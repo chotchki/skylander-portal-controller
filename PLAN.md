@@ -195,12 +195,12 @@ Verified on `http://192.168.1.162:8765` with mock driver:
 - [ ] 2.10.4 Use `MockPortalDriver` — the e2e suite doesn't need RPCS3. Driver selection gated by `SKYLANDER_PORTAL_DRIVER=mock` env var honored when the `dev-tools` feature is active.
 - [ ] 2.10.5 Keep this suite manually run locally; no CI.
 
-### 2.11 Cleanup + commit hygiene
+### 2.11 Cleanup + commit hygiene — DONE
 
-- [ ] 2.11.1 Delete the Phase 1 `src/main.rs` and `assets/spike_index.html` once 2.1.7 has moved the useful parts into `crates/server/`.
-- [ ] 2.11.2 Delete `tools/phone-smoke/` once 2.7.1 has migrated to `phone/`.
-- [ ] 2.11.3 Update CLAUDE.md with the final Phase 2 workspace layout.
-- [ ] 2.11.4 Update `README.md` with a brief "how to run" for developers.
+- [x] 2.11.1 Phase 1 `src/main.rs` / `assets/spike_index.html` moved via `git mv` in 2.1.7; the stale HTML dropped once `phone/dist/` came online.
+- [x] 2.11.2 `tools/phone-smoke/` promoted to `phone/` via `git mv`.
+- [x] 2.11.3 CLAUDE.md architecture section rewritten for the workspace layout.
+- [x] 2.11.4 README.md has a "Running in dev" quickstart + layout map.
 
 ---
 
