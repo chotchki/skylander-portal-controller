@@ -29,6 +29,13 @@ pub(crate) struct TakeoverReason {
 
 #[component]
 pub fn App() -> impl IntoView {
+    // Read the HMAC key out of `#k=<hex>` before anything else hits the
+    // network — `api::sign()` looks at the thread-local this populates, so
+    // it must happen before the first fetch. Called on every App() render;
+    // the function is idempotent (reads the hash each time, strips it after
+    // successful install).
+    api::install_key_from_hash();
+
     let portal = RwSignal::new(empty_portal());
     let picking_for = RwSignal::new(None::<u8>);
     let conn = RwSignal::new(ConnState::Connecting);

@@ -14,7 +14,7 @@ use skylander_e2e_tests::{unlock_default_profile, Phone, TestServer};
 async fn smoke_game_picker_renders() {
     let server = TestServer::spawn().expect("spawn server");
     unlock_default_profile(&server.url).await.expect("unlock profile");
-    let phone = Phone::new(&server.url, &server.chromedriver_url).await.expect("connect phone");
+    let phone = Phone::new(&server.phone_url().await.unwrap(), &server.chromedriver_url).await.expect("connect phone");
 
     // The GamePicker shows an h2 with "Pick a game". Wait for it.
     let heading = phone

@@ -28,6 +28,9 @@ pub struct AppState {
     /// Root of the committed static-data bundle served at `/api/figures/:id/image`.
     /// Points at `<repo>/data/` in dev; populated at startup from config.
     pub data_root: PathBuf,
+    /// 32-byte HMAC-SHA256 key shared with the phone via the TV's QR code.
+    /// Used by the `Signed` extractor on mutating REST endpoints (PLAN 3.13).
+    pub hmac_key: Vec<u8>,
     /// Lifecycle lock around the currently-running RPCS3 instance.
     pub rpcs3: Arc<Mutex<RpcsLifecycle>>,
 

@@ -131,6 +131,11 @@ pub struct PersistedConfig {
     pub log_dir: PathBuf,
     pub phone_dist_dir: PathBuf,
     pub data_root: PathBuf,
+    /// 32-byte HMAC key, serialised as a hex string. `Option` for backwards
+    /// compat with pre-3.13 configs; the release `config::load()` path
+    /// regenerates and persists if missing.
+    #[serde(default, with = "crate::wizard::hex_key_opt")]
+    pub hmac_key: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -167,6 +172,7 @@ impl PersistedConfig {
             log_dir: runtime_dir.join("logs"),
             phone_dist_dir: exe_parent.join("phone-dist"),
             data_root: exe_parent.join("data"),
+            hmac_key: Some(crate::config::generate_hmac_key()),
         }
     }
 
@@ -182,6 +188,32 @@ impl PersistedConfig {
         let json = serde_json::to_string_pretty(self)?;
         std::fs::write(path, json)?;
         Ok(())
+    }
+}
+
+/// Serde helper for `Option<Vec<u8>>` as a hex string — mirrors
+/// `config::hex_key` but optional.
+mod hex_key_opt {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(
+        bytes: &Option<Vec<u8>>,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        match bytes {
+            Some(b) => s.serialize_some(&hex::encode(b)),
+            None => s.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Option<Vec<u8>>, D::Error> {
+        let maybe = Option::<String>::deserialize(d)?;
+        match maybe {
+            Some(s) => hex::decode(&s).map(Some).map_err(serde::de::Error::custom),
+            None => Ok(None),
+        }
     }
 }
 

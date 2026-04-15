@@ -1,6 +1,6 @@
 //! REST helpers for talking to the server.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use serde_json::json;
 use wasm_bindgen::JsValue;
@@ -15,6 +15,11 @@ use crate::model::{GameLaunched, InstalledGame, PublicFigure, PublicProfile, Unl
 // contention, no cost at read-time.
 thread_local! {
     static SESSION_ID: Cell<Option<u64>> = const { Cell::new(None) };
+    /// HMAC-SHA256 key shared with the server via the TV's QR fragment
+    /// (`#k=<hex>`). Read once from `window.location.hash` on boot. None if
+    /// the phone was loaded via a bare URL (e.g. e2e tests, typed-URL access);
+    /// the server's dev build accepts unsigned requests in that case.
+    static HMAC_KEY: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
 }
 
 /// Called by `ws.rs` when the server sends `Event::Welcome`. Replaces any
@@ -28,10 +33,84 @@ pub fn current_session_id() -> Option<u64> {
     SESSION_ID.with(|c| c.get())
 }
 
+/// Parse `window.location.hash` looking for `#k=<hex>` and install the key
+/// for HMAC signing. Called once at app boot. Any existing hash is preserved
+/// in the URL; we strip the key fragment after reading so browser history
+/// screenshots / URL bar don't keep the shared secret around.
+pub fn install_key_from_hash() {
+    let loc = match web_sys::window().map(|w| w.location()) {
+        Some(l) => l,
+        None => return,
+    };
+    let hash = loc.hash().unwrap_or_default();
+    let Some(hex) = parse_key_fragment(&hash) else {
+        return;
+    };
+    if let Ok(bytes) = hex::decode(hex) {
+        if bytes.len() == 32 {
+            HMAC_KEY.with(|c| *c.borrow_mut() = Some(bytes));
+            // Wipe `#k=...` from the address bar without triggering a
+            // navigation. `history.replaceState` keeps the rest of the URL.
+            if let Some(hist) = web_sys::window().and_then(|w| w.history().ok()) {
+                let _ = hist.replace_state_with_url(
+                    &JsValue::NULL,
+                    "",
+                    Some(loc.pathname().unwrap_or_default().as_str()),
+                );
+            }
+        }
+    }
+}
+
+fn parse_key_fragment(hash: &str) -> Option<&str> {
+    // hash looks like `#k=abcd...` or `#foo=bar&k=abcd...`. Strip leading `#`.
+    let hash = hash.strip_prefix('#')?;
+    for part in hash.split('&') {
+        if let Some(rest) = part.strip_prefix("k=") {
+            return Some(rest);
+        }
+    }
+    None
+}
+
 fn origin() -> String {
     let loc = web_sys::window().unwrap().location();
     let origin = loc.origin().unwrap_or_else(|_| "".into());
     origin
+}
+
+fn sign(method: &str, path: &str, body: &[u8]) -> Option<(String, String)> {
+    use hmac::{Hmac, Mac};
+    type HmacSha256 = Hmac<sha2::Sha256>;
+    let key = HMAC_KEY.with(|c| c.borrow().clone())?;
+    let ts_ms = js_sys::Date::now() as u64;
+    let mut mac = HmacSha256::new_from_slice(&key).ok()?;
+    // Matches server's compute_hmac in http.rs exactly — any drift breaks
+    // the tag compare on the other side.
+    mac.update(ts_ms.to_string().as_bytes());
+    mac.update(b".");
+    mac.update(method.as_bytes());
+    mac.update(b".");
+    mac.update(path.as_bytes());
+    mac.update(b".");
+    mac.update(body.len().to_string().as_bytes());
+    mac.update(b".");
+    mac.update(body);
+    let tag = mac.finalize().into_bytes();
+    Some((ts_ms.to_string(), hex::encode(tag)))
+}
+
+/// Extract the path portion of a request URL (`/api/...`) for use in the
+/// HMAC input. The server sees only the path on its side — `X-Forwarded-*`
+/// etc. aren't in play on a trusted LAN.
+fn path_of(url: &str) -> &str {
+    // Skip scheme + host.
+    if let Some(rest) = url.strip_prefix("http://").or_else(|| url.strip_prefix("https://")) {
+        if let Some(slash) = rest.find('/') {
+            return &rest[slash..];
+        }
+    }
+    url
 }
 
 pub async fn fetch_figures() -> Vec<PublicFigure> {
@@ -161,10 +240,23 @@ async fn do_fetch(url: &str, method: &str, body: Option<&str>) -> Result<String,
     }
     // Attach the caller's session id on every mutating request so the server
     // can route per-session state correctly. Safe to set on GETs too — the
-    // server's `MaybeSession` extractor just reads the header if present.
+    // server's `CurrentSession` extractor is only required on handlers where
+    // session routing matters; elsewhere the header is simply ignored.
     if let Some(sid) = current_session_id() {
         req.headers()
             .set("X-Session-Id", &sid.to_string())
+            .map_err(js_err)?;
+    }
+    // HMAC signature for every request (PLAN 3.13). Server requires it on
+    // mutating endpoints in release; dev build accepts unsigned. Attach
+    // unconditionally when the key is known — harmless on read endpoints.
+    let body_bytes = body.map(|s| s.as_bytes()).unwrap_or(&[]);
+    if let Some((ts, sig)) = sign(method, path_of(url), body_bytes) {
+        req.headers()
+            .set("X-Skyportal-Timestamp", &ts)
+            .map_err(js_err)?;
+        req.headers()
+            .set("X-Skyportal-Sig", &sig)
             .map_err(js_err)?;
     }
     let window = web_sys::window().ok_or_else(|| "no window".to_string())?;

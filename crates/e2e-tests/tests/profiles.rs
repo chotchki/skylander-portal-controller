@@ -12,7 +12,8 @@ use skylander_e2e_tests::{Phone, TestServer};
 #[ignore = "requires chromedriver + built phone SPA"]
 async fn profile_create_and_unlock_lands_on_game_picker() {
     let server = TestServer::spawn().expect("spawn");
-    let phone = Phone::new(&server.url, &server.chromedriver_url)
+    let phone_url = server.phone_url().await.unwrap();
+    let phone = Phone::new(&phone_url, &server.chromedriver_url)
         .await
         .expect("connect phone");
 

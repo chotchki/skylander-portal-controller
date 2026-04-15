@@ -31,7 +31,7 @@ async fn spam_click_same_slot() {
     // single SlotChanged broadcast instead by watching the slot text).
     inject_load_outcomes(&server.url, json!([{"kind": "ok"}])).await.unwrap();
 
-    let phone = Phone::new(&server.url, &server.chromedriver_url).await.unwrap();
+    let phone = Phone::new(&server.phone_url().await.unwrap(), &server.chromedriver_url).await.unwrap();
     phone.wait_for_portal(Duration::from_secs(10)).await.unwrap();
     phone.tap_slot(1).await.unwrap();
 
@@ -88,7 +88,7 @@ async fn dup_figure_across_slots() {
     .await
     .unwrap();
 
-    let phone = Phone::new(&server.url, &server.chromedriver_url).await.unwrap();
+    let phone = Phone::new(&server.phone_url().await.unwrap(), &server.chromedriver_url).await.unwrap();
     phone.wait_for_portal(Duration::from_secs(10)).await.unwrap();
     phone.search("Spyro").await.unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -155,7 +155,7 @@ async fn clear_then_load_sequence() {
     .await
     .unwrap();
 
-    let phone = Phone::new(&server.url, &server.chromedriver_url).await.unwrap();
+    let phone = Phone::new(&server.phone_url().await.unwrap(), &server.chromedriver_url).await.unwrap();
     phone.wait_for_portal(Duration::from_secs(10)).await.unwrap();
     phone.tap_slot(1).await.unwrap();
     let cards = phone.client.find_all(Locator::Css(".card")).await.unwrap();
@@ -215,7 +215,7 @@ async fn error_toast_never_populates_slot() {
         launch_giants(&server.url).await.unwrap();
         inject_load_outcomes(&server.url, json!([v.clone()])).await.unwrap();
 
-        let phone = Phone::new(&server.url, &server.chromedriver_url).await.unwrap();
+        let phone = Phone::new(&server.phone_url().await.unwrap(), &server.chromedriver_url).await.unwrap();
         phone.wait_for_portal(Duration::from_secs(10)).await.unwrap();
         phone.tap_slot(1).await.unwrap();
         phone
@@ -250,7 +250,7 @@ async fn ws_reconnect() {
     launch_giants(&server.url).await.unwrap();
     inject_load_outcomes(&server.url, json!([{"kind":"ok"}])).await.unwrap();
 
-    let phone = Phone::new(&server.url, &server.chromedriver_url).await.unwrap();
+    let phone = Phone::new(&server.phone_url().await.unwrap(), &server.chromedriver_url).await.unwrap();
     phone.wait_for_portal(Duration::from_secs(10)).await.unwrap();
 
     // Load a figure first so we have a known post-reconnect snapshot.
@@ -318,7 +318,7 @@ async fn on_portal_figures_disabled() {
     launch_giants(&server.url).await.unwrap();
     inject_load_outcomes(&server.url, json!([{"kind":"ok"}])).await.unwrap();
 
-    let phone = Phone::new(&server.url, &server.chromedriver_url).await.unwrap();
+    let phone = Phone::new(&server.phone_url().await.unwrap(), &server.chromedriver_url).await.unwrap();
     phone.wait_for_portal(Duration::from_secs(10)).await.unwrap();
     phone.tap_slot(1).await.unwrap();
 

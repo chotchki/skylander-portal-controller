@@ -30,6 +30,35 @@ pub struct Config {
     /// Root of committed static data bundles: `images/<figure_id>/{hero,thumb}.png`,
     /// `figures.json`, `figures.manual.json`. Defaults to `<repo>/data/`.
     pub data_root: PathBuf,
+    /// 32-byte HMAC-SHA256 key shared with the phone via the TV's QR fragment
+    /// (`#k=<hex>`). Every mutating REST request carries an HMAC + timestamp
+    /// header computed with this key (PLAN 3.13). Stable across restarts —
+    /// regenerating invalidates any phone that still has the old QR cached.
+    #[serde(with = "hex_key")]
+    pub hmac_key: Vec<u8>,
+}
+
+/// Serde helper: persist `hmac_key` as a hex string in `config.json`.
+mod hex_key {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(bytes: &[u8], s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&hex::encode(bytes))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
+        let s = String::deserialize(d)?;
+        hex::decode(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Generate a fresh 32-byte HMAC key using the OS RNG. Called once at
+/// first-launch (dev or release) if the persisted config doesn't have one.
+pub fn generate_hmac_key() -> Vec<u8> {
+    use rand_core::{OsRng, RngCore};
+    let mut key = vec![0u8; 32];
+    OsRng.fill_bytes(&mut key);
+    key
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,6 +108,13 @@ pub fn load() -> Result<Config> {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("data"));
 
+    // HMAC key lives in `./dev-data/hmac.key` so it survives `cargo clean`
+    // but regenerates on `rm -rf dev-data/`. Dev mode doesn't push through
+    // the full config.json round-trip because `.env.dev` is the source of
+    // truth; the key is the one piece of runtime state that can't live in
+    // .env.dev without committing secrets.
+    let hmac_key = load_or_create_dev_hmac_key()?;
+
     Ok(Config {
         rpcs3_exe,
         firmware_pack_root,
@@ -88,7 +124,28 @@ pub fn load() -> Result<Config> {
         log_dir,
         phone_dist_dir,
         data_root,
+        hmac_key,
     })
+}
+
+#[cfg(feature = "dev-tools")]
+fn load_or_create_dev_hmac_key() -> Result<Vec<u8>> {
+    let path = PathBuf::from("dev-data").join("hmac.key");
+    if let Ok(raw) = std::fs::read_to_string(&path) {
+        let decoded = hex::decode(raw.trim())
+            .with_context(|| format!("parse hex from {}", path.display()))?;
+        if decoded.len() == 32 {
+            return Ok(decoded);
+        }
+        // Wrong length; regenerate.
+    }
+    let key = generate_hmac_key();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).ok();
+    }
+    std::fs::write(&path, hex::encode(&key))
+        .with_context(|| format!("write {}", path.display()))?;
+    Ok(key)
 }
 
 #[cfg(not(feature = "dev-tools"))]
@@ -107,6 +164,22 @@ pub fn load() -> Result<Config> {
         wizard::run_wizard_blocking(&config_path, &runtime_dir)?
     };
 
+    // Ensure the persisted config has an HMAC key. The wizard writes a
+    // fresh one on first launch; older configs (pre-3.13) won't have the
+    // field. `PersistedConfig` keeps `hmac_key` as `Option<Vec<u8>>` with a
+    // `#[serde(default)]`, so the `None` case here means a config from a
+    // server version before this feature existed — regenerate + persist.
+    let hmac_key = match persisted.hmac_key {
+        Some(k) if k.len() == 32 => k,
+        _ => {
+            let k = generate_hmac_key();
+            let mut updated = persisted.clone();
+            updated.hmac_key = Some(k.clone());
+            updated.write(&config_path)?;
+            k
+        }
+    };
+
     Ok(Config {
         rpcs3_exe: persisted.rpcs3_exe,
         firmware_pack_root: persisted.firmware_pack_root,
@@ -119,6 +192,7 @@ pub fn load() -> Result<Config> {
         log_dir: persisted.log_dir,
         phone_dist_dir: persisted.phone_dist_dir,
         data_root: persisted.data_root,
+        hmac_key,
     })
 }
 

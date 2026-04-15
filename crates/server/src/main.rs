@@ -61,7 +61,12 @@ fn main() -> Result<()> {
     // --- Pick bind address. ---
     let ip = first_non_loopback_ipv4().unwrap_or(Ipv4Addr::LOCALHOST);
     let bind = SocketAddr::from((ip, cfg.bind_port));
-    let url = format!("http://{bind}");
+    // The QR code / phone URL includes the HMAC key in a URL fragment so the
+    // phone can sign every mutating REST request (PLAN 3.13). The fragment
+    // never hits the server (browsers don't send `#...` in requests), so
+    // it's safe to embed in the QR without exposing it in access logs. Both
+    // the QR-rendered URL and the `serving on ...` log line use this form.
+    let url = format!("http://{bind}/#k={}", hex::encode(&cfg.hmac_key));
 
     // --- Shared between Axum and the eframe UI. ---
     let portal: Arc<Mutex<[SlotState; SLOT_COUNT]>> =
@@ -80,6 +85,7 @@ fn main() -> Result<()> {
     let driver_kind = cfg.driver_kind;
     let rpcs3_exe = cfg.rpcs3_exe.clone();
     let data_root = cfg.data_root.clone();
+    let hmac_key = cfg.hmac_key.clone();
     let rpcs3_lifecycle = Arc::new(tokio::sync::Mutex::new(RpcsLifecycle::default()));
     let rpcs3_for_task = rpcs3_lifecycle.clone();
     let portal_for_task = portal.clone();
@@ -135,6 +141,7 @@ fn main() -> Result<()> {
                     games: games_for_task,
                     rpcs3_exe,
                     data_root,
+                    hmac_key,
                     rpcs3: rpcs3_for_task,
                     profiles: profile_store,
                     sessions,

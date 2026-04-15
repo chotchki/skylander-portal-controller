@@ -44,6 +44,13 @@ ulid = "1"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 
+# HMAC command signing (3.13): random key at startup, key embedded in QR
+# fragment, phone signs every mutating request.
+hmac = "0.12"
+sha2 = { workspace = true }
+subtle = "2"  # constant-time tag compare
+hex = "0.4"
+
 # First-launch wizard (3.16): native file pickers + APPDATA resolution + .sky recursion.
 rfd = "0.14"
 directories = "5"

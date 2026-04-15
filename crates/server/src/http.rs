@@ -21,6 +21,137 @@ use crate::games::InstalledGame;
 use crate::profiles::{LockoutCheck, PublicProfile, RegistrationOutcome, SessionId, MAX_PROFILES};
 use crate::state::{AppState, DriverJob};
 
+/// Axum extractor that validates the HMAC signature on a mutating request
+/// and hands back the raw body bytes. Each `X-Skyportal-Sig` is
+/// `HMAC-SHA256(key, "{ts}.{method}.{path}.{body_bytes}")` hex-encoded, and
+/// each `X-Skyportal-Timestamp` is unix-ms — rejected outside a ±30s window
+/// to keep replay costs bounded. See PLAN 3.13.
+///
+/// Dev builds (`dev-tools` feature on) allow *unsigned* requests so the e2e
+/// harness keeps working without scraping the key from server logs. When the
+/// phone does send a signature in dev, it's still validated. Release builds
+/// reject anything unsigned with 401.
+///
+/// Handlers that used to take `Json<T>` now take `Signed` + deserialize the
+/// bytes themselves with `serde_json::from_slice`. Slightly more code at the
+/// call site than a fancy `SignedJson<T>` wrapper, but keeps the extractor
+/// simple and lets callers surface good error messages on malformed JSON.
+pub struct Signed(pub axum::body::Bytes);
+
+const SIG_TIMESTAMP_HEADER: &str = "x-skyportal-timestamp";
+const SIG_SIG_HEADER: &str = "x-skyportal-sig";
+const SIG_MAX_SKEW: Duration = Duration::from_secs(30);
+
+#[async_trait::async_trait]
+impl axum::extract::FromRequest<Arc<AppState>> for Signed {
+    type Rejection = Response;
+
+    async fn from_request(
+        req: axum::extract::Request,
+        state: &Arc<AppState>,
+    ) -> Result<Self, Self::Rejection> {
+        let method = req.method().clone();
+        let path = req.uri().path().to_string();
+        let headers = req.headers().clone();
+        let body = axum::body::to_bytes(req.into_body(), usize::MAX)
+            .await
+            .map_err(|e| {
+                (StatusCode::BAD_REQUEST, format!("read body: {e}")).into_response()
+            })?;
+
+        let sig_hdr = headers.get(SIG_SIG_HEADER);
+        let ts_hdr = headers.get(SIG_TIMESTAMP_HEADER);
+
+        // Dev bypass: unsigned requests are allowed when `dev-tools` is on.
+        // Present signatures are still validated (catches typos / key drift
+        // in the test harness before they become production issues).
+        #[cfg(feature = "dev-tools")]
+        {
+            if sig_hdr.is_none() && ts_hdr.is_none() {
+                return Ok(Signed(body));
+            }
+        }
+
+        let sig = sig_hdr
+            .ok_or_else(|| {
+                (StatusCode::UNAUTHORIZED, "missing X-Skyportal-Sig header").into_response()
+            })?
+            .to_str()
+            .map_err(|_| {
+                (StatusCode::BAD_REQUEST, "X-Skyportal-Sig not ASCII").into_response()
+            })?;
+        let ts = ts_hdr
+            .ok_or_else(|| {
+                (StatusCode::UNAUTHORIZED, "missing X-Skyportal-Timestamp header")
+                    .into_response()
+            })?
+            .to_str()
+            .map_err(|_| {
+                (StatusCode::BAD_REQUEST, "X-Skyportal-Timestamp not ASCII").into_response()
+            })?;
+
+        let ts_ms: u64 = ts.parse().map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                "X-Skyportal-Timestamp not a unix-ms integer",
+            )
+                .into_response()
+        })?;
+        let now_ms = now_unix_ms();
+        let diff_ms = now_ms.abs_diff(ts_ms);
+        if diff_ms > SIG_MAX_SKEW.as_millis() as u64 {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                format!(
+                    "timestamp skew {}ms exceeds {}ms window",
+                    diff_ms,
+                    SIG_MAX_SKEW.as_millis()
+                ),
+            )
+                .into_response());
+        }
+
+        let expected = compute_hmac(&state.hmac_key, ts_ms, method.as_str(), &path, &body);
+        let provided = hex::decode(sig).map_err(|_| {
+            (StatusCode::BAD_REQUEST, "X-Skyportal-Sig not hex").into_response()
+        })?;
+        // Constant-time compare — `subtle::ConstantTimeEq` returns a `Choice`.
+        use subtle::ConstantTimeEq;
+        if expected.ct_eq(&provided).unwrap_u8() != 1 {
+            return Err(
+                (StatusCode::UNAUTHORIZED, "bad signature").into_response(),
+            );
+        }
+        Ok(Signed(body))
+    }
+}
+
+fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn compute_hmac(key: &[u8], ts_ms: u64, method: &str, path: &str, body: &[u8]) -> Vec<u8> {
+    use hmac::{Hmac, Mac};
+    type HmacSha256 = Hmac<sha2::Sha256>;
+    let mut mac =
+        HmacSha256::new_from_slice(key).expect("HMAC accepts any key length; 32 bytes fine");
+    // Domain-separated framing: ts.method.path.bodyLen.body — the bodyLen
+    // prevents a body-suffix-matching path confusion attack.
+    mac.update(ts_ms.to_string().as_bytes());
+    mac.update(b".");
+    mac.update(method.as_bytes());
+    mac.update(b".");
+    mac.update(path.as_bytes());
+    mac.update(b".");
+    mac.update(body.len().to_string().as_bytes());
+    mac.update(b".");
+    mac.update(body);
+    mac.finalize().into_bytes().to_vec()
+}
+
 /// Axum extractor that pulls the caller's session id from the `X-Session-Id`
 /// request header. The phone receives its session id in the initial `Welcome`
 /// WS event and attaches it to every REST call so the server can route
@@ -90,7 +221,8 @@ pub fn router(state: Arc<AppState>, phone_dist: std::path::PathBuf) -> Router {
             .route("/api/_test/inject_load", post(inject_load))
             .route("/api/_test/set_game", post(set_game_state))
             .route("/api/_test/inject_profile", post(inject_profile))
-            .route("/api/_test/unlock_session", post(unlock_session_testhook));
+            .route("/api/_test/unlock_session", post(unlock_session_testhook))
+            .route("/api/_test/hmac_key", get(hmac_key_testhook));
     }
 
     // Static phone SPA (dev mode — ServeDir). When the dist directory isn't
@@ -192,13 +324,17 @@ async fn load_slot(
     State(state): State<Arc<AppState>>,
     AxumPath(n): AxumPath<u8>,
     CurrentSession(sid): CurrentSession,
-    axum::Json(body): axum::Json<LoadBody>,
+    Signed(body_bytes): Signed,
 ) -> Response {
     let slot = match SlotIndex::from_display(n) {
         Ok(s) => s,
         Err(_) => {
             return (StatusCode::BAD_REQUEST, format!("slot {n} out of range")).into_response()
         }
+    };
+    let body: LoadBody = match serde_json::from_slice(&body_bytes) {
+        Ok(b) => b,
+        Err(e) => return (StatusCode::BAD_REQUEST, format!("bad load body: {e}")).into_response(),
     };
     let figure = match state.lookup_figure(&body.figure_id) {
         Some(f) => f,
@@ -247,6 +383,7 @@ async fn load_slot(
 async fn clear_slot(
     State(state): State<Arc<AppState>>,
     AxumPath(n): AxumPath<u8>,
+    Signed(_body): Signed,
 ) -> Response {
     let slot = match SlotIndex::from_display(n) {
         Ok(s) => s,
@@ -279,7 +416,10 @@ async fn clear_slot(
     (StatusCode::ACCEPTED, "queued").into_response()
 }
 
-async fn refresh_portal(State(state): State<Arc<AppState>>) -> Response {
+async fn refresh_portal(
+    State(state): State<Arc<AppState>>,
+    Signed(_body): Signed,
+) -> Response {
     if state.driver_tx.send(DriverJob::RefreshPortal).await.is_err() {
         return (StatusCode::SERVICE_UNAVAILABLE, "driver channel closed").into_response();
     }
@@ -325,8 +465,12 @@ struct LaunchBody {
 
 async fn launch_game(
     State(state): State<Arc<AppState>>,
-    axum::Json(body): axum::Json<LaunchBody>,
+    Signed(body_bytes): Signed,
 ) -> Response {
+    let body: LaunchBody = match serde_json::from_slice(&body_bytes) {
+        Ok(b) => b,
+        Err(e) => return (StatusCode::BAD_REQUEST, format!("bad launch body: {e}")).into_response(),
+    };
     let game = match state.lookup_game(&body.serial) {
         Some(g) => g.clone(),
         None => return (StatusCode::NOT_FOUND, "unknown serial").into_response(),
@@ -468,6 +612,7 @@ async fn inject_load(
 async fn quit_game(
     State(state): State<Arc<AppState>>,
     axum::extract::Query(q): axum::extract::Query<QuitQuery>,
+    Signed(_body): Signed,
 ) -> Response {
     let mut guard = state.rpcs3.lock().await;
     let mut proc = match guard.process.take() {
@@ -652,8 +797,15 @@ struct CreateProfileBody {
 
 async fn create_profile(
     State(state): State<Arc<AppState>>,
-    axum::Json(body): axum::Json<CreateProfileBody>,
+    Signed(body_bytes): Signed,
 ) -> Response {
+    let body: CreateProfileBody = match serde_json::from_slice(&body_bytes) {
+        Ok(b) => b,
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, format!("bad create-profile body: {e}"))
+                .into_response()
+        }
+    };
     match state.profiles.count().await {
         Ok(n) if (n as usize) >= MAX_PROFILES => {
             return (
@@ -692,8 +844,12 @@ struct PinBody {
 async fn delete_profile(
     State(state): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
-    axum::Json(body): axum::Json<PinBody>,
+    Signed(body_bytes): Signed,
 ) -> Response {
+    let body: PinBody = match serde_json::from_slice(&body_bytes) {
+        Ok(b) => b,
+        Err(e) => return (StatusCode::BAD_REQUEST, format!("bad delete body: {e}")).into_response(),
+    };
     match state.profiles.verify_pin(&id, &body.pin).await {
         Ok(true) => {}
         Ok(false) => return (StatusCode::UNAUTHORIZED, "wrong pin").into_response(),
@@ -711,8 +867,12 @@ async fn unlock_profile(
     State(state): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
     CurrentSession(sid): CurrentSession,
-    axum::Json(body): axum::Json<PinBody>,
+    Signed(body_bytes): Signed,
 ) -> Response {
+    let body: PinBody = match serde_json::from_slice(&body_bytes) {
+        Ok(b) => b,
+        Err(e) => return (StatusCode::BAD_REQUEST, format!("bad unlock body: {e}")).into_response(),
+    };
     let now = std::time::Instant::now();
     match state.profiles.lockouts.check(&id, now).await {
         LockoutCheck::LockedOut { retry_after } => {
@@ -779,6 +939,7 @@ async fn lock_profile(
     State(state): State<Arc<AppState>>,
     AxumPath(_id): AxumPath<String>,
     CurrentSession(sid): CurrentSession,
+    Signed(_body): Signed,
 ) -> Response {
     state.sessions.set_profile(sid, None).await;
     let _ = state.events.send(Event::ProfileChanged {
@@ -797,8 +958,12 @@ struct ResetPinBody {
 async fn reset_pin(
     State(state): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
-    axum::Json(body): axum::Json<ResetPinBody>,
+    Signed(body_bytes): Signed,
 ) -> Response {
+    let body: ResetPinBody = match serde_json::from_slice(&body_bytes) {
+        Ok(b) => b,
+        Err(e) => return (StatusCode::BAD_REQUEST, format!("bad reset body: {e}")).into_response(),
+    };
     match state.profiles.verify_pin(&id, &body.current_pin).await {
         Ok(true) => {}
         Ok(false) => return (StatusCode::UNAUTHORIZED, "wrong pin").into_response(),
@@ -843,6 +1008,16 @@ async fn inject_profile(
 #[derive(Deserialize)]
 struct UnlockSessionBody {
     profile_id: String,
+}
+
+#[cfg(feature = "test-hooks")]
+async fn hmac_key_testhook(State(state): State<Arc<AppState>>) -> Response {
+    // Dev bypass exists precisely so the e2e harness doesn't HAVE to sign
+    // requests, but that leaves the HMAC path unverified. Expose the key
+    // here so the harness can build `#k=<hex>` URLs and exercise the real
+    // signed flow end-to-end. Only compiled when `test-hooks` is on.
+    let hex = hex::encode(&state.hmac_key);
+    (StatusCode::OK, axum::Json(serde_json::json!({ "hmac_key": hex }))).into_response()
 }
 
 #[cfg(feature = "test-hooks")]

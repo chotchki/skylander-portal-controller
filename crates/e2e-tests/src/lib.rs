@@ -104,6 +104,32 @@ impl TestServer {
             _tmpdir: tmp,
         })
     }
+
+    /// URL to navigate the phone to. Bakes the HMAC key into a `#k=<hex>`
+    /// fragment so the phone actually exercises the signed-request path
+    /// end-to-end rather than falling back to the server's dev bypass.
+    /// Fetched via the `/api/_test/hmac_key` hook; every `Phone::new` goes
+    /// through this rather than the raw `url`.
+    pub async fn phone_url(&self) -> anyhow::Result<String> {
+        let hex = fetch_hmac_key_hex(&self.url).await?;
+        Ok(format!("{}/#k={}", self.url, hex))
+    }
+}
+
+async fn fetch_hmac_key_hex(base: &str) -> anyhow::Result<String> {
+    #[derive(serde::Deserialize)]
+    struct Body {
+        hmac_key: String,
+    }
+    let resp = reqwest::Client::new()
+        .get(format!("{base}/api/_test/hmac_key"))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        bail!("hmac_key hook returned {}", resp.status());
+    }
+    let body: Body = resp.json().await?;
+    Ok(body.hmac_key)
 }
 
 /// Spawn a dedicated chromedriver on a free port and wait for it to accept
