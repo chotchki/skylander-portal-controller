@@ -111,10 +111,19 @@ fn main() -> Result<()> {
     // --- Fullscreen eframe window on the main thread. ---
     let figure_count = figures.len();
     let ui_clients = connected_clients.clone();
+    // Dev builds are windowed so you can alt-tab away; release launches
+    // fullscreen (it's invoked from Steam Big Picture with no window chrome).
+    let viewport = {
+        let mut vb = egui::ViewportBuilder::default().with_title("Skylander Portal Controller");
+        if cfg!(feature = "dev-tools") {
+            vb = vb.with_inner_size([900.0, 1000.0]);
+        } else {
+            vb = vb.with_fullscreen(true);
+        }
+        vb
+    };
     let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("Skylander Portal Controller")
-            .with_fullscreen(true),
+        viewport,
         ..Default::default()
     };
     let url_for_ui = url.clone();
