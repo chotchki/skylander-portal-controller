@@ -131,28 +131,31 @@ Deliberately deferred to Phase 3: PIN-gated profiles, multi-profile, working-cop
 - [~] 2.4.6 Snapshot test deferred. Replaced with a count-check integration test (`tests/real_pack.rs`, gated by `SKYLANDER_PACK_ROOT` env var) that verifies per-game + per-category totals match Phase 1c exactly. A full JSON snapshot is overkill for now.
 - [x] 2.4.7 `tools/inventory/` left as-is — it's the historical Phase 1c builder. Future regeneration should use the library.
 
-### 2.5 Dev config + bootstrap
+### 2.5 Dev config + bootstrap — DONE
 
-- [ ] 2.5.1 Read `.env.dev` at startup when the `dev-tools` feature flag is on (otherwise first-launch config wizard — Phase 3). Keys: `RPCS3_EXE`, `FIRMWARE_PACK_ROOT`, `GAMES_YAML` (optional, defaults to `<RPCS3_EXE dir>/config/games.yml`), `BIND_PORT` (default 8765).
-- [ ] 2.5.2 Add `dev-tools` Cargo feature to `crates/server/` (default ON during development, OFF in release).
-- [ ] 2.5.3 Commit `.env.dev.example` with placeholders; actual `.env.dev` stays gitignored.
-- [ ] 2.5.4 Log destination: `./logs/server.log` when `dev-tools`; `%APPDATA%/skylander-portal-controller/logs/` otherwise. Daily rotation, 7-day retention (use `tracing-appender`).
-- [ ] 2.5.5 On startup, log the resolved config to the log file and to stdout (visible to the e2e test harness for URL-scraping).
+- [x] 2.5.1 `.env.dev` loader in `config.rs` (RPCS3_EXE, FIRMWARE_PACK_ROOT, GAMES_YAML, BIND_PORT, SKYLANDER_PORTAL_DRIVER).
+- [x] 2.5.2 `dev-tools` feature on `skylander-server`, default ON.
+- [x] 2.5.3 `.env.dev.example` committed, `.env.dev` gitignored.
+- [x] 2.5.4 `tracing-appender` daily rolling log files in `./logs/` (dev). Release-mode APPDATA path is a Phase 3 concern.
+- [x] 2.5.5 Startup config logged to stdout + file — "serving on http://…" is the URL-scrape anchor the e2e harness needs.
 
-### 2.6 Server (`crates/server/`)
+### 2.6 Server (`crates/server/`) — DONE (mostly)
 
-- [ ] 2.6.1 Scaffold app state: `AppState { figures: Vec<Figure>, driver: Arc<dyn PortalDriver>, portal_state: Arc<Mutex<[SlotState; 8]>>, broadcast: broadcast::Sender<Event> }`.
-- [ ] 2.6.2 Startup sequence: (1) read config, (2) build indexer → `figures`, (3) construct `UiaPortalDriver`, (4) kick off a tokio task to do an initial `driver.read_slots()` and populate `portal_state`, (5) start Axum, (6) start eframe.
-- [ ] 2.6.3 REST: `GET /api/figures` returns `Vec<PublicFigure>` (phone-safe).
-- [ ] 2.6.4 REST: `GET /api/portal` returns current `[SlotState; 8]`.
-- [ ] 2.6.5 REST: `POST /api/portal/slot/{n}/load` body `{ figure_id }` — validates slot range, looks up figure, enqueues a driver job, returns 202 with a correlation ID.
-- [ ] 2.6.6 REST: `POST /api/portal/slot/{n}/clear` — same pattern.
-- [ ] 2.6.7 WebSocket `/ws`: on connect, send a `PortalSnapshot`; subscribe to broadcast for subsequent `SlotChanged` events.
-- [ ] 2.6.8 Driver job queue: a single-worker tokio task drains a `mpsc` of commands, invokes the driver serially, updates `portal_state`, broadcasts `SlotChanged`. Serialising here keeps the UIA driver sane.
-- [ ] 2.6.9 Serve the phone SPA static bundle via `tower_http::services::ServeDir` pointed at `phone/dist/` (dev) or an `include_dir!`-embedded copy (release). Gate behind the `dev-tools` feature.
-- [ ] 2.6.10 Serve element icon PNGs at `/assets/element/{Element}.png`, resolved from the firmware pack.
-- [ ] 2.6.11 First-non-loopback-IP pick at startup; log the URL clearly.
-- [ ] 2.6.12 Unit tests for the routes using `axum::test` + `MockPortalDriver`.
+- [x] 2.6.1 `AppState` in `state.rs` (figures, figure_index, driver_tx, portal mutex, broadcast, client counter).
+- [x] 2.6.2 Startup sequence in `main.rs`: config → index → driver → spawn tokio thread → eframe on main.
+- [x] 2.6.3 `GET /api/figures` → `Vec<PublicFigure>`.
+- [x] 2.6.4 `GET /api/portal` → current slot snapshot.
+- [x] 2.6.5 `POST /api/portal/slot/:n/load { figure_id }` validates + enqueues; returns 202.
+- [x] 2.6.6 `POST /api/portal/slot/:n/clear` same pattern. (Also added `POST /api/portal/refresh`.)
+- [x] 2.6.7 `/ws` sends initial `PortalSnapshot` then forwards broadcast events.
+- [x] 2.6.8 Driver worker in `state::spawn_driver_worker`: single tokio task, `spawn_blocking` for each driver call, broadcasts `SlotChanged` before + after.
+- [x] 2.6.9 `ServeDir` for the phone SPA — currently `tools/phone-smoke/dist/`; updated to `phone/dist/` in 2.7.1. Falls back gracefully if dist doesn't exist yet.
+- [~] 2.6.10 Element icon endpoint deferred — phone SPA doesn't need it for the immediate MVP wireframe. Will land alongside 2.7 if needed.
+- [x] 2.6.11 First-non-loopback IP pick via `local_ip_address`; URL logged as `serving on http://…`.
+- [~] 2.6.12 Route unit tests deferred. Manual e2e check against the mock driver confirmed: load → portal reflects Loaded → clear → empty.
+
+Verified on `http://192.168.1.162:8765` with mock driver:
+`POST /slot/1/load` → portal shows `Loaded{Eruptor}` → `POST /slot/1/clear` → empty.
 
 ### 2.7 Phone SPA (`phone/`)
 
@@ -169,12 +172,13 @@ Keep the scope surgical. One screen. Three columns on iPad, one-above-the-other 
 - [ ] 2.7.9 Add `Trunk.toml` with release profile + a build step that outputs to `phone/dist/` consistently.
 - [ ] 2.7.10 Manually verify the SPA builds and the button interactions against a running server on the HTPC.
 
-### 2.8 eframe launcher window
+### 2.8 eframe launcher window — DONE
 
-- [ ] 2.8.1 Port the Phase 1 spike's eframe `SpikeApp` into `crates/server/src/ui.rs`. Fullscreen, 86"@10ft sizing (large fonts).
-- [ ] 2.8.2 Show: big QR code of the server URL, URL text, "Clients connected: N" counter, RPCS3 connection status (has-dialog? unknown?).
-- [ ] 2.8.3 Share a single `AppState` pointer between Axum and eframe.
-- [ ] 2.8.4 No buttons in MVP (Phase 3 adds hide-dialog / restart-game / exit).
+- [x] 2.8.1 `LauncherApp` in `crates/server/src/ui.rs`. Fullscreen viewport, big fonts (64pt heading, 32pt URL, 40pt status).
+- [x] 2.8.2 Shows QR code (10x upsampled), URL, client count, figure count.
+- [x] 2.8.3 Shares the `AtomicUsize` client counter directly with the server; full AppState sharing across the OS-thread boundary was overkill for MVP.
+- [~] 2.8.4 No buttons — Phase 3.
+- [~] RPCS3 connection status indicator deferred; the first failed driver job already surfaces as an Event::Error on the phone side.
 
 ### 2.9 End-to-end wire-up + manual smoke
 

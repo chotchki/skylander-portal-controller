@@ -1,88 +1,159 @@
-//! Phase 1 spike 1e: verify Axum + eframe can coexist in one binary on Windows.
+//! Skylander Portal Controller — entry point.
 //!
-//! - Tokio multi-thread runtime runs on a background thread, serving an Axum app
-//!   with REST + WebSocket endpoints.
-//! - eframe owns the main thread, displaying a QR code for the server URL and a
-//!   live WebSocket-client count.
-//! - A shared `AtomicUsize` communicates client count across the boundary.
-//!
-//! This is NOT production structure — Phase 2 will split server and phone SPA
-//! into separate workspace crates. Keep this file self-contained.
+//! Threading model:
+//!  - Main OS thread owns the eframe event loop.
+//!  - A dedicated background OS thread hosts the tokio multi-threaded runtime
+//!    running the Axum server + the driver worker task.
+//!  - Shared state lives inside `Arc<AppState>` and an `AtomicUsize` client
+//!    counter that both sides read.
 
+mod config;
+mod http;
+mod logging;
+mod state;
+mod ui;
+
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicUsize;
 
-use axum::Router;
-use axum::extract::State;
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::response::{Html, IntoResponse, Json};
-use axum::routing::get;
-use futures_util::{SinkExt, StreamExt};
-use serde::Serialize;
+use anyhow::{Context, Result};
+use skylander_core::{Figure, SlotState, SLOT_COUNT};
+use skylander_rpcs3_control::PortalDriver;
+use tokio::sync::{broadcast, Mutex};
+use tracing::{info, warn};
 
-const INDEX_HTML: &str = include_str!("../assets/spike_index.html");
+use crate::config::DriverKind;
+use crate::state::{spawn_driver_worker, AppState};
+use crate::ui::LauncherApp;
 
-#[derive(Clone)]
-struct AppState {
-    clients: Arc<AtomicUsize>,
-}
+fn main() -> Result<()> {
+    let cfg = config::load().context("load config")?;
+    let _log_guard = logging::init(&cfg.log_dir)?;
 
-#[derive(Serialize)]
-struct Status {
-    clients: usize,
-    server: &'static str,
-}
-
-async fn index() -> Html<&'static str> {
-    Html(INDEX_HTML)
-}
-
-async fn status(State(state): State<AppState>) -> Json<Status> {
-    Json(Status {
-        clients: state.clients.load(Ordering::Relaxed),
-        server: "skylander-portal-controller spike",
-    })
-}
-
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
-}
-
-async fn handle_socket(socket: WebSocket, state: AppState) {
-    state.clients.fetch_add(1, Ordering::Relaxed);
-    tracing::info!(
-        "client connected; total = {}",
-        state.clients.load(Ordering::Relaxed)
+    info!(
+        rpcs3 = %cfg.rpcs3_exe.display(),
+        pack = %cfg.firmware_pack_root.display(),
+        port = cfg.bind_port,
+        driver = ?cfg.driver_kind,
+        "starting server",
     );
 
-    let (mut sender, mut receiver) = socket.split();
+    // --- Index the firmware pack. ---
+    let figures: Vec<Figure> = skylander_indexer::scan(&cfg.firmware_pack_root)
+        .context("scan firmware pack")?;
+    info!(count = figures.len(), "indexed figures");
+    let figure_index: HashMap<_, _> = figures
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (f.id.clone(), i))
+        .collect();
 
-    let _ = sender
-        .send(Message::Text("hello from server".into()))
-        .await;
+    // --- Build the driver. ---
+    let driver: Arc<dyn PortalDriver> = build_driver(cfg.driver_kind)?;
 
-    while let Some(Ok(msg)) = receiver.next().await {
-        match msg {
-            Message::Text(t) => {
-                let echo = format!("echo: {t}");
-                if sender.send(Message::Text(echo)).await.is_err() {
-                    break;
+    // --- Pick bind address. ---
+    let ip = first_non_loopback_ipv4().unwrap_or(Ipv4Addr::LOCALHOST);
+    let bind = SocketAddr::from((ip, cfg.bind_port));
+    let url = format!("http://{bind}");
+
+    // --- Shared between Axum and the eframe UI. ---
+    let portal: Arc<Mutex<[SlotState; SLOT_COUNT]>> =
+        Arc::new(Mutex::new(std::array::from_fn(|_| SlotState::Empty)));
+    let (events_tx, _) = broadcast::channel::<skylander_core::Event>(64);
+    let connected_clients = Arc::new(AtomicUsize::new(0));
+
+    // --- Start the Axum server + driver worker on a dedicated thread. ---
+    let phone_dist = cfg.phone_dist_dir.clone();
+    let bind_addr = bind;
+    let portal_for_task = portal.clone();
+    let events_for_task = events_tx.clone();
+    let clients_for_task = connected_clients.clone();
+    let driver_for_task = driver.clone();
+    let figures_for_task = figures.clone();
+    let figure_index_for_task = figure_index.clone();
+
+    let _server_thread = std::thread::Builder::new()
+        .name("tokio".into())
+        .spawn(move || {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("build tokio runtime");
+            rt.block_on(async move {
+                let driver_tx = spawn_driver_worker(
+                    driver_for_task,
+                    portal_for_task.clone(),
+                    events_for_task.clone(),
+                );
+                let state = Arc::new(AppState {
+                    figures: figures_for_task,
+                    figure_index: figure_index_for_task,
+                    driver_tx,
+                    portal: portal_for_task,
+                    events: events_for_task,
+                    connected_clients: clients_for_task,
+                });
+
+                let app = http::router(state.clone(), phone_dist);
+                let listener = tokio::net::TcpListener::bind(bind_addr)
+                    .await
+                    .expect("bind");
+                info!("serving on http://{bind_addr}");
+                if let Err(e) = axum::serve(listener, app).await {
+                    warn!("axum server exited: {e}");
                 }
+            });
+        })
+        .expect("spawn server thread");
+
+    // --- Fullscreen eframe window on the main thread. ---
+    let figure_count = figures.len();
+    let ui_clients = connected_clients.clone();
+    let native_options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_title("Skylander Portal Controller")
+            .with_fullscreen(true),
+        ..Default::default()
+    };
+    let url_for_ui = url.clone();
+    eframe::run_native(
+        "skylander-portal-controller",
+        native_options,
+        Box::new(move |cc| {
+            Ok(Box::new(LauncherApp::new(
+                cc,
+                ui_clients,
+                figure_count,
+                url_for_ui,
+            )))
+        }),
+    )
+    .map_err(|e| anyhow::anyhow!("eframe error: {e}"))
+}
+
+fn build_driver(kind: DriverKind) -> Result<Arc<dyn PortalDriver>> {
+    match kind {
+        DriverKind::Uia => {
+            #[cfg(windows)]
+            {
+                let d = skylander_rpcs3_control::UiaPortalDriver::new()?;
+                Ok(Arc::new(d))
             }
-            Message::Close(_) => break,
-            _ => {}
+            #[cfg(not(windows))]
+            anyhow::bail!("UIA driver only available on Windows");
+        }
+        DriverKind::Mock => {
+            #[cfg(feature = "dev-tools")]
+            {
+                let d = skylander_rpcs3_control::MockPortalDriver::new();
+                Ok(Arc::new(d))
+            }
+            #[cfg(not(feature = "dev-tools"))]
+            anyhow::bail!("mock driver only available with the dev-tools feature");
         }
     }
-
-    state.clients.fetch_sub(1, Ordering::Relaxed);
-    tracing::info!(
-        "client disconnected; total = {}",
-        state.clients.load(Ordering::Relaxed)
-    );
 }
 
 fn first_non_loopback_ipv4() -> Option<Ipv4Addr> {
@@ -92,127 +163,3 @@ fn first_non_loopback_ipv4() -> Option<Ipv4Addr> {
     }
 }
 
-fn start_server(state: AppState, bind: SocketAddr) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("build tokio runtime");
-        rt.block_on(async move {
-            let app = Router::new()
-                .route("/", get(index))
-                .route("/api/status", get(status))
-                .route("/ws", get(ws_handler))
-                .with_state(state);
-
-            let listener = tokio::net::TcpListener::bind(bind).await.expect("bind");
-            tracing::info!("serving on http://{bind}");
-            axum::serve(listener, app).await.expect("serve");
-        });
-    })
-}
-
-struct SpikeApp {
-    clients: Arc<AtomicUsize>,
-    url: String,
-    qr_texture: Option<egui::TextureHandle>,
-}
-
-impl SpikeApp {
-    fn new(cc: &eframe::CreationContext<'_>, clients: Arc<AtomicUsize>, url: String) -> Self {
-        let qr_texture = render_qr_texture(&cc.egui_ctx, &url);
-        Self {
-            clients,
-            url,
-            qr_texture: Some(qr_texture),
-        }
-    }
-}
-
-fn render_qr_texture(ctx: &egui::Context, url: &str) -> egui::TextureHandle {
-    let code = qrcode::QrCode::new(url).expect("qr encode");
-    let dark = egui::Color32::from_rgb(0x0b, 0x1e, 0x3f);
-    let light = egui::Color32::WHITE;
-    let scale = 8usize;
-    let modules: Vec<Vec<bool>> = code
-        .render::<char>()
-        .quiet_zone(true)
-        .module_dimensions(1, 1)
-        .build()
-        .lines()
-        .map(|l| l.chars().map(|c| c != ' ').collect())
-        .collect();
-    let h = modules.len();
-    let w = modules.first().map(|r| r.len()).unwrap_or(0);
-    let img_w = w * scale;
-    let img_h = h * scale;
-    let mut pixels = Vec::with_capacity(img_w * img_h);
-    for y in 0..img_h {
-        for x in 0..img_w {
-            let b = modules[y / scale][x / scale];
-            pixels.push(if b { dark } else { light });
-        }
-    }
-    let color_image = egui::ColorImage {
-        size: [img_w, img_h],
-        pixels,
-    };
-    ctx.load_texture("qr", color_image, egui::TextureOptions::NEAREST)
-}
-
-impl eframe::App for SpikeApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        ctx.request_repaint_after(std::time::Duration::from_millis(250));
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(12.0);
-                ui.heading(egui::RichText::new("Skylander Portal — Spike").size(32.0));
-                ui.add_space(8.0);
-                ui.label(egui::RichText::new(&self.url).size(20.0).monospace());
-                ui.add_space(16.0);
-                if let Some(tex) = &self.qr_texture {
-                    let size = tex.size_vec2();
-                    ui.image((tex.id(), size));
-                }
-                ui.add_space(16.0);
-                let n = self.clients.load(Ordering::Relaxed);
-                ui.label(egui::RichText::new(format!("Connected clients: {n}")).size(28.0));
-            });
-        });
-    }
-}
-
-fn main() -> eframe::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
-        )
-        .init();
-
-    let ip = first_non_loopback_ipv4().unwrap_or(Ipv4Addr::LOCALHOST);
-    let port: u16 = 8765;
-    let bind = SocketAddr::from((ip, port));
-    let url = format!("http://{bind}");
-
-    let clients = Arc::new(AtomicUsize::new(0));
-    let state = AppState {
-        clients: clients.clone(),
-    };
-
-    let _server = start_server(state, bind);
-
-    let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("Skylander Portal Controller (spike)")
-            .with_inner_size([640.0, 720.0]),
-        ..Default::default()
-    };
-
-    eframe::run_native(
-        "skylander-portal-spike",
-        native_options,
-        Box::new(move |cc| Ok(Box::new(SpikeApp::new(cc, clients, url)))),
-    )
-}
