@@ -79,16 +79,7 @@ async fn handle_job(
             figure_id,
             path,
         } => {
-            set_and_broadcast(
-                portal,
-                events,
-                slot,
-                SlotState::Loading {
-                    figure_id: Some(figure_id.clone()),
-                },
-            )
-            .await;
-
+            // HTTP handler already set Loading and broadcast it.
             let d = driver.clone();
             let fid = figure_id.clone();
             let result = tokio::task::spawn_blocking(move || -> Result<String> {
@@ -97,38 +88,71 @@ async fn handle_job(
             })
             .await?;
 
-            let new_state = match result {
-                Ok(display_name) => SlotState::Loaded {
-                    figure_id: Some(fid),
-                    display_name,
-                },
-                Err(e) => SlotState::Error {
-                    message: e.to_string(),
-                },
-            };
-            set_and_broadcast(portal, events, slot, new_state).await;
+            match result {
+                Ok(display_name) => {
+                    set_and_broadcast(
+                        portal,
+                        events,
+                        slot,
+                        SlotState::Loaded {
+                            figure_id: Some(fid),
+                            display_name,
+                        },
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    restore_after_failure(driver, portal, events, slot, &e.to_string()).await;
+                }
+            }
         }
         DriverJob::ClearSlot { slot } => {
-            set_and_broadcast(portal, events, slot, SlotState::Loading { figure_id: None }).await;
+            // HTTP handler already set Loading and broadcast it.
             let d = driver.clone();
             let result = tokio::task::spawn_blocking(move || -> Result<()> {
                 d.open_dialog()?;
                 d.clear(slot)
             })
             .await?;
-            let new_state = match result {
-                Ok(()) => SlotState::Empty,
-                Err(e) => SlotState::Error {
-                    message: e.to_string(),
-                },
-            };
-            set_and_broadcast(portal, events, slot, new_state).await;
+
+            match result {
+                Ok(()) => {
+                    set_and_broadcast(portal, events, slot, SlotState::Empty).await;
+                }
+                Err(e) => {
+                    restore_after_failure(driver, portal, events, slot, &e.to_string()).await;
+                }
+            }
         }
         DriverJob::RefreshPortal => {
             refresh(driver, portal, events).await?;
         }
     }
     Ok(())
+}
+
+/// After a driver error: emit an `Error` event for the toast, then re-read
+/// the portal to restore truthful slot state. If the re-read fails (unusual),
+/// fall back to `Empty` for the slot so the UI isn't stuck showing Loading.
+async fn restore_after_failure(
+    driver: &Arc<dyn PortalDriver>,
+    portal: &Arc<Mutex<[SlotState; SLOT_COUNT]>>,
+    events: &broadcast::Sender<Event>,
+    slot: SlotIndex,
+    message: &str,
+) {
+    let _ = events.send(Event::Error {
+        message: message.to_string(),
+    });
+
+    let d = driver.clone();
+    let snapshot = tokio::task::spawn_blocking(move || d.read_slots()).await;
+
+    let truth = match snapshot {
+        Ok(Ok(snap)) => snap[slot.as_usize()].clone(),
+        _ => SlotState::Empty,
+    };
+    set_and_broadcast(portal, events, slot, truth).await;
 }
 
 async fn refresh(
