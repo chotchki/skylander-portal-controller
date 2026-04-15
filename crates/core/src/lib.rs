@@ -34,13 +34,18 @@ mod tests {
     fn slot_state_serde_roundtrip() {
         let states = [
             SlotState::Empty,
-            SlotState::Loading { figure_id: None },
+            SlotState::Loading {
+                figure_id: None,
+                placed_by: None,
+            },
             SlotState::Loading {
                 figure_id: Some(FigureId::new("deadbeefcafebabe")),
+                placed_by: Some("alice".into()),
             },
             SlotState::Loaded {
                 figure_id: Some(FigureId::new("deadbeefcafebabe")),
                 display_name: "Eruptor".into(),
+                placed_by: Some("alice".into()),
             },
             SlotState::Error {
                 message: "file locked".into(),
@@ -78,6 +83,7 @@ mod tests {
                     SlotState::Loaded {
                         figure_id: None,
                         display_name: "Eruptor".into(),
+                        placed_by: None,
                     }
                 } else {
                     SlotState::Empty

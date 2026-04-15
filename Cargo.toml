@@ -5,7 +5,9 @@ members = [
     "crates/indexer",
     "crates/rpcs3-control",
     "crates/server",
+    "crates/sky-parser",
     "crates/e2e-tests",
+    "tools/wiki-scrape",
 ]
 
 [workspace.package]

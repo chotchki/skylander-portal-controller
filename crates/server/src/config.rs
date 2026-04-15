@@ -19,6 +19,9 @@ pub struct Config {
     pub log_dir: PathBuf,
     /// Directory containing the phone SPA's built assets.
     pub phone_dist_dir: PathBuf,
+    /// Root of committed static data bundles: `images/<figure_id>/{hero,thumb}.png`,
+    /// `figures.json`, `figures.manual.json`. Defaults to `<repo>/data/`.
+    pub data_root: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +64,10 @@ pub fn load() -> Result<Config> {
         .get("PHONE_DIST")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("phone/dist"));
+    let data_root = env
+        .get("DATA_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("data"));
 
     Ok(Config {
         rpcs3_exe,
@@ -70,6 +77,7 @@ pub fn load() -> Result<Config> {
         driver_kind,
         log_dir,
         phone_dist_dir,
+        data_root,
     })
 }
 

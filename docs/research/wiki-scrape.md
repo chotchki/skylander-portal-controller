@@ -139,3 +139,50 @@ Also add a short attribution note to the README and to `docs/aesthetic/README.md
 - **R-wiki-2:** Characterbox field names change per game generation (some pages use `|elem =` or nest differently). Mitigation: tolerant parser; fall back to category-derived fields.
 - **R-wiki-3:** A small number of figures (Items, Adventure Packs, Creation Crystals) may not have Characterbox at all. Mitigation: accept these with minimal metadata (name + image only) and don't block on them.
 - **R-wiki-4:** Image license is murkier than text. Mitigation: strong attribution, non-commercial use only, no redistribution outside the project. Keep this stance documented.
+
+## Implementation notes (Phase 3.19)
+
+### Repo size budget
+
+The spec target of "<5MB committed images" is **impossible** with PNG + ~500
+figures at both thumb and hero sizes. Concrete measurements during the scrape:
+- **Hero** at width 320px, PNG: ~150–200KB per figure → ~80MB for 500 figures.
+- **Thumb** at 128×128, PNG: ~25–40KB per figure → ~15MB for 500 figures.
+
+Chose a compromise: ship **thumbs only in the default commit** (the phone
+only renders thumbs; a hero detail view is deferred to 3.15), and expose
+`--with-hero` / `--no-hero` on the scraper for anyone who wants to re-run.
+Final committed size: ~X MB (see repo).
+
+### Gallery-redirect pitfall
+
+Fandom aggressively redirects bare figure titles (e.g. `Zook`) to their
+`/Gallery` subpage, which is an image dump with no Characterbox. When we
+get a redirect-resolved title ending in `/Gallery`, we strip the suffix and
+re-fetch from the parent page. Caught in QA on the first 35-entry slice of
+the full scrape.
+
+### Resume behaviour
+
+`data/figures.json` is written every 25 entries and on exit; `--force`
+re-scrapes everything, the default skips any figure whose cache entry has
+`wiki_page: Some` and whose `hero.png` (or `thumb.png` when `--no-hero`)
+already exists.
+
+### Output schema
+
+```rust
+struct WikiFigure {
+    figure_id: String,
+    wiki_page: Option<String>,       // full URL (unresolved → None)
+    soul_gem: Option<String>,        // from Characterbox `soul gem =`
+    signature_moves: Vec<String>,    // from Characterbox `attack =` bullets
+    alignment: Option<String>,       // role/alignment/faction field or Light/Dark Trap category
+    attributes: HashMap<String,String>, // rest of the Characterbox, cleaned
+}
+```
+
+Any figure the scraper couldn't resolve lands in `figures.json` with
+`wiki_page: None`; the user can fill in `data/figures.manual.json` to
+override on a per-ID basis. The server merges manual over scraped at
+load-time (future — for now the image route looks at `data/images/` only).

@@ -1,0 +1,25 @@
+[package]
+name = "skylander-wiki-scrape"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "skylander-wiki-scrape"
+path = "src/main.rs"
+
+# One-shot CLI. Commits its output (`data/figures.json`, `data/images/**`)
+# into the repo. Never runs in CI; runtime never calls the wiki.
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "fs"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "gzip"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+regex = "1"
+unicode-normalization = "0.1"

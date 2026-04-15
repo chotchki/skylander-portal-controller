@@ -547,9 +547,14 @@ fn interpret_slot_value(value: &str) -> SlotState {
     if value.is_empty() || value == "None" {
         SlotState::Empty
     } else {
+        // `placed_by` is a server-layer concept (the REST caller's profile);
+        // the driver only observes what RPCS3 shows. `None` here is correct
+        // — `set_and_broadcast` paths at the server level fill it in on
+        // actions that originated through a REST handler.
         SlotState::Loaded {
             figure_id: None,
             display_name: value.to_string(),
+            placed_by: None,
         }
     }
 }

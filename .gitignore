@@ -40,3 +40,9 @@ Thumbs.db
 /tools/*/dist/
 /phone/target/
 /phone/dist/
+
+# Scraped hero images are not committed by default — they'd blow past the
+# repo size budget at ~150-200KB × 500 figures. Only thumbs are versioned.
+# Re-generate locally with `cargo run -p skylander-wiki-scrape` if you need
+# the higher-resolution assets.
+/data/images/**/hero.png

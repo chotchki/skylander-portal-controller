@@ -79,6 +79,7 @@ fn main() -> Result<()> {
     let bind_addr = bind;
     let driver_kind = cfg.driver_kind;
     let rpcs3_exe = cfg.rpcs3_exe.clone();
+    let data_root = cfg.data_root.clone();
     let rpcs3_lifecycle = Arc::new(tokio::sync::Mutex::new(RpcsLifecycle::default()));
     let rpcs3_for_task = rpcs3_lifecycle.clone();
     let portal_for_task = portal.clone();
@@ -133,6 +134,7 @@ fn main() -> Result<()> {
                     connected_clients: clients_for_task,
                     games: games_for_task,
                     rpcs3_exe,
+                    data_root,
                     rpcs3: rpcs3_for_task,
                     profiles: profile_store,
                     sessions,

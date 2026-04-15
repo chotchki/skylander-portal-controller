@@ -317,22 +317,37 @@ fn Browser(
         })
     });
 
-    // Set of display names currently loaded (or mid-load) on the portal.
-    // We compare by canonical_name ↔ RPCS3's display_name because the server
-    // doesn't yet echo a figure_id back in Loaded events (Phase 3 reconciles).
+    // Two sets tracked separately so the card UI can tell "currently loading"
+    // apart from "already loaded":
+    //   - `loaded_names`  — canonical-name matches for fully-Loaded slots.
+    //     Used to render the "on portal" visual + fire the "Already on the
+    //     portal" toast when the user taps an already-loaded card.
+    //   - `loading_ids`   — figure_id markers for Loading slots. Used to
+    //     silently suppress repeat taps during the Empty → Loading → Loaded
+    //     transition (the spam-click case in 3.6.1) without firing a toast
+    //     that the user didn't cause.
+    //
+    // We compare Loaded by display_name because the server doesn't echo a
+    // figure_id back on Loaded events yet (see PLAN 3.8 — name reconciliation).
     let loaded_names = Memo::new(move |_| {
-        let p = portal.get();
-        let mut names: Vec<String> = Vec::new();
-        for s in p.iter() {
-            match &s.state {
-                SlotState::Loaded { display_name, .. } => names.push(display_name.clone()),
-                SlotState::Loading {
-                    figure_id: Some(id),
-                } => names.push(format!("__id:{id}")),
-                _ => {}
-            }
-        }
-        names
+        portal
+            .get()
+            .iter()
+            .filter_map(|s| match &s.state {
+                SlotState::Loaded { display_name, .. } => Some(display_name.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    });
+    let loading_ids = Memo::new(move |_| {
+        portal
+            .get()
+            .iter()
+            .filter_map(|s| match &s.state {
+                SlotState::Loading { figure_id: Some(id), .. } => Some(id.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
     });
 
     view! {
@@ -343,31 +358,74 @@ fn Browser(
                 key=|f: &PublicFigure| f.id.clone()
                 children=move |f: PublicFigure| {
                     let id = f.id.clone();
+                    let id_for_img = id.clone();
                     let name = f.canonical_name.clone();
+                    let name_for_img = name.clone();
                     let elem = f.element;
                     let variant = f.variant_tag.clone();
                     let variant_for_show = variant.clone();
 
-                    let name_for_check = name.clone();
-                    let id_for_check = id.clone();
-                    let is_on_portal = move || {
-                        let loaded = loaded_names.get();
-                        let id_marker = format!("__id:{id_for_check}");
-                        loaded
-                            .iter()
-                            .any(|n| n == &name_for_check || n == &id_marker)
+                    let name_for_loaded = name.clone();
+                    let id_for_loading = id.clone();
+                    let is_loaded_this = move || {
+                        loaded_names.get().iter().any(|n| n == &name_for_loaded)
                     };
-                    let on_portal_for_class = is_on_portal.clone();
-                    let on_portal_for_click = is_on_portal.clone();
-                    let on_portal_for_badge = is_on_portal.clone();
+                    let is_loading_this =
+                        move || loading_ids.get().iter().any(|id| id == &id_for_loading);
+
+                    let loaded_for_class = is_loaded_this.clone();
+                    let loaded_for_click = is_loaded_this.clone();
+                    let loaded_for_badge = is_loaded_this.clone();
+                    let loading_for_class = is_loading_this.clone();
+                    let loading_for_click = is_loading_this.clone();
+
+                    // Per-card transient back-pressure: goes true between the
+                    // click firing and the load response returning (ok or
+                    // 429). While true, the button reports `disabled` — the
+                    // DOM-level disable swallows extra clicks without running
+                    // the handler, so spam taps don't pile up either load
+                    // requests or toasts. The "Already on the portal" toast
+                    // still fires correctly for on-portal cards because
+                    // `on_portal` is a separate state (Loaded, not
+                    // Submitting).
+                    let submitting = RwSignal::new(false);
+                    let submitting_for_disabled = submitting;
 
                     view! {
                         <button
                             class=move || {
-                                if on_portal_for_class() { "card on-portal" } else { "card" }
+                                // `.card.on-portal` is terminal-state only
+                                // (the figure is Loaded on a slot), so e2e
+                                // tests can wait for it to know a load has
+                                // fully completed. `.card.loading` is the
+                                // transient state — same visual, different
+                                // selector. Lets the spam-click test sit
+                                // silent during Loading and the "already"
+                                // test distinguish when the toast is due.
+                                if loaded_for_class() {
+                                    "card on-portal"
+                                } else if loading_for_class() {
+                                    "card loading"
+                                } else {
+                                    "card"
+                                }
                             }
+                            disabled=move || submitting_for_disabled.get()
                             on:click=move |_| {
-                                if on_portal_for_click() {
+                                // Three gates, silent → toast:
+                                //   1. local submitting — this card just fired
+                                //      a load and the 202 hasn't returned yet.
+                                //   2. any slot currently Loading this figure —
+                                //      the server accepted a prior tap but the
+                                //      load hasn't completed. Silent swallow so
+                                //      spam taps during Empty→Loading→Loaded
+                                //      don't generate toasts.
+                                //   3. any slot Loaded with this figure — user
+                                //      is trying to re-add; surface "Already".
+                                if submitting.get() || loading_for_click() {
+                                    return;
+                                }
+                                if loaded_for_click() {
                                     push_toast(toasts, "Already on the portal.");
                                     return;
                                 }
@@ -382,9 +440,12 @@ fn Browser(
                                     },
                                 };
                                 picking_for.set(None);
+                                submitting.set(true);
                                 let id = id.clone();
                                 leptos::task::spawn_local(async move {
-                                    match post_load(slot, &id).await {
+                                    let res = post_load(slot, &id).await;
+                                    submitting.set(false);
+                                    match res {
                                         Ok(()) => {}
                                         Err(e) if e.contains("429") => {}
                                         Err(e) => push_toast(toasts, &format!("Load failed: {e}")),
@@ -393,13 +454,20 @@ fn Browser(
                             }
                         >
                             <div class="card-icon" data-element=element_slug(elem)>
-                                {element_short(elem)}
+                                <img
+                                    class="card-thumb"
+                                    src=format!("/api/figures/{id_for_img}/image?size=thumb")
+                                    alt=name_for_img
+                                    loading="lazy"
+                                    decoding="async"
+                                />
+                                <span class="card-icon-label">{element_short(elem)}</span>
                             </div>
                             <div class="card-name">{name}</div>
                             <Show when=move || variant_for_show != "base" fallback=|| ()>
                                 <div class="card-variant">{variant.clone()}</div>
                             </Show>
-                            <Show when=move || on_portal_for_badge() fallback=|| ()>
+                            <Show when=move || loaded_for_badge() fallback=|| ()>
                                 <div class="on-portal-badge">"On portal"</div>
                             </Show>
                         </button>
@@ -889,6 +957,12 @@ pub(crate) struct ToastMsg {
 
 pub(crate) fn push_toast(toasts: RwSignal<Vec<ToastMsg>>, message: &str) {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    // Deduplicate: if an active toast already has this exact message, skip.
+    // Prevents spam-click patterns (e.g. repeatedly tapping an already-
+    // on-portal card) from stacking identical toasts.
+    if toasts.with_untracked(|v| v.iter().any(|t| t.message == message)) {
+        return;
+    }
     let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let message = message.to_string();
     toasts.update(|v| v.push(ToastMsg { id, message }));

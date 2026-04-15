@@ -6,5 +6,7 @@ pub mod games;
 pub mod http;
 pub mod logging;
 pub mod profiles;
+#[cfg(feature = "sky-stats")]
+pub mod sky_stats;
 pub mod state;
 pub mod ui;

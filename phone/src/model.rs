@@ -72,11 +72,19 @@ pub enum SlotState {
         #[serde(default)]
         #[allow(dead_code)]
         figure_id: Option<String>,
+        /// Profile id of whoever initiated this load. Preserved across
+        /// Loading→Loaded so the phone can render a per-slot ownership
+        /// badge in 3.10e. `serde(default)` so older/unknown payloads round-
+        /// trip cleanly.
+        #[serde(default)]
+        placed_by: Option<String>,
     },
     Loaded {
         #[serde(default)]
         figure_id: Option<String>,
         display_name: String,
+        #[serde(default)]
+        placed_by: Option<String>,
     },
     Error {
         message: String,

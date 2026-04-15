@@ -221,6 +221,24 @@ button { font: inherit; color: inherit; cursor: pointer; }
   font-size: 11px; font-weight: 700; letter-spacing: 0.1em;
   color: var(--text-dim);
   border: 2px solid rgba(255,255,255,0.12);
+  overflow: hidden;
+  position: relative;
+}
+.card-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  z-index: 1;
+}
+/* The element-letter label sits under the image and only shows through if
+   the <img> fails to paint (server 404 with no element icon either). */
+.card-icon-label {
+  position: relative;
+  z-index: 0;
 }
 .card-icon[data-element="fire"]   { background: linear-gradient(135deg, #ff6b2a, #b13310); color: #fff; border-color: #ffa97a; }
 .card-icon[data-element="water"]  { background: linear-gradient(135deg, #2aa6ff, #0f4d8a); color: #fff; border-color: #8fd3ff; }

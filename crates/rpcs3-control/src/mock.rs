@@ -102,9 +102,14 @@ impl PortalDriver for MockPortalDriver {
         match outcome {
             None | Some(MockOutcome::Ok) => {
                 let mut slots = self.slots.lock().unwrap();
+                // Driver doesn't know the caller's profile — server fills in
+                // `placed_by` on the real state change it broadcasts. The
+                // mock's internal slot state is just a fixture so `None` is
+                // fine.
                 slots[slot.as_usize()] = SlotState::Loaded {
                     figure_id: None,
                     display_name: name.clone(),
+                    placed_by: None,
                 };
                 Ok(name)
             }

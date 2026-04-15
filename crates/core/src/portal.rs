@@ -61,12 +61,23 @@ impl std::fmt::Display for SlotIndex {
 pub enum SlotState {
     Empty,
     /// A load or clear is in flight. The phone shows a spinner on the slot.
-    Loading { figure_id: Option<FigureId> },
+    Loading {
+        figure_id: Option<FigureId>,
+        /// Profile id of the session that initiated this load. Carried
+        /// through to `Loaded` so both phones can render an ownership
+        /// indicator on the slot (SPEC Round 4 Q104). `None` for legacy
+        /// unauthenticated loads and for `RefreshPortal`-sourced reads where
+        /// we don't know who placed the figure.
+        placed_by: Option<String>,
+    },
     Loaded {
         figure_id: Option<FigureId>,
         /// Display name as RPCS3 reports it. `figure_id` may be `None` if we
         /// haven't reconciled the name back to a pack figure yet.
         display_name: String,
+        /// Same meaning as on `Loading`. Preserved across the Loading→Loaded
+        /// transition; cleared back to `None` on `Empty` / `Error`.
+        placed_by: Option<String>,
     },
     /// The last action failed. UI surfaces `message` as a toast; slot reverts
     /// to its prior state on the next successful update.

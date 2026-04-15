@@ -56,7 +56,14 @@ async fn spam_click_same_slot() {
 
     // At most one toast (and ideally zero — back-pressure should be silent).
     let toasts = phone.toast_count().await.unwrap();
-    assert!(toasts <= 1, "expected <=1 toast, got {toasts}");
+    if toasts > 1 {
+        let all = phone.client.find_all(Locator::Css(".toast")).await.unwrap();
+        let mut texts = Vec::new();
+        for t in all {
+            texts.push(t.text().await.unwrap_or_default());
+        }
+        panic!("expected <=1 toast, got {toasts}: {texts:?}");
+    }
 
     phone.close().await.unwrap();
 }
@@ -281,6 +288,14 @@ async fn ws_reconnect() {
             vec![],
         )
         .await;
+    // Post-reload the browser gets a brand-new WS session (per 3.10's
+    // per-session unlock model) so we need to re-seed the unlock before the
+    // new session registers. `unlock_default_profile` sets the server's
+    // `pending_unlock`, which the next `register()` consumes. There's a
+    // narrow race window (old session drop → pending set → new session
+    // register) but the reload's WS reconnect is much slower than the
+    // server's in-process state change, so this lands correctly in practice.
+    unlock_default_profile(&server.url).await.unwrap();
     phone.wait_for_portal(Duration::from_secs(10)).await.unwrap();
 
     phone

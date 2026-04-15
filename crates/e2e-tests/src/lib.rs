@@ -457,7 +457,17 @@ impl Phone {
 
     /// Count currently-rendered toasts.
     pub async fn toast_count(&self) -> Result<usize> {
-        Ok(self.client.find_all(Locator::Css(".toast")).await?.len())
+        // `.toast` elements can briefly appear in the DOM with empty text
+        // during Leptos's `<For>` transitions (the retain() on timeout vs.
+        // the next render). Filter those out so tests measure only user-
+        // visible toasts.
+        let mut n = 0;
+        for t in self.client.find_all(Locator::Css(".toast")).await? {
+            if !t.text().await.unwrap_or_default().is_empty() {
+                n += 1;
+            }
+        }
+        Ok(n)
     }
 
     pub async fn last_toast_text(&self) -> Result<Option<String>> {

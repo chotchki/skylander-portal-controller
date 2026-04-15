@@ -18,13 +18,59 @@ use tower_http::services::ServeDir;
 use tracing::{debug, info, warn};
 
 use crate::games::InstalledGame;
-use crate::profiles::{LockoutCheck, PublicProfile, MAX_PROFILES};
+use crate::profiles::{LockoutCheck, PublicProfile, RegistrationOutcome, SessionId, MAX_PROFILES};
 use crate::state::{AppState, DriverJob};
+
+/// Axum extractor that pulls the caller's session id from the `X-Session-Id`
+/// request header. The phone receives its session id in the initial
+/// `Welcome` WS event and attaches it to mutating REST calls so the server
+/// can route per-session state correctly.
+///
+/// The inner `Option` is `None` when the header is absent — pre-3.10d the
+/// phone doesn't send it yet, so handlers fall back to "most-recent
+/// session". Once the phone is wired, the Option will be removed and
+/// callers will reject requests without the header.
+pub struct MaybeSession(pub Option<SessionId>);
+
+#[async_trait::async_trait]
+impl<S> axum::extract::FromRequestParts<S> for MaybeSession
+where
+    S: Send + Sync,
+{
+    type Rejection = Response;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let Some(raw) = parts.headers.get("x-session-id") else {
+            return Ok(MaybeSession(None));
+        };
+        let s = raw
+            .to_str()
+            .map_err(|_| (StatusCode::BAD_REQUEST, "X-Session-Id not ASCII").into_response())?;
+        let id = s
+            .parse::<u64>()
+            .map_err(|_| (StatusCode::BAD_REQUEST, "X-Session-Id not a u64").into_response())?;
+        Ok(MaybeSession(Some(SessionId(id))))
+    }
+}
+
+/// Resolve the caller's `SessionId`: use the header-supplied one if
+/// present, else the most-recently-registered session. Returns `None`
+/// only when no sessions are registered at all (no WS connection yet).
+async fn resolve_session(hdr: MaybeSession, state: &AppState) -> Option<SessionId> {
+    if let Some(sid) = hdr.0 {
+        return Some(sid);
+    }
+    state.sessions.all_ids().await.into_iter().max_by_key(|s| s.0)
+}
 
 pub fn router(state: Arc<AppState>, phone_dist: std::path::PathBuf) -> Router {
     #[allow(unused_mut)]
     let mut api = Router::new()
         .route("/api/figures", get(list_figures))
+        .route("/api/figures/:id/image", get(figure_image))
         .route("/api/portal", get(get_portal))
         .route("/api/portal/slot/:n/load", post(load_slot))
         .route("/api/portal/slot/:n/clear", post(clear_slot))
@@ -39,6 +85,14 @@ pub fn router(state: Arc<AppState>, phone_dist: std::path::PathBuf) -> Router {
         .route("/api/profiles/:id/lock", post(lock_profile))
         .route("/api/profiles/:id/reset_pin", post(reset_pin))
         .route("/ws", get(ws_handler));
+
+    #[cfg(feature = "sky-stats")]
+    {
+        api = api.route(
+            "/api/profiles/:profile_id/figures/:figure_id/stats",
+            get(crate::sky_stats::get_figure_stats),
+        );
+    }
 
     #[cfg(feature = "test-hooks")]
     {
@@ -69,6 +123,71 @@ async fn list_figures(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     axum::Json(figs)
 }
 
+#[derive(Deserialize, Default)]
+struct ImageQuery {
+    #[serde(default)]
+    size: Option<String>,
+}
+
+/// GET /api/figures/:id/image?size=thumb|hero
+///
+/// Serves the scraped wiki hero portrait from
+/// `<data_root>/images/<id>/<size>.png`. Falls back to the firmware-pack's
+/// element-symbol PNG when the scrape didn't land a match. Returns 404 only
+/// if neither exists.
+async fn figure_image(
+    State(state): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+    axum::extract::Query(q): axum::extract::Query<ImageQuery>,
+) -> Response {
+    // Input validation: ids are 16 hex chars from the indexer. Be strict to
+    // keep this from becoming an arbitrary-file-read vector.
+    if id.len() != 16 || !id.chars().all(|c| c.is_ascii_hexdigit()) {
+        return (StatusCode::BAD_REQUEST, "bad figure id").into_response();
+    }
+    let size = match q.size.as_deref().unwrap_or("thumb") {
+        "thumb" => "thumb",
+        "hero" => "hero",
+        other => {
+            return (StatusCode::BAD_REQUEST, format!("unknown size: {other}"))
+                .into_response();
+        }
+    };
+
+    let scraped = state
+        .data_root
+        .join("images")
+        .join(&id)
+        .join(format!("{size}.png"));
+
+    if let Ok(bytes) = tokio::fs::read(&scraped).await {
+        return image_response(bytes);
+    }
+
+    // Fallback: element icon from the firmware pack.
+    if let Some(fig) = state.lookup_figure(&FigureId::new(&id)) {
+        if let Some(icon_path) = &fig.element_icon_path {
+            if let Ok(bytes) = tokio::fs::read(icon_path).await {
+                return image_response(bytes);
+            }
+        }
+    }
+
+    (StatusCode::NOT_FOUND, "no image available").into_response()
+}
+
+fn image_response(bytes: Vec<u8>) -> Response {
+    use axum::http::header;
+    (
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        bytes,
+    )
+        .into_response()
+}
+
 async fn get_portal(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let portal = state.portal.lock().await.clone();
     axum::Json(portal)
@@ -82,6 +201,7 @@ struct LoadBody {
 async fn load_slot(
     State(state): State<Arc<AppState>>,
     AxumPath(n): AxumPath<u8>,
+    hdr: MaybeSession,
     axum::Json(body): axum::Json<LoadBody>,
 ) -> Response {
     let slot = match SlotIndex::from_display(n) {
@@ -97,11 +217,21 @@ async fn load_slot(
     let figure_id = figure.id.clone();
     let path = figure.sky_path.clone();
 
+    // Who placed this figure? Pulled from the caller's WS session's
+    // currently-unlocked profile (via the X-Session-Id header, falling back
+    // to the most-recent session pre-3.10d). Threaded through Loading and
+    // Loaded so the phone can render a per-slot ownership badge.
+    let placed_by = match resolve_session(hdr, &state).await {
+        Some(sid) => state.sessions.profile_of(sid).await,
+        None => None,
+    };
+
     // Back pressure: atomically flip the slot to Loading, rejecting if it's
     // already in-flight. Avoids queueing a second load that would open a
     // duplicate file dialog on top of the first one still in progress.
     let loading = SlotState::Loading {
         figure_id: Some(figure_id.clone()),
+        placed_by: placed_by.clone(),
     };
     {
         let mut p = state.portal.lock().await;
@@ -119,6 +249,7 @@ async fn load_slot(
         slot,
         figure_id,
         path,
+        placed_by,
     };
     if state.driver_tx.send(job).await.is_err() {
         return (StatusCode::SERVICE_UNAVAILABLE, "driver channel closed").into_response();
@@ -137,7 +268,12 @@ async fn clear_slot(
         }
     };
 
-    let loading = SlotState::Loading { figure_id: None };
+    // placed_by=None for clears — the slot is emptying, ownership doesn't
+    // apply. Any inbound Loaded after this keeps its own placed_by.
+    let loading = SlotState::Loading {
+        figure_id: None,
+        placed_by: None,
+    };
     {
         let mut p = state.portal.lock().await;
         if matches!(p[slot.as_usize()], SlotState::Loading { .. }) {
@@ -396,12 +532,50 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
 
     let (mut sender, mut receiver) = socket.split();
 
-    // Mint a per-connection session id (3.9 is single-session; 3.10 extends
-    // this to a [Option<Session>; 2] FIFO registry).
-    let sid = state.sessions.mint();
-    state.sessions.insert_default(sid).await;
+    // Register with the 2-slot FIFO. Three outcomes:
+    //   - Admitted(sid): seat was free, proceed.
+    //   - AdmittedByEvicting { session, evicted }: we took the oldest seat;
+    //     broadcast TakenOver to the evicted session so its phone flips to
+    //     the Chaos screen.
+    //   - RejectedByCooldown: both seats full and the 1-min forced-evict
+    //     cooldown hasn't elapsed; send an Error event and close.
+    let sid = match state.sessions.register().await {
+        RegistrationOutcome::Admitted(sid) => sid,
+        RegistrationOutcome::AdmittedByEvicting { session, evicted } => {
+            let _ = state.events.send(Event::TakenOver {
+                session_id: evicted.0,
+                by_chaos: "Kaos".to_string(),
+            });
+            session
+        }
+        RegistrationOutcome::RejectedByCooldown { retry_after } => {
+            let secs = retry_after.as_secs_f32().ceil() as u64;
+            let evt = Event::Error {
+                message: format!(
+                    "Portal is full and a takeover just happened. Try again in {secs}s."
+                ),
+            };
+            if let Ok(j) = serde_json::to_string(&evt) {
+                let _ = sender.send(Message::Text(j)).await;
+            }
+            let _ = sender.send(Message::Close(None)).await;
+            state
+                .connected_clients
+                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            return;
+        }
+    };
 
-    // Send the initial snapshot.
+    // First message: tell the client its session id so it can attach it on
+    // REST and filter targeted broadcast events for itself.
+    {
+        let evt = Event::Welcome { session_id: sid.0 };
+        if let Ok(j) = serde_json::to_string(&evt) {
+            let _ = sender.send(Message::Text(j)).await;
+        }
+    }
+
+    // Portal snapshot.
     {
         let snap: [SlotState; SLOT_COUNT] = state.portal.lock().await.clone();
         let evt = Event::PortalSnapshot { slots: snap };
@@ -410,11 +584,11 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
         }
     }
 
-    // Inform the client of the current unlocked profile (if any). In 3.9
-    // there's one session; we look up the profile currently parked in the
-    // registry (the test-hook can pre-seed it).
+    // Session's unlocked profile (may have been seeded by `pending_unlock`
+    // from a test-hook, or stay None in production until the phone
+    // unlocks).
     {
-        let current_profile = state.sessions.any_unlocked_profile().await;
+        let current_profile = state.sessions.profile_of(sid).await;
         let unlocked = match current_profile {
             Some(pid) => match state.profiles.get(&pid).await {
                 Ok(Some(row)) => Some(UnlockedProfile {
@@ -426,7 +600,10 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
             },
             None => None,
         };
-        let evt = Event::ProfileChanged { profile: unlocked };
+        let evt = Event::ProfileChanged {
+            session_id: sid.0,
+            profile: unlocked,
+        };
         if let Ok(j) = serde_json::to_string(&evt) {
             let _ = sender.send(Message::Text(j)).await;
         }
@@ -434,7 +611,11 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
 
     let mut rx: broadcast::Receiver<Event> = state.events.subscribe();
 
-    // Writer task — forward broadcast events to the socket.
+    // Writer task — forward broadcast events to the socket. No server-side
+    // filtering: each client gets every event, and client-side JS filters
+    // session-targeted variants (`ProfileChanged`, `TakenOver`) by
+    // `session_id`. The set of possible values is tiny (≤2) so the network
+    // overhead is negligible.
     let writer = tokio::spawn(async move {
         while let Ok(evt) = rx.recv().await {
             match serde_json::to_string(&evt) {
@@ -542,6 +723,7 @@ async fn delete_profile(
 async fn unlock_profile(
     State(state): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
+    hdr: MaybeSession,
     axum::Json(body): axum::Json<PinBody>,
 ) -> Response {
     let now = std::time::Instant::now();
@@ -581,24 +763,33 @@ async fn unlock_profile(
 
     state.profiles.lockouts.record_success(&id).await;
 
-    // Park the unlocked profile on the (single) session slot. When 3.10 lands
-    // this should be keyed by the WS-derived session id, not "the first one".
     let row = match state.profiles.get(&id).await {
         Ok(Some(r)) => r,
         Ok(None) => return (StatusCode::NOT_FOUND, "no such profile").into_response(),
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     };
 
-    // Park the unlock on the current session (or a synthetic one if the WS
-    // hasn't connected yet — survives reconnect thanks to sticky state).
-    let _sid = state.sessions.unlock_current(id.clone()).await;
+    let Some(sid) = resolve_session(hdr, &state).await else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "no active session — connect WS first",
+        )
+            .into_response();
+    };
+
+    // Bind the unlocked profile to this specific WS session. Other phones
+    // stay independent.
+    state.sessions.set_profile(sid, Some(id.clone())).await;
 
     let unlocked = UnlockedProfile {
         id: row.id.clone(),
         display_name: row.display_name.clone(),
         color: row.color.clone(),
     };
+    // Broadcast — both connected clients receive it, only the one whose
+    // session_id matches applies the update.
     let _ = state.events.send(Event::ProfileChanged {
+        session_id: sid.0,
         profile: Some(unlocked.clone()),
     });
 
@@ -608,13 +799,20 @@ async fn unlock_profile(
 async fn lock_profile(
     State(state): State<Arc<AppState>>,
     AxumPath(_id): AxumPath<String>,
+    hdr: MaybeSession,
 ) -> Response {
-    // 3.9: single session — clear every session's unlocked profile. 3.10
-    // will narrow this to the caller's session.
-    state.sessions.lock_all().await;
-    let _ = state
-        .events
-        .send(Event::ProfileChanged { profile: None });
+    let Some(sid) = resolve_session(hdr, &state).await else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "no active session — connect WS first",
+        )
+            .into_response();
+    };
+    state.sessions.set_profile(sid, None).await;
+    let _ = state.events.send(Event::ProfileChanged {
+        session_id: sid.0,
+        profile: None,
+    });
     (StatusCode::OK, "locked").into_response()
 }
 
@@ -680,20 +878,43 @@ async fn unlock_session_testhook(
     State(state): State<Arc<AppState>>,
     axum::Json(body): axum::Json<UnlockSessionBody>,
 ) -> Response {
-    let row = match state.profiles.get(&body.profile_id).await {
-        Ok(Some(r)) => r,
+    // Confirm the profile exists before we seed it; otherwise tests get a
+    // confusing "unlock appeared but then disappeared" when the WS looks it
+    // up on connect.
+    match state.profiles.get(&body.profile_id).await {
+        Ok(Some(_)) => {}
         Ok(None) => return (StatusCode::NOT_FOUND, "no such profile").into_response(),
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-    };
-    let _sid = state.sessions.unlock_current(row.id.clone()).await;
-    let unlocked = UnlockedProfile {
-        id: row.id,
-        display_name: row.display_name,
-        color: row.color,
-    };
-    let _ = state.events.send(Event::ProfileChanged {
-        profile: Some(unlocked),
-    });
+    }
+    // Seed the next session's unlock so any freshly-registered connection
+    // (including reconnect-after-reload) inherits this profile. pending
+    // auto-clears on next `register()`. For 2-phone tests, callers must
+    // sequence this between Phone::new()s so the right profile lands on
+    // each session.
+    state
+        .sessions
+        .set_pending_unlock(Some(body.profile_id.clone()))
+        .await;
+
+    // Also push to the most-recent existing session if any is still
+    // connected — covers the "test sets up after Phone::new" flow.
+    if let Some(&sid) = state.sessions.all_ids().await.iter().max_by_key(|s| s.0) {
+        state
+            .sessions
+            .set_profile(sid, Some(body.profile_id.clone()))
+            .await;
+        let row = state.profiles.get(&body.profile_id).await.ok().flatten();
+        if let Some(row) = row {
+            let _ = state.events.send(Event::ProfileChanged {
+                session_id: sid.0,
+                profile: Some(UnlockedProfile {
+                    id: row.id,
+                    display_name: row.display_name,
+                    color: row.color,
+                }),
+            });
+        }
+    }
     (StatusCode::OK, "unlocked").into_response()
 }
 

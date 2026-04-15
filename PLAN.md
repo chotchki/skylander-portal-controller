@@ -339,12 +339,23 @@ Home: `crates/rpcs3-control/tests/live_lifecycle.rs`. All `#[ignore]`-gated. Dri
 
 Per SPEC Round 4 (Q99–Q105). Supersedes the original single-session takeover model. **Reordered ahead of working-copies/session-resume because it mutates `SlotState`, session plumbing, and the WS protocol — cheaper to land before downstream work freezes those shapes.**
 
-- [ ] 3.10.1 Server session registry: `[Option<Session>; 2]` keyed by connection id + join timestamp. Admit freely while a slot is `None`.
-- [ ] 3.10.2 On 3rd connection, evict the **oldest** session (FIFO); evicted client receives `TakenOver { by: chaos_flavor }` and shows the existing Chaos screen.
-- [ ] 3.10.3 1-minute cooldown applies only to forced eviction. Track `last_forced_evict_at` per slot; "kick back" from the evicted phone is rejected until the cooldown elapses. Joining into a free slot has no cooldown.
-- [ ] 3.10.4 Profile unlock is **per-session** (not global). Each phone enters its own PIN; unlocks do not propagate. Evicted-then-kicked-back sessions re-lock.
-- [ ] 3.10.5 Portal state remains a single shared `[SlotState; 8]`. Both phones see the same `SlotChanged` stream; last writer wins (driver worker serialises).
-- [ ] 3.10.6 Extend `SlotState` with `placed_by: Option<ProfileId>` (set on successful load, cleared on clear). Include in `SlotChanged` so both phones can render ownership.
+Rolled out in six sub-milestones for tracking. Each is a meaningful checkpoint you can run tests against before moving on.
+
+| Milestone | Covers | Status |
+|-----------|--------|--------|
+| 3.10a | 3.10.1, 3.10.2, 3.10.3 — `SessionRegistry` with 2-slot FIFO + forced-evict cooldown, `Event::Welcome`/`TakenOver`, per-session profile setters, 5 new unit tests | ✅ done |
+| 3.10b | 3.10.5, 3.10.6 — `SlotState::{Loading,Loaded}.placed_by: Option<String>` threaded through `DriverJob` → `handle_job` → `SlotChanged` broadcast; `http::load_slot` resolves it from the caller's session profile; phone `model.rs` mirrors | ✅ done |
+| 3.10c | 3.10.4 (server half) — retire the `MaybeSession` bridge once the phone is wired. Require `X-Session-Id` on `unlock_profile` / `lock_profile` / `load_slot` / `clear_slot`. Delete the "fall back to most-recent session" shim. | next |
+| 3.10d | 3.10.4 (phone half) — capture `session_id` from `Welcome` into a signal; attach as `X-Session-Id` on all REST; handle `TakenOver` → Chaos takeover screen with "kick back" button. | next (tandem with 3.10c) |
+| 3.10e | 3.10.7, 3.10.8 — ownership badge on portal slots, "show join code" affordance | after |
+| 3.10f | 3.10e.1–6 — multi-phone e2e scenarios | after |
+
+- [x] 3.10.1 Server session registry: `[Option<Session>; 2]` keyed by connection id + join timestamp. Admit freely while a slot is `None`. Implemented as `HashMap<SessionId, SessionState>` capped at `MAX_SESSIONS=2` with `created_at` for FIFO ordering.
+- [x] 3.10.2 On 3rd connection, evict the **oldest** session (FIFO); evicted client receives `TakenOver { session_id, by_chaos }` and shows the existing Chaos screen. `RegistrationOutcome::AdmittedByEvicting { session, evicted }` returned from `SessionRegistry::register()`.
+- [x] 3.10.3 1-minute cooldown applies only to forced eviction. Tracked as a single `last_forced_evict_at` on the registry (per-slot refinement deferred — one timestamp handles ping-pong correctly in practice). `RegistrationOutcome::RejectedByCooldown { retry_after }` when within the window; WS handshake sends an `Event::Error` and closes.
+- [ ] 3.10.4 Profile unlock is **per-session** (not global). Each phone enters its own PIN; unlocks do not propagate. Evicted-then-kicked-back sessions re-lock. Partial: `set_profile(sid, ..)` + per-session `Event::ProfileChanged { session_id, .. }` done; `X-Session-Id` extractor exists but is currently `MaybeSession` with a "most-recent session" fallback. 3.10c+d remove the fallback and wire the phone.
+- [x] 3.10.5 Portal state remains a single shared `[SlotState; 8]`. Both phones see the same `SlotChanged` stream; last writer wins (driver worker serialises).
+- [x] 3.10.6 Extend `SlotState` with `placed_by: Option<String>` (set on successful load, cleared on clear). Included in `SlotChanged` so both phones can render ownership.
 - [ ] 3.10.7 Phone: ownership indicator on each occupied slot (profile colour + initial). Owning phone's own figures get a highlighted treatment.
 - [ ] 3.10.8 Phone: "show join code" action (header/menu) that renders the same QR the launcher shows, so an existing player can hand the join URL to a new joiner.
 - [ ] 3.10.9 Defer: 2-player disconnect-cleanup semantics (what happens to P2's figures when P1 drops, how kick-back restores layout). Revisit with 3.17 reconnect overlay once real failure modes are visible.
@@ -395,6 +406,7 @@ Per SPEC Round 4 (Q99–Q105). Supersedes the original single-session takeover m
 - [ ] 3.15.2 Element gradient palette tuned against in-game references.
 - [ ] 3.15.3 Card-state transitions (Pick → Loading → Loaded) get subtle animation.
 - [ ] 3.15.4 Use the `frontend-design` skill for the heavier visual work.
+- [ ] 3.15.5 Apply the same Skylanders aesthetic to the PC-side egui launcher window (QR code, "serving on" address, status). egui 0.29 supports `Visuals` + custom fonts + `egui_extras` image loading; reuse the same palette + typography the phone uses so the two surfaces feel like one app. The text must be readable from ~10 ft on an 86" TV (≥32pt body, ≥64pt QR label).
 
 ### 3.16 First-launch config wizard (egui)
 
@@ -413,12 +425,13 @@ Per SPEC Round 4 (Q99–Q105). Supersedes the original single-session takeover m
 - [ ] 3.18.2 GitHub Action: on tag push, build Windows zip, attach to release.
 - [ ] 3.18.3 Release README spells out the required user-supplied bits (RPCS3 install + firmware backups).
 
-### 3.19 Wiki scrape (second pass)
+### 3.19 Wiki scrape — partial first pass
 
-- [ ] 3.19.1 `tools/wiki-scrape/` — Rust one-shot per Phase 1d plan. Reads `docs/research/firmware-inventory.json`, hits Fandom API, emits `data/figures.json` + `data/images/<figure_id>/{thumb,hero}.png`.
-- [ ] 3.19.2 Commit results to repo. Manual curation file `data/figures.manual.json` overlays the scrape.
-- [ ] 3.19.3 Server serves images at `/api/figures/<id>/image?size={thumb,hero}` (with fallback to element icon if absent).
-- [ ] 3.19.4 Phone card icon becomes the figure's hero image when available.
+- [x] 3.19.1 `tools/wiki-scrape/` — Rust one-shot binary. Reads `docs/research/firmware-inventory.json`, hits Fandom's MediaWiki API (opensearch + query with `prop=pageimages|categories|revisions`), downloads thumb + hero PNGs, emits `data/figures.json`.
+- [x] 3.19.2 Scrape output committed at `data/figures.json` + `data/images/<figure_id>/thumb.png`. `data/figures.manual.json` exists as an empty curation overlay. **Partial**: 100/504 figures scraped in the first run (roughly the whole SSA + Giants sets). Remaining ~400 figures need a re-run — the agent appears to have hit a rate-limit or early termination. Hero.pngs are gitignored (20MB+); re-run `cargo run -p skylander-wiki-scrape` locally if you need them.
+- [x] 3.19.3 Server serves `GET /api/figures/:id/image?size={thumb,hero}` with `Cache-Control: public, max-age=86400`. Fallback: element-icon from the firmware pack. Input validated to 16 hex chars.
+- [x] 3.19.4 Phone card icon renders `<img class="card-thumb" src="/api/figures/{id}/image?size=thumb">` over the element-short label; label shows through on 404.
+- [ ] 3.19.5 Re-run scraper to cover the remaining ~400 figures. Investigate what caused the first run to stop at 100 — suspect Fandom 429 without backoff. Add a resume-from-manifest flag so partial runs aren't wasted.
 
 ---
 
@@ -437,7 +450,9 @@ Chaos is LAST. Do not start without explicit go-ahead.
 
 ## Phase 5 — Post-Chaos polish (future enhancements)
 
-- [ ] 5.2 **Parse `.sky` firmware for per-figure stats** (level, gold, playtime, hats, nicknames, …). RPCS3's Skylanders implementation is open source and presumably decodes the same layout the real portal chip does — start by reading `rpcs3/Emu/Io/Skylander.cpp` (or equivalent in the RPCS3 tree) to understand the byte layout and decryption/obfuscation, then mirror the read-only bits we care about in `crates/core` (or a new `crates/sky-parser`). Phone surfaces the stats in the figure card's extended info panel. Scope: read-only, per-profile working copies (so siblings can't corrupt each other's saves). Writing is explicitly out of scope.
+- [x] 5.2 **Parse `.sky` firmware for per-figure stats** — mostly done, read-only. `crates/sky-parser/` parses the plaintext tag layout per `docs/research/sky-format/SkylanderFormat.md` (mirrored from NefariousTechSupport/Runes). RPCS3 writes plaintext `.sky` files with no AES, so no decryption needed. `GET /api/profiles/:profile_id/figures/:figure_id/stats` exposes the parse, feature-gated on `sky-stats`. 22 tests (header, variant decomposition, web code, XP/level, gold, nickname, hero points, playtime, hat history + current resolution, trinket, timestamps, quest raw u72s, CRC16 validation, area-sequence wraparound). **Still stubbed**: Trap / Vehicle / Racing Pack / CYOS (Imaginators creation-crystal) layouts — surfaced as `FigureKind::Other` with TODO pointers. Phone UI wiring (figure-card info panel) still pending — REST endpoint is ready to consume.
+
+- [ ] 5.3 **Detailed-stats screen on the phone** — "tap a figure card → a full-screen themed detail view" showing what 5.2's parser extracted: level + XP progress bar, gold, current hat, playtime, nickname, hero points, hat history, trinket, and quest progress when decoded. Land *after* the aesthetic pass (3.15) so the layout inherits the Skylanders starfield/gold-bezel theme instead of being re-themed twice. Hits `/api/profiles/:profile_id/figures/:figure_id/stats`. Read-only (no editing) — writing is out of scope per 5.2. Non-standard layouts (Trap/Vehicle/CYOS) render a reduced panel until 5.2's stub fills are done.
 
 - [ ] 5.1 **Suppress RPCS3 window flicker during menu navigation.** The 3.6b research landed on "accept a once-per-session flicker" because Qt renders menu popups at visible screen coords when the parent is off-screen, and the Skylanders Manager dialog appears in the screen centre for a brief moment before we sling it off-screen. Our eframe launcher window launches *before* RPCS3, so it's in a position to establish Z-order priority. Ideas to explore: (a) make our launcher `WS_EX_TOPMOST` during any `open_dialog` navigation so Qt popups render behind it; (b) use `SetWinEventHook` / `EVENT_OBJECT_SHOW` filtered to RPCS3's PID to intercept the dialog creation event and move it off-screen before the first paint (Tier 2 in the 3.6b write-up); (c) hook menu popups the same way (Tier 3). Prerequisite: the real app exists and the launcher-first ordering is stable.
 

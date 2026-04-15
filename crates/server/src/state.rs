@@ -25,6 +25,9 @@ pub struct AppState {
     /// Installed Skylanders games, loaded from RPCS3's games.yml at startup.
     pub games: Vec<InstalledGame>,
     pub rpcs3_exe: PathBuf,
+    /// Root of the committed static-data bundle served at `/api/figures/:id/image`.
+    /// Points at `<repo>/data/` in dev; populated at startup from config.
+    pub data_root: PathBuf,
     /// Lifecycle lock around the currently-running RPCS3 instance.
     pub rpcs3: Arc<Mutex<RpcsLifecycle>>,
 
@@ -66,6 +69,11 @@ pub enum DriverJob {
         slot: SlotIndex,
         figure_id: FigureId,
         path: PathBuf,
+        /// Profile id of the session that initiated this load. Threaded
+        /// through into `SlotState::Loaded.placed_by` so both phones can
+        /// render an ownership indicator. `None` if the caller wasn't
+        /// authenticated (pre-3.10d REST calls without X-Session-Id).
+        placed_by: Option<String>,
     },
     ClearSlot {
         slot: SlotIndex,
@@ -112,6 +120,7 @@ async fn handle_job(
             slot,
             figure_id,
             path,
+            placed_by,
         } => {
             // HTTP handler already set Loading and broadcast it.
             let d = driver.clone();
@@ -131,6 +140,7 @@ async fn handle_job(
                         SlotState::Loaded {
                             figure_id: Some(fid),
                             display_name,
+                            placed_by,
                         },
                     )
                     .await;

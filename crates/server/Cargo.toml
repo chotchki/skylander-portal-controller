@@ -16,6 +16,7 @@ path = "src/main.rs"
 skylander-core = { path = "../core" }
 skylander-indexer = { path = "../indexer" }
 skylander-rpcs3-control = { path = "../rpcs3-control" }
+skylander-sky-parser = { path = "../sky-parser", optional = true }
 
 anyhow = { workspace = true }
 tokio = { workspace = true }
@@ -26,6 +27,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 axum = { version = "0.7", features = ["ws"] }
+async-trait = "0.1"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["fs", "trace"] }
 futures-util = "0.3"
@@ -51,3 +53,7 @@ dev-tools = ["skylander-rpcs3-control/mock"]
 # mock-driver failure outcomes. Requires dev-tools and implicitly forces
 # the mock driver. Never enable in release builds.
 test-hooks = ["dev-tools"]
+# Parses `.sky` working copies and exposes a per-figure stats endpoint at
+# `GET /api/profiles/:profile_id/figures/:figure_id/stats`. Gated while
+# the parser's decrypt path matures — see `crates/sky-parser/README.md`.
+sky-stats = ["dep:skylander-sky-parser"]

@@ -141,7 +141,14 @@ impl Lockouts {
     }
 }
 
-// ---- Session registry (single-session for 3.9; extends to [_;2] in 3.10) --
+// ---- Session registry (2-slot FIFO with forced-eviction cooldown, PLAN 3.10) -
+
+/// Maximum concurrent phone sessions. Matches the co-op player count per
+/// SPEC Round 4. A 3rd connection evicts the oldest session (FIFO).
+pub const MAX_SESSIONS: usize = 2;
+
+/// Minimum time between forced evictions. Anti-ping-pong guard — SPEC Q31.
+pub const FORCED_EVICT_COOLDOWN: Duration = Duration::from_secs(60);
 
 /// Opaque per-connection id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -150,83 +157,155 @@ pub struct SessionId(pub u64);
 #[derive(Debug, Clone)]
 pub struct SessionState {
     pub profile_id: Option<String>,
+    pub created_at: Instant,
 }
 
-impl Default for SessionState {
+/// Outcome of registering a new WS connection via [`SessionRegistry::register`].
+#[derive(Debug, Clone)]
+pub enum RegistrationOutcome {
+    /// Session slot was free; registered without touching anyone else.
+    Admitted(SessionId),
+    /// Both slots were full and we evicted the oldest session to make room.
+    /// The caller must send `Event::TakenOver` to `evicted` and remove its
+    /// WS task. Updates the registry's cooldown clock.
+    AdmittedByEvicting {
+        session: SessionId,
+        evicted: SessionId,
+    },
+    /// Both slots were full and the forced-evict cooldown hasn't elapsed yet.
+    /// Caller should close the WS with a `Retry-After`-style signal and not
+    /// touch the existing sessions.
+    RejectedByCooldown { retry_after: Duration },
+}
+
+pub struct SessionRegistry {
+    sessions: RwLock<HashMap<SessionId, SessionState>>,
+    last_forced_evict_at: RwLock<Option<Instant>>,
+    next_id: std::sync::atomic::AtomicU64,
+    /// When set, the next session registered adopts this profile_id as its
+    /// unlock and the field clears itself. Used by the `test-hooks`
+    /// `inject_profile` + `unlock_session` flow so tests can wire profile
+    /// state before the phone's WS handshake. Also useful during
+    /// eviction-then-reconnect flows to preserve intent across sessions
+    /// (not currently exercised outside tests).
+    pending_unlock: RwLock<Option<String>>,
+}
+
+impl Default for SessionRegistry {
     fn default() -> Self {
-        Self { profile_id: None }
+        Self {
+            sessions: RwLock::new(HashMap::new()),
+            last_forced_evict_at: RwLock::new(None),
+            next_id: std::sync::atomic::AtomicU64::new(1),
+            pending_unlock: RwLock::new(None),
+        }
     }
 }
 
-#[derive(Default)]
-pub struct SessionRegistry {
-    sessions: RwLock<HashMap<SessionId, SessionState>>,
-    next_id: std::sync::atomic::AtomicU64,
-}
-
 impl SessionRegistry {
-    pub fn mint(&self) -> SessionId {
+    fn mint(&self) -> SessionId {
         let id = self
             .next_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         SessionId(id)
     }
 
-    pub async fn insert_default(&self, id: SessionId) {
-        self.sessions.write().await.insert(id, SessionState::default());
+    /// Admit a new WS connection, enforcing the 2-session FIFO cap and the
+    /// forced-eviction cooldown. Test-only callers can drive the clock via
+    /// [`Self::register_at`].
+    pub async fn register(&self) -> RegistrationOutcome {
+        self.register_at(Instant::now()).await
     }
 
+    /// Like [`Self::register`] but with a caller-supplied `now`. Used by
+    /// tests to fast-forward the cooldown without real sleeping.
+    pub async fn register_at(&self, now: Instant) -> RegistrationOutcome {
+        let mut sessions = self.sessions.write().await;
+        if sessions.len() < MAX_SESSIONS {
+            let sid = self.mint();
+            let pending = self.pending_unlock.write().await.take();
+            sessions.insert(
+                sid,
+                SessionState {
+                    profile_id: pending,
+                    created_at: now,
+                },
+            );
+            return RegistrationOutcome::Admitted(sid);
+        }
+
+        // Both slots full — forced-eviction path. Check cooldown first.
+        if let Some(last) = *self.last_forced_evict_at.read().await {
+            if let Some(remaining) =
+                FORCED_EVICT_COOLDOWN.checked_sub(now.saturating_duration_since(last))
+            {
+                if !remaining.is_zero() {
+                    return RegistrationOutcome::RejectedByCooldown {
+                        retry_after: remaining,
+                    };
+                }
+            }
+        }
+
+        // Pick the oldest session to evict.
+        let evicted = sessions
+            .iter()
+            .min_by_key(|(_, s)| s.created_at)
+            .map(|(sid, _)| *sid)
+            .expect("len >= MAX_SESSIONS > 0");
+        sessions.remove(&evicted);
+        let sid = self.mint();
+        let pending = self.pending_unlock.write().await.take();
+        sessions.insert(
+            sid,
+            SessionState {
+                profile_id: pending,
+                created_at: now,
+            },
+        );
+        drop(sessions);
+        *self.last_forced_evict_at.write().await = Some(now);
+        RegistrationOutcome::AdmittedByEvicting {
+            session: sid,
+            evicted,
+        }
+    }
+
+    /// Polite removal — WS connection closed on its own. Does NOT touch the
+    /// cooldown clock; the freed seat can be filled immediately.
     pub async fn remove(&self, id: SessionId) {
         self.sessions.write().await.remove(&id);
     }
 
-    #[allow(dead_code)] // kept for 3.10's per-session queries
     pub async fn get(&self, id: SessionId) -> Option<SessionState> {
         self.sessions.read().await.get(&id).cloned()
     }
 
-    #[allow(dead_code)] // kept for 3.10's per-session mutations
-    pub async fn set_profile(&self, id: SessionId, profile_id: Option<String>) {
-        let mut map = self.sessions.write().await;
-        map.entry(id).or_default().profile_id = profile_id;
+    /// All currently-registered session ids. Useful for fan-out decisions.
+    pub async fn all_ids(&self) -> Vec<SessionId> {
+        self.sessions.read().await.keys().copied().collect()
     }
 
-    /// Returns the single currently-unlocked profile, if any. For 3.9 there
-    /// is at most one session, so this is simply "find one". Extends trivially
-    /// to per-session lookup in 3.10.
-    pub async fn any_unlocked_profile(&self) -> Option<String> {
+    pub async fn set_profile(&self, id: SessionId, profile_id: Option<String>) {
+        let mut map = self.sessions.write().await;
+        if let Some(s) = map.get_mut(&id) {
+            s.profile_id = profile_id;
+        }
+    }
+
+    pub async fn profile_of(&self, id: SessionId) -> Option<String> {
         self.sessions
             .read()
             .await
-            .values()
-            .find_map(|s| s.profile_id.clone())
+            .get(&id)
+            .and_then(|s| s.profile_id.clone())
     }
 
-    /// Clear the unlock on every session. For 3.9 we treat lock as a global
-    /// event; 3.10 will key this per-session.
-    pub async fn lock_all(&self) {
-        let mut map = self.sessions.write().await;
-        for s in map.values_mut() {
-            s.profile_id = None;
-        }
-    }
-
-    /// Unlock a profile on the "current" session. For 3.9 this means: if any
-    /// session exists, use it; otherwise park on a fresh synthetic session.
-    /// 3.10 replaces this with the real per-WS session id.
-    pub async fn unlock_current(&self, profile_id: String) -> SessionId {
-        let mut map = self.sessions.write().await;
-        if let Some((sid, state)) = map.iter_mut().next() {
-            state.profile_id = Some(profile_id);
-            return *sid;
-        }
-        drop(map);
-        let sid = self.mint();
-        self.sessions
-            .write()
-            .await
-            .insert(sid, SessionState { profile_id: Some(profile_id) });
-        sid
+    /// Pre-seed the unlock that the *next* registered session will adopt.
+    /// Intended for `test-hooks` flows; production code should route REST
+    /// unlocks to a specific `SessionId`.
+    pub async fn set_pending_unlock(&self, profile_id: Option<String>) {
+        *self.pending_unlock.write().await = profile_id;
     }
 }
 
@@ -504,5 +583,115 @@ mod tests {
         assert!(s.create("A", "abcd", "#ffffff").await.is_err());
         assert!(s.create("A", "1234", "red").await.is_err());
         assert!(s.create("", "1234", "#ffffff").await.is_err());
+    }
+
+    // ---- SessionRegistry (3.10a) ----
+
+    fn sid(outcome: &RegistrationOutcome) -> SessionId {
+        match outcome {
+            RegistrationOutcome::Admitted(s) => *s,
+            RegistrationOutcome::AdmittedByEvicting { session, .. } => *session,
+            RegistrationOutcome::RejectedByCooldown { .. } => {
+                panic!("expected admission, got RejectedByCooldown")
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn registry_admits_up_to_two_without_eviction() {
+        let reg = SessionRegistry::default();
+        let a = sid(&reg.register().await);
+        let b = sid(&reg.register().await);
+        assert_ne!(a, b);
+        let ids = reg.all_ids().await;
+        assert_eq!(ids.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn registry_third_connection_evicts_oldest() {
+        let reg = SessionRegistry::default();
+        let base = Instant::now();
+        let a = sid(&reg.register_at(base).await);
+        let b = sid(&reg.register_at(base + Duration::from_secs(1)).await);
+
+        let outcome = reg
+            .register_at(base + Duration::from_secs(FORCED_EVICT_COOLDOWN.as_secs() + 2))
+            .await;
+        match outcome {
+            RegistrationOutcome::AdmittedByEvicting { session, evicted } => {
+                assert_eq!(evicted, a, "oldest (a) should be evicted, not b");
+                assert_ne!(session, a);
+                assert_ne!(session, b);
+                let ids = reg.all_ids().await;
+                assert!(ids.contains(&b));
+                assert!(ids.contains(&session));
+                assert!(!ids.contains(&a));
+            }
+            other => panic!("expected AdmittedByEvicting, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn registry_forced_eviction_triggers_cooldown() {
+        let reg = SessionRegistry::default();
+        let base = Instant::now();
+        let _a = sid(&reg.register_at(base).await);
+        let _b = sid(&reg.register_at(base + Duration::from_secs(1)).await);
+        // Third — evicts a.
+        let _c = sid(&reg.register_at(base + Duration::from_secs(2)).await);
+
+        // Fourth immediately after: still 2 seats, and within cooldown → reject.
+        let outcome = reg
+            .register_at(base + Duration::from_secs(3))
+            .await;
+        match outcome {
+            RegistrationOutcome::RejectedByCooldown { retry_after } => {
+                assert!(retry_after.as_secs() > 50 && retry_after.as_secs() <= 60);
+            }
+            other => panic!("expected RejectedByCooldown, got {other:?}"),
+        }
+
+        // After the cooldown elapses, a fresh forced evict succeeds.
+        let outcome = reg
+            .register_at(base + Duration::from_secs(2 + FORCED_EVICT_COOLDOWN.as_secs() + 1))
+            .await;
+        assert!(matches!(
+            outcome,
+            RegistrationOutcome::AdmittedByEvicting { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn registry_polite_disconnect_frees_seat_without_cooldown() {
+        let reg = SessionRegistry::default();
+        let base = Instant::now();
+        let a = sid(&reg.register_at(base).await);
+        let _b = sid(&reg.register_at(base + Duration::from_secs(1)).await);
+        reg.remove(a).await;
+
+        let outcome = reg.register_at(base + Duration::from_secs(2)).await;
+        assert!(matches!(outcome, RegistrationOutcome::Admitted(_)));
+    }
+
+    #[tokio::test]
+    async fn registry_set_profile_is_scoped_to_one_session() {
+        let reg = SessionRegistry::default();
+        let a = sid(&reg.register().await);
+        let b = sid(&reg.register().await);
+        reg.set_profile(a, Some("alpha".into())).await;
+        assert_eq!(reg.profile_of(a).await.as_deref(), Some("alpha"));
+        assert_eq!(reg.profile_of(b).await, None);
+        reg.set_profile(a, None).await;
+        assert_eq!(reg.profile_of(a).await, None);
+    }
+
+    #[tokio::test]
+    async fn registry_pending_unlock_applies_to_next_session_only() {
+        let reg = SessionRegistry::default();
+        reg.set_pending_unlock(Some("alpha".into())).await;
+        let a = sid(&reg.register().await);
+        let b = sid(&reg.register().await);
+        assert_eq!(reg.profile_of(a).await.as_deref(), Some("alpha"));
+        assert_eq!(reg.profile_of(b).await, None);
     }
 }
