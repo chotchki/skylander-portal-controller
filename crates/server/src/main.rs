@@ -50,9 +50,6 @@ fn main() -> Result<()> {
         .map(|(i, f)| (f.id.clone(), i))
         .collect();
 
-    // --- Build the driver. ---
-    let driver: Arc<dyn PortalDriver> = build_driver(cfg.driver_kind)?;
-
     // --- Pick bind address. ---
     let ip = first_non_loopback_ipv4().unwrap_or(Ipv4Addr::LOCALHOST);
     let bind = SocketAddr::from((ip, cfg.bind_port));
@@ -65,12 +62,17 @@ fn main() -> Result<()> {
     let connected_clients = Arc::new(AtomicUsize::new(0));
 
     // --- Start the Axum server + driver worker on a dedicated thread. ---
+    //
+    // The UIA driver is constructed inside the tokio thread, not on main —
+    // `UIAutomation::new()` initializes COM as MTA on the calling thread, and
+    // eframe needs main to stay uninitialized so it can OleInitialize(STA).
+    // Doing both on the same thread crashes with RPC_E_CHANGED_MODE.
     let phone_dist = cfg.phone_dist_dir.clone();
     let bind_addr = bind;
+    let driver_kind = cfg.driver_kind;
     let portal_for_task = portal.clone();
     let events_for_task = events_tx.clone();
     let clients_for_task = connected_clients.clone();
-    let driver_for_task = driver.clone();
     let figures_for_task = figures.clone();
     let figure_index_for_task = figure_index.clone();
 
@@ -82,8 +84,15 @@ fn main() -> Result<()> {
                 .build()
                 .expect("build tokio runtime");
             rt.block_on(async move {
+                let driver: Arc<dyn PortalDriver> = match build_driver(driver_kind) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        tracing::error!("failed to construct driver: {e}");
+                        return;
+                    }
+                };
                 let driver_tx = spawn_driver_worker(
-                    driver_for_task,
+                    driver,
                     portal_for_task.clone(),
                     events_for_task.clone(),
                 );

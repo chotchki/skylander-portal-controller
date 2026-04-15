@@ -211,6 +211,7 @@ Verified on `http://192.168.1.162:8765` with mock driver:
 ## Phase 3+ — To be planned after the MVP works
 
 Likely areas (order TBD):
+- **Disable figure cards already on the portal** so the UI stops users from hitting RPCS3's "file already in use" error. Driver now dismisses that modal and surfaces it as a toast, but the real fix is client-side — when broadcasting `SlotChanged`, the phone knows every loaded figure_id, so figure cards whose `id` matches any loaded slot should be shown disabled (grey + "on portal" badge).
 - Full profile system with PINs and per-profile working copies.
 - Takeover + kick-back flow with Chaos-themed kicked screen.
 - Full collection browse view (filters: element, game of origin, works-with, type).

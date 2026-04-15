@@ -284,22 +284,25 @@ impl crate::PortalDriver for UiaPortalDriver {
         file_edit.get_pattern::<UIValuePattern>()?.set_value(&abs_str)?;
         open_btn.get_pattern::<UIInvokePattern>()?.invoke()?;
 
-        let after = poll_until_changes(&edit, "None", LOAD_TIMEOUT)
-            .context("slot value didn't change after Open")?;
-
-        if let Some(err) = find_error_modal(&self.automation, &walker) {
-            // Dismiss and bubble up.
-            if let Some(ok) = find_descendant(&walker, &err, |el| {
-                el.get_control_type()
-                    .map(|c| c == ControlType::Button)
-                    .unwrap_or(false)
-                    && el.get_name().map(|n| n == "OK").unwrap_or(false)
-            }) {
-                let _ = ok.get_pattern::<UIInvokePattern>().and_then(|p| p.invoke());
+        // Race the slot value change against an error modal appearing.
+        // RPCS3 pops a QMessageBox ("Failed to open the skylander file!") when
+        // the same `.sky` is already loaded on another slot, or when the file
+        // can't be locked for another reason. Poll both with a short interval.
+        let after = match poll_load_outcome(&self.automation, &walker, &main, &edit, LOAD_TIMEOUT)? {
+            LoadOutcome::Changed(v) => v,
+            LoadOutcome::ErrorModal { title, body, modal } => {
+                dismiss_modal(&walker, &modal);
+                let msg = if !body.is_empty() {
+                    format!("{title} — {body}")
+                } else {
+                    title
+                };
+                bail!("RPCS3 reported: {msg}");
             }
-            let msg = err.get_name().unwrap_or_else(|_| "RPCS3 error".into());
-            bail!("RPCS3 reported: {msg}");
-        }
+            LoadOutcome::Timeout => {
+                bail!("slot value didn't change after Open (no error modal either)")
+            }
+        };
 
         info!(figure = %after, "loaded");
         Ok(after)
@@ -348,33 +351,115 @@ fn wait_for_value(el: &UIElement, expected: &str, timeout: Duration) -> Result<(
     Err(anyhow!("value didn't become '{expected}' within {timeout:?}"))
 }
 
-fn poll_until_changes(el: &UIElement, old: &str, timeout: Duration) -> Result<String> {
+
+enum LoadOutcome {
+    Changed(String),
+    ErrorModal {
+        title: String,
+        body: String,
+        modal: UIElement,
+    },
+    Timeout,
+}
+
+/// Poll the slot edit for value change and the RPCS3 main window for a new
+/// modal (i.e. an error popup) in parallel.
+fn poll_load_outcome(
+    automation: &UIAutomation,
+    walker: &UITreeWalker,
+    main: &UIElement,
+    slot_edit: &UIElement,
+    timeout: Duration,
+) -> Result<LoadOutcome> {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        let cur = read_value(el, Duration::ZERO).unwrap_or_default();
-        if cur != old {
-            return Ok(cur);
+        let cur = read_value(slot_edit, Duration::ZERO).unwrap_or_default();
+        if !cur.is_empty() && cur != "None" {
+            return Ok(LoadOutcome::Changed(cur));
+        }
+        if let Some(modal) = find_error_modal(automation, walker, main) {
+            let title = modal.get_name().unwrap_or_default();
+            let body = read_modal_body(walker, &modal);
+            return Ok(LoadOutcome::ErrorModal { title, body, modal });
         }
         sleep(POLL_INTERVAL);
     }
-    Err(anyhow!("value stayed '{old}' for {timeout:?}"))
+    Ok(LoadOutcome::Timeout)
 }
 
-fn find_error_modal(automation: &UIAutomation, walker: &UITreeWalker) -> Option<UIElement> {
+fn find_error_modal(
+    automation: &UIAutomation,
+    walker: &UITreeWalker,
+    main: &UIElement,
+) -> Option<UIElement> {
+    // Candidate windows: either nested under main (Qt parented dialogs) or
+    // top-level (defensive — some Qt builds float message boxes). We accept
+    // anything that's a Window whose name is neither "Skylanders Manager",
+    // "Select Skylander File", nor starts with "RPCS3 " — that leaves
+    // exactly the QMessageBox.
+    if let Some(hit) = find_descendant(walker, main, |el| is_error_modal(el)) {
+        return Some(hit);
+    }
     let root = automation.get_root_element().ok()?;
-    find_descendant(walker, &root, |el| {
+    find_descendant(walker, &root, |el| is_error_modal(el))
+}
+
+fn is_error_modal(el: &UIElement) -> bool {
+    if el.get_control_type().ok() != Some(ControlType::Window) {
+        return false;
+    }
+    let name = match el.get_name() {
+        Ok(n) => n,
+        Err(_) => return false,
+    };
+    if name.is_empty() {
+        return false;
+    }
+    if name.starts_with("RPCS3 ")
+        || name == "Skylanders Manager"
+        || name == "Select Skylander File"
+    {
+        return false;
+    }
+    // QMessageBox titles in RPCS3's skylander dialog are all "Failed to …" or
+    // "Error …" — require one of those prefixes to avoid false positives from
+    // random other Qt dialogs that might appear.
+    let lower = name.to_lowercase();
+    lower.starts_with("failed")
+        || lower.starts_with("error")
+        || lower.contains("skylander")
+}
+
+fn read_modal_body(walker: &UITreeWalker, modal: &UIElement) -> String {
+    let mut bits: Vec<String> = Vec::new();
+    if let Some(el) = find_descendant(walker, modal, |el| {
         el.get_control_type()
-            .map(|c| c == ControlType::Window)
+            .map(|c| c == ControlType::Text)
+            .unwrap_or(false)
+    }) {
+        if let Ok(name) = el.get_name() {
+            if !name.is_empty() {
+                bits.push(name);
+            }
+        }
+    }
+    bits.join(" ")
+}
+
+fn dismiss_modal(walker: &UITreeWalker, modal: &UIElement) {
+    if let Some(btn) = find_descendant(walker, modal, |el| {
+        el.get_control_type()
+            .map(|c| c == ControlType::Button)
             .unwrap_or(false)
             && el
-                .get_classname()
-                .map(|c| c.starts_with("QMessageBox") || c == "Qt651QWindowIcon" /* best-effort */)
-                .unwrap_or(false)
-            && el
                 .get_name()
-                .map(|n| !n.contains("Skylanders Manager") && !n.starts_with("RPCS3"))
+                .map(|n| matches!(n.as_str(), "OK" | "Ok" | "Close"))
                 .unwrap_or(false)
-    })
+    }) {
+        if let Ok(inv) = btn.get_pattern::<UIInvokePattern>() {
+            let _ = inv.invoke();
+        }
+    }
 }
 
 fn find_descendant<F>(walker: &UITreeWalker, root: &UIElement, pred: F) -> Option<UIElement>
