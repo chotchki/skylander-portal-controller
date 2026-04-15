@@ -258,32 +258,67 @@ Everything after 3.7 is feature work, safe to pick off in any order once tests a
 - [x] 3.4.3 `POST /api/_test/inject_load` endpoint behind `#[cfg(feature = "test-hooks")]` on `crates/server`. Body: `{ "outcomes": [{ "kind": "file_in_use", "message": "…" }, …] }`. Returns 409 if the mock driver isn't active. Disabled at the Router level when the feature is off.
 - [x] 3.4.4 Three new unit tests exercise the Ok-fallthrough, FileInUse, and QtModal paths through `MockPortalDriver::load`.
 
-### 3.5 E2E harness scaffolding (`crates/e2e-tests/`) — DONE (pending chromedriver install)
+### 3.5 E2E harness scaffolding (`crates/e2e-tests/`) — DONE
 
 - [x] 3.5.1 Workspace crate `crates/e2e-tests/`. Runs via `cargo test -p skylander-e2e-tests`.
 - [x] 3.5.2 `Phone::new` connects fantoccini to `http://localhost:4444`. One-time chromedriver install steps documented in `crates/e2e-tests/README.md`.
 - [x] 3.5.3 `TestServer::spawn()` writes a temp `.env.dev`, runs `cargo run -p skylander-server --features test-hooks`, multiplexes stdout + stderr into a channel, scrapes `serving on http://…`.
 - [x] 3.5.4 `Phone` helpers: `wait_for_portal`, `tap_slot`, `tap_figure_named`, `slot_text`, `search`, `toast_count`, `last_toast_text`, `wait_until`. `launch_giants` + `inject_load_outcomes` + `set_game` REST helpers exported at crate root.
 - [x] 3.5.5 `ChildGuard::Drop` kills the cargo-run child; fantoccini clients torn down via `Phone::close` (or their own Drop).
+- [x] 3.5.6 Harness owns chromedriver: `TestServer::spawn` locates `chromedriver.exe` via `$CHROMEDRIVER` → PATH → winget fallback (`%LOCALAPPDATA%/Microsoft/WinGet/Packages/Chromium.ChromeDriver_*/chromedriver-win64/`), spawns on a dynamic free port, kills it on drop. No need to run `chromedriver --port=4444` manually.
 
-### 3.6 Phase 2 regression scenarios as named tests — DRAFTED (needs chromedriver to run)
+### 3.6 Phase 2 regression scenarios as named tests — GREEN
 
-- [x] 3.6.1 `spam_click_same_slot` drafted — five rapid clicks, expect ≤1 toast, slot eventually Loaded.
-- [x] 3.6.2 `dup_figure_across_slots` drafted — first load injected OK, second injected FileInUse, slot 2 stays Empty.
-- [x] 3.6.3 `clear_then_load_sequence` drafted — load → Remove → load a different card → slot shows new figure.
-- [x] 3.6.4 `error_toast_never_populates_slot` drafted — parameterised over FileInUse and QtModal variants.
-- [x] 3.6.5 `ws_reconnect` drafted — currently implemented via a page reload since fantoccini can't easily reach into a JS `WebSocket` handle; a lower-level WS-drop approach is a future refinement.
-- [x] 3.6.6 `on_portal_figures_disabled` drafted — loads, asserts `.card.on-portal` class + "Already" toast on tap.
-- **To verify:** install chromedriver (+ `cd phone && trunk build`) and run `cargo test -p skylander-e2e-tests -- --ignored --nocapture`. Drafts likely need tweaks once we see them run.
+All seven tests pass (`cargo test -p skylander-e2e-tests -- --ignored --test-threads=1`), ~17s end-to-end with the dev firmware pack. `--test-threads=1` recommended: each test spawns its own `cargo run` build of the server which contends on the artifact dir if parallelised.
 
-### 3.7 Optional: real-RPCS3 e2e (heavier, manual trigger)
+- [x] 3.6.1 `spam_click_same_slot` — five rapid clicks, expect ≤1 toast, slot eventually Loaded. ✅
+- [x] 3.6.2 `dup_figure_across_slots` — first load injected OK, second injected FileInUse, slot 2 stays Empty. ✅
+- [x] 3.6.3 `clear_then_load_sequence` — load → Remove → load a different card → slot shows new figure. ✅
+- [x] 3.6.4 `error_toast_never_populates_slot` — parameterised over FileInUse and QtModal variants. ✅
+- [x] 3.6.5 `ws_reconnect` — page reload variant (fantoccini can't easily reach into a JS `WebSocket` handle; a lower-level WS-drop approach is a future refinement). ✅
+- [x] 3.6.6 `on_portal_figures_disabled` — loads, asserts `.card.on-portal` class + "Already" toast on tap. ✅
+- [x] 3.6.7 Product fix surfaced by 3.6.6: removed the redundant `disabled` attribute on the figure `<button>` in `phone/src/lib.rs` — the click handler already gates internally, and `disabled` was preventing the "Already" toast from ever firing. SPA rebuild required (`cd phone && trunk build`).
 
-- [ ] 3.7.1 `tests/e2e/live/` — tests that `RpcsProcess::launch` + drive actual RPCS3. Gated behind `--ignored` so they're never part of the default `cargo test`.
-- [ ] 3.7.2 `lifecycle_launch_load_clear_quit` — launches SSA (or whichever the user marks), loads Eruptor, clears, quits.
-- [ ] 3.7.3 `offscreen_hide_really_hides` — confirmed in 3.2.4 on Skylanders Manager; re-verify after code changes.
-- [ ] 3.7.4 `file_dialog_hidden_while_manager_hidden` — drive a load while the manager is off-screen; assert the Windows common file dialog also doesn't appear on-screen (we'd expect it modally parents to the manager and inherits its coords, but the Phase 2 probe showed it hovering at `@33,41` which is clearly on-screen, so we need explicit coverage). If it does appear, add a "hide-child-dialogs" helper to the driver.
+### 3.6b Game-launch + mid-game menu-driving research spike (interactive, HTPC)
 
-**Review checkpoint:** once 3.1 – 3.6 are green, feature work below is safe to fan out in parallel.
+**Why this exists:** Phase 1a/3.2 validated UIA driving against an *already-running* RPCS3 with the Skylanders Manager dialog *already opened by hand*. The first attempt at 3.7 (live lifecycle) revealed two unvalidated assumptions that need a research spike, not more test code:
+
+1. We've never opened the Manage menu via UIA *while a game is actually running* — the menu may be disabled, may need the emulator paused, or may behave differently from when the game isn't booted.
+2. We've never tested off-screen window hiding with a real game window present (only with the standalone Manager dialog).
+
+Plus a concrete bug to fix: `RpcsProcess::shutdown_graceful`'s `Forced` path leaves `RPCS3.buf` orphaned, which blocks subsequent launches with "Another instance is running."
+
+**Driver:** Chris at the HTPC. Output: `docs/research/game-launch-window-mgmt.md`, plus possibly a small fix to `process.rs` for the lockfile.
+
+**Working assumptions** (per Chris):
+- The portal dialog can be opened at any time after RPCS3 has finished initialising — including during shader compile and active gameplay. Shader compile being visible to the user is fine.
+- **Critical:** when a game runs, RPCS3 has *two* top-level windows: the original main window (menu bar, no game viewport) and a separate game-viewport window. They likely both have `"RPCS3 "` in the title (the viewport adds FPS + game name). Our `main_window()` in `crates/rpcs3-control/src/uia.rs:78–92` does a "first child whose name starts with `RPCS3 `" walk — which probably grabs the *viewport* window post-launch and then can't find the Manage menu inside it. This is the most likely root cause of the 3.7 failure.
+
+So the spike needs to (a) catalogue the two windows and how to distinguish them, then (b) make `main_window()` always pick the menu-bar one.
+
+Findings: `docs/research/game-launch-window-mgmt.md`. Major revision: the two-window theory was partly right (viewport title starts with `"FPS:"`, not `"RPCS3 "`, so it doesn't collide with the main-window title match), but the actual blocker was that UIA `Invoke`/`ExpandCollapse` are no-ops on Qt 6 menus. Keyboard navigation (Alt → arrows → Enter) with UIA focus verification is the mechanism that works.
+
+- [x] 3.6b.1 `crates/rpcs3-control/examples/rpcs3_windows.rs` — enumerates all rpcs3.exe top-level windows with title/class/HWND/rect. Confirmed two-window architecture (main at small rect + `"RPCS3 "` title; viewport fullscreen + `"FPS: ... | Skylanders ..."` title, same `Qt6110QWindowIcon` class).
+- [x] 3.6b.2 Manually confirmed: Manage → Manage Skylanders Portal works at every game phase (boot, shader compile, in-game). Gamepad input stays with the game; only keyboard focus shifts during our nav.
+- [x] 3.6b.3 `dump_menu_tree.rs` probe revealed the real blocker: the Manage MenuItem has **zero children** in the UIA tree until the menu is visually opened. UIA `Invoke`/`ExpandCollapse` return success but don't actually open it. Pivoted to keyboard navigation.
+- [x] 3.6b.4 `open_skylanders_dialog.rs` probe: synthesised `Alt` tap → `Right`×3 → `Down` → `Down`×3 → `Right` → `Enter` with per-step UIA `has_keyboard_focus` verification. Full nav ≈ 2s. Works with the game viewport minimised and the main window moved to `(-4000, -4000)` during navigation. Rewrote `UiaPortalDriver::trigger_dialog_via_menu` (crates/rpcs3-control/src/uia.rs) to use this mechanism; bumped `DIALOG_OPEN_TIMEOUT` from 3s to 5s.
+- [x] 3.6b.5 Dialog + main window + viewport are all restored to sensible state after nav via an RAII guard. Skylanders Manager dialog is slung to `(-4000, -4000)` the instant it appears. Dialog is opened once per RPCS3 session — subsequent `open_dialog` calls short-circuit.
+- [x] 3.6b.6 Lockfile cleanup: `RpcsProcess::shutdown_graceful` now remembers the install dir from `launch`, deletes `<install_dir>/RPCS3.buf` after the `Forced` path.
+- [x] 3.6b.7 Findings documented; CLAUDE.md "RPCS3 window/menu gotchas" section added.
+
+**Known residual UX**: Qt clamps menu popup windows and the Skylanders Manager dialog to visible screen coords even when the parent is off-screen, so during the once-per-session open the user sees (a) menu popup items flash in the upper-left for ~2s, (b) the dialog briefly appear centre-screen before we move it off. Acceptable for MVP — happens once during RPCS3 boot. Logged as PLAN 5.1 for post-Chaos polish.
+
+### 3.7 Optional: real-RPCS3 e2e (heavier, manual trigger) — PARKED, needs direct-desktop session
+
+Home: `crates/rpcs3-control/tests/live_lifecycle.rs`. All `#[ignore]`-gated. Driver code is correct (proven by 3.6b probes in Chris's interactive desktop session), but **tests cannot be verified over SSH/RDP** because of Windows session isolation: SSH runs in session 0, the user's desktop is session 2, and Win32 windows don't cross sessions. The tests need Chris at the physical keyboard/console, not in a remote session.
+
+- [x] 3.7.1 `tests/live_lifecycle.rs` scaffolded — three `#[ignore]` tests with panic-safe teardown.
+- [ ] 3.7.2 `lifecycle_launch_load_clear_quit` — update to launch without EBOOT arg (library view), UIA-boot the game by serial via the recipe proven in `examples/boot_game.rs` (`SelectionItemPattern.select()` + `set_focus()` + Enter), then run the full load→clear flow. Re-run from a direct-desktop session.
+- [ ] 3.7.3 `offscreen_hide_really_hides` — re-run from direct-desktop session.
+- [ ] 3.7.4 `file_dialog_hidden_while_manager_hidden` — re-run from direct-desktop session.
+- [ ] 3.7.5 Replace the existing EBOOT-based launch contract in tests with launch-then-UIA-boot. Shutdown via `File → Exit` menu nav (mirror the Manage menu approach) to get clean exits and let RPCS3 release its lockfile normally.
+
+**Review checkpoint:** 3.1 – 3.6 are green; 3.6b and 3.7 run on the HTPC at Chris's pace and don't block the rest of Phase 3 fanning out.
 
 ---
 
@@ -294,31 +329,52 @@ Everything after 3.7 is feature work, safe to pick off in any order once tests a
 
 ### 3.9 Profile system + PINs (covers SPEC.md Q20-Q24)
 
-- [ ] 3.9.1 `crates/server`: add SQLite via `sqlx`. Schema: `profiles(id, display_name, pin_hash, created_at)`, `sessions(profile_id, last_portal_layout_json, updated_at)`, `figure_usage(profile_id, figure_id, last_used_at)`.
-- [ ] 3.9.2 Profile-picker screen — "chest" visual placeholder until aesthetic pass.
-- [ ] 3.9.3 PIN keypad: 4-digit, large touch targets. Three-strikes backoff (5s lockout) to discourage a sibling from guessing.
-- [ ] 3.9.4 Profile admin UI: create/delete profile, reset PIN (no admin PIN per SPEC Q21 — just trust the keyboard at the PC for admin ops for now).
-- [ ] 3.9.5 Guest mode deferred to 3.15 or later.
+- [x] 3.9.1 `crates/server`: SQLite via `sqlx`. Schema: `profiles(id, display_name, pin_hash, color, created_at)`, `sessions(profile_id, last_portal_layout_json, updated_at)`, `figure_usage(profile_id, figure_id, last_used_at)`. Migrations under `crates/server/migrations/`; DB path is `./dev-data/db.sqlite` (dev) or `%APPDATA%/skylander-portal-controller/db.sqlite` (release).
+- [x] 3.9.2 Profile-picker screen — placeholder "Welcome, portal master" visuals; aesthetic pass deferred to 3.15.
+- [x] 3.9.3 PIN keypad: 4-digit, 64px+ tap targets. Three-strikes backoff (5s lockout) enforced server-side via the in-memory `Lockouts` map + `Retry-After`.
+- [x] 3.9.4 Profile admin UI: create/delete profile, reset PIN. Delete + reset both gated by the existing PIN per SPEC Q21.
+- [x] 3.9.5 Guest mode deferred to 3.15 or later.
 
-### 3.10 Working copies + reset-to-fresh
+### 3.10 Two-session concurrency + FIFO eviction
 
-- [ ] 3.10.1 Working copy location: `%APPDATA%/skylander-portal-controller/working/<profile_id>/<figure_id>.sky`.
-- [ ] 3.10.2 On first pick of a figure by a profile: fork from the pack's fresh `.sky` into the working path; load that instead of the pack file.
-- [ ] 3.10.3 Reset-to-fresh action on a loaded slot: confirm → clear → copy fresh over working → reload.
-- [ ] 3.10.4 Creation Crystals (Imaginators) per-profile; reset blocked behind an extra confirm per SPEC Q61.
+Per SPEC Round 4 (Q99–Q105). Supersedes the original single-session takeover model. **Reordered ahead of working-copies/session-resume because it mutates `SlotState`, session plumbing, and the WS protocol — cheaper to land before downstream work freezes those shapes.**
 
-### 3.11 Session resume + layout memory
+- [ ] 3.10.1 Server session registry: `[Option<Session>; 2]` keyed by connection id + join timestamp. Admit freely while a slot is `None`.
+- [ ] 3.10.2 On 3rd connection, evict the **oldest** session (FIFO); evicted client receives `TakenOver { by: chaos_flavor }` and shows the existing Chaos screen.
+- [ ] 3.10.3 1-minute cooldown applies only to forced eviction. Track `last_forced_evict_at` per slot; "kick back" from the evicted phone is rejected until the cooldown elapses. Joining into a free slot has no cooldown.
+- [ ] 3.10.4 Profile unlock is **per-session** (not global). Each phone enters its own PIN; unlocks do not propagate. Evicted-then-kicked-back sessions re-lock.
+- [ ] 3.10.5 Portal state remains a single shared `[SlotState; 8]`. Both phones see the same `SlotChanged` stream; last writer wins (driver worker serialises).
+- [ ] 3.10.6 Extend `SlotState` with `placed_by: Option<ProfileId>` (set on successful load, cleared on clear). Include in `SlotChanged` so both phones can render ownership.
+- [ ] 3.10.7 Phone: ownership indicator on each occupied slot (profile colour + initial). Owning phone's own figures get a highlighted treatment.
+- [ ] 3.10.8 Phone: "show join code" action (header/menu) that renders the same QR the launcher shows, so an existing player can hand the join URL to a new joiner.
+- [ ] 3.10.9 Defer: 2-player disconnect-cleanup semantics (what happens to P2's figures when P1 drops, how kick-back restores layout). Revisit with 3.17 reconnect overlay once real failure modes are visible.
 
-- [ ] 3.11.1 Persist the last portal layout to `sessions` on every successful load/clear.
-- [ ] 3.11.2 On profile unlock, prompt "resume last setup?" — confirm runs the load sequence automatically (respecting back-pressure).
-- [ ] 3.11.3 Skip if the profile has no prior layout.
+### 3.10e E2E harness — 2-session support
 
-### 3.12 Takeover + kick-back
+- [ ] 3.10e.1 Generalise `Phone::new` to support N concurrent fantoccini clients against one chromedriver (separate browser contexts). Expose `TestServer::new_phone()` factory.
+- [ ] 3.10e.2 Scenario: `concurrent_edits_both_phones` — P1 and P2 each load different figures into different slots; both see each other's updates via WS.
+- [ ] 3.10e.3 Scenario: `third_connection_evicts_oldest` — P1, P2 connected; P3 connects; assert P1 sees the Chaos "taken over" screen, P2 is undisturbed, P3 is in the profile picker.
+- [ ] 3.10e.4 Scenario: `forced_eviction_cooldown` — after 3.10e.3 eviction, P1's kick-back is rejected until 60s elapse. Use a test-hook to fast-forward the cooldown clock rather than sleeping.
+- [ ] 3.10e.5 Scenario: `independent_profile_unlock` — P1 unlocks profile A, P2 unlocks profile B; neither phone's unlock state leaks to the other.
+- [ ] 3.10e.6 Scenario: `ownership_badge_reflects_placer` — P1 loads a figure; both phones render the slot with P1's ownership badge.
 
-- [ ] 3.12.1 Server tracks the currently-authorized WS client (by connection id, not profile).
-- [ ] 3.12.2 New WS connection claims control; prior client receives a `TakenOver { by: chaos_flavor }` event.
-- [ ] 3.12.3 1-minute cooldown per SPEC Q31. "Kick back" button on the evicted phone re-initiates the handshake.
-- [ ] 3.12.4 Takeover locks the profile (clears the unlock state) but preserves the game/portal.
+### 3.11 Working copies + reset-to-fresh
+
+- [ ] 3.11.1 Working copy location is dev-mode-aware (matches the logs/DB convention from CLAUDE.md):
+  - Release: `%APPDATA%/skylander-portal-controller/working/<profile_id>/<figure_id>.sky`.
+  - Dev (`dev-tools` feature): `./dev-data/working/<profile_id>/<figure_id>.sky` under the repo workspace, alongside `./logs/` and the dev SQLite DB.
+  - Single resolver in `crates/server` returns the right root based on the feature flag — no per-call branching at the use sites.
+  - Add `dev-data/` to `.gitignore` (logs already there, mirror that).
+- [ ] 3.11.2 On first pick of a figure by a profile: fork from the pack's fresh `.sky` into the working path; load that instead of the pack file.
+- [ ] 3.11.3 Reset-to-fresh action on a loaded slot: confirm → clear → copy fresh over working → reload.
+- [ ] 3.11.4 Creation Crystals (Imaginators) per-profile; reset blocked behind an extra confirm per SPEC Q61.
+
+### 3.12 Session resume + layout memory
+
+- [ ] 3.12.1 Persist the last portal layout to `sessions` on every successful load/clear. With per-session profiles (3.10.4), layouts are still stored per-profile; the restore prompt belongs to whichever phone's session just unlocked that profile.
+- [ ] 3.12.2 On profile unlock, prompt "resume last setup?" — confirm runs the load sequence automatically (respecting back-pressure).
+- [ ] 3.12.3 Skip if the profile has no prior layout.
+- [ ] 3.12.4 Two-phone interaction: if the other phone already has figures on the portal when this profile unlocks, the prompt must either offer "resume alongside current" vs "clear + resume" or be suppressed entirely. Pick the simpler of the two once 3.10 is live and we've felt the UX.
 
 ### 3.13 HMAC command signing
 
@@ -379,7 +435,13 @@ Chaos is LAST. Do not start without explicit go-ahead.
 
 ---
 
-## Non-goals (explicit)
+## Phase 5 — Post-Chaos polish (future enhancements)
+
+- [ ] 5.2 **Parse `.sky` firmware for per-figure stats** (level, gold, playtime, hats, nicknames, …). RPCS3's Skylanders implementation is open source and presumably decodes the same layout the real portal chip does — start by reading `rpcs3/Emu/Io/Skylander.cpp` (or equivalent in the RPCS3 tree) to understand the byte layout and decryption/obfuscation, then mirror the read-only bits we care about in `crates/core` (or a new `crates/sky-parser`). Phone surfaces the stats in the figure card's extended info panel. Scope: read-only, per-profile working copies (so siblings can't corrupt each other's saves). Writing is explicitly out of scope.
+
+- [ ] 5.1 **Suppress RPCS3 window flicker during menu navigation.** The 3.6b research landed on "accept a once-per-session flicker" because Qt renders menu popups at visible screen coords when the parent is off-screen, and the Skylanders Manager dialog appears in the screen centre for a brief moment before we sling it off-screen. Our eframe launcher window launches *before* RPCS3, so it's in a position to establish Z-order priority. Ideas to explore: (a) make our launcher `WS_EX_TOPMOST` during any `open_dialog` navigation so Qt popups render behind it; (b) use `SetWinEventHook` / `EVENT_OBJECT_SHOW` filtered to RPCS3's PID to intercept the dialog creation event and move it off-screen before the first paint (Tier 2 in the 3.6b write-up); (c) hook menu popups the same way (Tier 3). Prerequisite: the real app exists and the launcher-first ordering is stable.
+
+
 
 - No bundling of RPCS3 or `.sky` files (piracy concern).
 - No CI until core features work.

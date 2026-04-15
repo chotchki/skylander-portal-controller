@@ -7,12 +7,7 @@
 //!  - Shared state lives inside `Arc<AppState>` and an `AtomicUsize` client
 //!    counter that both sides read.
 
-mod config;
-mod games;
-mod http;
-mod logging;
-mod state;
-mod ui;
+use skylander_server::{config, games, http, logging, profiles, state, ui};
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -108,6 +103,22 @@ fn main() -> Result<()> {
                         return;
                     }
                 };
+                let db_path = match crate::profiles::resolve_db_path() {
+                    Ok(p) => p,
+                    Err(e) => {
+                        tracing::error!("resolve db path: {e}");
+                        return;
+                    }
+                };
+                info!(db = %db_path.display(), "opening profile db");
+                let profile_store = match crate::profiles::ProfileStore::open(&db_path).await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::error!("open profile store: {e}");
+                        return;
+                    }
+                };
+                let sessions = Arc::new(crate::profiles::SessionRegistry::default());
                 let driver_tx = spawn_driver_worker(
                     driver,
                     portal_for_task.clone(),
@@ -123,6 +134,8 @@ fn main() -> Result<()> {
                     games: games_for_task,
                     rpcs3_exe,
                     rpcs3: rpcs3_for_task,
+                    profiles: profile_store,
+                    sessions,
                     #[cfg(feature = "test-hooks")]
                     test_mock,
                 });

@@ -13,7 +13,7 @@ use fantoccini::Locator;
 use serde_json::json;
 
 use skylander_e2e_tests::{
-    inject_load_outcomes, launch_giants, Phone, TestServer,
+    inject_load_outcomes, launch_giants, unlock_default_profile, Phone, TestServer,
 };
 
 // ---- Test 3.6.1: spam_click_same_slot -------------------------------------
@@ -22,6 +22,7 @@ use skylander_e2e_tests::{
 #[ignore = "requires chromedriver"]
 async fn spam_click_same_slot() {
     let server = TestServer::spawn().expect("spawn");
+    unlock_default_profile(&server.url).await.unwrap();
     launch_giants(&server.url).await.unwrap();
 
     // Queue exactly ONE Ok outcome so we can detect extra loads via the
@@ -30,7 +31,7 @@ async fn spam_click_same_slot() {
     // single SlotChanged broadcast instead by watching the slot text).
     inject_load_outcomes(&server.url, json!([{"kind": "ok"}])).await.unwrap();
 
-    let phone = Phone::new(&server.url).await.unwrap();
+    let phone = Phone::new(&server.url, &server.chromedriver_url).await.unwrap();
     phone.wait_for_portal(Duration::from_secs(10)).await.unwrap();
     phone.tap_slot(1).await.unwrap();
 
@@ -66,6 +67,7 @@ async fn spam_click_same_slot() {
 #[ignore = "requires chromedriver"]
 async fn dup_figure_across_slots() {
     let server = TestServer::spawn().expect("spawn");
+    unlock_default_profile(&server.url).await.unwrap();
     launch_giants(&server.url).await.unwrap();
 
     // First load OK, second load simulates the Windows "file in use" path.
@@ -79,7 +81,7 @@ async fn dup_figure_across_slots() {
     .await
     .unwrap();
 
-    let phone = Phone::new(&server.url).await.unwrap();
+    let phone = Phone::new(&server.url, &server.chromedriver_url).await.unwrap();
     phone.wait_for_portal(Duration::from_secs(10)).await.unwrap();
     phone.search("Spyro").await.unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -137,6 +139,7 @@ async fn dup_figure_across_slots() {
 #[ignore = "requires chromedriver"]
 async fn clear_then_load_sequence() {
     let server = TestServer::spawn().expect("spawn");
+    unlock_default_profile(&server.url).await.unwrap();
     launch_giants(&server.url).await.unwrap();
     inject_load_outcomes(
         &server.url,
@@ -145,7 +148,7 @@ async fn clear_then_load_sequence() {
     .await
     .unwrap();
 
-    let phone = Phone::new(&server.url).await.unwrap();
+    let phone = Phone::new(&server.url, &server.chromedriver_url).await.unwrap();
     phone.wait_for_portal(Duration::from_secs(10)).await.unwrap();
     phone.tap_slot(1).await.unwrap();
     let cards = phone.client.find_all(Locator::Css(".card")).await.unwrap();
@@ -201,10 +204,11 @@ async fn error_toast_never_populates_slot() {
     ];
     for v in &variants {
         let server = TestServer::spawn().expect("spawn");
+        unlock_default_profile(&server.url).await.unwrap();
         launch_giants(&server.url).await.unwrap();
         inject_load_outcomes(&server.url, json!([v.clone()])).await.unwrap();
 
-        let phone = Phone::new(&server.url).await.unwrap();
+        let phone = Phone::new(&server.url, &server.chromedriver_url).await.unwrap();
         phone.wait_for_portal(Duration::from_secs(10)).await.unwrap();
         phone.tap_slot(1).await.unwrap();
         phone
@@ -235,10 +239,11 @@ async fn error_toast_never_populates_slot() {
 #[ignore = "requires chromedriver"]
 async fn ws_reconnect() {
     let server = TestServer::spawn().expect("spawn");
+    unlock_default_profile(&server.url).await.unwrap();
     launch_giants(&server.url).await.unwrap();
     inject_load_outcomes(&server.url, json!([{"kind":"ok"}])).await.unwrap();
 
-    let phone = Phone::new(&server.url).await.unwrap();
+    let phone = Phone::new(&server.url, &server.chromedriver_url).await.unwrap();
     phone.wait_for_portal(Duration::from_secs(10)).await.unwrap();
 
     // Load a figure first so we have a known post-reconnect snapshot.
@@ -294,10 +299,11 @@ async fn ws_reconnect() {
 #[ignore = "requires chromedriver"]
 async fn on_portal_figures_disabled() {
     let server = TestServer::spawn().expect("spawn");
+    unlock_default_profile(&server.url).await.unwrap();
     launch_giants(&server.url).await.unwrap();
     inject_load_outcomes(&server.url, json!([{"kind":"ok"}])).await.unwrap();
 
-    let phone = Phone::new(&server.url).await.unwrap();
+    let phone = Phone::new(&server.url, &server.chromedriver_url).await.unwrap();
     phone.wait_for_portal(Duration::from_secs(10)).await.unwrap();
     phone.tap_slot(1).await.unwrap();
 

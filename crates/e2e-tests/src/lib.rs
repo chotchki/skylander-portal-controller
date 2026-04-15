@@ -17,26 +17,33 @@ use anyhow::{anyhow, bail, Context, Result};
 use fantoccini::{Client, ClientBuilder, Locator};
 use tempfile::TempDir;
 
-const CHROMEDRIVER_URL: &str = "http://localhost:4444";
-
-/// A running server instance. The child is killed on drop.
+/// A running server instance plus its owned chromedriver. Both children are
+/// killed when this drops.
 pub struct TestServer {
     pub url: String,
+    pub chromedriver_url: String,
     _child: ChildGuard,
+    _chromedriver: ChildGuard,
     _tmpdir: TempDir,
 }
 
 impl TestServer {
     pub fn spawn() -> Result<Self> {
         let repo = repo_root()?;
-        let firmware = repo.join("tools").join("inventory");
-        // We don't actually need the firmware pack for these tests since the
-        // mock driver ignores the file contents. Point FIRMWARE_PACK_ROOT at
-        // the repo itself so the indexer finds at least the pack if available,
-        // otherwise just anything. Override to the real pack via env.
+        // The phone SPA renders one `.card` per indexed figure, so the tests
+        // need a real pack — `tools/inventory` has no `.sky` files. Use the
+        // dev pack at the path documented in CLAUDE.md, overridable with
+        // `SKYLANDER_PACK_ROOT`.
+        let default_pack = PathBuf::from(r"C:\Users\chris\workspace\Skylanders Characters Pack for RPCS3");
         let firmware = std::env::var("SKYLANDER_PACK_ROOT")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| firmware);
+            .unwrap_or(default_pack);
+        if !firmware.is_dir() {
+            bail!(
+                "firmware pack not found at {} — set SKYLANDER_PACK_ROOT to your local pack",
+                firmware.display()
+            );
+        }
 
         let phone_dist = repo.join("phone").join("dist");
         if !phone_dist.join("index.html").is_file() {
@@ -86,12 +93,65 @@ impl TestServer {
 
         let url = wait_for_url(&rx, Duration::from_secs(120))?;
         let guard = ChildGuard::new(child);
+
+        let (chromedriver_url, chromedriver_guard) = spawn_chromedriver()?;
+
         Ok(Self {
             url,
+            chromedriver_url,
             _child: guard,
+            _chromedriver: chromedriver_guard,
             _tmpdir: tmp,
         })
     }
+}
+
+/// Spawn a dedicated chromedriver on a free port and wait for it to accept
+/// connections. Returns the base URL and an owning guard that kills the
+/// process on drop.
+///
+/// Resolution order for the chromedriver binary:
+///   1. `$CHROMEDRIVER` env var (explicit override).
+///   2. `chromedriver` on PATH.
+///   3. The winget install location
+///      (`%LOCALAPPDATA%/Microsoft/WinGet/Packages/Chromium.ChromeDriver_*/chromedriver-win64/chromedriver.exe`).
+fn spawn_chromedriver() -> Result<(String, ChildGuard)> {
+    let port = pick_free_port()?;
+    let bin = locate_chromedriver()?;
+    let mut cmd = Command::new(&bin);
+    cmd.arg(format!("--port={port}"))
+        .arg("--silent")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    let child = cmd.spawn().with_context(|| {
+        format!(
+            "spawn chromedriver from {} (install via `winget install --id=Chromium.ChromeDriver` \
+             or grab a matching build from https://googlechromelabs.github.io/chrome-for-testing/)",
+            bin.display()
+        )
+    })?;
+    let guard = ChildGuard::new(child);
+
+    let url = format!("http://127.0.0.1:{port}");
+    let addr = format!("127.0.0.1:{port}");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if std::net::TcpStream::connect_timeout(
+            &addr.parse().unwrap(),
+            Duration::from_millis(200),
+        )
+        .is_ok()
+        {
+            // Port accepts connections — chromedriver is up. The first
+            // fantoccini handshake will surface any deeper issues.
+            return Ok((url, guard));
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    Err(anyhow!(
+        "chromedriver at {url} didn't become ready within 10s"
+    ))
 }
 
 fn spawn_reader(tag: &'static str, stream: impl std::io::Read + Send + 'static, tx: mpsc::Sender<String>) {
@@ -124,6 +184,41 @@ fn wait_for_url(rx: &mpsc::Receiver<String>, timeout: Duration) -> Result<String
     }
     Err(anyhow!(
         "server didn't print 'serving on http://…' within {timeout:?}"
+    ))
+}
+
+fn locate_chromedriver() -> Result<PathBuf> {
+    if let Ok(s) = std::env::var("CHROMEDRIVER") {
+        let p = PathBuf::from(s);
+        if p.is_file() {
+            return Ok(p);
+        }
+        bail!("CHROMEDRIVER points at {} which doesn't exist", p.display());
+    }
+    if let Ok(p) = which::which("chromedriver") {
+        return Ok(p);
+    }
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        let winget_root = PathBuf::from(local).join("Microsoft/WinGet/Packages");
+        if let Ok(entries) = std::fs::read_dir(&winget_root) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_s = name.to_string_lossy();
+                if name_s.starts_with("Chromium.ChromeDriver_") {
+                    let candidate = entry
+                        .path()
+                        .join("chromedriver-win64")
+                        .join("chromedriver.exe");
+                    if candidate.is_file() {
+                        return Ok(candidate);
+                    }
+                }
+            }
+        }
+    }
+    Err(anyhow!(
+        "chromedriver not found — set $CHROMEDRIVER, add it to PATH, or install via \
+         `winget install --id=Chromium.ChromeDriver`"
     ))
 }
 
@@ -167,18 +262,18 @@ pub struct Phone {
 }
 
 impl Phone {
-    pub async fn new(url: &str) -> Result<Self> {
+    /// Connect a new headless Chrome session via the given chromedriver URL,
+    /// navigate to `server_url`.
+    pub async fn new(server_url: &str, chromedriver_url: &str) -> Result<Self> {
         let caps = serde_json::from_str::<serde_json::Value>(
             r#"{"goog:chromeOptions": {"args": ["--headless=new", "--no-sandbox", "--disable-gpu", "--window-size=420,900"]}}"#,
         )?;
         let client = ClientBuilder::native()
             .capabilities(caps.as_object().unwrap().clone())
-            .connect(CHROMEDRIVER_URL)
+            .connect(chromedriver_url)
             .await
-            .with_context(|| {
-                format!("connect to chromedriver at {CHROMEDRIVER_URL} (is it running?)")
-            })?;
-        client.goto(url).await?;
+            .with_context(|| format!("connect to chromedriver at {chromedriver_url}"))?;
+        client.goto(server_url).await?;
         Ok(Self { client })
     }
 
@@ -233,6 +328,63 @@ pub async fn set_game(base: &str, current: Option<serde_json::Value>) -> Result<
         bail!("set_game returned {}: {}", resp.status(), resp.text().await?);
     }
     Ok(())
+}
+
+/// Inject a profile via the test-hook. Returns the new profile id.
+pub async fn inject_profile(
+    base: &str,
+    name: &str,
+    pin: &str,
+    color: &str,
+) -> Result<String> {
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/api/_test/inject_profile"))
+        .json(&serde_json::json!({
+            "name": name,
+            "pin": pin,
+            "color": color,
+        }))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        bail!(
+            "inject_profile returned {}: {}",
+            resp.status(),
+            resp.text().await?
+        );
+    }
+    let body: serde_json::Value = resp.json().await?;
+    Ok(body
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("inject_profile: no id in response"))?
+        .to_string())
+}
+
+/// Flip the server session into the given profile (bypasses PIN entry).
+pub async fn unlock_session(base: &str, profile_id: &str) -> Result<()> {
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/api/_test/unlock_session"))
+        .json(&serde_json::json!({ "profile_id": profile_id }))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        bail!(
+            "unlock_session returned {}: {}",
+            resp.status(),
+            resp.text().await?
+        );
+    }
+    Ok(())
+}
+
+/// Inject a default "Player 1" profile and unlock the session under it. The
+/// existing game-picker/portal regression scenarios use this in setup now
+/// that the profile-picker is the first screen.
+pub async fn unlock_default_profile(base: &str) -> Result<String> {
+    let id = inject_profile(base, "Player 1", "1234", "#39d39f").await?;
+    unlock_session(base, &id).await?;
+    Ok(id)
 }
 
 /// Convenience for the common "launch Giants" setup.

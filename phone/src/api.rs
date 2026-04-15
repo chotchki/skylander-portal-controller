@@ -5,7 +5,7 @@ use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Request, RequestInit, Response};
 
-use crate::model::{GameLaunched, InstalledGame, PublicFigure};
+use crate::model::{GameLaunched, InstalledGame, PublicFigure, PublicProfile, UnlockedProfile};
 
 fn origin() -> String {
     let loc = web_sys::window().unwrap().location();
@@ -67,6 +67,53 @@ pub async fn fetch_status() -> Option<GameLaunched> {
 pub async fn post_launch(serial: &str) -> Result<(), String> {
     let url = format!("{}/api/launch", origin());
     let body = json!({ "serial": serial }).to_string();
+    do_fetch(&url, "POST", Some(&body)).await.map(|_| ())
+}
+
+pub async fn fetch_profiles() -> Vec<PublicProfile> {
+    let url = format!("{}/api/profiles", origin());
+    match do_fetch(&url, "GET", None).await {
+        Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+pub async fn create_profile(
+    display_name: &str,
+    pin: &str,
+    color: &str,
+) -> Result<PublicProfile, String> {
+    let url = format!("{}/api/profiles", origin());
+    let body = json!({
+        "display_name": display_name,
+        "pin": pin,
+        "color": color,
+    })
+    .to_string();
+    let text = do_fetch(&url, "POST", Some(&body)).await?;
+    serde_json::from_str(&text).map_err(|e| e.to_string())
+}
+
+pub async fn delete_profile(id: &str, pin: &str) -> Result<(), String> {
+    let url = format!("{}/api/profiles/{id}", origin());
+    let body = json!({ "pin": pin }).to_string();
+    do_fetch(&url, "DELETE", Some(&body)).await.map(|_| ())
+}
+
+pub async fn unlock_profile(id: &str, pin: &str) -> Result<UnlockedProfile, String> {
+    let url = format!("{}/api/profiles/{id}/unlock", origin());
+    let body = json!({ "pin": pin }).to_string();
+    let text = do_fetch(&url, "POST", Some(&body)).await?;
+    serde_json::from_str(&text).map_err(|e| e.to_string())
+}
+
+pub async fn reset_pin(id: &str, current_pin: &str, new_pin: &str) -> Result<(), String> {
+    let url = format!("{}/api/profiles/{id}/reset_pin", origin());
+    let body = json!({
+        "current_pin": current_pin,
+        "new_pin": new_pin,
+    })
+    .to_string();
     do_fetch(&url, "POST", Some(&body)).await.map(|_| ())
 }
 

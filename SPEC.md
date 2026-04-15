@@ -13,7 +13,7 @@
 # Application Flow / Technical Considerations:  
 - [ ] The application will be running on a Windows 11 PC, interfacing with RPCS3 a Qt based PlayStation 3 emulator.  
 - [ ] The application will be launched by Steam with the goal of prompting the user to connect a browser to the portal controller web application, which will be served by this application by listening on a web socket. The prompt will take the form of a scannable QR code that launches the users browser at the web application.  
-- [ ] All communication occurs over a local network that the user’s browser and the Windows PC share. There is no need for any user provisioning, the server should be http based. The last device that connects is assumed to be authorized to control the portal.  
+- [ ] All communication occurs over a local network that the user’s browser and the Windows PC share. There is no need for any user provisioning, the server should be http based. Up to **two** phones may be connected simultaneously (matching the co-op player count); a third connection evicts the oldest session (FIFO) with a Chaos-themed "taken over" screen. See Round 4 (Q99+) for the full revision — earlier "last device wins" answers are superseded.  
 - [ ] Once a device is connected, the remote controller prompts the user for which skylander game they wish to play. When selected, the application running on the windows pc, launches RPCS3 with the specified game. There is a static list of skylanders games to choose from, also by having the application launch it, the remote application should be able to ask to restart the game or quit it since RPCS3 sometimes freezes.  
 - [ ] The remote interface switches at this time into a portal control mode. It shows what skylanders are on the emulated portal and allows the user to add and remove skylanders. All the actions the user takes are mirrored by the application by clicking buttons on the RPCS3 emulated portal dialog, preferably without showing this dialog to the user on the PC (and interrupting game flow).   
 - [ ] RPCS3 has an ability to generate skylanders but its broken for certain games. As a result we have backed up the firmware of all the skylanders we own. However, skylanders progress and grow which means that the user may want to re-experience the journey many times. This is a long way of saying that when a skylander is picked for use, we will likely want to make a copy of the firmware file, use that and then offer the user the ability to reset a skylander by copying a fresh version over. This can all be handled by windows file operations, and the emulated portal is really just a series of slots that trigger a windows file dialog and a clear button.  
@@ -365,3 +365,39 @@ These are the last genuine gaps I see. After this I'd suggest we move to the pla
 - If you don't have any questions feel free to start planning. 
 - We will need a PLAN.md and I think a CLAUDE.md to distill the requirements in a more compact format while this document remains a larger reference.
 - I expect that this will take a LOT of steps/phases and we don't know it all up front. Focus on getting a plan with step by step checkboxes that focuses on research first. Post research we should review and then write a plan for the initial skeleton. Getting to a minimal end to end testable solution is more important first than building it all out.
+
+## Follow-up Questions (Round 4) — Concurrent Users Revision
+
+Context: original spec assumed 1 concurrent phone with "last device wins" takeover. Revising to **2** concurrent phones (matches co-op player count). This round supersedes the relevant portions of Q2, Q31, Q32, Q46, Q94, Q95.
+
+### Concurrency Model
+
+99. How many phones can be connected at once, and what happens on overflow?
+- Up to **2** active sessions at any time. A 3rd connection evicts the **oldest** session (FIFO) — the evicted phone shows the existing Chaos "taken over" screen with a "kick back" action. Eviction is what triggers the cooldown below; two free slots admit new phones immediately with no cooldown.
+
+100. Do the two phones share a profile or each unlock independently?
+- **Each phone unlocks its own profile independently.** Two kids, two profiles, two PINs. One profile may be unlocked on both phones if a kid is using two devices, but unlocks don't propagate — each device enters its PIN.
+
+101. When both phones are controlling the portal, how are conflicts resolved?
+- **Free-for-all.** Either phone can add/remove any slot. The driver already serialises operations (single tokio worker + `spawn_blocking`), so throttling is a natural consequence — no extra arbitration logic. Last writer wins on a given slot; both phones see the same `SlotChanged` broadcast.
+
+102. Does the cooldown from Q31 still apply?
+- Yes, but only for **forced eviction** (the 3rd-connection case). The prior holder of the evicted slot can't immediately kick back for 1 minute — this is the anti-ping-pong guard. A phone joining into a free slot has no cooldown.
+
+103. How does a new player join when both slots are full and neither player wants to be evicted?
+- New requirement: **in-app QR display**. Any connected phone can open a "show join code" button that renders the same QR the TV shows. An existing player can walk the QR over to a new player so they consciously initiate the eviction themselves rather than it being a surprise.
+
+104. On the portal-control view, how do the two players tell which figure belongs to whom?
+- New requirement: **ownership indicator** on each occupied slot. Minimum: a small profile-coloured dot or initial on the slot; the owning phone sees its own figures highlighted. "Ownership" = the profile that placed the figure into that slot (not profile-of-origin for the working-copy file, which is separate).
+
+105. What happens to on-portal figures when a phone disconnects?
+- **Deferred.** The current session-resume model (Q44: remember and reload on unlock) assumes one player. With two, the questions multiply: does Player 2's slot stay populated if Player 1 drops? Does the kick-back flow restore the exact prior layout? Revisit after the 2-concurrent server logic lands and we can see the real failure modes. Flag this in PLAN.md 3.17 (reconnect overlay) as a follow-up.
+
+### Impact Summary (for PLAN updates)
+
+- Server session registry: `[Option<Session>; 2]` keyed by connection id; FIFO eviction on 3rd.
+- Per-session state: `profile_unlock` is per-slot, not global. Portal state (8-slot array) remains global + shared.
+- Figure ownership: add `placed_by_session` or `placed_by_profile` to `SlotState`; broadcast in `SlotChanged`.
+- Phone UI: "show QR" action; ownership badge on portal slots; "taken over" screen already exists for evicted phones.
+- E2E harness: support 2 concurrent `Phone` instances; add scenarios for concurrent edits, 3rd-connection eviction, cooldown enforcement.
+

@@ -263,3 +263,82 @@ button { font: inherit; color: inherit; cursor: pointer; }
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* --------- Profile picker + PIN keypad (PLAN 3.9 — placeholder styling,
+   aesthetic pass in 3.15). --------- */
+.profile-picker { padding: 16px; max-width: 480px; margin: 0 auto; }
+.profile-picker h2 { font-size: 20px; margin: 8px 0 16px; }
+.profile-picker h3 { font-size: 17px; margin: 12px 0; }
+.profile-controls { display: flex; gap: 8px; margin-bottom: 12px; }
+.profile-controls button { flex: 1; padding: 10px; border-radius: 6px; border: 1px solid #444; background: #222; color: #eee; }
+.profile-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.profile-card {
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    padding: 14px; border-radius: 10px; border: 1px solid #333;
+    background: #1a1a1a; color: #eee; cursor: pointer;
+}
+.profile-swatch {
+    width: 60px; height: 60px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 28px; font-weight: 700; color: #fff;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+}
+.profile-name { font-size: 15px; }
+.profile-manage-hint { font-size: 11px; color: #aaa; }
+.profile-chip {
+    background: #333; padding: 2px 8px; border-radius: 999px;
+    font-size: 12px; margin-left: 8px;
+}
+
+.create-profile-form, .pin-entry, .profile-admin {
+    background: #161616; border: 1px solid #333; border-radius: 10px;
+    padding: 16px; margin-top: 8px;
+}
+.create-profile-form label { display: block; margin: 8px 0 4px; font-size: 13px; color: #bbb; }
+.create-profile-form input[type=text] {
+    width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #444;
+    background: #0f0f0f; color: #eee; font-size: 15px;
+}
+.color-picker { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0; }
+.color-picker .swatch {
+    width: 36px; height: 36px; border-radius: 50%;
+    border: 2px solid transparent; cursor: pointer;
+}
+.color-picker .swatch.active { border-color: #fff; }
+
+/* 4-dot PIN display */
+.pin-display { display: flex; gap: 14px; justify-content: center; margin: 10px 0 16px; }
+.pin-dot {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: transparent; border: 2px solid #666;
+}
+.pin-dot.filled { background: #fff; border-color: #fff; }
+
+/* 3x4 keypad — each button >= 60px square */
+.pin-keypad {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+    max-width: 320px; margin: 0 auto;
+}
+.pin-key {
+    min-height: 64px; min-width: 64px;
+    font-size: 22px; font-weight: 600;
+    border-radius: 10px; border: 1px solid #333;
+    background: #222; color: #eee;
+}
+.pin-key:disabled { background: transparent; border-color: transparent; }
+.pin-key:active { background: #444; }
+
+.form-actions { display: flex; gap: 8px; margin-top: 14px; }
+.form-actions button {
+    flex: 1; padding: 12px; font-size: 15px; border-radius: 8px;
+    border: 1px solid #333; background: #222; color: #eee;
+}
+.form-actions button.primary { background: #3059c9; border-color: #3059c9; }
+.form-actions button.danger  { background: #7a2222; border-color: #7a2222; }
+
+.admin-menu { display: flex; flex-direction: column; gap: 8px; }
+.admin-menu button {
+    padding: 14px; font-size: 15px; border-radius: 8px;
+    border: 1px solid #333; background: #222; color: #eee;
+}
+.admin-menu button.danger { background: #7a2222; border-color: #7a2222; }

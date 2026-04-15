@@ -100,6 +100,23 @@ pub enum Event {
     GameChanged {
         current: Option<GameLaunched>,
     },
+    ProfileChanged {
+        profile: Option<UnlockedProfile>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct PublicProfile {
+    pub id: String,
+    pub display_name: String,
+    pub color: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct UnlockedProfile {
+    pub id: String,
+    pub display_name: String,
+    pub color: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

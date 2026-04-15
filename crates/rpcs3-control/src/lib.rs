@@ -38,7 +38,7 @@ pub mod uia;
 #[cfg(windows)]
 pub use uia::{window_kind, UiaPortalDriver, WindowKind};
 #[cfg(windows)]
-pub(crate) mod hide;
+pub mod hide;
 
 #[cfg(windows)]
 pub mod process;

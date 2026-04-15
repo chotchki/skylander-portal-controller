@@ -7,13 +7,14 @@
 use std::time::Duration;
 
 use fantoccini::Locator;
-use skylander_e2e_tests::{Phone, TestServer};
+use skylander_e2e_tests::{unlock_default_profile, Phone, TestServer};
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver + built phone SPA"]
 async fn smoke_game_picker_renders() {
     let server = TestServer::spawn().expect("spawn server");
-    let phone = Phone::new(&server.url).await.expect("connect phone");
+    unlock_default_profile(&server.url).await.expect("unlock profile");
+    let phone = Phone::new(&server.url, &server.chromedriver_url).await.expect("connect phone");
 
     // The GamePicker shows an h2 with "Pick a game". Wait for it.
     let heading = phone

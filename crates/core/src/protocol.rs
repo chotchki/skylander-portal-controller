@@ -44,6 +44,19 @@ pub enum Event {
     GameChanged {
         current: Option<GameLaunched>,
     },
+    /// Profile unlock/lock transition. `None` means "session is locked".
+    ProfileChanged {
+        profile: Option<UnlockedProfile>,
+    },
+}
+
+/// Public profile description included in [`Event::ProfileChanged`] and the
+/// initial WS snapshot. Never carries the PIN hash.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnlockedProfile {
+    pub id: String,
+    pub display_name: String,
+    pub color: String,
 }
 
 /// Announcement payload included in `Event::GameChanged`.

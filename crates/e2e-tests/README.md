@@ -8,17 +8,16 @@ do not require RPCS3 to be running.
 ## One-time setup
 
 1. Install Chrome (stable channel).
-2. Install ChromeDriver matching your Chrome version:
-   - Download from https://googlechromelabs.github.io/chrome-for-testing/
-   - Or `winget install --id=Chromium.ChromeDriver`
-3. Start the chromedriver daemon in a dedicated terminal before running tests:
-   ```
-   chromedriver --port=4444
-   ```
-4. Build the phone SPA at least once so `phone/dist/` exists:
+2. Install ChromeDriver matching your Chrome version, on PATH:
+   - `winget install --id=Chromium.ChromeDriver`, or
+   - grab a matching build from https://googlechromelabs.github.io/chrome-for-testing/
+3. Build the phone SPA at least once so `phone/dist/` exists:
    ```
    cd phone && trunk build
    ```
+
+The harness spawns its own chromedriver on a free port per `TestServer` and
+kills it on drop — no need to run `chromedriver` manually.
 
 ## Running
 

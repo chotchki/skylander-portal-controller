@@ -33,8 +33,9 @@ A Windows app that wraps RPCS3 (PS3 emulator) so kids can manage the emulated Sk
 
 - **First-launch config** (PC keyboard, one time): RPCS3 executable path, firmware-pack root. Games auto-detected by scanning RPCS3's library for known serials; missing games don't delete their per-game settings.
 - **Firmware pack** layout: `{Game}/{Element}/[Alternate types/]{Name}.sky`. Top-level `Items`, `Adventure Packs` (per-game subfolders), `Sidekicks` (top-level is a duplicate — ignore it; Giants' internal `Sidekicks` is authoritative). Ignore `desktop.ini`, posters, element-symbol PNGs (reuse as element icons), readme `.txt` files.
-- **Release runtime state:** `%APPDATA%\skylander-portal-controller\` — SQLite DB, per-profile working copies of `.sky` files, logs (daily rotation, 7-day retention).
-- **Dev runtime state:** `./` (repo workspace) — logs under `./logs/`, DB and working copies under `./dev-data/`. Gated by `dev-tools` Cargo feature.
+- **Runtime state roots** (resolved once at startup, gated by the `dev-tools` Cargo feature — release builds physically can't pick the dev path):
+  - Release: `%APPDATA%\skylander-portal-controller\` — `db.sqlite`, `working/<profile_id>/<figure_id>.sky`, `logs/` (daily rotation, 7-day retention).
+  - Dev: `./dev-data/` — same layout, plus `./logs/` next to it. Both are gitignored. Never write runtime state outside these roots.
 - **Known dev RPCS3 install:** `C:\emuluators\rpcs3` (note the typo; it's the real path).
 - **Known dev firmware pack:** `C:\Users\chris\workspace\Skylanders Characters Pack for RPCS3`.
 - **Phone never sees file paths or filenames** — only stable figure IDs.
@@ -55,11 +56,16 @@ A Windows app that wraps RPCS3 (PS3 emulator) so kids can manage the emulated Sk
 - Working copy auto-loads when a figure is picked. Fork from fresh on first-ever use. Reset-to-fresh is an explicit user action.
 - Figure file shared across games (one working copy per profile+figure).
 
-## Takeover
+## Concurrency & takeover
 
-- "Last device wins" with a 1-minute cooldown between takeovers.
-- Silent cutover. Kicked device shows a Chaos-themed "taken over" screen offering a "kick back" action.
-- Takeover inherits game/portal state but re-locks the profile; new user must enter PIN.
+- **Up to 2 concurrent phone sessions** (matches co-op player count). Each unlocks its own profile with its own PIN; unlocks do not propagate between phones.
+- Portal is shared free-for-all — either phone can touch any slot. The single driver worker serialises operations naturally; no per-slot arbitration.
+- 3rd connection evicts the **oldest** session (FIFO) — evicted phone sees the Chaos "taken over" screen with a "kick back" button.
+- 1-minute cooldown applies only to forced eviction (anti-ping-pong). Joining into a free slot has no cooldown.
+- Evicted session's kick-back inherits game/portal state but the profile re-locks; PIN re-entry required.
+- Any connected phone can display the join QR in-app ("show join code") so existing players can hand it to a new joiner.
+- Portal view shows an **ownership indicator** per occupied slot (profile colour/initial) so players can tell whose figure is whose. Ownership = the profile that placed the figure into that slot.
+- Post-disconnect figure-cleanup semantics (2-player case) are deliberately deferred — revisit alongside the reconnect-overlay phase.
 
 ## Security
 
@@ -104,6 +110,16 @@ A Windows app that wraps RPCS3 (PS3 emulator) so kids can manage the emulated Sk
 - GitHub Releases zip. Do **not** bundle RPCS3 or `.sky` files (no piracy).
 - Users supply their own RPCS3 install and firmware backups.
 - Steam Big Picture shell behavior is a compatibility-pass concern, not a day-1 constraint.
+
+## RPCS3 window/menu gotchas (see `docs/research/game-launch-window-mgmt.md`)
+
+- While a game runs, RPCS3 has **two** top-level windows: the **main window** (menu bar, Qt class `Qt6110QWindowIcon`, title prefix `"RPCS3 "`) and the **game viewport** (same Qt class, title prefix `"FPS:"`). The viewport usually covers the main window.
+- **UIA `Invoke`/`ExpandCollapse` don't work on Qt 6 menus.** Menu items exist in the UIA tree but have zero children until a real user interaction opens them. We drive the Manage menu with synthesised keystrokes (Alt → arrows → Enter) instead, verifying `HasKeyboardFocus` at each step.
+- **Dialog opens once per RPCS3 session** — `open_dialog` navigates the menu on first call, then keeps the Skylanders Manager off-screen for the rest of the session. Subsequent calls short-circuit. If RPCS3 restarts, first `open_dialog` re-does the nav (brief once-per-session flicker during boot).
+- **Focus thieves**: the game viewport (minimised during nav), RPCS3's **update-check popup** at boot (can steal foreground mid-nav — tell users to disable Settings → Advanced → "Automatically check for updates at startup").
+- `RPCS3.buf` singleton lockfile next to `rpcs3.exe` survives forced kill → next launch fails. `RpcsProcess::shutdown_graceful` deletes it after the `Forced` path. Spawned processes are also wrapped in a Win32 Job Object with `KILL_ON_JOB_CLOSE` so RPCS3's re-exec shims and worker children don't leak across test runs.
+- **Booting a game programmatically:** launch `rpcs3.exe` with no arguments (library view), then find the `DataItem` whose name matches the game's serial (e.g. `"BLUS30968"`) under the `game_list_table`. Invoke via `SelectionItemPattern.select()` + `set_focus()` + synthesised `Enter` — UIA Invoke alone doesn't boot. The EBOOT-argument launch path puts RPCS3 into a direct-boot state where the menu bar does not respond to synthesised keystrokes; don't use it.
+- **Session isolation:** all UIA + SendInput automation is session-bound. Tests that exercise the real driver must run on the user's interactive desktop — SSH connects in session 0 and cannot see/touch windows in session 2+ at all. `RpcsProcess` launches, `EnumWindows`, UIA tree walk all return empty under SSH. Run RPCS3-live tests on the physical machine.
 
 ## Naming gotchas
 

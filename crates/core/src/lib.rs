@@ -12,7 +12,7 @@ pub use figure::{
     Category, Element, Figure, FigureId, Game, GameOfOrigin, GameSerial, PublicFigure,
 };
 pub use portal::{SlotIndex, SlotIndexOutOfRange, SlotState, SLOT_COUNT};
-pub use protocol::{Command, Event, GameLaunched};
+pub use protocol::{Command, Event, GameLaunched, UnlockedProfile};
 
 #[cfg(test)]
 mod tests {

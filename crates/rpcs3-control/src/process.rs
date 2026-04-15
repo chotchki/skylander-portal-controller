@@ -6,7 +6,7 @@
 //!
 //! Phase 3.1.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -16,8 +16,14 @@ use tracing::{debug, info, warn};
 use uiautomation::types::ControlType;
 use uiautomation::{UIAutomation, UIElement};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, LPARAM, WPARAM};
+use windows::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject, TerminateJobObject,
+    JobObjectExtendedLimitInformation, JOBOBJECT_BASIC_LIMIT_INFORMATION,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+};
 use windows::Win32::System::Threading::{
     GetExitCodeProcess, OpenProcess, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
+    PROCESS_SET_QUOTA, PROCESS_TERMINATE,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowThreadProcessId, PostMessageW, WM_CLOSE,
@@ -31,6 +37,39 @@ pub struct RpcsProcess {
     inner: ProcessOwnership,
     /// Cached PID from UIA at attach / Child::id at launch.
     pid: u32,
+    /// Directory containing `rpcs3.exe` — used to locate `RPCS3.buf` for
+    /// post-forced-kill cleanup. `None` for attached processes (we'd have to
+    /// resolve the exe path from the PID, which isn't worth it for a feature
+    /// that only matters to tests).
+    install_dir: Option<PathBuf>,
+    /// Job object that holds the spawned RPCS3 *and any descendants it
+    /// spawns*. Configured with `KILL_ON_JOB_CLOSE` so terminating the job
+    /// (or dropping this handle) reliably kills the whole process tree.
+    /// RPCS3 often re-execs itself or forks workers; `Child::kill` alone is
+    /// not enough. `None` for attached processes.
+    job: Option<JobHandle>,
+}
+
+/// `Send + Sync` wrapper around a Job Object HANDLE.
+#[derive(Debug)]
+struct JobHandle(HANDLE);
+// SAFETY: HANDLE is an opaque kernel object id; transferring it between
+// threads is safe. The only access we do is Terminate/Close, both of which
+// are documented as thread-safe.
+unsafe impl Send for JobHandle {}
+unsafe impl Sync for JobHandle {}
+
+impl Drop for JobHandle {
+    fn drop(&mut self) {
+        unsafe {
+            // KILL_ON_JOB_CLOSE means the OS terminates every process still
+            // assigned to this job when the last handle closes. Belt and
+            // braces: also call TerminateJobObject explicitly in case the
+            // kernel decides to keep a reference alive longer than us.
+            let _ = TerminateJobObject(self.0, 1);
+            let _ = CloseHandle(self.0);
+        }
+    }
 }
 
 /// How we got hold of this RPCS3.
@@ -62,9 +101,26 @@ impl RpcsProcess {
             .spawn()
             .with_context(|| format!("spawn {}", exe.display()))?;
         let pid = child.id();
+
+        // Wrap the child in a Job Object so any grandchildren RPCS3 spawns
+        // (elevation shims, audio/video workers, etc.) get killed together
+        // when we drop the job handle.
+        let job = match create_kill_on_close_job_for_pid(pid) {
+            Ok(h) => Some(h),
+            Err(e) => {
+                warn!(
+                    "couldn't create Job Object for RPCS3 pid {pid}: {e} \
+                     (shutdown may leave stray processes)"
+                );
+                None
+            }
+        };
+
         Ok(Self {
             inner: ProcessOwnership::Spawned(child),
             pid,
+            install_dir: exe.parent().map(PathBuf::from),
+            job,
         })
     }
 
@@ -77,6 +133,8 @@ impl RpcsProcess {
         Ok(Self {
             inner: ProcessOwnership::Attached,
             pid,
+            install_dir: None,
+            job: None,
         })
     }
 
@@ -143,6 +201,18 @@ impl RpcsProcess {
         warn!("RPCS3 didn't exit within {timeout:?}; forcing");
         match &mut self.inner {
             ProcessOwnership::Spawned(child) => {
+                // If we have a job, TerminateJobObject kills every process
+                // assigned to it in one shot — including any grandchildren
+                // RPCS3 may have forked off (shims, workers). Child::kill
+                // alone misses those, which is what leaked processes across
+                // test runs before we had job objects.
+                if let Some(job) = &self.job {
+                    unsafe {
+                        if let Err(e) = TerminateJobObject(job.0, 1) {
+                            warn!("TerminateJobObject failed: {e}");
+                        }
+                    }
+                }
                 let _ = child.kill();
                 let _ = child.wait();
             }
@@ -151,6 +221,18 @@ impl RpcsProcess {
                 if let Err(e) = terminate_pid(self.pid) {
                     warn!("TerminateProcess failed for pid {}: {e}", self.pid);
                 }
+            }
+        }
+        // RPCS3 writes a singleton lockfile (`RPCS3.buf`) next to the exe and
+        // normally removes it on clean exit. A forced kill leaves it orphaned,
+        // and the next `launch` bails with "Another instance of RPCS3 is
+        // running." Clean it up here.
+        if let Some(dir) = &self.install_dir {
+            let lock = dir.join("RPCS3.buf");
+            match std::fs::remove_file(&lock) {
+                Ok(()) => info!(path = %lock.display(), "removed orphaned RPCS3 lockfile"),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => warn!(path = %lock.display(), "failed to remove RPCS3 lockfile: {e}"),
             }
         }
         Ok(ShutdownPath::Forced)
@@ -268,6 +350,45 @@ fn terminate_pid(pid: u32) -> Result<()> {
         r.context("TerminateProcess")?;
     }
     Ok(())
+}
+
+/// Create an unnamed Job Object with `KILL_ON_JOB_CLOSE` and assign the
+/// given PID to it. Any processes the PID spawns from this point inherit
+/// membership, so terminating the job kills the whole tree.
+fn create_kill_on_close_job_for_pid(pid: u32) -> Result<JobHandle> {
+    unsafe {
+        let job = CreateJobObjectW(None, windows::core::PCWSTR::null())
+            .context("CreateJobObjectW")?;
+        if job.is_invalid() {
+            bail!("CreateJobObjectW returned invalid handle");
+        }
+        let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+            BasicLimitInformation: JOBOBJECT_BASIC_LIMIT_INFORMATION {
+                LimitFlags: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &mut info as *mut _ as *mut std::ffi::c_void,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        )
+        .context("SetInformationJobObject(KILL_ON_JOB_CLOSE)")?;
+
+        let child_handle = OpenProcess(PROCESS_TERMINATE | PROCESS_SET_QUOTA, false, pid)
+            .context("OpenProcess on child to assign to job")?;
+        if child_handle.is_invalid() {
+            let _ = CloseHandle(job);
+            bail!("OpenProcess returned invalid handle for pid {pid}");
+        }
+        let assign = AssignProcessToJobObject(job, child_handle);
+        let _ = CloseHandle(child_handle);
+        assign.context("AssignProcessToJobObject")?;
+
+        Ok(JobHandle(job))
+    }
 }
 
 /// Convenience for tests/polling code that just wants to block.

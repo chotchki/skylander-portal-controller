@@ -11,6 +11,7 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 use tracing::{error, info};
 
 use crate::games::InstalledGame;
+use crate::profiles::{ProfileStore, SessionRegistry};
 
 pub struct AppState {
     pub figures: Vec<Figure>,
@@ -26,6 +27,13 @@ pub struct AppState {
     pub rpcs3_exe: PathBuf,
     /// Lifecycle lock around the currently-running RPCS3 instance.
     pub rpcs3: Arc<Mutex<RpcsLifecycle>>,
+
+    /// SQLite-backed profile store + argon2 PIN hashes + lockout map.
+    pub profiles: ProfileStore,
+    /// Per-connection session registry. Tracks which profile (if any) is
+    /// unlocked for each WS session. 3.9 is single-session; 3.10 extends
+    /// this to a 2-slot FIFO registry.
+    pub sessions: Arc<SessionRegistry>,
 
     /// Concrete mock driver handle, populated only when running with the
     /// mock driver + test-hooks feature. The /api/_test/* endpoints use
