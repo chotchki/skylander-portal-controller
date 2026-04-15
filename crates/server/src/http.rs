@@ -36,7 +36,9 @@ pub fn router(state: Arc<AppState>, phone_dist: std::path::PathBuf) -> Router {
 
     #[cfg(feature = "test-hooks")]
     {
-        api = api.route("/api/_test/inject_load", post(inject_load));
+        api = api
+            .route("/api/_test/inject_load", post(inject_load))
+            .route("/api/_test/set_game", post(set_game_state));
     }
 
     // Static phone SPA (dev mode — ServeDir). When the dist directory isn't
@@ -275,6 +277,26 @@ enum InjectLoadOutcome {
 struct InjectLoadBody {
     /// Sequence of outcomes for upcoming `load` calls.
     outcomes: Vec<InjectLoadOutcome>,
+}
+
+#[cfg(feature = "test-hooks")]
+#[derive(Deserialize)]
+struct SetGameBody {
+    /// `None` → clear the current game.
+    current: Option<GameLaunched>,
+}
+
+#[cfg(feature = "test-hooks")]
+async fn set_game_state(
+    State(state): State<Arc<AppState>>,
+    axum::Json(body): axum::Json<SetGameBody>,
+) -> Response {
+    let mut guard = state.rpcs3.lock().await;
+    guard.current = body.current.clone();
+    let _ = state.events.send(Event::GameChanged {
+        current: body.current,
+    });
+    (StatusCode::ACCEPTED, "set").into_response()
 }
 
 #[cfg(feature = "test-hooks")]

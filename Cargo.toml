@@ -5,6 +5,7 @@ members = [
     "crates/indexer",
     "crates/rpcs3-control",
     "crates/server",
+    "crates/e2e-tests",
 ]
 
 [workspace.package]
