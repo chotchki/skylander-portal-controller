@@ -36,7 +36,7 @@ pub trait PortalDriver: Send + Sync {
 #[cfg(windows)]
 pub mod uia;
 #[cfg(windows)]
-pub use uia::UiaPortalDriver;
+pub use uia::{window_kind, UiaPortalDriver, WindowKind};
 #[cfg(windows)]
 pub(crate) mod hide;
 

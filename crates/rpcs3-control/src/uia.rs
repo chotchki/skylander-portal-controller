@@ -19,6 +19,31 @@ const LOAD_TIMEOUT: Duration = Duration::from_secs(10);
 const CLEAR_TIMEOUT: Duration = Duration::from_secs(3);
 const DIALOG_OPEN_TIMEOUT: Duration = Duration::from_secs(3);
 const POLL_INTERVAL: Duration = Duration::from_millis(30);
+const OFFSCREEN_POS: (i32, i32) = (-4000, -4000);
+
+/// Which kind of RPCS3 window a UIElement represents. Distinguished by Qt
+/// classname — matches the observations in docs/research/rpcs3-control.md.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowKind {
+    /// The RPCS3 main window (`classname = "main_window"`).
+    Main,
+    /// Skylanders Manager dialog (`classname = "skylander_dialog"`).
+    SkylanderDialog,
+    /// "Select Skylander File" native common dialog (`classname = "#32770"`).
+    FileDialog,
+    /// The boot game viewport — exact class TBD on first real-game launch;
+    /// for now we return `Other` so Phase 3 can refine.
+    Other,
+}
+
+pub fn window_kind(el: &UIElement) -> WindowKind {
+    match el.get_classname().as_deref().unwrap_or("") {
+        "main_window" => WindowKind::Main,
+        "skylander_dialog" => WindowKind::SkylanderDialog,
+        "#32770" => WindowKind::FileDialog,
+        _ => WindowKind::Other,
+    }
+}
 
 /// Drives the Skylanders Manager dialog via Windows UI Automation.
 ///
@@ -182,15 +207,35 @@ impl UiaPortalDriver {
     /// Hide the dialog by moving it far off-screen via raw Win32
     /// `SetWindowPos`. UIA's TransformPattern reports success but doesn't
     /// actually move the Qt window (see docs/research/rpcs3-control.md).
-    #[cfg(windows)]
+    ///
+    /// Idempotent: if the dialog is already near the off-screen sentinel
+    /// coordinates (within 100px) this is a no-op.
     pub fn hide_dialog_offscreen(&self) -> Result<()> {
+        self.move_dialog_to(OFFSCREEN_POS.0, OFFSCREEN_POS.1)
+    }
+
+    /// Put the dialog back on-screen at the given coordinates.
+    pub fn restore_dialog_visible(&self, x: i32, y: i32) -> Result<()> {
+        self.move_dialog_to(x, y)
+    }
+
+    fn move_dialog_to(&self, x: i32, y: i32) -> Result<()> {
         let walker = self.walker()?;
         let main = self.main_window(&walker)?;
         let dialog = self
             .find_dialog(&walker, &main)
             .ok_or_else(|| anyhow!("dialog not open"))?;
-        crate::hide::set_position(&dialog, -4000, -4000)?;
-        info!("dialog moved off-screen");
+
+        // Idempotency guard.
+        if let Ok(rect) = dialog.get_bounding_rectangle() {
+            if (rect.get_left() - x).abs() < 100 && (rect.get_top() - y).abs() < 100 {
+                debug!(x, y, "dialog already at target position, skipping");
+                return Ok(());
+            }
+        }
+
+        crate::hide::set_position(&dialog, x, y)?;
+        info!(x, y, "dialog moved");
         Ok(())
     }
 }
