@@ -214,26 +214,165 @@ Verified on `http://192.168.1.162:8765` with mock driver:
 
 ---
 
-## Phase 3+ — To be planned after the MVP works
+## Phase 3 — Testing infrastructure first, then features
 
-Likely areas (order TBD):
-- **Disable figure cards already on the portal** so the UI stops users from hitting RPCS3's "file already in use" error. Driver now dismisses that modal and surfaces it as a toast, but the real fix is client-side — when broadcasting `SlotChanged`, the phone knows every loaded figure_id, so figure cards whose `id` matches any loaded slot should be shown disabled (grey + "on portal" badge).
-- **Prefer our canonical name over RPCS3's slot text.** RPCS3's `list_skylanders` map (in `rpcs3/rpcs3qt/skylander_dialog.cpp`) doesn't cover every figure — for unknowns the slot edit shows `"Unknown (Id:N Var:M)"`. The server already knows the `figure_id` it asked the driver to load, so the driver worker should overwrite `display_name` with `figures[figure_id].canonical_name` before broadcasting `SlotChanged`. Pass `figures_by_id` into `spawn_driver_worker`. For snapshot reads (no figure_id context), fall back to RPCS3's string with a "Unknown" tag in the UI.
-- Full profile system with PINs and per-profile working copies.
-- Takeover + kick-back flow with Chaos-themed kicked screen.
-- Full collection browse view (filters: element, game of origin, works-with, type).
-- Reposes: collapse + variant cycling.
-- Session resume / layout memory.
-- Reset-to-fresh action.
-- HMAC signing of commands.
-- Aesthetic pass (Skylanders-style CSS; reference `docs/aesthetic/ui_style_example.png`).
-- Reconnect QR overlay window.
-- Windows firewall UX and network-interface fallback picker.
-- First-launch config wizard (egui side).
-- Game-graceful-quit with 30s kill timer.
-- Packaging / GitHub Releases pipeline (CI still deferred).
-- Wiki scrape second pass for misses.
-- Chaos feature (LAST, explicit user go-ahead required).
+**Strategy**: Phase 2 surfaced bugs through manual tapping. That's slow and non-repeating. Phase 3 puts test infrastructure in place *before* feature work so every subsequent bug lands as a named regression test. The process/window-management pieces (RPCS3 lifecycle + off-screen hide + game launching) are prerequisites for the automated e2e harness AND for shipping game-launch as a user feature, so they come first.
+
+**Milestone 1 (3.1 – 3.6):** a green `cargo test --test e2e` that exercises the regression scenarios from 2.10.6 against the mock driver, with injection points for the failure modes we chased this phase.
+
+**Milestone 2 (3.7):** optional heavier suite against a real RPCS3 the harness starts and stops.
+
+Everything after 3.7 is feature work, safe to pick off in any order once tests are watching the door.
+
+---
+
+### 3.1 RPCS3 process management (`crates/rpcs3-control`)
+
+- [ ] 3.1.1 `RpcsProcess::launch(exe: &Path, eboot: &Path) -> Result<RpcsProcess>` — spawn `rpcs3.exe <EBOOT.BIN>`, capture the `std::process::Child`, store PID.
+- [ ] 3.1.2 `wait_ready(&self, timeout: Duration)` — poll UIA for the main window whose name starts with "RPCS3 "; return once present. Fail with the process's stderr if the child exited.
+- [ ] 3.1.3 `shutdown_graceful(&mut self, timeout: Duration) -> Result<()>` — post `WM_CLOSE` to the main HWND; if it doesn't exit within the timeout, fall back to `Child::kill`. Logs which path was taken.
+- [ ] 3.1.4 `is_alive(&self) -> bool` and a `crashed` event on the driver so the server can surface "RPCS3 closed unexpectedly" as a toast.
+- [ ] 3.1.5 `RpcsProcess::attach(window_title: &str) -> Result<Self>` — find an already-running RPCS3 and adopt it (no Child; shutdown is a no-op). Useful in dev mode when the user already has RPCS3 up.
+
+### 3.2 Window management (`crates/rpcs3-control`)
+
+- [ ] 3.2.1 Promote the existing `hide_dialog_offscreen()` to a public method; make it idempotent and tolerant of a dialog being closed+reopened between calls.
+- [ ] 3.2.2 `restore_dialog_visible(x, y)` — move the dialog back on-screen at a specific position (for the dev-mode "show RPCS3 again" shortcut).
+- [ ] 3.2.3 Distinguish at least three kinds of RPCS3 window via UIA classname: main_window, skylander_dialog, and the game-output window (class differs — to capture). Used for "don't steal focus from the game" behaviour.
+- [ ] 3.2.4 Verify UIA accessibility still works on the off-screen dialog end-to-end (not just the theory from 1a). If it doesn't, fall back to `ShowWindow(SW_HIDE)` with a flag indicating RPCS3 can't be driven while hidden.
+
+### 3.3 Game launching
+
+- [ ] 3.3.1 `crates/server/src/games.rs` — parse `<rpcs3>/config/games.yml` into `Vec<Game>` keyed by serial. Use the Skylanders serial whitelist (BLUS30906, BLUS30968, BLUS31076, BLUS31442, BLUS31545, BLUS31600) to filter to just the Skylanders titles.
+- [ ] 3.3.2 `resolve_eboot(game: &Game) -> PathBuf` — `{game.sky_root}/PS3_GAME/USRDIR/EBOOT.BIN`. Verify existence.
+- [ ] 3.3.3 Server state gains `current_game: Option<GameSerial>`.
+- [ ] 3.3.4 REST: `GET /api/games` → installed Skylanders titles (cross-referenced with the Phase 1d game-of-origin whitelist). `POST /api/launch { serial }` → launches RPCS3 via `RpcsProcess::launch`, emits `Event::GameLaunched`. `POST /api/quit` → graceful shutdown.
+- [ ] 3.3.5 Phone: new `<GamePicker />` screen shown when `current_game` is None. After launch, transition to the existing portal view.
+- [ ] 3.3.6 Handle "quit game" from phone → driver flow: `shutdown_graceful` with 30s timer, user can request force-kill on the phone after the timer starts.
+
+### 3.4 Mock driver failure injection (`crates/rpcs3-control`)
+
+- [ ] 3.4.1 `MockPortalDriver` gains `inject_on_load(figure_id: Option<FigureId>, outcome: MockOutcome)` where `MockOutcome ∈ { Ok, FileInUse, QtModal(String), Timeout, DriverCrashed }`.
+- [ ] 3.4.2 Injection is thread-safe (`Mutex<VecDeque<InjectedOutcome>>`) so the e2e harness can queue a sequence across a multi-step scenario.
+- [ ] 3.4.3 Dev-only REST endpoint `POST /api/_test/inject { slot, kind, message }` gated by a `test-hooks` Cargo feature (on top of `dev-tools`). Absent in release.
+- [ ] 3.4.4 Unit tests confirming each outcome routes correctly through the server's `restore_after_failure` path.
+
+### 3.5 E2E harness scaffolding (`tests/e2e/`)
+
+- [ ] 3.5.1 New test-only crate `tests/e2e/` (or `crates/e2e-tests/` — whichever fits the workspace layout).
+- [ ] 3.5.2 `fantoccini` client connecting to a locally-running `chromedriver`. Document the one-time chromedriver install in `tests/e2e/README.md`; detect a running chromedriver on boot, fail fast with the install command if absent.
+- [ ] 3.5.3 `TestServer::spawn(feature = "test-hooks")` — builds and runs the server with mock driver + test-hooks feature, scrapes `serving on http://…` from the log file, returns the URL + a handle whose `Drop` kills the child.
+- [ ] 3.5.4 `Phone::new(url)` — fantoccini client + helper methods: `wait_for_figure_grid()`, `tap_slot(n)`, `tap_figure_by_name(n)`, `slot_state(n)`, `last_toast()`.
+- [ ] 3.5.5 Cleanup guarantees: every test's server + browser client are torn down via RAII even on panic.
+
+### 3.6 Phase 2 regression scenarios as named tests (covers 2.10.6)
+
+- [ ] 3.6.1 `spam_click_same_slot` — fantoccini clicks the same card 5x in <50ms; assert ≤1 load request reaches the driver (via `MockPortalDriver` counter); phone shows one-or-zero toasts; final slot state = Loaded.
+- [ ] 3.6.2 `dup_figure_across_slots` — load figure into slot 1 (injected OK), then load same figure into slot 2 (injected FileInUse); assert slot 2 ends Empty, toast fires, slot 1 still Loaded.
+- [ ] 3.6.3 `clear_then_load_sequence` — load, clear, load different figure; final state is the new figure Loaded.
+- [ ] 3.6.4 `error_toast_never_populates_slot` — parameterised over every `MockOutcome` failure variant; assert slot never ends in a visible "error text" state.
+- [ ] 3.6.5 `ws_reconnect` — kill the server WS connection mid-session; phone reconnects; receives `PortalSnapshot`; UI matches the pre-kill slot state.
+- [ ] 3.6.6 `on_portal_figures_disabled` — load a figure; assert the matching card is disabled with the "On portal" badge; tapping it toasts "Already on the portal."
+
+### 3.7 Optional: real-RPCS3 e2e (heavier, manual trigger)
+
+- [ ] 3.7.1 `tests/e2e/live/` — tests that `RpcsProcess::launch` + drive actual RPCS3. Gated behind `--ignored` so they're never part of the default `cargo test`.
+- [ ] 3.7.2 `lifecycle_launch_load_clear_quit` — launches SSA (or whichever the user marks), loads Eruptor, clears, quits.
+- [ ] 3.7.3 `offscreen_hide_really_hides` — the observational piece we couldn't confirm in Phase 1a.
+
+**Review checkpoint:** once 3.1 – 3.6 are green, feature work below is safe to fan out in parallel.
+
+---
+
+### 3.8 Name reconciliation (carryover from Phase 2)
+
+- [ ] 3.8.1 Driver worker knows the `figure_id` it asked to load; it overrides RPCS3's `display_name` with `figures[figure_id].canonical_name` before broadcasting `SlotChanged` so unknowns don't show as `"Unknown (Id:N Var:M)"`.
+- [ ] 3.8.2 On `RefreshPortal` (no figure_id context), attempt a name-to-id reverse match against the indexed figures; fall back to the raw display name with a visual "?" badge if unmatched.
+
+### 3.9 Profile system + PINs (covers SPEC.md Q20-Q24)
+
+- [ ] 3.9.1 `crates/server`: add SQLite via `sqlx`. Schema: `profiles(id, display_name, pin_hash, created_at)`, `sessions(profile_id, last_portal_layout_json, updated_at)`, `figure_usage(profile_id, figure_id, last_used_at)`.
+- [ ] 3.9.2 Profile-picker screen — "chest" visual placeholder until aesthetic pass.
+- [ ] 3.9.3 PIN keypad: 4-digit, large touch targets. Three-strikes backoff (5s lockout) to discourage a sibling from guessing.
+- [ ] 3.9.4 Profile admin UI: create/delete profile, reset PIN (no admin PIN per SPEC Q21 — just trust the keyboard at the PC for admin ops for now).
+- [ ] 3.9.5 Guest mode deferred to 3.15 or later.
+
+### 3.10 Working copies + reset-to-fresh
+
+- [ ] 3.10.1 Working copy location: `%APPDATA%/skylander-portal-controller/working/<profile_id>/<figure_id>.sky`.
+- [ ] 3.10.2 On first pick of a figure by a profile: fork from the pack's fresh `.sky` into the working path; load that instead of the pack file.
+- [ ] 3.10.3 Reset-to-fresh action on a loaded slot: confirm → clear → copy fresh over working → reload.
+- [ ] 3.10.4 Creation Crystals (Imaginators) per-profile; reset blocked behind an extra confirm per SPEC Q61.
+
+### 3.11 Session resume + layout memory
+
+- [ ] 3.11.1 Persist the last portal layout to `sessions` on every successful load/clear.
+- [ ] 3.11.2 On profile unlock, prompt "resume last setup?" — confirm runs the load sequence automatically (respecting back-pressure).
+- [ ] 3.11.3 Skip if the profile has no prior layout.
+
+### 3.12 Takeover + kick-back
+
+- [ ] 3.12.1 Server tracks the currently-authorized WS client (by connection id, not profile).
+- [ ] 3.12.2 New WS connection claims control; prior client receives a `TakenOver { by: chaos_flavor }` event.
+- [ ] 3.12.3 1-minute cooldown per SPEC Q31. "Kick back" button on the evicted phone re-initiates the handshake.
+- [ ] 3.12.4 Takeover locks the profile (clears the unlock state) but preserves the game/portal.
+
+### 3.13 HMAC command signing
+
+- [ ] 3.13.1 Server generates a random key at startup; encodes it into the QR payload alongside the URL.
+- [ ] 3.13.2 Phone includes `X-Skyportal-Sig: hmac-sha256(payload + timestamp)` on every mutating request.
+- [ ] 3.13.3 Server rejects unsigned or stale (>30s) signatures with 401.
+- [ ] 3.13.4 `on_portal` READ endpoints are unauthenticated (defence-in-depth is overkill on a trusted LAN; the gate is the mutating path).
+
+### 3.14 Reposes: collapse + variant cycling
+
+- [ ] 3.14.1 Browser collapses figures sharing a `variant_group` into a single card showing the base figure + "N variants" badge.
+- [ ] 3.14.2 Tap the variant badge → cycle between variants in place (per SPEC Q76).
+- [ ] 3.14.3 Loaded variant reflected on the slot's display_name.
+
+### 3.15 Aesthetic pass (Skylanders-style CSS)
+
+- [ ] 3.15.1 Implement the visual direction from `docs/aesthetic/ui_style_example.png`: circular gold-bezeled figure portraits, starfield blue background, bold white titles with gold outline.
+- [ ] 3.15.2 Element gradient palette tuned against in-game references.
+- [ ] 3.15.3 Card-state transitions (Pick → Loading → Loaded) get subtle animation.
+- [ ] 3.15.4 Use the `frontend-design` skill for the heavier visual work.
+
+### 3.16 First-launch config wizard (egui)
+
+- [ ] 3.16.1 On first launch (no `config.json` in APPDATA), egui shows a wizard: RPCS3 path picker, firmware pack picker, Done.
+- [ ] 3.16.2 Validate each path (rpcs3.exe exists; pack contains `.sky` files).
+- [ ] 3.16.3 Writes `%APPDATA%/skylander-portal-controller/config.json` and reloads.
+
+### 3.17 Reconnect overlay + network fallback
+
+- [ ] 3.17.1 When the authorised phone disconnects and doesn't return within ~10s, render a small always-on-top overlay window (separate eframe viewport) in the lower-right showing a reconnect QR.
+- [ ] 3.17.2 "Can't connect" button on the launcher opens a network-interface picker (Q49 fallback).
+
+### 3.18 Packaging + GitHub Releases
+
+- [ ] 3.18.1 `cargo dist` or hand-rolled zip script: bundle `server.exe` + `phone/dist/` + `README.md`.
+- [ ] 3.18.2 GitHub Action: on tag push, build Windows zip, attach to release.
+- [ ] 3.18.3 Release README spells out the required user-supplied bits (RPCS3 install + firmware backups).
+
+### 3.19 Wiki scrape (second pass)
+
+- [ ] 3.19.1 `tools/wiki-scrape/` — Rust one-shot per Phase 1d plan. Reads `docs/research/firmware-inventory.json`, hits Fandom API, emits `data/figures.json` + `data/images/<figure_id>/{thumb,hero}.png`.
+- [ ] 3.19.2 Commit results to repo. Manual curation file `data/figures.manual.json` overlays the scrape.
+- [ ] 3.19.3 Server serves images at `/api/figures/<id>/image?size={thumb,hero}` (with fallback to element icon if absent).
+- [ ] 3.19.4 Phone card icon becomes the figure's hero image when available.
+
+---
+
+## Phase 4 — Chaos
+
+- [ ] 4.1 Wall-clock timer: 20min warmup + randomized 60min windows.
+- [ ] 4.2 Text-only overlay with Kaos catchphrases (curated in-repo list; text avoids audio copyright).
+- [ ] 4.3 1-for-1 swap of a portal figure with a random compatible-with-current-game figure.
+- [ ] 4.4 Purple/pink skin theme applied via CSS variables.
+- [ ] 4.5 Parent kill-switch (SPEC Q38) — hidden config knob, not in the phone UI.
+- [ ] 4.6 Integration: Chaos swap must go through the standard driver flow (so tests catch regressions).
+
+Chaos is LAST. Do not start without explicit go-ahead.
 
 ---
 
