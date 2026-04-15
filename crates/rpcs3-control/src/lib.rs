@@ -48,4 +48,4 @@ pub use process::{RpcsProcess, ShutdownPath};
 #[cfg(feature = "mock")]
 pub mod mock;
 #[cfg(feature = "mock")]
-pub use mock::MockPortalDriver;
+pub use mock::{MockOutcome, MockPortalDriver};

@@ -39,11 +39,12 @@ fn main() -> Result<()> {
 }
 
 fn enumerate_all_matching() -> Result<()> {
-    use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
+    use windows::Win32::Foundation::{HWND, LPARAM, RECT};
     use windows::Win32::UI::WindowsAndMessaging::{
         EnumWindows, GetClassNameW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
         IsWindowVisible,
     };
+    use windows::core::BOOL;
 
     struct Ctx {
         hits: Vec<(HWND, String, String, RECT, bool)>,

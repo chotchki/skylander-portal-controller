@@ -21,7 +21,8 @@ use crate::games::InstalledGame;
 use crate::state::{AppState, DriverJob};
 
 pub fn router(state: Arc<AppState>, phone_dist: std::path::PathBuf) -> Router {
-    let api = Router::new()
+    #[allow(unused_mut)]
+    let mut api = Router::new()
         .route("/api/figures", get(list_figures))
         .route("/api/portal", get(get_portal))
         .route("/api/portal/slot/:n/load", post(load_slot))
@@ -32,6 +33,11 @@ pub fn router(state: Arc<AppState>, phone_dist: std::path::PathBuf) -> Router {
         .route("/api/launch", post(launch_game))
         .route("/api/quit", post(quit_game))
         .route("/ws", get(ws_handler));
+
+    #[cfg(feature = "test-hooks")]
+    {
+        api = api.route("/api/_test/inject_load", post(inject_load));
+    }
 
     // Static phone SPA (dev mode — ServeDir). When the dist directory isn't
     // present yet (before 2.7 builds the SPA), fall back to a placeholder.
@@ -252,6 +258,58 @@ async fn launch_game(
 struct QuitQuery {
     #[serde(default)]
     force: bool,
+}
+
+#[cfg(feature = "test-hooks")]
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum InjectLoadOutcome {
+    Ok,
+    FileInUse { message: Option<String> },
+    QtModal { message: String },
+    Timeout,
+}
+
+#[cfg(feature = "test-hooks")]
+#[derive(Deserialize)]
+struct InjectLoadBody {
+    /// Sequence of outcomes for upcoming `load` calls.
+    outcomes: Vec<InjectLoadOutcome>,
+}
+
+#[cfg(feature = "test-hooks")]
+async fn inject_load(
+    State(state): State<Arc<AppState>>,
+    axum::Json(body): axum::Json<InjectLoadBody>,
+) -> Response {
+    let mock = match &state.test_mock {
+        Some(m) => m.clone(),
+        None => {
+            return (
+                StatusCode::CONFLICT,
+                "/api/_test/inject_load requires the mock driver",
+            )
+                .into_response();
+        }
+    };
+    let mapped: Vec<skylander_rpcs3_control::MockOutcome> = body
+        .outcomes
+        .into_iter()
+        .map(|o| match o {
+            InjectLoadOutcome::Ok => skylander_rpcs3_control::MockOutcome::Ok,
+            InjectLoadOutcome::FileInUse { message } => {
+                skylander_rpcs3_control::MockOutcome::FileInUse {
+                    message: message.unwrap_or_else(|| "file is in use".into()),
+                }
+            }
+            InjectLoadOutcome::QtModal { message } => {
+                skylander_rpcs3_control::MockOutcome::QtModal { message }
+            }
+            InjectLoadOutcome::Timeout => skylander_rpcs3_control::MockOutcome::Timeout,
+        })
+        .collect();
+    mock.queue_load_outcomes(mapped);
+    (StatusCode::ACCEPTED, "queued").into_response()
 }
 
 async fn quit_game(

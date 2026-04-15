@@ -26,6 +26,12 @@ pub struct AppState {
     pub rpcs3_exe: PathBuf,
     /// Lifecycle lock around the currently-running RPCS3 instance.
     pub rpcs3: Arc<Mutex<RpcsLifecycle>>,
+
+    /// Concrete mock driver handle, populated only when running with the
+    /// mock driver + test-hooks feature. The /api/_test/* endpoints use
+    /// this to inject failure outcomes.
+    #[cfg(feature = "test-hooks")]
+    pub test_mock: Option<Arc<skylander_rpcs3_control::MockPortalDriver>>,
 }
 
 #[derive(Default)]

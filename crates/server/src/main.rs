@@ -101,7 +101,7 @@ fn main() -> Result<()> {
                 .build()
                 .expect("build tokio runtime");
             rt.block_on(async move {
-                let driver: Arc<dyn PortalDriver> = match build_driver(driver_kind) {
+                let (driver, test_mock): (Arc<dyn PortalDriver>, _) = match build_driver(driver_kind) {
                     Ok(d) => d,
                     Err(e) => {
                         tracing::error!("failed to construct driver: {e}");
@@ -123,7 +123,11 @@ fn main() -> Result<()> {
                     games: games_for_task,
                     rpcs3_exe,
                     rpcs3: rpcs3_for_task,
+                    #[cfg(feature = "test-hooks")]
+                    test_mock,
                 });
+                #[cfg(not(feature = "test-hooks"))]
+                let _ = test_mock;
 
                 let app = http::router(state.clone(), phone_dist);
                 let listener = tokio::net::TcpListener::bind(bind_addr)
@@ -171,13 +175,24 @@ fn main() -> Result<()> {
     .map_err(|e| anyhow::anyhow!("eframe error: {e}"))
 }
 
-fn build_driver(kind: DriverKind) -> Result<Arc<dyn PortalDriver>> {
+#[cfg(feature = "test-hooks")]
+type TestMockHandle = Option<Arc<skylander_rpcs3_control::MockPortalDriver>>;
+#[cfg(not(feature = "test-hooks"))]
+type TestMockHandle = ();
+
+type DriverBundle = (Arc<dyn PortalDriver>, TestMockHandle);
+
+fn build_driver(kind: DriverKind) -> Result<DriverBundle> {
     match kind {
         DriverKind::Uia => {
             #[cfg(windows)]
             {
                 let d = skylander_rpcs3_control::UiaPortalDriver::new()?;
-                Ok(Arc::new(d))
+                let arc: Arc<dyn PortalDriver> = Arc::new(d);
+                #[cfg(feature = "test-hooks")]
+                return Ok((arc, None));
+                #[cfg(not(feature = "test-hooks"))]
+                return Ok((arc, ()));
             }
             #[cfg(not(windows))]
             anyhow::bail!("UIA driver only available on Windows");
@@ -185,8 +200,15 @@ fn build_driver(kind: DriverKind) -> Result<Arc<dyn PortalDriver>> {
         DriverKind::Mock => {
             #[cfg(feature = "dev-tools")]
             {
-                let d = skylander_rpcs3_control::MockPortalDriver::new();
-                Ok(Arc::new(d))
+                let mock = Arc::new(skylander_rpcs3_control::MockPortalDriver::new());
+                let arc: Arc<dyn PortalDriver> = mock.clone();
+                #[cfg(feature = "test-hooks")]
+                return Ok((arc, Some(mock)));
+                #[cfg(not(feature = "test-hooks"))]
+                {
+                    let _ = mock;
+                    return Ok((arc, ()));
+                }
             }
             #[cfg(not(feature = "dev-tools"))]
             anyhow::bail!("mock driver only available with the dev-tools feature");

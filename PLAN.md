@@ -251,12 +251,12 @@ Everything after 3.7 is feature work, safe to pick off in any order once tests a
 - [x] 3.3.5 Phone `<GamePicker />` renders when `current_game` is None. Tapping a card posts /launch; the WS `GameChanged` event flips the UI into the portal view once RPCS3 is ready.
 - [x] 3.3.6 Header shows "Quit game" button when a game is active. Phase 3 can add the 30s countdown + force-kick UI on top (currently force=true is available programmatically only).
 
-### 3.4 Mock driver failure injection (`crates/rpcs3-control`)
+### 3.4 Mock driver failure injection (`crates/rpcs3-control`) — DONE
 
-- [ ] 3.4.1 `MockPortalDriver` gains `inject_on_load(figure_id: Option<FigureId>, outcome: MockOutcome)` where `MockOutcome ∈ { Ok, FileInUse, QtModal(String), Timeout, DriverCrashed }`.
-- [ ] 3.4.2 Injection is thread-safe (`Mutex<VecDeque<InjectedOutcome>>`) so the e2e harness can queue a sequence across a multi-step scenario.
-- [ ] 3.4.3 Dev-only REST endpoint `POST /api/_test/inject { slot, kind, message }` gated by a `test-hooks` Cargo feature (on top of `dev-tools`). Absent in release.
-- [ ] 3.4.4 Unit tests confirming each outcome routes correctly through the server's `restore_after_failure` path.
+- [x] 3.4.1 `MockPortalDriver::queue_load_outcomes(Vec<MockOutcome>)`. `MockOutcome` variants: `Ok`, `FileInUse { message }`, `QtModal { message }`, `Timeout`. (Simpler than per-figure targeting; FIFO across all loads is enough for the 2.10.6 scenarios.)
+- [x] 3.4.2 Queue lives in `Mutex<VecDeque<MockOutcome>>`, pop-front per load.
+- [x] 3.4.3 `POST /api/_test/inject_load` endpoint behind `#[cfg(feature = "test-hooks")]` on `crates/server`. Body: `{ "outcomes": [{ "kind": "file_in_use", "message": "…" }, …] }`. Returns 409 if the mock driver isn't active. Disabled at the Router level when the feature is off.
+- [x] 3.4.4 Three new unit tests exercise the Ok-fallthrough, FileInUse, and QtModal paths through `MockPortalDriver::load`.
 
 ### 3.5 E2E harness scaffolding (`tests/e2e/`)
 

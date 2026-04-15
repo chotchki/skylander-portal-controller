@@ -1,14 +1,33 @@
 //! In-memory `PortalDriver`. Use via the `mock` feature.
 
+use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::Mutex;
 use std::thread::sleep;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use skylander_core::{SlotIndex, SlotState, SLOT_COUNT};
 
 use crate::PortalDriver;
+
+/// Inject-able outcomes for the next `load` call. One per queued entry;
+/// consumed FIFO. When the queue is empty, `load` behaves normally.
+#[derive(Debug, Clone)]
+pub enum MockOutcome {
+    /// Normal success path.
+    Ok,
+    /// Simulate the Windows shell "file is in use" TaskDialog path.
+    FileInUse {
+        message: String,
+    },
+    /// Simulate an RPCS3 QMessageBox like "Failed to open the skylander file!".
+    QtModal {
+        message: String,
+    },
+    /// Sleep past the driver's load timeout so the outer loop times out.
+    Timeout,
+}
 
 /// Mock driver. Tracks per-slot state; `load` pulls the figure name from the
 /// filename stem. Default latency 50ms per op (tune for tests).
@@ -16,6 +35,8 @@ pub struct MockPortalDriver {
     slots: Mutex<[SlotState; SLOT_COUNT]>,
     dialog_open: Mutex<bool>,
     latency: Duration,
+    /// Queued outcomes for upcoming `load` calls.
+    load_queue: Mutex<VecDeque<MockOutcome>>,
 }
 
 impl MockPortalDriver {
@@ -28,7 +49,21 @@ impl MockPortalDriver {
             slots: Mutex::new(std::array::from_fn(|_| SlotState::Empty)),
             dialog_open: Mutex::new(false),
             latency,
+            load_queue: Mutex::new(VecDeque::new()),
         }
+    }
+
+    /// Queue a sequence of outcomes for the next N `load` invocations.
+    pub fn queue_load_outcomes(&self, outcomes: Vec<MockOutcome>) {
+        let mut q = self.load_queue.lock().unwrap();
+        for o in outcomes {
+            q.push_back(o);
+        }
+    }
+
+    /// Clear any queued outcomes without touching the slot state.
+    pub fn clear_queue(&self) {
+        self.load_queue.lock().unwrap().clear();
     }
 
     fn delay(&self) {
@@ -61,12 +96,31 @@ impl PortalDriver for MockPortalDriver {
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "Unknown".into());
-        let mut slots = self.slots.lock().unwrap();
-        slots[slot.as_usize()] = SlotState::Loaded {
-            figure_id: None,
-            display_name: name.clone(),
-        };
-        Ok(name)
+
+        // Consume the next injected outcome, if any.
+        let outcome = self.load_queue.lock().unwrap().pop_front();
+        match outcome {
+            None | Some(MockOutcome::Ok) => {
+                let mut slots = self.slots.lock().unwrap();
+                slots[slot.as_usize()] = SlotState::Loaded {
+                    figure_id: None,
+                    display_name: name.clone(),
+                };
+                Ok(name)
+            }
+            Some(MockOutcome::FileInUse { message }) => {
+                Err(anyhow!("Windows file in use: {message}"))
+            }
+            Some(MockOutcome::QtModal { message }) => {
+                Err(anyhow!("RPCS3 reported: {message}"))
+            }
+            Some(MockOutcome::Timeout) => {
+                // Sleep past any reasonable test-side timeout. The real UIA
+                // driver would bail at ~10s.
+                sleep(Duration::from_secs(11));
+                Err(anyhow!("timeout"))
+            }
+        }
     }
 
     fn clear(&self, slot: SlotIndex) -> Result<()> {
@@ -80,6 +134,50 @@ impl PortalDriver for MockPortalDriver {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn queued_file_in_use_errors_and_leaves_slot_empty() {
+        let d = MockPortalDriver::with_latency(Duration::ZERO);
+        d.queue_load_outcomes(vec![MockOutcome::FileInUse {
+            message: "Airstrike.sky — This file is in use.".into(),
+        }]);
+        let err = d
+            .load(SlotIndex::new(0).unwrap(), &PathBuf::from("Airstrike.sky"))
+            .unwrap_err();
+        assert!(err.to_string().contains("file in use"), "err: {err}");
+        assert!(matches!(d.read_slots().unwrap()[0], SlotState::Empty));
+    }
+
+    #[test]
+    fn queued_qt_modal_surfaces_message() {
+        let d = MockPortalDriver::with_latency(Duration::ZERO);
+        d.queue_load_outcomes(vec![MockOutcome::QtModal {
+            message: "Failed to open the skylander file!".into(),
+        }]);
+        let err = d
+            .load(SlotIndex::new(1).unwrap(), &PathBuf::from("Bash.sky"))
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("Failed to open"),
+            "unexpected err: {err}"
+        );
+    }
+
+    #[test]
+    fn queue_is_fifo_and_bypasses_to_normal_when_empty() {
+        let d = MockPortalDriver::with_latency(Duration::ZERO);
+        d.queue_load_outcomes(vec![MockOutcome::QtModal {
+            message: "boom".into(),
+        }]);
+        // First load hits the injected error.
+        assert!(d
+            .load(SlotIndex::new(0).unwrap(), &PathBuf::from("a.sky"))
+            .is_err());
+        // Second load falls through to the normal success path.
+        assert!(d
+            .load(SlotIndex::new(0).unwrap(), &PathBuf::from("b.sky"))
+            .is_ok());
+    }
 
     #[test]
     fn load_then_clear() {
