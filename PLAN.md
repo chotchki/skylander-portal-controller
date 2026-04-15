@@ -437,6 +437,7 @@ Implementation lives in `crates/server/src/wizard.rs` + `crates/server/src/paths
 - [x] 3.19.3 Server serves `GET /api/figures/:id/image?size={thumb,hero}` with `Cache-Control: public, max-age=86400`. Fallback: element-icon from the firmware pack. Input validated to 16 hex chars.
 - [x] 3.19.4 Phone card icon renders `<img class="card-thumb" src="/api/figures/{id}/image?size=thumb">` over the element-short label; label shows through on 404.
 - [ ] 3.19.5 Re-run scraper to cover the remaining ~400 figures. Investigate what caused the first run to stop at 100 — suspect Fandom 429 without backoff. Add a resume-from-manifest flag so partial runs aren't wasted.
+- [ ] 3.19.6 **Attribution (pre-release blocker).** Fandom content is CC BY-SA — the license requires prominent attribution + license identification + indication of modifications. Surface in the phone app: either (a) a footer link "Data & images from the Skylanders Wiki (CC BY-SA)" visible on the figure browser, (b) an About screen reachable from the header, or (c) a per-figure credit on the figure-detail screen (blocks on PLAN 5.3). The exact placement depends on how the aesthetic pass (3.15) reshapes the layout — decide when that lands. `data/LICENSE.md` already cites the source for the repo; this covers the user-visible runtime requirement. Must land before any public release (3.18).
 
 ---
 
