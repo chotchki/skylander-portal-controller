@@ -200,6 +200,24 @@ fn Browser(
         })
     });
 
+    // Set of display names currently loaded (or mid-load) on the portal.
+    // We compare by canonical_name ↔ RPCS3's display_name because the server
+    // doesn't yet echo a figure_id back in Loaded events (Phase 3 reconciles).
+    let loaded_names = Memo::new(move |_| {
+        let p = portal.get();
+        let mut names: Vec<String> = Vec::new();
+        for s in p.iter() {
+            match &s.state {
+                SlotState::Loaded { display_name, .. } => names.push(display_name.clone()),
+                SlotState::Loading {
+                    figure_id: Some(id),
+                } => names.push(format!("__id:{id}")),
+                _ => {}
+            }
+        }
+        names
+    });
+
     view! {
         <BrowserHead element_filter search />
         <div class="grid">
@@ -212,10 +230,32 @@ fn Browser(
                     let elem = f.element;
                     let variant = f.variant_tag.clone();
                     let variant_for_show = variant.clone();
+
+                    let name_for_check = name.clone();
+                    let id_for_check = id.clone();
+                    let is_on_portal = move || {
+                        let loaded = loaded_names.get();
+                        let id_marker = format!("__id:{id_for_check}");
+                        loaded
+                            .iter()
+                            .any(|n| n == &name_for_check || n == &id_marker)
+                    };
+                    let on_portal_for_class = is_on_portal.clone();
+                    let on_portal_for_disabled = is_on_portal.clone();
+                    let on_portal_for_click = is_on_portal.clone();
+                    let on_portal_for_badge = is_on_portal.clone();
+
                     view! {
                         <button
-                            class="card"
+                            class=move || {
+                                if on_portal_for_class() { "card on-portal" } else { "card" }
+                            }
+                            disabled=move || on_portal_for_disabled()
                             on:click=move |_| {
+                                if on_portal_for_click() {
+                                    push_toast(toasts, "Already on the portal.");
+                                    return;
+                                }
                                 let slot = match picking_for.get() {
                                     Some(s) => s,
                                     None => match first_empty_slot(&portal.get()) {
@@ -227,17 +267,11 @@ fn Browser(
                                     },
                                 };
                                 picking_for.set(None);
-                                // No optimistic Loading flip here — the server sets + broadcasts
-                                // Loading before enqueuing, so the WS event is authoritative. A
-                                // rejected request (e.g. 429 "slot busy") leaves the slot in its
-                                // actual previous state instead of a phantom "Loading…".
                                 let id = id.clone();
                                 leptos::task::spawn_local(async move {
                                     match post_load(slot, &id).await {
                                         Ok(()) => {}
-                                        Err(e) if e.contains("429") => {
-                                            // Slot is already mid-load from a prior tap; silently ignore.
-                                        }
+                                        Err(e) if e.contains("429") => {}
                                         Err(e) => push_toast(toasts, &format!("Load failed: {e}")),
                                     }
                                 });
@@ -249,6 +283,9 @@ fn Browser(
                             <div class="card-name">{name}</div>
                             <Show when=move || variant_for_show != "base" fallback=|| ()>
                                 <div class="card-variant">{variant.clone()}</div>
+                            </Show>
+                            <Show when=move || on_portal_for_badge() fallback=|| ()>
+                                <div class="on-portal-badge">"On portal"</div>
                             </Show>
                         </button>
                     }

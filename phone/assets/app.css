@@ -163,6 +163,25 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .card:active { transform: scale(0.96); }
 .card.active { border-color: var(--gold); background: rgba(255, 207, 58, 0.12); }
+.card.on-portal {
+  opacity: 0.45;
+  filter: saturate(0.5);
+  cursor: not-allowed;
+  position: relative;
+}
+.card.on-portal:active { transform: none; }
+.on-portal-badge {
+  position: absolute;
+  top: 4px; right: 4px;
+  background: var(--gold);
+  color: #1a1203;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 999px;
+}
 .card-icon {
   width: 54px; height: 54px; border-radius: 50%;
   background: rgba(255,255,255,0.08);
