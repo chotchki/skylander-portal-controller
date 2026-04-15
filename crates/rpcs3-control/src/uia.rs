@@ -284,22 +284,36 @@ impl crate::PortalDriver for UiaPortalDriver {
         file_edit.get_pattern::<UIValuePattern>()?.set_value(&abs_str)?;
         open_btn.get_pattern::<UIInvokePattern>()?.invoke()?;
 
-        // Race the slot value change against an error modal appearing.
-        // RPCS3 pops a QMessageBox ("Failed to open the skylander file!") when
-        // the same `.sky` is already loaded on another slot, or when the file
-        // can't be locked for another reason. Poll both with a short interval.
-        let after = match poll_load_outcome(&self.automation, &walker, &main, &edit, LOAD_TIMEOUT)? {
+        // Race the slot value change against three failure modes:
+        //  1. RPCS3's QMessageBox ("Failed to open the skylander file!").
+        //  2. Windows shell TaskDialog ("This file is in use") nested inside
+        //     the file dialog — triggered when the same .sky is already open
+        //     on another slot and the shell can't grab an exclusive handle.
+        //  3. Bare timeout — neither value change nor any modal.
+        let after = match poll_load_outcome(
+            &self.automation,
+            &walker,
+            &main,
+            &file_dlg,
+            &edit,
+            LOAD_TIMEOUT,
+        )? {
             LoadOutcome::Changed(v) => v,
-            LoadOutcome::ErrorModal { title, body, modal } => {
+            LoadOutcome::QtModal { title, body, modal } => {
                 dismiss_modal(&walker, &modal);
-                let msg = if !body.is_empty() {
-                    format!("{title} — {body}")
-                } else {
-                    title
-                };
-                bail!("RPCS3 reported: {msg}");
+                bail!("RPCS3 reported: {}", format_err(title, body));
+            }
+            LoadOutcome::ShellFileInUse { body } => {
+                // Dismiss the task dialog, then cancel the outer file dialog
+                // so the next load isn't stuck inside a half-open file picker.
+                dismiss_shell_task_dialog(&walker, &file_dlg);
+                cancel_file_dialog(&walker, &file_dlg);
+                bail!("Windows file in use: {}", body);
             }
             LoadOutcome::Timeout => {
+                // Try to back out of the file dialog so the next load can
+                // recover without user intervention.
+                cancel_file_dialog(&walker, &file_dlg);
                 bail!("slot value didn't change after Open (no error modal either)")
             }
         };
@@ -354,20 +368,28 @@ fn wait_for_value(el: &UIElement, expected: &str, timeout: Duration) -> Result<(
 
 enum LoadOutcome {
     Changed(String),
-    ErrorModal {
+    /// RPCS3-side Qt modal (QMessageBox).
+    QtModal {
         title: String,
         body: String,
         modal: UIElement,
     },
+    /// Windows shell TaskDialog nested inside the "Select Skylander File"
+    /// dialog — the "file is in use" prompt.
+    ShellFileInUse {
+        body: String,
+    },
     Timeout,
 }
 
-/// Poll the slot edit for value change and the RPCS3 main window for a new
-/// modal (i.e. an error popup) in parallel.
+/// Poll the slot edit for a value change, the RPCS3 main window for a Qt
+/// error modal, and the open file dialog for a nested shell TaskDialog — all
+/// in parallel.
 fn poll_load_outcome(
     automation: &UIAutomation,
     walker: &UITreeWalker,
     main: &UIElement,
+    file_dlg: &UIElement,
     slot_edit: &UIElement,
     timeout: Duration,
 ) -> Result<LoadOutcome> {
@@ -377,14 +399,80 @@ fn poll_load_outcome(
         if !cur.is_empty() && cur != "None" {
             return Ok(LoadOutcome::Changed(cur));
         }
+        if let Some(body) = find_shell_file_in_use(walker, file_dlg) {
+            return Ok(LoadOutcome::ShellFileInUse { body });
+        }
         if let Some(modal) = find_error_modal(automation, walker, main) {
             let title = modal.get_name().unwrap_or_default();
             let body = read_modal_body(walker, &modal);
-            return Ok(LoadOutcome::ErrorModal { title, body, modal });
+            return Ok(LoadOutcome::QtModal { title, body, modal });
         }
         sleep(POLL_INTERVAL);
     }
     Ok(LoadOutcome::Timeout)
+}
+
+fn format_err(title: String, body: String) -> String {
+    if body.is_empty() {
+        title
+    } else {
+        format!("{title} — {body}")
+    }
+}
+
+/// Windows shell's "This file is in use" TaskDialog appears as a nested
+/// `<TaskDialog>` pane inside the file dialog. Return its ContentText if
+/// present.
+fn find_shell_file_in_use(walker: &UITreeWalker, file_dlg: &UIElement) -> Option<String> {
+    let pane = find_descendant(walker, file_dlg, |el| {
+        el.get_classname()
+            .map(|c| c == "TaskDialog")
+            .unwrap_or(false)
+    })?;
+    let body = find_descendant(walker, &pane, |el| {
+        el.get_automation_id()
+            .map(|a| a == "ContentText")
+            .unwrap_or(false)
+    })
+    .and_then(|el| el.get_name().ok())
+    .unwrap_or_else(|| "File is in use.".to_string());
+    Some(body)
+}
+
+fn dismiss_shell_task_dialog(walker: &UITreeWalker, file_dlg: &UIElement) {
+    // The OK button in a shell TaskDialog has AutomationId "CommandButton_N";
+    // the "OK" / "Close" button is typically CommandButton_1.
+    if let Some(btn) = find_descendant(walker, file_dlg, |el| {
+        el.get_control_type()
+            .map(|c| c == ControlType::Button)
+            .unwrap_or(false)
+            && (el
+                .get_automation_id()
+                .map(|a| a.starts_with("CommandButton_"))
+                .unwrap_or(false)
+                || el.get_name().map(|n| matches!(n.as_str(), "OK" | "Close")).unwrap_or(false))
+    }) {
+        if let Ok(inv) = btn.get_pattern::<UIInvokePattern>() {
+            let _ = inv.invoke();
+        }
+    }
+    // Give the shell a tick to tear the TaskDialog down.
+    sleep(Duration::from_millis(60));
+}
+
+fn cancel_file_dialog(walker: &UITreeWalker, file_dlg: &UIElement) {
+    if let Some(btn) = find_descendant(walker, file_dlg, |el| {
+        el.get_control_type()
+            .map(|c| c == ControlType::Button)
+            .unwrap_or(false)
+            && el.get_automation_id().map(|a| a == "2").unwrap_or(false)
+            && el.get_name().map(|n| n == "Cancel").unwrap_or(false)
+    }) {
+        if let Ok(inv) = btn.get_pattern::<UIInvokePattern>() {
+            let _ = inv.invoke();
+        }
+    }
+    sleep(Duration::from_millis(80));
 }
 
 fn find_error_modal(
