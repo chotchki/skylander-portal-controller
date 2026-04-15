@@ -25,19 +25,20 @@ Conventions:
 
 These are the unknowns that block everything else. Each produces a short writeup in `docs/research/`.
 
-### 1a. RPCS3 portal control
-- [ ] Read RPCS3 source (it's open source) around the skylander portal emulation to understand: how does the "configure portal" dialog work? What widget tree does Qt expose? What file-picker flow triggers a figure load? What's the "clear slot" action?
-- [ ] Enumerate the widget tree on a running RPCS3 via Windows UI Automation (`uiautomation` crate or raw Win32) — confirm we can see the portal dialog, its slot buttons, and file-picker children by name/AutomationId.
-- [ ] Spike: can we drive "load figure X into slot N" end-to-end headlessly (dialog off-screen or backgrounded)? Report latency.
-- [ ] Investigate whether RPCS3 exposes any log events, IPC, or command-line hooks we can use to *confirm* a slot load happened (so our spinner has a real signal). Fallback: filesystem/timing heuristic.
-- [ ] Is the "configure portal" dialog a child window of the emulator, or top-level? Can we move it off-screen on Windows 11 without Windows snapping it back?
-- [ ] Writeup: `docs/research/rpcs3-control.md` with chosen mechanism, widget paths, latency numbers, confidence level, and known risks.
+### 1a. RPCS3 portal control — DONE
+- [x] Read RPCS3 source. Dialog at `rpcs3/rpcs3qt/skylander_dialog.{h,cpp}`. 8 slots, each with Label/LineEdit/Clear/Create/Load buttons. `UI_SKY_NUM = 8`. Dialog is a singleton triggered by `actionManage_Skylanders_Portal`.
+- [x] Enumerated widget tree via UIA (`tools/uia-probe/`). Every widget addressable by class/name; Invoke+Value patterns available.
+- [x] Drove a full load end-to-end (`tools/uia-drive/`). Eruptor → slot 1 in **861 ms total** (file dialog 554ms, path-set 2ms, value-change 71ms). Spinner signal: poll `ValuePattern::get_value()` on the row's `QLineEdit`.
+- [x] Slot confirmation comes from the `QLineEdit` value changing away from "None" — reliable and fast.
+- [x] Dialog is a **nested window** under the main RPCS3 window, not top-level. UIA finds it fine.
+- [x] Off-screen move: `TransformPattern.move_to` is insufficient (UIA reports success but window doesn't move). **Phase 2 must use Win32 `SetWindowPos` via `NativeWindowHandle`**. UIA accessibility continues to work either way.
+- [x] Writeup: `docs/research/rpcs3-control.md`.
 
-### 1b. RPCS3 launch & version detection
-- [ ] Determine RPCS3 CLI flags relevant to us (boot title by serial? `--no-gui`? stdout/exit behavior?).
-- [ ] Write a tiny spike that launches RPCS3 with a game and captures the process handle + main window handle.
-- [ ] Read the version from the running RPCS3 (UIA window title, or file version info of the .exe).
-- [ ] Writeup: `docs/research/rpcs3-launch.md`.
+### 1b. RPCS3 launch & version detection — DONE (folded into 1a)
+- [x] CLI boots a game via `rpcs3.exe "<game_root>/PS3_GAME/USRDIR/EBOOT.BIN"`. Do NOT use `--no-gui` (kills the Manage menu we depend on).
+- [x] Game catalogue: read `<install>/config/games.yml` — flat YAML of `serial: path/`. Users' installed titles: BLUS30968 (Giants), BLUS31076 (Swap Force), BLUS31442 (Trap Team), BLUS31545 (Superchargers), BLUS31600 (Imaginators). SSA (BLUS30906) not installed yet.
+- [x] Version from UIA window title: `RPCS3 0.0.40-19203-0b9c53e2 Alpha | master`. Regex-parseable.
+- Writeup merged into `docs/research/rpcs3-control.md`.
 
 ### 1c. Firmware pack indexer (first pass) — DONE
 - [x] Walk `C:\Users\chris\workspace\Skylanders Characters Pack for RPCS3`, produce a JSON inventory: `{game, element, variant_group, file_name}`.
@@ -61,7 +62,7 @@ These are the unknowns that block everything else. Each produces a short writeup
 - [x] Writeup: `docs/research/stack-smoke.md`.
 - **Findings:** stack works. Axum on tokio on a background thread + eframe on the main thread coexist cleanly. Leptos 0.7 compiles to WASM via trunk (768KB debug; smaller in release). Phase 2 will split into a real Cargo workspace; SPA bundles into server via `include_dir!`.
 
-**Review checkpoint (end of Phase 1):** 1c/1d/1e done. 1a and 1b still required (need interactive RPCS3). If 1a shows UIA is viable — proceed. If not, branch to emulator-source modification or rethink. Update PLAN.md with Phase 2 scope after 1a/1b land.
+**Review checkpoint (end of Phase 1): ALL SPIKES COMPLETE. UIA is viable.** Proceed to Phase 2.
 
 ---
 

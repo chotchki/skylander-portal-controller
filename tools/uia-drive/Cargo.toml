@@ -1,0 +1,13 @@
+# Standalone tool — intentionally NOT part of the root Cargo workspace.
+# Run with: `cargo run --manifest-path tools/uia-drive/Cargo.toml -- <slot> <sky-path>`
+[workspace]
+
+[package]
+name = "uia-drive"
+version = "0.0.1"
+edition = "2021"
+publish = false
+
+[dependencies]
+uiautomation = "0.20"
+anyhow = "1"
