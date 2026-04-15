@@ -1,0 +1,19 @@
+# Declare this as its own workspace so the root crate doesn't try to absorb it.
+[workspace]
+
+[package]
+name = "firmware-inventory"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Standalone tool — intentionally NOT a member of the root Cargo workspace.
+# Run with: `cargo run --manifest-path tools/inventory/Cargo.toml`
+
+[[bin]]
+name = "firmware-inventory"
+path = "src/main.rs"
+
+[dependencies]
+sha2 = "0.10"
+walkdir = "2"

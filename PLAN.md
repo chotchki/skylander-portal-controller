@@ -39,26 +39,29 @@ These are the unknowns that block everything else. Each produces a short writeup
 - [ ] Read the version from the running RPCS3 (UIA window title, or file version info of the .exe).
 - [ ] Writeup: `docs/research/rpcs3-launch.md`.
 
-### 1c. Firmware pack indexer (first pass)
-- [ ] Walk `C:\Users\chris\workspace\Skylanders Characters Pack for RPCS3`, produce a JSON inventory: `{game, element, variant_group, file_name}`.
-- [ ] Classify each entry (figure / sidekick / item / adventure-pack / creation-crystal).
-- [ ] Stable figure IDs: hash of `(game, element, relative path)` — verify stability across scans.
-- [ ] Writeup: `docs/research/firmware-inventory.md` with counts per game/element/type and any odd entries.
+### 1c. Firmware pack indexer (first pass) — DONE
+- [x] Walk `C:\Users\chris\workspace\Skylanders Characters Pack for RPCS3`, produce a JSON inventory: `{game, element, variant_group, file_name}`.
+- [x] Classify each entry (figure / sidekick / item / adventure-pack / creation-crystal).
+- [x] Stable figure IDs: hash of `(game, element, relative path)` — verify stability across scans.
+- [x] Writeup: `docs/research/firmware-inventory.md` with counts per game/element/type and any odd entries.
+- **Findings:** 504 entries. `.sky` (not `.dump`). Spec-unknown sub-trees: Trap Team `Traps/` (64), Trap Team `Minis/` (18), Superchargers `Vehicle/` (27). Imaginators has 3 naming conventions. Tool lives at `tools/inventory/`.
 
-### 1d. Wiki scrape feasibility
-- [ ] Confirm Fandom MediaWiki search API is reachable. Probe it with 20 figure names from the indexer: measure hit rate.
-- [ ] From a hit page, extract: canonical name, hero image URL, thumbnail URL, element, type, game of origin, notable attributes.
-- [ ] Decide scrape tool (PowerShell is fine per user; also OK to use pure Rust with `reqwest` + `scraper`).
-- [ ] Writeup: `docs/research/wiki-scrape.md` with the hit rate, extraction plan, image-size decisions (thumbnail + hero), and attribution block for the app's About page.
+### 1d. Wiki scrape feasibility — DONE
+- [x] Confirm Fandom MediaWiki search API is reachable. Probe it with 20 figure names from the indexer: measure hit rate.
+- [x] From a hit page, extract: canonical name, hero image URL, thumbnail URL, element, type, game of origin, notable attributes.
+- [x] Decide scrape tool (PowerShell is fine per user; also OK to use pure Rust with `reqwest` + `scraper`).
+- [x] Writeup: `docs/research/wiki-scrape.md` with the hit rate, extraction plan, image-size decisions (thumbnail + hero), and attribution block for the app's About page.
+- **Findings:** 20/20 hit via `opensearch`. Metadata extractable via `prop=pageimages|categories|revisions`. Use Rust (`reqwest`) for the Phase 2 scraper; output to `data/figures.json` + bundled images.
 
-### 1e. Stack smoke test (Axum + Leptos + egui)
-- [ ] Axum serves a "hello" JSON and a WebSocket echo.
-- [ ] Leptos (trunk-built WASM) SPA says "hello from the phone" and round-trips one WS message.
-- [ ] `eframe` window shows a QR code pointing at the Axum bind address and the current WS client count.
-- [ ] Confirm all three coexist in one binary and build on Windows from the HTPC dev environment.
-- [ ] Writeup: `docs/research/stack-smoke.md`.
+### 1e. Stack smoke test (Axum + Leptos + egui) — DONE
+- [x] Axum serves a "hello" JSON and a WebSocket echo.
+- [x] Leptos (trunk-built WASM) SPA says "hello from the phone" and round-trips one WS message.
+- [x] `eframe` window shows a QR code pointing at the Axum bind address and the current WS client count.
+- [x] Confirm all three coexist in one binary and build on Windows from the HTPC dev environment.
+- [x] Writeup: `docs/research/stack-smoke.md`.
+- **Findings:** stack works. Axum on tokio on a background thread + eframe on the main thread coexist cleanly. Leptos 0.7 compiles to WASM via trunk (768KB debug; smaller in release). Phase 2 will split into a real Cargo workspace; SPA bundles into server via `include_dir!`.
 
-**Review checkpoint (end of Phase 1):** Sit down together. If 1a shows UIA is viable — proceed. If not, branch to emulator-source modification or rethink the whole control approach before continuing. Update PLAN.md with Phase 2 scope based on findings.
+**Review checkpoint (end of Phase 1):** 1c/1d/1e done. 1a and 1b still required (need interactive RPCS3). If 1a shows UIA is viable — proceed. If not, branch to emulator-source modification or rethink. Update PLAN.md with Phase 2 scope after 1a/1b land.
 
 ---
 

@@ -34,3 +34,7 @@ node_modules/
 Thumbs.db
 .DS_Store
 .claude/settings.local.json
+
+# Standalone tool crates and trunk output
+/tools/*/target/
+/tools/*/dist/

@@ -1,0 +1,5042 @@
+[
+  {
+    "id": "8ad332cce9f8c1b3",
+    "game": "Imaginators",
+    "element": null,
+    "category": "adventure-pack",
+    "variant_group": "Enchanted Elven Forest",
+    "variant_tag": "base",
+    "name": "Enchanted Elven Forest",
+    "relative_path": "Adventure Packs/Imaginators/Enchanted Elven Forest.sky"
+  },
+  {
+    "id": "4dd89660b33cc7b7",
+    "game": "Imaginators",
+    "element": null,
+    "category": "adventure-pack",
+    "variant_group": "Gryphon Park Observatory",
+    "variant_tag": "base",
+    "name": "Gryphon Park Observatory",
+    "relative_path": "Adventure Packs/Imaginators/Gryphon Park Observatory.sky"
+  },
+  {
+    "id": "18b227b5fcfe3b0b",
+    "game": "Spyros Adventure",
+    "element": null,
+    "category": "adventure-pack",
+    "variant_group": "Darklight Crypt",
+    "variant_tag": "base",
+    "name": "Darklight Crypt",
+    "relative_path": "Adventure Packs/Spyros Adventure/Darklight Crypt.sky"
+  },
+  {
+    "id": "2f33e9a507be8e94",
+    "game": "Spyros Adventure",
+    "element": null,
+    "category": "adventure-pack",
+    "variant_group": "Dragon’s Peak",
+    "variant_tag": "base",
+    "name": "Dragon’s Peak",
+    "relative_path": "Adventure Packs/Spyros Adventure/Dragon’s Peak.sky"
+  },
+  {
+    "id": "b0741cc5d479ed3b",
+    "game": "Spyros Adventure",
+    "element": null,
+    "category": "adventure-pack",
+    "variant_group": "Empire of Ice",
+    "variant_tag": "base",
+    "name": "Empire of Ice",
+    "relative_path": "Adventure Packs/Spyros Adventure/Empire of Ice.sky"
+  },
+  {
+    "id": "36c61d131f8aa65f",
+    "game": "Spyros Adventure",
+    "element": null,
+    "category": "adventure-pack",
+    "variant_group": "Pirate Seas",
+    "variant_tag": "base",
+    "name": "Pirate Seas",
+    "relative_path": "Adventure Packs/Spyros Adventure/Pirate Seas.sky"
+  },
+  {
+    "id": "58ed044b39fc4740",
+    "game": "Swap Force",
+    "element": null,
+    "category": "adventure-pack",
+    "variant_group": "Sheep Wreck Island",
+    "variant_tag": "base",
+    "name": "Sheep Wreck Island",
+    "relative_path": "Adventure Packs/Swap Force/Sheep Wreck Island.sky"
+  },
+  {
+    "id": "63bb5989d7321c51",
+    "game": "Swap Force",
+    "element": null,
+    "category": "adventure-pack",
+    "variant_group": "Tower of Time",
+    "variant_tag": "base",
+    "name": "Tower of Time",
+    "relative_path": "Adventure Packs/Swap Force/Tower of Time.sky"
+  },
+  {
+    "id": "76fa2404185d5a89",
+    "game": "Trap Team",
+    "element": null,
+    "category": "adventure-pack",
+    "variant_group": "Midnight Museum",
+    "variant_tag": "base",
+    "name": "Midnight Museum",
+    "relative_path": "Adventure Packs/Trap Team/Midnight Museum.sky"
+  },
+  {
+    "id": "da0b0ccb54cde5bd",
+    "game": "Trap Team",
+    "element": null,
+    "category": "adventure-pack",
+    "variant_group": "Mirror of Mystery",
+    "variant_tag": "base",
+    "name": "Mirror of Mystery",
+    "relative_path": "Adventure Packs/Trap Team/Mirror of Mystery.sky"
+  },
+  {
+    "id": "932ab4bededa9f22",
+    "game": "Trap Team",
+    "element": null,
+    "category": "adventure-pack",
+    "variant_group": "Nightmare Express",
+    "variant_tag": "base",
+    "name": "Nightmare Express",
+    "relative_path": "Adventure Packs/Trap Team/Nightmare Express.sky"
+  },
+  {
+    "id": "c46b7d75b8f96759",
+    "game": "Trap Team",
+    "element": null,
+    "category": "adventure-pack",
+    "variant_group": "Sunscraper Spire",
+    "variant_tag": "base",
+    "name": "Sunscraper Spire",
+    "relative_path": "Adventure Packs/Trap Team/Sunscraper Spire.sky"
+  },
+  {
+    "id": "da74f95d82026213",
+    "game": "Giants",
+    "element": null,
+    "category": "item",
+    "variant_group": "Dragonfire Cannon",
+    "variant_tag": "base",
+    "name": "Dragonfire Cannon",
+    "relative_path": "Items/Giants/Dragonfire Cannon.sky"
+  },
+  {
+    "id": "c9621eb8b9dc0425",
+    "game": "Giants",
+    "element": null,
+    "category": "item",
+    "variant_group": "Dragonfire Cannon",
+    "variant_tag": "base",
+    "name": "Golden Dragonfire Cannon",
+    "relative_path": "Items/Giants/Golden Dragonfire Cannon.sky"
+  },
+  {
+    "id": "438e9f46761dfd2f",
+    "game": "Giants",
+    "element": null,
+    "category": "item",
+    "variant_group": "Hidden Treasure",
+    "variant_tag": "base",
+    "name": "Platinum Hidden Treasure",
+    "relative_path": "Items/Giants/Platinum Hidden Treasure.sky"
+  },
+  {
+    "id": "591d30dc0297a26c",
+    "game": "Giants",
+    "element": null,
+    "category": "item",
+    "variant_group": "Scorpion Striker",
+    "variant_tag": "base",
+    "name": "Scorpion Striker",
+    "relative_path": "Items/Giants/Scorpion Striker.sky"
+  },
+  {
+    "id": "7e7e08b4489911bf",
+    "game": "Spyros Adventure",
+    "element": null,
+    "category": "item",
+    "variant_group": "Anvil Rain",
+    "variant_tag": "base",
+    "name": "Anvil Rain",
+    "relative_path": "Items/Spyros Adventure/Anvil Rain.sky"
+  },
+  {
+    "id": "52fe4813de6c66ef",
+    "game": "Spyros Adventure",
+    "element": null,
+    "category": "item",
+    "variant_group": "Ghost Pirate Swords",
+    "variant_tag": "base",
+    "name": "Ghost Pirate Swords",
+    "relative_path": "Items/Spyros Adventure/Ghost Pirate Swords.sky"
+  },
+  {
+    "id": "2e0d68af67491701",
+    "game": "Spyros Adventure",
+    "element": null,
+    "category": "item",
+    "variant_group": "Healing Elixir",
+    "variant_tag": "base",
+    "name": "Healing Elixir",
+    "relative_path": "Items/Spyros Adventure/Healing Elixir.sky"
+  },
+  {
+    "id": "2f348db3c0750acc",
+    "game": "Spyros Adventure",
+    "element": null,
+    "category": "item",
+    "variant_group": "Hidden Treasure",
+    "variant_tag": "base",
+    "name": "Hidden Treasure",
+    "relative_path": "Items/Spyros Adventure/Hidden Treasure.sky"
+  },
+  {
+    "id": "749bbe7768e19ea8",
+    "game": "Spyros Adventure",
+    "element": null,
+    "category": "item",
+    "variant_group": "Sky Iron Shield",
+    "variant_tag": "base",
+    "name": "Sky Iron Shield",
+    "relative_path": "Items/Spyros Adventure/Sky Iron Shield.sky"
+  },
+  {
+    "id": "1fed663201139ac9",
+    "game": "Spyros Adventure",
+    "element": null,
+    "category": "item",
+    "variant_group": "Sparx the Dragonfly",
+    "variant_tag": "base",
+    "name": "Sparx the Dragonfly",
+    "relative_path": "Items/Spyros Adventure/Sparx the Dragonfly.sky"
+  },
+  {
+    "id": "b0d0a48974f8e1cb",
+    "game": "Spyros Adventure",
+    "element": null,
+    "category": "item",
+    "variant_group": "Time Twist Hourglass",
+    "variant_tag": "base",
+    "name": "Time Twist Hourglass",
+    "relative_path": "Items/Spyros Adventure/Time Twist Hourglass.sky"
+  },
+  {
+    "id": "c218e07ba55f7828",
+    "game": "Spyros Adventure",
+    "element": null,
+    "category": "item",
+    "variant_group": "Vault",
+    "variant_tag": "base",
+    "name": "Volcanic Vault",
+    "relative_path": "Items/Spyros Adventure/Volcanic Vault.sky"
+  },
+  {
+    "id": "88ca179b37188d4c",
+    "game": "Spyros Adventure",
+    "element": null,
+    "category": "item",
+    "variant_group": "Winged Boots",
+    "variant_tag": "base",
+    "name": "Winged Boots",
+    "relative_path": "Items/Spyros Adventure/Winged Boots.sky"
+  },
+  {
+    "id": "3fac79c382d7826a",
+    "game": "Superchargers",
+    "element": null,
+    "category": "item",
+    "variant_group": "Kaos Trophy",
+    "variant_tag": "base",
+    "name": "Kaos Trophy",
+    "relative_path": "Items/Superchargers/Kaos Trophy.sky"
+  },
+  {
+    "id": "05082a81423405fd",
+    "game": "Superchargers",
+    "element": null,
+    "category": "item",
+    "variant_group": "Land Trophy",
+    "variant_tag": "base",
+    "name": "Land Trophy",
+    "relative_path": "Items/Superchargers/Land Trophy.sky"
+  },
+  {
+    "id": "7a4d2ff565ac558f",
+    "game": "Superchargers",
+    "element": null,
+    "category": "item",
+    "variant_group": "Sea Trophy",
+    "variant_tag": "base",
+    "name": "Sea Trophy",
+    "relative_path": "Items/Superchargers/Sea Trophy.sky"
+  },
+  {
+    "id": "e606693938e4cf9c",
+    "game": "Superchargers",
+    "element": null,
+    "category": "item",
+    "variant_group": "Sky Trophy",
+    "variant_tag": "base",
+    "name": "Sky Trophy",
+    "relative_path": "Items/Superchargers/Sky Trophy.sky"
+  },
+  {
+    "id": "ebce2cfd9dfd0f12",
+    "game": "Swap Force",
+    "element": null,
+    "category": "item",
+    "variant_group": "Arkeyan Crossbow",
+    "variant_tag": "base",
+    "name": "Arkeyan Crossbow",
+    "relative_path": "Items/Swap Force/Arkeyan Crossbow.sky"
+  },
+  {
+    "id": "49f41d2386e22932",
+    "game": "Swap Force",
+    "element": null,
+    "category": "item",
+    "variant_group": "Battle Hammer",
+    "variant_tag": "base",
+    "name": "Battle Hammer",
+    "relative_path": "Items/Swap Force/Battle Hammer.sky"
+  },
+  {
+    "id": "ba98f2478bb41f2c",
+    "game": "Swap Force",
+    "element": null,
+    "category": "item",
+    "variant_group": "Fiery Forge",
+    "variant_tag": "base",
+    "name": "Fiery Forge",
+    "relative_path": "Items/Swap Force/Fiery Forge.sky"
+  },
+  {
+    "id": "2ac555c547b8dc0c",
+    "game": "Swap Force",
+    "element": null,
+    "category": "item",
+    "variant_group": "Groove Machine",
+    "variant_tag": "base",
+    "name": "Groove Machine",
+    "relative_path": "Items/Swap Force/Groove Machine.sky"
+  },
+  {
+    "id": "cf5dbd55f524d396",
+    "game": "Swap Force",
+    "element": null,
+    "category": "item",
+    "variant_group": "Sheep",
+    "variant_tag": "base",
+    "name": "Platinum Sheep",
+    "relative_path": "Items/Swap Force/Platinum Sheep.sky"
+  },
+  {
+    "id": "115b99c3eef46a8d",
+    "game": "Swap Force",
+    "element": null,
+    "category": "item",
+    "variant_group": "Sky Diamond",
+    "variant_tag": "base",
+    "name": "Sky Diamond",
+    "relative_path": "Items/Swap Force/Sky Diamond.sky"
+  },
+  {
+    "id": "b2e7870f2180fcb6",
+    "game": "Swap Force",
+    "element": null,
+    "category": "item",
+    "variant_group": "UFO Hat",
+    "variant_tag": "base",
+    "name": "UFO Hat",
+    "relative_path": "Items/Swap Force/UFO Hat.sky"
+  },
+  {
+    "id": "b27f7c7d682518e5",
+    "game": "Trap Team",
+    "element": null,
+    "category": "item",
+    "variant_group": "Hand of Fate",
+    "variant_tag": "base",
+    "name": "Hand of Fate",
+    "relative_path": "Items/Trap Team/Hand of Fate.sky"
+  },
+  {
+    "id": "26bc4220c765eaa1",
+    "game": "Trap Team",
+    "element": null,
+    "category": "item",
+    "variant_group": "Hand of Fate",
+    "variant_tag": "base",
+    "name": "Legendary Hand of Fate",
+    "relative_path": "Items/Trap Team/Legendary Hand of Fate.sky"
+  },
+  {
+    "id": "812c1688ad1d96ee",
+    "game": "Trap Team",
+    "element": null,
+    "category": "item",
+    "variant_group": "Piggy Bank",
+    "variant_tag": "base",
+    "name": "Piggy Bank",
+    "relative_path": "Items/Trap Team/Piggy Bank.sky"
+  },
+  {
+    "id": "f17ed0d13278dc24",
+    "game": "Trap Team",
+    "element": null,
+    "category": "item",
+    "variant_group": "Rocket Ram",
+    "variant_tag": "base",
+    "name": "Rocket Ram",
+    "relative_path": "Items/Trap Team/Rocket Ram.sky"
+  },
+  {
+    "id": "57e4c0bb8638055c",
+    "game": "Trap Team",
+    "element": null,
+    "category": "item",
+    "variant_group": "Tiki Speaky",
+    "variant_tag": "base",
+    "name": "Tiki Speaky",
+    "relative_path": "Items/Trap Team/Tiki Speaky.sky"
+  },
+  {
+    "id": "107fc494e47d02d5",
+    "game": "Giants",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Jet Vac",
+    "variant_tag": "Legendary",
+    "name": "Legendary Jet Vac",
+    "relative_path": "Skylanders Giants/Air/Alternate types/Legendary Jet Vac.sky"
+  },
+  {
+    "id": "f9f5b5b289d14752",
+    "game": "Giants",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Whirlwind",
+    "variant_tag": "Polar",
+    "name": "Polar Whirlwind",
+    "relative_path": "Skylanders Giants/Air/Alternate types/Polar Whirlwind.sky"
+  },
+  {
+    "id": "2e962289a3d8ae39",
+    "game": "Giants",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Jet Vac",
+    "variant_tag": "base",
+    "name": "Jet Vac",
+    "relative_path": "Skylanders Giants/Air/Jet Vac.sky"
+  },
+  {
+    "id": "6c0e8388800cdf66",
+    "game": "Giants",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Jet Vac",
+    "variant_tag": "LightCore",
+    "name": "LightCore Jet Vac",
+    "relative_path": "Skylanders Giants/Air/LightCore Jet Vac.sky"
+  },
+  {
+    "id": "4eb5d1022c65e1cc",
+    "game": "Giants",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Lightning Rod",
+    "variant_tag": "Series 2",
+    "name": "Series 2 Lightning Rod",
+    "relative_path": "Skylanders Giants/Air/Series 2 Lightning Rod.sky"
+  },
+  {
+    "id": "09261c6acb9492a5",
+    "game": "Giants",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Sonic Boom",
+    "variant_tag": "Series 2",
+    "name": "Series 2 Sonic Boom",
+    "relative_path": "Skylanders Giants/Air/Series 2 Sonic Boom.sky"
+  },
+  {
+    "id": "88fe66f52fe65ef0",
+    "game": "Giants",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Whirlwind",
+    "variant_tag": "Series 2",
+    "name": "Series 2 Whirlwind",
+    "relative_path": "Skylanders Giants/Air/Series 2 Whirlwind.sky"
+  },
+  {
+    "id": "07fd0feafec4a67b",
+    "game": "Giants",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Flash Wing",
+    "variant_tag": "Jade",
+    "name": "Jade Flash Wing",
+    "relative_path": "Skylanders Giants/Earth/Alternate types/Jade Flash Wing.sky"
+  },
+  {
+    "id": "eb5a9f3e19ed21e5",
+    "game": "Giants",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Flashwing",
+    "variant_tag": "base",
+    "name": "Flashwing",
+    "relative_path": "Skylanders Giants/Earth/Flashwing.sky"
+  },
+  {
+    "id": "1e4c4418504bce71",
+    "game": "Giants",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Prism Break",
+    "variant_tag": "LightCore",
+    "name": "LightCore Prism Break",
+    "relative_path": "Skylanders Giants/Earth/LightCore Prism Break.sky"
+  },
+  {
+    "id": "40612ef04496b2e3",
+    "game": "Giants",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Bash",
+    "variant_tag": "Series 2",
+    "name": "Series 2 Bash",
+    "relative_path": "Skylanders Giants/Earth/Series 2 Bash.sky"
+  },
+  {
+    "id": "198cbd46cb880c37",
+    "game": "Giants",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Prism Break",
+    "variant_tag": "Series 2",
+    "name": "Series 2 Prism Break",
+    "relative_path": "Skylanders Giants/Earth/Series 2 Prism Break.sky"
+  },
+  {
+    "id": "c71d5b4764a21592",
+    "game": "Giants",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Terrafin",
+    "variant_tag": "Series 2",
+    "name": "Series 2 Terrafin",
+    "relative_path": "Skylanders Giants/Earth/Series 2 Terrafin.sky"
+  },
+  {
+    "id": "96126e092c82fb7b",
+    "game": "Giants",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Ignitor",
+    "variant_tag": "Legendary",
+    "name": "Legendary Ignitor",
+    "relative_path": "Skylanders Giants/Fire/Alternate types/Legendary Ignitor.sky"
+  },
+  {
+    "id": "a75c106060e4128f",
+    "game": "Giants",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Hot Dog",
+    "variant_tag": "Molten",
+    "name": "Molten Hot Dog",
+    "relative_path": "Skylanders Giants/Fire/Alternate types/Molten Hot Dog.sky"
+  },
+  {
+    "id": "51d4a0c409752bbd",
+    "game": "Giants",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Hot Dog",
+    "variant_tag": "base",
+    "name": "Hot Dog",
+    "relative_path": "Skylanders Giants/Fire/Hot Dog.sky"
+  },
+  {
+    "id": "61cd9f5530e0e440",
+    "game": "Giants",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Eruptor",
+    "variant_tag": "LightCore",
+    "name": "LightCore Eruptor",
+    "relative_path": "Skylanders Giants/Fire/LightCore Eruptor.sky"
+  },
+  {
+    "id": "354e82ad0e3f6bcc",
+    "game": "Giants",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Eruptor",
+    "variant_tag": "Series 2",
+    "name": "Series 2 Eruptor",
+    "relative_path": "Skylanders Giants/Fire/Series 2 Eruptor.sky"
+  },
+  {
+    "id": "30978a80e14119c2",
+    "game": "Giants",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Flameslinger",
+    "variant_tag": "Series 2",
+    "name": "Series 2 Flameslinger",
+    "relative_path": "Skylanders Giants/Fire/Series 2 Flameslinger.sky"
+  },
+  {
+    "id": "0c6aa6f73755fa57",
+    "game": "Giants",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Ignitor",
+    "variant_tag": "Series 2",
+    "name": "Series 2 Ignitor",
+    "relative_path": "Skylanders Giants/Fire/Series 2 Ignitor.sky"
+  },
+  {
+    "id": "1fc129b86e6a3d99",
+    "game": "Giants",
+    "element": null,
+    "category": "giant",
+    "variant_group": "Tree Rex",
+    "variant_tag": "Gnarly",
+    "name": "Gnarly Tree Rex",
+    "relative_path": "Skylanders Giants/Giants/Alternate types/Gnarly Tree Rex.sky"
+  },
+  {
+    "id": "cc81e54afe5305ff",
+    "game": "Giants",
+    "element": null,
+    "category": "giant",
+    "variant_group": "Crusher",
+    "variant_tag": "Granite",
+    "name": "Granite Crusher",
+    "relative_path": "Skylanders Giants/Giants/Alternate types/Granite Crusher.sky"
+  },
+  {
+    "id": "7050e4f289835659",
+    "game": "Giants",
+    "element": null,
+    "category": "giant",
+    "variant_group": "Bouncer",
+    "variant_tag": "Legendary",
+    "name": "Legendary Bouncer",
+    "relative_path": "Skylanders Giants/Giants/Alternate types/Legendary Bouncer.sky"
+  },
+  {
+    "id": "765e37c09f9fdd02",
+    "game": "Giants",
+    "element": null,
+    "category": "giant",
+    "variant_group": "Ninjini",
+    "variant_tag": "Scarlet",
+    "name": "Scarlet Ninjini",
+    "relative_path": "Skylanders Giants/Giants/Alternate types/Scarlet Ninjini.sky"
+  },
+  {
+    "id": "7cad1184e748848d",
+    "game": "Giants",
+    "element": null,
+    "category": "giant",
+    "variant_group": "Bouncer",
+    "variant_tag": "base",
+    "name": "Bouncer",
+    "relative_path": "Skylanders Giants/Giants/Bouncer.sky"
+  },
+  {
+    "id": "705120f9b81a9cf8",
+    "game": "Giants",
+    "element": null,
+    "category": "giant",
+    "variant_group": "Crusher",
+    "variant_tag": "base",
+    "name": "Crusher",
+    "relative_path": "Skylanders Giants/Giants/Crusher.sky"
+  },
+  {
+    "id": "0158d1ed5ab1b673",
+    "game": "Giants",
+    "element": null,
+    "category": "giant",
+    "variant_group": "Eye Brawl",
+    "variant_tag": "base",
+    "name": "Eye Brawl",
+    "relative_path": "Skylanders Giants/Giants/Eye Brawl.sky"
+  },
+  {
+    "id": "aae4008c9c3fed6a",
+    "game": "Giants",
+    "element": null,
+    "category": "giant",
+    "variant_group": "Hot Head",
+    "variant_tag": "base",
+    "name": "Hot Head",
+    "relative_path": "Skylanders Giants/Giants/Hot Head.sky"
+  },
+  {
+    "id": "7d7b4e7950f2e4f6",
+    "game": "Giants",
+    "element": null,
+    "category": "giant",
+    "variant_group": "Ninjini",
+    "variant_tag": "base",
+    "name": "Ninjini",
+    "relative_path": "Skylanders Giants/Giants/Ninjini.sky"
+  },
+  {
+    "id": "751d9831e7b62d86",
+    "game": "Giants",
+    "element": null,
+    "category": "giant",
+    "variant_group": "Swarm",
+    "variant_tag": "base",
+    "name": "Swarm",
+    "relative_path": "Skylanders Giants/Giants/Swarm.sky"
+  },
+  {
+    "id": "7a61fc1ba5ac154e",
+    "game": "Giants",
+    "element": null,
+    "category": "giant",
+    "variant_group": "Thumpback",
+    "variant_tag": "base",
+    "name": "Thumpback",
+    "relative_path": "Skylanders Giants/Giants/Thumpback.sky"
+  },
+  {
+    "id": "cf3bea3e62ea7423",
+    "game": "Giants",
+    "element": null,
+    "category": "giant",
+    "variant_group": "Tree Rex",
+    "variant_tag": "base",
+    "name": "Tree Rex",
+    "relative_path": "Skylanders Giants/Giants/Tree Rex.sky"
+  },
+  {
+    "id": "44693110d05d9c1d",
+    "game": "Giants",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Stealth Elf",
+    "variant_tag": "Legendary",
+    "name": "Legendary Stealth Elf",
+    "relative_path": "Skylanders Giants/Life/Alternate types/Legendary Stealth Elf.sky"
+  },
+  {
+    "id": "c2339f3d7c31bfe4",
+    "game": "Giants",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Shroomboom",
+    "variant_tag": "LightCore",
+    "name": "LightCore Shroomboom",
+    "relative_path": "Skylanders Giants/Life/LightCore Shroomboom.sky"
+  },
+  {
+    "id": "ca3d254f70b9fd8b",
+    "game": "Giants",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Stealth Elf",
+    "variant_tag": "Series 2",
+    "name": "Series 2 Stealth Elf",
+    "relative_path": "Skylanders Giants/Life/Series 2 Stealth Elf.sky"
+  },
+  {
+    "id": "eed7aaa2ed8d615b",
+    "game": "Giants",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Stump Smash",
+    "variant_tag": "Series 2",
+    "name": "Series 2 Stump Smash",
+    "relative_path": "Skylanders Giants/Life/Series 2 Stump Smash.sky"
+  },
+  {
+    "id": "82d734a4b21d63cf",
+    "game": "Giants",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Zook",
+    "variant_tag": "Series 2",
+    "name": "Series 2 Zook",
+    "relative_path": "Skylanders Giants/Life/Series 2 Zook.sky"
+  },
+  {
+    "id": "6eac9341ceec03dd",
+    "game": "Giants",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Shroomboom",
+    "variant_tag": "base",
+    "name": "Shroomboom",
+    "relative_path": "Skylanders Giants/Life/Shroomboom.sky"
+  },
+  {
+    "id": "9b5bb93beed62eaa",
+    "game": "Giants",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Pop Fizz",
+    "variant_tag": "Punch",
+    "name": "Punch Pop Fizz",
+    "relative_path": "Skylanders Giants/Magic/Alternate types/Punch Pop Fizz.sky"
+  },
+  {
+    "id": "3373dfb20620720f",
+    "game": "Giants",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Double Trouble",
+    "variant_tag": "Royal",
+    "name": "Royal Double Trouble",
+    "relative_path": "Skylanders Giants/Magic/Alternate types/Royal Double Trouble.sky"
+  },
+  {
+    "id": "521abff4b36bd168",
+    "game": "Giants",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Pop Fizz",
+    "variant_tag": "LightCore",
+    "name": "LightCore Pop Fizz",
+    "relative_path": "Skylanders Giants/Magic/LightCore Pop Fizz.sky"
+  },
+  {
+    "id": "ff97d4373ba91d67",
+    "game": "Giants",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Pop Fizz",
+    "variant_tag": "base",
+    "name": "Pop Fizz",
+    "relative_path": "Skylanders Giants/Magic/Pop Fizz.sky"
+  },
+  {
+    "id": "0660dfe16304c390",
+    "game": "Giants",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Double Trouble",
+    "variant_tag": "Series 2",
+    "name": "Series 2 Double Trouble",
+    "relative_path": "Skylanders Giants/Magic/Series 2 Double Trouble.sky"
+  },
+  {
+    "id": "10b60d4f243388a9",
+    "game": "Giants",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Spyro",
+    "variant_tag": "Series 2",
+    "name": "Series 2 Spyro",
+    "relative_path": "Skylanders Giants/Magic/Series 2 Spyro.sky"
+  },
+  {
+    "id": "f15ea82f02dfc0aa",
+    "game": "Giants",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Wrecking Ball",
+    "variant_tag": "Series 2",
+    "name": "Series 2 Wrecking Ball",
+    "relative_path": "Skylanders Giants/Magic/Series 2 Wrecking Ball.sky"
+  },
+  {
+    "id": "efee02fed3a538d1",
+    "game": "Giants",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Barkley",
+    "variant_tag": "base",
+    "name": "Barkley",
+    "relative_path": "Skylanders Giants/Sidekicks/Barkley.sky"
+  },
+  {
+    "id": "76d0f310a90880ee",
+    "game": "Giants",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Eye Small",
+    "variant_tag": "base",
+    "name": "Eye Small",
+    "relative_path": "Skylanders Giants/Sidekicks/Eye Small.sky"
+  },
+  {
+    "id": "027a5ddb63516ef7",
+    "game": "Giants",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Gill Runt",
+    "variant_tag": "base",
+    "name": "Gill Runt",
+    "relative_path": "Skylanders Giants/Sidekicks/Gill Runt.sky"
+  },
+  {
+    "id": "6c207c5816b84e9e",
+    "game": "Giants",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Mini-Jini",
+    "variant_tag": "base",
+    "name": "Mini-Jini",
+    "relative_path": "Skylanders Giants/Sidekicks/Mini-Jini.sky"
+  },
+  {
+    "id": "f762526d156c69f2",
+    "game": "Giants",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Terrabite",
+    "variant_tag": "base",
+    "name": "Terrabite",
+    "relative_path": "Skylanders Giants/Sidekicks/Terrabite.sky"
+  },
+  {
+    "id": "553f1e6c30e643e3",
+    "game": "Giants",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Thumpling",
+    "variant_tag": "base",
+    "name": "Thumpling",
+    "relative_path": "Skylanders Giants/Sidekicks/Thumpling.sky"
+  },
+  {
+    "id": "e246ff7c65a7a1b5",
+    "game": "Giants",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Trigger Snappy",
+    "variant_tag": "base",
+    "name": "Trigger Snappy",
+    "relative_path": "Skylanders Giants/Sidekicks/Trigger Snappy.sky"
+  },
+  {
+    "id": "cff8187ea86da6ed",
+    "game": "Giants",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Whisper Elf",
+    "variant_tag": "base",
+    "name": "Whisper Elf",
+    "relative_path": "Skylanders Giants/Sidekicks/Whisper Elf.sky"
+  },
+  {
+    "id": "a9f4ffa78aad3f28",
+    "game": "Giants",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Drobot",
+    "variant_tag": "LightCore",
+    "name": "LightCore Drobot",
+    "relative_path": "Skylanders Giants/Tech/LightCore Drobot.sky"
+  },
+  {
+    "id": "2f92f617986f572d",
+    "game": "Giants",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Drill Seargeant",
+    "variant_tag": "Series 2",
+    "name": "Series 2 Drill Seargeant",
+    "relative_path": "Skylanders Giants/Tech/Series 2 Drill Seargeant.sky"
+  },
+  {
+    "id": "a4d50ad3fbeb287c",
+    "game": "Giants",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Drobot",
+    "variant_tag": "Series 2",
+    "name": "Series 2 Drobot",
+    "relative_path": "Skylanders Giants/Tech/Series 2 Drobot.sky"
+  },
+  {
+    "id": "971ca795a63122a2",
+    "game": "Giants",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Trigger Happy",
+    "variant_tag": "Series 2",
+    "name": "Series 2 Trigger Happy",
+    "relative_path": "Skylanders Giants/Tech/Series 2 Trigger Happy.sky"
+  },
+  {
+    "id": "f408ebcfe85cd7c9",
+    "game": "Giants",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Sprocket",
+    "variant_tag": "base",
+    "name": "Sprocket",
+    "relative_path": "Skylanders Giants/Tech/Sprocket.sky"
+  },
+  {
+    "id": "39ce054f6558cc25",
+    "game": "Giants",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Fright Rider",
+    "variant_tag": "base",
+    "name": "Fright Rider",
+    "relative_path": "Skylanders Giants/Undead/Fright Rider.sky"
+  },
+  {
+    "id": "6e96bade60010106",
+    "game": "Giants",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Hex",
+    "variant_tag": "LightCore",
+    "name": "LightCore Hex",
+    "relative_path": "Skylanders Giants/Undead/LightCore Hex.sky"
+  },
+  {
+    "id": "3b84bbca8e4a7b2d",
+    "game": "Giants",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Chop Chop",
+    "variant_tag": "Series 2",
+    "name": "Series 2 Chop Chop",
+    "relative_path": "Skylanders Giants/Undead/Series 2 Chop Chop.sky"
+  },
+  {
+    "id": "e072bc1387b6a0ae",
+    "game": "Giants",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Cynder",
+    "variant_tag": "Series 2",
+    "name": "Series 2 Cynder",
+    "relative_path": "Skylanders Giants/Undead/Series 2 Cynder.sky"
+  },
+  {
+    "id": "f9ce93220d4335c3",
+    "game": "Giants",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Hex",
+    "variant_tag": "Series 2",
+    "name": "Series 2 Hex",
+    "relative_path": "Skylanders Giants/Undead/Series 2 Hex.sky"
+  },
+  {
+    "id": "140dd1fe2a1f7039",
+    "game": "Giants",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Slam Bam",
+    "variant_tag": "Legendary",
+    "name": "Legendary Slam Bam",
+    "relative_path": "Skylanders Giants/Water/Alternate types/Legendary Slam Bam.sky"
+  },
+  {
+    "id": "a741276ca3a7d4f2",
+    "game": "Giants",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Chill",
+    "variant_tag": "base",
+    "name": "Chill",
+    "relative_path": "Skylanders Giants/Water/Chill.sky"
+  },
+  {
+    "id": "2b1727370431e1c9",
+    "game": "Giants",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Chill",
+    "variant_tag": "Legendary",
+    "name": "Legendary Chill",
+    "relative_path": "Skylanders Giants/Water/Legendary Chill.sky"
+  },
+  {
+    "id": "1f74acda8ea74d24",
+    "game": "Giants",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Chill",
+    "variant_tag": "LightCore",
+    "name": "LightCore Chill",
+    "relative_path": "Skylanders Giants/Water/LightCore Chill.sky"
+  },
+  {
+    "id": "622856636b146e6c",
+    "game": "Giants",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Gill Grunt",
+    "variant_tag": "Series 2",
+    "name": "Series 2 Gill Grunt",
+    "relative_path": "Skylanders Giants/Water/Series 2 Gill Grunt.sky"
+  },
+  {
+    "id": "952d9a7eab52fc63",
+    "game": "Giants",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Slam Bam",
+    "variant_tag": "Series 2",
+    "name": "Series 2 Slam Bam",
+    "relative_path": "Skylanders Giants/Water/Series 2 Slam Bam.sky"
+  },
+  {
+    "id": "c2d478a47297c14d",
+    "game": "Giants",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Zap",
+    "variant_tag": "Series 2",
+    "name": "Series 2 Zap",
+    "relative_path": "Skylanders Giants/Water/Series 2 Zap.sky"
+  },
+  {
+    "id": "a9a8a4fbf8650704",
+    "game": "Imaginators",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Airstrike",
+    "variant_tag": "base",
+    "name": "Airstrike",
+    "relative_path": "Skylanders Imaginators/Air/Airstrike.sky"
+  },
+  {
+    "id": "58f9b7df6a77954b",
+    "game": "Imaginators",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Airstrike",
+    "variant_tag": "Eggbomber",
+    "name": "Airstrike-Eggbomber",
+    "relative_path": "Skylanders Imaginators/Air/Alternate types/Airstrike-Eggbomber.sky"
+  },
+  {
+    "id": "13d4ee142bdd02c4",
+    "game": "Imaginators",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Badjuju",
+    "variant_tag": "Mystical",
+    "name": "Badjuju-Mystical",
+    "relative_path": "Skylanders Imaginators/Air/Alternate types/Badjuju-Mystical.sky"
+  },
+  {
+    "id": "32a5a97b6c01f41a",
+    "game": "Imaginators",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Bad Juju",
+    "variant_tag": "base",
+    "name": "Bad_Juju",
+    "relative_path": "Skylanders Imaginators/Air/Bad_Juju.sky"
+  },
+  {
+    "id": "568cb4cf3c1a226d",
+    "game": "Imaginators",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Wildstorm",
+    "variant_tag": "base",
+    "name": "Wildstorm",
+    "relative_path": "Skylanders Imaginators/Air/Wildstorm.sky"
+  },
+  {
+    "id": "821135e154ffa8b2",
+    "game": "Imaginators",
+    "element": "Air",
+    "category": "creation-crystal",
+    "variant_group": "CRYSTAL ",
+    "variant_tag": "base",
+    "name": "CRYSTAL_-_AIR_Lantern.key",
+    "relative_path": "Skylanders Imaginators/Creation Crystals/CRYSTAL_-_AIR_Lantern.key.sky"
+  },
+  {
+    "id": "3c83f6d6c77399ed",
+    "game": "Imaginators",
+    "element": "Dark",
+    "category": "creation-crystal",
+    "variant_group": "CRYSTAL ",
+    "variant_tag": "base",
+    "name": "CRYSTAL_-_DARK_Pyramid.key",
+    "relative_path": "Skylanders Imaginators/Creation Crystals/CRYSTAL_-_DARK_Pyramid.key.sky"
+  },
+  {
+    "id": "f338dd703560f12a",
+    "game": "Imaginators",
+    "element": "Earth",
+    "category": "creation-crystal",
+    "variant_group": "CRYSTAL ",
+    "variant_tag": "base",
+    "name": "CRYSTAL_-_EARTH_Rocket.key",
+    "relative_path": "Skylanders Imaginators/Creation Crystals/CRYSTAL_-_EARTH_Rocket.key.sky"
+  },
+  {
+    "id": "159fb4c717db42c8",
+    "game": "Imaginators",
+    "element": "Fire",
+    "category": "creation-crystal",
+    "variant_group": "CRYSTAL ",
+    "variant_tag": "base",
+    "name": "CRYSTAL_-_FIRE_Reactor.key",
+    "relative_path": "Skylanders Imaginators/Creation Crystals/CRYSTAL_-_FIRE_Reactor.key.sky"
+  },
+  {
+    "id": "5257453767cf2a6b",
+    "game": "Imaginators",
+    "element": "Life",
+    "category": "creation-crystal",
+    "variant_group": "CRYSTAL ",
+    "variant_tag": "base",
+    "name": "CRYSTAL_-_LIFE_Acorn.key",
+    "relative_path": "Skylanders Imaginators/Creation Crystals/CRYSTAL_-_LIFE_Acorn.key.sky"
+  },
+  {
+    "id": "b9bc6ac79908d799",
+    "game": "Imaginators",
+    "element": "Light",
+    "category": "creation-crystal",
+    "variant_group": "CRYSTAL ",
+    "variant_tag": "base",
+    "name": "CRYSTAL_-_LIGHT_Rune.key",
+    "relative_path": "Skylanders Imaginators/Creation Crystals/CRYSTAL_-_LIGHT_Rune.key.sky"
+  },
+  {
+    "id": "f401ab6f37e4fac1",
+    "game": "Imaginators",
+    "element": "Magic",
+    "category": "creation-crystal",
+    "variant_group": "CRYSTAL ",
+    "variant_tag": "base",
+    "name": "CRYSTAL_-_MAGIC_Claw.key",
+    "relative_path": "Skylanders Imaginators/Creation Crystals/CRYSTAL_-_MAGIC_Claw.key.sky"
+  },
+  {
+    "id": "fa15ef85e04bfc58",
+    "game": "Imaginators",
+    "element": "Tech",
+    "category": "creation-crystal",
+    "variant_group": "CRYSTAL ",
+    "variant_tag": "base",
+    "name": "CRYSTAL_-_TECH_Armor.key",
+    "relative_path": "Skylanders Imaginators/Creation Crystals/CRYSTAL_-_TECH_Armor.key.sky"
+  },
+  {
+    "id": "a6bc2c15c436d2ce",
+    "game": "Imaginators",
+    "element": "Undead",
+    "category": "creation-crystal",
+    "variant_group": "CRYSTAL ",
+    "variant_tag": "base",
+    "name": "CRYSTAL_-_UNDEAD_Fanged.key",
+    "relative_path": "Skylanders Imaginators/Creation Crystals/CRYSTAL_-_UNDEAD_Fanged.key.sky"
+  },
+  {
+    "id": "3ed150afa2ced03a",
+    "game": "Imaginators",
+    "element": "Water",
+    "category": "creation-crystal",
+    "variant_group": "CRYSTAL ",
+    "variant_tag": "base",
+    "name": "CRYSTAL_-_WATER_Armor.key",
+    "relative_path": "Skylanders Imaginators/Creation Crystals/CRYSTAL_-_WATER_Armor.key.sky"
+  },
+  {
+    "id": "ce607ea0018b4e41",
+    "game": "Imaginators",
+    "element": "Dark",
+    "category": "figure",
+    "variant_group": "Hoodsickle",
+    "variant_tag": "Steelplated",
+    "name": "Hoodsickle-Steelplated",
+    "relative_path": "Skylanders Imaginators/Dark/Alternate types/Hoodsickle-Steelplated.sky"
+  },
+  {
+    "id": "8c81200d61959895",
+    "game": "Imaginators",
+    "element": "Dark",
+    "category": "figure",
+    "variant_group": "Hoodsickle",
+    "variant_tag": "base",
+    "name": "Hoodsickle",
+    "relative_path": "Skylanders Imaginators/Dark/Hoodsickle.sky"
+  },
+  {
+    "id": "a2a0f993516410fa",
+    "game": "Imaginators",
+    "element": "Dark",
+    "category": "figure",
+    "variant_group": "Star Cast",
+    "variant_tag": "base",
+    "name": "Star_Cast",
+    "relative_path": "Skylanders Imaginators/Dark/Star_Cast.sky"
+  },
+  {
+    "id": "8bde920e6141ef4b",
+    "game": "Imaginators",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Golden Queen",
+    "variant_tag": "Dark",
+    "name": "Golden_Queen-Dark",
+    "relative_path": "Skylanders Imaginators/Earth/Alternate types/Golden_Queen-Dark.sky"
+  },
+  {
+    "id": "0fd5c4cca2d6edce",
+    "game": "Imaginators",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Tri-Tip",
+    "variant_tag": "Legendary",
+    "name": "Tri-Tip-Legendary",
+    "relative_path": "Skylanders Imaginators/Earth/Alternate types/Tri-Tip-Legendary.sky"
+  },
+  {
+    "id": "3ea805a1d767c3ca",
+    "game": "Imaginators",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Barbella",
+    "variant_tag": "base",
+    "name": "Barbella",
+    "relative_path": "Skylanders Imaginators/Earth/Barbella.sky"
+  },
+  {
+    "id": "bcbf404a7d85c72f",
+    "game": "Imaginators",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Golden Queen",
+    "variant_tag": "base",
+    "name": "Golden_Queen",
+    "relative_path": "Skylanders Imaginators/Earth/Golden_Queen.sky"
+  },
+  {
+    "id": "a58775d11bb378df",
+    "game": "Imaginators",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Tritip",
+    "variant_tag": "base",
+    "name": "Tritip",
+    "relative_path": "Skylanders Imaginators/Earth/Tritip.sky"
+  },
+  {
+    "id": "f14a2394e1fb5523",
+    "game": "Imaginators",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Flarewolf",
+    "variant_tag": "Hardboiled",
+    "name": "Flarewolf-Hardboiled",
+    "relative_path": "Skylanders Imaginators/Fire/Alternate types/Flarewolf-Hardboiled.sky"
+  },
+  {
+    "id": "8904069437cdaab4",
+    "game": "Imaginators",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Taekwoncrow",
+    "variant_tag": "Mystical",
+    "name": "Taekwoncrow-Mystical",
+    "relative_path": "Skylanders Imaginators/Fire/Alternate types/Taekwoncrow-Mystical.sky"
+  },
+  {
+    "id": "970ed78a18304144",
+    "game": "Imaginators",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Ember",
+    "variant_tag": "base",
+    "name": "Ember",
+    "relative_path": "Skylanders Imaginators/Fire/Ember.sky"
+  },
+  {
+    "id": "45c9521db6de869c",
+    "game": "Imaginators",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Flarewolf",
+    "variant_tag": "base",
+    "name": "Flarewolf",
+    "relative_path": "Skylanders Imaginators/Fire/Flarewolf.sky"
+  },
+  {
+    "id": "cf44578c15482545",
+    "game": "Imaginators",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Taekwoncrow",
+    "variant_tag": "base",
+    "name": "Taekwoncrow",
+    "relative_path": "Skylanders Imaginators/Fire/Taekwoncrow.sky"
+  },
+  {
+    "id": "aa3a7b4451409d0f",
+    "game": "Imaginators",
+    "element": null,
+    "category": "kaos",
+    "variant_group": "Kaos",
+    "variant_tag": "base",
+    "name": "Kaos",
+    "relative_path": "Skylanders Imaginators/Kaos/Kaos.sky"
+  },
+  {
+    "id": "5e85dfdaff2eedcb",
+    "game": "Imaginators",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Chompymage",
+    "variant_tag": "Jinglebell",
+    "name": "Chompymage-Jinglebell",
+    "relative_path": "Skylanders Imaginators/Life/Alternate types/Chompymage-Jinglebell.sky"
+  },
+  {
+    "id": "f2e429f7c21f8f27",
+    "game": "Imaginators",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Ambush",
+    "variant_tag": "base",
+    "name": "Ambush",
+    "relative_path": "Skylanders Imaginators/Life/Ambush.sky"
+  },
+  {
+    "id": "05489adb1924dc38",
+    "game": "Imaginators",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Boombloom",
+    "variant_tag": "base",
+    "name": "Boombloom",
+    "relative_path": "Skylanders Imaginators/Life/Boombloom.sky"
+  },
+  {
+    "id": "e492e3b2f3f02482",
+    "game": "Imaginators",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Chompymage",
+    "variant_tag": "base",
+    "name": "Chompymage",
+    "relative_path": "Skylanders Imaginators/Life/Chompymage.sky"
+  },
+  {
+    "id": "67e0623359b3f7a9",
+    "game": "Imaginators",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Crash Bandicoot",
+    "variant_tag": "base",
+    "name": "Crash_Bandicoot",
+    "relative_path": "Skylanders Imaginators/Life/Crash_Bandicoot.sky"
+  },
+  {
+    "id": "034714cffd91dce3",
+    "game": "Imaginators",
+    "element": "Light",
+    "category": "figure",
+    "variant_group": "Aurora",
+    "variant_tag": "Solarflare",
+    "name": "Aurora-Solarflare",
+    "relative_path": "Skylanders Imaginators/Light/Alternate types/Aurora-Solarflare.sky"
+  },
+  {
+    "id": "a33d489c6856ee69",
+    "game": "Imaginators",
+    "element": "Light",
+    "category": "figure",
+    "variant_group": "Aurora",
+    "variant_tag": "base",
+    "name": "Aurora",
+    "relative_path": "Skylanders Imaginators/Light/Aurora.sky"
+  },
+  {
+    "id": "2ff9778385039fc5",
+    "game": "Imaginators",
+    "element": "Light",
+    "category": "figure",
+    "variant_group": "Blaster-Tron",
+    "variant_tag": "base",
+    "name": "Blaster-Tron",
+    "relative_path": "Skylanders Imaginators/Light/Blaster-Tron.sky"
+  },
+  {
+    "id": "9ff22be799b0bd85",
+    "game": "Imaginators",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Buckshot",
+    "variant_tag": "base",
+    "name": "Buckshot",
+    "relative_path": "Skylanders Imaginators/Magic/Buckshot.sky"
+  },
+  {
+    "id": "2254d07a6b64129f",
+    "game": "Imaginators",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Mysticat",
+    "variant_tag": "base",
+    "name": "Mysticat",
+    "relative_path": "Skylanders Imaginators/Magic/Mysticat.sky"
+  },
+  {
+    "id": "a49a8a5b9837e5df",
+    "game": "Imaginators",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Pain-Yatta",
+    "variant_tag": "base",
+    "name": "Pain-Yatta",
+    "relative_path": "Skylanders Imaginators/Magic/Pain-Yatta.sky"
+  },
+  {
+    "id": "d1e8fd37d42940fe",
+    "game": "Imaginators",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Chain Reaction",
+    "variant_tag": "base",
+    "name": "Chain_Reaction",
+    "relative_path": "Skylanders Imaginators/Tech/Chain_Reaction.sky"
+  },
+  {
+    "id": "60904f33202c2835",
+    "game": "Imaginators",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Dr Krankcase",
+    "variant_tag": "base",
+    "name": "Dr_Krankcase",
+    "relative_path": "Skylanders Imaginators/Tech/Dr_Krankcase.sky"
+  },
+  {
+    "id": "b9cf0dc65a3494ea",
+    "game": "Imaginators",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Dr Neocortex",
+    "variant_tag": "base",
+    "name": "Dr_Neocortex",
+    "relative_path": "Skylanders Imaginators/Tech/Dr_Neocortex.sky"
+  },
+  {
+    "id": "dcc30c65b0adb7e6",
+    "game": "Imaginators",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Ro-Bow",
+    "variant_tag": "base",
+    "name": "Ro-Bow",
+    "relative_path": "Skylanders Imaginators/Tech/Ro-Bow.sky"
+  },
+  {
+    "id": "2c6cb938923dcdae",
+    "game": "Imaginators",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Chop Scotch-Candy",
+    "variant_tag": "Coated",
+    "name": "Chop_Scotch-Candy-Coated",
+    "relative_path": "Skylanders Imaginators/Undead/Alternate types/Chop_Scotch-Candy-Coated.sky"
+  },
+  {
+    "id": "821a08bfa4b2ee0a",
+    "game": "Imaginators",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Pitboss",
+    "variant_tag": "Legendary",
+    "name": "Pitboss-Legendary",
+    "relative_path": "Skylanders Imaginators/Undead/Alternate types/Pitboss-Legendary.sky"
+  },
+  {
+    "id": "8eb0b59321f26359",
+    "game": "Imaginators",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Wolfgang",
+    "variant_tag": "Dark",
+    "name": "Wolfgang-Dark",
+    "relative_path": "Skylanders Imaginators/Undead/Alternate types/Wolfgang-Dark.sky"
+  },
+  {
+    "id": "2f62f8fb68fb4794",
+    "game": "Imaginators",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Chop Scotch",
+    "variant_tag": "base",
+    "name": "Chop_Scotch",
+    "relative_path": "Skylanders Imaginators/Undead/Chop_Scotch.sky"
+  },
+  {
+    "id": "34b2a7d2267a373b",
+    "game": "Imaginators",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Pitboss",
+    "variant_tag": "base",
+    "name": "Pitboss",
+    "relative_path": "Skylanders Imaginators/Undead/Pitboss.sky"
+  },
+  {
+    "id": "e0dfc35442fa5ca3",
+    "game": "Imaginators",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Wolfgang",
+    "variant_tag": "base",
+    "name": "Wolfgang",
+    "relative_path": "Skylanders Imaginators/Undead/Wolfgang.sky"
+  },
+  {
+    "id": "22188795fca0d1df",
+    "game": "Imaginators",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Kingpen",
+    "variant_tag": "Dark",
+    "name": "Kingpen-Dark",
+    "relative_path": "Skylanders Imaginators/Water/Alternate types/Kingpen-Dark.sky"
+  },
+  {
+    "id": "bd1ad8178d6164aa",
+    "game": "Imaginators",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Graveclobber",
+    "variant_tag": "base",
+    "name": "Graveclobber",
+    "relative_path": "Skylanders Imaginators/Water/Graveclobber.sky"
+  },
+  {
+    "id": "29002f2020265aa5",
+    "game": "Imaginators",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Kingpen",
+    "variant_tag": "base",
+    "name": "Kingpen",
+    "relative_path": "Skylanders Imaginators/Water/Kingpen.sky"
+  },
+  {
+    "id": "50ad9a6316d555ca",
+    "game": "Imaginators",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Tidepool",
+    "variant_tag": "base",
+    "name": "Tidepool",
+    "relative_path": "Skylanders Imaginators/Water/Tidepool.sky"
+  },
+  {
+    "id": "15f91e16e4763b85",
+    "game": "Spyros Adventure",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Lightning Rod",
+    "variant_tag": "base",
+    "name": "Lightning Rod",
+    "relative_path": "Skylanders Spyros Adventure/Air/Lightning Rod.sky"
+  },
+  {
+    "id": "e5dcda99ae4e3fe4",
+    "game": "Spyros Adventure",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Sonic Boom",
+    "variant_tag": "base",
+    "name": "Sonic Boom",
+    "relative_path": "Skylanders Spyros Adventure/Air/Sonic Boom.sky"
+  },
+  {
+    "id": "d206f457b7411b50",
+    "game": "Spyros Adventure",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Warnado",
+    "variant_tag": "base",
+    "name": "Warnado",
+    "relative_path": "Skylanders Spyros Adventure/Air/Warnado.sky"
+  },
+  {
+    "id": "75754840d5ceb40f",
+    "game": "Spyros Adventure",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Whirlwind",
+    "variant_tag": "base",
+    "name": "Whirlwind",
+    "relative_path": "Skylanders Spyros Adventure/Air/Whirlwind.sky"
+  },
+  {
+    "id": "673794047c77c83f",
+    "game": "Spyros Adventure",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Bash",
+    "variant_tag": "Legendary",
+    "name": "Legendary Bash",
+    "relative_path": "Skylanders Spyros Adventure/Earth/Alternate types/Legendary Bash.sky"
+  },
+  {
+    "id": "7bf339a77d7c604d",
+    "game": "Spyros Adventure",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Bash",
+    "variant_tag": "base",
+    "name": "Bash",
+    "relative_path": "Skylanders Spyros Adventure/Earth/Bash.sky"
+  },
+  {
+    "id": "1cda49e44a4173ca",
+    "game": "Spyros Adventure",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Dino Rang",
+    "variant_tag": "base",
+    "name": "Dino Rang",
+    "relative_path": "Skylanders Spyros Adventure/Earth/Dino Rang.sky"
+  },
+  {
+    "id": "ea50bf29223ae379",
+    "game": "Spyros Adventure",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Prism Break",
+    "variant_tag": "base",
+    "name": "Prism Break",
+    "relative_path": "Skylanders Spyros Adventure/Earth/Prism Break.sky"
+  },
+  {
+    "id": "3247171bc3190bcc",
+    "game": "Spyros Adventure",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Terrafin",
+    "variant_tag": "base",
+    "name": "Terrafin",
+    "relative_path": "Skylanders Spyros Adventure/Earth/Terrafin.sky"
+  },
+  {
+    "id": "d9349c8cb5e52a44",
+    "game": "Spyros Adventure",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Eruptor",
+    "variant_tag": "base",
+    "name": "Eruptor",
+    "relative_path": "Skylanders Spyros Adventure/Fire/Eruptor.sky"
+  },
+  {
+    "id": "9af33c6e22572087",
+    "game": "Spyros Adventure",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Flameslinger",
+    "variant_tag": "base",
+    "name": "Flameslinger",
+    "relative_path": "Skylanders Spyros Adventure/Fire/Flameslinger.sky"
+  },
+  {
+    "id": "4a6890428ae25740",
+    "game": "Spyros Adventure",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Ignitor",
+    "variant_tag": "base",
+    "name": "Ignitor",
+    "relative_path": "Skylanders Spyros Adventure/Fire/Ignitor.sky"
+  },
+  {
+    "id": "4741b7b06e32c90f",
+    "game": "Spyros Adventure",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Sunburn",
+    "variant_tag": "base",
+    "name": "Sunburn",
+    "relative_path": "Skylanders Spyros Adventure/Fire/Sunburn.sky"
+  },
+  {
+    "id": "152c9a10c4ba8ac0",
+    "game": "Spyros Adventure",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Camo",
+    "variant_tag": "base",
+    "name": "Camo",
+    "relative_path": "Skylanders Spyros Adventure/Life/Camo.sky"
+  },
+  {
+    "id": "24e1efa9e5982b50",
+    "game": "Spyros Adventure",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Stealth Elf",
+    "variant_tag": "base",
+    "name": "Stealth Elf",
+    "relative_path": "Skylanders Spyros Adventure/Life/Stealth Elf.sky"
+  },
+  {
+    "id": "3ceaf3fdc903fc08",
+    "game": "Spyros Adventure",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Stump Smash",
+    "variant_tag": "base",
+    "name": "Stump Smash",
+    "relative_path": "Skylanders Spyros Adventure/Life/Stump Smash.sky"
+  },
+  {
+    "id": "0f7cf29678991525",
+    "game": "Spyros Adventure",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Zook",
+    "variant_tag": "base",
+    "name": "Zook",
+    "relative_path": "Skylanders Spyros Adventure/Life/Zook.sky"
+  },
+  {
+    "id": "0169dca4f6f1931d",
+    "game": "Spyros Adventure",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Spyro",
+    "variant_tag": "Dark",
+    "name": "Dark Spyro",
+    "relative_path": "Skylanders Spyros Adventure/Magic/Alternate types/Dark Spyro.sky"
+  },
+  {
+    "id": "a59b3741a23b4c4b",
+    "game": "Spyros Adventure",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Spyro",
+    "variant_tag": "Legendary",
+    "name": "Legendary Spyro",
+    "relative_path": "Skylanders Spyros Adventure/Magic/Alternate types/Legendary Spyro.sky"
+  },
+  {
+    "id": "1c2686cf20e8ab65",
+    "game": "Spyros Adventure",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Double Trouble",
+    "variant_tag": "base",
+    "name": "Double Trouble",
+    "relative_path": "Skylanders Spyros Adventure/Magic/Double Trouble.sky"
+  },
+  {
+    "id": "e6efa611ea175956",
+    "game": "Spyros Adventure",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Spyro",
+    "variant_tag": "base",
+    "name": "Spyro",
+    "relative_path": "Skylanders Spyros Adventure/Magic/Spyro.sky"
+  },
+  {
+    "id": "3def0618a9d28c18",
+    "game": "Spyros Adventure",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Voodood",
+    "variant_tag": "base",
+    "name": "Voodood",
+    "relative_path": "Skylanders Spyros Adventure/Magic/Voodood.sky"
+  },
+  {
+    "id": "7a8028a344e6c009",
+    "game": "Spyros Adventure",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Wrecking Ball",
+    "variant_tag": "base",
+    "name": "Wrecking Ball",
+    "relative_path": "Skylanders Spyros Adventure/Magic/Wrecking Ball.sky"
+  },
+  {
+    "id": "2900fe5f1252733f",
+    "game": "Spyros Adventure",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Trigger Happy",
+    "variant_tag": "Legendary",
+    "name": "Legendary Trigger Happy",
+    "relative_path": "Skylanders Spyros Adventure/Tech/Alternate types/Legendary Trigger Happy.sky"
+  },
+  {
+    "id": "24583561d8735a0b",
+    "game": "Spyros Adventure",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Boomer",
+    "variant_tag": "base",
+    "name": "Boomer",
+    "relative_path": "Skylanders Spyros Adventure/Tech/Boomer.sky"
+  },
+  {
+    "id": "209b4886d61fe460",
+    "game": "Spyros Adventure",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Drill Seargeant",
+    "variant_tag": "base",
+    "name": "Drill Seargeant",
+    "relative_path": "Skylanders Spyros Adventure/Tech/Drill Seargeant.sky"
+  },
+  {
+    "id": "c91deaf1da4d5657",
+    "game": "Spyros Adventure",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Drobot",
+    "variant_tag": "base",
+    "name": "Drobot",
+    "relative_path": "Skylanders Spyros Adventure/Tech/Drobot.sky"
+  },
+  {
+    "id": "4be1e975da8a023a",
+    "game": "Spyros Adventure",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Trigger Happy",
+    "variant_tag": "base",
+    "name": "Trigger Happy",
+    "relative_path": "Skylanders Spyros Adventure/Tech/Trigger Happy.sky"
+  },
+  {
+    "id": "a1b9f766751d1063",
+    "game": "Spyros Adventure",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Chop Chop",
+    "variant_tag": "Legendary",
+    "name": "Legendary Chop Chop",
+    "relative_path": "Skylanders Spyros Adventure/Undead/Alternate types/Legendary Chop Chop.sky"
+  },
+  {
+    "id": "20ebeb7ffe5553ab",
+    "game": "Spyros Adventure",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Chop Chop",
+    "variant_tag": "base",
+    "name": "Chop Chop",
+    "relative_path": "Skylanders Spyros Adventure/Undead/Chop Chop.sky"
+  },
+  {
+    "id": "28c1b4e810cebe4f",
+    "game": "Spyros Adventure",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Cynder",
+    "variant_tag": "base",
+    "name": "Cynder",
+    "relative_path": "Skylanders Spyros Adventure/Undead/Cynder.sky"
+  },
+  {
+    "id": "0c735ddd3f214f8c",
+    "game": "Spyros Adventure",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Ghost Roaster",
+    "variant_tag": "base",
+    "name": "Ghost Roaster",
+    "relative_path": "Skylanders Spyros Adventure/Undead/Ghost Roaster.sky"
+  },
+  {
+    "id": "7ba6aefb9a3e6b01",
+    "game": "Spyros Adventure",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Hex",
+    "variant_tag": "base",
+    "name": "Hex",
+    "relative_path": "Skylanders Spyros Adventure/Undead/Hex.sky"
+  },
+  {
+    "id": "8a7a584edba97cb0",
+    "game": "Spyros Adventure",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Gill Grunt",
+    "variant_tag": "base",
+    "name": "Gill Grunt",
+    "relative_path": "Skylanders Spyros Adventure/Water/Gill Grunt.sky"
+  },
+  {
+    "id": "c6252e61c1962949",
+    "game": "Spyros Adventure",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Slam Bam",
+    "variant_tag": "base",
+    "name": "Slam Bam",
+    "relative_path": "Skylanders Spyros Adventure/Water/Slam Bam.sky"
+  },
+  {
+    "id": "56b668a6bbc7cf33",
+    "game": "Spyros Adventure",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Wham Shell",
+    "variant_tag": "base",
+    "name": "Wham Shell",
+    "relative_path": "Skylanders Spyros Adventure/Water/Wham Shell.sky"
+  },
+  {
+    "id": "6c1274e7ca8493b6",
+    "game": "Spyros Adventure",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Zap",
+    "variant_tag": "base",
+    "name": "Zap",
+    "relative_path": "Skylanders Spyros Adventure/Water/Zap.sky"
+  },
+  {
+    "id": "f050f60290410917",
+    "game": "Superchargers",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Hurricane Jet Vac",
+    "variant_tag": "Legendary",
+    "name": "Legendary Hurricane Jet Vac",
+    "relative_path": "Skylanders Superchargers/Air/Alternate types/Legendary Hurricane Jet Vac.sky"
+  },
+  {
+    "id": "e5f5dd992100cff2",
+    "game": "Superchargers",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Jet Vac",
+    "variant_tag": "Hurricane",
+    "name": "Hurricane Jet Vac",
+    "relative_path": "Skylanders Superchargers/Air/Hurricane Jet Vac.sky"
+  },
+  {
+    "id": "d6cbe001401ffb1a",
+    "game": "Superchargers",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Stormblade",
+    "variant_tag": "base",
+    "name": "Stormblade",
+    "relative_path": "Skylanders Superchargers/Air/Stormblade.sky"
+  },
+  {
+    "id": "82f8a8738aa5e5bd",
+    "game": "Superchargers",
+    "element": "Air",
+    "category": "other",
+    "variant_group": "Jet Stream",
+    "variant_tag": "base",
+    "name": "Jet Stream",
+    "relative_path": "Skylanders Superchargers/Air/Vehicle/Jet Stream.sky"
+  },
+  {
+    "id": "ebe719c901f16123",
+    "game": "Superchargers",
+    "element": "Air",
+    "category": "other",
+    "variant_group": "Sky Slicer",
+    "variant_tag": "base",
+    "name": "Sky Slicer",
+    "relative_path": "Skylanders Superchargers/Air/Vehicle/Sky Slicer.sky"
+  },
+  {
+    "id": "6059147df38ea7f9",
+    "game": "Superchargers",
+    "element": "Dark",
+    "category": "figure",
+    "variant_group": "Nightfall",
+    "variant_tag": "base",
+    "name": "Nightfall",
+    "relative_path": "Skylanders Superchargers/Dark/Nightfall.sky"
+  },
+  {
+    "id": "72b3a4537ec6f5be",
+    "game": "Superchargers",
+    "element": "Dark",
+    "category": "other",
+    "variant_group": "Sea Shadow",
+    "variant_tag": "Dark",
+    "name": "Dark Sea Shadow",
+    "relative_path": "Skylanders Superchargers/Dark/Vehicle/Dark Sea Shadow.sky"
+  },
+  {
+    "id": "03e1141c9a131be6",
+    "game": "Superchargers",
+    "element": "Dark",
+    "category": "other",
+    "variant_group": "Sea Shadow",
+    "variant_tag": "base",
+    "name": "Sea Shadow",
+    "relative_path": "Skylanders Superchargers/Dark/Vehicle/Sea Shadow.sky"
+  },
+  {
+    "id": "5ff149a6dc06710d",
+    "game": "Superchargers",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Dino Rang",
+    "variant_tag": "Eon's Elite",
+    "name": "Eon's Elite Dino Rang",
+    "relative_path": "Skylanders Superchargers/Earth/Eon's Elite Dino Rang.sky"
+  },
+  {
+    "id": "75862e2ed2e72747",
+    "game": "Superchargers",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Terrafin",
+    "variant_tag": "Shark Shooter",
+    "name": "Shark Shooter Terrafin",
+    "relative_path": "Skylanders Superchargers/Earth/Shark Shooter Terrafin.sky"
+  },
+  {
+    "id": "9dcec518e36b0c73",
+    "game": "Superchargers",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Smash Hit",
+    "variant_tag": "base",
+    "name": "Smash Hit",
+    "relative_path": "Skylanders Superchargers/Earth/Smash Hit.sky"
+  },
+  {
+    "id": "8c1a58b7f75d9e0a",
+    "game": "Superchargers",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Smash Hit",
+    "variant_tag": "Steel Plated",
+    "name": "Steel Plated Smash Hit",
+    "relative_path": "Skylanders Superchargers/Earth/Steel Plated Smash Hit.sky"
+  },
+  {
+    "id": "5fd2366a803e98ad",
+    "game": "Superchargers",
+    "element": "Earth",
+    "category": "other",
+    "variant_group": "Shark Tank",
+    "variant_tag": "base",
+    "name": "Shark Tank",
+    "relative_path": "Skylanders Superchargers/Earth/Vehicle/Shark Tank.sky"
+  },
+  {
+    "id": "94b21672fa1a363b",
+    "game": "Superchargers",
+    "element": "Earth",
+    "category": "other",
+    "variant_group": "Thump Truck",
+    "variant_tag": "base",
+    "name": "Thump Truck",
+    "relative_path": "Skylanders Superchargers/Earth/Vehicle/Thump Truck.sky"
+  },
+  {
+    "id": "2611b0abc644507e",
+    "game": "Superchargers",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Spitfire",
+    "variant_tag": "Dark",
+    "name": "Dark Spitfire",
+    "relative_path": "Skylanders Superchargers/Fire/Alternate types/Dark Spitfire.sky"
+  },
+  {
+    "id": "03942d6cf17f8610",
+    "game": "Superchargers",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Eruptor",
+    "variant_tag": "Lava Lance",
+    "name": "Lava Lance Eruptor",
+    "relative_path": "Skylanders Superchargers/Fire/Lava Lance Eruptor.sky"
+  },
+  {
+    "id": "cbcd6a6c5c71a5f7",
+    "game": "Superchargers",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Spitfire",
+    "variant_tag": "base",
+    "name": "Spitfire",
+    "relative_path": "Skylanders Superchargers/Fire/Spitfire.sky"
+  },
+  {
+    "id": "e41f764d665ccc56",
+    "game": "Superchargers",
+    "element": "Fire",
+    "category": "other",
+    "variant_group": "Burn Cycle",
+    "variant_tag": "base",
+    "name": "Burn Cycle",
+    "relative_path": "Skylanders Superchargers/Fire/Vehicle/Burn Cycle.sky"
+  },
+  {
+    "id": "d186b16715e4d9f2",
+    "game": "Superchargers",
+    "element": "Fire",
+    "category": "other",
+    "variant_group": "Hot Streak",
+    "variant_tag": "Dark",
+    "name": "Dark Hot Streak",
+    "relative_path": "Skylanders Superchargers/Fire/Vehicle/Dark Hot Streak.sky"
+  },
+  {
+    "id": "b601e56792a18fc7",
+    "game": "Superchargers",
+    "element": "Fire",
+    "category": "other",
+    "variant_group": "Hot Streak",
+    "variant_tag": "E3",
+    "name": "E3 Hot Streak",
+    "relative_path": "Skylanders Superchargers/Fire/Vehicle/E3 Hot Streak.sky"
+  },
+  {
+    "id": "95077967363dda04",
+    "game": "Superchargers",
+    "element": "Fire",
+    "category": "other",
+    "variant_group": "Hot Streak",
+    "variant_tag": "Golden",
+    "name": "Golden Hot Streak",
+    "relative_path": "Skylanders Superchargers/Fire/Vehicle/Golden Hot Streak.sky"
+  },
+  {
+    "id": "a468e4aee2a876e5",
+    "game": "Superchargers",
+    "element": "Fire",
+    "category": "other",
+    "variant_group": "Hot Streak",
+    "variant_tag": "base",
+    "name": "Hot Streak",
+    "relative_path": "Skylanders Superchargers/Fire/Vehicle/Hot Streak.sky"
+  },
+  {
+    "id": "d53c49665cc8bb49",
+    "game": "Superchargers",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Super Shot Stealth Elf",
+    "variant_tag": "Dark",
+    "name": "Dark Super Shot Stealth Elf",
+    "relative_path": "Skylanders Superchargers/Life/Alternate types/Dark Super Shot Stealth Elf.sky"
+  },
+  {
+    "id": "6a96ca9536c9cd60",
+    "game": "Superchargers",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Thrillipede",
+    "variant_tag": "Eggcited",
+    "name": "Eggcited Thrillipede",
+    "relative_path": "Skylanders Superchargers/Life/Alternate types/Eggcited Thrillipede.sky"
+  },
+  {
+    "id": "26c8c8b2450615fa",
+    "game": "Superchargers",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Zook",
+    "variant_tag": "Eon's Elite",
+    "name": "Eon's Elite Zook",
+    "relative_path": "Skylanders Superchargers/Life/Eon's Elite Zook.sky"
+  },
+  {
+    "id": "ae36aa21993d7cb4",
+    "game": "Superchargers",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Stealth Elf",
+    "variant_tag": "Super Shot",
+    "name": "Super Shot Stealth Elf",
+    "relative_path": "Skylanders Superchargers/Life/Super Shot Stealth Elf.sky"
+  },
+  {
+    "id": "9864decef1f99d5c",
+    "game": "Superchargers",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Thrillipede",
+    "variant_tag": "base",
+    "name": "Thrillipede",
+    "relative_path": "Skylanders Superchargers/Life/Thrillipede.sky"
+  },
+  {
+    "id": "a8a8767ee756d180",
+    "game": "Superchargers",
+    "element": "Life",
+    "category": "other",
+    "variant_group": "Buzz Wing",
+    "variant_tag": "base",
+    "name": "Buzz Wing",
+    "relative_path": "Skylanders Superchargers/Life/Vehicle/Buzz Wing.sky"
+  },
+  {
+    "id": "1172f0b70089f079",
+    "game": "Superchargers",
+    "element": "Life",
+    "category": "other",
+    "variant_group": "Stealth Stinger",
+    "variant_tag": "Nitro",
+    "name": "Nitro Stealth Stinger",
+    "relative_path": "Skylanders Superchargers/Life/Vehicle/Nitro Stealth Stinger.sky"
+  },
+  {
+    "id": "9b4212b60b93b771",
+    "game": "Superchargers",
+    "element": "Life",
+    "category": "other",
+    "variant_group": "Stealth Stinger",
+    "variant_tag": "base",
+    "name": "Stealth Stinger",
+    "relative_path": "Skylanders Superchargers/Life/Vehicle/Stealth Stinger.sky"
+  },
+  {
+    "id": "fd57835c880ed7d2",
+    "game": "Superchargers",
+    "element": "Light",
+    "category": "figure",
+    "variant_group": "Astroblast",
+    "variant_tag": "Legendary",
+    "name": "Legendary Astroblast",
+    "relative_path": "Skylanders Superchargers/Light/Alternate types/Legendary Astroblast.sky"
+  },
+  {
+    "id": "ddf9e0fd1ddd46c9",
+    "game": "Superchargers",
+    "element": "Light",
+    "category": "figure",
+    "variant_group": "Astroblast",
+    "variant_tag": "base",
+    "name": "Astroblast",
+    "relative_path": "Skylanders Superchargers/Light/Astroblast.sky"
+  },
+  {
+    "id": "0e1f300c8c5b52ee",
+    "game": "Superchargers",
+    "element": "Light",
+    "category": "other",
+    "variant_group": "Sun Runner",
+    "variant_tag": "Legendary",
+    "name": "Legendary Sun Runner",
+    "relative_path": "Skylanders Superchargers/Light/Vehicle/Legendary Sun Runner.sky"
+  },
+  {
+    "id": "9b68706732fe76c5",
+    "game": "Superchargers",
+    "element": "Light",
+    "category": "other",
+    "variant_group": "Sun Runner",
+    "variant_tag": "base",
+    "name": "Sun Runner",
+    "relative_path": "Skylanders Superchargers/Light/Vehicle/Sun Runner.sky"
+  },
+  {
+    "id": "246272d0ab25eb83",
+    "game": "Superchargers",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Big Bubble Pop Fizz",
+    "variant_tag": "Birthday Bash",
+    "name": "Birthday Bash Big Bubble Pop Fizz",
+    "relative_path": "Skylanders Superchargers/Magic/Alternate types/Birthday Bash Big Bubble Pop Fizz.sky"
+  },
+  {
+    "id": "a9e5e97ab4a47487",
+    "game": "Superchargers",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Splat",
+    "variant_tag": "Power Blue",
+    "name": "Power Blue Splat",
+    "relative_path": "Skylanders Superchargers/Magic/Alternate types/Power Blue Splat.sky"
+  },
+  {
+    "id": "7f0621cc8be6a6dd",
+    "game": "Superchargers",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Pop Fizz",
+    "variant_tag": "Big Bubble",
+    "name": "Big Bubble Pop Fizz",
+    "relative_path": "Skylanders Superchargers/Magic/Big Bubble Pop Fizz.sky"
+  },
+  {
+    "id": "131285c9430718ac",
+    "game": "Superchargers",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Voodood",
+    "variant_tag": "Eon's Elite",
+    "name": "Eon's Elite Voodood",
+    "relative_path": "Skylanders Superchargers/Magic/Eon's Elite Voodood.sky"
+  },
+  {
+    "id": "ca7e3dc12fbf054e",
+    "game": "Superchargers",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Splat",
+    "variant_tag": "base",
+    "name": "Splat",
+    "relative_path": "Skylanders Superchargers/Magic/Splat.sky"
+  },
+  {
+    "id": "82c9ca050f9b5233",
+    "game": "Superchargers",
+    "element": "Magic",
+    "category": "other",
+    "variant_group": "Soda Skimmer",
+    "variant_tag": "Nitro",
+    "name": "Nitro Soda Skimmer",
+    "relative_path": "Skylanders Superchargers/Magic/Vehicle/Nitro Soda Skimmer.sky"
+  },
+  {
+    "id": "8f05515b0665a7e0",
+    "game": "Superchargers",
+    "element": "Magic",
+    "category": "other",
+    "variant_group": "Splatter Splasher",
+    "variant_tag": "Power Blue",
+    "name": "Power Blue Splatter Splasher",
+    "relative_path": "Skylanders Superchargers/Magic/Vehicle/Power Blue Splatter Splasher.sky"
+  },
+  {
+    "id": "143ce3597886d120",
+    "game": "Superchargers",
+    "element": "Magic",
+    "category": "other",
+    "variant_group": "Soda Skimmer",
+    "variant_tag": "base",
+    "name": "Soda Skimmer",
+    "relative_path": "Skylanders Superchargers/Magic/Vehicle/Soda Skimmer.sky"
+  },
+  {
+    "id": "cd3e065e261d9467",
+    "game": "Superchargers",
+    "element": "Magic",
+    "category": "other",
+    "variant_group": "Splatter Splasher",
+    "variant_tag": "base",
+    "name": "Splatter Splasher",
+    "relative_path": "Skylanders Superchargers/Magic/Vehicle/Splatter Splasher.sky"
+  },
+  {
+    "id": "3c70c50555d3c098",
+    "game": "Superchargers",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Double Dare Trigger Happy",
+    "variant_tag": "Power Blue",
+    "name": "Power Blue Double Dare Trigger Happy",
+    "relative_path": "Skylanders Superchargers/Tech/Alternate types/Power Blue Double Dare Trigger Happy.sky"
+  },
+  {
+    "id": "1092f81b79f05fbc",
+    "game": "Superchargers",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Trigger Happy",
+    "variant_tag": "Double Dare",
+    "name": "Double Dare Trigger Happy",
+    "relative_path": "Skylanders Superchargers/Tech/Double Dare Trigger Happy.sky"
+  },
+  {
+    "id": "14f7a7b7ba0278a6",
+    "game": "Superchargers",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Boomer",
+    "variant_tag": "Eon's Elite",
+    "name": "Eon's Elite Boomer",
+    "relative_path": "Skylanders Superchargers/Tech/Eon's Elite Boomer.sky"
+  },
+  {
+    "id": "39f2417d296731f4",
+    "game": "Superchargers",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "High Volt",
+    "variant_tag": "base",
+    "name": "High Volt",
+    "relative_path": "Skylanders Superchargers/Tech/High Volt.sky"
+  },
+  {
+    "id": "c6c42b70ca27913c",
+    "game": "Superchargers",
+    "element": "Tech",
+    "category": "other",
+    "variant_group": "Rusher",
+    "variant_tag": "Gold",
+    "name": "Gold Rusher",
+    "relative_path": "Skylanders Superchargers/Tech/Vehicle/Gold Rusher.sky"
+  },
+  {
+    "id": "2d4d0be17c32610a",
+    "game": "Superchargers",
+    "element": "Tech",
+    "category": "other",
+    "variant_group": "Gold Rusher",
+    "variant_tag": "Power Blue",
+    "name": "Power Blue Gold Rusher",
+    "relative_path": "Skylanders Superchargers/Tech/Vehicle/Power Blue Gold Rusher.sky"
+  },
+  {
+    "id": "92356293a033b213",
+    "game": "Superchargers",
+    "element": "Tech",
+    "category": "other",
+    "variant_group": "Shield Striker",
+    "variant_tag": "base",
+    "name": "Shield Striker",
+    "relative_path": "Skylanders Superchargers/Tech/Vehicle/Shield Striker.sky"
+  },
+  {
+    "id": "cf0a2b43f60bcaac",
+    "game": "Superchargers",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Fiesta",
+    "variant_tag": "Frightful",
+    "name": "Frightful Fiesta",
+    "relative_path": "Skylanders Superchargers/Undead/Alternate types/Frightful Fiesta.sky"
+  },
+  {
+    "id": "4a8f4237cc68d27d",
+    "game": "Superchargers",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Bone Bash Roller Brawl",
+    "variant_tag": "Legendary",
+    "name": "Legendary Bone Bash Roller Brawl",
+    "relative_path": "Skylanders Superchargers/Undead/Alternate types/Legendary Bone Bash Roller Brawl.sky"
+  },
+  {
+    "id": "5687c8fa3ee93249",
+    "game": "Superchargers",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Roller Brawl",
+    "variant_tag": "Bone Bash",
+    "name": "Bone Bash Roller Brawl",
+    "relative_path": "Skylanders Superchargers/Undead/Bone Bash Roller Brawl.sky"
+  },
+  {
+    "id": "b2ecc17085efec9d",
+    "game": "Superchargers",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Ghost Roaster",
+    "variant_tag": "Eon's Elite",
+    "name": "Eon's Elite Ghost Roaster",
+    "relative_path": "Skylanders Superchargers/Undead/Eon's Elite Ghost Roaster.sky"
+  },
+  {
+    "id": "b33239eafe4a5ffc",
+    "game": "Superchargers",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Fiesta",
+    "variant_tag": "base",
+    "name": "Fiesta",
+    "relative_path": "Skylanders Superchargers/Undead/Fiesta.sky"
+  },
+  {
+    "id": "ceea736104fcecca",
+    "game": "Superchargers",
+    "element": "Undead",
+    "category": "other",
+    "variant_group": "Crypt Crusher",
+    "variant_tag": "base",
+    "name": "Crypt Crusher",
+    "relative_path": "Skylanders Superchargers/Undead/Vehicle/Crypt Crusher.sky"
+  },
+  {
+    "id": "00a8f891b6a19ad5",
+    "game": "Superchargers",
+    "element": "Undead",
+    "category": "other",
+    "variant_group": "Tomb Buggy",
+    "variant_tag": "base",
+    "name": "Tomb Buggy",
+    "relative_path": "Skylanders Superchargers/Undead/Vehicle/Tomb Buggy.sky"
+  },
+  {
+    "id": "c69daf3303597c65",
+    "game": "Superchargers",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Dive-Clops",
+    "variant_tag": "Missile-Tow",
+    "name": "Missile-Tow Dive-Clops",
+    "relative_path": "Skylanders Superchargers/Water/Alternate types/Missile-Tow Dive-Clops.sky"
+  },
+  {
+    "id": "ac5b70890b240297",
+    "game": "Superchargers",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Gill Grunt",
+    "variant_tag": "Deep Dive",
+    "name": "Deep Dive Gill Grunt",
+    "relative_path": "Skylanders Superchargers/Water/Deep Dive Gill Grunt.sky"
+  },
+  {
+    "id": "17636c16eccef0e6",
+    "game": "Superchargers",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Dive-Clops",
+    "variant_tag": "base",
+    "name": "Dive-Clops",
+    "relative_path": "Skylanders Superchargers/Water/Dive-Clops.sky"
+  },
+  {
+    "id": "c0511f93a30c57a2",
+    "game": "Superchargers",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Slam Bam",
+    "variant_tag": "Eon's Elite",
+    "name": "Eon's Elite Slam Bam",
+    "relative_path": "Skylanders Superchargers/Water/Eon's Elite Slam Bam.sky"
+  },
+  {
+    "id": "a69c7873019fe57f",
+    "game": "Superchargers",
+    "element": "Water",
+    "category": "other",
+    "variant_group": "Dive Bomber",
+    "variant_tag": "base",
+    "name": "Dive Bomber",
+    "relative_path": "Skylanders Superchargers/Water/Vehicle/Dive Bomber.sky"
+  },
+  {
+    "id": "08721a03c0d987cc",
+    "game": "Superchargers",
+    "element": "Water",
+    "category": "other",
+    "variant_group": "Reef Ripper",
+    "variant_tag": "base",
+    "name": "Reef Ripper",
+    "relative_path": "Skylanders Superchargers/Water/Vehicle/Reef Ripper.sky"
+  },
+  {
+    "id": "c1a62a39bb32f45f",
+    "game": "Swap Force",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Free Ranger",
+    "variant_tag": "Legendary (Bottom)",
+    "name": "Legendary Free Ranger (Bottom)",
+    "relative_path": "Skylanders Swapforce/Air/Alternate types/Legendary Free Ranger (Bottom).sky"
+  },
+  {
+    "id": "0eb428d0eadc2019",
+    "game": "Swap Force",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Free Ranger",
+    "variant_tag": "Legendary (Top)",
+    "name": "Legendary Free Ranger (Top)",
+    "relative_path": "Skylanders Swapforce/Air/Alternate types/Legendary Free Ranger (Top).sky"
+  },
+  {
+    "id": "debefcb60fd8cec8",
+    "game": "Swap Force",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Warnado",
+    "variant_tag": "LightCore",
+    "name": "LightCore Warnado",
+    "relative_path": "Skylanders Swapforce/Air/Alternate types/LightCore Warnado.sky"
+  },
+  {
+    "id": "d75c03d7e91a4c87",
+    "game": "Swap Force",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Boom Jet",
+    "variant_tag": "base (Bottom)",
+    "name": "Boom Jet (Bottom)",
+    "relative_path": "Skylanders Swapforce/Air/Boom Jet (Bottom).sky"
+  },
+  {
+    "id": "e579ee07eeb81e06",
+    "game": "Swap Force",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Boom Jet",
+    "variant_tag": "base (Top)",
+    "name": "Boom Jet (Top)",
+    "relative_path": "Skylanders Swapforce/Air/Boom Jet (Top).sky"
+  },
+  {
+    "id": "7a7587dd6cfdc407",
+    "game": "Swap Force",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Free Ranger",
+    "variant_tag": "base (Bottom)",
+    "name": "Free Ranger (Bottom)",
+    "relative_path": "Skylanders Swapforce/Air/Free Ranger (Bottom).sky"
+  },
+  {
+    "id": "9b1235b81c7ee835",
+    "game": "Swap Force",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Free Ranger",
+    "variant_tag": "base (Top)",
+    "name": "Free Ranger (Top)",
+    "relative_path": "Skylanders Swapforce/Air/Free Ranger (Top).sky"
+  },
+  {
+    "id": "217fd8d2eabf2dcc",
+    "game": "Swap Force",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Whirlwind",
+    "variant_tag": "Horn Blast",
+    "name": "Horn Blast Whirlwind",
+    "relative_path": "Skylanders Swapforce/Air/Horn Blast Whirlwind.sky"
+  },
+  {
+    "id": "94cbf72c0f5c6060",
+    "game": "Swap Force",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Pop Thorn",
+    "variant_tag": "base",
+    "name": "Pop Thorn",
+    "relative_path": "Skylanders Swapforce/Air/Pop Thorn.sky"
+  },
+  {
+    "id": "2a5544f324302640",
+    "game": "Swap Force",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Scratch",
+    "variant_tag": "base",
+    "name": "Scratch",
+    "relative_path": "Skylanders Swapforce/Air/Scratch.sky"
+  },
+  {
+    "id": "0d71394f8396e699",
+    "game": "Swap Force",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Jet Vac",
+    "variant_tag": "Turbo",
+    "name": "Turbo Jet Vac",
+    "relative_path": "Skylanders Swapforce/Air/Turbo Jet Vac.sky"
+  },
+  {
+    "id": "0eb70f19e4eb5c9c",
+    "game": "Swap Force",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Slobber Tooth",
+    "variant_tag": "Dark",
+    "name": "Dark Slobber Tooth",
+    "relative_path": "Skylanders Swapforce/Earth/Alternate types/Dark Slobber Tooth.sky"
+  },
+  {
+    "id": "819bbf9feffe54c9",
+    "game": "Swap Force",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Flashwing",
+    "variant_tag": "LightCore",
+    "name": "LightCore Flashwing",
+    "relative_path": "Skylanders Swapforce/Earth/Alternate types/LightCore Flashwing.sky"
+  },
+  {
+    "id": "c1fc2feacf31105e",
+    "game": "Swap Force",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Doom Stone",
+    "variant_tag": "base (Bottom)",
+    "name": "Doom Stone (Bottom)",
+    "relative_path": "Skylanders Swapforce/Earth/Doom Stone (Bottom).sky"
+  },
+  {
+    "id": "555f8f9247124f63",
+    "game": "Swap Force",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Doom Stone",
+    "variant_tag": "base (Top)",
+    "name": "Doom Stone (Top)",
+    "relative_path": "Skylanders Swapforce/Earth/Doom Stone (Top).sky"
+  },
+  {
+    "id": "a6ff94182b5040a3",
+    "game": "Swap Force",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Prism Break",
+    "variant_tag": "Hyper Beam",
+    "name": "Hyper Beam Prism Break",
+    "relative_path": "Skylanders Swapforce/Earth/Hyper Beam Prism Break.sky"
+  },
+  {
+    "id": "4b56001493819dcd",
+    "game": "Swap Force",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Terrafin",
+    "variant_tag": "Knockout",
+    "name": "Knockout Terrafin",
+    "relative_path": "Skylanders Swapforce/Earth/Knockout Terrafin.sky"
+  },
+  {
+    "id": "2a882bc88c45466a",
+    "game": "Swap Force",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Rubble Rouser",
+    "variant_tag": "base (Bottom)",
+    "name": "Rubble Rouser (Bottom)",
+    "relative_path": "Skylanders Swapforce/Earth/Rubble Rouser (Bottom).sky"
+  },
+  {
+    "id": "06b3a8dfa1eb4c34",
+    "game": "Swap Force",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Rubble Rouser",
+    "variant_tag": "base (Top)",
+    "name": "Rubble Rouser (Top)",
+    "relative_path": "Skylanders Swapforce/Earth/Rubble Rouser (Top).sky"
+  },
+  {
+    "id": "739f23a25a32d8a1",
+    "game": "Swap Force",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Scorp",
+    "variant_tag": "base",
+    "name": "Scorp",
+    "relative_path": "Skylanders Swapforce/Earth/Scorp.sky"
+  },
+  {
+    "id": "87294fb5f5579583",
+    "game": "Swap Force",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Slobber Tooth",
+    "variant_tag": "base",
+    "name": "Slobber Tooth",
+    "relative_path": "Skylanders Swapforce/Earth/Slobber Tooth.sky"
+  },
+  {
+    "id": "21297116327154db",
+    "game": "Swap Force",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Blast Zone",
+    "variant_tag": "Dark (Bottom)",
+    "name": "Dark Blast Zone (Bottom)",
+    "relative_path": "Skylanders Swapforce/Fire/Alternate types/Dark Blast Zone (Bottom).sky"
+  },
+  {
+    "id": "384676805b8f14d5",
+    "game": "Swap Force",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Blast Zone",
+    "variant_tag": "Dark (Top)",
+    "name": "Dark Blast Zone (Top)",
+    "relative_path": "Skylanders Swapforce/Fire/Alternate types/Dark Blast Zone (Top).sky"
+  },
+  {
+    "id": "7b16bf151cbadac1",
+    "game": "Swap Force",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Fire Kraken",
+    "variant_tag": "Jade (Bottom)",
+    "name": "Jade Fire Kraken (Bottom)",
+    "relative_path": "Skylanders Swapforce/Fire/Alternate types/Jade Fire Kraken (Bottom).sky"
+  },
+  {
+    "id": "6bbe2de00f3617d0",
+    "game": "Swap Force",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Fire Kraken",
+    "variant_tag": "Jade (Top)",
+    "name": "Jade Fire Kraken (Top)",
+    "relative_path": "Skylanders Swapforce/Fire/Alternate types/Jade Fire Kraken (Top).sky"
+  },
+  {
+    "id": "3721c63169bd6d5b",
+    "game": "Swap Force",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Smolderdash",
+    "variant_tag": "LightCore",
+    "name": "LightCore Smolderdash",
+    "relative_path": "Skylanders Swapforce/Fire/Alternate types/LightCore Smolderdash.sky"
+  },
+  {
+    "id": "895465885814b9b7",
+    "game": "Swap Force",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Eruptor",
+    "variant_tag": "Volcanic",
+    "name": "Volcanic Eruptor",
+    "relative_path": "Skylanders Swapforce/Fire/Alternate types/Volcanic Eruptor.sky"
+  },
+  {
+    "id": "76e47d29928b6507",
+    "game": "Swap Force",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Blast Zone",
+    "variant_tag": "base (Bottom)",
+    "name": "Blast Zone (Bottom)",
+    "relative_path": "Skylanders Swapforce/Fire/Blast Zone (Bottom).sky"
+  },
+  {
+    "id": "7a73ee4305882c5c",
+    "game": "Swap Force",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Blast Zone",
+    "variant_tag": "base (Top)",
+    "name": "Blast Zone (Top)",
+    "relative_path": "Skylanders Swapforce/Fire/Blast Zone (Top).sky"
+  },
+  {
+    "id": "693a6c86dde95e57",
+    "game": "Swap Force",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Hot Dog",
+    "variant_tag": "Fire Bone",
+    "name": "Fire Bone Hot Dog",
+    "relative_path": "Skylanders Swapforce/Fire/Fire Bone Hot Dog.sky"
+  },
+  {
+    "id": "540e26eb97cf474a",
+    "game": "Swap Force",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Fire Kraken",
+    "variant_tag": "base (Bottom)",
+    "name": "Fire Kraken (Bottom)",
+    "relative_path": "Skylanders Swapforce/Fire/Fire Kraken (Bottom).sky"
+  },
+  {
+    "id": "231042efd0835450",
+    "game": "Swap Force",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Fire Kraken",
+    "variant_tag": "base (Top)",
+    "name": "Fire Kraken (Top)",
+    "relative_path": "Skylanders Swapforce/Fire/Fire Kraken (Top).sky"
+  },
+  {
+    "id": "93a66a9dfec620be",
+    "game": "Swap Force",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Fryno",
+    "variant_tag": "base",
+    "name": "Fryno",
+    "relative_path": "Skylanders Swapforce/Fire/Fryno.sky"
+  },
+  {
+    "id": "935315cbef2d87c4",
+    "game": "Swap Force",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Eruptor",
+    "variant_tag": "Lava Barf",
+    "name": "Lava Barf Eruptor",
+    "relative_path": "Skylanders Swapforce/Fire/Lava Barf Eruptor.sky"
+  },
+  {
+    "id": "f224fcd23b379203",
+    "game": "Swap Force",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Smolderdash",
+    "variant_tag": "base",
+    "name": "Smolderdash",
+    "relative_path": "Skylanders Swapforce/Fire/Smolderdash.sky"
+  },
+  {
+    "id": "892a106ebbccdc2a",
+    "game": "Swap Force",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Stealth Elf",
+    "variant_tag": "Dark",
+    "name": "Dark Stealth Elf",
+    "relative_path": "Skylanders Swapforce/Life/Alternate types/Dark Stealth Elf.sky"
+  },
+  {
+    "id": "3b219a702b9dd34f",
+    "game": "Swap Force",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Bumble Blast",
+    "variant_tag": "Jolly",
+    "name": "Jolly Bumble Blast",
+    "relative_path": "Skylanders Swapforce/Life/Alternate types/Jolly Bumble Blast.sky"
+  },
+  {
+    "id": "07e40be4df974056",
+    "game": "Swap Force",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Zoo Lou",
+    "variant_tag": "Legendary",
+    "name": "Legendary Zoo Lou",
+    "relative_path": "Skylanders Swapforce/Life/Alternate types/Legendary Zoo Lou.sky"
+  },
+  {
+    "id": "0a3b4ec59c2a9389",
+    "game": "Swap Force",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Bumble Blast",
+    "variant_tag": "LightCore",
+    "name": "LightCore Bumble Blast",
+    "relative_path": "Skylanders Swapforce/Life/Alternate types/LightCore Bumble Blast.sky"
+  },
+  {
+    "id": "9935f150d0a20928",
+    "game": "Swap Force",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Bumble Blast",
+    "variant_tag": "base",
+    "name": "Bumble Blast",
+    "relative_path": "Skylanders Swapforce/Life/Bumble Blast.sky"
+  },
+  {
+    "id": "57567dfe2fee6aea",
+    "game": "Swap Force",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Grilla Drilla",
+    "variant_tag": "base (Bottom)",
+    "name": "Grilla Drilla (Bottom)",
+    "relative_path": "Skylanders Swapforce/Life/Grilla Drilla (Bottom).sky"
+  },
+  {
+    "id": "9ad950d0d359c076",
+    "game": "Swap Force",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Grilla Drilla",
+    "variant_tag": "base (Top)",
+    "name": "Grilla Drilla (Top)",
+    "relative_path": "Skylanders Swapforce/Life/Grilla Drilla (Top).sky"
+  },
+  {
+    "id": "93bbed7eeb73b3a6",
+    "game": "Swap Force",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Ninja Stealth Elf",
+    "variant_tag": "base",
+    "name": "Ninja Stealth Elf",
+    "relative_path": "Skylanders Swapforce/Life/Ninja Stealth Elf.sky"
+  },
+  {
+    "id": "56ede4a8156d8829",
+    "game": "Swap Force",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Stink Bomb",
+    "variant_tag": "base (Bottom)",
+    "name": "Stink Bomb (Bottom)",
+    "relative_path": "Skylanders Swapforce/Life/Stink Bomb (Bottom).sky"
+  },
+  {
+    "id": "010fd0eb4cc8ad00",
+    "game": "Swap Force",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Stink Bomb",
+    "variant_tag": "base (Top)",
+    "name": "Stink Bomb (Top)",
+    "relative_path": "Skylanders Swapforce/Life/Stink Bomb (Top).sky"
+  },
+  {
+    "id": "761554941b119c21",
+    "game": "Swap Force",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Thorn Horn Camo",
+    "variant_tag": "base",
+    "name": "Thorn Horn Camo",
+    "relative_path": "Skylanders Swapforce/Life/Thorn Horn Camo.sky"
+  },
+  {
+    "id": "eb59e9087fa70c66",
+    "game": "Swap Force",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Zoo Lou",
+    "variant_tag": "base",
+    "name": "Zoo Lou",
+    "relative_path": "Skylanders Swapforce/Life/Zoo Lou.sky"
+  },
+  {
+    "id": "c8a26dee2ddb5065",
+    "game": "Swap Force",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Mega Ram Spyro",
+    "variant_tag": "Dark",
+    "name": "Dark Mega Ram Spyro",
+    "relative_path": "Skylanders Swapforce/Magic/Alternate types/Dark Mega Ram Spyro.sky"
+  },
+  {
+    "id": "b8803652cbfe2dff",
+    "game": "Swap Force",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Enchanted Hoot Loop",
+    "variant_tag": "Alternate (Bottom)",
+    "name": "Enchanted Hoot Loop (Bottom)",
+    "relative_path": "Skylanders Swapforce/Magic/Alternate types/Enchanted Hoot Loop (Bottom).sky"
+  },
+  {
+    "id": "64dc001e71df6c12",
+    "game": "Swap Force",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Enchanted Hoot Loop",
+    "variant_tag": "Alternate (Top)",
+    "name": "Enchanted Hoot Loop (Top)",
+    "relative_path": "Skylanders Swapforce/Magic/Alternate types/Enchanted Hoot Loop (Top).sky"
+  },
+  {
+    "id": "5d2da1ddb370de9a",
+    "game": "Swap Force",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Enchanted Star Strike",
+    "variant_tag": "Alternate",
+    "name": "Enchanted Star Strike",
+    "relative_path": "Skylanders Swapforce/Magic/Alternate types/Enchanted Star Strike.sky"
+  },
+  {
+    "id": "d7f4536f8126b0cd",
+    "game": "Swap Force",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Star Strike",
+    "variant_tag": "LightCore",
+    "name": "LightCore Star Strike",
+    "relative_path": "Skylanders Swapforce/Magic/Alternate types/LightCore Star Strike.sky"
+  },
+  {
+    "id": "0a48c1f681be0a40",
+    "game": "Swap Force",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Dune Bug",
+    "variant_tag": "base",
+    "name": "Dune Bug",
+    "relative_path": "Skylanders Swapforce/Magic/Dune Bug.sky"
+  },
+  {
+    "id": "baa9b018667969a1",
+    "game": "Swap Force",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Hoot Loop",
+    "variant_tag": "base (Bottom)",
+    "name": "Hoot Loop (Bottom)",
+    "relative_path": "Skylanders Swapforce/Magic/Hoot Loop (Bottom).sky"
+  },
+  {
+    "id": "9e9be953dfc7bac3",
+    "game": "Swap Force",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Hoot Loop",
+    "variant_tag": "base (Top)",
+    "name": "Hoot Loop (Top)",
+    "relative_path": "Skylanders Swapforce/Magic/Hoot Loop (Top).sky"
+  },
+  {
+    "id": "34b37d655efffe12",
+    "game": "Swap Force",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Mega Ram Spyro",
+    "variant_tag": "base",
+    "name": "Mega Ram Spyro",
+    "relative_path": "Skylanders Swapforce/Magic/Mega Ram Spyro.sky"
+  },
+  {
+    "id": "0a463323aed61b21",
+    "game": "Swap Force",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Star Strike",
+    "variant_tag": "base",
+    "name": "Star Strike",
+    "relative_path": "Skylanders Swapforce/Magic/Star Strike.sky"
+  },
+  {
+    "id": "cd9c83f1534eae24",
+    "game": "Swap Force",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Super Gulp Pop Fizz",
+    "variant_tag": "base",
+    "name": "Super Gulp Pop Fizz",
+    "relative_path": "Skylanders Swapforce/Magic/Super Gulp Pop Fizz.sky"
+  },
+  {
+    "id": "26c8f4f3a6e9dc3c",
+    "game": "Swap Force",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Trap Shadow",
+    "variant_tag": "base (Bottom)",
+    "name": "Trap Shadow (Bottom)",
+    "relative_path": "Skylanders Swapforce/Magic/Trap Shadow (Bottom).sky"
+  },
+  {
+    "id": "27be9ad62a7f5421",
+    "game": "Swap Force",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Trap Shadow",
+    "variant_tag": "base (Top)",
+    "name": "Trap Shadow (Top)",
+    "relative_path": "Skylanders Swapforce/Magic/Trap Shadow (Top).sky"
+  },
+  {
+    "id": "71f6ea7459a096ed",
+    "game": "Swap Force",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Kickoff Countdown",
+    "variant_tag": "Alternate",
+    "name": "Kickoff Countdown",
+    "relative_path": "Skylanders Swapforce/Tech/Alternate types/Kickoff Countdown.sky"
+  },
+  {
+    "id": "12c3f4e18431ef7d",
+    "game": "Swap Force",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Countdown",
+    "variant_tag": "LightCore",
+    "name": "LightCore Countdown",
+    "relative_path": "Skylanders Swapforce/Tech/Alternate types/LightCore Countdown.sky"
+  },
+  {
+    "id": "85d9d10be9db6096",
+    "game": "Swap Force",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Magna Charge",
+    "variant_tag": "Nitro (Bottom)",
+    "name": "Nitro Magna Charge (Bottom)",
+    "relative_path": "Skylanders Swapforce/Tech/Alternate types/Nitro Magna Charge (Bottom).sky"
+  },
+  {
+    "id": "3018e3b4ea9033a1",
+    "game": "Swap Force",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Magna Charge",
+    "variant_tag": "Nitro (Top)",
+    "name": "Nitro Magna Charge (Top)",
+    "relative_path": "Skylanders Swapforce/Tech/Alternate types/Nitro Magna Charge (Top).sky"
+  },
+  {
+    "id": "397a3a73ddb105a7",
+    "game": "Swap Force",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Springtime Trigger Happy",
+    "variant_tag": "Alternate",
+    "name": "Springtime Trigger Happy",
+    "relative_path": "Skylanders Swapforce/Tech/Alternate types/Springtime Trigger Happy.sky"
+  },
+  {
+    "id": "0cdb746f0982dd03",
+    "game": "Swap Force",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Big Bang Trigger Happy",
+    "variant_tag": "base",
+    "name": "Big Bang Trigger Happy",
+    "relative_path": "Skylanders Swapforce/Tech/Big Bang Trigger Happy.sky"
+  },
+  {
+    "id": "a4e497f6f5aed35d",
+    "game": "Swap Force",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Countdown",
+    "variant_tag": "base",
+    "name": "Countdown",
+    "relative_path": "Skylanders Swapforce/Tech/Countdown.sky"
+  },
+  {
+    "id": "fc2c0d36297c247b",
+    "game": "Swap Force",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Heavy Duty Sprocket",
+    "variant_tag": "base",
+    "name": "Heavy Duty Sprocket",
+    "relative_path": "Skylanders Swapforce/Tech/Heavy Duty Sprocket.sky"
+  },
+  {
+    "id": "75285eb6929cbb1e",
+    "game": "Swap Force",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Magna Charge",
+    "variant_tag": "base (Bottom)",
+    "name": "Magna Charge (Bottom)",
+    "relative_path": "Skylanders Swapforce/Tech/Magna Charge (Bottom).sky"
+  },
+  {
+    "id": "d70ffcae1e76b639",
+    "game": "Swap Force",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Magna Charge",
+    "variant_tag": "base (Top)",
+    "name": "Magna Charge (Top)",
+    "relative_path": "Skylanders Swapforce/Tech/Magna Charge (Top).sky"
+  },
+  {
+    "id": "caeee2092186ca57",
+    "game": "Swap Force",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Spy Rise",
+    "variant_tag": "base (Bottom)",
+    "name": "Spy Rise (Bottom)",
+    "relative_path": "Skylanders Swapforce/Tech/Spy Rise (Bottom).sky"
+  },
+  {
+    "id": "b662d27860e6ee87",
+    "game": "Swap Force",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Spy Rise",
+    "variant_tag": "base (Top)",
+    "name": "Spy Rise (Top)",
+    "relative_path": "Skylanders Swapforce/Tech/Spy Rise (Top).sky"
+  },
+  {
+    "id": "0b656b28c698a47a",
+    "game": "Swap Force",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Wind Up",
+    "variant_tag": "base",
+    "name": "Wind Up",
+    "relative_path": "Skylanders Swapforce/Tech/Wind Up.sky"
+  },
+  {
+    "id": "665a60f3b5d3ed67",
+    "game": "Swap Force",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "vvindup 1",
+    "variant_tag": "base",
+    "name": "vvindup_1",
+    "relative_path": "Skylanders Swapforce/Tech/vvindup_1.sky"
+  },
+  {
+    "id": "ad073cea770afb7f",
+    "game": "Swap Force",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Grim Creeper",
+    "variant_tag": "Legendary",
+    "name": "Legendary Grim Creeper",
+    "relative_path": "Skylanders Swapforce/Undead/Alternate types/Legendary Grim Creeper.sky"
+  },
+  {
+    "id": "5e97327ca400b117",
+    "game": "Swap Force",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Night Shift",
+    "variant_tag": "Legendary (Bottom)",
+    "name": "Legendary Night Shift (Bottom)",
+    "relative_path": "Skylanders Swapforce/Undead/Alternate types/Legendary Night Shift (Bottom).sky"
+  },
+  {
+    "id": "deb679ee7da5e772",
+    "game": "Swap Force",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Night Shift",
+    "variant_tag": "Legendary (Top)",
+    "name": "Legendary Night Shift (Top)",
+    "relative_path": "Skylanders Swapforce/Undead/Alternate types/Legendary Night Shift (Top).sky"
+  },
+  {
+    "id": "6f59f7913fef9b88",
+    "game": "Swap Force",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Grim Creeper",
+    "variant_tag": "LightCore",
+    "name": "LightCore Grim Creeper",
+    "relative_path": "Skylanders Swapforce/Undead/Alternate types/LightCore Grim Creeper.sky"
+  },
+  {
+    "id": "4e0756dcd8650c13",
+    "game": "Swap Force",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Quick Draw Rattle Shake",
+    "variant_tag": "Alternate (Bottom)",
+    "name": "Quick Draw Rattle Shake (Bottom)",
+    "relative_path": "Skylanders Swapforce/Undead/Alternate types/Quick Draw Rattle Shake (Bottom).sky"
+  },
+  {
+    "id": "2db7a36b668eb38a",
+    "game": "Swap Force",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Quick Draw Rattle Shake",
+    "variant_tag": "Alternate (Top)",
+    "name": "Quick Draw Rattle Shake (Top)",
+    "relative_path": "Skylanders Swapforce/Undead/Alternate types/Quick Draw Rattle Shake (Top).sky"
+  },
+  {
+    "id": "8cbf5a09908fdd12",
+    "game": "Swap Force",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Grim Creeper",
+    "variant_tag": "base",
+    "name": "Grim Creeper",
+    "relative_path": "Skylanders Swapforce/Undead/Grim Creeper.sky"
+  },
+  {
+    "id": "37378da026dd5ec0",
+    "game": "Swap Force",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Night Shift",
+    "variant_tag": "base (Bottom)",
+    "name": "Night Shift (Bottom)",
+    "relative_path": "Skylanders Swapforce/Undead/Night Shift (Bottom).sky"
+  },
+  {
+    "id": "2bced7036763ec00",
+    "game": "Swap Force",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Night Shift",
+    "variant_tag": "base (Top)",
+    "name": "Night Shift (Top)",
+    "relative_path": "Skylanders Swapforce/Undead/Night Shift (Top).sky"
+  },
+  {
+    "id": "cda0343011d0eb15",
+    "game": "Swap Force",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Phantom Cynder",
+    "variant_tag": "base",
+    "name": "Phantom Cynder",
+    "relative_path": "Skylanders Swapforce/Undead/Phantom Cynder.sky"
+  },
+  {
+    "id": "852932171aeae015",
+    "game": "Swap Force",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Rattle Shake",
+    "variant_tag": "base (Bottom)",
+    "name": "Rattle Shake (Bottom)",
+    "relative_path": "Skylanders Swapforce/Undead/Rattle Shake (Bottom).sky"
+  },
+  {
+    "id": "c78f27c987e2e74f",
+    "game": "Swap Force",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Rattle Shake",
+    "variant_tag": "base (Top)",
+    "name": "Rattle Shake (Top)",
+    "relative_path": "Skylanders Swapforce/Undead/Rattle Shake (Top).sky"
+  },
+  {
+    "id": "9a89b3f6bf790e16",
+    "game": "Swap Force",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Roller Brawl",
+    "variant_tag": "base",
+    "name": "Roller Brawl",
+    "relative_path": "Skylanders Swapforce/Undead/Roller Brawl.sky"
+  },
+  {
+    "id": "b8d2e2cd9ce57340",
+    "game": "Swap Force",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Twin Blade Chop Chop",
+    "variant_tag": "base",
+    "name": "Twin Blade Chop Chop",
+    "relative_path": "Skylanders Swapforce/Undead/Twin Blade Chop Chop.sky"
+  },
+  {
+    "id": "d6ea2b5c78e8a676",
+    "game": "Swap Force",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Wash Buckler",
+    "variant_tag": "Dark (Bottom)",
+    "name": "Dark Wash Buckler (Bottom)",
+    "relative_path": "Skylanders Swapforce/Water/Alternate types/Dark Wash Buckler (Bottom).sky"
+  },
+  {
+    "id": "40328bf786db2877",
+    "game": "Swap Force",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Wash Buckler",
+    "variant_tag": "Dark (Top)",
+    "name": "Dark Wash Buckler (Top)",
+    "relative_path": "Skylanders Swapforce/Water/Alternate types/Dark Wash Buckler (Top).sky"
+  },
+  {
+    "id": "4a8c4549cb17a96b",
+    "game": "Swap Force",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Wham Shell",
+    "variant_tag": "LightCore",
+    "name": "LightCore Wham Shell",
+    "relative_path": "Skylanders Swapforce/Water/Alternate types/LightCore Wham Shell.sky"
+  },
+  {
+    "id": "18e032fa0530136c",
+    "game": "Swap Force",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Freeze Blade",
+    "variant_tag": "Nitro (Bottom)",
+    "name": "Nitro Freeze Blade (Bottom)",
+    "relative_path": "Skylanders Swapforce/Water/Alternate types/Nitro Freeze Blade (Bottom).sky"
+  },
+  {
+    "id": "c50edb10cfe5e50e",
+    "game": "Swap Force",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Freeze Blade",
+    "variant_tag": "Nitro (Top)",
+    "name": "Nitro Freeze Blade (Top)",
+    "relative_path": "Skylanders Swapforce/Water/Alternate types/Nitro Freeze Blade (Top).sky"
+  },
+  {
+    "id": "c97690eea5e65a79",
+    "game": "Swap Force",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Anchors Away Gill Grunt",
+    "variant_tag": "base",
+    "name": "Anchors Away Gill Grunt",
+    "relative_path": "Skylanders Swapforce/Water/Anchors Away Gill Grunt.sky"
+  },
+  {
+    "id": "bbd1c0d3adc286f4",
+    "game": "Swap Force",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Blizzard Chill",
+    "variant_tag": "base",
+    "name": "Blizzard Chill",
+    "relative_path": "Skylanders Swapforce/Water/Blizzard Chill.sky"
+  },
+  {
+    "id": "bf8867879ce2b882",
+    "game": "Swap Force",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Freeze Blade",
+    "variant_tag": "base (Bottom)",
+    "name": "Freeze Blade (Bottom)",
+    "relative_path": "Skylanders Swapforce/Water/Freeze Blade (Bottom).sky"
+  },
+  {
+    "id": "767b60068086971b",
+    "game": "Swap Force",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Freeze Blade",
+    "variant_tag": "base (Top)",
+    "name": "Freeze Blade (Top)",
+    "relative_path": "Skylanders Swapforce/Water/Freeze Blade (Top).sky"
+  },
+  {
+    "id": "da3d5d3351b2c127",
+    "game": "Swap Force",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Punk Shock",
+    "variant_tag": "base",
+    "name": "Punk Shock",
+    "relative_path": "Skylanders Swapforce/Water/Punk Shock.sky"
+  },
+  {
+    "id": "aaf07b046748b59c",
+    "game": "Swap Force",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Rip Tide",
+    "variant_tag": "base",
+    "name": "Rip Tide",
+    "relative_path": "Skylanders Swapforce/Water/Rip Tide.sky"
+  },
+  {
+    "id": "5aea46f0ab78a9e7",
+    "game": "Swap Force",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Wash Buckler",
+    "variant_tag": "base (Bottom)",
+    "name": "Wash Buckler (Bottom)",
+    "relative_path": "Skylanders Swapforce/Water/Wash Buckler (Bottom).sky"
+  },
+  {
+    "id": "86c2a19d23c819f5",
+    "game": "Swap Force",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Wash Buckler",
+    "variant_tag": "base (Top)",
+    "name": "Wash Buckler (Top)",
+    "relative_path": "Skylanders Swapforce/Water/Wash Buckler (Top).sky"
+  },
+  {
+    "id": "64f63668f1831916",
+    "game": "Trap Team",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Blades",
+    "variant_tag": "Legendary",
+    "name": "Legendary Blades",
+    "relative_path": "Skylanders Trap Team/Air/Alternate types/Legendary Blades.sky"
+  },
+  {
+    "id": "1b8c3a38b1799213",
+    "game": "Trap Team",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Blades",
+    "variant_tag": "base",
+    "name": "Blades",
+    "relative_path": "Skylanders Trap Team/Air/Blades.sky"
+  },
+  {
+    "id": "a0ce4ae4aa8c4195",
+    "game": "Trap Team",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Whirlwind",
+    "variant_tag": "Eon's Elite",
+    "name": "Eon's Elite Whirlwind",
+    "relative_path": "Skylanders Trap Team/Air/Eon's Elite Whirlwind.sky"
+  },
+  {
+    "id": "54d5977dd06e8e90",
+    "game": "Trap Team",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Fling Kong",
+    "variant_tag": "base",
+    "name": "Fling Kong",
+    "relative_path": "Skylanders Trap Team/Air/Fling Kong.sky"
+  },
+  {
+    "id": "486c1d83a72c0310",
+    "game": "Trap Team",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Full Blast Jet Vac",
+    "variant_tag": "base",
+    "name": "Full Blast Jet Vac",
+    "relative_path": "Skylanders Trap Team/Air/Full Blast Jet Vac.sky"
+  },
+  {
+    "id": "15ea546dadfecaba",
+    "game": "Trap Team",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Gusto",
+    "variant_tag": "base",
+    "name": "Gusto",
+    "relative_path": "Skylanders Trap Team/Air/Gusto.sky"
+  },
+  {
+    "id": "29f0831366c210b8",
+    "game": "Trap Team",
+    "element": "Air",
+    "category": "figure",
+    "variant_group": "Thunderbolt",
+    "variant_tag": "base",
+    "name": "Thunderbolt",
+    "relative_path": "Skylanders Trap Team/Air/Thunderbolt.sky"
+  },
+  {
+    "id": "a5bc603ca372eb51",
+    "game": "Trap Team",
+    "element": "Dark",
+    "category": "figure",
+    "variant_group": "Blackout",
+    "variant_tag": "base",
+    "name": "Blackout",
+    "relative_path": "Skylanders Trap Team/Dark/Blackout.sky"
+  },
+  {
+    "id": "89c873b43456fe97",
+    "game": "Trap Team",
+    "element": "Dark",
+    "category": "figure",
+    "variant_group": "Knight Mare",
+    "variant_tag": "base",
+    "name": "Knight Mare",
+    "relative_path": "Skylanders Trap Team/Dark/Knight Mare.sky"
+  },
+  {
+    "id": "435477f6f364a7b4",
+    "game": "Trap Team",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Head Rush",
+    "variant_tag": "Nitro",
+    "name": "Nitro Head Rush",
+    "relative_path": "Skylanders Trap Team/Earth/Alternate types/Nitro Head Rush.sky"
+  },
+  {
+    "id": "c02d2534ad249260",
+    "game": "Trap Team",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Terrafin",
+    "variant_tag": "Eon's Elite",
+    "name": "Eon's Elite Terrafin",
+    "relative_path": "Skylanders Trap Team/Earth/Eon's Elite Terrafin.sky"
+  },
+  {
+    "id": "a65b7c9358981096",
+    "game": "Trap Team",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Fist Bump",
+    "variant_tag": "base",
+    "name": "Fist Bump",
+    "relative_path": "Skylanders Trap Team/Earth/Fist Bump.sky"
+  },
+  {
+    "id": "5e4c1016066ab092",
+    "game": "Trap Team",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Head Rush",
+    "variant_tag": "base",
+    "name": "Head Rush",
+    "relative_path": "Skylanders Trap Team/Earth/Head Rush.sky"
+  },
+  {
+    "id": "af054efaf6debbfb",
+    "game": "Trap Team",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Rocky Roll",
+    "variant_tag": "base",
+    "name": "Rocky Roll",
+    "relative_path": "Skylanders Trap Team/Earth/Rocky Roll.sky"
+  },
+  {
+    "id": "71b8a1f042f32dd5",
+    "game": "Trap Team",
+    "element": "Earth",
+    "category": "figure",
+    "variant_group": "Wallop",
+    "variant_tag": "base",
+    "name": "Wallop",
+    "relative_path": "Skylanders Trap Team/Earth/Wallop.sky"
+  },
+  {
+    "id": "131a236dc52db984",
+    "game": "Trap Team",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Wildfire",
+    "variant_tag": "Dark",
+    "name": "Dark Wildfire",
+    "relative_path": "Skylanders Trap Team/Fire/Alternate types/Dark Wildfire.sky"
+  },
+  {
+    "id": "2eccce063b785d37",
+    "game": "Trap Team",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Eruptor",
+    "variant_tag": "Eon's Elite",
+    "name": "Eon's Elite Eruptor",
+    "relative_path": "Skylanders Trap Team/Fire/Eon's Elite Eruptor.sky"
+  },
+  {
+    "id": "36c8655085d5fe5f",
+    "game": "Trap Team",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Hog Wild Fryno",
+    "variant_tag": "base",
+    "name": "Hog Wild Fryno",
+    "relative_path": "Skylanders Trap Team/Fire/Hog Wild Fryno.sky"
+  },
+  {
+    "id": "0b35000875118fc9",
+    "game": "Trap Team",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Ka Boom",
+    "variant_tag": "base",
+    "name": "Ka Boom",
+    "relative_path": "Skylanders Trap Team/Fire/Ka Boom.sky"
+  },
+  {
+    "id": "7f345898096e128d",
+    "game": "Trap Team",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Torch",
+    "variant_tag": "base",
+    "name": "Torch",
+    "relative_path": "Skylanders Trap Team/Fire/Torch.sky"
+  },
+  {
+    "id": "dac4cd2145321944",
+    "game": "Trap Team",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Trail Blazer",
+    "variant_tag": "base",
+    "name": "Trail Blazer",
+    "relative_path": "Skylanders Trap Team/Fire/Trail Blazer.sky"
+  },
+  {
+    "id": "8cab28a729d56e02",
+    "game": "Trap Team",
+    "element": "Fire",
+    "category": "figure",
+    "variant_group": "Wildfire",
+    "variant_tag": "base",
+    "name": "Wildfire",
+    "relative_path": "Skylanders Trap Team/Fire/Wildfire.sky"
+  },
+  {
+    "id": "ae7cb55eebe7e241",
+    "game": "Trap Team",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Food Fight",
+    "variant_tag": "Dark",
+    "name": "Dark Food Fight",
+    "relative_path": "Skylanders Trap Team/Life/Alternate types/Dark Food Fight.sky"
+  },
+  {
+    "id": "d4c40668c74967b8",
+    "game": "Trap Team",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Bushwack",
+    "variant_tag": "Legendary",
+    "name": "Legendary Bushwack",
+    "relative_path": "Skylanders Trap Team/Life/Alternate types/Legendary Bushwack.sky"
+  },
+  {
+    "id": "6c509c0cd8429ffc",
+    "game": "Trap Team",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Bushwack",
+    "variant_tag": "base",
+    "name": "Bushwack",
+    "relative_path": "Skylanders Trap Team/Life/Bushwack.sky"
+  },
+  {
+    "id": "993dc66b45c0b654",
+    "game": "Trap Team",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Stealth Elf",
+    "variant_tag": "Eon's Elite",
+    "name": "Eon's Elite Stealth Elf",
+    "relative_path": "Skylanders Trap Team/Life/Eon's Elite Stealth Elf.sky"
+  },
+  {
+    "id": "53ff7f5f90a4bbca",
+    "game": "Trap Team",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Food Fight",
+    "variant_tag": "base",
+    "name": "Food Fight",
+    "relative_path": "Skylanders Trap Team/Life/Food Fight.sky"
+  },
+  {
+    "id": "53323963d17361a3",
+    "game": "Trap Team",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "High Five",
+    "variant_tag": "base",
+    "name": "High Five",
+    "relative_path": "Skylanders Trap Team/Life/High Five.sky"
+  },
+  {
+    "id": "ab7ad08980803866",
+    "game": "Trap Team",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Sure Shot Shroomboom",
+    "variant_tag": "base",
+    "name": "Sure Shot Shroomboom",
+    "relative_path": "Skylanders Trap Team/Life/Sure Shot Shroomboom.sky"
+  },
+  {
+    "id": "2051024cadaf834e",
+    "game": "Trap Team",
+    "element": "Life",
+    "category": "figure",
+    "variant_group": "Tuff Luck",
+    "variant_tag": "base",
+    "name": "Tuff Luck",
+    "relative_path": "Skylanders Trap Team/Life/Tuff Luck.sky"
+  },
+  {
+    "id": "baf627ecea2839ec",
+    "game": "Trap Team",
+    "element": "Light",
+    "category": "figure",
+    "variant_group": "Knight Light",
+    "variant_tag": "base",
+    "name": "Knight Light",
+    "relative_path": "Skylanders Trap Team/Light/Knight Light.sky"
+  },
+  {
+    "id": "657b6378d009e9b4",
+    "game": "Trap Team",
+    "element": "Light",
+    "category": "figure",
+    "variant_group": "Spotlight",
+    "variant_tag": "base",
+    "name": "Spotlight",
+    "relative_path": "Skylanders Trap Team/Light/Spotlight.sky"
+  },
+  {
+    "id": "5f94cabb7bf36249",
+    "game": "Trap Team",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "King Cobra Cadabra",
+    "variant_tag": "Alternate",
+    "name": "King Cobra Cadabra",
+    "relative_path": "Skylanders Trap Team/Magic/Alternate types/King Cobra Cadabra.sky"
+  },
+  {
+    "id": "d25dbb67607bdcf5",
+    "game": "Trap Team",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Deja Vu",
+    "variant_tag": "Legendary",
+    "name": "Legendary Deja Vu",
+    "relative_path": "Skylanders Trap Team/Magic/Alternate types/Legendary Deja Vu.sky"
+  },
+  {
+    "id": "3c375352258e9762",
+    "game": "Trap Team",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Love Potion Pop Fizz",
+    "variant_tag": "Alternate",
+    "name": "Love Potion Pop Fizz",
+    "relative_path": "Skylanders Trap Team/Magic/Alternate types/Love Potion Pop Fizz.sky"
+  },
+  {
+    "id": "285a13bb5d5737d1",
+    "game": "Trap Team",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Blastermind",
+    "variant_tag": "base",
+    "name": "Blastermind",
+    "relative_path": "Skylanders Trap Team/Magic/Blastermind.sky"
+  },
+  {
+    "id": "5e182abfaecfc7bb",
+    "game": "Trap Team",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Cobra Candabra",
+    "variant_tag": "base",
+    "name": "Cobra Candabra",
+    "relative_path": "Skylanders Trap Team/Magic/Cobra Candabra.sky"
+  },
+  {
+    "id": "eda68d0809cb5347",
+    "game": "Trap Team",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Deja Vu",
+    "variant_tag": "base",
+    "name": "Deja Vu",
+    "relative_path": "Skylanders Trap Team/Magic/Deja Vu.sky"
+  },
+  {
+    "id": "bc22d0d7fc4f530e",
+    "game": "Trap Team",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Enigma",
+    "variant_tag": "base",
+    "name": "Enigma",
+    "relative_path": "Skylanders Trap Team/Magic/Enigma.sky"
+  },
+  {
+    "id": "cb58a8153647e1d1",
+    "game": "Trap Team",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Spyro",
+    "variant_tag": "Eon's Elite",
+    "name": "Eon's Elite Spyro",
+    "relative_path": "Skylanders Trap Team/Magic/Eon's Elite Spyro.sky"
+  },
+  {
+    "id": "577c260410a86ffd",
+    "game": "Trap Team",
+    "element": "Magic",
+    "category": "figure",
+    "variant_group": "Fizzy Frenzy Pop Fizz",
+    "variant_tag": "base",
+    "name": "Fizzy Frenzy Pop Fizz",
+    "relative_path": "Skylanders Trap Team/Magic/Fizzy Frenzy Pop Fizz.sky"
+  },
+  {
+    "id": "283198a4ada7a930",
+    "game": "Trap Team",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Weeruptor",
+    "variant_tag": "Eggcellent",
+    "name": "Eggcellent Weeruptor",
+    "relative_path": "Skylanders Trap Team/Minis/Alternate types/Eggcellent Weeruptor.sky"
+  },
+  {
+    "id": "546cba18d33b5ca7",
+    "game": "Trap Team",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Pet Vac",
+    "variant_tag": "Power Punch",
+    "name": "Power Punch Pet Vac",
+    "relative_path": "Skylanders Trap Team/Minis/Alternate types/Power Punch Pet Vac.sky"
+  },
+  {
+    "id": "b122fdf718a28ba1",
+    "game": "Trap Team",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Barkley",
+    "variant_tag": "base",
+    "name": "Barkley",
+    "relative_path": "Skylanders Trap Team/Minis/Barkley.sky"
+  },
+  {
+    "id": "c9e79399663c7253",
+    "game": "Trap Team",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Bop",
+    "variant_tag": "base",
+    "name": "Bop",
+    "relative_path": "Skylanders Trap Team/Minis/Bop.sky"
+  },
+  {
+    "id": "051bd70ab334b305",
+    "game": "Trap Team",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Breeze",
+    "variant_tag": "base",
+    "name": "Breeze",
+    "relative_path": "Skylanders Trap Team/Minis/Breeze.sky"
+  },
+  {
+    "id": "e966874b524a8001",
+    "game": "Trap Team",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Drobit",
+    "variant_tag": "base",
+    "name": "Drobit",
+    "relative_path": "Skylanders Trap Team/Minis/Drobit.sky"
+  },
+  {
+    "id": "a13be7319669e48c",
+    "game": "Trap Team",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Eye Small",
+    "variant_tag": "base",
+    "name": "Eye Small",
+    "relative_path": "Skylanders Trap Team/Minis/Eye Small.sky"
+  },
+  {
+    "id": "8c01851efc001c5d",
+    "game": "Trap Team",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Gill Runt",
+    "variant_tag": "base",
+    "name": "Gill Runt",
+    "relative_path": "Skylanders Trap Team/Minis/Gill Runt.sky"
+  },
+  {
+    "id": "4c38eb2112f2ef12",
+    "game": "Trap Team",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Hijinx",
+    "variant_tag": "base",
+    "name": "Hijinx",
+    "relative_path": "Skylanders Trap Team/Minis/Hijinx.sky"
+  },
+  {
+    "id": "9e92c2bcf7524635",
+    "game": "Trap Team",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Mini-Jini",
+    "variant_tag": "base",
+    "name": "Mini-Jini",
+    "relative_path": "Skylanders Trap Team/Minis/Mini-Jini.sky"
+  },
+  {
+    "id": "608f90fa6e6d224b",
+    "game": "Trap Team",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Pet Vac",
+    "variant_tag": "base",
+    "name": "Pet Vac",
+    "relative_path": "Skylanders Trap Team/Minis/Pet Vac.sky"
+  },
+  {
+    "id": "7650b1de233ce53f",
+    "game": "Trap Team",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Small Fry",
+    "variant_tag": "base",
+    "name": "Small Fry",
+    "relative_path": "Skylanders Trap Team/Minis/Small Fry.sky"
+  },
+  {
+    "id": "ec48a8117761360b",
+    "game": "Trap Team",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Spry",
+    "variant_tag": "base",
+    "name": "Spry",
+    "relative_path": "Skylanders Trap Team/Minis/Spry.sky"
+  },
+  {
+    "id": "ad4bbe861884ed4f",
+    "game": "Trap Team",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Terrabite",
+    "variant_tag": "base",
+    "name": "Terrabite",
+    "relative_path": "Skylanders Trap Team/Minis/Terrabite.sky"
+  },
+  {
+    "id": "2afd6de61708a388",
+    "game": "Trap Team",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Thumpling",
+    "variant_tag": "base",
+    "name": "Thumpling",
+    "relative_path": "Skylanders Trap Team/Minis/Thumpling.sky"
+  },
+  {
+    "id": "0de8bd30c9dd8768",
+    "game": "Trap Team",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Trigger Snappy",
+    "variant_tag": "base",
+    "name": "Trigger Snappy",
+    "relative_path": "Skylanders Trap Team/Minis/Trigger Snappy.sky"
+  },
+  {
+    "id": "ca6f26f3125aa812",
+    "game": "Trap Team",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Weeruptor",
+    "variant_tag": "base",
+    "name": "Weeruptor",
+    "relative_path": "Skylanders Trap Team/Minis/Weeruptor.sky"
+  },
+  {
+    "id": "d79f8ee99a3f26e1",
+    "game": "Trap Team",
+    "element": null,
+    "category": "sidekick",
+    "variant_group": "Whisper Elf",
+    "variant_tag": "base",
+    "name": "Whisper Elf",
+    "relative_path": "Skylanders Trap Team/Minis/Whisper Elf.sky"
+  },
+  {
+    "id": "41237d2e95980487",
+    "game": "Trap Team",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Jawbreaker",
+    "variant_tag": "Legendary",
+    "name": "Legendary Jawbreaker",
+    "relative_path": "Skylanders Trap Team/Tech/Alternate types/Legendary Jawbreaker.sky"
+  },
+  {
+    "id": "6e40631b9922f12b",
+    "game": "Trap Team",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Chopper",
+    "variant_tag": "base",
+    "name": "Chopper",
+    "relative_path": "Skylanders Trap Team/Tech/Chopper.sky"
+  },
+  {
+    "id": "11c995c1b9a94d34",
+    "game": "Trap Team",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Trigger Happy",
+    "variant_tag": "Eon's Elite",
+    "name": "Eon's Elite Trigger Happy",
+    "relative_path": "Skylanders Trap Team/Tech/Eon's Elite Trigger Happy.sky"
+  },
+  {
+    "id": "3bea959fe3dd2f10",
+    "game": "Trap Team",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Gearshift",
+    "variant_tag": "base",
+    "name": "Gearshift",
+    "relative_path": "Skylanders Trap Team/Tech/Gearshift.sky"
+  },
+  {
+    "id": "7e3c0b89a9cc6d40",
+    "game": "Trap Team",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Jawbreaker",
+    "variant_tag": "base",
+    "name": "Jawbreaker",
+    "relative_path": "Skylanders Trap Team/Tech/Jawbreaker.sky"
+  },
+  {
+    "id": "89e8e51f15ed09f1",
+    "game": "Trap Team",
+    "element": "Tech",
+    "category": "figure",
+    "variant_group": "Tread Head",
+    "variant_tag": "base",
+    "name": "Tread Head",
+    "relative_path": "Skylanders Trap Team/Tech/Tread Head.sky"
+  },
+  {
+    "id": "3c0c470f6695f02e",
+    "game": "Trap Team",
+    "element": "Air",
+    "category": "item",
+    "variant_group": "Breezy Bird",
+    "variant_tag": "base",
+    "name": "Breezy Bird",
+    "relative_path": "Skylanders Trap Team/Traps/Air/Breezy Bird.sky"
+  },
+  {
+    "id": "4fd1b8f5608cb246",
+    "game": "Trap Team",
+    "element": "Air",
+    "category": "item",
+    "variant_group": "Cloudy Cobra",
+    "variant_tag": "base",
+    "name": "Cloudy Cobra",
+    "relative_path": "Skylanders Trap Team/Traps/Air/Cloudy Cobra.sky"
+  },
+  {
+    "id": "9f4ee0471a64f282",
+    "game": "Trap Team",
+    "element": "Air",
+    "category": "item",
+    "variant_group": "Cyclone Saber",
+    "variant_tag": "base",
+    "name": "Cyclone Saber",
+    "relative_path": "Skylanders Trap Team/Traps/Air/Cyclone Saber.sky"
+  },
+  {
+    "id": "657bea211353b864",
+    "game": "Trap Team",
+    "element": "Air",
+    "category": "item",
+    "variant_group": "Drafty Decanter",
+    "variant_tag": "base",
+    "name": "Drafty Decanter",
+    "relative_path": "Skylanders Trap Team/Traps/Air/Drafty Decanter.sky"
+  },
+  {
+    "id": "1ab40b3505a44e2e",
+    "game": "Trap Team",
+    "element": "Air",
+    "category": "item",
+    "variant_group": "Storm Warning",
+    "variant_tag": "base",
+    "name": "Storm Warning",
+    "relative_path": "Skylanders Trap Team/Traps/Air/Storm Warning.sky"
+  },
+  {
+    "id": "61ca52a77e04dff6",
+    "game": "Trap Team",
+    "element": "Air",
+    "category": "item",
+    "variant_group": "Tempest Timer",
+    "variant_tag": "base",
+    "name": "Tempest Timer",
+    "relative_path": "Skylanders Trap Team/Traps/Air/Tempest Timer.sky"
+  },
+  {
+    "id": "44b0823f1b47ca99",
+    "game": "Trap Team",
+    "element": "Dark",
+    "category": "item",
+    "variant_group": "Dagger",
+    "variant_tag": "base",
+    "name": "Dark Dagger",
+    "relative_path": "Skylanders Trap Team/Traps/Dark/Dark Dagger.sky"
+  },
+  {
+    "id": "dac5f4fc36ab87e5",
+    "game": "Trap Team",
+    "element": "Dark",
+    "category": "item",
+    "variant_group": "Ghastly Grimace",
+    "variant_tag": "base",
+    "name": "Ghastly Grimace",
+    "relative_path": "Skylanders Trap Team/Traps/Dark/Ghastly Grimace.sky"
+  },
+  {
+    "id": "ff0dca3f2d63ac8d",
+    "game": "Trap Team",
+    "element": "Dark",
+    "category": "item",
+    "variant_group": "Shadow Spider",
+    "variant_tag": "base",
+    "name": "Shadow Spider",
+    "relative_path": "Skylanders Trap Team/Traps/Dark/Shadow Spider.sky"
+  },
+  {
+    "id": "41dc413610f32e18",
+    "game": "Trap Team",
+    "element": "Earth",
+    "category": "item",
+    "variant_group": "Banded Boulder",
+    "variant_tag": "base",
+    "name": "Banded Boulder",
+    "relative_path": "Skylanders Trap Team/Traps/Earth/Banded Boulder.sky"
+  },
+  {
+    "id": "e3af7c7033b407a5",
+    "game": "Trap Team",
+    "element": "Earth",
+    "category": "item",
+    "variant_group": "Dust Of Time",
+    "variant_tag": "base",
+    "name": "Dust Of Time",
+    "relative_path": "Skylanders Trap Team/Traps/Earth/Dust Of Time.sky"
+  },
+  {
+    "id": "d8e695b921ef9080",
+    "game": "Trap Team",
+    "element": "Earth",
+    "category": "item",
+    "variant_group": "Rock Hawk",
+    "variant_tag": "base",
+    "name": "Rock Hawk",
+    "relative_path": "Skylanders Trap Team/Traps/Earth/Rock Hawk.sky"
+  },
+  {
+    "id": "add48ec058dc15d6",
+    "game": "Trap Team",
+    "element": "Earth",
+    "category": "item",
+    "variant_group": "Rubble Trouble",
+    "variant_tag": "base",
+    "name": "Rubble Trouble",
+    "relative_path": "Skylanders Trap Team/Traps/Earth/Rubble Trouble.sky"
+  },
+  {
+    "id": "032c2a80f8c60e51",
+    "game": "Trap Team",
+    "element": "Earth",
+    "category": "item",
+    "variant_group": "Slag Hammer",
+    "variant_tag": "base",
+    "name": "Slag Hammer",
+    "relative_path": "Skylanders Trap Team/Traps/Earth/Slag Hammer.sky"
+  },
+  {
+    "id": "59d17d4ed6b1f053",
+    "game": "Trap Team",
+    "element": "Earth",
+    "category": "item",
+    "variant_group": "Spinning Sandstorm",
+    "variant_tag": "base",
+    "name": "Spinning Sandstorm",
+    "relative_path": "Skylanders Trap Team/Traps/Earth/Spinning Sandstorm.sky"
+  },
+  {
+    "id": "9dc0ab307e393caa",
+    "game": "Trap Team",
+    "element": "Fire",
+    "category": "item",
+    "variant_group": "Blazing Belch",
+    "variant_tag": "base",
+    "name": "Blazing Belch",
+    "relative_path": "Skylanders Trap Team/Traps/Fire/Blazing Belch.sky"
+  },
+  {
+    "id": "4b4b30e04609c7db",
+    "game": "Trap Team",
+    "element": "Fire",
+    "category": "item",
+    "variant_group": "Eternal Flame",
+    "variant_tag": "base",
+    "name": "Eternal Flame",
+    "relative_path": "Skylanders Trap Team/Traps/Fire/Eternal Flame.sky"
+  },
+  {
+    "id": "0c65d27ea983a9c5",
+    "game": "Trap Team",
+    "element": "Fire",
+    "category": "item",
+    "variant_group": "Fire Flower",
+    "variant_tag": "base",
+    "name": "Fire Flower",
+    "relative_path": "Skylanders Trap Team/Traps/Fire/Fire Flower.sky"
+  },
+  {
+    "id": "d456ab6b95598fbc",
+    "game": "Trap Team",
+    "element": "Fire",
+    "category": "item",
+    "variant_group": "Scorching Stopper",
+    "variant_tag": "base",
+    "name": "Scorching Stopper",
+    "relative_path": "Skylanders Trap Team/Traps/Fire/Scorching Stopper.sky"
+  },
+  {
+    "id": "a2fc3aafdf7430a4",
+    "game": "Trap Team",
+    "element": "Fire",
+    "category": "item",
+    "variant_group": "Searing Spinner",
+    "variant_tag": "base",
+    "name": "Searing Spinner",
+    "relative_path": "Skylanders Trap Team/Traps/Fire/Searing Spinner.sky"
+  },
+  {
+    "id": "e79111cea519afb6",
+    "game": "Trap Team",
+    "element": "Fire",
+    "category": "item",
+    "variant_group": "Spark Spear",
+    "variant_tag": "base",
+    "name": "Spark Spear",
+    "relative_path": "Skylanders Trap Team/Traps/Fire/Spark Spear.sky"
+  },
+  {
+    "id": "9f52e7c2a1668acd",
+    "game": "Trap Team",
+    "element": null,
+    "category": "kaos",
+    "variant_group": "Kaos Trap",
+    "variant_tag": "base",
+    "name": "Kaos Trap",
+    "relative_path": "Skylanders Trap Team/Traps/Kaos/Kaos Trap.sky"
+  },
+  {
+    "id": "1ba74a09cb31f70a",
+    "game": "Trap Team",
+    "element": null,
+    "category": "kaos",
+    "variant_group": "Kaos Trap",
+    "variant_tag": "base",
+    "name": "Ultimate Kaos Trap",
+    "relative_path": "Skylanders Trap Team/Traps/Kaos/Ultimate Kaos Trap.sky"
+  },
+  {
+    "id": "b8241cef8f71bd15",
+    "game": "Trap Team",
+    "element": "Life",
+    "category": "item",
+    "variant_group": "Emerald Energy",
+    "variant_tag": "base",
+    "name": "Emerald Energy",
+    "relative_path": "Skylanders Trap Team/Traps/Life/Emerald Energy.sky"
+  },
+  {
+    "id": "f06a77dd3523e77f",
+    "game": "Trap Team",
+    "element": "Life",
+    "category": "item",
+    "variant_group": "Blade",
+    "variant_tag": "base",
+    "name": "Jade Blade",
+    "relative_path": "Skylanders Trap Team/Traps/Life/Jade Blade.sky"
+  },
+  {
+    "id": "e5e253437f2d4a86",
+    "game": "Trap Team",
+    "element": "Life",
+    "category": "item",
+    "variant_group": "Oak Eagle",
+    "variant_tag": "base",
+    "name": "Oak Eagle",
+    "relative_path": "Skylanders Trap Team/Traps/Life/Oak Eagle.sky"
+  },
+  {
+    "id": "ef85f0554b5e6d63",
+    "game": "Trap Team",
+    "element": "Life",
+    "category": "item",
+    "variant_group": "Seed Serpent",
+    "variant_tag": "base",
+    "name": "Seed Serpent",
+    "relative_path": "Skylanders Trap Team/Traps/Life/Seed Serpent.sky"
+  },
+  {
+    "id": "dcf19a6323dd6133",
+    "game": "Trap Team",
+    "element": "Life",
+    "category": "item",
+    "variant_group": "Shrub Shrieker",
+    "variant_tag": "base",
+    "name": "Shrub Shrieker",
+    "relative_path": "Skylanders Trap Team/Traps/Life/Shrub Shrieker.sky"
+  },
+  {
+    "id": "3d7760a7d1c02c42",
+    "game": "Trap Team",
+    "element": "Life",
+    "category": "item",
+    "variant_group": "Weed Whacker",
+    "variant_tag": "base",
+    "name": "Weed Whacker",
+    "relative_path": "Skylanders Trap Team/Traps/Life/Weed Whacker.sky"
+  },
+  {
+    "id": "e9e570312579b866",
+    "game": "Trap Team",
+    "element": "Light",
+    "category": "item",
+    "variant_group": "Beam Scream",
+    "variant_tag": "base",
+    "name": "Beam Scream",
+    "relative_path": "Skylanders Trap Team/Traps/Light/Beam Scream.sky"
+  },
+  {
+    "id": "4756af076a2acc7c",
+    "game": "Trap Team",
+    "element": "Light",
+    "category": "item",
+    "variant_group": "Heavenly Hawk",
+    "variant_tag": "base",
+    "name": "Heavenly Hawk",
+    "relative_path": "Skylanders Trap Team/Traps/Light/Heavenly Hawk.sky"
+  },
+  {
+    "id": "34e79094a3710a0f",
+    "game": "Trap Team",
+    "element": "Light",
+    "category": "item",
+    "variant_group": "Shining Ship",
+    "variant_tag": "base",
+    "name": "Shining Ship",
+    "relative_path": "Skylanders Trap Team/Traps/Light/Shining Ship.sky"
+  },
+  {
+    "id": "f778fec41aa22afb",
+    "game": "Trap Team",
+    "element": "Magic",
+    "category": "item",
+    "variant_group": "Arcane Hourglass",
+    "variant_tag": "base",
+    "name": "Arcane Hourglass",
+    "relative_path": "Skylanders Trap Team/Traps/Magic/Arcane Hourglass.sky"
+  },
+  {
+    "id": "a190b7de5f65bb65",
+    "game": "Trap Team",
+    "element": "Magic",
+    "category": "item",
+    "variant_group": "Axe of Illusion",
+    "variant_tag": "base",
+    "name": "Axe of Illusion",
+    "relative_path": "Skylanders Trap Team/Traps/Magic/Axe of Illusion.sky"
+  },
+  {
+    "id": "4be8ba7c81a908d7",
+    "game": "Trap Team",
+    "element": "Magic",
+    "category": "item",
+    "variant_group": "Biter's Bane",
+    "variant_tag": "base",
+    "name": "Biter's Bane",
+    "relative_path": "Skylanders Trap Team/Traps/Magic/Biter's Bane.sky"
+  },
+  {
+    "id": "1bcc4e92ea3d93c7",
+    "game": "Trap Team",
+    "element": "Magic",
+    "category": "item",
+    "variant_group": "Rune Rocket",
+    "variant_tag": "base",
+    "name": "Rune Rocket",
+    "relative_path": "Skylanders Trap Team/Traps/Magic/Rune Rocket.sky"
+  },
+  {
+    "id": "9f4b24f18a78f3fb",
+    "game": "Trap Team",
+    "element": "Magic",
+    "category": "item",
+    "variant_group": "Sorcerous Skull",
+    "variant_tag": "base",
+    "name": "Sorcerous Skull",
+    "relative_path": "Skylanders Trap Team/Traps/Magic/Sorcerous Skull.sky"
+  },
+  {
+    "id": "ddd9f0ca2fa4f91c",
+    "game": "Trap Team",
+    "element": "Magic",
+    "category": "item",
+    "variant_group": "Spell Slapper",
+    "variant_tag": "base",
+    "name": "Spell Slapper",
+    "relative_path": "Skylanders Trap Team/Traps/Magic/Spell Slapper.sky"
+  },
+  {
+    "id": "dbd7b3e25bad3035",
+    "game": "Trap Team",
+    "element": "Tech",
+    "category": "item",
+    "variant_group": "Automatic Angel",
+    "variant_tag": "base",
+    "name": "Automatic Angel",
+    "relative_path": "Skylanders Trap Team/Traps/Tech/Automatic Angel.sky"
+  },
+  {
+    "id": "eaa446cb0c50ef93",
+    "game": "Trap Team",
+    "element": "Tech",
+    "category": "item",
+    "variant_group": "Factory Flower",
+    "variant_tag": "base",
+    "name": "Factory Flower",
+    "relative_path": "Skylanders Trap Team/Traps/Tech/Factory Flower.sky"
+  },
+  {
+    "id": "8eedfd5ccdd7a7b1",
+    "game": "Trap Team",
+    "element": "Tech",
+    "category": "item",
+    "variant_group": "Grabbing Gadget",
+    "variant_tag": "base",
+    "name": "Grabbing Gadget",
+    "relative_path": "Skylanders Trap Team/Traps/Tech/Grabbing Gadget.sky"
+  },
+  {
+    "id": "d2f80a8eef929b6a",
+    "game": "Trap Team",
+    "element": "Tech",
+    "category": "item",
+    "variant_group": "Makers Mana",
+    "variant_tag": "base",
+    "name": "Makers Mana",
+    "relative_path": "Skylanders Trap Team/Traps/Tech/Makers Mana.sky"
+  },
+  {
+    "id": "aa9b592ada5a653d",
+    "game": "Trap Team",
+    "element": "Tech",
+    "category": "item",
+    "variant_group": "Tech Totem",
+    "variant_tag": "base",
+    "name": "Tech Totem",
+    "relative_path": "Skylanders Trap Team/Traps/Tech/Tech Totem.sky"
+  },
+  {
+    "id": "9c1fcf05310cbfb7",
+    "game": "Trap Team",
+    "element": "Tech",
+    "category": "item",
+    "variant_group": "Topsy Techy",
+    "variant_tag": "base",
+    "name": "Topsy Techy",
+    "relative_path": "Skylanders Trap Team/Traps/Tech/Topsy Techy.sky"
+  },
+  {
+    "id": "0e9625de3b8ca3ba",
+    "game": "Trap Team",
+    "element": "Undead",
+    "category": "item",
+    "variant_group": "Spectral Skull",
+    "variant_tag": "Legendary",
+    "name": "Legendary Spectral Skull",
+    "relative_path": "Skylanders Trap Team/Traps/Undead/Alternate types/Legendary Spectral Skull.sky"
+  },
+  {
+    "id": "ab4c24c4b8417524",
+    "game": "Trap Team",
+    "element": "Undead",
+    "category": "item",
+    "variant_group": "Spirit Sphere",
+    "variant_tag": "Legendary",
+    "name": "Legendary Spirit Sphere",
+    "relative_path": "Skylanders Trap Team/Traps/Undead/Alternate types/Legendary Spirit Sphere.sky"
+  },
+  {
+    "id": "800ff9aea4456e94",
+    "game": "Trap Team",
+    "element": "Undead",
+    "category": "item",
+    "variant_group": "Dream Piercer",
+    "variant_tag": "base",
+    "name": "Dream Piercer",
+    "relative_path": "Skylanders Trap Team/Traps/Undead/Dream Piercer.sky"
+  },
+  {
+    "id": "c159ed2b28d1c723",
+    "game": "Trap Team",
+    "element": "Undead",
+    "category": "item",
+    "variant_group": "Grim Gripper",
+    "variant_tag": "base",
+    "name": "Grim Gripper",
+    "relative_path": "Skylanders Trap Team/Traps/Undead/Grim Gripper.sky"
+  },
+  {
+    "id": "fce2c51e2986d869",
+    "game": "Trap Team",
+    "element": "Undead",
+    "category": "item",
+    "variant_group": "Haunted Hatchet",
+    "variant_tag": "base",
+    "name": "Haunted Hatchet",
+    "relative_path": "Skylanders Trap Team/Traps/Undead/Haunted Hatchet.sky"
+  },
+  {
+    "id": "96c4000653983bcd",
+    "game": "Trap Team",
+    "element": "Undead",
+    "category": "item",
+    "variant_group": "Spectral Skull",
+    "variant_tag": "base",
+    "name": "Spectral Skull",
+    "relative_path": "Skylanders Trap Team/Traps/Undead/Spectral Skull.sky"
+  },
+  {
+    "id": "196c3b35cca9eb97",
+    "game": "Trap Team",
+    "element": "Undead",
+    "category": "item",
+    "variant_group": "Spirit Sphere",
+    "variant_tag": "base",
+    "name": "Spirit Sphere",
+    "relative_path": "Skylanders Trap Team/Traps/Undead/Spirit Sphere.sky"
+  },
+  {
+    "id": "e5b6601b65eae185",
+    "game": "Trap Team",
+    "element": "Undead",
+    "category": "item",
+    "variant_group": "Spooky Snake",
+    "variant_tag": "base",
+    "name": "Spooky Snake",
+    "relative_path": "Skylanders Trap Team/Traps/Undead/Spooky Snake.sky"
+  },
+  {
+    "id": "3ce3eafb4f71e555",
+    "game": "Trap Team",
+    "element": "Water",
+    "category": "item",
+    "variant_group": "Flood Flask",
+    "variant_tag": "Legendary",
+    "name": "Legendary Flood Flask",
+    "relative_path": "Skylanders Trap Team/Traps/Water/Alternate types/Legendary Flood Flask.sky"
+  },
+  {
+    "id": "b1b3334706c3b028",
+    "game": "Trap Team",
+    "element": "Water",
+    "category": "item",
+    "variant_group": "Aqua Axe",
+    "variant_tag": "base",
+    "name": "Aqua Axe",
+    "relative_path": "Skylanders Trap Team/Traps/Water/Aqua Axe.sky"
+  },
+  {
+    "id": "c501eab0304a0b38",
+    "game": "Trap Team",
+    "element": "Water",
+    "category": "item",
+    "variant_group": "Flood Flask",
+    "variant_tag": "base",
+    "name": "Flood Flask",
+    "relative_path": "Skylanders Trap Team/Traps/Water/Flood Flask.sky"
+  },
+  {
+    "id": "a240d75ae622e95a",
+    "game": "Trap Team",
+    "element": "Water",
+    "category": "item",
+    "variant_group": "Frost Helm",
+    "variant_tag": "base",
+    "name": "Frost Helm",
+    "relative_path": "Skylanders Trap Team/Traps/Water/Frost Helm.sky"
+  },
+  {
+    "id": "a0da7b8169e64099",
+    "game": "Trap Team",
+    "element": "Water",
+    "category": "item",
+    "variant_group": "Soaking Staff",
+    "variant_tag": "base",
+    "name": "Soaking Staff",
+    "relative_path": "Skylanders Trap Team/Traps/Water/Soaking Staff.sky"
+  },
+  {
+    "id": "f41809290ceeb587",
+    "game": "Trap Team",
+    "element": "Water",
+    "category": "item",
+    "variant_group": "Tidal Tiki",
+    "variant_tag": "base",
+    "name": "Tidal Tiki",
+    "relative_path": "Skylanders Trap Team/Traps/Water/Tidal Tiki.sky"
+  },
+  {
+    "id": "1bd457dfa79e5828",
+    "game": "Trap Team",
+    "element": "Water",
+    "category": "item",
+    "variant_group": "Wet Walter",
+    "variant_tag": "base",
+    "name": "Wet Walter",
+    "relative_path": "Skylanders Trap Team/Traps/Water/Wet Walter.sky"
+  },
+  {
+    "id": "1c4257d0caa74aa2",
+    "game": "Trap Team",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Krypt King",
+    "variant_tag": "Nitro",
+    "name": "Nitro Krypt King",
+    "relative_path": "Skylanders Trap Team/Undead/Alternate types/Nitro Krypt King.sky"
+  },
+  {
+    "id": "535282223c0e09fa",
+    "game": "Trap Team",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Bat Spin",
+    "variant_tag": "base",
+    "name": "Bat Spin",
+    "relative_path": "Skylanders Trap Team/Undead/Bat Spin.sky"
+  },
+  {
+    "id": "2216029756962760",
+    "game": "Trap Team",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Chop Chop",
+    "variant_tag": "Eon's Elite",
+    "name": "Eon's Elite Chop Chop",
+    "relative_path": "Skylanders Trap Team/Undead/Eon's Elite Chop Chop.sky"
+  },
+  {
+    "id": "5ddf16de907738f7",
+    "game": "Trap Team",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Funny Bone",
+    "variant_tag": "base",
+    "name": "Funny Bone",
+    "relative_path": "Skylanders Trap Team/Undead/Funny Bone.sky"
+  },
+  {
+    "id": "3787bf070ffc1344",
+    "game": "Trap Team",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Krypt King",
+    "variant_tag": "base",
+    "name": "Krypt King",
+    "relative_path": "Skylanders Trap Team/Undead/Krypt King.sky"
+  },
+  {
+    "id": "580a29575bc24dfa",
+    "game": "Trap Team",
+    "element": "Undead",
+    "category": "figure",
+    "variant_group": "Short Cut",
+    "variant_tag": "base",
+    "name": "Short Cut",
+    "relative_path": "Skylanders Trap Team/Undead/Short Cut.sky"
+  },
+  {
+    "id": "d3a8d54ce958c4c6",
+    "game": "Trap Team",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Snap Shot",
+    "variant_tag": "Dark",
+    "name": "Dark Snap Shot",
+    "relative_path": "Skylanders Trap Team/Water/Alternate types/Dark Snap Shot.sky"
+  },
+  {
+    "id": "5aebc6f5ed3fd132",
+    "game": "Trap Team",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Winterfest Lob-Star",
+    "variant_tag": "Alternate",
+    "name": "Winterfest Lob-Star",
+    "relative_path": "Skylanders Trap Team/Water/Alternate types/Winterfest Lob-Star.sky"
+  },
+  {
+    "id": "a8a1be51f38edbd1",
+    "game": "Trap Team",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Echo",
+    "variant_tag": "base",
+    "name": "Echo",
+    "relative_path": "Skylanders Trap Team/Water/Echo.sky"
+  },
+  {
+    "id": "da31dc360e50ff2a",
+    "game": "Trap Team",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Gill Grunt",
+    "variant_tag": "Eon's Elite",
+    "name": "Eon's Elite Gill Grunt",
+    "relative_path": "Skylanders Trap Team/Water/Eon's Elite Gill Grunt.sky"
+  },
+  {
+    "id": "0237b05f252cfc45",
+    "game": "Trap Team",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Flip Wreck",
+    "variant_tag": "base",
+    "name": "Flip Wreck",
+    "relative_path": "Skylanders Trap Team/Water/Flip Wreck.sky"
+  },
+  {
+    "id": "d32c15d41e61ffe9",
+    "game": "Trap Team",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Lob Star",
+    "variant_tag": "base",
+    "name": "Lob Star",
+    "relative_path": "Skylanders Trap Team/Water/Lob Star.sky"
+  },
+  {
+    "id": "e584c1a788a9b9aa",
+    "game": "Trap Team",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Snap Shot",
+    "variant_tag": "base",
+    "name": "Snap Shot",
+    "relative_path": "Skylanders Trap Team/Water/Snap Shot.sky"
+  },
+  {
+    "id": "3e7b6dd9f5bd7b30",
+    "game": "Trap Team",
+    "element": "Water",
+    "category": "figure",
+    "variant_group": "Tidal Wave Gill Grunt",
+    "variant_tag": "base",
+    "name": "Tidal Wave Gill Grunt",
+    "relative_path": "Skylanders Trap Team/Water/Tidal Wave Gill Grunt.sky"
+  }
+]
