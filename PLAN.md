@@ -91,18 +91,18 @@ Deliberately deferred to Phase 3: PIN-gated profiles, multi-profile, working-cop
 - [x] 2.1.7 Move the Phase 1 spike's `src/main.rs` and `assets/spike_index.html` into `crates/server/` via `git mv` (history preserved).
 - [x] 2.1.8 `cargo check --workspace` passes; `cd tools/phone-smoke && trunk build` still passes.
 
-### 2.2 Core types (`crates/core/`)
+### 2.2 Core types (`crates/core/`) — DONE
 
-- [ ] 2.2.1 Define `FigureId` (newtype over the SHA-256/64-bit hex the indexer produces).
-- [ ] 2.2.2 Define `Figure { id, canonical_name, variant_group, variant_tag, game, element, category, relative_path }`. `relative_path` is server-side only — **never serialized to the phone**.
-- [ ] 2.2.3 Define `PublicFigure` — the phone-safe subset of `Figure` (no path, no relative_path).
-- [ ] 2.2.4 Define `Game { id: GameSerial, display_name, sky_root: Option<PathBuf>, /* Phase 3: eboot_path */ }`.
-- [ ] 2.2.5 Define `SlotIndex(u8)` newtype with `0..=7` (0-indexed internally; display as 1..=8 on the phone).
-- [ ] 2.2.6 Define `SlotState { Empty, Loading { figure_id }, Loaded { figure_id, display_name }, Error { message } }`.
-- [ ] 2.2.7 Define `Command` (client → server): `LoadFigure { slot, figure_id }`, `ClearSlot { slot }`, `RefreshPortal`.
-- [ ] 2.2.8 Define `Event` (server → client): `SlotChanged { slot, state }`, `PortalSnapshot { slots: [SlotState; 8] }`, `Error { message }`.
-- [ ] 2.2.9 Serde-derive everything with `#[serde(tag = "kind", rename_all = "snake_case")]` for enums so the phone can match cleanly.
-- [ ] 2.2.10 Unit tests for serde round-trip on all messages.
+- [x] 2.2.1 Define `FigureId` (newtype over the SHA-256/64-bit hex the indexer produces).
+- [x] 2.2.2 Define `Figure { id, canonical_name, variant_group, variant_tag, game, element, category, sky_path, element_icon_path }`. `sky_path` and `element_icon_path` are server-side only — **never serialized to the phone**.
+- [x] 2.2.3 Define `PublicFigure` — the phone-safe subset of `Figure` (no filesystem paths).
+- [x] 2.2.4 Define `Game { id: GameSerial, display_name, sky_root: Option<PathBuf> }`. `sky_root` is `#[serde(skip)]`.
+- [x] 2.2.5 Define `SlotIndex(u8)` newtype with `0..=7`, 1-indexed on the phone via `from_display` / `display`.
+- [x] 2.2.6 Define `SlotState { Empty, Loading { figure_id }, Loaded { figure_id, display_name }, Error { message } }`.
+- [x] 2.2.7 Define `Command { LoadFigure { slot, figure_id }, ClearSlot { slot }, RefreshPortal }`.
+- [x] 2.2.8 Define `Event { PortalSnapshot { slots }, SlotChanged { slot, state }, Error { message } }`.
+- [x] 2.2.9 Serde-derive everything with `#[serde(tag = "kind", rename_all = "snake_case")]` for enums.
+- [x] 2.2.10 Unit tests for serde round-trip, slot-index bounds, Figure→PublicFigure path scrub (5 tests, all green).
 
 ### 2.3 RPCS3 control (`crates/rpcs3-control/`)
 
