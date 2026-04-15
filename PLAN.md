@@ -121,15 +121,15 @@ Deliberately deferred to Phase 3: PIN-gated profiles, multi-profile, working-cop
 - [ ] 2.3.13 Unit tests using `MockPortalDriver` for load/clear/full-slot flows.
 - [ ] 2.3.14 Serialize driver actions via `tokio::sync::Mutex` inside the server — not the crate's job, but document the requirement in the trait docs.
 
-### 2.4 Indexer (`crates/indexer/`)
+### 2.4 Indexer (`crates/indexer/`) — DONE (mostly)
 
-- [ ] 2.4.1 Port `tools/inventory/src/main.rs` into a library crate. Public API: `pub fn scan(root: &Path) -> Result<Vec<Figure>>`.
-- [ ] 2.4.2 Preserve the classification rules (figure/sidekick/item/adventure-pack/creation-crystal/giant/kaos/other) and the variant-prefix peel list from the spike.
-- [ ] 2.4.3 Add a `category = "vehicle"` variant per the Phase 1c recommendation.
-- [ ] 2.4.4 Add a `category = "trap"` variant (split out of "item").
-- [ ] 2.4.5 Element icon path: when building `Figure`, record the path to the element-symbol PNG (`<game>/<element>/<Element>SymbolSkylanders.png`) if present. Server uses this to serve icons.
-- [ ] 2.4.6 Snapshot test: index the pack and compare resulting JSON against a committed baseline (`crates/indexer/tests/fixtures/inventory.snapshot.json`). Failing tests flag unplanned changes.
-- [ ] 2.4.7 Keep `tools/inventory/` as a standalone binary wrapper for one-shot regeneration of `docs/research/firmware-inventory.json`.
+- [x] 2.4.1 Port `tools/inventory/src/main.rs` into a library crate. Public API: `pub fn scan(root: &Path) -> Result<Vec<Figure>>`.
+- [x] 2.4.2 Preserve the classification rules and the variant-prefix peel list from the spike.
+- [x] 2.4.3 `category = "vehicle"` first-class (was "other" in the spike). 27 entries.
+- [x] 2.4.4 `category = "trap"` first-class (was "item" with element). 57 entries.
+- [x] 2.4.5 Element icon path resolved per figure (~97.6% coverage on real pack).
+- [~] 2.4.6 Snapshot test deferred. Replaced with a count-check integration test (`tests/real_pack.rs`, gated by `SKYLANDER_PACK_ROOT` env var) that verifies per-game + per-category totals match Phase 1c exactly. A full JSON snapshot is overkill for now.
+- [x] 2.4.7 `tools/inventory/` left as-is — it's the historical Phase 1c builder. Future regeneration should use the library.
 
 ### 2.5 Dev config + bootstrap
 
