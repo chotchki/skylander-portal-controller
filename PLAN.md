@@ -11,11 +11,11 @@ Conventions:
 
 ## Phase 0 — Scaffolding (tiny, just enough to start building)
 
-- [ ] `cargo init` a workspace with one binary crate (for now). Commit `Cargo.lock`.
-- [ ] Add `.gitignore` for `target/`, `logs/`, `dev-data/`, `.env.dev`, `node_modules/` (just in case).
-- [ ] Create `docs/research/` folder. Research writeups land here.
-- [ ] Create `docs/aesthetic/` README referencing `ui_style_example.png`.
-- [ ] Verify local build runs with `cargo run`.
+- [x] `cargo init` a workspace with one binary crate (for now). Commit `Cargo.lock`.
+- [x] Add `.gitignore` for `target/`, `logs/`, `dev-data/`, `.env.dev`, `node_modules/` (just in case).
+- [x] Create `docs/research/` folder. Research writeups land here.
+- [x] Create `docs/aesthetic/` README referencing `ui_style_example.png`.
+- [x] Verify local build runs with `cargo run`.
 
 **Review checkpoint:** nothing to review; just ensures we have a skeleton.
 
