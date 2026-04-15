@@ -212,6 +212,7 @@ Verified on `http://192.168.1.162:8765` with mock driver:
 
 Likely areas (order TBD):
 - **Disable figure cards already on the portal** so the UI stops users from hitting RPCS3's "file already in use" error. Driver now dismisses that modal and surfaces it as a toast, but the real fix is client-side — when broadcasting `SlotChanged`, the phone knows every loaded figure_id, so figure cards whose `id` matches any loaded slot should be shown disabled (grey + "on portal" badge).
+- **Prefer our canonical name over RPCS3's slot text.** RPCS3's `list_skylanders` map (in `rpcs3/rpcs3qt/skylander_dialog.cpp`) doesn't cover every figure — for unknowns the slot edit shows `"Unknown (Id:N Var:M)"`. The server already knows the `figure_id` it asked the driver to load, so the driver worker should overwrite `display_name` with `figures[figure_id].canonical_name` before broadcasting `SlotChanged`. Pass `figures_by_id` into `spawn_driver_worker`. For snapshot reads (no figure_id context), fall back to RPCS3's string with a "Unknown" tag in the UI.
 - Full profile system with PINs and per-profile working copies.
 - Takeover + kick-back flow with Chaos-themed kicked screen.
 - Full collection browse view (filters: element, game of origin, works-with, type).
