@@ -66,21 +66,143 @@ These are the unknowns that block everything else. Each produces a short writeup
 
 ---
 
-## Phase 2 — Minimal end-to-end slice (post-research, to be detailed after review)
+## Phase 2 — Minimal end-to-end slice
 
-Target: **one phone connects → picks one hardcoded profile → picks one hardcoded game → picks one figure → figure appears on slot 1 in a running game.** No polish, no PINs, no multi-profile. Just prove the whole pipeline works.
+**Target:** a phone connects → sees the figure collection (names + element icons only, no wiki scrape yet) → taps a figure → taps a portal slot → figure loads into RPCS3's emulated portal → slot UI updates when RPCS3 confirms.
 
-Rough sketch (to be filled in after Phase 1 review):
-- [ ] Minimal SQLite schema (profiles, figures, working-copies).
-- [ ] Figure indexer writes to SQLite on first run.
-- [ ] Server: REST for static data, WebSocket for portal events.
-- [ ] Phone SPA: one-screen MVP — profile pick (hardcoded list) → game pick → portal view with 8 slots and a figure browser.
-- [ ] PC egui: fullscreen, shows QR + "X connected" status.
-- [ ] RPCS3 control adapter (from 1a) wired in. Load figure, clear slot. Spinner until RPCS3 confirms.
-- [ ] `dev-tools` feature flag; logs to `./logs/`; `.env.dev` for paths.
-- [ ] Smoke e2e test: headless browser drives the phone SPA through one round-trip. Scrapes QR URL from log file.
+Deliberately deferred to Phase 3: PIN-gated profiles, multi-profile, working-copies, session resume, game launching, wiki scrape, aesthetic pass, Chaos, takeover, security signing. We want the smallest possible end-to-end slice first.
 
-**Review checkpoint (end of Phase 2):** demo the slice end-to-end. Decide what pain points are worst and plan Phase 3 accordingly.
+**Pre-conditions the MVP assumes** (will be relaxed in Phase 3):
+- RPCS3 is already running with the Skylanders Manager dialog open (no game launching yet).
+- Paths to RPCS3 install and firmware pack come from `.env.dev`.
+- No profiles. Phone is a single, unauthed controller.
+- No working copies — we load the user's fresh `.sky` files directly (read-only use; Phase 3 introduces the copy-on-first-use).
+
+---
+
+### 2.1 Workspace restructure — DONE
+
+- [x] 2.1.1 Convert root `Cargo.toml` into a `[workspace]` with no root package.
+- [x] 2.1.2 Create `crates/core/` — shared types (Figure, SlotState, Command, Event), no I/O. (scaffolded; real contents land in 2.2)
+- [x] 2.1.3 Create `crates/indexer/` — library form of `tools/inventory`. Depends on `core`. (scaffolded; 2.4 ports the logic)
+- [x] 2.1.4 Create `crates/rpcs3-control/` — `PortalDriver` trait + `UiaPortalDriver` impl + `MockPortalDriver` (feature-flagged). Depends on `core`. (trait + mock stub in place; UIA impl in 2.3)
+- [x] 2.1.5 Create `crates/server/` — the binary. Axum + eframe + plumbing. Depends on `core`, `indexer`, `rpcs3-control`.
+- [x] 2.1.6 Phone SPA stays at `tools/phone-smoke/` for now; promoted to `phone/` in 2.7.1.
+- [x] 2.1.7 Move the Phase 1 spike's `src/main.rs` and `assets/spike_index.html` into `crates/server/` via `git mv` (history preserved).
+- [x] 2.1.8 `cargo check --workspace` passes; `cd tools/phone-smoke && trunk build` still passes.
+
+### 2.2 Core types (`crates/core/`)
+
+- [ ] 2.2.1 Define `FigureId` (newtype over the SHA-256/64-bit hex the indexer produces).
+- [ ] 2.2.2 Define `Figure { id, canonical_name, variant_group, variant_tag, game, element, category, relative_path }`. `relative_path` is server-side only — **never serialized to the phone**.
+- [ ] 2.2.3 Define `PublicFigure` — the phone-safe subset of `Figure` (no path, no relative_path).
+- [ ] 2.2.4 Define `Game { id: GameSerial, display_name, sky_root: Option<PathBuf>, /* Phase 3: eboot_path */ }`.
+- [ ] 2.2.5 Define `SlotIndex(u8)` newtype with `0..=7` (0-indexed internally; display as 1..=8 on the phone).
+- [ ] 2.2.6 Define `SlotState { Empty, Loading { figure_id }, Loaded { figure_id, display_name }, Error { message } }`.
+- [ ] 2.2.7 Define `Command` (client → server): `LoadFigure { slot, figure_id }`, `ClearSlot { slot }`, `RefreshPortal`.
+- [ ] 2.2.8 Define `Event` (server → client): `SlotChanged { slot, state }`, `PortalSnapshot { slots: [SlotState; 8] }`, `Error { message }`.
+- [ ] 2.2.9 Serde-derive everything with `#[serde(tag = "kind", rename_all = "snake_case")]` for enums so the phone can match cleanly.
+- [ ] 2.2.10 Unit tests for serde round-trip on all messages.
+
+### 2.3 RPCS3 control (`crates/rpcs3-control/`)
+
+- [ ] 2.3.1 Port `tools/uia-drive/src/main.rs` helpers into the library's private `uia/` module (find_dialog, find_group_box, find_row, find_descendant, value_of, poll_until_changes).
+- [ ] 2.3.2 Define `pub trait PortalDriver { fn open_dialog(&self) -> Result<()>; fn read_slots(&self) -> Result<[SlotState; 8]>; fn load(&self, slot: SlotIndex, path: &Path) -> Result<LoadedFigureName>; fn clear(&self, slot: SlotIndex) -> Result<()>; }` using the core `SlotState`.
+- [ ] 2.3.3 Implement `UiaPortalDriver` — holds a `UIAutomation` handle, re-resolves the dialog on every call (tolerates `WA_DeleteOnClose`).
+- [ ] 2.3.4 `open_dialog()`: find the RPCS3 main window; if dialog not present, click `Manage` menu → `Manage Skylanders Portal`. Block until dialog appears.
+- [ ] 2.3.5 `read_slots()`: walk rows 1–8, read each `QLineEdit` via `ValuePattern`. "None" → `Empty`, anything else → `Loaded { display_name }`. No figure_id yet — reconciliation happens at a higher layer via name lookup.
+- [ ] 2.3.6 `load(slot, path)`: if slot not Empty, call `clear()` first; invoke Load button; wait for file dialog ("Select Skylander File"); set file-name edit (AutomationId 1148) via ValuePattern; invoke Open (AutomationId 1); poll slot QLineEdit until value changes from prior; return the new value. Timeout 10s with clear error.
+- [ ] 2.3.7 `clear(slot)`: invoke row's Clear button; poll until value becomes "None". Timeout 3s.
+- [ ] 2.3.8 Error-modal handling: if a `QMessageBox` top-level window appears during any action, capture its text, dismiss it, surface the message as the operation's error.
+- [ ] 2.3.9 Off-screen helper: `hide_dialog_offscreen()` uses Win32 `SetWindowPos` via `NativeWindowHandle` to move the dialog to `(-4000,-4000)`. Verify UIA accessibility still works (the 1a probe said yes in principle; confirm on RPCS3 here).
+- [ ] 2.3.10 `structured tracing` events at every step (`rpcs3.driver.open`, `.find_row`, `.invoke_load`, `.poll_value`, `.success`, `.error`).
+- [ ] 2.3.11 `MockPortalDriver` behind a `mock` feature flag — in-memory slot state, sleeps 50ms to simulate latency, deterministic for tests.
+- [ ] 2.3.12 Integration test: `ignore`d by default (requires interactive RPCS3); `cargo test --ignored rpcs3_live_load` drives one load end-to-end using the real driver.
+- [ ] 2.3.13 Unit tests using `MockPortalDriver` for load/clear/full-slot flows.
+- [ ] 2.3.14 Serialize driver actions via `tokio::sync::Mutex` inside the server — not the crate's job, but document the requirement in the trait docs.
+
+### 2.4 Indexer (`crates/indexer/`)
+
+- [ ] 2.4.1 Port `tools/inventory/src/main.rs` into a library crate. Public API: `pub fn scan(root: &Path) -> Result<Vec<Figure>>`.
+- [ ] 2.4.2 Preserve the classification rules (figure/sidekick/item/adventure-pack/creation-crystal/giant/kaos/other) and the variant-prefix peel list from the spike.
+- [ ] 2.4.3 Add a `category = "vehicle"` variant per the Phase 1c recommendation.
+- [ ] 2.4.4 Add a `category = "trap"` variant (split out of "item").
+- [ ] 2.4.5 Element icon path: when building `Figure`, record the path to the element-symbol PNG (`<game>/<element>/<Element>SymbolSkylanders.png`) if present. Server uses this to serve icons.
+- [ ] 2.4.6 Snapshot test: index the pack and compare resulting JSON against a committed baseline (`crates/indexer/tests/fixtures/inventory.snapshot.json`). Failing tests flag unplanned changes.
+- [ ] 2.4.7 Keep `tools/inventory/` as a standalone binary wrapper for one-shot regeneration of `docs/research/firmware-inventory.json`.
+
+### 2.5 Dev config + bootstrap
+
+- [ ] 2.5.1 Read `.env.dev` at startup when the `dev-tools` feature flag is on (otherwise first-launch config wizard — Phase 3). Keys: `RPCS3_EXE`, `FIRMWARE_PACK_ROOT`, `GAMES_YAML` (optional, defaults to `<RPCS3_EXE dir>/config/games.yml`), `BIND_PORT` (default 8765).
+- [ ] 2.5.2 Add `dev-tools` Cargo feature to `crates/server/` (default ON during development, OFF in release).
+- [ ] 2.5.3 Commit `.env.dev.example` with placeholders; actual `.env.dev` stays gitignored.
+- [ ] 2.5.4 Log destination: `./logs/server.log` when `dev-tools`; `%APPDATA%/skylander-portal-controller/logs/` otherwise. Daily rotation, 7-day retention (use `tracing-appender`).
+- [ ] 2.5.5 On startup, log the resolved config to the log file and to stdout (visible to the e2e test harness for URL-scraping).
+
+### 2.6 Server (`crates/server/`)
+
+- [ ] 2.6.1 Scaffold app state: `AppState { figures: Vec<Figure>, driver: Arc<dyn PortalDriver>, portal_state: Arc<Mutex<[SlotState; 8]>>, broadcast: broadcast::Sender<Event> }`.
+- [ ] 2.6.2 Startup sequence: (1) read config, (2) build indexer → `figures`, (3) construct `UiaPortalDriver`, (4) kick off a tokio task to do an initial `driver.read_slots()` and populate `portal_state`, (5) start Axum, (6) start eframe.
+- [ ] 2.6.3 REST: `GET /api/figures` returns `Vec<PublicFigure>` (phone-safe).
+- [ ] 2.6.4 REST: `GET /api/portal` returns current `[SlotState; 8]`.
+- [ ] 2.6.5 REST: `POST /api/portal/slot/{n}/load` body `{ figure_id }` — validates slot range, looks up figure, enqueues a driver job, returns 202 with a correlation ID.
+- [ ] 2.6.6 REST: `POST /api/portal/slot/{n}/clear` — same pattern.
+- [ ] 2.6.7 WebSocket `/ws`: on connect, send a `PortalSnapshot`; subscribe to broadcast for subsequent `SlotChanged` events.
+- [ ] 2.6.8 Driver job queue: a single-worker tokio task drains a `mpsc` of commands, invokes the driver serially, updates `portal_state`, broadcasts `SlotChanged`. Serialising here keeps the UIA driver sane.
+- [ ] 2.6.9 Serve the phone SPA static bundle via `tower_http::services::ServeDir` pointed at `phone/dist/` (dev) or an `include_dir!`-embedded copy (release). Gate behind the `dev-tools` feature.
+- [ ] 2.6.10 Serve element icon PNGs at `/assets/element/{Element}.png`, resolved from the firmware pack.
+- [ ] 2.6.11 First-non-loopback-IP pick at startup; log the URL clearly.
+- [ ] 2.6.12 Unit tests for the routes using `axum::test` + `MockPortalDriver`.
+
+### 2.7 Phone SPA (`phone/`)
+
+Keep the scope surgical. One screen. Three columns on iPad, one-above-the-other on phone.
+
+- [ ] 2.7.1 Promote `tools/phone-smoke/` to `phone/`. Rename crate to `skylander-portal-phone`.
+- [ ] 2.7.2 WS client: connect on mount, auto-reconnect with backoff, dispatch incoming `Event` into a Leptos signal.
+- [ ] 2.7.3 REST helpers: typed `fetch_figures()` and `post_load(slot, figure_id)` / `post_clear(slot)`.
+- [ ] 2.7.4 Component `<Portal />`: renders 8 slots (the 8th shown only if the MVP needs it; show all 8 for simplicity). Each slot shows current `display_name` or "Empty"; a Remove button when loaded; a "pick figure" affordance when empty.
+- [ ] 2.7.5 Component `<FigureBrowser />`: a grid of figure cards. Element icon + canonical name. Filter: element dropdown + text search (minimum viable; fuller filters in Phase 3).
+- [ ] 2.7.6 Interaction flow: user selects a slot (tap) → `FigureBrowser` goes into "picking for slot N" mode → tap a figure → POST `/load` → optimistic "loading" state on the slot → WS `SlotChanged` flips it to loaded. No drag-drop.
+- [ ] 2.7.7 Minimal CSS — function over form. The Skylanders aesthetic pass is Phase 3. Use `phone/assets/spike.css` as a starting point and only enough styling to be legible.
+- [ ] 2.7.8 Error display: transient toasts from `Event::Error`.
+- [ ] 2.7.9 Add `Trunk.toml` with release profile + a build step that outputs to `phone/dist/` consistently.
+- [ ] 2.7.10 Manually verify the SPA builds and the button interactions against a running server on the HTPC.
+
+### 2.8 eframe launcher window
+
+- [ ] 2.8.1 Port the Phase 1 spike's eframe `SpikeApp` into `crates/server/src/ui.rs`. Fullscreen, 86"@10ft sizing (large fonts).
+- [ ] 2.8.2 Show: big QR code of the server URL, URL text, "Clients connected: N" counter, RPCS3 connection status (has-dialog? unknown?).
+- [ ] 2.8.3 Share a single `AppState` pointer between Axum and eframe.
+- [ ] 2.8.4 No buttons in MVP (Phase 3 adds hide-dialog / restart-game / exit).
+
+### 2.9 End-to-end wire-up + manual smoke
+
+- [ ] 2.9.1 On a fresh dev environment, start RPCS3, open Skylanders Manager, `cargo run`. QR window appears. Scan from phone. See figures. Tap slot 1 → tap Eruptor → Eruptor appears on the emulated portal. Full cycle.
+- [ ] 2.9.2 Test "already loaded": slot 1 already has Eruptor, pick another figure — driver should clear then load, UI should reflect Loading → Loaded.
+- [ ] 2.9.3 Test "missing file" error path: delete a `.sky` file, try to load it, confirm error toast appears on phone.
+- [ ] 2.9.4 Test "dialog not open": close the Manage dialog, try to load — driver auto-opens it, then proceeds.
+- [ ] 2.9.5 Confirm the off-screen helper actually hides the dialog (resolves the 1a open item). If Win32 `SetWindowPos` still doesn't hide it, document and defer.
+- [ ] 2.9.6 Snapshot memory/CPU under idle + during a load cycle. No strict target; just sanity.
+
+### 2.10 E2E test harness
+
+- [ ] 2.10.1 Add `tests/e2e/` with a Rust integration test that shells out to launch the server, waits for the "serving on http://…" log line, scrapes the URL.
+- [ ] 2.10.2 Use `fantoccini` (pure Rust) against a locally-running ChromeDriver. Document the one-time `chromedriver` setup in `tests/e2e/README.md`.
+- [ ] 2.10.3 Test case: load the URL, assert the figure grid renders, click slot 1, click first figure, assert the slot shows Loading then Loaded (WS driven).
+- [ ] 2.10.4 Use `MockPortalDriver` — the e2e suite doesn't need RPCS3. Driver selection gated by `SKYLANDER_PORTAL_DRIVER=mock` env var honored when the `dev-tools` feature is active.
+- [ ] 2.10.5 Keep this suite manually run locally; no CI.
+
+### 2.11 Cleanup + commit hygiene
+
+- [ ] 2.11.1 Delete the Phase 1 `src/main.rs` and `assets/spike_index.html` once 2.1.7 has moved the useful parts into `crates/server/`.
+- [ ] 2.11.2 Delete `tools/phone-smoke/` once 2.7.1 has migrated to `phone/`.
+- [ ] 2.11.3 Update CLAUDE.md with the final Phase 2 workspace layout.
+- [ ] 2.11.4 Update `README.md` with a brief "how to run" for developers.
+
+---
+
+**Review checkpoint (end of Phase 2):** demo the end-to-end slice on the HTPC. Identify the three biggest pain points. Plan Phase 3 (profiles + PINs + session resume + game launching) accordingly.
 
 ---
 
