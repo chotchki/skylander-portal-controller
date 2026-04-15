@@ -388,6 +388,10 @@ pub async fn inject_profile(
 }
 
 /// Flip the server session into the given profile (bypasses PIN entry).
+/// When there's only one session (the typical single-phone test), this
+/// seeds `pending_unlock` and also updates the most recent existing
+/// session. For 2-phone tests, call this between `Phone::new`s to target
+/// each phone in sequence.
 pub async fn unlock_session(base: &str, profile_id: &str) -> Result<()> {
     let resp = reqwest::Client::new()
         .post(format!("{base}/api/_test/unlock_session"))
@@ -397,6 +401,49 @@ pub async fn unlock_session(base: &str, profile_id: &str) -> Result<()> {
     if !resp.status().is_success() {
         bail!(
             "unlock_session returned {}: {}",
+            resp.status(),
+            resp.text().await?
+        );
+    }
+    Ok(())
+}
+
+/// Clear the server's 1-minute forced-eviction cooldown so
+/// `third_connection_evicts_oldest`-style tests can back-to-back evict
+/// without sleeping. Behind `test-hooks` on the server.
+pub async fn clear_eviction_cooldown(base: &str) -> Result<()> {
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/api/_test/clear_eviction_cooldown"))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        bail!(
+            "clear_eviction_cooldown returned {}: {}",
+            resp.status(),
+            resp.text().await?
+        );
+    }
+    Ok(())
+}
+
+/// Bind a specific session to a profile. Used by 2-phone tests that need to
+/// give each phone its own independent unlock — the lighter-touch
+/// `unlock_session` helper seeds `pending_unlock` which only affects the
+/// next-registered session, so for phones already connected you need this
+/// one. Caller supplies the session id from the phone's DOM
+/// (`Phone::session_id()`).
+pub async fn set_session_profile(base: &str, session_id: u64, profile_id: &str) -> Result<()> {
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/api/_test/set_session_profile"))
+        .json(&serde_json::json!({
+            "session_id": session_id,
+            "profile_id": profile_id,
+        }))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        bail!(
+            "set_session_profile returned {}: {}",
             resp.status(),
             resp.text().await?
         );
@@ -505,6 +552,17 @@ impl Phone {
     }
 
     /// Poll until `predicate` returns true or timeout expires.
+    /// Read the session id the server assigned this phone. Populated by the
+    /// phone's `ws.rs` on receipt of `Event::Welcome`, exposed in the DOM as
+    /// `<body data-session-id="..">`. Returns `None` until the WS handshake
+    /// completes — callers typically `wait_until` it's non-None before
+    /// using it.
+    pub async fn session_id(&self) -> Result<Option<u64>> {
+        let body = self.client.find(Locator::Css("body")).await?;
+        let attr = body.attr("data-session-id").await?.unwrap_or_default();
+        Ok(attr.parse::<u64>().ok())
+    }
+
     pub async fn wait_until<F, Fut>(&self, timeout: Duration, mut predicate: F) -> Result<()>
     where
         F: FnMut() -> Fut,

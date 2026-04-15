@@ -294,6 +294,13 @@ impl SessionRegistry {
     pub async fn set_pending_unlock(&self, profile_id: Option<String>) {
         *self.pending_unlock.write().await = profile_id;
     }
+
+    /// Clear the forced-eviction cooldown clock. Used by the `test-hooks`
+    /// e2e suite to validate cooldown behaviour without real 60-second
+    /// sleeps. Production code never calls this.
+    pub async fn clear_forced_evict_cooldown(&self) {
+        *self.last_forced_evict_at.write().await = None;
+    }
 }
 
 // ---- Store: DB + argon2 + lockout ----------------------------------------

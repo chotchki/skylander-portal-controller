@@ -347,8 +347,9 @@ Rolled out in six sub-milestones for tracking. Each is a meaningful checkpoint y
 | 3.10b | 3.10.5, 3.10.6 — `SlotState::{Loading,Loaded}.placed_by: Option<String>` threaded through `DriverJob` → `handle_job` → `SlotChanged` broadcast; `http::load_slot` resolves it from the caller's session profile; phone `model.rs` mirrors | ✅ done |
 | 3.10c | 3.10.4 (server half) — retired `MaybeSession` bridge. `CurrentSession(SessionId)` is a required extractor on `unlock_profile` / `lock_profile` / `load_slot`. Clear/refresh/launch/quit/profile-CRUD remain session-agnostic (global or PIN-gated). | ✅ done |
 | 3.10d | 3.10.4 (phone half) — `api::SESSION_ID` thread-local captured from `Event::Welcome`; `X-Session-Id` attached on every fetch in `do_fetch`; `TakenOver` → `TakeoverScreen` with "kick back" → page reload. `ProfileChanged` + `TakenOver` filtered client-side by session id. | ✅ done |
-| 3.10e | 3.10.7, 3.10.8 — ownership badge on portal slots, "show join code" affordance | next |
-| 3.10f | 3.10e.1–6 — multi-phone e2e scenarios | after |
+| 3.10e | 3.10.7, 3.10.8 — ownership badge on portal slots, "show join code" affordance | **deferred** until after 3.15 (aesthetic pass); would otherwise be re-styled twice |
+| 3.10f | 3.10e.1–5 — multi-phone e2e scenarios exercising registry + WS behaviour | next |
+| 3.10f (.6) | 3.10e.6 — ownership-badge visual test, needs 3.10.7 first | deferred with 3.10e |
 
 - [x] 3.10.1 Server session registry: `[Option<Session>; 2]` keyed by connection id + join timestamp. Admit freely while a slot is `None`. Implemented as `HashMap<SessionId, SessionState>` capped at `MAX_SESSIONS=2` with `created_at` for FIFO ordering.
 - [x] 3.10.2 On 3rd connection, evict the **oldest** session (FIFO); evicted client receives `TakenOver { session_id, by_chaos }` and shows the existing Chaos screen. `RegistrationOutcome::AdmittedByEvicting { session, evicted }` returned from `SessionRegistry::register()`.
@@ -356,18 +357,18 @@ Rolled out in six sub-milestones for tracking. Each is a meaningful checkpoint y
 - [x] 3.10.4 Profile unlock is **per-session** (not global). Server: `CurrentSession(SessionId)` extractor required on `unlock_profile` / `lock_profile` / `load_slot`. `Event::ProfileChanged { session_id, .. }` fan-outs; the phone filters by its own session id. Phone: captures session id from `Event::Welcome`, stores in `api::SESSION_ID` thread-local, attaches as `X-Session-Id` on every fetch. Evicted-then-kicked-back sessions re-lock because page reload mints a fresh session.
 - [x] 3.10.5 Portal state remains a single shared `[SlotState; 8]`. Both phones see the same `SlotChanged` stream; last writer wins (driver worker serialises).
 - [x] 3.10.6 Extend `SlotState` with `placed_by: Option<String>` (set on successful load, cleared on clear). Included in `SlotChanged` so both phones can render ownership.
-- [ ] 3.10.7 Phone: ownership indicator on each occupied slot (profile colour + initial). Owning phone's own figures get a highlighted treatment.
-- [ ] 3.10.8 Phone: "show join code" action (header/menu) that renders the same QR the launcher shows, so an existing player can hand the join URL to a new joiner.
+- [ ] 3.10.7 Phone: ownership indicator on each occupied slot (profile colour + initial). Owning phone's own figures get a highlighted treatment. **Deferred: land after 3.15** so the styling matches the Skylanders aesthetic pass first time.
+- [ ] 3.10.8 Phone: "show join code" action (header/menu) that renders the same QR the launcher shows, so an existing player can hand the join URL to a new joiner. **Deferred: land after 3.15** for the same reason.
 - [ ] 3.10.9 Defer: 2-player disconnect-cleanup semantics (what happens to P2's figures when P1 drops, how kick-back restores layout). Revisit with 3.17 reconnect overlay once real failure modes are visible.
 
 ### 3.10e E2E harness — 2-session support
 
-- [ ] 3.10e.1 Generalise `Phone::new` to support N concurrent fantoccini clients against one chromedriver (separate browser contexts). Expose `TestServer::new_phone()` factory.
-- [ ] 3.10e.2 Scenario: `concurrent_edits_both_phones` — P1 and P2 each load different figures into different slots; both see each other's updates via WS.
-- [ ] 3.10e.3 Scenario: `third_connection_evicts_oldest` — P1, P2 connected; P3 connects; assert P1 sees the Chaos "taken over" screen, P2 is undisturbed, P3 is in the profile picker.
-- [ ] 3.10e.4 Scenario: `forced_eviction_cooldown` — after 3.10e.3 eviction, P1's kick-back is rejected until 60s elapse. Use a test-hook to fast-forward the cooldown clock rather than sleeping.
-- [ ] 3.10e.5 Scenario: `independent_profile_unlock` — P1 unlocks profile A, P2 unlocks profile B; neither phone's unlock state leaks to the other.
-- [ ] 3.10e.6 Scenario: `ownership_badge_reflects_placer` — P1 loads a figure; both phones render the slot with P1's ownership badge.
+- [x] 3.10e.1 `Phone::new` already supports N concurrent clients — fantoccini opens a fresh browser session per call, chromedriver fans them out. Tests just call `Phone::new` twice/thrice. New `Phone::session_id()` reads `<body data-session-id>` (populated on `Event::Welcome`) so tests can target a specific session server-side.
+- [x] 3.10e.2 `concurrent_edits_both_phones` — P1 and P2 each load a different figure into a different slot; both phones see both slots Loaded via the shared `SlotChanged` broadcast.
+- [x] 3.10e.3 `third_connection_evicts_oldest` — P1, P2 connected; P3 connects; P1 flips to `.takeover` (Chaos screen), P2 is undisturbed (no `.takeover`), P3 lands on the portal view.
+- [x] 3.10e.4 `forced_eviction_cooldown` — after 3.10e.3 eviction, a raw WS reconnect gets `Event::Error` mentioning "taken over"/"full" and is closed. `/api/_test/clear_eviction_cooldown` fast-forwards the server clock; a subsequent connect lands `Event::Welcome` (admitted). Avoids a real 60s sleep.
+- [x] 3.10e.5 `independent_profile_unlock` — two distinct profiles injected, `set_session_profile(s2, profile_B)` pins P2 to a different profile from P1's; each phone's `.profile-chip` header shows its own profile name.
+- [ ] 3.10e.6 `ownership_badge_reflects_placer` — deferred with 3.10.7 (ownership badge UI) since the test asserts on the badge. Lands alongside the post-3.15 aesthetic pass.
 
 ### 3.11 Working copies + reset-to-fresh
 

@@ -70,6 +70,18 @@ fn spawn_connect(
                 match serde_json::from_str::<Event>(&text) {
                     Ok(Event::Welcome { session_id }) => {
                         set_session_id(session_id);
+                        // Expose the session id in the DOM so e2e tests can
+                        // look it up without calling into WASM. Harmless to
+                        // production — just an extra `data-` attr on <body>.
+                        if let Some(body) = web_sys::window()
+                            .and_then(|w| w.document())
+                            .and_then(|d| d.body())
+                        {
+                            let _ = body.set_attribute(
+                                "data-session-id",
+                                &session_id.to_string(),
+                            );
+                        }
                     }
                     Ok(Event::PortalSnapshot { slots }) => {
                         let mut arr: [Slot; SLOT_COUNT] =

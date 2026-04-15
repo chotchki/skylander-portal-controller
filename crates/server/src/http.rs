@@ -222,7 +222,15 @@ pub fn router(state: Arc<AppState>, phone_dist: std::path::PathBuf) -> Router {
             .route("/api/_test/set_game", post(set_game_state))
             .route("/api/_test/inject_profile", post(inject_profile))
             .route("/api/_test/unlock_session", post(unlock_session_testhook))
-            .route("/api/_test/hmac_key", get(hmac_key_testhook));
+            .route("/api/_test/hmac_key", get(hmac_key_testhook))
+            .route(
+                "/api/_test/clear_eviction_cooldown",
+                post(clear_eviction_cooldown_testhook),
+            )
+            .route(
+                "/api/_test/set_session_profile",
+                post(set_session_profile_testhook),
+            );
     }
 
     // Static phone SPA (dev mode — ServeDir). When the dist directory isn't
@@ -1008,6 +1016,43 @@ async fn inject_profile(
 #[derive(Deserialize)]
 struct UnlockSessionBody {
     profile_id: String,
+}
+
+#[cfg(feature = "test-hooks")]
+async fn clear_eviction_cooldown_testhook(State(state): State<Arc<AppState>>) -> Response {
+    state.sessions.clear_forced_evict_cooldown().await;
+    (StatusCode::OK, "cleared").into_response()
+}
+
+#[cfg(feature = "test-hooks")]
+#[derive(Deserialize)]
+struct SetSessionProfileBody {
+    session_id: u64,
+    profile_id: String,
+}
+
+#[cfg(feature = "test-hooks")]
+async fn set_session_profile_testhook(
+    State(state): State<Arc<AppState>>,
+    axum::Json(body): axum::Json<SetSessionProfileBody>,
+) -> Response {
+    let sid = crate::profiles::SessionId(body.session_id);
+    // Verify the profile exists before binding.
+    let row = match state.profiles.get(&body.profile_id).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return (StatusCode::NOT_FOUND, "no such profile").into_response(),
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+    state.sessions.set_profile(sid, Some(body.profile_id.clone())).await;
+    let _ = state.events.send(Event::ProfileChanged {
+        session_id: sid.0,
+        profile: Some(UnlockedProfile {
+            id: row.id,
+            display_name: row.display_name,
+            color: row.color,
+        }),
+    });
+    (StatusCode::OK, "bound").into_response()
 }
 
 #[cfg(feature = "test-hooks")]
