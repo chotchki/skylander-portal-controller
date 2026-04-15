@@ -71,10 +71,31 @@ async fn load_slot(
         Some(f) => f,
         None => return (StatusCode::NOT_FOUND, "unknown figure_id").into_response(),
     };
+    let figure_id = figure.id.clone();
+    let path = figure.sky_path.clone();
+
+    // Back pressure: atomically flip the slot to Loading, rejecting if it's
+    // already in-flight. Avoids queueing a second load that would open a
+    // duplicate file dialog on top of the first one still in progress.
+    let loading = SlotState::Loading {
+        figure_id: Some(figure_id.clone()),
+    };
+    {
+        let mut p = state.portal.lock().await;
+        if matches!(p[slot.as_usize()], SlotState::Loading { .. }) {
+            return (StatusCode::TOO_MANY_REQUESTS, "slot busy").into_response();
+        }
+        p[slot.as_usize()] = loading.clone();
+    }
+    let _ = state.events.send(skylander_core::Event::SlotChanged {
+        slot,
+        state: loading,
+    });
+
     let job = DriverJob::LoadFigure {
         slot,
-        figure_id: figure.id.clone(),
-        path: figure.sky_path.clone(),
+        figure_id,
+        path,
     };
     if state.driver_tx.send(job).await.is_err() {
         return (StatusCode::SERVICE_UNAVAILABLE, "driver channel closed").into_response();
@@ -92,6 +113,20 @@ async fn clear_slot(
             return (StatusCode::BAD_REQUEST, format!("slot {n} out of range")).into_response()
         }
     };
+
+    let loading = SlotState::Loading { figure_id: None };
+    {
+        let mut p = state.portal.lock().await;
+        if matches!(p[slot.as_usize()], SlotState::Loading { .. }) {
+            return (StatusCode::TOO_MANY_REQUESTS, "slot busy").into_response();
+        }
+        p[slot.as_usize()] = loading.clone();
+    }
+    let _ = state.events.send(skylander_core::Event::SlotChanged {
+        slot,
+        state: loading,
+    });
+
     if state.driver_tx.send(DriverJob::ClearSlot { slot }).await.is_err() {
         return (StatusCode::SERVICE_UNAVAILABLE, "driver channel closed").into_response();
     }
