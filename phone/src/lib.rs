@@ -227,11 +227,18 @@ fn Browser(
                                     },
                                 };
                                 picking_for.set(None);
-                                set_slot(portal, (slot - 1) as usize, SlotState::Loading { figure_id: None });
+                                // No optimistic Loading flip here — the server sets + broadcasts
+                                // Loading before enqueuing, so the WS event is authoritative. A
+                                // rejected request (e.g. 429 "slot busy") leaves the slot in its
+                                // actual previous state instead of a phantom "Loading…".
                                 let id = id.clone();
                                 leptos::task::spawn_local(async move {
-                                    if let Err(e) = post_load(slot, &id).await {
-                                        push_toast(toasts, &format!("Load failed: {e}"));
+                                    match post_load(slot, &id).await {
+                                        Ok(()) => {}
+                                        Err(e) if e.contains("429") => {
+                                            // Slot is already mid-load from a prior tap; silently ignore.
+                                        }
+                                        Err(e) => push_toast(toasts, &format!("Load failed: {e}")),
                                     }
                                 });
                             }
@@ -352,10 +359,6 @@ fn first_empty_slot(p: &[Slot; SLOT_COUNT]) -> Option<u8> {
         }
     }
     None
-}
-
-fn set_slot(portal: RwSignal<[Slot; SLOT_COUNT]>, idx: usize, state: SlotState) {
-    portal.update(|p| p[idx].state = state);
 }
 
 fn empty_portal() -> [Slot; SLOT_COUNT] {
