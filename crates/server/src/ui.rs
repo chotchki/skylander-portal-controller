@@ -111,6 +111,19 @@ impl eframe::App for LauncherApp {
                         .size(24.0)
                         .color(egui::Color32::from_gray(180)),
                 );
+
+                ui.add_space(32.0);
+                let btn = egui::Button::new(
+                    egui::RichText::new("Exit to Desktop")
+                        .size(28.0)
+                        .color(egui::Color32::WHITE),
+                )
+                .fill(egui::Color32::from_rgb(0x8a, 0x20, 0x20))
+                .rounding(egui::Rounding::same(16.0))
+                .min_size(egui::vec2(260.0, 60.0));
+                if ui.add(btn).clicked() {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
             });
         });
     }
