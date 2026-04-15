@@ -30,8 +30,40 @@ button { font: inherit; color: inherit; cursor: pointer; }
   padding: 16px calc(env(safe-area-inset-left) + 12px) calc(env(safe-area-inset-bottom) + 16px) calc(env(safe-area-inset-right) + 12px);
 }
 
-.app-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.brand { font-weight: 700; font-size: 20px; letter-spacing: 0.3px; }
+.app-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; gap: 10px; flex-wrap: wrap; }
+.brand { font-weight: 700; font-size: 20px; letter-spacing: 0.3px; display: flex; align-items: baseline; gap: 8px; }
+.brand .game-name { font-size: 13px; font-weight: 500; color: var(--gold); letter-spacing: 0.2px; }
+.header-right { display: flex; align-items: center; gap: 10px; }
+.quit-btn {
+  background: rgba(209, 68, 68, 0.85);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  border: 0;
+  border-radius: 10px;
+  padding: 6px 12px;
+}
+.quit-btn:disabled { opacity: 0.5; }
+
+.game-picker { padding: 8px 0 24px; }
+.game-picker h2 { font-size: 22px; margin: 8px 0 16px; font-weight: 600; }
+.game-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+.game-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px;
+  text-align: left;
+  min-height: 90px;
+  transition: transform 0.08s ease, border-color 0.15s ease, background 0.15s ease;
+  display: flex; flex-direction: column; gap: 6px;
+  color: var(--text);
+}
+.game-card:active { transform: scale(0.98); }
+.game-card:hover:not(:disabled) { border-color: var(--gold); background: rgba(255, 207, 58, 0.06); }
+.game-card:disabled { opacity: 0.45; cursor: wait; }
+.game-card .game-title { font-size: 16px; font-weight: 600; }
+.game-card .game-serial { font-size: 11px; color: var(--text-dim); font-family: ui-monospace, monospace; }
 .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; }
 .status-dot.connected { background: #65d68c; box-shadow: 0 0 8px #65d68c; }
 .status-dot.connecting { background: var(--gold-2); animation: pulse 1.2s ease-in-out infinite; }

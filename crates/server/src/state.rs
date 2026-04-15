@@ -5,10 +5,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
-use skylander_core::{Event, Figure, FigureId, SlotIndex, SlotState, SLOT_COUNT};
-use skylander_rpcs3_control::PortalDriver;
+use skylander_core::{Event, Figure, FigureId, GameLaunched, GameSerial, SlotIndex, SlotState, SLOT_COUNT};
+use skylander_rpcs3_control::{PortalDriver, RpcsProcess};
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tracing::{error, info};
+
+use crate::games::InstalledGame;
 
 pub struct AppState {
     pub figures: Vec<Figure>,
@@ -18,6 +20,24 @@ pub struct AppState {
     pub portal: Arc<Mutex<[SlotState; SLOT_COUNT]>>,
     pub events: broadcast::Sender<Event>,
     pub connected_clients: Arc<std::sync::atomic::AtomicUsize>,
+
+    /// Installed Skylanders games, loaded from RPCS3's games.yml at startup.
+    pub games: Vec<InstalledGame>,
+    pub rpcs3_exe: PathBuf,
+    /// Lifecycle lock around the currently-running RPCS3 instance.
+    pub rpcs3: Arc<Mutex<RpcsLifecycle>>,
+}
+
+#[derive(Default)]
+pub struct RpcsLifecycle {
+    pub process: Option<RpcsProcess>,
+    pub current: Option<GameLaunched>,
+}
+
+impl AppState {
+    pub fn lookup_game(&self, serial: &GameSerial) -> Option<&InstalledGame> {
+        self.games.iter().find(|g| &g.serial == serial)
+    }
 }
 
 impl AppState {

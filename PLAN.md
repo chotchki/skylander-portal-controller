@@ -235,21 +235,21 @@ Everything after 3.7 is feature work, safe to pick off in any order once tests a
 - [x] 3.1.5 `RpcsProcess::attach()` — UIA-resolve the first RPCS3 window, get its PID via `GetWindowThreadProcessId`, attach. Drop is a no-op for attached processes.
 - [x] 3.1.t Live integration tests in `crates/rpcs3-control/tests/process.rs` (both `#[ignore]`).
 
-### 3.2 Window management (`crates/rpcs3-control`)
+### 3.2 Window management (`crates/rpcs3-control`) — DONE
 
-- [ ] 3.2.1 Promote the existing `hide_dialog_offscreen()` to a public method; make it idempotent and tolerant of a dialog being closed+reopened between calls.
-- [ ] 3.2.2 `restore_dialog_visible(x, y)` — move the dialog back on-screen at a specific position (for the dev-mode "show RPCS3 again" shortcut).
-- [ ] 3.2.3 Distinguish at least three kinds of RPCS3 window via UIA classname: main_window, skylander_dialog, and the game-output window (class differs — to capture). Used for "don't steal focus from the game" behaviour.
-- [ ] 3.2.4 Verify UIA accessibility still works on the off-screen dialog end-to-end (not just the theory from 1a). If it doesn't, fall back to `ShowWindow(SW_HIDE)` with a flag indicating RPCS3 can't be driven while hidden.
+- [x] 3.2.1 `hide_dialog_offscreen()` is public and idempotent (skips the SetWindowPos when the dialog's bounding rect is within 100px of the target).
+- [x] 3.2.2 `restore_dialog_visible(x, y)` brings the dialog back, cycling SW_HIDE/SW_SHOW + `InvalidateRect` + `RedrawWindow` so Qt actually repaints after a long off-screen sojourn (verified visually).
+- [x] 3.2.3 `WindowKind` enum classifies UIElements as `Main`, `SkylanderDialog`, `FileDialog`, or `Other`. Game-output window class still TBD — will capture first time we launch a game in 3.3 and refine.
+- [x] 3.2.4 **Confirmed end-to-end**: off-screen hide makes the dialog visually disappear; `read_slots()` still reports all 8 slots correctly from the off-screen dialog (UIA accessibility survives). Restore brings it back repainted. Verified interactively on RPCS3 0.0.40.
 
-### 3.3 Game launching
+### 3.3 Game launching — DONE
 
-- [ ] 3.3.1 `crates/server/src/games.rs` — parse `<rpcs3>/config/games.yml` into `Vec<Game>` keyed by serial. Use the Skylanders serial whitelist (BLUS30906, BLUS30968, BLUS31076, BLUS31442, BLUS31545, BLUS31600) to filter to just the Skylanders titles.
-- [ ] 3.3.2 `resolve_eboot(game: &Game) -> PathBuf` — `{game.sky_root}/PS3_GAME/USRDIR/EBOOT.BIN`. Verify existence.
-- [ ] 3.3.3 Server state gains `current_game: Option<GameSerial>`.
-- [ ] 3.3.4 REST: `GET /api/games` → installed Skylanders titles (cross-referenced with the Phase 1d game-of-origin whitelist). `POST /api/launch { serial }` → launches RPCS3 via `RpcsProcess::launch`, emits `Event::GameLaunched`. `POST /api/quit` → graceful shutdown.
-- [ ] 3.3.5 Phone: new `<GamePicker />` screen shown when `current_game` is None. After launch, transition to the existing portal view.
-- [ ] 3.3.6 Handle "quit game" from phone → driver flow: `shutdown_graceful` with 30s timer, user can request force-kill on the phone after the timer starts.
+- [x] 3.3.1 `crates/server/src/games.rs` parses games.yml; `SKYLANDERS_SERIALS` whitelist filters to the six titles; missing EBOOT.BIN causes that game to be skipped with a warn log.
+- [x] 3.3.2 `InstalledGame::eboot_path()` resolves `<sky_root>/PS3_GAME/USRDIR/EBOOT.BIN`.
+- [x] 3.3.3 `RpcsLifecycle { process, current }` lives in `AppState::rpcs3` (Arc<Mutex>). `current` holds a `GameLaunched { serial, display_name }`.
+- [x] 3.3.4 `GET /api/games`, `GET /api/status`, `POST /api/launch { serial }`, `POST /api/quit[?force=true]`. launch + quit are serialized by the lifecycle mutex; launch does wait_ready on a spawn_blocking; quit does shutdown_graceful on a spawn_blocking with a 30s timeout (500ms when `force=true`).
+- [x] 3.3.5 Phone `<GamePicker />` renders when `current_game` is None. Tapping a card posts /launch; the WS `GameChanged` event flips the UI into the portal view once RPCS3 is ready.
+- [x] 3.3.6 Header shows "Quit game" button when a game is active. Phase 3 can add the 30s countdown + force-kick UI on top (currently force=true is available programmatically only).
 
 ### 3.4 Mock driver failure injection (`crates/rpcs3-control`)
 
@@ -279,7 +279,8 @@ Everything after 3.7 is feature work, safe to pick off in any order once tests a
 
 - [ ] 3.7.1 `tests/e2e/live/` — tests that `RpcsProcess::launch` + drive actual RPCS3. Gated behind `--ignored` so they're never part of the default `cargo test`.
 - [ ] 3.7.2 `lifecycle_launch_load_clear_quit` — launches SSA (or whichever the user marks), loads Eruptor, clears, quits.
-- [ ] 3.7.3 `offscreen_hide_really_hides` — the observational piece we couldn't confirm in Phase 1a.
+- [ ] 3.7.3 `offscreen_hide_really_hides` — confirmed in 3.2.4 on Skylanders Manager; re-verify after code changes.
+- [ ] 3.7.4 `file_dialog_hidden_while_manager_hidden` — drive a load while the manager is off-screen; assert the Windows common file dialog also doesn't appear on-screen (we'd expect it modally parents to the manager and inherits its coords, but the Phase 2 probe showed it hovering at `@33,41` which is clearly on-screen, so we need explicit coverage). If it does appear, add a "hide-child-dialogs" helper to the driver.
 
 **Review checkpoint:** once 3.1 – 3.6 are green, feature work below is safe to fan out in parallel.
 

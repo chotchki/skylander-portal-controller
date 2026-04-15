@@ -97,6 +97,21 @@ pub enum Event {
     Error {
         message: String,
     },
+    GameChanged {
+        current: Option<GameLaunched>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct GameLaunched {
+    pub serial: String,
+    pub display_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct InstalledGame {
+    pub serial: String,
+    pub display_name: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

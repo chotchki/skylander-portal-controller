@@ -8,6 +8,7 @@
 //!    counter that both sides read.
 
 mod config;
+mod games;
 mod http;
 mod logging;
 mod state;
@@ -25,7 +26,7 @@ use tokio::sync::{broadcast, Mutex};
 use tracing::{info, warn};
 
 use crate::config::DriverKind;
-use crate::state::{spawn_driver_worker, AppState};
+use crate::state::{spawn_driver_worker, AppState, RpcsLifecycle};
 use crate::ui::LauncherApp;
 
 fn main() -> Result<()> {
@@ -50,6 +51,18 @@ fn main() -> Result<()> {
         .map(|(i, f)| (f.id.clone(), i))
         .collect();
 
+    // --- Load installed games (best-effort). ---
+    let games = match games::load_installed(&cfg.games_yaml) {
+        Ok(g) => {
+            info!(count = g.len(), "loaded Skylanders game catalogue");
+            g
+        }
+        Err(e) => {
+            warn!("couldn't read games.yml at {}: {e}", cfg.games_yaml.display());
+            Vec::new()
+        }
+    };
+
     // --- Pick bind address. ---
     let ip = first_non_loopback_ipv4().unwrap_or(Ipv4Addr::LOCALHOST);
     let bind = SocketAddr::from((ip, cfg.bind_port));
@@ -70,11 +83,15 @@ fn main() -> Result<()> {
     let phone_dist = cfg.phone_dist_dir.clone();
     let bind_addr = bind;
     let driver_kind = cfg.driver_kind;
+    let rpcs3_exe = cfg.rpcs3_exe.clone();
+    let rpcs3_lifecycle = Arc::new(tokio::sync::Mutex::new(RpcsLifecycle::default()));
+    let rpcs3_for_task = rpcs3_lifecycle.clone();
     let portal_for_task = portal.clone();
     let events_for_task = events_tx.clone();
     let clients_for_task = connected_clients.clone();
     let figures_for_task = figures.clone();
     let figure_index_for_task = figure_index.clone();
+    let games_for_task = games.clone();
 
     let _server_thread = std::thread::Builder::new()
         .name("tokio".into())
@@ -103,6 +120,9 @@ fn main() -> Result<()> {
                     portal: portal_for_task,
                     events: events_for_task,
                     connected_clients: clients_for_task,
+                    games: games_for_task,
+                    rpcs3_exe,
+                    rpcs3: rpcs3_for_task,
                 });
 
                 let app = http::router(state.clone(), phone_dist);

@@ -40,4 +40,15 @@ pub enum Event {
     Error {
         message: String,
     },
+    /// Game state changed. `None` means "no game running".
+    GameChanged {
+        current: Option<GameLaunched>,
+    },
+}
+
+/// Announcement payload included in `Event::GameChanged`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GameLaunched {
+    pub serial: crate::figure::GameSerial,
+    pub display_name: String,
 }

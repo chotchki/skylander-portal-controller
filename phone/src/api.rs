@@ -5,7 +5,7 @@ use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Request, RequestInit, Response};
 
-use crate::model::PublicFigure;
+use crate::model::{GameLaunched, InstalledGame, PublicFigure};
 
 fn origin() -> String {
     let loc = web_sys::window().unwrap().location();
@@ -39,6 +39,44 @@ pub async fn post_clear(slot: u8) -> Result<(), String> {
         Ok(_) => Ok(()),
         Err(e) => Err(e),
     }
+}
+
+pub async fn fetch_games() -> Vec<InstalledGame> {
+    let url = format!("{}/api/games", origin());
+    match do_fetch(&url, "GET", None).await {
+        Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct StatusBody {
+    current_game: Option<GameLaunched>,
+}
+
+pub async fn fetch_status() -> Option<GameLaunched> {
+    let url = format!("{}/api/status", origin());
+    match do_fetch(&url, "GET", None).await {
+        Ok(text) => serde_json::from_str::<StatusBody>(&text)
+            .ok()
+            .and_then(|s| s.current_game),
+        Err(_) => None,
+    }
+}
+
+pub async fn post_launch(serial: &str) -> Result<(), String> {
+    let url = format!("{}/api/launch", origin());
+    let body = json!({ "serial": serial }).to_string();
+    do_fetch(&url, "POST", Some(&body)).await.map(|_| ())
+}
+
+pub async fn post_quit(force: bool) -> Result<(), String> {
+    let url = if force {
+        format!("{}/api/quit?force=true", origin())
+    } else {
+        format!("{}/api/quit", origin())
+    };
+    do_fetch(&url, "POST", None).await.map(|_| ())
 }
 
 async fn do_fetch(url: &str, method: &str, body: Option<&str>) -> Result<String, String> {

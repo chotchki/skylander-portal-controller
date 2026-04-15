@@ -6,21 +6,23 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use web_sys::{MessageEvent, WebSocket};
 
-use crate::model::{ConnState, Event, Slot, SlotState, SLOT_COUNT};
+use crate::model::{ConnState, Event, GameLaunched, Slot, SlotState, SLOT_COUNT};
 use crate::{ToastMsg, push_toast};
 
 pub fn connect(
     portal: RwSignal<[Slot; SLOT_COUNT]>,
     conn: RwSignal<ConnState>,
     toasts: RwSignal<Vec<ToastMsg>>,
+    current_game: RwSignal<Option<GameLaunched>>,
 ) {
-    spawn_connect(portal, conn, toasts, 0);
+    spawn_connect(portal, conn, toasts, current_game, 0);
 }
 
 fn spawn_connect(
     portal: RwSignal<[Slot; SLOT_COUNT]>,
     conn: RwSignal<ConnState>,
     toasts: RwSignal<Vec<ToastMsg>>,
+    current_game: RwSignal<Option<GameLaunched>>,
     attempt: u32,
 ) {
     let loc = web_sys::window().unwrap().location();
@@ -36,7 +38,7 @@ fn spawn_connect(
     let ws = match WebSocket::new(&url) {
         Ok(w) => w,
         Err(_) => {
-            schedule_reconnect(portal, conn, toasts, attempt);
+            schedule_reconnect(portal, conn, toasts, current_game, attempt);
             return;
         }
     };
@@ -55,6 +57,7 @@ fn spawn_connect(
     {
         let portal = portal;
         let toasts = toasts;
+        let current_game = current_game;
         let on_msg = Closure::<dyn FnMut(MessageEvent)>::new(move |e: MessageEvent| {
             if let Some(text) = e.data().as_string() {
                 match serde_json::from_str::<Event>(&text) {
@@ -77,6 +80,9 @@ fn spawn_connect(
                     Ok(Event::Error { message }) => {
                         push_toast(toasts, &message);
                     }
+                    Ok(Event::GameChanged { current }) => {
+                        current_game.set(current);
+                    }
                     Err(err) => {
                         web_sys::console::warn_1(
                             &format!("bad ws message: {err} — {text}").into(),
@@ -94,9 +100,10 @@ fn spawn_connect(
         let portal = portal;
         let conn = conn;
         let toasts = toasts;
+        let current_game = current_game;
         let on_close = Closure::<dyn FnMut()>::new(move || {
             conn.set(ConnState::Disconnected);
-            schedule_reconnect(portal, conn, toasts, attempt + 1);
+            schedule_reconnect(portal, conn, toasts, current_game, attempt + 1);
         });
         ws.set_onclose(Some(on_close.as_ref().unchecked_ref()));
         on_close.forget();
@@ -114,12 +121,13 @@ fn schedule_reconnect(
     portal: RwSignal<[Slot; SLOT_COUNT]>,
     conn: RwSignal<ConnState>,
     toasts: RwSignal<Vec<ToastMsg>>,
+    current_game: RwSignal<Option<GameLaunched>>,
     attempt: u32,
 ) {
     // Exponential backoff, clamped: 500ms, 1s, 2s, 4s, 8s (max).
     let delay = 500u32.saturating_mul(1 << attempt.min(4));
     let cb = Closure::once_into_js(move || {
-        spawn_connect(portal, conn, toasts, attempt);
+        spawn_connect(portal, conn, toasts, current_game, attempt);
     });
     let _ = web_sys::window()
         .unwrap()

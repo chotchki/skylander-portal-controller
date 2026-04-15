@@ -10,8 +10,10 @@ mod ws;
 
 use leptos::prelude::*;
 
-use crate::api::{post_clear, post_load};
-use crate::model::{ConnState, Element, PublicFigure, Slot, SlotState, SLOT_COUNT};
+use crate::api::{fetch_games, fetch_status, post_clear, post_launch, post_load, post_quit};
+use crate::model::{
+    ConnState, Element, GameLaunched, InstalledGame, PublicFigure, Slot, SlotState, SLOT_COUNT,
+};
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -21,39 +23,117 @@ pub fn App() -> impl IntoView {
     let toasts = RwSignal::new(Vec::<ToastMsg>::new());
     let element_filter = RwSignal::new(None::<Element>);
     let search = RwSignal::new(String::new());
+    let current_game = RwSignal::new(None::<GameLaunched>);
 
     let figures = LocalResource::new(api::fetch_figures);
+    let games = LocalResource::new(fetch_games);
 
-    ws::connect(portal, conn, toasts);
+    // Fetch the current game on boot; the WS will keep it updated after.
+    leptos::task::spawn_local(async move {
+        if let Some(g) = fetch_status().await {
+            current_game.set(Some(g));
+        }
+    });
+
+    ws::connect(portal, conn, toasts, current_game);
 
     view! {
         <div class="app">
-            <Header conn />
-            <Picking picking_for />
-            <Portal portal picking_for />
-            <Suspense fallback=|| view! { <div class="empty-msg">"Loading figures…"</div> }>
-                {move || figures.get().map(|figs| view! {
-                    <Browser
-                        figures=figs.take()
-                        picking_for
-                        portal
-                        element_filter
-                        search
-                        toasts
-                    />
-                })}
-            </Suspense>
+            <Header conn current_game toasts />
+            <Show
+                when=move || current_game.get().is_some()
+                fallback=move || view! {
+                    <Suspense fallback=|| view! { <div class="empty-msg">"Loading games…"</div> }>
+                        {move || games.get().map(|gs| view! {
+                            <GamePicker games=gs.take() toasts />
+                        })}
+                    </Suspense>
+                }
+            >
+                <Picking picking_for />
+                <Portal portal picking_for />
+                <Suspense fallback=|| view! { <div class="empty-msg">"Loading figures…"</div> }>
+                    {move || figures.get().map(|figs| view! {
+                        <Browser
+                            figures=figs.take()
+                            picking_for
+                            portal
+                            element_filter
+                            search
+                            toasts
+                        />
+                    })}
+                </Suspense>
+            </Show>
             <ToastStack toasts />
         </div>
     }
 }
 
 #[component]
-fn Header(conn: RwSignal<ConnState>) -> impl IntoView {
+fn GamePicker(games: Vec<InstalledGame>, toasts: RwSignal<Vec<ToastMsg>>) -> impl IntoView {
+    let launching = RwSignal::new(None::<String>);
+    let is_empty = games.is_empty();
+    view! {
+        <section class="game-picker">
+            <h2>"Pick a game"</h2>
+            <Show when=move || is_empty fallback=|| ()>
+                <div class="empty-msg">
+                    "No Skylanders games found in RPCS3. Add them to the emulator first."
+                </div>
+            </Show>
+            <div class="game-grid">
+                {games.into_iter().map(|g| {
+                    let serial = g.serial.clone();
+                    let display_name = g.display_name.clone();
+                    view! {
+                        <button
+                            class="game-card"
+                            disabled=move || launching.get().is_some()
+                            on:click=move |_| {
+                                let s = serial.clone();
+                                let n = display_name.clone();
+                                launching.set(Some(s.clone()));
+                                leptos::task::spawn_local(async move {
+                                    if let Err(e) = post_launch(&s).await {
+                                        push_toast(toasts, &format!("Launch failed: {e}"));
+                                        launching.set(None);
+                                    } else {
+                                        push_toast(toasts, &format!("Launched {n}"));
+                                        // WS GameChanged will flip the UI; keep the button
+                                        // disabled until then.
+                                    }
+                                });
+                            }
+                        >
+                            <div class="game-title">{g.display_name.clone()}</div>
+                            <div class="game-serial">{g.serial.clone()}</div>
+                        </button>
+                    }
+                }).collect_view()}
+            </div>
+        </section>
+    }
+}
+
+#[component]
+fn Header(
+    conn: RwSignal<ConnState>,
+    current_game: RwSignal<Option<GameLaunched>>,
+    toasts: RwSignal<Vec<ToastMsg>>,
+) -> impl IntoView {
+    let quitting = RwSignal::new(false);
     view! {
         <header class="app-header">
-            <div class="brand">"Skylander Portal"</div>
-            <div>
+            <div class="brand">
+                "Skylander Portal"
+                <Show when=move || current_game.get().is_some() fallback=|| ()>
+                    <span class="game-name">
+                        {move || current_game.get().map(|g| g.display_name).unwrap_or_default()}
+                    </span>
+                </Show>
+            </div>
+            <div class="header-right">
                 <span class={move || {
                     let cls = match conn.get() {
                         ConnState::Connecting => "connecting",
@@ -67,6 +147,23 @@ fn Header(conn: RwSignal<ConnState>) -> impl IntoView {
                     ConnState::Connected => "connected",
                     ConnState::Disconnected => "disconnected",
                 }}</span>
+                <Show when=move || current_game.get().is_some() fallback=|| ()>
+                    <button
+                        class="quit-btn"
+                        disabled=move || quitting.get()
+                        on:click=move |_| {
+                            quitting.set(true);
+                            leptos::task::spawn_local(async move {
+                                if let Err(e) = post_quit(false).await {
+                                    push_toast(toasts, &format!("Quit failed: {e}"));
+                                }
+                                quitting.set(false);
+                            });
+                        }
+                    >
+                        "Quit game"
+                    </button>
+                </Show>
             </div>
         </header>
     }
