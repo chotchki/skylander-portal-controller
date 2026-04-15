@@ -19,6 +19,14 @@ use crate::model::{
     UnlockedProfile, SLOT_COUNT,
 };
 
+/// A session that got forcibly evicted (server sent `Event::TakenOver`).
+/// When this is `Some`, the phone renders the Chaos takeover screen instead
+/// of the normal profile/game/portal flow.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TakeoverReason {
+    pub by_chaos: String,
+}
+
 #[component]
 pub fn App() -> impl IntoView {
     let portal = RwSignal::new(empty_portal());
@@ -29,6 +37,7 @@ pub fn App() -> impl IntoView {
     let search = RwSignal::new(String::new());
     let current_game = RwSignal::new(None::<GameLaunched>);
     let unlocked_profile = RwSignal::new(None::<UnlockedProfile>);
+    let takeover = RwSignal::new(None::<TakeoverReason>);
     // Bumps on every profile CRUD so the ProfilePicker re-fetches.
     let profiles_epoch = RwSignal::new(0u32);
 
@@ -42,11 +51,15 @@ pub fn App() -> impl IntoView {
         }
     });
 
-    ws::connect(portal, conn, toasts, current_game, unlocked_profile);
+    ws::connect(portal, conn, toasts, current_game, unlocked_profile, takeover);
 
     view! {
         <div class="app">
             <Header conn current_game toasts unlocked_profile />
+            <Show
+                when=move || takeover.get().is_none()
+                fallback=move || view! { <TakeoverScreen takeover /> }
+            >
             <Show
                 when=move || unlocked_profile.get().is_some()
                 fallback=move || view! {
@@ -79,8 +92,44 @@ pub fn App() -> impl IntoView {
                 </Suspense>
             </Show>
             </Show>
+            </Show>
             <ToastStack toasts />
         </div>
+    }
+}
+
+#[component]
+fn TakeoverScreen(takeover: RwSignal<Option<TakeoverReason>>) -> impl IntoView {
+    // Chaos took the slot. "Kick back" does a full page reload — the browser
+    // opens a fresh WS, server tries to re-admit via the FIFO path. If the
+    // 1-minute cooldown is still active, the reload-WS gets an `Error` event
+    // and closes. If cooldown elapsed, we land back at the ProfilePicker
+    // (server re-locks all profiles on a fresh session so PIN re-entry is
+    // required — SPEC Q46).
+    view! {
+        <section class="takeover">
+            <h2 class="takeover-title">"You've been taken over!"</h2>
+            <p class="takeover-quote">
+                {move || takeover
+                    .get()
+                    .map(|t| format!("— {}", t.by_chaos))
+                    .unwrap_or_default()}
+            </p>
+            <p class="takeover-body">
+                "Another portal master claimed your seat. You can kick back, "
+                "but you'll need to re-enter your PIN."
+            </p>
+            <button
+                class="takeover-kick"
+                on:click=move |_| {
+                    if let Some(loc) = web_sys::window().map(|w| w.location()) {
+                        let _ = loc.reload();
+                    }
+                }
+            >
+                "Kick back"
+            </button>
+        </section>
     }
 }
 

@@ -1,11 +1,32 @@
 //! REST helpers for talking to the server.
 
+use std::cell::Cell;
+
 use serde_json::json;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Request, RequestInit, Response};
 
 use crate::model::{GameLaunched, InstalledGame, PublicFigure, PublicProfile, UnlockedProfile};
+
+// Session-id storage shared between `ws.rs` (writes it on `Event::Welcome`)
+// and this module (reads it for the `X-Session-Id` header on every mutating
+// call). Thread-local Cell is enough since WASM is single-threaded — no lock
+// contention, no cost at read-time.
+thread_local! {
+    static SESSION_ID: Cell<Option<u64>> = const { Cell::new(None) };
+}
+
+/// Called by `ws.rs` when the server sends `Event::Welcome`. Replaces any
+/// previously stored id — a WS reconnect yields a new session.
+pub fn set_session_id(id: u64) {
+    SESSION_ID.with(|c| c.set(Some(id)));
+}
+
+/// Read the current session id, if the WS has connected and sent Welcome.
+pub fn current_session_id() -> Option<u64> {
+    SESSION_ID.with(|c| c.get())
+}
 
 fn origin() -> String {
     let loc = web_sys::window().unwrap().location();
@@ -136,6 +157,14 @@ async fn do_fetch(url: &str, method: &str, body: Option<&str>) -> Result<String,
     if body.is_some() {
         req.headers()
             .set("Content-Type", "application/json")
+            .map_err(js_err)?;
+    }
+    // Attach the caller's session id on every mutating request so the server
+    // can route per-session state correctly. Safe to set on GETs too — the
+    // server's `MaybeSession` extractor just reads the header if present.
+    if let Some(sid) = current_session_id() {
+        req.headers()
+            .set("X-Session-Id", &sid.to_string())
             .map_err(js_err)?;
     }
     let window = web_sys::window().ok_or_else(|| "no window".to_string())?;

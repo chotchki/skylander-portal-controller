@@ -91,10 +91,24 @@ pub enum SlotState {
     },
 }
 
-/// Wire event from the server's `/ws`.
+/// Wire event from the server's `/ws`. Each session-targeted variant carries
+/// a `session_id` so a shared broadcast channel can fan out to both clients
+/// with each filtering by their own id.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Event {
+    /// First event on every WS connection. Tells the phone the session id it
+    /// should attach as `X-Session-Id` on every mutating REST request + filter
+    /// session-targeted broadcasts by.
+    Welcome {
+        session_id: u64,
+    },
+    /// This session was forcibly evicted by a 3rd connection (FIFO). Phone
+    /// shows the Chaos takeover screen with a "kick back" button.
+    TakenOver {
+        session_id: u64,
+        by_chaos: String,
+    },
     PortalSnapshot {
         slots: Vec<SlotState>,
     },
@@ -109,6 +123,7 @@ pub enum Event {
         current: Option<GameLaunched>,
     },
     ProfileChanged {
+        session_id: u64,
         profile: Option<UnlockedProfile>,
     },
 }

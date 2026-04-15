@@ -62,24 +62,11 @@ impl From<&ProfileRow> for PublicProfile {
 
 /// Resolve the SQLite DB path. Dev builds put it under `./dev-data/`,
 /// release under `%APPDATA%/skylander-portal-controller/`.
+///
+/// Re-exported from [`crate::paths::db_path`] so existing callers keep
+/// working; the dev/release split lives in `paths.rs`.
 pub fn resolve_db_path() -> Result<PathBuf> {
-    let dir = resolve_runtime_dir()?;
-    std::fs::create_dir_all(&dir)
-        .with_context(|| format!("create runtime dir {}", dir.display()))?;
-    Ok(dir.join("db.sqlite"))
-}
-
-#[cfg(feature = "dev-tools")]
-fn resolve_runtime_dir() -> Result<PathBuf> {
-    Ok(PathBuf::from("dev-data"))
-}
-
-#[cfg(not(feature = "dev-tools"))]
-fn resolve_runtime_dir() -> Result<PathBuf> {
-    let base = std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .ok_or_else(|| anyhow::anyhow!("APPDATA not set"))?;
-    Ok(base.join("skylander-portal-controller"))
+    crate::paths::db_path()
 }
 
 // ---- Lockout state machine ------------------------------------------------

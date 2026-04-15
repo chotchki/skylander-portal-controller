@@ -6,8 +6,9 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use web_sys::{MessageEvent, WebSocket};
 
+use crate::api::set_session_id;
 use crate::model::{ConnState, Event, GameLaunched, Slot, SlotState, UnlockedProfile, SLOT_COUNT};
-use crate::{ToastMsg, push_toast};
+use crate::{ToastMsg, TakeoverReason, push_toast};
 
 pub fn connect(
     portal: RwSignal<[Slot; SLOT_COUNT]>,
@@ -15,8 +16,9 @@ pub fn connect(
     toasts: RwSignal<Vec<ToastMsg>>,
     current_game: RwSignal<Option<GameLaunched>>,
     unlocked_profile: RwSignal<Option<UnlockedProfile>>,
+    takeover: RwSignal<Option<TakeoverReason>>,
 ) {
-    spawn_connect(portal, conn, toasts, current_game, unlocked_profile, 0);
+    spawn_connect(portal, conn, toasts, current_game, unlocked_profile, takeover, 0);
 }
 
 fn spawn_connect(
@@ -25,6 +27,7 @@ fn spawn_connect(
     toasts: RwSignal<Vec<ToastMsg>>,
     current_game: RwSignal<Option<GameLaunched>>,
     unlocked_profile: RwSignal<Option<UnlockedProfile>>,
+    takeover: RwSignal<Option<TakeoverReason>>,
     attempt: u32,
 ) {
     let loc = web_sys::window().unwrap().location();
@@ -40,7 +43,7 @@ fn spawn_connect(
     let ws = match WebSocket::new(&url) {
         Ok(w) => w,
         Err(_) => {
-            schedule_reconnect(portal, conn, toasts, current_game, unlocked_profile, attempt);
+            schedule_reconnect(portal, conn, toasts, current_game, unlocked_profile, takeover, attempt);
             return;
         }
     };
@@ -61,9 +64,13 @@ fn spawn_connect(
         let toasts = toasts;
         let current_game = current_game;
         let unlocked_profile = unlocked_profile;
+        let takeover = takeover;
         let on_msg = Closure::<dyn FnMut(MessageEvent)>::new(move |e: MessageEvent| {
             if let Some(text) = e.data().as_string() {
                 match serde_json::from_str::<Event>(&text) {
+                    Ok(Event::Welcome { session_id }) => {
+                        set_session_id(session_id);
+                    }
                     Ok(Event::PortalSnapshot { slots }) => {
                         let mut arr: [Slot; SLOT_COUNT] =
                             std::array::from_fn(|_| Slot { state: SlotState::Empty });
@@ -86,8 +93,17 @@ fn spawn_connect(
                     Ok(Event::GameChanged { current }) => {
                         current_game.set(current);
                     }
-                    Ok(Event::ProfileChanged { profile }) => {
-                        unlocked_profile.set(profile);
+                    Ok(Event::ProfileChanged { session_id, profile }) => {
+                        // Session-filtered: only apply if it's addressed to us.
+                        // Other phones' unlock changes don't affect this client.
+                        if Some(session_id) == crate::api::current_session_id() {
+                            unlocked_profile.set(profile);
+                        }
+                    }
+                    Ok(Event::TakenOver { session_id, by_chaos }) => {
+                        if Some(session_id) == crate::api::current_session_id() {
+                            takeover.set(Some(TakeoverReason { by_chaos }));
+                        }
                     }
                     Err(err) => {
                         web_sys::console::warn_1(
@@ -108,9 +124,18 @@ fn spawn_connect(
         let toasts = toasts;
         let current_game = current_game;
         let unlocked_profile = unlocked_profile;
+        let takeover = takeover;
         let on_close = Closure::<dyn FnMut()>::new(move || {
             conn.set(ConnState::Disconnected);
-            schedule_reconnect(portal, conn, toasts, current_game, unlocked_profile, attempt + 1);
+            schedule_reconnect(
+                portal,
+                conn,
+                toasts,
+                current_game,
+                unlocked_profile,
+                takeover,
+                attempt + 1,
+            );
         });
         ws.set_onclose(Some(on_close.as_ref().unchecked_ref()));
         on_close.forget();
@@ -130,12 +155,13 @@ fn schedule_reconnect(
     toasts: RwSignal<Vec<ToastMsg>>,
     current_game: RwSignal<Option<GameLaunched>>,
     unlocked_profile: RwSignal<Option<UnlockedProfile>>,
+    takeover: RwSignal<Option<TakeoverReason>>,
     attempt: u32,
 ) {
     // Exponential backoff, clamped: 500ms, 1s, 2s, 4s, 8s (max).
     let delay = 500u32.saturating_mul(1 << attempt.min(4));
     let cb = Closure::once_into_js(move || {
-        spawn_connect(portal, conn, toasts, current_game, unlocked_profile, attempt);
+        spawn_connect(portal, conn, toasts, current_game, unlocked_profile, takeover, attempt);
     });
     let _ = web_sys::window()
         .unwrap()

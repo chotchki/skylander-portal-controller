@@ -22,18 +22,14 @@ use crate::profiles::{LockoutCheck, PublicProfile, RegistrationOutcome, SessionI
 use crate::state::{AppState, DriverJob};
 
 /// Axum extractor that pulls the caller's session id from the `X-Session-Id`
-/// request header. The phone receives its session id in the initial
-/// `Welcome` WS event and attaches it to mutating REST calls so the server
-/// can route per-session state correctly.
-///
-/// The inner `Option` is `None` when the header is absent — pre-3.10d the
-/// phone doesn't send it yet, so handlers fall back to "most-recent
-/// session". Once the phone is wired, the Option will be removed and
-/// callers will reject requests without the header.
-pub struct MaybeSession(pub Option<SessionId>);
+/// request header. The phone receives its session id in the initial `Welcome`
+/// WS event and attaches it to every REST call so the server can route
+/// per-session state correctly. Rejects with 400 if the header is missing
+/// or malformed.
+pub struct CurrentSession(pub SessionId);
 
 #[async_trait::async_trait]
-impl<S> axum::extract::FromRequestParts<S> for MaybeSession
+impl<S> axum::extract::FromRequestParts<S> for CurrentSession
 where
     S: Send + Sync,
 {
@@ -44,7 +40,11 @@ where
         _state: &S,
     ) -> Result<Self, Self::Rejection> {
         let Some(raw) = parts.headers.get("x-session-id") else {
-            return Ok(MaybeSession(None));
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "missing X-Session-Id header — connect WS and read Event::Welcome first",
+            )
+                .into_response());
         };
         let s = raw
             .to_str()
@@ -52,18 +52,8 @@ where
         let id = s
             .parse::<u64>()
             .map_err(|_| (StatusCode::BAD_REQUEST, "X-Session-Id not a u64").into_response())?;
-        Ok(MaybeSession(Some(SessionId(id))))
+        Ok(CurrentSession(SessionId(id)))
     }
-}
-
-/// Resolve the caller's `SessionId`: use the header-supplied one if
-/// present, else the most-recently-registered session. Returns `None`
-/// only when no sessions are registered at all (no WS connection yet).
-async fn resolve_session(hdr: MaybeSession, state: &AppState) -> Option<SessionId> {
-    if let Some(sid) = hdr.0 {
-        return Some(sid);
-    }
-    state.sessions.all_ids().await.into_iter().max_by_key(|s| s.0)
 }
 
 pub fn router(state: Arc<AppState>, phone_dist: std::path::PathBuf) -> Router {
@@ -201,7 +191,7 @@ struct LoadBody {
 async fn load_slot(
     State(state): State<Arc<AppState>>,
     AxumPath(n): AxumPath<u8>,
-    hdr: MaybeSession,
+    CurrentSession(sid): CurrentSession,
     axum::Json(body): axum::Json<LoadBody>,
 ) -> Response {
     let slot = match SlotIndex::from_display(n) {
@@ -217,14 +207,11 @@ async fn load_slot(
     let figure_id = figure.id.clone();
     let path = figure.sky_path.clone();
 
-    // Who placed this figure? Pulled from the caller's WS session's
-    // currently-unlocked profile (via the X-Session-Id header, falling back
-    // to the most-recent session pre-3.10d). Threaded through Loading and
-    // Loaded so the phone can render a per-slot ownership badge.
-    let placed_by = match resolve_session(hdr, &state).await {
-        Some(sid) => state.sessions.profile_of(sid).await,
-        None => None,
-    };
+    // Who placed this figure? The caller's WS session's unlocked profile.
+    // `None` means the session is locked — still allowed to load (placed_by
+    // just falls back to None on the resulting SlotState); a locked session
+    // can still operate the portal while other phones do their own thing.
+    let placed_by = state.sessions.profile_of(sid).await;
 
     // Back pressure: atomically flip the slot to Loading, rejecting if it's
     // already in-flight. Avoids queueing a second load that would open a
@@ -723,7 +710,7 @@ async fn delete_profile(
 async fn unlock_profile(
     State(state): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
-    hdr: MaybeSession,
+    CurrentSession(sid): CurrentSession,
     axum::Json(body): axum::Json<PinBody>,
 ) -> Response {
     let now = std::time::Instant::now();
@@ -769,14 +756,6 @@ async fn unlock_profile(
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     };
 
-    let Some(sid) = resolve_session(hdr, &state).await else {
-        return (
-            StatusCode::BAD_REQUEST,
-            "no active session — connect WS first",
-        )
-            .into_response();
-    };
-
     // Bind the unlocked profile to this specific WS session. Other phones
     // stay independent.
     state.sessions.set_profile(sid, Some(id.clone())).await;
@@ -799,15 +778,8 @@ async fn unlock_profile(
 async fn lock_profile(
     State(state): State<Arc<AppState>>,
     AxumPath(_id): AxumPath<String>,
-    hdr: MaybeSession,
+    CurrentSession(sid): CurrentSession,
 ) -> Response {
-    let Some(sid) = resolve_session(hdr, &state).await else {
-        return (
-            StatusCode::BAD_REQUEST,
-            "no active session — connect WS first",
-        )
-            .into_response();
-    };
     state.sessions.set_profile(sid, None).await;
     let _ = state.events.send(Event::ProfileChanged {
         session_id: sid.0,

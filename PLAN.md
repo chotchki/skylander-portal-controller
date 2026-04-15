@@ -345,15 +345,15 @@ Rolled out in six sub-milestones for tracking. Each is a meaningful checkpoint y
 |-----------|--------|--------|
 | 3.10a | 3.10.1, 3.10.2, 3.10.3 — `SessionRegistry` with 2-slot FIFO + forced-evict cooldown, `Event::Welcome`/`TakenOver`, per-session profile setters, 5 new unit tests | ✅ done |
 | 3.10b | 3.10.5, 3.10.6 — `SlotState::{Loading,Loaded}.placed_by: Option<String>` threaded through `DriverJob` → `handle_job` → `SlotChanged` broadcast; `http::load_slot` resolves it from the caller's session profile; phone `model.rs` mirrors | ✅ done |
-| 3.10c | 3.10.4 (server half) — retire the `MaybeSession` bridge once the phone is wired. Require `X-Session-Id` on `unlock_profile` / `lock_profile` / `load_slot` / `clear_slot`. Delete the "fall back to most-recent session" shim. | next |
-| 3.10d | 3.10.4 (phone half) — capture `session_id` from `Welcome` into a signal; attach as `X-Session-Id` on all REST; handle `TakenOver` → Chaos takeover screen with "kick back" button. | next (tandem with 3.10c) |
-| 3.10e | 3.10.7, 3.10.8 — ownership badge on portal slots, "show join code" affordance | after |
+| 3.10c | 3.10.4 (server half) — retired `MaybeSession` bridge. `CurrentSession(SessionId)` is a required extractor on `unlock_profile` / `lock_profile` / `load_slot`. Clear/refresh/launch/quit/profile-CRUD remain session-agnostic (global or PIN-gated). | ✅ done |
+| 3.10d | 3.10.4 (phone half) — `api::SESSION_ID` thread-local captured from `Event::Welcome`; `X-Session-Id` attached on every fetch in `do_fetch`; `TakenOver` → `TakeoverScreen` with "kick back" → page reload. `ProfileChanged` + `TakenOver` filtered client-side by session id. | ✅ done |
+| 3.10e | 3.10.7, 3.10.8 — ownership badge on portal slots, "show join code" affordance | next |
 | 3.10f | 3.10e.1–6 — multi-phone e2e scenarios | after |
 
 - [x] 3.10.1 Server session registry: `[Option<Session>; 2]` keyed by connection id + join timestamp. Admit freely while a slot is `None`. Implemented as `HashMap<SessionId, SessionState>` capped at `MAX_SESSIONS=2` with `created_at` for FIFO ordering.
 - [x] 3.10.2 On 3rd connection, evict the **oldest** session (FIFO); evicted client receives `TakenOver { session_id, by_chaos }` and shows the existing Chaos screen. `RegistrationOutcome::AdmittedByEvicting { session, evicted }` returned from `SessionRegistry::register()`.
 - [x] 3.10.3 1-minute cooldown applies only to forced eviction. Tracked as a single `last_forced_evict_at` on the registry (per-slot refinement deferred — one timestamp handles ping-pong correctly in practice). `RegistrationOutcome::RejectedByCooldown { retry_after }` when within the window; WS handshake sends an `Event::Error` and closes.
-- [ ] 3.10.4 Profile unlock is **per-session** (not global). Each phone enters its own PIN; unlocks do not propagate. Evicted-then-kicked-back sessions re-lock. Partial: `set_profile(sid, ..)` + per-session `Event::ProfileChanged { session_id, .. }` done; `X-Session-Id` extractor exists but is currently `MaybeSession` with a "most-recent session" fallback. 3.10c+d remove the fallback and wire the phone.
+- [x] 3.10.4 Profile unlock is **per-session** (not global). Server: `CurrentSession(SessionId)` extractor required on `unlock_profile` / `lock_profile` / `load_slot`. `Event::ProfileChanged { session_id, .. }` fan-outs; the phone filters by its own session id. Phone: captures session id from `Event::Welcome`, stores in `api::SESSION_ID` thread-local, attaches as `X-Session-Id` on every fetch. Evicted-then-kicked-back sessions re-lock because page reload mints a fresh session.
 - [x] 3.10.5 Portal state remains a single shared `[SlotState; 8]`. Both phones see the same `SlotChanged` stream; last writer wins (driver worker serialises).
 - [x] 3.10.6 Extend `SlotState` with `placed_by: Option<String>` (set on successful load, cleared on clear). Included in `SlotChanged` so both phones can render ownership.
 - [ ] 3.10.7 Phone: ownership indicator on each occupied slot (profile colour + initial). Owning phone's own figures get a highlighted treatment.
@@ -408,11 +408,16 @@ Rolled out in six sub-milestones for tracking. Each is a meaningful checkpoint y
 - [ ] 3.15.4 Use the `frontend-design` skill for the heavier visual work.
 - [ ] 3.15.5 Apply the same Skylanders aesthetic to the PC-side egui launcher window (QR code, "serving on" address, status). egui 0.29 supports `Visuals` + custom fonts + `egui_extras` image loading; reuse the same palette + typography the phone uses so the two surfaces feel like one app. The text must be readable from ~10 ft on an 86" TV (≥32pt body, ≥64pt QR label).
 
-### 3.16 First-launch config wizard (egui)
+### 3.16 First-launch config wizard (egui) — DRAFTED (needs live-desktop verify)
 
-- [ ] 3.16.1 On first launch (no `config.json` in APPDATA), egui shows a wizard: RPCS3 path picker, firmware pack picker, Done.
-- [ ] 3.16.2 Validate each path (rpcs3.exe exists; pack contains `.sky` files).
-- [ ] 3.16.3 Writes `%APPDATA%/skylander-portal-controller/config.json` and reloads.
+Implementation lives in `crates/server/src/wizard.rs` + `crates/server/src/paths.rs`. Runs inside `config::load()` so callers don't need to know setup happened. 11 unit tests for the validators + config JSON round-trip.
+
+- [x] 3.16.1 4-page egui wizard (Welcome → RPCS3 → Firmware pack → Done) gated behind the release `load()` path when `config.json` doesn't exist. Heuristic pre-fill: `%APPDATA%\..\..\emuluators\rpcs3\rpcs3.exe` + `%PROGRAMFILES%\RPCS3\rpcs3.exe` for RPCS3, common dev-pack paths for firmware. `rfd::FileDialog` Browse buttons. Live validity indicator per page (green/red).
+- [x] 3.16.2 Validators: `validate_rpcs3_path` (file must exist + be named `rpcs3.exe`), `validate_firmware_pack` (dir must exist + contain at least one `.sky` file, recursive via walkdir). Green/red UI feedback.
+- [x] 3.16.3 Writes `%APPDATA%/skylander-portal-controller/config.json` via `directories::ProjectDirs`. `load()` returns the fresh config after the wizard completes. No hot-restart needed.
+- [x] 3.16.4 Shared path resolver `crates/server/src/paths.rs` (`config_json_path`, `db_path`, `log_dir`, `runtime_dir_unchecked`) so every runtime-state consumer uses the same dev-vs-release split. `profiles::resolve_db_path` now delegates here.
+- [ ] 3.16.5 Live-desktop verification (blocked on SSH's session isolation per CLAUDE.md): run `cargo run -p skylander-server --no-default-features --release` from a clean APPDATA, walk through all 4 pages, confirm `config.json` lands in `%APPDATA%\skylander-portal-controller\` and subsequent launches skip the wizard.
+- [ ] 3.16.6 Future: a "re-run wizard" affordance once we have a general app-settings area. For now "delete `config.json` and relaunch" is the documented escape hatch.
 
 ### 3.17 Reconnect overlay + network fallback
 

@@ -1,12 +1,20 @@
-//! Runtime configuration. Phase 2 MVP reads `.env.dev` when the `dev-tools`
-//! feature is active; a proper first-launch wizard arrives in Phase 3.
+//! Runtime configuration.
+//!
+//! - Dev builds (`dev-tools` feature, default): read `.env.dev` at startup.
+//! - Release builds: read `%APPDATA%/skylander-portal-controller/config.json`,
+//!   or kick off the first-launch egui wizard when that file is missing
+//!   (see `crate::wizard`).
 
+#[cfg(feature = "dev-tools")]
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+#[cfg(feature = "dev-tools")]
+use anyhow::Context;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[allow(dead_code)] // used for game launching in Phase 3
     pub rpcs3_exe: PathBuf,
@@ -24,7 +32,9 @@ pub struct Config {
     pub data_root: PathBuf,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[allow(dead_code)] // Mock only exists under `dev-tools`; kept for config-file round-trip
 pub enum DriverKind {
     Uia,
     Mock,
@@ -83,18 +93,43 @@ pub fn load() -> Result<Config> {
 
 #[cfg(not(feature = "dev-tools"))]
 pub fn load() -> Result<Config> {
-    anyhow::bail!(
-        "release-build first-launch config wizard is a Phase 3 feature; \
-         run with --features dev-tools for now"
-    )
+    use crate::paths;
+    use crate::wizard::{self, PersistedConfig, PersistedDriverKind};
+
+    let config_path = paths::config_json_path()?;
+
+    let persisted = if config_path.exists() {
+        PersistedConfig::read(&config_path).with_context(|| {
+            format!("parse {} — delete it to re-run the first-launch wizard", config_path.display())
+        })?
+    } else {
+        let runtime_dir = paths::resolve_runtime_dir()?;
+        wizard::run_wizard_blocking(&config_path, &runtime_dir)?
+    };
+
+    Ok(Config {
+        rpcs3_exe: persisted.rpcs3_exe,
+        firmware_pack_root: persisted.firmware_pack_root,
+        games_yaml: persisted.games_yaml,
+        bind_port: persisted.bind_port,
+        driver_kind: match persisted.driver_kind {
+            PersistedDriverKind::Uia => DriverKind::Uia,
+            PersistedDriverKind::Mock => DriverKind::Mock,
+        },
+        log_dir: persisted.log_dir,
+        phone_dist_dir: persisted.phone_dist_dir,
+        data_root: persisted.data_root,
+    })
 }
 
+#[cfg(feature = "dev-tools")]
 fn require_path(env: &HashMap<String, String>, key: &str) -> Result<PathBuf> {
     env.get(key)
         .map(PathBuf::from)
         .ok_or_else(|| anyhow::anyhow!("missing {key} in .env.dev"))
 }
 
+#[cfg(feature = "dev-tools")]
 fn read_env_file(path: &str) -> Result<HashMap<String, String>> {
     let raw = std::fs::read_to_string(path)
         .with_context(|| format!("reading {path}"))?;
@@ -110,3 +145,4 @@ fn read_env_file(path: &str) -> Result<HashMap<String, String>> {
     }
     Ok(out)
 }
+

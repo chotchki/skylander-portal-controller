@@ -44,6 +44,15 @@ ulid = "1"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 
+# First-launch wizard (3.16): native file pickers + APPDATA resolution + .sky recursion.
+rfd = "0.14"
+directories = "5"
+walkdir = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+
 [features]
 default = ["dev-tools"]
 # Relaxes behavior for development: reads .env.dev, logs to ./logs/,
