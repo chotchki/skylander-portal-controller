@@ -220,21 +220,10 @@ impl UiaPortalDriver {
     }
 
     fn move_dialog_to(&self, x: i32, y: i32) -> Result<()> {
-        let walker = self.walker()?;
-        let main = self.main_window(&walker)?;
-        let dialog = self
-            .find_dialog(&walker, &main)
-            .ok_or_else(|| anyhow!("dialog not open"))?;
-
-        // Idempotency guard.
-        if let Ok(rect) = dialog.get_bounding_rectangle() {
-            if (rect.get_left() - x).abs() < 100 && (rect.get_top() - y).abs() < 100 {
-                debug!(x, y, "dialog already at target position, skipping");
-                return Ok(());
-            }
-        }
-
-        crate::hide::set_position(&dialog, x, y)?;
+        // Use raw Win32 FindWindowEx so we can move the dialog even when
+        // UIA's tree walker has pruned it for being off-screen.
+        let hwnd = crate::hide::find_dialog_hwnd()?;
+        crate::hide::set_position_raw(hwnd, x, y)?;
         info!(x, y, "dialog moved");
         Ok(())
     }
