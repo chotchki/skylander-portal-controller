@@ -32,7 +32,62 @@ fn main() -> Result<()> {
         "probe" => {
             verify_still_drivable(&driver)?;
         }
-        other => bail!("unknown command {other:?} — expected hide|show|probe"),
+        "enumerate" => enumerate_all_matching()?,
+        other => bail!("unknown command {other:?} — expected hide|show|probe|enumerate"),
+    }
+    Ok(())
+}
+
+fn enumerate_all_matching() -> Result<()> {
+    use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetClassNameW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
+        IsWindowVisible,
+    };
+
+    struct Ctx {
+        hits: Vec<(HWND, String, String, RECT, bool)>,
+    }
+    extern "system" fn cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let ctx = unsafe { &mut *(lparam.0 as *mut Ctx) };
+        unsafe {
+            let len = GetWindowTextLengthW(hwnd);
+            if len > 0 {
+                let mut buf = vec![0u16; (len + 1) as usize];
+                let read = GetWindowTextW(hwnd, &mut buf);
+                let title = String::from_utf16_lossy(&buf[..read as usize]);
+                if title == "Skylanders Manager" {
+                    let mut cbuf = [0u16; 256];
+                    let n = GetClassNameW(hwnd, &mut cbuf);
+                    let class = String::from_utf16_lossy(&cbuf[..n.max(0) as usize]);
+                    let mut rect = RECT::default();
+                    let _ = GetWindowRect(hwnd, &mut rect);
+                    let vis = IsWindowVisible(hwnd).as_bool();
+                    ctx.hits.push((hwnd, title, class, rect, vis));
+                }
+            }
+        }
+        BOOL(1)
+    }
+    let mut ctx = Ctx { hits: Vec::new() };
+    unsafe {
+        let _ = EnumWindows(Some(cb), LPARAM(&mut ctx as *mut _ as isize));
+    }
+    for (hwnd, title, class, rect, vis) in &ctx.hits {
+        println!(
+            "hwnd={:?}  class={:<25}  rect={}x{}@{},{}  vis={}  title={:?}",
+            hwnd.0,
+            class,
+            rect.right - rect.left,
+            rect.bottom - rect.top,
+            rect.left,
+            rect.top,
+            vis,
+            title,
+        );
+    }
+    if ctx.hits.is_empty() {
+        println!("(no windows titled 'Skylanders Manager' found)");
     }
     Ok(())
 }

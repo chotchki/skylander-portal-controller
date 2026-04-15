@@ -214,14 +214,15 @@ impl UiaPortalDriver {
         self.move_dialog_to(OFFSCREEN_POS.0, OFFSCREEN_POS.1)
     }
 
-    /// Put the dialog back on-screen at the given coordinates.
+    /// Put the dialog back on-screen at the given coordinates and raise it.
     pub fn restore_dialog_visible(&self, x: i32, y: i32) -> Result<()> {
-        self.move_dialog_to(x, y)
+        let hwnd = crate::hide::find_dialog_hwnd()?;
+        crate::hide::set_position_and_show(hwnd, x, y)?;
+        info!(x, y, "dialog restored and raised");
+        Ok(())
     }
 
     fn move_dialog_to(&self, x: i32, y: i32) -> Result<()> {
-        // Use raw Win32 FindWindowEx so we can move the dialog even when
-        // UIA's tree walker has pruned it for being off-screen.
         let hwnd = crate::hide::find_dialog_hwnd()?;
         crate::hide::set_position_raw(hwnd, x, y)?;
         info!(x, y, "dialog moved");
