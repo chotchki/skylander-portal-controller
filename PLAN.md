@@ -104,22 +104,22 @@ Deliberately deferred to Phase 3: PIN-gated profiles, multi-profile, working-cop
 - [x] 2.2.9 Serde-derive everything with `#[serde(tag = "kind", rename_all = "snake_case")]` for enums.
 - [x] 2.2.10 Unit tests for serde round-trip, slot-index bounds, Figure→PublicFigure path scrub (5 tests, all green).
 
-### 2.3 RPCS3 control (`crates/rpcs3-control/`)
+### 2.3 RPCS3 control (`crates/rpcs3-control/`) — DONE (live test pending hands-on)
 
-- [ ] 2.3.1 Port `tools/uia-drive/src/main.rs` helpers into the library's private `uia/` module (find_dialog, find_group_box, find_row, find_descendant, value_of, poll_until_changes).
-- [ ] 2.3.2 Define `pub trait PortalDriver { fn open_dialog(&self) -> Result<()>; fn read_slots(&self) -> Result<[SlotState; 8]>; fn load(&self, slot: SlotIndex, path: &Path) -> Result<LoadedFigureName>; fn clear(&self, slot: SlotIndex) -> Result<()>; }` using the core `SlotState`.
-- [ ] 2.3.3 Implement `UiaPortalDriver` — holds a `UIAutomation` handle, re-resolves the dialog on every call (tolerates `WA_DeleteOnClose`).
-- [ ] 2.3.4 `open_dialog()`: find the RPCS3 main window; if dialog not present, click `Manage` menu → `Manage Skylanders Portal`. Block until dialog appears.
-- [ ] 2.3.5 `read_slots()`: walk rows 1–8, read each `QLineEdit` via `ValuePattern`. "None" → `Empty`, anything else → `Loaded { display_name }`. No figure_id yet — reconciliation happens at a higher layer via name lookup.
-- [ ] 2.3.6 `load(slot, path)`: if slot not Empty, call `clear()` first; invoke Load button; wait for file dialog ("Select Skylander File"); set file-name edit (AutomationId 1148) via ValuePattern; invoke Open (AutomationId 1); poll slot QLineEdit until value changes from prior; return the new value. Timeout 10s with clear error.
-- [ ] 2.3.7 `clear(slot)`: invoke row's Clear button; poll until value becomes "None". Timeout 3s.
-- [ ] 2.3.8 Error-modal handling: if a `QMessageBox` top-level window appears during any action, capture its text, dismiss it, surface the message as the operation's error.
-- [ ] 2.3.9 Off-screen helper: `hide_dialog_offscreen()` uses Win32 `SetWindowPos` via `NativeWindowHandle` to move the dialog to `(-4000,-4000)`. Verify UIA accessibility still works (the 1a probe said yes in principle; confirm on RPCS3 here).
-- [ ] 2.3.10 `structured tracing` events at every step (`rpcs3.driver.open`, `.find_row`, `.invoke_load`, `.poll_value`, `.success`, `.error`).
-- [ ] 2.3.11 `MockPortalDriver` behind a `mock` feature flag — in-memory slot state, sleeps 50ms to simulate latency, deterministic for tests.
-- [ ] 2.3.12 Integration test: `ignore`d by default (requires interactive RPCS3); `cargo test --ignored rpcs3_live_load` drives one load end-to-end using the real driver.
-- [ ] 2.3.13 Unit tests using `MockPortalDriver` for load/clear/full-slot flows.
-- [ ] 2.3.14 Serialize driver actions via `tokio::sync::Mutex` inside the server — not the crate's job, but document the requirement in the trait docs.
+- [x] 2.3.1 UIA helpers ported to `src/uia.rs`.
+- [x] 2.3.2 `PortalDriver` trait defined.
+- [x] 2.3.3 `UiaPortalDriver` constructed via `::new()`; re-resolves widgets per call. `unsafe impl Send+Sync` added with reasoning documented (server serialises all access).
+- [x] 2.3.4 `open_dialog()` auto-triggers via the Manage menu → Manage Skylanders Portal submenu when the dialog isn't already visible.
+- [x] 2.3.5 `read_slots()` returns `[SlotState; 8]`; "None"/empty → `Empty`, anything else → `Loaded { display_name, figure_id: None }`.
+- [x] 2.3.6 `load()` clears if occupied, invokes Load, waits for the Select Skylander File dialog, sets path via Value pattern, invokes Open, polls until value changes.
+- [x] 2.3.7 `clear()` invokes Clear, polls until "None".
+- [x] 2.3.8 Error-modal detection after `load` — dismisses the OK button and surfaces the message.
+- [x] 2.3.9 `hide_dialog_offscreen()` implemented via Win32 `SetWindowPos` in `src/hide.rs`. (Visual verification still requires an interactive RPCS3 session — covered by the live test when run.)
+- [x] 2.3.10 `tracing::instrument` spans on every `PortalDriver` method plus key event logs inside.
+- [x] 2.3.11 `MockPortalDriver` (feature `mock`) with configurable latency.
+- [x] 2.3.12 Live integration test `tests/live.rs`; gated by `RPCS3_SKY_TEST_PATH` env var. Run with `cargo test -p skylander-rpcs3-control --test live -- --ignored`.
+- [x] 2.3.13 Mock unit tests (2 tests green).
+- [x] 2.3.14 Trait docs call out the server-side serialisation requirement.
 
 ### 2.4 Indexer (`crates/indexer/`) — DONE (mostly)
 
