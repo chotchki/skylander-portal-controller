@@ -40,6 +40,11 @@ pub use uia::UiaPortalDriver;
 #[cfg(windows)]
 pub(crate) mod hide;
 
+#[cfg(windows)]
+pub mod process;
+#[cfg(windows)]
+pub use process::{RpcsProcess, ShutdownPath};
+
 #[cfg(feature = "mock")]
 pub mod mock;
 #[cfg(feature = "mock")]

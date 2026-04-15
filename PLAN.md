@@ -226,13 +226,14 @@ Everything after 3.7 is feature work, safe to pick off in any order once tests a
 
 ---
 
-### 3.1 RPCS3 process management (`crates/rpcs3-control`)
+### 3.1 RPCS3 process management (`crates/rpcs3-control`) — DONE
 
-- [ ] 3.1.1 `RpcsProcess::launch(exe: &Path, eboot: &Path) -> Result<RpcsProcess>` — spawn `rpcs3.exe <EBOOT.BIN>`, capture the `std::process::Child`, store PID.
-- [ ] 3.1.2 `wait_ready(&self, timeout: Duration)` — poll UIA for the main window whose name starts with "RPCS3 "; return once present. Fail with the process's stderr if the child exited.
-- [ ] 3.1.3 `shutdown_graceful(&mut self, timeout: Duration) -> Result<()>` — post `WM_CLOSE` to the main HWND; if it doesn't exit within the timeout, fall back to `Child::kill`. Logs which path was taken.
-- [ ] 3.1.4 `is_alive(&self) -> bool` and a `crashed` event on the driver so the server can surface "RPCS3 closed unexpectedly" as a toast.
-- [ ] 3.1.5 `RpcsProcess::attach(window_title: &str) -> Result<Self>` — find an already-running RPCS3 and adopt it (no Child; shutdown is a no-op). Useful in dev mode when the user already has RPCS3 up.
+- [x] 3.1.1 `RpcsProcess::launch(exe, eboot)` — spawns `rpcs3.exe <EBOOT.BIN>`, owns the `Child`, stores PID.
+- [x] 3.1.2 `wait_ready(timeout)` — polls UIA for a top-level window whose name starts with `"RPCS3 "`; detects early child exit and surfaces the status.
+- [x] 3.1.3 `shutdown_graceful(timeout)` — posts `WM_CLOSE` to the main HWND; on timeout, falls back to `Child::kill` (spawned) or `TerminateProcess` (attached). Returns `ShutdownPath::{Graceful, Forced, AlreadyExited}`.
+- [x] 3.1.4 `is_alive()` — `Child::try_wait` for spawned, `GetExitCodeProcess` for attached. Crashed-event hook deferred to the server integration in 3.3.
+- [x] 3.1.5 `RpcsProcess::attach()` — UIA-resolve the first RPCS3 window, get its PID via `GetWindowThreadProcessId`, attach. Drop is a no-op for attached processes.
+- [x] 3.1.t Live integration tests in `crates/rpcs3-control/tests/process.rs` (both `#[ignore]`).
 
 ### 3.2 Window management (`crates/rpcs3-control`)
 
