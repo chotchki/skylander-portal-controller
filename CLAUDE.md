@@ -19,10 +19,15 @@ A Windows app that wraps RPCS3 (PS3 emulator) so kids can manage the emulated Sk
 
 ## Architecture
 
-- Single Rust binary. Axum serves both the phone SPA (as embedded static WASM assets) and the REST/WS API.
-- egui window on the PC is a separate thread/process of the same binary, mainly showing the QR + status + reconnect overlay.
-- Server owns the source of truth for portal state; phone is a dumb client. Slot actions are request→confirm (spinner until RPCS3 reports success).
-- RPCS3 control layer is abstracted behind a trait so we can swap implementations (UIA vs. future alternatives).
+- Cargo workspace:
+  - `crates/core/` — shared types (Figure, SlotState, Command, Event). No I/O. Public/private split enforced via `Figure::to_public()`.
+  - `crates/indexer/` — walks the firmware pack, emits `Vec<Figure>` with stable SHA-256-truncated IDs.
+  - `crates/rpcs3-control/` — `PortalDriver` trait, `UiaPortalDriver` (Windows UI Automation), `MockPortalDriver` (feature `mock`). Off-screen hiding via Win32 `SetWindowPos`.
+  - `crates/server/` — the binary: Axum + eframe + driver worker + config + logging. `dev-tools` feature on by default.
+- Separate from the workspace: `phone/` is a Leptos CSR crate that builds to WASM via trunk. Server's `tower_http::services::ServeDir` serves `phone/dist/`.
+- Threading: main OS thread owns eframe. Dedicated background thread hosts the tokio multi-thread runtime (Axum + driver worker).
+- Driver worker: single tokio task drains `mpsc<DriverJob>`; each load/clear runs inside `spawn_blocking`. Portal state lives in `Arc<Mutex<[SlotState; 8]>>`; changes broadcast through `broadcast::Sender<Event>`.
+- Phone is a dumb client. REST for commands (return 202), WS for state (snapshot on connect, `SlotChanged` per event).
 
 ## Data & paths
 
