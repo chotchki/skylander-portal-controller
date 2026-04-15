@@ -1,0 +1,75 @@
+//! REST helpers for talking to the server.
+
+use serde_json::json;
+use wasm_bindgen::JsValue;
+use wasm_bindgen_futures::JsFuture;
+use web_sys::{Request, RequestInit, Response};
+
+use crate::model::PublicFigure;
+
+fn origin() -> String {
+    let loc = web_sys::window().unwrap().location();
+    let origin = loc.origin().unwrap_or_else(|_| "".into());
+    origin
+}
+
+pub async fn fetch_figures() -> Vec<PublicFigure> {
+    let url = format!("{}/api/figures", origin());
+    match do_fetch(&url, "GET", None).await {
+        Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
+        Err(e) => {
+            web_sys::console::warn_1(&JsValue::from_str(&format!("fetch_figures: {e}")));
+            Vec::new()
+        }
+    }
+}
+
+pub async fn post_load(slot: u8, figure_id: &str) -> Result<(), String> {
+    let url = format!("{}/api/portal/slot/{slot}/load", origin());
+    let body = json!({ "figure_id": figure_id }).to_string();
+    match do_fetch(&url, "POST", Some(&body)).await {
+        Ok(_) => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+pub async fn post_clear(slot: u8) -> Result<(), String> {
+    let url = format!("{}/api/portal/slot/{slot}/clear", origin());
+    match do_fetch(&url, "POST", None).await {
+        Ok(_) => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+async fn do_fetch(url: &str, method: &str, body: Option<&str>) -> Result<String, String> {
+    let opts = RequestInit::new();
+    opts.set_method(method);
+    if let Some(b) = body {
+        opts.set_body(&JsValue::from_str(b));
+    }
+    let req = Request::new_with_str_and_init(url, &opts).map_err(js_err)?;
+    if body.is_some() {
+        req.headers()
+            .set("Content-Type", "application/json")
+            .map_err(js_err)?;
+    }
+    let window = web_sys::window().ok_or_else(|| "no window".to_string())?;
+    let resp_val = JsFuture::from(window.fetch_with_request(&req))
+        .await
+        .map_err(js_err)?;
+    let resp: Response = resp_val.dyn_into().map_err(js_err)?;
+    if !resp.ok() && resp.status() != 202 {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    let text = JsFuture::from(resp.text().map_err(js_err)?)
+        .await
+        .map_err(js_err)?;
+    Ok(text.as_string().unwrap_or_default())
+}
+
+fn js_err(v: JsValue) -> String {
+    v.as_string().unwrap_or_else(|| format!("{:?}", v))
+}
+
+// `dyn_into` is from wasm_bindgen's JsCast trait.
+use wasm_bindgen::JsCast;

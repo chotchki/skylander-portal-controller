@@ -56,12 +56,11 @@ pub fn load() -> Result<Config> {
         _ => DriverKind::Uia,
     };
 
-    // Dev defaults: ./logs/ and tools/phone-smoke/dist/ (until 2.7 promotes it).
     let log_dir = PathBuf::from("logs");
     let phone_dist_dir = env
         .get("PHONE_DIST")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("tools/phone-smoke/dist"));
+        .unwrap_or_else(|| PathBuf::from("phone/dist"));
 
     Ok(Config {
         rpcs3_exe,

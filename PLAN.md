@@ -157,20 +157,18 @@ Deliberately deferred to Phase 3: PIN-gated profiles, multi-profile, working-cop
 Verified on `http://192.168.1.162:8765` with mock driver:
 `POST /slot/1/load` → portal shows `Loaded{Eruptor}` → `POST /slot/1/clear` → empty.
 
-### 2.7 Phone SPA (`phone/`)
+### 2.7 Phone SPA (`phone/`) — DONE
 
-Keep the scope surgical. One screen. Three columns on iPad, one-above-the-other on phone.
-
-- [ ] 2.7.1 Promote `tools/phone-smoke/` to `phone/`. Rename crate to `skylander-portal-phone`.
-- [ ] 2.7.2 WS client: connect on mount, auto-reconnect with backoff, dispatch incoming `Event` into a Leptos signal.
-- [ ] 2.7.3 REST helpers: typed `fetch_figures()` and `post_load(slot, figure_id)` / `post_clear(slot)`.
-- [ ] 2.7.4 Component `<Portal />`: renders 8 slots (the 8th shown only if the MVP needs it; show all 8 for simplicity). Each slot shows current `display_name` or "Empty"; a Remove button when loaded; a "pick figure" affordance when empty.
-- [ ] 2.7.5 Component `<FigureBrowser />`: a grid of figure cards. Element icon + canonical name. Filter: element dropdown + text search (minimum viable; fuller filters in Phase 3).
-- [ ] 2.7.6 Interaction flow: user selects a slot (tap) → `FigureBrowser` goes into "picking for slot N" mode → tap a figure → POST `/load` → optimistic "loading" state on the slot → WS `SlotChanged` flips it to loaded. No drag-drop.
-- [ ] 2.7.7 Minimal CSS — function over form. The Skylanders aesthetic pass is Phase 3. Use `phone/assets/spike.css` as a starting point and only enough styling to be legible.
-- [ ] 2.7.8 Error display: transient toasts from `Event::Error`.
-- [ ] 2.7.9 Add `Trunk.toml` with release profile + a build step that outputs to `phone/dist/` consistently.
-- [ ] 2.7.10 Manually verify the SPA builds and the button interactions against a running server on the HTPC.
+- [x] 2.7.1 `git mv tools/phone-smoke → phone`. Crate renamed to `skylander-portal-phone`.
+- [x] 2.7.2 WS client in `src/ws.rs`: connects to `/ws`, exponential-backoff reconnect (500ms → 8s cap), dispatches `PortalSnapshot` / `SlotChanged` / `Error` into signals.
+- [x] 2.7.3 REST helpers in `src/api.rs`: `fetch_figures`, `post_load`, `post_clear`.
+- [x] 2.7.4 `<Portal />` renders all 8 slots. Each slot shows Empty / Loading / Loaded / Error with a Pick button (empty) or Remove button (loaded).
+- [x] 2.7.5 `<Browser />` grid with element-chip filter + text search. Element-themed card icons (CSS gradient per element).
+- [x] 2.7.6 Interaction: tap slot → banner "Pick a Skylander for slot N" → tap figure → optimistic Loading → WS flips to Loaded. Also a tap-figure-without-picking fallback that uses the first empty slot.
+- [x] 2.7.7 Minimal but coherent CSS (`phone/assets/app.css`): dark blue background, per-element gradient badges on figure cards, responsive grid, touch-sized buttons. Phase 3 will redo this for the Skylanders aesthetic.
+- [x] 2.7.8 Toast stack, auto-dismiss at 4s.
+- [x] 2.7.9 `trunk build` pipeline stable; outputs to `phone/dist/`.
+- [x] 2.7.10 Verified: server now serves the SPA's index.html at `/`, `/api/figures` returns 200, full stack is one command (`cargo run`) away.
 
 ### 2.8 eframe launcher window — DONE
 
