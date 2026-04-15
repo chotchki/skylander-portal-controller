@@ -421,28 +421,62 @@ fn format_err(title: String, body: String) -> String {
 }
 
 /// Windows shell's "This file is in use" TaskDialog appears as a nested
-/// `<TaskDialog>` pane inside the file dialog. Return its ContentText if
-/// present.
+/// pane inside the file dialog. Detection keys off the TaskDialog's
+/// `ContentText` element — more stable than the classname check which can
+/// return empty strings in race windows.
 fn find_shell_file_in_use(walker: &UITreeWalker, file_dlg: &UIElement) -> Option<String> {
-    let pane = find_descendant(walker, file_dlg, |el| {
-        el.get_classname()
-            .map(|c| c == "TaskDialog")
-            .unwrap_or(false)
-    })?;
-    let body = find_descendant(walker, &pane, |el| {
+    // Primary signal: a descendant whose AutomationId is "ContentText" and
+    // whose name mentions "in use".
+    if let Some(el) = find_descendant(walker, file_dlg, |el| {
         el.get_automation_id()
             .map(|a| a == "ContentText")
             .unwrap_or(false)
-    })
-    .and_then(|el| el.get_name().ok())
-    .unwrap_or_else(|| "File is in use.".to_string());
-    Some(body)
+    }) {
+        let body = el.get_name().unwrap_or_default();
+        if body.to_lowercase().contains("in use") {
+            debug!(body = %body, "shell TaskDialog detected via ContentText");
+            return Some(body);
+        }
+    }
+    // Fallback: look for any descendant Pane with classname "TaskDialog".
+    if let Some(pane) = find_descendant(walker, file_dlg, |el| {
+        el.get_classname()
+            .map(|c| c == "TaskDialog")
+            .unwrap_or(false)
+    }) {
+        debug!("shell TaskDialog detected via classname");
+        let body = find_descendant(walker, &pane, |el| {
+            el.get_automation_id()
+                .map(|a| a == "ContentText")
+                .unwrap_or(false)
+        })
+        .and_then(|el| el.get_name().ok())
+        .unwrap_or_else(|| "File is in use.".to_string());
+        return Some(body);
+    }
+    None
 }
 
 fn dismiss_shell_task_dialog(walker: &UITreeWalker, file_dlg: &UIElement) {
-    // The OK button in a shell TaskDialog has AutomationId "CommandButton_N";
-    // the "OK" / "Close" button is typically CommandButton_1.
-    if let Some(btn) = find_descendant(walker, file_dlg, |el| {
+    // Look for the OK button restricted to the TaskDialog's subtree, not the
+    // full file-dialog (otherwise we might grab the file dialog's Open
+    // button by name-matching accident).
+    let pane_or_dlg = find_descendant(walker, file_dlg, |el| {
+        el.get_classname()
+            .map(|c| c == "TaskDialog")
+            .unwrap_or(false)
+    })
+    .or_else(|| {
+        // No classname match — use the nearest ancestor of the ContentText.
+        find_descendant(walker, file_dlg, |el| {
+            el.get_automation_id()
+                .map(|a| a == "ContentText")
+                .unwrap_or(false)
+        })
+    })
+    .unwrap_or_else(|| file_dlg.clone());
+
+    let btn_opt = find_descendant(walker, &pane_or_dlg, |el| {
         el.get_control_type()
             .map(|c| c == ControlType::Button)
             .unwrap_or(false)
@@ -450,29 +484,65 @@ fn dismiss_shell_task_dialog(walker: &UITreeWalker, file_dlg: &UIElement) {
                 .get_automation_id()
                 .map(|a| a.starts_with("CommandButton_"))
                 .unwrap_or(false)
-                || el.get_name().map(|n| matches!(n.as_str(), "OK" | "Close")).unwrap_or(false))
-    }) {
-        if let Ok(inv) = btn.get_pattern::<UIInvokePattern>() {
-            let _ = inv.invoke();
+                || el
+                    .get_name()
+                    .map(|n| matches!(n.as_str(), "OK" | "Close"))
+                    .unwrap_or(false))
+    });
+
+    match btn_opt {
+        Some(btn) => {
+            match btn.get_pattern::<UIInvokePattern>() {
+                Ok(inv) => {
+                    if let Err(e) = inv.invoke() {
+                        warn!("failed to invoke TaskDialog OK button: {e}");
+                    } else {
+                        debug!("clicked TaskDialog OK");
+                    }
+                }
+                Err(e) => warn!("TaskDialog OK button has no invoke pattern: {e}"),
+            }
         }
+        None => warn!("TaskDialog OK button not found"),
     }
-    // Give the shell a tick to tear the TaskDialog down.
-    sleep(Duration::from_millis(60));
+    sleep(Duration::from_millis(120));
 }
 
 fn cancel_file_dialog(walker: &UITreeWalker, file_dlg: &UIElement) {
-    if let Some(btn) = find_descendant(walker, file_dlg, |el| {
+    // Cancel button inside the standard Win32 file dialog. Match by
+    // AutomationId "2" OR name "Cancel". Fall back to any Button whose name
+    // is "Cancel" if the AutomationId search returns nothing.
+    let btn_opt = find_descendant(walker, file_dlg, |el| {
         el.get_control_type()
             .map(|c| c == ControlType::Button)
             .unwrap_or(false)
             && el.get_automation_id().map(|a| a == "2").unwrap_or(false)
-            && el.get_name().map(|n| n == "Cancel").unwrap_or(false)
-    }) {
-        if let Ok(inv) = btn.get_pattern::<UIInvokePattern>() {
-            let _ = inv.invoke();
-        }
+    })
+    .or_else(|| {
+        find_descendant(walker, file_dlg, |el| {
+            el.get_control_type()
+                .map(|c| c == ControlType::Button)
+                .unwrap_or(false)
+                && el.get_name().map(|n| n == "Cancel").unwrap_or(false)
+        })
+    });
+
+    match btn_opt {
+        Some(btn) => match btn.get_pattern::<UIInvokePattern>() {
+            Ok(inv) => {
+                if let Err(e) = inv.invoke() {
+                    warn!("failed to invoke file-dialog Cancel: {e}");
+                } else {
+                    debug!("clicked file-dialog Cancel");
+                }
+            }
+            Err(e) => warn!("file-dialog Cancel has no invoke pattern: {e}"),
+        },
+        None => warn!("file-dialog Cancel button not found"),
     }
-    sleep(Duration::from_millis(80));
+    // Give the shell enough time to actually close the dialog window so
+    // subsequent load jobs don't fight the residual one.
+    sleep(Duration::from_millis(200));
 }
 
 fn find_error_modal(
