@@ -38,3 +38,5 @@ Thumbs.db
 # Standalone tool crates and trunk output
 /tools/*/target/
 /tools/*/dist/
+/phone/target/
+/phone/dist/
