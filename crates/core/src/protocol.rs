@@ -71,6 +71,15 @@ pub enum Event {
         session_id: u64,
         by_chaos: String,
     },
+    /// Offered to a session right after its profile unlocks, when that
+    /// profile has a prior portal layout the user can resume. Phone shows
+    /// a "Resume last setup?" modal; on confirm it issues per-slot
+    /// `/load` calls against `slots`. Broadcast; clients filter by own id.
+    /// PLAN 3.12.
+    ResumePrompt {
+        session_id: u64,
+        slots: [SlotState; SLOT_COUNT],
+    },
 }
 
 /// Public profile description included in [`Event::ProfileChanged`] and the

@@ -370,6 +370,63 @@ impl ProfileStore {
         Ok(n)
     }
 
+    /// Update `figure_usage.last_used_at` for this (profile_id, figure_id)
+    /// pair. Creates the row on first use. Called from `load_slot` after a
+    /// successful working-copy resolve (PLAN 3.11.2).
+    pub async fn record_figure_usage(
+        &self,
+        profile_id: &str,
+        figure_id: &str,
+    ) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO figure_usage (profile_id, figure_id, last_used_at) \
+             VALUES (?1, ?2, ?3) \
+             ON CONFLICT (profile_id, figure_id) \
+             DO UPDATE SET last_used_at = excluded.last_used_at",
+        )
+        .bind(profile_id)
+        .bind(figure_id)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Read + write `sessions.last_portal_layout_json` for a profile. The
+    /// layout is an opaque JSON blob (the 8-slot array, serialised via
+    /// `serde_json`) — shape is enforced by the caller, not the DB.
+    pub async fn save_portal_layout(
+        &self,
+        profile_id: &str,
+        layout_json: &str,
+    ) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO sessions (profile_id, last_portal_layout_json, updated_at) \
+             VALUES (?1, ?2, ?3) \
+             ON CONFLICT (profile_id) \
+             DO UPDATE SET last_portal_layout_json = excluded.last_portal_layout_json, \
+                           updated_at = excluded.updated_at",
+        )
+        .bind(profile_id)
+        .bind(layout_json)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn load_portal_layout(&self, profile_id: &str) -> Result<Option<String>> {
+        let row: Option<(Option<String>,)> = sqlx::query_as(
+            "SELECT last_portal_layout_json FROM sessions WHERE profile_id = ?1",
+        )
+        .bind(profile_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.and_then(|(json,)| json))
+    }
+
     pub async fn get(&self, id: &str) -> Result<Option<ProfileRow>> {
         let row = sqlx::query_as::<_, ProfileRow>(
             "SELECT id, display_name, pin_hash, color, created_at FROM profiles WHERE id = ?1",

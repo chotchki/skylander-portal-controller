@@ -130,6 +130,8 @@ fn main() -> Result<()> {
                     driver,
                     portal_for_task.clone(),
                     events_for_task.clone(),
+                    profile_store.clone(),
+                    sessions.clone(),
                 );
                 let state = Arc::new(AppState {
                     figures: figures_for_task,

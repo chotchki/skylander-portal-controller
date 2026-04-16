@@ -195,6 +195,7 @@ pub fn router(state: Arc<AppState>, phone_dist: std::path::PathBuf) -> Router {
         .route("/api/portal", get(get_portal))
         .route("/api/portal/slot/:n/load", post(load_slot))
         .route("/api/portal/slot/:n/clear", post(clear_slot))
+        .route("/api/portal/slot/:n/reset", post(reset_slot))
         .route("/api/portal/refresh", post(refresh_portal))
         .route("/api/games", get(list_games))
         .route("/api/status", get(get_status))
@@ -230,6 +231,10 @@ pub fn router(state: Arc<AppState>, phone_dist: std::path::PathBuf) -> Router {
             .route(
                 "/api/_test/set_session_profile",
                 post(set_session_profile_testhook),
+            )
+            .route(
+                "/api/_test/layout/:profile_id",
+                get(layout_testhook),
             );
     }
 
@@ -345,17 +350,48 @@ async fn load_slot(
         Err(e) => return (StatusCode::BAD_REQUEST, format!("bad load body: {e}")).into_response(),
     };
     let figure = match state.lookup_figure(&body.figure_id) {
-        Some(f) => f,
+        Some(f) => f.clone(),
         None => return (StatusCode::NOT_FOUND, "unknown figure_id").into_response(),
     };
     let figure_id = figure.id.clone();
-    let path = figure.sky_path.clone();
 
     // Who placed this figure? The caller's WS session's unlocked profile.
     // `None` means the session is locked — still allowed to load (placed_by
     // just falls back to None on the resulting SlotState); a locked session
     // can still operate the portal while other phones do their own thing.
     let placed_by = state.sessions.profile_of(sid).await;
+
+    // Resolve the actual file path we'll hand to the driver. With a profile
+    // unlocked, route through the per-profile working copy (PLAN 3.11.2)
+    // so progress persists across loads. Without a profile (no session
+    // unlocked yet), fall back to the pack's fresh file — read-only use.
+    let path = match &placed_by {
+        Some(profile_id) => {
+            match crate::working_copies::resolve_load_path(profile_id, &figure) {
+                Ok(p) => p,
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("working-copy resolve failed: {e}"),
+                    )
+                        .into_response()
+                }
+            }
+        }
+        None => figure.sky_path.clone(),
+    };
+
+    // Bump figure_usage.last_used_at. Best-effort — we don't fail the load
+    // just because the usage row can't be written.
+    if let Some(profile_id) = &placed_by {
+        if let Err(e) = state
+            .profiles
+            .record_figure_usage(profile_id, &figure_id.0)
+            .await
+        {
+            warn!("record_figure_usage failed: {e}");
+        }
+    }
 
     // Back pressure: atomically flip the slot to Loading, rejecting if it's
     // already in-flight. Avoids queueing a second load that would open a
@@ -381,6 +417,88 @@ async fn load_slot(
         figure_id,
         path,
         placed_by,
+        canonical_name: figure.canonical_name.clone(),
+    };
+    if state.driver_tx.send(job).await.is_err() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "driver channel closed").into_response();
+    }
+    (StatusCode::ACCEPTED, "queued").into_response()
+}
+
+/// Reset a figure's working copy to the pack's fresh contents (destroys
+/// level/gold/playtime). Expects the phone to have confirmed with the user
+/// — extra-confirmation flow for Creation Crystals lives on the phone side.
+///
+/// Flow: clear the slot, re-fork the working copy from the pack, re-load.
+/// Net effect: the same figure is back on the slot but with zero progress.
+async fn reset_slot(
+    State(state): State<Arc<AppState>>,
+    AxumPath(n): AxumPath<u8>,
+    CurrentSession(sid): CurrentSession,
+    Signed(body_bytes): Signed,
+) -> Response {
+    let slot = match SlotIndex::from_display(n) {
+        Ok(s) => s,
+        Err(_) => {
+            return (StatusCode::BAD_REQUEST, format!("slot {n} out of range")).into_response()
+        }
+    };
+    #[derive(Deserialize)]
+    struct ResetBody {
+        figure_id: FigureId,
+    }
+    let body: ResetBody = match serde_json::from_slice(&body_bytes) {
+        Ok(b) => b,
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, format!("bad reset body: {e}")).into_response()
+        }
+    };
+    let figure = match state.lookup_figure(&body.figure_id) {
+        Some(f) => f.clone(),
+        None => return (StatusCode::NOT_FOUND, "unknown figure_id").into_response(),
+    };
+
+    // Reset requires an unlocked profile — it's a destructive per-profile
+    // action. A locked session isn't allowed to reset someone else's save.
+    let Some(profile_id) = state.sessions.profile_of(sid).await else {
+        return (StatusCode::FORBIDDEN, "unlock a profile first").into_response();
+    };
+
+    // Back pressure: reject if the slot is already mid-transition.
+    let loading = SlotState::Loading {
+        figure_id: Some(figure.id.clone()),
+        placed_by: Some(profile_id.clone()),
+    };
+    {
+        let mut p = state.portal.lock().await;
+        if matches!(p[slot.as_usize()], SlotState::Loading { .. }) {
+            return (StatusCode::TOO_MANY_REQUESTS, "slot busy").into_response();
+        }
+        p[slot.as_usize()] = loading.clone();
+    }
+    let _ = state.events.send(skylander_core::Event::SlotChanged {
+        slot,
+        state: loading,
+    });
+
+    // Overwrite the working copy with fresh pack bytes. If this fails the
+    // driver never gets called; surface the error to the phone as a toast.
+    let path = match crate::working_copies::reset_to_fresh(&profile_id, &figure) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = state.events.send(skylander_core::Event::Error {
+                message: format!("Reset failed: {e}"),
+            });
+            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+        }
+    };
+
+    let job = DriverJob::LoadFigure {
+        slot,
+        figure_id: figure.id.clone(),
+        path,
+        placed_by: Some(profile_id),
+        canonical_name: figure.canonical_name.clone(),
     };
     if state.driver_tx.send(job).await.is_err() {
         return (StatusCode::SERVICE_UNAVAILABLE, "driver channel closed").into_response();
@@ -729,8 +847,8 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
     // unlocks).
     {
         let current_profile = state.sessions.profile_of(sid).await;
-        let unlocked = match current_profile {
-            Some(pid) => match state.profiles.get(&pid).await {
+        let unlocked = match &current_profile {
+            Some(pid) => match state.profiles.get(pid).await {
                 Ok(Some(row)) => Some(UnlockedProfile {
                     id: row.id,
                     display_name: row.display_name,
@@ -746,6 +864,22 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
         };
         if let Ok(j) = serde_json::to_string(&evt) {
             let _ = sender.send(Message::Text(j)).await;
+        }
+        // If this session came in with a profile already bound (via
+        // `pending_unlock`, typically after a reload or test-hook seed),
+        // offer the resume prompt here. Without this hook the WS-reconnect
+        // path would silently miss it — `unlock_profile` is only the
+        // explicit-PIN-entry path.
+        //
+        // Sent on `sender` directly (not broadcast) because we're still
+        // pre-writer-task: broadcast messages emitted before
+        // `state.events.subscribe()` below would be dropped.
+        if let Some(pid) = current_profile {
+            if let Some(evt) = build_resume_prompt(&state, sid.0, &pid).await {
+                if let Ok(j) = serde_json::to_string(&evt) {
+                    let _ = sender.send(Message::Text(j)).await;
+                }
+            }
         }
     }
 
@@ -940,7 +1074,56 @@ async fn unlock_profile(
         profile: Some(unlocked.clone()),
     });
 
+    // PLAN 3.12.2: if this profile has a stored portal layout from an earlier
+    // session, offer a "Resume last setup?" prompt. Broadcast; the client
+    // filters by its own session id. Silent on DB errors — resume is a nice-
+    // to-have, not worth failing the unlock for.
+    maybe_send_resume_prompt(&state, sid.0, &id).await;
+
     (StatusCode::OK, axum::Json(unlocked)).into_response()
+}
+
+/// Load + parse the persisted layout for `profile_id`, returning an
+/// `Event::ResumePrompt` if one should be offered (layout exists and isn't
+/// all-Empty). Caller sends via either `sender` (direct, for handshake)
+/// or `state.events` (broadcast, for post-subscribe events).
+async fn build_resume_prompt(
+    state: &Arc<AppState>,
+    session_id: u64,
+    profile_id: &str,
+) -> Option<Event> {
+    let json = match state.profiles.load_portal_layout(profile_id).await {
+        Ok(Some(j)) => j,
+        Ok(None) => return None,
+        Err(e) => {
+            warn!("load_portal_layout({profile_id}): {e}");
+            return None;
+        }
+    };
+    let slots: [SlotState; SLOT_COUNT] = match serde_json::from_str(&json) {
+        Ok(a) => a,
+        Err(e) => {
+            warn!("parse last_portal_layout_json for {profile_id}: {e}");
+            return None;
+        }
+    };
+    if slots.iter().all(|s| matches!(s, SlotState::Empty)) {
+        return None;
+    }
+    Some(Event::ResumePrompt { session_id, slots })
+}
+
+/// Convenience wrapper that builds + broadcasts. Used from REST handlers
+/// (`unlock_profile`, the test-hook unlock path) where the recipient
+/// session already has a writer task draining the broadcast channel.
+async fn maybe_send_resume_prompt(
+    state: &Arc<AppState>,
+    session_id: u64,
+    profile_id: &str,
+) {
+    if let Some(evt) = build_resume_prompt(state, session_id, profile_id).await {
+        let _ = state.events.send(evt);
+    }
 }
 
 async fn lock_profile(
@@ -1019,6 +1202,18 @@ struct UnlockSessionBody {
 }
 
 #[cfg(feature = "test-hooks")]
+async fn layout_testhook(
+    State(state): State<Arc<AppState>>,
+    AxumPath(profile_id): AxumPath<String>,
+) -> Response {
+    match state.profiles.load_portal_layout(&profile_id).await {
+        Ok(Some(json)) => (StatusCode::OK, json).into_response(),
+        Ok(None) => (StatusCode::NO_CONTENT, "").into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+#[cfg(feature = "test-hooks")]
 async fn clear_eviction_cooldown_testhook(State(state): State<Arc<AppState>>) -> Response {
     state.sessions.clear_forced_evict_cooldown().await;
     (StatusCode::OK, "cleared").into_response()
@@ -1089,8 +1284,10 @@ async fn unlock_session_testhook(
         .await;
 
     // Also push to the most-recent existing session if any is still
-    // connected — covers the "test sets up after Phone::new" flow.
-    if let Some(&sid) = state.sessions.all_ids().await.iter().max_by_key(|s| s.0) {
+    // connected — covers the "test sets up after Phone::new" flow, and the
+    // reload race where a new WS registers before `pending_unlock` is set.
+    let ids = state.sessions.all_ids().await;
+    if let Some(&sid) = ids.iter().max_by_key(|s| s.0) {
         state
             .sessions
             .set_profile(sid, Some(body.profile_id.clone()))
@@ -1106,6 +1303,11 @@ async fn unlock_session_testhook(
                 }),
             });
         }
+        // Mirror the real unlock_profile path: after binding a profile to a
+        // session, offer the resume prompt if there's a prior layout. This
+        // matters for the post-reload flow where the fresh WS registers
+        // with no profile and gets bound via this hook after the fact.
+        maybe_send_resume_prompt(&state, sid.0, &body.profile_id).await;
     }
     (StatusCode::OK, "unlocked").into_response()
 }

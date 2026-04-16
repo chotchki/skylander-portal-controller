@@ -65,3 +65,38 @@ pub fn log_dir() -> Result<PathBuf> {
     std::fs::create_dir_all(&dir).ok();
     Ok(dir)
 }
+
+/// Directory holding per-profile working copies of `.sky` files. Shaped as
+/// `<runtime_root>/working/<profile_id>/`. PLAN 3.11.1. Lazy-creates.
+pub fn working_copy_dir(profile_id: &str) -> Result<PathBuf> {
+    let dir = resolve_runtime_dir()?.join("working").join(profile_id);
+    std::fs::create_dir_all(&dir)
+        .with_context(|| format!("create working-copy dir {}", dir.display()))?;
+    Ok(dir)
+}
+
+/// Path to a specific figure's working copy under a profile:
+/// `<runtime_root>/working/<profile_id>/<figure_id>.sky`. Does NOT create
+/// the file — callers decide whether to fork from the pack or expect it to
+/// exist.
+pub fn working_copy_path(profile_id: &str, figure_id: &str) -> Result<PathBuf> {
+    Ok(working_copy_dir(profile_id)?.join(format!("{figure_id}.sky")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn working_copy_path_shape() {
+        let p = working_copy_path("alice", "deadbeef").unwrap();
+        let s = p.to_string_lossy().replace('\\', "/");
+        assert!(s.ends_with("/working/alice/deadbeef.sky"), "unexpected: {s}");
+    }
+
+    #[test]
+    fn working_copy_dir_is_created() {
+        let d = working_copy_dir("bob").unwrap();
+        assert!(d.is_dir(), "dir was not created: {}", d.display());
+    }
+}

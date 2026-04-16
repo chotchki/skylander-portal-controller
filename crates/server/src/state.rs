@@ -8,7 +8,7 @@ use anyhow::Result;
 use skylander_core::{Event, Figure, FigureId, GameLaunched, GameSerial, SlotIndex, SlotState, SLOT_COUNT};
 use skylander_rpcs3_control::{PortalDriver, RpcsProcess};
 use tokio::sync::{broadcast, mpsc, Mutex};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::games::InstalledGame;
 use crate::profiles::{ProfileStore, SessionRegistry};
@@ -77,6 +77,11 @@ pub enum DriverJob {
         /// render an ownership indicator. `None` if the caller wasn't
         /// authenticated (pre-3.10d REST calls without X-Session-Id).
         placed_by: Option<String>,
+        /// Canonical display name from the pack index. Authoritative — the
+        /// driver's own read (file-stem for the mock, UIA ValueValue for
+        /// UIA) is observational and less reliable, especially with
+        /// per-profile working copies whose filenames are figure-id hashes.
+        canonical_name: String,
     },
     ClearSlot {
         slot: SlotIndex,
@@ -85,10 +90,17 @@ pub enum DriverJob {
 }
 
 /// Spawn the driver worker. Owns the `PortalDriver` and serialises all access.
+///
+/// `profiles` + `sessions` are threaded in so the worker can persist the
+/// current portal layout after each successful mutation (PLAN 3.12.1) —
+/// each unlocked profile's `sessions` row gets the fresh JSON so that on
+/// next unlock we can offer a resume prompt.
 pub fn spawn_driver_worker(
     driver: Arc<dyn PortalDriver>,
     portal: Arc<Mutex<[SlotState; SLOT_COUNT]>>,
     events: broadcast::Sender<Event>,
+    profiles: crate::profiles::ProfileStore,
+    sessions: Arc<crate::profiles::SessionRegistry>,
 ) -> mpsc::Sender<DriverJob> {
     let (tx, mut rx) = mpsc::channel::<DriverJob>(32);
 
@@ -100,11 +112,23 @@ pub fn spawn_driver_worker(
         }
 
         while let Some(job) = rx.recv().await {
+            let mutation = matches!(
+                &job,
+                DriverJob::LoadFigure { .. } | DriverJob::ClearSlot { .. }
+            );
             if let Err(e) = handle_job(job, &driver, &portal, &events).await {
                 error!("driver job error: {e}");
                 let _ = events.send(Event::Error {
                     message: e.to_string(),
                 });
+            }
+            if mutation {
+                // Best-effort layout persistence: write the current portal
+                // snapshot to every unlocked profile's `sessions` row so an
+                // unlock-resume prompt can offer it. Failures are logged,
+                // not surfaced to the phone — the mutation itself succeeded
+                // and a missed layout save is a minor degradation.
+                persist_layout(&portal, &profiles, &sessions).await;
             }
         }
     });
@@ -124,6 +148,7 @@ async fn handle_job(
             figure_id,
             path,
             placed_by,
+            canonical_name,
         } => {
             // HTTP handler already set Loading and broadcast it.
             let d = driver.clone();
@@ -135,14 +160,17 @@ async fn handle_job(
             .await?;
 
             match result {
-                Ok(display_name) => {
+                Ok(_driver_reported_name) => {
+                    // Use the canonical name from the pack index, not
+                    // whatever the driver read back. See comment on
+                    // DriverJob::LoadFigure.canonical_name.
                     set_and_broadcast(
                         portal,
                         events,
                         slot,
                         SlotState::Loaded {
                             figure_id: Some(fid),
-                            display_name,
+                            display_name: canonical_name,
                             placed_by,
                         },
                     )
@@ -176,6 +204,36 @@ async fn handle_job(
         }
     }
     Ok(())
+}
+
+/// Save the current 8-slot portal state to `sessions.last_portal_layout_json`
+/// for every currently-unlocked profile. See PLAN 3.12 for the resume-prompt
+/// consumer side. Best-effort: DB errors are logged, not propagated.
+async fn persist_layout(
+    portal: &Arc<Mutex<[SlotState; SLOT_COUNT]>>,
+    profiles: &crate::profiles::ProfileStore,
+    sessions: &Arc<crate::profiles::SessionRegistry>,
+) {
+    let snapshot: [SlotState; SLOT_COUNT] = portal.lock().await.clone();
+    let json = match serde_json::to_string(&snapshot) {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("serialise portal snapshot: {e}");
+            return;
+        }
+    };
+    let ids = sessions.all_ids().await;
+    let mut seen_profiles = std::collections::HashSet::<String>::new();
+    for sid in ids {
+        if let Some(profile_id) = sessions.profile_of(sid).await {
+            if !seen_profiles.insert(profile_id.clone()) {
+                continue; // same profile on two phones — save once
+            }
+            if let Err(e) = profiles.save_portal_layout(&profile_id, &json).await {
+                warn!("save_portal_layout({profile_id}): {e}");
+            }
+        }
+    }
 }
 
 /// After a driver error: emit an `Error` event for the toast, then re-read

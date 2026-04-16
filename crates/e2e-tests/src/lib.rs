@@ -455,7 +455,25 @@ pub async fn set_session_profile(base: &str, session_id: u64, profile_id: &str) 
 /// existing game-picker/portal regression scenarios use this in setup now
 /// that the profile-picker is the first screen.
 pub async fn unlock_default_profile(base: &str) -> Result<String> {
-    let id = inject_profile(base, "Player 1", "1234", "#39d39f").await?;
+    // Idempotent: reuse an existing Player 1 if the test already created one
+    // (e.g. this is a second call after `location.reload()`). Creating a
+    // fresh profile every call breaks the resume-prompt flow because the
+    // saved layout is keyed on the *old* profile id.
+    let existing: Vec<serde_json::Value> = reqwest::Client::new()
+        .get(format!("{base}/api/profiles"))
+        .send()
+        .await?
+        .json()
+        .await?;
+    let id = match existing
+        .iter()
+        .find(|p| p.get("display_name").and_then(|v| v.as_str()) == Some("Player 1"))
+        .and_then(|p| p.get("id").and_then(|v| v.as_str()))
+        .map(String::from)
+    {
+        Some(id) => id,
+        None => inject_profile(base, "Player 1", "1234", "#39d39f").await?,
+    };
     unlock_session(base, &id).await?;
     Ok(id)
 }

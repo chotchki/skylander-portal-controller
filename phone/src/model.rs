@@ -126,6 +126,12 @@ pub enum Event {
         session_id: u64,
         profile: Option<UnlockedProfile>,
     },
+    /// Offered post-unlock when the just-unlocked profile has a stored
+    /// portal layout. PLAN 3.12.
+    ResumePrompt {
+        session_id: u64,
+        slots: Vec<SlotState>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

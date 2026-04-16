@@ -141,6 +141,18 @@ pub async fn post_clear(slot: u8) -> Result<(), String> {
     }
 }
 
+/// Reset the figure currently loaded in `slot` to pack-fresh bytes. PLAN
+/// 3.11.3. Caller confirms with the user before hitting this — the endpoint
+/// is destructive and intentionally has no built-in undo.
+pub async fn post_reset(slot: u8, figure_id: &str) -> Result<(), String> {
+    let url = format!("{}/api/portal/slot/{slot}/reset", origin());
+    let body = json!({ "figure_id": figure_id }).to_string();
+    match do_fetch(&url, "POST", Some(&body)).await {
+        Ok(_) => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
 pub async fn fetch_games() -> Vec<InstalledGame> {
     let url = format!("{}/api/games", origin());
     match do_fetch(&url, "GET", None).await {

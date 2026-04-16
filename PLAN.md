@@ -372,21 +372,22 @@ Rolled out in six sub-milestones for tracking. Each is a meaningful checkpoint y
 
 ### 3.11 Working copies + reset-to-fresh
 
-- [ ] 3.11.1 Working copy location is dev-mode-aware (matches the logs/DB convention from CLAUDE.md):
-  - Release: `%APPDATA%/skylander-portal-controller/working/<profile_id>/<figure_id>.sky`.
-  - Dev (`dev-tools` feature): `./dev-data/working/<profile_id>/<figure_id>.sky` under the repo workspace, alongside `./logs/` and the dev SQLite DB.
-  - Single resolver in `crates/server` returns the right root based on the feature flag — no per-call branching at the use sites.
-  - Add `dev-data/` to `.gitignore` (logs already there, mirror that).
-- [ ] 3.11.2 On first pick of a figure by a profile: fork from the pack's fresh `.sky` into the working path; load that instead of the pack file.
-- [ ] 3.11.3 Reset-to-fresh action on a loaded slot: confirm → clear → copy fresh over working → reload.
-- [ ] 3.11.4 Creation Crystals (Imaginators) per-profile; reset blocked behind an extra confirm per SPEC Q61.
+- [x] 3.11.1 Working copy location via `paths::working_copy_path(profile_id, figure_id)` — `<runtime_root>/working/<profile_id>/<figure_id>.sky`. Release `<runtime_root>` = `%APPDATA%/skylander-portal-controller/`; dev = `./dev-data/`. Single resolver, no per-call branching.
+- [x] 3.11.2 `crates/server/src/working_copies.rs`: `resolve_load_path(profile_id, figure)` forks on first use, returns the existing working path thereafter. Driver job consumes the resolved path; `figure_usage.last_used_at` bumped via new `ProfileStore::record_figure_usage`. 4 unit tests (fork, reuse, isolation, reset).
+- [x] 3.11.3 `POST /api/portal/slot/:n/reset` signed endpoint + `working_copies::reset_to_fresh`. Phone slot UI gains a "Reset" button with a plain `window.confirm()` gate.
+- [ ] 3.11.4 Creation Crystals extra-confirm (type "RESET" to confirm) — deferred with 3.15's polish pass, since the current `window.confirm` already carries meaningful "All progress will be lost" wording. Track in PLAN 3.15's scope.
 
 ### 3.12 Session resume + layout memory
 
-- [ ] 3.12.1 Persist the last portal layout to `sessions` on every successful load/clear. With per-session profiles (3.10.4), layouts are still stored per-profile; the restore prompt belongs to whichever phone's session just unlocked that profile.
-- [ ] 3.12.2 On profile unlock, prompt "resume last setup?" — confirm runs the load sequence automatically (respecting back-pressure).
-- [ ] 3.12.3 Skip if the profile has no prior layout.
-- [ ] 3.12.4 Two-phone interaction: if the other phone already has figures on the portal when this profile unlocks, the prompt must either offer "resume alongside current" vs "clear + resume" or be suppressed entirely. Pick the simpler of the two once 3.10 is live and we've felt the UX.
+- [x] 3.12.1 Layout persistence threaded into `spawn_driver_worker`: after every successful `LoadFigure`/`ClearSlot`, call `persist_layout` which iterates unlocked sessions and writes the current 8-slot snapshot to each profile's `sessions.last_portal_layout_json` row. New `ProfileStore::save_portal_layout` / `load_portal_layout` + SQLite upserts.
+- [x] 3.12.2 `Event::ResumePrompt { session_id, slots }` emitted on profile unlock. Three entry points, all routing through `build_resume_prompt`:
+  1. `unlock_profile` REST handler (explicit PIN entry).
+  2. `handle_ws` handshake (when the session was pre-seeded with a profile via `pending_unlock`, typical post-reload).
+  3. Test-hook `unlock_session` (the `set_profile` fallback path for races where the new WS registered before the hook fired).
+  Phone `ResumeModal` component shows "Resume" / "Start fresh"; Resume issues per-slot `/api/portal/slot/:n/load` calls.
+- [x] 3.12.3 Skip if the saved layout is all-Empty or no row exists.
+- [ ] 3.12.4 2-phone modal — if the *other* phone already has figures on the portal when this profile unlocks, the current modal still shows "Resume"/"Start fresh" with no special handling. Server-side back-pressure on `load_slot` (the existing 429 on already-loading slot) swallows collisions but doesn't communicate intent well. Proper 3-option modal (clear + resume / alongside / fresh) lands as a follow-up after 3.15 when we can style it cleanly.
+- [x] 3.12.5 Supporting work: new `ProfileStore::record_figure_usage` (updates `figure_usage.last_used_at` on every load). Canonical name threaded through `DriverJob::LoadFigure` so per-profile working copies (figure_id-hash filenames) don't leak into the displayed slot text. `unlock_default_profile` e2e helper now idempotent (reuses existing "Player 1" on repeat calls) so the reload-test flow keeps the same profile id. `/api/_test/layout/:profile_id` + `/api/_test/set_session_profile` hooks for multi-phone/resume tests.
 
 ### 3.13 HMAC command signing
 
@@ -433,7 +434,7 @@ Implementation lives in `crates/server/src/wizard.rs` + `crates/server/src/paths
 - [x] 3.19.2 Scrape output committed at `data/figures.json` + `data/images/<figure_id>/thumb.png`. `data/figures.manual.json` exists as an empty curation overlay. **Partial**: 100/504 figures scraped in the first run (roughly the whole SSA + Giants sets). Remaining ~400 figures need a re-run — the agent appears to have hit a rate-limit or early termination. Hero.pngs are gitignored (20MB+); re-run `cargo run -p skylander-wiki-scrape` locally if you need them.
 - [x] 3.19.3 Server serves `GET /api/figures/:id/image?size={thumb,hero}` with `Cache-Control: public, max-age=86400`. Fallback: element-icon from the firmware pack. Input validated to 16 hex chars.
 - [x] 3.19.4 Phone card icon renders `<img class="card-thumb" src="/api/figures/{id}/image?size=thumb">` over the element-short label; label shows through on 404.
-- [ ] 3.19.5 Re-run scraper to cover the remaining ~400 figures. Investigate what caused the first run to stop at 100 — suspect Fandom 429 without backoff. Add a resume-from-manifest flag so partial runs aren't wasted.
+- [x] 3.19.5 Scraper hardened (Retry-After handling, per-figure incremental writes, 5-retry skip-on-failure, `merge_for_save` preserves prior entries, `--resume` implicit) and re-run: **504/504 figures** (100% coverage), **488 thumbs** (~97% image hit rate — 16 figures had no wiki infobox image, which is fine).
 - [ ] 3.19.6 **Attribution (pre-release blocker).** Fandom content is CC BY-SA — the license requires prominent attribution + license identification + indication of modifications. Surface in the phone app: either (a) a footer link "Data & images from the Skylanders Wiki (CC BY-SA)" visible on the figure browser, (b) an About screen reachable from the header, or (c) a per-figure credit on the figure-detail screen (blocks on PLAN 5.3). The exact placement depends on how the aesthetic pass (3.15) reshapes the layout — decide when that lands. `data/LICENSE.md` already cites the source for the repo; this covers the user-visible runtime requirement. Must land before any public release (3.18).
 
 ---

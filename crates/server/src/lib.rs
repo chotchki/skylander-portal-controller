@@ -12,3 +12,4 @@ pub mod sky_stats;
 pub mod state;
 pub mod ui;
 pub mod wizard;
+pub mod working_copies;

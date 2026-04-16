@@ -27,6 +27,14 @@ pub(crate) struct TakeoverReason {
     pub by_chaos: String,
 }
 
+/// Pending "Resume last setup?" offer from `Event::ResumePrompt`. Set on
+/// unlock when the profile has a saved layout; cleared when the user picks
+/// "Resume" or "Start fresh" (or just dismisses).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ResumeOffer {
+    pub slots: Vec<SlotState>,
+}
+
 #[component]
 pub fn App() -> impl IntoView {
     // Read the HMAC key out of `#k=<hex>` before anything else hits the
@@ -45,6 +53,7 @@ pub fn App() -> impl IntoView {
     let current_game = RwSignal::new(None::<GameLaunched>);
     let unlocked_profile = RwSignal::new(None::<UnlockedProfile>);
     let takeover = RwSignal::new(None::<TakeoverReason>);
+    let resume_offer = RwSignal::new(None::<ResumeOffer>);
     // Bumps on every profile CRUD so the ProfilePicker re-fetches.
     let profiles_epoch = RwSignal::new(0u32);
 
@@ -58,7 +67,15 @@ pub fn App() -> impl IntoView {
         }
     });
 
-    ws::connect(portal, conn, toasts, current_game, unlocked_profile, takeover);
+    ws::connect(
+        portal,
+        conn,
+        toasts,
+        current_game,
+        unlocked_profile,
+        takeover,
+        resume_offer,
+    );
 
     view! {
         <div class="app">
@@ -84,7 +101,7 @@ pub fn App() -> impl IntoView {
                 }
             >
                 <Picking picking_for />
-                <Portal portal picking_for />
+                <Portal portal picking_for toasts />
                 <Suspense fallback=|| view! { <div class="empty-msg">"Loading figures…"</div> }>
                     {move || figures.get().map(|figs| view! {
                         <Browser
@@ -100,8 +117,72 @@ pub fn App() -> impl IntoView {
             </Show>
             </Show>
             </Show>
+            <Show when=move || resume_offer.get().is_some() fallback=|| ()>
+                <ResumeModal resume_offer toasts />
+            </Show>
             <ToastStack toasts />
         </div>
+    }
+}
+
+#[component]
+fn ResumeModal(
+    resume_offer: RwSignal<Option<ResumeOffer>>,
+    toasts: RwSignal<Vec<ToastMsg>>,
+) -> impl IntoView {
+    // Overlay modal offering to reload the profile's last portal layout.
+    // "Resume" issues one `/api/portal/slot/:n/load` per non-empty slot;
+    // "Start fresh" just dismisses. Either way we clear `resume_offer` —
+    // the next unlock will re-fire if there's a (possibly different) layout.
+    //
+    // 2-phone nuance (SPEC Round 4): if the portal *isn't* empty (the other
+    // phone already has figures down), a blanket resume would double-load
+    // or collide. For now we label the button accordingly but always go
+    // through the same per-slot calls; the server's slot-busy back-pressure
+    // handles collisions. Proper 3-option modal (`clear + resume` vs
+    // `alongside current` vs `fresh`) lands with PLAN 3.10.9 follow-up.
+    view! {
+        <section class="resume-modal">
+            <div class="resume-card">
+                <h3 class="resume-title">"Resume last setup?"</h3>
+                <p class="resume-body">"You left these figures on the portal last time."</p>
+                <div class="resume-actions">
+                    <button
+                        class="resume-yes"
+                        on:click=move |_| {
+                            let offer = match resume_offer.get() {
+                                Some(o) => o,
+                                None => return,
+                            };
+                            resume_offer.set(None);
+                            let slots = offer.slots.clone();
+                            leptos::task::spawn_local(async move {
+                                for (i, state) in slots.iter().enumerate() {
+                                    if let SlotState::Loaded { figure_id: Some(id), .. } = state {
+                                        let slot_1_indexed = (i + 1) as u8;
+                                        let id = id.clone();
+                                        match crate::api::post_load(slot_1_indexed, &id).await {
+                                            Ok(()) => {}
+                                            Err(e) if e.contains("429") => {}
+                                            Err(e) => {
+                                                push_toast(
+                                                    toasts,
+                                                    &format!("Resume slot {slot_1_indexed}: {e}"),
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            });
+                        }
+                    >"Resume"</button>
+                    <button
+                        class="resume-no"
+                        on:click=move |_| resume_offer.set(None)
+                    >"Start fresh"</button>
+                </div>
+            </div>
+        </section>
     }
 }
 
@@ -263,11 +344,15 @@ fn Picking(picking_for: RwSignal<Option<u8>>) -> impl IntoView {
 }
 
 #[component]
-fn Portal(portal: RwSignal<[Slot; SLOT_COUNT]>, picking_for: RwSignal<Option<u8>>) -> impl IntoView {
+fn Portal(
+    portal: RwSignal<[Slot; SLOT_COUNT]>,
+    picking_for: RwSignal<Option<u8>>,
+    toasts: RwSignal<Vec<ToastMsg>>,
+) -> impl IntoView {
     view! {
         <section class="portal">
             {(0..SLOT_COUNT).map(|i| {
-                view! { <SlotView idx=i portal picking_for /> }
+                view! { <SlotView idx=i portal picking_for toasts /> }
             }).collect_view()}
         </section>
     }
@@ -278,6 +363,7 @@ fn SlotView(
     idx: usize,
     portal: RwSignal<[Slot; SLOT_COUNT]>,
     picking_for: RwSignal<Option<u8>>,
+    toasts: RwSignal<Vec<ToastMsg>>,
 ) -> impl IntoView {
     let slot_num = (idx + 1) as u8;
 
@@ -331,7 +417,50 @@ fn SlotView(
                             <button class="slot-btn" disabled=true>"…"</button>
                         </div>
                     }.into_any(),
-                    SlotState::Loaded { .. } => view! {
+                    SlotState::Loaded { figure_id: Some(fig), .. } => {
+                        let fig_for_reset = fig.clone();
+                        let toasts_for_reset = toasts;
+                        view! {
+                            <div class="slot-actions">
+                                <button class="slot-btn danger" on:click=move |e| {
+                                    e.stop_propagation();
+                                    leptos::task::spawn_local(async move {
+                                        let _ = post_clear(slot_num).await;
+                                    });
+                                }>
+                                    "Remove"
+                                </button>
+                                <button
+                                    class="slot-btn reset"
+                                    title="Reset this figure to a fresh copy (wipes save progress)"
+                                    on:click=move |e| {
+                                        e.stop_propagation();
+                                        let confirm = web_sys::window()
+                                            .and_then(|w| {
+                                                w.confirm_with_message(
+                                                    "Reset this figure? All progress will be lost.",
+                                                )
+                                                .ok()
+                                            })
+                                            .unwrap_or(false);
+                                        if !confirm {
+                                            return;
+                                        }
+                                        let fig = fig_for_reset.clone();
+                                        leptos::task::spawn_local(async move {
+                                            if let Err(e) = crate::api::post_reset(slot_num, &fig).await {
+                                                push_toast(
+                                                    toasts_for_reset,
+                                                    &format!("Reset failed: {e}"),
+                                                );
+                                            }
+                                        });
+                                    }
+                                >"Reset"</button>
+                            </div>
+                        }.into_any()
+                    }
+                    SlotState::Loaded { figure_id: None, .. } => view! {
                         <div class="slot-actions">
                             <button class="slot-btn danger" on:click=move |e| {
                                 e.stop_propagation();
