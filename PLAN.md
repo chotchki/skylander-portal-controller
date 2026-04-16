@@ -464,8 +464,8 @@ Direction locked to Option A. Standalone HTML/CSS in `docs/aesthetic/mocks/`, vi
 
 - [x] 4.2.1 Portal view with all slot states — `option_a_heraldic.html`.
 - [x] 4.2.2 Slot state-transition demo — `transitions.html`.
-- [ ] 4.2.3 Profile picker — "WELCOME, PORTAL MASTER" heading, gold-bezeled profile swatches, "+ Add" card.
-- [ ] 4.2.4 PIN keypad — framed panel, gold-bezel dot display, oversized keys, lockout state.
+- [x] 4.2.3 Profile picker — "WELCOME, PORTAL MASTER" heading, gold-bezeled profile swatches, "+ Add" card. Mock: `profile_picker.html`.
+- [x] 4.2.4 PIN keypad — framed panel, gold-bezel dot display, oversized keys, lockout state. Mock: `pin_keypad.html`.
 - [x] 4.2.5 Game picker — names only, big and simple. No serial numbers or figure counts (those are dev/filter concerns, not pick-a-game concerns). Stagger-rise animation. Box art as faded background behind each card title (production: `/api/games/{serial}/boxart` endpoint, bundled images; mock uses gradient placeholders evoking each game's palette). "Launching" state dims other cards, pulses the selected title.
 - [x] 4.2.6 Browser / collection view — **resolved: toy box lid** overlay with collapsible search/filter lid + figure grid. Mock: `portal_with_box.html` (checkbox toggles open/closed; click SEARCH to expand lid, scroll to collapse).
 - [x] 4.2.7 Picking-mode — integrated into box-open state. "PICKING FOR SLOT N" label at top of collection. No separate banner mock needed.
@@ -477,8 +477,10 @@ Direction locked to Option A. Standalone HTML/CSS in `docs/aesthetic/mocks/`, vi
     - **Delete is hold-to-confirm** per §4 hold-to-activate — tapping the trash reveals an inline red bar "HOLD TO DELETE SPYRO" inside the row, with a ✕ cancel. Completing the hold animates the row collapsing out. Aligns with reset_confirm + menu_overlay danger pattern.
     - Demo controls include a "▸ auto-type code" button that fires the 10-key sequence at ~220ms/key so the gate unlock animation can be reviewed without memorising anything.
 - [x] 4.2.8b Figure detail view — mock: `docs/aesthetic/mocks/figure_detail.html`. Default / loading / errored states (demo controls in the corner toggle between them).
-- [ ] 4.2.9 Takeover / Kaos screen (blue palette; purple Kaos skin deferred to 5.4).
+- [x] 4.2.9 Takeover / Kaos screen — mocked in full Kaos palette directly (purple/pink/magenta, not blue placeholder). `kaos_takeover.html` (eviction + KICK BACK IN) + `kaos_swap.html` (mid-game figure swap + BACK TO THE BATTLE). Kaos skin swap for the *rest* of the app deferred to 5.4.
 - [ ] 4.2.10 Resume-last-setup modal, reset-to-fresh confirm, show-join-code sheet — all use `<FramedPanel>` treatment.
+- [x] 4.2.16 **Connection-lost overlay.** What the phone shows when the WebSocket drops mid-session. Mocked in `connection_lost.html`: faded portal underlay + red pulsing disconnected pip (✕) + "LOST CONNECTION" heading + "reconnecting…" spinner bar (auto-retry). Demo toggle reveals a manual "TRY AGAIN" gold button for when auto-retry gives up. Hint: "make sure the TV is on and you're on the same Wi-Fi."
+- [x] 4.2.17 **Empty states.** Three variants in `empty_states.html` (demo controls toggle): (a) no profiles / first launch — "NO PORTAL MASTERS" + CREATE PROFILE button, (b) no filter matches — inside the toy-box interior with active filter chips visible, "NO HEROES FOUND" + CLEAR FILTERS, (c) no games detected — "NO GAMES FOUND" + guidance to check RPCS3's library. All use a shared dimmed gold-bezel emblem with `?` glyph + the heraldic heading/body/hint stack.
 - [ ] 4.2.11 Screen-transition animation demo — **after 4.3**. Animates the full navigation sequence: profile picker → PIN → game picker → portal. Locks the feel for screen-level motion.
 - [ ] 4.2.12 Review round with user. Iterate before touching Leptos.
 - [ ] 4.2.13 **Contrast + readability cleanup pass.** After the first mock batch, user review caught systemic `rgba(..., <1)` text dimming across most screens. §2 Typography of `design_language.md` gained a "Contrast & readability contract" (opaque text only, role table: primary / accent / muted). First-pass audit staged to `docs/aesthetic/mocks/_contrast_pass/`. Follow-up items below finish the pass before promoting it back to `mocks/`.

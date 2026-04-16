@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=390,initial-scale=1,viewport-fit=cover">
+<title>Empty States — Heraldic — Skylanders Portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Titan+One&family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,800;1,9..144,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --sf-1: #0b1e52; --sf-2: #061436; --sf-3: #020818;
+    --gb: #ffe58a; --g: #f5c634; --gm: #c58c18; --gs: #6e4a00; --gi: #3a2500;
+    --text: #f7f7fb; --ink: #1a1203;
+    --wood-1: #6e5032; --wood-2: #4a3220; --wood-3: #352416;
+    --wood-4: #251810; --wood-gold: #d4a84a; --wood-gold-b: #f0d080;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: "Fraunces", Georgia, serif;
+    background: #0a0a0a;
+    display: grid; place-items: center;
+    min-height: 100vh; padding: 20px;
+    color: var(--text);
+  }
+  .phone {
+    width: 390px; height: 844px;
+    border-radius: 52px; overflow: hidden; position: relative;
+    box-shadow: 0 30px 80px rgba(0,0,0,0.6), 0 0 0 12px #1a1a1a, 0 0 0 13px #333;
+    background: var(--sf-3);
+  }
+  @media (max-width: 450px) {
+    body { padding: 0; background: var(--sf-3); }
+    .phone { width: 100vw; height: 100vh; border-radius: 0; box-shadow: none; }
+  }
+
+  .sky {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(ellipse 120% 60% at 50% 0%, #1a3a8a 0%, transparent 50%),
+      radial-gradient(ellipse 80% 50% at 50% 100%, #0e2464 0%, transparent 50%),
+      linear-gradient(180deg, var(--sf-1), var(--sf-2) 60%, var(--sf-3));
+  }
+  .stars {
+    position: absolute; inset: 0;
+    background-image:
+      radial-gradient(1px 1px at 20px 30px, white, transparent),
+      radial-gradient(1px 1px at 40px 70px, rgba(255,255,255,0.7), transparent),
+      radial-gradient(2px 2px at 50px 160px, rgba(255,230,180,0.9), transparent),
+      radial-gradient(1px 1px at 130px 40px, white, transparent),
+      radial-gradient(1px 1px at 90px 250px, rgba(255,255,255,0.8), transparent),
+      radial-gradient(1px 1px at 170px 300px, white, transparent),
+      radial-gradient(2px 2px at 230px 100px, rgba(180,220,255,0.9), transparent),
+      radial-gradient(1px 1px at 300px 200px, white, transparent);
+    background-size: 400px 800px;
+  }
+
+  .viewport {
+    position: relative; height: 100%;
+    padding: 44px 22px 22px;
+    display: flex; flex-direction: column;
+  }
+
+  .screen { display: none; flex-direction: column; flex: 1; min-height: 0; }
+  .screen.active { display: flex; }
+
+  /* ===== SHARED EMPTY-STATE CARD ===== */
+  .empty-card {
+    flex: 1;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 16px;
+    padding: 32px 24px;
+    text-align: center;
+  }
+  /* The "missing figure" glyph — a dimmed gold bezel with a ? */
+  .empty-emblem {
+    width: 100px; height: 100px; border-radius: 50%;
+    background: radial-gradient(circle at 30% 25%, rgba(245,198,52,0.2), rgba(110,74,0,0.2) 55%, rgba(0,0,0,0.35));
+    box-shadow:
+      inset 0 0 0 2.5px var(--gi),
+      inset 0 3px 4px rgba(255,255,255,0.06),
+      inset 0 -3px 4px rgba(0,0,0,0.3),
+      0 4px 14px rgba(0,0,0,0.5);
+    display: grid; place-items: center;
+    font-family: "Titan One"; font-size: 48px;
+    color: #d9c88a;
+    text-shadow: 0 2px 0 rgba(0,0,0,0.5);
+    animation: emblem-breathe 4s ease-in-out infinite;
+  }
+  @keyframes emblem-breathe { 50% { transform: translateY(-3px); } }
+  .empty-heading {
+    font-family: "Titan One"; font-size: 24px; letter-spacing: 0.06em;
+    color: var(--gb);
+    -webkit-text-stroke: 1px var(--gi);
+    text-shadow:
+      0 2px 0 var(--gs), 0 3px 0 var(--gi),
+      0 5px 10px rgba(0,0,0,0.5),
+      0 0 20px rgba(245,198,52,0.25);
+  }
+  .empty-body {
+    font-family: "Fraunces"; font-style: italic; font-weight: 600;
+    font-size: 15px; line-height: 1.5;
+    color: #fff4e0;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.55);
+    max-width: 280px;
+  }
+  .empty-hint {
+    font-family: "Fraunces"; font-style: italic; font-weight: 600;
+    font-size: 11px; letter-spacing: 0.12em;
+    color: #d9c88a;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+    max-width: 260px;
+  }
+  .empty-action {
+    margin-top: 8px;
+    padding: 14px 32px;
+    font-family: "Titan One"; font-size: 14px; letter-spacing: 0.22em;
+    color: var(--ink);
+    background: linear-gradient(180deg, var(--gb) 0%, var(--g) 45%, var(--gm) 100%);
+    border: 2px solid var(--gi);
+    border-radius: 14px;
+    cursor: pointer;
+    text-shadow: 0 1px 0 rgba(255,255,255,0.4);
+    box-shadow:
+      inset 0 2px 0 rgba(255,255,255,0.45),
+      inset 0 -2px 0 rgba(0,0,0,0.25),
+      0 4px 0 var(--gs),
+      0 6px 14px rgba(0,0,0,0.45);
+  }
+  .empty-action:active {
+    transform: translateY(3px);
+    box-shadow: inset 0 2px 0 rgba(255,255,255,0.45), 0 1px 0 var(--gs);
+  }
+
+  /* ===== NO FILTER MATCHES — context: inside the toy box ===== */
+  .no-matches-ctx {
+    flex: 1; display: flex; flex-direction: column; min-height: 0;
+  }
+  .box-lid-bar {
+    flex-shrink: 0;
+    padding: 10px 14px;
+    background:
+      repeating-linear-gradient(180deg, var(--wood-2) 0px, var(--wood-1) 2px, var(--wood-1) 18px, var(--wood-3) 19px, rgba(0,0,0,0.4) 20px, var(--wood-2) 21px),
+      linear-gradient(180deg, var(--wood-1), var(--wood-2));
+    border-bottom: 3px solid var(--wood-gold);
+    border-top: 2px solid var(--wood-gold);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .box-lid-bar-label {
+    font-family: "Titan One"; font-size: 12px; letter-spacing: 0.16em;
+    color: var(--wood-gold-b);
+    text-shadow: 0 1px 0 rgba(0,0,0,0.7);
+  }
+  .filter-chip {
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
+    border: 1.5px solid var(--gb);
+    color: var(--gb);
+    font-family: "Titan One"; font-size: 9px; letter-spacing: 0.1em;
+    text-shadow: 0 1px 0 var(--gs);
+  }
+  .box-interior {
+    flex: 1;
+    background: linear-gradient(180deg, var(--wood-4) 0%, #1a0e06 4%, #0e0804 20%, #080402 100%);
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  /* ===== NO GAMES DETECTED ===== */
+  .no-games .empty-emblem {
+    background: radial-gradient(circle at 30% 25%, rgba(245,198,52,0.15), rgba(110,74,0,0.15) 55%, rgba(0,0,0,0.3));
+  }
+
+  /* ===== DEMO CONTROLS ===== */
+  .demo-controls {
+    position: fixed; bottom: 16px; right: 16px;
+    z-index: 999;
+    background: rgba(0,0,0,0.85);
+    border: 1px solid #333; border-radius: 10px;
+    padding: 10px;
+    display: flex; gap: 6px; flex-direction: column;
+    font-family: system-ui; font-size: 11px;
+  }
+  .demo-controls .title { color: var(--gb); font-weight: 600; margin-bottom: 2px; }
+  .demo-controls button {
+    background: #222; color: #eee;
+    border: 1px solid #444; border-radius: 6px;
+    padding: 5px 9px; cursor: pointer; font: inherit;
+  }
+  .demo-controls button:hover { background: #333; color: var(--gb); }
+</style>
+</head>
+<body>
+  <div class="phone">
+    <div class="sky"></div>
+    <div class="stars"></div>
+
+    <div class="viewport">
+
+      <!-- ========== NO PROFILES (first-launch) ========== -->
+      <div class="screen first-launch active" data-screen="no-profiles">
+        <div class="empty-card">
+          <div class="empty-emblem">?</div>
+          <div class="empty-heading">NO PORTAL MASTERS</div>
+          <div class="empty-body">
+            Looks like this is your first time here. Create a profile to get started!
+          </div>
+          <button class="empty-action">CREATE PROFILE</button>
+          <div class="empty-hint">up to 4 portal masters can share this portal</div>
+        </div>
+      </div>
+
+      <!-- ========== NO FILTER MATCHES ========== -->
+      <div class="screen" data-screen="no-matches">
+        <div class="no-matches-ctx">
+          <div class="box-lid-bar">
+            <span class="box-lid-bar-label">COLLECTION</span>
+            <div style="display:flex;gap:6px;">
+              <span class="filter-chip">GIANTS</span>
+              <span class="filter-chip">UNDEAD</span>
+            </div>
+          </div>
+          <div class="box-interior">
+            <div class="empty-card" style="padding:24px 20px;">
+              <div class="empty-emblem" style="width:80px;height:80px;font-size:38px;">?</div>
+              <div class="empty-heading" style="font-size:20px;">NO HEROES FOUND</div>
+              <div class="empty-body" style="font-size:14px;">
+                No figures match those filters. Try a different combination or clear the search.
+              </div>
+              <button class="empty-action" style="font-size:12px;padding:12px 24px;">CLEAR FILTERS</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== NO GAMES DETECTED ========== -->
+      <div class="screen no-games" data-screen="no-games">
+        <div class="empty-card">
+          <div class="empty-emblem">?</div>
+          <div class="empty-heading">NO GAMES FOUND</div>
+          <div class="empty-body">
+            RPCS3 doesn't have any Skylanders games installed yet. Add a game to the library and come back.
+          </div>
+          <div class="empty-hint">
+            check RPCS3's game list · supported: SSA, Giants, Swap Force, Trap Team, SuperChargers, Imaginators
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="demo-controls">
+      <div class="title">Empty states demo</div>
+      <button data-goto="no-profiles">No profiles (first launch)</button>
+      <button data-goto="no-matches">No filter matches</button>
+      <button data-goto="no-games">No games detected</button>
+    </div>
+  </div>
+
+<script>
+  const screens = document.querySelectorAll('.screen');
+  function show(name) {
+    screens.forEach(s => s.classList.toggle('active', s.dataset.screen === name));
+  }
+  document.querySelectorAll('[data-goto]').forEach(b => {
+    b.addEventListener('click', () => show(b.dataset.goto));
+  });
+</script>
+</body>
+</html>

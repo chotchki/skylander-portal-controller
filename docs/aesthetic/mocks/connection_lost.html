@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=390,initial-scale=1,viewport-fit=cover">
+<title>Connection Lost — Heraldic — Skylanders Portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Titan+One&family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,800;1,9..144,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --sf-1: #0b1e52; --sf-2: #061436; --sf-3: #020818;
+    --gb: #ffe58a; --g: #f5c634; --gm: #c58c18; --gs: #6e4a00; --gi: #3a2500;
+    --text: #f7f7fb; --ink: #1a1203;
+    --danger: #e34c4c; --danger-dark: #7a1818;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: "Fraunces", Georgia, serif;
+    background: #0a0a0a;
+    display: grid; place-items: center;
+    min-height: 100vh; padding: 20px;
+    color: var(--text);
+  }
+  .phone {
+    width: 390px; height: 844px;
+    border-radius: 52px; overflow: hidden; position: relative;
+    box-shadow: 0 30px 80px rgba(0,0,0,0.6), 0 0 0 12px #1a1a1a, 0 0 0 13px #333;
+    background: var(--sf-3);
+  }
+  @media (max-width: 450px) {
+    body { padding: 0; background: var(--sf-3); }
+    .phone { width: 100vw; height: 100vh; border-radius: 0; box-shadow: none; }
+  }
+
+  .sky {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(ellipse 120% 60% at 50% 0%, #1a3a8a 0%, transparent 50%),
+      radial-gradient(ellipse 80% 50% at 50% 100%, #0e2464 0%, transparent 50%),
+      linear-gradient(180deg, var(--sf-1), var(--sf-2) 60%, var(--sf-3));
+  }
+  .stars {
+    position: absolute; inset: 0;
+    background-image:
+      radial-gradient(1px 1px at 20px 30px, white, transparent),
+      radial-gradient(1px 1px at 40px 70px, rgba(255,255,255,0.7), transparent),
+      radial-gradient(2px 2px at 50px 160px, rgba(255,230,180,0.9), transparent),
+      radial-gradient(1px 1px at 130px 40px, white, transparent),
+      radial-gradient(1px 1px at 90px 250px, rgba(255,255,255,0.8), transparent),
+      radial-gradient(1px 1px at 170px 300px, white, transparent),
+      radial-gradient(2px 2px at 230px 100px, rgba(180,220,255,0.9), transparent),
+      radial-gradient(1px 1px at 300px 200px, white, transparent);
+    background-size: 400px 800px;
+  }
+
+  /* ===== FADED PORTAL UNDERLAY ===== */
+  .underlay {
+    position: absolute; inset: 0;
+    filter: blur(2px) brightness(0.5);
+    opacity: 0.35;
+    pointer-events: none;
+  }
+  .u-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 44px 18px 10px;
+    height: 88px;
+  }
+  .u-swatch {
+    width: 42px; height: 42px; border-radius: 50%;
+    background: radial-gradient(circle at 30% 25%, var(--gb), var(--g) 22%, var(--gm) 55%, var(--gs) 100%);
+  }
+  .u-portal {
+    padding: 24px 28px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 18px 22px;
+  }
+  .u-slot {
+    aspect-ratio: 1; border-radius: 50%;
+    background: radial-gradient(circle at 30% 25%, rgba(245,198,52,0.2), rgba(110,74,0,0.25) 55%, rgba(0,0,0,0.35) 100%);
+    box-shadow: inset 0 0 0 2px rgba(58,37,0,0.6);
+  }
+
+  /* ===== OVERLAY ===== */
+  .overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 20px;
+    padding: 80px 32px;
+    z-index: 10;
+  }
+
+  /* Disconnected pip — pulsing red ring */
+  .disc-pip {
+    width: 64px; height: 64px; border-radius: 50%;
+    background: radial-gradient(circle at 40% 35%, #ff6b6b 0%, var(--danger) 40%, var(--danger-dark) 100%);
+    border: 3px solid var(--danger-dark);
+    box-shadow:
+      inset 0 2px 4px rgba(255,255,255,0.2),
+      inset 0 -2px 4px rgba(0,0,0,0.4),
+      0 0 0 4px rgba(227,76,76,0.25),
+      0 0 30px rgba(227,76,76,0.4);
+    display: grid; place-items: center;
+    animation: pip-pulse 2s ease-in-out infinite;
+  }
+  .disc-pip::after {
+    content: "✕";
+    font-family: "Titan One"; font-size: 28px;
+    color: #fff;
+    text-shadow: 0 2px 0 rgba(0,0,0,0.5);
+  }
+  @keyframes pip-pulse {
+    0%, 100% { box-shadow: inset 0 2px 4px rgba(255,255,255,0.2), inset 0 -2px 4px rgba(0,0,0,0.4), 0 0 0 4px rgba(227,76,76,0.25), 0 0 30px rgba(227,76,76,0.4); }
+    50% { box-shadow: inset 0 2px 4px rgba(255,255,255,0.2), inset 0 -2px 4px rgba(0,0,0,0.4), 0 0 0 6px rgba(227,76,76,0.35), 0 0 50px rgba(227,76,76,0.6); }
+  }
+
+  .disc-heading {
+    font-family: "Titan One"; font-size: 28px; letter-spacing: 0.06em;
+    text-align: center;
+    color: var(--gb);
+    -webkit-text-stroke: 1.25px var(--gi);
+    text-shadow:
+      0 2px 0 var(--gs), 0 3px 0 var(--gi),
+      0 5px 10px rgba(0,0,0,0.5),
+      0 0 24px rgba(245,198,52,0.25);
+  }
+  .disc-body {
+    text-align: center;
+    font-family: "Fraunces"; font-style: italic; font-weight: 600;
+    font-size: 15px; line-height: 1.5;
+    color: #fff4e0;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.55);
+    max-width: 300px;
+  }
+
+  /* Reconnect spinner */
+  .reconnect-bar {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 20px;
+    border-radius: 14px;
+    background: linear-gradient(180deg, rgba(26,58,138,0.6), rgba(10,36,100,0.75) 50%, rgba(6,20,54,0.85));
+    border: 1.5px solid rgba(245,198,52,0.35);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 6px rgba(0,0,0,0.4);
+  }
+  .reconnect-spinner {
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    border: 2.5px solid rgba(245,198,52,0.2);
+    border-top-color: var(--gb);
+    animation: spinner 0.8s linear infinite;
+  }
+  @keyframes spinner { to { transform: rotate(360deg); } }
+  .reconnect-label {
+    font-family: "Fraunces"; font-style: italic; font-weight: 600;
+    font-size: 13px; letter-spacing: 0.1em;
+    color: #fff4e0;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  }
+
+  /* Manual retry button (shows after N failed attempts) */
+  .retry-btn {
+    padding: 14px 32px;
+    font-family: "Titan One"; font-size: 15px; letter-spacing: 0.22em;
+    color: var(--ink);
+    background: linear-gradient(180deg, var(--gb) 0%, var(--g) 45%, var(--gm) 100%);
+    border: 2px solid var(--gi);
+    border-radius: 14px;
+    cursor: pointer;
+    text-shadow: 0 1px 0 rgba(255,255,255,0.4);
+    box-shadow:
+      inset 0 2px 0 rgba(255,255,255,0.45),
+      inset 0 -2px 0 rgba(0,0,0,0.25),
+      0 4px 0 var(--gs),
+      0 6px 14px rgba(0,0,0,0.45);
+    display: none;
+  }
+  .retry-btn:active {
+    transform: translateY(3px);
+    box-shadow: inset 0 2px 0 rgba(255,255,255,0.45), 0 1px 0 var(--gs);
+  }
+
+  .disc-hint {
+    font-family: "Fraunces"; font-style: italic; font-weight: 600;
+    font-size: 11px; letter-spacing: 0.14em;
+    color: #d9c88a;
+    text-align: center;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+    max-width: 280px;
+  }
+
+  /* ===== DEMO CONTROLS ===== */
+  .demo-controls {
+    position: fixed; bottom: 16px; right: 16px;
+    z-index: 999;
+    background: rgba(0,0,0,0.85);
+    border: 1px solid #333; border-radius: 10px;
+    padding: 10px;
+    display: flex; gap: 6px; flex-direction: column;
+    font-family: system-ui; font-size: 11px;
+  }
+  .demo-controls .title { color: var(--gb); font-weight: 600; margin-bottom: 2px; }
+  .demo-controls button {
+    background: #222; color: #eee;
+    border: 1px solid #444; border-radius: 6px;
+    padding: 5px 9px; cursor: pointer; font: inherit;
+  }
+  .demo-controls button:hover { background: #333; color: var(--gb); }
+</style>
+</head>
+<body>
+  <div class="phone">
+    <div class="sky"></div>
+    <div class="stars"></div>
+
+    <div class="underlay">
+      <div class="u-head"><div class="u-swatch"></div></div>
+      <div class="u-portal">
+        <div class="u-slot"></div><div class="u-slot"></div>
+        <div class="u-slot"></div><div class="u-slot"></div>
+        <div class="u-slot"></div><div class="u-slot"></div>
+      </div>
+    </div>
+
+    <div class="overlay" id="overlay">
+      <div class="disc-pip"></div>
+      <div class="disc-heading">LOST CONNECTION</div>
+      <div class="disc-body">
+        Your portal drifted out of range. Hang tight — we're trying to reconnect.
+      </div>
+
+      <div class="reconnect-bar" id="reconnect-bar">
+        <div class="reconnect-spinner"></div>
+        <div class="reconnect-label">reconnecting…</div>
+      </div>
+
+      <button class="retry-btn" id="retry-btn">TRY AGAIN</button>
+
+      <div class="disc-hint">
+        make sure the TV is on and you're on the same Wi-Fi
+      </div>
+    </div>
+
+    <div class="demo-controls">
+      <div class="title">Connection demo</div>
+      <button id="demo-reconnecting">Reconnecting (auto)</button>
+      <button id="demo-retry">Retry button (manual)</button>
+    </div>
+  </div>
+
+<script>
+  const bar = document.getElementById('reconnect-bar');
+  const retry = document.getElementById('retry-btn');
+
+  function showReconnecting() {
+    bar.style.display = 'flex';
+    retry.style.display = 'none';
+  }
+  function showRetry() {
+    bar.style.display = 'none';
+    retry.style.display = 'block';
+  }
+
+  document.getElementById('demo-reconnecting').addEventListener('click', showReconnecting);
+  document.getElementById('demo-retry').addEventListener('click', showRetry);
+  retry.addEventListener('click', () => {
+    showReconnecting();
+    console.log('[mock] manual retry initiated');
+  });
+
+  showReconnecting();
+</script>
+</body>
+</html>
