@@ -298,6 +298,11 @@
   .action.danger {
     background: linear-gradient(180deg, #c23a3a 0%, #9a2424 55%, #6e1414 100%);
     border-color: #ffc0c0;
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+    touch-action: manipulation;
+    -webkit-user-select: none; user-select: none;
   }
   .action.danger:hover {
     background: linear-gradient(180deg, #dc4d4d 0%, #b02e2e 55%, #821818 100%);
@@ -313,10 +318,69 @@
     border-color: #3a0808;
     color: #fff;
     text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+    position: relative; z-index: 2;
   }
   .action.danger .action-title {
     color: #ffd0d0;
     text-shadow: 0 1px 0 rgba(0,0,0,0.7), 0 0 8px rgba(0,0,0,0.4);
+  }
+  /* ===== HOLD-TO-CONFIRM =====
+     Applies to any `.action[data-hold]` — not just danger. Rule of thumb
+     (design_language §4): use for actions that are server-impactful and
+     take the user through a state they can't back out of with one tap.
+       • CHOOSE ANOTHER GAME → impactful (kicks everyone out of current
+         game), recoverable (can relaunch) → hold.
+       • SHUT DOWN           → destructive (ends the whole session)
+                              → hold + danger-red palette.
+     SWITCH PROFILE stays single-tap — it only affects this phone. */
+  .action[data-hold] {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+    touch-action: manipulation;
+    -webkit-user-select: none; user-select: none;
+  }
+  .action[data-hold] > *:not(.hold-fill) {
+    position: relative; z-index: 2;
+  }
+  .action[data-hold] .hold-fill {
+    position: absolute;
+    inset: 0;
+    /* Warm gold→white fill. Heraldic on the blue-card, still readable
+       when it sweeps across the red-card (danger variant overrides). */
+    background: linear-gradient(90deg, rgba(255,220,140,0.9), #fffaf0);
+    transform: scaleX(0);
+    transform-origin: left center;
+    transition: transform 0.2s ease-out;
+    z-index: 1;
+    pointer-events: none;
+    mix-blend-mode: screen;
+  }
+  .action[data-hold].holding .hold-fill {
+    transform: scaleX(1);
+    transition: transform var(--dur-hold-confirm, 1200ms) linear;
+  }
+  .action[data-hold].fired { animation: action-fire 0.42s ease-out; }
+  .action[data-hold].fired .hold-fill { transform: scaleX(1); background: #fff; }
+  @keyframes action-fire {
+    0%   { transform: scale(1); }
+    35%  { transform: scale(1.02); box-shadow: 0 0 44px rgba(255,230,120,0.7), 0 0 22px rgba(245,198,52,0.45); }
+    100% { transform: scale(1); }
+  }
+  /* Danger-variant overrides: red-pink fill + red glow on fire. */
+  .action.danger[data-hold] .hold-fill {
+    background: linear-gradient(90deg, rgba(255,200,200,0.95), #fff);
+  }
+  .action.danger[data-hold].fired {
+    animation: danger-fire 0.42s ease-out;
+  }
+  @keyframes danger-fire {
+    0%   { transform: scale(1); }
+    35%  { transform: scale(1.02); box-shadow: 0 0 44px rgba(255,255,255,0.85), 0 0 22px rgba(227,76,76,0.6); }
+    100% { transform: scale(1); }
+  }
+  .action.danger .action-desc {
+    color: #ffd6d6;
   }
 </style>
 </head>
@@ -358,6 +422,24 @@
         <div class="join-hint">scan to join this portal</div>
       </div>
 
+      <!--
+        TODO (PLAN 4.2.14.a — state-animation pass, 4.2.11 / 4.5):
+        CHOOSE ANOTHER GAME and SHUT DOWN both affect every connected
+        phone, not just this one. The post-action state animation has to
+        play on all sessions simultaneously — so the trigger is the
+        existing server broadcast, not a local "I tapped the button"
+        signal. Concretely:
+          • CHOOSE ANOTHER GAME → server emits its `GameChanged` /
+            game-exit event → every phone's ChooseAnotherGame handler
+            plays the "game folds away" transition into game picker.
+          • SHUT DOWN → server emits shutdown event + drops WS → every
+            phone plays the "lights out" farewell (starfield + bezels
+            dim, gold lettering recedes) before the WS close closes the
+            tab.
+        Design the animations in-situ with 4.2.11 / 4.5 ambient motion
+        so they share token vocabulary. SWITCH PROFILE is local-only and
+        just needs the local profile-re-lock transition.
+      -->
       <div class="actions">
         <button class="action">
           <div class="action-icon">⇄</div>
@@ -367,23 +449,52 @@
           </div>
         </button>
 
-        <button class="action">
+        <button class="action" data-hold>
+          <span class="hold-fill"></span>
           <div class="action-icon">◉</div>
           <div>
-            <div class="action-title">CHOOSE ANOTHER GAME</div>
+            <div class="action-title">HOLD TO SWITCH GAMES</div>
             <div class="action-desc">Quit Trap Team and pick a different adventure</div>
           </div>
         </button>
 
-        <button class="action danger">
+        <button class="action danger" data-hold>
+          <span class="hold-fill"></span>
           <div class="action-icon">⏻</div>
           <div>
-            <div class="action-title">SHUT DOWN</div>
-            <div class="action-desc">Close everything · ask a grown-up first</div>
+            <div class="action-title">HOLD TO SHUT DOWN</div>
+            <div class="action-desc">Closes everything · ask a grown-up first</div>
           </div>
         </button>
       </div>
     </div>
   </div>
+
+<script>
+  // Hold-to-confirm for destructive buttons (matches reset_confirm).
+  const HOLD_MS = 1200;
+  document.querySelectorAll('[data-hold]').forEach((btn) => {
+    let timer = null;
+    const start = (e) => {
+      e.preventDefault();
+      if (btn.classList.contains('fired')) return;
+      btn.classList.add('holding');
+      timer = setTimeout(() => {
+        btn.classList.remove('holding');
+        btn.classList.add('fired');
+        console.log('[hold-to-confirm] fired:', btn.querySelector('.action-title')?.textContent);
+        setTimeout(() => btn.classList.remove('fired'), 600);
+      }, HOLD_MS);
+    };
+    const cancel = () => {
+      if (timer !== null) { clearTimeout(timer); timer = null; }
+      btn.classList.remove('holding');
+    };
+    btn.addEventListener('pointerdown', start);
+    btn.addEventListener('pointerup', cancel);
+    btn.addEventListener('pointerleave', cancel);
+    btn.addEventListener('pointercancel', cancel);
+  });
+</script>
 </body>
 </html>

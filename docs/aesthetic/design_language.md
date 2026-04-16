@@ -325,6 +325,29 @@ box-shadow:
 - **Destructive**: red card (danger variant of blue card). Isolated; never next to primary gold.
 - **Tertiary / utility**: outline-only (transparent bg, faded gold border). "Back", "Cancel".
 
+### Hold-to-activate — impactful & destructive actions
+Actions that are **either** irreversible **or** forcibly change state for other connected players require a **press-and-hold** interaction instead of a single tap. Three tiers:
+
+| Action class | Example | Pattern |
+|--------------|---------|---------|
+| **Destructive** — data gone, can't be restored | `RESET <figure>`, `SHUT DOWN`, future `DELETE PROFILE` | Hold-to-activate + **danger** (red) visual |
+| **Impactful but recoverable** — reshapes session state for everyone connected, but no data loss | `CHOOSE ANOTHER GAME` (kicks all phones out of current game) | Hold-to-activate + **normal** (blue-card) visual |
+| **Local / recoverable** — affects only this phone, or the undo is one tap away | `SWITCH PROFILE`, `REMOVE figure` from portal slot, `RESUME`, `BACK TO BOX` | Single-tap, no hold |
+
+Hold mechanics (shared across tiers 1–2):
+
+- **Label carries the verb** — "HOLD TO RESET", "HOLD TO SHUT DOWN", "HOLD TO SWITCH GAMES". Not just "RESET" + hidden hold behavior. Make the gesture part of the copy.
+- **Progress fill** sweeps left→right across the button (`::before` / `.hold-fill` layer, `transform: scaleX(0→1)`) over `--dur-hold-confirm: 1200ms`, `mix-blend-mode: screen` so the label stays readable as it passes under.
+  - Default (blue-card / normal action): warm gold→white gradient fill — heraldic on blue.
+  - Danger variant (red-card): pink-white gradient fill + red glow on the `.fired` flash.
+- **Release-to-cancel.** Lifting the finger before the fill completes reverts the fill (`transition: transform 0.2s ease-out` resets to 0). No action fires.
+- **Complete-to-fire.** Hold through the full duration → the button flashes (`.fired` state, ~420ms keyframe) and the action is committed.
+- **Label shadow is heavy** — `text-shadow: 0 0 2px rgba(0,0,0,0.9), 0 1px 0 rgba(0,0,0,0.7), 0 2px 6px rgba(0,0,0,0.5)` — so white text stays readable on both the idle bg *and* the bright-white filled bg.
+
+Shared implementation: the `[data-hold]` attribute + a single JS snippet that binds `pointerdown/up/leave/cancel`. Danger variant only changes the fill color + flash palette. See `reset_confirm.html`, `menu_overlay.html` (CHOOSE ANOTHER GAME + SHUT DOWN).
+
+**Don't over-apply hold-friction.** Every extra hold-gated tap is a child mashing a button that won't obey. The bar is: *would a single mistaken tap hurt someone other than me?* If the answer is no (REMOVE puts the figure back in the box; SWITCH PROFILE only re-locks my session), stay with single-tap. `REMOVE` uses a **selection-then-confirm** pattern instead: tap the slot to select (gold-ringed bezel + scale 1.04); a full-width red `REMOVE` bar (~1/3 slot height, edge-to-edge) overlays the middle of the figure portrait; tap the bar to execute, tap outside to dismiss. The selection **auto-dismisses after 5s** of no interaction so a stray tap doesn't leave the slot armed behind the player's back. See `portal_with_box.html`.
+
 ### Spacing
 Stick to multiples of 4: 4, 6, 8, 10, 12, 14, 16, 20, 24, 32. Don't invent 7px or 13px gaps.
 

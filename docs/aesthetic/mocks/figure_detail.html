@@ -299,9 +299,9 @@
     position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%);
     font-family: "Fraunces"; font-size: 11px; font-style: italic; font-weight: 600;
     letter-spacing: 0.1em; text-transform: uppercase;
-    color: #d9c88a;
+    color: #fff4e0;
     white-space: nowrap;
-    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+    text-shadow: 0 1px 0 rgba(0,0,0,0.6), 0 0 8px rgba(0,0,0,0.5);
   }
 
   /* Stats preview strip — placeholder content from 6.2 parser */
@@ -353,12 +353,33 @@
     transform: translateY(2px);
     box-shadow: inset 0 2px 0 rgba(255,255,255,0.45), 0 2px 0 var(--gi);
   }
+  /* BACK TO BOX — blue-card secondary. Explicitly NOT gold-outline: with
+     the gold hero name / bezel / PLACE button above, a gold escape button
+     drowned in the gold wash. Blue contrasts, stays legible during loading
+     + errored states where the gold loading ring is the motion focus. */
   .btn-secondary {
-    background: transparent;
-    color: var(--gb);
-    border: 1.5px solid rgba(245,198,52,0.3);
+    color: #fff;
+    background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
+    border: 2px solid var(--gb);
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+    box-shadow:
+      inset 0 2px 0 rgba(255,255,255,0.25),
+      inset 0 -2px 0 rgba(0,0,0,0.25),
+      0 3px 0 rgba(0,0,0,0.4),
+      0 5px 12px rgba(0,0,0,0.4);
   }
-  .btn-secondary:hover { border-color: var(--gb); color: var(--gb); }
+  .btn-secondary:hover {
+    background: linear-gradient(180deg, #4286f0 0%, #2a62cd 55%, #1b46a0 100%);
+    box-shadow:
+      inset 0 2px 0 rgba(255,255,255,0.35),
+      inset 0 -2px 0 rgba(0,0,0,0.25),
+      0 3px 0 rgba(0,0,0,0.4),
+      0 0 18px rgba(245,198,52,0.3);
+  }
+  .btn-secondary:active {
+    transform: translateY(2px);
+    box-shadow: inset 0 2px 0 rgba(255,255,255,0.25), 0 1px 0 rgba(0,0,0,0.4);
+  }
 
   /* ============ LOADING STATE ============ */
   .loading-ring {
@@ -393,10 +414,15 @@
   .viewport.loading .action-row,
   .viewport.loading .stats-strip,
   .viewport.loading .btn-primary { pointer-events: none; opacity: 0.35; transition: opacity 0.25s ease; }
+  /* During loading the escape button stays obvious — brighten the blue +
+     add a soft gold halo so it reads as "this is still your out." */
   .viewport.loading .btn-secondary {
-    border-color: var(--gb);
-    color: var(--gb);
-    box-shadow: 0 0 14px rgba(245,198,52,0.2);
+    background: linear-gradient(180deg, #5fa2ff 0%, #3874d6 55%, #1f4fa8 100%);
+    box-shadow:
+      inset 0 2px 0 rgba(255,255,255,0.4),
+      inset 0 -2px 0 rgba(0,0,0,0.25),
+      0 3px 0 rgba(0,0,0,0.4),
+      0 0 22px rgba(245,198,52,0.45);
   }
   .viewport.loading .hero-meta::after {
     content: " · loading";

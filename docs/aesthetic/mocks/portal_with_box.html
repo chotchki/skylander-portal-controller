@@ -169,6 +169,72 @@
   }
   .slot.loaded .slot-inner { animation: float 4.5s ease-in-out infinite; }
   @keyframes float { 50% { transform: translateY(-2px); } }
+
+  /* Selected loaded slot — tap to reveal the REMOVE action chip.
+     Not destructive (figure just goes back to the collection), so it's
+     a simple single-tap confirm, not hold-to-activate. */
+  .slot.loaded.selected .slot-inner {
+    animation: none;
+    transform: scale(1.04);
+    transition: transform 0.18s cubic-bezier(.3,1.3,.5,1);
+  }
+  .slot.loaded.selected .bezel {
+    box-shadow:
+      inset 0 0 0 2px var(--gi),
+      inset 0 3px 4px rgba(255,255,255,0.3),
+      inset 0 -3px 4px rgba(0,0,0,0.5),
+      0 0 0 1px #000,
+      0 0 0 3px var(--gb),
+      0 0 26px rgba(245,198,52,0.6),
+      0 4px 14px rgba(0,0,0,0.6);
+  }
+  /* REMOVE overlay — full-width bar across the middle of the slot, ~1/3
+     slot height. Big, obvious tap target that can't be missed; sits over
+     the figure portrait. Auto-dismisses after 5s if untouched so a stray
+     tap doesn't leave the slot "armed" behind the player's back. */
+  .slot-actions {
+    position: absolute;
+    left: 0; right: 0;
+    top: 50%;
+    height: 33.333%;
+    transform: translateY(-50%) scaleY(0.85);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.16s ease-out, transform 0.2s cubic-bezier(.3,1.3,.5,1);
+    z-index: 20;
+    display: flex;
+  }
+  .slot.loaded.selected .slot-actions {
+    opacity: 1;
+    transform: translateY(-50%) scaleY(1);
+    pointer-events: auto;
+  }
+  .slot-action {
+    flex: 1;
+    background: linear-gradient(180deg, #c23a3a 0%, #9a2424 60%, #6e1414 100%);
+    color: #fff;
+    border: 2px solid #ffc0c0;
+    border-radius: 8px;
+    padding: 0;
+    font-family: "Titan One"; font-size: 13px;
+    letter-spacing: 0.22em; text-transform: uppercase;
+    cursor: pointer;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.8), 0 0 6px rgba(0,0,0,0.4);
+    box-shadow:
+      inset 0 2px 0 rgba(255,255,255,0.3),
+      inset 0 -2px 0 rgba(0,0,0,0.3),
+      0 3px 10px rgba(0,0,0,0.55),
+      0 0 18px rgba(227,76,76,0.5);
+  }
+  .slot-action:hover {
+    background: linear-gradient(180deg, #dc4d4d 0%, #b02e2e 60%, #821818 100%);
+    box-shadow:
+      inset 0 2px 0 rgba(255,255,255,0.35),
+      inset 0 -2px 0 rgba(0,0,0,0.3),
+      0 3px 10px rgba(0,0,0,0.55),
+      0 0 22px rgba(227,76,76,0.6);
+  }
+  .slot-action:active { transform: translateY(1px); }
   .el-fire .plate { background: var(--el-fire); }
   .el-water .plate { background: var(--el-water); }
   .el-life .plate { background: var(--el-life); }
@@ -232,11 +298,11 @@
     padding: 6px 14px 8px;
     overflow: hidden;
     transition: max-height 0.35s cubic-bezier(.4,.0,.2,1);
-    max-height: 60px;
+    max-height: 86px;
     display: flex; flex-direction: column;
   }
   .lid-open.expanded {
-    max-height: 380px;
+    max-height: 420px;
   }
   /* Swipe-affordance grabber pill at the top of the open lid.
      Gesture model (design_language §6.7): swipe-down expands / collapses,
@@ -262,6 +328,35 @@
   @keyframes grab-down-hint {
     0%, 100% { transform: translateY(0); }
     50% { transform: translateY(3px); }
+  }
+
+  /* Swipe-direction hint — text + chevron under the grabber that changes
+     copy by state so the gesture model (§6.7) is legible at a glance:
+       compact  → swipe down to reveal filters
+       expanded → swipe down again to close the whole box
+     The upward "swipe to open" case lives on the closed lid's .lid-arrow. */
+  .lid-swipe-hint {
+    flex-shrink: 0;
+    text-align: center;
+    font-family: "Fraunces"; font-style: italic; font-weight: 600;
+    font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--wood-gold-b);
+    text-shadow: 0 1px 0 rgba(0,0,0,0.7), 0 0 6px rgba(120,82,20,0.5);
+    margin-bottom: 4px;
+    user-select: none;
+    cursor: pointer;
+  }
+  .lid-swipe-hint::before {
+    content: "▾  swipe for filters";
+    display: inline-block;
+    animation: hint-nudge 2s ease-in-out infinite;
+  }
+  .lid-open.expanded .lid-swipe-hint::before {
+    content: "▾  swipe to close";
+  }
+  @keyframes hint-nudge {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(2px); }
   }
 
   .lid-top-row {
@@ -457,12 +552,22 @@
           <h1 class="title">PORTAL</h1>
         </div>
         <div class="portal-grid">
-          <div class="slot el-fire loaded" style="animation-delay:-0.5s">
-            <div class="slot-inner"><div class="slot-index">1</div><div class="bezel"></div><div class="plate">E</div></div>
+          <div class="slot el-fire loaded selected" style="animation-delay:-0.5s">
+            <div class="slot-inner">
+              <div class="slot-index">1</div>
+              <div class="bezel"></div>
+              <div class="plate">E</div>
+              <div class="slot-actions"><button class="slot-action">REMOVE</button></div>
+            </div>
             <div class="slot-label">ERUPTOR</div>
           </div>
           <div class="slot el-water loaded" style="animation-delay:-1.2s">
-            <div class="slot-inner"><div class="slot-index">2</div><div class="bezel"></div><div class="plate">G</div></div>
+            <div class="slot-inner">
+              <div class="slot-index">2</div>
+              <div class="bezel"></div>
+              <div class="plate">G</div>
+              <div class="slot-actions"><button class="slot-action">REMOVE</button></div>
+            </div>
             <div class="slot-label">GILL GRUNT</div>
           </div>
           <div class="slot empty">
@@ -474,7 +579,12 @@
             <div class="slot-label empty-label">empty</div>
           </div>
           <div class="slot el-magic loaded" style="animation-delay:-2.6s">
-            <div class="slot-inner"><div class="slot-index">5</div><div class="bezel"></div><div class="plate">S</div></div>
+            <div class="slot-inner">
+              <div class="slot-index">5</div>
+              <div class="bezel"></div>
+              <div class="plate">S</div>
+              <div class="slot-actions"><button class="slot-action">REMOVE</button></div>
+            </div>
             <div class="slot-label">SPYRO</div>
           </div>
           <div class="slot empty">
@@ -508,6 +618,7 @@
              design_language §6.7). -->
         <div class="lid-open" id="lid-open">
           <div class="lid-grabber"></div>
+          <div class="lid-swipe-hint"></div>
           <div class="lid-top-row">
             <span class="lid-open-title">COLLECTION</span>
             <button class="search-toggle" id="search-btn">
@@ -599,14 +710,40 @@
   </div>
 
 <script>
+  // TODO (PLAN 4.2.13.12 — defer to Leptos implementation): real swipe
+  // gesture detection is not implemented in this mock. The current demo
+  // uses a click-to-simulate shortcut on the grabber/hint — tap = swipe.
+  // Actual pointer-tracked swipe (pointerdown → move → up w/ threshold +
+  // direction check) feels wrong in a static HTML/CSS mock and clashes
+  // with the scroll gesture on the figure grid. Wire it up properly in
+  // the Leptos `<ToyBoxLid>` component using pointer events + Leptos
+  // signals so the state machine + scroll-collapse live in one place.
+
   const lid = document.getElementById('lid-open');
   const searchBtn = document.getElementById('search-btn');
   const scroll = document.getElementById('box-scroll');
+  const boxToggle = document.getElementById('box-toggle');
+  const grabber = lid.querySelector('.lid-grabber');
+  const swipeHint = lid.querySelector('.lid-swipe-hint');
 
-  // Toggle search expansion
+  // Toggle search expansion via the SEARCH button
   searchBtn.addEventListener('click', () => {
     lid.classList.toggle('expanded');
   });
+
+  // Demo of the gesture model (design_language §6.7) — click-to-simulate:
+  //   compact  → tap grabber / hint → expand filters (= swipe down)
+  //   expanded → tap grabber / hint → close entire box (= swipe down again)
+  function simulateSwipeDown() {
+    if (lid.classList.contains('expanded')) {
+      lid.classList.remove('expanded');
+      boxToggle.checked = false;
+    } else {
+      lid.classList.add('expanded');
+    }
+  }
+  grabber.addEventListener('click', simulateSwipeDown);
+  swipeHint.addEventListener('click', simulateSwipeDown);
 
   // Scroll down → collapse search (looking deeper into the box)
   let lastY = 0;
@@ -617,6 +754,49 @@
     }
     lastY = y;
   });
+
+  // Loaded-slot selection → surfaces a full-width REMOVE bar over the
+  // middle of the slot. Single-tap confirm (recoverable: figure goes
+  // back in the box). Auto-dismisses after 5s of no interaction so a
+  // stray tap doesn't leave the slot "armed" behind the player's back.
+  const loadedSlots = document.querySelectorAll('.slot.loaded');
+  const SELECTION_TIMEOUT = 5000;
+  let selectionTimer = null;
+
+  function deselectAll() {
+    loadedSlots.forEach((s) => s.classList.remove('selected'));
+    if (selectionTimer !== null) { clearTimeout(selectionTimer); selectionTimer = null; }
+  }
+  function selectSlot(slot) {
+    deselectAll();
+    slot.classList.add('selected');
+    selectionTimer = setTimeout(() => {
+      slot.classList.remove('selected');
+      selectionTimer = null;
+    }, SELECTION_TIMEOUT);
+  }
+
+  loadedSlots.forEach((slot) => {
+    slot.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (slot.classList.contains('selected')) {
+        deselectAll();
+      } else {
+        selectSlot(slot);
+      }
+    });
+  });
+  document.querySelectorAll('.slot-action').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const slot = btn.closest('.slot');
+      console.log('[mock] REMOVE:', slot.querySelector('.slot-label')?.textContent);
+      deselectAll();
+      // In the real app, server clears the slot → WS broadcasts SlotChanged.
+    });
+  });
+  // Click anywhere else → deselect
+  document.addEventListener('click', deselectAll);
 </script>
 </body>
 </html>
