@@ -13,18 +13,42 @@
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
-html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); }
+html, body { margin: 0; padding: 0; background: var(--sf-3); color: var(--text); }
 body {
   min-height: 100vh;
   background:
-    radial-gradient(ellipse at 50% 0%, #1e3a7a 0%, transparent 60%),
-    radial-gradient(ellipse at 50% 100%, #172852 0%, transparent 60%),
-    var(--bg);
+    radial-gradient(ellipse 120% 60% at 50% 0%, #1a3a8a 0%, transparent 50%),
+    radial-gradient(ellipse 80% 50% at 50% 100%, #0e2464 0%, transparent 50%),
+    linear-gradient(180deg, var(--sf-1), var(--sf-2) 60%, var(--sf-3));
+}
+body::after {
+  content: "";
+  position: fixed; inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(1px 1px at 20px 30px, white, transparent),
+    radial-gradient(1px 1px at 40px 70px, rgba(255,255,255,0.7), transparent),
+    radial-gradient(2px 2px at 50px 160px, rgba(255,230,180,0.9), transparent),
+    radial-gradient(1px 1px at 130px 40px, white, transparent),
+    radial-gradient(1px 1px at 90px 250px, rgba(255,255,255,0.8), transparent),
+    radial-gradient(1px 1px at 170px 300px, white, transparent),
+    radial-gradient(2px 2px at 230px 100px, rgba(180,220,255,0.9), transparent),
+    radial-gradient(1px 1px at 300px 200px, white, transparent),
+    radial-gradient(1px 1px at 260px 400px, white, transparent);
+  background-size: 400px 800px;
+  animation: sky-drift 140s linear infinite;
+}
+@keyframes sky-drift { to { background-position: -400px -800px; } }
+@media (prefers-reduced-motion: reduce) {
+  body::after { animation: none; }
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 button { font: inherit; color: inherit; cursor: pointer; }
 
 .app {
+  position: relative;
+  z-index: 1;
   max-width: 960px;
   margin: 0 auto;
   padding: 16px calc(env(safe-area-inset-left) + 12px) calc(env(safe-area-inset-bottom) + 16px) calc(env(safe-area-inset-right) + 12px);
