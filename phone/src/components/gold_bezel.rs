@@ -57,7 +57,7 @@ impl BezelState {
 pub fn GoldBezel(
     #[prop(default = BezelSize::Lg)]
     size: BezelSize,
-    #[prop(optional)]
+    #[prop(default = None)]
     element: Option<Element>,
     #[prop(optional, into)]
     state: Signal<BezelState>,

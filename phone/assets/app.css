@@ -527,3 +527,132 @@ button { font: inherit; color: inherit; cursor: pointer; }
   background: linear-gradient(135deg, #0e1a30, #060e1a);
   opacity: 0.65;
 }
+
+/* <FramedPanel> — design_language.md §3.3
+   Gold gradient border via ::before. No corner brackets. */
+
+.framed-panel {
+  position: relative;
+  padding: 22px 20px;
+  border-radius: 22px;
+  background:
+    radial-gradient(ellipse 120% 80% at 50% 0%, rgba(255,230,120,0.09), transparent 60%),
+    linear-gradient(180deg, rgba(26,58,138,0.94), rgba(10,36,100,0.96) 50%, rgba(6,20,54,0.98));
+}
+.framed-panel::before {
+  content: "";
+  position: absolute; inset: -2px;
+  border-radius: 24px;
+  z-index: -1;
+  background: linear-gradient(135deg,
+    var(--gb) 0%, var(--gm) 30%, var(--gb) 50%, var(--gm) 70%, var(--gb) 100%);
+}
+.panel-in {
+  animation: panel-in var(--dur-panel-in) var(--ease-spring) both;
+}
+@keyframes panel-in {
+  from { opacity: 0; transform: scale(0.92) translateY(10px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* <DisplayHeading> — design_language.md §2
+   Gold fill + dark stroke + layered drop shadow. */
+
+.display-heading {
+  position: relative;
+  text-align: center;
+  line-height: 0.95;
+}
+.dh-text {
+  font-family: "Titan One", sans-serif;
+  color: var(--gb);
+  -webkit-text-stroke: 1.5px var(--gi);
+  text-shadow:
+    0 2px 0 var(--gs),
+    0 3px 0 var(--gi),
+    0 5px 10px rgba(0,0,0,0.5),
+    0 0 24px rgba(245,198,52,0.3);
+}
+.dh-hero .dh-text { font-size: 46px; letter-spacing: 0.04em; }
+.dh-lg   .dh-text { font-size: 38px; letter-spacing: 0.04em; }
+.dh-md   .dh-text { font-size: 28px; letter-spacing: 0.06em; }
+.dh-sm   .dh-text { font-size: 16px; letter-spacing: 0.12em; -webkit-text-stroke-width: 1px; }
+.dh-xs   .dh-text { font-size: 12px; letter-spacing: 0.18em; -webkit-text-stroke-width: 0.75px; }
+
+.title-rays {
+  position: absolute;
+  inset: -40px -20px -20px;
+  background: radial-gradient(ellipse 80% 80% at 50% 50%,
+    rgba(255,230,120,0.12), transparent 60%);
+  pointer-events: none;
+}
+
+/* <RayHalo> — design_language.md §5.2
+   Rotating conic-gradient masked to a ring. */
+
+.ray-halo {
+  position: absolute;
+  inset: -8px;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg,
+    transparent 0%, transparent 30%,
+    rgba(255,230,120,0.35) 45%, rgba(245,198,52,0.6) 50%,
+    rgba(255,230,120,0.35) 55%, transparent 70%, transparent 100%);
+  mask: radial-gradient(circle, transparent 50%, black 58%, black 72%, transparent 80%);
+  -webkit-mask: radial-gradient(circle, transparent 50%, black 58%, black 72%, transparent 80%);
+  filter: blur(6px);
+  pointer-events: none;
+}
+.ray-halo-slow { animation: ray-spin var(--dur-halo-slow) linear infinite; }
+.ray-halo-fast { animation: ray-spin var(--dur-loading-sweep) linear infinite; }
+@keyframes ray-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .ray-halo { animation: none !important; }
+}
+
+/* <FigureHero> — design_language.md §6.5
+   Oversized bezel + aura + rays + loading ring. */
+
+.figure-hero {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 160px;
+}
+.hero-aura {
+  position: absolute; inset: -20px;
+  border-radius: 50%;
+  background: radial-gradient(circle,
+    rgba(245,198,52,0.15) 0%, transparent 70%);
+  pointer-events: none;
+}
+.hero-rays-wrap {
+  position: absolute; inset: 0;
+  pointer-events: none;
+}
+.figure-hero .loading-ring {
+  position: absolute; inset: -12px;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg,
+    transparent 0%, transparent 65%,
+    var(--gb) 90%, rgba(255,255,255,0.95) 96%, transparent 100%);
+  mask: radial-gradient(circle, transparent 54%, black 58%, black 72%, transparent 76%);
+  -webkit-mask: radial-gradient(circle, transparent 54%, black 58%, black 72%, transparent 76%);
+  z-index: 3;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+.hero-loading .loading-ring {
+  opacity: 1;
+  animation: ray-spin var(--dur-loading-sweep) linear infinite;
+}
+/* Kill aura + rays during loading/errored — motion focus rule (§5.6). */
+.hero-loading .hero-aura,
+.hero-errored .hero-aura,
+.hero-loading .hero-rays-wrap,
+.hero-errored .hero-rays-wrap {
+  opacity: 0;
+  animation: none;
+  transition: opacity 0.25s ease;
+}
