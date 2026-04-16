@@ -370,6 +370,37 @@ The fixes, in order of preference:
 
 The toy-box lid's expanded filter area (`portal_with_box.html`) is the canonical worked example.
 
+### Stable layout for expected error states
+**Common-error feedback must not shove the surrounding layout.** Any error / validation / status banner that can appear on a screen should **reserve its slot up front** — `min-height`-sized, `visibility: hidden` + `opacity: 0`, inserted into the normal flow. When the error fires, only opacity / transform animate; the dots above and the keypad below stay put.
+
+Failure modes this rule prevents:
+
+- User taps a wrong PIN, the mismatch banner slides in between the dots and keypad, pushing the keypad *into* the action buttons — thumbs mis-hit because the target just moved.
+- User clears a bad filter, the empty-state banner disappears, dots stop shifting vertically half a second after the user started reading.
+- A toast pushes the main action off-screen during load → fail-state glitch.
+
+The rule is strict for **expected** errors (`PIN mismatch`, `name already taken`, `no figures match filter`) — the ones you know can happen on that screen. One-off system errors (offline, server 500) can use a toast/overlay that *does* take temporary layout space, since they're surprises anyway and shouldn't be the common path.
+
+Pattern (see `profile_create.html` step 4 for the worked example):
+
+```css
+.pin-error {
+  min-height: 36px;        /* reserve the slot — never 0 */
+  visibility: hidden;
+  opacity: 0;
+  transform: translateY(-4px) scale(0.96);
+  transition: opacity 0.22s ease-out, transform 0.28s cubic-bezier(.3,1.5,.5,1);
+}
+.screen.mismatch .pin-error {
+  visibility: visible;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  animation: mismatch-pop 0.42s cubic-bezier(.3,1.5,.5,1);
+}
+```
+
+Pair the banner animation with a brief shake on the offending input (`.pin-dots` here) so the correction surface is as obvious as the message.
+
 ---
 
 ## 5. Motion
