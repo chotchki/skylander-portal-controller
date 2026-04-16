@@ -64,31 +64,41 @@
      Transitions slide vertically (deeper = up, per navigation.md).
      Only one screen has .active; the outgoing screen gets .exit-up
      or .exit-down depending on navigation direction. */
+  /* Transition engine: transitions live on the state classes, not the
+     base. The JS positions the incoming screen off-screen via inline
+     style, forces a reflow, then removes ALL inline styles and adds
+     .active — the browser transitions from the painted position to
+     translateY(0). */
   .screen {
     position: absolute; inset: 0; z-index: 1;
     display: flex; flex-direction: column;
     align-items: center; justify-content: center;
     gap: 20px;
     padding: 60px 28px;
-    transform: translateY(100%);
     opacity: 0;
-    transition:
-      transform var(--dur-transition) var(--ease-spring),
-      opacity calc(var(--dur-transition) * 0.6) ease-out;
     pointer-events: none;
   }
   .screen.active {
     transform: translateY(0);
     opacity: 1;
     pointer-events: auto;
+    transition:
+      transform var(--dur-transition) var(--ease-spring),
+      opacity calc(var(--dur-transition) * 0.6) ease-out;
   }
   .screen.exit-up {
     transform: translateY(-100%);
     opacity: 0;
+    transition:
+      transform var(--dur-transition) var(--ease-smooth),
+      opacity calc(var(--dur-transition) * 0.6) ease-out;
   }
   .screen.exit-down {
     transform: translateY(100%);
     opacity: 0;
+    transition:
+      transform var(--dur-transition) var(--ease-smooth),
+      opacity calc(var(--dur-transition) * 0.6) ease-out;
   }
 
   /* Simplified screen content — just enough to identify each screen,
@@ -333,30 +343,34 @@
   const infoDetail = document.getElementById('info-detail');
   const autoBtn = document.getElementById('btn-auto');
 
-  function transitionTo(idx, direction) {
+  function transitionTo(idx) {
     if (idx === current) return;
+    const goingDeeper = idx > current;
     const from = SCREENS[current];
     const to = SCREENS[idx];
-    const goingDeeper = idx > current;
 
-    // Outgoing screen
+    // 1. Exit the current screen
     from.el.classList.remove('active');
     from.el.classList.add(goingDeeper ? 'exit-up' : 'exit-down');
 
-    // Incoming screen: position it off-screen on the correct side first
-    to.el.classList.remove('exit-up', 'exit-down', 'active');
-    to.el.style.transition = 'none';
-    to.el.style.transform = goingDeeper ? 'translateY(100%)' : 'translateY(-100%)';
-    to.el.style.opacity = '0';
+    // 2. Position incoming off-screen — inline style, NO transition
+    to.el.classList.remove('active', 'exit-up', 'exit-down');
+    to.el.style.cssText = `
+      transition: none !important;
+      transform: translateY(${goingDeeper ? '100%' : '-100%'});
+      opacity: 0;
+    `;
 
-    // Force reflow so the position applies before we animate
+    // 3. Force browser to paint at that off-screen position
     void to.el.offsetHeight;
 
-    // Now animate in
-    to.el.style.transition = '';
+    // 4. Nuke all inline styles → element falls back to CSS classes.
+    //    Then add .active → CSS transition fires from the painted
+    //    position (step 3) to translateY(0).
+    to.el.removeAttribute('style');
     to.el.classList.add('active');
 
-    // Update info
+    // 5. Update info bar
     const dir = goingDeeper ? 'slide-up' : 'slide-down';
     const dur = Math.round(420 / speed);
     infoLabel.textContent = `${from.name} → ${to.name}`;
@@ -364,19 +378,19 @@
 
     current = idx;
 
-    // Clean exit class after transition
+    // 6. Clean exit class after animation settles
     setTimeout(() => {
       from.el.classList.remove('exit-up', 'exit-down');
-    }, 500);
+    }, 600);
   }
 
   function next() {
     const nextIdx = (current + 1) % SCREENS.length;
-    transitionTo(nextIdx, 'deeper');
+    transitionTo(nextIdx);
   }
   function prev() {
     const prevIdx = (current - 1 + SCREENS.length) % SCREENS.length;
-    transitionTo(prevIdx, 'back');
+    transitionTo(prevIdx);
   }
 
   function scheduleAuto() {
