@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=390,initial-scale=1,viewport-fit=cover">
+<title>Screen Transitions — Heraldic — Skylanders Portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Titan+One&family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,800;1,9..144,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --sf-1: #0b1e52; --sf-2: #061436; --sf-3: #020818;
+    --gb: #ffe58a; --g: #f5c634; --gm: #c58c18; --gs: #6e4a00; --gi: #3a2500;
+    --text: #f7f7fb; --ink: #1a1203;
+    --ease-spring: cubic-bezier(.3,1.3,.5,1);
+    --ease-smooth: cubic-bezier(.4,.0,.2,1);
+    --dur-transition: 420ms;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: "Fraunces", Georgia, serif;
+    background: #0a0a0a;
+    display: grid; place-items: center;
+    min-height: 100vh; padding: 20px;
+    color: var(--text);
+  }
+  .phone {
+    width: 390px; height: 844px;
+    border-radius: 52px; overflow: hidden; position: relative;
+    box-shadow: 0 30px 80px rgba(0,0,0,0.6), 0 0 0 12px #1a1a1a, 0 0 0 13px #333;
+    background: var(--sf-3);
+  }
+  @media (max-width: 450px) {
+    body { padding: 0; background: var(--sf-3); }
+    .phone { width: 100vw; height: 100vh; border-radius: 0; box-shadow: none; }
+  }
+
+  /* Shared starfield that stays continuous across transitions */
+  .sky {
+    position: absolute; inset: 0; z-index: 0;
+    background:
+      radial-gradient(ellipse 120% 60% at 50% 0%, #1a3a8a 0%, transparent 50%),
+      radial-gradient(ellipse 80% 50% at 50% 100%, #0e2464 0%, transparent 50%),
+      linear-gradient(180deg, var(--sf-1), var(--sf-2) 60%, var(--sf-3));
+  }
+  .stars {
+    position: absolute; inset: 0; z-index: 0;
+    background-image:
+      radial-gradient(1px 1px at 20px 30px, white, transparent),
+      radial-gradient(1px 1px at 40px 70px, rgba(255,255,255,0.7), transparent),
+      radial-gradient(2px 2px at 50px 160px, rgba(255,230,180,0.9), transparent),
+      radial-gradient(1px 1px at 130px 40px, white, transparent),
+      radial-gradient(1px 1px at 90px 250px, rgba(255,255,255,0.8), transparent),
+      radial-gradient(1px 1px at 170px 300px, white, transparent),
+      radial-gradient(2px 2px at 230px 100px, rgba(180,220,255,0.9), transparent),
+      radial-gradient(1px 1px at 300px 200px, white, transparent),
+      radial-gradient(1px 1px at 260px 400px, white, transparent);
+    background-size: 400px 800px;
+  }
+
+  /* ===== SCREEN STACK =====
+     Each screen is positioned absolutely, filling the viewport.
+     Transitions slide vertically (deeper = up, per navigation.md).
+     Only one screen has .active; the outgoing screen gets .exit-up
+     or .exit-down depending on navigation direction. */
+  .screen {
+    position: absolute; inset: 0; z-index: 1;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 20px;
+    padding: 60px 28px;
+    transform: translateY(100%);
+    opacity: 0;
+    transition:
+      transform var(--dur-transition) var(--ease-spring),
+      opacity calc(var(--dur-transition) * 0.6) ease-out;
+    pointer-events: none;
+  }
+  .screen.active {
+    transform: translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .screen.exit-up {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  .screen.exit-down {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+
+  /* Simplified screen content — just enough to identify each screen,
+     not full reproductions. The point is the slide direction + timing. */
+  .s-label {
+    font-family: "Titan One"; font-size: 11px; letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: #d9c88a;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+    position: absolute; top: 50px;
+  }
+  .s-heading {
+    font-family: "Titan One"; font-size: 30px; letter-spacing: 0.06em;
+    text-align: center; line-height: 0.95;
+    color: var(--gb);
+    -webkit-text-stroke: 1.25px var(--gi);
+    text-shadow:
+      0 2px 0 var(--gs), 0 3px 0 var(--gi),
+      0 5px 10px rgba(0,0,0,0.5),
+      0 0 24px rgba(245,198,52,0.25);
+  }
+  .s-sub {
+    font-family: "Fraunces"; font-style: italic; font-weight: 600;
+    font-size: 13px; letter-spacing: 0.25em;
+    color: #fff4e0; text-transform: uppercase;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+    margin-top: -10px;
+  }
+
+  /* Placeholder shapes */
+  .placeholder-grid {
+    display: grid; gap: 14px;
+    width: 100%;
+  }
+  .ph-circle {
+    aspect-ratio: 1; border-radius: 50%;
+    background: radial-gradient(circle at 30% 25%, rgba(245,198,52,0.2), rgba(110,74,0,0.2) 55%, rgba(0,0,0,0.3));
+    box-shadow: inset 0 0 0 2px var(--gi), 0 2px 6px rgba(0,0,0,0.4);
+  }
+  .ph-circle.filled {
+    background: radial-gradient(circle at 30% 25%, var(--gb), var(--g) 22%, var(--gm) 55%, var(--gs) 100%);
+    box-shadow: inset 0 0 0 2px var(--gi), inset 0 3px 4px rgba(255,255,255,0.3), inset 0 -3px 4px rgba(0,0,0,0.5), 0 0 0 1px #000, 0 4px 10px rgba(0,0,0,0.6);
+  }
+  .ph-card {
+    border-radius: 14px;
+    padding: 18px 16px;
+    background: linear-gradient(180deg, rgba(26,58,138,0.6), rgba(10,36,100,0.75) 50%, rgba(6,20,54,0.85));
+    border: 1.5px solid rgba(245,198,52,0.35);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 6px rgba(0,0,0,0.4);
+  }
+  .ph-card .ph-title {
+    font-family: "Titan One"; font-size: 16px; letter-spacing: 0.06em;
+    color: var(--gb);
+    text-shadow: 0 1px 0 var(--gs), 0 2px 0 var(--gi);
+  }
+  .ph-dots {
+    display: flex; justify-content: center; gap: 16px;
+  }
+  .ph-dot {
+    width: 18px; height: 18px; border-radius: 50%;
+    background: radial-gradient(circle at 30% 25%, var(--gb), var(--g) 40%, var(--gm) 80%);
+    box-shadow: inset 0 0 0 1.5px var(--gi), 0 0 6px rgba(245,198,52,0.5);
+  }
+  .ph-keypad {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+    padding: 14px;
+    border-radius: 16px;
+    background: linear-gradient(180deg, rgba(26,58,138,0.88), rgba(10,36,100,0.94) 50%, rgba(6,20,54,0.96));
+    border: 2px solid var(--gm);
+    width: 100%; max-width: 280px;
+  }
+  .ph-key {
+    aspect-ratio: 1.3; border-radius: 10px;
+    background: linear-gradient(180deg, rgba(255,230,120,0.08), rgba(58,37,0,0.2));
+    border: 1px solid var(--gi);
+  }
+
+  /* Game cards — each with a color strip for identity */
+  .game-stack { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+  .ph-game {
+    padding: 16px;
+    border-radius: 14px;
+    border: 1.5px solid rgba(245,198,52,0.3);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 2px 6px rgba(0,0,0,0.4);
+    font-family: "Titan One"; font-size: 18px; letter-spacing: 0.06em;
+    color: var(--gb);
+    -webkit-text-stroke: 0.75px var(--gi);
+    text-shadow: 0 1px 0 var(--gs), 0 2px 0 var(--gi);
+  }
+  .ph-game:nth-child(1) { background: linear-gradient(90deg, rgba(90,50,160,0.6), rgba(26,58,138,0.4)); }
+  .ph-game:nth-child(2) { background: linear-gradient(90deg, rgba(140,90,30,0.6), rgba(26,58,138,0.4)); }
+  .ph-game:nth-child(3) { background: linear-gradient(90deg, rgba(30,100,180,0.6), rgba(26,58,138,0.4)); }
+  .ph-game:nth-child(4) { background: linear-gradient(90deg, rgba(40,140,60,0.6), rgba(26,58,138,0.4)); }
+
+  /* Portal grid — 2x4 slots */
+  .portal-mini {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 12px 18px;
+    width: 100%; max-width: 300px;
+  }
+  .portal-mini .ph-circle { width: 100%; }
+
+  /* ===== TRANSITION INFO BAR ===== */
+  .info-bar {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    z-index: 100;
+    padding: 10px 20px 22px;
+    background: linear-gradient(0deg, rgba(0,0,0,0.85) 60%, transparent);
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px;
+  }
+  .info-label {
+    font-family: "Fraunces"; font-style: italic; font-weight: 600;
+    font-size: 11px; color: #fff4e0;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  }
+  .info-detail {
+    font-family: monospace; font-size: 10px;
+    color: #d9c88a;
+  }
+
+  /* ===== DEMO CONTROLS ===== */
+  .demo-controls {
+    position: fixed; bottom: 16px; right: 16px;
+    z-index: 999;
+    background: rgba(0,0,0,0.85);
+    border: 1px solid #333; border-radius: 10px;
+    padding: 10px;
+    display: flex; gap: 6px; flex-direction: column;
+    font-family: system-ui; font-size: 11px;
+  }
+  .demo-controls .title { color: var(--gb); font-weight: 600; margin-bottom: 2px; }
+  .demo-controls button {
+    background: #222; color: #eee;
+    border: 1px solid #444; border-radius: 6px;
+    padding: 5px 9px; cursor: pointer; font: inherit;
+  }
+  .demo-controls button:hover { background: #333; color: var(--gb); }
+  .demo-controls button.on { background: var(--g); color: var(--ink); }
+  .demo-row { display: flex; gap: 4px; }
+  .demo-row button { flex: 1; }
+</style>
+</head>
+<body>
+  <div class="phone">
+    <div class="sky"></div>
+    <div class="stars"></div>
+
+    <!-- ===== SCREEN 0: PROFILE PICKER ===== -->
+    <div class="screen active" data-idx="0">
+      <div class="s-label">SCREEN 1 OF 4</div>
+      <div class="s-sub">welcome</div>
+      <div class="s-heading">PORTAL<br>MASTER</div>
+      <div class="placeholder-grid" style="grid-template-columns: 1fr 1fr; max-width:240px;">
+        <div class="ph-circle filled"></div>
+        <div class="ph-circle filled"></div>
+        <div class="ph-circle filled"></div>
+        <div class="ph-circle"></div>
+      </div>
+    </div>
+
+    <!-- ===== SCREEN 1: PIN ENTRY ===== -->
+    <div class="screen" data-idx="1">
+      <div class="s-label">SCREEN 2 OF 4</div>
+      <div class="s-heading">ENTER<br>YOUR PIN</div>
+      <div class="ph-dots">
+        <div class="ph-dot"></div><div class="ph-dot"></div>
+        <div class="ph-dot"></div><div class="ph-dot"></div>
+      </div>
+      <div class="ph-keypad">
+        <div class="ph-key"></div><div class="ph-key"></div><div class="ph-key"></div>
+        <div class="ph-key"></div><div class="ph-key"></div><div class="ph-key"></div>
+        <div class="ph-key"></div><div class="ph-key"></div><div class="ph-key"></div>
+        <div class="ph-key"></div><div class="ph-key"></div><div class="ph-key"></div>
+      </div>
+    </div>
+
+    <!-- ===== SCREEN 2: GAME PICKER ===== -->
+    <div class="screen" data-idx="2">
+      <div class="s-label">SCREEN 3 OF 4</div>
+      <div class="s-sub">choose your adventure</div>
+      <div class="s-heading">PICK<br>A GAME</div>
+      <div class="game-stack">
+        <div class="ph-game">SPYRO'S ADVENTURE</div>
+        <div class="ph-game">GIANTS</div>
+        <div class="ph-game">SWAP FORCE</div>
+        <div class="ph-game">TRAP TEAM</div>
+      </div>
+    </div>
+
+    <!-- ===== SCREEN 3: PORTAL ===== -->
+    <div class="screen" data-idx="3">
+      <div class="s-label">SCREEN 4 OF 4</div>
+      <div class="s-heading">PORTAL</div>
+      <div class="portal-mini">
+        <div class="ph-circle filled"></div>
+        <div class="ph-circle filled"></div>
+        <div class="ph-circle"></div>
+        <div class="ph-circle"></div>
+        <div class="ph-circle filled"></div>
+        <div class="ph-circle"></div>
+        <div class="ph-circle"></div>
+        <div class="ph-circle"></div>
+      </div>
+    </div>
+
+    <div class="info-bar">
+      <div>
+        <div class="info-label" id="info-label">Profile Picker → PIN Entry</div>
+        <div class="info-detail" id="info-detail">slide-up · 420ms · ease-spring</div>
+      </div>
+    </div>
+
+    <div class="demo-controls">
+      <div class="title">Transition demo</div>
+      <div class="demo-row">
+        <button id="btn-prev">← Prev</button>
+        <button id="btn-next">Next →</button>
+      </div>
+      <button id="btn-auto" class="on">▶ Auto-play (2s hold)</button>
+      <div class="demo-row">
+        <button data-speed="0.5">0.5×</button>
+        <button data-speed="1" class="on">1×</button>
+        <button data-speed="2">2×</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const SCREENS = [
+    { name: 'Profile Picker', el: document.querySelector('[data-idx="0"]') },
+    { name: 'PIN Entry',      el: document.querySelector('[data-idx="1"]') },
+    { name: 'Game Picker',    el: document.querySelector('[data-idx="2"]') },
+    { name: 'Portal',         el: document.querySelector('[data-idx="3"]') },
+  ];
+  const HOLD_MS = 2000;
+  let current = 0;
+  let speed = 1;
+  let autoPlay = true;
+  let timer = null;
+
+  const infoLabel = document.getElementById('info-label');
+  const infoDetail = document.getElementById('info-detail');
+  const autoBtn = document.getElementById('btn-auto');
+
+  function transitionTo(idx, direction) {
+    if (idx === current) return;
+    const from = SCREENS[current];
+    const to = SCREENS[idx];
+    const goingDeeper = idx > current;
+
+    // Outgoing screen
+    from.el.classList.remove('active');
+    from.el.classList.add(goingDeeper ? 'exit-up' : 'exit-down');
+
+    // Incoming screen: position it off-screen on the correct side first
+    to.el.classList.remove('exit-up', 'exit-down', 'active');
+    to.el.style.transition = 'none';
+    to.el.style.transform = goingDeeper ? 'translateY(100%)' : 'translateY(-100%)';
+    to.el.style.opacity = '0';
+
+    // Force reflow so the position applies before we animate
+    void to.el.offsetHeight;
+
+    // Now animate in
+    to.el.style.transition = '';
+    to.el.classList.add('active');
+
+    // Update info
+    const dir = goingDeeper ? 'slide-up' : 'slide-down';
+    const dur = Math.round(420 / speed);
+    infoLabel.textContent = `${from.name} → ${to.name}`;
+    infoDetail.textContent = `${dir} · ${dur}ms · ease-spring`;
+
+    current = idx;
+
+    // Clean exit class after transition
+    setTimeout(() => {
+      from.el.classList.remove('exit-up', 'exit-down');
+    }, 500);
+  }
+
+  function next() {
+    const nextIdx = (current + 1) % SCREENS.length;
+    transitionTo(nextIdx, 'deeper');
+  }
+  function prev() {
+    const prevIdx = (current - 1 + SCREENS.length) % SCREENS.length;
+    transitionTo(prevIdx, 'back');
+  }
+
+  function scheduleAuto() {
+    clearTimeout(timer);
+    if (!autoPlay) return;
+    timer = setTimeout(() => {
+      next();
+      scheduleAuto();
+    }, HOLD_MS / speed + 500);
+  }
+
+  // Apply speed to CSS transition duration
+  function applySpeed() {
+    const dur = Math.round(420 / speed);
+    document.querySelector('.phone').style.setProperty('--dur-transition', dur + 'ms');
+  }
+
+  // Controls
+  document.getElementById('btn-next').addEventListener('click', () => { next(); if (autoPlay) scheduleAuto(); });
+  document.getElementById('btn-prev').addEventListener('click', () => { prev(); if (autoPlay) scheduleAuto(); });
+  autoBtn.addEventListener('click', () => {
+    autoPlay = !autoPlay;
+    autoBtn.classList.toggle('on', autoPlay);
+    autoBtn.textContent = autoPlay ? '▶ Auto-play (2s hold)' : '⏸ Paused';
+    if (autoPlay) scheduleAuto(); else clearTimeout(timer);
+  });
+  document.querySelectorAll('[data-speed]').forEach(b => {
+    b.addEventListener('click', () => {
+      speed = parseFloat(b.dataset.speed);
+      document.querySelectorAll('[data-speed]').forEach(s => s.classList.toggle('on', s.dataset.speed === b.dataset.speed));
+      applySpeed();
+      if (autoPlay) scheduleAuto();
+    });
+  });
+
+  // Init
+  infoLabel.textContent = SCREENS[0].name;
+  infoDetail.textContent = 'idle · waiting for first transition';
+  applySpeed();
+  scheduleAuto();
+</script>
+</body>
+</html>
