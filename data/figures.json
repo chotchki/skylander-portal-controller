@@ -12,18 +12,44 @@
     ],
     "alignment": "Giant",
     "attributes": {
-      "species": "*Flying Eyeball/Headless Undead Giant",
-      "image": "280px",
-      "element": "Undead",
-      "name": "Eye-Brawl",
       "world": "Skylands",
-      "firstrelease": "Skylanders: Giants",
+      "name": "Eye-Brawl",
+      "species": "*Flying Eyeball/Headless Undead Giant",
+      "element": "Undead",
+      "attack": "*Haymaker \n*Eye Fly \n*An Eye In Team \n*The Pummeler \n*Awesome Occu-Blast",
       "voiceeng": "Travis Willingham",
       "family": "Dive-Clops (twin brother)",
+      "firstrelease": "Skylanders: Giants",
+      "image": "280px",
       "role": "Giant",
-      "attack": "*Haymaker \n*Eye Fly \n*An Eye In Team \n*The Pummeler \n*Awesome Occu-Blast",
       "appearances": "*Skylanders: Giants\n*Skylanders: Lost Islands\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Return of the Dragon King\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Dive, Dive, Dive!\n*Skylanders: Imaginators",
       "gender": "Male"
+    }
+  },
+  {
+    "figure_id": "0169dca4f6f1931d",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Dark_Spyro",
+    "soul_gem": null,
+    "signature_moves": [
+      "Flameball",
+      "Horn Charge",
+      "Flight",
+      "Fire Shield",
+      "Triple Flameballs"
+    ],
+    "alignment": "Dark Edition Skylander",
+    "attributes": {
+      "gender": "Male",
+      "attack": "*Flameball \n*Horn Charge \n*Flight \n*Fire Shield \n*Triple Flameballs",
+      "voiceeng": "*Josh Keaton (2011-2015) \n*Matthew Mercer (2016)",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "role": "Dark Edition Skylander",
+      "name": "Dark Spyro",
+      "appearances": "*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Lost Islands\n*Skylanders: Battlegrounds\n*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
+      "element": "Magic/Dark",
+      "image": "<gallery>\n300px-Dark-Spyro_01.jpg",
+      "species": "Dragon",
+      "world": "Unknown"
     }
   },
   {
@@ -55,18 +81,18 @@
     ],
     "alignment": "Core Skylander",
     "attributes": {
+      "name": "Double Trouble",
       "role": "Core Skylander",
       "image": "<gallery>\n300px-Double-Trouble 03.jpg",
-      "world": "Skylands",
-      "element": "Magic",
-      "appearances": "{{Scrollbox|content= \n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Lost Islands\n*Skylanders: Giants\n*Skylanders: Battlegrounds\n*Lightning Rod Faces the Cyclops Queen\n*Skylanders: Swap Force\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes}}",
-      "name": "Double Trouble",
       "species": "Tiki-Masked sorcerer",
-      "attack": "*Eldritch Beam \n*Conjure Exploding Double \n*Summon Magic Bomb \n*Arcane Eldritch Beam \n*Magical Cataclysm",
+      "voiceeng": "Alex Ness<ref>[https://youtu.be/nh4_vKQf_5A?t=276 Skylanders: Portal Casters 10th Anniversary Celebration Pt. 5 - Alex Ness]. (Date Posted - Oct 16, 2021). [http://youtube.com YouTube].</ref>",
+      "firstrelease": "Skylanders: Spyro's Adventure",
       "cameos": "Skylanders: Ring of Heroes",
       "gender": "Male",
-      "voiceeng": "Alex Ness<ref>[https://youtu.be/nh4_vKQf_5A?t=276 Skylanders: Portal Casters 10th Anniversary Celebration Pt. 5 - Alex Ness]. (Date Posted - Oct 16, 2021). [http://youtube.com YouTube].</ref>",
-      "firstrelease": "Skylanders: Spyro's Adventure"
+      "appearances": "{{Scrollbox|content= \n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Lost Islands\n*Skylanders: Giants\n*Skylanders: Battlegrounds\n*Lightning Rod Faces the Cyclops Queen\n*Skylanders: Swap Force\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes}}",
+      "attack": "*Eldritch Beam \n*Conjure Exploding Double \n*Summon Magic Bomb \n*Arcane Eldritch Beam \n*Magical Cataclysm",
+      "element": "Magic",
+      "world": "Skylands"
     }
   },
   {
@@ -94,6 +120,59 @@
     "attributes": {}
   },
   {
+    "figure_id": "0c735ddd3f214f8c",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Ghost_Roaster",
+    "soul_gem": null,
+    "signature_moves": [
+      "Chain Whip",
+      "Skull Charge",
+      "Ectoplasm Mode",
+      "Haunt",
+      "Nightmare Touch"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "appearances": "*Spyro's Kingdom (Cancelled)\n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Lost Islands\n*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Secret Agent Secrets\n*Skylanders: Imaginators",
+      "attack": "*Chain Whip\n*Skull Charge\n*Ectoplasm Mode\n*Haunt\n*Nightmare Touch",
+      "element": "Undead",
+      "world": "Skylands",
+      "image": "280px",
+      "role": "Core Skylander",
+      "voiceeng": "*John Kassir<ref>[https://dpntalent.com/talent/john-kassir-2/ John Kassir â DPN Talent]. [https://dpntalent.com/ Commercial Talent Agency].</ref>",
+      "name": "Ghost Roaster",
+      "gender": "Male",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "species": "Skeletal Ghoul"
+    }
+  },
+  {
+    "figure_id": "0f7cf29678991525",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Zook",
+    "soul_gem": null,
+    "signature_moves": [
+      "Bazooka Attack",
+      "Foliage Barrier",
+      "Mortar Attack",
+      "Full Splinter Jacket",
+      "Exploding Shrapnel"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "appearances": "*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Giants\n*Skylanders: Swap Force\n*Cynder Confronts the Weather Wizard\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "element": "Life",
+      "species": "Bambazooker",
+      "gender": "Male",
+      "world": "Skylands",
+      "cameos": "Return of the Dragon King",
+      "attack": "*Bazooka Attack \n*Foliage Barrier \n*Mortar Attack \n*Full Splinter Jacket \n*Exploding Shrapnel",
+      "voiceeng": "Fred Tatasciore (2012)",
+      "image": "<gallery>\n442px-Zook.jpg",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "name": "Zook",
+      "role": "Core Skylander"
+    }
+  },
+  {
     "figure_id": "0fd5c4cca2d6edce",
     "wiki_page": "https://skylanders.fandom.com/wiki/Tri-Tip/Gallery",
     "soul_gem": null,
@@ -114,17 +193,17 @@
     ],
     "alignment": "Legendary Trap Master",
     "attributes": {
+      "image": "272px",
+      "firstrelease": "Skylanders: Trap Team",
+      "gender": "Male",
+      "appearances": "*Skylanders: Trap Team\n*Skylanders: Lost Islands\n*Champions \n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
       "attack": "*Traptainium Punch \n*Robo Rage Mode \n*Ragin' Robo Rage \n*Static Cling \n*Jolting Jab",
       "species": "Robot",
-      "firstrelease": "Skylanders: Trap Team",
-      "name": "Legendary Jawbreaker",
-      "gender": "Male",
-      "image": "272px",
-      "role": "Legendary Trap Master",
-      "world": "Skylands",
-      "voiceeng": "Ike Amadi",
       "element": "Tech",
-      "appearances": "*Skylanders: Trap Team\n*Skylanders: Lost Islands\n*Champions \n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators"
+      "role": "Legendary Trap Master",
+      "name": "Legendary Jawbreaker",
+      "world": "Skylands",
+      "voiceeng": "Ike Amadi"
     }
   },
   {
@@ -140,19 +219,19 @@
     ],
     "alignment": "Core Skylander",
     "attributes": {
-      "voiceita": "Daniela Fava",
       "species": "Dragon",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "cameos": "*Skylanders Issue 12\n*Rift into Overdrive",
+      "role": "Core Skylander",
       "image": "<gallery>\nCynder_Promo.jpg",
       "attack": "*Spectral Lightning\n*Shadow Dash\n*Cynder Flight\n*Black Lightning\n*Shadow Reach",
-      "firstrelease": "Skylanders: Spyro's Adventure",
       "element": "Undead",
-      "role": "Core Skylander",
       "appearances": "{{Scrollbox|content=\n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Giants\n*Spyro versus The Mega Monsters (mentioned)\n*Skylanders: Swap Force\n*Cynder Confronts the Weather Wizard\n*Skylanders: Trap Team\n*Trigger Happy Targets the Evil Kaos\n*Return of the Dragon King\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes}}",
-      "cameos": "*Skylanders Issue 12\n*Rift into Overdrive",
-      "world": "Skylands",
       "gender": "Female",
       "voiceeng": "Tobie LaSalandra (2012) \n Erica Lindbeck (Imaginators, Curse Tiki Temple cutscenes only)",
-      "name": "Cynder"
+      "voiceita": "Daniela Fava",
+      "name": "Cynder",
+      "world": "Skylands"
     }
   },
   {
@@ -168,19 +247,19 @@
     ],
     "alignment": "Core Skylander",
     "attributes": {
-      "species": "Anthropomorphic Beehive/Honey Tree",
-      "gender": "Male",
-      "role": "Core Skylander",
-      "appearances": "*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
-      "name": "Bumble Blast",
-      "image": "<gallery>\nBumble_blast.jpg",
-      "firstrelease": "Skylanders: Swap Force",
       "attack": "*Beezooka \n*Honey Glob \n*Honey Beecon\n*Bee Armada \n*Honey Buzz Blast",
+      "appearances": "*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "firstrelease": "Skylanders: Swap Force",
       "cameos": "Stump Smash Crosses the Bone Dragon",
       "voiceeng": "David Sobolov<ref>[https://twitter.com/volobos/status/739210902210150402 I'm looking for video of my work in Guild Wars 2, and as Bumbleblast and Krypt King in Skylanders.]. (Date Posted - Jun 4, 2016). [https://twitter.com/ Twitter].</ref>",
-      "element": "Life",
       "voicespa": "Blas Garcia (Latin American)",
-      "world": "Radiant Mountains"
+      "world": "Radiant Mountains",
+      "gender": "Male",
+      "element": "Life",
+      "species": "Anthropomorphic Beehive/Honey Tree",
+      "role": "Core Skylander",
+      "name": "Bumble Blast",
+      "image": "<gallery>\nBumble_blast.jpg"
     }
   },
   {
@@ -196,22 +275,113 @@
     ],
     "alignment": "Legendary Skylander",
     "attributes": {
-      "image": "204px",
       "attack": "*Yeti Fists \n*Ice Prison \n*Arctic Explosion\n*Yeti Ice Shoes \n*Ice Knuckles",
-      "appearances": "*Skylanders: Giants\n*Skylanders: Swap Force \n*Skylanders: Lost Islands \n*Skylanders: Trap Team \n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "image": "204px",
       "world": "Skylands",
-      "voiceeng": "Fred Tatasciore (2012)",
-      "element": "Water",
+      "firstrelease": "Skylanders: Giants",
       "gender": "Male",
-      "role": "Legendary Skylander",
       "name": "Legendary Slam Bam",
-      "species": "Yeti",
-      "firstrelease": "Skylanders: Giants"
+      "voiceeng": "Fred Tatasciore (2012)",
+      "appearances": "*Skylanders: Giants\n*Skylanders: Swap Force \n*Skylanders: Lost Islands \n*Skylanders: Trap Team \n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "element": "Water",
+      "role": "Legendary Skylander",
+      "species": "Yeti"
+    }
+  },
+  {
+    "figure_id": "152c9a10c4ba8ac0",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Camo",
+    "soul_gem": null,
+    "signature_moves": [
+      "Sun Burst",
+      "Firecracker Vines",
+      "Searing Sun Blast",
+      "Melon Fountain",
+      "Peppers of Potency"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "s2": "290px\n</tabber>",
+      "world": "Tree of Life",
+      "species": "Plant/Dragon Hybrid",
+      "attack": "*Sun Burst \n*Firecracker Vines\n*Searing Sun Blast \n*Melon Fountain \n*Peppers of Potency",
+      "name": "Camo",
+      "element": "Life",
+      "role": "Core Skylander",
+      "image": "<tabber>\nS1 = 310px",
+      "appearances": "*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "voiceeng": "AndrÃ© Sogliuzzo<ref>[https://www.andresogliuzzo.com/conventions Conventions & Highlights]. [https://www.andresogliuzzo.com/ AndrÃ© Sogliuzzo's website].</ref>",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "gender": "Male",
+      "cameos": "Return of the Dragon King"
+    }
+  },
+  {
+    "figure_id": "15f91e16e4763b85",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Lightning_Rod",
+    "soul_gem": null,
+    "signature_moves": [
+      "Lightning Bolt",
+      "Grand Lightning Summoning",
+      "Thunderation",
+      "Zapper Field",
+      "Lightning Avatar"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "attack": "*Lightning Bolt \n*Grand Lightning Summoning \n*Thunderation \n*Zapper Field\n*Lightning Avatar",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "element": "Air",
+      "image": "<gallery>\nLightningRod 01.jpg",
+      "cameos": "Stump Smash Crosses the Bone Dragon",
+      "voiceeng": "Alex Ness<ref>[https://youtu.be/nh4_vKQf_5A?t=276 Skylanders: Portal Casters 10th Anniversary Celebration Pt. 5 - Alex Ness]. (Date Posted - Oct 16, 2021). [https://www.youtube.com YouTube].</ref>",
+      "name": "Lightning Rod",
+      "world": "The Cloud Kingdom",
+      "gender": "Male",
+      "role": "Core Skylander",
+      "appearances": "{{Scrollbox|content= \n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Battlegrounds\n*Skylanders: Lost Islands\n*Skylanders: Giants\n*Lightning Rod Faces the Cyclops Queen\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Trigger Happy Targets the Evil Kaos\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes}}",
+      "species": "Storm Giant",
+      "voiceita": "Marco Pagani"
     }
   },
   {
     "figure_id": "198cbd46cb880c37",
     "wiki_page": "https://skylanders.fandom.com/wiki/Book_of_Elements:_Air_and_Earth",
+    "soul_gem": null,
+    "signature_moves": [],
+    "alignment": null,
+    "attributes": {}
+  },
+  {
+    "figure_id": "1c2686cf20e8ab65",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Double_Trouble",
+    "soul_gem": null,
+    "signature_moves": [
+      "Eldritch Beam",
+      "Conjure Exploding Double",
+      "Summon Magic Bomb",
+      "Arcane Eldritch Beam",
+      "Magical Cataclysm"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "role": "Core Skylander",
+      "species": "Tiki-Masked sorcerer",
+      "image": "<gallery>\n300px-Double-Trouble 03.jpg",
+      "name": "Double Trouble",
+      "cameos": "Skylanders: Ring of Heroes",
+      "gender": "Male",
+      "appearances": "{{Scrollbox|content= \n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Lost Islands\n*Skylanders: Giants\n*Skylanders: Battlegrounds\n*Lightning Rod Faces the Cyclops Queen\n*Skylanders: Swap Force\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes}}",
+      "element": "Magic",
+      "attack": "*Eldritch Beam \n*Conjure Exploding Double \n*Summon Magic Bomb \n*Arcane Eldritch Beam \n*Magical Cataclysm",
+      "voiceeng": "Alex Ness<ref>[https://youtu.be/nh4_vKQf_5A?t=276 Skylanders: Portal Casters 10th Anniversary Celebration Pt. 5 - Alex Ness]. (Date Posted - Oct 16, 2021). [http://youtube.com YouTube].</ref>",
+      "world": "Skylands",
+      "firstrelease": "Skylanders: Spyro's Adventure"
+    }
+  },
+  {
+    "figure_id": "1cda49e44a4173ca",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Ground_Defense",
     "soul_gem": null,
     "signature_moves": [],
     "alignment": null,
@@ -238,18 +408,18 @@
     ],
     "alignment": "Core Skylander",
     "attributes": {
-      "gender": "Male",
       "cameos": "Stump Smash Crosses the Bone Dragon",
-      "voiceeng": "David Sobolov<ref>[https://twitter.com/volobos/status/739210902210150402 I'm looking for video of my work in Guild Wars 2, and as Bumbleblast and Krypt King in Skylanders.]. (Date Posted - Jun 4, 2016). [https://twitter.com/ Twitter].</ref>",
-      "role": "Core Skylander",
+      "name": "Bumble Blast",
+      "image": "<gallery>\nBumble_blast.jpg",
+      "appearances": "*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "species": "Anthropomorphic Beehive/Honey Tree",
       "voicespa": "Blas Garcia (Latin American)",
       "world": "Radiant Mountains",
-      "name": "Bumble Blast",
-      "attack": "*Beezooka \n*Honey Glob \n*Honey Beecon\n*Bee Armada \n*Honey Buzz Blast",
-      "image": "<gallery>\nBumble_blast.jpg",
-      "species": "Anthropomorphic Beehive/Honey Tree",
       "firstrelease": "Skylanders: Swap Force",
-      "appearances": "*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "voiceeng": "David Sobolov<ref>[https://twitter.com/volobos/status/739210902210150402 I'm looking for video of my work in Guild Wars 2, and as Bumbleblast and Krypt King in Skylanders.]. (Date Posted - Jun 4, 2016). [https://twitter.com/ Twitter].</ref>",
+      "gender": "Male",
+      "role": "Core Skylander",
+      "attack": "*Beezooka \n*Honey Glob \n*Honey Beecon\n*Bee Armada \n*Honey Buzz Blast",
       "element": "Life"
     }
   },
@@ -266,17 +436,82 @@
     ],
     "alignment": "Skylander",
     "attributes": {
-      "species": "Ent",
-      "world": "Skylands",
-      "voiceeng": "Kevin Michael Richardson",
-      "firstrelease": "Skylanders: Giants",
-      "image": "276px",
       "role": "Skylander",
       "element": "Life",
       "name": "Gnarly Tree Rex",
+      "world": "Skylands",
+      "voiceeng": "Kevin Michael Richardson",
       "gender": "Male",
       "attack": "*Arbor Smash \n*Sequoia Charge \n*Big Thorn Shockwave Slam \n*Photosynthesis Cannon \n*Super Stampede",
-      "appearances": "*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team \n*Skylanders: Lost Islands\n* Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators"
+      "appearances": "*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team \n*Skylanders: Lost Islands\n* Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "species": "Ent",
+      "firstrelease": "Skylanders: Giants",
+      "image": "276px"
+    }
+  },
+  {
+    "figure_id": "209b4886d61fe460",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Ground_Defense",
+    "soul_gem": null,
+    "signature_moves": [],
+    "alignment": null,
+    "attributes": {}
+  },
+  {
+    "figure_id": "20ebeb7ffe5553ab",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Chop_Chop",
+    "soul_gem": null,
+    "signature_moves": [
+      "Sword Slash",
+      "Arkeyan Shield",
+      "Spiked Shield Bash",
+      "Arkeyan Vorpal Blade",
+      "Vampiric Aura"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "s3": "290px\n</tabber>",
+      "species": "Arkeyan Skeleton",
+      "voiceeng": "*David Lodge<ref>[http://www.davidlodge.com/current-credits/ Current Credits]. [http://www.davidlodge.com/ David Lodge's Website].</ref>\n*Steve Blum <small>(additional voicelines)</small><ref>[https://www.steveblumvoices.com/work/#/video-games/ Steven Blum's official website]. [http://www.steveblumvoices.com Steve Blum's Website].</ref>",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "s2": "290px",
+      "role": "Core Skylander",
+      "appearances": "*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Giants \n*Skylanders: Swap Force\n*Skylanders: Trap Team \n*Skylanders: SuperChargers (Racing)\n*Skylanders: Battlecast\n*Skylanders: Imaginators \n*Skylanders: Ring of Heroes",
+      "name": "Chop Chop",
+      "element": "Undead",
+      "attack": "*Sword Slash \n*Arkeyan Shield \n*Spiked Shield Bash \n*Arkeyan Vorpal Blade \n*Vampiric Aura",
+      "image": "<tabber>\nS1 = 290px",
+      "gender": "Male",
+      "world": "Skylands",
+      "cameos": "Return of the Dragon King"
+    }
+  },
+  {
+    "figure_id": "22188795fca0d1df",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Dark_King_Pen",
+    "soul_gem": null,
+    "signature_moves": [
+      "Penguin Combo",
+      "Frost Breath",
+      "Penguin Drill",
+      "Ice Charge Lvl 1: Ice Arena",
+      "Penguin Combos"
+    ],
+    "alignment": "Dark Edition Sensei",
+    "attributes": {
+      "name": "Dark King Pen",
+      "battleclass": "Brawler",
+      "image": "File:Dark King Pen Artwork.jpg",
+      "firstrelease": "Skylanders: Imaginators",
+      "role": "Dark Edition Sensei",
+      "attack": "*Penguin Combo \n*Frost Breath \n*Penguin Drill \n*Ice Charge Lvl 1: Ice Arena \n*Penguin Combos",
+      "voicefre": "MaÃ®tre Gims<ref>[https://www.youtube.com/watch?v=DXjIUuI07LE MAÃTRE GIMS DONNE DE LA VOIX DANS SKYLANDERS IMAGINATORS!]. (Date Posted - Sep 14, 2016). [https://www.youtube.com YouTube].</ref>",
+      "world": "Cloudmelt Glaciers",
+      "voiceeng": "Rino Romano",
+      "element": "Water/Dark",
+      "species": "Penguin",
+      "gender": "Male",
+      "appearances": "*Skylanders: Imaginators \n*Skylanders: Ring of Heroes"
     }
   },
   {
@@ -292,18 +527,154 @@
     ],
     "alignment": "Sensei",
     "attributes": {
-      "world": "Skylands",
-      "image": "File:Mysticat Promo.jpg",
-      "species": "Sphinx",
       "gender": "Male",
-      "element": "Magic",
-      "attack": "*Laser Painter \n*Paw Print \n*Help Meow-t \n*Cat-astrophic Chasers \n*The Feline's Mutual",
+      "name": "Mysticat",
       "appearances": "*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
+      "world": "Skylands",
+      "element": "Magic",
+      "image": "File:Mysticat Promo.jpg",
+      "attack": "*Laser Painter \n*Paw Print \n*Help Meow-t \n*Cat-astrophic Chasers \n*The Feline's Mutual",
       "firstrelease": "Skylanders: Imaginators",
       "voiceeng": "Jocelyn Blue<ref>[https://www.facebook.com/863971520319321/photos/a.1009203959129409/1287000521349750/?type=3 Meet Mysticat]. (Date Posted - Mar. 9, 2017). [http://facebook.com Facebook].</ref>",
       "role": "Sensei",
-      "battleclass": "Sorcerer",
-      "name": "Mysticat"
+      "species": "Sphinx",
+      "battleclass": "Sorcerer"
+    }
+  },
+  {
+    "figure_id": "24583561d8735a0b",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Boomer",
+    "soul_gem": null,
+    "signature_moves": [
+      "Dynamite Toss",
+      "Troll Smash",
+      "Troll Bomb",
+      "Bomblastic",
+      "Triple Bundle Dynamite"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "role": "Core Skylander",
+      "world": "Skylands",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "image": "320px",
+      "element": "Tech",
+      "attack": "*Dynamite Toss \n*Troll Smash \n*Troll Bomb \n*Bomblastic \n*Triple Bundle Dynamite",
+      "appearances": "{{Scrollbox|content= \n*Spyro's Kingdom (Cancelled)\n*Skylanders: Spyro's Adventure \n*Skylanders: Universe\n*Skylanders: Cloud Patrol \n*Skylanders: Lost Islands \n*The Machine of Doom\n*Skylanders: Giants \n*Skylanders: Swap Force \n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing) \n*Secret Agent Secrets \n*Skylanders: Imaginators \n*Skylanders: Ring of Heroes}}",
+      "species": "Troll",
+      "gender": "Male",
+      "voiceeng": "*Joey Camen (2012)<ref>[http://www.voicecomic.com/credits.shtml Joey Camen's resume]. [http://www.voicecomic.com/credits.shtml VoiceComic].</ref>",
+      "name": "Boomer"
+    }
+  },
+  {
+    "figure_id": "24e1efa9e5982b50",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Stealth_Elf",
+    "soul_gem": null,
+    "signature_moves": [
+      "Blade Slash",
+      "Stealth",
+      "Dragonfang Daggers",
+      "Arboreal Acrobatics",
+      "Elf Jitsu"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "world": "Skylands",
+      "appearances": "{{Scrollbox|content=  \n*Spyro's Kingdom (Cancelled)\n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Giants \n* Skylanders: Battlegrounds \n*Spyro versus The Mega Monsters \n*Skylanders: Swap Force\n*The Kaos Trap \n*Skylanders: Trap Team \n*Rift into Overdrive \n*Skylanders: SuperChargers (Racing)\n*Skylanders: Battlecast\n*Skylanders: Imaginators \n*Skylanders: Ring of Heroes}}",
+      "voiceita": "Patrizia Scianca",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "gender": "Female",
+      "attack": "*Blade Slash \n*Stealth \n*Dragonfang Daggers\n*Arboreal Acrobatics \n*Elf Jitsu",
+      "element": "Life",
+      "voiceeng": "Audrey Wasilewski (2012)<ref>[http://www.audreywasilewski.com/voice-over.html Audrey Wasilewski's voiceover list]. [http://www.audreywasilewski.com/ Audrey Wasilewski's Website].</ref>",
+      "role": "Core Skylander",
+      "image": "<gallery>\nStealth Elf Promo.jpg",
+      "name": "Stealth Elf",
+      "species": "Elf"
+    }
+  },
+  {
+    "figure_id": "28c1b4e810cebe4f",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Cynder",
+    "soul_gem": null,
+    "signature_moves": [
+      "Spectral Lightning",
+      "Shadow Dash",
+      "Cynder Flight",
+      "Black Lightning",
+      "Shadow Reach"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "name": "Cynder",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "role": "Core Skylander",
+      "voiceita": "Daniela Fava",
+      "appearances": "{{Scrollbox|content=\n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Giants\n*Spyro versus The Mega Monsters (mentioned)\n*Skylanders: Swap Force\n*Cynder Confronts the Weather Wizard\n*Skylanders: Trap Team\n*Trigger Happy Targets the Evil Kaos\n*Return of the Dragon King\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes}}",
+      "element": "Undead",
+      "voiceeng": "Tobie LaSalandra (2012) \n Erica Lindbeck (Imaginators, Curse Tiki Temple cutscenes only)",
+      "image": "<gallery>\nCynder_Promo.jpg",
+      "species": "Dragon",
+      "gender": "Female",
+      "world": "Skylands",
+      "attack": "*Spectral Lightning\n*Shadow Dash\n*Cynder Flight\n*Black Lightning\n*Shadow Reach",
+      "cameos": "*Skylanders Issue 12\n*Rift into Overdrive"
+    }
+  },
+  {
+    "figure_id": "29002f2020265aa5",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Dark_King_Pen",
+    "soul_gem": null,
+    "signature_moves": [
+      "Penguin Combo",
+      "Frost Breath",
+      "Penguin Drill",
+      "Ice Charge Lvl 1: Ice Arena",
+      "Penguin Combos"
+    ],
+    "alignment": "Dark Edition Sensei",
+    "attributes": {
+      "battleclass": "Brawler",
+      "name": "Dark King Pen",
+      "attack": "*Penguin Combo \n*Frost Breath \n*Penguin Drill \n*Ice Charge Lvl 1: Ice Arena \n*Penguin Combos",
+      "voiceeng": "Rino Romano",
+      "element": "Water/Dark",
+      "gender": "Male",
+      "image": "File:Dark King Pen Artwork.jpg",
+      "appearances": "*Skylanders: Imaginators \n*Skylanders: Ring of Heroes",
+      "role": "Dark Edition Sensei",
+      "voicefre": "MaÃ®tre Gims<ref>[https://www.youtube.com/watch?v=DXjIUuI07LE MAÃTRE GIMS DONNE DE LA VOIX DANS SKYLANDERS IMAGINATORS!]. (Date Posted - Sep 14, 2016). [https://www.youtube.com YouTube].</ref>",
+      "firstrelease": "Skylanders: Imaginators",
+      "world": "Cloudmelt Glaciers",
+      "species": "Penguin"
+    }
+  },
+  {
+    "figure_id": "2900fe5f1252733f",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Legendary_Trigger_Happy",
+    "soul_gem": null,
+    "signature_moves": [
+      "Gold Coin Shooters",
+      "Safe Cracker Bomb",
+      "Pot O' Gold",
+      "Golden Super Charge",
+      "Coinsplosion"
+    ],
+    "alignment": "Legendary Skylander",
+    "attributes": {
+      "species": "Gremlin",
+      "role": "Legendary Skylander",
+      "gender": "Male",
+      "cameos": "Champions (comic cover)",
+      "world": "Skylands",
+      "element": "Tech",
+      "name": "Legendary Trigger Happy",
+      "appearances": "*Skylanders: Spyro's Adventure\n*Skylanders: Universe \n*Skylanders: Cloud Patrol\n*Skylanders: Lost Islands\n*Skylanders: Battlegrounds\n*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team \n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "attack": "*Gold Coin Shooters\n*Safe Cracker Bomb\n*Pot O' Gold\n*Golden Super Charge\n*Coinsplosion",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "image": "300px",
+      "voiceeng": "Dave Wittenberg<ref>[https://www.davewittenberg.com/parade-of-characters Parade of Characters]. [https://www.davewittenberg.com/ Dave Wittenberg's official website].</ref>"
     }
   },
   {
@@ -320,16 +691,16 @@
     "alignment": "Legendary Skylander",
     "attributes": {
       "appearances": "*Skylanders: Giants\n*Skylanders: Lost Islands\n*Skylanders: Swap Force \n*Skylanders: Trap Team \n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
-      "role": "Legendary Skylander",
-      "image": "320px",
-      "world": "Skylands",
       "gender": "Female",
-      "firstrelease": "Skylanders: Giants",
       "species": "Unknown",
       "voiceeng": "Julie Nathanson",
-      "element": "Water",
+      "image": "320px",
+      "world": "Skylands",
+      "role": "Legendary Skylander",
       "name": "Legendary Chill",
-      "attack": "*Ice Javelin \n*Ice Wall \n*Glacial Bash \n*Cold Front \n*Imperial Armor"
+      "attack": "*Ice Javelin \n*Ice Wall \n*Glacial Bash \n*Cold Front \n*Imperial Armor",
+      "firstrelease": "Skylanders: Giants",
+      "element": "Water"
     }
   },
   {
@@ -373,14 +744,14 @@
     ],
     "alignment": "Enemy",
     "attributes": {
-      "species": "Robots",
+      "world": "The Future of Skylands \n Shrine of Light",
+      "appearances": "Skylanders: Trap Team \n Skylanders: Ring of Heroes",
+      "image": "BlasterTron2.png",
       "name": "Blaster-Tron",
       "role": "Enemy",
-      "appearances": "Skylanders: Trap Team \n Skylanders: Ring of Heroes",
       "element": "Light",
       "attack": "Ray beam",
-      "image": "BlasterTron2.png",
-      "world": "The Future of Skylands \n Shrine of Light"
+      "species": "Robots"
     }
   },
   {
@@ -396,18 +767,48 @@
     ],
     "alignment": "Core Skylander",
     "attributes": {
-      "role": "Core Skylander",
-      "appearances": "{{Scrollbox|content= \n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Lost Islands\n*Skylanders: Giants\n*Skylanders: Battlegrounds\n*Lightning Rod Faces the Cyclops Queen\n*Skylanders: Swap Force\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes}}",
       "firstrelease": "Skylanders: Spyro's Adventure",
-      "species": "Tiki-Masked sorcerer",
       "element": "Magic",
-      "world": "Skylands",
-      "voiceeng": "Alex Ness<ref>[https://youtu.be/nh4_vKQf_5A?t=276 Skylanders: Portal Casters 10th Anniversary Celebration Pt. 5 - Alex Ness]. (Date Posted - Oct 16, 2021). [http://youtube.com YouTube].</ref>",
-      "name": "Double Trouble",
-      "image": "<gallery>\n300px-Double-Trouble 03.jpg",
-      "attack": "*Eldritch Beam \n*Conjure Exploding Double \n*Summon Magic Bomb \n*Arcane Eldritch Beam \n*Magical Cataclysm",
       "cameos": "Skylanders: Ring of Heroes",
-      "gender": "Male"
+      "voiceeng": "Alex Ness<ref>[https://youtu.be/nh4_vKQf_5A?t=276 Skylanders: Portal Casters 10th Anniversary Celebration Pt. 5 - Alex Ness]. (Date Posted - Oct 16, 2021). [http://youtube.com YouTube].</ref>",
+      "gender": "Male",
+      "image": "<gallery>\n300px-Double-Trouble 03.jpg",
+      "appearances": "{{Scrollbox|content= \n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Lost Islands\n*Skylanders: Giants\n*Skylanders: Battlegrounds\n*Lightning Rod Faces the Cyclops Queen\n*Skylanders: Swap Force\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes}}",
+      "species": "Tiki-Masked sorcerer",
+      "name": "Double Trouble",
+      "role": "Core Skylander",
+      "world": "Skylands",
+      "attack": "*Eldritch Beam \n*Conjure Exploding Double \n*Summon Magic Bomb \n*Arcane Eldritch Beam \n*Magical Cataclysm"
+    }
+  },
+  {
+    "figure_id": "3247171bc3190bcc",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Terrafin",
+    "soul_gem": null,
+    "signature_moves": [
+      "Shark Punch",
+      "Earth Swim",
+      "Brass Knuckles",
+      "Mega Bellyflop",
+      "Razorfin"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "image": "<gallery>\nTerrafin.jpeg",
+      "voicefin": "Markus BÃ¤ckman",
+      "voiceger": "Tobias Brecklinghaus",
+      "appearances": "{{Scrollbox|content = \n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Giants\n*Skylanders: Swap Force\n*Terrafin Battles the Boom Brothers\n*Trigger Happy Targets the Evil Kaos\n*Skylanders: Trap Team\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators}}",
+      "voicespa": "Juan Carlos Lozano",
+      "name": "Terrafin",
+      "voiceeng": "*Unknown (2011) \n*Joey Camen (2012)<ref>[http://www.voicecomic.com/credits.shtml Joey Camen's resume]. [http://www.voicecomic.com/credits.shtml VoiceComic].</ref>\n*Chris Williams (The Beginning Trailer)",
+      "cameos": "*Spyro versus The Mega Monsters\n*Return of the Dragon King\n*Unexpected Allies",
+      "species": "Dirt Shark",
+      "role": "Core Skylander",
+      "gender": "Male",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "element": "Earth",
+      "attack": "*Shark Punch\n*Earth Swim \n*Brass Knuckles\n*Mega Bellyflop \n*Razorfin",
+      "world": "The Dirt Seas"
     }
   },
   {
@@ -420,14 +821,14 @@
     ],
     "alignment": "Enemy",
     "attributes": {
-      "appearances": "Skylanders: Trap Team (Console)\nSkylanders: Ring of Heroes",
-      "attack": "Lightning Strike\nWhirlwind",
       "world": "Skyhighlands\nThe Golden Desert\nLair of the Golden Queen",
-      "image": "File:BadJujuRoHRender.png",
-      "role": "Enemy",
-      "name": "Bad Jujus",
+      "element": "Air",
       "species": "Skeleton Ghost",
-      "element": "Air"
+      "appearances": "Skylanders: Trap Team (Console)\nSkylanders: Ring of Heroes",
+      "image": "File:BadJujuRoHRender.png",
+      "attack": "Lightning Strike\nWhirlwind",
+      "name": "Bad Jujus",
+      "role": "Enemy"
     }
   },
   {
@@ -444,16 +845,16 @@
     "alignment": "Skylander",
     "attributes": {
       "world": "Skylands",
-      "role": "Skylander",
-      "gender": "Male",
-      "attack": "*Eldritch Beam \n*Conjure Exploding Double \n*Summon Magic Bomb \n*Arcane Eldritch Beam \n*Magical Cataclysm",
-      "name": "Royal Double Trouble",
-      "species": "Tiki Masked Sorcerer.",
-      "appearances": "*Skylanders: Giants\n*Skylanders: Battlegrounds\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: Lost Islands\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
       "element": "Magic",
+      "species": "Tiki Masked Sorcerer.",
+      "image": "File:Royal_Double_Trouble_.png",
+      "name": "Royal Double Trouble",
+      "appearances": "*Skylanders: Giants\n*Skylanders: Battlegrounds\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: Lost Islands\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "gender": "Male",
       "voiceeng": "Alex Ness",
+      "role": "Skylander",
       "firstrelease": "Skylanders: Giants",
-      "image": "File:Royal_Double_Trouble_.png"
+      "attack": "*Eldritch Beam \n*Conjure Exploding Double \n*Summon Magic Bomb \n*Arcane Eldritch Beam \n*Magical Cataclysm"
     }
   },
   {
@@ -485,18 +886,18 @@
     ],
     "alignment": "Core Skylanders",
     "attributes": {
-      "name": "Fright Rider",
       "gender": "Male (both)",
-      "appearances": "*Skylanders: Giants\n*Skylanders: Lost Islands\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
-      "firstrelease": "Skylanders: Giants",
-      "species": "*Fright Rider: Undead Elf\n*Ozzy: Skeletal Ostrich",
-      "world": "Skylands",
-      "element": "Undead",
       "role": "Core Skylanders",
       "voiceeng": "Yuri Lowenthal<ref>[https://www.youtube.com/watch?v=3dY8iaYXZ4E Skylanders Trail Blazer + Fright Rider Voice Yuri Lowenthal Interview Wondercon 2015]. (Date Posted - Apr 7, 2015). [http://www.youtube.com YouTube].</ref>",
       "cameos": "*Gill Grunt and the Curse of the Fish Master\n*Trigger Happy Targets the Evil Kaos",
       "attack": "*Melee Attacks \n*Jousting Charge \n*Burrow Bomber \n*Ghoul Glaive\n*Halberd Horror",
-      "image": "320px"
+      "element": "Undead",
+      "image": "320px",
+      "appearances": "*Skylanders: Giants\n*Skylanders: Lost Islands\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "firstrelease": "Skylanders: Giants",
+      "species": "*Fright Rider: Undead Elf\n*Ozzy: Skeletal Ostrich",
+      "name": "Fright Rider",
+      "world": "Skylands"
     }
   },
   {
@@ -506,6 +907,61 @@
     "signature_moves": [],
     "alignment": null,
     "attributes": {}
+  },
+  {
+    "figure_id": "3ceaf3fdc903fc08",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Stump_Smash",
+    "soul_gem": null,
+    "signature_moves": [
+      "Wood Hammer",
+      "Acorn Spit",
+      "Meganut",
+      "Thorn Bark",
+      "Stump Crusher Combos"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "voiceita": "Pietro Ubaldi",
+      "appearances": "*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Stump Smash Crosses the Bone Dragon\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "attack": "*Wood Hammer \n*Acorn Spit \n*Meganut \n*Thorn Bark\n*Stump Crusher Combos",
+      "species": "Ent",
+      "voicefin": "Bruno LÃ¤hteenmÃ¤ki",
+      "element": "Life",
+      "voiceeng": "Kevin Michael Richardson<ref>[https://www.youtube.com/watch?v=sPI2gZhhR6Y Skylanders Voice of TREE REX & STUMP SMASH Kevin Michael Richardson Interview]. (Date Posted - May 31, 2014). [https://www.youtube.com YouTube].</ref>",
+      "voicejap": "Soichi Abe<ref>[https://kenyu-office.com/abesoichi/ Soichi Abe's talent agency profile].</ref>",
+      "role": "Core Skylander",
+      "world": "Skylands",
+      "gender": "Male",
+      "name": "Stump Smash",
+      "image": "<gallery>\nStump_Smash_Promo.jpg"
+    }
+  },
+  {
+    "figure_id": "3def0618a9d28c18",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Voodood",
+    "soul_gem": null,
+    "signature_moves": [
+      "Axe Reaver",
+      "Zipline Axe",
+      "Magical Tripwire",
+      "Extended Blade",
+      "Electro Axe"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "image": "310px",
+      "name": "Voodood",
+      "element": "Magic",
+      "role": "Core Skylander",
+      "voiceeng": "AndrÃ© Sogliuzzo<ref>[https://www.andresogliuzzo.com/conventions Conventions & Highlights]. [https://www.andresogliuzzo.com/ AndrÃ© Sogliuzzo's website].</ref>",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "gender": "Male",
+      "species": "Orc",
+      "world": "Skylands",
+      "appearances": "{{Scrollbox|content= \n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Lost Islands\n*Skylanders: Giants\n*Lightning Rod Faces the Cyclops Queen\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Secret Agent Secrets\n*Skylanders: Imaginators}}",
+      "attack": "*Axe Reaver  \n*Zipline Axe  \n*Magical Tripwire  \n*Extended Blade \n*Electro Axe"
+    }
   },
   {
     "figure_id": "3ea805a1d767c3ca",
@@ -520,19 +976,19 @@
     ],
     "alignment": "Sensei",
     "attributes": {
-      "name": "Barbella",
+      "element": "Earth",
       "appearances": "*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
       "species": "Unknown",
-      "voiceita": "Emanuela Pacotto",
-      "role": "Sensei",
-      "battleclass": "Sentinel",
-      "gender": "Female",
-      "attack": "*Barbell Bash\n*Rocky Rep \n*Cubic Runic Rock \n*Gifts of the Deadlift \n*For the Crater Good",
       "image": "280px",
+      "voiceita": "Emanuela Pacotto",
+      "attack": "*Barbell Bash\n*Rocky Rep \n*Cubic Runic Rock \n*Gifts of the Deadlift \n*For the Crater Good",
       "voiceeng": "Cynthia McWilliams<ref>[https://www.instagram.com/p/Cb0opv3gbT_/c/17936293495929905/r/18030684700352316/?hl=en Cynthia McWilliams's instagram post]. (Date Posted - ). [https://www.instagram.com Instagram].</ref>",
-      "element": "Earth",
       "firstrelease": "Skylanders: Imaginators",
-      "world": "Skylands"
+      "world": "Skylands",
+      "role": "Sensei",
+      "gender": "Female",
+      "name": "Barbella",
+      "battleclass": "Sentinel"
     }
   },
   {
@@ -556,17 +1012,17 @@
     ],
     "alignment": "Legendary Skylander",
     "attributes": {
+      "role": "Legendary Skylander",
+      "element": "Life",
+      "gender": "Female",
+      "appearances": "*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team \n*Skylanders: Lost Islands\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators\n*Arbor Day",
+      "image": "200px",
+      "species": "Elf",
       "name": "Legendary\nStealth Elf",
       "attack": "Blade Slash \n Stealthier Decoy \n Dragonfang Daggers \n Arboreal Acrobatics \n Elf Jitsu",
-      "gender": "Female",
-      "role": "Legendary Skylander",
-      "appearances": "*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team \n*Skylanders: Lost Islands\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators\n*Arbor Day",
-      "voiceeng": "Audrey Wasilewski",
-      "firstrelease": "Skylanders: Giants",
       "world": "Skylands",
-      "element": "Life",
-      "image": "200px",
-      "species": "Elf"
+      "firstrelease": "Skylanders: Giants",
+      "voiceeng": "Audrey Wasilewski"
     }
   },
   {
@@ -583,18 +1039,100 @@
     ],
     "alignment": "Sensei",
     "attributes": {
-      "image": "Flare_Wolf_Promo.jpg",
+      "voiceeng": "Cameron Bowen<ref>[https://twitter.com/CameronBowen/status/812075994211381248 #FlareWolf is in stores now! Pick one up and you might recognize the voice! ;)]. (Date Posted - Dec 22, 2016). [https://twitter.com Twitter]</ref>",
+      "battleclass": "Bazooker",
+      "name": "Flare Wolf",
+      "gender": "Male",
       "attack": "*Rockets Away\n*Ride the Rocket \n*Loop De Loop \n*Roman Candle \n*Pyrotechnist \n*Secret Weapon",
       "firstrelease": "Skylanders: Imaginators",
-      "appearances": "*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
       "role": "Sensei",
-      "gender": "Male",
-      "world": "Skylands",
-      "name": "Flare Wolf",
+      "appearances": "*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
       "element": "Fire",
-      "battleclass": "Bazooker",
-      "species": "Fire Wolf",
-      "voiceeng": "Cameron Bowen<ref>[https://twitter.com/CameronBowen/status/812075994211381248 #FlareWolf is in stores now! Pick one up and you might recognize the voice! ;)]. (Date Posted - Dec 22, 2016). [https://twitter.com Twitter]</ref>"
+      "image": "Flare_Wolf_Promo.jpg",
+      "world": "Skylands",
+      "species": "Fire Wolf"
+    }
+  },
+  {
+    "figure_id": "4741b7b06e32c90f",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Sunburn",
+    "soul_gem": null,
+    "signature_moves": [
+      "Flamethrower Breath",
+      "Immolation Teleport",
+      "Blazethrower",
+      "Phoenix Dash",
+      "Infinite Flame"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "name": "Sunburn",
+      "voiceeng": "Troy Baker (2012)",
+      "role": "Core Skylander",
+      "appearances": "*Spyro's Kingdom <small>(scrapped)</small>\n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Giants\n*Skylanders: Lost Islands\n*Skylanders: Battlegrounds\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "cameos": "Stump Smash Crosses the Bone Dragon",
+      "world": "Skylands",
+      "image": "310px",
+      "gender": "Male",
+      "element": "Fire",
+      "attack": "*Flamethrower Breath\n*Immolation Teleport\n*Blazethrower\n*Phoenix Dash\n*Infinite Flame",
+      "species": "Phoenix/Dragon Hybrid"
+    }
+  },
+  {
+    "figure_id": "4a6890428ae25740",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Ignitor",
+    "soul_gem": null,
+    "signature_moves": [
+      "Flaming Sword",
+      "Flame Form Mortar",
+      "Scorching Blade",
+      "Fire Forged Armor",
+      "Flame Form"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "image": "<gallery>\n270px-Sky_ignitor.jpg",
+      "role": "Core Skylander",
+      "name": "Ignitor",
+      "attack": "*Flaming Sword \n*Flame Form Mortar \n*Scorching Blade \n*Fire Forged Armor \n*Flame Form",
+      "world": "Skylands",
+      "voiceeng": "*Dwight Schultz",
+      "appearances": "*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: SuperChargers\n*Skylanders: SuperChargers Racing\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "species": "Fire Spirit Knight",
+      "element": "Fire",
+      "family": "Unnamed mother<ref>Skylanders Universe: Book of Elements - Fire and Water, page 39</ref>",
+      "gender": "Male"
+    }
+  },
+  {
+    "figure_id": "4be1e975da8a023a",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Trigger_Happy",
+    "soul_gem": null,
+    "signature_moves": [
+      "Gold Coin Shooters",
+      "Safe Cracker Bomb",
+      "Pot O' Gold",
+      "Golden Super Charge",
+      "Coinsplosion"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "name": "Trigger Happy",
+      "element": "Tech",
+      "world": "Skylands",
+      "attack": "*Gold Coin Shooters\n*Safe Cracker Bomb\n*Pot O' Gold\n*Golden Super Charge\n*Coinsplosion",
+      "cameos": "The Machine of Doom",
+      "gender": "Male",
+      "firstrelease": "Skylanders: Spyro's Adventure\nStefano Brusa",
+      "species": "Gremlin",
+      "image": "<gallery>\nSky trigger2.jpg",
+      "role": "Core Skylander",
+      "voiceeng": "Dave Wittenberg<ref>[https://www.davewittenberg.com/parade-of-characters Parade of Characters]. [https://www.davewittenberg.com/ Dave Wittenberg's official website].</ref>",
+      "voiceita": "Claudio Moneta (2011)",
+      "appearances": "{{Scrollbox|content= \n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Lost Islands\n*Skylanders: Battlegrounds\n*Skylanders: Giants\n*Spyro versus The Mega Monsters\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Champions\n*Trigger Happy Targets the Evil Kaos\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Battlecast\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes}}"
     }
   },
   {
@@ -604,6 +1142,33 @@
     "signature_moves": [],
     "alignment": null,
     "attributes": {}
+  },
+  {
+    "figure_id": "50ad9a6316d555ca",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Tidepool",
+    "soul_gem": null,
+    "signature_moves": [
+      "Squid Pistols",
+      "Squid Toss",
+      "Whale Tale",
+      "I'll ink to that",
+      "Squid Squabble"
+    ],
+    "alignment": "Sensei",
+    "attributes": {
+      "battleclass": "Quickshot",
+      "species": "Unknown",
+      "gender": "Female",
+      "element": "Water",
+      "name": "Tidepool",
+      "appearances": "*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
+      "voiceeng": "Moira Quirk<ref>[https://youtu.be/WV1R5QazZYU?t=71 Skylanders 10 Year Anniversary Collaboration Celebration Part 1: OG's and Masterminds]. (Date Posted - Oct 12, 2021). [http://youtube.com YouTube].</ref>",
+      "firstrelease": "Skylanders: Imaginators",
+      "role": "Sensei",
+      "world": "Skylands",
+      "attack": "*Squid Pistols \n*Squid Toss \n*Whale Tale \n*I'll ink to that\n*Squid Squabble",
+      "image": "File:Tidepool Promo.jpg"
+    }
   },
   {
     "figure_id": "51d4a0c409752bbd",
@@ -618,18 +1183,18 @@
     ],
     "alignment": "Core Skylander",
     "attributes": {
-      "world": "Popcorn Volcano",
-      "cameos": "*Return of the Dragon King \n*Skylanders: Battlecast",
-      "firstrelease": "Skylanders: Giants",
-      "attack": "*Firebark \n*Wall of Fire \n*Comet Slam \n*Wall of More Fire \n*Super Comet",
-      "appearances": "*Skylanders: Giants\n* Skylanders: Swap Force\n*Terrafin Battles the Boom Brothers \n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
+      "name": "Hot Dog",
       "voiceeng": "Carlos Alazraqui<ref>[https://twitter.com/carlosalazraqui/status/466283494285385730 Carlos Alazraqui's Twitter]. (Date Posted - May 13, 2014). [https://twitter.com Twitter].</ref> \n Tom Kenny (Still Friends commercial)",
-      "species": "Fire Dog",
       "image": "<gallery>\nHot_Dog_Promo.jpg",
-      "element": "Fire",
+      "species": "Fire Dog",
+      "world": "Popcorn Volcano",
+      "attack": "*Firebark \n*Wall of Fire \n*Comet Slam \n*Wall of More Fire \n*Super Comet",
+      "firstrelease": "Skylanders: Giants",
+      "cameos": "*Return of the Dragon King \n*Skylanders: Battlecast",
       "gender": "Male",
       "role": "Core Skylander",
-      "name": "Hot Dog"
+      "element": "Fire",
+      "appearances": "*Skylanders: Giants\n* Skylanders: Swap Force\n*Terrafin Battles the Boom Brothers \n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes"
     }
   },
   {
@@ -645,21 +1210,21 @@
     ],
     "alignment": "Core Skylander",
     "attributes": {
-      "appearances": "{{Scrollbox|content= \n*Skylanders: Giants\n*Lightning Rod Faces the Cyclops Queen\n*Skylanders: Swap Force\n*The Kaos Trap\n*Skylanders: Trap Team\n*Skylanders Issue 12\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Battlecast\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes}}",
-      "voiceger": "Erik SchÃ¤ffler",
-      "gender": "Male",
       "voiceport": "Dudu Feveiro<ref>[https://www.youtube.com/watch?v=PUKEF52rsMQ Skylanders - Pop Fizz]. (Date Posted: May 11, 2023). [https://youtube YouTube].</ref>",
-      "name": "Pop Fizz",
-      "image": "<gallery>\nPopFizz.jpg",
-      "element": "Magic",
       "species": "Blue Gremlin<ref name=\"Gremlin\">Skylander: Universe - Official Sticker Book, page 7</ref>",
       "voiceeng": "Bobcat Goldthwait",
+      "appearances": "{{Scrollbox|content= \n*Skylanders: Giants\n*Lightning Rod Faces the Cyclops Queen\n*Skylanders: Swap Force\n*The Kaos Trap\n*Skylanders: Trap Team\n*Skylanders Issue 12\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Battlecast\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes}}",
       "voicespa": "Juan Carlos Lozano (Castilian)\nHumberto VÃ©lez (Latin American)",
+      "gender": "Male",
       "role": "Core Skylander",
-      "world": "Skylands",
-      "attack": "*Potion Lob \n*Beast Form \n*New Concoctions \n*Puddle of Pain \n*Raging Beast",
       "firstrelease": "Skylanders: Giants",
-      "cameos": "*Stump Smash Crosses the Bone Dragon\n*Trigger Happy Targets the Evil Kaos\n*Return of the Dragon King"
+      "element": "Magic",
+      "name": "Pop Fizz",
+      "voiceger": "Erik SchÃ¤ffler",
+      "attack": "*Potion Lob \n*Beast Form \n*New Concoctions \n*Puddle of Pain \n*Raging Beast",
+      "world": "Skylands",
+      "cameos": "*Stump Smash Crosses the Bone Dragon\n*Trigger Happy Targets the Evil Kaos\n*Return of the Dragon King",
+      "image": "<gallery>\nPopFizz.jpg"
     }
   },
   {
@@ -675,19 +1240,34 @@
     ],
     "alignment": "Core Skylander",
     "attributes": {
-      "image": "<gallery>\nBumble_blast.jpg",
-      "species": "Anthropomorphic Beehive/Honey Tree",
-      "world": "Radiant Mountains",
-      "name": "Bumble Blast",
       "attack": "*Beezooka \n*Honey Glob \n*Honey Beecon\n*Bee Armada \n*Honey Buzz Blast",
-      "appearances": "*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
-      "cameos": "Stump Smash Crosses the Bone Dragon",
-      "firstrelease": "Skylanders: Swap Force",
+      "species": "Anthropomorphic Beehive/Honey Tree",
+      "image": "<gallery>\nBumble_blast.jpg",
+      "world": "Radiant Mountains",
       "voiceeng": "David Sobolov<ref>[https://twitter.com/volobos/status/739210902210150402 I'm looking for video of my work in Guild Wars 2, and as Bumbleblast and Krypt King in Skylanders.]. (Date Posted - Jun 4, 2016). [https://twitter.com/ Twitter].</ref>",
+      "firstrelease": "Skylanders: Swap Force",
+      "name": "Bumble Blast",
       "gender": "Male",
       "role": "Core Skylander",
+      "element": "Life",
       "voicespa": "Blas Garcia (Latin American)",
-      "element": "Life"
+      "cameos": "Stump Smash Crosses the Bone Dragon",
+      "appearances": "*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators"
+    }
+  },
+  {
+    "figure_id": "56b668a6bbc7cf33",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Crab",
+    "soul_gem": null,
+    "signature_moves": [],
+    "alignment": "*Neutrals\n*Allies\n*Skylanders\n*Enemies\n*Villains",
+    "attributes": {
+      "name": "Crabs",
+      "species": "Crustaceans",
+      "role": "*Neutrals\n*Allies\n*Skylanders\n*Enemies\n*Villains",
+      "world": "*Skylands \n*Motleyville\n*BattleBrawl Island \n*Ridepocalypse Demo Derby\n*Thumpin' Wumpa Islands",
+      "image": "Crabby (S.SC).jpg",
+      "appearances": "*Skylanders: Swap Force\n*Skylanders: SuperChargers"
     }
   },
   {
@@ -705,14 +1285,14 @@
     "attributes": {
       "species": "Orc",
       "role": "Eon's Elite",
-      "firstrelease": "Skylanders: SuperChargers",
+      "gender": "Male",
+      "attack": "*Axe Reaver  \n*Zipline Axe  \n*Magical Tripwire  \n*Extended Blade \n*Electro Axe",
+      "appearances": "*Skylanders: SuperChargers (Racing) \n*Skylanders: Imaginators",
+      "voiceeng": "AndrÃ© Sogliuzzo<ref>[https://www.andresogliuzzo.com/conventions Conventions & Highlights]. [https://www.andresogliuzzo.com/ AndrÃ© Sogliuzzo's website].</ref>",
       "image": "File:Eon's Elite Voodood.jpg",
       "element": "Magic",
       "world": "Skylands",
-      "voiceeng": "AndrÃ© Sogliuzzo<ref>[https://www.andresogliuzzo.com/conventions Conventions & Highlights]. [https://www.andresogliuzzo.com/ AndrÃ© Sogliuzzo's website].</ref>",
-      "attack": "*Axe Reaver  \n*Zipline Axe  \n*Magical Tripwire  \n*Extended Blade \n*Electro Axe",
-      "gender": "Male",
-      "appearances": "*Skylanders: SuperChargers (Racing) \n*Skylanders: Imaginators",
+      "firstrelease": "Skylanders: SuperChargers",
       "name": "Elite Voodood"
     }
   },
@@ -729,18 +1309,71 @@
     ],
     "alignment": "Sensei",
     "attributes": {
-      "element": "Life",
       "name": "Jingle Bell Chompy Mage",
-      "attack": "Chompzooka! \n Talk to the Hand! \n Chompy Pile! \n Staff Shot \n Chompies to Go Please",
-      "gender": "Male",
-      "image": "Jingle Bell Chompy Mage Promo.jpg",
-      "battleclass": "Bazooker",
-      "role": "Sensei",
       "species": "Half-Wizard Half-Gargantuan Chompy",
-      "world": "Chompy Mountain",
+      "firstrelease": "Skylanders: Imaginators",
+      "gender": "Male",
+      "role": "Sensei",
+      "battleclass": "Bazooker",
       "appearances": "Skylanders: Imaginators",
       "voiceeng": "Alex Ness",
-      "firstrelease": "Skylanders: Imaginators"
+      "world": "Chompy Mountain",
+      "element": "Life",
+      "image": "Jingle Bell Chompy Mage Promo.jpg",
+      "attack": "Chompzooka! \n Talk to the Hand! \n Chompy Pile! \n Staff Shot \n Chompies to Go Please"
+    }
+  },
+  {
+    "figure_id": "5ff149a6dc06710d",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Elite_Voodood",
+    "soul_gem": null,
+    "signature_moves": [
+      "Axe Reaver",
+      "Zipline Axe",
+      "Magical Tripwire",
+      "Extended Blade",
+      "Electro Axe"
+    ],
+    "alignment": "Eon's Elite",
+    "attributes": {
+      "world": "Skylands",
+      "voiceeng": "AndrÃ© Sogliuzzo<ref>[https://www.andresogliuzzo.com/conventions Conventions & Highlights]. [https://www.andresogliuzzo.com/ AndrÃ© Sogliuzzo's website].</ref>",
+      "element": "Magic",
+      "name": "Elite Voodood",
+      "gender": "Male",
+      "appearances": "*Skylanders: SuperChargers (Racing) \n*Skylanders: Imaginators",
+      "role": "Eon's Elite",
+      "species": "Orc",
+      "image": "File:Eon's Elite Voodood.jpg",
+      "firstrelease": "Skylanders: SuperChargers",
+      "attack": "*Axe Reaver  \n*Zipline Axe  \n*Magical Tripwire  \n*Extended Blade \n*Electro Axe"
+    }
+  },
+  {
+    "figure_id": "6059147df38ea7f9",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Nightfall",
+    "soul_gem": null,
+    "signature_moves": [
+      "Handy Hooks",
+      "Ambrush",
+      "Whip Lash",
+      "Splitting Hairs",
+      "Ambrush Rush"
+    ],
+    "alignment": "SuperCharger",
+    "attributes": {
+      "gender": "Female",
+      "firstrelease": "Skylanders: SuperChargers",
+      "cameos": "Unexpected Allies",
+      "species": "Dreadwalker",
+      "attack": "*Handy Hooks \n*Ambrush \n*Whip Lash \n*Splitting Hairs \n*Ambrush Rush",
+      "name": "Nightfall",
+      "world": "Fogshadow Tower",
+      "appearances": "*Skylanders: SuperChargers (Racing)\n*Secret Agent Secrets\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
+      "image": "290px",
+      "voiceeng": "Nika Futterman",
+      "role": "SuperCharger",
+      "element": "Dark"
     }
   },
   {
@@ -768,6 +1401,32 @@
     "attributes": {}
   },
   {
+    "figure_id": "673794047c77c83f",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Legendary_Bash",
+    "soul_gem": null,
+    "signature_moves": [
+      "Tail Swipe",
+      "Rock Roll",
+      "Iron Tail",
+      "Mace of Destruction",
+      "Gaia Hammer"
+    ],
+    "alignment": "Legendary Skylander",
+    "attributes": {
+      "appearances": "*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Lost Islands\n*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "world": "Skylands",
+      "role": "Legendary Skylander",
+      "image": "290px",
+      "species": "Rock Dragon",
+      "gender": "Male",
+      "voiceeng": "Keith Silverstein<ref>[https://twitter.com/silvertalkie/status/898640700513820672 #FlashbackFriday #Bash and #Dinorang from the #Skylanders game series.]. (Date Posted - Aug 18, 2017). [http://twitter.com Twitter].</ref>",
+      "name": "Legendary Bash",
+      "element": "Earth",
+      "attack": "*Tail Swipe\n*Rock Roll\n*Iron Tail\n*Mace of Destruction\n*Gaia Hammer",
+      "firstrelease": "Skylanders: Spyro's Adventure"
+    }
+  },
+  {
     "figure_id": "67e0623359b3f7a9",
     "wiki_page": "https://skylanders.fandom.com/wiki/Crash_Bandicoot",
     "soul_gem": null,
@@ -780,19 +1439,19 @@
     ],
     "alignment": "Sensei",
     "attributes": {
-      "attack": "*Cyclone Spin \n*Super Slide \n*Crate Going and Body Slam\n*Cyclone Spin Combo \n*Box O' Rockets",
-      "name": "Crash Bandicoot",
-      "species": "Mutated Bandicoot",
-      "role": "Sensei",
+      "voiceeng": "Jess Harnell",
       "image": "File:Crash_Bandicoot_Imaginators_Art.jpg",
+      "species": "Mutated Bandicoot",
       "appearances": "Skylanders: Imaginators",
       "firstrelease": "Skylanders: Imaginators",
+      "role": "Sensei",
       "element": "Life",
-      "family": "* [https://crashbandicoot.fandom.com/wiki/Coco_Bandicoot Coco Bandicoot] (Sister)\n* [https://crashbandicoot.fandom.com/wiki/Crunch_Bandicoot Crunch Bandicoot] (Brother)\n* [https://crashbandicoot.fandom.com/wiki/Polar Polar] (Pet Polar Bear)\n* [https://crashbandicoot.fandom.com/wiki/Pura Pura] (Pet Tiger)",
-      "battleclass": "Brawler",
+      "attack": "*Cyclone Spin \n*Super Slide \n*Crate Going and Body Slam\n*Cyclone Spin Combo \n*Box O' Rockets",
       "world": "Wumpa Island",
       "gender": "Male",
-      "voiceeng": "Jess Harnell"
+      "name": "Crash Bandicoot",
+      "family": "* [https://crashbandicoot.fandom.com/wiki/Coco_Bandicoot Coco Bandicoot] (Sister)\n* [https://crashbandicoot.fandom.com/wiki/Crunch_Bandicoot Crunch Bandicoot] (Brother)\n* [https://crashbandicoot.fandom.com/wiki/Polar Polar] (Pet Polar Bear)\n* [https://crashbandicoot.fandom.com/wiki/Pura Pura] (Pet Tiger)",
+      "battleclass": "Brawler"
     }
   },
   {
@@ -809,18 +1468,45 @@
     "alignment": "Core Skylander",
     "attributes": {
       "world": "Radiant Mountains",
-      "cameos": "Stump Smash Crosses the Bone Dragon",
       "voiceeng": "David Sobolov<ref>[https://twitter.com/volobos/status/739210902210150402 I'm looking for video of my work in Guild Wars 2, and as Bumbleblast and Krypt King in Skylanders.]. (Date Posted - Jun 4, 2016). [https://twitter.com/ Twitter].</ref>",
-      "firstrelease": "Skylanders: Swap Force",
-      "role": "Core Skylander",
       "name": "Bumble Blast",
-      "species": "Anthropomorphic Beehive/Honey Tree",
-      "gender": "Male",
-      "appearances": "*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
-      "element": "Life",
-      "image": "<gallery>\nBumble_blast.jpg",
       "attack": "*Beezooka \n*Honey Glob \n*Honey Beecon\n*Bee Armada \n*Honey Buzz Blast",
-      "voicespa": "Blas Garcia (Latin American)"
+      "species": "Anthropomorphic Beehive/Honey Tree",
+      "image": "<gallery>\nBumble_blast.jpg",
+      "firstrelease": "Skylanders: Swap Force",
+      "element": "Life",
+      "role": "Core Skylander",
+      "appearances": "*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "cameos": "Stump Smash Crosses the Bone Dragon",
+      "voicespa": "Blas Garcia (Latin American)",
+      "gender": "Male"
+    }
+  },
+  {
+    "figure_id": "6c1274e7ca8493b6",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Zap",
+    "soul_gem": null,
+    "signature_moves": [
+      "Electric Bolt",
+      "Water Surge",
+      "Electro-Slime",
+      "Mega-Volt",
+      "Wave Rider"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "species": "Water Dragon",
+      "gender": "Male",
+      "attack": "*Electric Bolt\n*Water Surge \n*Electro-Slime \n*Mega-Volt\n*Wave Rider",
+      "voiceeng": "Jeff Bergman<ref>[https://www.youtube.com/watch?v=5rIyNh5lXtM Jeff Bergman Sizzle Reel 2024",
+      "element": "Water",
+      "name": "Zap",
+      "role": "Core Skylander",
+      "image": "<tabber>\nS1 = 290px",
+      "appearances": "{{Scrollbox|content = \n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Giants\n*Gill Grunt and the Curse of the Fish Master\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Trigger Happy Targets the Evil Kaos\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators}}",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "world": "Skylands",
+      "s2": "290px\n</tabber>"
     }
   },
   {
@@ -844,21 +1530,21 @@
     ],
     "alignment": "Core Skylander",
     "attributes": {
-      "firstrelease": "Skylanders: Giants",
-      "world": "Skylands",
-      "appearances": "*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
-      "element": "Life",
-      "voiceger": "Konrad BÃ¶sherz",
-      "voiceswe": "Kim Sulocki",
-      "attack": "*Slingshot\n*Mushroom Ring \n*Bigger Boomshrooms \n*Bouncing Boomshrooms \n*Launch Paratroopers",
-      "role": "Core Skylander",
-      "voiceeng": "Matthew Moy<ref>[https://dpntalent.com/talent/matt-moy/ Matthew Moy",
       "name": "Shroomboom",
-      "species": "[http://en.wikipedia.org/wiki/Amanita_muscaria One-Eyed Fly Agaric Mushroom]",
+      "attack": "*Slingshot\n*Mushroom Ring \n*Bigger Boomshrooms \n*Bouncing Boomshrooms \n*Launch Paratroopers",
+      "voiceswe": "Kim Sulocki",
       "vpiceita": "Massimo Di Benedetto",
+      "species": "[http://en.wikipedia.org/wiki/Amanita_muscaria One-Eyed Fly Agaric Mushroom]",
+      "appearances": "*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "voiceeng": "Matthew Moy<ref>[https://dpntalent.com/talent/matt-moy/ Matthew Moy",
+      "element": "Life",
+      "world": "Skylands",
       "gender": "Male",
+      "voicefin": "Joonathan Kettunen",
       "image": "<gallery>\nScreenshot_48056.jpg",
-      "voicefin": "Joonathan Kettunen"
+      "firstrelease": "Skylanders: Giants",
+      "role": "Core Skylander",
+      "voiceger": "Konrad BÃ¶sherz"
     }
   },
   {
@@ -874,17 +1560,17 @@
     ],
     "alignment": "Legendary Giant",
     "attributes": {
-      "firstrelease": "Skylanders: Giants",
+      "voiceeng": "Bumper Robinson",
+      "role": "Legendary Giant",
+      "image": "181px",
+      "appearances": "*Skylanders: Giants\n*Skylanders: Universe \n*Skylanders: Lost Islands\n*Skylanders: Swap Force\n*Skylanders: Trap Team \n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
       "species": "Robot",
+      "firstrelease": "Skylanders: Giants",
       "world": "Skylands",
       "name": "Legendary Bouncer",
-      "role": "Legendary Giant",
-      "appearances": "*Skylanders: Giants\n*Skylanders: Universe \n*Skylanders: Lost Islands\n*Skylanders: Swap Force\n*Skylanders: Trap Team \n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
-      "voiceeng": "Bumper Robinson",
-      "gender": "Male",
       "element": "Tech",
-      "image": "181px",
-      "attack": "*Fingerguns \n*Shoulder Rockets\n*I-Beam \n*Cooler I-Beam \n*Machine Fingerguns"
+      "attack": "*Fingerguns \n*Shoulder Rockets\n*I-Beam \n*Cooler I-Beam \n*Machine Fingerguns",
+      "gender": "Male"
     }
   },
   {
@@ -900,20 +1586,20 @@
     ],
     "alignment": "Giant",
     "attributes": {
-      "image": "290px",
-      "role": "Giant",
+      "family": "Unnamed father",
       "appearances": "*Skylanders: Giants \n*Skylanders: Swap Force\n*Skylanders: Trap Team \n*Return of the Dragon King\n*Rift into Overdrive \n*Skylanders: SuperChargers (Racing) \n*Skylanders: Battlecast\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
-      "name": "Crusher",
-      "voiceger": "Torsten Michaelis",
-      "voicespa": "Roberto Encinas",
       "world": "Skylands",
-      "attack": "*Crusher's Crusher \n*Turn to Stone \n*Rockslide \n*Ground Grinder \n*Cavelight Blast",
-      "firstrelease": "Skylanders: Giants",
       "element": "Earth",
+      "voicespa": "Roberto Encinas",
+      "name": "Crusher",
+      "firstrelease": "Skylanders: Giants",
+      "voiceger": "Torsten Michaelis",
       "species": "Rock Golem",
       "gender": "Male",
       "voiceeng": "Kevin Sorbo<ref>[https://www.destructoid.com/merging-toys-and-videogames-with-skylanders/ Merging toys and videogames with Skylanders]. (Date Posted - Oct. 21, 2012). [http://www.destructoid.com Destructoid].</ref>",
-      "family": "Unnamed father"
+      "attack": "*Crusher's Crusher \n*Turn to Stone \n*Rockslide \n*Ground Grinder \n*Cavelight Blast",
+      "image": "290px",
+      "role": "Giant"
     }
   },
   {
@@ -929,20 +1615,75 @@
     ],
     "alignment": "Giant",
     "attributes": {
-      "species": "Giant Hornet/Hymenopteran Insect",
-      "world": "Skylands",
-      "image": "Image:Swarm.jpg",
-      "cameos": "Return of the Dragon King",
-      "attack": "*Barb Blades\n*Flight of the Wasp \n*Swarm Form \n*Sharpened Barbs\n*Stinger Shot",
-      "voiceita": "Daniele Demma",
-      "firstrelease": "Skylanders: Giants",
-      "family": "Insects",
-      "gender": "Male",
-      "role": "Giant",
       "name": "Swarm",
       "element": "Air",
+      "species": "Giant Hornet/Hymenopteran Insect",
+      "cameos": "Return of the Dragon King",
+      "image": "Image:Swarm.jpg",
+      "world": "Skylands",
+      "firstrelease": "Skylanders: Giants",
+      "attack": "*Barb Blades\n*Flight of the Wasp \n*Swarm Form \n*Sharpened Barbs\n*Stinger Shot",
       "voiceeng": "Danny Jacobs<ref>[https://dpntalent.com/talent/danny-jacobs-2/ Danny Jacob]. [https://dpntalent.com/ Commerical Talent Agency].</ref>",
-      "appearances": "*Skylanders: Giants\n*Skylanders: Cloud Patrol\n*Skylanders: Battlegrounds\n*Skylanders: Lost Islands\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators"
+      "voiceita": "Daniele Demma",
+      "family": "Insects",
+      "role": "Giant",
+      "appearances": "*Skylanders: Giants\n*Skylanders: Cloud Patrol\n*Skylanders: Battlegrounds\n*Skylanders: Lost Islands\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "gender": "Male"
+    }
+  },
+  {
+    "figure_id": "75754840d5ceb40f",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Whirlwind",
+    "soul_gem": null,
+    "signature_moves": [
+      "Rainbow of Doom",
+      "Tempest Cloud",
+      "Dragon Flight",
+      "Duel Rainbows",
+      "Atomic Rainbow"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "role": "Core Skylander",
+      "world": "Skylands",
+      "species": "Unicorn Dragon\\\"Unidragon\"",
+      "element": "Air",
+      "gender": "Female",
+      "attack": "*Rainbow of Doom\n*Tempest Cloud \n*Dragon Flight\n*Duel Rainbows\n*Atomic Rainbow",
+      "cameos": "Return of the Dragon King",
+      "appearances": "{{Scrollbox|content=\n*Spyro's Kingdom <small>(scrapped)</small>\n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Battlegrounds\n*Skylanders: Lost Islands\n*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Battlecast\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes}}",
+      "image": "<gallery>\nWhirlwind.png",
+      "name": "Whirlwind",
+      "voiceeng": "Salli Saffioti<ref>[https://twitter.com/sallisaffioti/status/476853594843779072 #skylanders booth! #whirlwind #torch and #eyescream are my characters in the new trap team#E32014]. (Date Posted -  Jun 11, 2014). [https://twitter.com/ Twitter].</ref>",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "voiceita": "Elda Olivieri"
+    }
+  },
+  {
+    "figure_id": "75862e2ed2e72747",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Shark_Shooter_Terrafin",
+    "soul_gem": null,
+    "signature_moves": [
+      "Ballistic Frenzy",
+      "Earth Swim Blast",
+      "Slam Support",
+      "Three Best Fins",
+      "Mentor Program"
+    ],
+    "alignment": "SuperCharger",
+    "attributes": {
+      "attack": "*Ballistic Frenzy \n*Earth Swim Blast \n*Slam Support \n*Three Best Fins \n*Mentor Program",
+      "voiceeng": "Joey Camen",
+      "cameos": "Unexpected Allies",
+      "role": "SuperCharger",
+      "element": "Earth",
+      "image": "280px",
+      "species": "Dirt Shark",
+      "gender": "Male",
+      "world": "The Dirt Seas",
+      "appearances": "*Skylanders: SuperChargers (Racing)\n*Skylanders: Ring of Heroes\n*Skylanders: Imaginators",
+      "name": "Shark Shooter Terrafin",
+      "firstrelease": "Skylanders: SuperChargers"
     }
   },
   {
@@ -958,17 +1699,17 @@
     ],
     "alignment": "Giant",
     "attributes": {
-      "gender": "Female",
-      "attack": "*Wishblades \n*Bottle Blast \n*Surrealistic Spheres \n*Abra-Ca-Stab-Bra \n*Juggling Act",
-      "species": "Elven Genie",
-      "voiceeng": "Laura Bailey",
-      "world": "Skylands",
-      "image": "286px",
-      "firstrelease": "Skylanders: Giants",
-      "name": "Scarlet Ninjini",
-      "appearances": "*Skylanders: Giants \n*Skylanders: Swap Force\n*Skylanders: Trap Team \n*Skylanders: SuperChargers (Racing)\n* Skylanders: Imaginators",
       "element": "Magic",
-      "role": "Giant"
+      "attack": "*Wishblades \n*Bottle Blast \n*Surrealistic Spheres \n*Abra-Ca-Stab-Bra \n*Juggling Act",
+      "appearances": "*Skylanders: Giants \n*Skylanders: Swap Force\n*Skylanders: Trap Team \n*Skylanders: SuperChargers (Racing)\n* Skylanders: Imaginators",
+      "image": "286px",
+      "name": "Scarlet Ninjini",
+      "role": "Giant",
+      "gender": "Female",
+      "voiceeng": "Laura Bailey",
+      "firstrelease": "Skylanders: Giants",
+      "species": "Elven Genie",
+      "world": "Skylands"
     }
   },
   {
@@ -985,18 +1726,98 @@
     "alignment": "Giant",
     "attributes": {
       "world": "Skylands",
-      "attack": "*Anchor Assault \n*Belly Flop \n*A Whale Of A Chomp \n*The Whalest Chomp \n*Now There's An Anchor!",
       "name": "Thumpback",
-      "voiceeng": "Dan Neil<ref>[https://youtu.be/JJmSlTh1bO0?t=1010 Skylanders Swap Force - Paul Reiche Talks Bafta, Lasers, Light-sensors, Voice, GPS & Boomer]. (Date Posted - Nov 23, 2012). [https://youtube.com/ YouTube].</ref>",
-      "image": "330px",
+      "attack": "*Anchor Assault \n*Belly Flop \n*A Whale Of A Chomp \n*The Whalest Chomp \n*Now There's An Anchor!",
       "role": "Giant",
-      "species": "Whale-like Behemoth",
-      "appearances": "*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
       "element": "Water",
       "cameos": "The Kaos Trap",
+      "species": "Whale-like Behemoth",
+      "voiceeng": "Dan Neil<ref>[https://youtu.be/JJmSlTh1bO0?t=1010 Skylanders Swap Force - Paul Reiche Talks Bafta, Lasers, Light-sensors, Voice, GPS & Boomer]. (Date Posted - Nov 23, 2012). [https://youtube.com/ YouTube].</ref>",
+      "image": "330px",
       "voiceita": "Claudio Moneta",
       "firstrelease": "Skylanders: Giants",
+      "appearances": "*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
       "gender": "Male"
+    }
+  },
+  {
+    "figure_id": "7a8028a344e6c009",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Wrecking_Ball",
+    "soul_gem": null,
+    "signature_moves": [
+      "Tongue Whip",
+      "Forcefield Ball",
+      "Power Belch",
+      "Digestive Detonation",
+      "Tongue Grabber"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "role": "Core Skylander",
+      "element": "Magic",
+      "world": "Skylands",
+      "attack": "*Tongue Whip \n*Forcefield Ball \n*Power Belch \n*Digestive Detonation \n*Tongue Grabber",
+      "appearances": "*Spyro's Kingdom <small>(scrapped)</small>\n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Lost Islands\n*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Stump Smash Crosses the Bone Dragon\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "voiceeng": "Ryan Cooper (2012)<ref>[https://www.instagram.com/p/8dy11IQ-1L/ Ryan Cooper's Instagram]. (Date Posted - Oct. 5, 2015). [https://www.instagram.com/ Instagram].</ref>",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "image": "<gallery>\nWrecking Ball.jpg",
+      "species": "Grub",
+      "name": "Wrecking Ball",
+      "gender": "Male"
+    }
+  },
+  {
+    "figure_id": "7ba6aefb9a3e6b01",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Hex",
+    "soul_gem": null,
+    "signature_moves": [
+      "Conjure Phantom Orb",
+      "Rain of Skulls",
+      "Wall of Bones",
+      "Storm of Skulls",
+      "Caustic Phantom Orbs"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "image": "<gallery>\n290px-Hex.jpg",
+      "appearances": "{{Scrollbox|content= \n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Giants\n*Skylanders: Swap Force\n*Cynder Confronts the Weather Wizard\n*Skylanders: Trap Team\n*Return of the Dragon King\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Battlecast\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes}}",
+      "voiceeng": "Courtenay Taylor<ref>[https://www.courtenaytaylor.com/vo Courtenay Taylor's official website]. [http://www.courtneytalor.com Courtney Taylor's Website].</ref>",
+      "name": "Hex",
+      "element": "Undead",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "species": "Undead Elf",
+      "role": "Core Skylander",
+      "world": "Skylands",
+      "attack": "*Conjure Phantom Orb\n*Rain of Skulls\n*Wall of Bones\n*Storm of Skulls\n*Caustic Phantom Orbs",
+      "voiceita": "Daniela Fava",
+      "gender": "Female"
+    }
+  },
+  {
+    "figure_id": "7bf339a77d7c604d",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Bash",
+    "soul_gem": null,
+    "signature_moves": [
+      "Tail Swipe",
+      "Rock Roll",
+      "Summoning: Stone Projection",
+      "Mace of Destruction",
+      "Gaia Hammer"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "attack": "*Tail Swipe\n*Rock Roll\n*Summoning: Stone Projection \n*Mace of Destruction \n*Gaia Hammer",
+      "image": "<gallery>\nBash.jpg",
+      "world": "Skylands",
+      "name": "Bash",
+      "gender": "Male",
+      "role": "Core Skylander",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "cameos": "Return of the Dragon King",
+      "appearances": "{{Scrollbox|content=\n*Spyro's Kingdom (Cancelled)\n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Battlegrounds\n*Skylanders: Lost Islands\n*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators}}",
+      "voiceeng": "Keith Silverstein<ref>[https://twitter.com/silvertalkie/status/898640700513820672 #FlashbackFriday #Bash and #Dinorang from the #Skylanders game series.]. (Date Posted - Aug 18, 2017). [http://twitter.com Twitter].</ref>",
+      "element": "Earth",
+      "species": "Rock Dragon"
     }
   },
   {
@@ -1012,17 +1833,17 @@
     ],
     "alignment": "Giant",
     "attributes": {
+      "attack": "*Fingerguns \n*Shoulder Rockets\n*I-Beam \n*Cooler I-Beam \n*Machine Fingerguns",
       "voiceeng": "Bumper Robinson",
       "image": "310px",
-      "element": "Tech",
-      "species": "Robot",
-      "gender": "Male",
       "name": "Bouncer",
       "role": "Giant",
-      "attack": "*Fingerguns \n*Shoulder Rockets\n*I-Beam \n*Cooler I-Beam \n*Machine Fingerguns",
+      "species": "Robot",
       "firstrelease": "Skylanders: Giants",
-      "world": "Skylands",
-      "appearances": "*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Champions\n*Return of the Dragon King\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators"
+      "appearances": "*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Champions\n*Return of the Dragon King\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "element": "Tech",
+      "gender": "Male",
+      "world": "Skylands"
     }
   },
   {
@@ -1038,19 +1859,19 @@
     ],
     "alignment": "Giant",
     "attributes": {
-      "world": "Skylands",
+      "name": "Ninjini",
+      "firstrelease": "Skylanders: Giants",
       "element": "Magic",
+      "world": "Skylands",
       "gender": "Female",
       "image": "290px",
-      "role": "Giant",
+      "appearances": "*Skylanders: Giants\n*Skylanders: Swap Force \n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing) \n*Skylanders: Battlecast\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
+      "voiceita": "Gea Riva",
       "species": "Elven Genie",
-      "name": "Ninjini",
       "cameos": "*The Kaos Trap\n*Rift into Overdrive",
       "attack": "*Wishblades \n*Bottle Blast \n*Surrealistic Spheres \n*Abra-Ca-Stab-Bra \n*Juggling Act",
-      "appearances": "*Skylanders: Giants\n*Skylanders: Swap Force \n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing) \n*Skylanders: Battlecast\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
-      "voiceeng": "Laura Bailey<ref>[https://www.youtube.com/watch?v=y4zl7gHq4Og Injustice 2 Supergirl Voice Laura Bailey + Skylanders Persephone Comic-Con 2016]. (Date Posted - Jul 24, 2016). [https://www.youtube.com/ YouTube].</ref>",
-      "voiceita": "Gea Riva",
-      "firstrelease": "Skylanders: Giants"
+      "role": "Giant",
+      "voiceeng": "Laura Bailey<ref>[https://www.youtube.com/watch?v=y4zl7gHq4Og Injustice 2 Supergirl Voice Laura Bailey + Skylanders Persephone Comic-Con 2016]. (Date Posted - Jul 24, 2016). [https://www.youtube.com/ YouTube].</ref>"
     }
   },
   {
@@ -1066,18 +1887,18 @@
     ],
     "alignment": "Legendary Sensei",
     "attributes": {
-      "battleclass": "Sorcerer",
       "gender": "Male",
-      "species": "Pit Viper",
-      "world": "Great Twisty Mountains",
       "image": "220px",
-      "attack": "*Snake Attack \n*Slithering Soul Snake \n*Viper Pits \n*Superior Slithering \n*Restless Reptiles",
-      "appearances": "Skylanders: Imaginators",
-      "voiceeng": "John Kassir",
       "firstrelease": "Skylanders: Imaginators",
+      "battleclass": "Sorcerer",
+      "species": "Pit Viper",
+      "appearances": "Skylanders: Imaginators",
       "role": "Legendary Sensei",
+      "element": "Undead",
+      "voiceeng": "John Kassir",
       "name": "Legendary Pit Boss",
-      "element": "Undead"
+      "attack": "*Snake Attack \n*Slithering Soul Snake \n*Viper Pits \n*Superior Slithering \n*Restless Reptiles",
+      "world": "Great Twisty Mountains"
     }
   },
   {
@@ -1109,19 +1930,47 @@
     ],
     "alignment": "Core Skylander",
     "attributes": {
-      "voiceeng": "David Sobolov<ref>[https://twitter.com/volobos/status/739210902210150402 I'm looking for video of my work in Guild Wars 2, and as Bumbleblast and Krypt King in Skylanders.]. (Date Posted - Jun 4, 2016). [https://twitter.com/ Twitter].</ref>",
-      "firstrelease": "Skylanders: Swap Force",
-      "voicespa": "Blas Garcia (Latin American)",
-      "cameos": "Stump Smash Crosses the Bone Dragon",
-      "element": "Life",
       "image": "<gallery>\nBumble_blast.jpg",
-      "gender": "Male",
       "world": "Radiant Mountains",
-      "name": "Bumble Blast",
-      "species": "Anthropomorphic Beehive/Honey Tree",
+      "voiceeng": "David Sobolov<ref>[https://twitter.com/volobos/status/739210902210150402 I'm looking for video of my work in Guild Wars 2, and as Bumbleblast and Krypt King in Skylanders.]. (Date Posted - Jun 4, 2016). [https://twitter.com/ Twitter].</ref>",
+      "element": "Life",
       "role": "Core Skylander",
       "attack": "*Beezooka \n*Honey Glob \n*Honey Beecon\n*Bee Armada \n*Honey Buzz Blast",
-      "appearances": "*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators"
+      "species": "Anthropomorphic Beehive/Honey Tree",
+      "cameos": "Stump Smash Crosses the Bone Dragon",
+      "gender": "Male",
+      "appearances": "*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "name": "Bumble Blast",
+      "voicespa": "Blas Garcia (Latin American)",
+      "firstrelease": "Skylanders: Swap Force"
+    }
+  },
+  {
+    "figure_id": "8a7a584edba97cb0",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Gill_Grunt",
+    "soul_gem": null,
+    "signature_moves": [
+      "Harpoon Gun",
+      "Water Cannon",
+      "Boiling Water Hose",
+      "Water Jet Pack",
+      "Anchor Cannon"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "role": "Core Skylander",
+      "name": "Gill Grunt",
+      "voicedan": "Christian Vincent<ref>[https://www.christian-vincent.com/#dubbing Christian Vincent's Resume]. [https://www.christian-vincent.com/ Christian Vincent's Official Website].</ref>",
+      "species": "Gillman",
+      "voiceeng": "*Unknown (2011)\n*Darin De Paul (2012)<ref>[https://www.darindepaul.com/resume Darin De Paul's Resume]. [https://www.darindepaul.com/ Darin De Paul's Official Website].</ref>",
+      "image": "<gallery>\nGill_Grunt_Promo.jpg",
+      "appearances": "{{Scrollbox|content= \n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*The Machine of Doom\n*Skylanders: Lost Islands\n*Skylanders: Battlegrounds\n*Skylanders: Giants\n*Gill Grunt and the Curse of the Fish Master\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Trigger Happy Targets the Evil Kaos\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes}}",
+      "attack": "*Harpoon Gun\n*Water Cannon\n*Boiling Water Hose\n*Water Jet Pack\n*Anchor Cannon",
+      "world": "Skylands",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "cameos": "*Spyro versus The Mega Monsters\n*The Kaos Trap\n*Trigger Happy Targets the Evil Kaos\n*Return of the Dragon King\n*Unexpected Allies",
+      "element": "Water",
+      "gender": "Male"
     }
   },
   {
@@ -1142,14 +1991,14 @@
     ],
     "alignment": "Enemy",
     "attributes": {
-      "role": "Enemy",
-      "world": "*The Ultimate Weapon\n*Midnight Museum\n*Brock's Arena Challenges\n*Mansion of Gloom",
+      "species": "Reaper",
       "element": "Undead",
       "attack": "Teleport \n Scythe swing",
-      "species": "Reaper",
       "name": "Hood Sickles",
-      "image": "HoodSickle2.png",
-      "appearances": "*Skylanders: Trap Team (Console)\n*Skylanders: Ring of Heroes"
+      "world": "*The Ultimate Weapon\n*Midnight Museum\n*Brock's Arena Challenges\n*Mansion of Gloom",
+      "appearances": "*Skylanders: Trap Team (Console)\n*Skylanders: Ring of Heroes",
+      "role": "Enemy",
+      "image": "HoodSickle2.png"
     }
   },
   {
@@ -1182,16 +2031,16 @@
     "alignment": "Legendary Skylander",
     "attributes": {
       "appearances": "*Skylanders: Giants \n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
-      "image": "180px",
-      "world": "Skylands",
-      "name": "Legendary Ignitor",
-      "species": "Fire Spirit Knight",
-      "attack": "*Flaming Sword \n*Flame Form Mortar \n*Scorching Blade \n*Fire Forged Armor \n*Flame Form",
-      "voiceeng": "Dwight Schultz",
-      "firstrelease": "Skylanders: Giants",
-      "element": "Fire",
       "role": "Legendary Skylander",
-      "gender": "Male"
+      "species": "Fire Spirit Knight",
+      "element": "Fire",
+      "gender": "Male",
+      "name": "Legendary Ignitor",
+      "world": "Skylands",
+      "attack": "*Flaming Sword \n*Flame Form Mortar \n*Scorching Blade \n*Fire Forged Armor \n*Flame Form",
+      "firstrelease": "Skylanders: Giants",
+      "voiceeng": "Dwight Schultz",
+      "image": "180px"
     }
   },
   {
@@ -1207,19 +2056,19 @@
     ],
     "alignment": "Sensei",
     "attributes": {
-      "attack": "*Samurai Combo \n*Flame Geyser \n*Immolation \n*Inner Fire \n*Living Bomb Path",
-      "element": "Fire",
       "world": "Dragonfire Dojo",
-      "gender": "Female",
-      "role": "Sensei",
       "appearances": "*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
+      "attack": "*Samurai Combo \n*Flame Geyser \n*Immolation \n*Inner Fire \n*Living Bomb Path",
+      "family": "Unnamed father",
+      "battleclass": "Sentinel",
+      "gender": "Female",
+      "element": "Fire",
       "species": "Unknown",
       "firstrelease": "Skylanders: Imaginators",
-      "voiceeng": "Stephanie Sheh<ref>[https://twitter.com/stephaniesheh/status/791846145668460544 Stephanie Sheh's Twitter]. (Date Posted - Oct. 27, 2016). [https://www.twitter.com Twitter].</ref>",
-      "battleclass": "Sentinel",
       "name": "Ember",
       "image": "File:Emberpromo.jpg",
-      "family": "Unnamed father"
+      "role": "Sensei",
+      "voiceeng": "Stephanie Sheh<ref>[https://twitter.com/stephaniesheh/status/791846145668460544 Stephanie Sheh's Twitter]. (Date Posted - Oct. 27, 2016). [https://www.twitter.com Twitter].</ref>"
     }
   },
   {
@@ -1235,19 +2084,46 @@
     ],
     "alignment": "Core Skylander",
     "attributes": {
-      "attack": "*Gold Coin Shooters\n*Safe Cracker Bomb\n*Pot O' Gold\n*Golden Super Charge\n*Coinsplosion",
+      "firstrelease": "Skylanders: Spyro's Adventure\nStefano Brusa",
+      "cameos": "The Machine of Doom",
+      "appearances": "{{Scrollbox|content= \n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Lost Islands\n*Skylanders: Battlegrounds\n*Skylanders: Giants\n*Spyro versus The Mega Monsters\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Champions\n*Trigger Happy Targets the Evil Kaos\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Battlecast\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes}}",
       "image": "<gallery>\nSky trigger2.jpg",
       "voiceita": "Claudio Moneta (2011)",
-      "role": "Core Skylander",
-      "firstrelease": "Skylanders: Spyro's Adventure\nStefano Brusa",
-      "world": "Skylands",
-      "gender": "Male",
-      "species": "Gremlin",
-      "name": "Trigger Happy",
-      "cameos": "The Machine of Doom",
-      "element": "Tech",
       "voiceeng": "Dave Wittenberg<ref>[https://www.davewittenberg.com/parade-of-characters Parade of Characters]. [https://www.davewittenberg.com/ Dave Wittenberg's official website].</ref>",
-      "appearances": "{{Scrollbox|content= \n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Lost Islands\n*Skylanders: Battlegrounds\n*Skylanders: Giants\n*Spyro versus The Mega Monsters\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Champions\n*Trigger Happy Targets the Evil Kaos\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Battlecast\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes}}"
+      "element": "Tech",
+      "role": "Core Skylander",
+      "gender": "Male",
+      "world": "Skylands",
+      "name": "Trigger Happy",
+      "attack": "*Gold Coin Shooters\n*Safe Cracker Bomb\n*Pot O' Gold\n*Golden Super Charge\n*Coinsplosion",
+      "species": "Gremlin"
+    }
+  },
+  {
+    "figure_id": "9af33c6e22572087",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Flameslinger",
+    "soul_gem": null,
+    "signature_moves": [
+      "Flaming Arrows",
+      "Fire Dash",
+      "Searing Arrows",
+      "Firestorm",
+      "Inferno Blast"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "cameos": "*Return of the Dragon King\n*Rift into Overdrive",
+      "image": "<gallery> \nSky_flameslinger.jpg",
+      "role": "Core Skylander",
+      "world": "Skylands",
+      "element": "Fire",
+      "attack": "*Flaming Arrows\n*Fire Dash \n*Searing Arrows \n*Firestorm \n*Inferno Blast",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "name": "Flameslinger",
+      "species": "Elf",
+      "gender": "Male",
+      "appearances": "{{Scrollbox|content = \n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Lost Islands\n*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Stump Smash Crosses the Bone Dragon\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes}}",
+      "voiceeng": "Keith Szarabajka (2012)"
     }
   },
   {
@@ -1263,17 +2139,17 @@
     ],
     "alignment": "Skylander",
     "attributes": {
-      "element": "Magic",
-      "gender": "Male",
+      "firstrelease": "Skylanders: Giants",
       "species": "Gremlin",
-      "world": "Skylands",
+      "appearances": "*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: Lost Islands\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
       "name": "Punch Pop Fizz",
       "image": "290px",
+      "world": "Skylands",
+      "element": "Magic",
       "role": "Skylander",
       "voiceeng": "Bobcat Goldthwait",
-      "firstrelease": "Skylanders: Giants",
       "attack": "*Potion Lob \n*Beast Form \n*New Concoctions \n*Puddle of Pain \n*Raging Beast",
-      "appearances": "*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: Lost Islands\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators"
+      "gender": "Male"
     }
   },
   {
@@ -1289,20 +2165,46 @@
     ],
     "alignment": "Sensei",
     "attributes": {
-      "appearances": "*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
-      "firstrelease": "Skylanders: Imaginators",
-      "battleclass": "Bowslinger",
       "family": "Unnamed siblings",
-      "voiceeng": "Edward Bosco<ref>[https://twitter.com/jlrosen133/status/1558505571690635265 Buckshotâs VA]. (Date Posted - Aug 13, 2022). [https://twitter.com Twitter].</ref>",
+      "battleclass": "Bowslinger",
       "gender": "Male",
-      "voiceita": "Stefano Pozzi",
       "image": "File:Buckshot Promo.jpg",
+      "firstrelease": "Skylanders: Imaginators",
+      "voiceeng": "Edward Bosco<ref>[https://twitter.com/jlrosen133/status/1558505571690635265 Buckshotâs VA]. (Date Posted - Aug 13, 2022). [https://twitter.com Twitter].</ref>",
       "element": "Magic",
-      "role": "Sensei",
+      "voiceita": "Stefano Pozzi",
       "world": "Skylands",
       "name": "Buckshot",
+      "role": "Sensei",
       "species": "Sky-Faun",
-      "attack": "*Spread Shot \n*Goat Portals \n*Through and Through \n*Not the Face! \n*Main Attraction"
+      "attack": "*Spread Shot \n*Goat Portals \n*Through and Through \n*Not the Face! \n*Main Attraction",
+      "appearances": "*Skylanders: Imaginators\n*Skylanders: Ring of Heroes"
+    }
+  },
+  {
+    "figure_id": "a1b9f766751d1063",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Legendary_Chop_Chop",
+    "soul_gem": null,
+    "signature_moves": [
+      "Sword Slash",
+      "Arkeyan Shield",
+      "Spiked Shield Bash",
+      "Arkeyan Vorpal Blade",
+      "Vampiric Aura"
+    ],
+    "alignment": "Legendary Skylander",
+    "attributes": {
+      "voiceeng": "Steven Blum (2012)<ref>[https://www.steveblumvoices.com/work/#/video-games/ Steven Blum's official website]. [http://www.steveblumvoices.com Steve Blum's Website].</ref>",
+      "role": "Legendary Skylander",
+      "name": "Legendary Chop Chop",
+      "species": "Arkeyan Skeleton",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "world": "Skylands",
+      "image": "280px",
+      "appearances": "*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Lost Islands\n*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "element": "Undead",
+      "gender": "Male",
+      "attack": "*Sword Slash \n*Arkeyan Shield \n*Spiked Shield Bash\n*Arkeyan Vorpal Blade\n*Vampiric Aura"
     }
   },
   {
@@ -1326,20 +2228,20 @@
     ],
     "alignment": "Sensei",
     "attributes": {
-      "world": "Skylands",
-      "gender": "Female",
       "element": "Light",
-      "attack": "*Double Sword Strike \n*Flash Dash \n*Light Burst \n*Sword Techniques \n*Forever Runner",
+      "world": "Skylands",
       "name": "Aurora",
-      "family": "Eon (uncle)",
-      "battleclass": "Swashbuckler",
       "species": "Human",
-      "image": "File:Aurora Promo.jpg",
+      "voiceeng": "Britt Baron<ref>Credited as Brittany Uomoleale)</ref><ref>[https://twitter.com/DonaldDiehl1/status/909401566431596544 Britt Baron's Twitter]. (Date Posted - Sep 17, 2017). [http://twitter.com Twitter].</ref>",
       "voiceger": "Lara Trautmann<ref>[https://www.bodalgo.com/en/voice-over-talents/lara-trautmann2 Lara Trautmann's Bodalgo resume]. [https://www.bodalgo.com/en Bodalgo].</ref>",
+      "attack": "*Double Sword Strike \n*Flash Dash \n*Light Burst \n*Sword Techniques \n*Forever Runner",
       "firstrelease": "Skylanders: Imaginators",
       "appearances": "*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
-      "voiceeng": "Britt Baron<ref>Credited as Brittany Uomoleale)</ref><ref>[https://twitter.com/DonaldDiehl1/status/909401566431596544 Britt Baron's Twitter]. (Date Posted - Sep 17, 2017). [http://twitter.com Twitter].</ref>",
-      "role": "Sensei"
+      "role": "Sensei",
+      "image": "File:Aurora Promo.jpg",
+      "battleclass": "Swashbuckler",
+      "family": "Eon (uncle)",
+      "gender": "Female"
     }
   },
   {
@@ -1351,14 +2253,14 @@
     ],
     "alignment": "Enemy",
     "attributes": {
-      "name": "Pain-Yatta",
       "appearances": "*Skylanders: Trap Team <small>(Console)</small>",
-      "role": "Enemy",
       "world": "*Telescope Towers\n*Brock's Arena Challenges",
       "species": "Walking Pinata",
       "image": "PAINYATTAS.png",
       "attack": "*Lollipop smash",
-      "element": "Magic"
+      "role": "Enemy",
+      "element": "Magic",
+      "name": "Pain-Yatta"
     }
   },
   {
@@ -1374,18 +2276,18 @@
     ],
     "alignment": "Core Skylander",
     "attributes": {
-      "gender": "Male",
-      "attack": "*Eldritch Beam \n*Conjure Exploding Double \n*Summon Magic Bomb \n*Arcane Eldritch Beam \n*Magical Cataclysm",
-      "voiceeng": "Alex Ness<ref>[https://youtu.be/nh4_vKQf_5A?t=276 Skylanders: Portal Casters 10th Anniversary Celebration Pt. 5 - Alex Ness]. (Date Posted - Oct 16, 2021). [http://youtube.com YouTube].</ref>",
       "name": "Double Trouble",
       "image": "<gallery>\n300px-Double-Trouble 03.jpg",
+      "voiceeng": "Alex Ness<ref>[https://youtu.be/nh4_vKQf_5A?t=276 Skylanders: Portal Casters 10th Anniversary Celebration Pt. 5 - Alex Ness]. (Date Posted - Oct 16, 2021). [http://youtube.com YouTube].</ref>",
       "appearances": "{{Scrollbox|content= \n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Lost Islands\n*Skylanders: Giants\n*Skylanders: Battlegrounds\n*Lightning Rod Faces the Cyclops Queen\n*Skylanders: Swap Force\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes}}",
-      "element": "Magic",
+      "species": "Tiki-Masked sorcerer",
       "role": "Core Skylander",
       "cameos": "Skylanders: Ring of Heroes",
-      "species": "Tiki-Masked sorcerer",
       "world": "Skylands",
-      "firstrelease": "Skylanders: Spyro's Adventure"
+      "attack": "*Eldritch Beam \n*Conjure Exploding Double \n*Summon Magic Bomb \n*Arcane Eldritch Beam \n*Magical Cataclysm",
+      "gender": "Male",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "element": "Magic"
     }
   },
   {
@@ -1395,6 +2297,32 @@
     "signature_moves": [],
     "alignment": null,
     "attributes": {}
+  },
+  {
+    "figure_id": "a59b3741a23b4c4b",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Legendary_Spyro",
+    "soul_gem": null,
+    "signature_moves": [
+      "Fire Breath",
+      "Horn Charge",
+      "Spyro's Flight",
+      "Triple Flameballs",
+      "Fire Shield"
+    ],
+    "alignment": "Legendary Skylander",
+    "attributes": {
+      "appearances": "*Skylanders: Spyro's Adventure \n*Skylanders: Universe\n*Skylanders: Cloud Patrol \n*Skylanders: Lost Islands\n*Skylanders: Battlegrounds\n*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n* Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "voiceeng": "Josh Keaton (2011-2015) \n Matthew Mercer (2016)",
+      "world": "Skylands",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "element": "Magic",
+      "species": "Dragon",
+      "image": "270px",
+      "gender": "Male",
+      "name": "Legendary Spyro",
+      "attack": "*Fire Breath\n*Horn Charge\n*Spyro's Flight\n*Triple Flameballs\n*Fire Shield",
+      "role": "Legendary Skylander"
+    }
   },
   {
     "figure_id": "a741276ca3a7d4f2",
@@ -1409,20 +2337,20 @@
     ],
     "alignment": "Core Skylander",
     "attributes": {
-      "gender": "Female",
+      "lc": "330px",
       "appearances": "*Skylanders: Giants \n*Skylanders: Universe\n*Skylanders: Lost Islands\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Rift into Overdrive\n* Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
       "image": "<tabber>\nS1= 330px",
-      "lc": "330px",
-      "role": "Core Skylander",
-      "world": "Ice Kingdom",
-      "firstrelease": "Skylanders: Giants",
+      "voiceeng": "Julie Nathanson<ref>[https://twitter.com/Julie_Nathanson/status/390165420235190272 Julie Nathanson's Twitter]. [https://www.twitter.com Twitter].</ref>",
       "species": "Unknown (Elf formerly)",
       "attack": "*Ice Javelin \n*Ice Wall \n*Glacial Bash \n*Cold Front \n*Imperial Armor",
-      "voiceeng": "Julie Nathanson<ref>[https://twitter.com/Julie_Nathanson/status/390165420235190272 Julie Nathanson's Twitter]. [https://www.twitter.com Twitter].</ref>",
-      "name": "Chill",
       "element": "Water",
+      "firstrelease": "Skylanders: Giants",
+      "voiceita": "Giuliana Atepi",
+      "role": "Core Skylander",
+      "world": "Ice Kingdom",
+      "name": "Chill",
       "s2": "330px",
-      "voiceita": "Giuliana Atepi"
+      "gender": "Female"
     }
   },
   {
@@ -1438,17 +2366,17 @@
     ],
     "alignment": "Core Skylander",
     "attributes": {
-      "element": "Fire",
-      "appearances": "*Skylanders: Giants\n*Skylanders: Swap Force \n*Skylanders: Trap Team \n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
-      "name": "Molten Hot Dog",
       "image": "File:Molten_Hot_Dog_Promo.jpg",
+      "species": "Fire Dog",
+      "firstrelease": "Skylanders: Giants",
+      "name": "Molten Hot Dog",
+      "appearances": "*Skylanders: Giants\n*Skylanders: Swap Force \n*Skylanders: Trap Team \n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "world": "Skylands",
+      "role": "Core Skylander",
+      "element": "Fire",
       "gender": "Male",
       "attack": "*Firebark \n*Wall of Fire \n*Comet Slam \n*Wall of More Fire \n*Super Comet",
-      "firstrelease": "Skylanders: Giants",
-      "world": "Skylands",
-      "species": "Fire Dog",
-      "voiceeng": "Carlos Alazraqui",
-      "role": "Core Skylander"
+      "voiceeng": "Carlos Alazraqui"
     }
   },
   {
@@ -1472,19 +2400,19 @@
     ],
     "alignment": "Core Skylander",
     "attributes": {
-      "gender": "Male",
-      "attack": "*Beezooka \n*Honey Glob \n*Honey Beecon\n*Bee Armada \n*Honey Buzz Blast",
       "voiceeng": "David Sobolov<ref>[https://twitter.com/volobos/status/739210902210150402 I'm looking for video of my work in Guild Wars 2, and as Bumbleblast and Krypt King in Skylanders.]. (Date Posted - Jun 4, 2016). [https://twitter.com/ Twitter].</ref>",
-      "name": "Bumble Blast",
-      "species": "Anthropomorphic Beehive/Honey Tree",
-      "role": "Core Skylander",
-      "image": "<gallery>\nBumble_blast.jpg",
       "firstrelease": "Skylanders: Swap Force",
-      "cameos": "Stump Smash Crosses the Bone Dragon",
+      "element": "Life",
+      "attack": "*Beezooka \n*Honey Glob \n*Honey Beecon\n*Bee Armada \n*Honey Buzz Blast",
+      "image": "<gallery>\nBumble_blast.jpg",
+      "gender": "Male",
+      "role": "Core Skylander",
       "voicespa": "Blas Garcia (Latin American)",
       "appearances": "*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
-      "element": "Life",
-      "world": "Radiant Mountains"
+      "cameos": "Stump Smash Crosses the Bone Dragon",
+      "world": "Radiant Mountains",
+      "name": "Bumble Blast",
+      "species": "Anthropomorphic Beehive/Honey Tree"
     }
   },
   {
@@ -1500,18 +2428,18 @@
     ],
     "alignment": "Giant",
     "attributes": {
-      "name": "Hot Head",
-      "image": "File:Hot_Head_Promo.jpg",
-      "attack": "*Flamefire Burst \n*Oil Blobs \n*Sizzle Shower \n*Turn Up the Heat! \n*Premium Grade",
-      "species": "Fire Golem",
-      "appearances": "*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Battlecast\n*Skylanders: Imaginators",
-      "element": "Fire",
-      "cameos": "Rift into Overdrive",
-      "firstrelease": "Skylanders: Giants",
       "gender": "Male",
-      "voiceeng": "Patrick Seitz<ref>[https://twitter.com/Seitz_Unseen/status/365730291651854336 Patrick Seitz's Twitter]. (Date Posted -  Aug 9, 2013). [https://twitter.com/ Twitter].</ref>\n Tom Kenny (commercials)",
+      "world": "Skylands",
+      "element": "Fire",
+      "name": "Hot Head",
+      "attack": "*Flamefire Burst \n*Oil Blobs \n*Sizzle Shower \n*Turn Up the Heat! \n*Premium Grade",
       "role": "Giant",
-      "world": "Skylands"
+      "firstrelease": "Skylanders: Giants",
+      "voiceeng": "Patrick Seitz<ref>[https://twitter.com/Seitz_Unseen/status/365730291651854336 Patrick Seitz's Twitter]. (Date Posted -  Aug 9, 2013). [https://twitter.com/ Twitter].</ref>\n Tom Kenny (commercials)",
+      "cameos": "Rift into Overdrive",
+      "image": "File:Hot_Head_Promo.jpg",
+      "species": "Fire Golem",
+      "appearances": "*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Battlecast\n*Skylanders: Imaginators"
     }
   },
   {
@@ -1523,12 +2451,12 @@
     ],
     "alignment": "Enemy",
     "attributes": {
-      "name": "Dr. Neo Cortex's Squadron",
-      "world": "*Thumpin' Wumpa Islands",
-      "attack": "*Projectiles",
       "image": "Dr Neo Cortex's Squadron Large.jpg",
-      "appearances": "*Skylanders: Imaginators",
-      "role": "Enemy"
+      "world": "*Thumpin' Wumpa Islands",
+      "role": "Enemy",
+      "attack": "*Projectiles",
+      "name": "Dr. Neo Cortex's Squadron",
+      "appearances": "*Skylanders: Imaginators"
     }
   },
   {
@@ -1542,21 +2470,29 @@
     ],
     "alignment": "*Doom Raider (Trap Team)\n*Ally (Trap Team)\n*Sensei (Imaginators)",
     "attributes": {
-      "role": "*Doom Raider (Trap Team)\n*Ally (Trap Team)\n*Sensei (Imaginators)",
-      "element": "Earth",
-      "gender": "Female",
-      "voiceeng": "C.C.H. Pounder<ref>[https://twitter.com/CCHPounder/status/675958876970295296 C.C.H. Pounder's Twitter]. (Date Posted -Dec 13, 2015). [http://twitter.com Twitter].</ref>",
-      "image": "<tabber>Villain=File:Golden Queen Promo Art.jpeg",
-      "attack": "<tabber>Trap Team=Staff Strike \n Golden Rays \n Golden Wings",
-      "firstrelease": "Skylanders: Imaginators",
-      "battleclass": "Sorcerer",
-      "sensei": "thumb</tabber>",
       "name": "Golden Queen",
-      "species": "Living Gold Statue",
+      "image": "<tabber>Villain=File:Golden Queen Promo Art.jpeg",
       "world": "*The Golden Desert\n* Cave of Gold",
       "imaginators": "Winged Scarabs \n Golden Shockwave \n Royal Guard \n Golden Opportunity \n Royal Treatment\n</tabber>",
-      "appearances": "*Skylanders: Trap Team\n*Skylanders: Lost Islands\n*Skylanders Issue 12\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Battlecast\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes"
+      "appearances": "*Skylanders: Trap Team\n*Skylanders: Lost Islands\n*Skylanders Issue 12\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Battlecast\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
+      "role": "*Doom Raider (Trap Team)\n*Ally (Trap Team)\n*Sensei (Imaginators)",
+      "sensei": "thumb</tabber>",
+      "firstrelease": "Skylanders: Imaginators",
+      "species": "Living Gold Statue",
+      "gender": "Female",
+      "battleclass": "Sorcerer",
+      "element": "Earth",
+      "voiceeng": "C.C.H. Pounder<ref>[https://twitter.com/CCHPounder/status/675958876970295296 C.C.H. Pounder's Twitter]. (Date Posted -Dec 13, 2015). [http://twitter.com Twitter].</ref>",
+      "attack": "<tabber>Trap Team=Staff Strike \n Golden Rays \n Golden Wings"
     }
+  },
+  {
+    "figure_id": "bd1ad8178d6164aa",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Grave_Clobber_(character)/Gallery",
+    "soul_gem": null,
+    "signature_moves": [],
+    "alignment": null,
+    "attributes": {}
   },
   {
     "figure_id": "c2339f3d7c31bfe4",
@@ -1571,19 +2507,19 @@
     ],
     "alignment": "Core Skylander",
     "attributes": {
-      "gender": "Male",
       "cameos": "Stump Smash Crosses the Bone Dragon",
+      "gender": "Male",
       "element": "Life",
-      "species": "Anthropomorphic Beehive/Honey Tree",
       "name": "Bumble Blast",
       "attack": "*Beezooka \n*Honey Glob \n*Honey Beecon\n*Bee Armada \n*Honey Buzz Blast",
-      "firstrelease": "Skylanders: Swap Force",
+      "species": "Anthropomorphic Beehive/Honey Tree",
       "voiceeng": "David Sobolov<ref>[https://twitter.com/volobos/status/739210902210150402 I'm looking for video of my work in Guild Wars 2, and as Bumbleblast and Krypt King in Skylanders.]. (Date Posted - Jun 4, 2016). [https://twitter.com/ Twitter].</ref>",
       "voicespa": "Blas Garcia (Latin American)",
-      "world": "Radiant Mountains",
       "appearances": "*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
-      "image": "<gallery>\nBumble_blast.jpg",
-      "role": "Core Skylander"
+      "role": "Core Skylander",
+      "world": "Radiant Mountains",
+      "firstrelease": "Skylanders: Swap Force",
+      "image": "<gallery>\nBumble_blast.jpg"
     }
   },
   {
@@ -1595,12 +2531,66 @@
     "attributes": {}
   },
   {
+    "figure_id": "c6252e61c1962949",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Slam_Bam",
+    "soul_gem": null,
+    "signature_moves": [
+      "Yeti Fists",
+      "Ice Prison",
+      "Arctic Explosion",
+      "Yeti Ice Shoes",
+      "Ice Knuckles"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "voiceeng": "Fred Tatasciore (2012)",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "world": "Skylands",
+      "role": "Core Skylander",
+      "species": "Four-armed Yeti",
+      "attack": "*Yeti Fists \n*Ice Prison \n*Arctic Explosion\n*Yeti Ice Shoes \n*Ice Knuckles",
+      "name": "Slam Bam",
+      "gender": "Male",
+      "element": "Water",
+      "image": "<gallery>\n300px-SlamBam 01.jpg",
+      "appearances": "*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Eruptor Meets the Nightmare King\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes"
+    }
+  },
+  {
     "figure_id": "c71d5b4764a21592",
     "wiki_page": "https://skylanders.fandom.com/wiki/Terrafin_Battles_the_Boom_Brothers",
     "soul_gem": null,
     "signature_moves": [],
     "alignment": null,
     "attributes": {}
+  },
+  {
+    "figure_id": "c91deaf1da4d5657",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Drobot",
+    "soul_gem": null,
+    "signature_moves": [
+      "Mega Blasters",
+      "Tactical Bladegears",
+      "Thruster Flight",
+      "Hover Mode",
+      "Quadratic Blasters"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "element": "Tech",
+      "attack": "*Mega Blasters \n*Tactical Bladegears\n*Thruster Flight\n*Hover Mode\n*Quadratic Blasters",
+      "voiceita": "Marco Balzarotti",
+      "appearances": "*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Lost Islands\n*Skylanders: Giants\n*Lightning Rod Faces the Cyclops Queen\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "role": "Core Skylander",
+      "name": "Drobot",
+      "cameos": "Return of the Dragon King",
+      "voiceeng": "Alex Ness<ref>[https://youtu.be/nh4_vKQf_5A?t=276 Skylanders: Portal Casters 10th Anniversary Celebration Pt. 5 - Alex Ness]. (Date Posted - Oct 16, 2021). [https://www.youtube.com YouTube].</ref>",
+      "image": "<gallery>\nImage:Tht.jpg",
+      "gender": "Male",
+      "world": "Skylands",
+      "species": "Tech Dragon"
+    }
   },
   {
     "figure_id": "ca3d254f70b9fd8b",
@@ -1623,17 +2613,17 @@
     ],
     "alignment": "Giant",
     "attributes": {
-      "appearances": "*Skylanders: Giants \n* Skylanders: Lost Islands\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
-      "species": "Rock Golem",
-      "world": "Skylands",
-      "image": "File:Granite_Crusher_Promo.jpg",
       "element": "Earth",
-      "name": "Granite Crusher",
-      "gender": "Male",
+      "world": "Skylands",
+      "species": "Rock Golem",
+      "image": "File:Granite_Crusher_Promo.jpg",
       "role": "Giant",
       "firstrelease": "Skylanders: Giants",
+      "appearances": "*Skylanders: Giants \n* Skylanders: Lost Islands\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
       "attack": "*Crusher's Crusher \n*Turn to Stone \n*Rockslide \n*Ground Grinder \n*Cavelight Blast",
-      "voiceeng": "Kevin Sorbo"
+      "voiceeng": "Kevin Sorbo",
+      "name": "Granite Crusher",
+      "gender": "Male"
     }
   },
   {
@@ -1648,18 +2638,18 @@
     ],
     "alignment": "Sensei",
     "attributes": {
-      "element": "Dark",
+      "firstrelease": "Skylanders: Imaginators",
+      "image": "File:Steel_Plated_Hood_Sickle_Promo.jpg",
       "attack": "*Dark Scythe Combo \n*Dark Dislocation \n*Dark Combo \n*More Remnants",
       "species": "Reaper",
-      "firstrelease": "Skylanders: Imaginators",
-      "role": "Sensei",
-      "name": "Steel Plated Hood Sickle",
-      "world": "Skylands",
-      "image": "File:Steel_Plated_Hood_Sickle_Promo.jpg",
       "gender": "Male",
-      "voiceeng": "J.B. Blanc",
+      "element": "Dark",
+      "world": "Skylands",
       "appearances": "Skylanders: Imaginators",
-      "battleclass": "Sentinel"
+      "name": "Steel Plated Hood Sickle",
+      "battleclass": "Sentinel",
+      "voiceeng": "J.B. Blanc",
+      "role": "Sensei"
     }
   },
   {
@@ -1675,19 +2665,19 @@
     ],
     "alignment": "Giant",
     "attributes": {
-      "world": "Skylands",
-      "image": "290px",
-      "role": "Giant",
-      "voiceeng": "Kevin Michael Richardson<ref>[https://www.youtube.com/watch?v=sPI2gZhhR6Y Skylanders Voice of TREE REX & STUMP SMASH Kevin Michael Richardson Interview]. (Date Posted - May 31, 2014). [http://youtube.com YouTube].</ref>\nTom Kenny (commercials)",
-      "name": "Tree Rex",
-      "cameos": "The Kaos Trap",
-      "element": "life",
       "appearances": "*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Return of the Dragon King\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Battlecast\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
-      "attack": "*Arbor Smash \n*Sequoia Charge \n*Big Thorn Shockwave Slam \n*Photosynthesis Cannon \n*Super Stampede",
+      "image": "290px",
+      "name": "Tree Rex",
       "species": "Ent",
-      "voiceita": "Pietro Ubaldi \nDiego Sabre (Swap Force - 2013)",
       "firstrelease": "Skylanders: Giants",
-      "gender": "Male"
+      "role": "Giant",
+      "gender": "Male",
+      "element": "life",
+      "voiceeng": "Kevin Michael Richardson<ref>[https://www.youtube.com/watch?v=sPI2gZhhR6Y Skylanders Voice of TREE REX & STUMP SMASH Kevin Michael Richardson Interview]. (Date Posted - May 31, 2014). [http://youtube.com YouTube].</ref>\nTom Kenny (commercials)",
+      "cameos": "The Kaos Trap",
+      "world": "Skylands",
+      "attack": "*Arbor Smash \n*Sequoia Charge \n*Big Thorn Shockwave Slam \n*Photosynthesis Cannon \n*Super Stampede",
+      "voiceita": "Pietro Ubaldi \nDiego Sabre (Swap Force - 2013)"
     }
   },
   {
@@ -1711,18 +2701,103 @@
     ],
     "alignment": "Sensei",
     "attributes": {
-      "species": "Robot",
-      "element": "Tech",
-      "name": "Chain Reaction",
-      "world": "Skylands",
       "role": "Sensei",
-      "gender": "Male",
-      "firstrelease": "Skylanders: Imaginators",
+      "world": "Skylands",
+      "name": "Chain Reaction",
+      "attack": "Chainsaw Combo \n Summon Invention \n Running With Chainsaws \n Thunderslam \n Overload",
+      "element": "Tech",
       "voiceeng": "Â¿Charlie Adler? <ref>[https://twitter.com/charlie_adler/status/985144391860826112 Iâm not sure . I think Chain Reaction ....]. (Date Posted - Apr 14, 2018). [https://twitter.com Twitter].</ref>",
       "appearances": "*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
-      "attack": "Chainsaw Combo \n Summon Invention \n Running With Chainsaws \n Thunderslam \n Overload",
+      "battleclass": "Swashbuckler",
+      "species": "Robot",
+      "gender": "Male",
       "image": "File:Chain Reaction Promo.jpg",
-      "battleclass": "Swashbuckler"
+      "firstrelease": "Skylanders: Imaginators"
+    }
+  },
+  {
+    "figure_id": "d206f457b7411b50",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Warnado",
+    "soul_gem": null,
+    "signature_moves": [
+      "Spin Attack",
+      "Summon Tornado",
+      "Sharp Shell",
+      "Whirlwind Flight",
+      "Turtle Slam"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "gender": "Male",
+      "voiceeng": "Fred Tatasciore",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "element": "Air",
+      "image": "<gallery>\n290px-Warnado_03.jpg",
+      "name": "Warnado",
+      "role": "Core Skylander",
+      "appearances": "{{Scrollbox|content= \n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Battlegrounds\n*Skylanders: Lost Islands\n*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators}}",
+      "cameos": "Spyro versus The Mega Monsters",
+      "species": "Turtle",
+      "world": "Skylands",
+      "attack": "*Spin Attack \n*Summon Tornado \n*Sharp Shell \n*Whirlwind Flight\n*Turtle Slam"
+    }
+  },
+  {
+    "figure_id": "d6cbe001401ffb1a",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Stormblade",
+    "soul_gem": null,
+    "signature_moves": [
+      "Feather Blade Throw",
+      "Steeled Wings",
+      "Cyclone Surge",
+      "Wind Wall",
+      "Fist Full of Feathers"
+    ],
+    "alignment": "SuperCharger",
+    "attributes": {
+      "cameos": "Dive, Dive, Dive!",
+      "name": "Stormblade",
+      "gender": "Female",
+      "element": "Air",
+      "image": "290px",
+      "appearances": "*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Secret Agent Secrets\n*Skylanders: Battlecast\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
+      "voiceeng": "Stephanie Lemelin<ref>[https://www.instagram.com/p/6-MJ-7GE19/?hl=en Stephanie Lemelin's Instagram]. (Date Posted - Aug. 29, 2015). [http://instagram.com Instagram].</ref>",
+      "role": "SuperCharger",
+      "voiceita": "Jenny De Cesarei",
+      "world": "Skylands",
+      "firstrelease": "Skylanders: SuperChargers",
+      "species": "[https://en.wikipedia.org/wiki/Lark Lark]<ref name=\"VV SuperChargers\">[http://gamingtrend.com/2015/09/08/the-fast-and-the-furry-ous-taking-a-ride-with-skylanders-superchargers/ The Fast and the Furry-ous: Taking a ride with Skylanders Superchargers]. (Date Posted - Sep. 8, 2015). [http://gamingtrend.com YouTube].</ref>",
+      "attack": "*Feather Blade Throw \n*Steeled Wings \n*Cyclone Surge \n*Wind Wall \n*Fist Full of Feathers"
+    }
+  },
+  {
+    "figure_id": "d9349c8cb5e52a44",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Eruptor",
+    "soul_gem": null,
+    "signature_moves": [
+      "Lava Lob",
+      "Eruption",
+      "Mega Magma Balls",
+      "Heavy Duty Plasma",
+      "Super Eruption"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "world": "Skylands",
+      "name": "Eruptor",
+      "role": "Core Skylander",
+      "attack": "*Lava Lob \n*Eruption \n*Mega Magma Balls\n*Heavy Duty Plasma\n*Super Eruption",
+      "voiceeng": "Keythe Farley (2012)<ref>[https://www.keythefarley.com/bio Keythe Farleyâs portfolio]. [https://www.keythefarley.com/ keythefarley].</ref>",
+      "voicespa": "Alfredo MartÃ­nez",
+      "species": "Lava Monster",
+      "element": "Fire",
+      "image": "<gallery>\nErup3.jpg",
+      "gender": "Male",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "appearances": "{{Scrollbox|content= \n*Spyro's Kingdom (Cancelled)\n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*The Machine of Doom\n*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Eruptor Meets the Nightmare King\n*Trigger Happy Targets the Evil Kaos\n*Rift into Overdrive\n*Skylanders: SuperChargers\n*Skylanders: SuperChargers Racing\n*Skylanders: Battlecast\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes}}",
+      "cameos": "*Spyro versus The Mega Monsters (mentioned)\n*The Kaos Trap\n*Return of the Dragon King",
+      "voiceger": "Wolfgang Berger",
+      "voiceita": "Pietro Ubaldi"
     }
   },
   {
@@ -1738,18 +2813,18 @@
     ],
     "alignment": "Sensei",
     "attributes": {
-      "voiceeng": "Sean Schemmel {{cite}}",
       "gender": "Male",
       "species": "Robot",
-      "role": "Sensei",
+      "battleclass": "Bowslinger",
+      "name": "Ro-Bow",
+      "voiceeng": "Sean Schemmel {{cite}}",
       "element": "Tech",
       "image": "Ro-Bow Promo.jpg",
       "world": "Skylands",
       "appearances": "*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
-      "battleclass": "Bowslinger",
+      "firstrelease": "Skylanders: Imaginators",
       "attack": "*Archer Combo \n*Whirling Destruct-O-Matic \n*Reinforced Arrows \n*Deconstruction Laser \n*Havoc Orb",
-      "name": "Ro-Bow",
-      "firstrelease": "Skylanders: Imaginators"
+      "role": "Sensei"
     }
   },
   {
@@ -1765,19 +2840,50 @@
     ],
     "alignment": "Core Skylander",
     "attributes": {
-      "element": "Undead",
+      "species": "Dragon",
+      "voiceeng": "Tobie LaSalandra (2012) \n Erica Lindbeck (Imaginators, Curse Tiki Temple cutscenes only)",
+      "image": "<gallery>\nCynder_Promo.jpg",
+      "role": "Core Skylander",
+      "name": "Cynder",
+      "firstrelease": "Skylanders: Spyro's Adventure",
       "cameos": "*Skylanders Issue 12\n*Rift into Overdrive",
       "appearances": "{{Scrollbox|content=\n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Giants\n*Spyro versus The Mega Monsters (mentioned)\n*Skylanders: Swap Force\n*Cynder Confronts the Weather Wizard\n*Skylanders: Trap Team\n*Trigger Happy Targets the Evil Kaos\n*Return of the Dragon King\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes}}",
-      "name": "Cynder",
-      "gender": "Female",
-      "species": "Dragon",
-      "firstrelease": "Skylanders: Spyro's Adventure",
-      "image": "<gallery>\nCynder_Promo.jpg",
       "attack": "*Spectral Lightning\n*Shadow Dash\n*Cynder Flight\n*Black Lightning\n*Shadow Reach",
       "voiceita": "Daniela Fava",
+      "element": "Undead",
+      "gender": "Female",
+      "world": "Skylands"
+    }
+  },
+  {
+    "figure_id": "e0dfc35442fa5ca3",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Wolfgang",
+    "soul_gem": null,
+    "signature_moves": [
+      "<tabber>",
+      "Trap Team= Harp slash",
+      "Music notes",
+      "Slide attack"
+    ],
+    "alignment": "*Doom Raider (Trap Team)\n*Ally (Trap Team)\n*Sensei (Imaginators)",
+    "attributes": {
+      "image": "<tabber>Villain=File:Wolfgang_Promo.jpg",
+      "gender": "Male",
+      "voiceita": "Claudio Moneta",
+      "voicefin": "Sasu Moilanen",
+      "firstrelease": "Skylanders: Imaginators",
+      "species": "Werewolf",
+      "family": "Sal (twin brother)",
       "world": "Skylands",
-      "voiceeng": "Tobie LaSalandra (2012) \n Erica Lindbeck (Imaginators, Curse Tiki Temple cutscenes only)",
-      "role": "Core Skylander"
+      "name": "Wolfgang",
+      "voiceeng": "JP Karliak<ref>Credited as John Paul Karliak </ref><ref>[https://youtu.be/ANVs_lpiy8Y Skylanders Voice of Wolfgang John Paul Karliak Interview]. (Date Posted - ). [http://youtube.com YouTube].</ref>",
+      "attack": "<tabber>\nTrap Team= Harp slash \n Music notes \n Slide attack",
+      "appearances": "*The Kaos Trap\n*Skylanders: Trap Team (Console)\n*Skylanders: Lost Islands\n*Skylanders Issue 12\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Battlecast\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
+      "battleclass": "Bowslinger",
+      "element": "Undead",
+      "imaginators": "Strike a Chord \n Knee Slide \n Song of the Underworld \n Lay Some Tracks \n Surround Sound\n</tabber>",
+      "role": "*Doom Raider (Trap Team)\n*Ally (Trap Team)\n*Sensei (Imaginators)",
+      "sensei": "File:Wolfgang_Sensei_Promo.jpg</tabber>"
     }
   },
   {
@@ -1793,18 +2899,128 @@
     ],
     "alignment": "Sensei",
     "attributes": {
-      "name": "Jingle Bell Chompy Mage",
+      "voiceeng": "Alex Ness",
       "gender": "Male",
-      "world": "Chompy Mountain",
+      "name": "Jingle Bell Chompy Mage",
       "appearances": "Skylanders: Imaginators",
-      "image": "Jingle Bell Chompy Mage Promo.jpg",
+      "battleclass": "Bazooker",
+      "world": "Chompy Mountain",
       "firstrelease": "Skylanders: Imaginators",
       "role": "Sensei",
-      "battleclass": "Bazooker",
       "element": "Life",
       "attack": "Chompzooka! \n Talk to the Hand! \n Chompy Pile! \n Staff Shot \n Chompies to Go Please",
-      "voiceeng": "Alex Ness",
-      "species": "Half-Wizard Half-Gargantuan Chompy"
+      "species": "Half-Wizard Half-Gargantuan Chompy",
+      "image": "Jingle Bell Chompy Mage Promo.jpg"
+    }
+  },
+  {
+    "figure_id": "e5dcda99ae4e3fe4",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Sonic_Boom",
+    "soul_gem": null,
+    "signature_moves": [
+      "Sonic Roar",
+      "Egg Toss",
+      "Loudmouth",
+      "Let there be Flight",
+      "Egg Shocker"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "attack": "*Sonic Roar\n*Egg Toss \n*Loudmouth\n*Let there be Flight \n*Egg Shocker",
+      "species": "Griffin",
+      "world": "Skylands",
+      "voiceeng": "Lani Minella (2012)<ref>[https://www.laniminella.com/assets/lani_minella_resume.pdf Lani Minella's resume]. [https://www.laniminella.com/ Lani Minella's Official Website].</ref>",
+      "name": "Sonic Boom",
+      "cameos": "*Trigger Happy Targets the Evil Kaos\n*Return of the Dragon King",
+      "element": "Air",
+      "family": "Her hatchlings",
+      "appearances": "{{Scrollbox|content= \n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Battlegrounds\n*Skylanders: Lost Islands\n*Skylanders: Giants\n*Skylanders: Swap Force\n*Terrafin Battles the Boom Brothers\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Battlecast\n*Skylanders: Imaginators}}",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "role": "Core Skylander",
+      "image": "<gallery>\nSonic Boom shot.jpg",
+      "gender": "Female"
+    }
+  },
+  {
+    "figure_id": "e5f5dd992100cff2",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Bumble_Blast",
+    "soul_gem": null,
+    "signature_moves": [
+      "Beezooka",
+      "Honey Glob",
+      "Honey Beecon",
+      "Bee Armada",
+      "Honey Buzz Blast"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "world": "Radiant Mountains",
+      "cameos": "Stump Smash Crosses the Bone Dragon",
+      "voicespa": "Blas Garcia (Latin American)",
+      "species": "Anthropomorphic Beehive/Honey Tree",
+      "name": "Bumble Blast",
+      "role": "Core Skylander",
+      "element": "Life",
+      "attack": "*Beezooka \n*Honey Glob \n*Honey Beecon\n*Bee Armada \n*Honey Buzz Blast",
+      "appearances": "*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "firstrelease": "Skylanders: Swap Force",
+      "image": "<gallery>\nBumble_blast.jpg",
+      "voiceeng": "David Sobolov<ref>[https://twitter.com/volobos/status/739210902210150402 I'm looking for video of my work in Guild Wars 2, and as Bumbleblast and Krypt King in Skylanders.]. (Date Posted - Jun 4, 2016). [https://twitter.com/ Twitter].</ref>",
+      "gender": "Male"
+    }
+  },
+  {
+    "figure_id": "e6efa611ea175956",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Spyro",
+    "soul_gem": null,
+    "signature_moves": [
+      "Fire Breath",
+      "Horn Charge",
+      "Dragon Flight",
+      "Triple Shot",
+      "Fire Shield"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "world": "Unknown",
+      "image": "<gallery>\nSpyro.jpg",
+      "appearances": "{{Scrollbox|content=\n*Spyro's Kingdom (Scrapped)\n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*The Machine of Doom\n*Skylanders: Lost Islands\n*Skylanders: Battlegrounds\n*Skylanders: Giants\n*Spyro versus The Mega Monsters\n*Gill Grunt and the Curse of the Fish Master\n*Skylanders: Swap Force\n*Cynder Confronts the Weather Wizard\n*Skylanders: Trap Team\n*Stump Smash Crosses the Bone Dragon\n*Champions\n*Trigger Happy Targets the Evil Kaos\n*Return of the Dragon King\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Secret Agent Secrets\n*Skylanders: Battlecast\n*Skylanders: Imaginators\n*Full Blast\n*Goldslinger\n*Skylanders: Ring of Heroes}}",
+      "cameos": "*The Kaos Trap\n*Dive, Dive, Dive!",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "attack": "*Fire Breath\n*Horn Charge \n*Dragon Flight\n*Triple Shot \n*Fire Shield",
+      "species": "Purple Dragon",
+      "voiceeng": "*Josh Keaton<ref>[https://twitter.com/joshkeaton/status/141613411745271808 Josh Keaton's Twitter]. (Date Posted - Nov. 29, 2011). [https://www.twitter.com Twitter].</ref> (2011-2015)\n*Matthew Mercer<ref>[https://twitter.com/matthewmercer/status/786991693664878593 Matthew Mercer's Tweet]. (Date Posted - Oct. 14, 2016). [https://www.twitter.com Twitter].</ref> (2016)",
+      "element": "Magic",
+      "gender": "Male",
+      "role": "Core Skylander",
+      "name": "Spyro"
+    }
+  },
+  {
+    "figure_id": "ea50bf29223ae379",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Prism_Break",
+    "soul_gem": null,
+    "signature_moves": [
+      "Energy Beams",
+      "Shard Summon",
+      "Chained Refraction",
+      "Crystalline Armor",
+      "Focused Energy"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "gender": "Male",
+      "species": "Crystal Rock Golem",
+      "name": "Prism Break",
+      "image": "<gallery>\nPrism Break.jpg",
+      "attack": "*Energy Beams \n*Shard Summon \n*Chained Refraction \n*Crystalline Armor\n*Focused Energy",
+      "cameos": "*Spyro versus The Mega Monsters\n*Stump Smash Crosses the Bone Dragon\n*Return of the Dragon King\n*Rift into Overdrive",
+      "firstrelease": "Skylanders: Spyro's Adventure",
+      "world": "Skylands",
+      "appearances": "{{Scrollbox|content=\n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Battlegrounds\n*Skylanders: Lost Islands\n*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators}}",
+      "element": "Earth",
+      "voiceeng": "*Peter Lurie (2012) \n*Brad Abrell (Skylanders: Battlecast)<ref>[https://twitter.com/bradabrell/status/867796065692508160 Skylanders Battlecast (union title Skylanders Mobile 2016)]. (Date Posted - May 25, 2017). [https://www.twitter.com Twitter].</ref>",
+      "role": "Core Skylander"
     }
   },
   {
@@ -1820,17 +3036,17 @@
     ],
     "alignment": "Core Skylander",
     "attributes": {
-      "role": "Core Skylander",
-      "attack": "*Crystal Shards \n*Shimmering Spin\n*Surrounded by Shards \n*Luminous Lasers \n*Light Speed Lasers",
-      "cameos": "*Stump Smash Crosses the Bone Dragon (mentioned)\n*Return of the Dragon King\n*Rift into Overdrive\n*Unexpected Allies",
-      "element": "Earth",
-      "image": "<gallery>\nEarth_Flashwing.jpg",
-      "gender": "Female",
-      "world": "Skylands",
       "species": "Crystal Dragon",
+      "role": "Core Skylander",
+      "world": "Skylands",
+      "gender": "Female",
+      "image": "<gallery>\nEarth_Flashwing.jpg",
+      "element": "Earth",
       "appearances": "*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Battlecast\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
+      "cameos": "*Stump Smash Crosses the Bone Dragon (mentioned)\n*Return of the Dragon King\n*Rift into Overdrive\n*Unexpected Allies",
       "name": "Flashwing",
       "voiceeng": "Tara Strong<ref>[https://twitter.com/tarastrong/status/1004871558941167616 Tara Strong's Twitter]. (Date Posted - Jun 7, 2018). [https://twitter.com Twitter].</ref>",
+      "attack": "*Crystal Shards \n*Shimmering Spin\n*Surrounded by Shards \n*Luminous Lasers \n*Light Speed Lasers",
       "firstrelease": "Skylanders: Giants"
     }
   },
@@ -1841,6 +3057,34 @@
     "signature_moves": [],
     "alignment": null,
     "attributes": {}
+  },
+  {
+    "figure_id": "f050f60290410917",
+    "wiki_page": "https://skylanders.fandom.com/wiki/Bumble_Blast",
+    "soul_gem": null,
+    "signature_moves": [
+      "Beezooka",
+      "Honey Glob",
+      "Honey Beecon",
+      "Bee Armada",
+      "Honey Buzz Blast"
+    ],
+    "alignment": "Core Skylander",
+    "attributes": {
+      "attack": "*Beezooka \n*Honey Glob \n*Honey Beecon\n*Bee Armada \n*Honey Buzz Blast",
+      "world": "Radiant Mountains",
+      "image": "<gallery>\nBumble_blast.jpg",
+      "voicespa": "Blas Garcia (Latin American)",
+      "gender": "Male",
+      "cameos": "Stump Smash Crosses the Bone Dragon",
+      "role": "Core Skylander",
+      "voiceeng": "David Sobolov<ref>[https://twitter.com/volobos/status/739210902210150402 I'm looking for video of my work in Guild Wars 2, and as Bumbleblast and Krypt King in Skylanders.]. (Date Posted - Jun 4, 2016). [https://twitter.com/ Twitter].</ref>",
+      "name": "Bumble Blast",
+      "appearances": "*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "species": "Anthropomorphic Beehive/Honey Tree",
+      "element": "Life",
+      "firstrelease": "Skylanders: Swap Force"
+    }
   },
   {
     "figure_id": "f14a2394e1fb5523",
@@ -1855,19 +3099,19 @@
     ],
     "alignment": "Core Skylander",
     "attributes": {
-      "name": "Bumble Blast",
-      "voiceeng": "David Sobolov<ref>[https://twitter.com/volobos/status/739210902210150402 I'm looking for video of my work in Guild Wars 2, and as Bumbleblast and Krypt King in Skylanders.]. (Date Posted - Jun 4, 2016). [https://twitter.com/ Twitter].</ref>",
       "gender": "Male",
-      "role": "Core Skylander",
+      "name": "Bumble Blast",
       "image": "<gallery>\nBumble_blast.jpg",
-      "world": "Radiant Mountains",
-      "appearances": "*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
-      "cameos": "Stump Smash Crosses the Bone Dragon",
-      "firstrelease": "Skylanders: Swap Force",
       "voicespa": "Blas Garcia (Latin American)",
-      "attack": "*Beezooka \n*Honey Glob \n*Honey Beecon\n*Bee Armada \n*Honey Buzz Blast",
+      "firstrelease": "Skylanders: Swap Force",
       "element": "Life",
-      "species": "Anthropomorphic Beehive/Honey Tree"
+      "species": "Anthropomorphic Beehive/Honey Tree",
+      "world": "Radiant Mountains",
+      "cameos": "Stump Smash Crosses the Bone Dragon",
+      "attack": "*Beezooka \n*Honey Glob \n*Honey Beecon\n*Bee Armada \n*Honey Buzz Blast",
+      "voiceeng": "David Sobolov<ref>[https://twitter.com/volobos/status/739210902210150402 I'm looking for video of my work in Guild Wars 2, and as Bumbleblast and Krypt King in Skylanders.]. (Date Posted - Jun 4, 2016). [https://twitter.com/ Twitter].</ref>",
+      "appearances": "*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "role": "Core Skylander"
     }
   },
   {
@@ -1883,17 +3127,17 @@
     ],
     "alignment": "Core Skylander",
     "attributes": {
-      "attack": "*Tongue Whip \n*Forcefield Ball \n*Power Belch \n*Digestive Detonation \n*Tongue Grabber",
-      "voiceeng": "Ryan Cooper (2012)<ref>[https://www.instagram.com/p/8dy11IQ-1L/ Ryan Cooper's Instagram]. (Date Posted - Oct. 5, 2015). [https://www.instagram.com/ Instagram].</ref>",
       "firstrelease": "Skylanders: Spyro's Adventure",
-      "element": "Magic",
-      "world": "Skylands",
       "gender": "Male",
+      "attack": "*Tongue Whip \n*Forcefield Ball \n*Power Belch \n*Digestive Detonation \n*Tongue Grabber",
       "appearances": "*Spyro's Kingdom <small>(scrapped)</small>\n*Skylanders: Spyro's Adventure\n*Skylanders: Universe\n*Skylanders: Cloud Patrol\n*Skylanders: Lost Islands\n*Skylanders: Giants\n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Stump Smash Crosses the Bone Dragon\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators",
+      "role": "Core Skylander",
+      "voiceeng": "Ryan Cooper (2012)<ref>[https://www.instagram.com/p/8dy11IQ-1L/ Ryan Cooper's Instagram]. (Date Posted - Oct. 5, 2015). [https://www.instagram.com/ Instagram].</ref>",
+      "world": "Skylands",
+      "image": "<gallery>\nWrecking Ball.jpg",
       "species": "Grub",
       "name": "Wrecking Ball",
-      "image": "<gallery>\nWrecking Ball.jpg",
-      "role": "Core Skylander"
+      "element": "Magic"
     }
   },
   {
@@ -1909,19 +3153,19 @@
     ],
     "alignment": "Sensei",
     "attributes": {
-      "appearances": "*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
-      "world": "Mystical Bamboo Forest",
-      "name": "Ambush",
-      "element": "Life",
-      "voiceita": "Renzo Ferrini",
-      "voiceeng": "J.B. Blanc",
-      "species": "Mystical Tree-Knight",
-      "role": "Sensei",
-      "battleclass": "Knight",
-      "attack": "*Whack Attack \n*Splintering Punch \n*Meditative Strike \n*Pruning the Hedges \n*Wood Knocks You!",
       "image": "File:Ambush_Promo.jpg",
+      "appearances": "*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
+      "battleclass": "Knight",
       "gender": "Male",
-      "firstrelease": "Skylanders: Imaginators"
+      "firstrelease": "Skylanders: Imaginators",
+      "role": "Sensei",
+      "world": "Mystical Bamboo Forest",
+      "element": "Life",
+      "name": "Ambush",
+      "voiceita": "Renzo Ferrini",
+      "species": "Mystical Tree-Knight",
+      "attack": "*Whack Attack \n*Splintering Punch \n*Meditative Strike \n*Pruning the Hedges \n*Wood Knocks You!",
+      "voiceeng": "J.B. Blanc"
     }
   },
   {
@@ -1937,19 +3181,19 @@
     ],
     "alignment": "Core Skylander",
     "attributes": {
-      "image": "<gallery>\nSprocket_Promo.jpg",
-      "family": "Unnamed uncle",
       "attack": "*Wrench Whack \n*Turret Gun-O-Matic \n*Auto Turret V2 \n*2 Times The Turrets \n*Tanks A Lot",
-      "appearances": "*Skylanders: Giants\n*Skylanders: Lost Islands\n*Skylanders: Swap Force\n*Terrafin Battles the Boom Brothers\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
-      "voiceeng": "Elizabeth G. Daily",
+      "image": "<gallery>\nSprocket_Promo.jpg",
       "element": "Tech",
+      "voiceeng": "Elizabeth G. Daily",
+      "role": "Core Skylander",
+      "species": "Goldling",
+      "family": "Unnamed uncle",
+      "appearances": "*Skylanders: Giants\n*Skylanders: Lost Islands\n*Skylanders: Swap Force\n*Terrafin Battles the Boom Brothers\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes",
+      "gender": "Female",
       "voiceita": "Jolanda Granato",
       "firstrelease": "Skylanders: Giants",
-      "gender": "Female",
-      "role": "Core Skylander",
       "world": "Skylands",
-      "name": "Sprocket",
-      "species": "Goldling"
+      "name": "Sprocket"
     }
   },
   {
@@ -1973,17 +3217,17 @@
     ],
     "alignment": "Skylander",
     "attributes": {
-      "appearances": "*Skylanders: Giants\n*Skylanders: Lost Islands \n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing) \n*Skylanders: Imaginators",
-      "firstrelease": "Skylanders: Giants",
-      "species": "Unicorn/Dragon Hybrid",
-      "name": "Polar Whirlwind",
-      "gender": "Female",
-      "element": "Air",
-      "image": "294px",
-      "role": "Skylander",
       "voiceeng": "Salli Saffioti",
       "world": "Skylands",
-      "attack": "*Rainbow of Doom\n*Tempest Cloud \n*Dragon Flight\n*Duel Rainbows\n*Atomic Rainbow"
+      "appearances": "*Skylanders: Giants\n*Skylanders: Lost Islands \n*Skylanders: Swap Force\n*Skylanders: Trap Team\n*Skylanders: SuperChargers (Racing) \n*Skylanders: Imaginators",
+      "species": "Unicorn/Dragon Hybrid",
+      "firstrelease": "Skylanders: Giants",
+      "gender": "Female",
+      "name": "Polar Whirlwind",
+      "image": "294px",
+      "attack": "*Rainbow of Doom\n*Tempest Cloud \n*Dragon Flight\n*Duel Rainbows\n*Atomic Rainbow",
+      "role": "Skylander",
+      "element": "Air"
     }
   },
   {
@@ -1999,21 +3243,21 @@
     ],
     "alignment": "Core Skylander",
     "attributes": {
-      "element": "Magic",
-      "voiceeng": "Bobcat Goldthwait",
-      "firstrelease": "Skylanders: Giants",
-      "species": "Blue Gremlin<ref name=\"Gremlin\">Skylander: Universe - Official Sticker Book, page 7</ref>",
-      "voiceport": "Dudu Feveiro<ref>[https://www.youtube.com/watch?v=PUKEF52rsMQ Skylanders - Pop Fizz]. (Date Posted: May 11, 2023). [https://youtube YouTube].</ref>",
-      "voicespa": "Juan Carlos Lozano (Castilian)\nHumberto VÃ©lez (Latin American)",
       "voiceger": "Erik SchÃ¤ffler",
-      "world": "Skylands",
+      "voicespa": "Juan Carlos Lozano (Castilian)\nHumberto VÃ©lez (Latin American)",
+      "attack": "*Potion Lob \n*Beast Form \n*New Concoctions \n*Puddle of Pain \n*Raging Beast",
+      "voiceport": "Dudu Feveiro<ref>[https://www.youtube.com/watch?v=PUKEF52rsMQ Skylanders - Pop Fizz]. (Date Posted: May 11, 2023). [https://youtube YouTube].</ref>",
       "name": "Pop Fizz",
+      "element": "Magic",
       "cameos": "*Stump Smash Crosses the Bone Dragon\n*Trigger Happy Targets the Evil Kaos\n*Return of the Dragon King",
+      "firstrelease": "Skylanders: Giants",
       "image": "<gallery>\nPopFizz.jpg",
-      "gender": "Male",
       "appearances": "{{Scrollbox|content= \n*Skylanders: Giants\n*Lightning Rod Faces the Cyclops Queen\n*Skylanders: Swap Force\n*The Kaos Trap\n*Skylanders: Trap Team\n*Skylanders Issue 12\n*Rift into Overdrive\n*Skylanders: SuperChargers (Racing)\n*Skylanders: Battlecast\n*Skylanders: Imaginators\n*Skylanders: Ring of Heroes}}",
       "role": "Core Skylander",
-      "attack": "*Potion Lob \n*Beast Form \n*New Concoctions \n*Puddle of Pain \n*Raging Beast"
+      "world": "Skylands",
+      "gender": "Male",
+      "voiceeng": "Bobcat Goldthwait",
+      "species": "Blue Gremlin<ref name=\"Gremlin\">Skylander: Universe - Official Sticker Book, page 7</ref>"
     }
   }
 ]

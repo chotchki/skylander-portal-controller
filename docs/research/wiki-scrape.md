@@ -164,10 +164,43 @@ the full scrape.
 
 ### Resume behaviour
 
-`data/figures.json` is written every 25 entries and on exit; `--force`
-re-scrapes everything, the default skips any figure whose cache entry has
-`wiki_page: Some` and whose `hero.png` (or `thumb.png` when `--no-hero`)
-already exists.
+`data/figures.json` is written **after every figure** (per-figure
+incremental save — a crash loses at most one figure's worth of progress).
+`--force` re-scrapes everything. The default is resume-safe: a cached
+`wiki_page: Some` entry is re-used as long as `thumb.png` exists on disk
+for that id. `hero.png` is gitignored, so on a fresh checkout we do NOT
+re-hit the wiki API just to regenerate heroes — the user can pass
+`--force` if they want a full rebuild with heroes. `--resume` exists as
+an explicit flag but is equivalent to the default.
+
+### Why the first run stopped at exactly 100 entries
+
+The first scraper cut (commit `81efd32` era) had two compounding issues:
+
+1. The loop only persisted `figures.json` every 25 iterations. If the
+   run was interrupted mid-way (terminal closed, laptop lid, Ctrl-C, or
+   a terminal crash on Windows), progress between saves was lost.
+2. The 429/retry path in `Client::get` only did 4 attempts with a 30s
+   cap and no `Retry-After` honouring, and a retry-exhausted error
+   bubbled all the way up out of `scrape_one` — while that *didn't*
+   crash the run, it did mean clusters of failures near the tail.
+
+Fix: per-figure `write_figures` call, `Retry-After`-aware 429 handling
+with 5 retries up to 60s, and the resume check now treats a cached
+`wiki_page` as authoritative even when `hero.png` is missing.
+
+### 429 / rate-limit notes
+
+Fandom does return 429 under heavy API load (most commonly when another
+client has been hammering them for a minute or two). Empirically they
+send `Retry-After: 30` or `60`. The scraper now:
+
+- Serialises all requests behind a 1.1s global gate.
+- On 429 or 5xx, reads `Retry-After` (seconds). Falls back to
+  exponential backoff starting at 2s, capped at 60s.
+- Retries up to 5 times per request, then returns an error for that
+  one figure. The main loop catches it, logs it, and moves on — the
+  run never aborts because of a rate-limit storm on a single name.
 
 ### Output schema
 

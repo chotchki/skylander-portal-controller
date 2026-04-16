@@ -96,9 +96,11 @@ impl Client {
     }
 
     /// Wait out the rate-limit window, then perform the request with
-    /// exponential-backoff retry on 429/5xx.
+    /// exponential-backoff retry on 429/5xx. Honours `Retry-After` when the
+    /// server sends one. Max 5 retries; after that the call returns Err and
+    /// the caller should treat the figure as "skipped", not abort the run.
     async fn get(&self, url: &str) -> Result<reqwest::Response> {
-        // Gate.
+        // Gate (global rate limit — all callers serialise through this).
         {
             let mut last = self.gate.lock().await;
             let elapsed = last.elapsed();
@@ -108,21 +110,46 @@ impl Client {
             *last = std::time::Instant::now();
         }
 
+        const MAX_ATTEMPTS: u32 = 6; // initial try + 5 retries
+        const MAX_BACKOFF: Duration = Duration::from_secs(60);
         let mut backoff = Duration::from_secs(2);
-        for attempt in 0..4 {
+        for attempt in 0..MAX_ATTEMPTS {
             let resp = self.http.get(url).send().await;
             match resp {
                 Ok(r) if r.status().is_success() => return Ok(r),
                 Ok(r) if r.status() == 429 || r.status().is_server_error() => {
-                    warn!(attempt, status = %r.status(), "HTTP {} — backing off {:?}", r.status(), backoff);
-                    sleep(backoff).await;
-                    backoff = (backoff * 2).min(Duration::from_secs(30));
+                    // Honour Retry-After if present (seconds or HTTP-date, but
+                    // Fandom sends seconds in practice). Fallback to exp-backoff.
+                    let wait = r
+                        .headers()
+                        .get(reqwest::header::RETRY_AFTER)
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|s| s.trim().parse::<u64>().ok())
+                        .map(Duration::from_secs)
+                        .unwrap_or(backoff)
+                        .min(MAX_BACKOFF);
+                    if attempt + 1 == MAX_ATTEMPTS {
+                        return Err(anyhow!(
+                            "HTTP {} after {} attempts for {url}",
+                            r.status(),
+                            MAX_ATTEMPTS
+                        ));
+                    }
+                    warn!(
+                        attempt,
+                        status = %r.status(),
+                        ?wait,
+                        "rate-limited — backing off"
+                    );
+                    // Release the gate's "last" isn't needed — we aren't holding it here.
+                    sleep(wait).await;
+                    backoff = (backoff * 2).min(MAX_BACKOFF);
                 }
                 Ok(r) => return Ok(r), // e.g. 404 — caller decides
-                Err(e) if attempt < 3 => {
-                    warn!(?e, "request error — backing off {:?}", backoff);
+                Err(e) if attempt + 1 < MAX_ATTEMPTS => {
+                    warn!(?e, ?backoff, "request error — backing off");
                     sleep(backoff).await;
-                    backoff = (backoff * 2).min(Duration::from_secs(30));
+                    backoff = (backoff * 2).min(MAX_BACKOFF);
                 }
                 Err(e) => return Err(e.into()),
             }
@@ -532,6 +559,9 @@ async fn main() -> Result<()> {
 
     let args: Vec<String> = std::env::args().collect();
     let force = args.iter().any(|a| a == "--force");
+    // `--resume` is the default; the flag exists so callers can be explicit in
+    // CI / shell history. `--force` still overrides it.
+    let _resume = args.iter().any(|a| a == "--resume") || !force;
     let skip_hero = args.iter().any(|a| a == "--no-hero");
     let limit: Option<usize> = args
         .windows(2)
@@ -587,15 +617,30 @@ async fn main() -> Result<()> {
     let mut total_bytes: u64 = 0;
 
     for (i, entry) in entries.iter().enumerate() {
+        // Resume: a cached entry with a wiki_page is authoritative. We only
+        // re-scrape to fetch images that are missing on disk (hero.png is
+        // gitignored, so this is the common case on a fresh checkout, but we
+        // don't re-hit the wiki API just to regenerate a hero — the cached
+        // wiki_page URL is enough to identify the page, and the thumb image
+        // is already committed).
         if !force {
             if let Some(prev) = existing.get(&entry.id) {
                 if prev.wiki_page.is_some() {
-                    // Image files already committed? skip re-download.
+                    let thumb = data_root
+                        .join("images")
+                        .join(&entry.id)
+                        .join("thumb.png");
                     let hero = data_root
                         .join("images")
                         .join(&entry.id)
                         .join("hero.png");
-                    if hero.exists() {
+                    let images_ok = thumb.exists() && (skip_hero || hero.exists());
+                    // On a fresh checkout thumb exists (committed) but hero
+                    // doesn't — that's fine, we treat the figure as cached and
+                    // skip both the API call and the image re-download. The
+                    // user can pass `--force` if they want a full rebuild.
+                    let thumb_ok = thumb.exists();
+                    if images_ok || thumb_ok {
                         results.push(prev.clone());
                         skipped_cached += 1;
                         found += 1;
@@ -629,23 +674,20 @@ async fn main() -> Result<()> {
             }
         }
 
-        // Periodic save so a crash doesn't lose progress.
-        if (i + 1) % 25 == 0 {
-            write_figures(&figures_json, &results)?;
-        }
+        // Incremental save after every figure so a crash loses at most one
+        // figure's worth of progress. Union with any existing entries not yet
+        // processed in this run (important for resume / --limit modes).
+        let merged = merge_for_save(&results, &existing);
+        write_figures(&figures_json, &merged)?;
     }
 
-    // Preserve any prior entries for figures that weren't in this run (limit mode).
-    if limit.is_some() {
-        let present: HashSet<String> = results.iter().map(|f| f.figure_id.clone()).collect();
-        for (id, f) in existing {
-            if !present.contains(&id) {
-                results.push(f);
-            }
-        }
-    }
+    // Always preserve any prior entries for figures that weren't in this run.
+    // (Matters for `--limit` and for runs that crash mid-way: incremental
+    // writes already include these, but we redo the merge at the end for the
+    // happy path too.)
+    let merged = merge_for_save(&results, &existing);
 
-    write_figures(&figures_json, &results)?;
+    write_figures(&figures_json, &merged)?;
 
     let hit_rate = if total == 0 {
         0.0
@@ -759,6 +801,24 @@ async fn scrape_one(
     }
 
     Ok((fig, bytes))
+}
+
+/// Combine this run's `results` with `existing` cache entries whose id hasn't
+/// been (re-)processed yet. Ensures per-figure incremental writes never
+/// clobber progress from earlier runs.
+fn merge_for_save(
+    results: &[WikiFigure],
+    existing: &HashMap<String, WikiFigure>,
+) -> Vec<WikiFigure> {
+    let present: HashSet<String> =
+        results.iter().map(|f| f.figure_id.clone()).collect();
+    let mut out: Vec<WikiFigure> = results.to_vec();
+    for (id, f) in existing {
+        if !present.contains(id) {
+            out.push(f.clone());
+        }
+    }
+    out
 }
 
 fn write_figures(path: &Path, figures: &[WikiFigure]) -> Result<()> {
