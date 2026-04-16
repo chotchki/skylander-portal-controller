@@ -427,12 +427,6 @@ Implementation lives in `crates/server/src/wizard.rs` + `crates/server/src/paths
 - [ ] 3.17.1 When the authorised phone disconnects and doesn't return within ~10s, render a small always-on-top overlay window (separate eframe viewport) in the lower-right showing a reconnect QR.
 - [ ] 3.17.2 "Can't connect" button on the launcher opens a network-interface picker (Q49 fallback).
 
-### 3.18 Packaging + GitHub Releases
-
-- [ ] 3.18.1 `cargo dist` or hand-rolled zip script: bundle `server.exe` + `phone/dist/` + `README.md`.
-- [ ] 3.18.2 GitHub Action: on tag push, build Windows zip, attach to release.
-- [ ] 3.18.3 Release README spells out the required user-supplied bits (RPCS3 install + firmware backups).
-
 ### 3.19 Wiki scrape — partial first pass
 
 - [x] 3.19.1 `tools/wiki-scrape/` — Rust one-shot binary. Reads `docs/research/firmware-inventory.json`, hits Fandom's MediaWiki API (opensearch + query with `prop=pageimages|categories|revisions`), downloads thumb + hero PNGs, emits `data/figures.json`.
@@ -465,7 +459,19 @@ Chaos is LAST. Do not start without explicit go-ahead.
 
 - [ ] 5.1 **Suppress RPCS3 window flicker during menu navigation.** The 3.6b research landed on "accept a once-per-session flicker" because Qt renders menu popups at visible screen coords when the parent is off-screen, and the Skylanders Manager dialog appears in the screen centre for a brief moment before we sling it off-screen. Our eframe launcher window launches *before* RPCS3, so it's in a position to establish Z-order priority. Ideas to explore: (a) make our launcher `WS_EX_TOPMOST` during any `open_dialog` navigation so Qt popups render behind it; (b) use `SetWinEventHook` / `EVENT_OBJECT_SHOW` filtered to RPCS3's PID to intercept the dialog creation event and move it off-screen before the first paint (Tier 2 in the 3.6b write-up); (c) hook menu popups the same way (Tier 3). Prerequisite: the real app exists and the launcher-first ordering is stable.
 
+---
 
+## Phase 6 — Packaging + release
+
+Deliberately separated from Phase 3 so it's clear this only runs once the app works end-to-end. CI deliberately deferred until here per the original "no CI until features work" stance.
+
+- [ ] 6.1 Bundle `server.exe` + `phone/dist/` + `data/images/*/thumb.png` + `data/figures.json` + `README.md` into a GitHub Releases zip. Evaluate `cargo dist` vs a hand-rolled PowerShell/zip script; prefer `cargo dist` if it handles the non-Rust assets cleanly.
+- [ ] 6.2 GitHub Actions workflow: on version-tag push, build Windows release, run the fast test suite (unit + integration + workspace build — NOT the `#[ignore]`-gated e2e tests), attach zip to the release.
+- [ ] 6.3 Release `README.md` spells out user-supplied bits: RPCS3 install path, firmware backup pack. Walk through the first-launch wizard experience. Link to `data/LICENSE.md` for the Fandom attribution (3.19.6).
+- [ ] 6.4 Verify the release zip on a *different* Windows machine than the dev one — catches "this path exists only on my laptop" bugs.
+- [ ] 6.5 Post-release monitoring plan: how do we hear about breaks? GitHub issues only for v1; formal telemetry out of scope.
+
+---
 
 - No bundling of RPCS3 or `.sky` files (piracy concern).
 - No CI until core features work.
