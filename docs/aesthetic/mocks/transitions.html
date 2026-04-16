@@ -43,10 +43,12 @@
   .subtitle {
     text-align: center;
     font-style: italic;
+    font-weight: 600;
     font-size: 13px;
-    color: rgba(255,230,120,0.7);
+    color: #fff4e0;
     letter-spacing: 0.08em;
     margin-bottom: 32px;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
   }
 
   .layout {
@@ -178,7 +180,7 @@
   /* state classes on .slot-big */
   .slot-big.state-empty .plate {
     background: rgba(10,26,54,0.8);
-    color: rgba(245,198,52,0.55);
+    color: #d9c88a;
     font-size: 80px;
     text-shadow: none;
     box-shadow: inset 0 0 0 1px rgba(0,0,0,0.6), inset 0 4px 8px rgba(0,0,0,0.4);
@@ -281,7 +283,7 @@
     color: var(--gb);
     margin-bottom: 4px;
   }
-  .controls p.muted { font-size: 12px; color: rgba(247,247,251,0.55); margin-bottom: 18px; font-style: italic; }
+  .controls p.muted { font-size: 13px; font-weight: 600; color: #e8e4d8; margin-bottom: 18px; font-style: italic; text-shadow: 0 1px 0 rgba(0,0,0,0.5); }
   .state-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -339,18 +341,20 @@
     background: rgba(0,0,0,0.4);
     padding: 12px 14px;
     border-radius: 8px;
-    color: rgba(255,230,120,0.9);
+    color: var(--gb);
     border: 1px solid rgba(245,198,52,0.15);
   }
-  .readout .k { color: rgba(247,247,251,0.55); }
+  .readout .k { color: #e8e4d8; }
   .readout .v { color: var(--gb); }
 
   .specs {
     font-family: "Fraunces";
-    font-size: 12px;
+    font-size: 13px;
+    font-weight: 600;
     line-height: 1.6;
-    color: rgba(247,247,251,0.75);
+    color: #e8e4d8;
     margin-top: 18px;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
   }
   .specs h3 {
     font-family: "Titan One";

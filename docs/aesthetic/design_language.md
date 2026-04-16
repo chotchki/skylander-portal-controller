@@ -165,6 +165,7 @@ Contrast failures on this project have one root cause: **semi-transparent text**
 - **If text needs to sit on a busy / gradient / dimmed surface, wrap it in a blue-card (or inner plate) so it has a solid contrasting backdrop.** Menu overlay's QR + profile chip are the canonical example; reset-confirm's warning block follows the same pattern inside a danger-bordered panel.
 - Gold fill (`--g`, `--gb`) is an **accent** color. Fine for display type + small Titan One labels; forbidden for paragraph/body copy — too much saturated yellow at reading size fatigues fast.
 - Target WCAG 4.5:1 for body. Short display type can relax to 3:1 since size carries legibility. If a text color fails on the intended surface, the fix is a stronger text color or an inset card — not opacity.
+- **Flavor-text carve-out.** Non-actionable decorative typography — Kaos quote glyphs, taunt attributions, ambient lair-of-Kaos insult copy, opening/closing `"` marks around quotes, etc. — may dial opacity down for atmosphere (roughly 0.5–0.75 max), *provided* the core insult/quote remains readable at a glance on the target device. Think of these as a visual flourish, not UI copy. The insult text itself (what the user is being razzed with) stays opaque per the main rule.
 
 ### Kaos display treatment (Kaos overlays only)
 When a title sits on a Kaos background instead of the starfield, swap the heraldic gold treatment for the villainous one:
@@ -329,6 +330,22 @@ Stick to multiples of 4: 4, 6, 8, 10, 12, 14, 16, 20, 24, 32. Don't invent 7px o
 
 ### Safe areas
 Respect `env(safe-area-inset-*)`. Corner radius on the device matters — keep tappable targets 12px+ from the viewport edge.
+
+### Tap-target reachability
+**Never clip interactive controls.** Buttons, chips, inputs, and other tappable elements must remain fully visible and reachable at every state their container can be in. The failure mode this rule exists to prevent:
+
+- A panel/drawer/lid has `overflow: hidden` + a `max-height` that's smaller than its content ⇒ the last row of chips or a button gets silently truncated.
+- A sticky footer or toast overlaps the last action in a scrolling list ⇒ user can see the button but can't tap it.
+- An absolutely-positioned decoration (ornament, ray halo, grabber pill) is stacked *over* a chip/button instead of under or beside it.
+
+The fixes, in order of preference:
+
+1. **Let the container grow** if it can — prefer `min-height` + content-flow over hard `max-height` with `overflow: hidden`.
+2. **Scroll internally** when the container has a fixed envelope (lids, modals, side sheets). Add `overflow-y: auto`, give the scroll region enough `min-height: 0`, and surface a **fade-mask at the clipping edge** (e.g. `mask-image: linear-gradient(180deg, #000 0, #000 calc(100% - 14px), transparent 100%)`) so the user sees "there's more below" instead of assuming the content ends.
+3. **Reserve footer safe-space** for any actions or bottom-pinned UI so scrollable content never parks a button behind them.
+4. **Decorative overlays get `pointer-events: none`** and sit behind interactive siblings in the stacking context.
+
+The toy-box lid's expanded filter area (`portal_with_box.html`) is the canonical worked example.
 
 ---
 

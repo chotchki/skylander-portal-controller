@@ -84,8 +84,9 @@
   }
   @keyframes breathe { 50% { opacity: 0.4; } }
   .pip-label {
-    font-size: 10px; letter-spacing: 0.12em;
-    text-transform: uppercase; color: rgba(255,255,255,0.5);
+    font-size: 11px; font-weight: 600; letter-spacing: 0.12em;
+    text-transform: uppercase; color: #e8e4d8;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
   }
 
   /* Welcome heading */
@@ -100,11 +101,12 @@
     pointer-events: none;
   }
   .welcome-sub {
-    font-family: "Fraunces"; font-style: italic;
+    font-family: "Fraunces"; font-style: italic; font-weight: 600;
     font-size: 13px; letter-spacing: 0.24em;
     text-transform: uppercase;
-    color: rgba(255,230,120,0.65);
+    color: #fff4e0;
     margin-bottom: 6px;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
   }
   .welcome-title {
     font-family: "Titan One";
@@ -196,11 +198,12 @@
     text-align: center;
   }
   .manage-hint {
-    font-family: "Fraunces"; font-style: italic;
-    font-size: 10px;
-    color: rgba(255,230,120,0.4);
+    font-family: "Fraunces"; font-style: italic; font-weight: 600;
+    font-size: 11px;
+    color: #d9c88a;
     letter-spacing: 0.12em;
     text-transform: uppercase;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
   }
 
   /* Add profile card */
@@ -213,27 +216,28 @@
   }
   .profile-card.add .bezel-plate {
     background: rgba(10,26,54,0.75);
-    color: rgba(245,198,52,0.55);
+    color: #d9c88a;
     font-size: 42px;
     text-shadow: none;
   }
   .profile-card.add .profile-name {
-    color: rgba(245,198,52,0.55);
+    color: #d9c88a;
   }
   .profile-card.add { border-style: dashed; }
 
   /* Manage toggle button — small utility button */
   .manage-toggle {
     position: absolute; top: 48px; left: 24px;
-    font-family: "Fraunces"; font-style: italic;
-    font-size: 12px;
-    color: rgba(255,230,120,0.55);
+    font-family: "Fraunces"; font-style: italic; font-weight: 600;
+    font-size: 13px;
+    color: var(--gb);
     background: transparent;
     border: 1px solid rgba(245,198,52,0.2);
     padding: 5px 12px;
     border-radius: 999px;
     cursor: pointer;
     letter-spacing: 0.08em;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
   }
   .manage-toggle:hover { border-color: rgba(245,198,52,0.5); color: var(--gb); }
 
@@ -252,9 +256,10 @@
   .tagline {
     position: absolute; bottom: 18px; left: 0; right: 0;
     text-align: center;
-    font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase;
-    color: rgba(255,230,120,0.3);
-    font-family: "Fraunces"; font-style: italic;
+    font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase;
+    color: #d9c88a;
+    font-family: "Fraunces"; font-style: italic; font-weight: 600;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
   }
 </style>
 </head>

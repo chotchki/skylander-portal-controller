@@ -214,13 +214,21 @@
     border: none; border-radius: 14px; cursor: pointer;
     position: relative;
   }
+  /* Tertiary outline — the "safe back-out" button. Not a primary alternative
+     (that'd be blue-card), not a primary action (that's the danger red).
+     Muted-solid gold border marks it as recoverable/neutral. */
   .btn-tertiary {
     color: var(--gb);
     background: transparent;
-    border: 2px solid rgba(245,198,52,0.55);
-    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+    border: 2px solid #c9a84a;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.55);
+    box-shadow: inset 0 1px 0 rgba(255,230,120,0.08), 0 2px 4px rgba(0,0,0,0.35);
   }
-  .btn-tertiary:hover { border-color: var(--gb); background: rgba(245,198,52,0.08); }
+  .btn-tertiary:hover {
+    border-color: var(--gb);
+    background: rgba(245,198,52,0.08);
+    box-shadow: inset 0 1px 0 rgba(255,230,120,0.15), 0 0 12px rgba(245,198,52,0.2);
+  }
   .btn-tertiary:active { transform: translateY(2px); }
 
   .btn-danger {

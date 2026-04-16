@@ -88,10 +88,10 @@
     box-shadow: inset 0 0 0 2px var(--gi), inset 0 0 0 5px var(--g), inset 0 2px 0 3px var(--gb), inset 0 -3px 0 3px var(--gs), 0 0 0 1px #000, 0 3px 10px rgba(0,0,0,0.6);
   }
   .profile-name { font-family: "Titan One"; font-size: 13px; color: var(--gb); letter-spacing: 0.04em; text-shadow: 0 1px 0 var(--gs); }
-  .game-label { font-size: 10px; color: rgba(255,255,255,0.5); font-style: italic; letter-spacing: 0.1em; margin-top: 2px; }
+  .game-label { font-size: 11px; color: #e8e4d8; font-style: italic; font-weight: 600; letter-spacing: 0.1em; margin-top: 2px; text-shadow: 0 1px 0 rgba(0,0,0,0.5); }
   .head-right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
   .pip { width: 8px; height: 8px; border-radius: 50%; background: #65d68c; box-shadow: 0 0 8px #65d68c; animation: breathe 2.2s ease-in-out infinite; }
-  .pip-label { font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(255,255,255,0.5); }
+  .pip-label { font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: #e8e4d8; text-shadow: 0 1px 0 rgba(0,0,0,0.5); }
   @keyframes breathe { 50% { opacity: 0.4; } }
   .kebab-btn {
     width: 42px; height: 42px;
@@ -152,14 +152,14 @@
     background: radial-gradient(circle at 30% 25%, rgba(245,198,52,0.2), rgba(110,74,0,0.25) 60%, rgba(0,0,0,0.35));
     box-shadow: inset 0 0 0 1.5px rgba(0,0,0,0.45), inset 0 2px 4px rgba(255,255,255,0.08), inset 0 -2px 4px rgba(0,0,0,0.3);
   }
-  .slot.empty .plate { background: rgba(10,26,54,0.75); color: rgba(245,198,52,0.55); font-size: 36px; text-shadow: none; }
+  .slot.empty .plate { background: rgba(10,26,54,0.75); color: #d9c88a; font-size: 36px; text-shadow: none; }
   .slot-label {
     text-align: center; margin-top: 6px;
     font-family: "Titan One"; font-size: 11px; letter-spacing: 0.08em;
     color: var(--gb);
     text-shadow: 0 1px 0 #000, 0 0 6px rgba(0,0,0,0.9);
   }
-  .slot-label.empty-label { color: rgba(245,198,52,0.4); font-style: italic; font-family: "Fraunces"; font-weight: 600; letter-spacing: 0.04em; }
+  .slot-label.empty-label { color: #d9c88a; font-style: italic; font-family: "Fraunces"; font-weight: 600; letter-spacing: 0.04em; text-shadow: 0 1px 0 rgba(0,0,0,0.5); }
   .slot-index {
     position: absolute; top: -2px; left: -2px;
     font-family: "Titan One"; font-size: 11px; color: var(--gi);
@@ -229,13 +229,39 @@
     border-bottom: 3px solid var(--wood-gold);
     border-top: 2px solid var(--wood-gold);
     box-shadow: inset 0 -4px 8px rgba(0,0,0,0.3), inset 0 2px 6px rgba(255,215,106,0.1), 0 6px 20px rgba(0,0,0,0.7);
-    padding: 8px 14px;
+    padding: 6px 14px 8px;
     overflow: hidden;
     transition: max-height 0.35s cubic-bezier(.4,.0,.2,1);
-    max-height: 52px;
+    max-height: 60px;
+    display: flex; flex-direction: column;
   }
   .lid-open.expanded {
-    max-height: 320px;
+    max-height: 380px;
+  }
+  /* Swipe-affordance grabber pill at the top of the open lid.
+     Gesture model (design_language §6.7): swipe-down expands / collapses,
+     so the pill is the persistent visual cue that the lid is draggable. */
+  .lid-grabber {
+    flex-shrink: 0;
+    width: 46px; height: 5px; border-radius: 3px;
+    margin: 0 auto 6px;
+    background: linear-gradient(180deg, var(--wood-gold-b), var(--wood-gold) 60%, rgba(120,82,20,0.9));
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.3),
+      inset 0 -1px 0 rgba(0,0,0,0.25),
+      0 1px 2px rgba(0,0,0,0.5);
+    cursor: grab;
+    animation: grab-breathe 2.6s ease-in-out infinite;
+  }
+  @keyframes grab-breathe {
+    50% { transform: translateY(1.5px); box-shadow: inset 0 1px 0 rgba(255,255,255,0.35), 0 2px 4px rgba(0,0,0,0.5), 0 0 8px rgba(255,215,106,0.4); }
+  }
+  .lid-open.expanded .lid-grabber {
+    animation: grab-down-hint 2.4s ease-in-out infinite;
+  }
+  @keyframes grab-down-hint {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(3px); }
   }
 
   .lid-top-row {
@@ -265,8 +291,27 @@
   }
 
   /* ---- EXPANDED SEARCH AREA ---- */
+  /* Scrolls internally so no filter chip / category row ever gets clipped
+     by the lid's max-height. Rule: interactive controls stay fully reachable
+     (design_language §4 "never clip tap targets"). */
   .search-expanded {
     padding-top: 12px;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(212,168,74,0.5) transparent;
+    /* Soft fade at the bottom hints that more content scrolls. */
+    mask-image: linear-gradient(180deg, #000 0, #000 calc(100% - 14px), transparent 100%);
+    -webkit-mask-image: linear-gradient(180deg, #000 0, #000 calc(100% - 14px), transparent 100%);
+    padding-bottom: 14px;
+  }
+  .search-expanded::-webkit-scrollbar { width: 6px; }
+  .search-expanded::-webkit-scrollbar-track { background: transparent; }
+  .search-expanded::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(240,208,128,0.6), rgba(120,82,20,0.5));
+    border-radius: 3px;
   }
   .search-input {
     width: 100%;
@@ -282,7 +327,7 @@
       inset 0 -2px 0 rgba(0,0,0,0.25),
       0 2px 6px rgba(0,0,0,0.4);
   }
-  .search-input::placeholder { color: rgba(255,255,255,0.55); font-style: italic; }
+  .search-input::placeholder { color: #e8e4d8; font-style: italic; font-weight: 600; }
   .search-input:focus { outline: 2px solid var(--gb); outline-offset: 1px; }
 
   .drill-section { margin-bottom: 10px; }
@@ -329,7 +374,7 @@
       0 2px 0 var(--gi),
       0 0 10px rgba(245,198,52,0.4);
   }
-  .drill-chip .arrow { font-size: 8px; margin-left: 4px; opacity: 0.7; }
+  .drill-chip .arrow { font-size: 11px; margin-left: 4px; color: #d9c88a; }
 
   /* ---- BOX BODY ---- */
   .box-body {
@@ -376,9 +421,10 @@
   .fig-bezel .bezel { box-shadow: inset 0 0 0 1.5px var(--gi), inset 0 2px 3px rgba(255,255,255,0.3), inset 0 -2px 3px rgba(0,0,0,0.5), 0 2px 6px rgba(0,0,0,0.5); }
   .fig-bezel .plate { font-size: 16px; }
   .fig-name {
-    font-family: "Fraunces"; font-size: 10px; font-weight: 600;
+    font-family: "Fraunces"; font-size: 11px; font-weight: 600;
     text-align: center; line-height: 1.2;
-    color: rgba(255,230,120,0.85); max-width: 80px;
+    color: #d9c88a; max-width: 80px;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
   }
 
   /* ============ OPEN STATE ============ */
@@ -457,8 +503,11 @@
 
       <!-- BOX INTERIOR -->
       <div class="box-interior">
-        <!-- OPEN LID — compact with SEARCH button, expands on click -->
+        <!-- OPEN LID — compact with SEARCH button, expands on click.
+             Grabber pill = swipe affordance (per gesture model in
+             design_language §6.7). -->
         <div class="lid-open" id="lid-open">
+          <div class="lid-grabber"></div>
           <div class="lid-top-row">
             <span class="lid-open-title">COLLECTION</span>
             <button class="search-toggle" id="search-btn">
