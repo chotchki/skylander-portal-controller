@@ -126,13 +126,34 @@ pub fn App() -> impl IntoView {
 
 // ---------- helpers ----------
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) enum ToastLevel {
+    Error,
+    Warn,
+    Success,
+    Info,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct ToastMsg {
     pub(crate) id: u64,
     pub(crate) message: String,
+    pub(crate) level: ToastLevel,
 }
 
+/// Push an error-level toast (default — matches existing call sites).
 pub(crate) fn push_toast(toasts: RwSignal<Vec<ToastMsg>>, message: &str) {
+    push_toast_level(toasts, message, ToastLevel::Error);
+}
+
+/// Push a toast with an explicit level.
+#[allow(dead_code)]
+pub(crate) fn push_toast_level(
+    toasts: RwSignal<Vec<ToastMsg>>,
+    message: &str,
+    level: ToastLevel,
+) {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     // Deduplicate: if an active toast already has this exact message, skip.
     // Prevents spam-click patterns (e.g. repeatedly tapping an already-
@@ -142,14 +163,14 @@ pub(crate) fn push_toast(toasts: RwSignal<Vec<ToastMsg>>, message: &str) {
     }
     let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let message = message.to_string();
-    toasts.update(|v| v.push(ToastMsg { id, message }));
+    toasts.update(|v| v.push(ToastMsg { id, message, level }));
     leptos::task::spawn_local(async move {
         gloo_timer(4000).await;
         toasts.update(|v| v.retain(|t| t.id != id));
     });
 }
 
-async fn gloo_timer(ms: i32) {
+pub(crate) async fn gloo_timer(ms: i32) {
     use wasm_bindgen::JsCast;
     use wasm_bindgen::closure::Closure;
     let promise = js_sys::Promise::new(&mut |resolve, _| {

@@ -1,6 +1,6 @@
 # Skylander Portal Controller — Working Notes
 
-Compact reference for this project. SPEC.md is the authoritative long-form requirements + Q&A log. PLAN.md tracks execution.
+Compact reference for this project. SPEC.md is the authoritative long-form requirements + Q&A log. PLAN.md tracks execution, new tasks should always be numbered and have a checkbox so it is traceable.
 
 ## What it does
 

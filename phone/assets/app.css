@@ -680,3 +680,653 @@ button { font: inherit; color: inherit; cursor: pointer; }
   animation: none;
   transition: opacity 0.25s ease;
 }
+
+/* =====================================================================
+   PLAN 4.13 — Toast Notification Redesign
+   Heraldic-themed toasts: framed-panel material, color-coded left strip,
+   Fraunces body text, slide-in from top-right.
+   ===================================================================== */
+
+.toast {
+  display: flex;
+  align-items: stretch;
+  border-radius: 12px;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse 120% 80% at 50% 0%, rgba(255,230,120,0.06), transparent 60%),
+    linear-gradient(180deg, rgba(26,58,138,0.95), rgba(10,36,100,0.97) 50%, rgba(6,20,54,0.98));
+  border: 1.5px solid var(--gm);
+  box-shadow:
+    0 4px 16px rgba(0,0,0,0.5),
+    0 1px 0 rgba(255,229,138,0.08) inset;
+  color: #fff4e0;
+  font-family: 'Fraunces', serif;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.4;
+  letter-spacing: normal;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+}
+
+/* Color-coded left strip — 4px wide, full height */
+.toast::before {
+  content: "";
+  flex-shrink: 0;
+  width: 4px;
+  align-self: stretch;
+}
+
+/* Toast message text area */
+.toast::after { display: none; } /* reset any inherited pseudo */
+
+/* The text content sits in the remaining space */
+.toast {
+  padding: 10px 14px 10px 0;
+}
+.toast::before {
+  margin-right: 12px;
+}
+
+/* --- Level variants: left-strip color --- */
+.toast-error::before {
+  background: var(--danger-p4, #e34c4c);
+}
+.toast-warn::before {
+  background: var(--g, #f5c634);
+}
+.toast-success::before {
+  background: var(--success-p4, #65d68c);
+}
+.toast-info::before {
+  background: #4a9eff;
+}
+
+/* Subtle border tint per level */
+.toast-error  { border-color: color-mix(in srgb, var(--danger-p4) 40%, var(--gm)); }
+.toast-warn   { border-color: var(--g); }
+.toast-success { border-color: color-mix(in srgb, var(--success-p4) 40%, var(--gm)); }
+.toast-info   { border-color: color-mix(in srgb, #4a9eff 40%, var(--gm)); }
+
+/* Reduced motion: keep entrance but simplify */
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation-duration: 0.15s;
+    animation-timing-function: ease-out;
+  }
+}
+
+/* ================================================================
+   PHASE 4.8 — PROFILE PICKER RESKIN
+   Heraldic gold-bezel treatment for the profile-picker screen.
+   ================================================================ */
+
+.profile-picker {
+  padding: 44px 24px 32px;
+  max-width: 480px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  min-height: 80vh;
+  justify-content: center;
+}
+
+/* Manage toggle — small pill, upper-left */
+.pp-manage-toggle {
+  position: absolute;
+  top: 48px;
+  left: 24px;
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--gb);
+  background: transparent;
+  border: 1px solid rgba(245,198,52,0.2);
+  padding: 5px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  letter-spacing: 0.08em;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  z-index: 2;
+}
+.pp-manage-toggle:hover {
+  border-color: rgba(245,198,52,0.5);
+}
+
+/* Welcome heading wrapper */
+.pp-welcome-wrap {
+  text-align: center;
+  margin-bottom: 40px;
+  position: relative;
+}
+.pp-welcome-sub {
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic;
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: #fff4e0;
+  margin-bottom: 6px;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  order: -1;
+}
+/* The sub sits above the heading visually */
+.pp-welcome-wrap .display-heading {
+  display: flex;
+  flex-direction: column;
+}
+.pp-welcome-wrap .dh-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.pp-welcome-line2 {
+  font-size: 48px;
+  display: block;
+  margin-top: 2px;
+}
+
+/* Profile grid — 2x2 */
+.profile-picker .profile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  width: 100%;
+  max-width: 340px;
+  margin-bottom: 20px;
+}
+
+/* Profile card — heraldic panel */
+.profile-picker .profile-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 12px 16px;
+  border-radius: 20px;
+  cursor: pointer;
+  position: relative;
+  background:
+    linear-gradient(180deg, rgba(16,40,90,0.6), rgba(8,22,60,0.65));
+  border: 1.5px solid rgba(245,198,52,0.25);
+  color: var(--text);
+  transition: transform 0.15s var(--ease-tap), border-color 0.2s, box-shadow 0.2s;
+  animation: pp-card-in 0.5s var(--ease-spring) both;
+}
+.profile-picker .profile-card:hover,
+.profile-picker .profile-card:active {
+  transform: scale(1.03);
+  border-color: rgba(245,198,52,0.6);
+  box-shadow: 0 0 28px rgba(245,198,52,0.25), inset 0 0 20px rgba(245,198,52,0.06);
+}
+.profile-picker .profile-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 20px;
+  background: radial-gradient(ellipse 100% 80% at 50% 0%, rgba(255,230,120,0.06), transparent 55%);
+  pointer-events: none;
+}
+
+/* Stagger-rise animation — 80ms per card */
+.profile-picker .profile-card:nth-child(1) { animation-delay: 0ms; }
+.profile-picker .profile-card:nth-child(2) { animation-delay: 80ms; }
+.profile-picker .profile-card:nth-child(3) { animation-delay: 160ms; }
+.profile-picker .profile-card:nth-child(4) { animation-delay: 240ms; }
+.profile-picker .profile-card:nth-child(5) { animation-delay: 320ms; }
+@keyframes pp-card-in {
+  from { opacity: 0; transform: scale(0.85) translateY(20px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* Profile color tints the bezel plate via custom property */
+.profile-card .bezel-plate {
+  background: var(--profile-color, linear-gradient(135deg, #1a2a4a, #0a1630));
+}
+
+/* Profile bezel sizing override — 88px like the mock */
+.profile-card .gold-bezel {
+  width: 88px;
+}
+.profile-card .bezel-plate {
+  font-size: 38px;
+}
+
+/* Profile initial inside the bezel */
+.pp-initial {
+  font-family: "Titan One", sans-serif;
+  color: #fff;
+  text-shadow: 0 3px 6px rgba(0,0,0,0.6);
+  line-height: 1;
+}
+
+/* Profile name — gold treatment */
+.profile-picker .profile-name {
+  font-family: "Titan One", sans-serif;
+  font-size: 16px;
+  letter-spacing: 0.06em;
+  color: var(--gb);
+  text-shadow: 0 1px 0 var(--gs), 0 0 6px rgba(245,198,52,0.3);
+  text-align: center;
+}
+
+/* Manage hint */
+.pp-manage-hint {
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic;
+  font-weight: 600;
+  font-size: 11px;
+  color: #d9c88a;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+}
+
+/* Add-profile card — dashed, dimmed bezel */
+.profile-picker .profile-card.add {
+  border-style: dashed;
+}
+.profile-card.add .pp-add-glyph {
+  font-size: 42px;
+  color: #d9c88a;
+  text-shadow: none;
+}
+.profile-picker .profile-card.add .profile-name {
+  color: #d9c88a;
+}
+
+/* Tagline footer */
+.pp-tagline {
+  position: absolute;
+  bottom: 18px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #d9c88a;
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic;
+  font-weight: 600;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+}
+
+/* ============================================================
+   Phase 4.11 — Game Picker reskin
+   ============================================================ */
+
+.game-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0 2px;
+}
+
+.gp-subtitle {
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic;
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.25em;
+  color: #fff4e0;
+  text-transform: uppercase;
+  text-align: center;
+  margin-top: 4px;
+  margin-bottom: 24px;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+}
+
+/* ---------- Card grid ---------- */
+.game-picker .game-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 2px;
+}
+
+/* ---------- Individual card ---------- */
+.game-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 24px;
+  border-radius: 18px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  border: 1.5px solid rgba(245,198,52,0.25);
+  transition: transform 0.15s cubic-bezier(.4,2.2,.5,1),
+              border-color 0.2s,
+              box-shadow 0.2s,
+              opacity 0.3s ease;
+  text-align: center;
+  color: var(--text);
+  font-family: "Titan One", sans-serif;
+  background: linear-gradient(180deg, rgba(16,40,90,0.65), rgba(8,22,60,0.7));
+  /* stagger-rise: delay set inline via style attr */
+  animation: gp-card-rise 0.5s cubic-bezier(.3,1.3,.5,1) both;
+}
+.game-card:hover,
+.game-card:active {
+  transform: scale(1.03);
+  border-color: rgba(245,198,52,0.6);
+  box-shadow: 0 0 28px rgba(245,198,52,0.3), inset 0 0 24px rgba(245,198,52,0.08);
+}
+
+@keyframes gp-card-rise {
+  from { opacity: 0; transform: translateY(24px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ---------- Per-game atmospheric backgrounds ---------- */
+.game-card::before {
+  content: "";
+  position: absolute; inset: 0;
+  opacity: 0.55;
+  transition: opacity 0.2s ease;
+  z-index: 0;
+}
+.game-card:hover::before { opacity: 0.7; }
+
+/* dark overlay for readability */
+.game-card::after {
+  content: "";
+  position: absolute; inset: 0;
+  background:
+    linear-gradient(180deg, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0.55) 100%),
+    radial-gradient(ellipse 80% 60% at 50% 40%, transparent 20%, rgba(0,0,0,0.5) 100%);
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* SSA — purple/green magic, Spyro with portal glow */
+.game-card--ssa::before {
+  background:
+    radial-gradient(ellipse 60% 80% at 30% 40%, rgba(130,60,220,0.9), transparent 50%),
+    radial-gradient(ellipse 50% 60% at 70% 50%, rgba(90,201,107,0.6), transparent 50%),
+    radial-gradient(ellipse 80% 80% at 50% 80%, rgba(245,198,52,0.5), transparent 60%),
+    linear-gradient(135deg, #2a0a5a, #0a2a4a);
+}
+/* Giants — earthy brown/orange, Tree Rex, lava glow */
+.game-card--giants::before {
+  background:
+    radial-gradient(ellipse 60% 70% at 25% 50%, rgba(167,123,58,0.9), transparent 55%),
+    radial-gradient(ellipse 50% 60% at 75% 40%, rgba(255,107,42,0.7), transparent 50%),
+    radial-gradient(ellipse 70% 50% at 50% 90%, rgba(200,80,20,0.6), transparent 60%),
+    linear-gradient(135deg, #3a1a08, #1a1008);
+}
+/* Swap Force — blue sky/water, bright green, aerial feel */
+.game-card--swap::before {
+  background:
+    radial-gradient(ellipse 70% 60% at 50% 20%, rgba(42,166,255,0.8), transparent 55%),
+    radial-gradient(ellipse 50% 50% at 30% 70%, rgba(90,201,107,0.7), transparent 50%),
+    radial-gradient(ellipse 60% 60% at 70% 50%, rgba(255,255,255,0.2), transparent 50%),
+    linear-gradient(135deg, #082040, #0a3060);
+}
+/* Trap Team — green crystals, trap glow, cave feel */
+.game-card--trap::before {
+  background:
+    radial-gradient(ellipse 50% 70% at 40% 50%, rgba(90,201,107,0.8), transparent 50%),
+    radial-gradient(ellipse 40% 50% at 70% 30%, rgba(0,255,160,0.5), transparent 50%),
+    radial-gradient(ellipse 60% 60% at 50% 80%, rgba(80,40,120,0.6), transparent 60%),
+    linear-gradient(135deg, #0a2a0a, #102040);
+}
+/* SuperChargers — orange/tech, vehicle energy, speed lines */
+.game-card--super::before {
+  background:
+    radial-gradient(ellipse 60% 50% at 50% 30%, rgba(255,184,77,0.8), transparent 55%),
+    radial-gradient(ellipse 40% 60% at 25% 60%, rgba(255,60,20,0.6), transparent 50%),
+    radial-gradient(ellipse 50% 50% at 75% 70%, rgba(80,180,255,0.5), transparent 50%),
+    linear-gradient(135deg, #2a1800, #0a1830);
+}
+/* Imaginators — magic purple/blue, creation crystals, ethereal */
+.game-card--imag::before {
+  background:
+    radial-gradient(ellipse 60% 70% at 40% 40%, rgba(218,90,214,0.8), transparent 50%),
+    radial-gradient(ellipse 50% 50% at 70% 50%, rgba(80,140,255,0.6), transparent 50%),
+    radial-gradient(ellipse 70% 60% at 50% 80%, rgba(245,198,52,0.4), transparent 60%),
+    linear-gradient(135deg, #200a40, #0a1040);
+}
+
+/* ---------- Game name label ---------- */
+.game-card .game-name {
+  font-family: "Titan One", sans-serif;
+  font-size: 24px;
+  letter-spacing: 0.06em;
+  color: var(--gb);
+  position: relative;
+  z-index: 2;
+  text-shadow:
+    0 2px 0 var(--gs),
+    0 3px 0 var(--gi),
+    0 0 16px rgba(245,198,52,0.5),
+    0 0 40px rgba(0,0,0,0.8);
+}
+
+/* ---------- Launching state ---------- */
+.game-card.launching {
+  border-color: var(--g);
+  box-shadow: 0 0 32px rgba(245,198,52,0.4);
+  pointer-events: none;
+}
+.game-card.launching .game-name {
+  animation: gp-name-pulse 1.2s ease-in-out infinite;
+}
+@keyframes gp-name-pulse {
+  50% {
+    text-shadow:
+      0 2px 0 var(--gs),
+      0 3px 0 var(--gi),
+      0 0 30px rgba(245,198,52,0.8),
+      0 0 60px rgba(245,198,52,0.4);
+  }
+}
+
+/* Other cards dim when one is launching */
+.game-card.dimmed {
+  opacity: 0.35;
+  pointer-events: none;
+  transform: scale(0.97);
+}
+
+/* ================================================================
+   PLAN 4.9 — Reskinned PIN keypad (heraldic treatment)
+   ================================================================ */
+
+/* Full-screen PIN entry layout */
+.pin-entry-screen {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 70vh;
+  padding: 44px 24px 32px;
+}
+
+/* Back button — top-left, gold Titan One */
+.pin-back-btn {
+  position: absolute;
+  top: 0;
+  left: 0;
+  font-family: "Titan One", sans-serif;
+  font-size: 16px;
+  color: var(--gb);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  letter-spacing: 0.08em;
+  text-shadow: 0 1px 0 var(--gs), 0 0 10px rgba(245,198,52,0.4);
+  padding: 4px 8px;
+}
+.pin-back-btn::before { content: "\2190 "; }
+
+/* Identity section — sits on starfield, NOT inside the panel */
+.pin-identity {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 20px;
+}
+.pin-profile-bezel {
+  margin-bottom: 10px;
+}
+/* Shrink the Lg bezel (128px) to 90px for the PIN screen */
+.pin-profile-bezel .gold-bezel {
+  width: 90px;
+}
+.pin-profile-bezel .bezel-plate {
+  font-size: 40px;
+}
+.pin-prompt-name {
+  font-family: "Titan One", sans-serif;
+  font-size: 26px;
+  letter-spacing: 0.08em;
+  color: var(--gb);
+  -webkit-text-stroke: 1px var(--gi);
+  text-shadow:
+    0 2px 0 var(--gs),
+    0 3px 0 var(--gi),
+    0 0 20px rgba(245,198,52,0.4),
+    0 5px 10px rgba(0,0,0,0.5);
+  margin-bottom: 6px;
+}
+.pin-prompt-label {
+  font-style: italic;
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #fff4e0;
+  margin-bottom: 16px;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+}
+
+/* PIN dots — mini gold bezels on starfield */
+.pin-dots {
+  display: flex;
+  gap: 20px;
+  justify-content: center;
+}
+.pin-entry-screen .pin-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  position: relative;
+  background: transparent;
+  border: 0;
+}
+.pin-dot-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 25%, var(--gb), var(--gm) 60%, var(--gs));
+  box-shadow:
+    inset 0 0 0 1.5px var(--gi),
+    inset 0 1px 2px rgba(255,255,255,0.3),
+    inset 0 -1px 2px rgba(0,0,0,0.5),
+    0 2px 6px rgba(0,0,0,0.4);
+}
+.pin-dot-fill {
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background: rgba(10,26,54,0.85);
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.6);
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+.pin-entry-screen .pin-dot.filled .pin-dot-fill {
+  background: radial-gradient(circle at 40% 30%, #fff8d0, var(--gb) 40%, var(--g));
+  box-shadow: 0 0 12px rgba(245,198,52,0.7), inset 0 1px 2px rgba(255,255,255,0.5);
+  animation: pin-dot-pop 0.2s var(--ease-tap);
+}
+@keyframes pin-dot-pop {
+  from { transform: scale(0.5); }
+  to   { transform: scale(1); }
+}
+
+/* Framed panel overrides for PIN keypad */
+.pin-keypad-panel {
+  width: 100%;
+  max-width: 310px;
+}
+.pin-keypad-panel.framed-panel {
+  padding: 18px 18px 14px;
+}
+
+/* Heraldic 3x4 keypad */
+.pin-keypad-heraldic {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  max-width: 280px;
+  margin: 0 auto;
+}
+.pin-hkey {
+  min-height: 64px;
+  min-width: 64px;
+  font-family: "Titan One", sans-serif;
+  font-size: 24px;
+  letter-spacing: 0.04em;
+  color: var(--gb);
+  background: linear-gradient(180deg, rgba(16,40,90,0.7), rgba(8,22,60,0.8));
+  border: 1.5px solid rgba(245,198,52,0.25);
+  border-radius: 14px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: transform 0.1s ease, background 0.1s ease, border-color 0.1s ease;
+  text-shadow: 0 1px 0 var(--gs), 0 0 8px rgba(245,198,52,0.3);
+  box-shadow: 0 3px 0 rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,230,120,0.08);
+}
+.pin-hkey:hover:not(:disabled) {
+  border-color: rgba(245,198,52,0.5);
+}
+.pin-hkey:active:not(:disabled) {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 rgba(0,0,0,0.4), inset 0 2px 4px rgba(0,0,0,0.3);
+  background: linear-gradient(180deg, rgba(16,40,90,0.9), rgba(8,22,60,0.95));
+}
+.pin-hkey-ghost {
+  background: transparent !important;
+  border-color: transparent !important;
+  cursor: default !important;
+  box-shadow: none !important;
+}
+.pin-hkey-backspace {
+  font-size: 20px;
+}
+.pin-hkey:disabled:not(.pin-hkey-ghost) {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Lockout banner */
+.pin-lockout-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(227,76,76,0.18);
+  border: 1px solid rgba(227,76,76,0.4);
+  color: #ffc8c8;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  margin-top: 14px;
+  width: 100%;
+  max-width: 310px;
+  justify-content: center;
+}
+.pin-lockout-countdown {
+  font-family: "Titan One", sans-serif;
+  font-size: 18px;
+  color: var(--danger-p4);
+  text-shadow: 0 0 6px rgba(227,76,76,0.5);
+  margin-left: 4px;
+}
