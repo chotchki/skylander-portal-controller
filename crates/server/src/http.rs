@@ -794,7 +794,7 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
     //   - Admitted(sid): seat was free, proceed.
     //   - AdmittedByEvicting { session, evicted }: we took the oldest seat;
     //     broadcast TakenOver to the evicted session so its phone flips to
-    //     the Chaos screen.
+    //     the Kaos screen.
     //   - RejectedByCooldown: both seats full and the 1-min forced-evict
     //     cooldown hasn't elapsed; send an Error event and close.
     let sid = match state.sessions.register().await {
@@ -802,7 +802,7 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
         RegistrationOutcome::AdmittedByEvicting { session, evicted } => {
             let _ = state.events.send(Event::TakenOver {
                 session_id: evicted.0,
-                by_chaos: "Kaos".to_string(),
+                by_kaos: "Kaos".to_string(),
             });
             session
         }

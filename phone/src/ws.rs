@@ -132,9 +132,9 @@ fn spawn_connect(
                             unlocked_profile.set(profile);
                         }
                     }
-                    Ok(Event::TakenOver { session_id, by_chaos }) => {
+                    Ok(Event::TakenOver { session_id, by_kaos }) => {
                         if Some(session_id) == crate::api::current_session_id() {
-                            takeover.set(Some(TakeoverReason { by_chaos }));
+                            takeover.set(Some(TakeoverReason { by_kaos }));
                         }
                     }
                     Ok(Event::ResumePrompt { session_id, slots }) => {

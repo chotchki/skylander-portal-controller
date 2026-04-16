@@ -70,7 +70,7 @@ These are the unknowns that block everything else. Each produces a short writeup
 
 **Target:** a phone connects → sees the figure collection (names + element icons only, no wiki scrape yet) → taps a figure → taps a portal slot → figure loads into RPCS3's emulated portal → slot UI updates when RPCS3 confirms.
 
-Deliberately deferred to Phase 3: PIN-gated profiles, multi-profile, working-copies, session resume, game launching, wiki scrape, aesthetic pass, Chaos, takeover, security signing. We want the smallest possible end-to-end slice first.
+Deliberately deferred to Phase 3: PIN-gated profiles, multi-profile, working-copies, session resume, game launching, wiki scrape, aesthetic pass, Kaos, takeover, security signing. We want the smallest possible end-to-end slice first.
 
 **Pre-conditions the MVP assumes** (will be relaxed in Phase 3):
 - RPCS3 is already running with the Skylanders Manager dialog open (no game launching yet).
@@ -306,7 +306,7 @@ Findings: `docs/research/game-launch-window-mgmt.md`. Major revision: the two-wi
 - [x] 3.6b.6 Lockfile cleanup: `RpcsProcess::shutdown_graceful` now remembers the install dir from `launch`, deletes `<install_dir>/RPCS3.buf` after the `Forced` path.
 - [x] 3.6b.7 Findings documented; CLAUDE.md "RPCS3 window/menu gotchas" section added.
 
-**Known residual UX**: Qt clamps menu popup windows and the Skylanders Manager dialog to visible screen coords even when the parent is off-screen, so during the once-per-session open the user sees (a) menu popup items flash in the upper-left for ~2s, (b) the dialog briefly appear centre-screen before we move it off. Acceptable for MVP — happens once during RPCS3 boot. Logged as PLAN 5.1 for post-Chaos polish.
+**Known residual UX**: Qt clamps menu popup windows and the Skylanders Manager dialog to visible screen coords even when the parent is off-screen, so during the once-per-session open the user sees (a) menu popup items flash in the upper-left for ~2s, (b) the dialog briefly appear centre-screen before we move it off. Acceptable for MVP — happens once during RPCS3 boot. Logged as PLAN 5.1 for post-Kaos polish.
 
 ### 3.7 Optional: real-RPCS3 e2e (heavier, manual trigger) — PARKED, needs direct-desktop session
 
@@ -347,35 +347,35 @@ Rolled out in six sub-milestones for tracking. Each is a meaningful checkpoint y
 | 3.10b | 3.10.5, 3.10.6 — `SlotState::{Loading,Loaded}.placed_by: Option<String>` threaded through `DriverJob` → `handle_job` → `SlotChanged` broadcast; `http::load_slot` resolves it from the caller's session profile; phone `model.rs` mirrors | ✅ done |
 | 3.10c | 3.10.4 (server half) — retired `MaybeSession` bridge. `CurrentSession(SessionId)` is a required extractor on `unlock_profile` / `lock_profile` / `load_slot`. Clear/refresh/launch/quit/profile-CRUD remain session-agnostic (global or PIN-gated). | ✅ done |
 | 3.10d | 3.10.4 (phone half) — `api::SESSION_ID` thread-local captured from `Event::Welcome`; `X-Session-Id` attached on every fetch in `do_fetch`; `TakenOver` → `TakeoverScreen` with "kick back" → page reload. `ProfileChanged` + `TakenOver` filtered client-side by session id. | ✅ done |
-| 3.10e | 3.10.7, 3.10.8 — ownership badge on portal slots, "show join code" affordance | **deferred** until after 3.15 (aesthetic pass); would otherwise be re-styled twice |
+| 3.10e | 3.10.7, 3.10.8 — ownership badge on portal slots, "show join code" affordance | **deferred** until after Phase 4 (aesthetic + UX pass); would otherwise be re-styled twice |
 | 3.10f | 3.10e.1–5 — multi-phone e2e scenarios exercising registry + WS behaviour | next |
 | 3.10f (.6) | 3.10e.6 — ownership-badge visual test, needs 3.10.7 first | deferred with 3.10e |
 
 - [x] 3.10.1 Server session registry: `[Option<Session>; 2]` keyed by connection id + join timestamp. Admit freely while a slot is `None`. Implemented as `HashMap<SessionId, SessionState>` capped at `MAX_SESSIONS=2` with `created_at` for FIFO ordering.
-- [x] 3.10.2 On 3rd connection, evict the **oldest** session (FIFO); evicted client receives `TakenOver { session_id, by_chaos }` and shows the existing Chaos screen. `RegistrationOutcome::AdmittedByEvicting { session, evicted }` returned from `SessionRegistry::register()`.
+- [x] 3.10.2 On 3rd connection, evict the **oldest** session (FIFO); evicted client receives `TakenOver { session_id, by_kaos }` and shows the existing Kaos screen. `RegistrationOutcome::AdmittedByEvicting { session, evicted }` returned from `SessionRegistry::register()`.
 - [x] 3.10.3 1-minute cooldown applies only to forced eviction. Tracked as a single `last_forced_evict_at` on the registry (per-slot refinement deferred — one timestamp handles ping-pong correctly in practice). `RegistrationOutcome::RejectedByCooldown { retry_after }` when within the window; WS handshake sends an `Event::Error` and closes.
 - [x] 3.10.4 Profile unlock is **per-session** (not global). Server: `CurrentSession(SessionId)` extractor required on `unlock_profile` / `lock_profile` / `load_slot`. `Event::ProfileChanged { session_id, .. }` fan-outs; the phone filters by its own session id. Phone: captures session id from `Event::Welcome`, stores in `api::SESSION_ID` thread-local, attaches as `X-Session-Id` on every fetch. Evicted-then-kicked-back sessions re-lock because page reload mints a fresh session.
 - [x] 3.10.5 Portal state remains a single shared `[SlotState; 8]`. Both phones see the same `SlotChanged` stream; last writer wins (driver worker serialises).
 - [x] 3.10.6 Extend `SlotState` with `placed_by: Option<String>` (set on successful load, cleared on clear). Included in `SlotChanged` so both phones can render ownership.
-- [ ] 3.10.7 Phone: ownership indicator on each occupied slot (profile colour + initial). Owning phone's own figures get a highlighted treatment. **Deferred: land after 3.15** so the styling matches the Skylanders aesthetic pass first time.
-- [ ] 3.10.8 Phone: "show join code" action (header/menu) that renders the same QR the launcher shows, so an existing player can hand the join URL to a new joiner. **Deferred: land after 3.15** for the same reason.
+- [ ] 3.10.7 Phone: ownership indicator on each occupied slot (profile colour + initial). Owning phone's own figures get a highlighted treatment. **Deferred: land after Phase 4** so the styling matches the Skylanders aesthetic pass first time.
+- [ ] 3.10.8 Phone: "show join code" action — the same QR the launcher shows, rendered inside the menu overlay (Phase 4, 4.12.4b) so an existing player can hand the join URL to a new joiner. **Moved into the Phase 4 menu overlay**; no separate sheet needed.
 - [ ] 3.10.9 Defer: 2-player disconnect-cleanup semantics (what happens to P2's figures when P1 drops, how kick-back restores layout). Revisit with 3.17 reconnect overlay once real failure modes are visible.
 
 ### 3.10e E2E harness — 2-session support
 
 - [x] 3.10e.1 `Phone::new` already supports N concurrent clients — fantoccini opens a fresh browser session per call, chromedriver fans them out. Tests just call `Phone::new` twice/thrice. New `Phone::session_id()` reads `<body data-session-id>` (populated on `Event::Welcome`) so tests can target a specific session server-side.
 - [x] 3.10e.2 `concurrent_edits_both_phones` — P1 and P2 each load a different figure into a different slot; both phones see both slots Loaded via the shared `SlotChanged` broadcast.
-- [x] 3.10e.3 `third_connection_evicts_oldest` — P1, P2 connected; P3 connects; P1 flips to `.takeover` (Chaos screen), P2 is undisturbed (no `.takeover`), P3 lands on the portal view.
+- [x] 3.10e.3 `third_connection_evicts_oldest` — P1, P2 connected; P3 connects; P1 flips to `.takeover` (Kaos screen), P2 is undisturbed (no `.takeover`), P3 lands on the portal view.
 - [x] 3.10e.4 `forced_eviction_cooldown` — after 3.10e.3 eviction, a raw WS reconnect gets `Event::Error` mentioning "taken over"/"full" and is closed. `/api/_test/clear_eviction_cooldown` fast-forwards the server clock; a subsequent connect lands `Event::Welcome` (admitted). Avoids a real 60s sleep.
 - [x] 3.10e.5 `independent_profile_unlock` — two distinct profiles injected, `set_session_profile(s2, profile_B)` pins P2 to a different profile from P1's; each phone's `.profile-chip` header shows its own profile name.
-- [ ] 3.10e.6 `ownership_badge_reflects_placer` — deferred with 3.10.7 (ownership badge UI) since the test asserts on the badge. Lands alongside the post-3.15 aesthetic pass.
+- [ ] 3.10e.6 `ownership_badge_reflects_placer` — deferred with 3.10.7 (ownership badge UI) since the test asserts on the badge. Lands after Phase 4.
 
 ### 3.11 Working copies + reset-to-fresh
 
 - [x] 3.11.1 Working copy location via `paths::working_copy_path(profile_id, figure_id)` — `<runtime_root>/working/<profile_id>/<figure_id>.sky`. Release `<runtime_root>` = `%APPDATA%/skylander-portal-controller/`; dev = `./dev-data/`. Single resolver, no per-call branching.
 - [x] 3.11.2 `crates/server/src/working_copies.rs`: `resolve_load_path(profile_id, figure)` forks on first use, returns the existing working path thereafter. Driver job consumes the resolved path; `figure_usage.last_used_at` bumped via new `ProfileStore::record_figure_usage`. 4 unit tests (fork, reuse, isolation, reset).
 - [x] 3.11.3 `POST /api/portal/slot/:n/reset` signed endpoint + `working_copies::reset_to_fresh`. Phone slot UI gains a "Reset" button with a plain `window.confirm()` gate.
-- [ ] 3.11.4 Creation Crystals extra-confirm (type "RESET" to confirm) — deferred with 3.15's polish pass, since the current `window.confirm` already carries meaningful "All progress will be lost" wording. Track in PLAN 3.15's scope.
+- [ ] 3.11.4 Creation Crystals extra-confirm (type "RESET" to confirm) — deferred with Phase 4's polish pass, since the current `window.confirm` already carries meaningful "All progress will be lost" wording. Track in Phase 4's scope.
 
 ### 3.12 Session resume + layout memory
 
@@ -386,7 +386,7 @@ Rolled out in six sub-milestones for tracking. Each is a meaningful checkpoint y
   3. Test-hook `unlock_session` (the `set_profile` fallback path for races where the new WS registered before the hook fired).
   Phone `ResumeModal` component shows "Resume" / "Start fresh"; Resume issues per-slot `/api/portal/slot/:n/load` calls.
 - [x] 3.12.3 Skip if the saved layout is all-Empty or no row exists.
-- [ ] 3.12.4 2-phone modal — if the *other* phone already has figures on the portal when this profile unlocks, the current modal still shows "Resume"/"Start fresh" with no special handling. Server-side back-pressure on `load_slot` (the existing 429 on already-loading slot) swallows collisions but doesn't communicate intent well. Proper 3-option modal (clear + resume / alongside / fresh) lands as a follow-up after 3.15 when we can style it cleanly.
+- [ ] 3.12.4 2-phone modal — if the *other* phone already has figures on the portal when this profile unlocks, the current modal still shows "Resume"/"Start fresh" with no special handling. Server-side back-pressure on `load_slot` (the existing 429 on already-loading slot) swallows collisions but doesn't communicate intent well. Proper 3-option modal (clear + resume / alongside / fresh) lands as a follow-up after Phase 4 when we can style it cleanly.
 - [x] 3.12.5 Supporting work: new `ProfileStore::record_figure_usage` (updates `figure_usage.last_used_at` on every load). Canonical name threaded through `DriverJob::LoadFigure` so per-profile working copies (figure_id-hash filenames) don't leak into the displayed slot text. `unlock_default_profile` e2e helper now idempotent (reuses existing "Player 1" on repeat calls) so the reload-test flow keeps the same profile id. `/api/_test/layout/:profile_id` + `/api/_test/set_session_profile` hooks for multi-phone/resume tests.
 
 ### 3.13 HMAC command signing
@@ -404,13 +404,9 @@ Rolled out in six sub-milestones for tracking. Each is a meaningful checkpoint y
 - [ ] 3.14.2 Tap the variant badge → cycle between variants in place (per SPEC Q76).
 - [ ] 3.14.3 Loaded variant reflected on the slot's display_name.
 
-### 3.15 Aesthetic pass (Skylanders-style CSS)
+### 3.15 Aesthetic pass — **MOVED to Phase 4**
 
-- [ ] 3.15.1 Implement the visual direction from `docs/aesthetic/ui_style_example.png`: circular gold-bezeled figure portraits, starfield blue background, bold white titles with gold outline.
-- [ ] 3.15.2 Element gradient palette tuned against in-game references.
-- [ ] 3.15.3 Card-state transitions (Pick → Loading → Loaded) get subtle animation.
-- [ ] 3.15.4 Use the `frontend-design` skill for the heavier visual work.
-- [ ] 3.15.5 Apply the same Skylanders aesthetic to the PC-side egui launcher window (QR code, "serving on" address, status). egui 0.29 supports `Visuals` + custom fonts + `egui_extras` image loading; reuse the same palette + typography the phone uses so the two surfaces feel like one app. The text must be readable from ~10 ft on an 86" TV (≥32pt body, ≥64pt QR label).
+The Skylanders-style CSS + UX reorganization grew big enough to earn its own phase. See Phase 4.
 
 ### 3.16 First-launch config wizard (egui) — DRAFTED (needs live-desktop verify)
 
@@ -435,42 +431,216 @@ Implementation lives in `crates/server/src/wizard.rs` + `crates/server/src/paths
 - [x] 3.19.3 Server serves `GET /api/figures/:id/image?size={thumb,hero}` with `Cache-Control: public, max-age=86400`. Fallback: element-icon from the firmware pack. Input validated to 16 hex chars.
 - [x] 3.19.4 Phone card icon renders `<img class="card-thumb" src="/api/figures/{id}/image?size=thumb">` over the element-short label; label shows through on 404.
 - [x] 3.19.5 Scraper hardened (Retry-After handling, per-figure incremental writes, 5-retry skip-on-failure, `merge_for_save` preserves prior entries, `--resume` implicit) and re-run: **504/504 figures** (100% coverage), **488 thumbs** (~97% image hit rate — 16 figures had no wiki infobox image, which is fine).
-- [ ] 3.19.6 **Attribution (pre-release blocker).** Fandom content is CC BY-SA — the license requires prominent attribution + license identification + indication of modifications. Surface in the phone app: either (a) a footer link "Data & images from the Skylanders Wiki (CC BY-SA)" visible on the figure browser, (b) an About screen reachable from the header, or (c) a per-figure credit on the figure-detail screen (blocks on PLAN 5.3). The exact placement depends on how the aesthetic pass (3.15) reshapes the layout — decide when that lands. `data/LICENSE.md` already cites the source for the repo; this covers the user-visible runtime requirement. Must land before any public release (3.18).
+- [ ] 3.19.6 **Attribution (pre-release blocker).** Fandom content is CC BY-SA — the license requires prominent attribution + license identification + indication of modifications. Surface in the phone app: either (a) a footer link "Data & images from the Skylanders Wiki (CC BY-SA)" visible on the figure browser, (b) an About screen reachable from the header, or (c) a per-figure credit on the figure-detail screen (blocks on old PLAN 5.3 → 6.3). The exact placement depends on how Phase 4 reshapes the layout — decide when that lands. `data/LICENSE.md` already cites the source for the repo; this covers the user-visible runtime requirement. Must land before any public release (old 3.18 → covered by Phase 7).
 
 ---
 
-## Phase 4 — Chaos
+## Phase 4 — Aesthetic + UX pass
 
-- [ ] 4.1 Wall-clock timer: 20min warmup + randomized 60min windows.
-- [ ] 4.2 Text-only overlay with Kaos catchphrases (curated in-repo list; text avoids audio copyright).
-- [ ] 4.3 1-for-1 swap of a portal figure with a random compatible-with-current-game figure.
-- [ ] 4.4 Purple/pink skin theme applied via CSS variables.
-- [ ] 4.5 Parent kill-switch (SPEC Q38) — hidden config knob, not in the phone UI.
-- [ ] 4.6 Integration: Chaos swap must go through the standard driver flow (so tests catch regressions).
+Phase 3 got the app *working*. Phase 4 makes it feel like Skylanders. Two intertwined workstreams:
 
-Chaos is LAST. Do not start without explicit go-ahead.
+- **Visual / aesthetic** — gold bezels, starfield, typography, ambient + state-transition animations. References: `docs/aesthetic/ui_style_example.png`, `Screenshot 2026-04-15 17161?.png`, `kaos_lair_feel.png`.
+- **UX / information architecture** — the portal-vs-browser drawer model (SPEC says they're separate, current implementation has them co-mounted), header composition, picking-mode flow, modal stack, navigation between screens. The placeholder CSS has been papering over decisions we never actually made.
+
+Remaining Phase 3 deferrals (3.10.7 ownership, 3.10.8 show-join-code, 3.10e.6 ownership-test, 3.11.4 crystal extra-confirm, 3.12.4 3-option resume modal, 3.19.6 attribution) are **deliberately not folded in here** — they'll land as small follow-ups after Phase 4 using the design system Phase 4 establishes. The Kaos skin (5.4) rides free on Phase 4's CSS-var architecture.
+
+**Direction chosen: Option A — Heraldic** (thick embossed gold bezels, Titan One display + Fraunces body, starfield, filigree plaques). Portal slot state-transition animations confirmed. Screen-level transition animations mock after 4.3 settles the IA. Mocks: `docs/aesthetic/mocks/option_a_heraldic.html` (portal), `transitions.html` (slot state machine). Options B (arcane hex) and C (modernized thin-ring) filed for reference but not pursued.
+
+**Milestone A (4.1 – 4.3):** design tokens + per-screen mockups + IA agreed + screen-transition animations mocked.
+**Milestone B (4.4 – 4.12):** reskin + transitions landed screen-by-screen.
+**Milestone C (4.13 – 4.17):** egui launcher parity, e2e selector fix-ups, demo.
+
+### 4.1 Design tokens + CSS architecture
+
+- [ ] 4.1.1 Palette: starfield blues (`--sf-1/2/3`), gold bezel stops (`--gold-bright/gold/gold-mid/gold-shadow/gold-inner`), per-element gradients (`--el-*`), status colors (loading/error/success). Kaos (5.4) variants defined as sibling vars upfront.
+- [ ] 4.1.2 Typography: **Titan One** (display), **Fraunces** (body). Self-host under `phone/assets/fonts/`. Both are OFL-licensed; note in `data/LICENSE.md`.
+- [ ] 4.1.3 Easing + timing tokens — `--ease-spring`, `--ease-sweep`, `--dur-tap`, `--dur-loading-sweep` (0.9s), `--dur-impact` (600ms), `--dur-shudder` (400ms), `--dur-halo-slow` (3.4s), `--dur-idle-float` (4.5s).
+- [ ] 4.1.4 CSS vars restructured so a body-class swap (`.skin-kaos`) repalettes the whole app without touching component CSS.
+- [ ] 4.1.5 `prefers-reduced-motion` kill-switch disables ambient drift + halo rotations app-wide.
+
+### 4.2 Static mockups
+
+Direction locked to Option A. Standalone HTML/CSS in `docs/aesthetic/mocks/`, viewable by opening directly. One screen per file.
+
+- [x] 4.2.1 Portal view with all slot states — `option_a_heraldic.html`.
+- [x] 4.2.2 Slot state-transition demo — `transitions.html`.
+- [ ] 4.2.3 Profile picker — "WELCOME, PORTAL MASTER" heading, gold-bezeled profile swatches, "+ Add" card.
+- [ ] 4.2.4 PIN keypad — framed panel, gold-bezel dot display, oversized keys, lockout state.
+- [x] 4.2.5 Game picker — names only, big and simple. No serial numbers or figure counts (those are dev/filter concerns, not pick-a-game concerns). Stagger-rise animation. Box art as faded background behind each card title (production: `/api/games/{serial}/boxart` endpoint, bundled images; mock uses gradient placeholders evoking each game's palette). "Launching" state dims other cards, pulses the selected title.
+- [x] 4.2.6 Browser / collection view — **resolved: toy box lid** overlay with collapsible search/filter lid + figure grid. Mock: `portal_with_box.html` (checkbox toggles open/closed; click SEARCH to expand lid, scroll to collapse).
+- [x] 4.2.7 Picking-mode — integrated into box-open state. "PICKING FOR SLOT N" label at top of collection. No separate banner mock needed.
+- [ ] 4.2.8 Profile creation flow — name entry → color pick → PIN set → PIN confirm → done. Reuses the PIN keypad layout with a "choose your pin" / "confirm your pin" label swap. Name entry needs a themed text input (or preset name picker — decide in mock).
+- [x] 4.2.8b Figure detail view — mock: `docs/aesthetic/mocks/figure_detail.html`. Default / loading / errored states (demo controls in the corner toggle between them).
+- [ ] 4.2.9 Takeover / Kaos screen (blue palette; purple Kaos skin deferred to 5.4).
+- [ ] 4.2.10 Resume-last-setup modal, reset-to-fresh confirm, show-join-code sheet — all use `<FramedPanel>` treatment.
+- [ ] 4.2.11 Screen-transition animation demo — **after 4.3**. Animates the full navigation sequence: profile picker → PIN → game picker → portal. Locks the feel for screen-level motion.
+- [ ] 4.2.12 Review round with user. Iterate before touching Leptos.
+
+### 4.3 UX reorganization — information architecture
+
+- [x] 4.3.1 **Portal vs browser — DECIDED: toy box lid.** Portal is the primary screen (2-wide × 4-tall slot grid to maximise bezel size). At the bottom sits a "toy box lid" — a wooden-textured bar with a gold clasp and "COLLECTION" label. The open lid sits at the top **below the header** (no overlap) as slatted wood, compact by default with a single "SEARCH" button. Tapping SEARCH expands the lid downward to reveal a search input + drill-down filters (Games → each game, Elements → list, Category → Vehicles/Traps/Minis/Items). Default sort is **current-game-compatible, then last-used** — so filters are opt-in and the figures kids want are already on top. A bottom dark-gradient pinned to the footer gives a depth illusion (figures receding into the box); a top fade makes figures scroll behind the lid rather than clip. Metaphor: kids digging through a Skylanders bin to find the right figure. Mock: `docs/aesthetic/mocks/portal_with_box.html`.
+
+  **Gesture model** (progressive swipe-down through open states):
+  - Closed → **tap** or **swipe up** on lid → Open (compact).
+  - Open (compact) → **swipe down** on lid → filters expand. (Tap SEARCH does the same thing.)
+  - Open (expanded) → **swipe down** again → box closes entirely.
+  - Scrolling the figure grid auto-collapses expanded filters back to compact (looking deeper into the box).
+  - Tap the lid's "✕" close button from any open state → box closes.
+  - Picking a figure and placing it → box closes after the portal-impact animation.
+
+  See `docs/aesthetic/design_language.md` §6.7 for the full gesture table + implementation notes (pointer events, 40–60px translate threshold, direction check).
+- [x] 4.3.2 **Header composition — DECIDED.** Left-to-right: **kebab (⋮)** → profile swatch → profile name + current game → connection pip + "live" label. No inline action buttons. All actions (quit/switch/join/about) consolidated into the kebab menu overlay (see 4.12.4b). Keeps the header quiet, reduces risk of a kid accidentally tapping a red ✕ to quit mid-game, and replaces the cryptic ⌘ join-code icon.
+- [x] 4.3.3 **Picking-mode flow — DECIDED: slot tap opens the box.** Tapping an empty slot opens the toy box (same as tapping the lid). No "picking for slot N" label is shown to the user — the server tracks which slot is being picked for; the client just passes the figure id and the server places it. Picking a figure closes the box and triggers the portal impact animation on the target slot. Tapping a loaded slot shows Remove / Reset actions directly on the portal (no box needed). No sticky banner.
+- [ ] 4.3.6 **Collection default sort — game-compatible, then last-used.** Because filters are opt-in (hidden behind SEARCH), the initial grid order must surface the most likely picks at the top. Primary key: figures compatible with the currently-launched game (per the Kaos-compatibility heuristic in CLAUDE.md — game-of-origin + all later games, with known exceptions like vehicles=SuperChargers-only). Secondary key: `figure_usage.last_used_at` descending (already persisted per-profile in SQLite). Server ranks; phone renders in order. Tie-break: canonical name alphabetical.
+- [x] 4.3.7 **Figure detail view flow.** Tapping a figure in the box opens the **detail view**, not a direct placement. Transition: other figures + wooden box interior fade to ~25% opacity, selected figure "lifts up" (scale + translate animation) into a blue framed panel that fades in. The lifted figure gets a soft aura + slow-rotating rays (like the in-game figure reveal). The panel hosts: figure name + element/game metadata, an action-icon row (appearance / stats / reset — icons are placeholders in Phase 4; 3.14 wires up variant cycling, 6.3 wires up stats drill-down, 3.11.3 wires up reset-to-fresh), a compact stats preview strip, `PLACE ON PORTAL` (primary) + `BACK TO BOX` (secondary) buttons. **Back** reverses the entrance animation (panel fades, figure descends into grid, other figures restore). **Place** triggers the portal loading ring on the hero figure; on success the toy box lid closes and the portal-impact animation plays on the server-assigned slot; on failure an inline error banner slides in from the top of the panel (no toast for this — the detail view stays put so the user can retry or go back). Server still decides the slot; the phone never computes it.
+- [ ] 4.3.4 **Modal stack semantics.** PIN entry, admin, resume prompt, reset confirm, takeover, show-join-code. Which stack, which block the portal, which auto-dismiss, which survive reconnect.
+- [ ] 4.3.5 **Navigation map** documented in `docs/aesthetic/navigation.md` — state graph so future screens (stats 6.3, reposes 3.14) have a place to land.
+
+### 4.4 Shared Leptos components
+
+- [ ] 4.4.1 `<GoldBezel>` — circular gold frame with element-tinted inner plate. Props: `size`, `element`, `state` (default / picking / loading / loaded / errored / disabled), child content. **Primary child is an `<img>` thumbnail** (`/api/figures/{id}/image?size=thumb`) that fills the circle; the element-gradient plate shows through as a fallback for figures without wiki images (16 of 504). Profile swatches use an initial letter instead. Reused by portal slots, browser cards, profile swatches, empty-slot "+", color-picker swatches, and the hero bezel in the figure detail view.
+- [ ] 4.4.2 `<FramedPanel>` — parchment-blue panel with a multi-stop gold gradient border for modal surfaces (PIN, admin, resume, confirms, takeover, show-join, figure detail). **No corner brackets** — the gradient border does the framing; brackets were visual noise. Consistent across all panels.
+- [ ] 4.4.3 `<DisplayHeading>` — two-tone outlined title: gold fill (linear-gradient via `background-clip: text`) + dark-gold `-webkit-text-stroke` + drop-shadow. Matches the "DARES" / "IMAGINITE" treatment.
+- [ ] 4.4.4 `<RayHalo>` — rotating conic-gradient halo for selected / loading state, masked to a ring.
+- [ ] 4.4.5 `<FigureHero>` — the lifted figure presentation used in the detail view: oversized `<GoldBezel>` + soft aura + slow-rotating conic-gradient rays. Takes a `state` prop (`default`, `loading`, `errored`) that switches the bezel treatment + triggers the loading ring overlay. Reused by the Kaos swap-announcement overlay (5.3).
+
+### 4.5 Starfield background + ambient motion
+
+- [ ] 4.5.1 Layered starfield: multiple radial gradients + tiled SVG star-dot layer + slow parallax drift (~40s loop). Single shared background on `body`, so screen changes feel continuous.
+- [ ] 4.5.2 Optional "magic dust" — sparse floating-particle layer; evaluate CPU cost on the HTPC before committing.
+
+### 4.6 Portal view reskin + state transitions
+
+- [ ] 4.6.1 Slots render through `<GoldBezel>`. Empty slot = dimmed bezel with a "+" in the center.
+- [ ] 4.6.2 Empty → Picking: scale 1.05 spring-ease, outer gold glow intensifies, `<RayHalo>` fades in and begins a slow rotation.
+- [ ] 4.6.3 Pick → Loading: halo rotation speeds up, a gold sweep travels once around the bezel ring (~1s loop), inner plate dims 20%.
+- [ ] 4.6.4 Loading → Loaded: "portal impact" — radial white→gold flash scales from 0 → 2× and fades (~400ms), bezel brightness spikes briefly, then settles into a subtle 4s idle float (±2px).
+- [ ] 4.6.5 Loaded → Cleared: desaturate + shrink, fade thumb out to element plate (~200ms).
+- [ ] 4.6.6 Errored: red-tinted bezel, short shake animation + persistent subdued red glow until dismissed.
+- [ ] 4.6.7 Slot tap feedback: inner-plate "dent" (inset shadow + 0.96 scale), spring back.
+
+### 4.6b Figure detail view (the "lifted" hero panel)
+
+Implemented as a new screen reached by tapping a figure inside the toy box. Shell only in Phase 4; the action-icon wiring lands with later work (3.14 variants → appearance icon; 6.3 stats → stats icon; 3.11.3 reset → reset icon).
+
+- [ ] 4.6b.1 `<FigureDetail>` Leptos component. Props: `figure: PublicFigure`, `placed_by: Option<String>` (for stats strip context), `on_back: Callback`, `on_place: Callback`. Internal state: `idle | loading | errored { message: String }`.
+- [ ] 4.6b.2 Entrance animation: other figures + box interior crossfade to ~25% opacity; selected `<FigureHero>` lifts from its grid position via FLIP-style transform; framed panel fades in behind (staggered ~120ms).
+- [ ] 4.6b.3 Action-icon row: three `<BezelButton>`s with placeholder icons + disabled state + "coming soon" tooltip until 3.14/6.3/3.11.3 wire real handlers. Keeps Phase 4 contained while locking the layout.
+- [ ] 4.6b.4 Stats preview strip — placeholder values in Phase 4 (shows the layout but reads from a stub). 6.3 pulls real numbers from `/api/profiles/:profile_id/figures/:figure_id/stats`.
+- [ ] 4.6b.5 `PLACE ON PORTAL` (primary) calls `on_place`; while awaiting the WS confirmation, state flips to `loading` and the hero bezel's loading ring spins. On WS `SlotChanged` with matching figure_id → box lid closes, portal-impact animation fires on the target slot. On error → state flips to `errored`, inline error banner slides in from top of panel. **Client-side timeout (8s default, configurable)**: if no `SlotChanged` or error arrives, auto-flip to `errored` with a "took too long — try again?" message. Prevents the user from sitting on a permanent loading spinner if the WS drops mid-operation.
+- [ ] 4.6b.6 `BACK TO BOX` (secondary) reverses the entrance animation and returns to the collection grid with scroll position preserved. **Must remain enabled in the loading and errored states** — the user should never be trapped waiting on the server. Backing out mid-load doesn't cancel the load (the figure may still appear on the portal once it completes); it just returns the user to the box. If the WS eventually reports success while the user is elsewhere, no UI disruption — the slot just populates.
+- [ ] 4.6b.7 Server contract unchanged: phone sends figure_id; server picks the slot (first-available or picking-for-specific-slot context). Phone never names a slot in the request.
+
+### 4.7 Browser view reskin
+
+- [ ] 4.7.1 Figure cards use a smaller `<GoldBezel>` as the portrait; card itself becomes a minimal frame under the bezel.
+- [ ] 4.7.2 Element chips redesigned as gold-bordered pills with element-tinted fills.
+- [ ] 4.7.3 `on-portal` state: desaturated bezel + a "ON PORTAL" gold ribbon across the corner.
+- [ ] 4.7.4 Search input: gold shimmer sweep along the border on focus (one-shot).
+- [ ] 4.7.5 Empty/filtered-out state: themed empty-state illustration + copy, not the plain text we have today.
+
+### 4.8 Profile picker reskin
+
+- [ ] 4.8.1 Big `<DisplayHeading>` "WELCOME, PORTAL MASTER".
+- [ ] 4.8.2 Profile cards: oversized gold-bezeled swatches with the initial rendered in the display font. Each profile's color tints the inner plate.
+- [ ] 4.8.3 "Add profile" affordance → prominent "+" bezel card instead of the placeholder button.
+- [ ] 4.8.4 Entry animation: cards bloom in from center, 80ms stagger.
+
+### 4.9 PIN keypad reskin
+
+- [ ] 4.9.1 `<FramedPanel>` surround. PIN dots become mini gold bezels that fill with element-tinted plates as digits are entered.
+- [ ] 4.9.2 Key press feedback: inset-shadow dent + soft "click" animation (≤100ms), plus subtle haptic-adjacent bounce.
+- [ ] 4.9.3 Unlock success: shockwave ring outward from profile swatch + gold streak L→R sweep as the panel fades out.
+- [ ] 4.9.4 Lockout state: panel tinted red, countdown in the display font, keys visually disabled (not hidden).
+
+### 4.10 Profile admin reskin
+
+- [ ] 4.10.1 `<FramedPanel>` surround. Form inputs themed (rounded, gold focus outline, display-font labels).
+- [ ] 4.10.2 Color picker swatches are mini gold bezels.
+- [ ] 4.10.3 Destructive actions (delete, reset-PIN) clearly marked with a red-tinted framing.
+
+### 4.11 Game picker reskin
+
+- [ ] 4.11.1 Game cards with room for per-game artwork (placeholder text if we don't have the assets yet).
+- [ ] 4.11.2 Card entry animation: stagger-rise from below, 80ms per card.
+- [ ] 4.11.3 Selected-card confirmation flash before the WS signal flips the UI to portal view.
+
+### 4.12 Modals + takeover screen
+
+- [ ] 4.12.1 Resume-last-setup modal (3.12.2 UI): `<FramedPanel>` with a figure-preview row of gold bezels, "Resume" + "Start fresh" CTAs.
+- [ ] 4.12.2 Reset-to-fresh confirm (3.11.3 UI).
+- [ ] 4.12.3 Takeover/Kaos screen polish — stays blue (the Kaos skin itself ships with 5.4; this is just restyled).
+- [ ] 4.12.4 Show-join-code sheet scaffolded — `<FramedPanel>` with a gold-bezeled QR and join URL. The real content wiring to 3.10.8 happens in the post-Phase-4 follow-up; this milestone just delivers the modal shell and a header entry point that navigates to it.
+- [ ] 4.12.4b **Menu overlay** (opened by header kebab). Single surface that consolidates: (a) show-join-code QR (prominent, always visible — answers "how does my friend join?"), (b) current profile chip for context, (c) three stacked actions with icon + title + one-line description:
+      - **SWITCH PROFILE** — locks current session, returns to profile picker. Other sessions on other phones keep their profiles.
+      - **CHOOSE ANOTHER GAME** — quits the current RPCS3 game, returns to game picker; profile stays unlocked. Confirm required (destructive for the other player if they're mid-play).
+      - **SHUT DOWN** — red/danger treatment — closes the whole server + RPCS3. Confirm required; labelled "ask a grown-up first" so kids know it's the adult exit.
+      Dimmed scrim behind, tap scrim or ✕ to close. Uses `<FramedPanel>` shell. Mock: `docs/aesthetic/mocks/menu_overlay.html`. Absorbs 3.10.8 (show-join-code) entirely — that line item's UI work lands here; server-side it's already done.
+
+### 4.13 Toasts redesign
+
+- [ ] 4.13.1 Color-coded left strip (error / warn / success / info). Consistent typography with the rest of the app.
+- [ ] 4.13.2 Slide-in from top-right variant for non-blocking notifications; existing bottom-center kept for critical errors.
+
+### 4.14 Ambient polish
+
+- [ ] 4.14.1 Screen-to-screen transitions: consistent cross-fade + slight motion direction based on navigation depth (deeper = slide up, back = slide down).
+- [ ] 4.14.2 Connection-status pip in the header gets a breathe animation while connecting, steady glow when connected, soft red when disconnected.
+
+### 4.15 egui launcher reskin
+
+- [ ] 4.15.1 Shared palette via egui `Visuals` — starfield-blue background, gold accents. Readable from ~10 ft on an 86" TV (≥32pt body, ≥64pt QR label).
+- [ ] 4.15.2 Display font loaded into egui so the PC-side and phone-side feel unified.
+- [ ] 4.15.3 QR code framed in a gold bezel equivalent (static, no conic gradients — egui doesn't need the web flourish).
+- [ ] 4.15.4 Status indicators — RPCS3 connection dot (absorbs the old 2.8.4 deferral), client count, figure count, current-game name.
+- [ ] 4.15.5 **Cloud vortex loading animation.** While RPCS3 boots a game, the egui window shows a swirling blue-white cloud vortex inspired by the in-game "PLEASE PLACE YOUR SKYLANDER ON THE PORTAL OF POWER" screen (reference: `docs/aesthetic/loading_screen.png`). Clouds rotate inward toward a bright center. Once the game is loaded (RPCS3 window detected), the clouds part/fade outward to reveal the portal QR / status underneath. Renders via egui `Painter` custom shapes or a pre-rendered animated texture if custom painting is too expensive for smooth rotation.
+
+### 4.16 E2E test updates
+
+- [ ] 4.16.1 Audit `crates/e2e-tests/` selectors after the reskin. Where possible move from class-name matches to stable `data-test` attributes so the next redesign doesn't break the harness.
+- [ ] 4.16.2 Visual regression: out of scope — manual review only.
+- [ ] 4.16.3 Manual multi-phone visual sanity on the HTPC (both phones running, picking flows, resume modal, takeover screen).
+
+### 4.17 Review checkpoint
+
+- [ ] 4.17.1 Demo on HTPC end-to-end: launcher TV readability → phone scans → profile picker → PIN → game picker → portal in all five slot states → takeover flow.
+- [ ] 4.17.2 Catalogue any UX papercuts and route them to Phase 3 stragglers (ownership badge, show-join-code wiring, 3-option resume modal, crystal extra-confirm, attribution placement).
 
 ---
 
-## Phase 5 — Post-Chaos polish (future enhancements)
+## Phase 5 — Kaos
 
-- [x] 5.2 **Parse `.sky` firmware for per-figure stats** — mostly done, read-only. `crates/sky-parser/` parses the plaintext tag layout per `docs/research/sky-format/SkylanderFormat.md` (mirrored from NefariousTechSupport/Runes). RPCS3 writes plaintext `.sky` files with no AES, so no decryption needed. `GET /api/profiles/:profile_id/figures/:figure_id/stats` exposes the parse, feature-gated on `sky-stats`. 22 tests (header, variant decomposition, web code, XP/level, gold, nickname, hero points, playtime, hat history + current resolution, trinket, timestamps, quest raw u72s, CRC16 validation, area-sequence wraparound). **Still stubbed**: Trap / Vehicle / Racing Pack / CYOS (Imaginators creation-crystal) layouts — surfaced as `FigureKind::Other` with TODO pointers. Phone UI wiring (figure-card info panel) still pending — REST endpoint is ready to consume.
+- [ ] 5.1 Wall-clock timer: 20min warmup + randomized 60min windows.
+- [ ] 5.2 Text-only overlay with Kaos catchphrases (curated in-repo list; text avoids audio copyright). Two distinct overlay surfaces mocked in Phase 4: (a) `kaos_takeover.html` — the stolen-seat screen with KICK BACK button; (b) `kaos_swap.html` — mid-game swap announcement with outgoing→⚡→incoming figure row + Kaos taunt. **No auto-dismiss**: phone is typically asleep during gameplay, so the overlay must stay visible until the user explicitly taps BACK TO THE BATTLE. If Kaos fires multiple times while the phone is asleep, latest-fires-wins (or queue — decide during implementation).
+- [ ] 5.3 1-for-1 swap of a portal figure with a random compatible-with-current-game figure.
+- [ ] 5.4 Purple/pink skin theme applied via CSS variables (rides on the `--*` tokens established in Phase 4 — should be a palette swap, not a rewrite).
+- [ ] 5.5 Parent kill-switch (SPEC Q38) — hidden config knob, not in the phone UI.
+- [ ] 5.6 Integration: Kaos swap must go through the standard driver flow (so tests catch regressions).
 
-- [ ] 5.3 **Detailed-stats screen on the phone** — "tap a figure card → a full-screen themed detail view" showing what 5.2's parser extracted: level + XP progress bar, gold, current hat, playtime, nickname, hero points, hat history, trinket, and quest progress when decoded. Land *after* the aesthetic pass (3.15) so the layout inherits the Skylanders starfield/gold-bezel theme instead of being re-themed twice. Hits `/api/profiles/:profile_id/figures/:figure_id/stats`. Read-only (no editing) — writing is out of scope per 5.2. Non-standard layouts (Trap/Vehicle/CYOS) render a reduced panel until 5.2's stub fills are done.
-
-- [ ] 5.1 **Suppress RPCS3 window flicker during menu navigation.** The 3.6b research landed on "accept a once-per-session flicker" because Qt renders menu popups at visible screen coords when the parent is off-screen, and the Skylanders Manager dialog appears in the screen centre for a brief moment before we sling it off-screen. Our eframe launcher window launches *before* RPCS3, so it's in a position to establish Z-order priority. Ideas to explore: (a) make our launcher `WS_EX_TOPMOST` during any `open_dialog` navigation so Qt popups render behind it; (b) use `SetWinEventHook` / `EVENT_OBJECT_SHOW` filtered to RPCS3's PID to intercept the dialog creation event and move it off-screen before the first paint (Tier 2 in the 3.6b write-up); (c) hook menu popups the same way (Tier 3). Prerequisite: the real app exists and the launcher-first ordering is stable.
+Kaos is LAST among feature work. Do not start without explicit go-ahead.
 
 ---
 
-## Phase 6 — Packaging + release
+## Phase 6 — Post-Kaos polish (future enhancements)
+
+- [x] 6.2 **Parse `.sky` firmware for per-figure stats** — mostly done, read-only. `crates/sky-parser/` parses the plaintext tag layout per `docs/research/sky-format/SkylanderFormat.md` (mirrored from NefariousTechSupport/Runes). RPCS3 writes plaintext `.sky` files with no AES, so no decryption needed. `GET /api/profiles/:profile_id/figures/:figure_id/stats` exposes the parse, feature-gated on `sky-stats`. 22 tests (header, variant decomposition, web code, XP/level, gold, nickname, hero points, playtime, hat history + current resolution, trinket, timestamps, quest raw u72s, CRC16 validation, area-sequence wraparound). **Still stubbed**: Trap / Vehicle / Racing Pack / CYOS (Imaginators creation-crystal) layouts — surfaced as `FigureKind::Other` with TODO pointers. Phone UI wiring (figure-card info panel) still pending — REST endpoint is ready to consume.
+
+- [ ] 6.3 **Detailed-stats screen on the phone** — "tap a figure card → a full-screen themed detail view" showing what 6.2's parser extracted: level + XP progress bar, gold, current hat, playtime, nickname, hero points, hat history, trinket, and quest progress when decoded. Land *after* Phase 4 so the layout inherits the Skylanders starfield/gold-bezel theme instead of being re-themed twice. Hits `/api/profiles/:profile_id/figures/:figure_id/stats`. Read-only (no editing) — writing is out of scope per 6.2. Non-standard layouts (Trap/Vehicle/CYOS) render a reduced panel until 6.2's stub fills are done.
+
+- [ ] 6.1 **Suppress RPCS3 window flicker during menu navigation.** The 3.6b research landed on "accept a once-per-session flicker" because Qt renders menu popups at visible screen coords when the parent is off-screen, and the Skylanders Manager dialog appears in the screen centre for a brief moment before we sling it off-screen. Our eframe launcher window launches *before* RPCS3, so it's in a position to establish Z-order priority. Ideas to explore: (a) make our launcher `WS_EX_TOPMOST` during any `open_dialog` navigation so Qt popups render behind it; (b) use `SetWinEventHook` / `EVENT_OBJECT_SHOW` filtered to RPCS3's PID to intercept the dialog creation event and move it off-screen before the first paint (Tier 2 in the 3.6b write-up); (c) hook menu popups the same way (Tier 3). Prerequisite: the real app exists and the launcher-first ordering is stable.
+
+---
+
+## Phase 7 — Packaging + release
 
 Deliberately separated from Phase 3 so it's clear this only runs once the app works end-to-end. CI deliberately deferred until here per the original "no CI until features work" stance.
 
-- [ ] 6.1 Bundle `server.exe` + `phone/dist/` + `data/images/*/thumb.png` + `data/figures.json` + `README.md` into a GitHub Releases zip. Evaluate `cargo dist` vs a hand-rolled PowerShell/zip script; prefer `cargo dist` if it handles the non-Rust assets cleanly.
-- [ ] 6.2 GitHub Actions workflow: on version-tag push, build Windows release, run the fast test suite (unit + integration + workspace build — NOT the `#[ignore]`-gated e2e tests), attach zip to the release.
-- [ ] 6.3 Release `README.md` spells out user-supplied bits: RPCS3 install path, firmware backup pack. Walk through the first-launch wizard experience. Link to `data/LICENSE.md` for the Fandom attribution (3.19.6).
-- [ ] 6.4 Verify the release zip on a *different* Windows machine than the dev one — catches "this path exists only on my laptop" bugs.
-- [ ] 6.5 Post-release monitoring plan: how do we hear about breaks? GitHub issues only for v1; formal telemetry out of scope.
+- [ ] 7.1 Bundle `server.exe` + `phone/dist/` + `data/images/*/thumb.png` + `data/figures.json` + `README.md` into a GitHub Releases zip. Evaluate `cargo dist` vs a hand-rolled PowerShell/zip script; prefer `cargo dist` if it handles the non-Rust assets cleanly.
+- [ ] 7.2 GitHub Actions workflow: on version-tag push, build Windows release, run the fast test suite (unit + integration + workspace build — NOT the `#[ignore]`-gated e2e tests), attach zip to the release.
+- [ ] 7.3 Release `README.md` spells out user-supplied bits: RPCS3 install path, firmware backup pack. Walk through the first-launch wizard experience. Link to `data/LICENSE.md` for the Fandom attribution (3.19.6).
+- [ ] 7.4 Verify the release zip on a *different* Windows machine than the dev one — catches "this path exists only on my laptop" bugs.
+- [ ] 7.5 Post-release monitoring plan: how do we hear about breaks? GitHub issues only for v1; formal telemetry out of scope.
+- [ ] 7.6 **Trademark / IP review of shipped assets.** The Kaos sigil (`docs/aesthetic/kaos_icon.svg` → bundled as `phone/assets/kaos.svg`) and potentially box-art thumbnails (4.2.5) are Activision/Beenox IP. Decide before public release: ship literal symbol as fair-use UI accent, ship a derivative/abstracted version, or commission/draw a Kaos-adjacent custom sigil. Firmware `.sky` files and RPCS3 are already documented as user-supplied; this is the runtime-asset angle on the same question.
 
 ---
 
@@ -478,7 +648,7 @@ Deliberately separated from Phase 3 so it's clear this only runs once the app wo
 - No CI until core features work.
 - No Linux/Mac support.
 - No user-entered figure names.
-- No audio (text-only Chaos to dodge copyright).
+- No audio (text-only Kaos to dodge copyright).
 - No live wiki scraping at runtime — data is committed to the repo.
 
 ## Risks (live list — update as we learn)

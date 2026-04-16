@@ -20,11 +20,11 @@ use crate::model::{
 };
 
 /// A session that got forcibly evicted (server sent `Event::TakenOver`).
-/// When this is `Some`, the phone renders the Chaos takeover screen instead
+/// When this is `Some`, the phone renders the Kaos takeover screen instead
 /// of the normal profile/game/portal flow.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TakeoverReason {
-    pub by_chaos: String,
+    pub by_kaos: String,
 }
 
 /// Pending "Resume last setup?" offer from `Event::ResumePrompt`. Set on
@@ -188,7 +188,7 @@ fn ResumeModal(
 
 #[component]
 fn TakeoverScreen(takeover: RwSignal<Option<TakeoverReason>>) -> impl IntoView {
-    // Chaos took the slot. "Kick back" does a full page reload — the browser
+    // Kaos took the slot. "Kick back" does a full page reload — the browser
     // opens a fresh WS, server tries to re-admit via the FIFO path. If the
     // 1-minute cooldown is still active, the reload-WS gets an `Error` event
     // and closes. If cooldown elapsed, we land back at the ProfilePicker
@@ -200,7 +200,7 @@ fn TakeoverScreen(takeover: RwSignal<Option<TakeoverReason>>) -> impl IntoView {
             <p class="takeover-quote">
                 {move || takeover
                     .get()
-                    .map(|t| format!("— {}", t.by_chaos))
+                    .map(|t| format!("— {}", t.by_kaos))
                     .unwrap_or_default()}
             </p>
             <p class="takeover-body">

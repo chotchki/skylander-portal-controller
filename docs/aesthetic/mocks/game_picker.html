@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=390,initial-scale=1,viewport-fit=cover">
+<title>Game Picker — Heraldic — Skylanders Portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Titan+One&family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,800;1,9..144,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --sf-1: #0b1e52; --sf-2: #061436; --sf-3: #020818;
+    --gb: #ffe58a; --g: #f5c634; --gm: #c58c18; --gs: #6e4a00; --gi: #3a2500;
+    --text: #f7f7fb; --ink: #1a1203;
+    --el-magic: linear-gradient(135deg, #da5ad6, #651564);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: "Fraunces", Georgia, serif;
+    background: #0a0a0a;
+    display: grid; place-items: center;
+    min-height: 100vh; padding: 20px;
+  }
+  .phone {
+    width: 390px; height: 844px;
+    border-radius: 52px; overflow: hidden; position: relative;
+    box-shadow: 0 30px 80px rgba(0,0,0,0.6), 0 0 0 12px #1a1a1a, 0 0 0 13px #333;
+    background: var(--sf-3);
+  }
+  @media (max-width: 450px) {
+    body { padding: 0; background: var(--sf-3); }
+    .phone { width: 100vw; height: 100vh; border-radius: 0; box-shadow: none; }
+  }
+  .sky {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(ellipse 120% 60% at 50% 0%, #1a3a8a 0%, transparent 50%),
+      radial-gradient(ellipse 80% 50% at 50% 100%, #0e2464 0%, transparent 50%),
+      linear-gradient(180deg, var(--sf-1), var(--sf-2) 60%, var(--sf-3));
+  }
+  .stars {
+    position: absolute; inset: 0;
+    background-image:
+      radial-gradient(1px 1px at 20px 30px, white, transparent),
+      radial-gradient(1px 1px at 40px 70px, rgba(255,255,255,0.7), transparent),
+      radial-gradient(2px 2px at 50px 160px, rgba(255,230,180,0.9), transparent),
+      radial-gradient(1px 1px at 130px 40px, white, transparent),
+      radial-gradient(1px 1px at 90px 250px, rgba(255,255,255,0.8), transparent),
+      radial-gradient(1px 1px at 170px 300px, white, transparent),
+      radial-gradient(2px 2px at 230px 100px, rgba(180,220,255,0.9), transparent),
+      radial-gradient(1px 1px at 300px 200px, white, transparent),
+      radial-gradient(1px 1px at 260px 400px, white, transparent);
+    background-size: 400px 800px;
+    animation: drift 140s linear infinite;
+  }
+  @keyframes drift { to { background-position: -400px -800px; } }
+  .screen {
+    position: relative; height: 100%;
+    display: flex; flex-direction: column;
+    padding: 44px 18px 32px;
+    overflow-y: auto;
+  }
+  .screen::-webkit-scrollbar { display: none; }
+
+  header {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 16px;
+  }
+  .swatch {
+    width: 38px; height: 38px; border-radius: 50%;
+    background: var(--el-magic);
+    display: grid; place-items: center;
+    color: #fff;
+    font-family: "Titan One"; font-size: 18px;
+    box-shadow:
+      inset 0 0 0 2px var(--gi),
+      inset 0 0 0 5px var(--g),
+      inset 0 2px 0 3px var(--gb),
+      inset 0 -3px 0 3px var(--gs),
+      0 0 0 1px #000,
+      0 3px 10px rgba(0,0,0,0.6);
+  }
+  .profile-info .name {
+    font-family: "Titan One"; font-size: 13px;
+    color: var(--gb); text-shadow: 0 1px 0 var(--gs);
+    letter-spacing: 0.04em;
+  }
+  .profile-info .status {
+    font-size: 10px; color: rgba(255,255,255,0.5);
+    font-style: italic; letter-spacing: 0.1em; margin-top: 2px;
+  }
+  .head-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .pip {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #65d68c;
+    box-shadow: 0 0 8px #65d68c;
+    animation: breathe 2.2s ease-in-out infinite;
+  }
+  .pip-label { font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(255,255,255,0.5); }
+  @keyframes breathe { 50% { opacity: 0.4; } }
+  .kebab-btn {
+    width: 42px; height: 42px;
+    background: transparent;
+    border: 1.5px solid rgba(245,198,52,0.3);
+    color: var(--gb);
+    font-family: "Titan One"; font-size: 22px; line-height: 0;
+    border-radius: 12px; cursor: pointer;
+    display: grid; place-items: center;
+    flex-shrink: 0;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .kebab-btn:hover { border-color: var(--gb); background: rgba(245,198,52,0.1); }
+
+  .title-wrap {
+    text-align: center;
+    padding: 16px 0 28px;
+    position: relative;
+  }
+  .title-rays {
+    position: absolute; inset: -20px 0;
+    background: radial-gradient(ellipse 60% 65% at 50% 50%, rgba(255,230,120,0.14), transparent 62%);
+    pointer-events: none;
+  }
+  .title {
+    font-family: "Titan One"; font-size: 32px;
+    letter-spacing: 0.08em;
+    color: var(--gb); -webkit-text-stroke: 1.5px var(--gi);
+    text-shadow: 0 2px 0 var(--gs), 0 3px 0 var(--gi), 0 5px 10px rgba(0,0,0,0.5), 0 0 30px rgba(245,198,52,0.2);
+  }
+  .title-sub {
+    font-family: "Fraunces"; font-style: italic;
+    font-size: 12px; letter-spacing: 0.25em;
+    color: rgba(255,230,120,0.6); text-transform: uppercase;
+    margin-top: 4px;
+  }
+
+  .game-grid {
+    display: flex; flex-direction: column;
+    gap: 12px; padding: 0 2px;
+  }
+
+  /* ========== GAME CARDS ========== */
+  .game-card {
+    display: flex; align-items: center; justify-content: center;
+    padding: 28px 24px;
+    border-radius: 18px;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    border: 1.5px solid rgba(245,198,52,0.25);
+    transition: transform 0.15s cubic-bezier(.4,2.2,.5,1), border-color 0.2s, box-shadow 0.2s;
+    text-align: center;
+    color: var(--text);
+    font-family: "Titan One";
+    /* fallback bg for before the art loads */
+    background: linear-gradient(180deg, rgba(16,40,90,0.65), rgba(8,22,60,0.7));
+  }
+  .game-card:hover, .game-card:active {
+    transform: scale(1.03);
+    border-color: rgba(245,198,52,0.6);
+    box-shadow: 0 0 28px rgba(245,198,52,0.3), inset 0 0 24px rgba(245,198,52,0.08);
+  }
+
+  /*
+    Box-art background layer. In production this is an <img> or background-image
+    from /api/games/:serial/boxart. For the mock, each game gets an atmospheric
+    gradient that evokes its box art color palette.
+  */
+  .game-card::before {
+    content: "";
+    position: absolute; inset: 0;
+    opacity: 0.55;
+    transition: opacity 0.2s ease;
+    z-index: 0;
+  }
+  .game-card:hover::before { opacity: 0.7; }
+  /* dark overlay to keep title readable */
+  .game-card::after {
+    content: "";
+    position: absolute; inset: 0;
+    background:
+      linear-gradient(180deg, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0.55) 100%),
+      radial-gradient(ellipse 80% 60% at 50% 40%, transparent 20%, rgba(0,0,0,0.5) 100%);
+    z-index: 1;
+    pointer-events: none;
+  }
+
+  /* SSA — purple/green magic, Spyro with portal glow */
+  .game-card[data-game="ssa"]::before {
+    background:
+      radial-gradient(ellipse 60% 80% at 30% 40%, rgba(130,60,220,0.9), transparent 50%),
+      radial-gradient(ellipse 50% 60% at 70% 50%, rgba(90,201,107,0.6), transparent 50%),
+      radial-gradient(ellipse 80% 80% at 50% 80%, rgba(245,198,52,0.5), transparent 60%),
+      linear-gradient(135deg, #2a0a5a, #0a2a4a);
+  }
+  /* Giants — earthy brown/orange, Tree Rex, lava glow */
+  .game-card[data-game="giants"]::before {
+    background:
+      radial-gradient(ellipse 60% 70% at 25% 50%, rgba(167,123,58,0.9), transparent 55%),
+      radial-gradient(ellipse 50% 60% at 75% 40%, rgba(255,107,42,0.7), transparent 50%),
+      radial-gradient(ellipse 70% 50% at 50% 90%, rgba(200,80,20,0.6), transparent 60%),
+      linear-gradient(135deg, #3a1a08, #1a1008);
+  }
+  /* Swap Force — blue sky/water, bright green, aerial feel */
+  .game-card[data-game="swap"]::before {
+    background:
+      radial-gradient(ellipse 70% 60% at 50% 20%, rgba(42,166,255,0.8), transparent 55%),
+      radial-gradient(ellipse 50% 50% at 30% 70%, rgba(90,201,107,0.7), transparent 50%),
+      radial-gradient(ellipse 60% 60% at 70% 50%, rgba(255,255,255,0.2), transparent 50%),
+      linear-gradient(135deg, #082040, #0a3060);
+  }
+  /* Trap Team — green crystals, trap glow, cave feel */
+  .game-card[data-game="trap"]::before {
+    background:
+      radial-gradient(ellipse 50% 70% at 40% 50%, rgba(90,201,107,0.8), transparent 50%),
+      radial-gradient(ellipse 40% 50% at 70% 30%, rgba(0,255,160,0.5), transparent 50%),
+      radial-gradient(ellipse 60% 60% at 50% 80%, rgba(80,40,120,0.6), transparent 60%),
+      linear-gradient(135deg, #0a2a0a, #102040);
+  }
+  /* SuperChargers — orange/tech, vehicle energy, speed lines */
+  .game-card[data-game="super"]::before {
+    background:
+      radial-gradient(ellipse 60% 50% at 50% 30%, rgba(255,184,77,0.8), transparent 55%),
+      radial-gradient(ellipse 40% 60% at 25% 60%, rgba(255,60,20,0.6), transparent 50%),
+      radial-gradient(ellipse 50% 50% at 75% 70%, rgba(80,180,255,0.5), transparent 50%),
+      linear-gradient(135deg, #2a1800, #0a1830);
+  }
+  /* Imaginators — magic purple/blue, creation crystals, ethereal */
+  .game-card[data-game="imag"]::before {
+    background:
+      radial-gradient(ellipse 60% 70% at 40% 40%, rgba(218,90,214,0.8), transparent 50%),
+      radial-gradient(ellipse 50% 50% at 70% 50%, rgba(80,140,255,0.6), transparent 50%),
+      radial-gradient(ellipse 70% 60% at 50% 80%, rgba(245,198,52,0.4), transparent 60%),
+      linear-gradient(135deg, #200a40, #0a1040);
+  }
+
+  .game-name {
+    font-size: 24px;
+    letter-spacing: 0.06em;
+    color: var(--gb);
+    position: relative; z-index: 2;
+    text-shadow:
+      0 2px 0 var(--gs),
+      0 3px 0 var(--gi),
+      0 0 16px rgba(245,198,52,0.5),
+      0 0 40px rgba(0,0,0,0.8);
+  }
+
+  .game-card { animation: card-rise 0.5s cubic-bezier(.3,1.3,.5,1) both; }
+  .game-card:nth-child(1) { animation-delay: 0ms; }
+  .game-card:nth-child(2) { animation-delay: 80ms; }
+  .game-card:nth-child(3) { animation-delay: 160ms; }
+  .game-card:nth-child(4) { animation-delay: 240ms; }
+  .game-card:nth-child(5) { animation-delay: 320ms; }
+  .game-card:nth-child(6) { animation-delay: 400ms; }
+  @keyframes card-rise {
+    from { opacity: 0; transform: translateY(24px) scale(0.97); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  /* Launching state — card stays highlighted, others dim */
+  .game-card.launching {
+    border-color: var(--g);
+    box-shadow: 0 0 32px rgba(245,198,52,0.4);
+    pointer-events: none;
+  }
+  .game-card.launching .game-name {
+    animation: name-pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes name-pulse {
+    50% { text-shadow: 0 2px 0 var(--gs), 0 3px 0 var(--gi), 0 0 30px rgba(245,198,52,0.8), 0 0 60px rgba(245,198,52,0.4); }
+  }
+  .game-grid:has(.launching) .game-card:not(.launching) {
+    opacity: 0.35;
+    pointer-events: none;
+    transform: scale(0.97);
+  }
+
+  .tagline {
+    text-align: center; margin-top: auto; padding-top: 16px;
+    font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase;
+    color: rgba(255,230,120,0.3);
+    font-family: "Fraunces"; font-style: italic;
+  }
+
+  /* ---- design note ---- */
+  .note {
+    position: fixed; bottom: 12px; right: 12px;
+    background: rgba(0,0,0,0.85); color: #aaa;
+    font-size: 11px; padding: 8px 12px; border-radius: 8px;
+    max-width: 260px; line-height: 1.5;
+    border: 1px solid #333;
+    font-family: system-ui;
+  }
+  .note b { color: var(--g); }
+  @media (max-width: 450px) { .note { display: none; } }
+</style>
+</head>
+<body>
+  <div class="phone">
+    <div class="sky"></div>
+    <div class="stars"></div>
+    <div class="screen">
+      <header>
+        <button class="kebab-btn" title="Menu">⋮</button>
+        <div class="swatch" style="background: var(--el-magic);">F</div>
+        <div class="profile-info">
+          <div class="name">FINN</div>
+          <div class="status">Portal Master</div>
+        </div>
+        <div class="head-right">
+          <span class="pip-label">live</span>
+          <span class="pip"></span>
+        </div>
+      </header>
+
+      <div class="title-wrap">
+        <div class="title-rays"></div>
+        <h1 class="title">PICK A GAME</h1>
+        <div class="title-sub">choose your adventure</div>
+      </div>
+
+      <div class="game-grid">
+        <button class="game-card" data-game="ssa">
+          <span class="game-name">Spyro's Adventure</span>
+        </button>
+        <button class="game-card" data-game="giants">
+          <span class="game-name">Giants</span>
+        </button>
+        <button class="game-card" data-game="swap">
+          <span class="game-name">Swap Force</span>
+        </button>
+        <button class="game-card" data-game="trap">
+          <span class="game-name">Trap Team</span>
+        </button>
+        <button class="game-card" data-game="super">
+          <span class="game-name">SuperChargers</span>
+        </button>
+        <button class="game-card launching" data-game="imag">
+          <span class="game-name">Imaginators</span>
+        </button>
+      </div>
+
+      <div class="tagline">data &amp; images from the skylanders wiki · cc by-sa</div>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>Implementation note:</b> The gradient backgrounds are placeholders.
+    In production, each card gets a real box art image via
+    <code>background-image: url(/api/games/{serial}/boxart)</code>,
+    darkened with the overlay. Imaginators shown in "launching" state.
+  </div>
+</body>
+</html>

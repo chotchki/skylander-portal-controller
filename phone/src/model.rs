@@ -104,10 +104,10 @@ pub enum Event {
         session_id: u64,
     },
     /// This session was forcibly evicted by a 3rd connection (FIFO). Phone
-    /// shows the Chaos takeover screen with a "kick back" button.
+    /// shows the Kaos takeover screen with a "kick back" button.
     TakenOver {
         session_id: u64,
-        by_chaos: String,
+        by_kaos: String,
     },
     PortalSnapshot {
         slots: Vec<SlotState>,

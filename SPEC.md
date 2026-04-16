@@ -13,12 +13,12 @@
 # Application Flow / Technical Considerations:  
 - [ ] The application will be running on a Windows 11 PC, interfacing with RPCS3 a Qt based PlayStation 3 emulator.  
 - [ ] The application will be launched by Steam with the goal of prompting the user to connect a browser to the portal controller web application, which will be served by this application by listening on a web socket. The prompt will take the form of a scannable QR code that launches the users browser at the web application.  
-- [ ] All communication occurs over a local network that the user’s browser and the Windows PC share. There is no need for any user provisioning, the server should be http based. Up to **two** phones may be connected simultaneously (matching the co-op player count); a third connection evicts the oldest session (FIFO) with a Chaos-themed "taken over" screen. See Round 4 (Q99+) for the full revision — earlier "last device wins" answers are superseded.  
+- [ ] All communication occurs over a local network that the user’s browser and the Windows PC share. There is no need for any user provisioning, the server should be http based. Up to **two** phones may be connected simultaneously (matching the co-op player count); a third connection evicts the oldest session (FIFO) with a Kaos-themed "taken over" screen. See Round 4 (Q99+) for the full revision — earlier "last device wins" answers are superseded.  
 - [ ] Once a device is connected, the remote controller prompts the user for which skylander game they wish to play. When selected, the application running on the windows pc, launches RPCS3 with the specified game. There is a static list of skylanders games to choose from, also by having the application launch it, the remote application should be able to ask to restart the game or quit it since RPCS3 sometimes freezes.  
 - [ ] The remote interface switches at this time into a portal control mode. It shows what skylanders are on the emulated portal and allows the user to add and remove skylanders. All the actions the user takes are mirrored by the application by clicking buttons on the RPCS3 emulated portal dialog, preferably without showing this dialog to the user on the PC (and interrupting game flow).   
 - [ ] RPCS3 has an ability to generate skylanders but its broken for certain games. As a result we have backed up the firmware of all the skylanders we own. However, skylanders progress and grow which means that the user may want to re-experience the journey many times. This is a long way of saying that when a skylander is picked for use, we will likely want to make a copy of the firmware file, use that and then offer the user the ability to reset a skylander by copying a fresh version over. This can all be handled by windows file operations, and the emulated portal is really just a series of slots that trigger a windows file dialog and a clear button.  
 - [ ] On the remote application, we’ll need two main views. What is on the portal, and another view allowing the sort of skylanders by elemental type, game it came from and if its a trap/vehicle/sensai/etc. This is static data that needs to be associated with the firmware files. I don’t have this assembled but its all on the skylanders wiki pages so an effort to download and built the dataset will be needed. This includes images since frequently the names don’t make a lot of sense unless you memorize them. Additionally a search function by name will probably be needed since my oldest son does know the names. (The wiki https://skylanders.fandom.com/wiki/Main_Page is licensed under creative commons so the use of data and images is legal, this project will be licensed in the public domain.)  
-- [ ] Secret surprise feature: Chaos is always the main villain of the skylanders games, he has numerous catchphrases, taunts the player and professes superiority. Once the main development is done an extra feature will be designed and added that on a random interval during a game session, no sooner than 20mins in and then repeating randomly every hour, choas will infect the remote application with “mind magic”. This will will cause an animation on the portal selection screen (very purple, dark pinks) and then chaos will swap the players slylanders to something random (which WILL swap them as if the player had done it). A demisable text overlay will taunt the player. This is a late feature but is noted so that any technical considerations can be incorporated into the designs. It will be implemented LAST.  
+- [ ] Secret surprise feature: Kaos is always the main villain of the skylanders games, he has numerous catchphrases, taunts the player and professes superiority. Once the main development is done an extra feature will be designed and added that on a random interval during a game session, no sooner than 20mins in and then repeating randomly every hour, choas will infect the remote application with “mind magic”. This will will cause an animation on the portal selection screen (very purple, dark pinks) and then kaos will swap the players slylanders to something random (which WILL swap them as if the player had done it). A demisable text overlay will taunt the player. This is a late feature but is noted so that any technical considerations can be incorporated into the designs. It will be implemented LAST.  
   
 # Technical direction, known speed bumps:  
 - [ ] I only have a single Windows computer and its going to be where this program runs. Its also hooked up to a tv, development is happening locally over remote desktop, so I am not interupting anyone.
@@ -57,7 +57,7 @@ Research Considerations:
   - yes that's correct, I misnamed it. Its code is here: https://github.com/rpcs3
   - please update the wording in the spec
 2. How many concurrent remote users do we support? You said "last device to connect is authorized" — does that mean earlier sessions get kicked, shown a "taken over" screen, or silently stop receiving updates?
-  - If a user gets kicked due to this they should be shown a taken over screen as if Chaos character did it and ask if they want to kick back and take over.
+  - If a user gets kicked due to this they should be shown a taken over screen as if Kaos character did it and ask if they want to kick back and take over.
 3. What happens if the connected phone disconnects (locks screen, walks out of wifi)? Does the PC-side app pause the game, show a reconnect QR, just wait, or does control fall back to local input?
   - so most phones go to sleep, which I don't know if there is a way to keep the connection alive in the face of that
   - putting a small reconnect overlay with a qr code in the lower right of the screen, would be ideal if the device is completely gone
@@ -96,7 +96,7 @@ Research Considerations:
 15. Are you okay committing the images into the repo, or should they be downloaded on first launch?
   - Commit to the repo. The dump files nor emulator should be committed, we do NOT encourage piracy.
 
-### Chaos Feature
+### Kaos Feature
 16. "Swap to something random" — from the full owned collection, or only skylanders compatible with the current game? And should it avoid swapping in something the player already has on the portal?
   - Since we'll have the data, a compatible skylander will make more sense.
 17. "No sooner than 20min in, then every hour" — is that cumulative session time, or wall-clock since game launch? Does it pause when the game is paused/backgrounded?
@@ -158,10 +158,10 @@ Research Considerations:
 37. Any attribute you specifically want that I might skip (e.g. soul gem name, signature moves, alignment for Trap Team traps)?
 - It may be worth grabbing any attributes found so we could build an extra info pop up or something.
 
-### Chaos Feature
-38. Should there be a parent-side kill switch (settings toggle or env var) that disables Chaos entirely? Useful for "kid is having a bad day, no surprises tonight."
+### Kaos Feature
+38. Should there be a parent-side kill switch (settings toggle or env var) that disables Kaos entirely? Useful for "kid is having a bad day, no surprises tonight."
 - Once we have a working remote app I'll think about a secret menu to disable that and/or reset pins. Not phase 1.
-39. Does Chaos ever *remove* a skylander without replacing it, or always swap one-for-one?
+39. Does Kaos ever *remove* a skylander without replacing it, or always swap one-for-one?
 - I would only swap one for one since there's a better chance of removal breaking things.
 
 ### Distribution
@@ -280,7 +280,7 @@ Context: I scanned `C:\Users\chris\workspace\Skylanders Characters Pack for RPCS
 - I take back my prior decision, just allow 8 slots, if too many are placed on the portal, the game will show an error automatically and the user can remove.
 
 ### Figure Compatibility & Collection View
-74. We need a `figure → list of compatible games` mapping so the "works with" filter (Q9) and Chaos's "compatible with current game" logic both function. Source options: (a) wiki per-figure pages, (b) hardcoded rules (figures work in their game of origin and all later games, with known exceptions like vehicles only in SuperChargers). (b) is much less scrape work. Which do you prefer?
+74. We need a `figure → list of compatible games` mapping so the "works with" filter (Q9) and Kaos's "compatible with current game" logic both function. Source options: (a) wiki per-figure pages, (b) hardcoded rules (figures work in their game of origin and all later games, with known exceptions like vehicles only in SuperChargers). (b) is much less scrape work. Which do you prefer?
 - I think b is a good rule of thumb, we can enhance later.
 75. When reposes are collapsed in the browse view, what's shown as the default card — the base figure, or the variant the kid most recently used? My lean: base figure, with a small badge indicating N variants available.
 - base figure with badge works
@@ -349,11 +349,11 @@ These are the last genuine gaps I see. After this I'd suggest we move to the pla
 ### Session & Takeover Edge Cases
 94. On first connect (before any profile is chosen), should the UI (a) immediately prompt for profile + PIN, or (b) show the game-picker first and only gate at portal-control time? Spec suggests (a); confirming.
 - let's do "a" welcoming the portal master and asking them to secure their profile
-95. Takeover after 1-min cooldown: does the **current** holder get any notification (e.g. "someone else is trying to connect, hold/release?"), or does it silently cut over once the cooldown elapses? My lean: silent cutover — kids will ping-pong otherwise, and the kicked user gets the "Chaos took it" screen per Q2.
+95. Takeover after 1-min cooldown: does the **current** holder get any notification (e.g. "someone else is trying to connect, hold/release?"), or does it silently cut over once the cooldown elapses? My lean: silent cutover — kids will ping-pong otherwise, and the kicked user gets the "Kaos took it" screen per Q2.
 - silent cutover
 
-### Chaos Implementation Hook
-96. Chaos's text overlay and any sound — text from the wiki's list of Kaos catchphrases is fine, yes? Any audio (if we ever add it later) — voice lines from the games would be copyrighted. Assume text-only forever unless you say otherwise?
+### Kaos Implementation Hook
+96. Kaos's text overlay and any sound — text from the wiki's list of Kaos catchphrases is fine, yes? Any audio (if we ever add it later) — voice lines from the games would be copyrighted. Assume text-only forever unless you say otherwise?
 - text is fine and avoids any copyright issues
 
 ### Networking Confirm
@@ -373,7 +373,7 @@ Context: original spec assumed 1 concurrent phone with "last device wins" takeov
 ### Concurrency Model
 
 99. How many phones can be connected at once, and what happens on overflow?
-- Up to **2** active sessions at any time. A 3rd connection evicts the **oldest** session (FIFO) — the evicted phone shows the existing Chaos "taken over" screen with a "kick back" action. Eviction is what triggers the cooldown below; two free slots admit new phones immediately with no cooldown.
+- Up to **2** active sessions at any time. A 3rd connection evicts the **oldest** session (FIFO) — the evicted phone shows the existing Kaos "taken over" screen with a "kick back" action. Eviction is what triggers the cooldown below; two free slots admit new phones immediately with no cooldown.
 
 100. Do the two phones share a profile or each unlock independently?
 - **Each phone unlocks its own profile independently.** Two kids, two profiles, two PINs. One profile may be unlocked on both phones if a kid is using two devices, but unlocks don't propagate — each device enters its PIN.

@@ -65,11 +65,11 @@ pub enum Event {
         profile: Option<UnlockedProfile>,
     },
     /// The target session has been forcibly evicted by a 3rd connection
-    /// (FIFO — oldest out). The evicted phone shows the "Chaos took over"
+    /// (FIFO — oldest out). The evicted phone shows the "Kaos took over"
     /// screen. Broadcast; clients ignore events not for their `session_id`.
     TakenOver {
         session_id: u64,
-        by_chaos: String,
+        by_kaos: String,
     },
     /// Offered to a session right after its profile unlocks, when that
     /// profile has a prior portal layout the user can resume. Phone shows

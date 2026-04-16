@@ -134,7 +134,7 @@ async fn third_connection_evicts_oldest() {
     let p3 = new_phone(&server).await;
     let _s3 = wait_for_session_id(&p3).await;
 
-    // P1 should flip to the Chaos "taken over" screen.
+    // P1 should flip to the Kaos "taken over" screen.
     p1.wait_until(Duration::from_secs(10), || async {
         p1.client
             .find(Locator::Css(".takeover"))

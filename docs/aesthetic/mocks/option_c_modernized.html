@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=390,initial-scale=1,viewport-fit=cover">
+<title>Option C — Modernized — Skylanders Portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@300;500;700;900&family=DM+Sans:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-1: #0b1a3a;
+    --bg-2: #061128;
+    --bg-3: #030813;
+    --gold: #ffd76a;
+    --gold-soft: #f0c146;
+    --gold-dim: rgba(255,215,106,0.6);
+    --ring: rgba(255,215,106,0.85);
+    --text: #eef3ff;
+    --text-dim: rgba(238,243,255,0.62);
+    --ink: #0a1020;
+    --danger: #ff7b7b;
+    --success: #7fffb4;
+    --el-fire: #ff8a3d;
+    --el-water: #4ab8ff;
+    --el-life: #6fd67e;
+    --el-magic: #e66fdf;
+    --el-undead: #a285e0;
+    --el-tech: #ffc25c;
+    --el-earth: #c59866;
+    --el-air: #dff0ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: "DM Sans", system-ui, sans-serif;
+    background: #050810;
+    display: grid; place-items: center;
+    min-height: 100vh; padding: 20px;
+    color: var(--text);
+    font-weight: 400;
+  }
+  .phone {
+    width: 390px; height: 844px;
+    border-radius: 52px;
+    overflow: hidden; position: relative;
+    box-shadow: 0 30px 80px rgba(0,0,0,0.6), 0 0 0 12px #1a1a1a, 0 0 0 13px #333;
+    background: var(--bg-3);
+  }
+  @media (max-width: 450px) {
+    body { padding: 0; background: var(--bg-3); }
+    .phone { width: 100vw; height: 100vh; border-radius: 0; box-shadow: none; }
+  }
+
+  .sky {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(ellipse 120% 50% at 50% 0%, #1a3270 0%, transparent 55%),
+      radial-gradient(ellipse 60% 40% at 80% 70%, rgba(255,215,106,0.07) 0%, transparent 60%),
+      linear-gradient(180deg, var(--bg-1) 0%, var(--bg-2) 55%, var(--bg-3) 100%);
+  }
+  .stars {
+    position: absolute; inset: 0;
+    background-image:
+      radial-gradient(1px 1px at 30px 60px, rgba(255,255,255,0.5), transparent),
+      radial-gradient(1px 1px at 120px 140px, rgba(255,255,255,0.4), transparent),
+      radial-gradient(1px 1px at 220px 220px, rgba(255,215,106,0.4), transparent),
+      radial-gradient(1px 1px at 320px 80px, rgba(255,255,255,0.5), transparent),
+      radial-gradient(1px 1px at 80px 360px, rgba(255,255,255,0.3), transparent),
+      radial-gradient(1px 1px at 280px 440px, rgba(255,215,106,0.4), transparent),
+      radial-gradient(1px 1px at 150px 580px, rgba(255,255,255,0.4), transparent),
+      radial-gradient(1px 1px at 310px 680px, rgba(255,255,255,0.3), transparent);
+    background-size: 400px 800px;
+    animation: drift 180s linear infinite;
+  }
+  @keyframes drift { to { background-position: -400px -800px; } }
+
+  .screen {
+    position: relative; height: 100%;
+    display: flex; flex-direction: column;
+    padding: 48px 20px 28px;
+    overflow-y: auto;
+  }
+  .screen::-webkit-scrollbar { display: none; }
+
+  header.app-head {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 28px;
+  }
+  .profile-chip { display: flex; align-items: center; gap: 11px; }
+  .swatch {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: var(--el-magic);
+    display: grid; place-items: center;
+    color: #fff;
+    font-family: "Unbounded";
+    font-weight: 700;
+    font-size: 16px;
+    box-shadow:
+      0 0 0 2px var(--ring),
+      0 0 0 3.5px var(--bg-3),
+      0 2px 10px rgba(0,0,0,0.4);
+  }
+  .profile-name {
+    font-family: "Unbounded";
+    font-weight: 500;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    color: var(--text);
+    line-height: 1;
+  }
+  .game-label {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 4px;
+    letter-spacing: 0.02em;
+  }
+  .head-right { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+  .pip {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--success);
+    box-shadow: 0 0 6px var(--success);
+    animation: breathe 2.4s ease-in-out infinite;
+    margin-right: 4px;
+  }
+  @keyframes breathe { 50% { opacity: 0.4; } }
+  .soft-btn {
+    height: 32px; padding: 0 10px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: var(--text);
+    font-family: "DM Sans";
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    border-radius: 999px;
+    display: inline-flex; align-items: center; gap: 5px;
+    cursor: pointer;
+  }
+  .soft-btn.quit { color: var(--danger); border-color: rgba(255,123,123,0.3); }
+
+  /* Title block — restrained. The portal is the title. */
+  .stage-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .stage-title {
+    font-family: "Unbounded";
+    font-weight: 700;
+    font-size: 28px;
+    letter-spacing: -0.02em;
+    line-height: 0.95;
+    background: linear-gradient(180deg, #ffffff 0%, #c8d8ff 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .stage-title .gold { color: var(--gold); background: none; -webkit-text-fill-color: var(--gold); }
+  .stage-count {
+    font-family: "DM Sans";
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  /* 2x4 slot grid — big tap targets */
+  .portal-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px 12px;
+    padding: 4px 0 18px;
+  }
+  .slot {
+    position: relative;
+    display: flex; flex-direction: column; align-items: center;
+    cursor: pointer;
+  }
+  .ring-wrap {
+    width: 100%; aspect-ratio: 1;
+    position: relative;
+    display: grid; place-items: center;
+  }
+  .ring {
+    position: absolute; inset: 0;
+    border-radius: 50%;
+    border: 2.5px solid var(--ring);
+    background: radial-gradient(circle, rgba(255,255,255,0.04), rgba(255,255,255,0) 70%);
+    box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+  }
+  .plate {
+    position: absolute; inset: 5px;
+    border-radius: 50%;
+    background: var(--el-fire);
+    display: grid; place-items: center;
+    color: #fff;
+    font-family: "Unbounded";
+    font-weight: 700;
+    font-size: 22px;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.3);
+    overflow: hidden;
+  }
+  .plate::after {
+    content: "";
+    position: absolute; inset: 0;
+    background: linear-gradient(180deg, rgba(255,255,255,0.14) 0%, transparent 50%);
+    pointer-events: none;
+  }
+  .slot-index {
+    position: absolute;
+    top: -4px; right: -4px;
+    font-family: "Unbounded"; font-weight: 700;
+    font-size: 10px;
+    color: var(--ink);
+    background: var(--gold);
+    border-radius: 999px;
+    min-width: 20px; height: 20px;
+    display: grid; place-items: center;
+    padding: 0 4px;
+    z-index: 2;
+  }
+  .owner-line {
+    position: absolute;
+    top: -4px; left: -2px;
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    background: var(--el-magic);
+    border: 2.5px solid var(--bg-2);
+    z-index: 2;
+  }
+  .slot-name {
+    margin-top: 10px;
+    font-family: "DM Sans";
+    font-weight: 500;
+    font-size: 11px;
+    color: var(--text);
+    letter-spacing: 0.01em;
+    text-align: center;
+    line-height: 1.15;
+    max-width: 80px;
+  }
+  .slot-status {
+    font-family: "DM Sans";
+    font-size: 9.5px;
+    color: var(--text-dim);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
+
+  .slot.empty .ring {
+    border: 1.5px dashed rgba(255,215,106,0.4);
+    background: radial-gradient(circle, rgba(255,215,106,0.04), transparent 70%);
+    box-shadow: none;
+  }
+  .slot.empty .plate {
+    background: transparent;
+    color: rgba(255,215,106,0.55);
+    font-weight: 300;
+    font-size: 26px;
+  }
+  .slot.empty .slot-name { color: var(--text-dim); font-style: italic; }
+
+  .slot.picking .ring {
+    border-color: var(--gold);
+    background: radial-gradient(circle, rgba(255,215,106,0.14), transparent 70%);
+    box-shadow: 0 0 0 4px rgba(255,215,106,0.14), 0 0 24px rgba(255,215,106,0.3);
+    animation: picking-pulse 2s ease-in-out infinite;
+  }
+  @keyframes picking-pulse {
+    50% { box-shadow: 0 0 0 7px rgba(255,215,106,0.16), 0 0 32px rgba(255,215,106,0.45); }
+  }
+  .slot.picking .plate { color: var(--gold); }
+  .slot.picking .slot-status { color: var(--gold); }
+
+  .slot.loading .ring {
+    border-color: transparent;
+    background: conic-gradient(from 0deg, transparent 0%, transparent 65%, var(--gold) 92%, transparent 100%);
+    animation: spin 0.9s linear infinite;
+    mask: radial-gradient(circle, transparent 55%, black 58%, black 66%, transparent 70%);
+    -webkit-mask: radial-gradient(circle, transparent 55%, black 58%, black 66%, transparent 70%);
+  }
+  .slot.loading .plate { opacity: 0.55; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .slot.errored .ring {
+    border-color: var(--danger);
+    background: radial-gradient(circle, rgba(255,123,123,0.12), transparent 70%);
+    box-shadow: 0 0 20px rgba(255,123,123,0.35);
+    animation: shake 0.4s ease-in-out 2;
+  }
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-2px); } 75% { transform: translateX(2px); }
+  }
+  .slot.errored .plate { background: rgba(255,123,123,0.2); color: var(--danger); }
+  .slot.errored .slot-status { color: var(--danger); }
+
+  .slot.loaded .ring-wrap { animation: float 4.5s ease-in-out infinite; }
+  @keyframes float { 50% { transform: translateY(-2px); } }
+
+  .el-fire .plate { background: var(--el-fire); }
+  .el-water .plate { background: var(--el-water); }
+  .el-life .plate { background: var(--el-life); }
+  .el-magic .plate { background: var(--el-magic); }
+  .el-undead .plate { background: var(--el-undead); }
+  .el-tech .plate { background: var(--el-tech); }
+  .el-earth .plate { background: var(--el-earth); }
+  .el-air .plate { background: var(--el-air); color: var(--ink); text-shadow: 0 1px 2px rgba(255,255,255,0.6); }
+
+  /* Bottom browse row — a large, inviting sheet handle */
+  .drawer-handle {
+    margin-top: auto;
+    padding: 18px 18px 16px;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0) 100%);
+    border-top: 1px solid rgba(255,255,255,0.08);
+    border-radius: 24px 24px 0 0;
+    margin-left: -20px; margin-right: -20px;
+    position: relative;
+  }
+  .drawer-handle::before {
+    content: "";
+    position: absolute;
+    top: 6px; left: 50%; transform: translateX(-50%);
+    width: 40px; height: 4px;
+    border-radius: 2px;
+    background: rgba(255,215,106,0.35);
+  }
+  .drawer-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin: 6px 0 12px;
+  }
+  .drawer-title {
+    font-family: "Unbounded"; font-weight: 500;
+    font-size: 14px; letter-spacing: 0.02em;
+  }
+  .drawer-sub {
+    font-size: 11px; color: var(--text-dim);
+    letter-spacing: 0.02em;
+  }
+  .mini-row { display: flex; gap: 10px; overflow-x: auto; padding: 2px 0 6px; }
+  .mini-row::-webkit-scrollbar { display: none; }
+  .mini { flex: 0 0 52px; text-align: center; }
+  .mini .ring-wrap { width: 52px; height: 52px; }
+  .mini .ring { border-width: 2px; }
+  .mini .plate { inset: 4px; font-size: 18px; }
+  .mini-name {
+    font-size: 9.5px; color: var(--text-dim);
+    margin-top: 5px;
+    max-width: 60px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .picking-chip {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 10px 6px 8px;
+    background: rgba(255,215,106,0.12);
+    border: 1px solid rgba(255,215,106,0.4);
+    color: var(--gold);
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    margin-bottom: 10px;
+    width: fit-content;
+  }
+  .picking-chip .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--gold);
+    box-shadow: 0 0 6px var(--gold);
+  }
+  .picking-chip .cancel {
+    background: none; border: 0;
+    color: inherit; cursor: pointer;
+    font-size: 14px;
+    padding: 0 4px;
+    opacity: 0.7;
+  }
+
+  .tagline {
+    font-size: 9.5px;
+    color: rgba(238,243,255,0.3);
+    text-align: center;
+    margin-top: 14px;
+    letter-spacing: 0.05em;
+  }
+  .tagline a { color: inherit; }
+</style>
+</head>
+<body>
+  <div class="phone">
+    <div class="sky"></div>
+    <div class="stars"></div>
+    <div class="screen">
+      <header class="app-head">
+        <div class="profile-chip">
+          <div class="swatch" style="background: var(--el-magic);">F</div>
+          <div>
+            <div class="profile-name">Finn</div>
+            <div class="game-label">Trap Team</div>
+          </div>
+        </div>
+        <div class="head-right">
+          <span class="pip"></span>
+          <button class="soft-btn">Join</button>
+          <button class="soft-btn quit">Quit</button>
+        </div>
+      </header>
+
+      <div class="stage-head">
+        <h1 class="stage-title">Portal<span class="gold">.</span></h1>
+        <span class="stage-count">4 / 8 active</span>
+      </div>
+
+      <div class="picking-chip">
+        <span class="dot"></span>
+        Picking for slot 3
+        <button class="cancel">×</button>
+      </div>
+
+      <div class="portal-grid">
+        <div class="slot el-fire loaded">
+          <div class="ring-wrap">
+            <div class="slot-index">1</div>
+            <div class="owner-line" style="background: var(--el-magic);"></div>
+            <div class="ring"></div>
+            <div class="plate">E</div>
+          </div>
+          <div class="slot-name">Eruptor</div>
+        </div>
+        <div class="slot el-water loading">
+          <div class="ring-wrap">
+            <div class="slot-index">2</div>
+            <div class="ring"></div>
+            <div class="plate">G</div>
+          </div>
+          <div class="slot-name">Gill Grunt</div>
+          <div class="slot-status">Loading</div>
+        </div>
+        <div class="slot empty picking">
+          <div class="ring-wrap">
+            <div class="slot-index">3</div>
+            <div class="ring"></div>
+            <div class="plate">+</div>
+          </div>
+          <div class="slot-name">Slot 3</div>
+          <div class="slot-status">Picking…</div>
+        </div>
+        <div class="slot empty">
+          <div class="ring-wrap">
+            <div class="slot-index">4</div>
+            <div class="ring"></div>
+            <div class="plate">+</div>
+          </div>
+          <div class="slot-name">Empty</div>
+        </div>
+        <div class="slot el-magic loaded">
+          <div class="ring-wrap">
+            <div class="slot-index">5</div>
+            <div class="owner-line" style="background: var(--el-magic);"></div>
+            <div class="ring"></div>
+            <div class="plate">S</div>
+          </div>
+          <div class="slot-name">Spyro</div>
+        </div>
+        <div class="slot el-life loaded">
+          <div class="ring-wrap">
+            <div class="slot-index">6</div>
+            <div class="owner-line" style="background: var(--el-fire);"></div>
+            <div class="ring"></div>
+            <div class="plate">S</div>
+          </div>
+          <div class="slot-name">Stealth Elf</div>
+        </div>
+        <div class="slot empty">
+          <div class="ring-wrap">
+            <div class="slot-index">7</div>
+            <div class="ring"></div>
+            <div class="plate">+</div>
+          </div>
+          <div class="slot-name">Empty</div>
+        </div>
+        <div class="slot errored">
+          <div class="ring-wrap">
+            <div class="slot-index">8</div>
+            <div class="ring"></div>
+            <div class="plate">!</div>
+          </div>
+          <div class="slot-name">Trigger Happy</div>
+          <div class="slot-status">In use</div>
+        </div>
+      </div>
+
+      <div class="drawer-handle">
+        <div class="drawer-head">
+          <span class="drawer-title">Recently used</span>
+          <span class="drawer-sub">504 total →</span>
+        </div>
+        <div class="mini-row">
+          <div class="mini el-fire">
+            <div class="ring-wrap"><div class="ring"></div><div class="plate">E</div></div>
+            <div class="mini-name">Eruptor</div>
+          </div>
+          <div class="mini el-water">
+            <div class="ring-wrap"><div class="ring"></div><div class="plate">W</div></div>
+            <div class="mini-name">Wash Buckler</div>
+          </div>
+          <div class="mini el-tech">
+            <div class="ring-wrap"><div class="ring"></div><div class="plate">T</div></div>
+            <div class="mini-name">Trigger H.</div>
+          </div>
+          <div class="mini el-earth">
+            <div class="ring-wrap"><div class="ring"></div><div class="plate">B</div></div>
+            <div class="mini-name">Bash</div>
+          </div>
+          <div class="mini el-undead">
+            <div class="ring-wrap"><div class="ring"></div><div class="plate">C</div></div>
+            <div class="mini-name">Chop Chop</div>
+          </div>
+          <div class="mini el-air">
+            <div class="ring-wrap"><div class="ring"></div><div class="plate">J</div></div>
+            <div class="mini-name">Jet-Vac</div>
+          </div>
+          <div class="mini el-magic">
+            <div class="ring-wrap"><div class="ring"></div><div class="plate">W</div></div>
+            <div class="mini-name">Wrecking B.</div>
+          </div>
+        </div>
+        <p class="tagline">Data &amp; images from the <a href="#">Skylanders Wiki</a> · CC BY-SA</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

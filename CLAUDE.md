@@ -60,7 +60,7 @@ A Windows app that wraps RPCS3 (PS3 emulator) so kids can manage the emulated Sk
 
 - **Up to 2 concurrent phone sessions** (matches co-op player count). Each unlocks its own profile with its own PIN; unlocks do not propagate between phones.
 - Portal is shared free-for-all — either phone can touch any slot. The single driver worker serialises operations naturally; no per-slot arbitration.
-- 3rd connection evicts the **oldest** session (FIFO) — evicted phone sees the Chaos "taken over" screen with a "kick back" button.
+- 3rd connection evicts the **oldest** session (FIFO) — evicted phone sees the Kaos "taken over" screen with a "kick back" button.
 - 1-minute cooldown applies only to forced eviction (anti-ping-pong). Joining into a free slot has no cooldown.
 - Evicted session's kick-back inherits game/portal state but the profile re-locks; PIN re-entry required.
 - Any connected phone can display the join QR in-app ("show join code") so existing players can hand it to a new joiner.
@@ -77,9 +77,9 @@ A Windows app that wraps RPCS3 (PS3 emulator) so kids can manage the emulated Sk
 
 - Match Skylanders game UI: starfield blue backgrounds, circular gold-bezeled figure portraits, bold white titles with gold outline, cartoony feel. Reference: `docs/aesthetic/ui_style_example.png`.
 - Implement via CSS (wiki asset resolution isn't enough for high-res phones).
-- Phone UI is theme-able (prepping for the Chaos "mind magic" takeover skin — dark purple/pink).
+- Phone UI is theme-able (prepping for the Kaos "mind magic" takeover skin — dark purple/pink).
 
-## Chaos feature (LAST — post-MVP)
+## Kaos feature (LAST — post-MVP)
 
 - Wall-clock timer: 20-min warmup, then random within every hour window.
 - Text-only overlay (Kaos catchphrases from wiki — text avoids copyright issues).

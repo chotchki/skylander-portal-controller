@@ -27,7 +27,7 @@ failing at `open_dialog` during early boot.
   moved to `(-4000, -4000)`. The Skylanders Manager dialog + Qt menu popups
   still flicker briefly (Qt clamps popup windows to visible screen coords even
   when the parent is off-screen). This is a once-per-session flash during
-  RPCS3 boot — acceptable for MVP. Documented as a post-Chaos enhancement in
+  RPCS3 boot — acceptable for MVP. Documented as a post-Kaos enhancement in
   PLAN 5.1.
 
 ## What didn't work (and why each is a dead end)
