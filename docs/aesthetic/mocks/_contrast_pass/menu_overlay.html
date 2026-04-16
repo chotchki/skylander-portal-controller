@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=390,initial-scale=1,viewport-fit=cover">
+<title>Menu Overlay — Heraldic — Skylanders Portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Titan+One&family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,800;1,9..144,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --sf-1: #0b1e52; --sf-2: #061436; --sf-3: #020818;
+    --gb: #ffe58a; --g: #f5c634; --gm: #c58c18; --gs: #6e4a00; --gi: #3a2500;
+    --text: #f7f7fb; --ink: #1a1203;
+    --danger: #e34c4c; --danger-dark: #7a1818;
+    --el-magic: linear-gradient(135deg, #da5ad6, #651564);
+    --el-fire: linear-gradient(135deg, #ff6b2a, #b13310);
+    --el-water: linear-gradient(135deg, #2aa6ff, #0f4d8a);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: "Fraunces", Georgia, serif;
+    background: #0a0a0a;
+    display: grid; place-items: center;
+    min-height: 100vh; padding: 20px;
+    color: var(--text);
+  }
+  .phone {
+    width: 390px; height: 844px;
+    border-radius: 52px; overflow: hidden; position: relative;
+    box-shadow: 0 30px 80px rgba(0,0,0,0.6), 0 0 0 12px #1a1a1a, 0 0 0 13px #333;
+    background: var(--sf-3);
+  }
+  @media (max-width: 450px) {
+    body { padding: 0; background: var(--sf-3); }
+    .phone { width: 100vw; height: 100vh; border-radius: 0; box-shadow: none; }
+  }
+  .sky {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(ellipse 120% 60% at 50% 0%, #1a3a8a 0%, transparent 50%),
+      radial-gradient(ellipse 80% 50% at 50% 100%, #0e2464 0%, transparent 50%),
+      linear-gradient(180deg, var(--sf-1), var(--sf-2) 60%, var(--sf-3));
+  }
+  .stars {
+    position: absolute; inset: 0;
+    background-image:
+      radial-gradient(1px 1px at 20px 30px, white, transparent),
+      radial-gradient(1px 1px at 40px 70px, rgba(255,255,255,0.7), transparent),
+      radial-gradient(2px 2px at 50px 160px, rgba(255,230,180,0.9), transparent),
+      radial-gradient(1px 1px at 130px 40px, white, transparent),
+      radial-gradient(1px 1px at 90px 250px, rgba(255,255,255,0.8), transparent),
+      radial-gradient(1px 1px at 170px 300px, white, transparent),
+      radial-gradient(2px 2px at 230px 100px, rgba(180,220,255,0.9), transparent),
+      radial-gradient(1px 1px at 300px 200px, white, transparent),
+      radial-gradient(1px 1px at 260px 400px, white, transparent);
+    background-size: 400px 800px;
+  }
+
+  /* ===== FADED-BACK PORTAL (what's underneath the overlay) ===== */
+  .underlay {
+    position: absolute; inset: 0;
+    filter: blur(2px);
+    opacity: 0.4;
+    pointer-events: none;
+  }
+  .underlay-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 44px 18px 10px;
+    height: 88px;
+  }
+  .u-kebab {
+    width: 42px; height: 42px;
+    border: 1.5px solid rgba(245,198,52,0.3);
+    border-radius: 12px;
+    display: grid; place-items: center;
+    color: var(--gb); font-family: "Titan One"; font-size: 22px;
+  }
+  .u-swatch {
+    width: 38px; height: 38px; border-radius: 50%;
+    background: var(--el-magic);
+    display: grid; place-items: center;
+    color: #fff; font-family: "Titan One"; font-size: 18px;
+    box-shadow: inset 0 0 0 2px var(--gi), inset 0 0 0 5px var(--g);
+  }
+  .u-title {
+    font-family: "Titan One"; font-size: 32px; letter-spacing: 0.08em;
+    color: var(--gb); text-align: center; margin-top: 20px;
+    -webkit-text-stroke: 1.5px var(--gi);
+    text-shadow: 0 2px 0 var(--gs), 0 3px 0 var(--gi);
+  }
+
+  /* ===== DIMMED BACKDROP ===== */
+  .scrim {
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse at center, rgba(0,0,0,0.55), rgba(0,0,0,0.85));
+    z-index: 10;
+    cursor: pointer;
+  }
+
+  /* ===== MENU PANEL ===== */
+  .menu-panel {
+    position: absolute;
+    top: 50%; left: 20px; right: 20px;
+    transform: translateY(-50%);
+    z-index: 20;
+    padding: 26px 22px 22px;
+    border-radius: 24px;
+    background:
+      radial-gradient(ellipse 120% 80% at 50% 0%, rgba(255,230,120,0.1), transparent 60%),
+      linear-gradient(180deg, rgba(26,58,138,0.95), rgba(10,36,100,0.95) 50%, rgba(6,20,54,0.98));
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    animation: panel-in 0.35s cubic-bezier(.3,1.3,.5,1) both;
+  }
+  .menu-panel::before {
+    content: ""; position: absolute; inset: -2px;
+    border-radius: 26px;
+    background: linear-gradient(135deg, var(--gb) 0%, var(--gm) 30%, var(--gb) 50%, var(--gm) 70%, var(--gb) 100%);
+    z-index: -1;
+  }
+  @keyframes panel-in {
+    from { opacity: 0; transform: translateY(-46%) scale(0.92); }
+    to { opacity: 1; transform: translateY(-50%) scale(1); }
+  }
+
+  /* Close X in corner */
+  .menu-close {
+    position: absolute; top: 12px; right: 12px;
+    width: 30px; height: 30px;
+    background: transparent;
+    border: 1px solid rgba(245,198,52,0.3);
+    color: var(--gb); font-size: 14px;
+    border-radius: 8px; cursor: pointer;
+    display: grid; place-items: center;
+  }
+  .menu-close:hover { border-color: var(--gb); background: rgba(245,198,52,0.1); }
+
+  /* Current profile chip inside panel */
+  .current-chip {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 16px 6px 6px;
+    background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
+    border: 1.5px solid var(--gb);
+    border-radius: 999px;
+    width: fit-content; margin: 0 auto 18px;
+    box-shadow:
+      inset 0 1.5px 0 rgba(255,255,255,0.25),
+      inset 0 -1.5px 0 rgba(0,0,0,0.25),
+      0 2px 0 rgba(0,0,0,0.4),
+      0 4px 10px rgba(0,0,0,0.35);
+  }
+  .current-swatch {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: var(--el-magic);
+    display: grid; place-items: center;
+    color: #fff; font-family: "Titan One"; font-size: 14px;
+    box-shadow:
+      inset 0 0 0 1.5px var(--gi),
+      inset 0 0 0 4px var(--g),
+      inset 0 2px 0 2px var(--gb);
+  }
+  .current-name {
+    font-family: "Titan One"; font-size: 13px;
+    color: var(--gb); letter-spacing: 0.06em;
+    text-shadow: 0 1px 0 var(--gs), 0 0 6px rgba(0,0,0,0.4);
+  }
+  .current-game {
+    font-family: "Fraunces"; font-style: italic; font-weight: 600;
+    font-size: 11px; letter-spacing: 0.12em;
+    color: #e8e4d8;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+    margin-top: 1px;
+  }
+
+  /* QR join code area — blue card matching the action buttons */
+  .join-card {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 14px 16px 14px;
+    margin-bottom: 18px;
+    border-radius: 16px;
+    background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
+    border: 2px solid var(--gb);
+    box-shadow:
+      inset 0 2px 0 rgba(255,255,255,0.25),
+      inset 0 -2px 0 rgba(0,0,0,0.25),
+      0 3px 0 rgba(0,0,0,0.45),
+      0 5px 12px rgba(0,0,0,0.4);
+  }
+  .join-label {
+    font-family: "Titan One"; font-size: 13px;
+    letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--gb);
+    text-align: center;
+    margin-bottom: 12px;
+    text-shadow: 0 1px 0 var(--gs), 0 0 8px rgba(0,0,0,0.4);
+  }
+  .qr-frame {
+    width: 160px; aspect-ratio: 1;
+    position: relative;
+    border-radius: 14px;
+    padding: 8px;
+    background:
+      linear-gradient(135deg, var(--gb) 0%, var(--gm) 30%, var(--gb) 50%, var(--gm) 70%, var(--gb) 100%);
+    box-shadow: 0 4px 14px rgba(0,0,0,0.5), inset 0 2px 4px rgba(255,255,255,0.3);
+  }
+  .qr-inner {
+    width: 100%; height: 100%;
+    background: #fff;
+    border-radius: 6px;
+    position: relative;
+    overflow: hidden;
+    background-image:
+      linear-gradient(45deg, #000 25%, transparent 25%, transparent 75%, #000 75%),
+      linear-gradient(45deg, #000 25%, transparent 25%, transparent 75%, #000 75%);
+    background-position: 0 0, 6px 6px;
+    background-size: 12px 12px;
+    background-color: #fff;
+  }
+  .qr-inner::before {
+    content: "QR";
+    position: absolute; inset: 0;
+    display: grid; place-items: center;
+    background: rgba(255,255,255,0.9);
+    font-family: "Titan One"; font-size: 24px;
+    color: #000;
+    letter-spacing: 0.1em;
+  }
+  .join-hint {
+    text-align: center;
+    font-family: "Fraunces"; font-style: italic; font-weight: 600;
+    font-size: 13px;
+    color: #fff4e0;
+    margin-top: 10px;
+    letter-spacing: 0.06em;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  }
+
+  /* Action buttons */
+  .actions {
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .action {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
+    border: 2px solid var(--gb);
+    color: var(--text);
+    cursor: pointer;
+    text-align: left;
+    font-family: "Fraunces";
+    transition: all 0.15s ease;
+    box-shadow:
+      inset 0 2px 0 rgba(255,255,255,0.25),
+      inset 0 -2px 0 rgba(0,0,0,0.25),
+      0 3px 0 rgba(0,0,0,0.45),
+      0 5px 12px rgba(0,0,0,0.4);
+  }
+  .action:hover {
+    background: linear-gradient(180deg, #4286f0 0%, #2a62cd 55%, #1b46a0 100%);
+    transform: translateX(2px);
+    box-shadow:
+      inset 0 2px 0 rgba(255,255,255,0.3),
+      inset 0 -2px 0 rgba(0,0,0,0.25),
+      0 3px 0 rgba(0,0,0,0.45),
+      0 0 20px rgba(245,198,52,0.35),
+      0 5px 14px rgba(0,0,0,0.4);
+  }
+  .action-icon {
+    width: 38px; height: 38px;
+    border-radius: 50%;
+    display: grid; place-items: center;
+    flex-shrink: 0;
+    font-size: 17px;
+    background: radial-gradient(circle at 30% 25%, var(--gb) 0%, var(--g) 40%, var(--gm) 80%);
+    border: 1.5px solid var(--gi);
+    color: var(--ink);
+    box-shadow: inset 0 1px 2px rgba(255,255,255,0.4), inset 0 -1px 2px rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.4);
+    text-shadow: 0 1px 0 rgba(255,255,255,0.3);
+    font-weight: bold;
+  }
+  .action-title {
+    font-family: "Titan One"; font-size: 13px;
+    letter-spacing: 0.08em;
+    color: var(--gb);
+    text-shadow: 0 1px 0 var(--gs), 0 0 6px rgba(0,0,0,0.5);
+  }
+  .action-desc {
+    font-family: "Fraunces"; font-style: italic; font-weight: 600;
+    font-size: 11px;
+    color: #e8e4d8;
+    margin-top: 2px;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  }
+
+  .action.danger {
+    background: linear-gradient(180deg, #c23a3a 0%, #9a2424 55%, #6e1414 100%);
+    border-color: #ffc0c0;
+  }
+  .action.danger:hover {
+    background: linear-gradient(180deg, #dc4d4d 0%, #b02e2e 55%, #821818 100%);
+    box-shadow:
+      inset 0 2px 0 rgba(255,255,255,0.3),
+      inset 0 -2px 0 rgba(0,0,0,0.25),
+      0 3px 0 rgba(0,0,0,0.45),
+      0 0 20px rgba(227,76,76,0.45),
+      0 5px 14px rgba(0,0,0,0.4);
+  }
+  .action.danger .action-icon {
+    background: radial-gradient(circle at 30% 25%, #ffb0b0 0%, #e34c4c 40%, #7a1818 80%);
+    border-color: #3a0808;
+    color: #fff;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+  }
+  .action.danger .action-title {
+    color: #ffd0d0;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.7), 0 0 8px rgba(0,0,0,0.4);
+  }
+</style>
+</head>
+<body>
+  <div class="phone">
+    <div class="sky"></div>
+    <div class="stars"></div>
+
+    <!-- What's underneath (dimmed) -->
+    <div class="underlay">
+      <div class="underlay-head">
+        <div class="u-kebab">⋮</div>
+        <div class="u-swatch">F</div>
+        <div style="color: var(--gb); font-family: 'Titan One'; font-size: 13px;">FINN</div>
+      </div>
+      <div class="u-title">PORTAL</div>
+    </div>
+
+    <!-- Dim scrim (tap to close) -->
+    <div class="scrim"></div>
+
+    <!-- MENU PANEL -->
+    <div class="menu-panel">
+      <button class="menu-close">✕</button>
+
+      <div class="current-chip">
+        <div class="current-swatch">F</div>
+        <div>
+          <div class="current-name">FINN</div>
+          <div class="current-game">Trap Team</div>
+        </div>
+      </div>
+
+      <div class="join-card">
+        <div class="join-label">⌖ Invite a player</div>
+        <div class="qr-frame">
+          <div class="qr-inner"></div>
+        </div>
+        <div class="join-hint">scan to join this portal</div>
+      </div>
+
+      <div class="actions">
+        <button class="action">
+          <div class="action-icon">⇄</div>
+          <div>
+            <div class="action-title">SWITCH PROFILE</div>
+            <div class="action-desc">Sign back in as someone else</div>
+          </div>
+        </button>
+
+        <button class="action">
+          <div class="action-icon">◉</div>
+          <div>
+            <div class="action-title">CHOOSE ANOTHER GAME</div>
+            <div class="action-desc">Quit Trap Team and pick a different adventure</div>
+          </div>
+        </button>
+
+        <button class="action danger">
+          <div class="action-icon">⏻</div>
+          <div>
+            <div class="action-title">SHUT DOWN</div>
+            <div class="action-desc">Close everything · ask a grown-up first</div>
+          </div>
+        </button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -475,6 +475,18 @@ Direction locked to Option A. Standalone HTML/CSS in `docs/aesthetic/mocks/`, vi
 - [ ] 4.2.10 Resume-last-setup modal, reset-to-fresh confirm, show-join-code sheet — all use `<FramedPanel>` treatment.
 - [ ] 4.2.11 Screen-transition animation demo — **after 4.3**. Animates the full navigation sequence: profile picker → PIN → game picker → portal. Locks the feel for screen-level motion.
 - [ ] 4.2.12 Review round with user. Iterate before touching Leptos.
+- [ ] 4.2.13 **Contrast + readability cleanup pass.** After the first mock batch, user review caught systemic `rgba(..., <1)` text dimming across most screens. §2 Typography of `design_language.md` gained a "Contrast & readability contract" (opaque text only, role table: primary / accent / muted). First-pass audit staged to `docs/aesthetic/mocks/_contrast_pass/`. Follow-up items below finish the pass before promoting it back to `mocks/`.
+    - [x] 4.2.13.1 Stage mocks to `_contrast_pass/` folder.
+    - [x] 4.2.13.2 Agent-assisted audit: 43 alpha→solid edits across 10 files (role table applied).
+    - [ ] 4.2.13.3 **Archive commit first** — PLAN update + `_contrast_pass/` staging committed while `option_a_heraldic.html` / `option_b_arcane.html` / `option_c_modernized.html` still live in `mocks/`. Preserves the three direction options in git history for reference.
+    - [ ] 4.2.13.4 `figure_detail.html` — fix remaining gold-on-gold contrast spot the rule missed (user flagged post-audit).
+    - [ ] 4.2.13.5 Subtitle audit — `resume_prompt.html` "pick up where you left off?" is the gold-subtitle reference; `game_picker.html` "choose your adventure" is the blue-surface reference. Align the other mocks' subtitles to one of these two.
+    - [ ] 4.2.13.6 `portal_with_box.html` — restore swipe-gesture affordance visuals lost in the pass; fix filter-category buttons being clipped/cut off by adjacent elements.
+    - [ ] 4.2.13.7 `reset_confirm.html` — keep `KEEP SPYRO` as tertiary outline (NOT blue secondary — it's not an alternative action, it's a back-out), remove the alpha'd border, apply the readability rules.
+    - [ ] 4.2.13.8 Delete `option_a_heraldic.html` / `option_b_arcane.html` / `option_c_modernized.html` from `mocks/` (archived at commit 4.2.13.3). Direction is locked, old options are clutter.
+    - [ ] 4.2.13.9 `design_language.md` §2 — carve-out rule: non-actionable **flavor text** (Kaos quote glyphs, taunt attribution, decorative insult copy) may relax the opaque-text rule moderately — readability of the insult must still hold, but some ambient dim is allowed since these aren't interactive controls.
+    - [ ] 4.2.13.10 `design_language.md` §4 Layout — new rule: **never clip interactive buttons / tap targets** behind other layers. Applies to filter chips, drawers, modals.
+    - [ ] 4.2.13.11 Promote `_contrast_pass/*.html` → `mocks/*.html`, remove staging folder, final commit.
 
 ### 4.3 UX reorganization — information architecture
 

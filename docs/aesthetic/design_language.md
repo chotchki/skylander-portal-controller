@@ -149,6 +149,23 @@ Wrap larger titles in a `.title-wrap` with a `.title-rays` pseudo (radial gold e
 - Lowercase Titan One (the font is for CAPS)
 - Body text in gold (readability cliff — use the gold for accent only)
 
+### Contrast & readability contract
+Contrast failures on this project have one root cause: **semi-transparent text**. The rule:
+
+- **All text is opaque.** No `rgba(..., 0.5)` / `opacity: 0.6` fade-outs on type. Alpha-dimmed text is the pattern we ban.
+- **Pick text color by role, not by "how prominent should this feel."** The three roles + their palette on dark surfaces:
+
+| Role | Examples | Color on starfield/blue panel | Color on danger/Kaos panel |
+|------|----------|-------------------------------|----------------------------|
+| **Primary** — headings, sub-heads, body paragraphs, warning text | "WELCOME BACK", "pick up where you left off?", reset warning | `#fff4e0` warm-white (italic often Fraunces 600+ for body weight) | `#f3e8e4` / `#ffd9ee` |
+| **Accent** — display glyphs, short Titan One labels, button text | "RESUME", "— YOUR LAST ADVENTURE —" section dividers | `var(--gb)` / `var(--g)` gold | `var(--k-magenta-bright)` magenta |
+| **Muted** — captions, timestamps, tertiary hints, small italic labels | "saved 3 days ago", "live" pip label, "— AVA" caption under swatch | `#d9c88a` muted gold *or* `#e8e4d8` warm off-white | `#ffd6d6` |
+
+- **Minimum sizes on dark surfaces**: body 13px, caption 11px. Below that, bump weight (Fraunces 600+) or switch to Titan One — never shrink + fade together. Add a single-pixel dark `text-shadow: 0 1px 0 rgba(0,0,0,0.5)` to anchor italic Fraunces on glowy backgrounds.
+- **If text needs to sit on a busy / gradient / dimmed surface, wrap it in a blue-card (or inner plate) so it has a solid contrasting backdrop.** Menu overlay's QR + profile chip are the canonical example; reset-confirm's warning block follows the same pattern inside a danger-bordered panel.
+- Gold fill (`--g`, `--gb`) is an **accent** color. Fine for display type + small Titan One labels; forbidden for paragraph/body copy — too much saturated yellow at reading size fatigues fast.
+- Target WCAG 4.5:1 for body. Short display type can relax to 3:1 since size carries legibility. If a text color fails on the intended surface, the fix is a stronger text color or an inset card — not opacity.
+
 ### Kaos display treatment (Kaos overlays only)
 When a title sits on a Kaos background instead of the starfield, swap the heraldic gold treatment for the villainous one:
 - `color: var(--k-magenta-bright)` (fill)

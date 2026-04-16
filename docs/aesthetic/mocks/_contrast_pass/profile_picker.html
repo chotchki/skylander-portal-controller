@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=390,initial-scale=1,viewport-fit=cover">
+<title>Profile Picker — Heraldic — Skylanders Portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Titan+One&family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,800;1,9..144,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --sf-1: #0b1e52; --sf-2: #061436; --sf-3: #020818;
+    --gb: #ffe58a; --g: #f5c634; --gm: #c58c18; --gs: #6e4a00; --gi: #3a2500;
+    --text: #f7f7fb; --ink: #1a1203;
+    --el-fire: linear-gradient(135deg, #ff6b2a, #b13310);
+    --el-water: linear-gradient(135deg, #2aa6ff, #0f4d8a);
+    --el-magic: linear-gradient(135deg, #da5ad6, #651564);
+    --el-life: linear-gradient(135deg, #5ac96b, #26612e);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: "Fraunces", Georgia, serif;
+    background: #0a0a0a;
+    display: grid; place-items: center;
+    min-height: 100vh; padding: 20px;
+  }
+  .phone {
+    width: 390px; height: 844px;
+    border-radius: 52px;
+    overflow: hidden; position: relative;
+    box-shadow: 0 30px 80px rgba(0,0,0,0.6), 0 0 0 12px #1a1a1a, 0 0 0 13px #333;
+    background: var(--sf-3);
+  }
+  @media (max-width: 450px) {
+    body { padding: 0; background: var(--sf-3); }
+    .phone { width: 100vw; height: 100vh; border-radius: 0; box-shadow: none; }
+  }
+  .sky {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(ellipse 120% 60% at 50% 0%, #1a3a8a 0%, transparent 50%),
+      radial-gradient(ellipse 80% 50% at 50% 100%, #0e2464 0%, transparent 50%),
+      radial-gradient(ellipse at 20% 30%, rgba(255,255,255,0.08) 0%, transparent 40%),
+      linear-gradient(180deg, var(--sf-1), var(--sf-2) 60%, var(--sf-3));
+  }
+  .stars {
+    position: absolute; inset: 0;
+    background-image:
+      radial-gradient(1px 1px at 20px 30px, white, transparent),
+      radial-gradient(1px 1px at 40px 70px, rgba(255,255,255,0.7), transparent),
+      radial-gradient(2px 2px at 50px 160px, rgba(255,230,180,0.9), transparent),
+      radial-gradient(1px 1px at 130px 40px, white, transparent),
+      radial-gradient(1px 1px at 90px 250px, rgba(255,255,255,0.8), transparent),
+      radial-gradient(1px 1px at 170px 300px, white, transparent),
+      radial-gradient(2px 2px at 230px 100px, rgba(180,220,255,0.9), transparent),
+      radial-gradient(1px 1px at 300px 200px, white, transparent),
+      radial-gradient(1px 1px at 350px 50px, rgba(255,255,255,0.7), transparent),
+      radial-gradient(1px 1px at 260px 400px, white, transparent),
+      radial-gradient(1px 1px at 60px 500px, white, transparent),
+      radial-gradient(2px 2px at 320px 720px, rgba(180,220,255,0.9), transparent);
+    background-size: 400px 800px;
+    animation: drift 140s linear infinite;
+  }
+  @keyframes drift { to { background-position: -400px -800px; } }
+  .screen {
+    position: relative; height: 100%;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: 44px 24px 32px;
+    overflow-y: auto;
+  }
+  .screen::-webkit-scrollbar { display: none; }
+
+  /* top bar — minimal on the picker screen; just a connection pip */
+  .top-bar {
+    position: absolute; top: 48px; right: 24px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .pip {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #65d68c; box-shadow: 0 0 8px #65d68c;
+    animation: breathe 2.2s ease-in-out infinite;
+  }
+  @keyframes breathe { 50% { opacity: 0.4; } }
+  .pip-label {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.12em;
+    text-transform: uppercase; color: #e8e4d8;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  }
+
+  /* Welcome heading */
+  .welcome-wrap {
+    text-align: center;
+    margin-bottom: 40px;
+    position: relative;
+  }
+  .welcome-rays {
+    position: absolute; inset: -60px -40px -30px;
+    background: radial-gradient(ellipse 80% 80% at 50% 50%, rgba(255,230,120,0.12), transparent 60%);
+    pointer-events: none;
+  }
+  .welcome-sub {
+    font-family: "Fraunces"; font-style: italic; font-weight: 600;
+    font-size: 13px; letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: #fff4e0;
+    margin-bottom: 6px;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  }
+  .welcome-title {
+    font-family: "Titan One";
+    font-size: 38px;
+    letter-spacing: 0.06em;
+    line-height: 0.95;
+    color: var(--gb);
+    -webkit-text-stroke: 1.5px var(--gi);
+    text-shadow:
+      0 2px 0 var(--gs), 0 3px 0 var(--gs), 0 4px 0 var(--gi),
+      0 6px 12px rgba(0,0,0,0.5), 0 0 40px rgba(245,198,52,0.25);
+  }
+  .welcome-title .line2 {
+    font-size: 48px;
+    display: block;
+    margin-top: 2px;
+  }
+
+  /* profile grid — 2 columns */
+  .profile-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+    width: 100%;
+    max-width: 340px;
+    margin-bottom: 20px;
+  }
+  .profile-card {
+    display: flex; flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 20px 12px 16px;
+    border-radius: 20px;
+    cursor: pointer;
+    position: relative;
+    background:
+      linear-gradient(180deg, rgba(16,40,90,0.6), rgba(8,22,60,0.65));
+    border: 1.5px solid rgba(245,198,52,0.25);
+    transition: transform 0.15s cubic-bezier(.4,2.2,.5,1), border-color 0.2s, box-shadow 0.2s;
+  }
+  .profile-card:hover, .profile-card:active {
+    transform: scale(1.03);
+    border-color: rgba(245,198,52,0.6);
+    box-shadow: 0 0 28px rgba(245,198,52,0.25), inset 0 0 20px rgba(245,198,52,0.06);
+  }
+  .profile-card::before {
+    content: "";
+    position: absolute; inset: 0;
+    border-radius: 20px;
+    background: radial-gradient(ellipse 100% 80% at 50% 0%, rgba(255,230,120,0.06), transparent 55%);
+    pointer-events: none;
+  }
+
+  .profile-bezel {
+    width: 88px; height: 88px; border-radius: 50%;
+    position: relative;
+    display: grid; place-items: center;
+  }
+  .bezel-ring {
+    position: absolute; inset: 0;
+    border-radius: 50%;
+    background: radial-gradient(circle at 30% 25%, var(--gb) 0%, var(--g) 22%, var(--gm) 55%, var(--gs) 100%);
+    box-shadow:
+      inset 0 0 0 2px var(--gi),
+      inset 0 3px 4px rgba(255,255,255,0.3),
+      inset 0 -3px 4px rgba(0,0,0,0.5),
+      0 0 0 1px #000,
+      0 6px 16px rgba(0,0,0,0.5);
+  }
+  .bezel-plate {
+    position: absolute; inset: 10%;
+    border-radius: 50%;
+    box-shadow:
+      inset 0 0 0 1px rgba(0,0,0,0.6),
+      inset 0 4px 8px rgba(255,255,255,0.25),
+      inset 0 -6px 10px rgba(0,0,0,0.5);
+    display: grid; place-items: center;
+    color: #fff;
+    font-family: "Titan One";
+    font-size: 38px;
+    text-shadow: 0 3px 6px rgba(0,0,0,0.6);
+  }
+  .profile-name {
+    font-family: "Titan One";
+    font-size: 16px;
+    letter-spacing: 0.06em;
+    color: var(--gb);
+    text-shadow: 0 1px 0 var(--gs), 0 0 6px rgba(245,198,52,0.3);
+    text-align: center;
+  }
+  .manage-hint {
+    font-family: "Fraunces"; font-style: italic; font-weight: 600;
+    font-size: 11px;
+    color: #d9c88a;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  }
+
+  /* Add profile card */
+  .profile-card.add .bezel-ring {
+    background: radial-gradient(circle at 30% 25%, rgba(245,198,52,0.2), rgba(110,74,0,0.25) 60%, rgba(0,0,0,0.35) 100%);
+    box-shadow:
+      inset 0 0 0 2px rgba(0,0,0,0.4),
+      inset 0 2px 4px rgba(255,255,255,0.08),
+      inset 0 -2px 4px rgba(0,0,0,0.3);
+  }
+  .profile-card.add .bezel-plate {
+    background: rgba(10,26,54,0.75);
+    color: #d9c88a;
+    font-size: 42px;
+    text-shadow: none;
+  }
+  .profile-card.add .profile-name {
+    color: #d9c88a;
+  }
+  .profile-card.add { border-style: dashed; }
+
+  /* Manage toggle button — small utility button */
+  .manage-toggle {
+    position: absolute; top: 48px; left: 24px;
+    font-family: "Fraunces"; font-style: italic; font-weight: 600;
+    font-size: 13px;
+    color: var(--gb);
+    background: transparent;
+    border: 1px solid rgba(245,198,52,0.2);
+    padding: 5px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    letter-spacing: 0.08em;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  }
+  .manage-toggle:hover { border-color: rgba(245,198,52,0.5); color: var(--gb); }
+
+  /* stagger animation */
+  .profile-card { animation: card-in 0.5s cubic-bezier(.3,1.3,.5,1) both; }
+  .profile-card:nth-child(1) { animation-delay: 0ms; }
+  .profile-card:nth-child(2) { animation-delay: 80ms; }
+  .profile-card:nth-child(3) { animation-delay: 160ms; }
+  .profile-card:nth-child(4) { animation-delay: 240ms; }
+  .profile-card:nth-child(5) { animation-delay: 320ms; }
+  @keyframes card-in {
+    from { opacity: 0; transform: scale(0.85) translateY(20px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+  }
+
+  .tagline {
+    position: absolute; bottom: 18px; left: 0; right: 0;
+    text-align: center;
+    font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase;
+    color: #d9c88a;
+    font-family: "Fraunces"; font-style: italic; font-weight: 600;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  }
+</style>
+</head>
+<body>
+  <div class="phone">
+    <div class="sky"></div>
+    <div class="stars"></div>
+    <div class="screen">
+      <button class="manage-toggle">Manage</button>
+      <div class="top-bar">
+        <span class="pip-label">connected</span>
+        <span class="pip"></span>
+      </div>
+
+      <div class="welcome-wrap">
+        <div class="welcome-rays"></div>
+        <div class="welcome-sub">welcome</div>
+        <h1 class="welcome-title">
+          PORTAL
+          <span class="line2">MASTER</span>
+        </h1>
+      </div>
+
+      <div class="profile-grid">
+        <button class="profile-card">
+          <div class="profile-bezel">
+            <div class="bezel-ring"></div>
+            <div class="bezel-plate" style="background: var(--el-magic);">F</div>
+          </div>
+          <div class="profile-name">FINN</div>
+        </button>
+
+        <button class="profile-card">
+          <div class="profile-bezel">
+            <div class="bezel-ring"></div>
+            <div class="bezel-plate" style="background: var(--el-fire);">O</div>
+          </div>
+          <div class="profile-name">OLIVER</div>
+        </button>
+
+        <button class="profile-card">
+          <div class="profile-bezel">
+            <div class="bezel-ring"></div>
+            <div class="bezel-plate" style="background: var(--el-water);">D</div>
+          </div>
+          <div class="profile-name">DAD</div>
+        </button>
+
+        <button class="profile-card add">
+          <div class="profile-bezel">
+            <div class="bezel-ring"></div>
+            <div class="bezel-plate">+</div>
+          </div>
+          <div class="profile-name">ADD</div>
+        </button>
+      </div>
+
+      <div class="tagline">data &amp; images from the skylanders wiki · cc by-sa</div>
+    </div>
+  </div>
+</body>
+</html>
