@@ -21,6 +21,23 @@ pub enum Element {
     Water,
 }
 
+impl Element {
+    pub fn css_class(self) -> &'static str {
+        match self {
+            Self::Air => "el-air",
+            Self::Dark => "el-dark",
+            Self::Earth => "el-earth",
+            Self::Fire => "el-fire",
+            Self::Life => "el-life",
+            Self::Light => "el-light",
+            Self::Magic => "el-magic",
+            Self::Tech => "el-tech",
+            Self::Undead => "el-undead",
+            Self::Water => "el-water",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Category {

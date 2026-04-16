@@ -360,3 +360,170 @@ button { font: inherit; color: inherit; cursor: pointer; }
     border: 1px solid #333; background: #222; color: #eee;
 }
 .admin-menu button.danger { background: #7a2222; border-color: #7a2222; }
+
+/* ================================================================
+   PHASE 4 — DESIGN TOKENS (design_language.md §1)
+   Additive — the Phase 2 vars above stay until screens are reskinned.
+   ================================================================ */
+
+:root {
+  /* Starfield */
+  --sf-1: #0b1e52;
+  --sf-2: #061436;
+  --sf-3: #020818;
+  /* Gold bezel stops */
+  --gb: #ffe58a;
+  --g:  #f5c634;
+  --gm: #c58c18;
+  --gs: #6e4a00;
+  --gi: #3a2500;
+  /* Element gradients */
+  --el-air:    linear-gradient(135deg, #c6e6ff, #7ea9cc);
+  --el-dark:   linear-gradient(135deg, #2a2a3a, #05050a);
+  --el-earth:  linear-gradient(135deg, #a77b3a, #5a3a13);
+  --el-fire:   linear-gradient(135deg, #ff6b2a, #b13310);
+  --el-life:   linear-gradient(135deg, #5ac96b, #26612e);
+  --el-light:  linear-gradient(135deg, #fff8a0, #c8b02c);
+  --el-magic:  linear-gradient(135deg, #da5ad6, #651564);
+  --el-tech:   linear-gradient(135deg, #ffb84d, #a56500);
+  --el-undead: linear-gradient(135deg, #8a62c9, #3b215f);
+  --el-water:  linear-gradient(135deg, #2aa6ff, #0f4d8a);
+  /* Status */
+  --danger-p4: #e34c4c;
+  --danger-dark-p4: #7a1818;
+  --success-p4: #65d68c;
+  /* Motion tokens */
+  --ease-spring: cubic-bezier(.3,1.3,.5,1);
+  --ease-tap: cubic-bezier(.4,2.2,.5,1);
+  --ease-smooth: cubic-bezier(.4,.0,.2,1);
+  --dur-tap: 120ms;
+  --dur-quick: 200ms;
+  --dur-loading-sweep: 900ms;
+  --dur-halo-slow: 3.4s;
+  --dur-idle-float: 4.5s;
+  --dur-panel-in: 400ms;
+}
+
+/* ================================================================
+   PHASE 4 — COMPONENTS
+   ================================================================ */
+
+/* <GoldBezel> — design_language.md §3.1
+   Structure: .gold-bezel > .bezel-ring + .bezel-plate > children */
+
+.gold-bezel {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 50%;
+}
+
+/* Sizes */
+.bezel-sm   { width: 32px; }
+.bezel-md   { width: 56px; }
+.bezel-lg   { width: 128px; }
+.bezel-hero { width: 160px; }
+
+.bezel-ring {
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 25%, var(--gb), var(--g) 22%, var(--gm) 55%, var(--gs) 100%);
+  box-shadow:
+    inset 0 0 0 2px var(--gi),
+    inset 0 3px 4px rgba(255,255,255,0.3),
+    inset 0 -3px 4px rgba(0,0,0,0.5),
+    0 0 0 1px #000,
+    0 4px 10px rgba(0,0,0,0.6);
+}
+
+.bezel-plate {
+  position: absolute;
+  inset: 10%;
+  border-radius: 50%;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, #1a2a4a, #0a1630);
+  box-shadow:
+    inset 0 0 0 1px rgba(0,0,0,0.6),
+    inset 0 4px 8px rgba(255,255,255,0.25),
+    inset 0 -6px 10px rgba(0,0,0,0.5);
+  color: #fff;
+  font-family: "Titan One", sans-serif;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.6);
+  z-index: 1;
+}
+
+/* Plate font sizes scale with bezel size */
+.bezel-sm   .bezel-plate { font-size: 14px; }
+.bezel-md   .bezel-plate { font-size: 22px; }
+.bezel-lg   .bezel-plate { font-size: 42px; }
+.bezel-hero .bezel-plate { font-size: 68px; }
+
+/* Element tinting — the plate background swaps to the element gradient */
+.el-air    .bezel-plate { background: var(--el-air);    color: #1a2a4a; }
+.el-dark   .bezel-plate { background: var(--el-dark); }
+.el-earth  .bezel-plate { background: var(--el-earth); }
+.el-fire   .bezel-plate { background: var(--el-fire); }
+.el-life   .bezel-plate { background: var(--el-life); }
+.el-light  .bezel-plate { background: var(--el-light);  color: #1a2a4a; }
+.el-magic  .bezel-plate { background: var(--el-magic); }
+.el-tech   .bezel-plate { background: var(--el-tech); }
+.el-undead .bezel-plate { background: var(--el-undead); }
+.el-water  .bezel-plate { background: var(--el-water); }
+
+/* Thumbnail images fill the plate circle */
+.bezel-plate > img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+}
+
+/* === STATE: picking === */
+.bezel-picking {
+  transform: scale(1.05);
+  transition: transform 0.2s var(--ease-spring);
+}
+.bezel-picking .bezel-ring {
+  box-shadow:
+    inset 0 0 0 2px var(--gi),
+    inset 0 3px 4px rgba(255,255,255,0.3),
+    inset 0 -3px 4px rgba(0,0,0,0.5),
+    0 0 0 1px #000,
+    0 0 22px 4px rgba(255,230,120,0.75),
+    0 4px 10px rgba(0,0,0,0.6);
+}
+
+/* === STATE: loading === */
+.bezel-loading .bezel-plate {
+  opacity: 0.55;
+  transition: opacity 0.3s ease;
+}
+
+/* === STATE: loaded (idle float) === */
+.bezel-loaded {
+  animation: bezel-float var(--dur-idle-float) ease-in-out infinite;
+}
+@keyframes bezel-float {
+  50% { transform: translateY(-2px); }
+}
+
+/* === STATE: errored === */
+.bezel-errored .bezel-ring {
+  background: radial-gradient(circle at 30% 25%, #ff9b9b 0%, var(--danger-p4) 35%, var(--danger-dark-p4) 100%);
+  animation: bezel-shudder 0.4s ease-in-out 2;
+}
+@keyframes bezel-shudder {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}
+
+/* === STATE: disabled (dimmed) === */
+.bezel-disabled .bezel-ring {
+  background: radial-gradient(circle at 30% 25%,
+    rgba(245,198,52,0.2), rgba(110,74,0,0.25) 55%, rgba(0,0,0,0.35));
+}
+.bezel-disabled .bezel-plate {
+  background: linear-gradient(135deg, #0e1a30, #060e1a);
+  opacity: 0.65;
+}

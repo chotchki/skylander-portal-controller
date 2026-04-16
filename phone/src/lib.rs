@@ -5,6 +5,7 @@
 //! Loading → Loaded. The Skylanders aesthetic polish pass comes in Phase 3.
 
 mod api;
+pub mod components;
 mod model;
 mod ws;
 
