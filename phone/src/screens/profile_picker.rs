@@ -1,11 +1,29 @@
 use leptos::prelude::*;
 
 use crate::api::{
-    create_profile, delete_profile, fetch_profiles, reset_pin, unlock_profile,
+    create_profile, fetch_profiles, reset_pin, unlock_profile,
 };
-use crate::components::{FramedPanel, GoldBezel, BezelSize, BezelState, DisplayHeading, HeadingSize};
+use crate::components::{BezelSize, BezelState, DisplayHeading, FramedPanel, GoldBezel, HeadingSize};
 use crate::model::PublicProfile;
 use crate::{event_target_value, push_toast, ToastMsg};
+
+// --------- Constants ---------
+
+const KONAMI: [&str; 10] = [
+    "up", "up", "down", "down", "left", "right", "left", "right", "b", "a",
+];
+
+/// Available profile colours (element-inspired).
+const COLOR_SWATCHES: [(&str, &str); 8] = [
+    ("magic", "#da5ad6"),
+    ("fire", "#ff6b2a"),
+    ("water", "#2aa6ff"),
+    ("life", "#5ac96b"),
+    ("tech", "#ffb84d"),
+    ("undead", "#9a5aaa"),
+    ("earth", "#a77b3a"),
+    ("air", "#c6e6ff"),
+];
 
 // --------- Profile picker / admin UI ---------
 
@@ -17,7 +35,7 @@ pub(crate) fn ProfilePicker(
     let profiles = RwSignal::new(Vec::<PublicProfile>::new());
     let manage_mode = RwSignal::new(false);
     let picked = RwSignal::new(None::<PublicProfile>); // profile whose PIN we're entering
-    let admin_target = RwSignal::new(None::<PublicProfile>);
+    let show_admin = RwSignal::new(false); // true = past konami gate
 
     // Fetch whenever epoch bumps.
     Effect::new(move |_| {
@@ -30,11 +48,12 @@ pub(crate) fn ProfilePicker(
     view! {
         <section class="profile-picker">
             {move || {
-                if let Some(p) = admin_target.get() {
+                if show_admin.get() {
                     view! {
-                        <ProfileAdmin
-                            profile=p
-                            on_done=move || { admin_target.set(None); profiles_epoch.update(|v| *v += 1); }
+                        <ProfileAdminHub
+                            profiles=profiles
+                            profiles_epoch=profiles_epoch
+                            on_lock=move || show_admin.set(false)
                             toasts
                         />
                     }.into_any()
@@ -48,7 +67,14 @@ pub(crate) fn ProfilePicker(
                     }.into_any()
                 } else {
                     view! {
-                        <ProfileGrid profiles picked admin_target toasts manage_mode profiles_epoch />
+                        <ProfileGrid
+                            profiles
+                            picked
+                            show_admin
+                            toasts
+                            _manage_mode=manage_mode
+                            profiles_epoch
+                        />
                     }.into_any()
                 }
             }}
@@ -56,33 +82,312 @@ pub(crate) fn ProfilePicker(
     }
 }
 
+// --------- Profile grid (main picker) ---------
+
 #[component]
 fn ProfileGrid(
     profiles: RwSignal<Vec<PublicProfile>>,
     picked: RwSignal<Option<PublicProfile>>,
-    admin_target: RwSignal<Option<PublicProfile>>,
+    show_admin: RwSignal<bool>,
     toasts: RwSignal<Vec<ToastMsg>>,
-    manage_mode: RwSignal<bool>,
+    _manage_mode: RwSignal<bool>,
     profiles_epoch: RwSignal<u32>,
 ) -> impl IntoView {
     let show_create = RwSignal::new(false);
     let default_state: Signal<BezelState> = Signal::derive(|| BezelState::Default);
     let disabled_state: Signal<BezelState> = Signal::derive(|| BezelState::Disabled);
 
+    // Konami gate signal — navigate to gate on "Manage" click.
+    let show_gate = RwSignal::new(false);
+
     view! {
-        <button
-            class="pp-manage-toggle"
-            on:click=move |_| manage_mode.update(|m| *m = !*m)
-        >
-            {move || if manage_mode.get() { "Done" } else { "Manage" }}
+        <Show when=move || show_gate.get() fallback=move || {
+            view! {
+                <button
+                    class="pp-manage-toggle"
+                    on:click=move |_| show_gate.set(true)
+                >
+                    "Manage"
+                </button>
+
+                <div class="pp-welcome-wrap">
+                    <DisplayHeading size=HeadingSize::Lg with_rays=true>
+                        "PORTAL "
+                        <span class="pp-welcome-line2">"MASTER"</span>
+                    </DisplayHeading>
+                    <div class="pp-welcome-sub">"welcome"</div>
+                </div>
+
+                <Show when=move || show_create.get() fallback=|| ()>
+                    <CreateProfileForm
+                        on_done=move || { show_create.set(false); profiles_epoch.update(|v| *v += 1); }
+                        toasts
+                    />
+                </Show>
+                <div class="profile-grid">
+                    {move || {
+                        let list = profiles.get();
+                        let can_add = list.len() < 4;
+                        view! {
+                            <>
+                            {list.into_iter().map(|p| {
+                                let p_for_click = p.clone();
+                                let color = p.color.clone();
+                                let initial = p.display_name.chars().next().unwrap_or('?').to_string();
+                                view! {
+                                    <button
+                                        class="profile-card"
+                                        on:click=move |_| {
+                                            picked.set(Some(p_for_click.clone()));
+                                        }
+                                    >
+                                        <div style=format!("--profile-color:{color}")>
+                                            <GoldBezel size=BezelSize::Lg state=default_state>
+                                                <span class="pp-initial">{initial}</span>
+                                            </GoldBezel>
+                                        </div>
+                                        <div class="profile-name">{p.display_name.clone()}</div>
+                                    </button>
+                                }
+                            }).collect_view()}
+                            {if can_add {
+                                Some(view! {
+                                    <button
+                                        class="profile-card add"
+                                        on:click=move |_| show_create.set(true)
+                                    >
+                                        <GoldBezel size=BezelSize::Lg state=disabled_state>
+                                            <span class="pp-initial pp-add-glyph">"+"</span>
+                                        </GoldBezel>
+                                        <div class="profile-name pp-add-name">"ADD"</div>
+                                    </button>
+                                })
+                            } else {
+                                None
+                            }}
+                            </>
+                        }
+                    }}
+                </div>
+                <div class="pp-tagline">"data & images from the skylanders wiki \u{00b7} cc by-sa"</div>
+                {let _ = toasts; view! { <></> }}
+            }
+        }>
+            <KonamiGate
+                on_success=move || { show_gate.set(false); show_admin.set(true); }
+                on_back=move || show_gate.set(false)
+            />
+        </Show>
+    }
+}
+
+// --------- Konami Gate ---------
+
+#[component]
+fn KonamiGate<S: Fn() + Send + Sync + 'static + Clone, B: Fn() + Send + Sync + 'static + Clone>(
+    on_success: S,
+    on_back: B,
+) -> impl IntoView {
+    let sequence = RwSignal::new(Vec::<String>::new());
+    let error_anim = RwSignal::new(false);
+    let success_flash = RwSignal::new(false);
+
+    let press_key = move |key: &str| {
+        if sequence.with(|s| s.len()) >= 10 {
+            return;
+        }
+        sequence.update(|s| s.push(key.to_string()));
+    };
+
+    let on_clear = move |_| {
+        sequence.set(Vec::new());
+    };
+
+    let on_success_inner = on_success.clone();
+    let on_submit = move |_| {
+        let seq = sequence.get();
+        if seq.len() != 10 {
+            return;
+        }
+        let correct = seq
+            .iter()
+            .zip(KONAMI.iter())
+            .all(|(a, b)| a.as_str() == *b);
+        if correct {
+            success_flash.set(true);
+            let on_success = on_success_inner.clone();
+            leptos::task::spawn_local(async move {
+                crate::gloo_timer(800).await;
+                on_success();
+            });
+        } else {
+            error_anim.set(true);
+            sequence.set(Vec::new());
+            leptos::task::spawn_local(async move {
+                crate::gloo_timer(600).await;
+                error_anim.set(false);
+            });
+        }
+    };
+
+    // Helper to make dpad/ab button click handlers.
+    let make_key_handler = move |key: &'static str| {
+        move |_| press_key(key)
+    };
+
+    view! {
+        <div class="konami-gate">
+            <div class=move || {
+                if success_flash.get() { "konami-unlock-flash active" } else { "konami-unlock-flash" }
+            }></div>
+
+            <button class="btn-back" on:click=move |_| on_back()>"BACK"</button>
+
+            <div class="konami-header">
+                <div class="title-sub">"grown-ups only"</div>
+                <DisplayHeading size=HeadingSize::Md>
+                    "ENTER"
+                    <br/>
+                    "THE CODE"
+                </DisplayHeading>
+            </div>
+
+            <div class=move || {
+                if error_anim.get() { "gate-progress error" } else { "gate-progress" }
+            }>
+                {move || {
+                    let len = sequence.with(|s| s.len());
+                    let is_error = error_anim.get();
+                    (0..10).map(|i| {
+                        let filled = i < len;
+                        let cls = if is_error && filled {
+                            "gate-dot was-filled"
+                        } else if filled {
+                            "gate-dot filled"
+                        } else {
+                            "gate-dot"
+                        };
+                        view! { <div class=cls></div> }
+                    }).collect_view()
+                }}
+            </div>
+            <div class="gate-hint">"Contra was such an easy game"</div>
+
+            <div class="gate-pad">
+                <div class="dpad">
+                    <button class="dpad-btn up" on:click=make_key_handler("up")>
+                        "\u{25B2}"
+                    </button>
+                    <button class="dpad-btn left" on:click=make_key_handler("left")>
+                        "\u{25C0}"
+                    </button>
+                    <button class="dpad-btn right" on:click=make_key_handler("right")>
+                        "\u{25B6}"
+                    </button>
+                    <button class="dpad-btn down" on:click=make_key_handler("down")>
+                        "\u{25BC}"
+                    </button>
+                </div>
+                <div class="ab-wrap">
+                    <button class="ab-btn ab-b" on:click=make_key_handler("b")>"B"</button>
+                    <button class="ab-btn ab-a" on:click=make_key_handler("a")>"A"</button>
+                </div>
+            </div>
+
+            <div class="gate-actions">
+                <button class="btn btn-clear" on:click=on_clear>"CLEAR"</button>
+                <button
+                    class="btn btn-submit"
+                    disabled=move || sequence.with(|s| s.len()) != 10
+                    on:click=on_submit
+                >"SUBMIT"</button>
+            </div>
+        </div>
+    }
+}
+
+// --------- Profile admin hub (list + edit + pin reset) ---------
+
+/// Sub-screen enum for the admin hub.
+#[derive(Clone, PartialEq)]
+enum AdminScreen {
+    List,
+    Edit(PublicProfile),
+    PinReset(PublicProfile),
+}
+
+#[component]
+fn ProfileAdminHub<F: Fn() + Send + Sync + 'static + Clone>(
+    profiles: RwSignal<Vec<PublicProfile>>,
+    profiles_epoch: RwSignal<u32>,
+    on_lock: F,
+    toasts: RwSignal<Vec<ToastMsg>>,
+) -> impl IntoView {
+    let screen = RwSignal::new(AdminScreen::List);
+    let show_create = RwSignal::new(false);
+
+    view! {
+        <div class="admin-hub">
+            {move || match screen.get() {
+                AdminScreen::List => {
+                    let on_lock = on_lock.clone();
+                    view! {
+                        <AdminList
+                            profiles=profiles
+                            profiles_epoch=profiles_epoch
+                            show_create=show_create
+                            screen=screen
+                            on_lock=move || on_lock()
+                            toasts
+                        />
+                    }.into_any()
+                }
+                AdminScreen::Edit(p) => {
+                    let profile = p.clone();
+                    view! {
+                        <AdminEdit
+                            profile=profile
+                            on_back=move || { screen.set(AdminScreen::List); profiles_epoch.update(|v| *v += 1); }
+                            toasts
+                        />
+                    }.into_any()
+                }
+                AdminScreen::PinReset(p) => {
+                    let profile = p.clone();
+                    view! {
+                        <AdminPinReset
+                            profile=profile
+                            on_back=move || { screen.set(AdminScreen::List); profiles_epoch.update(|v| *v += 1); }
+                            toasts
+                        />
+                    }.into_any()
+                }
+            }}
+        </div>
+    }
+}
+
+// --------- Admin list ---------
+
+#[component]
+fn AdminList<F: Fn() + Send + Sync + 'static + Clone>(
+    profiles: RwSignal<Vec<PublicProfile>>,
+    profiles_epoch: RwSignal<u32>,
+    show_create: RwSignal<bool>,
+    screen: RwSignal<AdminScreen>,
+    on_lock: F,
+    toasts: RwSignal<Vec<ToastMsg>>,
+) -> impl IntoView {
+    view! {
+        <button class="btn-back" on:click=move |_| on_lock()>
+            "\u{2190} LOCK"
         </button>
 
-        <div class="pp-welcome-wrap">
-            <DisplayHeading size=HeadingSize::Lg with_rays=true>
-                "PORTAL "
-                <span class="pp-welcome-line2">"MASTER"</span>
+        <div class="admin-header">
+            <div class="title-sub">"the grown-up side"</div>
+            <DisplayHeading size=HeadingSize::Md>
+                "PROFILE MANAGEMENT"
             </DisplayHeading>
-            <div class="pp-welcome-sub">"welcome"</div>
         </div>
 
         <Show when=move || show_create.get() fallback=|| ()>
@@ -91,64 +396,263 @@ fn ProfileGrid(
                 toasts
             />
         </Show>
-        <div class="profile-grid">
-            {move || {
-                let list = profiles.get();
-                let in_manage = manage_mode.get();
-                let can_add = list.len() < 4;
-                view! {
-                    <>
-                    {list.into_iter().map(|p| {
-                        let p_for_click = p.clone();
-                        let p_for_manage = p.clone();
-                        let color = p.color.clone();
-                        let initial = p.display_name.chars().next().unwrap_or('?').to_string();
-                        view! {
-                            <button
-                                class="profile-card"
-                                on:click=move |_| {
-                                    if in_manage {
-                                        admin_target.set(Some(p_for_manage.clone()));
-                                    } else {
-                                        picked.set(Some(p_for_click.clone()));
-                                    }
-                                }
-                            >
-                                <div style=format!("--profile-color:{color}")>
-                                    <GoldBezel size=BezelSize::Lg state=default_state>
-                                        <span class="pp-initial">{initial}</span>
-                                    </GoldBezel>
+
+        <FramedPanel class="admin-list-panel">
+            <div class="manage-list">
+                {move || {
+                    let list = profiles.get();
+                    view! {
+                        <>
+                        {list.into_iter().map(|p| {
+                            let p_edit = p.clone();
+                            let p_pin = p.clone();
+                            let p_del = p.clone();
+                            let initial = p.display_name.chars().next().unwrap_or('?').to_uppercase().to_string();
+                            let color_attr = color_to_element(&p.color);
+                            let name_upper = p.display_name.to_uppercase();
+                            let deleting = RwSignal::new(false);
+                            let _p_del = p_del;
+                            view! {
+                                <div class=move || if deleting.get() { "profile-row deleting" } else { "profile-row" }>
+                                    <div class="profile-bezel" data-el=color_attr.clone() data-initial=initial.clone()></div>
+                                    <div class="profile-meta">
+                                        <div class="profile-name">{name_upper}</div>
+                                    </div>
+                                    <div class="profile-actions">
+                                        <button class="act-btn" on:click=move |_| screen.set(AdminScreen::Edit(p_edit.clone()))>
+                                            "EDIT"
+                                        </button>
+                                        <button class="act-btn" on:click=move |_| screen.set(AdminScreen::PinReset(p_pin.clone()))>
+                                            "PIN"
+                                        </button>
+                                        <button class="act-btn danger" on:click=move |_| deleting.set(true)>
+                                            "DEL"
+                                        </button>
+                                    </div>
+                                    <div class="del-confirm">
+                                        <span class="del-confirm-label">
+                                            {format!("HOLD TO DELETE {}", p.display_name.to_uppercase())}
+                                        </span>
+                                        <button class="del-cancel" on:click=move |e: leptos::ev::MouseEvent| {
+                                            e.stop_propagation();
+                                            deleting.set(false);
+                                        }>
+                                            "\u{00d7}"
+                                        </button>
+                                    </div>
                                 </div>
-                                <div class="profile-name">{p.display_name.clone()}</div>
-                                <Show when=move || in_manage fallback=|| ()>
-                                    <div class="pp-manage-hint">"Tap to manage"</div>
-                                </Show>
-                            </button>
-                        }
-                    }).collect_view()}
-                    {if can_add {
-                        Some(view! {
-                            <button
-                                class="profile-card add"
-                                on:click=move |_| show_create.set(true)
-                            >
-                                <GoldBezel size=BezelSize::Lg state=disabled_state>
-                                    <span class="pp-initial pp-add-glyph">"+"</span>
-                                </GoldBezel>
-                                <div class="profile-name pp-add-name">"ADD"</div>
-                            </button>
-                        })
-                    } else {
-                        None
-                    }}
-                    </>
-                }
-            }}
-        </div>
-        <div class="pp-tagline">"data & images from the skylanders wiki \u{00b7} cc by-sa"</div>
-        {let _ = toasts; view! { <></> }}
+                            }
+                        }).collect_view()}
+                        </>
+                    }
+                }}
+                <Show when=move || profiles.with(|p| p.len() < 4) fallback=|| ()>
+                    <button class="add-row" on:click=move |_| show_create.set(true)>
+                        "ADD PROFILE"
+                    </button>
+                </Show>
+            </div>
+        </FramedPanel>
     }
 }
+
+// --------- Admin edit (name + color) ---------
+
+#[component]
+fn AdminEdit<F: Fn() + Send + Sync + 'static + Clone>(
+    profile: PublicProfile,
+    on_back: F,
+    toasts: RwSignal<Vec<ToastMsg>>,
+) -> impl IntoView {
+    let name = RwSignal::new(profile.display_name.clone());
+    let color = RwSignal::new(profile.color.clone());
+    let initial = Signal::derive(move || {
+        name.with(|n| n.chars().next().unwrap_or('?').to_uppercase().to_string())
+    });
+    let name_upper = Signal::derive(move || name.with(|n| n.to_uppercase()));
+    let color_el = Signal::derive(move || color_to_element(&color.get()));
+
+    let on_save = on_back.clone();
+    let on_cancel = on_back.clone();
+
+    view! {
+        <div class="admin-edit">
+            <button class="btn-back" on:click=move |_| on_cancel()>
+                "\u{2190} BACK"
+            </button>
+
+            <div class="pin-heading">
+                <div class="identity-bezel" data-el=move || color_el.get() data-initial=move || initial.get()></div>
+                <div class="pin-heading-text">
+                    <div class="pin-heading-sub">"editing"</div>
+                    <div class="pin-heading-title">{move || format!("EDIT {}", name_upper.get())}</div>
+                </div>
+            </div>
+
+            <div class="edit-wrap">
+                <div class="edit-input-row">
+                    <input
+                        class="edit-input"
+                        type="text"
+                        maxlength="16"
+                        autocomplete="off"
+                        spellcheck="false"
+                        prop:value=move || name.get()
+                        on:input=move |e| name.set(event_target_value(&e))
+                    />
+                </div>
+                <div class="edit-color-label">"portal color"</div>
+                <div class="edit-color-row">
+                    {COLOR_SWATCHES.iter().map(|(swatch_name, _hex)| {
+                        let swatch_name = swatch_name.to_string();
+                        let sn_class = swatch_name.clone();
+                        // Map swatch name to its hex for setting color.
+                        let hex_val = COLOR_SWATCHES.iter()
+                            .find(|(n, _)| *n == swatch_name)
+                            .map(|(_, h)| h.to_string())
+                            .unwrap_or_default();
+                        view! {
+                            <div
+                                class=move || {
+                                    if color_to_element(&color.get()) == sn_class {
+                                        "edit-swatch selected"
+                                    } else {
+                                        "edit-swatch"
+                                    }
+                                }
+                                data-color=swatch_name.clone()
+                                on:click=move |_| color.set(hex_val.clone())
+                            ></div>
+                        }
+                    }).collect_view()}
+                </div>
+            </div>
+
+            <div class="actions">
+                <button class="btn btn-cancel" on:click=move |_| on_back()>"CANCEL"</button>
+                <button class="btn btn-primary" on:click=move |_| {
+                    // TODO: wire to update_profile API when available
+                    push_toast(toasts, "Profile edit saved (UI only - API pending).");
+                    on_save();
+                }>"SAVE"</button>
+            </div>
+        </div>
+    }
+}
+
+// --------- Admin PIN reset ---------
+
+#[component]
+fn AdminPinReset<F: Fn() + Send + Sync + 'static + Clone>(
+    profile: PublicProfile,
+    on_back: F,
+    toasts: RwSignal<Vec<ToastMsg>>,
+) -> impl IntoView {
+    let current_pin = RwSignal::new(String::new());
+    let new_pin = RwSignal::new(String::new());
+    let busy = RwSignal::new(false);
+    let step = RwSignal::new(0u8); // 0 = enter current, 1 = enter new
+
+    let initial = profile
+        .display_name
+        .chars()
+        .next()
+        .unwrap_or('?')
+        .to_uppercase()
+        .to_string();
+    let name_upper = profile.display_name.to_uppercase();
+    let color_el = color_to_element(&profile.color);
+    let id = profile.id.clone();
+
+    let on_done = on_back.clone();
+    let on_cancel = on_back.clone();
+
+    view! {
+        <div class="admin-pin-reset">
+            <button class="btn-back" on:click=move |_| on_cancel()>
+                "\u{2190} BACK"
+            </button>
+
+            <div class="pin-heading">
+                <div class="identity-bezel" data-el=color_el.clone() data-initial=initial.clone()></div>
+                <div class="pin-heading-text">
+                    <div class="pin-heading-sub">
+                        {move || if step.get() == 0 {
+                            format!("current PIN for {name_upper}")
+                        } else {
+                            format!("new PIN for {name_upper}")
+                        }}
+                    </div>
+                    <div class="pin-heading-title">
+                        {move || if step.get() == 0 { "CURRENT PIN" } else { "TYPE A NEW PIN" }}
+                    </div>
+                </div>
+            </div>
+
+            <div class="pin-wrap">
+                <div class="pin-dots">
+                    {move || {
+                        let pin_val = if step.get() == 0 { current_pin.get() } else { new_pin.get() };
+                        (0..4).map(|i| {
+                            let cls = if i < pin_val.len() { "pin-dot filled" } else { "pin-dot" };
+                            view! { <div class=cls></div> }
+                        }).collect_view()
+                    }}
+                </div>
+
+                <FramedPanel class="pin-keypad-panel panel-in">
+                    {move || {
+                        let active_pin = if step.get() == 0 { current_pin } else { new_pin };
+                        view! { <PinPad pin=active_pin /> }
+                    }}
+                </FramedPanel>
+            </div>
+
+            <div class="actions">
+                <button class="btn btn-cancel" on:click=move |_| {
+                    if step.get() == 1 {
+                        new_pin.set(String::new());
+                        step.set(0);
+                    } else {
+                        on_back();
+                    }
+                }>"CANCEL"</button>
+                <button
+                    class="btn btn-primary"
+                    disabled=move || {
+                        let pin_val = if step.get() == 0 { current_pin.get() } else { new_pin.get() };
+                        pin_val.len() != 4 || busy.get()
+                    }
+                    on:click=move |_| {
+                        if step.get() == 0 {
+                            step.set(1);
+                        } else {
+                            busy.set(true);
+                            let id = id.clone();
+                            let cur = current_pin.get();
+                            let new_ = new_pin.get();
+                            let on_done = on_done.clone();
+                            leptos::task::spawn_local(async move {
+                                match reset_pin(&id, &cur, &new_).await {
+                                    Ok(()) => {
+                                        push_toast(toasts, "PIN updated.");
+                                        on_done();
+                                    }
+                                    Err(e) => push_toast(toasts, &format!("Reset failed: {e}")),
+                                }
+                                busy.set(false);
+                            });
+                        }
+                    }
+                >
+                    {move || if step.get() == 0 { "NEXT" } else { "SAVE" }}
+                </button>
+            </div>
+        </div>
+    }
+}
+
+// --------- Create profile form ---------
 
 #[component]
 fn CreateProfileForm<F: Fn() + Send + Sync + 'static + Clone>(
@@ -156,16 +660,16 @@ fn CreateProfileForm<F: Fn() + Send + Sync + 'static + Clone>(
     toasts: RwSignal<Vec<ToastMsg>>,
 ) -> impl IntoView {
     let name = RwSignal::new(String::new());
-    let color = RwSignal::new("#7a4bff".to_string());
+    let color = RwSignal::new("#da5ad6".to_string());
     let pin = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
-
-    let palette: [&str; 6] = ["#7a4bff", "#ff5a88", "#39d39f", "#ffb033", "#4ea8ff", "#e25858"];
 
     let submit = {
         let on_done = on_done.clone();
         move |_| {
-            if busy.get() { return; }
+            if busy.get() {
+                return;
+            }
             let n = name.get().trim().to_string();
             let p = pin.get();
             let c = color.get();
@@ -193,156 +697,52 @@ fn CreateProfileForm<F: Fn() + Send + Sync + 'static + Clone>(
     };
 
     view! {
-        <div class="create-profile-form">
-            <h3>"Create profile"</h3>
-            <label>
-                "Name"
-                <input
-                    type="text"
-                    prop:value=move || name.get()
-                    on:input=move |e| name.set(event_target_value(&e))
-                />
-            </label>
-            <label>"Color"</label>
-            <div class="color-picker">
-                {palette.iter().map(|hex| {
-                    let hex = hex.to_string();
-                    let hex_for_style = hex.clone();
-                    let hex_for_click = hex.clone();
-                    let hex_for_class = hex.clone();
-                    view! {
-                        <button
-                            type="button"
-                            class=move || {
-                                if color.get() == hex_for_class { "swatch active" } else { "swatch" }
-                            }
-                            style=format!("background:{hex_for_style}")
-                            on:click=move |_| color.set(hex_for_click.clone())
-                        ></button>
-                    }
-                }).collect_view()}
+        <FramedPanel class="create-profile-panel">
+            <div class="create-profile-form">
+                <div class="edit-color-label">"Name"</div>
+                <div class="edit-input-row">
+                    <input
+                        class="edit-input"
+                        type="text"
+                        maxlength="16"
+                        prop:value=move || name.get()
+                        on:input=move |e| name.set(event_target_value(&e))
+                    />
+                </div>
+                <div class="edit-color-label">"Color"</div>
+                <div class="edit-color-row">
+                    {COLOR_SWATCHES.iter().map(|(swatch_name, hex)| {
+                        let hex = hex.to_string();
+                        let hex_click = hex.clone();
+                        let hex_class = hex.clone();
+                        let sn = swatch_name.to_string();
+                        view! {
+                            <div
+                                class=move || {
+                                    if color.get() == hex_class { "edit-swatch selected" } else { "edit-swatch" }
+                                }
+                                data-color=sn
+                                on:click=move |_| color.set(hex_click.clone())
+                            ></div>
+                        }
+                    }).collect_view()}
+                </div>
+                <div class="edit-color-label">"PIN (4 digits)"</div>
+                <PinPad pin />
+                <div class="actions" style="margin-top: 12px;">
+                    <button class="btn btn-cancel" on:click=move |_| on_done()>"CANCEL"</button>
+                    <button
+                        class="btn btn-primary"
+                        disabled=move || busy.get()
+                        on:click=submit
+                    >"CREATE"</button>
+                </div>
             </div>
-            <label>"PIN (4 digits)"</label>
-            <PinPad pin />
-            <div class="form-actions">
-                <button
-                    class="primary"
-                    disabled=move || busy.get()
-                    on:click=submit
-                >
-                    "Create"
-                </button>
-                <button on:click=move |_| on_done()>"Cancel"</button>
-            </div>
-        </div>
+        </FramedPanel>
     }
 }
 
-#[component]
-fn ProfileAdmin<F: Fn() + Send + Sync + 'static + Clone>(
-    profile: PublicProfile,
-    on_done: F,
-    toasts: RwSignal<Vec<ToastMsg>>,
-) -> impl IntoView {
-    let mode = RwSignal::new("menu"); // menu | reset | delete
-    let current_pin = RwSignal::new(String::new());
-    let new_pin = RwSignal::new(String::new());
-    let busy = RwSignal::new(false);
-    let name = profile.display_name.clone();
-    let id = profile.id.clone();
-
-    let on_done_for_menu = on_done.clone();
-    let on_done_for_reset = on_done.clone();
-    let on_done_for_delete = on_done.clone();
-
-    let id_for_reset = id.clone();
-    let id_for_delete = id.clone();
-
-    view! {
-        <div class="profile-admin">
-            <h3>{format!("Manage {name}")}</h3>
-            {move || match mode.get() {
-                "reset" => {
-                    let on_done_inner = on_done_for_reset.clone();
-                    let id_inner = id_for_reset.clone();
-                    let submit = move |_| {
-                        if busy.get() { return; }
-                        if current_pin.get().len() != 4 || new_pin.get().len() != 4 {
-                            push_toast(toasts, "Both PINs must be 4 digits.");
-                            return;
-                        }
-                        busy.set(true);
-                        let id = id_inner.clone();
-                        let cur = current_pin.get();
-                        let new_ = new_pin.get();
-                        let on_done = on_done_inner.clone();
-                        leptos::task::spawn_local(async move {
-                            match reset_pin(&id, &cur, &new_).await {
-                                Ok(()) => { push_toast(toasts, "PIN updated."); on_done(); }
-                                Err(e) => push_toast(toasts, &format!("Reset failed: {e}")),
-                            }
-                            busy.set(false);
-                        });
-                    };
-                    view! {
-                        <div class="admin-form">
-                            <label>"Current PIN"</label>
-                            <PinPad pin=current_pin />
-                            <label>"New PIN"</label>
-                            <PinPad pin=new_pin />
-                            <div class="form-actions">
-                                <button class="primary" on:click=submit disabled=move || busy.get()>"Update"</button>
-                                <button on:click=move |_| mode.set("menu")>"Back"</button>
-                            </div>
-                        </div>
-                    }.into_any()
-                }
-                "delete" => {
-                    let on_done_inner = on_done_for_delete.clone();
-                    let id_inner = id_for_delete.clone();
-                    let submit = move |_| {
-                        if busy.get() { return; }
-                        if current_pin.get().len() != 4 {
-                            push_toast(toasts, "Enter 4-digit PIN.");
-                            return;
-                        }
-                        busy.set(true);
-                        let id = id_inner.clone();
-                        let cur = current_pin.get();
-                        let on_done = on_done_inner.clone();
-                        leptos::task::spawn_local(async move {
-                            match delete_profile(&id, &cur).await {
-                                Ok(()) => { push_toast(toasts, "Profile deleted."); on_done(); }
-                                Err(e) => push_toast(toasts, &format!("Delete failed: {e}")),
-                            }
-                            busy.set(false);
-                        });
-                    };
-                    view! {
-                        <div class="admin-form">
-                            <label>"Confirm with current PIN"</label>
-                            <PinPad pin=current_pin />
-                            <div class="form-actions">
-                                <button class="danger" on:click=submit disabled=move || busy.get()>"Delete"</button>
-                                <button on:click=move |_| mode.set("menu")>"Back"</button>
-                            </div>
-                        </div>
-                    }.into_any()
-                }
-                _ => {
-                    let on_back = on_done_for_menu.clone();
-                    view! {
-                        <div class="admin-menu">
-                            <button on:click=move |_| mode.set("reset")>"Reset PIN"</button>
-                            <button class="danger" on:click=move |_| mode.set("delete")>"Delete profile"</button>
-                            <button on:click=move |_| on_back()>"Back"</button>
-                        </div>
-                    }.into_any()
-                }
-            }}
-        </div>
-    }
-}
+// --------- PIN entry (for unlocking a profile) ---------
 
 #[component]
 fn PinEntry<F: Fn() + Send + Sync + 'static + Clone>(
@@ -356,7 +756,12 @@ fn PinEntry<F: Fn() + Send + Sync + 'static + Clone>(
     let id = profile.id.clone();
     let name = profile.display_name.clone();
     let name_upper = name.to_uppercase();
-    let initial = name.chars().next().unwrap_or('?').to_uppercase().to_string();
+    let initial = name
+        .chars()
+        .next()
+        .unwrap_or('?')
+        .to_uppercase()
+        .to_string();
     let _color = profile.color.clone();
 
     // Auto-submit when 4 digits entered.
@@ -443,12 +848,9 @@ fn PinEntry<F: Fn() + Send + Sync + 'static + Clone>(
     }
 }
 
+// --------- PIN pad ---------
+
 /// Four-digit touch keypad. Writes into the shared `pin` signal.
-///
-/// When used inside `PinEntry` the reskinned variant renders: heraldic gold
-/// keys inside a `FramedPanel`, mini-bezel PIN dots, and a lockout prop.
-/// When used inside `CreateProfileForm` / `ProfileAdmin` (no `locked_out`
-/// prop supplied) it keeps the old inline dot display + plain keypad.
 #[component]
 fn PinPad(
     pin: RwSignal<String>,
@@ -458,9 +860,11 @@ fn PinPad(
     let is_locked = locked_out.unwrap_or(Signal::derive(|| false));
     let has_reskin = locked_out.is_some();
 
-    let digits: [&str; 12] = ["1","2","3","4","5","6","7","8","9","","0","\u{232b}"];
+    let digits: [&str; 12] = [
+        "1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "\u{232b}",
+    ];
     view! {
-        // Legacy inline dots for non-reskinned callers (CreateProfileForm, ProfileAdmin).
+        // Legacy inline dots for non-reskinned callers (CreateProfileForm, AdminPinReset).
         <Show when=move || !has_reskin fallback=|| ()>
             <div class="pin-display">
                 {move || {
@@ -506,5 +910,31 @@ fn PinPad(
                 }
             }).collect_view()}
         </div>
+    }
+}
+
+// --------- Helpers ---------
+
+/// Map a hex color string to an element name for CSS data-attributes.
+fn color_to_element(color: &str) -> String {
+    for (name, hex) in COLOR_SWATCHES.iter() {
+        if color.eq_ignore_ascii_case(hex) {
+            return name.to_string();
+        }
+    }
+    // Fallback: try matching partial colour names.
+    let c = color.to_lowercase();
+    if c.contains("magic") || c.contains("da5a") || c.contains("7a4b") {
+        "magic".to_string()
+    } else if c.contains("fire") || c.contains("ff6b") || c.contains("ff5a") {
+        "fire".to_string()
+    } else if c.contains("water") || c.contains("2aa6") || c.contains("4ea8") {
+        "water".to_string()
+    } else if c.contains("life") || c.contains("5ac9") || c.contains("39d3") {
+        "life".to_string()
+    } else if c.contains("tech") || c.contains("ffb8") || c.contains("ffb0") {
+        "tech".to_string()
+    } else {
+        "magic".to_string() // default
     }
 }
