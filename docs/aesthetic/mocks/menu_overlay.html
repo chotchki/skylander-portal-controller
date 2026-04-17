@@ -382,6 +382,236 @@
   .action.danger .action-desc {
     color: #ffd6d6;
   }
+
+  /* ===== POST-ACTION STATE ANIMATIONS =====
+     Three destructive actions, three distinct exits. All dismiss the menu
+     panel + scrim identically (440ms / 600ms). They diverge on how the
+     underlay transforms and which "destination" placeholder arrives:
+
+       SWITCH PROFILE    (local)    identity drains → profile picker
+       CHOOSE ANOTHER GAME (server) underlay folds away → game picker
+       SHUT DOWN         (server)   lights out → "SEE YOU NEXT TIME"
+
+     The server-triggered pair fires on every connected phone at the same
+     time via a WS broadcast; SWITCH PROFILE only runs locally because
+     re-locking one phone doesn't affect the others. */
+
+  .menu-panel.dismissing {
+    animation: panel-out 440ms cubic-bezier(.5,0,.7,.5) forwards;
+  }
+  @keyframes panel-out {
+    0%   { opacity: 1; transform: translateY(-50%) scale(1); }
+    100% { opacity: 0; transform: translateY(-56%) scale(0.94); }
+  }
+  .scrim.dismissing {
+    animation: scrim-out 600ms ease-out forwards;
+  }
+  @keyframes scrim-out { to { opacity: 0; } }
+
+  /* SWITCH PROFILE — identity drains, profile picker arrives */
+  .underlay.re-lock .u-swatch,
+  .underlay.re-lock .underlay-head > div:last-child {
+    animation: identity-drain 800ms ease-out forwards;
+  }
+  .underlay.re-lock .u-title {
+    animation: identity-drain 800ms ease-out forwards;
+  }
+  @keyframes identity-drain {
+    0%   { filter: saturate(1) brightness(1); opacity: 1; }
+    100% { filter: saturate(0) brightness(0.55); opacity: 0.25; }
+  }
+  .underlay.re-lock {
+    animation: unveil-dim 800ms ease-out forwards;
+  }
+  @keyframes unveil-dim {
+    to { filter: blur(0); opacity: 0.8; }
+  }
+
+  /* CHOOSE ANOTHER GAME — the current title folds away (3D X-axis rotate),
+     header scales+fades, underlay drops to zero so the game picker
+     arrives against a clean blue field. */
+  .underlay.fold-away {
+    perspective: 1000px;
+  }
+  .underlay.fold-away .u-title {
+    animation: title-fold 520ms ease-in forwards;
+    transform-origin: top center;
+  }
+  @keyframes title-fold {
+    0%   { opacity: 1; transform: rotateX(0deg) scale(1); }
+    100% { opacity: 0; transform: rotateX(-80deg) scale(0.85); }
+  }
+  .underlay.fold-away .underlay-head {
+    animation: head-recede 520ms ease-in forwards;
+  }
+  @keyframes head-recede {
+    0%   { opacity: 1; transform: scale(1); }
+    100% { opacity: 0; transform: scale(0.82) translateY(-18px); }
+  }
+
+  /* SHUT DOWN — starfield + underlay dim toward black; a breathing
+     farewell fades in. Mirrors TV launcher state 8. */
+  .sky.dimming, .stars.dimming {
+    animation: lights-dim 1500ms ease-out forwards;
+  }
+  @keyframes lights-dim {
+    to { filter: brightness(0.15) saturate(0.4); }
+  }
+  .underlay.dimming {
+    animation: underlay-dim 1500ms ease-out forwards;
+  }
+  @keyframes underlay-dim {
+    to { opacity: 0.04; filter: blur(4px) saturate(0); }
+  }
+
+  /* ===== POST-STATE OVERLAYS =====
+     Each destination placeholder sits dormant until its animation brings
+     it on-screen. Opacity + transform cross-fade from the dismissing
+     panel. .poststate-shutdown is z-30 (above scrim) because it's the
+     final state; the other two live at z-5 under the fading scrim. */
+  .poststate {
+    position: absolute; inset: 0;
+    opacity: 0;
+    pointer-events: none;
+    transform: scale(0.92);
+    transition: opacity 620ms ease-out, transform 620ms cubic-bezier(.3,1.25,.5,1);
+    z-index: 5;
+  }
+  .poststate.show { opacity: 1; transform: scale(1); }
+
+  .poststate-switch {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 120px 24px 24px;
+  }
+  .poststate-switch .welcome {
+    font-family: "Titan One"; font-size: 22px; letter-spacing: 0.08em;
+    color: var(--gb);
+    -webkit-text-stroke: 1px var(--gi);
+    text-shadow: 0 2px 0 var(--gs), 0 3px 0 var(--gi), 0 0 18px rgba(245,198,52,0.35);
+    text-align: center;
+    margin-bottom: 6px;
+  }
+  .poststate-switch .welcome-sub {
+    font-family: "Fraunces"; font-style: italic; font-weight: 600;
+    font-size: 13px; color: #e8d9b6; letter-spacing: 0.1em;
+    margin-bottom: 28px;
+  }
+  .profile-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+    width: 100%;
+  }
+  .profile-tile {
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    padding: 18px 10px 14px;
+    border-radius: 14px;
+    background: linear-gradient(180deg, rgba(26,58,138,0.92), rgba(6,20,54,0.92));
+    border: 2px solid var(--gb);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.45);
+  }
+  .profile-tile .tile-swatch {
+    width: 60px; height: 60px; border-radius: 50%;
+    display: grid; place-items: center;
+    color: #fff; font-family: "Titan One"; font-size: 24px;
+    box-shadow: inset 0 0 0 2px var(--gi), inset 0 0 0 5px var(--g);
+  }
+  .profile-tile .tile-name {
+    font-family: "Titan One"; font-size: 12px; letter-spacing: 0.08em;
+    color: var(--gb);
+    text-shadow: 0 1px 0 var(--gs);
+  }
+  .tile-just-left .tile-swatch { filter: saturate(0.15) brightness(0.6); }
+  .tile-just-left .tile-name   { color: #8a8470; text-shadow: none; }
+
+  .poststate-game {
+    display: flex; flex-direction: column;
+    padding: 120px 24px 24px;
+  }
+  .poststate-game .pick-title {
+    font-family: "Titan One"; font-size: 22px; letter-spacing: 0.08em;
+    color: var(--gb);
+    -webkit-text-stroke: 1px var(--gi);
+    text-shadow: 0 2px 0 var(--gs), 0 3px 0 var(--gi);
+    text-align: center;
+    margin-bottom: 22px;
+  }
+  .poststate-game .game-grid {
+    display: flex; flex-direction: column; gap: 12px; width: 100%;
+  }
+  .game-card {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px;
+    border-radius: 14px;
+    background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
+    border: 2px solid var(--gb);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.45);
+  }
+  .game-cover {
+    width: 54px; height: 76px; border-radius: 6px;
+    border: 1px solid var(--gb);
+    flex-shrink: 0;
+    background: linear-gradient(135deg, #3a1a5a, #0a0320);
+  }
+  .game-cover.sg { background: linear-gradient(135deg, #1a4a5a, #0a2030); }
+  .game-cover.tt { background: linear-gradient(135deg, #5a3a1a, #2a1a0a); }
+  .game-name {
+    font-family: "Titan One"; font-size: 14px; letter-spacing: 0.06em;
+    color: var(--gb);
+    text-shadow: 0 1px 0 var(--gs);
+  }
+  .game-sub {
+    font-family: "Fraunces"; font-style: italic; font-weight: 600;
+    font-size: 11px; color: #e8e4d8; margin-top: 2px;
+  }
+
+  .poststate-shutdown {
+    z-index: 30;
+    display: grid; place-items: center;
+    text-align: center;
+    padding: 0 30px;
+  }
+  .poststate-shutdown .farewell-text {
+    font-family: "Titan One"; font-size: 20px; letter-spacing: 0.12em;
+    color: var(--gb);
+    -webkit-text-stroke: 1px var(--gi);
+    text-shadow: 0 2px 0 var(--gs), 0 3px 0 var(--gi), 0 0 22px rgba(245,198,52,0.45);
+    line-height: 1.35;
+  }
+  .poststate-shutdown.show .farewell-text {
+    animation: breathe 3.2s ease-in-out infinite;
+  }
+  .poststate-shutdown .farewell-sub {
+    font-family: "Fraunces"; font-style: italic; font-weight: 600;
+    font-size: 12px; color: #e8d9b6; letter-spacing: 0.15em;
+    margin-top: 18px;
+    opacity: 0.55;
+  }
+  @keyframes breathe {
+    0%, 100% { opacity: 0.88; }
+    50%      { opacity: 1; }
+  }
+
+  /* ===== DEMO CONTROLS — dev-only, visible on desktop preview ===== */
+  .controls {
+    position: fixed; top: 20px; right: 20px;
+    display: flex; flex-direction: column; gap: 6px;
+    z-index: 100;
+  }
+  .controls button {
+    padding: 7px 11px;
+    font-family: "Titan One"; font-size: 10px; letter-spacing: 0.18em;
+    color: #d0d0d0;
+    background: rgba(20,20,20,0.85);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 7px;
+    cursor: pointer;
+    min-width: 160px; text-align: left;
+  }
+  .controls button:hover { background: rgba(40,40,40,0.95); color: #fff; }
+  .controls button.replay {
+    color: var(--gb); border-color: rgba(245,198,52,0.4);
+    margin-top: 4px;
+  }
+  @media (max-width: 450px) { .controls { display: none; } }
 </style>
 </head>
 <body>
@@ -422,26 +652,8 @@
         <div class="join-hint">scan to join this portal</div>
       </div>
 
-      <!--
-        TODO (PLAN 4.2.14.a — state-animation pass, 4.2.11 / 4.5):
-        CHOOSE ANOTHER GAME and SHUT DOWN both affect every connected
-        phone, not just this one. The post-action state animation has to
-        play on all sessions simultaneously — so the trigger is the
-        existing server broadcast, not a local "I tapped the button"
-        signal. Concretely:
-          • CHOOSE ANOTHER GAME → server emits its `GameChanged` /
-            game-exit event → every phone's ChooseAnotherGame handler
-            plays the "game folds away" transition into game picker.
-          • SHUT DOWN → server emits shutdown event + drops WS → every
-            phone plays the "lights out" farewell (starfield + bezels
-            dim, gold lettering recedes) before the WS close closes the
-            tab.
-        Design the animations in-situ with 4.2.11 / 4.5 ambient motion
-        so they share token vocabulary. SWITCH PROFILE is local-only and
-        just needs the local profile-re-lock transition.
-      -->
       <div class="actions">
-        <button class="action">
+        <button class="action" data-action="switch">
           <div class="action-icon">⇄</div>
           <div>
             <div class="action-title">SWITCH PROFILE</div>
@@ -449,7 +661,7 @@
           </div>
         </button>
 
-        <button class="action" data-hold>
+        <button class="action" data-hold data-action="game">
           <span class="hold-fill"></span>
           <div class="action-icon">◉</div>
           <div>
@@ -458,7 +670,7 @@
           </div>
         </button>
 
-        <button class="action danger" data-hold>
+        <button class="action danger" data-hold data-action="shutdown">
           <span class="hold-fill"></span>
           <div class="action-icon">⏻</div>
           <div>
@@ -468,22 +680,92 @@
         </button>
       </div>
     </div>
+
+    <!-- Post-state destinations (each animation reveals one) -->
+    <div class="poststate poststate-switch" id="ps-switch">
+      <div class="welcome">WELCOME, PORTAL MASTER</div>
+      <div class="welcome-sub">pick who's playing</div>
+      <div class="profile-grid">
+        <div class="profile-tile tile-just-left">
+          <div class="tile-swatch" style="background: var(--el-magic);">F</div>
+          <div class="tile-name">FINN</div>
+        </div>
+        <div class="profile-tile">
+          <div class="tile-swatch" style="background: var(--el-fire);">A</div>
+          <div class="tile-name">AVA</div>
+        </div>
+        <div class="profile-tile">
+          <div class="tile-swatch" style="background: var(--el-water);">K</div>
+          <div class="tile-name">KAI</div>
+        </div>
+        <div class="profile-tile">
+          <div class="tile-swatch" style="background: linear-gradient(135deg, #5fd46a, #1b6a22);">+</div>
+          <div class="tile-name">NEW</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="poststate poststate-game" id="ps-game">
+      <div class="pick-title">PICK AN ADVENTURE</div>
+      <div class="game-grid">
+        <div class="game-card">
+          <div class="game-cover"></div>
+          <div>
+            <div class="game-name">SPYRO'S ADVENTURE</div>
+            <div class="game-sub">where it all began</div>
+          </div>
+        </div>
+        <div class="game-card">
+          <div class="game-cover sg"></div>
+          <div>
+            <div class="game-name">GIANTS</div>
+            <div class="game-sub">big heroes, bigger quests</div>
+          </div>
+        </div>
+        <div class="game-card">
+          <div class="game-cover tt"></div>
+          <div>
+            <div class="game-name">TRAP TEAM</div>
+            <div class="game-sub">currently playing</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="poststate poststate-shutdown" id="ps-shutdown">
+      <div>
+        <div class="farewell-text">SEE YOU NEXT TIME,<br>PORTAL MASTER</div>
+        <div class="farewell-sub">(disconnected)</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button data-demo="switch">▶ SWITCH PROFILE</button>
+    <button data-demo="game">▶ CHOOSE ANOTHER GAME</button>
+    <button data-demo="shutdown">▶ SHUT DOWN</button>
+    <button class="replay" id="replay">↻ REPLAY</button>
   </div>
 
 <script>
-  // Hold-to-confirm for destructive buttons (matches reset_confirm).
+  // Hold-to-confirm for destructive buttons. After fire, route to the
+  // matching post-action animation based on data-action.
   const HOLD_MS = 1200;
   document.querySelectorAll('[data-hold]').forEach((btn) => {
     let timer = null;
     const start = (e) => {
       e.preventDefault();
-      if (btn.classList.contains('fired')) return;
+      if (btn.classList.contains('fired') || btn.disabled) return;
       btn.classList.add('holding');
       timer = setTimeout(() => {
         btn.classList.remove('holding');
         btn.classList.add('fired');
+        btn.disabled = true;
         console.log('[hold-to-confirm] fired:', btn.querySelector('.action-title')?.textContent);
         setTimeout(() => btn.classList.remove('fired'), 600);
+        // Fire-flash crests around 150ms; start the post-state a beat
+        // after so the flash reads as the "trigger".
+        setTimeout(() => runAnimation(btn.dataset.action), 380);
       }, HOLD_MS);
     };
     const cancel = () => {
@@ -494,6 +776,77 @@
     btn.addEventListener('pointerup', cancel);
     btn.addEventListener('pointerleave', cancel);
     btn.addEventListener('pointercancel', cancel);
+  });
+
+  // SWITCH PROFILE is single-tap (local-only re-lock).
+  const switchBtn = document.querySelector('[data-action="switch"]');
+  switchBtn.addEventListener('click', () => {
+    if (switchBtn.disabled) return;
+    switchBtn.disabled = true;
+    switchBtn.classList.add('fired');
+    setTimeout(() => switchBtn.classList.remove('fired'), 600);
+    setTimeout(() => runAnimation('switch'), 280);
+  });
+
+  // Animations. All three dismiss the menu panel + scrim the same way,
+  // then branch: identity-drain / fold-away / lights-dim.
+  function runAnimation(action) {
+    const panel = document.querySelector('.menu-panel');
+    const scrim = document.querySelector('.scrim');
+    const underlay = document.querySelector('.underlay');
+    const sky = document.querySelector('.sky');
+    const stars = document.querySelector('.stars');
+    panel.classList.add('dismissing');
+    scrim.classList.add('dismissing');
+
+    if (action === 'switch') {
+      setTimeout(() => {
+        underlay.classList.add('re-lock');
+        document.getElementById('ps-switch').classList.add('show');
+      }, 360);
+    } else if (action === 'game') {
+      setTimeout(() => {
+        underlay.classList.add('fold-away');
+        setTimeout(() => {
+          document.getElementById('ps-game').classList.add('show');
+        }, 260);
+      }, 280);
+    } else if (action === 'shutdown') {
+      setTimeout(() => {
+        sky.classList.add('dimming');
+        stars.classList.add('dimming');
+        underlay.classList.add('dimming');
+        setTimeout(() => {
+          document.getElementById('ps-shutdown').classList.add('show');
+        }, 700);
+      }, 280);
+    }
+  }
+
+  // Demo controls: skip the button-press and just play the animation.
+  document.querySelectorAll('[data-demo]').forEach((btn) => {
+    btn.addEventListener('click', () => runAnimation(btn.dataset.demo));
+  });
+
+  // Replay restores the initial state so the design can be re-watched.
+  document.getElementById('replay').addEventListener('click', () => {
+    const panel = document.querySelector('.menu-panel');
+    const scrim = document.querySelector('.scrim');
+    const underlay = document.querySelector('.underlay');
+    const sky = document.querySelector('.sky');
+    const stars = document.querySelector('.stars');
+    [panel, scrim, underlay, sky, stars].forEach((el) => {
+      el.classList.remove('dismissing', 're-lock', 'fold-away', 'dimming');
+    });
+    document.querySelectorAll('.poststate').forEach((el) => el.classList.remove('show'));
+    document.querySelectorAll('[data-action]').forEach((btn) => {
+      btn.classList.remove('fired', 'holding');
+      btn.disabled = false;
+    });
+    // Force the panel-in animation to replay.
+    panel.style.animation = 'none';
+    void panel.offsetWidth;
+    panel.style.animation = '';
   });
 </script>
 </body>

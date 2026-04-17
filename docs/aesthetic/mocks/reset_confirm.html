@@ -294,6 +294,116 @@
     35%  { transform: scale(1.04); box-shadow: 0 0 44px rgba(255,255,255,0.85), 0 0 22px rgba(226,76,76,0.6); }
     100% { transform: scale(1); }
   }
+
+  /* ===== RESET SEQUENCE ANIMATION =====
+     Choreography after hold-to-confirm fires:
+
+       t=0      .fired flash plays on the button (420ms)
+       t=0      flakes spawn around the bezel rim, falling over ~1000ms
+       t=0      bezel + hero plate desaturate over 1100ms (gold → gray,
+                magic-purple → neutral) — thematic echo of the copy
+                ("all of SPYRO's treasure ... gone forever")
+       t=1100   panel scales down + fades; scrim fades; underlay unveils
+                (blur → 0, opacity → 1, magic plate also desaturates)
+       t=~2000  sequence complete. User is now looking at a "fresh"
+                figure detail view through the cleared scrim.
+
+     Real implementation: the server's `reset-to-fresh` command fires
+     on .fired, the server responds with the new figure state via WS,
+     and the phone plays this animation while the working copy is
+     replaced on disk. The timing budget (~2s) also masks any file-IO
+     latency on the server side. */
+
+  .flake {
+    position: fixed;
+    width: 7px; height: 4px;
+    border-radius: 2px;
+    background: linear-gradient(135deg, var(--gb) 0%, var(--g) 55%, var(--gm) 100%);
+    box-shadow: 0 0 6px rgba(255,220,120,0.55), inset 0 0 0 1px rgba(110,74,0,0.5);
+    pointer-events: none;
+    z-index: 50;
+    will-change: transform, opacity;
+    transform: translate(-50%, -50%);
+  }
+  @keyframes flake-fall {
+    0%   { transform: translate(-50%, -50%) rotate(0deg); opacity: 1; }
+    15%  { opacity: 1; }
+    80%  { opacity: 0.85; }
+    100% {
+      transform: translate(calc(-50% + var(--fx)), calc(-50% + var(--fy))) rotate(var(--fr));
+      opacity: 0;
+    }
+  }
+
+  .hero-bezel.resetting {
+    animation: bezel-drain 1100ms ease-in-out forwards;
+  }
+  @keyframes bezel-drain {
+    0%   { filter: saturate(1) brightness(1); }
+    55%  { filter: saturate(0.45) brightness(0.85); }
+    100% { filter: saturate(0.1) brightness(0.65); }
+  }
+
+  .hero-plate.resetting {
+    animation: plate-fade 1100ms ease-out forwards;
+  }
+  @keyframes plate-fade {
+    0%   { filter: saturate(1) brightness(1); }
+    100% { filter: saturate(0) brightness(0.55); }
+  }
+
+  .fig-title.resetting {
+    animation: title-fade 1100ms ease-out forwards;
+  }
+  @keyframes title-fade {
+    0%   { filter: saturate(1) brightness(1); }
+    100% { filter: saturate(0.15) brightness(0.6); }
+  }
+
+  .panel.dismissing {
+    animation: panel-out 520ms cubic-bezier(.5,0,.7,.5) forwards;
+  }
+  @keyframes panel-out {
+    0%   { opacity: 1; transform: scale(1) translateY(0); }
+    100% { opacity: 0; transform: scale(0.94) translateY(-6px); }
+  }
+
+  .scrim.dismissing {
+    animation: scrim-out 700ms ease-out forwards;
+  }
+  @keyframes scrim-out {
+    to { opacity: 0; }
+  }
+
+  .underlay.unveil {
+    animation: unveil 900ms ease-out forwards;
+  }
+  @keyframes unveil {
+    0%   { filter: blur(3px); opacity: 0.3; }
+    100% { filter: blur(0);   opacity: 1; }
+  }
+  .underlay.unveil .u-hero .p {
+    animation: u-plate-fade 900ms ease-out forwards;
+  }
+  @keyframes u-plate-fade {
+    0%   { filter: saturate(1) brightness(1); }
+    100% { filter: saturate(0) brightness(0.6); }
+  }
+
+  /* Replay control — dev-only, hidden on tight phone viewports. */
+  .replay {
+    position: fixed; top: 20px; right: 20px;
+    padding: 8px 14px;
+    font-family: "Titan One"; font-size: 11px; letter-spacing: 0.2em;
+    color: #d0d0d0;
+    background: rgba(20,20,20,0.85);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 8px;
+    cursor: pointer;
+    z-index: 100;
+  }
+  .replay:hover { background: rgba(40,40,40,0.95); color: #fff; }
+  @media (max-width: 450px) { .replay { display: none; } }
 </style>
 </head>
 <body>
@@ -327,40 +437,40 @@
 
         <div class="actions">
           <button class="btn btn-tertiary">KEEP SPYRO</button>
-          <!--
-            TODO (PLAN 4.2.11 / 4.5 ambient motion pass):
-            After the hold completes and `.fired` flashes white, the view
-            should play a "figure-reset" state animation before dismissing
-            the modal — e.g. gold flakes dropping off the bezel, the hero
-            plate desaturating / returning to a fresh-figure look, then
-            the panel fades. Designed alongside the other screen-level
-            state animations; for now the mock just logs to the console.
-          -->
-          <button class="btn btn-danger" data-hold>
+          <button class="btn btn-danger" data-hold data-reset-btn>
             <span class="hold-fill"></span>
             <span class="btn-label">HOLD TO RESET</span>
           </button>
         </div>
       </div>
     </div>
+  </div>
+
+  <button class="replay" id="replay">↻ REPLAY</button>
 
 <script>
   // Hold-to-confirm for destructive buttons. Design rule: any `[data-hold]`
   // button on a danger-styled surface requires a ~1.2s press. Releasing
-  // early cancels; holding through completes the action (mock: flash +
-  // console log stands in for the real destructive call).
+  // early cancels; holding through completes the action.
   const HOLD_MS = 1200;
   document.querySelectorAll('[data-hold]').forEach((btn) => {
     let timer = null;
     const start = (e) => {
       e.preventDefault();
-      if (btn.classList.contains('fired')) return;
+      if (btn.classList.contains('fired') || btn.disabled) return;
       btn.classList.add('holding');
       timer = setTimeout(() => {
         btn.classList.remove('holding');
         btn.classList.add('fired');
+        btn.disabled = true;
         console.log('[hold-to-confirm] fired:', btn.querySelector('.btn-label')?.textContent);
         setTimeout(() => btn.classList.remove('fired'), 600);
+        if (btn.hasAttribute('data-reset-btn')) {
+          // Wait for the fire flash to crest before the drain begins, so
+          // the white flash reads as the "trigger" and the desaturation
+          // reads as the "consequence".
+          setTimeout(playResetSequence, 380);
+        }
       }, HOLD_MS);
     };
     const cancel = () => {
@@ -372,7 +482,72 @@
     btn.addEventListener('pointerleave', cancel);
     btn.addEventListener('pointercancel', cancel);
   });
+
+  // Reset sequence — see the CSS block for the full choreography rationale.
+  const FLAKE_COUNT = 14;
+  function playResetSequence() {
+    const panel   = document.querySelector('.panel');
+    const bezel   = panel.querySelector('.hero-bezel');
+    const plate   = panel.querySelector('.hero-plate');
+    const title   = panel.querySelector('.fig-title');
+    const scrim   = document.querySelector('.scrim');
+    const underlay = document.querySelector('.underlay');
+
+    // Flakes spawn at positions on the bezel rim (in viewport coords via
+    // getBoundingClientRect), fall with random drift + rotation, fade.
+    const rect = bezel.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const r  = rect.width / 2 - 3;
+    for (let i = 0; i < FLAKE_COUNT; i++) {
+      const flake = document.createElement('div');
+      flake.className = 'flake';
+      const angle = Math.random() * Math.PI * 2;
+      flake.style.left = (cx + Math.cos(angle) * r) + 'px';
+      flake.style.top  = (cy + Math.sin(angle) * r) + 'px';
+      flake.style.setProperty('--fx', (Math.random() * 90 - 45).toFixed(1) + 'px');
+      flake.style.setProperty('--fy', (70 + Math.random() * 90).toFixed(1) + 'px');
+      flake.style.setProperty('--fr', (Math.random() * 360 - 180).toFixed(1) + 'deg');
+      const dur = 700 + Math.random() * 400;
+      const delay = Math.random() * 220;
+      flake.style.animation = `flake-fall ${dur}ms ${delay}ms ease-in forwards`;
+      document.body.appendChild(flake);
+      setTimeout(() => flake.remove(), dur + delay + 80);
+    }
+
+    bezel.classList.add('resetting');
+    plate.classList.add('resetting');
+    title.classList.add('resetting');
+
+    setTimeout(() => {
+      panel.classList.add('dismissing');
+      scrim.classList.add('dismissing');
+      underlay.classList.add('unveil');
+    }, 1100);
+  }
+
+  // Replay control for design review — restores initial state.
+  document.getElementById('replay').addEventListener('click', () => {
+    document.querySelectorAll('.flake').forEach((f) => f.remove());
+    const panel = document.querySelector('.panel');
+    const bezel = panel.querySelector('.hero-bezel');
+    const plate = panel.querySelector('.hero-plate');
+    const title = panel.querySelector('.fig-title');
+    const scrim = document.querySelector('.scrim');
+    const underlay = document.querySelector('.underlay');
+    const btn = panel.querySelector('[data-reset-btn]');
+    [panel, bezel, plate, title, scrim, underlay, btn].forEach((el) => {
+      el.classList.remove('dismissing', 'resetting', 'unveil', 'holding', 'fired');
+    });
+    btn.disabled = false;
+    // Re-trigger panel-in by forcing a reflow.
+    panel.style.animation = 'none';
+    void panel.offsetWidth;
+    panel.style.animation = '';
+    scrim.style.animation = 'none';
+    void scrim.offsetWidth;
+    scrim.style.animation = '';
+  });
 </script>
-  </div>
 </body>
 </html>
