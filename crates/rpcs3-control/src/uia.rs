@@ -674,8 +674,62 @@ impl crate::PortalDriver for UiaPortalDriver {
         }
 
         load_btn.get_pattern::<UIInvokePattern>()?.invoke()?;
+
+        // Poll `EnumWindows` for any newly-visible `#32770` common-dialog
+        // frame(s) — RPCS3's "Select Skylander File" is a native Windows
+        // common dialog, and Qt clamps it to on-screen coords whenever its
+        // parent (the off-screen Skylanders Manager) is off-screen. We
+        // sling every visible #32770 off-screen ourselves, then re-check
+        // on each poll iteration because Windows can re-parent/reposition
+        // the dialog slightly after creation. Polling at 5ms beats the
+        // 30ms sampler cadence in tests and stays well ahead of any
+        // paint that the user would perceive.
+        let sling_deadline = Instant::now() + DIALOG_OPEN_TIMEOUT;
+        let mut slung_any = false;
+        loop {
+            let hits = find_visible_file_dialogs();
+            for hwnd in &hits {
+                unsafe {
+                    if SetWindowPos(
+                        *hwnd,
+                        None,
+                        OFFSCREEN_POS.0,
+                        OFFSCREEN_POS.1,
+                        0,
+                        0,
+                        SWP_NOSIZE | SWP_NOZORDER,
+                    )
+                    .is_ok()
+                    {
+                        slung_any = true;
+                    }
+                }
+            }
+            // Once something was slung AND nothing on-screen remains, stop.
+            if slung_any && !hits.iter().any(|h| {
+                let mut r = RECT::default();
+                unsafe {
+                    GetWindowRect(*h, &mut r).ok();
+                }
+                r.left > -1000 || r.top > -1000
+            }) {
+                break;
+            }
+            if Instant::now() >= sling_deadline {
+                if !slung_any {
+                    bail!(
+                        "file dialog #32770 HWND didn't appear within {DIALOG_OPEN_TIMEOUT:?}"
+                    );
+                }
+                break;
+            }
+            sleep(Duration::from_millis(5));
+        }
+        debug!(?OFFSCREEN_POS, "file dialog(s) slung off-screen");
+
         let file_dlg =
             self.wait_for_child_window(&walker, "Select Skylander File", DIALOG_OPEN_TIMEOUT)?;
+
         let file_edit = find_descendant(&walker, &file_dlg, |el| {
             el.get_control_type()
                 .map(|c| c == ControlType::Edit)
@@ -1069,6 +1123,39 @@ where
 
 /// Enumerate top-level windows, return the HWND of the RPCS3 game viewport
 /// if one is present (only exists while a game is running).
+/// Enumerate top-level VISIBLE `#32770` common-dialog frames (file pickers,
+/// color pickers, etc.). RPCS3 may have multiple such dialogs live across
+/// a session, so we return every visible one and let the caller filter or
+/// move them all. Visibility filter matches what the 3.7.4 sampler uses —
+/// otherwise we'd move a stale/hidden #32770 and leave the user-visible
+/// one in place.
+fn find_visible_file_dialogs() -> Vec<HWND> {
+    use windows::Win32::UI::WindowsAndMessaging::IsWindowVisible;
+
+    struct Ctx {
+        hits: Vec<HWND>,
+    }
+    extern "system" fn proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let ctx = unsafe { &mut *(lparam.0 as *mut Ctx) };
+        unsafe {
+            if !IsWindowVisible(hwnd).as_bool() {
+                return BOOL(1);
+            }
+        }
+        let cls = read_class(hwnd).unwrap_or_default();
+        if cls == "#32770" {
+            ctx.hits.push(hwnd);
+        }
+        BOOL(1)
+    }
+    let mut ctx = Ctx { hits: Vec::new() };
+    unsafe {
+        let lp = LPARAM(&mut ctx as *mut _ as isize);
+        let _ = EnumWindows(Some(proc), lp);
+    }
+    ctx.hits
+}
+
 fn find_viewport_hwnd() -> Option<HWND> {
     struct Ctx {
         hit: Option<HWND>,

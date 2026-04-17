@@ -202,6 +202,14 @@ fn offscreen_hide_really_hides() {
     let (proc, driver) = open_and_boot();
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // `open_dialog` auto-hides the Skylanders Manager off-screen the
+        // instant it appears (for the real UX), so we have to explicitly
+        // restore it before we can test that `hide_dialog_offscreen` works.
+        driver
+            .restore_dialog_visible(100, 100)
+            .expect("restore_dialog_visible (setup)");
+        thread::sleep(Duration::from_millis(200));
+
         // Pre-condition: manager is on-screen with a positive x.
         let before = find_window_by_title("Skylanders Manager")
             .expect("dialog HWND findable pre-hide");
