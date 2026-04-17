@@ -4,8 +4,10 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
 
 use crate::state::LauncherStatus;
+use crate::vortex::{self, VortexParams};
 use crate::{fonts, palette};
 
 pub struct LauncherApp {
@@ -14,6 +16,10 @@ pub struct LauncherApp {
     url: String,
     figure_count: usize,
     qr_texture: Option<egui::TextureHandle>,
+    /// Monotonic animation clock for the cloud vortex (PLAN 4.15.5).
+    /// `egui::Context::input(|i| i.time)` would work too but is f64 and
+    /// resets on Context rebuild; keeping our own `Instant` is simpler.
+    started: Instant,
 }
 
 impl LauncherApp {
@@ -37,6 +43,7 @@ impl LauncherApp {
             url,
             figure_count,
             qr_texture,
+            started: Instant::now(),
         }
     }
 }
@@ -172,11 +179,20 @@ fn render_qr_texture(ctx: &egui::Context, url: &str) -> egui::TextureHandle {
 
 impl eframe::App for LauncherApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        ctx.request_repaint_after(std::time::Duration::from_millis(250));
+        // 60 FPS repaint cadence — the vortex animation needs smooth motion.
+        // Before 4.15.5 this was 250ms; the old rate would strobe the arms.
+        ctx.request_repaint_after(std::time::Duration::from_millis(16));
 
         let status_snapshot = self.status.lock().map(|s| s.clone()).unwrap_or_default();
+        let time_s = self.started.elapsed().as_secs_f32();
 
         egui::CentralPanel::default().show(ctx, |ui| {
+            // Vortex first so all foreground widgets layer on top of the
+            // clouds. Drawn via `ui.painter()` rather than a child frame
+            // so it fills the whole CentralPanel including the padding.
+            let rect = ui.max_rect();
+            vortex::draw(ui.painter(), rect, time_s, VortexParams::default());
+
             ui.vertical_centered(|ui| {
                 ui.add_space(16.0);
                 status_strip(ui, &status_snapshot);

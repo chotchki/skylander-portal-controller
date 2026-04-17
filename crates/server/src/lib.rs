@@ -13,5 +13,6 @@ pub mod profiles;
 pub mod sky_stats;
 pub mod state;
 pub mod ui;
+pub mod vortex;
 pub mod wizard;
 pub mod working_copies;
