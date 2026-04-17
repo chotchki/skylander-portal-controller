@@ -452,9 +452,9 @@ Remaining Phase 3 deferrals (3.10.7 ownership, 3.10.8 show-join-code, 3.10e.6 ow
 
 ### 4.1 Design tokens + CSS architecture
 
-- [ ] 4.1.1 Palette: starfield blues (`--sf-1/2/3`), gold bezel stops (`--gold-bright/gold/gold-mid/gold-shadow/gold-inner`), per-element gradients (`--el-*`), status colors (loading/error/success). Kaos (5.4) variants defined as sibling vars upfront.
+- [x] 4.1.1 Palette: starfield blues (`--sf-1/2/3`), gold bezel stops (`--gold-bright/gold/gold-mid/gold-shadow/gold-inner`), per-element gradients (`--el-*`), status colors (loading/error/success). Kaos (5.4) variants defined as sibling vars upfront.
 - [ ] 4.1.2 Typography: **Titan One** (display), **Fraunces** (body). Self-host under `phone/assets/fonts/`. Both are OFL-licensed; note in `data/LICENSE.md`.
-- [ ] 4.1.3 Easing + timing tokens — `--ease-spring`, `--ease-sweep`, `--dur-tap`, `--dur-loading-sweep` (0.9s), `--dur-impact` (600ms), `--dur-shudder` (400ms), `--dur-halo-slow` (3.4s), `--dur-idle-float` (4.5s).
+- [x] 4.1.3 Easing + timing tokens — `--ease-spring`, `--ease-sweep`, `--dur-tap`, `--dur-loading-sweep` (0.9s), `--dur-impact` (600ms), `--dur-shudder` (400ms), `--dur-halo-slow` (3.4s), `--dur-idle-float` (4.5s).
 - [ ] 4.1.4 CSS vars restructured so a body-class swap (`.skin-kaos`) repalettes the whole app without touching component CSS.
 - [ ] 4.1.5 `prefers-reduced-motion` kill-switch disables ambient drift + halo rotations app-wide.
 
@@ -526,78 +526,78 @@ Direction locked to Option A. Standalone HTML/CSS in `docs/aesthetic/mocks/`, vi
 
 ### 4.4 Shared Leptos components
 
-- [ ] 4.4.1 `<GoldBezel>` — circular gold frame with element-tinted inner plate. Props: `size`, `element`, `state` (default / picking / loading / loaded / errored / disabled), child content. **Primary child is an `<img>` thumbnail** (`/api/figures/{id}/image?size=thumb`) that fills the circle; the element-gradient plate shows through as a fallback for figures without wiki images (16 of 504). Profile swatches use an initial letter instead. Reused by portal slots, browser cards, profile swatches, empty-slot "+", color-picker swatches, and the hero bezel in the figure detail view.
-- [ ] 4.4.2 `<FramedPanel>` — parchment-blue panel with a multi-stop gold gradient border for modal surfaces (PIN, admin, resume, confirms, takeover, show-join, figure detail). **No corner brackets** — the gradient border does the framing; brackets were visual noise. Consistent across all panels.
-- [ ] 4.4.3 `<DisplayHeading>` — two-tone outlined title: gold fill (linear-gradient via `background-clip: text`) + dark-gold `-webkit-text-stroke` + drop-shadow. Matches the "DARES" / "IMAGINITE" treatment.
-- [ ] 4.4.4 `<RayHalo>` — rotating conic-gradient halo for selected / loading state, masked to a ring.
-- [ ] 4.4.5 `<FigureHero>` — the lifted figure presentation used in the detail view: oversized `<GoldBezel>` + soft aura + slow-rotating conic-gradient rays. Takes a `state` prop (`default`, `loading`, `errored`) that switches the bezel treatment + triggers the loading ring overlay. Reused by the Kaos swap-announcement overlay (5.3).
+- [x] 4.4.1 `<GoldBezel>` — circular gold frame with element-tinted inner plate. Props: `size`, `element`, `state` (default / picking / loading / loaded / errored / disabled), child content. **Primary child is an `<img>` thumbnail** (`/api/figures/{id}/image?size=thumb`) that fills the circle; the element-gradient plate shows through as a fallback for figures without wiki images (16 of 504). Profile swatches use an initial letter instead. Reused by portal slots, browser cards, profile swatches, empty-slot "+", color-picker swatches, and the hero bezel in the figure detail view.
+- [x] 4.4.2 `<FramedPanel>` — parchment-blue panel with a multi-stop gold gradient border for modal surfaces (PIN, admin, resume, confirms, takeover, show-join, figure detail). **No corner brackets** — the gradient border does the framing; brackets were visual noise. Consistent across all panels.
+- [x] 4.4.3 `<DisplayHeading>` — two-tone outlined title: gold fill (linear-gradient via `background-clip: text`) + dark-gold `-webkit-text-stroke` + drop-shadow. Matches the "DARES" / "IMAGINITE" treatment.
+- [x] 4.4.4 `<RayHalo>` — rotating conic-gradient halo for selected / loading state, masked to a ring.
+- [x] 4.4.5 `<FigureHero>` — the lifted figure presentation used in the detail view: oversized `<GoldBezel>` + soft aura + slow-rotating conic-gradient rays. Takes a `state` prop (`default`, `loading`, `errored`) that switches the bezel treatment + triggers the loading ring overlay. Reused by the Kaos swap-announcement overlay (5.3).
 
 ### 4.5 Starfield background + ambient motion
 
-- [ ] 4.5.1 Layered starfield: multiple radial gradients + tiled SVG star-dot layer + slow parallax drift (~40s loop). Single shared background on `body`, so screen changes feel continuous.
+- [x] 4.5.1 Layered starfield: multiple radial gradients + tiled SVG star-dot layer + slow parallax drift (~40s loop). Single shared background on `body`, so screen changes feel continuous.
 - [ ] 4.5.2 Optional "magic dust" — sparse floating-particle layer; evaluate CPU cost on the HTPC before committing.
 
 ### 4.6 Portal view reskin + state transitions
 
-- [ ] 4.6.1 Slots render through `<GoldBezel>`. Empty slot = dimmed bezel with a "+" in the center.
-- [ ] 4.6.2 Empty → Picking: scale 1.05 spring-ease, outer gold glow intensifies, `<RayHalo>` fades in and begins a slow rotation.
+- [x] 4.6.1 Slots render through `<GoldBezel>`. Empty slot = dimmed bezel with a "+" in the center.
+- [x] 4.6.2 Empty → Picking: scale 1.05 spring-ease, outer gold glow intensifies, `<RayHalo>` fades in and begins a slow rotation.
 - [ ] 4.6.3 Pick → Loading: halo rotation speeds up, a gold sweep travels once around the bezel ring (~1s loop), inner plate dims 20%.
 - [ ] 4.6.4 Loading → Loaded: "portal impact" — radial white→gold flash scales from 0 → 2× and fades (~400ms), bezel brightness spikes briefly, then settles into a subtle 4s idle float (±2px).
-- [ ] 4.6.5 Loaded → Cleared: desaturate + shrink, fade thumb out to element plate (~200ms).
-- [ ] 4.6.6 Errored: red-tinted bezel, short shake animation + persistent subdued red glow until dismissed.
-- [ ] 4.6.7 Slot tap feedback: inner-plate "dent" (inset shadow + 0.96 scale), spring back.
+- [x] 4.6.5 Loaded → Cleared: desaturate + shrink, fade thumb out to element plate (~200ms).
+- [x] 4.6.6 Errored: red-tinted bezel, short shake animation + persistent subdued red glow until dismissed.
+- [x] 4.6.7 Slot tap feedback: inner-plate "dent" (inset shadow + 0.96 scale), spring back.
 
 ### 4.6b Figure detail view (the "lifted" hero panel)
 
 Implemented as a new screen reached by tapping a figure inside the toy box. Shell only in Phase 4; the action-icon wiring lands with later work (3.14 variants → appearance icon; 6.3 stats → stats icon; 3.11.3 reset → reset icon).
 
-- [ ] 4.6b.1 `<FigureDetail>` Leptos component. Props: `figure: PublicFigure`, `placed_by: Option<String>` (for stats strip context), `on_back: Callback`, `on_place: Callback`. Internal state: `idle | loading | errored { message: String }`.
-- [ ] 4.6b.2 Entrance animation: other figures + box interior crossfade to ~25% opacity; selected `<FigureHero>` lifts from its grid position via FLIP-style transform; framed panel fades in behind (staggered ~120ms).
-- [ ] 4.6b.3 Action-icon row: three `<BezelButton>`s with placeholder icons + disabled state + "coming soon" tooltip until 3.14/6.3/3.11.3 wire real handlers. Keeps Phase 4 contained while locking the layout.
-- [ ] 4.6b.4 Stats preview strip — placeholder values in Phase 4 (shows the layout but reads from a stub). 6.3 pulls real numbers from `/api/profiles/:profile_id/figures/:figure_id/stats`.
-- [ ] 4.6b.5 `PLACE ON PORTAL` (primary) calls `on_place`; while awaiting the WS confirmation, state flips to `loading` and the hero bezel's loading ring spins. On WS `SlotChanged` with matching figure_id → box lid closes, portal-impact animation fires on the target slot. On error → state flips to `errored`, inline error banner slides in from top of panel. **Client-side timeout (8s default, configurable)**: if no `SlotChanged` or error arrives, auto-flip to `errored` with a "took too long — try again?" message. Prevents the user from sitting on a permanent loading spinner if the WS drops mid-operation.
-- [ ] 4.6b.6 `BACK TO BOX` (secondary) reverses the entrance animation and returns to the collection grid with scroll position preserved. **Must remain enabled in the loading and errored states** — the user should never be trapped waiting on the server. Backing out mid-load doesn't cancel the load (the figure may still appear on the portal once it completes); it just returns the user to the box. If the WS eventually reports success while the user is elsewhere, no UI disruption — the slot just populates.
-- [ ] 4.6b.7 Server contract unchanged: phone sends figure_id; server picks the slot (first-available or picking-for-specific-slot context). Phone never names a slot in the request.
+- [x] 4.6b.1 `<FigureDetail>` Leptos component. Props: `figure: PublicFigure`, `placed_by: Option<String>` (for stats strip context), `on_back: Callback`, `on_place: Callback`. Internal state: `idle | loading | errored { message: String }`.
+- [x] 4.6b.2 Entrance animation: other figures + box interior crossfade to ~25% opacity; selected `<FigureHero>` lifts from its grid position via FLIP-style transform; framed panel fades in behind (staggered ~120ms).
+- [x] 4.6b.3 Action-icon row: three `<BezelButton>`s with placeholder icons + disabled state + "coming soon" tooltip until 3.14/6.3/3.11.3 wire real handlers. Keeps Phase 4 contained while locking the layout.
+- [x] 4.6b.4 Stats preview strip — placeholder values in Phase 4 (shows the layout but reads from a stub). 6.3 pulls real numbers from `/api/profiles/:profile_id/figures/:figure_id/stats`.
+- [x] 4.6b.5 `PLACE ON PORTAL` (primary) calls `on_place`; while awaiting the WS confirmation, state flips to `loading` and the hero bezel's loading ring spins. On WS `SlotChanged` with matching figure_id → box lid closes, portal-impact animation fires on the target slot. On error → state flips to `errored`, inline error banner slides in from top of panel. **Client-side timeout (8s default, configurable)**: if no `SlotChanged` or error arrives, auto-flip to `errored` with a "took too long — try again?" message. Prevents the user from sitting on a permanent loading spinner if the WS drops mid-operation.
+- [x] 4.6b.6 `BACK TO BOX` (secondary) reverses the entrance animation and returns to the collection grid with scroll position preserved. **Must remain enabled in the loading and errored states** — the user should never be trapped waiting on the server. Backing out mid-load doesn't cancel the load (the figure may still appear on the portal once it completes); it just returns the user to the box. If the WS eventually reports success while the user is elsewhere, no UI disruption — the slot just populates.
+- [x] 4.6b.7 Server contract unchanged: phone sends figure_id; server picks the slot (first-available or picking-for-specific-slot context). Phone never names a slot in the request.
 
 ### 4.7 Browser view reskin
 
-- [ ] 4.7.1 Figure cards use a smaller `<GoldBezel>` as the portrait; card itself becomes a minimal frame under the bezel.
-- [ ] 4.7.2 Element chips redesigned as gold-bordered pills with element-tinted fills.
-- [ ] 4.7.3 `on-portal` state: desaturated bezel + a "ON PORTAL" gold ribbon across the corner.
-- [ ] 4.7.4 Search input: gold shimmer sweep along the border on focus (one-shot).
-- [ ] 4.7.5 Empty/filtered-out state: themed empty-state illustration + copy, not the plain text we have today.
+- [x] 4.7.1 Figure cards use a smaller `<GoldBezel>` as the portrait; card itself becomes a minimal frame under the bezel.
+- [x] 4.7.2 Element chips redesigned as gold-bordered pills with element-tinted fills.
+- [x] 4.7.3 `on-portal` state: desaturated bezel + a "ON PORTAL" gold ribbon across the corner.
+- [x] 4.7.4 Search input: gold shimmer sweep along the border on focus (one-shot).
+- [x] 4.7.5 Empty/filtered-out state: themed empty-state illustration + copy, not the plain text we have today.
 
 ### 4.8 Profile picker reskin
 
-- [ ] 4.8.1 Big `<DisplayHeading>` "WELCOME, PORTAL MASTER".
-- [ ] 4.8.2 Profile cards: oversized gold-bezeled swatches with the initial rendered in the display font. Each profile's color tints the inner plate.
-- [ ] 4.8.3 "Add profile" affordance → prominent "+" bezel card instead of the placeholder button.
-- [ ] 4.8.4 Entry animation: cards bloom in from center, 80ms stagger.
+- [x] 4.8.1 Big `<DisplayHeading>` "WELCOME, PORTAL MASTER".
+- [x] 4.8.2 Profile cards: oversized gold-bezeled swatches with the initial rendered in the display font. Each profile's color tints the inner plate.
+- [x] 4.8.3 "Add profile" affordance → prominent "+" bezel card instead of the placeholder button.
+- [x] 4.8.4 Entry animation: cards bloom in from center, 80ms stagger.
 
 ### 4.9 PIN keypad reskin
 
-- [ ] 4.9.1 `<FramedPanel>` surround. PIN dots become mini gold bezels that fill with element-tinted plates as digits are entered.
-- [ ] 4.9.2 Key press feedback: inset-shadow dent + soft "click" animation (≤100ms), plus subtle haptic-adjacent bounce.
+- [x] 4.9.1 `<FramedPanel>` surround. PIN dots become mini gold bezels that fill with element-tinted plates as digits are entered.
+- [x] 4.9.2 Key press feedback: inset-shadow dent + soft "click" animation (≤100ms), plus subtle haptic-adjacent bounce.
 - [ ] 4.9.3 Unlock success: shockwave ring outward from profile swatch + gold streak L→R sweep as the panel fades out.
-- [ ] 4.9.4 Lockout state: panel tinted red, countdown in the display font, keys visually disabled (not hidden).
+- [x] 4.9.4 Lockout state: panel tinted red, countdown in the display font, keys visually disabled (not hidden).
 
 ### 4.10 Profile admin reskin
 
-- [ ] 4.10.1 `<FramedPanel>` surround. Form inputs themed (rounded, gold focus outline, display-font labels).
-- [ ] 4.10.2 Color picker swatches are mini gold bezels.
-- [ ] 4.10.3 Destructive actions (delete, reset-PIN) clearly marked with a red-tinted framing.
+- [x] 4.10.1 `<FramedPanel>` surround. Form inputs themed (rounded, gold focus outline, display-font labels).
+- [x] 4.10.2 Color picker swatches are mini gold bezels.
+- [x] 4.10.3 Destructive actions (delete, reset-PIN) clearly marked with a red-tinted framing.
 
 ### 4.11 Game picker reskin
 
-- [ ] 4.11.1 Game cards with room for per-game artwork (placeholder text if we don't have the assets yet).
-- [ ] 4.11.2 Card entry animation: stagger-rise from below, 80ms per card.
-- [ ] 4.11.3 Selected-card confirmation flash before the WS signal flips the UI to portal view.
+- [x] 4.11.1 Game cards with room for per-game artwork (placeholder text if we don't have the assets yet).
+- [x] 4.11.2 Card entry animation: stagger-rise from below, 80ms per card.
+- [x] 4.11.3 Selected-card confirmation flash before the WS signal flips the UI to portal view.
 
 ### 4.12 Modals + takeover screen
 
-- [ ] 4.12.1 Resume-last-setup modal (3.12.2 UI): `<FramedPanel>` with a figure-preview row of gold bezels, "Resume" + "Start fresh" CTAs.
+- [x] 4.12.1 Resume-last-setup modal (3.12.2 UI): `<FramedPanel>` with a figure-preview row of gold bezels, "Resume" + "Start fresh" CTAs.
 - [ ] 4.12.2 Reset-to-fresh confirm (3.11.3 UI).
-- [ ] 4.12.3 Takeover/Kaos screen polish — stays blue (the Kaos skin itself ships with 5.4; this is just restyled).
+- [x] 4.12.3 Takeover/Kaos screen polish — stays blue (the Kaos skin itself ships with 5.4; this is just restyled).
 - [ ] 4.12.4 Show-join-code sheet scaffolded — `<FramedPanel>` with a gold-bezeled QR and join URL. The real content wiring to 3.10.8 happens in the post-Phase-4 follow-up; this milestone just delivers the modal shell and a header entry point that navigates to it.
 - [ ] 4.12.4b **Menu overlay** (opened by header kebab). Single surface that consolidates: (a) show-join-code QR (prominent, always visible — answers "how does my friend join?"), (b) current profile chip for context, (c) three stacked actions with icon + title + one-line description:
       - **SWITCH PROFILE** — locks current session, returns to profile picker. Other sessions on other phones keep their profiles.
@@ -607,8 +607,8 @@ Implemented as a new screen reached by tapping a figure inside the toy box. Shel
 
 ### 4.13 Toasts redesign
 
-- [ ] 4.13.1 Color-coded left strip (error / warn / success / info). Consistent typography with the rest of the app.
-- [ ] 4.13.2 Slide-in from top-right variant for non-blocking notifications; existing bottom-center kept for critical errors.
+- [x] 4.13.1 Color-coded left strip (error / warn / success / info). Consistent typography with the rest of the app.
+- [x] 4.13.2 Slide-in from top-right variant for non-blocking notifications; existing bottom-center kept for critical errors.
 
 ### 4.14 Ambient polish
 
