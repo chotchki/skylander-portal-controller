@@ -18,19 +18,17 @@ use uiautomation::patterns::{UIInvokePattern, UIValuePattern};
 use uiautomation::types::{ControlType, UIProperty};
 use uiautomation::{UIAutomation, UIElement, UITreeWalker};
 
-use windows::Win32::Foundation::{HWND, LPARAM, RECT};
+use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP,
-    MOUSE_EVENT_FLAGS, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
-    MOUSEEVENTF_MOVE, MOUSEINPUT, SendInput, VIRTUAL_KEY, VK_DOWN, VK_ESCAPE, VK_MENU, VK_RETURN,
-    VK_RIGHT, VK_UP,
+    INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
+    VIRTUAL_KEY, VK_DOWN, VK_ESCAPE, VK_MENU, VK_RETURN, VK_RIGHT, VK_UP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClassNameW, GetForegroundWindow, GetSystemMetrics, GetWindowRect,
-    GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, SM_CXSCREEN, SM_CYSCREEN,
-    SW_MINIMIZE, SW_RESTORE, SWP_NOSIZE, SWP_NOZORDER, SetForegroundWindow, SetWindowPos,
-    ShowWindow,
+    EnumWindows, GetClassNameW, GetForegroundWindow, GetWindowRect, GetWindowTextLengthW,
+    GetWindowTextW, GetWindowThreadProcessId, PostMessageW, SW_MINIMIZE, SW_RESTORE, SWP_NOSIZE,
+    SWP_NOZORDER, SetForegroundWindow, SetWindowPos, ShowWindow, WM_KEYDOWN, WM_KEYUP,
+    WM_LBUTTONDOWN, WM_LBUTTONUP,
 };
 use windows::core::BOOL;
 
@@ -774,29 +772,33 @@ impl crate::PortalDriver for UiaPortalDriver {
         .ok_or_else(|| anyhow!("no DataItem named {serial} in RPCS3 library"))?;
         debug!(serial, "found library cell");
 
-        // Synthesise a single mouse click at the cell's centre. UIA's
-        // `SelectionItemPattern.select` and `UIElement.set_focus` both
-        // silently fail to update the list widget's `currentIndex` on this
-        // Qt build — Enter keeps activating the alphabetically-first game
-        // regardless. A real mouse click through `SendInput` delivers the
-        // selection event Qt's QListView actually listens for, moving
-        // currentIndex to the target. Single-click (not double) because:
-        // with the Skylanders Manager dialog already open, Qt absorbs
-        // double-clicks on library cells but single clicks still select.
         let rect = cell
             .get_bounding_rectangle()
             .context("cell bounding rectangle")?;
-        let cx = rect.get_left() + (rect.get_right() - rect.get_left()) / 2;
-        let cy = rect.get_top() + (rect.get_bottom() - rect.get_top()) / 2;
+        let cx_screen = rect.get_left() + (rect.get_right() - rect.get_left()) / 2;
+        let cy_screen = rect.get_top() + (rect.get_bottom() - rect.get_top()) / 2;
 
-        let _ = focus_main_window(main_hwnd);
+        // Convert screen coords to main-window-relative. `PostMessageW`
+        // WM_LBUTTONDOWN/UP expect client-area coords, and RPCS3's library
+        // view sits at the window's client origin (no menu offset relative
+        // to the list), so subtracting the window's top-left works. Delivers
+        // the click even if an egui cover sits over RPCS3 as TOPMOST (PLAN
+        // 4.15.15's variant c — validated by `examples/zorder_probe.rs`).
+        let mut wrect = RECT::default();
+        unsafe {
+            let _ = GetWindowRect(main_hwnd, &mut wrect);
+        }
+        let lx = cx_screen - wrect.left;
+        let ly = cy_screen - wrect.top;
+        debug!(
+            cx_screen,
+            cy_screen, lx, ly, "posting WM_LBUTTONDOWN/UP to library cell"
+        );
+
+        post_click(main_hwnd, lx, ly).context("post library-cell click")?;
         sleep(MENU_STEP_PAUSE);
 
-        debug!(cx, cy, "single-clicking library cell centre");
-        mouse_single_click(cx, cy).context("single-click library cell")?;
-        sleep(MENU_STEP_PAUSE);
-
-        send_key(VK_RETURN).context("send Enter to boot selected game")?;
+        post_key(main_hwnd, VK_RETURN).context("post Enter to boot selected game")?;
 
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
@@ -1274,49 +1276,57 @@ fn key_input(vk: VIRTUAL_KEY, key_up: bool) -> INPUT {
     }
 }
 
-/// Synthesise a single left mouse click at absolute screen coordinates
-/// `(x, y)`. Primary-monitor scaled; `MOUSEEVENTF_VIRTUALDESK` would be
-/// needed for a non-primary display.
-fn mouse_single_click(x: i32, y: i32) -> Result<()> {
-    let (sw, sh) = unsafe {
-        (
-            GetSystemMetrics(SM_CXSCREEN).max(1),
-            GetSystemMetrics(SM_CYSCREEN).max(1),
-        )
-    };
-    let ax = (x as i64 * 65535 / sw as i64) as i32;
-    let ay = (y as i64 * 65535 / sh as i64) as i32;
-    let inputs = [
-        mouse_input(ax, ay, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE),
-        mouse_input(0, 0, MOUSEEVENTF_LEFTDOWN),
-        mouse_input(0, 0, MOUSEEVENTF_LEFTUP),
-    ];
+/// Post a left mouse click to `hwnd` at window-client-relative `(x, y)` via
+/// `PostMessageW`. Bypasses screen Z-order (synthesised input via
+/// `SendInput` lands on whichever window is topmost at those screen coords;
+/// `PostMessage` routes directly to the target HWND's message queue
+/// regardless of covers). Used by `boot_game_by_serial` so the boot flow
+/// survives an egui `WS_EX_TOPMOST` shell over RPCS3 — see PLAN 4.15.15
+/// and the `zorder_probe` example for the validation.
+fn post_click(hwnd: HWND, x: i32, y: i32) -> Result<()> {
+    let lparam = pack_xy_lparam(x, y);
     unsafe {
-        let n = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
-        if n as usize != inputs.len() {
-            bail!(
-                "SendInput only dispatched {n}/{} mouse events",
-                inputs.len()
-            );
-        }
+        // wParam = MK_LBUTTON (0x0001) while the button is held; 0 on release.
+        PostMessageW(Some(hwnd), WM_LBUTTONDOWN, WPARAM(0x0001), lparam)
+            .context("PostMessage WM_LBUTTONDOWN")?;
+        sleep(Duration::from_millis(50));
+        PostMessageW(Some(hwnd), WM_LBUTTONUP, WPARAM(0), lparam)
+            .context("PostMessage WM_LBUTTONUP")?;
     }
     Ok(())
 }
 
-fn mouse_input(dx: i32, dy: i32, flags: MOUSE_EVENT_FLAGS) -> INPUT {
-    INPUT {
-        r#type: INPUT_MOUSE,
-        Anonymous: INPUT_0 {
-            mi: MOUSEINPUT {
-                dx,
-                dy,
-                mouseData: 0,
-                dwFlags: flags,
-                time: 0,
-                dwExtraInfo: 0,
-            },
-        },
+/// Post a virtual-key press (down + up) to `hwnd` via `PostMessageW`. Pairs
+/// with `post_click` — both bypass Z-order so a topmost egui cover doesn't
+/// swallow the input (PLAN 4.15.15).
+fn post_key(hwnd: HWND, vk: VIRTUAL_KEY) -> Result<()> {
+    let wparam = WPARAM(vk.0 as usize);
+    unsafe {
+        // WM_KEYDOWN lParam bits: 0-15 repeat count (1), 16-23 scan code,
+        // 24 extended, 29 context (Alt=1), 30 previous key state, 31 transition.
+        // 0x0001 is "repeat count = 1, no other flags" — Qt accepts that.
+        PostMessageW(Some(hwnd), WM_KEYDOWN, wparam, LPARAM(0x0001))
+            .context("PostMessage WM_KEYDOWN")?;
+        sleep(Duration::from_millis(30));
+        // WM_KEYUP canonical lParam: repeat=1, prev-key-state=1 (bit 30),
+        // transition=1 (bit 31). 0xC0000001 packs those.
+        PostMessageW(
+            Some(hwnd),
+            WM_KEYUP,
+            wparam,
+            LPARAM(0xC0000001u32 as i32 as isize),
+        )
+        .context("PostMessage WM_KEYUP")?;
     }
+    Ok(())
+}
+
+/// Pack screen-relative or window-relative `(x, y)` into the low/high
+/// words of an `LPARAM` for `WM_LBUTTONDOWN/UP`.
+fn pack_xy_lparam(x: i32, y: i32) -> LPARAM {
+    let xl = (x as u16 as u32) & 0xFFFF;
+    let yl = (y as u16 as u32) & 0xFFFF;
+    LPARAM((xl | (yl << 16)) as isize)
 }
 
 /// After a navigation keystroke, confirm via UIA that the expected menu item
