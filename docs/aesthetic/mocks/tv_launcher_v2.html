@@ -74,53 +74,28 @@
     position: absolute; inset: 0; z-index: 2;
     display: flex; align-items: center; justify-content: center;
     pointer-events: none;
-    opacity: 0;
-    transform: scale(2);
-    transition: opacity 2s ease-out, transform 2s ease-out;
-  }
-  .cloud-vortex-wrap.visible {
-    opacity: 1;
-    transform: scale(1);
-  }
-  .cloud-vortex-wrap.spiral-out {
-    opacity: 0;
-    transform: scale(2);
-    transition: opacity 1.5s ease-in, transform 1.5s ease-in;
   }
 
   .cloud-layer {
     position: absolute;
     border-radius: 50%;
-    filter: url(#clouds);
     mix-blend-mode: screen;
+    /* Start off-screen — JS controls iris animation */
+    opacity: 0;
+    will-change: transform, opacity;
   }
 
-  /* Layers sized larger than viewport so clouds fill the screen edge-to-edge */
-  .cloud-layer.c1 {
-    width: 2800px; height: 2800px;
-    top: 50%; left: 50%;
-    transform: translate(-50%, -50%);
-    opacity: 0.55;
-    animation: cloud-spin-1 50s linear infinite;
-  }
-  .cloud-layer.c2 {
-    width: 2200px; height: 2200px;
-    top: 50%; left: 50%;
-    transform: translate(-50%, -50%);
-    opacity: 0.65;
-    animation: cloud-spin-2 38s linear infinite reverse;
-  }
-  .cloud-layer.c3 {
-    width: 1600px; height: 1600px;
-    top: 50%; left: 50%;
-    transform: translate(-50%, -50%);
-    opacity: 0.75;
-    animation: cloud-spin-3 26s linear infinite;
-  }
+  /* Layers sized larger than viewport so clouds fill edge-to-edge when centered */
+  .cloud-layer.c1 { width: 2800px; height: 2800px; }
+  .cloud-layer.c2 { width: 2200px; height: 2200px; }
+  .cloud-layer.c3 { width: 1600px; height: 1600px; }
 
-  @keyframes cloud-spin-1 { to { transform: translate(-50%, -50%) rotate(360deg); } }
-  @keyframes cloud-spin-2 { to { transform: translate(-50%, -50%) rotate(360deg); } }
-  @keyframes cloud-spin-3 { to { transform: translate(-50%, -50%) rotate(360deg); } }
+  /* Idle swirl — continuous rotation once layers are in position.
+     Applied via JS after iris-close completes. */
+  .cloud-layer.swirling.c1 { animation: cloud-idle 50s linear infinite; }
+  .cloud-layer.swirling.c2 { animation: cloud-idle 38s linear infinite reverse; }
+  .cloud-layer.swirling.c3 { animation: cloud-idle 26s linear infinite; }
+  @keyframes cloud-idle { to { transform: rotate(360deg); } }
 
   /* Subtle edge vignette — clouds fill the screen, just a gentle
      darkening at the very corners so it doesn't look clipped */
@@ -637,6 +612,69 @@
 </div>
 
 <script>
+  // ── Cloud iris animation engine ──
+  // Each of the 3 cloud layers spirals in from a different edge angle
+  // along a logarithmic spiral path (like an iris closing). Reverse for
+  // opening. Once closed, layers enter idle-swirl mode (CSS rotation).
+
+  const layers = document.querySelectorAll('.cloud-layer');
+  const TV_CX = 960, TV_CY = 540;
+  // Each layer's starting angle (radians) — spread around the edges
+  const LAYER_ANGLES = [0, Math.PI * 0.7, Math.PI * 1.4];
+  const EDGE_DIST = 1400; // px from center when fully open (off-screen)
+  const IRIS_MS = 2000;   // transition duration
+  let irisRAF = null;
+  let irisState = 'open'; // 'open' | 'closing' | 'closed' | 'opening'
+
+  function positionLayers(progress) {
+    // progress: 0 = open (layers at edge), 1 = closed (layers at center)
+    layers.forEach((el, i) => {
+      const angle = LAYER_ANGLES[i];
+      const spiralAngle = angle + progress * Math.PI * 1.5; // 1.5 turns of spiral
+      const r = EDGE_DIST * (1 - progress);
+      const x = TV_CX + Math.cos(spiralAngle) * r - el.offsetWidth / 2;
+      const y = TV_CY + Math.sin(spiralAngle) * r - el.offsetHeight / 2;
+      const rot = progress * 180 + (i * 30); // each layer rotates differently
+      el.style.transform = `translate(${x}px, ${y}px) rotate(${rot}deg)`;
+      el.style.opacity = 0.15 + progress * (i === 2 ? 0.6 : i === 1 ? 0.5 : 0.4);
+    });
+  }
+
+  function animateIris(direction, onDone) {
+    // direction: 'close' or 'open'
+    if (irisRAF) cancelAnimationFrame(irisRAF);
+    layers.forEach(el => el.classList.remove('swirling'));
+    irisState = direction === 'close' ? 'closing' : 'opening';
+    const startTime = performance.now();
+
+    function frame(ts) {
+      let t = Math.min((ts - startTime) / IRIS_MS, 1);
+      // Ease: smooth start, overshoot slightly at end
+      t = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+      const progress = direction === 'close' ? t : 1 - t;
+      positionLayers(progress);
+
+      if (t < 1) {
+        irisRAF = requestAnimationFrame(frame);
+      } else {
+        irisRAF = null;
+        irisState = direction === 'close' ? 'closed' : 'open';
+        if (direction === 'close') {
+          // Switch to idle CSS swirl
+          layers.forEach(el => {
+            el.style.transform = '';
+            el.style.left = '50%';
+            el.style.top = '50%';
+            el.style.transform = 'translate(-50%, -50%)';
+            el.classList.add('swirling');
+          });
+        }
+        if (onDone) onDone();
+      }
+    }
+    irisRAF = requestAnimationFrame(frame);
+  }
+
   // ── State machine ──
   let currentState = 1;
   let orbitRAF = null;
@@ -661,23 +699,27 @@
       if (b) b.classList.toggle('active', i === n);
     });
 
-    // Cloud vortex visibility
-    const cloudWrap = document.getElementById('cloudWrap');
+    // Cloud iris transitions
     const cloudMask = document.getElementById('cloudMask');
     const portalGlow = document.getElementById('portalGlow');
 
     if (n === 1) {
-      // Startup: no clouds
-      cloudWrap.classList.remove('visible');
-      cloudWrap.classList.add('spiral-out');
+      // Startup: iris open (clouds leave)
+      animateIris('open');
       cloudMask.style.opacity = '0';
       portalGlow.classList.remove('visible');
-    } else {
-      // States 2-5: clouds visible
-      cloudWrap.classList.remove('spiral-out');
-      cloudWrap.classList.add('visible');
+    } else if (prev === 1) {
+      // Coming from startup: iris close (clouds arrive)
       cloudMask.style.opacity = '1';
       portalGlow.classList.add('visible');
+      animateIris('close');
+    } else {
+      // Already have clouds — keep idle swirl
+      cloudMask.style.opacity = '1';
+      portalGlow.classList.add('visible');
+      if (irisState === 'open') {
+        animateIris('close');
+      }
     }
 
     // Switch content panels
@@ -694,7 +736,7 @@
     const qrBezel = document.getElementById('qrBezel');
     if (n === 3 && prev < 3) {
       qrBezel.classList.remove('spin-in');
-      void qrBezel.offsetWidth; // reflow
+      void qrBezel.offsetWidth;
       qrBezel.classList.add('spin-in');
     }
 
@@ -719,7 +761,6 @@
     const flipper5 = document.getElementById('qrFlipper5');
     const title5 = document.getElementById('state5Title');
     if (n === 5) {
-      // Start showing the front, then flip after a beat
       flipper5.classList.remove('flipped');
       title5.textContent = 'SCAN TO CONNECT';
       setTimeout(() => {
@@ -749,27 +790,17 @@
     stopOrbit();
     const pip1 = document.getElementById('pip1');
     const pip2 = document.getElementById('pip2');
-    // Elliptical orbit wide enough to clear the QR bezel + "SCAN TO CONNECT" text
     const rx = 340, ry = 280;
-    const speed = 0.0004; // radians per ms
+    const speed = 0.0004;
     let start = null;
 
     function frame(ts) {
       if (!start) start = ts;
       const t = (ts - start) * speed;
-
-      // Player 1
-      const x1 = Math.cos(t) * rx;
-      const y1 = Math.sin(t) * ry;
-      pip1.style.transform = `translate(${x1 - 32}px, ${y1 - 32}px)`;
-
-      // Player 2: 180 degrees offset
+      pip1.style.transform = `translate(${Math.cos(t) * rx - 32}px, ${Math.sin(t) * ry - 32}px)`;
       if (playerCount >= 2) {
-        const x2 = Math.cos(t + Math.PI) * rx;
-        const y2 = Math.sin(t + Math.PI) * ry;
-        pip2.style.transform = `translate(${x2 - 32}px, ${y2 - 32}px)`;
+        pip2.style.transform = `translate(${Math.cos(t + Math.PI) * rx - 32}px, ${Math.sin(t + Math.PI) * ry - 32}px)`;
       }
-
       orbitRAF = requestAnimationFrame(frame);
     }
     orbitRAF = requestAnimationFrame(frame);
@@ -809,7 +840,8 @@
     if (count) count.textContent = '0 / 189';
   }
 
-  // ── Init: state 1 ──
+  // ── Init: state 1 (clouds open, starry sky) ──
+  positionLayers(0);
   goState(1);
 </script>
 </body>
