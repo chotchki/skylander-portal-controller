@@ -621,10 +621,6 @@ Before opening a new mock file, run through:
 
 Tracked as PLAN items, parked here for visibility:
 
-- **4.2.8**: profile-creation flow (name entry, PIN set + confirm) — still needs mocking.
-- **4.2.9**: takeover/Kaos screen polish.
-- **4.2.10**: resume-last-setup + reset-to-fresh confirms.
-- **4.2.11**: screen-transition animations between profile picker → PIN → game → portal. Mocks after IA settles.
 - **Box art sourcing**: how do we bundle box art for the game picker without bloating the release zip? (Maybe: one 200px thumb per game, ~60kb total.)
 - **Egui cloud vortex (4.15.5)**: web-target aesthetic is settled — `mocks/tv_launcher_v3.html` uses a WebGL fragment shader (5-octave simplex FBM on a cylindrical spiral, 10 iris arms, circular hole). egui port has two candidate paths:
   - **Path A (preferred if feasible)** — port the shader via an `egui_wgpu` custom paint callback. Pixel-for-pixel match to the mock; GPU-cheap at 3840×2160. Spike needed to confirm wgpu integration and the decoupling rule (spiral speed independent of inflow speed) survives the port.
