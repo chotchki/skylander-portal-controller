@@ -541,8 +541,8 @@ Direction locked to Option A. Standalone HTML/CSS in `docs/aesthetic/mocks/`, vi
 
 - [x] 4.6.1 Slots render through `<GoldBezel>`. Empty slot = dimmed bezel with a "+" in the center.
 - [x] 4.6.2 Empty → Picking: scale 1.05 spring-ease, outer gold glow intensifies, `<RayHalo>` fades in and begins a slow rotation.
-- [ ] 4.6.3 Pick → Loading: halo rotation speeds up, a gold sweep travels once around the bezel ring (~1s loop), inner plate dims 20%.
-- [ ] 4.6.4 Loading → Loaded: "portal impact" — radial white→gold flash scales from 0 → 2× and fades (~400ms), bezel brightness spikes briefly, then settles into a subtle 4s idle float (±2px).
+- [x] 4.6.3 Pick → Loading: halo rotation speeds up, a gold sweep travels once around the bezel ring (~1s loop), inner plate dims 20%.
+- [x] 4.6.4 Loading → Loaded: "portal impact" — radial white→gold flash scales from 0 → 2× and fades (~400ms), bezel brightness spikes briefly, then settles into a subtle 4s idle float (±2px).
 - [x] 4.6.5 Loaded → Cleared: desaturate + shrink, fade thumb out to element plate (~200ms).
 - [x] 4.6.6 Errored: red-tinted bezel, short shake animation + persistent subdued red glow until dismissed.
 - [x] 4.6.7 Slot tap feedback: inner-plate "dent" (inset shadow + 0.96 scale), spring back.
@@ -578,7 +578,7 @@ Implemented as a new screen reached by tapping a figure inside the toy box. Shel
 
 - [x] 4.9.1 `<FramedPanel>` surround. PIN dots become mini gold bezels that fill with element-tinted plates as digits are entered.
 - [x] 4.9.2 Key press feedback: inset-shadow dent + soft "click" animation (≤100ms), plus subtle haptic-adjacent bounce.
-- [ ] 4.9.3 Unlock success: shockwave ring outward from profile swatch + gold streak L→R sweep as the panel fades out.
+- [x] 4.9.3 Unlock success: shockwave ring outward from profile swatch + gold streak L→R sweep as the panel fades out.
 - [x] 4.9.4 Lockout state: panel tinted red, countdown in the display font, keys visually disabled (not hidden).
 
 ### 4.10 Profile admin reskin

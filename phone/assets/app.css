@@ -543,16 +543,62 @@ button { font: inherit; color: inherit; cursor: pointer; }
 
 /* === STATE: loading === */
 .bezel-loading .bezel-plate {
-  opacity: 0.55;
+  opacity: 0.8; /* 4.6.3 — inner plate dims 20% */
   transition: opacity 0.3s ease;
 }
+/* 4.6.3 — gold sweep around the bezel ring, once per --dur-loading-sweep */
+.bezel-loading::after {
+  content: "";
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg,
+    transparent 0deg,
+    rgba(255,255,255,0.95) 20deg,
+    var(--gb) 40deg,
+    transparent 80deg,
+    transparent 360deg);
+  -webkit-mask: radial-gradient(circle, transparent 43%, black 45%, black 52%, transparent 54%);
+          mask: radial-gradient(circle, transparent 43%, black 45%, black 52%, transparent 54%);
+  animation: ray-spin var(--dur-loading-sweep) linear infinite;
+  pointer-events: none;
+  z-index: 2;
+}
 
-/* === STATE: loaded (idle float) === */
+/* === STATE: loaded (idle float + one-shot portal impact on entry) === */
 .bezel-loaded {
-  animation: bezel-float var(--dur-idle-float) ease-in-out infinite;
+  animation: bezel-float var(--dur-idle-float) ease-in-out 400ms infinite;
 }
 @keyframes bezel-float {
   50% { transform: translateY(-2px); }
+}
+/* 4.6.4 — brightness spike on the ring during the flash */
+.bezel-loaded .bezel-ring {
+  animation: bezel-impact-brightness 400ms ease-out;
+}
+@keyframes bezel-impact-brightness {
+  0%   { filter: brightness(1); }
+  25%  { filter: brightness(1.6); }
+  100% { filter: brightness(1); }
+}
+/* 4.6.4 — radial white→gold flash expanding 0 → 2x */
+.bezel-loaded::before {
+  content: "";
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle,
+    rgba(255,255,255,0.95) 0%,
+    rgba(255,207,58,0.6) 35%,
+    transparent 70%);
+  transform: scale(0);
+  opacity: 0;
+  animation: portal-impact-flash 400ms ease-out forwards;
+  pointer-events: none;
+  z-index: 3;
+}
+@keyframes portal-impact-flash {
+  0%   { transform: scale(0); opacity: 0; }
+  20%  { opacity: 1; }
+  100% { transform: scale(2); opacity: 0; }
 }
 
 /* === STATE: errored === */
@@ -1353,6 +1399,57 @@ button { font: inherit; color: inherit; cursor: pointer; }
   color: var(--danger-p4);
   text-shadow: 0 0 6px rgba(227,76,76,0.5);
   margin-left: 4px;
+}
+
+/* 4.9.3 — Unlock success choreography. `pin-success` class applied to
+   .pin-entry-screen when the server 200s; WS ProfileChanged unmounts
+   the view ~150ms later, so the animation plays to the extent the
+   component remains mounted. Shockwave ring + L→R gold streak + fade. */
+.pin-entry-screen.pin-success {
+  animation: pin-screen-fade 600ms ease-out 120ms forwards;
+}
+.pin-success .pin-profile-bezel {
+  position: relative;
+}
+.pin-success .pin-profile-bezel::after {
+  content: "";
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  border: 4px solid var(--gb);
+  box-shadow: 0 0 20px rgba(255,229,138,0.6);
+  opacity: 0;
+  animation: pin-shockwave 700ms ease-out forwards;
+  pointer-events: none;
+}
+.pin-success::after {
+  content: "";
+  position: absolute; top: 0; bottom: 0; left: -30%;
+  width: 30%;
+  background: linear-gradient(90deg,
+    transparent,
+    rgba(255,229,138,0.7) 50%,
+    transparent);
+  animation: pin-streak 700ms ease-out forwards;
+  pointer-events: none;
+  z-index: 10;
+}
+@keyframes pin-shockwave {
+  0%   { transform: scale(1);   opacity: 0.9; border-width: 4px; }
+  100% { transform: scale(2.4); opacity: 0;   border-width: 1px; }
+}
+@keyframes pin-screen-fade {
+  to { opacity: 0; transform: translateY(-8px); }
+}
+@keyframes pin-streak {
+  to { left: 130%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pin-success .pin-profile-bezel::after,
+  .pin-success::after {
+    animation: none !important;
+    opacity: 0;
+  }
+  .pin-entry-screen.pin-success { animation-duration: 200ms; }
 }
 
 /* ================================================================

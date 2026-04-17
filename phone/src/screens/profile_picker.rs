@@ -752,6 +752,7 @@ fn PinEntry<F: Fn() + Send + Sync + 'static + Clone>(
 ) -> impl IntoView {
     let pin = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
+    let success = RwSignal::new(false);
     let lockout_secs = RwSignal::new(0u32);
     let id = profile.id.clone();
     let name = profile.display_name.clone();
@@ -775,7 +776,9 @@ fn PinEntry<F: Fn() + Send + Sync + 'static + Clone>(
             leptos::task::spawn_local(async move {
                 match unlock_profile(&id, &pin_value).await {
                     Ok(_) => {
-                        // WS ProfileChanged will flip us out of the picker.
+                        // 4.9.3 — trigger unlock-success animation. WS
+                        // ProfileChanged will unmount this view shortly.
+                        success.set(true);
                     }
                     Err(e) => {
                         pin.set(String::new());
@@ -799,8 +802,12 @@ fn PinEntry<F: Fn() + Send + Sync + 'static + Clone>(
 
     let is_locked_out = Signal::derive(move || lockout_secs.get() > 0);
 
+    let screen_class = move || {
+        if success.get() { "pin-entry-screen pin-success" } else { "pin-entry-screen" }
+    };
+
     view! {
-        <div class="pin-entry-screen">
+        <div class=screen_class>
             <button class="pin-back-btn" on:click=move |_| on_cancel()>"BACK"</button>
 
             // Identity section on starfield (not inside the panel).
