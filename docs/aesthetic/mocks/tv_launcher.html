@@ -1,0 +1,539 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1920,initial-scale=1">
+<title>TV Launcher — Skylander Portal Controller</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Titan+One&family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,800;1,9..144,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --sf-1: #0b1e52; --sf-2: #061436; --sf-3: #020818;
+    --gb: #ffe58a; --g: #f5c634; --gm: #c58c18; --gs: #6e4a00; --gi: #3a2500;
+    --text: #fff4e0; --text-muted: #d9c88a;
+    --success: #65d68c; --danger: #e34c4c;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: #000; }
+  body {
+    font-family: "Fraunces", Georgia, serif;
+    display: grid; place-items: center;
+    min-height: 100vh;
+    color: var(--text);
+  }
+
+  /* ── TV frame ── */
+  .tv {
+    width: 1920px; height: 1080px;
+    position: relative; overflow: hidden;
+    background: var(--sf-3);
+    box-shadow: 0 0 0 4px #222, 0 0 80px rgba(0,0,0,0.8);
+    transform-origin: top left;
+  }
+
+  /* ── Starfield background ── */
+  .sky {
+    position: absolute; inset: 0; z-index: 0;
+    background:
+      radial-gradient(ellipse 120% 60% at 50% 0%, #1a3a8a 0%, transparent 50%),
+      radial-gradient(ellipse 80% 50% at 50% 100%, #0e2464 0%, transparent 50%),
+      linear-gradient(180deg, var(--sf-1), var(--sf-2) 60%, var(--sf-3));
+  }
+  .stars {
+    position: absolute; inset: 0; z-index: 1;
+    background-image:
+      radial-gradient(1.5px 1.5px at 120px 80px, white, transparent),
+      radial-gradient(2px 2px at 340px 160px, rgba(255,230,180,0.9), transparent),
+      radial-gradient(1.5px 1.5px at 560px 40px, white, transparent),
+      radial-gradient(1px 1px at 800px 200px, rgba(180,220,255,0.8), transparent),
+      radial-gradient(2px 2px at 1050px 90px, rgba(255,255,255,0.9), transparent),
+      radial-gradient(1px 1px at 1300px 300px, white, transparent),
+      radial-gradient(1.5px 1.5px at 1550px 50px, rgba(180,220,255,0.85), transparent),
+      radial-gradient(1px 1px at 1800px 180px, white, transparent),
+      radial-gradient(1px 1px at 200px 400px, white, transparent),
+      radial-gradient(2px 2px at 500px 600px, rgba(255,230,180,0.8), transparent),
+      radial-gradient(1px 1px at 750px 500px, white, transparent),
+      radial-gradient(1.5px 1.5px at 1000px 700px, rgba(180,220,255,0.9), transparent),
+      radial-gradient(1px 1px at 1250px 550px, white, transparent),
+      radial-gradient(1px 1px at 1500px 800px, rgba(255,255,255,0.7), transparent),
+      radial-gradient(2px 2px at 1700px 650px, white, transparent),
+      radial-gradient(1px 1px at 100px 900px, white, transparent),
+      radial-gradient(1.5px 1.5px at 400px 850px, rgba(255,230,180,0.7), transparent),
+      radial-gradient(1px 1px at 900px 950px, white, transparent),
+      radial-gradient(1px 1px at 1400px 1000px, rgba(180,220,255,0.8), transparent),
+      radial-gradient(1.5px 1.5px at 1850px 920px, white, transparent);
+    background-size: 1920px 1080px;
+    animation: drift 180s linear infinite;
+  }
+  @keyframes drift { to { background-position: -1920px -1080px; } }
+
+  /* ── Cloud vortex ── */
+  .vortex-wrap {
+    position: absolute; inset: 0; z-index: 2;
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: none;
+    transition: opacity 1.2s ease-out, transform 1.2s ease-out;
+  }
+  .vortex-wrap.hidden {
+    opacity: 0;
+    transform: scale(1.8);
+  }
+
+  .vortex {
+    position: relative;
+    width: 900px; height: 900px;
+  }
+
+  .vortex-layer {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    mix-blend-mode: screen;
+  }
+
+  /* Layer 1: outer slow swirl — broad blue cloud */
+  .vortex-layer.v1 {
+    background:
+      conic-gradient(from 0deg at 50% 50%,
+        transparent 0deg,
+        rgba(30,80,180,0.5) 30deg,
+        transparent 80deg,
+        rgba(60,120,220,0.4) 120deg,
+        transparent 170deg,
+        rgba(40,90,200,0.45) 220deg,
+        transparent 280deg,
+        rgba(50,100,210,0.35) 330deg,
+        transparent 360deg
+      );
+    filter: blur(30px);
+    animation: vortex-spin-1 18s linear infinite;
+  }
+
+  /* Layer 2: mid-ring — tighter, brighter blue-white */
+  .vortex-layer.v2 {
+    inset: 15%;
+    background:
+      conic-gradient(from 45deg at 50% 50%,
+        transparent 0deg,
+        rgba(80,160,255,0.6) 40deg,
+        transparent 90deg,
+        rgba(120,190,255,0.5) 150deg,
+        transparent 200deg,
+        rgba(100,170,255,0.55) 260deg,
+        transparent 310deg,
+        rgba(90,150,240,0.45) 350deg,
+        transparent 360deg
+      );
+    filter: blur(20px);
+    animation: vortex-spin-2 12s linear infinite reverse;
+  }
+
+  /* Layer 3: inner bright swirl — white-blue, faster */
+  .vortex-layer.v3 {
+    inset: 30%;
+    background:
+      conic-gradient(from 120deg at 50% 50%,
+        transparent 0deg,
+        rgba(160,210,255,0.7) 50deg,
+        transparent 110deg,
+        rgba(200,230,255,0.65) 180deg,
+        transparent 240deg,
+        rgba(180,220,255,0.6) 300deg,
+        transparent 360deg
+      );
+    filter: blur(14px);
+    animation: vortex-spin-3 8s linear infinite;
+  }
+
+  /* Layer 4: core glow — bright white center, fastest */
+  .vortex-layer.v4 {
+    inset: 42%;
+    background:
+      conic-gradient(from 200deg at 50% 50%,
+        transparent 0deg,
+        rgba(220,240,255,0.8) 60deg,
+        transparent 130deg,
+        rgba(240,250,255,0.75) 200deg,
+        transparent 270deg,
+        rgba(230,245,255,0.7) 340deg,
+        transparent 360deg
+      );
+    filter: blur(10px);
+    animation: vortex-spin-4 5s linear infinite reverse;
+  }
+
+  /* Central bright point */
+  .vortex-center {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 120px; height: 120px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: radial-gradient(circle,
+      rgba(255,255,255,0.9) 0%,
+      rgba(200,230,255,0.6) 30%,
+      rgba(100,170,255,0.3) 60%,
+      transparent 100%
+    );
+    filter: blur(4px);
+    animation: center-pulse 3s ease-in-out infinite;
+  }
+
+  /* Radial cloud wisps overlay */
+  .vortex-wisps {
+    position: absolute; inset: 5%;
+    border-radius: 50%;
+    background:
+      radial-gradient(ellipse 60% 40% at 35% 30%, rgba(80,140,240,0.3), transparent 70%),
+      radial-gradient(ellipse 50% 60% at 70% 65%, rgba(60,120,220,0.25), transparent 70%),
+      radial-gradient(ellipse 70% 30% at 50% 50%, rgba(100,160,250,0.2), transparent 60%);
+    filter: blur(16px);
+    mix-blend-mode: screen;
+    animation: wisps-rotate 25s linear infinite;
+  }
+
+  @keyframes vortex-spin-1 { to { transform: rotate(360deg); } }
+  @keyframes vortex-spin-2 { to { transform: rotate(360deg); } }
+  @keyframes vortex-spin-3 { to { transform: rotate(360deg); } }
+  @keyframes vortex-spin-4 { to { transform: rotate(360deg); } }
+  @keyframes wisps-rotate  { to { transform: rotate(-360deg); } }
+  @keyframes center-pulse  {
+    0%, 100% { opacity: 0.7; transform: translate(-50%, -50%) scale(1); }
+    50%      { opacity: 1;   transform: translate(-50%, -50%) scale(1.15); }
+  }
+
+  /* ── Content layer ── */
+  .content {
+    position: relative; z-index: 10;
+    width: 100%; height: 100%;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 24px;
+    padding: 60px;
+  }
+
+  /* ── Loading state content ── */
+  .loading-content {
+    display: flex; flex-direction: column;
+    align-items: center; gap: 32px;
+    transition: opacity 0.8s ease-out, transform 0.8s ease-out;
+  }
+  .loading-content.hidden {
+    opacity: 0; transform: translateY(-40px) scale(0.95);
+    pointer-events: none; position: absolute;
+  }
+
+  /* ── Ready state content ── */
+  .ready-content {
+    display: flex; flex-direction: column;
+    align-items: center; gap: 36px;
+    transition: opacity 0.8s ease-out 0.4s, transform 0.8s ease-out 0.4s;
+  }
+  .ready-content.hidden {
+    opacity: 0; transform: translateY(40px) scale(0.95);
+    pointer-events: none; position: absolute;
+  }
+
+  /* ── Typography ── */
+  .title-display {
+    font-family: "Titan One", cursive;
+    color: var(--gb);
+    -webkit-text-stroke: 2px var(--gi);
+    text-shadow:
+      0 3px 0 var(--gs),
+      0 4px 0 var(--gi),
+      0 6px 14px rgba(0,0,0,0.5),
+      0 0 40px rgba(245,198,52,0.3);
+    letter-spacing: 0.06em;
+    text-align: center;
+    text-transform: uppercase;
+  }
+  .title-hero {
+    font-size: 96px;
+    line-height: 1.1;
+  }
+  .title-lg {
+    font-size: 64px;
+    line-height: 1.1;
+  }
+  .title-md {
+    font-size: 48px;
+    line-height: 1.2;
+  }
+
+  .subtitle {
+    font-family: "Fraunces", Georgia, serif;
+    font-style: italic;
+    font-size: 36px;
+    color: var(--text);
+    letter-spacing: 0.08em;
+    text-align: center;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  }
+
+  .status-line {
+    font-family: "Fraunces", Georgia, serif;
+    font-style: italic;
+    font-size: 32px;
+    color: var(--text-muted);
+    letter-spacing: 0.12em;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  }
+
+  .url-text {
+    font-family: "JetBrains Mono", "Consolas", monospace;
+    font-size: 28px;
+    color: var(--text-muted);
+    letter-spacing: 0.04em;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  }
+
+  /* Loading dots animation */
+  .loading-dots::after {
+    content: '';
+    animation: dots 1.5s steps(4, end) infinite;
+  }
+  @keyframes dots {
+    0%  { content: ''; }
+    25% { content: '.'; }
+    50% { content: '..'; }
+    75% { content: '...'; }
+  }
+
+  /* ── QR bezel ── */
+  .qr-bezel {
+    width: 280px; height: 280px;
+    border-radius: 24px;
+    padding: 16px;
+    background: radial-gradient(circle at 30% 25%, var(--gb), var(--g) 22%, var(--gm) 55%, var(--gs) 100%);
+    box-shadow:
+      inset 0 0 0 3px var(--gi),
+      inset 0 4px 6px rgba(255,255,255,0.3),
+      inset 0 -4px 6px rgba(0,0,0,0.5),
+      0 0 0 2px #000,
+      0 6px 16px rgba(0,0,0,0.6),
+      0 0 60px rgba(245,198,52,0.15);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .qr-inner {
+    width: 100%; height: 100%;
+    border-radius: 12px;
+    background: #fff;
+    box-shadow:
+      inset 0 0 0 2px rgba(0,0,0,0.15),
+      inset 0 3px 6px rgba(0,0,0,0.1);
+    display: flex; align-items: center; justify-content: center;
+    font-family: "Fraunces", Georgia, serif;
+    font-size: 18px; color: #999;
+    text-align: center;
+    line-height: 1.4;
+  }
+
+  /* ── Status bar ── */
+  .status-bar {
+    position: absolute;
+    bottom: 48px; left: 0; right: 0;
+    display: flex; align-items: center; justify-content: center;
+    gap: 48px;
+    z-index: 11;
+  }
+  .status-item {
+    display: flex; align-items: center; gap: 12px;
+    font-family: "Fraunces", Georgia, serif;
+    font-size: 28px;
+    color: var(--text-muted);
+    letter-spacing: 0.04em;
+  }
+  .status-dot {
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    box-shadow: 0 0 8px currentColor;
+  }
+  .status-dot.green { background: var(--success); color: var(--success); }
+  .status-dot.gold  { background: var(--g); color: var(--g); animation: dot-pulse 2s ease-in-out infinite; }
+  .status-dot.red   { background: var(--danger); color: var(--danger); }
+  @keyframes dot-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  /* ── Demo controls ── */
+  .demo-controls {
+    position: fixed; bottom: 20px; right: 20px;
+    z-index: 999;
+    display: flex; flex-direction: column; gap: 8px;
+    background: rgba(0,0,0,0.85);
+    padding: 16px; border-radius: 12px;
+    border: 1px solid #444;
+    font-family: system-ui, sans-serif;
+    font-size: 14px; color: #ccc;
+  }
+  .demo-controls label {
+    display: flex; align-items: center; gap: 8px; cursor: pointer;
+  }
+  .demo-controls button {
+    padding: 8px 16px;
+    background: #2a62cd; color: white;
+    border: none; border-radius: 6px;
+    cursor: pointer; font-size: 14px;
+    font-family: system-ui, sans-serif;
+  }
+  .demo-controls button:hover { background: #4286f0; }
+  .demo-controls button.active { background: var(--gm); color: #000; }
+
+  /* ── Title rays (ambient gold halo behind heading) ── */
+  .title-wrap { position: relative; }
+  .title-rays {
+    position: absolute;
+    inset: -60px -120px;
+    background: radial-gradient(ellipse 100% 80% at 50% 50%, rgba(245,198,52,0.12), transparent 70%);
+    pointer-events: none;
+    z-index: -1;
+  }
+
+  /* ── Reduced motion ── */
+  @media (prefers-reduced-motion: reduce) {
+    .stars { animation: none; }
+    .vortex-layer, .vortex-wisps, .vortex-center { animation: none; }
+    .loading-dots::after { animation: none; content: '...'; }
+    .status-dot.gold { animation: none; }
+  }
+
+  /* ── Scale for smaller screens ── */
+  @media (max-width: 1920px) {
+    .tv { transform: scale(calc(100vw / 1920)); }
+  }
+</style>
+</head>
+<body>
+
+<div class="tv" id="tv">
+  <!-- Starfield -->
+  <div class="sky"></div>
+  <div class="stars"></div>
+
+  <!-- Cloud vortex -->
+  <div class="vortex-wrap" id="vortexWrap">
+    <div class="vortex">
+      <div class="vortex-layer v1"></div>
+      <div class="vortex-layer v2"></div>
+      <div class="vortex-layer v3"></div>
+      <div class="vortex-layer v4"></div>
+      <div class="vortex-wisps"></div>
+      <div class="vortex-center"></div>
+    </div>
+  </div>
+
+  <div class="content">
+    <!-- State 1: Loading -->
+    <div class="loading-content" id="loadingContent">
+      <div class="title-wrap">
+        <div class="title-rays"></div>
+        <div class="title-display title-hero"><span class="loading-dots">LOADING</span></div>
+      </div>
+      <div class="subtitle">Skylanders: Trap Team</div>
+      <div class="status-line" id="loadingStatus">Starting RPCS3...</div>
+    </div>
+
+    <!-- State 2: Ready -->
+    <div class="ready-content hidden" id="readyContent">
+      <div class="qr-bezel">
+        <div class="qr-inner">QR CODE<br>PLACEHOLDER</div>
+      </div>
+      <div class="title-wrap">
+        <div class="title-rays"></div>
+        <div class="title-display title-lg">SCAN TO CONNECT</div>
+      </div>
+      <div class="url-text">http://192.168.1.42:7575</div>
+    </div>
+  </div>
+
+  <!-- Status bar (visible in ready state) -->
+  <div class="status-bar" id="statusBar" style="opacity: 0; transition: opacity 0.8s ease-out 0.6s;">
+    <div class="status-item">
+      <div class="status-dot green"></div>
+      RPCS3 Running
+    </div>
+    <div class="status-item">
+      <div class="status-dot gold"></div>
+      0 Phones Connected
+    </div>
+    <div class="status-item">
+      <div class="status-dot green"></div>
+      Trap Team
+    </div>
+  </div>
+</div>
+
+<!-- Demo controls -->
+<div class="demo-controls">
+  <strong style="color:#fff; margin-bottom:4px;">TV Launcher Mock</strong>
+  <button id="btnLoading" class="active" onclick="setState('loading')">State 1: Loading</button>
+  <button id="btnReady" onclick="setState('ready')">State 2: Ready</button>
+  <hr style="border-color:#444; margin: 4px 0;">
+  <label style="font-size:12px; color:#888;">
+    Click buttons to toggle states.<br>
+    Transition animates between them.
+  </label>
+</div>
+
+<script>
+  const loadingStatusMessages = [
+    'Starting RPCS3...',
+    'Waiting for game window...',
+    'Opening Skylanders Manager...',
+    'Ready for connections'
+  ];
+
+  let currentState = 'loading';
+  let statusIdx = 0;
+  let statusInterval;
+
+  function setState(state) {
+    currentState = state;
+    const vortex = document.getElementById('vortexWrap');
+    const loading = document.getElementById('loadingContent');
+    const ready = document.getElementById('readyContent');
+    const statusBar = document.getElementById('statusBar');
+    const btnL = document.getElementById('btnLoading');
+    const btnR = document.getElementById('btnReady');
+
+    if (state === 'loading') {
+      vortex.classList.remove('hidden');
+      loading.classList.remove('hidden');
+      ready.classList.add('hidden');
+      statusBar.style.opacity = '0';
+      btnL.classList.add('active');
+      btnR.classList.remove('active');
+      startStatusCycle();
+    } else {
+      vortex.classList.add('hidden');
+      loading.classList.add('hidden');
+      ready.classList.remove('hidden');
+      statusBar.style.opacity = '1';
+      btnL.classList.remove('active');
+      btnR.classList.add('active');
+      stopStatusCycle();
+    }
+  }
+
+  function startStatusCycle() {
+    stopStatusCycle();
+    statusIdx = 0;
+    document.getElementById('loadingStatus').textContent = loadingStatusMessages[0];
+    statusInterval = setInterval(() => {
+      statusIdx = (statusIdx + 1) % loadingStatusMessages.length;
+      document.getElementById('loadingStatus').textContent = loadingStatusMessages[statusIdx];
+    }, 2500);
+  }
+
+  function stopStatusCycle() {
+    if (statusInterval) clearInterval(statusInterval);
+  }
+
+  startStatusCycle();
+</script>
+</body>
+</html>

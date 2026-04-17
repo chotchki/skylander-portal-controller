@@ -621,7 +621,7 @@ Implemented as a new screen reached by tapping a figure inside the toy box. Shel
 - [ ] 4.15.2 Display font loaded into egui so the PC-side and phone-side feel unified.
 - [ ] 4.15.3 QR code framed in a gold bezel equivalent (static, no conic gradients — egui doesn't need the web flourish).
 - [ ] 4.15.4 Status indicators — RPCS3 connection dot (absorbs the old 2.8.4 deferral), client count, figure count, current-game name.
-- [ ] 4.15.5 **Cloud vortex loading animation.** While RPCS3 boots a game, the egui window shows a swirling blue-white cloud vortex inspired by the in-game "PLEASE PLACE YOUR SKYLANDER ON THE PORTAL OF POWER" screen (reference: `docs/aesthetic/loading_screen.png`). Clouds rotate inward toward a bright center. Once the game is loaded (RPCS3 window detected), the clouds part/fade outward to reveal the portal QR / status underneath. Renders via egui `Painter` custom shapes or a pre-rendered animated texture if custom painting is too expensive for smooth rotation.
+- [ ] 4.15.5 **Cloud vortex loading animation.** While RPCS3 boots a game, the egui window shows a swirling blue-white cloud vortex inspired by the in-game "PLEASE PLACE YOUR SKYLANDER ON THE PORTAL OF POWER" screen (reference: `docs/aesthetic/loading_screen.png`). Clouds rotate inward toward a bright center. Once the enumlator is loaded (RPCS3 window detected), the clouds part/fade outward to reveal the portal QR / status underneath. Renders via egui `Painter` custom shapes or a pre-rendered animated texture if custom painting is too expensive for smooth rotation.
 
 ### 4.16 E2E test updates
 
