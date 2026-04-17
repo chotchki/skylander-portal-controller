@@ -15,13 +15,16 @@ use uiautomation::{UIAutomation, UIElement, UITreeWalker};
 use windows::Win32::Foundation::{HWND, LPARAM, RECT};
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
-    VIRTUAL_KEY, VK_DOWN, VK_ESCAPE, VK_MENU, VK_RETURN, VK_RIGHT,
+    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+    KEYEVENTF_KEYUP, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
+    MOUSEEVENTF_MOVE, MOUSEINPUT, MOUSE_EVENT_FLAGS, VIRTUAL_KEY, VK_DOWN, VK_ESCAPE, VK_MENU,
+    VK_RETURN, VK_RIGHT, VK_UP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClassNameW, GetForegroundWindow, GetWindowRect, GetWindowTextLengthW,
-    GetWindowTextW, GetWindowThreadProcessId, SetForegroundWindow, SetWindowPos, ShowWindow,
-    SWP_NOSIZE, SWP_NOZORDER, SW_MINIMIZE, SW_RESTORE,
+    EnumWindows, GetClassNameW, GetForegroundWindow, GetSystemMetrics, GetWindowRect,
+    GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, SetForegroundWindow,
+    SetWindowPos, ShowWindow, SM_CXSCREEN, SM_CYSCREEN, SWP_NOSIZE, SWP_NOZORDER, SW_MINIMIZE,
+    SW_RESTORE,
 };
 use windows::core::BOOL;
 
@@ -408,18 +411,34 @@ impl UiaPortalDriver {
     /// Boot a game from RPCS3's library view by its serial (e.g. `BLUS30968`).
     ///
     /// Prereq: RPCS3 was launched via `RpcsProcess::launch_library` so the
-    /// library grid is visible. Uses the recipe proven in
-    /// `examples/boot_game.rs`: find the `DataItem` whose name equals
-    /// `serial` under the main window, call `SelectionItemPattern::select()`,
-    /// set keyboard focus on the cell, then send `Enter`. UIA `Invoke` alone
-    /// does *not* boot the game — the selection + focus + keystroke combo is
-    /// required.
+    /// library grid is visible. UIA-`select()`s the `DataItem` with the given
+    /// `serial`, then sends keyboard `Space` + `Enter` to the main window.
+    ///
+    /// **Why keystrokes instead of Play-button Invoke**: UIA
+    /// `SelectionItemPattern.select()` on a Qt `QListView` `DataItem` sets
+    /// the item's visual "marked" state but does not update the list
+    /// widget's `currentIndex`. The toolbar Play button is bound to
+    /// `currentIndex`, so after bare `select()` the Play button stays
+    /// disabled (greyed out) and UIA `invoke()` on it is a no-op. Pressing
+    /// `Space` on the keyboard promotes the marked item to current, making
+    /// Play active; `Enter` then activates Play and boots the game. With
+    /// the Skylanders Manager dialog already open (normal flow order),
+    /// synthesised mouse events are absorbed by the dialog but keyboard
+    /// input still routes to the library grid, so this keystroke-based
+    /// path works in both cold-library and dialog-open states.
     ///
     /// Succeeds when a viewport window (`Qt6110QWindowIcon` class, title
     /// prefix `"FPS:"`) appears within `timeout`.
-    pub fn boot_game_by_serial(&self, serial: &str, timeout: Duration) -> Result<()> {
-        use uiautomation::patterns::UISelectionItemPattern;
+    /// Read the title of the currently-running game viewport window, if any.
+    /// Returns `None` when no game is booted. The title has format
+    /// `"FPS: <n> | <MHz-spec> | <frametime> | <game name>"` (Qt 6.11 RPCS3) —
+    /// callers can substring-search for the expected game name.
+    pub fn running_viewport_title(&self) -> Option<String> {
+        let hwnd = find_viewport_hwnd()?;
+        read_title(hwnd)
+    }
 
+    pub fn boot_game_by_serial(&self, serial: &str, timeout: Duration) -> Result<()> {
         let walker = self.walker()?;
         let main = self.main_window(&walker)?;
         let main_hwnd: isize = main
@@ -437,17 +456,29 @@ impl UiaPortalDriver {
         .ok_or_else(|| anyhow!("no DataItem named {serial} in RPCS3 library"))?;
         debug!(serial, "found library cell");
 
-        // Bring main forward so focus/keystroke calls target it.
+        // Synthesise a single mouse click at the cell's centre. UIA's
+        // `SelectionItemPattern.select` and `UIElement.set_focus` both
+        // silently fail to update the list widget's `currentIndex` on this
+        // Qt build — Enter keeps activating the alphabetically-first game
+        // regardless. A real mouse click through `SendInput` delivers the
+        // selection event Qt's QListView actually listens for, moving
+        // currentIndex to the target. Single-click (not double) because:
+        // with the Skylanders Manager dialog already open, Qt absorbs
+        // double-clicks on library cells but single clicks still select.
+        let rect = cell
+            .get_bounding_rectangle()
+            .context("cell bounding rectangle")?;
+        let cx = rect.get_left() + (rect.get_right() - rect.get_left()) / 2;
+        let cy = rect.get_top() + (rect.get_bottom() - rect.get_top()) / 2;
+
         let _ = focus_main_window(main_hwnd);
         sleep(MENU_STEP_PAUSE);
 
-        let sel = cell
-            .get_pattern::<UISelectionItemPattern>()
-            .context("SelectionItemPattern on library cell")?;
-        sel.select().context("select library cell")?;
-        cell.set_focus().context("focus library cell")?;
+        debug!(cx, cy, "single-clicking library cell centre");
+        mouse_single_click(cx, cy).context("single-click library cell")?;
         sleep(MENU_STEP_PAUSE);
-        send_key(VK_RETURN).context("send Enter to boot")?;
+
+        send_key(VK_RETURN).context("send Enter to boot selected game")?;
 
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
@@ -538,42 +569,39 @@ impl UiaPortalDriver {
         sleep(MENU_STEP_PAUSE);
         expect_focused_menu_item(&walker, &main, "File", "Alt tap")?;
 
-        // Down opens the File submenu and focuses its first item. We don't
-        // know that item's name ahead of time (varies by RPCS3 build), so
-        // just step Down until a menu item whose name normalises to "exit"
-        // is focused, capped at MAX_STEPS to avoid running forever if the
-        // menu ever changes.
-        const MAX_STEPS: u32 = 20;
+        // Down opens the File submenu (first item focused), then Up wraps to
+        // the last item — which is "Exit" on every RPCS3 build we've seen.
+        // Beats walking the full menu with Down×N. If Qt ever stops wrapping
+        // or Exit moves off the bottom, the expect_focused_menu_item check
+        // below catches it.
         focus_main_window(main_hwnd).ok();
         send_key(VK_DOWN)?;
         sleep(MENU_STEP_PAUSE);
+        focus_main_window(main_hwnd).ok();
+        send_key(VK_UP)?;
+        sleep(MENU_STEP_PAUSE);
 
-        let mut steps = 0;
-        loop {
-            let focused_name = current_focused_menu_name(&walker, &main);
-            let on_exit = focused_name
-                .as_deref()
-                .map(|n| normalise_menu_name(n).eq_ignore_ascii_case("exit"))
-                .unwrap_or(false);
-            if on_exit {
-                debug!(steps, "File → Exit focused");
-                break;
-            }
-            if steps >= MAX_STEPS {
-                // Dismiss so we don't leave RPCS3 in menu mode.
-                let _ = send_key(VK_ESCAPE);
-                let _ = send_key(VK_ESCAPE);
-                bail!(
-                    "walked {MAX_STEPS} File-menu items without finding 'Exit' \
-                     (last focused: {:?})",
-                    focused_name
-                );
-            }
-            focus_main_window(main_hwnd).ok();
-            send_key(VK_DOWN)?;
-            sleep(MENU_STEP_PAUSE);
-            steps += 1;
+        // Collect focused items across main + desktop-popup trees — Qt keeps
+        // "File" keyboard-focused on the menubar *in addition to* the focused
+        // dropdown item, so a single-match helper returned "File" repeatedly.
+        let mut focused = Vec::new();
+        collect_focused_menu_items(&walker, &main, &mut focused);
+        if let Ok(root) = self.automation.get_root_element() {
+            collect_focused_menu_items(&walker, &root, &mut focused);
         }
+        let on_exit = focused
+            .iter()
+            .any(|n| normalise_menu_name(n).eq_ignore_ascii_case("exit"));
+        if !on_exit {
+            // Dismiss so we don't leave RPCS3 in menu mode.
+            let _ = send_key(VK_ESCAPE);
+            let _ = send_key(VK_ESCAPE);
+            bail!(
+                "expected Up-wrap to land on 'Exit' at bottom of File menu; \
+                 focused items: {focused:?}"
+            );
+        }
+        debug!(?focused, "File → Exit focused via Up-wrap");
 
         send_key(VK_RETURN)?;
         info!("sent Enter on File → Exit");
@@ -1161,56 +1189,122 @@ fn key_input(vk: VIRTUAL_KEY, key_up: bool) -> INPUT {
     }
 }
 
+/// Synthesise a single left mouse click at absolute screen coordinates
+/// `(x, y)`. Primary-monitor scaled; `MOUSEEVENTF_VIRTUALDESK` would be
+/// needed for a non-primary display.
+fn mouse_single_click(x: i32, y: i32) -> Result<()> {
+    let (sw, sh) = unsafe {
+        (
+            GetSystemMetrics(SM_CXSCREEN).max(1),
+            GetSystemMetrics(SM_CYSCREEN).max(1),
+        )
+    };
+    let ax = (x as i64 * 65535 / sw as i64) as i32;
+    let ay = (y as i64 * 65535 / sh as i64) as i32;
+    let inputs = [
+        mouse_input(ax, ay, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE),
+        mouse_input(0, 0, MOUSEEVENTF_LEFTDOWN),
+        mouse_input(0, 0, MOUSEEVENTF_LEFTUP),
+    ];
+    unsafe {
+        let n = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+        if n as usize != inputs.len() {
+            bail!("SendInput only dispatched {n}/{} mouse events", inputs.len());
+        }
+    }
+    Ok(())
+}
+
+fn mouse_input(dx: i32, dy: i32, flags: MOUSE_EVENT_FLAGS) -> INPUT {
+    INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx,
+                dy,
+                mouseData: 0,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
+}
+
 /// After a navigation keystroke, confirm via UIA that the expected menu item
-/// has keyboard focus. If the menu ever gets reordered we'll get a clear
-/// error here naming both what we expected and what was actually focused.
+/// has keyboard focus *somewhere* in the tree. Polls for up to
+/// `FOCUS_POLL_BUDGET` because UIA's focus-change events can lag a few hundred
+/// ms behind the actual keystroke, especially when the owning window is
+/// off-screen.
+///
+/// **Why "somewhere"**: when Qt auto-opens a dropdown during Right-arrow
+/// navigation across the menubar, both the menubar item (e.g. "Manage") and
+/// the dropdown's first item (e.g. "Virtual File System") report
+/// `has_keyboard_focus == true`. A single-match search returns whichever the
+/// tree walker encounters first — usually the menubar item, because it's
+/// under the main window while the dropdown is in a detached popup. So we
+/// collect *all* focused menu items across both main and the desktop root
+/// and succeed if any of them matches. If the menu ever gets reordered, the
+/// error reports every focused item so diagnostics are obvious.
 fn expect_focused_menu_item(
     walker: &UITreeWalker,
     main: &UIElement,
     expected: &str,
     step: &str,
 ) -> Result<()> {
-    // Qt moves submenu items out from under the main window once they're
-    // expanded, so search desktop-wide.
+    const FOCUS_POLL_BUDGET: Duration = Duration::from_millis(1500);
+    const FOCUS_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
     let automation = UIAutomation::new().context("UIA init")?;
     let root = automation.get_root_element().context("UIA root")?;
-    for search_root in [main, &root] {
-        if let Some(hit) = find_descendant(walker, search_root, |el| {
-            el.get_control_type()
-                .map(|c| c == ControlType::MenuItem)
-                .unwrap_or(false)
-                && el.has_keyboard_focus().unwrap_or(false)
-        }) {
-            let name = hit.get_name().unwrap_or_default();
-            if name == expected {
-                debug!(step, expected, "menu item focused");
-                return Ok(());
-            }
-            bail!(
-                "at step {step:?}: expected {expected:?} focused, got {name:?}"
-            );
+
+    let deadline = Instant::now() + FOCUS_POLL_BUDGET;
+    let last_seen = loop {
+        let mut seen: Vec<String> = Vec::new();
+        for search_root in [main, &root] {
+            collect_focused_menu_items(walker, search_root, &mut seen);
         }
+        if seen.iter().any(|n| n == expected) {
+            debug!(step, expected, ?seen, "menu item focused");
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            break seen;
+        }
+        sleep(FOCUS_POLL_INTERVAL);
+    };
+    if last_seen.is_empty() {
+        bail!("at step {step:?}: expected {expected:?} focused, no menu item has focus");
     }
-    bail!("at step {step:?}: expected {expected:?} focused, no menu item has focus")
+    bail!(
+        "at step {step:?}: expected {expected:?} focused, focused items: {last_seen:?}"
+    )
 }
 
-/// Find the currently-focused menu item (if any) under main or desktop-root
-/// and return its raw UIA name. Used by `quit_via_file_menu` to walk the File
-/// submenu by name without knowing its layout ahead of time.
-fn current_focused_menu_name(walker: &UITreeWalker, main: &UIElement) -> Option<String> {
-    let automation = UIAutomation::new().ok()?;
-    let root = automation.get_root_element().ok()?;
-    for search_root in [main, &root] {
-        if let Some(hit) = find_descendant(walker, search_root, |el| {
-            el.get_control_type()
-                .map(|c| c == ControlType::MenuItem)
-                .unwrap_or(false)
-                && el.has_keyboard_focus().unwrap_or(false)
-        }) {
-            return hit.get_name().ok();
+/// Walk `root`, pushing the name of every `MenuItem` with keyboard focus into
+/// `out`. Deduplicates by name (Qt may expose the same item under both the
+/// menubar tree and a popup window).
+fn collect_focused_menu_items(walker: &UITreeWalker, root: &UIElement, out: &mut Vec<String>) {
+    let mut stack: Vec<UIElement> = vec![root.clone()];
+    while let Some(node) = stack.pop() {
+        let is_menu_item = node
+            .get_control_type()
+            .map(|c| c == ControlType::MenuItem)
+            .unwrap_or(false);
+        if is_menu_item && node.has_keyboard_focus().unwrap_or(false) {
+            let name = node.get_name().unwrap_or_default();
+            if !out.contains(&name) {
+                out.push(name);
+            }
+        }
+        if let Ok(child) = walker.get_first_child(&node) {
+            let mut cur = Some(child);
+            while let Some(c) = cur {
+                stack.push(c.clone());
+                cur = walker.get_next_sibling(&c).ok();
+            }
         }
     }
-    None
 }
 
 /// Strip Qt-style accelerator markers (`&`) and trim tab-separated shortcut

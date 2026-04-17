@@ -57,10 +57,17 @@ fn require_env() -> Option<(PathBuf, String, PathBuf)> {
 
 // ---------- shared setup helper ----------
 
-/// Launch RPCS3 in library view, UIA-boot the test game by serial, then open
-/// the Skylanders Manager dialog. Returns the owned process handle (caller
-/// must run it through `teardown`) and the driver.
-fn boot_and_open() -> (RpcsProcess, UiaPortalDriver) {
+/// Launch RPCS3, open the Skylanders Manager dialog from a cold library view,
+/// then UIA-boot the test game by serial. Returns the owned process handle
+/// (caller must run it through `teardown`) and the driver.
+///
+/// **Order matters**: dialog first, game second. This mirrors the real-app
+/// flow (the server opens the manager dialog before the user picks a game)
+/// and avoids the much harder post-boot menu-navigation case — with a game
+/// running, Qt's focus state is too scrambled for reliable Alt-menu
+/// traversal (see PLAN 3.7 debug trail). Game-change workflows instead
+/// kill + relaunch RPCS3 so each session starts from this cold state.
+fn open_and_boot() -> (RpcsProcess, UiaPortalDriver) {
     let (exe, serial, _sky) = require_env().expect("env vars set (pre-checked)");
 
     // If a previous test's teardown hit the Forced path and the cleanup
@@ -76,16 +83,51 @@ fn boot_and_open() -> (RpcsProcess, UiaPortalDriver) {
 
     let driver = UiaPortalDriver::new().expect("construct driver");
 
-    // Boot the game by serial — RPCS3 menu bar only responds to synthesised
-    // keystrokes when launched into the library view (not with EBOOT arg).
+    // Open dialog from the cold library view — this is the 3.6b-proven path.
+    driver.open_dialog().expect("open Skylanders Manager dialog");
+
+    // Now boot the game by serial. The dialog is already off-screen; it
+    // stays open for the rest of the session and the driver short-circuits
+    // subsequent `open_dialog` calls.
     driver
         .boot_game_by_serial(&serial, Duration::from_secs(60))
         .expect("UIA-boot game by serial");
 
-    // open_dialog has its own retry loop that absorbs post-boot readiness
-    // latency (shader compile, update-check popup stealing focus, etc.).
-    driver.open_dialog().expect("open Skylanders Manager dialog");
+    // Verify the booted game matches the requested serial. Without this
+    // check the test silently passed even when `boot_game_by_serial` booted
+    // the default game instead of the target, because `load()` operates on
+    // the Skylanders Manager (cross-game) and doesn't care which game is
+    // running. The viewport title contains the game's display name; we
+    // match that against a serial→name map rather than the serial itself
+    // (RPCS3 doesn't put the serial in the title).
+    let expected_name = expected_game_name_for_serial(&serial);
+    // Give Qt a beat to finalise the title once the FPS counter starts.
+    thread::sleep(Duration::from_secs(1));
+    let title = driver
+        .running_viewport_title()
+        .expect("viewport title readable after boot");
+    assert!(
+        title.contains(expected_name),
+        "booted wrong game: expected viewport title to contain {expected_name:?}, got {title:?} \
+         (requested serial {serial})"
+    );
+
     (proc, driver)
+}
+
+/// Known game-serial → substring of viewport title. Kept as a flat match
+/// rather than anything cleverer because this only backs the live-lifecycle
+/// test harness.
+fn expected_game_name_for_serial(serial: &str) -> &'static str {
+    match serial {
+        "BLUS30719" | "BLES00867" => "Spyro's Adventure",
+        "BLUS30968" => "Giants",
+        "BLUS31076" => "SWAP Force",
+        "BLUS31442" => "Trap Team",
+        "BLUS31545" => "SuperChargers",
+        "BLUS31600" => "Imaginators",
+        _ => panic!("unknown test serial {serial}; extend expected_game_name_for_serial"),
+    }
 }
 
 /// Prefer a clean File→Exit shutdown so RPCS3 releases its lockfile normally.
@@ -121,7 +163,7 @@ fn lifecycle_launch_load_clear_quit() {
         None => return,
     };
 
-    let (proc, driver) = boot_and_open();
+    let (proc, driver) = open_and_boot();
 
     // Tear down regardless of assertion outcome to avoid leaking RPCS3
     // processes across test runs.
@@ -157,7 +199,7 @@ fn offscreen_hide_really_hides() {
     if require_env().is_none() {
         return;
     }
-    let (proc, driver) = boot_and_open();
+    let (proc, driver) = open_and_boot();
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         // Pre-condition: manager is on-screen with a positive x.
@@ -213,7 +255,7 @@ fn file_dialog_hidden_while_manager_hidden() {
         None => return,
     };
 
-    let (proc, driver) = boot_and_open();
+    let (proc, driver) = open_and_boot();
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let slot = SlotIndex::new(0).unwrap();
