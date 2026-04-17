@@ -613,7 +613,7 @@ Implemented as a new screen reached by tapping a figure inside the toy box. Shel
 ### 4.14 Ambient polish
 
 - [ ] 4.14.1 Screen-to-screen transitions: consistent cross-fade + slight motion direction based on navigation depth (deeper = slide up, back = slide down).
-- [ ] 4.14.2 Connection-status pip in the header gets a breathe animation while connecting, steady glow when connected, soft red when disconnected.
+- [x] 4.14.2 Connection-status pip in the header gets a breathe animation while connecting (1.6s scale + halo), steady green glow when connected, soft red glow when disconnected. `prefers-reduced-motion` already neutralises the breathe via 4.1.5's blanket rule.
 
 ### 4.15 egui TV launcher — design cycle + implementation
 

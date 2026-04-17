@@ -112,12 +112,44 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .game-card:disabled { opacity: 0.45; cursor: wait; }
 .game-card .game-title { font-size: 16px; font-weight: 600; }
 .game-card .game-serial { font-size: 11px; color: var(--text-dim); font-family: ui-monospace, monospace; }
-.status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; }
-.status-dot.connected { background: #65d68c; box-shadow: 0 0 8px #65d68c; }
-.status-dot.connecting { background: var(--gold-2); animation: pulse 1.2s ease-in-out infinite; }
-.status-dot.disconnected { background: var(--danger); }
+/* PLAN 4.14.2 — Connection pip states.
+   connecting → breathe (pip + halo grow/contract, 1.6s)
+   connected  → steady green glow
+   disconnected → soft red glow (calm, not alarming) */
+.status-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  display: inline-block; margin-right: 6px;
+  position: relative;
+}
+.status-dot.connected {
+  background: #65d68c;
+  box-shadow: 0 0 8px #65d68c;
+}
+.status-dot.connecting {
+  background: var(--gold-2);
+  animation: status-breathe 1.6s ease-in-out infinite;
+}
+.status-dot.disconnected {
+  background: var(--danger);
+  box-shadow: 0 0 6px rgba(227, 76, 76, 0.55);
+}
 .status-label { font-size: 13px; color: var(--text-dim); }
 
+@keyframes status-breathe {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 4px rgba(245, 198, 52, 0.45);
+    opacity: 0.65;
+  }
+  50% {
+    transform: scale(1.25);
+    box-shadow: 0 0 14px rgba(245, 198, 52, 0.85), 0 0 22px rgba(245, 198, 52, 0.35);
+    opacity: 1;
+  }
+}
+
+/* Legacy keyframe kept under its old name in case other selectors still
+   reference it; the breathe replaces it for the connecting pip. */
 @keyframes pulse {
   0%, 100% { opacity: 0.5; } 50% { opacity: 1; }
 }
