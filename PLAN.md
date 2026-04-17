@@ -617,15 +617,15 @@ Implemented as a new screen reached by tapping a figure inside the toy box. Shel
 
 ### 4.15 egui TV launcher — design cycle + implementation
 
-The TV launcher is a full UX surface with its own 5-state machine (see `navigation.md` §3). Gets the same mock → design doc → implement treatment as the phone app. All cloud assets are **procedurally generated** at runtime — no pre-rendered frames or game captures (copyright avoidance).
+The TV launcher is a full UX surface with its own 8-state machine (see `navigation.md` §3). Gets the same mock → design doc → implement treatment as the phone app. All cloud assets are **procedurally generated** at runtime — no pre-rendered frames or game captures (copyright avoidance). Design source-of-truth is `docs/aesthetic/mocks/tv_launcher_v3.html` — v1 (CSS conic spike) and v2 (SVG turbulence) were exploration fork-points and have been removed.
 
 #### 4.15a TV launcher design cycle (mock + iterate)
 
-- [x] 4.15a.1 Initial HTML mock — `tv_launcher.html`. Two-state (loading/ready) with CSS conic-gradient cloud spike. Verdict: stylized but not organic enough.
-- [x] 4.15a.2 State machine documented in `navigation.md` §3: Startup → Booting (clouds spiral in) → Awaiting Connect (QR + orbiting players) → In-Game (clouds out, window transparent). QR card-flip on max players.
-- [ ] 4.15a.3 Procedural cloud spike — `tv_launcher_v2.html`. Uses SVG `feTurbulence` + `feDisplacementMap` for organic cloud texture, animated rotation. Three modes: spiral-in, idle-swirl, spiral-out. Assesses whether runtime Perlin noise can match the in-game aesthetic without shipped assets.
-- [ ] 4.15a.4 QR + player-orbit mock — orbiting gold-bezeled player indicators around the central QR. Max-reached card-flip animation.
-- [ ] 4.15a.5 In-game transparency mock — clouds spiral out, content fades to show "game underneath" (simulated). Reconnect QR in bottom-right as subtle overlay.
+- [x] 4.15a.1 Initial HTML mock — `tv_launcher.html` (since removed). Two-state (loading/ready) with CSS conic-gradient cloud spike. Verdict: stylized but not organic enough → led to v2.
+- [x] 4.15a.2 State machine documented in `navigation.md` §3. Final shape: Startup → Booting → Compiling Shaders → Awaiting Connect → Players Joined → Max Players → In-Game → Shutdown. QR card-flip on max players, iris choreography between cloud-visible and game-visible states.
+- [x] 4.15a.3 Procedural cloud — `tv_launcher_v3.html`. Final approach: **WebGL fragment shader** (cylindrical-spiral simplex FBM, 5-octave noise, 10 iris arms). Three independent uniforms — `irisRadius` (0=clear / 1.6=full), `rotationSpeed` (arm spin rad/s), `inflowSpeed` (cloud drift toward center r/s) — animated independently rather than as 3 discrete modes. v2's SVG `feTurbulence` approach was a stepping stone; the shader gives organic noise without shipping assets. **Decoupling note:** arm spiral uses plain `r` (not `r + inflow*t`) so inflow doesn't compound rotation into nausea-inducing arm spin. **Seam fix:** cylindrical sampling (cos/sin of theta) eliminates the polar-seam artifact at theta=±π.
+- [x] 4.15a.4 QR + player-orbit mock — folded into `tv_launcher_v3.html` states 3 (Awaiting Connect), 4 (Players Joined), 5 (Max Players, with QR card-flip). Player pips orbit on rx=560 ry=400 ellipse at z-index 9 so they pass behind the title text.
+- [x] 4.15a.5 In-game transparency + shutdown mocks — folded into `tv_launcher_v3.html` states 7 (In-Game) and 8 (Shutdown Farewell). **Reconnect QR refinement vs original spec:** moved from bottom-right (always-on) to **upper-right, hidden by default**. Only appears when *every* phone has disconnected — an "everyone left, anyone come back" cue, not a persistent overlay. Shutdown sequence: 2.2s read pause on "SEE YOU NEXT TIME, PORTAL MASTER" → 1.6s fade-to-black → "(launcher will exit)" hint surfaces.
 - [ ] 4.15a.6 Review round — iterate before touching egui.
 
 #### 4.15b egui implementation
@@ -634,7 +634,7 @@ The TV launcher is a full UX surface with its own 5-state machine (see `navigati
 - [ ] 4.15.2 Display font loaded into egui so the PC-side and phone-side feel unified.
 - [ ] 4.15.3 QR code framed in a gold bezel equivalent.
 - [ ] 4.15.4 Status indicators — RPCS3 connection dot (absorbs the old 2.8.4 deferral), client count, current-game name.
-- [ ] 4.15.5 **Procedural cloud vortex.** Runtime-generated Perlin noise texture atlas (~60 frames at 960×540, generated at app start in ~200ms). Three playback modes: spiral-in (frames + scale 2×→1×), idle-swirl (loop), spiral-out (frames + scale 1×→2× + fade). No shipped image assets.
+- [ ] 4.15.5 **Procedural cloud vortex.** Reproduce the WebGL shader from `tv_launcher_v3.html` in egui — open question is the rendering pipeline. Path A: ship a fragment shader via `egui_wgpu` custom paint callback (matches the mock 1:1, GPU-cheap, requires wgpu integration scaffolding). Path B: bake the shader to a texture atlas at startup (~60–90 frames at 960×540, generated once) and play frames back via `egui::Image` — simpler but loses continuous-knob control over `irisRadius` / `rotationSpeed` / `inflowSpeed`. Recommend Path A. No shipped image assets either way.
 - [ ] 4.15.6 QR card-flip on max-players (Y-axis rotate, back face shows "MAXIMUM PLAYERS REACHED").
 - [ ] 4.15.7 Player-orbit indicators around the QR (gold-bezeled circles with profile color + initial).
 - [ ] 4.15.8 In-game transparency — `eframe::Frame` transparent mode, reconnect QR overlay in corner.
@@ -643,7 +643,7 @@ The TV launcher is a full UX surface with its own 5-state machine (see `navigati
 - [ ] 4.15.11 **Shutdown farewell** — clean quit from phone menu → clouds spiral in gently → "SEE YOU NEXT TIME, PORTAL MASTER" → launcher exits after 3s.
 - [ ] 4.15.12 **Shader compilation detection (research spike).** RPCS3 compiles shaders on first game launch causing stutter. If detected, cloud vortex stays up until done — first frame user sees is clean gameplay. Investigate: (a) RPCS3 log-file watcher for "Compiling shader" patterns, (b) viewport window title polling for progress strings, (c) FPS-title heuristic (<5fps for >5s). Fallback: fixed 15s delay post-boot. See `navigation.md` §3.6.
 - [ ] 4.15.14 **Phone-side game-crash overlay.** When RPCS3 crashes, the server broadcasts `Event::GameCrashed`. Phone renders a full-screen overlay (NOT a toast): "GAME CRASHED" heading + "Restarting..." spinner or "RETURN TO GAMES" button. Auto-dismisses on new `GameLaunched` event. Modal priority: below ConnectionLost, above KaosTakeover. See `navigation.md` §3.8.
-- [ ] 4.15.13 **Shader progress visualization.** If log parsing yields `current/total` counts, show a gold progress ring (200–240px, conic-gradient fill) at the center of the cloud vortex with the count in Titan One 40px inside. "COMPILING SHADERS" heading + "preparing your adventure" subtitle below. Ring flashes gold on completion, then flow continues to Awaiting Connect. Turns a frustrating wait into a portal-powering-up moment. See `navigation.md` §3.6 for the visual spec. Mock: add as a state in `tv_launcher_v2.html`.
+- [ ] 4.15.13 **Shader progress visualization.** If log parsing yields `current/total` counts, show a gold progress ring (200–240px, conic-gradient fill) at the center of the cloud vortex with the count in Titan One 40px inside. "COMPILING SHADERS" heading + "preparing your adventure" subtitle below. Ring flashes gold on completion, then flow continues to Awaiting Connect. Turns a frustrating wait into a portal-powering-up moment. See `navigation.md` §3.6 for the visual spec. Mock: state 6 of `tv_launcher_v3.html`. Implementation pending egui-side.
 
 ### 4.16 E2E test updates
 

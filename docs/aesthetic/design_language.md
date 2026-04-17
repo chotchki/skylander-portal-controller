@@ -626,4 +626,6 @@ Tracked as PLAN items, parked here for visibility:
 - **4.2.10**: resume-last-setup + reset-to-fresh confirms.
 - **4.2.11**: screen-transition animations between profile picker → PIN → game → portal. Mocks after IA settles.
 - **Box art sourcing**: how do we bundle box art for the game picker without bloating the release zip? (Maybe: one 200px thumb per game, ~60kb total.)
-- **Egui cloud vortex (4.15.5)**: how much fidelity is possible with egui `Painter` vs a pre-rendered spritesheet? Spike needed.
+- **Egui cloud vortex (4.15.5)**: web-target aesthetic is settled — `mocks/tv_launcher_v3.html` uses a WebGL fragment shader (5-octave simplex FBM on a cylindrical spiral, 10 iris arms, circular hole). egui port has two candidate paths:
+  - **Path A (preferred if feasible)** — port the shader via an `egui_wgpu` custom paint callback. Pixel-for-pixel match to the mock; GPU-cheap at 3840×2160. Spike needed to confirm wgpu integration and the decoupling rule (spiral speed independent of inflow speed) survives the port.
+  - **Path B (fallback)** — pre-render 240 frames of the shader at 1920×1080, pack into an atlas texture, sample in egui with `Painter::image`. Larger binary, fixed resolution, but zero GPU risk.

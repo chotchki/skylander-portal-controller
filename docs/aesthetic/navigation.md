@@ -169,104 +169,127 @@ Every overlay in the app falls into one of three categories:
 
 The TV launcher is a separate egui window running on the PC, shown fullscreen on the 86" TV. It's NOT a web page — it's a native `eframe` app. But it follows the same design language (starfield, gold, Titan One) adapted for lean-back 10-foot viewing.
 
+**Design source-of-truth:** `docs/aesthetic/mocks/tv_launcher_v3.html` — a WebGL/HTML mock that demonstrates every state, transition, and timing. The egui implementation reproduces what that mock shows.
+
 ### 3.1 States
 
 ```
-[Startup]              starry sky, calm, no clouds
+[1: Startup]           starry sky, calm, no clouds (irisRadius=0)
     │ RPCS3 process spawned
     ▼
-[Booting]              clouds SPIRAL IN from edges toward center
+[2: Booting]           iris CLOSES (clouds spiral in to fill screen)
+    │                  "LOADING" + game name + boot status line
+    │                  Transition tuning: iris ramps over `irisDuration`
+    │                  (default 2500ms easeOut), but rotation/inflow
+    │                  SNAP to target in 200ms — slow-ramping them with
+    │                  the iris reads as a second inward sweep once the
+    │                  iris settles. Clouds aren't visible during the
+    │                  200ms snap (irisRadius still ~0), so it's free.
     │ RPCS3 menu loaded (UIA detects main window)
     ▼
-[Awaiting Connect]     QR spins in at center over the swirling clouds
-    │                  "SCAN TO CONNECT" below QR
-    │                  clouds still swirling around QR
+[3: Compiling Shaders] (only if detection §3.6 fires)
+    │                  Iris stays closed. Gold progress ring sits in
+    │                  the central hole (where QR would otherwise be).
+    │                  "COMPILING SHADERS" + "preparing your adventure"
+    │ shaders done
+    ▼
+[4: Awaiting Connect]  Iris stays closed. QR spins into the central hole.
+    │                  "SCAN TO CONNECT" below QR. Clouds keep swirling.
     │
-    ├─ phone connects → player avatar orbits the QR
-    │                   (up to 2 avatars orbiting)
+    ├─ phone joins ───▸ [5: Players Joined] — player pip orbits the QR
+    │                   (up to 2 pips, offset 180°). Clouds + QR unchanged.
     │
-    ├─ 2nd phone joins → 2 avatars orbiting
-    │
-    ├─ max reached ───→ QR FLIPS (card-rotate) to show
-    │                   "MAXIMUM PLAYERS REACHED" on the back
-    │                   (flip back when a slot opens)
+    ├─ max reached ───▸ [6: Max Players] — QR FLIPS (Y-axis rotate) to
+    │                   "PORTAL IS FULL". Title swaps. Flips back when
+    │                   a slot opens.
     │
     ▼ game selected (any phone picks a game)
-[In-Game]              clouds SPIRAL OUT (expand outward + fade)
-                       launcher window becomes TRANSPARENT
-                       → RPCS3 game viewport shows through
-                       small reconnect QR available as a
-                       semi-transparent overlay if needed
+[7: In-Game]           Iris OPENS (clouds spiral out). Launcher window
+                       fades to transparent → RPCS3 game viewport shows
+                       through. Reconnect QR sits in the upper-right
+                       corner, HIDDEN by default — only fades in when
+                       every phone has disconnected (see §3.4).
 
     │ game quit (phone picks another game)
     ▼
-[Switching Game]       clouds SPIRAL IN again (cover the old game)
-    │                  "SWITCHING GAMES..." heading
-    │                  same as Booting but with game-change context
+[Switching Game]       Iris closes again (covers the old game). Same as
+    │                  Booting visually, with "SWITCHING GAMES..." copy.
     │ RPCS3 loads new game
-    ▼
-[Compiling Shaders]    (if detected — see §3.6)
-    │                  clouds still swirling
-    │                  "COMPILING SHADERS..." + progress if available
-    │                  keeps the game hidden until shaders are done
-    │                  so the first frame the user sees is clean
-    │ shaders done / game viewport stable
-    ▼
-[In-Game]              clouds spiral out → transparent
+    ▼ (back through Compiling Shaders if detected)
+[7: In-Game]           Iris opens → transparent
 
     │ RPCS3 crashes / game exits unexpectedly
     ▼
-[Crashed]              clouds spiral in quickly (~1s, urgent feel)
-                       "SOMETHING WENT WRONG" heading
-                       "RPCS3 exited unexpectedly" body
-                       "RESTART" gold button → back to [Startup]
-                       auto-detects if RPCS3 process is gone
+[Crashed]              Iris snaps closed (~1s, urgent). "SOMETHING WENT
+                       WRONG" + "RESTART" gold button → back to Startup.
+                       Auto-detects RPCS3 process exit.
 
     │ clean quit (phone shuts down via menu)
     ▼
-[Shutdown]             clouds spiral in gently
-                       "SEE YOU NEXT TIME, PORTAL MASTER"
-                       launcher exits after 3s
+[8: Shutdown Farewell] Iris closes (clouds spiral in gently).
+                       "SEE YOU NEXT TIME, PORTAL MASTER" with breathe
+                       pulse. ~2.2s read pause, then 1.6s ease-in fade
+                       to black. "(launcher will exit)" hint surfaces
+                       after the fade lands. Launcher exits ~3s total.
 ```
 
-### 3.2 Cloud choreography
+### 3.2 Cloud choreography — WebGL fragment shader
 
-All clouds are **procedurally generated** — no pre-rendered frames or game captures (copyright avoidance). The approach:
+The v3 mock established **WebGL fragment shader** as the technique. All clouds are procedurally generated — no pre-rendered frames or game captures (copyright avoidance).
 
-| Technique | Pros | Cons |
-|-----------|------|------|
-| **Perlin/Simplex noise texture** (generated once at app start, rotated/animated in Painter) | Organic look, efficient, no shipped assets | Needs a noise implementation in Rust |
-| **SVG feTurbulence** (for HTML mocks) | Organic, built into browsers, zero assets | Not available in egui — mock-only |
-| **egui Painter arcs/meshes** (the CSS spike approach) | Pure code, no texture pipeline | Looks stylized, not organic |
-| **Runtime-generated texture atlas** | Best of both — generate Perlin noise frames at startup, cache as textures, animate by cycling | Startup cost (~200ms for 60 frames at 960×540), but then smooth playback |
+**Shader sketch** (full source in `tv_launcher_v3.html`):
 
-**Recommended for production:** Runtime-generated texture atlas. At startup, the egui app generates 60–90 frames of Perlin noise cloud animation into an in-memory texture atlas. Each frame is a 960×540 RGBA buffer with:
-- Base: radial Perlin noise with turbulence octaves (gives the organic cloud shape)
-- Tint: blue-white color ramp matching the starfield palette
-- Alpha: radial falloff from center (clouds dense at center, transparent at edges)
-- Per-frame: rotate the noise sampling coordinates slightly (gives the swirl)
+- **Base noise:** 5-octave simplex FBM (Ashima Arts/Stefan Gustavson 3D simplex). Three samples per fragment at different scales, mixed for cloud bulk + detail.
+- **Cylindrical sampling:** noise input is `(cos(spiral) * scale, sin(spiral) * scale, effectiveR * scale + t * 0.06)` where `spiral = theta + r * tightness + t * rotationSpeed`. Cylindrical coords (vs feeding `theta * scale` directly) eliminate the polar-seam artifact at theta=±π — the noise becomes continuous around the loop.
+- **Iris arms:** `armPattern = smoothstep(0.05, 0.95, sin(spiral * 10) * 0.5 + 0.5)` — 10 arms, integer count so the pattern stays continuous at the seam.
+- **Iris hole + edge:** `iris = smoothstep(irisRadius + edge, irisRadius - edge, r)` carves out the central hole (or fills it). At `irisRadius = 0` the alpha goes to zero everywhere → clouds invisible. At `irisRadius = 1.6` clouds extend past the screen corners (corner r ≈ 1.02).
 
-Three animation modes share the same atlas but play it differently:
-- **Spiral-in:** frames play forward + scale from 2× → 1× (clouds converge)
-- **Idle swirl:** frames loop continuously at 1× scale
-- **Spiral-out:** frames play forward + scale from 1× → 2× + fade opacity (clouds expand and vanish)
+**Three independent uniforms** drive the look — these are continuous knobs animated by JS, NOT discrete modes:
+
+| Uniform | Range | Idle target | Role |
+|---------|-------|-------------|------|
+| `irisRadius` | 0.0 – 1.6 | depends on state | Iris open (0=clear) / closed (1.6=full coverage) |
+| `rotationSpeed` | 0 – 0.3 rad/s | 0.08 | Arm spin rate (constant in cloud states) |
+| `inflowSpeed` | 0 – 0.4 r/s | 0.15 | Radial cloud drift toward center (z-coord scroll) |
+
+**Critical decoupling rule:** the arm spiral term uses **plain `r`**, not `r + inflow*t`. Compounding inflow into the spiral was nausea-inducing — it added `inflow * tightness ≈ 0.18 * 4 = 0.72 rad/s` on top of the 0.08 rotation, a ~9× speedup during iris transitions. Inflow only scrolls the noise z-coordinate now; the visible arms rotate at `rotationSpeed` only.
+
+**Halo composition:** the central focal-glow that sits behind QR / progress ring / hero title uses `mix-blend-mode: screen` with a soft 6-stop radial gradient. This makes the halo *additively brighten* the clouds beneath it rather than reading as its own opaque disk. Without screen-blend, the rim of the halo was visible as a hard circle.
+
+**Egui port path** (PLAN 4.15.5):
+- **Path A (recommended):** ship the fragment shader via `egui_wgpu` custom paint callback. Reproduces the mock 1:1, GPU-cheap, gives continuous-knob control over the three uniforms.
+- **Path B:** bake the shader into a texture atlas at startup (60–90 frames at 960×540) and cycle frames. Loses the continuous-knob control — animations have to be choreographed at bake time.
 
 ### 3.3 QR + player orbit
 
-- QR code renders inside a gold bezel (same `GoldBezel` material as phone, but large: ~280px equivalent on a 1080p TV)
-- **No URL text shown** — just the QR + "SCAN TO CONNECT" in Titan One
-- When phones connect, a small **player indicator** (gold-bezeled circle with the profile's color + initial) orbits the QR in a slow elliptical path
-- Up to 2 orbiting indicators; each offset by 180° so they balance visually
-- **Max-reached flip:** the QR bezel does a CSS-style Y-axis `rotateY(180deg)` card flip. The "back" shows a framed panel with "MAXIMUM PLAYERS REACHED" in Titan One gold. Flips back when a slot opens.
+- QR code renders inside a gold bezel (same `GoldBezel` material as phone, but large: ~280px equivalent on a 1080p TV).
+- **No URL text shown** — just the QR + "SCAN TO CONNECT" in Titan One.
+- Focal-glow halo sits behind the QR (mix-blend-mode: screen, 760px diameter, breathing pulse 3.5s).
+- When phones connect, a small **player indicator** (gold-bezeled circle with the profile's color + initial, 84px) orbits the QR on an ellipse (rx=560, ry=400). Pips sit at z-index 9 — *below* the title text — so they pass behind "SCAN TO CONNECT" rather than crossing it.
+- Up to 2 orbiting pips; each offset by 180° so they balance visually.
+- **Max-reached flip:** the QR bezel does a Y-axis `rotateY(180deg)` card flip. The "back" shows a framed panel with "PORTAL IS FULL" in Titan One gold. Title swaps to match. Flips back when a slot opens.
 
 ### 3.4 In-Game transparency
 
 Once a game is selected:
-1. Clouds spiral out (2s animation)
-2. Launcher window fades to transparent (`eframe::Frame::set_transparent(true)` + clear to alpha 0)
-3. The RPCS3 game viewport is now visible through the launcher window
-4. A **small reconnect QR** hovers in the bottom-right corner as a semi-transparent overlay — always available but unobtrusive
-5. If the QR needs attention (phone disconnects), it brightens + pulses briefly
+1. Iris animates open over ~1.8s easeIn (clouds spiral out from the center, alpha fades to 0). Rotation/inflow ramp to 0 in parallel.
+2. Launcher window becomes transparent (`eframe::Frame::set_transparent(true)` + clear to alpha 0). The RPCS3 game viewport is now visible through the launcher window.
+3. **Reconnect QR placement:** **upper-right** corner (was bottom-right in early spec — moved to keep it out of HUD/subtitle territory at the bottom of most games).
+4. **Reconnect QR visibility — NOT always-on.** The QR is HIDDEN by default. It only fades in when *every* phone has disconnected from the server. The intent: an "everyone left, anyone come back" cue, not a persistent overlay that competes with the game. When at least one phone is connected, the launcher stays fully out of the way.
+5. Fade timing: 1.0s opacity transition. The mock delays the show-up by ~1.4s after iris-open so it doesn't fight the iris animation for attention; the production rule is the same — wait until clouds have mostly cleared before introducing a UI element.
+
+### 3.5 Shutdown farewell
+
+Triggered by clean quit from the phone menu (server emits a shutdown event + drops WS):
+
+1. Iris closes (clouds spiral in gently). Same shader machinery as Booting; what differs is the next beat.
+2. "SEE YOU NEXT TIME, PORTAL MASTER" displays on the cloud field, in TV-display-lg (64px) gold with the standard breathe pulse (2.4s opacity + scale ±2.5%).
+3. ~2.2s read pause — long enough to register, short enough to not feel like the app froze.
+4. Full-screen black overlay fades in over 1.6s ease-in.
+5. After fade lands, a faint "( launcher will exit )" hint surfaces in Fraunces italic — secondary cue, low alpha.
+6. Launcher process exits.
+
+The shutdown sequence is **deliberately slower than Crashed** — Crashed snaps closed in ~1s with an urgent feel; Shutdown is the gentle "thanks for playing" ramp-down.
 
 ### 3.6 Shader compilation detection (research needed)
 
