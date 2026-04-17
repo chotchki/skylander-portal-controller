@@ -23,6 +23,13 @@ pub struct AppState {
     pub portal: Arc<Mutex<[SlotState; SLOT_COUNT]>>,
     pub events: broadcast::Sender<Event>,
     pub connected_clients: Arc<std::sync::atomic::AtomicUsize>,
+    /// Snapshot of launcher-visible state, polled by the eframe UI each
+    /// frame (PLAN 4.15.4). Kept in a *sync* `Mutex` — the eframe event
+    /// loop runs on the main OS thread and can't `await` a `tokio::Mutex`.
+    /// Updated by `/api/launch` on successful boot and `/api/quit` on
+    /// shutdown. Safe to hold briefly: the UI read is a single clone per
+    /// ~250ms frame.
+    pub launcher_status: Arc<std::sync::Mutex<LauncherStatus>>,
 
     /// Installed Skylanders games, loaded from RPCS3's games.yml at startup.
     pub games: Vec<InstalledGame>,
@@ -54,6 +61,21 @@ pub struct AppState {
 pub struct RpcsLifecycle {
     pub process: Option<RpcsProcess>,
     pub current: Option<GameLaunched>,
+}
+
+/// UI-polled snapshot of the launcher's status indicators (PLAN 4.15.4).
+/// This is a *derived* view of `RpcsLifecycle` + broadcast events, written
+/// from the handler threads and read by the eframe main thread. Kept as a
+/// flat struct with primitives so a single `lock().clone()` per frame is
+/// cheap and never contends on async work.
+#[derive(Default, Debug, Clone)]
+pub struct LauncherStatus {
+    /// `true` while a spawned RPCS3 process is alive. Drives the header
+    /// connection dot (dim → `SUCCESS_GLOW`).
+    pub rpcs3_running: bool,
+    /// Name of the currently-booted game, if any. Rendered in Titan One
+    /// near the connection dot when present.
+    pub current_game: Option<String>,
 }
 
 impl AppState {

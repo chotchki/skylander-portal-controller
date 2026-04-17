@@ -76,6 +76,9 @@ fn main() -> Result<()> {
         Arc::new(Mutex::new(std::array::from_fn(|_| SlotState::Empty)));
     let (events_tx, _) = broadcast::channel::<skylander_core::Event>(64);
     let connected_clients = Arc::new(AtomicUsize::new(0));
+    let launcher_status = Arc::new(std::sync::Mutex::new(
+        skylander_server::state::LauncherStatus::default(),
+    ));
 
     // --- Start the Axum server + driver worker on a dedicated thread. ---
     //
@@ -94,6 +97,7 @@ fn main() -> Result<()> {
     let portal_for_task = portal.clone();
     let events_for_task = events_tx.clone();
     let clients_for_task = connected_clients.clone();
+    let status_for_task = launcher_status.clone();
     let figures_for_task = figures.clone();
     let figure_index_for_task = figure_index.clone();
     let games_for_task = games.clone();
@@ -146,6 +150,7 @@ fn main() -> Result<()> {
                     portal: portal_for_task,
                     events: events_for_task,
                     connected_clients: clients_for_task,
+                    launcher_status: status_for_task,
                     games: games_for_task,
                     rpcs3_exe,
                     data_root,
@@ -178,6 +183,7 @@ fn main() -> Result<()> {
     // --- Fullscreen eframe window on the main thread. ---
     let figure_count = figures.len();
     let ui_clients = connected_clients.clone();
+    let ui_status = launcher_status.clone();
     // Dev builds are windowed so you can alt-tab away; release launches
     // fullscreen (it's invoked from Steam Big Picture with no window chrome).
     let viewport = {
@@ -201,6 +207,7 @@ fn main() -> Result<()> {
             Ok(Box::new(LauncherApp::new(
                 cc,
                 ui_clients,
+                ui_status,
                 figure_count,
                 url_for_ui,
             )))

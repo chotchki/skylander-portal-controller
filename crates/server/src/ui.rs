@@ -5,10 +5,12 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::state::LauncherStatus;
 use crate::{fonts, palette};
 
 pub struct LauncherApp {
     clients: Arc<AtomicUsize>,
+    status: Arc<std::sync::Mutex<LauncherStatus>>,
     url: String,
     figure_count: usize,
     qr_texture: Option<egui::TextureHandle>,
@@ -18,6 +20,7 @@ impl LauncherApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         clients: Arc<AtomicUsize>,
+        status: Arc<std::sync::Mutex<LauncherStatus>>,
         figure_count: usize,
         url: String,
     ) -> Self {
@@ -30,11 +33,68 @@ impl LauncherApp {
         let qr_texture = Some(render_qr_texture(&cc.egui_ctx, &url));
         Self {
             clients,
+            status,
             url,
             figure_count,
             qr_texture,
         }
     }
+}
+
+/// Header strip: RPCS3 connection dot + current-game label (PLAN 4.15.4).
+/// Absorbs the 2.8.4 deferral — a steady green dot while the emulator is
+/// running, dim grey otherwise. The current-game name renders in Titan
+/// One gold when a game is booted; blank otherwise.
+fn status_strip(ui: &mut egui::Ui, status: &LauncherStatus) {
+    const DOT_RADIUS: f32 = 10.0;
+    let (dot_colour, tooltip) = if status.rpcs3_running {
+        (palette::SUCCESS_GLOW, "RPCS3 running")
+    } else {
+        (palette::TEXT_DIM, "RPCS3 idle")
+    };
+
+    ui.horizontal(|ui| {
+        // Let the strip grow to the panel width so `with_layout` centering
+        // inside `vertical_centered` gives us the full row to work with.
+        ui.set_min_width(ui.available_width());
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.add_space(24.0);
+            // Dot — allocate a small square and paint a circle in its centre.
+            let (rect, response) = ui.allocate_exact_size(
+                egui::vec2(DOT_RADIUS * 2.0 + 4.0, DOT_RADIUS * 2.0 + 4.0),
+                egui::Sense::hover(),
+            );
+            ui.painter()
+                .circle_filled(rect.center(), DOT_RADIUS, dot_colour);
+            // Subtle outer ring for contrast against the starfield background.
+            ui.painter().circle_stroke(
+                rect.center(),
+                DOT_RADIUS,
+                egui::Stroke::new(1.5, palette::GOLD_INK),
+            );
+            response.on_hover_text(tooltip);
+
+            ui.add_space(12.0);
+            match &status.current_game {
+                Some(name) => {
+                    ui.label(
+                        egui::RichText::new(name)
+                            .size(26.0)
+                            .color(palette::GOLD)
+                            .family(egui::FontFamily::Name(fonts::TITAN_ONE.into())),
+                    );
+                }
+                None => {
+                    ui.label(
+                        egui::RichText::new("no game running")
+                            .size(22.0)
+                            .italics()
+                            .color(palette::TEXT_DIM),
+                    );
+                }
+            }
+        });
+    });
 }
 
 /// Frame the QR in a gold bezel equivalent to the phone's `GoldBezel` —
@@ -114,9 +174,13 @@ impl eframe::App for LauncherApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.request_repaint_after(std::time::Duration::from_millis(250));
 
+        let status_snapshot = self.status.lock().map(|s| s.clone()).unwrap_or_default();
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical_centered(|ui| {
-                ui.add_space(24.0);
+                ui.add_space(16.0);
+                status_strip(ui, &status_snapshot);
+                ui.add_space(8.0);
                 ui.heading(
                     egui::RichText::new("SKYLANDER PORTAL")
                         .size(80.0)

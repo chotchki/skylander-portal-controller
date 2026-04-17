@@ -749,6 +749,14 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
     };
     guard.current = Some(launched.clone());
 
+    // Publish to the launcher status snapshot (PLAN 4.15.4). Failed lock
+    // would mean a poisoned mutex — rare, and the UI survives reading a
+    // stale value for one more frame, so swallow and keep going.
+    if let Ok(mut st) = state.launcher_status.lock() {
+        st.rpcs3_running = true;
+        st.current_game = Some(game.display_name.clone());
+    }
+
     let _ = state.events.send(Event::GameChanged {
         current: Some(launched),
     });
@@ -870,6 +878,12 @@ async fn quit_game(
         slots: std::array::from_fn(|_| SlotState::Empty),
     });
     let _ = state.events.send(Event::GameChanged { current: None });
+
+    // Clear the launcher status snapshot (PLAN 4.15.4).
+    if let Ok(mut st) = state.launcher_status.lock() {
+        st.rpcs3_running = false;
+        st.current_game = None;
+    }
 
     (StatusCode::ACCEPTED, "quit").into_response()
 }
