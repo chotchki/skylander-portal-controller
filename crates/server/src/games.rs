@@ -34,7 +34,10 @@ pub struct InstalledGame {
 
 impl InstalledGame {
     pub fn eboot_path(&self) -> PathBuf {
-        self.sky_root.join("PS3_GAME").join("USRDIR").join("EBOOT.BIN")
+        self.sky_root
+            .join("PS3_GAME")
+            .join("USRDIR")
+            .join("EBOOT.BIN")
     }
 }
 

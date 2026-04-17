@@ -6,8 +6,8 @@ use std::sync::Mutex;
 use std::thread::sleep;
 use std::time::Duration;
 
-use anyhow::{anyhow, Result};
-use skylander_core::{SlotIndex, SlotState, SLOT_COUNT};
+use anyhow::{Result, anyhow};
+use skylander_core::{SLOT_COUNT, SlotIndex, SlotState};
 
 use crate::PortalDriver;
 
@@ -18,13 +18,9 @@ pub enum MockOutcome {
     /// Normal success path.
     Ok,
     /// Simulate the Windows shell "file is in use" TaskDialog path.
-    FileInUse {
-        message: String,
-    },
+    FileInUse { message: String },
     /// Simulate an RPCS3 QMessageBox like "Failed to open the skylander file!".
-    QtModal {
-        message: String,
-    },
+    QtModal { message: String },
     /// Sleep past the driver's load timeout so the outer loop times out.
     Timeout,
 }
@@ -116,9 +112,7 @@ impl PortalDriver for MockPortalDriver {
             Some(MockOutcome::FileInUse { message }) => {
                 Err(anyhow!("Windows file in use: {message}"))
             }
-            Some(MockOutcome::QtModal { message }) => {
-                Err(anyhow!("RPCS3 reported: {message}"))
-            }
+            Some(MockOutcome::QtModal { message }) => Err(anyhow!("RPCS3 reported: {message}")),
             Some(MockOutcome::Timeout) => {
                 // Sleep past any reasonable test-side timeout. The real UIA
                 // driver would bail at ~10s.
@@ -175,13 +169,15 @@ mod tests {
             message: "boom".into(),
         }]);
         // First load hits the injected error.
-        assert!(d
-            .load(SlotIndex::new(0).unwrap(), &PathBuf::from("a.sky"))
-            .is_err());
+        assert!(
+            d.load(SlotIndex::new(0).unwrap(), &PathBuf::from("a.sky"))
+                .is_err()
+        );
         // Second load falls through to the normal success path.
-        assert!(d
-            .load(SlotIndex::new(0).unwrap(), &PathBuf::from("b.sky"))
-            .is_ok());
+        assert!(
+            d.load(SlotIndex::new(0).unwrap(), &PathBuf::from("b.sky"))
+                .is_ok()
+        );
     }
 
     #[test]
@@ -214,10 +210,16 @@ mod tests {
     #[test]
     fn slots_are_independent() {
         let d = MockPortalDriver::with_latency(Duration::ZERO);
-        d.load(SlotIndex::new(2).unwrap(), &PathBuf::from("/pack/Spyro.sky"))
-            .unwrap();
-        d.load(SlotIndex::new(5).unwrap(), &PathBuf::from("/pack/Chop Chop.sky"))
-            .unwrap();
+        d.load(
+            SlotIndex::new(2).unwrap(),
+            &PathBuf::from("/pack/Spyro.sky"),
+        )
+        .unwrap();
+        d.load(
+            SlotIndex::new(5).unwrap(),
+            &PathBuf::from("/pack/Chop Chop.sky"),
+        )
+        .unwrap();
         let s = d.read_slots().unwrap();
         assert!(matches!(s[0], SlotState::Empty));
         assert!(matches!(s[1], SlotState::Empty));

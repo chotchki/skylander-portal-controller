@@ -30,11 +30,11 @@ use skylander_core::{SlotIndex, SlotState};
 use skylander_rpcs3_control::{PortalDriver, RpcsProcess, ShutdownPath, UiaPortalDriver};
 
 use windows::Win32::Foundation::{HWND, LPARAM, RECT};
-use windows::core::BOOL;
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClassNameW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
     IsWindowVisible,
 };
+use windows::core::BOOL;
 
 // ---------- env gating ----------
 
@@ -84,7 +84,9 @@ fn open_and_boot() -> (RpcsProcess, UiaPortalDriver) {
     let driver = UiaPortalDriver::new().expect("construct driver");
 
     // Open dialog from the cold library view — this is the 3.6b-proven path.
-    driver.open_dialog().expect("open Skylanders Manager dialog");
+    driver
+        .open_dialog()
+        .expect("open Skylanders Manager dialog");
 
     // Now boot the game by serial. The dialog is already off-screen; it
     // stays open for the rest of the session and the driver short-circuits
@@ -211,8 +213,8 @@ fn offscreen_hide_really_hides() {
         thread::sleep(Duration::from_millis(200));
 
         // Pre-condition: manager is on-screen with a positive x.
-        let before = find_window_by_title("Skylanders Manager")
-            .expect("dialog HWND findable pre-hide");
+        let before =
+            find_window_by_title("Skylanders Manager").expect("dialog HWND findable pre-hide");
         let rect_before = window_rect(before).expect("rect pre-hide");
         assert!(
             rect_before.left >= 0 && rect_before.top >= 0,
@@ -238,8 +240,8 @@ fn offscreen_hide_really_hides() {
             .expect("restore_dialog_visible");
         thread::sleep(Duration::from_millis(200));
 
-        let restored = find_window_by_title("Skylanders Manager")
-            .expect("dialog HWND findable post-restore");
+        let restored =
+            find_window_by_title("Skylanders Manager").expect("dialog HWND findable post-restore");
         let rect_restored = window_rect(restored).expect("rect post-restore");
         assert!(
             rect_restored.left >= 0 && rect_restored.top >= 0,

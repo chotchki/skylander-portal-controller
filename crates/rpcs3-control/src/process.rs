@@ -11,23 +11,21 @@ use std::process::{Child, Command};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use tracing::{debug, info, warn};
 use uiautomation::types::ControlType;
 use uiautomation::{UIAutomation, UIElement};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, LPARAM, WPARAM};
 use windows::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject, TerminateJobObject,
-    JobObjectExtendedLimitInformation, JOBOBJECT_BASIC_LIMIT_INFORMATION,
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    JOBOBJECT_BASIC_LIMIT_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JobObjectExtendedLimitInformation, SetInformationJobObject, TerminateJobObject,
 };
 use windows::Win32::System::Threading::{
-    GetExitCodeProcess, OpenProcess, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
-    PROCESS_SET_QUOTA, PROCESS_TERMINATE,
+    GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_QUOTA,
+    PROCESS_TERMINATE, WaitForSingleObject,
 };
-use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowThreadProcessId, PostMessageW, WM_CLOSE,
-};
+use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, PostMessageW, WM_CLOSE};
 
 const READY_POLL_INTERVAL: Duration = Duration::from_millis(150);
 const WINDOW_TITLE_PREFIX: &str = "RPCS3 ";
@@ -303,7 +301,10 @@ pub enum ShutdownPath {
 // --- helpers ---
 
 fn find_rpcs3_main_window() -> Option<UIElement> {
-    find_rpcs3_main_window_with_pid().ok().flatten().map(|(el, _)| el)
+    find_rpcs3_main_window_with_pid()
+        .ok()
+        .flatten()
+        .map(|(el, _)| el)
 }
 
 fn find_rpcs3_main_window_with_pid() -> Result<Option<(UIElement, u32)>> {
@@ -361,8 +362,8 @@ fn is_pid_alive(pid: u32) -> Result<bool> {
         return Ok(false);
     }
     unsafe {
-        let handle: HANDLE = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
-            .context("OpenProcess")?;
+        let handle: HANDLE =
+            OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).context("OpenProcess")?;
         if handle.is_invalid() {
             return Ok(false);
         }
@@ -375,7 +376,7 @@ fn is_pid_alive(pid: u32) -> Result<bool> {
 }
 
 fn terminate_pid(pid: u32) -> Result<()> {
-    use windows::Win32::System::Threading::{TerminateProcess, PROCESS_TERMINATE};
+    use windows::Win32::System::Threading::{PROCESS_TERMINATE, TerminateProcess};
     unsafe {
         let handle: HANDLE =
             OpenProcess(PROCESS_TERMINATE, false, pid).context("OpenProcess for terminate")?;
@@ -394,8 +395,8 @@ fn terminate_pid(pid: u32) -> Result<()> {
 /// membership, so terminating the job kills the whole tree.
 fn create_kill_on_close_job_for_pid(pid: u32) -> Result<JobHandle> {
     unsafe {
-        let job = CreateJobObjectW(None, windows::core::PCWSTR::null())
-            .context("CreateJobObjectW")?;
+        let job =
+            CreateJobObjectW(None, windows::core::PCWSTR::null()).context("CreateJobObjectW")?;
         if job.is_invalid() {
             bail!("CreateJobObjectW returned invalid handle");
         }

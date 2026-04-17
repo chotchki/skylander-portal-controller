@@ -649,9 +649,8 @@ fn parse_standard(bytes: &[u8], stats: &mut SkyFigureStats) {
     let crc14_stored = read_u16(bytes, b08 + 0x0E);
     let crc14_computed = crc16_ccitt_false(&c14);
 
-    stats.checksums_valid = stats.checksums_valid
-        && crc30_stored == crc30_computed
-        && crc14_stored == crc14_computed;
+    stats.checksums_valid =
+        stats.checksums_valid && crc30_stored == crc30_computed && crc14_stored == crc14_computed;
 }
 
 // ---------------------------------------------------------------------------
@@ -666,8 +665,8 @@ mod fixture {
     //! correct CRC16/CCITT-FALSE checksums so [`super::parse`] reports
     //! `checksums_valid: true`.
     use super::{
-        block_off, crc16_ccitt_false, BLOCK_LEN, OFFSET_ERROR_BYTE, OFFSET_FIGURE_ID,
-        OFFSET_HEADER_CRC, OFFSET_SERIAL, OFFSET_TRADING_CARD, OFFSET_VARIANT, SKY_FILE_LEN,
+        BLOCK_LEN, OFFSET_ERROR_BYTE, OFFSET_FIGURE_ID, OFFSET_HEADER_CRC, OFFSET_SERIAL,
+        OFFSET_TRADING_CARD, OFFSET_VARIANT, SKY_FILE_LEN, block_off, crc16_ccitt_false,
     };
 
     pub struct Fixture {
@@ -805,8 +804,7 @@ mod fixture {
                 buf[off..off + 2].copy_from_slice(&w.to_le_bytes());
             }
 
-            buf[b0d + 0x06..b0d + 0x0A]
-                .copy_from_slice(&self.heroic_challenges_ssa.to_le_bytes());
+            buf[b0d + 0x06..b0d + 0x0A].copy_from_slice(&self.heroic_challenges_ssa.to_le_bytes());
             buf[b0d + 0x0A..b0d + 0x0C].copy_from_slice(&self.hero_points.to_le_bytes());
             if let Some((mi, hr, d, mo, y)) = self.last_placed {
                 buf[b0d + 0x00] = mi;
@@ -909,7 +907,10 @@ mod tests {
         assert_eq!(stats.serial, 0xDEADBEEF);
         assert_eq!(stats.figure_id, 0x000005);
         assert_eq!(stats.trading_card_id, 0x1234_5678_9ABC_DEF0);
-        assert_eq!(stats.variant_decoded.year_code, SkyGeneration::SpyrosAdventure);
+        assert_eq!(
+            stats.variant_decoded.year_code,
+            SkyGeneration::SpyrosAdventure
+        );
         assert_eq!(stats.source_game_gen, SkyGeneration::SpyrosAdventure);
         assert_eq!(stats.figure_kind, FigureKind::Standard);
         assert_eq!(stats.raw_blocks.len(), BLOCK_COUNT);

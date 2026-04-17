@@ -9,7 +9,7 @@
 
 #![cfg(windows)]
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use uiautomation::types::ControlType;
 use uiautomation::{UIAutomation, UIElement, UITreeWalker};
 

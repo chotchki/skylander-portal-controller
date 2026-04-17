@@ -76,15 +76,12 @@ pub fn load() -> Result<Config> {
     let rpcs3_exe = require_path(&env, "RPCS3_EXE")?;
     let firmware_pack_root = require_path(&env, "FIRMWARE_PACK_ROOT")?;
 
-    let games_yaml = env
-        .get("GAMES_YAML")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            rpcs3_exe
-                .parent()
-                .map(|p| p.join("config").join("games.yml"))
-                .unwrap_or_else(|| PathBuf::from("games.yml"))
-        });
+    let games_yaml = env.get("GAMES_YAML").map(PathBuf::from).unwrap_or_else(|| {
+        rpcs3_exe
+            .parent()
+            .map(|p| p.join("config").join("games.yml"))
+            .unwrap_or_else(|| PathBuf::from("games.yml"))
+    });
 
     let bind_port: u16 = env
         .get("BIND_PORT")
@@ -157,7 +154,10 @@ pub fn load() -> Result<Config> {
 
     let persisted = if config_path.exists() {
         PersistedConfig::read(&config_path).with_context(|| {
-            format!("parse {} — delete it to re-run the first-launch wizard", config_path.display())
+            format!(
+                "parse {} — delete it to re-run the first-launch wizard",
+                config_path.display()
+            )
         })?
     } else {
         let runtime_dir = paths::resolve_runtime_dir()?;
@@ -205,8 +205,7 @@ fn require_path(env: &HashMap<String, String>, key: &str) -> Result<PathBuf> {
 
 #[cfg(feature = "dev-tools")]
 fn read_env_file(path: &str) -> Result<HashMap<String, String>> {
-    let raw = std::fs::read_to_string(path)
-        .with_context(|| format!("reading {path}"))?;
+    let raw = std::fs::read_to_string(path).with_context(|| format!("reading {path}"))?;
     let mut out = HashMap::new();
     for line in raw.lines() {
         let line = line.trim();
@@ -219,4 +218,3 @@ fn read_env_file(path: &str) -> Result<HashMap<String, String>> {
     }
     Ok(out)
 }
-

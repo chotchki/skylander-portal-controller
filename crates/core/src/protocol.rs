@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::figure::FigureId;
-use crate::portal::{SlotIndex, SlotState, SLOT_COUNT};
+use crate::portal::{SLOT_COUNT, SlotIndex, SlotState};
 
 /// Client → server. Delivered as REST bodies in MVP; a WebSocket command
 /// channel may land later.
@@ -37,26 +37,15 @@ pub enum Event {
     /// it should attach as `X-Session-Id` on subsequent REST calls, and
     /// which id to watch for in targeted events like `ProfileChanged` and
     /// `TakenOver`.
-    Welcome {
-        session_id: u64,
-    },
+    Welcome { session_id: u64 },
     /// Full snapshot of all 8 slots. Sent on connect and after `RefreshPortal`.
-    PortalSnapshot {
-        slots: [SlotState; SLOT_COUNT],
-    },
+    PortalSnapshot { slots: [SlotState; SLOT_COUNT] },
     /// One slot changed state.
-    SlotChanged {
-        slot: SlotIndex,
-        state: SlotState,
-    },
+    SlotChanged { slot: SlotIndex, state: SlotState },
     /// Non-fatal error surfaced as a toast on the phone.
-    Error {
-        message: String,
-    },
+    Error { message: String },
     /// Game state changed. `None` means "no game running".
-    GameChanged {
-        current: Option<GameLaunched>,
-    },
+    GameChanged { current: Option<GameLaunched> },
     /// Profile unlock/lock transition, scoped to one session. `None` means
     /// the session is locked. Broadcast; clients ignore events not for
     /// their `session_id`.
@@ -67,10 +56,7 @@ pub enum Event {
     /// The target session has been forcibly evicted by a 3rd connection
     /// (FIFO — oldest out). The evicted phone shows the "Kaos took over"
     /// screen. Broadcast; clients ignore events not for their `session_id`.
-    TakenOver {
-        session_id: u64,
-        by_kaos: String,
-    },
+    TakenOver { session_id: u64, by_kaos: String },
     /// Offered to a session right after its profile unlocks, when that
     /// profile has a prior portal layout the user can resume. Phone shows
     /// a "Resume last setup?" modal; on confirm it issues per-slot

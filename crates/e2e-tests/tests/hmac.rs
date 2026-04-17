@@ -25,7 +25,11 @@ async fn fetch_key(base: &str) -> String {
         .send()
         .await
         .unwrap();
-    assert!(resp.status().is_success(), "hmac_key hook returned {}", resp.status());
+    assert!(
+        resp.status().is_success(),
+        "hmac_key hook returned {}",
+        resp.status()
+    );
     resp.json::<serde_json::Value>()
         .await
         .unwrap()
@@ -66,10 +70,9 @@ async fn signed_unlock_succeeds() {
     // Create a profile first (the inject_profile test hook is itself
     // unsigned — it's feature-gated separately). We need an id to sign a
     // real /api/profiles/:id/unlock call.
-    let profile_id =
-        skylander_e2e_tests::inject_profile(&server.url, "SigTest", "1234", "#ffffff")
-            .await
-            .unwrap();
+    let profile_id = skylander_e2e_tests::inject_profile(&server.url, "SigTest", "1234", "#ffffff")
+        .await
+        .unwrap();
 
     // Sign a PIN-unlock request for this profile.
     let body = json!({ "pin": "1234" }).to_string();
@@ -112,7 +115,11 @@ async fn signed_unlock_succeeds() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK, "signed unlock should succeed");
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "signed unlock should succeed"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -120,10 +127,9 @@ async fn signed_unlock_succeeds() {
 async fn tampered_signature_rejected() {
     let server = TestServer::spawn().expect("spawn");
     let _key_hex = fetch_key(&server.url).await;
-    let profile_id =
-        skylander_e2e_tests::inject_profile(&server.url, "SigTest", "1234", "#ffffff")
-            .await
-            .unwrap();
+    let profile_id = skylander_e2e_tests::inject_profile(&server.url, "SigTest", "1234", "#ffffff")
+        .await
+        .unwrap();
 
     let body = json!({ "pin": "1234" }).to_string();
     let path = format!("/api/profiles/{profile_id}/unlock");
@@ -157,10 +163,9 @@ async fn stale_timestamp_rejected() {
     let server = TestServer::spawn().expect("spawn");
     let key_hex = fetch_key(&server.url).await;
     let key = hex::decode(&key_hex).unwrap();
-    let profile_id =
-        skylander_e2e_tests::inject_profile(&server.url, "SigTest", "1234", "#ffffff")
-            .await
-            .unwrap();
+    let profile_id = skylander_e2e_tests::inject_profile(&server.url, "SigTest", "1234", "#ffffff")
+        .await
+        .unwrap();
 
     let body = json!({ "pin": "1234" }).to_string();
     let path = format!("/api/profiles/{profile_id}/unlock");

@@ -2,10 +2,10 @@
 //! at launch and sat with an invisible main window.
 #![cfg(windows)]
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClassNameW, GetWindowTextLengthW, GetWindowTextW, ShowWindow, SW_SHOWNORMAL,
+    EnumWindows, GetClassNameW, GetWindowTextLengthW, GetWindowTextW, SW_SHOWNORMAL, ShowWindow,
 };
 use windows::core::BOOL;
 

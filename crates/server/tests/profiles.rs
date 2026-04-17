@@ -8,7 +8,7 @@
 
 use std::time::{Duration, Instant};
 
-use skylander_server::profiles::{LockoutCheck, ProfileStore, LOCKOUT_DURATION};
+use skylander_server::profiles::{LOCKOUT_DURATION, LockoutCheck, ProfileStore};
 
 #[tokio::test]
 async fn three_strikes_then_lockout_with_retry_after() {
@@ -47,7 +47,10 @@ async fn three_strikes_then_lockout_with_retry_after() {
 
     // After the freeze elapses, the correct pin works again.
     let after = t0 + LOCKOUT_DURATION + Duration::from_millis(1);
-    assert_eq!(store.lockouts.check(&id, after).await, LockoutCheck::Allowed);
+    assert_eq!(
+        store.lockouts.check(&id, after).await,
+        LockoutCheck::Allowed
+    );
     assert!(store.verify_pin(&id, "1234").await.unwrap());
 }
 

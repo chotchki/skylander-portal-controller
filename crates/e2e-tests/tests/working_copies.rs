@@ -12,7 +12,7 @@ use fantoccini::Locator;
 use serde_json::json;
 
 use skylander_e2e_tests::{
-    inject_load_outcomes, launch_giants, unlock_default_profile, Phone, TestServer,
+    Phone, TestServer, inject_load_outcomes, launch_giants, unlock_default_profile,
 };
 
 // ---- 3.11: working-copy fork + reset ------------------------------------
@@ -27,13 +27,18 @@ async fn load_uses_canonical_name_not_filename() {
     let server = TestServer::spawn().expect("spawn");
     unlock_default_profile(&server.url).await.unwrap();
     launch_giants(&server.url).await.unwrap();
-    inject_load_outcomes(&server.url, json!([{"kind": "ok"}])).await.unwrap();
+    inject_load_outcomes(&server.url, json!([{"kind": "ok"}]))
+        .await
+        .unwrap();
 
     let phone_url = server.phone_url().await.unwrap();
     let phone = Phone::new(&phone_url, &server.chromedriver_url)
         .await
         .unwrap();
-    phone.wait_for_portal(Duration::from_secs(10)).await.unwrap();
+    phone
+        .wait_for_portal(Duration::from_secs(10))
+        .await
+        .unwrap();
     phone.search("Spyro").await.unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
     phone.tap_slot(1).await.unwrap();
@@ -68,26 +73,22 @@ async fn resume_prompt_offers_prior_layout() {
     let server = TestServer::spawn().expect("spawn");
     unlock_default_profile(&server.url).await.unwrap();
     launch_giants(&server.url).await.unwrap();
-    inject_load_outcomes(
-        &server.url,
-        json!([{"kind": "ok"}, {"kind": "ok"}]),
-    )
-    .await
-    .unwrap();
+    inject_load_outcomes(&server.url, json!([{"kind": "ok"}, {"kind": "ok"}]))
+        .await
+        .unwrap();
 
     let phone_url = server.phone_url().await.unwrap();
     let phone = Phone::new(&phone_url, &server.chromedriver_url)
         .await
         .unwrap();
-    phone.wait_for_portal(Duration::from_secs(10)).await.unwrap();
+    phone
+        .wait_for_portal(Duration::from_secs(10))
+        .await
+        .unwrap();
 
     // Load slot 1.
     phone.tap_slot(1).await.unwrap();
-    phone
-        .client
-        .find_all(Locator::Css(".card"))
-        .await
-        .unwrap()[0]
+    phone.client.find_all(Locator::Css(".card")).await.unwrap()[0]
         .clone()
         .click()
         .await
@@ -106,7 +107,6 @@ async fn resume_prompt_offers_prior_layout() {
     // Briefly wait so `persist_layout` (fires after SlotChanged broadcast)
     // has a chance to write the row before we tear the session down.
     tokio::time::sleep(Duration::from_millis(500)).await;
-
 
     // Reload → new WS session. After reload, re-seed unlock so the new
     // session adopts the same profile and the server sees the prior
@@ -133,7 +133,9 @@ async fn resume_prompt_offers_prior_layout() {
 
     // Click "Resume" — should trigger re-loads. Queue a fresh outcome so
     // the mock driver can service the resume load.
-    inject_load_outcomes(&server.url, json!([{"kind": "ok"}])).await.unwrap();
+    inject_load_outcomes(&server.url, json!([{"kind": "ok"}]))
+        .await
+        .unwrap();
     phone
         .client
         .find(Locator::Css(".resume-yes"))

@@ -60,8 +60,7 @@ pub fn reset_to_fresh(profile_id: &str, figure: &Figure) -> Result<PathBuf> {
 
 fn fork_from_pack(pack_path: &Path, working_path: &Path) -> Result<()> {
     if let Some(parent) = working_path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("mkdir {}", parent.display()))?;
+        std::fs::create_dir_all(parent).with_context(|| format!("mkdir {}", parent.display()))?;
     }
     std::fs::copy(pack_path, working_path)
         .with_context(|| format!("copy {} → {}", pack_path.display(), working_path.display()))?;

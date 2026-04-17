@@ -11,14 +11,17 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use skylander_core::{Event, FigureId, GameLaunched, GameSerial, PublicFigure, SlotIndex, SlotState, UnlockedProfile, SLOT_COUNT};
+use skylander_core::{
+    Event, FigureId, GameLaunched, GameSerial, PublicFigure, SLOT_COUNT, SlotIndex, SlotState,
+    UnlockedProfile,
+};
 use skylander_rpcs3_control::RpcsProcess;
 use tokio::sync::broadcast;
 use tower_http::services::ServeDir;
 use tracing::{debug, info, warn};
 
 use crate::games::InstalledGame;
-use crate::profiles::{LockoutCheck, PublicProfile, RegistrationOutcome, SessionId, MAX_PROFILES};
+use crate::profiles::{LockoutCheck, MAX_PROFILES, PublicProfile, RegistrationOutcome, SessionId};
 use crate::state::{AppState, DriverJob};
 
 /// Axum extractor that validates the HMAC signature on a mutating request
@@ -55,9 +58,7 @@ impl axum::extract::FromRequest<Arc<AppState>> for Signed {
         let headers = req.headers().clone();
         let body = axum::body::to_bytes(req.into_body(), usize::MAX)
             .await
-            .map_err(|e| {
-                (StatusCode::BAD_REQUEST, format!("read body: {e}")).into_response()
-            })?;
+            .map_err(|e| (StatusCode::BAD_REQUEST, format!("read body: {e}")).into_response())?;
 
         let sig_hdr = headers.get(SIG_SIG_HEADER);
         let ts_hdr = headers.get(SIG_TIMESTAMP_HEADER);
@@ -77,12 +78,13 @@ impl axum::extract::FromRequest<Arc<AppState>> for Signed {
                 (StatusCode::UNAUTHORIZED, "missing X-Skyportal-Sig header").into_response()
             })?
             .to_str()
-            .map_err(|_| {
-                (StatusCode::BAD_REQUEST, "X-Skyportal-Sig not ASCII").into_response()
-            })?;
+            .map_err(|_| (StatusCode::BAD_REQUEST, "X-Skyportal-Sig not ASCII").into_response())?;
         let ts = ts_hdr
             .ok_or_else(|| {
-                (StatusCode::UNAUTHORIZED, "missing X-Skyportal-Timestamp header")
+                (
+                    StatusCode::UNAUTHORIZED,
+                    "missing X-Skyportal-Timestamp header",
+                )
                     .into_response()
             })?
             .to_str()
@@ -112,15 +114,12 @@ impl axum::extract::FromRequest<Arc<AppState>> for Signed {
         }
 
         let expected = compute_hmac(&state.hmac_key, ts_ms, method.as_str(), &path, &body);
-        let provided = hex::decode(sig).map_err(|_| {
-            (StatusCode::BAD_REQUEST, "X-Skyportal-Sig not hex").into_response()
-        })?;
+        let provided = hex::decode(sig)
+            .map_err(|_| (StatusCode::BAD_REQUEST, "X-Skyportal-Sig not hex").into_response())?;
         // Constant-time compare — `subtle::ConstantTimeEq` returns a `Choice`.
         use subtle::ConstantTimeEq;
         if expected.ct_eq(&provided).unwrap_u8() != 1 {
-            return Err(
-                (StatusCode::UNAUTHORIZED, "bad signature").into_response(),
-            );
+            return Err((StatusCode::UNAUTHORIZED, "bad signature").into_response());
         }
         Ok(Signed(body))
     }
@@ -232,10 +231,7 @@ pub fn router(state: Arc<AppState>, phone_dist: std::path::PathBuf) -> Router {
                 "/api/_test/set_session_profile",
                 post(set_session_profile_testhook),
             )
-            .route(
-                "/api/_test/layout/:profile_id",
-                get(layout_testhook),
-            );
+            .route("/api/_test/layout/:profile_id", get(layout_testhook));
     }
 
     // Static phone SPA (dev mode — ServeDir). When the dist directory isn't
@@ -340,8 +336,7 @@ async fn figure_image(
         "thumb" => "thumb",
         "hero" => "hero",
         other => {
-            return (StatusCode::BAD_REQUEST, format!("unknown size: {other}"))
-                .into_response();
+            return (StatusCode::BAD_REQUEST, format!("unknown size: {other}")).into_response();
         }
     };
 
@@ -398,7 +393,7 @@ async fn load_slot(
     let slot = match SlotIndex::from_display(n) {
         Ok(s) => s,
         Err(_) => {
-            return (StatusCode::BAD_REQUEST, format!("slot {n} out of range")).into_response()
+            return (StatusCode::BAD_REQUEST, format!("slot {n} out of range")).into_response();
         }
     };
     let body: LoadBody = match serde_json::from_slice(&body_bytes) {
@@ -422,18 +417,16 @@ async fn load_slot(
     // so progress persists across loads. Without a profile (no session
     // unlocked yet), fall back to the pack's fresh file — read-only use.
     let path = match &placed_by {
-        Some(profile_id) => {
-            match crate::working_copies::resolve_load_path(profile_id, &figure) {
-                Ok(p) => p,
-                Err(e) => {
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("working-copy resolve failed: {e}"),
-                    )
-                        .into_response()
-                }
+        Some(profile_id) => match crate::working_copies::resolve_load_path(profile_id, &figure) {
+            Ok(p) => p,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("working-copy resolve failed: {e}"),
+                )
+                    .into_response();
             }
-        }
+        },
         None => figure.sky_path.clone(),
     };
 
@@ -496,7 +489,7 @@ async fn reset_slot(
     let slot = match SlotIndex::from_display(n) {
         Ok(s) => s,
         Err(_) => {
-            return (StatusCode::BAD_REQUEST, format!("slot {n} out of range")).into_response()
+            return (StatusCode::BAD_REQUEST, format!("slot {n} out of range")).into_response();
         }
     };
     #[derive(Deserialize)]
@@ -505,9 +498,7 @@ async fn reset_slot(
     }
     let body: ResetBody = match serde_json::from_slice(&body_bytes) {
         Ok(b) => b,
-        Err(e) => {
-            return (StatusCode::BAD_REQUEST, format!("bad reset body: {e}")).into_response()
-        }
+        Err(e) => return (StatusCode::BAD_REQUEST, format!("bad reset body: {e}")).into_response(),
     };
     let figure = match state.lookup_figure(&body.figure_id) {
         Some(f) => f.clone(),
@@ -570,7 +561,7 @@ async fn clear_slot(
     let slot = match SlotIndex::from_display(n) {
         Ok(s) => s,
         Err(_) => {
-            return (StatusCode::BAD_REQUEST, format!("slot {n} out of range")).into_response()
+            return (StatusCode::BAD_REQUEST, format!("slot {n} out of range")).into_response();
         }
     };
 
@@ -592,17 +583,24 @@ async fn clear_slot(
         state: loading,
     });
 
-    if state.driver_tx.send(DriverJob::ClearSlot { slot }).await.is_err() {
+    if state
+        .driver_tx
+        .send(DriverJob::ClearSlot { slot })
+        .await
+        .is_err()
+    {
         return (StatusCode::SERVICE_UNAVAILABLE, "driver channel closed").into_response();
     }
     (StatusCode::ACCEPTED, "queued").into_response()
 }
 
-async fn refresh_portal(
-    State(state): State<Arc<AppState>>,
-    Signed(_body): Signed,
-) -> Response {
-    if state.driver_tx.send(DriverJob::RefreshPortal).await.is_err() {
+async fn refresh_portal(State(state): State<Arc<AppState>>, Signed(_body): Signed) -> Response {
+    if state
+        .driver_tx
+        .send(DriverJob::RefreshPortal)
+        .await
+        .is_err()
+    {
         return (StatusCode::SERVICE_UNAVAILABLE, "driver channel closed").into_response();
     }
     (StatusCode::ACCEPTED, "queued").into_response()
@@ -645,13 +643,12 @@ struct LaunchBody {
     serial: GameSerial,
 }
 
-async fn launch_game(
-    State(state): State<Arc<AppState>>,
-    Signed(body_bytes): Signed,
-) -> Response {
+async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Signed) -> Response {
     let body: LaunchBody = match serde_json::from_slice(&body_bytes) {
         Ok(b) => b,
-        Err(e) => return (StatusCode::BAD_REQUEST, format!("bad launch body: {e}")).into_response(),
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, format!("bad launch body: {e}")).into_response();
+        }
     };
     let game = match state.lookup_game(&body.serial) {
         Some(g) => g.clone(),
@@ -687,7 +684,10 @@ async fn launch_game(
     let proc = match launch {
         Ok(Ok(p)) => p,
         Ok(Err(e)) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, format!("launch failed: {e}"))
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("launch failed: {e}"),
+            )
                 .into_response();
         }
         Err(e) => {
@@ -813,8 +813,7 @@ async fn quit_game(
         Duration::from_secs(30)
     };
 
-    let result =
-        tokio::task::spawn_blocking(move || proc.shutdown_graceful(timeout)).await;
+    let result = tokio::task::spawn_blocking(move || proc.shutdown_graceful(timeout)).await;
 
     match result {
         Ok(Ok(path)) => info!(?path, "game shutdown finished"),
@@ -832,10 +831,7 @@ async fn quit_game(
     (StatusCode::ACCEPTED, "quit").into_response()
 }
 
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_ws(socket, state))
 }
 
@@ -1000,8 +996,11 @@ async fn create_profile(
     let body: CreateProfileBody = match serde_json::from_slice(&body_bytes) {
         Ok(b) => b,
         Err(e) => {
-            return (StatusCode::BAD_REQUEST, format!("bad create-profile body: {e}"))
-                .into_response()
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("bad create-profile body: {e}"),
+            )
+                .into_response();
         }
     };
     match state.profiles.count().await {
@@ -1046,7 +1045,9 @@ async fn delete_profile(
 ) -> Response {
     let body: PinBody = match serde_json::from_slice(&body_bytes) {
         Ok(b) => b,
-        Err(e) => return (StatusCode::BAD_REQUEST, format!("bad delete body: {e}")).into_response(),
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, format!("bad delete body: {e}")).into_response();
+        }
     };
     match state.profiles.verify_pin(&id, &body.pin).await {
         Ok(true) => {}
@@ -1069,7 +1070,9 @@ async fn unlock_profile(
 ) -> Response {
     let body: PinBody = match serde_json::from_slice(&body_bytes) {
         Ok(b) => b,
-        Err(e) => return (StatusCode::BAD_REQUEST, format!("bad unlock body: {e}")).into_response(),
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, format!("bad unlock body: {e}")).into_response();
+        }
     };
     let now = std::time::Instant::now();
     match state.profiles.lockouts.check(&id, now).await {
@@ -1172,11 +1175,7 @@ async fn build_resume_prompt(
 /// Convenience wrapper that builds + broadcasts. Used from REST handlers
 /// (`unlock_profile`, the test-hook unlock path) where the recipient
 /// session already has a writer task draining the broadcast channel.
-async fn maybe_send_resume_prompt(
-    state: &Arc<AppState>,
-    session_id: u64,
-    profile_id: &str,
-) {
+async fn maybe_send_resume_prompt(state: &Arc<AppState>, session_id: u64, profile_id: &str) {
     if let Some(evt) = build_resume_prompt(state, session_id, profile_id).await {
         let _ = state.events.send(evt);
     }
@@ -1294,7 +1293,10 @@ async fn set_session_profile_testhook(
         Ok(None) => return (StatusCode::NOT_FOUND, "no such profile").into_response(),
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     };
-    state.sessions.set_profile(sid, Some(body.profile_id.clone())).await;
+    state
+        .sessions
+        .set_profile(sid, Some(body.profile_id.clone()))
+        .await;
     let _ = state.events.send(Event::ProfileChanged {
         session_id: sid.0,
         profile: Some(UnlockedProfile {
@@ -1313,7 +1315,11 @@ async fn hmac_key_testhook(State(state): State<Arc<AppState>>) -> Response {
     // here so the harness can build `#k=<hex>` URLs and exercise the real
     // signed flow end-to-end. Only compiled when `test-hooks` is on.
     let hex = hex::encode(&state.hmac_key);
-    (StatusCode::OK, axum::Json(serde_json::json!({ "hmac_key": hex }))).into_response()
+    (
+        StatusCode::OK,
+        axum::Json(serde_json::json!({ "hmac_key": hex })),
+    )
+        .into_response()
 }
 
 #[cfg(feature = "test-hooks")]
@@ -1367,4 +1373,3 @@ async fn unlock_session_testhook(
     }
     (StatusCode::OK, "unlocked").into_response()
 }
-

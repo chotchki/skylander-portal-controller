@@ -8,7 +8,7 @@
 use std::path::Path;
 
 use anyhow::Result;
-use skylander_core::{SlotIndex, SlotState, SLOT_COUNT};
+use skylander_core::{SLOT_COUNT, SlotIndex, SlotState};
 
 /// Drive the emulated Skylanders portal.
 ///
@@ -36,7 +36,7 @@ pub trait PortalDriver: Send + Sync {
 #[cfg(windows)]
 pub mod uia;
 #[cfg(windows)]
-pub use uia::{window_kind, UiaPortalDriver, WindowKind};
+pub use uia::{UiaPortalDriver, WindowKind, window_kind};
 #[cfg(windows)]
 pub mod hide;
 

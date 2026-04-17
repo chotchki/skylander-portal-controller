@@ -29,10 +29,12 @@ pub fn scan(pack_root: &Path) -> Result<Vec<Figure>> {
         let file_name = sky.file_name.clone();
 
         let (game, element, category) = classify(&segs, &file_name);
-        let stem = file_name.strip_suffix(".sky").unwrap_or(&file_name).to_string();
+        let stem = file_name
+            .strip_suffix(".sky")
+            .unwrap_or(&file_name)
+            .to_string();
         let stem_clean = stem.strip_suffix(".key").unwrap_or(&stem).to_string();
-        let (variant_group, variant_tag) =
-            derive_group_and_tag(&segs, &stem_clean, category);
+        let (variant_group, variant_tag) = derive_group_and_tag(&segs, &stem_clean, category);
 
         let id = stable_id(game, element, &rel_str);
 
@@ -174,7 +176,11 @@ fn classify_inside_game(
                 .and_then(|f| f.strip_suffix(".sky"))
                 .map(|s| s.strip_suffix(".key").unwrap_or(s))
                 .unwrap_or("");
-            (game, parse_creation_crystal_element(stem), Category::CreationCrystal)
+            (
+                game,
+                parse_creation_crystal_element(stem),
+                Category::CreationCrystal,
+            )
         }
         "Traps" => {
             let elem_seg = segs.get(2).copied().unwrap_or("");
@@ -361,7 +367,11 @@ fn derive_group_and_tag(segs: &[&str], stem_clean: &str, category: Category) -> 
         | Category::Trap
         | Category::Kaos => (
             group.clone(),
-            if in_alternate { tag } else { "base".to_string() },
+            if in_alternate {
+                tag
+            } else {
+                "base".to_string()
+            },
         ),
         _ => (group, tag),
     }

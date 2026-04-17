@@ -10,10 +10,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use argon2::password_hash::{
-    rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString,
-};
 use argon2::Argon2;
+use argon2::password_hash::{
+    PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng,
+};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
@@ -372,10 +372,7 @@ impl ProfileStore {
 
     /// Return `(figure_id, last_used_at_rfc3339)` for every row the given
     /// profile owns. Empty map when the profile has no usage yet.
-    pub async fn fetch_usage(
-        &self,
-        profile_id: &str,
-    ) -> Result<HashMap<String, String>> {
+    pub async fn fetch_usage(&self, profile_id: &str) -> Result<HashMap<String, String>> {
         let rows: Vec<(String, String)> = sqlx::query_as(
             "SELECT figure_id, last_used_at FROM figure_usage WHERE profile_id = ?1",
         )
@@ -388,11 +385,7 @@ impl ProfileStore {
     /// Update `figure_usage.last_used_at` for this (profile_id, figure_id)
     /// pair. Creates the row on first use. Called from `load_slot` after a
     /// successful working-copy resolve (PLAN 3.11.2).
-    pub async fn record_figure_usage(
-        &self,
-        profile_id: &str,
-        figure_id: &str,
-    ) -> Result<()> {
+    pub async fn record_figure_usage(&self, profile_id: &str, figure_id: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         sqlx::query(
             "INSERT INTO figure_usage (profile_id, figure_id, last_used_at) \
@@ -411,11 +404,7 @@ impl ProfileStore {
     /// Read + write `sessions.last_portal_layout_json` for a profile. The
     /// layout is an opaque JSON blob (the 8-slot array, serialised via
     /// `serde_json`) — shape is enforced by the caller, not the DB.
-    pub async fn save_portal_layout(
-        &self,
-        profile_id: &str,
-        layout_json: &str,
-    ) -> Result<()> {
+    pub async fn save_portal_layout(&self, profile_id: &str, layout_json: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         sqlx::query(
             "INSERT INTO sessions (profile_id, last_portal_layout_json, updated_at) \
@@ -433,12 +422,11 @@ impl ProfileStore {
     }
 
     pub async fn load_portal_layout(&self, profile_id: &str) -> Result<Option<String>> {
-        let row: Option<(Option<String>,)> = sqlx::query_as(
-            "SELECT last_portal_layout_json FROM sessions WHERE profile_id = ?1",
-        )
-        .bind(profile_id)
-        .fetch_optional(&self.pool)
-        .await?;
+        let row: Option<(Option<String>,)> =
+            sqlx::query_as("SELECT last_portal_layout_json FROM sessions WHERE profile_id = ?1")
+                .bind(profile_id)
+                .fetch_optional(&self.pool)
+                .await?;
         Ok(row.and_then(|(json,)| json))
     }
 
@@ -454,12 +442,7 @@ impl ProfileStore {
 
     /// Create a profile. Returns the new id. Caller must have already
     /// enforced `count() < MAX_PROFILES`.
-    pub async fn create(
-        &self,
-        display_name: &str,
-        pin: &str,
-        color: &str,
-    ) -> Result<String> {
+    pub async fn create(&self, display_name: &str, pin: &str, color: &str) -> Result<String> {
         validate_pin(pin)?;
         validate_name(display_name)?;
         validate_color(color)?;
@@ -609,7 +592,8 @@ mod tests {
         ));
         // Cleared once the window elapses.
         assert_eq!(
-            l.check("p", t0 + LOCKOUT_DURATION + Duration::from_millis(1)).await,
+            l.check("p", t0 + LOCKOUT_DURATION + Duration::from_millis(1))
+                .await,
             LockoutCheck::Allowed
         );
     }
@@ -707,9 +691,7 @@ mod tests {
         let _c = sid(&reg.register_at(base + Duration::from_secs(2)).await);
 
         // Fourth immediately after: still 2 seats, and within cooldown → reject.
-        let outcome = reg
-            .register_at(base + Duration::from_secs(3))
-            .await;
+        let outcome = reg.register_at(base + Duration::from_secs(3)).await;
         match outcome {
             RegistrationOutcome::RejectedByCooldown { retry_after } => {
                 assert!(retry_after.as_secs() > 50 && retry_after.as_secs() <= 60);

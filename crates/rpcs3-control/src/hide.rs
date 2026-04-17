@@ -5,13 +5,13 @@
 //! positioning goes through SetWindowPos on a raw HWND; `find_dialog_hwnd`
 //! uses FindWindowEx so it works whether the dialog is on- or off-screen.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use uiautomation::UIElement;
 use windows::Win32::Foundation::{HWND, LPARAM};
-use windows::core::BOOL;
 use windows::Win32::UI::WindowsAndMessaging::{
-    SetWindowPos, SET_WINDOW_POS_FLAGS, SWP_NOSIZE, SWP_NOZORDER,
+    SET_WINDOW_POS_FLAGS, SWP_NOSIZE, SWP_NOZORDER, SetWindowPos,
 };
+use windows::core::BOOL;
 
 pub fn set_position(el: &UIElement, x: i32, y: i32) -> Result<()> {
     let raw = el
@@ -37,10 +37,12 @@ pub fn set_position_raw(hwnd: HWND, x: i32, y: i32) -> Result<()> {
 /// `restore_dialog_visible` so a hidden-then-offscreen dialog reappears
 /// for the user.
 pub fn set_position_and_show(hwnd: HWND, x: i32, y: i32) -> Result<()> {
-    use windows::Win32::Graphics::Gdi::{InvalidateRect, RedrawWindow, RDW_ERASE, RDW_INVALIDATE, RDW_UPDATENOW};
+    use windows::Win32::Graphics::Gdi::{
+        InvalidateRect, RDW_ERASE, RDW_INVALIDATE, RDW_UPDATENOW, RedrawWindow,
+    };
     use windows::Win32::UI::WindowsAndMessaging::{
-        BringWindowToTop, GetWindowRect, IsWindow, IsWindowVisible, SetForegroundWindow,
-        ShowWindow, SW_HIDE, SW_SHOW,
+        BringWindowToTop, GetWindowRect, IsWindow, IsWindowVisible, SW_HIDE, SW_SHOW,
+        SetForegroundWindow, ShowWindow,
     };
     unsafe {
         if !IsWindow(Some(hwnd)).as_bool() {

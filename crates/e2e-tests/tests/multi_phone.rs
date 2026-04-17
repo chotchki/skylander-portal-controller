@@ -14,18 +14,15 @@ use fantoccini::Locator;
 use serde_json::json;
 
 use skylander_e2e_tests::{
-    clear_eviction_cooldown, inject_load_outcomes, inject_profile, launch_giants,
-    set_session_profile, unlock_default_profile, unlock_session, Phone, TestServer,
+    Phone, TestServer, clear_eviction_cooldown, inject_load_outcomes, inject_profile,
+    launch_giants, set_session_profile, unlock_default_profile, unlock_session,
 };
 
 /// Helper: open a fresh Phone against the given server.
 async fn new_phone(server: &TestServer) -> Phone {
-    Phone::new(
-        &server.phone_url().await.unwrap(),
-        &server.chromedriver_url,
-    )
-    .await
-    .unwrap()
+    Phone::new(&server.phone_url().await.unwrap(), &server.chromedriver_url)
+        .await
+        .unwrap()
 }
 
 /// Helper: poll until the phone's session id is exposed in the DOM.
@@ -47,12 +44,9 @@ async fn concurrent_edits_both_phones() {
     let server = TestServer::spawn().expect("spawn");
     unlock_default_profile(&server.url).await.unwrap();
     launch_giants(&server.url).await.unwrap();
-    inject_load_outcomes(
-        &server.url,
-        json!([{"kind": "ok"}, {"kind": "ok"}]),
-    )
-    .await
-    .unwrap();
+    inject_load_outcomes(&server.url, json!([{"kind": "ok"}, {"kind": "ok"}]))
+        .await
+        .unwrap();
 
     // Two phones, same shared portal.
     let p1 = new_phone(&server).await;
@@ -73,10 +67,7 @@ async fn concurrent_edits_both_phones() {
 
     // P1 loads a figure into slot 1.
     p1.tap_slot(1).await.unwrap();
-    p1.client
-        .find_all(Locator::Css(".card"))
-        .await
-        .unwrap()[0]
+    p1.client.find_all(Locator::Css(".card")).await.unwrap()[0]
         .clone()
         .click()
         .await
@@ -84,10 +75,7 @@ async fn concurrent_edits_both_phones() {
 
     // P2 loads a different figure into slot 2.
     p2.tap_slot(2).await.unwrap();
-    p2.client
-        .find_all(Locator::Css(".card"))
-        .await
-        .unwrap()[1]
+    p2.client.find_all(Locator::Css(".card")).await.unwrap()[1]
         .clone()
         .click()
         .await
@@ -136,10 +124,7 @@ async fn third_connection_evicts_oldest() {
 
     // P1 should flip to the Kaos "taken over" screen.
     p1.wait_until(Duration::from_secs(10), || async {
-        p1.client
-            .find(Locator::Css(".takeover"))
-            .await
-            .is_ok()
+        p1.client.find(Locator::Css(".takeover")).await.is_ok()
     })
     .await
     .expect("P1 should see takeover screen");
@@ -289,14 +274,8 @@ async fn independent_profile_unlock() {
         .await
         .unwrap();
 
-    assert!(
-        chip1.contains("Alpha"),
-        "P1 expected Alpha, got {chip1:?}"
-    );
-    assert!(
-        chip2.contains("Beta"),
-        "P2 expected Beta, got {chip2:?}"
-    );
+    assert!(chip1.contains("Alpha"), "P1 expected Alpha, got {chip1:?}");
+    assert!(chip2.contains("Beta"), "P2 expected Beta, got {chip2:?}");
     assert_ne!(s1, s2);
     p1.close().await.unwrap();
     p2.close().await.unwrap();

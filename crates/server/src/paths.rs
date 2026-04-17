@@ -91,7 +91,10 @@ mod tests {
     fn working_copy_path_shape() {
         let p = working_copy_path("alice", "deadbeef").unwrap();
         let s = p.to_string_lossy().replace('\\', "/");
-        assert!(s.ends_with("/working/alice/deadbeef.sky"), "unexpected: {s}");
+        assert!(
+            s.ends_with("/working/alice/deadbeef.sky"),
+            "unexpected: {s}"
+        );
     }
 
     #[test]
