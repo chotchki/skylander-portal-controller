@@ -81,6 +81,30 @@ pub struct LauncherStatus {
     /// Flipped by the crash watchdog (PLAN 4.15.10) and `/api/shutdown`
     /// (PLAN 4.15.11) into `Crashed` / `Farewell` respectively.
     pub screen: LauncherScreen,
+    /// Number of currently-registered phone sessions (0..=MAX_SESSIONS).
+    /// Drives the count of visible player-orbit pips (PLAN 4.15.7).
+    pub session_count: u8,
+    /// `true` when the session registry is at the `MAX_SESSIONS` cap.
+    /// Triggers the QR card-flip animation (PLAN 4.15.6).
+    pub session_slots_full: bool,
+    /// One entry per currently-registered session. Ordered by session id
+    /// ascending (oldest first) so pips keep a stable slot when a new
+    /// session joins. Length matches `session_count`.
+    pub session_profiles: Vec<SessionPip>,
+}
+
+/// UI-polled view of one connected phone session. Colour / initial are
+/// `None` when the session is registered but not yet unlocked — the pip
+/// then renders as a neutral gold placeholder with a dot instead of a
+/// letter.
+#[derive(Debug, Clone, Default)]
+pub struct SessionPip {
+    /// Profile hex colour (e.g. `#ff00aa`). `None` means "session has no
+    /// profile unlocked yet".
+    pub color: Option<String>,
+    /// First grapheme of the profile's display name, uppercased. `None`
+    /// means unlocked state unknown.
+    pub initial: Option<String>,
 }
 
 /// Which top-level surface the egui TV launcher is rendering right now.
@@ -117,6 +141,67 @@ impl AppState {
     pub fn lookup_figure(&self, id: &FigureId) -> Option<&Figure> {
         self.figure_index.get(id).and_then(|i| self.figures.get(*i))
     }
+
+    /// Recompute the session-related fields on `launcher_status`
+    /// (`session_count`, `session_slots_full`, `session_profiles`) from the
+    /// current registry state + profile store and publish the snapshot for
+    /// the eframe UI thread. Call after every mutation of the session
+    /// registry: `register`, `remove`, `set_profile`, and the `test-hooks`
+    /// `set_pending_unlock` / `set_session_profile` paths (PLAN 4.15.6 /
+    /// 4.15.7).
+    ///
+    /// Best-effort: profile-store errors fall back to a neutral pip so the
+    /// UI can still render a count. A poisoned `launcher_status` mutex
+    /// (eframe thread panicked) silently no-ops — we keep serving phones.
+    pub async fn publish_session_snapshot(&self) {
+        let mut ids = self.sessions.all_ids().await;
+        // Stable order by session id so pips don't swap slots when a
+        // session joins or leaves. Session ids are minted monotonically, so
+        // ascending = oldest first, which matches how the mock assigns
+        // pip1/pip2.
+        ids.sort_by_key(|s| s.0);
+
+        let mut pips = Vec::with_capacity(ids.len());
+        for sid in &ids {
+            let profile_id = self.sessions.profile_of(*sid).await;
+            let pip = match profile_id {
+                Some(pid) => match self.profiles.get(&pid).await {
+                    Ok(Some(row)) => SessionPip {
+                        color: Some(row.color),
+                        initial: first_grapheme_uppercase(&row.display_name),
+                    },
+                    _ => SessionPip::default(),
+                },
+                None => SessionPip::default(),
+            };
+            pips.push(pip);
+        }
+
+        let count = pips.len() as u8;
+        let full = (pips.len()) >= crate::profiles::MAX_SESSIONS;
+
+        if let Ok(mut st) = self.launcher_status.lock() {
+            st.session_count = count;
+            st.session_slots_full = full;
+            st.session_profiles = pips;
+        }
+    }
+}
+
+/// Extract the first grapheme of a display name and uppercase it for use
+/// as a pip initial. Returns `None` for empty strings.
+fn first_grapheme_uppercase(name: &str) -> Option<String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // Unicode-naive first-char uppercase — display names are validated to
+    // be 1–32 chars ASCII-ish in `validate_name`, so `chars().next()`
+    // lines up with the user's intent without needing a grapheme crate.
+    trimmed
+        .chars()
+        .next()
+        .map(|c| c.to_uppercase().collect::<String>())
 }
 
 /// Reverse-lookup a figure by its display name (case and surrounding-whitespace
