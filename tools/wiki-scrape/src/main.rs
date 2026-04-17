@@ -260,11 +260,11 @@ async fn resolve_title(client: &Client, candidates: &[String]) -> Result<Option<
         if !resp.status().is_success() {
             continue;
         }
-        if let Ok(arr) = resp.json::<OpensearchArray3>().await {
-            if let Some(first) = arr.1.first() {
-                debug!(candidate = %cand, resolved = %first, "opensearch match");
-                return Ok(Some(first.clone()));
-            }
+        if let Ok(arr) = resp.json::<OpensearchArray3>().await
+            && let Some(first) = arr.1.first()
+        {
+            debug!(candidate = %cand, resolved = %first, "opensearch match");
+            return Ok(Some(first.clone()));
         }
     }
     Ok(None)
@@ -618,24 +618,23 @@ async fn main() -> Result<()> {
         // don't re-hit the wiki API just to regenerate a hero — the cached
         // wiki_page URL is enough to identify the page, and the thumb image
         // is already committed).
-        if !force {
-            if let Some(prev) = existing.get(&entry.id) {
-                if prev.wiki_page.is_some() {
-                    let thumb = data_root.join("images").join(&entry.id).join("thumb.png");
-                    let hero = data_root.join("images").join(&entry.id).join("hero.png");
-                    let images_ok = thumb.exists() && (skip_hero || hero.exists());
-                    // On a fresh checkout thumb exists (committed) but hero
-                    // doesn't — that's fine, we treat the figure as cached and
-                    // skip both the API call and the image re-download. The
-                    // user can pass `--force` if they want a full rebuild.
-                    let thumb_ok = thumb.exists();
-                    if images_ok || thumb_ok {
-                        results.push(prev.clone());
-                        skipped_cached += 1;
-                        found += 1;
-                        continue;
-                    }
-                }
+        if !force
+            && let Some(prev) = existing.get(&entry.id)
+            && prev.wiki_page.is_some()
+        {
+            let thumb = data_root.join("images").join(&entry.id).join("thumb.png");
+            let hero = data_root.join("images").join(&entry.id).join("hero.png");
+            let images_ok = thumb.exists() && (skip_hero || hero.exists());
+            // On a fresh checkout thumb exists (committed) but hero
+            // doesn't — that's fine, we treat the figure as cached and
+            // skip both the API call and the image re-download. The
+            // user can pass `--force` if they want a full rebuild.
+            let thumb_ok = thumb.exists();
+            if images_ok || thumb_ok {
+                results.push(prev.clone());
+                skipped_cached += 1;
+                found += 1;
+                continue;
             }
         }
 
@@ -736,34 +735,34 @@ async fn scrape_one(
     ));
 
     // Parse Characterbox.
-    if let Some(rev) = page.revisions.as_ref().and_then(|r| r.first()) {
-        if let Some(text) = rev.slots.main.content.as_deref() {
-            let cbox = parse_characterbox(text);
+    if let Some(rev) = page.revisions.as_ref().and_then(|r| r.first())
+        && let Some(text) = rev.slots.main.content.as_deref()
+    {
+        let cbox = parse_characterbox(text);
 
-            if let Some(soul_gem) = cbox.get("soul gem").or_else(|| cbox.get("soulgem")) {
-                fig.soul_gem = Some(soul_gem.clone());
-            }
-            if let Some(attack) = cbox.get("attack") {
-                fig.signature_moves = parse_bullets(attack);
-            }
-            if let Some(align) = cbox
-                .get("alignment")
-                .or_else(|| cbox.get("role"))
-                .or_else(|| cbox.get("faction"))
-            {
-                fig.alignment = Some(align.clone());
-            }
-            fig.attributes = cbox;
+        if let Some(soul_gem) = cbox.get("soul gem").or_else(|| cbox.get("soulgem")) {
+            fig.soul_gem = Some(soul_gem.clone());
         }
+        if let Some(attack) = cbox.get("attack") {
+            fig.signature_moves = parse_bullets(attack);
+        }
+        if let Some(align) = cbox
+            .get("alignment")
+            .or_else(|| cbox.get("role"))
+            .or_else(|| cbox.get("faction"))
+        {
+            fig.alignment = Some(align.clone());
+        }
+        fig.attributes = cbox;
     }
     // Fallback alignment from categories for Trap Team traps.
-    if fig.alignment.is_none() {
-        if let Some(cats) = &page.categories {
-            for c in cats {
-                let t = c.title.trim_start_matches("Category:");
-                if t == "Light Traps" || t == "Dark Traps" {
-                    fig.alignment = Some(t.to_string());
-                }
+    if fig.alignment.is_none()
+        && let Some(cats) = &page.categories
+    {
+        for c in cats {
+            let t = c.title.trim_start_matches("Category:");
+            if t == "Light Traps" || t == "Dark Traps" {
+                fig.alignment = Some(t.to_string());
             }
         }
     }

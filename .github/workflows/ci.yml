@@ -55,13 +55,14 @@ jobs:
           # build doesn't poison the default cache.
           shared-key: "windows-stable"
 
-      # Clippy is run in warning-only mode for now — the workspace has ~42
-      # pre-existing lints (mostly in `tools/wiki-scrape` + `crates/sky-parser`)
-      # that are out of scope for the CI-bring-up PR. Tighten to `-D warnings`
-      # once those are cleaned up in a follow-up.
-      - name: cargo clippy --workspace --all-targets (warning mode)
-        continue-on-error: true
-        run: cargo clippy --workspace --all-targets
+      # Clippy runs in strict mode: any warning fails the build. The workspace
+      # was cleaned up end-to-end (see the clippy-cleanup PR), with narrow
+      # `#[allow]`s documented where the lint was judged wrong for the code
+      # (UIA automation in `crates/rpcs3-control/src/uia.rs`, `+ 0x00` spec
+      # offsets in `crates/sky-parser`). New lints must be fixed before merge
+      # — don't re-introduce `continue-on-error` without a very good reason.
+      - name: cargo clippy --workspace --all-targets
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: cargo build --workspace --all-features
         run: cargo build --workspace --all-features

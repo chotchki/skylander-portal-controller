@@ -60,14 +60,14 @@ fn main() -> Result<()> {
         let _ = GetWindowRect(main_hwnd, &mut main_rect);
     }
 
-    if let Some(vp) = viewport_hwnd {
-        if minimise_viewport {
-            unsafe {
-                let _ = ShowWindow(vp, SW_MINIMIZE);
-            }
-            eprintln!("viewport minimised");
-            sleep(STEP_PAUSE);
+    if let Some(vp) = viewport_hwnd
+        && minimise_viewport
+    {
+        unsafe {
+            let _ = ShowWindow(vp, SW_MINIMIZE);
         }
+        eprintln!("viewport minimised");
+        sleep(STEP_PAUSE);
     }
 
     if hide_main {
@@ -201,13 +201,13 @@ fn main() -> Result<()> {
         eprintln!("main window position restored");
     }
 
-    if let Some(vp) = viewport_hwnd {
-        if minimise_viewport {
-            unsafe {
-                let _ = ShowWindow(vp, SW_RESTORE);
-            }
-            eprintln!("viewport restored");
+    if let Some(vp) = viewport_hwnd
+        && minimise_viewport
+    {
+        unsafe {
+            let _ = ShowWindow(vp, SW_RESTORE);
         }
+        eprintln!("viewport restored");
     }
 
     Ok(())

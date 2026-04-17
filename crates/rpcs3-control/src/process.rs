@@ -166,10 +166,10 @@ impl RpcsProcess {
         let deadline = Instant::now() + timeout;
         loop {
             // If we spawned the child, check it hasn't already died.
-            if let ProcessOwnership::Spawned(ref mut child) = self.inner {
-                if let Ok(Some(status)) = child.try_wait() {
-                    bail!("RPCS3 exited before it was ready (status: {:?})", status);
-                }
+            if let ProcessOwnership::Spawned(ref mut child) = self.inner
+                && let Ok(Some(status)) = child.try_wait()
+            {
+                bail!("RPCS3 exited before it was ready (status: {:?})", status);
             }
             if let Some(_el) = find_rpcs3_main_window() {
                 debug!("RPCS3 main window detected");
@@ -280,13 +280,13 @@ impl Drop for RpcsProcess {
         // handle. No graceful close here; callers are expected to drive
         // `shutdown_graceful` explicitly. This just prevents zombie children
         // if the server process exits without cleanup.
-        if let ProcessOwnership::Spawned(ref mut child) = self.inner {
-            if matches!(child.try_wait(), Ok(None)) {
-                warn!(
-                    "RpcsProcess dropped without shutdown_graceful; child {} still running",
-                    self.pid
-                );
-            }
+        if let ProcessOwnership::Spawned(ref mut child) = self.inner
+            && matches!(child.try_wait(), Ok(None))
+        {
+            warn!(
+                "RpcsProcess dropped without shutdown_graceful; child {} still running",
+                self.pid
+            );
         }
     }
 }
@@ -318,15 +318,16 @@ fn find_rpcs3_main_window_with_pid() -> Result<Option<(UIElement, u32)>> {
             .map(|c| c == ControlType::Window)
             .unwrap_or(false);
         let name = el.get_name().unwrap_or_default();
-        if is_window && name.starts_with(WINDOW_TITLE_PREFIX) {
-            if let Some(hwnd) = native_hwnd(&el) {
-                let mut pid: u32 = 0;
-                unsafe {
-                    let _ = GetWindowThreadProcessId(hwnd, Some(&mut pid as *mut u32));
-                }
-                if pid != 0 {
-                    return Ok(Some((el, pid)));
-                }
+        if is_window
+            && name.starts_with(WINDOW_TITLE_PREFIX)
+            && let Some(hwnd) = native_hwnd(&el)
+        {
+            let mut pid: u32 = 0;
+            unsafe {
+                let _ = GetWindowThreadProcessId(hwnd, Some(&mut pid as *mut u32));
+            }
+            if pid != 0 {
+                return Ok(Some((el, pid)));
             }
         }
         cur = walker.get_next_sibling(&el).ok();

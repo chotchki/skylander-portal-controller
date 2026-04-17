@@ -185,7 +185,7 @@ fn spawn_reader(
 ) {
     thread::spawn(move || {
         let reader = BufReader::new(stream);
-        for line in reader.lines().flatten() {
+        for line in reader.lines().map_while(Result::ok) {
             eprintln!("[{tag}] {line}");
             let _ = tx.send(line);
         }

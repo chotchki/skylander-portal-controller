@@ -107,10 +107,10 @@ fn find_top_level_by_exact_title(title: &str) -> Option<HWND> {
     }
     extern "system" fn proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
         let ctx = unsafe { &mut *(lparam.0 as *mut Ctx) };
-        if let Some(t) = window_title(hwnd) {
-            if t == ctx.title {
-                ctx.candidates.push(hwnd);
-            }
+        if let Some(t) = window_title(hwnd)
+            && t == ctx.title
+        {
+            ctx.candidates.push(hwnd);
         }
         BOOL(1)
     }
@@ -130,10 +130,10 @@ fn find_top_level_by_exact_title(title: &str) -> Option<HWND> {
         return None;
     }
     for hwnd in &ctx.candidates {
-        if let Some(cls) = window_class(*hwnd) {
-            if cls.contains("QWindowIcon") || cls.contains("QWindow") && !cls.contains("ToolSave") {
-                return Some(*hwnd);
-            }
+        if let Some(cls) = window_class(*hwnd)
+            && (cls.contains("QWindowIcon") || cls.contains("QWindow") && !cls.contains("ToolSave"))
+        {
+            return Some(*hwnd);
         }
     }
     ctx.candidates.first().copied()
@@ -160,11 +160,11 @@ fn find_top_level_by_title_prefix(prefix: &str) -> Option<HWND> {
     }
     extern "system" fn proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
         let ctx = unsafe { &mut *(lparam.0 as *mut Ctx) };
-        if let Some(title) = window_title(hwnd) {
-            if title.starts_with(&ctx.prefix) {
-                ctx.hit = Some(hwnd);
-                return BOOL(0); // stop
-            }
+        if let Some(title) = window_title(hwnd)
+            && title.starts_with(&ctx.prefix)
+        {
+            ctx.hit = Some(hwnd);
+            return BOOL(0); // stop
         }
         BOOL(1) // continue
     }
@@ -188,11 +188,11 @@ fn find_child_by_exact_title(parent: HWND, title: &str) -> Option<HWND> {
     }
     extern "system" fn proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
         let ctx = unsafe { &mut *(lparam.0 as *mut Ctx) };
-        if let Some(t) = window_title(hwnd) {
-            if t == ctx.title {
-                ctx.hit = Some(hwnd);
-                return BOOL(0);
-            }
+        if let Some(t) = window_title(hwnd)
+            && t == ctx.title
+        {
+            ctx.hit = Some(hwnd);
+            return BOOL(0);
         }
         BOOL(1)
     }

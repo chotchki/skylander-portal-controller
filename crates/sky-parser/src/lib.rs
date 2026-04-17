@@ -40,6 +40,13 @@
 //! See the corresponding sections of `SkylanderFormat.md` for a future pass.
 
 #![warn(missing_docs)]
+// This crate deliberately writes offsets as `block_base + 0x00` even when
+// the offset within a block is zero. The `+ 0x00` documents the spec-level
+// field offset inside each 16-byte block and keeps every read/write line
+// lined up for eyeball comparison against `SkylanderFormat.md`. Collapsing
+// them to bare `block_base` destroys that parallelism, so silence the
+// pedantic identity_op lint for the whole file.
+#![allow(clippy::identity_op)]
 
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};

@@ -309,7 +309,7 @@ const VARIANT_PREFIXES: &[&str] = &[
 ];
 
 fn derive_group_and_tag(segs: &[&str], stem_clean: &str, category: Category) -> (String, String) {
-    let in_alternate = segs.iter().any(|s| *s == "Alternate types");
+    let in_alternate = segs.contains(&"Alternate types");
 
     if stem_clean.contains('_') {
         if let Some((base, suffix)) = imaginators_split(stem_clean) {
@@ -325,13 +325,11 @@ fn derive_group_and_tag(segs: &[&str], stem_clean: &str, category: Category) -> 
             };
             return (group, tag);
         }
-    } else if in_alternate {
-        if let Some(dash_pos) = stem_clean.rfind('-') {
-            let (base, tail) = stem_clean.split_at(dash_pos);
-            let tail = tail[1..].to_string();
-            if is_known_imaginator_tag(&tail) {
-                return (base.to_string(), tail);
-            }
+    } else if in_alternate && let Some(dash_pos) = stem_clean.rfind('-') {
+        let (base, tail) = stem_clean.split_at(dash_pos);
+        let tail = tail[1..].to_string();
+        if is_known_imaginator_tag(&tail) {
+            return (base.to_string(), tail);
         }
     }
 
@@ -407,15 +405,14 @@ fn is_known_imaginator_tag(s: &str) -> bool {
 }
 
 fn split_parens(s: &str) -> (String, Option<String>) {
-    if let Some(open) = s.find('(') {
-        if let Some(close) = s.rfind(')') {
-            if close > open {
-                let inner = s[open + 1..close].trim().to_string();
-                let outer = format!("{}{}", &s[..open], &s[close + 1..]);
-                let cleaned = outer.trim().to_string();
-                return (cleaned, Some(inner));
-            }
-        }
+    if let Some(open) = s.find('(')
+        && let Some(close) = s.rfind(')')
+        && close > open
+    {
+        let inner = s[open + 1..close].trim().to_string();
+        let outer = format!("{}{}", &s[..open], &s[close + 1..]);
+        let cleaned = outer.trim().to_string();
+        return (cleaned, Some(inner));
     }
     (s.to_string(), None)
 }

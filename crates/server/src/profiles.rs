@@ -222,16 +222,14 @@ impl SessionRegistry {
         }
 
         // Both slots full — forced-eviction path. Check cooldown first.
-        if let Some(last) = *self.last_forced_evict_at.read().await {
-            if let Some(remaining) =
+        if let Some(last) = *self.last_forced_evict_at.read().await
+            && let Some(remaining) =
                 FORCED_EVICT_COOLDOWN.checked_sub(now.saturating_duration_since(last))
-            {
-                if !remaining.is_zero() {
-                    return RegistrationOutcome::RejectedByCooldown {
-                        retry_after: remaining,
-                    };
-                }
-            }
+            && !remaining.is_zero()
+        {
+            return RegistrationOutcome::RejectedByCooldown {
+                retry_after: remaining,
+            };
         }
 
         // Pick the oldest session to evict.

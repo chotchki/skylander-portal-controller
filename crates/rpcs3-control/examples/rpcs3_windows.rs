@@ -31,8 +31,8 @@ fn main() -> anyhow::Result<()> {
 
     let windows = enumerate_windows(&rpcs3_pids);
     println!(
-        "{:>8} {:>5} {:>1} {:>5} {:>5} {:>5} {:>5}  {:<28}  {}",
-        "HWND", "PID", "V", "x", "y", "w", "h", "classname", "title"
+        "{:>8} {:>5} {:>1} {:>5} {:>5} {:>5} {:>5}  {:<28}  title",
+        "HWND", "PID", "V", "x", "y", "w", "h", "classname"
     );
     for w in &windows {
         println!(

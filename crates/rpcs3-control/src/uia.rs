@@ -1,6 +1,12 @@
 //! Windows UIA-backed portal driver. Ported from the Phase 1 `tools/uia-drive`
 //! spike, with the trait-based API and Win32 off-screen helper added.
 
+// The UIA automation core is deliberately kept in a deeply-nested `if let`
+// style that mirrors the tree-walk it performs — collapsing the `if let
+// chains` breaks readability of the Qt-specific traversal logic and this
+// file is treated as sensitive (see CLAUDE.md on UIA session gotchas).
+#![allow(clippy::collapsible_if)]
+
 use std::path::Path;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -638,11 +644,11 @@ impl crate::PortalDriver for UiaPortalDriver {
         let group = self.find_group_box(&walker, &dialog)?;
 
         let mut out: [SlotState; SLOT_COUNT] = std::array::from_fn(|_| SlotState::Empty);
-        for i in 0..SLOT_COUNT {
+        for (i, out_slot) in out.iter_mut().enumerate().take(SLOT_COUNT) {
             let slot = SlotIndex::new(i as u8).unwrap();
             let (edit, _, _, _) = self.find_row(&walker, &group, slot)?;
             let value = read_value(&edit, READ_VALUE_TIMEOUT)?;
-            out[i] = interpret_slot_value(&value);
+            *out_slot = interpret_slot_value(&value);
         }
         Ok(out)
     }
@@ -1024,11 +1030,11 @@ fn find_error_modal(
     // anything that's a Window whose name is neither "Skylanders Manager",
     // "Select Skylander File", nor starts with "RPCS3 " — that leaves
     // exactly the QMessageBox.
-    if let Some(hit) = find_descendant(walker, main, |el| is_error_modal(el)) {
+    if let Some(hit) = find_descendant(walker, main, is_error_modal) {
         return Some(hit);
     }
     let root = automation.get_root_element().ok()?;
-    find_descendant(walker, &root, |el| is_error_modal(el))
+    find_descendant(walker, &root, is_error_modal)
 }
 
 fn is_error_modal(el: &UIElement) -> bool {

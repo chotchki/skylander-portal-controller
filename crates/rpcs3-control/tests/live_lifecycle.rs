@@ -284,10 +284,10 @@ fn file_dialog_hidden_while_manager_hidden() {
             let samples = Arc::clone(&samples);
             thread::spawn(move || {
                 while !stop.load(Ordering::Relaxed) {
-                    if let Some(hwnd) = find_file_dialog_visible() {
-                        if let Some(r) = window_rect(hwnd) {
-                            samples.lock().unwrap().push(r);
-                        }
+                    if let Some(hwnd) = find_file_dialog_visible()
+                        && let Some(r) = window_rect(hwnd)
+                    {
+                        samples.lock().unwrap().push(r);
                     }
                     thread::sleep(Duration::from_millis(30));
                 }
@@ -376,18 +376,18 @@ fn find_window_by_title(exact: &str) -> Option<HWND> {
     }
     extern "system" fn proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
         let ctx = unsafe { &mut *(lparam.0 as *mut Ctx) };
-        if let Some(t) = window_title(hwnd) {
-            if t == ctx.want {
-                // Skip the invisible Qt helper HWNDs — pick the QWindowIcon one.
-                if let Some(cls) = window_class(hwnd) {
-                    if cls.contains("QWindowIcon") {
-                        ctx.hit = Some(hwnd);
-                        return BOOL(0);
-                    }
-                    // Fallback: record any match but keep looking.
-                    if ctx.hit.is_none() {
-                        ctx.hit = Some(hwnd);
-                    }
+        if let Some(t) = window_title(hwnd)
+            && t == ctx.want
+        {
+            // Skip the invisible Qt helper HWNDs — pick the QWindowIcon one.
+            if let Some(cls) = window_class(hwnd) {
+                if cls.contains("QWindowIcon") {
+                    ctx.hit = Some(hwnd);
+                    return BOOL(0);
+                }
+                // Fallback: record any match but keep looking.
+                if ctx.hit.is_none() {
+                    ctx.hit = Some(hwnd);
                 }
             }
         }
@@ -417,11 +417,11 @@ fn find_file_dialog_visible() -> Option<HWND> {
                 return BOOL(1);
             }
         }
-        if let Some(cls) = window_class(hwnd) {
-            if cls == "#32770" {
-                ctx.hit = Some(hwnd);
-                return BOOL(0);
-            }
+        if let Some(cls) = window_class(hwnd)
+            && cls == "#32770"
+        {
+            ctx.hit = Some(hwnd);
+            return BOOL(0);
         }
         BOOL(1)
     }

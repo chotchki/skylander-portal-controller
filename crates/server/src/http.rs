@@ -351,12 +351,11 @@ async fn figure_image(
     }
 
     // Fallback: element icon from the firmware pack.
-    if let Some(fig) = state.lookup_figure(&FigureId::new(&id)) {
-        if let Some(icon_path) = &fig.element_icon_path {
-            if let Ok(bytes) = tokio::fs::read(icon_path).await {
-                return image_response(bytes);
-            }
-        }
+    if let Some(fig) = state.lookup_figure(&FigureId::new(&id))
+        && let Some(icon_path) = &fig.element_icon_path
+        && let Ok(bytes) = tokio::fs::read(icon_path).await
+    {
+        return image_response(bytes);
     }
 
     (StatusCode::NOT_FOUND, "no image available").into_response()
@@ -432,14 +431,13 @@ async fn load_slot(
 
     // Bump figure_usage.last_used_at. Best-effort — we don't fail the load
     // just because the usage row can't be written.
-    if let Some(profile_id) = &placed_by {
-        if let Err(e) = state
+    if let Some(profile_id) = &placed_by
+        && let Err(e) = state
             .profiles
             .record_figure_usage(profile_id, &figure_id.0)
             .await
-        {
-            warn!("record_figure_usage failed: {e}");
-        }
+    {
+        warn!("record_figure_usage failed: {e}");
     }
 
     // Back pressure: atomically flip the slot to Loading, rejecting if it's
@@ -926,12 +924,11 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
         // Sent on `sender` directly (not broadcast) because we're still
         // pre-writer-task: broadcast messages emitted before
         // `state.events.subscribe()` below would be dropped.
-        if let Some(pid) = current_profile {
-            if let Some(evt) = build_resume_prompt(&state, sid.0, &pid).await {
-                if let Ok(j) = serde_json::to_string(&evt) {
-                    let _ = sender.send(Message::Text(j)).await;
-                }
-            }
+        if let Some(pid) = current_profile
+            && let Some(evt) = build_resume_prompt(&state, sid.0, &pid).await
+            && let Ok(j) = serde_json::to_string(&evt)
+        {
+            let _ = sender.send(Message::Text(j)).await;
         }
     }
 

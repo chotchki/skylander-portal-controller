@@ -154,8 +154,12 @@ fn main() -> Result<()> {
                     #[cfg(feature = "test-hooks")]
                     test_mock,
                 });
+                // When `test-hooks` is disabled, `test_mock` is `()` and needs
+                // to be consumed so clippy doesn't warn about an unused binding.
+                // `let () = test_mock;` is the idiomatic way to assert+consume
+                // a unit value (avoids `clippy::let_unit_value`).
                 #[cfg(not(feature = "test-hooks"))]
-                let _ = test_mock;
+                let () = test_mock;
 
                 let app = http::router(state.clone(), phone_dist);
                 let listener = tokio::net::TcpListener::bind(bind_addr)
@@ -232,7 +236,12 @@ fn build_driver(kind: DriverKind) -> Result<DriverBundle> {
                 let arc: Arc<dyn PortalDriver> = mock.clone();
                 #[cfg(feature = "test-hooks")]
                 return Ok((arc, Some(mock)));
+                // The `return` on the branch below keeps the code symmetric
+                // with the `test-hooks` branch above and sidesteps a cfg-type
+                // mismatch that would otherwise require an outer `match`
+                // rebind. Narrow allow instead of restructuring.
                 #[cfg(not(feature = "test-hooks"))]
+                #[allow(clippy::needless_return)]
                 {
                     let _ = mock;
                     return Ok((arc, ()));
