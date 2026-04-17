@@ -34,6 +34,17 @@ pub(crate) struct ResumeOffer {
     pub slots: Vec<SlotState>,
 }
 
+/// In-flight "reset this figure to a fresh copy?" prompt. Set when the user
+/// taps RESET on a loaded slot; cleared on cancel, fire, or modal dismiss.
+/// `slot` is 1-indexed (matches the server route). `display_name` is what
+/// the modal heading uses ("All of <NAME>'s treasure ...").
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ResetTarget {
+    pub slot: u8,
+    pub figure_id: String,
+    pub display_name: String,
+}
+
 #[component]
 pub fn App() -> impl IntoView {
     // Read the HMAC key out of `#k=<hex>` before anything else hits the
@@ -53,6 +64,7 @@ pub fn App() -> impl IntoView {
     let unlocked_profile = RwSignal::new(None::<UnlockedProfile>);
     let takeover = RwSignal::new(None::<TakeoverReason>);
     let resume_offer = RwSignal::new(None::<ResumeOffer>);
+    let reset_target = RwSignal::new(None::<ResetTarget>);
     let menu_open = RwSignal::new(false);
     // Bumps on every profile CRUD so the ProfilePicker re-fetches.
     let profiles_epoch = RwSignal::new(0u32);
@@ -101,7 +113,7 @@ pub fn App() -> impl IntoView {
                 }
             >
                 <Picking picking_for />
-                <Portal portal picking_for toasts />
+                <Portal portal picking_for reset_target />
                 <Suspense fallback=|| view! { <div class="empty-msg">"Loading figures…"</div> }>
                     {move || figures.get().map(|figs| view! {
                         <Browser
@@ -120,6 +132,7 @@ pub fn App() -> impl IntoView {
             <Show when=move || resume_offer.get().is_some() fallback=|| ()>
                 <ResumeModal resume_offer toasts />
             </Show>
+            <ResetConfirmModal reset_target toasts />
             <MenuOverlay
                 open=menu_open
                 unlocked_profile

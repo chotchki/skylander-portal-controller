@@ -596,7 +596,7 @@ Implemented as a new screen reached by tapping a figure inside the toy box. Shel
 ### 4.12 Modals + takeover screen
 
 - [x] 4.12.1 Resume-last-setup modal (3.12.2 UI): `<FramedPanel>` with a figure-preview row of gold bezels, "Resume" + "Start fresh" CTAs.
-- [ ] 4.12.2 Reset-to-fresh confirm (3.11.3 UI).
+- [x] 4.12.2 Reset-to-fresh confirm (3.11.3 UI). Replaces portal slot's `window.confirm()` with a red-bezeled `<FramedPanel>` modal: hold-to-confirm primary, KEEP-FIGURE tertiary, gold-flake fall + bezel desaturation on fire (per 4.2.14.a). Server `post_reset` fires immediately; ~1500ms animation budget masks IO latency, then `reset_target` clears and the modal dismisses.
 - [x] 4.12.3 Takeover/Kaos screen polish — stays blue (the Kaos skin itself ships with 5.4; this is just restyled).
 - [x] 4.12.4 Show-join-code sheet — folded into 4.12.4b menu overlay's QR card (no separate sheet). Shell-only: the inner `.menu-qr-inner` renders a "QR" placeholder; real QR content wiring lands with 3.10.8 follow-up.
 - [x] 4.12.4b **Menu overlay** (opened by header kebab). Single surface that consolidates: (a) show-join-code QR (prominent, always visible — answers "how does my friend join?"), (b) current profile chip for context, (c) three stacked actions with icon + title + one-line description:

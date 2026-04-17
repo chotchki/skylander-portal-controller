@@ -3,7 +3,7 @@ use leptos::prelude::*;
 use crate::api::post_clear;
 use crate::components::{BezelSize, BezelState, GoldBezel};
 use crate::model::{Slot, SlotState, SLOT_COUNT};
-use crate::{push_toast, ToastMsg};
+use crate::ResetTarget;
 
 #[component]
 pub(crate) fn Picking(picking_for: RwSignal<Option<u8>>) -> impl IntoView {
@@ -26,12 +26,12 @@ pub(crate) fn Picking(picking_for: RwSignal<Option<u8>>) -> impl IntoView {
 pub(crate) fn Portal(
     portal: RwSignal<[Slot; SLOT_COUNT]>,
     picking_for: RwSignal<Option<u8>>,
-    toasts: RwSignal<Vec<ToastMsg>>,
+    reset_target: RwSignal<Option<ResetTarget>>,
 ) -> impl IntoView {
     view! {
         <section class="portal-p4">
             {(0..SLOT_COUNT).map(|i| {
-                view! { <SlotView idx=i portal picking_for toasts /> }
+                view! { <SlotView idx=i portal picking_for reset_target /> }
             }).collect_view()}
         </section>
     }
@@ -42,7 +42,7 @@ fn SlotView(
     idx: usize,
     portal: RwSignal<[Slot; SLOT_COUNT]>,
     picking_for: RwSignal<Option<u8>>,
-    toasts: RwSignal<Vec<ToastMsg>>,
+    reset_target: RwSignal<Option<ResetTarget>>,
 ) -> impl IntoView {
     let slot_num = (idx + 1) as u8;
 
@@ -112,9 +112,9 @@ fn SlotView(
                 // REMOVE overlay for loaded slots
                 {move || {
                     match portal.get()[idx].state.clone() {
-                        SlotState::Loaded { figure_id: Some(fig), .. } => {
+                        SlotState::Loaded { figure_id: Some(fig), display_name, .. } => {
                             let fig_for_reset = fig.clone();
-                            let toasts_for_reset = toasts;
+                            let name_for_reset = display_name.clone();
                             view! {
                                 <div class="p4-slot-actions">
                                     <button class="p4-slot-action p4-slot-action--remove" on:click=move |e| {
@@ -130,26 +130,11 @@ fn SlotView(
                                         title="Reset this figure to a fresh copy (wipes save progress)"
                                         on:click=move |e| {
                                             e.stop_propagation();
-                                            let confirm = web_sys::window()
-                                                .and_then(|w| {
-                                                    w.confirm_with_message(
-                                                        "Reset this figure? All progress will be lost.",
-                                                    )
-                                                    .ok()
-                                                })
-                                                .unwrap_or(false);
-                                            if !confirm {
-                                                return;
-                                            }
-                                            let fig = fig_for_reset.clone();
-                                            leptos::task::spawn_local(async move {
-                                                if let Err(e) = crate::api::post_reset(slot_num, &fig).await {
-                                                    push_toast(
-                                                        toasts_for_reset,
-                                                        &format!("Reset failed: {e}"),
-                                                    );
-                                                }
-                                            });
+                                            reset_target.set(Some(ResetTarget {
+                                                slot: slot_num,
+                                                figure_id: fig_for_reset.clone(),
+                                                display_name: name_for_reset.clone(),
+                                            }));
                                         }
                                     >"RESET"</button>
                                 </div>
