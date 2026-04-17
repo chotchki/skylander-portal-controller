@@ -116,6 +116,15 @@ impl TestServer {
         Ok(format!("{}/#k={}", self.url, hex))
     }
 
+    /// Path to this server's per-run `dev-data/` root. Lives inside the
+    /// harness's temp dir (killed on drop), so tests that want to inspect
+    /// working-copy files, DB state, etc. must do so before `TestServer`
+    /// drops. Used by the live-multi-phone profile-isolation scenario to
+    /// assert that each profile got its own `working/<profile_id>/` dir.
+    pub fn dev_data_dir(&self) -> PathBuf {
+        self._tmpdir.path().join("dev-data")
+    }
+
     /// Spawn the server configured for **real RPCS3 + real UIA driver**. Used
     /// by the live-integration test (`tests/live_integration.rs`) — the
     /// regular mock-driver tests use [`spawn`].

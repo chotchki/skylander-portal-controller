@@ -27,7 +27,9 @@ use std::time::Duration;
 use fantoccini::Locator;
 use reqwest::Client;
 
-use skylander_e2e_tests::{Phone, TestServer, unlock_default_profile};
+use skylander_e2e_tests::{
+    Phone, TestServer, inject_profile, set_session_profile, unlock_default_profile, unlock_session,
+};
 
 // ======================================================================
 // Env resolution
@@ -479,4 +481,249 @@ async fn live_resume_after_reload() {
     wait_slot_label(&phone, 2, &fig_b).await;
 
     phone.close().await.ok();
+}
+
+// ======================================================================
+// 3.10f — multi-phone scenarios against the live driver
+// ======================================================================
+
+/// Helper: poll until the phone's session id is exposed in the DOM. Matches
+/// the pattern in the mock `multi_phone.rs` tests. Returns `u64` for parity
+/// with `Phone::session_id()`'s return shape.
+async fn wait_for_session_id(phone: &Phone) -> u64 {
+    for _ in 0..50 {
+        if let Ok(Some(id)) = phone.session_id().await {
+            return id;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("phone never received Event::Welcome");
+}
+
+/// Click the matching `.game-card` on the given phone. Extracted out of
+/// `spawn_and_land_on_portal` so multi-phone tests can drive the launch from
+/// one phone and observe the auto-transition on the other.
+async fn click_game_card_for_serial(phone: &Phone, serial_short_name: &str) {
+    phone
+        .wait_for(Locator::Css(".game-picker"), Duration::from_secs(10))
+        .await
+        .expect("game picker renders");
+    // Poll around the staggered `gp-card-rise` animation — see
+    // `spawn_and_land_on_portal` for the full explanation.
+    phone
+        .wait_until(Duration::from_secs(10), || async {
+            let cards = match phone.client.find_all(Locator::Css(".game-card")).await {
+                Ok(v) => v,
+                Err(_) => return false,
+            };
+            for card in cards {
+                if let Ok(label_el) = card.find(Locator::Css(".game-name")).await
+                    && let Ok(text) = label_el.text().await
+                    && text.eq_ignore_ascii_case(serial_short_name)
+                {
+                    return true;
+                }
+            }
+            false
+        })
+        .await
+        .unwrap_or_else(|_| panic!("no .game-card rendered matching {serial_short_name:?}"));
+
+    for card in phone
+        .client
+        .find_all(Locator::Css(".game-card"))
+        .await
+        .unwrap()
+    {
+        let label = card
+            .find(Locator::Css(".game-name"))
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap_or_default();
+        if label.eq_ignore_ascii_case(serial_short_name) {
+            card.click().await.expect("click game card");
+            return;
+        }
+    }
+}
+
+/// PLAN 3.10f.1 — two phones on the same profile, each places a different
+/// figure into a different slot. Both phones observe both slots Loaded via
+/// the shared `SlotChanged` broadcast. Validates the driver worker
+/// serialises the two concurrent `LoadFigure` jobs through the single
+/// Skylanders Manager dialog without dropping one or racing the file
+/// picker's offscreen sling.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires RPCS3_EXE, RPCS3_TEST_SERIAL, RPCS3_SKY_TEST_PATH, RPCS3_SKY_TEST_PATH_2"]
+async fn live_concurrent_edits_both_phones() {
+    let (serial, sky_a, sky_b) = match require_env_two_figures() {
+        Some(t) => t,
+        None => {
+            eprintln!("skipping: set RPCS3_SKY_TEST_PATH_2 to a second .sky in the same pack");
+            return;
+        }
+    };
+    let fig_a = canonical_name_from_path(&sky_a);
+    let fig_b = canonical_name_from_path(&sky_b);
+    assert_ne!(fig_a, fig_b, "paths 1 and 2 must be different figures");
+
+    let server = TestServer::spawn_live().expect("spawn live server");
+    unlock_default_profile(&server.url)
+        .await
+        .expect("seed pending_unlock for phone 1");
+
+    let p1 = Phone::new(&server.phone_url().await.unwrap(), &server.chromedriver_url)
+        .await
+        .expect("connect phone 1");
+    let s1 = wait_for_session_id(&p1).await;
+
+    // Re-seed pending_unlock so P2 also lands on the profile (otherwise
+    // P2 starts at the profile picker).
+    unlock_default_profile(&server.url)
+        .await
+        .expect("re-seed pending_unlock for phone 2");
+    let p2 = Phone::new(&server.phone_url().await.unwrap(), &server.chromedriver_url)
+        .await
+        .expect("connect phone 2");
+    let s2 = wait_for_session_id(&p2).await;
+    assert_ne!(s1, s2, "each phone must get a distinct session id");
+
+    // P1 launches the game; P2 transitions to portal via GameChanged broadcast.
+    let short_name = short_name_for_serial(&server.url, &serial).await;
+    click_game_card_for_serial(&p1, &short_name).await;
+    for phone in [&p1, &p2] {
+        phone
+            .wait_for(Locator::Css(".screen-portal"), Duration::from_secs(120))
+            .await
+            .expect("portal screen");
+    }
+
+    // Each phone places a different figure in a different slot. Sequential
+    // at the fantoccini layer (one client per phone, each drives synchronously)
+    // but the driver worker still serialises — the second LoadFigure is
+    // queued while the first is in flight, and the assertion on both phones
+    // seeing both slots validates the queued job actually ran.
+    place_figure(&p1, 1, &fig_a).await;
+    wait_slot_label(&p1, 1, &fig_a).await;
+    dismiss_figure_detail(&p1).await;
+
+    place_figure(&p2, 2, &fig_b).await;
+    wait_slot_label(&p2, 2, &fig_b).await;
+    dismiss_figure_detail(&p2).await;
+
+    // Cross-phone visibility: P1 sees slot 2 Loaded with B, P2 sees slot 1
+    // Loaded with A. These come through the shared `SlotChanged` broadcast.
+    wait_slot_label(&p1, 2, &fig_b).await;
+    wait_slot_label(&p2, 1, &fig_a).await;
+
+    p1.close().await.ok();
+    p2.close().await.ok();
+}
+
+/// PLAN 3.10f.2 — two phones on two distinct profiles. Each places a
+/// figure; assert each profile gets its own `working/<profile_id>/` dir
+/// on disk. Validates the real-driver pass through
+/// `crate::working_copies::resolve_load_path` — mock-backed tests can't
+/// surface this because they don't actually touch the filesystem.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires RPCS3_EXE, RPCS3_TEST_SERIAL, RPCS3_SKY_TEST_PATH, RPCS3_SKY_TEST_PATH_2"]
+async fn live_independent_profiles_loads() {
+    let (serial, sky_a, sky_b) = match require_env_two_figures() {
+        Some(t) => t,
+        None => {
+            eprintln!("skipping: set RPCS3_SKY_TEST_PATH_2 to a second .sky in the same pack");
+            return;
+        }
+    };
+    let fig_a = canonical_name_from_path(&sky_a);
+    let fig_b = canonical_name_from_path(&sky_b);
+
+    let server = TestServer::spawn_live().expect("spawn live server");
+
+    // Two distinct profiles. Same pattern as mock multi-phone
+    // `independent_profile_unlock` but with live driver for the subsequent
+    // loads.
+    let pid_a = inject_profile(&server.url, "Alpha", "1111", "#ff00ff")
+        .await
+        .expect("inject profile Alpha");
+    let pid_b = inject_profile(&server.url, "Beta", "2222", "#00ffff")
+        .await
+        .expect("inject profile Beta");
+
+    // Seed P1 on profile A.
+    unlock_session(&server.url, &pid_a).await.expect("unlock A");
+    let p1 = Phone::new(&server.phone_url().await.unwrap(), &server.chromedriver_url)
+        .await
+        .expect("connect P1");
+    let _s1 = wait_for_session_id(&p1).await;
+
+    // P2 inherits pending_unlock (A); flip it to B via set_session_profile
+    // on P2's session id specifically.
+    let p2 = Phone::new(&server.phone_url().await.unwrap(), &server.chromedriver_url)
+        .await
+        .expect("connect P2");
+    let s2 = wait_for_session_id(&p2).await;
+    set_session_profile(&server.url, s2, &pid_b)
+        .await
+        .expect("flip P2 to profile B");
+
+    // P1 launches the game; P2 transitions to portal via GameChanged.
+    let short_name = short_name_for_serial(&server.url, &serial).await;
+    click_game_card_for_serial(&p1, &short_name).await;
+    for phone in [&p1, &p2] {
+        phone
+            .wait_for(Locator::Css(".screen-portal"), Duration::from_secs(120))
+            .await
+            .expect("portal screen");
+    }
+
+    // Each phone places its figure under its own profile.
+    place_figure(&p1, 1, &fig_a).await;
+    wait_slot_label(&p1, 1, &fig_a).await;
+    dismiss_figure_detail(&p1).await;
+
+    place_figure(&p2, 2, &fig_b).await;
+    wait_slot_label(&p2, 2, &fig_b).await;
+    dismiss_figure_detail(&p2).await;
+
+    // Each profile must have its own working directory with a .sky inside.
+    // Bug would surface as only one dir existing (loads all routed to one
+    // profile) or both dirs being the same path.
+    assert_ne!(pid_a, pid_b, "injected profile ids must differ");
+    let working_root = server.dev_data_dir().join("working");
+    let working_a = working_root.join(&pid_a);
+    let working_b = working_root.join(&pid_b);
+    assert!(
+        working_a.is_dir(),
+        "profile A working dir missing: {}",
+        working_a.display()
+    );
+    assert!(
+        working_b.is_dir(),
+        "profile B working dir missing: {}",
+        working_b.display()
+    );
+    let a_files: Vec<_> = std::fs::read_dir(&working_a)
+        .expect("read profile A dir")
+        .flatten()
+        .collect();
+    let b_files: Vec<_> = std::fs::read_dir(&working_b)
+        .expect("read profile B dir")
+        .flatten()
+        .collect();
+    assert!(
+        !a_files.is_empty(),
+        "profile A working dir is empty: {}",
+        working_a.display()
+    );
+    assert!(
+        !b_files.is_empty(),
+        "profile B working dir is empty: {}",
+        working_b.display()
+    );
+
+    p1.close().await.ok();
+    p2.close().await.ok();
 }

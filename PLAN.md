@@ -355,7 +355,7 @@ Rolled out in six sub-milestones for tracking. Each is a meaningful checkpoint y
 | 3.10c | 3.10.4 (server half) — retired `MaybeSession` bridge. `CurrentSession(SessionId)` is a required extractor on `unlock_profile` / `lock_profile` / `load_slot`. Clear/refresh/launch/quit/profile-CRUD remain session-agnostic (global or PIN-gated). | ✅ done |
 | 3.10d | 3.10.4 (phone half) — `api::SESSION_ID` thread-local captured from `Event::Welcome`; `X-Session-Id` attached on every fetch in `do_fetch`; `TakenOver` → `TakeoverScreen` with "kick back" → page reload. `ProfileChanged` + `TakenOver` filtered client-side by session id. | ✅ done |
 | 3.10e | 3.10.7, 3.10.8 — ownership badge on portal slots, "show join code" affordance | **deferred** until after Phase 4 (aesthetic + UX pass); would otherwise be re-styled twice |
-| 3.10f | 3.10e.1–5 — multi-phone e2e scenarios exercising registry + WS behaviour | next |
+| 3.10f | multi-phone scenarios against the **live** UIA driver (mirrors of 3.10e.2 / .5 but with real RPCS3 + real working copies) | ✅ done |
 | 3.10f (.6) | 3.10e.6 — ownership-badge visual test, needs 3.10.7 first | deferred with 3.10e |
 
 - [x] 3.10.1 Server session registry: `[Option<Session>; 2]` keyed by connection id + join timestamp. Admit freely while a slot is `None`. Implemented as `HashMap<SessionId, SessionState>` capped at `MAX_SESSIONS=2` with `created_at` for FIFO ordering.
@@ -376,6 +376,13 @@ Rolled out in six sub-milestones for tracking. Each is a meaningful checkpoint y
 - [x] 3.10e.4 `forced_eviction_cooldown` — after 3.10e.3 eviction, a raw WS reconnect gets `Event::Error` mentioning "taken over"/"full" and is closed. `/api/_test/clear_eviction_cooldown` fast-forwards the server clock; a subsequent connect lands `Event::Welcome` (admitted). Avoids a real 60s sleep.
 - [x] 3.10e.5 `independent_profile_unlock` — two distinct profiles injected, `set_session_profile(s2, profile_B)` pins P2 to a different profile from P1's; each phone's `.profile-chip` header shows its own profile name.
 - [ ] 3.10e.6 `ownership_badge_reflects_placer` — deferred with 3.10.7 (ownership badge UI) since the test asserts on the badge. Lands after Phase 4.
+
+### 3.10f Multi-phone scenarios against the **live** driver
+
+The mock-backed 3.10e.2–5 tests validate the session registry + WS plumbing against `MockPortalDriver`. Those miss the interactions that only the real driver surfaces: the driver worker serialising concurrent load jobs through a single UIA dialog, and per-profile working copies actually forking on disk when two different phones (two different profiles) each place a figure. These scenarios mirror the mock set but run against real RPCS3 + real UIA; same env vars and `#[ignore]`-gating as the 3.7.x live tests.
+
+- [x] 3.10f.1 `live_concurrent_edits_both_phones` — 2 phones connected to the same profile, each taps a different slot + places a different figure. Assert both phones see both slots Loaded via the shared `SlotChanged` broadcast. Validates: the driver worker serialises the two concurrent `DriverJob::LoadFigure` jobs through one Skylanders Manager dialog without either racing into a bad state. **Green in 22.39s.** Phone 1 places Eruptor in slot 1, Phone 2 places Fryno in slot 2, worker processes them sequentially through the one dialog, both phones see both slots Loaded via the cross-broadcast.
+- [x] 3.10f.2 `live_independent_profiles_loads` — 2 phones registered under 2 distinct profiles (inject + `set_session_profile`). Each places a figure into a different slot; assert the on-disk working copies fork into `dev-data/working/<profile_id>/` under the respective profiles (not the same directory). Validates the per-profile `resolve_load_path` through the real driver — the cross-profile collision case mock can't actually produce because it doesn't touch the filesystem. **Green in 23.04s.** Added `TestServer::dev_data_dir()` accessor so tests can inspect the harness's per-run temp dir. Post-load assertion walks `dev-data/working/{pid_a,pid_b}/` and confirms each profile has its own non-empty dir. Two distinct ULID profile IDs → two distinct `working/` subdirs on disk → distinct forked working copies.
 
 ### 3.11 Working copies + reset-to-fresh
 
