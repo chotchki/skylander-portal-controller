@@ -76,27 +76,134 @@
     pointer-events: none;
   }
 
-  /* Central bright portal glow */
-  .portal-glow {
+  /* ── Simulated "game underneath" (state 7: In-Game) ──
+     Sits between the starfield and the cloud canvas. Faded radial
+     gradients evoke "something is rendering" without showing copyrighted
+     game footage. The (SIMULATED GAME) label makes the placeholder
+     unambiguous in design review. */
+  .game-underlay {
+    position: absolute; inset: 0; z-index: 1;
+    background:
+      radial-gradient(circle at 28% 38%, rgba(180,110,210,0.45), transparent 52%),
+      radial-gradient(circle at 72% 58%, rgba(80,180,225,0.40), transparent 55%),
+      radial-gradient(circle at 50% 85%, rgba(225,150,80,0.30), transparent 60%),
+      linear-gradient(135deg, #160b30 0%, #0c2348 50%, #160b30 100%);
+    opacity: 0;
+    transition: opacity 1.4s ease-out;
+    pointer-events: none;
+  }
+  .game-underlay.visible { opacity: 1; }
+  .game-underlay::after {
+    content: "( SIMULATED GAME )";
+    position: absolute;
+    top: 40px; left: 50%; transform: translateX(-50%);
+    color: rgba(255,255,255,0.35);
+    font-family: "Fraunces", Georgia, serif;
+    font-style: italic;
+    font-size: 20px;
+    letter-spacing: 0.25em;
+  }
+
+  /* ── Reconnect QR corner overlay (state 7) ──
+     Small persistent bezel so a phone that drops can rescan without
+     leaving the game. Sits above content + game underlay, below farewell. */
+  .reconnect-corner {
+    position: absolute;
+    top: 60px; right: 60px;
+    z-index: 11;
+    display: flex; flex-direction: column;
+    align-items: center; gap: 14px;
+    opacity: 0;
+    transition: opacity 1.0s ease-out;
+    pointer-events: none;
+  }
+  .reconnect-corner.visible { opacity: 0.92; }
+  .qr-bezel-mini {
+    width: 160px; height: 160px;
+    border-radius: 18px;
+    padding: 10px;
+    background: radial-gradient(circle at 30% 25%, var(--gb), var(--g) 22%, var(--gm) 55%, var(--gs) 100%);
+    box-shadow:
+      inset 0 0 0 2px var(--gi),
+      inset 0 2px 4px rgba(255,255,255,0.3),
+      inset 0 -2px 4px rgba(0,0,0,0.5),
+      0 0 0 2px #000,
+      0 4px 12px rgba(0,0,0,0.65),
+      0 0 32px rgba(245,198,52,0.18);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .qr-bezel-mini > .qr-mini-inner {
+    width: 100%; height: 100%;
+    border-radius: 10px;
+    background: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-family: "Fraunces", Georgia, serif;
+    font-size: 13px; color: #888;
+    text-align: center;
+    line-height: 1.3;
+  }
+  .reconnect-label {
+    font-family: "Titan One", cursive;
+    font-size: 22px;
+    color: var(--gb);
+    -webkit-text-stroke: 1px var(--gi);
+    text-shadow:
+      0 2px 0 var(--gs),
+      0 3px 8px rgba(0,0,0,0.8);
+    letter-spacing: 0.10em;
+  }
+
+  /* ── Farewell black overlay (state 8) ──
+     Fades in on top of everything once "see you next time" has had a
+     beat to read; second-stage fade reveals the "(launcher exits)" hint. */
+  .farewell-overlay {
+    position: absolute; inset: 0;
+    z-index: 20;
+    background: #000;
+    opacity: 0;
+    transition: opacity 1.6s ease-in;
+    pointer-events: none;
+    display: flex; align-items: center; justify-content: center;
+    font-family: "Fraunces", Georgia, serif;
+    font-style: italic;
+    font-size: 22px;
+    color: rgba(255,255,255,0.45);
+    letter-spacing: 0.22em;
+  }
+  .farewell-overlay.visible { opacity: 1; }
+  .farewell-overlay > span { opacity: 0; transition: opacity 0.8s ease-in 1.6s; }
+  .farewell-overlay.visible > span { opacity: 1; }
+
+  /* ── Focal glow ── halo that follows each state's focal element ── */
+  /* .focal-stack wraps a focal element (QR, shader ring, hero title).
+     .focal-glow is an absolutely-positioned halo centered on the stack.
+     DOM order (glow first, focal element second) keeps the focal element
+     on top without any z-index juggling. */
+  .focal-stack {
+    position: relative;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .focal-glow {
     position: absolute;
     top: 50%; left: 50%;
-    width: 400px; height: 400px;
+    width: 760px; height: 760px;
     transform: translate(-50%, -50%);
     border-radius: 50%;
+    /* `screen` blend makes the halo additively brighten the clouds
+       beneath rather than reading as its own opaque disk. Combined with
+       the softened gradient, the rim dissolves into the cloud cover. */
+    mix-blend-mode: screen;
     background: radial-gradient(circle,
-      rgba(255,255,255,0.85) 0%,
-      rgba(200,230,255,0.5) 20%,
-      rgba(100,170,255,0.25) 45%,
-      rgba(50,100,200,0.1) 70%,
+      rgba(255,255,255,0.55) 0%,
+      rgba(225,238,255,0.32) 18%,
+      rgba(170,210,250,0.18) 36%,
+      rgba(110,170,235,0.10) 55%,
+      rgba(60,120,205,0.04) 75%,
       transparent 100%
     );
-    z-index: 3;
     pointer-events: none;
-    opacity: 0;
     animation: glow-pulse 3.5s ease-in-out infinite;
-    transition: opacity 1.5s ease-out;
   }
-  .portal-glow.visible { opacity: 1; }
 
   @keyframes glow-pulse {
     0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.7; }
@@ -167,16 +274,16 @@
     text-shadow: 0 1px 0 rgba(0,0,0,0.5);
   }
 
-  /* Loading dots animation */
-  .loading-dots::after {
-    content: '';
-    animation: dots 1.5s steps(4, end) infinite;
+  /* Breathing loading pulse — replaces the dots (which shifted the text
+     visually off-center). Scales + opacity pulse reads as "activity"
+     without changing layout width. */
+  .breathe {
+    animation: breathe 2.4s ease-in-out infinite;
+    transform-origin: center;
   }
-  @keyframes dots {
-    0%  { content: ''; }
-    25% { content: '.'; }
-    50% { content: '..'; }
-    75% { content: '...'; }
+  @keyframes breathe {
+    0%, 100% { opacity: 0.8; transform: scale(1); }
+    50%      { opacity: 1;   transform: scale(1.025); }
   }
 
   /* ── Title rays (ambient gold halo behind heading) ── */
@@ -264,27 +371,29 @@
   }
 
   /* ── Player indicators (orbiting gold bezels) ── */
+  /* z-index 9 sits below .content (10) so pips pass behind the title
+     text, matching the "orbiting around the whole QR group" read. */
   .player-orbit {
     position: absolute;
     top: 50%; left: 50%;
     width: 0; height: 0;
-    z-index: 11;
+    z-index: 9;
     pointer-events: none;
   }
   .player-pip {
     position: absolute;
-    width: 64px; height: 64px;
+    width: 84px; height: 84px;
     border-radius: 50%;
     background: radial-gradient(circle at 35% 30%, var(--gb), var(--g) 30%, var(--gm) 60%, var(--gs) 100%);
     box-shadow:
-      inset 0 0 0 2px var(--gi),
+      inset 0 0 0 3px var(--gi),
       inset 0 2px 3px rgba(255,255,255,0.4),
       0 0 0 2px #000,
-      0 3px 8px rgba(0,0,0,0.5),
-      0 0 20px rgba(245,198,52,0.2);
+      0 4px 10px rgba(0,0,0,0.55),
+      0 0 28px rgba(245,198,52,0.25);
     display: flex; align-items: center; justify-content: center;
     font-family: "Titan One", cursive;
-    font-size: 24px;
+    font-size: 32px;
     color: var(--gi);
     text-shadow: 0 1px 0 rgba(255,255,255,0.3);
     opacity: 0;
@@ -387,12 +496,30 @@
   .demo-controls .hint {
     font-size: 11px; color: #777; line-height: 1.35;
   }
+  .demo-controls .slider-row {
+    display: flex; flex-direction: column; gap: 3px;
+    font-size: 11px; color: #9ac;
+    margin: 2px 0;
+  }
+  .demo-controls .slider-row .val {
+    color: var(--gb);
+    font-family: "SF Mono", Menlo, monospace;
+    font-weight: 600;
+  }
+  .demo-controls input[type=range] {
+    width: 100%;
+    accent-color: var(--g);
+  }
+  .demo-controls .group-label {
+    font-size: 11px; color: #aac; text-transform: uppercase;
+    letter-spacing: 0.08em; margin-top: 2px;
+  }
 
   /* ── Reduced motion ── */
   @media (prefers-reduced-motion: reduce) {
     .stars { animation: none; }
-    .portal-glow { animation: none; }
-    .loading-dots::after { animation: none; content: '...'; }
+    .focal-glow { animation: none; }
+    .breathe { animation: none; opacity: 1; }
     .player-pip { transition: none; }
   }
 
@@ -412,24 +539,24 @@
   <!-- WebGL cloud vortex canvas -->
   <canvas id="cloudCanvas" width="1920" height="1080"></canvas>
 
-  <!-- Central portal glow -->
-  <div class="portal-glow" id="portalGlow"></div>
-
   <!-- Content layer -->
   <div class="content" id="contentLayer">
     <!-- State 1: Startup -->
     <div class="state-content active" id="state1">
       <div class="title-wrap">
         <div class="title-rays"></div>
-        <div class="title-display title-hero"><span class="loading-dots">STARTING UP</span></div>
+        <div class="title-display title-hero breathe">STARTING UP</div>
       </div>
     </div>
 
     <!-- State 2: Booting -->
     <div class="state-content" id="state2">
-      <div class="title-wrap">
-        <div class="title-rays"></div>
-        <div class="title-display title-hero"><span class="loading-dots">LOADING</span></div>
+      <div class="focal-stack">
+        <div class="focal-glow"></div>
+        <div class="title-wrap">
+          <div class="title-rays"></div>
+          <div class="title-display title-hero breathe">LOADING</div>
+        </div>
       </div>
       <div class="subtitle">Skylanders: Trap Team</div>
       <div class="status-line" id="bootStatus">Starting RPCS3...</div>
@@ -437,15 +564,18 @@
 
     <!-- State 3: Awaiting Connect -->
     <div class="state-content" id="state3">
-      <div class="qr-flipper" id="qrFlipper">
-        <div class="qr-front">
-          <div class="qr-bezel" id="qrBezel">
-            <div class="qr-inner">QR CODE<br>PLACEHOLDER</div>
+      <div class="focal-stack">
+        <div class="focal-glow"></div>
+        <div class="qr-flipper" id="qrFlipper">
+          <div class="qr-front">
+            <div class="qr-bezel" id="qrBezel">
+              <div class="qr-inner">QR CODE<br>PLACEHOLDER</div>
+            </div>
           </div>
-        </div>
-        <div class="qr-back">
-          <div class="qr-bezel">
-            <div class="qr-back-inner">MAXIMUM<br>PLAYERS<br>REACHED</div>
+          <div class="qr-back">
+            <div class="qr-bezel">
+              <div class="qr-back-inner">MAXIMUM<br>PLAYERS<br>REACHED</div>
+            </div>
           </div>
         </div>
       </div>
@@ -457,8 +587,11 @@
 
     <!-- State 4: Players Joined -->
     <div class="state-content" id="state4">
-      <div class="qr-bezel">
-        <div class="qr-inner">QR CODE<br>PLACEHOLDER</div>
+      <div class="focal-stack">
+        <div class="focal-glow"></div>
+        <div class="qr-bezel">
+          <div class="qr-inner">QR CODE<br>PLACEHOLDER</div>
+        </div>
       </div>
       <div class="title-wrap">
         <div class="title-rays"></div>
@@ -468,13 +601,16 @@
 
     <!-- State 6: Compiling Shaders -->
     <div class="state-content" id="state6">
-      <div class="shader-ring-wrap">
-        <div class="shader-ring-bg"></div>
-        <div class="shader-ring-fill" id="shaderFill"></div>
-        <div class="shader-ring-inner">
-          <div class="shader-count" id="shaderCount">0 / 189</div>
+      <div class="focal-stack">
+        <div class="focal-glow"></div>
+        <div class="shader-ring-wrap">
+          <div class="shader-ring-bg"></div>
+          <div class="shader-ring-fill" id="shaderFill"></div>
+          <div class="shader-ring-inner">
+            <div class="shader-count" id="shaderCount">0 / 189</div>
+          </div>
+          <div class="shader-ring-flash" id="shaderFlash"></div>
         </div>
-        <div class="shader-ring-flash" id="shaderFlash"></div>
       </div>
       <div class="title-wrap">
         <div class="title-rays"></div>
@@ -485,15 +621,18 @@
 
     <!-- State 5: Max Players -->
     <div class="state-content" id="state5">
-      <div class="qr-flipper" id="qrFlipper5">
-        <div class="qr-front">
-          <div class="qr-bezel">
-            <div class="qr-inner">QR CODE<br>PLACEHOLDER</div>
+      <div class="focal-stack">
+        <div class="focal-glow"></div>
+        <div class="qr-flipper" id="qrFlipper5">
+          <div class="qr-front">
+            <div class="qr-bezel">
+              <div class="qr-inner">QR CODE<br>PLACEHOLDER</div>
+            </div>
           </div>
-        </div>
-        <div class="qr-back">
-          <div class="qr-bezel">
-            <div class="qr-back-inner">MAXIMUM<br>PLAYERS<br>REACHED</div>
+          <div class="qr-back">
+            <div class="qr-bezel">
+              <div class="qr-back-inner">MAXIMUM<br>PLAYERS<br>REACHED</div>
+            </div>
           </div>
         </div>
       </div>
@@ -502,12 +641,40 @@
         <div class="title-display title-lg" id="state5Title">SCAN TO CONNECT</div>
       </div>
     </div>
+
+    <!-- State 7: In-Game (clouds out, game underneath, reconnect QR in corner) -->
+    <!-- Intentionally no center content — the game shows through. -->
+    <div class="state-content" id="state7"></div>
+
+    <!-- State 8: Shutdown Farewell -->
+    <div class="state-content" id="state8">
+      <div class="title-wrap">
+        <div class="title-rays"></div>
+        <div class="title-display title-lg breathe">SEE YOU NEXT TIME,<br>PORTAL MASTER</div>
+      </div>
+    </div>
   </div>
 
   <!-- Player orbit indicators -->
   <div class="player-orbit" id="playerOrbit">
     <div class="player-pip" id="pip1">P1</div>
     <div class="player-pip" id="pip2">P2</div>
+  </div>
+
+  <!-- Game underlay (behind cloud canvas, only visible in state 7) -->
+  <div class="game-underlay" id="gameUnderlay"></div>
+
+  <!-- Reconnect QR (corner overlay, only visible in state 7) -->
+  <div class="reconnect-corner" id="reconnectCorner">
+    <div class="qr-bezel-mini">
+      <div class="qr-mini-inner">QR<br>REJOIN</div>
+    </div>
+    <div class="reconnect-label">REJOIN</div>
+  </div>
+
+  <!-- Farewell black overlay (state 8) -->
+  <div class="farewell-overlay" id="farewellOverlay">
+    <span>( launcher will exit )</span>
   </div>
 </div>
 
@@ -521,12 +688,31 @@
   <button id="btn3" onclick="goState(3)">4: Awaiting Connect</button>
   <button id="btn4" onclick="goState(4)">5: Players Joined</button>
   <button id="btn5" onclick="goState(5)">6: Max Players</button>
+  <button id="btn7" onclick="goState(7)">7: In-Game (clouds out)</button>
+  <button id="btn8" onclick="goState(8)">8: Shutdown Farewell</button>
+  <button id="phonesBtn" onclick="togglePhones()">📱 Phones: connected</button>
+  <hr class="sep">
+  <span class="group-label">Tuning</span>
+  <label class="slider-row">Idle rotation <span class="val" id="rotVal">0.08</span> rad/s
+    <input type="range" id="rotSlider" min="0" max="0.3" step="0.01" value="0.08">
+  </label>
+  <label class="slider-row">Cloud inflow <span class="val" id="inflowVal">0.15</span> r/s
+    <input type="range" id="inflowSlider" min="0" max="0.4" step="0.01" value="0.15">
+  </label>
+  <label class="slider-row">Spiral tightness <span class="val" id="tightVal">4.0</span>
+    <input type="range" id="tightSlider" min="0.5" max="8" step="0.25" value="4">
+  </label>
+  <label class="slider-row">Iris close <span class="val" id="irisDurVal">2500</span> ms
+    <input type="range" id="irisDurSlider" min="500" max="5000" step="100" value="2500">
+  </label>
+  <button onclick="replayIris()">▶ Replay iris close</button>
   <hr class="sep">
   <span class="hint">
     Clouds: WebGL fragment shader.<br>
-    Procedural simplex noise FBM in polar coords.<br>
-    No image assets. Canvas alpha composites<br>
-    over CSS starfield.
+    Cylindrical-spiral simplex FBM, 10 iris arms.<br>
+    Arms rotate at idle-rotation only; inflow drives<br>
+    cloud drift separately (decoupled to avoid<br>
+    compounded nauseating motion).
   </span>
 </div>
 
@@ -555,8 +741,9 @@ const FRAG_SRC = `
 
   uniform vec2 u_resolution;
   uniform float u_time;
-  uniform float u_irisRadius;     // 0.0 = no clouds, 1.2 = fully closed
+  uniform float u_irisRadius;     // 0.0 = no clouds, 1.6 = fully closed past screen edges
   uniform float u_rotationSpeed;  // radians/sec for idle swirl
+  uniform float u_inflowSpeed;    // r-units/sec radial inflow (clouds spiral toward center)
   uniform float u_spiralTightness;
   uniform float u_tunnelDepth;
   uniform float u_reducedMotion;  // 1.0 = reduced motion active
@@ -648,43 +835,60 @@ const FRAG_SRC = `
 
     // ── Spiral coordinate ──
     // Theta offset increases with r to create swirl arms.
-    // rotationSpeed drives continuous rotation.
+    // IMPORTANT: spiral uses r (not effectiveR) so arm rotation stays at
+    // u_rotationSpeed. Earlier we folded inflow into spiral, which added
+    // u_inflowSpeed * u_spiralTightness to the effective angular rate
+    // (e.g. 0.18 * 4 = 0.72 rad/sec on top of 0.08) — that compounded
+    // motion felt nauseating. Now inflow only drives the radial noise
+    // scroll, producing cloud drift without cranking the arm rotation.
+    float effectiveR = r + t * u_inflowSpeed;
     float spiral = theta + r * u_spiralTightness + t * u_rotationSpeed;
 
-    // ── Sample noise in polar-spiral space ──
-    // Two noise layers at different scales for richness
-    float noiseScale1 = 3.0;
-    float noiseScale2 = 1.5;
+    // ── Sample noise in cylindrical-spiral space ──
+    // (cos(spiral), sin(spiral)) gives a continuous angular coordinate, which
+    // eliminates the polar seam at theta=±π that produced the horizontal
+    // artifact on the negative-x axis. The z-axis carries the radial info
+    // (effectiveR) so inflow scrolls the noise pattern toward the center.
+    float noiseScale1 = 2.5;
+    float noiseScale2 = 1.1;
+    float noiseScale3 = 0.5;
 
     vec3 samplePos1 = vec3(
-      r * noiseScale1,
-      spiral * noiseScale1 * 0.5,
-      t * 0.08
+      cos(spiral) * noiseScale1 * 0.55,
+      sin(spiral) * noiseScale1 * 0.55,
+      effectiveR * noiseScale1 * 0.85 + t * 0.06
     );
     vec3 samplePos2 = vec3(
-      r * noiseScale2 + 5.0,
-      spiral * noiseScale2 * 0.35 + 3.0,
-      t * 0.05 + 10.0
+      cos(spiral) * noiseScale2 * 0.55 + 5.0,
+      sin(spiral) * noiseScale2 * 0.55 + 3.0,
+      effectiveR * noiseScale2 * 0.85 + t * 0.04 + 10.0
+    );
+    vec3 samplePos3 = vec3(
+      cos(spiral) * noiseScale3 * 0.55 + 17.0,
+      sin(spiral) * noiseScale3 * 0.55 - 4.0,
+      effectiveR * noiseScale3 * 0.85 + t * 0.025 + 22.0
     );
 
     float cloud1 = fbm(samplePos1);
     float cloud2 = fbm(samplePos2);
+    float cloud3 = fbm(samplePos3);
 
-    // Combine: primary detail + broader structure
-    float cloud = cloud1 * 0.65 + cloud2 * 0.35;
-    // Remap from [-1,1] to [0,1] with contrast boost
-    cloud = smoothstep(-0.1, 0.7, cloud);
+    // Combine: fluffy big-blob base + medium structure + fine wisps
+    float cloud = cloud1 * 0.4 + cloud2 * 0.35 + cloud3 * 0.35;
+    // Add a constant bias so clouds fill more of the field (less hole-y)
+    cloud += 0.18;
+    // Remap to [0,1] with wider contrast — push more values into visible range
+    cloud = smoothstep(-0.35, 0.55, cloud);
 
     // ── Wispy arm structure ──
-    // Create defined spiral arms by modulating with a directional pattern.
-    // This gives the "iris blades" look — distinct arms rather than
-    // uniform fog.
-    float armCount = 6.0;
+    // More arms (10) for a denser iris/vortex feel.
+    // armCount=10 is integer, so sin(spiral*armCount) is continuous at
+    // the theta seam (10*2π is a full period of sin).
+    float armCount = 10.0;
     float armPattern = sin(spiral * armCount) * 0.5 + 0.5;
-    armPattern = smoothstep(0.15, 0.85, armPattern);
-    // Blend: arms are more distinct at larger r (near edges),
-    // more diffuse near center (tunnel mouth)
-    float armInfluence = mix(0.2, 0.7, smoothstep(0.0, 0.6, r));
+    armPattern = smoothstep(0.05, 0.95, armPattern);
+    // Soften arm cutout overall — keep some banding but don't punch holes
+    float armInfluence = mix(0.1, 0.38, smoothstep(0.0, 0.6, r));
     cloud *= mix(1.0, armPattern, armInfluence);
 
     // ── Tunnel depth / perspective ──
@@ -701,14 +905,15 @@ const FRAG_SRC = `
     // ── Iris mask ──
     // irisRadius controls how far clouds extend:
     // - At irisRadius=0: no clouds visible
-    // - At irisRadius=1.2: clouds fill past the screen edges
+    // - At irisRadius=1.6: clouds fill well past the screen edges (corner r ≈ 1.02)
     // Soft edge for organic feel
-    float irisEdge = 0.15;
+    float irisEdge = 0.2;
     float iris = smoothstep(u_irisRadius + irisEdge, u_irisRadius - irisEdge, r);
 
     // ── Edge vignette ──
-    // Gentle darkening at extreme edges so clouds don't look clipped
-    float vignette = 1.0 - smoothstep(0.7, 1.0, r);
+    // Very gentle darkening only at the extreme corners; clouds should
+    // reach all the way to the edges without obvious cutoff.
+    float vignette = 1.0 - smoothstep(1.05, 1.45, r) * 0.45;
 
     // ── Central hole ──
     // Keep the very center mostly clear for the portal glow / QR
@@ -733,10 +938,12 @@ const FRAG_SRC = `
     cloudColor = mix(cloudColor, warmTint, smoothstep(0.7, 1.0, colorMix) * 0.25);
 
     // ── Final composite ──
-    float alpha = cloud * iris * depth * vignette * centerHole * 0.82;
+    // Boosted multiplier (was 0.82) so clouds read as fluffy and dense,
+    // not thin streaks. Higher clamp lets the brightest puffs feel solid.
+    float alpha = cloud * iris * depth * vignette * centerHole * 1.25;
 
     // Clamp to avoid fireflies
-    alpha = clamp(alpha, 0.0, 0.88);
+    alpha = clamp(alpha, 0.0, 0.96);
 
     gl_FragColor = vec4(cloudColor * alpha, alpha);
   }
@@ -786,6 +993,7 @@ const uResolution = gl.getUniformLocation(program, 'u_resolution');
 const uTime = gl.getUniformLocation(program, 'u_time');
 const uIrisRadius = gl.getUniformLocation(program, 'u_irisRadius');
 const uRotationSpeed = gl.getUniformLocation(program, 'u_rotationSpeed');
+const uInflowSpeed = gl.getUniformLocation(program, 'u_inflowSpeed');
 const uSpiralTightness = gl.getUniformLocation(program, 'u_spiralTightness');
 const uTunnelDepth = gl.getUniformLocation(program, 'u_tunnelDepth');
 const uReducedMotion = gl.getUniformLocation(program, 'u_reducedMotion');
@@ -801,6 +1009,7 @@ const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matc
 const params = {
   irisRadius: 0.0,
   rotationSpeed: 0.0,
+  inflowSpeed: 0.0,
   spiralTightness: 4.0,
   tunnelDepth: 0.8,
   // Animation targets
@@ -819,6 +1028,12 @@ const params = {
   rotFrom: 0,
   rotTo: 0,
   rotDuration: 2000,
+  // Inflow ramp
+  inflowAnimating: false,
+  inflowStart: 0,
+  inflowFrom: 0,
+  inflowTo: 0,
+  inflowDuration: 2000,
 };
 
 // ── Easing functions ──
@@ -850,6 +1065,14 @@ function animateRotationTo(target, durationMs) {
   params.rotDuration = durationMs;
 }
 
+function animateInflowTo(target, durationMs) {
+  params.inflowAnimating = true;
+  params.inflowStart = performance.now();
+  params.inflowFrom = params.inflowSpeed;
+  params.inflowTo = target;
+  params.inflowDuration = durationMs;
+}
+
 // ── Render loop ──
 let startTime = performance.now();
 
@@ -878,6 +1101,17 @@ function render(now) {
     }
   }
 
+  // Update inflow ramp
+  if (params.inflowAnimating) {
+    let progress = Math.min((now - params.inflowStart) / params.inflowDuration, 1.0);
+    const eased = easeInOut(progress);
+    params.inflowSpeed = params.inflowFrom + (params.inflowTo - params.inflowFrom) * eased;
+    if (progress >= 1.0) {
+      params.inflowSpeed = params.inflowTo;
+      params.inflowAnimating = false;
+    }
+  }
+
   // Clear to transparent
   gl.viewport(0, 0, canvas.width, canvas.height);
   gl.clearColor(0, 0, 0, 0);
@@ -888,6 +1122,7 @@ function render(now) {
   gl.uniform1f(uTime, t);
   gl.uniform1f(uIrisRadius, params.irisRadius);
   gl.uniform1f(uRotationSpeed, params.rotationSpeed);
+  gl.uniform1f(uInflowSpeed, params.inflowSpeed);
   gl.uniform1f(uSpiralTightness, params.spiralTightness);
   gl.uniform1f(uTunnelDepth, params.tunnelDepth);
   gl.uniform1f(uReducedMotion, reducedMotion);
@@ -900,10 +1135,34 @@ function render(now) {
 
 requestAnimationFrame(render);
 
+// ── Tuning config (slider-driven targets) ──
+const config = {
+  rotationTarget: 0.08,   // rad/sec, idle arm rotation after iris closes
+  inflowTarget: 0.15,     // r/sec, cloud inward drift
+  irisDuration: 2500,     // ms, iris close animation length
+};
+
 // ── State machine ──
 let currentState = 1;
 let orbitRAF = null;
 let bootInterval = null;
+let farewellTimer = null;
+let phonesConnected = true;  // state 7 default: still mid-game with players
+
+function updateReconnectVisibility() {
+  const reconnect = document.getElementById('reconnectCorner');
+  // QR only appears when in-game AND every phone has disconnected —
+  // an "everyone left, anyone come back" cue, not a persistent overlay.
+  const shouldShow = currentState === 7 && !phonesConnected;
+  reconnect.classList.toggle('visible', shouldShow);
+}
+
+function togglePhones() {
+  phonesConnected = !phonesConnected;
+  document.getElementById('phonesBtn').textContent =
+    phonesConnected ? '📱 Phones: connected' : '📱 Phones: all dropped';
+  updateReconnectVisibility();
+}
 
 const bootMessages = [
   'Starting RPCS3...',
@@ -919,39 +1178,64 @@ function goState(n) {
   currentState = n;
 
   // Update buttons
-  [1,2,3,4,5,6].forEach(i => {
+  [1,2,3,4,5,6,7,8].forEach(i => {
     const b = document.getElementById('btn' + i);
     if (b) b.classList.toggle('active', i === n);
   });
 
-  const portalGlow = document.getElementById('portalGlow');
-
-  if (n === 1) {
-    // Startup: iris open (clouds leave)
-    animateIrisTo(0.0, 2000, 'in');
-    animateRotationTo(0.0, 2000);
-    portalGlow.classList.remove('visible');
-  } else if (prev === 1) {
-    // Coming from startup: iris close (clouds arrive)
-    portalGlow.classList.add('visible');
-    animateIrisTo(1.2, 2500, 'out');
-    animateRotationTo(0.2, 2500);
+  if (n === 1 || n === 7) {
+    // Startup or In-Game: iris open (clouds leave). Kill motion too.
+    // State 7 reveals the simulated game beneath; state 1 reveals stars.
+    animateIrisTo(0.0, n === 7 ? 1800 : 2000, 'in');
+    animateRotationTo(0.0, 1800);
+    animateInflowTo(0.0, 1800);
+  } else if (prev === 1 || prev === 7) {
+    // Coming from a clouds-cleared state. Iris ramps over irisDuration;
+    // rotation/inflow snap to target in 200ms so the cloud motion is
+    // "already running" by the time the iris reveals any clouds. If we
+    // ramp them over irisDuration too, inflow's easeInOut peaks AFTER
+    // the iris has settled, which reads as a second inward sweep.
+    animateIrisTo(1.6, config.irisDuration, 'out');
+    animateRotationTo(config.rotationTarget, 200);
+    animateInflowTo(config.inflowTarget, 200);
   } else {
-    // Already have clouds — keep idle swirl, ensure iris is closed
-    portalGlow.classList.add('visible');
-    if (params.irisRadius < 1.0 && !params.irisAnimating) {
-      animateIrisTo(1.2, 2500, 'out');
+    // Already in cloud state — keep iris closed; nudge motion toward current targets.
+    if (params.irisRadius < 1.4 && !params.irisAnimating) {
+      animateIrisTo(1.6, config.irisDuration, 'out');
     }
-    if (params.rotationSpeed < 0.1 && !params.rotAnimating) {
-      animateRotationTo(0.2, 1500);
+    if (Math.abs(params.rotationSpeed - config.rotationTarget) > 0.01 && !params.rotAnimating) {
+      animateRotationTo(config.rotationTarget, 1200);
+    }
+    if (Math.abs(params.inflowSpeed - config.inflowTarget) > 0.01 && !params.inflowAnimating) {
+      animateInflowTo(config.inflowTarget, 1200);
     }
   }
 
   // Switch content panels
-  [1,2,3,4,5,6].forEach(i => {
+  [1,2,3,4,5,6,7,8].forEach(i => {
     const el = document.getElementById('state' + i);
     if (el) el.classList.toggle('active', i === n);
   });
+
+  // Game underlay (state 7 only). Reconnect QR is gated separately on
+  // `phonesConnected` — it only appears when every phone has dropped, so
+  // a returning player can rescan without anyone needing to touch the TV.
+  const underlay = document.getElementById('gameUnderlay');
+  if (n === 7) underlay.classList.add('visible');
+  else underlay.classList.remove('visible');
+  updateReconnectVisibility();
+
+  // Farewell black-fade (state 8 only) — give "SEE YOU NEXT TIME" a beat
+  // to read before the screen goes dark. ~2.2s pause then 1.6s fade.
+  const farewell = document.getElementById('farewellOverlay');
+  if (farewellTimer) { clearTimeout(farewellTimer); farewellTimer = null; }
+  if (n === 8) {
+    farewellTimer = setTimeout(() => {
+      if (currentState === 8) farewell.classList.add('visible');
+    }, 2200);
+  } else {
+    farewell.classList.remove('visible');
+  }
 
   // Boot status cycling
   stopBoot();
@@ -1011,20 +1295,25 @@ function stopBoot() {
 }
 
 // ── Player pip orbit ──
+// Larger ellipse (was 340x280) clears the "SCAN TO CONNECT" title text
+// horizontally, and the lower z-index on .player-orbit (9 vs content 10)
+// lets pips pass behind the words when they do intersect.
+// pip is 84px → center offset 42px.
 function startOrbit(playerCount) {
   stopOrbit();
   const pip1 = document.getElementById('pip1');
   const pip2 = document.getElementById('pip2');
-  const rx = 340, ry = 280;
-  const speed = 0.0004;
+  const rx = 560, ry = 400;
+  const speed = 0.00032;
+  const PIP_HALF = 42;
   let start = null;
 
   function frame(ts) {
     if (!start) start = ts;
     const t = (ts - start) * speed;
-    pip1.style.transform = `translate(${Math.cos(t) * rx - 32}px, ${Math.sin(t) * ry - 32}px)`;
+    pip1.style.transform = `translate(${Math.cos(t) * rx - PIP_HALF}px, ${Math.sin(t) * ry - PIP_HALF}px)`;
     if (playerCount >= 2) {
-      pip2.style.transform = `translate(${Math.cos(t + Math.PI) * rx - 32}px, ${Math.sin(t + Math.PI) * ry - 32}px)`;
+      pip2.style.transform = `translate(${Math.cos(t + Math.PI) * rx - PIP_HALF}px, ${Math.sin(t + Math.PI) * ry - PIP_HALF}px)`;
     }
     orbitRAF = requestAnimationFrame(frame);
   }
@@ -1063,6 +1352,61 @@ function stopShader() {
   if (fill) fill.style.background = `conic-gradient(from 0deg, var(--gi) 0%, var(--gi) 100%)`;
   const count = document.getElementById('shaderCount');
   if (count) count.textContent = '0 / 189';
+}
+
+// ── Slider wiring ──
+const rotSlider = document.getElementById('rotSlider');
+const rotVal = document.getElementById('rotVal');
+const inflowSlider = document.getElementById('inflowSlider');
+const inflowVal = document.getElementById('inflowVal');
+const tightSlider = document.getElementById('tightSlider');
+const tightVal = document.getElementById('tightVal');
+const irisDurSlider = document.getElementById('irisDurSlider');
+const irisDurVal = document.getElementById('irisDurVal');
+
+rotSlider.addEventListener('input', e => {
+  const v = parseFloat(e.target.value);
+  config.rotationTarget = v;
+  rotVal.textContent = v.toFixed(2);
+  // Only apply live when we're in a cloud-visible state and iris isn't closing
+  if (!params.irisAnimating && currentState !== 1) {
+    animateRotationTo(v, 400);
+  }
+});
+
+inflowSlider.addEventListener('input', e => {
+  const v = parseFloat(e.target.value);
+  config.inflowTarget = v;
+  inflowVal.textContent = v.toFixed(2);
+  if (!params.irisAnimating && currentState !== 1) {
+    animateInflowTo(v, 400);
+  }
+});
+
+tightSlider.addEventListener('input', e => {
+  const v = parseFloat(e.target.value);
+  params.spiralTightness = v;  // applied every frame via uniform — live preview
+  tightVal.textContent = v.toFixed(1);
+});
+
+irisDurSlider.addEventListener('input', e => {
+  const v = parseInt(e.target.value);
+  config.irisDuration = v;
+  irisDurVal.textContent = v;
+});
+
+// Force a full open→close iris cycle so the user can audition the
+// current iris-duration + rotation/inflow settings without tabbing
+// between states. Useful when sliders are being adjusted.
+function replayIris() {
+  animateIrisTo(0.0, 700, 'in');
+  animateRotationTo(0.0, 600);
+  animateInflowTo(0.0, 600);
+  setTimeout(() => {
+    animateIrisTo(1.6, config.irisDuration, 'out');
+    animateRotationTo(config.rotationTarget, config.irisDuration);
+    animateInflowTo(config.inflowTarget, config.irisDuration);
+  }, 750);
 }
 
 // ── Init ──
