@@ -199,14 +199,21 @@ fn main() -> Result<()> {
     let ui_clients = connected_clients.clone();
     let ui_status = launcher_status.clone();
     // Dev builds are windowed so you can alt-tab away; release launches
-    // fullscreen (it's invoked from Steam Big Picture with no window chrome).
+    // fullscreen + always-on-top (it's invoked from Steam Big Picture with
+    // no window chrome) and supports transparency so the in-game surface
+    // (PLAN 4.15.8) can render a reconnect QR overlay with the game
+    // visible through the rest of the viewport.
     let viewport = {
         let mut vb = egui::ViewportBuilder::default().with_title("Skylander Portal Controller");
         if cfg!(feature = "dev-tools") {
             vb = vb.with_inner_size([900.0, 1000.0]);
         } else {
-            vb = vb.with_fullscreen(true);
+            vb = vb.with_fullscreen(true).with_always_on_top();
         }
+        // Transparent window always — the panel still paints an opaque
+        // starfield background in Main / Crashed / Farewell, so only the
+        // in-game path actually sees through to RPCS3 behind egui.
+        vb = vb.with_transparent(true);
         vb
     };
     let native_options = eframe::NativeOptions {

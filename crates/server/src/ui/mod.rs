@@ -22,6 +22,7 @@ use crate::{fonts, palette};
 
 mod crashed;
 mod farewell;
+mod in_game;
 mod main_screen;
 
 pub struct LauncherApp {
@@ -83,6 +84,24 @@ impl eframe::App for LauncherApp {
         // the next time we enter it, the 3s countdown restarts from zero.
         if !matches!(status_snapshot.screen, LauncherScreen::Farewell) {
             self.farewell_started_at = None;
+        }
+
+        // In-game transparent surface (PLAN 4.15.8) — when RPCS3 is
+        // actually running AND we're not in a crash/farewell override,
+        // skip the vortex + Main render and let the game show through
+        // the transparent viewport. The CentralPanel uses a fully-clear
+        // frame so the OS-level transparency (enabled via
+        // `ViewportBuilder::with_transparent(true)`) actually shows RPCS3.
+        let in_game =
+            status_snapshot.rpcs3_running && matches!(status_snapshot.screen, LauncherScreen::Main);
+
+        if in_game {
+            egui::CentralPanel::default()
+                .frame(egui::Frame::none().fill(egui::Color32::TRANSPARENT))
+                .show(ctx, |ui| {
+                    in_game::render(ui, &self.clients, self.qr_texture.as_ref());
+                });
+            return;
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
