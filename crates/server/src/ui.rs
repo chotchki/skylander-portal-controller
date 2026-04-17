@@ -37,6 +37,45 @@ impl LauncherApp {
     }
 }
 
+/// Frame the QR in a gold bezel equivalent to the phone's `GoldBezel` —
+/// rectangular rather than circular (the phone uses circles for figures;
+/// the QR needs a square frame) but the same colour story: gold body with a
+/// darker gold ink hairline outer edge and a near-black bezel plate
+/// surrounding the QR (PLAN 4.15.3). The radial-gradient + multi-layer
+/// inset shadows of the CSS version would need a custom `egui::Painter`
+/// pass; the stacked-Frame approach below is ~95% of the visual payoff for
+/// 5% of the code. Revisit via a custom painter in 4.15a polish if the TV
+/// looks flat.
+fn qr_in_gold_bezel(ui: &mut egui::Ui, tex: &egui::TextureHandle) {
+    let size = tex.size_vec2();
+    // Outer gold body — the visible bezel ring.
+    egui::Frame::none()
+        .fill(palette::GOLD)
+        .stroke(egui::Stroke::new(2.0, palette::GOLD_INK))
+        .inner_margin(egui::Margin::same(18.0))
+        .rounding(egui::Rounding::same(14.0))
+        .shadow(egui::epaint::Shadow {
+            offset: egui::vec2(0.0, 6.0),
+            blur: 18.0,
+            spread: 0.0,
+            color: egui::Color32::from_black_alpha(160),
+        })
+        .show(ui, |ui| {
+            // Bezel plate — darker SF_3 rim framing the QR itself, matching
+            // the phone's `linear-gradient(#1a2a4a, #0a1630)` plate colour
+            // (approximated as a solid fill — egui::Frame doesn't do
+            // gradients without a custom painter).
+            egui::Frame::none()
+                .fill(palette::SF_3)
+                .stroke(egui::Stroke::new(1.0, palette::GOLD_SHADOW))
+                .inner_margin(egui::Margin::same(10.0))
+                .rounding(egui::Rounding::same(8.0))
+                .show(ui, |ui| {
+                    ui.image((tex.id(), size));
+                });
+        });
+}
+
 fn render_qr_texture(ctx: &egui::Context, url: &str) -> egui::TextureHandle {
     let code = qrcode::QrCode::new(url).expect("qr encode");
     // QR renders in starfield-blue-on-white for readability. Matches the
@@ -92,8 +131,7 @@ impl eframe::App for LauncherApp {
                 );
                 ui.add_space(24.0);
                 if let Some(tex) = &self.qr_texture {
-                    let size = tex.size_vec2();
-                    ui.image((tex.id(), size));
+                    qr_in_gold_bezel(ui, tex);
                 }
                 ui.add_space(24.0);
                 ui.label(
