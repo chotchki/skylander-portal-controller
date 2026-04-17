@@ -1,0 +1,762 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1920,initial-scale=1">
+<title>TV Launcher v2 — Procedural Cloud Vortex</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Titan+One&family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,800;1,9..144,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --sf-1: #0b1e52; --sf-2: #061436; --sf-3: #020818;
+    --gb: #ffe58a; --g: #f5c634; --gm: #c58c18; --gs: #6e4a00; --gi: #3a2500;
+    --text: #fff4e0; --text-muted: #d9c88a;
+    --success: #65d68c; --danger: #e34c4c;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: #000; }
+  body {
+    font-family: "Fraunces", Georgia, serif;
+    display: grid; place-items: center;
+    min-height: 100vh;
+    color: var(--text);
+  }
+
+  /* ── TV frame ── */
+  .tv {
+    width: 1920px; height: 1080px;
+    position: relative; overflow: hidden;
+    background: var(--sf-3);
+    box-shadow: 0 0 0 4px #222, 0 0 80px rgba(0,0,0,0.8);
+    transform-origin: top left;
+  }
+
+  /* ── Starfield background ── */
+  .sky {
+    position: absolute; inset: 0; z-index: 0;
+    background:
+      radial-gradient(ellipse 120% 60% at 50% 0%, #1a3a8a 0%, transparent 50%),
+      radial-gradient(ellipse 80% 50% at 50% 100%, #0e2464 0%, transparent 50%),
+      linear-gradient(180deg, var(--sf-1), var(--sf-2) 60%, var(--sf-3));
+  }
+  .stars {
+    position: absolute; inset: 0; z-index: 1;
+    background-image:
+      radial-gradient(1.5px 1.5px at 120px 80px, white, transparent),
+      radial-gradient(2px 2px at 340px 160px, rgba(255,230,180,0.9), transparent),
+      radial-gradient(1.5px 1.5px at 560px 40px, white, transparent),
+      radial-gradient(1px 1px at 800px 200px, rgba(180,220,255,0.8), transparent),
+      radial-gradient(2px 2px at 1050px 90px, rgba(255,255,255,0.9), transparent),
+      radial-gradient(1px 1px at 1300px 300px, white, transparent),
+      radial-gradient(1.5px 1.5px at 1550px 50px, rgba(180,220,255,0.85), transparent),
+      radial-gradient(1px 1px at 1800px 180px, white, transparent),
+      radial-gradient(1px 1px at 200px 400px, white, transparent),
+      radial-gradient(2px 2px at 500px 600px, rgba(255,230,180,0.8), transparent),
+      radial-gradient(1px 1px at 750px 500px, white, transparent),
+      radial-gradient(1.5px 1.5px at 1000px 700px, rgba(180,220,255,0.9), transparent),
+      radial-gradient(1px 1px at 1250px 550px, white, transparent),
+      radial-gradient(1px 1px at 1500px 800px, rgba(255,255,255,0.7), transparent),
+      radial-gradient(2px 2px at 1700px 650px, white, transparent),
+      radial-gradient(1px 1px at 100px 900px, white, transparent),
+      radial-gradient(1.5px 1.5px at 400px 850px, rgba(255,230,180,0.7), transparent),
+      radial-gradient(1px 1px at 900px 950px, white, transparent),
+      radial-gradient(1px 1px at 1400px 1000px, rgba(180,220,255,0.8), transparent),
+      radial-gradient(1.5px 1.5px at 1850px 920px, white, transparent);
+    background-size: 1920px 1080px;
+    animation: drift 180s linear infinite;
+  }
+  @keyframes drift { to { background-position: -1920px -1080px; } }
+
+  /* ── SVG cloud vortex ── */
+  .cloud-vortex-wrap {
+    position: absolute; inset: 0; z-index: 2;
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: none;
+    opacity: 0;
+    transform: scale(2);
+    transition: opacity 2s ease-out, transform 2s ease-out;
+  }
+  .cloud-vortex-wrap.visible {
+    opacity: 1;
+    transform: scale(1);
+  }
+  .cloud-vortex-wrap.spiral-out {
+    opacity: 0;
+    transform: scale(2);
+    transition: opacity 1.5s ease-in, transform 1.5s ease-in;
+  }
+
+  .cloud-layer {
+    position: absolute;
+    border-radius: 50%;
+    filter: url(#clouds);
+    mix-blend-mode: screen;
+  }
+
+  /* Layer 1: outermost, slowest */
+  .cloud-layer.c1 {
+    width: 1400px; height: 1400px;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    opacity: 0.55;
+    animation: cloud-spin-1 50s linear infinite;
+  }
+  /* Layer 2: mid, counter-rotate */
+  .cloud-layer.c2 {
+    width: 1100px; height: 1100px;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    opacity: 0.65;
+    animation: cloud-spin-2 38s linear infinite reverse;
+  }
+  /* Layer 3: inner, faster */
+  .cloud-layer.c3 {
+    width: 800px; height: 800px;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    opacity: 0.75;
+    animation: cloud-spin-3 26s linear infinite;
+  }
+
+  @keyframes cloud-spin-1 { to { transform: translate(-50%, -50%) rotate(360deg); } }
+  @keyframes cloud-spin-2 { to { transform: translate(-50%, -50%) rotate(360deg); } }
+  @keyframes cloud-spin-3 { to { transform: translate(-50%, -50%) rotate(360deg); } }
+
+  /* Radial mask: dense center, fade at edges */
+  .cloud-mask {
+    position: absolute; inset: 0;
+    background: radial-gradient(circle at 50% 50%,
+      transparent 0%,
+      transparent 15%,
+      rgba(2,8,24,0.3) 35%,
+      rgba(2,8,24,0.7) 55%,
+      rgba(2,8,24,0.95) 75%,
+      var(--sf-3) 100%
+    );
+    z-index: 3;
+    pointer-events: none;
+  }
+
+  /* Central bright portal glow */
+  .portal-glow {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 400px; height: 400px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: radial-gradient(circle,
+      rgba(255,255,255,0.85) 0%,
+      rgba(200,230,255,0.5) 20%,
+      rgba(100,170,255,0.25) 45%,
+      rgba(50,100,200,0.1) 70%,
+      transparent 100%
+    );
+    z-index: 4;
+    pointer-events: none;
+    opacity: 0;
+    animation: glow-pulse 3.5s ease-in-out infinite;
+    transition: opacity 1.5s ease-out;
+  }
+  .portal-glow.visible { opacity: 1; }
+
+  @keyframes glow-pulse {
+    0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.7; }
+    50% { transform: translate(-50%, -50%) scale(1.12); opacity: 1; }
+  }
+
+  /* ── Content layer ── */
+  .content {
+    position: relative; z-index: 10;
+    width: 100%; height: 100%;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 24px;
+    padding: 60px;
+  }
+
+  /* ── State containers ── */
+  .state-content {
+    display: flex; flex-direction: column;
+    align-items: center; gap: 32px;
+    transition: opacity 0.8s ease-out, transform 0.8s ease-out;
+    position: absolute;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(30px) scale(0.95);
+  }
+  .state-content.active {
+    opacity: 1; transform: translateY(0) scale(1);
+    pointer-events: auto;
+    position: relative;
+  }
+
+  /* ── Typography ── */
+  .title-display {
+    font-family: "Titan One", cursive;
+    color: var(--gb);
+    -webkit-text-stroke: 2px var(--gi);
+    text-shadow:
+      0 3px 0 var(--gs),
+      0 4px 0 var(--gi),
+      0 6px 14px rgba(0,0,0,0.5),
+      0 0 40px rgba(245,198,52,0.3);
+    letter-spacing: 0.06em;
+    text-align: center;
+    text-transform: uppercase;
+  }
+  .title-hero { font-size: 96px; line-height: 1.1; }
+  .title-lg   { font-size: 64px; line-height: 1.1; }
+  .title-md   { font-size: 48px; line-height: 1.2; }
+  .title-sm   { font-size: 36px; line-height: 1.2; }
+
+  .subtitle {
+    font-family: "Fraunces", Georgia, serif;
+    font-style: italic;
+    font-size: 36px;
+    color: var(--text);
+    letter-spacing: 0.08em;
+    text-align: center;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  }
+
+  .status-line {
+    font-family: "Fraunces", Georgia, serif;
+    font-style: italic;
+    font-size: 32px;
+    color: var(--text-muted);
+    letter-spacing: 0.12em;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  }
+
+  /* Loading dots animation */
+  .loading-dots::after {
+    content: '';
+    animation: dots 1.5s steps(4, end) infinite;
+  }
+  @keyframes dots {
+    0%  { content: ''; }
+    25% { content: '.'; }
+    50% { content: '..'; }
+    75% { content: '...'; }
+  }
+
+  /* ── Title rays (ambient gold halo behind heading) ── */
+  .title-wrap { position: relative; }
+  .title-rays {
+    position: absolute;
+    inset: -60px -120px;
+    background: radial-gradient(ellipse 100% 80% at 50% 50%, rgba(245,198,52,0.12), transparent 70%);
+    pointer-events: none;
+    z-index: -1;
+  }
+
+  /* ── QR bezel ── */
+  .qr-bezel {
+    width: 280px; height: 280px;
+    border-radius: 24px;
+    padding: 16px;
+    background: radial-gradient(circle at 30% 25%, var(--gb), var(--g) 22%, var(--gm) 55%, var(--gs) 100%);
+    box-shadow:
+      inset 0 0 0 3px var(--gi),
+      inset 0 4px 6px rgba(255,255,255,0.3),
+      inset 0 -4px 6px rgba(0,0,0,0.5),
+      0 0 0 2px #000,
+      0 6px 16px rgba(0,0,0,0.6),
+      0 0 60px rgba(245,198,52,0.15);
+    display: flex; align-items: center; justify-content: center;
+    transition: transform 0.8s ease-out, opacity 0.8s ease-out;
+    transform-style: preserve-3d;
+    perspective: 800px;
+  }
+  .qr-bezel.spin-in {
+    animation: qr-spin-in 0.8s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  }
+  @keyframes qr-spin-in {
+    from { transform: scale(0) rotate(-180deg); opacity: 0; }
+    to   { transform: scale(1) rotate(0deg); opacity: 1; }
+  }
+  .qr-inner {
+    width: 100%; height: 100%;
+    border-radius: 12px;
+    background: #fff;
+    box-shadow:
+      inset 0 0 0 2px rgba(0,0,0,0.15),
+      inset 0 3px 6px rgba(0,0,0,0.1);
+    display: flex; align-items: center; justify-content: center;
+    font-family: "Fraunces", Georgia, serif;
+    font-size: 18px; color: #999;
+    text-align: center;
+    line-height: 1.4;
+  }
+
+  /* QR card flip */
+  .qr-flipper {
+    position: relative;
+    width: 280px; height: 280px;
+    transform-style: preserve-3d;
+    transition: transform 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .qr-flipper.flipped {
+    transform: rotateY(180deg);
+  }
+  .qr-front, .qr-back {
+    position: absolute; inset: 0;
+    backface-visibility: hidden;
+  }
+  .qr-back {
+    transform: rotateY(180deg);
+  }
+  .qr-back .qr-bezel {
+    width: 280px; height: 280px;
+  }
+  .qr-back-inner {
+    width: 100%; height: 100%;
+    border-radius: 12px;
+    background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+    font-family: "Titan One", cursive;
+    font-size: 22px;
+    color: var(--gb);
+    text-align: center;
+    text-shadow: 0 2px 0 var(--gs);
+    letter-spacing: 0.04em;
+    line-height: 1.3;
+  }
+
+  /* ── Player indicators (orbiting gold bezels) ── */
+  .player-orbit {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 0; height: 0;
+    z-index: 11;
+    pointer-events: none;
+  }
+  .player-pip {
+    position: absolute;
+    width: 64px; height: 64px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, var(--gb), var(--g) 30%, var(--gm) 60%, var(--gs) 100%);
+    box-shadow:
+      inset 0 0 0 2px var(--gi),
+      inset 0 2px 3px rgba(255,255,255,0.4),
+      0 0 0 2px #000,
+      0 3px 8px rgba(0,0,0,0.5),
+      0 0 20px rgba(245,198,52,0.2);
+    display: flex; align-items: center; justify-content: center;
+    font-family: "Titan One", cursive;
+    font-size: 24px;
+    color: var(--gi);
+    text-shadow: 0 1px 0 rgba(255,255,255,0.3);
+    opacity: 0;
+    transition: opacity 0.6s ease-out;
+  }
+  .player-pip.visible { opacity: 1; }
+
+  /* ── Status bar ── */
+  .status-bar {
+    position: absolute;
+    bottom: 48px; left: 0; right: 0;
+    display: flex; align-items: center; justify-content: center;
+    gap: 48px;
+    z-index: 11;
+    opacity: 0;
+    transition: opacity 0.8s ease-out;
+  }
+  .status-bar.visible { opacity: 1; }
+  .status-item {
+    display: flex; align-items: center; gap: 12px;
+    font-family: "Fraunces", Georgia, serif;
+    font-size: 28px;
+    color: var(--text-muted);
+    letter-spacing: 0.04em;
+  }
+  .status-dot {
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    box-shadow: 0 0 8px currentColor;
+  }
+  .status-dot.green { background: var(--success); color: var(--success); }
+  .status-dot.gold  { background: var(--g); color: var(--g); animation: dot-pulse 2s ease-in-out infinite; }
+  @keyframes dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+  /* ── Demo controls ── */
+  .demo-controls {
+    position: fixed; bottom: 20px; right: 20px;
+    z-index: 999;
+    display: flex; flex-direction: column; gap: 6px;
+    background: rgba(0,0,0,0.9);
+    padding: 16px; border-radius: 12px;
+    border: 1px solid #444;
+    font-family: system-ui, sans-serif;
+    font-size: 13px; color: #ccc;
+    min-width: 240px;
+  }
+  .demo-controls strong { color: #fff; margin-bottom: 2px; }
+  .demo-controls button {
+    padding: 7px 14px;
+    background: #2a3a5a; color: #aac;
+    border: 1px solid #445; border-radius: 6px;
+    cursor: pointer; font-size: 13px;
+    font-family: system-ui, sans-serif;
+    text-align: left;
+    transition: background 0.15s;
+  }
+  .demo-controls button:hover { background: #3a5a8a; }
+  .demo-controls button.active {
+    background: var(--gm); color: #000;
+    border-color: var(--g);
+    font-weight: 600;
+  }
+  .demo-controls .sep {
+    border: none; border-top: 1px solid #333; margin: 4px 0;
+  }
+  .demo-controls .hint {
+    font-size: 11px; color: #777; line-height: 1.35;
+  }
+
+  /* ── Reduced motion ── */
+  @media (prefers-reduced-motion: reduce) {
+    .stars { animation: none; }
+    .cloud-layer { animation: none; }
+    .portal-glow { animation: none; }
+    .loading-dots::after { animation: none; content: '...'; }
+    .status-dot.gold { animation: none; }
+    .player-pip { transition: none; }
+  }
+
+  /* ── Scale for smaller screens ── */
+  @media (max-width: 1920px) {
+    .tv { transform: scale(calc(100vw / 1920)); }
+  }
+</style>
+</head>
+<body>
+
+<!-- SVG filter definitions (hidden) -->
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <filter id="clouds" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.015" numOctaves="5" seed="1" result="noise"/>
+      <feColorMatrix type="saturate" values="0" in="noise" result="gray"/>
+      <feComponentTransfer in="gray" result="colored">
+        <feFuncR type="table" tableValues="0.04 0.06 0.1 0.4 0.8"/>
+        <feFuncG type="table" tableValues="0.04 0.08 0.2 0.5 0.9"/>
+        <feFuncB type="table" tableValues="0.15 0.3 0.5 0.7 1.0"/>
+        <feFuncA type="table" tableValues="0 0 0.3 0.6 0.8"/>
+      </feComponentTransfer>
+    </filter>
+    <filter id="clouds2" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.012" numOctaves="4" seed="7" result="noise"/>
+      <feColorMatrix type="saturate" values="0" in="noise" result="gray"/>
+      <feComponentTransfer in="gray" result="colored">
+        <feFuncR type="table" tableValues="0.02 0.05 0.12 0.35 0.7"/>
+        <feFuncG type="table" tableValues="0.04 0.1 0.25 0.55 0.85"/>
+        <feFuncB type="table" tableValues="0.12 0.25 0.45 0.7 1.0"/>
+        <feFuncA type="table" tableValues="0 0 0.25 0.55 0.75"/>
+      </feComponentTransfer>
+    </filter>
+    <filter id="clouds3" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.02" numOctaves="6" seed="42" result="noise"/>
+      <feColorMatrix type="saturate" values="0" in="noise" result="gray"/>
+      <feComponentTransfer in="gray" result="colored">
+        <feFuncR type="table" tableValues="0.06 0.1 0.2 0.5 0.9"/>
+        <feFuncG type="table" tableValues="0.08 0.15 0.3 0.6 0.95"/>
+        <feFuncB type="table" tableValues="0.2 0.35 0.55 0.75 1.0"/>
+        <feFuncA type="table" tableValues="0 0.1 0.35 0.65 0.85"/>
+      </feComponentTransfer>
+    </filter>
+  </defs>
+</svg>
+
+<div class="tv" id="tv">
+  <!-- Starfield -->
+  <div class="sky"></div>
+  <div class="stars"></div>
+
+  <!-- Procedural cloud vortex layers -->
+  <div class="cloud-vortex-wrap" id="cloudWrap">
+    <div class="cloud-layer c1" style="filter:url(#clouds)"></div>
+    <div class="cloud-layer c2" style="filter:url(#clouds2)"></div>
+    <div class="cloud-layer c3" style="filter:url(#clouds3)"></div>
+  </div>
+
+  <!-- Radial mask: fades clouds at edges -->
+  <div class="cloud-mask" id="cloudMask" style="opacity:0; transition: opacity 1.5s ease-out;"></div>
+
+  <!-- Central portal glow -->
+  <div class="portal-glow" id="portalGlow"></div>
+
+  <!-- Content layer -->
+  <div class="content" id="contentLayer">
+    <!-- State 1: Startup -->
+    <div class="state-content active" id="state1">
+      <div class="title-wrap">
+        <div class="title-rays"></div>
+        <div class="title-display title-hero"><span class="loading-dots">STARTING UP</span></div>
+      </div>
+    </div>
+
+    <!-- State 2: Booting -->
+    <div class="state-content" id="state2">
+      <div class="title-wrap">
+        <div class="title-rays"></div>
+        <div class="title-display title-hero"><span class="loading-dots">LOADING</span></div>
+      </div>
+      <div class="subtitle">Skylanders: Trap Team</div>
+      <div class="status-line" id="bootStatus">Starting RPCS3...</div>
+    </div>
+
+    <!-- State 3: Awaiting Connect -->
+    <div class="state-content" id="state3">
+      <div class="qr-flipper" id="qrFlipper">
+        <div class="qr-front">
+          <div class="qr-bezel" id="qrBezel">
+            <div class="qr-inner">QR CODE<br>PLACEHOLDER</div>
+          </div>
+        </div>
+        <div class="qr-back">
+          <div class="qr-bezel">
+            <div class="qr-back-inner">MAXIMUM<br>PLAYERS<br>REACHED</div>
+          </div>
+        </div>
+      </div>
+      <div class="title-wrap">
+        <div class="title-rays"></div>
+        <div class="title-display title-lg">SCAN TO CONNECT</div>
+      </div>
+    </div>
+
+    <!-- State 4: Players Joined (reuses state 3 QR visually, adds player pips) -->
+    <div class="state-content" id="state4">
+      <div class="qr-bezel">
+        <div class="qr-inner">QR CODE<br>PLACEHOLDER</div>
+      </div>
+      <div class="title-wrap">
+        <div class="title-rays"></div>
+        <div class="title-display title-lg">SCAN TO CONNECT</div>
+      </div>
+    </div>
+
+    <!-- State 5: Max Players (card flip) -->
+    <div class="state-content" id="state5">
+      <div class="qr-flipper" id="qrFlipper5">
+        <div class="qr-front">
+          <div class="qr-bezel">
+            <div class="qr-inner">QR CODE<br>PLACEHOLDER</div>
+          </div>
+        </div>
+        <div class="qr-back">
+          <div class="qr-bezel">
+            <div class="qr-back-inner">MAXIMUM<br>PLAYERS<br>REACHED</div>
+          </div>
+        </div>
+      </div>
+      <div class="title-wrap">
+        <div class="title-rays"></div>
+        <div class="title-display title-lg" id="state5Title">SCAN TO CONNECT</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Player orbit indicators -->
+  <div class="player-orbit" id="playerOrbit">
+    <div class="player-pip" id="pip1">P1</div>
+    <div class="player-pip" id="pip2">P2</div>
+  </div>
+
+  <!-- Status bar -->
+  <div class="status-bar" id="statusBar">
+    <div class="status-item">
+      <div class="status-dot green"></div>
+      RPCS3 Running
+    </div>
+    <div class="status-item">
+      <span class="status-dot gold" id="connDot"></span>
+      <span id="connLabel">0 Phones Connected</span>
+    </div>
+    <div class="status-item">
+      <div class="status-dot green"></div>
+      Trap Team
+    </div>
+  </div>
+</div>
+
+<!-- Demo controls -->
+<div class="demo-controls">
+  <strong>TV Launcher v2 — Cloud Vortex</strong>
+  <hr class="sep">
+  <button id="btn1" class="active" onclick="goState(1)">1: Startup</button>
+  <button id="btn2" onclick="goState(2)">2: Booting</button>
+  <button id="btn3" onclick="goState(3)">3: Awaiting Connect</button>
+  <button id="btn4" onclick="goState(4)">4: Players Joined</button>
+  <button id="btn5" onclick="goState(5)">5: Max Players</button>
+  <hr class="sep">
+  <span class="hint">
+    Clouds: SVG feTurbulence procedural noise.<br>
+    3 layers, different seeds/frequencies.<br>
+    No image assets shipped.
+  </span>
+</div>
+
+<script>
+  // ── State machine ──
+  let currentState = 1;
+  let orbitRAF = null;
+  let bootInterval = null;
+
+  const bootMessages = [
+    'Starting RPCS3...',
+    'Waiting for game window...',
+    'Opening Skylanders Manager...',
+    'Initializing portal driver...'
+  ];
+  let bootIdx = 0;
+
+  function goState(n) {
+    if (n === currentState) return;
+    const prev = currentState;
+    currentState = n;
+
+    // Update buttons
+    for (let i = 1; i <= 5; i++) {
+      document.getElementById('btn' + i).classList.toggle('active', i === n);
+    }
+
+    // Cloud vortex visibility
+    const cloudWrap = document.getElementById('cloudWrap');
+    const cloudMask = document.getElementById('cloudMask');
+    const portalGlow = document.getElementById('portalGlow');
+
+    if (n === 1) {
+      // Startup: no clouds
+      cloudWrap.classList.remove('visible');
+      cloudWrap.classList.add('spiral-out');
+      cloudMask.style.opacity = '0';
+      portalGlow.classList.remove('visible');
+    } else {
+      // States 2-5: clouds visible
+      cloudWrap.classList.remove('spiral-out');
+      cloudWrap.classList.add('visible');
+      cloudMask.style.opacity = '1';
+      portalGlow.classList.add('visible');
+    }
+
+    // Status bar visibility
+    const statusBar = document.getElementById('statusBar');
+    statusBar.classList.toggle('visible', n >= 2);
+
+    // Connection label
+    const connLabel = document.getElementById('connLabel');
+    const connDot = document.getElementById('connDot');
+    if (n <= 3) {
+      connLabel.textContent = '0 Phones Connected';
+      connDot.className = 'status-dot gold';
+    } else if (n === 4) {
+      connLabel.textContent = '2 Phones Connected';
+      connDot.className = 'status-dot green';
+    } else {
+      connLabel.textContent = '2 Phones Connected (MAX)';
+      connDot.className = 'status-dot green';
+    }
+
+    // Switch content panels
+    for (let i = 1; i <= 5; i++) {
+      document.getElementById('state' + i).classList.toggle('active', i === n);
+    }
+
+    // Boot status cycling
+    stopBoot();
+    if (n === 2) startBoot();
+
+    // QR spin-in animation
+    const qrBezel = document.getElementById('qrBezel');
+    if (n === 3 && prev < 3) {
+      qrBezel.classList.remove('spin-in');
+      void qrBezel.offsetWidth; // reflow
+      qrBezel.classList.add('spin-in');
+    }
+
+    // Player pips
+    const pip1 = document.getElementById('pip1');
+    const pip2 = document.getElementById('pip2');
+    if (n === 4) {
+      pip1.classList.add('visible');
+      pip2.classList.add('visible');
+      startOrbit(2);
+    } else {
+      pip1.classList.remove('visible');
+      pip2.classList.remove('visible');
+      stopOrbit();
+    }
+
+    // Card flip for state 5
+    const flipper5 = document.getElementById('qrFlipper5');
+    const title5 = document.getElementById('state5Title');
+    if (n === 5) {
+      // Start showing the front, then flip after a beat
+      flipper5.classList.remove('flipped');
+      title5.textContent = 'SCAN TO CONNECT';
+      setTimeout(() => {
+        flipper5.classList.add('flipped');
+        title5.textContent = 'PORTAL IS FULL';
+      }, 400);
+    } else {
+      flipper5.classList.remove('flipped');
+    }
+  }
+
+  // ── Boot status cycling ──
+  function startBoot() {
+    bootIdx = 0;
+    document.getElementById('bootStatus').textContent = bootMessages[0];
+    bootInterval = setInterval(() => {
+      bootIdx = (bootIdx + 1) % bootMessages.length;
+      document.getElementById('bootStatus').textContent = bootMessages[bootIdx];
+    }, 2200);
+  }
+  function stopBoot() {
+    if (bootInterval) { clearInterval(bootInterval); bootInterval = null; }
+  }
+
+  // ── Player pip orbit ──
+  function startOrbit(playerCount) {
+    stopOrbit();
+    const pip1 = document.getElementById('pip1');
+    const pip2 = document.getElementById('pip2');
+    // Elliptical orbit: 200px semi-major (x), 100px semi-minor (y)
+    const rx = 220, ry = 80;
+    const speed = 0.0004; // radians per ms
+    let start = null;
+
+    function frame(ts) {
+      if (!start) start = ts;
+      const t = (ts - start) * speed;
+
+      // Player 1
+      const x1 = Math.cos(t) * rx;
+      const y1 = Math.sin(t) * ry;
+      pip1.style.transform = `translate(${x1 - 32}px, ${y1 - 32}px)`;
+
+      // Player 2: 180 degrees offset
+      if (playerCount >= 2) {
+        const x2 = Math.cos(t + Math.PI) * rx;
+        const y2 = Math.sin(t + Math.PI) * ry;
+        pip2.style.transform = `translate(${x2 - 32}px, ${y2 - 32}px)`;
+      }
+
+      orbitRAF = requestAnimationFrame(frame);
+    }
+    orbitRAF = requestAnimationFrame(frame);
+  }
+  function stopOrbit() {
+    if (orbitRAF) { cancelAnimationFrame(orbitRAF); orbitRAF = null; }
+  }
+
+  // ── Init: state 1 ──
+  goState(1);
+</script>
+</body>
+</html>

@@ -165,7 +165,142 @@ Every overlay in the app falls into one of three categories:
 
 ---
 
-## 3. Future screen landing spots
+## 3. TV Launcher — egui state machine (PLAN 4.15)
+
+The TV launcher is a separate egui window running on the PC, shown fullscreen on the 86" TV. It's NOT a web page — it's a native `eframe` app. But it follows the same design language (starfield, gold, Titan One) adapted for lean-back 10-foot viewing.
+
+### 3.1 States
+
+```
+[Startup]              starry sky, calm, no clouds
+    │ RPCS3 process spawned
+    ▼
+[Booting]              clouds SPIRAL IN from edges toward center
+    │ RPCS3 menu loaded (UIA detects main window)
+    ▼
+[Awaiting Connect]     QR spins in at center over the swirling clouds
+    │                  "SCAN TO CONNECT" below QR
+    │                  clouds still swirling around QR
+    │
+    ├─ phone connects → player avatar orbits the QR
+    │                   (up to 2 avatars orbiting)
+    │
+    ├─ 2nd phone joins → 2 avatars orbiting
+    │
+    ├─ max reached ───→ QR FLIPS (card-rotate) to show
+    │                   "MAXIMUM PLAYERS REACHED" on the back
+    │                   (flip back when a slot opens)
+    │
+    ▼ game selected (any phone picks a game)
+[In-Game]              clouds SPIRAL OUT (expand outward + fade)
+                       launcher window becomes TRANSPARENT
+                       → RPCS3 game viewport shows through
+                       small reconnect QR available as a
+                       semi-transparent overlay if needed
+
+    │ game quit (phone picks another game)
+    ▼
+[Switching Game]       clouds SPIRAL IN again (cover the old game)
+    │                  "SWITCHING GAMES..." heading
+    │                  same as Booting but with game-change context
+    │ RPCS3 loads new game
+    ▼
+[Compiling Shaders]    (if detected — see §3.6)
+    │                  clouds still swirling
+    │                  "COMPILING SHADERS..." + progress if available
+    │                  keeps the game hidden until shaders are done
+    │                  so the first frame the user sees is clean
+    │ shaders done / game viewport stable
+    ▼
+[In-Game]              clouds spiral out → transparent
+
+    │ RPCS3 crashes / game exits unexpectedly
+    ▼
+[Crashed]              clouds spiral in quickly (~1s, urgent feel)
+                       "SOMETHING WENT WRONG" heading
+                       "RPCS3 exited unexpectedly" body
+                       "RESTART" gold button → back to [Startup]
+                       auto-detects if RPCS3 process is gone
+
+    │ clean quit (phone shuts down via menu)
+    ▼
+[Shutdown]             clouds spiral in gently
+                       "SEE YOU NEXT TIME, PORTAL MASTER"
+                       launcher exits after 3s
+```
+
+### 3.2 Cloud choreography
+
+All clouds are **procedurally generated** — no pre-rendered frames or game captures (copyright avoidance). The approach:
+
+| Technique | Pros | Cons |
+|-----------|------|------|
+| **Perlin/Simplex noise texture** (generated once at app start, rotated/animated in Painter) | Organic look, efficient, no shipped assets | Needs a noise implementation in Rust |
+| **SVG feTurbulence** (for HTML mocks) | Organic, built into browsers, zero assets | Not available in egui — mock-only |
+| **egui Painter arcs/meshes** (the CSS spike approach) | Pure code, no texture pipeline | Looks stylized, not organic |
+| **Runtime-generated texture atlas** | Best of both — generate Perlin noise frames at startup, cache as textures, animate by cycling | Startup cost (~200ms for 60 frames at 960×540), but then smooth playback |
+
+**Recommended for production:** Runtime-generated texture atlas. At startup, the egui app generates 60–90 frames of Perlin noise cloud animation into an in-memory texture atlas. Each frame is a 960×540 RGBA buffer with:
+- Base: radial Perlin noise with turbulence octaves (gives the organic cloud shape)
+- Tint: blue-white color ramp matching the starfield palette
+- Alpha: radial falloff from center (clouds dense at center, transparent at edges)
+- Per-frame: rotate the noise sampling coordinates slightly (gives the swirl)
+
+Three animation modes share the same atlas but play it differently:
+- **Spiral-in:** frames play forward + scale from 2× → 1× (clouds converge)
+- **Idle swirl:** frames loop continuously at 1× scale
+- **Spiral-out:** frames play forward + scale from 1× → 2× + fade opacity (clouds expand and vanish)
+
+### 3.3 QR + player orbit
+
+- QR code renders inside a gold bezel (same `GoldBezel` material as phone, but large: ~280px equivalent on a 1080p TV)
+- **No URL text shown** — just the QR + "SCAN TO CONNECT" in Titan One
+- When phones connect, a small **player indicator** (gold-bezeled circle with the profile's color + initial) orbits the QR in a slow elliptical path
+- Up to 2 orbiting indicators; each offset by 180° so they balance visually
+- **Max-reached flip:** the QR bezel does a CSS-style Y-axis `rotateY(180deg)` card flip. The "back" shows a framed panel with "MAXIMUM PLAYERS REACHED" in Titan One gold. Flips back when a slot opens.
+
+### 3.4 In-Game transparency
+
+Once a game is selected:
+1. Clouds spiral out (2s animation)
+2. Launcher window fades to transparent (`eframe::Frame::set_transparent(true)` + clear to alpha 0)
+3. The RPCS3 game viewport is now visible through the launcher window
+4. A **small reconnect QR** hovers in the bottom-right corner as a semi-transparent overlay — always available but unobtrusive
+5. If the QR needs attention (phone disconnects), it brightens + pulses briefly
+
+### 3.6 Shader compilation detection (research needed)
+
+RPCS3 compiles shaders on first launch of a game (and after GPU driver updates). This causes stutter if the game viewport is visible during compilation. If we can detect this phase, the cloud vortex stays up until shaders are done — so the first frame the user sees is clean gameplay.
+
+**Detection approaches to investigate (priority order):**
+
+1. **RPCS3 log file** — RPCS3 writes shader compilation progress to its log (`RPCS3.log` next to the executable). Look for patterns like `"Compiling shader"`, `"SPU cache"`, `"PPU module"` lines. A burst of these lines = compilation in progress; silence for ~2s = done. Cheapest to implement (file watcher).
+
+2. **Window title** — RPCS3 sometimes updates the game viewport window title with compilation progress (e.g., `"Compiling shaders... (42/189)"`). We already have UIA access to the window titles. Poll the viewport title for a `"Compiling"` substring.
+
+3. **CPU heuristic** — shader compilation pegs the CPU. If RPCS3's process CPU usage is >80% for >5s after game boot, assume compilation. Fragile but requires no RPCS3-specific knowledge.
+
+4. **Frame rate heuristic** — if the game viewport exists but FPS title shows <5fps for >5s, assume compilation stutter. We already parse the `"FPS:"` prefix from the viewport window title.
+
+**Fallback if none work:** Use a fixed delay after game-boot detection (~15s) before spiraling the clouds out. Not ideal but guarantees the worst shader stutter is hidden.
+
+### 3.7 TV typography scale
+
+Everything is sized for 86" at ~10 feet:
+
+| Token | Size | Use |
+|-------|------|-----|
+| TV display hero | 96px | "LOADING...", state titles |
+| TV display lg | 64px | "SCAN TO CONNECT" |
+| TV display md | 40px | Game name, status |
+| TV body | 32px | Status messages, connection info |
+| TV caption | 24px | Timestamps, secondary info |
+
+Minimum: 24px for anything readable. Nothing smaller.
+
+---
+
+## 4. Future screen landing spots
 
 Screens not yet implemented that need a place in the graph:
 

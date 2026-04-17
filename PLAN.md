@@ -615,13 +615,33 @@ Implemented as a new screen reached by tapping a figure inside the toy box. Shel
 - [ ] 4.14.1 Screen-to-screen transitions: consistent cross-fade + slight motion direction based on navigation depth (deeper = slide up, back = slide down).
 - [ ] 4.14.2 Connection-status pip in the header gets a breathe animation while connecting, steady glow when connected, soft red when disconnected.
 
-### 4.15 egui launcher reskin
+### 4.15 egui TV launcher — design cycle + implementation
+
+The TV launcher is a full UX surface with its own 5-state machine (see `navigation.md` §3). Gets the same mock → design doc → implement treatment as the phone app. All cloud assets are **procedurally generated** at runtime — no pre-rendered frames or game captures (copyright avoidance).
+
+#### 4.15a TV launcher design cycle (mock + iterate)
+
+- [x] 4.15a.1 Initial HTML mock — `tv_launcher.html`. Two-state (loading/ready) with CSS conic-gradient cloud spike. Verdict: stylized but not organic enough.
+- [x] 4.15a.2 State machine documented in `navigation.md` §3: Startup → Booting (clouds spiral in) → Awaiting Connect (QR + orbiting players) → In-Game (clouds out, window transparent). QR card-flip on max players.
+- [ ] 4.15a.3 Procedural cloud spike — `tv_launcher_v2.html`. Uses SVG `feTurbulence` + `feDisplacementMap` for organic cloud texture, animated rotation. Three modes: spiral-in, idle-swirl, spiral-out. Assesses whether runtime Perlin noise can match the in-game aesthetic without shipped assets.
+- [ ] 4.15a.4 QR + player-orbit mock — orbiting gold-bezeled player indicators around the central QR. Max-reached card-flip animation.
+- [ ] 4.15a.5 In-game transparency mock — clouds spiral out, content fades to show "game underneath" (simulated). Reconnect QR in bottom-right as subtle overlay.
+- [ ] 4.15a.6 Review round — iterate before touching egui.
+
+#### 4.15b egui implementation
 
 - [ ] 4.15.1 Shared palette via egui `Visuals` — starfield-blue background, gold accents. Readable from ~10 ft on an 86" TV (≥32pt body, ≥64pt QR label).
 - [ ] 4.15.2 Display font loaded into egui so the PC-side and phone-side feel unified.
-- [ ] 4.15.3 QR code framed in a gold bezel equivalent (static, no conic gradients — egui doesn't need the web flourish).
-- [ ] 4.15.4 Status indicators — RPCS3 connection dot (absorbs the old 2.8.4 deferral), client count, figure count, current-game name.
-- [ ] 4.15.5 **Cloud vortex loading animation.** While RPCS3 boots a game, the egui window shows a swirling blue-white cloud vortex inspired by the in-game "PLEASE PLACE YOUR SKYLANDER ON THE PORTAL OF POWER" screen (reference: `docs/aesthetic/loading_screen.png`). Clouds rotate inward toward a bright center. Once the enumlator is loaded (RPCS3 window detected), the clouds part/fade outward to reveal the portal QR / status underneath. Renders via egui `Painter` custom shapes or a pre-rendered animated texture if custom painting is too expensive for smooth rotation.
+- [ ] 4.15.3 QR code framed in a gold bezel equivalent.
+- [ ] 4.15.4 Status indicators — RPCS3 connection dot (absorbs the old 2.8.4 deferral), client count, current-game name.
+- [ ] 4.15.5 **Procedural cloud vortex.** Runtime-generated Perlin noise texture atlas (~60 frames at 960×540, generated at app start in ~200ms). Three playback modes: spiral-in (frames + scale 2×→1×), idle-swirl (loop), spiral-out (frames + scale 1×→2× + fade). No shipped image assets.
+- [ ] 4.15.6 QR card-flip on max-players (Y-axis rotate, back face shows "MAXIMUM PLAYERS REACHED").
+- [ ] 4.15.7 Player-orbit indicators around the QR (gold-bezeled circles with profile color + initial).
+- [ ] 4.15.8 In-game transparency — `eframe::Frame` transparent mode, reconnect QR overlay in corner.
+- [ ] 4.15.9 **Game-switching transition** — phone picks another game → clouds spiral in (cover current game) → "SWITCHING GAMES..." → RPCS3 loads new game → clouds spiral out. Same choreography, different heading copy.
+- [ ] 4.15.10 **Crash recovery screen** — RPCS3 process exits unexpectedly → clouds spiral in urgently (~1s) → "SOMETHING WENT WRONG" + "RESTART" gold button → respawns RPCS3 + returns to Startup.
+- [ ] 4.15.11 **Shutdown farewell** — clean quit from phone menu → clouds spiral in gently → "SEE YOU NEXT TIME, PORTAL MASTER" → launcher exits after 3s.
+- [ ] 4.15.12 **Shader compilation detection (research spike).** RPCS3 compiles shaders on first game launch causing stutter. If detected, cloud vortex stays up until done — first frame user sees is clean gameplay. Investigate: (a) RPCS3 log-file watcher for "Compiling shader" patterns, (b) viewport window title polling for progress strings, (c) FPS-title heuristic (<5fps for >5s). Fallback: fixed 15s delay post-boot. See `navigation.md` §3.6.
 
 ### 4.16 E2E test updates
 
