@@ -2070,6 +2070,22 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .lid-open-p4.expanded {
   max-height: 320px;
 }
+.lid-open-p4.closed {
+  max-height: 18px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.lid-open-p4.closed .lid-top-row-p4,
+.lid-open-p4.closed .search-expanded-p4 {
+  display: none;
+}
+/* 4.2.13.12 — gesture zone intercepts touch scrolls so the lid owns the gesture,
+   not the page. Applied only to the grabber + header; the expanded filters
+   area keeps its normal scroll. */
+.lid-grabber-p4,
+.lid-top-row-p4 {
+  touch-action: none;
+}
 
 /* Wood tokens (re-declare so standalone app.css works) */
 :root {

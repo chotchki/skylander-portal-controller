@@ -20,7 +20,7 @@ js-sys = "0.3"
 web-sys = { version = "0.3", features = [
     "WebSocket", "MessageEvent", "Event", "BinaryType", "console",
     "Window", "Location", "Request", "RequestInit", "RequestMode",
-    "Response", "Headers",
+    "Response", "Headers", "PointerEvent", "Element", "HtmlElement",
 ] }
 console_error_panic_hook = "0.1"
 serde = { version = "1", features = ["derive"] }
