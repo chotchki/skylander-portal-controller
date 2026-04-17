@@ -1,8 +1,9 @@
 use leptos::prelude::*;
 
-use crate::api::post_load;
+use crate::components::{BezelSize, BezelState, GoldBezel};
 use crate::model::{Element, PublicFigure, Slot, SlotState, SLOT_COUNT};
-use crate::{element_short, element_slug, event_target_value, first_empty_slot, push_toast, ToastMsg};
+use crate::screens::FigureDetail;
+use crate::{event_target_value, ToastMsg};
 
 #[component]
 pub(crate) fn Browser(
@@ -14,6 +15,7 @@ pub(crate) fn Browser(
     toasts: RwSignal<Vec<ToastMsg>>,
 ) -> impl IntoView {
     let all_figures = StoredValue::new(figures);
+    let selected_figure = RwSignal::new(None::<PublicFigure>);
 
     let filtered = Memo::new(move |_| {
         let ef = element_filter.get();
@@ -31,15 +33,7 @@ pub(crate) fn Browser(
     // Two sets tracked separately so the card UI can tell "currently loading"
     // apart from "already loaded":
     //   - `loaded_names`  — canonical-name matches for fully-Loaded slots.
-    //     Used to render the "on portal" visual + fire the "Already on the
-    //     portal" toast when the user taps an already-loaded card.
-    //   - `loading_ids`   — figure_id markers for Loading slots. Used to
-    //     silently suppress repeat taps during the Empty → Loading → Loaded
-    //     transition (the spam-click case in 3.6.1) without firing a toast
-    //     that the user didn't cause.
-    //
-    // We compare Loaded by display_name because the server doesn't echo a
-    // figure_id back on Loaded events yet (see PLAN 3.8 — name reconciliation).
+    //   - `loading_ids`   — figure_id markers for Loading slots.
     let loaded_names = Memo::new(move |_| {
         portal
             .get()
@@ -61,131 +55,115 @@ pub(crate) fn Browser(
             .collect::<Vec<_>>()
     });
 
+    let is_empty = Memo::new(move |_| filtered.get().is_empty());
+
     view! {
-        <BrowserHead element_filter search />
-        <div class="grid">
-            <For
-                each=move || filtered.get()
-                key=|f: &PublicFigure| f.id.clone()
-                children=move |f: PublicFigure| {
-                    let id = f.id.clone();
-                    let id_for_img = id.clone();
-                    let name = f.canonical_name.clone();
-                    let name_for_img = name.clone();
-                    let elem = f.element;
-                    let variant = f.variant_tag.clone();
-                    let variant_for_show = variant.clone();
-
-                    let name_for_loaded = name.clone();
-                    let id_for_loading = id.clone();
-                    let is_loaded_this = move || {
-                        loaded_names.get().iter().any(|n| n == &name_for_loaded)
-                    };
-                    let is_loading_this =
-                        move || loading_ids.get().iter().any(|id| id == &id_for_loading);
-
-                    let loaded_for_class = is_loaded_this.clone();
-                    let loaded_for_click = is_loaded_this.clone();
-                    let loaded_for_badge = is_loaded_this.clone();
-                    let loading_for_class = is_loading_this.clone();
-                    let loading_for_click = is_loading_this.clone();
-
-                    // Per-card transient back-pressure: goes true between the
-                    // click firing and the load response returning (ok or
-                    // 429). While true, the button reports `disabled` — the
-                    // DOM-level disable swallows extra clicks without running
-                    // the handler, so spam taps don't pile up either load
-                    // requests or toasts. The "Already on the portal" toast
-                    // still fires correctly for on-portal cards because
-                    // `on_portal` is a separate state (Loaded, not
-                    // Submitting).
-                    let submitting = RwSignal::new(false);
-                    let submitting_for_disabled = submitting;
-
-                    view! {
-                        <button
-                            class=move || {
-                                // `.card.on-portal` is terminal-state only
-                                // (the figure is Loaded on a slot), so e2e
-                                // tests can wait for it to know a load has
-                                // fully completed. `.card.loading` is the
-                                // transient state — same visual, different
-                                // selector. Lets the spam-click test sit
-                                // silent during Loading and the "already"
-                                // test distinguish when the toast is due.
-                                if loaded_for_class() {
-                                    "card on-portal"
-                                } else if loading_for_class() {
-                                    "card loading"
-                                } else {
-                                    "card"
-                                }
-                            }
-                            disabled=move || submitting_for_disabled.get()
-                            on:click=move |_| {
-                                // Three gates, silent → toast:
-                                //   1. local submitting — this card just fired
-                                //      a load and the 202 hasn't returned yet.
-                                //   2. any slot currently Loading this figure —
-                                //      the server accepted a prior tap but the
-                                //      load hasn't completed. Silent swallow so
-                                //      spam taps during Empty→Loading→Loaded
-                                //      don't generate toasts.
-                                //   3. any slot Loaded with this figure — user
-                                //      is trying to re-add; surface "Already".
-                                if submitting.get() || loading_for_click() {
-                                    return;
-                                }
-                                if loaded_for_click() {
-                                    push_toast(toasts, "Already on the portal.");
-                                    return;
-                                }
-                                let slot = match picking_for.get() {
-                                    Some(s) => s,
-                                    None => match first_empty_slot(&portal.get()) {
-                                        Some(s) => s,
-                                        None => {
-                                            push_toast(toasts, "Portal is full — remove a figure first.");
-                                            return;
-                                        }
-                                    },
-                                };
-                                picking_for.set(None);
-                                submitting.set(true);
-                                let id = id.clone();
-                                leptos::task::spawn_local(async move {
-                                    let res = post_load(slot, &id).await;
-                                    submitting.set(false);
-                                    match res {
-                                        Ok(()) => {}
-                                        Err(e) if e.contains("429") => {}
-                                        Err(e) => push_toast(toasts, &format!("Load failed: {e}")),
-                                    }
-                                });
+        <Show
+            when=move || selected_figure.get().is_some()
+            fallback=move || view! {
+                <BrowserHead element_filter search />
+                <div class="box-body-bg">
+                    <div class="box-body-fade-top"></div>
+                    <div class="box-body-fade-bottom"></div>
+                    <div class="box-body-scroll">
+                        <Show
+                            when=move || !is_empty.get()
+                            fallback=move || view! {
+                                <div class="browser-empty">
+                                    <span class="browser-empty-icon">"?"</span>
+                                    <span class="browser-empty-text">"No figures match your search."</span>
+                                </div>
                             }
                         >
-                            <div class="card-icon" data-element=element_slug(elem)>
-                                <img
-                                    class="card-thumb"
-                                    src=format!("/api/figures/{id_for_img}/image?size=thumb")
-                                    alt=name_for_img
-                                    loading="lazy"
-                                    decoding="async"
+                            <div class="figure-grid-p4">
+                                <For
+                                    each=move || filtered.get()
+                                    key=|f: &PublicFigure| f.id.clone()
+                                    children=move |f: PublicFigure| {
+                                        let fig_for_select = f.clone();
+                                        let id = f.id.clone();
+                                        let name = f.canonical_name.clone();
+                                        let elem = f.element;
+                                        let variant = f.variant_tag.clone();
+                                        let variant_for_show = variant.clone();
+                                        let initial = name.chars().next().unwrap_or('?').to_uppercase().to_string();
+
+                                        let name_for_loaded = name.clone();
+                                        let id_for_loading = id.clone();
+                                        let is_loaded_this = move || {
+                                            loaded_names.get().iter().any(|n| n == &name_for_loaded)
+                                        };
+                                        let is_loading_this =
+                                            move || loading_ids.get().iter().any(|id| id == &id_for_loading);
+
+                                        let loaded_for_class = is_loaded_this.clone();
+                                        let loaded_for_badge = is_loaded_this.clone();
+                                        let loaded_for_bezel = is_loaded_this.clone();
+                                        let loading_for_class = is_loading_this.clone();
+
+                                        // Bezel state: on-portal figures get Disabled (desaturated)
+                                        let bezel_state = Signal::derive(move || {
+                                            if loaded_for_bezel() {
+                                                BezelState::Disabled
+                                            } else {
+                                                BezelState::Default
+                                            }
+                                        });
+
+                                        view! {
+                                            <button
+                                                class=move || {
+                                                    if loaded_for_class() {
+                                                        "fig-card-p4 on-portal"
+                                                    } else if loading_for_class() {
+                                                        "fig-card-p4 loading"
+                                                    } else {
+                                                        "fig-card-p4"
+                                                    }
+                                                }
+                                                on:click={
+                                                    let fig = fig_for_select.clone();
+                                                    move |_| {
+                                                        selected_figure.set(Some(fig.clone()));
+                                                    }
+                                                }
+                                            >
+                                                <div class="fig-bezel-p4">
+                                                    <GoldBezel
+                                                        size=BezelSize::Sm
+                                                        element=elem
+                                                        state=bezel_state
+                                                    >
+                                                        <span class="fig-initial">{initial.clone()}</span>
+                                                    </GoldBezel>
+                                                </div>
+                                                <div class="fig-name-p4">{name}</div>
+                                                <Show when=move || variant_for_show != "base" fallback=|| ()>
+                                                    <div class="fig-variant-p4">{variant.clone()}</div>
+                                                </Show>
+                                                <Show when=move || loaded_for_badge() fallback=|| ()>
+                                                    <div class="fig-on-portal-ribbon">"ON PORTAL"</div>
+                                                </Show>
+                                            </button>
+                                        }
+                                    }
                                 />
-                                <span class="card-icon-label">{element_short(elem)}</span>
                             </div>
-                            <div class="card-name">{name}</div>
-                            <Show when=move || variant_for_show != "base" fallback=|| ()>
-                                <div class="card-variant">{variant.clone()}</div>
-                            </Show>
-                            <Show when=move || loaded_for_badge() fallback=|| ()>
-                                <div class="on-portal-badge">"On portal"</div>
-                            </Show>
-                        </button>
-                    }
-                }
-            />
-        </div>
+                        </Show>
+                    </div>
+                </div>
+            }
+        >
+            {move || selected_figure.get().map(|fig| view! {
+                <FigureDetail
+                    figure=fig
+                    picking_for
+                    portal
+                    toasts
+                    on_close=Callback::new(move |_| selected_figure.set(None))
+                />
+            })}
+        </Show>
     }
 }
 
@@ -194,6 +172,8 @@ fn BrowserHead(
     element_filter: RwSignal<Option<Element>>,
     search: RwSignal<String>,
 ) -> impl IntoView {
+    let search_open = RwSignal::new(false);
+
     let all_elements: [(Option<Element>, &'static str); 11] = [
         (None, "All"),
         (Some(Element::Air), "Air"),
@@ -209,27 +189,53 @@ fn BrowserHead(
     ];
 
     view! {
-        <div class="browser-head">
-            <input
-                class="search"
-                type="search"
-                placeholder="Search…"
-                prop:value=move || search.get()
-                on:input=move |e| search.set(event_target_value(&e))
-            />
-        </div>
-        <div class="chip-row">
-            {all_elements.into_iter().map(|(val, label)| {
-                let v = val;
-                view! {
-                    <button
-                        class={move || if element_filter.get() == v { "chip active" } else { "chip" }}
-                        on:click=move |_| element_filter.set(v)
-                    >
-                        {label}
-                    </button>
-                }
-            }).collect_view()}
+        <div class=move || {
+            if search_open.get() { "lid-open-p4 expanded" } else { "lid-open-p4" }
+        }>
+            <div class="lid-grabber-p4"></div>
+            <div class="lid-top-row-p4">
+                <span class="lid-open-title-p4">"COLLECTION"</span>
+                <button
+                    class="search-toggle-p4"
+                    on:click=move |_| search_open.update(|v| *v = !*v)
+                >
+                    <span class="search-toggle-mag">{"\u{2315}"}</span>
+                    " SEARCH"
+                </button>
+            </div>
+
+            <Show when=move || search_open.get() fallback=|| ()>
+                <div class="search-expanded-p4">
+                    <input
+                        class="search-input-p4"
+                        type="search"
+                        placeholder="Search heroes\u{2026}"
+                        prop:value=move || search.get()
+                        on:input=move |e| search.set(event_target_value(&e))
+                    />
+                    <div class="drill-label-p4">"ELEMENTS"</div>
+                    <div class="chip-row-p4">
+                        {all_elements.into_iter().map(|(val, label)| {
+                            let v = val;
+                            let el_class = val.map(|e| e.css_class()).unwrap_or("");
+                            view! {
+                                <button
+                                    class=move || {
+                                        if element_filter.get() == v {
+                                            format!("el-chip-p4 active {el_class}")
+                                        } else {
+                                            format!("el-chip-p4 {el_class}")
+                                        }
+                                    }
+                                    on:click=move |_| element_filter.set(v)
+                                >
+                                    {label}
+                                </button>
+                            }
+                        }).collect_view()}
+                    </div>
+                </div>
+            </Show>
         </div>
     }
 }

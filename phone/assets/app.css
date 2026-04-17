@@ -1891,3 +1891,634 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .kebab-btn:hover {
   border-color: rgba(245,198,52,0.6);
 }
+
+/* ================================================================
+   PLAN 4.7 — Browser / Collection (Toy Box) reskin
+   ================================================================ */
+
+/* --- Wood-textured open lid (search/filter area) --- */
+.lid-open-p4 {
+  position: relative;
+  z-index: 35;
+  flex-shrink: 0;
+  background:
+    repeating-linear-gradient(180deg, var(--wood-2, #4a3220) 0px, var(--wood-1, #6e5032) 2px, var(--wood-1, #6e5032) 18px, var(--wood-3, #352416) 19px, rgba(0,0,0,0.4) 20px, var(--wood-2, #4a3220) 21px),
+    linear-gradient(180deg, var(--wood-1, #6e5032), var(--wood-2, #4a3220));
+  border-bottom: 3px solid var(--gb);
+  border-top: 2px solid var(--gb);
+  box-shadow: inset 0 -4px 8px rgba(0,0,0,0.3), inset 0 2px 6px rgba(255,215,106,0.1), 0 6px 20px rgba(0,0,0,0.7);
+  padding: 6px 14px 8px;
+  overflow: hidden;
+  transition: max-height 0.35s var(--ease-smooth);
+  max-height: 52px;
+  display: flex;
+  flex-direction: column;
+}
+.lid-open-p4.expanded {
+  max-height: 320px;
+}
+
+/* Wood tokens (re-declare so standalone app.css works) */
+:root {
+  --wood-1: #6e5032;
+  --wood-2: #4a3220;
+  --wood-3: #352416;
+  --wood-4: #251810;
+  --wood-gold: #d4a84a;
+  --wood-gold-b: #f0d080;
+}
+
+/* Grabber pill */
+.lid-grabber-p4 {
+  flex-shrink: 0;
+  width: 46px; height: 5px; border-radius: 3px;
+  margin: 0 auto 6px;
+  background: linear-gradient(180deg, var(--wood-gold-b), var(--wood-gold) 60%, rgba(120,82,20,0.9));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.3), inset 0 -1px 0 rgba(0,0,0,0.25), 0 1px 2px rgba(0,0,0,0.5);
+}
+
+/* Top row: title + SEARCH toggle */
+.lid-top-row-p4 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 36px;
+}
+.lid-open-title-p4 {
+  font-family: "Titan One", sans-serif;
+  font-size: 14px;
+  letter-spacing: 0.16em;
+  color: var(--wood-gold-b);
+  text-shadow: 0 1px 0 rgba(0,0,0,0.7), 0 0 8px rgba(212,168,74,0.4);
+}
+
+/* SEARCH toggle button */
+.search-toggle-p4 {
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(0,0,0,0.25);
+  border: 1px solid rgba(212,168,74,0.35);
+  color: var(--wood-gold-b);
+  border-radius: 999px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-family: "Titan One", sans-serif;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  transition: all 0.15s ease;
+}
+.search-toggle-p4:hover {
+  border-color: var(--wood-gold);
+  background: rgba(212,168,74,0.15);
+}
+.search-toggle-mag { font-size: 14px; }
+
+/* Expanded search area */
+.search-expanded-p4 {
+  padding-top: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(212,168,74,0.5) transparent;
+}
+
+/* 4.7.4 — Gold-bordered search input with shimmer on focus */
+.search-input-p4 {
+  width: 100%;
+  background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
+  border: 1.5px solid var(--gb);
+  border-radius: 12px;
+  padding: 10px 14px;
+  color: var(--text);
+  font-family: "Fraunces", Georgia, serif;
+  font-size: 14px;
+  margin-bottom: 12px;
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.18),
+    inset 0 -2px 0 rgba(0,0,0,0.25),
+    0 2px 6px rgba(0,0,0,0.4);
+}
+.search-input-p4::placeholder {
+  color: #e8e4d8;
+  font-style: italic;
+  font-weight: 600;
+}
+.search-input-p4:focus {
+  outline: 2px solid var(--gb);
+  outline-offset: 1px;
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.18),
+    inset 0 -2px 0 rgba(0,0,0,0.25),
+    0 2px 6px rgba(0,0,0,0.4),
+    0 0 16px rgba(245,198,52,0.45);
+  animation: search-shimmer 1.2s ease-in-out;
+}
+@keyframes search-shimmer {
+  0%   { box-shadow: inset 0 2px 0 rgba(255,255,255,0.18), 0 0 0 rgba(245,198,52,0); }
+  50%  { box-shadow: inset 0 2px 0 rgba(255,255,255,0.18), 0 0 24px rgba(245,198,52,0.6); }
+  100% { box-shadow: inset 0 2px 0 rgba(255,255,255,0.18), 0 0 16px rgba(245,198,52,0.45); }
+}
+
+/* Drill label */
+.drill-label-p4 {
+  font-family: "Titan One", sans-serif;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: var(--gb);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.8), 0 0 6px rgba(245,198,52,0.3);
+}
+
+/* 4.7.2 — Element chips as gold-bordered pills with element-tint fill */
+.chip-row-p4 {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.el-chip-p4 {
+  border: 1.5px solid var(--gb);
+  background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
+  color: var(--gb);
+  border-radius: 999px;
+  padding: 6px 11px;
+  font-family: "Titan One", sans-serif;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  text-shadow: 0 1px 0 var(--gs), 0 0 6px rgba(0,0,0,0.4);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.2),
+    inset 0 -1px 0 rgba(0,0,0,0.25),
+    0 2px 0 rgba(0,0,0,0.4),
+    0 3px 6px rgba(0,0,0,0.3);
+  flex-shrink: 0;
+}
+/* Element-tinted fills for inactive chips */
+.el-chip-p4.el-fire   { background: linear-gradient(135deg, rgba(255,107,42,0.45), rgba(177,51,16,0.5)); }
+.el-chip-p4.el-water  { background: linear-gradient(135deg, rgba(42,166,255,0.45), rgba(15,77,138,0.5)); }
+.el-chip-p4.el-earth  { background: linear-gradient(135deg, rgba(167,123,58,0.45), rgba(90,58,19,0.5)); }
+.el-chip-p4.el-air    { background: linear-gradient(135deg, rgba(198,230,255,0.45), rgba(126,169,204,0.5)); }
+.el-chip-p4.el-life   { background: linear-gradient(135deg, rgba(90,201,107,0.45), rgba(38,97,46,0.5)); }
+.el-chip-p4.el-undead { background: linear-gradient(135deg, rgba(138,98,201,0.45), rgba(59,33,95,0.5)); }
+.el-chip-p4.el-tech   { background: linear-gradient(135deg, rgba(255,184,77,0.45), rgba(165,101,0,0.5)); }
+.el-chip-p4.el-magic  { background: linear-gradient(135deg, rgba(218,90,214,0.45), rgba(101,21,100,0.5)); }
+.el-chip-p4.el-light  { background: linear-gradient(135deg, rgba(255,248,160,0.45), rgba(200,176,44,0.5)); }
+.el-chip-p4.el-dark   { background: linear-gradient(135deg, rgba(42,42,58,0.65), rgba(5,5,10,0.6)); }
+
+.el-chip-p4:hover {
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.25),
+    inset 0 -1px 0 rgba(0,0,0,0.25),
+    0 2px 0 rgba(0,0,0,0.4),
+    0 0 12px rgba(245,198,52,0.3);
+}
+.el-chip-p4.active {
+  background: linear-gradient(180deg, var(--gb) 0%, var(--g) 50%, var(--gm) 100%);
+  color: var(--gi);
+  border-color: var(--gi);
+  text-shadow: 0 1px 0 rgba(255,255,255,0.4);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.4),
+    inset 0 -1px 0 rgba(110,74,0,0.3),
+    0 2px 0 var(--gi),
+    0 0 10px rgba(245,198,52,0.4);
+}
+
+/* --- Dark box body (figure grid area) --- */
+.box-body-bg {
+  flex: 1;
+  position: relative;
+  background: linear-gradient(180deg, var(--wood-4) 0%, #1a0e06 4%, #0e0804 20%, #080402 100%);
+  overflow: hidden;
+}
+/* Wood side rails */
+.box-body-bg::before, .box-body-bg::after {
+  content: ""; position: absolute; top: 0; bottom: 0; width: 6px; z-index: 5;
+}
+.box-body-bg::before {
+  left: 0;
+  background: linear-gradient(180deg, var(--wood-1), var(--wood-3));
+  box-shadow: inset -2px 0 4px rgba(255,215,106,0.08);
+}
+.box-body-bg::after {
+  right: 0;
+  background: linear-gradient(180deg, var(--wood-1), var(--wood-3));
+  box-shadow: inset 2px 0 4px rgba(255,215,106,0.08);
+}
+
+/* Top/bottom fades */
+.box-body-fade-top {
+  position: absolute; top: 0; left: 6px; right: 6px; height: 40px;
+  background: linear-gradient(180deg, var(--wood-4) 0%, rgba(14,8,4,0.8) 40%, transparent 100%);
+  z-index: 4; pointer-events: none;
+}
+.box-body-fade-bottom {
+  position: absolute; bottom: 0; left: 6px; right: 6px; height: 100px;
+  background: linear-gradient(180deg, transparent 0%, rgba(8,4,2,0.5) 30%, rgba(4,2,1,0.9) 70%, #030201 100%);
+  z-index: 4; pointer-events: none;
+}
+
+/* Scrollable interior */
+.box-body-scroll {
+  height: 100%; overflow-y: auto;
+  padding: 16px 16px 120px;
+  position: relative; z-index: 1;
+}
+.box-body-scroll::-webkit-scrollbar { display: none; }
+
+/* 4-column figure grid */
+.figure-grid-p4 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px 10px;
+}
+
+/* 4.7.1 — Figure card with small GoldBezel as portrait */
+.fig-card-p4 {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  padding: 4px 0;
+  transition: transform 0.12s ease;
+  position: relative;
+}
+.fig-card-p4:active { transform: scale(0.93); }
+
+/* Bezel wrapper — scales Sm (32px) up to fill the column */
+.fig-bezel-p4 {
+  width: 100%;
+  aspect-ratio: 1;
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+.fig-bezel-p4 .gold-bezel {
+  width: 100%;
+}
+/* Override Sm plate font for the larger rendered size */
+.fig-bezel-p4 .bezel-plate {
+  font-size: 16px;
+}
+/* Reduce ring shadows for smaller bezels in the grid */
+.fig-bezel-p4 .bezel-ring {
+  box-shadow:
+    inset 0 0 0 1.5px var(--gi),
+    inset 0 2px 3px rgba(255,255,255,0.3),
+    inset 0 -2px 3px rgba(0,0,0,0.5),
+    0 2px 6px rgba(0,0,0,0.5);
+}
+
+/* Figure initial inside the small bezel */
+.fig-initial {
+  font-family: "Titan One", sans-serif;
+  color: #fff;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.6);
+  line-height: 1;
+}
+
+/* Figure name below bezel */
+.fig-name-p4 {
+  font-family: "Fraunces", Georgia, serif;
+  font-size: 11px;
+  font-weight: 600;
+  font-style: italic;
+  text-align: center;
+  line-height: 1.2;
+  color: #d9c88a;
+  max-width: 80px;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* Variant tag */
+.fig-variant-p4 {
+  font-size: 9px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* 4.7.3 — ON PORTAL state: desaturated bezel + gold ribbon */
+.fig-card-p4.on-portal {
+  cursor: not-allowed;
+}
+.fig-card-p4.on-portal:active { transform: none; }
+.fig-card-p4.on-portal .fig-bezel-p4 {
+  filter: saturate(0.35) brightness(0.8);
+}
+
+.fig-on-portal-ribbon {
+  position: absolute;
+  top: 42%;
+  left: -4px;
+  right: -4px;
+  text-align: center;
+  padding: 3px 0;
+  font-family: "Titan One", sans-serif;
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  color: var(--gi);
+  background: linear-gradient(180deg, var(--gb), var(--g) 50%, var(--gm));
+  border: 1px solid var(--gi);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.5), 0 0 10px rgba(245,198,52,0.3);
+  z-index: 5;
+}
+
+/* 4.7.5 — Empty / no-results state */
+.browser-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 60px 24px;
+  text-align: center;
+}
+.browser-empty-icon {
+  font-family: "Titan One", sans-serif;
+  font-size: 48px;
+  color: var(--wood-gold);
+  opacity: 0.4;
+  text-shadow: 0 2px 0 rgba(0,0,0,0.5);
+}
+.browser-empty-text {
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic;
+  font-weight: 600;
+  font-size: 14px;
+  color: #d9c88a;
+  letter-spacing: 0.06em;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+}
+
+/* ================================================================
+   PLAN 4.6b — Figure Detail View (lifted hero overlay)
+   ================================================================ */
+
+/* Viewport wrapper — carries state classes for loading/errored */
+.detail-viewport {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 60vh;
+}
+
+/* Detail surface — blue panel with gold border, centered over ghost grid */
+.detail-viewport .detail-surface {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  z-index: 20;
+}
+
+/* Hero wrap — lifted above the panel edge */
+.detail-hero-wrap {
+  display: flex;
+  justify-content: center;
+  margin-top: -10px;
+  margin-bottom: 8px;
+  z-index: 30;
+  position: relative;
+}
+
+/* Name + subtitle */
+.detail-name-wrap {
+  text-align: center;
+  margin-top: 12px;
+}
+.detail-meta {
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic;
+  font-size: 12px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  margin-top: 6px;
+  text-shadow: 0 0 10px rgba(255,107,42,0.4), 0 1px 0 rgba(0,0,0,0.5);
+}
+/* Element color for meta line — default fire-orange; could be dynamic later */
+.detail-meta {
+  color: var(--gb);
+}
+
+/* Action icon row */
+.detail-action-row {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 22px;
+}
+.detail-action-btn {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 25%, rgba(22,40,88,0.88), rgba(8,20,54,0.95) 60%, rgba(4,12,36,0.98));
+  border: 2px solid var(--gb);
+  color: var(--gb);
+  font-size: 24px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  text-shadow: 0 1px 0 var(--gs), 0 0 8px rgba(245,198,52,0.4);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.08),
+    inset 0 -1px 0 rgba(0,0,0,0.4),
+    0 2px 6px rgba(0,0,0,0.5);
+  transition: transform 0.15s ease, box-shadow 0.2s, background 0.2s;
+}
+.detail-action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.detail-action-btn:hover:not(:disabled) {
+  background: radial-gradient(circle at 30% 25%, rgba(36,62,130,0.9), rgba(16,34,84,0.96) 60%, rgba(6,18,48,0.98));
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.15),
+    0 0 16px rgba(245,198,52,0.45),
+    0 3px 8px rgba(0,0,0,0.5);
+  transform: translateY(-2px);
+}
+
+/* Stats preview strip */
+.detail-stats-strip {
+  display: flex;
+  justify-content: space-around;
+  margin-top: 28px;
+  padding: 12px 6px;
+  background: rgba(0,0,0,0.25);
+  border: 1px solid rgba(245,198,52,0.2);
+  border-radius: 14px;
+}
+.detail-stat-cell {
+  text-align: center;
+}
+.detail-stat-v {
+  font-family: "Titan One", sans-serif;
+  font-size: 18px;
+  color: var(--gb);
+  text-shadow: 0 1px 0 var(--gs), 0 0 10px rgba(245,198,52,0.3);
+  letter-spacing: 0.04em;
+}
+.detail-stat-k {
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #e8e4d8;
+  margin-top: 2px;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+}
+
+/* Spacer */
+.detail-spacer {
+  flex: 1;
+  min-height: 16px;
+}
+
+/* Primary button — gold PLACE ON PORTAL */
+.detail-btn-primary {
+  width: 100%;
+  padding: 14px;
+  margin-top: 10px;
+  font-family: "Titan One", sans-serif;
+  font-size: 14px;
+  letter-spacing: 0.2em;
+  border-radius: 14px;
+  cursor: pointer;
+  color: var(--ink, #1a1203);
+  background: linear-gradient(180deg, var(--gb), var(--g) 50%, var(--gm));
+  border: 2px solid var(--gi);
+  text-shadow: 0 1px 0 rgba(255,255,255,0.4);
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.45),
+    inset 0 -2px 0 rgba(110,74,0,0.3),
+    0 4px 0 var(--gi),
+    0 6px 14px rgba(245,198,52,0.3);
+}
+.detail-btn-primary:active {
+  transform: translateY(2px);
+  box-shadow: inset 0 2px 0 rgba(255,255,255,0.45), 0 2px 0 var(--gi);
+}
+.detail-btn-primary:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* Secondary button — blue BACK TO BOX */
+.detail-btn-secondary {
+  width: 100%;
+  padding: 14px;
+  margin-top: 10px;
+  font-family: "Titan One", sans-serif;
+  font-size: 14px;
+  letter-spacing: 0.2em;
+  border-radius: 14px;
+  cursor: pointer;
+  color: #fff;
+  background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
+  border: 2px solid var(--gb);
+  text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.25),
+    inset 0 -2px 0 rgba(0,0,0,0.25),
+    0 3px 0 rgba(0,0,0,0.4),
+    0 5px 12px rgba(0,0,0,0.4);
+}
+.detail-btn-secondary:hover {
+  background: linear-gradient(180deg, #4286f0 0%, #2a62cd 55%, #1b46a0 100%);
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.35),
+    inset 0 -2px 0 rgba(0,0,0,0.25),
+    0 3px 0 rgba(0,0,0,0.4),
+    0 0 18px rgba(245,198,52,0.3);
+}
+.detail-btn-secondary:active {
+  transform: translateY(2px);
+  box-shadow: inset 0 2px 0 rgba(255,255,255,0.25), 0 1px 0 rgba(0,0,0,0.4);
+}
+
+/* ---- Loading state ---- */
+.detail-loading .detail-action-row,
+.detail-loading .detail-stats-strip,
+.detail-loading .detail-btn-primary {
+  pointer-events: none;
+  opacity: 0.35;
+  transition: opacity 0.25s ease;
+}
+/* Back button stays highlighted during loading */
+.detail-loading .detail-btn-secondary {
+  background: linear-gradient(180deg, #5fa2ff 0%, #3874d6 55%, #1f4fa8 100%);
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.4),
+    inset 0 -2px 0 rgba(0,0,0,0.25),
+    0 3px 0 rgba(0,0,0,0.4),
+    0 0 22px rgba(245,198,52,0.45);
+}
+.detail-loading .detail-meta::after {
+  content: " \00B7  loading";
+  color: var(--gb);
+  animation: blink 1s ease-in-out infinite;
+}
+@keyframes blink { 50% { opacity: 0.4; } }
+
+/* ---- Error state ---- */
+.detail-error-banner {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  z-index: 50;
+  padding: 12px 16px;
+  background: rgba(227,76,76,0.92);
+  border: 2px solid #7a1818;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #fff;
+  font-family: "Fraunces", Georgia, serif;
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 1.3;
+  box-shadow: 0 8px 20px rgba(227,76,76,0.4);
+  transform: translateY(-20px);
+  opacity: 0;
+  transition: transform 0.3s ease, opacity 0.3s ease;
+  pointer-events: none;
+}
+.detail-err-icon {
+  font-family: "Titan One", sans-serif;
+  font-size: 18px;
+  color: #fff;
+  background: rgba(0,0,0,0.3);
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.detail-errored .detail-error-banner {
+  transform: translateY(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .detail-viewport .detail-surface { animation: none !important; }
+}
