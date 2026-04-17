@@ -665,7 +665,7 @@ Kaos is LAST among feature work. Do not start without explicit go-ahead.
 
 Deliberately separated from Phase 3 so it's clear this only runs once the app works end-to-end. CI deliberately deferred until here per the original "no CI until features work" stance.
 
-- [ ] 7.1 Bundle `server.exe` + `phone/dist/` + `data/images/*/thumb.png` + `data/figures.json` + `README.md` into a GitHub Releases zip. Evaluate `cargo dist` vs a hand-rolled PowerShell/zip script; prefer `cargo dist` if it handles the non-Rust assets cleanly.
+- [ ] 7.1 **Single-exe distribution.** Everything ships as ONE `skylander-portal.exe` — no zip, no folder structure, no "extract here" instructions. The phone SPA (`phone/dist/`), figure thumbnails (`data/images/*/thumb.png`), `figures.json`, fonts (WOFF2), and the Kaos SVG are all embedded into the binary at compile time via `include_dir!` or `rust-embed`. The server serves them from memory; the user just double-clicks the exe. Evaluate `rust-embed` (simpler, less config) vs `include_dir!` (already used pattern in Rust ecosystem). Release builds strip debug symbols + `cargo build --release` + UPX if the binary exceeds ~50MB.
 - [ ] 7.2 GitHub Actions workflow: on version-tag push, build Windows release, run the fast test suite (unit + integration + workspace build — NOT the `#[ignore]`-gated e2e tests), attach zip to the release.
 - [ ] 7.3 Release `README.md` spells out user-supplied bits: RPCS3 install path, firmware backup pack. Walk through the first-launch wizard experience. Link to `data/LICENSE.md` for the Fandom attribution (3.19.6).
 - [ ] 7.4 Verify the release zip on a *different* Windows machine than the dev one — catches "this path exists only on my laptop" bugs.
