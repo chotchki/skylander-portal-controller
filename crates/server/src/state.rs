@@ -76,6 +76,35 @@ pub struct LauncherStatus {
     /// Name of the currently-booted game, if any. Rendered in Titan One
     /// near the connection dot when present.
     pub current_game: Option<String>,
+    /// Which full-screen launcher surface the egui UI should render on the
+    /// next frame. Default is `Main` — the QR + status strip layout.
+    /// Flipped by the crash watchdog (PLAN 4.15.10) and `/api/shutdown`
+    /// (PLAN 4.15.11) into `Crashed` / `Farewell` respectively.
+    pub screen: LauncherScreen,
+}
+
+/// Which top-level surface the egui TV launcher is rendering right now.
+/// Polled by the eframe `update` loop each frame; writers flip this from
+/// HTTP handlers (`/api/shutdown`) and background tasks (the crash
+/// watchdog). See `docs/aesthetic/navigation.md` §3 for the 8-state mock
+/// — this enum collapses the design-doc states down to the three the egui
+/// port cares about today. Other states (Booting, Awaiting Connect, etc.)
+/// are implicit in `rpcs3_running` / `current_game` / `connected_clients`
+/// and don't need their own variants yet.
+#[derive(Default, Debug, Clone)]
+pub enum LauncherScreen {
+    /// Default surface: title, QR bezel, status strip, connected-clients
+    /// counter, Exit-to-Desktop button.
+    #[default]
+    Main,
+    /// RPCS3 died unexpectedly. `message` is the human-readable string the
+    /// watchdog broadcasts alongside `Event::GameCrashed` so the egui
+    /// screen and the phone overlay carry the same copy.
+    Crashed { message: String },
+    /// User asked to quit the launcher via the phone menu's SHUT DOWN
+    /// action (or a dev `/api/shutdown` curl). The egui screen displays a
+    /// short farewell then calls `ViewportCommand::Close` after ~3s.
+    Farewell,
 }
 
 impl AppState {
@@ -179,6 +208,7 @@ pub fn spawn_crash_watchdog(
     rpcs3: Arc<Mutex<RpcsLifecycle>>,
     portal: Arc<Mutex<[SlotState; SLOT_COUNT]>>,
     events: broadcast::Sender<Event>,
+    launcher_status: Arc<std::sync::Mutex<LauncherStatus>>,
     interval: std::time::Duration,
 ) {
     tokio::spawn(async move {
@@ -217,6 +247,17 @@ pub fn spawn_crash_watchdog(
             let _ = events.send(Event::PortalSnapshot {
                 slots: std::array::from_fn(|_| SlotState::Empty),
             });
+            // Flip the TV launcher into the crash surface (PLAN 4.15.10)
+            // with the same copy we broadcast to phones. Lock poisoning
+            // would mean the eframe thread panicked earlier — nothing to
+            // salvage, swallow and keep publishing events to phones.
+            if let Ok(mut st) = launcher_status.lock() {
+                st.rpcs3_running = false;
+                st.current_game = None;
+                st.screen = LauncherScreen::Crashed {
+                    message: message.clone(),
+                };
+            }
             let _ = events.send(Event::GameCrashed { message });
             let _ = events.send(Event::GameChanged { current: None });
         }

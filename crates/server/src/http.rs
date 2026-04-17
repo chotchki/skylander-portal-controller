@@ -200,6 +200,7 @@ pub fn router(state: Arc<AppState>, phone_dist: std::path::PathBuf) -> Router {
         .route("/api/status", get(get_status))
         .route("/api/launch", post(launch_game))
         .route("/api/quit", post(quit_game))
+        .route("/api/shutdown", post(shutdown_launcher))
         .route("/api/profiles", get(list_profiles).post(create_profile))
         .route("/api/profiles/:id", axum::routing::delete(delete_profile))
         .route("/api/profiles/:id/unlock", post(unlock_profile))
@@ -886,6 +887,29 @@ async fn quit_game(
     }
 
     (StatusCode::ACCEPTED, "quit").into_response()
+}
+
+/// POST /api/shutdown — phone's SHUT DOWN menu action (PLAN 4.15.11).
+///
+/// Flips the TV launcher into the `Farewell` surface. The egui side runs
+/// a ~3s countdown and then sends `ViewportCommand::Close`, which is the
+/// same mechanism the Exit-to-Desktop button uses — we don't exit the
+/// process directly from here because (a) the eframe loop owns the only
+/// legal way to close the viewport cleanly, and (b) routing through the
+/// launcher screen lets us show the "SEE YOU NEXT TIME, PORTAL MASTER"
+/// farewell copy before the window disappears.
+///
+/// NOTE: this handler does NOT quit a running game. Callers that want
+/// "quit the game AND shut down the launcher" should POST `/api/quit`
+/// first and then `/api/shutdown`. Keeping them separate means a dev
+/// curl against a launcher with no RPCS3 running (startup state) still
+/// works — which is the primary way we'll exercise 4.15.11 until the
+/// phone menu lands.
+async fn shutdown_launcher(State(state): State<Arc<AppState>>, Signed(_body): Signed) -> Response {
+    if let Ok(mut st) = state.launcher_status.lock() {
+        st.screen = crate::state::LauncherScreen::Farewell;
+    }
+    (StatusCode::ACCEPTED, "farewell").into_response()
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
