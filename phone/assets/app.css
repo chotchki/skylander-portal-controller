@@ -1330,3 +1330,564 @@ button { font: inherit; color: inherit; cursor: pointer; }
   text-shadow: 0 0 6px rgba(227,76,76,0.5);
   margin-left: 4px;
 }
+
+/* ================================================================
+   PLAN 4.6 — Portal view reskin (2x4 grid with GoldBezel slots)
+   ================================================================ */
+
+/* 2-column grid matching the mock (portal_with_box.html) */
+.portal-p4 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px 20px;
+  padding: 6px 24px 0;
+  margin-bottom: 18px;
+}
+
+/* Individual slot container */
+.p4-slot {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform var(--dur-tap) var(--ease-tap);
+}
+
+/* 4.6.7 — Slot tap feedback: inset shadow + slight scale dent, spring back */
+.p4-slot:active {
+  transform: scale(0.96);
+}
+.p4-slot:active .bezel-plate {
+  box-shadow:
+    inset 0 0 0 1px rgba(0,0,0,0.6),
+    inset 0 6px 12px rgba(0,0,0,0.5),
+    inset 0 -4px 8px rgba(0,0,0,0.4);
+  transition: box-shadow var(--dur-tap) var(--ease-tap);
+}
+
+.p4-slot-inner {
+  width: 100%;
+  aspect-ratio: 1;
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+/* Make bezel fill the slot-inner */
+.p4-slot-inner .gold-bezel {
+  width: 100%;
+}
+
+/* Slot index badge — gold circle, top-left */
+.p4-slot-index {
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  font-family: "Titan One", sans-serif;
+  font-size: 11px;
+  color: var(--gi);
+  background: var(--gb);
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 0 0 1.5px var(--gi), 0 2px 4px rgba(0,0,0,0.5);
+  z-index: 3;
+}
+
+/* 4.6.1 — Empty slot: dimmed bezel with "+" glyph */
+.p4-plus-glyph {
+  font-family: "Titan One", sans-serif;
+  font-size: 36px;
+  color: #d9c88a;
+  text-shadow: none;
+  line-height: 1;
+}
+/* Dim the bezel ring for empty slots via the Default state (no extra class
+   needed — BezelState::Default is already the unstyled base). We override
+   the ring to match the mock's dimmed gold. */
+.p4-slot--empty .bezel-ring {
+  background: radial-gradient(circle at 30% 25%,
+    rgba(245,198,52,0.2), rgba(110,74,0,0.25) 60%, rgba(0,0,0,0.35));
+  box-shadow:
+    inset 0 0 0 1.5px rgba(0,0,0,0.45),
+    inset 0 2px 4px rgba(255,255,255,0.08),
+    inset 0 -2px 4px rgba(0,0,0,0.3);
+}
+.p4-slot--empty .bezel-plate {
+  background: rgba(10,26,54,0.75);
+}
+
+/* Initial letter for loaded/loading/errored slots */
+.p4-slot-initial {
+  font-family: "Titan One", sans-serif;
+  font-size: 32px;
+  color: #fff;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.6);
+  line-height: 1;
+}
+
+/* Slot label below the bezel */
+.p4-slot-label {
+  text-align: center;
+  margin-top: 6px;
+  font-family: "Titan One", sans-serif;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--gb);
+  text-shadow: 0 1px 0 #000, 0 0 6px rgba(0,0,0,0.9);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.p4-slot-label--empty {
+  color: #d9c88a;
+  font-style: italic;
+  font-family: "Fraunces", Georgia, serif;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+}
+.p4-slot-label--error {
+  color: #ffc0c0;
+  font-size: 10px;
+}
+
+/* 4.6.5 — Loaded->Cleared transition: desaturate + shrink.
+   Applied via the CSS transition on the slot when it goes empty after
+   being loaded — the browser animates the bezel's scale down. */
+.p4-slot--empty .gold-bezel {
+  transition: transform 0.3s var(--ease-smooth), filter 0.3s ease;
+}
+
+/* Actions overlay for loaded slots */
+.p4-slot-actions {
+  position: absolute;
+  left: 5%;
+  right: 5%;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  gap: 4px;
+  z-index: 20;
+}
+.p4-slot-action {
+  flex: 1;
+  padding: 8px 4px;
+  border: 0;
+  border-radius: 8px;
+  font-family: "Titan One", sans-serif;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.8);
+  transition: transform var(--dur-tap) ease;
+}
+.p4-slot-action:active {
+  transform: translateY(1px);
+}
+.p4-slot-action--remove {
+  background: linear-gradient(180deg, #c23a3a 0%, #9a2424 60%, #6e1414 100%);
+  color: #fff;
+  border: 1.5px solid #ffc0c0;
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.3),
+    inset 0 -2px 0 rgba(0,0,0,0.3),
+    0 3px 8px rgba(0,0,0,0.5),
+    0 0 14px rgba(227,76,76,0.4);
+}
+.p4-slot-action--reset {
+  background: linear-gradient(180deg, rgba(16,40,90,0.8), rgba(8,22,60,0.9));
+  color: var(--gb);
+  border: 1.5px solid rgba(245,198,52,0.35);
+  box-shadow:
+    inset 0 1px 0 rgba(255,230,120,0.1),
+    0 3px 8px rgba(0,0,0,0.5);
+}
+
+/* ================================================================
+   PLAN 4.12 — Kaos palette CSS vars
+   ================================================================ */
+
+:root {
+  --k-void-1: #1a0a40;
+  --k-void-2: #120628;
+  --k-void-3: #070212;
+  --k-violet: #7a4eff;
+  --k-violet-deep: #2d0f6a;
+  --k-ember: #ff6b9e;
+  --k-ember-deep: #8a2a56;
+  --k-magenta: #da28a8;
+  --k-magenta-bright: #ff4fd0;
+  --k-lime: #b8ff3a;
+}
+
+/* ================================================================
+   PLAN 4.12.1 — Resume Modal
+   ================================================================ */
+
+.resume-scrim {
+  position: fixed; inset: 0;
+  z-index: 50;
+  background: radial-gradient(ellipse 100% 70% at 50% 50%, rgba(0,0,0,0.55), rgba(0,0,0,0.8) 100%);
+  animation: resume-scrim-in 300ms ease-out both;
+}
+@keyframes resume-scrim-in { from { opacity: 0; } to { opacity: 1; } }
+
+.resume-panel-wrap {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  padding: 32px 24px;
+}
+.resume-panel {
+  width: 100%; max-width: 340px;
+  padding: 28px 24px 22px;
+}
+.resume-sub {
+  text-align: center;
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic;
+  font-weight: 600;
+  font-size: 15px;
+  color: #fff4e0;
+  letter-spacing: 0.08em;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.55), 0 0 12px rgba(255,230,120,0.2);
+  margin-bottom: 14px;
+}
+.resume-context {
+  text-align: center;
+  font-family: "Titan One", sans-serif;
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  color: var(--g);
+  text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  margin-bottom: 16px;
+}
+
+/* Figure preview row */
+.resume-fig-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin: 4px 0 16px;
+  padding: 14px 10px 12px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(8,20,54,0.6), rgba(4,12,36,0.7));
+  box-shadow: inset 0 0 0 1px rgba(255,230,120,0.15), inset 0 2px 4px rgba(0,0,0,0.4);
+  animation: resume-row-in 600ms var(--ease-spring) 200ms both;
+}
+@keyframes resume-row-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.resume-fig {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+}
+.resume-fig-name {
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic;
+  font-weight: 600;
+  font-size: 11px;
+  color: #e8e4d8;
+  text-align: center;
+  max-width: 74px;
+}
+.resume-when {
+  text-align: center;
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic;
+  font-size: 12px;
+  color: #d9c88a;
+  letter-spacing: 0.08em;
+  margin-bottom: 20px;
+}
+
+/* Buttons */
+.resume-actions { display: flex; flex-direction: column; gap: 10px; }
+.resume-btn {
+  width: 100%; padding: 14px;
+  font-family: "Titan One", sans-serif;
+  font-size: 16px;
+  letter-spacing: 0.22em;
+  text-align: center;
+  border: none; border-radius: 14px; cursor: pointer;
+}
+.resume-btn-primary {
+  color: var(--ink, #1a1203);
+  background: linear-gradient(180deg, var(--gb) 0%, var(--g) 45%, var(--gm) 100%);
+  border: 2px solid var(--gi);
+  text-shadow: 0 1px 0 rgba(255,255,255,0.4);
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.45),
+    inset 0 -2px 0 rgba(0,0,0,0.25),
+    0 4px 0 var(--gs),
+    0 6px 14px rgba(0,0,0,0.45),
+    0 0 20px rgba(245,198,52,0.25);
+}
+.resume-btn-primary:active {
+  transform: translateY(3px);
+  box-shadow: inset 0 2px 0 rgba(255,255,255,0.45), 0 1px 0 var(--gs);
+}
+.resume-btn-secondary {
+  color: #fff;
+  background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
+  border: 2px solid var(--gb);
+  text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.25),
+    inset 0 -2px 0 rgba(0,0,0,0.25),
+    0 4px 0 rgba(0,0,0,0.45),
+    0 5px 12px rgba(0,0,0,0.4);
+}
+.resume-btn-secondary:active {
+  transform: translateY(3px);
+  box-shadow: inset 0 2px 0 rgba(255,255,255,0.25), 0 1px 0 rgba(0,0,0,0.45);
+}
+
+/* ================================================================
+   PLAN 4.12.3 — Takeover (Kaos) Screen
+   ================================================================ */
+
+.takeover-void {
+  position: fixed; inset: 0;
+  z-index: 60;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 30%, var(--k-violet-deep) 0%, transparent 55%),
+    radial-gradient(ellipse 60% 50% at 30% 80%, var(--k-ember-deep) 0%, transparent 55%),
+    radial-gradient(ellipse 70% 50% at 80% 60%, rgba(122,78,255,0.4) 0%, transparent 55%),
+    linear-gradient(180deg, var(--k-void-1) 0%, var(--k-void-2) 50%, var(--k-void-3) 100%);
+}
+
+.takeover-hexgrid {
+  position: absolute; inset: 0;
+  background-image:
+    radial-gradient(circle at 30px 35px, rgba(218,40,168,0.18) 2px, transparent 3px),
+    radial-gradient(circle at 90px 35px, rgba(218,40,168,0.14) 2px, transparent 3px),
+    radial-gradient(circle at 60px 87px, rgba(218,40,168,0.18) 2px, transparent 3px),
+    radial-gradient(circle at 120px 87px, rgba(218,40,168,0.14) 2px, transparent 3px),
+    radial-gradient(circle at 30px 139px, rgba(255,107,158,0.18) 2px, transparent 3px);
+  background-size: 120px 104px;
+  opacity: 0.9;
+  animation: takeover-hex-pulse 4s ease-in-out infinite;
+}
+@keyframes takeover-hex-pulse { 50% { opacity: 0.5; } }
+
+.takeover-sparks {
+  position: absolute; inset: 0;
+  background-image:
+    radial-gradient(2px 2px at 50px 120px, var(--k-magenta-bright), transparent),
+    radial-gradient(1.5px 1.5px at 200px 80px, var(--k-ember), transparent),
+    radial-gradient(2px 2px at 320px 240px, var(--k-violet), transparent),
+    radial-gradient(1px 1px at 100px 400px, var(--k-magenta-bright), transparent),
+    radial-gradient(2px 2px at 280px 500px, var(--k-ember), transparent),
+    radial-gradient(1.5px 1.5px at 60px 640px, var(--k-violet), transparent),
+    radial-gradient(1px 1px at 340px 720px, var(--k-magenta-bright), transparent);
+  background-size: 400px 800px;
+  animation: takeover-sparks-flicker 5s ease-in-out infinite alternate;
+}
+@keyframes takeover-sparks-flicker { 50% { opacity: 0.5; transform: scale(1.05); } }
+
+.takeover-vignette {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse 100% 80% at 50% 50%, transparent 50%, rgba(0,0,0,0.7) 100%),
+    linear-gradient(135deg, transparent 45%, rgba(218,40,168,0.08) 50%, transparent 55%);
+  pointer-events: none;
+}
+
+.takeover-viewport {
+  position: relative; height: 100%;
+  display: flex; flex-direction: column;
+  padding: 60px 28px 32px;
+  align-items: center; justify-content: center;
+  gap: 22px;
+}
+
+/* Kaos sigil placeholder */
+.kaos-sigil {
+  width: 128px; height: 128px;
+  position: relative;
+  filter:
+    drop-shadow(0 0 20px var(--k-magenta))
+    drop-shadow(0 0 40px var(--k-ember))
+    drop-shadow(0 0 60px rgba(255,107,158,0.5));
+  animation: kaos-sigil-pulse 2.2s ease-in-out infinite;
+}
+.kaos-sigil::before {
+  content: "";
+  position: absolute; inset: 0;
+  background: radial-gradient(circle at 50% 35%,
+    #fff 0%, var(--k-ember) 35%, var(--k-magenta) 65%, var(--k-violet-deep) 100%);
+  border-radius: 50%;
+}
+@keyframes kaos-sigil-pulse {
+  0%, 100% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 20px var(--k-magenta)) drop-shadow(0 0 40px var(--k-ember)) drop-shadow(0 0 60px rgba(255,107,158,0.5));
+  }
+  50% {
+    transform: scale(1.05);
+    filter: drop-shadow(0 0 30px var(--k-magenta-bright)) drop-shadow(0 0 60px var(--k-ember)) drop-shadow(0 0 90px rgba(255,107,158,0.7));
+  }
+}
+
+/* Kaos display title */
+.kaos-title {
+  font-family: "Titan One", sans-serif;
+  font-size: 42px;
+  letter-spacing: 0.06em;
+  color: var(--k-magenta-bright);
+  -webkit-text-stroke: 1.5px var(--k-violet-deep);
+  text-align: center;
+  line-height: 0.95;
+  text-shadow:
+    0 2px 0 var(--k-ember-deep),
+    0 3px 0 var(--k-void-3),
+    0 0 24px var(--k-magenta),
+    0 0 48px rgba(255,107,158,0.5);
+  animation: kaos-title-glitch 3.5s ease-in-out infinite;
+}
+@keyframes kaos-title-glitch {
+  0%, 90%, 100% { transform: translateX(0); }
+  92% { transform: translateX(-2px) skewX(-1deg); }
+  94% { transform: translateX(2px) skewX(1deg); }
+  96% { transform: translateX(-1px); }
+}
+.kaos-title-line2 {
+  display: block; margin-top: 4px;
+  font-size: 54px;
+}
+
+/* Quote card */
+.takeover-quote-card {
+  width: 100%; max-width: 320px;
+  padding: 18px 20px;
+  border-radius: 16px;
+  background:
+    radial-gradient(ellipse 120% 80% at 50% 0%, rgba(255,107,158,0.15), transparent 60%),
+    linear-gradient(180deg, rgba(45,15,106,0.9), rgba(26,10,64,0.95));
+  position: relative;
+  animation: takeover-quote-in 0.6s var(--ease-spring) 0.2s both;
+}
+.takeover-quote-card::before {
+  content: ""; position: absolute; inset: -2px;
+  border-radius: 18px;
+  background: linear-gradient(135deg,
+    var(--k-ember) 0%, var(--k-magenta) 30%, var(--k-violet) 60%, var(--k-magenta-bright) 100%);
+  z-index: -1;
+}
+@keyframes takeover-quote-in {
+  from { opacity: 0; transform: scale(0.9) translateY(10px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+.takeover-quote-open, .takeover-quote-close {
+  font-family: "Titan One", sans-serif;
+  font-size: 36px;
+  color: #ffd6d6;
+  line-height: 0.6;
+}
+.takeover-quote-open { text-align: left; margin-bottom: -8px; }
+.takeover-quote-close { text-align: right; margin-top: -4px; }
+.takeover-quote-body {
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic;
+  font-size: 17px; line-height: 1.4;
+  color: #ffd9ee;
+  text-align: center;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.6), 0 0 10px rgba(218,40,168,0.3);
+  padding: 0 4px;
+}
+.takeover-quote-attrib {
+  font-family: "Titan One", sans-serif;
+  font-size: 11px; letter-spacing: 0.3em;
+  color: var(--k-ember);
+  text-align: right;
+  margin-top: 10px;
+  text-shadow: 0 1px 0 var(--k-void-3), 0 0 8px var(--k-magenta);
+}
+
+/* Info line */
+.takeover-info {
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic; font-weight: 600;
+  font-size: 13px;
+  color: #f3e8e4;
+  text-align: center;
+  letter-spacing: 0.08em;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.6);
+}
+
+/* Kick back button */
+.takeover-kick-btn {
+  width: 100%; max-width: 320px;
+  padding: 16px;
+  font-family: "Titan One", sans-serif;
+  font-size: 16px;
+  letter-spacing: 0.22em;
+  color: #fff;
+  background: linear-gradient(180deg, var(--k-magenta-bright) 0%, var(--k-magenta) 40%, var(--k-ember-deep) 100%);
+  border: 2px solid var(--k-ember);
+  border-radius: 14px;
+  cursor: pointer;
+  text-shadow: 0 1px 0 var(--k-void-3), 0 0 12px rgba(255,255,255,0.6);
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.35),
+    inset 0 -2px 0 rgba(0,0,0,0.3),
+    0 4px 0 var(--k-ember-deep),
+    0 8px 20px rgba(218,40,168,0.4),
+    0 0 30px rgba(255,107,158,0.3);
+  animation: takeover-kick-pulse 2.5s ease-in-out infinite;
+}
+@keyframes takeover-kick-pulse {
+  50% { box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.4),
+    inset 0 -2px 0 rgba(0,0,0,0.3),
+    0 4px 0 var(--k-ember-deep),
+    0 8px 24px rgba(218,40,168,0.6),
+    0 0 40px rgba(255,107,158,0.5); }
+}
+.takeover-kick-btn:active {
+  transform: translateY(3px);
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.35),
+    0 1px 0 var(--k-ember-deep),
+    0 4px 12px rgba(218,40,168,0.4);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .takeover-hexgrid,
+  .takeover-sparks,
+  .kaos-sigil,
+  .kaos-title,
+  .takeover-kick-btn { animation: none !important; }
+}
+
+/* ================================================================
+   PLAN 4.12.4b — Header kebab button
+   ================================================================ */
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.kebab-btn {
+  width: 42px; height: 42px;
+  border: 1.5px solid rgba(245,198,52,0.3);
+  border-radius: 12px;
+  display: grid; place-items: center;
+  background: transparent;
+  color: var(--gb);
+  font-family: "Titan One", sans-serif;
+  font-size: 22px;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+.kebab-btn:hover {
+  border-color: rgba(245,198,52,0.6);
+}

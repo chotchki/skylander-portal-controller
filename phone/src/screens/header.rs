@@ -14,18 +14,28 @@ pub(crate) fn Header(
     let quitting = RwSignal::new(false);
     view! {
         <header class="app-header">
-            <div class="brand">
-                "Skylander Portal"
-                <Show when=move || unlocked_profile.get().is_some() fallback=|| ()>
-                    <span class="profile-chip">
-                        {move || unlocked_profile.get().map(|p| p.display_name).unwrap_or_default()}
-                    </span>
-                </Show>
-                <Show when=move || current_game.get().is_some() fallback=|| ()>
-                    <span class="game-name">
-                        {move || current_game.get().map(|g| g.display_name).unwrap_or_default()}
-                    </span>
-                </Show>
+            <div class="header-left">
+                <button
+                    class="kebab-btn"
+                    on:click=move |_| {
+                        web_sys::console::log_1(&"kebab menu clicked".into());
+                    }
+                >
+                    {"\u{22EE}"}
+                </button>
+                <div class="brand">
+                    "Skylander Portal"
+                    <Show when=move || unlocked_profile.get().is_some() fallback=|| ()>
+                        <span class="profile-chip">
+                            {move || unlocked_profile.get().map(|p| p.display_name).unwrap_or_default()}
+                        </span>
+                    </Show>
+                    <Show when=move || current_game.get().is_some() fallback=|| ()>
+                        <span class="game-name">
+                            {move || current_game.get().map(|g| g.display_name).unwrap_or_default()}
+                        </span>
+                    </Show>
+                </div>
             </div>
             <div class="header-right">
                 <span class={move || {
@@ -37,7 +47,7 @@ pub(crate) fn Header(
                     format!("status-dot {cls}")
                 }}></span>
                 <span class="status-label">{move || match conn.get() {
-                    ConnState::Connecting => "connecting…",
+                    ConnState::Connecting => "connecting\u{2026}",
                     ConnState::Connected => "connected",
                     ConnState::Disconnected => "disconnected",
                 }}</span>
