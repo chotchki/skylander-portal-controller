@@ -111,6 +111,12 @@ A Windows app that wraps RPCS3 (PS3 emulator) so kids can manage the emulated Sk
 - Users supply their own RPCS3 install and firmware backups.
 - Steam Big Picture shell behavior is a compatibility-pass concern, not a day-1 constraint.
 
+## Git workflow (pre-1.0)
+
+- **Commit + push directly to `main`.** This is a solo project with no external developer coordination; GitHub PRs are pure friction at this stage. Skip them.
+- Reserve PR ceremony for post-1.0 or for cases where a human reviewer genuinely adds value (e.g. first-time CI-bring-up or a dangerous rewrite where the diff view is the point).
+- Concurrent subagents modifying overlapping files → spawn with `isolation: "worktree"` so they don't entangle WIP; merge their branches into `main` locally when done.
+
 ## RPCS3 window/menu gotchas (see `docs/research/game-launch-window-mgmt.md`)
 
 - While a game runs, RPCS3 has **two** top-level windows: the **main window** (menu bar, Qt class `Qt6110QWindowIcon`, title prefix `"RPCS3 "`) and the **game viewport** (same Qt class, title prefix `"FPS:"`). The viewport usually covers the main window.
