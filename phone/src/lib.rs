@@ -262,11 +262,7 @@ pub(crate) fn push_toast(toasts: RwSignal<Vec<ToastMsg>>, message: &str) {
 
 /// Push a toast with an explicit level.
 #[allow(dead_code)]
-pub(crate) fn push_toast_level(
-    toasts: RwSignal<Vec<ToastMsg>>,
-    message: &str,
-    level: ToastLevel,
-) {
+pub(crate) fn push_toast_level(toasts: RwSignal<Vec<ToastMsg>>, message: &str, level: ToastLevel) {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     // Deduplicate: if an active toast already has this exact message, skip.
     // Prevents spam-click patterns (e.g. repeatedly tapping an already-
@@ -284,18 +280,15 @@ pub(crate) fn push_toast_level(
 }
 
 pub(crate) async fn gloo_timer(ms: i32) {
-    use wasm_bindgen::JsCast;
     use wasm_bindgen::closure::Closure;
+    use wasm_bindgen::JsCast;
     let promise = js_sys::Promise::new(&mut |resolve, _| {
         let cb = Closure::once_into_js(move || {
             let _ = resolve.call0(&wasm_bindgen::JsValue::NULL);
         });
         let _ = web_sys::window()
             .unwrap()
-            .set_timeout_with_callback_and_timeout_and_arguments_0(
-                cb.as_ref().unchecked_ref(),
-                ms,
-            );
+            .set_timeout_with_callback_and_timeout_and_arguments_0(cb.as_ref().unchecked_ref(), ms);
     });
     let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
 }

@@ -457,33 +457,47 @@ pub(crate) fn ResetConfirmModal(
 
     let panel_wrap_class = move || {
         let mut cls = String::from("reset-panel-wrap");
-        if fired.get() { cls.push_str(" dismissing"); }
+        if fired.get() {
+            cls.push_str(" dismissing");
+        }
         cls
     };
     let bezel_class = move || {
         let mut cls = String::from("reset-hero-bezel");
-        if fired.get() { cls.push_str(" resetting"); }
+        if fired.get() {
+            cls.push_str(" resetting");
+        }
         cls
     };
     let plate_class = move || {
         let mut cls = String::from("reset-hero-plate");
-        if fired.get() { cls.push_str(" resetting"); }
+        if fired.get() {
+            cls.push_str(" resetting");
+        }
         cls
     };
     let title_class = move || {
         let mut cls = String::from("reset-fig-title");
-        if fired.get() { cls.push_str(" resetting"); }
+        if fired.get() {
+            cls.push_str(" resetting");
+        }
         cls
     };
     let scrim_class = move || {
         let mut cls = String::from("reset-scrim");
-        if fired.get() { cls.push_str(" dismissing"); }
+        if fired.get() {
+            cls.push_str(" dismissing");
+        }
         cls
     };
     let hold_btn_class = move || {
         let mut cls = String::from("reset-btn reset-btn-danger");
-        if holding.get() { cls.push_str(" holding"); }
-        if fired.get() { cls.push_str(" fired"); }
+        if holding.get() {
+            cls.push_str(" holding");
+        }
+        if fired.get() {
+            cls.push_str(" fired");
+        }
         cls
     };
 

@@ -44,7 +44,12 @@ pub(crate) fn FigureDetail(
     let name = figure.canonical_name.clone();
     let name_display = name.clone();
     let element = figure.element;
-    let initial = name.chars().next().unwrap_or('?').to_uppercase().to_string();
+    let initial = name
+        .chars()
+        .next()
+        .unwrap_or('?')
+        .to_uppercase()
+        .to_string();
     let game = figure.game;
     let fig_id = figure.id.clone();
 

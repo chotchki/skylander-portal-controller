@@ -6,7 +6,10 @@ use crate::model::InstalledGame;
 use crate::{push_toast, ToastMsg};
 
 #[component]
-pub(crate) fn GamePicker(games: Vec<InstalledGame>, toasts: RwSignal<Vec<ToastMsg>>) -> impl IntoView {
+pub(crate) fn GamePicker(
+    games: Vec<InstalledGame>,
+    toasts: RwSignal<Vec<ToastMsg>>,
+) -> impl IntoView {
     let launching = RwSignal::new(None::<String>);
     let is_empty = games.is_empty();
     view! {
@@ -68,13 +71,21 @@ pub(crate) fn GamePicker(games: Vec<InstalledGame>, toasts: RwSignal<Vec<ToastMs
 /// Map a display name like "Skylanders: Spyro's Adventure" to a CSS slug.
 fn game_slug(display_name: &str) -> &'static str {
     let lower = display_name.to_lowercase();
-    if lower.contains("spyro") { "ssa" }
-    else if lower.contains("giant") { "giants" }
-    else if lower.contains("swap") { "swap" }
-    else if lower.contains("trap") { "trap" }
-    else if lower.contains("supercharger") { "super" }
-    else if lower.contains("imaginator") { "imag" }
-    else { "unknown" }
+    if lower.contains("spyro") {
+        "ssa"
+    } else if lower.contains("giant") {
+        "giants"
+    } else if lower.contains("swap") {
+        "swap"
+    } else if lower.contains("trap") {
+        "trap"
+    } else if lower.contains("supercharger") {
+        "super"
+    } else if lower.contains("imaginator") {
+        "imag"
+    } else {
+        "unknown"
+    }
 }
 
 /// Strip the "Skylanders: " prefix for the big card label.

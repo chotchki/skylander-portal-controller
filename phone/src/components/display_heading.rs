@@ -29,10 +29,8 @@ impl HeadingSize {
 /// (set `with_rays = true`).
 #[component]
 pub fn DisplayHeading(
-    #[prop(default = HeadingSize::Md)]
-    size: HeadingSize,
-    #[prop(default = false)]
-    with_rays: bool,
+    #[prop(default = HeadingSize::Md)] size: HeadingSize,
+    #[prop(default = false)] with_rays: bool,
     children: Children,
 ) -> impl IntoView {
     let cls = format!("display-heading {}", size.css_class());

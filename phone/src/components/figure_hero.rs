@@ -20,10 +20,8 @@ pub enum HeroState {
 /// See `design_language.md` §6.5.
 #[component]
 pub fn FigureHero(
-    #[prop(optional)]
-    element: Option<Element>,
-    #[prop(optional, into)]
-    state: Signal<HeroState>,
+    #[prop(optional)] element: Option<Element>,
+    #[prop(optional, into)] state: Signal<HeroState>,
     children: Children,
 ) -> impl IntoView {
     let bezel_state = Signal::derive(move || match state.get() {

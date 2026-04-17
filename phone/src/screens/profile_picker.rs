@@ -1,9 +1,9 @@
 use leptos::prelude::*;
 
-use crate::api::{
-    create_profile, fetch_profiles, reset_pin, unlock_profile,
+use crate::api::{create_profile, fetch_profiles, reset_pin, unlock_profile};
+use crate::components::{
+    BezelSize, BezelState, DisplayHeading, FramedPanel, GoldBezel, HeadingSize,
 };
-use crate::components::{BezelSize, BezelState, DisplayHeading, FramedPanel, GoldBezel, HeadingSize};
 use crate::model::PublicProfile;
 use crate::{event_target_value, push_toast, ToastMsg};
 
@@ -209,10 +209,7 @@ fn KonamiGate<S: Fn() + Send + Sync + 'static + Clone, B: Fn() + Send + Sync + '
         if seq.len() != 10 {
             return;
         }
-        let correct = seq
-            .iter()
-            .zip(KONAMI.iter())
-            .all(|(a, b)| a.as_str() == *b);
+        let correct = seq.iter().zip(KONAMI.iter()).all(|(a, b)| a.as_str() == *b);
         if correct {
             success_flash.set(true);
             let on_success = on_success_inner.clone();
@@ -231,9 +228,7 @@ fn KonamiGate<S: Fn() + Send + Sync + 'static + Clone, B: Fn() + Send + Sync + '
     };
 
     // Helper to make dpad/ab button click handlers.
-    let make_key_handler = move |key: &'static str| {
-        move |_| press_key(key)
-    };
+    let make_key_handler = move |key: &'static str| move |_| press_key(key);
 
     view! {
         <div class="konami-gate">
@@ -803,7 +798,11 @@ fn PinEntry<F: Fn() + Send + Sync + 'static + Clone>(
     let is_locked_out = Signal::derive(move || lockout_secs.get() > 0);
 
     let screen_class = move || {
-        if success.get() { "pin-entry-screen pin-success" } else { "pin-entry-screen" }
+        if success.get() {
+            "pin-entry-screen pin-success"
+        } else {
+            "pin-entry-screen"
+        }
     };
 
     view! {
@@ -861,8 +860,7 @@ fn PinEntry<F: Fn() + Send + Sync + 'static + Clone>(
 #[component]
 fn PinPad(
     pin: RwSignal<String>,
-    #[prop(optional)]
-    locked_out: Option<Signal<bool>>,
+    #[prop(optional)] locked_out: Option<Signal<bool>>,
 ) -> impl IntoView {
     let is_locked = locked_out.unwrap_or(Signal::derive(|| false));
     let has_reskin = locked_out.is_some();
