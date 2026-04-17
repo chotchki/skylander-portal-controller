@@ -1,3 +1,27 @@
+/* 4.1.2 — Self-hosted display + body fonts (SIL Open Font License 1.1).
+   Titan One: single-weight display. Fraunces: variable, 400–600 used. */
+@font-face {
+  font-family: "Titan One";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/titan-one.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Fraunces";
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url("fonts/fraunces.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Fraunces";
+  font-style: italic;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url("fonts/fraunces-italic.woff2") format("woff2");
+}
+
 :root {
   --bg: #0a1a36;
   --bg-2: #0f2449;

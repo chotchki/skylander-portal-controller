@@ -453,7 +453,7 @@ Remaining Phase 3 deferrals (3.10.7 ownership, 3.10.8 show-join-code, 3.10e.6 ow
 ### 4.1 Design tokens + CSS architecture
 
 - [x] 4.1.1 Palette: starfield blues (`--sf-1/2/3`), gold bezel stops (`--gold-bright/gold/gold-mid/gold-shadow/gold-inner`), per-element gradients (`--el-*`), status colors (loading/error/success). Kaos (5.4) variants defined as sibling vars upfront.
-- [ ] 4.1.2 Typography: **Titan One** (display), **Fraunces** (body). Self-host under `phone/assets/fonts/`. Both are OFL-licensed; note in `data/LICENSE.md`.
+- [x] 4.1.2 Typography: **Titan One** (display), **Fraunces** (body). Self-host under `phone/assets/fonts/`. Both are OFL-licensed; note in `data/LICENSE.md`.
 - [x] 4.1.3 Easing + timing tokens — `--ease-spring`, `--ease-sweep`, `--dur-tap`, `--dur-loading-sweep` (0.9s), `--dur-impact` (600ms), `--dur-shudder` (400ms), `--dur-halo-slow` (3.4s), `--dur-idle-float` (4.5s).
 - [ ] 4.1.4 CSS vars restructured so a body-class swap (`.skin-kaos`) repalettes the whole app without touching component CSS.
 - [ ] 4.1.5 `prefers-reduced-motion` kill-switch disables ambient drift + halo rotations app-wide.

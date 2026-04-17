@@ -21,3 +21,15 @@ backups to use this app. No game assets are redistributed.
 
 Wiki pages cited inline per-figure via `wiki_page` in `figures.json`. See the
 app's About screen for user-facing attribution copy.
+
+## Fonts (`phone/assets/fonts/**`)
+
+Both self-hosted fonts are licensed under the **SIL Open Font License 1.1**:
+
+- **Titan One** — Copyright (c) 2012 The Titan One Project Authors
+  (<https://github.com/googlefonts/titan-one>). Single regular weight.
+- **Fraunces** — Copyright (c) 2019–2022 The Fraunces Project Authors
+  (<https://github.com/undercase/Fraunces>). Variable font, weights 400–600
+  in roman + italic (latin subset only).
+
+Full OFL text: <https://openfontlicense.org>. No modifications made.
