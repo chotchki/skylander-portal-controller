@@ -6,6 +6,7 @@
 //! `MockPortalDriver` (feature `mock`) is an in-memory stand-in for tests.
 
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::Result;
 use skylander_core::{SLOT_COUNT, SlotIndex, SlotState};
@@ -31,6 +32,14 @@ pub trait PortalDriver: Send + Sync {
 
     /// Clear `slot`. Returns once the slot shows "None".
     fn clear(&self, slot: SlotIndex) -> Result<()>;
+
+    /// Boot the game with PS3 serial `serial` from the library view. Prereq:
+    /// RPCS3 was just launched via `RpcsProcess::launch_library` and is
+    /// sitting at the game list. The UIA impl clicks the matching `DataItem`
+    /// and synthesises Enter; the mock impl is a no-op (mock has no RPCS3
+    /// process to boot). Called by the server's `/api/launch` handler after
+    /// `open_dialog()` so Qt's focus state is cold when boot runs.
+    fn boot_game_by_serial(&self, serial: &str, timeout: Duration) -> Result<()>;
 }
 
 #[cfg(windows)]

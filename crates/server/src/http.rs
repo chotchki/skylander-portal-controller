@@ -664,16 +664,21 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
     }
 
     let exe = state.rpcs3_exe.clone();
-    let eboot = game.eboot_path();
     info!(
         serial = %body.serial,
         display_name = %game.display_name,
-        eboot = %eboot.display(),
-        "launching game",
+        "launching game (library view + UIA-boot by serial)",
     );
 
+    // Two-step launch. Step 1: spawn RPCS3 with no EBOOT argument and wait
+    // for its main window to show up. Step 2: hand off to the driver worker
+    // to open the Manage dialog (cold-library nav) and UIA-boot the game
+    // by serial. This supersedes the old EBOOT-direct path — that left
+    // RPCS3 in a direct-boot state where the menu bar wouldn't respond to
+    // synthesised keystrokes, blocking every subsequent portal interaction.
+    // See CLAUDE.md "RPCS3 window/menu gotchas" + PLAN 3.7.5.
     let launch = tokio::task::spawn_blocking(move || -> anyhow::Result<RpcsProcess> {
-        let mut proc = RpcsProcess::launch(&exe, &eboot)?;
+        let mut proc = RpcsProcess::launch_library(&exe)?;
         proc.wait_ready(Duration::from_secs(45))?;
         Ok(proc)
     })
@@ -697,11 +702,51 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
         }
     };
 
+    // Save the process handle before the UIA-boot step so that if boot
+    // fails, the handler's error response doesn't leak the RPCS3 instance
+    // — the next launch attempt (or quit) will find and clean up via
+    // `guard.process`. The `current` GameLaunched is only set after boot
+    // succeeds so the UI doesn't show a half-booted game.
+    guard.process = Some(proc);
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    if let Err(e) = state
+        .driver_tx
+        .send(crate::state::DriverJob::BootGame {
+            serial: body.serial.as_str().to_string(),
+            timeout: Duration::from_secs(60),
+            done: tx,
+        })
+        .await
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("queue BootGame: {e}"),
+        )
+            .into_response();
+    }
+    match rx.await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("UIA-boot failed: {e}"),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("BootGame ack dropped: {e}"),
+            )
+                .into_response();
+        }
+    }
+
     let launched = GameLaunched {
         serial: game.serial.clone(),
         display_name: game.display_name.clone(),
     };
-    guard.process = Some(proc);
     guard.current = Some(launched.clone());
 
     let _ = state.events.send(Event::GameChanged {

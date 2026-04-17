@@ -445,56 +445,6 @@ impl UiaPortalDriver {
         read_title(hwnd)
     }
 
-    pub fn boot_game_by_serial(&self, serial: &str, timeout: Duration) -> Result<()> {
-        let walker = self.walker()?;
-        let main = self.main_window(&walker)?;
-        let main_hwnd: isize = main.get_native_window_handle().context("main HWND")?.into();
-        let main_hwnd = HWND(main_hwnd as _);
-
-        let cell = find_descendant(&walker, &main, |el| {
-            el.get_control_type()
-                .map(|c| c == ControlType::DataItem)
-                .unwrap_or(false)
-                && el.get_name().map(|n| n == serial).unwrap_or(false)
-        })
-        .ok_or_else(|| anyhow!("no DataItem named {serial} in RPCS3 library"))?;
-        debug!(serial, "found library cell");
-
-        // Synthesise a single mouse click at the cell's centre. UIA's
-        // `SelectionItemPattern.select` and `UIElement.set_focus` both
-        // silently fail to update the list widget's `currentIndex` on this
-        // Qt build — Enter keeps activating the alphabetically-first game
-        // regardless. A real mouse click through `SendInput` delivers the
-        // selection event Qt's QListView actually listens for, moving
-        // currentIndex to the target. Single-click (not double) because:
-        // with the Skylanders Manager dialog already open, Qt absorbs
-        // double-clicks on library cells but single clicks still select.
-        let rect = cell
-            .get_bounding_rectangle()
-            .context("cell bounding rectangle")?;
-        let cx = rect.get_left() + (rect.get_right() - rect.get_left()) / 2;
-        let cy = rect.get_top() + (rect.get_bottom() - rect.get_top()) / 2;
-
-        let _ = focus_main_window(main_hwnd);
-        sleep(MENU_STEP_PAUSE);
-
-        debug!(cx, cy, "single-clicking library cell centre");
-        mouse_single_click(cx, cy).context("single-click library cell")?;
-        sleep(MENU_STEP_PAUSE);
-
-        send_key(VK_RETURN).context("send Enter to boot selected game")?;
-
-        let deadline = Instant::now() + timeout;
-        while Instant::now() < deadline {
-            if find_viewport_hwnd().is_some() {
-                info!(serial, "game viewport detected — boot succeeded");
-                return Ok(());
-            }
-            sleep(POLL_INTERVAL);
-        }
-        bail!("game viewport didn't appear within {timeout:?} after boot attempt");
-    }
-
     /// Quit RPCS3 via the File → Exit menu path. Mirrors the Manage-menu
     /// approach in `trigger_dialog_via_menu`: minimises the game viewport so
     /// it can't steal focus, moves the main window off-screen so the Alt
@@ -806,6 +756,57 @@ impl crate::PortalDriver for UiaPortalDriver {
         clear_btn.get_pattern::<UIInvokePattern>()?.invoke()?;
         wait_for_value(&edit, "None", CLEAR_TIMEOUT)?;
         Ok(())
+    }
+
+    #[instrument(skip(self))]
+    fn boot_game_by_serial(&self, serial: &str, timeout: Duration) -> Result<()> {
+        let walker = self.walker()?;
+        let main = self.main_window(&walker)?;
+        let main_hwnd: isize = main.get_native_window_handle().context("main HWND")?.into();
+        let main_hwnd = HWND(main_hwnd as _);
+
+        let cell = find_descendant(&walker, &main, |el| {
+            el.get_control_type()
+                .map(|c| c == ControlType::DataItem)
+                .unwrap_or(false)
+                && el.get_name().map(|n| n == serial).unwrap_or(false)
+        })
+        .ok_or_else(|| anyhow!("no DataItem named {serial} in RPCS3 library"))?;
+        debug!(serial, "found library cell");
+
+        // Synthesise a single mouse click at the cell's centre. UIA's
+        // `SelectionItemPattern.select` and `UIElement.set_focus` both
+        // silently fail to update the list widget's `currentIndex` on this
+        // Qt build — Enter keeps activating the alphabetically-first game
+        // regardless. A real mouse click through `SendInput` delivers the
+        // selection event Qt's QListView actually listens for, moving
+        // currentIndex to the target. Single-click (not double) because:
+        // with the Skylanders Manager dialog already open, Qt absorbs
+        // double-clicks on library cells but single clicks still select.
+        let rect = cell
+            .get_bounding_rectangle()
+            .context("cell bounding rectangle")?;
+        let cx = rect.get_left() + (rect.get_right() - rect.get_left()) / 2;
+        let cy = rect.get_top() + (rect.get_bottom() - rect.get_top()) / 2;
+
+        let _ = focus_main_window(main_hwnd);
+        sleep(MENU_STEP_PAUSE);
+
+        debug!(cx, cy, "single-clicking library cell centre");
+        mouse_single_click(cx, cy).context("single-click library cell")?;
+        sleep(MENU_STEP_PAUSE);
+
+        send_key(VK_RETURN).context("send Enter to boot selected game")?;
+
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if find_viewport_hwnd().is_some() {
+                info!(serial, "game viewport detected — boot succeeded");
+                return Ok(());
+            }
+            sleep(POLL_INTERVAL);
+        }
+        bail!("game viewport didn't appear within {timeout:?} after boot attempt");
     }
 }
 

@@ -127,6 +127,18 @@ pub enum DriverJob {
         slot: SlotIndex,
     },
     RefreshPortal,
+    /// Boot a game into the already-running RPCS3. Prereq: the `/api/launch`
+    /// handler just spawned RPCS3 via `RpcsProcess::launch_library` and
+    /// `wait_ready`'d it, so the library view is visible. The worker calls
+    /// `driver.open_dialog()` (cold-library 3.6b-proven nav path) then
+    /// `driver.boot_game_by_serial(...)`. Result is delivered via the
+    /// oneshot so the handler can wait synchronously — the REST caller wants
+    /// a success/failure response for the launch, not fire-and-forget.
+    BootGame {
+        serial: String,
+        timeout: std::time::Duration,
+        done: tokio::sync::oneshot::Sender<Result<()>>,
+    },
 }
 
 /// Spawn the driver worker. Owns the `PortalDriver` and serialises all access.
@@ -245,6 +257,29 @@ async fn handle_job(
         }
         DriverJob::RefreshPortal => {
             refresh(driver, portal, events, figures).await?;
+        }
+        DriverJob::BootGame {
+            serial,
+            timeout,
+            done,
+        } => {
+            let d = driver.clone();
+            let serial_for_blocking = serial.clone();
+            // Dialog first, game second — same order as the 3.7.x live tests.
+            // Cold library view is the easiest UIA case; once a game is
+            // running, Qt's focus state is too scrambled to re-open the
+            // Manage menu reliably.
+            let result = tokio::task::spawn_blocking(move || -> Result<()> {
+                d.open_dialog()?;
+                d.boot_game_by_serial(&serial_for_blocking, timeout)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("boot task panicked: {e}"))
+            .and_then(|r| r);
+            // If the receiver dropped (handler timed out or errored),
+            // silently ignore — the worker's contract is fulfilled by
+            // having driven the driver; nobody is listening for the ack.
+            let _ = done.send(result);
         }
     }
     Ok(())

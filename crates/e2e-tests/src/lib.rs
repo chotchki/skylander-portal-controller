@@ -115,6 +115,106 @@ impl TestServer {
         let hex = fetch_hmac_key_hex(&self.url).await?;
         Ok(format!("{}/#k={}", self.url, hex))
     }
+
+    /// Spawn the server configured for **real RPCS3 + real UIA driver**. Used
+    /// by the live-integration test (`tests/live_integration.rs`) — the
+    /// regular mock-driver tests use [`spawn`].
+    ///
+    /// Requires `RPCS3_EXE` in the environment (same contract as the live
+    /// lifecycle tests in `crates/rpcs3-control/tests/`). The `test-hooks`
+    /// feature is still enabled so the phone's `#k=` auth flow works via
+    /// `/api/_test/hmac_key`, but no `inject_load_outcomes` call should be
+    /// made — the real driver handles its own failure modes.
+    pub fn spawn_live() -> Result<Self> {
+        let repo = repo_root()?;
+
+        let rpcs3_exe = std::env::var("RPCS3_EXE")
+            .map(PathBuf::from)
+            .context("RPCS3_EXE env var required for live-integration tests")?;
+        if !rpcs3_exe.is_file() {
+            bail!(
+                "RPCS3_EXE does not point to a file: {}",
+                rpcs3_exe.display()
+            );
+        }
+
+        let default_pack =
+            PathBuf::from(r"C:\Users\chris\workspace\Skylanders Characters Pack for RPCS3");
+        let firmware = std::env::var("SKYLANDER_PACK_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or(default_pack);
+        if !firmware.is_dir() {
+            bail!(
+                "firmware pack not found at {} — set SKYLANDER_PACK_ROOT to your local pack",
+                firmware.display()
+            );
+        }
+
+        let phone_dist = repo.join("phone").join("dist");
+        if !phone_dist.join("index.html").is_file() {
+            bail!(
+                "phone SPA not built — run `cd phone && trunk build` first (looking in {})",
+                phone_dist.display()
+            );
+        }
+
+        // If a previous run's forced shutdown left RPCS3.buf behind, next
+        // launch fails with "Another instance of RPCS3 is running". Same
+        // defensive clear the live-lifecycle tests do.
+        if let Some(dir) = rpcs3_exe.parent() {
+            let _ = std::fs::remove_file(dir.join("RPCS3.buf"));
+        }
+
+        let tmp = tempfile::tempdir().context("create temp dir")?;
+        let port = pick_free_port()?;
+        // Omit SKYLANDER_PORTAL_DRIVER so config's default (`Uia`) wins —
+        // setting it to anything else would downgrade back to the mock.
+        let env = format!(
+            "RPCS3_EXE={rpcs3}\nFIRMWARE_PACK_ROOT={pack}\nBIND_PORT={port}\nPHONE_DIST={phone}\n",
+            rpcs3 = rpcs3_exe.display(),
+            pack = firmware.display(),
+            port = port,
+            phone = phone_dist.display(),
+        );
+        std::fs::write(tmp.path().join(".env.dev"), env)?;
+
+        let mut cmd = Command::new("cargo");
+        cmd.current_dir(tmp.path())
+            .env("CARGO_MANIFEST_DIR", &repo)
+            .env("CARGO_TARGET_DIR", repo.join("target"))
+            .args([
+                "run",
+                "--manifest-path",
+                repo.join("Cargo.toml").to_str().unwrap(),
+                "-p",
+                "skylander-server",
+                "--features",
+                "test-hooks",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let mut child = cmd.spawn().context("spawn server via cargo run")?;
+        let stdout = child.stdout.take().unwrap();
+        let stderr = child.stderr.take().unwrap();
+
+        let (tx, rx) = mpsc::channel::<String>();
+        spawn_reader("stdout", stdout, tx.clone());
+        spawn_reader("stderr", stderr, tx);
+
+        let url = wait_for_url(&rx, Duration::from_secs(120))?;
+        let guard = ChildGuard::new(child);
+
+        let (chromedriver_url, chromedriver_guard) = spawn_chromedriver()?;
+
+        Ok(Self {
+            url,
+            chromedriver_url,
+            _child: guard,
+            _chromedriver: chromedriver_guard,
+            _tmpdir: tmp,
+        })
+    }
 }
 
 async fn fetch_hmac_key_hex(base: &str) -> anyhow::Result<String> {
