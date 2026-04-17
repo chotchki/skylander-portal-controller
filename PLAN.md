@@ -644,7 +644,7 @@ The TV launcher is a full UX surface with its own 8-state machine (see `navigati
 
 #### 4.15b egui implementation
 
-- [ ] 4.15.1 Shared palette via egui `Visuals` — starfield-blue background, gold accents. Readable from ~10 ft on an 86" TV (≥32pt body, ≥64pt QR label).
+- [x] 4.15.1 Shared palette via egui `Visuals` — starfield-blue background, gold accents. Readable from ~10 ft on an 86" TV (≥32pt body, ≥64pt QR label). **Summary:** new `crates/server/src/palette.rs` module holds `Color32` constants mirroring the phone's CSS tokens (`SF_1/2/3`, `GOLD`/`GOLD_BRIGHT`/`GOLD_2`/`GOLD_SHADOW`/`GOLD_INK`, `TEXT`/`TEXT_DIM`, `DANGER`, `SUCCESS_GLOW`). `palette::apply(&cc.egui_ctx)` is called once at `LauncherApp::new` to install `Visuals::dark()` with `panel_fill = SF_3`, `window_fill = SF_2`, `override_text_color = TEXT`, gold selection stroke. `ui.rs` replaces its hardcoded RGB literals (white heading, gray-180 subtext, `0xffcf3a` URL, `0x8a2020` exit button fill) with palette references. No visual regression since the previous shape was already close to the palette values; the new canonical source means 4.15.3+ pick up the same colors without drift.
 - [ ] 4.15.2 Display font loaded into egui so the PC-side and phone-side feel unified.
 - [ ] 4.15.3 QR code framed in a gold bezel equivalent.
 - [ ] 4.15.4 Status indicators — RPCS3 connection dot (absorbs the old 2.8.4 deferral), client count, current-game name.

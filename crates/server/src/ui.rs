@@ -5,6 +5,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::palette;
+
 pub struct LauncherApp {
     clients: Arc<AtomicUsize>,
     url: String,
@@ -19,6 +21,10 @@ impl LauncherApp {
         figure_count: usize,
         url: String,
     ) -> Self {
+        // Apply the shared TV-launcher palette. Must happen before any
+        // widgets render their first frame so `override_text_color` etc.
+        // take effect immediately (PLAN 4.15.1).
+        palette::apply(&cc.egui_ctx);
         let qr_texture = Some(render_qr_texture(&cc.egui_ctx, &url));
         Self {
             clients,
@@ -31,7 +37,10 @@ impl LauncherApp {
 
 fn render_qr_texture(ctx: &egui::Context, url: &str) -> egui::TextureHandle {
     let code = qrcode::QrCode::new(url).expect("qr encode");
-    let dark = egui::Color32::from_rgb(0x0b, 0x1e, 0x3f);
+    // QR renders in starfield-blue-on-white for readability. Matches the
+    // phone's selection-on-dark treatment (dark modules on a white
+    // quiet-zone background is what most QR scanners expect).
+    let dark = palette::SF_2;
     let light = egui::Color32::WHITE;
     let scale = 10usize;
     let modules: Vec<Vec<bool>> = code
@@ -70,13 +79,13 @@ impl eframe::App for LauncherApp {
                 ui.heading(
                     egui::RichText::new("Skylander Portal")
                         .size(64.0)
-                        .color(egui::Color32::WHITE),
+                        .color(palette::TEXT),
                 );
                 ui.add_space(16.0);
                 ui.label(
                     egui::RichText::new("Scan to connect:")
                         .size(36.0)
-                        .color(egui::Color32::from_gray(220)),
+                        .color(palette::TEXT_DIM),
                 );
                 ui.add_space(24.0);
                 if let Some(tex) = &self.qr_texture {
@@ -88,7 +97,7 @@ impl eframe::App for LauncherApp {
                     egui::RichText::new(&self.url)
                         .size(32.0)
                         .monospace()
-                        .color(egui::Color32::from_rgb(0xff, 0xcf, 0x3a)),
+                        .color(palette::GOLD),
                 );
                 ui.add_space(16.0);
 
@@ -103,22 +112,22 @@ impl eframe::App for LauncherApp {
                 ui.label(
                     egui::RichText::new(status)
                         .size(40.0)
-                        .color(egui::Color32::WHITE),
+                        .color(palette::TEXT),
                 );
                 ui.add_space(8.0);
                 ui.label(
                     egui::RichText::new(format!("{} figures indexed", self.figure_count))
                         .size(24.0)
-                        .color(egui::Color32::from_gray(180)),
+                        .color(palette::TEXT_DIM),
                 );
 
                 ui.add_space(32.0);
                 let btn = egui::Button::new(
                     egui::RichText::new("Exit to Desktop")
                         .size(28.0)
-                        .color(egui::Color32::WHITE),
+                        .color(palette::TEXT),
                 )
-                .fill(egui::Color32::from_rgb(0x8a, 0x20, 0x20))
+                .fill(palette::DANGER)
                 .rounding(egui::Rounding::same(16.0))
                 .min_size(egui::vec2(260.0, 60.0));
                 if ui.add(btn).clicked() {
