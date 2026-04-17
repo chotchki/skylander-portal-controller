@@ -284,6 +284,32 @@ RPCS3 compiles shaders on first launch of a game (and after GPU driver updates).
 
 **Fallback if none work:** Use a fixed delay after game-boot detection (~15s) before spiraling the clouds out. Not ideal but guarantees the worst shader stutter is hidden.
 
+#### Progress visualization (if log parsing works)
+
+If we can extract `current / total` counts from the log, the TV launcher shows a **gold progress ring** at the center of the cloud vortex — the same conic-gradient sweep used by `GoldBezel`'s loading state, but large (200–240px). The ring fills proportionally as shaders compile.
+
+```
+        ╭──────────────╮
+       ╱   ◠◡◠ clouds ◠◡◠  ╲
+      │                      │
+      │     ┌──────────┐     │
+      │     │ 42 / 189 │     │    ← gold progress ring (partial fill)
+      │     └──────────┘     │
+      │                      │
+       ╲   ◠◡◠ clouds ◠◡◠  ╱
+        ╰──────────────╯
+           COMPILING SHADERS
+```
+
+- Ring: conic-gradient from `var(--gi)` (unfilled) to `var(--gb)` (filled), sweeping clockwise proportional to `current / total`
+- Count: `"42 / 189"` in Titan One 40px gold inside the ring
+- Heading: `"COMPILING SHADERS"` below the ring in Titan One 64px gold
+- Subtitle: `"preparing your adventure"` in Fraunces italic 32px warm-white
+- The cloud vortex continues swirling behind the ring — the ring sits on top
+- When compilation finishes: ring does a quick bright flash (like the portal-impact flash), then the normal Awaiting Connect flow takes over
+
+This turns a frustrating wait into an anticipation-building moment — the ring charging up feels like the portal is powering on.
+
 ### 3.7 TV typography scale
 
 Everything is sized for 86" at ~10 feet:
