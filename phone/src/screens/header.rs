@@ -1,25 +1,21 @@
 use leptos::prelude::*;
 
-use crate::api::post_quit;
 use crate::model::{ConnState, GameLaunched, UnlockedProfile};
-use crate::{push_toast, ToastMsg};
 
 #[component]
 pub(crate) fn Header(
     conn: RwSignal<ConnState>,
     current_game: RwSignal<Option<GameLaunched>>,
-    toasts: RwSignal<Vec<ToastMsg>>,
     unlocked_profile: RwSignal<Option<UnlockedProfile>>,
+    menu_open: RwSignal<bool>,
 ) -> impl IntoView {
-    let quitting = RwSignal::new(false);
     view! {
         <header class="app-header">
             <div class="header-left">
                 <button
                     class="kebab-btn"
-                    on:click=move |_| {
-                        web_sys::console::log_1(&"kebab menu clicked".into());
-                    }
+                    aria-label="Open menu"
+                    on:click=move |_| menu_open.update(|o| *o = !*o)
                 >
                     {"\u{22EE}"}
                 </button>
@@ -51,23 +47,6 @@ pub(crate) fn Header(
                     ConnState::Connected => "connected",
                     ConnState::Disconnected => "disconnected",
                 }}</span>
-                <Show when=move || current_game.get().is_some() fallback=|| ()>
-                    <button
-                        class="quit-btn"
-                        disabled=move || quitting.get()
-                        on:click=move |_| {
-                            quitting.set(true);
-                            leptos::task::spawn_local(async move {
-                                if let Err(e) = post_quit(false).await {
-                                    push_toast(toasts, &format!("Quit failed: {e}"));
-                                }
-                                quitting.set(false);
-                            });
-                        }
-                    >
-                        "Quit game"
-                    </button>
-                </Show>
             </div>
         </header>
     }

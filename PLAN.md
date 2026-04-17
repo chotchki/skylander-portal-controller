@@ -598,8 +598,8 @@ Implemented as a new screen reached by tapping a figure inside the toy box. Shel
 - [x] 4.12.1 Resume-last-setup modal (3.12.2 UI): `<FramedPanel>` with a figure-preview row of gold bezels, "Resume" + "Start fresh" CTAs.
 - [ ] 4.12.2 Reset-to-fresh confirm (3.11.3 UI).
 - [x] 4.12.3 Takeover/Kaos screen polish — stays blue (the Kaos skin itself ships with 5.4; this is just restyled).
-- [ ] 4.12.4 Show-join-code sheet scaffolded — `<FramedPanel>` with a gold-bezeled QR and join URL. The real content wiring to 3.10.8 happens in the post-Phase-4 follow-up; this milestone just delivers the modal shell and a header entry point that navigates to it.
-- [ ] 4.12.4b **Menu overlay** (opened by header kebab). Single surface that consolidates: (a) show-join-code QR (prominent, always visible — answers "how does my friend join?"), (b) current profile chip for context, (c) three stacked actions with icon + title + one-line description:
+- [x] 4.12.4 Show-join-code sheet — folded into 4.12.4b menu overlay's QR card (no separate sheet). Shell-only: the inner `.menu-qr-inner` renders a "QR" placeholder; real QR content wiring lands with 3.10.8 follow-up.
+- [x] 4.12.4b **Menu overlay** (opened by header kebab). Single surface that consolidates: (a) show-join-code QR (prominent, always visible — answers "how does my friend join?"), (b) current profile chip for context, (c) three stacked actions with icon + title + one-line description:
       - **SWITCH PROFILE** — locks current session, returns to profile picker. Other sessions on other phones keep their profiles.
       - **CHOOSE ANOTHER GAME** — quits the current RPCS3 game, returns to game picker; profile stays unlocked. Confirm required (destructive for the other player if they're mid-play).
       - **SHUT DOWN** — red/danger treatment — closes the whole server + RPCS3. Confirm required; labelled "ask a grown-up first" so kids know it's the adult exit.

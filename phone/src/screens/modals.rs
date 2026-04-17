@@ -1,8 +1,9 @@
 use leptos::prelude::*;
 
-use crate::api::post_load;
+use crate::api::{post_load, post_quit};
 use crate::components::{BezelSize, DisplayHeading, FramedPanel, GoldBezel, HeadingSize};
-use crate::model::SlotState;
+use crate::gloo_timer;
+use crate::model::{GameLaunched, SlotState, UnlockedProfile};
 use crate::{push_toast, ResumeOffer, TakeoverReason, ToastMsg};
 
 #[component]
@@ -163,5 +164,206 @@ pub(crate) fn TakeoverScreen(takeover: RwSignal<Option<TakeoverReason>>) -> impl
 
             <div class="takeover-vignette"></div>
         </section>
+    }
+}
+
+/// Header kebab → single surface that consolidates: current-profile chip,
+/// join-QR (shell only — real QR content wiring is a post-Phase-4 follow-up),
+/// and three action buttons. PLAN 4.12.4b. Mock: `docs/aesthetic/mocks/menu_overlay.html`.
+///
+/// Actions:
+///   - SWITCH PROFILE  — single-tap, local re-lock. Clears `unlocked_profile`;
+///     the ProfilePicker re-renders. Server-side re-lock endpoint is a
+///     follow-up — for now the phone's view falls back to the picker and
+///     the next unlock goes through the normal PIN flow.
+///   - CHOOSE ANOTHER GAME — hold-to-confirm, server-impactful. Calls
+///     `post_quit(false)` → server quits RPCS3 → WS broadcasts GameStopped
+///     → every phone sees the game picker.
+///   - SHUT DOWN — hold-to-confirm, danger styling. No server endpoint yet;
+///     toasts a placeholder. Shutdown wiring lands alongside 4.15.11.
+#[component]
+pub(crate) fn MenuOverlay(
+    open: RwSignal<bool>,
+    unlocked_profile: RwSignal<Option<UnlockedProfile>>,
+    current_game: RwSignal<Option<GameLaunched>>,
+    toasts: RwSignal<Vec<ToastMsg>>,
+) -> impl IntoView {
+    let close = move || open.set(false);
+
+    // Hold-to-confirm state — one pair of signals per hold button. Using
+    // two signals instead of a single enum so the CSS class string stays
+    // an Fn closure that reads them independently. `spawn_local` task
+    // awaits 1200ms then checks `holding` — if still held, fires.
+    let game_holding = RwSignal::new(false);
+    let game_fired = RwSignal::new(false);
+    let shutdown_holding = RwSignal::new(false);
+    let shutdown_fired = RwSignal::new(false);
+
+    let initial = Signal::derive(move || {
+        unlocked_profile
+            .get()
+            .and_then(|p| p.display_name.chars().next())
+            .map(|c| c.to_uppercase().to_string())
+            .unwrap_or_default()
+    });
+    let name = Signal::derive(move || {
+        unlocked_profile
+            .get()
+            .map(|p| p.display_name)
+            .unwrap_or_default()
+    });
+    let game_name = Signal::derive(move || {
+        current_game
+            .get()
+            .map(|g| g.display_name)
+            .unwrap_or_default()
+    });
+
+    // SWITCH PROFILE — single tap. Local re-lock for now.
+    let on_switch = move |_| {
+        unlocked_profile.set(None);
+        close();
+    };
+
+    // CHOOSE ANOTHER GAME — hold-to-confirm.
+    let on_game_down = move |_| {
+        if game_fired.get_untracked() {
+            return;
+        }
+        game_holding.set(true);
+        leptos::task::spawn_local(async move {
+            gloo_timer(1200).await;
+            if !game_holding.get_untracked() || game_fired.get_untracked() {
+                return;
+            }
+            game_holding.set(false);
+            game_fired.set(true);
+            leptos::task::spawn_local(async move {
+                if let Err(e) = post_quit(false).await {
+                    push_toast(toasts, &format!("Quit failed: {e}"));
+                }
+            });
+            // Give the fire animation time to play, then close the menu.
+            gloo_timer(380).await;
+            open.set(false);
+            gloo_timer(600).await;
+            game_fired.set(false);
+        });
+    };
+    let on_game_cancel = move |_| game_holding.set(false);
+
+    // SHUT DOWN — hold-to-confirm. No server endpoint yet.
+    let on_shutdown_down = move |_| {
+        if shutdown_fired.get_untracked() {
+            return;
+        }
+        shutdown_holding.set(true);
+        leptos::task::spawn_local(async move {
+            gloo_timer(1200).await;
+            if !shutdown_holding.get_untracked() || shutdown_fired.get_untracked() {
+                return;
+            }
+            shutdown_holding.set(false);
+            shutdown_fired.set(true);
+            push_toast(toasts, "Shutdown not yet wired (Phase 4.15.11)");
+            gloo_timer(380).await;
+            open.set(false);
+            gloo_timer(600).await;
+            shutdown_fired.set(false);
+        });
+    };
+    let on_shutdown_cancel = move |_| shutdown_holding.set(false);
+
+    let game_class = move || {
+        let mut cls = String::from("menu-action");
+        cls.push_str(" menu-action--hold");
+        if game_holding.get() {
+            cls.push_str(" holding");
+        }
+        if game_fired.get() {
+            cls.push_str(" fired");
+        }
+        cls
+    };
+    let shutdown_class = move || {
+        let mut cls = String::from("menu-action menu-action--hold menu-action--danger");
+        if shutdown_holding.get() {
+            cls.push_str(" holding");
+        }
+        if shutdown_fired.get() {
+            cls.push_str(" fired");
+        }
+        cls
+    };
+
+    view! {
+        <Show when=move || open.get() fallback=|| ()>
+            <div class="menu-scrim" on:click=move |_| close()></div>
+            <div class="menu-overlay-panel">
+                <button class="menu-close" on:click=move |_| close()>"\u{2715}"</button>
+
+                <div class="menu-current-chip">
+                    <div class="menu-current-swatch">{move || initial.get()}</div>
+                    <div class="menu-current-meta">
+                        <div class="menu-current-name">{move || name.get()}</div>
+                        <Show when=move || current_game.get().is_some() fallback=|| ()>
+                            <div class="menu-current-game">{move || game_name.get()}</div>
+                        </Show>
+                    </div>
+                </div>
+
+                <div class="menu-join-card">
+                    <div class="menu-join-label">"\u{2316} INVITE A PLAYER"</div>
+                    <div class="menu-qr-frame">
+                        <div class="menu-qr-inner">"QR"</div>
+                    </div>
+                    <div class="menu-join-hint">"scan to join this portal"</div>
+                </div>
+
+                <div class="menu-actions">
+                    <button class="menu-action" on:click=on_switch>
+                        <div class="menu-action-icon">"\u{21C4}"</div>
+                        <div>
+                            <div class="menu-action-title">"SWITCH PROFILE"</div>
+                            <div class="menu-action-desc">"Sign back in as someone else"</div>
+                        </div>
+                    </button>
+
+                    <button
+                        class=game_class
+                        on:pointerdown=on_game_down
+                        on:pointerup=on_game_cancel
+                        on:pointerleave=on_game_cancel
+                        on:pointercancel=on_game_cancel
+                    >
+                        <span class="hold-fill"></span>
+                        <div class="menu-action-icon">"\u{25C9}"</div>
+                        <div>
+                            <div class="menu-action-title">"HOLD TO SWITCH GAMES"</div>
+                            <div class="menu-action-desc">
+                                "Quit the current game and pick a different adventure"
+                            </div>
+                        </div>
+                    </button>
+
+                    <button
+                        class=shutdown_class
+                        on:pointerdown=on_shutdown_down
+                        on:pointerup=on_shutdown_cancel
+                        on:pointerleave=on_shutdown_cancel
+                        on:pointercancel=on_shutdown_cancel
+                    >
+                        <span class="hold-fill"></span>
+                        <div class="menu-action-icon">"\u{23FB}"</div>
+                        <div>
+                            <div class="menu-action-title">"HOLD TO SHUT DOWN"</div>
+                            <div class="menu-action-desc">
+                                "Closes everything \u{00B7} ask a grown-up first"
+                            </div>
+                        </div>
+                    </button>
+                </div>
+            </div>
+        </Show>
     }
 }

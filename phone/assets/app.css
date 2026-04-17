@@ -3158,3 +3158,293 @@ body.skin-kaos {
     animation: none !important;
   }
 }
+
+/* ================================================================
+   PLAN 4.12.4b — Menu overlay (kebab → full-screen panel).
+   Translates docs/aesthetic/mocks/menu_overlay.html. Uses var tokens
+   so the Kaos skin (4.1.4) repalettes for free.
+   ================================================================ */
+
+.menu-scrim {
+  position: fixed; inset: 0;
+  background: radial-gradient(ellipse at center, rgba(0,0,0,0.55), rgba(0,0,0,0.85));
+  z-index: 200;
+  cursor: pointer;
+  animation: menu-scrim-in 220ms ease-out;
+}
+@keyframes menu-scrim-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.menu-overlay-panel {
+  position: fixed;
+  top: 50%; left: 20px; right: 20px;
+  transform: translateY(-50%);
+  z-index: 210;
+  padding: 26px 22px 22px;
+  border-radius: 24px;
+  background:
+    radial-gradient(ellipse 120% 80% at 50% 0%, rgba(255,230,120,0.10), transparent 60%),
+    linear-gradient(180deg, rgba(26,58,138,0.95), rgba(10,36,100,0.95) 50%, rgba(6,20,54,0.98));
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  animation: menu-panel-in 0.35s cubic-bezier(.3,1.3,.5,1) both;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+}
+.menu-overlay-panel::before {
+  content: ""; position: absolute; inset: -2px;
+  border-radius: 26px;
+  background: linear-gradient(135deg, var(--gb) 0%, var(--gm) 30%, var(--gb) 50%, var(--gm) 70%, var(--gb) 100%);
+  z-index: -1;
+}
+@keyframes menu-panel-in {
+  from { opacity: 0; transform: translateY(-46%) scale(0.92); }
+  to   { opacity: 1; transform: translateY(-50%) scale(1); }
+}
+
+.menu-close {
+  position: absolute; top: 12px; right: 12px;
+  width: 30px; height: 30px;
+  background: transparent;
+  border: 1px solid rgba(245,198,52,0.3);
+  color: var(--gb); font-size: 14px;
+  border-radius: 8px; cursor: pointer;
+  display: grid; place-items: center;
+}
+.menu-close:hover {
+  border-color: var(--gb);
+  background: rgba(245,198,52,0.1);
+}
+
+.menu-current-chip {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 16px 6px 6px;
+  background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
+  border: 1.5px solid var(--gb);
+  border-radius: 999px;
+  width: fit-content; margin: 0 auto 18px;
+  box-shadow:
+    inset 0 1.5px 0 rgba(255,255,255,0.25),
+    inset 0 -1.5px 0 rgba(0,0,0,0.25),
+    0 2px 0 rgba(0,0,0,0.4),
+    0 4px 10px rgba(0,0,0,0.35);
+}
+.menu-current-swatch {
+  width: 32px; height: 32px; border-radius: 50%;
+  background: linear-gradient(135deg, #da5ad6, #651564);
+  display: grid; place-items: center;
+  color: #fff; font-family: "Titan One", sans-serif; font-size: 14px;
+  box-shadow:
+    inset 0 0 0 1.5px var(--gi),
+    inset 0 0 0 4px var(--g),
+    inset 0 2px 0 2px var(--gb);
+}
+.menu-current-meta { display: flex; flex-direction: column; }
+.menu-current-name {
+  font-family: "Titan One", sans-serif; font-size: 13px;
+  color: var(--gb); letter-spacing: 0.06em;
+  text-shadow: 0 1px 0 var(--gs), 0 0 6px rgba(0,0,0,0.4);
+}
+.menu-current-game {
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic; font-weight: 600;
+  font-size: 11px; letter-spacing: 0.12em;
+  color: #e8e4d8;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  margin-top: 1px;
+}
+
+.menu-join-card {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 14px 16px;
+  margin-bottom: 18px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
+  border: 2px solid var(--gb);
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.25),
+    inset 0 -2px 0 rgba(0,0,0,0.25),
+    0 3px 0 rgba(0,0,0,0.45),
+    0 5px 12px rgba(0,0,0,0.4);
+}
+.menu-join-label {
+  font-family: "Titan One", sans-serif; font-size: 13px;
+  letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--gb);
+  text-align: center;
+  margin-bottom: 12px;
+  text-shadow: 0 1px 0 var(--gs), 0 0 8px rgba(0,0,0,0.4);
+}
+.menu-qr-frame {
+  width: 160px; aspect-ratio: 1;
+  border-radius: 14px;
+  padding: 8px;
+  background: linear-gradient(135deg, var(--gb) 0%, var(--gm) 30%, var(--gb) 50%, var(--gm) 70%, var(--gb) 100%);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.5), inset 0 2px 4px rgba(255,255,255,0.3);
+}
+.menu-qr-inner {
+  width: 100%; height: 100%;
+  background: #fff;
+  border-radius: 6px;
+  display: grid; place-items: center;
+  font-family: "Titan One", sans-serif;
+  font-size: 24px; color: #000;
+  letter-spacing: 0.1em;
+}
+.menu-join-hint {
+  text-align: center;
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic; font-weight: 600;
+  font-size: 13px;
+  color: #fff4e0;
+  margin-top: 10px;
+  letter-spacing: 0.06em;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+}
+
+.menu-actions {
+  display: flex; flex-direction: column; gap: 8px;
+}
+.menu-action {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
+  border: 2px solid var(--gb);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  font-family: "Fraunces", Georgia, serif;
+  transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.25),
+    inset 0 -2px 0 rgba(0,0,0,0.25),
+    0 3px 0 rgba(0,0,0,0.45),
+    0 5px 12px rgba(0,0,0,0.4);
+}
+.menu-action:hover {
+  background: linear-gradient(180deg, #4286f0 0%, #2a62cd 55%, #1b46a0 100%);
+  transform: translateX(2px);
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.3),
+    inset 0 -2px 0 rgba(0,0,0,0.25),
+    0 3px 0 rgba(0,0,0,0.45),
+    0 0 20px rgba(245,198,52,0.35),
+    0 5px 14px rgba(0,0,0,0.4);
+}
+.menu-action-icon {
+  width: 38px; height: 38px;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  flex-shrink: 0;
+  font-size: 17px; font-weight: bold;
+  background: radial-gradient(circle at 30% 25%, var(--gb) 0%, var(--g) 40%, var(--gm) 80%);
+  border: 1.5px solid var(--gi);
+  color: var(--ink);
+  box-shadow:
+    inset 0 1px 2px rgba(255,255,255,0.4),
+    inset 0 -1px 2px rgba(0,0,0,0.3),
+    0 2px 4px rgba(0,0,0,0.4);
+  text-shadow: 0 1px 0 rgba(255,255,255,0.3);
+}
+.menu-action-title {
+  font-family: "Titan One", sans-serif; font-size: 13px;
+  letter-spacing: 0.08em;
+  color: var(--gb);
+  text-shadow: 0 1px 0 var(--gs), 0 0 6px rgba(0,0,0,0.5);
+}
+.menu-action-desc {
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic; font-weight: 600;
+  font-size: 11px;
+  color: #e8e4d8;
+  margin-top: 2px;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+}
+
+/* Hold-to-confirm shared base — applies to .menu-action--hold and danger
+   variant. Fill sweeps L→R during the hold; .fired flashes the button. */
+.menu-action--hold {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  touch-action: manipulation;
+  -webkit-user-select: none; user-select: none;
+}
+.menu-action--hold > *:not(.hold-fill) { position: relative; z-index: 2; }
+.menu-action--hold .hold-fill {
+  position: absolute; inset: 0;
+  background: linear-gradient(90deg, rgba(255,220,140,0.9), #fffaf0);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 0.2s ease-out;
+  z-index: 1;
+  pointer-events: none;
+  mix-blend-mode: screen;
+}
+.menu-action--hold.holding .hold-fill {
+  transform: scaleX(1);
+  transition: transform var(--dur-hold-confirm, 1200ms) linear;
+}
+.menu-action--hold.fired {
+  animation: menu-action-fire 0.42s ease-out;
+}
+.menu-action--hold.fired .hold-fill {
+  transform: scaleX(1);
+  background: #fff;
+}
+@keyframes menu-action-fire {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(1.02); box-shadow: 0 0 44px rgba(255,230,120,0.7), 0 0 22px rgba(245,198,52,0.45); }
+  100% { transform: scale(1); }
+}
+
+/* Danger variant — red palette + red fire glow. */
+.menu-action--danger {
+  background: linear-gradient(180deg, #c23a3a 0%, #9a2424 55%, #6e1414 100%);
+  border-color: #ffc0c0;
+}
+.menu-action--danger:hover {
+  background: linear-gradient(180deg, #dc4d4d 0%, #b02e2e 55%, #821818 100%);
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.3),
+    inset 0 -2px 0 rgba(0,0,0,0.25),
+    0 3px 0 rgba(0,0,0,0.45),
+    0 0 20px rgba(227,76,76,0.45),
+    0 5px 14px rgba(0,0,0,0.4);
+}
+.menu-action--danger .menu-action-icon {
+  background: radial-gradient(circle at 30% 25%, #ffb0b0 0%, #e34c4c 40%, #7a1818 80%);
+  border-color: #3a0808;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+}
+.menu-action--danger .menu-action-title {
+  color: #ffd0d0;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.7), 0 0 8px rgba(0,0,0,0.4);
+}
+.menu-action--danger .menu-action-desc { color: #ffd6d6; }
+.menu-action--danger.menu-action--hold .hold-fill {
+  background: linear-gradient(90deg, rgba(255,200,200,0.95), #fff);
+}
+.menu-action--danger.menu-action--hold.fired {
+  animation: menu-action-fire-danger 0.42s ease-out;
+}
+@keyframes menu-action-fire-danger {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(1.02); box-shadow: 0 0 44px rgba(255,255,255,0.85), 0 0 22px rgba(227,76,76,0.6); }
+  100% { transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu-overlay-panel,
+  .menu-scrim {
+    animation: none !important;
+  }
+  .menu-action--hold.fired,
+  .menu-action--danger.menu-action--hold.fired {
+    animation: none !important;
+  }
+}

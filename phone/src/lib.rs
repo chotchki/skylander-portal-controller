@@ -53,6 +53,7 @@ pub fn App() -> impl IntoView {
     let unlocked_profile = RwSignal::new(None::<UnlockedProfile>);
     let takeover = RwSignal::new(None::<TakeoverReason>);
     let resume_offer = RwSignal::new(None::<ResumeOffer>);
+    let menu_open = RwSignal::new(false);
     // Bumps on every profile CRUD so the ProfilePicker re-fetches.
     let profiles_epoch = RwSignal::new(0u32);
 
@@ -78,7 +79,7 @@ pub fn App() -> impl IntoView {
 
     view! {
         <div class="app">
-            <Header conn current_game toasts unlocked_profile />
+            <Header conn current_game unlocked_profile menu_open />
             <Show
                 when=move || takeover.get().is_none()
                 fallback=move || view! { <TakeoverScreen takeover /> }
@@ -119,6 +120,12 @@ pub fn App() -> impl IntoView {
             <Show when=move || resume_offer.get().is_some() fallback=|| ()>
                 <ResumeModal resume_offer toasts />
             </Show>
+            <MenuOverlay
+                open=menu_open
+                unlocked_profile
+                current_game
+                toasts
+            />
             <ToastStack toasts />
         </div>
     }
