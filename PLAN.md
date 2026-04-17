@@ -316,7 +316,7 @@ Home: `crates/rpcs3-control/tests/live_lifecycle.rs`. All `#[ignore]`-gated. Dri
 - [ ] 3.7.2 `lifecycle_launch_load_clear_quit` — update to launch without EBOOT arg (library view), UIA-boot the game by serial via the recipe proven in `examples/boot_game.rs` (`SelectionItemPattern.select()` + `set_focus()` + Enter), then run the full load→clear flow. Re-run from a direct-desktop session.
 - [ ] 3.7.3 `offscreen_hide_really_hides` — re-run from direct-desktop session.
 - [ ] 3.7.4 `file_dialog_hidden_while_manager_hidden` — re-run from direct-desktop session.
-- [ ] 3.7.5 Replace the existing EBOOT-based launch contract in tests with launch-then-UIA-boot. Shutdown via `File → Exit` menu nav (mirror the Manage menu approach) to get clean exits and let RPCS3 release its lockfile normally.
+- [x] 3.7.5 Replace the existing EBOOT-based launch contract in tests with launch-then-UIA-boot. Shutdown via `File → Exit` menu nav (mirror the Manage menu approach) to get clean exits and let RPCS3 release its lockfile normally. **Summary:** Added `RpcsProcess::launch_library` (no EBOOT arg), extracted `wait_for_exit_or_force` out of `shutdown_graceful`, and added `UiaPortalDriver::boot_game_by_serial` + `UiaPortalDriver::quit_via_file_menu` (mirrors `trigger_dialog_via_menu`'s RAII guard + `expect_focused_menu_item` verification pattern; walks File submenu by name until it finds "Exit"). Tests switched env `RPCS3_TEST_EBOOT` → `RPCS3_TEST_SERIAL`. Server's own EBOOT-direct launch path left untouched (known-broken per CLAUDE.md; separate refactor).
 
 **Review checkpoint:** 3.1 – 3.6 are green; 3.6b and 3.7 run on the HTPC at Chris's pace and don't block the rest of Phase 3 fanning out.
 

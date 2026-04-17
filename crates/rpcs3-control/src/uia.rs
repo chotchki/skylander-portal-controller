@@ -404,6 +404,187 @@ impl UiaPortalDriver {
         info!(x, y, "dialog moved");
         Ok(())
     }
+
+    /// Boot a game from RPCS3's library view by its serial (e.g. `BLUS30968`).
+    ///
+    /// Prereq: RPCS3 was launched via `RpcsProcess::launch_library` so the
+    /// library grid is visible. Uses the recipe proven in
+    /// `examples/boot_game.rs`: find the `DataItem` whose name equals
+    /// `serial` under the main window, call `SelectionItemPattern::select()`,
+    /// set keyboard focus on the cell, then send `Enter`. UIA `Invoke` alone
+    /// does *not* boot the game — the selection + focus + keystroke combo is
+    /// required.
+    ///
+    /// Succeeds when a viewport window (`Qt6110QWindowIcon` class, title
+    /// prefix `"FPS:"`) appears within `timeout`.
+    pub fn boot_game_by_serial(&self, serial: &str, timeout: Duration) -> Result<()> {
+        use uiautomation::patterns::UISelectionItemPattern;
+
+        let walker = self.walker()?;
+        let main = self.main_window(&walker)?;
+        let main_hwnd: isize = main
+            .get_native_window_handle()
+            .context("main HWND")?
+            .into();
+        let main_hwnd = HWND(main_hwnd as _);
+
+        let cell = find_descendant(&walker, &main, |el| {
+            el.get_control_type()
+                .map(|c| c == ControlType::DataItem)
+                .unwrap_or(false)
+                && el.get_name().map(|n| n == serial).unwrap_or(false)
+        })
+        .ok_or_else(|| anyhow!("no DataItem named {serial} in RPCS3 library"))?;
+        debug!(serial, "found library cell");
+
+        // Bring main forward so focus/keystroke calls target it.
+        let _ = focus_main_window(main_hwnd);
+        sleep(MENU_STEP_PAUSE);
+
+        let sel = cell
+            .get_pattern::<UISelectionItemPattern>()
+            .context("SelectionItemPattern on library cell")?;
+        sel.select().context("select library cell")?;
+        cell.set_focus().context("focus library cell")?;
+        sleep(MENU_STEP_PAUSE);
+        send_key(VK_RETURN).context("send Enter to boot")?;
+
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if find_viewport_hwnd().is_some() {
+                info!(serial, "game viewport detected — boot succeeded");
+                return Ok(());
+            }
+            sleep(POLL_INTERVAL);
+        }
+        bail!("game viewport didn't appear within {timeout:?} after boot attempt");
+    }
+
+    /// Quit RPCS3 via the File → Exit menu path. Mirrors the Manage-menu
+    /// approach in `trigger_dialog_via_menu`: minimises the game viewport so
+    /// it can't steal focus, moves the main window off-screen so the Alt
+    /// highlight isn't visible, then drives the menu via synthesised
+    /// keystrokes verifying `has_keyboard_focus` at each step.
+    ///
+    /// Does NOT wait for the process to exit — pair with
+    /// `RpcsProcess::wait_for_exit_or_force` for that.
+    pub fn quit_via_file_menu(&self) -> Result<()> {
+        let walker = self.walker()?;
+        let main = self.main_window(&walker)?;
+        let main_hwnd: isize = main
+            .get_native_window_handle()
+            .context("main HWND")?
+            .into();
+        let main_hwnd = HWND(main_hwnd as _);
+        let viewport_hwnd = find_viewport_hwnd();
+        let mut saved_main_rect = RECT::default();
+        unsafe {
+            let _ = GetWindowRect(main_hwnd, &mut saved_main_rect);
+        }
+
+        if let Some(vp) = viewport_hwnd {
+            unsafe {
+                let _ = ShowWindow(vp, SW_MINIMIZE);
+            }
+            sleep(MENU_STEP_PAUSE);
+        }
+        unsafe {
+            let _ = SetWindowPos(
+                main_hwnd,
+                None,
+                OFFSCREEN_POS.0,
+                OFFSCREEN_POS.1,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER,
+            );
+        }
+        sleep(MENU_STEP_PAUSE);
+
+        struct RestoreGuard {
+            main_hwnd: HWND,
+            rect: RECT,
+            viewport: Option<HWND>,
+        }
+        impl Drop for RestoreGuard {
+            fn drop(&mut self) {
+                unsafe {
+                    let _ = SetWindowPos(
+                        self.main_hwnd,
+                        None,
+                        self.rect.left,
+                        self.rect.top,
+                        0,
+                        0,
+                        SWP_NOSIZE | SWP_NOZORDER,
+                    );
+                    if let Some(vp) = self.viewport {
+                        let _ = ShowWindow(vp, SW_RESTORE);
+                    }
+                }
+            }
+        }
+        let _guard = RestoreGuard {
+            main_hwnd,
+            rect: saved_main_rect,
+            viewport: viewport_hwnd,
+        };
+
+        focus_main_window(main_hwnd).context("focus main window")?;
+        sleep(MENU_STEP_PAUSE);
+
+        // Alt tap: File is the leftmost menu, so it takes focus immediately.
+        send_key(VK_MENU)?;
+        sleep(MENU_STEP_PAUSE);
+        expect_focused_menu_item(&walker, &main, "File", "Alt tap")?;
+
+        // Down opens the File submenu and focuses its first item. We don't
+        // know that item's name ahead of time (varies by RPCS3 build), so
+        // just step Down until a menu item whose name normalises to "exit"
+        // is focused, capped at MAX_STEPS to avoid running forever if the
+        // menu ever changes.
+        const MAX_STEPS: u32 = 20;
+        focus_main_window(main_hwnd).ok();
+        send_key(VK_DOWN)?;
+        sleep(MENU_STEP_PAUSE);
+
+        let mut steps = 0;
+        loop {
+            let focused_name = current_focused_menu_name(&walker, &main);
+            let on_exit = focused_name
+                .as_deref()
+                .map(|n| normalise_menu_name(n).eq_ignore_ascii_case("exit"))
+                .unwrap_or(false);
+            if on_exit {
+                debug!(steps, "File → Exit focused");
+                break;
+            }
+            if steps >= MAX_STEPS {
+                // Dismiss so we don't leave RPCS3 in menu mode.
+                let _ = send_key(VK_ESCAPE);
+                let _ = send_key(VK_ESCAPE);
+                bail!(
+                    "walked {MAX_STEPS} File-menu items without finding 'Exit' \
+                     (last focused: {:?})",
+                    focused_name
+                );
+            }
+            focus_main_window(main_hwnd).ok();
+            send_key(VK_DOWN)?;
+            sleep(MENU_STEP_PAUSE);
+            steps += 1;
+        }
+
+        send_key(VK_RETURN)?;
+        info!("sent Enter on File → Exit");
+
+        // RPCS3 sometimes pops a "confirm quit" dialog when a game is
+        // running. A second Enter after a brief settle lands on the default
+        // (Yes) button. If there's no dialog it's harmlessly ignored.
+        sleep(MENU_STEP_PAUSE);
+        let _ = send_key(VK_RETURN);
+        Ok(())
+    }
 }
 
 impl crate::PortalDriver for UiaPortalDriver {
@@ -1011,4 +1192,31 @@ fn expect_focused_menu_item(
         }
     }
     bail!("at step {step:?}: expected {expected:?} focused, no menu item has focus")
+}
+
+/// Find the currently-focused menu item (if any) under main or desktop-root
+/// and return its raw UIA name. Used by `quit_via_file_menu` to walk the File
+/// submenu by name without knowing its layout ahead of time.
+fn current_focused_menu_name(walker: &UITreeWalker, main: &UIElement) -> Option<String> {
+    let automation = UIAutomation::new().ok()?;
+    let root = automation.get_root_element().ok()?;
+    for search_root in [main, &root] {
+        if let Some(hit) = find_descendant(walker, search_root, |el| {
+            el.get_control_type()
+                .map(|c| c == ControlType::MenuItem)
+                .unwrap_or(false)
+                && el.has_keyboard_focus().unwrap_or(false)
+        }) {
+            return hit.get_name().ok();
+        }
+    }
+    None
+}
+
+/// Strip Qt-style accelerator markers (`&`) and trim tab-separated shortcut
+/// hints (e.g. "Exit\tCtrl+Q") so menu items can be matched by their human
+/// name regardless of accelerator/shortcut decoration.
+fn normalise_menu_name(raw: &str) -> String {
+    let without_shortcut = raw.split('\t').next().unwrap_or(raw);
+    without_shortcut.replace('&', "").trim().to_string()
 }

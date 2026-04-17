@@ -1,11 +1,11 @@
-//! Heavier live e2e: launch → drive → quit against real RPCS3.
+//! Heavier live e2e: launch → boot-by-serial → drive → quit via File→Exit.
 //!
 //! Unlike `tests/live.rs` (assumes RPCS3 + manager already open) and
 //! `tests/process.rs` (just launches and shuts down), these combine the full
 //! path. All tests are `#[ignore]` — they require:
 //!
 //!   RPCS3_EXE=C:/emuluators/rpcs3/rpcs3.exe
-//!   RPCS3_TEST_EBOOT="C:/.../Skylanders Giants/PS3_GAME/USRDIR/EBOOT.BIN"
+//!   RPCS3_TEST_SERIAL=BLUS30968      # game serial in the RPCS3 library
 //!   RPCS3_SKY_TEST_PATH=C:/.../Eruptor.sky
 //!
 //! Run:
@@ -13,6 +13,10 @@
 //!
 //! The .sky path should point at a figure supported by the test game — Eruptor
 //! works for SSA/Giants.
+//!
+//! Session isolation: UIA + SendInput are session-bound. Run from the user's
+//! interactive desktop (not SSH/RDP from another machine) or these tests
+//! cannot see the RPCS3 window at all.
 
 #![cfg(windows)]
 
@@ -38,20 +42,26 @@ fn env_path(key: &str) -> Option<PathBuf> {
     std::env::var(key).ok().map(PathBuf::from)
 }
 
-fn require_env() -> Option<(PathBuf, PathBuf, PathBuf)> {
+fn env_string(key: &str) -> Option<String> {
+    std::env::var(key).ok()
+}
+
+/// (exe, serial, sky). Serial is the library-grid cell name (e.g.
+/// `"BLUS30968"`), not a path.
+fn require_env() -> Option<(PathBuf, String, PathBuf)> {
     let exe = env_path("RPCS3_EXE")?;
-    let eboot = env_path("RPCS3_TEST_EBOOT")?;
+    let serial = env_string("RPCS3_TEST_SERIAL")?;
     let sky = env_path("RPCS3_SKY_TEST_PATH")?;
-    Some((exe, eboot, sky))
+    Some((exe, serial, sky))
 }
 
 // ---------- shared setup helper ----------
 
-/// Launch RPCS3 + boot eboot + open the Skylanders Manager dialog.
-/// Returns both the process handle (owned — must be shut down by the caller)
-/// and the driver.
+/// Launch RPCS3 in library view, UIA-boot the test game by serial, then open
+/// the Skylanders Manager dialog. Returns the owned process handle (caller
+/// must run it through `teardown`) and the driver.
 fn boot_and_open() -> (RpcsProcess, UiaPortalDriver) {
-    let (exe, eboot, _sky) = require_env().expect("env vars set (pre-checked)");
+    let (exe, serial, _sky) = require_env().expect("env vars set (pre-checked)");
 
     // If a previous test's teardown hit the Forced path and the cleanup
     // didn't settle before this one starts, the lockfile blocks launch with
@@ -60,22 +70,37 @@ fn boot_and_open() -> (RpcsProcess, UiaPortalDriver) {
         let _ = std::fs::remove_file(dir.join("RPCS3.buf"));
     }
 
-    let mut proc = RpcsProcess::launch(&exe, &eboot).expect("launch RPCS3");
+    let mut proc = RpcsProcess::launch_library(&exe).expect("launch RPCS3 library view");
     proc.wait_ready(Duration::from_secs(45))
         .expect("RPCS3 window ready within 45s");
 
-    // No fixed settle sleep — `open_dialog` has its own retry loop that
-    // absorbs post-launch readiness latency (shader compile, update-check
-    // popup stealing focus, etc.).
     let driver = UiaPortalDriver::new().expect("construct driver");
+
+    // Boot the game by serial — RPCS3 menu bar only responds to synthesised
+    // keystrokes when launched into the library view (not with EBOOT arg).
+    driver
+        .boot_game_by_serial(&serial, Duration::from_secs(60))
+        .expect("UIA-boot game by serial");
+
+    // open_dialog has its own retry loop that absorbs post-boot readiness
+    // latency (shader compile, update-check popup stealing focus, etc.).
     driver.open_dialog().expect("open Skylanders Manager dialog");
     (proc, driver)
 }
 
-fn teardown(mut proc: RpcsProcess) {
-    let path = proc
-        .shutdown_graceful(Duration::from_secs(30))
-        .expect("shutdown_graceful");
+/// Prefer a clean File→Exit shutdown so RPCS3 releases its lockfile normally.
+/// On nav failure, fall back to the forced path so tests don't leak RPCS3.
+fn teardown(mut proc: RpcsProcess, driver: UiaPortalDriver) {
+    let path = match driver.quit_via_file_menu() {
+        Ok(()) => proc
+            .wait_for_exit_or_force(Duration::from_secs(30))
+            .expect("wait_for_exit_or_force"),
+        Err(e) => {
+            eprintln!("quit_via_file_menu failed ({e}); falling back to shutdown_graceful");
+            proc.shutdown_graceful(Duration::from_secs(30))
+                .expect("shutdown_graceful")
+        }
+    };
     assert!(
         matches!(
             path,
@@ -89,9 +114,9 @@ fn teardown(mut proc: RpcsProcess) {
 // ---------- 3.7.2 ----------
 
 #[test]
-#[ignore = "requires RPCS3_EXE, RPCS3_TEST_EBOOT, RPCS3_SKY_TEST_PATH"]
+#[ignore = "requires RPCS3_EXE, RPCS3_TEST_SERIAL, RPCS3_SKY_TEST_PATH"]
 fn lifecycle_launch_load_clear_quit() {
-    let (_exe, _eboot, sky) = match require_env() {
+    let (_exe, _serial, sky) = match require_env() {
         Some(t) => t,
         None => return,
     };
@@ -118,7 +143,7 @@ fn lifecycle_launch_load_clear_quit() {
         assert!(matches!(driver.read_slots().unwrap()[0], SlotState::Empty));
     }));
 
-    teardown(proc);
+    teardown(proc, driver);
     if let Err(panic) = result {
         std::panic::resume_unwind(panic);
     }
@@ -127,7 +152,7 @@ fn lifecycle_launch_load_clear_quit() {
 // ---------- 3.7.3 ----------
 
 #[test]
-#[ignore = "requires RPCS3_EXE, RPCS3_TEST_EBOOT, RPCS3_SKY_TEST_PATH"]
+#[ignore = "requires RPCS3_EXE, RPCS3_TEST_SERIAL, RPCS3_SKY_TEST_PATH"]
 fn offscreen_hide_really_hides() {
     if require_env().is_none() {
         return;
@@ -172,7 +197,7 @@ fn offscreen_hide_really_hides() {
         );
     }));
 
-    teardown(proc);
+    teardown(proc, driver);
     if let Err(panic) = result {
         std::panic::resume_unwind(panic);
     }
@@ -181,9 +206,9 @@ fn offscreen_hide_really_hides() {
 // ---------- 3.7.4 ----------
 
 #[test]
-#[ignore = "requires RPCS3_EXE, RPCS3_TEST_EBOOT, RPCS3_SKY_TEST_PATH"]
+#[ignore = "requires RPCS3_EXE, RPCS3_TEST_SERIAL, RPCS3_SKY_TEST_PATH"]
 fn file_dialog_hidden_while_manager_hidden() {
-    let (_exe, _eboot, sky) = match require_env() {
+    let (_exe, _serial, sky) = match require_env() {
         Some(t) => t,
         None => return,
     };
@@ -247,7 +272,7 @@ fn file_dialog_hidden_while_manager_hidden() {
             .expect("restore_dialog_visible");
     }));
 
-    teardown(proc);
+    teardown(proc, driver);
     if let Err(panic) = result {
         std::panic::resume_unwind(panic);
     }

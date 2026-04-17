@@ -84,9 +84,30 @@ enum ProcessOwnership {
 }
 
 impl RpcsProcess {
-    /// Launch a fresh RPCS3 instance with the given game's EBOOT.BIN. Does
-    /// NOT pass `--no-gui` — we need the Manage menu to drive the portal
-    /// dialog.
+    /// Launch RPCS3 into its **library view** (no EBOOT argument). This is the
+    /// path used by UIA-driven control: the main window's menu bar responds to
+    /// synthesised keystrokes, and a game is booted afterwards via
+    /// `UiaPortalDriver::boot_game_by_serial`.
+    ///
+    /// Prefer this over `launch(exe, eboot)` whenever anything needs to drive
+    /// the menu bar — the EBOOT-argument path puts RPCS3 into direct-boot
+    /// state where Alt + arrow keystrokes are swallowed.
+    pub fn launch_library(exe: &Path) -> Result<Self> {
+        if !exe.is_file() {
+            bail!("rpcs3.exe not found at {}", exe.display());
+        }
+        info!(exe = %exe.display(), "launching RPCS3 (library view)");
+
+        let child = Command::new(exe)
+            .spawn()
+            .with_context(|| format!("spawn {}", exe.display()))?;
+        Self::wrap_spawned(child, exe)
+    }
+
+    /// Launch RPCS3 directly into a game by passing its `EBOOT.BIN`. **Legacy
+    /// path** — kept for the server handler but not menu-drivable. Prefer
+    /// `launch_library` + UIA boot-by-serial for anything that needs the
+    /// Manage menu.
     pub fn launch(exe: &Path, eboot: &Path) -> Result<Self> {
         if !exe.is_file() {
             bail!("rpcs3.exe not found at {}", exe.display());
@@ -94,17 +115,17 @@ impl RpcsProcess {
         if !eboot.is_file() {
             bail!("EBOOT.BIN not found at {}", eboot.display());
         }
-        info!(exe = %exe.display(), eboot = %eboot.display(), "launching RPCS3");
+        info!(exe = %exe.display(), eboot = %eboot.display(), "launching RPCS3 (EBOOT-direct)");
 
         let child = Command::new(exe)
             .arg(eboot)
             .spawn()
             .with_context(|| format!("spawn {}", exe.display()))?;
-        let pid = child.id();
+        Self::wrap_spawned(child, exe)
+    }
 
-        // Wrap the child in a Job Object so any grandchildren RPCS3 spawns
-        // (elevation shims, audio/video workers, etc.) get killed together
-        // when we drop the job handle.
+    fn wrap_spawned(child: Child, exe: &Path) -> Result<Self> {
+        let pid = child.id();
         let job = match create_kill_on_close_job_for_pid(pid) {
             Ok(h) => Some(h),
             Err(e) => {
@@ -115,7 +136,6 @@ impl RpcsProcess {
                 None
             }
         };
-
         Ok(Self {
             inner: ProcessOwnership::Spawned(child),
             pid,
@@ -193,6 +213,23 @@ impl RpcsProcess {
             warn!("no RPCS3 main window found; skipping WM_CLOSE and waiting anyway");
         }
 
+        self.wait_for_exit_or_force(timeout)
+    }
+
+    /// Wait up to `timeout` for the process to exit; if it's still alive at
+    /// the deadline, force-kill via the job object / `TerminateProcess` path
+    /// and clean up the orphaned `RPCS3.buf` lockfile.
+    ///
+    /// The caller is responsible for having first asked RPCS3 to quit —
+    /// `shutdown_graceful` does this with a `WM_CLOSE` to the main window,
+    /// and the test harness uses `UiaPortalDriver::quit_via_file_menu` to go
+    /// through Qt's menu-driven shutdown path (which releases the lockfile
+    /// cleanly and avoids the "Another instance is running" warning on the
+    /// next launch).
+    pub fn wait_for_exit_or_force(&mut self, timeout: Duration) -> Result<ShutdownPath> {
+        if !self.is_alive() {
+            return Ok(ShutdownPath::AlreadyExited);
+        }
         if wait_for_exit(self, timeout) {
             info!("RPCS3 exited gracefully");
             return Ok(ShutdownPath::Graceful);

@@ -1,10 +1,12 @@
-//! Live integration tests for `RpcsProcess`. Require a real RPCS3 install and
-//! a valid EBOOT.BIN; they are `#[ignore]` by default.
+//! Live integration tests for `RpcsProcess`. Require a real RPCS3 install;
+//! they are `#[ignore]` by default.
 //!
 //! Usage:
 //!   RPCS3_EXE=C:/emuluators/rpcs3/rpcs3.exe \
-//!   RPCS3_TEST_EBOOT="C:/games/ps3/Skylanders Giants/PS3_GAME/USRDIR/EBOOT.BIN" \
 //!     cargo test -p skylander-rpcs3-control --test process -- --ignored --nocapture
+//!
+//! These exercise process lifecycle only (launch + wait_ready + shutdown) —
+//! no UIA menu driving — so launching into library view is sufficient.
 
 #![cfg(windows)]
 
@@ -18,18 +20,14 @@ fn env_path(key: &str) -> Option<PathBuf> {
 }
 
 #[test]
-#[ignore = "requires RPCS3_EXE and RPCS3_TEST_EBOOT env vars"]
+#[ignore = "requires RPCS3_EXE env var"]
 fn launch_wait_shutdown_graceful() {
     let exe = match env_path("RPCS3_EXE") {
         Some(p) => p,
         None => return,
     };
-    let eboot = match env_path("RPCS3_TEST_EBOOT") {
-        Some(p) => p,
-        None => return,
-    };
 
-    let mut proc = RpcsProcess::launch(&exe, &eboot).expect("launch");
+    let mut proc = RpcsProcess::launch_library(&exe).expect("launch_library");
     assert!(proc.pid() != 0);
     assert!(proc.is_alive());
 
