@@ -326,6 +326,31 @@ Minimum: 24px for anything readable. Nothing smaller.
 
 ---
 
+## 3.8 Phone-side crash handling
+
+When RPCS3 crashes, the **TV launcher** shows the crash recovery screen (§3.1). But the **phone** also needs to react — the portal is now dead, and any tap will fail silently.
+
+**Server event:** `Event::GameCrashed { message: String }` — broadcast to all connected phones when the server detects the RPCS3 process exit unexpectedly (distinguishable from a clean quit by exit code or process-gone-while-game-still-expected).
+
+**Phone behavior:**
+- Full-screen overlay (same priority level as `ConnectionLost` — replaces whatever the user is looking at)
+- NOT a toast — this is a session-breaking event, not a transient error
+- Heading: "GAME CRASHED" in gold display treatment
+- Body: "The emulator stopped unexpectedly. Hang tight — we're working on it." in primary warm-white
+- Two options depending on server state:
+  - If server is auto-restarting RPCS3: show a spinner + "Restarting..." (auto-dismiss when new `GameLaunched` event arrives)
+  - If server can't restart: "RETURN TO GAMES" gold button → navigates to GamePicker
+- Dismisses automatically when a new game launches (server sends `GameLaunched` event)
+
+**Modal priority:** slots between `ConnectionLost` (highest) and `KaosTakeover`:
+1. ConnectionLost
+2. GameCrashed (new)
+3. KaosTakeover
+4. KaosSwap
+5. ... (rest unchanged)
+
+---
+
 ## 4. Future screen landing spots
 
 Screens not yet implemented that need a place in the graph:
