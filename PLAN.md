@@ -535,7 +535,7 @@ Direction locked to Option A. Standalone HTML/CSS in `docs/aesthetic/mocks/`, vi
 ### 4.5 Starfield background + ambient motion
 
 - [x] 4.5.1 Layered starfield: multiple radial gradients + tiled SVG star-dot layer + slow parallax drift (~40s loop). Single shared background on `body`, so screen changes feel continuous.
-- [ ] 4.5.2 Optional "magic dust" — sparse floating-particle layer; evaluate CPU cost on the HTPC before committing.
+- [x] 4.5.2 Optional "magic dust" — sparse floating-particle layer; evaluate CPU cost on the HTPC before committing. **Summary:** Added `<MagicDust />` as first child of `.app` with 24 radial-gradient particles, each randomized via inline `--drift`/`--peak-opacity`/delay/duration CSS vars. `prefers-reduced-motion` hides the layer entirely.
 
 ### 4.6 Portal view reskin + state transitions
 
@@ -612,7 +612,7 @@ Implemented as a new screen reached by tapping a figure inside the toy box. Shel
 
 ### 4.14 Ambient polish
 
-- [ ] 4.14.1 Screen-to-screen transitions: consistent cross-fade + slight motion direction based on navigation depth (deeper = slide up, back = slide down).
+- [x] 4.14.1 Screen-to-screen transitions: consistent cross-fade + slight motion direction based on navigation depth (deeper = slide up, back = slide down). **Summary:** Added `NavDir` enum + `nav_dir` signal in `lib.rs`, two `Effect`s tracking `unlocked_profile`/`current_game` to set direction. Each `Show` branch wraps in `<div class={screen_cls("screen-X")}>` where `screen_cls` captures `nav_dir.get_untracked()` at branch-mount so animations don't re-trigger on direction changes mid-screen. CSS adds `.screen-fwd`/`.screen-back`/`.screen-takeover` 240ms slide+fade keyframes; `prefers-reduced-motion` neutralises.
 - [x] 4.14.2 Connection-status pip in the header gets a breathe animation while connecting (1.6s scale + halo), steady green glow when connected, soft red glow when disconnected. `prefers-reduced-motion` already neutralises the breathe via 4.1.5's blanket rule.
 
 ### 4.15 egui TV launcher — design cycle + implementation

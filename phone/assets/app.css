@@ -3785,3 +3785,78 @@ body.skin-kaos {
   }
   .reset-flake { display: none; }
 }
+
+/* ================================================================
+   PLAN 4.14.1 — Screen-to-screen transitions.
+   `.screen-fwd` plays on entrance when going deeper (rises into view);
+   `.screen-back` plays when coming back (settles down into view). Both
+   share a 240ms crossfade. Direction is captured at branch-mount in
+   App's `screen_cls()` helper, so the class doesn't reactively swap.
+   ================================================================ */
+
+.screen {
+  position: relative;
+  will-change: transform, opacity;
+}
+.screen-fwd {
+  animation: screen-enter-fwd 240ms cubic-bezier(.2,.8,.3,1) both;
+}
+.screen-back {
+  animation: screen-enter-back 240ms cubic-bezier(.2,.8,.3,1) both;
+}
+@keyframes screen-enter-fwd {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes screen-enter-back {
+  from { opacity: 0; transform: translateY(-14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.screen-takeover {
+  animation: screen-enter-takeover 320ms ease-out both;
+}
+@keyframes screen-enter-takeover {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ================================================================
+   PLAN 4.5.2 — Sparse "magic dust" ambient particle layer.
+   24 particles; each carries inline CSS vars (--drift, --peak-opacity)
+   plus its own animation declaration with randomised duration + negative
+   delay so the loop is mid-cycle at mount (no synchronised burst). Sits
+   behind everything (z-index 0); content layers must establish their own
+   stacking context or float above z-index 0.
+   ================================================================ */
+
+.magic-dust {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 0;
+}
+.dust-particle {
+  position: absolute;
+  bottom: -6px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff4d0 0%, var(--gb, #ffe58a) 55%, transparent 80%);
+  box-shadow: 0 0 6px rgba(255, 230, 140, 0.55);
+  opacity: 0;
+  will-change: transform, opacity;
+}
+@keyframes dust-float {
+  0%   { transform: translate3d(0, 0, 0); opacity: 0; }
+  10%  { opacity: var(--peak-opacity, 0.45); }
+  90%  { opacity: var(--peak-opacity, 0.45); }
+  100% { transform: translate3d(var(--drift, 0px), -110vh, 0); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen-fwd,
+  .screen-back,
+  .screen-takeover {
+    animation: none !important;
+  }
+  .magic-dust { display: none; }
+}

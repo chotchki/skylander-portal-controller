@@ -45,6 +45,24 @@ pub(crate) struct ResetTarget {
     pub display_name: String,
 }
 
+/// Direction of the most recent screen-stack transition. Drives the
+/// per-screen entrance animation (slide-up for going deeper, slide-down
+/// for coming back). Set by effects that watch `unlocked_profile` and
+/// `current_game` for None↔Some flips. PLAN 4.14.1.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NavDir {
+    Forward,
+    Back,
+}
+impl NavDir {
+    fn class(self) -> &'static str {
+        match self {
+            NavDir::Forward => "screen-fwd",
+            NavDir::Back => "screen-back",
+        }
+    }
+}
+
 #[component]
 pub fn App() -> impl IntoView {
     // Read the HMAC key out of `#k=<hex>` before anything else hits the
@@ -66,6 +84,7 @@ pub fn App() -> impl IntoView {
     let resume_offer = RwSignal::new(None::<ResumeOffer>);
     let reset_target = RwSignal::new(None::<ResetTarget>);
     let menu_open = RwSignal::new(false);
+    let nav_dir = RwSignal::new(NavDir::Forward);
     // Bumps on every profile CRUD so the ProfilePicker re-fetches.
     let profiles_epoch = RwSignal::new(0u32);
 
@@ -89,43 +108,87 @@ pub fn App() -> impl IntoView {
         resume_offer,
     );
 
+    // Track depth-stack direction for screen entrance animations.
+    // unlocked_profile None→Some and current_game None→Some are "deeper";
+    // the reverse flips are "back". Effects use Cell to remember prior
+    // value so we can detect the direction of change without a separate
+    // signal. PLAN 4.14.1.
+    {
+        use std::cell::Cell;
+        let prev_unlocked = Cell::new(unlocked_profile.get_untracked().is_some());
+        Effect::new(move |_| {
+            let now = unlocked_profile.get().is_some();
+            if now != prev_unlocked.get() {
+                nav_dir.set(if now { NavDir::Forward } else { NavDir::Back });
+                prev_unlocked.set(now);
+            }
+        });
+        let prev_game = Cell::new(current_game.get_untracked().is_some());
+        Effect::new(move |_| {
+            let now = current_game.get().is_some();
+            if now != prev_game.get() {
+                nav_dir.set(if now { NavDir::Forward } else { NavDir::Back });
+                prev_game.set(now);
+            }
+        });
+    }
+
+    // Helper: capture nav_dir at the moment the wrapper mounts so the class
+    // (and its CSS animation) reflects the direction of the transition that
+    // brought this screen on-screen, not subsequent direction changes.
+    let screen_cls = move |extra: &str| {
+        let dir = nav_dir.get_untracked().class();
+        format!("screen {dir} {extra}")
+    };
+
     view! {
         <div class="app">
+            <MagicDust />
             <Header conn current_game unlocked_profile menu_open />
             <Show
                 when=move || takeover.get().is_none()
-                fallback=move || view! { <TakeoverScreen takeover /> }
+                fallback=move || view! {
+                    <div class={screen_cls("screen-takeover")}>
+                        <TakeoverScreen takeover />
+                    </div>
+                }
             >
             <Show
                 when=move || unlocked_profile.get().is_some()
                 fallback=move || view! {
-                    <ProfilePicker toasts profiles_epoch />
+                    <div class={screen_cls("screen-profile-picker")}>
+                        <ProfilePicker toasts profiles_epoch />
+                    </div>
                 }
             >
             <Show
                 when=move || current_game.get().is_some()
                 fallback=move || view! {
-                    <Suspense fallback=|| view! { <div class="empty-msg">"Loading games…"</div> }>
-                        {move || games.get().map(|gs| view! {
-                            <GamePicker games=gs.take() toasts />
-                        })}
-                    </Suspense>
+                    <div class={screen_cls("screen-game-picker")}>
+                        <Suspense fallback=|| view! { <div class="empty-msg">"Loading games…"</div> }>
+                            {move || games.get().map(|gs| view! {
+                                <GamePicker games=gs.take() toasts />
+                            })}
+                        </Suspense>
+                    </div>
                 }
             >
-                <Picking picking_for />
-                <Portal portal picking_for reset_target />
-                <Suspense fallback=|| view! { <div class="empty-msg">"Loading figures…"</div> }>
-                    {move || figures.get().map(|figs| view! {
-                        <Browser
-                            figures=figs.take()
-                            picking_for
-                            portal
-                            element_filter
-                            search
-                            toasts
-                        />
-                    })}
-                </Suspense>
+                <div class={screen_cls("screen-portal")}>
+                    <Picking picking_for />
+                    <Portal portal picking_for reset_target />
+                    <Suspense fallback=|| view! { <div class="empty-msg">"Loading figures…"</div> }>
+                        {move || figures.get().map(|figs| view! {
+                            <Browser
+                                figures=figs.take()
+                                picking_for
+                                portal
+                                element_filter
+                                search
+                                toasts
+                            />
+                        })}
+                    </Suspense>
+                </div>
             </Show>
             </Show>
             </Show>
@@ -140,6 +203,36 @@ pub fn App() -> impl IntoView {
                 toasts
             />
             <ToastStack toasts />
+        </div>
+    }
+}
+
+/// Sparse floating-particle ambient layer (PLAN 4.5.2). Pure-CSS animation
+/// per particle; positions and timings are randomised once at App mount so
+/// each load has a slightly different rhythm. 24 particles is sparse enough
+/// to feel ambient without competing with content.
+#[component]
+fn MagicDust() -> impl IntoView {
+    let particles: Vec<String> = (0..24)
+        .map(|_| {
+            let left = js_sys::Math::random() * 100.0;
+            let size = 1.5 + js_sys::Math::random() * 2.5;
+            let dur = 14.0 + js_sys::Math::random() * 16.0;
+            let delay = -(js_sys::Math::random() * dur);
+            let drift = js_sys::Math::random() * 40.0 - 20.0;
+            let opacity = 0.25 + js_sys::Math::random() * 0.45;
+            format!(
+                "left:{left:.2}%;width:{size:.2}px;height:{size:.2}px;\
+                 --drift:{drift:.1}px;--peak-opacity:{opacity:.2};\
+                 animation: dust-float {dur:.1}s {delay:.1}s linear infinite;"
+            )
+        })
+        .collect();
+    view! {
+        <div class="magic-dust" aria-hidden="true">
+            {particles.into_iter().map(|style| view! {
+                <span class="dust-particle" style=style></span>
+            }.into_any()).collect_view()}
         </div>
     }
 }
