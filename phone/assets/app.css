@@ -3011,3 +3011,53 @@ button { font: inherit; color: inherit; cursor: pointer; }
 
 /* Create profile panel */
 .create-profile-panel { margin-bottom: 12px; }
+
+/* ================================================================
+   4.1.4 — Kaos skin (5.4 takeover palette).
+   Body-class swap: <body class="skin-kaos"> repalettes every token.
+   Component CSS already references vars, so no component changes needed.
+   Purple/magenta void replaces starfield blues; magenta chrome
+   replaces gold bezels.
+   ================================================================ */
+
+body.skin-kaos {
+  /* Starfield → purple void */
+  --sf-1: #2a0a3e;
+  --sf-2: #150525;
+  --sf-3: #06010f;
+  /* Gold bezel → corrupted magenta chrome */
+  --gb: #ff8de2;
+  --g:  #d437a8;
+  --gm: #7b1a5c;
+  --gs: #2e0520;
+  --gi: #14020e;
+  /* Status vars unchanged — danger/success keep their semantics */
+}
+
+/* Body background has hardcoded highlight hexes; override for Kaos skin */
+body.skin-kaos {
+  background:
+    radial-gradient(ellipse 120% 60% at 50% 0%, #5a1a7e 0%, transparent 50%),
+    radial-gradient(ellipse 80% 50% at 50% 100%, #3a0855 0%, transparent 50%),
+    linear-gradient(180deg, var(--sf-1), var(--sf-2) 60%, var(--sf-3));
+}
+
+/* ================================================================
+   4.1.5 — prefers-reduced-motion: app-wide kill-switch for ambient
+   motion that this file's earlier sections didn't already cover.
+   Kills remaining infinite loops (idle float, status pulse, takeover
+   hex/sparks, loading blink). Short one-shot entrances (<400ms) are
+   preserved since they convey state changes without triggering
+   vestibular issues.
+   ================================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  .status-dot.connecting,
+  .bezel-float,
+  .game-card.launching .game-name,
+  .takeover-hexgrid,
+  .takeover-sparks,
+  .detail-loading .detail-meta::after {
+    animation: none !important;
+  }
+}
