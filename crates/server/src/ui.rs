@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::palette;
+use crate::{fonts, palette};
 
 pub struct LauncherApp {
     clients: Arc<AtomicUsize>,
@@ -21,10 +21,12 @@ impl LauncherApp {
         figure_count: usize,
         url: String,
     ) -> Self {
-        // Apply the shared TV-launcher palette. Must happen before any
-        // widgets render their first frame so `override_text_color` etc.
-        // take effect immediately (PLAN 4.15.1).
+        // Apply the shared TV-launcher palette + Titan One display face.
+        // Both must happen before any widgets render their first frame
+        // so colour overrides and named font families take effect
+        // immediately (PLAN 4.15.1 / 4.15.2).
         palette::apply(&cc.egui_ctx);
+        fonts::register(&cc.egui_ctx);
         let qr_texture = Some(render_qr_texture(&cc.egui_ctx, &url));
         Self {
             clients,
@@ -77,9 +79,10 @@ impl eframe::App for LauncherApp {
             ui.vertical_centered(|ui| {
                 ui.add_space(24.0);
                 ui.heading(
-                    egui::RichText::new("Skylander Portal")
-                        .size(64.0)
-                        .color(palette::TEXT),
+                    egui::RichText::new("SKYLANDER PORTAL")
+                        .size(80.0)
+                        .color(palette::GOLD)
+                        .family(egui::FontFamily::Name(fonts::TITAN_ONE.into())),
                 );
                 ui.add_space(16.0);
                 ui.label(
@@ -109,11 +112,7 @@ impl eframe::App for LauncherApp {
                 } else {
                     format!("{n} devices connected")
                 };
-                ui.label(
-                    egui::RichText::new(status)
-                        .size(40.0)
-                        .color(palette::TEXT),
-                );
+                ui.label(egui::RichText::new(status).size(40.0).color(palette::TEXT));
                 ui.add_space(8.0);
                 ui.label(
                     egui::RichText::new(format!("{} figures indexed", self.figure_count))
