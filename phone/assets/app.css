@@ -1551,6 +1551,28 @@ button { font: inherit; color: inherit; cursor: pointer; }
   z-index: 3;
 }
 
+/* 3.8.2 — Unrecognised-figure badge: amber circle, top-right. Shown when a
+   loaded slot's figure_id is None (RPCS3 reported a name we couldn't reverse-
+   match against the pack index). */
+.p4-slot-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  font-family: "Titan One", sans-serif;
+  font-size: 12px;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  z-index: 3;
+}
+.p4-slot-badge--unmatched {
+  color: #1b1300;
+  background: #f5b700;
+  box-shadow: 0 0 0 1.5px #7a5c00, 0 2px 4px rgba(0,0,0,0.5);
+}
+
 /* 4.6.1 — Empty slot: dimmed bezel with "+" glyph */
 .p4-plus-glyph {
   font-family: "Titan One", sans-serif;

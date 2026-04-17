@@ -130,12 +130,14 @@ fn main() -> Result<()> {
                     }
                 };
                 let sessions = Arc::new(crate::profiles::SessionRegistry::default());
+                let figures_for_driver: Arc<Vec<Figure>> = Arc::new(figures_for_task.clone());
                 let driver_tx = spawn_driver_worker(
                     driver,
                     portal_for_task.clone(),
                     events_for_task.clone(),
                     profile_store.clone(),
                     sessions.clone(),
+                    figures_for_driver,
                 );
                 let state = Arc::new(AppState {
                     figures: figures_for_task,

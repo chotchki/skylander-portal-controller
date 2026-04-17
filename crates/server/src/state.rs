@@ -68,6 +68,44 @@ impl AppState {
     }
 }
 
+/// Reverse-lookup a figure by its display name (case and surrounding-whitespace
+/// insensitive match against `canonical_name`). Used on `RefreshPortal` — and
+/// driver-failure re-reads — where the driver returns a raw RPCS3 name with no
+/// `figure_id` context. Returns `None` for the empty string.
+pub fn find_figure_by_display_name<'a>(figures: &'a [Figure], name: &str) -> Option<&'a Figure> {
+    let target = name.trim().to_lowercase();
+    if target.is_empty() {
+        return None;
+    }
+    figures
+        .iter()
+        .find(|f| f.canonical_name.trim().to_lowercase() == target)
+}
+
+/// Apply reverse name-matching to any `SlotState::Loaded` that arrived without
+/// a `figure_id` (i.e. came from `driver.read_slots()`, not from an outgoing
+/// `LoadFigure` job). Matched slots get their `figure_id` populated and their
+/// `display_name` canonicalised; unmatched slots are left alone so the phone
+/// can render the raw name with a "?" badge (PLAN 3.8.2).
+fn reconcile_slot_names(
+    mut snap: [SlotState; SLOT_COUNT],
+    figures: &[Figure],
+) -> [SlotState; SLOT_COUNT] {
+    for slot in snap.iter_mut() {
+        if let SlotState::Loaded {
+            figure_id: figure_id @ None,
+            display_name,
+            ..
+        } = slot
+            && let Some(fig) = find_figure_by_display_name(figures, display_name)
+        {
+            *figure_id = Some(fig.id.clone());
+            *display_name = fig.canonical_name.clone();
+        }
+    }
+    snap
+}
+
 #[derive(Debug)]
 pub enum DriverJob {
     LoadFigure {
@@ -103,13 +141,14 @@ pub fn spawn_driver_worker(
     events: broadcast::Sender<Event>,
     profiles: crate::profiles::ProfileStore,
     sessions: Arc<crate::profiles::SessionRegistry>,
+    figures: Arc<Vec<Figure>>,
 ) -> mpsc::Sender<DriverJob> {
     let (tx, mut rx) = mpsc::channel::<DriverJob>(32);
 
     tokio::spawn(async move {
         // Initial snapshot — best effort; a subsequent RefreshPortal will retry
         // if this fails (e.g. dialog not open yet).
-        if let Err(e) = refresh(&driver, &portal, &events).await {
+        if let Err(e) = refresh(&driver, &portal, &events, &figures).await {
             info!("initial portal refresh failed (expected if dialog isn't open yet): {e}");
         }
 
@@ -118,7 +157,7 @@ pub fn spawn_driver_worker(
                 &job,
                 DriverJob::LoadFigure { .. } | DriverJob::ClearSlot { .. }
             );
-            if let Err(e) = handle_job(job, &driver, &portal, &events).await {
+            if let Err(e) = handle_job(job, &driver, &portal, &events, &figures).await {
                 error!("driver job error: {e}");
                 let _ = events.send(Event::Error {
                     message: e.to_string(),
@@ -143,6 +182,7 @@ async fn handle_job(
     driver: &Arc<dyn PortalDriver>,
     portal: &Arc<Mutex<[SlotState; SLOT_COUNT]>>,
     events: &broadcast::Sender<Event>,
+    figures: &[Figure],
 ) -> Result<()> {
     match job {
         DriverJob::LoadFigure {
@@ -179,7 +219,8 @@ async fn handle_job(
                     .await;
                 }
                 Err(e) => {
-                    restore_after_failure(driver, portal, events, slot, &e.to_string()).await;
+                    restore_after_failure(driver, portal, events, slot, &e.to_string(), figures)
+                        .await;
                 }
             }
         }
@@ -197,12 +238,13 @@ async fn handle_job(
                     set_and_broadcast(portal, events, slot, SlotState::Empty).await;
                 }
                 Err(e) => {
-                    restore_after_failure(driver, portal, events, slot, &e.to_string()).await;
+                    restore_after_failure(driver, portal, events, slot, &e.to_string(), figures)
+                        .await;
                 }
             }
         }
         DriverJob::RefreshPortal => {
-            refresh(driver, portal, events).await?;
+            refresh(driver, portal, events, figures).await?;
         }
     }
     Ok(())
@@ -247,6 +289,7 @@ async fn restore_after_failure(
     events: &broadcast::Sender<Event>,
     slot: SlotIndex,
     message: &str,
+    figures: &[Figure],
 ) {
     let _ = events.send(Event::Error {
         message: message.to_string(),
@@ -256,7 +299,7 @@ async fn restore_after_failure(
     let snapshot = tokio::task::spawn_blocking(move || d.read_slots()).await;
 
     let truth = match snapshot {
-        Ok(Ok(snap)) => snap[slot.as_usize()].clone(),
+        Ok(Ok(snap)) => reconcile_slot_names(snap, figures)[slot.as_usize()].clone(),
         _ => SlotState::Empty,
     };
     set_and_broadcast(portal, events, slot, truth).await;
@@ -266,6 +309,7 @@ async fn refresh(
     driver: &Arc<dyn PortalDriver>,
     portal: &Arc<Mutex<[SlotState; SLOT_COUNT]>>,
     events: &broadcast::Sender<Event>,
+    figures: &[Figure],
 ) -> Result<()> {
     let d = driver.clone();
     let snap = tokio::task::spawn_blocking(move || -> Result<[SlotState; SLOT_COUNT]> {
@@ -274,6 +318,7 @@ async fn refresh(
     })
     .await??;
 
+    let snap = reconcile_slot_names(snap, figures);
     *portal.lock().await = snap.clone();
     let _ = events.send(Event::PortalSnapshot { slots: snap });
     Ok(())
@@ -287,4 +332,122 @@ async fn set_and_broadcast(
 ) {
     portal.lock().await[slot.as_usize()] = state.clone();
     let _ = events.send(Event::SlotChanged { slot, state });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use skylander_core::{Category, Element, GameOfOrigin};
+    use std::path::PathBuf;
+
+    fn fig(id: &str, canonical: &str) -> Figure {
+        Figure {
+            id: FigureId::new(id),
+            canonical_name: canonical.into(),
+            variant_group: canonical.into(),
+            variant_tag: "base".into(),
+            game: GameOfOrigin::SpyrosAdventure,
+            element: Some(Element::Fire),
+            category: Category::Figure,
+            sky_path: PathBuf::from("/dev/null"),
+            element_icon_path: None,
+        }
+    }
+
+    #[test]
+    fn find_by_display_name_exact() {
+        let figures = vec![fig("aaaa", "Lava Barf Eruptor"), fig("bbbb", "Spyro")];
+        let hit = find_figure_by_display_name(&figures, "Lava Barf Eruptor").unwrap();
+        assert_eq!(hit.id.as_str(), "aaaa");
+    }
+
+    #[test]
+    fn find_by_display_name_is_case_and_whitespace_insensitive() {
+        let figures = vec![fig("cccc", "Spyro")];
+        assert!(find_figure_by_display_name(&figures, "spyro").is_some());
+        assert!(find_figure_by_display_name(&figures, "  SPYRO  ").is_some());
+    }
+
+    #[test]
+    fn find_by_display_name_rejects_empty_and_unknown() {
+        let figures = vec![fig("dddd", "Spyro")];
+        assert!(find_figure_by_display_name(&figures, "").is_none());
+        assert!(find_figure_by_display_name(&figures, "   ").is_none());
+        assert!(find_figure_by_display_name(&figures, "Unknown (Id:42 Var:0)").is_none());
+    }
+
+    #[test]
+    fn reconcile_populates_figure_id_and_canonicalises_name() {
+        let figures = vec![fig("aaaa", "Lava Barf Eruptor")];
+        let mut snap: [SlotState; SLOT_COUNT] = std::array::from_fn(|_| SlotState::Empty);
+        // Driver returned a lowercased name with no figure_id — the kind of
+        // thing `read_slots()` produces on RefreshPortal.
+        snap[3] = SlotState::Loaded {
+            figure_id: None,
+            display_name: "lava barf eruptor".into(),
+            placed_by: None,
+        };
+
+        let reconciled = reconcile_slot_names(snap, &figures);
+
+        match &reconciled[3] {
+            SlotState::Loaded {
+                figure_id: Some(id),
+                display_name,
+                ..
+            } => {
+                assert_eq!(id.as_str(), "aaaa");
+                assert_eq!(display_name, "Lava Barf Eruptor");
+            }
+            other => panic!("expected Loaded with figure_id, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reconcile_leaves_unmatched_slots_alone() {
+        let figures = vec![fig("aaaa", "Spyro")];
+        let mut snap: [SlotState; SLOT_COUNT] = std::array::from_fn(|_| SlotState::Empty);
+        snap[0] = SlotState::Loaded {
+            figure_id: None,
+            display_name: "Unknown (Id:42 Var:0)".into(),
+            placed_by: None,
+        };
+
+        let reconciled = reconcile_slot_names(snap, &figures);
+
+        match &reconciled[0] {
+            SlotState::Loaded {
+                figure_id: None,
+                display_name,
+                ..
+            } => {
+                assert_eq!(display_name, "Unknown (Id:42 Var:0)");
+            }
+            other => panic!("expected Loaded with None figure_id, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reconcile_does_not_touch_slots_with_existing_figure_id() {
+        // If an upstream path (LoadFigure broadcast) already set figure_id,
+        // reconcile must not overwrite it even if canonical_name happens to
+        // match a different figure in the index.
+        let figures = vec![fig("aaaa", "Spyro")];
+        let mut snap: [SlotState; SLOT_COUNT] = std::array::from_fn(|_| SlotState::Empty);
+        snap[0] = SlotState::Loaded {
+            figure_id: Some(FigureId::new("bbbb")),
+            display_name: "Spyro".into(),
+            placed_by: None,
+        };
+
+        let reconciled = reconcile_slot_names(snap, &figures);
+
+        match &reconciled[0] {
+            SlotState::Loaded {
+                figure_id: Some(id),
+                ..
+            } => assert_eq!(id.as_str(), "bbbb"),
+            other => panic!("expected untouched figure_id, got {other:?}"),
+        }
+    }
 }

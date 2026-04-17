@@ -85,6 +85,23 @@ fn SlotView(
              }>
             <div class="p4-slot-inner">
                 <span class="p4-slot-index">{slot_num}</span>
+                // 3.8.2 — when a figure is on the portal but didn't match any
+                // indexed figure (i.e. RPCS3 reported a name we don't know),
+                // render a "?" badge so the phone makes the mismatch visible
+                // instead of silently showing a raw RPCS3 string.
+                {move || {
+                    match portal.get()[idx].state.clone() {
+                        SlotState::Loaded { figure_id: None, .. } => {
+                            view! {
+                                <span
+                                    class="p4-slot-badge p4-slot-badge--unmatched"
+                                    title="This figure isn't in your collection"
+                                >"?"</span>
+                            }.into_any()
+                        }
+                        _ => view! { <span></span> }.into_any(),
+                    }
+                }}
                 <GoldBezel size=BezelSize::Lg state=bezel_state>
                     {move || {
                         match portal.get()[idx].state.clone() {
