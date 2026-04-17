@@ -149,6 +149,14 @@ pub enum Event {
         session_id: u64,
         slots: Vec<SlotState>,
     },
+    /// RPCS3 crashed while a game was running. Phone renders a full-screen
+    /// "GAME CRASHED" overlay (see `GameCrashScreen`). Auto-dismissed on the
+    /// next `GameChanged { current: Some(_) }`. PLAN 4.15.14 /
+    /// `docs/aesthetic/navigation.md` §3.8.
+    GameCrashed {
+        #[serde(default)]
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

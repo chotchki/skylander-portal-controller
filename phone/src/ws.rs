@@ -8,7 +8,7 @@ use web_sys::{MessageEvent, WebSocket};
 
 use crate::api::set_session_id;
 use crate::model::{ConnState, Event, GameLaunched, Slot, SlotState, UnlockedProfile, SLOT_COUNT};
-use crate::{push_toast, ResumeOffer, TakeoverReason, ToastMsg};
+use crate::{push_toast, GameCrashReason, ResumeOffer, TakeoverReason, ToastMsg};
 
 pub fn connect(
     portal: RwSignal<[Slot; SLOT_COUNT]>,
@@ -18,6 +18,7 @@ pub fn connect(
     unlocked_profile: RwSignal<Option<UnlockedProfile>>,
     takeover: RwSignal<Option<TakeoverReason>>,
     resume_offer: RwSignal<Option<ResumeOffer>>,
+    game_crash: RwSignal<Option<GameCrashReason>>,
 ) {
     spawn_connect(
         portal,
@@ -27,10 +28,12 @@ pub fn connect(
         unlocked_profile,
         takeover,
         resume_offer,
+        game_crash,
         0,
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_connect(
     portal: RwSignal<[Slot; SLOT_COUNT]>,
     conn: RwSignal<ConnState>,
@@ -39,6 +42,7 @@ fn spawn_connect(
     unlocked_profile: RwSignal<Option<UnlockedProfile>>,
     takeover: RwSignal<Option<TakeoverReason>>,
     resume_offer: RwSignal<Option<ResumeOffer>>,
+    game_crash: RwSignal<Option<GameCrashReason>>,
     attempt: u32,
 ) {
     let loc = web_sys::window().unwrap().location();
@@ -62,6 +66,7 @@ fn spawn_connect(
                 unlocked_profile,
                 takeover,
                 resume_offer,
+                game_crash,
                 attempt,
             );
             return;
@@ -121,7 +126,20 @@ fn spawn_connect(
                         push_toast(toasts, &message);
                     }
                     Ok(Event::GameChanged { current }) => {
+                        // A new game booting implicitly dismisses the crash
+                        // overlay (we're back up and running). Clearing to
+                        // None (game ended) does NOT clear the crash — the
+                        // server pushes GameChanged { current: None } right
+                        // after GameCrashed, and we want the overlay to stay
+                        // until either the user taps "RETURN TO GAMES" or a
+                        // new game launches.
+                        if current.is_some() {
+                            game_crash.set(None);
+                        }
                         current_game.set(current);
+                    }
+                    Ok(Event::GameCrashed { message }) => {
+                        game_crash.set(Some(GameCrashReason { message }));
                     }
                     Ok(Event::ProfileChanged {
                         session_id,
@@ -165,6 +183,7 @@ fn spawn_connect(
         let unlocked_profile = unlocked_profile;
         let takeover = takeover;
         let resume_offer = resume_offer;
+        let game_crash = game_crash;
         let on_close = Closure::<dyn FnMut()>::new(move || {
             conn.set(ConnState::Disconnected);
             schedule_reconnect(
@@ -175,6 +194,7 @@ fn spawn_connect(
                 unlocked_profile,
                 takeover,
                 resume_offer,
+                game_crash,
                 attempt + 1,
             );
         });
@@ -190,6 +210,7 @@ fn spawn_connect(
     on_err.forget();
 }
 
+#[allow(clippy::too_many_arguments)]
 fn schedule_reconnect(
     portal: RwSignal<[Slot; SLOT_COUNT]>,
     conn: RwSignal<ConnState>,
@@ -198,6 +219,7 @@ fn schedule_reconnect(
     unlocked_profile: RwSignal<Option<UnlockedProfile>>,
     takeover: RwSignal<Option<TakeoverReason>>,
     resume_offer: RwSignal<Option<ResumeOffer>>,
+    game_crash: RwSignal<Option<GameCrashReason>>,
     attempt: u32,
 ) {
     // Exponential backoff, clamped: 500ms, 1s, 2s, 4s, 8s (max).
@@ -211,6 +233,7 @@ fn schedule_reconnect(
             unlocked_profile,
             takeover,
             resume_offer,
+            game_crash,
             attempt,
         );
     });

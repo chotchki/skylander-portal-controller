@@ -66,6 +66,12 @@ pub enum Event {
         session_id: u64,
         slots: [SlotState; SLOT_COUNT],
     },
+    /// RPCS3 exited unexpectedly while a game was running. Phones render a
+    /// full-screen "GAME CRASHED" overlay (not a toast — session-breaking
+    /// event). Auto-dismisses on the next `GameChanged { current: Some(_) }`.
+    /// Broadcast to all sessions — the portal is dead for everyone. PLAN
+    /// 4.15.14; see `docs/aesthetic/navigation.md` §3.8.
+    GameCrashed { message: String },
 }
 
 /// Public profile description included in [`Event::ProfileChanged`] and the

@@ -163,6 +163,66 @@ pub enum DriverJob {
     },
 }
 
+/// Spawn the RPCS3 crash watchdog. Polls the lifecycle lock once per
+/// `interval` and, the first frame it sees the spawned process has died
+/// while `current` is still set (i.e. nobody called `/api/quit`), treats it
+/// as an unexpected exit: takes the dead `RpcsProcess` out of the lifecycle,
+/// clears `current`, resets the portal snapshot, and broadcasts
+/// `Event::GameCrashed` + `Event::GameChanged { current: None }` so phones
+/// can render the "game crashed" overlay (PLAN 4.15.14 /
+/// `docs/aesthetic/navigation.md` §3.8).
+///
+/// `/api/quit` takes the process out of the guard *before* calling
+/// `shutdown_graceful`, so the watchdog naturally won't fire on clean
+/// quits — by the time the process dies, `guard.process` is already `None`.
+pub fn spawn_crash_watchdog(
+    rpcs3: Arc<Mutex<RpcsLifecycle>>,
+    portal: Arc<Mutex<[SlotState; SLOT_COUNT]>>,
+    events: broadcast::Sender<Event>,
+    interval: std::time::Duration,
+) {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(interval);
+        // Skip the immediate first tick — `interval` fires once on start.
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        ticker.tick().await;
+        loop {
+            ticker.tick().await;
+
+            let mut guard = rpcs3.lock().await;
+            // Only act if we own a process and a game is marked current.
+            let has_current = guard.current.is_some();
+            let crashed = match guard.process.as_mut() {
+                Some(proc) if has_current => !proc.is_alive(),
+                _ => false,
+            };
+            if !crashed {
+                continue;
+            }
+
+            // Drop the dead handle so we never double-report.
+            let _dead = guard.process.take();
+            let game = guard.current.take();
+            drop(guard);
+
+            let message = match game.as_ref() {
+                Some(g) => format!("{} exited unexpectedly", g.display_name),
+                None => "RPCS3 exited unexpectedly".into(),
+            };
+            warn!(message = %message, "detected RPCS3 crash");
+
+            // Reset the portal snapshot — the emulator is gone, so any
+            // previously-loaded slots are meaningless.
+            *portal.lock().await = std::array::from_fn(|_| SlotState::Empty);
+            let _ = events.send(Event::PortalSnapshot {
+                slots: std::array::from_fn(|_| SlotState::Empty),
+            });
+            let _ = events.send(Event::GameCrashed { message });
+            let _ = events.send(Event::GameChanged { current: None });
+        }
+    });
+}
+
 /// Spawn the driver worker. Owns the `PortalDriver` and serialises all access.
 ///
 /// `profiles` + `sessions` are threaded in so the worker can persist the
