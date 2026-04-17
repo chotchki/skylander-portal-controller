@@ -253,9 +253,65 @@ pub fn router(state: Arc<AppState>, phone_dist: std::path::PathBuf) -> Router {
     api.fallback_service(static_dir).with_state(state)
 }
 
-async fn list_figures(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let figs: Vec<PublicFigure> = state.figures.iter().map(|f| f.to_public()).collect();
-    axum::Json(figs)
+async fn list_figures(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    let session_id = headers
+        .get("x-session-id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(SessionId);
+
+    let profile_id = match session_id {
+        Some(sid) => state.sessions.profile_of(sid).await,
+        None => None,
+    };
+
+    let usage: std::collections::HashMap<String, String> = match &profile_id {
+        Some(pid) => state.profiles.fetch_usage(pid).await.unwrap_or_else(|e| {
+            warn!("fetch_usage({pid}): {e}");
+            std::collections::HashMap::new()
+        }),
+        None => std::collections::HashMap::new(),
+    };
+
+    let current_game = {
+        let rpcs3 = state.rpcs3.lock().await;
+        rpcs3
+            .current
+            .as_ref()
+            .and_then(|g| skylander_core::game_of_origin_from_serial(&g.serial))
+    };
+
+    let mut figs: Vec<(bool, Option<String>, PublicFigure)> = state
+        .figures
+        .iter()
+        .map(|f| {
+            let compat = current_game
+                .map(|cg| skylander_core::is_compatible(f.game, f.category, cg))
+                .unwrap_or(false);
+            let last_used = usage.get(f.id.as_str()).cloned();
+            (compat, last_used, f.to_public())
+        })
+        .collect();
+
+    // WHY: `last_used` is `Option<String>` holding RFC3339 — None sorts
+    // last so never-used figures come after used ones. Reverse on the
+    // timestamp gives most-recent-first.
+    figs.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| match (&a.1, &b.1) {
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (Some(x), Some(y)) => y.cmp(x),
+                (None, None) => std::cmp::Ordering::Equal,
+            })
+            .then_with(|| a.2.canonical_name.cmp(&b.2.canonical_name))
+    });
+
+    let out: Vec<PublicFigure> = figs.into_iter().map(|(_, _, f)| f).collect();
+    axum::Json(out)
 }
 
 #[derive(Deserialize, Default)]

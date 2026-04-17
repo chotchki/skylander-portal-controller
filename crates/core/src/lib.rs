@@ -4,10 +4,12 @@
 //! state) and the wire protocol between server and phone. Phase 2 MVP scope —
 //! profiles, PINs, working copies, and game launching come in Phase 3.
 
+pub mod compat;
 pub mod figure;
 pub mod portal;
 pub mod protocol;
 
+pub use compat::{game_of_origin_from_serial, is_compatible};
 pub use figure::{
     Category, Element, Figure, FigureId, Game, GameOfOrigin, GameSerial, PublicFigure,
 };

@@ -370,6 +370,21 @@ impl ProfileStore {
         Ok(n)
     }
 
+    /// Return `(figure_id, last_used_at_rfc3339)` for every row the given
+    /// profile owns. Empty map when the profile has no usage yet.
+    pub async fn fetch_usage(
+        &self,
+        profile_id: &str,
+    ) -> Result<HashMap<String, String>> {
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT figure_id, last_used_at FROM figure_usage WHERE profile_id = ?1",
+        )
+        .bind(profile_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().collect())
+    }
+
     /// Update `figure_usage.last_used_at` for this (profile_id, figure_id)
     /// pair. Creates the row on first use. Called from `load_slot` after a
     /// successful working-copy resolve (PLAN 3.11.2).
