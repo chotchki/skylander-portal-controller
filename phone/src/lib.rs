@@ -34,6 +34,17 @@ pub(crate) struct ResumeOffer {
     pub slots: Vec<SlotState>,
 }
 
+/// The emulator died. Set when the server broadcasts `Event::GameCrashed`
+/// (PLAN 4.15.14); cleared when a new `GameChanged { current: Some(_) }`
+/// arrives or the user taps "RETURN TO GAMES" in the overlay. The `message`
+/// is the short diagnostic the server produced (`"<Game> exited
+/// unexpectedly"`); rendered underneath the heading for players who want
+/// context.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct GameCrashReason {
+    pub message: String,
+}
+
 /// In-flight "reset this figure to a fresh copy?" prompt. Set when the user
 /// taps RESET on a loaded slot; cleared on cancel, fire, or modal dismiss.
 /// `slot` is 1-indexed (matches the server route). `display_name` is what
@@ -82,6 +93,7 @@ pub fn App() -> impl IntoView {
     let unlocked_profile = RwSignal::new(None::<UnlockedProfile>);
     let takeover = RwSignal::new(None::<TakeoverReason>);
     let resume_offer = RwSignal::new(None::<ResumeOffer>);
+    let game_crash = RwSignal::new(None::<GameCrashReason>);
     let reset_target = RwSignal::new(None::<ResetTarget>);
     let menu_open = RwSignal::new(false);
     let nav_dir = RwSignal::new(NavDir::Forward);
@@ -106,6 +118,7 @@ pub fn App() -> impl IntoView {
         unlocked_profile,
         takeover,
         resume_offer,
+        game_crash,
     );
 
     // Track depth-stack direction for screen entrance animations.
@@ -145,6 +158,20 @@ pub fn App() -> impl IntoView {
         <div class="app">
             <MagicDust />
             <Header conn current_game unlocked_profile menu_open />
+            // Modal stacking per `docs/aesthetic/navigation.md` §3.8:
+            //   1. ConnectionLost  (TODO — not yet implemented)
+            //   2. GameCrashed     (full-screen, preempts takeover + normal flow)
+            //   3. KaosTakeover    (below)
+            // GameCrashed is placed *outside* takeover so a crash during a
+            // takeover still wins — the portal is dead, nothing else matters.
+            <Show
+                when=move || game_crash.get().is_none()
+                fallback=move || view! {
+                    <div class={screen_cls("screen-game-crash")}>
+                        <GameCrashScreen game_crash current_game toasts />
+                    </div>
+                }
+            >
             <Show
                 when=move || takeover.get().is_none()
                 fallback=move || view! {
@@ -189,6 +216,7 @@ pub fn App() -> impl IntoView {
                         })}
                     </Suspense>
                 </div>
+            </Show>
             </Show>
             </Show>
             </Show>

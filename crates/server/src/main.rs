@@ -21,7 +21,7 @@ use tokio::sync::{Mutex, broadcast};
 use tracing::{info, warn};
 
 use crate::config::DriverKind;
-use crate::state::{AppState, RpcsLifecycle, spawn_driver_worker};
+use crate::state::{AppState, RpcsLifecycle, spawn_crash_watchdog, spawn_driver_worker};
 use crate::ui::LauncherApp;
 
 fn main() -> Result<()> {
@@ -138,6 +138,19 @@ fn main() -> Result<()> {
                     profile_store.clone(),
                     sessions.clone(),
                     figures_for_driver,
+                );
+                // Watchdog for unexpected RPCS3 exits (PLAN 4.15.14). Polls
+                // the lifecycle handle every 500ms; on the first frame a
+                // spawned process goes dead while `current` is still set,
+                // broadcasts `Event::GameCrashed` so phones can render the
+                // full-screen crash overlay. Clean quits drain `process` in
+                // `/api/quit` before the process actually dies, so the
+                // watchdog doesn't fire on those.
+                spawn_crash_watchdog(
+                    rpcs3_for_task.clone(),
+                    portal_for_task.clone(),
+                    events_for_task.clone(),
+                    std::time::Duration::from_millis(500),
                 );
                 let state = Arc::new(AppState {
                     figures: figures_for_task,

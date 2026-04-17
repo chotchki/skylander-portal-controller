@@ -3841,6 +3841,12 @@ body.skin-kaos {
   from { opacity: 0; }
   to   { opacity: 1; }
 }
+/* PLAN 4.15.14 — crash overlay shares the takeover-style crossfade so the
+   entrance reads as "this screen takes over" rather than sliding in from a
+   direction. Same 320ms timing for consistency. */
+.screen-game-crash {
+  animation: screen-enter-takeover 320ms ease-out both;
+}
 
 /* ================================================================
    PLAN 4.5.2 — Sparse "magic dust" ambient particle layer.
@@ -3877,8 +3883,178 @@ body.skin-kaos {
 @media (prefers-reduced-motion: reduce) {
   .screen-fwd,
   .screen-back,
-  .screen-takeover {
+  .screen-takeover,
+  .screen-game-crash {
     animation: none !important;
   }
   .magic-dust { display: none; }
+}
+
+/* ================================================================
+   PLAN 4.15.14 — Game-crash full-screen overlay.
+
+   Modal priority: below ConnectionLost, above KaosTakeover. Renders
+   when the server broadcasts `Event::GameCrashed`. Visual language:
+   starfield background (same --sf-* stack as the rest of the app),
+   warm gold heading, a subtle amber alert tint to distinguish from
+   the normal "everything's fine" blue flow. Not Kaos-purple — Kaos
+   takeover has its own void palette and this crash screen must read
+   as "something broke", not "Kaos struck".
+   ================================================================ */
+
+.crash-overlay {
+  position: fixed; inset: 0;
+  z-index: 70;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 30%, rgba(245, 198, 52, 0.12) 0%, transparent 55%),
+    radial-gradient(ellipse 60% 50% at 30% 80%, rgba(255, 140, 60, 0.10) 0%, transparent 55%),
+    linear-gradient(180deg, var(--sf-1) 0%, var(--sf-2) 55%, var(--sf-3) 100%);
+  animation: crash-overlay-in 340ms cubic-bezier(.2,.8,.3,1) both;
+}
+@keyframes crash-overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Soft amber backdrop pulse — conveys "alert state" without going full
+   Kaos-emergency-red. Slow 3.2s cycle so it stays ambient. */
+.crash-backdrop {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse 70% 55% at 50% 35%, rgba(245, 198, 52, 0.08), transparent 60%);
+  pointer-events: none;
+  animation: crash-backdrop-pulse 3.2s ease-in-out infinite;
+}
+@keyframes crash-backdrop-pulse {
+  0%, 100% { opacity: 0.75; }
+  50%      { opacity: 1.0; }
+}
+
+/* Sparse amber-spark layer — echoes the takeover sparks but dimmer and
+   gold-tinted rather than magenta. Sits behind the viewport content. */
+.crash-sparks {
+  position: absolute; inset: 0;
+  background-image:
+    radial-gradient(1.5px 1.5px at 48px 120px, var(--gb, #ffe58a), transparent),
+    radial-gradient(1px 1px   at 210px 72px,  #ffd66b, transparent),
+    radial-gradient(1.5px 1.5px at 320px 240px, var(--gb, #ffe58a), transparent),
+    radial-gradient(1px 1px   at 96px 420px,  #ffd66b, transparent),
+    radial-gradient(1.5px 1.5px at 280px 520px, var(--gb, #ffe58a), transparent),
+    radial-gradient(1px 1px   at 60px 660px,  #ffd66b, transparent),
+    radial-gradient(1px 1px   at 340px 720px, var(--gb, #ffe58a), transparent);
+  background-size: 400px 800px;
+  opacity: 0.55;
+  animation: crash-sparks-flicker 4.5s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+@keyframes crash-sparks-flicker { 50% { opacity: 0.3; transform: scale(1.02); } }
+
+.crash-viewport {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 56px 28px 40px;
+  gap: 22px;
+  text-align: center;
+}
+
+/* Warning sigil — oversized warm-glow triangle. Distinct from the Kaos
+   sigil (which is a sphere/burst) so the two overlays never read the
+   same at a glance. */
+.crash-warning-mark {
+  font-size: 72px;
+  line-height: 1;
+  color: var(--gb, #ffe58a);
+  text-shadow:
+    0 2px 0 rgba(0,0,0,0.6),
+    0 0 18px rgba(245, 198, 52, 0.55),
+    0 0 36px rgba(245, 198, 52, 0.35);
+  animation: crash-warning-pulse 2s ease-in-out infinite;
+}
+@keyframes crash-warning-pulse {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.06); }
+}
+
+.crash-body {
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic;
+  font-size: 16px;
+  line-height: 1.45;
+  color: var(--text);
+  max-width: 320px;
+  margin: 4px auto 0;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.6);
+}
+
+/* Secondary diagnostic line — monospaced-ish so it visually reads as
+   "technical detail" vs the italic reassurance above. Dimmed so the
+   heading + body stay the focus. */
+.crash-detail {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  max-width: 320px;
+  margin: -6px auto 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(2, 8, 24, 0.55);
+  border: 1px solid rgba(245, 198, 52, 0.18);
+  text-shadow: 0 1px 0 rgba(0,0,0,0.7);
+  word-break: break-word;
+}
+
+/* Return-to-games gold button — same shape language as the Takeover
+   kick-back button but in the standard gold palette (this is a
+   recoverable crash, not a Kaos event). */
+.crash-return-btn {
+  width: 100%;
+  max-width: 320px;
+  margin-top: 10px;
+  padding: 16px;
+  font-family: "Titan One", "Fredoka One", sans-serif;
+  font-size: 16px;
+  letter-spacing: 0.22em;
+  color: #2a1a00;
+  background: linear-gradient(180deg, var(--gb, #ffe58a) 0%, var(--g, #f5c634) 45%, #a87a17 100%);
+  border: 2px solid #8a5f10;
+  border-radius: 14px;
+  cursor: pointer;
+  text-shadow: 0 1px 0 rgba(255,255,255,0.35);
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.55),
+    inset 0 -2px 0 rgba(0,0,0,0.25),
+    0 4px 0 #6b480a,
+    0 8px 20px rgba(245, 198, 52, 0.35),
+    0 0 28px rgba(255, 229, 138, 0.28);
+  animation: crash-return-pulse 2.8s ease-in-out infinite;
+}
+@keyframes crash-return-pulse {
+  50% { box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.6),
+    inset 0 -2px 0 rgba(0,0,0,0.25),
+    0 4px 0 #6b480a,
+    0 8px 24px rgba(245, 198, 52, 0.5),
+    0 0 38px rgba(255, 229, 138, 0.42); }
+}
+.crash-return-btn:active {
+  transform: translateY(3px);
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.45),
+    0 1px 0 #6b480a,
+    0 4px 12px rgba(245, 198, 52, 0.28);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crash-overlay,
+  .crash-backdrop,
+  .crash-sparks,
+  .crash-warning-mark,
+  .crash-return-btn {
+    animation: none !important;
+  }
 }
