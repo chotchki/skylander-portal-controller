@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel in-flight runs for the same branch / PR when a new push lands.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # No sqlx compile-time macros are used today (the server uses runtime-checked
+  # `sqlx::query_as::<_, T>(...)` everywhere), so a `.sqlx/` offline cache isn't
+  # required. This flag is set defensively so that if someone introduces a
+  # `sqlx::query!` macro later, the build will fail loudly here rather than
+  # silently trying to connect to a non-existent dev DB.
+  SQLX_OFFLINE: "true"
+
+jobs:
+  # rustfmt is platform-independent — run on Ubuntu for speed.
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust (stable) with rustfmt
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt
+          rustup default stable
+      - name: cargo fmt --all --check (workspace)
+        run: cargo fmt --all --check
+      - name: cargo fmt --check (phone crate)
+        working-directory: phone
+        run: cargo fmt --all --check
+
+  # Workspace uses Windows-only APIs (windows-sys, Win32, UIA) via
+  # `crates/rpcs3-control`, so clippy/build/test must run on Windows.
+  clippy-build-test:
+    name: clippy + build + test (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable) with clippy
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Include feature-flag variants in the cache key so the `--all-features`
+          # build doesn't poison the default cache.
+          shared-key: "windows-stable"
+
+      # Clippy is run in warning-only mode for now — the workspace has ~42
+      # pre-existing lints (mostly in `tools/wiki-scrape` + `crates/sky-parser`)
+      # that are out of scope for the CI-bring-up PR. Tighten to `-D warnings`
+      # once those are cleaned up in a follow-up.
+      - name: cargo clippy --workspace --all-targets (warning mode)
+        continue-on-error: true
+        run: cargo clippy --workspace --all-targets
+
+      - name: cargo build --workspace --all-features
+        run: cargo build --workspace --all-features
+
+      # `cargo test` skips `#[ignore]`-gated tests by default. Per CLAUDE.md,
+      # the live-RPCS3 tests (crates/rpcs3-control/tests/live*.rs and parts of
+      # process.rs) plus every e2e test are session-bound — they need an
+      # interactive Windows desktop, a real RPCS3 install, and chromedriver —
+      # so they can't run on GitHub Actions. Do NOT pass `-- --ignored`.
+      - name: cargo test --workspace
+        run: cargo test --workspace
+
+  # The phone SPA is a separate (non-workspace) crate that compiles to WASM.
+  # Nothing in it is Windows-only, so build it on Ubuntu for speed.
+  phone-wasm:
+    name: phone SPA (wasm32)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable) with wasm target
+        run: |
+          rustup toolchain install stable --profile minimal --target wasm32-unknown-unknown
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "phone -> target"
+          shared-key: "phone-wasm"
+
+      - name: Install trunk
+        # Binary install is ~10x faster than `cargo install trunk` from source.
+        uses: jetli/trunk-action@v0.5.0
+        with:
+          version: "latest"
+
+      - name: trunk build --release
+        working-directory: phone
+        run: trunk build --release
