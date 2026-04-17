@@ -17,7 +17,10 @@ pub fn init(log_dir: &PathBuf) -> Result<WorkerGuard> {
         .unwrap_or_else(|_| EnvFilter::new("info,skylander=debug"));
 
     let fmt_stdout = fmt::layer().with_target(false);
-    let fmt_file = fmt::layer().with_target(false).with_ansi(false).with_writer(file_writer);
+    let fmt_file = fmt::layer()
+        .with_target(false)
+        .with_ansi(false)
+        .with_writer(file_writer);
 
     tracing_subscriber::registry()
         .with(env_filter)

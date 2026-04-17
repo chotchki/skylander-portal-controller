@@ -11,17 +11,15 @@
 #![cfg(windows)]
 
 use windows::Win32::Foundation::{HWND, LPARAM, RECT};
-use windows::core::BOOL;
 use windows::Win32::System::ProcessStatus::{
     EnumProcesses, GetModuleBaseNameW, K32EnumProcessModules,
 };
-use windows::Win32::System::Threading::{
-    OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
-};
+use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClassNameW, GetWindow, GetWindowRect, GetWindowTextLengthW,
-    GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, GW_OWNER,
+    EnumWindows, GW_OWNER, GetClassNameW, GetWindow, GetWindowRect, GetWindowTextLengthW,
+    GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
 };
+use windows::core::BOOL;
 
 fn main() -> anyhow::Result<()> {
     let rpcs3_pids = find_rpcs3_pids();
@@ -165,8 +163,7 @@ fn find_rpcs3_pids() -> Vec<u32> {
 
 fn process_name(pid: u32) -> Option<String> {
     unsafe {
-        let handle =
-            OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid).ok()?;
+        let handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid).ok()?;
         let mut module = windows::Win32::Foundation::HMODULE::default();
         let mut needed = 0u32;
         if K32EnumProcessModules(

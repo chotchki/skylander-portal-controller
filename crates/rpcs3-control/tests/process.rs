@@ -41,7 +41,10 @@ fn launch_wait_shutdown_graceful() {
         .shutdown_graceful(Duration::from_secs(30))
         .expect("shutdown_graceful");
     assert!(
-        matches!(path, ShutdownPath::Graceful | ShutdownPath::Forced | ShutdownPath::AlreadyExited),
+        matches!(
+            path,
+            ShutdownPath::Graceful | ShutdownPath::Forced | ShutdownPath::AlreadyExited
+        ),
         "unexpected shutdown path {path:?}",
     );
     assert!(!proc.is_alive(), "process should be dead after shutdown");

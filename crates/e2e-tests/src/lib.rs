@@ -13,7 +13,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use fantoccini::{Client, ClientBuilder, Locator};
 use tempfile::TempDir;
 
@@ -34,7 +34,8 @@ impl TestServer {
         // need a real pack — `tools/inventory` has no `.sky` files. Use the
         // dev pack at the path documented in CLAUDE.md, overridable with
         // `SKYLANDER_PACK_ROOT`.
-        let default_pack = PathBuf::from(r"C:\Users\chris\workspace\Skylanders Characters Pack for RPCS3");
+        let default_pack =
+            PathBuf::from(r"C:\Users\chris\workspace\Skylanders Characters Pack for RPCS3");
         let firmware = std::env::var("SKYLANDER_PACK_ROOT")
             .map(PathBuf::from)
             .unwrap_or(default_pack);
@@ -163,11 +164,8 @@ fn spawn_chromedriver() -> Result<(String, ChildGuard)> {
     let addr = format!("127.0.0.1:{port}");
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
-        if std::net::TcpStream::connect_timeout(
-            &addr.parse().unwrap(),
-            Duration::from_millis(200),
-        )
-        .is_ok()
+        if std::net::TcpStream::connect_timeout(&addr.parse().unwrap(), Duration::from_millis(200))
+            .is_ok()
         {
             // Port accepts connections — chromedriver is up. The first
             // fantoccini handshake will surface any deeper issues.
@@ -180,7 +178,11 @@ fn spawn_chromedriver() -> Result<(String, ChildGuard)> {
     ))
 }
 
-fn spawn_reader(tag: &'static str, stream: impl std::io::Read + Send + 'static, tx: mpsc::Sender<String>) {
+fn spawn_reader(
+    tag: &'static str,
+    stream: impl std::io::Read + Send + 'static,
+    tx: mpsc::Sender<String>,
+) {
     thread::spawn(move || {
         let reader = BufReader::new(stream);
         for line in reader.lines().flatten() {
@@ -303,7 +305,11 @@ impl Phone {
         Ok(Self { client })
     }
 
-    pub async fn wait_for(&self, loc: Locator<'_>, timeout: Duration) -> Result<fantoccini::elements::Element> {
+    pub async fn wait_for(
+        &self,
+        loc: Locator<'_>,
+        timeout: Duration,
+    ) -> Result<fantoccini::elements::Element> {
         let deadline = Instant::now() + timeout;
         loop {
             match self.client.find(loc).await {
@@ -337,7 +343,11 @@ pub async fn inject_load_outcomes(base: &str, outcomes: serde_json::Value) -> Re
         .send()
         .await?;
     if !resp.status().is_success() {
-        bail!("inject_load returned {}: {}", resp.status(), resp.text().await?);
+        bail!(
+            "inject_load returned {}: {}",
+            resp.status(),
+            resp.text().await?
+        );
     }
     Ok(())
 }
@@ -351,18 +361,17 @@ pub async fn set_game(base: &str, current: Option<serde_json::Value>) -> Result<
         .send()
         .await?;
     if !resp.status().is_success() {
-        bail!("set_game returned {}: {}", resp.status(), resp.text().await?);
+        bail!(
+            "set_game returned {}: {}",
+            resp.status(),
+            resp.text().await?
+        );
     }
     Ok(())
 }
 
 /// Inject a profile via the test-hook. Returns the new profile id.
-pub async fn inject_profile(
-    base: &str,
-    name: &str,
-    pin: &str,
-    color: &str,
-) -> Result<String> {
+pub async fn inject_profile(base: &str, name: &str, pin: &str, color: &str) -> Result<String> {
     let resp = reqwest::Client::new()
         .post(format!("{base}/api/_test/inject_profile"))
         .json(&serde_json::json!({

@@ -5,9 +5,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
-use skylander_core::{Event, Figure, FigureId, GameLaunched, GameSerial, SlotIndex, SlotState, SLOT_COUNT};
+use skylander_core::{
+    Event, Figure, FigureId, GameLaunched, GameSerial, SLOT_COUNT, SlotIndex, SlotState,
+};
 use skylander_rpcs3_control::{PortalDriver, RpcsProcess};
-use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::sync::{Mutex, broadcast, mpsc};
 use tracing::{error, info, warn};
 
 use crate::games::InstalledGame;

@@ -19,9 +19,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use chrono::NaiveDateTime;
 use serde::Serialize;
-use skylander_sky_parser::{
-    parse, FigureKind, HatId, SkyFigureStats, SkyGeneration, VariantInfo,
-};
+use skylander_sky_parser::{FigureKind, HatId, SkyFigureStats, SkyGeneration, VariantInfo, parse};
 use tracing::{debug, warn};
 
 use crate::state::AppState;
@@ -108,9 +106,8 @@ pub fn working_root() -> std::io::Result<PathBuf> {
     }
     #[cfg(not(feature = "dev-tools"))]
     {
-        let base = std::env::var_os("APPDATA").ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::NotFound, "APPDATA not set")
-        })?;
+        let base = std::env::var_os("APPDATA")
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "APPDATA not set"))?;
         Ok(PathBuf::from(base)
             .join("skylander-portal-controller")
             .join("working"))
@@ -129,9 +126,7 @@ pub fn working_copy_path(profile_id: &str, figure_id: &str) -> Result<PathBuf, &
         return Err("id contains illegal characters");
     }
     let root = working_root().map_err(|_| "cannot resolve working root")?;
-    Ok(root
-        .join(profile_id)
-        .join(format!("{figure_id}.sky")))
+    Ok(root.join(profile_id).join(format!("{figure_id}.sky")))
 }
 
 /// GET /api/profiles/:profile_id/figures/:figure_id/stats
@@ -151,7 +146,10 @@ pub async fn get_figure_stats(
     let bytes = match tokio::fs::read(&path).await {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return (StatusCode::NOT_FOUND, "no working copy for that profile+figure")
+            return (
+                StatusCode::NOT_FOUND,
+                "no working copy for that profile+figure",
+            )
                 .into_response();
         }
         Err(e) => {

@@ -107,8 +107,14 @@ pub fn default_firmware_pack_guess() -> Option<PathBuf> {
 
     if let Some(home) = std::env::var_os("USERPROFILE") {
         let home = PathBuf::from(home);
-        candidates.push(home.join("Documents").join("Skylanders Characters Pack for RPCS3"));
-        candidates.push(home.join("Downloads").join("Skylanders Characters Pack for RPCS3"));
+        candidates.push(
+            home.join("Documents")
+                .join("Skylanders Characters Pack for RPCS3"),
+        );
+        candidates.push(
+            home.join("Downloads")
+                .join("Skylanders Characters Pack for RPCS3"),
+        );
     }
 
     candidates
@@ -196,19 +202,14 @@ impl PersistedConfig {
 mod hex_key_opt {
     use serde::{Deserialize, Deserializer, Serializer};
 
-    pub fn serialize<S: Serializer>(
-        bytes: &Option<Vec<u8>>,
-        s: S,
-    ) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: Serializer>(bytes: &Option<Vec<u8>>, s: S) -> Result<S::Ok, S::Error> {
         match bytes {
             Some(b) => s.serialize_some(&hex::encode(b)),
             None => s.serialize_none(),
         }
     }
 
-    pub fn deserialize<'de, D: Deserializer<'de>>(
-        d: D,
-    ) -> Result<Option<Vec<u8>>, D::Error> {
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<u8>>, D::Error> {
         let maybe = Option::<String>::deserialize(d)?;
         match maybe {
             Some(s) => hex::decode(&s).map(Some).map_err(serde::de::Error::custom),
@@ -307,8 +308,7 @@ pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<Per
                         ui.label("Path to rpcs3.exe:");
                         ui.horizontal(|ui| {
                             ui.add(
-                                egui::TextEdit::singleline(&mut s.rpcs3_input)
-                                    .desired_width(500.0),
+                                egui::TextEdit::singleline(&mut s.rpcs3_input).desired_width(500.0),
                             );
                             if ui.button("Browse...").clicked() {
                                 if let Some(p) = rfd::FileDialog::new()
@@ -346,8 +346,7 @@ pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<Per
                         ui.label("Folder containing your .sky files:");
                         ui.horizontal(|ui| {
                             ui.add(
-                                egui::TextEdit::singleline(&mut s.pack_input)
-                                    .desired_width(500.0),
+                                egui::TextEdit::singleline(&mut s.pack_input).desired_width(500.0),
                             );
                             if ui.button("Browse...").clicked() {
                                 if let Some(p) = rfd::FileDialog::new()
@@ -361,10 +360,7 @@ pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<Per
                         ui.add_space(6.0);
                         match s.pack_valid() {
                             Ok(()) => {
-                                ui.colored_label(
-                                    egui::Color32::GREEN,
-                                    "Valid — .sky files found.",
-                                );
+                                ui.colored_label(egui::Color32::GREEN, "Valid — .sky files found.");
                             }
                             Err(e) => {
                                 ui.colored_label(egui::Color32::LIGHT_RED, format!("x  {e}"));
@@ -376,7 +372,10 @@ pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<Per
                                 s.page = Page::Rpcs3;
                             }
                             let enabled = s.pack_valid().is_ok();
-                            if ui.add_enabled(enabled, egui::Button::new("Finish")).clicked() {
+                            if ui
+                                .add_enabled(enabled, egui::Button::new("Finish"))
+                                .clicked()
+                            {
                                 let cfg = PersistedConfig::from_user_paths(
                                     s.rpcs3_path(),
                                     s.pack_path(),
@@ -408,7 +407,11 @@ pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<Per
     eframe::run_native(
         "skylander-portal-controller-wizard",
         native_options,
-        Box::new(move |_cc| Ok(Box::new(App { state: state_for_app }))),
+        Box::new(move |_cc| {
+            Ok(Box::new(App {
+                state: state_for_app,
+            }))
+        }),
     )
     .map_err(|e| anyhow::anyhow!("wizard eframe error: {e}"))?;
 

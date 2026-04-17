@@ -47,7 +47,8 @@ async fn profile_create_and_unlock_lands_on_game_picker() {
 
     // Tap digits 1,2,3,4 on the keypad.
     for d in ["1", "2", "3", "4"] {
-        let xpath = format!("//button[contains(@class,'pin-key') and normalize-space(text())='{d}']");
+        let xpath =
+            format!("//button[contains(@class,'pin-key') and normalize-space(text())='{d}']");
         let key = phone
             .client
             .find(Locator::XPath(&xpath))
@@ -59,7 +60,9 @@ async fn profile_create_and_unlock_lands_on_game_picker() {
     // Submit create.
     let create_submit = phone
         .client
-        .find(Locator::Css(".create-profile-form .form-actions button.primary"))
+        .find(Locator::Css(
+            ".create-profile-form .form-actions button.primary",
+        ))
         .await
         .unwrap();
     create_submit.click().await.unwrap();
@@ -90,7 +93,9 @@ async fn profile_create_and_unlock_lands_on_game_picker() {
         .await
         .expect("pin entry view");
     for d in ["1", "2", "3", "4"] {
-        let xpath = format!("//div[contains(@class,'pin-entry')]//button[contains(@class,'pin-key') and normalize-space(text())='{d}']");
+        let xpath = format!(
+            "//div[contains(@class,'pin-entry')]//button[contains(@class,'pin-key') and normalize-space(text())='{d}']"
+        );
         let key = phone.client.find(Locator::XPath(&xpath)).await.unwrap();
         key.click().await.unwrap();
     }

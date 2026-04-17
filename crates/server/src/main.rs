@@ -15,13 +15,13 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
 use anyhow::{Context, Result};
-use skylander_core::{Figure, SlotState, SLOT_COUNT};
+use skylander_core::{Figure, SLOT_COUNT, SlotState};
 use skylander_rpcs3_control::PortalDriver;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{Mutex, broadcast};
 use tracing::{info, warn};
 
 use crate::config::DriverKind;
-use crate::state::{spawn_driver_worker, AppState, RpcsLifecycle};
+use crate::state::{AppState, RpcsLifecycle, spawn_driver_worker};
 use crate::ui::LauncherApp;
 
 fn main() -> Result<()> {
@@ -37,8 +37,8 @@ fn main() -> Result<()> {
     );
 
     // --- Index the firmware pack. ---
-    let figures: Vec<Figure> = skylander_indexer::scan(&cfg.firmware_pack_root)
-        .context("scan firmware pack")?;
+    let figures: Vec<Figure> =
+        skylander_indexer::scan(&cfg.firmware_pack_root).context("scan firmware pack")?;
     info!(count = figures.len(), "indexed figures");
     let figure_index: HashMap<_, _> = figures
         .iter()
@@ -53,7 +53,10 @@ fn main() -> Result<()> {
             g
         }
         Err(e) => {
-            warn!("couldn't read games.yml at {}: {e}", cfg.games_yaml.display());
+            warn!(
+                "couldn't read games.yml at {}: {e}",
+                cfg.games_yaml.display()
+            );
             Vec::new()
         }
     };
@@ -103,13 +106,14 @@ fn main() -> Result<()> {
                 .build()
                 .expect("build tokio runtime");
             rt.block_on(async move {
-                let (driver, test_mock): (Arc<dyn PortalDriver>, _) = match build_driver(driver_kind) {
-                    Ok(d) => d,
-                    Err(e) => {
-                        tracing::error!("failed to construct driver: {e}");
-                        return;
-                    }
-                };
+                let (driver, test_mock): (Arc<dyn PortalDriver>, _) =
+                    match build_driver(driver_kind) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            tracing::error!("failed to construct driver: {e}");
+                            return;
+                        }
+                    };
                 let db_path = match crate::profiles::resolve_db_path() {
                     Ok(p) => p,
                     Err(e) => {
@@ -246,4 +250,3 @@ fn first_non_loopback_ipv4() -> Option<Ipv4Addr> {
         _ => None,
     }
 }
-

@@ -81,7 +81,9 @@ pub enum SlotState {
     },
     /// The last action failed. UI surfaces `message` as a toast; slot reverts
     /// to its prior state on the next successful update.
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
 
 impl SlotState {

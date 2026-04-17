@@ -17,22 +17,22 @@
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use uiautomation::types::ControlType;
 use uiautomation::{UIAutomation, UIElement, UITreeWalker};
 
+use windows::Win32::Foundation::RECT;
 use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+    INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
     VIRTUAL_KEY, VK_DOWN, VK_LEFT, VK_MENU, VK_RETURN, VK_RIGHT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClassNameW, GetForegroundWindow, GetWindowRect, GetWindowTextLengthW,
-    GetWindowTextW, GetWindowThreadProcessId, SetForegroundWindow, SetWindowPos, ShowWindow,
-    SWP_NOSIZE, SWP_NOZORDER, SW_MINIMIZE, SW_RESTORE,
+    GetWindowTextW, GetWindowThreadProcessId, SW_MINIMIZE, SW_RESTORE, SWP_NOSIZE, SWP_NOZORDER,
+    SetForegroundWindow, SetWindowPos, ShowWindow,
 };
-use windows::Win32::Foundation::RECT;
 use windows::core::BOOL;
 
 const STEP_PAUSE: Duration = Duration::from_millis(200);
@@ -45,9 +45,7 @@ fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let minimise_viewport = !args.iter().any(|a| a == "--no-minimise");
     let hide_main = args.iter().any(|a| a == "--hide-main");
-    eprintln!(
-        "mode: minimise_viewport={minimise_viewport}, hide_main={hide_main}"
-    );
+    eprintln!("mode: minimise_viewport={minimise_viewport}, hide_main={hide_main}");
 
     let (main_hwnd, viewport_hwnd) = find_rpcs3_windows()?;
     eprintln!(
@@ -74,7 +72,15 @@ fn main() -> Result<()> {
 
     if hide_main {
         unsafe {
-            let _ = SetWindowPos(main_hwnd, None, -4000, -4000, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+            let _ = SetWindowPos(
+                main_hwnd,
+                None,
+                -4000,
+                -4000,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER,
+            );
         }
         eprintln!("main window moved off-screen");
         sleep(STEP_PAUSE);
@@ -412,7 +418,9 @@ fn rpcs3_pids() -> Vec<u32> {
     use windows::Win32::System::ProcessStatus::{
         EnumProcesses, GetModuleBaseNameW, K32EnumProcessModules,
     };
-    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
+    use windows::Win32::System::Threading::{
+        OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
+    };
 
     let mut pids = vec![0u32; 1024];
     let mut bytes = 0u32;

@@ -11,7 +11,7 @@
 use std::env;
 use std::time::Duration;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use skylander_core::{SlotIndex, SlotState};
 use skylander_rpcs3_control::{PortalDriver, UiaPortalDriver};
 

@@ -5,8 +5,8 @@ use std::path::Path;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, bail, Context, Result};
-use skylander_core::{SlotIndex, SlotState, SLOT_COUNT};
+use anyhow::{Context, Result, anyhow, bail};
+use skylander_core::{SLOT_COUNT, SlotIndex, SlotState};
 use tracing::{debug, info, instrument, warn};
 use uiautomation::patterns::{UIInvokePattern, UIValuePattern};
 use uiautomation::types::{ControlType, UIProperty};
@@ -15,16 +15,16 @@ use uiautomation::{UIAutomation, UIElement, UITreeWalker};
 use windows::Win32::Foundation::{HWND, LPARAM, RECT};
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-    KEYEVENTF_KEYUP, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
-    MOUSEEVENTF_MOVE, MOUSEINPUT, MOUSE_EVENT_FLAGS, VIRTUAL_KEY, VK_DOWN, VK_ESCAPE, VK_MENU,
-    VK_RETURN, VK_RIGHT, VK_UP,
+    INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP,
+    MOUSE_EVENT_FLAGS, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
+    MOUSEEVENTF_MOVE, MOUSEINPUT, SendInput, VIRTUAL_KEY, VK_DOWN, VK_ESCAPE, VK_MENU, VK_RETURN,
+    VK_RIGHT, VK_UP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClassNameW, GetForegroundWindow, GetSystemMetrics, GetWindowRect,
-    GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, SetForegroundWindow,
-    SetWindowPos, ShowWindow, SM_CXSCREEN, SM_CYSCREEN, SWP_NOSIZE, SWP_NOZORDER, SW_MINIMIZE,
-    SW_RESTORE,
+    GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, SM_CXSCREEN, SM_CYSCREEN,
+    SW_MINIMIZE, SW_RESTORE, SWP_NOSIZE, SWP_NOZORDER, SetForegroundWindow, SetWindowPos,
+    ShowWindow,
 };
 use windows::core::BOOL;
 
@@ -171,11 +171,7 @@ impl UiaPortalDriver {
     ///
     /// Runs once per RPCS3 session; subsequent `open_dialog` calls hit the
     /// short-circuit in the caller.
-    fn trigger_dialog_via_menu(
-        &self,
-        walker: &UITreeWalker,
-        main: &UIElement,
-    ) -> Result<()> {
+    fn trigger_dialog_via_menu(&self, walker: &UITreeWalker, main: &UIElement) -> Result<()> {
         let main_hwnd: isize = main
             .get_native_window_handle()
             .context("main window has no native HWND")?
@@ -350,7 +346,12 @@ impl UiaPortalDriver {
         focus_main_window(main_hwnd).ok();
         send_key(VK_RIGHT)?;
         sleep(MENU_STEP_PAUSE);
-        expect_focused_menu_item(walker, main, "Skylanders Portal", "expand Portals and Gates")?;
+        expect_focused_menu_item(
+            walker,
+            main,
+            "Skylanders Portal",
+            "expand Portals and Gates",
+        )?;
 
         send_key(VK_RETURN)?;
         Ok(())
@@ -441,10 +442,7 @@ impl UiaPortalDriver {
     pub fn boot_game_by_serial(&self, serial: &str, timeout: Duration) -> Result<()> {
         let walker = self.walker()?;
         let main = self.main_window(&walker)?;
-        let main_hwnd: isize = main
-            .get_native_window_handle()
-            .context("main HWND")?
-            .into();
+        let main_hwnd: isize = main.get_native_window_handle().context("main HWND")?.into();
         let main_hwnd = HWND(main_hwnd as _);
 
         let cell = find_descendant(&walker, &main, |el| {
@@ -502,10 +500,7 @@ impl UiaPortalDriver {
     pub fn quit_via_file_menu(&self) -> Result<()> {
         let walker = self.walker()?;
         let main = self.main_window(&walker)?;
-        let main_hwnd: isize = main
-            .get_native_window_handle()
-            .context("main HWND")?
-            .into();
+        let main_hwnd: isize = main.get_native_window_handle().context("main HWND")?.into();
         let main_hwnd = HWND(main_hwnd as _);
         let viewport_hwnd = find_viewport_hwnd();
         let mut saved_main_rect = RECT::default();
@@ -656,7 +651,10 @@ impl crate::PortalDriver for UiaPortalDriver {
     fn load(&self, slot: SlotIndex, path: &Path) -> Result<String> {
         let abs = std::fs::canonicalize(path)
             .with_context(|| format!("cannot canonicalize {}", path.display()))?;
-        let abs_str = abs.to_string_lossy().trim_start_matches(r"\\?\").to_string();
+        let abs_str = abs
+            .to_string_lossy()
+            .trim_start_matches(r"\\?\")
+            .to_string();
 
         let walker = self.walker()?;
         let main = self.main_window(&walker)?;
@@ -706,20 +704,20 @@ impl crate::PortalDriver for UiaPortalDriver {
                 }
             }
             // Once something was slung AND nothing on-screen remains, stop.
-            if slung_any && !hits.iter().any(|h| {
-                let mut r = RECT::default();
-                unsafe {
-                    GetWindowRect(*h, &mut r).ok();
-                }
-                r.left > -1000 || r.top > -1000
-            }) {
+            if slung_any
+                && !hits.iter().any(|h| {
+                    let mut r = RECT::default();
+                    unsafe {
+                        GetWindowRect(*h, &mut r).ok();
+                    }
+                    r.left > -1000 || r.top > -1000
+                })
+            {
                 break;
             }
             if Instant::now() >= sling_deadline {
                 if !slung_any {
-                    bail!(
-                        "file dialog #32770 HWND didn't appear within {DIALOG_OPEN_TIMEOUT:?}"
-                    );
+                    bail!("file dialog #32770 HWND didn't appear within {DIALOG_OPEN_TIMEOUT:?}");
                 }
                 break;
             }
@@ -734,10 +732,7 @@ impl crate::PortalDriver for UiaPortalDriver {
             el.get_control_type()
                 .map(|c| c == ControlType::Edit)
                 .unwrap_or(false)
-                && el
-                    .get_automation_id()
-                    .map(|a| a == "1148")
-                    .unwrap_or(false)
+                && el.get_automation_id().map(|a| a == "1148").unwrap_or(false)
         })
         .ok_or_else(|| anyhow!("file-name edit not found"))?;
         let open_btn = find_descendant(&walker, &file_dlg, |el| {
@@ -749,7 +744,9 @@ impl crate::PortalDriver for UiaPortalDriver {
         })
         .ok_or_else(|| anyhow!("Open button not found"))?;
 
-        file_edit.get_pattern::<UIValuePattern>()?.set_value(&abs_str)?;
+        file_edit
+            .get_pattern::<UIValuePattern>()?
+            .set_value(&abs_str)?;
         open_btn.get_pattern::<UIInvokePattern>()?.invoke()?;
 
         // Race the slot value change against three failure modes:
@@ -835,9 +832,10 @@ fn wait_for_value(el: &UIElement, expected: &str, timeout: Duration) -> Result<(
         }
         sleep(POLL_INTERVAL);
     }
-    Err(anyhow!("value didn't become '{expected}' within {timeout:?}"))
+    Err(anyhow!(
+        "value didn't become '{expected}' within {timeout:?}"
+    ))
 }
-
 
 enum LoadOutcome {
     Changed(String),
@@ -964,18 +962,16 @@ fn dismiss_shell_task_dialog(walker: &UITreeWalker, file_dlg: &UIElement) {
     });
 
     match btn_opt {
-        Some(btn) => {
-            match btn.get_pattern::<UIInvokePattern>() {
-                Ok(inv) => {
-                    if let Err(e) = inv.invoke() {
-                        warn!("failed to invoke TaskDialog OK button: {e}");
-                    } else {
-                        debug!("clicked TaskDialog OK");
-                    }
+        Some(btn) => match btn.get_pattern::<UIInvokePattern>() {
+            Ok(inv) => {
+                if let Err(e) = inv.invoke() {
+                    warn!("failed to invoke TaskDialog OK button: {e}");
+                } else {
+                    debug!("clicked TaskDialog OK");
                 }
-                Err(e) => warn!("TaskDialog OK button has no invoke pattern: {e}"),
             }
-        }
+            Err(e) => warn!("TaskDialog OK button has no invoke pattern: {e}"),
+        },
         None => warn!("TaskDialog OK button not found"),
     }
     sleep(Duration::from_millis(120));
@@ -1046,9 +1042,7 @@ fn is_error_modal(el: &UIElement) -> bool {
     if name.is_empty() {
         return false;
     }
-    if name.starts_with("RPCS3 ")
-        || name == "Skylanders Manager"
-        || name == "Select Skylander File"
+    if name.starts_with("RPCS3 ") || name == "Skylanders Manager" || name == "Select Skylander File"
     {
         return false;
     }
@@ -1056,9 +1050,7 @@ fn is_error_modal(el: &UIElement) -> bool {
     // "Error …" — require one of those prefixes to avoid false positives from
     // random other Qt dialogs that might appear.
     let lower = name.to_lowercase();
-    lower.starts_with("failed")
-        || lower.starts_with("error")
-        || lower.contains("skylander")
+    lower.starts_with("failed") || lower.starts_with("error") || lower.contains("skylander")
 }
 
 fn read_modal_body(walker: &UITreeWalker, modal: &UIElement) -> String {
@@ -1221,8 +1213,7 @@ fn focus_main_window(hwnd: HWND) -> Result<()> {
         let _ = GetWindowThreadProcessId(fg, Some(&mut fg_tid));
     }
     let mut target_pid = 0u32;
-    let target_thread =
-        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut target_pid)) };
+    let target_thread = unsafe { GetWindowThreadProcessId(hwnd, Some(&mut target_pid)) };
     let mut fg_attached = false;
     let mut target_attached = false;
     unsafe {
@@ -1296,7 +1287,10 @@ fn mouse_single_click(x: i32, y: i32) -> Result<()> {
     unsafe {
         let n = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
         if n as usize != inputs.len() {
-            bail!("SendInput only dispatched {n}/{} mouse events", inputs.len());
+            bail!(
+                "SendInput only dispatched {n}/{} mouse events",
+                inputs.len()
+            );
         }
     }
     Ok(())
@@ -1363,9 +1357,7 @@ fn expect_focused_menu_item(
     if last_seen.is_empty() {
         bail!("at step {step:?}: expected {expected:?} focused, no menu item has focus");
     }
-    bail!(
-        "at step {step:?}: expected {expected:?} focused, focused items: {last_seen:?}"
-    )
+    bail!("at step {step:?}: expected {expected:?} focused, focused items: {last_seen:?}")
 }
 
 /// Walk `root`, pushing the name of every `MenuItem` with keyboard focus into

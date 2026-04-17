@@ -18,9 +18,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
-use image::imageops::FilterType;
+use anyhow::{Context, Result, anyhow};
 use image::GenericImageView;
+use image::imageops::FilterType;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -28,8 +28,7 @@ use tokio::time::sleep;
 use tracing::{debug, info, warn};
 use unicode_normalization::UnicodeNormalization;
 
-const USER_AGENT: &str =
-    "skylander-portal-controller/0.1 (https://github.com/chotchki/skylander-portal-controller; \
+const USER_AGENT: &str = "skylander-portal-controller/0.1 (https://github.com/chotchki/skylander-portal-controller; \
      one-shot figure-metadata scrape; contact via GitHub issues)";
 const API_BASE: &str = "https://skylanders.fandom.com/api.php";
 const WIKI_BASE: &str = "https://skylanders.fandom.com";
@@ -162,12 +161,7 @@ impl Client {
 
 #[derive(Deserialize)]
 #[allow(dead_code)]
-struct OpensearchArray3(
-    String,
-    Vec<String>,
-    Vec<String>,
-    Vec<String>,
-);
+struct OpensearchArray3(String, Vec<String>, Vec<String>, Vec<String>);
 
 #[derive(Deserialize)]
 struct QueryResponse {
@@ -394,7 +388,9 @@ fn clean_wikitext(s: &str) -> String {
     let s = Regex::new(r"\[\[([^|\]]*)\|([^\]]*)\]\]")
         .unwrap()
         .replace_all(&s, "$2");
-    let s = Regex::new(r"\[\[([^\]]*)\]\]").unwrap().replace_all(&s, "$1");
+    let s = Regex::new(r"\[\[([^\]]*)\]\]")
+        .unwrap()
+        .replace_all(&s, "$1");
     let s = s.replace("'''", "").replace("''", "");
     let s = Regex::new(r"<br\s*/?>").unwrap().replace_all(&s, "\n");
     s.trim().to_string()
@@ -426,8 +422,7 @@ async fn download_image(client: &Client, url: &str) -> Result<Vec<u8>> {
 }
 
 fn write_images(bytes: &[u8], id: &str, out_root: &Path, skip_hero: bool) -> Result<u64> {
-    let img = image::load_from_memory(bytes)
-        .context("decode downloaded image")?;
+    let img = image::load_from_memory(bytes).context("decode downloaded image")?;
     let dir = out_root.join("images").join(id);
     std::fs::create_dir_all(&dir)?;
 
@@ -626,14 +621,8 @@ async fn main() -> Result<()> {
         if !force {
             if let Some(prev) = existing.get(&entry.id) {
                 if prev.wiki_page.is_some() {
-                    let thumb = data_root
-                        .join("images")
-                        .join(&entry.id)
-                        .join("thumb.png");
-                    let hero = data_root
-                        .join("images")
-                        .join(&entry.id)
-                        .join("hero.png");
+                    let thumb = data_root.join("images").join(&entry.id).join("thumb.png");
+                    let hero = data_root.join("images").join(&entry.id).join("hero.png");
                     let images_ok = thumb.exists() && (skip_hero || hero.exists());
                     // On a fresh checkout thumb exists (committed) but hero
                     // doesn't — that's fine, we treat the figure as cached and
@@ -705,7 +694,10 @@ async fn main() -> Result<()> {
     );
     println!();
     println!("=============================================");
-    println!(" wiki-scrape: found={found}  failed={}  total={total}", failed.len());
+    println!(
+        " wiki-scrape: found={found}  failed={}  total={total}",
+        failed.len()
+    );
     println!(" hit rate: {hit_rate:.1}%");
     println!(" image bytes (this run): {total_bytes}");
     println!("=============================================");
@@ -810,8 +802,7 @@ fn merge_for_save(
     results: &[WikiFigure],
     existing: &HashMap<String, WikiFigure>,
 ) -> Vec<WikiFigure> {
-    let present: HashSet<String> =
-        results.iter().map(|f| f.figure_id.clone()).collect();
+    let present: HashSet<String> = results.iter().map(|f| f.figure_id.clone()).collect();
     let mut out: Vec<WikiFigure> = results.to_vec();
     for (id, f) in existing {
         if !present.contains(id) {

@@ -18,7 +18,7 @@
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use uiautomation::patterns::{UIInvokePattern, UISelectionItemPattern};
 use uiautomation::types::ControlType;
 use uiautomation::{UIAutomation, UIElement, UITreeWalker};
@@ -26,27 +26,26 @@ use uiautomation::{UIAutomation, UIElement, UITreeWalker};
 use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-    KEYEVENTF_KEYUP, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
-    MOUSEEVENTF_MOVE, MOUSEINPUT, VIRTUAL_KEY, VK_RETURN,
+    INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP,
+    MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, MOUSEINPUT,
+    SendInput, VIRTUAL_KEY, VK_RETURN,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClassNameW, GetForegroundWindow, GetSystemMetrics, GetWindowTextLengthW,
-    GetWindowTextW, GetWindowThreadProcessId, SetForegroundWindow, SM_CXSCREEN, SM_CYSCREEN,
+    GetWindowTextW, GetWindowThreadProcessId, SM_CXSCREEN, SM_CYSCREEN, SetForegroundWindow,
 };
 use windows::core::BOOL;
 
 fn main() -> Result<()> {
-    let serial = std::env::args().nth(1).unwrap_or_else(|| "BLUS30968".to_string());
+    let serial = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "BLUS30968".to_string());
     eprintln!("booting {serial}");
 
     let automation = UIAutomation::new().context("UIA init")?;
     let walker = automation.create_tree_walker().context("walker")?;
     let main = find_main_window(&automation, &walker)?;
-    let main_hwnd_raw: isize = main
-        .get_native_window_handle()
-        .context("main HWND")?
-        .into();
+    let main_hwnd_raw: isize = main.get_native_window_handle().context("main HWND")?.into();
     let main_hwnd = HWND(main_hwnd_raw as _);
 
     let cell = find_cell_by_name(&walker, &main, &serial)
