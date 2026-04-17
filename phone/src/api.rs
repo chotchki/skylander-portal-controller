@@ -105,7 +105,10 @@ fn sign(method: &str, path: &str, body: &[u8]) -> Option<(String, String)> {
 /// etc. aren't in play on a trusted LAN.
 fn path_of(url: &str) -> &str {
     // Skip scheme + host.
-    if let Some(rest) = url.strip_prefix("http://").or_else(|| url.strip_prefix("https://")) {
+    if let Some(rest) = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+    {
         if let Some(slash) = rest.find('/') {
             return &rest[slash..];
         }
@@ -267,9 +270,7 @@ async fn do_fetch(url: &str, method: &str, body: Option<&str>) -> Result<String,
         req.headers()
             .set("X-Skyportal-Timestamp", &ts)
             .map_err(js_err)?;
-        req.headers()
-            .set("X-Skyportal-Sig", &sig)
-            .map_err(js_err)?;
+        req.headers().set("X-Skyportal-Sig", &sig).map_err(js_err)?;
     }
     let window = web_sys::window().ok_or_else(|| "no window".to_string())?;
     let resp_val = JsFuture::from(window.fetch_with_request(&req))

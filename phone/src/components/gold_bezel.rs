@@ -55,12 +55,9 @@ impl BezelState {
 /// See `design_language.md` §3.1 for the full material spec.
 #[component]
 pub fn GoldBezel(
-    #[prop(default = BezelSize::Lg)]
-    size: BezelSize,
-    #[prop(default = None)]
-    element: Option<Element>,
-    #[prop(optional, into)]
-    state: Signal<BezelState>,
+    #[prop(default = BezelSize::Lg)] size: BezelSize,
+    #[prop(default = None)] element: Option<Element>,
+    #[prop(optional, into)] state: Signal<BezelState>,
     children: Children,
 ) -> impl IntoView {
     let class = move || {

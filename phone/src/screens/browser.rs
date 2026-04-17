@@ -71,7 +71,10 @@ pub(crate) fn Browser(
             .get()
             .iter()
             .filter_map(|s| match &s.state {
-                SlotState::Loading { figure_id: Some(id), .. } => Some(id.clone()),
+                SlotState::Loading {
+                    figure_id: Some(id),
+                    ..
+                } => Some(id.clone()),
                 _ => None,
             })
             .collect::<Vec<_>>()

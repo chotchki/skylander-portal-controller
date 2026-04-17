@@ -9,11 +9,7 @@ use leptos::prelude::*;
 ///
 /// See `design_language.md` §3.3.
 #[component]
-pub fn FramedPanel(
-    #[prop(optional)]
-    class: &'static str,
-    children: Children,
-) -> impl IntoView {
+pub fn FramedPanel(#[prop(optional)] class: &'static str, children: Children) -> impl IntoView {
     let cls = if class.is_empty() {
         "framed-panel".to_string()
     } else {

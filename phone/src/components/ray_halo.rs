@@ -14,10 +14,7 @@ pub enum HaloSpeed {
 ///
 /// See `design_language.md` §5.2.
 #[component]
-pub fn RayHalo(
-    #[prop(default = HaloSpeed::Slow)]
-    speed: HaloSpeed,
-) -> impl IntoView {
+pub fn RayHalo(#[prop(default = HaloSpeed::Slow)] speed: HaloSpeed) -> impl IntoView {
     let cls = match speed {
         HaloSpeed::Slow => "ray-halo ray-halo-slow",
         HaloSpeed::Fast => "ray-halo ray-halo-fast",

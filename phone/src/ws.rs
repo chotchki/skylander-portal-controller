@@ -2,13 +2,13 @@
 //! deserialises incoming `Event`s and updates the portal signal.
 
 use leptos::prelude::*;
-use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
+use wasm_bindgen::JsCast;
 use web_sys::{MessageEvent, WebSocket};
 
 use crate::api::set_session_id;
 use crate::model::{ConnState, Event, GameLaunched, Slot, SlotState, UnlockedProfile, SLOT_COUNT};
-use crate::{ResumeOffer, TakeoverReason, ToastMsg, push_toast};
+use crate::{push_toast, ResumeOffer, TakeoverReason, ToastMsg};
 
 pub fn connect(
     portal: RwSignal<[Slot; SLOT_COUNT]>,
@@ -97,15 +97,13 @@ fn spawn_connect(
                             .and_then(|w| w.document())
                             .and_then(|d| d.body())
                         {
-                            let _ = body.set_attribute(
-                                "data-session-id",
-                                &session_id.to_string(),
-                            );
+                            let _ = body.set_attribute("data-session-id", &session_id.to_string());
                         }
                     }
                     Ok(Event::PortalSnapshot { slots }) => {
-                        let mut arr: [Slot; SLOT_COUNT] =
-                            std::array::from_fn(|_| Slot { state: SlotState::Empty });
+                        let mut arr: [Slot; SLOT_COUNT] = std::array::from_fn(|_| Slot {
+                            state: SlotState::Empty,
+                        });
                         for (i, s) in slots.into_iter().take(SLOT_COUNT).enumerate() {
                             arr[i] = Slot { state: s };
                         }
@@ -125,14 +123,20 @@ fn spawn_connect(
                     Ok(Event::GameChanged { current }) => {
                         current_game.set(current);
                     }
-                    Ok(Event::ProfileChanged { session_id, profile }) => {
+                    Ok(Event::ProfileChanged {
+                        session_id,
+                        profile,
+                    }) => {
                         // Session-filtered: only apply if it's addressed to us.
                         // Other phones' unlock changes don't affect this client.
                         if Some(session_id) == crate::api::current_session_id() {
                             unlocked_profile.set(profile);
                         }
                     }
-                    Ok(Event::TakenOver { session_id, by_kaos }) => {
+                    Ok(Event::TakenOver {
+                        session_id,
+                        by_kaos,
+                    }) => {
                         if Some(session_id) == crate::api::current_session_id() {
                             takeover.set(Some(TakeoverReason { by_kaos }));
                         }
@@ -143,9 +147,7 @@ fn spawn_connect(
                         }
                     }
                     Err(err) => {
-                        web_sys::console::warn_1(
-                            &format!("bad ws message: {err} — {text}").into(),
-                        );
+                        web_sys::console::warn_1(&format!("bad ws message: {err} — {text}").into());
                     }
                 }
             }
