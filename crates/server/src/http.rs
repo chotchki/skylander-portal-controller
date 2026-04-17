@@ -956,6 +956,9 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
             return;
         }
     };
+    // Publish the new session snapshot so the TV launcher can update its
+    // orbit pip count + max-players card flip (PLAN 4.15.6 / 4.15.7).
+    state.publish_session_snapshot().await;
 
     // First message: tell the client its session id so it can attach it on
     // REST and filter targeted broadcast events for itself.
@@ -1045,6 +1048,7 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
     writer.abort();
 
     state.sessions.remove(sid).await;
+    state.publish_session_snapshot().await;
     state
         .connected_clients
         .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
@@ -1200,6 +1204,9 @@ async fn unlock_profile(
     // Bind the unlocked profile to this specific WS session. Other phones
     // stay independent.
     state.sessions.set_profile(sid, Some(id.clone())).await;
+    // Republish session pips so the TV orbit picks up this profile's
+    // colour + initial (PLAN 4.15.7).
+    state.publish_session_snapshot().await;
 
     let unlocked = UnlockedProfile {
         id: row.id.clone(),
@@ -1268,6 +1275,9 @@ async fn lock_profile(
     Signed(_body): Signed,
 ) -> Response {
     state.sessions.set_profile(sid, None).await;
+    // Republish session pips — the lock drops this profile's colour
+    // from the TV orbit indicator (PLAN 4.15.7).
+    state.publish_session_snapshot().await;
     let _ = state.events.send(Event::ProfileChanged {
         session_id: sid.0,
         profile: None,
@@ -1377,6 +1387,7 @@ async fn set_session_profile_testhook(
         .sessions
         .set_profile(sid, Some(body.profile_id.clone()))
         .await;
+    state.publish_session_snapshot().await;
     let _ = state.events.send(Event::ProfileChanged {
         session_id: sid.0,
         profile: Some(UnlockedProfile {
@@ -1450,6 +1461,7 @@ async fn unlock_session_testhook(
         // matters for the post-reload flow where the fresh WS registers
         // with no profile and gets bound via this hook after the fact.
         maybe_send_resume_prompt(&state, sid.0, &body.profile_id).await;
+        state.publish_session_snapshot().await;
     }
     (StatusCode::OK, "unlocked").into_response()
 }

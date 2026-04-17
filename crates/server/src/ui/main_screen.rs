@@ -5,15 +5,37 @@
 //! URL, a `SKYLANDER PORTAL` heading in Titan One, and a status strip with
 //! the RPCS3 connection dot + current-game label.
 //!
-//! Future 4.15 items that enrich this screen (QR card-flip on max players,
-//! player-orbit indicators) slot in here as additional helpers or separate
-//! overlays; the top-level dispatcher in [`super`] doesn't need to know.
+//! PLAN 4.15.6 bolts on a Y-axis card-flip that covers the QR with a
+//! `MAXIMUM PLAYERS REACHED` back face when the session registry hits
+//! `MAX_SESSIONS`. PLAN 4.15.7 paints a slow ellipse of gold-bezeled pips
+//! around the QR — one per connected phone session, each tinted with the
+//! session's unlocked-profile colour + initial.
 
+use std::f32::consts::TAU;
 use std::sync::atomic::Ordering;
 
 use super::LauncherApp;
-use crate::state::LauncherStatus;
+use crate::state::{LauncherStatus, SessionPip};
 use crate::{fonts, palette};
+
+/// Fixed square edge for the QR card. Matches the mock's `.qr-flipper`
+/// (280px) scaled up for a 10 ft TV read. The QR image itself is generated
+/// at whatever size `render_qr_texture` produces; here we just reserve the
+/// frame so the card-flip animation has a stable rect to shrink/grow into.
+const CARD_SIZE: f32 = 320.0;
+
+/// How long the QR → back-face flip animation takes, in seconds. `egui`'s
+/// `animate_bool_with_time` uses this as the full 0→1 transition; we split
+/// it into two halves (front scaling to 0, then back scaling from 0).
+const FLIP_DURATION: f32 = 0.5;
+
+/// Pip diameter in screen pixels. The mock uses 84px; we keep the same
+/// physical size so the pip text is legible at 10 ft.
+const PIP_DIAMETER: f32 = 84.0;
+
+/// Orbit rotation rate (rad/s). Quiet idle motion — matches the vortex's
+/// 0.08 rad/s so the two ambient animations don't compete for attention.
+const ORBIT_SPEED: f32 = 0.10;
 
 impl LauncherApp {
     /// Render the Main surface. Called from the top-level dispatcher in
@@ -24,6 +46,19 @@ impl LauncherApp {
         ctx: &egui::Context,
         status_snapshot: &LauncherStatus,
     ) {
+        // Paint the orbit pips *before* any widgets lay out. Immediate-mode
+        // egui paints shapes in submission order, so these land above the
+        // vortex (already drawn by the dispatcher) but below the heading
+        // and QR rendered below — matching the mock's z-index 9 orbit
+        // passing behind z-index 10 text.
+        let panel_rect = ui.max_rect();
+        paint_player_orbit(
+            ui.painter(),
+            panel_rect,
+            ctx.input(|i| i.time) as f32,
+            &status_snapshot.session_profiles,
+        );
+
         ui.vertical_centered(|ui| {
             ui.add_space(16.0);
             status_strip(ui, status_snapshot);
@@ -42,7 +77,11 @@ impl LauncherApp {
             );
             ui.add_space(24.0);
             if let Some(tex) = &self.qr_texture {
-                qr_in_gold_bezel(ui, tex);
+                // The card-flip helper reserves a fixed-size square and
+                // paints the front / back face directly via Painter so the
+                // Y-axis rotation reads as a horizontal scale without any
+                // custom matrix math — egui-native, see the helper doc.
+                qr_card_flip(ui, ctx, tex, status_snapshot.session_slots_full);
             }
             ui.add_space(24.0);
             ui.label(
@@ -141,43 +180,228 @@ fn status_strip(ui: &mut egui::Ui, status: &LauncherStatus) {
     });
 }
 
-/// Frame the QR in a gold bezel equivalent to the phone's `GoldBezel` —
-/// rectangular rather than circular (the phone uses circles for figures;
-/// the QR needs a square frame) but the same colour story: gold body with a
-/// darker gold ink hairline outer edge and a near-black bezel plate
-/// surrounding the QR (PLAN 4.15.3). The radial-gradient + multi-layer
-/// inset shadows of the CSS version would need a custom `egui::Painter`
-/// pass; the stacked-Frame approach below is ~95% of the visual payoff for
-/// 5% of the code. Revisit via a custom painter in 4.15a polish if the TV
-/// looks flat.
-fn qr_in_gold_bezel(ui: &mut egui::Ui, tex: &egui::TextureHandle) {
-    let size = tex.size_vec2();
-    // Outer gold body — the visible bezel ring.
-    egui::Frame::none()
-        .fill(palette::GOLD)
-        .stroke(egui::Stroke::new(2.0, palette::GOLD_INK))
-        .inner_margin(egui::Margin::same(18.0))
-        .rounding(egui::Rounding::same(14.0))
-        .shadow(egui::epaint::Shadow {
-            offset: egui::vec2(0.0, 6.0),
-            blur: 18.0,
-            spread: 0.0,
-            color: egui::Color32::from_black_alpha(160),
-        })
-        .show(ui, |ui| {
-            // Bezel plate — darker SF_3 rim framing the QR itself, matching
-            // the phone's `linear-gradient(#1a2a4a, #0a1630)` plate colour
-            // (approximated as a solid fill — egui::Frame doesn't do
-            // gradients without a custom painter).
-            egui::Frame::none()
-                .fill(palette::SF_3)
-                .stroke(egui::Stroke::new(1.0, palette::GOLD_SHADOW))
-                .inner_margin(egui::Margin::same(10.0))
-                .rounding(egui::Rounding::same(8.0))
-                .show(ui, |ui| {
-                    ui.image((tex.id(), size));
-                });
-        });
+/// Card-flip container (PLAN 4.15.6). Reserves a `CARD_SIZE × CARD_SIZE`
+/// square and paints either the QR front face or the `MAXIMUM PLAYERS
+/// REACHED` back face, with a tent-wave horizontal scale to simulate a
+/// Y-axis rotation.
+///
+/// egui doesn't ship 3D transforms, but a Y-axis rotation in 2D reads
+/// identically to an X-axis scale (the vertical edges stay stationary;
+/// the face just compresses horizontally, crosses zero at the midpoint,
+/// and expands back). `animate_bool_with_time` drives the 0→1 progress;
+/// the scale is `|2·progress − 1|`, peaking at 0 in the middle where we
+/// swap content. `FLIP_DURATION` sets the overall transition time.
+fn qr_card_flip(ui: &mut egui::Ui, ctx: &egui::Context, tex: &egui::TextureHandle, flipped: bool) {
+    // `animate_bool_with_time` interpolates 0.0 → 1.0 when `flipped` goes
+    // true, and 1.0 → 0.0 when it goes false. Unique id so multiple
+    // instances don't alias animations.
+    let id = egui::Id::new("launcher_qr_card_flip");
+    let progress = ctx.animate_bool_with_time(id, flipped, FLIP_DURATION);
+
+    // Tent wave: 1 at the edges, 0 in the middle. Represents the x-scale
+    // of the visible face; hits 0 at the flip midpoint.
+    let scale = (progress * 2.0 - 1.0).abs();
+    let show_back = progress > 0.5;
+
+    // Reserve the full square so layout below doesn't shift during the
+    // animation.
+    let (rect, _resp) =
+        ui.allocate_exact_size(egui::vec2(CARD_SIZE, CARD_SIZE), egui::Sense::hover());
+
+    // Squish horizontally, keep vertical alignment.
+    let half_w = (rect.width() * scale) * 0.5;
+    let inner =
+        egui::Rect::from_center_size(rect.center(), egui::vec2(half_w * 2.0, rect.height()));
+
+    // Guard against zero-width rendering — egui's rounding + stroke paint
+    // gets messy at 0 extent, and nothing's visible anyway at the midpoint.
+    if inner.width() < 1.0 {
+        return;
+    }
+
+    let painter = ui.painter();
+    if show_back {
+        paint_back_face(painter, inner);
+    } else {
+        paint_qr_front(painter, inner, tex);
+    }
+}
+
+/// Front face — gold bezel framing the QR. Equivalent to the stacked
+/// `egui::Frame` version in the pre-4.15.6 code, but painted directly via
+/// the `Painter` API so we can drive a per-frame horizontal scale.
+fn paint_qr_front(painter: &egui::Painter, rect: egui::Rect, tex: &egui::TextureHandle) {
+    // Outer gold body with a `GOLD_INK` hairline stroke.
+    painter.rect(
+        rect,
+        egui::Rounding::same(14.0),
+        palette::GOLD,
+        egui::Stroke::new(2.0, palette::GOLD_INK),
+    );
+    // Inner bezel plate — the darker `SF_3` rim that frames the QR itself.
+    let plate = rect.shrink(18.0);
+    painter.rect(
+        plate,
+        egui::Rounding::same(8.0),
+        palette::SF_3,
+        egui::Stroke::new(1.0, palette::GOLD_SHADOW),
+    );
+    // The QR texture. Fill the plate minus a small quiet-zone margin so
+    // the dark plate peeks through as a contrast rim.
+    let qr_rect = plate.shrink(10.0);
+    painter.image(
+        tex.id(),
+        qr_rect,
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+        egui::Color32::WHITE,
+    );
+}
+
+/// Back face — same bezel geometry, Titan One gold text reading
+/// `MAXIMUM PLAYERS REACHED`. Matches the mock's state 5 copy split
+/// across three lines so the letters stay big at 10 ft.
+fn paint_back_face(painter: &egui::Painter, rect: egui::Rect) {
+    // Gold bezel body (identical to the front face so the flip has a
+    // stable silhouette).
+    painter.rect(
+        rect,
+        egui::Rounding::same(14.0),
+        palette::GOLD,
+        egui::Stroke::new(2.0, palette::GOLD_INK),
+    );
+    // Plate with a warmer blue fill than `SF_3` — the mock uses a
+    // downward blue gradient. We approximate with a flat `SF_1` which is
+    // the brightest of the three starfield blues.
+    let plate = rect.shrink(18.0);
+    painter.rect(
+        plate,
+        egui::Rounding::same(8.0),
+        palette::SF_1,
+        egui::Stroke::new(1.0, palette::GOLD_SHADOW),
+    );
+    // Three-line title. Sized to fill the plate vertically; the mock
+    // splits at "MAXIMUM / PLAYERS / REACHED" so each word gets its own
+    // line and the letter-spacing stays readable.
+    let lines = ["MAXIMUM", "PLAYERS", "REACHED"];
+    let line_h = plate.height() / lines.len() as f32;
+    for (i, word) in lines.iter().enumerate() {
+        let y = plate.top() + line_h * (i as f32 + 0.5);
+        painter.text(
+            egui::pos2(plate.center().x, y),
+            egui::Align2::CENTER_CENTER,
+            word,
+            egui::FontId::new(44.0, egui::FontFamily::Name(fonts::TITAN_ONE.into())),
+            palette::GOLD_BRIGHT,
+        );
+    }
+}
+
+/// Paint the player-orbit indicators (PLAN 4.15.7). Up to `MAX_SESSIONS`
+/// gold-bezeled pips ride a slow ellipse centred on the panel; each pip is
+/// tinted with the owning profile's colour and shows the profile's
+/// initial. Called *before* the heading widget lays out so the pips sit
+/// behind the text when their orbit intersects it (per the mock's
+/// z-index 9 vs 10 layering).
+///
+/// The mock hard-codes `rx=560, ry=400` against a 1920×1080 surface. We
+/// express the ellipse as a fraction of the panel's shorter axis so it
+/// scales with the launcher's actual rect — dev builds are 900×1000, the
+/// HTPC is 3840×2160, and both should look proportionate.
+fn paint_player_orbit(painter: &egui::Painter, rect: egui::Rect, time_s: f32, pips: &[SessionPip]) {
+    if pips.is_empty() {
+        return;
+    }
+    let centre = rect.center();
+    // Ellipse proportions matched to the mock (560×400 on a 1920×1080
+    // frame → rx = 29% of width, ry = 37% of height). Clamped against
+    // the shorter axis so portrait and landscape surfaces both stay
+    // sensible.
+    let rx = (rect.width() * 0.29).min(rect.width() * 0.45);
+    let ry = (rect.height() * 0.37).min(rect.height() * 0.45);
+
+    let base_phase = time_s * ORBIT_SPEED;
+    for (i, pip) in pips.iter().enumerate().take(crate::profiles::MAX_SESSIONS) {
+        // Distribute pips evenly around the orbit — 2 pips → 180° apart.
+        let offset = TAU * (i as f32) / (crate::profiles::MAX_SESSIONS as f32);
+        let t = base_phase + offset;
+        let x = centre.x + t.cos() * rx;
+        let y = centre.y + t.sin() * ry;
+        let pip_rect =
+            egui::Rect::from_center_size(egui::pos2(x, y), egui::vec2(PIP_DIAMETER, PIP_DIAMETER));
+        paint_pip(painter, pip_rect, pip);
+    }
+}
+
+/// Single pip — a gold-bezeled circle with the profile's colour as fill
+/// and the initial rendered in Titan One. Unknown profile (None fields)
+/// falls back to neutral gold + a small dot.
+fn paint_pip(painter: &egui::Painter, rect: egui::Rect, pip: &SessionPip) {
+    let centre = rect.center();
+    let radius = rect.width() * 0.5;
+    // Dark hairline well outside the bezel — matches the mock's
+    // `0 0 0 2px #000` outer shadow, gives the pip a clean silhouette
+    // against either the vortex or the starfield.
+    painter.circle_stroke(
+        centre,
+        radius + 2.0,
+        egui::Stroke::new(2.0, egui::Color32::BLACK),
+    );
+    // Gold bezel body.
+    painter.circle_filled(centre, radius, palette::GOLD);
+    // Inner gold-ink ring (the mock's `inset 0 0 0 3px var(--gi)`).
+    painter.circle_stroke(
+        centre,
+        radius - 4.0,
+        egui::Stroke::new(3.0, palette::GOLD_INK),
+    );
+
+    // Profile-colour fill inside the ring.
+    let fill_radius = radius - 10.0;
+    let fill = pip
+        .color
+        .as_deref()
+        .and_then(parse_hex_color)
+        .unwrap_or(palette::GOLD_BRIGHT);
+    painter.circle_filled(centre, fill_radius, fill);
+
+    // Initial (or a small dot if unknown).
+    match pip.initial.as_deref() {
+        Some(ch) if !ch.is_empty() => {
+            painter.text(
+                centre,
+                egui::Align2::CENTER_CENTER,
+                ch,
+                egui::FontId::new(36.0, egui::FontFamily::Name(fonts::TITAN_ONE.into())),
+                palette::GOLD_INK,
+            );
+        }
+        _ => {
+            painter.circle_filled(centre, 6.0, palette::GOLD_INK);
+        }
+    }
+}
+
+/// Parse `#rrggbb` / `#rgb` into an `egui::Color32`. Profiles stored in
+/// SQLite are validated to one of those two shapes, but be defensive —
+/// a garbage value just falls through to `None` and the caller picks a
+/// neutral default.
+fn parse_hex_color(s: &str) -> Option<egui::Color32> {
+    let s = s.strip_prefix('#')?;
+    let (r, g, b) = match s.len() {
+        6 => (
+            u8::from_str_radix(&s[0..2], 16).ok()?,
+            u8::from_str_radix(&s[2..4], 16).ok()?,
+            u8::from_str_radix(&s[4..6], 16).ok()?,
+        ),
+        3 => {
+            let r = u8::from_str_radix(&s[0..1], 16).ok()?;
+            let g = u8::from_str_radix(&s[1..2], 16).ok()?;
+            let b = u8::from_str_radix(&s[2..3], 16).ok()?;
+            (r * 17, g * 17, b * 17)
+        }
+        _ => return None,
+    };
+    Some(egui::Color32::from_rgb(r, g, b))
 }
 
 /// Rasterise the pairing URL into a QR texture. Called once from
@@ -215,4 +439,30 @@ pub(super) fn render_qr_texture(ctx: &egui::Context, url: &str) -> egui::Texture
         pixels,
     };
     ctx.load_texture("qr", color_image, egui::TextureOptions::NEAREST)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hex_color_six_char() {
+        let c = parse_hex_color("#ff00aa").unwrap();
+        assert_eq!(c, egui::Color32::from_rgb(0xff, 0x00, 0xaa));
+    }
+
+    #[test]
+    fn hex_color_three_char_expands() {
+        let c = parse_hex_color("#f0a").unwrap();
+        // 0xf => 0xff, 0x0 => 0x00, 0xa => 0xaa (nibble * 17).
+        assert_eq!(c, egui::Color32::from_rgb(0xff, 0x00, 0xaa));
+    }
+
+    #[test]
+    fn hex_color_rejects_nonsense() {
+        assert!(parse_hex_color("red").is_none());
+        assert!(parse_hex_color("#xyz").is_none());
+        assert!(parse_hex_color("").is_none());
+        assert!(parse_hex_color("#ff00aabb").is_none());
+    }
 }
