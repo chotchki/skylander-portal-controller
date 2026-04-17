@@ -154,6 +154,7 @@ fn main() -> Result<()> {
                     rpcs3_for_task.clone(),
                     portal_for_task.clone(),
                     events_for_task.clone(),
+                    status_for_task.clone(),
                     std::time::Duration::from_millis(500),
                 );
                 let state = Arc::new(AppState {
