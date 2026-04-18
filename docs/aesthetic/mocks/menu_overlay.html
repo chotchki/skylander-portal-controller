@@ -764,22 +764,37 @@
     to   { opacity: 1; transform: translateY(0); }
   }
 
-  /* ===== EMPTY-STATE RENDERING =====
-     When the menu is opened before a profile is unlocked (the post-connect
-     profile-picker state), SWITCH PROFILE and HOLD TO SWITCH GAMES make
-     no sense — there's nothing to switch from. The current-profile chip
-     also goes blank. Hide those so only MANAGE PROFILES + SHUT DOWN (plus
-     the join QR) are offered. */
-  .phone.no-profile .current-chip,
-  .phone.no-profile [data-action="switch"],
-  .phone.no-profile [data-action="game"] {
+  /* ===== CONTEXT-AWARE RENDERING =====
+     The overlay is opened from three different contexts. Each exposes a
+     different action set — irrelevant actions are hidden rather than
+     disabled so the panel stays short + tappable.
+
+       NORMAL      unlocked profile + current game
+                   → SWITCH · HOLD-GAME · MANAGE · HOLD-SHUTDOWN · chip
+       NO-PROFILE  post-connect, sitting on profile picker
+                   → MANAGE · HOLD-SHUTDOWN (+ join QR)
+                   SWITCH hidden (already at picker); GAME hidden (no game);
+                   chip blank.
+       ON-KONAMI   tapped MANAGE, now on the Konami gate
+                   → SWITCH · HOLD-SHUTDOWN (+ join QR)
+                   MANAGE hidden (already in that flow); GAME hidden; chip
+                   blank. SWITCH acts as the parallel back-out — the gate
+                   also has its own BACK button (the obvious escape for a
+                   confused kid); SWITCH-via-kebab is the adult's equivalent.
+     In Leptos these two classes are mutually exclusive (both derive from
+     "no profile unlocked" + whether the manage-gate is open). */
+  .phone:is(.no-profile, .on-konami) .current-chip,
+  .phone:is(.no-profile, .on-konami) [data-action="game"],
+  .phone:is(.no-profile, .on-konami) .u-swatch,
+  .phone:is(.no-profile, .on-konami) .underlay-head > div:last-child {
     display: none;
   }
-  .phone.no-profile .u-swatch,
-  .phone.no-profile .underlay-head > div:last-child {
-    /* underlay reflects the empty-state too: no swatch, no profile name */
-    display: none;
-  }
+  .phone.no-profile [data-action="switch"] { display: none; }
+  .phone.on-konami [data-action="manage"] { display: none; }
+  /* Underlay title is "PORTAL" by default — misleading when the user is
+     actually on the gate. Hide it in konami context; the blur reads as
+     generic "something dim behind" without implying a destination. */
+  .phone.on-konami .u-title { display: none; }
 
   /* ===== DEMO CONTROLS — dev-only, visible on desktop preview ===== */
   .controls {
@@ -974,6 +989,7 @@
     <button data-demo="manage">▶ MANAGE PROFILES</button>
     <button data-demo="shutdown">▶ SHUT DOWN</button>
     <button data-toggle="no-profile">◐ TOGGLE NO-PROFILE STATE</button>
+    <button data-toggle="on-konami">◐ TOGGLE KONAMI-CONTEXT STATE</button>
     <button class="replay" id="replay">↻ REPLAY</button>
   </div>
 
@@ -1100,11 +1116,17 @@
     panel.style.animation = '';
   });
 
-  // Toggle no-profile state: flips to the post-connect composition where
-  // only MANAGE PROFILES, SHUT DOWN, and the join QR are meaningful.
+  // Context toggles — mutually exclusive. Clicking one clears the other
+  // so reviewers can't end up in a nonsensical combined state.
   const phone = document.querySelector('.phone');
-  document.querySelector('[data-toggle="no-profile"]').addEventListener('click', () => {
-    phone.classList.toggle('no-profile');
+  const CONTEXT_CLASSES = ['no-profile', 'on-konami'];
+  document.querySelectorAll('[data-toggle]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const target = btn.dataset.toggle;
+      const wasOn = phone.classList.contains(target);
+      CONTEXT_CLASSES.forEach(c => phone.classList.remove(c));
+      if (!wasOn) phone.classList.add(target);
+    });
   });
 </script>
 </body>

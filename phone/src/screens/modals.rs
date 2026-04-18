@@ -393,15 +393,17 @@ pub(crate) fn MenuOverlay(
             <div class="menu-overlay-panel">
                 <button class="menu-close" on:click=move |_| close()>"\u{2715}"</button>
 
-                <div class="menu-current-chip">
-                    <div class="menu-current-swatch">{move || initial.get()}</div>
-                    <div class="menu-current-meta">
-                        <div class="menu-current-name">{move || name.get()}</div>
-                        <Show when=move || current_game.get().is_some() fallback=|| ()>
-                            <div class="menu-current-game">{move || game_name.get()}</div>
-                        </Show>
+                <Show when=move || unlocked_profile.get().is_some() fallback=|| ()>
+                    <div class="menu-current-chip">
+                        <div class="menu-current-swatch">{move || initial.get()}</div>
+                        <div class="menu-current-meta">
+                            <div class="menu-current-name">{move || name.get()}</div>
+                            <Show when=move || current_game.get().is_some() fallback=|| ()>
+                                <div class="menu-current-game">{move || game_name.get()}</div>
+                            </Show>
+                        </div>
                     </div>
-                </div>
+                </Show>
 
                 <div class="menu-join-card">
                     <div class="menu-join-label">"\u{2316} INVITE A PLAYER"</div>
