@@ -125,6 +125,16 @@ impl TestServer {
         self._tmpdir.path().join("dev-data")
     }
 
+    /// Forcibly kill the server child while keeping the chromedriver and
+    /// the rest of the harness alive. Tests that want to observe phone-side
+    /// behavior when the server goes away (e.g. the ConnectionLost overlay
+    /// — PLAN 4.18.21) call this to simulate a sudden WS drop. After this,
+    /// `self.url` no longer responds; chromedriver and the connected phone
+    /// session are unaffected and remain usable until normal Drop.
+    pub fn kill_server(&mut self) {
+        self._child.kill_now();
+    }
+
     /// Spawn the server configured for **real RPCS3 + real UIA driver**. Used
     /// by the live-integration test (`tests/live_integration.rs`) — the
     /// regular mock-driver tests use [`spawn`].
@@ -380,14 +390,20 @@ impl ChildGuard {
     fn new(child: Child) -> Self {
         Self(Some(child))
     }
-}
 
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
+    /// Kill the wrapped child immediately and detach. Used by
+    /// `TestServer::kill_server` to simulate a server crash mid-test.
+    fn kill_now(&mut self) {
         if let Some(mut child) = self.0.take() {
             let _ = child.kill();
             let _ = child.wait();
         }
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        self.kill_now();
     }
 }
 

@@ -171,7 +171,8 @@ pub(crate) fn TakeoverScreen(takeover: RwSignal<Option<TakeoverReason>>) -> impl
 ///
 /// Full-screen (NOT a toast — this is a session-breaking event). Rendered
 /// when the server broadcasts `Event::GameCrashed`; preempts every other
-/// screen in the phone's stack except `ConnectionLost` (unimplemented).
+/// screen in the phone's stack except `ConnectionLost` (which has higher
+/// z and renders independently from the bottom of `App()`'s view).
 /// Auto-dismisses on the next `GameChanged { current: Some(_) }` (the
 /// WS handler in `ws.rs` clears `game_crash` when a new game boots).
 ///

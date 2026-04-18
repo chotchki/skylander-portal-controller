@@ -1,6 +1,9 @@
 //! WebSocket client. Connects on mount, auto-reconnects with backoff,
 //! deserialises incoming `Event`s and updates the portal signal.
 
+use std::cell::Cell;
+use std::rc::Rc;
+
 use leptos::prelude::*;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
@@ -10,6 +13,12 @@ use crate::api::set_session_id;
 use crate::model::{ConnState, Event, GameLaunched, Slot, SlotState, UnlockedProfile, SLOT_COUNT};
 use crate::{push_toast, GameCrashReason, ResumeOffer, TakeoverReason, ToastMsg};
 
+/// Pending backoff timer handle. Tracked so a manual TRY AGAIN can cancel
+/// the in-flight wait and reconnect immediately. Single-threaded WASM so
+/// `Rc<Cell<_>>` is fine; never crosses a thread.
+type PendingTimer = Rc<Cell<Option<i32>>>;
+
+#[allow(clippy::too_many_arguments)]
 pub fn connect(
     portal: RwSignal<[Slot; SLOT_COUNT]>,
     conn: RwSignal<ConnState>,
@@ -19,7 +28,43 @@ pub fn connect(
     takeover: RwSignal<Option<TakeoverReason>>,
     resume_offer: RwSignal<Option<ResumeOffer>>,
     game_crash: RwSignal<Option<GameCrashReason>>,
+    reconnect_attempts: RwSignal<u32>,
+    manual_retry: RwSignal<u32>,
 ) {
+    let pending: PendingTimer = Rc::new(Cell::new(None));
+
+    // Manual retry: when the UI bumps `manual_retry`, cancel the pending
+    // backoff timer (if any) and reconnect immediately. The Effect's prev
+    // arg lets us only act on changes after the initial run, so mounting
+    // the component doesn't trigger a spurious reconnect.
+    {
+        let pending = pending.clone();
+        Effect::new(move |prev: Option<u32>| {
+            let now = manual_retry.get();
+            if let Some(p) = prev {
+                if now != p {
+                    cancel_pending_timer(&pending);
+                    reconnect_attempts.set(0);
+                    spawn_connect(
+                        portal,
+                        conn,
+                        toasts,
+                        current_game,
+                        unlocked_profile,
+                        takeover,
+                        resume_offer,
+                        game_crash,
+                        reconnect_attempts,
+                        manual_retry,
+                        pending.clone(),
+                        0,
+                    );
+                }
+            }
+            now
+        });
+    }
+
     spawn_connect(
         portal,
         conn,
@@ -29,8 +74,19 @@ pub fn connect(
         takeover,
         resume_offer,
         game_crash,
+        reconnect_attempts,
+        manual_retry,
+        pending,
         0,
     );
+}
+
+fn cancel_pending_timer(pending: &PendingTimer) {
+    if let Some(handle) = pending.take() {
+        if let Some(window) = web_sys::window() {
+            window.clear_timeout_with_handle(handle);
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -43,6 +99,9 @@ fn spawn_connect(
     takeover: RwSignal<Option<TakeoverReason>>,
     resume_offer: RwSignal<Option<ResumeOffer>>,
     game_crash: RwSignal<Option<GameCrashReason>>,
+    reconnect_attempts: RwSignal<u32>,
+    manual_retry: RwSignal<u32>,
+    pending: PendingTimer,
     attempt: u32,
 ) {
     let loc = web_sys::window().unwrap().location();
@@ -67,17 +126,22 @@ fn spawn_connect(
                 takeover,
                 resume_offer,
                 game_crash,
+                reconnect_attempts,
+                manual_retry,
+                pending,
                 attempt,
             );
             return;
         }
     };
 
-    // onopen
+    // onopen — successful connection clears the attempt counter so the
+    // next disconnect's overlay starts fresh (TRY AGAIN won't be premature).
     {
         let conn = conn;
         let on_open = Closure::<dyn FnMut()>::new(move || {
             conn.set(ConnState::Connected);
+            reconnect_attempts.set(0);
         });
         ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));
         on_open.forget();
@@ -184,8 +248,12 @@ fn spawn_connect(
         let takeover = takeover;
         let resume_offer = resume_offer;
         let game_crash = game_crash;
+        let pending = pending;
         let on_close = Closure::<dyn FnMut()>::new(move || {
             conn.set(ConnState::Disconnected);
+            // Bump the attempt counter so the ConnectionLost overlay can
+            // promote the TRY AGAIN button after enough failed retries.
+            reconnect_attempts.update(|n| *n = n.saturating_add(1));
             schedule_reconnect(
                 portal,
                 conn,
@@ -195,6 +263,9 @@ fn spawn_connect(
                 takeover,
                 resume_offer,
                 game_crash,
+                reconnect_attempts,
+                manual_retry,
+                pending.clone(),
                 attempt + 1,
             );
         });
@@ -220,11 +291,18 @@ fn schedule_reconnect(
     takeover: RwSignal<Option<TakeoverReason>>,
     resume_offer: RwSignal<Option<ResumeOffer>>,
     game_crash: RwSignal<Option<GameCrashReason>>,
+    reconnect_attempts: RwSignal<u32>,
+    manual_retry: RwSignal<u32>,
+    pending: PendingTimer,
     attempt: u32,
 ) {
     // Exponential backoff, clamped: 500ms, 1s, 2s, 4s, 8s (max).
     let delay = 500u32.saturating_mul(1 << attempt.min(4));
+    let pending_for_cb = pending.clone();
     let cb = Closure::once_into_js(move || {
+        // Timer fired — clear the stored handle so a follow-up TRY AGAIN
+        // doesn't try to cancel an already-fired timer (no-op but tidy).
+        pending_for_cb.set(None);
         spawn_connect(
             portal,
             conn,
@@ -234,13 +312,18 @@ fn schedule_reconnect(
             takeover,
             resume_offer,
             game_crash,
+            reconnect_attempts,
+            manual_retry,
+            pending_for_cb,
             attempt,
         );
     });
-    let _ = web_sys::window()
+    let handle = web_sys::window()
         .unwrap()
         .set_timeout_with_callback_and_timeout_and_arguments_0(
             cb.as_ref().unchecked_ref(),
             delay as i32,
-        );
+        )
+        .ok();
+    pending.set(handle);
 }

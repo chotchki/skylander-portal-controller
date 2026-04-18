@@ -103,6 +103,12 @@ pub fn App() -> impl IntoView {
     let nav_dir = RwSignal::new(NavDir::Forward);
     // Bumps on every profile CRUD so the ProfilePicker re-fetches.
     let profiles_epoch = RwSignal::new(0u32);
+    // Failed-WS-reconnect counter (written by ws.rs, read by ConnectionLost
+    // to decide when to surface the manual TRY AGAIN button) and a bump
+    // counter the user fires from that button (watched by ws.rs to cancel
+    // the pending backoff and reconnect immediately). PLAN 4.18.21.
+    let reconnect_attempts = RwSignal::new(0u32);
+    let manual_retry = RwSignal::new(0u32);
 
     let figures = LocalResource::new(api::fetch_figures);
     let games = LocalResource::new(fetch_games);
@@ -123,6 +129,8 @@ pub fn App() -> impl IntoView {
         takeover,
         resume_offer,
         game_crash,
+        reconnect_attempts,
+        manual_retry,
     );
 
     // Track depth-stack direction for screen entrance animations.
@@ -163,11 +171,14 @@ pub fn App() -> impl IntoView {
             <MagicDust />
             <Header conn current_game unlocked_profile menu_open />
             // Modal stacking per `docs/aesthetic/navigation.md` §3.8:
-            //   1. ConnectionLost  (TODO — not yet implemented)
+            //   1. ConnectionLost  (rendered last → highest z; preempts all)
             //   2. GameCrashed     (full-screen, preempts takeover + normal flow)
             //   3. KaosTakeover    (below)
             // GameCrashed is placed *outside* takeover so a crash during a
             // takeover still wins — the portal is dead, nothing else matters.
+            // ConnectionLost lives outside this Show stack entirely (see the
+            // bottom of this view) so it can overlay any of these states
+            // without restructuring the route flow.
             <Show
                 when=move || game_crash.get().is_none()
                 fallback=move || view! {
@@ -236,6 +247,7 @@ pub fn App() -> impl IntoView {
                 toasts
             />
             <ToastStack toasts />
+            <ConnectionLost conn reconnect_attempts manual_retry />
         </div>
     }
 }
