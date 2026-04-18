@@ -9,6 +9,13 @@ members = [
     "crates/e2e-tests",
     "tools/wiki-scrape",
 ]
+# Bare cargo commands from the repo root narrow to just the server, which
+# has one bin (`skylander-portal-controller`). Without this, `cargo run`
+# errors on bin-ambiguity vs the one-shot `skylander-wiki-scrape` tool.
+# Note this also affects `cargo test` / `cargo build` / `cargo check` —
+# use `--workspace` (or `-p <name>`) when you need the rest of the
+# workspace. Wiki-scrape stays reachable via `cargo run -p skylander-wiki-scrape`.
+default-members = ["crates/server"]
 
 [workspace.package]
 version = "0.1.0"
