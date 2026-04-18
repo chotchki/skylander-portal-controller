@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=390,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=390,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <title>Profile Management (Konami-gated) — Heraldic — Skylanders Portal</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -20,12 +20,19 @@
     --el-tech:   linear-gradient(135deg, #ffb84d, #a56500);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; }
+  html, body { height: 100%; overscroll-behavior: none; }
+  /* Kill iOS double-tap-zoom delay + grey tap-highlight on every button.
+     Default `touch-action: auto` leaves Safari waiting ~300ms per tap to
+     see if a second tap follows (for zoom), which makes fast keypad entry
+     feel sluggish. */
+  button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
   body {
     font-family: "Fraunces", Georgia, serif;
     background: #0a0a0a;
     display: grid; place-items: center;
-    min-height: 100vh; padding: 20px;
+    min-height: 100vh;
+    min-height: 100dvh;
+    padding: 20px;
     color: var(--text);
   }
   .phone {
@@ -36,7 +43,12 @@
   }
   @media (max-width: 450px) {
     body { padding: 0; background: var(--sf-3); }
-    .phone { width: 100vw; height: 100vh; border-radius: 0; box-shadow: none; }
+    .phone {
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh;
+      border-radius: 0; box-shadow: none;
+    }
   }
 
   .sky {
@@ -65,7 +77,7 @@
 
   .viewport {
     position: relative; height: 100%;
-    padding: 44px 22px 22px;
+    padding: max(44px, calc(env(safe-area-inset-top) + 12px)) 22px 22px;
     display: flex; flex-direction: column; gap: 14px;
   }
 
@@ -160,6 +172,32 @@
     color: #d9c88a;
     text-shadow: 0 1px 0 rgba(0,0,0,0.5);
     margin-top: -4px;
+  }
+
+  /* Entry-cascade — each gate element rises into place on its own beat
+     when the screen becomes active. Matches the .poststate-gate.show
+     cascade in menu_overlay.html so the "landing from kebab" reference
+     and the standalone gate reference render identically.
+     Plays on initial load and on demo re-entry; does NOT replay on
+     wrong-sequence shake (the shake targets .gate-progress.error, which
+     doesn't re-toggle .screen.active). */
+  .screen.active[data-screen="gate"] > div:first-child .title-sub { animation: gate-child-rise 640ms 120ms cubic-bezier(.3,1.2,.5,1) both; }
+  .screen.active[data-screen="gate"] > div:first-child .heading   { animation: gate-heading-rise 700ms 180ms cubic-bezier(.3,1.25,.5,1) both; }
+  .screen.active[data-screen="gate"] .gate-progress                { animation: gate-child-rise 640ms 260ms cubic-bezier(.3,1.2,.5,1) both; }
+  .screen.active[data-screen="gate"] .gate-hint                    { animation: gate-child-rise 640ms 320ms cubic-bezier(.3,1.2,.5,1) both; }
+  .screen.active[data-screen="gate"] .gate-pad                     { animation: gate-pad-rise 760ms 360ms cubic-bezier(.3,1.2,.5,1) both; }
+  .screen.active[data-screen="gate"] .gate-actions                 { animation: gate-pad-rise 720ms 440ms cubic-bezier(.3,1.2,.5,1) both; }
+  @keyframes gate-child-rise {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes gate-heading-rise {
+    from { opacity: 0; transform: translateY(14px) scale(0.94); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes gate-pad-rise {
+    from { opacity: 0; transform: translateY(40px); }
+    to   { opacity: 1; transform: translateY(0); }
   }
 
   /* Input pad — no gamepad chassis, just the raw buttons. User types
@@ -980,7 +1018,7 @@
     renderProgress();
   }
 
-  // Tap handlers for D-pad + A/B
+  // Tap handlers for D-pad + A/B.
   document.querySelectorAll('[data-key]').forEach((btn) => {
     btn.addEventListener('click', () => onKey(btn.dataset.key));
   });

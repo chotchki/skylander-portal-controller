@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=390,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=390,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <title>Menu Overlay — Heraldic — Skylanders Portal</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -18,12 +18,14 @@
     --el-water: linear-gradient(135deg, #2aa6ff, #0f4d8a);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; }
+  html, body { height: 100%; overscroll-behavior: none; }
   body {
     font-family: "Fraunces", Georgia, serif;
     background: #0a0a0a;
     display: grid; place-items: center;
-    min-height: 100vh; padding: 20px;
+    min-height: 100vh;
+    min-height: 100dvh;
+    padding: 20px;
     color: var(--text);
   }
   .phone {
@@ -34,7 +36,12 @@
   }
   @media (max-width: 450px) {
     body { padding: 0; background: var(--sf-3); }
-    .phone { width: 100vw; height: 100vh; border-radius: 0; box-shadow: none; }
+    .phone {
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh;
+      border-radius: 0; box-shadow: none;
+    }
   }
   .sky {
     position: absolute; inset: 0;
@@ -464,6 +471,22 @@
     to { opacity: 0.04; filter: blur(4px) saturate(0); }
   }
 
+  /* MANAGE PROFILES — portal recedes, grown-ups' gate rises from below.
+     Unlike the other three transitions, this one arrives at a *gate*
+     (halfway state) rather than a final destination. The correct Konami
+     sequence continues into profile management; a wrong sequence shakes
+     and resets in place (see profile_manage.html). The visual bridge is
+     the gold heraldic language — menu-panel's gold border echoes into
+     the gate heading's gold outline so the transition doesn't feel like
+     a cut between two unrelated surfaces. */
+  .underlay.recede {
+    animation: portal-recede 640ms cubic-bezier(.4,0,.5,1) forwards;
+  }
+  @keyframes portal-recede {
+    0%   { opacity: 0.4; filter: blur(2px); transform: translateY(0); }
+    100% { opacity: 0;   filter: blur(6px) saturate(0.3); transform: translateY(28px); }
+  }
+
   /* ===== POST-STATE OVERLAYS =====
      Each destination placeholder sits dormant until its animation brings
      it on-screen. Opacity + transform cross-fade from the dismissing
@@ -590,6 +613,174 @@
     50%      { opacity: 1; }
   }
 
+  /* ===== POSTSTATE: MANAGE PROFILES (KONAMI GATE) =====
+     Schematic Konami gate — full reference lives in profile_manage.html.
+     Included here so the menu → gate transition can be previewed end-to-end
+     in a single file. Elements cascade in: heading (scale+glow), dots
+     (stagger from center-out), D-pad + A/B (slide up), actions (slide up).
+     The gold-bezel heading outline is the visual through-line with the
+     menu panel's gold border — heraldic continuity across the cut. */
+  .poststate-gate {
+    display: flex; flex-direction: column;
+    padding: 88px 22px 22px;
+    gap: 14px;
+  }
+  .poststate-gate .g-title-sub {
+    text-align: center;
+    font-family: "Fraunces"; font-style: italic; font-weight: 600;
+    font-size: 13px; letter-spacing: 0.25em;
+    color: #fff4e0; text-transform: uppercase;
+    margin-bottom: 2px;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  }
+  .poststate-gate .g-heading {
+    text-align: center;
+    font-family: "Titan One"; font-size: 28px; letter-spacing: 0.06em;
+    line-height: 0.95;
+    color: var(--gb);
+    -webkit-text-stroke: 1.25px var(--gi);
+    text-shadow:
+      0 2px 0 var(--gs), 0 3px 0 var(--gi),
+      0 5px 10px rgba(0,0,0,0.5),
+      0 0 24px rgba(245,198,52,0.3);
+  }
+  .poststate-gate .g-progress {
+    display: flex; justify-content: center; gap: 8px;
+    margin: 6px 0 0;
+  }
+  .poststate-gate .g-dot {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: rgba(245,198,52,0.1);
+    border: 1.5px solid var(--gi);
+  }
+  .poststate-gate .g-hint {
+    text-align: center;
+    font-family: "Fraunces"; font-style: italic; font-weight: 600;
+    font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase;
+    color: #d9c88a;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+    margin-top: -4px;
+  }
+  .poststate-gate .g-pad {
+    margin-top: auto;
+    display: flex; align-items: center; justify-content: space-around;
+    gap: 20px;
+    padding: 8px 4px 16px;
+  }
+  .poststate-gate .g-dpad {
+    position: relative;
+    width: 130px; height: 130px;
+  }
+  .poststate-gate .g-dpad-btn {
+    position: absolute;
+    width: 44px; height: 44px;
+    background: linear-gradient(180deg, #3a3a4a, #1a1a2a);
+    border: 1.5px solid var(--gi);
+    border-radius: 10px;
+    display: grid; place-items: center;
+    color: var(--gb);
+    font-size: 20px;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.15),
+      inset 0 -1px 0 rgba(0,0,0,0.4),
+      0 2px 4px rgba(0,0,0,0.6);
+    text-shadow: 0 1px 0 rgba(0,0,0,0.6), 0 0 6px rgba(245,198,52,0.4);
+  }
+  .poststate-gate .g-dpad-btn.up    { top: 0;    left: 43px; }
+  .poststate-gate .g-dpad-btn.down  { top: 86px; left: 43px; }
+  .poststate-gate .g-dpad-btn.left  { top: 43px; left: 0; }
+  .poststate-gate .g-dpad-btn.right { top: 43px; left: 86px; }
+  .poststate-gate .g-ab {
+    display: flex; align-items: center; gap: 14px;
+  }
+  .poststate-gate .g-ab-btn {
+    width: 60px; height: 60px;
+    border-radius: 50%;
+    border: 2.5px solid var(--gi);
+    color: #fff;
+    font-family: "Titan One"; font-size: 26px;
+    display: grid; place-items: center;
+    text-shadow: 0 2px 0 rgba(0,0,0,0.6), 0 0 6px rgba(0,0,0,0.4);
+    box-shadow:
+      inset 0 3px 0 rgba(255,255,255,0.3),
+      inset 0 -3px 0 rgba(0,0,0,0.4),
+      0 4px 10px rgba(0,0,0,0.65);
+  }
+  .poststate-gate .g-ab-btn.b {
+    background: radial-gradient(circle at 30% 25%, #6bb1ff 0%, #2677cc 40%, #0f3d6f 100%);
+  }
+  .poststate-gate .g-ab-btn.a {
+    background: radial-gradient(circle at 30% 25%, #ff8f6b 0%, #cc3d26 40%, #7a1818 100%);
+  }
+  .poststate-gate .g-actions {
+    display: flex; gap: 10px;
+  }
+  .poststate-gate .g-actions .btn {
+    padding: 14px;
+    font-family: "Titan One"; font-size: 14px; letter-spacing: 0.22em;
+    border: none; border-radius: 14px;
+    text-align: center;
+  }
+  .poststate-gate .g-clear {
+    flex: 0 0 110px;
+    color: var(--gb);
+    background: transparent;
+    border: 2px solid #c9a84a;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+    letter-spacing: 0.18em;
+  }
+  .poststate-gate .g-submit {
+    flex: 1;
+    color: var(--ink);
+    background: linear-gradient(180deg, var(--gb) 0%, var(--g) 45%, var(--gm) 100%);
+    border: 2px solid var(--gi);
+    text-shadow: 0 1px 0 rgba(255,255,255,0.4);
+    box-shadow:
+      inset 0 2px 0 rgba(255,255,255,0.45),
+      inset 0 -2px 0 rgba(0,0,0,0.25),
+      0 4px 0 var(--gs),
+      0 6px 14px rgba(0,0,0,0.45);
+    filter: saturate(0.35) brightness(0.65);
+  }
+  /* Gate-rise cascade — each sub-element lifts into place on its own beat.
+     The base .poststate transition handles the container scale+opacity; the
+     children add their own delayed lift so the gate doesn't pop as one block. */
+  .poststate-gate.show .g-title-sub { animation: gate-child-rise 640ms 120ms cubic-bezier(.3,1.2,.5,1) both; }
+  .poststate-gate.show .g-heading   { animation: gate-heading-rise 700ms 180ms cubic-bezier(.3,1.25,.5,1) both; }
+  .poststate-gate.show .g-progress  { animation: gate-child-rise 640ms 260ms cubic-bezier(.3,1.2,.5,1) both; }
+  .poststate-gate.show .g-hint      { animation: gate-child-rise 640ms 320ms cubic-bezier(.3,1.2,.5,1) both; }
+  .poststate-gate.show .g-pad       { animation: gate-pad-rise 760ms 360ms cubic-bezier(.3,1.2,.5,1) both; }
+  .poststate-gate.show .g-actions   { animation: gate-pad-rise 720ms 440ms cubic-bezier(.3,1.2,.5,1) both; }
+  @keyframes gate-child-rise {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes gate-heading-rise {
+    from { opacity: 0; transform: translateY(14px) scale(0.94); text-shadow: 0 2px 0 var(--gs), 0 3px 0 var(--gi), 0 5px 10px rgba(0,0,0,0.5), 0 0 0 rgba(245,198,52,0); }
+    to   { opacity: 1; transform: translateY(0)   scale(1);    text-shadow: 0 2px 0 var(--gs), 0 3px 0 var(--gi), 0 5px 10px rgba(0,0,0,0.5), 0 0 24px rgba(245,198,52,0.3); }
+  }
+  @keyframes gate-pad-rise {
+    from { opacity: 0; transform: translateY(40px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ===== EMPTY-STATE RENDERING =====
+     When the menu is opened before a profile is unlocked (the post-connect
+     profile-picker state), SWITCH PROFILE and HOLD TO SWITCH GAMES make
+     no sense — there's nothing to switch from. The current-profile chip
+     also goes blank. Hide those so only MANAGE PROFILES + SHUT DOWN (plus
+     the join QR) are offered. */
+  .phone.no-profile .current-chip,
+  .phone.no-profile [data-action="switch"],
+  .phone.no-profile [data-action="game"] {
+    display: none;
+  }
+  .phone.no-profile .u-swatch,
+  .phone.no-profile .underlay-head > div:last-child {
+    /* underlay reflects the empty-state too: no swatch, no profile name */
+    display: none;
+  }
+
   /* ===== DEMO CONTROLS — dev-only, visible on desktop preview ===== */
   .controls {
     position: fixed; top: 20px; right: 20px;
@@ -670,6 +861,14 @@
           </div>
         </button>
 
+        <button class="action" data-action="manage">
+          <div class="action-icon">⚙</div>
+          <div>
+            <div class="action-title">MANAGE PROFILES</div>
+            <div class="action-desc">Grown-ups only · reset PINs, add or remove profiles</div>
+          </div>
+        </button>
+
         <button class="action danger" data-hold data-action="shutdown">
           <span class="hold-fill"></span>
           <div class="action-icon">⏻</div>
@@ -738,12 +937,43 @@
         <div class="farewell-sub">(disconnected)</div>
       </div>
     </div>
+
+    <div class="poststate poststate-gate" id="ps-gate">
+      <div class="g-title-sub">grown-ups only</div>
+      <h1 class="g-heading">ENTER<br>THE CODE</h1>
+      <div class="g-progress">
+        <span class="g-dot"></span><span class="g-dot"></span>
+        <span class="g-dot"></span><span class="g-dot"></span>
+        <span class="g-dot"></span><span class="g-dot"></span>
+        <span class="g-dot"></span><span class="g-dot"></span>
+        <span class="g-dot"></span><span class="g-dot"></span>
+      </div>
+      <div class="g-hint">Contra was such an easy game</div>
+      <div class="g-pad">
+        <div class="g-dpad">
+          <button class="g-dpad-btn up">▲</button>
+          <button class="g-dpad-btn left">◀</button>
+          <button class="g-dpad-btn right">▶</button>
+          <button class="g-dpad-btn down">▼</button>
+        </div>
+        <div class="g-ab">
+          <button class="g-ab-btn b">B</button>
+          <button class="g-ab-btn a">A</button>
+        </div>
+      </div>
+      <div class="g-actions">
+        <button class="btn g-clear">CLEAR</button>
+        <button class="btn g-submit" disabled>SUBMIT</button>
+      </div>
+    </div>
   </div>
 
   <div class="controls">
     <button data-demo="switch">▶ SWITCH PROFILE</button>
     <button data-demo="game">▶ CHOOSE ANOTHER GAME</button>
+    <button data-demo="manage">▶ MANAGE PROFILES</button>
     <button data-demo="shutdown">▶ SHUT DOWN</button>
+    <button data-toggle="no-profile">◐ TOGGLE NO-PROFILE STATE</button>
     <button class="replay" id="replay">↻ REPLAY</button>
   </div>
 
@@ -788,6 +1018,17 @@
     setTimeout(() => runAnimation('switch'), 280);
   });
 
+  // MANAGE PROFILES is also single-tap — the Konami gate itself is the
+  // security layer, so the menu button doesn't need hold-to-confirm.
+  const manageBtn = document.querySelector('[data-action="manage"]');
+  manageBtn.addEventListener('click', () => {
+    if (manageBtn.disabled) return;
+    manageBtn.disabled = true;
+    manageBtn.classList.add('fired');
+    setTimeout(() => manageBtn.classList.remove('fired'), 600);
+    setTimeout(() => runAnimation('manage'), 280);
+  });
+
   // Animations. All three dismiss the menu panel + scrim the same way,
   // then branch: identity-drain / fold-away / lights-dim.
   function runAnimation(action) {
@@ -820,6 +1061,16 @@
           document.getElementById('ps-shutdown').classList.add('show');
         }, 700);
       }, 280);
+    } else if (action === 'manage') {
+      setTimeout(() => {
+        underlay.classList.add('recede');
+        // Gate rises ~160ms after the portal starts receding so the two
+        // motions overlap — the gate begins appearing before the portal
+        // has finished pulling away, which bridges the cut.
+        setTimeout(() => {
+          document.getElementById('ps-gate').classList.add('show');
+        }, 160);
+      }, 280);
     }
   }
 
@@ -836,7 +1087,7 @@
     const sky = document.querySelector('.sky');
     const stars = document.querySelector('.stars');
     [panel, scrim, underlay, sky, stars].forEach((el) => {
-      el.classList.remove('dismissing', 're-lock', 'fold-away', 'dimming');
+      el.classList.remove('dismissing', 're-lock', 'fold-away', 'dimming', 'recede');
     });
     document.querySelectorAll('.poststate').forEach((el) => el.classList.remove('show'));
     document.querySelectorAll('[data-action]').forEach((btn) => {
@@ -847,6 +1098,13 @@
     panel.style.animation = 'none';
     void panel.offsetWidth;
     panel.style.animation = '';
+  });
+
+  // Toggle no-profile state: flips to the post-connect composition where
+  // only MANAGE PROFILES, SHUT DOWN, and the join QR are meaningful.
+  const phone = document.querySelector('.phone');
+  document.querySelector('[data-toggle="no-profile"]').addEventListener('click', () => {
+    phone.classList.toggle('no-profile');
   });
 </script>
 </body>
