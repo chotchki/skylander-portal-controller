@@ -31,6 +31,7 @@ const COLOR_SWATCHES: [(&str, &str); 8] = [
 pub(crate) fn ProfilePicker(
     toasts: RwSignal<Vec<ToastMsg>>,
     profiles_epoch: RwSignal<u32>,
+    manage_gate: RwSignal<bool>,
 ) -> impl IntoView {
     let profiles = RwSignal::new(Vec::<PublicProfile>::new());
     let manage_mode = RwSignal::new(false);
@@ -74,6 +75,7 @@ pub(crate) fn ProfilePicker(
                             toasts
                             _manage_mode=manage_mode
                             profiles_epoch
+                            manage_gate
                         />
                     }.into_any()
                 }
@@ -92,24 +94,15 @@ fn ProfileGrid(
     toasts: RwSignal<Vec<ToastMsg>>,
     _manage_mode: RwSignal<bool>,
     profiles_epoch: RwSignal<u32>,
+    manage_gate: RwSignal<bool>,
 ) -> impl IntoView {
     let show_create = RwSignal::new(false);
     let default_state: Signal<BezelState> = Signal::derive(|| BezelState::Default);
     let disabled_state: Signal<BezelState> = Signal::derive(|| BezelState::Disabled);
 
-    // Konami gate signal — navigate to gate on "Manage" click.
-    let show_gate = RwSignal::new(false);
-
     view! {
-        <Show when=move || show_gate.get() fallback=move || {
+        <Show when=move || manage_gate.get() fallback=move || {
             view! {
-                <button
-                    class="pp-manage-toggle"
-                    on:click=move |_| show_gate.set(true)
-                >
-                    "Manage"
-                </button>
-
                 <div class="pp-welcome-wrap">
                     <DisplayHeading size=HeadingSize::Lg with_rays=true>
                         "PORTAL "
@@ -174,8 +167,8 @@ fn ProfileGrid(
             }
         }>
             <KonamiGate
-                on_success=move || { show_gate.set(false); show_admin.set(true); }
-                on_back=move || show_gate.set(false)
+                on_success=move || { manage_gate.set(false); show_admin.set(true); }
+                on_back=move || manage_gate.set(false)
             />
         </Show>
     }

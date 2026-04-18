@@ -680,6 +680,64 @@ The TV launcher is a full UX surface with its own 8-state machine (see `navigati
 - [ ] 4.17.1 Demo on HTPC end-to-end: launcher TV readability → phone scans → profile picker → PIN → game picker → portal in all five slot states → takeover flow.
 - [ ] 4.17.2 Catalogue any UX papercuts and route them to Phase 3 stragglers (ownership badge, show-join-code wiring, 3-option resume modal, crystal extra-confirm, attribution placement).
 
+### 4.18 Phone UI ↔ mock parity reconciliation
+
+Discovered during a Mac-side browser smoke-test on 2026-04-17: the shipped Leptos SPA has drifted from the Phase 4 mocks in several visible ways. 4.17's checkpoint is meant to catch drift like this, but enough of it accumulated during 4.4–4.12's screen-by-screen landings that it warrants a named reconciliation pass rather than a pile of papercuts on 4.17.2. Ordered roughly by user-visible impact; group labels in bold separate areas of the app.
+
+- [ ] 4.18.1 **Mobile viewport / address-bar doesn't hide.** On iOS Safari + mobile Chrome the browser chrome stays pinned because `body { min-height: 100vh }` (`phone/assets/app.css:42`) resolves to the *maximum* viewport (bar hidden), so content never overflows the shorter bar-visible viewport and the chrome has no reason to collapse. Switch the body + root container to `100dvh` (dynamic — shrinks when bar is shown, grows as the user scrolls past the threshold). Use `100svh` for full-screen scrims where we want to always fit within the minimum-available area with no scrolling. Also audit the `calc(100vh - 40px)` usage at `app.css:3263` for the same issue. Verify on a real iOS device after the change — desktop Chrome devtools can't reproduce address-bar behavior faithfully.
+    - **2026-04-17 partial fix** during iPhone smoke test: `100dvh` fallback added on body (`app.css:43`), `100svh` on `.menu-overlay` max-height (`app.css:3264`), **`env(safe-area-inset-top)` added to `.app` padding** so the status-bar/Dynamic Island doesn't overlap the header (`app.css:79`), corrected L/R safe-area-inset swap on same line, and added a **landscape-block overlay** to `index.html` + `app.css` (iOS Safari can't lock orientation from a web page). Confirmed on-device that iOS Safari **will not** auto-hide its chrome without scrollable content — the workable path is "install to home screen" as a PWA. Follow-ups are 4.18.1a (stable URL via mDNS) and 4.18.1b (loading-page hint).
+- [ ] 4.18.1a **mDNS/Bonjour advertisement for stable URL.** Home-screen bookmarks only survive if the URL is stable across boots. Today `crates/server/src/main.rs:65-72` bakes `first_non_loopback_ipv4()` into the QR URL, so a DHCP-lease change breaks every bookmark. Add `mdns-sd` (or similar) to `crates/server`, advertise `_skylander-portal._tcp.local` at the chosen bind port, and use `skylander-portal.local` in the QR URL (e.g., `http://skylander-portal.local:8765/#k=...`). iOS/Bonjour resolves `.local` natively. Include the raw-IP URL as a secondary QR fallback for environments where mDNS is blocked. (HMAC key itself is already persisted — `config.rs:113,172` — so the `#k=` half of the URL is stable.)
+- [ ] 4.18.1b **Loading / profile-picker: "Add to Home Screen" hint.** Depends on 4.18.1a. Render a one-time dismissible banner on first connect with the iOS install instructions (Share → Add to Home Screen). Persist dismissal in `localStorage`. Only show when UA matches iOS Safari and `navigator.standalone !== true` (already-installed PWA skips it). Android can be deferred — Chrome handles the prompt itself.
+
+**Shared header — affects every screen** (`phone/src/screens/header.rs`).
+
+- [x] 4.18.2 ~~Drop the "Skylander Portal" brand text.~~ **Done 2026-04-18** — `header.rs` rewritten; brand text and `.brand`/`.brand .game-name` CSS removed.
+- [x] 4.18.3 ~~Add a **profile swatch** beside the kebab.~~ **Done 2026-04-18** — `<GoldBezel size=BezelSize::Sm>` with profile initial + `--profile-color` CSS var; renders only when a profile is unlocked.
+- [x] 4.18.4 ~~Replace the status dot + text label with a **pulsing pip only**.~~ **Done 2026-04-18** — status dot retains `aria-label` + `title` for accessibility; visible text label removed.
+- [x] 4.18.5 ~~Consider splitting `Header` into per-screen variants.~~ **Done 2026-04-18** — single `Header` component handles all three states reactively (no profile → profile only → profile + game) via `Option::map` on the signals; no need for separate variants.
+- [x] 4.18.5a **MANAGE PROFILES moved into the kebab menu.** **Done 2026-04-18** — removed the stranded `.pp-manage-toggle` pill from `ProfilePicker`; added `MANAGE PROFILES` action (gear `\u{2699}`) inside `MenuOverlay` that clears `unlocked_profile` and sets `manage_gate=true`, routing into the Konami gate. `manage_gate` lifted from `ProfileGrid`-local signal to `App`-level `RwSignal<bool>` threaded through `ProfilePicker` + `MenuOverlay`. Orphan `.pp-manage-toggle` CSS removed from `app.css`.
+- [x] 4.18.5b **MenuOverlay made context-aware.** **Done 2026-04-18** — `SWITCH PROFILE` wrapped in `<Show when=unlocked_profile.is_some()>`; `HOLD TO SWITCH GAMES` wrapped in `<Show when=current_game.is_some()>`. Prevents the "user gets stuck with no profile" footgun that surfaced when we first considered replacing the kebab with Manage.
+- [ ] 4.18.5c **Revisit mock for menu-overlay → Konami-gate transition.** User flagged 2026-04-18: "transitioning from the overlay menu to the konami entry will need to be revisited in mock too since they are so different." Today the Leptos flow routes from `MenuOverlay` → (close + set manage_gate) → `ProfilePicker`'s `KonamiGate`, but the visual handoff is abrupt and the two surfaces have very different treatments. Revise the mocks (`menu_overlay.html` + `profile_manage.html` / Konami entry) so they share a coherent transition, then re-land in the Leptos `MenuOverlay` / `KonamiGate` components. Also: hide the empty `.menu-current-chip` row in `MenuOverlay` when no profile is unlocked (today the chip renders blank).
+
+**Profile picker, profile create, profile manage** (`phone/src/screens/profile_picker.rs`).
+
+- [ ] 4.18.6 Rebuild `CreateProfileForm` as the **4-step wizard** from `profile_create.html`: Name → Color ("CHOOSE YOUR MARK") → PIN ("CHOOSE YOUR PIN") → Confirm ("TYPE IT AGAIN"). The single-form shortcut skips the pacing the mock was designed around.
+- [ ] 4.18.7 Name step: native text input **prefilled with a random Skylander character name** + a ↻ reroll button. Kids tap through with the default or type their own (no whitelist per 4.2.8 decision).
+- [ ] 4.18.8 PIN confirm step: on mismatch, shake the dots + show an inline error banner. Matches mock's shake-on-error pattern.
+- [ ] 4.18.9 `AdminPinReset` is 2-step today (current PIN → new PIN). Mock `profile_manage.html` treats reset as **1-step** (new PIN only) because the Konami gate already authenticated the adult. Drop the current-PIN step.
+- [ ] 4.18.10 Profile rows in manage view need **"last used 2 days ago" / "never used"** subtext. Requires a per-profile last-used timestamp — derive from `MAX(figure_usage.last_used_at)` per profile, or add `profiles.last_used_at` column if that's simpler.
+- [ ] 4.18.11 Profile manage DEL: verify the row uses **HOLD TO DELETE** (1200ms hold-fill bar) — the danger-hold pattern from 4.2.14. If it's still `window.confirm()`, wire it to the same hold-fill machinery `ResetConfirmModal` uses.
+
+**Game picker** (`phone/src/screens/game_picker.rs`).
+
+- [ ] 4.18.12 Add **per-card sub-description** ("where it all began" / "big heroes, bigger quests" / "currently playing", etc.) beneath the game name, and a "currently playing" marker on the active game card. Either hardcode a map keyed on serial/slug or extend `InstalledGame` with a tagline field.
+
+**Portal + Browser** (`phone/src/screens/portal.rs`, `browser.rs`).
+
+- [ ] 4.18.13 Render the **"PORTAL" `<DisplayHeading>`** above the slot grid per `portal_with_box.html`. Currently absent.
+- [ ] 4.18.14 Add a **GAMES drill-down filter row** to `BrowserHead` alongside the element chips — horizontal chip strip, one chip per detected game.
+- [ ] 4.18.15 Add a **CATEGORY drill-down filter row** (Vehicles / Traps / Minis / Items). Additive with elements, not mutually exclusive. Requires per-figure category metadata from the indexer (likely already on `Figure`).
+- [ ] 4.18.16 Toy-box lid: verify the grabber pill + swipe-hint copy ("▾ swipe for filters" / "▾ swipe to close") renders. 4.2.13.6's fix landed in the mock; confirm it made it into the Leptos `<Browser>` gesture zone.
+- [ ] 4.18.17 **Ownership indicator per loaded slot** — profile swatch overlay on the bezel showing who placed the figure. Required by CLAUDE.md for 2-player sessions; currently missing. This is Phase 3 deferral 3.10.7 — adopt it here so the parity pass is self-contained.
+
+**Figure detail** (`phone/src/screens/figure_detail.rs`).
+
+- [ ] 4.18.18 Action buttons (✦ ☰ ↺) need **visible labels below the glyph** — "APPEARANCE" / "STATS" / "RESET". Mock renders captions via `data-label` + `::after`. Touch users never see the current `title=` tooltips; glyph-only is an accessibility hole.
+- [ ] 4.18.19 Confirm the **hero-aura (breathing glow) + hero-rays (slow-rotating conic gradient)** actually paint behind the lifted figure bezel. `<FigureHero>` owns this per 4.4.5 — verify whether the visual shipped or only the layout skeleton.
+- [ ] 4.18.20 Fix the **ghost-grid / box-backdrop context.** `lib.rs:203-218` replaces the portal+browser with the detail view via `<Show fallback>`, so the box interior and other figures disappear entirely. Mock keeps them at ~25% opacity behind the detail panel (per 4.3.7). Change the screen stack so `FigureDetail` overlays the browser rather than replacing it, and apply the opacity dim via CSS on the underlying layer.
+
+**Modals & overlays** (`phone/src/screens/modals.rs`, `phone/src/lib.rs`).
+
+- [ ] 4.18.21 **ConnectionLost overlay — NOT IMPLEMENTED.** `lib.rs:164` has an explicit TODO. Build the component from `connection_lost.html`: pulsing red ✕ pip, "LOST CONNECTION" heading, reconnect spinner, manual "TRY AGAIN" button that surfaces after N failed auto-retries, Wi-Fi hint. Wire into `App()` outside every other `<Show>` so it preempts the whole stack (per `navigation.md` §3.8 modal priority). Drive visibility from `conn.get() == ConnState::Disconnected` plus a ~1s grace so a momentary reconnect doesn't flash.
+- [ ] 4.18.22 `ResumeModal` figure bezels: **color the inner plate by element** (magic/fire/life/tech per figure). Currently uses a generic `<GoldBezel>` without element tinting. Mock's `.plate.magic` / `.plate.fire` / etc. carry this.
+- [ ] 4.18.23 `ResumeModal` timestamp: replace generic "saved layout" with **"saved N days ago"** / "saved today". Requires a `saved_at` timestamp on `ResumeOffer` (server-side `profile_layout.saved_at` or equivalent).
+- [ ] 4.18.24 `MenuOverlay`: implement the three **post-action transitions** from `menu_overlay.html` per 4.2.14.a — `identity-drain` (SWITCH PROFILE), `fold-away` (CHOOSE ANOTHER GAME), `lights-dim` (SHUT DOWN). Current exit is a plain dismiss.
+
+**Wrap-up.**
+
+- [ ] 4.18.25 Re-run the browser smoke-test on a real iOS device once 4.18.1 ships; re-compare each screen against its mock and add any missed items before closing this section.
+- [ ] 4.18.26 Once parity is reached, 4.17.1's end-to-end demo can proceed against a known-correct phone UI.
+
 ---
 
 ## Phase 5 — Kaos

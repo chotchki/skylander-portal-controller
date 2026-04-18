@@ -267,6 +267,7 @@ pub(crate) fn MenuOverlay(
     open: RwSignal<bool>,
     unlocked_profile: RwSignal<Option<UnlockedProfile>>,
     current_game: RwSignal<Option<GameLaunched>>,
+    manage_gate: RwSignal<bool>,
     toasts: RwSignal<Vec<ToastMsg>>,
 ) -> impl IntoView {
     let close = move || open.set(false);
@@ -303,6 +304,15 @@ pub(crate) fn MenuOverlay(
     // SWITCH PROFILE — single tap. Local re-lock for now.
     let on_switch = move |_| {
         unlocked_profile.set(None);
+        close();
+    };
+
+    // MANAGE PROFILES — enters the Konami gate (admin profile management).
+    // Locks the current session so ProfilePicker mounts, and raises the
+    // shared `manage_gate` signal that ProfilePicker reads to open the gate.
+    let on_manage = move |_| {
+        unlocked_profile.set(None);
+        manage_gate.set(true);
         close();
     };
 
@@ -402,30 +412,42 @@ pub(crate) fn MenuOverlay(
                 </div>
 
                 <div class="menu-actions">
-                    <button class="menu-action" on:click=on_switch>
-                        <div class="menu-action-icon">"\u{21C4}"</div>
+                    <Show when=move || unlocked_profile.get().is_some() fallback=|| ()>
+                        <button class="menu-action" on:click=on_switch>
+                            <div class="menu-action-icon">"\u{21C4}"</div>
+                            <div>
+                                <div class="menu-action-title">"SWITCH PROFILE"</div>
+                                <div class="menu-action-desc">"Sign back in as someone else"</div>
+                            </div>
+                        </button>
+                    </Show>
+
+                    <button class="menu-action" on:click=on_manage>
+                        <div class="menu-action-icon">"\u{2699}"</div>
                         <div>
-                            <div class="menu-action-title">"SWITCH PROFILE"</div>
-                            <div class="menu-action-desc">"Sign back in as someone else"</div>
+                            <div class="menu-action-title">"MANAGE PROFILES"</div>
+                            <div class="menu-action-desc">"Grown-ups only \u{00B7} reset PINs, add or remove profiles"</div>
                         </div>
                     </button>
 
-                    <button
-                        class=game_class
-                        on:pointerdown=on_game_down
-                        on:pointerup=on_game_cancel
-                        on:pointerleave=on_game_cancel
-                        on:pointercancel=on_game_cancel
-                    >
-                        <span class="hold-fill"></span>
-                        <div class="menu-action-icon">"\u{25C9}"</div>
-                        <div>
-                            <div class="menu-action-title">"HOLD TO SWITCH GAMES"</div>
-                            <div class="menu-action-desc">
-                                "Quit the current game and pick a different adventure"
+                    <Show when=move || current_game.get().is_some() fallback=|| ()>
+                        <button
+                            class=game_class
+                            on:pointerdown=on_game_down
+                            on:pointerup=on_game_cancel
+                            on:pointerleave=on_game_cancel
+                            on:pointercancel=on_game_cancel
+                        >
+                            <span class="hold-fill"></span>
+                            <div class="menu-action-icon">"\u{25C9}"</div>
+                            <div>
+                                <div class="menu-action-title">"HOLD TO SWITCH GAMES"</div>
+                                <div class="menu-action-desc">
+                                    "Quit the current game and pick a different adventure"
+                                </div>
                             </div>
-                        </div>
-                    </button>
+                        </button>
+                    </Show>
 
                     <button
                         class=shutdown_class

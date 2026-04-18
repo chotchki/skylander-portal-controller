@@ -40,6 +40,7 @@
 html, body { margin: 0; padding: 0; background: var(--sf-3); color: var(--text); }
 body {
   min-height: 100vh;
+  min-height: 100dvh;
   background:
     radial-gradient(ellipse 120% 60% at 50% 0%, #1a3a8a 0%, transparent 50%),
     radial-gradient(ellipse 80% 50% at 50% 100%, #0e2464 0%, transparent 50%),
@@ -75,13 +76,58 @@ button { font: inherit; color: inherit; cursor: pointer; }
   z-index: 1;
   max-width: 960px;
   margin: 0 auto;
-  padding: 16px calc(env(safe-area-inset-left) + 12px) calc(env(safe-area-inset-bottom) + 16px) calc(env(safe-area-inset-right) + 12px);
+  padding:
+    calc(env(safe-area-inset-top) + 16px)
+    calc(env(safe-area-inset-right) + 12px)
+    calc(env(safe-area-inset-bottom) + 16px)
+    calc(env(safe-area-inset-left) + 12px);
 }
 
 .app-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; gap: 10px; flex-wrap: wrap; }
-.brand { font-weight: 700; font-size: 20px; letter-spacing: 0.3px; display: flex; align-items: baseline; gap: 8px; }
-.brand .game-name { font-size: 13px; font-weight: 500; color: var(--gold); letter-spacing: 0.2px; }
 .header-right { display: flex; align-items: center; gap: 10px; }
+
+.header-swatch {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.header-swatch .bezel-plate {
+  background: var(--profile-color, linear-gradient(135deg, #1a2a4a, #0a1630));
+}
+.header-swatch-initial {
+  font-family: "Titan One", sans-serif;
+  color: #fff;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
+  line-height: 1;
+}
+.header-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.2;
+  min-width: 0;
+}
+.header-profile-name {
+  font-family: "Titan One", sans-serif;
+  font-size: 15px;
+  color: var(--text);
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.header-game-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--gold);
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .quit-btn {
   background: rgba(209, 68, 68, 0.85);
   color: #fff;
@@ -133,7 +179,6 @@ button { font: inherit; color: inherit; cursor: pointer; }
   background: var(--danger);
   box-shadow: 0 0 6px rgba(227, 76, 76, 0.55);
 }
-.status-label { font-size: 13px; color: var(--text-dim); }
 
 @keyframes status-breathe {
   0%, 100% {
@@ -383,10 +428,6 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .profile-name { font-size: 15px; }
 .profile-manage-hint { font-size: 11px; color: #aaa; }
-.profile-chip {
-    background: #333; padding: 2px 8px; border-radius: 999px;
-    font-size: 12px; margin-left: 8px;
-}
 
 .create-profile-form, .pin-entry, .profile-admin {
     background: #161616; border: 1px solid #333; border-radius: 10px;
@@ -872,29 +913,6 @@ button { font: inherit; color: inherit; cursor: pointer; }
   position: relative;
   min-height: 80vh;
   justify-content: center;
-}
-
-/* Manage toggle — small pill, upper-left */
-.pp-manage-toggle {
-  position: absolute;
-  top: 48px;
-  left: 24px;
-  font-family: "Fraunces", Georgia, serif;
-  font-style: italic;
-  font-weight: 600;
-  font-size: 13px;
-  color: var(--gb);
-  background: transparent;
-  border: 1px solid rgba(245,198,52,0.2);
-  padding: 5px 12px;
-  border-radius: 999px;
-  cursor: pointer;
-  letter-spacing: 0.08em;
-  text-shadow: 0 1px 0 rgba(0,0,0,0.5);
-  z-index: 2;
-}
-.pp-manage-toggle:hover {
-  border-color: rgba(245,198,52,0.5);
 }
 
 /* Welcome heading wrapper */
@@ -3261,6 +3279,7 @@ body.skin-kaos {
   background-clip: padding-box;
   animation: menu-panel-in 0.35s cubic-bezier(.3,1.3,.5,1) both;
   max-height: calc(100vh - 40px);
+  max-height: calc(100svh - 40px);
   overflow-y: auto;
 }
 .menu-overlay-panel::before {
@@ -4056,5 +4075,45 @@ body.skin-kaos {
   .crash-warning-mark,
   .crash-return-btn {
     animation: none !important;
+  }
+}
+
+/* Landscape block: iOS Safari can't lock orientation from a web page, so we
+   show a full-screen "rotate your phone" overlay when the viewport is wide
+   and short. Hidden by default; shown only in landscape on phone-sized
+   devices so iPad portrait-ish layouts and dev browsers aren't affected. */
+.landscape-block {
+  display: none;
+}
+
+@media (orientation: landscape) and (max-height: 500px) {
+  .landscape-block {
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 20px;
+    text-align: center;
+    background:
+      radial-gradient(ellipse at center, #1a237e 0%, #0a0e2a 60%, #000 100%);
+    color: #f4d67a;
+  }
+  .landscape-block__title {
+    font-family: "Titan One", system-ui, sans-serif;
+    font-size: clamp(1.8rem, 6vh, 3rem);
+    letter-spacing: 0.05em;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+  }
+  .landscape-block__sub {
+    font-size: clamp(0.9rem, 3vh, 1.2rem);
+    color: rgba(255, 255, 255, 0.75);
+  }
+  /* Hide the app itself so it can't steal taps behind the overlay. */
+  body > :not(.landscape-block) {
+    visibility: hidden;
   }
 }

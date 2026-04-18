@@ -1,5 +1,6 @@
 use leptos::prelude::*;
 
+use crate::components::{BezelSize, GoldBezel};
 use crate::model::{ConnState, GameLaunched, UnlockedProfile};
 
 #[component]
@@ -19,34 +20,52 @@ pub(crate) fn Header(
                 >
                     {"\u{22EE}"}
                 </button>
-                <div class="brand">
-                    "Skylander Portal"
-                    <Show when=move || unlocked_profile.get().is_some() fallback=|| ()>
-                        <span class="profile-chip">
-                            {move || unlocked_profile.get().map(|p| p.display_name).unwrap_or_default()}
-                        </span>
-                    </Show>
-                    <Show when=move || current_game.get().is_some() fallback=|| ()>
-                        <span class="game-name">
-                            {move || current_game.get().map(|g| g.display_name).unwrap_or_default()}
-                        </span>
-                    </Show>
-                </div>
+                {move || unlocked_profile.get().map(|profile| {
+                    let color = profile.color.clone();
+                    let initial = profile
+                        .display_name
+                        .chars()
+                        .next()
+                        .unwrap_or('?')
+                        .to_uppercase()
+                        .collect::<String>();
+                    let name = profile.display_name.clone();
+                    view! {
+                        <div class="header-swatch" style=format!("--profile-color:{color}")>
+                            <GoldBezel size=BezelSize::Sm>
+                                <span class="header-swatch-initial">{initial}</span>
+                            </GoldBezel>
+                        </div>
+                        <div class="header-identity">
+                            <span class="header-profile-name">{name}</span>
+                            {move || current_game.get().map(|g| view! {
+                                <span class="header-game-name">{g.display_name}</span>
+                            })}
+                        </div>
+                    }.into_any()
+                })}
             </div>
             <div class="header-right">
-                <span class={move || {
-                    let cls = match conn.get() {
+                <span
+                    class=move || {
+                        let cls = match conn.get() {
+                            ConnState::Connecting => "connecting",
+                            ConnState::Connected => "connected",
+                            ConnState::Disconnected => "disconnected",
+                        };
+                        format!("status-dot {cls}")
+                    }
+                    aria-label=move || match conn.get() {
                         ConnState::Connecting => "connecting",
                         ConnState::Connected => "connected",
                         ConnState::Disconnected => "disconnected",
-                    };
-                    format!("status-dot {cls}")
-                }}></span>
-                <span class="status-label">{move || match conn.get() {
-                    ConnState::Connecting => "connecting\u{2026}",
-                    ConnState::Connected => "connected",
-                    ConnState::Disconnected => "disconnected",
-                }}</span>
+                    }
+                    title=move || match conn.get() {
+                        ConnState::Connecting => "connecting\u{2026}",
+                        ConnState::Connected => "connected",
+                        ConnState::Disconnected => "disconnected",
+                    }
+                ></span>
             </div>
         </header>
     }

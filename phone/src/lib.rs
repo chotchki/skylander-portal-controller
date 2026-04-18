@@ -96,6 +96,10 @@ pub fn App() -> impl IntoView {
     let game_crash = RwSignal::new(None::<GameCrashReason>);
     let reset_target = RwSignal::new(None::<ResetTarget>);
     let menu_open = RwSignal::new(false);
+    // Konami-gate trigger shared between the kebab menu's MANAGE PROFILES action
+    // and the ProfilePicker that owns the gate UI. Set from MenuOverlay,
+    // read+reset inside ProfilePicker.
+    let manage_gate = RwSignal::new(false);
     let nav_dir = RwSignal::new(NavDir::Forward);
     // Bumps on every profile CRUD so the ProfilePicker re-fetches.
     let profiles_epoch = RwSignal::new(0u32);
@@ -184,7 +188,7 @@ pub fn App() -> impl IntoView {
                 when=move || unlocked_profile.get().is_some()
                 fallback=move || view! {
                     <div class={screen_cls("screen-profile-picker")}>
-                        <ProfilePicker toasts profiles_epoch />
+                        <ProfilePicker toasts profiles_epoch manage_gate />
                     </div>
                 }
             >
@@ -228,6 +232,7 @@ pub fn App() -> impl IntoView {
                 open=menu_open
                 unlocked_profile
                 current_game
+                manage_gate
                 toasts
             />
             <ToastStack toasts />
