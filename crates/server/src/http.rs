@@ -17,7 +17,9 @@ use skylander_core::{
 };
 use skylander_rpcs3_control::RpcsProcess;
 use tokio::sync::broadcast;
+use tower::ServiceBuilder;
 use tower_http::services::ServeDir;
+use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::{debug, info, warn};
 
 use crate::games::InstalledGame;
@@ -262,7 +264,25 @@ pub fn router(state: Arc<AppState>, phone_dist: std::path::PathBuf) -> Router {
         ServeDir::new(std::env::current_dir().unwrap_or_default())
     };
 
-    api.fallback_service(static_dir).with_state(state)
+    // Cache-busting layer for static assets. iOS Safari (especially in
+    // PWA mode after Add-to-Home-Screen) caches the SPA's entry HTML
+    // aggressively; without an explicit no-store header, every code
+    // change requires deleting + re-adding the home-screen icon to see
+    // updates. `no-store` forces the browser to refetch on every load,
+    // which lets it discover new hashed wasm/js filenames trunk emits
+    // per build. Trade-off: every PWA cold-start re-downloads the
+    // bundle (~1MB) — fine on a LAN, would matter over WAN. We may
+    // tune to `no-cache` (revalidate, allow cached on 304) once a
+    // service worker handles update detection. Layer applies to the
+    // fallback only so /api/* responses are unaffected.
+    let static_with_cache_headers = ServiceBuilder::new()
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("no-store"),
+        ))
+        .service(static_dir);
+
+    api.fallback_service(static_with_cache_headers).with_state(state)
 }
 
 async fn list_figures(

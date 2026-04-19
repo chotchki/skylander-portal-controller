@@ -65,11 +65,6 @@ fn main() -> Result<()> {
     let ip = first_non_loopback_ipv4().unwrap_or(Ipv4Addr::LOCALHOST);
     let bind = SocketAddr::from((ip, cfg.bind_port));
     let key_hex = hex::encode(&cfg.hmac_key);
-    // IP-form URL — what the listener binds to + what the `serving on ...`
-    // log line carries (the e2e harness's stdout scraper at
-    // `crates/e2e-tests/src/lib.rs:wait_for_url` grabs from this line, so
-    // the IP form is load-bearing for tests).
-    let bind_url = format!("http://{bind}/#k={key_hex}");
 
     // --- Phone-facing URL ---
     //

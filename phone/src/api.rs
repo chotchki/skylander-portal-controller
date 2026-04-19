@@ -241,6 +241,16 @@ pub async fn post_quit(force: bool) -> Result<(), String> {
     do_fetch(&url, "POST", None).await.map(|_| ())
 }
 
+/// Phone's SHUT DOWN menu action. Flips the TV launcher into the
+/// Farewell screen; the egui side runs its ~3s countdown and then
+/// closes the viewport (PLAN 4.15.11). NOT the same as `post_quit` —
+/// shutdown closes the LAUNCHER, quit closes the GAME. Callers that
+/// want both should `post_quit(true).await` first.
+pub async fn post_shutdown() -> Result<(), String> {
+    let url = format!("{}/api/shutdown", origin());
+    do_fetch(&url, "POST", None).await.map(|_| ())
+}
+
 async fn do_fetch(url: &str, method: &str, body: Option<&str>) -> Result<String, String> {
     let opts = RequestInit::new();
     opts.set_method(method);

@@ -261,8 +261,9 @@ pub(crate) fn GameCrashScreen(
 ///   - CHOOSE ANOTHER GAME — hold-to-confirm, server-impactful. Calls
 ///     `post_quit(false)` → server quits RPCS3 → WS broadcasts GameStopped
 ///     → every phone sees the game picker.
-///   - SHUT DOWN — hold-to-confirm, danger styling. No server endpoint yet;
-///     toasts a placeholder. Shutdown wiring lands alongside 4.15.11.
+///   - SHUT DOWN — hold-to-confirm, danger styling. POSTs `/api/shutdown`
+///     which flips the TV launcher into the Farewell surface; egui runs
+///     its own farewell countdown and closes the viewport. PLAN 4.15.11.
 #[component]
 pub(crate) fn MenuOverlay(
     open: RwSignal<bool>,
@@ -344,7 +345,11 @@ pub(crate) fn MenuOverlay(
     };
     let on_game_cancel = move |_| game_holding.set(false);
 
-    // SHUT DOWN — hold-to-confirm. No server endpoint yet.
+    // SHUT DOWN — hold-to-confirm. POSTs `/api/shutdown` which flips
+    // the TV launcher into the Farewell surface; the egui side runs its
+    // own ~3s countdown and then closes the viewport. We fire-and-forget
+    // because the launcher's death is the user-visible signal — no need
+    // to wait for the response on the phone.
     let on_shutdown_down = move |_| {
         if shutdown_fired.get_untracked() {
             return;
@@ -357,7 +362,12 @@ pub(crate) fn MenuOverlay(
             }
             shutdown_holding.set(false);
             shutdown_fired.set(true);
-            push_toast(toasts, "Shutdown not yet wired (Phase 4.15.11)");
+            // Best-effort POST. On failure we toast so the user knows
+            // their tap didn't take effect; success is silent because
+            // the launcher's farewell + viewport-close speaks for itself.
+            if let Err(e) = crate::api::post_shutdown().await {
+                push_toast(toasts, &format!("Shutdown failed: {e}"));
+            }
             gloo_timer(380).await;
             open.set(false);
             gloo_timer(600).await;
