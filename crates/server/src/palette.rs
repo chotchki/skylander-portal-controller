@@ -47,7 +47,18 @@ pub const SUCCESS_GLOW: Color32 = Color32::from_rgb(0x5a, 0xc9, 0x6b);
 /// Install the palette into an egui context. Called once from
 /// `LauncherApp::new`. Overrides the dark-mode defaults so the whole
 /// launcher reads as starfield-blue rather than egui's default near-black.
+///
+/// **Pins the theme preference to Dark first.** egui 0.29 follows the OS
+/// theme by default (`ThemePreference::System`), and on a Windows 11 box
+/// set to Light Mode it would apply `Visuals::light()` *after* our
+/// `set_visuals` call, clobbering the starfield panel_fill back to the
+/// cream ~#F8F8F8 default — Chris hit exactly that on the HTPC
+/// 2026-04-19 (the launcher rendered with a near-white background and
+/// the gold title floating in the middle). Setting the preference to
+/// `Dark` stops egui from overriding our visuals on subsequent frames.
 pub fn apply(ctx: &egui::Context) {
+    ctx.set_theme(egui::ThemePreference::Dark);
+
     let mut v = Visuals::dark();
     // Background surfaces — central panel, windows, popups.
     v.panel_fill = SF_3;

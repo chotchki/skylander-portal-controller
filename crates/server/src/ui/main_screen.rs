@@ -38,6 +38,28 @@ const PIP_DIAMETER: f32 = 84.0;
 const ORBIT_SPEED: f32 = 0.10;
 
 impl LauncherApp {
+    /// Render the gold "STARTING" title, centred on the panel. Used by
+    /// the launcher Startup beat (PLAN 4.19.2a) to give the calm-starfield
+    /// window a focal element — without it the screen reads as broken for
+    /// the first second(s). The copy matches the spec's "state title"
+    /// pattern (§3.1 state 1 reads as the launcher waking up); the full
+    /// Main surface (QR + status + orbit pips) takes over after the
+    /// transition completes.
+    ///
+    /// Painted via direct `Painter::text` calls (not `ui.heading`) so the
+    /// embossed shadow stack + outer glow can land — `RichText` only
+    /// supports a single solid colour, which produced the flat sticker
+    /// look Chris flagged 2026-04-19. See `paint_heraldic_title`.
+    pub(super) fn render_brand_intro(&self, ui: &mut egui::Ui) {
+        let rect = ui.max_rect();
+        let pos = egui::pos2(rect.center().x, rect.top() + rect.height() * 0.5);
+        // Spec §3.7 calls 96px the "TV display hero" size, used for state
+        // titles. Startup is a state title; render_main's "SKYLANDER
+        // PORTAL" steady-state title is a separate drift item (4.19.19)
+        // still using the smaller 80px.
+        paint_heraldic_title(ui.painter(), pos, "STARTING", 96.0);
+    }
+
     /// Render the Main surface. Called from the top-level dispatcher in
     /// [`super`] when `LauncherStatus::screen == LauncherScreen::Main`.
     pub(super) fn render_main(
@@ -402,6 +424,78 @@ fn parse_hex_color(s: &str) -> Option<egui::Color32> {
         _ => return None,
     };
     Some(egui::Color32::from_rgb(r, g, b))
+}
+
+/// Paint a Titan-One title with the heraldic embossed treatment from
+/// `docs/aesthetic/design_language.md` §1: stacked shadow layers reading
+/// as carved-into-the-bezel depth, plus a soft gold outer halo. egui's
+/// `RichText` only ships a single solid colour per glyph, so the effect
+/// is built by stacking multiple `Painter::text` calls in z-order:
+///
+///   1. Outer halo  — 8 semi-transparent `GOLD_BRIGHT` copies offset on
+///      a small radial — fakes the CSS `text-shadow: 0 0 24px gold`
+///      bloom at egui-paintable cost (no real blur).
+///   2. Drop shadow — one near-black copy 5px below — gives the title
+///      lift off the starfield (CSS: `0 5px 10px rgba(0,0,0,0.5)`).
+///   3. Carve under-layers — `GOLD_INK` at +3px and `GOLD_SHADOW` at +2px
+///      stack into the embossed depth (CSS: `0 3px 0 var(--gi),
+///      0 2px 0 var(--gs)`).
+///   4. Bright body — `GOLD_BRIGHT` at the actual position, on top.
+///
+/// Called by `render_brand_intro` for the Startup beat. Render_main's
+/// title still uses `ui.heading(...)` flat — switching that over is
+/// 4.19.19's territory and would mean restructuring the layout stack.
+fn paint_heraldic_title(painter: &egui::Painter, pos: egui::Pos2, text: &str, size: f32) {
+    let font = egui::FontId::new(size, egui::FontFamily::Name(fonts::TITAN_ONE.into()));
+
+    // 1. Outer halo. Eight radial offsets at one-eighth turn each give a
+    // smoother bloom than 4 cardinal points; alpha low enough that the
+    // halo reads as glow, not chromatic aberration.
+    let halo = egui::Color32::from_rgba_unmultiplied(0xff, 0xe5, 0x8a, 60);
+    let halo_radius = (size * 0.07).max(3.0);
+    for step in 0..8 {
+        let theta = (step as f32) * std::f32::consts::TAU / 8.0;
+        let off = egui::vec2(theta.cos() * halo_radius, theta.sin() * halo_radius);
+        painter.text(pos + off, egui::Align2::CENTER_CENTER, text, font.clone(), halo);
+    }
+
+    // 2. Drop shadow — soft and well below, so the title floats off the
+    // starfield rather than sitting on it.
+    painter.text(
+        pos + egui::vec2(0.0, (size * 0.06).max(4.0)),
+        egui::Align2::CENTER_CENTER,
+        text,
+        font.clone(),
+        egui::Color32::from_rgba_unmultiplied(0, 0, 0, 130),
+    );
+
+    // 3. Carve under-layers. Two stacked offsets in deepening gold tones
+    // produce the engraved-into-the-bezel depth the heraldic treatment
+    // calls for. Offsets scale with the size so the depth reads at any
+    // resolution.
+    painter.text(
+        pos + egui::vec2(0.0, (size * 0.035).max(2.5)),
+        egui::Align2::CENTER_CENTER,
+        text,
+        font.clone(),
+        palette::GOLD_INK,
+    );
+    painter.text(
+        pos + egui::vec2(0.0, (size * 0.022).max(1.5)),
+        egui::Align2::CENTER_CENTER,
+        text,
+        font.clone(),
+        palette::GOLD_SHADOW,
+    );
+
+    // 4. Bright body on top.
+    painter.text(
+        pos,
+        egui::Align2::CENTER_CENTER,
+        text,
+        font,
+        palette::GOLD_BRIGHT,
+    );
 }
 
 /// Rasterise the pairing URL into a QR texture. Called once from

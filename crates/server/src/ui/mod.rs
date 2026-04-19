@@ -13,7 +13,7 @@
 //! iris-close on crash, gentle on farewell) is deferred to 4.15a.7 polish.
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use crate::state::{LauncherScreen, LauncherStatus};
@@ -23,7 +23,10 @@ use crate::{fonts, palette};
 mod crashed;
 mod farewell;
 mod in_game;
+mod launch_phase;
 mod main_screen;
+
+use launch_phase::LaunchPhase;
 
 pub struct LauncherApp {
     clients: Arc<AtomicUsize>,
@@ -104,18 +107,51 @@ impl eframe::App for LauncherApp {
             return;
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            // Vortex first so every subsequent widget layers on top of the
-            // clouds. Drawn via `ui.painter()` so it fills the whole
-            // CentralPanel including padding. All three screens share the
-            // same vortex backdrop for visual continuity; per-screen
-            // VortexParams tuning is a 4.15a.7 polish item.
-            let rect = ui.max_rect();
-            vortex::draw(ui.painter(), rect, time_s, VortexParams::default());
+        // Launcher start-of-life phasing (PLAN 4.19.2a). Only meaningful
+        // for the Main screen — Crashed and Farewell are explicit
+        // overrides that should render immediately regardless of how
+        // long ago the launcher booted. The phase drives both the
+        // vortex's iris and whether the QR/heading layer renders this
+        // frame; see `launch_phase.rs` for the full state machine.
+        let launch_phase = if matches!(status_snapshot.screen, LauncherScreen::Main) {
+            let has_activity =
+                status_snapshot.rpcs3_running || self.clients.load(Ordering::Relaxed) > 0;
+            LaunchPhase::compute(time_s, has_activity)
+        } else {
+            LaunchPhase::AwaitingConnect
+        };
 
+        egui::CentralPanel::default().show(ctx, |ui| {
+            let rect = ui.max_rect();
+
+            // Layer 1: starfield. Always painted so it shows through the
+            // vortex's iris hole (and stands alone during the launcher's
+            // Startup beat when iris_radius=0). Painted before the vortex
+            // so clouds layer on top once they're visible.
+            vortex::paint_starfield(ui.painter(), rect, time_s);
+
+            // Layer 2: vortex clouds. Per-screen VortexParams tuning is a
+            // 4.15a.7 / 4.19.6 polish item — for now we only override
+            // `iris_radius` so the launcher startup sequence (4.19.2a)
+            // can hide / ramp / reveal the clouds.
+            let vortex_params = VortexParams {
+                iris_radius: launch_phase.iris_radius(),
+                ..VortexParams::default()
+            };
+            vortex::draw(ui.painter(), rect, time_s, vortex_params);
+
+            // Layer 3: per-screen content.
             match &status_snapshot.screen {
                 LauncherScreen::Main => {
-                    self.render_main(ui, ctx, &status_snapshot);
+                    if launch_phase.shows_main_content() {
+                        self.render_main(ui, ctx, &status_snapshot);
+                    } else {
+                        // Startup beat: brand title only over the
+                        // starfield. Gives the 1.0s (5.0s during 4.19.2a
+                        // validation) hold a focal element rather than
+                        // an empty calm field.
+                        self.render_brand_intro(ui);
+                    }
                 }
                 LauncherScreen::Crashed { message } => {
                     crashed::render(ui, &self.status, message);

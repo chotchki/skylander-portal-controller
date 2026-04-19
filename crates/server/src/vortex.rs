@@ -197,6 +197,91 @@ fn sample_cloud_colour(r: f32, theta: f32, time_s: f32, params: VortexParams) ->
     )
 }
 
+/// Paint the starfield backdrop into `rect`. Sparse procedural stars at
+/// deterministic positions (seeded so they don't shimmer position frame-
+/// to-frame), with a slow per-star alpha twinkle. Painted *before* the
+/// vortex so clouds layer on top — but during the launcher's Startup beat
+/// (PLAN 4.19.2a, vortex iris=0) the stars stand alone and the screen
+/// reads as the "calm starry sky" the spec calls for.
+///
+/// Tuned for an 86" TV at ~10ft: ~120 stars distributed across the rect,
+/// 1–2.5px equivalent at 1080p (auto-scaled with the rect's shorter
+/// axis), three colour tints (white / warm gold / cool blue) so the field
+/// has variety without going cartoony.
+pub fn paint_starfield(painter: &egui::Painter, rect: Rect, time_s: f32) {
+    const NUM_STARS: u32 = 120;
+    const SEED: u32 = 0xCAFE_BABE;
+
+    // Reference resolution is 1920×1080; star sizes scale with the shorter
+    // rect axis so the density reads similarly on dev windows (900×1000)
+    // and the HTPC's 4K (3840×2160).
+    let scale = (rect.width().min(rect.height()) / 1080.0).max(0.5);
+    let inset = 4.0 * scale; // keep stars off the absolute edge
+
+    for i in 0..NUM_STARS {
+        // Four independent hash draws per star: x, y, size+colour pick,
+        // twinkle phase. Hashing the seed + index gives a stable layout
+        // across frames and across launcher restarts.
+        let h1 = star_hash(SEED.wrapping_add(i.wrapping_mul(0x9e37_79b9)));
+        let h2 = star_hash(h1);
+        let h3 = star_hash(h2);
+        let h4 = star_hash(h3);
+
+        let x = rect.left() + inset + (h1 as f32 / u32::MAX as f32) * (rect.width() - 2.0 * inset);
+        let y = rect.top() + inset + (h2 as f32 / u32::MAX as f32) * (rect.height() - 2.0 * inset);
+
+        let size_choice = h3 as f32 / u32::MAX as f32;
+        // Most stars small (1px), a minority bigger (~2.5px) for the
+        // "depth" cue the mock's preview shots have.
+        let radius = if size_choice < 0.7 {
+            1.0 * scale
+        } else if size_choice < 0.92 {
+            1.6 * scale
+        } else {
+            2.4 * scale
+        };
+
+        let colour_choice = h4 as f32 / u32::MAX as f32;
+        let base = if colour_choice < 0.6 {
+            (0xff, 0xff, 0xff)
+        } else if colour_choice < 0.85 {
+            // Warm gold tint — picks up the heraldic palette without
+            // looking like the gold is leaking out of the bezels.
+            (0xff, 0xe6, 0xb4)
+        } else {
+            // Cool blue tint — keeps the field from looking monotone
+            // under a TV's gamma.
+            (0xb4, 0xdc, 0xff)
+        };
+
+        // Per-star twinkle phase derived from another hash bit so adjacent
+        // stars don't pulse in lockstep. Slow cycle (~6s) so it reads as
+        // ambient sparkle, not strobe. Alpha bottoms out at ~50% so stars
+        // never fully vanish.
+        let phase = (h3 as f32 / u32::MAX as f32) * std::f32::consts::TAU;
+        let twinkle = 0.5 + 0.5 * (0.5 * (time_s * 1.05 + phase).sin() + 0.5);
+        let alpha = (255.0 * twinkle) as u8;
+
+        painter.circle_filled(
+            egui::pos2(x, y),
+            radius,
+            Color32::from_rgba_unmultiplied(base.0, base.1, base.2, alpha),
+        );
+    }
+}
+
+/// Pseudo-random hash used by `paint_starfield` for deterministic star
+/// layout. Cheap integer mix from <https://nullprogram.com/blog/2018/07/31/>;
+/// we don't need cryptographic strength, just good distribution.
+fn star_hash(mut x: u32) -> u32 {
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x7feb_352d);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x846c_a68b);
+    x ^= x >> 16;
+    x
+}
+
 fn rgba(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
     (r, g, b)
 }
