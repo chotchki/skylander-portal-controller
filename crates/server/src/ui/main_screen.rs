@@ -53,11 +53,13 @@ impl LauncherApp {
     pub(super) fn render_brand_intro(&self, ui: &mut egui::Ui) {
         let rect = ui.max_rect();
         let pos = egui::pos2(rect.center().x, rect.top() + rect.height() * 0.5);
-        // Spec §3.7 calls 96px the "TV display hero" size, used for state
-        // titles. Startup is a state title; render_main's "SKYLANDER
-        // PORTAL" steady-state title is a separate drift item (4.19.19)
-        // still using the smaller 80px.
-        paint_heraldic_title(ui.painter(), pos, "STARTING", 96.0);
+        // Spec §3.7 calls 96px the "TV display hero" floor for state
+        // titles. The mock's actual rendered title is visibly larger —
+        // takes ~50% of panel width vs ours at 25%. Bumped to 140px to
+        // match the mock's on-screen presence (Chris's screenshot
+        // 2026-04-19). render_main's "SKYLANDER PORTAL" steady-state
+        // title is a separate drift item (4.19.19) still on 80px.
+        paint_heraldic_title(ui.painter(), pos, "STARTING", 140.0);
     }
 
     /// Render the Main surface. Called from the top-level dispatcher in
@@ -428,19 +430,29 @@ fn parse_hex_color(s: &str) -> Option<egui::Color32> {
 
 /// Paint a Titan-One title with the heraldic embossed treatment from
 /// `docs/aesthetic/design_language.md` §1: stacked shadow layers reading
-/// as carved-into-the-bezel depth, plus a soft gold outer halo. egui's
+/// as carved-into-the-bezel depth, plus a strong gold outer halo. egui's
 /// `RichText` only ships a single solid colour per glyph, so the effect
-/// is built by stacking multiple `Painter::text` calls in z-order:
+/// is built by stacking multiple `Painter::text` calls in z-order. The
+/// CSS spec the visual mimics:
 ///
-///   1. Outer halo  — 8 semi-transparent `GOLD_BRIGHT` copies offset on
-///      a small radial — fakes the CSS `text-shadow: 0 0 24px gold`
-///      bloom at egui-paintable cost (no real blur).
-///   2. Drop shadow — one near-black copy 5px below — gives the title
-///      lift off the starfield (CSS: `0 5px 10px rgba(0,0,0,0.5)`).
-///   3. Carve under-layers — `GOLD_INK` at +3px and `GOLD_SHADOW` at +2px
-///      stack into the embossed depth (CSS: `0 3px 0 var(--gi),
-///      0 2px 0 var(--gs)`).
-///   4. Bright body — `GOLD_BRIGHT` at the actual position, on top.
+///   text-shadow:
+///     0 2px 0 var(--gs),                        ← carve, sharp
+///     0 3px 0 var(--gi),                        ← carve, sharp
+///     0 5px 10px rgba(0,0,0,0.5),               ← lift, blurred
+///     0 0 24px rgba(245,198,52,0.25);           ← halo, wide blur
+///
+/// We can't do real Gaussian blur in the painter, so the blurred layers
+/// (drop shadow + halo) are approximated by painting multiple copies on
+/// concentric rings with falling alpha — accumulated additive paint
+/// fakes the bloom. Tuned per Chris's feedback 2026-04-19 ("missing the
+/// gold glow") — earlier single-ring 8-copy halo was too tight + too dim
+/// to register against the dark starfield panel.
+///
+/// Layer order (bottom → top):
+///   1. Outer gold halo (3 rings × 12 angular steps = 36 copies)
+///   2. Soft black drop shadow (2 layers at +5/+7 px)
+///   3. Carve under-layers (GOLD_SHADOW +2.5px, GOLD_INK +3.5px)
+///   4. Bright body (GOLD_BRIGHT) on top
 ///
 /// Called by `render_brand_intro` for the Startup beat. Render_main's
 /// title still uses `ui.heading(...)` flat — switching that over is
@@ -448,19 +460,53 @@ fn parse_hex_color(s: &str) -> Option<egui::Color32> {
 fn paint_heraldic_title(painter: &egui::Painter, pos: egui::Pos2, text: &str, size: f32) {
     let font = egui::FontId::new(size, egui::FontFamily::Name(fonts::TITAN_ONE.into()));
 
-    // 1. Outer halo. Eight radial offsets at one-eighth turn each give a
-    // smoother bloom than 4 cardinal points; alpha low enough that the
-    // halo reads as glow, not chromatic aberration.
-    let halo = egui::Color32::from_rgba_unmultiplied(0xff, 0xe5, 0x8a, 60);
-    let halo_radius = (size * 0.07).max(3.0);
-    for step in 0..8 {
-        let theta = (step as f32) * std::f32::consts::TAU / 8.0;
-        let off = egui::vec2(theta.cos() * halo_radius, theta.sin() * halo_radius);
-        painter.text(pos + off, egui::Align2::CENTER_CENTER, text, font.clone(), halo);
-    }
+    // 1. Outer gold halo. The first cut painted 36 offset copies of
+    // the text glyph — but you could SEE the ghost copies (Chris
+    // flagged 2026-04-19). The mock's CSS `text-shadow: 0 0 24px gold`
+    // is a real Gaussian blur, which loses glyph detail and becomes a
+    // soft blob roughly tracing the word's bounding box.
+    //
+    // We approximate that blob with a smooth radial-gradient ellipse
+    // sized to the text bounds + halo padding. No glyph shape — just
+    // a soft gold backlight. Looks like a real blur because it IS
+    // smooth (vs. 36 offset copies that read as ghost letters).
+    let galley = painter
+        .ctx()
+        .fonts(|f| f.layout_no_wrap(text.to_string(), font.clone(), palette::GOLD_BRIGHT));
+    let text_size = galley.size();
+    // Two stacked ellipses for a softer Gaussian-style falloff: wide
+    // outer at low alpha (the diffuse outer glow), tighter inner at
+    // medium alpha (the focal warmth around the text). A single
+    // ellipse has a linear-ramp falloff that reads as harder-edged
+    // than the mock's ~24px-blur shadow — the two-layer overpaint
+    // approximates the soft Gaussian shoulder.
+    // Outer ellipse uses pale GOLD_BRIGHT (#ffe58a) — fades to pale
+    // gold at the rim. Inner uses richer GOLD (#f5c634) — keeps the
+    // centre warm/honey instead of washing to white when the alphas
+    // stack (Chris flagged 2026-04-19: pure GOLD_BRIGHT in both
+    // layers reads white-hot at the centre, loses the gold tint).
+    let outer = palette::GOLD_BRIGHT;
+    let inner = palette::GOLD;
+    let outer_pad = size * 1.45;
+    let inner_pad = size * 0.75;
+    crate::vortex::paint_radial_ellipse(
+        painter,
+        pos,
+        text_size.x * 0.5 + outer_pad,
+        text_size.y * 0.5 + outer_pad,
+        egui::Color32::from_rgba_unmultiplied(outer.r(), outer.g(), outer.b(), 5),
+    );
+    crate::vortex::paint_radial_ellipse(
+        painter,
+        pos,
+        text_size.x * 0.5 + inner_pad,
+        text_size.y * 0.5 + inner_pad,
+        egui::Color32::from_rgba_unmultiplied(inner.r(), inner.g(), inner.b(), 15),
+    );
 
-    // 2. Drop shadow — soft and well below, so the title floats off the
-    // starfield rather than sitting on it.
+    // 2. Soft drop shadow. Two layers at +5/+7px below — the lower one
+    // half-alpha — approximates a 10px blur. Title lifts off the
+    // starfield instead of sitting flat on it.
     painter.text(
         pos + egui::vec2(0.0, (size * 0.06).max(4.0)),
         egui::Align2::CENTER_CENTER,
@@ -468,11 +514,19 @@ fn paint_heraldic_title(painter: &egui::Painter, pos: egui::Pos2, text: &str, si
         font.clone(),
         egui::Color32::from_rgba_unmultiplied(0, 0, 0, 130),
     );
+    painter.text(
+        pos + egui::vec2(0.0, (size * 0.085).max(6.0)),
+        egui::Align2::CENTER_CENTER,
+        text,
+        font.clone(),
+        egui::Color32::from_rgba_unmultiplied(0, 0, 0, 70),
+    );
 
-    // 3. Carve under-layers. Two stacked offsets in deepening gold tones
-    // produce the engraved-into-the-bezel depth the heraldic treatment
-    // calls for. Offsets scale with the size so the depth reads at any
-    // resolution.
+    // 3. Carve under-layers. Two stacked offsets in deepening gold
+    // tones produce the engraved-into-the-bezel depth the heraldic
+    // treatment calls for. Offsets scale with the size so the depth
+    // reads at any resolution. Sharp (no spread) — the engraving
+    // shouldn't blur.
     painter.text(
         pos + egui::vec2(0.0, (size * 0.035).max(2.5)),
         egui::Align2::CENTER_CENTER,

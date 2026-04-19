@@ -197,38 +197,258 @@ fn sample_cloud_colour(r: f32, theta: f32, time_s: f32, params: VortexParams) ->
     )
 }
 
-/// Paint the starfield backdrop into `rect`. Sparse procedural stars at
-/// deterministic positions (seeded so they don't shimmer position frame-
-/// to-frame), with a slow per-star alpha twinkle. Painted *before* the
-/// vortex so clouds layer on top — but during the launcher's Startup beat
-/// (PLAN 4.19.2a, vortex iris=0) the stars stand alone and the screen
-/// reads as the "calm starry sky" the spec calls for.
+/// Paint the full sky backdrop: vertical base gradient + top/bottom
+/// hue ellipses. Three layers, matching the mock's `.sky` element
+/// (`tv_launcher_v3.html` lines 36-43):
 ///
-/// Tuned for an 86" TV at ~10ft: ~120 stars distributed across the rect,
-/// 1–2.5px equivalent at 1080p (auto-scaled with the rect's shorter
-/// axis), three colour tints (white / warm gold / cool blue) so the field
-/// has variety without going cartoony.
+///   1. **Vertical gradient** (`SF_1` at top → `SF_2` at 60% down →
+///      `SF_3` at bottom) — the base. The launcher's `panel_fill` is
+///      flat `SF_3`, so without this layer everything reads "all dark
+///      bottom blue" and the upper half loses depth. We paint over the
+///      panel fill rather than reach into egui's Visuals to make the
+///      panel transparent — slightly redundant but simple.
+///   2. **Top ellipse** — `#1a3a8a`-tinted, wide + relatively short
+///      (mock: 120% × 60%), centred at top-middle. Brightens the upper
+///      portion further; reads as the "sky lifting" toward where the
+///      logo / QR will be.
+///   3. **Bottom ellipse** — `#0e2464`-tinted, narrower + shorter
+///      (mock: 80% × 50%), centred at bottom-middle. Adds a subtle
+///      foreground depth without competing with the top.
+///
+/// Painted *before* `paint_starfield` + `vortex::draw` so stars + clouds
+/// layer on top. Always-on backdrop — no time argument because the
+/// gradient + glows are static (moving elements are stars + vortex).
+pub fn paint_sky_background(painter: &egui::Painter, rect: Rect) {
+    // 1. Vertical gradient base. Mock's CSS spec is mid-stop at 60%
+    // (`linear-gradient(180deg, var(--sf-1), var(--sf-2) 60%,
+    // var(--sf-3))`) but on a real fullscreen render that pulls the
+    // near-black SF_3 too high up the panel — the bottom 40% reads
+    // as ink rather than ocean. Pushing the mid-stop to 85% keeps
+    // most of the panel in the SF_1→SF_2 range and reserves SF_3 for
+    // the very bottom edge, which matches the mock's actual on-TV
+    // look (Chris's screenshot 2026-04-19).
+    paint_vertical_gradient(
+        painter,
+        rect,
+        palette::SF_1,
+        0.85,
+        palette::SF_2,
+        palette::SF_3,
+    );
+
+    // 2. Top ellipse. Mock spec proportions (60% × 30% half-w/h)
+    // produce a hotspot too bright when overlaid on the gradient
+    // base; alpha dialed down to 70 (from the original 130) so it
+    // reads as ambient depth, not a spotlight.
+    paint_radial_ellipse(
+        painter,
+        Pos2::new(rect.center().x, rect.top()),
+        rect.width() * 0.6,
+        rect.height() * 0.3,
+        Color32::from_rgba_unmultiplied(0x1a, 0x3a, 0x8a, 70),
+    );
+
+    // 3. Bottom ellipse. Same alpha-down treatment — ambient depth,
+    // not a focal element. Half-width pushed past the panel edges
+    // (0.6 instead of mock-spec 0.4) so the bottom corners get tinted
+    // too — Chris flagged 2026-04-19 that the corners were reading as
+    // dark voids when only the centre band was lit. Rim alpha is 0
+    // either way, so painting past the edges costs nothing visible
+    // beyond what gets clipped.
+    paint_radial_ellipse(
+        painter,
+        Pos2::new(rect.center().x, rect.bottom()),
+        rect.width() * 0.6,
+        rect.height() * 0.25,
+        Color32::from_rgba_unmultiplied(0x0e, 0x24, 0x64, 60),
+    );
+}
+
+/// Paint a vertical 3-stop linear gradient as a rect-filling mesh.
+/// The colour at `mid_pos` (0.0..=1.0 from top) is `mid_color`; top is
+/// `top_color`, bottom is `bot_color`. egui smooth-shades vertex colours
+/// so the result reads as a continuous gradient. Used by
+/// `paint_sky_background` to lay down the base SF_1 → SF_2 → SF_3
+/// gradient that the mock's CSS `.sky` does via linear-gradient.
+fn paint_vertical_gradient(
+    painter: &egui::Painter,
+    rect: Rect,
+    top_color: Color32,
+    mid_pos: f32,
+    mid_color: Color32,
+    bot_color: Color32,
+) {
+    use egui::epaint::WHITE_UV;
+
+    let mid_y = rect.top() + rect.height() * mid_pos.clamp(0.0, 1.0);
+    let mut mesh = Mesh::default();
+    // 6 vertices: 3 rows × 2 columns. Order: TL, TR, ML, MR, BL, BR.
+    mesh.vertices.push(Vertex {
+        pos: Pos2::new(rect.left(), rect.top()),
+        uv: WHITE_UV,
+        color: top_color,
+    });
+    mesh.vertices.push(Vertex {
+        pos: Pos2::new(rect.right(), rect.top()),
+        uv: WHITE_UV,
+        color: top_color,
+    });
+    mesh.vertices.push(Vertex {
+        pos: Pos2::new(rect.left(), mid_y),
+        uv: WHITE_UV,
+        color: mid_color,
+    });
+    mesh.vertices.push(Vertex {
+        pos: Pos2::new(rect.right(), mid_y),
+        uv: WHITE_UV,
+        color: mid_color,
+    });
+    mesh.vertices.push(Vertex {
+        pos: Pos2::new(rect.left(), rect.bottom()),
+        uv: WHITE_UV,
+        color: bot_color,
+    });
+    mesh.vertices.push(Vertex {
+        pos: Pos2::new(rect.right(), rect.bottom()),
+        uv: WHITE_UV,
+        color: bot_color,
+    });
+    // Top quad (TL, TR, ML, MR) → 2 triangles.
+    mesh.indices.extend([0, 1, 2, 1, 3, 2]);
+    // Bottom quad (ML, MR, BL, BR) → 2 triangles.
+    mesh.indices.extend([2, 3, 4, 3, 5, 4]);
+    painter.add(egui::Shape::mesh(mesh));
+}
+
+/// Paint a single soft ellipse that fades from `center_color` at the
+/// centre to fully transparent at the rim. Triangle-fan with one
+/// centre vertex + N rim vertices; egui smooth-shades the alpha
+/// between them, giving a passable radial-gradient look without
+/// needing a custom shader. Useful as a general-purpose glow primitive
+/// — sky background uses it for the top + bottom hue washes, the
+/// heraldic title (`paint_heraldic_title`) uses it for the soft gold
+/// halo behind the text.
+pub fn paint_radial_ellipse(
+    painter: &egui::Painter,
+    center: Pos2,
+    half_width: f32,
+    half_height: f32,
+    center_color: Color32,
+) {
+    use egui::epaint::WHITE_UV;
+
+    const SEGMENTS: usize = 48;
+    let mut mesh = Mesh::default();
+    mesh.vertices.push(Vertex {
+        pos: center,
+        uv: WHITE_UV,
+        color: center_color,
+    });
+    for i in 0..SEGMENTS {
+        let theta = (i as f32) * std::f32::consts::TAU / SEGMENTS as f32;
+        let rim = Pos2::new(
+            center.x + theta.cos() * half_width,
+            center.y + theta.sin() * half_height,
+        );
+        mesh.vertices.push(Vertex {
+            pos: rim,
+            uv: WHITE_UV,
+            color: Color32::TRANSPARENT,
+        });
+    }
+    for i in 0..SEGMENTS {
+        let next = (i + 1) % SEGMENTS;
+        mesh.indices.push(0);
+        mesh.indices.push(1 + i as u32);
+        mesh.indices.push(1 + next as u32);
+    }
+    painter.add(egui::Shape::mesh(mesh));
+}
+
+/// Paint the starfield backdrop into `rect`. Sparse procedural stars
+/// at deterministic *angular* positions (seeded so the field doesn't
+/// shimmer frame-to-frame), with two animations:
+///
+///   1. **Radial outward drift** — each star travels from near the
+///      panel centre toward the edges along a fixed bearing, then
+///      wraps back to centre. Reads as "coming out of the screen,"
+///      which doesn't conflict with the vortex's own rotation (the
+///      first cut used a diagonal pan that fought the iris). Per-star
+///      fade-in near centre + fade-out near edge hides the wrap so
+///      no teleport is visible. Rate: ~5 px/s — half the previous
+///      diagonal speed per Chris's feedback 2026-04-19, since the
+///      effect is meant to be subtle.
+///   2. **Per-star alpha twinkle** — slow ~6s cycle, alpha bottoms at
+///      ~50%. Phase hashed per-star so neighbours don't pulse in
+///      lockstep.
+///
+/// Density: ~36 stars across the rect. Three colour tints (white,
+/// warm gold, cool blue) for variety. Painted *before* the vortex so
+/// clouds layer on top during Awaiting Connect; during Startup
+/// (vortex iris=0) the stars stand alone.
 pub fn paint_starfield(painter: &egui::Painter, rect: Rect, time_s: f32) {
-    const NUM_STARS: u32 = 120;
+    const NUM_STARS: u32 = 36;
     const SEED: u32 = 0xCAFE_BABE;
+    /// Pixels per second along the radial outward bearing. Subtle —
+    /// over 30s a star travels ~150px, which on a 1080p panel is
+    /// visible motion without dominating the visual frame.
+    const DRIFT_PX_PER_SEC: f32 = 5.0;
+    /// Fraction of the drift cycle at each end where stars fade
+    /// (in near centre, out near edge). 0.15 gives a smooth handoff
+    /// without making the visible-motion middle too short.
+    const FADE_FRAC: f32 = 0.15;
 
     // Reference resolution is 1920×1080; star sizes scale with the shorter
     // rect axis so the density reads similarly on dev windows (900×1000)
     // and the HTPC's 4K (3840×2160).
     let scale = (rect.width().min(rect.height()) / 1080.0).max(0.5);
-    let inset = 4.0 * scale; // keep stars off the absolute edge
+    let centre = rect.center();
+    // Max radius = the distance from centre to the panel corner. Stars
+    // disappear (fade) before they reach this, so they're never painted
+    // outside the rect.
+    let max_radius = ((rect.width() * 0.5).powi(2) + (rect.height() * 0.5).powi(2))
+        .sqrt()
+        .max(1.0);
+    // Drift advances the cycle phase. One full cycle (centre → edge →
+    // wrap) = max_radius / DRIFT_PX_PER_SEC seconds.
+    let cycle_offset = (time_s * DRIFT_PX_PER_SEC / max_radius).rem_euclid(1.0);
 
     for i in 0..NUM_STARS {
-        // Four independent hash draws per star: x, y, size+colour pick,
-        // twinkle phase. Hashing the seed + index gives a stable layout
-        // across frames and across launcher restarts.
+        // Four independent hash draws per star: bearing (theta), initial
+        // cycle phase, size+colour pick, twinkle phase. Hashing the seed
+        // + index gives a stable layout across frames and restarts.
         let h1 = star_hash(SEED.wrapping_add(i.wrapping_mul(0x9e37_79b9)));
         let h2 = star_hash(h1);
         let h3 = star_hash(h2);
         let h4 = star_hash(h3);
 
-        let x = rect.left() + inset + (h1 as f32 / u32::MAX as f32) * (rect.width() - 2.0 * inset);
-        let y = rect.top() + inset + (h2 as f32 / u32::MAX as f32) * (rect.height() - 2.0 * inset);
+        // Bearing — the fixed angle at which this star travels outward.
+        let theta = (h1 as f32 / u32::MAX as f32) * std::f32::consts::TAU;
+        // Initial phase along the cycle in [0, 1). Plus the global
+        // cycle_offset, modulo 1.0, so stars are spread along the
+        // cycle at any moment (some near centre, some near edge).
+        let base_phase = h2 as f32 / u32::MAX as f32;
+        let depth = (base_phase + cycle_offset).rem_euclid(1.0);
+
+        // Position: centre + (cos, sin) * depth*max_radius.
+        let r = depth * max_radius;
+        let x = centre.x + theta.cos() * r;
+        let y = centre.y + theta.sin() * r;
+
+        // Skip stars whose bearing happens to land outside the rect
+        // before they reach max_radius (panel isn't square; corners
+        // are farther than the cardinal sides). Cheap rect-contains
+        // check, no allocation.
+        if x < rect.left() || x > rect.right() || y < rect.top() || y > rect.bottom() {
+            continue;
+        }
+
+        // Smooth fade in (near centre) + out (near edge) so the wrap
+        // is invisible. life_alpha goes 0→1 over [0..FADE_FRAC], stays
+        // 1 in the middle, then 1→0 over [1-FADE_FRAC..1].
+        let fade_in = (depth / FADE_FRAC).clamp(0.0, 1.0);
+        let fade_out = ((1.0 - depth) / FADE_FRAC).clamp(0.0, 1.0);
+        let life_alpha = fade_in.min(fade_out);
 
         let size_choice = h3 as f32 / u32::MAX as f32;
         // Most stars small (1px), a minority bigger (~2.5px) for the
@@ -260,7 +480,9 @@ pub fn paint_starfield(painter: &egui::Painter, rect: Rect, time_s: f32) {
         // never fully vanish.
         let phase = (h3 as f32 / u32::MAX as f32) * std::f32::consts::TAU;
         let twinkle = 0.5 + 0.5 * (0.5 * (time_s * 1.05 + phase).sin() + 0.5);
-        let alpha = (255.0 * twinkle) as u8;
+        // Final alpha = twinkle * life_alpha. The life_alpha multiplier
+        // is the in-out fade that hides the centre→edge wrap.
+        let alpha = (255.0 * twinkle * life_alpha) as u8;
 
         painter.circle_filled(
             egui::pos2(x, y),

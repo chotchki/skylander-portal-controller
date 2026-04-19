@@ -124,10 +124,18 @@ impl eframe::App for LauncherApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             let rect = ui.max_rect();
 
+            // Layer 0: soft top + bottom sky-glow ellipses. Static
+            // backdrop that gives the dark panel ambient depth — what
+            // the mock's `.sky` element does with two CSS radial
+            // gradients (tv_launcher_v3.html lines 36-43).
+            vortex::paint_sky_background(ui.painter(), rect);
+
             // Layer 1: starfield. Always painted so it shows through the
             // vortex's iris hole (and stands alone during the launcher's
             // Startup beat when iris_radius=0). Painted before the vortex
-            // so clouds layer on top once they're visible.
+            // so clouds layer on top once they're visible. The field
+            // slowly drifts diagonally over time so the screen never
+            // feels static — see `paint_starfield` for the rate.
             vortex::paint_starfield(ui.painter(), rect, time_s);
 
             // Layer 2: vortex clouds. Per-screen VortexParams tuning is a
