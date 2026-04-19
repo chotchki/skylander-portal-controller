@@ -1,29 +1,33 @@
 //! ConnectionLost overlay (PLAN 4.18.21).
 //!
 //! Highest-priority modal in the phone stack — renders on top of every
-//! other screen when the WS has been disconnected for the grace window.
-//! Per `docs/aesthetic/navigation.md` §3.8 modal priority: this beats
-//! GameCrashed, KaosTakeover, KaosSwap, and the normal flow.
+//! other screen once we've been off-WS long enough to cross the grace
+//! window. Per `docs/aesthetic/navigation.md` §3.8 modal priority: this
+//! beats GameCrashed, KaosTakeover, KaosSwap, and the normal flow.
 //!
-//! Drives off three signals from `ws.rs`:
-//!   - `conn` — current connection state. Anything other than
-//!     `Disconnected` hides the overlay.
-//!   - `reconnect_attempts` — incremented on each onclose. Once it crosses
-//!     [`RETRY_THRESHOLD`], the spinner gives way to a manual "TRY AGAIN"
-//!     button so the user isn't stuck watching an 8-second backoff.
-//!   - `manual_retry` — bumped by the TRY AGAIN button; `ws.rs` watches it
-//!     and reconnects immediately, cancelling any pending backoff timer.
+//! Drives off two signals from `ws.rs`:
+//!   - `reconnect_attempts` — bumped on every onclose, reset to 0 on a
+//!     successful onopen (or on manual retry). Non-zero == "we've lost
+//!     the connection and haven't gotten it back yet." We deliberately
+//!     don't watch `conn` directly because the reconnect cycle flips it
+//!     between `Disconnected` (briefly, at each onclose) and `Connecting`
+//!     (during each backoff-fired spawn) — driving the overlay off `conn`
+//!     causes it to flash on every tick.
+//!   - `manual_retry` — bumped by the TRY AGAIN button; `ws.rs` watches
+//!     it and reconnects immediately, cancelling any pending backoff
+//!     timer and resetting `reconnect_attempts` to 0 (which hides the
+//!     overlay until the next failure).
 //!
-//! A ~1s grace prevents a momentary disconnect (e.g., the dev server's
-//! restart, or a brief radio drop) from flashing the overlay. The grace
-//! is implemented as a deferred set-on-true: we mount immediately but only
-//! flip `visible` after the timer if `conn` is *still* Disconnected.
+//! ~1s grace absorbs momentary drops (server restart, brief radio dip):
+//! we only flip `visible` on the 0→≥1 transition, after the timer
+//! confirms `reconnect_attempts` is *still* > 0. Subsequent attempts in
+//! the same disconnected stretch don't re-arm — they just keep ticking,
+//! and `visible` stays true until a successful reconnect resets attempts.
 
 use leptos::prelude::*;
 
 use crate::components::{DisplayHeading, HeadingSize};
 use crate::gloo_timer;
-use crate::model::ConnState;
 
 /// Show the manual TRY AGAIN button after this many failed reconnect
 /// attempts. Three attempts at 500ms, 1s, 2s = ~3.5s of waiting before we
@@ -36,29 +40,37 @@ const GRACE_MS: i32 = 1000;
 
 #[component]
 pub(crate) fn ConnectionLost(
-    conn: RwSignal<ConnState>,
     reconnect_attempts: RwSignal<u32>,
     manual_retry: RwSignal<u32>,
 ) -> impl IntoView {
     let visible = RwSignal::new(false);
 
-    // Watch `conn`. On entering Disconnected, schedule a check after the
-    // grace window — only flip to visible if we're still disconnected. On
-    // leaving Disconnected, hide immediately. Effect re-runs on every
-    // `conn` change; the spawn_local check at the end of the grace
-    // re-reads `conn` so a quick reconnect won't show the overlay.
-    Effect::new(move |_| {
-        let state = conn.get();
-        if state == ConnState::Disconnected {
+    // 0 → hide. 0 → ≥1 transition → arm a deferred reveal that re-checks
+    // after the grace window. Subsequent ticks within the stretch are
+    // no-ops (we only re-arm when crossing back through 0).
+    Effect::new(move |prev: Option<u32>| {
+        let now = reconnect_attempts.get();
+        web_sys::console::log_1(
+            &format!("[overlay] effect prev={prev:?} now={now} visible={}", visible.get_untracked()).into(),
+        );
+        if now == 0 {
+            web_sys::console::log_1(&"[overlay] visible→false (attempts=0)".into());
+            visible.set(false);
+        } else if prev.unwrap_or(0) == 0 {
+            web_sys::console::log_1(&"[overlay] arming grace timer".into());
             leptos::task::spawn_local(async move {
                 gloo_timer(GRACE_MS).await;
-                if conn.get_untracked() == ConnState::Disconnected {
+                let attempts_after_grace = reconnect_attempts.get_untracked();
+                web_sys::console::log_1(
+                    &format!("[overlay] grace fired, attempts={attempts_after_grace}").into(),
+                );
+                if attempts_after_grace > 0 {
+                    web_sys::console::log_1(&"[overlay] visible→true".into());
                     visible.set(true);
                 }
             });
-        } else {
-            visible.set(false);
         }
+        now
     });
 
     let show_retry = Memo::new(move |_| reconnect_attempts.get() >= RETRY_THRESHOLD);

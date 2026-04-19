@@ -247,7 +247,7 @@ pub fn App() -> impl IntoView {
                 toasts
             />
             <ToastStack toasts />
-            <ConnectionLost conn reconnect_attempts manual_retry />
+            <ConnectionLost reconnect_attempts manual_retry />
         </div>
     }
 }
