@@ -64,12 +64,31 @@ fn main() -> Result<()> {
     // --- Pick bind address. ---
     let ip = first_non_loopback_ipv4().unwrap_or(Ipv4Addr::LOCALHOST);
     let bind = SocketAddr::from((ip, cfg.bind_port));
-    // The QR code / phone URL includes the HMAC key in a URL fragment so the
-    // phone can sign every mutating REST request (PLAN 3.13). The fragment
-    // never hits the server (browsers don't send `#...` in requests), so
-    // it's safe to embed in the QR without exposing it in access logs. Both
-    // the QR-rendered URL and the `serving on ...` log line use this form.
-    let url = format!("http://{bind}/#k={}", hex::encode(&cfg.hmac_key));
+    let key_hex = hex::encode(&cfg.hmac_key);
+    // IP-form URL — what the listener binds to + what the `serving on ...`
+    // log line carries (the e2e harness's stdout scraper at
+    // `crates/e2e-tests/src/lib.rs:wait_for_url` grabs from this line, so
+    // the IP form is load-bearing for tests).
+    let bind_url = format!("http://{bind}/#k={key_hex}");
+
+    // --- Phone-facing URL ---
+    //
+    // PLAN 4.18.1a / 4.19.10b: prefer `http://<os-hostname>.local:<port>/`
+    // so home-screen PWA bookmarks survive a DHCP-lease refresh. Windows
+    // ≥10 v2004 auto-publishes the local hostname via its built-in mDNS
+    // responder; we just read it and put it in the QR. Falls back to
+    // the raw-IP URL if the OS hostname can't be read.
+    //
+    // Earlier cuts tried to publish a custom `skylander-portal.local`
+    // hostname via mdns-sd then via Windows's `DnsServiceRegister` — see
+    // the `mdns` module doc for why both failed in practice.
+    let (phone_url, used_mdns) =
+        skylander_server::mdns::build_phone_url(ip, cfg.bind_port, &key_hex);
+    if used_mdns {
+        info!("phone URL {phone_url}");
+    } else {
+        tracing::warn!("OS hostname unavailable; QR will use the raw-IP URL: {phone_url}");
+    }
 
     // --- Shared between Axum and the eframe UI. ---
     let portal: Arc<Mutex<[SlotState; SLOT_COUNT]>> =
@@ -221,7 +240,7 @@ fn main() -> Result<()> {
         viewport,
         ..Default::default()
     };
-    let url_for_ui = url.clone();
+    let url_for_ui = phone_url.clone();
     eframe::run_native(
         "skylander-portal-controller",
         native_options,

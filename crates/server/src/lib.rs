@@ -6,6 +6,7 @@ pub mod fonts;
 pub mod games;
 pub mod http;
 pub mod logging;
+pub mod mdns;
 pub mod palette;
 pub mod paths;
 pub mod profiles;

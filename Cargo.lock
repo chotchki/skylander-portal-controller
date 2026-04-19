@@ -4333,6 +4333,7 @@ dependencies = [
  "ulid",
  "uuid",
  "walkdir",
+ "windows 0.61.3",
 ]
 
 [[package]]
