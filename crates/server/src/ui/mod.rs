@@ -31,8 +31,6 @@ use launch_phase::LaunchPhase;
 pub struct LauncherApp {
     clients: Arc<AtomicUsize>,
     status: Arc<std::sync::Mutex<LauncherStatus>>,
-    url: String,
-    figure_count: usize,
     qr_texture: Option<egui::TextureHandle>,
     /// Monotonic animation clock for the cloud vortex (PLAN 4.15.5).
     /// `egui::Context::input(|i| i.time)` would work too but is f64 and
@@ -51,7 +49,6 @@ impl LauncherApp {
         cc: &eframe::CreationContext<'_>,
         clients: Arc<AtomicUsize>,
         status: Arc<std::sync::Mutex<LauncherStatus>>,
-        figure_count: usize,
         url: String,
     ) -> Self {
         // Apply the shared TV-launcher palette + Titan One display face.
@@ -60,12 +57,15 @@ impl LauncherApp {
         // immediately (PLAN 4.15.1 / 4.15.2).
         palette::apply(&cc.egui_ctx);
         fonts::register(&cc.egui_ctx);
+        // QR texture is generated once at startup and cached. We
+        // consume the URL here — render_main no longer needs it as a
+        // field after 4.19.10a / 4.19.22 dropped the on-screen URL
+        // text and brand heading. `figure_count` previously rode along
+        // for the "504 figures indexed" debug counter; same drop.
         let qr_texture = Some(main_screen::render_qr_texture(&cc.egui_ctx, &url));
         Self {
             clients,
             status,
-            url,
-            figure_count,
             qr_texture,
             started: Instant::now(),
             farewell_started_at: None,

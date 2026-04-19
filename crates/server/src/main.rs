@@ -210,7 +210,6 @@ fn main() -> Result<()> {
         .expect("spawn server thread");
 
     // --- Fullscreen eframe window on the main thread. ---
-    let figure_count = figures.len();
     let ui_clients = connected_clients.clone();
     let ui_status = launcher_status.clone();
     // Both dev and release fullscreen on launch — same visual model, so
@@ -256,7 +255,6 @@ fn main() -> Result<()> {
                 cc,
                 ui_clients,
                 ui_status,
-                figure_count,
                 url_for_ui,
             )))
         }),

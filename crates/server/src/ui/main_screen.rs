@@ -12,17 +12,17 @@
 //! session's unlocked-profile colour + initial.
 
 use std::f32::consts::TAU;
-use std::sync::atomic::Ordering;
 
 use super::LauncherApp;
 use crate::state::{LauncherStatus, SessionPip};
 use crate::{fonts, palette};
 
-/// Fixed square edge for the QR card. Matches the mock's `.qr-flipper`
-/// (280px) scaled up for a 10 ft TV read. The QR image itself is generated
-/// at whatever size `render_qr_texture` produces; here we just reserve the
-/// frame so the card-flip animation has a stable rect to shrink/grow into.
-const CARD_SIZE: f32 = 320.0;
+/// Fixed square edge for the QR card. Bumped 320→420 on 2026-04-19
+/// when the bezel went circular — a circle inscribed in a square reads
+/// visually smaller than the same-sized square (the corners are gone),
+/// so the round bezel needed more bounding room to retain the same
+/// presence as the old rounded-square version.
+const CARD_SIZE: f32 = 420.0;
 
 /// How long the QR → back-face flip animation takes, in seconds. `egui`'s
 /// `animate_bool_with_time` uses this as the full 0→1 transition; we split
@@ -36,6 +36,35 @@ const PIP_DIAMETER: f32 = 84.0;
 /// Orbit rotation rate (rad/s). Quiet idle motion — matches the vortex's
 /// 0.08 rad/s so the two ambient animations don't compete for attention.
 const ORBIT_SPEED: f32 = 0.10;
+
+/// Visible thickness of the gold ring around the inner content disc,
+/// in screen pixels. The bezel paints a full filled gold disc; the
+/// inner SF_3 / SF_1 content disc is drawn smaller by this amount so
+/// the gold shows around it as a ring. Bumped 14→24 on 2026-04-19
+/// after Chris noted the dark inner ring was out of proportion with
+/// the gold on a 420px bezel — at 14px the gold read as thinner than
+/// the combined dark (GOLD_INK inset + SF_3 rim) inside it.
+const BEZEL_RING_PX: f32 = 24.0;
+
+/// Visible thickness of the dark "screen bezel" between the gold ring
+/// and the QR/text content. Matches the look of a recessed monitor
+/// screen sitting inside a gold frame — the screen rim is a darker
+/// inner ring that frames the content. Total inset from the bezel
+/// rect to the QR texture / text is `BEZEL_RING_PX + SCREEN_RIM_PX`.
+/// Trimmed 8→3 alongside the gold-ring bump so the dark region stays
+/// subordinate — the phone pip's inner dark line is near-hairline.
+const SCREEN_RIM_PX: f32 = 3.0;
+
+/// Width (in QR modules) of the clear quiet-zone ring between the QR
+/// data and the surrounding circular noise field. Spike on 2026-04-19
+/// (`examples/round_qr_spike.rs`) found 2 modules to be the sweet spot:
+/// scanners lock on quickly while the noise still encroaches enough
+/// to make the composition read as round/circular at a glance.
+/// Variant C (gap=0) also scanned but took noticeably longer to lock,
+/// so 2 is the user-validated default. Bump up if cross-room scanning
+/// proves too slow on a real TV; the QR is encoded at ECC level H so
+/// 0–4 are all functional, just trade off scan-speed vs visual.
+const QR_NOISE_GAP_MODULES: u32 = 2;
 
 impl LauncherApp {
     /// Render the gold "STARTING" title, centred on the panel. Used by
@@ -63,7 +92,20 @@ impl LauncherApp {
     }
 
     /// Render the Main surface. Called from the top-level dispatcher in
-    /// [`super`] when `LauncherStatus::screen == LauncherScreen::Main`.
+    /// [`super`] when `LauncherStatus::screen == LauncherScreen::Main`
+    /// AND no game is running (game-running flips to `in_game::render`
+    /// for the transparent in-game overlay).
+    ///
+    /// Layout matches mock state 4 (Awaiting Connect): centred QR card
+    /// with heraldic "SCAN TO CONNECT" label below, plus the Exit to
+    /// Desktop button as an implementation pragmatism (mock omits it
+    /// because the mock can't trap you; we keep it so a stuck launcher
+    /// has an obvious escape hatch independent of the phone).
+    ///
+    /// 4.19.22 stripped the prior brand heading, status strip, URL
+    /// text, "Waiting for phone…", and figures-indexed counter — the
+    /// orbit pips already convey "phone joined" and the rest was
+    /// debug-info noise the mock omits. URL drop also closes 4.19.10a.
     pub(super) fn render_main(
         &self,
         ui: &mut egui::Ui,
@@ -72,9 +114,9 @@ impl LauncherApp {
     ) {
         // Paint the orbit pips *before* any widgets lay out. Immediate-mode
         // egui paints shapes in submission order, so these land above the
-        // vortex (already drawn by the dispatcher) but below the heading
-        // and QR rendered below — matching the mock's z-index 9 orbit
-        // passing behind z-index 10 text.
+        // vortex (already drawn by the dispatcher) but below the QR + label
+        // rendered below — matching the mock's z-index 9 orbit passing
+        // behind z-index 10 text.
         let panel_rect = ui.max_rect();
         paint_player_orbit(
             ui.painter(),
@@ -84,22 +126,15 @@ impl LauncherApp {
         );
 
         ui.vertical_centered(|ui| {
-            ui.add_space(16.0);
-            status_strip(ui, status_snapshot);
-            ui.add_space(8.0);
-            ui.heading(
-                egui::RichText::new("SKYLANDER PORTAL")
-                    .size(80.0)
-                    .color(palette::GOLD)
-                    .family(egui::FontFamily::Name(fonts::TITAN_ONE.into())),
-            );
-            ui.add_space(16.0);
-            ui.label(
-                egui::RichText::new("Scan to connect:")
-                    .size(36.0)
-                    .color(palette::TEXT_DIM),
-            );
-            ui.add_space(24.0);
+            // Centre the **QR card** at the panel midpoint — same point
+            // the vortex's iris hole sits on. (Earlier cuts centred the
+            // whole QR + label cluster, which put the QR ~60px above
+            // the vortex centre — the cluster was visibly off-axis from
+            // the swirl.) The label hangs below; the button takes the
+            // remainder of the bottom space.
+            let avail = ui.available_height();
+            ui.add_space(((avail - CARD_SIZE) * 0.5).max(24.0));
+
             if let Some(tex) = &self.qr_texture {
                 // The card-flip helper reserves a fixed-size square and
                 // paints the front / back face directly via Painter so the
@@ -107,32 +142,28 @@ impl LauncherApp {
                 // custom matrix math — egui-native, see the helper doc.
                 qr_card_flip(ui, ctx, tex, status_snapshot.session_slots_full);
             }
+
             ui.add_space(24.0);
-            ui.label(
-                egui::RichText::new(&self.url)
-                    .size(32.0)
-                    .monospace()
-                    .color(palette::GOLD),
-            );
-            ui.add_space(16.0);
 
-            let n = self.clients.load(Ordering::Relaxed);
-            let status = if n == 0 {
-                "Waiting for phone…".to_string()
-            } else if n == 1 {
-                "1 device connected".to_string()
-            } else {
-                format!("{n} devices connected")
-            };
-            ui.label(egui::RichText::new(status).size(40.0).color(palette::TEXT));
-            ui.add_space(8.0);
-            ui.label(
-                egui::RichText::new(format!("{} figures indexed", self.figure_count))
-                    .size(24.0)
-                    .color(palette::TEXT_DIM),
-            );
+            // "SCAN TO CONNECT" label, heraldic — closes 4.19.10. Mock
+            // calls this "TV display lg" (64px). Allocate a fixed-height
+            // strip to land the painter call in the right rect, then
+            // paint the title centred inside it.
+            let label_height = 96.0;
+            let label_rect = ui
+                .allocate_exact_size(
+                    egui::vec2(ui.available_width(), label_height),
+                    egui::Sense::hover(),
+                )
+                .0;
+            paint_heraldic_title(ui.painter(), label_rect.center(), "SCAN TO CONNECT", 64.0);
 
-            ui.add_space(32.0);
+            // Push the Exit to Desktop button toward the bottom of the
+            // panel. Visible escape hatch — kept regardless of mock per
+            // user 2026-04-19. Distinct red so it doesn't read as a
+            // primary action competing with the QR.
+            let remaining = ui.available_height();
+            ui.add_space((remaining * 0.55).max(48.0));
             let btn = egui::Button::new(
                 egui::RichText::new("Exit to Desktop")
                     .size(28.0)
@@ -146,62 +177,6 @@ impl LauncherApp {
             }
         });
     }
-}
-
-/// Header strip: RPCS3 connection dot + current-game label (PLAN 4.15.4).
-/// Absorbs the 2.8.4 deferral — a steady green dot while the emulator is
-/// running, dim grey otherwise. The current-game name renders in Titan
-/// One gold when a game is booted; blank otherwise.
-fn status_strip(ui: &mut egui::Ui, status: &LauncherStatus) {
-    const DOT_RADIUS: f32 = 10.0;
-    let (dot_colour, tooltip) = if status.rpcs3_running {
-        (palette::SUCCESS_GLOW, "RPCS3 running")
-    } else {
-        (palette::TEXT_DIM, "RPCS3 idle")
-    };
-
-    ui.horizontal(|ui| {
-        // Let the strip grow to the panel width so `with_layout` centering
-        // inside `vertical_centered` gives us the full row to work with.
-        ui.set_min_width(ui.available_width());
-        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-            ui.add_space(24.0);
-            // Dot — allocate a small square and paint a circle in its centre.
-            let (rect, response) = ui.allocate_exact_size(
-                egui::vec2(DOT_RADIUS * 2.0 + 4.0, DOT_RADIUS * 2.0 + 4.0),
-                egui::Sense::hover(),
-            );
-            ui.painter()
-                .circle_filled(rect.center(), DOT_RADIUS, dot_colour);
-            // Subtle outer ring for contrast against the starfield background.
-            ui.painter().circle_stroke(
-                rect.center(),
-                DOT_RADIUS,
-                egui::Stroke::new(1.5, palette::GOLD_INK),
-            );
-            response.on_hover_text(tooltip);
-
-            ui.add_space(12.0);
-            match &status.current_game {
-                Some(name) => {
-                    ui.label(
-                        egui::RichText::new(name)
-                            .size(26.0)
-                            .color(palette::GOLD)
-                            .family(egui::FontFamily::Name(fonts::TITAN_ONE.into())),
-                    );
-                }
-                None => {
-                    ui.label(
-                        egui::RichText::new("no game running")
-                            .size(22.0)
-                            .italics()
-                            .color(palette::TEXT_DIM),
-                    );
-                }
-            }
-        });
-    });
 }
 
 /// Card-flip container (PLAN 4.15.6). Reserves a `CARD_SIZE × CARD_SIZE`
@@ -251,28 +226,266 @@ fn qr_card_flip(ui: &mut egui::Ui, ctx: &egui::Context, tex: &egui::TextureHandl
     }
 }
 
-/// Front face — gold bezel framing the QR. Equivalent to the stacked
-/// `egui::Frame` version in the pre-4.15.6 code, but painted directly via
-/// the `Painter` API so we can drive a per-frame horizontal scale.
-fn paint_qr_front(painter: &egui::Painter, rect: egui::Rect, tex: &egui::TextureHandle) {
-    // Outer gold body with a `GOLD_INK` hairline stroke.
-    painter.rect(
-        rect,
-        egui::Rounding::same(14.0),
-        palette::GOLD,
+/// Paint the circular gold bezel — matches the phone SPA's `.bezel-ring`
+/// (`phone/assets/app.css` line 547). The phone is the source of truth
+/// for the design language; the launcher mirrors it so the TV and
+/// phone read as one product.
+///
+/// Phone CSS recipe:
+/// ```css
+/// background: radial-gradient(circle at 30% 25%,
+///     var(--gb), var(--g) 22%, var(--gm) 55%, var(--gs) 100%);
+/// box-shadow:
+///     inset 0 0 0 2px var(--gi),                  /* dark inner border */
+///     inset 0 3px 4px rgba(255,255,255,0.3),      /* top white highlight */
+///     inset 0 -3px 4px rgba(0,0,0,0.5),           /* bottom dark shadow */
+///     0 0 0 1px #000,                             /* outer black border */
+///     0 4px 10px rgba(0,0,0,0.6);                 /* drop shadow */
+/// ```
+///
+/// We approximate in egui as:
+///   1. Halo glow (4.19.7).
+///   2. 4-stop radial gradient disc with the highlight offset to
+///      top-left — gives the embossed-metal look the phone has.
+///   3. Inset top white highlight (thin bright crescent at the top
+///      inner edge).
+///   4. Inset bottom dark shadow (thin dark crescent at the bottom
+///      inner edge).
+///   5. Inner GOLD_INK ring (the inset 2px dark border).
+///   6. Outer dark border (the 1px black halo around the whole disc).
+///
+/// Note for future bezel consumers: this is a *filled disc*, not a
+/// ring. If you call `paint_bezel` and then paint nothing on top, you
+/// get a solid gold circle. To make a ring visible, paint your screen
+/// content (SF_3 / SF_1 / texture) inset enough that the gold shows
+/// around it — see `paint_qr_front` for the pattern.
+fn paint_bezel(painter: &egui::Painter, rect: egui::Rect) {
+    let center = rect.center();
+    let outer_r = rect.width().min(rect.height()) / 2.0;
+
+    // 1. Halo glow — soft gold radial behind the disc.
+    crate::vortex::paint_radial_ellipse(
+        painter,
+        center,
+        outer_r * 1.7,
+        outer_r * 1.7,
+        egui::Color32::from_rgba_unmultiplied(
+            palette::GOLD_BRIGHT.r(),
+            palette::GOLD_BRIGHT.g(),
+            palette::GOLD_BRIGHT.b(),
+            55,
+        ),
+    );
+
+    // 2. 4-stop radial gradient disc, highlight offset to (30%, 25%)
+    // of the bounding rect — matches the phone CSS exactly. The
+    // highlight position simulates a light source above-and-left of
+    // the bezel; without the offset the gradient looks flat.
+    let highlight_offset = egui::vec2(-0.4 * outer_r, -0.5 * outer_r);
+    paint_radial_gradient_disc(
+        painter,
+        center,
+        outer_r,
+        center + highlight_offset,
+        &[
+            (0.00, palette::GOLD_BRIGHT),
+            (0.22, palette::GOLD),
+            (0.55, palette::GOLD_MID),
+            (1.00, palette::GOLD_SHADOW),
+        ],
+    );
+
+    // 3. Inset top highlight — thin crescent of white at the top
+    // inner edge (the phone's `inset 0 3px 4px rgba(255,255,255,0.3)`).
+    // We approximate as a stroke just inside the rim, top-half only,
+    // by stacking two strokes with progressively tighter alpha and
+    // smaller radii.
+    let highlight = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 76); // ~0.3 alpha
+    painter.circle_stroke(
+        center - egui::vec2(0.0, 1.0),
+        outer_r - 2.0,
+        egui::Stroke::new(2.0, highlight),
+    );
+
+    // 4. Inset bottom shadow — same trick, dark crescent at the
+    // bottom inner edge.
+    let shadow = egui::Color32::from_rgba_unmultiplied(0, 0, 0, 127); // ~0.5 alpha
+    painter.circle_stroke(
+        center + egui::vec2(0.0, 1.0),
+        outer_r - 2.0,
+        egui::Stroke::new(2.0, shadow),
+    );
+
+    // 5. Inner dark ring — the phone's `inset 0 0 0 2px var(--gi)`,
+    // a thin GOLD_INK band just inside the rim that frames the gold.
+    painter.circle_stroke(
+        center,
+        outer_r - 1.0,
         egui::Stroke::new(2.0, palette::GOLD_INK),
     );
-    // Inner bezel plate — the darker `SF_3` rim that frames the QR itself.
-    let plate = rect.shrink(18.0);
-    painter.rect(
-        plate,
-        egui::Rounding::same(8.0),
-        palette::SF_3,
+
+    // 6. Outer black border — the phone's `0 0 0 1px #000`, a 1px
+    // black halo around the whole disc separating bezel from sky.
+    painter.circle_stroke(
+        center,
+        outer_r + 0.5,
+        egui::Stroke::new(1.0, egui::Color32::BLACK),
+    );
+}
+
+/// Paint a filled disc with a multi-stop RADIAL colour gradient
+/// emanating from `highlight_center`. `stops` is `(distance_t, color)`
+/// pairs where `distance_t` is normalised against the maximum distance
+/// from `highlight_center` to any point on the disc rim — so `t=0`
+/// is at the highlight, `t=1` is at the farthest rim point.
+///
+/// Implementation: a triangle fan from `highlight_center` plus a ring
+/// of internal "rib" vertices to densify the mesh. Each vertex is
+/// coloured by interpolating the stops at its `t = distance / max_d`.
+/// Without rib vertices the gradient steps would be visible as
+/// straight lines from the highlight outward; with them the mesh has
+/// enough density to read as smooth.
+///
+/// The disc rim is approximated by 96 segments (slightly higher than
+/// the linear gradient's 64 — the offset highlight makes any flat
+/// edges more obvious).
+///
+/// **Stops MUST be sorted by `distance_t` ascending.** No bounds
+/// checking — internal use only.
+fn paint_radial_gradient_disc(
+    painter: &egui::Painter,
+    center: egui::Pos2,
+    radius: f32,
+    highlight_center: egui::Pos2,
+    stops: &[(f32, egui::Color32)],
+) {
+    use egui::epaint::{Mesh, Vertex, WHITE_UV};
+
+    let segments: usize = 96;
+    let rings: usize = 8; // intermediate radial rings for smoothness
+    let mut mesh = Mesh::default();
+
+    // Compute the maximum distance from highlight_center to any rim
+    // point. Used to normalise distances into the [0, 1] stop range.
+    let highlight_to_disc = highlight_center - center;
+    let h_dist = highlight_to_disc.length();
+    let max_d = radius + h_dist;
+
+    let color_at = |t: f32| -> egui::Color32 {
+        let t = t.clamp(0.0, 1.0);
+        for w in stops.windows(2) {
+            let (t0, c0) = w[0];
+            let (t1, c1) = w[1];
+            if t <= t1 {
+                let span = (t1 - t0).max(1e-6);
+                let local = ((t - t0) / span).clamp(0.0, 1.0);
+                return lerp_color(c0, c1, local);
+            }
+        }
+        stops.last().unwrap().1
+    };
+
+    let push_vertex = |mesh: &mut Mesh, pos: egui::Pos2| {
+        let d = (pos - highlight_center).length();
+        let t = (d / max_d).clamp(0.0, 1.0);
+        mesh.vertices.push(Vertex {
+            pos,
+            uv: WHITE_UV,
+            color: color_at(t),
+        });
+    };
+
+    // Vertex 0: highlight centre.
+    push_vertex(&mut mesh, highlight_center);
+
+    // Ring 1..=rings: vertices on concentric circles around the disc
+    // centre (NOT the highlight centre — we want the rings to follow
+    // the disc shape so the outermost ring is the rim). The first
+    // ring is small, the last is the rim.
+    for ring in 1..=rings {
+        let r = radius * (ring as f32) / (rings as f32);
+        for seg in 0..segments {
+            let angle = TAU * (seg as f32) / (segments as f32);
+            let (s, c) = angle.sin_cos();
+            let pos = egui::pos2(center.x + r * c, center.y + r * s);
+            push_vertex(&mut mesh, pos);
+        }
+    }
+
+    // Triangulate. First ring fans from vertex 0 to the first ring's
+    // segments. Subsequent rings tile as quads between consecutive
+    // rings.
+    let seg = segments as u32;
+    // Fan from highlight to ring 1.
+    for s in 0..seg {
+        let next = (s + 1) % seg;
+        mesh.indices.push(0);
+        mesh.indices.push(1 + s);
+        mesh.indices.push(1 + next);
+    }
+    // Quad strips between rings.
+    for ring in 0..(rings - 1) {
+        let inner_base = 1 + (ring as u32) * seg;
+        let outer_base = 1 + ((ring + 1) as u32) * seg;
+        for s in 0..seg {
+            let next = (s + 1) % seg;
+            // Triangle 1: inner_s, outer_s, outer_next
+            mesh.indices.push(inner_base + s);
+            mesh.indices.push(outer_base + s);
+            mesh.indices.push(outer_base + next);
+            // Triangle 2: inner_s, outer_next, inner_next
+            mesh.indices.push(inner_base + s);
+            mesh.indices.push(outer_base + next);
+            mesh.indices.push(inner_base + next);
+        }
+    }
+
+    painter.add(egui::Shape::Mesh(mesh));
+}
+
+/// Linear RGBA interpolation for `Color32`. egui stores premultiplied
+/// alpha so this only does the right thing for opaque or
+/// fully-transparent endpoints — fine for our gold gradient where both
+/// stops are 255-alpha.
+fn lerp_color(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 {
+    let inv = 1.0 - t;
+    egui::Color32::from_rgba_premultiplied(
+        ((a.r() as f32) * inv + (b.r() as f32) * t) as u8,
+        ((a.g() as f32) * inv + (b.g() as f32) * t) as u8,
+        ((a.b() as f32) * inv + (b.b() as f32) * t) as u8,
+        ((a.a() as f32) * inv + (b.a() as f32) * t) as u8,
+    )
+}
+
+/// Front face — circular gold bezel + dark "screen rim" + round QR
+/// composition. Layered outermost-to-innermost:
+///
+///   1. Gold bezel disc (`paint_bezel`)
+///   2. SF_3 screen disc inset by `BEZEL_RING_PX` — visible as a thin
+///      dark ring between gold and content, like a recessed monitor
+///      screen sitting inside the gold frame
+///   3. Thin GOLD_SHADOW stroke around the SF_3 disc for definition
+///   4. QR texture inset by `BEZEL_RING_PX + SCREEN_RIM_PX` so the
+///      SF_3 ring is visible around the white screen content
+///
+/// The texture's transparent corners (outside its inscribed circle)
+/// land in the SF_3 disc area, so they read as continuous SF_3 rim
+/// rather than gold — visually the noise/QR composition sits inside
+/// a clean dark monitor frame with a gold bezel around the whole.
+fn paint_qr_front(painter: &egui::Painter, rect: egui::Rect, tex: &egui::TextureHandle) {
+    paint_bezel(painter, rect);
+
+    let center = rect.center();
+    let outer_r = rect.width().min(rect.height()) / 2.0;
+    let screen_r = outer_r - BEZEL_RING_PX;
+    painter.circle_filled(center, screen_r, palette::SF_3);
+    painter.circle_stroke(
+        center,
+        screen_r,
         egui::Stroke::new(1.0, palette::GOLD_SHADOW),
     );
-    // The QR texture. Fill the plate minus a small quiet-zone margin so
-    // the dark plate peeks through as a contrast rim.
-    let qr_rect = plate.shrink(10.0);
+
+    let qr_rect = rect.shrink(BEZEL_RING_PX + SCREEN_RIM_PX);
     painter.image(
         tex.id(),
         qr_rect,
@@ -285,33 +498,35 @@ fn paint_qr_front(painter: &egui::Painter, rect: egui::Rect, tex: &egui::Texture
 /// `MAXIMUM PLAYERS REACHED`. Matches the mock's state 5 copy split
 /// across three lines so the letters stay big at 10 ft.
 fn paint_back_face(painter: &egui::Painter, rect: egui::Rect) {
-    // Gold bezel body (identical to the front face so the flip has a
-    // stable silhouette).
-    painter.rect(
-        rect,
-        egui::Rounding::same(14.0),
-        palette::GOLD,
-        egui::Stroke::new(2.0, palette::GOLD_INK),
-    );
-    // Plate with a warmer blue fill than `SF_3` — the mock uses a
-    // downward blue gradient. We approximate with a flat `SF_1` which is
-    // the brightest of the three starfield blues.
-    let plate = rect.shrink(18.0);
-    painter.rect(
-        plate,
-        egui::Rounding::same(8.0),
-        palette::SF_1,
+    paint_bezel(painter, rect);
+
+    // Layered like paint_qr_front: SF_3 screen rim + thin GOLD_SHADOW
+    // stroke + inner SF_1 disc carrying the text. Same screen geometry
+    // as the QR-front so the card-flip silhouette is stable.
+    let center = rect.center();
+    let outer_r = rect.width().min(rect.height()) / 2.0;
+    let screen_r = outer_r - BEZEL_RING_PX;
+    painter.circle_filled(center, screen_r, palette::SF_3);
+    painter.circle_stroke(
+        center,
+        screen_r,
         egui::Stroke::new(1.0, palette::GOLD_SHADOW),
     );
-    // Three-line title. Sized to fill the plate vertically; the mock
-    // splits at "MAXIMUM / PLAYERS / REACHED" so each word gets its own
-    // line and the letter-spacing stays readable.
+
+    // SF_1 inner "screen content" disc. Slightly smaller than screen_r
+    // so the SF_3 rim shows around it.
+    let inner_r = screen_r - SCREEN_RIM_PX;
+    painter.circle_filled(center, inner_r, palette::SF_1);
+
+    // Three-line title centred on the inner disc. Layout box is the
+    // inscribed square so text doesn't clip the curved edges.
     let lines = ["MAXIMUM", "PLAYERS", "REACHED"];
-    let line_h = plate.height() / lines.len() as f32;
+    let inscribed_half = inner_r * std::f32::consts::FRAC_1_SQRT_2;
+    let line_h = (inscribed_half * 2.0) / lines.len() as f32;
     for (i, word) in lines.iter().enumerate() {
-        let y = plate.top() + line_h * (i as f32 + 0.5);
+        let y = center.y - inscribed_half + line_h * (i as f32 + 0.5);
         painter.text(
-            egui::pos2(plate.center().x, y),
+            egui::pos2(center.x, y),
             egui::Align2::CENTER_CENTER,
             word,
             egui::FontId::new(44.0, egui::FontFamily::Name(fonts::TITAN_ONE.into())),
@@ -555,38 +770,173 @@ fn paint_heraldic_title(painter: &egui::Painter, pos: egui::Pos2, text: &str, si
 /// Rasterise the pairing URL into a QR texture. Called once from
 /// [`LauncherApp::new`]; the texture is cached on the app for the life of
 /// the viewport.
+/// Build the QR texture used by [`paint_qr_front`].
+///
+/// The texture is a circular composition: a white "screen" disc with the
+/// real QR centered inside, surrounded by a ring of random blue
+/// "noise" modules that make the overall shape read as round (not
+/// square) — the portal aesthetic the launcher is built around.
+///
+/// Encoded at ECC level H so the ~30% Reed-Solomon recovery margin
+/// covers any visual encroachment of the noise ring on the QR data.
+/// The clear `QR_NOISE_GAP_MODULES`-wide quiet zone keeps standard
+/// scanners (iOS Camera, Google Lens) locking on quickly. See the
+/// `round_qr_spike` example for the variant trade-offs.
+///
+/// Pixels outside the inscribed noise circle are TRANSPARENT, so the
+/// plate behind the texture shows through in the four corner triangles
+/// of the texture's bounding rect. That intentional transparency is
+/// what keeps the visual "round" inside a square card.
 pub(super) fn render_qr_texture(ctx: &egui::Context, url: &str) -> egui::TextureHandle {
-    let code = qrcode::QrCode::new(url).expect("qr encode");
-    // QR renders in starfield-blue-on-white for readability. Matches the
-    // phone's selection-on-dark treatment (dark modules on a white
-    // quiet-zone background is what most QR scanners expect).
-    let dark = palette::SF_2;
-    let light = egui::Color32::WHITE;
-    let scale = 10usize;
-    let modules: Vec<Vec<bool>> = code
-        .render::<char>()
-        .quiet_zone(true)
-        .module_dimensions(1, 1)
-        .build()
-        .lines()
-        .map(|l| l.chars().map(|c| c != ' ').collect())
+    use rand_core::{OsRng, RngCore};
+
+    let code = qrcode::QrCode::with_error_correction_level(url, qrcode::EcLevel::H)
+        .expect("qr encode");
+    let n = code.width() as u32;
+    let qr_modules: Vec<bool> = code
+        .to_colors()
+        .into_iter()
+        .map(|c| matches!(c, qrcode::Color::Dark))
         .collect();
-    let h = modules.len();
-    let w = modules.first().map(|r| r.len()).unwrap_or(0);
-    let img_w = w * scale;
-    let img_h = h * scale;
-    let mut pixels = Vec::with_capacity(img_w * img_h);
-    for y in 0..img_h {
-        for x in 0..img_w {
-            let b = modules[y / scale][x / scale];
-            pixels.push(if b { dark } else { light });
+
+    // Pixel size of one QR module on the texture. Matches the spike
+    // (`examples/round_qr_spike.rs`) value the user validated for scan
+    // reliability at TV viewing distance.
+    let scale: u32 = 14;
+    // Canvas leaves the standard 4-module quiet zone reserved in its
+    // dimensions, plus 6 modules of breathing room outside the noise
+    // ring. Total square edge in modules:
+    let breathing: u32 = 6;
+    let canvas_modules = n + 2 * (4 + breathing);
+    let canvas_px = canvas_modules * scale;
+    let img_w = canvas_px as usize;
+    let img_h = canvas_px as usize;
+
+    let qr_origin = (canvas_modules - n) / 2;
+    let qr_center_px = (canvas_px / 2) as f32;
+    // Noise circle inscribes within the canvas with one module of edge
+    // padding so it doesn't kiss the bounding box.
+    let noise_radius_px = (canvas_px as f32 / 2.0) - (scale as f32);
+    // Half-extent (px) of the reserved central square: QR data + the
+    // configurable gap. Noise modules whose centers fall inside this
+    // axis-aligned square are skipped, leaving a clear quiet zone.
+    let reserved_half_px =
+        (n as f32 / 2.0 + QR_NOISE_GAP_MODULES as f32) * scale as f32;
+
+    // Pre-generate enough random bits for the noise ring. One bit per
+    // candidate module — the loop below skips most (outside the circle
+    // or inside the reserved square), so the buffer is sized by total
+    // module count and any unused bits are just discarded.
+    let mut noise_buf = vec![0u8; (canvas_modules * canvas_modules / 8 + 1) as usize];
+    OsRng.fill_bytes(&mut noise_buf);
+    let bit_at = |idx: u32| -> bool {
+        let i = (idx as usize) % (noise_buf.len() * 8);
+        (noise_buf[i / 8] >> (i % 8)) & 1 == 1
+    };
+
+    // Colour roles:
+    // - QR data dark modules: pure black for max scanner contrast on
+    //   the white screen disc.
+    // - Noise dots: SF_2 — darker than SF_1, gives stronger contrast
+    //   against the white screen at typical viewing distance. Tried
+    //   SF_1 first (2026-04-19) but at downsampled scale the noise
+    //   washed out; SF_2 reads more clearly without going so dark
+    //   that it competes with the QR data itself.
+    // - Screen background: white (standard QR quiet-zone colour).
+    // - Outside the circle: transparent so the SF_3 screen rim behind
+    //   the texture shows through in the inscribed-square corners.
+    let qr_dark = egui::Color32::BLACK;
+    let noise_blue = palette::SF_2;
+    let screen_white = egui::Color32::WHITE;
+    let outside = egui::Color32::TRANSPARENT;
+
+    let mut pixels = vec![outside; img_w * img_h];
+
+    // Pass 1: fill the inscribed circle with white. Per-pixel circle
+    // test — the noise ring + QR will overpaint specific modules on
+    // top, but every pixel inside the circle starts as white so the
+    // scanner sees clean quiet-zone background where noise is sparse.
+    let r2 = noise_radius_px * noise_radius_px;
+    for y in 0..canvas_px {
+        let dy = y as f32 + 0.5 - qr_center_px;
+        let dy2 = dy * dy;
+        for x in 0..canvas_px {
+            let dx = x as f32 + 0.5 - qr_center_px;
+            if dx * dx + dy2 <= r2 {
+                pixels[(y as usize) * img_w + (x as usize)] = screen_white;
+            }
         }
     }
+
+    // Pass 2: noise modules. Iterate per-module (not per-pixel) so each
+    // "noise dot" is a crisp QR-sized square — visually consistent
+    // with the real QR's data modules.
+    let mut bit_idx = 0u32;
+    for my in 0..canvas_modules {
+        for mx in 0..canvas_modules {
+            let cx = (mx as f32 + 0.5) * scale as f32;
+            let cy = (my as f32 + 0.5) * scale as f32;
+            let dx = cx - qr_center_px;
+            let dy = cy - qr_center_px;
+            let dist_sq = dx * dx + dy * dy;
+            if dist_sq > r2 {
+                continue;
+            }
+            if dx.abs() < reserved_half_px && dy.abs() < reserved_half_px {
+                continue;
+            }
+            let dark = bit_at(bit_idx);
+            bit_idx = bit_idx.wrapping_add(1);
+            if dark {
+                paint_module_into(&mut pixels, img_w, mx, my, scale, noise_blue);
+            }
+        }
+    }
+
+    // Pass 3: real QR data on top — guaranteed not to overlap with
+    // noise (the reserved square is bigger than the QR by at least
+    // QR_NOISE_GAP_MODULES on every side).
+    for y in 0..n {
+        for x in 0..n {
+            if qr_modules[(y * n + x) as usize] {
+                paint_module_into(
+                    &mut pixels,
+                    img_w,
+                    qr_origin + x,
+                    qr_origin + y,
+                    scale,
+                    qr_dark,
+                );
+            }
+        }
+    }
+
     let color_image = egui::ColorImage {
         size: [img_w, img_h],
         pixels,
     };
     ctx.load_texture("qr", color_image, egui::TextureOptions::NEAREST)
+}
+
+/// Fill a `scale × scale` block in the texture pixel buffer at module
+/// coordinates `(mx, my)` with `color`. Used by [`render_qr_texture`].
+fn paint_module_into(
+    pixels: &mut [egui::Color32],
+    stride: usize,
+    mx: u32,
+    my: u32,
+    scale: u32,
+    color: egui::Color32,
+) {
+    let x0 = (mx * scale) as usize;
+    let y0 = (my * scale) as usize;
+    let s = scale as usize;
+    for dy in 0..s {
+        let row = (y0 + dy) * stride;
+        for dx in 0..s {
+            pixels[row + x0 + dx] = color;
+        }
+    }
 }
 
 #[cfg(test)]

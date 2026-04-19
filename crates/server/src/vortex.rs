@@ -267,10 +267,12 @@ pub fn paint_sky_background(painter: &egui::Painter, rect: Rect) {
 /// Paint a vertical 3-stop linear gradient as a rect-filling mesh.
 /// The colour at `mid_pos` (0.0..=1.0 from top) is `mid_color`; top is
 /// `top_color`, bottom is `bot_color`. egui smooth-shades vertex colours
-/// so the result reads as a continuous gradient. Used by
-/// `paint_sky_background` to lay down the base SF_1 → SF_2 → SF_3
-/// gradient that the mock's CSS `.sky` does via linear-gradient.
-fn paint_vertical_gradient(
+/// so the result reads as a continuous gradient. Sharp corners — caller
+/// is responsible for hiding them under a rounded layer if needed.
+/// Used by `paint_sky_background` for the SF_1 → SF_2 → SF_3 base, and
+/// by `paint_bezel` for the gold-bezel body's vertical light → dark
+/// ramp.
+pub fn paint_vertical_gradient(
     painter: &egui::Painter,
     rect: Rect,
     top_color: Color32,

@@ -16,11 +16,7 @@
 /// How long the calm starfield stays on its own before the transition
 /// begins. Long enough to register as "the launcher woke up," short
 /// enough to not feel like a splash screen the user has to skip.
-///
-/// **Bumped to 5.0 for 4.19.2a validation (2026-04-19)** — gives the
-/// user enough wall-clock to actually observe the calm-starfield beat
-/// on the HTPC. Bring back down (~1.0) before release.
-const STARTUP_HOLD_S: f32 = 5.0;
+const STARTUP_HOLD_S: f32 = 1.0;
 
 /// How long the iris-close + content-reveal transition runs. Picked to
 /// feel like a deliberate sweep — too fast reads as a snap, too slow

@@ -24,6 +24,13 @@ pub const GOLD_BRIGHT: Color32 = Color32::from_rgb(0xff, 0xe5, 0x8a);
 pub const GOLD: Color32 = Color32::from_rgb(0xf5, 0xc6, 0x34);
 /// Secondary gold, used for the `.game-name` text fill equivalents.
 pub const GOLD_2: Color32 = Color32::from_rgb(0xe9, 0xa7, 0x14);
+/// Mid-dark gold — third stop in the bezel's radial gradient (the
+/// "shadow side" of the embossed metal before it fades to deep
+/// shadow). Mirrors the phone's `--gm: #c58c18`. Distinct from
+/// `GOLD_2` (which is a brighter mid-tone for text); the bezel
+/// gradient needs this darker step or the embossed lighting reads
+/// as flat (Chris flagged 2026-04-19).
+pub const GOLD_MID: Color32 = Color32::from_rgb(0xc5, 0x8c, 0x18);
 /// Gold shadow — bezel outer shadow ring, text drop shadow.
 pub const GOLD_SHADOW: Color32 = Color32::from_rgb(0x6e, 0x4a, 0x00);
 /// Gold ink — darkest tone, for inset engraving effects.
