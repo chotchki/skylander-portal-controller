@@ -1328,21 +1328,26 @@ async fn reset_pin(
 
 // ============================================================ icons + manifest
 
-/// In dev builds, swap icon requests to the Kaos-tinted variants so
+/// In debug builds, swap icon requests to the Kaos-tinted variants so
 /// pinned dev installs are visually distinct from prod installs on the
 /// home screen. In release builds, serve the gold variants. The phone's
 /// index.html requests stable URLs (`/icons/icon-180.png`,
 /// `/icons/icon.svg`); we map them to the appropriate on-disk file.
 ///
-/// The match is on the `dev-tools` feature (default-on in dev, off in
-/// release) — same gate that controls every other dev-only behavior, so
-/// there's only one knob to think about.
+/// Gated on `cfg!(debug_assertions)`, NOT the `dev-tools` Cargo feature:
+/// the icon swap is purely a build-flavor visual signal, and the user-
+/// intuitive contract is "`cargo run --release` looks like production."
+/// Cargo features are orthogonal to profiles, so `--release` alone keeps
+/// default features (incl. `dev-tools`) on — feature-gating the icon
+/// swap would leave `--release` builds wearing the dev tint. Things that
+/// genuinely depend on the dev-tools machinery (mock driver, `.env.dev`,
+/// dev_log endpoint) stay feature-gated; this is a cosmetic decision.
 ///
 /// Recognized URL shapes:
-///   - `icon-{size}.png` → `icon-dev-{size}.png` (dev) or unchanged (prod)
-///   - `icon.svg`        → `icon-dev.svg`        (dev) or unchanged (prod)
+///   - `icon-{size}.png` → `icon-dev-{size}.png` (debug) or unchanged (release)
+///   - `icon.svg`        → `icon-dev.svg`        (debug) or unchanged (release)
 fn dev_swapped(filename: &str) -> Option<String> {
-    if !cfg!(feature = "dev-tools") {
+    if !cfg!(debug_assertions) {
         return None;
     }
     // Already-dev names — never double-swap. Check both shapes (with and
@@ -1381,7 +1386,9 @@ async fn serve_icon(
 }
 
 async fn serve_manifest(State(state): State<Arc<AppState>>) -> Response {
-    let filename = if cfg!(feature = "dev-tools") {
+    // Same gate as the icon swap — see `dev_swapped` doc comment for why
+    // this uses `debug_assertions` and not the `dev-tools` feature.
+    let filename = if cfg!(debug_assertions) {
         "manifest-dev.webmanifest"
     } else {
         "manifest.webmanifest"
@@ -1597,17 +1604,17 @@ async fn unlock_session_testhook(
 
 #[cfg(test)]
 mod icon_swap_tests {
-    //! `dev_swapped` is compile-time gated on the `dev-tools` feature, so
-    //! these tests split: dev-build assertions pin the swap behavior,
-    //! release-build assertion pins the no-op contract. CI runs both
-    //! `cargo test --workspace` (dev features on) and the release build,
-    //! covering both branches.
+    //! `dev_swapped` is gated on `cfg!(debug_assertions)`. `cargo test`
+    //! always runs in debug profile (--release would also enable
+    //! optimizations on tests, which we don't do), so the dev-side
+    //! assertions always run. The "release-build is no-op" branch is
+    //! covered indirectly by CI's `cargo build --release --workspace`
+    //! step plus manual verification when running `cargo run --release`.
 
     use super::*;
 
-    #[cfg(feature = "dev-tools")]
     #[test]
-    fn dev_build_maps_png_filenames_to_dev_variant() {
+    fn debug_build_maps_png_filenames_to_dev_variant() {
         assert_eq!(
             dev_swapped("icon-180.png").as_deref(),
             Some("icon-dev-180.png")
@@ -1622,35 +1629,25 @@ mod icon_swap_tests {
         );
     }
 
-    #[cfg(feature = "dev-tools")]
     #[test]
-    fn dev_build_maps_svg_to_dev_variant() {
+    fn debug_build_maps_svg_to_dev_variant() {
         assert_eq!(dev_swapped("icon.svg").as_deref(), Some("icon-dev.svg"));
     }
 
     /// Belt + braces: if the SPA somehow already requests the dev-named
     /// file directly, the swap must NOT prepend another `dev-`. Without
     /// this guard we'd 404 because `icon-dev-dev-180.png` doesn't exist.
-    #[cfg(feature = "dev-tools")]
     #[test]
-    fn dev_build_does_not_double_swap() {
+    fn debug_build_does_not_double_swap() {
         assert_eq!(dev_swapped("icon-dev-180.png"), None);
         assert_eq!(dev_swapped("icon-dev.svg"), None);
     }
 
-    #[cfg(feature = "dev-tools")]
     #[test]
-    fn dev_build_passes_through_unknown_filenames() {
+    fn debug_build_passes_through_unknown_filenames() {
         assert_eq!(dev_swapped("manifest.webmanifest"), None);
         assert_eq!(dev_swapped("random.png"), None);
         assert_eq!(dev_swapped(""), None);
-    }
-
-    #[cfg(not(feature = "dev-tools"))]
-    #[test]
-    fn release_build_is_noop() {
-        assert_eq!(dev_swapped("icon-180.png"), None);
-        assert_eq!(dev_swapped("icon.svg"), None);
     }
 }
 

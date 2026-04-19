@@ -13,10 +13,11 @@
 <!-- App icons. The src URLs (`/icons/icon-XXX.png`, `/manifest.webmanifest`)
      are served by the Axum server, NOT directly by trunk's static dir —
      the server intercepts those paths and swaps in the dev variants
-     (icon-dev-XXX.png, manifest-dev.webmanifest) when the `dev-tools`
-     feature is on. That way prod and dev installs end up with visually
-     distinct home-screen icons + PWA names without a build-time swap.
-     See crates/server/src/http.rs `serve_icon` / `serve_manifest`. -->
+     (icon-dev-XXX.png, manifest-dev.webmanifest) when running a debug
+     build. Release builds (`cargo run --release`) serve the gold variants
+     and the unmarked manifest. That way prod and dev installs end up with
+     visually distinct home-screen icons + PWA names without a build-time
+     swap. See crates/server/src/http.rs `serve_icon` / `serve_manifest`. -->
 <link rel="icon" type="image/png" sizes="32x32" href="/icons/icon-32.png">
 <link rel="icon" type="image/svg+xml" href="/icons/icon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png">
