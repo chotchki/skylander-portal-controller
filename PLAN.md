@@ -753,8 +753,51 @@ Ordered roughly by user-visible impact; group labels in bold separate areas of t
 
 User flagged 2026-04-18 (alongside 4.18 reframe): the egui shell on the HTPC has the same kind of drift between the implemented launcher state machine and the intended Phase-4 design — possibly worse, because the initial implementation never got pushed past "it works." Same lens applies as 4.18: code + tests are truth, mocks/spec are reference, decide each drift on its merits.
 
-- [ ] 4.19.1 **Inventory the drift.** Walk every launcher state in `crates/server/src/launcher.rs` (or wherever the egui state machine lives) against `docs/aesthetic/navigation.md` §3 (TV Launcher state machine) — note what's implemented, what's stubbed, and what's missing. Output a checklist of drift items here, tagged the same way as 4.18 (`[bug]` / `[feature]` / `[judgment]` / `[verify]`).
-- [ ] 4.19.2 Execute the checklist from 4.19.1 in priority order, locking each decision with a test where one is missing.
+- [x] 4.19.1 ~~**Inventory the drift.**~~ **Done 2026-04-19** — walked `docs/aesthetic/navigation.md` §3.1–§3.7 + `tv_launcher_v3.html` mock against `crates/server/src/ui/{mod,main_screen,in_game,crashed,farewell}.rs` + `crates/server/src/vortex.rs`. Headline: spec defines 8 distinct states (Startup → Booting → Compiling Shaders → Awaiting Connect → Players Joined → Max Players → In-Game → Farewell + Crashed + Switching Games branches); code collapses to 3 enum variants (`Main` / `Crashed` / `Farewell`) with the rest implicit in `rpcs3_running` / `current_game` / `connected_clients`. Several visual moments in the spec (Booting "LOADING", Compiling Shaders progress ring, Switching Games iris-close) therefore never render. Itemised drift below as 4.19.2–4.19.21.
+
+**§3.1 States** — major drift (state machine collapsed).
+
+- [ ] 4.19.2 *[feature]* **No "Booting" surface.** State 2 in spec: iris closes, "LOADING" hero text + game name + boot status. Today `main_screen.rs` renders the QR + "SKYLANDER PORTAL" heading even while RPCS3 is mid-launch. Decide: introduce a `Booting` variant (or render a transient overlay when `current_game.is_some()` && portal isn't ready), then a render test asserting the heading swaps.
+- [ ] 4.19.3 *[feature]* **No "Switching Games" surface.** Spec describes an intermediate iris-close between In-Game and the next Booting (covers the old game frame, "SWITCHING GAMES..." copy). Today the in-game launcher just goes transparent → next launch. Decide if the visual breath is worth the wiring; if yes, share machinery with 4.19.2.
+- [ ] 4.19.4 *[feature]* **No "Compiling Shaders" surface (depends on 4.19.13).** Even when the underlying detection lands, there's no rendering path for the progress ring + "COMPILING SHADERS" heading + "preparing your adventure" subtitle.
+
+**§3.2 Cloud choreography + iris** — the vortex itself is in but tuning is static.
+
+- [ ] 4.19.5 *[judgment]* **Vortex shader: cheap polar-mesh sin/cos vs spec'd 5-octave simplex FBM.** `vortex.rs:1-29` documents this trade-off explicitly (4.15a deferred). Decide: ship the real simplex FBM via `egui_wgpu` custom paint callback (Path A in §3.2), keep the cheap approximation, or move to baked texture frames. On a 10-foot TV the visual delta may be imperceptible — get a real-distance sanity check before committing.
+- [ ] 4.19.6 *[feature]* **Iris is locked at `iris_radius=1.2` for every state.** Spec §3.1 calls for: Booting close over 2.5s easeOut (rotation/inflow snap in 200ms), Crash close ~1s urgent, Shutdown close gentle, In-Game open over ~1.8s easeIn. Per-state `VortexParams` tuning is the 4.15a.7 polish item already noted in code comments. Lock chosen timings with a test on `VortexParams` interpolation.
+- [ ] 4.19.7 *[verify]* **Halo focal-glow missing.** Spec §3.3 + §3.6: 760px-equivalent radial gradient with `mix-blend-mode: screen` behind the QR / progress ring. Code paints the QR/heading without an underlying glow layer. Confirm in-app on the TV — without the halo the QR may read as a flat sticker on top of the clouds rather than emerging from them.
+- [ ] 4.19.8 *[verify]* **Pip orbit speed: code `0.10` rad/s vs spec `0.08`.** `main_screen.rs:38` `ORBIT_SPEED` claims to "match" 0.08 but is 0.10. Either fix the constant or update the comment to explain the deliberate offset.
+
+**§3.3 QR + player orbit.**
+
+- [ ] 4.19.9 *[bug]* **Max-players copy mismatch.** Code says "MAXIMUM PLAYERS REACHED"; spec + `tv_launcher_v3.html` say "PORTAL IS FULL". Decide which reads better at 10ft and unify. Lock the chosen string with a render test on the flipped face.
+- [ ] 4.19.10 *[verify]* **"SCAN TO CONNECT" label position + size.** Code: 36px label *above* the QR. Spec/mock: ~64px (TV display lg) *below* the QR. Decide layout, then a positional test (egui rect-relative) so future drift is caught.
+- [ ] 4.19.11 *[verify]* **QR bezel size: 320px in code vs ~280px in spec.** Probably intentional headroom for the HTPC's 4K display, but worth confirming on the actual TV.
+
+**§3.4 In-Game transparency.**
+
+- [ ] 4.19.12 *[bug]* **Reconnect QR has no fade-in animation.** Spec: 1.0s ease-out opacity transition when the last phone disconnects. Today the QR pops in instantly. Add an opacity ramp driven by the `clients == 0` transition; lock with a test that asserts the alpha is interpolating, not snapping.
+- [ ] 4.19.13 *[verify]* **Reconnect QR copy + inset differ.** Code: "scan to rejoin" 11px italic, 32px inset from upper-right. Mock: "REJOIN" label, 60px inset. Decide ergonomics on the real TV (the inset matters for HUD-overlap avoidance) and pin.
+
+**§3.5 Shutdown farewell.**
+
+- [ ] 4.19.14 *[bug]* **No breathe pulse on the farewell heading.** Spec: 2.4s opacity + scale ±2.5%. Today the heading is static. Add the animation; lock with a test that asserts the heading's transform is non-static across frames.
+- [ ] 4.19.15 *[feature]* **No black-overlay fade-out + "( launcher will exit )" hint sequence.** Spec describes ~2.2s read pause → 1.6s ease-in fade to black → hint surfaces after fade lands → exit. Code uses a single 3s countdown then `ViewportCommand::Close` with no overlay. egui has no native full-screen overlay equivalent to the mock's CSS — either implement via a custom paint pass on top of everything or accept the simpler current behavior as the answer.
+- [ ] 4.19.16 *[verify]* **Heading size: 72px in code vs 64px in spec ("TV display lg").** Possibly intentional for the 86" TV; spot-check at viewing distance.
+
+**§3.6 Shader compilation detection.**
+
+- [ ] 4.19.17 *[feature]* **Detection unimplemented.** Spec §3.6 lists four approaches (RPCS3 log file, viewport title, CPU heuristic, FPS heuristic) plus a fixed-15s fallback. Today: zero detection, zero fallback. First-shader-compile stutter will be visible to the user. Decide which detection to wire (log file is cheapest); fallback is the zero-cost insurance and should land regardless.
+- [ ] 4.19.18 *[feature]* **Progress ring + "COMPILING SHADERS" heading missing (depends on 4.19.4 + 4.19.17).** Even with detection wired, the visual is a follow-up: gold conic-gradient ring (200–240px), `current / total` count in centre, ring-flash on completion. Skip if 4.19.17 lands without log-derived progress data.
+
+**§3.7 Typography.**
+
+- [ ] 4.19.19 *[verify]* **Hero size 80px in code vs 96px in spec.** Plus the farewell-heading 72px-vs-64px deviation flagged in 4.19.16. Walk the type scale on the actual TV and either bring code in line or update the spec. One pass, then pin sizes per surface with a test.
+
+**Cross-cutting wrap-up.**
+
+- [ ] 4.19.20 **Re-walk every state on the actual HTPC** once 4.19.2–4.19.19 land. Same shape as 4.18.25.
+- [ ] 4.19.21 Once parity is reached, the launcher can be the demo subject of 6.4 (screen-recording demo harness).
 
 ---
 
