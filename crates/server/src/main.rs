@@ -229,6 +229,14 @@ fn main() -> Result<()> {
         // starfield background in Main / Crashed / Farewell, so only the
         // in-game path actually sees through to RPCS3 behind egui.
         vb = vb.with_transparent(true);
+        // Window icon — same gold/Kaos asset the phone PWA pins to the
+        // home screen. Without this Windows shows the eframe default
+        // "egui e" placeholder in the taskbar / alt-tab. Same
+        // `debug_assertions` gate as the favicon swap so dev runs are
+        // visually distinct from `cargo run --release`.
+        if let Some(icon) = load_window_icon() {
+            vb = vb.with_icon(icon);
+        }
         vb
     };
     let native_options = eframe::NativeOptions {
@@ -302,5 +310,55 @@ fn first_non_loopback_ipv4() -> Option<Ipv4Addr> {
     match local_ip_address::local_ip() {
         Ok(IpAddr::V4(v4)) if !v4.is_loopback() => Some(v4),
         _ => None,
+    }
+}
+
+/// Decode the embedded PWA icon PNG into the raw-RGBA form eframe wants
+/// for the window's taskbar / title-bar / alt-tab icon. The 192px size
+/// is the Android PWA standard — large enough that Windows downscales
+/// cleanly to the 16/24/32px sizes the OS shell uses, small enough to
+/// embed without bloating the binary. Same `debug_assertions` gate as
+/// the favicon (`crates/server/src/http.rs` `dev_swapped`) so dev and
+/// release builds are visually distinct in the taskbar too.
+///
+/// PNG bytes are baked at compile time so a missing `phone/assets/icons/`
+/// directory is a compile error, not a runtime fallthrough — there's no
+/// way to silently end up with the eframe default "egui e" icon again
+/// once this lands.
+fn load_window_icon() -> Option<egui::IconData> {
+    const PROD: &[u8] =
+        include_bytes!("../../../phone/assets/icons/icon-192.png");
+    const DEV: &[u8] =
+        include_bytes!("../../../phone/assets/icons/icon-dev-192.png");
+    let bytes: &[u8] = if cfg!(debug_assertions) { DEV } else { PROD };
+    let img = image::load_from_memory(bytes).ok()?;
+    let rgba = img.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    Some(egui::IconData {
+        rgba: rgba.into_raw(),
+        width,
+        height,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Decode-roundtrip pin: the embedded PNG bytes must yield a
+    /// 192×192 RGBA buffer. If `icon-bake` is rerun and accidentally
+    /// resizes (or if someone deletes the file), this test catches it
+    /// at `cargo test` time instead of waiting until launcher start.
+    #[test]
+    fn window_icon_decodes_to_expected_dimensions() {
+        let icon = load_window_icon().expect("window icon should decode");
+        assert_eq!(icon.width, 192, "icon width should be 192px");
+        assert_eq!(icon.height, 192, "icon height should be 192px");
+        // 4 bytes per pixel (RGBA).
+        assert_eq!(
+            icon.rgba.len(),
+            (icon.width * icon.height * 4) as usize,
+            "rgba buffer size should match width × height × 4"
+        );
     }
 }
