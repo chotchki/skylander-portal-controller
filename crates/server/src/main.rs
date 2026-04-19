@@ -213,17 +213,21 @@ fn main() -> Result<()> {
     let figure_count = figures.len();
     let ui_clients = connected_clients.clone();
     let ui_status = launcher_status.clone();
-    // Dev builds are windowed so you can alt-tab away; release launches
-    // fullscreen + always-on-top (it's invoked from Steam Big Picture with
-    // no window chrome) and supports transparency so the in-game surface
-    // (PLAN 4.15.8) can render a reconnect QR overlay with the game
-    // visible through the rest of the viewport.
+    // Both dev and release fullscreen on launch — same visual model, so
+    // what you see at `cargo run` is what the HTPC user gets. Release
+    // additionally pins always-on-top (Steam Big Picture invocation,
+    // game viewport must not peek through); dev skips that so alt-tab
+    // works during iteration. Either way the SHUT DOWN button on the
+    // phone (4.15.11) is the supported escape — no need for a windowed
+    // dev exception now that the kill path is reliable. Transparency is
+    // always on so the in-game surface (PLAN 4.15.8) can render a
+    // reconnect QR overlay with the game visible through the viewport.
     let viewport = {
-        let mut vb = egui::ViewportBuilder::default().with_title("Skylander Portal Controller");
-        if cfg!(feature = "dev-tools") {
-            vb = vb.with_inner_size([900.0, 1000.0]);
-        } else {
-            vb = vb.with_fullscreen(true).with_always_on_top();
+        let mut vb = egui::ViewportBuilder::default()
+            .with_title("Skylander Portal Controller")
+            .with_fullscreen(true);
+        if !cfg!(feature = "dev-tools") {
+            vb = vb.with_always_on_top();
         }
         // Transparent window always — the panel still paints an opaque
         // starfield background in Main / Crashed / Farewell, so only the
