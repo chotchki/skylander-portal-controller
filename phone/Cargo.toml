@@ -10,7 +10,10 @@ edition = "2021"
 publish = false
 
 [lib]
-crate-type = ["cdylib"]
+# `cdylib` is what trunk emits to wasm; `rlib` is added so pure-Rust
+# modules (e.g. `dev_log::DevLogBuffer`) can be exercised by native
+# `cargo test` without needing a wasm-bindgen-test runtime.
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 leptos = { version = "0.7", features = ["csr"] }

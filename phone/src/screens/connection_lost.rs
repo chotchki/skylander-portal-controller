@@ -27,7 +27,7 @@
 use leptos::prelude::*;
 
 use crate::components::{DisplayHeading, HeadingSize};
-use crate::gloo_timer;
+use crate::{dev_log, gloo_timer};
 
 /// Show the manual TRY AGAIN button after this many failed reconnect
 /// attempts. Three attempts at 500ms, 1s, 2s = ~3.5s of waiting before we
@@ -50,22 +50,21 @@ pub(crate) fn ConnectionLost(
     // no-ops (we only re-arm when crossing back through 0).
     Effect::new(move |prev: Option<u32>| {
         let now = reconnect_attempts.get();
-        web_sys::console::log_1(
-            &format!("[overlay] effect prev={prev:?} now={now} visible={}", visible.get_untracked()).into(),
+        dev_log!(
+            "[overlay] effect prev={prev:?} now={now} visible={}",
+            visible.get_untracked()
         );
         if now == 0 {
-            web_sys::console::log_1(&"[overlay] visible→false (attempts=0)".into());
+            dev_log!("[overlay] visible→false (attempts=0)");
             visible.set(false);
         } else if prev.unwrap_or(0) == 0 {
-            web_sys::console::log_1(&"[overlay] arming grace timer".into());
+            dev_log!("[overlay] arming grace timer");
             leptos::task::spawn_local(async move {
                 gloo_timer(GRACE_MS).await;
                 let attempts_after_grace = reconnect_attempts.get_untracked();
-                web_sys::console::log_1(
-                    &format!("[overlay] grace fired, attempts={attempts_after_grace}").into(),
-                );
+                dev_log!("[overlay] grace fired, attempts={attempts_after_grace}");
                 if attempts_after_grace > 0 {
-                    web_sys::console::log_1(&"[overlay] visible→true".into());
+                    dev_log!("[overlay] visible→true");
                     visible.set(true);
                 }
             });

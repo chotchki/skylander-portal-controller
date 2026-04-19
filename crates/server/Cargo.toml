@@ -59,6 +59,10 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
+# `util` brings `ServiceExt::oneshot`, used by axum-handler unit tests
+# (e.g. dev_log handler) to drive a router without spinning up a server.
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
 
 [features]
 default = ["dev-tools"]

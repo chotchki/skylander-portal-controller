@@ -216,6 +216,11 @@ pub fn router(state: Arc<AppState>, phone_dist: std::path::PathBuf) -> Router {
         );
     }
 
+    #[cfg(feature = "dev-tools")]
+    {
+        api = api.route("/api/_dev/log", post(dev_log));
+    }
+
     #[cfg(feature = "test-hooks")]
     {
         api = api
@@ -1311,6 +1316,41 @@ async fn reset_pin(
     }
 }
 
+// ============================================================ dev-tools
+
+/// Dev-time log forwarder. Phone POSTs a batch of console-mirror entries;
+/// we re-emit each as `tracing` output so it lands in whatever sink the
+/// launcher process is using (PowerShell on the dev HTPC, daily-rotated
+/// files in dev-data/logs/, etc.). Lets us debug real-device behavior
+/// without a Mac + Safari Web Inspector tether.
+///
+/// Compiled into dev/test builds only — gated on the default-on `dev-tools`
+/// feature so release builds physically can't accept phone log bodies.
+/// PLAN 4.18.21 supporting infra.
+#[cfg(feature = "dev-tools")]
+#[derive(Deserialize)]
+struct DevLogEntry {
+    /// Browser-side `Date.now()` (ms since epoch). Useful for ordering
+    /// when batches from multiple phones interleave in the server log.
+    t: f64,
+    level: String,
+    msg: String,
+}
+
+#[cfg(feature = "dev-tools")]
+async fn dev_log(axum::Json(entries): axum::Json<Vec<DevLogEntry>>) -> StatusCode {
+    for e in entries {
+        // Choose tracing level by the JS source. Anything weird falls
+        // through as info — never want a malformed batch to cost a log line.
+        match e.level.as_str() {
+            "warn" => tracing::warn!(target: "phone", browser_t = e.t, "{}", e.msg),
+            "error" => tracing::error!(target: "phone", browser_t = e.t, "{}", e.msg),
+            _ => tracing::info!(target: "phone", browser_t = e.t, "{}", e.msg),
+        }
+    }
+    StatusCode::NO_CONTENT
+}
+
 // ============================================================ test-hooks
 
 #[cfg(feature = "test-hooks")]
@@ -1464,4 +1504,118 @@ async fn unlock_session_testhook(
         state.publish_session_snapshot().await;
     }
     (StatusCode::OK, "unlocked").into_response()
+}
+
+#[cfg(all(test, feature = "dev-tools"))]
+mod dev_log_handler_tests {
+    //! Server-side tests for `POST /api/_dev/log` (PLAN 4.18.21).
+    //!
+    //! Pinned contracts:
+    //!   - Well-formed batch with mixed levels → 204 No Content.
+    //!   - Levels other than log/warn/error fall through to info (no panic,
+    //!     no rejection — handler is forgiving so a SPA-side typo doesn't
+    //!     drop the batch).
+    //!   - Empty batch → 204 (legitimate "tick fired but nothing to send"
+    //!     never happens in practice because flusher skips empty, but the
+    //!     handler should not 400 on it).
+    //!   - Malformed JSON → 4xx (axum's Json extractor returns 400/415).
+    //!   - Missing fields → 4xx (deserialization fails).
+    //!
+    //! These all run via `Router::oneshot` with no live server — fast,
+    //! and validates the route wiring lands as expected.
+    //!
+    //! NOTE: The "messages from a disconnect window get delivered later"
+    //! contract is enforced on the SPA side (see `phone/src/dev_log.rs`
+    //! tests). The server endpoint itself is stateless — every batch is
+    //! independent — so there's nothing for it to "remember" across the
+    //! disconnect; the test value here is at the SPA buffer layer.
+
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    fn router() -> Router {
+        Router::new().route("/api/_dev/log", post(dev_log))
+    }
+
+    async fn post_json(body: &str) -> axum::http::Response<Body> {
+        router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/_dev/log")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn well_formed_batch_returns_204() {
+        let body = serde_json::json!([
+            {"t": 1.0, "level": "log",   "msg": "[ws] onclose attempts 0→1"},
+            {"t": 2.0, "level": "warn",  "msg": "[ws] backoff 8s"},
+            {"t": 3.0, "level": "error", "msg": "[overlay] grace fired"},
+        ]);
+        let resp = post_json(&body.to_string()).await;
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn unknown_level_falls_through_to_info() {
+        // Forgiveness contract: a typo'd or future level shouldn't 4xx
+        // the whole batch. We don't have a tracing capture here, but the
+        // 204 confirms the handler reached the end without panicking on
+        // the unknown variant.
+        let body = serde_json::json!([
+            {"t": 1.0, "level": "trace",  "msg": "future-level"},
+            {"t": 2.0, "level": "garble", "msg": "typo"},
+        ]);
+        let resp = post_json(&body.to_string()).await;
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn empty_batch_returns_204() {
+        let resp = post_json("[]").await;
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn malformed_json_is_rejected() {
+        let resp = post_json("not json").await;
+        assert!(
+            resp.status().is_client_error(),
+            "expected 4xx, got {}",
+            resp.status()
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_required_fields_is_rejected() {
+        // Each entry needs t/level/msg; omit `msg`.
+        let body = serde_json::json!([
+            {"t": 1.0, "level": "log"},
+        ]);
+        let resp = post_json(&body.to_string()).await;
+        assert!(
+            resp.status().is_client_error(),
+            "expected 4xx, got {}",
+            resp.status()
+        );
+    }
+
+    /// Sanity that we can read the response body — used in case future
+    /// changes start returning a JSON ack and a test wants to inspect it.
+    /// Today the body is empty for 204.
+    #[tokio::test]
+    async fn no_content_response_body_is_empty() {
+        let resp = post_json("[]").await;
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        assert!(bytes.is_empty());
+    }
 }

@@ -6,6 +6,7 @@
 
 mod api;
 pub mod components;
+pub mod dev_log;
 mod model;
 mod screens;
 mod ws;
@@ -82,6 +83,10 @@ pub fn App() -> impl IntoView {
     // the function is idempotent (reads the hash each time, strips it after
     // successful install).
     api::install_key_from_hash();
+    // Fire up the phone→server log forwarder. Mirrors console output to
+    // the launcher process so on-device debugging doesn't need a Mac +
+    // Web Inspector. See `dev_log.rs`.
+    dev_log::start_flusher();
 
     let portal = RwSignal::new(empty_portal());
     let picking_for = RwSignal::new(None::<u8>);

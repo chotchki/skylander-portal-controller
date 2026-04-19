@@ -11,7 +11,7 @@ use web_sys::{MessageEvent, WebSocket};
 
 use crate::api::set_session_id;
 use crate::model::{ConnState, Event, GameLaunched, Slot, SlotState, UnlockedProfile, SLOT_COUNT};
-use crate::{push_toast, GameCrashReason, ResumeOffer, TakeoverReason, ToastMsg};
+use crate::{dev_log, dev_warn, push_toast, GameCrashReason, ResumeOffer, TakeoverReason, ToastMsg};
 
 /// Pending backoff timer handle. Tracked so a manual TRY AGAIN can cancel
 /// the in-flight wait and reconnect immediately. Single-threaded WASM so
@@ -113,7 +113,7 @@ fn spawn_connect(
     };
     let url = format!("{scheme}{host}/ws");
 
-    web_sys::console::log_1(&format!("[ws] spawn_connect attempt={attempt} url={url}").into());
+    dev_log!("[ws] spawn_connect attempt={attempt} url={url}");
     conn.set(ConnState::Connecting);
     let ws = match WebSocket::new(&url) {
         Ok(w) => w,
@@ -141,7 +141,10 @@ fn spawn_connect(
     {
         let conn = conn;
         let on_open = Closure::<dyn FnMut()>::new(move || {
-            web_sys::console::log_1(&format!("[ws] onopen — attempts→0 (was {})", reconnect_attempts.get_untracked()).into());
+            dev_log!(
+                "[ws] onopen — attempts→0 (was {})",
+                reconnect_attempts.get_untracked()
+            );
             conn.set(ConnState::Connected);
             reconnect_attempts.set(0);
         });
@@ -231,7 +234,7 @@ fn spawn_connect(
                         }
                     }
                     Err(err) => {
-                        web_sys::console::warn_1(&format!("bad ws message: {err} — {text}").into());
+                        dev_warn!("bad ws message: {err} — {text}");
                     }
                 }
             }
@@ -253,7 +256,7 @@ fn spawn_connect(
         let pending = pending;
         let on_close = Closure::<dyn FnMut()>::new(move || {
             let prev = reconnect_attempts.get_untracked();
-            web_sys::console::log_1(&format!("[ws] onclose — attempts {prev}→{}", prev + 1).into());
+            dev_log!("[ws] onclose — attempts {prev}→{}", prev + 1);
             conn.set(ConnState::Disconnected);
             // Bump the attempt counter so the ConnectionLost overlay can
             // promote the TRY AGAIN button after enough failed retries.
@@ -279,7 +282,7 @@ fn spawn_connect(
 
     // onerror — let onclose handle reconnect.
     let on_err = Closure::<dyn FnMut()>::new(move || {
-        web_sys::console::log_1(&format!("[ws] onerror (attempt={attempt})").into());
+        dev_warn!("[ws] onerror (attempt={attempt})");
     });
     ws.set_onerror(Some(on_err.as_ref().unchecked_ref()));
     on_err.forget();

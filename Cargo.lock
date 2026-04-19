@@ -4113,6 +4113,7 @@ dependencies = [
  "futures-util",
  "hex",
  "hmac",
+ "http-body-util",
  "image",
  "local-ip-address",
  "qrcode",
