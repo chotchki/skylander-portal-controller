@@ -168,6 +168,7 @@ fn main() -> Result<()> {
                     games: games_for_task,
                     rpcs3_exe,
                     data_root,
+                    phone_dist: phone_dist.clone(),
                     hmac_key,
                     rpcs3: rpcs3_for_task,
                     profiles: profile_store,

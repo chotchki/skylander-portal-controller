@@ -221,6 +221,16 @@ pub fn router(state: Arc<AppState>, phone_dist: std::path::PathBuf) -> Router {
         api = api.route("/api/_dev/log", post(dev_log));
     }
 
+    // PWA icons + manifest. The phone's index.html references stable URLs
+    // (`/icons/icon-180.png`, `/manifest.webmanifest`); the server picks
+    // which on-disk file to serve based on the `dev-tools` feature so a
+    // dev build's home-screen install ends up with a Kaos-tinted icon
+    // and "Skylander Portal (DEV)" name. Production swaps in the gold
+    // variant + stock manifest. See phone/index.html for the contract.
+    api = api
+        .route("/icons/:filename", get(serve_icon))
+        .route("/manifest.webmanifest", get(serve_manifest));
+
     #[cfg(feature = "test-hooks")]
     {
         api = api
@@ -1316,6 +1326,85 @@ async fn reset_pin(
     }
 }
 
+// ============================================================ icons + manifest
+
+/// In dev builds, swap icon requests to the Kaos-tinted variants so
+/// pinned dev installs are visually distinct from prod installs on the
+/// home screen. In release builds, serve the gold variants. The phone's
+/// index.html requests stable URLs (`/icons/icon-180.png`,
+/// `/icons/icon.svg`); we map them to the appropriate on-disk file.
+///
+/// The match is on the `dev-tools` feature (default-on in dev, off in
+/// release) — same gate that controls every other dev-only behavior, so
+/// there's only one knob to think about.
+///
+/// Recognized URL shapes:
+///   - `icon-{size}.png` → `icon-dev-{size}.png` (dev) or unchanged (prod)
+///   - `icon.svg`        → `icon-dev.svg`        (dev) or unchanged (prod)
+fn dev_swapped(filename: &str) -> Option<String> {
+    if !cfg!(feature = "dev-tools") {
+        return None;
+    }
+    // Already-dev names — never double-swap. Check both shapes (with and
+    // without trailing dash) before any prefix manipulation; the test
+    // `dev_build_does_not_double_swap` caught a bug where `icon-dev.svg`
+    // slipped through the dash-required check and became `icon-dev-dev.svg`.
+    if filename.starts_with("icon-dev-") || filename == "icon-dev.svg" {
+        return None;
+    }
+    if filename == "icon.svg" {
+        return Some("icon-dev.svg".to_string());
+    }
+    if let Some(rest) = filename.strip_prefix("icon-") {
+        return Some(format!("icon-dev-{rest}"));
+    }
+    None
+}
+
+async fn serve_icon(
+    State(state): State<Arc<AppState>>,
+    AxumPath(filename): AxumPath<String>,
+) -> Response {
+    // Path-traversal guard. The single-segment matcher already prevents
+    // slashes, but `..` could still be slipped in. Belt + braces.
+    if filename.contains("..") {
+        return (StatusCode::BAD_REQUEST, "bad icon name").into_response();
+    }
+    let resolved = dev_swapped(&filename).unwrap_or_else(|| filename.clone());
+    let content_type = if resolved.ends_with(".svg") {
+        "image/svg+xml"
+    } else {
+        "image/png"
+    };
+    let path = state.phone_dist.join("icons").join(&resolved);
+    serve_static_file(&path, content_type).await
+}
+
+async fn serve_manifest(State(state): State<Arc<AppState>>) -> Response {
+    let filename = if cfg!(feature = "dev-tools") {
+        "manifest-dev.webmanifest"
+    } else {
+        "manifest.webmanifest"
+    };
+    let path = state.phone_dist.join(filename);
+    // PWA manifest spec MIME is application/manifest+json; some browsers
+    // also accept application/json. Use the spec one — Chrome and Safari
+    // both honor it.
+    serve_static_file(&path, "application/manifest+json").await
+}
+
+async fn serve_static_file(path: &std::path::Path, content_type: &'static str) -> Response {
+    match tokio::fs::read(path).await {
+        Ok(bytes) => (
+            StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, content_type)],
+            bytes,
+        )
+            .into_response(),
+        Err(_) => (StatusCode::NOT_FOUND, "asset not found").into_response(),
+    }
+}
+
 // ============================================================ dev-tools
 
 /// Dev-time log forwarder. Phone POSTs a batch of console-mirror entries;
@@ -1504,6 +1593,65 @@ async fn unlock_session_testhook(
         state.publish_session_snapshot().await;
     }
     (StatusCode::OK, "unlocked").into_response()
+}
+
+#[cfg(test)]
+mod icon_swap_tests {
+    //! `dev_swapped` is compile-time gated on the `dev-tools` feature, so
+    //! these tests split: dev-build assertions pin the swap behavior,
+    //! release-build assertion pins the no-op contract. CI runs both
+    //! `cargo test --workspace` (dev features on) and the release build,
+    //! covering both branches.
+
+    use super::*;
+
+    #[cfg(feature = "dev-tools")]
+    #[test]
+    fn dev_build_maps_png_filenames_to_dev_variant() {
+        assert_eq!(
+            dev_swapped("icon-180.png").as_deref(),
+            Some("icon-dev-180.png")
+        );
+        assert_eq!(
+            dev_swapped("icon-32.png").as_deref(),
+            Some("icon-dev-32.png")
+        );
+        assert_eq!(
+            dev_swapped("icon-512.png").as_deref(),
+            Some("icon-dev-512.png")
+        );
+    }
+
+    #[cfg(feature = "dev-tools")]
+    #[test]
+    fn dev_build_maps_svg_to_dev_variant() {
+        assert_eq!(dev_swapped("icon.svg").as_deref(), Some("icon-dev.svg"));
+    }
+
+    /// Belt + braces: if the SPA somehow already requests the dev-named
+    /// file directly, the swap must NOT prepend another `dev-`. Without
+    /// this guard we'd 404 because `icon-dev-dev-180.png` doesn't exist.
+    #[cfg(feature = "dev-tools")]
+    #[test]
+    fn dev_build_does_not_double_swap() {
+        assert_eq!(dev_swapped("icon-dev-180.png"), None);
+        assert_eq!(dev_swapped("icon-dev.svg"), None);
+    }
+
+    #[cfg(feature = "dev-tools")]
+    #[test]
+    fn dev_build_passes_through_unknown_filenames() {
+        assert_eq!(dev_swapped("manifest.webmanifest"), None);
+        assert_eq!(dev_swapped("random.png"), None);
+        assert_eq!(dev_swapped(""), None);
+    }
+
+    #[cfg(not(feature = "dev-tools"))]
+    #[test]
+    fn release_build_is_noop() {
+        assert_eq!(dev_swapped("icon-180.png"), None);
+        assert_eq!(dev_swapped("icon.svg"), None);
+    }
 }
 
 #[cfg(all(test, feature = "dev-tools"))]

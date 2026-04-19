@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!--
+    Production app icon — Skylanders portal viewed from above.
+    Heraldic palette per docs/aesthetic/design_language.md §1.
+    Gold-bezeled circle on starfield blue, with a bright "portal energy"
+    glow at center. Designed to be legible at 32px favicon size and
+    striking at 512px PWA splash size.
+  -->
+  <defs>
+    <!-- Outer gold bezel: radial gradient through the gold scale, biased
+         to upper-left so the bezel reads as lit from above. -->
+    <radialGradient id="bezel" cx="0.4" cy="0.32" r="0.85">
+      <stop offset="0" stop-color="#ffe58a"/>
+      <stop offset="0.22" stop-color="#f5c634"/>
+      <stop offset="0.55" stop-color="#c58c18"/>
+      <stop offset="0.85" stop-color="#6e4a00"/>
+      <stop offset="1" stop-color="#3a2500"/>
+    </radialGradient>
+
+    <!-- Starfield interior — top-tinted to feel like a deep window. -->
+    <radialGradient id="sky" cx="0.5" cy="0.32" r="0.8">
+      <stop offset="0" stop-color="#1a3a8a"/>
+      <stop offset="0.55" stop-color="#0b1e52"/>
+      <stop offset="1" stop-color="#020818"/>
+    </radialGradient>
+
+    <!-- Center "portal energy" glow — bright gold, soft falloff. -->
+    <radialGradient id="energy" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#fff8d8" stop-opacity="1"/>
+      <stop offset="0.35" stop-color="#ffe58a" stop-opacity="0.85"/>
+      <stop offset="0.75" stop-color="#f5c634" stop-opacity="0.25"/>
+      <stop offset="1" stop-color="#f5c634" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Rounded-square background tile. iOS will round the corners further;
+       Android adaptive icons crop to a circle/squircle. The dark fill
+       makes the bezel pop on either treatment. -->
+  <rect x="0" y="0" width="512" height="512" rx="96" fill="#020818"/>
+
+  <!-- Outer bezel -->
+  <circle cx="256" cy="256" r="232" fill="url(#bezel)"/>
+
+  <!-- Dark inner ring — separates bezel from interior, gives the
+       embossed depth that the design language calls for. -->
+  <circle cx="256" cy="256" r="200" fill="#3a2500"/>
+
+  <!-- Starfield interior -->
+  <circle cx="256" cy="256" r="190" fill="url(#sky)"/>
+
+  <!-- Stars (sparse — invisible at 32px but adds depth at 180px+) -->
+  <circle cx="180" cy="200" r="3" fill="#ffffff" opacity="0.85"/>
+  <circle cx="320" cy="178" r="2" fill="#ffffff" opacity="0.65"/>
+  <circle cx="346" cy="296" r="2.5" fill="#ffd66b" opacity="0.7"/>
+  <circle cx="172" cy="318" r="2" fill="#ffffff" opacity="0.7"/>
+  <circle cx="298" cy="358" r="2" fill="#ffffff" opacity="0.5"/>
+  <circle cx="218" cy="234" r="1.5" fill="#ffd66b" opacity="0.6"/>
+  <circle cx="316" cy="244" r="1.5" fill="#ffffff" opacity="0.55"/>
+  <circle cx="244" cy="178" r="1.5" fill="#ffffff" opacity="0.5"/>
+
+  <!-- Center portal-energy glow -->
+  <circle cx="256" cy="256" r="120" fill="url(#energy)"/>
+
+  <!-- Inner bright core — the focal "portal is active" signal. Sized to
+       remain visible at 32px (the favicon will read as gold-rimmed
+       circle with a bright dot). -->
+  <circle cx="256" cy="256" r="28" fill="#fff8d8"/>
+</svg>

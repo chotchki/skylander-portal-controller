@@ -37,6 +37,12 @@ pub struct AppState {
     /// Root of the committed static-data bundle served at `/api/figures/:id/image`.
     /// Points at `<repo>/data/` in dev; populated at startup from config.
     pub data_root: PathBuf,
+    /// Root of the built phone SPA (trunk's `dist/`). Used by handlers
+    /// that need to read static assets directly — e.g. the icon-serving
+    /// route in `http.rs`, which swaps in dev-tinted variants when the
+    /// `dev-tools` feature is on. The general SPA fallback uses ServeDir
+    /// against this same path.
+    pub phone_dist: PathBuf,
     /// 32-byte HMAC-SHA256 key shared with the phone via the TV's QR code.
     /// Used by the `Signed` extractor on mutating REST endpoints (PLAN 3.13).
     pub hmac_key: Vec<u8>,

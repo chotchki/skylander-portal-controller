@@ -7,6 +7,7 @@ members = [
     "crates/server",
     "crates/sky-parser",
     "crates/e2e-tests",
+    "tools/icon-bake",
     "tools/wiki-scrape",
 ]
 # Bare cargo commands from the repo root narrow to just the server, which

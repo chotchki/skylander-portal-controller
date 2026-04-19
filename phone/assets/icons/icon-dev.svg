@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!--
+    Dev app icon — same Skylanders portal silhouette as the production
+    icon, but recoloured in the Kaos palette (docs/aesthetic/design_language.md
+    §1 "Kaos palette"). Magenta+violet bezel on void-purple background
+    instead of gold-on-starfield. Distinct enough to tell prod and dev
+    PWA installs apart at a glance on the home screen.
+  -->
+  <defs>
+    <!-- Outer Kaos bezel — magenta-bright through ember-deep, biased
+         upper-left to read as lit from above (matches prod silhouette). -->
+    <radialGradient id="bezel" cx="0.4" cy="0.32" r="0.85">
+      <stop offset="0" stop-color="#ff8ade"/>
+      <stop offset="0.22" stop-color="#ff4fd0"/>
+      <stop offset="0.55" stop-color="#da28a8"/>
+      <stop offset="0.85" stop-color="#8a2a56"/>
+      <stop offset="1" stop-color="#3d0028"/>
+    </radialGradient>
+
+    <!-- Void interior — top-tinted with violet for that lair-of-Kaos feel. -->
+    <radialGradient id="sky" cx="0.5" cy="0.32" r="0.8">
+      <stop offset="0" stop-color="#3d1a8c"/>
+      <stop offset="0.55" stop-color="#1a0a40"/>
+      <stop offset="1" stop-color="#070212"/>
+    </radialGradient>
+
+    <!-- Center "Kaos energy" glow — magenta core, soft falloff. -->
+    <radialGradient id="energy" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ffe8f8" stop-opacity="1"/>
+      <stop offset="0.35" stop-color="#ff8ade" stop-opacity="0.85"/>
+      <stop offset="0.75" stop-color="#ff4fd0" stop-opacity="0.3"/>
+      <stop offset="1" stop-color="#da28a8" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect x="0" y="0" width="512" height="512" rx="96" fill="#070212"/>
+
+  <circle cx="256" cy="256" r="232" fill="url(#bezel)"/>
+  <circle cx="256" cy="256" r="200" fill="#3d0028"/>
+  <circle cx="256" cy="256" r="190" fill="url(#sky)"/>
+
+  <!-- Stars in the void — same positions as prod, restained to violet/magenta
+       so the dev-vs-prod cue is consistent across every detail. -->
+  <circle cx="180" cy="200" r="3" fill="#ffe8f8" opacity="0.8"/>
+  <circle cx="320" cy="178" r="2" fill="#ff8ade" opacity="0.65"/>
+  <circle cx="346" cy="296" r="2.5" fill="#b8ff3a" opacity="0.55"/>
+  <circle cx="172" cy="318" r="2" fill="#ffe8f8" opacity="0.7"/>
+  <circle cx="298" cy="358" r="2" fill="#ff8ade" opacity="0.5"/>
+  <circle cx="218" cy="234" r="1.5" fill="#7a4eff" opacity="0.7"/>
+  <circle cx="316" cy="244" r="1.5" fill="#ffe8f8" opacity="0.55"/>
+  <circle cx="244" cy="178" r="1.5" fill="#ffe8f8" opacity="0.5"/>
+
+  <circle cx="256" cy="256" r="120" fill="url(#energy)"/>
+  <circle cx="256" cy="256" r="28" fill="#ffe8f8"/>
+</svg>
