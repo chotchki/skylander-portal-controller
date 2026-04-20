@@ -119,8 +119,8 @@ impl LaunchPhase {
         match self {
             Self::Startup => 0.0,
             Self::IntroTransitioning { progress } => {
-                // Spin starts 40% into intro, lands at 100%.
-                let p = ((progress - 0.4) / 0.6).clamp(0.0, 1.0);
+                // Spin starts 20% into intro, lands at 100%.
+                let p = ((progress - 0.2) / 0.8).clamp(0.0, 1.0);
                 (p * FRAC_PI_2).sin()
             }
             Self::AwaitingConnect => 1.0,
@@ -136,18 +136,30 @@ impl LaunchPhase {
     /// loosely but offset so the bezel can fade independently of the
     /// spin — during close the bezel fades out before the spin hits
     /// edge-on, so the badge dissolves rather than collapsing.
+    ///
+    /// Multiplied by a scale-gate (smoothstep 0.05 → 0.25) so the
+    /// bezel is invisible while it's a thin sliver; without the gate
+    /// the spin's early/late "edge-on" phase reads as a vertical
+    /// line on screen rather than a circular badge becoming
+    /// visible (Chris flagged 2026-04-19). The gate also handles
+    /// the close: as the badge spins out and gets thin, its alpha
+    /// drops to 0 before it reaches the line-shaped phase.
     pub(crate) fn badge_alpha(self) -> f32 {
-        match self {
+        let in_window = match self {
             Self::Startup => 0.0,
             Self::IntroTransitioning { progress } => {
-                ((progress - 0.4) / 0.4).clamp(0.0, 1.0)
+                ((progress - 0.2) / 0.6).clamp(0.0, 1.0)
             }
             Self::AwaitingConnect => 1.0,
             Self::ClosingToInGame { progress } => {
                 let p = ((progress - 0.2) / 0.4).clamp(0.0, 1.0);
                 1.0 - p
             }
-        }
+        };
+        let scale = self.badge_scale();
+        let t = ((scale - 0.05) / 0.20).clamp(0.0, 1.0);
+        let scale_gate = t * t * (3.0 - 2.0 * t);
+        in_window * scale_gate
     }
 
     /// Alpha for text/QR content inside (or beneath) the badge. Fades
@@ -158,7 +170,7 @@ impl LaunchPhase {
         match self {
             Self::Startup => 0.0,
             Self::IntroTransitioning { progress } => {
-                ((progress - 0.7) / 0.3).clamp(0.0, 1.0)
+                ((progress - 0.5) / 0.5).clamp(0.0, 1.0)
             }
             Self::AwaitingConnect => 1.0,
             Self::ClosingToInGame { progress } => {
@@ -174,6 +186,22 @@ impl LaunchPhase {
     /// above.
     pub(crate) fn shows_main_content(self) -> bool {
         !matches!(self, Self::Startup)
+    }
+
+    /// Alpha for the "STARTING" brand-intro title. Full opacity
+    /// during Startup, fades to 0 across the first 30% of the intro
+    /// transition so the title hands off smoothly to the main
+    /// content (badge + label) instead of snapping out the moment
+    /// the iris begins to grow. Without this the user sees a hard
+    /// pop when shows_main_content flips — Chris flagged 2026-04-19.
+    pub(crate) fn brand_intro_alpha(self) -> f32 {
+        match self {
+            Self::Startup => 1.0,
+            Self::IntroTransitioning { progress } => {
+                (1.0 - progress / 0.3).clamp(0.0, 1.0)
+            }
+            _ => 0.0,
+        }
     }
 
     /// True once the close transition has fully run. The dispatcher
@@ -299,9 +327,9 @@ mod tests {
 
     #[test]
     fn badge_scale_zero_at_phase_endpoints() {
-        // Beginning of intro spin window (40%): still 0.
+        // Beginning of intro spin window (20%): still 0.
         assert!(approx(
-            LaunchPhase::IntroTransitioning { progress: 0.4 }.badge_scale(),
+            LaunchPhase::IntroTransitioning { progress: 0.2 }.badge_scale(),
             0.0
         ));
         // End of close spin window (60%): back to 0.

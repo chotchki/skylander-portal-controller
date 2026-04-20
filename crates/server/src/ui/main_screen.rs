@@ -84,7 +84,7 @@ impl LauncherApp {
     /// embossed shadow stack + outer glow can land — `RichText` only
     /// supports a single solid colour, which produced the flat sticker
     /// look Chris flagged 2026-04-19. See `paint_heraldic_title`.
-    pub(super) fn render_brand_intro(&self, ui: &mut egui::Ui) {
+    pub(super) fn render_brand_intro(&self, ui: &mut egui::Ui, alpha: f32) {
         let rect = ui.max_rect();
         let pos = egui::pos2(rect.center().x, rect.top() + rect.height() * 0.5);
         // Spec §3.7 calls 96px the "TV display hero" floor for state
@@ -93,7 +93,13 @@ impl LauncherApp {
         // match the mock's on-screen presence (Chris's screenshot
         // 2026-04-19). render_main's "SKYLANDER PORTAL" steady-state
         // title is a separate drift item (4.19.19) still on 80px.
-        paint_heraldic_title(ui.painter(), pos, "STARTING", 140.0, 1.0);
+        //
+        // `alpha` lets the dispatcher cross-fade the title against
+        // the main content layer during the intro reveal so the
+        // hand-off doesn't pop. paint_heraldic_title early-exits at
+        // alpha≈0 so we don't burn the text-layout cost when faded
+        // out.
+        paint_heraldic_title(ui.painter(), pos, "STARTING", 140.0, alpha);
     }
 
     /// Render the Main surface. Called from the top-level dispatcher in
@@ -155,6 +161,7 @@ impl LauncherApp {
                     tex,
                     status_snapshot.session_slots_full,
                     launch_phase.badge_scale(),
+                    launch_phase.badge_alpha(),
                     launch_phase.badge_text_alpha(),
                 );
             }
@@ -220,6 +227,7 @@ fn qr_card_flip(
     tex: &egui::TextureHandle,
     flipped: bool,
     phase_scale: f32,
+    bezel_alpha: f32,
     content_alpha: f32,
 ) {
     // `animate_bool_with_time` interpolates 0.0 → 1.0 when `flipped` goes
@@ -260,9 +268,9 @@ fn qr_card_flip(
 
     let painter = ui.painter();
     if show_back {
-        paint_back_face(painter, inner, content_alpha);
+        paint_back_face(painter, inner, bezel_alpha, content_alpha);
     } else {
-        paint_qr_front(painter, inner, tex, content_alpha);
+        paint_qr_front(painter, inner, tex, bezel_alpha, content_alpha);
     }
 }
 
@@ -299,7 +307,10 @@ fn qr_card_flip(
 /// get a solid gold circle. To make a ring visible, paint your screen
 /// content (SF_3 / SF_1 / texture) inset enough that the gold shows
 /// around it — see `paint_qr_front` for the pattern.
-fn paint_bezel(painter: &egui::Painter, rect: egui::Rect) {
+fn paint_bezel(painter: &egui::Painter, rect: egui::Rect, alpha: f32) {
+    if alpha <= 0.001 {
+        return;
+    }
     let center = rect.center();
     let outer_r = rect.width().min(rect.height()) / 2.0;
 
@@ -309,11 +320,14 @@ fn paint_bezel(painter: &egui::Painter, rect: egui::Rect) {
         center,
         outer_r * 1.7,
         outer_r * 1.7,
-        egui::Color32::from_rgba_unmultiplied(
-            palette::GOLD_BRIGHT.r(),
-            palette::GOLD_BRIGHT.g(),
-            palette::GOLD_BRIGHT.b(),
-            55,
+        with_alpha(
+            egui::Color32::from_rgba_unmultiplied(
+                palette::GOLD_BRIGHT.r(),
+                palette::GOLD_BRIGHT.g(),
+                palette::GOLD_BRIGHT.b(),
+                55,
+            ),
+            alpha,
         ),
     );
 
@@ -328,10 +342,10 @@ fn paint_bezel(painter: &egui::Painter, rect: egui::Rect) {
         outer_r,
         center + highlight_offset,
         &[
-            (0.00, palette::GOLD_BRIGHT),
-            (0.22, palette::GOLD),
-            (0.55, palette::GOLD_MID),
-            (1.00, palette::GOLD_SHADOW),
+            (0.00, with_alpha(palette::GOLD_BRIGHT, alpha)),
+            (0.22, with_alpha(palette::GOLD, alpha)),
+            (0.55, with_alpha(palette::GOLD_MID, alpha)),
+            (1.00, with_alpha(palette::GOLD_SHADOW, alpha)),
         ],
     );
 
@@ -340,7 +354,10 @@ fn paint_bezel(painter: &egui::Painter, rect: egui::Rect) {
     // We approximate as a stroke just inside the rim, top-half only,
     // by stacking two strokes with progressively tighter alpha and
     // smaller radii.
-    let highlight = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 76); // ~0.3 alpha
+    let highlight = with_alpha(
+        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 76),
+        alpha,
+    );
     painter.circle_stroke(
         center - egui::vec2(0.0, 1.0),
         outer_r - 2.0,
@@ -349,7 +366,10 @@ fn paint_bezel(painter: &egui::Painter, rect: egui::Rect) {
 
     // 4. Inset bottom shadow — same trick, dark crescent at the
     // bottom inner edge.
-    let shadow = egui::Color32::from_rgba_unmultiplied(0, 0, 0, 127); // ~0.5 alpha
+    let shadow = with_alpha(
+        egui::Color32::from_rgba_unmultiplied(0, 0, 0, 127),
+        alpha,
+    );
     painter.circle_stroke(
         center + egui::vec2(0.0, 1.0),
         outer_r - 2.0,
@@ -361,7 +381,7 @@ fn paint_bezel(painter: &egui::Painter, rect: egui::Rect) {
     painter.circle_stroke(
         center,
         outer_r - 1.0,
-        egui::Stroke::new(2.0, palette::GOLD_INK),
+        egui::Stroke::new(2.0, with_alpha(palette::GOLD_INK, alpha)),
     );
 
     // 6. Outer black border — the phone's `0 0 0 1px #000`, a 1px
@@ -369,7 +389,7 @@ fn paint_bezel(painter: &egui::Painter, rect: egui::Rect) {
     painter.circle_stroke(
         center,
         outer_r + 0.5,
-        egui::Stroke::new(1.0, egui::Color32::BLACK),
+        egui::Stroke::new(1.0, with_alpha(egui::Color32::BLACK, alpha)),
     );
 }
 
@@ -516,24 +536,25 @@ fn paint_qr_front(
     painter: &egui::Painter,
     rect: egui::Rect,
     tex: &egui::TextureHandle,
+    bezel_alpha: f32,
     content_alpha: f32,
 ) {
-    paint_bezel(painter, rect);
+    paint_bezel(painter, rect, bezel_alpha);
 
     let center = rect.center();
     let outer_r = rect.width().min(rect.height()) / 2.0;
     let screen_r = outer_r - BEZEL_RING_PX;
-    painter.circle_filled(center, screen_r, palette::SF_3);
+    // SF_3 inner disc + thin gold rim track the bezel's alpha so the
+    // whole "monitor screen" face dissolves in/out together with the
+    // surrounding gold frame.
+    painter.circle_filled(center, screen_r, with_alpha(palette::SF_3, bezel_alpha));
     painter.circle_stroke(
         center,
         screen_r,
-        egui::Stroke::new(1.0, palette::GOLD_SHADOW),
+        egui::Stroke::new(1.0, with_alpha(palette::GOLD_SHADOW, bezel_alpha)),
     );
 
     let qr_rect = rect.shrink(BEZEL_RING_PX + SCREEN_RIM_PX);
-    // Tint the QR image by `content_alpha` so the QR fades in late
-    // during the intro reveal and out early during the close-to-in-game
-    // animation, while the bezel stays solid (only its scale changes).
     let tint_a = (content_alpha.clamp(0.0, 1.0) * 255.0) as u8;
     painter.image(
         tex.id(),
@@ -549,8 +570,19 @@ fn paint_qr_front(
 /// the shared [`paint_titled_card`] helper so the back face and the
 /// `server_error` surface (and any future card-style screens) stay
 /// visually identical.
-fn paint_back_face(painter: &egui::Painter, rect: egui::Rect, text_alpha: f32) {
-    paint_titled_card(painter, rect, &["MAXIMUM", "PLAYERS", "REACHED"], text_alpha);
+fn paint_back_face(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    bezel_alpha: f32,
+    text_alpha: f32,
+) {
+    paint_titled_card(
+        painter,
+        rect,
+        &["MAXIMUM", "PLAYERS", "REACHED"],
+        bezel_alpha,
+        text_alpha,
+    );
 }
 
 /// Paint a circular bezel + dark "monitor screen" rim + SF_1 inner
@@ -568,25 +600,28 @@ pub(super) fn paint_titled_card(
     painter: &egui::Painter,
     rect: egui::Rect,
     lines: &[&str],
+    bezel_alpha: f32,
     text_alpha: f32,
 ) {
-    paint_bezel(painter, rect);
+    paint_bezel(painter, rect, bezel_alpha);
 
     // Layered identically to paint_qr_front: SF_3 screen rim + thin
     // GOLD_SHADOW stroke + inner SF_1 disc. Same screen geometry as
-    // the QR-front so the card-flip silhouette is stable.
+    // the QR-front so the card-flip silhouette is stable. All three
+    // layers track the bezel_alpha so the whole card dissolves
+    // together.
     let center = rect.center();
     let outer_r = rect.width().min(rect.height()) / 2.0;
     let screen_r = outer_r - BEZEL_RING_PX;
-    painter.circle_filled(center, screen_r, palette::SF_3);
+    painter.circle_filled(center, screen_r, with_alpha(palette::SF_3, bezel_alpha));
     painter.circle_stroke(
         center,
         screen_r,
-        egui::Stroke::new(1.0, palette::GOLD_SHADOW),
+        egui::Stroke::new(1.0, with_alpha(palette::GOLD_SHADOW, bezel_alpha)),
     );
 
     let inner_r = screen_r - SCREEN_RIM_PX;
-    painter.circle_filled(center, inner_r, palette::SF_1);
+    painter.circle_filled(center, inner_r, with_alpha(palette::SF_1, bezel_alpha));
 
     // Layout box is the inscribed square so text never strays into the
     // curved edges of the inner disc where it would clip visually.

@@ -27,6 +27,7 @@ pub(super) fn render(
     launch_phase: LaunchPhase,
 ) {
     let badge_scale = launch_phase.badge_scale();
+    let badge_alpha = launch_phase.badge_alpha();
     let text_alpha = launch_phase.badge_text_alpha();
 
     ui.vertical_centered(|ui| {
@@ -54,6 +55,7 @@ pub(super) fn render(
                 ui.painter(),
                 badge_rect,
                 &["SERVER", "FAILED", "TO START"],
+                badge_alpha,
                 text_alpha,
             );
         }

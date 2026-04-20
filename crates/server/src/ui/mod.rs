@@ -242,14 +242,20 @@ impl eframe::App for LauncherApp {
             // Layer 3: per-screen content.
             match &status_snapshot.screen {
                 LauncherScreen::Main => {
+                    // Both layers can render in the same frame during
+                    // the intro hand-off: main content fades in via
+                    // its own per-element alpha curves while the
+                    // brand intro fades out via `brand_intro_alpha`.
+                    // Painting the brand AFTER main content puts the
+                    // title on top during the early intro window
+                    // when both are visible — the title is the focal
+                    // element until ~30% into the transition.
                     if launch_phase.shows_main_content() {
                         self.render_main(ui, ctx, &status_snapshot, launch_phase);
-                    } else {
-                        // Startup beat: brand title only over the
-                        // starfield. Gives the 1.0s (5.0s during 4.19.2a
-                        // validation) hold a focal element rather than
-                        // an empty calm field.
-                        self.render_brand_intro(ui);
+                    }
+                    let brand_alpha = launch_phase.brand_intro_alpha();
+                    if brand_alpha > 0.001 {
+                        self.render_brand_intro(ui, brand_alpha);
                     }
                 }
                 LauncherScreen::Crashed { message } => {
