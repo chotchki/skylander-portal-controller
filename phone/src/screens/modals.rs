@@ -1,7 +1,11 @@
+use std::time::Duration;
+
 use leptos::prelude::*;
 
 use crate::api::{post_load, post_quit, post_reset};
-use crate::components::{BezelSize, DisplayHeading, FramedPanel, GoldBezel, HeadingSize};
+use crate::components::{
+    ActionButton, ActionVariant, BezelSize, DisplayHeading, FramedPanel, GoldBezel, HeadingSize,
+};
 use crate::gloo_timer;
 use crate::model::{GameLaunched, SlotState, UnlockedProfile};
 use crate::{push_toast, GameCrashReason, ResetTarget, ResumeOffer, TakeoverReason, ToastMsg};
@@ -272,17 +276,6 @@ pub(crate) fn MenuOverlay(
     manage_gate: RwSignal<bool>,
     toasts: RwSignal<Vec<ToastMsg>>,
 ) -> impl IntoView {
-    let close = move || open.set(false);
-
-    // Hold-to-confirm state — one pair of signals per hold button. Using
-    // two signals instead of a single enum so the CSS class string stays
-    // an Fn closure that reads them independently. `spawn_local` task
-    // awaits 1200ms then checks `holding` — if still held, fires.
-    let game_holding = RwSignal::new(false);
-    let game_fired = RwSignal::new(false);
-    let shutdown_holding = RwSignal::new(false);
-    let shutdown_fired = RwSignal::new(false);
-
     let initial = Signal::derive(move || {
         unlocked_profile
             .get()
@@ -303,106 +296,59 @@ pub(crate) fn MenuOverlay(
             .unwrap_or_default()
     });
 
-    // SWITCH PROFILE — single tap. Local re-lock for now.
-    let on_switch = move |_| {
-        unlocked_profile.set(None);
-        close();
-    };
+    let hold_dur = Duration::from_millis(1200);
 
-    // MANAGE PROFILES — enters the Konami gate (admin profile management).
-    // Locks the current session so ProfilePicker mounts, and raises the
-    // shared `manage_gate` signal that ProfilePicker reads to open the gate.
-    let on_manage = move |_| {
+    // SWITCH PROFILE — single tap. Local re-lock for now.
+    let on_switch = Callback::new(move |_| {
+        unlocked_profile.set(None);
+        open.set(false);
+    });
+
+    // MANAGE PROFILES — single tap. Enters the Konami gate (admin profile
+    // management). Locks the current session so ProfilePicker mounts, and
+    // raises the shared `manage_gate` signal that ProfilePicker reads.
+    let on_manage = Callback::new(move |_| {
         unlocked_profile.set(None);
         manage_gate.set(true);
-        close();
-    };
+        open.set(false);
+    });
 
-    // CHOOSE ANOTHER GAME — hold-to-confirm.
-    let on_game_down = move |_| {
-        if game_fired.get_untracked() {
-            return;
-        }
-        game_holding.set(true);
+    // HOLD TO SWITCH GAMES — fires after 1200ms hold. ActionButton owns
+    // the hold timer + .fired animation; we just do the post-fire work:
+    // network request + delayed menu close so the .fired flash plays.
+    let on_switch_games = Callback::new(move |_| {
         leptos::task::spawn_local(async move {
-            gloo_timer(1200).await;
-            if !game_holding.get_untracked() || game_fired.get_untracked() {
-                return;
+            if let Err(e) = post_quit(false).await {
+                push_toast(toasts, &format!("Quit failed: {e}"));
             }
-            game_holding.set(false);
-            game_fired.set(true);
-            leptos::task::spawn_local(async move {
-                if let Err(e) = post_quit(false).await {
-                    push_toast(toasts, &format!("Quit failed: {e}"));
-                }
-            });
-            // Give the fire animation time to play, then close the menu.
+        });
+        leptos::task::spawn_local(async move {
             gloo_timer(380).await;
             open.set(false);
-            gloo_timer(600).await;
-            game_fired.set(false);
         });
-    };
-    let on_game_cancel = move |_| game_holding.set(false);
+    });
 
-    // SHUT DOWN — hold-to-confirm. POSTs `/api/shutdown` which flips
-    // the TV launcher into the Farewell surface; the egui side runs its
-    // own ~3s countdown and then closes the viewport. We fire-and-forget
-    // because the launcher's death is the user-visible signal — no need
-    // to wait for the response on the phone.
-    let on_shutdown_down = move |_| {
-        if shutdown_fired.get_untracked() {
-            return;
-        }
-        shutdown_holding.set(true);
+    // HOLD TO SHUT DOWN — POSTs `/api/shutdown` which flips the TV
+    // launcher into the Farewell surface; the egui side runs its own
+    // ~3s countdown and then closes the viewport. Fire-and-forget — the
+    // launcher's death is the user-visible signal.
+    let on_shutdown = Callback::new(move |_| {
         leptos::task::spawn_local(async move {
-            gloo_timer(1200).await;
-            if !shutdown_holding.get_untracked() || shutdown_fired.get_untracked() {
-                return;
-            }
-            shutdown_holding.set(false);
-            shutdown_fired.set(true);
-            // Best-effort POST. On failure we toast so the user knows
-            // their tap didn't take effect; success is silent because
-            // the launcher's farewell + viewport-close speaks for itself.
             if let Err(e) = crate::api::post_shutdown().await {
                 push_toast(toasts, &format!("Shutdown failed: {e}"));
             }
+        });
+        leptos::task::spawn_local(async move {
             gloo_timer(380).await;
             open.set(false);
-            gloo_timer(600).await;
-            shutdown_fired.set(false);
         });
-    };
-    let on_shutdown_cancel = move |_| shutdown_holding.set(false);
-
-    let game_class = move || {
-        let mut cls = String::from("menu-action");
-        cls.push_str(" menu-action--hold");
-        if game_holding.get() {
-            cls.push_str(" holding");
-        }
-        if game_fired.get() {
-            cls.push_str(" fired");
-        }
-        cls
-    };
-    let shutdown_class = move || {
-        let mut cls = String::from("menu-action menu-action--hold menu-action--danger");
-        if shutdown_holding.get() {
-            cls.push_str(" holding");
-        }
-        if shutdown_fired.get() {
-            cls.push_str(" fired");
-        }
-        cls
-    };
+    });
 
     view! {
         <Show when=move || open.get() fallback=|| ()>
-            <div class="menu-scrim" on:click=move |_| close()></div>
+            <div class="menu-scrim" on:click=move |_| open.set(false)></div>
             <div class="menu-overlay-panel">
-                <button class="menu-close" on:click=move |_| close()>"\u{2715}"</button>
+                <button class="menu-close" on:click=move |_| open.set(false)>"\u{2715}"</button>
 
                 <Show when=move || unlocked_profile.get().is_some() fallback=|| ()>
                     <div class="menu-current-chip">
@@ -426,58 +372,39 @@ pub(crate) fn MenuOverlay(
 
                 <div class="menu-actions">
                     <Show when=move || unlocked_profile.get().is_some() fallback=|| ()>
-                        <button class="menu-action" on:click=on_switch>
-                            <div class="menu-action-icon">"\u{21C4}"</div>
-                            <div>
-                                <div class="menu-action-title">"SWITCH PROFILE"</div>
-                                <div class="menu-action-desc">"Sign back in as someone else"</div>
-                            </div>
-                        </button>
+                        <ActionButton
+                            title="SWITCH PROFILE"
+                            description="Sign back in as someone else"
+                            icon="\u{21C4}"
+                            on_fire=on_switch
+                        />
                     </Show>
 
-                    <button class="menu-action" on:click=on_manage>
-                        <div class="menu-action-icon">"\u{2699}"</div>
-                        <div>
-                            <div class="menu-action-title">"MANAGE PROFILES"</div>
-                            <div class="menu-action-desc">"Grown-ups only \u{00B7} reset PINs, add or remove profiles"</div>
-                        </div>
-                    </button>
+                    <ActionButton
+                        title="MANAGE PROFILES"
+                        description="Grown-ups only \u{00B7} reset PINs, add or remove profiles"
+                        icon="\u{2699}"
+                        on_fire=on_manage
+                    />
 
                     <Show when=move || current_game.get().is_some() fallback=|| ()>
-                        <button
-                            class=game_class
-                            on:pointerdown=on_game_down
-                            on:pointerup=on_game_cancel
-                            on:pointerleave=on_game_cancel
-                            on:pointercancel=on_game_cancel
-                        >
-                            <span class="hold-fill"></span>
-                            <div class="menu-action-icon">"\u{25C9}"</div>
-                            <div>
-                                <div class="menu-action-title">"HOLD TO SWITCH GAMES"</div>
-                                <div class="menu-action-desc">
-                                    "Quit the current game and pick a different adventure"
-                                </div>
-                            </div>
-                        </button>
+                        <ActionButton
+                            title="HOLD TO SWITCH GAMES"
+                            description="Quit the current game and pick a different adventure"
+                            icon="\u{25C9}"
+                            hold_duration=Some(hold_dur)
+                            on_fire=on_switch_games
+                        />
                     </Show>
 
-                    <button
-                        class=shutdown_class
-                        on:pointerdown=on_shutdown_down
-                        on:pointerup=on_shutdown_cancel
-                        on:pointerleave=on_shutdown_cancel
-                        on:pointercancel=on_shutdown_cancel
-                    >
-                        <span class="hold-fill"></span>
-                        <div class="menu-action-icon">"\u{23FB}"</div>
-                        <div>
-                            <div class="menu-action-title">"HOLD TO SHUT DOWN"</div>
-                            <div class="menu-action-desc">
-                                "Closes everything \u{00B7} ask a grown-up first"
-                            </div>
-                        </div>
-                    </button>
+                    <ActionButton
+                        title="HOLD TO SHUT DOWN"
+                        description="Closes everything \u{00B7} ask a grown-up first"
+                        icon="\u{23FB}"
+                        variant=ActionVariant::Danger
+                        hold_duration=Some(hold_dur)
+                        on_fire=on_shutdown
+                    />
                 </div>
             </div>
         </Show>
