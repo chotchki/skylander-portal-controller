@@ -25,6 +25,7 @@ mod crashed;
 mod farewell;
 mod in_game;
 mod launch_phase;
+mod loading;
 mod main_screen;
 mod server_error;
 
@@ -191,8 +192,13 @@ impl eframe::App for LauncherApp {
         //      Win32 with `SWP_NOACTIVATE` keeps us at the top of
         //      the topmost stack without stealing focus from RPCS3
         //      (Chris flagged 2026-04-19, "menus still win").
+        // In dev mode, on top whenever a game session is in flight —
+        // either loading (RPCS3 spawning + UIA-booting) or already
+        // running. Earlier this only flipped on `rpcs3_running`,
+        // which meant the loading surface drew BEHIND RPCS3's main
+        // window for the ~30s of boot (Chris flagged 2026-04-19).
         let want_on_top = if cfg!(feature = "dev-tools") {
-            status_snapshot.rpcs3_running
+            status_snapshot.rpcs3_running || status_snapshot.loading_game.is_some()
         } else {
             true
         };
@@ -232,21 +238,27 @@ impl eframe::App for LauncherApp {
 
         // In-game transition (PLAN 4.15.8 + close animation):
         //
-        //   1. RPCS3 just started while we're on Main → kick off the
-        //      ClosingToInGame animation (badge spins out, dark-hole
-        //      iris grows).
+        //   1. RPCS3 starts loading OR is running while we're on Main →
+        //      kick off the ClosingToInGame animation (badge spins
+        //      out, dark-hole iris grows). Triggering on `loading_game`
+        //      means the close fires as soon as the user picks a game,
+        //      not 30s later when RPCS3 finishes booting.
         //   2. Animation runs as a Main render with the closing phase.
-        //   3. Once `close_complete()`, flip to the transparent in-game
-        //      surface so RPCS3 shows through.
-        //   4. If RPCS3 stops before the animation finishes (rare —
-        //      game crashes mid-launch), reset the timer so we don't
-        //      finish a close that no longer applies.
-        let want_in_game =
-            status_snapshot.rpcs3_running && matches!(status_snapshot.screen, LauncherScreen::Main);
-        if want_in_game && self.closing_to_in_game_at.is_none() {
+        //   3. Once `close_complete()`:
+        //      - if `rpcs3_running`: render the transparent in-game
+        //        surface so RPCS3 shows through.
+        //      - else (still loading): render the loading surface so
+        //        the user has visual feedback during the wait.
+        //   4. If RPCS3 stops / loading aborts before the animation
+        //      finishes, reset the timer so we don't finish a close
+        //      that no longer applies.
+        let game_active = status_snapshot.rpcs3_running
+            || status_snapshot.loading_game.is_some();
+        let want_close = game_active && matches!(status_snapshot.screen, LauncherScreen::Main);
+        if want_close && self.closing_to_in_game_at.is_none() {
             self.closing_to_in_game_at = Some(Instant::now());
         }
-        if !want_in_game {
+        if !want_close {
             self.closing_to_in_game_at = None;
         }
         let closing_elapsed_s = self
@@ -311,18 +323,53 @@ impl eframe::App for LauncherApp {
             self.returning_from_game_at = None;
         }
 
-        // Close animation has finished — hand off to the transparent
-        // in-game surface so RPCS3 is visible.
+        // Close animation has finished — what happens next depends on
+        // whether the game is actually running yet.
+        //
+        //   - rpcs3_running: hand off to the transparent in-game
+        //     surface so RPCS3 shows through.
+        //   - loading_game.is_some(): RPCS3 is still booting (~30s for
+        //     a cold launch). Render the loading surface so the user
+        //     has visual feedback during the wait. The transition out
+        //     of loading happens automatically when rpcs3_running
+        //     flips true on the next frame.
         if launch_phase.close_complete() {
-            egui::CentralPanel::default()
-                .frame(egui::Frame::none().fill(egui::Color32::TRANSPARENT))
-                .show(ctx, |ui| {
-                    in_game::render(ui, &self.clients, self.qr_texture.as_ref());
+            if status_snapshot.rpcs3_running {
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::none().fill(egui::Color32::TRANSPARENT))
+                    .show(ctx, |ui| {
+                        in_game::render(ui, &self.clients, self.qr_texture.as_ref());
+                    });
+                // Remember we just rendered in-game so the next frame's
+                // game-end detection can fire if RPCS3 stops.
+                self.was_in_game = true;
+                return;
+            } else if let Some(name) = status_snapshot.loading_game.as_deref() {
+                // Render the loading surface on the closed dark
+                // vortex. Vortex stays at iris-full DarkHole from the
+                // close animation, so the loading badge sits on a
+                // dark backdrop without re-painting the full vortex.
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let rect = ui.max_rect();
+                    vortex::paint_sky_background(ui.painter(), rect);
+                    vortex::paint_starfield(ui.painter(), rect, time_s);
+                    let mut vortex_params = self.vortex_idle;
+                    vortex_params.iris_radius = launch_phase::IRIS_FULL;
+                    vortex_params.iris_mode = vortex::IrisMode::DarkHole;
+                    vortex_params.star_brightness = 0.0;
+                    let vortex_time_s = time_s + self.vortex_idle.time_offset;
+                    vortex::paint_vortex(
+                        ui.painter(),
+                        rect,
+                        self.vortex_rig.clone(),
+                        vortex_params,
+                        vortex_time_s,
+                    );
+                    loading::render(ui, name);
                 });
-            // Remember we just rendered in-game so the next frame's
-            // game-end detection can fire if RPCS3 stops.
-            self.was_in_game = true;
-            return;
+                self.was_in_game = false;
+                return;
+            }
         }
         // Cache for the next frame's transition detection.
         let prev_was_in_game = self.was_in_game;

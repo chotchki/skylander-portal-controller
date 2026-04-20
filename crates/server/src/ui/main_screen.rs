@@ -700,47 +700,58 @@ fn paint_player_orbit(painter: &egui::Painter, rect: egui::Rect, time_s: f32, pi
 fn paint_pip(painter: &egui::Painter, rect: egui::Rect, pip: &SessionPip) {
     let centre = rect.center();
     let radius = rect.width() * 0.5;
-    // Dark hairline well outside the bezel — matches the mock's
-    // `0 0 0 2px #000` outer shadow, gives the pip a clean silhouette
-    // against either the vortex or the starfield.
-    painter.circle_stroke(
-        centre,
-        radius + 2.0,
-        egui::Stroke::new(2.0, egui::Color32::BLACK),
-    );
-    // Gold bezel body.
-    painter.circle_filled(centre, radius, palette::GOLD);
-    // Inner gold-ink ring (the mock's `inset 0 0 0 3px var(--gi)`).
-    painter.circle_stroke(
-        centre,
-        radius - 4.0,
-        egui::Stroke::new(3.0, palette::GOLD_INK),
-    );
 
-    // Profile-colour fill inside the ring.
-    let fill_radius = radius - 10.0;
-    let fill = pip
+    // Outer gold bezel — reuses the QR card's `paint_bezel` (halo,
+    // 4-stop radial gradient, inset highlight, inset shadow, inner
+    // GOLD_INK ring, outer black). Visual consistency with every
+    // other gold-rimmed surface in the launcher and a 1:1 match for
+    // the phone's `.player-pip` design language (Chris flagged
+    // 2026-04-19, "use the nice coloring of the phone profile badge").
+    paint_bezel(painter, rect, 1.0);
+
+    // Inner profile-colour disc with a soft radial gradient for
+    // depth — highlight offset to top-left mimics ambient light from
+    // above, the same "embossed" treatment paint_bezel uses for the
+    // gold ring. Proportions match the phone: ~78% of pip diameter
+    // for the inner disc leaves a ~11% gold-ring rim visible.
+    let inner_radius = radius * 0.78;
+    let base = pip
         .color
         .as_deref()
         .and_then(parse_hex_color)
         .unwrap_or(palette::GOLD_BRIGHT);
-    painter.circle_filled(centre, fill_radius, fill);
+    let highlight = lerp_color(base, egui::Color32::WHITE, 0.25);
+    let shadow = lerp_color(base, egui::Color32::BLACK, 0.30);
+    paint_radial_gradient_disc(
+        painter,
+        centre,
+        inner_radius,
+        centre + egui::vec2(-inner_radius * 0.30, -inner_radius * 0.40),
+        &[(0.0, highlight), (0.4, base), (1.0, shadow)],
+    );
 
-    // Initial (or a small dot if unknown).
-    match pip.initial.as_deref() {
-        Some(ch) if !ch.is_empty() => {
-            painter.text(
-                centre,
-                egui::Align2::CENTER_CENTER,
-                ch,
-                egui::FontId::new(36.0, egui::FontFamily::Name(fonts::TITAN_ONE.into())),
-                palette::GOLD_INK,
-            );
-        }
-        _ => {
-            painter.circle_filled(centre, 6.0, palette::GOLD_INK);
-        }
-    }
+    // Glyph — white Titan One with a soft drop shadow so it reads
+    // cleanly on any profile colour. "?" fallback when a session is
+    // registered but the player hasn't unlocked a profile yet.
+    let glyph = match pip.initial.as_deref() {
+        Some(ch) if !ch.is_empty() => ch,
+        _ => "?",
+    };
+    let font = egui::FontId::new(28.0, egui::FontFamily::Name(fonts::TITAN_ONE.into()));
+    painter.text(
+        centre + egui::vec2(0.0, 2.0),
+        egui::Align2::CENTER_CENTER,
+        glyph,
+        font.clone(),
+        egui::Color32::from_rgba_unmultiplied(0, 0, 0, 120),
+    );
+    painter.text(
+        centre,
+        egui::Align2::CENTER_CENTER,
+        glyph,
+        font,
+        egui::Color32::WHITE,
+    );
 }
 
 /// Parse `#rrggbb` / `#rgb` into an `egui::Color32`. Profiles stored in
@@ -795,7 +806,7 @@ fn parse_hex_color(s: &str) -> Option<egui::Color32> {
 /// Called by `render_brand_intro` for the Startup beat. Render_main's
 /// title still uses `ui.heading(...)` flat — switching that over is
 /// 4.19.19's territory and would mean restructuring the layout stack.
-fn paint_heraldic_title(
+pub(super) fn paint_heraldic_title(
     painter: &egui::Painter,
     pos: egui::Pos2,
     text: &str,

@@ -706,6 +706,29 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
         "launching game (library view + UIA-boot by serial)",
     );
 
+    // Tell the launcher UI we're loading. RAII so any error return
+    // path below automatically clears the flag — the launcher would
+    // otherwise sit on a stale "LOADING ..." surface forever after a
+    // boot failure. The success path also clears (drop on function
+    // return) and then sets `rpcs3_running = true` + `current_game =
+    // Some(name)`, which transitions the launcher into in-game.
+    if let Ok(mut st) = state.launcher_status.lock() {
+        st.loading_game = Some(game.display_name.clone());
+    }
+    struct LoadingGuard<'a> {
+        status: &'a Arc<std::sync::Mutex<crate::state::LauncherStatus>>,
+    }
+    impl Drop for LoadingGuard<'_> {
+        fn drop(&mut self) {
+            if let Ok(mut st) = self.status.lock() {
+                st.loading_game = None;
+            }
+        }
+    }
+    let _loading_guard = LoadingGuard {
+        status: &state.launcher_status,
+    };
+
     // Two-step launch. Step 1: spawn RPCS3 with no EBOOT argument and wait
     // for its main window to show up. Step 2: hand off to the driver worker
     // to open the Manage dialog (cold-library nav) and UIA-boot the game

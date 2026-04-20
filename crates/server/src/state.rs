@@ -82,6 +82,15 @@ pub struct LauncherStatus {
     /// Name of the currently-booted game, if any. Rendered in Titan One
     /// near the connection dot when present.
     pub current_game: Option<String>,
+    /// Display name of a game that's currently being launched but isn't
+    /// yet visible (RPCS3 is spawning + UIA-booting, takes ~10–30s).
+    /// Set by `/api/launch` at the start of the boot path, cleared on
+    /// success (alongside `rpcs3_running = true` + `current_game =
+    /// Some`) or failure. Drives the launcher's loading screen — gives
+    /// the user immediate visual feedback that their game pick was
+    /// received instead of ~30s of unchanged Awaiting Connect (Chris
+    /// flagged 2026-04-19, "the game loading state never shows").
+    pub loading_game: Option<String>,
     /// Which full-screen launcher surface the egui UI should render on the
     /// next frame. Default is `Main` — the QR + status strip layout.
     /// Flipped by the crash watchdog (PLAN 4.15.10) and `/api/shutdown`
