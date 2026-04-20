@@ -53,6 +53,14 @@ pub struct LauncherApp {
     /// (`progress >= 1.0`) the dispatcher routes rendering to
     /// `in_game::render` and the transparent panel reveals RPCS3.
     closing_to_in_game_at: Option<Instant>,
+    /// When the launcher first observed `LauncherStatus.server_ready =
+    /// true`. The launch-phase elapsed clock starts here, NOT at app
+    /// mount — so the intro animations (iris reveal, badge spin) only
+    /// fire once the server is healthy. If the server fails to start,
+    /// this stays `None`, the launcher holds in the calm-starfield
+    /// Startup beat, and `ServerError` takes over without the user
+    /// ever seeing a partially-played spin animation.
+    server_ready_at: Option<Instant>,
     /// GPU shader rig for the vortex (PLAN 4.19.6). Initialised lazily
     /// on the first frame because the eframe `Frame::gl()` context
     /// isn't available until `update()` is called. `Arc<Mutex<…>>` so
@@ -93,6 +101,7 @@ impl LauncherApp {
             started: Instant::now(),
             farewell_started_at: None,
             closing_to_in_game_at: None,
+            server_ready_at: None,
             vortex_rig: Arc::new(Mutex::new(None)),
             vortex_idle: vortex::idle_params(),
         }
@@ -122,6 +131,15 @@ impl eframe::App for LauncherApp {
 
         let status_snapshot = self.status.lock().map(|s| s.clone()).unwrap_or_default();
         let time_s = self.started.elapsed().as_secs_f32();
+
+        // Latch the server-ready timestamp the first frame we see the
+        // server is up. The launch_phase clock runs from here (not
+        // from app mount) so the intro animation only plays once the
+        // server is actually healthy — startup failures route to
+        // ServerError before this latches and the spin never fires.
+        if status_snapshot.server_ready && self.server_ready_at.is_none() {
+            self.server_ready_at = Some(Instant::now());
+        }
 
         // Reset the farewell timer when we're NOT on the farewell surface
         // — so if a future path flips screen out of Farewell (none today)
@@ -162,7 +180,16 @@ impl eframe::App for LauncherApp {
         let launch_phase = if matches!(status_snapshot.screen, LauncherScreen::Main) {
             let has_activity =
                 status_snapshot.rpcs3_running || self.clients.load(Ordering::Relaxed) > 0;
-            LaunchPhase::compute(time_s, closing_elapsed_s, has_activity)
+            // Phase elapsed measured from server-ready, not from app
+            // mount. Before the server is ready, phase_elapsed_s is 0
+            // so LaunchPhase::compute returns Startup (calm starfield
+            // + brand intro). The intro animations only kick off
+            // STARTUP_HOLD_S after the server confirms healthy.
+            let phase_elapsed_s = self
+                .server_ready_at
+                .map(|t| t.elapsed().as_secs_f32())
+                .unwrap_or(0.0);
+            LaunchPhase::compute(phase_elapsed_s, closing_elapsed_s, has_activity)
         } else {
             LaunchPhase::AwaitingConnect
         };

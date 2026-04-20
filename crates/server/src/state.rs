@@ -97,6 +97,16 @@ pub struct LauncherStatus {
     /// ascending (oldest first) so pips keep a stable slot when a new
     /// session joins. Length matches `session_count`.
     pub session_profiles: Vec<SessionPip>,
+    /// `true` once the server has bound its listener and is serving HTTP.
+    /// Set by the tokio thread right before `axum::serve()`. Drives the
+    /// launcher's intro-animation gate: with this `false` the launcher
+    /// holds in the calm-starfield Startup beat indefinitely instead of
+    /// auto-advancing to the iris reveal + badge spin. If the server
+    /// fails to start (port-in-use, db-open error) the screen flips to
+    /// `ServerError` before this is ever set, so the user sees the
+    /// error directly rather than watching the intro spin only to be
+    /// interrupted (Chris flagged 2026-04-19).
+    pub server_ready: bool,
 }
 
 /// UI-polled view of one connected phone session. Colour / initial are

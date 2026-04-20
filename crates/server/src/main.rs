@@ -117,6 +117,7 @@ fn main() -> Result<()> {
     let games_for_task = games.clone();
 
     let status_for_errors = launcher_status.clone();
+    let status_for_ready = launcher_status.clone();
     let _server_thread = std::thread::Builder::new()
         .name("tokio".into())
         .spawn(move || {
@@ -224,6 +225,15 @@ fn main() -> Result<()> {
                     }
                 };
                 info!("serving on http://{bind_addr}");
+                // Tell the launcher UI the server is healthy. Until
+                // this flips, the launcher's intro animations stay
+                // gated — calm starfield + brand intro only — so a
+                // startup failure routes straight to the error
+                // surface without first running the spin animation
+                // (PLAN 4.19.x).
+                if let Ok(mut st) = status_for_ready.lock() {
+                    st.server_ready = true;
+                }
                 if let Err(e) = axum::serve(listener, app).await {
                     // axum exits non-cleanly: same surface as a startup
                     // failure (the phone QR no longer points at a live
