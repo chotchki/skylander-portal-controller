@@ -1,232 +1,564 @@
-//! Procedural cloud vortex — PLAN 4.15.5.
+//! GPU vortex shader (PLAN 4.19.6).
 //!
-//! The canonical design (in `docs/aesthetic/mocks/tv_launcher_v3.html`) is a
-//! 5-octave simplex-FBM WebGL fragment shader. Porting that to WGSL and
-//! wiring an `egui_wgpu` custom paint callback is the long-term "Path A"
-//! from the plan. This module ships the *visual shape* via a cheap
-//! polar-mesh approximation driven by egui's native `Painter::add(Mesh)` —
-//! no wgpu integration, no shader compilation, no new crate deps. The
-//! render cost is ~2k triangles per frame, negligible on the launcher's
-//! 250ms repaint cadence.
+//! Replaces the earlier polar-mesh approximation with a real fragment
+//! shader. Domain-warped FBM in spiral+log-radial coords, with a
+//! streak overlay for "clouds flying past" motion and an iris mask
+//! the launch-phase machinery uses for intro reveal + close-to-
+//! in-game transitions.
 //!
-//! What matches the mock:
-//! - concentric density gradient (deep blue at centre → bright blue-white
-//!   at edges, modulated by the iris);
-//! - 10 rotating spiral arms drifting at `rotation_speed` rad/s;
-//! - central hole kept clear for the QR + title;
-//! - iris open/close via `iris_radius` knob (0.0 → no clouds, 1.6 →
-//!   fills past the screen edges).
+//! The shader was developed in `examples/vortex_shader_spike.rs` —
+//! that file remains as the iteration playground (live sliders, save/
+//! load presets). This module is the production embedding: same
+//! shader source, same `Params` shape, with the canonical "look"
+//! baked into a JSON preset committed at `vortex_presets/idle.json`.
+//! Re-tune in the spike → save preset → rebuild to update the
+//! production look.
 //!
-//! What doesn't:
-//! - simplex-FBM noise texture — replaced with a cheap sin/cos sum that
-//!   reads as "bands of density" rather than "organic fluff". The eye
-//!   fills in the rest on a 10-foot TV.
-//! - "inflow" (radial noise scroll) — the current sin/cos doesn't have a
-//!   meaningful analogue; folded into a phase shift on the band noise.
-//!
-//! Follow-up: real shader port lives in a future `vortex_wgpu` module
-//! that swaps `eframe`'s backend to `wgpu` and drops a WGSL port of the
-//! HTML mock's FBM. Tracked against 4.15a polish.
+//! The non-shader parts (sky background, starfield, helper paint
+//! primitives) are unchanged from the polar-mesh era.
+
+use std::sync::{Arc, Mutex};
 
 use egui::epaint::{Mesh, Vertex};
-use egui::{Color32, Pos2, Rect, Stroke, Vec2};
+use egui::{Color32, Pos2, Rect};
+use egui_glow::glow::{self, HasContext};
+use serde::{Deserialize, Serialize};
 
 use crate::palette;
 
-/// Tunables for the vortex, mirroring the HTML mock's three knobs
-/// (irisRadius / rotationSpeed / inflowSpeed). Defaults approximate the
-/// mock's "idle" state — steady slow swirl, clouds fill most of the
-/// frame.
-#[derive(Debug, Clone, Copy)]
+/// Which side of the iris boundary is opaque. The intro reveal grows
+/// the visible region (Reveal); the in-game close grows a dark hole
+/// that pushes the vortex outward (DarkHole).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IrisMode {
+    /// `iris_radius` is the INNER edge of a dark hole. Dark inside the
+    /// radius, clouds visible outside. Used during the close-to-in-game
+    /// transition.
+    DarkHole,
+    /// `iris_radius` is the OUTER edge of cloud visibility. Clouds
+    /// visible inside the radius, dark outside. Used for the intro
+    /// reveal (Startup → AwaitingConnect).
+    Reveal,
+}
+
+/// Full parameter set for the vortex shader. Mirrors the spike's
+/// `Params` exactly so JSON presets serialise/deserialise across the
+/// two contexts. `#[serde(default)]` at struct level lets older preset
+/// files deserialise cleanly when new fields are added — unknown
+/// fields fall back to `VortexParams::default()`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(default)]
 pub struct VortexParams {
-    /// 0.0 = no clouds visible (iris fully closed to a dot).
-    /// 1.6 = clouds fill past the screen corners.
     pub iris_radius: f32,
-    /// Arm rotation in radians per second. Positive = clockwise on screen.
+    pub iris_softness: f32,
+    pub iris_mode: IrisMode,
     pub rotation_speed: f32,
-    /// Radial inflow speed — folded into the band-noise phase drift.
+    pub streak_outward: bool,
     pub inflow_speed: f32,
+    pub spiral_tightness: f32,
+    pub cloud_brightness: f32,
+    pub cloud_bias: f32,
+    pub radial_freq: f32,
+    pub angular_freq: f32,
+    pub thickness: f32,
+    pub octaves: i32,
+    pub persistence: f32,
+    pub layer2_strength: f32,
+    pub streak_strength: f32,
+    pub streak_freq: f32,
+    pub streak_speed: f32,
+    /// Animation clock offset, in seconds. Added to the launcher's
+    /// elapsed time when feeding `u_time` to the shader. Lets the
+    /// preset pin a known starting point in the noise/motion cycle
+    /// so the boot-up frame matches what was tuned in the spike —
+    /// without it, every launcher start shows a different snapshot
+    /// because rotation / inflow / streak motion all advect the
+    /// noise field over time. Saved by the spike (see "time offset
+    /// (s)" in its Motion section).
+    pub time_offset: f32,
+    pub color_deep: [f32; 3],
+    pub color_mid: [f32; 3],
+    pub color_wisp: [f32; 3],
+    pub star_brightness: f32,
+    pub star_density: f32,
+    pub iris_glow: f32,
+    pub transparent: bool,
 }
 
 impl Default for VortexParams {
     fn default() -> Self {
+        // Conservative defaults matching the spike's `Default` impl.
+        // Production normally uses `idle_params()` (loaded from the
+        // preset JSON); this Default serves as a fallback if the
+        // preset fails to parse.
         Self {
-            iris_radius: 1.2,
+            iris_radius: 1.5,
+            iris_softness: 0.25,
+            iris_mode: IrisMode::Reveal,
             rotation_speed: 0.08,
-            inflow_speed: 0.18,
+            streak_outward: false,
+            inflow_speed: 0.20,
+            spiral_tightness: 4.0,
+            cloud_brightness: 1.0,
+            cloud_bias: 0.15,
+            radial_freq: 1.5,
+            angular_freq: 1.2,
+            thickness: 1.0,
+            octaves: 5,
+            persistence: 0.55,
+            layer2_strength: 0.0,
+            streak_strength: 0.5,
+            streak_freq: 8.0,
+            streak_speed: 1.0,
+            time_offset: 0.0,
+            color_deep: [0.008, 0.031, 0.094], // SF_3
+            color_mid: [0.043, 0.118, 0.322],  // SF_1
+            color_wisp: [0.85, 0.92, 1.0],
+            star_brightness: 0.9,
+            star_density: 24.0,
+            iris_glow: 0.4,
+            transparent: false,
         }
     }
 }
 
-/// Number of radial bands in the mesh. More = finer density gradient,
-/// more triangles. 24 gives a smooth ramp at 10 ft on an 86" TV.
-const RADIAL_BANDS: usize = 24;
-/// Number of angular segments. Must be a multiple of `ARM_COUNT` for the
-/// arm bands to line up cleanly on vertex boundaries.
-const ANGULAR_SEGMENTS: usize = 60;
-/// Matches the mock's 10-arm iris for visual continuity with the design.
-const ARM_COUNT: f32 = 10.0;
+/// Production vortex preset, bundled into the binary at compile time.
+/// Update by re-saving from the spike's Presets panel and rebuilding.
+const IDLE_PRESET_JSON: &str = include_str!("vortex_presets/idle.json");
 
-/// Paint the cloud vortex into `rect`, filling the background behind the
-/// launcher content. Call *before* any other widgets in the same frame
-/// so they layer on top. `time_s` is the monotonic animation clock.
-pub fn draw(painter: &egui::Painter, rect: Rect, time_s: f32, params: VortexParams) {
-    let centre = rect.center();
-    // Normalise by the shorter axis so the vortex is round on any aspect
-    // ratio, matching the mock's `u_resolution.y` division.
-    let radial_scale = rect.height().min(rect.width()) * 0.5;
-
-    let mut mesh = Mesh::default();
-
-    // Generate polar-grid vertices: (ANGULAR_SEGMENTS + 1) × (RADIAL_BANDS + 1).
-    // +1 on the angular axis so the seam closes cleanly; +1 on radial so the
-    // outer ring reaches the screen edge.
-    for ri in 0..=RADIAL_BANDS {
-        // r goes 0..iris_radius. We push the outer edge slightly past
-        // `iris_radius` so the smoothstep cutoff has room to soften.
-        let r_norm = ri as f32 / RADIAL_BANDS as f32;
-        let r = r_norm * params.iris_radius;
-
-        for ti in 0..=ANGULAR_SEGMENTS {
-            let theta = (ti as f32 / ANGULAR_SEGMENTS as f32) * std::f32::consts::TAU;
-
-            let x = theta.cos() * r * radial_scale;
-            let y = theta.sin() * r * radial_scale;
-            let pos = Pos2::new(centre.x + x, centre.y + y);
-
-            let colour = sample_cloud_colour(r, theta, time_s, params);
-            mesh.vertices.push(Vertex {
-                pos,
-                uv: egui::epaint::WHITE_UV,
-                color: colour,
-            });
-        }
-    }
-
-    // Stitch quads into triangle pairs.
-    let stride = (ANGULAR_SEGMENTS + 1) as u32;
-    for ri in 0..RADIAL_BANDS as u32 {
-        for ti in 0..ANGULAR_SEGMENTS as u32 {
-            let a = ri * stride + ti;
-            let b = a + 1;
-            let c = a + stride;
-            let d = c + 1;
-            // Triangle 1: a, b, c
-            mesh.indices.extend_from_slice(&[a, b, c]);
-            // Triangle 2: b, d, c
-            mesh.indices.extend_from_slice(&[b, d, c]);
-        }
-    }
-
-    painter.add(egui::Shape::mesh(mesh));
+/// Load the canonical "idle" vortex look from the bundled preset JSON.
+/// Falls back to `VortexParams::default()` if the file is malformed —
+/// the launcher should still boot rather than panic over a bad preset.
+pub fn idle_params() -> VortexParams {
+    serde_json::from_str(IDLE_PRESET_JSON).unwrap_or_else(|err| {
+        tracing::warn!("vortex preset parse failed, using defaults: {err}");
+        VortexParams::default()
+    })
 }
 
-/// Per-vertex cloud colour. Mirrors the structure of the mock's shader —
-/// density + arm pattern + iris mask + centre hole + colour ramp — but
-/// with a cheap sin/cos "noise" instead of simplex FBM. The three
-/// 3-colour-ramp colours are pulled from the mock: deep-blue core,
-/// mid-blue body, bright-blue wisps.
-fn sample_cloud_colour(r: f32, theta: f32, time_s: f32, params: VortexParams) -> Color32 {
-    // Spiral coordinate: same structure as the mock — theta offset grows
-    // with r to create swirl arms; time drives rotation at
-    // `rotation_speed`. The mock also folds `inflow_speed` into the
-    // *radial* noise coord; we fold it into the band phase so there's
-    // still perceptible cloud drift.
-    let spiral = theta + r * 4.0 + time_s * params.rotation_speed;
-    let band_phase = r * 3.5 + time_s * params.inflow_speed;
+const VS_SRC: &str = r#"#version 140
+in vec2 a_pos;
+out vec2 v_uv;
+void main() {
+    v_uv = a_pos * 0.5 + 0.5;
+    gl_Position = vec4(a_pos, 0.0, 1.0);
+}
+"#;
 
-    // Cheap "band noise" — sum of three sinusoids at different
-    // frequencies in spiral+radial space. Reads as banded density rather
-    // than organic fluff but captures the right shape.
-    let noise = (spiral * 2.3 + band_phase).sin() * 0.35
-        + (spiral * 1.1 - band_phase * 0.6).cos() * 0.30
-        + (spiral * 4.7 + band_phase * 0.3).sin() * 0.20;
-    let cloud = (0.5 + noise * 0.5).clamp(0.0, 1.0);
+const FS_SRC: &str = r#"#version 140
+precision highp float;
+in vec2 v_uv;
+out vec4 frag_color;
 
-    // 10 spiral arms, matching the mock. `smoothstep` approximation
-    // via a re-map of sin into [0,1] with a contrast curve.
-    let arm_raw = (spiral * ARM_COUNT).sin() * 0.5 + 0.5;
-    let arm = smoothstep(0.05, 0.95, arm_raw);
-    let arm_influence = mix(0.1, 0.38, smoothstep(0.0, 0.6, r));
-    let mut cloud = cloud * mix(1.0, arm, arm_influence);
+uniform vec2  u_resolution;
+uniform float u_time;
+uniform float u_iris_radius;
+uniform float u_iris_softness;
+uniform int   u_iris_mode;       // 0 = mask center (dark hole), 1 = reveal from center
+uniform float u_rotation_speed;
+uniform float u_inflow_speed;
+uniform float u_spiral_tightness;
+uniform float u_cloud_brightness;
+uniform float u_cloud_bias;
+uniform float u_radial_freq;
+uniform float u_angular_freq;
+uniform float u_thickness;
+uniform int   u_octaves;
+uniform float u_persistence;
+uniform float u_layer2_strength;
+uniform float u_streak_strength;
+uniform float u_streak_freq;
+uniform float u_streak_speed;
+uniform vec3  u_color_deep;
+uniform vec3  u_color_mid;
+uniform vec3  u_color_wisp;
+uniform float u_star_brightness;
+uniform float u_star_density;
+uniform float u_iris_glow;
+uniform int   u_transparent;
 
-    // Depth / perspective cue — inner clouds dimmer, outer brighter.
-    let depth = mix(0.25, 1.0, smoothstep(0.0, 0.65, r).powf(0.9));
-    cloud *= depth;
+float hash(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
 
-    // Iris mask — 0 past the iris radius with a soft edge. Cheapest
-    // smoothstep from `iris_radius + 0.2` → `iris_radius - 0.2`.
-    let iris_edge = 0.2;
-    let iris = smoothstep(
-        params.iris_radius + iris_edge,
-        params.iris_radius - iris_edge,
-        r,
+float vnoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = hash(i);
+    float b = hash(i + vec2(1.0, 0.0));
+    float c = hash(i + vec2(0.0, 1.0));
+    float d = hash(i + vec2(1.0, 1.0));
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+float fbm(vec2 p) {
+    float v = 0.0;
+    float a = 0.5;
+    float total = 0.0;
+    for (int i = 0; i < 8; i++) {
+        if (i >= u_octaves) break;
+        v += a * vnoise(p);
+        total += a;
+        p *= 2.0;
+        a *= u_persistence;
+    }
+    return v / max(total, 1e-4);
+}
+
+float starfield(vec2 uv, float density) {
+    vec2 cell = floor(uv * density);
+    float h = hash(cell);
+    if (h < 0.985) return 0.0;
+    vec2 sub = fract(uv * density);
+    vec2 star_pos = vec2(hash(cell + 11.0), hash(cell + 17.0));
+    float d = length(sub - star_pos);
+    float brightness = (h - 0.985) / 0.015;
+    float twinkle = 0.7 + 0.3 * sin(u_time * 1.5 + h * 100.0);
+    return smoothstep(0.06, 0.0, d) * brightness * twinkle;
+}
+
+void main() {
+    vec2 uv = (v_uv - 0.5) * u_resolution / min(u_resolution.x, u_resolution.y);
+    float radius = length(uv);
+    float angle  = atan(uv.y, uv.x);
+
+    float spiral_angle = angle
+        + radius * u_spiral_tightness
+        + u_time * u_rotation_speed;
+
+    float r_clamped = max(radius, 0.001);
+    float radial = -log(r_clamped) * u_radial_freq + u_time * u_inflow_speed;
+    // cos+sin parametrisation avoids the atan2 wrap discontinuity at
+    // the −x axis. Translation magnitude (~2 per radial unit) gives
+    // roughly isotropic noise gradient so features read as blobs
+    // rather than radial rays — see spike comments for the analysis.
+    float circle_r = u_angular_freq * 3.14159 * (1.0 + 0.18 * radial);
+    vec2 nuv1 = vec2(cos(spiral_angle), sin(spiral_angle)) * circle_r;
+    nuv1 += vec2(radial * 1.0, radial * 1.7);
+    nuv1 /= max(u_thickness, 0.05);
+    float n = fbm(nuv1);
+
+    if (u_layer2_strength > 0.001) {
+        float spiral_angle_2 = -angle
+            + radius * u_spiral_tightness * 1.3
+            - u_time * u_rotation_speed * 1.4;
+        float circle_r_2 = u_angular_freq * 3.14159 * (1.0 + 0.18 * radial) * 1.3;
+        vec2 nuv2 = vec2(cos(spiral_angle_2), sin(spiral_angle_2)) * circle_r_2;
+        nuv2 += vec2(radial * 0.5, radial * 0.3);
+        nuv2 /= max(u_thickness, 0.05);
+        float n2 = fbm(nuv2);
+        n = mix(n, max(n, n2), u_layer2_strength);
+    }
+
+    // Soft cloud bias — see spike comments for why smoothstep over
+    // hard clip (the latter produced "missing arm" asymmetry).
+    n = smoothstep(u_cloud_bias - 0.2, u_cloud_bias + 0.7, n);
+
+    // Streak overlay: multiplicative across × along, so streaks lie
+    // exactly on the spiral arms and bright dashes scroll along them.
+    float streak_freq_i = floor(u_streak_freq + 0.5);
+    float across = cos(spiral_angle * streak_freq_i) * 0.5 + 0.5;
+    across = pow(across, 2.5);
+    float along = cos(radial * 1.2 - u_time * u_streak_speed * 4.0) * 0.45 + 0.55;
+    along = pow(along, 1.5);
+    float streak = across * along;
+    n = mix(n, n * (0.6 + streak * 1.8), u_streak_strength);
+
+    // Cloud density drives ALPHA, not color mixing. The wisp tint is
+    // the only color the shader contributes; the deep blue / mid blue
+    // background that used to live in the shader is now provided by
+    // `paint_sky_background` underneath, so it shows through wherever
+    // the cloud density is low. Result: white clouds against the
+    // production sky gradient, with starfield visible through gaps —
+    // matches the pre-shader design (Chris 2026-04-19).
+    float cloud_falloff = smoothstep(0.0, 0.6, radius);
+    float cloud_density = n * u_cloud_brightness * cloud_falloff;
+
+    float edge = smoothstep(
+        u_iris_radius - u_iris_softness,
+        u_iris_radius,
+        radius
     );
+    float iris = (u_iris_mode == 1) ? (1.0 - edge) : edge;
+    float cloud_alpha = cloud_density * iris;
 
-    // Central hole — keep the very centre clear for the QR / heading.
-    let centre_hole = smoothstep(0.05, 0.22, r);
+    // Iris glow ring — bright wave-front at the iris boundary,
+    // contributes to alpha so it shines through regardless of the
+    // local cloud density. Used by the close transition's portal-
+    // opening pulse.
+    float boundary_dist = abs(radius - u_iris_radius);
+    float ring = exp(-boundary_dist * 30.0 / max(u_iris_softness, 0.05));
+    float glow_alpha = ring * u_iris_glow;
 
-    // Corner vignette — very gentle, only at extreme corners.
-    let vignette = 1.0 - smoothstep(1.05, 1.45, r) * 0.45;
+    float a = clamp(cloud_alpha + glow_alpha, 0.0, 1.0);
 
-    let alpha = (cloud * iris * centre_hole * vignette * 1.25).clamp(0.0, 0.96);
-
-    // 3-stop colour ramp: SF_1 (#0b1e52) → mid-blue (#2d5ab8) → warm
-    // bright (#c0d8ff). Matches the mock's `colorDeep` / `colorMid` /
-    // `colorBright`.
-    let colour_deep = rgba(0x0b, 0x1e, 0x52);
-    let colour_mid = rgba(0x2d, 0x5a, 0xb8);
-    let colour_bright = rgba(0xc0, 0xd8, 0xff);
-
-    let mix_amount = cloud;
-    let lower = lerp_colour(colour_deep, colour_mid, (mix_amount * 2.0).clamp(0.0, 1.0));
-    let higher = lerp_colour(
-        colour_mid,
-        colour_bright,
-        ((mix_amount - 0.5) * 2.0).clamp(0.0, 1.0),
-    );
-    let rgb = if mix_amount < 0.5 { lower } else { higher };
-
-    // Premultiplied alpha — egui::Color32 stores premultiplied values.
-    let a = (alpha * 255.0) as u8;
-    Color32::from_rgba_premultiplied(
-        ((rgb.0 as f32) * alpha) as u8,
-        ((rgb.1 as f32) * alpha) as u8,
-        ((rgb.2 as f32) * alpha) as u8,
-        a,
-    )
+    // Premultiplied alpha — egui blends with `glBlendFunc(ONE, ONE_MINUS_SRC_ALPHA)`,
+    // so RGB is pre-multiplied by alpha at the shader output.
+    vec3 col = u_color_wisp * a;
+    frag_color = vec4(col, a);
 }
+"#;
+
+/// GL state for one shader program — created once on first paint
+/// (when the eframe `Frame` first hands us a `glow::Context`) and
+/// reused every frame. Owned by the `LauncherApp` via
+/// `Arc<Mutex<Option<ShaderRig>>>` so the `egui::PaintCallback`
+/// closure can capture it across the immediate-mode boundary.
+pub struct ShaderRig {
+    program: glow::Program,
+    vao: glow::VertexArray,
+    vbo: glow::Buffer,
+    u_resolution: Option<glow::UniformLocation>,
+    u_time: Option<glow::UniformLocation>,
+    u_iris_radius: Option<glow::UniformLocation>,
+    u_iris_softness: Option<glow::UniformLocation>,
+    u_iris_mode: Option<glow::UniformLocation>,
+    u_rotation_speed: Option<glow::UniformLocation>,
+    u_inflow_speed: Option<glow::UniformLocation>,
+    u_spiral_tightness: Option<glow::UniformLocation>,
+    u_cloud_brightness: Option<glow::UniformLocation>,
+    u_cloud_bias: Option<glow::UniformLocation>,
+    u_radial_freq: Option<glow::UniformLocation>,
+    u_angular_freq: Option<glow::UniformLocation>,
+    u_thickness: Option<glow::UniformLocation>,
+    u_octaves: Option<glow::UniformLocation>,
+    u_persistence: Option<glow::UniformLocation>,
+    u_layer2_strength: Option<glow::UniformLocation>,
+    u_streak_strength: Option<glow::UniformLocation>,
+    u_streak_freq: Option<glow::UniformLocation>,
+    u_streak_speed: Option<glow::UniformLocation>,
+    u_color_deep: Option<glow::UniformLocation>,
+    u_color_mid: Option<glow::UniformLocation>,
+    u_color_wisp: Option<glow::UniformLocation>,
+    u_star_brightness: Option<glow::UniformLocation>,
+    u_star_density: Option<glow::UniformLocation>,
+    u_iris_glow: Option<glow::UniformLocation>,
+    u_transparent: Option<glow::UniformLocation>,
+}
+
+impl ShaderRig {
+    pub fn new(gl: &glow::Context) -> Result<Self, String> {
+        unsafe {
+            let program = gl
+                .create_program()
+                .map_err(|e| format!("create_program: {e}"))?;
+            let vs = compile_shader(gl, glow::VERTEX_SHADER, VS_SRC)?;
+            let fs = compile_shader(gl, glow::FRAGMENT_SHADER, FS_SRC)?;
+            gl.attach_shader(program, vs);
+            gl.attach_shader(program, fs);
+            gl.link_program(program);
+            if !gl.get_program_link_status(program) {
+                let log = gl.get_program_info_log(program);
+                gl.delete_shader(vs);
+                gl.delete_shader(fs);
+                gl.delete_program(program);
+                return Err(format!("program link: {log}"));
+            }
+            gl.detach_shader(program, vs);
+            gl.detach_shader(program, fs);
+            gl.delete_shader(vs);
+            gl.delete_shader(fs);
+
+            // Fullscreen triangle covers clip-space [-1,1]² with one
+            // triangle (cheaper than a 6-vertex quad). The visible
+            // viewport is fully inside this triangle.
+            let vao = gl
+                .create_vertex_array()
+                .map_err(|e| format!("create_vao: {e}"))?;
+            let vbo = gl.create_buffer().map_err(|e| format!("create_vbo: {e}"))?;
+            gl.bind_vertex_array(Some(vao));
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
+            let verts: [f32; 6] = [-1.0, -1.0, 3.0, -1.0, -1.0, 3.0];
+            let bytes = std::slice::from_raw_parts(
+                verts.as_ptr() as *const u8,
+                std::mem::size_of_val(&verts),
+            );
+            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STATIC_DRAW);
+            let pos_loc = gl
+                .get_attrib_location(program, "a_pos")
+                .ok_or("missing a_pos attribute")?;
+            gl.enable_vertex_attrib_array(pos_loc);
+            gl.vertex_attrib_pointer_f32(pos_loc, 2, glow::FLOAT, false, 0, 0);
+            gl.bind_buffer(glow::ARRAY_BUFFER, None);
+            gl.bind_vertex_array(None);
+
+            Ok(Self {
+                u_resolution: gl.get_uniform_location(program, "u_resolution"),
+                u_time: gl.get_uniform_location(program, "u_time"),
+                u_iris_radius: gl.get_uniform_location(program, "u_iris_radius"),
+                u_iris_softness: gl.get_uniform_location(program, "u_iris_softness"),
+                u_iris_mode: gl.get_uniform_location(program, "u_iris_mode"),
+                u_rotation_speed: gl.get_uniform_location(program, "u_rotation_speed"),
+                u_inflow_speed: gl.get_uniform_location(program, "u_inflow_speed"),
+                u_spiral_tightness: gl.get_uniform_location(program, "u_spiral_tightness"),
+                u_cloud_brightness: gl.get_uniform_location(program, "u_cloud_brightness"),
+                u_cloud_bias: gl.get_uniform_location(program, "u_cloud_bias"),
+                u_radial_freq: gl.get_uniform_location(program, "u_radial_freq"),
+                u_angular_freq: gl.get_uniform_location(program, "u_angular_freq"),
+                u_thickness: gl.get_uniform_location(program, "u_thickness"),
+                u_octaves: gl.get_uniform_location(program, "u_octaves"),
+                u_persistence: gl.get_uniform_location(program, "u_persistence"),
+                u_layer2_strength: gl.get_uniform_location(program, "u_layer2_strength"),
+                u_streak_strength: gl.get_uniform_location(program, "u_streak_strength"),
+                u_streak_freq: gl.get_uniform_location(program, "u_streak_freq"),
+                u_streak_speed: gl.get_uniform_location(program, "u_streak_speed"),
+                u_color_deep: gl.get_uniform_location(program, "u_color_deep"),
+                u_color_mid: gl.get_uniform_location(program, "u_color_mid"),
+                u_color_wisp: gl.get_uniform_location(program, "u_color_wisp"),
+                u_star_brightness: gl.get_uniform_location(program, "u_star_brightness"),
+                u_star_density: gl.get_uniform_location(program, "u_star_density"),
+                u_iris_glow: gl.get_uniform_location(program, "u_iris_glow"),
+                u_transparent: gl.get_uniform_location(program, "u_transparent"),
+                program,
+                vao,
+                vbo,
+            })
+        }
+    }
+
+    pub fn paint(
+        &self,
+        gl: &glow::Context,
+        params: VortexParams,
+        time: f32,
+        viewport_px: [i32; 4],
+    ) {
+        unsafe {
+            gl.viewport(viewport_px[0], viewport_px[1], viewport_px[2], viewport_px[3]);
+            // Always alpha-blend. The shader outputs premultiplied
+            // RGBA where alpha = cloud_density * iris (+ glow ring),
+            // so the sky/starfield layers painted underneath show
+            // through the dim/no-cloud regions — that's what gives
+            // the deep-blue gradient + tuned stars visibility behind
+            // the white wisps. Disabling blend would overwrite the
+            // sky with the shader's transparent-by-design output.
+            gl.enable(glow::BLEND);
+            gl.blend_func(glow::ONE, glow::ONE_MINUS_SRC_ALPHA);
+            gl.disable(glow::DEPTH_TEST);
+            gl.disable(glow::CULL_FACE);
+
+            gl.use_program(Some(self.program));
+            gl.uniform_2_f32(
+                self.u_resolution.as_ref(),
+                viewport_px[2] as f32,
+                viewport_px[3] as f32,
+            );
+            gl.uniform_1_f32(self.u_time.as_ref(), time);
+            gl.uniform_1_f32(self.u_iris_radius.as_ref(), params.iris_radius);
+            gl.uniform_1_f32(self.u_iris_softness.as_ref(), params.iris_softness);
+            let mode_int = match params.iris_mode {
+                IrisMode::DarkHole => 0,
+                IrisMode::Reveal => 1,
+            };
+            gl.uniform_1_i32(self.u_iris_mode.as_ref(), mode_int);
+            gl.uniform_1_f32(self.u_rotation_speed.as_ref(), params.rotation_speed);
+            gl.uniform_1_f32(self.u_inflow_speed.as_ref(), params.inflow_speed);
+            gl.uniform_1_f32(self.u_spiral_tightness.as_ref(), params.spiral_tightness);
+            gl.uniform_1_f32(self.u_cloud_brightness.as_ref(), params.cloud_brightness);
+            gl.uniform_1_f32(self.u_cloud_bias.as_ref(), params.cloud_bias);
+            gl.uniform_1_f32(self.u_radial_freq.as_ref(), params.radial_freq);
+            gl.uniform_1_f32(self.u_angular_freq.as_ref(), params.angular_freq);
+            gl.uniform_1_f32(self.u_thickness.as_ref(), params.thickness);
+            gl.uniform_1_i32(self.u_octaves.as_ref(), params.octaves);
+            gl.uniform_1_f32(self.u_persistence.as_ref(), params.persistence);
+            gl.uniform_1_f32(self.u_layer2_strength.as_ref(), params.layer2_strength);
+            gl.uniform_1_f32(self.u_streak_strength.as_ref(), params.streak_strength);
+            gl.uniform_1_f32(self.u_streak_freq.as_ref(), params.streak_freq);
+            let streak_speed = if params.streak_outward {
+                -params.streak_speed
+            } else {
+                params.streak_speed
+            };
+            gl.uniform_1_f32(self.u_streak_speed.as_ref(), streak_speed);
+            gl.uniform_3_f32_slice(self.u_color_deep.as_ref(), &params.color_deep);
+            gl.uniform_3_f32_slice(self.u_color_mid.as_ref(), &params.color_mid);
+            gl.uniform_3_f32_slice(self.u_color_wisp.as_ref(), &params.color_wisp);
+            gl.uniform_1_f32(self.u_star_brightness.as_ref(), params.star_brightness);
+            gl.uniform_1_f32(self.u_star_density.as_ref(), params.star_density);
+            gl.uniform_1_f32(self.u_iris_glow.as_ref(), params.iris_glow);
+            gl.uniform_1_i32(
+                self.u_transparent.as_ref(),
+                if params.transparent { 1 } else { 0 },
+            );
+
+            gl.bind_vertex_array(Some(self.vao));
+            gl.draw_arrays(glow::TRIANGLES, 0, 3);
+            gl.bind_vertex_array(None);
+            gl.use_program(None);
+        }
+    }
+
+    pub fn destroy(&self, gl: &glow::Context) {
+        unsafe {
+            gl.delete_program(self.program);
+            gl.delete_vertex_array(self.vao);
+            gl.delete_buffer(self.vbo);
+        }
+    }
+}
+
+unsafe fn compile_shader(
+    gl: &glow::Context,
+    kind: u32,
+    src: &str,
+) -> Result<glow::Shader, String> {
+    unsafe {
+        let s = gl
+            .create_shader(kind)
+            .map_err(|e| format!("create_shader: {e}"))?;
+        gl.shader_source(s, src);
+        gl.compile_shader(s);
+        if !gl.get_shader_compile_status(s) {
+            let log = gl.get_shader_info_log(s);
+            gl.delete_shader(s);
+            return Err(format!("compile: {log}"));
+        }
+        Ok(s)
+    }
+}
+
+/// Paint the GPU vortex into `rect` via an `egui::PaintCallback`. The
+/// `rig` is captured by the callback closure (Arc-shared) so it can
+/// outlive this function's stack frame and be dispatched from egui's
+/// paint pass — same pattern as the spike.
+///
+/// The rig may be `None` on the first frame before the eframe `Frame`
+/// has handed us a `glow::Context`; in that case the callback is a
+/// no-op and the screen renders without the vortex layer for one
+/// frame. Subsequent frames pick up the initialised rig.
+pub fn paint_vortex(
+    painter: &egui::Painter,
+    rect: Rect,
+    rig: Arc<Mutex<Option<ShaderRig>>>,
+    params: VortexParams,
+    time_s: f32,
+) {
+    let cb = egui::PaintCallback {
+        rect,
+        callback: Arc::new(egui_glow::CallbackFn::new(move |info, painter| {
+            let vp = info.viewport_in_pixels();
+            let viewport_px = [vp.left_px, vp.from_bottom_px, vp.width_px, vp.height_px];
+            if let Some(rig) = rig.lock().unwrap().as_ref() {
+                rig.paint(painter.gl(), params, time_s, viewport_px);
+            }
+        })),
+    };
+    painter.add(cb);
+}
+
+// -- Sky background, starfield, and primitive helpers ----------------
+// Unchanged from the polar-mesh era — these layer beneath the GPU
+// vortex (sky behind, starfield above sky but logically beneath the
+// shader output too — the shader has its own internal starfield;
+// this CPU one is only used during the Startup beat where the vortex
+// shader is gated off by iris_radius=0 in Reveal mode).
 
 /// Paint the full sky backdrop: vertical base gradient + top/bottom
-/// hue ellipses. Three layers, matching the mock's `.sky` element
-/// (`tv_launcher_v3.html` lines 36-43):
-///
-///   1. **Vertical gradient** (`SF_1` at top → `SF_2` at 60% down →
-///      `SF_3` at bottom) — the base. The launcher's `panel_fill` is
-///      flat `SF_3`, so without this layer everything reads "all dark
-///      bottom blue" and the upper half loses depth. We paint over the
-///      panel fill rather than reach into egui's Visuals to make the
-///      panel transparent — slightly redundant but simple.
-///   2. **Top ellipse** — `#1a3a8a`-tinted, wide + relatively short
-///      (mock: 120% × 60%), centred at top-middle. Brightens the upper
-///      portion further; reads as the "sky lifting" toward where the
-///      logo / QR will be.
-///   3. **Bottom ellipse** — `#0e2464`-tinted, narrower + shorter
-///      (mock: 80% × 50%), centred at bottom-middle. Adds a subtle
-///      foreground depth without competing with the top.
-///
-/// Painted *before* `paint_starfield` + `vortex::draw` so stars + clouds
-/// layer on top. Always-on backdrop — no time argument because the
-/// gradient + glows are static (moving elements are stars + vortex).
+/// hue ellipses. Always-on; the shader vortex layers on top.
 pub fn paint_sky_background(painter: &egui::Painter, rect: Rect) {
-    // 1. Vertical gradient base. Mock's CSS spec is mid-stop at 60%
-    // (`linear-gradient(180deg, var(--sf-1), var(--sf-2) 60%,
-    // var(--sf-3))`) but on a real fullscreen render that pulls the
-    // near-black SF_3 too high up the panel — the bottom 40% reads
-    // as ink rather than ocean. Pushing the mid-stop to 85% keeps
-    // most of the panel in the SF_1→SF_2 range and reserves SF_3 for
-    // the very bottom edge, which matches the mock's actual on-TV
-    // look (Chris's screenshot 2026-04-19).
     paint_vertical_gradient(
         painter,
         rect,
@@ -236,10 +568,6 @@ pub fn paint_sky_background(painter: &egui::Painter, rect: Rect) {
         palette::SF_3,
     );
 
-    // 2. Top ellipse. Mock spec proportions (60% × 30% half-w/h)
-    // produce a hotspot too bright when overlaid on the gradient
-    // base; alpha dialed down to 70 (from the original 130) so it
-    // reads as ambient depth, not a spotlight.
     paint_radial_ellipse(
         painter,
         Pos2::new(rect.center().x, rect.top()),
@@ -248,13 +576,6 @@ pub fn paint_sky_background(painter: &egui::Painter, rect: Rect) {
         Color32::from_rgba_unmultiplied(0x1a, 0x3a, 0x8a, 70),
     );
 
-    // 3. Bottom ellipse. Same alpha-down treatment — ambient depth,
-    // not a focal element. Half-width pushed past the panel edges
-    // (0.6 instead of mock-spec 0.4) so the bottom corners get tinted
-    // too — Chris flagged 2026-04-19 that the corners were reading as
-    // dark voids when only the centre band was lit. Rim alpha is 0
-    // either way, so painting past the edges costs nothing visible
-    // beyond what gets clipped.
     paint_radial_ellipse(
         painter,
         Pos2::new(rect.center().x, rect.bottom()),
@@ -265,13 +586,6 @@ pub fn paint_sky_background(painter: &egui::Painter, rect: Rect) {
 }
 
 /// Paint a vertical 3-stop linear gradient as a rect-filling mesh.
-/// The colour at `mid_pos` (0.0..=1.0 from top) is `mid_color`; top is
-/// `top_color`, bottom is `bot_color`. egui smooth-shades vertex colours
-/// so the result reads as a continuous gradient. Sharp corners — caller
-/// is responsible for hiding them under a rounded layer if needed.
-/// Used by `paint_sky_background` for the SF_1 → SF_2 → SF_3 base, and
-/// by `paint_bezel` for the gold-bezel body's vertical light → dark
-/// ramp.
 pub fn paint_vertical_gradient(
     painter: &egui::Painter,
     rect: Rect,
@@ -284,7 +598,6 @@ pub fn paint_vertical_gradient(
 
     let mid_y = rect.top() + rect.height() * mid_pos.clamp(0.0, 1.0);
     let mut mesh = Mesh::default();
-    // 6 vertices: 3 rows × 2 columns. Order: TL, TR, ML, MR, BL, BR.
     mesh.vertices.push(Vertex {
         pos: Pos2::new(rect.left(), rect.top()),
         uv: WHITE_UV,
@@ -315,21 +628,13 @@ pub fn paint_vertical_gradient(
         uv: WHITE_UV,
         color: bot_color,
     });
-    // Top quad (TL, TR, ML, MR) → 2 triangles.
     mesh.indices.extend([0, 1, 2, 1, 3, 2]);
-    // Bottom quad (ML, MR, BL, BR) → 2 triangles.
     mesh.indices.extend([2, 3, 4, 3, 5, 4]);
     painter.add(egui::Shape::mesh(mesh));
 }
 
-/// Paint a single soft ellipse that fades from `center_color` at the
-/// centre to fully transparent at the rim. Triangle-fan with one
-/// centre vertex + N rim vertices; egui smooth-shades the alpha
-/// between them, giving a passable radial-gradient look without
-/// needing a custom shader. Useful as a general-purpose glow primitive
-/// — sky background uses it for the top + bottom hue washes, the
-/// heraldic title (`paint_heraldic_title`) uses it for the soft gold
-/// halo behind the text.
+/// Paint a single soft ellipse that fades from `center_color` to
+/// fully transparent at the rim.
 pub fn paint_radial_ellipse(
     painter: &egui::Painter,
     center: Pos2,
@@ -367,94 +672,49 @@ pub fn paint_radial_ellipse(
     painter.add(egui::Shape::mesh(mesh));
 }
 
-/// Paint the starfield backdrop into `rect`. Sparse procedural stars
-/// at deterministic *angular* positions (seeded so the field doesn't
-/// shimmer frame-to-frame), with two animations:
-///
-///   1. **Radial outward drift** — each star travels from near the
-///      panel centre toward the edges along a fixed bearing, then
-///      wraps back to centre. Reads as "coming out of the screen,"
-///      which doesn't conflict with the vortex's own rotation (the
-///      first cut used a diagonal pan that fought the iris). Per-star
-///      fade-in near centre + fade-out near edge hides the wrap so
-///      no teleport is visible. Rate: ~5 px/s — half the previous
-///      diagonal speed per Chris's feedback 2026-04-19, since the
-///      effect is meant to be subtle.
-///   2. **Per-star alpha twinkle** — slow ~6s cycle, alpha bottoms at
-///      ~50%. Phase hashed per-star so neighbours don't pulse in
-///      lockstep.
-///
-/// Density: ~36 stars across the rect. Three colour tints (white,
-/// warm gold, cool blue) for variety. Painted *before* the vortex so
-/// clouds layer on top during Awaiting Connect; during Startup
-/// (vortex iris=0) the stars stand alone.
+/// Paint the CPU starfield — the production starfield, with three
+/// colour tints (white / warm gold / cool blue), radial outward
+/// drift with per-star fade-in/-out at the wrap, and per-star
+/// twinkle. The shader has its own internal `starfield()` function
+/// but it's spike-only (used while tuning); production sets
+/// `star_brightness = 0` on the shader and renders this CPU field
+/// AFTER the vortex so the stars sit visibly on top of the clouds.
 pub fn paint_starfield(painter: &egui::Painter, rect: Rect, time_s: f32) {
     const NUM_STARS: u32 = 36;
     const SEED: u32 = 0xCAFE_BABE;
-    /// Pixels per second along the radial outward bearing. Subtle —
-    /// over 30s a star travels ~150px, which on a 1080p panel is
-    /// visible motion without dominating the visual frame.
     const DRIFT_PX_PER_SEC: f32 = 5.0;
-    /// Fraction of the drift cycle at each end where stars fade
-    /// (in near centre, out near edge). 0.15 gives a smooth handoff
-    /// without making the visible-motion middle too short.
     const FADE_FRAC: f32 = 0.15;
 
-    // Reference resolution is 1920×1080; star sizes scale with the shorter
-    // rect axis so the density reads similarly on dev windows (900×1000)
-    // and the HTPC's 4K (3840×2160).
     let scale = (rect.width().min(rect.height()) / 1080.0).max(0.5);
     let centre = rect.center();
-    // Max radius = the distance from centre to the panel corner. Stars
-    // disappear (fade) before they reach this, so they're never painted
-    // outside the rect.
     let max_radius = ((rect.width() * 0.5).powi(2) + (rect.height() * 0.5).powi(2))
         .sqrt()
         .max(1.0);
-    // Drift advances the cycle phase. One full cycle (centre → edge →
-    // wrap) = max_radius / DRIFT_PX_PER_SEC seconds.
     let cycle_offset = (time_s * DRIFT_PX_PER_SEC / max_radius).rem_euclid(1.0);
 
     for i in 0..NUM_STARS {
-        // Four independent hash draws per star: bearing (theta), initial
-        // cycle phase, size+colour pick, twinkle phase. Hashing the seed
-        // + index gives a stable layout across frames and restarts.
         let h1 = star_hash(SEED.wrapping_add(i.wrapping_mul(0x9e37_79b9)));
         let h2 = star_hash(h1);
         let h3 = star_hash(h2);
         let h4 = star_hash(h3);
 
-        // Bearing — the fixed angle at which this star travels outward.
         let theta = (h1 as f32 / u32::MAX as f32) * std::f32::consts::TAU;
-        // Initial phase along the cycle in [0, 1). Plus the global
-        // cycle_offset, modulo 1.0, so stars are spread along the
-        // cycle at any moment (some near centre, some near edge).
         let base_phase = h2 as f32 / u32::MAX as f32;
         let depth = (base_phase + cycle_offset).rem_euclid(1.0);
 
-        // Position: centre + (cos, sin) * depth*max_radius.
         let r = depth * max_radius;
         let x = centre.x + theta.cos() * r;
         let y = centre.y + theta.sin() * r;
 
-        // Skip stars whose bearing happens to land outside the rect
-        // before they reach max_radius (panel isn't square; corners
-        // are farther than the cardinal sides). Cheap rect-contains
-        // check, no allocation.
         if x < rect.left() || x > rect.right() || y < rect.top() || y > rect.bottom() {
             continue;
         }
 
-        // Smooth fade in (near centre) + out (near edge) so the wrap
-        // is invisible. life_alpha goes 0→1 over [0..FADE_FRAC], stays
-        // 1 in the middle, then 1→0 over [1-FADE_FRAC..1].
         let fade_in = (depth / FADE_FRAC).clamp(0.0, 1.0);
         let fade_out = ((1.0 - depth) / FADE_FRAC).clamp(0.0, 1.0);
         let life_alpha = fade_in.min(fade_out);
 
         let size_choice = h3 as f32 / u32::MAX as f32;
-        // Most stars small (1px), a minority bigger (~2.5px) for the
-        // "depth" cue the mock's preview shots have.
         let radius = if size_choice < 0.7 {
             1.0 * scale
         } else if size_choice < 0.92 {
@@ -467,23 +727,13 @@ pub fn paint_starfield(painter: &egui::Painter, rect: Rect, time_s: f32) {
         let base = if colour_choice < 0.6 {
             (0xff, 0xff, 0xff)
         } else if colour_choice < 0.85 {
-            // Warm gold tint — picks up the heraldic palette without
-            // looking like the gold is leaking out of the bezels.
             (0xff, 0xe6, 0xb4)
         } else {
-            // Cool blue tint — keeps the field from looking monotone
-            // under a TV's gamma.
             (0xb4, 0xdc, 0xff)
         };
 
-        // Per-star twinkle phase derived from another hash bit so adjacent
-        // stars don't pulse in lockstep. Slow cycle (~6s) so it reads as
-        // ambient sparkle, not strobe. Alpha bottoms out at ~50% so stars
-        // never fully vanish.
         let phase = (h3 as f32 / u32::MAX as f32) * std::f32::consts::TAU;
         let twinkle = 0.5 + 0.5 * (0.5 * (time_s * 1.05 + phase).sin() + 0.5);
-        // Final alpha = twinkle * life_alpha. The life_alpha multiplier
-        // is the in-out fade that hides the centre→edge wrap.
         let alpha = (255.0 * twinkle * life_alpha) as u8;
 
         painter.circle_filled(
@@ -494,9 +744,6 @@ pub fn paint_starfield(painter: &egui::Painter, rect: Rect, time_s: f32) {
     }
 }
 
-/// Pseudo-random hash used by `paint_starfield` for deterministic star
-/// layout. Cheap integer mix from <https://nullprogram.com/blog/2018/07/31/>;
-/// we don't need cryptographic strength, just good distribution.
 fn star_hash(mut x: u32) -> u32 {
     x ^= x >> 16;
     x = x.wrapping_mul(0x7feb_352d);
@@ -504,35 +751,4 @@ fn star_hash(mut x: u32) -> u32 {
     x = x.wrapping_mul(0x846c_a68b);
     x ^= x >> 16;
     x
-}
-
-fn rgba(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
-    (r, g, b)
-}
-
-fn lerp_colour(a: (u8, u8, u8), b: (u8, u8, u8), t: f32) -> (u8, u8, u8) {
-    let t = t.clamp(0.0, 1.0);
-    (
-        (a.0 as f32 + (b.0 as i32 - a.0 as i32) as f32 * t) as u8,
-        (a.1 as f32 + (b.1 as i32 - a.1 as i32) as f32 * t) as u8,
-        (a.2 as f32 + (b.2 as i32 - a.2 as i32) as f32 * t) as u8,
-    )
-}
-
-fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
-    // Standard GLSL smoothstep. Handles edge0 > edge1 (used for the iris
-    // mask) via a plain division — no branch needed since the clamp
-    // deals with the overshoot either way.
-    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-
-fn mix(a: f32, b: f32, t: f32) -> f32 {
-    a + (b - a) * t
-}
-
-// Silence unused-import warnings for items we may add later during polish.
-#[allow(dead_code)]
-fn _unused_refs() -> (Vec2, Stroke, Color32) {
-    (Vec2::ZERO, Stroke::NONE, palette::SF_3)
 }

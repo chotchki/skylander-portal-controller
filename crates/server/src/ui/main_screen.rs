@@ -14,6 +14,7 @@
 use std::f32::consts::TAU;
 
 use super::LauncherApp;
+use super::launch_phase::LaunchPhase;
 use crate::state::{LauncherStatus, SessionPip};
 use crate::{fonts, palette};
 
@@ -21,8 +22,10 @@ use crate::{fonts, palette};
 /// when the bezel went circular — a circle inscribed in a square reads
 /// visually smaller than the same-sized square (the corners are gone),
 /// so the round bezel needed more bounding room to retain the same
-/// presence as the old rounded-square version.
-const CARD_SIZE: f32 = 420.0;
+/// presence as the old rounded-square version. Exposed `pub(super)`
+/// so other screens (e.g. `server_error`) can match the QR-card size
+/// when reusing `paint_titled_card`.
+pub(super) const CARD_SIZE: f32 = 420.0;
 
 /// How long the QR → back-face flip animation takes, in seconds. `egui`'s
 /// `animate_bool_with_time` uses this as the full 0→1 transition; we split
@@ -51,9 +54,11 @@ const BEZEL_RING_PX: f32 = 24.0;
 /// screen sitting inside a gold frame — the screen rim is a darker
 /// inner ring that frames the content. Total inset from the bezel
 /// rect to the QR texture / text is `BEZEL_RING_PX + SCREEN_RIM_PX`.
-/// Trimmed 8→3 alongside the gold-ring bump so the dark region stays
-/// subordinate — the phone pip's inner dark line is near-hairline.
-const SCREEN_RIM_PX: f32 = 3.0;
+/// Bounced 8→3→8→14 on 2026-04-19: 14 finally gives the dark border
+/// enough screen presence that the QR doesn't read as kissing the
+/// gold. Gold ring (24px) still dominates the dark (14px) ~1.7:1,
+/// matching the phone pip's gold-dominant proportion.
+const SCREEN_RIM_PX: f32 = 14.0;
 
 /// Width (in QR modules) of the clear quiet-zone ring between the QR
 /// data and the surrounding circular noise field. Spike on 2026-04-19
@@ -88,7 +93,7 @@ impl LauncherApp {
         // match the mock's on-screen presence (Chris's screenshot
         // 2026-04-19). render_main's "SKYLANDER PORTAL" steady-state
         // title is a separate drift item (4.19.19) still on 80px.
-        paint_heraldic_title(ui.painter(), pos, "STARTING", 140.0);
+        paint_heraldic_title(ui.painter(), pos, "STARTING", 140.0, 1.0);
     }
 
     /// Render the Main surface. Called from the top-level dispatcher in
@@ -111,6 +116,7 @@ impl LauncherApp {
         ui: &mut egui::Ui,
         ctx: &egui::Context,
         status_snapshot: &LauncherStatus,
+        launch_phase: LaunchPhase,
     ) {
         // Paint the orbit pips *before* any widgets lay out. Immediate-mode
         // egui paints shapes in submission order, so these land above the
@@ -140,7 +146,17 @@ impl LauncherApp {
                 // paints the front / back face directly via Painter so the
                 // Y-axis rotation reads as a horizontal scale without any
                 // custom matrix math — egui-native, see the helper doc.
-                qr_card_flip(ui, ctx, tex, status_snapshot.session_slots_full);
+                // The launch_phase factors layer ONTO the flip scale —
+                // intro spin-in, close spin-out — and tint the QR/text
+                // alpha so content fades independently of the scale.
+                qr_card_flip(
+                    ui,
+                    ctx,
+                    tex,
+                    status_snapshot.session_slots_full,
+                    launch_phase.badge_scale(),
+                    launch_phase.badge_text_alpha(),
+                );
             }
 
             ui.add_space(24.0);
@@ -148,7 +164,9 @@ impl LauncherApp {
             // "SCAN TO CONNECT" label, heraldic — closes 4.19.10. Mock
             // calls this "TV display lg" (64px). Allocate a fixed-height
             // strip to land the painter call in the right rect, then
-            // paint the title centred inside it.
+            // paint the title centred inside it. Alpha tracks the
+            // badge text fade so the label disappears alongside the
+            // QR content during the close-to-in-game animation.
             let label_height = 96.0;
             let label_rect = ui
                 .allocate_exact_size(
@@ -156,7 +174,13 @@ impl LauncherApp {
                     egui::Sense::hover(),
                 )
                 .0;
-            paint_heraldic_title(ui.painter(), label_rect.center(), "SCAN TO CONNECT", 64.0);
+            paint_heraldic_title(
+                ui.painter(),
+                label_rect.center(),
+                "SCAN TO CONNECT",
+                64.0,
+                launch_phase.badge_text_alpha(),
+            );
 
             // Push the Exit to Desktop button toward the bottom of the
             // panel. Visible escape hatch — kept regardless of mock per
@@ -190,7 +214,14 @@ impl LauncherApp {
 /// and expands back). `animate_bool_with_time` drives the 0→1 progress;
 /// the scale is `|2·progress − 1|`, peaking at 0 in the middle where we
 /// swap content. `FLIP_DURATION` sets the overall transition time.
-fn qr_card_flip(ui: &mut egui::Ui, ctx: &egui::Context, tex: &egui::TextureHandle, flipped: bool) {
+fn qr_card_flip(
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    tex: &egui::TextureHandle,
+    flipped: bool,
+    phase_scale: f32,
+    content_alpha: f32,
+) {
     // `animate_bool_with_time` interpolates 0.0 → 1.0 when `flipped` goes
     // true, and 1.0 → 0.0 when it goes false. Unique id so multiple
     // instances don't alias animations.
@@ -198,9 +229,18 @@ fn qr_card_flip(ui: &mut egui::Ui, ctx: &egui::Context, tex: &egui::TextureHandl
     let progress = ctx.animate_bool_with_time(id, flipped, FLIP_DURATION);
 
     // Tent wave: 1 at the edges, 0 in the middle. Represents the x-scale
-    // of the visible face; hits 0 at the flip midpoint.
-    let scale = (progress * 2.0 - 1.0).abs();
+    // of the visible face from the flip animation; hits 0 at the flip
+    // midpoint where we swap content.
+    let flip_scale = (progress * 2.0 - 1.0).abs();
     let show_back = progress > 0.5;
+
+    // Final horizontal scale = flip × phase. The phase factor handles
+    // the intro spin-in (0 → 1) and close spin-out (1 → 0); the flip
+    // factor handles the in-place QR↔back-face card flip when the
+    // session count saturates. Multiplying composes them naturally —
+    // a flip mid-spin would scale to (mostly invisible) × (mostly
+    // invisible), which is the right visual.
+    let scale = flip_scale * phase_scale;
 
     // Reserve the full square so layout below doesn't shift during the
     // animation.
@@ -220,9 +260,9 @@ fn qr_card_flip(ui: &mut egui::Ui, ctx: &egui::Context, tex: &egui::TextureHandl
 
     let painter = ui.painter();
     if show_back {
-        paint_back_face(painter, inner);
+        paint_back_face(painter, inner, content_alpha);
     } else {
-        paint_qr_front(painter, inner, tex);
+        paint_qr_front(painter, inner, tex, content_alpha);
     }
 }
 
@@ -472,7 +512,12 @@ fn lerp_color(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 {
 /// land in the SF_3 disc area, so they read as continuous SF_3 rim
 /// rather than gold — visually the noise/QR composition sits inside
 /// a clean dark monitor frame with a gold bezel around the whole.
-fn paint_qr_front(painter: &egui::Painter, rect: egui::Rect, tex: &egui::TextureHandle) {
+fn paint_qr_front(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    tex: &egui::TextureHandle,
+    content_alpha: f32,
+) {
     paint_bezel(painter, rect);
 
     let center = rect.center();
@@ -486,23 +531,50 @@ fn paint_qr_front(painter: &egui::Painter, rect: egui::Rect, tex: &egui::Texture
     );
 
     let qr_rect = rect.shrink(BEZEL_RING_PX + SCREEN_RIM_PX);
+    // Tint the QR image by `content_alpha` so the QR fades in late
+    // during the intro reveal and out early during the close-to-in-game
+    // animation, while the bezel stays solid (only its scale changes).
+    let tint_a = (content_alpha.clamp(0.0, 1.0) * 255.0) as u8;
     painter.image(
         tex.id(),
         qr_rect,
         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-        egui::Color32::WHITE,
+        egui::Color32::from_rgba_unmultiplied(255, 255, 255, tint_a),
     );
 }
 
-/// Back face — same bezel geometry, Titan One gold text reading
-/// `MAXIMUM PLAYERS REACHED`. Matches the mock's state 5 copy split
-/// across three lines so the letters stay big at 10 ft.
-fn paint_back_face(painter: &egui::Painter, rect: egui::Rect) {
+/// Back face — same circular bezel + dark screen rim + SF_1 content
+/// disc as the QR front face, but with a 3-line `MAXIMUM PLAYERS
+/// REACHED` title in Titan One instead of a QR. Thin wrapper around
+/// the shared [`paint_titled_card`] helper so the back face and the
+/// `server_error` surface (and any future card-style screens) stay
+/// visually identical.
+fn paint_back_face(painter: &egui::Painter, rect: egui::Rect, text_alpha: f32) {
+    paint_titled_card(painter, rect, &["MAXIMUM", "PLAYERS", "REACHED"], text_alpha);
+}
+
+/// Paint a circular bezel + dark "monitor screen" rim + SF_1 inner
+/// disc carrying centred Titan One title text. Used by the QR card's
+/// back face (`MAXIMUM PLAYERS REACHED`) and the server-error screen
+/// (`SERVER FAILED TO START`). Geometry matches `paint_qr_front`'s
+/// layered layout so different surfaces sharing a card silhouette
+/// (e.g. card-flip transitions, screen swaps) read as one design
+/// language.
+///
+/// Font size auto-scales from the inner disc radius and the line
+/// count so 2-line vs 3-line vs 4-line titles all stay legible without
+/// clipping the curved edges of the inscribed square.
+pub(super) fn paint_titled_card(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    lines: &[&str],
+    text_alpha: f32,
+) {
     paint_bezel(painter, rect);
 
-    // Layered like paint_qr_front: SF_3 screen rim + thin GOLD_SHADOW
-    // stroke + inner SF_1 disc carrying the text. Same screen geometry
-    // as the QR-front so the card-flip silhouette is stable.
+    // Layered identically to paint_qr_front: SF_3 screen rim + thin
+    // GOLD_SHADOW stroke + inner SF_1 disc. Same screen geometry as
+    // the QR-front so the card-flip silhouette is stable.
     let center = rect.center();
     let outer_r = rect.width().min(rect.height()) / 2.0;
     let screen_r = outer_r - BEZEL_RING_PX;
@@ -513,26 +585,42 @@ fn paint_back_face(painter: &egui::Painter, rect: egui::Rect) {
         egui::Stroke::new(1.0, palette::GOLD_SHADOW),
     );
 
-    // SF_1 inner "screen content" disc. Slightly smaller than screen_r
-    // so the SF_3 rim shows around it.
     let inner_r = screen_r - SCREEN_RIM_PX;
     painter.circle_filled(center, inner_r, palette::SF_1);
 
-    // Three-line title centred on the inner disc. Layout box is the
-    // inscribed square so text doesn't clip the curved edges.
-    let lines = ["MAXIMUM", "PLAYERS", "REACHED"];
+    // Layout box is the inscribed square so text never strays into the
+    // curved edges of the inner disc where it would clip visually.
     let inscribed_half = inner_r * std::f32::consts::FRAC_1_SQRT_2;
-    let line_h = (inscribed_half * 2.0) / lines.len() as f32;
+    let n = lines.len().max(1) as f32;
+    let line_h = (inscribed_half * 2.0) / n;
+    // Font size = 55% of line height, clamped so single-word lines
+    // don't blow up and tight 4-line cards stay readable.
+    let font_size = (line_h * 0.55).clamp(20.0, 56.0);
+    let text_color = with_alpha(palette::GOLD_BRIGHT, text_alpha);
     for (i, word) in lines.iter().enumerate() {
         let y = center.y - inscribed_half + line_h * (i as f32 + 0.5);
         painter.text(
             egui::pos2(center.x, y),
             egui::Align2::CENTER_CENTER,
-            word,
-            egui::FontId::new(44.0, egui::FontFamily::Name(fonts::TITAN_ONE.into())),
-            palette::GOLD_BRIGHT,
+            *word,
+            egui::FontId::new(font_size, egui::FontFamily::Name(fonts::TITAN_ONE.into())),
+            text_color,
         );
     }
+}
+
+/// Re-tint a (likely solid) `Color32` by an additional alpha factor.
+/// Used to fade text + content layers during launch-phase transitions
+/// without touching the shape geometry. The shader treats Color32 as
+/// premultiplied, so we scale RGB and alpha together.
+pub(super) fn with_alpha(color: egui::Color32, alpha: f32) -> egui::Color32 {
+    let a = alpha.clamp(0.0, 1.0);
+    egui::Color32::from_rgba_premultiplied(
+        ((color.r() as f32) * a) as u8,
+        ((color.g() as f32) * a) as u8,
+        ((color.b() as f32) * a) as u8,
+        ((color.a() as f32) * a) as u8,
+    )
 }
 
 /// Paint the player-orbit indicators (PLAN 4.15.7). Up to `MAX_SESSIONS`
@@ -672,7 +760,19 @@ fn parse_hex_color(s: &str) -> Option<egui::Color32> {
 /// Called by `render_brand_intro` for the Startup beat. Render_main's
 /// title still uses `ui.heading(...)` flat — switching that over is
 /// 4.19.19's territory and would mean restructuring the layout stack.
-fn paint_heraldic_title(painter: &egui::Painter, pos: egui::Pos2, text: &str, size: f32) {
+fn paint_heraldic_title(
+    painter: &egui::Painter,
+    pos: egui::Pos2,
+    text: &str,
+    size: f32,
+    alpha: f32,
+) {
+    // Skip the whole stack if the title is fully faded — saves the
+    // text-layout cost during launch-phase transitions where alpha
+    // sits at 0 for the early/late portions of the close.
+    if alpha <= 0.001 {
+        return;
+    }
     let font = egui::FontId::new(size, egui::FontFamily::Name(fonts::TITAN_ONE.into()));
 
     // 1. Outer gold halo. The first cut painted 36 offset copies of
@@ -704,19 +804,24 @@ fn paint_heraldic_title(painter: &egui::Painter, pos: egui::Pos2, text: &str, si
     let inner = palette::GOLD;
     let outer_pad = size * 1.45;
     let inner_pad = size * 0.75;
+    // Each layer's color is multiplied by the launch-phase alpha so
+    // the whole stack fades together — fade is uniform across glow,
+    // shadow, carve, and body, no layers strobing relative to each
+    // other.
+    let scale_alpha = |a: u8| ((a as f32) * alpha.clamp(0.0, 1.0)) as u8;
     crate::vortex::paint_radial_ellipse(
         painter,
         pos,
         text_size.x * 0.5 + outer_pad,
         text_size.y * 0.5 + outer_pad,
-        egui::Color32::from_rgba_unmultiplied(outer.r(), outer.g(), outer.b(), 5),
+        egui::Color32::from_rgba_unmultiplied(outer.r(), outer.g(), outer.b(), scale_alpha(5)),
     );
     crate::vortex::paint_radial_ellipse(
         painter,
         pos,
         text_size.x * 0.5 + inner_pad,
         text_size.y * 0.5 + inner_pad,
-        egui::Color32::from_rgba_unmultiplied(inner.r(), inner.g(), inner.b(), 15),
+        egui::Color32::from_rgba_unmultiplied(inner.r(), inner.g(), inner.b(), scale_alpha(15)),
     );
 
     // 2. Soft drop shadow. Two layers at +5/+7px below — the lower one
@@ -727,14 +832,14 @@ fn paint_heraldic_title(painter: &egui::Painter, pos: egui::Pos2, text: &str, si
         egui::Align2::CENTER_CENTER,
         text,
         font.clone(),
-        egui::Color32::from_rgba_unmultiplied(0, 0, 0, 130),
+        egui::Color32::from_rgba_unmultiplied(0, 0, 0, scale_alpha(130)),
     );
     painter.text(
         pos + egui::vec2(0.0, (size * 0.085).max(6.0)),
         egui::Align2::CENTER_CENTER,
         text,
         font.clone(),
-        egui::Color32::from_rgba_unmultiplied(0, 0, 0, 70),
+        egui::Color32::from_rgba_unmultiplied(0, 0, 0, scale_alpha(70)),
     );
 
     // 3. Carve under-layers. Two stacked offsets in deepening gold
@@ -747,14 +852,14 @@ fn paint_heraldic_title(painter: &egui::Painter, pos: egui::Pos2, text: &str, si
         egui::Align2::CENTER_CENTER,
         text,
         font.clone(),
-        palette::GOLD_INK,
+        with_alpha(palette::GOLD_INK, alpha),
     );
     painter.text(
         pos + egui::vec2(0.0, (size * 0.022).max(1.5)),
         egui::Align2::CENTER_CENTER,
         text,
         font.clone(),
-        palette::GOLD_SHADOW,
+        with_alpha(palette::GOLD_SHADOW, alpha),
     );
 
     // 4. Bright body on top.
@@ -763,7 +868,7 @@ fn paint_heraldic_title(painter: &egui::Painter, pos: egui::Pos2, text: &str, si
         egui::Align2::CENTER_CENTER,
         text,
         font,
-        palette::GOLD_BRIGHT,
+        with_alpha(palette::GOLD_BRIGHT, alpha),
     );
 }
 
@@ -804,9 +909,15 @@ pub(super) fn render_qr_texture(ctx: &egui::Context, url: &str) -> egui::Texture
     // reliability at TV viewing distance.
     let scale: u32 = 14;
     // Canvas leaves the standard 4-module quiet zone reserved in its
-    // dimensions, plus 6 modules of breathing room outside the noise
-    // ring. Total square edge in modules:
-    let breathing: u32 = 6;
+    // dimensions, plus N modules of breathing room outside the noise
+    // ring. Bumped 6→8 on 2026-04-19: at 6 the QR's diagonal CORNERS
+    // sat at ~29.0 modules from center while the noise circle was at
+    // ~29.5 modules — only ~0.5 module of diagonal quiet zone, which
+    // mapped to ~3 screen pixels and made the QR read as touching
+    // the SF_3 rim. 8 pushes the noise circle out to ~31.5 modules
+    // for a comfortable diagonal quiet zone without shrinking the
+    // QR data so much that scanning gets harder.
+    let breathing: u32 = 8;
     let canvas_modules = n + 2 * (4 + breathing);
     let canvas_px = canvas_modules * scale;
     let img_w = canvas_px as usize;
@@ -870,7 +981,13 @@ pub(super) fn render_qr_texture(ctx: &egui::Context, url: &str) -> egui::Texture
 
     // Pass 2: noise modules. Iterate per-module (not per-pixel) so each
     // "noise dot" is a crisp QR-sized square — visually consistent
-    // with the real QR's data modules.
+    // with the real QR's data modules. Per-pixel circle clip during
+    // painting: a module whose CENTER is just inside the noise circle
+    // would otherwise have its 14×14 box extend a few pixels past
+    // the circle boundary into the texture's transparent corner zone,
+    // producing blue dots that bleed into the SF_3 screen rim around
+    // the bezel (Chris flagged 2026-04-19). The center test alone
+    // isn't enough; we also clip each painted pixel to the circle.
     let mut bit_idx = 0u32;
     for my in 0..canvas_modules {
         for mx in 0..canvas_modules {
@@ -887,8 +1004,23 @@ pub(super) fn render_qr_texture(ctx: &egui::Context, url: &str) -> egui::Texture
             }
             let dark = bit_at(bit_idx);
             bit_idx = bit_idx.wrapping_add(1);
-            if dark {
-                paint_module_into(&mut pixels, img_w, mx, my, scale, noise_blue);
+            if !dark {
+                continue;
+            }
+            let x0 = (mx * scale) as usize;
+            let y0 = (my * scale) as usize;
+            let s = scale as usize;
+            for ddy in 0..s {
+                let py = y0 + ddy;
+                let dpy = py as f32 + 0.5 - qr_center_px;
+                let dpy2 = dpy * dpy;
+                for ddx in 0..s {
+                    let px = x0 + ddx;
+                    let dpx = px as f32 + 0.5 - qr_center_px;
+                    if dpx * dpx + dpy2 <= r2 {
+                        pixels[py * img_w + px] = noise_blue;
+                    }
+                }
             }
         }
     }

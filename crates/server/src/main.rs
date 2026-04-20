@@ -116,6 +116,7 @@ fn main() -> Result<()> {
     let figure_index_for_task = figure_index.clone();
     let games_for_task = games.clone();
 
+    let status_for_errors = launcher_status.clone();
     let _server_thread = std::thread::Builder::new()
         .name("tokio".into())
         .spawn(move || {
@@ -123,19 +124,32 @@ fn main() -> Result<()> {
                 .enable_all()
                 .build()
                 .expect("build tokio runtime");
+            // Helper: log + flip the launcher screen to ServerError so the
+            // egui surface shows a real diagnostic instead of a QR that
+            // points at a server that isn't there. Each failure path below
+            // calls this and then returns — the tokio thread exits but
+            // egui keeps running and renders the message.
+            let report_fatal = |scope: &str, err: &dyn std::fmt::Display| {
+                tracing::error!("{scope}: {err}");
+                if let Ok(mut st) = status_for_errors.lock() {
+                    st.screen = state::LauncherScreen::ServerError {
+                        message: format!("{scope}: {err}"),
+                    };
+                }
+            };
             rt.block_on(async move {
                 let (driver, test_mock): (Arc<dyn PortalDriver>, _) =
                     match build_driver(driver_kind) {
                         Ok(d) => d,
                         Err(e) => {
-                            tracing::error!("failed to construct driver: {e}");
+                            report_fatal("failed to construct driver", &e);
                             return;
                         }
                     };
                 let db_path = match crate::profiles::resolve_db_path() {
                     Ok(p) => p,
                     Err(e) => {
-                        tracing::error!("resolve db path: {e}");
+                        report_fatal("resolve db path", &e);
                         return;
                     }
                 };
@@ -143,7 +157,7 @@ fn main() -> Result<()> {
                 let profile_store = match crate::profiles::ProfileStore::open(&db_path).await {
                     Ok(s) => s,
                     Err(e) => {
-                        tracing::error!("open profile store: {e}");
+                        report_fatal("open profile store", &e);
                         return;
                     }
                 };
@@ -198,12 +212,23 @@ fn main() -> Result<()> {
                 let () = test_mock;
 
                 let app = http::router(state.clone(), phone_dist);
-                let listener = tokio::net::TcpListener::bind(bind_addr)
-                    .await
-                    .expect("bind");
+                // Bind is the most common startup failure (port already
+                // in use, permission denied on a privileged port). Don't
+                // panic — flip the launcher to ServerError so the user
+                // sees the actual reason instead of a closed window.
+                let listener = match tokio::net::TcpListener::bind(bind_addr).await {
+                    Ok(l) => l,
+                    Err(e) => {
+                        report_fatal(&format!("bind {bind_addr}"), &e);
+                        return;
+                    }
+                };
                 info!("serving on http://{bind_addr}");
                 if let Err(e) = axum::serve(listener, app).await {
-                    warn!("axum server exited: {e}");
+                    // axum exits non-cleanly: same surface as a startup
+                    // failure (the phone QR no longer points at a live
+                    // server, so showing it would be dishonest).
+                    report_fatal("axum server exited", &e);
                 }
             });
         })

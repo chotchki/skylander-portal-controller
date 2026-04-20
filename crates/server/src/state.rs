@@ -135,6 +135,15 @@ pub enum LauncherScreen {
     /// action (or a dev `/api/shutdown` curl). The egui screen displays a
     /// short farewell then calls `ViewportCommand::Close` after ~3s.
     Farewell,
+    /// Backend startup failed — the tokio thread couldn't construct the
+    /// driver, open the profile DB, bind the listener, etc. Phones can't
+    /// connect because nothing's serving HTTP, so the QR screen would be
+    /// dishonest. Set by the tokio thread on each failure path; the egui
+    /// surface shows the human-readable `message` and an Exit button.
+    /// (Recovery is manual — the typical fix is "free port 8080" or
+    /// "restore the corrupt db file", neither of which the launcher can
+    /// do for the user.)
+    ServerError { message: String },
 }
 
 impl AppState {

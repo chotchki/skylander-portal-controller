@@ -1,0 +1,40 @@
+{
+  "iris_radius": 0.0,
+  "iris_softness": 0.25,
+  "iris_mode": "DarkHole",
+  "rotation_speed": 0.1,
+  "streak_outward": true,
+  "inflow_speed": 0.3,
+  "spiral_tightness": 1.8,
+  "cloud_brightness": 1.0,
+  "cloud_bias": 0.42,
+  "radial_freq": 3.35,
+  "angular_freq": 0.25,
+  "thickness": 3.6,
+  "octaves": 4,
+  "persistence": 0.55,
+  "layer2_strength": 0.0,
+  "streak_strength": 0.91,
+  "streak_freq": 12.6,
+  "streak_speed": 1.0,
+  "time_offset": 300.0,
+  "color_deep": [
+    0.0079999985,
+    0.03100003,
+    0.094
+  ],
+  "color_mid": [
+    0.043000005,
+    0.11799993,
+    0.322
+  ],
+  "color_wisp": [
+    0.85,
+    0.92,
+    1.0
+  ],
+  "star_brightness": 0.9,
+  "star_density": 24.0,
+  "iris_glow": 0.0,
+  "transparent": false
+}

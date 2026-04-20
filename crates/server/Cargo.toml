@@ -33,6 +33,14 @@ tower-http = { version = "0.6", features = ["fs", "trace", "set-header"] }
 futures-util = "0.3"
 eframe = { version = "0.29", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 egui = "0.29"
+# Direct GL access for the vortex fragment shader (PLAN 4.19.6). eframe
+# pulls these in transitively for the glow backend, but we depend on
+# them explicitly so we can build a `ShaderRig` + `egui::PaintCallback`
+# in `vortex.rs`. Originally dev-deps for the spike at
+# `examples/vortex_shader_spike.rs`; promoted to runtime once the spike
+# graduated.
+egui_glow = "0.29"
+glow = "0.14"
 qrcode = "0.14"
 image = { version = "0.25", default-features = false, features = ["png"] }
 local-ip-address = "0.6"
@@ -80,6 +88,8 @@ tempfile = "3"
 # (e.g. dev_log handler) to drive a router without spinning up a server.
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+# (egui_glow + glow promoted to runtime deps above for the production
+# vortex shader; spike uses the same crates.)
 
 [features]
 default = ["dev-tools"]
