@@ -2,9 +2,17 @@
 
 Covers PLAN 4.3.4 (modal stack) and 4.3.5 (navigation map). Authoritative for the Leptos routing + overlay logic.
 
+**How to read this doc.** Each top-level section below is tagged with its nature:
+
+- **[Contract]** — load-bearing rules the code + tests must honor. Drift = bug: either fix the code to match, or update this doc because the rule was wrong. Audit when touching nearby code.
+- **[Snapshot]** — design spec captured at a point in time; shipped code is known to diverge. Reconciliation tracked in the referenced PLAN items. Treat like a mock — useful reference, not authoritative.
+- **[Roadmap]** — pointer list of not-yet-built things; overlaps with PLAN's open-items list.
+
+When in doubt: code + tests are truth, this doc is guidance.
+
 ---
 
-## 1. Screen graph
+## 1. Screen graph [Contract]
 
 ```
                  ┌──────────────┐
@@ -107,7 +115,7 @@ Covers PLAN 4.3.4 (modal stack) and 4.3.5 (navigation map). Authoritative for th
 
 ---
 
-## 2. Modal stack semantics
+## 2. Modal stack semantics [Contract]
 
 ### Taxonomy
 
@@ -165,7 +173,9 @@ Every overlay in the app falls into one of three categories:
 
 ---
 
-## 3. TV Launcher — egui state machine (PLAN 4.15)
+## 3. TV Launcher — egui state machine (PLAN 4.15) [Snapshot — reconciled by PLAN 4.19.x]
+
+> This section is a design snapshot that the 4.19.x drift reconciliation is grinding against. Shipped code currently implements 3 of the 8 states described below; the cloud vortex is a polar-mesh approximation rather than the WebGL simplex-FBM shader documented in §3.2 (full port tracked at PLAN 4.15a.7). Treat subsections as design intent, not current behavior — cross-reference PLAN 4.19 for per-item status.
 
 The TV launcher is a separate egui window running on the PC, shown fullscreen on the 86" TV. It's NOT a web page — it's a native `eframe` app. But it follows the same design language (starfield, gold, Titan One) adapted for lean-back 10-foot viewing.
 
@@ -349,7 +359,7 @@ Minimum: 24px for anything readable. Nothing smaller.
 
 ---
 
-## 3.8 Phone-side crash handling
+## 3.8 Phone-side crash handling [Contract — shipped via PLAN 4.15.14]
 
 When RPCS3 crashes, the **TV launcher** shows the crash recovery screen (§3.1). But the **phone** also needs to react — the portal is now dead, and any tap will fail silently.
 
@@ -374,15 +384,13 @@ When RPCS3 crashes, the **TV launcher** shows the crash recovery screen (§3.1).
 
 ---
 
-## 4. Future screen landing spots
+## 4. Future screen landing spots [Roadmap]
 
-Screens not yet implemented that need a place in the graph:
+Tracked as PLAN carryover — graph edges land alongside each feature as it ships, so §1 is the living source and this section was purely bookkeeping. Cross-reference:
 
-| Future screen | Entry point | Category |
-|--------------|-------------|----------|
-| **Stats drill-down** (6.3) | FigureDetail → stats action icon | Inline overlay (extends the FigureDetail panel or slides a sub-panel) |
-| **Variant cycling** (3.14) | FigureDetail → appearance action icon | Inline UI within FigureDetail (carousel or swipe on the hero bezel) |
-| **Reset-to-fresh flow** (3.11.3) | FigureDetail → reset action icon | Opens ResetConfirm scrim modal |
-| **Ownership badge** (3.10.7) | Portal slot — always visible on occupied slots | Portal-screen decoration, not a navigation target |
-| **Show-join-code** (3.10.8) | MenuOverlay — QR is inline, not a separate screen | Already in MenuOverlay mock |
-| **Crystal extra-confirm** (3.11.4) | ResetConfirm variant for Imaginators creation crystals | Same modal, stronger warning copy |
+- Stats drill-down → `FigureDetail` stats icon — PLAN 6.3
+- Variant cycling → `FigureDetail` appearance icon — PLAN 3.14
+- Reset-to-fresh → `FigureDetail` reset icon → `ResetConfirm` — PLAN 3.11.3 (shipped) + crystal-variant 3.11.4
+- Ownership badge → Portal slot decoration — PLAN 3.10.7 + data-wiring 4.18.17 (shipped)
+- Show-join-code → inside `MenuOverlay` QR card — PLAN 3.10.8
+- Crystal extra-confirm → `ResetConfirm` variant — PLAN 3.11.4
