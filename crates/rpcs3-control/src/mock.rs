@@ -33,6 +33,10 @@ pub struct MockPortalDriver {
     latency: Duration,
     /// Queued outcomes for upcoming `load` calls.
     load_queue: Mutex<VecDeque<MockOutcome>>,
+    /// Mocked library enumeration result. Defaults to empty so unconfigured
+    /// tests get the "stale games.yml" error path; tests that need the
+    /// happy path call `set_enumerated_games` to publish serials.
+    enumerated_games: Mutex<Vec<String>>,
 }
 
 impl MockPortalDriver {
@@ -46,6 +50,7 @@ impl MockPortalDriver {
             dialog_open: Mutex::new(false),
             latency,
             load_queue: Mutex::new(VecDeque::new()),
+            enumerated_games: Mutex::new(Vec::new()),
         }
     }
 
@@ -60,6 +65,14 @@ impl MockPortalDriver {
     /// Clear any queued outcomes without touching the slot state.
     pub fn clear_queue(&self) {
         self.load_queue.lock().unwrap().clear();
+    }
+
+    /// Set the list of serials that the next `enumerate_games` call will
+    /// return. Replaces any previous list. Drives the 3.7.8 verify-at-launch
+    /// test path: empty (default) simulates "no library / serial missing",
+    /// `vec!["BLUS31076"]` simulates a library that has SWAP Force only.
+    pub fn set_enumerated_games(&self, serials: Vec<String>) {
+        *self.enumerated_games.lock().unwrap() = serials;
     }
 
     fn delay(&self) {
@@ -134,6 +147,10 @@ impl PortalDriver for MockPortalDriver {
         // running game directly into server state.
         Ok(())
     }
+
+    fn enumerate_games(&self, _timeout: Duration) -> Result<Vec<String>> {
+        Ok(self.enumerated_games.lock().unwrap().clone())
+    }
 }
 
 #[cfg(test)]
@@ -185,6 +202,21 @@ mod tests {
             d.load(SlotIndex::new(0).unwrap(), &PathBuf::from("b.sky"))
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn enumerate_games_defaults_empty_and_round_trips_set() {
+        let d = MockPortalDriver::with_latency(Duration::ZERO);
+        // Default: empty list = "no library / nothing installed".
+        assert!(d.enumerate_games(Duration::ZERO).unwrap().is_empty());
+
+        d.set_enumerated_games(vec!["BLUS31076".into(), "BLUS31442".into()]);
+        let serials = d.enumerate_games(Duration::ZERO).unwrap();
+        assert_eq!(serials, vec!["BLUS31076", "BLUS31442"]);
+
+        // Replaces, doesn't append.
+        d.set_enumerated_games(vec!["BLUS30968".into()]);
+        assert_eq!(d.enumerate_games(Duration::ZERO).unwrap(), vec!["BLUS30968"]);
     }
 
     #[test]

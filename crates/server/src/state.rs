@@ -333,6 +333,15 @@ pub enum DriverJob {
         timeout: std::time::Duration,
         done: tokio::sync::oneshot::Sender<Result<()>>,
     },
+    /// Walk RPCS3's library view and return every visible serial. PLAN
+    /// 3.7.8 phase 1 — `/api/launch` calls this between `wait_ready` and
+    /// `BootGame` so a request for a stale `games.yml` serial fails fast
+    /// with a specific error instead of hitting `boot_game_by_serial`'s
+    /// generic timeout.
+    EnumerateGames {
+        timeout: std::time::Duration,
+        done: tokio::sync::oneshot::Sender<Result<Vec<String>>>,
+    },
 }
 
 /// Spawn the RPCS3 shader-compile watchdog. Tails RPCS3's log file
@@ -741,6 +750,14 @@ async fn handle_job(
             // If the receiver dropped (handler timed out or errored),
             // silently ignore — the worker's contract is fulfilled by
             // having driven the driver; nobody is listening for the ack.
+            let _ = done.send(result);
+        }
+        DriverJob::EnumerateGames { timeout, done } => {
+            let d = driver.clone();
+            let result = tokio::task::spawn_blocking(move || d.enumerate_games(timeout))
+                .await
+                .map_err(|e| anyhow::anyhow!("enumerate task panicked: {e}"))
+                .and_then(|r| r);
             let _ = done.send(result);
         }
     }

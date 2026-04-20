@@ -40,6 +40,18 @@ pub trait PortalDriver: Send + Sync {
     /// process to boot). Called by the server's `/api/launch` handler after
     /// `open_dialog()` so Qt's focus state is cold when boot runs.
     fn boot_game_by_serial(&self, serial: &str, timeout: Duration) -> Result<()>;
+
+    /// Enumerate every game serial currently visible in RPCS3's library
+    /// view. Prereq: RPCS3 is at the game-list table (same prereq as
+    /// `boot_game_by_serial`). The UIA impl walks `game_list_table` for
+    /// `DataItem`s and returns each item's name (the PS3 serial, e.g.
+    /// `"BLUS31076"`). The mock impl returns whatever was previously
+    /// `set_enumerated_games`d (default empty). Used by `/api/launch` to
+    /// verify a requested serial actually exists in the library before
+    /// committing to a boot, so a stale `games.yml` entry produces a
+    /// fast specific error instead of a slow generic boot timeout
+    /// (PLAN 3.7.8 phase 1).
+    fn enumerate_games(&self, timeout: Duration) -> Result<Vec<String>>;
 }
 
 #[cfg(windows)]

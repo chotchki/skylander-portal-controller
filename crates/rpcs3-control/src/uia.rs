@@ -810,6 +810,26 @@ impl crate::PortalDriver for UiaPortalDriver {
         }
         bail!("game viewport didn't appear within {timeout:?} after boot attempt");
     }
+
+    #[instrument(skip(self))]
+    fn enumerate_games(&self, _timeout: Duration) -> Result<Vec<String>> {
+        let walker = self.walker()?;
+        let main = self.main_window(&walker)?;
+        let items = collect_descendants(&walker, &main, |el| {
+            el.get_control_type()
+                .map(|c| c == ControlType::DataItem)
+                .unwrap_or(false)
+        });
+        let mut serials: Vec<String> = items
+            .iter()
+            .filter_map(|el| el.get_name().ok())
+            .filter(|n| !n.is_empty())
+            .collect();
+        serials.sort();
+        serials.dedup();
+        debug!(count = serials.len(), "enumerated library serials");
+        Ok(serials)
+    }
 }
 
 fn interpret_slot_value(value: &str) -> SlotState {
@@ -1120,6 +1140,37 @@ where
         None
     }
     recurse(walker, root, &pred, 0)
+}
+
+/// Walk the entire descendant tree (depth-first) and collect every element
+/// matching `pred`. Mirrors `find_descendant`'s recursion + 15-deep cap;
+/// used by `enumerate_games` to gather all `DataItem`s under the library.
+fn collect_descendants<F>(walker: &UITreeWalker, root: &UIElement, pred: F) -> Vec<UIElement>
+where
+    F: Fn(&UIElement) -> bool,
+{
+    fn recurse<F: Fn(&UIElement) -> bool>(
+        walker: &UITreeWalker,
+        el: &UIElement,
+        pred: &F,
+        depth: usize,
+        out: &mut Vec<UIElement>,
+    ) {
+        if depth > 15 {
+            return;
+        }
+        if pred(el) {
+            out.push(el.clone());
+        }
+        let mut child = walker.get_first_child(el).ok();
+        while let Some(c) = child.clone() {
+            recurse(walker, &c, pred, depth + 1, out);
+            child = walker.get_next_sibling(&c).ok();
+        }
+    }
+    let mut out = Vec::new();
+    recurse(walker, root, &pred, 0, &mut out);
+    out
 }
 
 /// Enumerate top-level windows, return the HWND of the RPCS3 game viewport

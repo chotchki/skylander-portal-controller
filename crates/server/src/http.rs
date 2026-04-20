@@ -193,6 +193,7 @@ pub fn router(state: Arc<AppState>, phone_dist: std::path::PathBuf) -> Router {
     let mut api = Router::new()
         .route("/api/figures", get(list_figures))
         .route("/api/figures/:id/image", get(figure_image))
+        .route("/api/games/:serial/image", get(game_image))
         .route("/api/portal", get(get_portal))
         .route("/api/portal/slot/:n/load", post(load_slot))
         .route("/api/portal/slot/:n/clear", post(clear_slot))
@@ -407,6 +408,49 @@ fn image_response(bytes: Vec<u8>) -> Response {
         bytes,
     )
         .into_response()
+}
+
+/// GET /api/games/:serial/image
+///
+/// Serves the scraped box-art PNG from `<data_root>/games/<serial>.png` for
+/// the phone's game-picker cards. Box art is optional polish — a miss returns
+/// 404 with no fallback (cards render fine without an image thanks to their
+/// per-slug CSS gradient).
+async fn game_image(
+    State(state): State<Arc<AppState>>,
+    AxumPath(serial): AxumPath<String>,
+) -> Response {
+    serve_game_image(&state.data_root, &serial).await
+}
+
+/// Shared core of `game_image`, factored out so tests can exercise the
+/// validation + filesystem logic against a temp `data_root` without having
+/// to construct a full `AppState`.
+async fn serve_game_image(data_root: &std::path::Path, serial: &str) -> Response {
+    // Strict format check — path-traversal guard analogous to the figure
+    // route's hex validation. All supported PS3 serials match
+    // ^(BLUS|BLES|BCUS|BCES)\d{5}$; anything else is rejected without
+    // touching the filesystem.
+    if !is_valid_ps3_serial(serial) {
+        return (StatusCode::BAD_REQUEST, "bad game serial").into_response();
+    }
+
+    let path = data_root.join("games").join(format!("{serial}.png"));
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => image_response(bytes),
+        Err(_) => (StatusCode::NOT_FOUND, "").into_response(),
+    }
+}
+
+fn is_valid_ps3_serial(s: &str) -> bool {
+    if s.len() != 9 {
+        return false;
+    }
+    let prefix = &s[..4];
+    if !matches!(prefix, "BLUS" | "BLES" | "BCUS" | "BCES") {
+        return false;
+    }
+    s[4..].chars().all(|c| c.is_ascii_digit())
 }
 
 async fn get_portal(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -801,6 +845,73 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
     // `guard.process`. The `current` GameLaunched is only set after boot
     // succeeds so the UI doesn't show a half-booted game.
     guard.process = Some(proc);
+
+    // PLAN 3.7.8 phase 1: verify the requested serial is actually in
+    // RPCS3's library before committing to a boot. Catches the
+    // games.yml-says-yes-but-RPCS3-says-no failure mode (user removed
+    // the entry from RPCS3's UI without cleaning the yml). Skipped if
+    // enumeration UIA-errors (rare, falls through to boot's own error
+    // path) or returns empty (defensive: don't block every launch on
+    // an apparent empty library — boot will catch the real issue).
+    let (etx, erx) = tokio::sync::oneshot::channel();
+    if let Err(e) = state
+        .driver_tx
+        .send(crate::state::DriverJob::EnumerateGames {
+            timeout: Duration::from_secs(5),
+            done: etx,
+        })
+        .await
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("queue EnumerateGames: {e}"),
+        )
+            .into_response();
+    }
+    match erx.await {
+        Ok(Ok(serials)) if !serials.is_empty() => {
+            if !serials.iter().any(|s| s == body.serial.as_str()) {
+                warn!(
+                    serial = %body.serial,
+                    available = serials.len(),
+                    "requested serial not in RPCS3 library — refusing boot",
+                );
+                // Quit the just-spawned RPCS3 so a retry can re-launch
+                // cleanly. Use the force-kill path because graceful is
+                // tens of seconds and we know RPCS3 is at library view
+                // with nothing in flight.
+                if let Some(mut p) = guard.process.take() {
+                    let _ = tokio::task::spawn_blocking(move || {
+                        p.shutdown_graceful(Duration::from_millis(500))
+                    })
+                    .await;
+                }
+                if let Ok(mut st) = state.launcher_status.lock() {
+                    st.rpcs3_running = false;
+                    st.current_game = None;
+                }
+                return (
+                    StatusCode::NOT_FOUND,
+                    format!(
+                        "{} ({}) isn't in RPCS3's library. \
+                         Re-scan games in RPCS3 and try again.",
+                        game.display_name,
+                        body.serial.as_str(),
+                    ),
+                )
+                    .into_response();
+            }
+        }
+        Ok(Ok(_empty)) => {
+            warn!("library enumeration returned empty; skipping pre-boot verify");
+        }
+        Ok(Err(e)) => {
+            warn!("library enumeration failed: {e}; falling through to boot");
+        }
+        Err(e) => {
+            warn!("EnumerateGames ack dropped: {e}; falling through to boot");
+        }
+    }
 
     let (tx, rx) = tokio::sync::oneshot::channel();
     if let Err(e) = state
@@ -1916,5 +2027,127 @@ mod loading_guard_tests {
             status.lock().unwrap().loading_game.as_deref(),
             Some("Spyro's Adventure"),
         );
+    }
+}
+
+#[cfg(test)]
+mod game_image_tests {
+    //! `GET /api/games/:serial/image` — serves scraped box-art PNGs to the
+    //! phone game picker. Pinned contracts:
+    //!
+    //!   1. Well-formed serial with PNG present → 200 + image/png body.
+    //!   2. Well-formed serial with no file → 404 (polish asset; no fallback).
+    //!   3. Malformed serial (bad prefix, wrong length, non-digits, path
+    //!      traversal attempt) → 400 and the filesystem is never touched.
+    //!
+    //! The filesystem-touch guard matters: `AxumPath` already decodes %-encoded
+    //! input, so a serial of `"..%2F..%2Fetc%2Fpasswd"` would arrive as
+    //! `"../../etc/passwd"` without the strict regex check below.
+
+    use super::*;
+    use axum::Router;
+    use axum::body::Body;
+    use axum::http::Request;
+    use axum::routing::get;
+    use http_body_util::BodyExt;
+    use tempfile::TempDir;
+    use tower::ServiceExt;
+
+    /// Build a tiny router that wraps `serve_game_image` against a
+    /// temp-dir data root — avoids constructing a full `AppState`.
+    fn router(data_root: Arc<std::path::PathBuf>) -> Router {
+        Router::new().route(
+            "/api/games/:serial/image",
+            get(move |AxumPath(serial): AxumPath<String>| {
+                let root = data_root.clone();
+                async move { serve_game_image(&root, &serial).await }
+            }),
+        )
+    }
+
+    async fn get_image(
+        data_root: Arc<std::path::PathBuf>,
+        serial: &str,
+    ) -> axum::http::Response<Body> {
+        router(data_root)
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/api/games/{serial}/image"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    #[test]
+    fn serial_validator_accepts_all_four_region_prefixes() {
+        assert!(is_valid_ps3_serial("BLUS30906"));
+        assert!(is_valid_ps3_serial("BLES30906"));
+        assert!(is_valid_ps3_serial("BCUS30906"));
+        assert!(is_valid_ps3_serial("BCES30906"));
+    }
+
+    #[test]
+    fn serial_validator_rejects_malformed_inputs() {
+        // Wrong length / missing digits.
+        assert!(!is_valid_ps3_serial(""));
+        assert!(!is_valid_ps3_serial("BLUS"));
+        assert!(!is_valid_ps3_serial("BLUS3090"));
+        assert!(!is_valid_ps3_serial("BLUS309066"));
+        // Unknown prefix.
+        assert!(!is_valid_ps3_serial("XXXX30906"));
+        // Lowercase prefix.
+        assert!(!is_valid_ps3_serial("blus30906"));
+        // Non-digit tail.
+        assert!(!is_valid_ps3_serial("BLUS3090a"));
+        // Path traversal / separators.
+        assert!(!is_valid_ps3_serial("../etc/passwd"));
+        assert!(!is_valid_ps3_serial("BLUS/0906"));
+    }
+
+    #[tokio::test]
+    async fn well_formed_serial_with_file_returns_200_png() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join("games")).unwrap();
+        let png_path = tmp.path().join("games").join("BLUS30906.png");
+        // Minimal PNG header — the handler just reads the bytes and sets
+        // the content-type; it never decodes. 8-byte signature is enough.
+        std::fs::write(&png_path, b"\x89PNG\r\n\x1a\n").unwrap();
+
+        let root = Arc::new(tmp.path().to_path_buf());
+        let resp = get_image(root, "BLUS30906").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok()),
+            Some("image/png"),
+        );
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(&body[..], b"\x89PNG\r\n\x1a\n");
+    }
+
+    #[tokio::test]
+    async fn well_formed_serial_with_missing_file_returns_404() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join("games")).unwrap();
+        let root = Arc::new(tmp.path().to_path_buf());
+        let resp = get_image(root, "BLES99999").await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        assert!(body.is_empty(), "404 body should be empty");
+    }
+
+    #[tokio::test]
+    async fn malformed_serial_returns_400() {
+        let tmp = TempDir::new().unwrap();
+        let root = Arc::new(tmp.path().to_path_buf());
+        let resp = get_image(root.clone(), "XXXX30906").await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        // Wrong length.
+        let resp = get_image(root.clone(), "BLUS1").await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 }
