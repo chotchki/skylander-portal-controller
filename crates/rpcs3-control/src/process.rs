@@ -25,7 +25,9 @@ use windows::Win32::System::Threading::{
     GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_QUOTA,
     PROCESS_TERMINATE, WaitForSingleObject,
 };
-use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, PostMessageW, WM_CLOSE};
+use windows::Win32::UI::WindowsAndMessaging::{
+    EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, PostMessageW, WM_CLOSE,
+};
 
 const READY_POLL_INTERVAL: Duration = Duration::from_millis(150);
 const WINDOW_TITLE_PREFIX: &str = "RPCS3 ";
@@ -305,6 +307,112 @@ fn find_rpcs3_main_window() -> Option<UIElement> {
         .ok()
         .flatten()
         .map(|(el, _)| el)
+}
+
+/// Read the current title of RPCS3's main window. Returns `None` if
+/// RPCS3 isn't running. Cheap (~ms), safe to poll a few times per
+/// second.
+pub fn read_main_window_title() -> Option<String> {
+    enum_first_visible_window(|title| title.starts_with(WINDOW_TITLE_PREFIX))
+}
+
+/// Find ANY top-level visible window whose title contains `"compil"`
+/// (case-insensitive) or `"cache"`. Returns the matched title.
+pub fn find_compile_progress_text() -> Option<String> {
+    enum_first_visible_window(|title| {
+        let low = title.to_ascii_lowercase();
+        low.contains("compil") || low.contains("cache")
+    })
+}
+
+/// Snapshot ALL top-level visible window titles. Used by the
+/// shader-compile watchdog as a diagnostic — by logging every new
+/// title that appears we can discover where RPCS3 actually surfaces
+/// shader-compile / cache-rebuild progress on the running version
+/// (the title of the main window, the FPS viewport, a separate Qt
+/// progress dialog, or somewhere else entirely).
+///
+/// Cheap (~ms). Returns titles in EnumWindows order (top of z-stack
+/// first). Empty titles are excluded.
+pub fn list_all_visible_window_titles() -> Vec<String> {
+    use windows::core::BOOL;
+
+    let mut titles: Vec<String> = Vec::new();
+
+    extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        unsafe {
+            if !IsWindowVisible(hwnd).as_bool() {
+                return BOOL(1);
+            }
+            let mut buf = [0u16; 256];
+            let len = GetWindowTextW(hwnd, &mut buf);
+            if len > 0 {
+                let title = String::from_utf16_lossy(&buf[..len as usize]);
+                let titles = &mut *(lparam.0 as *mut Vec<String>);
+                titles.push(title);
+            }
+            BOOL(1)
+        }
+    }
+
+    unsafe {
+        let _ = EnumWindows(
+            Some(enum_proc),
+            LPARAM(&mut titles as *mut Vec<String> as isize),
+        );
+    }
+    titles
+}
+
+/// Internal helper: enumerate top-level visible windows, return the
+/// first title for which `predicate` returns true.
+fn enum_first_visible_window<F>(predicate: F) -> Option<String>
+where
+    F: Fn(&str) -> bool,
+{
+    use windows::core::BOOL;
+
+    // Predicate is held in `state` so the C callback can call it via
+    // a fat-pointer reference. Boxing as `&dyn Fn` keeps the type
+    // simple and lets predicate capture from its environment.
+    struct State<'a> {
+        title: Option<String>,
+        predicate: &'a dyn Fn(&str) -> bool,
+    }
+
+    extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        unsafe {
+            if !IsWindowVisible(hwnd).as_bool() {
+                return BOOL(1);
+            }
+            let mut buf = [0u16; 256];
+            let len = GetWindowTextW(hwnd, &mut buf);
+            if len > 0 {
+                let title = String::from_utf16_lossy(&buf[..len as usize]);
+                let state = &mut *(lparam.0 as *mut State);
+                if (state.predicate)(&title) {
+                    state.title = Some(title);
+                    return BOOL(0); // stop enumeration
+                }
+            }
+            BOOL(1)
+        }
+    }
+
+    let mut state = State {
+        title: None,
+        predicate: &predicate,
+    };
+    // SAFETY: `state` outlives the EnumWindows call; the callback
+    // dereferences the pointer only while EnumWindows is on the
+    // stack. EnumWindows itself is thread-safe.
+    unsafe {
+        let _ = EnumWindows(
+            Some(enum_proc),
+            LPARAM(&mut state as *mut State as isize),
+        );
+    }
+    state.title
 }
 
 fn find_rpcs3_main_window_with_pid() -> Result<Option<(UIElement, u32)>> {

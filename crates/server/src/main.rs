@@ -21,7 +21,10 @@ use tokio::sync::{Mutex, broadcast};
 use tracing::{info, warn};
 
 use crate::config::DriverKind;
-use crate::state::{AppState, RpcsLifecycle, spawn_crash_watchdog, spawn_driver_worker};
+use crate::state::{
+    AppState, RpcsLifecycle, spawn_crash_watchdog, spawn_driver_worker,
+    spawn_shader_compile_watchdog,
+};
 use crate::ui::LauncherApp;
 
 fn main() -> Result<()> {
@@ -184,6 +187,15 @@ fn main() -> Result<()> {
                     portal_for_task.clone(),
                     events_for_task.clone(),
                     status_for_task.clone(),
+                    std::time::Duration::from_millis(500),
+                );
+                // Shader-compile watchdog — polls RPCS3's main window
+                // title for "Compiling shaders…" progress so the
+                // launcher's loading surface can show the count
+                // (first-run compile can take several minutes).
+                spawn_shader_compile_watchdog(
+                    status_for_task.clone(),
+                    rpcs3_exe.clone(),
                     std::time::Duration::from_millis(500),
                 );
                 let state = Arc::new(AppState {

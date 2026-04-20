@@ -34,6 +34,7 @@ pub(super) fn render(
     let remaining = FAREWELL_COUNTDOWN.saturating_sub(elapsed);
 
     if remaining.is_zero() {
+        tracing::info!("farewell countdown complete — sending viewport close");
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     } else {
         // egui is lazy by default — without this request_repaint the

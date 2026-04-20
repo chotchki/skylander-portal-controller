@@ -147,33 +147,53 @@ impl LauncherApp {
             let avail = ui.available_height();
             ui.add_space(((avail - CARD_SIZE) * 0.5).max(24.0));
 
+            // Decide which face the centre card should show this frame.
+            // Loading takes priority over MaxPlayers — if the user
+            // picked a game while the session count happens to be
+            // saturated, the loading state is the more useful signal.
+            let back_face = if status_snapshot.loading_game.is_some() {
+                Some(BackFace::Loading)
+            } else if status_snapshot.session_slots_full {
+                Some(BackFace::MaxPlayers)
+            } else {
+                None
+            };
+
             if let Some(tex) = &self.qr_texture {
                 // The card-flip helper reserves a fixed-size square and
                 // paints the front / back face directly via Painter so the
                 // Y-axis rotation reads as a horizontal scale without any
                 // custom matrix math — egui-native, see the helper doc.
-                // The launch_phase factors layer ONTO the flip scale —
-                // intro spin-in, close spin-out — and tint the QR/text
-                // alpha so content fades independently of the scale.
+                // The launch_phase factors layer ONTO the flip scale.
                 qr_card_flip(
                     ui,
                     ctx,
                     tex,
-                    status_snapshot.session_slots_full,
+                    back_face,
                     launch_phase.badge_scale(),
                     launch_phase.badge_alpha(),
                     launch_phase.badge_text_alpha(),
                 );
+                // Loading needs continuous frames for the rotating
+                // halos; egui is lazy by default and would only
+                // repaint on input.
+                if matches!(back_face, Some(BackFace::Loading)) {
+                    ctx.request_repaint_after(std::time::Duration::from_millis(16));
+                }
             }
 
             ui.add_space(24.0);
 
-            // "SCAN TO CONNECT" label, heraldic — closes 4.19.10. Mock
-            // calls this "TV display lg" (64px). Allocate a fixed-height
-            // strip to land the painter call in the right rect, then
-            // paint the title centred inside it. Alpha tracks the
-            // badge text fade so the label disappears alongside the
-            // QR content during the close-to-in-game animation.
+            // Subtitle below the card. The text changes with the
+            // back-face state so the loading state reads as "LOADING
+            // / [game name]" rather than "LOADING / SCAN TO CONNECT".
+            // MaxPlayers shares the QR's "SCAN TO CONNECT" since the
+            // existing fifth-player-please-wait copy is implicit in
+            // the back-face card itself.
+            let subtitle: &str = match (back_face, status_snapshot.loading_game.as_deref()) {
+                (Some(BackFace::Loading), Some(name)) => name,
+                _ => "SCAN TO CONNECT",
+            };
             let label_height = 96.0;
             let label_rect = ui
                 .allocate_exact_size(
@@ -184,10 +204,27 @@ impl LauncherApp {
             paint_heraldic_title(
                 ui.painter(),
                 label_rect.center(),
-                "SCAN TO CONNECT",
+                subtitle,
                 64.0,
                 launch_phase.badge_text_alpha(),
             );
+
+            // Shader-compile progress (when the watchdog has detected
+            // RPCS3 mid-compile). Italic dim status line below the
+            // game-name title so the user knows progress is being
+            // made during the multi-minute first-run shader compile.
+            if let Some(text) = status_snapshot.shader_compile_text.as_deref() {
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(text)
+                        .size(20.0)
+                        .italics()
+                        .color(with_alpha(
+                            palette::TEXT_DIM,
+                            launch_phase.badge_text_alpha(),
+                        )),
+                );
+            }
 
             // Push the Exit to Desktop button toward the bottom of the
             // panel. Visible escape hatch — kept regardless of mock per
@@ -210,10 +247,22 @@ impl LauncherApp {
     }
 }
 
+/// Which face the centre card is showing right now. The flip
+/// animation drives the QR ↔ back-face transition; `back_face` then
+/// picks what's actually painted on the back side.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum BackFace {
+    /// "MAXIMUM PLAYERS REACHED" — session count is at MAX_SESSIONS.
+    MaxPlayers,
+    /// "LOADING" — RPCS3 is spawning + UIA-booting the picked game.
+    /// Subtitle (game name) is rendered separately by the caller.
+    Loading,
+}
+
 /// Card-flip container (PLAN 4.15.6). Reserves a `CARD_SIZE × CARD_SIZE`
-/// square and paints either the QR front face or the `MAXIMUM PLAYERS
-/// REACHED` back face, with a tent-wave horizontal scale to simulate a
-/// Y-axis rotation.
+/// square and paints either the QR front face or one of the back
+/// faces (MAXIMUM PLAYERS REACHED, LOADING) with a tent-wave
+/// horizontal scale to simulate a Y-axis rotation.
 ///
 /// egui doesn't ship 3D transforms, but a Y-axis rotation in 2D reads
 /// identically to an X-axis scale (the vertical edges stay stationary;
@@ -225,16 +274,17 @@ fn qr_card_flip(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
     tex: &egui::TextureHandle,
-    flipped: bool,
+    back_face: Option<BackFace>,
     phase_scale: f32,
     bezel_alpha: f32,
     content_alpha: f32,
 ) {
-    // `animate_bool_with_time` interpolates 0.0 → 1.0 when `flipped` goes
-    // true, and 1.0 → 0.0 when it goes false. Unique id so multiple
-    // instances don't alias animations.
+    // `animate_bool_with_time` interpolates 0.0 → 1.0 when the back
+    // face is wanted, and back to 0 when it's not. Driven by
+    // `back_face.is_some()` so any back face (MaxPlayers OR Loading)
+    // triggers the same coin-flip.
     let id = egui::Id::new("launcher_qr_card_flip");
-    let progress = ctx.animate_bool_with_time(id, flipped, FLIP_DURATION);
+    let progress = ctx.animate_bool_with_time(id, back_face.is_some(), FLIP_DURATION);
 
     // Tent wave: 1 at the edges, 0 in the middle. Represents the x-scale
     // of the visible face from the flip animation; hits 0 at the flip
@@ -244,10 +294,9 @@ fn qr_card_flip(
 
     // Final horizontal scale = flip × phase. The phase factor handles
     // the intro spin-in (0 → 1) and close spin-out (1 → 0); the flip
-    // factor handles the in-place QR↔back-face card flip when the
-    // session count saturates. Multiplying composes them naturally —
-    // a flip mid-spin would scale to (mostly invisible) × (mostly
-    // invisible), which is the right visual.
+    // factor handles the in-place QR↔back-face card flip. Multiplying
+    // composes them — a flip mid-intro reads as both layers
+    // contributing to the squish.
     let scale = flip_scale * phase_scale;
 
     // Reserve the full square so layout below doesn't shift during the
@@ -268,9 +317,145 @@ fn qr_card_flip(
 
     let painter = ui.painter();
     if show_back {
-        paint_back_face(painter, inner, bezel_alpha, content_alpha);
+        // Pick the lines based on which back face is wanted. If the
+        // caller passed `None` but we're past the midpoint (rare race
+        // — `back_face` flipped to None mid-animation), fall back to
+        // the LAST visible back face by re-using whatever's stored —
+        // simpler to just default to MaxPlayers; the next frame will
+        // pick the right side.
+        let lines: &[&str] = match back_face.unwrap_or(BackFace::MaxPlayers) {
+            BackFace::MaxPlayers => &["MAXIMUM", "PLAYERS", "REACHED"],
+            BackFace::Loading => &["LOADING"],
+        };
+        paint_titled_card(painter, inner, lines, bezel_alpha, content_alpha);
+        // Loading face gets two rotating halos around the bezel rim
+        // — same look as `mocks/transitions.html`'s `.state-loading`
+        // (slow outer halo + fast inner halo, both gold conic
+        // gradients sweeping around the badge). The badge content
+        // itself stays static; rotation lives in the halos so the
+        // word "LOADING" stays readable.
+        if matches!(back_face, Some(BackFace::Loading))
+            && bezel_alpha > 0.001
+            && inner.width() >= 1.0
+        {
+            paint_loading_halos(painter, inner, ctx.input(|i| i.time) as f32, bezel_alpha);
+        }
     } else {
         paint_qr_front(painter, inner, tex, bezel_alpha, content_alpha);
+    }
+}
+
+/// Paint the rotating loading halos around the badge — matches the
+/// mock's `.state-loading` look from `docs/aesthetic/mocks/
+/// transitions.html`: slow outer halo (1.4s period) + fast inner
+/// halo (0.9s period), both gold conic-gradient arcs that sweep
+/// around the bezel rim.
+///
+/// Multiplied by `outer_alpha` so the halos fade with the bezel
+/// during the launch-phase intro/close transitions (badge_alpha =
+/// 0 → 1 spin-in, then back to 0 on close).
+fn paint_loading_halos(painter: &egui::Painter, rect: egui::Rect, time_s: f32, outer_alpha: f32) {
+    let center = rect.center();
+    let outer_r = rect.width().min(rect.height()) / 2.0;
+
+    // Slow halo: broad bright sweep + secondary trailing sweep, both
+    // at the same radius (just past the bezel) on a 1.4s rotation.
+    paint_halo_arc(
+        painter,
+        center,
+        outer_r + 18.0,
+        5.0,
+        time_s / 1.4,
+        130.0,
+        palette::GOLD_BRIGHT,
+        0.7 * outer_alpha,
+    );
+    paint_halo_arc(
+        painter,
+        center,
+        outer_r + 18.0,
+        4.0,
+        time_s / 1.4 + 0.5,
+        80.0,
+        palette::GOLD,
+        0.4 * outer_alpha,
+    );
+
+    // Fast halo: single tight bright sweep right at the bezel edge,
+    // 0.9s rotation. Reads as the "spinner needle" against the
+    // wider slow halo's diffuse gold glow.
+    paint_halo_arc(
+        painter,
+        center,
+        outer_r + 6.0,
+        3.0,
+        time_s / 0.9,
+        30.0,
+        palette::GOLD_BRIGHT,
+        outer_alpha,
+    );
+}
+
+/// Paint a partial arc with a hump-shaped alpha (transparent → full
+/// → transparent across the arc's span), giving the conic-gradient
+/// sweep look. `rotation_cycles` = current rotation in turns (1.0 =
+/// full revolution); the start angle is `rotation_cycles * 2π`.
+///
+/// Painted as THREE concentric stroke passes at decreasing alpha to
+/// fake a Gaussian-ish blur — egui doesn't ship a real shape blur,
+/// but stacking a wide-dim, mid-medium, narrow-bright triplet reads
+/// as the soft glow the mock's `filter: blur(6px)` produces.
+fn paint_halo_arc(
+    painter: &egui::Painter,
+    center: egui::Pos2,
+    radius: f32,
+    stroke_width: f32,
+    rotation_cycles: f32,
+    span_deg: f32,
+    color: egui::Color32,
+    alpha: f32,
+) {
+    use std::f32::consts::{PI, TAU};
+    let segments = ((span_deg / 3.0).ceil() as usize).max(8);
+    let start_angle = rotation_cycles * TAU;
+    let span_rad = span_deg.to_radians();
+    let alpha = alpha.clamp(0.0, 1.0);
+
+    // Three passes simulating a soft outer glow → bright core. Wider
+    // strokes at lower alpha sit underneath; the bright narrow core
+    // sits on top.
+    let passes: [(f32, f32); 3] = [
+        (stroke_width * 3.0, 0.20), // wide dim halo
+        (stroke_width * 1.8, 0.40), // mid
+        (stroke_width, 1.0),        // bright core
+    ];
+
+    let mut last_points: Vec<egui::Pos2> = Vec::with_capacity(segments + 1);
+    for i in 0..=segments {
+        let t = i as f32 / segments as f32;
+        let angle = start_angle + t * span_rad;
+        last_points.push(egui::pos2(
+            center.x + angle.cos() * radius,
+            center.y + angle.sin() * radius,
+        ));
+    }
+
+    for (pass_width, pass_alpha) in passes {
+        for i in 0..segments {
+            let t = i as f32 / segments as f32;
+            // Hump shape on the segment's leading vertex's t.
+            let local_alpha = (PI * t).sin() * alpha * pass_alpha;
+            let alpha_byte = (255.0 * local_alpha) as u8;
+            if alpha_byte == 0 {
+                continue;
+            }
+            let stroke_color =
+                egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha_byte);
+            painter.line_segment(
+                [last_points[i], last_points[i + 1]],
+                egui::Stroke::new(pass_width, stroke_color),
+            );
+        }
     }
 }
 
@@ -561,27 +746,6 @@ fn paint_qr_front(
         qr_rect,
         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
         egui::Color32::from_rgba_unmultiplied(255, 255, 255, tint_a),
-    );
-}
-
-/// Back face — same circular bezel + dark screen rim + SF_1 content
-/// disc as the QR front face, but with a 3-line `MAXIMUM PLAYERS
-/// REACHED` title in Titan One instead of a QR. Thin wrapper around
-/// the shared [`paint_titled_card`] helper so the back face and the
-/// `server_error` surface (and any future card-style screens) stay
-/// visually identical.
-fn paint_back_face(
-    painter: &egui::Painter,
-    rect: egui::Rect,
-    bezel_alpha: f32,
-    text_alpha: f32,
-) {
-    paint_titled_card(
-        painter,
-        rect,
-        &["MAXIMUM", "PLAYERS", "REACHED"],
-        bezel_alpha,
-        text_alpha,
     );
 }
 

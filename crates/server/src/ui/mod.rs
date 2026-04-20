@@ -25,7 +25,6 @@ mod crashed;
 mod farewell;
 mod in_game;
 mod launch_phase;
-mod loading;
 mod main_screen;
 mod server_error;
 
@@ -54,6 +53,15 @@ pub struct LauncherApp {
     /// (`progress >= 1.0`) the dispatcher routes rendering to
     /// `in_game::render` and the transparent panel reveals RPCS3.
     closing_to_in_game_at: Option<Instant>,
+    /// When the close-to-shutdown animation started. Set the first
+    /// frame the dispatcher observes `screen = Farewell`. Reuses the
+    /// same `ClosingToInGame` curve as the in-game close, so the
+    /// iris-DarkHole grows + badge spins out before the farewell
+    /// surface appears (Chris flagged 2026-04-19, "on requested
+    /// shutdown we should iris close immediately and then start the
+    /// shutdown commands"). Cleared if the screen leaves Farewell —
+    /// no path does that today, but defensive.
+    closing_to_shutdown_at: Option<Instant>,
     /// When the launcher first observed `LauncherStatus.server_ready =
     /// true`. The launch-phase elapsed clock starts here, NOT at app
     /// mount — so the intro animations (iris reveal, badge spin) only
@@ -131,6 +139,7 @@ impl LauncherApp {
             started: Instant::now(),
             farewell_started_at: None,
             closing_to_in_game_at: None,
+            closing_to_shutdown_at: None,
             server_ready_at: None,
             current_screen: LauncherScreen::default(),
             screen_entered_at: Instant::now(),
@@ -222,6 +231,11 @@ impl eframe::App for LauncherApp {
         if std::mem::discriminant(&self.current_screen)
             != std::mem::discriminant(&status_snapshot.screen)
         {
+            tracing::info!(
+                from = ?self.current_screen,
+                to = ?status_snapshot.screen,
+                "launcher screen variant changed",
+            );
             self.current_screen = status_snapshot.screen.clone();
             self.screen_entered_at = Instant::now();
         }
@@ -236,33 +250,62 @@ impl eframe::App for LauncherApp {
             self.farewell_started_at = None;
         }
 
-        // In-game transition (PLAN 4.15.8 + close animation):
+        // In-game transition (PLAN 4.15.8 + close animation). Only
+        // triggered when RPCS3 is actually running — `loading_game`
+        // is a SOFT state that shows a "LOADING" face on the QR
+        // card while keeping the rest of the launcher visible
+        // (vortex, orbit pips, exit button). The close-animation +
+        // transparent-panel handoff only happens once the game is
+        // really ready, so the user sees the loading badge on the
+        // existing surface during the boot wait instead of a
+        // separate dark loading screen.
+        // Close fires on `game_playable`, NOT raw `rpcs3_running` —
+        // the launcher waits until the shader/cache compile activity
+        // has been quiet for a couple seconds before closing onto
+        // the game. Without this the iris would close as soon as
+        // RPCS3 reports running, leaving the user staring at a
+        // transparent panel covering a still-compiling RPCS3.
         //
-        //   1. RPCS3 starts loading OR is running while we're on Main →
-        //      kick off the ClosingToInGame animation (badge spins
-        //      out, dark-hole iris grows). Triggering on `loading_game`
-        //      means the close fires as soon as the user picks a game,
-        //      not 30s later when RPCS3 finishes booting.
-        //   2. Animation runs as a Main render with the closing phase.
-        //   3. Once `close_complete()`:
-        //      - if `rpcs3_running`: render the transparent in-game
-        //        surface so RPCS3 shows through.
-        //      - else (still loading): render the loading surface so
-        //        the user has visual feedback during the wait.
-        //   4. If RPCS3 stops / loading aborts before the animation
-        //      finishes, reset the timer so we don't finish a close
-        //      that no longer applies.
-        let game_active = status_snapshot.rpcs3_running
-            || status_snapshot.loading_game.is_some();
-        let want_close = game_active && matches!(status_snapshot.screen, LauncherScreen::Main);
-        if want_close && self.closing_to_in_game_at.is_none() {
+        // **`closing_to_in_game_at` persists through `game_playable`
+        // flapping.** Mid-game shader compile makes game_playable
+        // flip false → true repeatedly; without this fix, every
+        // false flip would reset the close timer and the launcher
+        // would render the QR card briefly between in-game frames
+        // (Chris 2026-04-19, "watcher fire a bunch of times threw
+        // game back into weird loading but still scan to connect").
+        // Reset only when the in-game session genuinely ends —
+        // RPCS3 stopped or screen changed to non-Main.
+        let want_close_start = status_snapshot.game_playable
+            && matches!(status_snapshot.screen, LauncherScreen::Main);
+        let kill_close = !status_snapshot.rpcs3_running
+            || !matches!(status_snapshot.screen, LauncherScreen::Main);
+        if want_close_start && self.closing_to_in_game_at.is_none() {
             self.closing_to_in_game_at = Some(Instant::now());
         }
-        if !want_close {
+        if kill_close {
             self.closing_to_in_game_at = None;
         }
+
+        // Same close animation, fired by a different trigger: when
+        // the screen flips to Farewell (phone shutdown request), kick
+        // off the iris-close immediately so the launcher visibly
+        // starts shutting down before any farewell text appears.
+        if matches!(status_snapshot.screen, LauncherScreen::Farewell) {
+            if self.closing_to_shutdown_at.is_none() {
+                self.closing_to_shutdown_at = Some(Instant::now());
+            }
+        } else {
+            self.closing_to_shutdown_at = None;
+        }
+
+        // The two trigger timestamps feed into one elapsed value —
+        // `LaunchPhase::compute` doesn't care which trigger fired
+        // the close, just that one is in flight. (They can't both
+        // be set at once: in-game close requires screen=Main,
+        // shutdown close requires screen=Farewell.)
         let closing_elapsed_s = self
             .closing_to_in_game_at
+            .or(self.closing_to_shutdown_at)
             .map(|t| t.elapsed().as_secs_f32());
 
         // Launcher start-of-life phasing (PLAN 4.19.2a). Only meaningful
@@ -323,53 +366,36 @@ impl eframe::App for LauncherApp {
             self.returning_from_game_at = None;
         }
 
-        // Close animation has finished — what happens next depends on
-        // whether the game is actually running yet.
-        //
-        //   - rpcs3_running: hand off to the transparent in-game
-        //     surface so RPCS3 shows through.
-        //   - loading_game.is_some(): RPCS3 is still booting (~30s for
-        //     a cold launch). Render the loading surface so the user
-        //     has visual feedback during the wait. The transition out
-        //     of loading happens automatically when rpcs3_running
-        //     flips true on the next frame.
-        if launch_phase.close_complete() {
-            if status_snapshot.rpcs3_running {
-                egui::CentralPanel::default()
-                    .frame(egui::Frame::none().fill(egui::Color32::TRANSPARENT))
-                    .show(ctx, |ui| {
-                        in_game::render(ui, &self.clients, self.qr_texture.as_ref());
-                    });
-                // Remember we just rendered in-game so the next frame's
-                // game-end detection can fire if RPCS3 stops.
-                self.was_in_game = true;
-                return;
-            } else if let Some(name) = status_snapshot.loading_game.as_deref() {
-                // Render the loading surface on the closed dark
-                // vortex. Vortex stays at iris-full DarkHole from the
-                // close animation, so the loading badge sits on a
-                // dark backdrop without re-painting the full vortex.
-                egui::CentralPanel::default().show(ctx, |ui| {
-                    let rect = ui.max_rect();
-                    vortex::paint_sky_background(ui.painter(), rect);
-                    vortex::paint_starfield(ui.painter(), rect, time_s);
-                    let mut vortex_params = self.vortex_idle;
-                    vortex_params.iris_radius = launch_phase::IRIS_FULL;
-                    vortex_params.iris_mode = vortex::IrisMode::DarkHole;
-                    vortex_params.star_brightness = 0.0;
-                    let vortex_time_s = time_s + self.vortex_idle.time_offset;
-                    vortex::paint_vortex(
-                        ui.painter(),
-                        rect,
-                        self.vortex_rig.clone(),
-                        vortex_params,
-                        vortex_time_s,
-                    );
-                    loading::render(ui, name);
+        // Close animation has finished — for the in-game close path
+        // (game running + Main screen), hand off to the transparent
+        // in-game surface so RPCS3 shows through. The close can also
+        // fire for shutdown (screen=Farewell), in which case we DON'T
+        // want to flip to in-game — the Farewell arm below renders
+        // the closed-iris backdrop + farewell badge instead.
+        // In-game render fires on `rpcs3_running` (NOT game_playable)
+        // so mid-game shader compile flapping doesn't bounce the
+        // launcher back to the Main view. game_playable is the
+        // signal to START closing; once close is complete we stay
+        // in-game as long as RPCS3 is alive.
+        if launch_phase.close_complete()
+            && status_snapshot.rpcs3_running
+            && matches!(status_snapshot.screen, LauncherScreen::Main)
+        {
+            egui::CentralPanel::default()
+                .frame(egui::Frame::none().fill(egui::Color32::TRANSPARENT))
+                .show(ctx, |ui| {
+                    in_game::render(ui, &self.clients, self.qr_texture.as_ref());
                 });
-                self.was_in_game = false;
-                return;
+            self.was_in_game = true;
+            // Loading is over — the launch handler intentionally
+            // left `loading_game` set so the LOADING badge persisted
+            // through compile; clear it now that the launcher is
+            // rendering the actual game so the next launcher boot
+            // starts clean.
+            if let Ok(mut st) = self.status.lock() {
+                st.loading_game = None;
             }
+            return;
         }
         // Cache for the next frame's transition detection.
         let prev_was_in_game = self.was_in_game;
@@ -408,7 +434,18 @@ impl eframe::App for LauncherApp {
                 (LauncherScreen::Crashed { .. }, true) => screen_intro.iris_radius(),
                 _ => launch_phase.iris_radius(),
             };
-            vortex_params.iris_mode = launch_phase.iris_mode();
+            // Iris mode override: Farewell stays in DarkHole forever.
+            // During the close animation `LaunchPhase::ClosingToInGame`
+            // already returns DarkHole, but once close completes the
+            // phase resolves to AwaitingConnect (Reveal) and would
+            // re-show the vortex underneath the farewell card. Pin
+            // it to DarkHole so the dark-iris backdrop persists
+            // through the countdown and the actual ViewportCommand::
+            // Close that ends the launcher.
+            vortex_params.iris_mode = match status_snapshot.screen {
+                LauncherScreen::Farewell => vortex::IrisMode::DarkHole,
+                _ => launch_phase.iris_mode(),
+            };
             vortex_params.star_brightness = 0.0;
             // Add the preset's `time_offset` to the launcher's
             // elapsed time so the very first frame's `u_time`
@@ -458,7 +495,30 @@ impl eframe::App for LauncherApp {
                     crashed::render(ui, &self.status, message, screen_intro);
                 }
                 LauncherScreen::Farewell => {
-                    farewell::render(ui, ctx, &mut self.farewell_started_at, screen_intro);
+                    // Render the farewell badge IMMEDIATELY on screen
+                    // change — no pre-close render_main intermediate.
+                    // The iris-close animation is still running
+                    // (`launch_phase = ClosingToInGame { progress }`,
+                    // wired into `vortex_params` above), so the
+                    // vortex closes AROUND the farewell badge rather
+                    // than the badge replacing a "Scan to Connect"
+                    // beat (Chris 2026-04-19, "shutdown via phone
+                    // resulted in scan to connect").
+                    //
+                    // Countdown starts on the first call to
+                    // farewell::render → first frame of screen=
+                    // Farewell, so the 3s window covers the iris
+                    // close + the visible-farewell beat together
+                    // (1s close + 2s of badge on dark backdrop).
+                    if self.farewell_started_at.is_none() {
+                        tracing::info!("farewell countdown starting");
+                    }
+                    farewell::render(
+                        ui,
+                        ctx,
+                        &mut self.farewell_started_at,
+                        launch_phase::ScreenIntro::landed(),
+                    );
                 }
                 LauncherScreen::ServerError { message } => {
                     server_error::render(ui, ctx, message, screen_intro);

@@ -715,18 +715,33 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
     if let Ok(mut st) = state.launcher_status.lock() {
         st.loading_game = Some(game.display_name.clone());
     }
+    // Guard clears `loading_game` ONLY on early-return error paths.
+    // The success path explicitly disarms (`clear_on_drop = false`)
+    // and lets the launcher's dispatcher clear `loading_game` when
+    // it transitions to the in-game render — that way the LOADING
+    // badge stays visible all the way through the post-launch
+    // shader/cache compile (~minutes for first runs), not just the
+    // ~10s of UIA-boot before this handler returns. Without the
+    // disarm, the launcher would flash back to the QR card the
+    // moment this handler returns and stay there until the actual
+    // close-to-in-game animation fires (Chris flagged 2026-04-19).
     struct LoadingGuard<'a> {
         status: &'a Arc<std::sync::Mutex<crate::state::LauncherStatus>>,
+        clear_on_drop: bool,
     }
     impl Drop for LoadingGuard<'_> {
         fn drop(&mut self) {
+            if !self.clear_on_drop {
+                return;
+            }
             if let Ok(mut st) = self.status.lock() {
                 st.loading_game = None;
             }
         }
     }
-    let _loading_guard = LoadingGuard {
+    let mut loading_guard = LoadingGuard {
         status: &state.launcher_status,
+        clear_on_drop: true,
     };
 
     // Two-step launch. Step 1: spawn RPCS3 with no EBOOT argument and wait
@@ -815,6 +830,10 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
         st.rpcs3_running = true;
         st.current_game = Some(game.display_name.clone());
     }
+    // Boot succeeded — disarm the loading guard so `loading_game`
+    // persists through shader/cache compile until the launcher
+    // dispatcher clears it on the in-game transition.
+    loading_guard.clear_on_drop = false;
 
     let _ = state.events.send(Event::GameChanged {
         current: Some(launched),
@@ -964,6 +983,7 @@ async fn quit_game(
 /// works — which is the primary way we'll exercise 4.15.11 until the
 /// phone menu lands.
 async fn shutdown_launcher(State(state): State<Arc<AppState>>, Signed(_body): Signed) -> Response {
+    info!("shutdown requested via /api/shutdown");
     if let Ok(mut st) = state.launcher_status.lock() {
         st.screen = crate::state::LauncherScreen::Farewell;
     }

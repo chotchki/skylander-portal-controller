@@ -1,7 +1,7 @@
 //! Shared state + driver job queue.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -91,6 +91,23 @@ pub struct LauncherStatus {
     /// received instead of ~30s of unchanged Awaiting Connect (Chris
     /// flagged 2026-04-19, "the game loading state never shows").
     pub loading_game: Option<String>,
+    /// Categorised loading stage, derived from RPCS3 log activity by
+    /// the shader-compile watchdog. Values today: `"Building SPU
+    /// cache"`, `"Building PPU cache"`, `"Compiling shaders"`. Drives
+    /// the subtitle text on the LOADING badge so the user knows what
+    /// phase the boot is in (first-launch shader compile can take
+    /// minutes; the per-stage text reassures them progress is being
+    /// made).
+    pub shader_compile_text: Option<String>,
+    /// `true` when `rpcs3_running` AND we've seen no compile/cache
+    /// activity in the log for ~2s. The launcher waits for this
+    /// signal — not just `rpcs3_running` — to trigger the close-to-
+    /// in-game animation, because RPCS3 reports "running" the moment
+    /// the UIA boot completes (well before shaders are compiled and
+    /// the game is actually playable). Without the wait the user
+    /// would see the launcher animate closed onto a black RPCS3
+    /// window that's still mid-compile.
+    pub game_playable: bool,
     /// Which full-screen launcher surface the egui UI should render on the
     /// next frame. Default is `Main` — the QR + status strip layout.
     /// Flipped by the crash watchdog (PLAN 4.15.10) and `/api/shutdown`
@@ -309,6 +326,202 @@ pub enum DriverJob {
         timeout: std::time::Duration,
         done: tokio::sync::oneshot::Sender<Result<()>>,
     },
+}
+
+/// Spawn the RPCS3 shader-compile watchdog. Tails RPCS3's log file
+/// (`RPCS3.log` next to the exe) and surfaces any line containing
+/// shader-compile / cache-rebuild markers as
+/// `LauncherStatus.shader_compile_text`. The window-title scan we
+/// tried first didn't work for RPCS3 0.0.40 — that version surfaces
+/// the state as an in-viewport overlay rendered into the OpenGL/
+/// Vulkan surface, not in any window title — but the same state is
+/// always written to the log as it happens, so tailing is the
+/// reliable signal.
+///
+/// File is opened lazily (RPCS3.log doesn't exist until the first
+/// time RPCS3 runs) and the read position is seeked to the end on
+/// open so we only see new content. Truncation (RPCS3 rotated its
+/// log) is detected by the file shrinking and we re-seek to 0.
+pub fn spawn_shader_compile_watchdog(
+    launcher_status: Arc<std::sync::Mutex<LauncherStatus>>,
+    rpcs3_exe: PathBuf,
+    interval: std::time::Duration,
+) {
+    // RPCS3 0.0.40 writes its log to `<exe_dir>/log/RPCS3.log`. Older
+    // / portable installs may put it directly next to the exe. Try
+    // the `log/` subdir first, then fall back to portable-style.
+    let log_path = rpcs3_exe
+        .parent()
+        .map(|p| {
+            let new_style = p.join("log").join("RPCS3.log");
+            let portable = p.join("RPCS3.log");
+            if new_style.exists() {
+                new_style
+            } else if portable.exists() {
+                portable
+            } else {
+                // Default to new-style path; will be created when
+                // RPCS3 first runs.
+                new_style
+            }
+        })
+        .unwrap_or_else(|| PathBuf::from("RPCS3.log"));
+    info!(path = %log_path.display(), "tailing rpcs3 log for shader-compile progress");
+
+    /// How long the watchdog waits after the last compile/cache line
+    /// before declaring the game "playable" (assuming RPCS3 is also
+    /// running). 2s strikes a balance — long enough that brief gaps
+    /// between compile bursts don't trigger the close prematurely,
+    /// short enough that the user doesn't wait noticeably after the
+    /// last shader finishes.
+    const PLAYABLE_QUIET_SECS: f32 = 2.0;
+
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        ticker.tick().await;
+
+        let mut file: Option<std::fs::File> = None;
+        let mut pos: u64 = 0;
+        let mut carry = String::new();
+        let mut last_text: Option<String> = None;
+        // Time of the most recent compile/cache log hit. Used for the
+        // playable-detection heuristic: rpcs3_running + no hit in
+        // PLAYABLE_QUIET_SECS = game is actually ready.
+        let mut last_compile_at: Option<std::time::Instant> = None;
+
+        loop {
+            ticker.tick().await;
+
+            let new_compile_text = read_new_compile_text(&log_path, &mut file, &mut pos, &mut carry);
+
+            if let Some(text) = new_compile_text {
+                last_compile_at = Some(std::time::Instant::now());
+                if Some(&text) != last_text.as_ref() {
+                    info!(text = %text, "rpcs3 compile/cache progress detected");
+                    last_text = Some(text.clone());
+                }
+            }
+
+            // Compute playability: rpcs3_running AND quiet on compile
+            // for PLAYABLE_QUIET_SECS. If we've never seen a compile
+            // line yet (e.g. fully cached on second launch), treat
+            // last_compile_at = None as "instantly playable once
+            // rpcs3_running is true".
+            let now = std::time::Instant::now();
+            let quiet = last_compile_at
+                .map(|t| now.duration_since(t).as_secs_f32() >= PLAYABLE_QUIET_SECS)
+                .unwrap_or(true);
+
+            if let Ok(mut st) = launcher_status.lock() {
+                if last_text.is_some() && st.shader_compile_text != last_text {
+                    st.shader_compile_text = last_text.clone();
+                }
+                let playable = st.rpcs3_running && quiet;
+                if st.game_playable != playable {
+                    if playable {
+                        info!("rpcs3 game playable (compile activity quiet)");
+                    } else if st.game_playable {
+                        info!("rpcs3 game no longer playable (compile activity resumed)");
+                    }
+                    st.game_playable = playable;
+                }
+            }
+        }
+    });
+}
+
+/// Read any new bytes appended to RPCS3's log file since the last
+/// call, scan the new lines for compile/cache progress markers, and
+/// return the cleaned text of the most recent matching line (or
+/// `None` if nothing matched).
+///
+/// `file` / `pos` / `carry` carry state across calls: open-once file
+/// handle, last-read byte offset, and any partial trailing line
+/// (RPCS3 writes line-by-line but we may catch it mid-flush).
+fn read_new_compile_text(
+    log_path: &Path,
+    file: &mut Option<std::fs::File>,
+    pos: &mut u64,
+    carry: &mut String,
+) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    if file.is_none() {
+        let f = std::fs::File::open(log_path).ok()?;
+        let len = f.metadata().ok()?.len();
+        *file = Some(f);
+        *pos = len; // seek to end on first open — only care about NEW content
+    }
+    let f = file.as_mut()?;
+
+    // Detect truncation / rotation — file shrunk under us.
+    let len = f.metadata().ok().map(|m| m.len()).unwrap_or(*pos);
+    if len < *pos {
+        *pos = 0;
+        carry.clear();
+    }
+
+    f.seek(SeekFrom::Start(*pos)).ok()?;
+    let mut chunk = String::new();
+    let n = f.read_to_string(&mut chunk).ok()?;
+    *pos += n as u64;
+    if n == 0 {
+        return None;
+    }
+
+    let mut buf = String::new();
+    buf.push_str(carry);
+    buf.push_str(&chunk);
+
+    // Split on '\n'; the last segment is "partial" (no trailing '\n')
+    // unless `buf` ends with '\n'. Stash it in carry for the next call.
+    let mut latest_match: Option<String> = None;
+    let mut iter = buf.split('\n').peekable();
+    let mut last_partial = String::new();
+    while let Some(line) = iter.next() {
+        if iter.peek().is_none() {
+            last_partial = line.to_string();
+            break;
+        }
+        if let Some(stage) = classify_log_line(line) {
+            latest_match = Some(stage.to_string());
+        }
+    }
+    *carry = last_partial;
+    latest_match
+}
+
+/// Classify an RPCS3 log line into a user-facing loading stage, or
+/// `None` if it's not compile-related. Returns categorical strings
+/// (e.g. "Building SPU cache") rather than raw log content — at the
+/// 10-foot TV scale, the per-line counts don't read; the user just
+/// needs to know which phase is in progress.
+///
+/// Lines RPCS3 0.0.40 emits during boot (verified from log dump):
+///   - `SPU: Building function 0x...`              → SPU cache
+///   - `PPU: Block 0x... will be compiled ...`     → PPU cache
+///   - `PPU: ... instructions will be compiled ...` → PPU cache (summary)
+///   - `RSX: ...` with `compil` / `shader` / `pipeline` → shaders
+///
+/// Filters out `ppu_loader: ****` lines (lots of `cellHttp*Pipeline`
+/// API listings that match "pipeline" but aren't compile activity).
+fn classify_log_line(line: &str) -> Option<&'static str> {
+    if line.contains("ppu_loader: ****") {
+        return None;
+    }
+    let low = line.to_ascii_lowercase();
+    if low.contains("spu: building") || low.contains("spu cache:") {
+        Some("Building SPU cache")
+    } else if low.contains("ppu: block") || (low.contains("ppu:") && low.contains("compiled"))
+    {
+        Some("Building PPU cache")
+    } else if low.contains("rsx:") && (low.contains("compil") || low.contains("shader"))
+    {
+        Some("Compiling shaders")
+    } else {
+        None
+    }
 }
 
 /// Spawn the RPCS3 crash watchdog. Polls the lifecycle lock once per

@@ -259,6 +259,18 @@ impl ScreenIntro {
     /// brand-fade hand-off — the badge just needs to land.
     const DURATION_S: f32 = 1.2;
 
+    /// A `ScreenIntro` already fully landed — every output curve at
+    /// its post-animation steady-state value (scale=1, alpha=1,
+    /// content=1, iris=full). For screens that should appear instantly
+    /// without the badge spin-in, e.g. Farewell after the iris-close
+    /// animation finishes (Chris 2026-04-19, "shutdown showed scan to
+    /// connect, never showed farewell").
+    pub(crate) fn landed() -> Self {
+        Self {
+            elapsed_s: Self::DURATION_S,
+        }
+    }
+
     fn progress(self) -> f32 {
         (self.elapsed_s / Self::DURATION_S).clamp(0.0, 1.0)
     }

@@ -52,7 +52,10 @@ pub mod hide;
 #[cfg(windows)]
 pub mod process;
 #[cfg(windows)]
-pub use process::{RpcsProcess, ShutdownPath};
+pub use process::{
+    RpcsProcess, ShutdownPath, find_compile_progress_text, list_all_visible_window_titles,
+    read_main_window_title,
+};
 
 #[cfg(feature = "mock")]
 pub mod mock;
