@@ -116,9 +116,12 @@ pub enum SlotState {
 pub enum Event {
     /// First event on every WS connection. Tells the phone the session id it
     /// should attach as `X-Session-Id` on every mutating REST request + filter
-    /// session-targeted broadcasts by.
+    /// session-targeted broadcasts by. `boot_id` is the server's per-startup
+    /// random u64 — phones compare against the last-seen value and reload on
+    /// mismatch so a server restart wipes any stale UI state.
     Welcome {
         session_id: u64,
+        boot_id: u64,
     },
     /// This session was forcibly evicted by a 3rd connection (FIFO). Phone
     /// shows the Kaos takeover screen with a "kick back" button.

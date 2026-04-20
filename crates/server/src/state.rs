@@ -46,6 +46,13 @@ pub struct AppState {
     /// 32-byte HMAC-SHA256 key shared with the phone via the TV's QR code.
     /// Used by the `Signed` extractor on mutating REST endpoints (PLAN 3.13).
     pub hmac_key: Vec<u8>,
+    /// Random u64 generated once at server startup. Sent to phones in the
+    /// WS `Welcome` event so they can detect a server restart by comparing
+    /// against the last-seen boot id and reset their in-memory UI state
+    /// (the server has no record of any prior session/profile/screen
+    /// after a restart). Chris flagged 2026-04-19, "force the phone app
+    /// to reset its state if the server application has relaunched".
+    pub boot_id: u64,
     /// Lifecycle lock around the currently-running RPCS3 instance.
     pub rpcs3: Arc<Mutex<RpcsLifecycle>>,
 
@@ -939,5 +946,90 @@ mod tests {
             } => assert_eq!(id.as_str(), "bbbb"),
             other => panic!("expected untouched figure_id, got {other:?}"),
         }
+    }
+
+    // RPCS3-log compile classification (PLAN 4.18.x). Locks down the
+    // keyword-set bug where the watcher missed compile activity because
+    // RPCS3 0.0.40 emits "Building" / "Block ... compiled", not the
+    // older "Compiling" wording the first implementation looked for.
+    // Kids would otherwise see the QR card during multi-minute first-run
+    // shader compiles instead of the LOADING badge with stage subtitle.
+
+    #[test]
+    fn classify_spu_building_function() {
+        assert_eq!(
+            classify_log_line("S 0:00:01.234 SPU: Building function 0xdeadbeef"),
+            Some("Building SPU cache"),
+        );
+    }
+
+    #[test]
+    fn classify_ppu_block_will_be_compiled() {
+        assert_eq!(
+            classify_log_line("S 0:00:02.000 PPU: Block 0x100 will be compiled..."),
+            Some("Building PPU cache"),
+        );
+    }
+
+    #[test]
+    fn classify_ppu_instructions_compiled_summary() {
+        // The "summary" form: "PPU: 1234 instructions will be compiled".
+        // Hits the `compiled` branch via the catch-all PPU/compiled match.
+        assert_eq!(
+            classify_log_line("S 0:00:03.000 PPU: Block 0x... 1234 instructions compiled"),
+            Some("Building PPU cache"),
+        );
+    }
+
+    #[test]
+    fn classify_rsx_shader_compile() {
+        assert_eq!(
+            classify_log_line("S 0:00:04.000 RSX: Compiling pipeline state for shader 0xabc"),
+            Some("Compiling shaders"),
+        );
+        assert_eq!(
+            classify_log_line("S 0:00:04.000 RSX: shader 0xabc cached"),
+            Some("Compiling shaders"),
+        );
+    }
+
+    #[test]
+    fn classify_filters_ppu_loader_pipeline_noise() {
+        // ppu_loader logs `**** cellHttpClientPipelineRedirectMethod` etc.
+        // at boot — they match "pipeline" but aren't compile activity.
+        // Pre-filter must drop them before the RSX/PPU branches see them.
+        assert_eq!(
+            classify_log_line(
+                "S 0:00:00.001 ppu_loader: **** cellHttpClientPipelineRedirectMethod"
+            ),
+            None,
+        );
+    }
+
+    #[test]
+    fn classify_returns_none_for_unrelated_lines() {
+        assert_eq!(classify_log_line(""), None);
+        assert_eq!(
+            classify_log_line("S 0:00:00.000 sys_fs: open /dev_hdd0/game/..."),
+            None,
+        );
+        assert_eq!(
+            classify_log_line("· 0:00:00.000 RSX: Frame 0 rendered"),
+            None,
+        );
+    }
+
+    #[test]
+    fn classify_is_case_insensitive() {
+        // RPCS3 capitalisation is consistent today, but the implementation
+        // lowercases first to be tolerant of future casing drift.
+        assert_eq!(
+            classify_log_line("spu: building function 0x0"),
+            Some("Building SPU cache"),
+        );
+        assert_eq!(
+            classify_log_line("RSX: SHADER cached"),
+            Some("Compiling shaders"),
+        );
     }
 }

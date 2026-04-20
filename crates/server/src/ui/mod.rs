@@ -26,9 +26,11 @@ mod farewell;
 mod in_game;
 mod launch_phase;
 mod main_screen;
+mod sequencer;
 mod server_error;
 
 use launch_phase::{LaunchPhase, ScreenIntro};
+use sequencer::{CloseTimers, detect_returning_from_game};
 
 pub struct LauncherApp {
     clients: Arc<AtomicUsize>,
@@ -44,24 +46,11 @@ pub struct LauncherApp {
     /// a "cancel farewell" path). `None` means we haven't rendered the
     /// farewell yet this session.
     farewell_started_at: Option<Instant>,
-    /// When the close-to-in-game animation started. Set the first frame
-    /// the dispatcher detects RPCS3-running while on the Main screen
-    /// (transition from "awaiting connect" → "game running"). Drives
-    /// the badge spin-out + dark-hole iris growth via `LaunchPhase::
-    /// ClosingToInGame`. Cleared if RPCS3 stops before the animation
-    /// completes (game crash mid-launch). After the animation finishes
-    /// (`progress >= 1.0`) the dispatcher routes rendering to
-    /// `in_game::render` and the transparent panel reveals RPCS3.
-    closing_to_in_game_at: Option<Instant>,
-    /// When the close-to-shutdown animation started. Set the first
-    /// frame the dispatcher observes `screen = Farewell`. Reuses the
-    /// same `ClosingToInGame` curve as the in-game close, so the
-    /// iris-DarkHole grows + badge spins out before the farewell
-    /// surface appears (Chris flagged 2026-04-19, "on requested
-    /// shutdown we should iris close immediately and then start the
-    /// shutdown commands"). Cleared if the screen leaves Farewell —
-    /// no path does that today, but defensive.
-    closing_to_shutdown_at: Option<Instant>,
+    /// Close-animation timers (in-game and shutdown). See
+    /// [`sequencer::CloseTimers`] for the lifecycle rules — they're
+    /// extracted into the sequencer module so the dispatcher's
+    /// state-machine logic is unit-testable without an eframe context.
+    close_timers: CloseTimers,
     /// When the launcher first observed `LauncherStatus.server_ready =
     /// true`. The launch-phase elapsed clock starts here, NOT at app
     /// mount — so the intro animations (iris reveal, badge spin) only
@@ -138,8 +127,7 @@ impl LauncherApp {
             qr_texture,
             started: Instant::now(),
             farewell_started_at: None,
-            closing_to_in_game_at: None,
-            closing_to_shutdown_at: None,
+            close_timers: CloseTimers::default(),
             server_ready_at: None,
             current_screen: LauncherScreen::default(),
             screen_entered_at: Instant::now(),
@@ -250,63 +238,14 @@ impl eframe::App for LauncherApp {
             self.farewell_started_at = None;
         }
 
-        // In-game transition (PLAN 4.15.8 + close animation). Only
-        // triggered when RPCS3 is actually running — `loading_game`
-        // is a SOFT state that shows a "LOADING" face on the QR
-        // card while keeping the rest of the launcher visible
-        // (vortex, orbit pips, exit button). The close-animation +
-        // transparent-panel handoff only happens once the game is
-        // really ready, so the user sees the loading badge on the
-        // existing surface during the boot wait instead of a
-        // separate dark loading screen.
-        // Close fires on `game_playable`, NOT raw `rpcs3_running` —
-        // the launcher waits until the shader/cache compile activity
-        // has been quiet for a couple seconds before closing onto
-        // the game. Without this the iris would close as soon as
-        // RPCS3 reports running, leaving the user staring at a
-        // transparent panel covering a still-compiling RPCS3.
-        //
-        // **`closing_to_in_game_at` persists through `game_playable`
-        // flapping.** Mid-game shader compile makes game_playable
-        // flip false → true repeatedly; without this fix, every
-        // false flip would reset the close timer and the launcher
-        // would render the QR card briefly between in-game frames
-        // (Chris 2026-04-19, "watcher fire a bunch of times threw
-        // game back into weird loading but still scan to connect").
-        // Reset only when the in-game session genuinely ends —
-        // RPCS3 stopped or screen changed to non-Main.
-        let want_close_start = status_snapshot.game_playable
-            && matches!(status_snapshot.screen, LauncherScreen::Main);
-        let kill_close = !status_snapshot.rpcs3_running
-            || !matches!(status_snapshot.screen, LauncherScreen::Main);
-        if want_close_start && self.closing_to_in_game_at.is_none() {
-            self.closing_to_in_game_at = Some(Instant::now());
-        }
-        if kill_close {
-            self.closing_to_in_game_at = None;
-        }
-
-        // Same close animation, fired by a different trigger: when
-        // the screen flips to Farewell (phone shutdown request), kick
-        // off the iris-close immediately so the launcher visibly
-        // starts shutting down before any farewell text appears.
-        if matches!(status_snapshot.screen, LauncherScreen::Farewell) {
-            if self.closing_to_shutdown_at.is_none() {
-                self.closing_to_shutdown_at = Some(Instant::now());
-            }
-        } else {
-            self.closing_to_shutdown_at = None;
-        }
-
-        // The two trigger timestamps feed into one elapsed value —
-        // `LaunchPhase::compute` doesn't care which trigger fired
-        // the close, just that one is in flight. (They can't both
-        // be set at once: in-game close requires screen=Main,
-        // shutdown close requires screen=Farewell.)
-        let closing_elapsed_s = self
-            .closing_to_in_game_at
-            .or(self.closing_to_shutdown_at)
-            .map(|t| t.elapsed().as_secs_f32());
+        // Close-animation timers — see `sequencer::CloseTimers` for
+        // the full lifecycle rules. The two trigger timestamps
+        // (in-game start vs shutdown) feed into one elapsed value
+        // because `LaunchPhase::compute` doesn't care which trigger
+        // fired; only that one is in flight.
+        let now = Instant::now();
+        self.close_timers.tick(now, &status_snapshot);
+        let closing_elapsed_s = self.close_timers.elapsed_s(now);
 
         // Launcher start-of-life phasing (PLAN 4.19.2a). Only meaningful
         // for the Main screen — Crashed and Farewell are explicit
@@ -321,13 +260,8 @@ impl eframe::App for LauncherApp {
         // computation switches to `ReturnFromGame` for the next
         // ~INTRO_TRANSITION_S, replaying the iris reveal + badge
         // spin-in without the brand intro.
-        let want_in_game_now =
-            status_snapshot.rpcs3_running && matches!(status_snapshot.screen, LauncherScreen::Main);
-        if self.was_in_game
-            && !want_in_game_now
-            && matches!(status_snapshot.screen, LauncherScreen::Main)
-        {
-            self.returning_from_game_at = Some(Instant::now());
+        if detect_returning_from_game(self.was_in_game, &status_snapshot) {
+            self.returning_from_game_at = Some(now);
         }
 
         let returning_elapsed_s = self

@@ -211,6 +211,13 @@ fn main() -> Result<()> {
                     data_root,
                     phone_dist: phone_dist.clone(),
                     hmac_key,
+                    boot_id: {
+                        // Random u64 from OsRng (already a dep via argon2's
+                        // rand_core re-export). Phones compare against the
+                        // last-seen value to detect a server restart.
+                        use rand_core::RngCore;
+                        rand_core::OsRng.next_u64()
+                    },
                     rpcs3: rpcs3_for_task,
                     profiles: profile_store,
                     sessions,

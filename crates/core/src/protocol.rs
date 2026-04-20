@@ -37,7 +37,14 @@ pub enum Event {
     /// it should attach as `X-Session-Id` on subsequent REST calls, and
     /// which id to watch for in targeted events like `ProfileChanged` and
     /// `TakenOver`.
-    Welcome { session_id: u64 },
+    ///
+    /// `boot_id` is a u64 generated once at server startup. The phone
+    /// remembers it across WS reconnects: a Welcome whose `boot_id`
+    /// differs from the last-seen one means the server restarted, so
+    /// the phone should reset its in-memory UI state (which profile
+    /// is unlocked, current screen, etc.) since the server has no
+    /// record of any of it.
+    Welcome { session_id: u64, boot_id: u64 },
     /// Full snapshot of all 8 slots. Sent on connect and after `RefreshPortal`.
     PortalSnapshot { slots: [SlotState; SLOT_COUNT] },
     /// One slot changed state.

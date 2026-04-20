@@ -15,6 +15,12 @@ use crate::model::{GameLaunched, InstalledGame, PublicFigure, PublicProfile, Unl
 // contention, no cost at read-time.
 thread_local! {
     static SESSION_ID: Cell<Option<u64>> = const { Cell::new(None) };
+    /// Last-seen `boot_id` from `Event::Welcome`. Persists across WS
+    /// reconnects (unlike `SESSION_ID`, which is replaced each connect).
+    /// A new Welcome whose `boot_id` differs from this means the server
+    /// restarted, which `ws.rs` handles by reloading the page so the
+    /// phone's UI state can't drift from the server's empty state.
+    static LAST_BOOT_ID: Cell<Option<u64>> = const { Cell::new(None) };
     /// HMAC-SHA256 key shared with the server via the TV's QR fragment
     /// (`#k=<hex>`). Read once from `window.location.hash` on boot. None if
     /// the phone was loaded via a bare URL (e.g. e2e tests, typed-URL access);
@@ -31,6 +37,21 @@ pub fn set_session_id(id: u64) {
 /// Read the current session id, if the WS has connected and sent Welcome.
 pub fn current_session_id() -> Option<u64> {
     SESSION_ID.with(|c| c.get())
+}
+
+/// Compare `incoming` against the previously stored boot id (and store it
+/// if absent). Returns `true` when the value changed from a known prior —
+/// the caller should reload the page so any cached UI state is discarded.
+/// First call after page load always returns `false`.
+pub fn observe_boot_id(incoming: u64) -> bool {
+    LAST_BOOT_ID.with(|c| match c.get() {
+        Some(prev) if prev != incoming => true,
+        Some(_) => false,
+        None => {
+            c.set(Some(incoming));
+            false
+        }
+    })
 }
 
 /// Parse `window.location.hash` looking for `#k=<hex>` and install the key

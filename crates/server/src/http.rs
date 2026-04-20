@@ -677,6 +677,52 @@ struct LaunchBody {
     serial: GameSerial,
 }
 
+/// RAII handle that clears `LauncherStatus::loading_game` on drop UNLESS
+/// explicitly disarmed via [`LoadingGuard::disarm`].
+///
+/// The launch handler arms a guard right after setting `loading_game` so
+/// every error-return path scrubs the LOADING surface (otherwise the TV
+/// would sit on it forever after a boot failure). Once boot succeeds, the
+/// success path disarms the guard so `loading_game` survives all the way
+/// through shader/cache compile (~minutes for first runs) — the launcher
+/// dispatcher clears it later when it transitions to the in-game render.
+/// Disarming is essential: without it, the QR card flashes back the
+/// instant `launch_game` returns (Chris flagged 2026-04-19).
+struct LoadingGuard<'a> {
+    status: &'a Arc<std::sync::Mutex<crate::state::LauncherStatus>>,
+    clear_on_drop: bool,
+}
+
+impl<'a> LoadingGuard<'a> {
+    /// New guard armed to clear on drop. Use after writing
+    /// `loading_game = Some(...)` so that any early-return error path
+    /// implicitly scrubs the surface.
+    fn armed(status: &'a Arc<std::sync::Mutex<crate::state::LauncherStatus>>) -> Self {
+        Self {
+            status,
+            clear_on_drop: true,
+        }
+    }
+
+    /// Cancel the on-drop clear. Call only on the success path, after the
+    /// post-boot `LauncherStatus` write — the launcher dispatcher then owns
+    /// clearing `loading_game` on the in-game transition.
+    fn disarm(&mut self) {
+        self.clear_on_drop = false;
+    }
+}
+
+impl Drop for LoadingGuard<'_> {
+    fn drop(&mut self) {
+        if !self.clear_on_drop {
+            return;
+        }
+        if let Ok(mut st) = self.status.lock() {
+            st.loading_game = None;
+        }
+    }
+}
+
 async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Signed) -> Response {
     let body: LaunchBody = match serde_json::from_slice(&body_bytes) {
         Ok(b) => b,
@@ -715,34 +761,7 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
     if let Ok(mut st) = state.launcher_status.lock() {
         st.loading_game = Some(game.display_name.clone());
     }
-    // Guard clears `loading_game` ONLY on early-return error paths.
-    // The success path explicitly disarms (`clear_on_drop = false`)
-    // and lets the launcher's dispatcher clear `loading_game` when
-    // it transitions to the in-game render — that way the LOADING
-    // badge stays visible all the way through the post-launch
-    // shader/cache compile (~minutes for first runs), not just the
-    // ~10s of UIA-boot before this handler returns. Without the
-    // disarm, the launcher would flash back to the QR card the
-    // moment this handler returns and stay there until the actual
-    // close-to-in-game animation fires (Chris flagged 2026-04-19).
-    struct LoadingGuard<'a> {
-        status: &'a Arc<std::sync::Mutex<crate::state::LauncherStatus>>,
-        clear_on_drop: bool,
-    }
-    impl Drop for LoadingGuard<'_> {
-        fn drop(&mut self) {
-            if !self.clear_on_drop {
-                return;
-            }
-            if let Ok(mut st) = self.status.lock() {
-                st.loading_game = None;
-            }
-        }
-    }
-    let mut loading_guard = LoadingGuard {
-        status: &state.launcher_status,
-        clear_on_drop: true,
-    };
+    let mut loading_guard = LoadingGuard::armed(&state.launcher_status);
 
     // Two-step launch. Step 1: spawn RPCS3 with no EBOOT argument and wait
     // for its main window to show up. Step 2: hand off to the driver worker
@@ -833,7 +852,7 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
     // Boot succeeded — disarm the loading guard so `loading_game`
     // persists through shader/cache compile until the launcher
     // dispatcher clears it on the in-game transition.
-    loading_guard.clear_on_drop = false;
+    loading_guard.disarm();
 
     let _ = state.events.send(Event::GameChanged {
         current: Some(launched),
@@ -1041,7 +1060,10 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
     // First message: tell the client its session id so it can attach it on
     // REST and filter targeted broadcast events for itself.
     {
-        let evt = Event::Welcome { session_id: sid.0 };
+        let evt = Event::Welcome {
+            session_id: sid.0,
+            boot_id: state.boot_id,
+        };
         if let Ok(j) = serde_json::to_string(&evt) {
             let _ = sender.send(Message::Text(j)).await;
         }
@@ -1825,5 +1847,74 @@ mod dev_log_handler_tests {
         let resp = post_json("[]").await;
         let bytes = resp.into_body().collect().await.unwrap().to_bytes();
         assert!(bytes.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod loading_guard_tests {
+    //! `LoadingGuard` is the RAII handle that protects against the TV
+    //! sitting on a stale "LOADING ..." surface after a boot failure.
+    //! These tests pin the two semantics that have already broken in
+    //! live testing:
+    //!
+    //!   1. Armed guard clears `loading_game` on drop (any error-return
+    //!      path through `launch_game` triggers this).
+    //!   2. Disarmed guard preserves `loading_game` (success path; the
+    //!      dispatcher clears it on in-game transition instead).
+    //!
+    //! The bug that motivated #2: pre-disarm, the QR card would flash
+    //! back the instant `launch_game` returned, even though the game
+    //! was still in the multi-minute first-run shader compile.
+    use super::*;
+    use crate::state::LauncherStatus;
+
+    fn status_with_loading() -> Arc<std::sync::Mutex<LauncherStatus>> {
+        Arc::new(std::sync::Mutex::new(LauncherStatus {
+            loading_game: Some("Spyro's Adventure".into()),
+            ..Default::default()
+        }))
+    }
+
+    #[test]
+    fn armed_guard_clears_loading_game_on_drop() {
+        let status = status_with_loading();
+        {
+            let _g = LoadingGuard::armed(&status);
+        }
+        assert!(
+            status.lock().unwrap().loading_game.is_none(),
+            "armed guard must scrub loading_game so the TV doesn't sit on a stale LOADING surface",
+        );
+    }
+
+    #[test]
+    fn disarmed_guard_preserves_loading_game() {
+        // The success-path contract: the launcher dispatcher owns
+        // clearing loading_game on the in-game transition, NOT this
+        // handler. Without disarm, the QR card flashes back the
+        // instant `launch_game` returns.
+        let status = status_with_loading();
+        {
+            let mut g = LoadingGuard::armed(&status);
+            g.disarm();
+        }
+        assert_eq!(
+            status.lock().unwrap().loading_game.as_deref(),
+            Some("Spyro's Adventure"),
+            "disarmed guard must leave loading_game intact through compile",
+        );
+    }
+
+    #[test]
+    fn arming_does_not_touch_loading_game_until_drop() {
+        // The handler writes `loading_game = Some(...)` BEFORE arming
+        // the guard. Arming itself must not mutate the status — only
+        // the eventual drop does.
+        let status = status_with_loading();
+        let _g = LoadingGuard::armed(&status);
+        assert_eq!(
+            status.lock().unwrap().loading_game.as_deref(),
+            Some("Spyro's Adventure"),
+        );
     }
 }
