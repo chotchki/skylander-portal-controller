@@ -13,6 +13,7 @@
 //!     cargo run -p skylander-wiki-scrape
 //!     cargo run -p skylander-wiki-scrape -- --force         # redo everything
 //!     cargo run -p skylander-wiki-scrape -- --limit 5       # smoke test
+//!     cargo run -p skylander-wiki-scrape -- --mode boxart   # game-card box art
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -40,6 +41,29 @@ const HERO_WIDTH: u32 = 512;
 const HERO_SAVE_WIDTH: u32 = 320;
 // Politeness: one request per second to Fandom (both API + image CDN share it).
 const REQ_INTERVAL: Duration = Duration::from_millis(1100);
+
+/// Width we request from MediaWiki when fetching game box art for the phone's
+/// game-card display. 600px on the long side is comfortably sharp on 3x
+/// mobile displays for a card that renders roughly 180–220 CSS-px wide.
+const BOXART_WIDTH: u32 = 600;
+
+/// PS3 serials + preferred wiki page title(s) for the six supported Skylanders
+/// games. The scraper tries each candidate in order until one resolves.
+/// Fandom's canonical article names don't always match the franchise name —
+/// e.g. "Skylanders: Spyro's Adventure" redirects to "Spyro's Adventure" with
+/// the colon stripped on some pages — so we front-load the most-specific
+/// candidate and fall back to the bare title.
+const BOXART_GAMES: &[(&str, &[&str])] = &[
+    (
+        "BLUS30906",
+        &["Skylanders: Spyro's Adventure", "Spyro's Adventure"],
+    ),
+    ("BLUS30968", &["Skylanders: Giants", "Giants"]),
+    ("BLUS31076", &["Skylanders: Swap Force", "Swap Force"]),
+    ("BLUS31442", &["Skylanders: Trap Team", "Trap Team"]),
+    ("BLUS31545", &["Skylanders: SuperChargers", "SuperChargers"]),
+    ("BLUS31600", &["Skylanders: Imaginators", "Imaginators"]),
+];
 
 // ---------------- Input (firmware-inventory.json) ----------------
 
@@ -562,9 +586,21 @@ async fn main() -> Result<()> {
         .windows(2)
         .find(|w| w[0] == "--limit")
         .and_then(|w| w[1].parse().ok());
+    let mode: String = args
+        .windows(2)
+        .find(|w| w[0] == "--mode")
+        .map(|w| w[1].clone())
+        .unwrap_or_else(|| "figures".to_string());
 
     // Find repo root: CWD, else the parent of this crate.
     let repo_root = find_repo_root()?;
+
+    if mode == "boxart" {
+        return run_boxart(&repo_root, force).await;
+    }
+    if mode != "figures" {
+        anyhow::bail!("unknown --mode {mode:?}; expected 'figures' or 'boxart'");
+    }
     let inventory_path = repo_root.join("docs/research/firmware-inventory.json");
     let data_root = repo_root.join("data");
     let figures_json = data_root.join("figures.json");
@@ -708,6 +744,125 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Scrape and save game box-art PNGs under `data/games/<serial>.png`.
+///
+/// Same rate-limit + retry semantics as the figure scraper; unrelated to
+/// `figures.json`. Existing files are skipped unless `--force` is passed.
+async fn run_boxart(repo_root: &Path, force: bool) -> Result<()> {
+    let data_root = repo_root.join("data");
+    let out_dir = data_root.join("games");
+    std::fs::create_dir_all(&out_dir)?;
+
+    let client = Client::new()?;
+    let total = BOXART_GAMES.len();
+    info!(total, "starting box-art scrape");
+
+    let mut found = 0usize;
+    let mut failed: Vec<(String, String)> = Vec::new();
+    let mut total_bytes: u64 = 0;
+
+    for (i, (serial, candidates)) in BOXART_GAMES.iter().enumerate() {
+        let progress = format!("[{}/{}]", i + 1, total);
+        let out_path = out_dir.join(format!("{serial}.png"));
+
+        if !force && out_path.exists() {
+            info!("{progress} cached {serial} ({})", candidates[0]);
+            found += 1;
+            continue;
+        }
+        info!("{progress} scraping {serial} ({})", candidates[0]);
+
+        let cands: Vec<String> = candidates.iter().map(|s| s.to_string()).collect();
+        match scrape_boxart_one(&client, &cands, &out_path).await {
+            Ok(Some(bytes)) => {
+                found += 1;
+                total_bytes += bytes;
+            }
+            Ok(None) => {
+                warn!("no wiki page / box art for {serial} ({})", candidates[0]);
+                failed.push((serial.to_string(), candidates[0].to_string()));
+            }
+            Err(e) => {
+                warn!("box-art error for {serial}: {e}");
+                failed.push((serial.to_string(), format!("{}: {e}", candidates[0])));
+            }
+        }
+    }
+
+    let hit_rate = (found as f64 / total as f64) * 100.0;
+    println!();
+    println!("=============================================");
+    println!(
+        " wiki-scrape (boxart): found={found}  failed={}  total={total}",
+        failed.len()
+    );
+    println!(" hit rate: {hit_rate:.1}%");
+    println!(" image bytes (this run): {total_bytes}");
+    println!("=============================================");
+    if !failed.is_empty() {
+        println!("Failures ({}):", failed.len());
+        for (serial, name) in &failed {
+            println!("  {serial}  {name}");
+        }
+    }
+    Ok(())
+}
+
+async fn scrape_boxart_one(
+    client: &Client,
+    candidates: &[String],
+    out_path: &Path,
+) -> Result<Option<u64>> {
+    let Some(title) = resolve_title(client, candidates).await? else {
+        return Ok(None);
+    };
+    // Request a `pageimage` thumbnail at our target width. Fandom returns the
+    // article's primary infobox image when present — for game articles that's
+    // the box art.
+    let url = format!(
+        "{API_BASE}?action=query&titles={}&prop=pageimages\
+         &pithumbsize={}&format=json&redirects=1",
+        urlencode(&title),
+        BOXART_WIDTH
+    );
+    let resp = client.get(&url).await?;
+    if !resp.status().is_success() {
+        return Ok(None);
+    }
+    let body: QueryResponse = resp.json().await?;
+    let Some(pages) = body.query else {
+        return Ok(None);
+    };
+    let mut thumb_url: Option<String> = None;
+    for (_pid, page) in pages.pages {
+        if page.missing.is_some() {
+            continue;
+        }
+        if let Some(t) = page.thumbnail {
+            thumb_url = Some(t.source);
+            break;
+        }
+    }
+    let Some(src) = thumb_url else {
+        return Ok(None);
+    };
+
+    let raw = download_image(client, &src).await?;
+    let img = image::load_from_memory(&raw).context("decode box-art image")?;
+    let (w, h) = img.dimensions();
+    // Downscale if wider OR taller than BOXART_WIDTH — box art is roughly
+    // square/portrait on Fandom, so guarding only on width can leave a tall
+    // image taller than we want.
+    let resized = if w > BOXART_WIDTH || h > BOXART_WIDTH {
+        img.resize(BOXART_WIDTH, BOXART_WIDTH, FilterType::Lanczos3)
+    } else {
+        img
+    };
+    resized.save_with_format(out_path, image::ImageFormat::Png)?;
+    let bytes = std::fs::metadata(out_path)?.len();
+    Ok(Some(bytes))
 }
 
 async fn scrape_one(

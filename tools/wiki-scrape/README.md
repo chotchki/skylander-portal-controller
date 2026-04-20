@@ -1,8 +1,8 @@
 # Skylanders Wiki Scraper
 
 One-shot CLI that populates `data/figures.json` + `data/images/<figure_id>/*.png`
-from the [Skylanders Fandom wiki][wiki]. Its output is **committed to the repo**;
-the runtime never touches the wiki.
++ `data/games/<serial>.png` from the [Skylanders Fandom wiki][wiki]. Its
+output is **committed to the repo**; the runtime never touches the wiki.
 
 ## Running
 
@@ -18,6 +18,11 @@ cargo run --release -p skylander-wiki-scrape -- --force
 
 # Skip the hero.png download (thumbs are usually all we need — see LICENSE.md)
 cargo run --release -p skylander-wiki-scrape -- --no-hero
+
+# Scrape game box art for the phone's game picker cards (6 entries, fast).
+# Saves to data/games/<PS3_SERIAL>.png at ~600px on the long side.
+cargo run -p skylander-wiki-scrape -- --mode boxart
+cargo run -p skylander-wiki-scrape -- --mode boxart --force
 ```
 
 Reads `docs/research/firmware-inventory.json`, writes under `data/`:
@@ -26,6 +31,8 @@ Reads `docs/research/firmware-inventory.json`, writes under `data/`:
 - `figures.manual.json` — empty-object template; fill in to override the scrape
 - `images/<figure_id>/thumb.png` — 128×128 center-cropped PNG
 - `images/<figure_id>/hero.png` — downsized infobox portrait (~320px wide)
+- `games/<PS3_SERIAL>.png` — game box art (~600px on the long side), written
+  by the `--mode boxart` sub-run. Six entries today, one per supported game.
 - `LICENSE.md` — CC BY-SA + trademark attribution
 
 ## Resume semantics
