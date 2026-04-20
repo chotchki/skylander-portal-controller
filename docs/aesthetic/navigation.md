@@ -28,8 +28,8 @@ When in doubt: code + tests are truth, this doc is guidance.
 │ (entry) │─┴─▸│Profile  │───▸│  PIN     │───▸│  Game    │
 │ QR scan │    │Picker   │    │  Entry   │    │  Picker  │
 └─────────┘    │         │    └──────────┘    └────┬─────┘
-               │ manage  │                         │
-               │ button ─┘                    select game
+               │         │                         │
+               │         │                    select game
                └────┬────┘                         │
                     ▴                               ▾
                SWITCH PROFILE              ┌────────────────────────────────┐
@@ -54,9 +54,12 @@ When in doubt: code + tests are truth, this doc is guidance.
                     │  SWITCH GAMES        │  • profile chip      │
                     │  (hold)                • show-join QR
                     │     │                │  • SWITCH PROFILE     │
-                    │     │                  • SWITCH GAMES (hold)
-                    │     │                │  • SHUT DOWN (hold)   │
-                    │     ▾                └─ ─ ─ ─ ─ ─ ─ ─ ─ ─┘
+                    │     │                  • MANAGE PROFILES ───┐ (re-locks + gates
+                    │     │                │  • SWITCH GAMES (hold)│  ProfilePicker)
+                    │     │                  • SHUT DOWN (hold)   │
+                    │     ▾                └─ ─ ─ ─ ─ ─ ─ ─ ─ ─┘  │
+                    │                                              │
+                    │                       ▸ KonamiGate ◂─────────┘
                     │  GamePicker                     │
                     │                            SHUT DOWN
                     │                            (hold)
@@ -70,7 +73,7 @@ When in doubt: code + tests are truth, this doc is guidance.
 
                  WS disconnect ──▸ ConnectionLost overlay
                  WS TakenOver  ──▸ KaosTakeover (full replacement)
-                 WS KaosSwap   ──▸ KaosSwap overlay (portal peeks through)
+                 WS KaosSwap   ──▸ KaosSwap overlay (portal peeks through) [PLAN 5.3 — not shipped]
                  WS ResumePrompt ──▸ ResumePrompt modal (on unlock only)
 ```
 
@@ -81,11 +84,11 @@ When in doubt: code + tests are truth, this doc is guidance.
 | QR scan / URL | page load | ProfilePicker | fade-in |
 | ProfilePicker | tap profile | PinEntry | slide up |
 | PinEntry | correct PIN | GamePicker (+ ResumePrompt if layout exists) | slide up |
-| ProfilePicker | manage button | KonamiGate | slide right |
+| MenuOverlay | MANAGE PROFILES | KonamiGate (via briefly re-locked ProfilePicker) | slide down + gate swap |
 | KonamiGate | correct code | ProfileManage | gold flash → crossfade |
-| ProfileManage | EDIT | EditProfile | slide right |
-| ProfileManage | PIN | PinReset | slide right |
-| ProfileManage | LOCK | KonamiGate → ProfilePicker | slide left |
+| ProfileManage | EDIT | EditProfile | within-screen swap |
+| ProfileManage | PIN | PinReset | within-screen swap |
+| ProfileManage | LOCK | ProfilePicker | within-screen swap |
 | GamePicker | select game | Portal | slide up |
 | Portal | kebab tap | MenuOverlay | scrim fade-in + panel slide |
 | Portal | tap empty slot | ToyBox opens (lid slides up) | drawer slide |
@@ -99,8 +102,8 @@ When in doubt: code + tests are truth, this doc is guidance.
 | ConnectionLost | reconnect | previous screen restored | fade-out overlay |
 | Any | WS TakenOver | KaosTakeover (replaces everything) | Kaos void wash |
 | KaosTakeover | KICK BACK | page reload → ProfilePicker | full reload |
-| Portal | WS KaosSwap | KaosSwap overlay | Kaos wash + portal dims |
-| KaosSwap | BACK TO BATTLE | Portal | overlay fade-out |
+| Portal | WS KaosSwap | KaosSwap overlay | Kaos wash + portal dims *(PLAN 5.3 — not shipped)* |
+| KaosSwap | BACK TO BATTLE | Portal | overlay fade-out *(PLAN 5.3 — not shipped)* |
 | PinEntry (on unlock) | WS ResumePrompt | ResumePrompt modal | scrim + panel spring |
 | ResumePrompt | RESUME | Portal (auto-loads saved layout) | panel fade-out → slot impacts |
 | ResumePrompt | START FRESH | Portal (empty) | panel fade-out |
@@ -108,8 +111,8 @@ When in doubt: code + tests are truth, this doc is guidance.
 ### Direction convention
 
 - **Deeper** in the flow (profile → PIN → game → portal): **slide up** (ascending into the adventure).
-- **Back / escape** (portal → game picker, switch profile): **slide down**.
-- **Lateral / admin** (PIN → Konami gate, manage → edit/pin-reset): **slide right** (going, left coming back).
+- **Back / escape** (portal → game picker, switch profile, manage-profiles): **slide down**.
+- **Within-screen swap** (admin panel EDIT/PIN/LOCK, ProfilePicker gate-swap): local crossfade, no directional slide. The `NavDir` signal only tracks Forward/Back between the top-level screens; admin sub-states are handled inside the owning screen.
 - **Modals / overlays** (menu, resume, confirms, connection lost): **scrim fade + panel spring** from below. No directional slide — they sit on top of the current context.
 - **Kaos events**: their own void/wash animation — not part of the normal directional system.
 
@@ -133,11 +136,12 @@ Every overlay in the app falls into one of three categories:
 
    **Priority (highest first):**
    1. `ConnectionLost` — always wins, always on top, auto-dismisses on reconnect.
-   2. `KaosTakeover` — replaces everything (session is gone).
-   3. `KaosSwap` — overlays the portal; if menu was open, menu closes first.
-   4. `ResumePrompt` — only fires on profile unlock; no competing modal can be open at that moment.
-   5. `ResetConfirm` — only opens from FigureDetail; FigureDetail must be active (not another modal).
-   6. `MenuOverlay` — user-initiated; can be dismissed to make room.
+   2. `GameCrashed` — emulator died; session can't continue until the game relaunches. See §3.8.
+   3. `KaosTakeover` — replaces everything (session is gone).
+   4. `KaosSwap` — overlays the portal; if menu was open, menu closes first. *(PLAN 5.3 — not shipped)*
+   5. `ResumePrompt` — only fires on profile unlock; no competing modal can be open at that moment.
+   6. `ResetConfirm` — only opens from FigureDetail; FigureDetail must be active (not another modal).
+   7. `MenuOverlay` — user-initiated; can be dismissed to make room.
 
 2. **Inline overlays are not part of the modal stack.** FigureDetail, REMOVE bar, and ToyBox are portal-screen internal states. They coexist with the portal — they don't "stack" with scrim modals. If a scrim modal opens while FigureDetail is showing, FigureDetail stays underneath the scrim (dimmed like the rest of the portal).
 
@@ -165,7 +169,7 @@ Every overlay in the app falls into one of three categories:
    | FigureDetail | No — dismiss on reconnect | Portal state may have changed; stale detail is misleading |
    | REMOVE bar | No — dismiss on reconnect | Slot may have already been cleared |
 
-6. **Back-button / swipe-back behavior (browser navigation):**
+6. **Back-button / swipe-back behavior (browser navigation)** — *aspirational; not yet implemented.* The phone SPA currently has no `popstate` handling. Listed here to lock the intended behavior when we wire it up:
    - Scrim modals: browser-back dismisses the modal (acts like tapping the scrim).
    - Full-screen replacements: browser-back goes to the previous route (GamePicker → PinEntry, etc.). Standard Leptos router history.
    - Inline overlays (FigureDetail, ToyBox): browser-back reverses to the portal idle state.
