@@ -16,7 +16,7 @@
 //! gives the user a clean way out so they can address the root
 //! cause and relaunch.
 
-use super::launch_phase::LaunchPhase;
+use super::launch_phase::ScreenIntro;
 use super::main_screen::{CARD_SIZE, paint_titled_card, with_alpha};
 use crate::palette;
 
@@ -24,11 +24,11 @@ pub(super) fn render(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
     message: &str,
-    launch_phase: LaunchPhase,
+    intro: ScreenIntro,
 ) {
-    let badge_scale = launch_phase.badge_scale();
-    let badge_alpha = launch_phase.badge_alpha();
-    let text_alpha = launch_phase.badge_text_alpha();
+    let badge_scale = intro.badge_scale();
+    let badge_alpha = intro.badge_alpha();
+    let text_alpha = intro.content_alpha();
 
     ui.vertical_centered(|ui| {
         // Centre the card on the vortex iris — same calculation as

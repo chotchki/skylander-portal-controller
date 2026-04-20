@@ -75,11 +75,23 @@ directories = "5"
 walkdir = { workspace = true }
 thiserror = { workspace = true }
 
-# GetComputerNameExW for mDNS hostname discovery — see crates/server/src/mdns.rs.
+# `raw-window-handle` is needed to extract the HWND from eframe's
+# `Frame::window_handle()` for the Win32 SetWindowPos call below.
+# Top-level dep so the import compiles on non-Windows too (the
+# Windows-specific call is gated by `#[cfg(windows)]`).
+raw-window-handle = "0.6"
+
+# Win32 surface area:
+#   - GetComputerNameExW for mDNS hostname discovery (see mdns.rs).
+#   - SetWindowPos for re-asserting always-on-top each frame, since
+#     egui/winit's WindowLevel command isn't aggressive enough to
+#     beat Win32 menus + dropdowns that activate after us — see
+#     `ui/mod.rs::update()` always-on-top section.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_SystemInformation",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 
 [dev-dependencies]

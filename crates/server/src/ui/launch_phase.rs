@@ -40,6 +40,13 @@ pub(crate) enum LaunchPhase {
     IntroTransitioning { progress: f32 },
     AwaitingConnect,
     ClosingToInGame { progress: f32 },
+    /// Returning to the launcher after an in-game session ended. Plays
+    /// the same iris-reveal + badge spin-in curves as
+    /// IntroTransitioning, but `brand_intro_alpha` stays 0 — the user
+    /// already knows the launcher, so re-flashing "STARTING" would be
+    /// weird. Driven by the dispatcher's `returning_from_game_at`
+    /// timestamp.
+    ReturnFromGame { progress: f32 },
 }
 
 // Re-export so callers can `use launch_phase::IrisMode` without
@@ -60,11 +67,19 @@ impl LaunchPhase {
     pub(crate) fn compute(
         elapsed_s: f32,
         closing_elapsed_s: Option<f32>,
+        returning_elapsed_s: Option<f32>,
         has_activity: bool,
     ) -> Self {
         if let Some(close) = closing_elapsed_s {
             let progress = (close / CLOSE_TRANSITION_S).clamp(0.0, 1.0);
             return Self::ClosingToInGame { progress };
+        }
+        if let Some(returning) = returning_elapsed_s {
+            let progress = (returning / INTRO_TRANSITION_S).clamp(0.0, 1.0);
+            if progress >= 1.0 {
+                return Self::AwaitingConnect;
+            }
+            return Self::ReturnFromGame { progress };
         }
         if has_activity {
             return Self::AwaitingConnect;
@@ -85,7 +100,7 @@ impl LaunchPhase {
     pub(crate) fn iris_radius(self) -> f32 {
         match self {
             Self::Startup => 0.0,
-            Self::IntroTransitioning { progress } => {
+            Self::IntroTransitioning { progress } | Self::ReturnFromGame { progress } => {
                 // Ease-out cubic — fast at first, gentle landing.
                 IRIS_FULL * ease_out_cubic(progress)
             }
@@ -118,7 +133,7 @@ impl LaunchPhase {
         use std::f32::consts::FRAC_PI_2;
         match self {
             Self::Startup => 0.0,
-            Self::IntroTransitioning { progress } => {
+            Self::IntroTransitioning { progress } | Self::ReturnFromGame { progress } => {
                 // Spin starts 20% into intro, lands at 100%.
                 let p = ((progress - 0.2) / 0.8).clamp(0.0, 1.0);
                 (p * FRAC_PI_2).sin()
@@ -147,7 +162,7 @@ impl LaunchPhase {
     pub(crate) fn badge_alpha(self) -> f32 {
         let in_window = match self {
             Self::Startup => 0.0,
-            Self::IntroTransitioning { progress } => {
+            Self::IntroTransitioning { progress } | Self::ReturnFromGame { progress } => {
                 ((progress - 0.2) / 0.6).clamp(0.0, 1.0)
             }
             Self::AwaitingConnect => 1.0,
@@ -169,7 +184,7 @@ impl LaunchPhase {
     pub(crate) fn badge_text_alpha(self) -> f32 {
         match self {
             Self::Startup => 0.0,
-            Self::IntroTransitioning { progress } => {
+            Self::IntroTransitioning { progress } | Self::ReturnFromGame { progress } => {
                 ((progress - 0.5) / 0.5).clamp(0.0, 1.0)
             }
             Self::AwaitingConnect => 1.0,
@@ -200,6 +215,9 @@ impl LaunchPhase {
             Self::IntroTransitioning { progress } => {
                 (1.0 - progress / 0.3).clamp(0.0, 1.0)
             }
+            // ReturnFromGame deliberately omitted — the user already
+            // knows the launcher, the "STARTING" brand intro would
+            // be jarring on return from a game session.
             _ => 0.0,
         }
     }
@@ -222,6 +240,60 @@ fn ease_in_cubic(t: f32) -> f32 {
     t * t * t
 }
 
+/// Per-screen entry animation for non-Main surfaces (Crashed,
+/// Farewell, ServerError). Drives the same badge spin + content fade
+/// the QR card uses during the launcher intro, just gated on
+/// per-screen entry time instead of launcher startup.
+///
+/// Reuses the curve shapes from `LaunchPhase::badge_*` so the visual
+/// language is identical — same coin-spin sine, same scale-gate to
+/// avoid the thin-line phase, same late text fade-in.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ScreenIntro {
+    pub elapsed_s: f32,
+}
+
+impl ScreenIntro {
+    /// Total duration of the screen-entry animation. Slightly shorter
+    /// than the launcher intro because there's no startup hold or
+    /// brand-fade hand-off — the badge just needs to land.
+    const DURATION_S: f32 = 1.2;
+
+    fn progress(self) -> f32 {
+        (self.elapsed_s / Self::DURATION_S).clamp(0.0, 1.0)
+    }
+
+    /// Horizontal scale for the centre badge (0 = edge-on, 1 = face-on).
+    pub(crate) fn badge_scale(self) -> f32 {
+        (self.progress() * std::f32::consts::FRAC_PI_2).sin()
+    }
+
+    /// Alpha for the bezel layers. Gated on `badge_scale` via
+    /// smoothstep(0.05, 0.25) so the bezel only becomes visible once
+    /// the badge has enough width to read as a circle, not as a thin
+    /// vertical line.
+    pub(crate) fn badge_alpha(self) -> f32 {
+        let scale = self.badge_scale();
+        let t = ((scale - 0.05) / 0.20).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    }
+
+    /// Alpha for text/content inside the badge. Fades in late so it
+    /// isn't readable mid-rotation.
+    pub(crate) fn content_alpha(self) -> f32 {
+        ((self.progress() - 0.5) / 0.5).clamp(0.0, 1.0)
+    }
+
+    /// Vortex iris radius for the screen entry. Used by Crashed coming
+    /// from in-game (where the vortex wasn't visible) to reveal the
+    /// vortex alongside the badge spin-in. Other screens (Farewell,
+    /// ServerError when the vortex is already at full extent) ignore
+    /// this and keep their existing iris.
+    pub(crate) fn iris_radius(self) -> f32 {
+        IRIS_FULL * ease_out_cubic(self.progress())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,13 +304,13 @@ mod tests {
 
     #[test]
     fn fresh_boot_starts_in_startup() {
-        assert_eq!(LaunchPhase::compute(0.0, None, false), LaunchPhase::Startup);
-        assert_eq!(LaunchPhase::compute(0.5, None, false), LaunchPhase::Startup);
+        assert_eq!(LaunchPhase::compute(0.0, None, None, false), LaunchPhase::Startup);
+        assert_eq!(LaunchPhase::compute(0.5, None, None, false), LaunchPhase::Startup);
     }
 
     #[test]
     fn startup_hold_boundary_enters_intro() {
-        match LaunchPhase::compute(STARTUP_HOLD_S, None, false) {
+        match LaunchPhase::compute(STARTUP_HOLD_S, None, None, false) {
             LaunchPhase::IntroTransitioning { progress } => assert!(approx(progress, 0.0)),
             other => panic!("expected IntroTransitioning, got {other:?}"),
         }
@@ -247,7 +319,7 @@ mod tests {
     #[test]
     fn intro_progress_interpolates_linearly() {
         let mid = STARTUP_HOLD_S + INTRO_TRANSITION_S * 0.5;
-        match LaunchPhase::compute(mid, None, false) {
+        match LaunchPhase::compute(mid, None, None, false) {
             LaunchPhase::IntroTransitioning { progress } => assert!(approx(progress, 0.5)),
             other => panic!("expected IntroTransitioning, got {other:?}"),
         }
@@ -257,7 +329,7 @@ mod tests {
     fn intro_end_lands_in_awaiting_connect() {
         let end = STARTUP_HOLD_S + INTRO_TRANSITION_S;
         assert_eq!(
-            LaunchPhase::compute(end, None, false),
+            LaunchPhase::compute(end, None, None, false),
             LaunchPhase::AwaitingConnect
         );
     }
@@ -265,7 +337,7 @@ mod tests {
     #[test]
     fn activity_short_circuits_to_awaiting_connect() {
         assert_eq!(
-            LaunchPhase::compute(0.0, None, true),
+            LaunchPhase::compute(0.0, None, None, true),
             LaunchPhase::AwaitingConnect
         );
     }
@@ -274,7 +346,7 @@ mod tests {
     fn close_overrides_intro() {
         // Close in flight → ClosingToInGame regardless of where intro
         // would have placed us. Startup-time + close = close.
-        match LaunchPhase::compute(0.5, Some(0.0), false) {
+        match LaunchPhase::compute(0.5, Some(0.0), None, false) {
             LaunchPhase::ClosingToInGame { progress } => assert!(approx(progress, 0.0)),
             other => panic!("expected ClosingToInGame, got {other:?}"),
         }
@@ -282,7 +354,7 @@ mod tests {
 
     #[test]
     fn close_progress_clamps_at_one() {
-        match LaunchPhase::compute(0.0, Some(CLOSE_TRANSITION_S * 5.0), false) {
+        match LaunchPhase::compute(0.0, Some(CLOSE_TRANSITION_S * 5.0), None, false) {
             LaunchPhase::ClosingToInGame { progress } => assert!(approx(progress, 1.0)),
             other => panic!("expected ClosingToInGame, got {other:?}"),
         }
@@ -368,7 +440,7 @@ mod tests {
         let mut prev = -1.0;
         let mut t = 0.0;
         while t <= STARTUP_HOLD_S + INTRO_TRANSITION_S + 0.1 {
-            let now = LaunchPhase::compute(t, None, false).iris_radius();
+            let now = LaunchPhase::compute(t, None, None, false).iris_radius();
             assert!(
                 now >= prev - 1e-5,
                 "iris dropped at t={t}: prev={prev}, now={now}"

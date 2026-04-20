@@ -28,7 +28,7 @@ mod launch_phase;
 mod main_screen;
 mod server_error;
 
-use launch_phase::LaunchPhase;
+use launch_phase::{LaunchPhase, ScreenIntro};
 
 pub struct LauncherApp {
     clients: Arc<AtomicUsize>,
@@ -61,6 +61,35 @@ pub struct LauncherApp {
     /// Startup beat, and `ServerError` takes over without the user
     /// ever seeing a partially-played spin animation.
     server_ready_at: Option<Instant>,
+    /// Discriminant of the last-rendered `LauncherScreen` variant +
+    /// when this variant first became active. Drives the per-screen
+    /// `ScreenIntro` animation: each non-Main screen plays a
+    /// badge-spin-in on its first ~1.2s of being shown. Reset
+    /// whenever the screen variant changes (compared via
+    /// `mem::discriminant` so e.g. `Crashed { msg }` with a different
+    /// message doesn't trigger a re-entry).
+    current_screen: LauncherScreen,
+    screen_entered_at: Instant,
+    /// Whether the previous frame routed to `in_game::render` (RPCS3
+    /// running + screen=Main + close-complete). Used by the dispatcher
+    /// to detect the "game just ended" transition: if last frame was
+    /// in-game and this frame isn't, kick off a return animation
+    /// (vortex iris reveal + badge spin-in via `LaunchPhase::
+    /// ReturnFromGame`, OR, if entering Crashed instead of Main,
+    /// drive the iris reveal off `ScreenIntro`).
+    was_in_game: bool,
+    /// Last-applied always-on-top state. `None` until the first frame
+    /// sends a `WindowLevel` command so we re-assert on startup; then
+    /// only on transitions. In release the target is always
+    /// `AlwaysOnTop` (matches the viewport-creation setting). In dev
+    /// the target is `AlwaysOnTop` only while RPCS3 is running so the
+    /// launcher overlays the game window for in-game testing —
+    /// otherwise `Normal`, so alt-tab works during code iteration.
+    window_on_top_state: Option<bool>,
+    /// When the launcher started returning from an in-game session.
+    /// Drives `LaunchPhase::ReturnFromGame` (skips the Startup beat,
+    /// no brand intro). Cleared once the animation completes.
+    returning_from_game_at: Option<Instant>,
     /// GPU shader rig for the vortex (PLAN 4.19.6). Initialised lazily
     /// on the first frame because the eframe `Frame::gl()` context
     /// isn't available until `update()` is called. `Arc<Mutex<…>>` so
@@ -102,6 +131,11 @@ impl LauncherApp {
             farewell_started_at: None,
             closing_to_in_game_at: None,
             server_ready_at: None,
+            current_screen: LauncherScreen::default(),
+            screen_entered_at: Instant::now(),
+            was_in_game: false,
+            returning_from_game_at: None,
+            window_on_top_state: None,
             vortex_rig: Arc::new(Mutex::new(None)),
             vortex_idle: vortex::idle_params(),
         }
@@ -141,6 +175,54 @@ impl eframe::App for LauncherApp {
             self.server_ready_at = Some(Instant::now());
         }
 
+        // Always-on-top toggle. Release: always on. Dev: only while
+        // RPCS3 is running so the launcher overlays the game for
+        // in-game testing without sticking on top during normal code
+        // iteration (where alt-tab matters).
+        //
+        // Two layers of enforcement:
+        //   1. egui's `ViewportCommand::WindowLevel` for the initial
+        //      transition Normal ↔ AlwaysOnTop.
+        //   2. Direct `SetWindowPos(HWND_TOPMOST, SWP_NOACTIVATE)`
+        //      every frame on Windows. The egui/winit path isn't
+        //      aggressive enough to beat Win32 menus + dropdowns —
+        //      those use a higher z-class and activate after us, so
+        //      they slide above the launcher. Re-asserting via raw
+        //      Win32 with `SWP_NOACTIVATE` keeps us at the top of
+        //      the topmost stack without stealing focus from RPCS3
+        //      (Chris flagged 2026-04-19, "menus still win").
+        let want_on_top = if cfg!(feature = "dev-tools") {
+            status_snapshot.rpcs3_running
+        } else {
+            true
+        };
+        if self.window_on_top_state != Some(want_on_top) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(if want_on_top {
+                egui::WindowLevel::AlwaysOnTop
+            } else {
+                egui::WindowLevel::Normal
+            }));
+            self.window_on_top_state = Some(want_on_top);
+        }
+        if want_on_top {
+            force_topmost_via_win32(frame);
+        }
+
+        // Per-screen entry detection — compare variant discriminants
+        // (not full equality) so e.g. `Crashed { msg }` with a
+        // changing message doesn't re-trigger the entry animation.
+        // Reset the entry clock on every variant change; non-Main
+        // screens use it to drive their badge-spin-in.
+        if std::mem::discriminant(&self.current_screen)
+            != std::mem::discriminant(&status_snapshot.screen)
+        {
+            self.current_screen = status_snapshot.screen.clone();
+            self.screen_entered_at = Instant::now();
+        }
+        let screen_intro = ScreenIntro {
+            elapsed_s: self.screen_entered_at.elapsed().as_secs_f32(),
+        };
+
         // Reset the farewell timer when we're NOT on the farewell surface
         // — so if a future path flips screen out of Farewell (none today)
         // the next time we enter it, the 3s countdown restarts from zero.
@@ -177,6 +259,26 @@ impl eframe::App for LauncherApp {
         // long ago the launcher booted. The phase drives the vortex
         // iris, the badge spin scale + alpha, and the text fade — see
         // `launch_phase.rs` for the choreography.
+        // Game-end detection. If last frame was rendered as in_game
+        // and this frame isn't, the user is returning to the
+        // launcher (RPCS3 quit normally → screen still Main, no
+        // crash). Stamp `returning_from_game_at` so the launch_phase
+        // computation switches to `ReturnFromGame` for the next
+        // ~INTRO_TRANSITION_S, replaying the iris reveal + badge
+        // spin-in without the brand intro.
+        let want_in_game_now =
+            status_snapshot.rpcs3_running && matches!(status_snapshot.screen, LauncherScreen::Main);
+        if self.was_in_game
+            && !want_in_game_now
+            && matches!(status_snapshot.screen, LauncherScreen::Main)
+        {
+            self.returning_from_game_at = Some(Instant::now());
+        }
+
+        let returning_elapsed_s = self
+            .returning_from_game_at
+            .map(|t| t.elapsed().as_secs_f32());
+
         let launch_phase = if matches!(status_snapshot.screen, LauncherScreen::Main) {
             let has_activity =
                 status_snapshot.rpcs3_running || self.clients.load(Ordering::Relaxed) > 0;
@@ -189,10 +291,25 @@ impl eframe::App for LauncherApp {
                 .server_ready_at
                 .map(|t| t.elapsed().as_secs_f32())
                 .unwrap_or(0.0);
-            LaunchPhase::compute(phase_elapsed_s, closing_elapsed_s, has_activity)
+            LaunchPhase::compute(
+                phase_elapsed_s,
+                closing_elapsed_s,
+                returning_elapsed_s,
+                has_activity,
+            )
         } else {
             LaunchPhase::AwaitingConnect
         };
+
+        // Clear the return timestamp once the animation finishes so
+        // we don't keep recomputing ReturnFromGame past its useful
+        // life — once the phase resolves to AwaitingConnect we're
+        // back to steady state.
+        if matches!(launch_phase, LaunchPhase::AwaitingConnect)
+            && self.returning_from_game_at.is_some()
+        {
+            self.returning_from_game_at = None;
+        }
 
         // Close animation has finished — hand off to the transparent
         // in-game surface so RPCS3 is visible.
@@ -202,8 +319,14 @@ impl eframe::App for LauncherApp {
                 .show(ctx, |ui| {
                     in_game::render(ui, &self.clients, self.qr_texture.as_ref());
                 });
+            // Remember we just rendered in-game so the next frame's
+            // game-end detection can fire if RPCS3 stops.
+            self.was_in_game = true;
             return;
         }
+        // Cache for the next frame's transition detection.
+        let prev_was_in_game = self.was_in_game;
+        self.was_in_game = false;
 
         egui::CentralPanel::default().show(ctx, |ui| {
             let rect = ui.max_rect();
@@ -226,19 +349,18 @@ impl eframe::App for LauncherApp {
 
             // Layer 2: GPU vortex shader. Most params (noise, colors,
             // motion, streaks) come from the bundled `idle.json`
-            // preset. The launch phase overrides:
-            //
-            //   - `iris_radius` — animates 0 → 1.5 during intro/close
-            //   - `iris_mode` — Reveal during intro, DarkHole during close
-            //
-            // The shader now outputs premultiplied alpha based on
-            // cloud density × iris, so sky + starfield underneath
-            // show through dim regions naturally without any extra
-            // mode flag. `star_brightness` is forced to 0 because
-            // the shader's internal starfield was a spike-only
-            // tuning aid; production uses the CPU starfield (Layer 1).
+            // preset. Iris radius/mode come from launch_phase, with
+            // one override: Crashed coming from in-game uses the
+            // ScreenIntro reveal so the vortex grows in alongside
+            // the badge spin — without it, the launcher would snap
+            // from transparent (in-game) to full vortex instantly.
+            // `star_brightness` is forced to 0; production uses the
+            // CPU starfield (Layer 1).
             let mut vortex_params = self.vortex_idle;
-            vortex_params.iris_radius = launch_phase.iris_radius();
+            vortex_params.iris_radius = match (&status_snapshot.screen, prev_was_in_game) {
+                (LauncherScreen::Crashed { .. }, true) => screen_intro.iris_radius(),
+                _ => launch_phase.iris_radius(),
+            };
             vortex_params.iris_mode = launch_phase.iris_mode();
             vortex_params.star_brightness = 0.0;
             // Add the preset's `time_offset` to the launcher's
@@ -286,13 +408,13 @@ impl eframe::App for LauncherApp {
                     }
                 }
                 LauncherScreen::Crashed { message } => {
-                    crashed::render(ui, &self.status, message);
+                    crashed::render(ui, &self.status, message, screen_intro);
                 }
                 LauncherScreen::Farewell => {
-                    farewell::render(ui, ctx, &mut self.farewell_started_at);
+                    farewell::render(ui, ctx, &mut self.farewell_started_at, screen_intro);
                 }
                 LauncherScreen::ServerError { message } => {
-                    server_error::render(ui, ctx, message, launch_phase);
+                    server_error::render(ui, ctx, message, screen_intro);
                 }
             }
         });
@@ -308,3 +430,48 @@ impl eframe::App for LauncherApp {
         }
     }
 }
+
+/// Force the launcher window to the top of the Win32 z-order via
+/// `SetWindowPos(HWND_TOPMOST, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE)`.
+/// Called every frame by `update()` when always-on-top is desired.
+/// The `SWP_NOACTIVATE` is critical: it keeps us above other topmost
+/// windows (RPCS3, system menus, taskbar) without stealing focus from
+/// RPCS3 — the user can still interact with the game while the
+/// launcher overlays correctly.
+///
+/// No-op on non-Windows targets (the project is Windows-only per
+/// PLAN Phase 7, but the cfg gate keeps the file portable).
+#[cfg(windows)]
+fn force_topmost_via_win32(frame: &eframe::Frame) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
+    };
+
+    let Ok(handle) = frame.window_handle() else {
+        return;
+    };
+    let RawWindowHandle::Win32(win32) = handle.as_raw() else {
+        return;
+    };
+    let hwnd = HWND(win32.hwnd.get() as *mut _);
+    // SAFETY: `hwnd` came from eframe's owned window handle this frame;
+    // it's a valid HWND for the lifetime of this call. SetWindowPos
+    // is thread-safe and the SWP flags ensure we don't move/resize/
+    // activate — purely a z-order assertion.
+    unsafe {
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+fn force_topmost_via_win32(_frame: &eframe::Frame) {}

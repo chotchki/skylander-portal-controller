@@ -3,67 +3,95 @@
 //! RPCS3 died unexpectedly — the `spawn_crash_watchdog` task in
 //! [`crate::state`] flipped `LauncherStatus.screen` to
 //! `LauncherScreen::Crashed { message }` and broadcast `Event::GameCrashed`
-//! to phones. The launcher shows a full-bleed "SOMETHING WENT WRONG"
-//! surface with the watchdog's message and a gold RESTART button.
+//! to phones. The launcher shows a round-badge "SOMETHING / WENT /
+//! WRONG" surface with the watchdog's diagnostic message and a gold
+//! RESTART button.
 //!
-//! The cloud vortex backdrop (4.15.5) is drawn by the top-level dispatcher
-//! before this surface renders; per-screen `VortexParams` tuning (urgent
-//! iris-close matching §3.8 of `docs/aesthetic/navigation.md`) is a
-//! 4.15a.7 polish item.
+//! The badge spin-in is driven by the dispatcher's `ScreenIntro` so
+//! the crash card lands the same way the QR card does on a fresh
+//! intro — visual continuity across surfaces. When the crash arrives
+//! from an in-game session the vortex wasn't visible at all; the
+//! dispatcher pairs the badge spin with an iris reveal so the
+//! launcher reasserts itself rather than snapping in opaque.
 
 use std::sync::Arc;
 
+use super::launch_phase::ScreenIntro;
+use super::main_screen::{CARD_SIZE, paint_titled_card, with_alpha};
 use crate::state::{LauncherScreen, LauncherStatus};
 use crate::{fonts, palette};
 
-/// Render the crash-recovery surface. RESTART flips the screen back to
-/// `Main`; actual RPCS3 respawn is a follow-up (see the TODO inline — the
-/// `/api/launch` endpoint currently expects the phone to pick a serial,
-/// and the server has no "last booted game" memory yet).
 pub(super) fn render(
     ui: &mut egui::Ui,
     status: &Arc<std::sync::Mutex<LauncherStatus>>,
     message: &str,
+    intro: ScreenIntro,
 ) {
+    let badge_scale = intro.badge_scale();
+    let badge_alpha = intro.badge_alpha();
+    let text_alpha = intro.content_alpha();
+
     ui.vertical_centered(|ui| {
-        // Vertical centering on a full-screen panel: use a chunk of the
-        // available height as top padding so the block sits roughly
-        // between 1/4 and 3/4 of the viewport height.
-        ui.add_space(ui.available_height() * 0.18);
-        ui.heading(
-            egui::RichText::new("SOMETHING WENT WRONG")
-                .size(80.0)
-                .color(palette::GOLD)
-                .family(egui::FontFamily::Name(fonts::TITAN_ONE.into())),
+        // Same vertical centring as `render_main` and `server_error`
+        // so the badge sits on the vortex iris regardless of which
+        // surface the user lands on.
+        let avail = ui.available_height();
+        ui.add_space(((avail - CARD_SIZE) * 0.5).max(24.0));
+
+        let (full_rect, _) =
+            ui.allocate_exact_size(egui::vec2(CARD_SIZE, CARD_SIZE), egui::Sense::hover());
+        let half_w = (full_rect.width() * badge_scale) * 0.5;
+        let badge_rect = egui::Rect::from_center_size(
+            full_rect.center(),
+            egui::vec2(half_w * 2.0, full_rect.height()),
         );
-        ui.add_space(28.0);
-        ui.label(
-            egui::RichText::new(message)
-                .size(26.0)
-                .italics()
-                .color(palette::TEXT_DIM),
+        if badge_rect.width() >= 1.0 {
+            paint_titled_card(
+                ui.painter(),
+                badge_rect,
+                &["SOMETHING", "WENT", "WRONG"],
+                badge_alpha,
+                text_alpha,
+            );
+        }
+
+        ui.add_space(24.0);
+
+        // Diagnostic message — italic dim, fades in with the rest of
+        // the card content so it isn't readable mid-spin.
+        let max_w = (ui.available_width() * 0.7).min(900.0);
+        ui.allocate_ui_with_layout(
+            egui::vec2(max_w, 0.0),
+            egui::Layout::top_down(egui::Align::Center),
+            |ui| {
+                ui.label(
+                    egui::RichText::new(message)
+                        .size(20.0)
+                        .italics()
+                        .color(with_alpha(palette::TEXT_DIM, text_alpha)),
+                );
+            },
         );
-        ui.add_space(56.0);
+
+        // Push the RESTART button toward the bottom — same placement
+        // pattern as render_main's Exit button + server_error's exit.
+        let remaining = ui.available_height();
+        ui.add_space((remaining * 0.55).max(48.0));
 
         let btn = egui::Button::new(
             egui::RichText::new("RESTART")
-                .size(40.0)
-                .color(palette::GOLD_INK)
+                .size(28.0)
+                .color(with_alpha(palette::GOLD_INK, text_alpha))
                 .family(egui::FontFamily::Name(fonts::TITAN_ONE.into())),
         )
-        .fill(palette::GOLD)
-        .stroke(egui::Stroke::new(2.0, palette::GOLD_SHADOW))
-        .rounding(egui::Rounding::same(20.0))
-        .min_size(egui::vec2(320.0, 96.0));
+        .fill(with_alpha(palette::GOLD, text_alpha))
+        .rounding(egui::Rounding::same(16.0))
+        .min_size(egui::vec2(260.0, 60.0));
         if ui.add(btn).clicked() {
             // TODO(4.15.10 follow-up): respawn RPCS3 with the last
             // booted game's serial once we persist a "last game"
-            // memory. Today `/api/launch` expects the phone to pick
-            // the serial, so a real restart requires either (a) the
-            // phone driving this button via a REST endpoint, or (b)
-            // a new server-side "last serial" cache. Flipping back to
-            // Main is sufficient for MVP — the user sees the QR again
-            // and can reconnect the phone + re-pick the game.
+            // memory. For now flipping back to Main is sufficient —
+            // the user sees the QR again and can reconnect + re-pick.
             if let Ok(mut st) = status.lock() {
                 st.screen = LauncherScreen::Main;
                 // The watchdog already cleared these, but be
