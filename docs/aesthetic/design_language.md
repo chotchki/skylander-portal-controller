@@ -115,16 +115,19 @@ Distinct evil-lair-of-Kaos color system. Used as full palette for the two Kaos o
 Self-host as WOFF2 under `phone/assets/fonts/` — no external CDN in production (see feedback memory). Declare `@font-face` with `font-display: swap`.
 
 ### Scale
+
+Tokens are declared in `phone/assets/app.css` `:root` (PLAN 4.20.6). Migration of hardcoded `font-size:` rules to these tokens is PLAN 4.20.7. The egui launcher has its own typography scale documented in `navigation.md` §3.7 (TV display sizes, optimised for 10ft viewing).
+
 | Token | Size | Weight | Use |
 |-------|------|--------|-----|
-| `--t-display-hero` | 46px (mobile) / 64px (egui) | Titan One | Welcome / Portal title |
+| `--t-display-hero` | 46px | Titan One | Welcome / Portal title |
 | `--t-display-lg` | 38px | Titan One | Profile name in PIN, hero figure name |
-| `--t-display-md` | 26–32px | Titan One | Game titles, section titles |
+| `--t-display-md` | 28px | Titan One | Game titles, section titles |
 | `--t-display-sm` | 16px | Titan One | Button labels, panel titles |
-| `--t-display-xs` | 10–13px | Titan One | Slot labels, chip labels |
+| `--t-display-xs` | 12px | Titan One | Slot labels, chip labels |
 | `--t-body` | 14px | Fraunces regular | Body copy |
-| `--t-body-italic` | 12–13px | Fraunces italic | Labels, subtitles, captions |
-| `--t-body-sm` | 10–11px | Fraunces italic | Hints, taglines |
+| `--t-body-italic` | 13px | Fraunces italic | Labels, subtitles, captions |
+| `--t-body-sm` | 11px | Fraunces italic | Hints, taglines |
 
 ### Display treatment (always)
 Every Titan One heading — top-to-bottom layered:
@@ -409,10 +412,11 @@ Pair the banner animation with a brief shake on the offending input (`.pin-dots`
 | Token | Value | Use |
 |-------|-------|-----|
 | `--dur-tap` | 120ms | Button press feedback |
-| `--dur-quick` | 200–250ms | State-fade transitions |
+| `--dur-quick` | 200ms | State-fade transitions |
 | `--dur-impact` | 600ms | Portal impact flash |
 | `--dur-shudder` | 400ms (×2) | Error shake |
 | `--dur-loading-sweep` | 900ms | Loading ring rotation period |
+| `--dur-hold-confirm` | 1200ms | Hold-to-activate fill (RESET, SHUT DOWN, etc. — see §4) |
 | `--dur-halo-slow` | 3.4s | Picking ray halo period |
 | `--dur-idle-float` | 4.5s | Loaded-slot breathe |
 | `--dur-panel-in` | 400ms | Modal/panel entrance |

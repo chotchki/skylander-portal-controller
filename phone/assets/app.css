@@ -513,16 +513,33 @@ button { font: inherit; color: inherit; cursor: pointer; }
   --danger-p4: #e34c4c;
   --danger-dark-p4: #7a1818;
   --success-p4: #65d68c;
+  /* Typography scale (design_language.md §2). Migration of hardcoded
+     font-sizes to these tokens is PLAN 4.20.7. Token values match the
+     spec; ranges in the doc are collapsed to single canonical values
+     here, with screens using non-token sizes treated as overrides
+     until the migration sweeps them. */
+  --t-display-hero: 46px;     /* phone hero — startup, big titles */
+  --t-display-lg: 38px;       /* profile name in PIN, hero figure name */
+  --t-display-md: 28px;       /* game titles, section titles */
+  --t-display-sm: 16px;       /* button labels, panel titles */
+  --t-display-xs: 12px;       /* slot labels, chip labels */
+  --t-body: 14px;             /* body copy */
+  --t-body-italic: 13px;      /* labels, subtitles, captions */
+  --t-body-sm: 11px;          /* hints, taglines */
   /* Motion tokens */
   --ease-spring: cubic-bezier(.3,1.3,.5,1);
   --ease-tap: cubic-bezier(.4,2.2,.5,1);
   --ease-smooth: cubic-bezier(.4,.0,.2,1);
   --dur-tap: 120ms;
   --dur-quick: 200ms;
+  --dur-impact: 600ms;        /* portal impact flash */
+  --dur-shudder: 400ms;       /* error shake (×2 cycles) */
   --dur-loading-sweep: 900ms;
+  --dur-hold-confirm: 1200ms; /* press-and-hold to fire (RESET, SHUT DOWN) */
   --dur-halo-slow: 3.4s;
   --dur-idle-float: 4.5s;
   --dur-panel-in: 400ms;
+  --dur-sky-drift: 140s;      /* starfield parallax loop */
 }
 
 /* ================================================================
