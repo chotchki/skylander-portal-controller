@@ -37,10 +37,34 @@
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
-html, body { margin: 0; padding: 0; background: var(--sf-3); color: var(--text); }
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--sf-3);
+  color: var(--text);
+  /* Kill iOS Safari's double-tap-to-zoom across the whole app. Without
+     this, two quick taps on any interactive element (konami dots, PIN
+     digits, profile cards, menu actions) trigger browser zoom instead
+     of registering as two taps. Pinch-zoom still works; only the
+     double-tap gesture is suppressed. `touch-action` inherits, so one
+     declaration here covers every descendant (PLAN 4.18.8 follow-up —
+     generalised per Chris 2026-04-20 "we should just fix it everywhere"). */
+  touch-action: manipulation;
+}
 body {
-  min-height: 100vh;
-  min-height: 100dvh;
+  /* Lock the body to the visible viewport so no screen except the toy
+     box scrolls (Chris 2026-04-20: "you can still scroll on pages you
+     shouldn't"). 100dvh tracks the dynamic viewport (shrinks when the
+     iOS chrome is up); 100vh stays as the fallback for browsers that
+     don't support dvh. `overflow: hidden` blocks page-level scroll;
+     `overscroll-behavior: none` kills the iOS rubber-band bounce so
+     the gold backdrop doesn't reveal an empty white strip on a drag.
+     Screens that genuinely need scroll declare it on their inner
+     container — see `.box-body-scroll` in the figure browser. */
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
   background:
     radial-gradient(ellipse 120% 60% at 50% 0%, #1a3a8a 0%, transparent 50%),
     radial-gradient(ellipse 80% 50% at 50% 100%, #0e2464 0%, transparent 50%),
@@ -69,7 +93,21 @@ body::after {
   body::after { animation: none; }
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-button { font: inherit; color: inherit; cursor: pointer; }
+/* Suppress text selection on interactive chrome — long-pressing a
+   profile card or menu button shouldn't pop the iOS text-select
+   callout. Inputs + textareas override this below so typed content
+   still works. */
+button, [role="button"] {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+input, textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
 
 .app {
   position: relative;
@@ -81,6 +119,19 @@ button { font: inherit; color: inherit; cursor: pointer; }
     calc(env(safe-area-inset-right) + 12px)
     calc(env(safe-area-inset-bottom) + 16px)
     calc(env(safe-area-inset-left) + 12px);
+  /* Flex column that fills the now-locked body height (PLAN no-page-scroll
+     follow-up). Header is a natural-height first child; the active
+     `.screen` below grows with `flex: 1` so its descendants — most
+     importantly `.box-body-scroll` in the figure browser — have a real
+     parent height to anchor `height: 100%` against. Without this chain,
+     the toy box's scroll silently bubbled up to the body, which let
+     every screen page-scroll (the bug). `min-height: 0` is the standard
+     flex-child escape hatch so children with `overflow` are free to
+     shrink past their min-content size. */
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .app-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; gap: 10px; flex-wrap: wrap; }
@@ -463,9 +514,16 @@ button { font: inherit; color: inherit; cursor: pointer; }
     font-size: 22px; font-weight: 600;
     border-radius: 10px; border: 1px solid #333;
     background: #222; color: #eee;
+    /* iOS touch hygiene: kill double-tap-to-zoom + system tap highlight
+       so the press feedback below is the only visible reaction. */
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    -webkit-user-select: none;
 }
 .pin-key:disabled { background: transparent; border-color: transparent; }
-.pin-key:active { background: #444; }
+.pin-key:active:not(:disabled),
+.pin-key.pressed:not(:disabled) { background: #444; }
 
 .form-actions { display: flex; gap: 8px; margin-top: 14px; }
 .form-actions button {
@@ -1229,6 +1287,26 @@ button { font: inherit; color: inherit; cursor: pointer; }
     linear-gradient(135deg, #200a40, #0a1040);
 }
 
+/* ---------- Box art ---------- */
+/* Scraped box-art PNG from /api/games/<serial>/image. Sits on top of the
+   per-slug ::before gradient but under the ::after dark overlay + name
+   label so the Titan One title stays legible. `object-fit: cover` lets us
+   use whatever native aspect ratio the wiki serves (roughly square for the
+   PS3 box scans) without distorting. If the server 404s the asset, the
+   on:error handler in game_picker.rs sets display:none so the card falls
+   back to the gradient-only look. */
+.game-card-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 0;
+  opacity: 0.85;
+  /* Pointer events pass through so the button still catches taps. */
+  pointer-events: none;
+}
+
 /* ---------- Game name label ---------- */
 .game-card .game-name {
   font-family: "Titan One", sans-serif;
@@ -1416,17 +1494,30 @@ button { font: inherit; color: inherit; cursor: pointer; }
   cursor: pointer;
   display: grid;
   place-items: center;
-  transition: transform 0.1s ease, background 0.1s ease, border-color 0.1s ease;
+  transition: transform 0.1s ease, background 0.1s ease, border-color 0.1s ease,
+              box-shadow 0.1s ease;
   text-shadow: 0 1px 0 var(--gs), 0 0 8px rgba(245,198,52,0.3);
   box-shadow: 0 3px 0 rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,230,120,0.08);
+  /* iOS touch hygiene — same contract as `.pin-key` above (PLAN 4.18.8
+     follow-up): disable double-tap-to-zoom and the system grey tap
+     highlight so the `.pressed` visual flash below is the only press
+     reaction the user sees. Without these, a fast tap on iPhone either
+     triggered a zoom (two taps within ~300ms) or showed the default
+     iOS tap overlay instead of our heraldic press animation. */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .pin-hkey:hover:not(:disabled) {
   border-color: rgba(245,198,52,0.5);
 }
-.pin-hkey:active:not(:disabled) {
+.pin-hkey:active:not(:disabled),
+.pin-hkey.pressed:not(:disabled) {
   transform: translateY(2px);
   box-shadow: 0 1px 0 rgba(0,0,0,0.4), inset 0 2px 4px rgba(0,0,0,0.3);
-  background: linear-gradient(180deg, rgba(16,40,90,0.9), rgba(8,22,60,0.95));
+  background: linear-gradient(180deg, rgba(16,40,90,0.95), rgba(8,22,60,1));
+  border-color: rgba(245,198,52,0.55);
 }
 .pin-hkey-ghost {
   background: transparent !important;
@@ -1523,13 +1614,22 @@ button { font: inherit; color: inherit; cursor: pointer; }
    PLAN 4.6 — Portal view reskin (2x4 grid with GoldBezel slots)
    ================================================================ */
 
-/* 2-column grid matching the mock (portal_with_box.html) */
+/* Portal section: heading on top, then a 2-column grid of slots
+   (per mock portal_with_box.html). The wrapping flex column lets
+   the "PORTAL" DisplayHeading sit above the grid without disrupting
+   the 2-column slot layout below. */
 .portal-p4 {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  padding: 6px 24px 0;
+  margin-bottom: 18px;
+}
+.portal-p4-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 16px 20px;
-  padding: 6px 24px 0;
-  margin-bottom: 18px;
 }
 
 /* Individual slot container */
@@ -1606,6 +1706,36 @@ button { font: inherit; color: inherit; cursor: pointer; }
   color: #1b1300;
   background: #f5b700;
   box-shadow: 0 0 0 1.5px #7a5c00, 0 2px 4px rgba(0,0,0,0.5);
+}
+
+/* Ownership pip (PLAN 4.18.17). Sits at the bottom-right corner of the
+   slot bezel so in 2-player sessions each kid can see at a glance whose
+   figure is in which slot (required by CLAUDE.md §Concurrency & takeover
+   / Phase-3 deferral 3.10.7). Colour + border come from inline style
+   (profile colour); the initial text sits on top. Bottom-right is the
+   safe corner — top-left carries the slot index, top-right the "?"
+   unmatched badge. `.pending` variant dims the chip during the
+   Loading→Loaded transition so it reads as "in flight" rather than
+   fully anchored. */
+.p4-slot-owner {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  font-family: "Titan One", sans-serif;
+  font-size: 11px;
+  color: #fff;
+  border: 1.5px solid transparent;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  z-index: 3;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.55);
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.35), 0 2px 4px rgba(0, 0, 0, 0.45);
+}
+.p4-slot-owner--pending {
+  opacity: 0.6;
 }
 
 /* 4.6.1 — Empty slot: dimmed bezel with "+" glyph */
@@ -2411,6 +2541,22 @@ button { font: inherit; color: inherit; cursor: pointer; }
   line-height: 1;
 }
 
+/* Wiki-scraped figure thumbnail (PLAN figure-image follow-up). Sits on
+   top of the `.fig-initial` fallback inside the bezel plate, so a
+   missing scrape silently degrades to the letter. The plate already
+   clips with `overflow: hidden`, so the img naturally rounds with the
+   bezel. `object-fit: contain` preserves aspect ratio — Skylanders
+   wiki portraits are tall poses we don't want to crop. */
+.fig-bezel-p4 .fig-image-p4 {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  z-index: 2;
+  pointer-events: none;
+}
+
 /* Figure name below bezel */
 .fig-name-p4 {
   font-family: "Fraunces", Georgia, serif;
@@ -2521,6 +2667,27 @@ button { font: inherit; color: inherit; cursor: pointer; }
   position: relative;
 }
 
+/* Hero portrait that sits on top of the detail bezel's letter
+   fallback. Same pattern as `.fig-bezel-p4 .fig-image-p4` but sized
+   for the hero bezel and routed inside the FigureHero composite
+   structure (which mounts a `.gold-bezel` containing `.bezel-plate`).
+   Loaded eager because the hero is the focal element of the screen —
+   no point lazy-loading it. */
+.figure-hero .gold-bezel .detail-hero-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  z-index: 2;
+  pointer-events: none;
+}
+.detail-hero-initial {
+  /* Behind the img — invisible whenever the scrape lands, visible
+     when the server falls back to 404 (rare). */
+  z-index: 1;
+}
+
 /* Name + subtitle */
 .detail-name-wrap {
   text-align: center;
@@ -2540,12 +2707,33 @@ button { font: inherit; color: inherit; cursor: pointer; }
   color: var(--gb);
 }
 
-/* Action icon row */
+/* Action icon row — each action is an icon button stacked above
+   its visible text label (PLAN 4.18.18). Touch users never see the
+   `title=` tooltip, so the label is required for the action to be
+   identifiable; aria-label on the button keeps screen-reader output
+   clean (label is presentational only). */
 .detail-action-row {
   display: flex;
   justify-content: center;
+  align-items: flex-start;
   gap: 16px;
   margin-top: 22px;
+}
+.detail-action {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.detail-action-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--gb);
+  opacity: 0.85;
+  text-transform: uppercase;
+  text-align: center;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.45);
 }
 .detail-action-btn {
   width: 56px;
@@ -3211,8 +3399,108 @@ button { font: inherit; color: inherit; cursor: pointer; }
   letter-spacing: 0.18em;
 }
 
+/* PWA "Add to Home Screen" banner (PLAN 4.18.1b). Sits at the top of
+   the ProfilePicker when the page is loaded in an iOS Safari tab (not
+   as an installed PWA). Dismiss is persistent via localStorage, so the
+   banner must earn its screen space: keep copy short, keep the CTA
+   obvious, and don't stack above the welcome heading in a way that
+   fights for attention. One concrete sentence + a small dismiss pill. */
+.pwa-hint {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 12px 18px 14px;
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: linear-gradient(180deg, rgba(32, 58, 120, 0.92), rgba(14, 30, 78, 0.96));
+    border: 1.5px solid rgba(245, 198, 52, 0.45);
+    color: #f5edc6;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.55);
+    box-shadow:
+        0 3px 10px rgba(0, 0, 0, 0.45),
+        inset 0 1px 0 rgba(255, 230, 150, 0.08);
+}
+.pwa-hint-body { flex: 1 1 auto; min-width: 0; }
+.pwa-hint-title {
+    font-family: "Titan One", sans-serif;
+    font-size: 14px;
+    letter-spacing: 0.04em;
+    color: var(--gb);
+    margin-bottom: 2px;
+}
+.pwa-hint-copy {
+    font-size: 13px;
+    line-height: 1.35;
+    color: #f5edc6;
+}
+.pwa-hint-icon {
+    display: inline-block;
+    font-size: 14px;
+    color: #fff;
+    opacity: 0.9;
+    transform: translateY(1px);
+}
+.pwa-hint-dismiss {
+    flex: 0 0 auto;
+    font-family: "Titan One", sans-serif;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--gb);
+    background: rgba(8, 18, 48, 0.7);
+    border: 1.5px solid rgba(245, 198, 52, 0.35);
+    border-radius: 10px;
+    padding: 8px 12px;
+    cursor: pointer;
+    /* Same iOS touch hygiene as .pin-key — kill double-tap zoom + the
+       grey tap overlay so the press styling is the only reaction. */
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    -webkit-user-select: none;
+}
+.pwa-hint-dismiss:active:not(:disabled) {
+    background: rgba(16, 32, 72, 0.9);
+    border-color: rgba(245, 198, 52, 0.55);
+}
+
 /* Create profile panel */
 .create-profile-panel { margin-bottom: 12px; }
+
+/* PIN confirm mismatch feedback (PLAN 4.18.8). The wrapper carries the
+   `shake` class briefly so a mismatch gets an unmistakable haptic-style
+   reaction; `.pin-mismatch-banner` shows the plain-language reason. The
+   shake is keyed off the error signal rather than a one-shot animation
+   so consecutive mismatches still retrigger visibly. */
+.pin-confirm-wrap {
+    /* Container for the confirm keypad; inherits layout from nested PinPad. */
+    display: block;
+}
+.pin-confirm-wrap.shake {
+    animation: pin-mismatch-shake 0.5s ease;
+}
+@keyframes pin-mismatch-shake {
+    0%, 100% { transform: translateX(0); }
+    15% { transform: translateX(-8px); }
+    30% { transform: translateX(7px); }
+    45% { transform: translateX(-5px); }
+    60% { transform: translateX(4px); }
+    80% { transform: translateX(-2px); }
+}
+.pin-mismatch-banner {
+    margin-top: 10px;
+    padding: 10px 14px;
+    border-radius: 12px;
+    background: linear-gradient(180deg, rgba(180, 40, 40, 0.9), rgba(120, 20, 20, 0.95));
+    border: 1.5px solid rgba(255, 120, 120, 0.55);
+    color: #ffe8e8;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-align: center;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+    box-shadow: 0 3px 10px rgba(180, 40, 40, 0.35), inset 0 1px 0 rgba(255, 200, 200, 0.12);
+}
 
 /* ================================================================
    4.1.4 — Kaos skin (5.4 takeover palette).
@@ -3297,7 +3585,14 @@ body.skin-kaos {
   animation: menu-panel-in 0.35s cubic-bezier(.3,1.3,.5,1) both;
   max-height: calc(100vh - 40px);
   max-height: calc(100svh - 40px);
-  overflow-y: auto;
+  /* No internal scroll on the menu panel — `overflow: hidden` matches
+     the rest of the app's no-page-scroll contract (Chris 2026-04-20:
+     "the menu overlay lets you scroll inside its viewport"). If the
+     menu's content ever exceeds `max-height`, the layout needs a
+     real fix (tighter padding, drop an optional row) rather than a
+     scrollbar — a centered fixed-position card that scrolls inside
+     itself reads as broken. */
+  overflow: hidden;
 }
 .menu-overlay-panel::before {
   content: ""; position: absolute; inset: -2px;
@@ -3855,6 +4150,15 @@ body.skin-kaos {
 .screen {
   position: relative;
   will-change: transform, opacity;
+  /* Flex-grow inside `.app` so the active screen owns the remaining
+     viewport. Children that need internal scroll (figure browser) sit
+     in their own flex column inside this. Screens with naturally
+     short content (profile picker, game picker, portal grid) just
+     fill the area without scrolling. */
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 .screen-fwd {
   animation: screen-enter-fwd 240ms cubic-bezier(.2,.8,.3,1) both;

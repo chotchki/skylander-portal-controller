@@ -48,6 +48,7 @@ pub(crate) fn ProfilePicker(
 
     view! {
         <section class="profile-picker">
+            <PwaHint />
             {move || {
                 if show_admin.get() {
                     view! {
@@ -81,6 +82,57 @@ pub(crate) fn ProfilePicker(
                 }
             }}
         </section>
+    }
+}
+
+// --------- PWA "Add to Home Screen" hint (PLAN 4.18.1b) ---------
+
+/// One-time dismissible banner shown on the profile picker when the phone
+/// is running as a plain iOS Safari tab (not an installed PWA) and the
+/// user hasn't previously tapped "NOT NOW". The iOS Safari chrome doesn't
+/// hide unless the content overflows the viewport, so the only workable
+/// fix for the cramped portrait layout is to promote the site to a
+/// fullscreen PWA via Share → Add to Home Screen. `pwa::should_show_hint`
+/// owns the gating logic (pure, unit-tested); this component is just the
+/// rendering + dismiss plumbing.
+#[component]
+fn PwaHint() -> impl IntoView {
+    // Decision is read once on mount — the three inputs (UA, display
+    // mode, localStorage) don't meaningfully change while the page is
+    // alive, so re-checking each render would waste work. If the user
+    // dismisses, we flip `visible` below without re-consulting the gate.
+    let initial = crate::pwa::should_show_hint(
+        crate::pwa::is_ios_safari(),
+        crate::pwa::is_standalone(),
+        crate::pwa::hint_dismissed(),
+    );
+    let visible = RwSignal::new(initial);
+
+    let dismiss = move |_| {
+        crate::pwa::dismiss_hint();
+        visible.set(false);
+    };
+
+    view! {
+        <Show when=move || visible.get() fallback=|| ()>
+            <div class="pwa-hint" role="note">
+                <div class="pwa-hint-body">
+                    <div class="pwa-hint-title">"Pin this to your home screen"</div>
+                    <div class="pwa-hint-copy">
+                        "Tap "
+                        <span class="pwa-hint-icon" aria-label="Share">"\u{2B06}"</span>
+                        " Share, then "
+                        <strong>"Add to Home Screen"</strong>
+                        " for a bigger portal."
+                    </div>
+                </div>
+                <button
+                    class="pwa-hint-dismiss"
+                    on:click=dismiss
+                    aria-label="Dismiss install hint"
+                >"NOT NOW"</button>
+            </div>
+        </Show>
     }
 }
 
@@ -650,7 +702,22 @@ fn CreateProfileForm<F: Fn() + Send + Sync + 'static + Clone>(
     let name = RwSignal::new(String::new());
     let color = RwSignal::new("#da5ad6".to_string());
     let pin = RwSignal::new(String::new());
+    let pin_confirm = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
+    // Visible inline error for PIN mismatch (PLAN 4.18.8). `None` → no
+    // error panel; `Some(_)` → render the banner + attach the `shake`
+    // class to the confirm keypad so the mismatch is unmistakable. Any
+    // edit to either PIN clears the error so the next attempt starts clean.
+    let error: RwSignal<Option<String>> = RwSignal::new(None);
+
+    // Clear error whenever either PIN is edited.
+    Effect::new(move |_| {
+        pin.track();
+        pin_confirm.track();
+        if error.get_untracked().is_some() {
+            error.set(None);
+        }
+    });
 
     let submit = {
         let on_done = on_done.clone();
@@ -660,6 +727,7 @@ fn CreateProfileForm<F: Fn() + Send + Sync + 'static + Clone>(
             }
             let n = name.get().trim().to_string();
             let p = pin.get();
+            let pc = pin_confirm.get();
             let c = color.get();
             if n.is_empty() {
                 push_toast(toasts, "Name required.");
@@ -667,6 +735,18 @@ fn CreateProfileForm<F: Fn() + Send + Sync + 'static + Clone>(
             }
             if p.len() != 4 || !p.chars().all(|c| c.is_ascii_digit()) {
                 push_toast(toasts, "PIN must be 4 digits.");
+                return;
+            }
+            if pc.len() != 4 {
+                error.set(Some("Re-enter your PIN to confirm.".into()));
+                return;
+            }
+            if p != pc {
+                // Wipe the confirm entry so the user can retry without a
+                // backspace-marathon. The first PIN survives — typos are
+                // far more common on the second entry than the first.
+                pin_confirm.set(String::new());
+                error.set(Some("PINs don't match. Try the confirm again.".into()));
                 return;
             }
             busy.set(true);
@@ -683,6 +763,11 @@ fn CreateProfileForm<F: Fn() + Send + Sync + 'static + Clone>(
             });
         }
     };
+
+    // Reveal the confirm keypad only after the first PIN is 4 digits so
+    // the form doesn't look cluttered up-front and the user sees one
+    // thing to do at a time.
+    let confirm_ready = Signal::derive(move || pin.with(|p| p.len() == 4));
 
     view! {
         <FramedPanel class="create-profile-panel">
@@ -717,6 +802,23 @@ fn CreateProfileForm<F: Fn() + Send + Sync + 'static + Clone>(
                 </div>
                 <div class="edit-color-label">"PIN (4 digits)"</div>
                 <PinPad pin />
+                <Show when=move || confirm_ready.get() fallback=|| ()>
+                    <div class="edit-color-label">"Confirm PIN"</div>
+                    <div class=move || {
+                        let mut s = String::from("pin-confirm-wrap");
+                        if error.get().is_some() {
+                            s.push_str(" shake");
+                        }
+                        s
+                    }>
+                        <PinPad pin=pin_confirm />
+                    </div>
+                </Show>
+                <Show when=move || error.get().is_some() fallback=|| ()>
+                    <div class="pin-mismatch-banner" role="alert">
+                        {move || error.get().unwrap_or_default()}
+                    </div>
+                </Show>
                 <div class="actions" style="margin-top: 12px;">
                     <button class="btn btn-cancel" on:click=move |_| on_done()>"CANCEL"</button>
                     <button
@@ -861,6 +963,16 @@ fn PinPad(
     let digits: [&str; 12] = [
         "1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "\u{232b}",
     ];
+
+    // Tracks which key is currently visually "pressed" so a fast tap on
+    // iOS still flashes the press state (CSS `:active` is unreliable
+    // there — the active style can come and go faster than the screen
+    // refresh). Set on `pointerdown`, cleared after `PRESS_FLASH_MS`
+    // even if the finger is still down, which gives a guaranteed visible
+    // pulse per tap. Chris flagged 2026-04-19 alongside double-tap zoom.
+    let pressed: RwSignal<Option<String>> = RwSignal::new(None);
+    const PRESS_FLASH_MS: i32 = 140;
+
     view! {
         // Legacy inline dots for non-reskinned callers (CreateProfileForm, AdminPinReset).
         <Show when=move || !has_reskin fallback=|| ()>
@@ -882,7 +994,7 @@ fn PinPad(
                 let label = d.clone();
                 let is_ghost = d.is_empty();
                 let is_backspace = d == "\u{232b}";
-                let cls = if !has_reskin {
+                let base_cls = if !has_reskin {
                     "pin-key"
                 } else if is_ghost {
                     "pin-hkey pin-hkey-ghost"
@@ -891,10 +1003,32 @@ fn PinPad(
                 } else {
                     "pin-hkey"
                 };
+                let d_for_class = d.clone();
+                let class_fn = move || {
+                    let mut s = String::from(base_cls);
+                    if pressed.get().as_deref() == Some(d_for_class.as_str()) {
+                        s.push_str(" pressed");
+                    }
+                    s
+                };
+                let d_for_press = d.clone();
                 view! {
                     <button
-                        class=cls
+                        class=class_fn
                         disabled=move || is_ghost || is_locked.get()
+                        on:pointerdown=move |_| {
+                            if is_ghost || is_locked.get() { return; }
+                            pressed.set(Some(d_for_press.clone()));
+                            let key = d_for_press.clone();
+                            leptos::task::spawn_local(async move {
+                                crate::gloo_timer(PRESS_FLASH_MS).await;
+                                pressed.update(|cur| {
+                                    if cur.as_deref() == Some(key.as_str()) {
+                                        *cur = None;
+                                    }
+                                });
+                            });
+                        }
                         on:click=move |_| {
                             let k = d.clone();
                             if k.is_empty() || is_locked.get() { return; }

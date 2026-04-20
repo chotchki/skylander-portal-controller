@@ -30,6 +30,7 @@ pub(crate) fn GamePicker(
                     let slug = game_slug(&g.display_name);
                     let short_name = game_short_name(&g.display_name);
                     let serial_for_class = serial.clone();
+                    let boxart_src = format!("/api/games/{serial}/image");
                     let delay_style = format!("animation-delay: {}ms", i * 80);
                     view! {
                         <button
@@ -59,6 +60,28 @@ pub(crate) fn GamePicker(
                                 });
                             }
                         >
+                            <img
+                                class="game-card-image"
+                                src=boxart_src
+                                loading="lazy"
+                                decoding="async"
+                                alt=""
+                                on:error=move |ev| {
+                                    // Defensive: the scrape shipped all six serials,
+                                    // but a future game lands without box art first →
+                                    // hide the <img> so the per-slug CSS gradient +
+                                    // name label render uncluttered. `display: none`
+                                    // is also what the CSS default renders if the
+                                    // <img> never mounts, so on:error keeps us in
+                                    // the same visual slot.
+                                    use leptos::wasm_bindgen::JsCast;
+                                    if let Some(img) = ev.target()
+                                        .and_then(|t| t.dyn_into::<web_sys::HtmlElement>().ok())
+                                    {
+                                        let _ = img.style().set_property("display", "none");
+                                    }
+                                }
+                            />
                             <span class="game-name">{short_name}</span>
                         </button>
                     }

@@ -24,6 +24,11 @@ web-sys = { version = "0.3", features = [
     "WebSocket", "MessageEvent", "Event", "BinaryType", "console",
     "Window", "Location", "Request", "RequestInit", "RequestMode",
     "Response", "Headers", "PointerEvent", "Element", "HtmlElement",
+    # PWA install-hint detection (PLAN 4.18.1b):
+    #   Navigator      → user_agent() + max_touch_points() for iOS/iPad-Pro sniff
+    #   MediaQueryList → matchMedia("(display-mode: standalone)")
+    #   Storage        → localStorage for once-and-done dismissal
+    "Navigator", "MediaQueryList", "Storage",
 ] }
 console_error_panic_hook = "0.1"
 serde = { version = "1", features = ["derive"] }

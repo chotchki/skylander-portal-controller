@@ -8,6 +8,7 @@ mod api;
 pub mod components;
 pub mod dev_log;
 mod model;
+mod pwa;
 mod screens;
 mod ws;
 
@@ -15,7 +16,7 @@ use leptos::prelude::*;
 
 use crate::api::{fetch_games, fetch_status};
 use crate::model::{
-    ConnState, Element, GameLaunched, Slot, SlotState, UnlockedProfile, SLOT_COUNT,
+    ConnState, Element, GameLaunched, PublicProfile, Slot, SlotState, UnlockedProfile, SLOT_COUNT,
 };
 use crate::screens::*;
 
@@ -108,6 +109,19 @@ pub fn App() -> impl IntoView {
     let nav_dir = RwSignal::new(NavDir::Forward);
     // Bumps on every profile CRUD so the ProfilePicker re-fetches.
     let profiles_epoch = RwSignal::new(0u32);
+    // Flat list of known profiles, refreshed on mount and every time
+    // `profiles_epoch` bumps. Read by the portal's per-slot ownership
+    // indicator (PLAN 4.18.17) which resolves `placed_by` → color +
+    // initial so both co-op players can tell whose figure is whose.
+    let known_profiles: RwSignal<Vec<PublicProfile>> = RwSignal::new(Vec::new());
+    Effect::new(move |_| {
+        // Track so a CRUD bump re-fetches. The initial run hits the
+        // server once on mount; subsequent runs only on explicit bumps.
+        let _ = profiles_epoch.get();
+        leptos::task::spawn_local(async move {
+            known_profiles.set(api::fetch_profiles().await);
+        });
+    });
     // Failed-WS-reconnect counter (written by ws.rs, read by ConnectionLost
     // to decide when to surface the manual TRY AGAIN button) and a bump
     // counter the user fires from that button (watched by ws.rs to cancel
@@ -222,7 +236,7 @@ pub fn App() -> impl IntoView {
             >
                 <div class={screen_cls("screen-portal")}>
                     <Picking picking_for />
-                    <Portal portal picking_for reset_target />
+                    <Portal portal picking_for reset_target known_profiles />
                     <Suspense fallback=|| view! { <div class="empty-msg">"Loading figures…"</div> }>
                         {move || figures.get().map(|figs| view! {
                             <Browser

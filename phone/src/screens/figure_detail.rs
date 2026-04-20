@@ -129,18 +129,41 @@ pub(crate) fn FigureDetail(
 
             <div class="detail-surface framed-panel panel-in">
                 <div class="detail-hero-wrap">
-                    {match element {
-                        Some(el) => view! {
-                            <FigureHero element=el state=hero_state>
-                                <span>{initial.clone()}</span>
-                            </FigureHero>
-                        }.into_any(),
-                        None => view! {
-                            <FigureHero state=hero_state>
-                                <span>{initial.clone()}</span>
-                            </FigureHero>
-                        }.into_any(),
-                    }}
+                    {
+                        // Hero portrait + initial fallback. Initial sits
+                        // behind the img so a missing scrape (rare —
+                        // server falls back to the element icon) still
+                        // shows something readable inside the bezel.
+                        let hero_id = fig_id.clone();
+                        let hero_initial = initial.clone();
+                        let hero_src = format!("/api/figures/{}/image?size=hero", hero_id);
+                        match element {
+                            Some(el) => view! {
+                                <FigureHero element=el state=hero_state>
+                                    <span class="detail-hero-initial">{hero_initial}</span>
+                                    <img
+                                        class="detail-hero-image"
+                                        src=hero_src
+                                        alt=""
+                                        loading="eager"
+                                        decoding="async"
+                                    />
+                                </FigureHero>
+                            }.into_any(),
+                            None => view! {
+                                <FigureHero state=hero_state>
+                                    <span class="detail-hero-initial">{hero_initial}</span>
+                                    <img
+                                        class="detail-hero-image"
+                                        src=hero_src
+                                        alt=""
+                                        loading="eager"
+                                        decoding="async"
+                                    />
+                                </FigureHero>
+                            }.into_any(),
+                        }
+                    }
                 </div>
 
                 <div class="detail-name-wrap">
@@ -151,15 +174,39 @@ pub(crate) fn FigureDetail(
                 </div>
 
                 <div class="detail-action-row">
-                    <button class="detail-action-btn" disabled=true title="Appearance">
-                        "\u{2726}"
-                    </button>
-                    <button class="detail-action-btn" disabled=true title="Stats">
-                        "\u{2630}"
-                    </button>
-                    <button class="detail-action-btn" disabled=true title="Reset">
-                        "\u{21BA}"
-                    </button>
+                    <div class="detail-action">
+                        <button
+                            class="detail-action-btn"
+                            disabled=true
+                            aria-label="Appearance"
+                            title="Appearance"
+                        >
+                            "\u{2726}"
+                        </button>
+                        <div class="detail-action-label">"APPEARANCE"</div>
+                    </div>
+                    <div class="detail-action">
+                        <button
+                            class="detail-action-btn"
+                            disabled=true
+                            aria-label="Stats"
+                            title="Stats"
+                        >
+                            "\u{2630}"
+                        </button>
+                        <div class="detail-action-label">"STATS"</div>
+                    </div>
+                    <div class="detail-action">
+                        <button
+                            class="detail-action-btn"
+                            disabled=true
+                            aria-label="Reset"
+                            title="Reset"
+                        >
+                            "\u{21BA}"
+                        </button>
+                        <div class="detail-action-label">"RESET"</div>
+                    </div>
                 </div>
 
                 <div class="detail-stats-strip">

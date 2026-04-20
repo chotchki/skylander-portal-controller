@@ -169,7 +169,17 @@ pub(crate) fn Browser(
                                                         element=elem
                                                         state=bezel_state
                                                     >
+                                                        // Initial sits behind the portrait so a missing
+                                                        // scrape (rare — server falls back to the element
+                                                        // icon) still shows something readable.
                                                         <span class="fig-initial">{initial.clone()}</span>
+                                                        <img
+                                                            class="fig-image-p4"
+                                                            src=format!("/api/figures/{}/image?size=thumb", id)
+                                                            alt=""
+                                                            loading="lazy"
+                                                            decoding="async"
+                                                        />
                                                     </GoldBezel>
                                                 </div>
                                                 <div class="fig-name-p4">{name}</div>
