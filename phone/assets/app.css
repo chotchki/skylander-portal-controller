@@ -80,7 +80,15 @@ body::after {
   position: fixed; inset: 0;
   z-index: 0;
   pointer-events: none;
+  /* 400×800 tile with stars populating the WHOLE 800px height. The
+     original 9 points all fell in y=30..400, so anything taller than
+     800px (every iPhone Pro Max) showed a visible empty band followed
+     by the next tile's top-cluster — Chris flagged 2026-04-21 as
+     "stops short of the bottom and then tiles". The bottom-half stars
+     mirror the top half's mix of sizes + colour tints so each tile
+     looks self-similar at the seam. */
   background-image:
+    /* upper half (y = 30..400) */
     radial-gradient(1px 1px at 20px 30px, white, transparent),
     radial-gradient(1px 1px at 40px 70px, rgba(255,255,255,0.7), transparent),
     radial-gradient(2px 2px at 50px 160px, rgba(255,230,180,0.9), transparent),
@@ -89,7 +97,17 @@ body::after {
     radial-gradient(1px 1px at 170px 300px, white, transparent),
     radial-gradient(2px 2px at 230px 100px, rgba(180,220,255,0.9), transparent),
     radial-gradient(1px 1px at 300px 200px, white, transparent),
-    radial-gradient(1px 1px at 260px 400px, white, transparent);
+    radial-gradient(1px 1px at 260px 400px, white, transparent),
+    /* lower half (y = 440..780) — same density + colour mix */
+    radial-gradient(1px 1px at 60px 460px, rgba(255,255,255,0.8), transparent),
+    radial-gradient(1px 1px at 180px 500px, white, transparent),
+    radial-gradient(2px 2px at 110px 560px, rgba(180,220,255,0.9), transparent),
+    radial-gradient(1px 1px at 250px 540px, white, transparent),
+    radial-gradient(1px 1px at 30px 630px, rgba(255,255,255,0.7), transparent),
+    radial-gradient(1px 1px at 210px 660px, white, transparent),
+    radial-gradient(2px 2px at 320px 700px, rgba(255,230,180,0.9), transparent),
+    radial-gradient(1px 1px at 80px 740px, white, transparent),
+    radial-gradient(1px 1px at 290px 780px, rgba(255,255,255,0.8), transparent);
   background-size: 400px 800px;
   animation: sky-drift var(--dur-sky-drift) linear infinite;
 }
