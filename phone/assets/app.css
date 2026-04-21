@@ -2308,12 +2308,40 @@ input, textarea {
   max-height: 320px;
 }
 .lid-open-p4.closed {
-  max-height: 18px;
-  padding-top: 4px;
-  padding-bottom: 4px;
+  /* Per design_language.md §6.7: closed lid is a 64px wooden plank
+     at the bottom. Keep the grabber + wood grain + gold trim visible
+     so the tap target reads as "pull me up"; hide the top row so
+     it's a clean bar rather than a half-open compact state. */
+  max-height: 64px;
+  padding-top: 10px;
+  padding-bottom: 10px;
 }
 .lid-open-p4.closed .lid-top-row-p4,
 .lid-open-p4.closed .search-expanded-p4 {
+  display: none;
+}
+
+/* Portal / interior visibility keyed on the lid state.
+   - Closed → portal grid owns the viewport above the lid bar; the
+     dark box interior is irrelevant so we hide it (it would
+     otherwise steal flex:1 space and pancake the portal).
+   - Compact / Expanded → lid + figure interior are the focus; the
+     portal grid hides so the figure cards have room to breathe,
+     matching the mock's "toy box open, slots behind a veil" idea.
+   Uses `:has()` so Leptos doesn't need to thread `box_state` out
+   of Browser — the lid's class modifier is the source of truth.
+   iOS Safari ≥ 15.4 supports `:has()`, matches our PWA baseline.
+   PLAN 4.18 on-device round 3 (Chris 2026-04-21). */
+.screen-portal:has(.lid-open-p4.closed) .portal-p4 {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.screen-portal:has(.lid-open-p4.closed) .box-body-bg {
+  display: none;
+}
+.screen-portal:has(.lid-open-p4:not(.closed)) .portal-p4 {
   display: none;
 }
 /* 4.2.13.12 — gesture zone intercepts touch scrolls so the lid owns the gesture,

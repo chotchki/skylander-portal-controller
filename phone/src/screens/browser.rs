@@ -62,7 +62,14 @@ pub(crate) fn Browser(
 
     let is_empty = Memo::new(move |_| filtered.get().is_empty());
 
-    let box_state = RwSignal::new(BoxState::Compact);
+    // Default is `Closed` so the portal grid owns the viewport on arrival
+    // (design_language.md §6.7: closed = wooden plank at the bottom,
+    // portal visible above). User taps/swipes the lid to open. Prior
+    // default was `Compact`, which hid the portal behind the figure grid
+    // and pushed the lid off-screen on any iPhone where the 2×4 bezel
+    // grid (~940px) exceeded the available viewport (~660px). Chris
+    // flagged 2026-04-21 ("the lid is not there"). PLAN 4.18 round 3.
+    let box_state = RwSignal::new(BoxState::Closed);
 
     view! {
         <Show
