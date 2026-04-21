@@ -705,12 +705,20 @@ async fn list_games(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
 #[derive(Serialize)]
 struct StatusBody {
+    /// True iff an `RpcsProcess` handle is held in the lifecycle.
+    /// Under PLAN 4.15.16 this stays true across game quits (stop_emulation
+    /// leaves the process alive); it's false only during the brief startup
+    /// window before the initial spawn completes and during crash-respawn.
+    /// The phone game picker can use this to gate launch affordances on
+    /// "emulator actually ready".
+    rpcs3_running: bool,
     current_game: Option<GameLaunched>,
 }
 
 async fn get_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let rpcs3 = state.rpcs3.lock().await;
     axum::Json(StatusBody {
+        rpcs3_running: rpcs3.process.is_some(),
         current_game: rpcs3.current.clone(),
     })
 }

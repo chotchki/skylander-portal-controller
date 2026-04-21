@@ -244,8 +244,6 @@ fn main() -> Result<()> {
                         return;
                     }
                 };
-                info!("serving on http://{bind_addr}");
-
                 // Spawn RPCS3 at startup (PLAN 4.15.16) so the emulator
                 // is ready by the time the phone reaches the game
                 // picker. Skipped when the mock driver is active — mock
@@ -256,6 +254,12 @@ fn main() -> Result<()> {
                 // already gates on rpcs3_running, so the cloud vortex
                 // persists while we wait, and on error flips straight
                 // to ServerError with the diagnostic.
+                //
+                // This block intentionally runs BEFORE the "serving on"
+                // log: test harnesses (TestServer::spawn_live) scrape
+                // that line as their readiness signal, so it must imply
+                // "RPCS3 is up + axum is about to accept connections",
+                // not "listener bound but RPCS3 still starting up".
                 if driver_kind == crate::config::DriverKind::Uia {
                     let rpcs3_exe_clone = state.rpcs3_exe.clone();
                     let rpcs3_state = state.rpcs3.clone();
@@ -289,6 +293,7 @@ fn main() -> Result<()> {
                     }
                 }
 
+                info!("serving on http://{bind_addr}");
                 // Tell the launcher UI the server is healthy. Until
                 // this flips, the launcher's intro animations stay
                 // gated — calm starfield + brand intro only — so a
