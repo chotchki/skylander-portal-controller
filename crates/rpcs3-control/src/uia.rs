@@ -926,20 +926,29 @@ impl crate::PortalDriver for UiaPortalDriver {
         // Try UIInvokePattern first — RPCS3's toolbar button responds
         // to it on the Qt 6 builds we've tested (CLAUDE.md's
         // "Invoke doesn't work" caveat was specifically for menu items).
+        //
+        // Do NOT post Enter afterwards to "dismiss a confirm dialog"
+        // (older pattern from quit_via_file_menu): the toolbar Stop
+        // button morphs into a Play button the instant emulation
+        // halts, and pressing Enter after the invoke lands on the
+        // now-focused Play and restarts the game — exactly the
+        // "killed and restarted" path Chris flagged 2026-04-21 during
+        // HTPC validation. If an RPCS3 build ever defaults to a
+        // stop-confirmation dialog, handle it by finding the dialog
+        // window + invoking its default button, not by blindly
+        // posting Enter to main.
         if let Ok(inv) = target.get_pattern::<UIInvokePattern>() {
             if inv.invoke().is_ok() {
                 debug!("invoked Stop via UIInvokePattern");
-                // Confirm-quit dialog may appear; Enter lands on the
-                // default. Harmless if no dialog.
-                sleep(MENU_STEP_PAUSE);
-                let _ = post_key(main_hwnd, VK_RETURN);
                 return wait_for_viewport_gone(timeout);
             }
         }
 
         // Fallback: PostMessage click at the button's centre. Matches
         // `boot_game_by_serial`'s pattern — bypasses Z-order so the
-        // egui cover doesn't swallow the click.
+        // egui cover doesn't swallow the click. Same "no Enter post"
+        // rule applies here: after the click the button has morphed,
+        // so a follow-up keypress would hit the wrong control.
         let rect = target
             .get_bounding_rectangle()
             .context("Stop control bounding rect")?;
@@ -953,8 +962,6 @@ impl crate::PortalDriver for UiaPortalDriver {
         let ly = cy - wrect.top;
         post_click(main_hwnd, lx, ly).context("post Stop click")?;
         debug!(lx, ly, "posted Stop click to main window");
-        sleep(MENU_STEP_PAUSE);
-        let _ = post_key(main_hwnd, VK_RETURN);
 
         wait_for_viewport_gone(timeout)
     }
