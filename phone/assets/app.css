@@ -40,7 +40,6 @@
 html, body {
   margin: 0;
   padding: 0;
-  background: var(--sf-3);
   color: var(--text);
   /* Kill iOS Safari's zoom gestures across the whole app:
        - `pan-x pan-y` permits scroll (inside `.box-body-scroll` etc.)
@@ -56,6 +55,11 @@ html, body {
      from the PIN keypad.) */
   touch-action: pan-x pan-y;
 }
+/* Flat sf-3 lives ONLY on html. body stays transparent so the
+   fixed-positioned `body::before` gradient layer below shows
+   through — if the pseudo ever fails to render, html's sf-3
+   provides a sensible flat fallback. */
+html { background: var(--sf-3); }
 body {
   /* Lock the body to the visible viewport so no screen except the toy
      box scrolls (Chris 2026-04-20: "you can still scroll on pages you
@@ -70,19 +74,25 @@ body {
   height: 100dvh;
   overflow: hidden;
   overscroll-behavior: none;
+  /* Flat sf-3 fallback. The real gradient backdrop lives on
+     `body::before` (fixed-positioned) so it covers the full
+     visible viewport even when iOS's URL bar is mid-transition
+     and body's 100dvh briefly lags behind the visible area.
+     Chris flagged 2026-04-21 that `background-attachment: fixed`
+     on body didn't fix the dark band on iOS — switched to the
+     ::before approach which matches the body::after starfield
+     layer's pattern and is known-good on iOS since iOS 9. */
+}
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
   background:
     radial-gradient(ellipse 120% 60% at 50% 0%, #1a3a8a 0%, transparent 50%),
     radial-gradient(ellipse 80% 50% at 50% 100%, #0e2464 0%, transparent 50%),
     linear-gradient(180deg, var(--sf-1), var(--sf-2) 60%, var(--sf-3));
-  /* Attach the gradient to the viewport rather than the body box.
-     Without this, the bottom radial glow ends at body's edge — and
-     on iOS the visible area sometimes extends past body (address
-     bar mid-transition, safe-area inset, home-indicator strip),
-     which renders as a dark band at the bottom of the screen where
-     only html's flat sf-3 shows through. With `fixed`, the gradient
-     is sized against the viewport and always fills what's visible.
-     Chris flagged 2026-04-21. */
-  background-attachment: fixed;
 }
 body::after {
   content: "";
