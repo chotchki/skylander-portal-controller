@@ -15,7 +15,6 @@ use skylander_core::{
     Event, FigureId, GameLaunched, GameSerial, PublicFigure, SLOT_COUNT, SlotIndex, SlotState,
     UnlockedProfile,
 };
-use skylander_rpcs3_control::RpcsProcess;
 use tokio::sync::broadcast;
 use tower::ServiceBuilder;
 use tower_http::services::ServeDir;
@@ -780,20 +779,35 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
     };
 
     // Hold the rpcs3 lock across the whole launch so we can't race.
-    let mut guard = state.rpcs3.lock().await;
-    if guard.process.is_some() {
+    // Under the always-running RPCS3 contract (PLAN 4.15.16): the
+    // process should already exist from server startup. If it's
+    // missing, either startup is still in flight or the crash watchdog
+    // is mid-respawn — return 503 so the phone retries rather than
+    // mis-reporting a "conflict".
+    let guard = state.rpcs3.lock().await;
+    if guard.process.is_none() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "RPCS3 isn't ready yet; hold tight",
+        )
+            .into_response();
+    }
+    if guard.current.is_some() {
         return (
             StatusCode::CONFLICT,
             "another game is already running; quit it first",
         )
             .into_response();
     }
+    // Drop the lock before we start sending driver jobs so other
+    // handlers (crash-aware status reads, /api/quit) aren't serialised
+    // behind the enumerate + boot round-trip.
+    drop(guard);
 
-    let exe = state.rpcs3_exe.clone();
     info!(
         serial = %body.serial,
         display_name = %game.display_name,
-        "launching game (library view + UIA-boot by serial)",
+        "booting game (RPCS3 already running — UIA-pick + boot by serial)",
     );
 
     // Tell the launcher UI we're loading. RAII so any error return
@@ -807,52 +821,12 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
     }
     let mut loading_guard = LoadingGuard::armed(&state.launcher_status);
 
-    // Two-step launch. Step 1: spawn RPCS3 with no EBOOT argument and wait
-    // for its main window to show up. Step 2: hand off to the driver worker
-    // to open the Manage dialog (cold-library nav) and UIA-boot the game
-    // by serial. This supersedes the old EBOOT-direct path — that left
-    // RPCS3 in a direct-boot state where the menu bar wouldn't respond to
-    // synthesised keystrokes, blocking every subsequent portal interaction.
-    // See CLAUDE.md "RPCS3 window/menu gotchas" + PLAN 3.7.5.
-    let launch = tokio::task::spawn_blocking(move || -> anyhow::Result<RpcsProcess> {
-        let mut proc = RpcsProcess::launch_library(&exe)?;
-        proc.wait_ready(Duration::from_secs(45))?;
-        Ok(proc)
-    })
-    .await;
-
-    let proc = match launch {
-        Ok(Ok(p)) => p,
-        Ok(Err(e)) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("launch failed: {e}"),
-            )
-                .into_response();
-        }
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("launch task panicked: {e}"),
-            )
-                .into_response();
-        }
-    };
-
-    // Save the process handle before the UIA-boot step so that if boot
-    // fails, the handler's error response doesn't leak the RPCS3 instance
-    // — the next launch attempt (or quit) will find and clean up via
-    // `guard.process`. The `current` GameLaunched is only set after boot
-    // succeeds so the UI doesn't show a half-booted game.
-    guard.process = Some(proc);
-
     // PLAN 3.7.8 phase 1: verify the requested serial is actually in
-    // RPCS3's library before committing to a boot. Catches the
-    // games.yml-says-yes-but-RPCS3-says-no failure mode (user removed
-    // the entry from RPCS3's UI without cleaning the yml). Skipped if
-    // enumeration UIA-errors (rare, falls through to boot's own error
-    // path) or returns empty (defensive: don't block every launch on
-    // an apparent empty library — boot will catch the real issue).
+    // RPCS3's library before committing to a boot. Under 4.15.16 we
+    // don't kill RPCS3 on miss anymore — it stays at library view so
+    // the user can pick a different game without waiting for a
+    // respawn. Empty-list / UIA-error fall through to boot's own
+    // error handling as before.
     let (etx, erx) = tokio::sync::oneshot::channel();
     if let Err(e) = state
         .driver_tx
@@ -876,20 +850,6 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
                     available = serials.len(),
                     "requested serial not in RPCS3 library — refusing boot",
                 );
-                // Quit the just-spawned RPCS3 so a retry can re-launch
-                // cleanly. Use the force-kill path because graceful is
-                // tens of seconds and we know RPCS3 is at library view
-                // with nothing in flight.
-                if let Some(mut p) = guard.process.take() {
-                    let _ = tokio::task::spawn_blocking(move || {
-                        p.shutdown_graceful(Duration::from_millis(500))
-                    })
-                    .await;
-                }
-                if let Ok(mut st) = state.launcher_status.lock() {
-                    st.rpcs3_running = false;
-                    st.current_game = None;
-                }
                 return (
                     StatusCode::NOT_FOUND,
                     format!(
@@ -951,13 +911,16 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
         serial: game.serial.clone(),
         display_name: game.display_name.clone(),
     };
-    guard.current = Some(launched.clone());
+    // Re-acquire the rpcs3 lock to publish `current`. The window between
+    // drop + reacquire is fine: /api/quit and /api/shutdown both check
+    // `current` (not `process`) to decide whether a game is running, and
+    // neither can preempt us because of the driver worker's serialisation.
+    state.rpcs3.lock().await.current = Some(launched.clone());
 
-    // Publish to the launcher status snapshot (PLAN 4.15.4). Failed lock
-    // would mean a poisoned mutex — rare, and the UI survives reading a
-    // stale value for one more frame, so swallow and keep going.
+    // Publish to the launcher status snapshot (PLAN 4.15.4). `rpcs3_running`
+    // stayed true across the boot (the process was live the whole time
+    // under 4.15.16); only `current_game` flips here.
     if let Ok(mut st) = state.launcher_status.lock() {
-        st.rpcs3_running = true;
         st.current_game = Some(game.display_name.clone());
     }
     // Boot succeeded — disarm the loading guard so `loading_game`
@@ -1055,67 +1018,165 @@ async fn quit_game(
     axum::extract::Query(q): axum::extract::Query<QuitQuery>,
     Signed(_body): Signed,
 ) -> Response {
+    // Under the always-running RPCS3 contract (PLAN 4.15.16), "quit"
+    // means "stop the current game and return RPCS3 to library view".
+    // The process stays alive; only `current` clears. `force=true`
+    // keeps the old escape hatch — kill the process and let the crash
+    // watchdog respawn it — for cases where the UIA stop path is
+    // wedged or the game is unresponsive.
     let mut guard = state.rpcs3.lock().await;
-    let mut proc = match guard.process.take() {
-        Some(p) => p,
-        None => return (StatusCode::CONFLICT, "no game is running").into_response(),
-    };
-
-    // Reset current immediately — the quit is committed even if the process
-    // takes time to actually die.
+    if guard.current.is_none() {
+        return (StatusCode::CONFLICT, "no game is running").into_response();
+    }
+    // Reset current immediately — the quit is committed the moment we
+    // decide to stop, whether the UIA click takes a moment or not.
     guard.current = None;
-    drop(guard);
 
-    let timeout = if q.force {
-        Duration::from_millis(500)
+    if q.force {
+        // Force path: take the process, kill it, let the watchdog
+        // respawn a fresh library-view RPCS3. Rare; useful when
+        // UIA stop doesn't work and the user needs a hard reset.
+        let mut proc = match guard.process.take() {
+            Some(p) => p,
+            None => {
+                drop(guard);
+                return (
+                    StatusCode::CONFLICT,
+                    "no RPCS3 process to force-kill",
+                )
+                    .into_response();
+            }
+        };
+        drop(guard);
+        let result = tokio::task::spawn_blocking(move || {
+            proc.shutdown_graceful(Duration::from_millis(500))
+        })
+        .await;
+        match result {
+            Ok(Ok(path)) => info!(?path, "force-quit: process killed"),
+            Ok(Err(e)) => warn!("force-quit errored: {e}"),
+            Err(e) => warn!("force-quit task panicked: {e}"),
+        }
+        if let Ok(mut st) = state.launcher_status.lock() {
+            st.rpcs3_running = false;
+            st.current_game = None;
+        }
     } else {
-        Duration::from_secs(30)
-    };
-
-    let result = tokio::task::spawn_blocking(move || proc.shutdown_graceful(timeout)).await;
-
-    match result {
-        Ok(Ok(path)) => info!(?path, "game shutdown finished"),
-        Ok(Err(e)) => warn!("game shutdown errored: {e}"),
-        Err(e) => warn!("shutdown task panicked: {e}"),
+        // Normal path: stop emulation via UIA. Process stays alive at
+        // library view; next launch is a BootGame away.
+        drop(guard);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        if let Err(e) = state
+            .driver_tx
+            .send(crate::state::DriverJob::StopEmulation {
+                timeout: Duration::from_secs(10),
+                done: tx,
+            })
+            .await
+        {
+            warn!("queue StopEmulation: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("queue StopEmulation: {e}"),
+            )
+                .into_response();
+        }
+        match rx.await {
+            Ok(Ok(())) => info!("stop_emulation succeeded; RPCS3 back at library"),
+            Ok(Err(e)) => {
+                warn!("stop_emulation failed: {e}; leaving current cleared anyway");
+                // Don't revert `current` — the user's intent was to
+                // quit, and retrying with ?force=true is the escape
+                // hatch for a wedged stop.
+            }
+            Err(e) => warn!("StopEmulation ack dropped: {e}"),
+        }
+        if let Ok(mut st) = state.launcher_status.lock() {
+            // rpcs3_running stays true — process is alive. Only the
+            // current-game field clears.
+            st.current_game = None;
+        }
     }
 
-    // Reset the portal snapshot since the emulator is gone.
+    // Reset the portal snapshot since the game is no longer loaded.
     *state.portal.lock().await = std::array::from_fn(|_| SlotState::Empty);
     let _ = state.events.send(Event::PortalSnapshot {
         slots: std::array::from_fn(|_| SlotState::Empty),
     });
     let _ = state.events.send(Event::GameChanged { current: None });
 
-    // Clear the launcher status snapshot (PLAN 4.15.4).
-    if let Ok(mut st) = state.launcher_status.lock() {
-        st.rpcs3_running = false;
-        st.current_game = None;
-    }
-
     (StatusCode::ACCEPTED, "quit").into_response()
 }
 
-/// POST /api/shutdown — phone's SHUT DOWN menu action (PLAN 4.15.11).
+/// POST /api/shutdown — phone's SHUT DOWN menu action (PLAN 4.15.11 +
+/// 4.15.16).
 ///
-/// Flips the TV launcher into the `Farewell` surface. The egui side runs
-/// a ~3s countdown and then sends `ViewportCommand::Close`, which is the
-/// same mechanism the Exit-to-Desktop button uses — we don't exit the
-/// process directly from here because (a) the eframe loop owns the only
-/// legal way to close the viewport cleanly, and (b) routing through the
-/// launcher screen lets us show the "SEE YOU NEXT TIME, PORTAL MASTER"
-/// farewell copy before the window disappears.
+/// Coordinated exit:
+/// 1. If a game is running, stop emulation first so RPCS3 can flush its
+///    caches cleanly. Best-effort — if stop fails we still proceed.
+/// 2. Gracefully shut down the RPCS3 process (File → Exit via WM_CLOSE).
+///    The launcher's Job Object would kill it on viewport-close anyway,
+///    but a graceful exit gives RPCS3 a chance to write its config +
+///    shader caches before it dies.
+/// 3. Flip the launcher into the `Farewell` surface. The egui side
+///    runs a ~3s countdown, then sends `ViewportCommand::Close` which
+///    is the same mechanism the Exit-to-Desktop button uses.
 ///
-/// NOTE: this handler does NOT quit a running game. Callers that want
-/// "quit the game AND shut down the launcher" should POST `/api/quit`
-/// first and then `/api/shutdown`. Keeping them separate means a dev
-/// curl against a launcher with no RPCS3 running (startup state) still
-/// works — which is the primary way we'll exercise 4.15.11 until the
-/// phone menu lands.
+/// We don't exit the server process directly because (a) the eframe
+/// loop owns the only legal way to close the viewport cleanly, and
+/// (b) the farewell screen gives the user visual confirmation before
+/// the window disappears.
 async fn shutdown_launcher(State(state): State<Arc<AppState>>, Signed(_body): Signed) -> Response {
     info!("shutdown requested via /api/shutdown");
+
+    // Step 1: stop the current game if any. Brief timeout since we're
+    // on the way out — don't block the shutdown on a wedged UIA call.
+    let has_game = {
+        let guard = state.rpcs3.lock().await;
+        guard.current.is_some()
+    };
+    if has_game {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        if state
+            .driver_tx
+            .send(crate::state::DriverJob::StopEmulation {
+                timeout: Duration::from_secs(5),
+                done: tx,
+            })
+            .await
+            .is_ok()
+        {
+            match rx.await {
+                Ok(Ok(())) => info!("shutdown: stop_emulation ok"),
+                Ok(Err(e)) => warn!("shutdown: stop_emulation failed: {e}"),
+                Err(e) => warn!("shutdown: StopEmulation ack dropped: {e}"),
+            }
+        }
+        let mut guard = state.rpcs3.lock().await;
+        guard.current = None;
+    }
+
+    // Step 2: graceful RPCS3 exit. Take the process so the crash
+    // watchdog doesn't see it die and try to respawn.
+    let process = state.rpcs3.lock().await.process.take();
+    if let Some(mut proc) = process {
+        let result = tokio::task::spawn_blocking(move || {
+            proc.shutdown_graceful(Duration::from_secs(5))
+        })
+        .await;
+        match result {
+            Ok(Ok(path)) => info!(?path, "shutdown: RPCS3 exited"),
+            Ok(Err(e)) => warn!("shutdown: RPCS3 shutdown errored: {e}"),
+            Err(e) => warn!("shutdown: RPCS3 shutdown task panicked: {e}"),
+        }
+    }
+
+    // Step 3: flip the launcher to Farewell. eframe's countdown fires
+    // ViewportCommand::Close when it hits zero.
     if let Ok(mut st) = state.launcher_status.lock() {
         st.screen = crate::state::LauncherScreen::Farewell;
+        st.rpcs3_running = false;
+        st.current_game = None;
     }
     (StatusCode::ACCEPTED, "farewell").into_response()
 }

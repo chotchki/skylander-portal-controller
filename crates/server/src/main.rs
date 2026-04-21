@@ -16,7 +16,7 @@ use std::sync::atomic::AtomicUsize;
 
 use anyhow::{Context, Result};
 use skylander_core::{Figure, SLOT_COUNT, SlotState};
-use skylander_rpcs3_control::PortalDriver;
+use skylander_rpcs3_control::{PortalDriver, RpcsProcess};
 use tokio::sync::{Mutex, broadcast};
 use tracing::{info, warn};
 
@@ -187,6 +187,7 @@ fn main() -> Result<()> {
                     portal_for_task.clone(),
                     events_for_task.clone(),
                     status_for_task.clone(),
+                    rpcs3_exe.clone(),
                     std::time::Duration::from_millis(500),
                 );
                 // Shader-compile watchdog — polls RPCS3's main window
@@ -244,6 +245,50 @@ fn main() -> Result<()> {
                     }
                 };
                 info!("serving on http://{bind_addr}");
+
+                // Spawn RPCS3 at startup (PLAN 4.15.16) so the emulator
+                // is ready by the time the phone reaches the game
+                // picker. Skipped when the mock driver is active — mock
+                // doesn't have a real RPCS3 to spawn, and test suites
+                // use `/api/_test/set_game` to fake lifecycle state.
+                // Hard-fails on spawn error per the "starting-screen
+                // makes sense" decision: egui's LaunchPhase::Startup
+                // already gates on rpcs3_running, so the cloud vortex
+                // persists while we wait, and on error flips straight
+                // to ServerError with the diagnostic.
+                if driver_kind == crate::config::DriverKind::Uia {
+                    let rpcs3_exe_clone = state.rpcs3_exe.clone();
+                    let rpcs3_state = state.rpcs3.clone();
+                    let status = state.launcher_status.clone();
+                    let spawn_result = tokio::task::spawn_blocking(
+                        move || -> anyhow::Result<RpcsProcess> {
+                            let mut proc = RpcsProcess::launch_library(&rpcs3_exe_clone)?;
+                            proc.wait_ready(std::time::Duration::from_secs(45))?;
+                            Ok(proc)
+                        },
+                    )
+                    .await;
+                    match spawn_result {
+                        Ok(Ok(proc)) => {
+                            let mut guard = rpcs3_state.lock().await;
+                            guard.process = Some(proc);
+                            drop(guard);
+                            if let Ok(mut st) = status.lock() {
+                                st.rpcs3_running = true;
+                            }
+                            info!("RPCS3 spawned at startup, library view ready");
+                        }
+                        Ok(Err(e)) => {
+                            report_fatal("spawn RPCS3 at startup", &e);
+                            return;
+                        }
+                        Err(e) => {
+                            report_fatal("RPCS3 spawn task panicked", &e);
+                            return;
+                        }
+                    }
+                }
+
                 // Tell the launcher UI the server is healthy. Until
                 // this flips, the launcher's intro animations stay
                 // gated — calm starfield + brand intro only — so a

@@ -52,6 +52,16 @@ pub trait PortalDriver: Send + Sync {
     /// fast specific error instead of a slow generic boot timeout
     /// (PLAN 3.7.8 phase 1).
     fn enumerate_games(&self, timeout: Duration) -> Result<Vec<String>>;
+
+    /// Stop the currently-running game and return RPCS3 to its library
+    /// view. Prereq: a game is actually running (viewport window
+    /// present). The UIA impl finds a "Stop Emulation" / "Stop" menu
+    /// item or toolbar button and invokes it; the mock impl is a no-op
+    /// (mock has no real RPCS3 to stop). Used by `/api/quit` so the
+    /// RPCS3 process stays alive across game changes — PLAN 4.15.16's
+    /// "always-running RPCS3" contract. Returns once the game viewport
+    /// has disappeared or `timeout` elapses.
+    fn stop_emulation(&self, timeout: Duration) -> Result<()>;
 }
 
 #[cfg(windows)]

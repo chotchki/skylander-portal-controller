@@ -342,6 +342,15 @@ pub enum DriverJob {
         timeout: std::time::Duration,
         done: tokio::sync::oneshot::Sender<Result<Vec<String>>>,
     },
+    /// Stop the current game and return RPCS3 to library view without
+    /// killing the process. Replaces `/api/quit`'s old `shutdown_graceful`
+    /// path under the always-running RPCS3 contract (PLAN 4.15.16). The
+    /// worker calls `driver.stop_emulation(timeout)`; result comes back
+    /// through the oneshot so the handler can sync on it.
+    StopEmulation {
+        timeout: std::time::Duration,
+        done: tokio::sync::oneshot::Sender<Result<()>>,
+    },
 }
 
 /// Spawn the RPCS3 shader-compile watchdog. Tails RPCS3's log file
@@ -549,30 +558,46 @@ fn classify_log_line(line: &str) -> Option<&'static str> {
 /// can render the "game crashed" overlay (PLAN 4.15.14 /
 /// `docs/aesthetic/navigation.md` §3.8).
 ///
-/// `/api/quit` takes the process out of the guard *before* calling
-/// `shutdown_graceful`, so the watchdog naturally won't fire on clean
-/// quits — by the time the process dies, `guard.process` is already `None`.
+/// Auto-respawn (PLAN 4.15.16): after reporting the crash, the watchdog
+/// immediately tries to relaunch RPCS3 at library view so the
+/// always-running contract holds. If respawn fails `MAX_RESPAWNS` times
+/// the launcher flips to `ServerError` with a diagnostic.
+///
+/// `/api/quit` (in normal mode) uses `DriverJob::StopEmulation` which
+/// doesn't touch `guard.process` — the watchdog naturally won't fire on
+/// clean quits. `/api/quit?force=true` and `/api/shutdown` both take the
+/// process out of `guard.process` before killing it, so the watchdog
+/// won't treat those as crashes either.
 pub fn spawn_crash_watchdog(
     rpcs3: Arc<Mutex<RpcsLifecycle>>,
     portal: Arc<Mutex<[SlotState; SLOT_COUNT]>>,
     events: broadcast::Sender<Event>,
     launcher_status: Arc<std::sync::Mutex<LauncherStatus>>,
+    rpcs3_exe: std::path::PathBuf,
     interval: std::time::Duration,
 ) {
+    /// Cap on consecutive respawn attempts before we give up and flip
+    /// the launcher to ServerError. If RPCS3 is crashing on launch
+    /// repeatedly something is fundamentally wrong (bad install,
+    /// missing firmware, etc.) — spamming retries just wastes cycles.
+    const MAX_RESPAWNS: u32 = 3;
+
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(interval);
         // Skip the immediate first tick — `interval` fires once on start.
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         ticker.tick().await;
+        let mut consecutive_failures: u32 = 0;
         loop {
             ticker.tick().await;
 
             let mut guard = rpcs3.lock().await;
-            // Only act if we own a process and a game is marked current.
-            let has_current = guard.current.is_some();
+            // Fire if we own a process and it's dead. Under 4.15.16
+            // RPCS3 can be alive at library view (no current game),
+            // so we check process.is_alive() regardless of `current`.
             let crashed = match guard.process.as_mut() {
-                Some(proc) if has_current => !proc.is_alive(),
-                _ => false,
+                Some(proc) => !proc.is_alive(),
+                None => false,
             };
             if !crashed {
                 continue;
@@ -583,6 +608,7 @@ pub fn spawn_crash_watchdog(
             let game = guard.current.take();
             drop(guard);
 
+            let had_game = game.is_some();
             let message = match game.as_ref() {
                 Some(g) => format!("{} exited unexpectedly", g.display_name),
                 None => "RPCS3 exited unexpectedly".into(),
@@ -595,19 +621,84 @@ pub fn spawn_crash_watchdog(
             let _ = events.send(Event::PortalSnapshot {
                 slots: std::array::from_fn(|_| SlotState::Empty),
             });
-            // Flip the TV launcher into the crash surface (PLAN 4.15.10)
-            // with the same copy we broadcast to phones. Lock poisoning
-            // would mean the eframe thread panicked earlier — nothing to
-            // salvage, swallow and keep publishing events to phones.
-            if let Ok(mut st) = launcher_status.lock() {
-                st.rpcs3_running = false;
-                st.current_game = None;
-                st.screen = LauncherScreen::Crashed {
+            // Only surface the full crash overlay to phones + Crashed
+            // screen on the TV when a GAME was running. A library-view
+            // crash during auto-respawn is invisible to the user — the
+            // cloud vortex covers it on the TV; phones just see a
+            // transient `rpcs3_running = false` window.
+            if had_game {
+                if let Ok(mut st) = launcher_status.lock() {
+                    st.rpcs3_running = false;
+                    st.current_game = None;
+                    st.screen = LauncherScreen::Crashed {
+                        message: message.clone(),
+                    };
+                }
+                let _ = events.send(Event::GameCrashed {
                     message: message.clone(),
-                };
+                });
+                let _ = events.send(Event::GameChanged { current: None });
+            } else {
+                if let Ok(mut st) = launcher_status.lock() {
+                    st.rpcs3_running = false;
+                    st.current_game = None;
+                }
             }
-            let _ = events.send(Event::GameCrashed { message });
-            let _ = events.send(Event::GameChanged { current: None });
+
+            // Auto-respawn. Small delay so OS cleanup (handle release,
+            // child process teardown) doesn't collide with the new
+            // launch. 500ms matches the watchdog tick and is
+            // empirically enough on Windows 11.
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let exe = rpcs3_exe.clone();
+            let respawn = tokio::task::spawn_blocking(
+                move || -> anyhow::Result<skylander_rpcs3_control::RpcsProcess> {
+                    let mut proc = skylander_rpcs3_control::RpcsProcess::launch_library(&exe)?;
+                    proc.wait_ready(std::time::Duration::from_secs(45))?;
+                    Ok(proc)
+                },
+            )
+            .await;
+            match respawn {
+                Ok(Ok(proc)) => {
+                    let mut guard = rpcs3.lock().await;
+                    guard.process = Some(proc);
+                    drop(guard);
+                    if let Ok(mut st) = launcher_status.lock() {
+                        st.rpcs3_running = true;
+                        // Leave `.screen` in Crashed if it was a
+                        // game-crash — the user taps RESTART or
+                        // RETURN TO GAMES to dismiss it. A library-
+                        // view respawn silently returns to Main.
+                    }
+                    consecutive_failures = 0;
+                    info!("RPCS3 auto-respawn succeeded");
+                }
+                Ok(Err(e)) => {
+                    consecutive_failures = consecutive_failures.saturating_add(1);
+                    warn!(
+                        consecutive_failures,
+                        "RPCS3 auto-respawn failed: {e}"
+                    );
+                    if consecutive_failures >= MAX_RESPAWNS {
+                        if let Ok(mut st) = launcher_status.lock() {
+                            st.screen = LauncherScreen::ServerError {
+                                message: format!(
+                                    "RPCS3 keeps crashing ({} attempts): {}",
+                                    consecutive_failures, e
+                                ),
+                            };
+                        }
+                    }
+                }
+                Err(e) => {
+                    consecutive_failures = consecutive_failures.saturating_add(1);
+                    warn!(
+                        consecutive_failures,
+                        "RPCS3 auto-respawn task panicked: {e}"
+                    );
+                }
+            }
         }
     });
 }
@@ -757,6 +848,14 @@ async fn handle_job(
             let result = tokio::task::spawn_blocking(move || d.enumerate_games(timeout))
                 .await
                 .map_err(|e| anyhow::anyhow!("enumerate task panicked: {e}"))
+                .and_then(|r| r);
+            let _ = done.send(result);
+        }
+        DriverJob::StopEmulation { timeout, done } => {
+            let d = driver.clone();
+            let result = tokio::task::spawn_blocking(move || d.stop_emulation(timeout))
+                .await
+                .map_err(|e| anyhow::anyhow!("stop_emulation task panicked: {e}"))
                 .and_then(|r| r);
             let _ = done.send(result);
         }

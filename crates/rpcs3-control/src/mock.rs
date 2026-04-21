@@ -151,6 +151,13 @@ impl PortalDriver for MockPortalDriver {
     fn enumerate_games(&self, _timeout: Duration) -> Result<Vec<String>> {
         Ok(self.enumerated_games.lock().unwrap().clone())
     }
+
+    fn stop_emulation(&self, _timeout: Duration) -> Result<()> {
+        // Mock has no RPCS3 process, so "return to library" is a no-op.
+        // Tests that want to observe the lifecycle use `/api/_test/set_game`
+        // to flip `current_game` back to None directly.
+        Ok(())
+    }
 }
 
 #[cfg(test)]

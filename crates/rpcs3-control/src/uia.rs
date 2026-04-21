@@ -830,6 +830,150 @@ impl crate::PortalDriver for UiaPortalDriver {
         debug!(count = serials.len(), "enumerated library serials");
         Ok(serials)
     }
+
+    #[instrument(skip(self))]
+    fn stop_emulation(&self, timeout: Duration) -> Result<()> {
+        let walker = self.walker()?;
+        let main = self.main_window(&walker)?;
+        let main_hwnd: isize = main.get_native_window_handle().context("main HWND")?.into();
+        let main_hwnd = HWND(main_hwnd as _);
+
+        // The Stop control lives on the main RPCS3 window, which is
+        // hidden behind the game viewport while a game runs. Same
+        // off-screen + viewport-minimize dance as `quit_via_file_menu`
+        // so UIA can see the main window's widgets and we can
+        // PostMessage a click without the egui cover or game frame
+        // getting in the way. RestoreGuard puts everything back on
+        // drop, even on error paths.
+        let viewport_hwnd = find_viewport_hwnd();
+        let mut saved_rect = RECT::default();
+        unsafe {
+            let _ = GetWindowRect(main_hwnd, &mut saved_rect);
+        }
+        if let Some(vp) = viewport_hwnd {
+            unsafe {
+                let _ = ShowWindow(vp, SW_MINIMIZE);
+            }
+            sleep(MENU_STEP_PAUSE);
+        }
+        unsafe {
+            let _ = SetWindowPos(
+                main_hwnd,
+                None,
+                OFFSCREEN_POS.0,
+                OFFSCREEN_POS.1,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER,
+            );
+        }
+        sleep(MENU_STEP_PAUSE);
+
+        struct RestoreGuard {
+            main_hwnd: HWND,
+            rect: RECT,
+            viewport: Option<HWND>,
+        }
+        impl Drop for RestoreGuard {
+            fn drop(&mut self) {
+                unsafe {
+                    let _ = SetWindowPos(
+                        self.main_hwnd,
+                        None,
+                        self.rect.left,
+                        self.rect.top,
+                        0,
+                        0,
+                        SWP_NOSIZE | SWP_NOZORDER,
+                    );
+                    if let Some(vp) = self.viewport {
+                        let _ = ShowWindow(vp, SW_RESTORE);
+                    }
+                }
+            }
+        }
+        let _guard = RestoreGuard {
+            main_hwnd,
+            rect: saved_rect,
+            viewport: viewport_hwnd,
+        };
+
+        // Find a Button or MenuItem whose name looks like "Stop" — RPCS3
+        // offers both a toolbar "Stop" button and a "Stop Emulation"
+        // menu item, plus a few naming variations across versions. We
+        // accept any of them and stop at the first hit; Button is
+        // preferred (toolbar, directly clickable) but we'll walk the
+        // full tree which finds the toolbar button first on RPCS3
+        // 0.0.40 because it's a shallower child of the main window
+        // than the menu items.
+        let target = find_descendant(&walker, &main, |el| {
+            let kind = match el.get_control_type() {
+                Ok(k) => k,
+                Err(_) => return false,
+            };
+            if !matches!(kind, ControlType::Button | ControlType::MenuItem) {
+                return false;
+            }
+            let name = el.get_name().unwrap_or_default();
+            let norm = name.trim().to_lowercase();
+            matches!(
+                norm.as_str(),
+                "stop" | "stop emulation" | "stop game" | "&stop" | "&stop emulation"
+            )
+        })
+        .ok_or_else(|| anyhow!("no Stop button or menu item found on RPCS3 main window"))?;
+
+        // Try UIInvokePattern first — RPCS3's toolbar button responds
+        // to it on the Qt 6 builds we've tested (CLAUDE.md's
+        // "Invoke doesn't work" caveat was specifically for menu items).
+        if let Ok(inv) = target.get_pattern::<UIInvokePattern>() {
+            if inv.invoke().is_ok() {
+                debug!("invoked Stop via UIInvokePattern");
+                // Confirm-quit dialog may appear; Enter lands on the
+                // default. Harmless if no dialog.
+                sleep(MENU_STEP_PAUSE);
+                let _ = post_key(main_hwnd, VK_RETURN);
+                return wait_for_viewport_gone(timeout);
+            }
+        }
+
+        // Fallback: PostMessage click at the button's centre. Matches
+        // `boot_game_by_serial`'s pattern — bypasses Z-order so the
+        // egui cover doesn't swallow the click.
+        let rect = target
+            .get_bounding_rectangle()
+            .context("Stop control bounding rect")?;
+        let cx = rect.get_left() + (rect.get_right() - rect.get_left()) / 2;
+        let cy = rect.get_top() + (rect.get_bottom() - rect.get_top()) / 2;
+        let mut wrect = RECT::default();
+        unsafe {
+            let _ = GetWindowRect(main_hwnd, &mut wrect);
+        }
+        let lx = cx - wrect.left;
+        let ly = cy - wrect.top;
+        post_click(main_hwnd, lx, ly).context("post Stop click")?;
+        debug!(lx, ly, "posted Stop click to main window");
+        sleep(MENU_STEP_PAUSE);
+        let _ = post_key(main_hwnd, VK_RETURN);
+
+        wait_for_viewport_gone(timeout)
+    }
+}
+
+/// Poll until the game viewport window disappears, or `timeout` elapses.
+/// Used by `stop_emulation` to confirm the game actually stopped —
+/// returns Ok once RPCS3 is back at library view, Err if the viewport
+/// is still present after `timeout`.
+fn wait_for_viewport_gone(timeout: Duration) -> Result<()> {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if find_viewport_hwnd().is_none() {
+            debug!("game viewport gone — stop_emulation confirmed");
+            return Ok(());
+        }
+        sleep(POLL_INTERVAL);
+    }
+    bail!("game viewport still present after {timeout:?}");
 }
 
 fn interpret_slot_value(value: &str) -> SlotState {
