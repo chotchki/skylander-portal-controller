@@ -86,7 +86,7 @@ body::after {
     radial-gradient(1px 1px at 300px 200px, white, transparent),
     radial-gradient(1px 1px at 260px 400px, white, transparent);
   background-size: 400px 800px;
-  animation: sky-drift 140s linear infinite;
+  animation: sky-drift var(--dur-sky-drift) linear infinite;
 }
 @keyframes sky-drift { to { background-position: -400px -800px; } }
 @media (prefers-reduced-motion: reduce) {
@@ -451,7 +451,7 @@ input, textarea {
   font-size: var(--t-body);
   font-weight: 500;
   pointer-events: auto;
-  animation: toast-in 0.2s ease-out;
+  animation: toast-in var(--dur-quick) ease-out;
 }
 @keyframes toast-in {
   from { opacity: 0; transform: translateY(8px); }
@@ -677,7 +677,7 @@ input, textarea {
 /* === STATE: picking === */
 .bezel-picking {
   transform: scale(1.05);
-  transition: transform 0.2s var(--ease-spring);
+  transition: transform var(--dur-quick) var(--ease-spring);
 }
 .bezel-picking .bezel-ring {
   box-shadow:
@@ -752,7 +752,7 @@ input, textarea {
 /* === STATE: errored === */
 .bezel-errored .bezel-ring {
   background: radial-gradient(circle at 30% 25%, #ff9b9b 0%, var(--danger-p4) 35%, var(--danger-dark-p4) 100%);
-  animation: bezel-shudder 0.4s ease-in-out 2;
+  animation: bezel-shudder var(--dur-shudder) ease-in-out 2;
 }
 @keyframes bezel-shudder {
   0%, 100% { transform: translateX(0); }
@@ -882,7 +882,7 @@ input, textarea {
   -webkit-mask: radial-gradient(circle, transparent 54%, black 58%, black 72%, transparent 76%);
   z-index: 3;
   opacity: 0;
-  transition: opacity 0.2s ease;
+  transition: opacity var(--dur-quick) ease;
   pointer-events: none;
 }
 .hero-loading .loading-ring {
@@ -1048,7 +1048,7 @@ input, textarea {
     linear-gradient(180deg, rgba(16,40,90,0.6), rgba(8,22,60,0.65));
   border: 1.5px solid rgba(245,198,52,0.25);
   color: var(--text);
-  transition: transform 0.15s var(--ease-tap), border-color 0.2s, box-shadow 0.2s;
+  transition: transform 0.15s var(--ease-tap), border-color var(--dur-quick), box-shadow var(--dur-quick);
   animation: pp-card-in 0.5s var(--ease-spring) both;
 }
 .profile-picker .profile-card:hover,
@@ -1195,8 +1195,8 @@ input, textarea {
   overflow: hidden;
   border: 1.5px solid rgba(245,198,52,0.25);
   transition: transform 0.15s cubic-bezier(.4,2.2,.5,1),
-              border-color 0.2s,
-              box-shadow 0.2s,
+              border-color var(--dur-quick),
+              box-shadow var(--dur-quick),
               opacity 0.3s ease;
   text-align: center;
   color: var(--text);
@@ -1222,7 +1222,7 @@ input, textarea {
   content: "";
   position: absolute; inset: 0;
   opacity: 0.55;
-  transition: opacity 0.2s ease;
+  transition: opacity var(--dur-quick) ease;
   z-index: 0;
 }
 .game-card:hover::before { opacity: 0.7; }
@@ -1457,7 +1457,7 @@ input, textarea {
 .pin-entry-screen .pin-dot.filled .pin-dot-fill {
   background: radial-gradient(circle at 40% 30%, #fff8d0, var(--gb) 40%, var(--g));
   box-shadow: 0 0 12px rgba(245,198,52,0.7), inset 0 1px 2px rgba(255,255,255,0.5);
-  animation: pin-dot-pop 0.2s var(--ease-tap);
+  animation: pin-dot-pop var(--dur-quick) var(--ease-tap);
 }
 @keyframes pin-dot-pop {
   from { transform: scale(0.5); }
@@ -1607,7 +1607,7 @@ input, textarea {
     animation: none !important;
     opacity: 0;
   }
-  .pin-entry-screen.pin-success { animation-duration: 200ms; }
+  .pin-entry-screen.pin-success { animation-duration: var(--dur-quick); }
 }
 
 /* ================================================================
@@ -2112,7 +2112,7 @@ input, textarea {
     radial-gradient(ellipse 120% 80% at 50% 0%, rgba(255,107,158,0.15), transparent 60%),
     linear-gradient(180deg, rgba(45,15,106,0.9), rgba(26,10,64,0.95));
   position: relative;
-  animation: takeover-quote-in 0.6s var(--ease-spring) 0.2s both;
+  animation: takeover-quote-in 0.6s var(--ease-spring) var(--dur-quick) both;
 }
 .takeover-quote-card::before {
   content: ""; position: absolute; inset: -2px;
@@ -2751,7 +2751,7 @@ input, textarea {
     inset 0 1px 0 rgba(255,255,255,0.08),
     inset 0 -1px 0 rgba(0,0,0,0.4),
     0 2px 6px rgba(0,0,0,0.5);
-  transition: transform 0.15s ease, box-shadow 0.2s, background 0.2s;
+  transition: transform 0.15s ease, box-shadow var(--dur-quick), background var(--dur-quick);
 }
 .detail-action-btn:disabled {
   opacity: 0.45;
@@ -2953,7 +2953,7 @@ input, textarea {
   width: 14px; height: 14px; border-radius: 50%;
   background: rgba(245,198,52,0.1);
   border: 1.5px solid var(--gi, #3a2500);
-  transition: all 0.2s ease;
+  transition: all var(--dur-quick) ease;
 }
 .gate-dot.filled {
   background: radial-gradient(circle at 30% 25%, #ffe58a, #f5c634 55%, #c58c18 100%);
@@ -3780,7 +3780,7 @@ body.skin-kaos {
   background: linear-gradient(90deg, rgba(255,220,140,0.9), #fffaf0);
   transform: scaleX(0);
   transform-origin: left center;
-  transition: transform 0.2s ease-out;
+  transition: transform var(--dur-quick) ease-out;
   z-index: 1;
   pointer-events: none;
   mix-blend-mode: screen;
@@ -4068,7 +4068,7 @@ body.skin-kaos {
   background: linear-gradient(90deg, rgba(255,200,200,0.95), #fff);
   transform: scaleX(0);
   transform-origin: left center;
-  transition: transform 0.2s ease-out;
+  transition: transform var(--dur-quick) ease-out;
   z-index: 1;
   pointer-events: none;
   mix-blend-mode: screen;
