@@ -15,7 +15,7 @@ mod ws;
 use leptos::prelude::*;
 
 use crate::api::{fetch_games, fetch_status};
-use crate::components::Header;
+use crate::components::{ConnectionLost, GameCrashScreen, Header};
 use crate::model::{
     ConnState, Element, GameLaunched, PublicProfile, Slot, SlotState, UnlockedProfile, SLOT_COUNT,
 };
