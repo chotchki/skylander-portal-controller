@@ -15,7 +15,7 @@ mod ws;
 use leptos::prelude::*;
 
 use crate::api::{fetch_games, fetch_status};
-use crate::components::{ConnectionLost, GameCrashScreen, Header};
+use crate::components::{ConnectionLost, GameCrashScreen, Header, KaosOverlay};
 use crate::model::{
     ConnState, Element, GameLaunched, PublicProfile, Slot, SlotState, UnlockedProfile, SLOT_COUNT,
 };
@@ -211,7 +211,7 @@ pub fn App() -> impl IntoView {
                 when=move || takeover.get().is_none()
                 fallback=move || view! {
                     <div class={screen_cls("screen-takeover")}>
-                        <TakeoverScreen takeover />
+                        <KaosOverlay takeover />
                     </div>
                 }
             >

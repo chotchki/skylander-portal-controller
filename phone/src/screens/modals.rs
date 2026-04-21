@@ -4,7 +4,7 @@ use crate::api::{post_load, post_reset};
 use crate::components::{BezelSize, DisplayHeading, FramedPanel, GoldBezel, HeadingSize};
 use crate::gloo_timer;
 use crate::model::SlotState;
-use crate::{push_toast, ResetTarget, ResumeOffer, TakeoverReason, ToastMsg};
+use crate::{push_toast, ResetTarget, ResumeOffer, ToastMsg};
 
 #[component]
 pub(crate) fn ResumeModal(
@@ -108,61 +108,6 @@ pub(crate) fn ResumeModal(
                     </div>
                 </FramedPanel>
             </div>
-        </section>
-    }
-}
-
-#[component]
-pub(crate) fn TakeoverScreen(takeover: RwSignal<Option<TakeoverReason>>) -> impl IntoView {
-    // Kaos took the slot. "Kick back" does a full page reload — the browser
-    // opens a fresh WS, server tries to re-admit via the FIFO path. If the
-    // 1-minute cooldown is still active, the reload-WS gets an `Error` event
-    // and closes. If cooldown elapsed, we land back at the ProfilePicker
-    // (server re-locks all profiles on a fresh session so PIN re-entry is
-    // required — SPEC Q46).
-    view! {
-        <section class="takeover-void">
-            <div class="takeover-hexgrid"></div>
-            <div class="takeover-sparks"></div>
-
-            <div class="takeover-viewport">
-                // Kaos sigil placeholder — actual SVG mask wiring deferred
-                <div class="kaos-sigil"></div>
-
-                <h1 class="kaos-title">
-                    "KAOS"
-                    <span class="kaos-title-line2">"REIGNS!"</span>
-                </h1>
-
-                <div class="takeover-quote-card">
-                    <div class="takeover-quote-open">{"\u{201C}"}</div>
-                    <div class="takeover-quote-body">
-                        {move || takeover
-                            .get()
-                            .map(|t| t.by_kaos.clone())
-                            .unwrap_or_else(|| "Behold my magnificent wickedness!".into())}
-                    </div>
-                    <div class="takeover-quote-close">{"\u{201D}"}</div>
-                    <div class="takeover-quote-attrib">{"\u{2014} KAOS"}</div>
-                </div>
-
-                <p class="takeover-info">
-                    "your seat has been claimed \u{00B7} enter your pin to return"
-                </p>
-
-                <button
-                    class="takeover-kick-btn"
-                    on:click=move |_| {
-                        if let Some(loc) = web_sys::window().map(|w| w.location()) {
-                            let _ = loc.reload();
-                        }
-                    }
-                >
-                    "KICK BACK IN"
-                </button>
-            </div>
-
-            <div class="takeover-vignette"></div>
         </section>
     }
 }
