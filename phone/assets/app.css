@@ -42,14 +42,19 @@ html, body {
   padding: 0;
   background: var(--sf-3);
   color: var(--text);
-  /* Kill iOS Safari's double-tap-to-zoom across the whole app. Without
-     this, two quick taps on any interactive element (konami dots, PIN
-     digits, profile cards, menu actions) trigger browser zoom instead
-     of registering as two taps. Pinch-zoom still works; only the
-     double-tap gesture is suppressed. `touch-action` inherits, so one
-     declaration here covers every descendant (PLAN 4.18.8 follow-up —
-     generalised per Chris 2026-04-20 "we should just fix it everywhere"). */
-  touch-action: manipulation;
+  /* Kill iOS Safari's zoom gestures across the whole app:
+       - `pan-x pan-y` permits scroll (inside `.box-body-scroll` etc.)
+         but disables both double-tap-zoom and pinch-zoom.
+       - `manipulation` previously only killed the double-tap path;
+         Chris flagged 2026-04-21 that pinch-zoom was still working
+         everywhere, which doesn't fit a kid-facing single-purpose
+         UI. We pair this with `user-scalable=no`/`maximum-scale=1`
+         on the viewport meta as belt-and-braces (iOS sometimes
+         honours meta but not touch-action, and vice versa).
+     `touch-action` inherits, so one declaration covers every
+     descendant. (PLAN 4.18.8 evolution — originally generalised
+     from the PIN keypad.) */
+  touch-action: pan-x pan-y;
 }
 body {
   /* Lock the body to the visible viewport so no screen except the toy
@@ -270,7 +275,7 @@ input, textarea {
   display: flex; flex-direction: column; justify-content: space-between;
   gap: 8px;
   transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
-  touch-action: manipulation;
+  touch-action: pan-x pan-y;
 }
 .slot:active { transform: scale(0.98); }
 .slot.empty { background: transparent; border-style: dashed; border-color: rgba(255,255,255,0.18); }
@@ -516,7 +521,7 @@ input, textarea {
     background: #222; color: #eee;
     /* iOS touch hygiene: kill double-tap-to-zoom + system tap highlight
        so the press feedback below is the only visible reaction. */
-    touch-action: manipulation;
+    touch-action: pan-x pan-y;
     -webkit-tap-highlight-color: transparent;
     user-select: none;
     -webkit-user-select: none;
@@ -1504,7 +1509,7 @@ input, textarea {
      reaction the user sees. Without these, a fast tap on iPhone either
      triggered a zoom (two taps within ~300ms) or showed the default
      iOS tap overlay instead of our heraldic press animation. */
-  touch-action: manipulation;
+  touch-action: pan-x pan-y;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
   -webkit-user-select: none;
@@ -1645,7 +1650,7 @@ input, textarea {
   flex-direction: column;
   align-items: center;
   cursor: pointer;
-  touch-action: manipulation;
+  touch-action: pan-x pan-y;
   transition: transform var(--dur-tap) var(--ease-tap);
 }
 
@@ -3212,7 +3217,7 @@ input, textarea {
   transform: scaleX(0.85); transform-origin: right center;
   transition: opacity 0.18s ease, transform 0.22s cubic-bezier(.3,1.5,.5,1);
   overflow: hidden; isolation: isolate;
-  touch-action: manipulation; -webkit-user-select: none; user-select: none;
+  touch-action: pan-x pan-y; -webkit-user-select: none; user-select: none;
 }
 .profile-row.deleting .del-confirm {
   opacity: 1; pointer-events: auto; transform: scaleX(1);
@@ -3345,7 +3350,18 @@ input, textarea {
   text-shadow: 0 1px 0 rgba(0,0,0,0.5);
   text-align: center; margin-top: 4px;
 }
-.edit-color-row { display: flex; justify-content: center; gap: 10px; }
+/* 8 element swatches × 38px + 7 × 10px gap = 374px, which overflows
+   the FramedPanel's inner content area on a 390px iPhone viewport
+   (Chris flagged 2026-04-21 — the row was clipping both sides). wrap
+   lets them fall to a second row when the available width is tight;
+   `justify-content: center` keeps each row centered. 8 fits 4×2 in
+   portrait at 38px + 8px gap ≈ 176px. */
+.edit-color-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px 8px;
+}
 .edit-swatch {
   width: 38px; height: 38px; border-radius: 50%;
   background: radial-gradient(circle at 30% 25%, #ffe58a, #f5c634 22%, #c58c18 55%, #6e4a00 100%);
@@ -3460,7 +3476,7 @@ input, textarea {
     cursor: pointer;
     /* Same iOS touch hygiene as .pin-key — kill double-tap zoom + the
        grey tap overlay so the press styling is the only reaction. */
-    touch-action: manipulation;
+    touch-action: pan-x pan-y;
     -webkit-tap-highlight-color: transparent;
     user-select: none;
     -webkit-user-select: none;
@@ -3777,7 +3793,7 @@ body.skin-kaos {
   position: relative;
   overflow: hidden;
   isolation: isolate;
-  touch-action: manipulation;
+  touch-action: pan-x pan-y;
   -webkit-user-select: none; user-select: none;
 }
 .menu-action--hold > *:not(.hold-fill) { position: relative; z-index: 2; }
@@ -4053,7 +4069,7 @@ body.skin-kaos {
   position: relative;
   overflow: hidden;
   isolation: isolate;
-  touch-action: manipulation;
+  touch-action: pan-x pan-y;
   -webkit-user-select: none; user-select: none;
 }
 .reset-btn-danger:active {
