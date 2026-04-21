@@ -25,6 +25,27 @@ const COLOR_SWATCHES: [(&str, &str); 8] = [
     ("air", "#c6e6ff"),
 ];
 
+/// Prefilled names for the "Create profile" flow (PLAN 4.18.7). Kid can
+/// keep the default, tap the ↻ button to reroll, or type their own. No
+/// whitelist at submit time per PLAN 4.2.8 ("if a kid names themselves
+/// poop that's okay"). List mirrors the 20 names in
+/// `docs/aesthetic/mocks/profile_create.html`.
+const SKYLANDER_NAMES: [&str; 20] = [
+    "Spyro", "Eruptor", "Stealth Elf", "Trigger Happy", "Gill Grunt",
+    "Pop Fizz", "Chop Chop", "Cynder", "Wrecking Ball", "Hex",
+    "Drobot", "Boomer", "Whirlwind", "Flashwing", "Jet-Vac",
+    "Terrafin", "Bash", "Dino-Rang", "Zook", "Shroomboom",
+];
+
+/// Return a random Skylander name from `SKYLANDER_NAMES`. Used to seed
+/// the initial Name field in CreateProfileForm and to power the reroll
+/// button. `js_sys::Math::random()` is the pragmatic RNG on wasm — no
+/// need to drag in a crypto-grade source for a UI prefill.
+fn random_skylander_name() -> &'static str {
+    let idx = (js_sys::Math::random() * SKYLANDER_NAMES.len() as f64) as usize;
+    SKYLANDER_NAMES[idx.min(SKYLANDER_NAMES.len() - 1)]
+}
+
 // --------- Profile picker / admin UI ---------
 
 #[component]
@@ -650,6 +671,32 @@ fn AdminPinReset<F: Fn() + Send + Sync + 'static + Clone>(
     }
 }
 
+/// Four heraldic PIN dots (gold bezel + fill-on-filled) driven by the
+/// shared `pin` signal. Same visual treatment as PinEntry's dots but
+/// self-contained — no need to wrap the caller in `.pin-entry-screen`
+/// just to get the right CSS scope. CreateProfileForm and any future
+/// heraldic-keypad callers reuse this directly.
+#[component]
+fn HeraldicPinDots(pin: RwSignal<String>) -> impl IntoView {
+    view! {
+        <div class="pin-dots pin-dots-heraldic">
+            {move || {
+                let p = pin.get();
+                (0..4).map(|i| {
+                    let filled = i < p.len();
+                    let cls = if filled { "pin-dot filled" } else { "pin-dot" };
+                    view! {
+                        <span class=cls>
+                            <span class="pin-dot-ring"></span>
+                            <span class="pin-dot-fill"></span>
+                        </span>
+                    }
+                }).collect_view()
+            }}
+        </div>
+    }
+}
+
 // --------- Create profile form ---------
 
 #[component]
@@ -657,7 +704,9 @@ fn CreateProfileForm<F: Fn() + Send + Sync + 'static + Clone>(
     on_done: F,
     toasts: RwSignal<Vec<ToastMsg>>,
 ) -> impl IntoView {
-    let name = RwSignal::new(String::new());
+    // Initial name is a random Skylander (PLAN 4.18.7). Kid can keep it,
+    // reroll via the ↻ button, or type anything they like over the top.
+    let name = RwSignal::new(random_skylander_name().to_string());
     let color = RwSignal::new("#da5ad6".to_string());
     let pin = RwSignal::new(String::new());
     let pin_confirm = RwSignal::new(String::new());
@@ -727,6 +776,13 @@ fn CreateProfileForm<F: Fn() + Send + Sync + 'static + Clone>(
     // thing to do at a time.
     let confirm_ready = Signal::derive(move || pin.with(|p| p.len() == 4));
 
+    // Constant-false locked_out signal flips PinPad into the heraldic
+    // reskin (gold-bezel keys + Titan One glyphs) — matches PinEntry's
+    // look so the create + unlock flows feel continuous. Chris flagged
+    // 2026-04-21 that the legacy keypad here clashed with the heraldic
+    // keypad in PinEntry. PLAN 4.18.6a.
+    let never_locked: Signal<bool> = Signal::derive(|| false);
+
     view! {
         <FramedPanel class="create-profile-panel">
             <div class="create-profile-form">
@@ -739,7 +795,15 @@ fn CreateProfileForm<F: Fn() + Send + Sync + 'static + Clone>(
                         prop:value=move || name.get()
                         on:input=move |e| name.set(event_target_value(&e))
                     />
+                    <button
+                        class="roll-btn"
+                        type="button"
+                        title="pick another"
+                        aria-label="Pick a random Skylander name"
+                        on:click=move |_| name.set(random_skylander_name().to_string())
+                    >"\u{21BB}"</button>
                 </div>
+                <div class="create-name-hint">"anything you like \u{00B7} or tap \u{21BB} for a random one"</div>
                 <div class="edit-color-label">"Color"</div>
                 <div class="edit-color-row">
                     {COLOR_SWATCHES.iter().map(|(swatch_name, hex)| {
@@ -759,7 +823,8 @@ fn CreateProfileForm<F: Fn() + Send + Sync + 'static + Clone>(
                     }).collect_view()}
                 </div>
                 <div class="edit-color-label">"PIN (4 digits)"</div>
-                <PinPad pin />
+                <HeraldicPinDots pin />
+                <PinPad pin locked_out=never_locked />
                 <Show when=move || confirm_ready.get() fallback=|| ()>
                     <div class="edit-color-label">"Confirm PIN"</div>
                     <div class=move || {
@@ -769,7 +834,8 @@ fn CreateProfileForm<F: Fn() + Send + Sync + 'static + Clone>(
                         }
                         s
                     }>
-                        <PinPad pin=pin_confirm />
+                        <HeraldicPinDots pin=pin_confirm />
+                        <PinPad pin=pin_confirm locked_out=never_locked />
                     </div>
                 </Show>
                 <Show when=move || error.get().is_some() fallback=|| ()>

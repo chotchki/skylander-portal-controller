@@ -1469,7 +1469,8 @@ input, textarea {
   gap: 20px;
   justify-content: center;
 }
-.pin-entry-screen .pin-dot {
+.pin-entry-screen .pin-dot,
+.pin-dots-heraldic .pin-dot {
   width: 24px;
   height: 24px;
   border-radius: 50%;
@@ -1496,7 +1497,8 @@ input, textarea {
   box-shadow: inset 0 1px 3px rgba(0,0,0,0.6);
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
-.pin-entry-screen .pin-dot.filled .pin-dot-fill {
+.pin-entry-screen .pin-dot.filled .pin-dot-fill,
+.pin-dots-heraldic .pin-dot.filled .pin-dot-fill {
   background: radial-gradient(circle at 40% 30%, #fff8d0, var(--gb) 40%, var(--g));
   box-shadow: 0 0 12px rgba(245,198,52,0.7), inset 0 1px 2px rgba(255,255,255,0.5);
   animation: pin-dot-pop var(--dur-quick) var(--ease-tap);
@@ -3379,6 +3381,45 @@ input, textarea {
   outline: none;
 }
 .edit-input:focus { outline: 2px solid rgba(255,230,120,0.6); outline-offset: 2px; }
+
+/* Name reroll (↻) button in CreateProfileForm (PLAN 4.18.7). Gold
+   radial coin sitting flush with the name input — 54px fixed, never
+   shrinks, ticks a rotation on press so the kid sees the roll land. */
+.roll-btn {
+  flex: 0 0 54px;
+  width: 54px;
+  aspect-ratio: 1;
+  padding: 0;
+  background: radial-gradient(circle at 30% 25%, var(--gb) 0%, var(--g) 40%, var(--gm) 80%);
+  border: 2px solid var(--gi);
+  border-radius: 14px;
+  color: #1a1203;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.4),
+    inset 0 -2px 0 rgba(0,0,0,0.25),
+    0 4px 0 var(--gs),
+    0 6px 12px rgba(0,0,0,0.4);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.roll-btn:active {
+  transform: translateY(2px) rotate(-60deg);
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.4),
+    inset 0 -2px 0 rgba(0,0,0,0.25),
+    0 2px 0 var(--gs),
+    0 3px 6px rgba(0,0,0,0.5);
+}
+.create-name-hint {
+  font-family: "Fraunces", Georgia, serif; font-style: italic; font-weight: 600;
+  font-size: var(--t-body-sm); letter-spacing: 0.08em;
+  color: #d9c88a;
+  text-align: center;
+  margin-top: 6px;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+}
 
 .edit-color-label {
   font-family: "Fraunces", Georgia, serif; font-style: italic; font-weight: 600;
