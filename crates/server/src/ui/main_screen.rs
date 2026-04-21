@@ -99,7 +99,7 @@ impl LauncherApp {
         // hand-off doesn't pop. paint_heraldic_title early-exits at
         // alpha≈0 so we don't burn the text-layout cost when faded
         // out.
-        paint_heraldic_title(ui.painter(), pos, "STARTING", 140.0, alpha);
+        paint_heraldic_title(ui.painter(), pos, "STARTING", palette::HERO_INTRO, alpha);
     }
 
     /// Render the Main surface. Called from the top-level dispatcher in
@@ -205,7 +205,7 @@ impl LauncherApp {
                 ui.painter(),
                 label_rect.center(),
                 subtitle,
-                64.0,
+                palette::HEADING_LG,
                 launch_phase.badge_text_alpha(),
             );
 
@@ -217,7 +217,7 @@ impl LauncherApp {
                 ui.add_space(4.0);
                 ui.label(
                     egui::RichText::new(text)
-                        .size(20.0)
+                        .size(palette::SUBHEAD)
                         .italics()
                         .color(with_alpha(
                             palette::TEXT_DIM,
@@ -234,7 +234,7 @@ impl LauncherApp {
             ui.add_space((remaining * 0.55).max(48.0));
             let btn = egui::Button::new(
                 egui::RichText::new("Exit to Desktop")
-                    .size(28.0)
+                    .size(palette::HEADING)
                     .color(palette::TEXT),
             )
             .fill(palette::DANGER)
@@ -793,8 +793,9 @@ pub(super) fn paint_titled_card(
     let n = lines.len().max(1) as f32;
     let line_h = (inscribed_half * 2.0) / n;
     // Font size = 55% of line height, clamped so single-word lines
-    // don't blow up and tight 4-line cards stay readable.
-    let font_size = (line_h * 0.55).clamp(20.0, 56.0);
+    // don't blow up and tight 4-line cards stay readable. Bounds tied
+    // to palette tokens so a global retune cascades here too.
+    let font_size = (line_h * 0.55).clamp(palette::SUBHEAD, palette::COUNTDOWN);
     let text_color = with_alpha(palette::GOLD_BRIGHT, text_alpha);
     for (i, word) in lines.iter().enumerate() {
         let y = center.y - inscribed_half + line_h * (i as f32 + 0.5);
@@ -901,7 +902,7 @@ fn paint_pip(painter: &egui::Painter, rect: egui::Rect, pip: &SessionPip) {
         Some(ch) if !ch.is_empty() => ch,
         _ => "?",
     };
-    let font = egui::FontId::new(28.0, egui::FontFamily::Name(fonts::TITAN_ONE.into()));
+    let font = egui::FontId::new(palette::HEADING, egui::FontFamily::Name(fonts::TITAN_ONE.into()));
     painter.text(
         centre + egui::vec2(0.0, 2.0),
         egui::Align2::CENTER_CENTER,

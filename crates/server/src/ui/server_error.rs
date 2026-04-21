@@ -73,7 +73,7 @@ pub(super) fn render(
                 let dim_alpha = with_alpha(palette::TEXT_DIM, text_alpha);
                 ui.label(
                     egui::RichText::new(message)
-                        .size(20.0)
+                        .size(palette::SUBHEAD)
                         .italics()
                         .color(dim_alpha),
                 );
@@ -82,7 +82,7 @@ pub(super) fn render(
                     egui::RichText::new(
                         "Check the launcher log for details, then exit and try again.",
                     )
-                    .size(18.0)
+                    .size(palette::BODY)
                     .color(dim_alpha),
                 );
             },
@@ -95,7 +95,7 @@ pub(super) fn render(
 
         let btn = egui::Button::new(
             egui::RichText::new("Exit to Desktop")
-                .size(28.0)
+                .size(palette::HEADING)
                 .color(egui::Color32::WHITE),
         )
         .fill(palette::DANGER)

@@ -74,7 +74,7 @@ fn reconnect_qr(ui: &mut egui::Ui, qr_texture: Option<&egui::TextureHandle>) {
                 .show(ui, |ui| {
                     ui.label(
                         egui::RichText::new("RECONNECT")
-                            .size(14.0)
+                            .size(palette::CAPTION)
                             .color(palette::GOLD)
                             .family(egui::FontFamily::Name(fonts::TITAN_ONE.into())),
                     );
@@ -90,7 +90,7 @@ fn reconnect_qr(ui: &mut egui::Ui, qr_texture: Option<&egui::TextureHandle>) {
                     ui.add_space(4.0);
                     ui.label(
                         egui::RichText::new("scan to rejoin")
-                            .size(11.0)
+                            .size(palette::CAPTION_SM)
                             .italics()
                             .color(palette::TEXT_DIM),
                     );

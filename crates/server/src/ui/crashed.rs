@@ -66,7 +66,7 @@ pub(super) fn render(
             |ui| {
                 ui.label(
                     egui::RichText::new(message)
-                        .size(20.0)
+                        .size(palette::SUBHEAD)
                         .italics()
                         .color(with_alpha(palette::TEXT_DIM, text_alpha)),
                 );
@@ -80,7 +80,7 @@ pub(super) fn render(
 
         let btn = egui::Button::new(
             egui::RichText::new("RESTART")
-                .size(28.0)
+                .size(palette::HEADING)
                 .color(with_alpha(palette::GOLD_INK, text_alpha))
                 .family(egui::FontFamily::Name(fonts::TITAN_ONE.into())),
         )

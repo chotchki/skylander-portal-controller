@@ -49,6 +49,37 @@ pub const TEXT_DIM: Color32 = Color32::from_rgba_premultiplied(0xa3, 0xa3, 0xa6,
 pub const DANGER: Color32 = Color32::from_rgb(0xd1, 0x44, 0x44);
 pub const SUCCESS_GLOW: Color32 = Color32::from_rgb(0x5a, 0xc9, 0x6b);
 
+// ---- Typography (TV viewing distance, ~10 ft) ---------------------------
+//
+// These point sizes are tuned for the 86" TV — separate from the phone's
+// `--t-*` tokens (which target handheld 6-12in viewing). Sizes match the
+// values currently shipped in `ui/*.rs`; navigation.md §3.7's spec
+// reference diverges (96/64/40/32/24) — that reconciliation is tracked
+// in PLAN 4.19.19, not this constant set. Per PLAN 4.20.10.
+//
+// Code is truth: when the launcher's visual tuning lands a different
+// size on real hardware, update the constant here and call sites
+// follow automatically.
+
+/// "STARTING" intro title — embossed paint via `paint_heraldic_title`.
+pub const HERO_INTRO: f32 = 140.0;
+/// Heraldic subtitle bands (e.g. game-name during boot, "SCAN TO CONNECT").
+pub const HEADING_LG: f32 = 64.0;
+/// Farewell-screen large numerals (countdown).
+pub const COUNTDOWN: f32 = 56.0;
+/// Display heading on sub-screens (RESTART label, Exit button, status copy).
+pub const HEADING: f32 = 28.0;
+/// Common subhead / context line (under headings, button-row labels,
+/// shader-compile progress).
+pub const SUBHEAD: f32 = 20.0;
+/// Body copy on error / info screens (server-error message text).
+pub const BODY: f32 = 18.0;
+/// Small overlay text on the in-game transparent surface (RECONNECT
+/// label).
+pub const CAPTION: f32 = 14.0;
+/// Tiniest secondary text (in-game "scan to rejoin" subline).
+pub const CAPTION_SM: f32 = 11.0;
+
 // ---- Apply to egui::Context ---------------------------------------------
 
 /// Install the palette into an egui context. Called once from

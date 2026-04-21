@@ -83,14 +83,14 @@ pub(super) fn render(
             |ui| {
                 ui.label(
                     egui::RichText::new("(launcher will exit)")
-                        .size(20.0)
+                        .size(palette::SUBHEAD)
                         .italics()
                         .color(with_alpha(palette::TEXT_DIM, text_alpha)),
                 );
                 ui.add_space(12.0);
                 ui.label(
                     egui::RichText::new(format!("{secs}"))
-                        .size(56.0)
+                        .size(palette::COUNTDOWN)
                         .color(with_alpha(palette::GOLD_2, text_alpha))
                         .family(egui::FontFamily::Name(fonts::TITAN_ONE.into())),
                 );
