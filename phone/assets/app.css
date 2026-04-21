@@ -1525,8 +1525,14 @@ input, textarea {
   cursor: default !important;
   box-shadow: none !important;
 }
+/* Backspace glyph inherits the digit size (24px) so it reads as a
+   peer of the other keys. The earlier 20px override from the mock
+   made the ⌫ glyph look tiny on-device vs the 22px sans-serif ⌫ in
+   create-profile's legacy keypad — Chris flagged 2026-04-21. */
 .pin-hkey-backspace {
-  font-size: 20px;
+  /* intentionally empty — size, colour, and padding all come from
+     the base `.pin-hkey` rules above. Keeping the class selector in
+     place so future variant tuning has an anchor. */
 }
 .pin-hkey:disabled:not(.pin-hkey-ghost) {
   opacity: 0.4;

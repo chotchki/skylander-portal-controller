@@ -103,67 +103,76 @@ fn ProfileGrid(
 
     view! {
         <Show when=move || manage_gate.get() fallback=move || {
+            // Sub-branch: create-form is mutually exclusive with the
+            // welcome+grid view. Chris flagged 2026-04-21 that the
+            // form was stacking on top of the grid — fixed by wrapping
+            // both surfaces in a <Show> rather than rendering the form
+            // beside the grid.
             view! {
-                <div class="pp-welcome-wrap">
-                    <DisplayHeading size=HeadingSize::Lg with_rays=true>
-                        "PORTAL "
-                        <span class="pp-welcome-line2">"MASTER"</span>
-                    </DisplayHeading>
-                    <div class="pp-welcome-sub">"welcome"</div>
-                </div>
+                <Show
+                    when=move || show_create.get()
+                    fallback=move || view! {
+                        <div class="pp-welcome-wrap">
+                            <DisplayHeading size=HeadingSize::Lg with_rays=true>
+                                "PORTAL "
+                                <span class="pp-welcome-line2">"MASTER"</span>
+                            </DisplayHeading>
+                            <div class="pp-welcome-sub">"welcome"</div>
+                        </div>
 
-                <Show when=move || show_create.get() fallback=|| ()>
+                        <div class="profile-grid">
+                            {move || {
+                                let list = profiles.get();
+                                let can_add = list.len() < 4;
+                                view! {
+                                    <>
+                                    {list.into_iter().map(|p| {
+                                        let p_for_click = p.clone();
+                                        let color = p.color.clone();
+                                        let initial = p.display_name.chars().next().unwrap_or('?').to_string();
+                                        view! {
+                                            <button
+                                                class="profile-card"
+                                                on:click=move |_| {
+                                                    picked.set(Some(p_for_click.clone()));
+                                                }
+                                            >
+                                                <div style=format!("--profile-color:{color}")>
+                                                    <GoldBezel size=BezelSize::Lg state=default_state>
+                                                        <span class="pp-initial">{initial}</span>
+                                                    </GoldBezel>
+                                                </div>
+                                                <div class="profile-name">{p.display_name.clone()}</div>
+                                            </button>
+                                        }
+                                    }).collect_view()}
+                                    {if can_add {
+                                        Some(view! {
+                                            <button
+                                                class="profile-card add"
+                                                on:click=move |_| show_create.set(true)
+                                            >
+                                                <GoldBezel size=BezelSize::Lg state=disabled_state>
+                                                    <span class="pp-initial pp-add-glyph">"+"</span>
+                                                </GoldBezel>
+                                                <div class="profile-name pp-add-name">"ADD"</div>
+                                            </button>
+                                        })
+                                    } else {
+                                        None
+                                    }}
+                                    </>
+                                }
+                            }}
+                        </div>
+                        <div class="pp-tagline">"data & images from the skylanders wiki \u{00b7} cc by-sa"</div>
+                    }
+                >
                     <CreateProfileForm
                         on_done=move || { show_create.set(false); profiles_epoch.update(|v| *v += 1); }
                         toasts
                     />
                 </Show>
-                <div class="profile-grid">
-                    {move || {
-                        let list = profiles.get();
-                        let can_add = list.len() < 4;
-                        view! {
-                            <>
-                            {list.into_iter().map(|p| {
-                                let p_for_click = p.clone();
-                                let color = p.color.clone();
-                                let initial = p.display_name.chars().next().unwrap_or('?').to_string();
-                                view! {
-                                    <button
-                                        class="profile-card"
-                                        on:click=move |_| {
-                                            picked.set(Some(p_for_click.clone()));
-                                        }
-                                    >
-                                        <div style=format!("--profile-color:{color}")>
-                                            <GoldBezel size=BezelSize::Lg state=default_state>
-                                                <span class="pp-initial">{initial}</span>
-                                            </GoldBezel>
-                                        </div>
-                                        <div class="profile-name">{p.display_name.clone()}</div>
-                                    </button>
-                                }
-                            }).collect_view()}
-                            {if can_add {
-                                Some(view! {
-                                    <button
-                                        class="profile-card add"
-                                        on:click=move |_| show_create.set(true)
-                                    >
-                                        <GoldBezel size=BezelSize::Lg state=disabled_state>
-                                            <span class="pp-initial pp-add-glyph">"+"</span>
-                                        </GoldBezel>
-                                        <div class="profile-name pp-add-name">"ADD"</div>
-                                    </button>
-                                })
-                            } else {
-                                None
-                            }}
-                            </>
-                        }
-                    }}
-                </div>
-                <div class="pp-tagline">"data & images from the skylanders wiki \u{00b7} cc by-sa"</div>
                 {let _ = toasts; view! { <></> }}
             }
         }>
