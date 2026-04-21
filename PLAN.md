@@ -361,9 +361,9 @@ Close the drift between `docs/aesthetic/design_language.md`, the shipped phone C
 
 **Doc fixes (C).**
 
-- [ ] 4.20.11 Fix §6.1 mock reference — `option_a_heraldic.html` no longer exists (deleted in 4.2.13.8). Point to `portal_with_box.html` or `transitions.html`.
-- [ ] 4.20.12 Extend §3.1 bezel states with overlay-badge treatments: ownership pip (4.18.17, bottom-right) + unmatched "?" badge (3.8.2, top-right). Locks the corner semantics so future badges don't collide.
-- [ ] 4.20.13 Update §10 open question on egui cloud vortex — 4.15.5 shipped a polar-mesh Path C approximation; WGSL port is 4.15a.7 deferred. Replace the A/B-only framing.
+- [x] 4.20.11 Fix §6.1 mock reference. Done 2026-04-20. Now points to `portal_with_box.html` (real composition with overlay badges) + `transitions.html` (state-machine demo).
+- [x] 4.20.12 Extend §3.1 bezel states with overlay-badge treatments. Done 2026-04-20. Added a four-corner table: top-left = slot index, top-right = unmatched "?" badge (3.8.2), bottom-left reserved, bottom-right = ownership pip (4.18.17). Future badges claim a free corner rather than stack.
+- [x] 4.20.13 Update §10 open question on egui cloud vortex. Done 2026-04-20. Replaces A/B-only framing with three paths: Path C (shipped, polar-mesh), Path A (deferred to 4.15a.7, WGSL port), Path B (rejected, frame atlas — loses continuous-knob control).
 
 **Wrap-up.**
 

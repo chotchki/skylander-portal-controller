@@ -218,6 +218,18 @@ The signature motif. Any round-figure presentation (portal slot, figure card, pr
 - `errored`: bezel swaps to red gradient `#ff9b9b → #e34c4c → #7a1818`, shudders 2× at 0.4s
 - `disabled`: bezel dims to `rgba(245,198,52,0.2) → rgba(110,74,0,0.25) → rgba(0,0,0,0.35)`, plate goes deep blue
 
+**Overlay badges on portal slots** — the four bezel corners are reserved
+for small status pips that don't replace the bezel itself. Each slot can
+carry at most one badge per corner; if a future feature needs another
+badge, claim a free corner rather than stacking.
+
+| Corner | Badge | Class | Use |
+|--------|-------|-------|-----|
+| Top-left | Slot index | `.p4-slot-num` | Always-visible "1"–"8" so kids can refer to a specific slot by number. |
+| Top-right | Unmatched figure | `.p4-slot-badge--unmatched` | Amber circle with `?` glyph. Renders when `SlotState::Loaded { figure_id: None }` — i.e. RPCS3 reports a figure name we can't reverse-match against the indexed pack (PLAN 3.8.2). Tooltip: "This figure isn't in your collection". |
+| Bottom-left | *reserved* | — | Open for future status (planned: load-from-storage indicator if 3.11.4 needs one). |
+| Bottom-right | Ownership pip | `.p4-slot-owner` | Profile-coloured circle with the placer's initial. Renders on every Loaded/Loading slot whose `placed_by` resolves against the known-profiles list (PLAN 4.18.17). Dimmed (`.p4-slot-owner--pending`) during Loading. |
+
 ### 3.2 Blue card
 Any tappable or groupable surface inside an overlay/panel. Profile chips, action buttons, QR wrappers, stats strips.
 
@@ -464,7 +476,7 @@ Radial white→gold flash, 600ms, scale 0 → 2×, opacity 0 → 1 at 30% → 0.
 Every component in this list has a mock that exercises it. Implementation follows the mocks.
 
 ### 6.1 `<GoldBezel>`
-Props: `size`, `element`, `state`, `thumb_src`, `fallback_letter`. Renders the bezel + plate + (img or letter). Reused by: portal slots, browser figure cards, profile swatches, game emblems, hero figure, action icons, color-picker swatches. See mock: `option_a_heraldic.html`.
+Props: `size`, `element`, `state`, `thumb_src`, `fallback_letter`. Renders the bezel + plate + (img or letter). Reused by: portal slots, browser figure cards, profile swatches, game emblems, hero figure, action icons, color-picker swatches. See mocks: `portal_with_box.html` (real-world composition with overlay badges) and `transitions.html` (state machine demo).
 
 ### 6.2 `<FramedPanel>`
 Props: `size_variant` (modal / sheet / detail), children. No corner brackets; gold gradient border only. See mocks: `pin_keypad.html`, `figure_detail.html`, `menu_overlay.html`.
@@ -626,6 +638,7 @@ Before opening a new mock file, run through:
 Tracked as PLAN items, parked here for visibility:
 
 - **Box art sourcing**: how do we bundle box art for the game picker without bloating the release zip? (Maybe: one 200px thumb per game, ~60kb total.)
-- **Egui cloud vortex (4.15.5)**: web-target aesthetic is settled — `mocks/tv_launcher_v3.html` uses a WebGL fragment shader (5-octave simplex FBM on a cylindrical spiral, 10 iris arms, circular hole). egui port has two candidate paths:
-  - **Path A (preferred if feasible)** — port the shader via an `egui_wgpu` custom paint callback. Pixel-for-pixel match to the mock; GPU-cheap at 3840×2160. Spike needed to confirm wgpu integration and the decoupling rule (spiral speed independent of inflow speed) survives the port.
-  - **Path B (fallback)** — pre-render 240 frames of the shader at 1920×1080, pack into an atlas texture, sample in egui with `Painter::image`. Larger binary, fixed resolution, but zero GPU risk.
+- **Egui cloud vortex (4.15.5)**: web-target aesthetic is settled — `mocks/tv_launcher_v3.html` uses a WebGL fragment shader (5-octave simplex FBM on a cylindrical spiral, 10 iris arms, circular hole). The egui port shipped a third pragmatic path:
+  - **Path C (shipped, 4.15.5)** — polar-mesh approximation drawn via egui's native `Painter::add(Mesh)` (~2k triangles/frame). Captures the iconic shape (10 rotating arms + iris knob + centre hole) without any wgpu integration. Uses cheap sin/cos band noise rather than simplex FBM, so reads as banded density rather than organic fluff at 10 ft.
+  - **Path A (deferred to 4.15a.7)** — port the WebGL fragment shader to WGSL via an `egui_wgpu` custom paint callback for pixel-for-pixel match. Requires flipping the eframe backend `glow → wgpu`. Deferred until the surrounding 4.15.x visuals settle so we don't churn on tuning twice.
+  - **Path B (rejected)** — pre-rendered frame atlas. Loses the continuous-knob control over `irisRadius` / `rotationSpeed` / `inflowSpeed` that drives state transitions; not worth the ergonomics loss.
