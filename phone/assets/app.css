@@ -74,6 +74,15 @@ body {
     radial-gradient(ellipse 120% 60% at 50% 0%, #1a3a8a 0%, transparent 50%),
     radial-gradient(ellipse 80% 50% at 50% 100%, #0e2464 0%, transparent 50%),
     linear-gradient(180deg, var(--sf-1), var(--sf-2) 60%, var(--sf-3));
+  /* Attach the gradient to the viewport rather than the body box.
+     Without this, the bottom radial glow ends at body's edge — and
+     on iOS the visible area sometimes extends past body (address
+     bar mid-transition, safe-area inset, home-indicator strip),
+     which renders as a dark band at the bottom of the screen where
+     only html's flat sf-3 shows through. With `fixed`, the gradient
+     is sized against the viewport and always fills what's visible.
+     Chris flagged 2026-04-21. */
+  background-attachment: fixed;
 }
 body::after {
   content: "";
