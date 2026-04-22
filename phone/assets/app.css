@@ -66,6 +66,14 @@ html, body {
    Painting on html — the root — avoids the layout-vs-visual-viewport
    mismatch entirely because html's canvas is the whole rendered area. */
 html {
+  /* 100vh on iOS Safari == the URL-bar-retracted (large) viewport, which
+     is ~29px taller than the dvh body. Without this, html's auto-height
+     follows content and the radial-anchored-at-50%-100% bottom highlight
+     stops short of the true canvas bottom; when the URL bar retracts,
+     users see a thin strip of default-bg at the bottom (Chris noticed on
+     physical phone + sim, 2026-04-22). 100lvh would be equivalent on
+     iOS but has narrower support. */
+  min-height: 100vh;
   background:
     radial-gradient(ellipse 120% 60% at 50% 0%, #1a3a8a 0%, transparent 50%),
     radial-gradient(ellipse 80% 50% at 50% 100%, #0e2464 0%, transparent 50%),
