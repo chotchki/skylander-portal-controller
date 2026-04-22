@@ -6,15 +6,19 @@
 //!
 //! Approach: connect in `ShareMode::Direct` so we can send PN532 commands via
 //! `SCardControl` escape without needing PC/SC to successfully activate the
-//! card (macOS's inbox CCID driver refuses to mark Mifare Classic 1K as
-//! PRESENT because MFC is ISO14443-3 only — no native ATS). Once we're
-//! talking to the PN532 directly, we can `InListPassiveTarget` → grab UID →
-//! `InDataExchange` for Mifare authenticate/read.
+//! card (Mifare Classic 1K is ISO14443-3 only — no native ATS — so PC/SC
+//! never marks it PRESENT on its own). Direct mode lets us talk straight to
+//! the PN532: `InListPassiveTarget` → grab UID → `InDataExchange` for Mifare
+//! authenticate + read, block-by-block.
 //!
-//! Dev tested on macOS against an ACS ACR122U. Direct PN532 framing uses the
-//! `FF 00 00 00 <Lc>` escape envelope (ACS-family standard) wrapped in
-//! `SCardControl(ctl_code(1))` (the CCID `IFD_ESCAPE` IOCTL). Same binary
-//! should work on Windows. Linux needs pcsc-lite installed.
+//! macOS requires the ACS Unified CCID Driver
+//! (https://www.acs.com.hk/en/driver/3/acr122u-nfc-reader/) — the inbox
+//! Apple CCID driver silently rejects `SCardControl` escape commands. The
+//! ACS driver also mirrors the Windows IOCTL convention:
+//! `IOCTL_CCID_ESCAPE = SCARD_CTL_CODE(3500)` (not pcsc-lite's
+//! `IFD_ESCAPE = 1`), which is the value we use in `escape()` below.
+//! Windows works out-of-the-box with the same IOCTL. Linux needs pcsc-lite
+//! plus the `libacsccid1` driver package (same IOCTL value).
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -25,11 +29,6 @@ use pcsc::{Card, Context as PcscContext, Protocols, Scope, ShareMode, ctl_code};
 const MIFARE_1K_BLOCKS: usize = 64;
 const BLOCK_BYTES: usize = 16;
 const SKY_SIZE: usize = MIFARE_1K_BLOCKS * BLOCK_BYTES; // 1024
-
-/// CCID IOCTL for IFD_ESCAPE. The pcsc-lite / macOS value is
-/// `SCARD_CTL_CODE(1) = 0x42000001`; Windows routes the same symbolic code
-/// to its own numeric value via the ctl_code() helper.
-const IFD_ESCAPE: u32 = 1;
 
 /// CRC48 initial value per blog Appendix A:
 /// `2 * 2 * 3 * 1103 * 12_868_356_821` → fits in 48 bits.
@@ -194,11 +193,18 @@ fn escape(reader: &Card, payload: &[u8]) -> Result<Vec<u8>> {
     apdu.push(payload.len() as u8);
     apdu.extend_from_slice(payload);
 
+    // IOCTL_CCID_ESCAPE = SCARD_CTL_CODE(3500) is the ACS-family value,
+    // mirroring Windows's convention; ACS's own CCID driver (which we
+    // require on macOS because the inbox CCID driver has escape locked
+    // down) accepts this code. pcsc-lite's stock IFD_ESCAPE = 1 isn't
+    // accepted by the ACS driver on macOS, so we don't bother trying it.
+    const IOCTL_CCID_ESCAPE: u32 = 3500;
+
     let mut buf = [0u8; 512];
     let out = reader
-        .control(ctl_code(IFD_ESCAPE), &apdu, &mut buf)
+        .control(ctl_code(IOCTL_CCID_ESCAPE), &apdu, &mut buf)
         .context(
-            "SCardControl(IFD_ESCAPE) failed — macOS inbox CCID may have escape disabled; verify with `system_profiler SPUSBDataType | grep -i acr` and try ACS's driver",
+            "SCardControl(CCID_ESCAPE=3500) failed — on macOS this needs the ACS Unified CCID Driver installed (the inbox Apple CCID driver rejects escape commands).",
         )?;
     if out.len() < 2 {
         bail!("escape response too short ({} bytes)", out.len());
