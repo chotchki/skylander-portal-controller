@@ -1813,6 +1813,20 @@ input, textarea {
   line-height: 1;
 }
 
+/* Portal-slot portrait — sits on top of the initial so known figures
+   show their wiki thumb while unmatched ones fall back to the letter.
+   Same role as `.fig-image-p4` in the grid card, scoped to the
+   larger `Lg` bezel and routed inside `.gold-bezel .bezel-plate`. */
+.p4-slot-inner .gold-bezel .p4-slot-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  z-index: 2;
+  pointer-events: none;
+}
+
 /* Slot label below the bezel */
 .p4-slot-label {
   text-align: center;
@@ -1847,28 +1861,43 @@ input, textarea {
   transition: transform 0.3s var(--ease-smooth), filter 0.3s ease;
 }
 
-/* Actions overlay for loaded slots */
+/* REMOVE overlay for loaded slots. Full-width bar across the middle of
+   the bezel (~1/3 slot height) — big, obvious tap target that can't be
+   missed, sits on top of the figure portrait. Revealed via the parent's
+   `.p4-slot--selected` class so the reveal/hide animates with CSS instead
+   of being mounted/unmounted (which would skip the transition). Matches
+   portal_with_box.html mock — RESET moved to the figure-detail view; the
+   portal slot is REMOVE-only to keep the action unambiguous. 5s auto-
+   dismiss lives in the Leptos click handler, not CSS. */
 .p4-slot-actions {
   position: absolute;
-  left: 5%;
-  right: 5%;
+  left: 0;
+  right: 0;
   top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  gap: 4px;
+  height: 33.333%;
+  transform: translateY(-50%) scaleY(0.85);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 260ms ease-out, transform 320ms cubic-bezier(.3,1.3,.5,1);
   z-index: 20;
+  display: flex;
+}
+.p4-slot--selected .p4-slot-actions {
+  opacity: 1;
+  transform: translateY(-50%) scaleY(1);
+  pointer-events: auto;
 }
 .p4-slot-action {
   flex: 1;
-  padding: 8px 4px;
+  padding: 0;
   border: 0;
   border-radius: 8px;
   font-family: "Titan One", sans-serif;
   font-size: var(--t-body-sm);
-  letter-spacing: 0.14em;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
   cursor: pointer;
-  text-shadow: 0 1px 0 rgba(0,0,0,0.8);
+  text-shadow: 0 1px 0 rgba(0,0,0,0.8), 0 0 6px rgba(0,0,0,0.4);
   transition: transform var(--dur-tap) ease;
 }
 .p4-slot-action:active {
@@ -1877,20 +1906,29 @@ input, textarea {
 .p4-slot-action--remove {
   background: linear-gradient(180deg, #c23a3a 0%, #9a2424 60%, #6e1414 100%);
   color: #fff;
-  border: 1.5px solid #ffc0c0;
+  border: 2px solid #ffc0c0;
   box-shadow:
     inset 0 2px 0 rgba(255,255,255,0.3),
     inset 0 -2px 0 rgba(0,0,0,0.3),
-    0 3px 8px rgba(0,0,0,0.5),
-    0 0 14px rgba(227,76,76,0.4);
+    0 3px 10px rgba(0,0,0,0.55),
+    0 0 18px rgba(227,76,76,0.5);
 }
-.p4-slot-action--reset {
-  background: linear-gradient(180deg, rgba(16,40,90,0.8), rgba(8,22,60,0.9));
-  color: var(--gb);
-  border: 1.5px solid rgba(245,198,52,0.35);
+
+/* Selected loaded slot — nudge the bezel with a gold halo so the armed
+   state reads immediately. Pairs with the REMOVE reveal above. */
+.p4-slot--selected .p4-slot-inner {
+  transform: scale(1.04);
+  transition: transform 180ms cubic-bezier(.3,1.3,.5,1);
+}
+.p4-slot--selected .bezel-ring {
   box-shadow:
-    inset 0 1px 0 rgba(255,230,120,0.1),
-    0 3px 8px rgba(0,0,0,0.5);
+    inset 0 0 0 2px var(--gi),
+    inset 0 3px 4px rgba(255,255,255,0.3),
+    inset 0 -3px 4px rgba(0,0,0,0.5),
+    0 0 0 1px #000,
+    0 0 0 3px var(--gb),
+    0 0 26px rgba(245,198,52,0.6),
+    0 4px 14px rgba(0,0,0,0.6);
 }
 
 /* ================================================================
@@ -1970,6 +2008,23 @@ input, textarea {
 }
 .resume-fig {
   display: flex; flex-direction: column; align-items: center; gap: 6px;
+}
+/* Portrait layered over the initial fallback inside the GoldBezel — same
+   pattern as `.p4-slot-image` + `.fig-image-p4`. Unmatched figures
+   (figure_id: None) simply render the initial letter alone. */
+.resume-fig .gold-bezel .resume-fig-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  z-index: 2;
+  pointer-events: none;
+}
+.resume-fig-initial {
+  font-family: "Titan One", sans-serif;
+  color: #fff;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.5);
 }
 .resume-fig-name {
   font-family: "Fraunces", Georgia, serif;
@@ -2290,28 +2345,63 @@ input, textarea {
   border-bottom: 3px solid var(--gb);
   border-top: 2px solid var(--gb);
   box-shadow: inset 0 -4px 8px rgba(0,0,0,0.3), inset 0 2px 6px rgba(255,215,106,0.1), 0 6px 20px rgba(0,0,0,0.7);
-  padding: 6px 14px 8px;
   overflow: hidden;
   transition: max-height 0.35s var(--ease-smooth);
   max-height: 52px;
   display: flex;
   flex-direction: column;
+  /* Bleed edge-to-edge through .app's horizontal + bottom padding so
+     the lid paints the iOS home-indicator safe-area with wood instead
+     of letting the starfield show through — otherwise the lid reads as
+     a floating plank with a dark-blue strip below it. Inner padding
+     re-applies the safe-area-inset so the grabber / title stay above
+     the home indicator. */
+  margin-left: calc(-1 * (env(safe-area-inset-left) + 12px));
+  margin-right: calc(-1 * (env(safe-area-inset-right) + 12px));
+  margin-bottom: calc(-1 * (env(safe-area-inset-bottom) + 16px));
+  padding: 6px 14px calc(8px + env(safe-area-inset-bottom) + 16px);
 }
 .lid-open-p4.expanded {
-  max-height: 320px;
+  max-height: calc(320px + env(safe-area-inset-bottom) + 16px);
 }
 .lid-open-p4.closed {
   /* Per design_language.md §6.7: closed lid is a 64px wooden plank
      at the bottom. Keep the grabber + wood grain + gold trim visible
      so the tap target reads as "pull me up"; hide the top row so
-     it's a clean bar rather than a half-open compact state. */
-  max-height: 64px;
+     it's a clean bar rather than a half-open compact state.
+     Adds env(safe-area-inset-bottom) + 16px so the wood extends
+     through the home-indicator region. */
+  max-height: calc(64px + env(safe-area-inset-bottom) + 16px);
   padding-top: 10px;
-  padding-bottom: 10px;
+  padding-bottom: calc(10px + env(safe-area-inset-bottom) + 16px);
 }
-.lid-open-p4.closed .lid-top-row-p4,
 .lid-open-p4.closed .search-expanded-p4 {
   display: none;
+}
+/* Closed lid keeps the COLLECTION title visible so the plank reads as
+   "the box is here, and this is what's inside" rather than an anonymous
+   bar. The SEARCH button is an expanded-state action and is hidden. A
+   pulsing up-chevron replaces it as the "tap or swipe up to open"
+   affordance — the grabber pill alone wasn't discoverable enough
+   (Chris 2026-04-22). */
+.lid-open-p4.closed .lid-top-row-p4 {
+  min-height: 24px;
+}
+.lid-open-p4.closed .search-toggle-p4 {
+  display: none;
+}
+.lid-open-p4.closed .lid-top-row-p4::after {
+  content: "\25B2";
+  font-size: 12px;
+  color: var(--wood-gold-b);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+  animation: lid-chevron-pulse 1.8s ease-in-out infinite;
+  /* Decorative — don't intercept the lid's pointerdown. */
+  pointer-events: none;
+}
+@keyframes lid-chevron-pulse {
+  0%, 100% { transform: translateY(0); opacity: 0.55; }
+  50% { transform: translateY(-3px); opacity: 1; }
 }
 
 /* Portal / interior visibility keyed on the lid state.
@@ -2447,6 +2537,13 @@ input, textarea {
   100% { box-shadow: inset 0 2px 0 rgba(255,255,255,0.18), 0 0 16px rgba(245,198,52,0.45); }
 }
 
+/* Drill section wrapper — each chip row belongs to GAMES / ELEMENTS /
+   CATEGORY, stacked in the expanded lid area. Matches
+   docs/aesthetic/mocks/portal_with_box.html. */
+.drill-section-p4 {
+  margin-bottom: 10px;
+}
+
 /* Drill label */
 .drill-label-p4 {
   font-family: "Titan One", sans-serif;
@@ -2458,18 +2555,21 @@ input, textarea {
   text-shadow: 0 1px 0 rgba(0,0,0,0.8), 0 0 6px rgba(245,198,52,0.3);
 }
 
-/* 4.7.2 — Element chips as gold-bordered pills with element-tint fill */
-.chip-row-p4 {
+/* Rectangular gold-bordered chips with blue fill (inactive) or gold fill
+   (active). Shared by all three drill sections so the filter UI reads as
+   a single consistent control row. Per-element tinted backgrounds were
+   removed with the mock-parity pass — mock keeps every inactive chip the
+   same blue so the active-chip glow is what the eye tracks. */
+.drill-row-p4 {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
-  margin-bottom: 10px;
 }
-.el-chip-p4 {
+.drill-chip-p4 {
   border: 1.5px solid var(--gb);
   background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
   color: var(--gb);
-  border-radius: 999px;
+  border-radius: 8px;
   padding: 6px 11px;
   font-family: "Titan One", sans-serif;
   font-size: 9px;
@@ -2484,26 +2584,15 @@ input, textarea {
     0 3px 6px rgba(0,0,0,0.3);
   flex-shrink: 0;
 }
-/* Element-tinted fills for inactive chips */
-.el-chip-p4.el-fire   { background: linear-gradient(135deg, rgba(255,107,42,0.45), rgba(177,51,16,0.5)); }
-.el-chip-p4.el-water  { background: linear-gradient(135deg, rgba(42,166,255,0.45), rgba(15,77,138,0.5)); }
-.el-chip-p4.el-earth  { background: linear-gradient(135deg, rgba(167,123,58,0.45), rgba(90,58,19,0.5)); }
-.el-chip-p4.el-air    { background: linear-gradient(135deg, rgba(198,230,255,0.45), rgba(126,169,204,0.5)); }
-.el-chip-p4.el-life   { background: linear-gradient(135deg, rgba(90,201,107,0.45), rgba(38,97,46,0.5)); }
-.el-chip-p4.el-undead { background: linear-gradient(135deg, rgba(138,98,201,0.45), rgba(59,33,95,0.5)); }
-.el-chip-p4.el-tech   { background: linear-gradient(135deg, rgba(255,184,77,0.45), rgba(165,101,0,0.5)); }
-.el-chip-p4.el-magic  { background: linear-gradient(135deg, rgba(218,90,214,0.45), rgba(101,21,100,0.5)); }
-.el-chip-p4.el-light  { background: linear-gradient(135deg, rgba(255,248,160,0.45), rgba(200,176,44,0.5)); }
-.el-chip-p4.el-dark   { background: linear-gradient(135deg, rgba(42,42,58,0.65), rgba(5,5,10,0.6)); }
-
-.el-chip-p4:hover {
+.drill-chip-p4:hover {
+  background: linear-gradient(180deg, #4286f0 0%, #2a62cd 55%, #1b46a0 100%);
   box-shadow:
     inset 0 1px 0 rgba(255,255,255,0.25),
     inset 0 -1px 0 rgba(0,0,0,0.25),
     0 2px 0 rgba(0,0,0,0.4),
     0 0 12px rgba(245,198,52,0.3);
 }
-.el-chip-p4.active {
+.drill-chip-p4.active {
   background: linear-gradient(180deg, var(--gb) 0%, var(--g) 50%, var(--gm) 100%);
   color: var(--gi);
   border-color: var(--gi);
@@ -2711,12 +2800,22 @@ input, textarea {
    PLAN 4.6b — Figure Detail View (lifted hero overlay)
    ================================================================ */
 
-/* Viewport wrapper — carries state classes for loading/errored */
+/* Viewport wrapper — carries state classes for loading/errored.
+   Absolute-overlays the whole `.screen-portal` so the lifted detail
+   fully covers the portal strip + toy box grid beneath it, rather than
+   stacking below them in normal flow (which pushed the detail off-
+   screen on iPhone — ~940px after the grid eats the viewport). The
+   parent `.screen` is already `position: relative`, so `inset: 0`
+   anchors to the screen bounds. Allow vertical scroll in case content
+   exceeds the viewport. */
 .detail-viewport {
-  position: relative;
+  position: absolute;
+  inset: 0;
+  z-index: 10;
   display: flex;
   flex-direction: column;
-  min-height: 60vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Detail surface — blue panel with gold border, centered over ghost grid */
@@ -2857,6 +2956,24 @@ input, textarea {
   text-shadow: 0 1px 0 var(--gs), 0 0 10px rgba(245,198,52,0.3);
   letter-spacing: 0.04em;
 }
+/* "Coming soon" placeholder — single muted row centred inside the strip
+   (detail-stats-soon). Replaces the three `--` cells until PLAN 6.3
+   wires real level/gold/playtime from the sky-parser endpoint. */
+.detail-stats-soon {
+  justify-content: center;
+  align-items: center;
+  opacity: 0.6;
+}
+.detail-stats-soon-label {
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic;
+  font-size: var(--t-body-sm);
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #e8e4d8;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+}
 .detail-stat-k {
   font-family: "Fraunces", Georgia, serif;
   font-style: italic;
@@ -2960,6 +3077,31 @@ input, textarea {
   animation: blink 1s ease-in-out infinite;
 }
 @keyframes blink { 50% { opacity: 0.4; } }
+
+/* ---- Placing state (reverse-lift exit) ----
+   After a successful `/api/load`, FigureDetail holds `DetailState::Placing`
+   for ~380ms while this animation plays. The surface slides down + fades
+   while the hero bezel lifts slightly and fades — reads as "figure lifts
+   off toward the portal, panel falls away behind it". Matches the intent
+   of navigation.md §1 "PLACE → Portal (reverse lift)" without attempting
+   the full impact-at-slot/lid-closes choreography (PLAN 6.3 polish). */
+.detail-placing {
+  pointer-events: none;
+}
+.detail-placing .detail-surface {
+  animation: detail-surface-out 560ms cubic-bezier(.4,0,.6,1) both;
+}
+.detail-placing .detail-hero-wrap {
+  animation: detail-hero-lift-out 560ms cubic-bezier(.3,.1,.3,1) both;
+}
+@keyframes detail-surface-out {
+  from { transform: translateY(0); opacity: 1; }
+  to   { transform: translateY(48px); opacity: 0; }
+}
+@keyframes detail-hero-lift-out {
+  from { transform: translateY(0) scale(1); opacity: 1; }
+  to   { transform: translateY(-56px) scale(1.12); opacity: 0; }
+}
 
 /* ---- Error state ---- */
 .detail-error-banner {

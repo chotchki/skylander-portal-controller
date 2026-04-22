@@ -17,7 +17,8 @@ use leptos::prelude::*;
 use crate::api::{fetch_games, fetch_status};
 use crate::components::{ConnectionLost, GameCrashScreen, Header, KaosOverlay};
 use crate::model::{
-    ConnState, Element, GameLaunched, PublicProfile, Slot, SlotState, UnlockedProfile, SLOT_COUNT,
+    Category, ConnState, Element, GameLaunched, GameOfOrigin, PublicProfile, Slot, SlotState,
+    UnlockedProfile, SLOT_COUNT,
 };
 use crate::screens::*;
 
@@ -95,6 +96,8 @@ pub fn App() -> impl IntoView {
     let conn = RwSignal::new(ConnState::Connecting);
     let toasts = RwSignal::new(Vec::<ToastMsg>::new());
     let element_filter = RwSignal::new(None::<Element>);
+    let game_filter = RwSignal::new(None::<GameOfOrigin>);
+    let category_filter = RwSignal::new(None::<Category>);
     let search = RwSignal::new(String::new());
     let current_game = RwSignal::new(None::<GameLaunched>);
     let unlocked_profile = RwSignal::new(None::<UnlockedProfile>);
@@ -237,7 +240,7 @@ pub fn App() -> impl IntoView {
             >
                 <div class={screen_cls("screen-portal")}>
                     <Picking picking_for />
-                    <Portal portal picking_for reset_target known_profiles />
+                    <Portal portal picking_for known_profiles />
                     <Suspense fallback=|| view! { <div class="empty-msg">"Loading figures…"</div> }>
                         {move || figures.get().map(|figs| view! {
                             <Browser
@@ -245,6 +248,8 @@ pub fn App() -> impl IntoView {
                                 picking_for
                                 portal
                                 element_filter
+                                game_filter
+                                category_filter
                                 search
                                 toasts
                             />

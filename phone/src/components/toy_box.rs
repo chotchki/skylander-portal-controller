@@ -90,8 +90,11 @@ pub fn ToyBoxLid(
         gesture_pointer_id.set_value(Some(ev.pointer_id()));
         gesture_committed.set_value(false);
         // WHY: capture pointer so pointermove/up keep firing on the lid even
-        // if the finger drifts onto the grid or off-screen.
-        if let Some(target) = ev.target() {
+        // if the finger drifts onto the grid or off-screen. Anchor on
+        // `current_target` (the listener element) not `target` — the hit
+        // target is often a descendant text node/span, and capturing on a
+        // descendant breaks once the finger drifts off that sub-element.
+        if let Some(target) = ev.current_target() {
             if let Ok(el) = target.dyn_into::<web_sys::Element>() {
                 let _ = el.set_pointer_capture(ev.pointer_id());
             }
@@ -125,7 +128,7 @@ pub fn ToyBoxLid(
         gesture_pointer_id.set_value(None);
         gesture_committed.set_value(false);
 
-        if let (Some(pid), Some(target)) = (pointer_id, ev.target()) {
+        if let (Some(pid), Some(target)) = (pointer_id, ev.current_target()) {
             if let Ok(el) = target.dyn_into::<web_sys::Element>() {
                 let _ = el.release_pointer_capture(pid);
             }

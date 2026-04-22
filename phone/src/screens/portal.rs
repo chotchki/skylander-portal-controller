@@ -3,7 +3,6 @@ use leptos::prelude::*;
 use crate::api::post_clear;
 use crate::components::{BezelSize, BezelState, DisplayHeading, GoldBezel, HeadingSize};
 use crate::model::{PublicProfile, Slot, SlotState, SLOT_COUNT};
-use crate::ResetTarget;
 
 #[component]
 pub(crate) fn Picking(picking_for: RwSignal<Option<u8>>) -> impl IntoView {
@@ -26,17 +25,23 @@ pub(crate) fn Picking(picking_for: RwSignal<Option<u8>>) -> impl IntoView {
 pub(crate) fn Portal(
     portal: RwSignal<[Slot; SLOT_COUNT]>,
     picking_for: RwSignal<Option<u8>>,
-    reset_target: RwSignal<Option<ResetTarget>>,
     /// Known profiles, used to resolve a slot's `placed_by` id into the
     /// coloured-initial ownership pip (PLAN 4.18.17). Driven by App().
     known_profiles: RwSignal<Vec<PublicProfile>>,
 ) -> impl IntoView {
+    // Which loaded slot currently has its REMOVE bar revealed. Tap-to-arm,
+    // 5s auto-dismiss, tap elsewhere to cancel — `selection_token` gives
+    // each arming a unique cookie so a stale timer can't kill a fresh
+    // selection. Matches the mock in `docs/aesthetic/mocks/portal_with_box.html`.
+    let selected_slot = RwSignal::new(None::<u8>);
+    let selection_token = StoredValue::new(0u32);
+
     view! {
         <section class="portal-p4">
             <DisplayHeading size=HeadingSize::Md>"PORTAL"</DisplayHeading>
             <div class="portal-p4-grid">
                 {(0..SLOT_COUNT).map(|i| {
-                    view! { <SlotView idx=i portal picking_for reset_target known_profiles /> }
+                    view! { <SlotView idx=i portal picking_for known_profiles selected_slot selection_token /> }
                 }).collect_view()}
             </div>
         </section>
@@ -61,8 +66,9 @@ fn SlotView(
     idx: usize,
     portal: RwSignal<[Slot; SLOT_COUNT]>,
     picking_for: RwSignal<Option<u8>>,
-    reset_target: RwSignal<Option<ResetTarget>>,
     known_profiles: RwSignal<Vec<PublicProfile>>,
+    selected_slot: RwSignal<Option<u8>>,
+    selection_token: StoredValue<u32>,
 ) -> impl IntoView {
     let slot_num = (idx + 1) as u8;
 
@@ -78,12 +84,7 @@ fn SlotView(
         }
     });
 
-    let is_empty = move || {
-        matches!(
-            portal.get()[idx].state,
-            SlotState::Empty | SlotState::Error { .. }
-        )
-    };
+    let is_selected = move || selected_slot.get() == Some(slot_num);
 
     let slot_class = move || {
         let base = "p4-slot";
@@ -93,16 +94,40 @@ fn SlotView(
             SlotState::Loaded { .. } => "p4-slot--loaded",
             SlotState::Error { .. } => "p4-slot--errored",
         };
-        format!("{base} {state}")
+        let sel = if is_selected() { " p4-slot--selected" } else { "" };
+        format!("{base} {state}{sel}")
+    };
+
+    // Tap arms a loaded slot for REMOVE; tap again (or wait 5s) unarms.
+    // Empty/errored slots jump straight to the figure picker. Any tap
+    // bumps the selection token so a stale 5s timer can't clear a newer
+    // selection on the same slot.
+    let on_slot_click = move |_| match portal.get()[idx].state {
+        SlotState::Empty | SlotState::Error { .. } => {
+            selection_token.update_value(|t| *t += 1);
+            selected_slot.set(None);
+            picking_for.set(Some(slot_num));
+        }
+        SlotState::Loaded { .. } => {
+            selection_token.update_value(|t| *t += 1);
+            if is_selected() {
+                selected_slot.set(None);
+            } else {
+                let token = selection_token.get_value();
+                selected_slot.set(Some(slot_num));
+                leptos::task::spawn_local(async move {
+                    crate::gloo_timer(5000).await;
+                    if selection_token.get_value() == token {
+                        selected_slot.set(None);
+                    }
+                });
+            }
+        }
+        SlotState::Loading { .. } => {}
     };
 
     view! {
-        <div class=slot_class
-             on:click=move |_| {
-                 if is_empty() {
-                     picking_for.set(Some(slot_num));
-                 }
-             }>
+        <div class=slot_class on:click=on_slot_click>
             <div class="p4-slot-inner">
                 <span class="p4-slot-index">{slot_num}</span>
                 // 3.8.2 — when a figure is on the portal but didn't match any
@@ -177,14 +202,35 @@ fn SlotView(
                             SlotState::Loading { .. } => {
                                 view! { <span class="p4-slot-initial">{"\u{2026}"}</span> }.into_any()
                             }
-                            SlotState::Loaded { ref display_name, .. } => {
+                            SlotState::Loaded { ref display_name, ref figure_id, .. } => {
                                 let initial = display_name
                                     .chars()
                                     .next()
                                     .unwrap_or('?')
                                     .to_uppercase()
                                     .to_string();
-                                view! { <span class="p4-slot-initial">{initial}</span> }.into_any()
+                                // Portrait on top of the initial fallback so
+                                // matched figures show their wiki thumb and
+                                // unmatched (`figure_id: None`) figures still
+                                // show *something* readable. Same pattern as
+                                // `.fig-bezel-p4 .fig-image-p4` in the grid
+                                // card, scoped to `.p4-slot-image` so the
+                                // portal-sized bezel gets its own sizing.
+                                let img_view = figure_id.clone().map(|id| {
+                                    view! {
+                                        <img
+                                            class="p4-slot-image"
+                                            src=format!("/api/figures/{id}/image?size=thumb")
+                                            alt=""
+                                            loading="eager"
+                                            decoding="async"
+                                        />
+                                    }
+                                });
+                                view! {
+                                    <span class="p4-slot-initial">{initial}</span>
+                                    {img_view}
+                                }.into_any()
                             }
                             SlotState::Error { .. } => {
                                 view! { <span class="p4-slot-initial">"!"</span> }.into_any()
@@ -192,52 +238,30 @@ fn SlotView(
                         }
                     }}
                 </GoldBezel>
-                // REMOVE overlay for loaded slots
+                // REMOVE overlay for loaded slots. Always rendered (for both
+                // matched and unmatched figures) so CSS can animate its
+                // reveal/hide via the parent's `.p4-slot--selected` class;
+                // RESET moved off the portal slot to the figure-detail view
+                // — the portal slot should be a single, low-friction "take
+                // it off" action (portal_with_box.html mock).
                 {move || {
-                    match portal.get()[idx].state.clone() {
-                        SlotState::Loaded { figure_id: Some(fig), display_name, .. } => {
-                            let fig_for_reset = fig.clone();
-                            let name_for_reset = display_name.clone();
-                            view! {
-                                <div class="p4-slot-actions">
-                                    <button class="p4-slot-action p4-slot-action--remove" on:click=move |e| {
-                                        e.stop_propagation();
-                                        leptos::task::spawn_local(async move {
-                                            let _ = post_clear(slot_num).await;
-                                        });
-                                    }>
-                                        "REMOVE"
-                                    </button>
-                                    <button
-                                        class="p4-slot-action p4-slot-action--reset"
-                                        title="Reset this figure to a fresh copy (wipes save progress)"
-                                        on:click=move |e| {
-                                            e.stop_propagation();
-                                            reset_target.set(Some(ResetTarget {
-                                                slot: slot_num,
-                                                figure_id: fig_for_reset.clone(),
-                                                display_name: name_for_reset.clone(),
-                                            }));
-                                        }
-                                    >"RESET"</button>
-                                </div>
-                            }.into_any()
-                        }
-                        SlotState::Loaded { figure_id: None, .. } => {
-                            view! {
-                                <div class="p4-slot-actions">
-                                    <button class="p4-slot-action p4-slot-action--remove" on:click=move |e| {
-                                        e.stop_propagation();
-                                        leptos::task::spawn_local(async move {
-                                            let _ = post_clear(slot_num).await;
-                                        });
-                                    }>
-                                        "REMOVE"
-                                    </button>
-                                </div>
-                            }.into_any()
-                        }
-                        _ => view! { <span></span> }.into_any(),
+                    if matches!(portal.get()[idx].state, SlotState::Loaded { .. }) {
+                        view! {
+                            <div class="p4-slot-actions">
+                                <button class="p4-slot-action p4-slot-action--remove" on:click=move |e| {
+                                    e.stop_propagation();
+                                    selection_token.update_value(|t| *t += 1);
+                                    selected_slot.set(None);
+                                    leptos::task::spawn_local(async move {
+                                        let _ = post_clear(slot_num).await;
+                                    });
+                                }>
+                                    "REMOVE"
+                                </button>
+                            </div>
+                        }.into_any()
+                    } else {
+                        view! { <span></span> }.into_any()
                     }
                 }}
             </div>

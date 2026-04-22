@@ -10,6 +10,11 @@ use crate::{element_slug, first_empty_slot, push_toast, ToastMsg};
 enum DetailState {
     Default,
     Loading,
+    /// Post-load succeeded; playing the reverse-lift exit animation
+    /// (`navigation.md` §1 — "PLACE → Portal, reverse lift"). The state
+    /// is a brief transitional hold so the animation has time to run
+    /// before `on_close` unmounts the overlay.
+    Placing,
     Errored,
 }
 
@@ -24,20 +29,28 @@ pub(crate) fn FigureDetail(
     picking_for: RwSignal<Option<u8>>,
     portal: RwSignal<[Slot; SLOT_COUNT]>,
     toasts: RwSignal<Vec<ToastMsg>>,
-    /// Set to `None` to close the detail view.
+    /// Dismiss the detail view (BACK button path; browse state is
+    /// preserved — toy-box lid stays in whatever open state it was).
     on_close: Callback<()>,
+    /// Fired after a successful `/api/load` completes + the reverse-lift
+    /// animation runs. Browser uses this to both unmount the detail AND
+    /// close the toy-box lid (navigation.md §1 — "PLACE → Portal, lid
+    /// closes"), which `on_close` deliberately doesn't do.
+    on_placed: Callback<()>,
 ) -> impl IntoView {
     let state = RwSignal::new(DetailState::Default);
 
     let hero_state = Signal::derive(move || match state.get() {
         DetailState::Default => HeroState::Default,
         DetailState::Loading => HeroState::Loading,
+        DetailState::Placing => HeroState::Default,
         DetailState::Errored => HeroState::Errored,
     });
 
     let viewport_class = move || match state.get() {
         DetailState::Default => "detail-viewport",
         DetailState::Loading => "detail-viewport detail-loading",
+        DetailState::Placing => "detail-viewport detail-placing",
         DetailState::Errored => "detail-viewport detail-errored",
     };
 
@@ -94,11 +107,20 @@ pub(crate) fn FigureDetail(
 
             let fig_id = fig_id.clone();
             let name = name.clone();
+            let placed_cb = on_placed.clone();
             leptos::task::spawn_local(async move {
                 let result = post_load(slot, &fig_id).await;
                 match result {
                     Ok(()) => {
-                        state.set(DetailState::Default);
+                        // Hold the "placing" state long enough for the
+                        // reverse-lift CSS animation in `.detail-placing`
+                        // to finish, then unmount + close the lid. Matches
+                        // the 560ms animation duration below plus a small
+                        // buffer so the fade fully resolves on slower
+                        // devices before the overlay unmounts.
+                        state.set(DetailState::Placing);
+                        crate::gloo_timer(620).await;
+                        placed_cb.run(());
                     }
                     Err(e) if e.contains("429") => {
                         state.set(DetailState::Default);
@@ -209,19 +231,13 @@ pub(crate) fn FigureDetail(
                     </div>
                 </div>
 
-                <div class="detail-stats-strip">
-                    <div class="detail-stat-cell">
-                        <div class="detail-stat-v">"--"</div>
-                        <div class="detail-stat-k">"LEVEL"</div>
-                    </div>
-                    <div class="detail-stat-cell">
-                        <div class="detail-stat-v">"--"</div>
-                        <div class="detail-stat-k">"GOLD"</div>
-                    </div>
-                    <div class="detail-stat-cell">
-                        <div class="detail-stat-v">"--"</div>
-                        <div class="detail-stat-k">"PLAYED"</div>
-                    </div>
+                // Real level/gold/playtime wiring is PLAN 6.3 (post-Kaos
+                // polish, Phase 6). The parser + endpoint already exist
+                // (6.2); only the phone fetch/render is pending. Until
+                // then, show a single muted "coming soon" strip rather
+                // than three `--` cells that read as broken data.
+                <div class="detail-stats-strip detail-stats-soon">
+                    <div class="detail-stats-soon-label">"STATS COMING SOON"</div>
                 </div>
 
                 <div class="detail-spacer"></div>

@@ -24,20 +24,28 @@ pub(crate) fn ResumeModal(
     // `alongside current` vs `fresh`) lands with PLAN 3.10.9 follow-up.
 
     // Build a static list of figure preview data from the offer slots.
+    // `figure_id` is carried so the bezel can render the real portrait
+    // (server `/api/figures/{id}/image?size=thumb`) on top of the initial
+    // fallback — same pattern as `.p4-slot-image` + `.fig-image-p4`.
     let figures = move || {
         resume_offer.get().map(|offer| {
             offer
                 .slots
                 .iter()
                 .filter_map(|s| {
-                    if let SlotState::Loaded { display_name, .. } = s {
+                    if let SlotState::Loaded {
+                        display_name,
+                        figure_id,
+                        ..
+                    } = s
+                    {
                         let initial = display_name
                             .chars()
                             .next()
                             .unwrap_or('?')
                             .to_uppercase()
                             .to_string();
-                        Some((initial, display_name.clone()))
+                        Some((initial, display_name.clone(), figure_id.clone()))
                     } else {
                         None
                     }
@@ -57,11 +65,23 @@ pub(crate) fn ResumeModal(
                     <p class="resume-context">{"\u{2014} YOUR LAST ADVENTURE \u{2014}"}</p>
 
                     <div class="resume-fig-row">
-                        {move || figures().unwrap_or_default().into_iter().map(|(initial, name)| {
+                        {move || figures().unwrap_or_default().into_iter().map(|(initial, name, figure_id)| {
+                            let img_view = figure_id.map(|id| {
+                                view! {
+                                    <img
+                                        class="resume-fig-image"
+                                        src=format!("/api/figures/{id}/image?size=thumb")
+                                        alt=""
+                                        loading="eager"
+                                        decoding="async"
+                                    />
+                                }
+                            });
                             view! {
                                 <div class="resume-fig">
                                     <GoldBezel size=BezelSize::Md>
-                                        <span>{initial}</span>
+                                        <span class="resume-fig-initial">{initial}</span>
+                                        {img_view}
                                     </GoldBezel>
                                     <span class="resume-fig-name">{name}</span>
                                 </div>

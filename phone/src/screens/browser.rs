@@ -3,7 +3,7 @@ use leptos::prelude::*;
 use crate::components::{
     BezelSize, BezelState, BoxState, GoldBezel, ToyBoxInterior, ToyBoxLid,
 };
-use crate::model::{Element, PublicFigure, Slot, SlotState, SLOT_COUNT};
+use crate::model::{Category, Element, GameOfOrigin, PublicFigure, Slot, SlotState, SLOT_COUNT};
 use crate::screens::FigureDetail;
 use crate::{event_target_value, ToastMsg};
 
@@ -13,6 +13,8 @@ pub(crate) fn Browser(
     picking_for: RwSignal<Option<u8>>,
     portal: RwSignal<[Slot; SLOT_COUNT]>,
     element_filter: RwSignal<Option<Element>>,
+    game_filter: RwSignal<Option<GameOfOrigin>>,
+    category_filter: RwSignal<Option<Category>>,
     search: RwSignal<String>,
     toasts: RwSignal<Vec<ToastMsg>>,
 ) -> impl IntoView {
@@ -21,10 +23,14 @@ pub(crate) fn Browser(
 
     let filtered = Memo::new(move |_| {
         let ef = element_filter.get();
+        let gf = game_filter.get();
+        let cf = category_filter.get();
         let q = search.get().trim().to_lowercase();
         all_figures.with_value(|figs| {
             figs.iter()
                 .filter(|f| ef.map_or(true, |e| f.element == Some(e)))
+                .filter(|f| gf.map_or(true, |g| f.game == g))
+                .filter(|f| cf.map_or(true, |c| f.category == c))
                 .filter(|f| q.is_empty() || f.canonical_name.to_lowercase().contains(&q))
                 .take(400) // Phase 3 will virtualize.
                 .cloned()
@@ -76,7 +82,7 @@ pub(crate) fn Browser(
             when=move || selected_figure.get().is_some()
             fallback=move || view! {
                 <ToyBoxLid box_state>
-                    <BrowserFilters element_filter search />
+                    <BrowserFilters element_filter game_filter category_filter search />
                 </ToyBoxLid>
                 <ToyBoxInterior box_state>
                     <Show
@@ -183,20 +189,41 @@ pub(crate) fn Browser(
                     portal
                     toasts
                     on_close=Callback::new(move |_| selected_figure.set(None))
+                    on_placed=Callback::new(move |_| {
+                        // PLACE success: dismiss detail AND close the lid
+                        // so the user lands back on the portal with the
+                        // toy box shut — navigation.md §1. BACK uses the
+                        // `on_close` path above, which leaves the lid in
+                        // whatever open state the user had while browsing.
+                        selected_figure.set(None);
+                        box_state.set(BoxState::Closed);
+                    })
                 />
             })}
         </Show>
     }
 }
 
-/// Search + element-chip row that fills the toy-box lid's expanded area.
-/// Owns no gesture state — purely renders the filter UI driven by the
-/// signals passed in.
+/// Search + drill-section filter rows that fill the toy-box lid's expanded
+/// area. Owns no gesture state — purely renders the filter UI driven by the
+/// signals passed in. Three sections — GAMES / ELEMENTS / CATEGORY — match
+/// `docs/aesthetic/mocks/portal_with_box.html`.
 #[component]
 fn BrowserFilters(
     element_filter: RwSignal<Option<Element>>,
+    game_filter: RwSignal<Option<GameOfOrigin>>,
+    category_filter: RwSignal<Option<Category>>,
     search: RwSignal<String>,
 ) -> impl IntoView {
+    let all_games: [(Option<GameOfOrigin>, &'static str); 7] = [
+        (None, "All"),
+        (Some(GameOfOrigin::SpyrosAdventure), "SSA"),
+        (Some(GameOfOrigin::Giants), "Giants"),
+        (Some(GameOfOrigin::SwapForce), "Swap Force"),
+        (Some(GameOfOrigin::TrapTeam), "Trap Team"),
+        (Some(GameOfOrigin::Superchargers), "SuperChargers"),
+        (Some(GameOfOrigin::Imaginators), "Imaginators"),
+    ];
     let all_elements: [(Option<Element>, &'static str); 11] = [
         (None, "All"),
         (Some(Element::Air), "Air"),
@@ -210,6 +237,18 @@ fn BrowserFilters(
         (Some(Element::Light), "Light"),
         (Some(Element::Dark), "Dark"),
     ];
+    // CATEGORY filter covers the big sub-types the mock calls out. We skip
+    // the plain `Figure` + `Sidekick` / `Giant` / `Kaos` / `CreationCrystal`
+    // / `Other` rows: those are either the default case (Figure) or niche
+    // enough that a flat chip row would add clutter without helping a kid
+    // find what they want. Revisit once we have real feedback.
+    let all_categories: [(Option<Category>, &'static str); 5] = [
+        (None, "All"),
+        (Some(Category::Vehicle), "Vehicles"),
+        (Some(Category::Trap), "Traps"),
+        (Some(Category::AdventurePack), "Adventure Packs"),
+        (Some(Category::Item), "Items"),
+    ];
 
     view! {
         <input
@@ -219,26 +258,65 @@ fn BrowserFilters(
             prop:value=move || search.get()
             on:input=move |e| search.set(event_target_value(&e))
         />
-        <div class="drill-label-p4">"ELEMENTS"</div>
-        <div class="chip-row-p4">
-            {all_elements.into_iter().map(|(val, label)| {
-                let v = val;
-                let el_class = val.map(|e| e.css_class()).unwrap_or("");
-                view! {
-                    <button
-                        class=move || {
-                            if element_filter.get() == v {
-                                format!("el-chip-p4 active {el_class}")
+        <div class="drill-section-p4">
+            <div class="drill-label-p4">"GAMES"</div>
+            <div class="drill-row-p4">
+                {all_games.into_iter().map(|(val, label)| {
+                    let v = val;
+                    view! {
+                        <button
+                            class=move || if game_filter.get() == v {
+                                "drill-chip-p4 active"
                             } else {
-                                format!("el-chip-p4 {el_class}")
+                                "drill-chip-p4"
                             }
-                        }
-                        on:click=move |_| element_filter.set(v)
-                    >
-                        {label}
-                    </button>
-                }
-            }).collect_view()}
+                            on:click=move |_| game_filter.set(v)
+                        >
+                            {label}
+                        </button>
+                    }
+                }).collect_view()}
+            </div>
+        </div>
+        <div class="drill-section-p4">
+            <div class="drill-label-p4">"ELEMENTS"</div>
+            <div class="drill-row-p4">
+                {all_elements.into_iter().map(|(val, label)| {
+                    let v = val;
+                    view! {
+                        <button
+                            class=move || if element_filter.get() == v {
+                                "drill-chip-p4 active"
+                            } else {
+                                "drill-chip-p4"
+                            }
+                            on:click=move |_| element_filter.set(v)
+                        >
+                            {label}
+                        </button>
+                    }
+                }).collect_view()}
+            </div>
+        </div>
+        <div class="drill-section-p4">
+            <div class="drill-label-p4">"CATEGORY"</div>
+            <div class="drill-row-p4">
+                {all_categories.into_iter().map(|(val, label)| {
+                    let v = val;
+                    view! {
+                        <button
+                            class=move || if category_filter.get() == v {
+                                "drill-chip-p4 active"
+                            } else {
+                                "drill-chip-p4"
+                            }
+                            on:click=move |_| category_filter.set(v)
+                        >
+                            {label}
+                        </button>
+                    }
+                }).collect_view()}
+            </div>
         </div>
     }
 }
