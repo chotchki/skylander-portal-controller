@@ -1,0 +1,24 @@
+# Standalone tool — intentionally NOT part of the root Cargo workspace.
+# Run with: `cargo run --manifest-path tools/ios-inspect/Cargo.toml -- <cmd>`
+# Or `cd tools/ios-inspect && cargo run -- <cmd>`.
+#
+# Mac-only dev tool for iterating on iOS-specific phone UI bugs against the
+# iOS Simulator. See PLAN.md §4.21 + README.md.
+[workspace]
+
+[package]
+name = "ios-inspect"
+version = "0.0.1"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "io-util", "process", "fs"] }
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+base64 = "0.22"
