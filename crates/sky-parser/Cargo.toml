@@ -12,6 +12,8 @@ path = "src/lib.rs"
 serde = { workspace = true }
 thiserror = { workspace = true }
 chrono = { version = "0.4", default-features = false, features = ["serde", "alloc"] }
+aes = "0.8"
+md-5 = "0.10"
 
 [dev-dependencies]
 serde_json = { workspace = true }

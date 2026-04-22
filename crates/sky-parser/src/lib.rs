@@ -8,14 +8,17 @@
 //! `docs/research/sky-format/SkylanderFormat.md` (mirrored from the Runes
 //! project: <https://github.com/NefariousTechSupport/Runes/blob/master/Docs/SkylanderFormat.md>).
 //!
-//! # Plaintext-only
+//! # Encryption
 //!
-//! Real NFC tags encrypt the per-figure data with AES-128, keyed off each
-//! block's contents + figure identity. **RPCS3 writes `.sky` files without
-//! that encryption layer** — the bytes on disk are the decrypted payload
-//! directly. Since our use case is "read the files RPCS3 maintains", this
-//! crate never touches AES. Consumers that want to read files dumped from
-//! physical tags would need to decrypt first externally.
+//! RPCS3 preserves the full Mifare Classic encryption layer: blocks 0–7 and
+//! every sector trailer (`(i + 1) % 4 == 0`) are plaintext; all other blocks
+//! are AES-128-ECB with per-block keys derived as
+//! `MD5(block_0 || block_1 || block_index_byte || " Copyright (C) 2010 Activision. All Rights Reserved.")`.
+//! [`parse`] decrypts before reading payload fields — the 0x56-byte hash-input
+//! is built once per figure, then the single-byte block index is flipped for
+//! each block. Zero-filled blocks are passed through unchanged (matches the
+//! reference encrypt path, which doesn't "encrypt" all-zero blocks either).
+//! This is the algorithm from the blog post linked in PLAN 6.2, Appendix D.
 //!
 //! # Scope
 //!
@@ -36,7 +39,8 @@
 //! # What is stubbed
 //!
 //! Trap, Vehicle, Racing Pack, and CYOS/Imaginator-crystal layouts classify
-//! as [`FigureKind::Other`] and their payload-specific fields stay defaulted.
+//! as non-Standard [`FigureKind`] variants and their payload-specific fields
+//! stay defaulted. PLAN 6.2.3–6.2.5 extend each kind's parser.
 //! See the corresponding sections of `SkylanderFormat.md` for a future pass.
 
 #![warn(missing_docs)]
@@ -76,6 +80,94 @@ pub const OFFSET_FIGURE_ID: usize = 0x10;
 pub const OFFSET_VARIANT: usize = 0x1C;
 /// Header CRC16 — uint16 LE at 0x1E; covers bytes 0x00..0x1E.
 pub const OFFSET_HEADER_CRC: usize = 0x1E;
+
+// ---------------------------------------------------------------------------
+// AES-128-ECB + MD5 per-block decrypt (see module-level encryption docs).
+// ---------------------------------------------------------------------------
+
+/// " Copyright (C) 2010 Activision. All Rights Reserved. " (leading AND
+/// trailing space — the blog's hex dump ends in 0x20). Trailing 0x35 bytes
+/// of the 0x56-byte hash input.
+const HASH_CONST: [u8; 0x35] = *b" Copyright (C) 2010 Activision. All Rights Reserved. ";
+
+/// Return `true` for blocks the encryption algorithm leaves as plaintext:
+/// blocks 0..=7 (sector 0 + sector 1) and every sector trailer (every 4th
+/// block starting at 3).
+fn is_plaintext_block(i: usize) -> bool {
+    i < 8 || (i + 1) % 4 == 0
+}
+
+/// Build the 0x56-byte hash-input template: `block_0 || block_1 || 0x00 ||
+/// HASH_CONST`. The single zero byte at offset 0x20 is overwritten with the
+/// block index per block.
+fn hash_in_template(bytes: &[u8; SKY_FILE_LEN]) -> [u8; 0x56] {
+    let mut out = [0u8; 0x56];
+    out[0x00..0x20].copy_from_slice(&bytes[0x00..0x20]);
+    // out[0x20] left as 0; callers overwrite with block index.
+    out[0x21..0x56].copy_from_slice(&HASH_CONST);
+    out
+}
+
+fn block_key(hash_in_template: &[u8; 0x56], block_index: u8) -> [u8; 16] {
+    use md5::{Digest, Md5};
+    let mut hash_in = *hash_in_template;
+    hash_in[0x20] = block_index;
+    let digest = Md5::digest(hash_in);
+    let mut key = [0u8; 16];
+    key.copy_from_slice(&digest);
+    key
+}
+
+/// Decrypt a whole figure in place. See module docs for the algorithm; matches
+/// the blog's Appendix D `DecryptFigure`.
+pub fn decrypt_figure(bytes: &mut [u8; SKY_FILE_LEN]) {
+    use aes::Aes128;
+    use aes::cipher::{BlockDecrypt, KeyInit, generic_array::GenericArray};
+
+    let template = hash_in_template(bytes);
+    for i in 0..BLOCK_COUNT {
+        if is_plaintext_block(i) {
+            continue;
+        }
+        let off = i * BLOCK_LEN;
+        let block = &mut bytes[off..off + BLOCK_LEN];
+        if block.iter().all(|&b| b == 0) {
+            // Matches the reference: zero-filled blocks aren't decrypted so
+            // they remain zero (their encrypted form is also all-zero because
+            // the encrypt path skips them).
+            continue;
+        }
+        let key = block_key(&template, i as u8);
+        let cipher = Aes128::new(GenericArray::from_slice(&key));
+        let mut buf = GenericArray::clone_from_slice(block);
+        cipher.decrypt_block(&mut buf);
+        block.copy_from_slice(&buf);
+    }
+}
+
+/// Encrypt a whole figure in place. Inverse of [`decrypt_figure`]; used by
+/// tests so fixtures can exercise the full decrypt path.
+pub fn encrypt_figure(bytes: &mut [u8; SKY_FILE_LEN]) {
+    use aes::Aes128;
+    use aes::cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray};
+
+    let template = hash_in_template(bytes);
+    for i in 0..BLOCK_COUNT {
+        if is_plaintext_block(i) {
+            continue;
+        }
+        let off = i * BLOCK_LEN;
+        let block = &mut bytes[off..off + BLOCK_LEN];
+        if block.iter().all(|&b| b == 0) {
+            continue;
+        }
+        let key = block_key(&template, i as u8);
+        let cipher = Aes128::new(GenericArray::from_slice(&key));
+        let mut buf = GenericArray::clone_from_slice(block);
+        cipher.encrypt_block(&mut buf);
+        block.copy_from_slice(&buf);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -136,21 +228,32 @@ impl SkyGeneration {
     }
 }
 
-/// Kind of figure inferred from variant/deco heuristics. Drives which "data
-/// area" layout applies — see `SkylanderFormat.md`.
-///
-/// We only fully parse [`FigureKind::Standard`] for now. The others are
-/// detected so consumers can avoid misreading fields that don't apply.
+/// Kind of figure inferred from its `figure_id` range. Drives which "data
+/// area" layout applies — see `SkylanderFormat.md`. Only [`FigureKind::Standard`]
+/// currently has a payload parser; the non-Standard variants exist so the UI
+/// can branch per kind and future per-kind parsers can slot in without API
+/// churn (PLAN 6.2.2 split this from the prior single `Other` variant).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FigureKind {
-    /// Standard Skylander / Giant / Swapper / Sensei — "None of the above" in
-    /// the spec's layout table.
+    /// Standard Skylander / Giant / Swapper / Trap Master / Sensei — the
+    /// `tfbSpyroTagData` layout that [`parse`] reads in full.
     Standard,
-    /// Trap, Vehicle, Racing Pack trophy, CYOS (Creation Crystal / Imaginator),
-    /// or anything else whose layout we don't yet parse.
-    // TODO: split this into Trap / Vehicle / RacingPack / Cyos and parse the
-    // corresponding sections of SkylanderFormat.md.
+    /// Trap Team elemental trap crystal (figure_id 0x1F4..=0x225). Payload
+    /// layout lives at `SkylanderFormat.md` §"Trap".
+    Trap,
+    /// SuperChargers vehicle (figure_id 0x2BC..=0x2ED). Payload layout at
+    /// `SkylanderFormat.md` §"Vehicle".
+    Vehicle,
+    /// SuperChargers Racing Pack trophy. Range unknown in the public spec —
+    /// no files classify here until the range is confirmed against real
+    /// dumps; variant reserved so downstream code can match it exhaustively.
+    RacingPack,
+    /// Imaginators Creation Crystal (figure_id 0x320..=0x383). Spec warns
+    /// this layout "may be incorrect, actively being worked on"
+    /// (`SkylanderFormat.md` §"CYOS").
+    Cyos,
+    /// Fallthrough for figure_ids outside any known range.
     Other,
 }
 
@@ -270,7 +373,7 @@ pub fn crc16_ccitt_false(data: &[u8]) -> u16 {
 
 /// Everything the parser managed to pull out of a `.sky` blob.
 ///
-/// For non-standard kinds ([`FigureKind::Other`]) only the header fields and
+/// For non-standard kinds (every `FigureKind` other than `Standard`) only the header fields and
 /// variant decomposition are meaningful — payload fields stay at their
 /// defaults.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -439,6 +542,15 @@ pub fn parse(bytes: &[u8]) -> Result<SkyFigureStats, ParseError> {
         return Err(ParseError::BadLength(bytes.len()));
     }
 
+    // Real `.sky` dumps are always encrypted — decrypt unconditionally. Test
+    // fixtures run their synthetic plaintext through `encrypt_figure` inside
+    // `Fixture::build()` so this path is the single source of truth for how
+    // payloads get read.
+    let mut buf = [0u8; SKY_FILE_LEN];
+    buf.copy_from_slice(bytes);
+    decrypt_figure(&mut buf);
+    let bytes: &[u8] = &buf;
+
     // Split into 64 fixed-size blocks.
     let mut raw_blocks = Vec::with_capacity(BLOCK_COUNT);
     for chunk in bytes.chunks_exact(BLOCK_LEN) {
@@ -463,24 +575,36 @@ pub fn parse(bytes: &[u8]) -> Result<SkyFigureStats, ParseError> {
     let web_code = web_code_from_trading_card(trading_card_id);
 
     // --- Figure kind classification ----------------------------------
-    // Heuristic based on figure id ranges — see kTfbSpyroTag_ToyType in Runes.
-    // This is conservative: we only claim "standard" for figure ids we're
-    // confident fit the tfbSpyroTagData layout. Everything else (Traps,
-    // Vehicles, Creation Crystals, Racing Pack trophies) is "Other".
+    // Ranges pinned against real RPCS3 dumps from `dev-data/validation-figures/`
+    // (see PLAN 6.2.0 validation + the `validate_samples` example). The old
+    // community-sourced ranges (Traps at 0x1F4..=0x225, Vehicles at
+    // 0x2BC..=0x2ED, CYOS at 0x320..=0x383) don't match what RPCS3 actually
+    // writes — all 151 real samples classified as Standard under those
+    // ranges. What we've observed:
     //
-    // Community-sourced ranges:
-    //   0x000..0x12C   standard Skylanders (SSA..Trap Team Senseis)
-    //   0x12C..0x1F4   standard (Swap Force swappers + halves)
-    //   0x1F4..0x226   traps (Trap Team)
-    //   0x226..0x2BC   standard (Minis/Eon's elites)
-    //   0x2BC..0x2EE   vehicles (SuperChargers)
-    //   0x320..0x384   CYOS / Creation Crystals (Imaginators)
-    // We simplify by flagging only the obvious non-standard windows.
-    // TODO: tighten via kTfbSpyroTag_ToyType.hpp once checked in.
+    //   0x0D2..=0x0DC → Trap crystals. 11 values, one per element (Magic
+    //                    through Kaos). Confirmed against 11 element traps
+    //                    + 10 villain-named trap dumps (villain-loaded
+    //                    traps keep the trap's element-encoded figure_id
+    //                    and stash the captured villain in the payload —
+    //                    see spec §"Trap" 0x0010 `VillainType`).
+    //   0x0C8x..=0x0CAx → mixed SuperChargers-era: characters (e.g. Sheep
+    //                    Creep 0x0C82) AND vehicles (Hot Streak 0x0C98,
+    //                    Reef Ripper 0x0C96, Sun Runner 0x0CA4). Vehicle
+    //                    vs character disambiguation can't be done on
+    //                    figure_id alone from the samples we have; needs
+    //                    either a lookup table or a variant-bit check.
+    //                    Deferred to a follow-up plan item.
+    //   CYOS (Creation Crystal) range: unknown. Our sample dir's
+    //                    `creation crystal/` folder was empty when 6.2.0
+    //                    ran; range will be pinned when Chris provides CC
+    //                    dumps.
+    //
+    // TODO(PLAN 6.2.x vehicle-range): split Vehicle from Standard in the
+    // 0xC8x..=0xCAx block.
+    // TODO(PLAN 6.2.x cyos-range): verify CYOS range against real dumps.
     let figure_kind = match figure_id {
-        0x1F4..=0x225 => FigureKind::Other, // Traps
-        0x2BC..=0x2ED => FigureKind::Other, // Vehicles
-        0x320..=0x383 => FigureKind::Other, // CYOS / creation crystals
+        0x0D2..=0x0DC => FigureKind::Trap,
         _ => FigureKind::Standard,
     };
 
@@ -674,6 +798,7 @@ mod fixture {
     use super::{
         BLOCK_LEN, OFFSET_ERROR_BYTE, OFFSET_FIGURE_ID, OFFSET_HEADER_CRC, OFFSET_SERIAL,
         OFFSET_TRADING_CARD, OFFSET_VARIANT, SKY_FILE_LEN, block_off, crc16_ccitt_false,
+        encrypt_figure,
     };
 
     pub struct Fixture {
@@ -785,7 +910,14 @@ mod fixture {
 
             debug_assert_eq!(buf.len(), SKY_FILE_LEN);
             debug_assert_eq!(buf.len() / BLOCK_LEN, super::BLOCK_COUNT);
-            buf
+
+            // Encrypt so `parse()` runs the full decrypt path end-to-end. The
+            // fixture is the test-side canonical "plaintext synthetic"; the
+            // ciphertext that comes out is what RPCS3 would write.
+            let mut arr = [0u8; SKY_FILE_LEN];
+            arr.copy_from_slice(&buf);
+            encrypt_figure(&mut arr);
+            arr.to_vec()
         }
 
         fn write_region_a(&self, buf: &mut [u8], base: usize) {
@@ -1169,21 +1301,23 @@ mod tests {
     }
 
     #[test]
-    fn other_figure_kind_skips_standard_payload() {
-        // Figure id 0x200 → Trap per our conservative range.
-        let bytes = Fixture {
-            figure_id: 0x200,
-            variant: 0x4000,
-            xp_2011: 9999,
-            gold: 500,
-            ..Default::default()
+    fn trap_kind_skips_standard_payload() {
+        // Boundaries + middle of the observed trap range 0x0D2..=0x0DC.
+        // Each should classify as Trap and leave Standard payload defaults.
+        for figure_id in [0x0D2u32, 0x0D7, 0x0DC] {
+            let bytes = Fixture {
+                figure_id,
+                variant: 0x4000,
+                xp_2011: 9999,
+                gold: 500,
+                ..Default::default()
+            }
+            .build();
+            let stats = parse(&bytes).unwrap();
+            assert_eq!(stats.figure_kind, FigureKind::Trap, "id=0x{figure_id:X}");
+            assert_eq!(stats.xp_2011, 0, "id=0x{figure_id:X}");
+            assert_eq!(stats.gold, 0, "id=0x{figure_id:X}");
         }
-        .build();
-        let stats = parse(&bytes).unwrap();
-        assert_eq!(stats.figure_kind, FigureKind::Other);
-        // Standard payload fields stay at defaults.
-        assert_eq!(stats.xp_2011, 0);
-        assert_eq!(stats.gold, 0);
     }
 
     #[test]
