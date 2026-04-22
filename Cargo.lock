@@ -4330,12 +4330,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "skylander-nfc-dump"
+name = "skylander-nfc-reader"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "pcsc",
+ "skylander-core",
  "skylander-sky-parser",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -4379,6 +4382,7 @@ dependencies = [
  "sha2",
  "skylander-core",
  "skylander-indexer",
+ "skylander-nfc-reader",
  "skylander-rpcs3-control",
  "skylander-sky-parser",
  "sqlx",

@@ -79,6 +79,20 @@ pub enum Event {
     /// Broadcast to all sessions — the portal is dead for everyone. PLAN
     /// 4.15.14; see `docs/aesthetic/navigation.md` §3.8.
     GameCrashed { message: String },
+    /// A Skylanders figure was scanned on the attached NFC reader. Broadcast
+    /// to all sessions so the phone can refresh its toy-box library view and
+    /// surface a "new figure imported" toast. The raw 1024-byte tag dump
+    /// stays on the server (written to the scanned-figures dir) — phones
+    /// never see it. PLAN 6.5.1.
+    ///
+    /// - `uid`: 8-char uppercase hex of the Mifare NUID (doubles as filename stem).
+    /// - `figure_id`: tag's 24-bit toy type; 0 if parse failed.
+    /// - `variant`: tag's 16-bit variant word; 0 if parse failed.
+    FigureScanned {
+        uid: String,
+        figure_id: u32,
+        variant: u16,
+    },
 }
 
 /// Public profile description included in [`Event::ProfileChanged`] and the

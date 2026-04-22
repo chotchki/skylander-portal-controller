@@ -1,0 +1,21 @@
+[package]
+name = "skylander-nfc-reader"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# Library + thin bin wrapper (`nfc-dump`, the ad-hoc dump CLI). Server
+# depends on the lib when built with `--features nfc-import`; bin is
+# always available via `cargo run -p skylander-nfc-reader --bin nfc-dump`.
+
+[dependencies]
+anyhow = { workspace = true }
+pcsc = "2"
+skylander-core = { path = "../core" }
+skylander-sky-parser = { path = "../sky-parser" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[[bin]]
+name = "nfc-dump"
+path = "src/bin/nfc-dump.rs"

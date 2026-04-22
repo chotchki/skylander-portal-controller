@@ -17,6 +17,7 @@ skylander-core = { path = "../core" }
 skylander-indexer = { path = "../indexer" }
 skylander-rpcs3-control = { path = "../rpcs3-control" }
 skylander-sky-parser = { path = "../sky-parser", optional = true }
+skylander-nfc-reader = { path = "../nfc-reader", optional = true }
 
 anyhow = { workspace = true }
 tokio = { workspace = true }
@@ -116,3 +117,9 @@ test-hooks = ["dev-tools"]
 # `GET /api/profiles/:profile_id/figures/:figure_id/stats`. Gated while
 # the parser's decrypt path matures — see `crates/sky-parser/README.md`.
 sky-stats = ["dep:skylander-sky-parser"]
+# Spawns a background NFC scanner worker that watches an ACR122U (or any
+# compatible PC/SC reader) and imports scanned figures into the shared
+# toy-box library. Off by default so users without the hardware don't
+# pull in pcsc-lite / winscard linkage. PLAN 6.5. Needs the ACS Unified
+# CCID Driver on macOS; see `crates/nfc-reader/src/lib.rs` for details.
+nfc-import = ["dep:skylander-nfc-reader"]

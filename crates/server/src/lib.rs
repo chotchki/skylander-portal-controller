@@ -6,6 +6,8 @@ pub mod fonts;
 pub mod http;
 pub mod logging;
 pub mod mdns;
+#[cfg(feature = "nfc-import")]
+pub mod nfc;
 pub mod palette;
 pub mod paths;
 pub mod profiles;

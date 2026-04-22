@@ -215,6 +215,16 @@ fn main() -> Result<()> {
                     rpcs3_exe.clone(),
                     std::time::Duration::from_millis(500),
                 );
+                // NFC scanner worker (PLAN 6.5.1). Feature-gated: off by
+                // default so users without an ACR122U aren't pulling in
+                // pcsc linkage. Dumps land under `<data_root>/scanned/`
+                // as `<uid>.sky`; scanner emits `Event::FigureScanned`
+                // on the existing broadcast channel.
+                #[cfg(feature = "nfc-import")]
+                skylander_server::nfc::spawn(
+                    events_for_task.clone(),
+                    data_root.join("scanned"),
+                );
                 let state = Arc::new(AppState {
                     figures: figures_for_task,
                     figure_index: figure_index_for_task,
