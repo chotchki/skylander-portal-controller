@@ -17,6 +17,12 @@
 //! always-on. It surfaces only when connected-clients drops to zero —
 //! the "everyone left, anyone come back" cue — so gameplay isn't
 //! cluttered with a persistent overlay.
+//!
+//! Visual form: gold-bezel coin matching the launcher's main QR card
+//! (`ui/main_screen.rs::paint_qr_front`) but shrunk. The round noise
+//! ring inside the `qr_texture` carries the circular silhouette on its
+//! own; this screen just wraps it in a smaller gold ring + SF_3 screen
+//! rim so it reads as a scaled-down version of the Main surface QR.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -38,63 +44,99 @@ pub(super) fn render(
     }
 }
 
-/// Small gold-bezeled QR in the upper-right. Includes a one-line
-/// "reconnect a phone" hint in dim text. Mirrors what the phone SPA
-/// would show if it had a connection-lost overlay — this is the
-/// TV-side equivalent that guides a family member back in.
+/// Gold-bezeled round QR coin in the upper-right, with RECONNECT /
+/// "scan to rejoin" text above and below. Mirrors the Main surface's
+/// QR card scaled for a corner overlay; the texture already carries the
+/// circular silhouette via its noise ring + transparent corners.
 fn reconnect_qr(ui: &mut egui::Ui, qr_texture: Option<&egui::TextureHandle>) {
     let Some(tex) = qr_texture else { return };
 
+    // Visible diameter of the round QR coin. Larger than the prior
+    // square panel's 180px because a circle reads smaller than the same
+    // bounding-box square (same tradeoff PLAN 4.19.6 hit on the main
+    // QR), and the coin replaces the panel outright here.
+    const COIN_DIAMETER: f32 = 220.0;
+    // Gold ring + dark screen rim thicknesses. Proportionally lighter
+    // than the main screen's 24/14 so the small coin doesn't look
+    // overbuilt at TV distance from across the room.
+    const BEZEL_RING_PX: f32 = 14.0;
+    const SCREEN_RIM_PX: f32 = 8.0;
+    // Margin from the viewport corners to the coin's bounding box.
+    const CORNER_MARGIN: f32 = 32.0;
+    // Extra vertical room for the RECONNECT title + "scan to rejoin"
+    // subtitle rendered above / below the coin.
+    const LABEL_LANE: f32 = 44.0;
+
     let full = ui.max_rect();
-    // Reconnect overlay panel: ~200px QR + label, anchored 32px inside
-    // the upper-right corner.
-    const PANEL_W: f32 = 260.0;
-    const PANEL_H: f32 = 300.0;
+    let panel_w = COIN_DIAMETER;
+    let panel_h = COIN_DIAMETER + LABEL_LANE * 2.0;
     let panel_rect = egui::Rect::from_min_size(
-        egui::pos2(full.right() - PANEL_W - 32.0, full.top() + 32.0),
-        egui::vec2(PANEL_W, PANEL_H),
+        egui::pos2(
+            full.right() - panel_w - CORNER_MARGIN,
+            full.top() + CORNER_MARGIN,
+        ),
+        egui::vec2(panel_w, panel_h),
+    );
+    let painter = ui.painter();
+
+    // Title — Titan One gold caption above the coin.
+    painter.text(
+        egui::pos2(
+            panel_rect.center().x,
+            panel_rect.top() + LABEL_LANE * 0.5,
+        ),
+        egui::Align2::CENTER_CENTER,
+        "RECONNECT",
+        egui::FontId::new(
+            palette::CAPTION,
+            egui::FontFamily::Name(fonts::TITAN_ONE.into()),
+        ),
+        palette::GOLD,
     );
 
-    ui.allocate_new_ui(
-        egui::UiBuilder::new()
-            .max_rect(panel_rect)
-            .layout(egui::Layout::top_down(egui::Align::Center)),
-        |ui| {
-            egui::Frame::none()
-                .fill(palette::SF_3)
-                .stroke(egui::Stroke::new(2.0, palette::GOLD_INK))
-                .inner_margin(egui::Margin::same(12.0))
-                .rounding(egui::Rounding::same(10.0))
-                .shadow(egui::epaint::Shadow {
-                    offset: egui::vec2(0.0, 4.0),
-                    blur: 14.0,
-                    spread: 0.0,
-                    color: egui::Color32::from_black_alpha(180),
-                })
-                .show(ui, |ui| {
-                    ui.label(
-                        egui::RichText::new("RECONNECT")
-                            .size(palette::CAPTION)
-                            .color(palette::GOLD)
-                            .family(egui::FontFamily::Name(fonts::TITAN_ONE.into())),
-                    );
-                    ui.add_space(6.0);
-                    // QR scales down to ~180px to fit the corner panel.
-                    // `size_vec2()` returns the native (10×module) size;
-                    // we let egui clamp via `.max_size`.
-                    let tex_size = tex.size_vec2();
-                    let max = 180.0;
-                    let scale = (max / tex_size.x).min(max / tex_size.y).min(1.0);
-                    let display_size = tex_size * scale;
-                    ui.image((tex.id(), display_size));
-                    ui.add_space(4.0);
-                    ui.label(
-                        egui::RichText::new("scan to rejoin")
-                            .size(palette::CAPTION_SM)
-                            .italics()
-                            .color(palette::TEXT_DIM),
-                    );
-                });
-        },
+    // Round coin: gold ring → SF_3 screen rim → QR texture. Same
+    // layering pattern as the Main surface so the two reads as a single
+    // design language, just scaled.
+    let coin_center = egui::pos2(
+        panel_rect.center().x,
+        panel_rect.top() + LABEL_LANE + COIN_DIAMETER * 0.5,
+    );
+    let coin_r = COIN_DIAMETER * 0.5;
+    painter.circle_filled(coin_center, coin_r, palette::GOLD);
+    painter.circle_stroke(
+        coin_center,
+        coin_r - 1.0,
+        egui::Stroke::new(1.0, palette::GOLD_SHADOW),
+    );
+    let screen_r = coin_r - BEZEL_RING_PX;
+    painter.circle_filled(coin_center, screen_r, palette::SF_3);
+    painter.circle_stroke(
+        coin_center,
+        screen_r,
+        egui::Stroke::new(1.0, palette::GOLD_INK),
+    );
+
+    // QR texture sits inside the dark screen rim. Side = inscribed
+    // square of the (screen - rim) disc, clamped to the texture aspect.
+    let inner_r = screen_r - SCREEN_RIM_PX;
+    let side = inner_r * 2.0;
+    let qr_rect = egui::Rect::from_center_size(coin_center, egui::vec2(side, side));
+    painter.image(
+        tex.id(),
+        qr_rect,
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+        egui::Color32::WHITE,
+    );
+
+    // Subtitle — italic dim caption below the coin.
+    painter.text(
+        egui::pos2(
+            panel_rect.center().x,
+            panel_rect.bottom() - LABEL_LANE * 0.5,
+        ),
+        egui::Align2::CENTER_CENTER,
+        "scan to rejoin",
+        egui::FontId::new(palette::CAPTION_SM, egui::FontFamily::Proportional),
+        palette::TEXT_DIM,
     );
 }

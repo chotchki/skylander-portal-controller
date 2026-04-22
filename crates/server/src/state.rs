@@ -64,6 +64,13 @@ pub struct AppState {
     /// this to a 2-slot FIFO registry.
     pub sessions: Arc<SessionRegistry>,
 
+    /// Pre-rendered round-QR PNG of the phone's join URL (same URL the
+    /// TV launcher encodes). Computed once at startup and served as-is
+    /// from `GET /api/join-qr.png` for the phone's INVITE menu card.
+    /// `Arc` so the handler can clone cheaply without duplicating the
+    /// ~few-KB buffer per request.
+    pub join_qr_png: Arc<Vec<u8>>,
+
     /// Concrete mock driver handle, populated only when running with the
     /// mock driver + test-hooks feature. The /api/_test/* endpoints use
     /// this to inject failure outcomes.

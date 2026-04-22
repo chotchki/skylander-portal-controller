@@ -194,6 +194,7 @@ pub fn router(state: Arc<AppState>, phone_dist: std::path::PathBuf) -> Router {
         .route("/api/figures", get(list_figures))
         .route("/api/figures/:id/image", get(figure_image))
         .route("/api/games/:serial/image", get(game_image))
+        .route("/api/join-qr.png", get(join_qr))
         .route("/api/portal", get(get_portal))
         .route("/api/portal/slot/:n/load", post(load_slot))
         .route("/api/portal/slot/:n/clear", post(clear_slot))
@@ -420,6 +421,34 @@ fn image_response(bytes: Vec<u8>) -> Response {
             (header::CACHE_CONTROL, "public, max-age=86400"),
         ],
         bytes,
+    )
+        .into_response()
+}
+
+/// GET /api/join-qr.png
+///
+/// Pre-rendered round QR of the phone's join URL (same URL the TV
+/// launcher encodes — mDNS-stable when available, raw-IP fallback
+/// otherwise). Computed once at startup in `main.rs` and stored as
+/// `AppState.join_qr_png`; this handler just serves the bytes.
+///
+/// Used by the phone menu overlay's INVITE card to hand the QR to a
+/// would-be new joiner without re-opening the TV launcher.
+async fn join_qr(State(state): State<Arc<AppState>>) -> Response {
+    use axum::http::header;
+    if state.join_qr_png.is_empty() {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "join QR render failed").into_response();
+    }
+    (
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            // Boot-id-scoped: URL + HMAC key both change only across
+            // restarts, so ~1h cache is plenty. Phones re-fetch after
+            // a server restart because the WS Welcome event's boot_id
+            // mismatch flips them through the reconnect flow anyway.
+            (header::CACHE_CONTROL, "public, max-age=3600"),
+        ],
+        (*state.join_qr_png).clone(),
     )
         .into_response()
 }

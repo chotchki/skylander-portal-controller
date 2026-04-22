@@ -1083,203 +1083,41 @@ pub(super) fn paint_heraldic_title(
     );
 }
 
-/// Rasterise the pairing URL into a QR texture. Called once from
-/// [`LauncherApp::new`]; the texture is cached on the app for the life of
-/// the viewport.
-/// Build the QR texture used by [`paint_qr_front`].
+/// Rasterise the pairing URL into a round QR texture. Called once from
+/// [`LauncherApp::new`]; the texture is cached on the app for the life
+/// of the viewport and reused by the corner reconnect panel in
+/// `ui/in_game.rs`.
 ///
-/// The texture is a circular composition: a white "screen" disc with the
-/// real QR centered inside, surrounded by a ring of random blue
-/// "noise" modules that make the overall shape read as round (not
-/// square) — the portal aesthetic the launcher is built around.
-///
-/// Encoded at ECC level H so the ~30% Reed-Solomon recovery margin
-/// covers any visual encroachment of the noise ring on the QR data.
-/// The clear `QR_NOISE_GAP_MODULES`-wide quiet zone keeps standard
-/// scanners (iOS Camera, Google Lens) locking on quickly. See the
-/// `round_qr_spike` example for the variant trade-offs.
-///
-/// Pixels outside the inscribed noise circle are TRANSPARENT, so the
-/// plate behind the texture shows through in the four corner triangles
-/// of the texture's bounding rect. That intentional transparency is
-/// what keeps the visual "round" inside a square card.
+/// Pixel composition (circular disc, noise ring, transparent corners)
+/// lives in `crate::round_qr` so the phone's `/api/join-qr.png`
+/// endpoint renders an identical image. `QR_NOISE_GAP_MODULES` overrides
+/// the shared default gap — the TV-distance scan tests settled on 2,
+/// which is tighter than the 4-module standard quiet zone but still
+/// locks quickly at ECC level H.
 pub(super) fn render_qr_texture(ctx: &egui::Context, url: &str) -> egui::TextureHandle {
-    use rand_core::{OsRng, RngCore};
+    use crate::round_qr::{RoundQrConfig, render};
 
-    let code = qrcode::QrCode::with_error_correction_level(url, qrcode::EcLevel::H)
-        .expect("qr encode");
-    let n = code.width() as u32;
-    let qr_modules: Vec<bool> = code
-        .to_colors()
-        .into_iter()
-        .map(|c| matches!(c, qrcode::Color::Dark))
-        .collect();
-
-    // Pixel size of one QR module on the texture. Matches the spike
-    // (`examples/round_qr_spike.rs`) value the user validated for scan
-    // reliability at TV viewing distance.
-    let scale: u32 = 14;
-    // Canvas leaves the standard 4-module quiet zone reserved in its
-    // dimensions, plus N modules of breathing room outside the noise
-    // ring. Bumped 6→8 on 2026-04-19: at 6 the QR's diagonal CORNERS
-    // sat at ~29.0 modules from center while the noise circle was at
-    // ~29.5 modules — only ~0.5 module of diagonal quiet zone, which
-    // mapped to ~3 screen pixels and made the QR read as touching
-    // the SF_3 rim. 8 pushes the noise circle out to ~31.5 modules
-    // for a comfortable diagonal quiet zone without shrinking the
-    // QR data so much that scanning gets harder.
-    let breathing: u32 = 8;
-    let canvas_modules = n + 2 * (4 + breathing);
-    let canvas_px = canvas_modules * scale;
-    let img_w = canvas_px as usize;
-    let img_h = canvas_px as usize;
-
-    let qr_origin = (canvas_modules - n) / 2;
-    let qr_center_px = (canvas_px / 2) as f32;
-    // Noise circle inscribes within the canvas with one module of edge
-    // padding so it doesn't kiss the bounding box.
-    let noise_radius_px = (canvas_px as f32 / 2.0) - (scale as f32);
-    // Half-extent (px) of the reserved central square: QR data + the
-    // configurable gap. Noise modules whose centers fall inside this
-    // axis-aligned square are skipped, leaving a clear quiet zone.
-    let reserved_half_px =
-        (n as f32 / 2.0 + QR_NOISE_GAP_MODULES as f32) * scale as f32;
-
-    // Pre-generate enough random bits for the noise ring. One bit per
-    // candidate module — the loop below skips most (outside the circle
-    // or inside the reserved square), so the buffer is sized by total
-    // module count and any unused bits are just discarded.
-    let mut noise_buf = vec![0u8; (canvas_modules * canvas_modules / 8 + 1) as usize];
-    OsRng.fill_bytes(&mut noise_buf);
-    let bit_at = |idx: u32| -> bool {
-        let i = (idx as usize) % (noise_buf.len() * 8);
-        (noise_buf[i / 8] >> (i % 8)) & 1 == 1
+    let cfg = RoundQrConfig {
+        gap_modules: QR_NOISE_GAP_MODULES,
+        ..RoundQrConfig::launcher_default()
     };
+    let pixels = render(url, &cfg).expect("render round QR");
 
-    // Colour roles:
-    // - QR data dark modules: pure black for max scanner contrast on
-    //   the white screen disc.
-    // - Noise dots: SF_2 — darker than SF_1, gives stronger contrast
-    //   against the white screen at typical viewing distance. Tried
-    //   SF_1 first (2026-04-19) but at downsampled scale the noise
-    //   washed out; SF_2 reads more clearly without going so dark
-    //   that it competes with the QR data itself.
-    // - Screen background: white (standard QR quiet-zone colour).
-    // - Outside the circle: transparent so the SF_3 screen rim behind
-    //   the texture shows through in the inscribed-square corners.
-    let qr_dark = egui::Color32::BLACK;
-    let noise_blue = palette::SF_2;
-    let screen_white = egui::Color32::WHITE;
-    let outside = egui::Color32::TRANSPARENT;
-
-    let mut pixels = vec![outside; img_w * img_h];
-
-    // Pass 1: fill the inscribed circle with white. Per-pixel circle
-    // test — the noise ring + QR will overpaint specific modules on
-    // top, but every pixel inside the circle starts as white so the
-    // scanner sees clean quiet-zone background where noise is sparse.
-    let r2 = noise_radius_px * noise_radius_px;
-    for y in 0..canvas_px {
-        let dy = y as f32 + 0.5 - qr_center_px;
-        let dy2 = dy * dy;
-        for x in 0..canvas_px {
-            let dx = x as f32 + 0.5 - qr_center_px;
-            if dx * dx + dy2 <= r2 {
-                pixels[(y as usize) * img_w + (x as usize)] = screen_white;
-            }
-        }
-    }
-
-    // Pass 2: noise modules. Iterate per-module (not per-pixel) so each
-    // "noise dot" is a crisp QR-sized square — visually consistent
-    // with the real QR's data modules. Per-pixel circle clip during
-    // painting: a module whose CENTER is just inside the noise circle
-    // would otherwise have its 14×14 box extend a few pixels past
-    // the circle boundary into the texture's transparent corner zone,
-    // producing blue dots that bleed into the SF_3 screen rim around
-    // the bezel (Chris flagged 2026-04-19). The center test alone
-    // isn't enough; we also clip each painted pixel to the circle.
-    let mut bit_idx = 0u32;
-    for my in 0..canvas_modules {
-        for mx in 0..canvas_modules {
-            let cx = (mx as f32 + 0.5) * scale as f32;
-            let cy = (my as f32 + 0.5) * scale as f32;
-            let dx = cx - qr_center_px;
-            let dy = cy - qr_center_px;
-            let dist_sq = dx * dx + dy * dy;
-            if dist_sq > r2 {
-                continue;
-            }
-            if dx.abs() < reserved_half_px && dy.abs() < reserved_half_px {
-                continue;
-            }
-            let dark = bit_at(bit_idx);
-            bit_idx = bit_idx.wrapping_add(1);
-            if !dark {
-                continue;
-            }
-            let x0 = (mx * scale) as usize;
-            let y0 = (my * scale) as usize;
-            let s = scale as usize;
-            for ddy in 0..s {
-                let py = y0 + ddy;
-                let dpy = py as f32 + 0.5 - qr_center_px;
-                let dpy2 = dpy * dpy;
-                for ddx in 0..s {
-                    let px = x0 + ddx;
-                    let dpx = px as f32 + 0.5 - qr_center_px;
-                    if dpx * dpx + dpy2 <= r2 {
-                        pixels[py * img_w + px] = noise_blue;
-                    }
-                }
-            }
-        }
-    }
-
-    // Pass 3: real QR data on top — guaranteed not to overlap with
-    // noise (the reserved square is bigger than the QR by at least
-    // QR_NOISE_GAP_MODULES on every side).
-    for y in 0..n {
-        for x in 0..n {
-            if qr_modules[(y * n + x) as usize] {
-                paint_module_into(
-                    &mut pixels,
-                    img_w,
-                    qr_origin + x,
-                    qr_origin + y,
-                    scale,
-                    qr_dark,
-                );
-            }
-        }
-    }
-
+    // Repack RGBA bytes into egui's premultiplied `Color32` vec. The
+    // shared renderer returns straight sRGB with alpha=0 in the corner
+    // triangles; `Color32::from_rgba_unmultiplied` does the egui-side
+    // premultiplication and preserves the transparency so the bezel
+    // plate shows through.
+    let color_pixels: Vec<egui::Color32> = pixels
+        .rgba
+        .chunks_exact(4)
+        .map(|c| egui::Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]))
+        .collect();
     let color_image = egui::ColorImage {
-        size: [img_w, img_h],
-        pixels,
+        size: [pixels.width as usize, pixels.height as usize],
+        pixels: color_pixels,
     };
     ctx.load_texture("qr", color_image, egui::TextureOptions::NEAREST)
-}
-
-/// Fill a `scale × scale` block in the texture pixel buffer at module
-/// coordinates `(mx, my)` with `color`. Used by [`render_qr_texture`].
-fn paint_module_into(
-    pixels: &mut [egui::Color32],
-    stride: usize,
-    mx: u32,
-    my: u32,
-    scale: u32,
-    color: egui::Color32,
-) {
-    let x0 = (mx * scale) as usize;
-    let y0 = (my * scale) as usize;
-    let s = scale as usize;
-    for dy in 0..s {
-        let row = (y0 + dy) * stride;
-        for dx in 0..s {
-            pixels[row + x0 + dx] = color;
-        }
-    }
 }
 
 #[cfg(test)]

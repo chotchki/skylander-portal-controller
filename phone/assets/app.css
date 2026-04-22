@@ -3945,21 +3945,25 @@ html.skin-kaos {
   margin-bottom: 12px;
   text-shadow: 0 1px 0 var(--gs), 0 0 8px rgba(0,0,0,0.4);
 }
+/* Circular gold bezel matching the TV launcher's QR card. The QR PNG
+   served by `/api/join-qr.png` has transparent corners with a white
+   noise-ringed disc inside, so the gold ring here + disc inside the
+   image together read as a round coin. */
 .menu-qr-frame {
-  width: 160px; aspect-ratio: 1;
-  border-radius: 14px;
-  padding: 8px;
+  width: 180px; aspect-ratio: 1;
+  border-radius: 50%;
+  padding: 6px;
   background: linear-gradient(135deg, var(--gb) 0%, var(--gm) 30%, var(--gb) 50%, var(--gm) 70%, var(--gb) 100%);
-  box-shadow: 0 4px 14px rgba(0,0,0,0.5), inset 0 2px 4px rgba(255,255,255,0.3);
+  box-shadow:
+    0 4px 14px rgba(0,0,0,0.5),
+    inset 0 2px 4px rgba(255,255,255,0.3),
+    inset 0 -2px 4px rgba(0,0,0,0.35);
 }
-.menu-qr-inner {
+.menu-qr-img {
   width: 100%; height: 100%;
+  display: block;
+  border-radius: 50%;
   background: #fff;
-  border-radius: 6px;
-  display: grid; place-items: center;
-  font-family: "Titan One", sans-serif;
-  font-size: 24px; color: #000;
-  letter-spacing: 0.1em;
 }
 .menu-join-hint {
   text-align: center;

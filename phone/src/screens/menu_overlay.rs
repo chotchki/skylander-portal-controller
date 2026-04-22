@@ -1,9 +1,11 @@
 //! Header-kebab menu overlay (PLAN 4.12.4b, design_language.md §6.8).
 //!
-//! Single surface that consolidates: current-profile chip, join-QR (shell
-//! only — real QR content wiring is a post-Phase-4 follow-up tracked as
-//! 3.10.8 carryover), and three or four action buttons depending on
-//! session state. Mock: `docs/aesthetic/mocks/menu_overlay.html`.
+//! Single surface that consolidates: current-profile chip, join-QR (real
+//! content served by the server as a pre-rendered round QR at
+//! `GET /api/join-qr.png` — same URL the TV launcher encodes, round form
+//! with transparent corners so it drops onto any card background), and
+//! three or four action buttons depending on session state. Mock:
+//! `docs/aesthetic/mocks/menu_overlay.html`.
 //!
 //! Extracted from `screens/modals.rs` per PLAN 4.20.3 — modals.rs was
 //! housing 5 unrelated components in one file, MenuOverlay is the largest
@@ -130,7 +132,13 @@ pub(crate) fn MenuOverlay(
                 <div class="menu-join-card">
                     <div class="menu-join-label">"\u{2316} INVITE A PLAYER"</div>
                     <div class="menu-qr-frame">
-                        <div class="menu-qr-inner">"QR"</div>
+                        <img
+                            class="menu-qr-img"
+                            src="/api/join-qr.png"
+                            alt="Join QR code"
+                            loading="eager"
+                            decoding="async"
+                        />
                     </div>
                     <div class="menu-join-hint">"scan to join this portal"</div>
                 </div>

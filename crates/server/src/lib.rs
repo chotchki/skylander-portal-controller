@@ -9,6 +9,7 @@ pub mod mdns;
 pub mod palette;
 pub mod paths;
 pub mod profiles;
+pub mod round_qr;
 #[cfg(feature = "sky-stats")]
 pub mod sky_stats;
 pub mod state;

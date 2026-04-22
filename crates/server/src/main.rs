@@ -77,6 +77,22 @@ fn main() -> Result<()> {
         tracing::warn!("OS hostname unavailable; QR will use the raw-IP URL: {phone_url}");
     }
 
+    // Pre-render the round-QR PNG once — the URL is fixed for the life
+    // of the server, so `/api/join-qr.png` is just an `Arc<Vec<u8>>`
+    // clone per request. Produced here (synchronously, cheap) so the
+    // eframe launcher and the HTTP endpoint share the same committed
+    // image buffer (one source of truth for the rendered QR).
+    let join_qr_png = match skylander_server::round_qr::render_png(
+        &phone_url,
+        &skylander_server::round_qr::RoundQrConfig::launcher_default(),
+    ) {
+        Ok(bytes) => Arc::new(bytes),
+        Err(e) => {
+            tracing::error!("render join QR PNG: {e}");
+            Arc::new(Vec::new())
+        }
+    };
+
     // --- Shared between Axum and the eframe UI. ---
     let portal: Arc<Mutex<[SlotState; SLOT_COUNT]>> =
         Arc::new(Mutex::new(std::array::from_fn(|_| SlotState::Empty)));
@@ -107,6 +123,7 @@ fn main() -> Result<()> {
     let figures_for_task = figures.clone();
     let figure_index_for_task = figure_index.clone();
     let games_yaml_for_task = cfg.games_yaml.clone();
+    let join_qr_png_for_task = join_qr_png.clone();
 
     let status_for_errors = launcher_status.clone();
     let status_for_ready = launcher_status.clone();
@@ -221,6 +238,7 @@ fn main() -> Result<()> {
                     rpcs3: rpcs3_for_task,
                     profiles: profile_store,
                     sessions,
+                    join_qr_png: join_qr_png_for_task,
                     #[cfg(feature = "test-hooks")]
                     test_mock,
                 });
