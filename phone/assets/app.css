@@ -55,11 +55,22 @@ html, body {
      from the PIN keypad.) */
   touch-action: pan-x pan-y;
 }
-/* Flat sf-3 lives ONLY on html. body stays transparent so the
-   fixed-positioned `body::before` gradient layer below shows
-   through — if the pseudo ever fails to render, html's sf-3
-   provides a sensible flat fallback. */
-html { background: var(--sf-3); }
+/* Gradient backdrop lives on `html` directly (not on a fixed-positioned
+   pseudo) so it paints across the full canvas. Earlier iterations used
+   `body::before { position: fixed; inset: 0 }` which fills only the
+   *layout* viewport. On iOS Safari, URL-bar retraction grows the *visual*
+   viewport taller than the layout viewport by ~34–52px; the strip below
+   the layout viewport exposed html's then-flat `sf-3` bg, producing a
+   visible colour seam against the gradient's lighter bottom-centre radial
+   highlight (diagnosed 2026-04-21 via `tools/ios-inspect/`, PLAN 4.21.4).
+   Painting on html — the root — avoids the layout-vs-visual-viewport
+   mismatch entirely because html's canvas is the whole rendered area. */
+html {
+  background:
+    radial-gradient(ellipse 120% 60% at 50% 0%, #1a3a8a 0%, transparent 50%),
+    radial-gradient(ellipse 80% 50% at 50% 100%, #0e2464 0%, transparent 50%),
+    linear-gradient(180deg, var(--sf-1), var(--sf-2) 60%, var(--sf-3));
+}
 body {
   /* Lock the body to the visible viewport so no screen except the toy
      box scrolls (Chris 2026-04-20: "you can still scroll on pages you
@@ -74,25 +85,7 @@ body {
   height: 100dvh;
   overflow: hidden;
   overscroll-behavior: none;
-  /* Flat sf-3 fallback. The real gradient backdrop lives on
-     `body::before` (fixed-positioned) so it covers the full
-     visible viewport even when iOS's URL bar is mid-transition
-     and body's 100dvh briefly lags behind the visible area.
-     Chris flagged 2026-04-21 that `background-attachment: fixed`
-     on body didn't fix the dark band on iOS — switched to the
-     ::before approach which matches the body::after starfield
-     layer's pattern and is known-good on iOS since iOS 9. */
-}
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background:
-    radial-gradient(ellipse 120% 60% at 50% 0%, #1a3a8a 0%, transparent 50%),
-    radial-gradient(ellipse 80% 50% at 50% 100%, #0e2464 0%, transparent 50%),
-    linear-gradient(180deg, var(--sf-1), var(--sf-2) 60%, var(--sf-3));
+  /* Transparent — gradient paints on html above. */
 }
 body::after {
   content: "";
@@ -3632,13 +3625,17 @@ input, textarea {
 
 /* ================================================================
    4.1.4 — Kaos skin (5.4 takeover palette).
-   Body-class swap: <body class="skin-kaos"> repalettes every token.
+   Html-class swap: <html class="skin-kaos"> repalettes every token.
+   (Class goes on <html>, not <body>, so the `--sf-*` overrides reach
+   the gradient-painting rule on `html` — body's scope can't affect
+   ancestors. The eventual pwa.rs hook must toggle the class on
+   `document.documentElement`, not `document.body`.)
    Component CSS already references vars, so no component changes needed.
    Purple/magenta void replaces starfield blues; magenta chrome
    replaces gold bezels.
    ================================================================ */
 
-body.skin-kaos {
+html.skin-kaos {
   /* Starfield → purple void */
   --sf-1: #2a0a3e;
   --sf-2: #150525;
@@ -3652,8 +3649,8 @@ body.skin-kaos {
   /* Status vars unchanged — danger/success keep their semantics */
 }
 
-/* Body background has hardcoded highlight hexes; override for Kaos skin */
-body.skin-kaos {
+/* html background has hardcoded highlight hexes; override for Kaos skin */
+html.skin-kaos {
   background:
     radial-gradient(ellipse 120% 60% at 50% 0%, #5a1a7e 0%, transparent 50%),
     radial-gradient(ellipse 80% 50% at 50% 100%, #3a0855 0%, transparent 50%),
