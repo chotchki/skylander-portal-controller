@@ -3,7 +3,6 @@
 
 pub mod config;
 pub mod fonts;
-pub mod games;
 pub mod http;
 pub mod logging;
 pub mod mdns;

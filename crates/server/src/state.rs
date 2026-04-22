@@ -12,7 +12,8 @@ use skylander_rpcs3_control::{PortalDriver, RpcsProcess};
 use tokio::sync::{Mutex, broadcast, mpsc};
 use tracing::{error, info, warn};
 
-use crate::games::InstalledGame;
+use skylander_core::InstalledGame;
+
 use crate::profiles::{ProfileStore, SessionRegistry};
 
 pub struct AppState {

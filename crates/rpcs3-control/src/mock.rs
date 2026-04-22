@@ -7,7 +7,9 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use anyhow::{Result, anyhow};
-use skylander_core::{SLOT_COUNT, SlotIndex, SlotState};
+use skylander_core::{
+    GameSerial, InstalledGame, SKYLANDERS_SERIALS, SLOT_COUNT, SlotIndex, SlotState,
+};
 
 use crate::PortalDriver;
 
@@ -37,6 +39,11 @@ pub struct MockPortalDriver {
     /// tests get the "stale games.yml" error path; tests that need the
     /// happy path call `set_enumerated_games` to publish serials.
     enumerated_games: Mutex<Vec<String>>,
+    /// Installed-game catalogue surfaced via `list_installed_games`.
+    /// Seeded with every title in `SKYLANDERS_SERIALS` so dev-mode
+    /// manual testing has a populated game picker out of the box;
+    /// unit tests override via `set_installed_games`.
+    installed_games: Mutex<Vec<InstalledGame>>,
 }
 
 impl MockPortalDriver {
@@ -51,6 +58,7 @@ impl MockPortalDriver {
             latency,
             load_queue: Mutex::new(VecDeque::new()),
             enumerated_games: Mutex::new(Vec::new()),
+            installed_games: Mutex::new(default_installed_games()),
         }
     }
 
@@ -73,6 +81,13 @@ impl MockPortalDriver {
     /// `vec!["BLUS31076"]` simulates a library that has SWAP Force only.
     pub fn set_enumerated_games(&self, serials: Vec<String>) {
         *self.enumerated_games.lock().unwrap() = serials;
+    }
+
+    /// Replace the `list_installed_games` catalogue. Used by unit tests
+    /// that want an empty or narrowed game picker; dev-mode defaults to
+    /// every Skylanders title.
+    pub fn set_installed_games(&self, games: Vec<InstalledGame>) {
+        *self.installed_games.lock().unwrap() = games;
     }
 
     fn delay(&self) {
@@ -158,6 +173,24 @@ impl PortalDriver for MockPortalDriver {
         // to flip `current_game` back to None directly.
         Ok(())
     }
+
+    fn list_installed_games(&self) -> Result<Vec<InstalledGame>> {
+        Ok(self.installed_games.lock().unwrap().clone())
+    }
+}
+
+/// Every title in `SKYLANDERS_SERIALS`, with an empty `sky_root` — the
+/// mock has no real PS3 payload, so a boot against one of these would
+/// fail at the UIA step (but `DriverKind::Mock` never boots anyway).
+fn default_installed_games() -> Vec<InstalledGame> {
+    SKYLANDERS_SERIALS
+        .iter()
+        .map(|(serial, display)| InstalledGame {
+            serial: GameSerial::new(*serial),
+            display_name: (*display).to_string(),
+            sky_root: std::path::PathBuf::new(),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -209,6 +242,18 @@ mod tests {
             d.load(SlotIndex::new(0).unwrap(), &PathBuf::from("b.sky"))
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn installed_games_defaults_to_all_skylanders_and_round_trips_override() {
+        let d = MockPortalDriver::with_latency(Duration::ZERO);
+        let got = d.list_installed_games().unwrap();
+        assert_eq!(got.len(), SKYLANDERS_SERIALS.len());
+        assert_eq!(got[0].serial.as_str(), SKYLANDERS_SERIALS[0].0);
+
+        // Tests that need a narrowed picker can override.
+        d.set_installed_games(vec![]);
+        assert!(d.list_installed_games().unwrap().is_empty());
     }
 
     #[test]

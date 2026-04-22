@@ -7,7 +7,7 @@
 //!  - Shared state lives inside `Arc<AppState>` and an `AtomicUsize` client
 //!    counter that both sides read.
 
-use skylander_server::{config, games, http, logging, profiles, state, ui};
+use skylander_server::{config, http, logging, profiles, state, ui};
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -49,20 +49,9 @@ fn main() -> Result<()> {
         .map(|(i, f)| (f.id.clone(), i))
         .collect();
 
-    // --- Load installed games (best-effort). ---
-    let games = match games::load_installed(&cfg.games_yaml) {
-        Ok(g) => {
-            info!(count = g.len(), "loaded Skylanders game catalogue");
-            g
-        }
-        Err(e) => {
-            warn!(
-                "couldn't read games.yml at {}: {e}",
-                cfg.games_yaml.display()
-            );
-            Vec::new()
-        }
-    };
+    // Game catalogue now comes from `driver.list_installed_games()` —
+    // constructed inside the tokio task (COM apartment constraint) and
+    // populated into AppState there.
 
     // --- Pick bind address. ---
     let ip = first_non_loopback_ipv4().unwrap_or(Ipv4Addr::LOCALHOST);
@@ -117,7 +106,7 @@ fn main() -> Result<()> {
     let status_for_task = launcher_status.clone();
     let figures_for_task = figures.clone();
     let figure_index_for_task = figure_index.clone();
-    let games_for_task = games.clone();
+    let games_yaml_for_task = cfg.games_yaml.clone();
 
     let status_for_errors = launcher_status.clone();
     let status_for_ready = launcher_status.clone();
@@ -143,13 +132,23 @@ fn main() -> Result<()> {
             };
             rt.block_on(async move {
                 let (driver, test_mock): (Arc<dyn PortalDriver>, _) =
-                    match build_driver(driver_kind) {
+                    match build_driver(driver_kind, games_yaml_for_task.clone()) {
                         Ok(d) => d,
                         Err(e) => {
                             report_fatal("failed to construct driver", &e);
                             return;
                         }
                     };
+                let games = match driver.list_installed_games() {
+                    Ok(g) => {
+                        info!(count = g.len(), "loaded Skylanders game catalogue");
+                        g
+                    }
+                    Err(e) => {
+                        warn!("driver.list_installed_games() failed: {e}");
+                        Vec::new()
+                    }
+                };
                 let db_path = match crate::profiles::resolve_db_path() {
                     Ok(p) => p,
                     Err(e) => {
@@ -207,7 +206,7 @@ fn main() -> Result<()> {
                     events: events_for_task,
                     connected_clients: clients_for_task,
                     launcher_status: status_for_task,
-                    games: games_for_task,
+                    games,
                     rpcs3_exe,
                     data_root,
                     phone_dist: phone_dist.clone(),
@@ -246,50 +245,53 @@ fn main() -> Result<()> {
                 };
                 // Spawn RPCS3 at startup (PLAN 4.15.16) so the emulator
                 // is ready by the time the phone reaches the game
-                // picker. Skipped when the mock driver is active — mock
-                // doesn't have a real RPCS3 to spawn, and test suites
-                // use `/api/_test/set_game` to fake lifecycle state.
-                // Hard-fails on spawn error per the "starting-screen
-                // makes sense" decision: egui's LaunchPhase::Startup
-                // already gates on rpcs3_running, so the cloud vortex
-                // persists while we wait, and on error flips straight
-                // to ServerError with the diagnostic.
+                // picker. Under the mock driver we install a Mock
+                // variant that always reports alive — same lifecycle
+                // shape, no real process — so `/api/launch` passes its
+                // `process.is_some()` gate on Mac/Linux dev without
+                // `/api/_test/*` hacks. Hard-fails on spawn error per
+                // the "starting-screen makes sense" decision: egui's
+                // LaunchPhase::Startup already gates on rpcs3_running,
+                // so the cloud vortex persists while we wait, and on
+                // error flips straight to ServerError with the
+                // diagnostic.
                 //
                 // This block intentionally runs BEFORE the "serving on"
                 // log: test harnesses (TestServer::spawn_live) scrape
                 // that line as their readiness signal, so it must imply
                 // "RPCS3 is up + axum is about to accept connections",
                 // not "listener bound but RPCS3 still starting up".
-                if driver_kind == crate::config::DriverKind::Uia {
-                    let rpcs3_exe_clone = state.rpcs3_exe.clone();
-                    let rpcs3_state = state.rpcs3.clone();
-                    let status = state.launcher_status.clone();
-                    let spawn_result = tokio::task::spawn_blocking(
-                        move || -> anyhow::Result<RpcsProcess> {
-                            let mut proc = RpcsProcess::launch_library(&rpcs3_exe_clone)?;
-                            proc.wait_ready(std::time::Duration::from_secs(45))?;
-                            Ok(proc)
-                        },
-                    )
-                    .await;
-                    match spawn_result {
-                        Ok(Ok(proc)) => {
-                            let mut guard = rpcs3_state.lock().await;
-                            guard.process = Some(proc);
-                            drop(guard);
-                            if let Ok(mut st) = status.lock() {
-                                st.rpcs3_running = true;
-                            }
-                            info!("RPCS3 spawned at startup, library view ready");
+                let spawn_result: Result<RpcsProcess, anyhow::Error> = match driver_kind {
+                    crate::config::DriverKind::Uia => {
+                        let rpcs3_exe_clone = state.rpcs3_exe.clone();
+                        match tokio::task::spawn_blocking(
+                            move || -> anyhow::Result<RpcsProcess> {
+                                let mut proc = RpcsProcess::launch_library(&rpcs3_exe_clone)?;
+                                proc.wait_ready(std::time::Duration::from_secs(45))?;
+                                Ok(proc)
+                            },
+                        )
+                        .await
+                        {
+                            Ok(inner) => inner,
+                            Err(e) => Err(anyhow::anyhow!("RPCS3 spawn task panicked: {e}")),
                         }
-                        Ok(Err(e)) => {
-                            report_fatal("spawn RPCS3 at startup", &e);
-                            return;
+                    }
+                    crate::config::DriverKind::Mock => Ok(RpcsProcess::mock()),
+                };
+                match spawn_result {
+                    Ok(proc) => {
+                        let mut guard = state.rpcs3.lock().await;
+                        guard.process = Some(proc);
+                        drop(guard);
+                        if let Ok(mut st) = state.launcher_status.lock() {
+                            st.rpcs3_running = true;
                         }
-                        Err(e) => {
-                            report_fatal("RPCS3 spawn task panicked", &e);
-                            return;
-                        }
+                        info!(?driver_kind, "RPCS3 lifecycle ready");
+                    }
+                    Err(e) => {
+                        report_fatal("spawn RPCS3 at startup", &e);
+                        return;
                     }
                 }
 
@@ -373,12 +375,12 @@ type TestMockHandle = ();
 
 type DriverBundle = (Arc<dyn PortalDriver>, TestMockHandle);
 
-fn build_driver(kind: DriverKind) -> Result<DriverBundle> {
+fn build_driver(kind: DriverKind, games_yaml: std::path::PathBuf) -> Result<DriverBundle> {
     match kind {
         DriverKind::Uia => {
             #[cfg(windows)]
             {
-                let d = skylander_rpcs3_control::UiaPortalDriver::new()?;
+                let d = skylander_rpcs3_control::UiaPortalDriver::new(games_yaml)?;
                 let arc: Arc<dyn PortalDriver> = Arc::new(d);
                 #[cfg(feature = "test-hooks")]
                 return Ok((arc, None));
@@ -389,6 +391,9 @@ fn build_driver(kind: DriverKind) -> Result<DriverBundle> {
             anyhow::bail!("UIA driver only available on Windows");
         }
         DriverKind::Mock => {
+            // Mock driver doesn't care about games.yml — its installed-games
+            // catalogue is seeded from `SKYLANDERS_SERIALS` at construction.
+            let _ = games_yaml;
             #[cfg(feature = "dev-tools")]
             {
                 let mock = Arc::new(skylander_rpcs3_control::MockPortalDriver::new());

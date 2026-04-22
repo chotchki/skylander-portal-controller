@@ -21,7 +21,8 @@ use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::{debug, info, warn};
 
-use crate::games::InstalledGame;
+use skylander_core::InstalledGame;
+
 use crate::profiles::{LockoutCheck, MAX_PROFILES, PublicProfile, RegistrationOutcome, SessionId};
 use crate::state::{AppState, DriverJob};
 
@@ -384,6 +385,20 @@ async fn figure_image(
 
     if let Ok(bytes) = tokio::fs::read(&scraped).await {
         return image_response(bytes);
+    }
+
+    // Second-choice fallback when `size=hero` was requested but only a
+    // `thumb.png` is on disk: serve the thumb. The hero slot is a gitignored
+    // ~320px download that the scraper skips on fresh checkouts (thumb is the
+    // committed 128×128 and covers the `.detail-hero-image` 128×128 render
+    // size fine). Without this fallback every figure's detail view fell
+    // through to the element-icon, even though 488 figures have real
+    // thumbnails on disk.
+    if size == "hero" {
+        let thumb = state.data_root.join("images").join(&id).join("thumb.png");
+        if let Ok(bytes) = tokio::fs::read(&thumb).await {
+            return image_response(bytes);
+        }
     }
 
     // Fallback: element icon from the firmware pack.

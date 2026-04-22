@@ -6,6 +6,7 @@
 
 pub mod compat;
 pub mod figure;
+pub mod game;
 pub mod portal;
 pub mod protocol;
 
@@ -13,6 +14,7 @@ pub use compat::{game_of_origin_from_serial, is_compatible};
 pub use figure::{
     Category, Element, Figure, FigureId, Game, GameOfOrigin, GameSerial, PublicFigure,
 };
+pub use game::{InstalledGame, SKYLANDERS_SERIALS};
 pub use portal::{SLOT_COUNT, SlotIndex, SlotIndexOutOfRange, SlotState};
 pub use protocol::{Command, Event, GameLaunched, UnlockedProfile};
 

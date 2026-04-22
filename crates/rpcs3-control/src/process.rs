@@ -1,8 +1,12 @@
-//! RPCS3 process management.
+//! UIA-driven RPCS3 process management (Windows-only).
 //!
-//! `RpcsProcess` owns either a spawned child (launch) or a handle to an
+//! `UiaRpcsProcess` owns either a spawned child (launch) or a handle to an
 //! already-running RPCS3 (attach). In either case it exposes a uniform API
 //! to wait for readiness, check liveness, and shut it down gracefully.
+//!
+//! The top-level `RpcsProcess` enum in `lib.rs` wraps this alongside
+//! `MockRpcsProcess`; callers use the enum so Mac/Linux dev mode and
+//! Windows production share one lifecycle API.
 //!
 //! Phase 3.1.
 
@@ -15,6 +19,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use tracing::{debug, info, warn};
 use uiautomation::types::ControlType;
 use uiautomation::{UIAutomation, UIElement};
+
+use crate::ShutdownPath;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, LPARAM, WPARAM};
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
@@ -33,7 +39,7 @@ const READY_POLL_INTERVAL: Duration = Duration::from_millis(150);
 const WINDOW_TITLE_PREFIX: &str = "RPCS3 ";
 
 #[derive(Debug)]
-pub struct RpcsProcess {
+pub struct UiaRpcsProcess {
     inner: ProcessOwnership,
     /// Cached PID from UIA at attach / Child::id at launch.
     pid: u32,
@@ -83,7 +89,7 @@ enum ProcessOwnership {
     Attached,
 }
 
-impl RpcsProcess {
+impl UiaRpcsProcess {
     /// Launch RPCS3 into its **library view** (no EBOOT argument). This is the
     /// path used by UIA-driven control: the main window's menu bar responds to
     /// synthesised keystrokes, and a game is booted afterwards via
@@ -276,7 +282,7 @@ impl RpcsProcess {
     }
 }
 
-impl Drop for RpcsProcess {
+impl Drop for UiaRpcsProcess {
     fn drop(&mut self) {
         // Only reap spawned children — attached processes live on past our
         // handle. No graceful close here; callers are expected to drive
@@ -286,18 +292,11 @@ impl Drop for RpcsProcess {
             && matches!(child.try_wait(), Ok(None))
         {
             warn!(
-                "RpcsProcess dropped without shutdown_graceful; child {} still running",
+                "UiaRpcsProcess dropped without shutdown_graceful; child {} still running",
                 self.pid
             );
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ShutdownPath {
-    AlreadyExited,
-    Graceful,
-    Forced,
 }
 
 // --- helpers ---
@@ -453,7 +452,7 @@ fn native_hwnd(el: &UIElement) -> Option<HWND> {
     }
 }
 
-fn wait_for_exit(proc: &mut RpcsProcess, timeout: Duration) -> bool {
+fn wait_for_exit(proc: &mut UiaRpcsProcess, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     loop {
         if !proc.is_alive() {

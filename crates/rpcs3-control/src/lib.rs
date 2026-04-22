@@ -8,8 +8,8 @@
 use std::path::Path;
 use std::time::Duration;
 
-use anyhow::Result;
-use skylander_core::{SLOT_COUNT, SlotIndex, SlotState};
+use anyhow::{Result, bail};
+use skylander_core::{InstalledGame, SLOT_COUNT, SlotIndex, SlotState};
 
 /// Drive the emulated Skylanders portal.
 ///
@@ -62,7 +62,18 @@ pub trait PortalDriver: Send + Sync {
     /// "always-running RPCS3" contract. Returns once the game viewport
     /// has disappeared or `timeout` elapses.
     fn stop_emulation(&self, timeout: Duration) -> Result<()>;
+
+    /// Return the Skylanders titles the emulator knows about. The UIA
+    /// impl parses RPCS3's `games.yml` (filtering to serials in
+    /// `SKYLANDERS_SERIALS` whose `EBOOT.BIN` exists on disk); the mock
+    /// impl returns a seeded list — defaults to every supported title so
+    /// dev-mode manual testing has a populated game picker out of the
+    /// box. This is the sole source for the phone-facing game picker,
+    /// so `main.rs` doesn't have to cfg-branch on driver kind.
+    fn list_installed_games(&self) -> Result<Vec<InstalledGame>>;
 }
+
+pub mod games_yaml;
 
 #[cfg(windows)]
 pub mod uia;
@@ -73,13 +84,135 @@ pub mod hide;
 
 #[cfg(windows)]
 pub mod process;
+pub mod process_mock;
+
+#[cfg(windows)]
+pub use process::UiaRpcsProcess;
+pub use process_mock::MockRpcsProcess;
+
+// Windows-only internal helpers (UIA progress-text scraping + window
+// enumeration). Not used by the server crate.
 #[cfg(windows)]
 pub use process::{
-    RpcsProcess, ShutdownPath, find_compile_progress_text, list_all_visible_window_titles,
-    read_main_window_title,
+    find_compile_progress_text, list_all_visible_window_titles, read_main_window_title,
 };
 
 #[cfg(feature = "mock")]
 pub mod mock;
 #[cfg(feature = "mock")]
 pub use mock::{MockOutcome, MockPortalDriver};
+
+/// Lifecycle handle for an RPCS3 instance.
+///
+/// Two variants: `Uia` wraps a real Windows process driven by UI Automation
+/// (spawned + job-object-bound, drivable via the menu bar). `Mock` is a
+/// portable fake — always reports alive until shutdown — used under
+/// `DriverKind::Mock` so Mac/Linux dev (and mock-driver tests on Windows)
+/// can satisfy PLAN 4.15.16's always-running-RPCS3 contract without a real
+/// emulator.
+///
+/// Callers use this enum directly so the server crate doesn't have to
+/// `cfg`-branch on driver kind for every lifecycle call site.
+#[derive(Debug)]
+pub enum RpcsProcess {
+    #[cfg(windows)]
+    Uia(UiaRpcsProcess),
+    Mock(MockRpcsProcess),
+}
+
+impl RpcsProcess {
+    /// Launch RPCS3 into library view (Windows only). On non-Windows this
+    /// returns an error — use `mock()` instead.
+    pub fn launch_library(exe: &Path) -> Result<Self> {
+        #[cfg(windows)]
+        {
+            UiaRpcsProcess::launch_library(exe).map(Self::Uia)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = exe;
+            bail!(
+                "RPCS3 process management is only supported on Windows; \
+                 use SKYLANDER_PORTAL_DRIVER=mock on this platform"
+            )
+        }
+    }
+
+    /// Launch RPCS3 directly into a game by EBOOT path (Windows only, legacy).
+    pub fn launch(exe: &Path, eboot: &Path) -> Result<Self> {
+        #[cfg(windows)]
+        {
+            UiaRpcsProcess::launch(exe, eboot).map(Self::Uia)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (exe, eboot);
+            bail!("RPCS3 process management is only supported on Windows")
+        }
+    }
+
+    /// Adopt an already-running RPCS3 (Windows only).
+    pub fn attach() -> Result<Self> {
+        #[cfg(windows)]
+        {
+            UiaRpcsProcess::attach().map(Self::Uia)
+        }
+        #[cfg(not(windows))]
+        {
+            bail!("RPCS3 process management is only supported on Windows")
+        }
+    }
+
+    /// Construct the portable Mock variant. Always reports alive until
+    /// shutdown. Used at startup under `DriverKind::Mock`.
+    pub fn mock() -> Self {
+        Self::Mock(MockRpcsProcess::new())
+    }
+
+    pub fn pid(&self) -> u32 {
+        match self {
+            #[cfg(windows)]
+            Self::Uia(p) => p.pid(),
+            Self::Mock(p) => p.pid(),
+        }
+    }
+
+    pub fn wait_ready(&mut self, timeout: Duration) -> Result<()> {
+        match self {
+            #[cfg(windows)]
+            Self::Uia(p) => p.wait_ready(timeout),
+            Self::Mock(p) => p.wait_ready(timeout),
+        }
+    }
+
+    pub fn is_alive(&mut self) -> bool {
+        match self {
+            #[cfg(windows)]
+            Self::Uia(p) => p.is_alive(),
+            Self::Mock(p) => p.is_alive(),
+        }
+    }
+
+    pub fn shutdown_graceful(&mut self, timeout: Duration) -> Result<ShutdownPath> {
+        match self {
+            #[cfg(windows)]
+            Self::Uia(p) => p.shutdown_graceful(timeout),
+            Self::Mock(p) => p.shutdown_graceful(timeout),
+        }
+    }
+
+    pub fn wait_for_exit_or_force(&mut self, timeout: Duration) -> Result<ShutdownPath> {
+        match self {
+            #[cfg(windows)]
+            Self::Uia(p) => p.wait_for_exit_or_force(timeout),
+            Self::Mock(p) => p.wait_for_exit_or_force(timeout),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShutdownPath {
+    AlreadyExited,
+    Graceful,
+    Forced,
+}
