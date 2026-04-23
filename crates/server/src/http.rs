@@ -419,10 +419,21 @@ async fn figure_image(
 
 fn image_response(bytes: Vec<u8>) -> Response {
     use axum::http::header;
+    // Release builds cache hard — images don't change between versions,
+    // and the 24h hit avoids re-downloading every portrait on each app
+    // launch. Dev builds intentionally skip the cache so regens and
+    // re-scrapes (`tools/rekey-figure-ids`, `tools/wiki-scrape`) are
+    // visible without the reviewer knowing to clear Safari's store.
+    // 6.6 live verify 2026-04-23 hit this — post-migration thumbs
+    // looked like element-icon fallbacks until the 24h cache expired.
+    #[cfg(feature = "dev-tools")]
+    let cache_control = "no-cache";
+    #[cfg(not(feature = "dev-tools"))]
+    let cache_control = "public, max-age=86400";
     (
         [
             (header::CONTENT_TYPE, "image/png"),
-            (header::CACHE_CONTROL, "public, max-age=86400"),
+            (header::CACHE_CONTROL, cache_control),
         ],
         bytes,
     )
