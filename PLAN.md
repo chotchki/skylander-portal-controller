@@ -281,6 +281,8 @@ Item tags: **[bug]** wrong behavior, **[feature]** missing capability, **[judgme
 
 - [ ] 4.18.25 Re-run browser smoke-test on real iOS after 4.18.1c ships; walk each screen against the agreed behavior, add missed drift items.
 - [ ] 4.18.26 Once parity reached, 4.17.1's end-to-end demo can proceed against a known-correct phone UI.
+- [ ] 4.18.27 *[bug → feature]* **Profile-create → wizard.** The Leptos port of 4.2.8's `profile_create.html` mock crunched the mock's staged flow (name → color → PIN → confirm) into one long form. On iPhone the confirm keypad scrolls off-screen and the screen container didn't own scroll; `.screen-profile-picker { overflow-y: auto }` was the 2026-04-23 minimum-viable unblock. The real fix is to convert to a staged wizard that matches the mock, so the user sees one pad at a time (and the form isn't a 2000px-tall list). Surfaced by the 6.6 DB-wipe forcing first-profile creation; path hadn't been exercised since 4.2.8's mock landed. Keep the scroll-fix in place as a defensive fallback even after the wizard lands.
+- [ ] 4.18.28 *[bug]* **Profile-create color scheme alignment.** The create-profile panel + buttons still use the pre-Phase-4 gray scheme (`#161616` bg, `#333` border, muted text) instead of the starfield / gold-bezel design system everything else adopted. Swap to `FramedPanel`-native styling + `ActionButton` / gold-bezel button treatments; color swatches were pass-through from the mock but their interaction states also need the heraldic lift. Pair with 4.18.27 when it lands — no point fixing the colors of a form that's about to split into wizard steps.
 
 ### 4.19 egui TV-launcher drift reconciliation
 

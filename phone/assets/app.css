@@ -3756,6 +3756,21 @@ input, textarea {
 /* Create profile panel */
 .create-profile-panel { margin-bottom: 12px; }
 
+/* Profile-picker screen owns its own scroll when content exceeds the
+   viewport. The picker itself fits (3 profile tiles + a NEW button) but
+   the create-profile flow stacks two PinPads + color picker + form
+   fields, which blows past the height on most phones. PLAN 4.18.27
+   tracks the wizard-ification that removes the need for this scroll;
+   until then, `overflow-y: auto` on the whole screen is the minimum
+   fix so the confirm pad is actually reachable. Uses `safe-area-inset-
+   bottom` so the last row doesn't render under the home indicator.
+   PLAN 4.18.27 (2026-04-23 DB-wipe surfaced the issue). */
+.screen-profile-picker {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+}
+
 /* PIN confirm mismatch feedback (PLAN 4.18.8). The wrapper carries the
    `shake` class briefly so a mismatch gets an unmistakable haptic-style
    reaction; `.pin-mismatch-banner` shows the plain-language reason. The
