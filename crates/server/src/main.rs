@@ -56,6 +56,15 @@ fn main() -> Result<()> {
     };
     info!(count = pack_figures.len(), "indexed pack figures");
 
+    // Runtime state (profile db, scanned dumps, working copies) lives under
+    // `resolve_runtime_dir()` — `./dev-data/` in dev, `%APPDATA%/...` in
+    // release. Distinct from `cfg.data_root` which is the tracked-asset
+    // root (images/, figures.json, games/). Conflating the two earlier
+    // (setting DATA_ROOT=./dev-data in .env.dev) broke image lookup
+    // because the server then looked for `dev-data/images/...`.
+    let runtime_dir = skylander_server::paths::resolve_runtime_dir()
+        .context("resolve runtime dir")?;
+
     // Merge scanned figures + build the tag-identity map only when the
     // NFC feature is enabled — without it there are no scans to dedup
     // against, so the ~1s pack re-parse would be pure cost.
@@ -88,7 +97,7 @@ fn main() -> Result<()> {
             "built tag-identity map from pack"
         );
 
-        let scanned_dir = cfg.data_root.join("scanned");
+        let scanned_dir = runtime_dir.join("scanned");
         let scan_figures = skylander_indexer::scan_runtime(&scanned_dir)
             .context("walk scanned-figure dir")?;
         let mut scanned_kept = 0usize;
@@ -215,6 +224,7 @@ fn main() -> Result<()> {
     let driver_kind = cfg.driver_kind;
     let rpcs3_exe = cfg.rpcs3_exe.clone();
     let data_root = cfg.data_root.clone();
+    let runtime_dir_for_task = runtime_dir.clone();
     let hmac_key = cfg.hmac_key.clone();
     let rpcs3_lifecycle = Arc::new(tokio::sync::Mutex::new(RpcsLifecycle::default()));
     let rpcs3_for_task = rpcs3_lifecycle.clone();
@@ -322,14 +332,15 @@ fn main() -> Result<()> {
                 // NFC scanner worker (PLAN 6.5.1 + 6.5.5a). Feature-gated:
                 // off by default so users without an ACR122U aren't
                 // pulling in pcsc linkage. Dumps land under
-                // `<data_root>/scanned/` as `<uid>.sky`; scanner emits
-                // `Event::FigureScanned` on the broadcast channel with
-                // `is_duplicate` set by consulting the library identity
-                // map (pack + prior scans).
+                // `<runtime_dir>/scanned/` as `<uid>.sky` (next to the
+                // profile db, per paths::resolve_runtime_dir); scanner
+                // emits `Event::FigureScanned` on the broadcast channel
+                // with `is_duplicate` set by consulting the library
+                // identity map (pack + prior scans).
                 #[cfg(feature = "nfc-import")]
                 skylander_server::nfc::spawn(
                     events_for_task.clone(),
-                    data_root.join("scanned"),
+                    runtime_dir_for_task.join("scanned"),
                     tag_identity_map_for_task.clone(),
                 );
                 let state = Arc::new(AppState {
