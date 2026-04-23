@@ -445,3 +445,240 @@ Implementation lives in `crates/server/src/wizard.rs` + `crates/server/src/paths
 - [ ] 3.19.6 **Attribution (pre-release blocker).** Fandom content is CC BY-SA — the license requires prominent attribution + license identification + indication of modifications. Surface in the phone app: either (a) a footer link "Data & images from the Skylanders Wiki (CC BY-SA)" visible on the figure browser, (b) an About screen reachable from the header, or (c) a per-figure credit on the figure-detail screen (blocks on old PLAN 5.3 → 6.3). The exact placement depends on how Phase 4 reshapes the layout — decide when that lands. `data/LICENSE.md` already cites the source for the repo; this covers the user-visible runtime requirement. Must land before any public release (old 3.18 → covered by Phase 7).
 
 ---
+
+## Phase 3 carryover — newly resolved (2026-04-22/23)
+
+- [x] **3.7.8 Phase 1 verify-at-launch.** `PortalDriver::enumerate_games` + `DriverJob::EnumerateGames`; `/api/launch` checks between `wait_ready` and `BootGame`, returns 404 on miss. Empty enumeration + UIA errors fall through. Phase 2 (truth-from-UIA at picker time, unblocked by 4.15.16) remains in active PLAN.
+- [x] **3.10.8 Show-join-code.** 2026-04-22. Pre-rendered PNG at `GET /api/join-qr.png` backed by `crates/server/src/round_qr.rs` (shared renderer with launcher). Phone `menu_overlay.rs` renders `<img>` inside gold-ringed `.menu-qr-frame`.
+- [x] **3.16.5 First-launch wizard live-desktop verify.** 2026-04-23 alongside 6.5.4. Release-mode wizard clicks through end-to-end; `config.json` persists; server boots from it. Reader-detection side stays gated on physical console (RDP redirects PC/SC — see auto-memory).
+
+---
+
+## Phase 4 — Aesthetic + UX pass
+
+Two intertwined workstreams: visual reskin (Option A Heraldic — gold bezels, Titan One + Fraunces, starfield) + IA reorganization (portal-primary + toy-box drawer). Milestones A–D mostly shipped; residuals (4.15 remainders, 4.16–17 review, 4.18–19 drift reconciliation, 4.20.14 re-audit) stay in active PLAN.md.
+
+### 4.1 Design tokens + CSS architecture
+- [x] 4.1.1 Palette (starfield + gold + element gradients + Kaos variants up-front).
+- [x] 4.1.2 Titan One display + Fraunces body, self-hosted OFL under `phone/assets/fonts/`.
+- [x] 4.1.3 Motion tokens (spring, sweep, tap, impact, shudder, halo, idle-float).
+- [x] 4.1.4 `.skin-kaos` body class repalettes app-wide without touching components.
+- [x] 4.1.5 `prefers-reduced-motion` disables ambient drift + halo rotations.
+
+### 4.2 Static mockups (4.2.12 open in active PLAN)
+- [x] 4.2.1 Portal view all states — `option_a_heraldic.html`.
+- [x] 4.2.2 Slot state-transitions — `transitions.html`.
+- [x] 4.2.3 Profile picker — `profile_picker.html`.
+- [x] 4.2.4 PIN keypad — `pin_keypad.html`.
+- [x] 4.2.5 Game picker — `game_picker.html`.
+- [x] 4.2.6 Browser / toy-box lid — `portal_with_box.html`.
+- [x] 4.2.7 Picking-mode integrated into box-open state.
+- [x] 4.2.8 Profile creation flow — `profile_create.html`.
+- [x] 4.2.8b Konami-gated profile management — `profile_manage.html`.
+- [x] 4.2.8b Figure detail view — `figure_detail.html` (numbering dupe preserved for back-refs).
+- [x] 4.2.9 Takeover / Kaos — `kaos_takeover.html` + `kaos_swap.html`.
+- [x] 4.2.10 Resume modal / reset-to-fresh / show-join-code — folded into `menu_overlay.html`.
+- [x] 4.2.11 Screen-transition demo — `screen_transitions.html` (420ms ease-spring default).
+- [x] 4.2.13 Contrast/readability cleanup — opaque-text contract in design_language.md §2; 43 alpha→solid edits across 10 mocks.
+- [x] 4.2.14 Hold-to-activate destructive confirmation (~1.2s). Applied to RESET + SHUT DOWN. REMOVE stays single-tap.
+- [x] 4.2.15 Portal slot loaded-selection REMOVE overlay — auto-dismiss 5s.
+- [x] 4.2.16 Connection-lost overlay — `connection_lost.html`.
+- [x] 4.2.17 Empty states — `empty_states.html`.
+
+### 4.3 UX reorganization
+- [x] 4.3.1 Portal vs browser: toy box lid (portal primary 2×4, collection in wood-textured lid).
+- [x] 4.3.2 Header: kebab → profile swatch → profile name+game → connection pip.
+- [x] 4.3.3 Picking-mode flow: empty slot → toy box; loaded slot → Remove/Reset.
+- [x] 4.3.4 Modal stack semantics (3 categories, no stacking, ConnectionLost always wins).
+- [x] 4.3.5 Navigation map in `navigation.md` §1.
+- [x] 4.3.6 Collection default sort — game-compatible, then last-used (`crates/core/src/compat.rs`).
+- [x] 4.3.7 Figure detail view flow — lift in, dim others to 25%.
+
+### 4.4 Shared Leptos components
+- [x] 4.4.1 `<GoldBezel>`.
+- [x] 4.4.2 `<FramedPanel>`.
+- [x] 4.4.3 `<DisplayHeading>`.
+- [x] 4.4.4 `<RayHalo>`.
+- [x] 4.4.5 `<FigureHero>` (reused by Kaos swap).
+
+### 4.5 Starfield + ambient motion
+- [x] 4.5.1 Layered starfield on body (gradients + SVG stars + 40s parallax).
+- [x] 4.5.2 `<MagicDust>` sparse particle layer (24 particles; reduced-motion hides).
+
+### 4.6 Portal view reskin
+- [x] 4.6.1 Slots via `<GoldBezel>`; empty = dimmed bezel with "+".
+- [x] 4.6.2 Empty → Picking: scale 1.05 spring + glow + RayHalo.
+- [x] 4.6.3 Pick → Loading: halo speeds up + gold sweep + plate dims.
+- [x] 4.6.4 Loading → Loaded: impact flash + brightness spike + 4s idle float.
+- [x] 4.6.5 Loaded → Cleared: desaturate + shrink + fade.
+- [x] 4.6.6 Errored: red-tinted + shake + subdued red glow.
+- [x] 4.6.7 Slot tap feedback: plate dent + 0.96 spring-back.
+
+### 4.6b Figure detail view
+- [x] 4.6b.1 `<FigureDetail>` with idle/loading/errored states.
+- [x] 4.6b.2 Entrance: others crossfade to 25%; FLIP-style lift.
+- [x] 4.6b.3 Action-icon row (stubs until 3.14, 6.3, 3.11.3 wire handlers).
+- [x] 4.6b.4 Stats preview strip (placeholder).
+- [x] 4.6b.5 PLACE ON PORTAL → loading ring → box closes + impact.
+- [x] 4.6b.6 BACK TO BOX stays enabled in loading/errored.
+- [x] 4.6b.7 Server contract unchanged.
+
+### 4.7 Browser view reskin
+- [x] 4.7.1 Figure cards with smaller `<GoldBezel>`.
+- [x] 4.7.2 Element chips as gold-bordered pills.
+- [x] 4.7.3 on-portal: desaturated + "ON PORTAL" ribbon.
+- [x] 4.7.4 Search shimmer on focus.
+- [x] 4.7.5 Empty/filtered-out illustration.
+
+### 4.8 Profile picker reskin
+- [x] 4.8.1 `<DisplayHeading>` "WELCOME, PORTAL MASTER".
+- [x] 4.8.2 Oversized gold-bezeled swatches tinted by profile color.
+- [x] 4.8.3 "+ Add profile" bezel card.
+- [x] 4.8.4 Entry bloom, 80ms stagger.
+
+### 4.9 PIN keypad reskin
+- [x] 4.9.1 `<FramedPanel>` + mini gold bezel dots.
+- [x] 4.9.2 Inset dent + bounce (<100ms).
+- [x] 4.9.3 Unlock: shockwave + gold L→R streak.
+- [x] 4.9.4 Lockout: red panel + countdown display font.
+
+### 4.10 Profile admin reskin
+- [x] 4.10.1 `<FramedPanel>` + themed inputs.
+- [x] 4.10.2 Color-picker swatches as mini bezels.
+- [x] 4.10.3 Destructive actions red-tinted.
+
+### 4.11 Game picker reskin
+- [x] 4.11.1 Game cards with per-game art slot.
+- [x] 4.11.2 Stagger-rise entry.
+- [x] 4.11.3 Selected-card flash before WS → portal.
+
+### 4.12 Modals + takeover
+- [x] 4.12.1 Resume-last-setup modal.
+- [x] 4.12.2 Reset-to-fresh confirm (hold, gold-flake fall + desaturation).
+- [x] 4.12.3 Takeover/Kaos polish (stays blue; skin ships 5.4).
+- [x] 4.12.4 Show-join-code sheet → folded into menu QR card.
+- [x] 4.12.4b Menu overlay (kebab surface): join QR + profile chip + 3 actions.
+
+### 4.13 Toasts redesign
+- [x] 4.13.1 Color-coded left strip (error/warn/success/info).
+- [x] 4.13.2 Top-right slide-in non-blocking; bottom-center for critical.
+
+### 4.14 Ambient polish
+- [x] 4.14.1 Screen-to-screen cross-fade + direction motion (`NavDir` signal).
+- [x] 4.14.2 Connection pip: breathe / steady green / soft red.
+
+### 4.15 egui TV launcher (residuals in active PLAN)
+Design source: `docs/aesthetic/mocks/tv_launcher_v3.html`. Open: 4.15a.6 (review), 4.15a.7 (WGSL port), 4.15.9 (game-switching), 4.15.12 (shader detection), 4.15.13 (shader ring).
+
+- [x] 4.15a.1 Initial HTML mock (superseded, removed).
+- [x] 4.15a.2 State machine in `navigation.md` §3.
+- [x] 4.15a.3 Procedural cloud WebGL shader (10 arms, cylindrical, 3 knobs).
+- [x] 4.15a.4 QR + player orbit (folded into v3).
+- [x] 4.15a.5 In-game transparency + shutdown (folded into v3).
+- [x] 4.15.1 Palette in `crates/server/src/palette.rs`.
+- [x] 4.15.2 Titan One as named font family.
+- [x] 4.15.3 QR in gold bezel.
+- [x] 4.15.4 Status strip + `LauncherStatus`.
+- [~] 4.15.5 Polar-mesh vortex approximation shipped; full WGSL port at 4.15a.7.
+- [x] 4.15.6 QR card-flip on max-players.
+- [x] 4.15.7 Player-orbit indicators (`SessionPip`).
+- [x] 4.15.8 In-game transparency via eframe transparent + `PostMessage` input routing.
+- [x] 4.15.10 Crash recovery (`LauncherScreen::Crashed`).
+- [x] 4.15.11 Shutdown farewell (3s countdown + `ViewportCommand::Close`).
+- [x] 4.15.14 Phone-side game-crash overlay.
+- [x] 4.15.15 Cover + input routing research spike (chose opaque `WS_EX_TOPMOST` cover + `PostMessage`).
+- [x] 4.15.16 RPCS3 lifecycle — launch at server startup; `/api/launch` uses the already-running instance; `/api/quit` uses `StopEmulation` not full shutdown.
+
+### 4.18 Phone UI drift reconciliation (partial)
+Done pieces below. Remaining items in active PLAN.
+
+- [x] 4.18.1a mDNS/Bonjour (`crates/server/src/mdns.rs` via `GetComputerNameExW`).
+- [x] 4.18.1b "Add to Home Screen" PWA hint (10 unit tests).
+- [x] 4.18.1d iOS dark-band diagnosed (html flat-bg seam against body::before gradient).
+- [x] 4.18.1e Gradient moved from `body::before` to `html`; `min-height: 100vh` follow-up. Kaos skin class moved to `<html>`.
+- [x] 4.18.2 Drop "Skylander Portal" brand text.
+- [x] 4.18.3 Profile swatch beside kebab.
+- [x] 4.18.4 Pulsing pip only (text label removed).
+- [x] 4.18.5 Single `Header` reactive via `Option::map`.
+- [x] 4.18.5a MANAGE PROFILES into kebab menu.
+- [x] 4.18.5b MenuOverlay context-aware.
+- [x] 4.18.6a CreateProfileForm visual parity with PinEntry (heraldic gold-bezel keypad).
+- [x] 4.18.7 Prefilled random Skylander name + reroll button.
+- [x] 4.18.8 PIN confirm mismatch feedback (shake + banner + wipe).
+- [x] 4.18.13 "PORTAL" `<DisplayHeading>` above slot grid.
+- [x] 4.18.17 Ownership pip per loaded slot + `resolve_owner` helper + 4 unit tests.
+- [x] 4.18.18 Action button labels visible.
+- [x] 4.18.21 ConnectionLost overlay (pulsing pip, spinner, manual TRY AGAIN after 3 retries).
+
+### 4.19 egui TV-launcher drift reconciliation (partial)
+Done pieces below; extensive residuals in active PLAN.
+
+- [x] 4.19.1 Inventory drift. Headline: spec 8 states, code 3. Itemised as 4.19.2–4.19.22.
+- [x] 4.19.2a Startup surface + launch-phase infra (`ui/launch_phase.rs`).
+- [x] 4.19.10b QR URL mDNS-based (alongside 4.18.1a).
+- [x] 4.19.23 Server-error launcher state (`LauncherScreen::ServerError`) replacing `expect("bind")` panic.
+
+### 4.20 Design system consolidation (4.20.14 residual in active PLAN)
+
+- [~] 4.20.1 `<ActionButton>` extracted for menu-action call sites; ResetConfirmModal + figure_detail BezelButton stay inline. 1 unit test.
+- [x] 4.20.2 `<ToyBoxLid>` / `<ToyBoxInterior>` extracted; browser.rs 392 → 241 lines. 1 unit test.
+- [x] 4.20.3 `MenuOverlay` extracted to `screens/menu_overlay.rs`.
+- [x] 4.20.4 Relocate `Header` to `components/`.
+- [~] 4.20.5 `<KaosOverlay>` scaffolded for takeover variant; swap variant lands with 5.3.
+- [x] 4.20.5a `ConnectionLost` / `GameCrashScreen` / `PwaHint` as `components/`.
+- [x] 4.20.6 Typography scale declared in `:root` (8 tokens).
+- [~] 4.20.7 Font-size migration: 88 sites to tokens; 58 off-token kept as literals by design.
+- [x] 4.20.8 Motion tokens (`--dur-impact/shudder/sky-drift/hold-confirm`).
+- [~] 4.20.9 Duration migration: 4 semantic sites; ambiguous/off-token literals left alone.
+- [x] 4.20.10 Launcher typography constants in `palette.rs` (8 pt-size consts).
+- [x] 4.20.11 §6.1 mock reference fixed.
+- [x] 4.20.12 §3.1 bezel states extended with overlay-badge corner table.
+- [x] 4.20.13 §10 egui vortex open-question updated (three paths: shipped polar-mesh / deferred WGSL / rejected frame atlas).
+
+### 4.21 iOS inspector tool (`tools/ios-inspect/`)
+Mac-only CLI driving iOS Simulator + Safari via WebKit Web Inspector protocol (`ios-webkit-debug-proxy`). Routes layout/CSS probes; e2e harness handles functional regressions.
+
+- [x] 4.21.1 Spike — WebKit protocol + proxy + simulator + screenshot all verified end-to-end on iPhone 17 Pro / iOS 26.2 sim.
+- [x] 4.21.2 `tools/ios-inspect/` built: 8 subcommands (`boot`/`open`/`eval`/`computed-style`/`dump-dom`/`screenshot`/`tabs`/`shutdown`), self-healing proxy lifecycle via `lsof`-based socket discovery.
+- [x] 4.21.3 Documented in CLAUDE.md Aesthetic section.
+- [x] 4.21.4 4.18.1d root-caused via the tool — html flat-bg color-seam against fixed `body::before` gradient. Recommended fix landed as 4.18.1e.
+
+---
+
+## Phase 6 — Post-Kaos polish (partial)
+
+6.1/6.3/6.4 stay open. 6.2 parent + 6.5 parent have mixed completion; residuals in active PLAN.
+
+### 6.2 Parse `.sky` firmware for per-figure stats (partial)
+Encryption discovered + decryption landed. FigureKind range-table split. Remaining: per-kind UI + payloads (Trap/Vehicle/CYOS), investigate 10 CRC-fails, pin Vehicle/CYOS ranges.
+
+- [x] 6.2.0 Validate plaintext assumption — 0/151 CRC-valid on real dumps; encryption confirmed (2026-04-22).
+- [x] 6.2.0b AES-128-ECB + MD5-derived per-block keys per blog Appendix B. 141/151 CRC-valid post-landing. `Fixture::build()` encrypts synthetic plaintext so 22 tests run full decrypt→parse roundtrip.
+- [x] 6.2.2 `FigureKind::Other` split into `Trap`/`Vehicle`/`RacingPack`/`Cyos`. Trap range `0x0D2..=0x0DC` from real dumps (community-sourced ranges didn't match reality).
+- [x] 6.2.7 Superseded by 6.5.5 — scanning proves folder-walk vestigial.
+
+### 6.5 NFC-scan import via ACS122U (partial)
+Scan pipeline landed. Remaining sub-items in active PLAN (timeout live-test).
+
+- [x] 6.5.0 SPIKE — `pcsc` crate + `ShareMode::Direct` + `SCardControl(IOCTL 3500)`; 1024 bytes in ~1.4s; Key-A CRC48 per blog Appendix A. macOS needs ACS Unified CCID Driver (Apple inbox driver rejects SCardControl escape).
+- [x] 6.5.1 Scanner worker + event stream (`crates/nfc-reader/` lib crate; `nfc-import` feature off by default). `Event::FigureScanned` carries identity only, not raw bytes.
+- [x] 6.5.3 Shared-pack storage layout: `<data_root>/scanned/<uid>.sky` (uid-keyed — preserves per-physical-tag state across household duplicates).
+- [x] 6.5.4 First-launch onboarding — `probe_reader()` + optional pack. Wizard re-themed with fullscreen + palette + Titan One + starfield (2026-04-23). Live-verified on HTPC; reader-detect path gated on physical console (RDP redirects PC/SC — see auto-memory).
+- [x] 6.5.5a Scanned-figure indexer + pack-wins merge. `VARIANT_IDENTITY_MASK = 0x0BFF`. Nickname-promotion escape-hatch keeps pack master identity while surfacing user customization.
+- [-] 6.5.5b Superseded by 6.6.
+
+### 6.6 ID-scheme rekey: SHA → tag identity
+Pack figures now keyed by `{toy_type:06x}-{variant:04x}` (was SHA-of-path); scans stay `scan:{uid}`; parse-failure fallback `sha:{hex}`. `data/figures.json` rekeyed 504 → 489 (15 collisions collapsed; winners in `data/rekey-log.json`). Newtypes `ToyTypeId` / `TagVariant` / `MaskedVariant` / `TagIdentity` / `MifareNuid` in `skylander_core::figure`. Five phases all landed 2026-04-23; 153/153 workspace tests green.
+
+- [x] 6.6.1 Phase 1 — Newtype foundation + `Figure.tag_identity` prep. Indexer populates via `parse_tag_identity()` helper. `MifareNuid` nfc-reader migration was initially deferred (6.6.1f) and closed in Phase 4 (6.6.4f).
+- [x] 6.6.2 Phase 2 — Migration tool (`tools/rekey-figure-ids/`) + dev DB wipe. Idempotent rename-planning loop tracks already-claimed destinations in-memory; 488 image dirs renamed, 14 orphan SHA dirs cleaned, `data/rekey-log.json` committed.
+- [x] 6.6.3 Phase 3 — Indexer + core `stable_id` switch. `FigureId::from_tag_identity` produces hyphen-separated lowercase hex. Image-endpoint validator updated to accept 3 canonical forms.
+- [x] 6.6.4 Phase 4 — Consumer sweep. FigureId opacity held up; concrete fix was image-endpoint validator + nfc-reader `Uid` → `MifareNuid` newtype. Profile DB schema takes TEXT opaque; no migration needed after wipe.
+- [x] 6.6.5 Phase 5 — Live verification. Boot numbers identical pre/post (pack=504, identity-map=489, nicknames_promoted=1). Non-6.6 fallout logged as 4.18.27/4.18.28/4.18.29 in active PLAN.
+
+**Risk callouts from planning (historical):**
+- 15 pack `(fid, variant_masked)` collisions collapsed to one entry each; losers effectively dropped from library.
+- Any phone bookmark pointing at `/api/figures/<old-sha>/…` 404s post-migration; `boot_id` change triggers auto-reload so live sessions don't notice.
+- DB wipe lost dev-data profile state. Acceptable (no real users).
+
+---
