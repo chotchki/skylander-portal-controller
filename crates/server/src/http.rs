@@ -365,9 +365,13 @@ async fn figure_image(
     AxumPath(id): AxumPath<String>,
     axum::extract::Query(q): axum::extract::Query<ImageQuery>,
 ) -> Response {
-    // Input validation: ids are 16 hex chars from the indexer. Be strict to
-    // keep this from becoming an arbitrary-file-read vector.
-    if id.len() != 16 || !id.chars().all(|c| c.is_ascii_hexdigit()) {
+    // Input validation — canonical FigureId forms post-PLAN-6.6.3:
+    //   - `{6-hex}-{4-hex}` — tag-identity pack figures (common case)
+    //   - `scan:{8-hex}` — scan-only by Mifare NUID
+    //   - `sha:{16-hex}` — parse-failure fallback
+    // Be strict about the charset so this endpoint can't be turned into
+    // an arbitrary-file-read vector.
+    if !is_safe_figure_id(&id) {
         return (StatusCode::BAD_REQUEST, "bad figure id").into_response();
     }
     let size = match q.size.as_deref().unwrap_or("thumb") {
@@ -423,6 +427,32 @@ fn image_response(bytes: Vec<u8>) -> Response {
         bytes,
     )
         .into_response()
+}
+
+/// PLAN 6.6.3 accepts three `FigureId` shapes:
+///   - `{6-hex}-{4-hex}` — tag-identity pack figures
+///   - `scan:{uid}`      — scan-only (uid is uppercase hex, length 8)
+///   - `sha:{hex}`       — parse-failure fallback (16 hex chars)
+/// Anything else is rejected so this endpoint can't be coerced into
+/// reading arbitrary paths under `data/images/`.
+fn is_safe_figure_id(id: &str) -> bool {
+    // `{6-hex}-{4-hex}`
+    if id.len() == 11 {
+        let bytes = id.as_bytes();
+        if bytes[6] == b'-'
+            && bytes[..6].iter().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+            && bytes[7..].iter().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        {
+            return true;
+        }
+    }
+    if let Some(rest) = id.strip_prefix("scan:") {
+        return rest.len() == 8 && rest.chars().all(|c| c.is_ascii_hexdigit());
+    }
+    if let Some(rest) = id.strip_prefix("sha:") {
+        return rest.len() == 16 && rest.chars().all(|c| c.is_ascii_hexdigit());
+    }
+    false
 }
 
 /// GET /api/join-qr.png

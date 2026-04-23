@@ -4343,6 +4343,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "skylander-rekey-figure-ids"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "skylander-core",
+ "skylander-indexer",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "skylander-rpcs3-control"
 version = "0.1.0"
 dependencies = [

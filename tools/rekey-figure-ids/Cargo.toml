@@ -1,0 +1,20 @@
+[package]
+name = "skylander-rekey-figure-ids"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# PLAN 6.6.2 one-shot. Rekeys `data/figures.json` from the old SHA-of-path
+# `FigureId` format to the tag-identity `"{toy_type:06x}-{variant:04x}"`
+# form. Also renames `data/images/<SHA>/` → `data/images/<tag-id>/` and
+# writes a `rekey-log.json` with the full mapping + any collisions.
+# Idempotent — rerunning after migration is a no-op.
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+skylander-core = { path = "../../crates/core" }
+skylander-indexer = { path = "../../crates/indexer" }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

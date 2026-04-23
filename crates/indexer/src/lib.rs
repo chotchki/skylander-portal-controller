@@ -36,8 +36,6 @@ pub fn scan(pack_root: &Path) -> Result<Vec<Figure>> {
         let stem_clean = stem.strip_suffix(".key").unwrap_or(&stem).to_string();
         let (variant_group, variant_tag) = derive_group_and_tag(&segs, &stem_clean, category);
 
-        let id = stable_id(game, element, &rel_str);
-
         let element_icon_path = element.and_then(|el| {
             let key = element_icon_key(&segs, el);
             element_icons.get(&key).cloned()
@@ -49,6 +47,24 @@ pub fn scan(pack_root: &Path) -> Result<Vec<Figure>> {
         // totally-broken files. Log and keep going in that case so one
         // corrupted master doesn't torch the whole index.
         let tag_identity = parse_tag_identity(&sky.abs);
+
+        // PLAN 6.6.3: canonical `FigureId` comes from the tag identity when
+        // parse succeeds (`"{toy_type:06x}-{variant:04x}"`). Fallback for
+        // the rare parse-failure case: `"sha:{old-hash}"` — loud prefix so
+        // nothing orphans silently and a future `tools/rekey-figure-ids`
+        // rerun can still reconcile.
+        let id = match tag_identity {
+            Some(tid) => FigureId::from_tag_identity(tid),
+            None => {
+                let sha = stable_id_hex(game, element, &rel_str);
+                tracing::warn!(
+                    path = %sky.abs.display(),
+                    sha = %sha,
+                    "indexer: parse-failure fallback — FigureId = sha:<hex>",
+                );
+                FigureId::new(format!("sha:{}", sha))
+            }
+        };
 
         out.push(Figure {
             id,
@@ -589,13 +605,18 @@ fn peel_variant_prefix(name: &str) -> (&'static str, String) {
     ("", name.to_string())
 }
 
-fn stable_id(game: GameOfOrigin, element: Option<Element>, rel_path: &str) -> FigureId {
+/// First 16 hex chars of SHA-256 of `"<game>|<element>|<relative_path>"`.
+/// Used only as a **parse-failure fallback** for `FigureId` since PLAN 6.6.3
+/// — the canonical form is the tag-identity string. Kept because the
+/// fallback string is embedded in FigureId as `"sha:{hex}"` so it needs
+/// to be stable + reproducible.
+fn stable_id_hex(game: GameOfOrigin, element: Option<Element>, rel_path: &str) -> String {
     let elem_str = element.map(element_str).unwrap_or("");
     let game_str = game_str(game);
     let key = format!("{}|{}|{}", game_str, elem_str, rel_path);
     let digest = Sha256::digest(key.as_bytes());
     let hex: String = digest.iter().map(|b| format!("{:02x}", b)).collect();
-    FigureId::new(hex[..16].to_string())
+    hex[..16].to_string()
 }
 
 fn game_str(g: GameOfOrigin) -> &'static str {

@@ -504,17 +504,18 @@ Pack figures today are keyed by `FigureId(String)` where the string is a 16-hex-
   - [ ] 6.6.1f `MifareNuid` newtype is defined; nfc-reader hasn't migrated yet — deferred to a follow-up inside Phase 4 alongside the other consumer sweep.
   - [x] 6.6.1g Commit `5c9c…` — `cargo test --workspace` + `trunk build` both green.
 
-- [ ] 6.6.2 **Phase 2 — Migration tool + dev DB wipe.**
-  - [ ] 6.6.2a New `tools/rekey-figure-ids/` one-shot CLI. Walks `data/firmware-pack` (or `FIRMWARE_PACK_ROOT` from `.env.dev`), computes `SHA → FigureId::from_tag_identity` map for each pack `.sky`. Rewrites `data/figures.json` keyed by new canonical strings, collapsing duplicates first-wins with a log line per collision (504 raw → ~489 unique). Renames every `data/images/<SHA>/` directory to `data/images/<new-id>/`. Idempotent — detects already-migrated state and exits cleanly on re-run.
-  - [ ] 6.6.2b Emits `tools/rekey-figure-ids/rekey-log.json` summary with the SHA→tag-id map + collision list; committed alongside the rekeyed data so a future developer can trace entries back to their pack-path origin if needed.
-  - [ ] 6.6.2c Delete `dev-data/db.sqlite` (pre-1.0, solo project — per Chris's call 2026-04-23 we're nuking rather than writing schema migration logic). Server startup recreates it.
-  - [ ] 6.6.2d Commit `data/figures.json` + the renamed `data/images/` tree + the rekey-log.
+- [x] 6.6.2 **Phase 2 — Migration tool + dev DB wipe.** Done 2026-04-23. `data/figures.json` rekeyed (504 → 489 entries with 15 first-wins collisions), 488 image dirs renamed (14 orphan SHA dirs cleaned up after), `dev-data/db.sqlite` nuked.
+  - [x] 6.6.2a New `tools/rekey-figure-ids/`. Idempotent. One initial bug fixed during the run: the rename-planning loop had to track already-claimed destinations in-memory because two losers can both plan to rename into the same dir before any rename executes. Emitted `data/rekey-log.json` with full SHA→tag-id map + collision list.
+  - [x] 6.6.2b Rekey-log committed alongside the data.
+  - [x] 6.6.2c `dev-data/db.sqlite` removed; server recreates on next boot.
+  - [x] 6.6.2d Committed `data/figures.json` + the renamed/pruned `data/images/` + `data/rekey-log.json`.
 
-- [ ] 6.6.3 **Phase 3 — Indexer + core `stable_id` switch.**
-  - [ ] 6.6.3a Canonical `FigureId` format for pack figures becomes `"{toy_type:06x}-{variant_masked:04x}"`. Hyphen-separated lowercase hex, URL-safe, sortable.
-  - [ ] 6.6.3b `skylander_indexer::stable_id` replaced by tag-identity-derived ID when parse succeeds; falls back to `"sha:{old-hash}"` for the (rare) parse-failure case so nothing silently orphans. Fallback is loud — `tracing::warn!` at index time.
-  - [ ] 6.6.3c `scan_runtime` keeps the `"scan:<uid>"` format: each physical tag stays distinct in the library even when multiple copies of the same SKU are owned. Documented explicitly in the function doc.
-  - [ ] 6.6.3d Regenerate `crates/indexer/tests/real_pack.rs` snapshot. Verify counts match the rekey log's 504→489 collapse.
+- [x] 6.6.3 **Phase 3 — Indexer + core `stable_id` switch.** Done 2026-04-23. Landed alongside Phase 2 since image lookups 404'd until `Figure.id` matched the renamed dirs.
+  - [x] 6.6.3a Canonical `FigureId` for pack figures is now `"{toy_type:06x}-{variant:04x}"` — hyphen-separated lowercase hex via `FigureId::from_tag_identity`.
+  - [x] 6.6.3b Parse-failure fallback is `"sha:{hex}"` (loud prefix); old `stable_id()` renamed to `stable_id_hex()` for the fallback case and emits `tracing::warn!` with the path.
+  - [x] 6.6.3c `scan_runtime` unchanged — still `"scan:{uid}"` so each physical tag remains distinct.
+  - [x] 6.6.3d `crates/indexer/tests/real_pack.rs` already only asserts counts (not IDs), so no snapshot regen needed. 153/153 workspace tests still green.
+  - [x] Also: `crates/server/src/http.rs::figure_image` input validator updated. Old check was `id.len() == 16 && all hex`; new `is_safe_figure_id` accepts the three canonical forms (`{6-hex}-{4-hex}`, `scan:{8-hex}`, `sha:{16-hex}`) and rejects anything else. Image endpoint confirmed serving new-format URLs (200 OK, 17.9KB PNG for `0001ce-0000`).
 
 - [ ] 6.6.4 **Phase 4 — Consumer sweep.** Most sites are transparent — `FigureId` stays `String`-under-the-hood — but a few assume SHA-specific formatting.
   - [ ] 6.6.4a `crates/server/src/http.rs` image/stats handlers: verify no SHA-format assumptions (e.g. regex validation, 16-char-only paths).
