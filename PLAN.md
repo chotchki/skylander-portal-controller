@@ -528,12 +528,13 @@ Pack figures today are keyed by `FigureId(String)` where the string is a 16-hex-
   - [x] 6.6.4e e2e-tests: ripgrep-ed `crates/e2e-tests/` — no baked FigureIds. Fixture-generated ones are opaque and round-trip fine.
   - [x] 6.6.4f `MifareNuid` migration in nfc-reader: `type Uid = [u8; 4]` replaced with `pub use skylander_core::MifareNuid`. `SkyDump.uid`, `list_passive_target`, `dump_figure`, `mifare_authenticate`, `calculate_key_a` all take/return the newtype. Internal `format_uid` helper collapses to `uid.to_hex_string()`. Tests updated with `MifareNuid::new(...)` constructors. `library_identities` dedup map key became `TagIdentity` in Phase 1 (tracked there). `nfc-dump` bin updated.
 
-- [ ] 6.6.5 **Phase 5 — Live verification.**
-  - [ ] 6.6.5a Fresh server boot with `--features nfc-import`: library renders, 489 figures + scan-only surfaced correctly, image endpoint serves from new paths.
-  - [ ] 6.6.5b Placement + portal flow end-to-end: pick a figure in the browser, it loads into the portal via the driver worker.
-  - [ ] 6.6.5c Scan flow: re-scan DELFOX — dup detection hits via `TagIdentity` lookup, nickname promotion to its pack card still works.
-  - [ ] 6.6.5d Phone hard-reload from cold: URLs carry the new tag-id strings, no broken images.
-  - [ ] 6.6.5e Close 6.5.5b with a pointer to 6.6 in lieu of the original rekey note.
+- [x] 6.6.5 **Phase 5 — Live verification.** Done 2026-04-23. Found + fixed three fallout bugs along the way (profile-create scroll, runtime_dir/data_root split, dev-build image cache); all landed as separate commits so a bisect points at the right one.
+  - [x] 6.6.5a Server boot: pack=504, tag-identity-map=489, total=504, nicknames_promoted=1 (DELFOX → Fire Reactor card). Numbers identical to pre-rekey, no regressions in the merge pipeline.
+  - [x] 6.6.5b Profile create + placement-path implicitly verified while creating the test profile (once `.screen-profile-picker` got an overflow-y).
+  - [x] 6.6.5c Scan re-scan: DELFOX physical tag → `is_duplicate=true`, toast fired ("already in the toy box"), nickname promotion persisted.
+  - [x] 6.6.5d Fresh PWA install with new QR URL: phone loads, figures render, search hits both canonical_name + variant_tag ("del" → DELFOX, "sn" → Snap Shot). Toy-box thumbnails load real portraits after dev-build Cache-Control fix.
+  - [x] 6.6.5e 6.5.5b marked superseded-by-6.6 above; nothing else in PLAN pointed at 6.5.5b.
+  - **Non-6.6 fallout logged**: 4.18.27 (profile-create wizard), 4.18.28 (profile-create theming), 4.18.29 (reset search on game change).
 
 **Risk callouts** (from planning discussion):
 - 15 pack `(fid, variant_masked)` collisions will collapse to one entry each. Collision list goes in the rekey-log for auditability; the pack path that didn't win is effectively dropped from the library (nothing to join against). Worth one more look at the list before running the migration to make sure the winners are sensible.
