@@ -32,7 +32,16 @@ pub(crate) fn Browser(
                 .filter(|f| ef.map_or(true, |e| f.element == Some(e)))
                 .filter(|f| gf.map_or(true, |g| f.game == g))
                 .filter(|f| cf.map_or(true, |c| f.category == c))
-                .filter(|f| q.is_empty() || f.canonical_name.to_lowercase().contains(&q))
+                // Search hits canonical_name (main card text) OR variant_tag
+                // (the small subtitle under the name — e.g. "DELFOX" under
+                // "Creation Crystal" for a scan-only CC). PLAN 6.5.5a: user
+                // memory of their figures is more likely to match the
+                // custom nickname than the kind-category title.
+                .filter(|f| {
+                    q.is_empty()
+                        || f.canonical_name.to_lowercase().contains(&q)
+                        || f.variant_tag.to_lowercase().contains(&q)
+                })
                 .take(400) // Phase 3 will virtualize.
                 .cloned()
                 .collect::<Vec<_>>()
@@ -255,14 +264,17 @@ fn BrowserFilters(
         (Some(Element::Dark), "Dark"),
     ];
     // CATEGORY filter covers the big sub-types the mock calls out. We skip
-    // the plain `Figure` + `Sidekick` / `Giant` / `Kaos` / `CreationCrystal`
-    // / `Other` rows: those are either the default case (Figure) or niche
-    // enough that a flat chip row would add clutter without helping a kid
-    // find what they want. Revisit once we have real feedback.
-    let all_categories: [(Option<Category>, &'static str); 5] = [
+    // the plain `Figure` + `Sidekick` / `Giant` / `Kaos` / `Other` rows:
+    // those are either the default case (Figure) or niche enough that a
+    // flat chip row would add clutter without helping a kid find what
+    // they want. `CreationCrystal` joined the list once 6.5.5a started
+    // surfacing scan-only CCs in the library — previously nothing in
+    // the pack fell in that bucket.
+    let all_categories: [(Option<Category>, &'static str); 6] = [
         (None, "All"),
         (Some(Category::Vehicle), "Vehicles"),
         (Some(Category::Trap), "Traps"),
+        (Some(Category::CreationCrystal), "Crystals"),
         (Some(Category::AdventurePack), "Adventure Packs"),
         (Some(Category::Item), "Items"),
     ];

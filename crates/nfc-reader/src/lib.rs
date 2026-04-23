@@ -500,11 +500,17 @@ fn persist_and_broadcast(
         }
     };
 
-    // "Already in your collection" = (figure_id, variant) is known to the
-    // library (pack master OR prior scan, doesn't matter which). Replaces
-    // the earlier file-existence heuristic so that even a first-ever scan
-    // of a figure already in the pack reports is_duplicate=true.
-    let is_duplicate = figure_id != 0 && library_identities.contains_key(&(figure_id, variant));
+    // "Already in your collection" = masked (figure_id, variant) is known
+    // to the library (pack master OR prior scan). We apply the
+    // VARIANT_IDENTITY_MASK because pack masters store variant=0x0000
+    // while physical tags include year_code + is_in_game_variant bits
+    // that aren't part of canonical identity. Raw matching would miss
+    // the collision on the very first scan of a pack-owned figure.
+    let identity_key = (
+        figure_id,
+        variant & skylander_sky_parser::VARIANT_IDENTITY_MASK,
+    );
+    let is_duplicate = figure_id != 0 && library_identities.contains_key(&identity_key);
 
     tracing::info!(
         uid = %dump.uid_hex(),

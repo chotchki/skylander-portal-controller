@@ -115,19 +115,34 @@ pub fn scan_runtime(scanned_dir: &Path) -> Result<Vec<Figure>> {
             .unwrap_or(&file_name)
             .to_string();
         let id = FigureId::new(format!("scan:{}", uid_stem));
-        let canonical_name = if stats.nickname.trim().is_empty() {
-            format!("Figure 0x{:06X}", stats.figure_id)
+
+        // Split the user's nickname (e.g. "DELFOX") off into variant_tag
+        // and use the kind-derived name as canonical_name ("Creation
+        // Crystal" / "Trap" / etc.). This reads naturally in the library:
+        //   ┌──────────┐
+        //   │  DELFOX  │  ← variant_tag
+        //   │  Creation│  ← canonical_name
+        //   │  Crystal │
+        //   └──────────┘
+        // and the user can search on either field (browser.rs 6.5.5a).
+        let category = figure_kind_to_category(stats.figure_kind);
+        let canonical_name = canonical_name_for_scan(stats.figure_kind, stats.figure_id);
+        let variant_tag = if stats.nickname.trim().is_empty() {
+            "base".to_string()
         } else {
             stats.nickname.clone()
         };
-        let category = figure_kind_to_category(stats.figure_kind);
 
         out.push(Figure {
             id,
             canonical_name: canonical_name.clone(),
             variant_group: canonical_name,
-            variant_tag: "base".to_string(),
+            variant_tag,
             game: GameOfOrigin::Unknown,
+            // PLAN 6.5.5b: element inference for scan-only figures needs
+            // a figure_id → element table we don't have yet. Leaving None
+            // here is loss-of-info but not wrong — figures render with
+            // the neutral bezel instead of a coloured one.
             element: None,
             category,
             sky_path: abs,
@@ -135,6 +150,21 @@ pub fn scan_runtime(scanned_dir: &Path) -> Result<Vec<Figure>> {
         });
     }
     Ok(out)
+}
+
+/// Kind-based display name for scan-only figures (no pack lookup, no
+/// figures.json). "Creation Crystal", "Trap", etc. Keeps canonical_name
+/// browsable while variant_tag carries the tag's stored nickname.
+fn canonical_name_for_scan(kind: skylander_sky_parser::FigureKind, figure_id: u32) -> String {
+    use skylander_sky_parser::FigureKind as K;
+    match kind {
+        K::Standard => format!("Figure 0x{:06X}", figure_id),
+        K::Trap => "Trap".to_string(),
+        K::Vehicle => "Vehicle".to_string(),
+        K::RacingPack => "Racing Pack".to_string(),
+        K::Cyos => "Creation Crystal".to_string(),
+        K::Other => format!("Figure 0x{:06X}", figure_id),
+    }
 }
 
 /// Best-effort category inference from the sky-parser's `FigureKind`.

@@ -257,6 +257,18 @@ pub enum FigureKind {
     Other,
 }
 
+/// Bits of the variant word that encode the figure's *canonical identity*
+/// — mask this over a raw variant before keying a dedup lookup. We keep
+/// deco_id (bits 0..8), is_supercharger (8), is_lightcore (9), and
+/// is_reposed (11); we drop is_in_game_variant (10) and year_code
+/// (12..16) because those encode **runtime/game state**, not identity.
+///
+/// Concrete example: pack Snap Shot stores `variant=0x0000` (canonical,
+/// no game-generation tag), while a live-scanned physical Snap Shot
+/// stores `variant=0x3000` (year_code 3 = Trap Team). Masked, both
+/// collapse to `0x0000` and dedup correctly. PLAN 6.5.5a.
+pub const VARIANT_IDENTITY_MASK: u16 = 0x0BFF;
+
 /// Decomposition of the 16-bit variant bitfield.
 ///
 /// See `SkylanderFormat.md` "Variant ID". Note the comment there that some

@@ -61,7 +61,24 @@ fn main() -> Result<()> {
     // against, so the ~1s pack re-parse would be pure cost.
     #[cfg(feature = "nfc-import")]
     let (figures, tag_identity_map) = {
+        use skylander_sky_parser::VARIANT_IDENTITY_MASK;
         use std::collections::HashMap as StdHashMap;
+
+        // Canonical identity key — strip the year_code + is_in_game_variant
+        // bits off the raw variant (see sky-parser::VARIANT_IDENTITY_MASK).
+        // Pack masters store `variant=0x0000`; a physical tag scanned off
+        // a real portal includes the year code it was last played in. Raw
+        // matching would miss the dedup; masked matching collapses them.
+        let identity_key = |fid: u32, variant: u16| -> (u32, u16) {
+            (fid, variant & VARIANT_IDENTITY_MASK)
+        };
+
+        let mut pack_figures = pack_figures;
+        let pack_index_by_id: StdHashMap<skylander_core::FigureId, usize> = pack_figures
+            .iter()
+            .enumerate()
+            .map(|(i, f)| (f.id.clone(), i))
+            .collect();
 
         let mut tag_identity_map: StdHashMap<(u32, u16), skylander_core::FigureId> =
             StdHashMap::new();
@@ -69,7 +86,7 @@ fn main() -> Result<()> {
             if let Ok(bytes) = std::fs::read(&f.sky_path) {
                 if let Ok(stats) = skylander_sky_parser::parse(&bytes) {
                     tag_identity_map
-                        .entry((stats.figure_id, stats.variant))
+                        .entry(identity_key(stats.figure_id, stats.variant))
                         .or_insert_with(|| f.id.clone());
                 }
             }
@@ -83,6 +100,7 @@ fn main() -> Result<()> {
         let scan_figures = skylander_indexer::scan_runtime(&scanned_dir)
             .context("walk scanned-figure dir")?;
         let mut scanned_kept = 0usize;
+        let mut nicknames_promoted = 0usize;
         let mut scan_only_figures: Vec<Figure> = Vec::new();
         for f in scan_figures {
             let Ok(bytes) = std::fs::read(&f.sky_path) else {
@@ -91,11 +109,29 @@ fn main() -> Result<()> {
             let Ok(stats) = skylander_sky_parser::parse(&bytes) else {
                 continue;
             };
-            let key = (stats.figure_id, stats.variant);
-            if tag_identity_map.contains_key(&key) {
+            let key = identity_key(stats.figure_id, stats.variant);
+            if let Some(pack_id) = tag_identity_map.get(&key).cloned() {
                 // Pack wins — suppress the scan entry from the library
                 // (still exists on disk as a physical-tag record, just
-                // not a distinct library card).
+                // not a distinct library card). BUT: if the scan carried
+                // a user-chosen nickname AND the pack's variant_tag is
+                // still the default "base", promote the nickname onto
+                // the pack card so the user sees their customization
+                // (common for Creation Crystals — you name "DELFOX" what
+                // the pack just calls "CRYSTAL_-_FIRE_Reactor"). PLAN
+                // 6.5.5a option B.
+                let nickname = stats.nickname.trim();
+                if !nickname.is_empty() {
+                    if let Some(&idx) = pack_index_by_id.get(&pack_id) {
+                        let pack_fig = &mut pack_figures[idx];
+                        if pack_fig.variant_tag == "base"
+                            && pack_fig.canonical_name != nickname
+                        {
+                            pack_fig.variant_tag = nickname.to_string();
+                            nicknames_promoted += 1;
+                        }
+                    }
+                }
                 continue;
             }
             tag_identity_map.insert(key, f.id.clone());
@@ -104,6 +140,7 @@ fn main() -> Result<()> {
         }
         info!(
             kept = scanned_kept,
+            nicknames_promoted,
             "merged scanned figures (pack wins on collision)"
         );
 
