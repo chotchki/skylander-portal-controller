@@ -34,8 +34,10 @@ A Windows app that wraps RPCS3 (PS3 emulator) so kids can manage the emulated Sk
 - **First-launch config** (PC keyboard, one time): RPCS3 executable path, firmware-pack root. Games auto-detected by scanning RPCS3's library for known serials; missing games don't delete their per-game settings.
 - **Firmware pack** layout: `{Game}/{Element}/[Alternate types/]{Name}.sky`. Top-level `Items`, `Adventure Packs` (per-game subfolders), `Sidekicks` (top-level is a duplicate — ignore it; Giants' internal `Sidekicks` is authoritative). Ignore `desktop.ini`, posters, element-symbol PNGs (reuse as element icons), readme `.txt` files.
 - **Runtime state roots** (resolved once at startup, gated by the `dev-tools` Cargo feature — release builds physically can't pick the dev path):
-  - Release: `%APPDATA%\skylander-portal-controller\` — `db.sqlite`, `working/<profile_id>/<figure_id>.sky`, `logs/` (daily rotation, 7-day retention).
+  - Release: `%APPDATA%\skylander-portal-controller\` — `db.sqlite`, `working/<profile_id>/<figure_id>.sky`, `scanned/<uid>.sky`, `logs/` (daily rotation, 7-day retention).
   - Dev: `./dev-data/` — same layout, plus `./logs/` next to it. Both are gitignored. Never write runtime state outside these roots.
+  - Dev `DATA_ROOT` must be set to `./dev-data` in `.env.dev` to unify the scanner's output dir with the profile db (the compile-time default is `./data`, a leftover from earlier layouts).
+- **Scanned-figure layout (PLAN 6.5.3):** `<data_root>/scanned/<uid>.sky`, where `<uid>` is the 8-char uppercase hex of the 4-byte Mifare NUID (e.g. `7FC1ADA3.sky`). Each *physical* tag is its own file — two copies of Spyro in the same household remain distinct so their independent gold / level state is preserved. A re-scan of the same tag overwrites the file (letting later scans pick up on-tag changes) and the server emits `Event::FigureScanned { is_duplicate: true }`. Working-copy semantics for scanned figures (one copy per (profile, uid)? per (profile, canonical figure)?) are deferred to 6.5.5 alongside the broader `FigureId` rekey.
 - **Known dev RPCS3 install:** `C:\emuluators\rpcs3` (note the typo; it's the real path).
 - **Known dev firmware pack:** `C:\Users\chris\workspace\Skylanders Characters Pack for RPCS3`.
 - **Phone never sees file paths or filenames** — only stable figure IDs.
