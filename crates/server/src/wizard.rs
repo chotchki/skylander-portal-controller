@@ -10,6 +10,8 @@
 //! re-theme alongside the launcher later.
 
 use std::path::{Path, PathBuf};
+#[cfg(not(feature = "dev-tools"))]
+use std::time::Instant;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -224,6 +226,8 @@ mod hex_key_opt {
 pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<PersistedConfig> {
     use std::sync::{Arc, Mutex};
 
+    use crate::{fonts, palette, vortex};
+
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum Page {
         Welcome,
@@ -299,182 +303,324 @@ pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<Per
 
     struct App {
         state: Arc<Mutex<WizardState>>,
+        /// Animation clock for the starfield backdrop. Separate from any
+        /// wall-clock — driven from `Instant::now()` at app mount.
+        started: Instant,
     }
 
     impl eframe::App for App {
         fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+            // Starfield drifts at 60Hz like the launcher. Without an
+            // explicit repaint cadence egui would only repaint on input.
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+
+            // Esc as a global cancel — fullscreen removes the title-bar X,
+            // so keyboard escape is the only always-visible bail-out.
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                let mut s = self.state.lock().unwrap();
+                s.cancelled = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                return;
+            }
+
+            let time_s = self.started.elapsed().as_secs_f32();
             let mut s = self.state.lock().unwrap();
-            egui::CentralPanel::default().show(ctx, |ui| {
-                ui.add_space(24.0);
-                match s.page {
-                    Page::Welcome => {
-                        ui.heading("Skylander Portal Controller");
-                        ui.add_space(12.0);
-                        ui.label("First launch — let's set this up. Takes 30 seconds.");
-                        ui.add_space(20.0);
-                        ui.label(
-                            "We need your RPCS3 install path. A Skylanders firmware pack \
-                             is optional — you can also scan figures with an NFC reader, \
-                             or start empty and use in-game creation (Imaginators).",
+
+            egui::CentralPanel::default()
+                .frame(egui::Frame::none().fill(palette::SF_3))
+                .show(ctx, |ui| {
+                    let rect = ui.max_rect();
+                    vortex::paint_sky_background(ui.painter(), rect);
+                    vortex::paint_starfield(ui.painter(), rect, time_s);
+
+                    // Centre a constrained content column so the form
+                    // doesn't stretch across an 86" TV — readable at
+                    // 10 ft without eye-scan fatigue.
+                    let col_w = (rect.width() * 0.6).min(1100.0).max(720.0);
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(rect.height() * 0.08);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(col_w, 0.0),
+                            egui::Layout::top_down(egui::Align::LEFT),
+                            |ui| match s.page {
+                                Page::Welcome => render_welcome(ui, ctx, &mut s),
+                                Page::Rpcs3 => render_rpcs3(ui, &mut s),
+                                Page::FirmwarePack => render_pack(ui, &mut s),
+                                Page::Done => render_done(ui, ctx),
+                            },
                         );
-                        ui.add_space(16.0);
-                        // PLAN 6.5.4: surface reader presence so the user
-                        // knows what their onboarding options really are
-                        // before they click through.
-                        if s.reader_present {
-                            ui.colored_label(
-                                egui::Color32::GREEN,
-                                "✓  NFC reader detected — you can scan figures to build your library.",
-                            );
-                        } else {
-                            ui.colored_label(
-                                egui::Color32::from_rgb(180, 180, 180),
-                                "ℹ  No NFC reader detected. If you'd like to scan figures later, \
-                                 plug in an ACR122U and re-run setup.",
-                            );
-                        }
-                        ui.add_space(32.0);
-                        ui.horizontal(|ui| {
-                            if ui.button("Next").clicked() {
-                                s.page = Page::Rpcs3;
-                            }
-                            if ui.button("Cancel").clicked() {
-                                s.cancelled = true;
-                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                            }
-                        });
-                    }
-                    Page::Rpcs3 => {
-                        ui.heading("Step 1 of 2 — RPCS3");
-                        ui.add_space(12.0);
-                        ui.label("Path to rpcs3.exe:");
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                egui::TextEdit::singleline(&mut s.rpcs3_input).desired_width(500.0),
-                            );
-                            if ui.button("Browse...").clicked() {
-                                if let Some(p) = rfd::FileDialog::new()
-                                    .add_filter("rpcs3.exe", &["exe"])
-                                    .set_title("Select rpcs3.exe")
-                                    .pick_file()
-                                {
-                                    s.rpcs3_input = p.display().to_string();
-                                }
-                            }
-                        });
-                        ui.add_space(6.0);
-                        match s.rpcs3_valid() {
-                            Ok(()) => {
-                                ui.colored_label(egui::Color32::GREEN, "Valid — rpcs3.exe found.");
-                            }
-                            Err(e) => {
-                                ui.colored_label(egui::Color32::LIGHT_RED, format!("x  {e}"));
-                            }
-                        }
-                        ui.add_space(20.0);
-                        ui.horizontal(|ui| {
-                            if ui.button("Back").clicked() {
-                                s.page = Page::Welcome;
-                            }
-                            let enabled = s.rpcs3_valid().is_ok();
-                            if ui.add_enabled(enabled, egui::Button::new("Next")).clicked() {
-                                s.page = Page::FirmwarePack;
-                            }
-                        });
-                    }
-                    Page::FirmwarePack => {
-                        ui.heading("Step 2 of 2 — Firmware pack (optional)");
-                        ui.add_space(12.0);
-                        if s.reader_present {
-                            ui.label(
-                                "Pick the folder with your .sky files, or leave blank and \
-                                 scan figures in with your NFC reader.",
-                            );
-                        } else {
-                            ui.label(
-                                "Pick the folder with your .sky files. You can leave this \
-                                 blank to start empty, but without a reader or a pack your \
-                                 library will stay empty until you plug one in.",
-                            );
-                        }
-                        ui.add_space(12.0);
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                egui::TextEdit::singleline(&mut s.pack_input).desired_width(500.0),
-                            );
-                            if ui.button("Browse...").clicked() {
-                                if let Some(p) = rfd::FileDialog::new()
-                                    .set_title("Select firmware pack folder")
-                                    .pick_folder()
-                                {
-                                    s.pack_input = p.display().to_string();
-                                }
-                            }
-                            if !s.pack_input.trim().is_empty() && ui.button("Clear").clicked() {
-                                s.pack_input.clear();
-                            }
-                        });
-                        ui.add_space(6.0);
-                        if s.pack_skipped() {
-                            ui.colored_label(
-                                egui::Color32::from_rgb(180, 180, 180),
-                                "Skipping the pack — library starts empty.",
-                            );
-                        } else {
-                            match s.pack_valid() {
-                                Ok(()) => {
-                                    ui.colored_label(egui::Color32::GREEN, "Valid — .sky files found.");
-                                }
-                                Err(e) => {
-                                    ui.colored_label(egui::Color32::LIGHT_RED, format!("x  {e}"));
-                                }
-                            }
-                        }
-                        ui.add_space(20.0);
-                        ui.horizontal(|ui| {
-                            if ui.button("Back").clicked() {
-                                s.page = Page::Rpcs3;
-                            }
-                            let enabled = s.pack_valid().is_ok();
-                            let label = if s.pack_skipped() { "Finish (skip pack)" } else { "Finish" };
-                            if ui
-                                .add_enabled(enabled, egui::Button::new(label))
-                                .clicked()
-                            {
-                                let cfg = PersistedConfig::from_user_paths(
-                                    s.rpcs3_path(),
-                                    s.pack_path(),
-                                    &s.runtime_dir,
-                                );
-                                s.result = Some(cfg);
-                                s.page = Page::Done;
-                            }
-                        });
-                    }
-                    Page::Done => {
-                        ui.heading("All set!");
-                        ui.add_space(12.0);
-                        ui.label("Config saved. Launching the server...");
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
-                }
-            });
+                    });
+                });
         }
+    }
+
+    // ---- Per-page renderers ------------------------------------------
+
+    fn titan(size: f32) -> egui::FontId {
+        egui::FontId::new(size, egui::FontFamily::Name(fonts::TITAN_ONE.into()))
+    }
+
+    fn heading(ui: &mut egui::Ui, text: &str) {
+        ui.label(
+            egui::RichText::new(text)
+                .font(titan(palette::HEADING_LG * 0.6))
+                .color(palette::GOLD_BRIGHT),
+        );
+        ui.add_space(4.0);
+    }
+
+    fn subhead(ui: &mut egui::Ui, text: &str) {
+        ui.label(
+            egui::RichText::new(text)
+                .font(titan(palette::SUBHEAD))
+                .color(palette::GOLD_2),
+        );
+    }
+
+    fn body(ui: &mut egui::Ui, text: &str) {
+        ui.label(
+            egui::RichText::new(text)
+                .size(palette::BODY)
+                .color(palette::TEXT),
+        );
+    }
+
+    /// Rounded gold-outlined singleline input sized for TV viewing.
+    fn styled_input(ui: &mut egui::Ui, buf: &mut String, width: f32) {
+        let prev_stroke = ui.style().visuals.widgets.inactive.bg_stroke;
+        ui.style_mut().visuals.widgets.inactive.bg_stroke =
+            egui::Stroke::new(1.5, palette::GOLD_SHADOW);
+        ui.style_mut().visuals.widgets.hovered.bg_stroke =
+            egui::Stroke::new(1.5, palette::GOLD_MID);
+        ui.style_mut().visuals.widgets.active.bg_stroke =
+            egui::Stroke::new(2.0, palette::GOLD);
+        ui.add(
+            egui::TextEdit::singleline(buf)
+                .desired_width(width)
+                .font(egui::FontId::proportional(palette::BODY))
+                .text_color(palette::TEXT)
+                .margin(egui::vec2(10.0, 8.0)),
+        );
+        ui.style_mut().visuals.widgets.inactive.bg_stroke = prev_stroke;
+    }
+
+    fn primary_button(ui: &mut egui::Ui, enabled: bool, label: &str) -> egui::Response {
+        let btn = egui::Button::new(
+            egui::RichText::new(label)
+                .font(titan(palette::SUBHEAD))
+                .color(palette::SF_3),
+        )
+        .fill(palette::GOLD)
+        .rounding(egui::Rounding::same(10.0))
+        .min_size(egui::vec2(180.0, 52.0));
+        ui.add_enabled(enabled, btn)
+    }
+
+    fn ghost_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+        let btn = egui::Button::new(
+            egui::RichText::new(label)
+                .font(titan(palette::SUBHEAD))
+                .color(palette::GOLD_BRIGHT),
+        )
+        .fill(egui::Color32::TRANSPARENT)
+        .stroke(egui::Stroke::new(1.5, palette::GOLD_SHADOW))
+        .rounding(egui::Rounding::same(10.0))
+        .min_size(egui::vec2(140.0, 52.0));
+        ui.add(btn)
+    }
+
+    fn status_ok(ui: &mut egui::Ui, text: &str) {
+        ui.label(
+            egui::RichText::new(text)
+                .size(palette::BODY)
+                .color(palette::SUCCESS_GLOW),
+        );
+    }
+
+    fn status_err(ui: &mut egui::Ui, text: &str) {
+        ui.label(
+            egui::RichText::new(text)
+                .size(palette::BODY)
+                .color(palette::DANGER),
+        );
+    }
+
+    fn status_info(ui: &mut egui::Ui, text: &str) {
+        ui.label(
+            egui::RichText::new(text)
+                .size(palette::BODY)
+                .color(palette::TEXT_DIM),
+        );
+    }
+
+    fn render_welcome(ui: &mut egui::Ui, ctx: &egui::Context, s: &mut WizardState) {
+        ui.label(
+            egui::RichText::new("SKYLANDER PORTAL CONTROLLER")
+                .font(titan(palette::HEADING_LG))
+                .color(palette::GOLD_BRIGHT),
+        );
+        ui.add_space(8.0);
+        subhead(ui, "FIRST LAUNCH, ABOUT 30 SECONDS");
+        ui.add_space(28.0);
+        body(
+            ui,
+            "We need your RPCS3 install path. A Skylanders firmware pack is optional - \
+             you can also scan figures with an NFC reader, or start empty and use \
+             in-game creation (Imaginators).",
+        );
+        ui.add_space(24.0);
+        if s.reader_present {
+            status_ok(ui, "NFC reader detected - you can scan figures to build your library.");
+        } else {
+            status_info(
+                ui,
+                "No NFC reader detected. Plug in an ACR122U and re-run setup if you'd \
+                 like to scan figures later.",
+            );
+        }
+        ui.add_space(48.0);
+        ui.horizontal(|ui| {
+            if primary_button(ui, true, "NEXT").clicked() {
+                s.page = Page::Rpcs3;
+            }
+            ui.add_space(12.0);
+            if ghost_button(ui, "CANCEL").clicked() {
+                s.cancelled = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        });
+    }
+
+    fn render_rpcs3(ui: &mut egui::Ui, s: &mut WizardState) {
+        heading(ui, "STEP 1 OF 2");
+        subhead(ui, "RPCS3");
+        ui.add_space(24.0);
+        body(ui, "Path to rpcs3.exe:");
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            styled_input(ui, &mut s.rpcs3_input, 620.0);
+            ui.add_space(8.0);
+            if ghost_button(ui, "BROWSE").clicked() {
+                if let Some(p) = rfd::FileDialog::new()
+                    .add_filter("rpcs3.exe", &["exe"])
+                    .set_title("Select rpcs3.exe")
+                    .pick_file()
+                {
+                    s.rpcs3_input = p.display().to_string();
+                }
+            }
+        });
+        ui.add_space(12.0);
+        match s.rpcs3_valid() {
+            Ok(()) => status_ok(ui, "rpcs3.exe found."),
+            Err(e) => status_err(ui, &e.to_string()),
+        }
+        ui.add_space(36.0);
+        ui.horizontal(|ui| {
+            if ghost_button(ui, "BACK").clicked() {
+                s.page = Page::Welcome;
+            }
+            ui.add_space(12.0);
+            if primary_button(ui, s.rpcs3_valid().is_ok(), "NEXT").clicked() {
+                s.page = Page::FirmwarePack;
+            }
+        });
+    }
+
+    fn render_pack(ui: &mut egui::Ui, s: &mut WizardState) {
+        heading(ui, "STEP 2 OF 2");
+        subhead(ui, "FIRMWARE PACK (OPTIONAL)");
+        ui.add_space(24.0);
+        let copy = if s.reader_present {
+            "Pick the folder with your .sky files, or leave blank and scan figures in \
+             with your NFC reader."
+        } else {
+            "Pick the folder with your .sky files. You can leave this blank to start \
+             empty, but without a reader or a pack your library will stay empty until \
+             you plug one in."
+        };
+        body(ui, copy);
+        ui.add_space(16.0);
+        ui.horizontal(|ui| {
+            styled_input(ui, &mut s.pack_input, 620.0);
+            ui.add_space(8.0);
+            if ghost_button(ui, "BROWSE").clicked() {
+                if let Some(p) = rfd::FileDialog::new()
+                    .set_title("Select firmware pack folder")
+                    .pick_folder()
+                {
+                    s.pack_input = p.display().to_string();
+                }
+            }
+            if !s.pack_input.trim().is_empty() {
+                ui.add_space(8.0);
+                if ghost_button(ui, "CLEAR").clicked() {
+                    s.pack_input.clear();
+                }
+            }
+        });
+        ui.add_space(12.0);
+        if s.pack_skipped() {
+            status_info(ui, "Skipping the pack - library starts empty.");
+        } else {
+            match s.pack_valid() {
+                Ok(()) => status_ok(ui, ".sky files found."),
+                Err(e) => status_err(ui, &e.to_string()),
+            }
+        }
+        ui.add_space(36.0);
+        ui.horizontal(|ui| {
+            if ghost_button(ui, "BACK").clicked() {
+                s.page = Page::Rpcs3;
+            }
+            ui.add_space(12.0);
+            let label = if s.pack_skipped() {
+                "FINISH (SKIP PACK)"
+            } else {
+                "FINISH"
+            };
+            if primary_button(ui, s.pack_valid().is_ok(), label).clicked() {
+                let cfg = PersistedConfig::from_user_paths(
+                    s.rpcs3_path(),
+                    s.pack_path(),
+                    &s.runtime_dir,
+                );
+                s.result = Some(cfg);
+                s.page = Page::Done;
+            }
+        });
+    }
+
+    fn render_done(ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui.label(
+            egui::RichText::new("ALL SET!")
+                .font(titan(palette::HEADING_LG))
+                .color(palette::GOLD_BRIGHT),
+        );
+        ui.add_space(12.0);
+        body(ui, "Config saved. Launching the server...");
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 
     let state_for_app = state.clone();
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Skylander Portal Controller — Setup")
-            .with_inner_size([720.0, 480.0]),
+            .with_fullscreen(true),
         ..Default::default()
     };
     eframe::run_native(
         "skylander-portal-controller-wizard",
         native_options,
-        Box::new(move |_cc| {
+        Box::new(move |cc| {
+            // Pull in the launcher's palette (starfield blues + gold
+            // accents) and Titan One display face so the wizard and the
+            // launcher read as one piece.
+            palette::apply(&cc.egui_ctx);
+            fonts::register(&cc.egui_ctx);
             Ok(Box::new(App {
                 state: state_for_app,
+                started: Instant::now(),
             }))
         }),
     )
