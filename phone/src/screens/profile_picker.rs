@@ -2,7 +2,8 @@ use leptos::prelude::*;
 
 use crate::api::{create_profile, fetch_profiles, reset_pin, unlock_profile};
 use crate::components::{
-    BezelSize, BezelState, DisplayHeading, FramedPanel, GoldBezel, HeadingSize, PwaHint,
+    BezelSize, BezelState, CreditsOverlay, DisplayHeading, FramedPanel, GoldBezel, HeadingSize,
+    PwaHint,
 };
 use crate::model::PublicProfile;
 use crate::{event_target_value, push_toast, ToastMsg};
@@ -119,6 +120,7 @@ fn ProfileGrid(
     manage_gate: RwSignal<bool>,
 ) -> impl IntoView {
     let show_create = RwSignal::new(false);
+    let show_credits = RwSignal::new(false);
     let default_state: Signal<BezelState> = Signal::derive(|| BezelState::Default);
     let disabled_state: Signal<BezelState> = Signal::derive(|| BezelState::Disabled);
 
@@ -186,7 +188,12 @@ fn ProfileGrid(
                                 }
                             }}
                         </div>
-                        <div class="pp-tagline">"data & images from the skylanders wiki \u{00b7} cc by-sa"</div>
+                        <button
+                            class="pp-tagline"
+                            type="button"
+                            on:click=move |_| show_credits.set(true)
+                        >"CREDITS"</button>
+                        <CreditsOverlay open=show_credits />
                     }
                 >
                     <CreateProfileForm

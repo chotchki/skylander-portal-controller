@@ -1,5 +1,6 @@
 mod action_button;
 mod connection_lost;
+mod credits_overlay;
 mod display_heading;
 mod figure_hero;
 mod framed_panel;
@@ -14,6 +15,7 @@ mod toy_box;
 
 pub use action_button::*;
 pub use connection_lost::*;
+pub use credits_overlay::*;
 pub use display_heading::*;
 pub use figure_hero::*;
 pub use framed_panel::*;
