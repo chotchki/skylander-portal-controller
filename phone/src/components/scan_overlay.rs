@@ -140,13 +140,20 @@ pub fn ScanOverlay(
                         </div>
                         <p class="scan-figure-name">
                             {move || match scan_overlay.get() {
-                                ScanOverlayState::Success { display_name } => {
+                                ScanOverlayState::Success { display_name, .. } => {
                                     display_name.to_uppercase()
                                 }
                                 _ => String::new(),
                             }}
                         </p>
-                        <p class="scan-sub">"Added to your collection."</p>
+                        <p class="scan-sub">
+                            {move || match scan_overlay.get() {
+                                ScanOverlayState::Success { is_duplicate: true, .. } => {
+                                    "Already in your collection."
+                                }
+                                _ => "Added to your collection.",
+                            }}
+                        </p>
                         <div class="scan-actions">
                             <button
                                 class="scan-btn"

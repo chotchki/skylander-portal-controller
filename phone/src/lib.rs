@@ -58,7 +58,13 @@ pub(crate) struct GameCrashReason {
 pub(crate) enum ScanOverlayState {
     Closed,
     Prompt,
-    Success { display_name: String },
+    Success {
+        display_name: String,
+        /// Server says the tag has been scanned before (the `<uid>.sky`
+        /// existed prior to this dump). Drives copy: "Added to your
+        /// collection" vs "Already in your collection".
+        is_duplicate: bool,
+    },
     Timeout,
 }
 

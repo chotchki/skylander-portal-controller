@@ -259,6 +259,7 @@ fn spawn_connect(
                         figure_id: _,
                         variant: _,
                         display_name,
+                        is_duplicate,
                     }) => {
                         // Broadcast to all sessions. Two paths depending on
                         // whether the user is actively using the scan-import
@@ -268,6 +269,10 @@ fn spawn_connect(
                         // silently. Name falls back to "a new figure" when
                         // the parser couldn't extract a nickname (unknown
                         // figure_id, CYOS layout gap, etc. — see 6.2.9).
+                        // `is_duplicate` comes from the server — true when
+                        // the same uid has been scanned before. We branch
+                        // copy + toast level on it so repeated taps read
+                        // differently ("Already scanned" vs "Scanned").
                         let name_for_show = if display_name.trim().is_empty() {
                             "a new figure".to_string()
                         } else {
@@ -276,13 +281,21 @@ fn spawn_connect(
                         if scan_overlay.get_untracked() == crate::ScanOverlayState::Prompt {
                             scan_overlay.set(crate::ScanOverlayState::Success {
                                 display_name: name_for_show,
+                                is_duplicate,
                             });
                         } else {
-                            crate::push_toast_level(
-                                toasts,
-                                &format!("Scanned: {name_for_show}"),
-                                crate::ToastLevel::Success,
-                            );
+                            let (msg, level) = if is_duplicate {
+                                (
+                                    format!("Already scanned: {name_for_show}"),
+                                    crate::ToastLevel::Info,
+                                )
+                            } else {
+                                (
+                                    format!("Scanned: {name_for_show}"),
+                                    crate::ToastLevel::Success,
+                                )
+                            };
+                            crate::push_toast_level(toasts, &msg, level);
                         }
                     }
                     Err(err) => {

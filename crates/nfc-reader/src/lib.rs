@@ -21,7 +21,7 @@
 //! All three share the same IOCTL value (`SCARD_CTL_CODE(3500)`).
 
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use pcsc::{Card, Context as PcscContext, Protocols, Scope, ShareMode, ctl_code};
@@ -351,11 +351,6 @@ pub fn scan_once(reader: &Reader) -> Result<SkyDump> {
 
 // ---------------- Long-running scanner worker ----------------
 
-/// How long a just-scanned UID stays in the "already seen" set before we'd
-/// re-dump it. Prevents spamming the broadcast channel when a figure is
-/// left on the pad.
-const DEDUP_WINDOW: Duration = Duration::from_secs(5);
-
 /// Delay between reader-reopen attempts when the reader is unplugged or
 /// otherwise gone.
 const RECONNECT_BACKOFF: Duration = Duration::from_secs(2);
@@ -373,7 +368,16 @@ pub fn run_scanner_worker(events: broadcast::Sender<Event>, out_dir: std::path::
         return;
     }
 
-    let mut last_seen: Option<(Uid, Instant)> = None;
+    // Edge-detection state: `Some(uid)` means a figure is currently in the
+    // field; `None` means the field is empty. We broadcast a scan only on
+    // the empty→present transition (or when the present uid changes —
+    // swap without lifting). A figure left on the pad thus stays silent
+    // no matter how long it sits there; re-scanning requires lifting and
+    // placing, which matches the physical tap-to-add mental model.
+    //
+    // Reset per reader-cycle inside the inner loop below, not here: the
+    // outer loop re-opens the reader on unplug, and the edge history is
+    // meaningless across a reader swap.
     loop {
         let reader = match open_reader() {
             Ok(r) => {
@@ -391,17 +395,12 @@ pub fn run_scanner_worker(events: broadcast::Sender<Event>, out_dir: std::path::
         };
 
         // Inner poll loop — on any hard error, drop the reader and reopen.
+        let mut last_field: Option<Uid> = None;
         loop {
             match reader.list_passive_target() {
                 Ok(Some(uid)) => {
-                    let now = Instant::now();
-                    let fresh = match last_seen {
-                        Some((prev_uid, prev_t)) => {
-                            prev_uid != uid || now.duration_since(prev_t) > DEDUP_WINDOW
-                        }
-                        None => true,
-                    };
-                    if !fresh {
+                    let is_new_tap = last_field != Some(uid);
+                    if !is_new_tap {
                         std::thread::sleep(Duration::from_millis(200));
                         continue;
                     }
@@ -409,20 +408,23 @@ pub fn run_scanner_worker(events: broadcast::Sender<Event>, out_dir: std::path::
                     match dump_figure(&reader, uid) {
                         Ok(bytes) => {
                             let dump = SkyDump { uid, bytes };
-                            last_seen = Some((uid, now));
+                            // Mark the edge AFTER a successful dump so a
+                            // dump failure doesn't silence the next retry.
+                            last_field = Some(uid);
                             if let Err(e) = persist_and_broadcast(&dump, &out_dir, &events) {
                                 tracing::warn!(error = %e, uid = %dump.uid_hex(), "nfc-scanner: post-dump handling failed");
                             }
                         }
                         Err(e) => {
                             tracing::warn!(error = %e, uid = %format_uid(&uid), "nfc-scanner: dump failed — skipping this tap");
-                            // Don't update last_seen — let the user retry
-                            // without the dedupe window swallowing it.
                             std::thread::sleep(Duration::from_millis(500));
                         }
                     }
                 }
                 Ok(None) => {
+                    // Field cleared — lifting the figure off is what lets a
+                    // subsequent placement count as a fresh tap.
+                    last_field = None;
                     std::thread::sleep(Duration::from_millis(200));
                 }
                 Err(e) => {
@@ -441,6 +443,11 @@ fn persist_and_broadcast(
     events: &broadcast::Sender<Event>,
 ) -> Result<()> {
     let path = out_dir.join(format!("{}.sky", dump.uid_hex()));
+    // "Already in your collection" flag — true if we've seen this uid in
+    // a prior scan (the .sky exists on disk). We overwrite regardless so
+    // a re-scan can pick up newer on-tag state (level-ups, gold changes,
+    // future nickname updates). Existence check is cheap and pre-write.
+    let is_duplicate = path.exists();
     std::fs::write(&path, &dump.bytes)
         .with_context(|| format!("write {}", path.display()))?;
 
@@ -462,6 +469,7 @@ fn persist_and_broadcast(
         figure_id = format!("0x{:06X}", figure_id),
         variant = format!("0x{:04X}", variant),
         display_name = %display_name,
+        is_duplicate,
         path = %path.display(),
         "nfc-scanner: figure dumped"
     );
@@ -473,6 +481,7 @@ fn persist_and_broadcast(
         figure_id,
         variant,
         display_name,
+        is_duplicate,
     });
     Ok(())
 }

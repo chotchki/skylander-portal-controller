@@ -173,6 +173,8 @@ pub enum Event {
         variant: u16,
         #[serde(default)]
         display_name: String,
+        #[serde(default)]
+        is_duplicate: bool,
     },
 }
 
