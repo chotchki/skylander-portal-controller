@@ -444,15 +444,16 @@ fn persist_and_broadcast(
     std::fs::write(&path, &dump.bytes)
         .with_context(|| format!("write {}", path.display()))?;
 
-    // Parse identity fields only (figure_id + variant are plaintext block 0,
-    // always decodable). Non-Standard kinds and encrypted payload failures
-    // don't block the event — we just want the phone to know a figure
-    // arrived in the library.
-    let (figure_id, variant) = match skylander_sky_parser::parse(&dump.bytes) {
-        Ok(stats) => (stats.figure_id, stats.variant),
+    // Parse identity fields — figure_id + variant are plaintext block 0,
+    // always decodable. Nickname is encrypted-payload territory and can
+    // fail (wrong FigureKind classification, CYOS layout gap, etc.); we
+    // surface whatever the parser gives us and let the phone fall back
+    // to the uid when empty.
+    let (figure_id, variant, display_name) = match skylander_sky_parser::parse(&dump.bytes) {
+        Ok(stats) => (stats.figure_id, stats.variant, stats.nickname.clone()),
         Err(e) => {
             tracing::warn!(error = ?e, uid = %dump.uid_hex(), "nfc-scanner: parse failed — emitting scan event anyway with unknown identity");
-            (0, 0)
+            (0, 0, String::new())
         }
     };
 
@@ -460,6 +461,7 @@ fn persist_and_broadcast(
         uid = %dump.uid_hex(),
         figure_id = format!("0x{:06X}", figure_id),
         variant = format!("0x{:04X}", variant),
+        display_name = %display_name,
         path = %path.display(),
         "nfc-scanner: figure dumped"
     );
@@ -470,6 +472,7 @@ fn persist_and_broadcast(
         uid: dump.uid_hex(),
         figure_id,
         variant,
+        display_name,
     });
     Ok(())
 }

@@ -28,6 +28,7 @@ pub fn connect(
     takeover: RwSignal<Option<TakeoverReason>>,
     resume_offer: RwSignal<Option<ResumeOffer>>,
     game_crash: RwSignal<Option<GameCrashReason>>,
+    scan_overlay: RwSignal<crate::ScanOverlayState>,
     reconnect_attempts: RwSignal<u32>,
     manual_retry: RwSignal<u32>,
 ) {
@@ -54,6 +55,7 @@ pub fn connect(
                         takeover,
                         resume_offer,
                         game_crash,
+                        scan_overlay,
                         reconnect_attempts,
                         manual_retry,
                         pending.clone(),
@@ -74,6 +76,7 @@ pub fn connect(
         takeover,
         resume_offer,
         game_crash,
+        scan_overlay,
         reconnect_attempts,
         manual_retry,
         pending,
@@ -99,6 +102,7 @@ fn spawn_connect(
     takeover: RwSignal<Option<TakeoverReason>>,
     resume_offer: RwSignal<Option<ResumeOffer>>,
     game_crash: RwSignal<Option<GameCrashReason>>,
+    scan_overlay: RwSignal<crate::ScanOverlayState>,
     reconnect_attempts: RwSignal<u32>,
     manual_retry: RwSignal<u32>,
     pending: PendingTimer,
@@ -127,6 +131,7 @@ fn spawn_connect(
                 takeover,
                 resume_offer,
                 game_crash,
+                scan_overlay,
                 reconnect_attempts,
                 manual_retry,
                 pending,
@@ -159,6 +164,7 @@ fn spawn_connect(
         let current_game = current_game;
         let unlocked_profile = unlocked_profile;
         let takeover = takeover;
+        let scan_overlay = scan_overlay;
         let on_msg = Closure::<dyn FnMut(MessageEvent)>::new(move |e: MessageEvent| {
             if let Some(text) = e.data().as_string() {
                 match serde_json::from_str::<Event>(&text) {
@@ -248,6 +254,37 @@ fn spawn_connect(
                             resume_offer.set(Some(ResumeOffer { slots }));
                         }
                     }
+                    Ok(Event::FigureScanned {
+                        uid: _,
+                        figure_id: _,
+                        variant: _,
+                        display_name,
+                    }) => {
+                        // Broadcast to all sessions. Two paths depending on
+                        // whether the user is actively using the scan-import
+                        // flow: if the overlay is open in Prompt, flip it to
+                        // Success so they see confirmation; otherwise fire a
+                        // passive toast so ambient scans don't vanish
+                        // silently. Name falls back to "a new figure" when
+                        // the parser couldn't extract a nickname (unknown
+                        // figure_id, CYOS layout gap, etc. — see 6.2.9).
+                        let name_for_show = if display_name.trim().is_empty() {
+                            "a new figure".to_string()
+                        } else {
+                            display_name.clone()
+                        };
+                        if scan_overlay.get_untracked() == crate::ScanOverlayState::Prompt {
+                            scan_overlay.set(crate::ScanOverlayState::Success {
+                                display_name: name_for_show,
+                            });
+                        } else {
+                            crate::push_toast_level(
+                                toasts,
+                                &format!("Scanned: {name_for_show}"),
+                                crate::ToastLevel::Success,
+                            );
+                        }
+                    }
                     Err(err) => {
                         dev_warn!("bad ws message: {err} — {text}");
                     }
@@ -268,6 +305,7 @@ fn spawn_connect(
         let takeover = takeover;
         let resume_offer = resume_offer;
         let game_crash = game_crash;
+        let scan_overlay = scan_overlay;
         let pending = pending;
         let on_close = Closure::<dyn FnMut()>::new(move || {
             let prev = reconnect_attempts.get_untracked();
@@ -285,6 +323,7 @@ fn spawn_connect(
                 takeover,
                 resume_offer,
                 game_crash,
+                scan_overlay,
                 reconnect_attempts,
                 manual_retry,
                 pending.clone(),
@@ -313,6 +352,7 @@ fn schedule_reconnect(
     takeover: RwSignal<Option<TakeoverReason>>,
     resume_offer: RwSignal<Option<ResumeOffer>>,
     game_crash: RwSignal<Option<GameCrashReason>>,
+    scan_overlay: RwSignal<crate::ScanOverlayState>,
     reconnect_attempts: RwSignal<u32>,
     manual_retry: RwSignal<u32>,
     pending: PendingTimer,
@@ -334,6 +374,7 @@ fn schedule_reconnect(
             takeover,
             resume_offer,
             game_crash,
+            scan_overlay,
             reconnect_attempts,
             manual_retry,
             pending_for_cb,

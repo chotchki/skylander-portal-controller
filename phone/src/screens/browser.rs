@@ -5,7 +5,7 @@ use crate::components::{
 };
 use crate::model::{Category, Element, GameOfOrigin, PublicFigure, Slot, SlotState, SLOT_COUNT};
 use crate::screens::FigureDetail;
-use crate::{event_target_value, ToastMsg};
+use crate::{event_target_value, ScanOverlayState, ToastMsg};
 
 #[component]
 pub(crate) fn Browser(
@@ -17,6 +17,7 @@ pub(crate) fn Browser(
     category_filter: RwSignal<Option<Category>>,
     search: RwSignal<String>,
     toasts: RwSignal<Vec<ToastMsg>>,
+    scan_overlay: RwSignal<ScanOverlayState>,
 ) -> impl IntoView {
     let all_figures = StoredValue::new(figures);
     let selected_figure = RwSignal::new(None::<PublicFigure>);
@@ -95,6 +96,22 @@ pub(crate) fn Browser(
                         }
                     >
                         <div class="figure-grid-p4">
+                            // Plus-card (PLAN 6.5.2): pinned at position 0
+                            // so adding a figure feels like "there's
+                            // always a slot for a new one" rather than an
+                            // off-screen button. Opens the scan overlay;
+                            // the 6.5.1 scanner worker is already polling,
+                            // so success arrives as Event::FigureScanned.
+                            <button
+                                class="fig-card-p4 scan-new"
+                                aria-label="Add a figure by tapping it on the scanner"
+                                on:click=move |_| scan_overlay.set(ScanOverlayState::Prompt)
+                            >
+                                <div class="fig-bezel-p4">
+                                    <div class="scan-new-bezel"></div>
+                                </div>
+                                <div class="fig-name-p4 scan-new-label">"SCAN NEW"</div>
+                            </button>
                             <For
                                 each=move || filtered.get()
                                 key=|f: &PublicFigure| f.id.clone()

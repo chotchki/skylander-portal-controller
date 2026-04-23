@@ -88,10 +88,15 @@ pub enum Event {
     /// - `uid`: 8-char uppercase hex of the Mifare NUID (doubles as filename stem).
     /// - `figure_id`: tag's 24-bit toy type; 0 if parse failed.
     /// - `variant`: tag's 16-bit variant word; 0 if parse failed.
+    /// - `display_name`: parser-derived nickname for the UI ("Snap Shot",
+    ///   "Eruptor", etc.). Best-effort — empty for parse failures, and for
+    ///   Creation Crystals / CYOS tags the default-nickname offset decodes
+    ///   as mojibake until 6.2.9 pins the CYOS layout (PLAN 6.5.0 notes).
     FigureScanned {
         uid: String,
         figure_id: u32,
         variant: u16,
+        display_name: String,
     },
 }
 

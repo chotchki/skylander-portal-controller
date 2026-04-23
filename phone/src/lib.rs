@@ -15,7 +15,7 @@ mod ws;
 use leptos::prelude::*;
 
 use crate::api::{fetch_games, fetch_status};
-use crate::components::{ConnectionLost, GameCrashScreen, Header, KaosOverlay};
+use crate::components::{ConnectionLost, GameCrashScreen, Header, KaosOverlay, ScanOverlay};
 use crate::model::{
     Category, ConnState, Element, GameLaunched, GameOfOrigin, PublicProfile, Slot, SlotState,
     UnlockedProfile, SLOT_COUNT,
@@ -47,6 +47,19 @@ pub(crate) struct ResumeOffer {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct GameCrashReason {
     pub message: String,
+}
+
+/// NFC scan-to-import overlay state (PLAN 6.5.2). `Closed` is the default;
+/// tapping the `+` card in the toy box flips to `Prompt`; the WS handler
+/// for [`Event::FigureScanned`] flips `Prompt → Success` so the user sees
+/// what landed. The overlay component owns its own timeout timer that
+/// bumps `Prompt → Timeout` after ~30s of no scan.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ScanOverlayState {
+    Closed,
+    Prompt,
+    Success { display_name: String },
+    Timeout,
 }
 
 /// In-flight "reset this figure to a fresh copy?" prompt. Set when the user
@@ -104,6 +117,7 @@ pub fn App() -> impl IntoView {
     let takeover = RwSignal::new(None::<TakeoverReason>);
     let resume_offer = RwSignal::new(None::<ResumeOffer>);
     let game_crash = RwSignal::new(None::<GameCrashReason>);
+    let scan_overlay = RwSignal::new(ScanOverlayState::Closed);
     let reset_target = RwSignal::new(None::<ResetTarget>);
     let menu_open = RwSignal::new(false);
     // Konami-gate trigger shared between the kebab menu's MANAGE PROFILES action
@@ -152,6 +166,7 @@ pub fn App() -> impl IntoView {
         takeover,
         resume_offer,
         game_crash,
+        scan_overlay,
         reconnect_attempts,
         manual_retry,
     );
@@ -252,6 +267,7 @@ pub fn App() -> impl IntoView {
                                 category_filter
                                 search
                                 toasts
+                                scan_overlay
                             />
                         })}
                     </Suspense>
@@ -264,6 +280,7 @@ pub fn App() -> impl IntoView {
                 <ResumeModal resume_offer toasts />
             </Show>
             <ResetConfirmModal reset_target toasts />
+            <ScanOverlay scan_overlay toasts />
             <MenuOverlay
                 open=menu_open
                 unlocked_profile

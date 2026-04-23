@@ -9,6 +9,7 @@ mod header;
 mod kaos_overlay;
 mod pwa_hint;
 mod ray_halo;
+mod scan_overlay;
 mod toy_box;
 
 pub use action_button::*;
@@ -22,4 +23,5 @@ pub use header::*;
 pub use kaos_overlay::*;
 pub use pwa_hint::*;
 pub use ray_halo::*;
+pub use scan_overlay::*;
 pub use toy_box::*;

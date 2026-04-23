@@ -160,6 +160,20 @@ pub enum Event {
         #[serde(default)]
         message: String,
     },
+    /// A figure was scanned on the attached NFC reader. PLAN 6.5.2 — phone
+    /// listens for this to drive the scan-import overlay from Prompt →
+    /// Success (if open) or to fire a passive "Scanned: <name>" toast
+    /// otherwise.
+    FigureScanned {
+        #[serde(default)]
+        uid: String,
+        #[serde(default)]
+        figure_id: u32,
+        #[serde(default)]
+        variant: u16,
+        #[serde(default)]
+        display_name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
