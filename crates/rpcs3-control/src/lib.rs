@@ -9,7 +9,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
-use skylander_core::{InstalledGame, SLOT_COUNT, SlotIndex, SlotState};
+use skylander_core::{SLOT_COUNT, SlotIndex, SlotState};
 
 /// Drive the emulated Skylanders portal.
 ///
@@ -62,18 +62,7 @@ pub trait PortalDriver: Send + Sync {
     /// "always-running RPCS3" contract. Returns once the game viewport
     /// has disappeared or `timeout` elapses.
     fn stop_emulation(&self, timeout: Duration) -> Result<()>;
-
-    /// Return the Skylanders titles the emulator knows about. The UIA
-    /// impl parses RPCS3's `games.yml` (filtering to serials in
-    /// `SKYLANDERS_SERIALS` whose `EBOOT.BIN` exists on disk); the mock
-    /// impl returns a seeded list — defaults to every supported title so
-    /// dev-mode manual testing has a populated game picker out of the
-    /// box. This is the sole source for the phone-facing game picker,
-    /// so `main.rs` doesn't have to cfg-branch on driver kind.
-    fn list_installed_games(&self) -> Result<Vec<InstalledGame>>;
 }
-
-pub mod games_yaml;
 
 #[cfg(windows)]
 pub mod uia;
@@ -135,19 +124,6 @@ impl RpcsProcess {
                 "RPCS3 process management is only supported on Windows; \
                  use SKYLANDER_PORTAL_DRIVER=mock on this platform"
             )
-        }
-    }
-
-    /// Launch RPCS3 directly into a game by EBOOT path (Windows only, legacy).
-    pub fn launch(exe: &Path, eboot: &Path) -> Result<Self> {
-        #[cfg(windows)]
-        {
-            UiaRpcsProcess::launch(exe, eboot).map(Self::Uia)
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = (exe, eboot);
-            bail!("RPCS3 process management is only supported on Windows")
         }
     }
 

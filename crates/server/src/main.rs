@@ -236,7 +236,6 @@ fn main() -> Result<()> {
     let figure_index_for_task = figure_index.clone();
     #[cfg(feature = "nfc-import")]
     let tag_identity_map_for_task = tag_identity_map.clone();
-    let games_yaml_for_task = cfg.games_yaml.clone();
     let join_qr_png_for_task = join_qr_png.clone();
 
     let status_for_errors = launcher_status.clone();
@@ -263,23 +262,13 @@ fn main() -> Result<()> {
             };
             rt.block_on(async move {
                 let (driver, test_mock): (Arc<dyn PortalDriver>, _) =
-                    match build_driver(driver_kind, games_yaml_for_task.clone()) {
+                    match build_driver(driver_kind) {
                         Ok(d) => d,
                         Err(e) => {
                             report_fatal("failed to construct driver", &e);
                             return;
                         }
                     };
-                let games = match driver.list_installed_games() {
-                    Ok(g) => {
-                        info!(count = g.len(), "loaded Skylanders game catalogue");
-                        g
-                    }
-                    Err(e) => {
-                        warn!("driver.list_installed_games() failed: {e}");
-                        Vec::new()
-                    }
-                };
                 let db_path = match crate::profiles::resolve_db_path() {
                     Ok(p) => p,
                     Err(e) => {
@@ -343,6 +332,112 @@ fn main() -> Result<()> {
                     runtime_dir_for_task.join("scanned"),
                     tag_identity_map_for_task.clone(),
                 );
+                // Bind is the most common startup failure (port already
+                // in use, permission denied on a privileged port). Don't
+                // panic — flip the launcher to ServerError so the user
+                // sees the actual reason instead of a closed window.
+                let listener = match tokio::net::TcpListener::bind(bind_addr).await {
+                    Ok(l) => l,
+                    Err(e) => {
+                        report_fatal(&format!("bind {bind_addr}"), &e);
+                        return;
+                    }
+                };
+                // Spawn RPCS3 at startup (PLAN 4.15.16) so the emulator
+                // is ready by the time the phone reaches the game
+                // picker. Under the mock driver we install a Mock
+                // variant that always reports alive — same lifecycle
+                // shape, no real process — so `/api/launch` passes its
+                // `process.is_some()` gate on Mac/Linux dev without
+                // `/api/_test/*` hacks. Hard-fails on spawn error per
+                // the "starting-screen makes sense" decision: egui's
+                // LaunchPhase::Startup already gates on rpcs3_running,
+                // so the cloud vortex persists while we wait, and on
+                // error flips straight to ServerError with the
+                // diagnostic.
+                //
+                // This block intentionally runs BEFORE the "serving on"
+                // log: test harnesses (TestServer::spawn_live) scrape
+                // that line as their readiness signal, so it must imply
+                // "RPCS3 is up + axum is about to accept connections",
+                // not "listener bound but RPCS3 still starting up".
+                let spawn_result: Result<RpcsProcess, anyhow::Error> = match driver_kind {
+                    crate::config::DriverKind::Uia => {
+                        let rpcs3_exe_clone = rpcs3_exe.clone();
+                        match tokio::task::spawn_blocking(
+                            move || -> anyhow::Result<RpcsProcess> {
+                                let mut proc = RpcsProcess::launch_library(&rpcs3_exe_clone)?;
+                                proc.wait_ready(std::time::Duration::from_secs(45))?;
+                                Ok(proc)
+                            },
+                        )
+                        .await
+                        {
+                            Ok(inner) => inner,
+                            Err(e) => Err(anyhow::anyhow!("RPCS3 spawn task panicked: {e}")),
+                        }
+                    }
+                    crate::config::DriverKind::Mock => Ok(RpcsProcess::mock()),
+                };
+                match spawn_result {
+                    Ok(proc) => {
+                        let mut guard = rpcs3_for_task.lock().await;
+                        guard.process = Some(proc);
+                        drop(guard);
+                        if let Ok(mut st) = status_for_task.lock() {
+                            st.rpcs3_running = true;
+                        }
+                        info!(?driver_kind, "RPCS3 lifecycle ready");
+                    }
+                    Err(e) => {
+                        report_fatal("spawn RPCS3 at startup", &e);
+                        return;
+                    }
+                }
+
+                // PLAN 3.7.8 phase 2: game catalogue is now truth-from-UIA.
+                // Enumerate the library via the driver worker (same job the
+                // /api/launch handler uses for verify-at-launch), then filter
+                // to supported Skylanders serials using SKYLANDERS_SERIALS.
+                // Drops the games.yml dependency entirely — if a user removes
+                // a game from RPCS3's library, the picker reflects that on
+                // the next server restart. A failure here logs + starts with
+                // an empty catalogue rather than aborting; user sees "no games
+                // installed" in the picker and can re-scan in RPCS3.
+                let games = {
+                    let (etx, erx) = tokio::sync::oneshot::channel();
+                    if let Err(e) = driver_tx
+                        .send(crate::state::DriverJob::EnumerateGames {
+                            timeout: std::time::Duration::from_secs(5),
+                            done: etx,
+                        })
+                        .await
+                    {
+                        warn!("queue EnumerateGames at startup: {e}");
+                        Vec::<skylander_core::InstalledGame>::new()
+                    } else {
+                        match erx.await {
+                            Ok(Ok(serials)) => {
+                                let catalogue = serials_to_catalogue(&serials);
+                                info!(
+                                    installed = catalogue.len(),
+                                    enumerated = serials.len(),
+                                    "loaded Skylanders game catalogue from RPCS3 library",
+                                );
+                                catalogue
+                            }
+                            Ok(Err(e)) => {
+                                warn!("enumerate_games at startup failed: {e}");
+                                Vec::new()
+                            }
+                            Err(e) => {
+                                warn!("EnumerateGames ack dropped: {e}");
+                                Vec::new()
+                            }
+                        }
+                    }
+                };
+
                 let state = Arc::new(AppState {
                     figures: figures_for_task,
                     figure_index: figure_index_for_task,
@@ -378,68 +473,6 @@ fn main() -> Result<()> {
                 let () = test_mock;
 
                 let app = http::router(state.clone(), phone_dist);
-                // Bind is the most common startup failure (port already
-                // in use, permission denied on a privileged port). Don't
-                // panic — flip the launcher to ServerError so the user
-                // sees the actual reason instead of a closed window.
-                let listener = match tokio::net::TcpListener::bind(bind_addr).await {
-                    Ok(l) => l,
-                    Err(e) => {
-                        report_fatal(&format!("bind {bind_addr}"), &e);
-                        return;
-                    }
-                };
-                // Spawn RPCS3 at startup (PLAN 4.15.16) so the emulator
-                // is ready by the time the phone reaches the game
-                // picker. Under the mock driver we install a Mock
-                // variant that always reports alive — same lifecycle
-                // shape, no real process — so `/api/launch` passes its
-                // `process.is_some()` gate on Mac/Linux dev without
-                // `/api/_test/*` hacks. Hard-fails on spawn error per
-                // the "starting-screen makes sense" decision: egui's
-                // LaunchPhase::Startup already gates on rpcs3_running,
-                // so the cloud vortex persists while we wait, and on
-                // error flips straight to ServerError with the
-                // diagnostic.
-                //
-                // This block intentionally runs BEFORE the "serving on"
-                // log: test harnesses (TestServer::spawn_live) scrape
-                // that line as their readiness signal, so it must imply
-                // "RPCS3 is up + axum is about to accept connections",
-                // not "listener bound but RPCS3 still starting up".
-                let spawn_result: Result<RpcsProcess, anyhow::Error> = match driver_kind {
-                    crate::config::DriverKind::Uia => {
-                        let rpcs3_exe_clone = state.rpcs3_exe.clone();
-                        match tokio::task::spawn_blocking(
-                            move || -> anyhow::Result<RpcsProcess> {
-                                let mut proc = RpcsProcess::launch_library(&rpcs3_exe_clone)?;
-                                proc.wait_ready(std::time::Duration::from_secs(45))?;
-                                Ok(proc)
-                            },
-                        )
-                        .await
-                        {
-                            Ok(inner) => inner,
-                            Err(e) => Err(anyhow::anyhow!("RPCS3 spawn task panicked: {e}")),
-                        }
-                    }
-                    crate::config::DriverKind::Mock => Ok(RpcsProcess::mock()),
-                };
-                match spawn_result {
-                    Ok(proc) => {
-                        let mut guard = state.rpcs3.lock().await;
-                        guard.process = Some(proc);
-                        drop(guard);
-                        if let Ok(mut st) = state.launcher_status.lock() {
-                            st.rpcs3_running = true;
-                        }
-                        info!(?driver_kind, "RPCS3 lifecycle ready");
-                    }
-                    Err(e) => {
-                        report_fatal("spawn RPCS3 at startup", &e);
-                        return;
-                    }
-                }
 
                 info!("serving on http://{bind_addr}");
                 // Tell the launcher UI the server is healthy. Until
@@ -521,12 +554,28 @@ type TestMockHandle = ();
 
 type DriverBundle = (Arc<dyn PortalDriver>, TestMockHandle);
 
-fn build_driver(kind: DriverKind, games_yaml: std::path::PathBuf) -> Result<DriverBundle> {
+/// Convert a list of RPCS3 library serials (from `enumerate_games`) into the
+/// phone-facing `InstalledGame` catalogue. Filters out non-Skylanders serials
+/// the library happens to hold and attaches the canonical display name from
+/// `SKYLANDERS_SERIALS`. Return order matches `SKYLANDERS_SERIALS` (release
+/// order) so the phone picker is stable across sessions.
+fn serials_to_catalogue(serials: &[String]) -> Vec<skylander_core::InstalledGame> {
+    skylander_core::SKYLANDERS_SERIALS
+        .iter()
+        .filter(|(serial, _)| serials.iter().any(|s| s == serial))
+        .map(|(serial, display)| skylander_core::InstalledGame {
+            serial: skylander_core::GameSerial::new(*serial),
+            display_name: (*display).to_string(),
+        })
+        .collect()
+}
+
+fn build_driver(kind: DriverKind) -> Result<DriverBundle> {
     match kind {
         DriverKind::Uia => {
             #[cfg(windows)]
             {
-                let d = skylander_rpcs3_control::UiaPortalDriver::new(games_yaml)?;
+                let d = skylander_rpcs3_control::UiaPortalDriver::new()?;
                 let arc: Arc<dyn PortalDriver> = Arc::new(d);
                 #[cfg(feature = "test-hooks")]
                 return Ok((arc, None));
@@ -537,9 +586,6 @@ fn build_driver(kind: DriverKind, games_yaml: std::path::PathBuf) -> Result<Driv
             anyhow::bail!("UIA driver only available on Windows");
         }
         DriverKind::Mock => {
-            // Mock driver doesn't care about games.yml — its installed-games
-            // catalogue is seeded from `SKYLANDERS_SERIALS` at construction.
-            let _ = games_yaml;
             #[cfg(feature = "dev-tools")]
             {
                 let mock = Arc::new(skylander_rpcs3_control::MockPortalDriver::new());

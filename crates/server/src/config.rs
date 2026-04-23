@@ -19,8 +19,6 @@ pub struct Config {
     #[allow(dead_code)] // used for game launching in Phase 3
     pub rpcs3_exe: PathBuf,
     pub firmware_pack_root: PathBuf,
-    #[allow(dead_code)] // used for game catalogue in Phase 3
-    pub games_yaml: PathBuf,
     pub bind_port: u16,
     pub driver_kind: DriverKind,
     /// Directory where the log file(s) live. Differs dev vs release.
@@ -85,13 +83,6 @@ pub fn load() -> Result<Config> {
         .map(PathBuf::from)
         .unwrap_or_default();
 
-    let games_yaml = env.get("GAMES_YAML").map(PathBuf::from).unwrap_or_else(|| {
-        rpcs3_exe
-            .parent()
-            .map(|p| p.join("config").join("games.yml"))
-            .unwrap_or_else(|| PathBuf::from("games.yml"))
-    });
-
     let bind_port: u16 = env
         .get("BIND_PORT")
         .map(|s| s.parse())
@@ -124,7 +115,6 @@ pub fn load() -> Result<Config> {
     Ok(Config {
         rpcs3_exe,
         firmware_pack_root,
-        games_yaml,
         bind_port,
         driver_kind,
         log_dir,
@@ -193,7 +183,6 @@ pub fn load() -> Result<Config> {
     Ok(Config {
         rpcs3_exe: persisted.rpcs3_exe,
         firmware_pack_root: persisted.firmware_pack_root,
-        games_yaml: persisted.games_yaml,
         bind_port: persisted.bind_port,
         driver_kind: match persisted.driver_kind {
             PersistedDriverKind::Uia => DriverKind::Uia,

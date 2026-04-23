@@ -133,7 +133,6 @@ pub fn default_firmware_pack_guess() -> Option<PathBuf> {
 pub struct PersistedConfig {
     pub rpcs3_exe: PathBuf,
     pub firmware_pack_root: PathBuf,
-    pub games_yaml: PathBuf,
     pub bind_port: u16,
     pub driver_kind: PersistedDriverKind,
     pub log_dir: PathBuf,
@@ -161,11 +160,6 @@ impl PersistedConfig {
         firmware_pack_root: PathBuf,
         runtime_dir: &Path,
     ) -> Self {
-        let games_yaml = rpcs3_exe
-            .parent()
-            .map(|p| p.join("config").join("games.yml"))
-            .unwrap_or_else(|| PathBuf::from("games.yml"));
-
         let exe_parent = std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(|p| p.to_path_buf()))
@@ -174,7 +168,6 @@ impl PersistedConfig {
         PersistedConfig {
             rpcs3_exe,
             firmware_pack_root,
-            games_yaml,
             bind_port: 8765,
             driver_kind: PersistedDriverKind::Uia,
             log_dir: runtime_dir.join("logs"),

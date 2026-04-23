@@ -7,9 +7,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use anyhow::{Result, anyhow};
-use skylander_core::{
-    GameSerial, InstalledGame, SKYLANDERS_SERIALS, SLOT_COUNT, SlotIndex, SlotState,
-};
+use skylander_core::{SLOT_COUNT, SlotIndex, SlotState};
 
 use crate::PortalDriver;
 
@@ -35,15 +33,11 @@ pub struct MockPortalDriver {
     latency: Duration,
     /// Queued outcomes for upcoming `load` calls.
     load_queue: Mutex<VecDeque<MockOutcome>>,
-    /// Mocked library enumeration result. Defaults to empty so unconfigured
-    /// tests get the "stale games.yml" error path; tests that need the
-    /// happy path call `set_enumerated_games` to publish serials.
+    /// Mocked library enumeration result. Defaults to every supported
+    /// Skylanders serial so dev-mode manual testing has a populated
+    /// game picker out of the box; unit tests override via
+    /// `set_enumerated_games`.
     enumerated_games: Mutex<Vec<String>>,
-    /// Installed-game catalogue surfaced via `list_installed_games`.
-    /// Seeded with every title in `SKYLANDERS_SERIALS` so dev-mode
-    /// manual testing has a populated game picker out of the box;
-    /// unit tests override via `set_installed_games`.
-    installed_games: Mutex<Vec<InstalledGame>>,
 }
 
 impl MockPortalDriver {
@@ -57,8 +51,7 @@ impl MockPortalDriver {
             dialog_open: Mutex::new(false),
             latency,
             load_queue: Mutex::new(VecDeque::new()),
-            enumerated_games: Mutex::new(Vec::new()),
-            installed_games: Mutex::new(default_installed_games()),
+            enumerated_games: Mutex::new(default_serials()),
         }
     }
 
@@ -77,17 +70,10 @@ impl MockPortalDriver {
 
     /// Set the list of serials that the next `enumerate_games` call will
     /// return. Replaces any previous list. Drives the 3.7.8 verify-at-launch
-    /// test path: empty (default) simulates "no library / serial missing",
+    /// test path: empty simulates "no library / serial missing",
     /// `vec!["BLUS31076"]` simulates a library that has SWAP Force only.
     pub fn set_enumerated_games(&self, serials: Vec<String>) {
         *self.enumerated_games.lock().unwrap() = serials;
-    }
-
-    /// Replace the `list_installed_games` catalogue. Used by unit tests
-    /// that want an empty or narrowed game picker; dev-mode defaults to
-    /// every Skylanders title.
-    pub fn set_installed_games(&self, games: Vec<InstalledGame>) {
-        *self.installed_games.lock().unwrap() = games;
     }
 
     fn delay(&self) {
@@ -173,23 +159,14 @@ impl PortalDriver for MockPortalDriver {
         // to flip `current_game` back to None directly.
         Ok(())
     }
-
-    fn list_installed_games(&self) -> Result<Vec<InstalledGame>> {
-        Ok(self.installed_games.lock().unwrap().clone())
-    }
 }
 
-/// Every title in `SKYLANDERS_SERIALS`, with an empty `sky_root` — the
-/// mock has no real PS3 payload, so a boot against one of these would
-/// fail at the UIA step (but `DriverKind::Mock` never boots anyway).
-fn default_installed_games() -> Vec<InstalledGame> {
-    SKYLANDERS_SERIALS
+/// Seed `enumerate_games` with every supported Skylanders serial so
+/// dev-mode manual testing has a populated game picker out of the box.
+fn default_serials() -> Vec<String> {
+    skylander_core::SKYLANDERS_SERIALS
         .iter()
-        .map(|(serial, display)| InstalledGame {
-            serial: GameSerial::new(*serial),
-            display_name: (*display).to_string(),
-            sky_root: std::path::PathBuf::new(),
-        })
+        .map(|(serial, _)| (*serial).to_string())
         .collect()
 }
 
@@ -245,22 +222,12 @@ mod tests {
     }
 
     #[test]
-    fn installed_games_defaults_to_all_skylanders_and_round_trips_override() {
+    fn enumerate_games_defaults_to_all_skylanders_and_round_trips_set() {
         let d = MockPortalDriver::with_latency(Duration::ZERO);
-        let got = d.list_installed_games().unwrap();
-        assert_eq!(got.len(), SKYLANDERS_SERIALS.len());
-        assert_eq!(got[0].serial.as_str(), SKYLANDERS_SERIALS[0].0);
-
-        // Tests that need a narrowed picker can override.
-        d.set_installed_games(vec![]);
-        assert!(d.list_installed_games().unwrap().is_empty());
-    }
-
-    #[test]
-    fn enumerate_games_defaults_empty_and_round_trips_set() {
-        let d = MockPortalDriver::with_latency(Duration::ZERO);
-        // Default: empty list = "no library / nothing installed".
-        assert!(d.enumerate_games(Duration::ZERO).unwrap().is_empty());
+        // Default: every supported Skylanders serial.
+        let got = d.enumerate_games(Duration::ZERO).unwrap();
+        assert_eq!(got.len(), skylander_core::SKYLANDERS_SERIALS.len());
+        assert_eq!(got[0], skylander_core::SKYLANDERS_SERIALS[0].0);
 
         d.set_enumerated_games(vec!["BLUS31076".into(), "BLUS31442".into()]);
         let serials = d.enumerate_games(Duration::ZERO).unwrap();
@@ -269,6 +236,10 @@ mod tests {
         // Replaces, doesn't append.
         d.set_enumerated_games(vec!["BLUS30968".into()]);
         assert_eq!(d.enumerate_games(Duration::ZERO).unwrap(), vec!["BLUS30968"]);
+
+        // Explicit empty models "no library / nothing installed".
+        d.set_enumerated_games(vec![]);
+        assert!(d.enumerate_games(Duration::ZERO).unwrap().is_empty());
     }
 
     #[test]

@@ -11,7 +11,6 @@ Conventions:
 
 ## Phase 3 carryover — still open
 
-- [ ] **3.7.8 Phase 2: truth-from-UIA at picker time** — unblocked by 4.15.16 (RPCS3 always running at library view). `/api/games` can call `driver.enumerate_games()` at request time (or cache + refresh) and drop the games.yml dependency.
 - [ ] **3.10.7 Ownership badge — final aesthetic pass.** Pip data + colour shipped as 4.18.17; post-Phase-4 styling pass with final design-system tokens.
 - [ ] **3.10.9 Two-player disconnect-cleanup semantics.** What happens to P2's figures when P1 drops; revisit with 3.17 reconnect work.
 - [ ] **3.10e.6 Ownership-badge e2e test.** Lands with 3.10.7.

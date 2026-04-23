@@ -7,12 +7,12 @@
 // file is treated as sensitive (see CLAUDE.md on UIA session gotchas).
 #![allow(clippy::collapsible_if)]
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
-use skylander_core::{InstalledGame, SLOT_COUNT, SlotIndex, SlotState};
+use skylander_core::{SLOT_COUNT, SlotIndex, SlotState};
 use tracing::{debug, info, instrument, warn};
 use uiautomation::patterns::{UIInvokePattern, UIValuePattern};
 use uiautomation::types::{ControlType, UIProperty};
@@ -75,11 +75,6 @@ pub fn window_kind(el: &UIElement) -> WindowKind {
 /// is no real concurrency despite the type living inside an `Arc`.
 pub struct UiaPortalDriver {
     automation: UIAutomation,
-    /// Path to RPCS3's `games.yml`. Read by `list_installed_games` on
-    /// each call so a library edit in RPCS3 is visible without
-    /// restarting the server. Examples/tests that don't touch the game
-    /// catalogue can pass any path.
-    games_yaml: PathBuf,
 }
 
 // SAFETY: IUIAutomation is free-threaded. The server guarantees one-at-a-time
@@ -88,12 +83,9 @@ unsafe impl Send for UiaPortalDriver {}
 unsafe impl Sync for UiaPortalDriver {}
 
 impl UiaPortalDriver {
-    pub fn new(games_yaml: PathBuf) -> Result<Self> {
+    pub fn new() -> Result<Self> {
         let automation = UIAutomation::new().context("init Windows UI Automation")?;
-        Ok(Self {
-            automation,
-            games_yaml,
-        })
+        Ok(Self { automation })
     }
 
     fn walker(&self) -> Result<UITreeWalker> {
@@ -817,11 +809,6 @@ impl crate::PortalDriver for UiaPortalDriver {
             sleep(POLL_INTERVAL);
         }
         bail!("game viewport didn't appear within {timeout:?} after boot attempt");
-    }
-
-    #[instrument(skip(self))]
-    fn list_installed_games(&self) -> Result<Vec<InstalledGame>> {
-        crate::games_yaml::load_installed(&self.games_yaml)
     }
 
     #[instrument(skip(self))]

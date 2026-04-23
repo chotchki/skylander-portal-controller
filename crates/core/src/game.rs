@@ -1,10 +1,8 @@
 //! Installed-game metadata + the canonical Skylanders serial catalogue.
 //!
 //! Pure domain data; no I/O. The `PortalDriver` trait returns
-//! `Vec<InstalledGame>` — RPCS3-yaml parsing lives in the UIA driver, and
-//! the mock driver seeds a default list from `SKYLANDERS_SERIALS`.
-
-use std::path::PathBuf;
+//! `Vec<InstalledGame>` — UIA enumeration lives in the driver, and the
+//! mock driver seeds a default list from `SKYLANDERS_SERIALS`.
 
 use serde::{Deserialize, Serialize};
 
@@ -25,17 +23,4 @@ pub const SKYLANDERS_SERIALS: &[(&str, &str)] = &[
 pub struct InstalledGame {
     pub serial: GameSerial,
     pub display_name: String,
-    /// Game root directory (parent of `PS3_GAME/`). Server-private — phone
-    /// never sees it. Empty under the mock driver (no real PS3 payload).
-    #[serde(skip)]
-    pub sky_root: PathBuf,
-}
-
-impl InstalledGame {
-    pub fn eboot_path(&self) -> PathBuf {
-        self.sky_root
-            .join("PS3_GAME")
-            .join("USRDIR")
-            .join("EBOOT.BIN")
-    }
 }

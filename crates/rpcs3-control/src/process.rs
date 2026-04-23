@@ -90,14 +90,9 @@ enum ProcessOwnership {
 }
 
 impl UiaRpcsProcess {
-    /// Launch RPCS3 into its **library view** (no EBOOT argument). This is the
-    /// path used by UIA-driven control: the main window's menu bar responds to
-    /// synthesised keystrokes, and a game is booted afterwards via
-    /// `UiaPortalDriver::boot_game_by_serial`.
-    ///
-    /// Prefer this over `launch(exe, eboot)` whenever anything needs to drive
-    /// the menu bar — the EBOOT-argument path puts RPCS3 into direct-boot
-    /// state where Alt + arrow keystrokes are swallowed.
+    /// Launch RPCS3 into its **library view** (no EBOOT argument). The main
+    /// window's menu bar responds to synthesised keystrokes in this state,
+    /// and games are booted afterwards via `UiaPortalDriver::boot_game_by_serial`.
     pub fn launch_library(exe: &Path) -> Result<Self> {
         if !exe.is_file() {
             bail!("rpcs3.exe not found at {}", exe.display());
@@ -105,26 +100,6 @@ impl UiaRpcsProcess {
         info!(exe = %exe.display(), "launching RPCS3 (library view)");
 
         let child = Command::new(exe)
-            .spawn()
-            .with_context(|| format!("spawn {}", exe.display()))?;
-        Self::wrap_spawned(child, exe)
-    }
-
-    /// Launch RPCS3 directly into a game by passing its `EBOOT.BIN`. **Legacy
-    /// path** — kept for the server handler but not menu-drivable. Prefer
-    /// `launch_library` + UIA boot-by-serial for anything that needs the
-    /// Manage menu.
-    pub fn launch(exe: &Path, eboot: &Path) -> Result<Self> {
-        if !exe.is_file() {
-            bail!("rpcs3.exe not found at {}", exe.display());
-        }
-        if !eboot.is_file() {
-            bail!("EBOOT.BIN not found at {}", eboot.display());
-        }
-        info!(exe = %exe.display(), eboot = %eboot.display(), "launching RPCS3 (EBOOT-direct)");
-
-        let child = Command::new(exe)
-            .arg(eboot)
             .spawn()
             .with_context(|| format!("spawn {}", exe.display()))?;
         Self::wrap_spawned(child, exe)
