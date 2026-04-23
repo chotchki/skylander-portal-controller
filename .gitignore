@@ -28,12 +28,10 @@ target
 # Project-specific
 /logs/
 /dev-data/
-# Runtime root when the server's `DATA_ROOT` env var is unset — defaults to
-# `./data/` (see crates/server/src/config.rs). Ideally dev would resolve
-# here consistently, but the profile db and nfc-scanner dir diverge
-# today (db lands in `./dev-data/`, scans in `./data/`). Ignore both so
-# a local `cargo run` doesn't leak scans / sqlite into commits.
-/data/
+# Runtime-only subtree of the shared asset dir — server writes scanned
+# `.sky` dumps here when DATA_ROOT defaults to `./data/`. Tracked
+# sibling dirs (figures.json, images/, games/, LICENSE.md) stay in.
+/data/scanned/
 .env.dev
 .env
 node_modules/

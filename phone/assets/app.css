@@ -1008,6 +1008,24 @@ input, textarea {
 .toast-success { border-color: color-mix(in srgb, var(--success-p4) 40%, var(--gm)); }
 .toast-info   { border-color: color-mix(in srgb, #4a9eff 40%, var(--gm)); }
 
+/* Icon + message — explicit flex so the icon stays a fixed width on the
+   left and the message wraps to the right. Per-level colour matches the
+   strip so the status is redundantly encoded (colour + glyph), which is
+   the accessibility minimum for any status-by-colour UI. */
+.toast-icon {
+  display: inline-grid; place-items: center;
+  width: 22px; height: 22px;
+  margin-right: 10px;
+  font-size: 16px; font-weight: 700; line-height: 1;
+  flex-shrink: 0;
+  align-self: center;
+}
+.toast-msg { flex: 1; min-width: 0; align-self: center; }
+.toast-error   .toast-icon { color: var(--danger-p4,  #e34c4c); }
+.toast-warn    .toast-icon { color: var(--g,          #f5c634); }
+.toast-success .toast-icon { color: var(--success-p4, #65d68c); }
+.toast-info    .toast-icon { color: #4a9eff; }
+
 /* Reduced motion: keep entrance but simplify */
 @media (prefers-reduced-motion: reduce) {
   .toast {

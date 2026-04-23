@@ -478,17 +478,55 @@ fn read_u72(bytes: &[u8], off: usize) -> u128 {
     u128::from_le_bytes(buf)
 }
 
-/// Decode a null-terminated UTF-16 LE string from `bytes`.
-fn decode_utf16_le(bytes: &[u8]) -> String {
-    let mut words: Vec<u16> = Vec::with_capacity(bytes.len() / 2);
-    for chunk in bytes.chunks_exact(2) {
-        let w = u16::from_le_bytes([chunk[0], chunk[1]]);
-        if w == 0 {
-            break;
-        }
-        words.push(w);
+/// Decode the 32-byte nickname region, auto-detecting which encoding the
+/// figure used. Standard figures store UTF-16 LE (`'S' 00 'n' 00 'a' 00
+/// 'p' 00 …` for "Snap Shot"); Creation Crystals and some custom-named
+/// variants store densely-packed single-byte ASCII (`'D' 'E' 'L' 'F' 'O'
+/// 'X' 00 00 …` for "DELFOX"). Feeding ASCII through the UTF-16 path
+/// produces CJK mojibake (`䕄䙌塏`), so we pick based on byte shape.
+///
+/// Heuristic: inspect the populated run (bytes before the first null,
+/// or the whole buffer if there is none). If every byte at an odd index
+/// is `0x00`, treat the buffer as UTF-16 LE — that's the distinguishing
+/// signature of ASCII-codepoints-as-UTF-16. Otherwise, treat it as
+/// packed ASCII. A buffer with a 1-char string (`'S' 00 00 00 …`) is
+/// ambiguous but resolves to UTF-16 LE "S" either way, since the ASCII
+/// path also stops at the first null and produces the same single char.
+///
+/// Fallback for non-ASCII bytes in the packed path (rare — would imply
+/// Latin-1 or other 8-bit encoding): pass through `char::from` per byte
+/// so we don't lose information, but the string may render oddly.
+fn decode_nickname(bytes: &[u8]) -> String {
+    // Find the populated run length. For UTF-16 LE it terminates at the
+    // first `00 00` word pair; for packed ASCII it terminates at the
+    // first `00` byte. Using "first null byte" is a superset that
+    // covers both without false positives.
+    let populated_len = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    if populated_len == 0 {
+        return String::new();
     }
-    String::from_utf16_lossy(&words)
+
+    let looks_like_utf16_le = bytes[..populated_len]
+        .iter()
+        .enumerate()
+        .all(|(i, &b)| i % 2 == 0 || b == 0);
+
+    if looks_like_utf16_le {
+        let mut words = Vec::with_capacity(bytes.len() / 2);
+        for chunk in bytes.chunks_exact(2) {
+            let w = u16::from_le_bytes([chunk[0], chunk[1]]);
+            if w == 0 {
+                break;
+            }
+            words.push(w);
+        }
+        String::from_utf16_lossy(&words)
+    } else {
+        bytes[..populated_len]
+            .iter()
+            .map(|&b| char::from(b))
+            .collect()
+    }
 }
 
 /// Is `a` "higher than" `b` under wraparound per `SkylanderFormat.md` "Area
@@ -698,7 +736,7 @@ fn parse_standard(bytes: &[u8], stats: &mut SkyFigureStats) {
     let mut nick_buf = Vec::with_capacity(32);
     nick_buf.extend_from_slice(&bytes[b0a..b0a + 16]);
     nick_buf.extend_from_slice(&bytes[b0c..b0c + 16]);
-    stats.nickname = decode_utf16_le(&nick_buf);
+    stats.nickname = decode_nickname(&nick_buf);
 
     // --- Block 0x0D/0x29 --------------------------------------------
     stats.heroic_challenges_ssa = read_u32(bytes, b0d + 0x06);
@@ -1029,6 +1067,44 @@ mod tests {
     fn rejects_long_input() {
         let err = parse(&[0u8; 2048]).unwrap_err();
         assert!(matches!(err, ParseError::BadLength(2048)));
+    }
+
+    #[test]
+    fn decode_nickname_utf16_le_standard() {
+        // "Snap Shot" — what Standard figures store: ASCII codepoints
+        // widened to UTF-16 LE with null high bytes.
+        let bytes: Vec<u8> = "Snap Shot"
+            .chars()
+            .flat_map(|c| [c as u8, 0])
+            .chain(std::iter::repeat(0).take(32 - 18))
+            .collect();
+        assert_eq!(decode_nickname(&bytes), "Snap Shot");
+    }
+
+    #[test]
+    fn decode_nickname_ascii_packed_creation_crystal() {
+        // CCs pack the user-chosen name as single-byte ASCII instead of
+        // UTF-16 LE. Before the auto-detect, this decoded as CJK
+        // mojibake ("䕄䙌塏" for "DELFOX"). Exact raw bytes observed in
+        // the live scan 7FC1ADA3.sky at block 0x0A+0x0C.
+        let mut bytes = [0u8; 32];
+        bytes[..6].copy_from_slice(b"DELFOX");
+        assert_eq!(decode_nickname(&bytes), "DELFOX");
+    }
+
+    #[test]
+    fn decode_nickname_empty() {
+        assert_eq!(decode_nickname(&[0u8; 32]), "");
+    }
+
+    #[test]
+    fn decode_nickname_single_char_ambiguous_resolves_to_utf16_path() {
+        // A 1-char string `'A' 00 00 00 …` satisfies both heuristics.
+        // Either path produces "A"; the UTF-16 LE branch wins by the
+        // "every odd byte is 0" rule. Test pins the behaviour.
+        let mut bytes = [0u8; 32];
+        bytes[0] = b'A';
+        assert_eq!(decode_nickname(&bytes), "A");
     }
 
     #[test]
