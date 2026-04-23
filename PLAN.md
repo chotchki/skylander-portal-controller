@@ -11,7 +11,6 @@ Conventions:
 
 ## Phase 3 carryover — still open
 
-- [ ] **3.12.4 Three-option resume modal** (clear + resume / alongside / fresh) for the 2-phone case.
 - [ ] **3.14 Reposes — variant cycling.**
   - [ ] 3.14.1 Browser collapses figures sharing `variant_group` into one card with "N variants" badge.
   - [ ] 3.14.2 Tap variant badge → cycle in place (SPEC Q76).
