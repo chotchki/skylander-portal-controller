@@ -480,7 +480,61 @@ Kaos is LAST among feature work. Do not start without explicit go-ahead.
     - **`is_duplicate` semantic**. Worker no longer uses file-existence; now it consults the Arc<HashMap<(fid, masked_variant), FigureId>> that main.rs builds at startup from pack + prior-scanned merge. "Already in your collection" covers both cases and fires on the very first scan.
     - Phone: `Category::CreationCrystal → "Crystals"` filter chip added now that there's real content in that bucket. Search filter extended to match `variant_tag` alongside `canonical_name`.
     - Not closing the parent 6.5.5 — 5b (full figures.json / wiki-scrape rekey) is still open. See note below.
-  - [ ] 6.5.5b **Full identity-key rekey.** Re-key `data/figures.json` + `tools/wiki-scrape` output from SHA-of-path to `(figure_id, variant)`. Fills in the things 5a punted on: scan-only figures get real game-of-origin + element (via figures.json lookup), phone URL params become human-readable tag identities, stats endpoint gets a natural join key. Big blast radius — still touches indexer internals, core/figure.rs, every crates/server/* consumer, wiki-scrape, real_pack test. Not on the immediate path — 5a shipped all the user-visible dedup/visibility wins; 5b is architectural cleanup that can wait until a concrete consumer asks for it.
+  - [-] 6.5.5b **Superseded by 6.6.** Original "figures.json rekey" scope was reframed as a bigger ID-scheme cleanup project (see 6.6 below). The motivation is the same: stop keying pack figures by SHA-of-path once we have a natural tag-level identity from the scan pipeline. Chris's call 2026-04-23: do the cleanup *now* while the mental model of why-this-way is fresh, rather than carrying SHA IDs indefinitely alongside the new tag-based ones.
+
+### 6.6 ID-scheme rekey: SHA → tag identity + newtype wrappers
+
+Pack figures today are keyed by `FigureId(String)` where the string is a 16-hex-char SHA-of-`"<game>|<element>|<relative_path>"`. Scan figures use `"scan:<uid>"`. `data/figures.json` + `data/images/<id>/` all use the SHA form. This item replaces the SHA format for pack figures with a canonical tag-identity string derived from block 0 (`"{toy_type:06x}-{variant_masked:04x}"`), keeping scan figures in their own `"scan:<uid>"` namespace.
+
+**Why now**: 6.5.5a proved the tag-identity scheme works end-to-end for dedup. Running both keying schemes in parallel (SHA for pack, tag-id for scan dedup) is a tax on future work — every touch of Figure has to remember which world it's in. Cheaper to rip the bandaid now while the reasoning is fresh than to carry the dual scheme forward and re-derive the why later.
+
+**Also adopting the NewType pattern** on primitive-type fields that had been passed around as bare integers:
+  - `ToyTypeId(u32)` for the 24-bit "figure_id" block-0 field (to avoid confusion with `FigureId(String)`)
+  - `TagVariant(u16)` for the raw 16-bit variant word
+  - `MaskedVariant(u16)` for the identity-bits-only form (post-`VARIANT_IDENTITY_MASK`)
+  - `TagIdentity { toy_type: ToyTypeId, variant: MaskedVariant }` as the dedup key
+  - `MifareNuid([u8; 4])` for the 4-byte Mifare UID (currently an alias in nfc-reader)
+
+- [ ] 6.6.1 **Phase 1 — Newtype foundation + `Figure.tag_identity` prep.** Prep pass that adds the plumbing without changing the wire format yet. Tests stay green throughout.
+  - [ ] 6.6.1a Define `ToyTypeId`, `TagVariant`, `MaskedVariant`, `TagIdentity`, `MifareNuid` newtypes in `crates/core/src/figure.rs`. Serde transparent where it makes sense; `Display` + `FromStr` impls for the ones that appear in URLs / logs.
+  - [ ] 6.6.1b `skylander-sky-parser` gains a `skylander-core` dep. Replace the bare `figure_id: u32` / `variant: u16` fields on `SkyFigureStats` with newtyped equivalents. Update `VARIANT_IDENTITY_MASK` to return `MaskedVariant` via a helper.
+  - [ ] 6.6.1c `Figure` gains `tag_identity: Option<TagIdentity>` (None only for parse failures — keep an escape valve).
+  - [ ] 6.6.1d `skylander_indexer::scan()` parses each pack `.sky` inline and populates `tag_identity`. `scan_runtime()` does the same on the scan side (already parses, just wire the field).
+  - [ ] 6.6.1e `crates/server/src/main.rs` drops the separate re-parse loop — builds the `tag_identity → FigureId` map directly from `figure.tag_identity`. Net ~1s faster startup, no behaviour change.
+  - [ ] 6.6.1f `crates/nfc-reader`: upgrade the existing `type Uid = [u8; 4]` alias to a `MifareNuid` newtype. Re-export from core. Update `dump_figure`, `SkyDump`, `list_passive_target` signatures.
+  - [ ] 6.6.1g Commit with full `cargo test --workspace` + trunk-phone build green.
+
+- [ ] 6.6.2 **Phase 2 — Migration tool + dev DB wipe.**
+  - [ ] 6.6.2a New `tools/rekey-figure-ids/` one-shot CLI. Walks `data/firmware-pack` (or `FIRMWARE_PACK_ROOT` from `.env.dev`), computes `SHA → FigureId::from_tag_identity` map for each pack `.sky`. Rewrites `data/figures.json` keyed by new canonical strings, collapsing duplicates first-wins with a log line per collision (504 raw → ~489 unique). Renames every `data/images/<SHA>/` directory to `data/images/<new-id>/`. Idempotent — detects already-migrated state and exits cleanly on re-run.
+  - [ ] 6.6.2b Emits `tools/rekey-figure-ids/rekey-log.json` summary with the SHA→tag-id map + collision list; committed alongside the rekeyed data so a future developer can trace entries back to their pack-path origin if needed.
+  - [ ] 6.6.2c Delete `dev-data/db.sqlite` (pre-1.0, solo project — per Chris's call 2026-04-23 we're nuking rather than writing schema migration logic). Server startup recreates it.
+  - [ ] 6.6.2d Commit `data/figures.json` + the renamed `data/images/` tree + the rekey-log.
+
+- [ ] 6.6.3 **Phase 3 — Indexer + core `stable_id` switch.**
+  - [ ] 6.6.3a Canonical `FigureId` format for pack figures becomes `"{toy_type:06x}-{variant_masked:04x}"`. Hyphen-separated lowercase hex, URL-safe, sortable.
+  - [ ] 6.6.3b `skylander_indexer::stable_id` replaced by tag-identity-derived ID when parse succeeds; falls back to `"sha:{old-hash}"` for the (rare) parse-failure case so nothing silently orphans. Fallback is loud — `tracing::warn!` at index time.
+  - [ ] 6.6.3c `scan_runtime` keeps the `"scan:<uid>"` format: each physical tag stays distinct in the library even when multiple copies of the same SKU are owned. Documented explicitly in the function doc.
+  - [ ] 6.6.3d Regenerate `crates/indexer/tests/real_pack.rs` snapshot. Verify counts match the rekey log's 504→489 collapse.
+
+- [ ] 6.6.4 **Phase 4 — Consumer sweep.** Most sites are transparent — `FigureId` stays `String`-under-the-hood — but a few assume SHA-specific formatting.
+  - [ ] 6.6.4a `crates/server/src/http.rs` image/stats handlers: verify no SHA-format assumptions (e.g. regex validation, 16-char-only paths).
+  - [ ] 6.6.4b `crates/server/src/working_copies.rs`: working-copy path uses `FigureId` as a directory name — verify new format doesn't break any filesystem quirks on Windows (the new format is all hex + hyphen so should be safe).
+  - [ ] 6.6.4c `crates/server/src/profiles.rs` + DB schema: profile state tables referencing `figure_id` columns — expect these to hold the new-format string after the DB nuke.
+  - [ ] 6.6.4d `phone/src/*`: `PublicFigure.id` stays a string; audit any sort-by-id or substring-match paths to confirm nothing keys on SHA hex.
+  - [ ] 6.6.4e `crates/e2e-tests/tests/working_copies.rs`: update any baked figure IDs to the new format. If the test generates its own pack fixtures with synthetic SHA IDs, that path keeps working (IDs are opaque strings); only pack-derived IDs need regen.
+  - [ ] 6.6.4f `crates/nfc-reader::persist_and_broadcast`: take `TagIdentity` directly for the dedup lookup instead of synthesising `(u32, u16)` inline; library_identities map key becomes `TagIdentity` too.
+
+- [ ] 6.6.5 **Phase 5 — Live verification.**
+  - [ ] 6.6.5a Fresh server boot with `--features nfc-import`: library renders, 489 figures + scan-only surfaced correctly, image endpoint serves from new paths.
+  - [ ] 6.6.5b Placement + portal flow end-to-end: pick a figure in the browser, it loads into the portal via the driver worker.
+  - [ ] 6.6.5c Scan flow: re-scan DELFOX — dup detection hits via `TagIdentity` lookup, nickname promotion to its pack card still works.
+  - [ ] 6.6.5d Phone hard-reload from cold: URLs carry the new tag-id strings, no broken images.
+  - [ ] 6.6.5e Close 6.5.5b with a pointer to 6.6 in lieu of the original rekey note.
+
+**Risk callouts** (from planning discussion):
+- 15 pack `(fid, variant_masked)` collisions will collapse to one entry each. Collision list goes in the rekey-log for auditability; the pack path that didn't win is effectively dropped from the library (nothing to join against). Worth one more look at the list before running the migration to make sure the winners are sensible.
+- Any existing browser bookmark / URL on a phone pointing at `/api/figures/<old-sha>/…` will 404 post-migration. `boot_id` change triggers auto-reload so live sessions don't notice, but shared links or home-screen PWA shortcuts would need re-bookmarking (minor, pre-1.0).
+- DB wipe loses any saved profile state in `dev-data/`. Acceptable (no real users yet).
 
 ---
 
