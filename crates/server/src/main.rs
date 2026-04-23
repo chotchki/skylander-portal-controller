@@ -40,8 +40,17 @@ fn main() -> Result<()> {
     );
 
     // --- Index the firmware pack. ---
-    let figures: Vec<Figure> =
-        skylander_indexer::scan(&cfg.firmware_pack_root).context("scan firmware pack")?;
+    // PLAN 6.5.4 makes the pack optional — reader-only onboarding is valid,
+    // and so is the degenerate "no pack, no reader" start (user will create
+    // figures in-game or scan later). Empty pack root → empty library;
+    // scanned figures take over as the canonical source once 6.5.5 teaches
+    // the indexer to walk `<data_root>/scanned/`.
+    let figures: Vec<Figure> = if cfg.firmware_pack_root.as_os_str().is_empty() {
+        info!("no firmware pack configured — starting with an empty library");
+        Vec::new()
+    } else {
+        skylander_indexer::scan(&cfg.firmware_pack_root).context("scan firmware pack")?
+    };
     info!(count = figures.len(), "indexed figures");
     let figure_index: HashMap<_, _> = figures
         .iter()

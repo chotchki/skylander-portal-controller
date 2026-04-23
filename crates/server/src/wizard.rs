@@ -239,6 +239,13 @@ pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<Per
         result: Option<PersistedConfig>,
         cancelled: bool,
         runtime_dir: PathBuf,
+        /// PLAN 6.5.4 — probed once at wizard mount. Drives the Welcome
+        /// status line and the FirmwarePack copy (reader → pack optional,
+        /// no reader → pack strongly recommended). A later plug-in doesn't
+        /// retroactively change the messaging; user can re-run setup if
+        /// they want. The compile-time default with `nfc-import` off is
+        /// `false`, so feature-less builds show the reader-absent flow.
+        reader_present: bool,
     }
 
     impl WizardState {
@@ -251,10 +258,27 @@ pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<Per
         fn rpcs3_valid(&self) -> Result<(), ValidationError> {
             validate_rpcs3_path(&self.rpcs3_path())
         }
+        /// Empty input is now **explicitly valid** — it means "skip the
+        /// pack, I'll scan". Non-empty goes through the normal validator.
         fn pack_valid(&self) -> Result<(), ValidationError> {
-            validate_firmware_pack(&self.pack_path())
+            if self.pack_input.trim().is_empty() {
+                Ok(())
+            } else {
+                validate_firmware_pack(&self.pack_path())
+            }
+        }
+        fn pack_skipped(&self) -> bool {
+            self.pack_input.trim().is_empty()
         }
     }
+
+    // Reader probe is feature-gated; without `nfc-import` it's always
+    // `false`, which collapses the wizard to the original single-path
+    // (pack-required-ish) flow.
+    #[cfg(feature = "nfc-import")]
+    let reader_present = skylander_nfc_reader::probe_reader();
+    #[cfg(not(feature = "nfc-import"))]
+    let reader_present = false;
 
     let rpcs3_default = default_rpcs3_path_guess()
         .map(|p| p.display().to_string())
@@ -270,6 +294,7 @@ pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<Per
         result: None,
         cancelled: false,
         runtime_dir: runtime_dir.to_path_buf(),
+        reader_present,
     }));
 
     struct App {
@@ -288,9 +313,26 @@ pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<Per
                         ui.label("First launch — let's set this up. Takes 30 seconds.");
                         ui.add_space(20.0);
                         ui.label(
-                            "We need to know where your RPCS3 install lives, and where \
-                             your Skylanders firmware pack is stored.",
+                            "We need your RPCS3 install path. A Skylanders firmware pack \
+                             is optional — you can also scan figures with an NFC reader, \
+                             or start empty and use in-game creation (Imaginators).",
                         );
+                        ui.add_space(16.0);
+                        // PLAN 6.5.4: surface reader presence so the user
+                        // knows what their onboarding options really are
+                        // before they click through.
+                        if s.reader_present {
+                            ui.colored_label(
+                                egui::Color32::GREEN,
+                                "✓  NFC reader detected — you can scan figures to build your library.",
+                            );
+                        } else {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(180, 180, 180),
+                                "ℹ  No NFC reader detected. If you'd like to scan figures later, \
+                                 plug in an ACR122U and re-run setup.",
+                            );
+                        }
                         ui.add_space(32.0);
                         ui.horizontal(|ui| {
                             if ui.button("Next").clicked() {
@@ -341,9 +383,21 @@ pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<Per
                         });
                     }
                     Page::FirmwarePack => {
-                        ui.heading("Step 2 of 2 — Firmware pack");
+                        ui.heading("Step 2 of 2 — Firmware pack (optional)");
                         ui.add_space(12.0);
-                        ui.label("Folder containing your .sky files:");
+                        if s.reader_present {
+                            ui.label(
+                                "Pick the folder with your .sky files, or leave blank and \
+                                 scan figures in with your NFC reader.",
+                            );
+                        } else {
+                            ui.label(
+                                "Pick the folder with your .sky files. You can leave this \
+                                 blank to start empty, but without a reader or a pack your \
+                                 library will stay empty until you plug one in.",
+                            );
+                        }
+                        ui.add_space(12.0);
                         ui.horizontal(|ui| {
                             ui.add(
                                 egui::TextEdit::singleline(&mut s.pack_input).desired_width(500.0),
@@ -356,14 +410,24 @@ pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<Per
                                     s.pack_input = p.display().to_string();
                                 }
                             }
+                            if !s.pack_input.trim().is_empty() && ui.button("Clear").clicked() {
+                                s.pack_input.clear();
+                            }
                         });
                         ui.add_space(6.0);
-                        match s.pack_valid() {
-                            Ok(()) => {
-                                ui.colored_label(egui::Color32::GREEN, "Valid — .sky files found.");
-                            }
-                            Err(e) => {
-                                ui.colored_label(egui::Color32::LIGHT_RED, format!("x  {e}"));
+                        if s.pack_skipped() {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(180, 180, 180),
+                                "Skipping the pack — library starts empty.",
+                            );
+                        } else {
+                            match s.pack_valid() {
+                                Ok(()) => {
+                                    ui.colored_label(egui::Color32::GREEN, "Valid — .sky files found.");
+                                }
+                                Err(e) => {
+                                    ui.colored_label(egui::Color32::LIGHT_RED, format!("x  {e}"));
+                                }
                             }
                         }
                         ui.add_space(20.0);
@@ -372,8 +436,9 @@ pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<Per
                                 s.page = Page::Rpcs3;
                             }
                             let enabled = s.pack_valid().is_ok();
+                            let label = if s.pack_skipped() { "Finish (skip pack)" } else { "Finish" };
                             if ui
-                                .add_enabled(enabled, egui::Button::new("Finish"))
+                                .add_enabled(enabled, egui::Button::new(label))
                                 .clicked()
                             {
                                 let cfg = PersistedConfig::from_user_paths(

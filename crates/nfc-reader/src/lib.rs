@@ -60,6 +60,28 @@ impl SkyDump {
 
 // ---------------- PC/SC reader open ----------------
 
+/// Fast, side-effect-free probe: is any PC/SC reader whose name contains
+/// "acr122" currently connected? Used by the first-launch wizard (PLAN
+/// 6.5.4) to steer onboarding copy — pack-strongly-recommended when no
+/// reader is attached, pack-optional when one is.
+///
+/// Returns `false` on any PC/SC error (service down, no readers
+/// enumerated, etc.) so the caller doesn't have to branch on the
+/// specific failure mode — absent-or-failing both map to "not
+/// available". A matching-name reader is required; a non-ACR PC/SC
+/// device (e.g. a smart-card reader) doesn't count, because we can't
+/// drive it through the 6.5.0 transport.
+pub fn probe_reader() -> bool {
+    let Ok(ctx) = PcscContext::establish(Scope::User) else {
+        return false;
+    };
+    let mut buf = [0u8; 2048];
+    let Ok(mut readers) = ctx.list_readers(&mut buf) else {
+        return false;
+    };
+    readers.any(|r| r.to_string_lossy().to_lowercase().contains("acr122"))
+}
+
 /// Open the first PC/SC reader whose name contains `"acr122"`
 /// (case-insensitive), or the first reader if none match.
 pub fn open_reader() -> Result<Reader> {

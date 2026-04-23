@@ -74,7 +74,16 @@ pub fn load() -> Result<Config> {
     let env = read_env_file(".env.dev").unwrap_or_default();
 
     let rpcs3_exe = require_path(&env, "RPCS3_EXE")?;
-    let firmware_pack_root = require_path(&env, "FIRMWARE_PACK_ROOT")?;
+    // `FIRMWARE_PACK_ROOT` is now optional (PLAN 6.5.4): reader-only users
+    // don't need a pack, and a zero-collection boot is valid (Imaginators
+    // "instant Skylander" flow, for one). Empty / unset collapses to
+    // PathBuf::new(); `skylander_indexer::scan()` already returns Ok(vec![])
+    // for a missing root, so main.rs's boot path is safe without changes.
+    let firmware_pack_root = env
+        .get("FIRMWARE_PACK_ROOT")
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_default();
 
     let games_yaml = env.get("GAMES_YAML").map(PathBuf::from).unwrap_or_else(|| {
         rpcs3_exe
@@ -147,6 +156,7 @@ fn load_or_create_dev_hmac_key() -> Result<Vec<u8>> {
 
 #[cfg(not(feature = "dev-tools"))]
 pub fn load() -> Result<Config> {
+    use anyhow::Context;
     use crate::paths;
     use crate::wizard::{self, PersistedConfig, PersistedDriverKind};
 
@@ -169,7 +179,7 @@ pub fn load() -> Result<Config> {
     // field. `PersistedConfig` keeps `hmac_key` as `Option<Vec<u8>>` with a
     // `#[serde(default)]`, so the `None` case here means a config from a
     // server version before this feature existed — regenerate + persist.
-    let hmac_key = match persisted.hmac_key {
+    let hmac_key: Vec<u8> = match persisted.hmac_key {
         Some(k) if k.len() == 32 => k,
         _ => {
             let k = generate_hmac_key();
