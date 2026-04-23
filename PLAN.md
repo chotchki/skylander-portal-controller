@@ -517,13 +517,13 @@ Pack figures today are keyed by `FigureId(String)` where the string is a 16-hex-
   - [x] 6.6.3d `crates/indexer/tests/real_pack.rs` already only asserts counts (not IDs), so no snapshot regen needed. 153/153 workspace tests still green.
   - [x] Also: `crates/server/src/http.rs::figure_image` input validator updated. Old check was `id.len() == 16 && all hex`; new `is_safe_figure_id` accepts the three canonical forms (`{6-hex}-{4-hex}`, `scan:{8-hex}`, `sha:{16-hex}`) and rejects anything else. Image endpoint confirmed serving new-format URLs (200 OK, 17.9KB PNG for `0001ce-0000`).
 
-- [ ] 6.6.4 **Phase 4 — Consumer sweep.** Most sites are transparent — `FigureId` stays `String`-under-the-hood — but a few assume SHA-specific formatting.
-  - [ ] 6.6.4a `crates/server/src/http.rs` image/stats handlers: verify no SHA-format assumptions (e.g. regex validation, 16-char-only paths).
-  - [ ] 6.6.4b `crates/server/src/working_copies.rs`: working-copy path uses `FigureId` as a directory name — verify new format doesn't break any filesystem quirks on Windows (the new format is all hex + hyphen so should be safe).
-  - [ ] 6.6.4c `crates/server/src/profiles.rs` + DB schema: profile state tables referencing `figure_id` columns — expect these to hold the new-format string after the DB nuke.
-  - [ ] 6.6.4d `phone/src/*`: `PublicFigure.id` stays a string; audit any sort-by-id or substring-match paths to confirm nothing keys on SHA hex.
-  - [ ] 6.6.4e `crates/e2e-tests/tests/working_copies.rs`: update any baked figure IDs to the new format. If the test generates its own pack fixtures with synthetic SHA IDs, that path keeps working (IDs are opaque strings); only pack-derived IDs need regen.
-  - [ ] 6.6.4f `crates/nfc-reader::persist_and_broadcast`: take `TagIdentity` directly for the dedup lookup instead of synthesising `(u32, u16)` inline; library_identities map key becomes `TagIdentity` too.
+- [x] 6.6.4 **Phase 4 — Consumer sweep.** Done 2026-04-23. Mostly a no-op (FigureId opacity held up); only concrete fix was the image-endpoint validator (handled inline in Phase 3) and the nfc-reader `Uid` alias upgrade.
+  - [x] 6.6.4a `crates/server/src/http.rs::figure_image` validator updated in Phase 3. `is_safe_figure_id` accepts the three canonical forms and rejects anything else.
+  - [x] 6.6.4b Working-copy path: verified — `FigureId` as a directory name stays safe on Windows since the new format uses only `[0-9a-f-]`. No fs quirks.
+  - [x] 6.6.4c Profile DB: schema takes `figure_id` as TEXT (opaque). New format round-trips transparently; DB wipe means no legacy data to migrate.
+  - [x] 6.6.4d Phone audit: `PublicFigure.id` is still `String`; ripgrep found no SHA-format assumptions.
+  - [x] 6.6.4e e2e-tests: ripgrep-ed `crates/e2e-tests/` — no baked FigureIds. Fixture-generated ones are opaque and round-trip fine.
+  - [x] 6.6.4f `MifareNuid` migration in nfc-reader: `type Uid = [u8; 4]` replaced with `pub use skylander_core::MifareNuid`. `SkyDump.uid`, `list_passive_target`, `dump_figure`, `mifare_authenticate`, `calculate_key_a` all take/return the newtype. Internal `format_uid` helper collapses to `uid.to_hex_string()`. Tests updated with `MifareNuid::new(...)` constructors. `library_identities` dedup map key became `TagIdentity` in Phase 1 (tracked there). `nfc-dump` bin updated.
 
 - [ ] 6.6.5 **Phase 5 — Live verification.**
   - [ ] 6.6.5a Fresh server boot with `--features nfc-import`: library renders, 489 figures + scan-only surfaced correctly, image endpoint serves from new paths.

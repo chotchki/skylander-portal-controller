@@ -42,7 +42,7 @@ fn main() -> Result<()> {
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
     };
-    let uid_hex: String = uid.iter().map(|b| format!("{:02X}", b)).collect();
+    let uid_hex = uid.to_hex_string();
     println!("target found after {:.2?}, uid={}", t0.elapsed(), uid_hex);
 
     let dump_t = std::time::Instant::now();

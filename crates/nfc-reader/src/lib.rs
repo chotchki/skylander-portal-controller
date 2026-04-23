@@ -40,13 +40,15 @@ const CRC48_POLY: u64 = 0x42F0_E1EB_A9EA_3693;
 /// Sector-0 Key A: product of the three primes in the blog.
 const SECTOR0_KEY_U64: u64 = 73u64 * 2017u64 * 560_381_651u64;
 
-/// 4-byte NUID (Mifare Classic 1K's UID is always 4 bytes).
-pub type Uid = [u8; 4];
+/// PLAN 6.6.4f — re-export of [`skylander_core::MifareNuid`] so consumers
+/// that already reached into this crate for `Uid` don't break. New code
+/// should import `MifareNuid` from `skylander_core` directly.
+pub use skylander_core::MifareNuid;
 
 /// A dumped Skylanders figure — its UID and the full 1024-byte tag image.
 #[derive(Clone)]
 pub struct SkyDump {
-    pub uid: Uid,
+    pub uid: MifareNuid,
     pub bytes: [u8; SKY_SIZE],
 }
 
@@ -54,7 +56,7 @@ impl SkyDump {
     /// Hex-encode the UID as an 8-character uppercase string
     /// (e.g. `"7FC1ADA3"`) — canonical filename stem.
     pub fn uid_hex(&self) -> String {
-        self.uid.iter().map(|b| format!("{:02X}", b)).collect()
+        self.uid.to_hex_string()
     }
 }
 
@@ -163,7 +165,7 @@ impl Reader {
 
     /// One-shot: ask the PN532 whether a Type-A 106kbps target is in the
     /// field. Returns `Some(uid)` if so, `None` for empty field.
-    pub fn list_passive_target(&self) -> Result<Option<Uid>> {
+    pub fn list_passive_target(&self) -> Result<Option<MifareNuid>> {
         let resp = self.escape(&[0xD4, 0x4A, 0x01, 0x00])?;
         let body = expect_pn532_reply(&resp, 0x4B)?;
         if body.is_empty() {
@@ -191,17 +193,17 @@ impl Reader {
                 nfcid_len
             );
         }
-        let mut nuid = [0u8; 4];
-        nuid.copy_from_slice(&body[6..6 + 4]);
-        Ok(Some(nuid))
+        let mut nuid_bytes = [0u8; 4];
+        nuid_bytes.copy_from_slice(&body[6..6 + 4]);
+        Ok(Some(MifareNuid::new(nuid_bytes)))
     }
 
     /// Authenticate one Mifare block with `key` (Key A) + `uid`.
-    fn mifare_authenticate(&self, block: u8, key: &[u8; 6], uid: &Uid) -> Result<()> {
+    fn mifare_authenticate(&self, block: u8, key: &[u8; 6], uid: &MifareNuid) -> Result<()> {
         let mut payload = Vec::with_capacity(16);
         payload.extend_from_slice(&[0xD4, 0x40, 0x01, 0x60, block]);
         payload.extend_from_slice(key);
-        payload.extend_from_slice(uid);
+        payload.extend_from_slice(uid.as_bytes());
         let resp = self.escape(&payload)?;
         let body = expect_pn532_reply(&resp, 0x41)?;
         if body.is_empty() {
@@ -314,11 +316,12 @@ fn compute_crc48(data: &[u8]) -> u64 {
 /// Derive the Mifare Classic Key A for a given sector, given the 4-byte
 /// NUID. Sector 0 uses a fixed, published constant. Other sectors hash
 /// (NUID || sector_index) through CRC48 and byte-reverse the 48-bit result.
-pub fn calculate_key_a(sector: u8, nuid: Uid) -> [u8; 6] {
+pub fn calculate_key_a(sector: u8, nuid: MifareNuid) -> [u8; 6] {
     let key_u64 = if sector == 0 {
         SECTOR0_KEY_U64
     } else {
-        let data = [nuid[0], nuid[1], nuid[2], nuid[3], sector];
+        let nb = nuid.as_bytes();
+        let data = [nb[0], nb[1], nb[2], nb[3], sector];
         let be_crc = compute_crc48(&data);
         let mut rev = 0u64;
         for i in 0..6u64 {
@@ -345,7 +348,7 @@ pub fn calculate_key_a(sector: u8, nuid: Uid) -> [u8; 6] {
 ///
 /// Iterates 16 sectors × 4 blocks. On any auth/read error, returns early;
 /// caller decides whether to retry or surface the failure.
-pub fn dump_figure(reader: &Reader, uid: Uid) -> Result<[u8; SKY_SIZE]> {
+pub fn dump_figure(reader: &Reader, uid: MifareNuid) -> Result<[u8; SKY_SIZE]> {
     let mut dump = [0u8; SKY_SIZE];
     for sector in 0..16u8 {
         let key = calculate_key_a(sector, uid);
@@ -430,7 +433,7 @@ pub fn run_scanner_worker(
         };
 
         // Inner poll loop — on any hard error, drop the reader and reopen.
-        let mut last_field: Option<Uid> = None;
+        let mut last_field: Option<MifareNuid> = None;
         loop {
             match reader.list_passive_target() {
                 Ok(Some(uid)) => {
@@ -548,8 +551,8 @@ fn persist_and_broadcast(
     Ok(())
 }
 
-fn format_uid(uid: &Uid) -> String {
-    uid.iter().map(|b| format!("{:02X}", b)).collect()
+fn format_uid(uid: &MifareNuid) -> String {
+    uid.to_hex_string()
 }
 
 #[cfg(test)]
@@ -559,7 +562,7 @@ mod tests {
     #[test]
     fn sector0_key_matches_known_static() {
         assert_eq!(
-            calculate_key_a(0, [0x00; 4]),
+            calculate_key_a(0, MifareNuid::new([0x00; 4])),
             [0x4B, 0x0B, 0x20, 0x10, 0x7C, 0xCB]
         );
     }
@@ -580,15 +583,16 @@ mod tests {
 
     #[test]
     fn key_a_sector1_differs_from_sector2() {
-        let k1 = calculate_key_a(1, [0xDE, 0xAD, 0xBE, 0xEF]);
-        let k2 = calculate_key_a(2, [0xDE, 0xAD, 0xBE, 0xEF]);
+        let nuid = MifareNuid::new([0xDE, 0xAD, 0xBE, 0xEF]);
+        let k1 = calculate_key_a(1, nuid);
+        let k2 = calculate_key_a(2, nuid);
         assert_ne!(k1, k2);
     }
 
     #[test]
     fn sky_dump_uid_hex_is_uppercase_eight_chars() {
         let dump = SkyDump {
-            uid: [0x7F, 0xC1, 0xAD, 0xA3],
+            uid: MifareNuid::new([0x7F, 0xC1, 0xAD, 0xA3]),
             bytes: [0u8; SKY_SIZE],
         };
         assert_eq!(dump.uid_hex(), "7FC1ADA3");
