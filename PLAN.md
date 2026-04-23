@@ -21,7 +21,6 @@ Conventions:
   - [ ] 3.14.1 Browser collapses figures sharing `variant_group` into one card with "N variants" badge.
   - [ ] 3.14.2 Tap variant badge → cycle in place (SPEC Q76).
   - [ ] 3.14.3 Loaded variant reflected on the slot's display_name.
-- [ ] **3.16.6 "Re-run wizard" affordance** once a general app-settings area exists. Escape hatch today: delete `config.json` and relaunch.
 - [ ] **3.17.2 "Can't connect" button → network-interface picker** (SPEC Q49 fallback). Note: 3.17.1 shipped as 4.15.8's upper-right overlay.
 
 ---
