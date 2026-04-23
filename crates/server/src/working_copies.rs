@@ -86,6 +86,7 @@ mod tests {
             category: Category::Figure,
             sky_path: pack_path,
             element_icon_path: None,
+            tag_identity: None,
         }
     }
 

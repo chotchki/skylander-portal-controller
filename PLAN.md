@@ -495,14 +495,14 @@ Pack figures today are keyed by `FigureId(String)` where the string is a 16-hex-
   - `TagIdentity { toy_type: ToyTypeId, variant: MaskedVariant }` as the dedup key
   - `MifareNuid([u8; 4])` for the 4-byte Mifare UID (currently an alias in nfc-reader)
 
-- [ ] 6.6.1 **Phase 1 — Newtype foundation + `Figure.tag_identity` prep.** Prep pass that adds the plumbing without changing the wire format yet. Tests stay green throughout.
-  - [ ] 6.6.1a Define `ToyTypeId`, `TagVariant`, `MaskedVariant`, `TagIdentity`, `MifareNuid` newtypes in `crates/core/src/figure.rs`. Serde transparent where it makes sense; `Display` + `FromStr` impls for the ones that appear in URLs / logs.
-  - [ ] 6.6.1b `skylander-sky-parser` gains a `skylander-core` dep. Replace the bare `figure_id: u32` / `variant: u16` fields on `SkyFigureStats` with newtyped equivalents. Update `VARIANT_IDENTITY_MASK` to return `MaskedVariant` via a helper.
-  - [ ] 6.6.1c `Figure` gains `tag_identity: Option<TagIdentity>` (None only for parse failures — keep an escape valve).
-  - [ ] 6.6.1d `skylander_indexer::scan()` parses each pack `.sky` inline and populates `tag_identity`. `scan_runtime()` does the same on the scan side (already parses, just wire the field).
-  - [ ] 6.6.1e `crates/server/src/main.rs` drops the separate re-parse loop — builds the `tag_identity → FigureId` map directly from `figure.tag_identity`. Net ~1s faster startup, no behaviour change.
-  - [ ] 6.6.1f `crates/nfc-reader`: upgrade the existing `type Uid = [u8; 4]` alias to a `MifareNuid` newtype. Re-export from core. Update `dump_figure`, `SkyDump`, `list_passive_target` signatures.
-  - [ ] 6.6.1g Commit with full `cargo test --workspace` + trunk-phone build green.
+- [x] 6.6.1 **Phase 1 — Newtype foundation + `Figure.tag_identity` prep.** Done 2026-04-23. Numbers preserved end-to-end (pack=504, identity_map=489, nicknames_promoted=1, total_library=504 pre/post refactor). 153/153 workspace tests green. Boot log identical.
+  - [x] 6.6.1a Newtypes `ToyTypeId`, `TagVariant`, `MaskedVariant`, `TagIdentity`, `MifareNuid` live in `crates/core/src/figure.rs`. Serde-transparent, with `Display` + `to_canonical_id_string()` on `TagIdentity` for the URL form.
+  - [x] 6.6.1b sky-parser gained a core dep. `SkyFigureStats.figure_id: u32` → `ToyTypeId`, `.variant: u16` → `TagVariant`. `VARIANT_IDENTITY_MASK` moved to core with `TagVariant::mask_to_identity()` helper; sky-parser keeps a `pub use` for back-compat.
+  - [x] 6.6.1c `Figure.tag_identity: Option<TagIdentity>` shipped with `#[serde(default)]` so existing persisted payloads stay deserializable.
+  - [x] 6.6.1d Indexer `scan()` populates via `parse_tag_identity()` helper (parse-failure → None with a `tracing::warn!`); `scan_runtime()` populates directly from the parse it already does.
+  - [x] 6.6.1e Server main drops the re-parse loop; builds the `TagIdentity → FigureId` map from `figure.tag_identity` directly. Nickname-promote now checks `f.variant_tag != "base"` instead of re-parsing for nickname.
+  - [ ] 6.6.1f `MifareNuid` newtype is defined; nfc-reader hasn't migrated yet — deferred to a follow-up inside Phase 4 alongside the other consumer sweep.
+  - [x] 6.6.1g Commit `5c9c…` — `cargo test --workspace` + `trunk build` both green.
 
 - [ ] 6.6.2 **Phase 2 — Migration tool + dev DB wipe.**
   - [ ] 6.6.2a New `tools/rekey-figure-ids/` one-shot CLI. Walks `data/firmware-pack` (or `FIRMWARE_PACK_ROOT` from `.env.dev`), computes `SHA → FigureId::from_tag_identity` map for each pack `.sky`. Rewrites `data/figures.json` keyed by new canonical strings, collapsing duplicates first-wins with a log line per collision (504 raw → ~489 unique). Renames every `data/images/<SHA>/` directory to `data/images/<new-id>/`. Idempotent — detects already-migrated state and exits cleanly on re-run.

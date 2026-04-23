@@ -395,7 +395,7 @@ pub fn run_scanner_worker(
     events: broadcast::Sender<Event>,
     out_dir: std::path::PathBuf,
     library_identities: std::sync::Arc<
-        std::collections::HashMap<(u32, u16), skylander_core::FigureId>,
+        std::collections::HashMap<skylander_core::TagIdentity, skylander_core::FigureId>,
     >,
 ) {
     if let Err(e) = std::fs::create_dir_all(&out_dir) {
@@ -481,7 +481,7 @@ fn persist_and_broadcast(
     dump: &SkyDump,
     out_dir: &Path,
     events: &broadcast::Sender<Event>,
-    library_identities: &std::collections::HashMap<(u32, u16), skylander_core::FigureId>,
+    library_identities: &std::collections::HashMap<skylander_core::TagIdentity, skylander_core::FigureId>,
 ) -> Result<()> {
     let path = out_dir.join(format!("{}.sky", dump.uid_hex()));
     std::fs::write(&path, &dump.bytes)
@@ -492,30 +492,44 @@ fn persist_and_broadcast(
     // fail (wrong FigureKind classification, CYOS layout gap, etc.); we
     // surface whatever the parser gives us and let the phone fall back
     // to the uid when empty.
-    let (figure_id, variant, display_name) = match skylander_sky_parser::parse(&dump.bytes) {
-        Ok(stats) => (stats.figure_id, stats.variant, stats.nickname.clone()),
-        Err(e) => {
-            tracing::warn!(error = ?e, uid = %dump.uid_hex(), "nfc-scanner: parse failed — emitting scan event anyway with unknown identity");
-            (0, 0, String::new())
-        }
-    };
+    let parsed = skylander_sky_parser::parse(&dump.bytes);
+    if let Err(e) = &parsed {
+        tracing::warn!(
+            error = ?e,
+            uid = %dump.uid_hex(),
+            "nfc-scanner: parse failed — emitting scan event anyway with unknown identity",
+        );
+    }
+    let figure_id = parsed.as_ref().map(|s| s.figure_id).ok();
+    let variant = parsed.as_ref().map(|s| s.variant).ok();
+    let display_name = parsed
+        .as_ref()
+        .map(|s| s.nickname.clone())
+        .unwrap_or_default();
 
-    // "Already in your collection" = masked (figure_id, variant) is known
-    // to the library (pack master OR prior scan). We apply the
-    // VARIANT_IDENTITY_MASK because pack masters store variant=0x0000
-    // while physical tags include year_code + is_in_game_variant bits
-    // that aren't part of canonical identity. Raw matching would miss
-    // the collision on the very first scan of a pack-owned figure.
-    let identity_key = (
-        figure_id,
-        variant & skylander_sky_parser::VARIANT_IDENTITY_MASK,
-    );
-    let is_duplicate = figure_id != 0 && library_identities.contains_key(&identity_key);
+    // "Already in your collection" = the tag's canonical identity is known
+    // to the library (pack master OR prior scan). The mask is applied via
+    // `TagVariant::mask_to_identity` so we ignore year_code + is_in_game
+    // bits — pack masters store `variant=0x0000` while physical tags
+    // include runtime state; raw matching would miss the collision.
+    let tag_identity = match (figure_id, variant) {
+        (Some(fid), Some(var)) => {
+            Some(skylander_core::TagIdentity::new(fid, var.mask_to_identity()))
+        }
+        _ => None,
+    };
+    let is_duplicate = tag_identity
+        .map(|id| library_identities.contains_key(&id))
+        .unwrap_or(false);
+
+    // Unwrap for the outgoing event — zero is the sentinel when parse failed.
+    let figure_id_u32 = figure_id.map(|f| f.get()).unwrap_or(0);
+    let variant_u16 = variant.map(|v| v.get()).unwrap_or(0);
 
     tracing::info!(
         uid = %dump.uid_hex(),
-        figure_id = format!("0x{:06X}", figure_id),
-        variant = format!("0x{:04X}", variant),
+        figure_id = format!("0x{:06X}", figure_id_u32),
+        variant = format!("0x{:04X}", variant_u16),
         display_name = %display_name,
         is_duplicate,
         path = %path.display(),
@@ -526,8 +540,8 @@ fn persist_and_broadcast(
     // is still useful on reconnect.
     let _ = events.send(Event::FigureScanned {
         uid: dump.uid_hex(),
-        figure_id,
-        variant,
+        figure_id: figure_id_u32,
+        variant: variant_u16,
         display_name,
         is_duplicate,
     });

@@ -12,7 +12,8 @@ pub mod protocol;
 
 pub use compat::{game_of_origin_from_serial, is_compatible};
 pub use figure::{
-    Category, Element, Figure, FigureId, Game, GameOfOrigin, GameSerial, PublicFigure,
+    Category, Element, Figure, FigureId, Game, GameOfOrigin, GameSerial, MaskedVariant,
+    MifareNuid, PublicFigure, TagIdentity, TagVariant, ToyTypeId, VARIANT_IDENTITY_MASK,
 };
 pub use game::{InstalledGame, SKYLANDERS_SERIALS};
 pub use portal::{SLOT_COUNT, SlotIndex, SlotIndexOutOfRange, SlotState};
@@ -121,6 +122,7 @@ mod tests {
             category: Category::Figure,
             sky_path: PathBuf::from("C:/pack/fire/Eruptor.sky"),
             element_icon_path: Some(PathBuf::from("C:/pack/fire/FireSymbolSkylanders.png")),
+            tag_identity: None,
         };
         let j = serde_json::to_string(&f.to_public()).unwrap();
         assert!(!j.contains("C:/pack"));

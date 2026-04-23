@@ -43,6 +43,13 @@ pub fn scan(pack_root: &Path) -> Result<Vec<Figure>> {
             element_icons.get(&key).cloned()
         });
 
+        // Parse tag block 0 to populate `tag_identity` (PLAN 6.6.1d) — the
+        // canonical dedup key for pack-vs-scan merging. Block 0 is plaintext
+        // Mifare manufacturer data; parse is cheap and only fails on
+        // totally-broken files. Log and keep going in that case so one
+        // corrupted master doesn't torch the whole index.
+        let tag_identity = parse_tag_identity(&sky.abs);
+
         out.push(Figure {
             id,
             canonical_name: display_name(&stem_clean),
@@ -53,6 +60,7 @@ pub fn scan(pack_root: &Path) -> Result<Vec<Figure>> {
             category,
             sky_path: sky.abs,
             element_icon_path,
+            tag_identity,
         });
     }
 
@@ -132,6 +140,10 @@ pub fn scan_runtime(scanned_dir: &Path) -> Result<Vec<Figure>> {
         } else {
             stats.nickname.clone()
         };
+        let tag_identity = Some(skylander_core::TagIdentity::new(
+            stats.figure_id,
+            stats.variant.mask_to_identity(),
+        ));
 
         out.push(Figure {
             id,
@@ -147,6 +159,7 @@ pub fn scan_runtime(scanned_dir: &Path) -> Result<Vec<Figure>> {
             category,
             sky_path: abs,
             element_icon_path: None,
+            tag_identity,
         });
     }
     Ok(out)
@@ -155,16 +168,44 @@ pub fn scan_runtime(scanned_dir: &Path) -> Result<Vec<Figure>> {
 /// Kind-based display name for scan-only figures (no pack lookup, no
 /// figures.json). "Creation Crystal", "Trap", etc. Keeps canonical_name
 /// browsable while variant_tag carries the tag's stored nickname.
-fn canonical_name_for_scan(kind: skylander_sky_parser::FigureKind, figure_id: u32) -> String {
+fn canonical_name_for_scan(
+    kind: skylander_sky_parser::FigureKind,
+    figure_id: skylander_core::ToyTypeId,
+) -> String {
     use skylander_sky_parser::FigureKind as K;
     match kind {
-        K::Standard => format!("Figure 0x{:06X}", figure_id),
+        K::Standard => format!("Figure 0x{:06X}", figure_id.get()),
         K::Trap => "Trap".to_string(),
         K::Vehicle => "Vehicle".to_string(),
         K::RacingPack => "Racing Pack".to_string(),
         K::Cyos => "Creation Crystal".to_string(),
-        K::Other => format!("Figure 0x{:06X}", figure_id),
+        K::Other => format!("Figure 0x{:06X}", figure_id.get()),
     }
+}
+
+/// Parse block 0 of a pack `.sky` for its tag identity. Returns `None` on
+/// any read / parse failure — caller treats absence as "no identity"
+/// (Figure.tag_identity = None). Logs so the failure is visible but doesn't
+/// abort indexing.
+fn parse_tag_identity(path: &Path) -> Option<skylander_core::TagIdentity> {
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(path = %path.display(), error = %e, "indexer: read failed — tag_identity unset");
+            return None;
+        }
+    };
+    let stats = match skylander_sky_parser::parse(&bytes) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(path = %path.display(), error = ?e, "indexer: parse failed — tag_identity unset");
+            return None;
+        }
+    };
+    Some(skylander_core::TagIdentity::new(
+        stats.figure_id,
+        stats.variant.mask_to_identity(),
+    ))
 }
 
 /// Best-effort category inference from the sky-parser's `FigureKind`.

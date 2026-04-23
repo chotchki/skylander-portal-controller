@@ -61,34 +61,26 @@ fn main() -> Result<()> {
     // against, so the ~1s pack re-parse would be pure cost.
     #[cfg(feature = "nfc-import")]
     let (figures, tag_identity_map) = {
-        use skylander_sky_parser::VARIANT_IDENTITY_MASK;
+        use skylander_core::{FigureId, TagIdentity};
         use std::collections::HashMap as StdHashMap;
 
-        // Canonical identity key — strip the year_code + is_in_game_variant
-        // bits off the raw variant (see sky-parser::VARIANT_IDENTITY_MASK).
-        // Pack masters store `variant=0x0000`; a physical tag scanned off
-        // a real portal includes the year code it was last played in. Raw
-        // matching would miss the dedup; masked matching collapses them.
-        let identity_key = |fid: u32, variant: u16| -> (u32, u16) {
-            (fid, variant & VARIANT_IDENTITY_MASK)
-        };
+        // PLAN 6.6.1e: `Figure.tag_identity` is populated by the indexer
+        // now, so we build the lookup from `f.tag_identity` directly
+        // instead of re-parsing every `.sky` at boot. Saves ~1s on a
+        // 500-figure pack and collapses a layer of "where does the
+        // identity come from" confusion.
 
         let mut pack_figures = pack_figures;
-        let pack_index_by_id: StdHashMap<skylander_core::FigureId, usize> = pack_figures
+        let pack_index_by_id: StdHashMap<FigureId, usize> = pack_figures
             .iter()
             .enumerate()
             .map(|(i, f)| (f.id.clone(), i))
             .collect();
 
-        let mut tag_identity_map: StdHashMap<(u32, u16), skylander_core::FigureId> =
-            StdHashMap::new();
+        let mut tag_identity_map: StdHashMap<TagIdentity, FigureId> = StdHashMap::new();
         for f in &pack_figures {
-            if let Ok(bytes) = std::fs::read(&f.sky_path) {
-                if let Ok(stats) = skylander_sky_parser::parse(&bytes) {
-                    tag_identity_map
-                        .entry(identity_key(stats.figure_id, stats.variant))
-                        .or_insert_with(|| f.id.clone());
-                }
+            if let Some(id) = f.tag_identity {
+                tag_identity_map.entry(id).or_insert_with(|| f.id.clone());
             }
         }
         info!(
@@ -103,13 +95,14 @@ fn main() -> Result<()> {
         let mut nicknames_promoted = 0usize;
         let mut scan_only_figures: Vec<Figure> = Vec::new();
         for f in scan_figures {
-            let Ok(bytes) = std::fs::read(&f.sky_path) else {
+            let Some(key) = f.tag_identity else {
+                // Parse failed inside scan_runtime — no identity, no dedup.
+                // Accept into the library as scan-only with whatever
+                // canonical_name/variant_tag the indexer produced.
+                scanned_kept += 1;
+                scan_only_figures.push(f);
                 continue;
             };
-            let Ok(stats) = skylander_sky_parser::parse(&bytes) else {
-                continue;
-            };
-            let key = identity_key(stats.figure_id, stats.variant);
             if let Some(pack_id) = tag_identity_map.get(&key).cloned() {
                 // Pack wins — suppress the scan entry from the library
                 // (still exists on disk as a physical-tag record, just
@@ -117,17 +110,17 @@ fn main() -> Result<()> {
                 // a user-chosen nickname AND the pack's variant_tag is
                 // still the default "base", promote the nickname onto
                 // the pack card so the user sees their customization
-                // (common for Creation Crystals — you name "DELFOX" what
-                // the pack just calls "CRYSTAL_-_FIRE_Reactor"). PLAN
-                // 6.5.5a option B.
-                let nickname = stats.nickname.trim();
-                if !nickname.is_empty() {
+                // (common for Creation Crystals — you name "DELFOX"
+                // what the pack just calls "CRYSTAL_-_FIRE_Reactor").
+                // PLAN 6.5.5a option B.
+                let scan_variant = f.variant_tag.trim();
+                if !scan_variant.is_empty() && scan_variant != "base" {
                     if let Some(&idx) = pack_index_by_id.get(&pack_id) {
                         let pack_fig = &mut pack_figures[idx];
                         if pack_fig.variant_tag == "base"
-                            && pack_fig.canonical_name != nickname
+                            && pack_fig.canonical_name != scan_variant
                         {
-                            pack_fig.variant_tag = nickname.to_string();
+                            pack_fig.variant_tag = scan_variant.to_string();
                             nicknames_promoted += 1;
                         }
                     }

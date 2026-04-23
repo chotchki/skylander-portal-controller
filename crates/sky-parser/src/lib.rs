@@ -257,17 +257,12 @@ pub enum FigureKind {
     Other,
 }
 
-/// Bits of the variant word that encode the figure's *canonical identity*
-/// — mask this over a raw variant before keying a dedup lookup. We keep
-/// deco_id (bits 0..8), is_supercharger (8), is_lightcore (9), and
-/// is_reposed (11); we drop is_in_game_variant (10) and year_code
-/// (12..16) because those encode **runtime/game state**, not identity.
-///
-/// Concrete example: pack Snap Shot stores `variant=0x0000` (canonical,
-/// no game-generation tag), while a live-scanned physical Snap Shot
-/// stores `variant=0x3000` (year_code 3 = Trap Team). Masked, both
-/// collapse to `0x0000` and dedup correctly. PLAN 6.5.5a.
-pub const VARIANT_IDENTITY_MASK: u16 = 0x0BFF;
+/// Re-export of [`skylander_core::VARIANT_IDENTITY_MASK`] for consumers
+/// that were already reaching into sky-parser for this. The const itself
+/// moved to `core` in PLAN 6.6.1b alongside the newtype wrappers it
+/// operates on — `TagVariant::mask_to_identity()` is the idiomatic form
+/// new code should use instead of ANDing with the raw u16.
+pub use skylander_core::VARIANT_IDENTITY_MASK;
 
 /// Decomposition of the 16-bit variant bitfield.
 ///
@@ -391,10 +386,13 @@ pub fn crc16_ccitt_false(data: &[u8]) -> u16 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkyFigureStats {
     // --- Header ---------------------------------------------------------
-    /// Activision-assigned toy type ("figure id"), 24-bit.
-    pub figure_id: u32,
-    /// Raw variant word as stored on the tag.
-    pub variant: u16,
+    /// Activision-assigned toy type ("figure id"), 24-bit. Newtyped via
+    /// [`skylander_core::ToyTypeId`] (PLAN 6.6.1b) so it can't be mixed
+    /// up with the library-level `FigureId` string or other u32 fields.
+    pub figure_id: skylander_core::ToyTypeId,
+    /// Raw variant word as stored on the tag. Use
+    /// [`skylander_core::TagVariant::mask_to_identity`] before dedup.
+    pub variant: skylander_core::TagVariant,
     /// Decomposition of the variant word.
     pub variant_decoded: VariantInfo,
     /// Non-unique identifier / serial from header byte 0x00 (uint32 LE).
@@ -660,8 +658,8 @@ pub fn parse(bytes: &[u8]) -> Result<SkyFigureStats, ParseError> {
 
     // Default-initialised; only filled for Standard.
     let mut stats = SkyFigureStats {
-        figure_id,
-        variant: variant_raw,
+        figure_id: skylander_core::ToyTypeId::new(figure_id),
+        variant: skylander_core::TagVariant::new(variant_raw),
         variant_decoded,
         serial,
         trading_card_id,
@@ -1132,7 +1130,7 @@ mod tests {
         .build();
         let stats = parse(&bytes).unwrap();
         assert_eq!(stats.serial, 0xDEADBEEF);
-        assert_eq!(stats.figure_id, 0x000005);
+        assert_eq!(stats.figure_id, skylander_core::ToyTypeId(0x000005));
         assert_eq!(stats.trading_card_id, 0x1234_5678_9ABC_DEF0);
         assert_eq!(
             stats.variant_decoded.year_code,
@@ -1420,7 +1418,7 @@ mod tests {
         let stats = parse(&bytes).unwrap();
         let json = serde_json::to_string(&stats).unwrap();
         let round: SkyFigureStats = serde_json::from_str(&json).unwrap();
-        assert_eq!(round.figure_id, 7);
+        assert_eq!(round.figure_id, skylander_core::ToyTypeId(7));
         assert_eq!(round.nickname, "Kaos");
     }
 
@@ -1438,8 +1436,8 @@ mod tests {
         // should be false.
         let bytes = vec![0u8; SKY_FILE_LEN];
         let stats = parse(&bytes).unwrap();
-        assert_eq!(stats.figure_id, 0);
-        assert_eq!(stats.variant, 0);
+        assert_eq!(stats.figure_id, skylander_core::ToyTypeId(0));
+        assert_eq!(stats.variant, skylander_core::TagVariant(0));
         assert_eq!(stats.variant_decoded.year_code, SkyGeneration::Unknown);
         // All-zero bytes fail the header CRC (CRC of 30 zeros is 0xE1F0).
         assert!(!stats.checksums_valid);

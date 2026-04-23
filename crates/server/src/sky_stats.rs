@@ -63,8 +63,8 @@ pub struct PublicSkyStats {
 impl From<SkyFigureStats> for PublicSkyStats {
     fn from(s: SkyFigureStats) -> Self {
         Self {
-            figure_id: s.figure_id,
-            variant: s.variant,
+            figure_id: s.figure_id.get(),
+            variant: s.variant.get(),
             variant_decoded: s.variant_decoded,
             serial: s.serial,
             trading_card_id: s.trading_card_id,

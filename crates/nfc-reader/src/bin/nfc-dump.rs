@@ -61,8 +61,8 @@ fn main() -> Result<()> {
         Ok(stats) => {
             println!(
                 "parser: figure_id=0x{:06X} variant=0x{:04X} kind={:?} level={} gold={} nickname={:?} crc_ok={}",
-                stats.figure_id,
-                stats.variant,
+                stats.figure_id.get(),
+                stats.variant.get(),
                 stats.figure_kind,
                 stats.level,
                 stats.gold,

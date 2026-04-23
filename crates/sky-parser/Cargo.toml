@@ -9,6 +9,7 @@ name = "skylander_sky_parser"
 path = "src/lib.rs"
 
 [dependencies]
+skylander-core = { path = "../core" }
 serde = { workspace = true }
 thiserror = { workspace = true }
 chrono = { version = "0.4", default-features = false, features = ["serde", "alloc"] }

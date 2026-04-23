@@ -4411,6 +4411,7 @@ dependencies = [
  "md-5",
  "serde",
  "serde_json",
+ "skylander-core",
  "thiserror 1.0.69",
 ]
 

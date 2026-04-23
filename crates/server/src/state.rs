@@ -972,6 +972,7 @@ mod tests {
             category: Category::Figure,
             sky_path: PathBuf::from("/dev/null"),
             element_icon_path: None,
+            tag_identity: None,
         }
     }
 

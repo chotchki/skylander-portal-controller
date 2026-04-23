@@ -12,20 +12,20 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use skylander_core::{Event, FigureId};
+use skylander_core::{Event, FigureId, TagIdentity};
 use tokio::sync::broadcast;
 
 /// Spawn the scanner worker. Non-blocking; the thread runs until the
 /// process exits. Logs its own errors via `tracing`.
 ///
 /// `scanned_dir` holds raw `<uid>.sky` dumps (PLAN 6.5.3).
-/// `library_identities` is the pack-plus-prior-scans `(fid, variant)`
-/// map built at startup (PLAN 6.5.5a); the worker uses it to decide
-/// whether a scan is "already in your collection".
+/// `library_identities` is the pack-plus-prior-scans [`TagIdentity`]
+/// map built at startup (PLAN 6.5.5a + 6.6.4f); the worker consults it
+/// to set `is_duplicate` — "already in your collection".
 pub fn spawn(
     events: broadcast::Sender<Event>,
     scanned_dir: PathBuf,
-    library_identities: Arc<HashMap<(u32, u16), FigureId>>,
+    library_identities: Arc<HashMap<TagIdentity, FigureId>>,
 ) {
     if let Err(e) = std::thread::Builder::new()
         .name("nfc-scanner".into())

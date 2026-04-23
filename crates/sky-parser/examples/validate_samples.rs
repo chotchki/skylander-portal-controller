@@ -63,7 +63,9 @@ fn main() {
                         path.clone(),
                         format!(
                             "figure_id=0x{:06X} variant=0x{:04X} kind={}",
-                            stats.figure_id, stats.variant, kind_label
+                            stats.figure_id.get(),
+                            stats.variant.get(),
+                            kind_label
                         ),
                     ));
                 }
@@ -71,8 +73,8 @@ fn main() {
                 println!(
                     "{:<50} fid={:>8} var={:>6} lvl={:>3} xp11={:>6} xp13={:>7} gold={:>5} play_s={:>8} nick={:?} crc={}",
                     truncate(&rel.display().to_string(), 50),
-                    format!("0x{:06X}", stats.figure_id),
-                    format!("0x{:04X}", stats.variant),
+                    format!("0x{:06X}", stats.figure_id.get()),
+                    format!("0x{:04X}", stats.variant.get()),
                     stats.level,
                     stats.xp_2011,
                     stats.xp_2013,
