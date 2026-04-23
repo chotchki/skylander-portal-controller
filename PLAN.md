@@ -11,16 +11,12 @@ Conventions:
 
 ## Phase 3 carryover — still open
 
-- [ ] **3.10.7 Ownership badge — final aesthetic pass.** Pip data + colour shipped as 4.18.17; post-Phase-4 styling pass with final design-system tokens.
 - [ ] **3.10.9 Two-player disconnect-cleanup semantics.** What happens to P2's figures when P1 drops; revisit with 3.17 reconnect work.
-- [ ] **3.10e.6 Ownership-badge e2e test.** Lands with 3.10.7.
-- [ ] **3.11.4 Creation Crystals extra-confirm** (type "RESET"). Defer until 4.2.14's hold-to-activate pattern is generalized.
 - [ ] **3.12.4 Three-option resume modal** (clear + resume / alongside / fresh) for the 2-phone case.
 - [ ] **3.14 Reposes — variant cycling.**
   - [ ] 3.14.1 Browser collapses figures sharing `variant_group` into one card with "N variants" badge.
   - [ ] 3.14.2 Tap variant badge → cycle in place (SPEC Q76).
   - [ ] 3.14.3 Loaded variant reflected on the slot's display_name.
-- [ ] **3.17.2 "Can't connect" button → network-interface picker** (SPEC Q49 fallback). Note: 3.17.1 shipped as 4.15.8's upper-right overlay.
 
 ---
 

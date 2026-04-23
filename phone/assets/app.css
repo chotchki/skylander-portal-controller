@@ -1997,34 +1997,73 @@ input, textarea {
   box-shadow: 0 0 0 1.5px #7a5c00, 0 2px 4px rgba(0,0,0,0.5);
 }
 
-/* Ownership pip (PLAN 4.18.17). Sits at the bottom-right corner of the
-   slot bezel so in 2-player sessions each kid can see at a glance whose
-   figure is in which slot (required by CLAUDE.md §Concurrency & takeover
-   / Phase-3 deferral 3.10.7). Colour + border come from inline style
-   (profile colour); the initial text sits on top. Bottom-right is the
-   safe corner — top-left carries the slot index, top-right the "?"
-   unmatched badge. `.pending` variant dims the chip during the
-   Loading→Loaded transition so it reads as "in flight" rather than
-   fully anchored. */
+/* Ownership pip (PLAN 4.18.17 data + 3.10.7 aesthetic). Mini heraldic
+   bezel — gold radial-gradient ring wrapping a profile-color-tinted
+   inner plate with the owner's initial. Shares visual vocabulary with
+   `<GoldBezel>` so the pip reads as "a tiny slot sigil" rather than a
+   flat dot. Bottom-right is the safe corner — top-left carries the
+   slot index, top-right the "?" unmatched badge. `.pending` variant
+   desaturates + dims the pip during the Loading→Loaded transition so
+   it reads as "in flight" rather than fully anchored. `pointer-events:
+   none` keeps the pip from stealing slot taps; `aria-label` on the
+   wrapper carries "Placed by {name}" for screen readers.
+
+   Sized intentionally small (24px): big enough for the gold ring to
+   read at 10ft + for a Titan One initial to sit legibly, small enough
+   not to compete with the figure portrait inside the slot bezel. */
 .p4-slot-owner {
   position: absolute;
   bottom: -2px;
   right: -2px;
-  font-family: "Titan One", sans-serif;
-  font-size: var(--t-body-sm);
-  color: #fff;
-  border: 1.5px solid transparent;
+  width: 24px;
+  height: 24px;
+  z-index: 3;
+  pointer-events: none;
+  animation: p4-slot-owner-in 260ms var(--ease-spring) both;
+}
+.p4-slot-owner-ring {
+  position: absolute;
+  inset: 0;
   border-radius: 50%;
-  width: 20px;
-  height: 20px;
+  background: radial-gradient(
+    circle at 30% 25%,
+    var(--gb), var(--g) 22%, var(--gm) 55%, var(--gs) 100%
+  );
+  box-shadow:
+    inset 0 0 0 1px var(--gi),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.3),
+    inset 0 -1px 1.5px rgba(0, 0, 0, 0.5),
+    0 0 0 1px #000,
+    0 2px 4px rgba(0, 0, 0, 0.55);
+}
+.p4-slot-owner-plate {
+  position: absolute;
+  inset: 14%;
+  border-radius: 50%;
   display: grid;
   place-items: center;
-  z-index: 3;
-  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.55);
-  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.35), 0 2px 4px rgba(0, 0, 0, 0.45);
+  background: var(--profile-color, #1a2a4a);
+  color: #fff;
+  font-family: "Titan One", sans-serif;
+  font-size: var(--t-body-sm);
+  line-height: 1;
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.6), 0 0 2px rgba(0, 0, 0, 0.45);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.5),
+    inset 0 1px 2px rgba(255, 255, 255, 0.3),
+    inset 0 -1px 2px rgba(0, 0, 0, 0.35);
 }
 .p4-slot-owner--pending {
-  opacity: 0.6;
+  opacity: 0.55;
+  filter: saturate(0.75);
+}
+@keyframes p4-slot-owner-in {
+  from { opacity: 0; transform: scale(0.5); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .p4-slot-owner { animation: none; }
 }
 
 /* 4.6.1 — Empty slot: dimmed bezel with "+" glyph */

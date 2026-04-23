@@ -280,3 +280,145 @@ async fn independent_profile_unlock() {
     p1.close().await.unwrap();
     p2.close().await.unwrap();
 }
+
+// ---- 3.10e.6 ownership_pip_shows_correct_owner_per_slot ------------------
+//
+// Companion to 3.10.7's aesthetic pass. Two profiles with distinct colours
+// each place a figure; every connected phone should see each slot's pip
+// render the placing-profile's initial + colour, so a mixed 2-player
+// session can tell whose figure is whose at a glance.
+//
+// Uses current `.p4-*` selectors directly rather than going through the
+// stale `.portal .slot` helpers — 4.16.1 owns the broader selector
+// migration.
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver"]
+async fn ownership_pip_shows_correct_owner_per_slot() {
+    let server = TestServer::spawn().expect("spawn");
+    launch_giants(&server.url).await.unwrap();
+
+    // Two profiles with distinct, recognisable colours so we can
+    // substring-match the CSS custom-property echo.
+    let alice_id = inject_profile(&server.url, "Alice", "1111", "#ff6b2a")
+        .await
+        .unwrap();
+    let bob_id = inject_profile(&server.url, "Bob", "2222", "#5ac96b")
+        .await
+        .unwrap();
+
+    unlock_session(&server.url, &alice_id).await.unwrap();
+    let p1 = new_phone(&server).await;
+    let s1 = wait_for_session_id(&p1).await;
+    let p2 = new_phone(&server).await;
+    let s2 = wait_for_session_id(&p2).await;
+
+    // Rebind each session to its owner explicitly — pending_unlock
+    // only drives the first-to-register phone (see independent_profile_unlock).
+    set_session_profile(&server.url, s1, &alice_id).await.unwrap();
+    set_session_profile(&server.url, s2, &bob_id).await.unwrap();
+
+    // Two successful loads — one per slot, same mock outcome.
+    inject_load_outcomes(&server.url, json!([{"kind": "ok"}, {"kind": "ok"}]))
+        .await
+        .unwrap();
+
+    // Wait for both phones to reach the portal grid.
+    for phone in [&p1, &p2] {
+        phone
+            .wait_for(Locator::Css(".portal-p4"), Duration::from_secs(10))
+            .await
+            .unwrap();
+    }
+
+    // P1 (Alice) places into slot 1; P2 (Bob) places into slot 2.
+    let p1_slots = p1.client.find_all(Locator::Css(".p4-slot")).await.unwrap();
+    p1_slots[0].clone().click().await.unwrap();
+    p1.client.find_all(Locator::Css(".fig-card-p4")).await.unwrap()[0]
+        .clone()
+        .click()
+        .await
+        .unwrap();
+
+    let p2_slots = p2.client.find_all(Locator::Css(".p4-slot")).await.unwrap();
+    p2_slots[1].clone().click().await.unwrap();
+    p2.client.find_all(Locator::Css(".fig-card-p4")).await.unwrap()[1]
+        .clone()
+        .click()
+        .await
+        .unwrap();
+
+    // Poll until both phones see both ownership plates settled (not pending).
+    // The `--pending` class is stripped once the slot flips from Loading
+    // to Loaded; if either slot stays in-flight the assertion would fire
+    // against transient state.
+    for phone in [&p1, &p2] {
+        phone
+            .wait_until(Duration::from_secs(10), || async {
+                let plates = phone
+                    .client
+                    .find_all(Locator::Css(".p4-slot-owner:not(.p4-slot-owner--pending) .p4-slot-owner-plate"))
+                    .await
+                    .unwrap_or_default();
+                plates.len() >= 2
+            })
+            .await
+            .unwrap();
+    }
+
+    // Each connected phone should see both pips with the correct owner
+    // initial and tinted plate — ownership follows the placing profile,
+    // not the viewing phone.
+    for (name, phone) in [("P1", &p1), ("P2", &p2)] {
+        let slot1_owner = phone
+            .client
+            .find(Locator::Css(".p4-slot:nth-child(1) .p4-slot-owner"))
+            .await
+            .unwrap_or_else(|_| panic!("{name}: slot 1 ownership pip should exist"));
+        let slot1_style = slot1_owner.attr("style").await.unwrap().unwrap_or_default();
+        let slot1_initial = phone
+            .client
+            .find(Locator::Css(".p4-slot:nth-child(1) .p4-slot-owner-plate"))
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert_eq!(
+            slot1_initial.trim(),
+            "A",
+            "{name}: slot 1 initial expected Alice's A, got {slot1_initial:?}",
+        );
+        assert!(
+            slot1_style.to_ascii_lowercase().contains("#ff6b2a"),
+            "{name}: slot 1 style should carry Alice's #ff6b2a; got {slot1_style:?}",
+        );
+
+        let slot2_owner = phone
+            .client
+            .find(Locator::Css(".p4-slot:nth-child(2) .p4-slot-owner"))
+            .await
+            .unwrap_or_else(|_| panic!("{name}: slot 2 ownership pip should exist"));
+        let slot2_style = slot2_owner.attr("style").await.unwrap().unwrap_or_default();
+        let slot2_initial = phone
+            .client
+            .find(Locator::Css(".p4-slot:nth-child(2) .p4-slot-owner-plate"))
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert_eq!(
+            slot2_initial.trim(),
+            "B",
+            "{name}: slot 2 initial expected Bob's B, got {slot2_initial:?}",
+        );
+        assert!(
+            slot2_style.to_ascii_lowercase().contains("#5ac96b"),
+            "{name}: slot 2 style should carry Bob's #5ac96b; got {slot2_style:?}",
+        );
+    }
+
+    p1.close().await.unwrap();
+    p2.close().await.unwrap();
+}

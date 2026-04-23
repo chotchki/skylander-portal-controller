@@ -172,10 +172,11 @@ fn SlotView(
                         .unwrap_or('?')
                         .to_uppercase()
                         .to_string();
-                    let style = format!(
-                        "background: {color}; border-color: {color};",
-                        color = owner.color,
-                    );
+                    // Inline `--profile-color` so the heraldic plate inside
+                    // the mini bezel tints to the owner's swatch. Gold ring
+                    // is fixed (all owners get the same frame); only the
+                    // plate varies.
+                    let style = format!("--profile-color: {};", owner.color);
                     let cls = if is_loaded {
                         "p4-slot-owner"
                     } else {
@@ -189,7 +190,8 @@ fn SlotView(
                             title=title.clone()
                             aria-label=title
                         >
-                            {initial}
+                            <span class="p4-slot-owner-ring"></span>
+                            <span class="p4-slot-owner-plate">{initial}</span>
                         </span>
                     }.into_any()
                 }}
