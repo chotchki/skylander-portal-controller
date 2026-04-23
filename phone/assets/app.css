@@ -1351,6 +1351,28 @@ input, textarea {
   color: #ffe58a;
   font-weight: 700;
 }
+.credits-dedication {
+  text-align: center;
+  padding: 8px 4px 18px;
+}
+.credits-dedication-body {
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic;
+  font-weight: 500;
+  font-size: var(--t-body);
+  line-height: 1.5;
+  color: #ffe58a;
+  margin: 0 0 10px 0;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
+}
+.credits-dedication-sig {
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic;
+  font-size: var(--t-body-sm);
+  letter-spacing: 0.08em;
+  color: #d9c88a;
+  margin: 0;
+}
 .credits-disclaimer {
   padding: 14px 16px;
   background: rgba(2, 8, 24, 0.55);

@@ -20,6 +20,14 @@ pub fn CreditsOverlay(open: RwSignal<bool>) -> impl IntoView {
                 <div class="credits-card">
                     <h2 class="credits-title">"CREDITS"</h2>
                     <div class="credits-body">
+                        <section class="credits-dedication">
+                            <p class="credits-dedication-body">
+                                "To my kids, this is for your love of Skylanders and may \
+                                 it enable you to enjoy them for years to come."
+                            </p>
+                            <p class="credits-dedication-sig">"— Christopher Hotchkiss"</p>
+                        </section>
+
                         <section class="credits-disclaimer">
                             <p>
                                 "Skylanders, its characters, names, logos, and artwork are \
