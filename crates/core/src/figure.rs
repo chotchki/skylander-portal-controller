@@ -102,6 +102,10 @@ pub enum GameOfOrigin {
     /// Cross-cutting Items / Adventure Packs / Sidekicks collections at the
     /// firmware pack root that don't tie to a single game of origin.
     CrossGame,
+    /// Scan-discovered figure whose `(figure_id, variant)` isn't in the pack
+    /// and for which we haven't resolved the game-of-origin yet. PLAN 6.5.5
+    /// landing spot; 6.5.5b will fill this in via a tag-id → metadata table.
+    Unknown,
 }
 
 /// Server-side figure record. Holds filesystem details — **never** serialize

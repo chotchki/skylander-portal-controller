@@ -381,10 +381,23 @@ const RECONNECT_BACKOFF: Duration = Duration::from_secs(2);
 /// [`Event::FigureScanned`] on `events`. Writes raw `<uid>.sky` bytes under
 /// `out_dir` (created if missing). Intended to run on its own OS thread.
 ///
+/// `library_identities` is the caller's startup-built `(figure_id, variant)`
+/// → `FigureId` map covering pack + prior-scanned figures. The worker
+/// consults it to set `is_duplicate` on every emitted event — "already in
+/// your collection" rather than "we've written this uid before" (PLAN
+/// 6.5.5a). Read-only from the worker's side; the caller is responsible
+/// for clone-and-swap if the library ever needs to mutate at runtime.
+///
 /// Infinite loop — returns only if `events` has been dropped by every
 /// subscriber *and* sends start to fail with `SendError`. Process-shutdown
 /// is signalled by dropping all event receivers + the Tokio runtime.
-pub fn run_scanner_worker(events: broadcast::Sender<Event>, out_dir: std::path::PathBuf) {
+pub fn run_scanner_worker(
+    events: broadcast::Sender<Event>,
+    out_dir: std::path::PathBuf,
+    library_identities: std::sync::Arc<
+        std::collections::HashMap<(u32, u16), skylander_core::FigureId>,
+    >,
+) {
     if let Err(e) = std::fs::create_dir_all(&out_dir) {
         tracing::error!(error = %e, dir = %out_dir.display(), "nfc-scanner: create out_dir failed — worker exiting");
         return;
@@ -433,7 +446,12 @@ pub fn run_scanner_worker(events: broadcast::Sender<Event>, out_dir: std::path::
                             // Mark the edge AFTER a successful dump so a
                             // dump failure doesn't silence the next retry.
                             last_field = Some(uid);
-                            if let Err(e) = persist_and_broadcast(&dump, &out_dir, &events) {
+                            if let Err(e) = persist_and_broadcast(
+                                &dump,
+                                &out_dir,
+                                &events,
+                                &library_identities,
+                            ) {
                                 tracing::warn!(error = %e, uid = %dump.uid_hex(), "nfc-scanner: post-dump handling failed");
                             }
                         }
@@ -463,13 +481,9 @@ fn persist_and_broadcast(
     dump: &SkyDump,
     out_dir: &Path,
     events: &broadcast::Sender<Event>,
+    library_identities: &std::collections::HashMap<(u32, u16), skylander_core::FigureId>,
 ) -> Result<()> {
     let path = out_dir.join(format!("{}.sky", dump.uid_hex()));
-    // "Already in your collection" flag — true if we've seen this uid in
-    // a prior scan (the .sky exists on disk). We overwrite regardless so
-    // a re-scan can pick up newer on-tag state (level-ups, gold changes,
-    // future nickname updates). Existence check is cheap and pre-write.
-    let is_duplicate = path.exists();
     std::fs::write(&path, &dump.bytes)
         .with_context(|| format!("write {}", path.display()))?;
 
@@ -485,6 +499,12 @@ fn persist_and_broadcast(
             (0, 0, String::new())
         }
     };
+
+    // "Already in your collection" = (figure_id, variant) is known to the
+    // library (pack master OR prior scan, doesn't matter which). Replaces
+    // the earlier file-existence heuristic so that even a first-ever scan
+    // of a figure already in the pack reports is_duplicate=true.
+    let is_duplicate = figure_id != 0 && library_identities.contains_key(&(figure_id, variant));
 
     tracing::info!(
         uid = %dump.uid_hex(),

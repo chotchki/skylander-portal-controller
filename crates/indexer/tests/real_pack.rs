@@ -82,6 +82,7 @@ fn game_name(g: GameOfOrigin) -> &'static str {
         GameOfOrigin::Superchargers => "Superchargers",
         GameOfOrigin::Imaginators => "Imaginators",
         GameOfOrigin::CrossGame => "CrossGame",
+        GameOfOrigin::Unknown => "Unknown",
     }
 }
 

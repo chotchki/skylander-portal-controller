@@ -39,19 +39,82 @@ fn main() -> Result<()> {
         "starting server",
     );
 
-    // --- Index the firmware pack. ---
-    // PLAN 6.5.4 makes the pack optional — reader-only onboarding is valid,
-    // and so is the degenerate "no pack, no reader" start (user will create
-    // figures in-game or scan later). Empty pack root → empty library;
-    // scanned figures take over as the canonical source once 6.5.5 teaches
-    // the indexer to walk `<data_root>/scanned/`.
-    let figures: Vec<Figure> = if cfg.firmware_pack_root.as_os_str().is_empty() {
+    // --- Index the firmware pack + runtime scanned dir. ---
+    // PLAN 6.5.4 made the pack optional; PLAN 6.5.5a merges the scanned
+    // dir in alongside. Two rules govern the merge:
+    //   1. Pack .sky files are fresh-state masters (reset-to-zero); scans
+    //      capture the physical tag's *current* state. Pack wins on any
+    //      `(figure_id, variant)` collision so new-profile working copies
+    //      fork from a clean slate rather than the user's current XP.
+    //   2. A pack with zero hits + no scans = empty library; the phone
+    //      already handles that gracefully (empty-state copy).
+    let pack_figures: Vec<Figure> = if cfg.firmware_pack_root.as_os_str().is_empty() {
         info!("no firmware pack configured — starting with an empty library");
         Vec::new()
     } else {
         skylander_indexer::scan(&cfg.firmware_pack_root).context("scan firmware pack")?
     };
-    info!(count = figures.len(), "indexed figures");
+    info!(count = pack_figures.len(), "indexed pack figures");
+
+    // Merge scanned figures + build the tag-identity map only when the
+    // NFC feature is enabled — without it there are no scans to dedup
+    // against, so the ~1s pack re-parse would be pure cost.
+    #[cfg(feature = "nfc-import")]
+    let (figures, tag_identity_map) = {
+        use std::collections::HashMap as StdHashMap;
+
+        let mut tag_identity_map: StdHashMap<(u32, u16), skylander_core::FigureId> =
+            StdHashMap::new();
+        for f in &pack_figures {
+            if let Ok(bytes) = std::fs::read(&f.sky_path) {
+                if let Ok(stats) = skylander_sky_parser::parse(&bytes) {
+                    tag_identity_map
+                        .entry((stats.figure_id, stats.variant))
+                        .or_insert_with(|| f.id.clone());
+                }
+            }
+        }
+        info!(
+            count = tag_identity_map.len(),
+            "built tag-identity map from pack"
+        );
+
+        let scanned_dir = cfg.data_root.join("scanned");
+        let scan_figures = skylander_indexer::scan_runtime(&scanned_dir)
+            .context("walk scanned-figure dir")?;
+        let mut scanned_kept = 0usize;
+        let mut scan_only_figures: Vec<Figure> = Vec::new();
+        for f in scan_figures {
+            let Ok(bytes) = std::fs::read(&f.sky_path) else {
+                continue;
+            };
+            let Ok(stats) = skylander_sky_parser::parse(&bytes) else {
+                continue;
+            };
+            let key = (stats.figure_id, stats.variant);
+            if tag_identity_map.contains_key(&key) {
+                // Pack wins — suppress the scan entry from the library
+                // (still exists on disk as a physical-tag record, just
+                // not a distinct library card).
+                continue;
+            }
+            tag_identity_map.insert(key, f.id.clone());
+            scanned_kept += 1;
+            scan_only_figures.push(f);
+        }
+        info!(
+            kept = scanned_kept,
+            "merged scanned figures (pack wins on collision)"
+        );
+
+        let mut figures: Vec<Figure> = pack_figures;
+        figures.extend(scan_only_figures);
+        (figures, std::sync::Arc::new(tag_identity_map))
+    };
+    #[cfg(not(feature = "nfc-import"))]
+    let figures: Vec<Figure> = pack_figures;
+    info!(count = figures.len(), "total library figures");
+
     let figure_index: HashMap<_, _> = figures
         .iter()
         .enumerate()
@@ -131,6 +194,8 @@ fn main() -> Result<()> {
     let status_for_task = launcher_status.clone();
     let figures_for_task = figures.clone();
     let figure_index_for_task = figure_index.clone();
+    #[cfg(feature = "nfc-import")]
+    let tag_identity_map_for_task = tag_identity_map.clone();
     let games_yaml_for_task = cfg.games_yaml.clone();
     let join_qr_png_for_task = join_qr_png.clone();
 
@@ -224,15 +289,18 @@ fn main() -> Result<()> {
                     rpcs3_exe.clone(),
                     std::time::Duration::from_millis(500),
                 );
-                // NFC scanner worker (PLAN 6.5.1). Feature-gated: off by
-                // default so users without an ACR122U aren't pulling in
-                // pcsc linkage. Dumps land under `<data_root>/scanned/`
-                // as `<uid>.sky`; scanner emits `Event::FigureScanned`
-                // on the existing broadcast channel.
+                // NFC scanner worker (PLAN 6.5.1 + 6.5.5a). Feature-gated:
+                // off by default so users without an ACR122U aren't
+                // pulling in pcsc linkage. Dumps land under
+                // `<data_root>/scanned/` as `<uid>.sky`; scanner emits
+                // `Event::FigureScanned` on the broadcast channel with
+                // `is_duplicate` set by consulting the library identity
+                // map (pack + prior scans).
                 #[cfg(feature = "nfc-import")]
                 skylander_server::nfc::spawn(
                     events_for_task.clone(),
                     data_root.join("scanned"),
+                    tag_identity_map_for_task.clone(),
                 );
                 let state = Arc::new(AppState {
                     figures: figures_for_task,

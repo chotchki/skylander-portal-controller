@@ -60,6 +60,97 @@ pub fn scan(pack_root: &Path) -> Result<Vec<Figure>> {
     Ok(out)
 }
 
+// ---------------- runtime (scanned) walk ----------------
+
+/// Walk `scanned_dir` (`<data_root>/scanned/`), parse each `<uid>.sky` for
+/// its tag-level identity, and emit [`Figure`] entries that can live
+/// alongside pack figures in the library. PLAN 6.5.5a.
+///
+/// Caller is expected to merge with pack results and dedupe: when the same
+/// `(figure_id, variant)` shows up in both, **pack wins** (per the UX rule
+/// — pack .sky files are reset-to-fresh masters, whereas scanned files
+/// carry the physical tag's current state, which isn't what a new profile
+/// wants to fork from). That dedup is the consumer's responsibility; this
+/// function is purely "what's in the scanned dir".
+///
+/// Missing directory is not an error — returns an empty vec. Files that
+/// fail to read or parse are logged and skipped; one bad dump doesn't
+/// torch the whole index.
+pub fn scan_runtime(scanned_dir: &Path) -> Result<Vec<Figure>> {
+    if !scanned_dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut out: Vec<Figure> = Vec::new();
+    for dent in WalkDir::new(scanned_dir)
+        .max_depth(1)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        if !dent.file_type().is_file() {
+            continue;
+        }
+        let abs = dent.path().to_path_buf();
+        let file_name = dent.file_name().to_string_lossy().to_string();
+        if !file_name.to_lowercase().ends_with(".sky") {
+            continue;
+        }
+
+        let bytes = match std::fs::read(&abs) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(path = %abs.display(), error = %e, "scan_runtime: read failed");
+                continue;
+            }
+        };
+        let stats = match skylander_sky_parser::parse(&bytes) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(path = %abs.display(), error = ?e, "scan_runtime: parse failed");
+                continue;
+            }
+        };
+
+        let uid_stem = file_name
+            .strip_suffix(".sky")
+            .unwrap_or(&file_name)
+            .to_string();
+        let id = FigureId::new(format!("scan:{}", uid_stem));
+        let canonical_name = if stats.nickname.trim().is_empty() {
+            format!("Figure 0x{:06X}", stats.figure_id)
+        } else {
+            stats.nickname.clone()
+        };
+        let category = figure_kind_to_category(stats.figure_kind);
+
+        out.push(Figure {
+            id,
+            canonical_name: canonical_name.clone(),
+            variant_group: canonical_name,
+            variant_tag: "base".to_string(),
+            game: GameOfOrigin::Unknown,
+            element: None,
+            category,
+            sky_path: abs,
+            element_icon_path: None,
+        });
+    }
+    Ok(out)
+}
+
+/// Best-effort category inference from the sky-parser's `FigureKind`.
+/// Scan-only figures don't come from a folder tree, so we can't derive
+/// category from path — the tag's figure_id range is all we have.
+fn figure_kind_to_category(kind: skylander_sky_parser::FigureKind) -> Category {
+    use skylander_sky_parser::FigureKind as K;
+    match kind {
+        K::Standard | K::Other => Category::Figure,
+        K::Trap => Category::Trap,
+        K::Vehicle => Category::Vehicle,
+        K::RacingPack => Category::Other,
+        K::Cyos => Category::CreationCrystal,
+    }
+}
+
 // ---------------- walk ----------------
 
 struct SkyFile {
@@ -445,6 +536,7 @@ fn game_str(g: GameOfOrigin) -> &'static str {
         GameOfOrigin::Superchargers => "Superchargers",
         GameOfOrigin::Imaginators => "Imaginators",
         GameOfOrigin::CrossGame => "",
+        GameOfOrigin::Unknown => "",
     }
 }
 

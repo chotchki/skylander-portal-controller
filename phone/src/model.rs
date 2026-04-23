@@ -63,6 +63,11 @@ pub enum GameOfOrigin {
     Superchargers,
     Imaginators,
     CrossGame,
+    /// Scan-discovered figure with unresolved game-of-origin (PLAN 6.5.5).
+    /// Phone hides this from the game filter chip row to avoid an
+    /// empty-looking "Unknown" filter; figures with this game still
+    /// render normally in the unfiltered library view.
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

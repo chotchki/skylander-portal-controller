@@ -21,6 +21,11 @@ fn release_index(g: GameOfOrigin) -> Option<u8> {
         GameOfOrigin::Superchargers => Some(4),
         GameOfOrigin::Imaginators => Some(5),
         GameOfOrigin::CrossGame => None,
+        // Scan-discovered figures with unresolved game-of-origin (6.5.5) —
+        // treat the same as CrossGame for compat-matrix purposes: no
+        // release slot, always-compatible. A future rekey (6.5.5b) will
+        // fill these in with the right origin.
+        GameOfOrigin::Unknown => None,
     }
 }
 

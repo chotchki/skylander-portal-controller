@@ -122,4 +122,6 @@ sky-stats = ["dep:skylander-sky-parser"]
 # toy-box library. Off by default so users without the hardware don't
 # pull in pcsc-lite / winscard linkage. PLAN 6.5. Needs the ACS Unified
 # CCID Driver on macOS; see `crates/nfc-reader/src/lib.rs` for details.
-nfc-import = ["dep:skylander-nfc-reader"]
+# Implies `sky-stats`: the feature uses sky-parser at startup to build
+# the tag-identity map for pack-vs-scan dedup (PLAN 6.5.5a).
+nfc-import = ["dep:skylander-nfc-reader", "sky-stats"]

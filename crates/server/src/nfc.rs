@@ -8,21 +8,29 @@
 //!
 //! PLAN 6.5.1.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use skylander_core::Event;
+use skylander_core::{Event, FigureId};
 use tokio::sync::broadcast;
 
 /// Spawn the scanner worker. Non-blocking; the thread runs until the
 /// process exits. Logs its own errors via `tracing`.
 ///
-/// `scanned_dir` is the destination for raw `<uid>.sky` dumps — 6.5.3 will
-/// formalize this path; for 6.5.1 it's just `<data_root>/scanned/`.
-pub fn spawn(events: broadcast::Sender<Event>, scanned_dir: PathBuf) {
+/// `scanned_dir` holds raw `<uid>.sky` dumps (PLAN 6.5.3).
+/// `library_identities` is the pack-plus-prior-scans `(fid, variant)`
+/// map built at startup (PLAN 6.5.5a); the worker uses it to decide
+/// whether a scan is "already in your collection".
+pub fn spawn(
+    events: broadcast::Sender<Event>,
+    scanned_dir: PathBuf,
+    library_identities: Arc<HashMap<(u32, u16), FigureId>>,
+) {
     if let Err(e) = std::thread::Builder::new()
         .name("nfc-scanner".into())
         .spawn(move || {
-            skylander_nfc_reader::run_scanner_worker(events, scanned_dir);
+            skylander_nfc_reader::run_scanner_worker(events, scanned_dir, library_identities);
         })
     {
         tracing::error!(error = %e, "nfc-scanner: failed to spawn worker thread");

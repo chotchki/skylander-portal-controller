@@ -4325,6 +4325,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "skylander-core",
+ "skylander-sky-parser",
  "tracing",
  "walkdir",
 ]
