@@ -208,6 +208,47 @@ impl AppState {
         self.figure_index.get(id).and_then(|i| self.figures.get(*i))
     }
 
+    /// Drop every slot on the portal whose `placed_by` matches `profile_id`.
+    /// Called when a phone disconnects so the departing player's figures
+    /// come off the portal instead of lingering ownerless (PLAN 3.10.9 —
+    /// simple MVP 2-player disconnect policy).
+    ///
+    /// Only `Loaded` slots are touched. `Loading` slots aren't rewritten —
+    /// the in-flight driver job will complete normally; any subsequent
+    /// Loaded doesn't retro-clear because the snapshot is taken up-front.
+    /// `Empty` and `Error` slots have no owner by definition.
+    ///
+    /// Each matched slot is flipped to `Loading { placed_by: None }` in
+    /// portal state, broadcast as `SlotChanged` so connected phones
+    /// animate the desat+shrink transition (4.6.5), and enqueued as a
+    /// `DriverJob::ClearSlot` for RPCS3 to drop the `.sky` file.
+    pub async fn clear_slots_for_profile(&self, profile_id: &str) {
+        let to_clear = {
+            let mut p = self.portal.lock().await;
+            flip_loaded_owned_to_loading(&mut p, profile_id)
+        };
+        if to_clear.is_empty() {
+            return;
+        }
+        info!(
+            profile_id,
+            count = to_clear.len(),
+            "disconnect cleanup — clearing departing profile's slots",
+        );
+        for (slot, loading) in to_clear {
+            let _ = self.events.send(Event::SlotChanged {
+                slot,
+                state: loading,
+            });
+            if let Err(e) = self.driver_tx.send(DriverJob::ClearSlot { slot }).await {
+                warn!(
+                    slot = slot.as_u8(),
+                    "disconnect cleanup: queue ClearSlot failed: {e}",
+                );
+            }
+        }
+    }
+
     /// Recompute the session-related fields on `launcher_status`
     /// (`session_count`, `session_slots_full`, `session_profiles`) from the
     /// current registry state + profile store and publish the snapshot for
@@ -955,6 +996,45 @@ async fn set_and_broadcast(
     let _ = events.send(Event::SlotChanged { slot, state });
 }
 
+/// Walk `slots` and flip every `Loaded { placed_by: Some(p) }` whose `p`
+/// equals `profile_id` to `Loading { placed_by: None }`, returning the
+/// (index, new-state) pairs so the caller can broadcast + enqueue
+/// clears. Pure function over an in-memory snapshot — no I/O — so
+/// disconnect-cleanup behavior is unit-testable without spinning up a
+/// full `AppState`.
+///
+/// Deliberately skips:
+///   * `Empty` / `Error` — no owner to match.
+///   * `Loading` — the in-flight driver job is mid-ack; rewriting it
+///     would race with the worker's own broadcast of the Loaded result.
+///   * `Loaded { placed_by: None }` — legacy rows from before 4.18.17.
+fn flip_loaded_owned_to_loading(
+    slots: &mut [SlotState; SLOT_COUNT],
+    profile_id: &str,
+) -> Vec<(SlotIndex, SlotState)> {
+    let mut out = Vec::new();
+    for (i, s) in slots.iter_mut().enumerate() {
+        if let SlotState::Loaded {
+            placed_by: Some(owner),
+            ..
+        } = s
+        {
+            if owner == profile_id {
+                let Ok(slot) = SlotIndex::new(i as u8) else {
+                    continue;
+                };
+                let loading = SlotState::Loading {
+                    figure_id: None,
+                    placed_by: None,
+                };
+                *s = loading.clone();
+                out.push((slot, loading));
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1156,5 +1236,91 @@ mod tests {
             classify_log_line("RSX: SHADER cached"),
             Some("Compiling shaders"),
         );
+    }
+
+    // ---- disconnect-cleanup helper (PLAN 3.10.9) ----------------------------
+
+    fn loaded(owner: Option<&str>) -> SlotState {
+        SlotState::Loaded {
+            figure_id: Some(FigureId::new("fig")),
+            display_name: "Spyro".into(),
+            placed_by: owner.map(|s| s.to_string()),
+        }
+    }
+
+    #[test]
+    fn flip_clears_owned_loaded_slots_and_leaves_others() {
+        let mut slots: [SlotState; SLOT_COUNT] = std::array::from_fn(|_| SlotState::Empty);
+        slots[0] = loaded(Some("alice"));
+        slots[2] = loaded(Some("bob"));
+        slots[4] = loaded(Some("alice"));
+        slots[5] = SlotState::Loading {
+            figure_id: None,
+            placed_by: Some("alice".into()),
+        };
+        slots[6] = loaded(None);
+
+        let out = flip_loaded_owned_to_loading(&mut slots, "alice");
+
+        assert_eq!(out.len(), 2, "expected two slots cleared, got {out:?}");
+        assert!(matches!(slots[0], SlotState::Loading { .. }));
+        assert!(matches!(slots[4], SlotState::Loading { .. }));
+        // Bob's slot untouched.
+        assert!(matches!(
+            slots[2],
+            SlotState::Loaded {
+                placed_by: Some(ref p),
+                ..
+            } if p == "bob",
+        ));
+        // Already-Loading alice slot stays Loading (not rewritten).
+        assert!(matches!(slots[5], SlotState::Loading { .. }));
+        // Legacy Loaded-without-owner row untouched.
+        assert!(matches!(
+            slots[6],
+            SlotState::Loaded {
+                placed_by: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn flip_is_noop_when_profile_has_no_figures() {
+        let mut slots: [SlotState; SLOT_COUNT] = std::array::from_fn(|_| SlotState::Empty);
+        slots[1] = loaded(Some("bob"));
+
+        let out = flip_loaded_owned_to_loading(&mut slots, "alice");
+
+        assert!(out.is_empty());
+        assert!(matches!(
+            slots[1],
+            SlotState::Loaded {
+                placed_by: Some(ref p),
+                ..
+            } if p == "bob",
+        ));
+    }
+
+    #[test]
+    fn flip_emits_loading_placeholder_with_none_placed_by() {
+        // The Loading state we emit must have placed_by=None — otherwise
+        // the phone's ownership pip would linger with the departing
+        // profile's tint during the clear round-trip.
+        let mut slots: [SlotState; SLOT_COUNT] = std::array::from_fn(|_| SlotState::Empty);
+        slots[3] = loaded(Some("alice"));
+
+        let out = flip_loaded_owned_to_loading(&mut slots, "alice");
+
+        assert_eq!(out.len(), 1);
+        let (idx, new_state) = &out[0];
+        assert_eq!(idx.as_usize(), 3);
+        assert!(matches!(
+            new_state,
+            SlotState::Loading {
+                figure_id: None,
+                placed_by: None,
+            }
+        ));
     }
 }

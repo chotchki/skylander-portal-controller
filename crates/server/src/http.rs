@@ -1412,7 +1412,15 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
     }
     writer.abort();
 
+    // Capture the departing session's profile BEFORE removing it from the
+    // registry so the disconnect-cleanup pass (PLAN 3.10.9) can drop any
+    // figures it placed. `profile_of` returns None for still-locked
+    // sessions, which short-circuits the cleanup to a no-op.
+    let departing_profile = state.sessions.profile_of(sid).await;
     state.sessions.remove(sid).await;
+    if let Some(profile_id) = departing_profile {
+        state.clear_slots_for_profile(&profile_id).await;
+    }
     state.publish_session_snapshot().await;
     state
         .connected_clients

@@ -11,7 +11,6 @@ Conventions:
 
 ## Phase 3 carryover — still open
 
-- [ ] **3.10.9 Two-player disconnect-cleanup semantics.** What happens to P2's figures when P1 drops; revisit with 3.17 reconnect work.
 - [ ] **3.12.4 Three-option resume modal** (clear + resume / alongside / fresh) for the 2-phone case.
 - [ ] **3.14 Reposes — variant cycling.**
   - [ ] 3.14.1 Browser collapses figures sharing `variant_group` into one card with "N variants" badge.

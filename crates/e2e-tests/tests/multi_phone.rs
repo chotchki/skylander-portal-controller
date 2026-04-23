@@ -422,3 +422,109 @@ async fn ownership_pip_shows_correct_owner_per_slot() {
     p1.close().await.unwrap();
     p2.close().await.unwrap();
 }
+
+// ---- 3.10.9 disconnect_clears_departing_profile_slots --------------------
+//
+// Simple MVP 2-player disconnect policy: when Phone A drops, any slots
+// they placed figures in clear; Phone B's figures stay. Exercises the
+// `state.rs::flip_loaded_owned_to_loading` free fn end-to-end through
+// the WS-close hook in `http.rs::ws_handler`.
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver"]
+async fn disconnect_clears_departing_profile_slots() {
+    let server = TestServer::spawn().expect("spawn");
+    launch_giants(&server.url).await.unwrap();
+
+    let alice_id = inject_profile(&server.url, "Alice", "1111", "#ff6b2a")
+        .await
+        .unwrap();
+    let bob_id = inject_profile(&server.url, "Bob", "2222", "#5ac96b")
+        .await
+        .unwrap();
+
+    unlock_session(&server.url, &alice_id).await.unwrap();
+    let p1 = new_phone(&server).await;
+    let s1 = wait_for_session_id(&p1).await;
+    let p2 = new_phone(&server).await;
+    let s2 = wait_for_session_id(&p2).await;
+    set_session_profile(&server.url, s1, &alice_id).await.unwrap();
+    set_session_profile(&server.url, s2, &bob_id).await.unwrap();
+
+    inject_load_outcomes(&server.url, json!([{"kind": "ok"}, {"kind": "ok"}]))
+        .await
+        .unwrap();
+
+    for phone in [&p1, &p2] {
+        phone
+            .wait_for(Locator::Css(".portal-p4"), Duration::from_secs(10))
+            .await
+            .unwrap();
+    }
+
+    // Alice places in slot 1; Bob places in slot 2.
+    let p1_slots = p1.client.find_all(Locator::Css(".p4-slot")).await.unwrap();
+    p1_slots[0].clone().click().await.unwrap();
+    p1.client.find_all(Locator::Css(".fig-card-p4")).await.unwrap()[0]
+        .clone()
+        .click()
+        .await
+        .unwrap();
+
+    let p2_slots = p2.client.find_all(Locator::Css(".p4-slot")).await.unwrap();
+    p2_slots[1].clone().click().await.unwrap();
+    p2.client.find_all(Locator::Css(".fig-card-p4")).await.unwrap()[1]
+        .clone()
+        .click()
+        .await
+        .unwrap();
+
+    // Wait for both slots to settle Loaded on P2 (the witness).
+    p2.wait_until(Duration::from_secs(10), || async {
+        let loaded_owners = p2
+            .client
+            .find_all(Locator::Css(".p4-slot-owner:not(.p4-slot-owner--pending)"))
+            .await
+            .unwrap_or_default();
+        loaded_owners.len() >= 2
+    })
+    .await
+    .unwrap();
+
+    // Alice disconnects.
+    p1.close().await.unwrap();
+
+    // P2 should see slot 1 go Empty while slot 2 (Bob's) stays Loaded.
+    // The driver-side ClearSlot round-trip has to complete, so poll
+    // with a generous timeout — mock driver's 50ms default latency
+    // puts this in the ~200ms range but CI loads vary.
+    p2.wait_until(Duration::from_secs(10), || async {
+        let s1 = p2
+            .client
+            .find(Locator::Css(".p4-slot:nth-child(1)"))
+            .await;
+        if let Ok(slot) = s1 {
+            let cls = slot.attr("class").await.unwrap().unwrap_or_default();
+            if !cls.contains("p4-slot--empty") {
+                return false;
+            }
+        } else {
+            return false;
+        }
+        // Bob's slot 2 should still be Loaded.
+        let s2 = p2
+            .client
+            .find(Locator::Css(".p4-slot:nth-child(2)"))
+            .await;
+        if let Ok(slot) = s2 {
+            let cls = slot.attr("class").await.unwrap().unwrap_or_default();
+            cls.contains("p4-slot--loaded")
+        } else {
+            false
+        }
+    })
+    .await
+    .expect("slot 1 should empty on Alice disconnect; slot 2 (Bob) should stay loaded");
+
+    p2.close().await.unwrap();
+}
