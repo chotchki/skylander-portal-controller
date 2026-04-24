@@ -682,21 +682,42 @@ impl crate::PortalDriver for UiaPortalDriver {
         let file_dlg =
             self.wait_for_child_window(&walker, "Select Skylander File", DIALOG_OPEN_TIMEOUT)?;
 
-        let file_edit = find_descendant(&walker, &file_dlg, |el| {
-            el.get_control_type()
-                .map(|c| c == ControlType::Edit)
-                .unwrap_or(false)
-                && el.get_automation_id().map(|a| a == "1148").unwrap_or(false)
-        })
-        .ok_or_else(|| anyhow!("file-name edit not found"))?;
-        let open_btn = find_descendant(&walker, &file_dlg, |el| {
-            el.get_control_type()
-                .map(|c| c == ControlType::Button)
-                .unwrap_or(false)
-                && el.get_automation_id().map(|a| a == "1").unwrap_or(false)
-                && el.get_name().map(|n| n == "Open").unwrap_or(false)
-        })
-        .ok_or_else(|| anyhow!("Open button not found"))?;
+        // Retry loop for file_edit + open_btn (PLAY_TEST #19 —
+        // 2026-04-24). Immediately after Windows creates the file
+        // dialog and we sling it off-screen, the UIA subtree can take
+        // a few frames to settle — the first enumeration sometimes
+        // misses the Open button. Poll up to 500ms at 50ms intervals.
+        //
+        // Also: match the Open button by AutomationId alone. The id
+        // "1" is IDOK — a Win32 constant, locale-independent. The
+        // Name ("Open") is translated on non-English Windows builds
+        // and races an empty initial value right after window
+        // creation, both of which masked as "Open button not found"
+        // in Chris's test session.
+        let find_deadline = Instant::now() + Duration::from_millis(500);
+        let (file_edit, open_btn) = loop {
+            let edit = find_descendant(&walker, &file_dlg, |el| {
+                el.get_control_type()
+                    .map(|c| c == ControlType::Edit)
+                    .unwrap_or(false)
+                    && el.get_automation_id().map(|a| a == "1148").unwrap_or(false)
+            });
+            let btn = find_descendant(&walker, &file_dlg, |el| {
+                el.get_control_type()
+                    .map(|c| c == ControlType::Button)
+                    .unwrap_or(false)
+                    && el.get_automation_id().map(|a| a == "1").unwrap_or(false)
+            });
+            match (edit, btn) {
+                (Some(e), Some(b)) => break (e, b),
+                _ if Instant::now() < find_deadline => {
+                    sleep(Duration::from_millis(50));
+                    continue;
+                }
+                (None, _) => bail!("file-name edit not found (dialog subtree never settled)"),
+                (_, None) => bail!("file-dialog Open button not found (dialog subtree never settled)"),
+            }
+        };
 
         file_edit
             .get_pattern::<UIValuePattern>()?
