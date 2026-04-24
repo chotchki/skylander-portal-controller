@@ -88,7 +88,14 @@ pub fn install_key_from_hash() {
     let search = loc.search().unwrap_or_default();
     if let Some(hex) = parse_key_query(&search) {
         if try_install(&hex) {
+            crate::dev_log!(
+                "hmac: installed key from query ?k= ({} chars, prefix {})",
+                hex.len(),
+                &hex[..hex.len().min(8)]
+            );
             return;
+        } else {
+            crate::dev_warn!("hmac: ?k= present but try_install rejected ({} chars)", hex.len());
         }
     }
 
@@ -97,6 +104,11 @@ pub fn install_key_from_hash() {
     let hash = loc.hash().unwrap_or_default();
     if let Some(hex) = parse_key_fragment(&hash) {
         if try_install(hex) {
+            crate::dev_log!(
+                "hmac: installed key from fragment #k= ({} chars, prefix {})",
+                hex.len(),
+                &hex[..hex.len().min(8)]
+            );
             return;
         }
     }
@@ -109,10 +121,18 @@ pub fn install_key_from_hash() {
             if let Ok(bytes) = hex::decode(&hex) {
                 if bytes.len() == 32 {
                     HMAC_KEY.with(|c| *c.borrow_mut() = Some(bytes));
+                    crate::dev_log!(
+                        "hmac: installed key from localStorage (prefix {})",
+                        &hex[..hex.len().min(8)]
+                    );
+                    return;
                 }
             }
+            crate::dev_warn!("hmac: localStorage has malformed key ({} chars)", hex.len());
         }
     }
+
+    crate::dev_warn!("hmac: NO KEY installed — query/fragment/localStorage all empty; signed requests will 401");
 }
 
 /// Decode + install `hex` if valid; also persist to localStorage for

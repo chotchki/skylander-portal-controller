@@ -1076,20 +1076,24 @@ input, textarea {
    ================================================================ */
 
 .profile-picker {
-  /* Fills the viewport so the CREDITS footer can anchor at the
-     bottom (via `.pp-tagline { margin-top: auto }`) while the
-     welcome heading / admin-hub title top-bias with small top pad.
-     Chris 2026-04-23 round 2. */
+  /* Fills the screen's available height so content centers cleanly.
+     `flex: 1` + `min-height: 0` piggybacks on the `.screen` flex
+     column above, sizing the section to whatever the screen left
+     after the header. `100dvh` used to be here but it made the
+     section always viewport-tall regardless of the actual content
+     area, pushing the admin/konami content past the visible bottom
+     and forcing `.screen-profile-picker` to scroll even when the
+     payload was small. Play-test 2026-04-24. */
   padding: 16px 24px 32px;
   max-width: 480px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  justify-content: flex-start;
-  position: relative;
-  min-height: 100dvh;
   justify-content: center;
+  position: relative;
+  flex: 1;
+  min-height: 0;
 }
 
 /* Welcome heading wrapper */
@@ -1677,15 +1681,23 @@ input, textarea {
    PLAN 4.9 — Reskinned PIN keypad (heraldic treatment)
    ================================================================ */
 
-/* Full-screen PIN entry layout */
+/* Full-screen PIN entry layout. No min-height: 70vh — that was baked
+   in when the screen was a floating card centered on starfield, but
+   with identity (~193px) + keypad (~318px) + padding the block now
+   exceeds the real iPhone viewport and the bottom keypad row gets
+   clipped. Play-test 2026-04-24. Let the flex column fill its parent
+   naturally (`.screen` is already flex:1 min-height:0) and scroll at
+   the screen level if the identity + keypad genuinely overflow. The
+   top padding dropped from 44px → 16px because the kebab + back
+   button now live at the top of `.app`, not inside this screen. */
 .pin-entry-screen {
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  min-height: 70vh;
-  padding: 44px 24px 32px;
+  justify-content: flex-start;
+  padding: 16px 24px 16px;
+  gap: 8px;
 }
 
 /* Back button — top-left, gold Titan One */
@@ -1698,17 +1710,20 @@ input, textarea {
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-bottom: 20px;
-}
-.pin-profile-bezel {
   margin-bottom: 10px;
 }
-/* Shrink the Lg bezel (128px) to 90px for the PIN screen */
+.pin-profile-bezel {
+  margin-bottom: 6px;
+}
+/* Shrink the Lg bezel (128px) to 72px for the PIN screen so the
+   identity block (bezel + name + dots) fits alongside the keypad in
+   a single iPhone viewport — 90px bled into a second screenful on
+   iPhone 14 Pro with the address bar showing. */
 .pin-profile-bezel .gold-bezel {
-  width: 90px;
+  width: 72px;
 }
 .pin-profile-bezel .bezel-plate {
-  font-size: 40px;
+  font-size: 32px;
 }
 .pin-prompt-name {
   font-family: "Titan One", sans-serif;
@@ -1737,7 +1752,7 @@ input, textarea {
 /* PIN dots — mini gold bezels on starfield */
 .pin-dots {
   display: flex;
-  gap: 20px;
+  gap: 14px;
   justify-content: center;
 }
 .pin-entry-screen .pin-dot,
@@ -1785,22 +1800,22 @@ input, textarea {
   max-width: 310px;
 }
 .pin-keypad-panel.framed-panel {
-  padding: 18px 18px 14px;
+  padding: 12px 14px 10px;
 }
 
 /* Heraldic 3x4 keypad */
 .pin-keypad-heraldic {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
+  gap: 8px;
   max-width: 280px;
   margin: 0 auto;
 }
 .pin-hkey {
-  min-height: 64px;
-  min-width: 64px;
+  min-height: 48px;
+  min-width: 48px;
   font-family: "Titan One", sans-serif;
-  font-size: 24px;
+  font-size: 22px;
   letter-spacing: 0.04em;
   color: var(--gb);
   background: linear-gradient(180deg, rgba(16,40,90,0.7), rgba(8,22,60,0.8));
@@ -3558,18 +3573,15 @@ input, textarea {
    `.gate-pad { margin-top: auto }` and the Clear/Submit row being
    natural-flex below it). Title + progress dots stay at top. */
 .konami-gate {
-  display: flex; flex-direction: column; gap: 14px;
+  display: flex; flex-direction: column; gap: 12px;
   position: relative;
   padding-bottom: max(16px, env(safe-area-inset-bottom));
-  flex: 1;
-  min-height: 0;
-  /* Safety net: if the small-iPhone viewport genuinely can't fit the
-     dpad + action row under the header + title (Chris 2026-04-24
-     play-test reported the DOWN arrow + CLEAR/SUBMIT clipped off the
-     bottom), let the column scroll rather than vanish. On taller
-     viewports nothing scrolls. */
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
+  /* Size to content — the parent `.screen-profile-picker` owns any
+     overflow. Flex:1 combined with the parent's `overflow-y: auto`
+     caused the gate to expand past the visible screen (Chris
+     play-test 2026-04-24 scrollbar-but-nothing-to-scroll), because
+     overflow:auto on a flex parent defers vertical constraint to the
+     scroll container, so the child's `flex:1` happily ballooned. */
 }
 .konami-header { text-align: center; }
 
@@ -3647,10 +3659,10 @@ input, textarea {
 
 /* D-PAD */
 .dpad {
-  position: relative; width: 130px; height: 130px; flex-shrink: 0;
+  position: relative; width: 108px; height: 108px; flex-shrink: 0;
 }
 .dpad-btn {
-  position: absolute; width: 44px; height: 44px;
+  position: absolute; width: 36px; height: 36px;
   background: linear-gradient(180deg, #3a3a4a, #1a1a2a);
   border: 1.5px solid var(--gi, #3a2500);
   border-radius: 10px;
@@ -3663,10 +3675,10 @@ input, textarea {
     0 2px 4px rgba(0,0,0,0.6);
   text-shadow: 0 1px 0 rgba(0,0,0,0.6), 0 0 6px rgba(245,198,52,0.4);
 }
-.dpad-btn.up    { top: 0;    left: 43px; }
-.dpad-btn.down  { top: 86px; left: 43px; }
-.dpad-btn.left  { top: 43px; left: 0; }
-.dpad-btn.right { top: 43px; left: 86px; }
+.dpad-btn.up    { top: 0;    left: 36px; }
+.dpad-btn.down  { top: 72px; left: 36px; }
+.dpad-btn.left  { top: 36px; left: 0; }
+.dpad-btn.right { top: 36px; left: 72px; }
 .dpad-btn {
   /* iOS: kill the default grey tap highlight so the gold pressed
      glow below is the only press reaction. Chris 2026-04-23. */
@@ -3684,10 +3696,10 @@ input, textarea {
 /* A / B BUTTONS */
 .ab-wrap { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
 .ab-btn {
-  width: 60px; height: 60px; border-radius: 50%;
+  width: 50px; height: 50px; border-radius: 50%;
   border: 2.5px solid var(--gi, #3a2500);
   color: #fff;
-  font-family: "Titan One", sans-serif; font-size: 26px;
+  font-family: "Titan One", sans-serif; font-size: 22px;
   cursor: pointer; display: grid; place-items: center;
   text-shadow: 0 2px 0 rgba(0,0,0,0.6), 0 0 6px rgba(0,0,0,0.4);
   box-shadow:
@@ -4901,8 +4913,15 @@ html.skin-kaos {
 
 .screen {
   position: relative;
-  will-change: transform, opacity;
-  /* Flex-grow inside `.app` so the active screen owns the remaining
+  /* Intentionally NO `will-change: transform, opacity` — it creates a
+     fixed-positioning containing block in Chrome + iOS Safari (per
+     the "contains" spec), which meant `.btn-back { position: fixed }`
+     was pinning to `.screen` (70px into the viewport) instead of
+     the viewport itself, landing the back button on top of the
+     page title. The 240ms entrance animation still runs without the
+     hint — the perf cost is imperceptible on modern phones and the
+     correctness win is critical. Chris play-test 2026-04-24.
+     Flex-grow inside `.app` so the active screen owns the remaining
      viewport. Children that need internal scroll (figure browser) sit
      in their own flex column inside this. Screens with naturally
      short content (profile picker, game picker, portal grid) just
