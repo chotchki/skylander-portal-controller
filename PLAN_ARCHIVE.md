@@ -588,6 +588,9 @@ Design source: `docs/aesthetic/mocks/tv_launcher_v3.html`. Open: 4.15a.6 (review
 - [x] 4.15a.3 Procedural cloud WebGL shader (10 arms, cylindrical, 3 knobs).
 - [x] 4.15a.4 QR + player orbit (folded into v3).
 - [x] 4.15a.5 In-game transparency + shutdown (folded into v3).
+- [-] 4.2.12 Mockups review round — overcome by events (2026-04-23). The Leptos reskin was built iteratively against the mocks, and subsequent rounds (4.18.x drift reconciliation) already served as the user-facing review. A separate pre-Leptos review beat would be redundant at this point.
+- [-] 4.15a.6 Launcher review round — overcome by events (2026-04-23). 4.15.5-4.15.16 landed with live HTPC iteration; 4.19.x captures the remaining drift explicitly. No benefit to a separate stop-and-review checkpoint.
+- [-] 4.15a.7 WGSL port via `egui_wgpu` — overcome by events (2026-04-23). The PLAN entry was written when 4.15.5's polar-mesh approximation was the shipped renderer. Since then, `crates/server/src/vortex.rs` landed a real GLSL fragment shader (domain-warped FBM, spiral + log-radial coords, streak overlay, iris mask) via `egui_glow` with `vortex_shader_spike.rs` as the live-tuning playground + `vortex_presets/idle.json` as the saved look. Chris is happy with the current render, so the remaining work in 4.15a.7's text — backend migration from `glow` → `wgpu` — no longer has a user-visible payoff. Reopen if a specific feature ever needs wgpu-only GPU paths.
 - [x] 4.15.1 Palette in `crates/server/src/palette.rs`.
 - [x] 4.15.2 Titan One as named font family.
 - [x] 4.15.3 QR in gold bezel.

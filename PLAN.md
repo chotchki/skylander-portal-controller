@@ -13,12 +13,7 @@ Conventions:
 
 Most of Phase 4 shipped — see [PLAN_ARCHIVE.md](PLAN_ARCHIVE.md) for §4.1–4.14 + done pieces of 4.15/4.18/4.19/4.20/4.21. Remaining items below.
 
-### 4.2 Mockups
-- [ ] 4.2.12 Review round with user. Iterate before touching Leptos.
-
 ### 4.15 egui TV launcher
-- [ ] 4.15a.6 Review round — iterate before touching egui.
-- [ ] 4.15a.7 **Port WebGL shader → WGSL via `egui_wgpu`.** 4.15.5 ships a polar-mesh approximation; full port gives the organic-fluff look matching `tv_launcher_v3.html` 1:1. Requires flipping eframe backend `glow → wgpu`. Deferred until visual tuning stable.
 - [ ] 4.15.9 **Game-switching transition.** Phone picks another game → clouds spiral in → "SWITCHING GAMES…" → RPCS3 loads → clouds spiral out. Same `PostMessage` input routing as 4.15.8; `quit_via_file_menu` must also move `SendInput` → `PostMessage`.
 - [ ] 4.15.12 **Shader compilation detection (research spike).** Investigate (a) log-file watcher, (b) viewport title polling, (c) FPS <5 for >5s heuristic. Fallback: fixed 15s post-boot.
 - [ ] 4.15.13 **Shader progress visualization** (depends 4.15.12). Gold conic-gradient ring (200–240px), count in Titan One, ring flashes on completion.
