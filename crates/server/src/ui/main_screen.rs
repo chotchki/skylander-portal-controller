@@ -343,7 +343,10 @@ fn qr_card_flip(
         // simpler to just default to MaxPlayers; the next frame will
         // pick the right side.
         let lines: &[&str] = match back_face.unwrap_or(BackFace::MaxPlayers) {
-            BackFace::MaxPlayers => &["MAXIMUM", "PLAYERS", "REACHED"],
+            // PLAN 4.19.9 — spec copy is "PORTAL IS FULL"; previously
+            // "MAXIMUM PLAYERS REACHED". Shorter line reads better at
+            // TV distance.
+            BackFace::MaxPlayers => &["PORTAL", "IS", "FULL"],
             BackFace::Loading => &["LOADING"],
         };
         paint_titled_card(painter, inner, lines, bezel_alpha, content_alpha);

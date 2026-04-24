@@ -47,17 +47,11 @@ Tags: **[bug]** wrong behavior, **[feature]** missing capability, **[judgment]**
 
 **States (§3.1) — state machine collapsed.**
 - [ ] 4.19.2 *[feature]* **No "Booting" surface.** Spec: iris closes + "LOADING" + game name + boot status. Today mid-launch renders QR + brand heading.
-- [ ] 4.19.3 *[feature]* **No "Switching Games" surface** (iris-close between In-Game and next Booting).
-- [ ] 4.19.4 *[feature]* **No "Compiling Shaders" surface** (depends 4.19.17).
 
 **Cloud + iris (§3.2) — tuning is static.**
-- [ ] 4.19.5 *[judgment]* **Vortex shader: polar-mesh approximation vs spec'd simplex FBM.** Downgraded from [feature] 2026-04-19 — surrounding improvements (sky backdrop + starfield + halo glow) carry most weight. Re-eval before committing to `egui_wgpu` port.
 - [ ] 4.19.6 *[feature]* **Iris locked at 1.2 for every state.** Spec: per-state tuning (Booting 2.5s ease-out, Crash ~1s urgent, Shutdown gentle, In-Game ~1.8s ease-in). Coupled with 4.15a.7.
 
 **QR + orbit (§3.3).**
-- [ ] 4.19.9 *[bug]* **Max-players copy mismatch.** Code: "MAXIMUM PLAYERS REACHED"; spec: "PORTAL IS FULL".
-- [ ] 4.19.10a *[bug]* **URL string rendered on screen** — spec says QR carries it, no text.
-- [ ] 4.19.22 *[bug]* **AwaitingConnect debug noise.** Today adds brand heading + status strip + URL + client count + figures-indexed. Drop all five. Keep Exit-to-Desktop button.
 
 **In-Game transparency (§3.4).**
 - [ ] 4.19.12 *[bug]* **Reconnect QR no fade-in** (spec: 1.0s ease-out).
@@ -67,8 +61,6 @@ Tags: **[bug]** wrong behavior, **[feature]** missing capability, **[judgment]**
 - [ ] 4.19.15 *[feature]* **No black-overlay fade-out + hint sequence.** egui has no native full-screen overlay equivalent; either custom paint or accept current.
 
 **Shader compilation (§3.6).**
-- [ ] 4.19.17 *[feature]* **Detection unimplemented.** Duplicates 4.15.12.
-- [ ] 4.19.18 *[feature]* **Progress ring + heading missing** (depends 4.19.17). Duplicates 4.15.13.
 
 **Typography (§3.7).**
 
