@@ -523,14 +523,50 @@ input, textarea {
 .profile-name { font-size: 15px; }
 .profile-manage-hint { font-size: var(--t-body-sm); color: #aaa; }
 
-.create-profile-form, .pin-entry, .profile-admin {
-    background: #161616; border: 1px solid #333; border-radius: 10px;
-    padding: 16px; margin-top: 8px;
+/* 4.18.27 + 4.18.28 — the old `.create-profile-form`/`.pin-entry`
+   /`.profile-admin` rule painted a gray container inside the
+   FramedPanel's gold frame, reading as pre-Phase-4 chrome bolted onto
+   the heraldic skin. Retired in favour of the wizard's per-step body
+   styling below; `.pin-entry` / `.profile-admin` markup no longer
+   exists, so nothing else referenced this rule. */
+
+/* Create-profile staged wizard (PLAN 4.18.27). Each step renders its
+   own .create-step-body + shared header chip + title + BACK/NEXT
+   footer, so the viewport only needs room for one step's worth of
+   controls at a time. Chrome comes from the surrounding FramedPanel. */
+.create-profile-wizard {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
-.create-profile-form label { display: block; margin: 8px 0 4px; font-size: var(--t-body-italic); color: #bbb; }
-.create-profile-form input[type=text] {
-    width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #444;
-    background: #0f0f0f; color: #eee; font-size: 15px;
+.create-step-chip {
+  align-self: center;
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic;
+  font-size: var(--t-body-sm);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--gm);
+  padding: 2px 12px;
+  border: 1px solid rgba(245, 198, 52, 0.35);
+  border-radius: 999px;
+  background: rgba(2, 8, 24, 0.35);
+}
+.create-step-title {
+  align-self: center;
+  font-family: "Titan One", sans-serif;
+  font-size: var(--t-display-md);
+  letter-spacing: 0.08em;
+  color: var(--gb);
+  text-shadow: 0 2px 0 var(--gs), 0 0 8px rgba(245, 198, 52, 0.25);
+  text-align: center;
+}
+.create-step-body {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  min-height: 0;
 }
 .color-picker { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0; }
 .color-picker .swatch {

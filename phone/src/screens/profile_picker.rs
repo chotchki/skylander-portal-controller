@@ -706,6 +706,44 @@ fn HeraldicPinDots(pin: RwSignal<String>) -> impl IntoView {
 
 // --------- Create profile form ---------
 
+/// Staged steps for profile creation (PLAN 4.18.27). Splits the long
+/// form in `4.2.8/profile_create.html` into four narrow-viewport-
+/// friendly panels so the iPhone confirm keypad doesn't scroll off.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CreateStep {
+    Name,
+    Color,
+    Pin,
+    Confirm,
+}
+
+impl CreateStep {
+    fn number(self) -> u8 {
+        match self {
+            Self::Name => 1,
+            Self::Color => 2,
+            Self::Pin => 3,
+            Self::Confirm => 4,
+        }
+    }
+    fn title(self) -> &'static str {
+        match self {
+            Self::Name => "NAME",
+            Self::Color => "COLOR",
+            Self::Pin => "CHOOSE A PIN",
+            Self::Confirm => "CONFIRM PIN",
+        }
+    }
+    fn back(self) -> Option<Self> {
+        match self {
+            Self::Name => None,
+            Self::Color => Some(Self::Name),
+            Self::Pin => Some(Self::Color),
+            Self::Confirm => Some(Self::Pin),
+        }
+    }
+}
+
 #[component]
 fn CreateProfileForm<F: Fn() + Send + Sync + 'static + Clone>(
     on_done: F,
@@ -718,6 +756,7 @@ fn CreateProfileForm<F: Fn() + Send + Sync + 'static + Clone>(
     let pin = RwSignal::new(String::new());
     let pin_confirm = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
+    let step = RwSignal::new(CreateStep::Name);
     // Visible inline error for PIN mismatch (PLAN 4.18.8). `None` → no
     // error panel; `Some(_)` → render the banner + attach the `shake`
     // class to the confirm keypad so the mismatch is unmistakable. Any
@@ -733,9 +772,14 @@ fn CreateProfileForm<F: Fn() + Send + Sync + 'static + Clone>(
         }
     });
 
+    // Constant-false locked_out signal flips PinPad into the heraldic
+    // reskin (gold-bezel keys + Titan One glyphs) — matches PinEntry's
+    // look so the create + unlock flows feel continuous. PLAN 4.18.6a.
+    let never_locked: Signal<bool> = Signal::derive(|| false);
+
     let submit = {
         let on_done = on_done.clone();
-        move |_| {
+        move || {
             if busy.get() {
                 return;
             }
@@ -745,10 +789,12 @@ fn CreateProfileForm<F: Fn() + Send + Sync + 'static + Clone>(
             let c = color.get();
             if n.is_empty() {
                 push_toast(toasts, "Name required.");
+                step.set(CreateStep::Name);
                 return;
             }
             if p.len() != 4 || !p.chars().all(|c| c.is_ascii_digit()) {
                 push_toast(toasts, "PIN must be 4 digits.");
+                step.set(CreateStep::Pin);
                 return;
             }
             if pc.len() != 4 {
@@ -778,64 +824,104 @@ fn CreateProfileForm<F: Fn() + Send + Sync + 'static + Clone>(
         }
     };
 
-    // Reveal the confirm keypad only after the first PIN is 4 digits so
-    // the form doesn't look cluttered up-front and the user sees one
-    // thing to do at a time.
-    let confirm_ready = Signal::derive(move || pin.with(|p| p.len() == 4));
+    // Per-step NEXT eligibility. Name requires non-empty; Pin requires
+    // 4 digits. Color + Confirm always allow NEXT/CREATE (Confirm's
+    // validation lives inside submit).
+    let can_advance = Signal::derive(move || match step.get() {
+        CreateStep::Name => !name.with(|n| n.trim().is_empty()),
+        CreateStep::Color => true,
+        CreateStep::Pin => pin.with(|p| p.len() == 4),
+        CreateStep::Confirm => pin_confirm.with(|p| p.len() == 4) && !busy.get(),
+    });
 
-    // Constant-false locked_out signal flips PinPad into the heraldic
-    // reskin (gold-bezel keys + Titan One glyphs) — matches PinEntry's
-    // look so the create + unlock flows feel continuous. Chris flagged
-    // 2026-04-21 that the legacy keypad here clashed with the heraldic
-    // keypad in PinEntry. PLAN 4.18.6a.
-    let never_locked: Signal<bool> = Signal::derive(|| false);
+    let on_next = {
+        let submit = submit.clone();
+        move |_| match step.get() {
+            CreateStep::Name => step.set(CreateStep::Color),
+            CreateStep::Color => step.set(CreateStep::Pin),
+            CreateStep::Pin => step.set(CreateStep::Confirm),
+            CreateStep::Confirm => submit(),
+        }
+    };
+
+    let on_back_or_cancel = {
+        let on_done = on_done.clone();
+        move |_| match step.get().back() {
+            Some(prev) => step.set(prev),
+            None => on_done(),
+        }
+    };
 
     view! {
         <FramedPanel class="create-profile-panel">
-            <div class="create-profile-form">
-                <div class="edit-color-label">"Name"</div>
-                <div class="edit-input-row">
-                    <input
-                        class="edit-input"
-                        type="text"
-                        maxlength="16"
-                        prop:value=move || name.get()
-                        on:input=move |e| name.set(event_target_value(&e))
-                    />
-                    <button
-                        class="roll-btn"
-                        type="button"
-                        title="pick another"
-                        aria-label="Pick a random Skylander name"
-                        on:click=move |_| name.set(random_skylander_name().to_string())
-                    >"\u{21BB}"</button>
+            <div class="create-profile-wizard">
+                <div class="create-step-chip">
+                    {move || format!("Step {} of 4", step.get().number())}
                 </div>
-                <div class="create-name-hint">"anything you like \u{00B7} or tap \u{21BB} for a random one"</div>
-                <div class="edit-color-label">"Color"</div>
-                <div class="edit-color-row">
-                    {COLOR_SWATCHES.iter().map(|(swatch_name, hex)| {
-                        let hex = hex.to_string();
-                        let hex_click = hex.clone();
-                        let hex_class = hex.clone();
-                        let sn = swatch_name.to_string();
-                        view! {
-                            <div
-                                class=move || {
-                                    if color.get() == hex_class { "edit-swatch selected" } else { "edit-swatch" }
+                <div class="create-step-title">{move || step.get().title()}</div>
+
+                // -------- Step 1: Name --------
+                <Show when=move || step.get() == CreateStep::Name fallback=|| ()>
+                    <div class="create-step-body">
+                        <div class="edit-input-row">
+                            <input
+                                class="edit-input"
+                                type="text"
+                                maxlength="16"
+                                autocomplete="off"
+                                spellcheck="false"
+                                prop:value=move || name.get()
+                                on:input=move |e| name.set(event_target_value(&e))
+                            />
+                            <button
+                                class="roll-btn"
+                                type="button"
+                                title="pick another"
+                                aria-label="Pick a random Skylander name"
+                                on:click=move |_| name.set(random_skylander_name().to_string())
+                            >"\u{21BB}"</button>
+                        </div>
+                        <div class="create-name-hint">
+                            "anything you like \u{00B7} or tap \u{21BB} for a random one"
+                        </div>
+                    </div>
+                </Show>
+
+                // -------- Step 2: Color --------
+                <Show when=move || step.get() == CreateStep::Color fallback=|| ()>
+                    <div class="create-step-body">
+                        <div class="edit-color-row">
+                            {COLOR_SWATCHES.iter().map(|(swatch_name, hex)| {
+                                let hex = hex.to_string();
+                                let hex_click = hex.clone();
+                                let hex_class = hex.clone();
+                                let sn = swatch_name.to_string();
+                                view! {
+                                    <div
+                                        class=move || {
+                                            if color.get() == hex_class { "edit-swatch selected" } else { "edit-swatch" }
+                                        }
+                                        data-color=sn
+                                        on:click=move |_| color.set(hex_click.clone())
+                                    ></div>
                                 }
-                                data-color=sn
-                                on:click=move |_| color.set(hex_click.clone())
-                            ></div>
-                        }
-                    }).collect_view()}
-                </div>
-                <div class="edit-color-label">"PIN (4 digits)"</div>
-                <HeraldicPinDots pin />
-                <PinPad pin locked_out=never_locked />
-                <Show when=move || confirm_ready.get() fallback=|| ()>
-                    <div class="edit-color-label">"Confirm PIN"</div>
+                            }).collect_view()}
+                        </div>
+                    </div>
+                </Show>
+
+                // -------- Step 3: Pin --------
+                <Show when=move || step.get() == CreateStep::Pin fallback=|| ()>
+                    <div class="create-step-body">
+                        <HeraldicPinDots pin />
+                        <PinPad pin locked_out=never_locked />
+                    </div>
+                </Show>
+
+                // -------- Step 4: Confirm --------
+                <Show when=move || step.get() == CreateStep::Confirm fallback=|| ()>
                     <div class=move || {
-                        let mut s = String::from("pin-confirm-wrap");
+                        let mut s = String::from("create-step-body pin-confirm-wrap");
                         if error.get().is_some() {
                             s.push_str(" shake");
                         }
@@ -843,20 +929,25 @@ fn CreateProfileForm<F: Fn() + Send + Sync + 'static + Clone>(
                     }>
                         <HeraldicPinDots pin=pin_confirm />
                         <PinPad pin=pin_confirm locked_out=never_locked />
+                        <Show when=move || error.get().is_some() fallback=|| ()>
+                            <div class="pin-mismatch-banner" role="alert">
+                                {move || error.get().unwrap_or_default()}
+                            </div>
+                        </Show>
                     </div>
                 </Show>
-                <Show when=move || error.get().is_some() fallback=|| ()>
-                    <div class="pin-mismatch-banner" role="alert">
-                        {move || error.get().unwrap_or_default()}
-                    </div>
-                </Show>
+
                 <div class="actions" style="margin-top: 12px;">
-                    <button class="btn btn-cancel" on:click=move |_| on_done()>"CANCEL"</button>
+                    <button class="btn btn-cancel" on:click=on_back_or_cancel>
+                        {move || if step.get() == CreateStep::Name { "CANCEL" } else { "BACK" }}
+                    </button>
                     <button
                         class="btn btn-primary"
-                        disabled=move || busy.get()
-                        on:click=submit
-                    >"CREATE"</button>
+                        disabled=move || !can_advance.get()
+                        on:click=on_next
+                    >
+                        {move || if step.get() == CreateStep::Confirm { "CREATE" } else { "NEXT" }}
+                    </button>
                 </div>
             </div>
         </FramedPanel>
