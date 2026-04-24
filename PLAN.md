@@ -56,7 +56,6 @@ Tags: **[bug]** wrong behavior, **[feature]** missing capability, **[judgment]**
 
 **Shutdown (§3.5).**
 - [ ] 4.19.14 *[bug]* **No breathe pulse on farewell heading** (spec: 2.4s opacity + scale ±2.5%).
-- [ ] 4.19.15 *[feature]* **No black-overlay fade-out + hint sequence.** egui has no native full-screen overlay equivalent; either custom paint or accept current.
 
 **Shader compilation (§3.6).**
 

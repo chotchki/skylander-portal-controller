@@ -13,12 +13,17 @@ use super::launch_phase::ScreenIntro;
 use super::main_screen::{CARD_SIZE, paint_titled_card, with_alpha};
 use crate::{fonts, palette};
 
-/// How long the farewell screen lingers before the launcher issues
-/// `ViewportCommand::Close`. Matches the navigation-doc spec (§3.5 —
-/// ~2.2s read pause + 1.6s fade-in of the "(launcher will exit)" hint).
-/// Kept as a single const so the countdown text and the close trigger
-/// can't drift apart.
+/// How long the farewell message lingers before the fade-to-black
+/// overlay begins. Matches the navigation-doc spec (§3.5 — ~2.2s read
+/// pause + 1.6s fade-in of the "(launcher will exit)" hint).
 const FAREWELL_COUNTDOWN: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Fade-to-black duration AFTER the countdown hits zero (PLAN 4.19.15).
+/// A full-viewport black rect ramps from 0 → fully-opaque alpha over
+/// this window, then `ViewportCommand::Close` fires. Gives the exit
+/// a deliberate "the lights dim" beat instead of popping the window
+/// out the instant the countdown ends.
+const FAREWELL_FADE: std::time::Duration = std::time::Duration::from_millis(800);
 
 pub(super) fn render(
     ui: &mut egui::Ui,
@@ -33,19 +38,36 @@ pub(super) fn render(
     let elapsed = start.elapsed();
     let remaining = FAREWELL_COUNTDOWN.saturating_sub(elapsed);
 
-    if remaining.is_zero() {
-        tracing::info!("farewell countdown complete — sending viewport close");
+    // Fade phase elapsed — 0 before the countdown ends, grows up to
+    // FAREWELL_FADE after. Converted to a 0..=1 progress the alpha
+    // curve multiplies against below.
+    let fade_elapsed = elapsed.saturating_sub(FAREWELL_COUNTDOWN);
+    let fade_progress = (fade_elapsed.as_secs_f32() / FAREWELL_FADE.as_secs_f32())
+        .clamp(0.0, 1.0);
+
+    if fade_elapsed >= FAREWELL_FADE {
+        tracing::info!("farewell fade complete — sending viewport close");
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     } else {
-        // egui is lazy by default — without this request_repaint the
-        // countdown would only advance on external input.
-        let next = remaining.min(std::time::Duration::from_millis(500));
+        // egui is lazy by default — request a tight repaint during the
+        // fade (we need 60fps smoothness) and a looser one during the
+        // countdown read beat (the seconds label only changes once/sec).
+        let next = if remaining.is_zero() {
+            std::time::Duration::from_millis(16)
+        } else {
+            remaining.min(std::time::Duration::from_millis(500))
+        };
         ctx.request_repaint_after(next);
     }
 
     let badge_scale = intro.badge_scale();
     let badge_alpha = intro.badge_alpha();
     let text_alpha = intro.content_alpha();
+
+    // Grab the full panel rect before the centered layout consumes it
+    // — we use it below to paint the fade-to-black overlay over
+    // everything else (badge + countdown + vortex).
+    let panel_rect = ui.max_rect();
 
     ui.vertical_centered(|ui| {
         let avail = ui.available_height();
@@ -97,4 +119,23 @@ pub(super) fn render(
             },
         );
     });
+
+    // Fade-to-black overlay (PLAN 4.19.15). Painted last so it layers
+    // over the badge + countdown + vortex backdrop. `fade_progress`
+    // stays at 0 during the 3s read beat, then ramps 0 → 1 over the
+    // 0.8s fade window; ease-in cubic so the dim starts gentle and
+    // accelerates into full black. At progress=1 the next frame's
+    // ViewportCommand::Close fires.
+    if fade_progress > 0.0 {
+        let eased = {
+            let t = fade_progress;
+            t * t * t
+        };
+        let alpha = (255.0 * eased).round().clamp(0.0, 255.0) as u8;
+        ui.painter().rect_filled(
+            panel_rect,
+            0.0,
+            egui::Color32::from_rgba_unmultiplied(0, 0, 0, alpha),
+        );
+    }
 }
