@@ -55,7 +55,6 @@ Tags: **[bug]** wrong behavior, **[feature]** missing capability, **[judgment]**
 **In-Game transparency (§3.4).**
 
 **Shutdown (§3.5).**
-- [ ] 4.19.14 *[bug]* **No breathe pulse on farewell heading** (spec: 2.4s opacity + scale ±2.5%).
 
 **Shader compilation (§3.6).**
 

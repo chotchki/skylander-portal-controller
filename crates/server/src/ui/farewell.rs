@@ -25,6 +25,21 @@ const FAREWELL_COUNTDOWN: std::time::Duration = std::time::Duration::from_secs(3
 /// out the instant the countdown ends.
 const FAREWELL_FADE: std::time::Duration = std::time::Duration::from_millis(800);
 
+/// Farewell heading breathe pulse (PLAN 4.19.14). Period of the
+/// combined scale + opacity wobble — matches `navigation.md` §3.5 spec.
+/// The badge pulses during the 3s countdown beat only; the fade-to-
+/// black window freezes it at the last state so the engulfing black
+/// doesn't fight a moving badge.
+const BREATHE_PERIOD_S: f32 = 2.4;
+/// Scale amplitude — the badge pulses between 0.975 × and 1.025 × its
+/// steady size. Subtle enough to read as "the portal is still alive"
+/// without looking like a graphical glitch.
+const BREATHE_SCALE_AMP: f32 = 0.025;
+/// Opacity amplitude — at sin-phase -1 the badge sits at 0.975 × its
+/// steady alpha; at phase +1 it's fully opaque. Half-rectified so
+/// the pulse only dips (never overshoots) full opacity.
+const BREATHE_OPACITY_AMP: f32 = 0.025;
+
 pub(super) fn render(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
@@ -49,20 +64,31 @@ pub(super) fn render(
         tracing::info!("farewell fade complete — sending viewport close");
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     } else {
-        // egui is lazy by default — request a tight repaint during the
-        // fade (we need 60fps smoothness) and a looser one during the
-        // countdown read beat (the seconds label only changes once/sec).
-        let next = if remaining.is_zero() {
-            std::time::Duration::from_millis(16)
-        } else {
-            remaining.min(std::time::Duration::from_millis(500))
-        };
-        ctx.request_repaint_after(next);
+        // Tight repaint throughout farewell — the breathe pulse (60fps
+        // sin modulation) and the fade-to-black overlay both need
+        // smooth frames. The countdown text only changes once/sec but
+        // the GPU was already painting the vortex at 60fps anyway, so
+        // the extra frames are free.
+        ctx.request_repaint_after(std::time::Duration::from_millis(16));
     }
 
-    let badge_scale = intro.badge_scale();
-    let badge_alpha = intro.badge_alpha();
-    let text_alpha = intro.content_alpha();
+    // Breathe pulse (PLAN 4.19.14). Active during the 3s countdown
+    // beat only — freezes the moment the fade starts so the engulfing
+    // black doesn't fight a moving badge. sin-wave over
+    // BREATHE_PERIOD_S; scale uses the raw phase (±2.5% around 1.0),
+    // opacity half-rectifies so it only ever dips (never overshoots
+    // full opacity, which would be invisible anyway at alpha=1).
+    let (breathe_scale, breathe_alpha) = if fade_progress > 0.0 {
+        (1.0, 1.0)
+    } else {
+        let phase = (elapsed.as_secs_f32() * std::f32::consts::TAU / BREATHE_PERIOD_S).sin();
+        let t = (phase + 1.0) * 0.5; // 0..1
+        (1.0 + BREATHE_SCALE_AMP * phase, 1.0 - BREATHE_OPACITY_AMP + BREATHE_OPACITY_AMP * t)
+    };
+
+    let badge_scale = intro.badge_scale() * breathe_scale;
+    let badge_alpha = intro.badge_alpha() * breathe_alpha;
+    let text_alpha = intro.content_alpha() * breathe_alpha;
 
     // Grab the full panel rect before the centered layout consumes it
     // — we use it below to paint the fade-to-black overlay over
@@ -75,10 +101,15 @@ pub(super) fn render(
 
         let (full_rect, _) =
             ui.allocate_exact_size(egui::vec2(CARD_SIZE, CARD_SIZE), egui::Sense::hover());
+        // Horizontal scales via `badge_scale` (carries the intro coin-
+        // flip + the breathe pulse). Vertical scales via the breathe
+        // only — coin-flip is a horizontal-only spin axis. On landed
+        // intro + no-fade, both collapse to `breathe_scale`.
         let half_w = (full_rect.width() * badge_scale) * 0.5;
+        let height = full_rect.height() * breathe_scale;
         let badge_rect = egui::Rect::from_center_size(
             full_rect.center(),
-            egui::vec2(half_w * 2.0, full_rect.height()),
+            egui::vec2(half_w * 2.0, height),
         );
         if badge_rect.width() >= 1.0 {
             // Three lines mirroring the Skylanders "Portal Master"
