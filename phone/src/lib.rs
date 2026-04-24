@@ -15,7 +15,9 @@ mod ws;
 use leptos::prelude::*;
 
 use crate::api::{fetch_games, fetch_status};
-use crate::components::{ConnectionLost, GameCrashScreen, Header, KaosOverlay, ScanOverlay};
+use crate::components::{
+    ConnectionLost, GameCrashScreen, Header, KaosOverlay, PairingRequired, ScanOverlay,
+};
 use crate::model::{
     Category, ConnState, Element, GameLaunched, GameOfOrigin, PublicProfile, Slot, SlotState,
     UnlockedProfile, SLOT_COUNT,
@@ -102,9 +104,13 @@ pub fn App() -> impl IntoView {
     // Read the HMAC key out of `#k=<hex>` before anything else hits the
     // network — `api::sign()` looks at the thread-local this populates, so
     // it must happen before the first fetch. Called on every App() render;
-    // the function is idempotent (reads the hash each time, strips it after
-    // successful install).
+    // the function is idempotent.
     api::install_key_from_hash();
+    // Surface a visible error if pairing didn't take — otherwise every
+    // signed POST silently 401s and the user thinks the app is broken.
+    // The PairingRequired overlay sits highest in the modal stack below
+    // and blocks all interaction until the user scans the TV's QR.
+    let pairing_required: Signal<bool> = Signal::derive(|| !api::has_hmac_key());
     // Fire up the phone→server log forwarder. Mirrors console output to
     // the launcher process so on-device debugging doesn't need a Mac +
     // Web Inspector. See `dev_log.rs`.
@@ -326,6 +332,12 @@ pub fn App() -> impl IntoView {
             />
             <ToastStack toasts />
             <ConnectionLost reconnect_attempts manual_retry />
+            // PairingRequired renders LAST so it sits above everything
+            // else in the stacking context. It's only visible when no
+            // HMAC key is loaded; in that state none of the other
+            // surfaces can do useful work anyway (every signed POST
+            // would 401), so blocking them wholesale is the honest UX.
+            <PairingRequired visible=pairing_required />
         </div>
     }
 }

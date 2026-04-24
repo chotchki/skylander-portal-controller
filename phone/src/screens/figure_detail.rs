@@ -3,7 +3,7 @@ use leptos::prelude::*;
 use crate::api::post_load;
 use crate::components::{DisplayHeading, FigureHero, HeadingSize, HeroState};
 use crate::model::{GameOfOrigin, PublicFigure, Slot, SlotState, SLOT_COUNT};
-use crate::{element_slug, first_empty_slot, push_toast, ToastMsg};
+use crate::{element_slug, first_empty_slot, push_toast_level, ToastLevel, ToastMsg};
 
 /// Detail view state machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,7 +97,7 @@ pub(crate) fn FigureDetail(
                 None => match first_empty_slot(&p) {
                     Some(s) => s,
                     None => {
-                        push_toast(toasts, "Portal is full \u{2014} remove a figure first.");
+                        push_toast_level(toasts, "Portal is full \u{2014} remove a figure first.", ToastLevel::Warn);
                         return;
                     }
                 },

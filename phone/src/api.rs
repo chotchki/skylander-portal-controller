@@ -54,33 +54,97 @@ pub fn observe_boot_id(incoming: u64) -> bool {
     })
 }
 
-/// Parse `window.location.hash` looking for `#k=<hex>` and install the key
-/// for HMAC signing. Called once at app boot. Any existing hash is preserved
-/// in the URL; we strip the key fragment after reading so browser history
-/// screenshots / URL bar don't keep the shared secret around.
+/// localStorage key under which the HMAC shared-secret is cached so
+/// PWA-home-screen launches (and plain page reloads) don't need to
+/// re-scan the QR. Overwritten every time `?k=...` is present in the
+/// URL, so regenerating the server key + scanning the fresh QR is the
+/// re-pair path.
+const HMAC_STORAGE_KEY: &str = "hmac_key";
+
+/// Parse the URL for `?k=<hex>` (query string) or `#k=<hex>` (fragment
+/// — legacy, for home-screen shortcuts pinned before 2026-04-24) and
+/// install the key for HMAC signing. Called once at app boot.
+///
+/// Lookup order:
+///   1. `?k=<hex>` in the URL query — fresh pair from a QR scan. iOS
+///      preserves query params through "Add to Home Screen" snapshots;
+///      fragments get stripped. Wins over any cached key.
+///   2. `#k=<hex>` in the URL fragment — legacy path for users whose
+///      home-screen shortcut was pinned with a fragment-style URL.
+///   3. `localStorage["hmac_key"]` — fallback for subsequent reloads
+///      after a successful pair.
+///
+/// On a successful URL-path read we ALSO write to localStorage so any
+/// reload / tab-restore / PWA launch without the key in the URL still
+/// finds it via the fallback.
 pub fn install_key_from_hash() {
     let loc = match web_sys::window().map(|w| w.location()) {
         Some(l) => l,
         None => return,
     };
+
+    // 1) Query string path — fresh pair from a QR scan. iOS PWA pinning
+    //    preserves query params (unlike fragments).
+    let search = loc.search().unwrap_or_default();
+    if let Some(hex) = parse_key_query(&search) {
+        if try_install(&hex) {
+            return;
+        }
+    }
+
+    // 2) Fragment fallback — legacy home-screen shortcuts pinned before
+    //    the server moved to `?k=`.
     let hash = loc.hash().unwrap_or_default();
-    let Some(hex) = parse_key_fragment(&hash) else {
-        return;
-    };
-    if let Ok(bytes) = hex::decode(hex) {
-        if bytes.len() == 32 {
-            HMAC_KEY.with(|c| *c.borrow_mut() = Some(bytes));
-            // Wipe `#k=...` from the address bar without triggering a
-            // navigation. `history.replaceState` keeps the rest of the URL.
-            if let Some(hist) = web_sys::window().and_then(|w| w.history().ok()) {
-                let _ = hist.replace_state_with_url(
-                    &JsValue::NULL,
-                    "",
-                    Some(loc.pathname().unwrap_or_default().as_str()),
-                );
+    if let Some(hex) = parse_key_fragment(&hash) {
+        if try_install(hex) {
+            return;
+        }
+    }
+
+    // 3) localStorage fallback — cached from a previous successful pair.
+    if let Some(storage) = web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+    {
+        if let Ok(Some(hex)) = storage.get_item(HMAC_STORAGE_KEY) {
+            if let Ok(bytes) = hex::decode(&hex) {
+                if bytes.len() == 32 {
+                    HMAC_KEY.with(|c| *c.borrow_mut() = Some(bytes));
+                }
             }
         }
     }
+}
+
+/// Decode + install `hex` if valid; also persist to localStorage for
+/// the next reload. Returns true when the install stuck.
+fn try_install(hex: &str) -> bool {
+    if let Ok(bytes) = hex::decode(hex) {
+        if bytes.len() == 32 {
+            HMAC_KEY.with(|c| *c.borrow_mut() = Some(bytes));
+            if let Some(storage) = web_sys::window()
+                .and_then(|w| w.local_storage().ok().flatten())
+            {
+                let _ = storage.set_item(HMAC_STORAGE_KEY, hex);
+            }
+            return true;
+        }
+    }
+    false
+}
+
+/// Parse `window.location.search` looking for `k=<hex>`. Returns the
+/// hex payload on match (the caller decodes + length-checks).
+fn parse_key_query(search: &str) -> Option<String> {
+    let search = search.strip_prefix('?').unwrap_or(search);
+    if search.is_empty() {
+        return None;
+    }
+    for pair in search.split('&') {
+        if let Some(rest) = pair.strip_prefix("k=") {
+            return Some(rest.to_string());
+        }
+    }
+    None
 }
 
 fn parse_key_fragment(hash: &str) -> Option<&str> {
@@ -98,6 +162,14 @@ fn origin() -> String {
     let loc = web_sys::window().unwrap().location();
     let origin = loc.origin().unwrap_or_else(|_| "".into());
     origin
+}
+
+/// True iff a shared HMAC secret was loaded — either from a URL
+/// fragment scan or the localStorage fallback. Used by the UI to
+/// show a visible "scan the TV's QR to pair" banner instead of
+/// letting the user poke around and hit silent 401s.
+pub fn has_hmac_key() -> bool {
+    HMAC_KEY.with(|c| c.borrow().is_some())
 }
 
 fn sign(method: &str, path: &str, body: &[u8]) -> Option<(String, String)> {

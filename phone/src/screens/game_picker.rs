@@ -3,7 +3,7 @@ use leptos::prelude::*;
 use crate::api::post_launch;
 use crate::components::{DisplayHeading, HeadingSize};
 use crate::model::InstalledGame;
-use crate::{push_toast, ToastMsg};
+use crate::{push_toast, push_toast_level, ToastLevel, ToastMsg};
 
 #[component]
 pub(crate) fn GamePicker(
@@ -55,7 +55,7 @@ pub(crate) fn GamePicker(
                                         push_toast(toasts, &format!("Launch failed: {e}"));
                                         launching.set(None);
                                     } else {
-                                        push_toast(toasts, &format!("Launched {n}"));
+                                        push_toast_level(toasts, &format!("Launched {n}"), ToastLevel::Success);
                                     }
                                 });
                             }

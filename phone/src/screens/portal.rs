@@ -6,19 +6,15 @@ use crate::model::{PublicProfile, Slot, SlotState, SLOT_COUNT};
 
 #[component]
 pub(crate) fn Picking(picking_for: RwSignal<Option<u8>>) -> impl IntoView {
-    view! {
-        <Show when=move || picking_for.get().is_some() fallback=|| ()>
-            {move || {
-                let slot = picking_for.get().unwrap_or(1);
-                view! {
-                    <div class="picking-banner">
-                        <span>{format!("Pick a Skylander for slot {slot}")}</span>
-                        <button on:click=move |_| picking_for.set(None)>"Cancel"</button>
-                    </div>
-                }
-            }}
-        </Show>
-    }
+    // PLAY_TEST #22 (Chris 2026-04-24): the "Pick a Skylander for slot N"
+    // banner is gone — per-slot targeting was noisy, and the `+` glyphs
+    // on empty slots were redundant. The toy-box lid below is the single
+    // entry point for adding a figure now (see `.portal-empty-hint` in
+    // `portal.rs`). The Picking component stays as a no-op so its call
+    // site in lib.rs doesn't need editing; if we ever want a per-slot
+    // target flow back, this is the spot.
+    let _ = picking_for;
+    view! { <></> }
 }
 
 #[component]
@@ -36,6 +32,14 @@ pub(crate) fn Portal(
     let selected_slot = RwSignal::new(None::<u8>);
     let selection_token = StoredValue::new(0u32);
 
+    // True when any slot is Empty — drives the single floating hint
+    // below the grid that points players at the toy-box lid. PLAY_TEST
+    // #22: one hint replaces eight per-slot "+" glyphs + a per-slot
+    // "pick a skylander for slot N" banner.
+    let any_empty = Signal::derive(move || {
+        portal.with(|p| p.iter().any(|s| matches!(s.state, SlotState::Empty)))
+    });
+
     view! {
         <section class="portal-p4">
             <DisplayHeading size=HeadingSize::Md>"PORTAL"</DisplayHeading>
@@ -44,6 +48,12 @@ pub(crate) fn Portal(
                     view! { <SlotView idx=i portal picking_for known_profiles selected_slot selection_token /> }
                 }).collect_view()}
             </div>
+            <Show when=move || any_empty.get() fallback=|| ()>
+                <div class="portal-empty-hint" aria-live="polite">
+                    <span class="portal-empty-hint-arrow">"\u{2193}"</span>
+                    <span>"open the toy box to add a figure"</span>
+                </div>
+            </Show>
         </section>
     }
 }
@@ -99,14 +109,24 @@ fn SlotView(
     };
 
     // Tap arms a loaded slot for REMOVE; tap again (or wait 5s) unarms.
-    // Empty/errored slots jump straight to the figure picker. Any tap
-    // bumps the selection token so a stale 5s timer can't clear a newer
-    // selection on the same slot.
+    // Empty and loading slots are no-ops — the user adds figures through
+    // the toy-box lid below, pointed at by `.portal-empty-hint`. Errored
+    // slots stay tappable as an escape hatch (clear + retry via picker).
+    // PLAY_TEST #22 dropped the per-slot picker flow. `picking_for` is
+    // still threaded through for future re-introduction but no longer
+    // set from the portal.
+    let _ = picking_for;
     let on_slot_click = move |_| match portal.get()[idx].state {
-        SlotState::Empty | SlotState::Error { .. } => {
+        SlotState::Empty | SlotState::Loading { .. } => {}
+        SlotState::Error { .. } => {
+            // Clear the errored slot so the user can retry without a
+            // dead slot blocking progress. Non-destructive — `post_clear`
+            // just drops the server-side record.
             selection_token.update_value(|t| *t += 1);
             selected_slot.set(None);
-            picking_for.set(Some(slot_num));
+            leptos::task::spawn_local(async move {
+                let _ = post_clear(slot_num).await;
+            });
         }
         SlotState::Loaded { .. } => {
             selection_token.update_value(|t| *t += 1);
@@ -123,7 +143,6 @@ fn SlotView(
                 });
             }
         }
-        SlotState::Loading { .. } => {}
     };
 
     view! {
@@ -199,7 +218,11 @@ fn SlotView(
                     {move || {
                         match portal.get()[idx].state.clone() {
                             SlotState::Empty => {
-                                view! { <span class="p4-plus-glyph">"+"</span> }.into_any()
+                                // Empty = blank bezel. PLAY_TEST #22 dropped
+                                // the "+" placeholder in favour of the
+                                // single `.portal-empty-hint` pointing at
+                                // the toy-box lid below.
+                                view! { <span></span> }.into_any()
                             }
                             SlotState::Loading { .. } => {
                                 view! { <span class="p4-slot-initial">{"\u{2026}"}</span> }.into_any()

@@ -6,7 +6,7 @@ use crate::components::{
     PwaHint,
 };
 use crate::model::PublicProfile;
-use crate::{event_target_value, push_toast, ToastMsg};
+use crate::{event_target_value, push_toast, push_toast_level, ToastLevel, ToastMsg};
 
 // --------- Constants ---------
 
@@ -222,12 +222,27 @@ fn KonamiGate<S: Fn() + Send + Sync + 'static + Clone, B: Fn() + Send + Sync + '
     let sequence = RwSignal::new(Vec::<String>::new());
     let error_anim = RwSignal::new(false);
     let success_flash = RwSignal::new(false);
+    // Pressed-key flash state — set on pointerdown, cleared after
+    // ~150ms. iOS Safari's CSS `:active` fires unreliably on fast
+    // taps; a signal-driven `.pressed` class lets us guarantee the
+    // press visual lands even if the user releases in <1 frame.
+    let pressed_key = RwSignal::new(None::<String>);
 
     let press_key = move |key: &str| {
         if sequence.with(|s| s.len()) >= 10 {
             return;
         }
         sequence.update(|s| s.push(key.to_string()));
+        let k = key.to_string();
+        pressed_key.set(Some(k.clone()));
+        leptos::task::spawn_local(async move {
+            crate::gloo_timer(150).await;
+            pressed_key.update(|cur| {
+                if cur.as_deref() == Some(k.as_str()) {
+                    *cur = None;
+                }
+            });
+        });
     };
 
     let on_clear = move |_| {
@@ -301,22 +316,47 @@ fn KonamiGate<S: Fn() + Send + Sync + 'static + Clone, B: Fn() + Send + Sync + '
 
             <div class="gate-pad">
                 <div class="dpad">
-                    <button class="dpad-btn up" on:click=make_key_handler("up")>
-                        "\u{25B2}"
-                    </button>
-                    <button class="dpad-btn left" on:click=make_key_handler("left")>
-                        "\u{25C0}"
-                    </button>
-                    <button class="dpad-btn right" on:click=make_key_handler("right")>
-                        "\u{25B6}"
-                    </button>
-                    <button class="dpad-btn down" on:click=make_key_handler("down")>
-                        "\u{25BC}"
-                    </button>
+                    {["up", "down", "left", "right"].iter().map(|k| {
+                        let k = *k;
+                        let glyph = match k {
+                            "up" => "\u{25B2}",
+                            "down" => "\u{25BC}",
+                            "left" => "\u{25C0}",
+                            "right" => "\u{25B6}",
+                            _ => "",
+                        };
+                        let dir_cls = k;
+                        let class_fn = move || {
+                            let mut s = format!("dpad-btn {dir_cls}");
+                            if pressed_key.get().as_deref() == Some(k) {
+                                s.push_str(" pressed");
+                            }
+                            s
+                        };
+                        view! {
+                            <button class=class_fn on:click=make_key_handler(k)>
+                                {glyph}
+                            </button>
+                        }
+                    }).collect_view()}
                 </div>
                 <div class="ab-wrap">
-                    <button class="ab-btn ab-b" on:click=make_key_handler("b")>"B"</button>
-                    <button class="ab-btn ab-a" on:click=make_key_handler("a")>"A"</button>
+                    {["b", "a"].iter().map(|k| {
+                        let k = *k;
+                        let ab_cls = if k == "a" { "ab-a" } else { "ab-b" };
+                        let class_fn = move || {
+                            let mut s = format!("ab-btn {ab_cls}");
+                            if pressed_key.get().as_deref() == Some(k) {
+                                s.push_str(" pressed");
+                            }
+                            s
+                        };
+                        view! {
+                            <button class=class_fn on:click=make_key_handler(k)>
+                                {k.to_uppercase()}
+                            </button>
+                        }
+                    }).collect_view()}
                 </div>
             </div>
 
@@ -350,7 +390,6 @@ fn ProfileAdminHub<F: Fn() + Send + Sync + 'static + Clone>(
     toasts: RwSignal<Vec<ToastMsg>>,
 ) -> impl IntoView {
     let screen = RwSignal::new(AdminScreen::List);
-    let show_create = RwSignal::new(false);
 
     view! {
         <div class="admin-hub">
@@ -360,8 +399,6 @@ fn ProfileAdminHub<F: Fn() + Send + Sync + 'static + Clone>(
                     view! {
                         <AdminList
                             profiles=profiles
-                            profiles_epoch=profiles_epoch
-                            show_create=show_create
                             screen=screen
                             on_lock=move || on_lock()
                             toasts
@@ -398,16 +435,13 @@ fn ProfileAdminHub<F: Fn() + Send + Sync + 'static + Clone>(
 #[component]
 fn AdminList<F: Fn() + Send + Sync + 'static + Clone>(
     profiles: RwSignal<Vec<PublicProfile>>,
-    profiles_epoch: RwSignal<u32>,
-    show_create: RwSignal<bool>,
     screen: RwSignal<AdminScreen>,
     on_lock: F,
     toasts: RwSignal<Vec<ToastMsg>>,
 ) -> impl IntoView {
+    let _ = toasts; // consumed by nested admin views, not the list itself
     view! {
-        <button class="btn-back" on:click=move |_| on_lock()>
-            "\u{2190} LOCK"
-        </button>
+        <button class="btn-back" on:click=move |_| on_lock()>"LOCK"</button>
 
         <div class="admin-header">
             <div class="title-sub">"the grown-up side"</div>
@@ -415,13 +449,6 @@ fn AdminList<F: Fn() + Send + Sync + 'static + Clone>(
                 "PROFILE MANAGEMENT"
             </DisplayHeading>
         </div>
-
-        <Show when=move || show_create.get() fallback=|| ()>
-            <CreateProfileForm
-                on_done=move || { show_create.set(false); profiles_epoch.update(|v| *v += 1); }
-                toasts
-            />
-        </Show>
 
         <FramedPanel class="admin-list-panel">
             <div class="manage-list">
@@ -472,11 +499,9 @@ fn AdminList<F: Fn() + Send + Sync + 'static + Clone>(
                         </>
                     }
                 }}
-                <Show when=move || profiles.with(|p| p.len() < 4) fallback=|| ()>
-                    <button class="add-row" on:click=move |_| show_create.set(true)>
-                        "ADD PROFILE"
-                    </button>
-                </Show>
+                // ADD PROFILE intentionally absent (Chris 2026-04-23):
+                // creation lives on the main picker "+" card only.
+                // Profile management is edit/PIN/delete only.
             </div>
         </FramedPanel>
     }
@@ -503,9 +528,7 @@ fn AdminEdit<F: Fn() + Send + Sync + 'static + Clone>(
 
     view! {
         <div class="admin-edit">
-            <button class="btn-back" on:click=move |_| on_cancel()>
-                "\u{2190} BACK"
-            </button>
+            <button class="btn-back" on:click=move |_| on_cancel()>"BACK"</button>
 
             <div class="pin-heading">
                 <div class="identity-bezel" data-el=move || color_el.get() data-initial=move || initial.get()></div>
@@ -558,7 +581,7 @@ fn AdminEdit<F: Fn() + Send + Sync + 'static + Clone>(
                 <button class="btn btn-cancel" on:click=move |_| on_back()>"CANCEL"</button>
                 <button class="btn btn-primary" on:click=move |_| {
                     // TODO: wire to update_profile API when available
-                    push_toast(toasts, "Profile edit saved (UI only - API pending).");
+                    push_toast_level(toasts, "Profile edit saved (UI only - API pending).", ToastLevel::Success);
                     on_save();
                 }>"SAVE"</button>
             </div>
@@ -595,9 +618,7 @@ fn AdminPinReset<F: Fn() + Send + Sync + 'static + Clone>(
 
     view! {
         <div class="admin-pin-reset">
-            <button class="btn-back" on:click=move |_| on_cancel()>
-                "\u{2190} BACK"
-            </button>
+            <button class="btn-back" on:click=move |_| on_cancel()>"BACK"</button>
 
             <div class="pin-heading">
                 <div class="identity-bezel" data-el=color_el.clone() data-initial=initial.clone()></div>
@@ -661,7 +682,7 @@ fn AdminPinReset<F: Fn() + Send + Sync + 'static + Clone>(
                             leptos::task::spawn_local(async move {
                                 match reset_pin(&id, &cur, &new_).await {
                                     Ok(()) => {
-                                        push_toast(toasts, "PIN updated.");
+                                        push_toast_level(toasts, "PIN updated.", ToastLevel::Success);
                                         on_done();
                                     }
                                     Err(e) => push_toast(toasts, &format!("Reset failed: {e}")),
@@ -788,12 +809,12 @@ fn CreateProfileForm<F: Fn() + Send + Sync + 'static + Clone>(
             let pc = pin_confirm.get();
             let c = color.get();
             if n.is_empty() {
-                push_toast(toasts, "Name required.");
+                push_toast_level(toasts, "Name required.", ToastLevel::Warn);
                 step.set(CreateStep::Name);
                 return;
             }
             if p.len() != 4 || !p.chars().all(|c| c.is_ascii_digit()) {
-                push_toast(toasts, "PIN must be 4 digits.");
+                push_toast_level(toasts, "PIN must be 4 digits.", ToastLevel::Warn);
                 step.set(CreateStep::Pin);
                 return;
             }
@@ -814,7 +835,7 @@ fn CreateProfileForm<F: Fn() + Send + Sync + 'static + Clone>(
             leptos::task::spawn_local(async move {
                 match create_profile(&n, &p, &c).await {
                     Ok(_) => {
-                        push_toast(toasts, "Profile created.");
+                        push_toast_level(toasts, "Profile created.", ToastLevel::Success);
                         on_done();
                     }
                     Err(e) => push_toast(toasts, &format!("Couldn't create profile: {e}")),
@@ -844,15 +865,18 @@ fn CreateProfileForm<F: Fn() + Send + Sync + 'static + Clone>(
         }
     };
 
-    let on_back_or_cancel = {
+    let make_back_handler = || {
         let on_done = on_done.clone();
         move |_| match step.get().back() {
             Some(prev) => step.set(prev),
             None => on_done(),
         }
     };
+    let on_back_top = make_back_handler();
 
     view! {
+        <>
+        <button class="btn-back" on:click=on_back_top>"BACK"</button>
         <FramedPanel class="create-profile-panel">
             <div class="create-profile-wizard">
                 <div class="create-step-chip">
@@ -938,9 +962,11 @@ fn CreateProfileForm<F: Fn() + Send + Sync + 'static + Clone>(
                 </Show>
 
                 <div class="actions" style="margin-top: 12px;">
-                    <button class="btn btn-cancel" on:click=on_back_or_cancel>
-                        {move || if step.get() == CreateStep::Name { "CANCEL" } else { "BACK" }}
-                    </button>
+                    // BACK moved to the floating `.btn-back` at the top
+                    // (next to the kebab) so every flow — Konami, Admin,
+                    // PIN entry, create-profile — has one way back in one
+                    // spot. Only the forward primary stays in the actions
+                    // row. Chris 2026-04-24.
                     <button
                         class="btn btn-primary"
                         disabled=move || !can_advance.get()
@@ -951,6 +977,7 @@ fn CreateProfileForm<F: Fn() + Send + Sync + 'static + Clone>(
                 </div>
             </div>
         </FramedPanel>
+        </>
     }
 }
 
@@ -1024,7 +1051,7 @@ fn PinEntry<F: Fn() + Send + Sync + 'static + Clone>(
 
     view! {
         <div class=screen_class>
-            <button class="pin-back-btn" on:click=move |_| on_cancel()>"BACK"</button>
+            <button class="btn-back" on:click=move |_| on_cancel()>"BACK"</button>
 
             // Identity section on starfield (not inside the panel).
             <div class="pin-identity">

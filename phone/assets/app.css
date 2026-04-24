@@ -1076,14 +1076,19 @@ input, textarea {
    ================================================================ */
 
 .profile-picker {
-  padding: 44px 24px 32px;
+  /* Fills the viewport so the CREDITS footer can anchor at the
+     bottom (via `.pp-tagline { margin-top: auto }`) while the
+     welcome heading / admin-hub title top-bias with small top pad.
+     Chris 2026-04-23 round 2. */
+  padding: 16px 24px 32px;
   max-width: 480px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
+  justify-content: flex-start;
   position: relative;
-  min-height: 80vh;
+  min-height: 100dvh;
   justify-content: center;
 }
 
@@ -1230,12 +1235,15 @@ input, textarea {
   color: #d9c88a;
 }
 
-/* Credits footer button (PLAN 3.19.6) */
+/* Credits footer button (PLAN 3.19.6). In-flow but anchored to the
+   viewport bottom via `margin-top: auto` — the profile-picker's
+   `min-height: 100dvh` + flex column lets the auto-margin push the
+   tagline all the way down, while the welcome heading stays
+   naturally at the top. Chris 2026-04-23 round 2. */
 .pp-tagline {
-  position: absolute;
-  bottom: max(18px, calc(env(safe-area-inset-bottom) + 8px));
-  left: 50%;
-  transform: translateX(-50%);
+  align-self: center;
+  margin-top: auto;
+  margin-bottom: max(8px, env(safe-area-inset-bottom));
   appearance: none;
   background: transparent;
   border: 1px solid rgba(217, 200, 138, 0.35);
@@ -1261,7 +1269,7 @@ input, textarea {
   outline: none;
 }
 .pp-tagline:active {
-  transform: translateX(-50%) scale(0.97);
+  transform: scale(0.97);
 }
 
 /* Credits overlay (PLAN 3.19.6) */
@@ -1681,21 +1689,9 @@ input, textarea {
 }
 
 /* Back button — top-left, gold Titan One */
-.pin-back-btn {
-  position: absolute;
-  top: 0;
-  left: 0;
-  font-family: "Titan One", sans-serif;
-  font-size: var(--t-display-sm);
-  color: var(--gb);
-  background: transparent;
-  border: 0;
-  cursor: pointer;
-  letter-spacing: 0.08em;
-  text-shadow: 0 1px 0 var(--gs), 0 0 10px rgba(245,198,52,0.4);
-  padding: 4px 8px;
-}
-.pin-back-btn::before { content: "\2190 "; }
+/* Legacy pin-specific back-button — collapsed into the shared
+   `.btn-back` above so every flow uses the same treatment and the
+   same position (to the right of the kebab). No standalone styles. */
 
 /* Identity section — sits on starfield, NOT inside the panel */
 .pin-identity {
@@ -1844,14 +1840,13 @@ input, textarea {
   cursor: default !important;
   box-shadow: none !important;
 }
-/* Backspace glyph inherits the digit size (24px) so it reads as a
-   peer of the other keys. The earlier 20px override from the mock
-   made the ⌫ glyph look tiny on-device vs the 22px sans-serif ⌫ in
-   create-profile's legacy keypad — Chris flagged 2026-04-21. */
+/* Backspace glyph reads smaller than a digit at the same font-size
+   because ⌫ is a thinner, narrower glyph than a numeral. Bump it up
+   so the key feels like a peer rather than a tiny footnote. Chris
+   flagged 2026-04-23 after the 24px-peer-with-digits value still
+   read too small on-device. */
 .pin-hkey-backspace {
-  /* intentionally empty — size, colour, and padding all come from
-     the base `.pin-hkey` rules above. Keeping the class selector in
-     place so future variant tuning has an anchor. */
+  font-size: 34px;
 }
 .pin-hkey:disabled:not(.pin-hkey-ghost) {
   opacity: 0.4;
@@ -2103,13 +2098,50 @@ input, textarea {
 }
 
 /* 4.6.1 — Empty slot: dimmed bezel with "+" glyph */
-.p4-plus-glyph {
-  font-family: "Titan One", sans-serif;
-  font-size: 36px;
+/* Legacy placeholder glyph — retired 2026-04-24 (PLAY_TEST #22).
+   Empty slots now render an empty bezel and the `.portal-empty-hint`
+   below the grid points at the toy-box lid. Kept the class stub so
+   older screenshots/docs don't silently break if someone ever re-adds
+   the span. */
+.p4-plus-glyph { display: none; }
+
+/* Single floating hint replacing the eight per-slot "+" placeholders
+   and the "Pick a Skylander for slot N" banner (PLAY_TEST #22,
+   2026-04-24). Shown when any slot is empty. The down-arrow nudges
+   toward the toy-box lid that sits immediately below the portal. */
+.portal-empty-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 8px 14px;
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic;
+  font-weight: 600;
+  font-size: var(--t-body-sm);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
   color: #d9c88a;
-  text-shadow: none;
-  line-height: 1;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  animation: portal-empty-hint-bob 2.4s ease-in-out infinite;
 }
+.portal-empty-hint-arrow {
+  font-family: "Titan One", sans-serif;
+  font-size: 18px;
+  color: var(--gb);
+  text-shadow: 0 1px 0 var(--gs), 0 0 10px rgba(245,198,52,0.4);
+}
+@keyframes portal-empty-hint-bob {
+  0%, 100% { transform: translateY(0); opacity: 0.9; }
+  50%      { transform: translateY(3px); opacity: 1; }
+}
+
+/* Empty-slot taps are no-ops now that the toy-box lid owns the
+   add-figure flow. Drop the pointer cursor so the UI doesn't lie
+   about interactivity. Loaded/loading/errored slots override this
+   back to `pointer` via the base `.p4-slot` rule. */
+.p4-slot--empty { cursor: default; }
 /* Dim the bezel ring for empty slots via the Default state (no extra class
    needed — BezelState::Default is already the unstyled base). We override
    the ring to match the mock's dimmed gold. */
@@ -2414,7 +2446,8 @@ input, textarea {
 
 .takeover-void {
   position: fixed; inset: 0;
-  z-index: 60;
+  z-index: 85;
+  overflow: hidden;
   background:
     radial-gradient(ellipse 80% 60% at 50% 30%, var(--k-violet-deep) 0%, transparent 55%),
     radial-gradient(ellipse 60% 50% at 30% 80%, var(--k-ember-deep) 0%, transparent 55%),
@@ -2467,7 +2500,10 @@ input, textarea {
   gap: 22px;
 }
 
-/* Kaos sigil placeholder */
+/* Kaos sigil — uses the bundled kaos.svg as a mask so we can tint
+   the silhouette with the takeover palette's magenta/ember fill.
+   Replaces the earlier radial-gradient blob placeholder that read
+   as an oval rather than the character's head. */
 .kaos-sigil {
   width: 128px; height: 128px;
   position: relative;
@@ -2476,13 +2512,10 @@ input, textarea {
     drop-shadow(0 0 40px var(--k-ember))
     drop-shadow(0 0 60px rgba(255,107,158,0.5));
   animation: kaos-sigil-pulse 2.2s ease-in-out infinite;
-}
-.kaos-sigil::before {
-  content: "";
-  position: absolute; inset: 0;
   background: radial-gradient(circle at 50% 35%,
     #fff 0%, var(--k-ember) 35%, var(--k-magenta) 65%, var(--k-violet-deep) 100%);
-  border-radius: 50%;
+  -webkit-mask: url("/kaos.svg") center/contain no-repeat;
+          mask: url("/kaos.svg") center/contain no-repeat;
 }
 @keyframes kaos-sigil-pulse {
   0%, 100% {
@@ -3520,9 +3553,23 @@ input, textarea {
 
 /* ============ KONAMI GATE ============ */
 
+/* 4.18.5c — konami gate fills the profile-picker viewport so the
+   controller pad + action buttons anchor at the bottom (via
+   `.gate-pad { margin-top: auto }` and the Clear/Submit row being
+   natural-flex below it). Title + progress dots stay at top. */
 .konami-gate {
   display: flex; flex-direction: column; gap: 14px;
-  min-height: 80vh; position: relative;
+  position: relative;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+  flex: 1;
+  min-height: 0;
+  /* Safety net: if the small-iPhone viewport genuinely can't fit the
+     dpad + action row under the header + title (Chris 2026-04-24
+     play-test reported the DOWN arrow + CLEAR/SUBMIT clipped off the
+     bottom), let the column scroll rather than vanish. On taller
+     viewports nothing scrolls. */
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 .konami-header { text-align: center; }
 
@@ -3589,9 +3636,13 @@ input, textarea {
 }
 
 .gate-pad {
-  margin-top: auto;
+  /* Used to be `margin-top: auto` pushing the dpad to the bottom, but
+     that clipped the DOWN arrow + gate-actions on small iPhones when
+     the screen flex collapsed. Natural flow + the `.konami-gate`
+     overflow-y safety net handles both tall and short viewports now. */
   display: flex; align-items: center; justify-content: space-around;
   gap: 20px; padding: 8px 4px 16px; flex-shrink: 0;
+  margin-top: 8px;
 }
 
 /* D-PAD */
@@ -3616,10 +3667,18 @@ input, textarea {
 .dpad-btn.down  { top: 86px; left: 43px; }
 .dpad-btn.left  { top: 43px; left: 0; }
 .dpad-btn.right { top: 43px; left: 86px; }
-.dpad-btn:active {
-  background: linear-gradient(180deg, #5a5a7a, #2a2a4a);
-  box-shadow: inset 0 0 8px rgba(245,198,52,0.4), 0 0 10px rgba(245,198,52,0.5);
-  transform: scale(0.94);
+.dpad-btn {
+  /* iOS: kill the default grey tap highlight so the gold pressed
+     glow below is the only press reaction. Chris 2026-04-23. */
+  -webkit-tap-highlight-color: transparent;
+}
+.dpad-btn:active,
+.dpad-btn.pressed {
+  background: linear-gradient(180deg, #ffe58a, #c58c18);
+  color: #1a1203;
+  box-shadow: inset 0 0 12px rgba(245,198,52,0.9), 0 0 18px rgba(245,198,52,0.8);
+  transform: scale(0.9);
+  text-shadow: 0 1px 0 rgba(255,255,255,0.4);
 }
 
 /* A / B BUTTONS */
@@ -3643,9 +3702,14 @@ input, textarea {
 .ab-a {
   background: radial-gradient(circle at 30% 25%, #ff8f6b 0%, #cc3d26 40%, #7a1818 100%);
 }
-.ab-btn:active {
-  transform: scale(0.93);
-  box-shadow: inset 0 2px 4px rgba(0,0,0,0.4), 0 0 16px rgba(245,198,52,0.5);
+.ab-btn {
+  -webkit-tap-highlight-color: transparent;
+}
+.ab-btn:active,
+.ab-btn.pressed {
+  transform: scale(0.88);
+  box-shadow: inset 0 3px 6px rgba(0,0,0,0.5), 0 0 24px rgba(245,198,52,0.85);
+  filter: brightness(1.25);
 }
 
 /* Gate action buttons */
@@ -3692,7 +3756,7 @@ input, textarea {
 
 /* ============ PROFILE ADMIN — LIST ============ */
 
-.admin-hub { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+.admin-hub { display: flex; flex-direction: column; gap: 14px; min-height: 0; flex: 1; }
 .admin-header { text-align: center; }
 .admin-list-panel { flex: 1; min-height: 0; }
 
@@ -3818,19 +3882,32 @@ input, textarea {
   content: "\FF0B"; font-size: 20px; line-height: 1; color: #ffe58a;
 }
 
-/* Back / Lock button */
+/* Back / Lock button — unified treatment across Konami, Admin, PIN
+   entry, and create-profile flows. Sits on the starfield to the right
+   of the Header's kebab (three-dot menu), not boxed: the PIN-entry
+   pattern Chris picked as the canonical look (2026-04-24). Absolute
+   position lands it in the same vertical band as the kebab; the kebab
+   is 42px wide inside `.app`'s 12px left-pad + safe-area, so
+   `left: calc(env(safe-area-inset-left) + 64px)` clears it with a
+   small breathing gap. */
 .btn-back {
-  align-self: flex-start;
-  padding: 8px 16px;
-  color: #ffe58a;
+  position: fixed;
+  top: calc(env(safe-area-inset-top) + 22px);
+  left: calc(env(safe-area-inset-left) + 64px);
+  z-index: 20;
+  padding: 4px 8px;
+  color: var(--gb);
   background: transparent;
-  border: 2px solid #c9a84a;
-  border-radius: 10px;
-  font-family: "Titan One", sans-serif; font-size: var(--t-display-xs); letter-spacing: 0.22em;
+  border: 0;
+  font-family: "Titan One", sans-serif;
+  font-size: var(--t-display-sm);
+  letter-spacing: 0.08em;
   cursor: pointer;
-  text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+  text-shadow: 0 1px 0 var(--gs), 0 0 10px rgba(245,198,52,0.4);
+  -webkit-tap-highlight-color: transparent;
 }
-.btn-back:hover { border-color: #ffe58a; background: rgba(245,198,52,0.08); }
+.btn-back::before { content: "\2190 "; }
+.btn-back:active { transform: scale(0.95); }
 
 /* Title sub (reusable) */
 .title-sub {
@@ -4096,7 +4173,24 @@ input, textarea {
 }
 
 /* Create profile panel */
-.create-profile-panel { margin-bottom: 12px; }
+.create-profile-panel {
+  margin-bottom: 12px;
+  /* Lock the card width so step titles of different lengths (PICK A
+     COLOR vs CONFIRM YOUR PIN) can't flex the panel wider/narrower
+     between steps. Chris play-test 2026-04-24 noticed the Create-PIN
+     vs Confirm-PIN cards shifted width; `align-self: center` on the
+     title leaves the panel's intrinsic width content-driven without
+     this. */
+  width: 100%;
+  box-sizing: border-box;
+}
+/* Title is center-aligned text only — its intrinsic width must not
+   flex the parent card. Explicit width keeps the title a pure text
+   node whose overflow (if ever) would wrap rather than push the card. */
+.create-step-title {
+  width: 100%;
+  box-sizing: border-box;
+}
 
 /* Profile-picker screen owns its own scroll when content exceeds the
    viewport. The picker itself fits (3 profile tiles + a NEW button) but
@@ -4119,8 +4213,12 @@ input, textarea {
    shake is keyed off the error signal rather than a one-shot animation
    so consecutive mismatches still retrigger visibly. */
 .pin-confirm-wrap {
-    /* Container for the confirm keypad; inherits layout from nested PinPad. */
-    display: block;
+    /* Container for the confirm keypad. Intentionally layout-neutral
+       — inherits the parent `.create-step-body` flex column so the
+       wrapper doesn't override display and squash the keypad's
+       centered 280px max-width layout. The only job of this class
+       today is the `.shake` animation trigger below. PLAN 4.18.27/28
+       follow-up 2026-04-23. */
 }
 .pin-confirm-wrap.shake {
     animation: pin-mismatch-shake 0.5s ease;
@@ -5476,4 +5574,76 @@ html.skin-kaos {
   color: rgba(247,247,251,0.7);
   box-shadow: inset 0 0 0 1px rgba(247,247,251,0.18);
   text-shadow: none;
+}
+
+
+/* ============================================================
+   Pairing-required overlay (api::has_hmac_key gate, 2026-04-24)
+   ============================================================ */
+.pairing-required {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(2, 8, 24, 0.88);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.pairing-card {
+  max-width: 420px;
+  width: 100%;
+  padding: 28px 28px 24px;
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(11, 30, 82, 0.95), rgba(6, 20, 54, 0.95)),
+    #06142e;
+  box-shadow:
+    0 0 0 1px rgba(110, 74, 0, 0.6),
+    0 18px 48px rgba(0, 0, 0, 0.6),
+    inset 0 0 24px rgba(245, 198, 52, 0.08);
+  position: relative;
+  text-align: center;
+}
+.pairing-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  padding: 2px;
+  border-radius: 22px;
+  background: linear-gradient(
+    150deg,
+    #ffe58a 0%, #f5c634 30%, #c58c18 55%, #6e4a00 100%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  pointer-events: none;
+}
+.pairing-title {
+  margin: 0 0 12px 0;
+  font-family: "Titan One", system-ui, sans-serif;
+  font-size: var(--t-display-md);
+  letter-spacing: 0.1em;
+  color: #ffe58a;
+  text-shadow: 0 2px 0 #6e4a00, 0 4px 12px rgba(0,0,0,0.6);
+}
+.pairing-body {
+  margin: 0 0 14px 0;
+  font-family: "Fraunces", Georgia, serif;
+  font-size: var(--t-body);
+  line-height: 1.55;
+  color: #f7f7fb;
+}
+.pairing-hint {
+  margin: 0;
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic;
+  font-size: var(--t-body-sm);
+  color: #d9c88a;
+  line-height: 1.5;
 }

@@ -29,7 +29,7 @@ pub struct Config {
     /// `figures.json`, `figures.manual.json`. Defaults to `<repo>/data/`.
     pub data_root: PathBuf,
     /// 32-byte HMAC-SHA256 key shared with the phone via the TV's QR fragment
-    /// (`#k=<hex>`). Every mutating REST request carries an HMAC + timestamp
+    /// (`?k=<hex>` query param). Every mutating REST request carries an HMAC + timestamp
     /// header computed with this key (PLAN 3.13). Stable across restarts —
     /// regenerating invalidates any phone that still has the old QR cached.
     #[serde(with = "hex_key")]

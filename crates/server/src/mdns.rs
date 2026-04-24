@@ -64,12 +64,21 @@ fn os_dns_hostname() -> Option<String> {
 /// caller log which path won and (in the future) emit telemetry for
 /// "fell back to IP" cases.
 pub fn build_phone_url(ip: Ipv4Addr, port: u16, hex_key: &str) -> (String, bool) {
+    // Key goes in the query string `?k=<hex>` rather than the URL
+    // fragment so iOS "Add to Home Screen" preserves it on the
+    // pinned shortcut — Safari strips fragments when snapshotting
+    // the URL into a home-screen bookmark, and the resulting
+    // standalone-PWA launch context can't read Safari's localStorage
+    // (sandboxed separately). Chris flagged 2026-04-24. The key is
+    // still HMAC-only — it's not used for authn — so ending up in
+    // server access logs is the same exposure as ending up in the
+    // QR image itself.
     match os_dns_hostname() {
         Some(host) if !host.is_empty() => (
-            format!("http://{}.local:{port}/#k={hex_key}", host.to_ascii_lowercase()),
+            format!("http://{}.local:{port}/?k={hex_key}", host.to_ascii_lowercase()),
             true,
         ),
-        _ => (format!("http://{ip}:{port}/#k={hex_key}"), false),
+        _ => (format!("http://{ip}:{port}/?k={hex_key}"), false),
     }
 }
 
@@ -81,12 +90,12 @@ mod tests {
     fn url_uses_lowercased_hostname_when_available() {
         // We don't control os_dns_hostname() in tests, but on Windows it
         // returns the actual machine name. Just sanity-check the format
-        // rules — lowercased, ends with .local:port/#k=, includes the key.
+        // rules — lowercased, ends with .local:port/?k=, includes the key.
         let (url, _) = build_phone_url(Ipv4Addr::new(192, 168, 1, 147), 8765, "deadbeef");
         assert!(url.starts_with("http://"), "url should be http: {url}");
-        assert!(url.contains(":8765/#k=deadbeef"), "url missing port/key: {url}");
+        assert!(url.contains(":8765/?k=deadbeef"), "url missing port/key: {url}");
         // No uppercase letters in the host portion (everything after // up
-        // to the first :, ignoring the QR fragment which is hex-only).
+        // to the first :, ignoring the hex-only key).
         let host_segment = url
             .strip_prefix("http://")
             .and_then(|s| s.split(':').next())
@@ -125,6 +134,6 @@ mod tests {
     fn falls_back_to_ip_on_non_windows() {
         let (url, used_mdns) = build_phone_url(Ipv4Addr::new(192, 168, 1, 147), 8765, "abc");
         assert!(!used_mdns);
-        assert_eq!(url, "http://192.168.1.147:8765/#k=abc");
+        assert_eq!(url, "http://192.168.1.147:8765/?k=abc");
     }
 }

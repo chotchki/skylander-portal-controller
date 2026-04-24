@@ -56,7 +56,17 @@ impl axum::extract::FromRequest<Arc<AppState>> for Signed {
         state: &Arc<AppState>,
     ) -> Result<Self, Self::Rejection> {
         let method = req.method().clone();
-        let path = req.uri().path().to_string();
+        // Path AND query: the phone signs `path_of(url)` which includes
+        // the query string, so e.g. POST /api/quit?switch=true is a
+        // different signed payload than POST /api/quit. Before this
+        // fix, 4.15.9's switch-intent quit returned `bad signature` on
+        // every HOLD TO SWITCH GAMES fire because the server was
+        // hashing only `/api/quit`. PLAN 4.15.9 follow-up 2026-04-24.
+        let path = req
+            .uri()
+            .path_and_query()
+            .map(|pq| pq.as_str().to_string())
+            .unwrap_or_else(|| req.uri().path().to_string());
         let headers = req.headers().clone();
         let body = axum::body::to_bytes(req.into_body(), usize::MAX)
             .await
@@ -77,12 +87,14 @@ impl axum::extract::FromRequest<Arc<AppState>> for Signed {
 
         let sig = sig_hdr
             .ok_or_else(|| {
+                warn!(%method, %path, "signed request rejected: missing X-Skyportal-Sig header");
                 (StatusCode::UNAUTHORIZED, "missing X-Skyportal-Sig header").into_response()
             })?
             .to_str()
             .map_err(|_| (StatusCode::BAD_REQUEST, "X-Skyportal-Sig not ASCII").into_response())?;
         let ts = ts_hdr
             .ok_or_else(|| {
+                warn!(%method, %path, "signed request rejected: missing X-Skyportal-Timestamp header");
                 (
                     StatusCode::UNAUTHORIZED,
                     "missing X-Skyportal-Timestamp header",
@@ -104,6 +116,11 @@ impl axum::extract::FromRequest<Arc<AppState>> for Signed {
         let now_ms = now_unix_ms();
         let diff_ms = now_ms.abs_diff(ts_ms);
         if diff_ms > SIG_MAX_SKEW.as_millis() as u64 {
+            warn!(
+                %method, %path, diff_ms,
+                window_ms = SIG_MAX_SKEW.as_millis() as u64,
+                "signed request rejected: timestamp skew exceeds window",
+            );
             return Err((
                 StatusCode::UNAUTHORIZED,
                 format!(
@@ -121,6 +138,10 @@ impl axum::extract::FromRequest<Arc<AppState>> for Signed {
         // Constant-time compare — `subtle::ConstantTimeEq` returns a `Choice`.
         use subtle::ConstantTimeEq;
         if expected.ct_eq(&provided).unwrap_u8() != 1 {
+            warn!(
+                %method, %path, body_len = body.len(), ts_ms,
+                "signed request rejected: bad signature (key mismatch or corruption)",
+            );
             return Err((StatusCode::UNAUTHORIZED, "bad signature").into_response());
         }
         Ok(Signed(body))
@@ -151,6 +172,31 @@ fn compute_hmac(key: &[u8], ts_ms: u64, method: &str, path: &str, body: &[u8]) -
     mac.update(b".");
     mac.update(body);
     mac.finalize().into_bytes().to_vec()
+}
+
+/// Kaos taunt catchphrases (text-only — we can't bundle voice lines
+/// without stepping on Activision's IP per SPEC §text-only-kaos).
+/// Lines are paraphrased in Kaos-voice rather than quoted verbatim
+/// from the games. Used by the session-takeover broadcast so the
+/// evicted phone's Kaos overlay reads as a taunt, not the literal
+/// string "Kaos". PLAN 4.12.3 follow-up 2026-04-24.
+const KAOS_TAUNTS: &[&str] = &[
+    "Behold my magnificent wickedness!",
+    "Another worthless minion bends to my rule!",
+    "Your puny phone is MINE now!",
+    "Hahahaha! The portal kneels before Kaos!",
+    "You snooze, you lose, imbecile!",
+    "DOOM! DESTRUCTION! DETHRONEMENT!",
+    "I have won! Again! As always!",
+    "Your Skylanders are no match for my ultimate genius!",
+    "Welcome to the Kaosphere, peasant!",
+    "This is just the beginning of my EVIL MASTER PLAN!",
+];
+
+fn random_kaos_taunt() -> &'static str {
+    use rand_core::RngCore;
+    let idx = (rand_core::OsRng.next_u32() as usize) % KAOS_TAUNTS.len();
+    KAOS_TAUNTS[idx]
 }
 
 /// Axum extractor that pulls the caller's session id from the `X-Session-Id`
@@ -1320,7 +1366,7 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
         RegistrationOutcome::AdmittedByEvicting { session, evicted } => {
             let _ = state.events.send(Event::TakenOver {
                 session_id: evicted.0,
-                by_kaos: "Kaos".to_string(),
+                by_kaos: random_kaos_taunt().to_string(),
             });
             session
         }
@@ -1775,10 +1821,38 @@ async fn serve_manifest(State(state): State<Arc<AppState>>) -> Response {
         "manifest.webmanifest"
     };
     let path = state.phone_dist.join(filename);
-    // PWA manifest spec MIME is application/manifest+json; some browsers
-    // also accept application/json. Use the spec one — Chrome and Safari
-    // both honor it.
-    serve_static_file(&path, "application/manifest+json").await
+
+    // Inject the current HMAC key into `start_url` so pinned home-screen
+    // shortcuts include it (iOS uses the manifest's start_url for the
+    // PWA launch URL, not whatever was in the address bar at pin time,
+    // and it strips fragments + query params from the raw URL). Without
+    // this, pinning loses the key and the app lands in the
+    // PairingRequired overlay on every PWA launch until the user
+    // re-scans the QR. Chris flagged 2026-04-24.
+    let raw = match tokio::fs::read_to_string(&path).await {
+        Ok(s) => s,
+        Err(e) => {
+            return (
+                StatusCode::NOT_FOUND,
+                format!("manifest {} unreadable: {e}", path.display()),
+            )
+                .into_response();
+        }
+    };
+    let key_hex = hex::encode(&state.hmac_key);
+    // Replace the `/` start_url with `/?k=<hex>`. Tolerates either
+    // `"start_url": "/"` (what ships today) or a pre-injected variant.
+    let rewritten = raw.replace(r#""start_url": "/""#, &format!(r#""start_url": "/?k={key_hex}""#));
+
+    (
+        StatusCode::OK,
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "application/manifest+json",
+        )],
+        rewritten,
+    )
+        .into_response()
 }
 
 async fn serve_static_file(path: &std::path::Path, content_type: &'static str) -> Response {
