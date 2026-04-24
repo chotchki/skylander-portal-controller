@@ -278,8 +278,17 @@ impl eframe::App for LauncherApp {
             .map(|t| t.elapsed().as_secs_f32());
 
         let launch_phase = if matches!(status_snapshot.screen, LauncherScreen::Main) {
+            // PLAN 4.15.16 regression fix: `has_activity` used to read
+            // `rpcs3_running || clients > 0`, but under the always-
+            // running RPCS3 contract rpcs3_running is true from the
+            // moment of launcher boot (RPCS3 spawns at startup, lives
+            // at library view). That made the intro skip every time
+            // and the launcher jumped straight to AwaitingConnect
+            // without the iris reveal / badge spin-in. Gate on
+            // `current_game.is_some()` instead — true activity is a
+            // game booted or a phone connected.
             let has_activity =
-                status_snapshot.rpcs3_running || self.clients.load(Ordering::Relaxed) > 0;
+                status_snapshot.current_game.is_some() || self.clients.load(Ordering::Relaxed) > 0;
             // Phase elapsed measured from server-ready, not from app
             // mount. Before the server is ready, phase_elapsed_s is 0
             // so LaunchPhase::compute returns Startup (calm starfield

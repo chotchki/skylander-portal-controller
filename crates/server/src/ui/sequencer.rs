@@ -47,9 +47,21 @@ impl CloseTimers {
     ///   - **Cleared** if screen ever leaves Farewell (defensive — no
     ///     code path does that today).
     pub(super) fn tick(&mut self, now: Instant, status: &LauncherStatus) {
+        // PLAN 4.15.9 post-regression fix: the close-to-in-game
+        // animation must track `current_game` presence, not just
+        // `game_playable && rpcs3_running`. Under 4.15.16's always-
+        // running RPCS3 contract, `game_playable` flips true the
+        // moment RPCS3 lands at its library view (no compile
+        // activity), and `rpcs3_running` stays true across quits —
+        // so without the current_game gate the close timer would
+        // latch at server startup and never unlatch, putting the
+        // launcher into close_complete with a blank dark badge
+        // instead of showing SCAN TO CONNECT.
         let want_close_start = status.game_playable
+            && status.current_game.is_some()
             && matches!(status.screen, LauncherScreen::Main);
         let kill_close = !status.rpcs3_running
+            || status.current_game.is_none()
             || !matches!(status.screen, LauncherScreen::Main);
         if want_close_start && self.in_game_at.is_none() {
             self.in_game_at = Some(now);
@@ -100,10 +112,30 @@ mod tests {
     use std::time::Duration;
 
     fn status_main(rpcs3: bool, playable: bool) -> LauncherStatus {
+        // Default: a game is booted (`current_game = Some`) so
+        // want_close_start's 3-way gate passes for the latch-related
+        // tests. Tests that exercise the "no game booted" state call
+        // `status_main_no_game` instead.
         LauncherStatus {
             rpcs3_running: rpcs3,
             game_playable: playable,
             screen: LauncherScreen::Main,
+            current_game: Some("Skylanders: Giants".into()),
+            ..Default::default()
+        }
+    }
+
+    /// Variant with `current_game = None` — models the launcher
+    /// between quit and next boot. PLAN 4.15.9 post-regression:
+    /// in this state the close timer must NOT latch, otherwise
+    /// the launcher holds a blank dark badge instead of reverting
+    /// to SCAN TO CONNECT.
+    fn status_main_no_game(rpcs3: bool, playable: bool) -> LauncherStatus {
+        LauncherStatus {
+            rpcs3_running: rpcs3,
+            game_playable: playable,
+            screen: LauncherScreen::Main,
+            current_game: None,
             ..Default::default()
         }
     }
@@ -121,6 +153,44 @@ mod tests {
         let now = Instant::now();
         t.tick(now, &status_main(true, true));
         assert!(t.in_game_at.is_some());
+    }
+
+    #[test]
+    fn close_timer_not_set_when_no_game_booted() {
+        // PLAN 4.15.9 post-regression: at boot the launcher has
+        // rpcs3_running=true (always-running RPCS3), screen=Main,
+        // game_playable=true (RPCS3 at library view, not compiling)
+        // — but current_game=None. The close timer must NOT latch
+        // in this state, otherwise the launcher holds close_complete
+        // with a blank dark badge instead of showing SCAN TO CONNECT.
+        let mut t = CloseTimers::default();
+        let now = Instant::now();
+        t.tick(now, &status_main_no_game(true, true));
+        assert!(
+            t.in_game_at.is_none(),
+            "close timer must not latch without a booted game",
+        );
+    }
+
+    #[test]
+    fn close_timer_cleared_when_game_quits() {
+        // Quit path under 4.15.16: rpcs3_running stays true (process
+        // alive at library), screen stays Main, but current_game
+        // flips to None. The timer must clear so the launcher
+        // reverts to AwaitingConnect with iris open.
+        let mut t = CloseTimers::default();
+        let now = Instant::now();
+        t.tick(now, &status_main(true, true));
+        assert!(t.in_game_at.is_some(), "timer latches while game booted");
+
+        t.tick(
+            now + Duration::from_secs(1),
+            &status_main_no_game(true, true),
+        );
+        assert!(
+            t.in_game_at.is_none(),
+            "timer clears when current_game drops to None (quit)",
+        );
     }
 
     #[test]
