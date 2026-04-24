@@ -9,15 +9,6 @@ Conventions:
 
 ---
 
-## Phase 3 carryover — still open
-
-- [ ] **3.14 Reposes — variant cycling.**
-  - [ ] 3.14.1 Browser collapses figures sharing `variant_group` into one card with "N variants" badge.
-  - [ ] 3.14.2 Tap variant badge → cycle in place (SPEC Q76).
-  - [ ] 3.14.3 Loaded variant reflected on the slot's display_name.
-
----
-
 ## Phase 4 — Aesthetic + UX pass (residuals)
 
 Most of Phase 4 shipped — see [PLAN_ARCHIVE.md](PLAN_ARCHIVE.md) for §4.1–4.14 + done pieces of 4.15/4.18/4.19/4.20/4.21. Remaining items below.

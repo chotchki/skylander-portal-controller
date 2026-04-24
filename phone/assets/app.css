@@ -2938,7 +2938,12 @@ input, textarea {
   gap: 14px 10px;
 }
 
-/* 4.7.1 — Figure card with small GoldBezel as portrait */
+/* 4.7.1 — Figure card with small GoldBezel as portrait. `role="button"`
+   on a <div> rather than a real <button> so the N-variants badge
+   (PLAN 3.14.2) can be a nested <button> without nesting buttons-in-
+   buttons (HTML5 invalid). Keyboard nav still works via tabindex=0 +
+   the browser's focus ring; `:active` fires on pointer-down regardless
+   of element type. */
 .fig-card-p4 {
   display: flex;
   flex-direction: column;
@@ -2951,6 +2956,7 @@ input, textarea {
   padding: 4px 0;
   transition: transform 0.12s ease;
   position: relative;
+  -webkit-tap-highlight-color: transparent;
 }
 .fig-card-p4:active { transform: scale(0.93); }
 
@@ -3052,6 +3058,47 @@ input, textarea {
   border: 1px solid var(--gi);
   box-shadow: 0 2px 6px rgba(0,0,0,0.5), 0 0 10px rgba(245,198,52,0.3);
   z-index: 5;
+}
+
+/* 3.14.2 — N-variants badge. Top-right of the figure card; shows the
+   variant count and cycles through them on tap. Gold pill matches the
+   design-system gold-ring vocabulary without pulling in the full
+   heraldic bezel (24px is too small for a ring to read cleanly). */
+.fig-variant-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  padding: 0;
+  border: 1.5px solid var(--gi);
+  background: radial-gradient(
+    circle at 30% 25%,
+    var(--gb), var(--g) 40%, var(--gm) 100%
+  );
+  color: var(--gi);
+  font-family: "Titan One", sans-serif;
+  font-size: var(--t-body-sm);
+  line-height: 1;
+  cursor: pointer;
+  z-index: 6;
+  box-shadow: 0 0 0 1px #000, 0 2px 4px rgba(0, 0, 0, 0.5);
+  transition: transform 0.12s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.fig-variant-badge:hover,
+.fig-variant-badge:focus-visible {
+  filter: brightness(1.1);
+  outline: none;
+}
+.fig-variant-badge:active {
+  transform: scale(0.9) rotate(45deg);
+}
+/* Desat the badge when the card is showing the on-portal state so the
+   gold pill doesn't shout against the dimmed portrait. */
+.fig-card-p4.on-portal .fig-variant-badge {
+  filter: saturate(0.5) brightness(0.85);
 }
 
 /* 4.7.5 — Empty / no-results state */
