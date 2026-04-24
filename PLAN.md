@@ -53,7 +53,6 @@ Tags: **[bug]** wrong behavior, **[feature]** missing capability, **[judgment]**
 **QR + orbit (§3.3).**
 
 **In-Game transparency (§3.4).**
-- [ ] 4.19.12 *[bug]* **Reconnect QR no fade-in** (spec: 1.0s ease-out).
 
 **Shutdown (§3.5).**
 - [ ] 4.19.14 *[bug]* **No breathe pulse on farewell heading** (spec: 2.4s opacity + scale ±2.5%).

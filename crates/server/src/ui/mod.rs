@@ -88,6 +88,14 @@ pub struct LauncherApp {
     /// Drives `LaunchPhase::ReturnFromGame` (skips the Startup beat,
     /// no brand intro). Cleared once the animation completes.
     returning_from_game_at: Option<Instant>,
+    /// When the reconnect QR first became eligible to render (i.e.
+    /// the moment `clients` transitioned to 0 while the launcher was
+    /// on the in-game transparent surface). Drives `in_game::render`'s
+    /// 1.0s ease-out fade-in per PLAN 4.19.12 — instead of popping
+    /// into view the second the last phone drops, the overlay
+    /// smooths in. Cleared whenever `clients > 0` so a subsequent
+    /// drop starts a fresh fade.
+    reconnect_qr_shown_at: Option<Instant>,
     /// GPU shader rig for the vortex (PLAN 4.19.6). Initialised lazily
     /// on the first frame because the eframe `Frame::gl()` context
     /// isn't available until `update()` is called. `Arc<Mutex<…>>` so
@@ -133,6 +141,7 @@ impl LauncherApp {
             screen_entered_at: Instant::now(),
             was_in_game: false,
             returning_from_game_at: None,
+            reconnect_qr_shown_at: None,
             window_on_top_state: None,
             vortex_rig: Arc::new(Mutex::new(None)),
             vortex_idle: vortex::idle_params(),
@@ -337,10 +346,31 @@ impl eframe::App for LauncherApp {
             && status_snapshot.current_game.is_some()
             && matches!(status_snapshot.screen, LauncherScreen::Main)
         {
+            // PLAN 4.19.12 — stamp/clear the reconnect-QR fade-in timer
+            // only while we're on the in-game surface, so the fade
+            // always plays on re-entry rather than carrying stale
+            // elapsed time from an earlier session.
+            let clients_now = self.clients.load(Ordering::Relaxed);
+            if clients_now == 0 {
+                if self.reconnect_qr_shown_at.is_none() {
+                    self.reconnect_qr_shown_at = Some(Instant::now());
+                }
+            } else {
+                self.reconnect_qr_shown_at = None;
+            }
+            let reconnect_fade_elapsed_s = self
+                .reconnect_qr_shown_at
+                .map(|t| t.elapsed().as_secs_f32())
+                .unwrap_or(0.0);
             egui::CentralPanel::default()
                 .frame(egui::Frame::none().fill(egui::Color32::TRANSPARENT))
                 .show(ctx, |ui| {
-                    in_game::render(ui, &self.clients, self.qr_texture.as_ref());
+                    in_game::render(
+                        ui,
+                        &self.clients,
+                        self.qr_texture.as_ref(),
+                        reconnect_fade_elapsed_s,
+                    );
                 });
             self.was_in_game = true;
             // Loading is over — the launch handler intentionally
@@ -356,6 +386,12 @@ impl eframe::App for LauncherApp {
         // Cache for the next frame's transition detection.
         let prev_was_in_game = self.was_in_game;
         self.was_in_game = false;
+        // PLAN 4.19.12 — reset the reconnect-QR fade timer whenever
+        // we're NOT rendering the in-game surface this frame, so a
+        // subsequent in-game entry with clients=0 starts the fade
+        // fresh rather than inheriting elapsed time from an earlier
+        // session.
+        self.reconnect_qr_shown_at = None;
 
         egui::CentralPanel::default().show(ctx, |ui| {
             let rect = ui.max_rect();
