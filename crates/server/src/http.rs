@@ -26,6 +26,12 @@ use skylander_core::InstalledGame;
 use crate::profiles::{LockoutCheck, MAX_PROFILES, PublicProfile, RegistrationOutcome, SessionId};
 use crate::state::{AppState, DriverJob};
 
+/// Short git hash (+ `-dirty`) baked in by `build.rs`. Surfaced via
+/// `GET /api/version` so the phone can detect it's running a stale
+/// wasm bundle against a newer server. See `build.rs` for how the
+/// value is computed.
+pub const BUILD_TOKEN: &str = env!("BUILD_TOKEN");
+
 /// Axum extractor that validates the HMAC signature on a mutating request
 /// and hands back the raw body bytes. Each `X-Skyportal-Sig` is
 /// `HMAC-SHA256(key, "{ts}.{method}.{path}.{body_bytes}")` hex-encoded, and
@@ -256,6 +262,7 @@ pub fn router(state: Arc<AppState>, phone_dist: std::path::PathBuf) -> Router {
         .route("/api/profiles/:id/unlock", post(unlock_profile))
         .route("/api/profiles/:id/lock", post(lock_profile))
         .route("/api/profiles/:id/reset_pin", post(reset_pin))
+        .route("/api/version", get(get_version))
         .route("/ws", get(ws_handler));
 
     #[cfg(feature = "sky-stats")]
@@ -852,6 +859,28 @@ async fn get_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         rpcs3_running: rpcs3.process.is_some(),
         current_game: rpcs3.current.clone(),
     })
+}
+
+/// Version handshake body — just the server's compile-time token.
+/// Phone compares against its own baked-in `BUILD_TOKEN`; a mismatch
+/// raises the StaleVersion overlay telling the user to refresh.
+#[derive(Serialize)]
+struct VersionBody {
+    build_token: &'static str,
+}
+
+/// GET /api/version
+///
+/// Signed so that on a bad HMAC key the phone gets a 401 here and
+/// surfaces the pairing overlay (same as any other signed request
+/// would). Thereby a single handshake covers BOTH failure modes
+/// the phone cares about: wrong-key AND stale-bundle. Called at app
+/// mount and after every WS reconnect.
+async fn get_version(Signed(_body): Signed) -> Response {
+    axum::Json(VersionBody {
+        build_token: BUILD_TOKEN,
+    })
+    .into_response()
 }
 
 #[derive(Deserialize)]

@@ -14,9 +14,10 @@ mod ws;
 
 use leptos::prelude::*;
 
-use crate::api::{fetch_games, fetch_status};
+use crate::api::{fetch_games, fetch_status, fetch_version_check, VersionCheck, BUILD_TOKEN};
 use crate::components::{
     ConnectionLost, GameCrashScreen, Header, KaosOverlay, PairingRequired, ScanOverlay,
+    StaleVersion,
 };
 use crate::model::{
     Category, ConnState, Element, GameLaunched, GameOfOrigin, PublicProfile, Slot, SlotState,
@@ -106,11 +107,50 @@ pub fn App() -> impl IntoView {
     // it must happen before the first fetch. Called on every App() render;
     // the function is idempotent.
     api::install_key_from_hash();
-    // Surface a visible error if pairing didn't take — otherwise every
-    // signed POST silently 401s and the user thinks the app is broken.
-    // The PairingRequired overlay sits highest in the modal stack below
-    // and blocks all interaction until the user scans the TV's QR.
-    let pairing_required: Signal<bool> = Signal::derive(|| !api::has_hmac_key());
+    // Version handshake state — driven by `fetch_version_check()` at
+    // app mount + after every successful WS reconnect. `VersionCheck`
+    // collapses the two failure modes we want to raise loudly:
+    //   * Unauthorized → key is missing or the server rejected it →
+    //     fold into the existing PairingRequired overlay so both
+    //     "never paired" and "paired but key invalidated" read the
+    //     same to the user (re-scan the QR).
+    //   * Stale { server_token } → our bundle's BUILD_TOKEN doesn't
+    //     match the server's → show the StaleVersion overlay so the
+    //     user refreshes (fixes iOS PWA cached-wasm drift that
+    //     previously caused silent "the PIN doesn't work" dead-ends).
+    let version_check = RwSignal::new(VersionCheck::Pending);
+    let run_version_check = move || {
+        leptos::task::spawn_local(async move {
+            let outcome = fetch_version_check().await;
+            version_check.set(outcome);
+        });
+    };
+    run_version_check();
+    // Re-run the handshake on every WS reconnect. A server that
+    // restarts with a new build will drop existing connections and
+    // come back up; when the phone reconnects we re-probe so a stale
+    // bundle becomes visible within seconds of the new server
+    // binary's first boot, not on next manual refresh.
+    let pairing_required: Signal<bool> = Signal::derive(move || {
+        // Local miss OR server-side rejection both route here. During
+        // the handshake's in-flight window (`Pending`) we fall back to
+        // the local-only check so the overlay doesn't flicker on
+        // every load.
+        match version_check.get() {
+            VersionCheck::Unauthorized => true,
+            VersionCheck::Pending => !api::has_hmac_key(),
+            _ => false,
+        }
+    });
+    let stale_version_visible: Signal<bool> = Signal::derive(move || {
+        matches!(version_check.get(), VersionCheck::Stale { .. })
+    });
+    let server_build_token: Signal<Option<String>> = Signal::derive(move || match version_check
+        .get()
+    {
+        VersionCheck::Stale { server_token } => Some(server_token),
+        _ => None,
+    });
     // Fire up the phone→server log forwarder. Mirrors console output to
     // the launcher process so on-device debugging doesn't need a Mac +
     // Web Inspector. See `dev_log.rs`.
@@ -182,6 +222,22 @@ pub fn App() -> impl IntoView {
         reconnect_attempts,
         manual_retry,
     );
+
+    // Watch `conn` for transitions into Connected (i.e. WS onopen after
+    // any reconnect or the initial boot) and re-fire the version
+    // handshake. Uses a Cell-held prior state so every transition
+    // fires once — not on unrelated re-renders.
+    {
+        use std::cell::Cell;
+        let prev = Cell::new(conn.get_untracked());
+        Effect::new(move |_| {
+            let now = conn.get();
+            let was = prev.replace(now);
+            if matches!(now, ConnState::Connected) && !matches!(was, ConnState::Connected) {
+                run_version_check();
+            }
+        });
+    }
 
     // Track depth-stack direction for screen entrance animations.
     // unlocked_profile None→Some and current_game None→Some are "deeper";
@@ -332,12 +388,18 @@ pub fn App() -> impl IntoView {
             />
             <ToastStack toasts />
             <ConnectionLost reconnect_attempts manual_retry />
-            // PairingRequired renders LAST so it sits above everything
-            // else in the stacking context. It's only visible when no
-            // HMAC key is loaded; in that state none of the other
-            // surfaces can do useful work anyway (every signed POST
-            // would 401), so blocking them wholesale is the honest UX.
+            // PairingRequired + StaleVersion render LAST so they sit
+            // above everything else in the stacking context. Both are
+            // blocking — when either is visible, no other surface can
+            // do useful work (signed POSTs would 401; a stale bundle
+            // would misbehave unpredictably), so blocking them
+            // wholesale is the honest UX.
             <PairingRequired visible=pairing_required />
+            <StaleVersion
+                visible=stale_version_visible
+                local=BUILD_TOKEN
+                server=server_build_token
+            />
         </div>
     }
 }

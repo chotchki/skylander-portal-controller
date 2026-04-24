@@ -5666,3 +5666,103 @@ html.skin-kaos {
   color: #d9c88a;
   line-height: 1.5;
 }
+
+/* ============ Stale-version overlay ============
+   Loud noisy dialog shown when the phone's BUILD_TOKEN doesn't match
+   the server's /api/version response. Companion to PairingRequired
+   but a touch redder (bundle drift is a user-actionable "you're
+   holding an old app" condition, not a setup step). */
+.stale-version {
+  position: fixed;
+  inset: 0;
+  z-index: 91;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(env(safe-area-inset-top) + 24px) 20px
+           calc(env(safe-area-inset-bottom) + 24px);
+  background: rgba(8, 4, 18, 0.82);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.stale-card {
+  position: relative;
+  max-width: 420px;
+  width: 100%;
+  padding: 28px 28px 24px;
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(55, 15, 30, 0.95), rgba(30, 6, 18, 0.95)),
+    linear-gradient(180deg, rgba(26,58,138,0.08), rgba(6,20,54,0.08));
+  box-shadow:
+    0 24px 60px rgba(0,0,0,0.65),
+    inset 0 1px 0 rgba(255,255,255,0.08);
+}
+.stale-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  padding: 2px;
+  border-radius: 22px;
+  background: linear-gradient(
+    180deg,
+    rgba(245,198,52,0.9),
+    rgba(245,198,52,0.35) 40%,
+    rgba(110,74,0,0.7)
+  );
+  -webkit-mask: linear-gradient(#000,#000) content-box, linear-gradient(#000,#000);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+.stale-title {
+  margin: 0 0 12px 0;
+  font-family: "Titan One", system-ui, sans-serif;
+  font-size: var(--t-display-md);
+  letter-spacing: 0.1em;
+  color: #ffe58a;
+  text-shadow: 0 2px 0 #6e4a00, 0 4px 12px rgba(0,0,0,0.6);
+}
+.stale-body {
+  margin: 0 0 16px 0;
+  font-family: "Fraunces", Georgia, serif;
+  font-size: var(--t-body);
+  line-height: 1.55;
+  color: #f7f7fb;
+}
+.stale-refresh-btn {
+  display: block;
+  width: 100%;
+  padding: 14px;
+  margin: 0 0 14px 0;
+  font-family: "Titan One", system-ui, sans-serif;
+  font-size: var(--t-body);
+  letter-spacing: 0.18em;
+  color: #1a1203;
+  background: linear-gradient(180deg, #ffe58a, #c58c18);
+  border: 2px solid #3a2500;
+  border-radius: 12px;
+  cursor: pointer;
+  box-shadow: 0 2px 0 rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.4);
+  -webkit-tap-highlight-color: transparent;
+}
+.stale-refresh-btn:active { transform: translateY(1px); }
+.stale-hint {
+  margin: 0 0 10px 0;
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic;
+  font-size: var(--t-body-sm);
+  color: #d9c88a;
+  line-height: 1.5;
+}
+.stale-diag {
+  margin: 14px 0 0 0;
+  padding: 8px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #9aa2c8;
+  background: rgba(0,0,0,0.3);
+  border-radius: 8px;
+  word-break: break-all;
+}

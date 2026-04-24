@@ -12,6 +12,7 @@ mod pairing_required;
 mod pwa_hint;
 mod ray_halo;
 mod scan_overlay;
+mod stale_version;
 mod toy_box;
 
 pub use action_button::*;
@@ -28,4 +29,5 @@ pub use pairing_required::*;
 pub use pwa_hint::*;
 pub use ray_halo::*;
 pub use scan_overlay::*;
+pub use stale_version::*;
 pub use toy_box::*;

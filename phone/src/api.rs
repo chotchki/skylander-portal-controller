@@ -2,6 +2,34 @@
 
 use std::cell::{Cell, RefCell};
 
+/// Short git hash (+ `-dirty`) baked in by `build.rs`. Sent to the
+/// server's `/api/version` endpoint at boot + after every WS reconnect
+/// for a stale-bundle handshake: mismatch → `StaleVersion` overlay
+/// tells the user to refresh.
+pub const BUILD_TOKEN: &str = env!("BUILD_TOKEN");
+
+/// Outcome of the `GET /api/version` handshake. Drives both the
+/// PairingRequired overlay (auth failure) and the StaleVersion overlay
+/// (token mismatch).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum VersionCheck {
+    /// Haven't called yet, or in-flight — show nothing.
+    Pending,
+    /// Server's token matches ours. All good.
+    Matches,
+    /// Server accepted our signature but its token differs — our
+    /// bundle is stale (or newer). String is the server's token so
+    /// the overlay can surface both sides for diagnosis.
+    Stale { server_token: String },
+    /// Server rejected our key (401) or missing pairing entirely.
+    /// Folds into the existing PairingRequired flow.
+    Unauthorized,
+    /// Couldn't reach the server at all. Shown as a soft hint, not a
+    /// blocking overlay — the existing ConnectionLost surface owns
+    /// real-time WS health.
+    Unreachable,
+}
+
 use serde_json::json;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
@@ -289,6 +317,36 @@ pub async fn fetch_status() -> Option<GameLaunched> {
             .ok()
             .and_then(|s| s.current_game),
         Err(_) => None,
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct VersionBody {
+    build_token: String,
+}
+
+/// Version handshake — signed GET that detects both a wrong HMAC key
+/// (401 → Unauthorized) and a stale phone bundle (server token differs
+/// from [`BUILD_TOKEN`] → Stale). Called at app mount + after every
+/// successful WS reconnect.
+pub async fn fetch_version_check() -> VersionCheck {
+    if !has_hmac_key() {
+        // No local key — the PairingRequired overlay already handles
+        // this case. Return Unauthorized so callers can collapse the
+        // reason into one signal.
+        return VersionCheck::Unauthorized;
+    }
+    let url = format!("{}/api/version", origin());
+    match do_fetch(&url, "GET", None).await {
+        Ok(text) => match serde_json::from_str::<VersionBody>(&text) {
+            Ok(body) if body.build_token == BUILD_TOKEN => VersionCheck::Matches,
+            Ok(body) => VersionCheck::Stale {
+                server_token: body.build_token,
+            },
+            Err(_) => VersionCheck::Unreachable,
+        },
+        Err(e) if e.contains("401") => VersionCheck::Unauthorized,
+        Err(_) => VersionCheck::Unreachable,
     }
 }
 
