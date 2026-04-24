@@ -33,12 +33,9 @@ Tags: **[bug]** wrong behavior, **[feature]** missing capability, **[judgment]**
 - [ ] 4.18.6 *[judgment]* CreateProfileForm pacing: single form vs 4-step wizard.
 - [ ] 4.18.9 *[judgment]* PIN reset: 1-step vs 2-step (Konami as authentication vs defence-in-depth).
 - [ ] 4.18.10 *[feature]* Profile "last used N days ago" subtext. Needs `MAX(figure_usage.last_used_at)` or `profiles.last_used_at`.
-- [ ] 4.18.11 *[verify]* Profile manage DEL uses HOLD TO DELETE, not `window.confirm()`.
 - [ ] 4.18.12 *[feature]* Per-card tagline + "currently playing" marker.
 - [ ] 4.18.14 *[feature]* GAMES drill-down chip row in `BrowserHead`.
 - [ ] 4.18.15 *[feature]* CATEGORY drill-down chip row (Vehicles / Traps / Minis / Items). Additive with elements.
-- [ ] 4.18.16 *[verify]* Toy-box lid grabber pill + swipe-hint copy shipped.
-- [ ] 4.18.19 *[verify]* Hero-aura + hero-rays behind lifted figure bezel.
 - [ ] 4.18.20 *[judgment]* Ghost-grid / box-backdrop context on figure detail.
 - [ ] 4.18.22 *[feature]* ResumeModal element-tinted bezel plates.
 - [ ] 4.18.23 *[feature]* ResumeModal relative-time subtext. Needs `saved_at` on `ResumeOffer`.
@@ -56,31 +53,24 @@ Tags: **[bug]** wrong behavior, **[feature]** missing capability, **[judgment]**
 **Cloud + iris (§3.2) — tuning is static.**
 - [ ] 4.19.5 *[judgment]* **Vortex shader: polar-mesh approximation vs spec'd simplex FBM.** Downgraded from [feature] 2026-04-19 — surrounding improvements (sky backdrop + starfield + halo glow) carry most weight. Re-eval before committing to `egui_wgpu` port.
 - [ ] 4.19.6 *[feature]* **Iris locked at 1.2 for every state.** Spec: per-state tuning (Booting 2.5s ease-out, Crash ~1s urgent, Shutdown gentle, In-Game ~1.8s ease-in). Coupled with 4.15a.7.
-- [ ] 4.19.7 *[verify]* **Halo focal-glow missing** behind QR / progress ring. Primitive ready: `paint_radial_ellipse`.
-- [ ] 4.19.8 *[verify]* **Pip orbit speed: code 0.10 rad/s vs spec 0.08.**
 
 **QR + orbit (§3.3).**
 - [ ] 4.19.9 *[bug]* **Max-players copy mismatch.** Code: "MAXIMUM PLAYERS REACHED"; spec: "PORTAL IS FULL".
-- [ ] 4.19.10 *[verify]* **"SCAN TO CONNECT" label position + size** (above 36px vs below 64px).
 - [ ] 4.19.10a *[bug]* **URL string rendered on screen** — spec says QR carries it, no text.
-- [ ] 4.19.11 *[verify]* **QR bezel size: 320px code vs ~280px spec.** Likely intentional 4K headroom.
 - [ ] 4.19.22 *[bug]* **AwaitingConnect debug noise.** Today adds brand heading + status strip + URL + client count + figures-indexed. Drop all five. Keep Exit-to-Desktop button.
 
 **In-Game transparency (§3.4).**
 - [ ] 4.19.12 *[bug]* **Reconnect QR no fade-in** (spec: 1.0s ease-out).
-- [ ] 4.19.13 *[verify]* **Reconnect QR copy + inset.**
 
 **Shutdown (§3.5).**
 - [ ] 4.19.14 *[bug]* **No breathe pulse on farewell heading** (spec: 2.4s opacity + scale ±2.5%).
 - [ ] 4.19.15 *[feature]* **No black-overlay fade-out + hint sequence.** egui has no native full-screen overlay equivalent; either custom paint or accept current.
-- [ ] 4.19.16 *[verify]* **Heading size: 72px code vs 64px spec.**
 
 **Shader compilation (§3.6).**
 - [ ] 4.19.17 *[feature]* **Detection unimplemented.** Duplicates 4.15.12.
 - [ ] 4.19.18 *[feature]* **Progress ring + heading missing** (depends 4.19.17). Duplicates 4.15.13.
 
 **Typography (§3.7).**
-- [ ] 4.19.19 *[verify, half-done]* **Hero size 80px code vs 96px spec**; farewell 72 vs 64. 4.19.2a landed 140px embossed for Startup; steady-state still flat-and-small.
 
 **Wrap-up.**
 - [ ] 4.19.20 Re-walk every state on HTPC once 4.19.2–4.19.19 land.

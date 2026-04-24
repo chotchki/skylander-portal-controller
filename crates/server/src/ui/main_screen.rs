@@ -38,7 +38,9 @@ const PIP_DIAMETER: f32 = 84.0;
 
 /// Orbit rotation rate (rad/s). Quiet idle motion — matches the vortex's
 /// 0.08 rad/s so the two ambient animations don't compete for attention.
-const ORBIT_SPEED: f32 = 0.10;
+/// PLAN 4.19.8: pulled from 0.10 → 0.08 to match the comment + the
+/// `navigation.md` §3.3 spec value.
+const ORBIT_SPEED: f32 = 0.08;
 
 /// Visible thickness of the gold ring around the inner content disc,
 /// in screen pixels. The bezel paints a full filled gold disc; the
