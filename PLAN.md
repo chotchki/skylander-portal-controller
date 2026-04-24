@@ -47,7 +47,6 @@ Tags: **[bug]** wrong behavior, **[feature]** missing capability, **[judgment]**
 - [ ] 4.18.26 Once parity reached, 4.17.1's end-to-end demo can proceed.
 - [ ] 4.18.27 *[bug → feature]* **Profile-create → staged wizard.** Leptos port of 4.2.8's `profile_create.html` crunched the staged flow into one long form; on iPhone the confirm keypad scrolls off-screen. `.screen-profile-picker { overflow-y: auto }` was the minimum-viable unblock 2026-04-23; real fix is the 4-step wizard that matches the mock. Keep the scroll-fix in place as defensive fallback.
 - [ ] 4.18.28 *[bug]* **Profile-create color scheme alignment.** Still uses pre-Phase-4 gray (`#161616` bg, `#333` border). Swap to `FramedPanel` + `ActionButton` / gold-bezel button treatments. Pair with 4.18.27.
-- [ ] 4.18.29 *[bug]* **Reset browser search on game change.** `search` signal in `phone/src/lib.rs` persists across `current_game` transitions. Also applies to `element_filter` / `game_filter` / `category_filter` (less disruptive since visibly toggled). Fix: `Effect` that clears all four when `current_game` changes (skip initial `None → Some(_)` run). Surfaced 2026-04-23 during 6.6 live verification.
 
 ### 4.19 egui TV-launcher drift reconciliation (residuals)
 

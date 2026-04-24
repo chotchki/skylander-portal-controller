@@ -202,6 +202,36 @@ pub fn App() -> impl IntoView {
         });
     }
 
+    // PLAN 4.18.29: reset browser filters on any game change. The search
+    // field + element/game/category drill-downs persist across game
+    // transitions by default (they live at app level), which means a
+    // query typed while Giants was booted keeps filtering the library
+    // after switching to Trap Team. Fire an Effect that clears all four
+    // on every `current_game` transition *after* the app's initial mount,
+    // so booting into an already-running game doesn't clobber a fresh
+    // Signal value the user never touched. Compares by serial so
+    // re-picking the same game (unlikely but harmless) is a no-op.
+    {
+        use std::cell::{Cell, RefCell};
+        let first_run = Cell::new(true);
+        let prev_serial: RefCell<Option<String>> =
+            RefCell::new(current_game.get_untracked().map(|g| g.serial));
+        Effect::new(move |_| {
+            let now_serial = current_game.get().map(|g| g.serial);
+            if first_run.replace(false) {
+                *prev_serial.borrow_mut() = now_serial;
+                return;
+            }
+            let prev = prev_serial.replace(now_serial.clone());
+            if prev != now_serial {
+                search.set(String::new());
+                element_filter.set(None);
+                game_filter.set(None);
+                category_filter.set(None);
+            }
+        });
+    }
+
     // Helper: capture nav_dir at the moment the wrapper mounts so the class
     // (and its CSS animation) reflects the direction of the transition that
     // brought this screen on-screen, not subsequent direction changes.
