@@ -39,7 +39,20 @@ pub trait PortalDriver: Send + Sync {
     /// and synthesises Enter; the mock impl is a no-op (mock has no RPCS3
     /// process to boot). Called by the server's `/api/launch` handler after
     /// `open_dialog()` so Qt's focus state is cold when boot runs.
-    fn boot_game_by_serial(&self, serial: &str, timeout: Duration) -> Result<()>;
+    ///
+    /// `expected_name` is the canonical display name from the game catalogue
+    /// (e.g. `"Skylanders: Trap Team"`). After the viewport appears, the UIA
+    /// impl reads its title and fails fast if the title identifies a
+    /// *different* known Skylanders game — a defence against the library-
+    /// cell click landing on the wrong cell (library scrolled, stale
+    /// bounding rect, etc.) and booting the wrong game. If the title is
+    /// unrecognisable (some future RPCS3 title format) the boot is trusted.
+    fn boot_game_by_serial(
+        &self,
+        serial: &str,
+        expected_name: &str,
+        timeout: Duration,
+    ) -> Result<()>;
 
     /// Enumerate every game serial currently visible in RPCS3's library
     /// view. Prereq: RPCS3 is at the game-list table (same prereq as

@@ -142,7 +142,12 @@ impl PortalDriver for MockPortalDriver {
         Ok(())
     }
 
-    fn boot_game_by_serial(&self, _serial: &str, _timeout: Duration) -> Result<()> {
+    fn boot_game_by_serial(
+        &self,
+        _serial: &str,
+        _expected_name: &str,
+        _timeout: Duration,
+    ) -> Result<()> {
         // Mock has no RPCS3 process to boot. Tests that need to exercise the
         // launch flow against the mock use `/api/_test/set_game` to inject a
         // running game directly into server state.

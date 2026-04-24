@@ -1052,6 +1052,7 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
         .driver_tx
         .send(crate::state::DriverJob::BootGame {
             serial: body.serial.as_str().to_string(),
+            expected_name: game.display_name.clone(),
             timeout: Duration::from_secs(60),
             done: tx,
         })
@@ -1066,9 +1067,35 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
     match rx.await {
         Ok(Ok(())) => {}
         Ok(Err(e)) => {
+            // Boot failed — the driver may have left a game running that
+            // the verifier rejected (wrong-game boot, 2026-04-24). Queue
+            // a stop_emulation so RPCS3 returns to the library view; the
+            // next launch then starts from a clean state instead of the
+            // user having to manually quit the wrongly-booted game.
+            // Best-effort; don't let the recovery path mask the original
+            // error. Time-boxed to 5s so a genuinely-wedged RPCS3 doesn't
+            // pin the handler.
+            let err_msg = e.to_string();
+            warn!("UIA-boot failed: {err_msg}; attempting stop_emulation recovery");
+            let (stx, srx) = tokio::sync::oneshot::channel();
+            if state
+                .driver_tx
+                .send(crate::state::DriverJob::StopEmulation {
+                    timeout: Duration::from_secs(5),
+                    done: stx,
+                })
+                .await
+                .is_ok()
+            {
+                match srx.await {
+                    Ok(Ok(())) => info!("recovery stop_emulation succeeded"),
+                    Ok(Err(se)) => warn!("recovery stop_emulation errored: {se}"),
+                    Err(se) => warn!("recovery stop_emulation ack dropped: {se}"),
+                }
+            }
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("UIA-boot failed: {e}"),
+                format!("UIA-boot failed: {err_msg}"),
             )
                 .into_response();
         }

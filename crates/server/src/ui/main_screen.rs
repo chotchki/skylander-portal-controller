@@ -104,23 +104,6 @@ impl LauncherApp {
         paint_heraldic_title(ui.painter(), pos, "STARTING", palette::HERO_INTRO, alpha);
     }
 
-    /// PLAN 4.15.9 — render a "SWITCHING GAMES" heading centred over
-    /// the closed-iris void during a game switch. Same heraldic paint
-    /// as the startup brand intro so the visual vocabulary is
-    /// consistent; no animation (the iris holds at fully-closed
-    /// DarkHole for as long as the switch is in flight).
-    pub(super) fn render_switching_heading(&self, ui: &mut egui::Ui) {
-        let rect = ui.max_rect();
-        let pos = egui::pos2(rect.center().x, rect.top() + rect.height() * 0.5);
-        paint_heraldic_title(
-            ui.painter(),
-            pos,
-            "SWITCHING GAMES",
-            palette::HEADING_LG,
-            1.0,
-        );
-    }
-
     /// Render the Main surface. Called from the top-level dispatcher in
     /// [`super`] when `LauncherStatus::screen == LauncherScreen::Main`
     /// AND no game is running (game-running flips to `in_game::render`
@@ -167,10 +150,17 @@ impl LauncherApp {
             ui.add_space(((avail - CARD_SIZE) * 0.5).max(24.0));
 
             // Decide which face the centre card should show this frame.
-            // Loading takes priority over MaxPlayers — if the user
-            // picked a game while the session count happens to be
-            // saturated, the loading state is the more useful signal.
-            let back_face = if status_snapshot.loading_game.is_some() {
+            // Precedence: Switching > Loading > MaxPlayers. Switching
+            // outranks Loading because the flag is only set between
+            // /api/quit?switch=true and the next /api/launch clearing
+            // it; during that window `loading_game` is still the
+            // previous (now-quit) game and would read wrong. Loading
+            // then takes priority over MaxPlayers — if the user picked
+            // a game while the session count happens to be saturated,
+            // the loading state is the more useful signal.
+            let back_face = if status_snapshot.switching {
+                Some(BackFace::Switching)
+            } else if status_snapshot.loading_game.is_some() {
                 Some(BackFace::Loading)
             } else if status_snapshot.session_slots_full {
                 Some(BackFace::MaxPlayers)
@@ -210,6 +200,11 @@ impl LauncherApp {
             // existing fifth-player-please-wait copy is implicit in
             // the back-face card itself.
             let subtitle: &str = match (back_face, status_snapshot.loading_game.as_deref()) {
+                // Switching bridges two games — the phone hasn't picked
+                // the next one yet, so there's no game name to show. A
+                // bare "CHOOSE YOUR NEXT ADVENTURE" hint reads better
+                // than an empty subtitle lane.
+                (Some(BackFace::Switching), _) => "CHOOSE YOUR NEXT ADVENTURE",
                 (Some(BackFace::Loading), Some(name)) => name,
                 _ => "SCAN TO CONNECT",
             };
@@ -276,6 +271,11 @@ pub(super) enum BackFace {
     /// "LOADING" — RPCS3 is spawning + UIA-booting the picked game.
     /// Subtitle (game name) is rendered separately by the caller.
     Loading,
+    /// "SWITCHING GAMES" — bridge face between quitting the current
+    /// game and the phone selecting the next. Visually identical to
+    /// Loading (same halos) so the loading→switching→loading handoff
+    /// reads as one continuous spin rather than card flips in and out.
+    Switching,
 }
 
 /// Card-flip container (PLAN 4.15.6). Reserves a `CARD_SIZE × CARD_SIZE`
@@ -348,15 +348,18 @@ fn qr_card_flip(
             // TV distance.
             BackFace::MaxPlayers => &["PORTAL", "IS", "FULL"],
             BackFace::Loading => &["LOADING"],
+            BackFace::Switching => &["SWITCHING", "GAMES"],
         };
         paint_titled_card(painter, inner, lines, bezel_alpha, content_alpha);
-        // Loading face gets two rotating halos around the bezel rim
-        // — same look as `mocks/transitions.html`'s `.state-loading`
-        // (slow outer halo + fast inner halo, both gold conic
-        // gradients sweeping around the badge). The badge content
-        // itself stays static; rotation lives in the halos so the
-        // word "LOADING" stays readable.
-        if matches!(back_face, Some(BackFace::Loading))
+        // Loading + Switching faces get two rotating halos around the
+        // bezel rim — same look as `mocks/transitions.html`'s
+        // `.state-loading` (slow outer halo + fast inner halo, both
+        // gold conic gradients sweeping around the badge). The badge
+        // content itself stays static; rotation lives in the halos so
+        // the word stays readable. Sharing the halos between the two
+        // states keeps the loading→switching→loading handoff reading
+        // as one continuous spin.
+        if matches!(back_face, Some(BackFace::Loading | BackFace::Switching))
             && bezel_alpha > 0.001
             && inner.width() >= 1.0
         {

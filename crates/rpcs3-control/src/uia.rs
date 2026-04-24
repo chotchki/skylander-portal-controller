@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow, bail};
 use skylander_core::{SLOT_COUNT, SlotIndex, SlotState};
 use tracing::{debug, info, instrument, warn};
-use uiautomation::patterns::{UIInvokePattern, UIValuePattern};
+use uiautomation::patterns::{UIInvokePattern, UIScrollItemPattern, UIValuePattern};
 use uiautomation::types::{ControlType, UIProperty};
 use uiautomation::{UIAutomation, UIElement, UITreeWalker};
 
@@ -30,6 +30,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SWP_NOZORDER, SetForegroundWindow, SetWindowPos, ShowWindow, WM_KEYDOWN, WM_KEYUP,
     WM_LBUTTONDOWN, WM_LBUTTONUP,
 };
+use windows::Win32::Foundation::POINT;
+use windows::Win32::Graphics::Gdi::ScreenToClient;
 use windows::core::BOOL;
 
 const READ_VALUE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -562,6 +564,133 @@ impl UiaPortalDriver {
         let _ = send_key(VK_RETURN);
         Ok(())
     }
+
+    /// One boot attempt: fresh UIA tree walk → find cell for `serial` →
+    /// post coord-click at the cell's bounding rect + synthesised Enter
+    /// → poll for viewport → verify title. Called in a retry loop by
+    /// [`PortalDriver::boot_game_by_serial`]; each invocation re-walks
+    /// UIA so a stale-rect mis-click on attempt N gets a fresh lookup on
+    /// attempt N+1.
+    ///
+    /// History 2026-04-24: briefly swapped to `UIInvokePattern::invoke()`
+    /// after a run where coord-click kept hitting the wrong row — that
+    /// turned out to be the documented RDP-degrades-eframe / UIA-coord
+    /// drift gremlin, not a real code bug. On a physical console, Invoke
+    /// alone doesn't boot (CLAUDE.md RPCS3 notes) and coord-click + Enter
+    /// is the working path. Reverted.
+    #[instrument(skip(self), fields(attempt))]
+    fn try_boot_once(
+        &self,
+        serial: &str,
+        expected_name: &str,
+        timeout: Duration,
+        _attempt: u32,
+    ) -> Result<()> {
+        let walker = self.walker()?;
+        let main = self.main_window(&walker)?;
+        let main_hwnd: isize = main.get_native_window_handle().context("main HWND")?.into();
+        let main_hwnd = HWND(main_hwnd as _);
+
+        let cell = find_descendant(&walker, &main, |el| {
+            el.get_control_type()
+                .map(|c| c == ControlType::DataItem)
+                .unwrap_or(false)
+                && el.get_name().map(|n| n == serial).unwrap_or(false)
+        })
+        .ok_or_else(|| anyhow!("no DataItem named {serial} in RPCS3 library"))?;
+        debug!(serial, "found library cell");
+
+        // Scroll the target cell into the visible viewport before reading
+        // its rect. 2026-04-24 Chris hit a consistent mis-click where the
+        // UIA-reported coords for SuperChargers landed on Imaginators'
+        // rendered row — the library had scrolled enough that the target
+        // row was off-screen, and UIA's rect was in the un-scrolled
+        // coordinate system. `ScrollItemPattern::scroll_into_view()` tells
+        // Qt to update the list's scroll position so the cell is actually
+        // on screen; the subsequent rect re-query returns a coordinate
+        // that matches what's rendered. Best-effort — if the pattern
+        // isn't exposed we still have the retry loop.
+        if let Ok(scroll) = cell.get_pattern::<UIScrollItemPattern>() {
+            if let Err(e) = scroll.scroll_into_view() {
+                debug!(serial, "scroll_into_view errored: {e}");
+            } else {
+                debug!(serial, "scrolled library cell into view");
+            }
+        }
+        sleep(Duration::from_millis(150));
+
+        // Re-fetch the cell AFTER scrolling — bounding rect now reflects
+        // the scrolled position rather than the stale pre-scroll value.
+        let cell_after = find_descendant(&walker, &main, |el| {
+            el.get_control_type()
+                .map(|c| c == ControlType::DataItem)
+                .unwrap_or(false)
+                && el.get_name().map(|n| n == serial).unwrap_or(false)
+        })
+        .ok_or_else(|| anyhow!("cell for {serial} disappeared after scroll"))?;
+
+        let rect = cell_after
+            .get_bounding_rectangle()
+            .context("cell bounding rectangle")?;
+        let cx_screen = rect.get_left() + (rect.get_right() - rect.get_left()) / 2;
+        let cy_screen = rect.get_top() + (rect.get_bottom() - rect.get_top()) / 2;
+
+        // 2026-04-24 — on the HTPC's 4K display we were seeing UIA rects
+        // at physical pixels (cx=1600, cy=1293) while PostMessage WM_
+        // LBUTTONDOWN's lParam needs CLIENT-area coords that respect the
+        // window's DPI context. Naive `cx_screen - wrect.left` gave the
+        // wrong row because `GetWindowRect` returns the non-client area
+        // (title bar etc.) offset, and the window's internal client-area
+        // coord system may be at a different DPI scale than the outer
+        // screen. `ScreenToClient` does the right conversion in one
+        // shot — it applies the window's DPI context to translate
+        // physical screen pixels into the coord system the window's
+        // message loop expects.
+        let mut pt = POINT {
+            x: cx_screen,
+            y: cy_screen,
+        };
+        unsafe {
+            let _ = ScreenToClient(main_hwnd, &mut pt);
+        }
+        let lx = pt.x;
+        let ly = pt.y;
+        debug!(
+            cx_screen,
+            cy_screen,
+            lx,
+            ly,
+            rect_left = rect.get_left(),
+            rect_top = rect.get_top(),
+            rect_right = rect.get_right(),
+            rect_bottom = rect.get_bottom(),
+            "posting WM_LBUTTONDOWN/UP to library cell"
+        );
+
+        post_click(main_hwnd, lx, ly).context("post library-cell click")?;
+        sleep(MENU_STEP_PAUSE);
+        post_key(main_hwnd, VK_RETURN).context("post Enter to boot selected game")?;
+
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if let Some(vp) = find_viewport_hwnd() {
+                let title = read_title(vp).unwrap_or_default();
+                if let Err(e) = verify_viewport_title(&title, expected_name) {
+                    info!(
+                        serial,
+                        ?title,
+                        expected = expected_name,
+                        "viewport title mismatch — booted wrong game",
+                    );
+                    return Err(e);
+                }
+                info!(serial, "game viewport detected — boot succeeded");
+                return Ok(());
+            }
+            sleep(POLL_INTERVAL);
+        }
+        bail!("game viewport didn't appear within {timeout:?} after boot attempt");
+    }
 }
 
 impl crate::PortalDriver for UiaPortalDriver {
@@ -778,58 +907,62 @@ impl crate::PortalDriver for UiaPortalDriver {
     }
 
     #[instrument(skip(self))]
-    fn boot_game_by_serial(&self, serial: &str, timeout: Duration) -> Result<()> {
-        let walker = self.walker()?;
-        let main = self.main_window(&walker)?;
-        let main_hwnd: isize = main.get_native_window_handle().context("main HWND")?.into();
-        let main_hwnd = HWND(main_hwnd as _);
-
-        let cell = find_descendant(&walker, &main, |el| {
-            el.get_control_type()
-                .map(|c| c == ControlType::DataItem)
-                .unwrap_or(false)
-                && el.get_name().map(|n| n == serial).unwrap_or(false)
-        })
-        .ok_or_else(|| anyhow!("no DataItem named {serial} in RPCS3 library"))?;
-        debug!(serial, "found library cell");
-
-        let rect = cell
-            .get_bounding_rectangle()
-            .context("cell bounding rectangle")?;
-        let cx_screen = rect.get_left() + (rect.get_right() - rect.get_left()) / 2;
-        let cy_screen = rect.get_top() + (rect.get_bottom() - rect.get_top()) / 2;
-
-        // Convert screen coords to main-window-relative. `PostMessageW`
-        // WM_LBUTTONDOWN/UP expect client-area coords, and RPCS3's library
-        // view sits at the window's client origin (no menu offset relative
-        // to the list), so subtracting the window's top-left works. Delivers
-        // the click even if an egui cover sits over RPCS3 as TOPMOST (PLAN
-        // 4.15.15's variant c — validated by `examples/zorder_probe.rs`).
-        let mut wrect = RECT::default();
-        unsafe {
-            let _ = GetWindowRect(main_hwnd, &mut wrect);
-        }
-        let lx = cx_screen - wrect.left;
-        let ly = cy_screen - wrect.top;
-        debug!(
-            cx_screen,
-            cy_screen, lx, ly, "posting WM_LBUTTONDOWN/UP to library cell"
-        );
-
-        post_click(main_hwnd, lx, ly).context("post library-cell click")?;
-        sleep(MENU_STEP_PAUSE);
-
-        post_key(main_hwnd, VK_RETURN).context("post Enter to boot selected game")?;
-
-        let deadline = Instant::now() + timeout;
-        while Instant::now() < deadline {
-            if find_viewport_hwnd().is_some() {
-                info!(serial, "game viewport detected — boot succeeded");
-                return Ok(());
+    fn boot_game_by_serial(
+        &self,
+        serial: &str,
+        expected_name: &str,
+        timeout: Duration,
+    ) -> Result<()> {
+        // Up to 3 attempts. Each attempt: fresh UIA walk → coord-click at
+        // reported rect + Enter → poll for viewport → verify title. If the
+        // viewport title identifies a different game (stale UIA rect landed
+        // on a sibling row), stop emulation and retry. If the title is
+        // correct, success; if it's unrecognisable, trust it and succeed.
+        //
+        // Earlier strategies that didn't survive live testing 2026-04-24:
+        //   - `SelectionItemPattern.select()` + `Space` + `Enter`: Space
+        //     resurfaced a QListView quirk that pinned currentIndex at
+        //     row 0 (Digimon).
+        //   - `select()` + `set_focus()` + `Enter`: `set_focus` hung
+        //     indefinitely on the Qt DataItem.
+        //   - Keyboard-only arrow-nav tracking `is_selected`: keys
+        //     synthesised into main_hwnd didn't reach the library
+        //     widget's selection model — `is_selected` stayed false on
+        //     every row across 100 Down-arrow presses.
+        //
+        // Coord-click with a freshly-walked UIA rect works the vast
+        // majority of the time; the rare mis-click is self-correcting via
+        // the retry loop below.
+        const MAX_ATTEMPTS: u32 = 3;
+        let mut last_err: Option<anyhow::Error> = None;
+        for attempt in 1..=MAX_ATTEMPTS {
+            match self.try_boot_once(serial, expected_name, timeout, attempt) {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    warn!(
+                        attempt,
+                        serial,
+                        expected = expected_name,
+                        "boot attempt failed: {e}",
+                    );
+                    last_err = Some(e);
+                    if attempt < MAX_ATTEMPTS {
+                        // Recover: stop whatever did boot so the next
+                        // attempt starts from a clean library view.
+                        // Best-effort; errors here don't mask the
+                        // underlying boot failure.
+                        if let Err(se) = self.stop_emulation(Duration::from_secs(5)) {
+                            warn!(
+                                attempt,
+                                "recovery stop_emulation before retry errored: {se}",
+                            );
+                        }
+                        sleep(Duration::from_millis(300));
+                    }
+                }
             }
-            sleep(POLL_INTERVAL);
         }
-        bail!("game viewport didn't appear within {timeout:?} after boot attempt");
+        Err(last_err.unwrap_or_else(|| anyhow!("boot_game_by_serial: no attempts made")))
     }
 
     #[instrument(skip(self))]
@@ -1380,6 +1513,79 @@ fn find_visible_file_dialogs() -> Vec<HWND> {
     ctx.hits
 }
 
+/// Validate that `title` (the FPS-prefixed viewport window title) agrees
+/// with `expected_name` (the canonical display name from the game
+/// catalogue, e.g. `"Skylanders: Trap Team"`).
+///
+/// The check is deliberately lenient: exact string equality is fragile
+/// against RPCS3's title format drift, and a loose substring match on
+/// expected_name's full string can fail for punctuation reasons
+/// ("Trap Team" vs "Skylanders Trap Team"). The reliable failure mode
+/// we DO want to catch is "boot clicked the wrong library cell and
+/// launched a different known Skylanders game" — so we scan the title
+/// for any *other* known game's distinguishing keyword and bail if we
+/// find one. An unrecognisable title (neither expected nor a known
+/// peer) is trusted.
+fn verify_viewport_title(title: &str, expected_name: &str) -> Result<()> {
+    // One distinguishing keyword per known game. Chosen to be unique
+    // against the others (e.g. "Spyro" is fine because no other game
+    // has "Spyro" in its title; "Trap Team" works; "SuperChargers" and
+    // "Swap Force" likewise).
+    const KNOWN_GAME_KEYWORDS: &[&str] = &[
+        "Spyro",
+        "Giants",
+        "SWAP",
+        "Trap Team",
+        "SuperChargers",
+        "Imaginators",
+    ];
+    let title_lower = title.to_lowercase();
+    let expected_lower = expected_name.to_lowercase();
+
+    // Fast-path: title contains the full expected display name. Matches
+    // the common case where RPCS3 echoes the library cell's name into
+    // the viewport title verbatim.
+    if title_lower.contains(&expected_lower) {
+        return Ok(());
+    }
+    // Scan for peer games' keywords. Finding one that ISN'T in our
+    // expected name is definitive evidence of a wrong boot.
+    for kw in KNOWN_GAME_KEYWORDS {
+        let kw_lower = kw.to_lowercase();
+        if expected_lower.contains(&kw_lower) {
+            // The expected game also owns this keyword — skip; it can
+            // only match "correct" above.
+            continue;
+        }
+        if title_lower.contains(&kw_lower) {
+            bail!(
+                "booted wrong game: requested {expected_name}, \
+                 viewport title is {title:?}",
+            );
+        }
+    }
+    // No peer keyword AND no expected-name match. If the user's library
+    // contains non-Skylanders games (Digimon etc., 2026-04-24) this
+    // branch catches them — the request was always for a Skylanders
+    // game, so a title with zero Skylanders keywords means we booted
+    // the wrong thing regardless of whether we can identify what
+    // specifically it is. At least one of our keywords must appear in
+    // any correctly-booted Skylanders title.
+    let any_keyword = KNOWN_GAME_KEYWORDS
+        .iter()
+        .any(|kw| title_lower.contains(&kw.to_lowercase()));
+    if !any_keyword {
+        bail!(
+            "booted non-Skylanders game: requested {expected_name}, \
+             viewport title is {title:?} (no Skylanders keyword found)",
+        );
+    }
+    // Title contains the expected keyword but not the full display name
+    // string — RPCS3 title format variant (punctuation, trademark
+    // symbol, etc.). Trust the boot.
+    Ok(())
+}
+
 fn find_viewport_hwnd() -> Option<HWND> {
     struct Ctx {
         hit: Option<HWND>,
@@ -1632,4 +1838,70 @@ fn collect_focused_menu_items(walker: &UITreeWalker, root: &UIElement, out: &mut
 fn normalise_menu_name(raw: &str) -> String {
     let without_shortcut = raw.split('\t').next().unwrap_or(raw);
     without_shortcut.replace('&', "").trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::verify_viewport_title;
+
+    #[test]
+    fn accepts_title_containing_expected_name() {
+        let ok = verify_viewport_title(
+            "FPS: 60 | Skylanders: Trap Team [BLUS31442]",
+            "Skylanders: Trap Team",
+        );
+        assert!(ok.is_ok(), "verbatim display name match should pass");
+    }
+
+    #[test]
+    fn accepts_loose_title_with_expected_keyword() {
+        // RPCS3 sometimes drops the punctuation — "Skylanders Trap Team"
+        // without the colon. That doesn't match the full expected string,
+        // but it also doesn't match any OTHER known keyword, so trust it.
+        let ok = verify_viewport_title(
+            "FPS: 60 | Skylanders Trap Team",
+            "Skylanders: Trap Team",
+        );
+        assert!(
+            ok.is_ok(),
+            "title without colon should still be trusted — no peer keyword present",
+        );
+    }
+
+    #[test]
+    fn rejects_title_identifying_different_known_game() {
+        // The exact bug Chris hit 2026-04-24: asked for Trap Team, RPCS3
+        // booted SuperChargers. Title contains "SuperChargers" keyword,
+        // which isn't in the expected name — that's the failure signal.
+        let err = verify_viewport_title(
+            "FPS: 60 | Skylanders SuperChargers [BLUS31545]",
+            "Skylanders: Trap Team",
+        );
+        assert!(err.is_err(), "peer game keyword should flag wrong boot");
+        let msg = err.unwrap_err().to_string();
+        assert!(
+            msg.contains("wrong game"),
+            "error should name the bug: {msg}",
+        );
+    }
+
+    #[test]
+    fn rejects_non_skylanders_title() {
+        // Library can contain non-Skylanders games (Chris hit this
+        // 2026-04-24 with Digimon as library row 0 — Enter with a stale
+        // currentIndex activated Digimon when SuperChargers was asked
+        // for). Zero Skylanders keywords in the title must fail the
+        // check — we never boot non-Skylanders games, so this is
+        // always a wrong-game signal.
+        let err = verify_viewport_title(
+            "FPS: 60 | 3.20 GHz | Digimon World Re:Digitize [NPUB99999]",
+            "Skylanders: SuperChargers",
+        );
+        assert!(err.is_err(), "non-Skylanders title must bail");
+        let msg = err.unwrap_err().to_string();
+        assert!(
+            msg.contains("non-Skylanders"),
+            "error should name the non-Skylanders condition: {msg}",
+        );
+    }
 }

@@ -5,32 +5,69 @@ triaged into a severity bucket. Within a bucket, order is "closest to
 the main flow first". `[x]` = shipped, `[~]` = in progress, `[-]` =
 won't-do / defer, `[ ]` = pending.
 
+## Latest run, need triage
+
+- [x] **Startup feels dead during RPCS3 boot (~10s).** Calm starfield
+  + static "STARTING" title was the only content during the server-
+  boot window. Added a gentle breathing on the brand-intro alpha
+  while `LaunchPhase::Startup` is active (2s period, 55→100% of
+  phase alpha, cosine eased). Confirmed 2026-04-24 ("much better").
+- [x] Stale PWA from yesterday: now loudly surfaced by the BUILD_TOKEN
+  handshake (`/api/version`). Overlay verified firing today against a
+  deliberately mismatched server token. Same path also catches a bad
+  HMAC key → pairing overlay. Closes the "Pin entry fails, 1234" and
+  "Had a pin entry error, deleting pwa and trying again" notes.
+- Profile PIN entry back/scroll + Konami layout scroll: pending live
+  spot-check against today's freshly installed bundle.
+
 ## Blockers — break the core flow
 
 - [~] **21. Switch game 401 toaster "quit failed".** HMAC signature
   included the path's query string on the phone (`/api/quit?switch=true`)
   but the server only hashed the path (`/api/quit`). Fix queued — server
   now uses `uri().path_and_query()`. Pending rebuild+relaunch.
-- [ ] **9. After picking Giants, phone hangs on game-select while
+- [x] **9. After picking Giants, phone hangs on game-select while
   LOADING is showing above.** Phone should transition to the portal
   view the moment the driver accepts the launch, not wait for compile.
-  - that works
-- [ ] **15. In-game overlay isn't clear — looks like everything is
-  dark.** The transparent launcher layer isn't actually letting RPCS3
-  show through. Might be the Kaos overlay z-index bump clashing, or the
-  vortex still painting when it should be transparent.
-  - Kaos overlay is phone side, this is an egui problem
-- [ ] **19. "Ok button not found" toaster on first place.** Portal
-  dialog wasn't open when the load fired — `open_dialog` needs to run
-  before the first `load`. Server-side ordering bug.
-  - must fix immediately
-- [ ] **20. Emulator library screen not pushed back under the game.**
-  RPCS3's main window peeks through during the in-game view.
-- [ ] **23. Exit failed to kill the app / overlay.** Suspect a desync
-  — the launcher viewport doesn't close even after the server signals
-  shutdown. Possibly related to the farewell fade-to-black holding the
-  process alive.
-  - should we consider a state force on server message broadcast? unsure if that's overkill
+  Confirmed working 2026-04-24.
+- [x] **15. In-game overlay isn't clear — looks like everything is
+  dark.** Root cause: eframe's default `App::clear_color` returns the
+  visuals' `window_fill` (dark grey), which painted a dim layer over
+  RPCS3 during the in-game transparent surface. `Frame::none().fill(
+  TRANSPARENT)` on the CentralPanel only skips the panel paint, not
+  the pre-panel GL clear. Fix: override `clear_color` to `[0,0,0,0]`.
+  Confirmed 2026-04-24.
+- [x] **19. "Ok button not found" toaster on first place.** File-
+  dialog UIA subtree didn't settle before the first Open-button
+  lookup; added a 500ms retry loop + accept button by AutomationId
+  "1" (IDOK, locale-independent) alongside the localized "Open"
+  name. Confirmed 2026-04-24.
+- [x] **20. Emulator library screen not pushed back under the game.**
+  Root cause: UIA `Invoke` on the Skylanders Manager dialog's Load/
+  Clear buttons (parented to RPCS3's main window) transiently promotes
+  main over the game viewport on each figure swap. Fix: per-frame
+  `SetWindowPos(HWND_BOTTOM, SWP_NOACTIVATE)` on the main window while
+  `rpcs3_running && current_game.is_some() && !switching`. Confirmed
+  2026-04-24.
+- [x] **23. Exit failed to kill the app / overlay.** Confirmed working
+  2026-04-24.
+- [x] **24. Desktop flash during game switch.** `switching=true` set
+  before stop_emulation completes, but the in-game transparent branch
+  still fired while `current_game` was still `Some`, so the player saw
+  a frame of desktop before the launcher turned opaque. Fix: gate the
+  in-game branch on `!switching`; also clear `in_game_at` so the iris
+  isn't pinned closed during the switch. Paired with the new SWITCHING
+  GAMES QR back-face so the bridge visual is a halo-spinning coin flip
+  rather than a bare heading. Confirmed 2026-04-24.
+- [x] **25. Wrong game booted (BLUS31545 requested → BLUS31600 ran).**
+  Root cause: UIA returned the cell's bounding rect in physical pixels
+  at 4K DPI (cx=1600, cy=1293), and the naive `cx - window_rect.left`
+  translation didn't respect the window's DPI context — the computed
+  client-area coords landed on a neighbouring row. Fix: use Win32
+  `ScreenToClient` so DPI/scaling is handled by the OS. Also added a
+  post-boot viewport-title verifier (catches wrong-game boots) and a
+  3-attempt retry loop with `stop_emulation` recovery between attempts
+  so a rare mis-click is self-correcting. Confirmed 2026-04-24.
 
 ## Layout / polish
 
@@ -112,7 +149,6 @@ won't-do / defer, `[ ]` = pending.
   - We should consider/try service worker/push notification if possible
 - [ ] **13. Phone sleep produces the same reconnect overlay, slower.**
   Sub-case of #12; same fix.
-
 ---
 
 **Already shipped / informational** (carryover from earlier rounds, not

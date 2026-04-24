@@ -150,6 +150,20 @@ impl LauncherApp {
 }
 
 impl eframe::App for LauncherApp {
+    /// Fully transparent GL clear every frame. eframe's default pulls
+    /// from `visuals.window_fill` (dark grey in the default dark theme),
+    /// which painted a dim grey-black over RPCS3 during the in-game
+    /// transparent surface — the `Frame::none().fill(TRANSPARENT)` on
+    /// the CentralPanel only skips the panel's own paint, it does not
+    /// change the pre-panel GL clear. Main / Crashed / Farewell are
+    /// unaffected because they paint opaque `paint_sky_background` +
+    /// starfield + vortex on top of the clear; only in-game, which
+    /// deliberately paints nothing below the reconnect QR, exposes the
+    /// clear color to the compositor. Chris flagged 2026-04-24.
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0, 0.0, 0.0, 0.0]
+    }
+
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         // 60 FPS repaint cadence — the vortex animation needs smooth motion.
         // Before 4.15.5 this was 250ms; the old rate would strobe the arms.
@@ -218,6 +232,23 @@ impl eframe::App for LauncherApp {
         }
         if want_on_top {
             force_topmost_via_win32(frame);
+        }
+
+        // While a game is actually being played, demote RPCS3's main
+        // (library / menu-bar) window to the bottom of the z-order.
+        // UIA `Invoke` on the Skylanders Manager dialog's Load/Clear
+        // buttons transiently promotes main over the game viewport —
+        // visible to the player as the library flashing through the
+        // launcher's transparent in-game surface each time a figure
+        // is swapped. Gate on `!switching` so the mid-game-switch
+        // window (where `trigger_dialog_via_menu` briefly needs main
+        // foregrounded to drive the menu) isn't kneecapped. Chris
+        // flagged 2026-04-24.
+        let game_live = status_snapshot.rpcs3_running
+            && status_snapshot.current_game.is_some()
+            && !status_snapshot.switching;
+        if game_live {
+            push_rpcs3_main_to_bottom_via_win32();
         }
 
         // Per-screen entry detection — compare variant discriminants
@@ -298,24 +329,21 @@ impl eframe::App for LauncherApp {
                 .server_ready_at
                 .map(|t| t.elapsed().as_secs_f32())
                 .unwrap_or(0.0);
-            let natural = LaunchPhase::compute(
+            // 2026-04-24 — PLAN 4.15.9 used to override the natural
+            // phase to `ClosingToInGame { progress: 1.0 }` while
+            // `switching` was set, pinning the iris fully closed so
+            // the transparent in-game surface wouldn't flash back to
+            // "SCAN TO CONNECT" between games. That override was
+            // retired alongside the SWITCHING GAMES QR back-face —
+            // the card flip + halos carry the bridge visual now, so
+            // we want the normal AwaitingConnect iris (open + vortex
+            // visible) behind it, matching the Loading state.
+            LaunchPhase::compute(
                 phase_elapsed_s,
                 closing_elapsed_s,
                 returning_elapsed_s,
                 has_activity,
-            );
-            // PLAN 4.15.9 — during a game-switch, pin iris at fully-
-            // closed DarkHole so the visual reads as "mid-transition"
-            // rather than reverting to the join screen. The close
-            // timer usually has us there already (in_game_at was set
-            // during the outgoing game), but the explicit override
-            // is defensive against edge cases like an in_game_at
-            // that never latched.
-            if status_snapshot.switching {
-                LaunchPhase::ClosingToInGame { progress: 1.0 }
-            } else {
-                natural
-            }
+            )
         } else {
             LaunchPhase::AwaitingConnect
         };
@@ -350,9 +378,20 @@ impl eframe::App for LauncherApp {
         // switch. current_game only flips back to Some when the next
         // boot completes, which is exactly when we want transparency
         // to resume.
+        //
+        // 2026-04-24 — also gate on `!switching`: between switching=true
+        // being set and `current_game` clearing on stop_emulation
+        // completion, this branch would fire (current_game still Some)
+        // and paint transparent just as RPCS3 was minimising the game
+        // viewport — the player saw a brief flash of desktop before the
+        // launcher flipped to the opaque SWITCHING GAMES heading. With
+        // the `!switching` gate, the moment the phone requests a switch
+        // the main-branch takes over and paints the closed-iris backdrop
+        // over whatever RPCS3 is doing underneath.
         if launch_phase.close_complete()
             && status_snapshot.rpcs3_running
             && status_snapshot.current_game.is_some()
+            && !status_snapshot.switching
             && matches!(status_snapshot.screen, LauncherScreen::Main)
         {
             // PLAN 4.19.12 — stamp/clear the reconnect-QR fade-in timer
@@ -485,21 +524,33 @@ impl eframe::App for LauncherApp {
                     // when both are visible — the title is the focal
                     // element until ~30% into the transition.
                     //
-                    // PLAN 4.15.9 — during a switch, the closed iris
-                    // sits on a dark void; skip the normal main
-                    // content (QR card, status strip) and paint a
-                    // "SWITCHING GAMES" heading over the void so the
-                    // TV reads as mid-transition.
-                    if status_snapshot.switching {
-                        self.render_switching_heading(ui);
+                    // 2026-04-24 — the prior `switching` branch here
+                    // painted a bare "SWITCHING GAMES" heading over a
+                    // closed-iris void. Now switching is a QR-card
+                    // back-face alongside Loading, so the normal
+                    // render_main path carries it — card flip + halos
+                    // bridge the outgoing→incoming game transition
+                    // without a separate render surface.
+                    if launch_phase.shows_main_content() {
+                        self.render_main(ui, ctx, &status_snapshot, launch_phase);
+                    }
+                    let brand_alpha = launch_phase.brand_intro_alpha();
+                    // Gentle breathing during the Startup hold so the TV
+                    // reads as "alive, waiting" rather than frozen — the
+                    // server-boot window (RPCS3 spawn + menu nav) can
+                    // stretch 10s+ with only the static "STARTING" title
+                    // painted. Cosine so it eases at both ends; 2s period,
+                    // 55→100% of the phase-driven alpha. Restricted to
+                    // Startup so the intro cross-fade hand-off isn't
+                    // disrupted.
+                    let brand_alpha = if matches!(launch_phase, LaunchPhase::Startup) {
+                        let pulse = 0.5 - 0.5 * (time_s * std::f32::consts::PI).cos();
+                        brand_alpha * (0.55 + 0.45 * pulse)
                     } else {
-                        if launch_phase.shows_main_content() {
-                            self.render_main(ui, ctx, &status_snapshot, launch_phase);
-                        }
-                        let brand_alpha = launch_phase.brand_intro_alpha();
-                        if brand_alpha > 0.001 {
-                            self.render_brand_intro(ui, brand_alpha);
-                        }
+                        brand_alpha
+                    };
+                    if brand_alpha > 0.001 {
+                        self.render_brand_intro(ui, brand_alpha);
                     }
                 }
                 LauncherScreen::Crashed { message } => {
@@ -593,3 +644,15 @@ fn force_topmost_via_win32(frame: &eframe::Frame) {
 
 #[cfg(not(windows))]
 fn force_topmost_via_win32(_frame: &eframe::Frame) {}
+
+/// Every-frame z-order demotion of RPCS3's main window while a game is
+/// live. Thin wrapper over `skylander_rpcs3_control::hide::
+/// push_rpcs3_main_to_bottom`; keeps the Windows-only dependency
+/// contained in this file.
+#[cfg(windows)]
+fn push_rpcs3_main_to_bottom_via_win32() {
+    let _ = skylander_rpcs3_control::hide::push_rpcs3_main_to_bottom();
+}
+
+#[cfg(not(windows))]
+fn push_rpcs3_main_to_bottom_via_win32() {}

@@ -59,9 +59,18 @@ impl CloseTimers {
         // instead of showing SCAN TO CONNECT.
         let want_close_start = status.game_playable
             && status.current_game.is_some()
+            && !status.switching
             && matches!(status.screen, LauncherScreen::Main);
+        // Clear when: game stopped, current_game gone, screen changed,
+        // or a switch was requested. The last case covers the window
+        // between `switching=true` being set and `current_game` clearing
+        // on stop_emulation completion — without it, `closing_elapsed_s`
+        // would still feed `LaunchPhase::ClosingToInGame { progress ≥ 1.0 }`
+        // and pin the iris fully closed instead of letting it open back
+        // up behind the new SWITCHING GAMES QR back-face.
         let kill_close = !status.rpcs3_running
             || status.current_game.is_none()
+            || status.switching
             || !matches!(status.screen, LauncherScreen::Main);
         if want_close_start && self.in_game_at.is_none() {
             self.in_game_at = Some(now);

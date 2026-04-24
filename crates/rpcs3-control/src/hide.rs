@@ -33,6 +33,39 @@ pub fn set_position_raw(hwnd: HWND, x: i32, y: i32) -> Result<()> {
     Ok(())
 }
 
+/// Demote the RPCS3 main window (menu-bar/library) to the bottom of
+/// the z-order without activating, moving, or resizing it. Safe to
+/// call every frame — ~1ms EnumWindows sweep + SetWindowPos on hit,
+/// no-op on miss. `SWP_NOACTIVATE` is critical so the game viewport
+/// keeps keyboard focus.
+///
+/// Why: UIA Invoke on the Skylanders Manager dialog's Load/Clear
+/// buttons (which are parented to the main window) transiently
+/// promotes main over the viewport, so the player sees the library
+/// flash through the launcher's transparent in-game surface each
+/// time a figure is swapped. Re-asserting HWND_BOTTOM on the tick
+/// beats the activation race.
+pub fn push_rpcs3_main_to_bottom() -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        HWND_BOTTOM, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    };
+    let Some(hwnd) = find_top_level_by_title_prefix("RPCS3 ") else {
+        return false;
+    };
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            Some(HWND_BOTTOM),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        )
+        .is_ok()
+    }
+}
+
 /// Move the dialog on-screen AND make sure it's shown + on top. Used for
 /// `restore_dialog_visible` so a hidden-then-offscreen dialog reappears
 /// for the user.

@@ -388,6 +388,11 @@ pub enum DriverJob {
     /// a success/failure response for the launch, not fire-and-forget.
     BootGame {
         serial: String,
+        /// Canonical display name from the game catalogue (`Skylanders:
+        /// Trap Team` etc). Handed to the driver so the post-boot
+        /// viewport-title check can reject a mis-click that booted a
+        /// different known Skylanders game.
+        expected_name: String,
         timeout: std::time::Duration,
         done: tokio::sync::oneshot::Sender<Result<()>>,
     },
@@ -880,18 +885,20 @@ async fn handle_job(
         }
         DriverJob::BootGame {
             serial,
+            expected_name,
             timeout,
             done,
         } => {
             let d = driver.clone();
             let serial_for_blocking = serial.clone();
+            let expected_for_blocking = expected_name.clone();
             // Dialog first, game second — same order as the 3.7.x live tests.
             // Cold library view is the easiest UIA case; once a game is
             // running, Qt's focus state is too scrambled to re-open the
             // Manage menu reliably.
             let result = tokio::task::spawn_blocking(move || -> Result<()> {
                 d.open_dialog()?;
-                d.boot_game_by_serial(&serial_for_blocking, timeout)
+                d.boot_game_by_serial(&serial_for_blocking, &expected_for_blocking, timeout)
             })
             .await
             .map_err(|e| anyhow::anyhow!("boot task panicked: {e}"))
