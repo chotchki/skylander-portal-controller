@@ -909,8 +909,14 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
     // boot failure. The success path also clears (drop on function
     // return) and then sets `rpcs3_running = true` + `current_game =
     // Some(name)`, which transitions the launcher into in-game.
+    //
+    // PLAN 4.15.9 — if a switch-in-progress flag is set (prior
+    // /api/quit?switch=true), clear it here. The SWITCHING GAMES
+    // heading was the bridge visual; now we're loading the next game
+    // and the launcher should show that instead.
     if let Ok(mut st) = state.launcher_status.lock() {
         st.loading_game = Some(game.display_name.clone());
+        st.switching = false;
     }
     let mut loading_guard = LoadingGuard::armed(&state.launcher_status);
 
@@ -1032,6 +1038,12 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
 struct QuitQuery {
     #[serde(default)]
     force: bool,
+    /// PLAN 4.15.9 — `true` when the phone's HOLD TO SWITCH GAMES fired.
+    /// Server sets `launcher_status.switching = true` so the launcher
+    /// holds iris-closed + "SWITCHING GAMES" text instead of playing
+    /// the ReturnFromGame reveal. Cleared on the next `/api/launch`.
+    #[serde(default)]
+    switch: bool,
 }
 
 #[cfg(feature = "test-hooks")]
@@ -1124,6 +1136,17 @@ async fn quit_game(
     // Reset current immediately — the quit is committed the moment we
     // decide to stop, whether the UIA click takes a moment or not.
     guard.current = None;
+
+    // PLAN 4.15.9 — if the phone signalled switch intent, arm the
+    // launcher-side "switching" state before we stop emulation so the
+    // transition from in-game → iris-closed happens in one frame.
+    // Cleared either by the next `/api/launch` or by the shutdown
+    // path (screen flipping to Farewell overrides).
+    if q.switch {
+        if let Ok(mut st) = state.launcher_status.lock() {
+            st.switching = true;
+        }
+    }
 
     if q.force {
         // Force path: take the process, kill it, let the watchdog

@@ -262,6 +262,18 @@ pub async fn post_quit(force: bool) -> Result<(), String> {
     do_fetch(&url, "POST", None).await.map(|_| ())
 }
 
+/// Like `post_quit(false)` but signals switch-game intent (PLAN 4.15.9).
+/// The server sets `launcher_status.switching = true` before stopping
+/// emulation; the TV launcher pins iris-closed + "SWITCHING GAMES"
+/// heading until the next `/api/launch` clears the flag. Used by the
+/// phone menu's HOLD TO SWITCH GAMES action so the TV doesn't flash
+/// back to the join screen between the old game stopping and the new
+/// one booting.
+pub async fn post_quit_for_switch() -> Result<(), String> {
+    let url = format!("{}/api/quit?switch=true", origin());
+    do_fetch(&url, "POST", None).await.map(|_| ())
+}
+
 /// Phone's SHUT DOWN menu action. Flips the TV launcher into the
 /// Farewell screen; the egui side runs its ~3s countdown and then
 /// closes the viewport (PLAN 4.15.11). NOT the same as `post_quit` —

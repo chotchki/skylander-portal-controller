@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use leptos::prelude::*;
 
-use crate::api::{post_quit, post_shutdown};
+use crate::api::{post_quit_for_switch, post_shutdown};
 use crate::components::{ActionButton, ActionVariant};
 use crate::gloo_timer;
 use crate::model::{GameLaunched, UnlockedProfile};
@@ -29,8 +29,10 @@ use crate::{push_toast, ToastMsg};
 ///   - MANAGE PROFILES — single-tap, raises `manage_gate` so ProfilePicker
 ///     opens the Konami gate (PLAN 4.18.5a).
 ///   - HOLD TO SWITCH GAMES — hold-to-confirm, server-impactful. Calls
-///     `post_quit(false)` → server quits RPCS3 → WS broadcasts GameStopped
-///     → every phone sees the game picker.
+///     `post_quit_for_switch()` (PLAN 4.15.9) → server arms the launcher's
+///     "switching" flag + stops emulation → WS broadcasts GameStopped →
+///     every phone sees the game picker. TV launcher holds iris-closed
+///     with "SWITCHING GAMES" until the next `/api/launch`.
 ///   - HOLD TO SHUT DOWN — hold-to-confirm, danger styling. POSTs
 ///     `/api/shutdown` which flips the TV launcher into the Farewell
 ///     surface; egui runs its own farewell countdown and closes the
@@ -85,7 +87,7 @@ pub(crate) fn MenuOverlay(
     // network request + delayed menu close so the .fired flash plays.
     let on_switch_games = Callback::new(move |_| {
         leptos::task::spawn_local(async move {
-            if let Err(e) = post_quit(false).await {
+            if let Err(e) = post_quit_for_switch().await {
                 push_toast(toasts, &format!("Quit failed: {e}"));
             }
         });

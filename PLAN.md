@@ -14,7 +14,6 @@ Conventions:
 Most of Phase 4 shipped — see [PLAN_ARCHIVE.md](PLAN_ARCHIVE.md) for §4.1–4.14 + done pieces of 4.15/4.18/4.19/4.20/4.21. Remaining items below.
 
 ### 4.15 egui TV launcher
-- [ ] 4.15.9 **Game-switching transition.** Phone picks another game → clouds spiral in → "SWITCHING GAMES…" → RPCS3 loads → clouds spiral out. Same `PostMessage` input routing as 4.15.8; `quit_via_file_menu` must also move `SendInput` → `PostMessage`.
 - [ ] 4.15.12 **Shader compilation detection (research spike).** Investigate (a) log-file watcher, (b) viewport title polling, (c) FPS <5 for >5s heuristic. Fallback: fixed 15s post-boot.
 - [ ] 4.15.13 **Shader progress visualization** (depends 4.15.12). Gold conic-gradient ring (200–240px), count in Titan One, ring flashes on completion.
 

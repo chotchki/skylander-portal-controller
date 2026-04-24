@@ -148,6 +148,15 @@ pub struct LauncherStatus {
     /// error directly rather than watching the intro spin only to be
     /// interrupted (Chris flagged 2026-04-19).
     pub server_ready: bool,
+    /// `true` between the phone's HOLD TO SWITCH GAMES action firing and
+    /// the next `/api/launch` arriving. PLAN 4.15.9 — without this flag
+    /// the launcher runs its ReturnFromGame animation (iris reveals, QR
+    /// card spins back in) the moment the outgoing game is stopped,
+    /// which reads as "back to the join screen" not "changing games".
+    /// With this set, the launcher pins iris at fully-closed DarkHole
+    /// and shows a "SWITCHING GAMES" heading until the new boot fires.
+    /// Cleared by `/api/launch` on entry.
+    pub switching: bool,
 }
 
 /// UI-polled view of one connected phone session. Colour / initial are

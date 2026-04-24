@@ -102,6 +102,23 @@ impl LauncherApp {
         paint_heraldic_title(ui.painter(), pos, "STARTING", palette::HERO_INTRO, alpha);
     }
 
+    /// PLAN 4.15.9 — render a "SWITCHING GAMES" heading centred over
+    /// the closed-iris void during a game switch. Same heraldic paint
+    /// as the startup brand intro so the visual vocabulary is
+    /// consistent; no animation (the iris holds at fully-closed
+    /// DarkHole for as long as the switch is in flight).
+    pub(super) fn render_switching_heading(&self, ui: &mut egui::Ui) {
+        let rect = ui.max_rect();
+        let pos = egui::pos2(rect.center().x, rect.top() + rect.height() * 0.5);
+        paint_heraldic_title(
+            ui.painter(),
+            pos,
+            "SWITCHING GAMES",
+            palette::HEADING_LG,
+            1.0,
+        );
+    }
+
     /// Render the Main surface. Called from the top-level dispatcher in
     /// [`super`] when `LauncherStatus::screen == LauncherScreen::Main`
     /// AND no game is running (game-running flips to `in_game::render`

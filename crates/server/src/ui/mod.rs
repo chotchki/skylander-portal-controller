@@ -280,12 +280,24 @@ impl eframe::App for LauncherApp {
                 .server_ready_at
                 .map(|t| t.elapsed().as_secs_f32())
                 .unwrap_or(0.0);
-            LaunchPhase::compute(
+            let natural = LaunchPhase::compute(
                 phase_elapsed_s,
                 closing_elapsed_s,
                 returning_elapsed_s,
                 has_activity,
-            )
+            );
+            // PLAN 4.15.9 — during a game-switch, pin iris at fully-
+            // closed DarkHole so the visual reads as "mid-transition"
+            // rather than reverting to the join screen. The close
+            // timer usually has us there already (in_game_at was set
+            // during the outgoing game), but the explicit override
+            // is defensive against edge cases like an in_game_at
+            // that never latched.
+            if status_snapshot.switching {
+                LaunchPhase::ClosingToInGame { progress: 1.0 }
+            } else {
+                natural
+            }
         } else {
             LaunchPhase::AwaitingConnect
         };
@@ -311,8 +323,18 @@ impl eframe::App for LauncherApp {
         // launcher back to the Main view. game_playable is the
         // signal to START closing; once close is complete we stay
         // in-game as long as RPCS3 is alive.
+        //
+        // PLAN 4.15.9 — gate on `current_game.is_some()` too. Under
+        // 4.15.16 rpcs3_running stays true during game-switching
+        // (process alive at library view), so without this gate the
+        // launcher would keep rendering transparent and the user
+        // would see RPCS3's library view peeking through during the
+        // switch. current_game only flips back to Some when the next
+        // boot completes, which is exactly when we want transparency
+        // to resume.
         if launch_phase.close_complete()
             && status_snapshot.rpcs3_running
+            && status_snapshot.current_game.is_some()
             && matches!(status_snapshot.screen, LauncherScreen::Main)
         {
             egui::CentralPanel::default()
@@ -417,12 +439,22 @@ impl eframe::App for LauncherApp {
                     // title on top during the early intro window
                     // when both are visible — the title is the focal
                     // element until ~30% into the transition.
-                    if launch_phase.shows_main_content() {
-                        self.render_main(ui, ctx, &status_snapshot, launch_phase);
-                    }
-                    let brand_alpha = launch_phase.brand_intro_alpha();
-                    if brand_alpha > 0.001 {
-                        self.render_brand_intro(ui, brand_alpha);
+                    //
+                    // PLAN 4.15.9 — during a switch, the closed iris
+                    // sits on a dark void; skip the normal main
+                    // content (QR card, status strip) and paint a
+                    // "SWITCHING GAMES" heading over the void so the
+                    // TV reads as mid-transition.
+                    if status_snapshot.switching {
+                        self.render_switching_heading(ui);
+                    } else {
+                        if launch_phase.shows_main_content() {
+                            self.render_main(ui, ctx, &status_snapshot, launch_phase);
+                        }
+                        let brand_alpha = launch_phase.brand_intro_alpha();
+                        if brand_alpha > 0.001 {
+                            self.render_brand_intro(ui, brand_alpha);
+                        }
                     }
                 }
                 LauncherScreen::Crashed { message } => {
