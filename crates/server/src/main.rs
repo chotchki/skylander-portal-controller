@@ -123,14 +123,14 @@ fn main() -> Result<()> {
                 // what the pack just calls "CRYSTAL_-_FIRE_Reactor").
                 // PLAN 6.5.5a option B.
                 let scan_variant = f.variant_tag.trim();
-                if !scan_variant.is_empty() && scan_variant != "base" {
-                    if let Some(&idx) = pack_index_by_id.get(&pack_id) {
-                        let pack_fig = &mut pack_figures[idx];
-                        if pack_fig.variant_tag == "base" && pack_fig.canonical_name != scan_variant
-                        {
-                            pack_fig.variant_tag = scan_variant.to_string();
-                            nicknames_promoted += 1;
-                        }
+                if !scan_variant.is_empty()
+                    && scan_variant != "base"
+                    && let Some(&idx) = pack_index_by_id.get(&pack_id)
+                {
+                    let pack_fig = &mut pack_figures[idx];
+                    if pack_fig.variant_tag == "base" && pack_fig.canonical_name != scan_variant {
+                        pack_fig.variant_tag = scan_variant.to_string();
+                        nicknames_promoted += 1;
                     }
                 }
                 continue;
@@ -222,7 +222,11 @@ fn main() -> Result<()> {
     let driver_kind = cfg.driver_kind;
     let rpcs3_exe = cfg.rpcs3_exe.clone();
     let data_root = cfg.data_root.clone();
-    let _runtime_dir_for_task = runtime_dir.clone();
+    // Only consumed under `nfc-import` (used by the scanner spawn
+    // below). Bind unconditionally so the feature flag doesn't leak
+    // into this prep block; the cfg gate on the consumer is enough.
+    #[cfg_attr(not(feature = "nfc-import"), allow(unused_variables))]
+    let runtime_dir_for_task = runtime_dir.clone();
     let hmac_key = cfg.hmac_key.clone();
     let rpcs3_lifecycle = Arc::new(tokio::sync::Mutex::new(RpcsLifecycle::default()));
     let rpcs3_for_task = rpcs3_lifecycle.clone();

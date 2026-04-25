@@ -9,21 +9,6 @@ Conventions:
 
 ---
 
-## Phase 4 — Aesthetic + UX pass (residuals)
-
-Most of Phase 4 shipped — see [PLAN_ARCHIVE.md](PLAN_ARCHIVE.md) for §4.1–4.14 + done pieces of 4.15/4.18/4.19/4.20/4.21. Remaining items below.
-
-### 4.15 egui TV launcher
-
-### 4.16 E2E test updates
-- [ ] 4.16.1 Audit `crates/e2e-tests/` selectors post-reskin — move to `data-test` attrs where possible.
-- [ ] 4.16.2 Visual regression out of scope — manual review only.
-- [ ] 4.16.3 Manual multi-phone visual sanity on HTPC.
-
-### 4.17 Review checkpoint
-- [ ] 4.17.1 HTPC end-to-end demo: launcher → phone scan → profile → PIN → game picker → portal in all 5 slot states → takeover.
-- [ ] 4.17.2 Catalogue UX papercuts → route to Phase 3 carryover.
-
 ### 4.18 Phone UI drift reconciliation (residuals)
 Tags: **[bug]** wrong behavior, **[feature]** missing capability, **[judgment]** mock is one opinion shipped is another, **[verify]** may already be done.
 
@@ -41,28 +26,6 @@ Tags: **[bug]** wrong behavior, **[feature]** missing capability, **[judgment]**
 - [ ] 4.18.24 *[judgment]* MenuOverlay post-action transitions (identity-drain / fold-away / lights-dim vs shared clean exit).
 - [ ] 4.18.25 Re-run iOS browser smoke-test after 4.18.1c ships.
 - [ ] 4.18.26 Once parity reached, 4.17.1's end-to-end demo can proceed.
-
-### 4.19 egui TV-launcher drift reconciliation (residuals)
-
-**States (§3.1) — state machine collapsed.**
-- [ ] 4.19.2 *[feature]* **No "Booting" surface.** Spec: iris closes + "LOADING" + game name + boot status. Today mid-launch renders QR + brand heading.
-
-**Cloud + iris (§3.2) — tuning is static.**
-- [ ] 4.19.6 *[feature]* **Iris locked at 1.2 for every state.** Spec: per-state tuning (Booting 2.5s ease-out, Crash ~1s urgent, Shutdown gentle, In-Game ~1.8s ease-in). Coupled with 4.15a.7.
-
-**QR + orbit (§3.3).**
-
-**In-Game transparency (§3.4).**
-
-**Shutdown (§3.5).**
-
-**Shader compilation (§3.6).**
-
-**Typography (§3.7).**
-
-**Wrap-up.**
-- [ ] 4.19.20 Re-walk every state on HTPC once 4.19.2–4.19.19 land.
-- [ ] 4.19.21 Once parity reached, launcher can be demo subject of 6.4.
 
 ### 4.20 Design system consolidation (residual)
 - [ ] 4.20.14 Re-run design language audit after 4.20.1–13 land. Any remaining drift either folds into 4.17 or surfaces a new 4.20.x.
@@ -104,11 +67,6 @@ Encryption handled (6.2.0 + 6.2.0b archived). Identity fields decode correctly; 
 ### 6.4 Demo harness for screen recording
 - [ ] 6.4 Browser-viewable test session driving the phone SPA through a representative flow (profile → PIN → game → portal → toy box → place → Kaos swap). Runs side-by-side with remote-desktop HTPC view for single-frame recording.
 
-### 6.5 NFC-scan import (residuals)
-Pipeline landed; see PLAN_ARCHIVE.md §6.5. Small follow-ups:
-
-- [~] 6.5.2 Timeout path not live-tested — watch for during in-game tests.
-
 ---
 
 ## Phase 7 — Packaging + release
@@ -122,7 +80,17 @@ Deliberately separated so it's clear this only runs once the app works end-to-en
 - [ ] 7.5 Post-release monitoring plan (GitHub issues only for v1).
 - [ ] 7.6 **Trademark / IP review of shipped assets.** Kaos sigil (`docs/aesthetic/kaos_icon.svg` → `phone/assets/kaos.svg`) and any box-art thumbnails (4.2.5). Decide fair-use vs derivative vs custom-drawn before public release.
 
----
+## Phase 8 Items
+- [ ] 8.1 - Change disconnect behavior, don't remove skylander figures from someone who disconnected until someone else takes over their slot. If someone reconnects with their skylanders still on the portal, don't prompt to resume (solves the PWA disconnect problem)
+- [ ] 8.2 - When kicked and in the kickback cooldown, show the kicked screen with the kickback button greyed out and counting down. Enable once it hits zero.
+- [ ] 8.2 - Implement part 5, Kaos
+- [ ] 8.3 - Release 1.1
+
+## Phase 9 Items
+- [ ] 9.1 - Add MacOS support
+- [ ] 9.2 - Add fully automated e2e testing since we can run it all on a Mac
+- [ ] 9.3 - Spike evaluate a frontend component framework to make the app.css more reasonable
+- [ ] 9.4 - Optimize ipad and iphone layouts
 
 ## Non-goals
 
