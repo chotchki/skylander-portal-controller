@@ -339,6 +339,14 @@ made painful. With utility-first markup, breakpoint variants
 (`md:`, `lg:`) live next to the base utilities and the iPad layout
 becomes additive, not a separate stylesheet branch.
 
+**Blocked on Phase 10.** This pass needs `tools/ios-inspect/` (Mac-only
+CLI driving the iOS Simulator + Safari Web Inspector — see CLAUDE.md
+"Aesthetic" section) and a real iPad for the device-fidelity gap that
+the simulator can't surface. Picking up 9.7 from the Windows HTPC
+would mean eyeballing dev-tools at 768/1024 width, which is the exact
+trap the migration was supposed to make obsolete. Phase 10 stands up
+the Mac path; resume 9.7 once 10.1 lands.
+
 - [ ] 9.7 — Optimize for iPad + iPhone layouts. Inventory which
   components need a wider-viewport variant (toy-box grid columns,
   portal slot row layout, Header chip density). Drop `md:` /
@@ -356,6 +364,11 @@ text treatment. The migration emphasised *identity preservation*
 deliberately deferred. 9.8 is the after-the-fact refactor pass that
 surfaces and unifies those duplicates so the design system has one
 source of truth per pattern.
+
+**Sequenced after 9.7** so the consolidation pass sees the full set
+of patterns (including responsive variants) at once. Like 9.7,
+benefits from running on the Mac path with iOS Simulator open for
+quick visual verification — held alongside 9.7 pending Phase 10.
 
 - [ ] 9.8 — Sweep the `phone/styles/components/*.css` files for
   repeated patterns and consolidate. Three target shapes, in order
