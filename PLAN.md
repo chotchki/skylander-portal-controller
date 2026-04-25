@@ -173,10 +173,12 @@ owner's collection, a Kaos catchphrase overlays for ~5s.
 - [ ] 8.2b.6 — Tests: timer math, swap selection (vehicles edge
   case), taunt rotation, replay-on-reconnect.
 
-### 8.3 Release 1.1
-- [ ] 8.3.1 — Release notes drafted from commits since v1.0.0
+### 8.3 Hide empty portal spots
+
+### 8.4 Release 1.1
+- [ ] 8.4.1 — Release notes drafted from commits since v1.0.0
   (`generate_release_notes` already wired in `release.yml`).
-- [ ] 8.3.2 — Tag → CI release workflow → draft release with the new
+- [ ] 8.4.2 — Tag → CI release workflow → draft release with the new
   exe → publish.
 
 ## Phase 9 Items
