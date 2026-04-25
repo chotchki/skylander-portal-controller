@@ -282,7 +282,7 @@ screenshot tour acting as the per-tranche regression contract.
   should be byte-stable; visible drift means a real regression or an
   intentional design tweak.
 
-- [ ] 9.4 — Migrate components in tranches. Bottom-up so containers
+- [x] 9.4 — Migrate components in tranches. Bottom-up so containers
   inherit migrated primitives:
   - [x] 9.4a — Shared primitives: `GoldBezel`, `FramedPanel`, `RayHalo`,
     `ActionButton`, `DisplayHeading`, `Header`.
@@ -302,10 +302,13 @@ screenshot tour acting as the per-tranche regression contract.
     slipped through. The `:has()` coupling stayed as raw CSS per
     9.5 escape-hatch policy; lifting `box_state` up to
     `.screen-portal` is on the table for 9.8 / a future refactor.)
-  - 9.4e — Kaos overlays: `KaosOverlay`. Multi-layer pseudo-element
+  - [x] 9.4e — Kaos overlays: `KaosOverlay`. Multi-layer pseudo-element
     decoration + conic-gradient lens + custom keyframes; almost
     certainly retains a small per-component CSS file with raw
     `@keyframes` + `@apply`. Acceptable.
+    (Result: ~280 lines, seven keyframes, mostly raw CSS as
+    expected. Six-layer composition — void / hexgrid / sparks /
+    vignette / viewport / sigil — kept identical to source.)
 
   Each tranche: port → trunk build → screenshot tour → diff PNGs →
   commit if intentional.

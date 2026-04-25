@@ -1,0 +1,330 @@
+/*
+ * <KaosOverlay> — Takeover (forced eviction) + Mid-game swap (PLAN 4.12.3 + 8.2b.5).
+ * (PLAN 9.4e — final Tailwind migration tranche.)
+ *
+ * Six-layer stacked composition:
+ *   1. .takeover-void     — full-screen radial-on-radial gradient.
+ *   2. .takeover-hexgrid  — pulsing dot lattice (background-image
+ *                            of stacked radial-gradients).
+ *   3. .takeover-sparks   — wandering bright dots (same trick).
+ *   4. .takeover-vignette — corner darkening + diagonal magenta sheen.
+ *   5. .takeover-viewport — content (sigil + title + quote + button).
+ *   6. .kaos-sigil        — masked SVG silhouette tinted with the
+ *                            takeover palette.
+ *
+ * Two variants share the surface:
+ *   - Takeover (terminal): fills viewport, blocks until kick-back.
+ *   - Swap (transient, --swap modifier): 5s auto-dismiss, tappable
+ *     vignette dismisses early, smaller viewport so gameplay state
+ *     behind it reads as "still in the game."
+ *
+ * Per the PLAN 9.4e expectation, this is the component most reliant
+ * on raw CSS — multi-layer pseudo-element decoration, multiple
+ * stacked-gradient backgrounds, and seven custom keyframes
+ * (takeover-hex-pulse, takeover-sparks-flicker, kaos-sigil-pulse,
+ * kaos-title-glitch, takeover-quote-in, takeover-swap-fade-in,
+ * takeover-kick-pulse). `@apply` is used for the layout primitives
+ * but the bulk stays declarative.
+ *
+ * The `html.skin-kaos` global theme override (a separate concern —
+ * repalettes every token when the Kaos skin is active) deliberately
+ * stays out of this file; it's a theme switch, not a component.
+ *
+ * Class names unchanged.
+ */
+
+@layer components {
+  .takeover-void {
+    @apply fixed inset-0 z-[85] overflow-hidden;
+    background:
+      radial-gradient(ellipse 80% 60% at 50% 30%, var(--color-k-violet-deep) 0%, transparent 55%),
+      radial-gradient(ellipse 60% 50% at 30% 80%, var(--color-k-ember-deep) 0%, transparent 55%),
+      radial-gradient(ellipse 70% 50% at 80% 60%, rgba(122, 78, 255, 0.4) 0%, transparent 55%),
+      linear-gradient(180deg,
+        var(--color-k-void-1) 0%,
+        var(--color-k-void-2) 50%,
+        var(--color-k-void-3) 100%);
+  }
+
+  /* Pulsing dot lattice. */
+  .takeover-hexgrid {
+    @apply absolute inset-0;
+    background-image:
+      radial-gradient(circle at 30px  35px,  rgba(218, 40, 168, 0.18) 2px, transparent 3px),
+      radial-gradient(circle at 90px  35px,  rgba(218, 40, 168, 0.14) 2px, transparent 3px),
+      radial-gradient(circle at 60px  87px,  rgba(218, 40, 168, 0.18) 2px, transparent 3px),
+      radial-gradient(circle at 120px 87px,  rgba(218, 40, 168, 0.14) 2px, transparent 3px),
+      radial-gradient(circle at 30px  139px, rgba(255, 107, 158, 0.18) 2px, transparent 3px);
+    background-size: 120px 104px;
+    opacity: 0.9;
+    animation: takeover-hex-pulse 4s ease-in-out infinite;
+  }
+
+  /* Wandering bright sparks. */
+  .takeover-sparks {
+    @apply absolute inset-0;
+    background-image:
+      radial-gradient(2px   2px   at 50px  120px, var(--color-k-magenta-bright), transparent),
+      radial-gradient(1.5px 1.5px at 200px 80px,  var(--color-k-ember),          transparent),
+      radial-gradient(2px   2px   at 320px 240px, var(--color-k-violet),         transparent),
+      radial-gradient(1px   1px   at 100px 400px, var(--color-k-magenta-bright), transparent),
+      radial-gradient(2px   2px   at 280px 500px, var(--color-k-ember),          transparent),
+      radial-gradient(1.5px 1.5px at 60px  640px, var(--color-k-violet),         transparent),
+      radial-gradient(1px   1px   at 340px 720px, var(--color-k-magenta-bright), transparent);
+    background-size: 400px 800px;
+    animation: takeover-sparks-flicker 5s ease-in-out infinite alternate;
+  }
+
+  /* Corner vignette + diagonal magenta sheen. */
+  .takeover-vignette {
+    @apply absolute inset-0 pointer-events-none;
+    background:
+      radial-gradient(ellipse 100% 80% at 50% 50%, transparent 50%, rgba(0, 0, 0, 0.7) 100%),
+      linear-gradient(135deg, transparent 45%, rgba(218, 40, 168, 0.08) 50%, transparent 55%);
+  }
+
+  .takeover-viewport {
+    @apply relative h-full flex flex-col items-center justify-center;
+    padding: 60px 28px 32px;
+    gap: 22px;
+  }
+
+  /* Kaos sigil — bundled kaos.svg masked over a magenta/ember radial
+     so the silhouette reads tinted with the takeover palette. */
+  .kaos-sigil {
+    @apply relative;
+    width: 128px;
+    height: 128px;
+    background: radial-gradient(circle at 50% 35%,
+      #fff 0%,
+      var(--color-k-ember) 35%,
+      var(--color-k-magenta) 65%,
+      var(--color-k-violet-deep) 100%);
+    -webkit-mask: url("/kaos.svg") center / contain no-repeat;
+            mask: url("/kaos.svg") center / contain no-repeat;
+    filter:
+      drop-shadow(0 0 20px var(--color-k-magenta))
+      drop-shadow(0 0 40px var(--color-k-ember))
+      drop-shadow(0 0 60px rgba(255, 107, 158, 0.5));
+    animation: kaos-sigil-pulse 2.2s ease-in-out infinite;
+  }
+
+  /* Display title — heraldic stroke + magenta glow. */
+  .kaos-title {
+    @apply text-center;
+    font-family: var(--font-display);
+    font-size: 42px;
+    letter-spacing: 0.06em;
+    color: var(--color-k-magenta-bright);
+    -webkit-text-stroke: 1.5px var(--color-k-violet-deep);
+    line-height: 0.95;
+    text-shadow:
+      0 2px 0 var(--color-k-ember-deep),
+      0 3px 0 var(--color-k-void-3),
+      0 0 24px var(--color-k-magenta),
+      0 0 48px rgba(255, 107, 158, 0.5);
+    animation: kaos-title-glitch 3.5s ease-in-out infinite;
+  }
+  .kaos-title-line2 {
+    @apply block;
+    margin-top: 4px;
+    font-size: 54px;
+  }
+
+  /* Quote card — gradient border via a -1 z-pseudo, same as FramedPanel. */
+  .takeover-quote-card {
+    @apply relative w-full rounded-2xl;
+    max-width: 320px;
+    padding: 18px 20px;
+    background:
+      radial-gradient(ellipse 120% 80% at 50% 0%, rgba(255, 107, 158, 0.15), transparent 60%),
+      linear-gradient(180deg, rgba(45, 15, 106, 0.9), rgba(26, 10, 64, 0.95));
+    animation: takeover-quote-in 0.6s var(--ease-spring) var(--dur-quick) both;
+  }
+  .takeover-quote-card::before {
+    content: "";
+    @apply absolute inset-[-2px] rounded-[18px];
+    z-index: -1;
+    background: linear-gradient(135deg,
+      var(--color-k-ember) 0%,
+      var(--color-k-magenta) 30%,
+      var(--color-k-violet) 60%,
+      var(--color-k-magenta-bright) 100%);
+  }
+
+  .takeover-quote-open,
+  .takeover-quote-close {
+    font-family: var(--font-display);
+    font-size: 36px;
+    color: #ffd6d6;
+    line-height: 0.6;
+  }
+  .takeover-quote-open  { @apply text-left;  margin-bottom: -8px; }
+  .takeover-quote-close { @apply text-right; margin-top:    -4px; }
+
+  .takeover-quote-body {
+    @apply text-center;
+    font-family: var(--font-body);
+    font-style: italic;
+    font-size: 17px;
+    line-height: 1.4;
+    color: #ffd9ee;
+    padding: 0 4px;
+    text-shadow:
+      0 1px 0 rgba(0, 0, 0, 0.6),
+      0 0 10px rgba(218, 40, 168, 0.3);
+  }
+  .takeover-quote-attrib {
+    @apply text-right;
+    font-family: var(--font-display);
+    font-size: var(--text-body-sm);
+    letter-spacing: 0.3em;
+    color: var(--color-k-ember);
+    margin-top: 10px;
+    text-shadow:
+      0 1px 0 var(--color-k-void-3),
+      0 0 8px var(--color-k-magenta);
+  }
+
+  .takeover-info {
+    @apply text-center;
+    font-family: var(--font-body);
+    font-style: italic;
+    font-weight: 600;
+    font-size: var(--text-body-italic);
+    color: #f3e8e4;
+    letter-spacing: 0.08em;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.6);
+  }
+
+  /* === Swap variant (PLAN 8.2b.5) === */
+  .takeover-void--swap {
+    animation: takeover-swap-fade-in 240ms ease-out;
+  }
+  .takeover-viewport--swap {
+    @apply cursor-pointer;
+    max-width: 86%;
+  }
+  .takeover-info--swap {
+    opacity: 0.75;
+    font-size: 0.9em;
+  }
+
+  /* === Kick-back button === */
+  .takeover-kick-btn {
+    @apply w-full rounded-[14px] cursor-pointer text-white;
+    max-width: 320px;
+    padding: 16px;
+    font-family: var(--font-display);
+    font-size: var(--text-display-sm);
+    letter-spacing: 0.22em;
+    background: linear-gradient(180deg,
+      var(--color-k-magenta-bright) 0%,
+      var(--color-k-magenta) 40%,
+      var(--color-k-ember-deep) 100%);
+    border: 2px solid var(--color-k-ember);
+    text-shadow:
+      0 1px 0 var(--color-k-void-3),
+      0 0 12px rgba(255, 255, 255, 0.6);
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.35),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.3),
+      0  4px 0 var(--color-k-ember-deep),
+      0  8px 20px rgba(218, 40, 168, 0.4),
+      0  0 30px rgba(255, 107, 158, 0.3);
+    animation: takeover-kick-pulse 2.5s ease-in-out infinite;
+  }
+  .takeover-kick-btn:active {
+    transform: translateY(3px);
+    box-shadow:
+      inset 0 2px 0 rgba(255, 255, 255, 0.35),
+      0 1px 0 var(--color-k-ember-deep),
+      0 4px 12px rgba(218, 40, 168, 0.4);
+  }
+
+  /* PLAN 8.2a.3 — cooldown variant. While the forced-evict cooldown
+     is ticking down, the button is disabled + visually muted: pulsing
+     magenta gradient swaps to flat dim grey, pulse animation off. */
+  .takeover-kick-btn--cooldown,
+  .takeover-kick-btn:disabled {
+    @apply cursor-not-allowed;
+    background: linear-gradient(180deg, #50404c 0%, #3a2c38 40%, #2a1d28 100%);
+    border-color: rgba(120, 90, 110, 0.6);
+    color: rgba(255, 255, 255, 0.55);
+    text-shadow: 0 1px 0 var(--color-k-void-3);
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.06),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.4),
+      0  4px 0 #1a1018;
+    animation: none;
+  }
+  .takeover-kick-btn--cooldown:active,
+  .takeover-kick-btn:disabled:active {
+    transform: none;
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.06),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.4),
+      0  4px 0 #1a1018;
+  }
+}
+
+@keyframes takeover-hex-pulse {
+  50% { opacity: 0.5; }
+}
+
+@keyframes takeover-sparks-flicker {
+  50% { opacity: 0.5; transform: scale(1.05); }
+}
+
+@keyframes kaos-sigil-pulse {
+  0%, 100% {
+    transform: scale(1);
+    filter:
+      drop-shadow(0 0 20px var(--color-k-magenta))
+      drop-shadow(0 0 40px var(--color-k-ember))
+      drop-shadow(0 0 60px rgba(255, 107, 158, 0.5));
+  }
+  50% {
+    transform: scale(1.05);
+    filter:
+      drop-shadow(0 0 30px var(--color-k-magenta-bright))
+      drop-shadow(0 0 60px var(--color-k-ember))
+      drop-shadow(0 0 90px rgba(255, 107, 158, 0.7));
+  }
+}
+
+@keyframes kaos-title-glitch {
+  0%, 90%, 100% { transform: translateX(0); }
+  92% { transform: translateX(-2px) skewX(-1deg); }
+  94% { transform: translateX(2px)  skewX(1deg); }
+  96% { transform: translateX(-1px); }
+}
+
+@keyframes takeover-quote-in {
+  from { opacity: 0; transform: scale(0.9) translateY(10px); }
+  to   { opacity: 1; transform: scale(1)   translateY(0); }
+}
+
+@keyframes takeover-swap-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes takeover-kick-pulse {
+  50% {
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.4),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.3),
+      0  4px 0 var(--color-k-ember-deep),
+      0  8px 24px rgba(218, 40, 168, 0.6),
+      0  0 40px rgba(255, 107, 158, 0.5);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .takeover-hexgrid,
+  .takeover-sparks,
+  .kaos-sigil,
+  .kaos-title,
+  .takeover-kick-btn { animation: none !important; }
+}
