@@ -427,7 +427,12 @@ impl ShaderRig {
         viewport_px: [i32; 4],
     ) {
         unsafe {
-            gl.viewport(viewport_px[0], viewport_px[1], viewport_px[2], viewport_px[3]);
+            gl.viewport(
+                viewport_px[0],
+                viewport_px[1],
+                viewport_px[2],
+                viewport_px[3],
+            );
             // Always alpha-blend. The shader outputs premultiplied
             // RGBA where alpha = cloud_density * iris (+ glow ring),
             // so the sky/starfield layers painted underneath show
@@ -500,11 +505,7 @@ impl ShaderRig {
     }
 }
 
-unsafe fn compile_shader(
-    gl: &glow::Context,
-    kind: u32,
-    src: &str,
-) -> Result<glow::Shader, String> {
+unsafe fn compile_shader(gl: &glow::Context, kind: u32, src: &str) -> Result<glow::Shader, String> {
     unsafe {
         let s = gl
             .create_shader(kind)

@@ -32,10 +32,26 @@ const COLOR_SWATCHES: [(&str, &str); 8] = [
 /// poop that's okay"). List mirrors the 20 names in
 /// `docs/aesthetic/mocks/profile_create.html`.
 const SKYLANDER_NAMES: [&str; 20] = [
-    "Spyro", "Eruptor", "Stealth Elf", "Trigger Happy", "Gill Grunt",
-    "Pop Fizz", "Chop Chop", "Cynder", "Wrecking Ball", "Hex",
-    "Drobot", "Boomer", "Whirlwind", "Flashwing", "Jet-Vac",
-    "Terrafin", "Bash", "Dino-Rang", "Zook", "Shroomboom",
+    "Spyro",
+    "Eruptor",
+    "Stealth Elf",
+    "Trigger Happy",
+    "Gill Grunt",
+    "Pop Fizz",
+    "Chop Chop",
+    "Cynder",
+    "Wrecking Ball",
+    "Hex",
+    "Drobot",
+    "Boomer",
+    "Whirlwind",
+    "Flashwing",
+    "Jet-Vac",
+    "Terrafin",
+    "Bash",
+    "Dino-Rang",
+    "Zook",
+    "Shroomboom",
 ];
 
 /// Return a random Skylander name from `SKYLANDER_NAMES`. Used to seed

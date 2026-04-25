@@ -20,12 +20,7 @@ use super::launch_phase::ScreenIntro;
 use super::main_screen::{paint_centered_back_card, with_alpha};
 use crate::palette;
 
-pub(super) fn render(
-    ui: &mut egui::Ui,
-    ctx: &egui::Context,
-    message: &str,
-    intro: ScreenIntro,
-) {
+pub(super) fn render(ui: &mut egui::Ui, ctx: &egui::Context, message: &str, intro: ScreenIntro) {
     let badge_scale = intro.badge_scale();
     let badge_alpha = intro.badge_alpha();
     let text_alpha = intro.content_alpha();

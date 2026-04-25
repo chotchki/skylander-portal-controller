@@ -62,8 +62,8 @@ fn main() -> Result<()> {
     // root (images/, figures.json, games/). Conflating the two earlier
     // (setting DATA_ROOT=./dev-data in .env.dev) broke image lookup
     // because the server then looked for `dev-data/images/...`.
-    let runtime_dir = skylander_server::paths::resolve_runtime_dir()
-        .context("resolve runtime dir")?;
+    let runtime_dir =
+        skylander_server::paths::resolve_runtime_dir().context("resolve runtime dir")?;
 
     // Merge scanned figures + build the tag-identity map only when the
     // NFC feature is enabled — without it there are no scans to dedup
@@ -98,8 +98,8 @@ fn main() -> Result<()> {
         );
 
         let scanned_dir = runtime_dir.join("scanned");
-        let scan_figures = skylander_indexer::scan_runtime(&scanned_dir)
-            .context("walk scanned-figure dir")?;
+        let scan_figures =
+            skylander_indexer::scan_runtime(&scanned_dir).context("walk scanned-figure dir")?;
         let mut scanned_kept = 0usize;
         let mut nicknames_promoted = 0usize;
         let mut scan_only_figures: Vec<Figure> = Vec::new();
@@ -126,8 +126,7 @@ fn main() -> Result<()> {
                 if !scan_variant.is_empty() && scan_variant != "base" {
                     if let Some(&idx) = pack_index_by_id.get(&pack_id) {
                         let pack_fig = &mut pack_figures[idx];
-                        if pack_fig.variant_tag == "base"
-                            && pack_fig.canonical_name != scan_variant
+                        if pack_fig.variant_tag == "base" && pack_fig.canonical_name != scan_variant
                         {
                             pack_fig.variant_tag = scan_variant.to_string();
                             nicknames_promoted += 1;
@@ -142,8 +141,7 @@ fn main() -> Result<()> {
         }
         info!(
             kept = scanned_kept,
-            nicknames_promoted,
-            "merged scanned figures (pack wins on collision)"
+            nicknames_promoted, "merged scanned figures (pack wins on collision)"
         );
 
         let mut figures: Vec<Figure> = pack_figures;
@@ -364,13 +362,11 @@ fn main() -> Result<()> {
                 let spawn_result: Result<RpcsProcess, anyhow::Error> = match driver_kind {
                     crate::config::DriverKind::Uia => {
                         let rpcs3_exe_clone = rpcs3_exe.clone();
-                        match tokio::task::spawn_blocking(
-                            move || -> anyhow::Result<RpcsProcess> {
-                                let mut proc = RpcsProcess::launch_library(&rpcs3_exe_clone)?;
-                                proc.wait_ready(std::time::Duration::from_secs(45))?;
-                                Ok(proc)
-                            },
-                        )
+                        match tokio::task::spawn_blocking(move || -> anyhow::Result<RpcsProcess> {
+                            let mut proc = RpcsProcess::launch_library(&rpcs3_exe_clone)?;
+                            proc.wait_ready(std::time::Duration::from_secs(45))?;
+                            Ok(proc)
+                        })
                         .await
                         {
                             Ok(inner) => inner,
@@ -537,10 +533,7 @@ fn main() -> Result<()> {
         native_options,
         Box::new(move |cc| {
             Ok(Box::new(LauncherApp::new(
-                cc,
-                ui_clients,
-                ui_status,
-                url_for_ui,
+                cc, ui_clients, ui_status, url_for_ui,
             )))
         }),
     )
@@ -629,10 +622,8 @@ fn first_non_loopback_ipv4() -> Option<Ipv4Addr> {
 /// way to silently end up with the eframe default "egui e" icon again
 /// once this lands.
 fn load_window_icon() -> Option<egui::IconData> {
-    const PROD: &[u8] =
-        include_bytes!("../../../phone/assets/icons/icon-192.png");
-    const DEV: &[u8] =
-        include_bytes!("../../../phone/assets/icons/icon-dev-192.png");
+    const PROD: &[u8] = include_bytes!("../../../phone/assets/icons/icon-192.png");
+    const DEV: &[u8] = include_bytes!("../../../phone/assets/icons/icon-dev-192.png");
     let bytes: &[u8] = if cfg!(debug_assertions) { DEV } else { PROD };
     let img = image::load_from_memory(bytes).ok()?;
     let rgba = img.to_rgba8();

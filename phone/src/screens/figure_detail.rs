@@ -121,7 +121,11 @@ pub(crate) fn FigureDetail(
                 None => match first_empty_slot(&p) {
                     Some(s) => s,
                     None => {
-                        push_toast_level(toasts, "Portal is full \u{2014} remove a figure first.", ToastLevel::Warn);
+                        push_toast_level(
+                            toasts,
+                            "Portal is full \u{2014} remove a figure first.",
+                            ToastLevel::Warn,
+                        );
                         return;
                     }
                 },

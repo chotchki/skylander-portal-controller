@@ -381,10 +381,7 @@ where
     // dereferences the pointer only while EnumWindows is on the
     // stack. EnumWindows itself is thread-safe.
     unsafe {
-        let _ = EnumWindows(
-            Some(enum_proc),
-            LPARAM(&mut state as *mut State as isize),
-        );
+        let _ = EnumWindows(Some(enum_proc), LPARAM(&mut state as *mut State as isize));
     }
     state.title
 }

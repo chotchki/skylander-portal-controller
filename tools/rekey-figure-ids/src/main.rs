@@ -59,7 +59,10 @@ fn main() -> Result<()> {
         bail!("pack path doesn't exist or isn't a dir: {}", pack.display());
     }
     if !args.data.is_dir() {
-        bail!("data path doesn't exist or isn't a dir: {}", args.data.display());
+        bail!(
+            "data path doesn't exist or isn't a dir: {}",
+            args.data.display()
+        );
     }
     let figures_json_path = args.data.join("figures.json");
     let images_dir = args.data.join("images");
@@ -227,8 +230,14 @@ fn main() -> Result<()> {
         info!(dir = %images_dir.display(), "no images dir — skipping renames");
     }
     info!(
-        planned = image_renames.iter().filter(|r| matches!(r.outcome, RenameOutcome::Renamed)).count(),
-        skipped = image_renames.iter().filter(|r| matches!(r.outcome, RenameOutcome::SkippedDestExists)).count(),
+        planned = image_renames
+            .iter()
+            .filter(|r| matches!(r.outcome, RenameOutcome::Renamed))
+            .count(),
+        skipped = image_renames
+            .iter()
+            .filter(|r| matches!(r.outcome, RenameOutcome::SkippedDestExists))
+            .count(),
         "image-rename plan"
     );
 

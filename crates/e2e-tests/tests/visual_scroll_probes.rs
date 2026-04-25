@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use fantoccini::{ClientBuilder, Locator};
 use serde_json::json;
-use skylander_e2e_tests::{inject_profile, TestServer};
+use skylander_e2e_tests::{TestServer, inject_profile};
 
 /// iPhone 14 Pro portrait viewport, mobile Safari with address bar
 /// showing — the state where Chris's bugs manifest. Chrome headless
@@ -172,7 +172,9 @@ async fn click(client: &fantoccini::Client, selector: &str) {
         .find(Locator::Css(selector))
         .await
         .unwrap_or_else(|_| panic!("find {selector}"));
-    el.click().await.unwrap_or_else(|_| panic!("click {selector}"));
+    el.click()
+        .await
+        .unwrap_or_else(|_| panic!("click {selector}"));
 }
 
 async fn click_text(client: &fantoccini::Client, text: &str) -> Result<(), String> {

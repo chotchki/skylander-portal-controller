@@ -138,7 +138,9 @@ async fn overlay_appears_and_persists_through_reconnect_cycle() {
         Ok(el) => el,
         Err(e) => {
             let logs = fetch_console_logs(&phone).await;
-            panic!("ConnectionLost overlay should appear after server dies: {e}\n--- captured browser console ---\n{logs}");
+            panic!(
+                "ConnectionLost overlay should appear after server dies: {e}\n--- captured browser console ---\n{logs}"
+            );
         }
     };
 
@@ -174,7 +176,8 @@ async fn overlay_appears_and_persists_through_reconnect_cycle() {
             .await
             .is_err()
         {
-            let elapsed = persistence_window.saturating_sub(deadline.saturating_duration_since(std::time::Instant::now()));
+            let elapsed = persistence_window
+                .saturating_sub(deadline.saturating_duration_since(std::time::Instant::now()));
             let logs = fetch_console_logs(&phone).await;
             panic!(
                 "ConnectionLost overlay vanished during the reconnect cycle \
@@ -188,4 +191,3 @@ async fn overlay_appears_and_persists_through_reconnect_cycle() {
 
     phone.close().await.unwrap();
 }
-

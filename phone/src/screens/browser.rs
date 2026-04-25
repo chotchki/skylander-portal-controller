@@ -1,9 +1,7 @@
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
-use crate::components::{
-    BezelSize, BezelState, BoxState, GoldBezel, ToyBoxInterior, ToyBoxLid,
-};
+use crate::components::{BezelSize, BezelState, BoxState, GoldBezel, ToyBoxInterior, ToyBoxLid};
 use crate::model::{Category, Element, GameOfOrigin, PublicFigure, Slot, SlotState, SLOT_COUNT};
 use crate::screens::FigureDetail;
 use crate::{event_target_value, ScanOverlayState, ToastMsg};

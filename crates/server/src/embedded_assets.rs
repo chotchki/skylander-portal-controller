@@ -89,7 +89,11 @@ pub fn serve(path: &str) -> Response {
 pub async fn fallback_handler(req: axum::extract::Request) -> Response {
     let raw = req.uri().path();
     let trimmed = raw.trim_start_matches('/');
-    let key = if trimmed.is_empty() { "index.html" } else { trimmed };
+    let key = if trimmed.is_empty() {
+        "index.html"
+    } else {
+        trimmed
+    };
     if let Some((bytes, ct)) = lookup(key) {
         let mut resp: Response = (StatusCode::OK, bytes).into_response();
         if let Ok(value) = HeaderValue::from_str(ct) {

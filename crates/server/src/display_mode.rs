@@ -21,11 +21,10 @@ use anyhow::{Result, anyhow};
 
 #[cfg(windows)]
 use windows::Win32::Graphics::Gdi::{
-    CDS_TYPE, ChangeDisplaySettingsExW, DEVMODEW, DISP_CHANGE_BADDUALVIEW,
-    DISP_CHANGE_BADFLAGS, DISP_CHANGE_BADMODE, DISP_CHANGE_BADPARAM, DISP_CHANGE_FAILED,
-    DISP_CHANGE_NOTUPDATED, DISP_CHANGE_RESTART, DISP_CHANGE_SUCCESSFUL,
-    DM_DISPLAYFREQUENCY, DM_PELSHEIGHT, DM_PELSWIDTH, ENUM_CURRENT_SETTINGS,
-    EnumDisplaySettingsW,
+    CDS_TYPE, ChangeDisplaySettingsExW, DEVMODEW, DISP_CHANGE_BADDUALVIEW, DISP_CHANGE_BADFLAGS,
+    DISP_CHANGE_BADMODE, DISP_CHANGE_BADPARAM, DISP_CHANGE_FAILED, DISP_CHANGE_NOTUPDATED,
+    DISP_CHANGE_RESTART, DISP_CHANGE_SUCCESSFUL, DM_DISPLAYFREQUENCY, DM_PELSHEIGHT, DM_PELSWIDTH,
+    ENUM_CURRENT_SETTINGS, EnumDisplaySettingsW,
 };
 
 /// Snapshot of a primary-display mode. Stored per-game so subsequent
@@ -83,10 +82,10 @@ pub fn set(mode: DisplayMode) -> Result<()> {
         dm.dmDisplayFrequency = mode.refresh_hz;
 
         let result = ChangeDisplaySettingsExW(
-            None,                  // primary display
+            None, // primary display
             Some(&dm),
-            None,                  // hwnd not needed for global mode set
-            CDS_TYPE(0),           // apply immediately, no `CDS_TEST`
+            None,        // hwnd not needed for global mode set
+            CDS_TYPE(0), // apply immediately, no `CDS_TEST`
             None,
         );
 

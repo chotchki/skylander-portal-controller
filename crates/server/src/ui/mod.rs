@@ -13,8 +13,8 @@
 //! iris-close on crash, gentle on farewell) is deferred to 4.15a.7 polish.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use crate::state::{LauncherScreen, LauncherStatus};

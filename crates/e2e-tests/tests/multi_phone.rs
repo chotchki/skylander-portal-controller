@@ -315,7 +315,9 @@ async fn ownership_pip_shows_correct_owner_per_slot() {
 
     // Rebind each session to its owner explicitly — pending_unlock
     // only drives the first-to-register phone (see independent_profile_unlock).
-    set_session_profile(&server.url, s1, &alice_id).await.unwrap();
+    set_session_profile(&server.url, s1, &alice_id)
+        .await
+        .unwrap();
     set_session_profile(&server.url, s2, &bob_id).await.unwrap();
 
     // Two successful loads — one per slot, same mock outcome.
@@ -334,7 +336,10 @@ async fn ownership_pip_shows_correct_owner_per_slot() {
     // P1 (Alice) places into slot 1; P2 (Bob) places into slot 2.
     let p1_slots = p1.client.find_all(Locator::Css(".p4-slot")).await.unwrap();
     p1_slots[0].clone().click().await.unwrap();
-    p1.client.find_all(Locator::Css(".fig-card-p4")).await.unwrap()[0]
+    p1.client
+        .find_all(Locator::Css(".fig-card-p4"))
+        .await
+        .unwrap()[0]
         .clone()
         .click()
         .await
@@ -342,7 +347,10 @@ async fn ownership_pip_shows_correct_owner_per_slot() {
 
     let p2_slots = p2.client.find_all(Locator::Css(".p4-slot")).await.unwrap();
     p2_slots[1].clone().click().await.unwrap();
-    p2.client.find_all(Locator::Css(".fig-card-p4")).await.unwrap()[1]
+    p2.client
+        .find_all(Locator::Css(".fig-card-p4"))
+        .await
+        .unwrap()[1]
         .clone()
         .click()
         .await
@@ -357,7 +365,9 @@ async fn ownership_pip_shows_correct_owner_per_slot() {
             .wait_until(Duration::from_secs(10), || async {
                 let plates = phone
                     .client
-                    .find_all(Locator::Css(".p4-slot-owner:not(.p4-slot-owner--pending) .p4-slot-owner-plate"))
+                    .find_all(Locator::Css(
+                        ".p4-slot-owner:not(.p4-slot-owner--pending) .p4-slot-owner-plate",
+                    ))
                     .await
                     .unwrap_or_default();
                 plates.len() >= 2
@@ -448,7 +458,9 @@ async fn disconnect_clears_departing_profile_slots() {
     let s1 = wait_for_session_id(&p1).await;
     let p2 = new_phone(&server).await;
     let s2 = wait_for_session_id(&p2).await;
-    set_session_profile(&server.url, s1, &alice_id).await.unwrap();
+    set_session_profile(&server.url, s1, &alice_id)
+        .await
+        .unwrap();
     set_session_profile(&server.url, s2, &bob_id).await.unwrap();
 
     inject_load_outcomes(&server.url, json!([{"kind": "ok"}, {"kind": "ok"}]))
@@ -465,7 +477,10 @@ async fn disconnect_clears_departing_profile_slots() {
     // Alice places in slot 1; Bob places in slot 2.
     let p1_slots = p1.client.find_all(Locator::Css(".p4-slot")).await.unwrap();
     p1_slots[0].clone().click().await.unwrap();
-    p1.client.find_all(Locator::Css(".fig-card-p4")).await.unwrap()[0]
+    p1.client
+        .find_all(Locator::Css(".fig-card-p4"))
+        .await
+        .unwrap()[0]
         .clone()
         .click()
         .await
@@ -473,7 +488,10 @@ async fn disconnect_clears_departing_profile_slots() {
 
     let p2_slots = p2.client.find_all(Locator::Css(".p4-slot")).await.unwrap();
     p2_slots[1].clone().click().await.unwrap();
-    p2.client.find_all(Locator::Css(".fig-card-p4")).await.unwrap()[1]
+    p2.client
+        .find_all(Locator::Css(".fig-card-p4"))
+        .await
+        .unwrap()[1]
         .clone()
         .click()
         .await
@@ -499,10 +517,7 @@ async fn disconnect_clears_departing_profile_slots() {
     // with a generous timeout — mock driver's 50ms default latency
     // puts this in the ~200ms range but CI loads vary.
     p2.wait_until(Duration::from_secs(10), || async {
-        let s1 = p2
-            .client
-            .find(Locator::Css(".p4-slot:nth-child(1)"))
-            .await;
+        let s1 = p2.client.find(Locator::Css(".p4-slot:nth-child(1)")).await;
         if let Ok(slot) = s1 {
             let cls = slot.attr("class").await.unwrap().unwrap_or_default();
             if !cls.contains("p4-slot--empty") {
@@ -512,10 +527,7 @@ async fn disconnect_clears_departing_profile_slots() {
             return false;
         }
         // Bob's slot 2 should still be Loaded.
-        let s2 = p2
-            .client
-            .find(Locator::Css(".p4-slot:nth-child(2)"))
-            .await;
+        let s2 = p2.client.find(Locator::Css(".p4-slot:nth-child(2)")).await;
         if let Ok(slot) = s2 {
             let cls = slot.attr("class").await.unwrap().unwrap_or_default();
             cls.contains("p4-slot--loaded")

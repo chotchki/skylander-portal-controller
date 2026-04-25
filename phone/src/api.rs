@@ -123,7 +123,10 @@ pub fn install_key_from_hash() {
             );
             return;
         } else {
-            crate::dev_warn!("hmac: ?k= present but try_install rejected ({} chars)", hex.len());
+            crate::dev_warn!(
+                "hmac: ?k= present but try_install rejected ({} chars)",
+                hex.len()
+            );
         }
     }
 
@@ -142,9 +145,7 @@ pub fn install_key_from_hash() {
     }
 
     // 3) localStorage fallback — cached from a previous successful pair.
-    if let Some(storage) = web_sys::window()
-        .and_then(|w| w.local_storage().ok().flatten())
-    {
+    if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
         if let Ok(Some(hex)) = storage.get_item(HMAC_STORAGE_KEY) {
             if let Ok(bytes) = hex::decode(&hex) {
                 if bytes.len() == 32 {
@@ -160,7 +161,9 @@ pub fn install_key_from_hash() {
         }
     }
 
-    crate::dev_warn!("hmac: NO KEY installed — query/fragment/localStorage all empty; signed requests will 401");
+    crate::dev_warn!(
+        "hmac: NO KEY installed — query/fragment/localStorage all empty; signed requests will 401"
+    );
 }
 
 /// Decode + install `hex` if valid; also persist to localStorage for
@@ -169,8 +172,7 @@ fn try_install(hex: &str) -> bool {
     if let Ok(bytes) = hex::decode(hex) {
         if bytes.len() == 32 {
             HMAC_KEY.with(|c| *c.borrow_mut() = Some(bytes));
-            if let Some(storage) = web_sys::window()
-                .and_then(|w| w.local_storage().ok().flatten())
+            if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten())
             {
                 let _ = storage.set_item(HMAC_STORAGE_KEY, hex);
             }

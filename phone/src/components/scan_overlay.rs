@@ -27,8 +27,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use leptos::prelude::*;
-use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
+use wasm_bindgen::JsCast;
 
 use crate::{ScanOverlayState, ToastMsg};
 
@@ -71,14 +71,13 @@ pub fn ScanOverlay(
                         scan_overlay.set(ScanOverlayState::Timeout);
                     }
                 });
-                let handle = web_sys::window()
-                    .and_then(|w| {
-                        w.set_timeout_with_callback_and_timeout_and_arguments_0(
-                            cb.as_ref().unchecked_ref(),
-                            PROMPT_TIMEOUT_MS,
-                        )
-                        .ok()
-                    });
+                let handle = web_sys::window().and_then(|w| {
+                    w.set_timeout_with_callback_and_timeout_and_arguments_0(
+                        cb.as_ref().unchecked_ref(),
+                        PROMPT_TIMEOUT_MS,
+                    )
+                    .ok()
+                });
                 pending.set(handle);
             }
         });

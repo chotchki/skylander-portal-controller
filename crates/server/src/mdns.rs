@@ -75,7 +75,10 @@ pub fn build_phone_url(ip: Ipv4Addr, port: u16, hex_key: &str) -> (String, bool)
     // QR image itself.
     match os_dns_hostname() {
         Some(host) if !host.is_empty() => (
-            format!("http://{}.local:{port}/?k={hex_key}", host.to_ascii_lowercase()),
+            format!(
+                "http://{}.local:{port}/?k={hex_key}",
+                host.to_ascii_lowercase()
+            ),
             true,
         ),
         _ => (format!("http://{ip}:{port}/?k={hex_key}"), false),
@@ -93,7 +96,10 @@ mod tests {
         // rules — lowercased, ends with .local:port/?k=, includes the key.
         let (url, _) = build_phone_url(Ipv4Addr::new(192, 168, 1, 147), 8765, "deadbeef");
         assert!(url.starts_with("http://"), "url should be http: {url}");
-        assert!(url.contains(":8765/?k=deadbeef"), "url missing port/key: {url}");
+        assert!(
+            url.contains(":8765/?k=deadbeef"),
+            "url missing port/key: {url}"
+        );
         // No uppercase letters in the host portion (everything after // up
         // to the first :, ignoring the hex-only key).
         let host_segment = url

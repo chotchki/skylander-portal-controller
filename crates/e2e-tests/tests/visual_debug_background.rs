@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use fantoccini::Locator;
-use skylander_e2e_tests::{set_game, unlock_default_profile, Phone, TestServer};
+use skylander_e2e_tests::{Phone, TestServer, set_game, unlock_default_profile};
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver + built phone SPA; visual inspection only"]
@@ -22,10 +22,7 @@ async fn capture_background_coverage_at_phone_size() {
 
     // ProfilePicker is the first screen; wait for the welcome heading.
     phone
-        .wait_for(
-            Locator::Css(".pp-welcome-wrap"),
-            Duration::from_secs(10),
-        )
+        .wait_for(Locator::Css(".pp-welcome-wrap"), Duration::from_secs(10))
         .await
         .expect("profile picker heading");
 
@@ -106,7 +103,10 @@ async fn capture_background_coverage_at_phone_size() {
     std::fs::create_dir_all(&out_dir).expect("mkdir visual_debug");
     let out = out_dir.join("profile_picker_background.png");
     std::fs::write(&out, &png).expect("write png");
-    println!("---- profile picker screenshot written to {} ----", out.display());
+    println!(
+        "---- profile picker screenshot written to {} ----",
+        out.display()
+    );
 
     phone.close().await.unwrap();
 }
@@ -187,7 +187,10 @@ async fn capture_portal_screen_at_phone_size() {
     std::fs::create_dir_all(&out_dir).expect("mkdir visual_debug");
     let out = out_dir.join("portal_screen.png");
     std::fs::write(&out, &png).expect("write png");
-    println!("---- portal (closed) screenshot written to {} ----", out.display());
+    println!(
+        "---- portal (closed) screenshot written to {} ----",
+        out.display()
+    );
 
     // Tap the lid to open (Closed → Compact). fantoccini's click goes
     // through WebDriver as a synthetic pointer sequence — hits the
@@ -198,7 +201,10 @@ async fn capture_portal_screen_at_phone_size() {
         let png = phone.client.screenshot().await.expect("screenshot open");
         let out = out_dir.join("portal_screen_open.png");
         std::fs::write(&out, &png).expect("write png open");
-        println!("---- portal (compact/open) screenshot written to {} ----", out.display());
+        println!(
+            "---- portal (compact/open) screenshot written to {} ----",
+            out.display()
+        );
     }
 
     phone.close().await.unwrap();

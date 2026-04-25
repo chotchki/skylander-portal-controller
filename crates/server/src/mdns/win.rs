@@ -3,9 +3,7 @@
 //! module doc for the rationale on going this route instead of trying
 //! to publish a custom hostname via DnsServiceRegister.
 
-use windows::Win32::System::SystemInformation::{
-    ComputerNameDnsHostname, GetComputerNameExW,
-};
+use windows::Win32::System::SystemInformation::{ComputerNameDnsHostname, GetComputerNameExW};
 use windows::core::PWSTR;
 
 /// Read the local machine's DNS hostname — the same string Windows
@@ -59,8 +57,8 @@ mod tests {
     /// the IP form.
     #[test]
     fn os_hostname_is_readable() {
-        let host = os_dns_hostname()
-            .expect("GetComputerNameExW should always succeed on a Windows host");
+        let host =
+            os_dns_hostname().expect("GetComputerNameExW should always succeed on a Windows host");
         assert!(!host.is_empty(), "OS hostname should not be empty");
         // Reasonable upper bound — Windows caps NetBIOS names at 15 chars,
         // DNS hostnames at 63. 256 covers either with room to spare.

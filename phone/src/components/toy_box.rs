@@ -206,10 +206,7 @@ pub fn ToyBoxLid(
 /// Caller's `children` go inside the inner scroll container — typically a
 /// figure grid or an empty-state placeholder.
 #[component]
-pub fn ToyBoxInterior(
-    box_state: RwSignal<BoxState>,
-    children: Children,
-) -> impl IntoView {
+pub fn ToyBoxInterior(box_state: RwSignal<BoxState>, children: Children) -> impl IntoView {
     let on_grid_scroll = move |_| {
         if box_state.get_untracked() == BoxState::Expanded {
             box_state.set(BoxState::Compact);

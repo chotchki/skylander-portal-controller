@@ -122,10 +122,7 @@ async fn display_mode_persistence_roundtrip_and_overwrite() {
     let store = ProfileStore::open_in_memory().await.unwrap();
 
     // Cold cache — no mode for any serial yet.
-    assert_eq!(
-        store.get_display_mode("BLUS31442").await.unwrap(),
-        None,
-    );
+    assert_eq!(store.get_display_mode("BLUS31442").await.unwrap(), None,);
 
     // Save once.
     let first = DisplayMode {
@@ -154,8 +151,5 @@ async fn display_mode_persistence_roundtrip_and_overwrite() {
     );
 
     // Different serial reads independently — modes are per-game.
-    assert_eq!(
-        store.get_display_mode("BLUS30906").await.unwrap(),
-        None,
-    );
+    assert_eq!(store.get_display_mode("BLUS30906").await.unwrap(), None,);
 }

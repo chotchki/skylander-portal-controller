@@ -18,7 +18,9 @@ use uiautomation::patterns::{UIInvokePattern, UIScrollItemPattern, UIValuePatter
 use uiautomation::types::{ControlType, UIProperty};
 use uiautomation::{UIAutomation, UIElement, UITreeWalker};
 
+use windows::Win32::Foundation::POINT;
 use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
+use windows::Win32::Graphics::Gdi::ScreenToClient;
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
@@ -30,8 +32,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SWP_NOZORDER, SetForegroundWindow, SetWindowPos, ShowWindow, WM_KEYDOWN, WM_KEYUP,
     WM_LBUTTONDOWN, WM_LBUTTONUP,
 };
-use windows::Win32::Foundation::POINT;
-use windows::Win32::Graphics::Gdi::ScreenToClient;
 use windows::core::BOOL;
 
 const READ_VALUE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -732,7 +732,9 @@ impl crate::PortalDriver for UiaPortalDriver {
                     continue;
                 }
                 (None, _) => bail!("file-name edit not found (dialog subtree never settled)"),
-                (_, None) => bail!("file-dialog Open button not found (dialog subtree never settled)"),
+                (_, None) => {
+                    bail!("file-dialog Open button not found (dialog subtree never settled)")
+                }
             }
         };
 
@@ -1767,10 +1769,7 @@ mod tests {
         // RPCS3 sometimes drops the punctuation — "Skylanders Trap Team"
         // without the colon. That doesn't match the full expected string,
         // but it also doesn't match any OTHER known keyword, so trust it.
-        let ok = verify_viewport_title(
-            "FPS: 60 | Skylanders Trap Team",
-            "Skylanders: Trap Team",
-        );
+        let ok = verify_viewport_title("FPS: 60 | Skylanders Trap Team", "Skylanders: Trap Team");
         assert!(
             ok.is_ok(),
             "title without colon should still be trusted — no peer keyword present",

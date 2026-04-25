@@ -11,7 +11,9 @@ use web_sys::{MessageEvent, WebSocket};
 
 use crate::api::{observe_boot_id, set_session_id};
 use crate::model::{ConnState, Event, GameLaunched, Slot, SlotState, UnlockedProfile, SLOT_COUNT};
-use crate::{dev_log, dev_warn, push_toast, GameCrashReason, ResumeOffer, TakeoverReason, ToastMsg};
+use crate::{
+    dev_log, dev_warn, push_toast, GameCrashReason, ResumeOffer, TakeoverReason, ToastMsg,
+};
 
 /// Pending backoff timer handle. Tracked so a manual TRY AGAIN can cancel
 /// the in-flight wait and reconnect immediately. Single-threaded WASM so
@@ -168,7 +170,10 @@ fn spawn_connect(
         let on_msg = Closure::<dyn FnMut(MessageEvent)>::new(move |e: MessageEvent| {
             if let Some(text) = e.data().as_string() {
                 match serde_json::from_str::<Event>(&text) {
-                    Ok(Event::Welcome { session_id, boot_id }) => {
+                    Ok(Event::Welcome {
+                        session_id,
+                        boot_id,
+                    }) => {
                         // Server restart detection: if the boot id changed
                         // from a known prior, reload the page so any cached
                         // UI state (unlocked profile, current screen, etc.)
@@ -176,9 +181,7 @@ fn spawn_connect(
                         // state. First connect after page load just stores
                         // the id.
                         if observe_boot_id(boot_id) {
-                            dev_log!(
-                                "[ws] boot_id changed → server restarted, reloading"
-                            );
+                            dev_log!("[ws] boot_id changed → server restarted, reloading");
                             if let Some(loc) = web_sys::window().map(|w| w.location()) {
                                 let _ = loc.reload();
                             }

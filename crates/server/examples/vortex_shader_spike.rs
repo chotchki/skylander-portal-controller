@@ -471,7 +471,9 @@ struct ShaderRig {
 impl ShaderRig {
     fn new(gl: &glow::Context) -> Result<Self, String> {
         unsafe {
-            let program = gl.create_program().map_err(|e| format!("create_program: {e}"))?;
+            let program = gl
+                .create_program()
+                .map_err(|e| format!("create_program: {e}"))?;
 
             let vs = compile_shader(gl, glow::VERTEX_SHADER, VS_SRC)?;
             let fs = compile_shader(gl, glow::FRAGMENT_SHADER, FS_SRC)?;
@@ -497,7 +499,9 @@ impl ShaderRig {
             // the conventional path that works the same on every GL
             // driver — keeps the spike portable when we lift it into
             // production.
-            let vao = gl.create_vertex_array().map_err(|e| format!("create_vao: {e}"))?;
+            let vao = gl
+                .create_vertex_array()
+                .map_err(|e| format!("create_vao: {e}"))?;
             let vbo = gl.create_buffer().map_err(|e| format!("create_vbo: {e}"))?;
             gl.bind_vertex_array(Some(vao));
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
@@ -553,19 +557,18 @@ impl ShaderRig {
         }
     }
 
-    fn paint(
-        &self,
-        gl: &glow::Context,
-        params: Params,
-        time: f32,
-        viewport_px: [i32; 4],
-    ) {
+    fn paint(&self, gl: &glow::Context, params: Params, time: f32, viewport_px: [i32; 4]) {
         unsafe {
             // Confine drawing to the painted region (egui's central
             // panel rect, in pixels). The shader uses v_uv (vertex-
             // emitted, viewport-relative) so the centre + scale match
             // the viewport regardless of where it sits in the window.
-            gl.viewport(viewport_px[0], viewport_px[1], viewport_px[2], viewport_px[3]);
+            gl.viewport(
+                viewport_px[0],
+                viewport_px[1],
+                viewport_px[2],
+                viewport_px[3],
+            );
             // Always alpha-blend — shader outputs premultiplied RGBA
             // where alpha = cloud_density * iris (+ glow ring), so
             // the panel/sky underneath shows through dim regions.
@@ -613,7 +616,10 @@ impl ShaderRig {
             gl.uniform_1_f32(self.u_star_brightness.as_ref(), params.star_brightness);
             gl.uniform_1_f32(self.u_star_density.as_ref(), params.star_density);
             gl.uniform_1_f32(self.u_iris_glow.as_ref(), params.iris_glow);
-            gl.uniform_1_i32(self.u_transparent.as_ref(), if params.transparent { 1 } else { 0 });
+            gl.uniform_1_i32(
+                self.u_transparent.as_ref(),
+                if params.transparent { 1 } else { 0 },
+            );
 
             gl.bind_vertex_array(Some(self.vao));
             gl.draw_arrays(glow::TRIANGLES, 0, 3);
@@ -631,21 +637,21 @@ impl ShaderRig {
     }
 }
 
-unsafe fn compile_shader(
-    gl: &glow::Context,
-    kind: u32,
-    src: &str,
-) -> Result<glow::Shader, String> { unsafe {
-    let s = gl.create_shader(kind).map_err(|e| format!("create_shader: {e}"))?;
-    gl.shader_source(s, src);
-    gl.compile_shader(s);
-    if !gl.get_shader_compile_status(s) {
-        let log = gl.get_shader_info_log(s);
-        gl.delete_shader(s);
-        return Err(format!("compile: {log}"));
+unsafe fn compile_shader(gl: &glow::Context, kind: u32, src: &str) -> Result<glow::Shader, String> {
+    unsafe {
+        let s = gl
+            .create_shader(kind)
+            .map_err(|e| format!("create_shader: {e}"))?;
+        gl.shader_source(s, src);
+        gl.compile_shader(s);
+        if !gl.get_shader_compile_status(s) {
+            let log = gl.get_shader_info_log(s);
+            gl.delete_shader(s);
+            return Err(format!("compile: {log}"));
+        }
+        Ok(s)
     }
-    Ok(s)
-}}
+}
 
 struct App {
     params: Params,
@@ -771,7 +777,10 @@ impl eframe::App for App {
                         );
                         let name = self.preset_name.trim().to_string();
                         let can_save = !name.is_empty();
-                        if ui.add_enabled(can_save, egui::Button::new("Save")).clicked() {
+                        if ui
+                            .add_enabled(can_save, egui::Button::new("Save"))
+                            .clicked()
+                        {
                             let _ = save_preset(&name, &self.params);
                         }
                     });
@@ -799,16 +808,14 @@ impl eframe::App for App {
 
                 ui.label("Iris");
                 ui.add(egui::Slider::new(&mut self.params.iris_radius, 0.0..=1.5).text("radius"));
-                ui.add(egui::Slider::new(&mut self.params.iris_softness, 0.0..=1.0).text("softness"));
+                ui.add(
+                    egui::Slider::new(&mut self.params.iris_softness, 0.0..=1.0).text("softness"),
+                );
                 ui.add(egui::Slider::new(&mut self.params.iris_glow, 0.0..=1.5).text("glow ring"));
                 ui.horizontal(|ui| {
                     ui.label("mode");
                     ui.radio_value(&mut self.params.iris_mode, IrisMode::DarkHole, "dark hole");
-                    ui.radio_value(
-                        &mut self.params.iris_mode,
-                        IrisMode::Reveal,
-                        "reveal",
-                    );
+                    ui.radio_value(&mut self.params.iris_mode, IrisMode::Reveal, "reveal");
                 });
                 ui.horizontal(|ui| {
                     if ui.button("Open (2.5s)").clicked() {
@@ -833,9 +840,14 @@ impl eframe::App for App {
                 ui.separator();
 
                 ui.label("Motion");
-                ui.add(egui::Slider::new(&mut self.params.rotation_speed, -1.0..=1.0).text("rotation"));
+                ui.add(
+                    egui::Slider::new(&mut self.params.rotation_speed, -1.0..=1.0).text("rotation"),
+                );
                 ui.add(egui::Slider::new(&mut self.params.inflow_speed, -2.0..=2.0).text("inflow"));
-                ui.add(egui::Slider::new(&mut self.params.spiral_tightness, 0.0..=12.0).text("spiral tightness"));
+                ui.add(
+                    egui::Slider::new(&mut self.params.spiral_tightness, 0.0..=12.0)
+                        .text("spiral tightness"),
+                );
                 // Time offset (seconds). Scrubs the animation clock —
                 // the same params at different `u_time` values look
                 // visually different because rotation / inflow /
@@ -860,21 +872,42 @@ impl eframe::App for App {
                 ui.separator();
 
                 ui.label("Noise");
-                ui.add(egui::Slider::new(&mut self.params.cloud_brightness, 0.0..=2.5).text("cloud brightness"));
-                ui.add(egui::Slider::new(&mut self.params.cloud_bias, 0.0..=0.9).text("cloud bias (less white)"));
-                ui.add(egui::Slider::new(&mut self.params.radial_freq, 0.1..=4.0).text("radial freq"));
-                ui.add(egui::Slider::new(&mut self.params.angular_freq, 0.1..=4.0).text("angular freq"));
+                ui.add(
+                    egui::Slider::new(&mut self.params.cloud_brightness, 0.0..=2.5)
+                        .text("cloud brightness"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut self.params.cloud_bias, 0.0..=0.9)
+                        .text("cloud bias (less white)"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut self.params.radial_freq, 0.1..=4.0).text("radial freq"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut self.params.angular_freq, 0.1..=4.0)
+                        .text("angular freq"),
+                );
                 ui.add(egui::Slider::new(&mut self.params.thickness, 0.2..=4.0).text("thickness"));
                 ui.add(egui::Slider::new(&mut self.params.octaves, 1..=8).text("octaves"));
-                ui.add(egui::Slider::new(&mut self.params.persistence, 0.2..=0.8).text("persistence"));
-                ui.add(egui::Slider::new(&mut self.params.layer2_strength, 0.0..=1.0).text("layer 2 (counter-spiral)"));
+                ui.add(
+                    egui::Slider::new(&mut self.params.persistence, 0.2..=0.8).text("persistence"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut self.params.layer2_strength, 0.0..=1.0)
+                        .text("layer 2 (counter-spiral)"),
+                );
                 ui.separator();
 
                 ui.label("Streaks (clouds flying past)");
-                ui.add(egui::Slider::new(&mut self.params.streak_strength, 0.0..=1.0).text("strength"));
+                ui.add(
+                    egui::Slider::new(&mut self.params.streak_strength, 0.0..=1.0).text("strength"),
+                );
                 ui.add(egui::Slider::new(&mut self.params.streak_freq, 2.0..=20.0).text("count"));
                 ui.add(egui::Slider::new(&mut self.params.streak_speed, 0.0..=4.0).text("speed"));
-                ui.checkbox(&mut self.params.streak_outward, "flow outward (clouds out vs in)");
+                ui.checkbox(
+                    &mut self.params.streak_outward,
+                    "flow outward (clouds out vs in)",
+                );
                 ui.separator();
 
                 ui.label("Colors");
@@ -893,11 +926,19 @@ impl eframe::App for App {
                 ui.separator();
 
                 ui.label("Stars");
-                ui.add(egui::Slider::new(&mut self.params.star_brightness, 0.0..=2.0).text("brightness"));
-                ui.add(egui::Slider::new(&mut self.params.star_density, 8.0..=64.0).text("density"));
+                ui.add(
+                    egui::Slider::new(&mut self.params.star_brightness, 0.0..=2.0)
+                        .text("brightness"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut self.params.star_density, 8.0..=64.0).text("density"),
+                );
                 ui.separator();
 
-                ui.checkbox(&mut self.params.transparent, "transparent iris (in-game demo)");
+                ui.checkbox(
+                    &mut self.params.transparent,
+                    "transparent iris (in-game demo)",
+                );
                 ui.label(
                     egui::RichText::new(
                         "When on, the iris area becomes alpha=0 — desktop \
@@ -946,19 +987,18 @@ impl eframe::App for App {
 
                 let cb = egui::PaintCallback {
                     rect,
-                    callback: Arc::new(egui_glow::CallbackFn::new(
-                        move |info, painter| {
-                            // viewport_in_pixels gives [x, y, w, h] in
-                            // physical pixels with origin bottom-left
-                            // (GL convention) — exactly what gl.viewport
-                            // wants.
-                            let vp = info.viewport_in_pixels();
-                            let viewport_px = [vp.left_px, vp.from_bottom_px, vp.width_px, vp.height_px];
-                            if let Some(rig) = rig.lock().unwrap().as_ref() {
-                                rig.paint(painter.gl(), params, time, viewport_px);
-                            }
-                        },
-                    )),
+                    callback: Arc::new(egui_glow::CallbackFn::new(move |info, painter| {
+                        // viewport_in_pixels gives [x, y, w, h] in
+                        // physical pixels with origin bottom-left
+                        // (GL convention) — exactly what gl.viewport
+                        // wants.
+                        let vp = info.viewport_in_pixels();
+                        let viewport_px =
+                            [vp.left_px, vp.from_bottom_px, vp.width_px, vp.height_px];
+                        if let Some(rig) = rig.lock().unwrap().as_ref() {
+                            rig.paint(painter.gl(), params, time, viewport_px);
+                        }
+                    })),
                 };
                 let _ = pixels_per_point;
                 ui.painter().add(cb);

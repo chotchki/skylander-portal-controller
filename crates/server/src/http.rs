@@ -498,8 +498,12 @@ fn is_safe_figure_id(id: &str) -> bool {
     if id.len() == 11 {
         let bytes = id.as_bytes();
         if bytes[6] == b'-'
-            && bytes[..6].iter().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-            && bytes[7..].iter().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+            && bytes[..6]
+                .iter()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+            && bytes[7..]
+                .iter()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
         {
             return true;
         }
@@ -1361,18 +1365,13 @@ async fn quit_game(
             Some(p) => p,
             None => {
                 drop(guard);
-                return (
-                    StatusCode::CONFLICT,
-                    "no RPCS3 process to force-kill",
-                )
-                    .into_response();
+                return (StatusCode::CONFLICT, "no RPCS3 process to force-kill").into_response();
             }
         };
         drop(guard);
-        let result = tokio::task::spawn_blocking(move || {
-            proc.shutdown_graceful(Duration::from_millis(500))
-        })
-        .await;
+        let result =
+            tokio::task::spawn_blocking(move || proc.shutdown_graceful(Duration::from_millis(500)))
+                .await;
         match result {
             Ok(Ok(path)) => info!(?path, "force-quit: process killed"),
             Ok(Err(e)) => warn!("force-quit errored: {e}"),
@@ -1507,10 +1506,9 @@ async fn shutdown_launcher(State(state): State<Arc<AppState>>, Signed(_body): Si
 
         let process = detached_state.rpcs3.lock().await.process.take();
         if let Some(mut proc) = process {
-            let result = tokio::task::spawn_blocking(move || {
-                proc.shutdown_graceful(Duration::from_secs(5))
-            })
-            .await;
+            let result =
+                tokio::task::spawn_blocking(move || proc.shutdown_graceful(Duration::from_secs(5)))
+                    .await;
             match result {
                 Ok(Ok(path)) => info!(?path, "shutdown: RPCS3 exited"),
                 Ok(Err(e)) => warn!("shutdown: RPCS3 shutdown errored: {e}"),
@@ -2037,14 +2035,20 @@ async fn serve_manifest(State(state): State<Arc<AppState>>) -> Response {
     let raw = match String::from_utf8(bytes) {
         Ok(s) => s,
         Err(e) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, format!("manifest decode: {e}"))
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("manifest decode: {e}"),
+            )
                 .into_response();
         }
     };
     let key_hex = hex::encode(&state.hmac_key);
     // Replace the `/` start_url with `/?k=<hex>`. Tolerates either
     // `"start_url": "/"` (what ships today) or a pre-injected variant.
-    let rewritten = raw.replace(r#""start_url": "/""#, &format!(r#""start_url": "/?k={key_hex}""#));
+    let rewritten = raw.replace(
+        r#""start_url": "/""#,
+        &format!(r#""start_url": "/?k={key_hex}""#),
+    );
 
     (
         StatusCode::OK,

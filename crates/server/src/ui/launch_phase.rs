@@ -34,14 +34,20 @@ pub(crate) const IRIS_FULL: f32 = 1.5;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum LaunchPhase {
-    IntroTransitioning { progress: f32 },
+    IntroTransitioning {
+        progress: f32,
+    },
     AwaitingConnect,
-    ClosingToInGame { progress: f32 },
+    ClosingToInGame {
+        progress: f32,
+    },
     /// Returning to the launcher after an in-game session ended. Plays
     /// the same iris-reveal + badge spin-in curves as
     /// IntroTransitioning. Driven by the dispatcher's
     /// `returning_from_game_at` timestamp.
-    ReturnFromGame { progress: f32 },
+    ReturnFromGame {
+        progress: f32,
+    },
 }
 
 // Re-export so callers can `use launch_phase::IrisMode` without
@@ -174,9 +180,7 @@ impl LaunchPhase {
                 ((progress - 0.5) / 0.5).clamp(0.0, 1.0)
             }
             Self::AwaitingConnect => 1.0,
-            Self::ClosingToInGame { progress } => {
-                (1.0 - progress / 0.4).clamp(0.0, 1.0)
-            }
+            Self::ClosingToInGame { progress } => (1.0 - progress / 0.4).clamp(0.0, 1.0),
         }
     }
 
@@ -336,7 +340,10 @@ mod tests {
             LaunchPhase::IntroTransitioning { progress: 1.0 }.iris_radius(),
             IRIS_FULL
         ));
-        assert!(approx(LaunchPhase::AwaitingConnect.iris_radius(), IRIS_FULL));
+        assert!(approx(
+            LaunchPhase::AwaitingConnect.iris_radius(),
+            IRIS_FULL
+        ));
         assert!(approx(
             LaunchPhase::ClosingToInGame { progress: 0.0 }.iris_radius(),
             0.0
@@ -391,7 +398,10 @@ mod tests {
         let p30 = LaunchPhase::ClosingToInGame { progress: 0.3 };
         let text = p30.badge_text_alpha();
         let badge = p30.badge_alpha();
-        assert!(text < badge, "text ({text}) should fade before badge ({badge})");
+        assert!(
+            text < badge,
+            "text ({text}) should fade before badge ({badge})"
+        );
     }
 
     #[test]

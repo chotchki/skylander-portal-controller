@@ -24,7 +24,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use resvg::{
     tiny_skia::{Pixmap, Transform},
     usvg::{Options, Tree},
@@ -56,8 +56,8 @@ fn main() -> Result<()> {
 }
 
 fn bake_set(svg_path: &Path, out_dir: &Path, prefix: &str) -> Result<()> {
-    let svg_data = std::fs::read(svg_path)
-        .with_context(|| format!("read SVG: {}", svg_path.display()))?;
+    let svg_data =
+        std::fs::read(svg_path).with_context(|| format!("read SVG: {}", svg_path.display()))?;
 
     // Default options are fine — our SVGs are inline, no external refs,
     // no fonts, no images. usvg parses → tiny_skia rasterises.
@@ -71,8 +71,8 @@ fn bake_set(svg_path: &Path, out_dir: &Path, prefix: &str) -> Result<()> {
     let src_max = src.width().max(src.height());
 
     for &size in SIZES {
-        let mut pixmap = Pixmap::new(size, size)
-            .ok_or_else(|| anyhow!("alloc {size}×{size} pixmap"))?;
+        let mut pixmap =
+            Pixmap::new(size, size).ok_or_else(|| anyhow!("alloc {size}×{size} pixmap"))?;
         let scale = size as f32 / src_max;
         let transform = Transform::from_scale(scale, scale);
         resvg::render(&tree, transform, &mut pixmap.as_mut());

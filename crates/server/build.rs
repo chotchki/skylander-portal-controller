@@ -46,9 +46,5 @@ fn compute_token() -> String {
         .map(|s| !s.success())
         .unwrap_or(false);
 
-    if dirty {
-        format!("{hash}-dirty")
-    } else {
-        hash
-    }
+    if dirty { format!("{hash}-dirty") } else { hash }
 }

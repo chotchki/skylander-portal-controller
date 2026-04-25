@@ -104,15 +104,9 @@ impl CloseTimers {
 /// the in-game surface, this frame doesn't, AND screen is still Main
 /// (game ended cleanly via `/api/quit` or RPCS3 process exit, NOT
 /// by transitioning to Crashed/Farewell which have their own paths).
-pub(super) fn detect_returning_from_game(
-    was_in_game: bool,
-    status: &LauncherStatus,
-) -> bool {
-    let want_in_game_now =
-        status.rpcs3_running && matches!(status.screen, LauncherScreen::Main);
-    was_in_game
-        && !want_in_game_now
-        && matches!(status.screen, LauncherScreen::Main)
+pub(super) fn detect_returning_from_game(was_in_game: bool, status: &LauncherStatus) -> bool {
+    let want_in_game_now = status.rpcs3_running && matches!(status.screen, LauncherScreen::Main);
+    was_in_game && !want_in_game_now && matches!(status.screen, LauncherScreen::Main)
 }
 
 #[cfg(test)]

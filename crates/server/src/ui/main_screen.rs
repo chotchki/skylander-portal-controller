@@ -585,10 +585,7 @@ fn paint_bezel(painter: &egui::Painter, rect: egui::Rect, alpha: f32) {
 
     // 4. Inset bottom shadow — same trick, dark crescent at the
     // bottom inner edge.
-    let shadow = with_alpha(
-        egui::Color32::from_rgba_unmultiplied(0, 0, 0, 127),
-        alpha,
-    );
+    let shadow = with_alpha(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 127), alpha);
     painter.circle_stroke(
         center + egui::vec2(0.0, 1.0),
         outer_r - 2.0,
@@ -979,7 +976,10 @@ fn paint_pip(painter: &egui::Painter, rect: egui::Rect, pip: &SessionPip) {
         Some(ch) if !ch.is_empty() => ch,
         _ => "?",
     };
-    let font = egui::FontId::new(palette::HEADING, egui::FontFamily::Name(fonts::TITAN_ONE.into()));
+    let font = egui::FontId::new(
+        palette::HEADING,
+        egui::FontFamily::Name(fonts::TITAN_ONE.into()),
+    );
     painter.text(
         centre + egui::vec2(0.0, 2.0),
         egui::Align2::CENTER_CENTER,

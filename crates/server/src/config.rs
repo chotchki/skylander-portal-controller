@@ -146,9 +146,9 @@ fn load_or_create_dev_hmac_key() -> Result<Vec<u8>> {
 
 #[cfg(not(feature = "dev-tools"))]
 pub fn load() -> Result<Config> {
-    use anyhow::Context;
     use crate::paths;
     use crate::wizard::{self, PersistedConfig, PersistedDriverKind};
+    use anyhow::Context;
 
     let config_path = paths::config_json_path()?;
 

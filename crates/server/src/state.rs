@@ -481,7 +481,8 @@ pub fn spawn_shader_compile_watchdog(
         loop {
             ticker.tick().await;
 
-            let new_compile_text = read_new_compile_text(&log_path, &mut file, &mut pos, &mut carry);
+            let new_compile_text =
+                read_new_compile_text(&log_path, &mut file, &mut pos, &mut carry);
 
             if let Some(text) = new_compile_text {
                 last_compile_at = Some(std::time::Instant::now());
@@ -601,11 +602,9 @@ fn classify_log_line(line: &str) -> Option<&'static str> {
     let low = line.to_ascii_lowercase();
     if low.contains("spu: building") || low.contains("spu cache:") {
         Some("Building SPU cache")
-    } else if low.contains("ppu: block") || (low.contains("ppu:") && low.contains("compiled"))
-    {
+    } else if low.contains("ppu: block") || (low.contains("ppu:") && low.contains("compiled")) {
         Some("Building PPU cache")
-    } else if low.contains("rsx:") && (low.contains("compil") || low.contains("shader"))
-    {
+    } else if low.contains("rsx:") && (low.contains("compil") || low.contains("shader")) {
         Some("Compiling shaders")
     } else {
         None
@@ -739,10 +738,7 @@ pub fn spawn_crash_watchdog(
                 }
                 Ok(Err(e)) => {
                     consecutive_failures = consecutive_failures.saturating_add(1);
-                    warn!(
-                        consecutive_failures,
-                        "RPCS3 auto-respawn failed: {e}"
-                    );
+                    warn!(consecutive_failures, "RPCS3 auto-respawn failed: {e}");
                     if consecutive_failures >= MAX_RESPAWNS {
                         if let Ok(mut st) = launcher_status.lock() {
                             st.screen = LauncherScreen::ServerError {

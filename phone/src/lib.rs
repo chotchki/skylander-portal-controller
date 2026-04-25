@@ -142,15 +142,13 @@ pub fn App() -> impl IntoView {
             _ => false,
         }
     });
-    let stale_version_visible: Signal<bool> = Signal::derive(move || {
-        matches!(version_check.get(), VersionCheck::Stale { .. })
-    });
-    let server_build_token: Signal<Option<String>> = Signal::derive(move || match version_check
-        .get()
-    {
-        VersionCheck::Stale { server_token } => Some(server_token),
-        _ => None,
-    });
+    let stale_version_visible: Signal<bool> =
+        Signal::derive(move || matches!(version_check.get(), VersionCheck::Stale { .. }));
+    let server_build_token: Signal<Option<String>> =
+        Signal::derive(move || match version_check.get() {
+            VersionCheck::Stale { server_token } => Some(server_token),
+            _ => None,
+        });
     // Fire up the phone→server log forwarder. Mirrors console output to
     // the launcher process so on-device debugging doesn't need a Mac +
     // Web Inspector. See `dev_log.rs`.

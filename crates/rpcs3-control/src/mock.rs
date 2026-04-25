@@ -240,7 +240,10 @@ mod tests {
 
         // Replaces, doesn't append.
         d.set_enumerated_games(vec!["BLUS30968".into()]);
-        assert_eq!(d.enumerate_games(Duration::ZERO).unwrap(), vec!["BLUS30968"]);
+        assert_eq!(
+            d.enumerate_games(Duration::ZERO).unwrap(),
+            vec!["BLUS30968"]
+        );
 
         // Explicit empty models "no library / nothing installed".
         d.set_enumerated_games(vec![]);

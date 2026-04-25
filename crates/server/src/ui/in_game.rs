@@ -117,10 +117,7 @@ fn reconnect_qr(ui: &mut egui::Ui, qr_texture: Option<&egui::TextureHandle>, alp
 
     // Title — Titan One gold caption above the coin.
     painter.text(
-        egui::pos2(
-            panel_rect.center().x,
-            panel_rect.top() + LABEL_LANE * 0.5,
-        ),
+        egui::pos2(panel_rect.center().x, panel_rect.top() + LABEL_LANE * 0.5),
         egui::Align2::CENTER_CENTER,
         "RECONNECT",
         egui::FontId::new(
@@ -161,7 +158,9 @@ fn reconnect_qr(ui: &mut egui::Ui, qr_texture: Option<&egui::TextureHandle>, alp
     // egui's `painter.image` multiplies the texture sample by this
     // tint, so alpha scaling carries through to the pixel output.
     let image_tint = egui::Color32::from_rgba_unmultiplied(
-        255, 255, 255,
+        255,
+        255,
+        255,
         (255.0 * alpha.clamp(0.0, 1.0)).round() as u8,
     );
     painter.image(

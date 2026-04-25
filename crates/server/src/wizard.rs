@@ -385,8 +385,7 @@ pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<Per
             egui::Stroke::new(1.5, palette::GOLD_SHADOW);
         ui.style_mut().visuals.widgets.hovered.bg_stroke =
             egui::Stroke::new(1.5, palette::GOLD_MID);
-        ui.style_mut().visuals.widgets.active.bg_stroke =
-            egui::Stroke::new(2.0, palette::GOLD);
+        ui.style_mut().visuals.widgets.active.bg_stroke = egui::Stroke::new(2.0, palette::GOLD);
         ui.add(
             egui::TextEdit::singleline(buf)
                 .desired_width(width)
@@ -463,7 +462,10 @@ pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<Per
         );
         ui.add_space(24.0);
         if s.reader_present {
-            status_ok(ui, "NFC reader detected - you can scan figures to build your library.");
+            status_ok(
+                ui,
+                "NFC reader detected - you can scan figures to build your library.",
+            );
         } else {
             status_info(
                 ui,
@@ -573,11 +575,8 @@ pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<Per
                 "FINISH"
             };
             if primary_button(ui, s.pack_valid().is_ok(), label).clicked() {
-                let cfg = PersistedConfig::from_user_paths(
-                    s.rpcs3_path(),
-                    s.pack_path(),
-                    &s.runtime_dir,
-                );
+                let cfg =
+                    PersistedConfig::from_user_paths(s.rpcs3_path(), s.pack_path(), &s.runtime_dir);
                 s.result = Some(cfg);
                 s.page = Page::Done;
             }

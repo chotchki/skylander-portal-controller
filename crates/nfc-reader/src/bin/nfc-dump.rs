@@ -47,11 +47,7 @@ fn main() -> Result<()> {
 
     let dump_t = std::time::Instant::now();
     let bytes = dump_figure(&reader, uid)?;
-    println!(
-        "read {} bytes in {:.3?}",
-        bytes.len(),
-        dump_t.elapsed()
-    );
+    println!("read {} bytes in {:.3?}", bytes.len(), dump_t.elapsed());
 
     let path = out_dir.join(format!("{}.sky", uid_hex));
     std::fs::write(&path, &bytes).with_context(|| format!("write {}", path.display()))?;

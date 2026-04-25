@@ -120,7 +120,11 @@ fn connect_direct(ctx: &PcscContext, reader: &std::ffi::CStr) -> Result<Card> {
     let attempts: &[(ShareMode, Protocols, &str)] = &[
         (ShareMode::Direct, Protocols::T1, "Direct + T1"),
         (ShareMode::Direct, Protocols::T0, "Direct + T0"),
-        (ShareMode::Direct, Protocols::UNDEFINED, "Direct + UNDEFINED"),
+        (
+            ShareMode::Direct,
+            Protocols::UNDEFINED,
+            "Direct + UNDEFINED",
+        ),
     ];
     let mut last: Option<String> = None;
     for (share, proto, _label) in attempts {
@@ -449,12 +453,9 @@ pub fn run_scanner_worker(
                             // Mark the edge AFTER a successful dump so a
                             // dump failure doesn't silence the next retry.
                             last_field = Some(uid);
-                            if let Err(e) = persist_and_broadcast(
-                                &dump,
-                                &out_dir,
-                                &events,
-                                &library_identities,
-                            ) {
+                            if let Err(e) =
+                                persist_and_broadcast(&dump, &out_dir, &events, &library_identities)
+                            {
                                 tracing::warn!(error = %e, uid = %dump.uid_hex(), "nfc-scanner: post-dump handling failed");
                             }
                         }
@@ -484,11 +485,13 @@ fn persist_and_broadcast(
     dump: &SkyDump,
     out_dir: &Path,
     events: &broadcast::Sender<Event>,
-    library_identities: &std::collections::HashMap<skylander_core::TagIdentity, skylander_core::FigureId>,
+    library_identities: &std::collections::HashMap<
+        skylander_core::TagIdentity,
+        skylander_core::FigureId,
+    >,
 ) -> Result<()> {
     let path = out_dir.join(format!("{}.sky", dump.uid_hex()));
-    std::fs::write(&path, &dump.bytes)
-        .with_context(|| format!("write {}", path.display()))?;
+    std::fs::write(&path, &dump.bytes).with_context(|| format!("write {}", path.display()))?;
 
     // Parse identity fields — figure_id + variant are plaintext block 0,
     // always decodable. Nickname is encrypted-payload territory and can
@@ -516,9 +519,10 @@ fn persist_and_broadcast(
     // bits — pack masters store `variant=0x0000` while physical tags
     // include runtime state; raw matching would miss the collision.
     let tag_identity = match (figure_id, variant) {
-        (Some(fid), Some(var)) => {
-            Some(skylander_core::TagIdentity::new(fid, var.mask_to_identity()))
-        }
+        (Some(fid), Some(var)) => Some(skylander_core::TagIdentity::new(
+            fid,
+            var.mask_to_identity(),
+        )),
         _ => None,
     };
     let is_duplicate = tag_identity

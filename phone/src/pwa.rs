@@ -25,11 +25,7 @@ const DISMISS_KEY: &str = "skylander-pwa-hint-dismissed";
 
 /// Combined predicate: should the ProfilePicker render the install banner?
 /// Pure — the three inputs come from thin wrappers around `web_sys` below.
-pub(crate) fn should_show_hint(
-    is_ios_safari: bool,
-    is_standalone: bool,
-    dismissed: bool,
-) -> bool {
+pub(crate) fn should_show_hint(is_ios_safari: bool, is_standalone: bool, dismissed: bool) -> bool {
     is_ios_safari && !is_standalone && !dismissed
 }
 
@@ -45,8 +41,7 @@ pub(crate) fn should_show_hint(
 /// Safari-specific) shouldn't target them.
 pub(crate) fn classify_ua(user_agent: &str, is_touch_mac: bool) -> bool {
     let ua = user_agent.to_lowercase();
-    let is_ios_device =
-        ua.contains("iphone") || ua.contains("ipod") || ua.contains("ipad");
+    let is_ios_device = ua.contains("iphone") || ua.contains("ipod") || ua.contains("ipad");
     let is_ipad_pro_as_mac = ua.contains("macintosh") && is_touch_mac;
     let is_apple_mobile = is_ios_device || is_ipad_pro_as_mac;
     if !is_apple_mobile {

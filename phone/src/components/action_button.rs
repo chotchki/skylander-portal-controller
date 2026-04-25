@@ -83,9 +83,7 @@ pub fn ActionButton(
     let fired = RwSignal::new(false);
 
     let is_hold = hold_duration.is_some();
-    let hold_ms = hold_duration
-        .map(|d| d.as_millis() as u32)
-        .unwrap_or(1200);
+    let hold_ms = hold_duration.map(|d| d.as_millis() as u32).unwrap_or(1200);
 
     let class = move || {
         let mut cls = String::from("menu-action");

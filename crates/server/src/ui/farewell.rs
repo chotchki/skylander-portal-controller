@@ -57,8 +57,7 @@ pub(super) fn render(
     // FAREWELL_FADE after. Converted to a 0..=1 progress the alpha
     // curve multiplies against below.
     let fade_elapsed = elapsed.saturating_sub(FAREWELL_COUNTDOWN);
-    let fade_progress = (fade_elapsed.as_secs_f32() / FAREWELL_FADE.as_secs_f32())
-        .clamp(0.0, 1.0);
+    let fade_progress = (fade_elapsed.as_secs_f32() / FAREWELL_FADE.as_secs_f32()).clamp(0.0, 1.0);
 
     if fade_elapsed >= FAREWELL_FADE {
         tracing::info!("farewell fade complete — sending viewport close");
@@ -83,7 +82,10 @@ pub(super) fn render(
     } else {
         let phase = (elapsed.as_secs_f32() * std::f32::consts::TAU / BREATHE_PERIOD_S).sin();
         let t = (phase + 1.0) * 0.5; // 0..1
-        (1.0 + BREATHE_SCALE_AMP * phase, 1.0 - BREATHE_OPACITY_AMP + BREATHE_OPACITY_AMP * t)
+        (
+            1.0 + BREATHE_SCALE_AMP * phase,
+            1.0 - BREATHE_OPACITY_AMP + BREATHE_OPACITY_AMP * t,
+        )
     };
 
     let badge_scale = intro.badge_scale() * breathe_scale;

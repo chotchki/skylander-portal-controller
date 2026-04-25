@@ -105,8 +105,7 @@ impl SpikeApp {
         );
         let size = [img.width() as usize, img.height() as usize];
         let pixels = img.into_raw();
-        let color_image =
-            egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+        let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
         let handle = ctx.load_texture("qr_spike", color_image, egui::TextureOptions::NEAREST);
         self.texture = Some(handle);
         self.dirty = false;
@@ -133,7 +132,11 @@ impl eframe::App for SpikeApp {
                 ui.label("Variant");
                 let mut changed = false;
                 changed |= ui
-                    .radio_value(&mut self.variant, Variant::SquareControl, "A · Square (control)")
+                    .radio_value(
+                        &mut self.variant,
+                        Variant::SquareControl,
+                        "A · Square (control)",
+                    )
                     .changed();
                 changed |= ui
                     .radio_value(&mut self.variant, Variant::RoundWithGap, "B · Round w/ gap")
@@ -182,9 +185,7 @@ impl eframe::App for SpikeApp {
                     let tex_size = tex.size_vec2();
                     // Fit-to-panel scale, never upscale past 1:1 (noise/QR
                     // pixels look best at native resolution).
-                    let scale = (avail.x / tex_size.x)
-                        .min(avail.y / tex_size.y)
-                        .min(1.0);
+                    let scale = (avail.x / tex_size.x).min(avail.y / tex_size.y).min(1.0);
                     let display_size = tex_size * scale;
                     ui.centered_and_justified(|ui| {
                         ui.image((tex.id(), display_size));
@@ -196,21 +197,13 @@ impl eframe::App for SpikeApp {
 
 fn scan_hint(v: Variant, gap: u32) -> &'static str {
     match (v, gap) {
-        (Variant::SquareControl, _) => {
-            "Sanity check — should always scan."
-        }
+        (Variant::SquareControl, _) => "Sanity check — should always scan.",
         (Variant::RoundWithGap, g) if g >= 4 => {
             "Safest round form — full standard quiet zone preserved."
         }
-        (Variant::RoundWithGap, g) if g >= 2 => {
-            "Reduced quiet zone — most scanners still OK."
-        }
-        (Variant::RoundWithGap, _) => {
-            "Minimal/no quiet zone — riskier; iOS Camera may struggle."
-        }
-        (Variant::RoundNoGap, _) => {
-            "Noise touches QR data — relies on ECC H (~30%) to recover."
-        }
+        (Variant::RoundWithGap, g) if g >= 2 => "Reduced quiet zone — most scanners still OK.",
+        (Variant::RoundWithGap, _) => "Minimal/no quiet zone — riskier; iOS Camera may struggle.",
+        (Variant::RoundNoGap, _) => "Noise touches QR data — relies on ECC H (~30%) to recover.",
     }
 }
 

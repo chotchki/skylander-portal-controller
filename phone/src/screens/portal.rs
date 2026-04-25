@@ -64,10 +64,7 @@ pub(crate) fn Portal(
 /// mid-session, or the load event predates the phone's profile fetch) —
 /// the indicator is purely informational, so we'd rather render nothing
 /// than a stale/misleading chip.
-fn resolve_owner<'a>(
-    placed_by: &str,
-    profiles: &'a [PublicProfile],
-) -> Option<&'a PublicProfile> {
+fn resolve_owner<'a>(placed_by: &str, profiles: &'a [PublicProfile]) -> Option<&'a PublicProfile> {
     profiles.iter().find(|p| p.id == placed_by)
 }
 
@@ -104,7 +101,11 @@ fn SlotView(
             SlotState::Loaded { .. } => "p4-slot--loaded",
             SlotState::Error { .. } => "p4-slot--errored",
         };
-        let sel = if is_selected() { " p4-slot--selected" } else { "" };
+        let sel = if is_selected() {
+            " p4-slot--selected"
+        } else {
+            ""
+        };
         format!("{base} {state}{sel}")
     };
 
