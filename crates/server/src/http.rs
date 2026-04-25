@@ -1047,6 +1047,37 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
         }
     }
 
+    // PLAN 4.20.x — pre-set the primary display mode if we've captured
+    // one for this serial on a prior boot. RPCS3's launch sequence
+    // requests the game's preferred resolution mid-boot, which on
+    // mismatched-desktop displays triggers a mode flicker that masks
+    // egui-side animations (Chris 2026-04-24). With the mode already
+    // matching what RPCS3 wants, the boot stays at one resolution and
+    // the launcher's animations survive.
+    match state.profiles.get_display_mode(body.serial.as_str()).await {
+        Ok(Some(mode)) => {
+            let was_set = crate::display_mode::try_set(mode);
+            info!(
+                serial = %body.serial.as_str(),
+                ?mode,
+                was_set,
+                "pre-set display mode from saved per-game preference",
+            );
+        }
+        Ok(None) => {
+            info!(
+                serial = %body.serial.as_str(),
+                "no saved display mode — first launch, will capture after boot",
+            );
+        }
+        Err(e) => {
+            warn!(
+                serial = %body.serial.as_str(),
+                "display mode lookup failed: {e}; proceeding without pre-set",
+            );
+        }
+    }
+
     let (tx, rx) = tokio::sync::oneshot::channel();
     if let Err(e) = state
         .driver_tx
@@ -1131,6 +1162,84 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
 
     let _ = state.events.send(Event::GameChanged {
         current: Some(launched),
+    });
+
+    // PLAN 4.20.x — capture the display mode after the first
+    // skylander hits the portal. Earlier we used `game_playable + 2s`
+    // but Trap Team (and likely others) don't surface clean shader-
+    // compile state, so `game_playable` can fire mid-boot at the
+    // wrong resolution. The first portal load is a more stable
+    // signal: the user is actively playing, RPCS3 is rendering a
+    // gameplay frame, and the display mode has settled into whatever
+    // the game is going to use. Run detached so the launch handler
+    // returns immediately.
+    let capture_state = state.clone();
+    let capture_serial = body.serial.as_str().to_string();
+    tokio::spawn(async move {
+        use skylander_core::SlotState;
+        // Wait up to 5 minutes for the first portal load. Skylanders
+        // games gate the portal slot until the player gets through
+        // the intro / demands a figure on the portal — varies by
+        // game, but 5 min covers everything Chris's family hits.
+        let deadline = std::time::Instant::now() + Duration::from_secs(300);
+        loop {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            if std::time::Instant::now() > deadline {
+                info!(
+                    serial = %capture_serial,
+                    "display mode capture skipped — no portal load within 5 min",
+                );
+                return;
+            }
+            // current_game cleared (quit/switch) → bail.
+            let still_running = capture_state
+                .launcher_status
+                .lock()
+                .map(|s| s.current_game.is_some())
+                .unwrap_or(false);
+            if !still_running {
+                info!(
+                    serial = %capture_serial,
+                    "display mode capture aborted — game ended before first load",
+                );
+                return;
+            }
+            // Any slot occupied → first load has happened, capture now.
+            let any_loaded = {
+                let portal = capture_state.portal.lock().await;
+                portal.iter().any(|s| matches!(s, SlotState::Loaded { .. }))
+            };
+            if any_loaded {
+                break;
+            }
+        }
+        // Tiny settle so the game's display mode has fully stabilised
+        // after the first frame of "loaded figure on portal" finishes
+        // rendering. 200ms covers a handful of frames at the worst-
+        // case 30Hz.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        match crate::display_mode::get_current() {
+            Ok(Some(mode)) => {
+                if let Err(e) = capture_state
+                    .profiles
+                    .save_display_mode(&capture_serial, mode)
+                    .await
+                {
+                    warn!(serial = %capture_serial, ?mode, "save_display_mode failed: {e}");
+                } else {
+                    info!(serial = %capture_serial, ?mode, "captured display mode for next launch");
+                }
+            }
+            Ok(None) => {
+                info!(
+                    serial = %capture_serial,
+                    "EnumDisplaySettings returned no mode — capture skipped",
+                );
+            }
+            Err(e) => {
+                warn!(serial = %capture_serial, "display mode read failed: {e}");
+            }
+        }
     });
 
     (StatusCode::ACCEPTED, "launched").into_response()
@@ -1347,55 +1456,80 @@ async fn quit_game(
 async fn shutdown_launcher(State(state): State<Arc<AppState>>, Signed(_body): Signed) -> Response {
     info!("shutdown requested via /api/shutdown");
 
-    // Step 1: stop the current game if any. Brief timeout since we're
-    // on the way out — don't block the shutdown on a wedged UIA call.
-    let has_game = {
-        let guard = state.rpcs3.lock().await;
-        guard.current.is_some()
-    };
-    if has_game {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        if state
-            .driver_tx
-            .send(crate::state::DriverJob::StopEmulation {
-                timeout: Duration::from_secs(5),
-                done: tx,
-            })
-            .await
-            .is_ok()
-        {
-            match rx.await {
-                Ok(Ok(())) => info!("shutdown: stop_emulation ok"),
-                Ok(Err(e)) => warn!("shutdown: stop_emulation failed: {e}"),
-                Err(e) => warn!("shutdown: StopEmulation ack dropped: {e}"),
-            }
-        }
-        let mut guard = state.rpcs3.lock().await;
-        guard.current = None;
-    }
-
-    // Step 2: graceful RPCS3 exit. Take the process so the crash
-    // watchdog doesn't see it die and try to respawn.
-    let process = state.rpcs3.lock().await.process.take();
-    if let Some(mut proc) = process {
-        let result = tokio::task::spawn_blocking(move || {
-            proc.shutdown_graceful(Duration::from_secs(5))
-        })
-        .await;
-        match result {
-            Ok(Ok(path)) => info!(?path, "shutdown: RPCS3 exited"),
-            Ok(Err(e)) => warn!("shutdown: RPCS3 shutdown errored: {e}"),
-            Err(e) => warn!("shutdown: RPCS3 shutdown task panicked: {e}"),
-        }
-    }
-
-    // Step 3: flip the launcher to Farewell. eframe's countdown fires
-    // ViewportCommand::Close when it hits zero.
+    // Flip screen to Farewell IMMEDIATELY, before touching RPCS3. Why:
+    // during in-game the launcher paints a transparent CentralPanel so
+    // RPCS3 shows through. If we kill RPCS3 first the user sees a frame
+    // of desktop before the Farewell render takes over (Chris 2026-04-
+    // 24). Flipping to Farewell first routes the dispatcher to the
+    // Farewell arm, which paints the dark-iris + GOODBYE badge over
+    // the still-running game — RPCS3 dies BENEATH the cover, invisible
+    // to the user.
     if let Ok(mut st) = state.launcher_status.lock() {
         st.screen = crate::state::LauncherScreen::Farewell;
-        st.rpcs3_running = false;
-        st.current_game = None;
     }
+
+    // Everything else is detached so the HTTP handler returns 202 to
+    // the phone *now*. The Farewell countdown fires `ViewportCommand::
+    // Close` ~3.8s later, which tears down the axum server too — if
+    // this handler were still awaiting the stop + graceful-exit dance
+    // at that point, the in-flight response gets cut and the phone
+    // renders a "shutdown failed" toast even though the launcher
+    // actually did shut down. Phone wants a fast ACK; the teardown
+    // proceeds on its own timeline.
+    let detached_state = state.clone();
+    tokio::spawn(async move {
+        // Give the iris-wipe close animation time to complete before
+        // we start killing RPCS3. The display-mode flip back to
+        // desktop res when the process dies drops frames and
+        // obliterates any in-flight close animation — waiting 1.2s
+        // lets the ~1s close (with its 200ms lead-in lag) settle
+        // into a fully-dark screen before the mode flip hits.
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+
+        let has_game = {
+            let guard = detached_state.rpcs3.lock().await;
+            guard.current.is_some()
+        };
+        if has_game {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            if detached_state
+                .driver_tx
+                .send(crate::state::DriverJob::StopEmulation {
+                    timeout: Duration::from_secs(5),
+                    done: tx,
+                })
+                .await
+                .is_ok()
+            {
+                match rx.await {
+                    Ok(Ok(())) => info!("shutdown: stop_emulation ok"),
+                    Ok(Err(e)) => warn!("shutdown: stop_emulation failed: {e}"),
+                    Err(e) => warn!("shutdown: StopEmulation ack dropped: {e}"),
+                }
+            }
+            let mut guard = detached_state.rpcs3.lock().await;
+            guard.current = None;
+        }
+
+        let process = detached_state.rpcs3.lock().await.process.take();
+        if let Some(mut proc) = process {
+            let result = tokio::task::spawn_blocking(move || {
+                proc.shutdown_graceful(Duration::from_secs(5))
+            })
+            .await;
+            match result {
+                Ok(Ok(path)) => info!(?path, "shutdown: RPCS3 exited"),
+                Ok(Err(e)) => warn!("shutdown: RPCS3 shutdown errored: {e}"),
+                Err(e) => warn!("shutdown: RPCS3 shutdown task panicked: {e}"),
+            }
+        }
+
+        if let Ok(mut st) = detached_state.launcher_status.lock() {
+            st.rpcs3_running = false;
+            st.current_game = None;
+        }
+    });
+
     (StatusCode::ACCEPTED, "farewell").into_response()
 }
 

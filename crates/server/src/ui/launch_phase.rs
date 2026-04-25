@@ -3,14 +3,13 @@
 //!
 //! Phases the launcher cycles through:
 //!
-//!   - **Startup** — calm starfield only. No vortex iris, no badge.
-//!     Brief hold so the launcher reads as "waking up".
 //!   - **IntroTransitioning** — vortex iris reveals from centre, badge
 //!     spins in like a coin tipping flat, text fades in late so it
-//!     isn't illegible mid-rotation. Heavy overlap (Chris 2026-04-19):
-//!     the iris reveal leads, the badge spin starts at ~40%, the text
-//!     fade-in starts at ~70%. Reads as one fluid motion rather than
-//!     three sequential beats.
+//!     isn't illegible mid-rotation. Begins at app mount: before
+//!     2026-04-24 there was a 1s "calm starfield only" Startup beat
+//!     with a separate heraldic "STARTING" title; that title folded
+//!     into the card's `BackFace::Starting` so the intro now begins
+//!     immediately and the user sees one continuous spin-up.
 //!   - **AwaitingConnect** — steady state. Vortex parked at 1.5, badge
 //!     face-on, text full opacity.
 //!   - **ClosingToInGame** — triggered when RPCS3 starts. Reverse
@@ -25,7 +24,6 @@
 //! one place — adjust the windows here and the renderer picks it up
 //! without further edits.
 
-const STARTUP_HOLD_S: f32 = 1.0;
 const INTRO_TRANSITION_S: f32 = 1.8;
 const CLOSE_TRANSITION_S: f32 = 1.0;
 
@@ -36,16 +34,13 @@ pub(crate) const IRIS_FULL: f32 = 1.5;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum LaunchPhase {
-    Startup,
     IntroTransitioning { progress: f32 },
     AwaitingConnect,
     ClosingToInGame { progress: f32 },
     /// Returning to the launcher after an in-game session ended. Plays
     /// the same iris-reveal + badge spin-in curves as
-    /// IntroTransitioning, but `brand_intro_alpha` stays 0 — the user
-    /// already knows the launcher, so re-flashing "STARTING" would be
-    /// weird. Driven by the dispatcher's `returning_from_game_at`
-    /// timestamp.
+    /// IntroTransitioning. Driven by the dispatcher's
+    /// `returning_from_game_at` timestamp.
     ReturnFromGame { progress: f32 },
 }
 
@@ -84,22 +79,16 @@ impl LaunchPhase {
         if has_activity {
             return Self::AwaitingConnect;
         }
-        if elapsed_s < STARTUP_HOLD_S {
-            return Self::Startup;
-        }
-        let intro_end = STARTUP_HOLD_S + INTRO_TRANSITION_S;
-        if elapsed_s >= intro_end {
+        if elapsed_s >= INTRO_TRANSITION_S {
             return Self::AwaitingConnect;
         }
-        let progress =
-            ((elapsed_s - STARTUP_HOLD_S) / INTRO_TRANSITION_S).clamp(0.0, 1.0);
+        let progress = (elapsed_s / INTRO_TRANSITION_S).clamp(0.0, 1.0);
         Self::IntroTransitioning { progress }
     }
 
     /// Iris radius the vortex should render with this frame.
     pub(crate) fn iris_radius(self) -> f32 {
         match self {
-            Self::Startup => 0.0,
             Self::IntroTransitioning { progress } | Self::ReturnFromGame { progress } => {
                 // Ease-out cubic — fast at first, gentle landing.
                 IRIS_FULL * ease_out_cubic(progress)
@@ -132,7 +121,6 @@ impl LaunchPhase {
     pub(crate) fn badge_scale(self) -> f32 {
         use std::f32::consts::FRAC_PI_2;
         match self {
-            Self::Startup => 0.0,
             Self::IntroTransitioning { progress } | Self::ReturnFromGame { progress } => {
                 // Spin starts 20% into intro, lands at 100%.
                 let p = ((progress - 0.2) / 0.8).clamp(0.0, 1.0);
@@ -161,7 +149,6 @@ impl LaunchPhase {
     /// drops to 0 before it reaches the line-shaped phase.
     pub(crate) fn badge_alpha(self) -> f32 {
         let in_window = match self {
-            Self::Startup => 0.0,
             Self::IntroTransitioning { progress } | Self::ReturnFromGame { progress } => {
                 ((progress - 0.2) / 0.6).clamp(0.0, 1.0)
             }
@@ -183,7 +170,6 @@ impl LaunchPhase {
     /// out blank.
     pub(crate) fn badge_text_alpha(self) -> f32 {
         match self {
-            Self::Startup => 0.0,
             Self::IntroTransitioning { progress } | Self::ReturnFromGame { progress } => {
                 ((progress - 0.5) / 0.5).clamp(0.0, 1.0)
             }
@@ -191,34 +177,6 @@ impl LaunchPhase {
             Self::ClosingToInGame { progress } => {
                 (1.0 - progress / 0.4).clamp(0.0, 1.0)
             }
-        }
-    }
-
-    /// Whether the main content layer (heading + QR + status strip +
-    /// orbit pips) should render this frame at all. Hidden during
-    /// Startup so the calm starfield stands alone; everything else
-    /// renders, with individual elements scaled/faded by the methods
-    /// above.
-    pub(crate) fn shows_main_content(self) -> bool {
-        !matches!(self, Self::Startup)
-    }
-
-    /// Alpha for the "STARTING" brand-intro title. Full opacity
-    /// during Startup, fades to 0 across the first 30% of the intro
-    /// transition so the title hands off smoothly to the main
-    /// content (badge + label) instead of snapping out the moment
-    /// the iris begins to grow. Without this the user sees a hard
-    /// pop when shows_main_content flips — Chris flagged 2026-04-19.
-    pub(crate) fn brand_intro_alpha(self) -> f32 {
-        match self {
-            Self::Startup => 1.0,
-            Self::IntroTransitioning { progress } => {
-                (1.0 - progress / 0.3).clamp(0.0, 1.0)
-            }
-            // ReturnFromGame deliberately omitted — the user already
-            // knows the launcher, the "STARTING" brand intro would
-            // be jarring on return from a game session.
-            _ => 0.0,
         }
     }
 
@@ -315,14 +273,11 @@ mod tests {
     }
 
     #[test]
-    fn fresh_boot_starts_in_startup() {
-        assert_eq!(LaunchPhase::compute(0.0, None, None, false), LaunchPhase::Startup);
-        assert_eq!(LaunchPhase::compute(0.5, None, None, false), LaunchPhase::Startup);
-    }
-
-    #[test]
-    fn startup_hold_boundary_enters_intro() {
-        match LaunchPhase::compute(STARTUP_HOLD_S, None, None, false) {
+    fn fresh_boot_starts_in_intro_transitioning() {
+        // After the Startup pre-beat was retired (STARTING folded into
+        // the card back-face), the app boots straight into the intro
+        // spin-up at progress 0.
+        match LaunchPhase::compute(0.0, None, None, false) {
             LaunchPhase::IntroTransitioning { progress } => assert!(approx(progress, 0.0)),
             other => panic!("expected IntroTransitioning, got {other:?}"),
         }
@@ -330,7 +285,7 @@ mod tests {
 
     #[test]
     fn intro_progress_interpolates_linearly() {
-        let mid = STARTUP_HOLD_S + INTRO_TRANSITION_S * 0.5;
+        let mid = INTRO_TRANSITION_S * 0.5;
         match LaunchPhase::compute(mid, None, None, false) {
             LaunchPhase::IntroTransitioning { progress } => assert!(approx(progress, 0.5)),
             other => panic!("expected IntroTransitioning, got {other:?}"),
@@ -339,9 +294,8 @@ mod tests {
 
     #[test]
     fn intro_end_lands_in_awaiting_connect() {
-        let end = STARTUP_HOLD_S + INTRO_TRANSITION_S;
         assert_eq!(
-            LaunchPhase::compute(end, None, None, false),
+            LaunchPhase::compute(INTRO_TRANSITION_S, None, None, false),
             LaunchPhase::AwaitingConnect
         );
     }
@@ -374,7 +328,6 @@ mod tests {
 
     #[test]
     fn iris_radius_progresses_with_phase() {
-        assert!(approx(LaunchPhase::Startup.iris_radius(), 0.0));
         assert!(approx(
             LaunchPhase::IntroTransitioning { progress: 0.0 }.iris_radius(),
             0.0
@@ -396,7 +349,10 @@ mod tests {
 
     #[test]
     fn iris_mode_flips_during_close() {
-        assert_eq!(LaunchPhase::Startup.iris_mode(), IrisMode::Reveal);
+        assert_eq!(
+            LaunchPhase::IntroTransitioning { progress: 0.5 }.iris_mode(),
+            IrisMode::Reveal,
+        );
         assert_eq!(LaunchPhase::AwaitingConnect.iris_mode(), IrisMode::Reveal);
         assert_eq!(
             LaunchPhase::ClosingToInGame { progress: 0.5 }.iris_mode(),
@@ -440,7 +396,6 @@ mod tests {
 
     #[test]
     fn close_complete_only_at_progress_one() {
-        assert!(!LaunchPhase::Startup.close_complete());
         assert!(!LaunchPhase::AwaitingConnect.close_complete());
         assert!(!LaunchPhase::ClosingToInGame { progress: 0.5 }.close_complete());
         assert!(!LaunchPhase::ClosingToInGame { progress: 0.99 }.close_complete());
@@ -451,7 +406,7 @@ mod tests {
     fn iris_radius_monotonic_across_intro() {
         let mut prev = -1.0;
         let mut t = 0.0;
-        while t <= STARTUP_HOLD_S + INTRO_TRANSITION_S + 0.1 {
+        while t <= INTRO_TRANSITION_S + 0.1 {
             let now = LaunchPhase::compute(t, None, None, false).iris_radius();
             assert!(
                 now >= prev - 1e-5,
@@ -460,13 +415,5 @@ mod tests {
             prev = now;
             t += 0.05;
         }
-    }
-
-    #[test]
-    fn main_content_hidden_only_in_startup() {
-        assert!(!LaunchPhase::Startup.shows_main_content());
-        assert!(LaunchPhase::IntroTransitioning { progress: 0.0 }.shows_main_content());
-        assert!(LaunchPhase::AwaitingConnect.shows_main_content());
-        assert!(LaunchPhase::ClosingToInGame { progress: 0.0 }.shows_main_content());
     }
 }

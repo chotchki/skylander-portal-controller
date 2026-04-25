@@ -308,7 +308,21 @@ impl eframe::App for LauncherApp {
             .returning_from_game_at
             .map(|t| t.elapsed().as_secs_f32());
 
-        let launch_phase = if matches!(status_snapshot.screen, LauncherScreen::Main) {
+        // Farewell drives its iris-wipe close through the same
+        // `ClosingToInGame { progress }` timeline the Main branch uses,
+        // just fed by `close_timers.shutdown_at` instead of `in_game_at`.
+        // Without this, the Farewell branch would land on
+        // AwaitingConnect below (iris pinned at IRIS_FULL) and the
+        // `IRIS_FULL - iris_radius()` vortex override would produce a
+        // static 0 — no visible close.
+        let launch_phase = if matches!(status_snapshot.screen, LauncherScreen::Farewell) {
+            LaunchPhase::compute(
+                self.started.elapsed().as_secs_f32(),
+                closing_elapsed_s,
+                None,
+                false,
+            )
+        } else if matches!(status_snapshot.screen, LauncherScreen::Main) {
             // PLAN 4.15.16 regression fix: `has_activity` used to read
             // `rpcs3_running || clients > 0`, but under the always-
             // running RPCS3 contract rpcs3_running is true from the
@@ -320,15 +334,18 @@ impl eframe::App for LauncherApp {
             // game booted or a phone connected.
             let has_activity =
                 status_snapshot.current_game.is_some() || self.clients.load(Ordering::Relaxed) > 0;
-            // Phase elapsed measured from server-ready, not from app
-            // mount. Before the server is ready, phase_elapsed_s is 0
-            // so LaunchPhase::compute returns Startup (calm starfield
-            // + brand intro). The intro animations only kick off
-            // STARTUP_HOLD_S after the server confirms healthy.
-            let phase_elapsed_s = self
-                .server_ready_at
-                .map(|t| t.elapsed().as_secs_f32())
-                .unwrap_or(0.0);
+            // Phase elapsed measured from app mount. 2026-04-24 — the
+            // prior timeline used `server_ready_at` as the clock base
+            // so the intro animations only began once the server was
+            // healthy (indexer + driver + axum bind complete). Once the
+            // STARTING heraldic title was folded into the card's
+            // `BackFace::Starting`, that gate moved: the intro spins up
+            // immediately at app mount showing Starting on the card,
+            // and the back-face flips to QR/etc. once `server_ready`
+            // fires (see main_screen.rs back_face selection). That way
+            // the user gets visible motion during the entire server-
+            // boot window instead of a static starfield.
+            let phase_elapsed_s = self.started.elapsed().as_secs_f32();
             // 2026-04-24 — PLAN 4.15.9 used to override the natural
             // phase to `ClosingToInGame { progress: 1.0 }` while
             // `switching` was set, pinning the iris fully closed so
@@ -474,18 +491,7 @@ impl eframe::App for LauncherApp {
                 (LauncherScreen::Crashed { .. }, true) => screen_intro.iris_radius(),
                 _ => launch_phase.iris_radius(),
             };
-            // Iris mode override: Farewell stays in DarkHole forever.
-            // During the close animation `LaunchPhase::ClosingToInGame`
-            // already returns DarkHole, but once close completes the
-            // phase resolves to AwaitingConnect (Reveal) and would
-            // re-show the vortex underneath the farewell card. Pin
-            // it to DarkHole so the dark-iris backdrop persists
-            // through the countdown and the actual ViewportCommand::
-            // Close that ends the launcher.
-            vortex_params.iris_mode = match status_snapshot.screen {
-                LauncherScreen::Farewell => vortex::IrisMode::DarkHole,
-                _ => launch_phase.iris_mode(),
-            };
+            vortex_params.iris_mode = launch_phase.iris_mode();
             vortex_params.star_brightness = 0.0;
             // Add the preset's `time_offset` to the launcher's
             // elapsed time so the very first frame's `u_time`
@@ -515,43 +521,16 @@ impl eframe::App for LauncherApp {
             // Layer 3: per-screen content.
             match &status_snapshot.screen {
                 LauncherScreen::Main => {
-                    // Both layers can render in the same frame during
-                    // the intro hand-off: main content fades in via
-                    // its own per-element alpha curves while the
-                    // brand intro fades out via `brand_intro_alpha`.
-                    // Painting the brand AFTER main content puts the
-                    // title on top during the early intro window
-                    // when both are visible — the title is the focal
-                    // element until ~30% into the transition.
-                    //
-                    // 2026-04-24 — the prior `switching` branch here
-                    // painted a bare "SWITCHING GAMES" heading over a
-                    // closed-iris void. Now switching is a QR-card
-                    // back-face alongside Loading, so the normal
-                    // render_main path carries it — card flip + halos
-                    // bridge the outgoing→incoming game transition
-                    // without a separate render surface.
-                    if launch_phase.shows_main_content() {
-                        self.render_main(ui, ctx, &status_snapshot, launch_phase);
-                    }
-                    let brand_alpha = launch_phase.brand_intro_alpha();
-                    // Gentle breathing during the Startup hold so the TV
-                    // reads as "alive, waiting" rather than frozen — the
-                    // server-boot window (RPCS3 spawn + menu nav) can
-                    // stretch 10s+ with only the static "STARTING" title
-                    // painted. Cosine so it eases at both ends; 2s period,
-                    // 55→100% of the phase-driven alpha. Restricted to
-                    // Startup so the intro cross-fade hand-off isn't
-                    // disrupted.
-                    let brand_alpha = if matches!(launch_phase, LaunchPhase::Startup) {
-                        let pulse = 0.5 - 0.5 * (time_s * std::f32::consts::PI).cos();
-                        brand_alpha * (0.55 + 0.45 * pulse)
-                    } else {
-                        brand_alpha
-                    };
-                    if brand_alpha > 0.001 {
-                        self.render_brand_intro(ui, brand_alpha);
-                    }
+                    // 2026-04-24 — two prior special cases retired from
+                    // this branch as part of the ring-badge standard-
+                    // isation:
+                    //   1. The `switching` heading was folded into the
+                    //      card's `BackFace::Switching` (halo spin).
+                    //   2. The heraldic `STARTING` brand intro title
+                    //      was folded into `BackFace::Starting`.
+                    // `render_main` owns the whole centre layout now;
+                    // the back-face carries every non-QR state.
+                    self.render_main(ui, ctx, &status_snapshot, launch_phase);
                 }
                 LauncherScreen::Crashed { message } => {
                     crashed::render(ui, &self.status, message, screen_intro);

@@ -2,6 +2,7 @@
 //! integration tests under `tests/` import what they need directly.
 
 pub mod config;
+pub mod display_mode;
 pub mod fonts;
 pub mod http;
 pub mod logging;

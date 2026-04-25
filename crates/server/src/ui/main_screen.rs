@@ -74,36 +74,6 @@ const SCREEN_RIM_PX: f32 = 14.0;
 const QR_NOISE_GAP_MODULES: u32 = 2;
 
 impl LauncherApp {
-    /// Render the gold "STARTING" title, centred on the panel. Used by
-    /// the launcher Startup beat (PLAN 4.19.2a) to give the calm-starfield
-    /// window a focal element — without it the screen reads as broken for
-    /// the first second(s). The copy matches the spec's "state title"
-    /// pattern (§3.1 state 1 reads as the launcher waking up); the full
-    /// Main surface (QR + status + orbit pips) takes over after the
-    /// transition completes.
-    ///
-    /// Painted via direct `Painter::text` calls (not `ui.heading`) so the
-    /// embossed shadow stack + outer glow can land — `RichText` only
-    /// supports a single solid colour, which produced the flat sticker
-    /// look Chris flagged 2026-04-19. See `paint_heraldic_title`.
-    pub(super) fn render_brand_intro(&self, ui: &mut egui::Ui, alpha: f32) {
-        let rect = ui.max_rect();
-        let pos = egui::pos2(rect.center().x, rect.top() + rect.height() * 0.5);
-        // Spec §3.7 calls 96px the "TV display hero" floor for state
-        // titles. The mock's actual rendered title is visibly larger —
-        // takes ~50% of panel width vs ours at 25%. Bumped to 140px to
-        // match the mock's on-screen presence (Chris's screenshot
-        // 2026-04-19). render_main's "SKYLANDER PORTAL" steady-state
-        // title is a separate drift item (4.19.19) still on 80px.
-        //
-        // `alpha` lets the dispatcher cross-fade the title against
-        // the main content layer during the intro reveal so the
-        // hand-off doesn't pop. paint_heraldic_title early-exits at
-        // alpha≈0 so we don't burn the text-layout cost when faded
-        // out.
-        paint_heraldic_title(ui.painter(), pos, "STARTING", palette::HERO_INTRO, alpha);
-    }
-
     /// Render the Main surface. Called from the top-level dispatcher in
     /// [`super`] when `LauncherStatus::screen == LauncherScreen::Main`
     /// AND no game is running (game-running flips to `in_game::render`
@@ -150,15 +120,23 @@ impl LauncherApp {
             ui.add_space(((avail - CARD_SIZE) * 0.5).max(24.0));
 
             // Decide which face the centre card should show this frame.
-            // Precedence: Switching > Loading > MaxPlayers. Switching
-            // outranks Loading because the flag is only set between
-            // /api/quit?switch=true and the next /api/launch clearing
-            // it; during that window `loading_game` is still the
-            // previous (now-quit) game and would read wrong. Loading
-            // then takes priority over MaxPlayers — if the user picked
-            // a game while the session count happens to be saturated,
-            // the loading state is the more useful signal.
-            let back_face = if status_snapshot.switching {
+            // Precedence: Starting > Switching > Loading > MaxPlayers >
+            // QR front.
+            //   - Starting outranks everything: while the server is
+            //     booting (indexer, driver warmup, axum bind) no other
+            //     state is meaningful and flipping in/out of Starting
+            //     would read as noise.
+            //   - Switching outranks Loading because the flag is only
+            //     set between /api/quit?switch=true and the next
+            //     /api/launch clearing it; during that window
+            //     `loading_game` is still the previous (now-quit) game
+            //     and would read wrong.
+            //   - Loading outranks MaxPlayers — if the user picked a
+            //     game while the session count happens to be saturated,
+            //     the loading state is the more useful signal.
+            let back_face = if !status_snapshot.server_ready {
+                Some(BackFace::Starting)
+            } else if status_snapshot.switching {
                 Some(BackFace::Switching)
             } else if status_snapshot.loading_game.is_some() {
                 Some(BackFace::Loading)
@@ -183,10 +161,15 @@ impl LauncherApp {
                     launch_phase.badge_alpha(),
                     launch_phase.badge_text_alpha(),
                 );
-                // Loading needs continuous frames for the rotating
-                // halos; egui is lazy by default and would only
-                // repaint on input.
-                if matches!(back_face, Some(BackFace::Loading)) {
+                // Any halo-spinning face needs continuous frames; egui
+                // is lazy by default and would only repaint on input.
+                // The launcher's outer update loop already hits 60fps,
+                // so this is defensive — safe to leave in case the
+                // outer loop is ever gated.
+                if matches!(
+                    back_face,
+                    Some(BackFace::Starting | BackFace::Loading | BackFace::Switching),
+                ) {
                     ctx.request_repaint_after(std::time::Duration::from_millis(16));
                 }
             }
@@ -200,6 +183,9 @@ impl LauncherApp {
             // existing fifth-player-please-wait copy is implicit in
             // the back-face card itself.
             let subtitle: &str = match (back_face, status_snapshot.loading_game.as_deref()) {
+                // Starting: subtitle lane is empty for now — the big
+                // halo-spinning "STARTING" word carries the message.
+                (Some(BackFace::Starting), _) => "",
                 // Switching bridges two games — the phone hasn't picked
                 // the next one yet, so there's no game name to show. A
                 // bare "CHOOSE YOUR NEXT ADVENTURE" hint reads better
@@ -266,6 +252,11 @@ impl LauncherApp {
 /// picks what's actually painted on the back side.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum BackFace {
+    /// "STARTING" — server is booting (indexer, driver warmup, axum
+    /// bind). Halo-spinning same as Loading so the transition from
+    /// Starting → Loading (picked a game) / Starting → QR (ready to
+    /// scan) stays a continuous spin rather than a card flip.
+    Starting,
     /// "MAXIMUM PLAYERS REACHED" — session count is at MAX_SESSIONS.
     MaxPlayers,
     /// "LOADING" — RPCS3 is spawning + UIA-booting the picked game.
@@ -276,6 +267,18 @@ pub(super) enum BackFace {
     /// Loading (same halos) so the loading→switching→loading handoff
     /// reads as one continuous spin rather than card flips in and out.
     Switching,
+    /// "GOODBYE" — shutdown in progress. Iris pins to DarkHole behind
+    /// this face; the launcher closes its viewport once the
+    /// farewell_started_at countdown elapses.
+    Farewell,
+    /// "SOMETHING WENT WRONG" — RPCS3 crashed or failed to stay alive.
+    /// Caller paints the diagnostic message as a separate overlay
+    /// below the card; the card itself just carries the state title.
+    Crashed,
+    /// "SERVER FAILED TO START" — infrastructure error before the
+    /// server finished booting (port busy, DB corrupt, etc.). Caller
+    /// paints the error message as a separate overlay below the card.
+    ServerError,
 }
 
 /// Card-flip container (PLAN 4.15.6). Reserves a `CARD_SIZE × CARD_SIZE`
@@ -343,24 +346,30 @@ fn qr_card_flip(
         // simpler to just default to MaxPlayers; the next frame will
         // pick the right side.
         let lines: &[&str] = match back_face.unwrap_or(BackFace::MaxPlayers) {
+            BackFace::Starting => &["STARTING"],
             // PLAN 4.19.9 — spec copy is "PORTAL IS FULL"; previously
             // "MAXIMUM PLAYERS REACHED". Shorter line reads better at
             // TV distance.
             BackFace::MaxPlayers => &["PORTAL", "IS", "FULL"],
             BackFace::Loading => &["LOADING"],
             BackFace::Switching => &["SWITCHING", "GAMES"],
+            BackFace::Farewell => &["GOODBYE"],
+            BackFace::Crashed => &["SOMETHING", "WENT", "WRONG"],
+            BackFace::ServerError => &["SERVER", "FAILED", "TO START"],
         };
         paint_titled_card(painter, inner, lines, bezel_alpha, content_alpha);
-        // Loading + Switching faces get two rotating halos around the
-        // bezel rim — same look as `mocks/transitions.html`'s
-        // `.state-loading` (slow outer halo + fast inner halo, both
-        // gold conic gradients sweeping around the badge). The badge
-        // content itself stays static; rotation lives in the halos so
-        // the word stays readable. Sharing the halos between the two
-        // states keeps the loading→switching→loading handoff reading
-        // as one continuous spin.
-        if matches!(back_face, Some(BackFace::Loading | BackFace::Switching))
-            && bezel_alpha > 0.001
+        // "Waiting" faces (Starting / Loading / Switching) get two
+        // rotating halos around the bezel rim — same look as
+        // `mocks/transitions.html`'s `.state-loading` (slow outer halo
+        // + fast inner halo, both gold conic gradients sweeping around
+        // the badge). The badge content itself stays static; rotation
+        // lives in the halos so the word stays readable. Sharing the
+        // halos across Starting → Loading → Switching keeps their
+        // transitions reading as one continuous spin.
+        if matches!(
+            back_face,
+            Some(BackFace::Starting | BackFace::Loading | BackFace::Switching),
+        ) && bezel_alpha > 0.001
             && inner.width() >= 1.0
         {
             paint_loading_halos(painter, inner, ctx.input(|i| i.time) as f32, bezel_alpha);

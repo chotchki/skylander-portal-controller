@@ -490,6 +490,59 @@ impl ProfileStore {
         };
         Ok(verify_hash(pin, &row.pin_hash))
     }
+
+    // ---- Display-mode persistence (PLAN 4.20.x) ---------------------
+    //
+    // Per-game preferred display mode, captured after each successful
+    // boot stabilises. Read on the next launch so the launcher can
+    // pre-set Windows' primary display BEFORE spawning RPCS3 — keeps
+    // the boot from triggering a display-mode flicker that would
+    // mask egui-side animations.
+
+    /// Look up the saved mode for a game serial. `None` if we've
+    /// never captured a mode for this serial yet (first launch).
+    pub async fn get_display_mode(
+        &self,
+        serial: &str,
+    ) -> Result<Option<crate::display_mode::DisplayMode>> {
+        let row: Option<(i64, i64, i64)> = sqlx::query_as(
+            "SELECT width, height, refresh_hz FROM game_display_modes WHERE serial = ?1",
+        )
+        .bind(serial)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|(w, h, r)| crate::display_mode::DisplayMode {
+            width: w as u32,
+            height: h as u32,
+            refresh_hz: r as u32,
+        }))
+    }
+
+    /// Save (or overwrite) the captured mode for a serial.
+    pub async fn save_display_mode(
+        &self,
+        serial: &str,
+        mode: crate::display_mode::DisplayMode,
+    ) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO game_display_modes (serial, width, height, refresh_hz, captured_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5) \
+             ON CONFLICT (serial) DO UPDATE SET \
+                width = excluded.width, \
+                height = excluded.height, \
+                refresh_hz = excluded.refresh_hz, \
+                captured_at = excluded.captured_at",
+        )
+        .bind(serial)
+        .bind(mode.width as i64)
+        .bind(mode.height as i64)
+        .bind(mode.refresh_hz as i64)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
 }
 
 // ---- Argon2 helpers -------------------------------------------------------
