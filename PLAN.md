@@ -236,10 +236,111 @@ figure lands and push the arrow hint down.
   exe → publish.
 
 ## Phase 9 Items
-- [ ] 9.1 - Add MacOS support
-- [ ] 9.2 - Add fully automated e2e testing since we can run it all on a Mac
-- [ ] 9.3 - Spike evaluate a frontend component framework to make the app.css more reasonable
-- [ ] 9.4 - Optimize ipad and iphone layouts
+
+### 9.x Tailwind v4 migration (phone CSS rewrite)
+Today: ~3000-line monolithic `phone/assets/app.css` with active visual
+bugs that have been deferred because every fix cascades into unrelated
+breakage. Goal: replace the CSS layer with Tailwind v4 utilities so
+the cascade is gone, latent bugs surface (and get fixed) per
+component, and future iteration is locally-scoped to whatever element
+is being changed. Bounded migration by tranche, with the Phase 8
+screenshot tour acting as the per-tranche regression contract.
+
+- [ ] 9.1 — Stand up Tailwind v4 + cached CLI downloader. New
+  `tools/tailwind-build/` Rust helper crate: pins `TAILWIND_VERSION`,
+  downloads the standalone `tailwindcss` CLI binary into
+  `phone/.tailwind-cache/` (gitignored) on first run, reuses on
+  subsequent builds, then invokes it with the project's `input.css`
+  → `phone/dist/tailwind.css`. Trunk `Trunk.toml` `[[hooks]]
+  pre_build` runs `cargo run -p tailwind-build` so `trunk build` /
+  `trunk serve` regenerate the bundle automatically. `phone/styles/
+  input.css` carries `@import "tailwindcss"` + `@theme {}` mapping
+  the existing tokens (gold scale, starfield blues, Titan One /
+  Fraunces / JetBrains Mono fonts, k-magenta / k-violet for Kaos)
+  into Tailwind's design system. `phone/index.html` swaps its CSS
+  link from `app.css` to the generated `tailwind.css`. CI release
+  workflow + ci workflow gain `actions/cache` keyed on
+  `TAILWIND_VERSION + os` so the binary doesn't re-download every
+  run.
+
+- [ ] 9.2 — Pilot on a shared primitive. Pick `GoldBezel` or
+  `FramedPanel` (small, used widely; better proof of the migration
+  pattern + `@theme` token plumbing than starting on the elaborate
+  Kaos overlays). Port its rules from `app.css` to utility classes
+  in the `view! {}` macro; for any class string that's becoming
+  unmanageable, drop into `@apply` inside a small per-component CSS
+  file (`phone/styles/components/<name>.css`) imported from
+  `input.css`. Run the screenshot tour, eyeball the diff, commit the
+  pilot.
+
+- [ ] 9.3 — Lock the screenshot-tour baseline as the regression
+  contract. Document the per-tranche workflow in
+  `crates/e2e-tests/README.md`: "rebuild phone bundle → run tour
+  → `git diff docs/assets/screens/` → reconcile any visual drift
+  before commit." Since the tour drives a real browser at fixed
+  420×900 viewport with deterministic seeds, frame-to-frame the PNGs
+  should be byte-stable; visible drift means a real regression or an
+  intentional design tweak.
+
+- [ ] 9.4 — Migrate components in tranches. Bottom-up so containers
+  inherit migrated primitives:
+  - 9.4a — Shared primitives: `GoldBezel`, `FramedPanel`, `RayHalo`,
+    `ActionButton`, `DisplayHeading`, `Header`.
+  - 9.4b — Overlays: `ConnectionLost`, `GameCrashScreen`,
+    `PairingRequired`, `StaleVersion`, `ScanOverlay`, `MenuOverlay`,
+    `ResumeModal`, `ResetConfirmModal`.
+  - 9.4c — Screens: `ProfilePicker` (largest — Konami gate,
+    PIN keypad, profile grid), `GamePicker`, `FigureDetail`.
+  - 9.4d — Portal + toy box: `Portal`, `ToyBoxLid`, `Browser`. Most
+    visually complex; expect `@apply` escape hatches for the lid's
+    swipe-state CSS + `:has()` selectors that drive the
+    `.screen-portal:has(.lid-open-p4.closed)` cross-component
+    coupling. Migration may also be the natural moment to remove
+    those `:has()` selectors entirely in favor of explicit
+    Leptos-signal-driven classes.
+  - 9.4e — Kaos overlays: `KaosOverlay`. Multi-layer pseudo-element
+    decoration + conic-gradient lens + custom keyframes; almost
+    certainly retains a small per-component CSS file with raw
+    `@keyframes` + `@apply`. Acceptable.
+
+  Each tranche: port → trunk build → screenshot tour → diff PNGs →
+  commit if intentional.
+
+- [ ] 9.5 — Escape-hatch policy. Document in `CLAUDE.md` when to
+  reach for a per-component CSS file vs inline utilities:
+  - **Inline utilities (default):** layout, spacing, typography,
+    colour, single-layer effects.
+  - **`@apply` in a component CSS file:** repeated complex shadow
+    stacks where the inline class would exceed readability (rule
+    of thumb: >12 utility classes on a single element).
+  - **Raw CSS (rare):** `@keyframes`, `@font-face`, complex
+    pseudo-element content, `:has()` selectors that can't be
+    expressed with utilities. Co-located with the component.
+
+- [ ] 9.6 — Sweep + post-condition. Diff `app.css` before/after.
+  Final state: `app.css` slims to design-token `:root` vars +
+  `@font-face` declarations + body baseline + the handful of
+  component CSS files imported by `input.css`. Rename to
+  `phone/styles/base.css` for clarity. Update `CLAUDE.md` Phase 4 +
+  4.18 / 4.20 references (most reconciliation residuals fold into
+  "use a utility" or "fix the markup"). Re-run full screenshot tour
+  + commit any intentional drift.
+
+### 9.7 iPad + iPhone layout pass
+Once 9.1–9.6 land, tackle the responsive pass that the monolithic CSS
+made painful. With utility-first markup, breakpoint variants
+(`md:`, `lg:`) live next to the base utilities and the iPad layout
+becomes additive, not a separate stylesheet branch.
+
+- [ ] 9.7 — Optimize for iPad + iPhone layouts. Inventory which
+  components need a wider-viewport variant (toy-box grid columns,
+  portal slot row layout, Header chip density). Drop `md:` /
+  `lg:` overrides per-component; verify on iOS Simulator + a real
+  iPad via the Tour gallery.
+
+## Phase 10 Items
+- [ ] 10.1 - Add MacOS support
+- [ ] 10.2 - Add fully automated e2e testing since we can run it all on a Mac
 
 ## Non-goals
 
