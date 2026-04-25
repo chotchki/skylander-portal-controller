@@ -9,8 +9,8 @@
 use std::time::{Duration, Instant};
 
 use skylander_server::profiles::{
-    GHOST_TIMEOUT, LOCKOUT_DURATION, LockoutCheck, ProfileStore, RegistrationOutcome,
-    SessionRegistry,
+    GHOST_TIMEOUT, LOCKOUT_DURATION, LockoutCheck, ProfileStore, REPLAY_BUFFER_LIMIT,
+    RegistrationOutcome, SessionRegistry,
 };
 
 #[tokio::test]
@@ -237,6 +237,106 @@ async fn expire_ghosts_older_than_returns_only_stale_ghosts() {
     // Live session intact post-sweep.
     let still_live = reg.all_ids().await;
     assert_eq!(still_live, vec![live]);
+}
+
+/// Replay buffer collects events while the session is ghosted, only
+/// for matching profile_id, in arrival order. Live sessions are
+/// skipped — they get the events via the broadcast channel directly.
+#[tokio::test]
+async fn replay_buffer_collects_events_for_matching_ghost_only() {
+    use skylander_core::Event;
+
+    let reg = SessionRegistry::default();
+    let t0 = Instant::now();
+
+    // Live session, profile alice — should NOT receive replays.
+    let live = match reg.register_at(t0).await {
+        RegistrationOutcome::Admitted(s) => s,
+        other => panic!("{other:?}"),
+    };
+    reg.set_profile(live, Some("alice".into())).await;
+
+    // Ghost session, profile bob.
+    let ghost_bob = match reg.register_at(t0 + Duration::from_secs(1)).await {
+        RegistrationOutcome::Admitted(s) => s,
+        other => panic!("{other:?}"),
+    };
+    reg.set_profile(ghost_bob, Some("bob".into())).await;
+    reg.ghost(ghost_bob, t0 + Duration::from_secs(2)).await;
+
+    // Push two events for bob, one for a non-existent profile.
+    let evt1 = Event::Error {
+        message: "first".into(),
+    };
+    let evt2 = Event::Error {
+        message: "second".into(),
+    };
+    let evt_other = Event::Error {
+        message: "other".into(),
+    };
+    assert_eq!(reg.push_replay_for_profile("bob", &evt1).await, 1);
+    assert_eq!(reg.push_replay_for_profile("bob", &evt2).await, 1);
+    assert_eq!(
+        reg.push_replay_for_profile("nobody", &evt_other).await,
+        0,
+        "no ghost for unknown profile, no buffer touched",
+    );
+
+    // Drain bob's ghost: events come back in order.
+    let drained = reg.drain_replay(ghost_bob).await;
+    assert_eq!(drained.len(), 2);
+    match (&drained[0], &drained[1]) {
+        (Event::Error { message: m1 }, Event::Error { message: m2 }) => {
+            assert_eq!(m1, "first");
+            assert_eq!(m2, "second");
+        }
+        _ => panic!("unexpected event variants in drain: {drained:?}"),
+    }
+
+    // Re-draining is empty (drain consumes).
+    assert!(reg.drain_replay(ghost_bob).await.is_empty());
+
+    // Live session never accumulated anything.
+    assert!(reg.drain_replay(live).await.is_empty());
+}
+
+/// Pushing past `REPLAY_BUFFER_LIMIT` drops the oldest event. Verifies
+/// the ring stays bounded so a long-abandoned ghost can't grow without
+/// limit until eviction.
+#[tokio::test]
+async fn replay_buffer_drops_oldest_on_overflow() {
+    use skylander_core::Event;
+
+    let reg = SessionRegistry::default();
+    let t0 = Instant::now();
+    let sid = match reg.register_at(t0).await {
+        RegistrationOutcome::Admitted(s) => s,
+        other => panic!("{other:?}"),
+    };
+    reg.set_profile(sid, Some("alice".into())).await;
+    reg.ghost(sid, t0).await;
+
+    // Push LIMIT + 5 events; the first 5 should fall out.
+    for i in 0..(REPLAY_BUFFER_LIMIT + 5) {
+        let e = Event::Error {
+            message: format!("e{i}"),
+        };
+        reg.push_replay_for_profile("alice", &e).await;
+    }
+    let drained = reg.drain_replay(sid).await;
+    assert_eq!(drained.len(), REPLAY_BUFFER_LIMIT);
+    // Newest entry is the last one pushed.
+    if let Event::Error { message } = drained.last().unwrap() {
+        assert_eq!(message, &format!("e{}", REPLAY_BUFFER_LIMIT + 4));
+    } else {
+        panic!("unexpected variant");
+    }
+    // Oldest survivor is push #5 (the first 5 were evicted).
+    if let Event::Error { message } = &drained[0] {
+        assert_eq!(message, "e5");
+    } else {
+        panic!("unexpected variant");
+    }
 }
 
 /// Ghosts count against the 2-session FIFO cap — a 3rd registration

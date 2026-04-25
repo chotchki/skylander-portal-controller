@@ -4,7 +4,7 @@
 //! This module is deliberately self-contained — HTTP handlers live in
 //! `http.rs` and pull the pieces they need from [`ProfileStore`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -145,6 +145,14 @@ pub const FORCED_EVICT_COOLDOWN: Duration = Duration::from_secs(60);
 /// session-end, not a transient disconnect.
 pub const GHOST_TIMEOUT: Duration = Duration::from_secs(3600);
 
+/// Maximum number of events held in a ghost session's replay buffer
+/// (PLAN 8.1.2). Bounded ring — when full, the oldest event is dropped
+/// to make room for the newest. Sized to hold a generous burst of
+/// SlotChanged + a Kaos taunt during a short backgrounding without
+/// retaining the entire history of a long-abandoned session. Tune up
+/// if real-world replay logs show events getting truncated.
+pub const REPLAY_BUFFER_LIMIT: usize = 32;
+
 /// Opaque per-connection id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SessionId(pub u64);
@@ -166,6 +174,12 @@ pub struct SessionState {
     ///
     /// `None` for live sessions.
     pub ghosted_at: Option<Instant>,
+    /// Events that arrived while this session was ghosted, waiting to
+    /// be replayed when the same profile reconnects (PLAN 8.1.2).
+    /// Bounded ring of `REPLAY_BUFFER_LIMIT`; oldest dropped on
+    /// overflow. Empty for live sessions — they receive directly via
+    /// the broadcast channel.
+    pub replay_buffer: VecDeque<skylander_core::Event>,
 }
 
 impl SessionState {
@@ -246,6 +260,7 @@ impl SessionRegistry {
                     profile_id: pending,
                     created_at: now,
                     ghosted_at: None,
+                    replay_buffer: VecDeque::new(),
                 },
             );
             return RegistrationOutcome::Admitted(sid);
@@ -277,6 +292,7 @@ impl SessionRegistry {
                 profile_id: pending,
                 created_at: now,
                 ghosted_at: None,
+                replay_buffer: VecDeque::new(),
             },
         );
         drop(sessions);
@@ -343,6 +359,48 @@ impl SessionRegistry {
                 (sid, s.profile_id)
             })
             .collect()
+    }
+
+    /// Push `event` into the replay buffer of every ghost session whose
+    /// `profile_id` matches. Live sessions are skipped — they receive
+    /// the same event via the broadcast channel directly. Bounded by
+    /// `REPLAY_BUFFER_LIMIT`; the oldest entry is dropped to make room
+    /// when the ring is full.
+    ///
+    /// Returns the number of ghost sessions whose buffer was touched
+    /// (mostly for caller logging — typically 0 or 1, can be 2 if the
+    /// same profile is somehow ghosted across multiple slots).
+    pub async fn push_replay_for_profile(
+        &self,
+        profile_id: &str,
+        event: &skylander_core::Event,
+    ) -> usize {
+        let mut map = self.sessions.write().await;
+        let mut touched = 0usize;
+        for s in map.values_mut() {
+            if !s.is_ghost() || s.profile_id.as_deref() != Some(profile_id) {
+                continue;
+            }
+            if s.replay_buffer.len() >= REPLAY_BUFFER_LIMIT {
+                s.replay_buffer.pop_front();
+            }
+            s.replay_buffer.push_back(event.clone());
+            touched += 1;
+        }
+        touched
+    }
+
+    /// Drain the replay buffer for a session. Used by the reclamation
+    /// path (PLAN 8.1.3) — once the new WS connection has adopted a
+    /// ghost, the events queued during the disconnect window are
+    /// flushed in order to the freshly-connected client. Empty `Vec`
+    /// for unknown ids OR for sessions whose buffer is empty.
+    pub async fn drain_replay(&self, id: SessionId) -> Vec<skylander_core::Event> {
+        let mut map = self.sessions.write().await;
+        match map.get_mut(&id) {
+            Some(s) => s.replay_buffer.drain(..).collect(),
+            None => Vec::new(),
+        }
     }
 
     pub async fn get(&self, id: SessionId) -> Option<SessionState> {
