@@ -376,6 +376,7 @@ pub fn App() -> impl IntoView {
                                 search
                                 toasts
                                 scan_overlay
+                                unlocked_profile
                             />
                         })}
                     </Suspense>

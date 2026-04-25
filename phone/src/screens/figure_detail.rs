@@ -1,8 +1,8 @@
 use leptos::prelude::*;
 
-use crate::api::post_load;
+use crate::api::{fetch_figure_stats, post_load, FigureStats};
 use crate::components::{DisplayHeading, FigureHero, HeadingSize, HeroState};
-use crate::model::{GameOfOrigin, PublicFigure, Slot, SlotState, SLOT_COUNT};
+use crate::model::{GameOfOrigin, PublicFigure, Slot, SlotState, UnlockedProfile, SLOT_COUNT};
 use crate::{element_slug, first_empty_slot, push_toast_level, ToastLevel, ToastMsg};
 
 /// Detail view state machine.
@@ -29,6 +29,12 @@ pub(crate) fn FigureDetail(
     picking_for: RwSignal<Option<u8>>,
     portal: RwSignal<[Slot; SLOT_COUNT]>,
     toasts: RwSignal<Vec<ToastMsg>>,
+    /// Currently unlocked profile — its `id` keys the per-figure
+    /// stats fetch (PLAN 6.3). Working copies are stored at
+    /// `working/<profile_id>/<figure_id>.sky`, so without the
+    /// profile we'd have nothing to read. `None` while the user
+    /// is on the join screen.
+    unlocked_profile: RwSignal<Option<UnlockedProfile>>,
     /// Dismiss the detail view (BACK button path; browse state is
     /// preserved — toy-box lid stays in whatever open state it was).
     on_close: Callback<()>,
@@ -73,6 +79,24 @@ pub(crate) fn FigureDetail(
     let meta_line = format!("{element_label} \u{00B7} {game_label}");
 
     let error_msg = RwSignal::new(String::new());
+
+    // Per-figure stats (PLAN 6.3). Fetches the working copy's parsed
+    // level/gold/playtime/nickname when both an unlocked profile and
+    // figure id are available. `None` outcome (no working copy yet,
+    // unparseable .sky, transport error) falls back to the placeholder
+    // strip — the whole experience stays usable when stats aren't
+    // available, the placeholder just makes that absence legible.
+    let stats_fig_id = fig_id.clone();
+    let stats: LocalResource<Option<FigureStats>> = LocalResource::new(move || {
+        let profile_id = unlocked_profile.get().map(|p| p.id);
+        let fig_id = stats_fig_id.clone();
+        async move {
+            match profile_id {
+                Some(pid) => fetch_figure_stats(&pid, &fig_id).await,
+                None => None,
+            }
+        }
+    });
 
     let on_place = {
         let fig_id = fig_id.clone();
@@ -231,14 +255,36 @@ pub(crate) fn FigureDetail(
                     </div>
                 </div>
 
-                // Real level/gold/playtime wiring is PLAN 6.3 (post-Kaos
-                // polish, Phase 6). The parser + endpoint already exist
-                // (6.2); only the phone fetch/render is pending. Until
-                // then, show a single muted "coming soon" strip rather
-                // than three `--` cells that read as broken data.
-                <div class="detail-stats-strip detail-stats-soon">
-                    <div class="detail-stats-soon-label">"STATS COMING SOON"</div>
-                </div>
+                // PLAN 6.3 — three stat cells (Level / Gold / Playtime)
+                // populated from the per-figure `.sky` working copy. When
+                // the fetch hasn't resolved yet, returns None (no working
+                // copy, never played, parse failure), or the figure
+                // simply doesn't have stats yet, fall back to the muted
+                // "STATS COMING SOON" strip — that path is still useful
+                // for figures the profile has never placed.
+                {move || match stats.get().as_deref().and_then(|opt| opt.as_ref().cloned()) {
+                    Some(s) => view! {
+                        <div class="detail-stats-strip">
+                            <div class="detail-stat-cell">
+                                <div class="detail-stat-l">"LEVEL"</div>
+                                <div class="detail-stat-v">{s.level.to_string()}</div>
+                            </div>
+                            <div class="detail-stat-cell">
+                                <div class="detail-stat-l">"GOLD"</div>
+                                <div class="detail-stat-v">{s.gold.to_string()}</div>
+                            </div>
+                            <div class="detail-stat-cell">
+                                <div class="detail-stat-l">"PLAYTIME"</div>
+                                <div class="detail-stat-v">{format_playtime(s.playtime_secs)}</div>
+                            </div>
+                        </div>
+                    }.into_any(),
+                    None => view! {
+                        <div class="detail-stats-strip detail-stats-soon">
+                            <div class="detail-stats-soon-label">"NEVER PLACED"</div>
+                        </div>
+                    }.into_any(),
+                }}
 
                 <div class="detail-spacer"></div>
 
@@ -257,6 +303,23 @@ pub(crate) fn FigureDetail(
                 </button>
             </div>
         </div>
+    }
+}
+
+/// Compact playtime formatter for the stats strip. The `.sky` payload
+/// stores total seconds and fresh figures will be on the order of
+/// minutes, while well-played ones can pile up to dozens of hours, so
+/// the format adapts: < 1h = "Xm", < 24h = "Xh Ym", longer = "Xh".
+fn format_playtime(secs: u32) -> String {
+    let total_min = secs / 60;
+    let h = total_min / 60;
+    let m = total_min % 60;
+    if h == 0 {
+        format!("{m}m")
+    } else if h < 100 {
+        format!("{h}h {m}m")
+    } else {
+        format!("{h}h")
     }
 }
 

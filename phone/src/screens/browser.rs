@@ -68,6 +68,12 @@ pub(crate) fn Browser(
     search: RwSignal<String>,
     toasts: RwSignal<Vec<ToastMsg>>,
     scan_overlay: RwSignal<ScanOverlayState>,
+    /// Threaded through to FigureDetail so the per-figure stats fetch
+    /// (PLAN 6.3) can address the right `working/<profile_id>/<id>.sky`
+    /// working copy. `None` while the user is still on the join screen
+    /// — the detail view shouldn't be reachable in that state, but the
+    /// signal keeps the wiring honest if the flow ever changes.
+    unlocked_profile: RwSignal<Option<crate::model::UnlockedProfile>>,
 ) -> impl IntoView {
     let all_figures = StoredValue::new(figures);
     let selected_figure = RwSignal::new(None::<PublicFigure>);
@@ -338,6 +344,7 @@ pub(crate) fn Browser(
                     picking_for
                     portal
                     toasts
+                    unlocked_profile
                     on_close=Callback::new(move |_| selected_figure.set(None))
                     on_placed=Callback::new(move |_| {
                         // PLACE success: dismiss detail AND close the lid

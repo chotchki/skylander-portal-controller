@@ -106,7 +106,7 @@ http-body-util = "0.1"
 # vortex shader; spike uses the same crates.)
 
 [features]
-default = ["dev-tools"]
+default = ["dev-tools", "sky-stats"]
 # Relaxes behavior for development: reads .env.dev, logs to ./logs/,
 # accepts SKYLANDER_PORTAL_DRIVER=mock, allows insecure helpers, etc.
 dev-tools = ["skylander-rpcs3-control/mock"]

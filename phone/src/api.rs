@@ -268,6 +268,51 @@ pub async fn fetch_figures() -> Vec<PublicFigure> {
     }
 }
 
+/// Subset of the server's `PublicSkyStats` JSON shape — only the
+/// fields the figure-detail screen actually shows. Lots of bytes on
+/// the wire we don't care about (raw blocks, hat history, web codes,
+/// quest bitmaps); `serde(deny_unknown_fields)` is intentionally NOT
+/// set so the server can grow new fields without forcing a phone
+/// bundle rebuild.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct FigureStats {
+    pub level: u8,
+    pub gold: u16,
+    pub playtime_secs: u32,
+    pub nickname: String,
+}
+
+/// `GET /api/profiles/:profile_id/figures/:figure_id/stats`.
+/// Returns `None` on 404 (no working copy yet — figure has never been
+/// played by this profile, so there's nothing to read), parser errors
+/// (UNPROCESSABLE_ENTITY), or transport failures. The caller treats
+/// `None` as "stats unavailable, fall back to the placeholder strip".
+pub async fn fetch_figure_stats(profile_id: &str, figure_id: &str) -> Option<FigureStats> {
+    let url = format!(
+        "{}/api/profiles/{profile_id}/figures/{figure_id}/stats",
+        origin()
+    );
+    match do_fetch(&url, "GET", None).await {
+        Ok(text) => match serde_json::from_str::<FigureStats>(&text) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                crate::dev_warn!("fetch_figure_stats: parse error {e}");
+                None
+            }
+        },
+        Err(e) => {
+            // 404 just means no working copy yet — common on first
+            // browse before the figure has ever been on the portal.
+            // Anything else is at most a soft warn; the UI just shows
+            // the placeholder strip.
+            if !e.contains("404") {
+                crate::dev_warn!("fetch_figure_stats: {e}");
+            }
+            None
+        }
+    }
+}
+
 pub async fn post_load(slot: u8, figure_id: &str) -> Result<(), String> {
     let url = format!("{}/api/portal/slot/{slot}/load", origin());
     let body = json!({ "figure_id": figure_id }).to_string();
