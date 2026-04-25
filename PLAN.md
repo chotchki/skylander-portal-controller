@@ -127,9 +127,16 @@ new phone genuinely takes over the slot.
   colour + half-alpha bezel + dimmed glyph. Updates fan in via the
   existing `publish_session_snapshot` hooks on `ghost`, `claim_ghost`,
   and the periodic sweep.
-- [ ] 8.1.7 — Tests: ghost create/adopt/evict/expire round-trips
+- [x] 8.1.7 — Tests: ghost create/adopt/evict/expire round-trips
   against the in-memory session registry; replay buffer ordering;
   KaosTaunt-during-disconnect replay scenario.
+  14 tests in `crates/server/tests/profiles.rs` cover ghost-stickiness,
+  expire-only-stale, replay matching + overflow, claim picks-oldest,
+  ghost-counts-toward-cap (with profile_id surfacing on force-evict),
+  and a full chained round-trip standing in for KaosTaunt-during-
+  disconnect via `Event::Error`. The KaosTaunt variant lands with
+  8.2b.4; the buffer's behavior is variant-agnostic so adding the
+  new event will plug straight into the existing path.
 
 ### 8.2a Kickback cooldown countdown UI
 Today: kickback button is enabled immediately on the Kaos takeover

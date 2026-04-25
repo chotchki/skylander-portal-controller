@@ -452,6 +452,106 @@ async fn claim_ghost_picks_oldest_when_multiple_match() {
     assert!(reg.claim_ghost("alice").await.is_none());
 }
 
+/// End-to-end round-trip mirroring the WS handler's flow: a profile
+/// unlocks on a session, the WS drops, an event arrives during the
+/// disconnect window, the same profile reconnects and adopts the
+/// ghost. Verifies SessionId preservation, replay-buffer ordering,
+/// and the live state restored on the registry.
+///
+/// Stands in for the 8.2b.4 KaosTaunt-during-disconnect flow (the
+/// KaosTaunt variant doesn't exist yet, so we use `Event::Error` as
+/// the in-flight event — the buffer's behavior is variant-agnostic).
+#[tokio::test]
+async fn ghost_reclaim_full_roundtrip() {
+    use skylander_core::Event;
+
+    let reg = SessionRegistry::default();
+    let t0 = Instant::now();
+
+    // Phase 1 — phone connects, unlocks alice.
+    let initial_sid = match reg.register_at(t0).await {
+        RegistrationOutcome::Admitted(s) => s,
+        other => panic!("expected Admitted, got {other:?}"),
+    };
+    reg.set_profile(initial_sid, Some("alice".into())).await;
+    let s = reg.get(initial_sid).await.unwrap();
+    assert!(!s.is_ghost(), "live before ghosting");
+    assert_eq!(s.profile_id.as_deref(), Some("alice"));
+
+    // Phase 2 — phone goes away (PWA-background, etc). WS exit path
+    // ghosts the session instead of removing it.
+    let returned = reg.ghost(initial_sid, t0 + Duration::from_secs(5)).await;
+    assert_eq!(returned.as_deref(), Some("alice"));
+    let s = reg.get(initial_sid).await.unwrap();
+    assert!(s.is_ghost());
+    // Ghost still occupies a registry slot — figures stay placed.
+    assert_eq!(reg.all_ids().await.len(), 1);
+
+    // Phase 3 — events arrive during the disconnect window. The
+    // handler-side broadcaster fans these into the ghost's replay
+    // buffer via push_replay_for_profile. Order matters — drain
+    // must reproduce arrival order so the phone catches up linearly.
+    let t_event_a = t0 + Duration::from_secs(10);
+    let t_event_b = t0 + Duration::from_secs(20);
+    let _ = (t_event_a, t_event_b); // timestamps only doc the ordering
+    let event_a = Event::Error {
+        message: "kaos-taunt-stand-in-A".into(),
+    };
+    let event_b = Event::Error {
+        message: "kaos-taunt-stand-in-B".into(),
+    };
+    assert_eq!(
+        reg.push_replay_for_profile("alice", &event_a).await,
+        1,
+        "ghost matched, A buffered"
+    );
+    assert_eq!(
+        reg.push_replay_for_profile("alice", &event_b).await,
+        1,
+        "ghost matched, B buffered"
+    );
+    // An event for an unrelated profile should NOT touch alice's buffer.
+    let evt_other = Event::Error {
+        message: "noise".into(),
+    };
+    assert_eq!(reg.push_replay_for_profile("eve", &evt_other).await, 0);
+
+    // Phase 4 — phone reconnects with `?reclaim=alice`. Server
+    // adopts the ghost atomically, returning the same SessionId
+    // and the drained events in arrival order.
+    let (reclaimed_sid, replay) = reg
+        .claim_ghost("alice")
+        .await
+        .expect("ghost matches profile");
+    assert_eq!(
+        reclaimed_sid, initial_sid,
+        "session id preserved across the disconnect → reconnect cycle",
+    );
+    assert_eq!(replay.len(), 2);
+    let messages: Vec<_> = replay
+        .into_iter()
+        .map(|e| match e {
+            Event::Error { message } => message,
+            _ => unreachable!(),
+        })
+        .collect();
+    assert_eq!(
+        messages,
+        vec!["kaos-taunt-stand-in-A", "kaos-taunt-stand-in-B"],
+        "buffer drained in arrival order",
+    );
+
+    // Phase 5 — post-claim the session is live again. The phone
+    // can place new figures, broadcast events flow normally.
+    let s = reg.get(initial_sid).await.unwrap();
+    assert!(!s.is_ghost(), "claim un-ghosts the session");
+    assert_eq!(s.profile_id.as_deref(), Some("alice"));
+    assert!(
+        reg.claim_ghost("alice").await.is_none(),
+        "no remaining ghost for alice — second claim is a no-op",
+    );
+}
+
 /// Ghosts count against the 2-session FIFO cap — a 3rd registration
 /// still triggers forced eviction of the oldest, ghost or not. This
 /// is what keeps the abandoned-PWA case from blocking real users.
