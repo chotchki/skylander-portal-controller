@@ -308,7 +308,9 @@ pub fn router(state: Arc<AppState>, _phone_dist: std::path::PathBuf) -> Router {
                 "/api/_test/set_session_profile",
                 post(set_session_profile_testhook),
             )
-            .route("/api/_test/layout/:profile_id", get(layout_testhook));
+            .route("/api/_test/layout/:profile_id", get(layout_testhook))
+            .route("/api/_test/fire_kaos_taunt", post(fire_kaos_taunt_testhook))
+            .route("/api/_test/fire_takeover", post(fire_takeover_testhook));
     }
 
     // Static phone SPA (PLAN 7.1). Serves out of the embedded
@@ -2409,6 +2411,75 @@ async fn unlock_session_testhook(
         state.publish_session_snapshot().await;
     }
     (StatusCode::OK, "unlocked").into_response()
+}
+
+// ---- screenshot-tour hooks (PLAN docs/8.4 follow-up) ---------------------
+
+#[cfg(feature = "test-hooks")]
+#[derive(Deserialize)]
+struct FireKaosTauntBody {
+    profile_id: String,
+    /// Slot index (0..SLOT_COUNT) the synthetic swap targeted.
+    slot: u8,
+    /// Library figure id of the figure being swapped out + replaced. Both
+    /// fields are best-effort hints for the phone's reconciler — the
+    /// screenshot tour just needs the overlay to render with the right
+    /// taunt text, so any non-empty FigureId works.
+    old_figure_id: String,
+    new_figure_id: String,
+    /// The taunt copy. Free-form so screenshot tours can pin a particular
+    /// catchphrase rather than rolling the dice on `random_swap_taunt`.
+    taunt: String,
+}
+
+/// Broadcast a synthetic `Event::KaosTaunt`. Lets the screenshot tour
+/// reach the kaos_swap overlay variant without arming the real timer
+/// (which warmups for 20 minutes on session unlock).
+#[cfg(feature = "test-hooks")]
+async fn fire_kaos_taunt_testhook(
+    State(state): State<Arc<AppState>>,
+    axum::Json(body): axum::Json<FireKaosTauntBody>,
+) -> Response {
+    let Ok(slot) = SlotIndex::new(body.slot) else {
+        return (StatusCode::BAD_REQUEST, "slot out of range").into_response();
+    };
+    let _ = state.events.send(Event::KaosTaunt {
+        profile_id: body.profile_id,
+        slot,
+        old_figure_id: FigureId::new(body.old_figure_id),
+        new_figure_id: FigureId::new(body.new_figure_id),
+        taunt: body.taunt,
+    });
+    (StatusCode::OK, "fired").into_response()
+}
+
+#[cfg(feature = "test-hooks")]
+#[derive(Deserialize)]
+struct FireTakeoverBody {
+    /// Session id to target — the phone with this id is what will see
+    /// the takeover overlay (other connected phones drop the event).
+    session_id: u64,
+    by_kaos: String,
+    /// Cooldown countdown the overlay shows on the kickback button.
+    /// Pass 0 to skip the disabled-state and capture the enabled
+    /// variant of the screen.
+    cooldown_remaining_secs: u32,
+}
+
+/// Broadcast a synthetic `Event::TakenOver` directly. Reaches the
+/// takeover surface for the screenshot tour without spinning up a 3rd
+/// phone + running the FIFO eviction path.
+#[cfg(feature = "test-hooks")]
+async fn fire_takeover_testhook(
+    State(state): State<Arc<AppState>>,
+    axum::Json(body): axum::Json<FireTakeoverBody>,
+) -> Response {
+    let _ = state.events.send(Event::TakenOver {
+        session_id: body.session_id,
+        by_kaos: body.by_kaos,
+        cooldown_remaining_secs: body.cooldown_remaining_secs,
+    });
+    (StatusCode::OK, "fired").into_response()
 }
 
 #[cfg(test)]

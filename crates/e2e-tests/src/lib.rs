@@ -456,6 +456,18 @@ impl Phone {
         self.client.close().await?;
         Ok(())
     }
+
+    /// Capture a full-viewport PNG of the current page and write it to
+    /// `path`. Used by the docs-site screenshot tour
+    /// (`tests/screenshot_tour.rs`) — fantoccini's `screenshot()`
+    /// returns the PNG bytes already encoded, so we just write them
+    /// out. Parent directory must exist.
+    pub async fn screenshot(&self, path: impl AsRef<std::path::Path>) -> Result<()> {
+        let bytes = self.client.screenshot().await?;
+        std::fs::write(path.as_ref(), bytes)
+            .with_context(|| format!("write screenshot to {}", path.as_ref().display()))?;
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------- REST
@@ -610,6 +622,67 @@ pub async fn unlock_default_profile(base: &str) -> Result<String> {
     };
     unlock_session(base, &id).await?;
     Ok(id)
+}
+
+/// Fire a synthetic Kaos taunt on the screenshot-tour test-hook so
+/// the kaos_swap overlay renders without waiting on the real 20-min
+/// warmup timer. Hook lives behind `test-hooks` on the server.
+pub async fn fire_kaos_taunt(
+    base: &str,
+    profile_id: &str,
+    slot: u8,
+    old_figure_id: &str,
+    new_figure_id: &str,
+    taunt: &str,
+) -> Result<()> {
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/api/_test/fire_kaos_taunt"))
+        .json(&serde_json::json!({
+            "profile_id": profile_id,
+            "slot": slot,
+            "old_figure_id": old_figure_id,
+            "new_figure_id": new_figure_id,
+            "taunt": taunt,
+        }))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        bail!(
+            "fire_kaos_taunt returned {}: {}",
+            resp.status(),
+            resp.text().await?
+        );
+    }
+    Ok(())
+}
+
+/// Fire a synthetic TakenOver event for the targeted session, so the
+/// Kaos takeover overlay can be screenshotted without running the
+/// FIFO eviction path with a 3rd phone. `cooldown_remaining_secs = 0`
+/// captures the enabled-button variant.
+pub async fn fire_takeover(
+    base: &str,
+    session_id: u64,
+    by_kaos: &str,
+    cooldown_remaining_secs: u32,
+) -> Result<()> {
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/api/_test/fire_takeover"))
+        .json(&serde_json::json!({
+            "session_id": session_id,
+            "by_kaos": by_kaos,
+            "cooldown_remaining_secs": cooldown_remaining_secs,
+        }))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        bail!(
+            "fire_takeover returned {}: {}",
+            resp.status(),
+            resp.text().await?
+        );
+    }
+    Ok(())
 }
 
 /// Convenience for the common "launch Giants" setup.

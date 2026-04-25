@@ -903,6 +903,148 @@ table {
 }
 
 // ============================================================================
+// Tour gallery — phone screenshots framed in gold-bezel "device" cards
+// ============================================================================
+//
+// Two-column grid on desktop, single column on phones. Each cell is a
+// figure with a captioned step number. The .tour-bezel wraps the
+// raster screenshot in the same bezel motif as the rest of the site,
+// so the captures feel like they're hanging in a heraldic exhibit
+// rather than dropped on the page raw.
+
+.tour-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 36px 28px;
+  margin: 2.4rem 0 0;
+
+  @media (max-width: 720px) {
+    grid-template-columns: 1fr;
+    gap: 28px;
+  }
+}
+
+.tour-shot {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.tour-bezel {
+  // Phone-like rounded frame with the gold-bezel halo + cosmic
+  // backdrop. The screenshot inside is at native 420x900-ish; we
+  // cap visual width at 260 for the grid + cap aspect via the
+  // image's intrinsic ratio.
+  position: relative;
+  padding: 14px 12px 18px;
+  border-radius: 28px;
+  background:
+    linear-gradient(180deg, rgba(255, 229, 138, 0.10) 0%, rgba(245, 198, 52, 0.04) 100%),
+    radial-gradient(ellipse at 50% 0%, rgba(245, 198, 52, 0.18), transparent 70%);
+  border: 1px solid $gold-mid;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    inset 0 -2px 0 $gold-deep,
+    0 8px 28px rgba(0, 0, 0, 0.5),
+    0 0 28px rgba(245, 198, 52, 0.18);
+  transition: transform 220ms cubic-bezier(.3, 1.3, .5, 1),
+              box-shadow 220ms ease;
+
+  &::before {
+    // Subtle cosmic glow behind the screenshot
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 28px;
+    pointer-events: none;
+    background: radial-gradient(circle at 50% 50%,
+      transparent 30%,
+      rgba(11, 30, 82, 0.5) 100%);
+    z-index: 0;
+  }
+
+  img {
+    display: block;
+    position: relative;
+    z-index: 1;
+    max-width: 260px;
+    width: 100%;
+    height: auto;
+    border-radius: 18px;
+    box-shadow:
+      0 0 0 1px $gold-deep,
+      0 8px 18px rgba(0, 0, 0, 0.5);
+  }
+
+  &:hover {
+    transform: translateY(-3px) rotate(-0.4deg);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.15),
+      inset 0 -2px 0 $gold-deep,
+      0 14px 36px rgba(0, 0, 0, 0.55),
+      0 0 36px rgba(245, 198, 52, 0.30);
+  }
+}
+
+.tour-shot:nth-child(odd) .tour-bezel:hover {
+  transform: translateY(-3px) rotate(-0.4deg);
+}
+.tour-shot:nth-child(even) .tour-bezel:hover {
+  transform: translateY(-3px) rotate(0.4deg);
+}
+
+.tour-shot figcaption {
+  font-family: "Fraunces", serif;
+  font-size: 0.98rem;
+  line-height: 1.55;
+  color: $text;
+  max-width: 320px;
+  text-align: center;
+  position: relative;
+  padding-top: 8px;
+
+  strong {
+    display: block;
+    font-family: "Titan One", serif;
+    font-weight: 400;
+    font-size: 0.95rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #fff;
+    -webkit-text-stroke: 0.6px $gold;
+    text-shadow:
+      0 1px 0 $gold-shadow,
+      0 0 10px rgba(245, 198, 52, 0.3);
+    margin-bottom: 8px;
+    text-shadow: 0 1px 0 $gold-shadow, 0 0 10px rgba(245, 198, 52, 0.3);
+  }
+}
+
+.tour-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  margin-bottom: 12px;
+  background:
+    radial-gradient(circle at 30% 30%, $gold-bright 0%, $gold 50%, $gold-mid 100%);
+  color: $gold-ink;
+  font-family: "Titan One", serif;
+  font-size: 0.85rem;
+  font-weight: 400;
+  border-radius: 50%;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    inset 0 -1px 0 $gold-shadow,
+    0 0 0 1.5px $gold-deep,
+    0 0 14px rgba(245, 198, 52, 0.45);
+  letter-spacing: 0;
+}
+
+// ============================================================================
 // Page-load reveal — staggered fade for the hero, no JS
 // ============================================================================
 

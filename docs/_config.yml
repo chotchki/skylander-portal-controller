@@ -12,6 +12,7 @@ minima:
   skin: dark
   nav_pages:
     - features.md
+    - tour.md
     - setup.md
     - roadmap.md
     - about.md
