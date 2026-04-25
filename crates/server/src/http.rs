@@ -16,9 +16,6 @@ use skylander_core::{
     UnlockedProfile,
 };
 use tokio::sync::broadcast;
-use tower::ServiceBuilder;
-use tower_http::services::ServeDir;
-use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::{debug, info, warn};
 
 use skylander_core::InstalledGame;
@@ -240,7 +237,12 @@ where
     }
 }
 
-pub fn router(state: Arc<AppState>, phone_dist: std::path::PathBuf) -> Router {
+pub fn router(state: Arc<AppState>, _phone_dist: std::path::PathBuf) -> Router {
+    // `_phone_dist` was the live filesystem path the SPA was served
+    // from before PLAN 7.1 baked the bundle into the exe via
+    // `rust-embed`. Kept for now as a no-op param so the wizard +
+    // config plumbing doesn't churn just to remove it; will drop in
+    // a follow-up cleanup once the dust settles on the embedded path.
     #[allow(unused_mut)]
     let mut api = Router::new()
         .route("/api/figures", get(list_figures))
@@ -308,37 +310,19 @@ pub fn router(state: Arc<AppState>, phone_dist: std::path::PathBuf) -> Router {
             .route("/api/_test/layout/:profile_id", get(layout_testhook));
     }
 
-    // Static phone SPA (dev mode — ServeDir). When the dist directory isn't
-    // present yet (before 2.7 builds the SPA), fall back to a placeholder.
-    let static_dir = if phone_dist.exists() {
-        ServeDir::new(&phone_dist)
-    } else {
-        warn!(
-            "phone dist at {} doesn't exist — SPA will not be served; serving placeholder",
-            phone_dist.display()
-        );
-        ServeDir::new(std::env::current_dir().unwrap_or_default())
-    };
-
-    // Cache-busting layer for static assets. iOS Safari (especially in
-    // PWA mode after Add-to-Home-Screen) caches the SPA's entry HTML
-    // aggressively; without an explicit no-store header, every code
-    // change requires deleting + re-adding the home-screen icon to see
-    // updates. `no-store` forces the browser to refetch on every load,
-    // which lets it discover new hashed wasm/js filenames trunk emits
-    // per build. Trade-off: every PWA cold-start re-downloads the
-    // bundle (~1MB) — fine on a LAN, would matter over WAN. We may
-    // tune to `no-cache` (revalidate, allow cached on 304) once a
-    // service worker handles update detection. Layer applies to the
-    // fallback only so /api/* responses are unaffected.
-    let static_with_cache_headers = ServiceBuilder::new()
-        .layer(SetResponseHeaderLayer::overriding(
-            axum::http::header::CACHE_CONTROL,
-            axum::http::HeaderValue::from_static("no-store"),
-        ))
-        .service(static_dir);
-
-    api.fallback_service(static_with_cache_headers).with_state(state)
+    // Static phone SPA (PLAN 7.1). Serves out of the embedded
+    // `phone/dist` snapshot; debug builds re-read from disk per
+    // request via the rust-embed `debug-embed` opt-out, so trunk-
+    // watch iteration keeps working without a server restart.
+    //
+    // Cache-busting: the embedded fallback handler emits `no-store`
+    // on the SPA shell. iOS Safari (especially in PWA mode after
+    // Add-to-Home-Screen) caches `index.html` aggressively; without
+    // an explicit no-store header, every code change requires
+    // deleting + re-adding the home-screen icon. Trunk-emitted
+    // hashed wasm/js filenames are immutable and safe to cache.
+    api.fallback(crate::embedded_assets::fallback_handler)
+        .with_state(state)
 }
 
 async fn list_figures(
@@ -2013,23 +1997,15 @@ fn dev_swapped(filename: &str) -> Option<String> {
     None
 }
 
-async fn serve_icon(
-    State(state): State<Arc<AppState>>,
-    AxumPath(filename): AxumPath<String>,
-) -> Response {
+async fn serve_icon(AxumPath(filename): AxumPath<String>) -> Response {
     // Path-traversal guard. The single-segment matcher already prevents
     // slashes, but `..` could still be slipped in. Belt + braces.
     if filename.contains("..") {
         return (StatusCode::BAD_REQUEST, "bad icon name").into_response();
     }
     let resolved = dev_swapped(&filename).unwrap_or_else(|| filename.clone());
-    let content_type = if resolved.ends_with(".svg") {
-        "image/svg+xml"
-    } else {
-        "image/png"
-    };
-    let path = state.phone_dist.join("icons").join(&resolved);
-    serve_static_file(&path, content_type).await
+    let key = format!("icons/{resolved}");
+    crate::embedded_assets::serve(&key)
 }
 
 async fn serve_manifest(State(state): State<Arc<AppState>>) -> Response {
@@ -2040,7 +2016,6 @@ async fn serve_manifest(State(state): State<Arc<AppState>>) -> Response {
     } else {
         "manifest.webmanifest"
     };
-    let path = state.phone_dist.join(filename);
 
     // Inject the current HMAC key into `start_url` so pinned home-screen
     // shortcuts include it (iOS uses the manifest's start_url for the
@@ -2049,13 +2024,20 @@ async fn serve_manifest(State(state): State<Arc<AppState>>) -> Response {
     // this, pinning loses the key and the app lands in the
     // PairingRequired overlay on every PWA launch until the user
     // re-scans the QR. Chris flagged 2026-04-24.
-    let raw = match tokio::fs::read_to_string(&path).await {
-        Ok(s) => s,
-        Err(e) => {
+    let (bytes, _) = match crate::embedded_assets::lookup(filename) {
+        Some(b) => b,
+        None => {
             return (
                 StatusCode::NOT_FOUND,
-                format!("manifest {} unreadable: {e}", path.display()),
+                format!("manifest {filename} not embedded"),
             )
+                .into_response();
+        }
+    };
+    let raw = match String::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("manifest decode: {e}"))
                 .into_response();
         }
     };

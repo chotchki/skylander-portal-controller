@@ -1,0 +1,97 @@
+name: Release
+
+# Triggered by `git tag v*.*.* && git push --tags`. Builds the Windows
+# release exe with the phone bundle embedded (`rust-embed`), runs the
+# fast tests, zips the binary, and attaches it to a draft GitHub
+# Release. Manual `workflow_dispatch` is wired so we can rehearse the
+# pipeline without burning a real tag.
+#
+# CI (`ci.yml`) covers PRs + main pushes — clippy/build/test cycle.
+# This workflow assumes that's already green for the tagged commit;
+# we don't re-run clippy here, just the test suite as a sanity check.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  SQLX_OFFLINE: "true"
+
+jobs:
+  build-windows-release:
+    name: build + release (windows)
+    runs-on: windows-latest
+    permissions:
+      # Required to create + upload to a GitHub Release from a tag.
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable) + wasm target
+        run: |
+          rustup toolchain install stable --profile minimal --target wasm32-unknown-unknown
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "windows-release"
+
+      - name: Install trunk
+        uses: jetli/trunk-action@v0.5.0
+        with:
+          version: "latest"
+
+      # Phone bundle has to exist BEFORE the server build — the
+      # server's `rust-embed` macro reads `phone/dist/` at compile
+      # time. Release-mode trunk emits hashed filenames + minified
+      # wasm so the embedded bytes match what users will run.
+      - name: trunk build --release (phone bundle)
+        working-directory: phone
+        run: trunk build --release
+
+      # Fast smoke pass — unit + integration tests. The
+      # `#[ignore]`-gated suites (live RPCS3, e2e webdriver) need an
+      # interactive desktop and aren't runnable on Actions; CI never
+      # passes `-- --ignored` per CLAUDE.md.
+      - name: cargo test --workspace
+        run: cargo test --workspace
+
+      - name: cargo build --release -p skylander-server
+        run: cargo build --release -p skylander-server
+
+      - name: Stage release artifacts
+        shell: pwsh
+        run: |
+          $tag = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "manual-${env:GITHUB_SHA}".Substring(0, 14) }
+          $stage = "release-stage/skylander-portal-controller-$tag"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item "target/release/skylander-portal-controller.exe" "$stage/"
+          Copy-Item "README.md" "$stage/" -ErrorAction SilentlyContinue
+          Copy-Item "LICENSE*" "$stage/" -ErrorAction SilentlyContinue
+          $zip = "skylander-portal-controller-$tag-windows-x86_64.zip"
+          Compress-Archive -Path "$stage/*" -DestinationPath $zip -Force
+          "RELEASE_ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload artifact (always)
+        # Up the chain even on workflow_dispatch (no tag) so we can
+        # download + smoke-test the build without publishing a release.
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_ZIP }}
+          path: ${{ env.RELEASE_ZIP }}
+          retention-days: 30
+
+      - name: Create draft release
+        # Only on actual tag pushes — manual dispatch leaves the
+        # uploaded artifact for inspection but doesn't publish.
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: ${{ env.RELEASE_ZIP }}
+          generate_release_notes: true
+          # Tag and name come from `github.ref` automatically.

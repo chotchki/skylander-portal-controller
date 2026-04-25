@@ -1,10 +1,20 @@
 # skylander-portal-controller
 
-Remote-control the RPCS3 emulated Skylanders portal from a phone or iPad over your local Wi-Fi.
+Remote-control the RPCS3 emulated Skylanders portal from a phone or iPad over your local Wi-Fi. Family-safe alternative to a physical Skylanders portal where the kids' save data lives somewhere safer than a pile of plastic figures on the living-room floor.
 
-**Status:** Phase 2 MVP — portal control end-to-end with a phone SPA. Profiles, game launching, wiki-backed figure metadata, and the Skylanders aesthetic pass are Phase 3+.
+The Windows app boots from Steam Big Picture and shows a QR code on the TV; phones scan in, pick a profile (PIN-gated), pick a game, and drive RPCS3's emulated portal slot-by-slot.
 
-See `SPEC.md` for the long-form requirements, `PLAN.md` for the current execution checklist, and `CLAUDE.md` for a compact working reference. Research writeups from Phase 1 are under `docs/research/`.
+For a higher-level pitch see the project site: <https://chotchki.github.io/skylander-portal-controller/>. Source-of-truth docs are in this repo: `SPEC.md` (long-form spec + Q&A), `PLAN.md` (execution checklist), and `CLAUDE.md` (compact working reference). Research writeups are under `docs/research/`.
+
+## Releases (end-user install)
+
+1. Grab the latest `.zip` from <https://github.com/chotchki/skylander-portal-controller/releases>.
+2. Unzip somewhere persistent (Steam library, `Documents\…`, etc.).
+3. Bring your own RPCS3 install (see <https://rpcs3.net>) and your own firmware-pack of `.sky` dumps.
+4. Launch `skylander-portal-controller.exe`. First-run wizard asks for the RPCS3 path and the firmware-pack root; settings persist to `%APPDATA%\skylander-portal-controller\`.
+5. Add the resulting `.exe` to Steam (Add a Non-Steam Game) so it launches in Big Picture mode.
+
+The phone bundle is embedded in the exe; no separate web server, no node, no extra files to ship. Only Windows 11 x64 builds are published — the project uses Windows-only UIA + Win32 plumbing for the RPCS3 driver and isn't portable.
 
 ## Running in dev
 

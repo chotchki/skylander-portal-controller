@@ -75,6 +75,12 @@ rfd = "0.14"
 directories = "5"
 walkdir = { workspace = true }
 thiserror = { workspace = true }
+# Embeds the trunk-built phone bundle into the release exe. With the
+# `debug-embed` feature OFF (the default), debug builds read the
+# files from disk on every request — so `trunk serve --watch` still
+# iterates without needing a server restart. Release builds bake the
+# bundle into the binary (PLAN 7.1).
+rust-embed = "8"
 
 # `raw-window-handle` is needed to extract the HWND from eframe's
 # `Frame::window_handle()` for the Win32 SetWindowPos call below.

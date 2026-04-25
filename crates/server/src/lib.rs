@@ -3,6 +3,7 @@
 
 pub mod config;
 pub mod display_mode;
+pub mod embedded_assets;
 pub mod fonts;
 pub mod http;
 pub mod logging;
