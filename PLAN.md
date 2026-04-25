@@ -338,6 +338,60 @@ becomes additive, not a separate stylesheet branch.
   `lg:` overrides per-component; verify on iOS Simulator + a real
   iPad via the Tour gallery.
 
+### 9.8 Collapse + standardize repeated patterns
+Once every component lives in its own file (9.4) and responsive
+variants are in (9.7), the per-tranche escape-hatch CSS will have
+accumulated duplicate declarations across files — same multi-layer
+shadow stacks, same gradient stops, same hex literals that should
+have been tokens, same text-shadow combinations on the heraldic
+text treatment. The migration emphasised *identity preservation*
+(class names + visuals stay byte-stable), so consolidation was
+deliberately deferred. 9.8 is the after-the-fact refactor pass that
+surfaces and unifies those duplicates so the design system has one
+source of truth per pattern.
+
+- [ ] 9.8 — Sweep the `phone/styles/components/*.css` files for
+  repeated patterns and consolidate. Three target shapes, in order
+  of preference:
+  1. **`@theme` token** — add to `phone/styles/input.css`'s `@theme`
+     block when the value is a design constant (a colour, a font, a
+     duration, a gradient stop set). Example candidates: the
+     "blue-card" gradient `linear-gradient(180deg, #2f6edc 0%,
+     #1e4fb3 55%, #153a8a 100%)` (currently inlined in
+     `action_button.css`; will recur in MenuOverlay), the "gold
+     radial" `radial-gradient(circle at 30% 25%, var(--gold-bright)
+     0%, var(--gold) 40%, var(--gold-mid) 80%)` (in `gold_bezel.css`
+     ring + `action_button.css` icon), the dark-stroked heraldic
+     text-shadow stack from `display_heading.css`. Promote to
+     `--gradient-blue-card`, `--gradient-gold-radial`, etc.
+  2. **`@utility`** — Tailwind v4's mechanism for a custom utility
+     that composes other utilities. Use when a pattern is utility-
+     shaped (single property or a tight cluster) and gets applied
+     in markup. Example: the "raised button" elevation shadow
+     (`inset 0 2px 0 rgba(...)`, `inset 0 -2px 0 ...`, `0 3px 0 ...`,
+     `0 5px 12px ...`) appears on `.menu-action` and probably on
+     ResetConfirmModal's HOLD button; lift to `@utility shadow-raised
+     { box-shadow: ... }` so callers get `class="shadow-raised"`.
+  3. **Shared `@layer components` class** — last resort for
+     multi-property patterns that cross several declarations and
+     can't be expressed as a utility. Co-locate in a new
+     `phone/styles/components/_shared.css` (underscore prefix flags
+     "not a component, a kit").
+
+  Procedure per consolidation:
+  - Identify the duplicate (`grep -F` against component CSS files).
+  - Extract to whichever shape fits.
+  - Update the component files to reference the new token /
+     utility / shared class.
+  - Run `trunk build` + screenshot tour; reconcile any drift before
+     committing per the 9.3 contract. Most consolidations should be
+     pixel-identical because the underlying declaration is the same.
+
+  Out of scope: chasing single-occurrence values into tokens (`--color-foo`
+  used once isn't a token, it's an indirection). The bar is "this
+  pattern shows up in ≥2 component files" or "this hex literal is
+  brand-meaningful and should be discoverable in `@theme`."
+
 ## Phase 10 Items
 - [ ] 10.1 - Add MacOS support
 - [ ] 10.2 - Add fully automated e2e testing since we can run it all on a Mac
