@@ -1,0 +1,31 @@
+title: Skylander Portal Controller
+description: >-
+  A Windows app that wraps RPCS3 so kids can manage the emulated Skylanders
+  portal from a phone or iPad over Wi-Fi. Launched from Steam Big Picture.
+baseurl: "/skylander-portal-controller"
+url: "https://chotchki.github.io"
+author: Chris Hotchkiss
+email: chris@hotchkiss.io
+
+theme: minima
+minima:
+  skin: dark
+  nav_pages:
+    - features.md
+    - setup.md
+    - roadmap.md
+    - about.md
+
+# GitHub repo link (shown by minima footer)
+github_username: chotchki
+repository: chotchki/skylander-portal-controller
+
+# Markdown / build settings
+markdown: kramdown
+permalink: pretty
+exclude:
+  - README.md
+  - Gemfile
+  - Gemfile.lock
+  - vendor
+  - .jekyll-cache
