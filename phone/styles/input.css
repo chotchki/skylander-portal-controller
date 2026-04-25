@@ -1,0 +1,203 @@
+/*
+ * Tailwind v4 entry stylesheet (PLAN 9.1).
+ *
+ * Compiled by `tools/tailwind-build` (a workspace member that
+ * caches the standalone tailwindcss CLI in
+ * `phone/.tailwind-cache/`) into `phone/dist/tailwind.css` via a
+ * Trunk pre_build hook.
+ *
+ * Strategy during the migration:
+ *
+ *   1. This file is the single Tailwind input — `@import "tailwindcss"`,
+ *      a `@source` for class-name scanning, `@theme` for design tokens.
+ *   2. The legacy `phone/assets/app.css` still ships alongside (linked
+ *      separately from `index.html`) so unmigrated components keep
+ *      rendering. As components convert to utility classes, their
+ *      rules get deleted from `app.css`; eventually the file is
+ *      empty and the link disappears.
+ *   3. `:root` mirrors the `@theme` tokens with the legacy variable
+ *      names (`--gold`, `--gb`, `--bg`, etc.) so existing `var(--*)`
+ *      refs in `app.css` still resolve while we migrate. The mirror
+ *      comes out as soon as the last legacy var reference is gone.
+ */
+
+@import "tailwindcss";
+
+/*
+ * Tell Tailwind where to scan for utility class names. Default is
+ * `**\/*.{html,js,jsx,...}` which doesn't include Rust source —
+ * Leptos `view! { class="bg-gold ..." }` macros live in `.rs`.
+ */
+@source "../src/**/*.rs";
+@source "../index.html";
+
+/*
+ * Design tokens. Mirror the names already in
+ * `docs/aesthetic/design_language.md` and `phone/assets/app.css`'s
+ * `:root`. Tailwind generates `bg-gold`, `text-gold-bright`,
+ * `border-gold-mid`, etc. from `--color-*`; `font-display`,
+ * `font-body`, `font-mono` from `--font-*`; `ease-spring`,
+ * `ease-tap` from `--ease-*`.
+ *
+ * Spacing + breakpoints stay on Tailwind defaults for now — they
+ * don't conflict with anything in app.css and 9.7's responsive
+ * pass can refine.
+ */
+@theme {
+  /* Cosmic + UI surfaces */
+  --color-bg:     #0a1a36;
+  --color-bg-2:   #0f2449;
+  --color-sf-1:   #0b1e52;
+  --color-sf-2:   #061436;
+  --color-sf-3:   #020818;
+
+  /* Gold scale (heraldic) */
+  --color-gold:        #f5c634;
+  --color-gold-bright: #ffe58a;
+  --color-gold-mid:    #c58c18;
+  --color-gold-shadow: #6e4a00;
+  --color-gold-deep:   #3a2500;
+  --color-gold-ink:    #1f1300;
+
+  /* Body text */
+  --color-text:     #f7f7fb;
+  --color-text-dim: rgba(247, 247, 251, 0.66);
+
+  /* Status */
+  --color-danger:      #d14444;
+  --color-danger-p4:   #e34c4c;
+  --color-danger-dark: #7a1818;
+  --color-success:     #65d68c;
+
+  /* Kaos palette */
+  --color-k-violet:         #7a4eff;
+  --color-k-violet-deep:    #2d0f6a;
+  --color-k-ember:          #ff6b9e;
+  --color-k-ember-deep:     #8a2a56;
+  --color-k-magenta:        #da28a8;
+  --color-k-magenta-bright: #ff4fd0;
+  --color-k-lime:           #b8ff3a;
+  --color-k-void-1:         #1a0a40;
+  --color-k-void-2:         #120628;
+  --color-k-void-3:         #070212;
+
+  /* Wood (toy-box lid) */
+  --color-wood-1:      #6e5032;
+  --color-wood-2:      #4a3220;
+  --color-wood-3:      #352416;
+  --color-wood-4:      #251810;
+  --color-wood-gold:   #d4a84a;
+  --color-wood-gold-b: #f0d080;
+
+  /* Element gradients are kept on `:root` below — Tailwind doesn't
+     yet have a clean shorthand for utility-named gradient stops,
+     so element-tinted bezels reference `var(--el-fire)` directly
+     during the migration. */
+
+  /* Typography families */
+  --font-display: "Titan One", serif;
+  --font-body:    "Fraunces", Georgia, serif;
+  --font-mono:    "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+
+  /* Display-scale type sizes (kept as utilities for now; Tailwind
+     emits `text-display-hero`, etc.) */
+  --text-display-hero: 46px;
+  --text-display-lg:   38px;
+  --text-display-md:   28px;
+  --text-display-sm:   16px;
+  --text-display-xs:   12px;
+  --text-body:         14px;
+  --text-body-italic:  13px;
+  --text-body-sm:      11px;
+
+  /* Easing + duration tokens */
+  --ease-spring: cubic-bezier(.3,1.3,.5,1);
+  --ease-tap:    cubic-bezier(.4,2.2,.5,1);
+  --ease-smooth: cubic-bezier(.4,.0,.2,1);
+}
+
+/*
+ * Legacy variable mirror — keeps `var(--gold)` / `var(--gb)` /
+ * `var(--bg)` / etc. usages in `phone/assets/app.css` resolving
+ * during the migration. Drop these as the last legacy refs go.
+ */
+:root {
+  --bg:    #0a1a36;
+  --bg-2:  #0f2449;
+  --panel:   rgba(255, 255, 255, 0.06);
+  --panel-2: rgba(255, 255, 255, 0.10);
+  --border:  rgba(255, 255, 255, 0.14);
+
+  --gold:    #ffcf3a;
+  --gold-2:  #e9a714;
+
+  --text:     #f7f7fb;
+  --text-dim: rgba(247, 247, 251, 0.66);
+  --danger:   #d14444;
+
+  --sf-1: #0b1e52;
+  --sf-2: #061436;
+  --sf-3: #020818;
+  --gb:   #ffe58a;
+  --g:    #f5c634;
+  --gm:   #c58c18;
+  --gs:   #6e4a00;
+  --gi:   #3a2500;
+
+  --el-air:    linear-gradient(135deg, #c6e6ff, #7ea9cc);
+  --el-dark:   linear-gradient(135deg, #2a2a3a, #05050a);
+  --el-earth:  linear-gradient(135deg, #a77b3a, #5a3a13);
+  --el-fire:   linear-gradient(135deg, #ff6b2a, #b13310);
+  --el-life:   linear-gradient(135deg, #5ac96b, #26612e);
+  --el-light:  linear-gradient(135deg, #fff8a0, #c8b02c);
+  --el-magic:  linear-gradient(135deg, #da5ad6, #651564);
+  --el-tech:   linear-gradient(135deg, #ffb84d, #a56500);
+  --el-undead: linear-gradient(135deg, #8a62c9, #3b215f);
+  --el-water:  linear-gradient(135deg, #2aa6ff, #0f4d8a);
+
+  --danger-p4:      #e34c4c;
+  --danger-dark-p4: #7a1818;
+  --success-p4:     #65d68c;
+
+  --t-display-hero: 46px;
+  --t-display-lg:   38px;
+  --t-display-md:   28px;
+  --t-display-sm:   16px;
+  --t-display-xs:   12px;
+  --t-body:         14px;
+  --t-body-italic:  13px;
+  --t-body-sm:      11px;
+
+  --ease-spring: cubic-bezier(.3,1.3,.5,1);
+  --ease-tap:    cubic-bezier(.4,2.2,.5,1);
+  --ease-smooth: cubic-bezier(.4,.0,.2,1);
+
+  --dur-tap:           120ms;
+  --dur-quick:         200ms;
+  --dur-impact:        600ms;
+  --dur-shudder:       400ms;
+  --dur-loading-sweep: 900ms;
+  --dur-hold-confirm:  1200ms;
+  --dur-halo-slow:     3.4s;
+  --dur-idle-float:    4.5s;
+  --dur-panel-in:      400ms;
+  --dur-sky-drift:     140s;
+
+  --k-void-1: #1a0a40;
+  --k-void-2: #120628;
+  --k-void-3: #070212;
+  --k-violet: #7a4eff;
+  --k-violet-deep: #2d0f6a;
+  --k-ember: #ff6b9e;
+  --k-ember-deep: #8a2a56;
+  --k-magenta: #da28a8;
+  --k-magenta-bright: #ff4fd0;
+  --k-lime: #b8ff3a;
+
+  --wood-1: #6e5032;
+  --wood-2: #4a3220;
+  --wood-3: #352416;
+  --wood-4: #251810;
+  --wood-gold:   #d4a84a;
+  --wood-gold-b: #f0d080;
+}

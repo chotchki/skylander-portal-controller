@@ -45,6 +45,14 @@ jobs:
         with:
           version: "latest"
 
+      # PLAN 9.1 — cached download of the standalone tailwindcss CLI.
+      # See ci.yml for the rationale; same key/path here.
+      - name: Cache tailwindcss CLI
+        uses: actions/cache@v4
+        with:
+          path: phone/.tailwind-cache
+          key: tailwindcss-${{ runner.os }}-${{ hashFiles('tools/tailwind-build/src/main.rs') }}
+
       # Phone bundle has to exist BEFORE the server build — the
       # server's `rust-embed` macro reads `phone/dist/` at compile
       # time. Release-mode trunk emits hashed filenames + minified

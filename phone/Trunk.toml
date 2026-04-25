@@ -1,0 +1,24 @@
+# Trunk config for the phone SPA (PLAN 9.1).
+#
+# Today's only purpose is the Tailwind v4 pre_build hook — `trunk
+# build` and `trunk serve` invoke `cargo run -p tailwind-build` to
+# regenerate `phone/dist/tailwind.css` before bundling. The
+# tailwind-build helper caches the standalone tailwindcss CLI
+# binary in `phone/.tailwind-cache/` (gitignored) so the download
+# is one-and-done per host.
+#
+# `--quiet` keeps cargo's "Compiling …" output off Trunk's stdout
+# during steady-state rebuilds; the hook still prints download
+# progress on the rare cache miss.
+
+[[hooks]]
+stage = "pre_build"
+command = "cargo"
+command_arguments = [
+    "run",
+    "--quiet",
+    "--manifest-path",
+    "../Cargo.toml",
+    "-p",
+    "tailwind-build",
+]
