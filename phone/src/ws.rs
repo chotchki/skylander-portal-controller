@@ -15,7 +15,8 @@ use crate::api::{
 };
 use crate::model::{ConnState, Event, GameLaunched, Slot, SlotState, UnlockedProfile, SLOT_COUNT};
 use crate::{
-    dev_log, dev_warn, push_toast, GameCrashReason, ResumeOffer, TakeoverReason, ToastMsg,
+    dev_log, dev_warn, push_toast, GameCrashReason, KaosSwapAnnouncement, ResumeOffer,
+    TakeoverReason, ToastMsg,
 };
 
 /// Pending backoff timer handle. Tracked so a manual TRY AGAIN can cancel
@@ -36,6 +37,7 @@ pub fn connect(
     scan_overlay: RwSignal<crate::ScanOverlayState>,
     reconnect_attempts: RwSignal<u32>,
     manual_retry: RwSignal<u32>,
+    kaos_swap: RwSignal<Option<KaosSwapAnnouncement>>,
 ) {
     let pending: PendingTimer = Rc::new(Cell::new(None));
 
@@ -63,6 +65,7 @@ pub fn connect(
                         scan_overlay,
                         reconnect_attempts,
                         manual_retry,
+                        kaos_swap,
                         pending.clone(),
                         0,
                     );
@@ -84,6 +87,7 @@ pub fn connect(
         scan_overlay,
         reconnect_attempts,
         manual_retry,
+        kaos_swap,
         pending,
         0,
     );
@@ -110,6 +114,7 @@ fn spawn_connect(
     scan_overlay: RwSignal<crate::ScanOverlayState>,
     reconnect_attempts: RwSignal<u32>,
     manual_retry: RwSignal<u32>,
+    kaos_swap: RwSignal<Option<KaosSwapAnnouncement>>,
     pending: PendingTimer,
     attempt: u32,
 ) {
@@ -151,6 +156,7 @@ fn spawn_connect(
                 scan_overlay,
                 reconnect_attempts,
                 manual_retry,
+                kaos_swap,
                 pending,
                 attempt,
             );
@@ -333,6 +339,19 @@ fn spawn_connect(
                             crate::push_toast_level(toasts, &msg, level);
                         }
                     }
+                    Ok(Event::KaosTaunt {
+                        profile_id,
+                        slot: _,
+                        old_figure_id: _,
+                        new_figure_id: _,
+                        taunt,
+                    }) => {
+                        dev_log!("[ws] kaos taunt: {taunt}");
+                        kaos_swap.set(Some(KaosSwapAnnouncement {
+                            taunt,
+                            profile_id,
+                        }));
+                    }
                     Err(err) => {
                         dev_warn!("bad ws message: {err} — {text}");
                     }
@@ -374,6 +393,7 @@ fn spawn_connect(
                 scan_overlay,
                 reconnect_attempts,
                 manual_retry,
+                kaos_swap,
                 pending.clone(),
                 attempt + 1,
             );
@@ -403,6 +423,7 @@ fn schedule_reconnect(
     scan_overlay: RwSignal<crate::ScanOverlayState>,
     reconnect_attempts: RwSignal<u32>,
     manual_retry: RwSignal<u32>,
+    kaos_swap: RwSignal<Option<KaosSwapAnnouncement>>,
     pending: PendingTimer,
     attempt: u32,
 ) {
@@ -425,6 +446,7 @@ fn schedule_reconnect(
             scan_overlay,
             reconnect_attempts,
             manual_retry,
+            kaos_swap,
             pending_for_cb,
             attempt,
         );

@@ -494,6 +494,28 @@ fn main() -> Result<()> {
                     });
                 }
 
+                // Kaos timer ticker (PLAN 8.2b.2). Walks sessions every
+                // ~10s; for kaos_enabled profiles, seeds a 20-min
+                // warmup on first sight and fires swaps at uniformly-
+                // random 1min..=1hr gaps thereafter. Ticker cadence
+                // sets the precision on "fire at" — 10s means fires
+                // can happen up to ~10s after their scheduled instant,
+                // which is fine given the random gap is measured in
+                // minutes. Single task, not per-session, so no
+                // cancellation plumbing needed when sessions come
+                // and go.
+                {
+                    let kaos_state = state.clone();
+                    tokio::spawn(async move {
+                        let mut tick = tokio::time::interval(std::time::Duration::from_secs(10));
+                        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                        loop {
+                            tick.tick().await;
+                            kaos_state.tick_kaos(std::time::Instant::now()).await;
+                        }
+                    });
+                }
+
                 let app = http::router(state.clone(), phone_dist);
 
                 info!("serving on http://{bind_addr}");

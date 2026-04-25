@@ -47,6 +47,21 @@ pub(crate) struct ResumeOffer {
     pub slots: Vec<SlotState>,
 }
 
+/// Pending Kaos mid-game swap (PLAN 8.2b.5). Set when the server
+/// broadcasts `Event::KaosTaunt`; cleared by a 5s auto-dismiss timer
+/// inside the overlay component, or on manual tap.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct KaosSwapAnnouncement {
+    pub taunt: String,
+    /// Profile id whose slot got swapped. Today the overlay shows
+    /// the same copy for everyone; surfacing the id here lets a
+    /// future refinement tint the overlay in the target player's
+    /// colour so co-op players can tell it's Alice's figure that
+    /// was yanked, not Bob's.
+    #[allow(dead_code)]
+    pub profile_id: String,
+}
+
 /// The emulator died. Set when the server broadcasts `Event::GameCrashed`
 /// (PLAN 4.15.14); cleared when a new `GameChanged { current: Some(_) }`
 /// arrives or the user taps "RETURN TO GAMES" in the overlay. The `message`
@@ -171,6 +186,7 @@ pub fn App() -> impl IntoView {
     let current_game = RwSignal::new(None::<GameLaunched>);
     let unlocked_profile = RwSignal::new(None::<UnlockedProfile>);
     let takeover = RwSignal::new(None::<TakeoverReason>);
+    let kaos_swap = RwSignal::new(None::<KaosSwapAnnouncement>);
     let resume_offer = RwSignal::new(None::<ResumeOffer>);
     let game_crash = RwSignal::new(None::<GameCrashReason>);
     let scan_overlay = RwSignal::new(ScanOverlayState::Closed);
@@ -235,6 +251,7 @@ pub fn App() -> impl IntoView {
         scan_overlay,
         reconnect_attempts,
         manual_retry,
+        kaos_swap,
     );
 
     // Watch `conn` for transitions into Connected (i.e. WS onopen after
@@ -338,10 +355,10 @@ pub fn App() -> impl IntoView {
                 }
             >
             <Show
-                when=move || takeover.get().is_none()
+                when=move || takeover.get().is_none() && kaos_swap.get().is_none()
                 fallback=move || view! {
                     <div class={screen_cls("screen-takeover")}>
-                        <KaosOverlay takeover />
+                        <KaosOverlay takeover kaos_swap />
                     </div>
                 }
             >

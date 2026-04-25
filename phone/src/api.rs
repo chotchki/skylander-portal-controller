@@ -498,6 +498,16 @@ pub async fn clear_resume(profile_id: &str) -> Result<(), String> {
     do_fetch(&url, "POST", None).await.map(|_| ())
 }
 
+/// PLAN 8.2b.1 — flip a profile's Kaos opt-in. Returns `()` on 2xx;
+/// the server rebroadcasts `ProfileChanged` to every unlocked-on-this-
+/// profile session so the phone's `unlocked_profile` signal catches
+/// the new state automatically without another round-trip.
+pub async fn set_kaos_enabled(profile_id: &str, enabled: bool) -> Result<(), String> {
+    let url = format!("{}/api/profiles/{profile_id}/kaos", origin());
+    let body = serde_json::json!({ "enabled": enabled }).to_string();
+    do_fetch(&url, "POST", Some(&body)).await.map(|_| ())
+}
+
 pub async fn post_quit(force: bool) -> Result<(), String> {
     let url = if force {
         format!("{}/api/quit?force=true", origin())

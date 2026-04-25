@@ -265,6 +265,7 @@ pub fn router(state: Arc<AppState>, _phone_dist: std::path::PathBuf) -> Router {
         .route("/api/profiles/:id/lock", post(lock_profile))
         .route("/api/profiles/:id/reset_pin", post(reset_pin))
         .route("/api/profiles/:id/clear_resume", post(clear_resume))
+        .route("/api/profiles/:id/kaos", post(set_kaos_enabled))
         .route("/api/version", get(get_version))
         .route("/ws", get(ws_handler));
 
@@ -1661,6 +1662,7 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, reclaim_profile: Opt
                     id: row.id,
                     display_name: row.display_name,
                     color: row.color,
+                    kaos_enabled: row.kaos_enabled,
                 }),
                 _ => None,
             },
@@ -1937,6 +1939,7 @@ async fn unlock_profile(
         id: row.id.clone(),
         display_name: row.display_name.clone(),
         color: row.color.clone(),
+        kaos_enabled: row.kaos_enabled,
     };
     // Broadcast — both connected clients receive it, only the one whose
     // session_id matches applies the update.
@@ -2054,6 +2057,60 @@ async fn reset_pin(
         Ok(()) => (StatusCode::OK, "updated").into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
     }
+}
+
+#[derive(Deserialize)]
+struct SetKaosBody {
+    enabled: bool,
+}
+
+/// PLAN 8.2b.1 — flip a profile's Kaos opt-in. Signed POST body
+/// `{ "enabled": true|false }`. No PIN re-verify: the toggle is
+/// already behind the phone's per-profile unlock flow + menu kebab,
+/// which means the requester is the same physical player already
+/// running on the session. Returns 404 if the id doesn't match a
+/// profile.
+///
+/// Broadcasts `ProfileChanged` to every session currently holding
+/// this profile unlocked so both connected phones (same player on
+/// two devices) update their toggle state without a round-trip.
+async fn set_kaos_enabled(
+    State(state): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+    Signed(body_bytes): Signed,
+) -> Response {
+    let body: SetKaosBody = match serde_json::from_slice(&body_bytes) {
+        Ok(b) => b,
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, format!("bad set_kaos body: {e}")).into_response();
+        }
+    };
+    match state.profiles.set_kaos_enabled(&id, body.enabled).await {
+        Ok(true) => {}
+        Ok(false) => return (StatusCode::NOT_FOUND, "unknown profile").into_response(),
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+    // Rebroadcast the updated profile to every session currently
+    // holding it unlocked so the kebab toggle reflects the new
+    // state on both (co-op) phones of the same profile.
+    let Ok(Some(row)) = state.profiles.get(&id).await else {
+        return (StatusCode::OK, "updated").into_response();
+    };
+    let ids = state.sessions.all_ids().await;
+    for sid in ids {
+        if state.sessions.profile_of(sid).await.as_deref() == Some(&id) {
+            let _ = state.events.send(Event::ProfileChanged {
+                session_id: sid.0,
+                profile: Some(UnlockedProfile {
+                    id: row.id.clone(),
+                    display_name: row.display_name.clone(),
+                    color: row.color.clone(),
+                    kaos_enabled: row.kaos_enabled,
+                }),
+            });
+        }
+    }
+    (StatusCode::OK, "updated").into_response()
 }
 
 // ============================================================ icons + manifest
@@ -2280,6 +2337,7 @@ async fn set_session_profile_testhook(
             id: row.id,
             display_name: row.display_name,
             color: row.color,
+            kaos_enabled: row.kaos_enabled,
         }),
     });
     (StatusCode::OK, "bound").into_response()
@@ -2339,6 +2397,7 @@ async fn unlock_session_testhook(
                     id: row.id,
                     display_name: row.display_name,
                     color: row.color,
+                    kaos_enabled: row.kaos_enabled,
                 }),
             });
         }

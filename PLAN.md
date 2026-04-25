@@ -163,23 +163,51 @@ The Skylanders-themed mid-game disruption — wall-clock timer fires,
 a portal figure gets swapped for a random compatible one from the
 owner's collection, a Kaos catchphrase overlays for ~5s.
 
-- [ ] 8.2b.1 — Per-profile Kaos enable toggle (kebab menu; off by
-  default while we tune the cadence).
-- [ ] 8.2b.2 — Server timer task: 20-min warmup from session unlock,
+- [x] 8.2b.1 — Per-profile Kaos enable toggle (kebab menu; off by
+  default while we tune the cadence). `profiles.kaos_enabled`
+  migration + `POST /api/profiles/:id/kaos`; kebab menu surfaces
+  ENABLE / DISABLE action; server rebroadcasts `ProfileChanged` on
+  flip so both co-op phones update.
+- [x] 8.2b.2 — Server timer task: 20-min warmup from session unlock,
   then uniformly-random fire within each hour window.
-- [ ] 8.2b.3 — Compatibility-aware swap selection: pick a portal
+  `AppState::tick_kaos` on a 10s tokio ticker; warmup seeds on
+  first tick, subsequent fires pick random 1min–1hr gaps via
+  `kaos::random_gap`. Schedule lives on `SessionState` so
+  ghost/reclaim preserves it across disconnects.
+- [x] 8.2b.3 — Compatibility-aware swap selection: pick a portal
   figure + a compatible replacement from the owning profile's
   collection via `compat::is_compatible` (vehicles SuperChargers-
-  only edge case already handled there).
-- [ ] 8.2b.4 — Execute the swap as a clear+load pair, broadcast
+  only edge case already handled there). `kaos::select_swap` —
+  pure fn, 7 unit tests covering placed-by filter, vehicles edge
+  case, already-on-portal exclusion, same-figure rejection.
+- [x] 8.2b.4 — Execute the swap as a clear+load pair, broadcast
   `Event::KaosTaunt { profile_id, slot, taunt }` with a random
   catchphrase from `data/kaos_taunts.json`. Pairs with 8.1.2 — the
   taunt has to land even if the targeted phone is backgrounded /
   briefly disconnected when it fires.
-- [ ] 8.2b.5 — Phone `KaosOverlay` component (already exists)
+  `AppState::execute_kaos_swap`: flips portal state to Loading,
+  queues ClearSlot + LoadFigure driver jobs, pushes the taunt
+  into any matching ghost's replay buffer before broadcasting (so
+  a backgrounded phone still sees it on reconnect), then
+  broadcasts the `KaosTaunt` event. Taunts inlined in
+  `kaos::KAOS_SWAP_TAUNTS` rather than loaded from JSON — simpler
+  and ships with the exe.
+- [x] 8.2b.5 — Phone `KaosOverlay` component (already exists)
   renders the taunt + visual treatment for ~5s, then dismisses.
-- [ ] 8.2b.6 — Tests: timer math, swap selection (vehicles edge
-  case), taunt rotation, replay-on-reconnect.
+  `KaosOverlay` now branches on `takeover.is_some()`: terminal
+  takeover UI, or transient swap banner with a 5s auto-dismiss
+  timer + tap-to-dismiss-early. Shared surface vocabulary
+  (starfield, sigil, quote-card); swap variant drops the info
+  line + kickback button. Co-author signal `kaos_swap` threaded
+  through `ws::connect` + `App`.
+- [x] 8.2b.6 — Tests: timer math, swap selection (vehicles edge
+  case), taunt rotation, replay-on-reconnect. 10 tests:
+  `random_gap_stays_within_bounds`, `random_gap_rotates_across_*`,
+  `taunt_rotation_has_multiple_entries`, plus the 7 selection
+  tests. Replay-on-reconnect is covered transitively by 8.1.7's
+  `ghost_reclaim_full_roundtrip` (KaosTaunt is variant-agnostic
+  in the replay buffer). Kaos toggle round-trip in
+  `tests/profiles.rs::kaos_toggle_roundtrips_against_store`.
 
 ### 8.3 Hide empty portal spots
 

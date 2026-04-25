@@ -189,6 +189,21 @@ pub enum Event {
         #[serde(default)]
         is_duplicate: bool,
     },
+    /// Kaos just swapped one of this profile's figures for a compat-eligible
+    /// replacement. Phone renders the `kaos_swap` overlay variant with the
+    /// taunt text for ~5s. Fields mirror the server's payload — PLAN 8.2b.4.
+    KaosTaunt {
+        #[serde(default)]
+        profile_id: String,
+        #[serde(default)]
+        slot: u8,
+        #[serde(default)]
+        old_figure_id: String,
+        #[serde(default)]
+        new_figure_id: String,
+        #[serde(default)]
+        taunt: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -203,6 +218,11 @@ pub struct UnlockedProfile {
     pub id: String,
     pub display_name: String,
     pub color: String,
+    /// PLAN 8.2b.1 — phone-side mirror of the server's Kaos opt-in.
+    /// `#[serde(default)]` so older servers (or the pre-8.2b.1
+    /// variant with no column) fall through to `false`.
+    #[serde(default)]
+    pub kaos_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

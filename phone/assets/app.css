@@ -2629,6 +2629,29 @@ input, textarea {
   text-shadow: 0 1px 0 rgba(0,0,0,0.6);
 }
 
+/* PLAN 8.2b.5 — swap variant.
+   Shares the takeover surface, but is transient (5s auto-dismiss)
+   and non-blocking: tappable vignette dismisses early. Slight
+   visual differentiation so players know this is a "mid-game
+   moment" vs the terminal takeover screen: cooler hue shift on
+   the vignette + a smaller overall viewport so gameplay state
+   behind it reads as "still in the game". */
+.takeover-void--swap {
+  animation: takeover-swap-fade-in 240ms ease-out;
+}
+@keyframes takeover-swap-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.takeover-viewport--swap {
+  cursor: pointer;
+  max-width: 86%;
+}
+.takeover-info--swap {
+  opacity: 0.75;
+  font-size: 0.9em;
+}
+
 /* Kick back button */
 .takeover-kick-btn {
   width: 100%; max-width: 320px;

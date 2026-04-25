@@ -249,6 +249,199 @@ impl AppState {
         self.publish_session_snapshot().await;
     }
 
+    /// Kaos timer tick (PLAN 8.2b.2). Walks every registered session
+    /// and, for those whose profile has `kaos_enabled = true`:
+    ///
+    /// - **No schedule yet** → seed `kaos_next_fire_at = now + WARMUP`.
+    ///   Gives the user a 20-min grace window after unlock before any
+    ///   disruption; also used to re-arm after a toggle flip.
+    /// - **Due** (`kaos_next_fire_at <= now`) → attempt a swap via
+    ///   `kaos::select_swap`. On success, execute the swap + reschedule
+    ///   to `now + random_gap()` (1min..=1hr). On failure (no eligible
+    ///   slots or no compatible replacements), reschedule to `now +
+    ///   MIN_GAP` so we try again shortly.
+    ///
+    /// Sessions whose profile has `kaos_enabled = false` get their
+    /// schedule cleared — flipping back on starts a fresh warmup.
+    /// Ghosted sessions are skipped entirely (their replay buffer
+    /// would accumulate the taunt on next fire, but firing into
+    /// nobody feels wasteful; the next tick picks them up if they
+    /// reconnect).
+    ///
+    /// Intended to be called on a ~10s tokio interval from main.rs;
+    /// no-ops when no session is eligible.
+    pub async fn tick_kaos(&self, now: std::time::Instant) {
+        use rand_core::RngCore;
+        let ids = self.sessions.all_ids().await;
+        let mut rng = rand_core::OsRng;
+        for sid in ids {
+            let Some(sess) = self.sessions.get(sid).await else {
+                continue;
+            };
+            if sess.is_ghost() {
+                continue;
+            }
+            let Some(pid) = sess.profile_id else {
+                continue;
+            };
+            let Ok(Some(row)) = self.profiles.get(&pid).await else {
+                continue;
+            };
+            if !row.kaos_enabled {
+                if sess.kaos_next_fire_at.is_some() {
+                    self.sessions.set_kaos_schedule(sid, None).await;
+                }
+                continue;
+            }
+            let Some(due_at) = sess.kaos_next_fire_at else {
+                // First tick after unlock — seed the warmup. Use a
+                // small random jitter so multiple sessions unlocking
+                // in the same tick don't end up firing in lockstep.
+                let jitter = std::time::Duration::from_secs(rng.next_u64() % 30);
+                self.sessions
+                    .set_kaos_schedule(sid, Some(now + crate::kaos::WARMUP + jitter))
+                    .await;
+                continue;
+            };
+            if due_at > now {
+                continue;
+            }
+            // Pick + execute the swap. Fall through to a short
+            // reschedule on "nothing to swap" — the common case is
+            // "portal is empty right now, try again in a minute."
+            let portal = self.portal.lock().await.clone();
+            let current_game = self
+                .current_game_of_origin()
+                .await
+                .unwrap_or(skylander_core::GameOfOrigin::Imaginators);
+            let swap =
+                crate::kaos::select_swap(current_game, &portal, &self.figures, &pid, &mut rng);
+            let next = match swap {
+                Some(s) => {
+                    let taunt = crate::kaos::random_swap_taunt(&mut rng);
+                    self.execute_kaos_swap(&s, &pid, taunt).await;
+                    now + crate::kaos::random_gap(&mut rng)
+                }
+                None => {
+                    // No-op — try again in MIN_GAP so we don't hot-
+                    // spin. Typical causes: portal is empty, profile
+                    // has no figures placed, current game has no
+                    // compatible library match.
+                    now + crate::kaos::MIN_GAP
+                }
+            };
+            self.sessions.set_kaos_schedule(sid, Some(next)).await;
+        }
+    }
+
+    /// Look up the `GameOfOrigin` of the currently-running game, if any.
+    /// `None` means the launcher hasn't booted a game (or the booted
+    /// serial isn't in our catalogue). Used by the Kaos ticker to
+    /// gate compatibility.
+    pub async fn current_game_of_origin(&self) -> Option<skylander_core::GameOfOrigin> {
+        let lifecycle = self.rpcs3.lock().await;
+        lifecycle
+            .current
+            .as_ref()
+            .and_then(|g| skylander_core::compat::game_of_origin_from_serial(&g.serial))
+    }
+
+    /// Execute a Kaos mid-game swap (PLAN 8.2b.4). Queues a ClearSlot
+    /// followed by a LoadFigure for the same slot, flips portal state
+    /// into Loading, broadcasts `SlotChanged` + `KaosTaunt`, and pushes
+    /// the taunt into any matching ghost's replay buffer so a
+    /// backgrounded phone still sees it on reconnect.
+    ///
+    /// `placed_by` on the new load is the same profile_id — the swap
+    /// preserves ownership (it's still Alice's slot, just a different
+    /// figure). Figures not in the library (lookup miss) → fail silently;
+    /// this is an unreachable state in practice because the caller
+    /// picked `new_figure_id` from the library.
+    pub async fn execute_kaos_swap(
+        &self,
+        swap: &crate::kaos::KaosSwap,
+        profile_id: &str,
+        taunt: &str,
+    ) {
+        let Some(new_figure) = self.lookup_figure(&swap.new_figure_id) else {
+            warn!(
+                new_figure_id = %swap.new_figure_id.as_str(),
+                "kaos swap: replacement figure vanished from library — aborting",
+            );
+            return;
+        };
+        let new_path = match crate::working_copies::resolve_load_path(profile_id, new_figure) {
+            Ok(p) => p,
+            Err(e) => {
+                warn!(
+                    profile_id,
+                    new_figure_id = %swap.new_figure_id.as_str(),
+                    "kaos swap: resolve working copy failed: {e}"
+                );
+                return;
+            }
+        };
+        // Flip portal state immediately so phones animate the slot
+        // transitioning rather than waiting on the async clear+load
+        // round-trip.
+        {
+            let mut portal = self.portal.lock().await;
+            portal[swap.slot.as_u8() as usize] = SlotState::Loading {
+                figure_id: Some(new_figure.id.clone()),
+                placed_by: Some(profile_id.to_string()),
+            };
+        }
+        let _ = self.events.send(Event::SlotChanged {
+            slot: swap.slot,
+            state: SlotState::Loading {
+                figure_id: Some(new_figure.id.clone()),
+                placed_by: Some(profile_id.to_string()),
+            },
+        });
+
+        if let Err(e) = self
+            .driver_tx
+            .send(DriverJob::ClearSlot { slot: swap.slot })
+            .await
+        {
+            warn!("kaos swap: queue ClearSlot failed: {e}");
+            return;
+        }
+        if let Err(e) = self
+            .driver_tx
+            .send(DriverJob::LoadFigure {
+                slot: swap.slot,
+                figure_id: new_figure.id.clone(),
+                path: new_path,
+                placed_by: Some(profile_id.to_string()),
+                canonical_name: new_figure.canonical_name.clone(),
+            })
+            .await
+        {
+            warn!("kaos swap: queue LoadFigure failed: {e}");
+            return;
+        }
+
+        info!(
+            profile_id,
+            slot = swap.slot.as_u8(),
+            old = %swap.old_figure_id.as_str(),
+            new = %swap.new_figure_id.as_str(),
+            "kaos swap executed — clear + load + taunt",
+        );
+
+        let evt = crate::kaos::build_taunt_event(swap, taunt, profile_id);
+        // Push into the ghost's replay buffer BEFORE broadcast so a
+        // reconnect that happens in the same tick still flushes the
+        // taunt out (push_replay_for_profile filters by is_ghost so
+        // live sessions are a no-op here; they'll get it via broadcast).
+        let _ = self
+            .sessions
+            .push_replay_for_profile(profile_id, &evt)
+            .await;
+        let _ = self.events.send(evt);
+    }
+
     /// Drop every slot on the portal whose `placed_by` matches `profile_id`.
     /// Called when a phone disconnects so the departing player's figures
     /// come off the portal instead of lingering ownerless (PLAN 3.10.9 —

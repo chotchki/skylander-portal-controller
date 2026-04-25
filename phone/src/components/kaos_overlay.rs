@@ -1,20 +1,21 @@
 //! Full-screen Kaos overlay (design_language.md §6.10).
 //!
-//! Two variants are planned per the design doc:
+//! Two variants:
 //!
-//! - **`takeover`** — shipped now. Rendered when the server sends
+//! - **`takeover`** — terminal surface shown when the server sends
 //!   `Event::TakenOver` because a third phone joined and the FIFO
 //!   registry evicted this session. Shows the Kaos sigil + "KAOS
-//!   REIGNS!" title + taunt quote + KICK BACK IN button.
+//!   REIGNS!" title + taunt quote + KICK BACK IN button. Dismissed
+//!   only by the user (page reload).
 //!
-//! - **`swap`** — Phase 5.3 follow-up (mid-game 1-for-1 figure swap
-//!   announcement). Will extend this component with an additional
-//!   signal prop + a variant dispatch.
+//! - **`swap`** — transient announcement shown when the server sends
+//!   `Event::KaosTaunt` (PLAN 8.2b.5). Same visual DNA (starfield +
+//!   sigil + taunt quote) but no kickback button; auto-dismisses
+//!   after ~5s. Takeover wins if both signals are set simultaneously.
 //!
 //! Extracted from `screens/modals.rs` per PLAN 4.20.5. Renamed from
-//! `TakeoverScreen` to `KaosOverlay` so the Phase 5.3 swap variant
-//! lands as a new branch inside the same component surface rather
-//! than a parallel screen-level one-off.
+//! `TakeoverScreen` to `KaosOverlay` so the swap variant could land
+//! inside the same component surface rather than a parallel one.
 
 // `#[component]` macro emits a wrapper around the fn that's effectively
 // `pub`; `pub(crate)` parameter types (`TakeoverReason` from `lib.rs`)
@@ -30,13 +31,51 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 
-use crate::TakeoverReason;
+use crate::{KaosSwapAnnouncement, TakeoverReason};
 
-/// Kaos takeover / swap overlay. Today only renders when
-/// `takeover.get().is_some()` (takeover variant); the enclosing
-/// `App()` controls mount via `<Show>`.
+/// How long the swap announcement stays on-screen before auto-dismissing.
+const SWAP_DISMISS_MS: i32 = 5_000;
+
+/// Kaos overlay driving both the takeover and mid-game-swap variants.
+/// The enclosing `App()` controls mount via `<Show>` on "takeover OR
+/// swap is Some".
 #[component]
-pub(crate) fn KaosOverlay(takeover: RwSignal<Option<TakeoverReason>>) -> impl IntoView {
+pub(crate) fn KaosOverlay(
+    takeover: RwSignal<Option<TakeoverReason>>,
+    kaos_swap: RwSignal<Option<KaosSwapAnnouncement>>,
+) -> impl IntoView {
+    // Swap variant — 5s auto-dismiss timer. Fires whenever `kaos_swap`
+    // transitions to Some; each new arrival restarts the timer so a
+    // rapid-fire back-to-back swap (unusual but possible) doesn't get
+    // truncated by the previous one's timer.
+    {
+        let pending: Rc<Cell<Option<i32>>> = Rc::new(Cell::new(None));
+        let pending_for_effect = pending.clone();
+        Effect::new(move |_| {
+            if kaos_swap.get().is_none() {
+                return;
+            }
+            // Cancel any prior timer (overlapping swap case).
+            if let Some(h) = pending_for_effect.take() {
+                if let Some(w) = web_sys::window() {
+                    w.clear_timeout_with_handle(h);
+                }
+            }
+            let pending_for_cb = pending_for_effect.clone();
+            let cb = Closure::once_into_js(move || {
+                pending_for_cb.set(None);
+                kaos_swap.set(None);
+            });
+            if let Some(w) = web_sys::window() {
+                if let Ok(h) = w.set_timeout_with_callback_and_timeout_and_arguments_0(
+                    cb.as_ref().unchecked_ref(),
+                    SWAP_DISMISS_MS,
+                ) {
+                    pending_for_effect.set(Some(h));
+                }
+            }
+        });
+    }
     // Kaos took the slot. "Kick back" does a full page reload — the browser
     // opens a fresh WS, server tries to re-admit via the FIFO path. If the
     // 1-minute cooldown is still active, the reload-WS gets an `Error` event
@@ -113,53 +152,98 @@ pub(crate) fn KaosOverlay(takeover: RwSignal<Option<TakeoverReason>>) -> impl In
     };
 
     view! {
-        <section class="takeover-void">
-            <div class="takeover-hexgrid"></div>
-            <div class="takeover-sparks"></div>
+        <Show
+            when=move || takeover.get().is_some()
+            fallback=move || view! {
+                // Swap variant — transient banner, dismissed by 5s timer
+                // above. Reuses takeover's surface + sigil + quote-card
+                // classes so the visual vocabulary stays consistent
+                // between the two Kaos moments; the takeover-specific
+                // info line + kickback button are omitted.
+                <section class="takeover-void takeover-void--swap">
+                    <div class="takeover-hexgrid"></div>
+                    <div class="takeover-sparks"></div>
 
-            <div class="takeover-viewport">
-                // Kaos sigil placeholder — actual SVG mask wiring deferred
-                <div class="kaos-sigil"></div>
+                    <div
+                        class="takeover-viewport takeover-viewport--swap"
+                        on:click=move |_| kaos_swap.set(None)
+                    >
+                        <div class="kaos-sigil"></div>
 
-                <h1 class="kaos-title">
-                    "KAOS"
-                    <span class="kaos-title-line2">"REIGNS!"</span>
-                </h1>
+                        <h1 class="kaos-title">
+                            "KAOS"
+                            <span class="kaos-title-line2">"STRIKES!"</span>
+                        </h1>
 
-                <div class="takeover-quote-card">
-                    <div class="takeover-quote-open">{"\u{201C}"}</div>
-                    <div class="takeover-quote-body">
-                        {move || takeover
-                            .get()
-                            .map(|t| t.by_kaos.clone())
-                            .unwrap_or_else(|| "Behold my magnificent wickedness!".into())}
+                        <div class="takeover-quote-card">
+                            <div class="takeover-quote-open">{"\u{201C}"}</div>
+                            <div class="takeover-quote-body">
+                                {move || kaos_swap
+                                    .get()
+                                    .map(|s| s.taunt.clone())
+                                    .unwrap_or_default()}
+                            </div>
+                            <div class="takeover-quote-close">{"\u{201D}"}</div>
+                            <div class="takeover-quote-attrib">{"\u{2014} KAOS"}</div>
+                        </div>
+
+                        <p class="takeover-info takeover-info--swap">
+                            "tap to dismiss"
+                        </p>
                     </div>
-                    <div class="takeover-quote-close">{"\u{201D}"}</div>
-                    <div class="takeover-quote-attrib">{"\u{2014} KAOS"}</div>
+
+                    <div class="takeover-vignette"></div>
+                </section>
+            }
+        >
+            <section class="takeover-void">
+                <div class="takeover-hexgrid"></div>
+                <div class="takeover-sparks"></div>
+
+                <div class="takeover-viewport">
+                    // Kaos sigil placeholder — actual SVG mask wiring deferred
+                    <div class="kaos-sigil"></div>
+
+                    <h1 class="kaos-title">
+                        "KAOS"
+                        <span class="kaos-title-line2">"REIGNS!"</span>
+                    </h1>
+
+                    <div class="takeover-quote-card">
+                        <div class="takeover-quote-open">{"\u{201C}"}</div>
+                        <div class="takeover-quote-body">
+                            {move || takeover
+                                .get()
+                                .map(|t| t.by_kaos.clone())
+                                .unwrap_or_else(|| "Behold my magnificent wickedness!".into())}
+                        </div>
+                        <div class="takeover-quote-close">{"\u{201D}"}</div>
+                        <div class="takeover-quote-attrib">{"\u{2014} KAOS"}</div>
+                    </div>
+
+                    <p class="takeover-info">
+                        "your seat has been claimed \u{00B7} enter your pin to return"
+                    </p>
+
+                    <button
+                        class="takeover-kick-btn"
+                        class:takeover-kick-btn--cooldown=kick_disabled
+                        disabled=kick_disabled
+                        on:click=move |_| {
+                            if kick_disabled() {
+                                return;
+                            }
+                            if let Some(loc) = web_sys::window().map(|w| w.location()) {
+                                let _ = loc.reload();
+                            }
+                        }
+                    >
+                        {kick_label}
+                    </button>
                 </div>
 
-                <p class="takeover-info">
-                    "your seat has been claimed \u{00B7} enter your pin to return"
-                </p>
-
-                <button
-                    class="takeover-kick-btn"
-                    class:takeover-kick-btn--cooldown=kick_disabled
-                    disabled=kick_disabled
-                    on:click=move |_| {
-                        if kick_disabled() {
-                            return;
-                        }
-                        if let Some(loc) = web_sys::window().map(|w| w.location()) {
-                            let _ = loc.reload();
-                        }
-                    }
-                >
-                    {kick_label}
-                </button>
-            </div>
-
-            <div class="takeover-vignette"></div>
-        </section>
+                <div class="takeover-vignette"></div>
+            </section>
+        </Show>
     }
 }

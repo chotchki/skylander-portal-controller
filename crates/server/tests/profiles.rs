@@ -115,6 +115,42 @@ async fn clear_portal_layout_drops_saved_layout() {
     );
 }
 
+/// Kaos toggle round-trip (PLAN 8.2b.1): a fresh profile defaults to
+/// kaos_enabled = false; set_kaos_enabled flips the column and surfaces
+/// via `get`. Covers both `true` and `false` transitions + the no-op
+/// when the id doesn't match a profile.
+#[tokio::test]
+async fn kaos_toggle_roundtrips_against_store() {
+    let store = ProfileStore::open_in_memory().await.unwrap();
+    let id = store.create("Alice", "1234", "#ff00aa").await.unwrap();
+
+    // Default — new profiles are opted-out.
+    let row = store.get(&id).await.unwrap().expect("just created");
+    assert!(
+        !row.kaos_enabled,
+        "fresh profiles default to kaos_enabled=false"
+    );
+
+    // Enable.
+    assert!(store.set_kaos_enabled(&id, true).await.unwrap());
+    let row = store.get(&id).await.unwrap().expect("still there");
+    assert!(row.kaos_enabled);
+
+    // Disable.
+    assert!(store.set_kaos_enabled(&id, false).await.unwrap());
+    let row = store.get(&id).await.unwrap().expect("still there");
+    assert!(!row.kaos_enabled);
+
+    // Unknown id — returns false, doesn't error.
+    assert!(
+        !store
+            .set_kaos_enabled("nonexistent-id", true)
+            .await
+            .unwrap(),
+        "setter reports no-op on unknown id rather than erroring",
+    );
+}
+
 /// Display-mode persistence (PLAN 4.20.x): unknown serial → None,
 /// save a mode → get returns it, save again with different values →
 /// the conflict-on-serial UPSERT overwrites cleanly.

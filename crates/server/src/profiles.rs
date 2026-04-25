@@ -38,6 +38,12 @@ pub struct ProfileRow {
     pub color: String,
     #[allow(dead_code)] // surfaced via ORDER BY, not read directly
     pub created_at: String,
+    /// PLAN 8.2b.1 — per-profile Kaos feature toggle. `true` opts the
+    /// profile into mid-game swaps; `false` (the default) keeps the
+    /// timer dormant for that profile. Stored as INTEGER 0/1 in SQLite;
+    /// sqlx maps it to bool automatically.
+    #[sqlx(default)]
+    pub kaos_enabled: bool,
 }
 
 /// Public shape returned to the phone — never includes `pin_hash`.
@@ -180,6 +186,14 @@ pub struct SessionState {
     /// overflow. Empty for live sessions — they receive directly via
     /// the broadcast channel.
     pub replay_buffer: VecDeque<skylander_core::Event>,
+    /// Next wall-clock instant at which the Kaos swap timer
+    /// should fire for this session (PLAN 8.2b.2). `None` means
+    /// "not scheduled" — either the session hasn't unlocked a
+    /// Kaos-enabled profile yet, or the toggle is currently off.
+    /// Preserved across ghost/reclaim so the same SessionId
+    /// picks up its pending schedule on reconnect without a fresh
+    /// 20-min warmup.
+    pub kaos_next_fire_at: Option<Instant>,
 }
 
 impl SessionState {
@@ -268,6 +282,7 @@ impl SessionRegistry {
                     created_at: now,
                     ghosted_at: None,
                     replay_buffer: VecDeque::new(),
+                    kaos_next_fire_at: None,
                 },
             );
             return RegistrationOutcome::Admitted(sid);
@@ -308,6 +323,7 @@ impl SessionRegistry {
                 created_at: now,
                 ghosted_at: None,
                 replay_buffer: VecDeque::new(),
+                kaos_next_fire_at: None,
             },
         );
         drop(sessions);
@@ -465,6 +481,22 @@ impl SessionRegistry {
         let mut map = self.sessions.write().await;
         if let Some(s) = map.get_mut(&id) {
             s.profile_id = profile_id;
+            // Unlock transition — clear any leftover Kaos schedule
+            // from a prior unlock so the next kaos_enabled profile
+            // starts a fresh 20-min warmup instead of inheriting
+            // some stale fire-at from a profile switch.
+            s.kaos_next_fire_at = None;
+        }
+    }
+
+    /// Set or clear the next Kaos fire instant for this session
+    /// (PLAN 8.2b.2). Passed through the registry so we don't need
+    /// a separate lock around the schedule map. No-op if the session
+    /// id isn't registered.
+    pub async fn set_kaos_schedule(&self, id: SessionId, at: Option<Instant>) {
+        let mut map = self.sessions.write().await;
+        if let Some(s) = map.get_mut(&id) {
+            s.kaos_next_fire_at = at;
         }
     }
 
@@ -544,7 +576,7 @@ impl ProfileStore {
 
     pub async fn list(&self) -> Result<Vec<ProfileRow>> {
         let rows = sqlx::query_as::<_, ProfileRow>(
-            "SELECT id, display_name, pin_hash, color, created_at FROM profiles ORDER BY created_at ASC",
+            "SELECT id, display_name, pin_hash, color, created_at, kaos_enabled FROM profiles ORDER BY created_at ASC",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -640,7 +672,7 @@ impl ProfileStore {
 
     pub async fn get(&self, id: &str) -> Result<Option<ProfileRow>> {
         let row = sqlx::query_as::<_, ProfileRow>(
-            "SELECT id, display_name, pin_hash, color, created_at FROM profiles WHERE id = ?1",
+            "SELECT id, display_name, pin_hash, color, created_at, kaos_enabled FROM profiles WHERE id = ?1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -673,6 +705,19 @@ impl ProfileStore {
 
     pub async fn delete(&self, id: &str) -> Result<bool> {
         let res = sqlx::query("DELETE FROM profiles WHERE id = ?1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// PLAN 8.2b.1 — toggle a profile's Kaos opt-in. `true` arms the
+    /// swap timer for this profile's sessions; `false` keeps it
+    /// dormant. `Ok(false)` (no-op) is returned if the id doesn't
+    /// match a profile.
+    pub async fn set_kaos_enabled(&self, id: &str, enabled: bool) -> Result<bool> {
+        let res = sqlx::query("UPDATE profiles SET kaos_enabled = ?1 WHERE id = ?2")
+            .bind(enabled)
             .bind(id)
             .execute(&self.pool)
             .await?;

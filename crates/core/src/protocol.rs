@@ -89,6 +89,30 @@ pub enum Event {
     /// Broadcast to all sessions — the portal is dead for everyone. PLAN
     /// 4.15.14; see `docs/aesthetic/navigation.md` §3.8.
     GameCrashed { message: String },
+    /// Kaos mid-game swap (PLAN 8.2b.4). The server timer picked a
+    /// compatible replacement for one of `profile_id`'s currently-placed
+    /// figures and just executed a clear+load pair on `slot`. Phones
+    /// render the `kaos_swap` variant of `KaosOverlay` for ~5s showing
+    /// the taunt, then dismiss. Broadcast to every session so all
+    /// connected phones see the notification; the body of `profile_id`
+    /// lets them tint the overlay with the target player's colour if
+    /// they want to emphasise it's Alice's figure that changed.
+    ///
+    /// Replay-buffered for ghosted sessions: if the target phone was
+    /// backgrounded when the timer fired, the taunt lands when they
+    /// reconnect (PLAN 8.1.2). The `slot` + `old_figure_id` +
+    /// `new_figure_id` fields let the phone reconcile against the
+    /// `PortalSnapshot` it receives on reconnect — if the figure is
+    /// still there, the swap hasn't actually happened yet (rare: driver
+    /// job queued but not executed); normally the snapshot will already
+    /// reflect the new state.
+    KaosTaunt {
+        profile_id: String,
+        slot: SlotIndex,
+        old_figure_id: crate::figure::FigureId,
+        new_figure_id: crate::figure::FigureId,
+        taunt: String,
+    },
     /// A Skylanders figure was scanned on the attached NFC reader. Broadcast
     /// to all sessions so the phone can refresh its toy-box library view and
     /// surface a "new figure imported" toast. The raw 1024-byte tag dump
@@ -122,6 +146,13 @@ pub struct UnlockedProfile {
     pub id: String,
     pub display_name: String,
     pub color: String,
+    /// PLAN 8.2b.1 — whether the user has opted the profile into
+    /// Kaos mid-game swaps. Phone's settings screen reads this to
+    /// show the correct toggle state. `#[serde(default)]` so older
+    /// servers without the column still parse into UnlockedProfile
+    /// on the phone (default = off, matches the DB default).
+    #[serde(default)]
+    pub kaos_enabled: bool,
 }
 
 /// Announcement payload included in `Event::GameChanged`.

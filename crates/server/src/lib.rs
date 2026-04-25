@@ -6,6 +6,7 @@ pub mod display_mode;
 pub mod embedded_assets;
 pub mod fonts;
 pub mod http;
+pub mod kaos;
 pub mod logging;
 pub mod mdns;
 #[cfg(feature = "nfc-import")]
