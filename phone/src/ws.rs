@@ -9,7 +9,10 @@ use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 use web_sys::{MessageEvent, WebSocket};
 
-use crate::api::{observe_boot_id, set_session_id};
+use crate::api::{
+    cached_reclaim_profile, forget_unlocked_profile, observe_boot_id, remember_unlocked_profile,
+    set_session_id,
+};
 use crate::model::{ConnState, Event, GameLaunched, Slot, SlotState, UnlockedProfile, SLOT_COUNT};
 use crate::{
     dev_log, dev_warn, push_toast, GameCrashReason, ResumeOffer, TakeoverReason, ToastMsg,
@@ -117,7 +120,19 @@ fn spawn_connect(
     } else {
         "ws://"
     };
-    let url = format!("{scheme}{host}/ws");
+    // Reclaim hint (PLAN 8.1.3 phone-side) — if we previously unlocked
+    // a profile, pass it on the WS query string so the server can
+    // adopt our ghost session if one's still parked. No hint = normal
+    // register() on the server. URL-encode defensively even though
+    // profile ids are ULIDs today (alphanumeric); future id formats
+    // shouldn't break the handshake.
+    let url = match cached_reclaim_profile() {
+        Some(pid) => {
+            let encoded = js_sys::encode_uri_component(&pid);
+            format!("{scheme}{host}/ws?reclaim={encoded}")
+        }
+        None => format!("{scheme}{host}/ws"),
+    };
 
     dev_log!("[ws] spawn_connect attempt={attempt} url={url}");
     conn.set(ConnState::Connecting);
@@ -179,9 +194,13 @@ fn spawn_connect(
                         // UI state (unlocked profile, current screen, etc.)
                         // can't drift from the server's empty post-restart
                         // state. First connect after page load just stores
-                        // the id.
+                        // the id. Also clear the reclaim hint — the
+                        // server's ghost registry is empty after a restart,
+                        // so leaving the hint around would just trigger
+                        // wrong-profile claim attempts.
                         if observe_boot_id(boot_id) {
                             dev_log!("[ws] boot_id changed → server restarted, reloading");
+                            forget_unlocked_profile();
                             if let Some(loc) = web_sys::window().map(|w| w.location()) {
                                 let _ = loc.reload();
                             }
@@ -241,6 +260,15 @@ fn spawn_connect(
                         // Session-filtered: only apply if it's addressed to us.
                         // Other phones' unlock changes don't affect this client.
                         if Some(session_id) == crate::api::current_session_id() {
+                            // Reclaim-hint maintenance (PLAN 8.1.3
+                            // phone-side): cache the profile id while
+                            // unlocked so a future WS reconnect can adopt
+                            // the ghost; clear on lock so we don't keep
+                            // hinting after the user stepped away.
+                            match &profile {
+                                Some(p) => remember_unlocked_profile(&p.id),
+                                None => forget_unlocked_profile(),
+                            }
                             unlocked_profile.set(profile);
                         }
                     }

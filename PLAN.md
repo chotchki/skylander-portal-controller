@@ -69,17 +69,6 @@ Encryption handled (6.2.0 + 6.2.0b archived). Identity fields decode correctly; 
 
 ---
 
-## Phase 7 — Packaging + release
-
-Deliberately separated so it's clear this only runs once the app works end-to-end. CI deferred until here.
-
-- [ ] 7.1 **Single-exe distribution.** Everything ships as ONE `skylander-portal.exe`. Phone SPA + images + `figures.json` + fonts (WOFF2) + Kaos SVG embedded via `include_dir!` or `rust-embed`. Release builds strip debug + `cargo build --release` + UPX if >~50 MB.
-- [ ] 7.2 GitHub Actions on version-tag push: Windows release build + fast test suite (unit + integration + workspace build, NOT `#[ignore]`-gated e2e), attach zip to release.
-- [ ] 7.3 Release `README.md` — user-supplied bits (RPCS3 install path, firmware backup pack). Walk through first-launch wizard. Link `data/LICENSE.md` for Fandom attribution (3.19.6).
-- [ ] 7.4 Verify release zip on a *different* Windows machine than the dev one.
-- [ ] 7.5 Post-release monitoring plan (GitHub issues only for v1).
-- [ ] 7.6 **Trademark / IP review of shipped assets.** Kaos sigil (`docs/aesthetic/kaos_icon.svg` → `phone/assets/kaos.svg`) and any box-art thumbnails (4.2.5). Decide fair-use vs derivative vs custom-drawn before public release.
-
 ## Phase 8 Items
 
 ### 8.1 Ghost sessions (sticky disconnect)

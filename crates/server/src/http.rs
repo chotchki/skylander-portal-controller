@@ -1571,6 +1571,7 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, reclaim_profile: Opt
     //     already gone; instead clean up the figures it had on the portal.
     //   - RejectedByCooldown: both seats full and the 1-min forced-evict
     //     cooldown hasn't elapsed; send an Error event and close.
+    let is_reclaim = claimed.is_some();
     let (sid, replay_events) = if let Some((claimed_sid, events)) = claimed {
         // Adopted a ghost — same SessionId, replay buffer drained.
         // No registration / no eviction. Skip TakenOver entirely.
@@ -1672,7 +1673,12 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, reclaim_profile: Opt
         // Sent on `sender` directly (not broadcast) because we're still
         // pre-writer-task: broadcast messages emitted before
         // `state.events.subscribe()` below would be dropped.
-        if let Some(pid) = current_profile
+        //
+        // Skipped on ghost reclaim (PLAN 8.1.3) — the figures are
+        // already on the portal (ghost protection), so prompting
+        // "Resume last setup?" would be redundant + confusing.
+        if !is_reclaim
+            && let Some(pid) = current_profile
             && let Some(evt) = build_resume_prompt(&state, sid.0, &pid).await
             && let Ok(j) = serde_json::to_string(&evt)
         {

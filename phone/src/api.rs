@@ -89,6 +89,44 @@ pub fn observe_boot_id(incoming: u64) -> bool {
 /// re-pair path.
 const HMAC_STORAGE_KEY: &str = "hmac_key";
 
+/// localStorage key under which the most-recently-unlocked profile id
+/// is cached so the next WS connect can hint `?reclaim=<pid>` to adopt
+/// any matching ghost session on the server (PLAN 8.1.3 phone-side).
+/// Set when `Event::ProfileChanged { profile: Some(_) }` arrives, cleared
+/// on `Some → None` (lock) and on a server-restart `boot_id` change.
+const RECLAIM_PROFILE_KEY: &str = "reclaim_profile_id";
+
+/// Persist `profile_id` so the next WS reconnect can pass it as the
+/// `?reclaim=` hint. Best-effort: a missing localStorage (private mode,
+/// disabled storage, …) silently no-ops — without the hint we just
+/// fall back to the normal `register()` path, which is correct, just
+/// slower in the ghost-reclaim case.
+pub fn remember_unlocked_profile(profile_id: &str) {
+    if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+        let _ = storage.set_item(RECLAIM_PROFILE_KEY, profile_id);
+    }
+}
+
+/// Drop the cached reclaim hint — call when the profile locks
+/// (ProfileChanged → None) or the server restarts (boot_id changed).
+/// Without this a stale ghost on a long-dead server could yield a
+/// wrong-profile reclaim attempt on a brand-new boot, which the server
+/// would reject (no matching ghost) but would still cost a roundtrip.
+pub fn forget_unlocked_profile() {
+    if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+        let _ = storage.remove_item(RECLAIM_PROFILE_KEY);
+    }
+}
+
+/// Read the cached reclaim hint, if any. `None` when the user hasn't
+/// unlocked yet, or after a forget.
+pub fn cached_reclaim_profile() -> Option<String> {
+    web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .and_then(|s| s.get_item(RECLAIM_PROFILE_KEY).ok().flatten())
+        .filter(|s| !s.is_empty())
+}
+
 /// Parse the URL for `?k=<hex>` (query string) or `#k=<hex>` (fragment
 /// — legacy, for home-screen shortcuts pinned before 2026-04-24) and
 /// install the key for HMAC signing. Called once at app boot.
