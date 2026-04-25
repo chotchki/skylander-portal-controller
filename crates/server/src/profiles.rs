@@ -403,6 +403,39 @@ impl SessionRegistry {
         }
     }
 
+    /// Adopt a ghost session for the reconnecting phone (PLAN 8.1.3).
+    /// Atomically: find the *oldest* ghost whose `profile_id` matches,
+    /// clear its `ghosted_at` (back to live), drain its replay buffer,
+    /// and return both. The same `SessionId` is preserved so any
+    /// `X-Session-Id` headers + `placed_by` slot attribution from the
+    /// pre-disconnect window keep working without re-issuing.
+    ///
+    /// Returns `None` if no ghost matches; the WS handler should then
+    /// fall through to the normal `register()` path. Concurrent
+    /// claims for the same profile are serialised by the registry's
+    /// write lock — first writer wins, second sees `None`.
+    ///
+    /// "Oldest first" is deliberate: if a profile has somehow ended up
+    /// with multiple ghosts (rare — would need two simultaneous
+    /// disconnects of the same profile across separate sessions), the
+    /// one with the earliest `ghosted_at` is the most stale and worth
+    /// adopting; the others time-out via the normal sweep.
+    pub async fn claim_ghost(
+        &self,
+        profile_id: &str,
+    ) -> Option<(SessionId, Vec<skylander_core::Event>)> {
+        let mut map = self.sessions.write().await;
+        let sid = map
+            .iter()
+            .filter(|(_, s)| s.is_ghost() && s.profile_id.as_deref() == Some(profile_id))
+            .min_by_key(|(_, s)| s.ghosted_at.expect("is_ghost guarantees Some"))
+            .map(|(sid, _)| *sid)?;
+        let s = map.get_mut(&sid).expect("just located");
+        s.ghosted_at = None;
+        let replay: Vec<_> = s.replay_buffer.drain(..).collect();
+        Some((sid, replay))
+    }
+
     pub async fn get(&self, id: SessionId) -> Option<SessionState> {
         self.sessions.read().await.get(&id).cloned()
     }

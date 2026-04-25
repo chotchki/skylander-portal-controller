@@ -339,6 +339,119 @@ async fn replay_buffer_drops_oldest_on_overflow() {
     }
 }
 
+/// Reclamation: a phone reconnecting with a profile_id hint adopts
+/// the matching ghost — same SessionId, replay buffer drained in
+/// order, ghost flag cleared. Subsequent claim attempts for the same
+/// profile see no remaining ghost.
+#[tokio::test]
+async fn claim_ghost_un_ghosts_session_and_drains_replay() {
+    use skylander_core::Event;
+
+    let reg = SessionRegistry::default();
+    let t0 = Instant::now();
+
+    let sid = match reg.register_at(t0).await {
+        RegistrationOutcome::Admitted(s) => s,
+        other => panic!("{other:?}"),
+    };
+    reg.set_profile(sid, Some("alice".into())).await;
+    reg.ghost(sid, t0 + Duration::from_secs(1)).await;
+
+    // Buffer up some events.
+    for i in 0..3 {
+        let e = Event::Error {
+            message: format!("queued-{i}"),
+        };
+        reg.push_replay_for_profile("alice", &e).await;
+    }
+
+    // Claim — same SessionId returned, buffer drained in order, ghost
+    // flag cleared.
+    let (claimed, replay) = reg.claim_ghost("alice").await.expect("ghost matched");
+    assert_eq!(claimed, sid, "session id preserved across reconnect");
+    assert_eq!(replay.len(), 3);
+    let messages: Vec<_> = replay
+        .into_iter()
+        .map(|e| match e {
+            Event::Error { message } => message,
+            _ => unreachable!(),
+        })
+        .collect();
+    assert_eq!(messages, vec!["queued-0", "queued-1", "queued-2"]);
+
+    // Post-claim the session is live again.
+    let s = reg.get(sid).await.expect("session still registered");
+    assert!(!s.is_ghost(), "ghosted_at cleared by claim");
+
+    // No remaining ghost for that profile.
+    assert!(reg.claim_ghost("alice").await.is_none());
+}
+
+/// Claim with no matching ghost returns `None` so the WS handler can
+/// fall through to the normal `register()` path.
+#[tokio::test]
+async fn claim_ghost_returns_none_when_no_match() {
+    let reg = SessionRegistry::default();
+
+    // No sessions at all.
+    assert!(reg.claim_ghost("anyone").await.is_none());
+
+    // Live session exists for alice but isn't ghosted — no claim.
+    let t0 = Instant::now();
+    let live = match reg.register_at(t0).await {
+        RegistrationOutcome::Admitted(s) => s,
+        other => panic!("{other:?}"),
+    };
+    reg.set_profile(live, Some("alice".into())).await;
+    assert!(reg.claim_ghost("alice").await.is_none());
+
+    // Ghost exists for bob, not alice — wrong-profile claim still None.
+    let bob = match reg.register_at(t0 + Duration::from_secs(1)).await {
+        RegistrationOutcome::Admitted(s) => s,
+        other => panic!("{other:?}"),
+    };
+    reg.set_profile(bob, Some("bob".into())).await;
+    reg.ghost(bob, t0 + Duration::from_secs(2)).await;
+    assert!(reg.claim_ghost("alice").await.is_none());
+}
+
+/// When two ghosts exist for the same profile (rare — same profile
+/// disconnected from two separate sessions), the OLDEST is claimed
+/// first. The other stays in the registry until its own claim or
+/// expiry sweep.
+#[tokio::test]
+async fn claim_ghost_picks_oldest_when_multiple_match() {
+    let reg = SessionRegistry::default();
+    let t0 = Instant::now();
+
+    let older = match reg.register_at(t0).await {
+        RegistrationOutcome::Admitted(s) => s,
+        other => panic!("{other:?}"),
+    };
+    reg.set_profile(older, Some("alice".into())).await;
+    reg.ghost(older, t0 + Duration::from_secs(1)).await;
+
+    let newer = match reg.register_at(t0 + Duration::from_secs(2)).await {
+        RegistrationOutcome::Admitted(s) => s,
+        other => panic!("{other:?}"),
+    };
+    reg.set_profile(newer, Some("alice".into())).await;
+    reg.ghost(newer, t0 + Duration::from_secs(3)).await;
+
+    let (claimed, _) = reg
+        .claim_ghost("alice")
+        .await
+        .expect("at least one matches");
+    assert_eq!(claimed, older);
+
+    // Second claim hits the newer ghost.
+    let (claimed_again, _) = reg.claim_ghost("alice").await.expect("newer still ghosted");
+    assert_eq!(claimed_again, newer);
+
+    // Third claim: nothing left.
+    assert!(reg.claim_ghost("alice").await.is_none());
+}
+
 /// Ghosts count against the 2-session FIFO cap — a 3rd registration
 /// still triggers forced eviction of the oldest, ghost or not. This
 /// is what keeps the abandoned-PWA case from blocking real users.
