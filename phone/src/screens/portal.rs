@@ -32,28 +32,29 @@ pub(crate) fn Portal(
     let selected_slot = RwSignal::new(None::<u8>);
     let selection_token = StoredValue::new(0u32);
 
-    // True when any slot is Empty — drives the single floating hint
-    // below the grid that points players at the toy-box lid. PLAY_TEST
-    // #22: one hint replaces eight per-slot "+" glyphs + a per-slot
-    // "pick a skylander for slot N" banner.
-    let any_empty = Signal::derive(move || {
-        portal.with(|p| p.iter().any(|s| matches!(s.state, SlotState::Empty)))
-    });
-
     view! {
         <section class="portal-p4">
             <DisplayHeading size=HeadingSize::Md>"PORTAL"</DisplayHeading>
+            // PLAY_TEST round 2 (PLAN 8.3): kids tapped empty slot
+            // bezels expecting something to happen — they're inert
+            // (placement happens through the toy box). Pull empty
+            // slots out of the DOM entirely; only Loaded / Loading /
+            // Error slots render. The toy-box arrow hint below the
+            // grid is then the only call-to-action when nothing is
+            // placed, and naturally pushes down once any slot fills.
             <div class="portal-p4-grid">
                 {(0..SLOT_COUNT).map(|i| {
-                    view! { <SlotView idx=i portal picking_for known_profiles selected_slot selection_token /> }
+                    view! {
+                        <Show when=move || !matches!(portal.get()[i].state, SlotState::Empty)>
+                            <SlotView idx=i portal picking_for known_profiles selected_slot selection_token />
+                        </Show>
+                    }
                 }).collect_view()}
             </div>
-            <Show when=move || any_empty.get() fallback=|| ()>
-                <div class="portal-empty-hint" aria-live="polite">
-                    <span class="portal-empty-hint-arrow">"\u{2193}"</span>
-                    <span>"open the toy box to add a figure"</span>
-                </div>
-            </Show>
+            <div class="portal-empty-hint" aria-live="polite">
+                <span class="portal-empty-hint-arrow">"\u{2193}"</span>
+                <span>"open the toy box to add a figure"</span>
+            </div>
         </section>
     }
 }

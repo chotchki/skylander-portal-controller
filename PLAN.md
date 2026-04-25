@@ -210,6 +210,24 @@ owner's collection, a Kaos catchphrase overlays for ~5s.
   `tests/profiles.rs::kaos_toggle_roundtrips_against_store`.
 
 ### 8.3 Hide empty portal spots
+PLAY_TEST round 2: kid tried to tap empty portal slots expecting
+something to happen. Empty slots are inert (placement happens via
+the toy-box lid), so they're a tap-target lie. Goal: hide empty
+slots entirely; let the toy-box arrow + hint be the only visible
+affordance when nothing is placed; populated slots reappear when a
+figure lands and push the arrow hint down.
+
+- [x] 8.3.1 — Wrap each `<SlotView>` in a `<Show when=!is_empty>` so
+  Empty-state slots fall out of the DOM. Loading / Loaded / Error
+  stay visible (the user has actionable state on each). Grid auto-
+  flows the survivors top-to-bottom, left-to-right; original slot
+  index badges still render on each visible slot for diagnostic
+  honesty.
+- [x] 8.3.2 — Drop the `any_empty` gate on `.portal-empty-hint` so
+  the toy-box arrow renders unconditionally. Empty portal: hint is
+  the only call-to-action (PORTAL heading + hint, nothing in
+  between). Populated portal: hint sits below the visible slots,
+  pushed down by the grid.
 
 ### 8.4 Release 1.1
 - [ ] 8.4.1 — Release notes drafted from commits since v1.0.0
