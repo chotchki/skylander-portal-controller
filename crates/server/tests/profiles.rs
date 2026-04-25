@@ -73,3 +73,89 @@ async fn create_delete_roundtrip_and_max_profiles_enforced_externally() {
     }
     assert_eq!(store.count().await.unwrap(), 0);
 }
+
+/// Locks down the resume-modal "Start Fresh" path (PLAN 4.20.x):
+/// save a layout → load returns it → clear → load returns None.
+/// Pre-fix the modal only dismissed itself client-side, so the
+/// server's saved JSON survived and re-fired on every subsequent
+/// unlock. The clear step is the contract that broke that loop.
+#[tokio::test]
+async fn clear_portal_layout_drops_saved_layout() {
+    let store = ProfileStore::open_in_memory().await.unwrap();
+    let id = store.create("Alice", "1234", "#abcdef").await.unwrap();
+
+    // Empty load before any save.
+    assert_eq!(store.load_portal_layout(&id).await.unwrap(), None);
+
+    // Save → load round-trips.
+    let layout = r#"[{"Loaded":{"figure_id":"abc","display_name":"Eruptor"}}]"#;
+    store.save_portal_layout(&id, layout).await.unwrap();
+    assert_eq!(
+        store.load_portal_layout(&id).await.unwrap().as_deref(),
+        Some(layout),
+    );
+
+    // Clear nukes the JSON.
+    store.clear_portal_layout(&id).await.unwrap();
+    assert_eq!(store.load_portal_layout(&id).await.unwrap(), None);
+
+    // Idempotent — clearing again on an already-cleared profile is fine.
+    store.clear_portal_layout(&id).await.unwrap();
+    assert_eq!(store.load_portal_layout(&id).await.unwrap(), None);
+
+    // After clear, save still works (next time the user does a real
+    // load on the portal we re-record the layout).
+    store.save_portal_layout(&id, "[]").await.unwrap();
+    assert_eq!(
+        store.load_portal_layout(&id).await.unwrap().as_deref(),
+        Some("[]"),
+    );
+}
+
+/// Display-mode persistence (PLAN 4.20.x): unknown serial → None,
+/// save a mode → get returns it, save again with different values →
+/// the conflict-on-serial UPSERT overwrites cleanly.
+#[tokio::test]
+async fn display_mode_persistence_roundtrip_and_overwrite() {
+    use skylander_server::display_mode::DisplayMode;
+
+    let store = ProfileStore::open_in_memory().await.unwrap();
+
+    // Cold cache — no mode for any serial yet.
+    assert_eq!(
+        store.get_display_mode("BLUS31442").await.unwrap(),
+        None,
+    );
+
+    // Save once.
+    let first = DisplayMode {
+        width: 1920,
+        height: 1080,
+        refresh_hz: 60,
+    };
+    store.save_display_mode("BLUS31442", first).await.unwrap();
+    assert_eq!(
+        store.get_display_mode("BLUS31442").await.unwrap(),
+        Some(first),
+    );
+
+    // Overwrite — the second save should completely replace the first
+    // (this is what happens on a re-launch where RPCS3 picked a
+    // different mode than we pre-set, e.g. native res differs).
+    let second = DisplayMode {
+        width: 3840,
+        height: 2160,
+        refresh_hz: 30,
+    };
+    store.save_display_mode("BLUS31442", second).await.unwrap();
+    assert_eq!(
+        store.get_display_mode("BLUS31442").await.unwrap(),
+        Some(second),
+    );
+
+    // Different serial reads independently — modes are per-game.
+    assert_eq!(
+        store.get_display_mode("BLUS30906").await.unwrap(),
+        None,
+    );
+}
