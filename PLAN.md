@@ -89,30 +89,48 @@ constantly. Goal: keep a phone's figures on the portal across a
 disconnect, replay missed events on reconnect, and only evict when a
 new phone genuinely takes over the slot.
 
-- [ ] 8.1.1 — Introduce a *ghost session* state on the server. When a
+- [x] 8.1.1 — Introduce a *ghost session* state on the server. When a
   WS drops with an unlocked profile + placed slots, mark the session
   ghost (profile id + placed-slot snapshot + last-seen timestamp).
   Don't clear figures, don't fire `disconnect cleanup`. Ghost stays
-  in the registry's slot allocation.
-- [ ] 8.1.2 — Per-ghost replay buffer for events that arrived after
+  in the registry's slot allocation. `SessionState::ghosted_at` +
+  `SessionRegistry::ghost`; WS exit path routes profile-bound
+  sessions here instead of `remove`.
+- [x] 8.1.2 — Per-ghost replay buffer for events that arrived after
   the WS dropped but the phone needs on reconnect. At minimum the
   KaosTaunt event (8.2b.4 fires while the phone is asleep / PWA
   backgrounded) plus any post-disconnect SlotChanged for the
   ghost's own slots. Bounded ring (last N ≤ ~32 events; pre-2026 we
   capped at "last 10 minutes worth" — pick whichever fits).
-- [ ] 8.1.3 — On reconnect, match the incoming Welcome's profile-id
+  `REPLAY_BUFFER_LIMIT = 32` ring on `SessionState`;
+  `push_replay_for_profile` + `drain_replay`. Producer-side wiring
+  (which events fan into the buffer) lands with the consumers in
+  8.2b.4.
+- [x] 8.1.3 — On reconnect, match the incoming Welcome's profile-id
   hint (cookie? localStorage echo? we'll need a phone-side handle)
   against ghost sessions. If a ghost matches, *adopt* it — keep the
   same session id, skip the resume modal entirely (figures are
   already where the user left them), and drain the replay buffer
   into the phone in event order so the Kaos taunt etc. lands.
-- [ ] 8.1.4 — 2-phone cap counts ghosts as occupying a slot. A 3rd
+  Server-side: `SessionRegistry::claim_ghost` + WS handler accepts
+  `?reclaim=<profile_id>` and flushes the drained buffer to the new
+  socket. Phone-side reclaim hint (localStorage echo) is the
+  follow-up bullet — the server side is in place and falls back to
+  `register()` when the hint is absent.
+- [x] 8.1.4 — 2-phone cap counts ghosts as occupying a slot. A 3rd
   connection still FIFO-evicts the oldest, ghost or live. Forced-
   eviction cooldown still applies. When a ghost is evicted, ITS
   slots clear (deferred cleanup runs at evict time, not disconnect
-  time).
-- [ ] 8.1.5 — Time-bound ghosts (1 hour idle) so they don't pile up
+  time). Implemented end-to-end: `RegistrationOutcome::AdmittedByEvicting`
+  now carries `evicted_ghost_profile`; the WS handler runs
+  `clear_slots_for_profile` on that profile inline. WS disconnect path
+  routes profile-bound sessions through `SessionRegistry::ghost`
+  instead of `remove`, so figures stay on the portal until claim or
+  expiry.
+- [x] 8.1.5 — Time-bound ghosts (1 hour idle) so they don't pile up
   forever after a real abandon. After timeout: evict + cleanup.
+  `AppState::sweep_expired_ghosts` runs every 60s from a tokio task
+  spawned in `main.rs`; `GHOST_TIMEOUT = 1h`.
 - [ ] 8.1.6 — UI: live phones see ghost-placed figures with their
   existing `placed_by` attribution; surface a subtle "(away)" hint
   on the orbit pip so it's clear which phones are responsive.

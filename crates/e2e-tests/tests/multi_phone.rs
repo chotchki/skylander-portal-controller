@@ -433,16 +433,24 @@ async fn ownership_pip_shows_correct_owner_per_slot() {
     p2.close().await.unwrap();
 }
 
-// ---- 3.10.9 disconnect_clears_departing_profile_slots --------------------
+// ---- 8.1.4 disconnect_ghosts_session_keeps_slots --------------------------
 //
-// Simple MVP 2-player disconnect policy: when Phone A drops, any slots
-// they placed figures in clear; Phone B's figures stay. Exercises the
-// `state.rs::flip_loaded_owned_to_loading` free fn end-to-end through
-// the WS-close hook in `http.rs::ws_handler`.
+// Updated disconnect policy (PLAN 8.1): when Phone A drops while it had
+// figures on the portal, the session is *ghosted* rather than removed.
+// Alice's figures stay placed so a quick PWA-background / WS-blip
+// reconnect can adopt the ghost and pick up where she left off. Cleanup
+// is deferred to either the same-profile reconnect path (`?reclaim=`),
+// the periodic `GHOST_TIMEOUT` sweep, or forced eviction by a 3rd
+// phone. Bob's slot 2 must stay loaded throughout (his session is live).
+//
+// Replaces the old 3.10.9 contract that cleared slots eagerly on
+// disconnect — that policy was only ever a placeholder; PLAN deferred
+// the real semantics to "alongside the reconnect-overlay phase" which
+// is now 8.1.
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver"]
-async fn disconnect_clears_departing_profile_slots() {
+async fn disconnect_ghosts_session_keeps_slots() {
     let server = TestServer::spawn().expect("spawn");
     launch_giants(&server.url).await.unwrap();
 
@@ -512,31 +520,29 @@ async fn disconnect_clears_departing_profile_slots() {
     // Alice disconnects.
     p1.close().await.unwrap();
 
-    // P2 should see slot 1 go Empty while slot 2 (Bob's) stays Loaded.
-    // The driver-side ClearSlot round-trip has to complete, so poll
-    // with a generous timeout — mock driver's 50ms default latency
-    // puts this in the ~200ms range but CI loads vary.
-    p2.wait_until(Duration::from_secs(10), || async {
-        let s1 = p2.client.find(Locator::Css(".p4-slot:nth-child(1)")).await;
-        if let Ok(slot) = s1 {
-            let cls = slot.attr("class").await.unwrap().unwrap_or_default();
-            if !cls.contains("p4-slot--empty") {
-                return false;
-            }
-        } else {
-            return false;
-        }
-        // Bob's slot 2 should still be Loaded.
-        let s2 = p2.client.find(Locator::Css(".p4-slot:nth-child(2)")).await;
-        if let Ok(slot) = s2 {
-            let cls = slot.attr("class").await.unwrap().unwrap_or_default();
-            cls.contains("p4-slot--loaded")
-        } else {
-            false
-        }
-    })
-    .await
-    .expect("slot 1 should empty on Alice disconnect; slot 2 (Bob) should stay loaded");
+    // Both slots should remain Loaded — Alice's session ghosted, so
+    // her slot 1 figure stays placed waiting for a reclaim. Bob's
+    // slot 2 is unaffected (his session is live).
+    //
+    // Asserting an event ABSENCE is awkward, so we just settle for
+    // ~1s and check the steady state. If the legacy 3.10.9 eager
+    // clear ever comes back, slot 1 would flip to Empty in well
+    // under 200ms.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    for (idx, label) in [(1usize, "Alice ghost"), (2usize, "Bob live")] {
+        let css = format!(".p4-slot:nth-child({idx})");
+        let slot = p2
+            .client
+            .find(Locator::Css(&css))
+            .await
+            .unwrap_or_else(|e| panic!("locate slot {idx}: {e}"));
+        let cls = slot.attr("class").await.unwrap().unwrap_or_default();
+        assert!(
+            cls.contains("p4-slot--loaded"),
+            "{label} slot {idx} should stay Loaded post-disconnect (ghost \
+             protection); got class={cls:?}"
+        );
+    }
 
     p2.close().await.unwrap();
 }

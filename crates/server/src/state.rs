@@ -217,6 +217,32 @@ impl AppState {
         self.figure_index.get(id).and_then(|i| self.figures.get(*i))
     }
 
+    /// Sweep ghosted sessions whose `ghosted_at` exceeded the configured
+    /// `GHOST_TIMEOUT` (PLAN 8.1.4). Each removed ghost has its placed
+    /// figures cleared from the portal and a snapshot published so the
+    /// TV's player-orbit pip count updates. Schedule on a 60s tick from
+    /// `main.rs`; idempotent on quiet ticks.
+    pub async fn sweep_expired_ghosts(&self) {
+        let evicted = self
+            .sessions
+            .expire_ghosts_older_than(crate::profiles::GHOST_TIMEOUT, std::time::Instant::now())
+            .await;
+        if evicted.is_empty() {
+            return;
+        }
+        for (sid, pid) in evicted {
+            info!(
+                session_id = sid.0,
+                profile_id = pid.as_deref().unwrap_or("<none>"),
+                "ghost session expired — running deferred slot cleanup"
+            );
+            if let Some(pid) = pid {
+                self.clear_slots_for_profile(&pid).await;
+            }
+        }
+        self.publish_session_snapshot().await;
+    }
+
     /// Drop every slot on the portal whose `placed_by` matches `profile_id`.
     /// Called when a phone disconnects so the departing player's figures
     /// come off the portal instead of lingering ownerless (PLAN 3.10.9 —

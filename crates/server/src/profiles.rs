@@ -198,9 +198,16 @@ pub enum RegistrationOutcome {
     /// Both slots were full and we evicted the oldest session to make room.
     /// The caller must send `Event::TakenOver` to `evicted` and remove its
     /// WS task. Updates the registry's cooldown clock.
+    ///
+    /// `evicted_ghost_profile` is `Some(pid)` when the seat we took came
+    /// from a ghosted session — that phone has no live WS to receive
+    /// `TakenOver`, so the caller skips the broadcast and instead runs
+    /// `clear_slots_for_profile(pid)` to drop its placed figures (PLAN
+    /// 8.1.4). `None` for normal live-eviction.
     AdmittedByEvicting {
         session: SessionId,
         evicted: SessionId,
+        evicted_ghost_profile: Option<String>,
     },
     /// Both slots were full and the forced-evict cooldown hasn't elapsed yet.
     /// Caller should close the WS with a `Retry-After`-style signal and not
@@ -283,7 +290,15 @@ impl SessionRegistry {
             .min_by_key(|(_, s)| s.created_at)
             .map(|(sid, _)| *sid)
             .expect("len >= MAX_SESSIONS > 0");
-        sessions.remove(&evicted);
+        let evicted_state = sessions.remove(&evicted).expect("just located");
+        // If the evicted seat was a ghost, surface its profile_id so
+        // the caller can run `clear_slots_for_profile` — there's no
+        // live WS to receive `TakenOver`. Live evictions return None
+        // here; the caller broadcasts TakenOver as before. (PLAN 8.1.4)
+        let evicted_ghost_profile = evicted_state
+            .is_ghost()
+            .then(|| evicted_state.profile_id.clone())
+            .flatten();
         let sid = self.mint();
         let pending = self.pending_unlock.write().await.take();
         sessions.insert(
@@ -300,6 +315,7 @@ impl SessionRegistry {
         RegistrationOutcome::AdmittedByEvicting {
             session: sid,
             evicted,
+            evicted_ghost_profile,
         }
     }
 
@@ -913,10 +929,18 @@ mod tests {
             .register_at(base + Duration::from_secs(FORCED_EVICT_COOLDOWN.as_secs() + 2))
             .await;
         match outcome {
-            RegistrationOutcome::AdmittedByEvicting { session, evicted } => {
+            RegistrationOutcome::AdmittedByEvicting {
+                session,
+                evicted,
+                evicted_ghost_profile,
+            } => {
                 assert_eq!(evicted, a, "oldest (a) should be evicted, not b");
                 assert_ne!(session, a);
                 assert_ne!(session, b);
+                assert_eq!(
+                    evicted_ghost_profile, None,
+                    "evicting a live session reports None for the ghost-profile field",
+                );
                 let ids = reg.all_ids().await;
                 assert!(ids.contains(&b));
                 assert!(ids.contains(&session));

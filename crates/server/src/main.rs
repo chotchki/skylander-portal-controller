@@ -472,6 +472,28 @@ fn main() -> Result<()> {
                 #[cfg(not(feature = "test-hooks"))]
                 let () = test_mock;
 
+                // Periodic ghost-expiry sweep (PLAN 8.1.4). Ghosts hold
+                // their portal slots until either the same profile
+                // reconnects with a `?reclaim=` hint, a 3rd connection
+                // forces eviction, or this sweep notices the ghost has
+                // sat past `GHOST_TIMEOUT`. 60s cadence keeps the
+                // wall-clock cleanup latency bounded without burning
+                // wakeups on a quiet day.
+                {
+                    let sweep_state = state.clone();
+                    tokio::spawn(async move {
+                        let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+                        // Defaults to Burst — first tick fires immediately,
+                        // which would race with startup work; Skip waits a
+                        // full period instead.
+                        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                        loop {
+                            tick.tick().await;
+                            sweep_state.sweep_expired_ghosts().await;
+                        }
+                    });
+                }
+
                 let app = http::router(state.clone(), phone_dist);
 
                 info!("serving on http://{bind_addr}");

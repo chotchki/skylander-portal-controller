@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path as AxumPath, State};
+use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -1526,49 +1526,94 @@ async fn shutdown_launcher(State(state): State<Arc<AppState>>, Signed(_body): Si
     (StatusCode::ACCEPTED, "farewell").into_response()
 }
 
-async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_ws(socket, state))
+/// Optional WS query string. `?reclaim=<profile_id>` lets a reconnecting
+/// phone hint that it had a profile unlocked + figures on the portal
+/// before the disconnect, so the server should adopt its ghost session
+/// (PLAN 8.1.4) instead of registering fresh. Without the hint the WS
+/// goes through the normal `register()` path.
+#[derive(Deserialize)]
+struct WsQuery {
+    reclaim: Option<String>,
 }
 
-async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    Query(q): Query<WsQuery>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_ws(socket, state, q.reclaim))
+}
+
+async fn handle_ws(socket: WebSocket, state: Arc<AppState>, reclaim_profile: Option<String>) {
     state
         .connected_clients
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
     let (mut sender, mut receiver) = socket.split();
 
+    // Reclamation path (PLAN 8.1.4) — phone reconnecting after a
+    // ghosting can pass `?reclaim=<profile_id>` to adopt its prior
+    // ghost session. Returns the same `SessionId` it had before the
+    // disconnect plus any events that arrived during the gap; we
+    // flush those to the new socket after the snapshot block below.
+    // No match (no ghost, wrong profile, expired) → fall through to
+    // the normal `register()` path.
+    let claimed = match reclaim_profile.as_deref() {
+        Some(pid) if !pid.is_empty() => state.sessions.claim_ghost(pid).await,
+        _ => None,
+    };
+
     // Register with the 2-slot FIFO. Three outcomes:
     //   - Admitted(sid): seat was free, proceed.
-    //   - AdmittedByEvicting { session, evicted }: we took the oldest seat;
-    //     broadcast TakenOver to the evicted session so its phone flips to
-    //     the Kaos screen.
+    //   - AdmittedByEvicting { session, evicted, evicted_ghost_profile }:
+    //     we took the oldest seat. If the seat was a live phone, broadcast
+    //     `TakenOver` to that session. If it was a ghost, the phone is
+    //     already gone; instead clean up the figures it had on the portal.
     //   - RejectedByCooldown: both seats full and the 1-min forced-evict
     //     cooldown hasn't elapsed; send an Error event and close.
-    let sid = match state.sessions.register().await {
-        RegistrationOutcome::Admitted(sid) => sid,
-        RegistrationOutcome::AdmittedByEvicting { session, evicted } => {
-            let _ = state.events.send(Event::TakenOver {
-                session_id: evicted.0,
-                by_kaos: random_kaos_taunt().to_string(),
-            });
-            session
-        }
-        RegistrationOutcome::RejectedByCooldown { retry_after } => {
-            let secs = retry_after.as_secs_f32().ceil() as u64;
-            let evt = Event::Error {
-                message: format!(
-                    "Portal is full and a takeover just happened. Try again in {secs}s."
-                ),
-            };
-            if let Ok(j) = serde_json::to_string(&evt) {
-                let _ = sender.send(Message::Text(j)).await;
+    let (sid, replay_events) = if let Some((claimed_sid, events)) = claimed {
+        // Adopted a ghost — same SessionId, replay buffer drained.
+        // No registration / no eviction. Skip TakenOver entirely.
+        (claimed_sid, events)
+    } else {
+        let outcome = state.sessions.register().await;
+        let sid = match outcome {
+            RegistrationOutcome::Admitted(sid) => sid,
+            RegistrationOutcome::AdmittedByEvicting {
+                session,
+                evicted,
+                evicted_ghost_profile,
+            } => {
+                if let Some(pid) = evicted_ghost_profile {
+                    // Force-evicted a ghost: no live WS to notify, just
+                    // drop the figures it left on the portal.
+                    state.clear_slots_for_profile(&pid).await;
+                } else {
+                    let _ = state.events.send(Event::TakenOver {
+                        session_id: evicted.0,
+                        by_kaos: random_kaos_taunt().to_string(),
+                    });
+                }
+                session
             }
-            let _ = sender.send(Message::Close(None)).await;
-            state
-                .connected_clients
-                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-            return;
-        }
+            RegistrationOutcome::RejectedByCooldown { retry_after } => {
+                let secs = retry_after.as_secs_f32().ceil() as u64;
+                let evt = Event::Error {
+                    message: format!(
+                        "Portal is full and a takeover just happened. Try again in {secs}s."
+                    ),
+                };
+                if let Ok(j) = serde_json::to_string(&evt) {
+                    let _ = sender.send(Message::Text(j)).await;
+                }
+                let _ = sender.send(Message::Close(None)).await;
+                state
+                    .connected_clients
+                    .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                return;
+            }
+        };
+        (sid, Vec::new())
     };
     // Publish the new session snapshot so the TV launcher can update its
     // orbit pip count + max-players card flip (PLAN 4.15.6 / 4.15.7).
@@ -1635,6 +1680,26 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
         }
     }
 
+    // Replay buffer (PLAN 8.1.4) — events that arrived while this
+    // session was ghosted, flushed in arrival order to the
+    // freshly-reclaimed connection. Sent on `sender` directly (not
+    // broadcast) so they land before the writer task starts pumping
+    // live events. Empty for every non-reclaim path.
+    if !replay_events.is_empty() {
+        info!(
+            session_id = sid.0,
+            count = replay_events.len(),
+            "ghost reclaim — flushing replay buffer to reconnected phone",
+        );
+        for evt in &replay_events {
+            if let Ok(j) = serde_json::to_string(evt)
+                && sender.send(Message::Text(j)).await.is_err()
+            {
+                break;
+            }
+        }
+    }
+
     let mut rx: broadcast::Receiver<Event> = state.events.subscribe();
 
     // Writer task — forward broadcast events to the socket. No server-side
@@ -1664,14 +1729,34 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
     }
     writer.abort();
 
-    // Capture the departing session's profile BEFORE removing it from the
-    // registry so the disconnect-cleanup pass (PLAN 3.10.9) can drop any
-    // figures it placed. `profile_of` returns None for still-locked
-    // sessions, which short-circuits the cleanup to a no-op.
+    // Disconnect dispatch (PLAN 8.1.4):
+    //   - Locked session (no profile bound) → drop it. Nothing to
+    //     preserve; a fresh connect re-registers from scratch.
+    //   - Profile-bound session → ghost it. The profile's placed
+    //     figures stay on the portal until the same profile reconnects
+    //     with `?reclaim=<pid>` (claims the ghost) or `GHOST_TIMEOUT`
+    //     elapses (the periodic sweep clears slots and removes the
+    //     entry).
+    //
+    // Ghosts continue to count against `MAX_SESSIONS`, so a 3rd
+    // connection still triggers forced eviction; the ghost path in
+    // `register_at` surfaces the evicted profile_id so cleanup runs
+    // there too. PLAN 3.10.9's eager-cleanup contract is preserved
+    // for live phones whose connection was never associated with a
+    // profile.
     let departing_profile = state.sessions.profile_of(sid).await;
-    state.sessions.remove(sid).await;
-    if let Some(profile_id) = departing_profile {
-        state.clear_slots_for_profile(&profile_id).await;
+    match departing_profile {
+        Some(pid) => {
+            info!(
+                session_id = sid.0,
+                profile_id = %pid,
+                "WS dropped — ghosting session, deferring slot cleanup"
+            );
+            state.sessions.ghost(sid, std::time::Instant::now()).await;
+        }
+        None => {
+            state.sessions.remove(sid).await;
+        }
     }
     state.publish_session_snapshot().await;
     state

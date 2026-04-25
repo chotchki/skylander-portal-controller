@@ -477,10 +477,22 @@ async fn ghost_counts_toward_max_sessions_and_can_be_force_evicted() {
 
     // 3rd registration: forced-evict cooldown is fresh (no prior
     // forced eviction), so it should evict the oldest (the ghost).
+    // Since that seat was a ghost holding alice, the outcome must
+    // surface alice's profile_id so the WS handler can clean up the
+    // figures the ghost still has on the portal (PLAN 8.1.4).
     let third_outcome = reg.register_at(t0 + Duration::from_secs(2)).await;
     match third_outcome {
-        RegistrationOutcome::AdmittedByEvicting { evicted, .. } => {
+        RegistrationOutcome::AdmittedByEvicting {
+            evicted,
+            evicted_ghost_profile,
+            ..
+        } => {
             assert_eq!(evicted, s1, "ghost should be evicted as the oldest");
+            assert_eq!(
+                evicted_ghost_profile.as_deref(),
+                Some("alice"),
+                "ghost eviction must surface the profile_id for slot cleanup",
+            );
         }
         other => panic!("expected AdmittedByEvicting, got {other:?}"),
     }
