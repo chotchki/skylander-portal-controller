@@ -284,7 +284,7 @@ screenshot tour acting as the per-tranche regression contract.
 
 - [ ] 9.4 — Migrate components in tranches. Bottom-up so containers
   inherit migrated primitives:
-  - 9.4a — Shared primitives: `GoldBezel`, `FramedPanel`, `RayHalo`,
+  - [x] 9.4a — Shared primitives: `GoldBezel`, `FramedPanel`, `RayHalo`,
     `ActionButton`, `DisplayHeading`, `Header`.
   - 9.4b — Overlays: `ConnectionLost`, `GameCrashScreen`,
     `PairingRequired`, `StaleVersion`, `ScanOverlay`, `MenuOverlay`,

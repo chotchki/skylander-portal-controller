@@ -188,9 +188,8 @@
 /*
  * Keyframes live outside @layer so they're addressable from the
  * GoldBezel rules above AND any other component that wants to
- * reuse `bezel-float` / `ray-spin` etc. (Currently `ray-spin` is
- * also referenced by RayHalo — it'll keep working until that
- * component migrates and absorbs its own keyframe.)
+ * reuse them. (`ray-spin` is owned by ray_halo.css now; the
+ * loading sweep below reaches it via the shared global namespace.)
  */
 
 @keyframes bezel-float {

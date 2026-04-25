@@ -177,51 +177,9 @@ input, textarea {
   min-height: 0;
 }
 
-.app-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; gap: 10px; flex-wrap: wrap; }
-.header-right { display: flex; align-items: center; gap: 10px; }
-
-.header-swatch {
-  width: 40px;
-  height: 40px;
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.header-swatch .bezel-plate {
-  background: var(--profile-color, linear-gradient(135deg, #1a2a4a, #0a1630));
-}
-.header-swatch-initial {
-  font-family: "Titan One", sans-serif;
-  color: #fff;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
-  line-height: 1;
-}
-.header-identity {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  line-height: 1.2;
-  min-width: 0;
-}
-.header-profile-name {
-  font-family: "Titan One", sans-serif;
-  font-size: 15px;
-  color: var(--text);
-  letter-spacing: 0.3px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.header-game-name {
-  font-size: var(--t-display-xs);
-  font-weight: 500;
-  color: var(--gold);
-  letter-spacing: 0.2px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+/* <Header> — migrated to phone/styles/components/header.css under
+   PLAN 9.4a. The .quit-btn below still ships from this file (legacy,
+   used elsewhere). */
 .quit-btn {
   background: rgba(209, 68, 68, 0.85);
   color: #fff;
@@ -252,46 +210,10 @@ input, textarea {
 .game-card:disabled { opacity: 0.45; cursor: wait; }
 .game-card .game-title { font-size: var(--t-display-sm); font-weight: 600; }
 .game-card .game-serial { font-size: var(--t-body-sm); color: var(--text-dim); font-family: ui-monospace, monospace; }
-/* PLAN 4.14.2 — Connection pip states.
-   connecting → breathe (pip + halo grow/contract, 1.6s)
-   connected  → steady green glow
-   disconnected → soft red glow (calm, not alarming) */
-.status-dot {
-  width: 10px; height: 10px; border-radius: 50%;
-  display: inline-block; margin-right: 6px;
-  position: relative;
-}
-.status-dot.connected {
-  background: #65d68c;
-  box-shadow: 0 0 8px #65d68c;
-}
-.status-dot.connecting {
-  background: var(--gold-2);
-  animation: status-breathe 1.6s ease-in-out infinite;
-}
-.status-dot.disconnected {
-  background: var(--danger);
-  box-shadow: 0 0 6px rgba(227, 76, 76, 0.55);
-}
-
-@keyframes status-breathe {
-  0%, 100% {
-    transform: scale(1);
-    box-shadow: 0 0 4px rgba(245, 198, 52, 0.45);
-    opacity: 0.65;
-  }
-  50% {
-    transform: scale(1.25);
-    box-shadow: 0 0 14px rgba(245, 198, 52, 0.85), 0 0 22px rgba(245, 198, 52, 0.35);
-    opacity: 1;
-  }
-}
-
-/* Legacy keyframe kept under its old name in case other selectors still
-   reference it; the breathe replaces it for the connecting pip. */
-@keyframes pulse {
-  0%, 100% { opacity: 0.5; } 50% { opacity: 1; }
-}
+/* `.status-dot` connection pip + `status-breathe` keyframe migrated
+   to phone/styles/components/header.css under PLAN 9.4a. The legacy
+   `pulse` keyframe alongside it had no remaining references and was
+   dropped. */
 
 /* Portal grid */
 .portal {
@@ -683,93 +605,16 @@ input, textarea {
    PHASE 4 — COMPONENTS
    ================================================================ */
 
-/* <GoldBezel> — migrated to phone/styles/components/gold_bezel.css
-   under PLAN 9.2. Rules + keyframes (bezel-float, bezel-impact-brightness,
-   portal-impact-flash, bezel-shudder) live there now. The `ray-spin`
-   keyframe stays here since RayHalo also uses it; it migrates with that
-   component in tranche 9.4a. */
+/* <GoldBezel>, <FramedPanel> — migrated to phone/styles/components/
+   under PLAN 9.2 / 9.4a. The `ray-spin` keyframe stays here while
+   RayHalo is still legacy; it migrates with that component below. */
 
-/* <FramedPanel> — design_language.md §3.3
-   Gold gradient border via ::before. No corner brackets. */
+/* <DisplayHeading> — migrated to phone/styles/components/display_heading.css
+   under PLAN 9.4a. The optional `.title-rays` halo moved with it. */
 
-.framed-panel {
-  position: relative;
-  padding: 22px 20px;
-  border-radius: 22px;
-  background:
-    radial-gradient(ellipse 120% 80% at 50% 0%, rgba(255,230,120,0.09), transparent 60%),
-    linear-gradient(180deg, rgba(26,58,138,0.94), rgba(10,36,100,0.96) 50%, rgba(6,20,54,0.98));
-}
-.framed-panel::before {
-  content: "";
-  position: absolute; inset: -2px;
-  border-radius: 24px;
-  z-index: -1;
-  background: linear-gradient(135deg,
-    var(--gb) 0%, var(--gm) 30%, var(--gb) 50%, var(--gm) 70%, var(--gb) 100%);
-}
-.panel-in {
-  animation: panel-in var(--dur-panel-in) var(--ease-spring) both;
-}
-@keyframes panel-in {
-  from { opacity: 0; transform: scale(0.92) translateY(10px); }
-  to   { opacity: 1; transform: scale(1) translateY(0); }
-}
-
-/* <DisplayHeading> — design_language.md §2
-   Gold fill + dark stroke + layered drop shadow. */
-
-.display-heading {
-  position: relative;
-  text-align: center;
-  line-height: 0.95;
-}
-.dh-text {
-  font-family: "Titan One", sans-serif;
-  color: var(--gb);
-  -webkit-text-stroke: 1.5px var(--gi);
-  text-shadow:
-    0 2px 0 var(--gs),
-    0 3px 0 var(--gi),
-    0 5px 10px rgba(0,0,0,0.5),
-    0 0 24px rgba(245,198,52,0.3);
-}
-.dh-hero .dh-text { font-size: var(--t-display-hero); letter-spacing: 0.04em; }
-.dh-lg   .dh-text { font-size: var(--t-display-lg); letter-spacing: 0.04em; }
-.dh-md   .dh-text { font-size: var(--t-display-md); letter-spacing: 0.06em; }
-.dh-sm   .dh-text { font-size: var(--t-display-sm); letter-spacing: 0.12em; -webkit-text-stroke-width: 1px; }
-.dh-xs   .dh-text { font-size: var(--t-display-xs); letter-spacing: 0.18em; -webkit-text-stroke-width: 0.75px; }
-
-.title-rays {
-  position: absolute;
-  inset: -40px -20px -20px;
-  background: radial-gradient(ellipse 80% 80% at 50% 50%,
-    rgba(255,230,120,0.12), transparent 60%);
-  pointer-events: none;
-}
-
-/* <RayHalo> — design_language.md §5.2
-   Rotating conic-gradient masked to a ring. */
-
-.ray-halo {
-  position: absolute;
-  inset: -8px;
-  border-radius: 50%;
-  background: conic-gradient(from 0deg,
-    transparent 0%, transparent 30%,
-    rgba(255,230,120,0.35) 45%, rgba(245,198,52,0.6) 50%,
-    rgba(255,230,120,0.35) 55%, transparent 70%, transparent 100%);
-  mask: radial-gradient(circle, transparent 50%, black 58%, black 72%, transparent 80%);
-  -webkit-mask: radial-gradient(circle, transparent 50%, black 58%, black 72%, transparent 80%);
-  filter: blur(6px);
-  pointer-events: none;
-}
-.ray-halo-slow { animation: ray-spin var(--dur-halo-slow) linear infinite; }
-.ray-halo-fast { animation: ray-spin var(--dur-loading-sweep) linear infinite; }
-@keyframes ray-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) {
-  .ray-halo { animation: none !important; }
-}
+/* <RayHalo> — migrated to phone/styles/components/ray_halo.css
+   under PLAN 9.4a. The `ray-spin` keyframe moved with it; GoldBezel's
+   loading sweep references it globally. */
 
 /* <FigureHero> — design_language.md §6.5
    Oversized bezel + aura + rays + loading ring. */
@@ -2569,26 +2414,8 @@ input, textarea {
    PLAN 4.12.4b — Header kebab button
    ================================================================ */
 
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.kebab-btn {
-  width: 42px; height: 42px;
-  border: 1.5px solid rgba(245,198,52,0.3);
-  border-radius: 12px;
-  display: grid; place-items: center;
-  background: transparent;
-  color: var(--gb);
-  font-family: "Titan One", sans-serif;
-  font-size: 22px;
-  cursor: pointer;
-  transition: border-color 0.15s ease;
-}
-.kebab-btn:hover {
-  border-color: rgba(245,198,52,0.6);
-}
+/* .header-left + .kebab-btn migrated to phone/styles/components/header.css
+   under PLAN 9.4a. */
 
 /* ================================================================
    PLAN 4.7 — Browser / Collection (Toy Box) reskin
@@ -4376,144 +4203,16 @@ html.skin-kaos {
 .menu-actions {
   display: flex; flex-direction: column; gap: 8px;
 }
-.menu-action {
-  display: flex; align-items: center; gap: 12px;
-  padding: 12px 14px;
-  border-radius: 12px;
-  background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
-  border: 2px solid var(--gb);
-  color: var(--text);
-  cursor: pointer;
-  text-align: left;
-  font-family: "Fraunces", Georgia, serif;
-  transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
-  box-shadow:
-    inset 0 2px 0 rgba(255,255,255,0.25),
-    inset 0 -2px 0 rgba(0,0,0,0.25),
-    0 3px 0 rgba(0,0,0,0.45),
-    0 5px 12px rgba(0,0,0,0.4);
-}
-.menu-action:hover {
-  background: linear-gradient(180deg, #4286f0 0%, #2a62cd 55%, #1b46a0 100%);
-  transform: translateX(2px);
-  box-shadow:
-    inset 0 2px 0 rgba(255,255,255,0.3),
-    inset 0 -2px 0 rgba(0,0,0,0.25),
-    0 3px 0 rgba(0,0,0,0.45),
-    0 0 20px rgba(245,198,52,0.35),
-    0 5px 14px rgba(0,0,0,0.4);
-}
-.menu-action-icon {
-  width: 38px; height: 38px;
-  border-radius: 50%;
-  display: grid; place-items: center;
-  flex-shrink: 0;
-  font-size: 17px; font-weight: bold;
-  background: radial-gradient(circle at 30% 25%, var(--gb) 0%, var(--g) 40%, var(--gm) 80%);
-  border: 1.5px solid var(--gi);
-  color: var(--ink);
-  box-shadow:
-    inset 0 1px 2px rgba(255,255,255,0.4),
-    inset 0 -1px 2px rgba(0,0,0,0.3),
-    0 2px 4px rgba(0,0,0,0.4);
-  text-shadow: 0 1px 0 rgba(255,255,255,0.3);
-}
-.menu-action-title {
-  font-family: "Titan One", sans-serif; font-size: var(--t-body-italic);
-  letter-spacing: 0.08em;
-  color: var(--gb);
-  text-shadow: 0 1px 0 var(--gs), 0 0 6px rgba(0,0,0,0.5);
-}
-.menu-action-desc {
-  font-family: "Fraunces", Georgia, serif;
-  font-style: italic; font-weight: 600;
-  font-size: var(--t-body-sm);
-  color: #e8e4d8;
-  margin-top: 2px;
-  text-shadow: 0 1px 0 rgba(0,0,0,0.5);
-}
-
-/* Hold-to-confirm shared base — applies to .menu-action--hold and danger
-   variant. Fill sweeps L→R during the hold; .fired flashes the button. */
-.menu-action--hold {
-  position: relative;
-  overflow: hidden;
-  isolation: isolate;
-  touch-action: pan-x pan-y;
-  -webkit-user-select: none; user-select: none;
-}
-.menu-action--hold > *:not(.hold-fill) { position: relative; z-index: 2; }
-.menu-action--hold .hold-fill {
-  position: absolute; inset: 0;
-  background: linear-gradient(90deg, rgba(255,220,140,0.9), #fffaf0);
-  transform: scaleX(0);
-  transform-origin: left center;
-  transition: transform var(--dur-quick) ease-out;
-  z-index: 1;
-  pointer-events: none;
-  mix-blend-mode: screen;
-}
-.menu-action--hold.holding .hold-fill {
-  transform: scaleX(1);
-  transition: transform var(--dur-hold-confirm, 1200ms) linear;
-}
-.menu-action--hold.fired {
-  animation: menu-action-fire 0.42s ease-out;
-}
-.menu-action--hold.fired .hold-fill {
-  transform: scaleX(1);
-  background: #fff;
-}
-@keyframes menu-action-fire {
-  0%   { transform: scale(1); }
-  35%  { transform: scale(1.02); box-shadow: 0 0 44px rgba(255,230,120,0.7), 0 0 22px rgba(245,198,52,0.45); }
-  100% { transform: scale(1); }
-}
-
-/* Danger variant — red palette + red fire glow. */
-.menu-action--danger {
-  background: linear-gradient(180deg, #c23a3a 0%, #9a2424 55%, #6e1414 100%);
-  border-color: #ffc0c0;
-}
-.menu-action--danger:hover {
-  background: linear-gradient(180deg, #dc4d4d 0%, #b02e2e 55%, #821818 100%);
-  box-shadow:
-    inset 0 2px 0 rgba(255,255,255,0.3),
-    inset 0 -2px 0 rgba(0,0,0,0.25),
-    0 3px 0 rgba(0,0,0,0.45),
-    0 0 20px rgba(227,76,76,0.45),
-    0 5px 14px rgba(0,0,0,0.4);
-}
-.menu-action--danger .menu-action-icon {
-  background: radial-gradient(circle at 30% 25%, #ffb0b0 0%, #e34c4c 40%, #7a1818 80%);
-  border-color: #3a0808;
-  color: #fff;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.6);
-}
-.menu-action--danger .menu-action-title {
-  color: #ffd0d0;
-  text-shadow: 0 1px 0 rgba(0,0,0,0.7), 0 0 8px rgba(0,0,0,0.4);
-}
-.menu-action--danger .menu-action-desc { color: #ffd6d6; }
-.menu-action--danger.menu-action--hold .hold-fill {
-  background: linear-gradient(90deg, rgba(255,200,200,0.95), #fff);
-}
-.menu-action--danger.menu-action--hold.fired {
-  animation: menu-action-fire-danger 0.42s ease-out;
-}
-@keyframes menu-action-fire-danger {
-  0%   { transform: scale(1); }
-  35%  { transform: scale(1.02); box-shadow: 0 0 44px rgba(255,255,255,0.85), 0 0 22px rgba(227,76,76,0.6); }
-  100% { transform: scale(1); }
-}
+/* <ActionButton> — migrated to phone/styles/components/action_button.css
+   under PLAN 9.4a. The `.menu-actions` flex wrapper above stays here
+   since it's a MenuOverlay layout primitive (migrates with 9.4b).
+   Button-side prefers-reduced-motion is in the component file; the
+   menu-overlay-panel + menu-scrim media block lives below alongside
+   those rules. */
 
 @media (prefers-reduced-motion: reduce) {
   .menu-overlay-panel,
   .menu-scrim {
-    animation: none !important;
-  }
-  .menu-action--hold.fired,
-  .menu-action--danger.menu-action--hold.fired {
     animation: none !important;
   }
 }

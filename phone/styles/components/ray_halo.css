@@ -1,0 +1,41 @@
+/*
+ * <RayHalo> — design_language.md §5.2.
+ * (PLAN 9.4a — shared primitive tranche.)
+ *
+ * Rotating conic-gradient masked to a ring, rendered behind a
+ * `<GoldBezel>` for picking / loading states and the hero figure
+ * reveal. Tight to the bezel (`inset: -8px`); ring fades to
+ * transparent at both edges via the radial mask.
+ *
+ * The `ray-spin` keyframe lives in this file (formerly app.css).
+ * `<GoldBezel>`'s `.bezel-loading::after` also references it — the
+ * keyframe lookup is global, so as long as this file is imported
+ * (which it is, from input.css) both components animate.
+ *
+ * Class names (`.ray-halo`, `.ray-halo-slow`, `.ray-halo-fast`) are
+ * unchanged so callers don't move during the migration.
+ */
+
+@layer components {
+  .ray-halo {
+    @apply absolute inset-[-8px] rounded-full pointer-events-none;
+    background: conic-gradient(from 0deg,
+      transparent 0%, transparent 30%,
+      rgba(255, 230, 120, 0.35) 45%,
+      rgba(245, 198, 52, 0.60) 50%,
+      rgba(255, 230, 120, 0.35) 55%,
+      transparent 70%, transparent 100%);
+    mask:         radial-gradient(circle, transparent 50%, black 58%, black 72%, transparent 80%);
+    -webkit-mask: radial-gradient(circle, transparent 50%, black 58%, black 72%, transparent 80%);
+    filter: blur(6px);
+  }
+
+  .ray-halo-slow { animation: ray-spin var(--dur-halo-slow)     linear infinite; }
+  .ray-halo-fast { animation: ray-spin var(--dur-loading-sweep) linear infinite; }
+}
+
+@keyframes ray-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .ray-halo { animation: none !important; }
+}

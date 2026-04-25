@@ -212,4 +212,9 @@
  * import list is the table of contents for the design system.
  */
 @import "./components/gold_bezel.css";
+@import "./components/framed_panel.css";
+@import "./components/ray_halo.css";
+@import "./components/action_button.css";
+@import "./components/display_heading.css";
+@import "./components/header.css";
 
