@@ -1,0 +1,81 @@
+/*
+ * <PairingRequired> overlay (2026-04-24).
+ * (PLAN 9.4b — overlays tranche.)
+ *
+ * Full-screen blocker shown when the phone has no HMAC shared
+ * secret. Mutating endpoints all 401 silently without the key, so
+ * the app would read as "nothing works" — this overlay names the
+ * state and points the user at the QR.
+ *
+ * Companion to <StaleVersion>; visually similar (gold-bordered
+ * card on a dark scrim) but a touch warmer (this is a setup step,
+ * not an error).
+ *
+ * Class names unchanged.
+ */
+
+@layer components {
+  .pairing-required {
+    @apply fixed inset-0 z-[90] flex items-center justify-center;
+    padding: 24px;
+    background: rgba(2, 8, 24, 0.88);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+
+  .pairing-card {
+    @apply w-full relative rounded-[22px] text-center;
+    max-width: 420px;
+    padding: 28px 28px 24px;
+    background:
+      linear-gradient(180deg, rgba(11, 30, 82, 0.95), rgba(6, 20, 54, 0.95)),
+      #06142e;
+    box-shadow:
+      0 0 0 1px rgba(110, 74, 0, 0.6),
+      0 18px 48px rgba(0, 0, 0, 0.6),
+      inset 0 0 24px rgba(245, 198, 52, 0.08);
+  }
+  .pairing-card::before {
+    content: "";
+    @apply absolute inset-0 pointer-events-none rounded-[22px];
+    padding: 2px;
+    background: linear-gradient(150deg,
+      var(--color-gold-bright) 0%,
+      var(--color-gold) 30%,
+      var(--color-gold-mid) 55%,
+      var(--color-gold-shadow) 100%);
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+            mask-composite: exclude;
+  }
+
+  .pairing-title {
+    margin: 0 0 12px 0;
+    font-family: var(--font-display);
+    font-size: var(--text-display-md);
+    letter-spacing: 0.1em;
+    color: var(--color-gold-bright);
+    text-shadow:
+      0 2px 0 var(--color-gold-shadow),
+      0 4px 12px rgba(0, 0, 0, 0.6);
+  }
+
+  .pairing-body {
+    margin: 0 0 14px 0;
+    font-family: var(--font-body);
+    font-size: var(--text-body);
+    line-height: 1.55;
+    color: var(--color-text);
+  }
+
+  .pairing-hint {
+    margin: 0;
+    font-family: var(--font-body);
+    font-style: italic;
+    font-size: var(--text-body-sm);
+    color: #d9c88a;
+    line-height: 1.5;
+  }
+}

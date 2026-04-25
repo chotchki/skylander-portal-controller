@@ -286,7 +286,7 @@ screenshot tour acting as the per-tranche regression contract.
   inherit migrated primitives:
   - [x] 9.4a — Shared primitives: `GoldBezel`, `FramedPanel`, `RayHalo`,
     `ActionButton`, `DisplayHeading`, `Header`.
-  - 9.4b — Overlays: `ConnectionLost`, `GameCrashScreen`,
+  - [x] 9.4b — Overlays: `ConnectionLost`, `GameCrashScreen`,
     `PairingRequired`, `StaleVersion`, `ScanOverlay`, `MenuOverlay`,
     `ResumeModal`, `ResetConfirmModal`.
   - 9.4c — Screens: `ProfilePicker` (largest — Konami gate,

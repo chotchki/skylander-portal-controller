@@ -217,4 +217,12 @@
 @import "./components/action_button.css";
 @import "./components/display_heading.css";
 @import "./components/header.css";
+@import "./components/connection_lost.css";
+@import "./components/game_crash_screen.css";
+@import "./components/pairing_required.css";
+@import "./components/stale_version.css";
+@import "./components/scan_overlay.css";
+@import "./components/menu_overlay.css";
+@import "./components/resume_modal.css";
+@import "./components/reset_confirm_modal.css";
 

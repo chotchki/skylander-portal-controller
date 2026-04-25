@@ -1,0 +1,184 @@
+/*
+ * <ConnectionLost> overlay (PLAN 4.18.21).
+ * (PLAN 9.4b — overlays tranche.)
+ *
+ * Top-of-stack modal — z-index 90, beats the GameCrashed overlay
+ * (z-70) so a server kill during a crash still surfaces "you're
+ * disconnected" first. Mirrors the GameCrashScreen structure
+ * (opaque starfield + viewport) so the two read as a family;
+ * palette tilts red instead of amber so users learn at a glance
+ * "this is the network one, not the emulator one."
+ *
+ * Class names + state semantics unchanged.
+ */
+
+@layer components {
+  .conn-lost-overlay {
+    @apply fixed inset-0 z-[90];
+    background:
+      radial-gradient(ellipse 80% 60% at 50% 30%, rgba(227, 76, 76, 0.10) 0%, transparent 55%),
+      radial-gradient(ellipse 60% 50% at 30% 80%, rgba(120, 24, 24, 0.10) 0%, transparent 55%),
+      linear-gradient(180deg, var(--color-sf-1) 0%, var(--color-sf-2) 55%, var(--color-sf-3) 100%);
+    animation: conn-lost-overlay-in 280ms cubic-bezier(.2, .8, .3, 1) both;
+  }
+
+  /* Soft red backdrop pulse — slightly faster cycle than the crash
+     overlay's amber so the urgency reads as "active problem" vs the
+     crash's "something settled into a broken state." */
+  .conn-lost-backdrop {
+    @apply absolute inset-0 pointer-events-none;
+    background:
+      radial-gradient(ellipse 70% 55% at 50% 35%, rgba(227, 76, 76, 0.10), transparent 60%);
+    animation: conn-lost-backdrop-pulse 2.6s ease-in-out infinite;
+  }
+
+  .conn-lost-viewport {
+    @apply relative h-full flex flex-col items-center justify-center text-center;
+    padding: 56px 28px 40px;
+    gap: 20px;
+  }
+
+  /* Pulsing red ✕ pip — analogue of the header's status dot but
+     blown up to focal-element size with a glyph in the centre. */
+  .conn-lost-pip {
+    @apply w-[64px] h-[64px] rounded-full grid place-items-center text-white;
+    background: radial-gradient(circle at 40% 35%, #ff7a7a 0%, #d14444 40%, #7a1818 100%);
+    border: 3px solid #4a0e0e;
+    font-family: var(--font-display), "Fredoka One", sans-serif;
+    font-size: var(--text-display-md);
+    text-shadow: 0 2px 0 rgba(0, 0, 0, 0.5);
+    box-shadow:
+      inset 0  2px 4px rgba(255, 255, 255, 0.2),
+      inset 0 -2px 4px rgba(0, 0, 0, 0.4),
+      0 0 0 4px rgba(227, 76, 76, 0.25),
+      0 0 30px rgba(227, 76, 76, 0.4);
+    animation: conn-lost-pip-pulse 2s ease-in-out infinite;
+  }
+
+  .conn-lost-body {
+    font-family: var(--font-body);
+    font-style: italic;
+    font-size: var(--text-display-sm);
+    line-height: 1.45;
+    color: var(--color-text);
+    max-width: 320px;
+    margin: 4px auto 0;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.6);
+  }
+
+  /* Reconnect bar — the "we're working on it" affordance. Subtle gold
+     border so it reads as informational, not actionable. */
+  .conn-lost-reconnect-bar {
+    @apply flex items-center gap-3 rounded-xl;
+    padding: 12px 18px;
+    background: linear-gradient(180deg,
+      rgba(26, 58, 138, 0.55),
+      rgba(10, 36, 100, 0.7) 50%,
+      rgba(6, 20, 54, 0.8));
+    border: 1.5px solid rgba(245, 198, 52, 0.32);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 2px 6px rgba(0, 0, 0, 0.4);
+  }
+  .conn-lost-spinner {
+    @apply w-[20px] h-[20px] rounded-full;
+    border: 2.5px solid rgba(245, 198, 52, 0.2);
+    border-top-color: var(--color-gold-bright);
+    animation: conn-lost-spin 0.8s linear infinite;
+  }
+  .conn-lost-label {
+    font-family: var(--font-body);
+    font-style: italic;
+    font-weight: 600;
+    font-size: var(--text-body-italic);
+    letter-spacing: 0.1em;
+    color: #fff4e0;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+  }
+
+  /* TRY AGAIN button — same gold-button family as crash-return-btn but
+     sized down (this is a "skip the wait", not a "leave the screen"
+     action). */
+  .conn-lost-retry-btn {
+    @apply rounded-[14px] cursor-pointer;
+    padding: 14px 32px;
+    font-family: var(--font-display), "Fredoka One", sans-serif;
+    font-size: 15px;
+    letter-spacing: 0.22em;
+    color: #2a1a00;
+    background: linear-gradient(180deg, var(--color-gold-bright) 0%, var(--color-gold) 45%, #a87a17 100%);
+    border: 2px solid #8a5f10;
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.45),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.25),
+      0  4px 0 #6b480a,
+      0  6px 14px rgba(0, 0, 0, 0.45);
+    animation: conn-lost-retry-pulse 2.4s ease-in-out infinite;
+  }
+  .conn-lost-retry-btn:active {
+    transform: translateY(3px);
+    box-shadow:
+      inset 0 2px 0 rgba(255, 255, 255, 0.45),
+      0 1px 0 #6b480a,
+      0 4px 12px rgba(245, 198, 52, 0.28);
+  }
+
+  .conn-lost-hint {
+    font-family: var(--font-body);
+    font-style: italic;
+    font-weight: 600;
+    font-size: var(--text-body-sm);
+    letter-spacing: 0.14em;
+    color: #d9c88a;
+    max-width: 280px;
+    margin: 0 auto;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+  }
+}
+
+@keyframes conn-lost-overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes conn-lost-backdrop-pulse {
+  0%, 100% { opacity: 0.7; }
+  50%      { opacity: 1.0; }
+}
+
+@keyframes conn-lost-pip-pulse {
+  0%, 100% {
+    box-shadow:
+      inset 0  2px 4px rgba(255, 255, 255, 0.2),
+      inset 0 -2px 4px rgba(0, 0, 0, 0.4),
+      0 0 0 4px rgba(227, 76, 76, 0.25),
+      0 0 30px rgba(227, 76, 76, 0.4);
+  }
+  50% {
+    box-shadow:
+      inset 0  2px 4px rgba(255, 255, 255, 0.2),
+      inset 0 -2px 4px rgba(0, 0, 0, 0.4),
+      0 0 0 6px rgba(227, 76, 76, 0.35),
+      0 0 50px rgba(227, 76, 76, 0.6);
+  }
+}
+
+@keyframes conn-lost-spin { to { transform: rotate(360deg); } }
+
+@keyframes conn-lost-retry-pulse {
+  50% {
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.5),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.25),
+      0  4px 0 #6b480a,
+      0  6px 18px rgba(245, 198, 52, 0.45),
+      0  0 26px rgba(255, 229, 138, 0.32);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conn-lost-overlay,
+  .conn-lost-backdrop,
+  .conn-lost-pip,
+  .conn-lost-spinner,
+  .conn-lost-retry-btn { animation: none !important; }
+}
