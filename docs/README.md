@@ -3,7 +3,13 @@
 Source for the project's GitHub Pages site at
 <https://chotchki.github.io/skylander-portal-controller/>.
 
-This is a plain Jekyll site using the default `minima` theme. Nothing clever.
+A Jekyll site on the `minima` theme with a Skylanders-aesthetic skin
+layered on top — starfield background, gold accents, Titan One headings
+mirroring the phone UI's design tokens (`phone/assets/app.css`). The
+override lives in `assets/main.scss` (imports minima then redefines
+colors / typography); the Google Fonts link is in
+`_includes/head-custom.html`.
+
 Source-of-truth for the project lives in [`CLAUDE.md`](../../CLAUDE.md),
 [`SPEC.md`](../../SPEC.md), [`PLAN.md`](../../PLAN.md), and
 [`docs/aesthetic/`](../aesthetic/); these pages are a readable summary for

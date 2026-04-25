@@ -1,0 +1,15 @@
+{% comment %}
+  Skylanders-aesthetic typography for the public docs site (PLAN 8.4).
+  Pulls Titan One (display headings) + Fraunces (body / italic
+  callouts) from Google Fonts. The phone bundles WOFF2s on the LAN
+  to avoid external requests; this site is public, so a CDN is fine.
+
+  `display=swap` so the page renders immediately in the system serif
+  fallback, then re-renders in Titan One / Fraunces once the font
+  files arrive — beats a full FOIT on slow connections.
+{% endcomment %}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link
+  href="https://fonts.googleapis.com/css2?family=Titan+One&family=Fraunces:ital,wght@0,400;0,600;1,400;1,600&display=swap"
+  rel="stylesheet">

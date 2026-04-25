@@ -32,7 +32,9 @@ This app takes over that role. It runs on the HTPC, shows a QR code on the TV at
 
 ## Project status
 
-Early development. Core portal control works end-to-end; profiles, PINs, multi-phone takeover, game launching, and the Skylanders-themed aesthetic are shipped. Packaging, single-exe distribution, and a proper installer are the next milestone — see the [roadmap]({{ '/roadmap/' | relative_url }}).
+**v1.1.0 shipped.** Core portal control works end-to-end. Profiles, PINs, multi-phone takeover with FIFO eviction, game launching with display-mode persistence, and the Skylanders-themed aesthetic are all stable. v1.1.0 added sticky disconnects (your figures stay on the portal across a PWA backgrounding or short network blip), the Kaos surprise feature (mid-game figure swaps with text-only catchphrase overlay, opt-in per profile), and a kid-friendly empty-portal UI.
+
+Releases: [github.com/chotchki/skylander-portal-controller/releases](https://github.com/chotchki/skylander-portal-controller/releases) — Windows zip with the phone bundle embedded. See the [roadmap]({{ '/roadmap/' | relative_url }}) for what's next.
 
 Source: [github.com/chotchki/skylander-portal-controller](https://github.com/chotchki/skylander-portal-controller)
 

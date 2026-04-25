@@ -4,6 +4,8 @@ Remote-control the RPCS3 emulated Skylanders portal from a phone or iPad over yo
 
 The Windows app boots from Steam Big Picture and shows a QR code on the TV; phones scan in, pick a profile (PIN-gated), pick a game, and drive RPCS3's emulated portal slot-by-slot.
 
+**Latest release:** [v1.1.0](https://github.com/chotchki/skylander-portal-controller/releases/tag/v1.1.0) — sticky disconnects (figures stay on the portal across PWA backgrounding / brief network blips), Kaos mid-game swap (per-profile opt-in), kickback cooldown countdown, kid-friendly empty-portal UI.
+
 For a higher-level pitch see the project site: <https://chotchki.github.io/skylander-portal-controller/>. Source-of-truth docs are in this repo: `SPEC.md` (long-form spec + Q&A), `PLAN.md` (execution checklist), and `CLAUDE.md` (compact working reference). Research writeups are under `docs/research/`.
 
 ## Releases (end-user install)
