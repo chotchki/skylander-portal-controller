@@ -1,14 +1,20 @@
 use leptos::prelude::*;
 
-use crate::api::{post_load, post_reset};
+use crate::api::{clear_resume, post_load, post_reset};
 use crate::components::{BezelSize, DisplayHeading, FramedPanel, GoldBezel, HeadingSize};
 use crate::gloo_timer;
-use crate::model::SlotState;
+use crate::model::{SlotState, UnlockedProfile};
 use crate::{push_toast, ResetTarget, ResumeOffer, ToastMsg};
 
 #[component]
 pub(crate) fn ResumeModal(
     resume_offer: RwSignal<Option<ResumeOffer>>,
+    /// The currently unlocked profile — its `id` is what
+    /// `/api/profiles/:id/clear_resume` keys on. Lifted from the lib
+    /// signal so the Start Fresh handler can drop the saved layout
+    /// server-side; without that, the modal only dismissed locally
+    /// and re-fired on every subsequent unlock.
+    unlocked_profile: RwSignal<Option<UnlockedProfile>>,
     toasts: RwSignal<Vec<ToastMsg>>,
 ) -> impl IntoView {
     // Overlay modal offering to reload the profile's last portal layout.
@@ -123,7 +129,25 @@ pub(crate) fn ResumeModal(
                         >"RESUME"</button>
                         <button
                             class="resume-btn resume-btn-secondary"
-                            on:click=move |_| resume_offer.set(None)
+                            on:click=move |_| {
+                                resume_offer.set(None);
+                                // Drop the saved layout on the server
+                                // so the next unlock won't re-offer
+                                // the same resume. Best-effort —
+                                // failure here just means the prompt
+                                // re-appears on the next unlock,
+                                // which is recoverable.
+                                if let Some(profile) = unlocked_profile.get_untracked() {
+                                    leptos::task::spawn_local(async move {
+                                        if let Err(e) = clear_resume(&profile.id).await {
+                                            crate::dev_warn!(
+                                                "clear_resume({}): {e}",
+                                                profile.id,
+                                            );
+                                        }
+                                    });
+                                }
+                            }
                         >"START FRESH"</button>
                     </div>
                 </FramedPanel>

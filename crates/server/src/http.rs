@@ -262,6 +262,7 @@ pub fn router(state: Arc<AppState>, phone_dist: std::path::PathBuf) -> Router {
         .route("/api/profiles/:id/unlock", post(unlock_profile))
         .route("/api/profiles/:id/lock", post(lock_profile))
         .route("/api/profiles/:id/reset_pin", post(reset_pin))
+        .route("/api/profiles/:id/clear_resume", post(clear_resume))
         .route("/api/version", get(get_version))
         .route("/ws", get(ws_handler));
 
@@ -371,15 +372,25 @@ async fn list_figures(
             .and_then(|g| skylander_core::game_of_origin_from_serial(&g.serial))
     };
 
-    let mut figs: Vec<(bool, Option<String>, PublicFigure)> = state
+    // Filter to figures compatible with the running game. When no game
+    // is running (current_game is None) we return everything — that's
+    // the "browse my collection" view from the join screen. Once a
+    // game boots, only the figures playable in that title come back —
+    // Chris flagged 2026-04-24 ("the skylander list doesn't seem to
+    // be filtered to what is supported in game"). Pre-2026-04-24 the
+    // handler computed a `compat` boolean and only used it as a sort
+    // key, so newer-game figures still showed up under the supported
+    // ones in earlier games — which the phone presented as playable.
+    let mut figs: Vec<(Option<String>, PublicFigure)> = state
         .figures
         .iter()
+        .filter(|f| match current_game {
+            Some(cg) => skylander_core::is_compatible(f.game, f.category, cg),
+            None => true,
+        })
         .map(|f| {
-            let compat = current_game
-                .map(|cg| skylander_core::is_compatible(f.game, f.category, cg))
-                .unwrap_or(false);
             let last_used = usage.get(f.id.as_str()).cloned();
-            (compat, last_used, f.to_public())
+            (last_used, f.to_public())
         })
         .collect();
 
@@ -387,17 +398,16 @@ async fn list_figures(
     // last so never-used figures come after used ones. Reverse on the
     // timestamp gives most-recent-first.
     figs.sort_by(|a, b| {
-        b.0.cmp(&a.0)
-            .then_with(|| match (&a.1, &b.1) {
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (Some(x), Some(y)) => y.cmp(x),
-                (None, None) => std::cmp::Ordering::Equal,
-            })
-            .then_with(|| a.2.canonical_name.cmp(&b.2.canonical_name))
+        match (&a.0, &b.0) {
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (Some(x), Some(y)) => y.cmp(x),
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+        .then_with(|| a.1.canonical_name.cmp(&b.1.canonical_name))
     });
 
-    let out: Vec<PublicFigure> = figs.into_iter().map(|(_, _, f)| f).collect();
+    let out: Vec<PublicFigure> = figs.into_iter().map(|(_, f)| f).collect();
     axum::Json(out)
 }
 
@@ -1915,6 +1925,26 @@ async fn lock_profile(
         profile: None,
     });
     (StatusCode::OK, "locked").into_response()
+}
+
+/// `POST /api/profiles/:id/clear_resume` — drop the saved portal layout
+/// for this profile so the next unlock won't fire `Event::ResumePrompt`.
+/// Phone calls this when the user taps "Start Fresh" on the resume
+/// modal. Pre-2026-04-24 the modal only dismissed itself client-side,
+/// leaving the saved JSON intact, so every subsequent unlock re-offered
+/// the same resume.
+async fn clear_resume(
+    State(state): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+    Signed(_body): Signed,
+) -> Response {
+    match state.profiles.clear_portal_layout(&id).await {
+        Ok(()) => (StatusCode::OK, "cleared").into_response(),
+        Err(e) => {
+            warn!("clear_portal_layout({id}): {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+        }
+    }
 }
 
 #[derive(Deserialize)]

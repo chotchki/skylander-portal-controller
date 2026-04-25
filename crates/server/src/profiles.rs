@@ -428,6 +428,28 @@ impl ProfileStore {
         Ok(row.and_then(|(json,)| json))
     }
 
+    /// Drop the saved layout for a profile so the next unlock won't fire
+    /// `Event::ResumePrompt`. Used by the phone's "Start Fresh" handler
+    /// (PLAN 4.20.x papercut) — the modal previously only dismissed
+    /// itself client-side, leaving the server's saved layout intact, so
+    /// every subsequent unlock re-offered the same resume. NULL-ing the
+    /// JSON column makes `load_portal_layout` return `None` and the
+    /// build_resume_prompt path bails before sending the event.
+    pub async fn clear_portal_layout(&self, profile_id: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO sessions (profile_id, last_portal_layout_json, updated_at) \
+             VALUES (?1, NULL, ?2) \
+             ON CONFLICT (profile_id) \
+             DO UPDATE SET last_portal_layout_json = NULL, updated_at = excluded.updated_at",
+        )
+        .bind(profile_id)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     pub async fn get(&self, id: &str) -> Result<Option<ProfileRow>> {
         let row = sqlx::query_as::<_, ProfileRow>(
             "SELECT id, display_name, pin_hash, color, created_at FROM profiles WHERE id = ?1",

@@ -403,6 +403,16 @@ pub async fn reset_pin(id: &str, current_pin: &str, new_pin: &str) -> Result<(),
     do_fetch(&url, "POST", Some(&body)).await.map(|_| ())
 }
 
+/// Drop the saved portal layout for this profile on the server side
+/// so the next unlock won't re-offer the resume modal. Called from
+/// the resume modal's START FRESH handler — without it, the modal
+/// only dismissed locally and the same offer would surface every
+/// time the profile unlocked again.
+pub async fn clear_resume(profile_id: &str) -> Result<(), String> {
+    let url = format!("{}/api/profiles/{profile_id}/clear_resume", origin());
+    do_fetch(&url, "POST", None).await.map(|_| ())
+}
+
 pub async fn post_quit(force: bool) -> Result<(), String> {
     let url = if force {
         format!("{}/api/quit?force=true", origin())

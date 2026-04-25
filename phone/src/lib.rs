@@ -199,7 +199,17 @@ pub fn App() -> impl IntoView {
     let reconnect_attempts = RwSignal::new(0u32);
     let manual_retry = RwSignal::new(0u32);
 
-    let figures = LocalResource::new(api::fetch_figures);
+    // Re-fetch the figure list whenever the current game changes —
+    // the server filters `/api/figures` by what's compatible with the
+    // running game, so a stale list (fetched before launch, or
+    // fetched while a different game was running) shows figures the
+    // current game doesn't support. Tracking `current_game` inside
+    // the LocalResource fetcher kicks a refresh on every transition.
+    // Chris flagged 2026-04-25 ("still seeing sensei in Trap Team").
+    let figures = LocalResource::new(move || {
+        let _ = current_game.get();
+        api::fetch_figures()
+    });
     let games = LocalResource::new(fetch_games);
 
     // Fetch the current game on boot; the WS will keep it updated after.
@@ -375,7 +385,7 @@ pub fn App() -> impl IntoView {
             </Show>
             </Show>
             <Show when=move || resume_offer.get().is_some() fallback=|| ()>
-                <ResumeModal resume_offer toasts />
+                <ResumeModal resume_offer unlocked_profile toasts />
             </Show>
             <ResetConfirmModal reset_target toasts />
             <ScanOverlay scan_overlay toasts />
