@@ -81,10 +81,85 @@ Deliberately separated so it's clear this only runs once the app works end-to-en
 - [ ] 7.6 **Trademark / IP review of shipped assets.** Kaos sigil (`docs/aesthetic/kaos_icon.svg` → `phone/assets/kaos.svg`) and any box-art thumbnails (4.2.5). Decide fair-use vs derivative vs custom-drawn before public release.
 
 ## Phase 8 Items
-- [ ] 8.1 - Change disconnect behavior, don't remove skylander figures from someone who disconnected until someone else takes over their slot. If someone reconnects with their skylanders still on the portal, don't prompt to resume (solves the PWA disconnect problem)
-- [ ] 8.2 - When kicked and in the kickback cooldown, show the kicked screen with the kickback button greyed out and counting down. Enable once it hits zero.
-- [ ] 8.2 - Implement part 5, Kaos
-- [ ] 8.3 - Release 1.1
+
+### 8.1 Ghost sessions (sticky disconnect)
+Today: WS drop → server's `disconnect cleanup` clears the departing
+profile's portal slots immediately. PWA backgrounding triggers it
+constantly. Goal: keep a phone's figures on the portal across a
+disconnect, replay missed events on reconnect, and only evict when a
+new phone genuinely takes over the slot.
+
+- [ ] 8.1.1 — Introduce a *ghost session* state on the server. When a
+  WS drops with an unlocked profile + placed slots, mark the session
+  ghost (profile id + placed-slot snapshot + last-seen timestamp).
+  Don't clear figures, don't fire `disconnect cleanup`. Ghost stays
+  in the registry's slot allocation.
+- [ ] 8.1.2 — Per-ghost replay buffer for events that arrived after
+  the WS dropped but the phone needs on reconnect. At minimum the
+  KaosTaunt event (8.2b.4 fires while the phone is asleep / PWA
+  backgrounded) plus any post-disconnect SlotChanged for the
+  ghost's own slots. Bounded ring (last N ≤ ~32 events; pre-2026 we
+  capped at "last 10 minutes worth" — pick whichever fits).
+- [ ] 8.1.3 — On reconnect, match the incoming Welcome's profile-id
+  hint (cookie? localStorage echo? we'll need a phone-side handle)
+  against ghost sessions. If a ghost matches, *adopt* it — keep the
+  same session id, skip the resume modal entirely (figures are
+  already where the user left them), and drain the replay buffer
+  into the phone in event order so the Kaos taunt etc. lands.
+- [ ] 8.1.4 — 2-phone cap counts ghosts as occupying a slot. A 3rd
+  connection still FIFO-evicts the oldest, ghost or live. Forced-
+  eviction cooldown still applies. When a ghost is evicted, ITS
+  slots clear (deferred cleanup runs at evict time, not disconnect
+  time).
+- [ ] 8.1.5 — Time-bound ghosts (1 hour idle) so they don't pile up
+  forever after a real abandon. After timeout: evict + cleanup.
+- [ ] 8.1.6 — UI: live phones see ghost-placed figures with their
+  existing `placed_by` attribution; surface a subtle "(away)" hint
+  on the orbit pip so it's clear which phones are responsive.
+- [ ] 8.1.7 — Tests: ghost create/adopt/evict/expire round-trips
+  against the in-memory session registry; replay buffer ordering;
+  KaosTaunt-during-disconnect replay scenario.
+
+### 8.2a Kickback cooldown countdown UI
+Today: kickback button is enabled immediately on the Kaos takeover
+screen; server returns 401-RetryAfter if the 60s cooldown hasn't
+elapsed. Should grey-out + count down instead.
+
+- [ ] 8.2a.1 — Server includes `cooldown_remaining_secs` in the
+  `TakenOver` event payload.
+- [ ] 8.2a.2 — Phone Kaos overlay starts a local 1Hz countdown from
+  that value.
+- [ ] 8.2a.3 — Button styled disabled while countdown > 0 (grey +
+  ring or seconds-remaining caption); enables at zero.
+
+### 8.2b Kaos feature (CLAUDE.md "Kaos feature")
+The Skylanders-themed mid-game disruption — wall-clock timer fires,
+a portal figure gets swapped for a random compatible one from the
+owner's collection, a Kaos catchphrase overlays for ~5s.
+
+- [ ] 8.2b.1 — Per-profile Kaos enable toggle (kebab menu; off by
+  default while we tune the cadence).
+- [ ] 8.2b.2 — Server timer task: 20-min warmup from session unlock,
+  then uniformly-random fire within each hour window.
+- [ ] 8.2b.3 — Compatibility-aware swap selection: pick a portal
+  figure + a compatible replacement from the owning profile's
+  collection via `compat::is_compatible` (vehicles SuperChargers-
+  only edge case already handled there).
+- [ ] 8.2b.4 — Execute the swap as a clear+load pair, broadcast
+  `Event::KaosTaunt { profile_id, slot, taunt }` with a random
+  catchphrase from `data/kaos_taunts.json`. Pairs with 8.1.2 — the
+  taunt has to land even if the targeted phone is backgrounded /
+  briefly disconnected when it fires.
+- [ ] 8.2b.5 — Phone `KaosOverlay` component (already exists)
+  renders the taunt + visual treatment for ~5s, then dismisses.
+- [ ] 8.2b.6 — Tests: timer math, swap selection (vehicles edge
+  case), taunt rotation, replay-on-reconnect.
+
+### 8.3 Release 1.1
+- [ ] 8.3.1 — Release notes drafted from commits since v1.0.0
+  (`generate_release_notes` already wired in `release.yml`).
+- [ ] 8.3.2 — Tag → CI release workflow → draft release with the new
+  exe → publish.
 
 ## Phase 9 Items
 - [ ] 9.1 - Add MacOS support
