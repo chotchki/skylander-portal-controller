@@ -222,7 +222,7 @@ fn main() -> Result<()> {
     let driver_kind = cfg.driver_kind;
     let rpcs3_exe = cfg.rpcs3_exe.clone();
     let data_root = cfg.data_root.clone();
-    let runtime_dir_for_task = runtime_dir.clone();
+    let _runtime_dir_for_task = runtime_dir.clone();
     let hmac_key = cfg.hmac_key.clone();
     let rpcs3_lifecycle = Arc::new(tokio::sync::Mutex::new(RpcsLifecycle::default()));
     let rpcs3_for_task = rpcs3_lifecycle.clone();

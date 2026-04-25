@@ -8,7 +8,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use skylander_core::{SLOT_COUNT, SlotIndex, SlotState};
 
 /// Drive the emulated Skylanders portal.

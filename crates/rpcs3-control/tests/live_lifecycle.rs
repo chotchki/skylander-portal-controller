@@ -90,9 +90,13 @@ fn open_and_boot() -> (RpcsProcess, UiaPortalDriver) {
 
     // Now boot the game by serial. The dialog is already off-screen; it
     // stays open for the rest of the session and the driver short-circuits
-    // subsequent `open_dialog` calls.
+    // subsequent `open_dialog` calls. `boot_game_by_serial` does its own
+    // post-boot title verification using `expected_name`; we redundantly
+    // verify below because that check is "title contains a peer-game
+    // keyword" — broader than the exact-substring match we want here.
+    let expected_name = expected_game_name_for_serial(&serial);
     driver
-        .boot_game_by_serial(&serial, Duration::from_secs(60))
+        .boot_game_by_serial(&serial, expected_name, Duration::from_secs(60))
         .expect("UIA-boot game by serial");
 
     // Verify the booted game matches the requested serial. Without this
@@ -102,7 +106,6 @@ fn open_and_boot() -> (RpcsProcess, UiaPortalDriver) {
     // running. The viewport title contains the game's display name; we
     // match that against a serial→name map rather than the serial itself
     // (RPCS3 doesn't put the serial in the title).
-    let expected_name = expected_game_name_for_serial(&serial);
     // Give Qt a beat to finalise the title once the FPS counter starts.
     thread::sleep(Duration::from_secs(1));
     let title = driver

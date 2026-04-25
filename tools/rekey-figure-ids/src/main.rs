@@ -309,7 +309,6 @@ fn parse_args() -> Result<Args> {
             "--dry-run" => args.dry_run = true,
             "--help" | "-h" => {
                 eprintln!(
-                    "{}",
                     "usage: skylander-rekey-figure-ids [--pack <dir>] [--data <dir>] [--dry-run]"
                 );
                 std::process::exit(0);

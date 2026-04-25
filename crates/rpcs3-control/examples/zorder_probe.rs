@@ -187,7 +187,7 @@ fn boot_a_sendinput_through_transparent(driver: &UiaPortalDriver, serial: &str) 
     // The cover is WS_EX_TRANSPARENT, so SendInput at screen coords hits
     // whatever window is underneath at those coords — RPCS3, in this case.
     // `boot_game_by_serial` already uses `SendInput`; nothing special to do.
-    driver.boot_game_by_serial(serial, Duration::from_secs(30))
+    driver.boot_game_by_serial(serial, "", Duration::from_secs(30))
 }
 
 // ---------------------------------------------------------------------------
@@ -218,7 +218,7 @@ fn boot_b_lower_zorder_then_click(
     // synthesising input.
     sleep(Duration::from_millis(120));
 
-    let result = driver.boot_game_by_serial(serial, Duration::from_secs(30));
+    let result = driver.boot_game_by_serial(serial, "", Duration::from_secs(30));
 
     // Restore topmost regardless of boot outcome.
     unsafe {

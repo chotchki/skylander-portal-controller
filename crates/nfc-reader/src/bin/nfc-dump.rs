@@ -50,7 +50,7 @@ fn main() -> Result<()> {
     println!("read {} bytes in {:.3?}", bytes.len(), dump_t.elapsed());
 
     let path = out_dir.join(format!("{}.sky", uid_hex));
-    std::fs::write(&path, &bytes).with_context(|| format!("write {}", path.display()))?;
+    std::fs::write(&path, bytes).with_context(|| format!("write {}", path.display()))?;
     println!("wrote {}", path.display());
 
     match skylander_sky_parser::parse(&bytes) {

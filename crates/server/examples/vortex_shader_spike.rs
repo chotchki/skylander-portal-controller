@@ -56,8 +56,7 @@ fn list_presets() -> Vec<String> {
 fn save_preset(name: &str, params: &Params) -> std::io::Result<()> {
     let dir = presets_dir();
     std::fs::create_dir_all(&dir)?;
-    let json = serde_json::to_string_pretty(params)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let json = serde_json::to_string_pretty(params).map_err(std::io::Error::other)?;
     std::fs::write(dir.join(format!("{name}.json")), json)
 }
 
@@ -728,12 +727,12 @@ impl eframe::App for App {
         // Lazy shader init on the first frame (need the gl context
         // from the eframe Frame; not available before the app starts
         // updating).
-        if self.rig.lock().unwrap().is_none() {
-            if let Some(gl) = frame.gl() {
-                match ShaderRig::new(gl) {
-                    Ok(rig) => *self.rig.lock().unwrap() = Some(rig),
-                    Err(e) => eprintln!("shader init failed: {e}"),
-                }
+        if self.rig.lock().unwrap().is_none()
+            && let Some(gl) = frame.gl()
+        {
+            match ShaderRig::new(gl) {
+                Ok(rig) => *self.rig.lock().unwrap() = Some(rig),
+                Err(e) => eprintln!("shader init failed: {e}"),
             }
         }
 
@@ -790,11 +789,11 @@ impl eframe::App for App {
                         .show(ui, |ui| {
                             for name in list_presets() {
                                 ui.horizontal(|ui| {
-                                    if ui.button("Load").clicked() {
-                                        if let Some(p) = load_preset(&name) {
-                                            self.params = p;
-                                            self.preset_name = name.clone();
-                                        }
+                                    if ui.button("Load").clicked()
+                                        && let Some(p) = load_preset(&name)
+                                    {
+                                        self.params = p;
+                                        self.preset_name = name.clone();
                                     }
                                     if ui.button("Del").clicked() {
                                         let _ = delete_preset(&name);
@@ -971,10 +970,11 @@ impl eframe::App for App {
             self.dirty_since = Some(std::time::Instant::now());
             self.last_saved = compare;
         }
-        if let Some(t) = self.dirty_since {
-            if t.elapsed() >= SAVE_DEBOUNCE && self.iris_anim.is_none() {
-                self.save();
-            }
+        if let Some(t) = self.dirty_since
+            && t.elapsed() >= SAVE_DEBOUNCE
+            && self.iris_anim.is_none()
+        {
+            self.save();
         }
 
         egui::CentralPanel::default()

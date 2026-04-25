@@ -111,10 +111,8 @@ pub async fn fallback_handler(req: axum::extract::Request) -> Response {
             .into_response();
         // Match the prior ServeDir's no-store behavior so iOS PWA
         // installs see new bundles after a cold launch.
-        if let Ok(v) = HeaderValue::from_static("no-store").try_into() {
-            let v: HeaderValue = v;
-            resp.headers_mut().insert(header::CACHE_CONTROL, v);
-        }
+        resp.headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
         return resp;
     }
     Response::builder()

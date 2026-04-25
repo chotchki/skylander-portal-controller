@@ -175,6 +175,7 @@ impl std::fmt::Display for MifareNuid {
 ///   own library card even when SKUs collide.
 /// - Pack figures whose block 0 can't be parsed: `"sha:{old-hash}"` —
 ///   escape valve so nothing orphans silently.
+///
 /// Consumers should continue to treat the inner string as opaque.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]

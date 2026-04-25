@@ -18,6 +18,7 @@
 //!   inbox CCID driver silently rejects `SCardControl` escape commands.
 //! - **Windows**: works with the inbox ACR122U driver.
 //! - **Linux**: needs pcsc-lite + `libacsccid1`.
+//!
 //! All three share the same IOCTL value (`SCARD_CTL_CODE(3500)`).
 
 use std::path::Path;
@@ -491,7 +492,7 @@ fn persist_and_broadcast(
     >,
 ) -> Result<()> {
     let path = out_dir.join(format!("{}.sky", dump.uid_hex()));
-    std::fs::write(&path, &dump.bytes).with_context(|| format!("write {}", path.display()))?;
+    std::fs::write(&path, dump.bytes).with_context(|| format!("write {}", path.display()))?;
 
     // Parse identity fields — figure_id + variant are plaintext block 0,
     // always decodable. Nickname is encrypted-payload territory and can

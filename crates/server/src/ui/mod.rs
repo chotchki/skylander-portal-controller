@@ -175,12 +175,12 @@ impl eframe::App for LauncherApp {
         // unsupported GLSL version) we log and continue with the rig
         // stuck at None — the launcher renders without the vortex
         // layer rather than crashing.
-        if self.vortex_rig.lock().unwrap().is_none() {
-            if let Some(gl) = frame.gl() {
-                match ShaderRig::new(gl) {
-                    Ok(rig) => *self.vortex_rig.lock().unwrap() = Some(rig),
-                    Err(e) => tracing::error!("vortex shader init failed: {e}"),
-                }
+        if self.vortex_rig.lock().unwrap().is_none()
+            && let Some(gl) = frame.gl()
+        {
+            match ShaderRig::new(gl) {
+                Ok(rig) => *self.vortex_rig.lock().unwrap() = Some(rig),
+                Err(e) => tracing::error!("vortex shader init failed: {e}"),
             }
         }
 

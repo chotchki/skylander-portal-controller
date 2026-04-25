@@ -250,6 +250,13 @@ impl LauncherApp {
 /// Which face the centre card is showing right now. The flip
 /// animation drives the QR ↔ back-face transition; `back_face` then
 /// picks what's actually painted on the back side.
+///
+/// `Farewell`, `Crashed`, and `ServerError` are reserved for the
+/// in-flight ring-badge unification (each non-Main screen will fold
+/// onto the dispatcher's standard card render). They're not
+/// constructed yet — the per-screen render functions still hand-paint
+/// — so suppress the dead-code warning until that wiring lands.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum BackFace {
     /// "STARTING" — server is booting (indexer, driver warmup, axum
@@ -439,6 +446,7 @@ fn paint_loading_halos(painter: &egui::Painter, rect: egui::Rect, time_s: f32, o
 /// fake a Gaussian-ish blur — egui doesn't ship a real shape blur,
 /// but stacking a wide-dim, mid-medium, narrow-bright triplet reads
 /// as the soft glow the mock's `filter: blur(6px)` produces.
+#[allow(clippy::too_many_arguments)]
 fn paint_halo_arc(
     painter: &egui::Painter,
     center: egui::Pos2,

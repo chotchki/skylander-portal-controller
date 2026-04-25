@@ -739,15 +739,15 @@ pub fn spawn_crash_watchdog(
                 Ok(Err(e)) => {
                     consecutive_failures = consecutive_failures.saturating_add(1);
                     warn!(consecutive_failures, "RPCS3 auto-respawn failed: {e}");
-                    if consecutive_failures >= MAX_RESPAWNS {
-                        if let Ok(mut st) = launcher_status.lock() {
-                            st.screen = LauncherScreen::ServerError {
-                                message: format!(
-                                    "RPCS3 keeps crashing ({} attempts): {}",
-                                    consecutive_failures, e
-                                ),
-                            };
-                        }
+                    if consecutive_failures >= MAX_RESPAWNS
+                        && let Ok(mut st) = launcher_status.lock()
+                    {
+                        st.screen = LauncherScreen::ServerError {
+                            message: format!(
+                                "RPCS3 keeps crashing ({} attempts): {}",
+                                consecutive_failures, e
+                            ),
+                        };
                     }
                 }
                 Err(e) => {
@@ -1030,18 +1030,17 @@ fn flip_loaded_owned_to_loading(
             placed_by: Some(owner),
             ..
         } = s
+            && owner == profile_id
         {
-            if owner == profile_id {
-                let Ok(slot) = SlotIndex::new(i as u8) else {
-                    continue;
-                };
-                let loading = SlotState::Loading {
-                    figure_id: None,
-                    placed_by: None,
-                };
-                *s = loading.clone();
-                out.push((slot, loading));
-            }
+            let Ok(slot) = SlotIndex::new(i as u8) else {
+                continue;
+            };
+            let loading = SlotState::Loading {
+                figure_id: None,
+                placed_by: None,
+            };
+            *s = loading.clone();
+            out.push((slot, loading));
         }
     }
     out

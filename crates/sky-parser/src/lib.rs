@@ -94,7 +94,7 @@ const HASH_CONST: [u8; 0x35] = *b" Copyright (C) 2010 Activision. All Rights Res
 /// blocks 0..=7 (sector 0 + sector 1) and every sector trailer (every 4th
 /// block starting at 3).
 fn is_plaintext_block(i: usize) -> bool {
-    i < 8 || (i + 1) % 4 == 0
+    i < 8 || (i + 1).is_multiple_of(4)
 }
 
 /// Build the 0x56-byte hash-input template: `block_0 || block_1 || 0x00 ||
@@ -1086,7 +1086,7 @@ mod tests {
         let bytes: Vec<u8> = "Snap Shot"
             .chars()
             .flat_map(|c| [c as u8, 0])
-            .chain(std::iter::repeat(0).take(32 - 18))
+            .chain(std::iter::repeat_n(0, 32 - 18))
             .collect();
         assert_eq!(decode_nickname(&bytes), "Snap Shot");
     }

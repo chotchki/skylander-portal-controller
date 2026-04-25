@@ -491,6 +491,7 @@ fn image_response(bytes: Vec<u8>) -> Response {
 ///   - `{6-hex}-{4-hex}` — tag-identity pack figures
 ///   - `scan:{uid}`      — scan-only (uid is uppercase hex, length 8)
 ///   - `sha:{hex}`       — parse-failure fallback (16 hex chars)
+///
 /// Anything else is rejected so this endpoint can't be coerced into
 /// reading arbitrary paths under `data/images/`.
 fn is_safe_figure_id(id: &str) -> bool {
@@ -1351,10 +1352,10 @@ async fn quit_game(
     // transition from in-game → iris-closed happens in one frame.
     // Cleared either by the next `/api/launch` or by the shutdown
     // path (screen flipping to Farewell overrides).
-    if q.switch {
-        if let Ok(mut st) = state.launcher_status.lock() {
-            st.switching = true;
-        }
+    if q.switch
+        && let Ok(mut st) = state.launcher_status.lock()
+    {
+        st.switching = true;
     }
 
     if q.force {
@@ -2059,18 +2060,6 @@ async fn serve_manifest(State(state): State<Arc<AppState>>) -> Response {
         rewritten,
     )
         .into_response()
-}
-
-async fn serve_static_file(path: &std::path::Path, content_type: &'static str) -> Response {
-    match tokio::fs::read(path).await {
-        Ok(bytes) => (
-            StatusCode::OK,
-            [(axum::http::header::CONTENT_TYPE, content_type)],
-            bytes,
-        )
-            .into_response(),
-        Err(_) => (StatusCode::NOT_FOUND, "asset not found").into_response(),
-    }
 }
 
 // ============================================================ dev-tools
