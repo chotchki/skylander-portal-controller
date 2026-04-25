@@ -171,6 +171,12 @@ pub struct SessionPip {
     /// First grapheme of the profile's display name, uppercased. `None`
     /// means unlocked state unknown.
     pub initial: Option<String>,
+    /// `true` for ghosted sessions (PLAN 8.1.6). The pip renders in a
+    /// dimmed "(away)" treatment — the player's figures still occupy
+    /// their portal slots, but their phone isn't responsive right now.
+    /// Cleared to `false` when the same profile reconnects via
+    /// `?reclaim=` and the session goes live again.
+    pub is_ghost: bool,
 }
 
 /// Which top-level surface the egui TV launcher is rendering right now.
@@ -305,17 +311,24 @@ impl AppState {
 
         let mut pips = Vec::with_capacity(ids.len());
         for sid in &ids {
-            let profile_id = self.sessions.profile_of(*sid).await;
-            let pip = match profile_id {
+            let session_state = self.sessions.get(*sid).await;
+            let is_ghost = session_state
+                .as_ref()
+                .map(|s| s.is_ghost())
+                .unwrap_or(false);
+            let profile_id = session_state.and_then(|s| s.profile_id);
+            let mut pip = match profile_id {
                 Some(pid) => match self.profiles.get(&pid).await {
                     Ok(Some(row)) => SessionPip {
                         color: Some(row.color),
                         initial: first_grapheme_uppercase(&row.display_name),
+                        is_ghost: false,
                     },
                     _ => SessionPip::default(),
                 },
                 None => SessionPip::default(),
             };
+            pip.is_ghost = is_ghost;
             pips.push(pip);
         }
 

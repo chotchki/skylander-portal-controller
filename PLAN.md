@@ -120,9 +120,13 @@ new phone genuinely takes over the slot.
   forever after a real abandon. After timeout: evict + cleanup.
   `AppState::sweep_expired_ghosts` runs every 60s from a tokio task
   spawned in `main.rs`; `GHOST_TIMEOUT = 1h`.
-- [ ] 8.1.6 — UI: live phones see ghost-placed figures with their
+- [x] 8.1.6 — UI: live phones see ghost-placed figures with their
   existing `placed_by` attribution; surface a subtle "(away)" hint
   on the orbit pip so it's clear which phones are responsive.
+  `SessionPip.is_ghost`; ghost pips render with a desaturated profile
+  colour + half-alpha bezel + dimmed glyph. Updates fan in via the
+  existing `publish_session_snapshot` hooks on `ghost`, `claim_ghost`,
+  and the periodic sweep.
 - [ ] 8.1.7 — Tests: ghost create/adopt/evict/expire round-trips
   against the in-memory session registry; replay buffer ordering;
   KaosTaunt-during-disconnect replay scenario.

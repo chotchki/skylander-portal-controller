@@ -943,7 +943,10 @@ fn paint_player_orbit(painter: &egui::Painter, rect: egui::Rect, time_s: f32, pi
 
 /// Single pip — a gold-bezeled circle with the profile's colour as fill
 /// and the initial rendered in Titan One. Unknown profile (None fields)
-/// falls back to neutral gold + a small dot.
+/// falls back to neutral gold + a small dot. Ghosted sessions (PLAN
+/// 8.1.6) render the same pip but desaturated + half-alpha as a
+/// "(away)" hint — figures still on the portal, but the phone isn't
+/// responsive.
 fn paint_pip(painter: &egui::Painter, rect: egui::Rect, pip: &SessionPip) {
     let centre = rect.center();
     let radius = rect.width() * 0.5;
@@ -954,19 +957,29 @@ fn paint_pip(painter: &egui::Painter, rect: egui::Rect, pip: &SessionPip) {
     // other gold-rimmed surface in the launcher and a 1:1 match for
     // the phone's `.player-pip` design language (Chris flagged
     // 2026-04-19, "use the nice coloring of the phone profile badge").
-    paint_bezel(painter, rect, 1.0);
+    let bezel_alpha = if pip.is_ghost { 0.5 } else { 1.0 };
+    paint_bezel(painter, rect, bezel_alpha);
 
     // Inner profile-colour disc with a soft radial gradient for
     // depth — highlight offset to top-left mimics ambient light from
     // above, the same "embossed" treatment paint_bezel uses for the
     // gold ring. Proportions match the phone: ~78% of pip diameter
     // for the inner disc leaves a ~11% gold-ring rim visible.
+    //
+    // Ghost treatment: lerp the profile colour halfway to neutral
+    // grey so the pip reads as "muted" without losing the player
+    // attribution entirely (you can still tell which player is
+    // away). Combined with the half-alpha bezel + glyph, this lands
+    // the desaturated-and-dimmed look the PLAN spec calls for.
     let inner_radius = radius * 0.78;
-    let base = pip
+    let mut base = pip
         .color
         .as_deref()
         .and_then(parse_hex_color)
         .unwrap_or(palette::GOLD_BRIGHT);
+    if pip.is_ghost {
+        base = lerp_color(base, egui::Color32::from_gray(120), 0.55);
+    }
     let highlight = lerp_color(base, egui::Color32::WHITE, 0.25);
     let shadow = lerp_color(base, egui::Color32::BLACK, 0.30);
     paint_radial_gradient_disc(
@@ -988,19 +1001,20 @@ fn paint_pip(painter: &egui::Painter, rect: egui::Rect, pip: &SessionPip) {
         palette::HEADING,
         egui::FontFamily::Name(fonts::TITAN_ONE.into()),
     );
+    let glyph_alpha: u8 = if pip.is_ghost { 150 } else { 255 };
     painter.text(
         centre + egui::vec2(0.0, 2.0),
         egui::Align2::CENTER_CENTER,
         glyph,
         font.clone(),
-        egui::Color32::from_rgba_unmultiplied(0, 0, 0, 120),
+        egui::Color32::from_rgba_unmultiplied(0, 0, 0, if pip.is_ghost { 60 } else { 120 }),
     );
     painter.text(
         centre,
         egui::Align2::CENTER_CENTER,
         glyph,
         font,
-        egui::Color32::WHITE,
+        egui::Color32::from_rgba_unmultiplied(255, 255, 255, glyph_alpha),
     );
 }
 
