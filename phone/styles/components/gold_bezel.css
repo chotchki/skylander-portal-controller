@@ -1,0 +1,216 @@
+/*
+ * <GoldBezel> — design_language.md §3.1.
+ * (PLAN 9.2 pilot — first component migrated off the app.css monolith.)
+ *
+ * Migration approach: the structural class names (`.gold-bezel`,
+ * `.bezel-ring`, `.bezel-plate`, `.bezel-sm/md/lg/hero`,
+ * `.bezel-{state}`, `.el-{element}`) are kept *as-is* — many other
+ * components (`.profile-card`, `.p4-slot`, `.fig-bezel-p4`,
+ * `.figure-hero`, etc.) cascade INTO them, so removing those names
+ * before those consumers also migrate would shatter the layout.
+ *
+ * What changes: the rules now live in `phone/styles/components/`
+ * instead of `phone/assets/app.css`, are emitted into
+ * `tailwind.css` via `@import` from `input.css`, and reference
+ * `@theme` token vars (`var(--color-gold)`) where convenient.
+ * Multi-layer shadows + radial gradients stay as raw CSS — Tailwind
+ * doesn't have a useful utility for 5-layer inset/outset shadow
+ * stacks, and `@apply shadow-[...]` would be uglier than the
+ * declaration itself.
+ *
+ * `@apply` IS used for primitive layout bits (`relative`, `rounded-full`,
+ * `grid place-items-center`) where it documents intent better than
+ * the raw declaration. Mixed pattern is the point — escape-hatch
+ * policy in CLAUDE.md (PLAN 9.5).
+ *
+ * Structure: .gold-bezel > .bezel-ring + .bezel-plate > children.
+ */
+
+@layer components {
+  .gold-bezel {
+    @apply relative aspect-square rounded-full;
+  }
+
+  /* Sizes — w-8/14/32/40 == 32/56/128/160px (Tailwind base spacing
+     scale: 0.25rem per step at default 16px root). */
+  .bezel-sm   { @apply w-8;  }
+  .bezel-md   { @apply w-14; }
+  .bezel-lg   { @apply w-32; }
+  .bezel-hero { @apply w-40; }
+
+  .bezel-ring {
+    @apply absolute inset-0 rounded-full;
+    background: radial-gradient(
+      circle at 30% 25%,
+      var(--color-gold-bright),
+      var(--color-gold) 22%,
+      var(--color-gold-mid) 55%,
+      var(--color-gold-shadow) 100%
+    );
+    box-shadow:
+      inset 0 0 0 2px var(--color-gold-deep),
+      inset 0 3px 4px rgba(255, 255, 255, 0.3),
+      inset 0 -3px 4px rgba(0, 0, 0, 0.5),
+      0 0 0 1px #000,
+      0 4px 10px rgba(0, 0, 0, 0.6);
+  }
+
+  .bezel-plate {
+    @apply absolute rounded-full overflow-hidden grid place-items-center text-white z-[1];
+    inset: 10%;
+    background: linear-gradient(135deg, #1a2a4a, #0a1630);
+    box-shadow:
+      inset 0 0 0 1px rgba(0, 0, 0, 0.6),
+      inset 0 4px 8px rgba(255, 255, 255, 0.25),
+      inset 0 -6px 10px rgba(0, 0, 0, 0.5);
+    font-family: var(--font-display);
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
+  }
+
+  /* Plate font sizes scale with bezel size. */
+  .bezel-sm   .bezel-plate { font-size: var(--text-body); }
+  .bezel-md   .bezel-plate { font-size: 22px; }
+  .bezel-lg   .bezel-plate { font-size: 42px; }
+  .bezel-hero .bezel-plate { font-size: 68px; }
+
+  /* Element tinting — plate background swaps to the element gradient.
+     Air + light have darker glyph colour for legibility on lighter fills. */
+  .el-air    .bezel-plate { background: var(--el-air);    color: #1a2a4a; }
+  .el-dark   .bezel-plate { background: var(--el-dark); }
+  .el-earth  .bezel-plate { background: var(--el-earth); }
+  .el-fire   .bezel-plate { background: var(--el-fire); }
+  .el-life   .bezel-plate { background: var(--el-life); }
+  .el-light  .bezel-plate { background: var(--el-light);  color: #1a2a4a; }
+  .el-magic  .bezel-plate { background: var(--el-magic); }
+  .el-tech   .bezel-plate { background: var(--el-tech); }
+  .el-undead .bezel-plate { background: var(--el-undead); }
+  .el-water  .bezel-plate { background: var(--el-water); }
+
+  /* Thumbnail + photo children fill the plate circle. */
+  .bezel-plate > img {
+    @apply w-full h-full object-cover rounded-full;
+  }
+
+  /* === STATE: picking === */
+  .bezel-picking {
+    transform: scale(1.05);
+    transition: transform var(--dur-quick) var(--ease-spring);
+  }
+  .bezel-picking .bezel-ring {
+    box-shadow:
+      inset 0 0 0 2px var(--color-gold-deep),
+      inset 0 3px 4px rgba(255, 255, 255, 0.3),
+      inset 0 -3px 4px rgba(0, 0, 0, 0.5),
+      0 0 0 1px #000,
+      0 0 22px 4px rgba(255, 230, 120, 0.75),
+      0 4px 10px rgba(0, 0, 0, 0.6);
+  }
+
+  /* === STATE: loading === */
+  .bezel-loading .bezel-plate {
+    opacity: 0.8;
+    transition: opacity 0.3s ease;
+  }
+  /* 4.6.3 — gold sweep around the bezel ring, once per --dur-loading-sweep. */
+  .bezel-loading::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: conic-gradient(
+      from 0deg,
+      transparent 0deg,
+      rgba(255, 255, 255, 0.95) 20deg,
+      var(--color-gold-bright) 40deg,
+      transparent 80deg,
+      transparent 360deg
+    );
+    -webkit-mask: radial-gradient(circle, transparent 43%, black 45%, black 52%, transparent 54%);
+            mask: radial-gradient(circle, transparent 43%, black 45%, black 52%, transparent 54%);
+    animation: ray-spin var(--dur-loading-sweep) linear infinite;
+    pointer-events: none;
+    z-index: 2;
+  }
+
+  /* === STATE: loaded — idle float + one-shot portal-impact flash === */
+  .bezel-loaded {
+    animation: bezel-float var(--dur-idle-float) ease-in-out 400ms infinite;
+  }
+  /* 4.6.4 — brightness spike on the ring during the impact flash. */
+  .bezel-loaded .bezel-ring {
+    animation: bezel-impact-brightness 400ms ease-out;
+  }
+  /* 4.6.4 — radial white→gold flash expanding 0 → 2x. */
+  .bezel-loaded::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: radial-gradient(
+      circle,
+      rgba(255, 255, 255, 0.95) 0%,
+      rgba(255, 207, 58, 0.6) 35%,
+      transparent 70%
+    );
+    transform: scale(0);
+    opacity: 0;
+    animation: portal-impact-flash 400ms ease-out forwards;
+    pointer-events: none;
+    z-index: 3;
+  }
+
+  /* === STATE: errored === */
+  .bezel-errored .bezel-ring {
+    background: radial-gradient(
+      circle at 30% 25%,
+      #ff9b9b 0%,
+      var(--color-danger-p4) 35%,
+      var(--color-danger-dark) 100%
+    );
+    animation: bezel-shudder var(--dur-shudder) ease-in-out 2;
+  }
+
+  /* === STATE: disabled — dimmed gold + dark plate === */
+  .bezel-disabled .bezel-ring {
+    background: radial-gradient(
+      circle at 30% 25%,
+      rgba(245, 198, 52, 0.2),
+      rgba(110, 74, 0, 0.25) 55%,
+      rgba(0, 0, 0, 0.35)
+    );
+  }
+  .bezel-disabled .bezel-plate {
+    background: linear-gradient(135deg, #0e1a30, #060e1a);
+    opacity: 0.65;
+  }
+}
+
+/*
+ * Keyframes live outside @layer so they're addressable from the
+ * GoldBezel rules above AND any other component that wants to
+ * reuse `bezel-float` / `ray-spin` etc. (Currently `ray-spin` is
+ * also referenced by RayHalo — it'll keep working until that
+ * component migrates and absorbs its own keyframe.)
+ */
+
+@keyframes bezel-float {
+  50% { transform: translateY(-2px); }
+}
+
+@keyframes bezel-impact-brightness {
+  0%   { filter: brightness(1); }
+  25%  { filter: brightness(1.6); }
+  100% { filter: brightness(1); }
+}
+
+@keyframes portal-impact-flash {
+  0%   { transform: scale(0); opacity: 0; }
+  20%  { opacity: 1; }
+  100% { transform: scale(2); opacity: 0; }
+}
+
+@keyframes bezel-shudder {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}

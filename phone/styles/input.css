@@ -201,3 +201,15 @@
   --wood-gold:   #d4a84a;
   --wood-gold-b: #f0d080;
 }
+
+/*
+ * Component CSS files (PLAN 9.4). Each file owns the rules for one
+ * Leptos component, written as a mix of `@apply` for utility-style
+ * primitives and raw CSS for the bits Tailwind doesn't help with
+ * (multi-layer shadow stacks, complex gradients, keyframes). As
+ * components migrate they appear here and disappear from
+ * `phone/assets/app.css`. Final state: app.css is empty + this
+ * import list is the table of contents for the design system.
+ */
+@import "./components/gold_bezel.css";
+
