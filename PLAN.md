@@ -289,7 +289,7 @@ screenshot tour acting as the per-tranche regression contract.
   - [x] 9.4b — Overlays: `ConnectionLost`, `GameCrashScreen`,
     `PairingRequired`, `StaleVersion`, `ScanOverlay`, `MenuOverlay`,
     `ResumeModal`, `ResetConfirmModal`.
-  - 9.4c — Screens: `ProfilePicker` (largest — Konami gate,
+  - [x] 9.4c — Screens: `ProfilePicker` (largest — Konami gate,
     PIN keypad, profile grid), `GamePicker`, `FigureDetail`.
   - 9.4d — Portal + toy box: `Portal`, `ToyBoxLid`, `Browser`. Most
     visually complex; expect `@apply` escape hatches for the lid's

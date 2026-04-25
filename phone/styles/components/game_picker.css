@@ -1,0 +1,201 @@
+/*
+ * <GamePicker> screen (PLAN 4.11 reskin).
+ * (PLAN 9.4c — screens tranche.)
+ *
+ * Vertical column of full-width cards, one per installed game. Each
+ * card is a layered composition:
+ *   1. `.game-card::before` — per-slug atmospheric radial gradient
+ *      (Spyro purple/green, Giants brown/orange, etc.).
+ *   2. `.game-card-image` — scraped box-art PNG from
+ *      `/api/games/<serial>/image`, fades over the gradient.
+ *   3. `.game-card::after` — dark vignette for legibility.
+ *   4. `.game-name` — Titan One label on top.
+ *
+ * Loading state: tapping a card flips it to `.launching` (gold border
+ * + name pulse) and dims the others to `.dimmed`. The on:error handler
+ * in game_picker.rs hides missing box art with `display: none` so the
+ * card falls back to gradient-only.
+ *
+ * The legacy v1 rules from app.css (`.game-picker h2`, `.game-card
+ * .game-title`, `.game-card .game-serial`, the v1 `.game-card`
+ * background) were already shadowed by the v2 reskin and dropped on
+ * migration — the current source emits `.game-name` not `.game-title`,
+ * and DisplayHeading not `<h2>`.
+ *
+ * Class names unchanged.
+ */
+
+@layer components {
+  .game-picker {
+    @apply flex flex-col;
+    gap: 0;
+    padding: 0 2px;
+  }
+
+  .gp-subtitle {
+    @apply text-center uppercase;
+    font-family: var(--font-body);
+    font-style: italic;
+    font-weight: 600;
+    font-size: var(--text-body-italic);
+    letter-spacing: 0.25em;
+    color: #fff4e0;
+    margin-top: 4px;
+    margin-bottom: 24px;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+  }
+
+  /* ---------- Card grid (column on phone) ---------- */
+  .game-picker .game-grid {
+    @apply flex flex-col gap-3;
+    padding: 0 2px;
+  }
+
+  /* ---------- Individual card ---------- */
+  .game-card {
+    @apply relative flex items-center justify-center rounded-[18px] overflow-hidden cursor-pointer text-center;
+    padding: 28px 24px;
+    color: var(--color-text);
+    border: 1.5px solid rgba(245, 198, 52, 0.25);
+    background: linear-gradient(180deg, rgba(16, 40, 90, 0.65), rgba(8, 22, 60, 0.7));
+    font-family: var(--font-display);
+    transition:
+      transform 0.15s cubic-bezier(.4, 2.2, .5, 1),
+      border-color var(--dur-quick),
+      box-shadow var(--dur-quick),
+      opacity 0.3s ease;
+    /* Stagger-rise animation; delay set inline via style attr in
+       game_picker.rs (`animation-delay: {i * 80}ms`). */
+    animation: gp-card-rise 0.5s cubic-bezier(.3, 1.3, .5, 1) both;
+  }
+  .game-card:hover,
+  .game-card:active {
+    transform: scale(1.03);
+    border-color: rgba(245, 198, 52, 0.6);
+    box-shadow:
+      0 0 28px rgba(245, 198, 52, 0.3),
+      inset 0 0 24px rgba(245, 198, 52, 0.08);
+  }
+
+  /* Per-slug atmospheric gradient layer. */
+  .game-card::before {
+    content: "";
+    @apply absolute inset-0 z-0;
+    opacity: 0.55;
+    transition: opacity var(--dur-quick) ease;
+  }
+  .game-card:hover::before { opacity: 0.7; }
+
+  /* Dark legibility overlay above the gradient + box art. */
+  .game-card::after {
+    content: "";
+    @apply absolute inset-0 pointer-events-none z-[1];
+    background:
+      linear-gradient(180deg, rgba(0, 0, 0, 0.3) 0%, rgba(0, 0, 0, 0.55) 100%),
+      radial-gradient(ellipse 80% 60% at 50% 40%, transparent 20%, rgba(0, 0, 0, 0.5) 100%);
+  }
+
+  /* SSA — purple/green magic, Spyro with portal glow */
+  .game-card--ssa::before {
+    background:
+      radial-gradient(ellipse 60% 80% at 30% 40%, rgba(130, 60, 220, 0.9), transparent 50%),
+      radial-gradient(ellipse 50% 60% at 70% 50%, rgba(90, 201, 107, 0.6), transparent 50%),
+      radial-gradient(ellipse 80% 80% at 50% 80%, rgba(245, 198, 52, 0.5), transparent 60%),
+      linear-gradient(135deg, #2a0a5a, #0a2a4a);
+  }
+  /* Giants — earthy brown/orange, Tree Rex, lava glow */
+  .game-card--giants::before {
+    background:
+      radial-gradient(ellipse 60% 70% at 25% 50%, rgba(167, 123, 58, 0.9), transparent 55%),
+      radial-gradient(ellipse 50% 60% at 75% 40%, rgba(255, 107, 42, 0.7), transparent 50%),
+      radial-gradient(ellipse 70% 50% at 50% 90%, rgba(200, 80, 20, 0.6), transparent 60%),
+      linear-gradient(135deg, #3a1a08, #1a1008);
+  }
+  /* Swap Force — blue sky/water, bright green, aerial */
+  .game-card--swap::before {
+    background:
+      radial-gradient(ellipse 70% 60% at 50% 20%, rgba(42, 166, 255, 0.8), transparent 55%),
+      radial-gradient(ellipse 50% 50% at 30% 70%, rgba(90, 201, 107, 0.7), transparent 50%),
+      radial-gradient(ellipse 60% 60% at 70% 50%, rgba(255, 255, 255, 0.2), transparent 50%),
+      linear-gradient(135deg, #082040, #0a3060);
+  }
+  /* Trap Team — green crystals, trap glow, cave */
+  .game-card--trap::before {
+    background:
+      radial-gradient(ellipse 50% 70% at 40% 50%, rgba(90, 201, 107, 0.8), transparent 50%),
+      radial-gradient(ellipse 40% 50% at 70% 30%, rgba(0, 255, 160, 0.5), transparent 50%),
+      radial-gradient(ellipse 60% 60% at 50% 80%, rgba(80, 40, 120, 0.6), transparent 60%),
+      linear-gradient(135deg, #0a2a0a, #102040);
+  }
+  /* SuperChargers — orange/tech, vehicle energy */
+  .game-card--super::before {
+    background:
+      radial-gradient(ellipse 60% 50% at 50% 30%, rgba(255, 184, 77, 0.8), transparent 55%),
+      radial-gradient(ellipse 40% 60% at 25% 60%, rgba(255, 60, 20, 0.6), transparent 50%),
+      radial-gradient(ellipse 50% 50% at 75% 70%, rgba(80, 180, 255, 0.5), transparent 50%),
+      linear-gradient(135deg, #2a1800, #0a1830);
+  }
+  /* Imaginators — magic purple/blue, creation crystals */
+  .game-card--imag::before {
+    background:
+      radial-gradient(ellipse 60% 70% at 40% 40%, rgba(218, 90, 214, 0.8), transparent 50%),
+      radial-gradient(ellipse 50% 50% at 70% 50%, rgba(80, 140, 255, 0.6), transparent 50%),
+      radial-gradient(ellipse 70% 60% at 50% 80%, rgba(245, 198, 52, 0.4), transparent 60%),
+      linear-gradient(135deg, #200a40, #0a1040);
+  }
+
+  /* Box art — scraped PNG. Sits above the per-slug gradient and below
+     the dark vignette so the Titan One title stays legible. The
+     on:error handler in game_picker.rs hides the <img> when the
+     server 404s, falling back to gradient-only. */
+  .game-card-image {
+    @apply absolute inset-0 w-full h-full pointer-events-none z-0;
+    object-fit: cover;
+    opacity: 0.85;
+  }
+
+  .game-card .game-name {
+    @apply relative z-[2];
+    font-family: var(--font-display);
+    font-size: 24px;
+    letter-spacing: 0.06em;
+    color: var(--color-gold-bright);
+    text-shadow:
+      0 2px 0 var(--color-gold-shadow),
+      0 3px 0 var(--color-gold-deep),
+      0 0 16px rgba(245, 198, 52, 0.5),
+      0 0 40px rgba(0, 0, 0, 0.8);
+  }
+
+  /* Launching state — tapped card. */
+  .game-card.launching {
+    @apply pointer-events-none;
+    border-color: var(--color-gold);
+    box-shadow: 0 0 32px rgba(245, 198, 52, 0.4);
+  }
+  .game-card.launching .game-name {
+    animation: gp-name-pulse 1.2s ease-in-out infinite;
+  }
+
+  /* Other cards dim while one is launching. */
+  .game-card.dimmed {
+    @apply pointer-events-none;
+    opacity: 0.35;
+    transform: scale(0.97);
+  }
+}
+
+@keyframes gp-card-rise {
+  from { opacity: 0; transform: translateY(24px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+
+@keyframes gp-name-pulse {
+  50% {
+    text-shadow:
+      0 2px 0 var(--color-gold-shadow),
+      0 3px 0 var(--color-gold-deep),
+      0 0 30px rgba(245, 198, 52, 0.8),
+      0 0 60px rgba(245, 198, 52, 0.4);
+  }
+}

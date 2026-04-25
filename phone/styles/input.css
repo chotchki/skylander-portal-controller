@@ -225,4 +225,7 @@
 @import "./components/menu_overlay.css";
 @import "./components/resume_modal.css";
 @import "./components/reset_confirm_modal.css";
+@import "./components/game_picker.css";
+@import "./components/figure_detail.css";
+@import "./components/profile_picker.css";
 
