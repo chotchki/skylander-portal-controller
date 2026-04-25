@@ -794,6 +794,49 @@ fn paint_qr_front(
 /// Font size auto-scales from the inner disc radius and the line
 /// count so 2-line vs 3-line vs 4-line titles all stay legible without
 /// clipping the curved edges of the inscribed square.
+/// Allocate a `CARD_SIZE × CARD_SIZE` square in the current ui's
+/// vertical-centered column AT the same vertical-midpoint position
+/// `render_main` uses for the QR card, then paint a back-face card
+/// (lines = the title text inside the bezel) with the given coin-flip
+/// scale + alpha. Returns the rect of the allocated square so callers
+/// can stack their own content (subtitle, buttons, fade overlays)
+/// below at the natural cursor.
+///
+/// Used by `crashed`, `server_error`, and `farewell` — three render
+/// paths that all want the same gold-bezeled silhouette + the same
+/// vertical anchor as Main, but with screen-specific copy underneath.
+/// 2026-04-25 cleanup: pulled out the inlined ~30-line allocate +
+/// half-w + from_center_size + paint dance from each of those files.
+/// `vertical_scale` is the badge's vertical (Y-axis) scale: 1.0 for
+/// the screens that only use the coin-flip horizontal spin (Crashed,
+/// ServerError); Farewell passes its breathe pulse here so the badge
+/// pulses in both axes during the goodbye countdown.
+pub(super) fn paint_centered_back_card(
+    ui: &mut egui::Ui,
+    lines: &[&str],
+    badge_scale: f32,
+    vertical_scale: f32,
+    bezel_alpha: f32,
+    text_alpha: f32,
+) -> egui::Rect {
+    // Same vertical centring `render_main` uses for the QR card so
+    // the badge silhouette anchors at the vortex iris regardless of
+    // which screen the user lands on.
+    let avail = ui.available_height();
+    ui.add_space(((avail - CARD_SIZE) * 0.5).max(24.0));
+
+    let (full_rect, _) =
+        ui.allocate_exact_size(egui::vec2(CARD_SIZE, CARD_SIZE), egui::Sense::hover());
+    let half_w = (full_rect.width() * badge_scale) * 0.5;
+    let height = full_rect.height() * vertical_scale;
+    let badge_rect =
+        egui::Rect::from_center_size(full_rect.center(), egui::vec2(half_w * 2.0, height));
+    if badge_rect.width() >= 1.0 {
+        paint_titled_card(ui.painter(), badge_rect, lines, bezel_alpha, text_alpha);
+    }
+    full_rect
+}
+
 pub(super) fn paint_titled_card(
     painter: &egui::Painter,
     rect: egui::Rect,

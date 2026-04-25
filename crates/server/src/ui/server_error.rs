@@ -17,7 +17,7 @@
 //! cause and relaunch.
 
 use super::launch_phase::ScreenIntro;
-use super::main_screen::{CARD_SIZE, paint_titled_card, with_alpha};
+use super::main_screen::{paint_centered_back_card, with_alpha};
 use crate::palette;
 
 pub(super) fn render(
@@ -31,34 +31,14 @@ pub(super) fn render(
     let text_alpha = intro.content_alpha();
 
     ui.vertical_centered(|ui| {
-        // Centre the card on the vortex iris — same calculation as
-        // render_main so the card sits on the spiral's centre point.
-        // Diagnostic message and Exit button hang below into the
-        // lower half, matching how the QR screen's "SCAN TO CONNECT"
-        // label + button stack below the QR card.
-        let avail = ui.available_height();
-        ui.add_space(((avail - CARD_SIZE) * 0.5).max(24.0));
-
-        // Allocate the full square so the message + button below
-        // don't reflow when the badge spins. Apply the launch-phase
-        // horizontal scale to the *paint rect* — same coin-flip
-        // pattern as the QR card.
-        let (full_rect, _) =
-            ui.allocate_exact_size(egui::vec2(CARD_SIZE, CARD_SIZE), egui::Sense::hover());
-        let half_w = (full_rect.width() * badge_scale) * 0.5;
-        let badge_rect = egui::Rect::from_center_size(
-            full_rect.center(),
-            egui::vec2(half_w * 2.0, full_rect.height()),
+        paint_centered_back_card(
+            ui,
+            &["SERVER", "FAILED", "TO START"],
+            badge_scale,
+            1.0,
+            badge_alpha,
+            text_alpha,
         );
-        if badge_rect.width() >= 1.0 {
-            paint_titled_card(
-                ui.painter(),
-                badge_rect,
-                &["SERVER", "FAILED", "TO START"],
-                badge_alpha,
-                text_alpha,
-            );
-        }
 
         ui.add_space(24.0);
 

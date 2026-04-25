@@ -17,7 +17,7 @@
 use std::sync::Arc;
 
 use super::launch_phase::ScreenIntro;
-use super::main_screen::{CARD_SIZE, paint_titled_card, with_alpha};
+use super::main_screen::{paint_centered_back_card, with_alpha};
 use crate::state::{LauncherScreen, LauncherStatus};
 use crate::{fonts, palette};
 
@@ -32,28 +32,14 @@ pub(super) fn render(
     let text_alpha = intro.content_alpha();
 
     ui.vertical_centered(|ui| {
-        // Same vertical centring as `render_main` and `server_error`
-        // so the badge sits on the vortex iris regardless of which
-        // surface the user lands on.
-        let avail = ui.available_height();
-        ui.add_space(((avail - CARD_SIZE) * 0.5).max(24.0));
-
-        let (full_rect, _) =
-            ui.allocate_exact_size(egui::vec2(CARD_SIZE, CARD_SIZE), egui::Sense::hover());
-        let half_w = (full_rect.width() * badge_scale) * 0.5;
-        let badge_rect = egui::Rect::from_center_size(
-            full_rect.center(),
-            egui::vec2(half_w * 2.0, full_rect.height()),
+        paint_centered_back_card(
+            ui,
+            &["SOMETHING", "WENT", "WRONG"],
+            badge_scale,
+            1.0,
+            badge_alpha,
+            text_alpha,
         );
-        if badge_rect.width() >= 1.0 {
-            paint_titled_card(
-                ui.painter(),
-                badge_rect,
-                &["SOMETHING", "WENT", "WRONG"],
-                badge_alpha,
-                text_alpha,
-            );
-        }
 
         ui.add_space(24.0);
 

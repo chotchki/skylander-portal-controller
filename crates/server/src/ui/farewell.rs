@@ -10,7 +10,7 @@
 use std::time::Instant;
 
 use super::launch_phase::ScreenIntro;
-use super::main_screen::{CARD_SIZE, paint_titled_card, with_alpha};
+use super::main_screen::{paint_centered_back_card, with_alpha};
 use crate::{fonts, palette};
 
 /// How long the farewell message lingers before the fade-to-black
@@ -96,33 +96,19 @@ pub(super) fn render(
     let panel_rect = ui.max_rect();
 
     ui.vertical_centered(|ui| {
-        let avail = ui.available_height();
-        ui.add_space(((avail - CARD_SIZE) * 0.5).max(24.0));
-
-        let (full_rect, _) =
-            ui.allocate_exact_size(egui::vec2(CARD_SIZE, CARD_SIZE), egui::Sense::hover());
-        // Horizontal scales via `badge_scale` (carries the intro coin-
-        // flip + the breathe pulse). Vertical scales via the breathe
-        // only — coin-flip is a horizontal-only spin axis. On landed
-        // intro + no-fade, both collapse to `breathe_scale`.
-        let half_w = (full_rect.width() * badge_scale) * 0.5;
-        let height = full_rect.height() * breathe_scale;
-        let badge_rect = egui::Rect::from_center_size(
-            full_rect.center(),
-            egui::vec2(half_w * 2.0, height),
+        // Horizontal scales via `badge_scale` (carries the intro
+        // coin-flip + the breathe pulse). Vertical scales via the
+        // breathe only — coin-flip is a horizontal-only spin axis.
+        // Three lines mirror the "Portal Master" farewell rhythm;
+        // paint_titled_card's auto-scale font fits cleanly.
+        paint_centered_back_card(
+            ui,
+            &["FAREWELL", "PORTAL", "MASTER"],
+            badge_scale,
+            breathe_scale,
+            badge_alpha,
+            text_alpha,
         );
-        if badge_rect.width() >= 1.0 {
-            // Three lines mirroring the Skylanders "Portal Master"
-            // farewell rhythm. Short words let `paint_titled_card`'s
-            // auto-scale font fit cleanly inside the inscribed square.
-            paint_titled_card(
-                ui.painter(),
-                badge_rect,
-                &["FAREWELL", "PORTAL", "MASTER"],
-                badge_alpha,
-                text_alpha,
-            );
-        }
 
         ui.add_space(24.0);
 
