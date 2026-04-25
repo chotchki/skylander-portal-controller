@@ -1,10 +1,8 @@
 ---
 layout: page
-title: Setup
+title: Setup and requirements
 permalink: /setup/
 ---
-
-# Setup and requirements
 
 This project intentionally ships as a thin wrapper. It does not bundle the emulator, the games, or the Skylanders firmware. Users bring their own.
 

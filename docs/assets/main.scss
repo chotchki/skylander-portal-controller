@@ -1,44 +1,49 @@
 ---
 # Frontmatter required so Jekyll processes this file as Sass.
-# Imports minima then layers Skylanders-aesthetic overrides on top —
-# starfield bg + gold accents + Titan One headings to match the phone
-# UI's design language (`phone/assets/app.css`). The site is public,
-# so we pull Titan One + Fraunces from Google Fonts via head-custom.html
-# rather than bundling WOFF2s the way the LAN-served phone does.
+#
+# Skin: "Portal Master's Codex" — the phone UI's starfield + gold +
+# Titan One vocabulary, scaled up for a public docs site. Outlined
+# display titles in the iconic Skylanders white-fill / gold-stroke
+# style, animated parallax starfield, gold-bezel chrome, drop caps,
+# rune bullets, ornate dividers. Imports minima for layout scaffold,
+# then layers everything on top — minima's text styles get fully
+# overridden but its header / nav / page templates stay.
 ---
 
 @charset "utf-8";
 
-// ---- Design tokens (mirror phone/assets/app.css) -------------------------
-//
-// We keep the names short + parallel to the phone so future drift is easy
-// to spot in a side-by-side. Don't add tokens here that aren't actually
-// used in this stylesheet — copy them as the docs need them.
+// ============================================================================
+// Tokens — mirror phone/assets/app.css so the two products read as one
+// ============================================================================
 
-$bg-deep:   #020818;
-$bg-mid:    #061436;
-$bg-near:   #0b1e52;
-$bg-card:   rgba(255, 255, 255, 0.06);
-$border:    rgba(255, 255, 255, 0.14);
+$bg-deep:      #020818;
+$bg-mid:       #061436;
+$bg-near:      #0b1e52;
+$bg-card:      rgba(255, 255, 255, 0.04);
+$bg-card-2:    rgba(255, 255, 255, 0.08);
+$border-soft:  rgba(255, 255, 255, 0.12);
 
-$gold-bright: #ffe58a;
-$gold:        #f5c634;
-$gold-mid:    #c58c18;
-$gold-shadow: #6e4a00;
-$gold-deep:   #3a2500;
+$gold-bright:  #ffe58a;
+$gold:         #f5c634;
+$gold-mid:     #c58c18;
+$gold-shadow:  #6e4a00;
+$gold-deep:    #3a2500;
+$gold-ink:     #1f1300;
 
-$text:        #f7f7fb;
-$text-dim:    rgba(247, 247, 251, 0.66);
+$kaos-magenta: #da28a8;
+$kaos-violet:  #7644c8;
 
-// ---- Reset minima's defaults we don't want --------------------------------
-//
-// Importing minima first then overriding lets us keep its layout scaffold
-// (header, footer, page chrome) but replace the visual treatment.
+$text:         #f7f7fb;
+$text-dim:     rgba(247, 247, 251, 0.66);
+$text-faint:   rgba(247, 247, 251, 0.44);
+
+// ----------------------------------------------------------------------------
+// Pre-import variable overrides minima reads
+// ----------------------------------------------------------------------------
 
 $brand-color:        $gold !default;
 $text-color:         $text !default;
 $background-color:   $bg-mid !default;
-$header-bg:          $bg-deep !default;
 $site-title-color:   $gold-bright !default;
 $grey-color:         $text-dim !default;
 $grey-color-light:   rgba(255, 255, 255, 0.08) !default;
@@ -46,194 +51,878 @@ $grey-color-dark:    rgba(255, 255, 255, 0.16) !default;
 $link-base-color:    $gold !default;
 $link-visited-color: $gold-mid !default;
 $link-hover-color:   $gold-bright !default;
+$content-width:      820px !default;
 
 @import "minima";
 
-// ---- Starfield background -------------------------------------------------
+// ============================================================================
+// Atmosphere — animated starfield + cosmic vignette + grain
+// ============================================================================
 //
-// Two stacked radial gradients form a vignette: a deep bottom-left dome
-// (cosmic far) into a bright-blue near (cosmic near) into the page bg.
-// CSS-only, no images — keeps the site lightweight. The phone runs a
-// fancier multi-layer starfield with parallax sparks; we deliberately
-// keep this static so the docs read calmly.
+// Three stacked layers: a near cosmic dome (top), a far cosmic floor
+// (bottom-left, with a violet "Kaos cloud" hint), and a tiny CSS-only
+// star pattern that drifts slowly via background-position. No images —
+// keeps GH Pages bandwidth tiny and lets reduced-motion kill the
+// animation cleanly.
+
+html { background-color: $bg-deep; }
 
 body {
   background-color: $bg-mid;
   background-image:
-    radial-gradient(ellipse at 50% 0%, $bg-near 0%, $bg-mid 35%, $bg-deep 100%),
-    radial-gradient(circle at 20% 80%, rgba(118, 68, 200, 0.18) 0%, transparent 50%);
-  background-attachment: fixed;
+    // Star layer: tiny dots, repeating, animated.
+    radial-gradient(circle at 17% 23%, rgba(255, 229, 138, 0.55) 0.5px, transparent 1.5px),
+    radial-gradient(circle at 73% 41%, rgba(255, 255, 255, 0.40) 0.5px, transparent 1.2px),
+    radial-gradient(circle at 41% 78%, rgba(255, 229, 138, 0.30) 0.5px, transparent 1.5px),
+    radial-gradient(circle at 89% 88%, rgba(255, 255, 255, 0.45) 0.5px, transparent 1.2px),
+    // Cosmic dome (top)
+    radial-gradient(ellipse 90% 60% at 50% 0%, $bg-near 0%, $bg-mid 35%, transparent 100%),
+    // Kaos cloud (bottom-left, subtle)
+    radial-gradient(ellipse 60% 40% at 15% 95%, rgba(118, 68, 200, 0.18) 0%, transparent 60%),
+    // Base
+    linear-gradient(180deg, $bg-mid 0%, $bg-deep 100%);
+  background-size:
+    320px 320px,
+    260px 260px,
+    280px 280px,
+    300px 300px,
+    100% 100%,
+    100% 100%,
+    100% 100%;
+  background-attachment: fixed, fixed, fixed, fixed, fixed, fixed, fixed;
   color: $text;
   font-family: "Fraunces", Georgia, serif;
   font-weight: 400;
-  font-feature-settings: "kern", "liga";
+  font-feature-settings: "kern", "liga", "ss01";
+  font-optical-sizing: auto;
+  animation: starfield-drift 240s linear infinite;
+
+  // Grain — tiny SVG noise overlay via data URI. Adds the inked-paper
+  // tactility a Codex needs. Multiply blend with a low opacity so it
+  // reads as texture, not noise.
+  &::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240' viewBox='0 0 240 240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.4   0 0 0 0 0.32   0 0 0 0 0.1   0 0 0 0.5 0'/></filter><rect width='240' height='240' filter='url(%23n)'/></svg>");
+    opacity: 0.06;
+    mix-blend-mode: overlay;
+    z-index: 1;
+  }
+
+  // Vignette — gold-tinted at the edges, a parchment glow.
+  &::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(ellipse 100% 80% at 50% 50%,
+      transparent 50%,
+      rgba(2, 8, 24, 0.55) 100%);
+    z-index: 1;
+  }
 }
 
-// ---- Headings -------------------------------------------------------------
+@keyframes starfield-drift {
+  from { background-position:
+    0 0,           0 0,            0 0,           0 0,
+    50% 0%,        15% 95%,        0 0; }
+  to   { background-position:
+    -640px -480px, 520px -640px,  -560px 720px,   480px 800px,
+    50% 0%,        15% 95%,        0 0; }
+}
 
-h1, h2, h3, h4, h5, h6,
-.site-title, .post-title, .page-title {
-  font-family: "Titan One", "Fraunces", Georgia, serif;
-  letter-spacing: 0.02em;
+// Lift content above the grain + vignette.
+.site-header,
+.page-content,
+.site-footer,
+.codex-hero { position: relative; z-index: 2; }
+
+@media (prefers-reduced-motion: reduce) {
+  body { animation: none; }
+  body::before { opacity: 0.03; }
+}
+
+// ============================================================================
+// Selection + scrollbars — small details that betray a generic site
+// ============================================================================
+
+::selection {
+  background: rgba(245, 198, 52, 0.32);
   color: $gold-bright;
-  text-shadow:
-    0 1px 0 $gold-shadow,
-    0 2px 0 $gold-deep,
-    0 0 16px rgba(245, 198, 52, 0.25);
+  text-shadow: 0 0 10px rgba(245, 198, 52, 0.6);
 }
 
-h1 { font-size: 2.4rem; }
-h2 { font-size: 1.8rem; margin-top: 2.2rem; }
-h3 { font-size: 1.35rem; margin-top: 1.6rem; }
+* {
+  scrollbar-width: thin;
+  scrollbar-color: $gold-mid transparent;
+}
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, $gold $gold-mid);
+  border-radius: 5px;
+  border: 2px solid $bg-deep;
+}
 
-// ---- Site header (title bar) ---------------------------------------------
+// ============================================================================
+// Site header — Skylanders-style outlined title, gold underline, sigil
+// ============================================================================
 
 .site-header {
-  background: linear-gradient(180deg, $bg-deep 0%, $bg-mid 100%);
-  border-top: none;
+  background:
+    linear-gradient(180deg, rgba(2, 8, 24, 0.85) 0%, rgba(11, 30, 82, 0.55) 100%),
+    radial-gradient(ellipse at 50% 100%, rgba(245, 198, 52, 0.12), transparent 60%);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: none;
   border-bottom: 1px solid $gold-mid;
-  box-shadow: 0 2px 18px rgba(245, 198, 52, 0.08);
+  box-shadow:
+    inset 0 -1px 0 rgba(255, 229, 138, 0.25),
+    0 4px 24px rgba(0, 0, 0, 0.6),
+    0 1px 0 $gold-deep;
+  min-height: 64px;
 }
 
 .site-title,
 .site-title:visited {
-  color: $gold-bright;
-  font-family: "Titan One", "Fraunces", Georgia, serif;
-  letter-spacing: 0.05em;
-  text-shadow: 0 1px 0 $gold-shadow, 0 0 12px rgba(245, 198, 52, 0.4);
-}
-
-.site-nav .page-link,
-.site-nav .page-link:visited {
-  color: $text;
-  font-family: "Fraunces", Georgia, serif;
-  font-style: italic;
+  font-family: "Titan One", "Fraunces", serif;
+  font-weight: 400;
+  font-size: 1.5rem;
   letter-spacing: 0.06em;
-  &:hover { color: $gold-bright; text-decoration: none; }
+  text-transform: uppercase;
+  color: #fff;
+  -webkit-text-stroke: 1px $gold;
+  text-shadow:
+    0 1px 0 $gold-shadow,
+    0 2px 0 $gold-deep,
+    0 0 16px rgba(245, 198, 52, 0.45);
+  border-bottom: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  line-height: 1;
+
+  // The "sigil" — a stacked diamond glyph in gold, pure CSS.
+  &::before {
+    content: "\25C6";  // ◆
+    color: $gold;
+    font-family: "Fraunces", serif;
+    -webkit-text-stroke: 0;
+    font-size: 1.05rem;
+    text-shadow: 0 0 10px rgba(245, 198, 52, 0.7);
+    transform: translateY(-1px);
+  }
 }
 
-// ---- Body copy ------------------------------------------------------------
-
-.page-content {
-  padding-top: 2.5rem;
-  padding-bottom: 4rem;
+.site-nav {
+  .page-link,
+  .page-link:visited {
+    color: $text;
+    font-family: "Fraunces", serif;
+    font-style: italic;
+    font-weight: 600;
+    letter-spacing: 0.10em;
+    text-transform: lowercase;
+    border-bottom: none;
+    padding: 4px 2px;
+    position: relative;
+    transition: color 160ms ease;
+    &::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      right: 50%;
+      bottom: -2px;
+      height: 1.5px;
+      background: linear-gradient(90deg, transparent, $gold-bright, transparent);
+      transition: left 200ms ease, right 200ms ease;
+    }
+    &:hover {
+      color: $gold-bright;
+      text-decoration: none;
+      &::after { left: 0; right: 0; }
+    }
+  }
 }
+
+// ============================================================================
+// Hero — the Portal of Power. Index-only via .codex-hero wrapper.
+// ============================================================================
+//
+// A giant gold-bezeled ring rendered via concentric box-shadows + radial
+// gradients. The project title sits inside in outlined Titan One. The
+// ring slowly rotates (background gradient angle) so it reads as alive,
+// not static. Below: a single italic tagline, then two CTA pills.
+
+.codex-hero {
+  text-align: center;
+  padding: 72px 24px 96px;
+  position: relative;
+  overflow: hidden;
+
+  // Decorative cosmic burst behind the ring.
+  &::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 720px;
+    height: 720px;
+    transform: translate(-50%, -55%);
+    background: radial-gradient(circle, rgba(245, 198, 52, 0.18) 0%, transparent 60%);
+    pointer-events: none;
+    z-index: 0;
+  }
+}
+
+.codex-portal {
+  position: relative;
+  width: 280px;
+  height: 280px;
+  margin: 0 auto;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 30% 30%, $gold-bright 0%, $gold 22%, $gold-mid 50%, $gold-shadow 78%, $gold-ink 100%);
+  box-shadow:
+    // Inner shadow for the bezel groove
+    inset 0 4px 8px rgba(255, 255, 255, 0.6),
+    inset 0 -6px 12px rgba(0, 0, 0, 0.5),
+    inset 0 0 0 6px $gold-deep,
+    // Outer glow
+    0 0 0 4px $gold-ink,
+    0 0 60px rgba(245, 198, 52, 0.5),
+    0 0 120px rgba(245, 198, 52, 0.2),
+    0 16px 40px rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+  animation: codex-portal-pulse 6s ease-in-out infinite;
+
+  // Inner disc — the actual portal "lens"
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 22px;
+    border-radius: 50%;
+    background:
+      radial-gradient(circle at 50% 35%, rgba(255, 229, 138, 0.4) 0%, transparent 40%),
+      conic-gradient(from 0deg,
+        $bg-near 0%,
+        $kaos-violet 25%,
+        $bg-near 50%,
+        $kaos-magenta 75%,
+        $bg-near 100%);
+    box-shadow:
+      inset 0 0 30px rgba(0, 0, 0, 0.7),
+      inset 0 0 60px rgba(118, 68, 200, 0.25);
+    animation: codex-portal-spin 22s linear infinite;
+  }
+
+  // Title plate — sits over the spinning lens
+  &::after {
+    content: "PORTAL\AMASTER";
+    white-space: pre;
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-family: "Titan One", serif;
+    font-size: 2.2rem;
+    line-height: 1.0;
+    letter-spacing: 0.06em;
+    color: #fff;
+    -webkit-text-stroke: 1.2px $gold;
+    text-shadow:
+      0 2px 0 $gold-shadow,
+      0 4px 0 $gold-deep,
+      0 0 20px rgba(245, 198, 52, 0.6);
+    z-index: 1;
+  }
+}
+
+@keyframes codex-portal-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes codex-portal-pulse {
+  0%, 100% {
+    box-shadow:
+      inset 0 4px 8px rgba(255, 255, 255, 0.6),
+      inset 0 -6px 12px rgba(0, 0, 0, 0.5),
+      inset 0 0 0 6px $gold-deep,
+      0 0 0 4px $gold-ink,
+      0 0 60px rgba(245, 198, 52, 0.5),
+      0 0 120px rgba(245, 198, 52, 0.2),
+      0 16px 40px rgba(0, 0, 0, 0.6);
+  }
+  50% {
+    box-shadow:
+      inset 0 4px 8px rgba(255, 255, 255, 0.7),
+      inset 0 -6px 12px rgba(0, 0, 0, 0.5),
+      inset 0 0 0 6px $gold-deep,
+      0 0 0 4px $gold-ink,
+      0 0 80px rgba(245, 198, 52, 0.7),
+      0 0 160px rgba(245, 198, 52, 0.32),
+      0 16px 40px rgba(0, 0, 0, 0.6);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .codex-portal,
+  .codex-portal::before { animation: none; }
+}
+
+.codex-tagline {
+  font-family: "Fraunces", serif;
+  font-style: italic;
+  font-weight: 400;
+  font-size: 1.25rem;
+  color: $gold-bright;
+  margin: 36px auto 0;
+  max-width: 560px;
+  line-height: 1.5;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.6);
+  letter-spacing: 0.01em;
+  position: relative;
+  z-index: 1;
+
+  // Quote-mark flourishes, faint gold
+  &::before, &::after {
+    color: rgba(245, 198, 52, 0.35);
+    font-family: "Titan One", serif;
+    font-size: 2rem;
+    line-height: 0;
+    position: relative;
+    top: 0.4em;
+  }
+  &::before { content: "\201C"; margin-right: 6px; }
+  &::after  { content: "\201D"; margin-left: 6px; }
+}
+
+.codex-ctas {
+  margin-top: 40px;
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  flex-wrap: wrap;
+  position: relative;
+  z-index: 1;
+}
+
+.codex-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 22px;
+  font-family: "Titan One", serif;
+  font-size: 0.95rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #fff !important;
+  -webkit-text-stroke: 0.5px $gold-deep;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+  border-radius: 999px;
+  border: 2px solid $gold;
+  background: linear-gradient(180deg, rgba(245, 198, 52, 0.15) 0%, rgba(245, 198, 52, 0.05) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    inset 0 -2px 0 $gold-deep,
+    0 4px 16px rgba(0, 0, 0, 0.4),
+    0 0 0 1px $gold-ink;
+  transition: transform 160ms cubic-bezier(.3,1.3,.5,1),
+              box-shadow 160ms ease,
+              background 160ms ease;
+
+  &:hover {
+    transform: translateY(-2px);
+    background: linear-gradient(180deg, rgba(255, 229, 138, 0.30) 0%, rgba(245, 198, 52, 0.12) 100%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.32),
+      inset 0 -2px 0 $gold-deep,
+      0 6px 22px rgba(245, 198, 52, 0.32),
+      0 0 0 1px $gold-ink,
+      0 0 30px rgba(245, 198, 52, 0.32);
+    text-decoration: none;
+  }
+
+  &--primary {
+    background: linear-gradient(180deg, $gold 0%, $gold-mid 100%);
+    color: $gold-ink !important;
+    -webkit-text-stroke: 0;
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.3);
+    &:hover {
+      background: linear-gradient(180deg, $gold-bright 0%, $gold 100%);
+      color: $gold-ink !important;
+    }
+  }
+
+  &::before {
+    content: "\25C6";  // ◆
+    font-family: "Fraunces", serif;
+    -webkit-text-stroke: 0;
+    color: currentColor;
+    font-size: 0.7em;
+    opacity: 0.6;
+  }
+}
+
+// ============================================================================
+// Page chrome — wider hit area for the codex feel
+// ============================================================================
+
+.page-content { padding-top: 2.5rem; padding-bottom: 5rem; }
+
+.post,
+.page,
+.codex-hero ~ .home {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+// ============================================================================
+// Headings — Skylanders white-fill / gold-stroke style
+// ============================================================================
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: "Titan One", "Fraunces", serif;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  margin-top: 2.4rem;
+  margin-bottom: 0.8rem;
+  line-height: 1.1;
+}
+
+h1, h2, h3 {
+  color: #fff;
+  -webkit-text-stroke: 1px $gold;
+  text-shadow:
+    0 1px 0 $gold-shadow,
+    0 2px 0 $gold-deep,
+    0 4px 12px rgba(245, 198, 52, 0.25);
+}
+
+h1 {
+  font-size: 2.6rem;
+  text-align: left;
+  margin-top: 0.3rem;
+  margin-bottom: 1.2rem;
+  -webkit-text-stroke: 1.5px $gold;
+  text-shadow:
+    0 2px 0 $gold-shadow,
+    0 4px 0 $gold-deep,
+    0 0 24px rgba(245, 198, 52, 0.32);
+
+  // Subtle gold underline that doesn't span the whole width.
+  &::after {
+    content: "";
+    display: block;
+    width: 96px;
+    height: 3px;
+    margin-top: 10px;
+    background: linear-gradient(90deg, $gold 0%, transparent 100%);
+    border-radius: 2px;
+    box-shadow: 0 0 12px rgba(245, 198, 52, 0.5);
+  }
+}
+
+h2 {
+  font-size: 1.6rem;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+
+  // Rune marker — a small gold diamond aligned with the cap height
+  &::before {
+    content: "\25C6";  // ◆
+    font-family: "Fraunces", serif;
+    font-size: 0.8em;
+    color: $gold;
+    -webkit-text-stroke: 0;
+    text-shadow: 0 0 10px rgba(245, 198, 52, 0.6);
+    flex-shrink: 0;
+  }
+}
+
+h3 {
+  font-size: 1.25rem;
+  font-family: "Fraunces", serif;
+  font-style: italic;
+  font-weight: 600;
+  color: $gold-bright;
+  -webkit-text-stroke: 0;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
+}
+
+h4, h5, h6 {
+  font-family: "Fraunces", serif;
+  font-style: italic;
+  color: $gold-bright;
+}
+
+// ============================================================================
+// Body — drop caps + considered measure
+// ============================================================================
 
 p, li {
   color: $text;
-  line-height: 1.65;
+  line-height: 1.7;
+  font-size: 1.04rem;
 }
+
+// Drop cap on the first paragraph following an h1 — the opening
+// of every page reads like a chapter.
+h1 + p::first-letter,
+.page-content > p:first-of-type::first-letter {
+  font-family: "Titan One", serif;
+  float: left;
+  font-size: 3.6rem;
+  line-height: 0.9;
+  margin: 0.1em 0.18em 0 0;
+  color: $gold-bright;
+  -webkit-text-stroke: 1.5px $gold-mid;
+  text-shadow:
+    0 2px 0 $gold-shadow,
+    0 4px 0 $gold-deep,
+    0 0 16px rgba(245, 198, 52, 0.4);
+}
+
+strong, b {
+  color: $gold-bright;
+  font-weight: 600;
+  text-shadow: 0 0 8px rgba(245, 198, 52, 0.25);
+}
+
+em, i {
+  color: $gold-bright;
+  font-family: "Fraunces", serif;
+  font-style: italic;
+  font-weight: 600;
+}
+
+// ============================================================================
+// Links — gold, with a sweep underline on hover
+// ============================================================================
 
 a, a:visited {
   color: $gold;
   text-decoration: none;
-  border-bottom: 1px dotted rgba(245, 198, 52, 0.4);
-  transition: color 120ms ease, border-color 120ms ease;
+  background-image: linear-gradient(90deg, $gold-bright, $gold-bright);
+  background-repeat: no-repeat;
+  background-size: 0% 1.5px;
+  background-position: 0 100%;
+  transition: color 160ms ease, background-size 220ms cubic-bezier(.3,1.3,.5,1);
+  padding-bottom: 1px;
+
   &:hover {
     color: $gold-bright;
-    border-bottom-color: $gold-bright;
+    background-size: 100% 1.5px;
+    text-shadow: 0 0 8px rgba(245, 198, 52, 0.4);
   }
 }
 
-// ---- Lists with a gold bullet ---------------------------------------------
+// External-link glyph for the obvious off-site links
+a[href^="http"]:not([href*="chotchki.github.io"]):not([href*="github.com/chotchki/skylander-portal-controller"])::after {
+  content: " \2197";  // ↗
+  font-size: 0.8em;
+  opacity: 0.7;
+  margin-left: 2px;
+}
+
+// ============================================================================
+// Lists — rune bullets
+// ============================================================================
 
 ul {
   list-style: none;
-  padding-left: 1.4rem;
+  padding-left: 1.6rem;
+
   li {
     position: relative;
-    margin-bottom: 0.4rem;
+    margin-bottom: 0.5rem;
     &::before {
-      content: "\25C6"; // ◆ — solid lozenge matches the gold-bezel motif
+      content: "\25C6";  // ◆
       color: $gold;
       position: absolute;
-      left: -1.2rem;
+      left: -1.4rem;
       top: 0.05em;
-      font-size: 0.75em;
-      text-shadow: 0 0 6px rgba(245, 198, 52, 0.4);
+      font-size: 0.78em;
+      text-shadow: 0 0 8px rgba(245, 198, 52, 0.45);
     }
   }
 }
 
 ol {
-  padding-left: 1.4rem;
-  li::marker {
-    color: $gold;
-    font-weight: 700;
+  padding-left: 1.6rem;
+  li {
+    margin-bottom: 0.5rem;
+    &::marker {
+      color: $gold;
+      font-weight: 700;
+      font-family: "Titan One", serif;
+    }
   }
 }
 
-// ---- Code blocks (kept readable, gold accent on the frame) ----------------
+// Nested lists — different rune
+ul ul li::before { content: "\25C7"; opacity: 0.7; }  // ◇
 
-code, pre {
-  font-family: "JetBrains Mono", "Consolas", "Cascadia Code", monospace;
+// ============================================================================
+// Code blocks — cartouche styling
+// ============================================================================
+
+code, pre, kbd, samp {
+  font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
   font-size: 0.92rem;
 }
 
 code {
-  background: rgba(245, 198, 52, 0.08);
-  border: 1px solid rgba(245, 198, 52, 0.2);
+  background: rgba(245, 198, 52, 0.10);
+  border: 1px solid rgba(245, 198, 52, 0.22);
   border-radius: 4px;
   padding: 0.05em 0.4em;
   color: $gold-bright;
+  text-shadow: none;
 }
 
 pre {
-  background: rgba(2, 8, 24, 0.7);
+  background:
+    linear-gradient(180deg, rgba(2, 8, 24, 0.8) 0%, rgba(2, 8, 24, 0.92) 100%);
   border: 1px solid $gold-mid;
   border-radius: 8px;
-  padding: 14px 16px;
+  padding: 16px 20px;
   overflow-x: auto;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05),
-              0 0 24px rgba(245, 198, 52, 0.06);
+  position: relative;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    inset 0 0 0 1px rgba(245, 198, 52, 0.08),
+    0 6px 24px rgba(0, 0, 0, 0.45),
+    0 0 24px rgba(245, 198, 52, 0.06);
+
+  // Decorative gold corner-marks — top-left + bottom-right
+  &::before, &::after {
+    content: "";
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    border: 1.5px solid $gold;
+    box-shadow: 0 0 8px rgba(245, 198, 52, 0.35);
+  }
+  &::before {
+    top: -1.5px; left: -1.5px;
+    border-right: none;
+    border-bottom: none;
+    border-top-left-radius: 8px;
+  }
+  &::after {
+    bottom: -1.5px; right: -1.5px;
+    border-left: none;
+    border-top: none;
+    border-bottom-right-radius: 8px;
+  }
+
   > code {
     background: transparent;
     border: none;
     padding: 0;
     color: $text;
+    text-shadow: none;
   }
 }
 
-// ---- Blockquotes — used for callouts in setup.md, etc. -------------------
+// ============================================================================
+// Blockquote — inset "scroll" with gold rope
+// ============================================================================
 
 blockquote {
-  border-left: 3px solid $gold;
-  background: rgba(245, 198, 52, 0.06);
-  padding: 12px 18px;
+  position: relative;
+  padding: 18px 24px 18px 32px;
+  margin: 1.6rem 0;
+  background:
+    linear-gradient(180deg, rgba(245, 198, 52, 0.06) 0%, rgba(245, 198, 52, 0.02) 100%);
+  border: 1px solid rgba(245, 198, 52, 0.22);
+  border-left: 4px solid $gold;
+  border-radius: 0 8px 8px 0;
   color: $text;
+  font-family: "Fraunces", serif;
   font-style: italic;
-  border-radius: 0 6px 6px 0;
+  font-size: 1.04rem;
+  line-height: 1.65;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 229, 138, 0.06),
+    0 4px 18px rgba(0, 0, 0, 0.25);
+
+  &::before {
+    content: "\201C";  // “
+    position: absolute;
+    top: -8px;
+    left: 14px;
+    font-family: "Titan One", serif;
+    font-size: 2.4rem;
+    color: $gold;
+    line-height: 1;
+    text-shadow: 0 0 12px rgba(245, 198, 52, 0.4);
+  }
+
   > :last-child { margin-bottom: 0; }
 }
 
-// ---- Footer ---------------------------------------------------------------
+// ============================================================================
+// Horizontal rule — ornate gold flourish
+// ============================================================================
+
+hr {
+  border: none;
+  height: 24px;
+  margin: 2.6rem auto;
+  background: transparent;
+  position: relative;
+  overflow: visible;
+  text-align: center;
+
+  &::before {
+    content: "\25C7  \25C6  \25C7";  // ◇ ◆ ◇
+    color: $gold;
+    font-size: 1rem;
+    letter-spacing: 0.6em;
+    text-shadow: 0 0 12px rgba(245, 198, 52, 0.5);
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background:
+      linear-gradient(90deg,
+        transparent 0%,
+        $gold-mid 35%,
+        $gold-bright 50%,
+        $gold-mid 65%,
+        transparent 100%) center / 100% 1px no-repeat;
+  }
+}
+
+// ============================================================================
+// Tables — gold-bezel headers
+// ============================================================================
+
+table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  margin: 1.6rem 0;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(245, 198, 52, 0.22);
+  border-radius: 8px;
+  overflow: hidden;
+
+  th, td {
+    padding: 10px 14px;
+    border-bottom: 1px solid rgba(245, 198, 52, 0.12);
+    text-align: left;
+  }
+  th {
+    background: linear-gradient(180deg, rgba(245, 198, 52, 0.18), rgba(245, 198, 52, 0.06));
+    color: $gold-bright;
+    font-family: "Titan One", serif;
+    font-weight: 400;
+    font-size: 0.85rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
+  }
+  tr:last-child td { border-bottom: none; }
+}
+
+// ============================================================================
+// Footer — matching dark gradient with a centered ornament
+// ============================================================================
 
 .site-footer {
   background: linear-gradient(180deg, $bg-mid 0%, $bg-deep 100%);
   border-top: 1px solid $gold-mid;
   color: $text-dim;
-  .footer-heading,
-  .contact-list a,
-  .social-media-list a {
-    color: $gold-bright;
+  position: relative;
+  margin-top: 4rem;
+  padding-top: 3rem;
+  padding-bottom: 2rem;
+  box-shadow: inset 0 1px 0 rgba(255, 229, 138, 0.18);
+
+  &::before {
+    content: "\25C7  \25C6  \25C7";
+    position: absolute;
+    top: -10px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: $bg-deep;
+    padding: 0 16px;
+    color: $gold;
+    letter-spacing: 0.6em;
+    font-size: 0.85rem;
+    text-shadow: 0 0 12px rgba(245, 198, 52, 0.5);
   }
+
+  .footer-heading {
+    color: $gold-bright;
+    font-family: "Titan One", serif;
+    font-size: 1rem;
+    letter-spacing: 0.06em;
+    text-shadow: 0 0 12px rgba(245, 198, 52, 0.3);
+  }
+  .contact-list,
+  .social-media-list {
+    list-style: none;
+    padding-left: 0;
+    li::before { content: none; }
+  }
+  .contact-list a,
+  .social-media-list a { color: $gold-bright; }
 }
 
-// ---- Page-level "hero" tweak — make h1 stand out a little more on index --
+// ============================================================================
+// Responsive — keep the portal hero readable on narrow screens
+// ============================================================================
 
-.page-content h1:first-of-type {
-  margin-top: 0.5rem;
-  margin-bottom: 1.2rem;
-  font-size: 2.8rem;
-  text-shadow:
-    0 1px 0 $gold-shadow,
-    0 3px 0 $gold-deep,
-    0 0 24px rgba(245, 198, 52, 0.35);
+@media (max-width: 600px) {
+  .codex-hero {
+    padding: 56px 18px 72px;
+    &::before { width: 480px; height: 480px; }
+  }
+  .codex-portal {
+    width: 220px;
+    height: 220px;
+    &::after { font-size: 1.6rem; }
+  }
+  .codex-tagline { font-size: 1.05rem; }
+  h1 { font-size: 2rem; }
+  .site-title { font-size: 1.15rem; }
 }
 
-// ---- Reduced-motion respect (no animations to disable, but kill shadows
-//      that strobe on reflow) ------------------------------------------------
+// ============================================================================
+// Page-load reveal — staggered fade for the hero, no JS
+// ============================================================================
+
+.codex-hero > * {
+  opacity: 0;
+  animation: codex-reveal 800ms cubic-bezier(.3, 1, .4, 1) forwards;
+}
+.codex-portal      { animation-delay: 100ms; }
+.codex-tagline     { animation-delay: 350ms; }
+.codex-ctas        { animation-delay: 550ms; }
+
+@keyframes codex-reveal {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 
 @media (prefers-reduced-motion: reduce) {
-  body { background-attachment: scroll; }
+  .codex-hero > * {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
 }

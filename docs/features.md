@@ -4,8 +4,6 @@ title: Features
 permalink: /features/
 ---
 
-# Features
-
 What the app does today, grouped by what you actually interact with.
 
 ## Portal control

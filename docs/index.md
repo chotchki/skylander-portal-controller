@@ -1,9 +1,8 @@
 ---
-layout: page
+layout: home
 title: Skylander Portal Controller
+tagline: Phone-driven portal control for an emulated Skylanders setup, built for kids who outlived their PS3 hardware.
 ---
-
-# Skylander Portal Controller
 
 A Windows app that lets kids manage an emulated Skylanders portal from a phone or tablet, while a PS3 Skylanders game runs on the TV through [RPCS3](https://rpcs3.net/).
 

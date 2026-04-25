@@ -4,8 +4,6 @@ title: Roadmap
 permalink: /roadmap/
 ---
 
-# Roadmap
-
 High-level phasing. Detailed checklists live in [PLAN.md](https://github.com/chotchki/skylander-portal-controller/blob/main/PLAN.md) and [PLAN_ARCHIVE.md](https://github.com/chotchki/skylander-portal-controller/blob/main/PLAN_ARCHIVE.md) in the repo.
 
 ## Phase 0 — Scaffolding (done)

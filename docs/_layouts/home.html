@@ -1,0 +1,36 @@
+---
+layout: default
+---
+{%- comment -%}
+  PLAN 8.4 follow-up — index-only "Portal Master's Codex" hero.
+  Extends minima's `default` layout (which gives us head + header +
+  footer) and SKIPS the `page-heading` `<h1>` that minima's `page`
+  layout would otherwise render from `page.title`. This stops the
+  triple-title bug where the site title, the page-heading, and a
+  body-level `# Title` all stacked at the top.
+
+  The hero is pure CSS — see `assets/main.scss` `.codex-*` classes
+  for the gold-bezel ring, parallax glow, and CTA pills.
+{%- endcomment -%}
+
+<section class="codex-hero">
+  <div class="codex-portal" role="img" aria-label="Portal of Power"></div>
+
+  {%- if page.tagline -%}
+  <p class="codex-tagline">{{ page.tagline }}</p>
+  {%- endif -%}
+
+  <div class="codex-ctas">
+    <a class="codex-cta codex-cta--primary"
+       href="{{ '/setup/' | relative_url }}">Get Started</a>
+    <a class="codex-cta"
+       href="https://github.com/chotchki/skylander-portal-controller/releases/latest"
+       rel="noopener">Latest Release</a>
+  </div>
+</section>
+
+<article class="post page">
+  <div class="post-content e-content" itemprop="articleBody">
+    {{ content }}
+  </div>
+</article>

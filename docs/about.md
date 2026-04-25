@@ -4,8 +4,6 @@ title: About
 permalink: /about/
 ---
 
-# About
-
 A solo project by Chris Hotchkiss, built for his kids.
 
 The original motivation was very specific. The old family PS3 hardware had given up. The kids were still asking to play Skylanders. RPCS3 did the heavy lifting of emulating the console and the portal, but its UI is optimised for developers debugging an emulator, not for a six-year-old in front of an 86-inch TV. Every session started with a parent alt-tabbing to a Qt file dialog to pick a `.sky` file out of a long list of filenames. That was not sustainable.
