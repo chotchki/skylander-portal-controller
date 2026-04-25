@@ -347,10 +347,7 @@ fn spawn_connect(
                         taunt,
                     }) => {
                         dev_log!("[ws] kaos taunt: {taunt}");
-                        kaos_swap.set(Some(KaosSwapAnnouncement {
-                            taunt,
-                            profile_id,
-                        }));
+                        kaos_swap.set(Some(KaosSwapAnnouncement { taunt, profile_id }));
                     }
                     Err(err) => {
                         dev_warn!("bad ws message: {err} — {text}");
