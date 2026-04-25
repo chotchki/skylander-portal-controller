@@ -1,0 +1,287 @@
+/*
+ * <Browser> + <ToyBoxInterior> (PLAN 4.7).
+ * (PLAN 9.4d — portal + toy box tranche.)
+ *
+ * The dark "interior" of the toy box: scrollable 4-column figure
+ * grid with side rails, top/bottom fades, and a "no results" empty
+ * state. Each card is a small <GoldBezel> + name label, with optional
+ * variant badge, on-portal ribbon, and the +-card that opens the
+ * <ScanOverlay>.
+ *
+ * The plus-card rules (.fig-card-p4.scan-new, .scan-new-bezel,
+ * .scan-new-label) lived in app.css alongside ScanOverlay until 9.4b;
+ * they were deferred to this tranche since they're a Browser concern,
+ * not an overlay concern. Now folded in here.
+ *
+ * The legacy Phase-3 browser placeholder rules (.browser-head,
+ * .search, .chip-row, .chip, .grid, .card, .card-icon, .card-thumb,
+ * .card-name, .card-variant, .on-portal-badge, .card-icon-label) were
+ * confirmed unreferenced in current source and dropped on migration.
+ *
+ * Class names unchanged.
+ */
+
+@layer components {
+  /* === Box body === */
+  /* Dark figure-grid container with wood side rails. */
+  .box-body-bg {
+    @apply relative overflow-hidden;
+    flex: 1;
+    background: linear-gradient(180deg,
+      var(--color-wood-4) 0%,
+      #1a0e06 4%,
+      #0e0804 20%,
+      #080402 100%);
+  }
+  .box-body-bg::before,
+  .box-body-bg::after {
+    content: "";
+    @apply absolute z-[5];
+    top: 0;
+    bottom: 0;
+    width: 6px;
+  }
+  .box-body-bg::before {
+    left: 0;
+    background: linear-gradient(180deg, var(--color-wood-1), var(--color-wood-3));
+    box-shadow: inset -2px 0 4px rgba(255, 215, 106, 0.08);
+  }
+  .box-body-bg::after {
+    right: 0;
+    background: linear-gradient(180deg, var(--color-wood-1), var(--color-wood-3));
+    box-shadow: inset 2px 0 4px rgba(255, 215, 106, 0.08);
+  }
+
+  /* Top/bottom fades. */
+  .box-body-fade-top {
+    @apply absolute pointer-events-none z-[4];
+    top: 0;
+    left: 6px;
+    right: 6px;
+    height: 40px;
+    background: linear-gradient(180deg,
+      var(--color-wood-4) 0%,
+      rgba(14, 8, 4, 0.8) 40%,
+      transparent 100%);
+  }
+  .box-body-fade-bottom {
+    @apply absolute pointer-events-none z-[4];
+    bottom: 0;
+    left: 6px;
+    right: 6px;
+    height: 100px;
+    background: linear-gradient(180deg,
+      transparent 0%,
+      rgba(8, 4, 2, 0.5) 30%,
+      rgba(4, 2, 1, 0.9) 70%,
+      #030201 100%);
+  }
+
+  /* Scrollable interior. */
+  .box-body-scroll {
+    @apply relative h-full overflow-y-auto z-[1];
+    padding: 16px 16px 120px;
+  }
+  .box-body-scroll::-webkit-scrollbar { display: none; }
+
+  /* === Figure grid === */
+  .figure-grid-p4 {
+    @apply grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px 10px;
+  }
+
+  /* Card — div with role=button so the N-variants <button> can nest
+     without invalid HTML5 nested buttons (PLAN 4.7.1). */
+  .fig-card-p4 {
+    @apply relative flex flex-col items-center cursor-pointer bg-transparent;
+    gap: 6px;
+    padding: 4px 0;
+    border: 0;
+    color: var(--color-text);
+    transition: transform 0.12s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .fig-card-p4:active { transform: scale(0.93); }
+
+  /* Bezel wrapper — Sm (32px) scaled up to fill the column. */
+  .fig-bezel-p4 {
+    @apply relative w-full grid place-items-center;
+    aspect-ratio: 1;
+  }
+  .fig-bezel-p4 .gold-bezel {
+    width: 100%;
+  }
+  /* Override Sm plate font for the larger rendered size. */
+  .fig-bezel-p4 .bezel-plate {
+    font-size: var(--text-display-sm);
+  }
+  /* Reduce ring shadows for smaller bezels in the grid. */
+  .fig-bezel-p4 .bezel-ring {
+    box-shadow:
+      inset 0  0 0 1.5px var(--color-gold-deep),
+      inset 0  2px 3px rgba(255, 255, 255, 0.3),
+      inset 0 -2px 3px rgba(0, 0, 0, 0.5),
+      0  2px 6px rgba(0, 0, 0, 0.5);
+  }
+
+  .fig-initial {
+    font-family: var(--font-display);
+    color: #fff;
+    line-height: 1;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
+  }
+
+  /* Wiki-scraped figure thumbnail. Sits above the .fig-initial
+     fallback so a missing scrape silently degrades to the letter. */
+  .fig-bezel-p4 .fig-image-p4 {
+    @apply absolute inset-0 w-full h-full pointer-events-none z-[2];
+    object-fit: contain;
+  }
+
+  /* Figure name below bezel — clamps to 2 lines. */
+  .fig-name-p4 {
+    @apply text-center overflow-hidden text-ellipsis;
+    font-family: var(--font-body);
+    font-size: var(--text-body-sm);
+    font-weight: 600;
+    font-style: italic;
+    line-height: 1.2;
+    color: #d9c88a;
+    max-width: 80px;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  .fig-variant-p4 {
+    @apply uppercase;
+    font-size: 9px;
+    color: var(--color-text-dim);
+    letter-spacing: 0.08em;
+  }
+
+  /* === ON PORTAL state (PLAN 4.7.3). === */
+  .fig-card-p4.on-portal {
+    @apply cursor-not-allowed;
+  }
+  .fig-card-p4.on-portal:active { transform: none; }
+  .fig-card-p4.on-portal .fig-bezel-p4 {
+    filter: saturate(0.35) brightness(0.8);
+  }
+
+  .fig-on-portal-ribbon {
+    @apply absolute text-center z-[5];
+    top: 42%;
+    left: -4px;
+    right: -4px;
+    padding: 3px 0;
+    font-family: var(--font-display);
+    font-size: 8px;
+    letter-spacing: 0.16em;
+    color: var(--color-gold-deep);
+    background: linear-gradient(180deg,
+      var(--color-gold-bright),
+      var(--color-gold) 50%,
+      var(--color-gold-mid));
+    border: 1px solid var(--color-gold-deep);
+    box-shadow:
+      0 2px 6px rgba(0, 0, 0, 0.5),
+      0 0 10px rgba(245, 198, 52, 0.3);
+  }
+
+  /* N-variants badge — top-right gold pill (PLAN 3.14.2). */
+  .fig-variant-badge {
+    @apply absolute w-[22px] h-[22px] rounded-full cursor-pointer z-[6];
+    top: -4px;
+    right: -4px;
+    padding: 0;
+    border: 1.5px solid var(--color-gold-deep);
+    background: radial-gradient(circle at 30% 25%,
+      var(--color-gold-bright),
+      var(--color-gold) 40%,
+      var(--color-gold-mid) 100%);
+    color: var(--color-gold-deep);
+    font-family: var(--font-display);
+    font-size: var(--text-body-sm);
+    line-height: 1;
+    box-shadow:
+      0 0 0 1px #000,
+      0 2px 4px rgba(0, 0, 0, 0.5);
+    transition: transform 0.12s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .fig-variant-badge:hover,
+  .fig-variant-badge:focus-visible {
+    filter: brightness(1.1);
+    outline: none;
+  }
+  .fig-variant-badge:active {
+    transform: scale(0.9) rotate(45deg);
+  }
+  .fig-card-p4.on-portal .fig-variant-badge {
+    filter: saturate(0.5) brightness(0.85);
+  }
+
+  /* === Empty / no-results (PLAN 4.7.5). === */
+  .browser-empty {
+    @apply flex flex-col items-center justify-center text-center;
+    gap: 12px;
+    padding: 60px 24px;
+  }
+  .browser-empty-icon {
+    font-family: var(--font-display);
+    font-size: 48px;
+    color: var(--color-wood-gold);
+    opacity: 0.4;
+    text-shadow: 0 2px 0 rgba(0, 0, 0, 0.5);
+  }
+  .browser-empty-text {
+    font-family: var(--font-body);
+    font-style: italic;
+    font-weight: 600;
+    font-size: var(--text-body);
+    color: #d9c88a;
+    letter-spacing: 0.06em;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+  }
+
+  /* === Scan-new plus-card (PLAN 6.5.2). ===
+     Sits at grid-position 0 of the figure-grid. Same .fig-card-p4 frame;
+     swaps the bezel contents for a filled-gold disc with a chunky `+`
+     so it reads as "another slot" in the visual vocabulary. */
+  .fig-card-p4.scan-new .fig-bezel-p4 {
+    @apply relative;
+    aspect-ratio: 1;
+  }
+  .scan-new-bezel {
+    @apply absolute inset-0 rounded-full grid place-items-center;
+    background: radial-gradient(circle at 35% 30%,
+      var(--color-gold-bright),
+      var(--color-gold) 22%,
+      var(--color-gold-mid) 55%,
+      var(--color-gold-shadow));
+    box-shadow:
+      inset 0  0 0 2px var(--color-gold-deep),
+      inset 0  3px 4px rgba(255, 255, 255, 0.35),
+      inset 0 -3px 4px rgba(0, 0, 0, 0.5),
+      0  0 0 1px #000,
+      0  4px 10px rgba(0, 0, 0, 0.55);
+  }
+  .scan-new-bezel::before {
+    content: "+";
+    font-family: var(--font-display);
+    font-size: 46px;
+    line-height: 1;
+    color: #1a1203;
+    text-shadow: 0 2px 0 rgba(255, 255, 255, 0.5);
+    transform: translateY(-2px);
+  }
+  .scan-new-label {
+    @apply uppercase;
+    color: var(--color-gold-bright) !important;
+    letter-spacing: 0.12em;
+    font-weight: 800;
+  }
+}

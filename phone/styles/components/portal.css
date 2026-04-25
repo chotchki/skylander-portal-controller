@@ -1,0 +1,305 @@
+/*
+ * <Portal> screen — design_language.md §6.4 / mock portal_with_box.html.
+ * (PLAN 9.4d — portal + toy box tranche.)
+ *
+ * 2x4 grid of slots. Each .p4-slot is a tap target wrapping a
+ * GoldBezel (Lg size) + slot-index badge + optional unmatched / owner
+ * pip + portrait or initial fallback. Selection state reveals a
+ * REMOVE bar across the bezel (figure-detail RESET path is its own
+ * modal, not a slot action).
+ *
+ * Empty slots dim the bezel ring and surface a single floating
+ * `.portal-empty-hint` below the grid pointing at the toy-box lid;
+ * the per-slot `+` glyph was retired 2026-04-24.
+ *
+ * Owner pip mirrors GoldBezel construction at 24px (gold radial ring +
+ * profile-color plate + initial). It's strictly visual — pointer-events
+ * none + aria-label on the wrapper handles the screen-reader path.
+ *
+ * Class names unchanged.
+ */
+
+@layer components {
+  /* Section: heading + 2-column grid. */
+  .portal-p4 {
+    @apply flex flex-col items-stretch;
+    gap: 12px;
+    padding: 6px 24px 0;
+    margin-bottom: 18px;
+  }
+  .portal-p4-grid {
+    @apply grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px 20px;
+  }
+
+  /* Slot container. */
+  .p4-slot {
+    @apply relative flex flex-col items-center cursor-pointer;
+    touch-action: pan-x pan-y;
+    transition: transform var(--dur-tap) var(--ease-tap);
+  }
+  /* Tap feedback (PLAN 4.6.7) — inset shadow + scale dent. */
+  .p4-slot:active {
+    transform: scale(0.96);
+  }
+  .p4-slot:active .bezel-plate {
+    box-shadow:
+      inset 0  0 0 1px rgba(0, 0, 0, 0.6),
+      inset 0  6px 12px rgba(0, 0, 0, 0.5),
+      inset 0 -4px 8px rgba(0, 0, 0, 0.4);
+    transition: box-shadow var(--dur-tap) var(--ease-tap);
+  }
+
+  .p4-slot-inner {
+    @apply relative w-full grid place-items-center;
+    aspect-ratio: 1;
+  }
+  .p4-slot-inner .gold-bezel {
+    width: 100%;
+  }
+
+  /* Top-left slot index. */
+  .p4-slot-index {
+    @apply absolute w-5 h-5 rounded-full grid place-items-center z-[3];
+    top: -2px;
+    left: -2px;
+    font-family: var(--font-display);
+    font-size: var(--text-body-sm);
+    color: var(--color-gold-deep);
+    background: var(--color-gold-bright);
+    box-shadow:
+      0 0 0 1.5px var(--color-gold-deep),
+      0 2px 4px rgba(0, 0, 0, 0.5);
+  }
+
+  /* Top-right unrecognised-figure badge (PLAN 3.8.2). */
+  .p4-slot-badge {
+    @apply absolute w-5 h-5 rounded-full grid place-items-center z-[3];
+    top: -2px;
+    right: -2px;
+    font-family: var(--font-display);
+    font-size: var(--text-display-xs);
+  }
+  .p4-slot-badge--unmatched {
+    color: #1b1300;
+    background: #f5b700;
+    box-shadow:
+      0 0 0 1.5px #7a5c00,
+      0 2px 4px rgba(0, 0, 0, 0.5);
+  }
+
+  /* Bottom-right ownership pip — mini heraldic bezel (PLAN 4.18.17 +
+     3.10.7). 24px so the gold ring reads at 10ft without competing
+     with the figure portrait. */
+  .p4-slot-owner {
+    @apply absolute w-6 h-6 z-[3] pointer-events-none;
+    bottom: -2px;
+    right: -2px;
+    animation: p4-slot-owner-in 260ms var(--ease-spring) both;
+  }
+  .p4-slot-owner-ring {
+    @apply absolute inset-0 rounded-full;
+    background: radial-gradient(circle at 30% 25%,
+      var(--color-gold-bright),
+      var(--color-gold) 22%,
+      var(--color-gold-mid) 55%,
+      var(--color-gold-shadow) 100%);
+    box-shadow:
+      inset 0  0 0 1px var(--color-gold-deep),
+      inset 0  1px 1.5px rgba(255, 255, 255, 0.3),
+      inset 0 -1px 1.5px rgba(0, 0, 0, 0.5),
+      0  0 0 1px #000,
+      0  2px 4px rgba(0, 0, 0, 0.55);
+  }
+  .p4-slot-owner-plate {
+    @apply absolute rounded-full grid place-items-center text-white;
+    inset: 14%;
+    background: var(--profile-color, #1a2a4a);
+    font-family: var(--font-display);
+    font-size: var(--text-body-sm);
+    line-height: 1;
+    letter-spacing: 0.02em;
+    text-shadow:
+      0 1px 0 rgba(0, 0, 0, 0.6),
+      0 0 2px rgba(0, 0, 0, 0.45);
+    box-shadow:
+      inset 0  0 0 1px rgba(0, 0, 0, 0.5),
+      inset 0  1px 2px rgba(255, 255, 255, 0.3),
+      inset 0 -1px 2px rgba(0, 0, 0, 0.35);
+  }
+  /* Pending — desaturate during Loading→Loaded transition. */
+  .p4-slot-owner--pending {
+    opacity: 0.55;
+    filter: saturate(0.75);
+  }
+
+  /* Retired per-slot "+" placeholder kept as an empty class so
+     older docs/screenshots don't silently break (PLAY_TEST #22). */
+  .p4-plus-glyph { display: none; }
+
+  /* Single floating "tap the toy box" hint below the grid. */
+  .portal-empty-hint {
+    @apply flex items-center justify-center uppercase;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 8px 14px;
+    font-family: var(--font-body);
+    font-style: italic;
+    font-weight: 600;
+    font-size: var(--text-body-sm);
+    letter-spacing: 0.18em;
+    color: #d9c88a;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+    animation: portal-empty-hint-bob 2.4s ease-in-out infinite;
+  }
+  .portal-empty-hint-arrow {
+    font-family: var(--font-display);
+    font-size: 18px;
+    color: var(--color-gold-bright);
+    text-shadow:
+      0 1px 0 var(--color-gold-shadow),
+      0 0 10px rgba(245, 198, 52, 0.4);
+  }
+
+  /* Empty slot — taps no-op since the toy-box lid owns the
+     add-figure flow now. */
+  .p4-slot--empty { cursor: default; }
+  .p4-slot--empty .bezel-ring {
+    background: radial-gradient(circle at 30% 25%,
+      rgba(245, 198, 52, 0.2),
+      rgba(110, 74, 0, 0.25) 60%,
+      rgba(0, 0, 0, 0.35));
+    box-shadow:
+      inset 0  0 0 1.5px rgba(0, 0, 0, 0.45),
+      inset 0  2px 4px rgba(255, 255, 255, 0.08),
+      inset 0 -2px 4px rgba(0, 0, 0, 0.3);
+  }
+  .p4-slot--empty .bezel-plate {
+    background: rgba(10, 26, 54, 0.75);
+  }
+
+  .p4-slot-initial {
+    font-family: var(--font-display);
+    font-size: 32px;
+    color: #fff;
+    line-height: 1;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
+  }
+
+  /* Portrait inside the loaded slot's bezel — falls back to the
+     initial when the wiki scrape 404s. */
+  .p4-slot-inner .gold-bezel .p4-slot-image {
+    @apply absolute inset-0 w-full h-full pointer-events-none z-[2];
+    object-fit: contain;
+  }
+
+  /* Slot label below the bezel. */
+  .p4-slot-label {
+    @apply text-center whitespace-nowrap overflow-hidden text-ellipsis max-w-full;
+    margin-top: 6px;
+    font-family: var(--font-display);
+    font-size: var(--text-body-sm);
+    letter-spacing: 0.08em;
+    color: var(--color-gold-bright);
+    text-shadow:
+      0 1px 0 #000,
+      0 0 6px rgba(0, 0, 0, 0.9);
+  }
+  .p4-slot-label--empty {
+    color: #d9c88a;
+    font-style: italic;
+    font-family: var(--font-body);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+  }
+  .p4-slot-label--error {
+    color: #ffc0c0;
+    font-size: 10px;
+  }
+
+  /* Loaded→Cleared: bezel desaturates + shrinks (PLAN 4.6.5). */
+  .p4-slot--empty .gold-bezel {
+    transition:
+      transform 0.3s var(--ease-smooth),
+      filter 0.3s ease;
+  }
+
+  /* REMOVE overlay — full-width bar across the bezel revealed when
+     the slot is selected. RESET moved to the figure-detail view per
+     portal_with_box.html mock. 5s auto-dismiss is in the click
+     handler, not CSS. */
+  .p4-slot-actions {
+    @apply absolute flex pointer-events-none z-[20];
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 33.333%;
+    transform: translateY(-50%) scaleY(0.85);
+    opacity: 0;
+    transition:
+      opacity 260ms ease-out,
+      transform 320ms cubic-bezier(.3, 1.3, .5, 1);
+  }
+  .p4-slot--selected .p4-slot-actions {
+    @apply pointer-events-auto;
+    opacity: 1;
+    transform: translateY(-50%) scaleY(1);
+  }
+  .p4-slot-action {
+    @apply flex-1 cursor-pointer rounded-lg uppercase;
+    padding: 0;
+    border: 0;
+    font-family: var(--font-display);
+    font-size: var(--text-body-sm);
+    letter-spacing: 0.22em;
+    text-shadow:
+      0 1px 0 rgba(0, 0, 0, 0.8),
+      0 0 6px rgba(0, 0, 0, 0.4);
+    transition: transform var(--dur-tap) ease;
+  }
+  .p4-slot-action:active {
+    transform: translateY(1px);
+  }
+  .p4-slot-action--remove {
+    color: #fff;
+    background: linear-gradient(180deg, #c23a3a 0%, #9a2424 60%, #6e1414 100%);
+    border: 2px solid #ffc0c0;
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.3),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.3),
+      0  3px 10px rgba(0, 0, 0, 0.55),
+      0  0 18px rgba(227, 76, 76, 0.5);
+  }
+
+  /* Selected slot — gold halo + scale nudge. */
+  .p4-slot--selected .p4-slot-inner {
+    transform: scale(1.04);
+    transition: transform 180ms cubic-bezier(.3, 1.3, .5, 1);
+  }
+  .p4-slot--selected .bezel-ring {
+    box-shadow:
+      inset 0  0 0 2px var(--color-gold-deep),
+      inset 0  3px 4px rgba(255, 255, 255, 0.3),
+      inset 0 -3px 4px rgba(0, 0, 0, 0.5),
+      0  0 0 1px #000,
+      0  0 0 3px var(--color-gold-bright),
+      0  0 26px rgba(245, 198, 52, 0.6),
+      0  4px 14px rgba(0, 0, 0, 0.6);
+  }
+}
+
+@keyframes p4-slot-owner-in {
+  from { opacity: 0; transform: scale(0.5); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes portal-empty-hint-bob {
+  0%, 100% { transform: translateY(0);   opacity: 0.9; }
+  50%      { transform: translateY(3px); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .p4-slot-owner { animation: none; }
+}

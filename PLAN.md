@@ -291,13 +291,17 @@ screenshot tour acting as the per-tranche regression contract.
     `ResumeModal`, `ResetConfirmModal`.
   - [x] 9.4c — Screens: `ProfilePicker` (largest — Konami gate,
     PIN keypad, profile grid), `GamePicker`, `FigureDetail`.
-  - 9.4d — Portal + toy box: `Portal`, `ToyBoxLid`, `Browser`. Most
+  - [x] 9.4d — Portal + toy box: `Portal`, `ToyBoxLid`, `Browser`. Most
     visually complex; expect `@apply` escape hatches for the lid's
     swipe-state CSS + `:has()` selectors that drive the
     `.screen-portal:has(.lid-open-p4.closed)` cross-component
     coupling. Migration may also be the natural moment to remove
     those `:has()` selectors entirely in favor of explicit
     Leptos-signal-driven classes.
+    (FigureHero rode along — it should have shipped in 9.4a but
+    slipped through. The `:has()` coupling stayed as raw CSS per
+    9.5 escape-hatch policy; lifting `box_state` up to
+    `.screen-portal` is on the table for 9.8 / a future refactor.)
   - 9.4e — Kaos overlays: `KaosOverlay`. Multi-layer pseudo-element
     decoration + conic-gradient lens + custom keyframes; almost
     certainly retains a small per-component CSS file with raw

@@ -1,0 +1,62 @@
+/*
+ * <FigureHero> — design_language.md §6.5.
+ * (PLAN 9.4d — moved with the portal tranche; should have ridden
+ * along in 9.4a's primitives but slipped through.)
+ *
+ * Composite: oversized GoldBezel + radial aura + rotating RayHalo +
+ * conic loading ring. State machine driven by a `hero-loading` /
+ * `hero-errored` modifier on the wrapper; the loading sweep also
+ * uses `ray-spin` (owned by ray_halo.css) so motion stays in sync.
+ *
+ * Motion-focus rule (design_language.md §5.6): aura + rays suppress
+ * during loading/errored states so the only animation reading is the
+ * loading ring or the bezel shudder.
+ *
+ * Class names unchanged.
+ */
+
+@layer components {
+  .figure-hero {
+    @apply relative grid place-items-center;
+    width: 160px;
+  }
+
+  .hero-aura {
+    @apply absolute rounded-full pointer-events-none;
+    inset: -20px;
+    background: radial-gradient(circle, rgba(245, 198, 52, 0.15) 0%, transparent 70%);
+  }
+
+  .hero-rays-wrap {
+    @apply absolute inset-0 pointer-events-none;
+  }
+
+  .figure-hero .loading-ring {
+    @apply absolute rounded-full pointer-events-none;
+    inset: -12px;
+    background: conic-gradient(from 0deg,
+      transparent 0%, transparent 65%,
+      var(--color-gold-bright) 90%,
+      rgba(255, 255, 255, 0.95) 96%,
+      transparent 100%);
+    mask:         radial-gradient(circle, transparent 54%, black 58%, black 72%, transparent 76%);
+    -webkit-mask: radial-gradient(circle, transparent 54%, black 58%, black 72%, transparent 76%);
+    z-index: 3;
+    opacity: 0;
+    transition: opacity var(--dur-quick) ease;
+  }
+  .hero-loading .loading-ring {
+    opacity: 1;
+    animation: ray-spin var(--dur-loading-sweep) linear infinite;
+  }
+
+  /* Motion-focus rule §5.6 — kill aura + rays during loading/errored. */
+  .hero-loading .hero-aura,
+  .hero-errored .hero-aura,
+  .hero-loading .hero-rays-wrap,
+  .hero-errored .hero-rays-wrap {
+    opacity: 0;
+    animation: none;
+    transition: opacity 0.25s ease;
+  }
+}

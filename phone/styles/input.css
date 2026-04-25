@@ -228,4 +228,8 @@
 @import "./components/game_picker.css";
 @import "./components/figure_detail.css";
 @import "./components/profile_picker.css";
+@import "./components/figure_hero.css";
+@import "./components/portal.css";
+@import "./components/toy_box_lid.css";
+@import "./components/browser.css";
 

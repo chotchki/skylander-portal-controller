@@ -1,0 +1,286 @@
+/*
+ * <ToyBoxLid> — design_language.md §6.7 / mock portal_with_box.html.
+ * (PLAN 9.4d — portal + toy box tranche.)
+ *
+ * The wood-textured plank that sits at the bottom of the portal screen
+ * and pulls up to reveal the figure grid. Three states:
+ *   - .closed   → 64px-tall bar; portal owns the viewport above it.
+ *   - .compact  → ~52px (default); same plank, search/filters revealed
+ *                  at the bottom of the page — currently treated as
+ *                  "expand → expanded" with the in-flow filter strip.
+ *   - .expanded → ~320px; search input + drill-section chips visible.
+ *
+ * Cross-component coupling via `:has()` (kept as raw CSS per the
+ * 9.5 escape-hatch policy):
+ *   .screen-portal:has(.lid-open-p4.closed) → portal grid takes over
+ *     the viewport, hide the box-body interior.
+ *   .screen-portal:has(.lid-open-p4:not(.closed)) → portal grid hides
+ *     so figure cards have room.
+ * The :has() target is `.lid-open-p4`, so the keyframes + state classes
+ * stay co-located here (the state is owned by Browser's `box_state`
+ * signal, which writes the state class onto `.lid-open-p4`).
+ *
+ * Wood tokens (--wood-1..4, --wood-gold, --wood-gold-b) are mirrored
+ * into the legacy :root in input.css and into the @theme block as
+ * --color-wood-* — both are still resolved here via var().
+ *
+ * Class names unchanged.
+ */
+
+@layer components {
+  .lid-open-p4 {
+    @apply relative flex flex-col z-[35] shrink-0 overflow-hidden;
+    background:
+      repeating-linear-gradient(180deg,
+        var(--color-wood-2) 0px,
+        var(--color-wood-1) 2px,
+        var(--color-wood-1) 18px,
+        var(--color-wood-3) 19px,
+        rgba(0, 0, 0, 0.4) 20px,
+        var(--color-wood-2) 21px),
+      linear-gradient(180deg, var(--color-wood-1), var(--color-wood-2));
+    border-bottom: 3px solid var(--color-gold-bright);
+    border-top: 2px solid var(--color-gold-bright);
+    box-shadow:
+      inset 0 -4px 8px rgba(0, 0, 0, 0.3),
+      inset 0  2px 6px rgba(255, 215, 106, 0.1),
+      0  6px 20px rgba(0, 0, 0, 0.7);
+    transition: max-height 0.35s var(--ease-smooth);
+    max-height: 52px;
+    /* Bleed edge-to-edge through .app's horizontal + bottom padding so
+       the lid paints the iOS home-indicator safe-area with wood. Inner
+       padding re-applies the safe-area insets so grabber/title stay
+       above the home indicator. */
+    margin-left:   calc(-1 * (env(safe-area-inset-left) + 12px));
+    margin-right:  calc(-1 * (env(safe-area-inset-right) + 12px));
+    margin-bottom: calc(-1 * (env(safe-area-inset-bottom) + 16px));
+    padding: 6px 14px calc(8px + env(safe-area-inset-bottom) + 16px);
+  }
+  .lid-open-p4.expanded {
+    max-height: calc(320px + env(safe-area-inset-bottom) + 16px);
+  }
+  .lid-open-p4.closed {
+    /* design_language.md §6.7: closed lid is a 64px wooden plank. Keep
+       the grabber + wood + gold trim visible; hide the search toggle. */
+    max-height:     calc(64px  + env(safe-area-inset-bottom) + 16px);
+    padding-top:    10px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom) + 16px);
+  }
+  .lid-open-p4.closed .search-expanded-p4 {
+    display: none;
+  }
+  /* Closed plank keeps the COLLECTION title; SEARCH button hides; a
+     pulsing up-chevron replaces it as the discoverable "tap or swipe up"
+     affordance. */
+  .lid-open-p4.closed .lid-top-row-p4 {
+    min-height: 24px;
+  }
+  .lid-open-p4.closed .search-toggle-p4 {
+    display: none;
+  }
+  .lid-open-p4.closed .lid-top-row-p4::after {
+    content: "\25B2";
+    font-size: 12px;
+    color: var(--color-wood-gold-b);
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+    animation: lid-chevron-pulse 1.8s ease-in-out infinite;
+    /* Decorative — don't intercept the lid's pointerdown. */
+    pointer-events: none;
+  }
+
+  /* Gesture zone — grabber + header own the touch scroll, expanded
+     filters area keeps its normal scroll (PLAN 4.2.13.12). */
+  .lid-grabber-p4,
+  .lid-top-row-p4 {
+    touch-action: none;
+  }
+
+  /* Grabber pill. */
+  .lid-grabber-p4 {
+    @apply mx-auto shrink-0;
+    width: 46px;
+    height: 5px;
+    border-radius: 3px;
+    margin-bottom: 6px;
+    background: linear-gradient(180deg,
+      var(--color-wood-gold-b),
+      var(--color-wood-gold) 60%,
+      rgba(120, 82, 20, 0.9));
+    box-shadow:
+      inset 0  1px 0 rgba(255, 255, 255, 0.3),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.25),
+      0  1px 2px rgba(0, 0, 0, 0.5);
+  }
+
+  /* Top row: title + SEARCH toggle. */
+  .lid-top-row-p4 {
+    @apply flex items-center justify-between;
+    min-height: 36px;
+  }
+  .lid-open-title-p4 {
+    font-family: var(--font-display);
+    font-size: var(--text-body);
+    letter-spacing: 0.16em;
+    color: var(--color-wood-gold-b);
+    text-shadow:
+      0 1px 0 rgba(0, 0, 0, 0.7),
+      0 0 8px rgba(212, 168, 74, 0.4);
+  }
+
+  /* SEARCH toggle button. */
+  .search-toggle-p4 {
+    @apply flex items-center cursor-pointer rounded-full;
+    gap: 8px;
+    padding: 6px 14px;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(212, 168, 74, 0.35);
+    color: var(--color-wood-gold-b);
+    font-family: var(--font-display);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    transition: all 0.15s ease;
+  }
+  .search-toggle-p4:hover {
+    border-color: var(--color-wood-gold);
+    background: rgba(212, 168, 74, 0.15);
+  }
+  .search-toggle-mag { font-size: var(--text-body); }
+
+  /* Expanded search area — drill-down filters + search input. */
+  .search-expanded-p4 {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding-top: 12px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(212, 168, 74, 0.5) transparent;
+  }
+
+  /* Gold-bordered search input with shimmer on focus (PLAN 4.7.4). */
+  .search-input-p4 {
+    @apply w-full rounded-xl;
+    padding: 10px 14px;
+    margin-bottom: 12px;
+    color: var(--color-text);
+    background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
+    border: 1.5px solid var(--color-gold-bright);
+    font-family: var(--font-body);
+    font-size: var(--text-body);
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.18),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.25),
+      0  2px 6px rgba(0, 0, 0, 0.4);
+  }
+  .search-input-p4::placeholder {
+    color: #e8e4d8;
+    font-style: italic;
+    font-weight: 600;
+  }
+  .search-input-p4:focus {
+    outline: 2px solid var(--color-gold-bright);
+    outline-offset: 1px;
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.18),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.25),
+      0  2px 6px rgba(0, 0, 0, 0.4),
+      0  0 16px rgba(245, 198, 52, 0.45);
+    animation: search-shimmer 1.2s ease-in-out;
+  }
+
+  /* Drill section: GAMES / ELEMENTS / CATEGORY chip rows. */
+  .drill-section-p4 {
+    margin-bottom: 10px;
+  }
+  .drill-label-p4 {
+    @apply uppercase;
+    font-family: var(--font-display);
+    font-size: 9px;
+    letter-spacing: 0.18em;
+    color: var(--color-gold-bright);
+    margin-bottom: 6px;
+    text-shadow:
+      0 1px 0 rgba(0, 0, 0, 0.8),
+      0 0 6px rgba(245, 198, 52, 0.3);
+  }
+  .drill-row-p4 {
+    @apply flex flex-wrap;
+    gap: 6px;
+  }
+  .drill-chip-p4 {
+    @apply cursor-pointer shrink-0 rounded-lg;
+    padding: 6px 11px;
+    border: 1.5px solid var(--color-gold-bright);
+    background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
+    color: var(--color-gold-bright);
+    font-family: var(--font-display);
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    text-shadow:
+      0 1px 0 var(--color-gold-shadow),
+      0 0 6px rgba(0, 0, 0, 0.4);
+    box-shadow:
+      inset 0  1px 0 rgba(255, 255, 255, 0.2),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.25),
+      0  2px 0 rgba(0, 0, 0, 0.4),
+      0  3px 6px rgba(0, 0, 0, 0.3);
+    transition: all 0.12s ease;
+  }
+  .drill-chip-p4:hover {
+    background: linear-gradient(180deg, #4286f0 0%, #2a62cd 55%, #1b46a0 100%);
+    box-shadow:
+      inset 0  1px 0 rgba(255, 255, 255, 0.25),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.25),
+      0  2px 0 rgba(0, 0, 0, 0.4),
+      0  0 12px rgba(245, 198, 52, 0.3);
+  }
+  .drill-chip-p4.active {
+    background: linear-gradient(180deg,
+      var(--color-gold-bright) 0%,
+      var(--color-gold) 50%,
+      var(--color-gold-mid) 100%);
+    color: var(--color-gold-deep);
+    border-color: var(--color-gold-deep);
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+    box-shadow:
+      inset 0  1px 0 rgba(255, 255, 255, 0.4),
+      inset 0 -1px 0 rgba(110, 74, 0, 0.3),
+      0  2px 0 var(--color-gold-deep),
+      0  0 10px rgba(245, 198, 52, 0.4);
+  }
+}
+
+/*
+ * Cross-component layout coupling — kept as raw CSS per PLAN 9.5
+ * escape-hatch policy. The lid's class modifier is the source of
+ * truth for portal/interior visibility; using `:has()` avoids
+ * threading `box_state` through Browser's parent. iOS Safari ≥ 15.4
+ * supports `:has()`, matching our PWA baseline.
+ *
+ * Migrating these to a Leptos-signal-driven explicit class on
+ * `.screen-portal` is on the table for 9.8 / a future refactor;
+ * for now they stay as a clear rule with documented contract.
+ */
+.screen-portal:has(.lid-open-p4.closed) .portal-p4 {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.screen-portal:has(.lid-open-p4.closed) .box-body-bg {
+  display: none;
+}
+.screen-portal:has(.lid-open-p4:not(.closed)) .portal-p4 {
+  display: none;
+}
+
+@keyframes lid-chevron-pulse {
+  0%, 100% { transform: translateY(0);    opacity: 0.55; }
+  50%      { transform: translateY(-3px); opacity: 1; }
+}
+
+@keyframes search-shimmer {
+  0%   { box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.18), 0 0 0  rgba(245, 198, 52, 0); }
+  50%  { box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.18), 0 0 24px rgba(245, 198, 52, 0.6); }
+  100% { box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.18), 0 0 16px rgba(245, 198, 52, 0.45); }
+}
