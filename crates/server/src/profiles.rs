@@ -137,6 +137,14 @@ pub const MAX_SESSIONS: usize = 2;
 /// Minimum time between forced evictions. Anti-ping-pong guard — SPEC Q31.
 pub const FORCED_EVICT_COOLDOWN: Duration = Duration::from_secs(60);
 
+/// How long a ghosted session sticks around before it's expired and its
+/// portal slots get cleaned up. PLAN 8.1 — keeps a phone's figures on the
+/// portal across PWA backgrounding / WS-drop without leaking forever after
+/// a real abandon. One hour matches the wall-clock window for "the kid put
+/// the iPad down and went to dinner"; longer than that and it's a real
+/// session-end, not a transient disconnect.
+pub const GHOST_TIMEOUT: Duration = Duration::from_secs(3600);
+
 /// Opaque per-connection id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SessionId(pub u64);
@@ -145,6 +153,27 @@ pub struct SessionId(pub u64);
 pub struct SessionState {
     pub profile_id: Option<String>,
     pub created_at: Instant,
+    /// Set when the WS connection drops while the session held an
+    /// unlocked profile + had figures placed on the portal. The
+    /// session entry stays in the registry (counts against
+    /// `MAX_SESSIONS`) so the slot ownership and the placed figures
+    /// stick around until either:
+    ///   - The same profile reconnects and adopts the ghost (PLAN
+    ///     8.1.3 — adoption surface not yet wired).
+    ///   - `GHOST_TIMEOUT` elapses since `ghosted_at` (caller sweeps
+    ///     via `expire_ghosts_older_than`).
+    ///   - A new session forces eviction for FIFO capacity.
+    ///
+    /// `None` for live sessions.
+    pub ghosted_at: Option<Instant>,
+}
+
+impl SessionState {
+    /// True when this session has been ghosted (WS dropped, slots
+    /// kept). See [`SessionState::ghosted_at`] for lifecycle.
+    pub fn is_ghost(&self) -> bool {
+        self.ghosted_at.is_some()
+    }
 }
 
 /// Outcome of registering a new WS connection via [`SessionRegistry::register`].
@@ -216,6 +245,7 @@ impl SessionRegistry {
                 SessionState {
                     profile_id: pending,
                     created_at: now,
+                    ghosted_at: None,
                 },
             );
             return RegistrationOutcome::Admitted(sid);
@@ -246,6 +276,7 @@ impl SessionRegistry {
             SessionState {
                 profile_id: pending,
                 created_at: now,
+                ghosted_at: None,
             },
         );
         drop(sessions);
@@ -260,6 +291,58 @@ impl SessionRegistry {
     /// cooldown clock; the freed seat can be filled immediately.
     pub async fn remove(&self, id: SessionId) {
         self.sessions.write().await.remove(&id);
+    }
+
+    /// Mark a session ghosted (PLAN 8.1) — WS dropped but the session
+    /// stays in the registry so the user's placed figures survive a
+    /// PWA-backgrounding / network blip. Returns the ghosted session's
+    /// `profile_id` if it had one. The caller (WS exit path) uses the
+    /// return value to decide what cleanup to defer.
+    ///
+    /// No-op if the session id isn't registered (already removed via
+    /// `remove`, e.g. a forced eviction).
+    pub async fn ghost(&self, id: SessionId, now: Instant) -> Option<String> {
+        let mut map = self.sessions.write().await;
+        match map.get_mut(&id) {
+            Some(s) => {
+                s.ghosted_at = Some(now);
+                s.profile_id.clone()
+            }
+            None => None,
+        }
+    }
+
+    /// Find ghosted sessions whose `ghosted_at` is older than `timeout`
+    /// (i.e. ready for hard eviction + slot cleanup). Removes them from
+    /// the registry and returns their (session_id, profile_id) pairs so
+    /// the caller can run `clear_slots_for_profile` on each. Live
+    /// sessions are untouched. Caller schedules this on a tick — once
+    /// per minute is plenty.
+    ///
+    /// Returns the freshly-evicted entries; entries without a profile_id
+    /// (shouldn't happen via the ghost path but defensively handled)
+    /// are still returned with `None` so the caller can log the case.
+    pub async fn expire_ghosts_older_than(
+        &self,
+        timeout: Duration,
+        now: Instant,
+    ) -> Vec<(SessionId, Option<String>)> {
+        let mut map = self.sessions.write().await;
+        let expired: Vec<SessionId> = map
+            .iter()
+            .filter_map(|(sid, s)| {
+                let g = s.ghosted_at?;
+                let elapsed = now.saturating_duration_since(g);
+                (elapsed >= timeout).then_some(*sid)
+            })
+            .collect();
+        expired
+            .into_iter()
+            .map(|sid| {
+                let s = map.remove(&sid).expect("just enumerated");
+                (sid, s.profile_id)
+            })
+            .collect()
     }
 
     pub async fn get(&self, id: SessionId) -> Option<SessionState> {
