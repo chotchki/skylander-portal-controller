@@ -246,7 +246,7 @@ component, and future iteration is locally-scoped to whatever element
 is being changed. Bounded migration by tranche, with the Phase 8
 screenshot tour acting as the per-tranche regression contract.
 
-- [ ] 9.1 — Stand up Tailwind v4 + cached CLI downloader. New
+- [x] 9.1 — Stand up Tailwind v4 + cached CLI downloader. New
   `tools/tailwind-build/` Rust helper crate: pins `TAILWIND_VERSION`,
   downloads the standalone `tailwindcss` CLI binary into
   `phone/.tailwind-cache/` (gitignored) on first run, reuses on
@@ -263,7 +263,7 @@ screenshot tour acting as the per-tranche regression contract.
   `TAILWIND_VERSION + os` so the binary doesn't re-download every
   run.
 
-- [ ] 9.2 — Pilot on a shared primitive. Pick `GoldBezel` or
+- [x] 9.2 — Pilot on a shared primitive. Pick `GoldBezel` or
   `FramedPanel` (small, used widely; better proof of the migration
   pattern + `@theme` token plumbing than starting on the elaborate
   Kaos overlays). Port its rules from `app.css` to utility classes
@@ -273,7 +273,7 @@ screenshot tour acting as the per-tranche regression contract.
   `input.css`. Run the screenshot tour, eyeball the diff, commit the
   pilot.
 
-- [ ] 9.3 — Lock the screenshot-tour baseline as the regression
+- [x] 9.3 — Lock the screenshot-tour baseline as the regression
   contract. Document the per-tranche workflow in
   `crates/e2e-tests/README.md`: "rebuild phone bundle → run tour
   → `git diff docs/assets/screens/` → reconcile any visual drift
