@@ -399,10 +399,15 @@ impl ProfileStore {
         Ok(())
     }
 
-    /// Read + write `sessions.last_portal_layout_json` for a profile. The
-    /// layout is an opaque JSON blob (the 8-slot array, serialised via
-    /// `serde_json`) — shape is enforced by the caller, not the DB.
-    pub async fn save_portal_layout(&self, profile_id: &str, layout_json: &str) -> Result<()> {
+    /// Internal UPSERT for `sessions.last_portal_layout_json`. `layout` is
+    /// `Some(json)` for save, `None` to NULL the column out (start-fresh
+    /// path). The save and clear public APIs are thin wrappers; both
+    /// fan into here so the SQL UPSERT lives in one place.
+    async fn write_session_layout(
+        &self,
+        profile_id: &str,
+        layout: Option<&str>,
+    ) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         sqlx::query(
             "INSERT INTO sessions (profile_id, last_portal_layout_json, updated_at) \
@@ -412,11 +417,18 @@ impl ProfileStore {
                            updated_at = excluded.updated_at",
         )
         .bind(profile_id)
-        .bind(layout_json)
+        .bind(layout)
         .bind(now)
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    /// Read + write `sessions.last_portal_layout_json` for a profile. The
+    /// layout is an opaque JSON blob (the 8-slot array, serialised via
+    /// `serde_json`) — shape is enforced by the caller, not the DB.
+    pub async fn save_portal_layout(&self, profile_id: &str, layout_json: &str) -> Result<()> {
+        self.write_session_layout(profile_id, Some(layout_json)).await
     }
 
     pub async fn load_portal_layout(&self, profile_id: &str) -> Result<Option<String>> {
@@ -436,18 +448,7 @@ impl ProfileStore {
     /// JSON column makes `load_portal_layout` return `None` and the
     /// build_resume_prompt path bails before sending the event.
     pub async fn clear_portal_layout(&self, profile_id: &str) -> Result<()> {
-        let now = Utc::now().to_rfc3339();
-        sqlx::query(
-            "INSERT INTO sessions (profile_id, last_portal_layout_json, updated_at) \
-             VALUES (?1, NULL, ?2) \
-             ON CONFLICT (profile_id) \
-             DO UPDATE SET last_portal_layout_json = NULL, updated_at = excluded.updated_at",
-        )
-        .bind(profile_id)
-        .bind(now)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
+        self.write_session_layout(profile_id, None).await
     }
 
     pub async fn get(&self, id: &str) -> Result<Option<ProfileRow>> {

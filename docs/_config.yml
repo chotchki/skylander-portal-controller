@@ -29,3 +29,10 @@ exclude:
   - Gemfile.lock
   - vendor
   - .jekyll-cache
+  # Internal repo docs that shouldn't be served on the public site.
+  # GitHub Pages only allows / or /docs as the source path, so these
+  # live alongside the Jekyll content; excluding them here keeps them
+  # out of the rendered site without forcing a separate website
+  # subtree.
+  - research
+  - aesthetic

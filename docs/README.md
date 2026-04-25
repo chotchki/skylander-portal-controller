@@ -14,7 +14,7 @@ people evaluating the project, not authoritative docs.
 You need Ruby (3.1+) and Bundler. One-time:
 
 ```
-cd docs/website
+cd docs
 bundle install
 ```
 
@@ -29,17 +29,21 @@ Opens on <http://127.0.0.1:4000/>. Live-reloads on file save.
 
 ## Deployment
 
-GitHub Pages serves this site. It does **not** auto-pick up arbitrary
-subdirectories — the repo has to be configured to point at this folder.
+GitHub Pages serves this site. The repo has to be configured to point
+at this folder — Pages only allows `/` or `/docs` as the source path,
+which is why the Jekyll content lives directly under `docs/` rather
+than `docs/website/`. The `research/` and `aesthetic/` siblings are
+excluded from the Jekyll build via `_config.yml` so they don't end up
+on the public site.
 
 One-time setup in the repo's GitHub settings:
 
 1. Repo → **Settings** → **Pages**.
 2. **Source:** "Deploy from a branch".
-3. **Branch:** `main`, **folder:** `/docs/website`.
+3. **Branch:** `main`, **folder:** `/docs`.
 4. Save.
 
-After that, every push to `main` that touches `docs/website/` triggers a
+After that, every push to `main` that touches `docs/` triggers a
 GitHub Pages build. The public URL
 <https://chotchki.github.io/skylander-portal-controller/> picks up the new
 content within a minute or two. Build errors show up under the Pages tab
