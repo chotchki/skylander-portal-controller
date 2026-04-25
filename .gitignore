@@ -38,6 +38,11 @@ node_modules/
 Thumbs.db
 .DS_Store
 .claude/settings.local.json
+.claude/settings.json
+# Per-agent scratch worktrees the Claude Code harness creates when
+# isolation: "worktree" is requested — each is its own git checkout
+# and shouldn't end up in the main repo.
+.claude/worktrees/
 
 # Standalone tool crates and trunk output
 /tools/*/target/
