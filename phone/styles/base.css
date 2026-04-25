@@ -1,0 +1,376 @@
+/*
+ * phone/styles/base.css — global app baseline (PLAN 9.6).
+ *
+ * What lives here:
+ *   - Self-hosted display + body fonts (@font-face).
+ *   - The html / body sizing + gradient background.
+ *   - Body::after starfield-drift overlay.
+ *   - Global element baselines (* box-sizing, button, input).
+ *   - The .app flex column wrapper.
+ *   - Screen-to-screen transitions (.screen, .screen-fwd / -back /
+ *     -takeover / -game-crash + their keyframes).
+ *   - Ambient .magic-dust + .dust-particle particle layer.
+ *   - .landscape-block "rotate your phone" overlay.
+ *   - .empty-msg used by Suspense fallbacks.
+ *   - The Kaos skin-class theme override (html.skin-kaos repalettes
+ *     legacy var names so component CSS auto-flips).
+ *   - One cross-cutting prefers-reduced-motion aggregator that hits
+ *     selectors from multiple components — kept here because the
+ *     alternative is three nearly-empty @media blocks in three
+ *     component files.
+ *
+ * What does NOT live here: any per-component styling. Every component
+ * has its own file under phone/styles/components/ imported from
+ * phone/styles/input.css. See CLAUDE.md "CSS escape-hatch policy"
+ * for when to use inline utilities vs @apply vs raw CSS.
+ *
+ * Renamed from phone/assets/app.css under PLAN 9.6. Old file's role
+ * was the entire monolithic stylesheet (~5670 lines pre-Tailwind);
+ * this one is just the global baseline.
+ */
+
+/* ============ Self-hosted fonts (SIL OFL 1.1). =============
+   Titan One: single-weight display.  Fraunces: variable, 400–600. */
+
+@font-face {
+  font-family: "Titan One";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/titan-one.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Fraunces";
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url("fonts/fraunces.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Fraunces";
+  font-style: italic;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url("fonts/fraunces-italic.woff2") format("woff2");
+}
+
+/* The legacy `:root` mirrors that lived in app.css are now centralized
+   in `phone/styles/input.css` (both the @theme block and the legacy
+   `--gb`/`--g`/`--text`/etc. names). Component CSS resolves both via
+   var(); this file just paints the canvas. */
+
+html, body {
+  margin: 0;
+  padding: 0;
+  color: var(--color-text);
+  /* Kill iOS Safari's zoom gestures across the whole app:
+     `pan-x pan-y` permits scroll (inside .box-body-scroll etc.) but
+     disables both double-tap-zoom and pinch-zoom. We pair this with
+     user-scalable=no/maximum-scale=1 on the viewport meta as
+     belt-and-braces (iOS sometimes honours meta but not touch-action,
+     and vice versa). PLAN 4.18.8. */
+  touch-action: pan-x pan-y;
+}
+
+/* Gradient backdrop lives on `html` directly (not a fixed pseudo on
+   body) so it paints across the full canvas. Earlier iterations used
+   `body::before { position: fixed; inset: 0 }` which fills only the
+   *layout* viewport. On iOS Safari, URL-bar retraction grows the
+   *visual* viewport taller than the layout viewport by ~34–52px;
+   the strip below the layout viewport exposed html's then-flat sf-3
+   bg, producing a visible colour seam against the gradient (diagnosed
+   2026-04-21 via tools/ios-inspect/, PLAN 4.21.4). Painting on html
+   avoids the layout-vs-visual-viewport mismatch entirely. */
+html {
+  /* 100vh on iOS Safari == the URL-bar-retracted (large) viewport,
+     ~29px taller than the dvh body. Without this, html's auto-height
+     follows content and the radial-anchored-at-50%-100% bottom
+     highlight stops short of the canvas bottom; URL-bar retraction
+     then exposes a thin strip of default-bg. PLAN 4.21.4 follow-up. */
+  min-height: 100vh;
+  background:
+    radial-gradient(ellipse 120% 60% at 50% 0%,   #1a3a8a 0%, transparent 50%),
+    radial-gradient(ellipse  80% 50% at 50% 100%, #0e2464 0%, transparent 50%),
+    linear-gradient(180deg, var(--color-sf-1), var(--color-sf-2) 60%, var(--color-sf-3));
+}
+
+body {
+  /* Lock body to the visible viewport so no screen except the toy
+     box scrolls — Chris 2026-04-20: "you can still scroll on pages
+     you shouldn't". 100dvh tracks the dynamic viewport (shrinks when
+     iOS chrome is up); 100vh stays as fallback. `overflow: hidden`
+     blocks page-level scroll; `overscroll-behavior: none` kills the
+     iOS rubber-band bounce. Screens that need scroll declare it on
+     their inner container — see .box-body-scroll in browser.css. */
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+  /* Transparent — gradient paints on html above. */
+}
+
+/* Starfield overlay — 400×800 tile with stars populating the WHOLE
+   800px height (both halves) so seamless tiling is true at any
+   viewport height. Mirrored top/bottom mix of sizes + colour tints
+   so each tile looks self-similar at the seam. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    /* upper half (y = 30..400) */
+    radial-gradient(1px 1px at  20px  30px, white,                  transparent),
+    radial-gradient(1px 1px at  40px  70px, rgba(255, 255, 255, 0.7), transparent),
+    radial-gradient(2px 2px at  50px 160px, rgba(255, 230, 180, 0.9), transparent),
+    radial-gradient(1px 1px at 130px  40px, white,                  transparent),
+    radial-gradient(1px 1px at  90px 250px, rgba(255, 255, 255, 0.8), transparent),
+    radial-gradient(1px 1px at 170px 300px, white,                  transparent),
+    radial-gradient(2px 2px at 230px 100px, rgba(180, 220, 255, 0.9), transparent),
+    radial-gradient(1px 1px at 300px 200px, white,                  transparent),
+    radial-gradient(1px 1px at 260px 400px, white,                  transparent),
+    /* lower half (y = 440..780) — same density + colour mix */
+    radial-gradient(1px 1px at  60px 460px, rgba(255, 255, 255, 0.8), transparent),
+    radial-gradient(1px 1px at 180px 500px, white,                  transparent),
+    radial-gradient(2px 2px at 110px 560px, rgba(180, 220, 255, 0.9), transparent),
+    radial-gradient(1px 1px at 250px 540px, white,                  transparent),
+    radial-gradient(1px 1px at  30px 630px, rgba(255, 255, 255, 0.7), transparent),
+    radial-gradient(1px 1px at 210px 660px, white,                  transparent),
+    radial-gradient(2px 2px at 320px 700px, rgba(255, 230, 180, 0.9), transparent),
+    radial-gradient(1px 1px at  80px 740px, white,                  transparent),
+    radial-gradient(1px 1px at 290px 780px, rgba(255, 255, 255, 0.8), transparent);
+  background-size: 400px 800px;
+  animation: sky-drift var(--dur-sky-drift) linear infinite;
+}
+@keyframes sky-drift {
+  to { background-position: -400px -800px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  body::after { animation: none; }
+}
+
+/* Universal box-sizing + tap-highlight reset. */
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Suppress text selection on interactive chrome — long-pressing a
+   profile card or menu button shouldn't pop the iOS text-select
+   callout. Inputs + textareas override below so typed content works. */
+button, [role="button"] {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+input, textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* App container — flex column that fills the body. Header is a
+   natural-height first child; the active `.screen` below grows with
+   `flex: 1` so its descendants (most importantly .box-body-scroll
+   in the figure browser) have a real parent height to anchor
+   `height: 100%` against. `min-height: 0` is the standard flex-child
+   escape hatch so children with overflow are free to shrink past
+   their min-content size. */
+.app {
+  position: relative;
+  z-index: 1;
+  max-width: 960px;
+  margin: 0 auto;
+  padding:
+    calc(env(safe-area-inset-top) + 16px)
+    calc(env(safe-area-inset-right) + 12px)
+    calc(env(safe-area-inset-bottom) + 16px)
+    calc(env(safe-area-inset-left) + 12px);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.empty-msg {
+  color: var(--color-text-dim);
+  padding: 24px 8px;
+  text-align: center;
+}
+
+/* ================================================================
+   PLAN 4.14.1 — Screen-to-screen transitions.
+   `.screen-fwd` plays on entrance when going deeper; `.screen-back`
+   when coming back. Both share a 240ms crossfade. Direction is
+   captured at branch-mount in App's `screen_cls()` helper, so the
+   class doesn't reactively swap.
+   ================================================================ */
+
+.screen {
+  position: relative;
+  /* Intentionally NO `will-change: transform, opacity` — it creates a
+     fixed-positioning containing block in Chrome + iOS Safari (per
+     the "contains" spec), which meant `.btn-back { position: fixed }`
+     was pinning to .screen instead of the viewport. The 240ms
+     entrance animation still runs without the hint — the perf cost
+     is imperceptible on modern phones and the correctness win is
+     critical. Chris play-test 2026-04-24. */
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.screen-fwd  { animation: screen-enter-fwd  240ms cubic-bezier(.2, .8, .3, 1) both; }
+.screen-back { animation: screen-enter-back 240ms cubic-bezier(.2, .8, .3, 1) both; }
+.screen-takeover    { animation: screen-enter-takeover 320ms ease-out both; }
+.screen-game-crash  { animation: screen-enter-takeover 320ms ease-out both; }
+@keyframes screen-enter-fwd {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes screen-enter-back {
+  from { opacity: 0; transform: translateY(-14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes screen-enter-takeover {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ================================================================
+   PLAN 4.5.2 — Sparse "magic dust" ambient particle layer.
+   24 particles; each carries inline CSS vars (--drift, --peak-opacity)
+   plus its own animation declaration with randomised duration +
+   negative delay so the loop is mid-cycle at mount (no synchronised
+   burst). Sits behind everything (z-index 0); content layers
+   establish their own stacking context above.
+   ================================================================ */
+
+.magic-dust {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 0;
+}
+.dust-particle {
+  position: absolute;
+  bottom: -6px;
+  border-radius: 50%;
+  background: radial-gradient(circle,
+    #fff4d0 0%,
+    var(--color-gold-bright) 55%,
+    transparent 80%);
+  box-shadow: 0 0 6px rgba(255, 230, 140, 0.55);
+  opacity: 0;
+  will-change: transform, opacity;
+}
+@keyframes dust-float {
+  0%   { transform: translate3d(0, 0, 0); opacity: 0; }
+  10%  { opacity: var(--peak-opacity, 0.45); }
+  90%  { opacity: var(--peak-opacity, 0.45); }
+  100% {
+    transform: translate3d(var(--drift, 0px), -110vh, 0);
+    opacity: 0;
+  }
+}
+
+/* ================================================================
+   Landscape block: iOS Safari can't lock orientation from a web page,
+   so we show a full-screen "rotate your phone" overlay when the
+   viewport is wide and short. Hidden by default; only shown in
+   landscape on phone-sized devices so iPad portrait-ish layouts and
+   dev browsers aren't affected.
+   ================================================================ */
+
+.landscape-block { display: none; }
+
+@media (orientation: landscape) and (max-height: 500px) {
+  .landscape-block {
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 20px;
+    text-align: center;
+    background: radial-gradient(ellipse at center,
+      #1a237e 0%,
+      #0a0e2a 60%,
+      #000 100%);
+    color: #f4d67a;
+  }
+  .landscape-block__title {
+    font-family: var(--font-display);
+    font-size: clamp(1.8rem, 6vh, 3rem);
+    letter-spacing: 0.05em;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+  }
+  .landscape-block__sub {
+    font-size: clamp(0.9rem, 3vh, 1.2rem);
+    color: rgba(255, 255, 255, 0.75);
+  }
+  /* Hide the app behind the overlay so it can't steal taps. */
+  body > :not(.landscape-block) { visibility: hidden; }
+}
+
+/* ================================================================
+   PLAN 4.1.4 — Kaos skin (5.4 takeover palette).
+   Html-class swap: <html class="skin-kaos"> repalettes every legacy
+   var name. Class goes on <html>, not <body>, so the --sf-* overrides
+   reach the gradient-painting rule on `html`. The eventual pwa.rs
+   hook must toggle the class on document.documentElement, not
+   document.body. Component CSS already references vars, so no
+   component changes are needed when the skin flips.
+   ================================================================ */
+
+html.skin-kaos {
+  /* Starfield → purple void */
+  --sf-1: #2a0a3e;
+  --sf-2: #150525;
+  --sf-3: #06010f;
+  /* Gold bezel → corrupted magenta chrome (legacy var names so all
+     component files repalette without code changes). */
+  --gb: #ff8de2;
+  --g:  #d437a8;
+  --gm: #7b1a5c;
+  --gs: #2e0520;
+  --gi: #14020e;
+  /* danger / success keep their semantics. */
+}
+html.skin-kaos {
+  background:
+    radial-gradient(ellipse 120% 60% at 50% 0%,   #5a1a7e 0%, transparent 50%),
+    radial-gradient(ellipse  80% 50% at 50% 100%, #3a0855 0%, transparent 50%),
+    linear-gradient(180deg, var(--sf-1), var(--sf-2) 60%, var(--sf-3));
+}
+
+/* ================================================================
+   PLAN 4.1.5 — prefers-reduced-motion aggregator.
+   Cross-cutting kill-switch for ambient motion that doesn't have
+   a natural home in any single component file (status pulse, bezel
+   idle float, game-card launching pulse). Kept here as the global
+   stragglers; per-component reduced-motion rules live with their
+   component.
+   ================================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  .status-dot.connecting,
+  .bezel-float,
+  .game-card.launching .game-name,
+  .takeover-hexgrid,
+  .takeover-sparks,
+  .detail-loading .detail-meta::after,
+  .screen-fwd,
+  .screen-back,
+  .screen-takeover,
+  .screen-game-crash {
+    animation: none !important;
+  }
+  .magic-dust { display: none; }
+}

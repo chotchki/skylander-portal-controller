@@ -1,0 +1,206 @@
+/*
+ * <CreditsOverlay> (PLAN 3.19.6).
+ * (PLAN 9.6 — slipped through 9.4 and ported as part of the
+ * sweep tranche.)
+ *
+ * Modal opened from the picker tagline. Gold-bordered card with
+ * scrollable body (sections + dedication + disclaimer) and a
+ * single dismiss button anchored to the bottom.
+ *
+ * Class names unchanged.
+ */
+
+@layer components {
+  .credits-overlay {
+    @apply fixed inset-0 z-[80] flex items-center justify-center;
+    padding:
+      max(24px, env(safe-area-inset-top)) 18px
+      max(24px, env(safe-area-inset-bottom)) 18px;
+  }
+
+  .credits-scrim {
+    @apply absolute inset-0;
+    background: rgba(2, 8, 24, 0.78);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    animation: credits-fade 220ms ease both;
+  }
+
+  .credits-card {
+    @apply relative flex flex-col rounded-[22px] max-h-full;
+    width: min(560px, 100%);
+    padding: 2px;
+    background:
+      linear-gradient(180deg, rgba(11, 30, 82, 0.95), rgba(6, 20, 54, 0.95)),
+      #06142e;
+    background-clip: padding-box;
+    box-shadow:
+      0  0 0 1px rgba(110, 74, 0, 0.6),
+      0  18px 48px rgba(0, 0, 0, 0.6),
+      inset 0 0 24px rgba(245, 198, 52, 0.08);
+    animation: credits-rise 260ms cubic-bezier(.22, 1, .36, 1) both;
+  }
+  /* Gold gradient frame via mask-composite — same trick as
+     PairingRequired/StaleVersion. */
+  .credits-card::before {
+    content: "";
+    @apply absolute inset-0 pointer-events-none rounded-[22px];
+    padding: 2px;
+    background: linear-gradient(150deg,
+      var(--color-gold-bright) 0%,
+      var(--color-gold) 30%,
+      var(--color-gold-mid) 55%,
+      var(--color-gold-shadow) 100%);
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+            mask-composite: exclude;
+  }
+
+  .credits-title {
+    @apply text-center;
+    margin: 0;
+    padding: 20px 28px 12px;
+    font-family: var(--font-display);
+    font-size: var(--text-display-md);
+    letter-spacing: 0.12em;
+    color: var(--color-gold-bright);
+    text-shadow:
+      0 2px 0 var(--color-gold-shadow),
+      0 4px 12px rgba(0, 0, 0, 0.6);
+  }
+
+  .credits-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 8px 24px 20px;
+    color: var(--color-text);
+    font-family: var(--font-body);
+    font-size: var(--text-body);
+    line-height: 1.55;
+  }
+  .credits-body section { margin-bottom: 18px; }
+  .credits-body section:last-child { margin-bottom: 4px; }
+  .credits-body h3 {
+    @apply uppercase;
+    margin: 0 0 8px 0;
+    font-family: var(--font-display);
+    font-size: var(--text-display-sm);
+    letter-spacing: 0.08em;
+    color: var(--color-gold);
+  }
+  .credits-body p { margin: 0 0 8px 0; }
+  .credits-body p:last-child { margin-bottom: 0; }
+  .credits-body ul {
+    margin: 6px 0 0 0;
+    padding-left: 20px;
+  }
+  .credits-body li { margin-bottom: 4px; }
+  .credits-body a {
+    color: var(--color-gold-bright);
+    text-decoration: underline;
+    text-decoration-color: rgba(255, 229, 138, 0.5);
+    text-underline-offset: 2px;
+    word-break: break-word;
+  }
+  .credits-body a:hover,
+  .credits-body a:focus-visible {
+    color: #ffffff;
+    text-decoration-color: var(--color-gold-bright);
+    outline: none;
+  }
+  .credits-body strong {
+    color: var(--color-gold-bright);
+    font-weight: 700;
+  }
+
+  .credits-dedication {
+    @apply text-center;
+    padding: 8px 4px 18px;
+  }
+  .credits-dedication-body {
+    margin: 0 0 10px 0;
+    font-family: var(--font-body);
+    font-style: italic;
+    font-weight: 500;
+    font-size: var(--text-body);
+    line-height: 1.5;
+    color: var(--color-gold-bright);
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
+  }
+  .credits-dedication-sig {
+    margin: 0;
+    font-family: var(--font-body);
+    font-style: italic;
+    font-size: var(--text-body-sm);
+    letter-spacing: 0.08em;
+    color: #d9c88a;
+  }
+
+  .credits-disclaimer {
+    @apply rounded-xl;
+    padding: 14px 16px;
+    background: rgba(2, 8, 24, 0.55);
+    border: 1px solid rgba(245, 198, 52, 0.3);
+  }
+  .credits-disclaimer p {
+    font-style: italic;
+  }
+
+  .credits-actions {
+    @apply flex justify-center;
+    padding: 12px 24px max(16px, env(safe-area-inset-bottom));
+    border-top: 1px solid rgba(245, 198, 52, 0.18);
+  }
+  .credits-btn {
+    @apply rounded-full cursor-pointer uppercase;
+    appearance: none;
+    border: none;
+    min-width: 160px;
+    min-height: 48px;
+    padding: 0 28px;
+    background: linear-gradient(180deg,
+      var(--color-gold-bright) 0%,
+      var(--color-gold) 55%,
+      var(--color-gold-mid) 100%);
+    color: var(--color-sf-3);
+    font-family: var(--font-display);
+    font-size: var(--text-body);
+    letter-spacing: 0.18em;
+    box-shadow:
+      0 2px 0 var(--color-gold-shadow),
+      0 6px 14px rgba(0, 0, 0, 0.45);
+    transition:
+      transform 120ms ease,
+      box-shadow 120ms ease,
+      filter 120ms ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .credits-btn:hover,
+  .credits-btn:focus-visible {
+    filter: brightness(1.05);
+    outline: none;
+  }
+  .credits-btn:active {
+    transform: translateY(1px);
+    box-shadow:
+      0 1px 0 var(--color-gold-shadow),
+      0 3px 8px rgba(0, 0, 0, 0.45);
+  }
+}
+
+@keyframes credits-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes credits-rise {
+  from { opacity: 0; transform: translateY(18px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .credits-scrim,
+  .credits-card { animation: none; }
+}

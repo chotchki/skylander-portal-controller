@@ -313,7 +313,7 @@ screenshot tour acting as the per-tranche regression contract.
   Each tranche: port → trunk build → screenshot tour → diff PNGs →
   commit if intentional.
 
-- [ ] 9.5 — Escape-hatch policy. Document in `CLAUDE.md` when to
+- [x] 9.5 — Escape-hatch policy. Document in `CLAUDE.md` when to
   reach for a per-component CSS file vs inline utilities:
   - **Inline utilities (default):** layout, spacing, typography,
     colour, single-layer effects.
@@ -324,7 +324,7 @@ screenshot tour acting as the per-tranche regression contract.
     pseudo-element content, `:has()` selectors that can't be
     expressed with utilities. Co-located with the component.
 
-- [ ] 9.6 — Sweep + post-condition. Diff `app.css` before/after.
+- [x] 9.6 — Sweep + post-condition. Diff `app.css` before/after.
   Final state: `app.css` slims to design-token `:root` vars +
   `@font-face` declarations + body baseline + the handful of
   component CSS files imported by `input.css`. Rename to

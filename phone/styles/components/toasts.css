@@ -1,0 +1,106 @@
+/*
+ * <Toasts> stack + per-level toasts (PLAN 4.13 — heraldic redesign).
+ * (PLAN 9.6 — slipped through 9.4 and ported here as part of the
+ * sweep tranche.)
+ *
+ * Bottom-anchored fixed stack at the body edge; each toast is a
+ * framed-panel-material card with a 4px color-coded left strip
+ * (Error / Warn / Success / Info) and a matching glyph in the icon
+ * column. Per-level border tint via `color-mix()`.
+ *
+ * The original app.css had a redundant Phase-3 `.toast` block that
+ * was shadowed by this Phase-4 block; both were dropped on migration
+ * — the redesign owns the only remaining toast styling. The
+ * `toast-in` keyframe animates the entrance.
+ *
+ * Class names unchanged.
+ */
+
+@layer components {
+  .toast-stack {
+    @apply fixed flex flex-col-reverse pointer-events-none z-[100];
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: calc(env(safe-area-inset-bottom) + 16px);
+    gap: 8px;
+    width: min(420px, calc(100% - 32px));
+  }
+
+  .toast {
+    @apply flex items-stretch overflow-hidden rounded-xl pointer-events-auto;
+    padding: 10px 14px 10px 0;
+    color: #fff4e0;
+    background:
+      radial-gradient(ellipse 120% 80% at 50% 0%, rgba(255, 230, 120, 0.06), transparent 60%),
+      linear-gradient(180deg,
+        rgba(26, 58, 138, 0.95),
+        rgba(10, 36, 100, 0.97) 50%,
+        rgba(6, 20, 54, 0.98));
+    border: 1.5px solid var(--color-gold-mid);
+    box-shadow:
+      0 4px 16px rgba(0, 0, 0, 0.5),
+      inset 0 1px 0 rgba(255, 229, 138, 0.08);
+    font-family: var(--font-body);
+    font-size: var(--text-body-italic);
+    font-weight: 400;
+    line-height: 1.4;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+    animation: toast-in var(--dur-quick) ease-out;
+  }
+
+  /* Color-coded left strip. */
+  .toast::before {
+    content: "";
+    @apply shrink-0 self-stretch;
+    width: 4px;
+    margin-right: 12px;
+  }
+  /* Reset any inherited pseudo. */
+  .toast::after { display: none; }
+
+  /* Per-level strip + border. */
+  .toast-error::before    { background: var(--color-danger-p4); }
+  .toast-warn::before     { background: var(--color-gold); }
+  .toast-success::before  { background: var(--color-success); }
+  .toast-info::before     { background: #4a9eff; }
+
+  .toast-error   { border-color: color-mix(in srgb, var(--color-danger-p4) 40%, var(--color-gold-mid)); }
+  .toast-warn    { border-color: var(--color-gold); }
+  .toast-success { border-color: color-mix(in srgb, var(--color-success) 40%, var(--color-gold-mid)); }
+  .toast-info    { border-color: color-mix(in srgb, #4a9eff           40%, var(--color-gold-mid)); }
+
+  /* Icon column + message column. */
+  .toast-icon {
+    @apply inline-grid place-items-center self-center shrink-0;
+    width: 22px;
+    height: 22px;
+    margin-right: 10px;
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .toast-msg {
+    @apply self-center;
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* Per-level icon tint matches the strip — colour + glyph redundancy
+     is the accessibility minimum for any status-by-colour UI. */
+  .toast-error   .toast-icon { color: var(--color-danger-p4); }
+  .toast-warn    .toast-icon { color: var(--color-gold); }
+  .toast-success .toast-icon { color: var(--color-success); }
+  .toast-info    .toast-icon { color: #4a9eff; }
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation-duration: 0.15s;
+    animation-timing-function: ease-out;
+  }
+}
