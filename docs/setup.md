@@ -11,7 +11,7 @@ This project intentionally ships as a thin wrapper. It does not bundle the emula
 ### Hardware
 
 - A Windows 11 PC. The target deployment is an HTPC hooked to a TV, with Steam in Big Picture mode acting as the shell.
-- An 86-inch TV is the form factor the launcher UI is tuned for. Any large display works; the launcher just targets that reading distance.
+- A large TV is the target form factor. The launcher UI is tuned for lean-back viewing from across the room.
 - A phone or tablet on the same Wi-Fi network as the HTPC. iOS Safari and Android Chrome are the tested targets.
 
 ### Software you install yourself
