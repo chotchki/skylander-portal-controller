@@ -183,67 +183,7 @@ impl UiaPortalDriver {
             .context("main window has no native HWND")?
             .into();
         let main_hwnd = HWND(main_hwnd as _);
-        let viewport_hwnd = find_viewport_hwnd();
-        let mut saved_main_rect = RECT::default();
-        unsafe {
-            let _ = GetWindowRect(main_hwnd, &mut saved_main_rect);
-        }
-
-        // Minimise the viewport so it can't steal focus while we drive the
-        // main window's menu bar. No-op if there's no game running.
-        if let Some(vp) = viewport_hwnd {
-            unsafe {
-                let _ = ShowWindow(vp, SW_MINIMIZE);
-            }
-            sleep(MENU_STEP_PAUSE);
-        }
-
-        // Move main off-screen so the Alt-menu highlight isn't visible. The
-        // menu popups Qt spawns during navigation will still render at
-        // visible screen coords (Qt clamps popups to the screen); the dialog
-        // does the same until we hide it below.
-        unsafe {
-            let _ = SetWindowPos(
-                main_hwnd,
-                None,
-                OFFSCREEN_POS.0,
-                OFFSCREEN_POS.1,
-                0,
-                0,
-                SWP_NOSIZE | SWP_NOZORDER,
-            );
-        }
-        sleep(MENU_STEP_PAUSE);
-
-        // RAII: always restore main's original rect + viewport even on error.
-        struct RestoreGuard {
-            main_hwnd: HWND,
-            rect: RECT,
-            viewport: Option<HWND>,
-        }
-        impl Drop for RestoreGuard {
-            fn drop(&mut self) {
-                unsafe {
-                    let _ = SetWindowPos(
-                        self.main_hwnd,
-                        None,
-                        self.rect.left,
-                        self.rect.top,
-                        0,
-                        0,
-                        SWP_NOSIZE | SWP_NOZORDER,
-                    );
-                    if let Some(vp) = self.viewport {
-                        let _ = ShowWindow(vp, SW_RESTORE);
-                    }
-                }
-            }
-        }
-        let _guard = RestoreGuard {
-            main_hwnd,
-            rect: saved_main_rect,
-            viewport: viewport_hwnd,
-        };
+        let _guard = prep_main_offscreen(main_hwnd);
 
         // Retry the whole nav — RPCS3 drops menu events during heavy work
         // (shader compile, update check popup, etc.). On failure we Esc out of
@@ -458,59 +398,7 @@ impl UiaPortalDriver {
         let main = self.main_window(&walker)?;
         let main_hwnd: isize = main.get_native_window_handle().context("main HWND")?.into();
         let main_hwnd = HWND(main_hwnd as _);
-        let viewport_hwnd = find_viewport_hwnd();
-        let mut saved_main_rect = RECT::default();
-        unsafe {
-            let _ = GetWindowRect(main_hwnd, &mut saved_main_rect);
-        }
-
-        if let Some(vp) = viewport_hwnd {
-            unsafe {
-                let _ = ShowWindow(vp, SW_MINIMIZE);
-            }
-            sleep(MENU_STEP_PAUSE);
-        }
-        unsafe {
-            let _ = SetWindowPos(
-                main_hwnd,
-                None,
-                OFFSCREEN_POS.0,
-                OFFSCREEN_POS.1,
-                0,
-                0,
-                SWP_NOSIZE | SWP_NOZORDER,
-            );
-        }
-        sleep(MENU_STEP_PAUSE);
-
-        struct RestoreGuard {
-            main_hwnd: HWND,
-            rect: RECT,
-            viewport: Option<HWND>,
-        }
-        impl Drop for RestoreGuard {
-            fn drop(&mut self) {
-                unsafe {
-                    let _ = SetWindowPos(
-                        self.main_hwnd,
-                        None,
-                        self.rect.left,
-                        self.rect.top,
-                        0,
-                        0,
-                        SWP_NOSIZE | SWP_NOZORDER,
-                    );
-                    if let Some(vp) = self.viewport {
-                        let _ = ShowWindow(vp, SW_RESTORE);
-                    }
-                }
-            }
-        }
-        let _guard = RestoreGuard {
-            main_hwnd,
-            rect: saved_main_rect,
-            viewport: viewport_hwnd,
-        };
+        let _guard = prep_main_offscreen(main_hwnd);
 
         focus_main_window(main_hwnd).context("focus main window")?;
         sleep(MENU_STEP_PAUSE);
@@ -997,60 +885,8 @@ impl crate::PortalDriver for UiaPortalDriver {
         // off-screen + viewport-minimize dance as `quit_via_file_menu`
         // so UIA can see the main window's widgets and we can
         // PostMessage a click without the egui cover or game frame
-        // getting in the way. RestoreGuard puts everything back on
-        // drop, even on error paths.
-        let viewport_hwnd = find_viewport_hwnd();
-        let mut saved_rect = RECT::default();
-        unsafe {
-            let _ = GetWindowRect(main_hwnd, &mut saved_rect);
-        }
-        if let Some(vp) = viewport_hwnd {
-            unsafe {
-                let _ = ShowWindow(vp, SW_MINIMIZE);
-            }
-            sleep(MENU_STEP_PAUSE);
-        }
-        unsafe {
-            let _ = SetWindowPos(
-                main_hwnd,
-                None,
-                OFFSCREEN_POS.0,
-                OFFSCREEN_POS.1,
-                0,
-                0,
-                SWP_NOSIZE | SWP_NOZORDER,
-            );
-        }
-        sleep(MENU_STEP_PAUSE);
-
-        struct RestoreGuard {
-            main_hwnd: HWND,
-            rect: RECT,
-            viewport: Option<HWND>,
-        }
-        impl Drop for RestoreGuard {
-            fn drop(&mut self) {
-                unsafe {
-                    let _ = SetWindowPos(
-                        self.main_hwnd,
-                        None,
-                        self.rect.left,
-                        self.rect.top,
-                        0,
-                        0,
-                        SWP_NOSIZE | SWP_NOZORDER,
-                    );
-                    if let Some(vp) = self.viewport {
-                        let _ = ShowWindow(vp, SW_RESTORE);
-                    }
-                }
-            }
-        }
-        let _guard = RestoreGuard {
-            main_hwnd,
-            rect: saved_rect,
-            viewport: viewport_hwnd,
-        };
+        // getting in the way.
+        let _guard = prep_main_offscreen(main_hwnd);
 
         // Find a Button or MenuItem whose name looks like "Stop" — RPCS3
         // offers both a toolbar "Stop" button and a "Stop Emulation"
@@ -1584,6 +1420,79 @@ fn verify_viewport_title(title: &str, expected_name: &str) -> Result<()> {
     // string — RPCS3 title format variant (punctuation, trademark
     // symbol, etc.). Trust the boot.
     Ok(())
+}
+
+/// RAII guard that reverses [`prep_main_offscreen`]'s side effects on
+/// drop. Restores the main window's saved rect (so it's back where the
+/// user had it before we slung it off-screen) and unminimizes the game
+/// viewport if there was one. Always-fire-on-drop semantics let
+/// callers `?` through their menu-nav body without leaking the
+/// off-screen state on the error path.
+struct OffscreenMainGuard {
+    main_hwnd: HWND,
+    saved_rect: RECT,
+    viewport: Option<HWND>,
+}
+
+impl Drop for OffscreenMainGuard {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = SetWindowPos(
+                self.main_hwnd,
+                None,
+                self.saved_rect.left,
+                self.saved_rect.top,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER,
+            );
+            if let Some(vp) = self.viewport {
+                let _ = ShowWindow(vp, SW_RESTORE);
+            }
+        }
+    }
+}
+
+/// Minimize the game viewport (if any) and slide RPCS3's main window
+/// off-screen so subsequent UIA / synthesised-keyboard menu nav can
+/// drive it without:
+///   - the game viewport stealing focus,
+///   - the user seeing the Alt-menu highlight bouncing around the
+///     main window,
+///   - Qt menu popups landing over the player's view.
+///
+/// Returns an [`OffscreenMainGuard`] that reverses both moves on drop.
+/// Three call-sites used to copy this whole dance inline (the original
+/// `RestoreGuard` declared once per function); extracted 2026-04-25.
+fn prep_main_offscreen(main_hwnd: HWND) -> OffscreenMainGuard {
+    let viewport_hwnd = find_viewport_hwnd();
+    let mut saved_rect = RECT::default();
+    unsafe {
+        let _ = GetWindowRect(main_hwnd, &mut saved_rect);
+    }
+    if let Some(vp) = viewport_hwnd {
+        unsafe {
+            let _ = ShowWindow(vp, SW_MINIMIZE);
+        }
+        sleep(MENU_STEP_PAUSE);
+    }
+    unsafe {
+        let _ = SetWindowPos(
+            main_hwnd,
+            None,
+            OFFSCREEN_POS.0,
+            OFFSCREEN_POS.1,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER,
+        );
+    }
+    sleep(MENU_STEP_PAUSE);
+    OffscreenMainGuard {
+        main_hwnd,
+        saved_rect,
+        viewport: viewport_hwnd,
+    }
 }
 
 fn find_viewport_hwnd() -> Option<HWND> {
