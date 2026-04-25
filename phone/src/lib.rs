@@ -31,6 +31,12 @@ use crate::screens::*;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TakeoverReason {
     pub by_kaos: String,
+    /// Wall-clock seconds the kickback button should stay greyed
+    /// out before a reload could even reach a free seat. Captured
+    /// from `Event::TakenOver`'s `cooldown_remaining_secs` at the
+    /// instant we received it; the overlay component re-runs a
+    /// 1Hz timer from there. PLAN 8.2a.
+    pub cooldown_remaining_secs: u32,
 }
 
 /// Pending "Resume last setup?" offer from `Event::ResumePrompt`. Set on

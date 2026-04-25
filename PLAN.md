@@ -143,12 +143,20 @@ Today: kickback button is enabled immediately on the Kaos takeover
 screen; server returns 401-RetryAfter if the 60s cooldown hasn't
 elapsed. Should grey-out + count down instead.
 
-- [ ] 8.2a.1 — Server includes `cooldown_remaining_secs` in the
-  `TakenOver` event payload.
-- [ ] 8.2a.2 — Phone Kaos overlay starts a local 1Hz countdown from
-  that value.
-- [ ] 8.2a.3 — Button styled disabled while countdown > 0 (grey +
-  ring or seconds-remaining caption); enables at zero.
+- [x] 8.2a.1 — Server includes `cooldown_remaining_secs` in the
+  `TakenOver` event payload. Sourced from `FORCED_EVICT_COOLDOWN`
+  at the AdmittedByEvicting site; phone-side wire is `#[serde(default)]`
+  so a stale phone bundle still parses TakenOver against a newer server.
+- [x] 8.2a.2 — Phone Kaos overlay starts a local 1Hz countdown from
+  that value. `KaosOverlay` runs an `Effect` that seeds a
+  `cooldown_remaining` signal off the takeover prop and ticks via
+  a self-cancelling `setInterval` (clears itself when the count
+  hits zero or the overlay dismisses).
+- [x] 8.2a.3 — Button styled disabled while countdown > 0 (grey +
+  ring or seconds-remaining caption); enables at zero. `disabled=`
+  binding + `takeover-kick-btn--cooldown` class drive the muted
+  visual; label appends ` · {n}s` while ticking, reverts to plain
+  "KICK BACK IN" on zero.
 
 ### 8.2b Kaos feature (CLAUDE.md "Kaos feature")
 The Skylanders-themed mid-game disruption — wall-clock timer fires,

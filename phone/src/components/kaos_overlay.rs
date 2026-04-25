@@ -23,7 +23,12 @@
 // reason.
 #![allow(private_interfaces)]
 
+use std::cell::Cell;
+use std::rc::Rc;
+
 use leptos::prelude::*;
+use wasm_bindgen::JsCast;
+use wasm_bindgen::closure::Closure;
 
 use crate::TakeoverReason;
 
@@ -38,6 +43,75 @@ pub(crate) fn KaosOverlay(takeover: RwSignal<Option<TakeoverReason>>) -> impl In
     // and closes. If cooldown elapsed, we land back at the ProfilePicker
     // (server re-locks all profiles on a fresh session so PIN re-entry is
     // required — SPEC Q46).
+
+    // Local countdown signal driving the disabled state on the
+    // KICK BACK IN button (PLAN 8.2a). Initialised from the
+    // `cooldown_remaining_secs` carried on the TakenOver event;
+    // a 1Hz interval decrements until zero, then the button
+    // re-enables. Using `Effect` with `on_cleanup` so the timer
+    // is properly torn down if the overlay unmounts mid-countdown
+    // (e.g. takeover signal cleared programmatically in tests).
+    let cooldown_remaining = RwSignal::new(0u32);
+
+    Effect::new(move |_| {
+        // Re-runs whenever `takeover` changes. On a transition to
+        // Some(_), seed the countdown and start the interval; on
+        // None, leave the countdown at 0 (no timer needed — the
+        // overlay is unmounting).
+        let Some(t) = takeover.get() else {
+            return;
+        };
+        cooldown_remaining.set(t.cooldown_remaining_secs);
+        if t.cooldown_remaining_secs == 0 {
+            return;
+        }
+
+        // Self-cancelling interval. Stored by reference inside its
+        // own callback so the last tick can clear itself once the
+        // countdown reaches zero. Single-threaded WASM, so
+        // `Rc<Cell<_>>` is fine; `on_cleanup` would need `Send +
+        // Sync` which `Rc` isn't, so instead the tick checks
+        // `takeover.get_untracked()` and self-cancels if the
+        // overlay was dismissed (kick → page reload kills the
+        // timer for free; programmatic dismissal goes through the
+        // None branch). Closure leaks via `forget` — typical
+        // lifecycle ends in a full page reload, so this is bounded.
+        let handle: Rc<Cell<Option<i32>>> = Rc::new(Cell::new(None));
+        let tick = {
+            let handle = handle.clone();
+            Closure::<dyn FnMut()>::new(move || {
+                let dismissed = takeover.get_untracked().is_none();
+                let next = cooldown_remaining.get_untracked().saturating_sub(1);
+                cooldown_remaining.set(next);
+                if dismissed || next == 0 {
+                    if let (Some(h), Some(w)) = (handle.take(), web_sys::window()) {
+                        w.clear_interval_with_handle(h);
+                    }
+                }
+            })
+        };
+
+        if let Some(w) = web_sys::window() {
+            if let Ok(h) = w.set_interval_with_callback_and_timeout_and_arguments_0(
+                tick.as_ref().unchecked_ref(),
+                1000,
+            ) {
+                handle.set(Some(h));
+            }
+        }
+        tick.forget();
+    });
+
+    let kick_disabled = move || cooldown_remaining.get() > 0;
+    let kick_label = move || {
+        let remaining = cooldown_remaining.get();
+        if remaining > 0 {
+            format!("KICK BACK IN \u{00B7} {remaining}s")
+        } else {
+            "KICK BACK IN".to_string()
+        }
+    };
+
     view! {
         <section class="takeover-void">
             <div class="takeover-hexgrid"></div>
@@ -70,13 +144,18 @@ pub(crate) fn KaosOverlay(takeover: RwSignal<Option<TakeoverReason>>) -> impl In
 
                 <button
                     class="takeover-kick-btn"
+                    class:takeover-kick-btn--cooldown=kick_disabled
+                    disabled=kick_disabled
                     on:click=move |_| {
+                        if kick_disabled() {
+                            return;
+                        }
                         if let Some(loc) = web_sys::window().map(|w| w.location()) {
                             let _ = loc.reload();
                         }
                     }
                 >
-                    "KICK BACK IN"
+                    {kick_label}
                 </button>
             </div>
 

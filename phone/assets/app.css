@@ -2666,6 +2666,34 @@ input, textarea {
     0 4px 12px rgba(218,40,168,0.4);
 }
 
+/* PLAN 8.2a.3 — cooldown variant. While the forced-evict cooldown
+   is ticking down, the button is disabled and visually muted: the
+   pulsing magenta gradient swaps to flat dim grey, the seconds
+   caption is appended in the label, and the press-down animation
+   is suppressed. Honors `disabled=true` so screen readers + keyboard
+   nav also see the unavailable state. */
+.takeover-kick-btn--cooldown,
+.takeover-kick-btn:disabled {
+  background: linear-gradient(180deg, #50404c 0%, #3a2c38 40%, #2a1d28 100%);
+  border-color: rgba(120, 90, 110, 0.6);
+  color: rgba(255, 255, 255, 0.55);
+  cursor: not-allowed;
+  text-shadow: 0 1px 0 var(--k-void-3);
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.06),
+    inset 0 -2px 0 rgba(0,0,0,0.4),
+    0 4px 0 #1a1018;
+  animation: none;
+}
+.takeover-kick-btn--cooldown:active,
+.takeover-kick-btn:disabled:active {
+  transform: none;
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.06),
+    inset 0 -2px 0 rgba(0,0,0,0.4),
+    0 4px 0 #1a1018;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .takeover-hexgrid,
   .takeover-sparks,

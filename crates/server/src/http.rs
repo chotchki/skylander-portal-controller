@@ -1590,9 +1590,18 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, reclaim_profile: Opt
                     // drop the figures it left on the portal.
                     state.clear_slots_for_profile(&pid).await;
                 } else {
+                    // Live phone is being shown the takeover screen.
+                    // Cooldown was just started by the registry (PLAN
+                    // 3.10), so the remaining wall-clock window is
+                    // exactly `FORCED_EVICT_COOLDOWN`. Phone uses this
+                    // to drive its local 1Hz countdown + disabled
+                    // KICK BACK IN button (PLAN 8.2a).
+                    let cooldown_remaining_secs =
+                        crate::profiles::FORCED_EVICT_COOLDOWN.as_secs() as u32;
                     let _ = state.events.send(Event::TakenOver {
                         session_id: evicted.0,
                         by_kaos: random_kaos_taunt().to_string(),
+                        cooldown_remaining_secs,
                     });
                 }
                 session

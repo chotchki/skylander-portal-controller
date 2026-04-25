@@ -129,10 +129,18 @@ pub enum Event {
         boot_id: u64,
     },
     /// This session was forcibly evicted by a 3rd connection (FIFO). Phone
-    /// shows the Kaos takeover screen with a "kick back" button.
+    /// shows the Kaos takeover screen with a "kick back" button. The
+    /// `cooldown_remaining_secs` field is the wall-clock window during
+    /// which a reload would still get bounced by the server's
+    /// forced-evict cooldown; phone drives a local 1Hz countdown from
+    /// it and disables KICK BACK IN until it hits zero (PLAN 8.2a).
+    /// Defaulted for backwards compat with the v1.0.0 server (which
+    /// didn't include the field).
     TakenOver {
         session_id: u64,
         by_kaos: String,
+        #[serde(default)]
+        cooldown_remaining_secs: u32,
     },
     PortalSnapshot {
         slots: Vec<SlotState>,

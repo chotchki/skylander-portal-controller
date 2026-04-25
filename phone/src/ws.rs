@@ -275,9 +275,13 @@ fn spawn_connect(
                     Ok(Event::TakenOver {
                         session_id,
                         by_kaos,
+                        cooldown_remaining_secs,
                     }) => {
                         if Some(session_id) == crate::api::current_session_id() {
-                            takeover.set(Some(TakeoverReason { by_kaos }));
+                            takeover.set(Some(TakeoverReason {
+                                by_kaos,
+                                cooldown_remaining_secs,
+                            }));
                         }
                     }
                     Ok(Event::ResumePrompt { session_id, slots }) => {

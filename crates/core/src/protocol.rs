@@ -63,7 +63,17 @@ pub enum Event {
     /// The target session has been forcibly evicted by a 3rd connection
     /// (FIFO — oldest out). The evicted phone shows the "Kaos took over"
     /// screen. Broadcast; clients ignore events not for their `session_id`.
-    TakenOver { session_id: u64, by_kaos: String },
+    ///
+    /// `cooldown_remaining_secs` is the wall-clock seconds the evicted
+    /// phone must wait before the server will accept its KICK BACK IN
+    /// reload — the FIFO forced-evict cooldown (PLAN 3.10/8.2a). Phones
+    /// drive a local 1Hz countdown from this value and grey-out the
+    /// kickback button until it reaches zero.
+    TakenOver {
+        session_id: u64,
+        by_kaos: String,
+        cooldown_remaining_secs: u32,
+    },
     /// Offered to a session right after its profile unlocks, when that
     /// profile has a prior portal layout the user can resume. Phone shows
     /// a "Resume last setup?" modal; on confirm it issues per-slot
