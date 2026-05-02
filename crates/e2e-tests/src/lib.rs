@@ -738,28 +738,41 @@ pub async fn launch_giants(base: &str) -> Result<()> {
 }
 
 impl Phone {
-    /// Wait for the portal grid to appear (post-GamePicker).
+    /// Wait for the portal grid to appear (post-GamePicker). Phase 4
+    /// renamed `.portal` to `.portal-p4` (PLAN 10.3.6); the old
+    /// selector still appears in stale tests and gets fixed file-
+    /// by-file.
     pub async fn wait_for_portal(&self, timeout: Duration) -> Result<()> {
-        self.wait_for(Locator::Css(".portal"), timeout).await?;
+        self.wait_for(Locator::Css(".portal-p4"), timeout).await?;
         Ok(())
     }
 
     /// Text inside a specific slot's name label (1-indexed).
+    /// Reads via `innerText` so `-webkit-text-stroke` titles surface
+    /// the actual rendered text (WebDriver `getElementText` returns
+    /// "" for those — see [`Phone::inner_text`]).
     pub async fn slot_text(&self, slot: u8) -> Result<String> {
-        let slots = self
-            .client
-            .find_all(Locator::Css(".portal .slot .slot-name"))
-            .await?;
         let idx = (slot as usize).saturating_sub(1);
-        let el = slots
+        let labels = self
+            .client
+            .find_all(Locator::Css(".portal-p4 .p4-slot-label"))
+            .await?;
+        let _ = labels
             .get(idx)
             .ok_or_else(|| anyhow!("no slot {slot} found"))?;
-        Ok(el.text().await.unwrap_or_default())
+        // Use innerText via JS — Phase-4 slot labels can be styled
+        // with text-stroke or absolute-positioned via `::before`
+        // pseudo-elements that confuse WebDriver's getText.
+        let selector = format!(".portal-p4 .p4-slot:nth-of-type({slot}) .p4-slot-label");
+        Ok(self.inner_text(&selector).await?.unwrap_or_default())
     }
 
     /// Tap the Nth slot (1-indexed).
     pub async fn tap_slot(&self, slot: u8) -> Result<()> {
-        let slots = self.client.find_all(Locator::Css(".portal .slot")).await?;
+        let slots = self
+            .client
+            .find_all(Locator::Css(".portal-p4 .p4-slot"))
+            .await?;
         let idx = (slot as usize).saturating_sub(1);
         let el = slots
             .get(idx)
@@ -769,11 +782,16 @@ impl Phone {
     }
 
     /// Tap the first figure card whose visible name matches.
+    /// Skips the synthetic `.scan-new` "SCAN NEW" sentinel card so
+    /// callers can search by figure name without false positives.
     pub async fn tap_figure_named(&self, name: &str) -> Result<()> {
-        let cards = self.client.find_all(Locator::Css(".card")).await?;
+        let cards = self
+            .client
+            .find_all(Locator::Css(".fig-card-p4:not(.scan-new)"))
+            .await?;
         for card in cards {
             let label = card
-                .find(Locator::Css(".card-name"))
+                .find(Locator::Css(".fig-name-p4"))
                 .await?
                 .text()
                 .await
@@ -788,9 +806,23 @@ impl Phone {
 
     /// Filter the browser by typing into the search box.
     pub async fn search(&self, q: &str) -> Result<()> {
-        let input = self.client.find(Locator::Css(".search")).await?;
+        let input = self.client.find(Locator::Css(".search-input-p4")).await?;
         input.send_keys(q).await?;
         Ok(())
+    }
+
+    /// Read `element.innerText` for the first match of `selector`.
+    /// Bypasses WebDriver's `getElementText`, which returns "" for
+    /// elements styled with `-webkit-text-stroke` (the gold-stroked
+    /// `<DisplayHeading>` titles all over the SPA hit this). Returns
+    /// `None` if no element matches. PLAN 10.3.6.
+    pub async fn inner_text(&self, selector: &str) -> Result<Option<String>> {
+        let script = format!(
+            "var el = document.querySelector({}); return el ? el.innerText : null;",
+            serde_json::to_string(selector)?,
+        );
+        let val = self.client.execute(&script, vec![]).await?;
+        Ok(val.as_str().map(str::to_string))
     }
 
     /// Count currently-rendered toasts.

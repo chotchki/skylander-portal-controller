@@ -496,30 +496,67 @@ suite green on macOS.
   install commands (`brew install --cask chromedriver`), version-
   mismatch troubleshooting (Chrome ↔ ChromeDriver major-version
   pin), per-OS screenshot baseline note (CoreText vs DirectWrite).
-- [ ] 10.3.6 — **Reconcile chromedriver suite with current SPA.** The
-  bulk of `crates/e2e-tests/tests/*.rs` still target selectors and
-  text from before Phase 4's design-system pass (`DisplayHeading`,
-  `GoldBezel`, etc.) and Phase 9's pending Tailwind migration.
-  Concrete known issues: (a) `.game-picker h2` doesn't exist —
-  picker title is now in `<div class="display-heading"><span
-  class="dh-text">…</span></div>` (smoke.rs fixed in 10.3.3 by
-  asserting on `.game-card` count instead). (b) Headless Chrome's
-  `getElementText` returns "" for `-webkit-text-stroke` titles, so
-  text-content assertions on display headings need to switch to
-  structural assertions or read `textContent` via JS. (c)
-  `multi_phone.rs` 5/6 failing — likely a mix of DOM drift +
-  pre-8.1 ghost-session timing assumptions. Inventory all failures
-  per-file, fix per-test, commit incrementally. Side-effect:
-  improvements to the harness's Phone helpers (selector patterns
-  worth extracting, retry semantics) likely fall out of this pass
-  and get folded back into `src/lib.rs`. Not gating Phase 10 close
-  but worth completing before the screenshot tour rebaseline (10.3.4).
+- [~] 10.3.6 — **Reconcile chromedriver suite with current SPA.**
+  Foundational selector + helper modernization done; per-test flow
+  rewrites pending (multi-PR workstream).
+
+  **Done in this pass:**
+  - `Phone` helpers in `crates/e2e-tests/src/lib.rs` modernized:
+    `wait_for_portal` → `.portal-p4`, `tap_slot/slot_text` →
+    `.portal-p4 .p4-slot[*-label]`, `tap_figure_named` →
+    `.fig-card-p4:not(.scan-new) .fig-name-p4`, `search` →
+    `.search-input-p4`. New `Phone::inner_text` helper reads via
+    `element.innerText` JS so `-webkit-text-stroke` headings
+    (DisplayHeading family) surface their text content — WebDriver's
+    native `getElementText` returns "" for those.
+  - `regressions.rs` + `working_copies.rs` direct-selector references
+    swept: `.card` → `.fig-card-p4:not(.scan-new)`,
+    `.portal .slot .slot-btn.danger` →
+    `.portal-p4 .p4-slot .p4-slot-action--remove`. Slot-label string
+    constants updated to lowercase Phase-4 values
+    (`"Empty"` → `"empty"`, `"Loading…"` → `"…"`).
+  - Smoke test verified still green after the helper rewrite.
+
+  **Real finding from the per-test triage** (the reason this is
+  bigger than originally scoped): the SPA's *flow* changed too, not
+  just selectors. Three concrete examples:
+  - `regressions.rs` calls `phone.search("Spyro")` immediately after
+    `wait_for_portal`. Phase-4 hides `.search-input-p4` behind the
+    toy-box lid + a `.search-toggle-p4` toggle. Test needs to open
+    the lid and toggle search before the input is reachable.
+  - PLAY_TEST PLAN 8.3 made empty portal slots inert
+    (`<Show when=!is_empty>`). Tests that did "tap empty slot → see
+    figure picker" no longer have anything to tap. Placement is
+    now via the toy-box lid only.
+  - `profiles.rs` walks a form-based create flow; profile picker
+    redesign moved to a wizard + PIN-pad UX. Selectors AND
+    interaction sequence both changed.
+
+  **Pending per-test** (each is its own follow-up bite):
+  - `connection_lost.rs` — heading text via `inner_text` helper.
+  - `regressions.rs` — open toy-box lid before search/figure-tap.
+  - `working_copies.rs` — same lid-open dance.
+  - `profiles.rs` — full rewrite for the wizard + PIN-pad flow.
+  - `multi_phone.rs` — selector + flow rewrites + verify
+    `wait_for_session_id` timing assumptions match post-8.1
+    ghost-session lifecycle.
+  - `screenshot_tour.rs` — already uses modern selectors; rebaseline
+    PNGs as part of 10.3.4.
+  - `live_integration.rs`, `live_lifecycle_switch.rs` — already
+    modern; Windows-live-RPCS3-only, can't be exercised on Mac.
+  - `visual_*` — already modern; visual-only, no functional asserts.
+
   **Process hygiene reminder:** `Phone::new` spawns a headless
   Chrome that gets orphaned when the test panics before
   `Phone::close` — manual `pkill -9 -f 'enable-automation.*webdriver'`
-  + `rm -rf /var/folders/*/T/org.chromium.Chromium.scoped_dir.*`
-  cleans up between iteration runs. Worth a `Drop` impl on `Phone`
-  long term.
+  + `find /var/folders -maxdepth 5 -type d -name
+  'org.chromium.Chromium.scoped_dir.*' -exec rm -rf {} +` cleans
+  up between iteration runs. Worth a `Drop` impl on `Phone` long
+  term.
+
+  **Iterate cadence note:** rerun a single test file at a time
+  with `--test-threads=1` to avoid Chrome contention; full-suite
+  parallel runs were timing out tests that pass solo.
 
 ### 10.4 Simultaneous iPad + iPhone simulator e2e
 This is the core user value: drive both an iPad and an iPhone

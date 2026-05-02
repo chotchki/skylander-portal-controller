@@ -43,7 +43,11 @@ async fn spam_click_same_slot() {
     phone.tap_slot(1).await.unwrap();
 
     // Rapid-fire five clicks on the first card.
-    let cards = phone.client.find_all(Locator::Css(".card")).await.unwrap();
+    let cards = phone
+        .client
+        .find_all(Locator::Css(".fig-card-p4:not(.scan-new)"))
+        .await
+        .unwrap();
     let first = cards.first().expect("at least one figure");
     for _ in 0..5 {
         let _ = first.clone().click().await;
@@ -55,7 +59,7 @@ async fn spam_click_same_slot() {
             phone
                 .slot_text(1)
                 .await
-                .map(|t| !t.is_empty() && t != "Empty" && t != "Loading…")
+                .map(|t| !t.is_empty() && t != "empty" && t != "…")
                 .unwrap_or(false)
         })
         .await
@@ -107,7 +111,11 @@ async fn dup_figure_across_slots() {
     phone.tap_slot(1).await.unwrap();
 
     // Click the first matching "Spyro" card.
-    let card = phone.client.find(Locator::Css(".card")).await.unwrap();
+    let card = phone
+        .client
+        .find(Locator::Css(".fig-card-p4:not(.scan-new)"))
+        .await
+        .unwrap();
     card.click().await.unwrap();
 
     phone
@@ -124,7 +132,7 @@ async fn dup_figure_across_slots() {
     // That card should now render with the "on-portal" class.
     let class = phone
         .client
-        .find(Locator::Css(".card"))
+        .find(Locator::Css(".fig-card-p4:not(.scan-new)"))
         .await
         .unwrap()
         .attr("class")
@@ -140,14 +148,14 @@ async fn dup_figure_across_slots() {
     phone.tap_slot(2).await.unwrap();
     let _ = phone
         .client
-        .find(Locator::Css(".card"))
+        .find(Locator::Css(".fig-card-p4:not(.scan-new)"))
         .await
         .unwrap()
         .click()
         .await;
     tokio::time::sleep(Duration::from_millis(400)).await;
     let slot2 = phone.slot_text(2).await.unwrap();
-    assert_eq!(slot2, "Empty", "slot 2 should stay empty, got {slot2:?}");
+    assert_eq!(slot2, "empty", "slot 2 should stay empty, got {slot2:?}");
 
     phone.close().await.unwrap();
 }
@@ -172,14 +180,18 @@ async fn clear_then_load_sequence() {
         .await
         .unwrap();
     phone.tap_slot(1).await.unwrap();
-    let cards = phone.client.find_all(Locator::Css(".card")).await.unwrap();
+    let cards = phone
+        .client
+        .find_all(Locator::Css(".fig-card-p4:not(.scan-new)"))
+        .await
+        .unwrap();
     cards[0].clone().click().await.unwrap();
     phone
         .wait_until(Duration::from_secs(5), || async {
             phone
                 .slot_text(1)
                 .await
-                .map(|t| t != "Empty" && t != "Loading…")
+                .map(|t| t != "empty" && t != "…")
                 .unwrap_or(false)
         })
         .await
@@ -188,7 +200,7 @@ async fn clear_then_load_sequence() {
     // Remove.
     let remove = phone
         .client
-        .find(Locator::Css(".portal .slot .slot-btn.danger"))
+        .find(Locator::Css(".portal-p4 .p4-slot .p4-slot-action--remove"))
         .await
         .unwrap();
     remove.click().await.unwrap();
@@ -197,7 +209,7 @@ async fn clear_then_load_sequence() {
             phone
                 .slot_text(1)
                 .await
-                .map(|t| t == "Empty")
+                .map(|t| t == "empty")
                 .unwrap_or(false)
         })
         .await
@@ -205,14 +217,18 @@ async fn clear_then_load_sequence() {
 
     // Load a different figure.
     phone.tap_slot(1).await.unwrap();
-    let cards = phone.client.find_all(Locator::Css(".card")).await.unwrap();
+    let cards = phone
+        .client
+        .find_all(Locator::Css(".fig-card-p4:not(.scan-new)"))
+        .await
+        .unwrap();
     cards[1].clone().click().await.unwrap();
     phone
         .wait_until(Duration::from_secs(5), || async {
             phone
                 .slot_text(1)
                 .await
-                .map(|t| t != "Empty" && t != "Loading…")
+                .map(|t| t != "empty" && t != "…")
                 .unwrap_or(false)
         })
         .await
@@ -249,7 +265,7 @@ async fn error_toast_never_populates_slot() {
         phone.tap_slot(1).await.unwrap();
         phone
             .client
-            .find(Locator::Css(".card"))
+            .find(Locator::Css(".fig-card-p4:not(.scan-new)"))
             .await
             .unwrap()
             .click()
@@ -264,7 +280,7 @@ async fn error_toast_never_populates_slot() {
             .unwrap();
         // Slot should end Empty, not with any error-as-text content.
         let t = phone.slot_text(1).await.unwrap();
-        assert_eq!(t, "Empty", "slot leaked error text {t:?} for {v:?}");
+        assert_eq!(t, "empty", "slot leaked error text {t:?} for {v:?}");
         phone.close().await.unwrap();
     }
 }
@@ -293,7 +309,7 @@ async fn ws_reconnect() {
     phone.tap_slot(1).await.unwrap();
     phone
         .client
-        .find(Locator::Css(".card"))
+        .find(Locator::Css(".fig-card-p4:not(.scan-new)"))
         .await
         .unwrap()
         .click()
@@ -304,7 +320,7 @@ async fn ws_reconnect() {
             phone
                 .slot_text(1)
                 .await
-                .map(|t| t != "Empty" && t != "Loading…")
+                .map(|t| t != "empty" && t != "…")
                 .unwrap_or(false)
         })
         .await
@@ -372,7 +388,11 @@ async fn on_portal_figures_disabled() {
         .unwrap();
     phone.tap_slot(1).await.unwrap();
 
-    let cards = phone.client.find_all(Locator::Css(".card")).await.unwrap();
+    let cards = phone
+        .client
+        .find_all(Locator::Css(".fig-card-p4:not(.scan-new)"))
+        .await
+        .unwrap();
     cards[0].clone().click().await.unwrap();
 
     phone

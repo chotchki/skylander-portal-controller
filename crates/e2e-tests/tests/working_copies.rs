@@ -42,7 +42,11 @@ async fn load_uses_canonical_name_not_filename() {
     phone.search("Spyro").await.unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
     phone.tap_slot(1).await.unwrap();
-    let card = phone.client.find(Locator::Css(".card")).await.unwrap();
+    let card = phone
+        .client
+        .find(Locator::Css(".fig-card-p4:not(.scan-new)"))
+        .await
+        .unwrap();
     card.click().await.unwrap();
 
     phone
@@ -88,7 +92,11 @@ async fn resume_prompt_offers_prior_layout() {
 
     // Load slot 1.
     phone.tap_slot(1).await.unwrap();
-    phone.client.find_all(Locator::Css(".card")).await.unwrap()[0]
+    phone
+        .client
+        .find_all(Locator::Css(".fig-card-p4:not(.scan-new)"))
+        .await
+        .unwrap()[0]
         .clone()
         .click()
         .await
@@ -98,7 +106,7 @@ async fn resume_prompt_offers_prior_layout() {
             phone
                 .slot_text(1)
                 .await
-                .map(|t| !t.is_empty() && t != "Empty" && t != "Loading…")
+                .map(|t| !t.is_empty() && t != "empty" && t != "…")
                 .unwrap_or(false)
         })
         .await
@@ -162,7 +170,7 @@ async fn resume_prompt_offers_prior_layout() {
             phone
                 .slot_text(1)
                 .await
-                .map(|t| !t.is_empty() && t != "Empty" && t != "Loading…")
+                .map(|t| !t.is_empty() && t != "empty" && t != "…")
                 .unwrap_or(false)
         })
         .await
