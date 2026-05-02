@@ -1,4 +1,13 @@
-//! Phase 3 regression scenarios (PLAN 3.6).
+//! Phase 3 regression scenarios (PLAN 3.6), retargeted to the Phase-4
+//! placement model (PLAN 10.3.6a). Original tests followed a
+//! "tap empty slot → see picker → tap card" flow that no longer exists
+//! — PLAY_TEST PLAN 8.3 made empty slots inert and out of the DOM,
+//! and placement is now a two-step "tap card → FigureDetail → place"
+//! gesture mediated by the toy-box lid.
+//!
+//! The shared `Phone` helpers (`open_toy_box_lid`, `place_first_figure`,
+//! `place_figure_named`, `remove_slot`, `wait_for_slot_empty`) hide
+//! the lid + detail dance from each test.
 //!
 //! Every test is `#[ignore]`-gated; run with:
 //!
@@ -17,6 +26,10 @@ use skylander_e2e_tests::{
 };
 
 // ---- Test 3.6.1: spam_click_same_slot -------------------------------------
+// Pre-Phase-4: rapid card-clicks would fire 5 load_slot calls.
+// Phase-4 contract: rapid clicks of `.detail-btn-primary` should still
+// produce at most one slot load. The figure card opens the detail
+// panel; the place button is what triggers the actual load.
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver"]
@@ -25,10 +38,6 @@ async fn spam_click_same_slot() {
     unlock_default_profile(&server.url).await.unwrap();
     launch_giants(&server.url).await.unwrap();
 
-    // Queue exactly ONE Ok outcome so we can detect extra loads via the
-    // server running out of injected outcomes and falling back to the
-    // normal mock path (which would also succeed — so we assert on the
-    // single SlotChanged broadcast instead by watching the slot text).
     inject_load_outcomes(&server.url, json!([{"kind": "ok"}]))
         .await
         .unwrap();
@@ -40,20 +49,25 @@ async fn spam_click_same_slot() {
         .wait_for_portal(Duration::from_secs(10))
         .await
         .unwrap();
-    phone.tap_slot(1).await.unwrap();
+    phone.open_toy_box_lid().await.unwrap();
 
-    // Rapid-fire five clicks on the first card.
-    let cards = phone
+    // Tap the first figure card to open its detail panel.
+    let card = phone
         .client
-        .find_all(Locator::Css(".fig-card-p4:not(.scan-new)"))
+        .find(Locator::Css(".fig-card-p4:not(.scan-new)"))
         .await
         .unwrap();
-    let first = cards.first().expect("at least one figure");
+    card.click().await.unwrap();
+    let place = phone
+        .wait_for(Locator::Css(".detail-btn-primary"), Duration::from_secs(5))
+        .await
+        .unwrap();
+    // Rapid-fire five clicks on the place button.
     for _ in 0..5 {
-        let _ = first.clone().click().await;
+        let _ = place.clone().click().await;
     }
 
-    // Wait for the slot to end up Loaded.
+    // Wait for slot 1 to end up Loaded.
     phone
         .wait_until(Duration::from_secs(5), || async {
             phone
@@ -80,6 +94,16 @@ async fn spam_click_same_slot() {
 }
 
 // ---- Test 3.6.2: dup_figure_across_slots ----------------------------------
+// Pre-Phase-4: place Spyro on slot 1, try to place Spyro on slot 2 →
+// rejected with toast.
+// Phase-4 contract: placement auto-picks the next empty slot. The
+// "duplicate across slots" scenario maps to: place Spyro on slot 1
+// (placed) → re-open detail for the same Spyro card → place again →
+// either rejected (toast) OR auto-routed to slot 2. Per PLAN 8.3 +
+// the on-portal ribbon, Spyro should now show `.fig-on-portal-ribbon`
+// on its card. Re-tapping a placed card is a no-op (the FigureDetail
+// `place` button is disabled when on-portal); we assert the ribbon
+// + the absence of any second placement.
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver"]
@@ -88,7 +112,6 @@ async fn dup_figure_across_slots() {
     unlock_default_profile(&server.url).await.unwrap();
     launch_giants(&server.url).await.unwrap();
 
-    // First load OK, second load simulates the Windows "file in use" path.
     inject_load_outcomes(
         &server.url,
         json!([
@@ -106,18 +129,12 @@ async fn dup_figure_across_slots() {
         .wait_for_portal(Duration::from_secs(10))
         .await
         .unwrap();
+    phone.open_search().await.unwrap();
     phone.search("Spyro").await.unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
-    phone.tap_slot(1).await.unwrap();
 
-    // Click the first matching "Spyro" card.
-    let card = phone
-        .client
-        .find(Locator::Css(".fig-card-p4:not(.scan-new)"))
-        .await
-        .unwrap();
-    card.click().await.unwrap();
-
+    // Place the first Spyro card. Auto-routes to slot 1.
+    phone.place_first_figure().await.unwrap();
     phone
         .wait_until(Duration::from_secs(5), || async {
             phone
@@ -129,33 +146,22 @@ async fn dup_figure_across_slots() {
         .await
         .unwrap();
 
-    // That card should now render with the "on-portal" class.
-    let class = phone
-        .client
-        .find(Locator::Css(".fig-card-p4:not(.scan-new)"))
+    // After placement, the same card should now render with the
+    // on-portal ribbon (.fig-on-portal-ribbon nested inside the
+    // .fig-card-p4 element).
+    let _ribbon = phone
+        .wait_for(
+            Locator::Css(".fig-card-p4:not(.scan-new) .fig-on-portal-ribbon"),
+            Duration::from_secs(3),
+        )
         .await
-        .unwrap()
-        .attr("class")
-        .await
-        .unwrap()
-        .unwrap_or_default();
-    assert!(
-        class.contains("on-portal"),
-        "expected card to be marked on-portal; class = {class:?}",
-    );
+        .expect("expected on-portal ribbon on placed card");
 
-    // Tapping the disabled card produces a toast and doesn't populate slot 2.
-    phone.tap_slot(2).await.unwrap();
-    let _ = phone
-        .client
-        .find(Locator::Css(".fig-card-p4:not(.scan-new)"))
-        .await
-        .unwrap()
-        .click()
-        .await;
-    tokio::time::sleep(Duration::from_millis(400)).await;
-    let slot2 = phone.slot_text(2).await.unwrap();
-    assert_eq!(slot2, "empty", "slot 2 should stay empty, got {slot2:?}");
+    // Slot 2 should remain empty (out of the DOM).
+    assert!(
+        phone.slot_text(2).await.is_err(),
+        "slot 2 should stay empty after placing Spyro on slot 1"
+    );
 
     phone.close().await.unwrap();
 }
@@ -179,13 +185,20 @@ async fn clear_then_load_sequence() {
         .wait_for_portal(Duration::from_secs(10))
         .await
         .unwrap();
-    phone.tap_slot(1).await.unwrap();
+    phone.open_toy_box_lid().await.unwrap();
+
+    // Place the first available figure into slot 1.
     let cards = phone
         .client
         .find_all(Locator::Css(".fig-card-p4:not(.scan-new)"))
         .await
         .unwrap();
     cards[0].clone().click().await.unwrap();
+    let place = phone
+        .wait_for(Locator::Css(".detail-btn-primary"), Duration::from_secs(5))
+        .await
+        .unwrap();
+    place.click().await.unwrap();
     phone
         .wait_until(Duration::from_secs(5), || async {
             phone
@@ -197,32 +210,27 @@ async fn clear_then_load_sequence() {
         .await
         .unwrap();
 
-    // Remove.
-    let remove = phone
-        .client
-        .find(Locator::Css(".portal-p4 .p4-slot .p4-slot-action--remove"))
-        .await
-        .unwrap();
-    remove.click().await.unwrap();
+    // Remove slot 1. After removal it should disappear from the DOM
+    // (PLAY_TEST PLAN 8.3 — empty slots aren't rendered).
+    phone.remove_slot(1).await.unwrap();
     phone
-        .wait_until(Duration::from_secs(5), || async {
-            phone
-                .slot_text(1)
-                .await
-                .map(|t| t == "empty")
-                .unwrap_or(false)
-        })
+        .wait_for_slot_empty(1, Duration::from_secs(5))
         .await
         .unwrap();
 
-    // Load a different figure.
-    phone.tap_slot(1).await.unwrap();
+    // Load a different figure into slot 1.
+    phone.open_toy_box_lid().await.unwrap();
     let cards = phone
         .client
-        .find_all(Locator::Css(".fig-card-p4:not(.scan-new)"))
+        .find_all(Locator::Css(".fig-card-p4:not(.scan-new):not(.on-portal)"))
         .await
         .unwrap();
     cards[1].clone().click().await.unwrap();
+    let place = phone
+        .wait_for(Locator::Css(".detail-btn-primary"), Duration::from_secs(5))
+        .await
+        .unwrap();
+    place.click().await.unwrap();
     phone
         .wait_until(Duration::from_secs(5), || async {
             phone
@@ -262,15 +270,8 @@ async fn error_toast_never_populates_slot() {
             .wait_for_portal(Duration::from_secs(10))
             .await
             .unwrap();
-        phone.tap_slot(1).await.unwrap();
-        phone
-            .client
-            .find(Locator::Css(".fig-card-p4:not(.scan-new)"))
-            .await
-            .unwrap()
-            .click()
-            .await
-            .unwrap();
+        phone.open_toy_box_lid().await.unwrap();
+        phone.place_first_figure().await.unwrap();
 
         phone
             .wait_until(Duration::from_secs(5), || async {
@@ -278,9 +279,12 @@ async fn error_toast_never_populates_slot() {
             })
             .await
             .unwrap();
-        // Slot should end Empty, not with any error-as-text content.
-        let t = phone.slot_text(1).await.unwrap();
-        assert_eq!(t, "empty", "slot leaked error text {t:?} for {v:?}");
+        // Slot 1 should never have appeared — failure leaves the
+        // portal empty, and per PLAN 8.3 empty slots aren't in the DOM.
+        assert!(
+            phone.slot_text(1).await.is_err(),
+            "slot 1 leaked content for failure {v:?}"
+        );
         phone.close().await.unwrap();
     }
 }
@@ -304,17 +308,10 @@ async fn ws_reconnect() {
         .wait_for_portal(Duration::from_secs(10))
         .await
         .unwrap();
+    phone.open_toy_box_lid().await.unwrap();
 
-    // Load a figure first so we have a known post-reconnect snapshot.
-    phone.tap_slot(1).await.unwrap();
-    phone
-        .client
-        .find(Locator::Css(".fig-card-p4:not(.scan-new)"))
-        .await
-        .unwrap()
-        .click()
-        .await
-        .unwrap();
+    // Place a figure first so we have a known post-reconnect snapshot.
+    phone.place_first_figure().await.unwrap();
     phone
         .wait_until(Duration::from_secs(5), || async {
             phone
@@ -327,26 +324,10 @@ async fn ws_reconnect() {
         .unwrap();
     let before = phone.slot_text(1).await.unwrap();
 
-    // Nudge the WS: force-close the window's WebSocket via JS, wait for
-    // reconnect, verify state still shows `before`.
-    let _ = phone
-        .client
-        .execute(
-            r#"
-              // Find the global WS by monkey-patching onclose to trigger early.
-              // If nothing is exposed, fall back to reloading the page.
-              try { location.reload(); } catch(e) {}
-            "#,
-            vec![],
-        )
-        .await;
-    // Post-reload the browser gets a brand-new WS session (per 3.10's
-    // per-session unlock model) so we need to re-seed the unlock before the
-    // new session registers. `unlock_default_profile` sets the server's
-    // `pending_unlock`, which the next `register()` consumes. There's a
-    // narrow race window (old session drop → pending set → new session
-    // register) but the reload's WS reconnect is much slower than the
-    // server's in-process state change, so this lands correctly in practice.
+    // Nudge the WS via reload. Per 3.10 each new session needs the
+    // unlock re-seeded so it adopts the same profile and gets the
+    // prior layout snapshot back.
+    let _ = phone.client.execute("location.reload();", vec![]).await;
     unlock_default_profile(&server.url).await.unwrap();
     phone
         .wait_for_portal(Duration::from_secs(10))
@@ -368,6 +349,11 @@ async fn ws_reconnect() {
 }
 
 // ---- Test 3.6.6: on_portal_figures_disabled ------------------------------
+// Pre-Phase-4: placed cards got `.card.on-portal`; tapping again fired
+// a toast. Phase-4 renders an `.fig-on-portal-ribbon` on the placed
+// card and disables the FigureDetail's place button. Re-tapping a
+// placed card opens the detail panel but the place button is in a
+// disabled state — no second load fires.
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver"]
@@ -386,43 +372,57 @@ async fn on_portal_figures_disabled() {
         .wait_for_portal(Duration::from_secs(10))
         .await
         .unwrap();
-    phone.tap_slot(1).await.unwrap();
+    phone.open_toy_box_lid().await.unwrap();
 
-    let cards = phone
-        .client
-        .find_all(Locator::Css(".fig-card-p4:not(.scan-new)"))
-        .await
-        .unwrap();
-    cards[0].clone().click().await.unwrap();
-
+    phone.place_first_figure().await.unwrap();
     phone
         .wait_until(Duration::from_secs(5), || async {
             phone
-                .client
-                .find(Locator::Css(".card.on-portal"))
+                .slot_text(1)
                 .await
-                .is_ok()
-        })
-        .await
-        .unwrap();
-
-    // Tap it anyway → toast, not a second load.
-    let card = phone
-        .client
-        .find(Locator::Css(".card.on-portal"))
-        .await
-        .unwrap();
-    let _ = card.click().await;
-    phone
-        .wait_until(Duration::from_secs(3), || async {
-            phone
-                .last_toast_text()
-                .await
-                .map(|t| t.unwrap_or_default().contains("Already"))
+                .map(|t| t != "empty" && t != "…")
                 .unwrap_or(false)
         })
         .await
         .unwrap();
+
+    // After placement, the card should render the on-portal ribbon.
+    phone
+        .wait_for(
+            Locator::Css(".fig-card-p4:not(.scan-new) .fig-on-portal-ribbon"),
+            Duration::from_secs(3),
+        )
+        .await
+        .expect("expected on-portal ribbon on placed card");
+
+    // The lid auto-closes after place (see browser.rs's on_placed
+    // handler) — re-open it before we can re-tap the card.
+    phone.open_toy_box_lid().await.unwrap();
+    let placed_card = phone
+        .client
+        .find(Locator::Css(
+            ".fig-card-p4:not(.scan-new):has(.fig-on-portal-ribbon)",
+        ))
+        .await
+        .unwrap();
+    placed_card.click().await.unwrap();
+    let place = phone
+        .wait_for(Locator::Css(".detail-btn-primary"), Duration::from_secs(3))
+        .await
+        .expect("expected detail panel to open");
+    // Clicking place on an already-on-portal figure should surface an
+    // error banner inside the detail panel and NOT trigger a second
+    // load (figure_detail.rs::on_place's `already` short-circuit).
+    place.click().await.unwrap();
+    phone
+        .wait_for(Locator::Css(".detail-error-banner"), Duration::from_secs(3))
+        .await
+        .expect("expected detail-error-banner for already-placed figure");
+    // Slot 2 must still be empty — no second placement happened.
+    assert!(
+        phone.slot_text(2).await.is_err(),
+        "slot 2 leaked a second placement when re-clicking an on-portal figure"
+    );
 
     phone.close().await.unwrap();
 }

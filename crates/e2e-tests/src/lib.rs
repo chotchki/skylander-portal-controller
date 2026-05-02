@@ -904,10 +904,83 @@ impl Phone {
         Ok(())
     }
 
+    /// Place the first non-`.scan-new` figure card the browser shows.
+    /// Useful for tests that don't care which figure goes onto the
+    /// portal, only that *something* gets placed (back-pressure
+    /// regressions, ws-reconnect-state-survives, etc.). Same two-step
+    /// shape as `place_figure_named`.
+    pub async fn place_first_figure(&self) -> Result<()> {
+        let card = self
+            .client
+            .find(Locator::Css(".fig-card-p4:not(.scan-new)"))
+            .await?;
+        card.click().await?;
+        let place = self
+            .wait_for(Locator::Css(".detail-btn-primary"), Duration::from_secs(5))
+            .await?;
+        place.click().await?;
+        Ok(())
+    }
+
+    /// Click the remove button on a portal slot (tap the loaded slot
+    /// to arm it, then tap the remove action that appears). Caller
+    /// supplies the slot index; if the slot isn't currently visible
+    /// (empty, hence not in the DOM per PLAY_TEST PLAN 8.3) returns
+    /// `Err`.
+    pub async fn remove_slot(&self, slot: u8) -> Result<()> {
+        // Find the .p4-slot whose .p4-slot-index reads `slot`.
+        let script = format!(
+            r#"
+            const target = {slot};
+            const slots = document.querySelectorAll('.portal-p4 .p4-slot');
+            for (const s of slots) {{
+              const idx = s.querySelector('.p4-slot-index');
+              if (idx && Number(idx.textContent.trim()) === target) {{
+                s.click();
+                return true;
+              }}
+            }}
+            return false;
+            "#
+        );
+        let armed = self.client.execute(&script, vec![]).await?;
+        if !armed.as_bool().unwrap_or(false) {
+            return Err(anyhow!("slot {slot} not visible — already empty?"));
+        }
+        // Wait for the remove action to surface inside that slot.
+        let remove = self
+            .wait_for(
+                Locator::Css(".portal-p4 .p4-slot .p4-slot-action--remove"),
+                Duration::from_secs(2),
+            )
+            .await?;
+        remove.click().await?;
+        Ok(())
+    }
+
+    /// Wait until slot `n` no longer appears in the portal — i.e. it
+    /// went empty (`<Show when=!is_empty>` removes it from the DOM).
+    /// Mirror of [`Phone::slot_text`]'s find-by-index logic.
+    pub async fn wait_for_slot_empty(&self, slot: u8, timeout: Duration) -> Result<()> {
+        let deadline = std::time::Instant::now() + timeout;
+        while std::time::Instant::now() < deadline {
+            if self.slot_text(slot).await.is_err() {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        Err(anyhow!(
+            "slot {slot} still visible after {timeout:?} — expected to vanish"
+        ))
+    }
+
     /// Tap the toy-box lid grabber so the lid opens (Closed → Compact).
     /// Idempotent: if the lid is already open (no `.closed` modifier
     /// on `.lid-open-p4`), no-op. Required before [`Phone::open_search`]
     /// since the search toggle button is part of the lid header.
+    /// Waits up to 2 s for the grabber to appear — the Browser screen
+    /// briefly remounts during navigation transitions (place → portal,
+    /// remove → empty), and a too-eager find races the re-render.
     pub async fn open_toy_box_lid(&self) -> Result<()> {
         // `apply_tap` cycles Closed → Compact → Expanded → Closed; we
         // only want to advance from Closed → Compact, so check first.
@@ -919,7 +992,9 @@ impl Phone {
         if already_open {
             return Ok(());
         }
-        let grabber = self.client.find(Locator::Css(".lid-grabber-p4")).await?;
+        let grabber = self
+            .wait_for(Locator::Css(".lid-grabber-p4"), Duration::from_secs(2))
+            .await?;
         grabber.click().await?;
         Ok(())
     }

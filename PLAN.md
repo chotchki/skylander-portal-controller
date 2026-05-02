@@ -547,16 +547,29 @@ suite green on macOS.
     (`profiles.rs::profile_create_and_unlock_lands_on_game_picker`
     is the worst-affected file).
 
-- [ ] 10.3.6a — **regressions.rs (6 tests).** Each test needs the
-  toy-box lid opened before figure cards / search are reachable.
-  Pattern after lid-open is settled: `phone.tap_lid_open(); phone
-  .search(...); phone.tap_figure_named(...);`. Likely add a
-  `Phone::open_toy_box_lid()` helper that clicks `.lid-grabber-p4`
-  and waits for `.fig-card-p4` to render.
-- [ ] 10.3.6b — **working_copies.rs (2 tests).** Same lid-open
-  dance as 10.3.6a; after that lands, the existing assertion shape
-  (slot text contains "spyro", resume modal appears, etc.) should
-  carry over.
+- [x] 10.3.6a — **regressions.rs (6 tests).** All green locally
+  (~34 s for the file). Adopted the new `Phone` helpers
+  (`open_toy_box_lid`, `place_first_figure`, `remove_slot`,
+  `wait_for_slot_empty`) and rewrote each test for the Phase-4
+  placement model. Notable per-test adaptations: `dup_figure_across_slots`
+  asserts the on-portal ribbon + slot-2 stays out of DOM (auto-pick
+  doesn't apply to already-placed figures); `clear_then_load_sequence`
+  needed the `wait_for_slot_empty` helper since removed slots
+  vanish; `on_portal_figures_disabled` switched from "place button
+  is disabled" to "clicking place surfaces `.detail-error-banner`"
+  (current SPA shows an error banner rather than disabling the
+  button — the `already` short-circuit lives in
+  `figure_detail.rs::on_place`). Not yet wired into CI — see
+  10.3.6f below.
+- [~] 10.3.6b — **working_copies.rs (2 tests).** 1/2 green:
+  `load_uses_canonical_name_not_filename` passes (~19 s). The
+  `resume_prompt_offers_prior_layout` test is `#[ignore]`-ed with
+  a WIP note — the resume modal isn't appearing after
+  `location.reload()` + re-unlock; either the persist_layout
+  write is racing the reload (500 ms wait may not be enough
+  post-Phase-4 SlotChanged → save chain) or the post-reload phone
+  never re-handshakes the HMAC key cleanly. Needs deeper
+  investigation against the live emit path.
 - [ ] 10.3.6c — **multi_phone.rs (6 tests).** Heaviest single
   file. Three classes of update needed: (1) selector freshness for
   `.profile-chip` → `.header-identity .header-profile-name` etc.,
@@ -574,6 +587,20 @@ suite green on macOS.
 - [ ] 10.3.6e — **screenshot_tour.rs.** Already uses modern
   selectors; the work here is purely re-baselining the per-scene
   PNGs on macOS (PLAN 10.3.4 — same lane, can be done together).
+- [ ] 10.3.6f — **CI fixture-pack story.** The chromedriver lane
+  in CI stubs an empty `dev-data/firmware-pack/` so the harness
+  can boot, but tests that need actual figure cards
+  (`regressions.rs`, `working_copies.rs`, eventually `multi_phone.rs`,
+  `screenshot_tour.rs`) can't run in CI without a real `.sky`
+  pack. CLAUDE.md is explicit about not bundling `.sky` files
+  (copyright). Options: (a) generate synthetic stub-`.sky` files
+  at CI time that the indexer accepts as a tiny fixture library,
+  (b) commit an obfuscated/zeroed pack of a few representative
+  figures small enough to dodge the copyright concern, or (c)
+  accept "real-pack tests are local-only" and don't gate them on
+  CI. Decision deferred until one of the affected files needs to
+  ship. For now the local-only tests still catch regressions
+  during dev; CI just isn't the safety net.
 
   **Iteration tips for any of the above:**
   - Run a single test file at a time with `--test-threads=1` to

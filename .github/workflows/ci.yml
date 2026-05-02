@@ -245,14 +245,12 @@ jobs:
       - name: cargo test connection_lost (chromedriver, mock driver)
         run: cargo test -p skylander-e2e-tests --test connection_lost -- --ignored --nocapture
 
-      # working_copies has two tests: the canonical-name regression
-      # is green (PLAN 10.3.6b), the resume-modal-after-reload flow
-      # is still WIP. Filter by name so the WIP test doesn't drag
-      # the lane red — once it's debugged, drop the filter.
-      - name: cargo test working_copies/load_uses_canonical_name_not_filename
-        run: |
-          cargo test -p skylander-e2e-tests --test working_copies \
-            load_uses_canonical_name_not_filename -- --ignored --nocapture
+      # working_copies + regressions need a real `.sky` firmware pack
+      # to find figure cards (the CI lane stubs an empty
+      # dev-data/firmware-pack/, which is enough for smoke +
+      # connection_lost but not for tests that filter by figure name
+      # or count cards). Keep them local-only until CI gets a fixture-
+      # pack story (PLAN 10.3.6 follow-up).
 
       # hmac + shutdown don't actually use chromedriver (no Phone
       # instances) — they exercise raw HTTP against the spawned
