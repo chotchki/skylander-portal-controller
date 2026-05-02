@@ -25,6 +25,7 @@ pub fn PwaHint() -> impl IntoView {
     let initial = crate::pwa::should_show_hint(
         crate::pwa::is_ios_safari(),
         crate::pwa::is_standalone(),
+        crate::pwa::is_tablet(),
         crate::pwa::hint_dismissed(),
     );
     let visible = RwSignal::new(initial);

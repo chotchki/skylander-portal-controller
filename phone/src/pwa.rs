@@ -24,9 +24,21 @@ use wasm_bindgen::JsValue;
 const DISMISS_KEY: &str = "skylander-pwa-hint-dismissed";
 
 /// Combined predicate: should the ProfilePicker render the install banner?
-/// Pure — the three inputs come from thin wrappers around `web_sys` below.
-pub(crate) fn should_show_hint(is_ios_safari: bool, is_standalone: bool, dismissed: bool) -> bool {
-    is_ios_safari && !is_standalone && !dismissed
+/// Pure — the four inputs come from thin wrappers around `web_sys` below.
+///
+/// `is_tablet` suppresses the banner on iPad regardless of standalone-
+/// vs-tab state. Reasoning (PLAN 9.7.1, found driving the iPad sim
+/// during 10.2 verification): iPad Safari puts the address bar at the
+/// *top* and the viewport is much larger; the banner exists to escape
+/// iPhone Safari's bottom address bar that crowds portrait layouts,
+/// and the same gain doesn't apply on tablet.
+pub(crate) fn should_show_hint(
+    is_ios_safari: bool,
+    is_standalone: bool,
+    is_tablet: bool,
+    dismissed: bool,
+) -> bool {
+    is_ios_safari && !is_standalone && !is_tablet && !dismissed
 }
 
 /// Rough iOS-Safari classification from a user-agent string + iPad-Pro
@@ -49,6 +61,16 @@ pub(crate) fn classify_ua(user_agent: &str, is_touch_mac: bool) -> bool {
     }
     // Exclude alternate iOS browsers.
     !ua.contains("crios") && !ua.contains("fxios") && !ua.contains("edgios")
+}
+
+/// True when the user agent is a tablet-class device (iPad, including
+/// iPad Pro running the desktop Safari UA). PLAN 9.7.1: PwaHint is
+/// suppressed on tablet because the banner exists to escape iPhone
+/// Safari's bottom address bar — iPad puts the address bar at the top
+/// and has a much larger viewport, so the same gain doesn't apply.
+pub(crate) fn is_tablet_ua(user_agent: &str, is_touch_mac: bool) -> bool {
+    let ua = user_agent.to_lowercase();
+    ua.contains("ipad") || (ua.contains("macintosh") && is_touch_mac)
 }
 
 // ---- web_sys wrappers (not unit-tested; exercised on-device) ----
@@ -88,6 +110,18 @@ pub(crate) fn is_ios_safari() -> bool {
     };
     let is_touch_mac = nav.max_touch_points() > 1;
     classify_ua(&ua, is_touch_mac)
+}
+
+pub(crate) fn is_tablet() -> bool {
+    let Some(win) = web_sys::window() else {
+        return false;
+    };
+    let nav = win.navigator();
+    let Ok(ua) = nav.user_agent() else {
+        return false;
+    };
+    let is_touch_mac = nav.max_touch_points() > 1;
+    is_tablet_ua(&ua, is_touch_mac)
 }
 
 pub(crate) fn hint_dismissed() -> bool {
@@ -172,25 +206,67 @@ mod tests {
     }
 
     #[test]
-    fn should_show_hint_true_only_for_ios_safari_browser_not_dismissed() {
-        assert!(should_show_hint(true, false, false));
+    fn should_show_hint_true_only_for_ios_safari_browser_not_dismissed_phone() {
+        // is_ios_safari, !standalone, !tablet, !dismissed → show.
+        assert!(should_show_hint(true, false, false, false));
     }
 
     #[test]
     fn should_show_hint_false_when_already_installed() {
         // Installed PWA → no nag; user already did the thing.
-        assert!(!should_show_hint(true, true, false));
+        assert!(!should_show_hint(true, true, false, false));
     }
 
     #[test]
     fn should_show_hint_false_when_dismissed() {
         // User tapped "not now" — stop asking.
-        assert!(!should_show_hint(true, false, true));
+        assert!(!should_show_hint(true, false, false, true));
     }
 
     #[test]
     fn should_show_hint_false_on_non_ios_safari() {
         // Android Chrome etc. get their own native install UX.
-        assert!(!should_show_hint(false, false, false));
+        assert!(!should_show_hint(false, false, false, false));
+    }
+
+    #[test]
+    fn should_show_hint_false_on_tablet() {
+        // PLAN 9.7.1: iPad Safari puts the address bar at the top and
+        // the viewport is much larger, so the install banner is mostly
+        // noise on tablet even when every other condition matches.
+        assert!(!should_show_hint(true, false, true, false));
+    }
+
+    #[test]
+    fn is_tablet_ua_matches_legacy_ipad() {
+        assert!(is_tablet_ua(UA_IPAD_SAFARI, true));
+    }
+
+    #[test]
+    fn is_tablet_ua_matches_ipad_pro_via_touch_probe() {
+        // iPadOS 13+ masquerades as Mac. The touch-points probe is the
+        // only signal that distinguishes a real Mac from a tablet here.
+        assert!(is_tablet_ua(UA_IPAD_PRO_AS_MAC, true));
+    }
+
+    #[test]
+    fn is_tablet_ua_rejects_iphone() {
+        // Phone is the form factor the banner was designed for — must
+        // not be classified as tablet.
+        assert!(!is_tablet_ua(UA_IPHONE_SAFARI, false));
+    }
+
+    #[test]
+    fn is_tablet_ua_rejects_real_mac() {
+        // Mac UA without touch probe = real Mac, not iPad Pro.
+        assert!(!is_tablet_ua(UA_DESKTOP_SAFARI, false));
+        assert!(!is_tablet_ua(UA_IPAD_PRO_AS_MAC, false));
+    }
+
+    #[test]
+    fn is_tablet_ua_rejects_android() {
+        // Android tablets are out of scope for the iOS Safari install
+        // banner; their host check is is_ios_safari, not this helper.
+        assert!(!is_tablet_ua(UA_ANDROID_CHROME, false));
     }
 }

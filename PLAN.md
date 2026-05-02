@@ -337,17 +337,17 @@ becomes additive, not a separate stylesheet branch.
   portal slot row layout, Header chip density). Drop `md:` /
   `lg:` overrides per-component; verify on iOS Simulator + a real
   iPad via the Tour gallery.
-- [ ] 9.7.1 — *[bug]* Suppress `PwaHint` on iPad. The "Pin this to
-  your home screen" banner exists to escape iOS Safari's bottom
-  address bar that crowds iPhone portrait layouts (PLAN 4.18.1b).
-  iPad Safari puts the address bar at the *top* and the viewport is
-  much larger — the pin prompt is mostly noise there. Found while
-  driving the iPad Pro 13" sim during 10.2 verification (Chris,
-  2026-05-02). Fix: extend `pwa::should_show_hint` to also return
-  false on tablet-class viewports (UA includes "iPad" OR width >=
-  ~768px AND `is_ios_safari`). Pure-fn change, easy to unit-test.
-  Folds into the broader 9.7 audit but worth its own bullet because
-  it's a single component change with a clear gate.
+- [x] 9.7.1 — *[bug]* `PwaHint` suppressed on iPad. `pwa.rs` gains
+  `is_tablet_ua` (pure: UA contains "ipad" OR macintosh + touch-mac
+  probe) + an `is_tablet()` web_sys wrapper; `should_show_hint`
+  takes the new gate as its third arg. 5 new unit tests cover
+  (iPad/iPad-Pro-as-Mac/iPhone/real-Mac/Android) + the truth-table
+  case for tablet=true → false. PwaHint component reads the new
+  signal on mount. End-to-end verified by
+  `crates/e2e-tests/tests/ios_pwa_hint.rs` — boots iPhone + iPad
+  sims, opens the SPA, asserts `.pwa-hint` count == 1 on iPhone +
+  == 0 on iPad. First load-bearing demonstration that the iOS-sim
+  e2e lane (PLAN 10.4) catches and pins real product bugs.
 
 ## Phase 10 Items
 
