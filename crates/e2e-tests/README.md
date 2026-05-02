@@ -90,3 +90,71 @@ progress.
   When you intentionally change a screen, regenerate on the
   same OS that committed the existing baseline and `git diff
   docs/assets/screens/` to review.
+- `tests/ios_simulator_smoke.rs`, `tests/ios_two_phone.rs` —
+  Mac-only iOS-Simulator-driven tests. See "iOS Simulator lane"
+  below.
+
+## iOS Simulator lane (macOS only)
+
+Drives real iOS Safari inside the Simulator via the standalone
+`tools/ios-inspect/` library (PLAN 10.4). Lives alongside the
+chromedriver lane but with a different test-engine and an extra
+prereq stack — runs the 2-phone product feature end-to-end against
+real iPhone + iPad form factors instead of headless Chrome.
+
+### Prereqs (in addition to the chromedriver lane prereqs)
+
+- **Xcode** + at least one iOS runtime with both an iPhone and an
+  iPad device available (Xcode → Settings → Platforms).
+- **`brew install ios-webkit-debug-proxy`** — the bridge from
+  WebKit's Web Inspector socket to a TCP port.
+- A built phone bundle (`cd phone && trunk build`) — same as the
+  chromedriver lane.
+
+### Running
+
+```sh
+cargo test -p skylander-e2e-tests --test ios_simulator_smoke -- --ignored --nocapture
+cargo test -p skylander-e2e-tests --test ios_two_phone -- --ignored --nocapture
+```
+
+Wall-clock expectations:
+- `ios_simulator_smoke` — ~20 s (one iPhone sim cold-boot + SPA
+  load + assertion).
+- `ios_two_phone` — ~60–70 s (cold-boot of iPad + iPhone in
+  sequence + per-device Safari startup + dual session assertion).
+- Subsequent runs in the same shell session reuse the cached sim
+  device snapshots and run faster.
+
+### How it differs from the chromedriver lane
+
+- Tests use `ios_inspect::{boot_devices, open_url, wait_for_selector,
+  query_selector_*}` directly — no separate driver process to
+  install or version-pin.
+- Selectors are evaluated via `Runtime.evaluate` over the WebKit
+  Web Inspector protocol, which uses **innerText** semantics —
+  visually-hidden elements report empty (different from
+  WebDriver's `getElementText`, which has its own quirks for
+  `-webkit-text-stroke` titles like the chromedriver lane hits).
+- Each test owns a `TeardownGuard` that runs `shutdown_all` on
+  drop, so a panic mid-test still cleans up booted sims + the
+  per-device proxies. Manual cleanup if needed:
+  ```sh
+  xcrun simctl shutdown all
+  pkill -f ios_webkit_debug_proxy
+  rm -f /tmp/ios-inspect-state.json
+  ```
+
+### Known caveats
+
+- Sim Safari reports `safe-area-inset-bottom = 0` even on
+  Dynamic-Island iPhones — bugs that depend on the bottom inset
+  need PWA-standalone (Add-to-Home-Screen) inside the sim or a
+  real device.
+- `boot_devices` does substring matching against `xcrun simctl
+  list`; same-name devices across runtimes (e.g. "iPhone 17 Pro"
+  on iOS 26.0/26.2/26.4) pick the first hit non-deterministically.
+  Pass an exact UDID to pin a specific runtime.
+- Tests use `tokio::test(flavor = "multi_thread")` so the Drop-
+  based teardown can call `block_on` — current-thread runtimes
+  would panic in the guard.

@@ -12,6 +12,20 @@ version = "0.0.1"
 edition = "2021"
 publish = false
 
+[lib]
+# Lets `crates/e2e-tests/` depend on the same modules the CLI uses,
+# so the iOS-sim e2e tests get type-safe access to boot / open /
+# screenshot rather than shelling out to the binary (PLAN 10.4.1).
+# Crate name underscored so callers `use ios_inspect::…` (Cargo
+# converts hyphens to underscores in package → crate names by
+# default; pinning explicitly here keeps the rename obvious).
+name = "ios_inspect"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ios-inspect"
+path = "src/main.rs"
+
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }

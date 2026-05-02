@@ -14,18 +14,14 @@
 //! in `/tmp/ios-inspect-state.json` so subsequent invocations pick up
 //! where `boot` left off.
 
-mod protocol;
-mod proxy;
-mod simulator;
-mod state;
-
 use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
-use crate::state::DeviceState;
+use ios_inspect::state::{self, DeviceState};
+use ios_inspect::{protocol, proxy, simulator};
 
 #[derive(Parser)]
 #[command(name = "ios-inspect", about = "Drive the iOS Simulator + Safari Web Inspector")]

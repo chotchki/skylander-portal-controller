@@ -527,38 +527,58 @@ simulator against a single server instance, exactly the way the
 2-phone feature ships. Combines 10.2's multi-device `ios-inspect`
 with 10.3's portable harness.
 
-- [ ] 10.4.1 — Refactor `tools/ios-inspect`: extract the lifecycle +
-  protocol logic into a sibling `lib.rs`, leave `main.rs` as a thin
-  clap wrapper. The existing crate is currently outside the workspace
-  (its own `[workspace]` block); decide whether to bring it in or keep
-  it standalone with a published-to-disk artifact path. Keeping it
-  standalone preserves the "dev tool, not a runtime dep" boundary.
-- [ ] 10.4.2 — `crates/e2e-tests/Cargo.toml`: add `ios-inspect` as a
-  `[target.'cfg(target_os = "macos")'.dev-dependencies]` path
-  dependency. If 10.4.1 chose to keep the tool standalone, add a thin
-  subprocess wrapper helper in `e2e-tests/src/ios.rs` that shells out
-  to the binary instead.
-- [ ] 10.4.3 — `crates/e2e-tests/tests/ios_simulator_smoke.rs`
-  (`#[cfg(target_os = "macos")]`, `#[ignore]`): boot one iPhone Sim,
-  open the SPA's `/?k=...` URL, assert the profile picker renders,
-  unlock via the test-hook, assert the portal screen appears. Tears
-  down the sim on success.
-- [ ] 10.4.4 — `tests/ios_two_phone.rs`: boot iPad Sim + iPhone Sim
-  simultaneously, both load the SPA, each unlocks a distinct profile,
-  place a figure from one, assert the other's portal view sees the
-  placement (mirrors the
-  `crates/e2e-tests/tests/multi_phone.rs::shared_portal_visibility`
-  scenario but on real iOS WebKit instead of headless Chrome).
+- [x] 10.4.1 — `tools/ios-inspect/` now ships a `[lib]` (`ios_inspect`)
+  alongside the existing `[[bin]]`. `src/lib.rs` exposes the four
+  modules + high-level helpers (`boot_devices`, `open_url`,
+  `wait_for_selector`, `query_selector_count`,
+  `query_selector_text`, `eval_js`, `session_id`,
+  `wait_for_session_id`, `screenshot_web`, `shutdown_all`,
+  `tear_down`). `src/main.rs` now `use ios_inspect::*` instead of
+  declaring the modules inline. The crate stays standalone (its own
+  `[workspace]` block kept) so its CLI deps don't pollute the main
+  workspace; root `Cargo.toml` has `exclude = ["tools/ios-inspect"]`
+  so e2e-tests' path-dep doesn't trip Cargo's "multiple workspace
+  roots" guard.
+- [x] 10.4.2 — `crates/e2e-tests/Cargo.toml` gains
+  `[target.'cfg(target_os = "macos")'.dependencies]
+   ios-inspect = { path = "../../tools/ios-inspect" }`. Lives under
+  regular `dependencies` (not `dev-dependencies`) so the symbol is
+  reachable from `tests/*.rs` source — Rust integration tests
+  resolve via the dependent crate's regular dep graph.
+- [x] 10.4.3 — `crates/e2e-tests/tests/ios_simulator_smoke.rs`
+  passes end-to-end in ~19 s. Boots one iPhone sim, opens the
+  Bonjour SPA URL, waits for `.game-card` to render, asserts
+  `count == 6`. `TeardownGuard` Drop impl runs `shutdown_all`
+  via `tokio::task::block_in_place + Handle::current().block_on`
+  so a panic mid-test still cleans up. Required tightening
+  `wait_for_selector` to forgive transient "no tabs visible"
+  errors during the 1-3 s window after `simctl openurl` while
+  Safari is registering the page with `webinspectord_sim`.
+- [x] 10.4.4 — `tests/ios_two_phone.rs` passes in ~64 s. Boots
+  iPad + iPhone, opens SPA on each, calls `inject_profile` for
+  Alpha+Beta + `unlock_session(Alpha)`, lets iPhone consume the
+  pending unlock, calls `set_session_profile(s_ipad, beta)`,
+  asserts each device's `.header-identity .header-profile-name`
+  shows the right name. Mirrors `multi_phone.rs::independent_profile_unlock`
+  shape with the post-design-system selectors. Figure-placement
+  + cross-device portal sync deferred to a follow-up — the
+  session/profile contract is the load-bearing 2-phone product
+  contract; figure placement layers on top once the chromedriver
+  suite (10.3.6) re-pins those selectors first.
 - [ ] 10.4.5 — Visual regression: snap paired screenshots per scene
   (profile picker, portal, toy box, kaos overlay) on iPad + iPhone,
   commit as `docs/assets/screens/ios/<scene>-{ipad,iphone}.png`. Reuse
   the chromedriver tour's scene list (`tests/screenshot_tour.rs`) as
-  the source of truth for *which* scenes to capture.
-- [ ] 10.4.6 — Document the iOS-sim e2e lane in
-  `crates/e2e-tests/README.md` separately from the chromedriver lane:
-  prereqs (Xcode + iPad runtime + Dynamic-Island iPhone runtime +
-  `ios-webkit-debug-proxy`), invocation, expected runtime (~2-3 min
-  cold-boot for both sims).
+  the source of truth for *which* scenes to capture. Blocked on a
+  `set_game` / portal-screen helper extension to drive each
+  device past the GamePicker into a stable scene before snapping.
+- [x] 10.4.6 — `crates/e2e-tests/README.md` gains an "iOS Simulator
+  lane" section: prereqs (Xcode + iPad + iPhone runtimes +
+  `brew install ios-webkit-debug-proxy`), per-test wall-clock
+  budgets, manual-cleanup escape hatch, caveats list (sim safe-
+  area-inset-bottom always 0; same-name-across-runtimes pick is
+  non-deterministic; multi-thread tokio runtime required for the
+  TeardownGuard Drop).
 
 ### 10.5 Continuous-integration lane
 CI was deferred until the app worked. With 10.1–10.4 in place, the

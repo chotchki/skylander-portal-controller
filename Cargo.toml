@@ -12,6 +12,16 @@ members = [
     "tools/rekey-figure-ids",
     "tools/wiki-scrape",
 ]
+# tools/ios-inspect is a standalone Mac-only crate with its own
+# [workspace] block — kept outside the root workspace so its
+# clap/tokio-tungstenite/reqwest deps don't end up in every workspace
+# build, AND so non-Mac contributors don't have to deal with its
+# libc::setsid usage. The e2e-tests crate path-deps it via a
+# target.cfg(target_os = "macos") dev-dependency (PLAN 10.4.2);
+# `exclude` here tells Cargo "this directory is intentionally not
+# a workspace member" so the path-dep doesn't trip the
+# "multiple workspace roots" guard.
+exclude = ["tools/ios-inspect"]
 # Bare cargo commands from the repo root narrow to just the server, which
 # has one bin (`skylander-portal-controller`). Without this, `cargo run`
 # errors on bin-ambiguity vs the one-shot `skylander-wiki-scrape` tool.
