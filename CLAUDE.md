@@ -144,6 +144,8 @@ A Windows app that wraps RPCS3 (PS3 emulator) so kids can manage the emulated Sk
 ## Git workflow (pre-1.0)
 
 - **Commit + push directly to `main`.** This is a solo project with no external developer coordination; GitHub PRs are pure friction at this stage. Skip them.
+- **Optional pre-push hook** (PLAN 10.5.5) at `.githooks/pre-push` runs `cargo fmt --check` + `cargo check --workspace` + `cargo test --workspace`. Activate with `git config core.hooksPath .githooks`; bypass with `git push --no-verify` for WIP branches. CI runs the same checks plus clippy on push, so the hook is convenience, not a gate.
+- **CI lanes** documented in `docs/dev/ci.md`. The iOS-Simulator e2e lane is label-gated to `run-ios-sim` on PRs (and runnable via manual `workflow_dispatch`) — running it on every PR would dominate the macOS-minutes budget.
 - Reserve PR ceremony for post-1.0 or for cases where a human reviewer genuinely adds value (e.g. first-time CI-bring-up or a dangerous rewrite where the diff view is the point).
 - Concurrent subagents modifying overlapping files → spawn with `isolation: "worktree"` so they don't entangle WIP; merge their branches into `main` locally when done.
 

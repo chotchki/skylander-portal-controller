@@ -586,28 +586,42 @@ e2e suite has a credible automated home and the "fully automated"
 half of the user goal becomes real. Decide CI host first since it
 shapes everything downstream.
 
-- [ ] 10.5.1 — Decide CI host: GitHub-hosted `macos-14` runner
-  (free for public repos, Xcode pre-installed, but no persistent
-  simulator cache → ~3-5 min cold-sim boot per run) vs. self-hosted on
-  Chris's Mac (warm sim cache, no minute-budget pressure, but ties CI
-  to one machine being awake). Document the choice + tradeoffs in
-  `docs/dev/ci.md` (new file). Default lean: GH-hosted for unit + the
-  chromedriver lane, self-hosted for the simulator-driven lane.
-- [ ] 10.5.2 — `.github/workflows/ci.yml` lane 1: `cargo build
-  --workspace` + `cargo test --workspace` on macOS. No simulator
-  dependency. Cache `~/.cargo/registry` + `target/` keyed on
-  `Cargo.lock` hash.
-- [ ] 10.5.3 — Lane 2: `cargo test -p skylander-e2e-tests -- --ignored`
-  excluding any test gated `cfg(target_os = "macos")` simulator-only.
-  Runs the chromedriver suite on the same Mac runner.
-- [ ] 10.5.4 — Lane 3 (label-gated, slower): the simulator-driven
-  iOS tests from 10.4. Triggered on PRs touching `phone/`,
-  `tools/ios-inspect/`, or `crates/server/src/http.rs`. Skipped by
-  default to keep PR latency reasonable.
-- [ ] 10.5.5 — Local pre-push hook (opt-in, in
-  `.githooks/pre-push`, activated via `git config core.hooksPath
-  .githooks`): `cargo check --workspace` + `cargo test --workspace`.
-  Documented in `CLAUDE.md` as the recommended dev loop.
+- [x] 10.5.1 — `docs/dev/ci.md` captures the host-choice decision.
+  GH-hosted `macos-14` for everything Mac-side (including the
+  iOS-sim lane). Tradeoffs documented: cold simulator boot vs.
+  operational simplicity; switch to self-hosted when iOS-sim usage
+  grows past free macOS minutes or warm cache becomes load-bearing.
+- [x] 10.5.2 — New `clippy-build-test-macos` job in `ci.yml`,
+  parallel to the existing Windows job. Same shape: clippy
+  --workspace --all-targets -D warnings, build --all-features, test
+  --workspace, plus a production-flavored `cargo build --release
+  --features sky-stats,mock-driver-runtime` that mirrors what
+  `release.yml` ships. Catches feature-flag regressions in the lane
+  that actually goes to users.
+- [x] 10.5.3 — New `e2e-mock-macos` job runs the chromedriver e2e
+  suite against the mock driver on macos-14. ChromeDriver pulled
+  from the Chrome-for-Testing CDN matched to the runner's Chrome
+  version (avoids the "ChromeDriver version N only supports Chrome
+  N" mismatch a brew install would risk). Currently whitelisted to
+  `tests/smoke.rs` only — broader suite reconciliation tracked in
+  10.3.6 will expand the `--test` list as each chromedriver test
+  gets a selector update.
+- [x] 10.5.4 — New `e2e-ios-sim` job runs `tests/ios_simulator_smoke`,
+  `tests/ios_pwa_hint`, and `tests/ios_two_phone` in sequence on
+  macos-14. Gated to PR label `run-ios-sim` OR manual
+  `workflow_dispatch`; skipped on push so the macOS-minutes budget
+  doesn't blow up on every commit. Brew-installs
+  `ios-webkit-debug-proxy` per run; uses Xcode + iOS runtimes
+  pre-installed on the macos-14 image. Tests run in sequence (not
+  parallel) to avoid two simultaneous reads/writes of
+  `/tmp/ios-inspect-state.json`.
+- [x] 10.5.5 — `.githooks/pre-push` is a Bash hook that runs
+  `cargo fmt --all --check` (workspace + phone) + `cargo check
+  --workspace` + `cargo test --workspace`. Activate with
+  `git config core.hooksPath .githooks`; bypass with `git push
+  --no-verify`. Documented in CLAUDE.md's "Git workflow" section.
+  Doesn't run clippy — CI does that, and the gain over `cargo
+  check` is small for the daily loop.
 
 ### 10.6 macOS production release artifact
 Today the release pipeline produces a Windows zip (`release.yml` runs

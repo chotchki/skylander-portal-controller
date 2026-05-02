@@ -402,9 +402,8 @@ fn resolve_firmware_pack(repo: &Path) -> Result<PathBuf> {
     if dev_data.is_dir() {
         return Ok(dev_data);
     }
-    let chris_htpc = PathBuf::from(
-        r"C:\Users\chris\workspace\Skylanders Characters Pack for RPCS3",
-    );
+    let chris_htpc =
+        PathBuf::from(r"C:\Users\chris\workspace\Skylanders Characters Pack for RPCS3");
     if chris_htpc.is_dir() {
         return Ok(chris_htpc);
     }

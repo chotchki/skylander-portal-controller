@@ -54,19 +54,17 @@ impl State {
     /// exact UDID. Returns `None` if no match.
     pub fn find(&self, key: &str) -> Option<&DeviceState> {
         let lc = key.to_lowercase();
-        self.devices.iter().find(|d| {
-            d.udid == key
-                || d.device_name.to_lowercase().contains(&lc)
-        })
+        self.devices
+            .iter()
+            .find(|d| d.udid == key || d.device_name.to_lowercase().contains(&lc))
     }
 
     /// Mutable variant of [`find`].
     pub fn find_mut(&mut self, key: &str) -> Option<&mut DeviceState> {
         let lc = key.to_lowercase();
-        self.devices.iter_mut().find(|d| {
-            d.udid == key
-                || d.device_name.to_lowercase().contains(&lc)
-        })
+        self.devices
+            .iter_mut()
+            .find(|d| d.udid == key || d.device_name.to_lowercase().contains(&lc))
     }
 }
 

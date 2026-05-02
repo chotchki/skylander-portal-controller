@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The iOS-Simulator e2e lane is label-gated on PRs and skipped on
+  # push; manual dispatch lets us run it ad-hoc when investigating a
+  # phone-side regression without opening a PR.
+  workflow_dispatch:
 
 # Cancel in-flight runs for the same branch / PR when a new push lands.
 concurrency:
@@ -37,7 +41,11 @@ jobs:
         run: cargo fmt --all --check
 
   # Workspace uses Windows-only APIs (windows-sys, Win32, UIA) via
-  # `crates/rpcs3-control`, so clippy/build/test must run on Windows.
+  # `crates/rpcs3-control`, so clippy/build/test must run on Windows
+  # to cover the UIA driver path. Phase 10 also makes the workspace
+  # build cleanly on macOS under the mock driver — the parallel
+  # `clippy-build-test-macos` lane below covers that, so a regression
+  # in either platform's cfg gates fails fast.
   clippy-build-test:
     name: clippy + build + test (windows)
     runs-on: windows-latest
@@ -117,3 +125,164 @@ jobs:
       - name: trunk build --release
         working-directory: phone
         run: trunk build --release
+
+  # Mac coverage of the workspace, including the production-flavored
+  # release build and the Mac-only mdns/scutil branch (PLAN 10.1.6 +
+  # 10.6.4). Mirrors the Windows lane structure: clippy + build + test.
+  # macos-14 is Apple Silicon (M-series) — same arch as the macOS
+  # release artifact ships against.
+  clippy-build-test-macos:
+    name: clippy + build + test (macos)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable) with clippy + wasm target
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy --target wasm32-unknown-unknown
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "macos-stable"
+
+      - name: Install trunk
+        uses: jetli/trunk-action@v0.5.0
+        with:
+          version: "latest"
+
+      - name: trunk build --release (phone bundle)
+        working-directory: phone
+        run: trunk build --release
+
+      # Same strict-warnings policy as the Windows lane.
+      - name: cargo clippy --workspace --all-targets
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo build --workspace --all-features
+        run: cargo build --workspace --all-features
+
+      # Skips #[ignore]-gated tests by default, same as Windows. The
+      # mock-driver chromedriver suite (10.3.6) and the iOS-sim suite
+      # (10.4) live in their own lanes below.
+      - name: cargo test --workspace
+        run: cargo test --workspace
+
+      # Production-flavored release build (matches release.yml's
+      # macOS lane). Catches feature-flag regressions in the lane
+      # that actually ships to users.
+      - name: cargo build --release (production features)
+        run: cargo build --release -p skylander-server --no-default-features --features sky-stats,mock-driver-runtime
+
+  # Mock-driver chromedriver e2e on Mac. Runs only the tests known to
+  # be green today; the broader suite reconciliation (PLAN 10.3.6) will
+  # gradually expand the --test list as each chromedriver test is
+  # ported off pre-Phase-4 selectors.
+  e2e-mock-macos:
+    name: e2e (mock chromedriver, macos)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable) + wasm target
+        run: |
+          rustup toolchain install stable --profile minimal --target wasm32-unknown-unknown
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "macos-e2e"
+
+      - name: Install trunk
+        uses: jetli/trunk-action@v0.5.0
+        with:
+          version: "latest"
+
+      - name: trunk build (phone bundle)
+        working-directory: phone
+        run: trunk build
+
+      # ChromeDriver via the Chrome-for-Testing CDN — the matched
+      # ChromeDriver / Chrome pair ships together so we don't get
+      # the version-mismatch error a brew install would risk. Pin
+      # to whatever's marked "Stable" in the channel feed.
+      - name: Install matched Chrome + ChromeDriver
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The macos-14 runner ships with Google Chrome installed by
+          # default at /Applications/Google Chrome.app. Ask it for its
+          # version and pull the exact matching ChromeDriver from the
+          # CFT CDN.
+          chrome_version=$(/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --version | awk '{print $3}')
+          echo "Chrome version: $chrome_version"
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL -o /tmp/chromedriver.zip \
+            "https://storage.googleapis.com/chrome-for-testing-public/${chrome_version}/mac-arm64/chromedriver-mac-arm64.zip"
+          unzip -q /tmp/chromedriver.zip -d /tmp/cd
+          mv /tmp/cd/chromedriver-mac-arm64/chromedriver "$HOME/.local/bin/chromedriver"
+          chmod +x "$HOME/.local/bin/chromedriver"
+          xattr -d com.apple.quarantine "$HOME/.local/bin/chromedriver" 2>/dev/null || true
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/chromedriver" --version
+
+      # Whitelisted to known-green tests today (PLAN 10.3.6 tracks
+      # the broader reconciliation). Add more --test entries as each
+      # gets a selector / DOM update.
+      - name: cargo test smoke (chromedriver, mock driver)
+        run: cargo test -p skylander-e2e-tests --test smoke -- --ignored --nocapture
+
+  # iOS-Simulator-driven e2e (PLAN 10.4). Heavy: cold-boots simulators,
+  # spawns one ios_webkit_debug_proxy per device. Gated to label
+  # `run-ios-sim` on PRs + manual workflow_dispatch — running on every
+  # PR would dominate the macOS-minutes budget.
+  e2e-ios-sim:
+    name: e2e (iOS Simulator, macos)
+    runs-on: macos-14
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       contains(github.event.pull_request.labels.*.name, 'run-ios-sim'))
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable) + wasm target
+        run: |
+          rustup toolchain install stable --profile minimal --target wasm32-unknown-unknown
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "macos-ios-sim"
+
+      - name: Install trunk
+        uses: jetli/trunk-action@v0.5.0
+        with:
+          version: "latest"
+
+      - name: Install ios-webkit-debug-proxy
+        run: brew install ios-webkit-debug-proxy
+
+      - name: trunk build (phone bundle)
+        working-directory: phone
+        run: trunk build
+
+      # iOS runtimes pre-installed on macos-14: at least iOS 17 for
+      # iPhone 15 Pro family. The ios-inspect tool's auto-pick
+      # heuristic targets Dynamic-Island iPhones (15+); the matched
+      # iPad runtime ships in the same Xcode bundle.
+      - name: List available simulators (diagnostic)
+        run: xcrun simctl list devices available
+
+      # Run the iOS-sim tests in sequence. Each test owns a
+      # TeardownGuard that shuts down its booted devices on Drop —
+      # serialization here is to avoid two tests fighting over the
+      # /tmp/ios-inspect-state.json file.
+      - name: cargo test ios_simulator_smoke
+        run: cargo test -p skylander-e2e-tests --test ios_simulator_smoke -- --ignored --nocapture
+
+      - name: cargo test ios_pwa_hint
+        run: cargo test -p skylander-e2e-tests --test ios_pwa_hint -- --ignored --nocapture
+
+      - name: cargo test ios_two_phone
+        run: cargo test -p skylander-e2e-tests --test ios_two_phone -- --ignored --nocapture

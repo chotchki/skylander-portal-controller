@@ -50,15 +50,15 @@
 
 use std::net::Ipv4Addr;
 
-#[cfg(windows)]
-mod win;
 #[cfg(target_os = "macos")]
 mod mac;
-
 #[cfg(windows)]
-use win::os_dns_hostname;
+mod win;
+
 #[cfg(target_os = "macos")]
 use mac::os_dns_hostname;
+#[cfg(windows)]
+use win::os_dns_hostname;
 
 #[cfg(not(any(windows, target_os = "macos")))]
 fn os_dns_hostname() -> Option<String> {

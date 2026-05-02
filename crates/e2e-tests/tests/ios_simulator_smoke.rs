@@ -32,10 +32,7 @@ async fn ios_smoke_game_picker_renders() {
     let session = ios_inspect::boot_devices(&[])
         .await
         .expect("boot iPhone sim");
-    let device: &DeviceState = session
-        .devices
-        .first()
-        .expect("at least one device booted");
+    let device: &DeviceState = session.devices.first().expect("at least one device booted");
 
     // Use a teardown guard to ensure the sim shuts down even if the
     // assertion below panics. Captures the device label for logging.

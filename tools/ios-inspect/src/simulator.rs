@@ -1,6 +1,6 @@
 //! `xcrun simctl` wrappers.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::path::Path;
 use tokio::process::Command;
@@ -57,10 +57,13 @@ fn list_available() -> Result<Vec<Device>> {
         .output()
         .context("run `xcrun simctl list --json`")?;
     if !out.status.success() {
-        bail!("simctl list failed: {}", String::from_utf8_lossy(&out.stderr));
+        bail!(
+            "simctl list failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
-    let listing: SimctlList = serde_json::from_slice(&out.stdout)
-        .context("parse simctl list --json")?;
+    let listing: SimctlList =
+        serde_json::from_slice(&out.stdout).context("parse simctl list --json")?;
 
     let mut candidates: Vec<Device> = Vec::new();
     for (runtime, devices) in &listing.devices {
@@ -97,7 +100,10 @@ fn auto_pick(mut candidates: Vec<Device>) -> Device {
     // are like "com.apple.CoreSimulator.SimRuntime.iOS-26-2"; lexicographic
     // sort matches version order across the range we care about.
     candidates.sort_by(|a, b| b.runtime.cmp(&a.runtime));
-    if let Some(d) = candidates.iter().find(|c| is_dynamic_island_iphone(&c.name)) {
+    if let Some(d) = candidates
+        .iter()
+        .find(|c| is_dynamic_island_iphone(&c.name))
+    {
         return d.clone();
     }
     if let Some(d) = candidates.iter().find(|c| c.name.starts_with("iPhone")) {
@@ -138,7 +144,10 @@ pub async fn launch_simulator_app() -> Result<()> {
     // `open -a Simulator` is the standard way to surface the sim window.
     // Idempotent: if Simulator.app is already running, this brings it to
     // the front.
-    Command::new("open").args(["-a", "Simulator"]).status().await?;
+    Command::new("open")
+        .args(["-a", "Simulator"])
+        .status()
+        .await?;
     Ok(())
 }
 

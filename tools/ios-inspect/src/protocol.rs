@@ -10,10 +10,10 @@
 //! - `Page.snapshotRect` returns a `data:image/png;base64,…` dataURL that
 //!   can exceed 1 MB, so we bump `max_message_size` explicitly.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
@@ -52,7 +52,12 @@ impl Session {
             }
         };
 
-        Ok(Self { ws, target_id, next_outer: 1, next_inner: 100 })
+        Ok(Self {
+            ws,
+            target_id,
+            next_outer: 1,
+            next_inner: 100,
+        })
     }
 
     /// Send a wrapped command, read until we see the matching response.
@@ -69,7 +74,9 @@ impl Session {
             "params": {"targetId": self.target_id, "message": inner.to_string()},
         });
         self.ws
-            .send(tokio_tungstenite::tungstenite::Message::Text(outer.to_string()))
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                outer.to_string(),
+            ))
             .await?;
 
         // Drain incoming messages until the matching inner id arrives.
@@ -77,8 +84,7 @@ impl Session {
         for _ in 0..200 {
             let raw = recv_text(&mut self.ws).await?;
             let v: Value = serde_json::from_str(&raw)?;
-            if v.get("method").and_then(Value::as_str) == Some("Target.dispatchMessageFromTarget")
-            {
+            if v.get("method").and_then(Value::as_str) == Some("Target.dispatchMessageFromTarget") {
                 let inner_str = v
                     .pointer("/params/message")
                     .and_then(Value::as_str)
@@ -123,10 +129,7 @@ impl Session {
 
     pub async fn computed_style(&mut self, node_id: u64) -> Result<Vec<ComputedProp>> {
         let r = self
-            .call(
-                "CSS.getComputedStyleForNode",
-                json!({"nodeId": node_id}),
-            )
+            .call("CSS.getComputedStyleForNode", json!({"nodeId": node_id}))
             .await?;
         #[derive(Deserialize)]
         struct Wrap {
@@ -201,7 +204,8 @@ async fn recv_text(ws: &mut WsStream) -> Result<String> {
             tokio_tungstenite::tungstenite::Message::Text(t) => return Ok(t),
             tokio_tungstenite::tungstenite::Message::Binary(_) => continue,
             tokio_tungstenite::tungstenite::Message::Ping(p) => {
-                ws.send(tokio_tungstenite::tungstenite::Message::Pong(p)).await?;
+                ws.send(tokio_tungstenite::tungstenite::Message::Pong(p))
+                    .await?;
             }
             tokio_tungstenite::tungstenite::Message::Close(_) => {
                 bail!("websocket closed");

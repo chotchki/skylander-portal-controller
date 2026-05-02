@@ -28,7 +28,10 @@ async fn smoke_game_picker_renders() {
     // headless Chrome's `getElementText` returns "" for those even though
     // the text is visually present in the DOM.
     phone
-        .wait_for(Locator::Css(".game-picker .game-card"), Duration::from_secs(10))
+        .wait_for(
+            Locator::Css(".game-picker .game-card"),
+            Duration::from_secs(10),
+        )
         .await
         .expect("first game card");
     let cards = phone

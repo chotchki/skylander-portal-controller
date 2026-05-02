@@ -650,7 +650,9 @@ fn build_driver(kind: DriverKind) -> Result<DriverBundle> {
                 }
             }
             #[cfg(not(any(feature = "dev-tools", feature = "mock-driver-runtime")))]
-            anyhow::bail!("mock driver only available with the dev-tools or mock-driver-runtime feature");
+            anyhow::bail!(
+                "mock driver only available with the dev-tools or mock-driver-runtime feature"
+            );
         }
     }
 }

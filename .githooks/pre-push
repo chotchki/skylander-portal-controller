@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Opt-in local pre-push hook (PLAN 10.5.5). Activated via:
+#
+#   git config core.hooksPath .githooks
+#
+# Runs the same checks the `clippy-build-test` CI lane runs on every
+# push, catching most regressions before they hit GitHub. Skip with
+# `git push --no-verify` for WIP branches.
+#
+# Order matters: cheapest first so failures fail fast.
+#   1. cargo fmt --check (workspace + phone) — seconds.
+#   2. cargo check --workspace — fast incremental.
+#   3. cargo test --workspace — typically <60 s on warm cargo cache,
+#      slower on cold.
+#
+# Doesn't run clippy (CI does); the workspace's clippy-clean status
+# rarely regresses between local check and clippy lint, and skipping
+# saves ~30 s on a typical loop.
+
+set -euo pipefail
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+step() {
+  printf "\n\033[1;36m[pre-push] %s\033[0m\n" "$*"
+}
+
+step "cargo fmt --all --check (workspace)"
+cargo fmt --all --check
+
+step "cargo fmt --all --check (phone)"
+( cd phone && cargo fmt --all --check )
+
+step "cargo check --workspace"
+cargo check --workspace
+
+step "cargo test --workspace"
+cargo test --workspace
+
+printf "\n\033[1;32m[pre-push] all checks passed.\033[0m\n"

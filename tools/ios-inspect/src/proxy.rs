@@ -13,7 +13,7 @@
 //! pins both ports so cross-process commands don't have to re-parse
 //! HTML to find the right endpoint.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -52,10 +52,7 @@ pub async fn find_live_sim_sockets() -> Result<Vec<PathBuf>> {
 /// wasn't in the `before` snapshot. Returns the first new path. Used
 /// at boot time to attribute a freshly-created socket to the
 /// just-booted simulator (boot sequentially, snapshot-diff, claim).
-pub async fn wait_for_new_socket(
-    before: &HashSet<PathBuf>,
-    timeout: Duration,
-) -> Result<PathBuf> {
+pub async fn wait_for_new_socket(before: &HashSet<PathBuf>, timeout: Duration) -> Result<PathBuf> {
     let deadline = Instant::now() + timeout;
     loop {
         let now = find_live_sim_sockets().await?;
@@ -175,7 +172,9 @@ pub async fn wait_for_ready(control_port: u16, timeout: Duration) -> Result<()> 
             _ => {}
         }
         if Instant::now() >= deadline {
-            bail!("ios_webkit_debug_proxy on :{control_port} didn't become ready within {timeout:?}");
+            bail!(
+                "ios_webkit_debug_proxy on :{control_port} didn't become ready within {timeout:?}"
+            );
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
@@ -220,13 +219,20 @@ fn parse_tabs_html(html: &str, port: u16) -> Vec<Tab> {
         };
         // Title: look backwards/forwards to find `title="..."`.
         let li_start = html[..idx].rfind("<li").unwrap_or(cursor);
-        let li_end = html[idx..].find("</li>").map(|p| idx + p).unwrap_or(html.len());
+        let li_end = html[idx..]
+            .find("</li>")
+            .map(|p| idx + p)
+            .unwrap_or(html.len());
         let li = &html[li_start..li_end];
         let title = extract_attr(li, "title=\"").unwrap_or_default();
         // URL: text between `">` and `</a>` of the first <a> in this <li>.
         let url = li
             .find(">h")
-            .and_then(|s| li[s + 1..].find("</a>").map(|e| li[s + 1..s + 1 + e].to_string()))
+            .and_then(|s| {
+                li[s + 1..]
+                    .find("</a>")
+                    .map(|e| li[s + 1..s + 1 + e].to_string())
+            })
             .unwrap_or_default();
         tabs.push(Tab {
             page_num,

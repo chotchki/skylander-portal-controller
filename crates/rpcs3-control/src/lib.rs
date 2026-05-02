@@ -8,9 +8,9 @@
 use std::path::Path;
 use std::time::Duration;
 
+use anyhow::Result;
 #[cfg(not(windows))]
 use anyhow::bail;
-use anyhow::Result;
 use skylander_core::{SLOT_COUNT, SlotIndex, SlotState};
 
 /// Drive the emulated Skylanders portal.

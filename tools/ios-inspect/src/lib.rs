@@ -16,7 +16,7 @@ pub mod state;
 
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 
 use crate::state::{DeviceState, State};
 
@@ -30,7 +30,9 @@ use crate::state::{DeviceState, State};
 /// owns the returned state and is responsible for `shutdown_all` when
 /// done (or `tear_down(state)`).
 pub async fn boot_devices(device_names: &[String]) -> Result<State> {
-    let mut state = state::load()?.unwrap_or(State { devices: Vec::new() });
+    let mut state = state::load()?.unwrap_or(State {
+        devices: Vec::new(),
+    });
 
     // Reap stale state silently from the lib path — the CLI does its
     // own reaping with stderr breadcrumbs (see main.rs::cmd_boot); the
@@ -57,9 +59,7 @@ pub async fn boot_devices(device_names: &[String]) -> Result<State> {
 
         let socket = proxy::wait_for_new_socket(&before, Duration::from_secs(60))
             .await
-            .with_context(|| {
-                format!("locate webinspectord_sim socket for {}", dev.name)
-            })?;
+            .with_context(|| format!("locate webinspectord_sim socket for {}", dev.name))?;
 
         let (control_port, device_port) = state::next_port_pair(&state.devices);
         let pid = proxy::spawn(&socket, control_port, device_port).await?;
@@ -184,10 +184,7 @@ pub async fn session_id(device: &DeviceState) -> Result<Option<u64>> {
 /// Wait for `device` to receive a session id (Event::Welcome) and
 /// return it. Mirrors the chromedriver harness's `Phone::session_id`
 /// polling loop.
-pub async fn wait_for_session_id(
-    device: &DeviceState,
-    timeout: Duration,
-) -> Result<u64> {
+pub async fn wait_for_session_id(device: &DeviceState, timeout: Duration) -> Result<u64> {
     let deadline = std::time::Instant::now() + timeout;
     loop {
         if let Ok(Some(id)) = session_id(device).await {
@@ -223,10 +220,7 @@ pub async fn query_selector_count(device: &DeviceState, selector: &str) -> Resul
 /// Uses `innerText` rather than WebDriver's getElementText, so visually
 /// hidden text reports "" (intentional — match the user-visible
 /// rendering, not the DOM-source string). On no match returns `None`.
-pub async fn query_selector_text(
-    device: &DeviceState,
-    selector: &str,
-) -> Result<Option<String>> {
+pub async fn query_selector_text(device: &DeviceState, selector: &str) -> Result<Option<String>> {
     let tab = proxy::pick_current_tab(device.device_port).await?;
     let mut sess = protocol::Session::connect(&tab.ws_url).await?;
     let expr = format!(

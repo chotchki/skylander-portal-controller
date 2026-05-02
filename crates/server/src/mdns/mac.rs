@@ -47,9 +47,8 @@ mod tests {
     /// either way the launcher silently falls back to the raw-IP URL.
     #[test]
     fn os_hostname_is_readable() {
-        let host = os_dns_hostname().expect(
-            "scutil --get LocalHostName should always return a value on a healthy Mac",
-        );
+        let host = os_dns_hostname()
+            .expect("scutil --get LocalHostName should always return a value on a healthy Mac");
         assert!(!host.is_empty(), "LocalHostName should not be empty");
         assert!(host.len() < 256, "LocalHostName suspiciously long: {host}");
     }

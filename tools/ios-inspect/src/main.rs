@@ -17,14 +17,17 @@
 use std::path::Path;
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 
 use ios_inspect::state::{self, DeviceState};
 use ios_inspect::{protocol, proxy, simulator};
 
 #[derive(Parser)]
-#[command(name = "ios-inspect", about = "Drive the iOS Simulator + Safari Web Inspector")]
+#[command(
+    name = "ios-inspect",
+    about = "Drive the iOS Simulator + Safari Web Inspector"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -108,18 +111,26 @@ async fn main() -> Result<()> {
     match cli.cmd {
         Cmd::Boot { device } => cmd_boot(device).await,
         Cmd::Open { url, device } => cmd_open(&url, device.as_deref()).await,
-        Cmd::Eval { expression, raw, device } => {
-            cmd_eval(&expression, raw, device.as_deref()).await
-        }
-        Cmd::ComputedStyle { selector, filter, device } => {
-            cmd_computed_style(&selector, filter, device.as_deref()).await
-        }
-        Cmd::DumpDom { selector, depth, device } => {
-            cmd_dump_dom(selector.as_deref(), depth, device.as_deref()).await
-        }
-        Cmd::Screenshot { output, web_only, device } => {
-            cmd_screenshot(&output, web_only, device.as_deref()).await
-        }
+        Cmd::Eval {
+            expression,
+            raw,
+            device,
+        } => cmd_eval(&expression, raw, device.as_deref()).await,
+        Cmd::ComputedStyle {
+            selector,
+            filter,
+            device,
+        } => cmd_computed_style(&selector, filter, device.as_deref()).await,
+        Cmd::DumpDom {
+            selector,
+            depth,
+            device,
+        } => cmd_dump_dom(selector.as_deref(), depth, device.as_deref()).await,
+        Cmd::Screenshot {
+            output,
+            web_only,
+            device,
+        } => cmd_screenshot(&output, web_only, device.as_deref()).await,
         Cmd::Tabs { device } => cmd_tabs(device.as_deref()).await,
         Cmd::Shutdown => cmd_shutdown().await,
     }
@@ -129,7 +140,9 @@ async fn cmd_boot(device_args: Vec<String>) -> Result<()> {
     // If a session already exists, top up rather than replacing — let
     // the user add a second device to a single-device session by re-
     // running `boot --device <new>`.
-    let mut state = state::load()?.unwrap_or(state::State { devices: Vec::new() });
+    let mut state = state::load()?.unwrap_or(state::State {
+        devices: Vec::new(),
+    });
 
     // Reap any state entries whose proxy died since the last boot — a
     // crashed proxy shouldn't leave its UDID + port pair "claimed".
@@ -176,17 +189,13 @@ async fn cmd_boot(device_args: Vec<String>) -> Result<()> {
 
         let socket = proxy::wait_for_new_socket(&before, Duration::from_secs(15))
             .await
-            .with_context(|| {
-                format!("locate webinspectord_sim socket for {}", dev.name)
-            })?;
+            .with_context(|| format!("locate webinspectord_sim socket for {}", dev.name))?;
         println!("  socket: {}", socket.display());
 
         let (control_port, device_port) = state::next_port_pair(&state.devices);
         let pid = proxy::spawn(&socket, control_port, device_port).await?;
         proxy::wait_for_ready(control_port, Duration::from_secs(5)).await?;
-        println!(
-            "  proxy pid: {pid} · control :{control_port} · device :{device_port}"
-        );
+        println!("  proxy pid: {pid} · control :{control_port} · device :{device_port}");
 
         state.devices.push(DeviceState {
             udid: dev.udid,
@@ -308,16 +317,15 @@ async fn cmd_computed_style(
 ) -> Result<()> {
     let state = state::load()?.context("not booted — run `ios-inspect boot` first")?;
     let targets = resolve_devices(&state, device_filter)?;
-    let filter_set: Option<std::collections::HashSet<String>> = filter
-        .map(|f| f.split(',').map(|s| s.trim().to_string()).collect());
+    let filter_set: Option<std::collections::HashSet<String>> =
+        filter.map(|f| f.split(',').map(|s| s.trim().to_string()).collect());
     for d in targets {
         let healthy = ensure_device_healthy(&d.udid).await?;
         let tab = proxy::pick_current_tab(healthy.device_port).await?;
         let mut sess = protocol::Session::connect(&tab.ws_url).await?;
-        let node_id = sess
-            .query_selector(selector)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("[{}] no element matches {selector:?}", healthy.label()))?;
+        let node_id = sess.query_selector(selector).await?.ok_or_else(|| {
+            anyhow::anyhow!("[{}] no element matches {selector:?}", healthy.label())
+        })?;
         let style = sess.computed_style(node_id).await?;
         let mut out = serde_json::Map::new();
         for prop in style {
@@ -328,7 +336,11 @@ async fn cmd_computed_style(
             }
             out.insert(prop.name, serde_json::Value::String(prop.value));
         }
-        println!("[{}] {}", healthy.label(), serde_json::to_string_pretty(&out)?);
+        println!(
+            "[{}] {}",
+            healthy.label(),
+            serde_json::to_string_pretty(&out)?
+        );
     }
     Ok(())
 }
@@ -355,11 +367,7 @@ async fn cmd_dump_dom(
     Ok(())
 }
 
-async fn cmd_screenshot(
-    output: &Path,
-    web_only: bool,
-    device_filter: Option<&str>,
-) -> Result<()> {
+async fn cmd_screenshot(output: &Path, web_only: bool, device_filter: Option<&str>) -> Result<()> {
     let state = state::load()?.context("not booted — run `ios-inspect boot` first")?;
     let targets = resolve_devices(&state, device_filter)?;
 
@@ -413,7 +421,13 @@ async fn cmd_tabs(device_filter: Option<&str>) -> Result<()> {
             continue;
         }
         for t in tabs {
-            println!("[{}] {:>3}  {}  ({})", d.label(), t.page_num, t.url, t.title);
+            println!(
+                "[{}] {:>3}  {}  ({})",
+                d.label(),
+                t.page_num,
+                t.url,
+                t.title
+            );
         }
     }
     Ok(())

@@ -117,20 +117,15 @@ async fn ios_two_phone_independent_profiles() {
     .await
     .expect("iPad header profile name renders");
 
-    let iphone_name = ios_inspect::query_selector_text(
-        iphone,
-        ".header-identity .header-profile-name",
-    )
-    .await
-    .expect("iPhone profile name text")
-    .unwrap_or_default();
-    let ipad_name = ios_inspect::query_selector_text(
-        ipad,
-        ".header-identity .header-profile-name",
-    )
-    .await
-    .expect("iPad profile name text")
-    .unwrap_or_default();
+    let iphone_name =
+        ios_inspect::query_selector_text(iphone, ".header-identity .header-profile-name")
+            .await
+            .expect("iPhone profile name text")
+            .unwrap_or_default();
+    let ipad_name = ios_inspect::query_selector_text(ipad, ".header-identity .header-profile-name")
+        .await
+        .expect("iPad profile name text")
+        .unwrap_or_default();
 
     assert!(
         iphone_name.contains("Alpha"),
