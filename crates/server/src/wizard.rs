@@ -177,6 +177,33 @@ impl PersistedConfig {
         }
     }
 
+    /// Build a no-wizard default for a macOS production build (PLAN 10.6).
+    /// macOS has no AXUIElement-based driver so RPCS3 paths are unused —
+    /// `rpcs3_exe` + `firmware_pack_root` are empty and `driver_kind`
+    /// is `Mock`. Phone bundle + tracked data ship next to the binary
+    /// in the release tarball, same shape as the Windows zip.
+    ///
+    /// The user can later replace this `config.json` if they want a
+    /// different bind port, custom data path, etc. — re-running the
+    /// app picks up the edited file on next launch.
+    pub fn macos_default(runtime_dir: &Path) -> Self {
+        let exe_parent = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| PathBuf::from("."));
+
+        PersistedConfig {
+            rpcs3_exe: PathBuf::new(),
+            firmware_pack_root: PathBuf::new(),
+            bind_port: 8765,
+            driver_kind: PersistedDriverKind::Mock,
+            log_dir: runtime_dir.join("logs"),
+            phone_dist_dir: exe_parent.join("phone-dist"),
+            data_root: exe_parent.join("data"),
+            hmac_key: Some(crate::config::generate_hmac_key()),
+        }
+    }
+
     pub fn read(path: &Path) -> Result<Self> {
         let raw = std::fs::read_to_string(path)?;
         Ok(serde_json::from_str(&raw)?)

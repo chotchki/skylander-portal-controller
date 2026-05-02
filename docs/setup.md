@@ -10,13 +10,13 @@ This project intentionally ships as a thin wrapper. It does not bundle the emula
 
 ### Hardware
 
-- A Windows 11 PC. The target deployment is an HTPC hooked to a TV, with Steam in Big Picture mode acting as the shell.
-- A large TV is the target form factor. The launcher UI is tuned for lean-back viewing from across the room.
-- A phone or tablet on the same Wi-Fi network as the HTPC. iOS Safari and Android Chrome are the tested targets.
+- A **Windows 11 PC** for the full HTPC experience (drives a real RPCS3), or an **Apple Silicon Mac** running macOS 14+ for a mock-driver build (no live emulator — useful for demo, family-member play, or development).
+- A large TV is the target form factor on Windows. The launcher UI is tuned for lean-back viewing from across the room.
+- A phone or tablet on the same Wi-Fi network. iOS Safari and Android Chrome are the tested targets.
 
 ### Software you install yourself
 
-- **[RPCS3](https://rpcs3.net/)**, the PS3 emulator, installed and working. You should be able to boot a Skylanders game in it before installing this project. RPCS3 also needs the PS3 system firmware, which you supply per [RPCS3's own setup guide](https://rpcs3.net/quickstart).
+- **[RPCS3](https://rpcs3.net/)**, the PS3 emulator, installed and working. You should be able to boot a Skylanders game in it before installing this project. RPCS3 also needs the PS3 system firmware, which you supply per [RPCS3's own setup guide](https://rpcs3.net/quickstart). *Mac users can skip RPCS3* — the macOS build only ships the mock driver, so a fake `rpcs3` path is enough.
 - **Your own backup of Skylanders figure firmware.** This app reads `.sky` files dumped from physical toys you own. Dumping your own figures is out of scope for this project. The [Portal Authority](https://portal-authority.fandom.com/) and [dumping wiki pages](https://rpcs3.net/wiki/Help%3A_Skylanders) cover the tools and hardware.
 - **The Skylanders games themselves**, installed into RPCS3. You dump those from physical discs you own, per RPCS3's normal disc-dump flow. Supported serials: BLUS30906 (SSA), BLUS30968 (Giants), BLUS31076 (Swap Force), BLUS31442 (Trap Team), BLUS31545 (SuperChargers), BLUS31600 (Imaginators).
 
@@ -40,7 +40,16 @@ The app is designed to be added to Steam as a non-Steam game and launched from B
 
 ## Distribution
 
-Releases ship as a zip on [GitHub Releases](https://github.com/chotchki/skylander-portal-controller/releases). Current plan is a single `skylander-portal.exe` with all assets (phone SPA, fonts, figure metadata, element icons) embedded into the binary. See the [roadmap]({{ '/roadmap/' | relative_url }}) for where that stands.
+Releases ship on [GitHub Releases](https://github.com/chotchki/skylander-portal-controller/releases). Each release attaches two artifacts:
+
+- **Windows:** `skylander-portal-controller-vX.Y.Z-windows-x86_64.zip` — single `skylander-portal.exe` with all assets (phone SPA, fonts, figure metadata, element icons) embedded into the binary. This is the production target with the UIA driver against a real RPCS3.
+- **macOS:** `skylander-portal-controller-vX.Y.Z-macos-arm64.tar.gz` — single `skylander-portal-controller` binary, same embedded assets. Apple Silicon only. The macOS build ships the mock driver only — there's no AXUIElement-based equivalent of the Windows UI Automation driver, so a Mac binary can't talk to a real RPCS3. It's still useful for demo, family-member play, dev iteration, and the iOS-Simulator e2e harness.
+
+### Mac install notes
+
+`tar.gz` extracts to a single binary. The first time you run it, macOS Gatekeeper will refuse to launch the binary because it isn't code-signed. **Right-click the binary in Finder, choose "Open", then click "Open" in the dialog.** That records an exception so subsequent launches work normally. (Code signing + notarization is post-MVP — see the [roadmap]({{ '/roadmap/' | relative_url }}).)
+
+The Mac binary skips the first-launch wizard entirely. On first run it writes a sensible `config.json` to `~/Library/Application Support/skylander-portal-controller/` (mock driver, no RPCS3 path, no firmware pack required) and goes straight to serving the QR. If you want to point it at a `.sky` firmware pack later, edit the `firmware_pack_root` field in that file and restart. SQLite db, logs, and working-copy `.sky` files all live under the same per-user directory.
 
 ## Running from source
 

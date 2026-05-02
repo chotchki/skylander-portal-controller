@@ -618,17 +618,37 @@ a CLI binary in a tar.gz mirrors the Windows zip's friction level and
 keeps the release pipeline simple. `.app` + signing + notarization are
 deferred unless a real user reports the bare-binary UX as blocking.
 
-- [ ] 10.6.1 — Add a macOS lane to `.github/workflows/release.yml`:
-  `cargo build --release -p skylander-server` on `macos-14`, package
-  the binary + the trunk-built `phone/dist/` + `data/` next to it as
-  `skylander-portal-controller-macos-arm64.tar.gz`, attach to the
-  Release. Lane mirrors the Windows lane structure 1:1.
-- [ ] 10.6.2 — Document the Mac release on `docs/setup.md` (the
-  Jekyll-published setup guide): "Mac users — download the macOS
-  tar.gz, expand, run the binary; right-click + Open the first time
-  to bypass Gatekeeper's 'unidentified developer' warning." Note the
-  mock-driver-only constraint up front so users know Mac doesn't talk
-  to RPCS3.
+- [x] 10.6.1 — `.github/workflows/release.yml` gains a
+  `build-macos-release` job on `macos-14` (Apple Silicon). Mirrors
+  the Windows lane: install Rust + wasm + trunk, build phone bundle,
+  `cargo test --workspace`, build server with production features,
+  bash-stage the binary + README + LICENSE into a tar.gz, upload as
+  artifact, attach to the draft release on tag pushes. Both jobs run
+  in parallel; second one to land just appends its artifact to the
+  same draft.
+- [x] 10.6.2 — `docs/setup.md` rewritten to describe both
+  distributions: Windows zip with the UIA driver vs. macOS tar.gz
+  with the mock driver. New "Mac install notes" subsection covers
+  Gatekeeper "right-click + Open" workaround + the no-wizard
+  default-config behaviour landed in 10.6.4. Hardware section
+  updated to call out Apple Silicon as a supported target.
+- [x] 10.6.4 — Mac production binary skips the wizard. New
+  `mock-driver-runtime` Cargo feature ungates `MockPortalDriver` in
+  release builds without pulling in the rest of `dev-tools` (relaxed
+  HMAC, `/api/_dev/log`, `.env.dev` parsing). `dev-tools` now implies
+  `mock-driver-runtime` so existing dev workflows are unaffected.
+  `config::load` (release branch) writes a sensible default
+  `config.json` (driver=mock, empty rpcs3 + pack paths) on macOS
+  instead of running the wizard — Mac binary boots clean on first
+  launch and goes straight to serving the QR. Also fixed a
+  Windows-tuned `paths::runtime_dir_unchecked` that was walking up
+  one too many directory levels on macOS — now stops at
+  `~/Library/Application Support/skylander-portal-controller/`
+  instead of polluting `~/Library/Application Support/`.
+  Smoke-verified: `cargo build --release -p skylander-server
+  --no-default-features --features sky-stats,mock-driver-runtime`
+  produces a binary that boots cleanly, writes a config, and
+  serves `/` → 200.
 - [ ] 10.6.3 — Optional follow-up (not gating Phase 10 close): bundle
   the binary as `Skylander Portal Controller.app` for dock + Launchpad
   discoverability. Skip code signing / notarization unless a user

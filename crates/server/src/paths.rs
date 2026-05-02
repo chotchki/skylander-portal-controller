@@ -31,17 +31,34 @@ pub fn runtime_dir_unchecked() -> Result<PathBuf> {
     {
         use directories::ProjectDirs;
         let proj = ProjectDirs::from("", "", "skylander-portal-controller")
-            .ok_or_else(|| anyhow::anyhow!("couldn't resolve APPDATA via directories crate"))?;
-        // ProjectDirs::config_dir() on Windows = %APPDATA%\skylander-portal-controller\config
-        // We want %APPDATA%\skylander-portal-controller\ (no `config` subdir) per CLAUDE.md.
-        // data_dir() on Windows returns %APPDATA%\skylander-portal-controller\data, also wrong.
-        // Walk up from config_dir() to the project root.
-        let root = proj
-            .config_dir()
-            .parent()
-            .unwrap_or_else(|| proj.config_dir())
-            .to_path_buf();
-        Ok(root)
+            .ok_or_else(|| anyhow::anyhow!("couldn't resolve runtime dir via directories crate"))?;
+        // The right path differs per OS; the `directories` crate's
+        // `config_dir()` returns a per-platform "canonical" location
+        // that we need to massage into our project's chosen layout.
+        //
+        // - Windows: `config_dir()` =
+        //   `%APPDATA%\skylander-portal-controller\config\`. We want
+        //   `%APPDATA%\skylander-portal-controller\` per CLAUDE.md, so
+        //   walk up one level. `data_dir()` ends in `\data` — same
+        //   issue, also wrong shape for us.
+        // - macOS: `config_dir()` =
+        //   `~/Library/Application Support/skylander-portal-controller/`,
+        //   which is already the right level — DON'T walk up
+        //   (would land in `~/Library/Application Support/` and pollute
+        //   the user's home directory with a stray `config.json`).
+        #[cfg(windows)]
+        {
+            let root = proj
+                .config_dir()
+                .parent()
+                .unwrap_or_else(|| proj.config_dir())
+                .to_path_buf();
+            Ok(root)
+        }
+        #[cfg(not(windows))]
+        {
+            Ok(proj.config_dir().to_path_buf())
+        }
     }
 }
 

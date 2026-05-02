@@ -1,10 +1,19 @@
 name: Release
 
-# Triggered by `git tag v*.*.* && git push --tags`. Builds the Windows
-# release exe with the phone bundle embedded (`rust-embed`), runs the
-# fast tests, zips the binary, and attaches it to a draft GitHub
-# Release. Manual `workflow_dispatch` is wired so we can rehearse the
-# pipeline without burning a real tag.
+# Triggered by `git tag v*.*.* && git push --tags`. Builds the
+# Windows + macOS release artifacts in parallel, each with the phone
+# bundle embedded (`rust-embed`), runs the fast tests, packages the
+# binary (zip on Windows, tar.gz on macOS), and attaches them to a
+# draft GitHub Release. Manual `workflow_dispatch` is wired so we
+# can rehearse the pipeline without burning a real tag.
+#
+# Per-platform notes:
+#   - Windows = production target with the UIA driver against real
+#     RPCS3 (PLAN Phase 7).
+#   - macOS = production target with the mock driver only (PLAN
+#     10.6); no AXUIElement-based driver port. Useful for demo,
+#     family-member play, dev iteration, and the iOS-Simulator e2e
+#     harness, but doesn't talk to a real RPCS3.
 #
 # CI (`ci.yml`) covers PRs + main pushes — clippy/build/test cycle.
 # This workflow assumes that's already green for the tagged commit;
@@ -103,3 +112,98 @@ jobs:
           files: ${{ env.RELEASE_ZIP }}
           generate_release_notes: true
           # Tag and name come from `github.ref` automatically.
+
+  build-macos-release:
+    name: build + release (macos)
+    # macos-14 is Apple Silicon (M-series); arm64 is the only Mac
+    # architecture we ship a binary for in v1. Adding x86_64 (Intel)
+    # is doable later via macos-13 + a separate artifact, but ~all
+    # Mac users targeted by this distribution are on Apple Silicon
+    # by 2026.
+    runs-on: macos-14
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable) + wasm target
+        run: |
+          rustup toolchain install stable --profile minimal --target wasm32-unknown-unknown
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "macos-release"
+
+      - name: Install trunk
+        uses: jetli/trunk-action@v0.5.0
+        with:
+          version: "latest"
+
+      # Same build order as the Windows lane: phone bundle first
+      # because the server's `rust-embed` reads `phone/dist/` at
+      # compile time.
+      - name: trunk build --release (phone bundle)
+        working-directory: phone
+        run: trunk build --release
+
+      # The chromedriver / iOS-Simulator e2e tests are #[ignore]-gated
+      # so this skips them. The mac-only mdns::mac::os_hostname_resolves_via_local
+      # test is also #[ignore]-gated (needs a working LAN +
+      # mDNSResponder); same skip behaviour as the Windows lane's
+      # live-RPCS3 ignores.
+      - name: cargo test --workspace
+        run: cargo test --workspace
+
+      # Production features for macOS (PLAN 10.6):
+      # - `sky-stats`: same as Windows; enables the per-figure stats
+      #   endpoint behind the parsed `.sky` working copies.
+      # - `mock-driver-runtime`: lets `build_driver` construct
+      #   `MockPortalDriver` even without `dev-tools`. Required on
+      #   Mac because there's no AXUIElement-based driver — without
+      #   this flag the binary would bail at startup with "mock
+      #   driver only available with the dev-tools feature".
+      # Drops `dev-tools` (relaxes HMAC, adds /api/_dev/log, enables
+      # .env.dev parsing) — same security gates as the Windows lane.
+      - name: cargo build --release -p skylander-server (production features)
+        run: cargo build --release -p skylander-server --no-default-features --features sky-stats,mock-driver-runtime
+
+      - name: Stage release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME:-manual-${GITHUB_SHA:0:8}}"
+          stage="release-stage/skylander-portal-controller-${tag}"
+          mkdir -p "$stage"
+          cp target/release/skylander-portal-controller "$stage/"
+          # README + LICENSE are best-effort — keep going even if a
+          # bare repo somehow lacks them.
+          cp README.md "$stage/" || true
+          cp LICENSE* "$stage/" 2>/dev/null || true
+          tarball="skylander-portal-controller-${tag}-macos-arm64.tar.gz"
+          # -C + relative dir so the tar root is the staged folder
+          # name, not the absolute checkout path.
+          tar -czf "$tarball" -C release-stage "skylander-portal-controller-${tag}"
+          echo "RELEASE_TARBALL=${tarball}" >> "$GITHUB_ENV"
+
+      - name: Upload artifact (always)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_TARBALL }}
+          path: ${{ env.RELEASE_TARBALL }}
+          retention-days: 30
+
+      - name: Create draft release
+        # Only on actual tag pushes. softprops/action-gh-release is
+        # idempotent across multiple jobs uploading to the same tag —
+        # the Windows job creates the draft if absent, this one
+        # appends. `generate_release_notes: true` is set in both jobs
+        # so whichever lands first writes the notes; the other no-ops
+        # the field.
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: ${{ env.RELEASE_TARBALL }}
+          generate_release_notes: true

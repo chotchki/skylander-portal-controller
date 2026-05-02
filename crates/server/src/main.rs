@@ -627,7 +627,12 @@ fn build_driver(kind: DriverKind) -> Result<DriverBundle> {
             anyhow::bail!("UIA driver only available on Windows");
         }
         DriverKind::Mock => {
-            #[cfg(feature = "dev-tools")]
+            // Available under EITHER dev-tools (the standard
+            // contributor build) OR mock-driver-runtime (the macOS
+            // production build that has no UIA path). Gating Mock
+            // behind dev-tools alone would have made the Mac release
+            // binary refuse to start (PLAN 10.6).
+            #[cfg(any(feature = "dev-tools", feature = "mock-driver-runtime"))]
             {
                 let mock = Arc::new(skylander_rpcs3_control::MockPortalDriver::new());
                 let arc: Arc<dyn PortalDriver> = mock.clone();
@@ -644,8 +649,8 @@ fn build_driver(kind: DriverKind) -> Result<DriverBundle> {
                     return Ok((arc, ()));
                 }
             }
-            #[cfg(not(feature = "dev-tools"))]
-            anyhow::bail!("mock driver only available with the dev-tools feature");
+            #[cfg(not(any(feature = "dev-tools", feature = "mock-driver-runtime")))]
+            anyhow::bail!("mock driver only available with the dev-tools or mock-driver-runtime feature");
         }
     }
 }

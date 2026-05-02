@@ -147,8 +147,12 @@ fn load_or_create_dev_hmac_key() -> Result<Vec<u8>> {
 #[cfg(not(feature = "dev-tools"))]
 pub fn load() -> Result<Config> {
     use crate::paths;
-    use crate::wizard::{self, PersistedConfig, PersistedDriverKind};
+    use crate::wizard::{PersistedConfig, PersistedDriverKind};
     use anyhow::Context;
+    // The wizard module itself is only referenced on non-macOS (PLAN
+    // 10.6.4 short-circuits the Mac path with a default config).
+    #[cfg(not(target_os = "macos"))]
+    use crate::wizard;
 
     let config_path = paths::config_json_path()?;
 
@@ -161,7 +165,23 @@ pub fn load() -> Result<Config> {
         })?
     } else {
         let runtime_dir = paths::resolve_runtime_dir()?;
-        wizard::run_wizard_blocking(&config_path, &runtime_dir)?
+        // PLAN 10.6.4: macOS production builds skip the wizard
+        // entirely. The wizard is RPCS3-shaped (validates `rpcs3.exe`
+        // filename, expects a firmware-pack root), and macOS has no
+        // AXUIElement-based driver — the only available DriverKind on
+        // Mac is Mock. Write a sensible default + move on. User can
+        // hand-edit the resulting `config.json` if they want a
+        // different bind port, custom data path, etc.
+        #[cfg(target_os = "macos")]
+        {
+            let cfg = PersistedConfig::macos_default(&runtime_dir);
+            cfg.write(&config_path)?;
+            cfg
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            wizard::run_wizard_blocking(&config_path, &runtime_dir)?
+        }
     };
 
     // Ensure the persisted config has an HMAC key. The wizard writes a
