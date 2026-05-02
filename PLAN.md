@@ -339,14 +339,246 @@ becomes additive, not a separate stylesheet branch.
   iPad via the Tour gallery.
 
 ## Phase 10 Items
-- [ ] 10.1 - Add MacOS support
-- [ ] 10.2 - Add fully automated e2e testing since we can run it all on a Mac
+
+Goal: bring macOS up as a first-class platform — production-ready
+server binary plus the multi-device iPad+iPhone simulator orchestration
+that makes the 2-phone product feature exercisable end-to-end without a
+Windows machine. Independent of Phase 9 — the Tailwind port is the
+visual baseline whether or not 9.1–9.6 have landed when 10.x starts.
+
+The UIA driver remains Windows-only; on macOS the mock driver is the
+only available `DriverKind`. That's a real product limitation (no Mac
+RPCS3 integration), not a build-only gap — Mac users get a working
+portal-controller against an in-memory mock instead of a live emulator,
+which is useful for demo, family-member play, and dev iteration but
+isn't the full Skylanders flow. AXUIElement-based Mac driver work is
+out of scope for Phase 10.
+
+Deliverables, in dependency order:
+- 10.1 — server compiles + runs cleanly on macOS under the mock driver.
+- 10.2 — `ios-inspect` boots and drives two simulators at once.
+- 10.3 — existing chromedriver e2e suite goes green on macOS.
+- 10.4 — new simulator-driven tests exercise iPad + iPhone simultaneously.
+- 10.5 — CI lane on a Mac runner so the suite stays green automatically.
+- 10.6 — macOS release artifact published alongside the Windows zip.
+
+### 10.1 Server builds and runs on macOS (mock-driver only)
+Today: workspace mostly cfg-gates Windows-only code paths, but
+`cargo check -p skylander-server --no-default-features --features dev-tools`
+on macOS fails with `bail!` not in scope inside the non-Windows arm of
+`RpcsProcess::launch_library` / `attach`. Beyond the immediate fix, the
+cross-platform scaffold needs a smoke-pass before the rest of Phase 10
+has anything to stand on.
+
+- [x] 10.1.1 — Imported `anyhow::bail` in `crates/rpcs3-control/src/lib.rs`
+  for the non-Windows arms. `cargo check -p skylander-server
+  --no-default-features --features dev-tools` is clean on macOS.
+- [x] 10.1.2 — `cargo check --workspace` is clean. The 9
+  `crates/rpcs3-control/examples/*` files are `#![cfg(windows)]` (file
+  body vanishes on Mac → "no main function" under `--all-targets`).
+  Fixed by listing each example in `crates/rpcs3-control/Cargo.toml`
+  with `required-features = ["uia-examples"]`; Mac skips them by
+  default, Windows contributors opt in with the flag.
+- [x] 10.1.3 — Confirmed: `DriverKind::Mock` short-circuits both
+  `build_driver` and the spawn task before either touches `RPCS3_EXE`,
+  so the dev sentinel path never gets opened. The eframe `wayland`/`x11`
+  features in `crates/server/Cargo.toml` turned out to be inert on Mac
+  (eframe wires them only on `cfg(target_os = "linux")` internally), so
+  no per-target gating needed there either.
+- [x] 10.1.4 — pcsc + skylander-nfc-reader build cleanly on Mac via
+  `cargo check -p skylander-server --features nfc-import` — pcsc-lite's
+  `build.rs` finds the system PCSC framework via pkg-config without
+  intervention. No code changes needed.
+- [x] 10.1.5 — End-to-end smoke run captured. `cargo run -p
+  skylander-server` indexes 504 figures, the SPA serves at
+  `http://<en0-ip>:8765/`, `/api/join-qr.png` returns a 37 KB PNG.
+  Bringup doc: `docs/dev/macos-bringup.md` (excluded from the Jekyll
+  site via `docs/_config.yml`).
+- [x] 10.1.6 — Added `crates/server/src/mdns/mac.rs` reading
+  `scutil --get LocalHostName` and wired it into
+  `mdns::os_dns_hostname` via `#[cfg(target_os = "macos")]`. Verified
+  end-to-end: server logs `phone URL http://christophers-macbook-pro.local:8765/?k=…`
+  and `curl` against that URL returns 200. The ignored
+  `os_hostname_resolves_via_local` test passes on this Mac.
+- [x] 10.1.7 — Added a "macOS dev workflow" section to `CLAUDE.md`
+  pointing at `docs/dev/macos-bringup.md` + `tools/ios-inspect/README.md`.
+  Neither `CLAUDE.md` nor `SPEC.md` had a "No Linux/Mac support"
+  non-goal in the first place — only PLAN.md did, and that was
+  flipped in the same commit as the Phase 10 expansion.
+
+### 10.2 `ios-inspect` multi-device orchestration
+Today `ios-inspect boot` auto-picks the newest Dynamic-Island iPhone
+and `state.json` tracks one device + one webinspectord_sim socket. The
+2-phone product feature (PLAN 8.1, 8.2a) needs an iPad and an iPhone
+booted simultaneously, both pointed at the same server, each driveable
+independently. `xcrun simctl` and `ios-webkit-debug-proxy` both support
+multiple simulators concurrently — the limitation is purely in
+`ios-inspect`'s state model.
+
+- [ ] 10.2.1 — `ios-inspect boot --device "<name>" [--device "<name>"]`:
+  accept multiple `--device` flags, boot each, persist the full UDID
+  list in `/tmp/ios-inspect-state.json`. Default (no flag) keeps the
+  current single-iPhone behavior for back-compat.
+- [ ] 10.2.2 — Per-device targeting on every read/eval command (`open`,
+  `eval`, `computed-style`, `dump-dom`, `screenshot`, `tabs`): add
+  `--device <name|udid>`. Without filter, fan out to all booted devices
+  and prefix output with the device label.
+- [ ] 10.2.3 — Restructure `proxy.rs` to track per-device proxy sockets
+  + active tab IDs in `state.json`. The proxy itself enumerates booted
+  sims and exposes one socket per device — adapt the lookup + self-heal
+  paths to the multi-socket world.
+- [ ] 10.2.4 — `ios-inspect screenshot --output <dir>` with no
+  `--device`: writes one PNG per booted device, device label in the
+  filename (`iphone17pro.png`, `ipadpro13.png`). Useful for two-up
+  visual comparison without scripting.
+- [ ] 10.2.5 — `ios-inspect shutdown` cleans up *all* booted devices
+  tracked in state, not just the cached one. Idempotent.
+- [ ] 10.2.6 — Update `tools/ios-inspect/README.md` with a multi-device
+  session walkthrough: boot both, open same URL, paired screenshot,
+  per-device eval. Keep the simulator-fidelity caveats list intact
+  (`safe-area-inset-bottom = 0` still applies per-device).
+
+### 10.3 E2E harness portable to macOS
+The fantoccini suite in `crates/e2e-tests/` already exercises the mock
+driver — which is the only driver available on Mac — but is hardcoded
+for Windows in two places: the firmware-pack default path and the
+chromedriver discovery fallback. Fix those, then drive the existing
+suite green on macOS.
+
+- [ ] 10.3.1 — `crates/e2e-tests/src/lib.rs::TestServer::spawn` +
+  `spawn_live`: replace the hard-coded
+  `C:\Users\chris\workspace\Skylanders Characters Pack for RPCS3`
+  default with a per-target default (Mac/Linux:
+  `<repo>/dev-data/firmware-pack/`). `SKYLANDER_PACK_ROOT` override
+  stays as the escape hatch.
+- [ ] 10.3.2 — `locate_chromedriver`: add macOS branches checking
+  `/opt/homebrew/bin/chromedriver`, `/usr/local/bin/chromedriver`, then
+  `which chromedriver`. Document the install
+  (`brew install --cask chromedriver`) in
+  `crates/e2e-tests/README.md`. Windows-only winget fallback stays
+  cfg-gated.
+- [ ] 10.3.3 — Run the existing mock-driver e2e suite on Mac:
+  `cargo test -p skylander-e2e-tests -- --ignored --nocapture`. Triage
+  failures — most likely path-separator assumptions in
+  `working_copies.rs`, `paths.rs::working_copy_path_shape` (which
+  already does `.replace('\\', '/')` so should be safe), and any tests
+  that assert on Windows-line-ending log output.
+- [ ] 10.3.4 — `tests/screenshot_tour.rs`: lock the Mac-rendered baseline.
+  The headless-Chrome viewport is fixed at 420×900 and seeds are
+  deterministic, but Mac CoreText vs. Windows DirectWrite font rendering
+  may produce non-byte-identical PNGs. Decide: re-baseline on Mac, or
+  accept platform-specific tour outputs in
+  `docs/assets/screens/{macos,windows}/`. Update
+  `crates/e2e-tests/README.md` with the chosen workflow + diff command.
+- [ ] 10.3.5 — Add a `Running on macOS` section to
+  `crates/e2e-tests/README.md`: prereqs (Chrome stable + chromedriver +
+  `phone/dist/` built), expected first-run command sequence, known
+  caveats vs. the Windows lane.
+
+### 10.4 Simultaneous iPad + iPhone simulator e2e
+This is the core user value: drive both an iPad and an iPhone
+simulator against a single server instance, exactly the way the
+2-phone feature ships. Combines 10.2's multi-device `ios-inspect`
+with 10.3's portable harness.
+
+- [ ] 10.4.1 — Refactor `tools/ios-inspect`: extract the lifecycle +
+  protocol logic into a sibling `lib.rs`, leave `main.rs` as a thin
+  clap wrapper. The existing crate is currently outside the workspace
+  (its own `[workspace]` block); decide whether to bring it in or keep
+  it standalone with a published-to-disk artifact path. Keeping it
+  standalone preserves the "dev tool, not a runtime dep" boundary.
+- [ ] 10.4.2 — `crates/e2e-tests/Cargo.toml`: add `ios-inspect` as a
+  `[target.'cfg(target_os = "macos")'.dev-dependencies]` path
+  dependency. If 10.4.1 chose to keep the tool standalone, add a thin
+  subprocess wrapper helper in `e2e-tests/src/ios.rs` that shells out
+  to the binary instead.
+- [ ] 10.4.3 — `crates/e2e-tests/tests/ios_simulator_smoke.rs`
+  (`#[cfg(target_os = "macos")]`, `#[ignore]`): boot one iPhone Sim,
+  open the SPA's `/?k=...` URL, assert the profile picker renders,
+  unlock via the test-hook, assert the portal screen appears. Tears
+  down the sim on success.
+- [ ] 10.4.4 — `tests/ios_two_phone.rs`: boot iPad Sim + iPhone Sim
+  simultaneously, both load the SPA, each unlocks a distinct profile,
+  place a figure from one, assert the other's portal view sees the
+  placement (mirrors the
+  `crates/e2e-tests/tests/multi_phone.rs::shared_portal_visibility`
+  scenario but on real iOS WebKit instead of headless Chrome).
+- [ ] 10.4.5 — Visual regression: snap paired screenshots per scene
+  (profile picker, portal, toy box, kaos overlay) on iPad + iPhone,
+  commit as `docs/assets/screens/ios/<scene>-{ipad,iphone}.png`. Reuse
+  the chromedriver tour's scene list (`tests/screenshot_tour.rs`) as
+  the source of truth for *which* scenes to capture.
+- [ ] 10.4.6 — Document the iOS-sim e2e lane in
+  `crates/e2e-tests/README.md` separately from the chromedriver lane:
+  prereqs (Xcode + iPad runtime + Dynamic-Island iPhone runtime +
+  `ios-webkit-debug-proxy`), invocation, expected runtime (~2-3 min
+  cold-boot for both sims).
+
+### 10.5 Continuous-integration lane
+CI was deferred until the app worked. With 10.1–10.4 in place, the
+e2e suite has a credible automated home and the "fully automated"
+half of the user goal becomes real. Decide CI host first since it
+shapes everything downstream.
+
+- [ ] 10.5.1 — Decide CI host: GitHub-hosted `macos-14` runner
+  (free for public repos, Xcode pre-installed, but no persistent
+  simulator cache → ~3-5 min cold-sim boot per run) vs. self-hosted on
+  Chris's Mac (warm sim cache, no minute-budget pressure, but ties CI
+  to one machine being awake). Document the choice + tradeoffs in
+  `docs/dev/ci.md` (new file). Default lean: GH-hosted for unit + the
+  chromedriver lane, self-hosted for the simulator-driven lane.
+- [ ] 10.5.2 — `.github/workflows/ci.yml` lane 1: `cargo build
+  --workspace` + `cargo test --workspace` on macOS. No simulator
+  dependency. Cache `~/.cargo/registry` + `target/` keyed on
+  `Cargo.lock` hash.
+- [ ] 10.5.3 — Lane 2: `cargo test -p skylander-e2e-tests -- --ignored`
+  excluding any test gated `cfg(target_os = "macos")` simulator-only.
+  Runs the chromedriver suite on the same Mac runner.
+- [ ] 10.5.4 — Lane 3 (label-gated, slower): the simulator-driven
+  iOS tests from 10.4. Triggered on PRs touching `phone/`,
+  `tools/ios-inspect/`, or `crates/server/src/http.rs`. Skipped by
+  default to keep PR latency reasonable.
+- [ ] 10.5.5 — Local pre-push hook (opt-in, in
+  `.githooks/pre-push`, activated via `git config core.hooksPath
+  .githooks`): `cargo check --workspace` + `cargo test --workspace`.
+  Documented in `CLAUDE.md` as the recommended dev loop.
+
+### 10.6 macOS production release artifact
+Today the release pipeline produces a Windows zip (`release.yml` runs
+`generate_release_notes` and uploads `skylander-portal-controller.exe`).
+Mac becomes a parallel artifact: same binary, mock-only driver, same
+GitHub Releases attachment shape. No `.app` bundle in the first cut —
+a CLI binary in a tar.gz mirrors the Windows zip's friction level and
+keeps the release pipeline simple. `.app` + signing + notarization are
+deferred unless a real user reports the bare-binary UX as blocking.
+
+- [ ] 10.6.1 — Add a macOS lane to `.github/workflows/release.yml`:
+  `cargo build --release -p skylander-server` on `macos-14`, package
+  the binary + the trunk-built `phone/dist/` + `data/` next to it as
+  `skylander-portal-controller-macos-arm64.tar.gz`, attach to the
+  Release. Lane mirrors the Windows lane structure 1:1.
+- [ ] 10.6.2 — Document the Mac release on `docs/setup.md` (the
+  Jekyll-published setup guide): "Mac users — download the macOS
+  tar.gz, expand, run the binary; right-click + Open the first time
+  to bypass Gatekeeper's 'unidentified developer' warning." Note the
+  mock-driver-only constraint up front so users know Mac doesn't talk
+  to RPCS3.
+- [ ] 10.6.3 — Optional follow-up (not gating Phase 10 close): bundle
+  the binary as `Skylander Portal Controller.app` for dock + Launchpad
+  discoverability. Skip code signing / notarization unless a user
+  flags the Gatekeeper friction as a blocker — `$99/yr Apple
+  Developer ID + manual notarization run` is non-trivial overhead for
+  a hobby project. If signed: integrate `codesign` + `notarytool` into
+  the release lane; if not: keep the right-click-open instruction in
+  the setup doc.
 
 ## Non-goals
 
 - No bundling of RPCS3 or `.sky` files (piracy concern).
-- No CI until core features work.
-- No Linux/Mac support.
+- No Linux support — production targets are Windows + macOS. macOS
+  ships the mock driver only (no AXUIElement-based driver to talk to
+  Mac RPCS3); .app bundle + code signing are deferred (10.6.3) unless
+  Gatekeeper friction proves blocking.
 - No user-entered figure names.
 - No audio (text-only Kaos to dodge copyright).
 - No live wiki scraping at runtime — data is committed to the repo.

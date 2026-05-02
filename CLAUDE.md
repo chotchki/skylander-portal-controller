@@ -107,6 +107,30 @@ A Windows app that wraps RPCS3 (PS3 emulator) so kids can manage the emulated Sk
 - E2E harness can inject a profile and bypass PINs.
 - Release builds physically cannot take these shortcuts.
 
+## macOS support
+
+- **Production target on both Windows and macOS.** Windows uses the
+  UIA driver to talk to a real RPCS3; macOS gets the mock driver only
+  (no AXUIElement-based driver port — that's an explicit non-goal).
+  Mac users see the same SPA + launcher surface but the portal is an
+  in-memory mock, not a live emulator. Useful for demo, family-member
+  play, dev iteration, and the iOS-Simulator e2e harness.
+- Dev: `cargo run -p skylander-server` boots cleanly with
+  `SKYLANDER_PORTAL_DRIVER=mock` + a sentinel `RPCS3_EXE` path. The QR
+  URL uses Bonjour (`<LocalHostName>.local`, read via `scutil --get
+  LocalHostName`) so PWA bookmarks survive DHCP changes the same way
+  they do on Windows.
+- Full dev bringup steps + expected log lines:
+  `docs/dev/macos-bringup.md`.
+- iOS Simulator iteration: `tools/ios-inspect/README.md`. The CLI
+  drives `xcrun simctl` + `ios-webkit-debug-proxy` for layout/CSS
+  probes against booted simulators. Multi-device (iPad + iPhone) is
+  PLAN 10.2 — not landed yet.
+- Release artifact: macOS tar.gz attached to GitHub Releases alongside
+  the Windows zip (PLAN 10.6). No `.app` bundle / code signing /
+  notarization in v1 — users right-click + Open the binary to bypass
+  Gatekeeper.
+
 ## Error handling
 
 - GUI-drive failure: silent retry up to N times, then error toast on phone. Start simple, iterate.

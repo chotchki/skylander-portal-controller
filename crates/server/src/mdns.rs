@@ -39,16 +39,28 @@
 //! If the OS hostname can't be read, or `<hostname>.local` doesn't
 //! resolve locally (broken responder, weird config), we fall back to
 //! the raw-IP URL — the QR still works, just without DHCP-survival.
+//!
+//! Per-platform implementation:
+//!   - Windows reads `GetComputerNameExW(ComputerNameDnsHostname, …)`
+//!     — see `mdns/win.rs`.
+//!   - macOS shells out to `scutil --get LocalHostName` (the Bonjour
+//!     name `mDNSResponder` advertises) — see `mdns/mac.rs`.
+//!   - Other platforms (Linux/BSD) currently fall back to the raw-IP
+//!     URL; we don't ship there.
 
 use std::net::Ipv4Addr;
 
 #[cfg(windows)]
 mod win;
+#[cfg(target_os = "macos")]
+mod mac;
 
 #[cfg(windows)]
 use win::os_dns_hostname;
+#[cfg(target_os = "macos")]
+use mac::os_dns_hostname;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn os_dns_hostname() -> Option<String> {
     None
 }
@@ -131,15 +143,30 @@ mod tests {
         // this is the unit-level pin on the lowercasing transform.)
     }
 
-    /// On non-Windows hosts (where `os_dns_hostname` always returns
-    /// None), the URL falls back to the IP form so the QR still works.
-    /// This branch matters for cross-platform CI builds that target
-    /// non-Windows even if production is Windows-only.
-    #[cfg(not(windows))]
+    /// Platforms with no `os_dns_hostname` implementation (Linux/BSD)
+    /// fall back to the IP-form URL. Cross-platform CI builds for
+    /// those targets land here; macOS + Windows have their own
+    /// hostname paths covered in their respective submodules.
+    #[cfg(not(any(windows, target_os = "macos")))]
     #[test]
-    fn falls_back_to_ip_on_non_windows() {
+    fn falls_back_to_ip_on_unsupported_targets() {
         let (url, used_mdns) = build_phone_url(Ipv4Addr::new(192, 168, 1, 147), 8765, "abc");
         assert!(!used_mdns);
         assert_eq!(url, "http://192.168.1.147:8765/?k=abc");
+    }
+
+    /// macOS path: `scutil --get LocalHostName` returns the Bonjour
+    /// name, so the URL uses `<host>.local:port/?k=…`. Same shape as
+    /// the Windows-side test in `mdns/win.rs::os_hostname_is_readable` —
+    /// just confirms the URL builder routed through the Mac branch.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn url_uses_local_hostname_on_macos() {
+        let (url, used_mdns) = build_phone_url(Ipv4Addr::new(192, 168, 1, 147), 8765, "abc");
+        assert!(used_mdns, "macOS should publish via Bonjour: {url}");
+        assert!(
+            url.ends_with(".local:8765/?k=abc"),
+            "macOS URL should be <host>.local:port/?k=…, got {url}"
+        );
     }
 }

@@ -8,6 +8,8 @@
 use std::path::Path;
 use std::time::Duration;
 
+#[cfg(not(windows))]
+use anyhow::bail;
 use anyhow::Result;
 use skylander_core::{SLOT_COUNT, SlotIndex, SlotState};
 

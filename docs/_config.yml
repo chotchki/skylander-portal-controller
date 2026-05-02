@@ -37,3 +37,4 @@ exclude:
   # subtree.
   - research
   - aesthetic
+  - dev

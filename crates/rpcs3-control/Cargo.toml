@@ -26,3 +26,48 @@ windows = { version = "0.61", features = [
 [features]
 default = []
 mock = []
+# Synthetic feature gating the Windows-only manual probes under
+# `examples/`. They use `#![cfg(windows)]` at the crate level, so on
+# non-Windows targets the file body vanishes and Cargo errors with
+# "no main function". Listing each example with
+# `required-features = ["uia-examples"]` makes Cargo skip them unless
+# the flag is set, so `cargo check --all-targets` is clean on macOS.
+# Windows contributors who want to build the probes use:
+#   cargo build -p skylander-rpcs3-control --examples --features uia-examples
+uia-examples = []
+
+[[example]]
+name = "boot_game"
+required-features = ["uia-examples"]
+
+[[example]]
+name = "dump_menu_tree"
+required-features = ["uia-examples"]
+
+[[example]]
+name = "hide_dialog"
+required-features = ["uia-examples"]
+
+[[example]]
+name = "library_probe"
+required-features = ["uia-examples"]
+
+[[example]]
+name = "open_skylanders_dialog"
+required-features = ["uia-examples"]
+
+[[example]]
+name = "rpcs3_windows"
+required-features = ["uia-examples"]
+
+[[example]]
+name = "show_main"
+required-features = ["uia-examples"]
+
+[[example]]
+name = "stop_probe"
+required-features = ["uia-examples"]
+
+[[example]]
+name = "zorder_probe"
+required-features = ["uia-examples"]
