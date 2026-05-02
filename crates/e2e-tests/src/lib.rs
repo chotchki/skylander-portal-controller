@@ -68,6 +68,15 @@ impl TestServer {
             ])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        // Spawn into our own process group so ChildGuard can kill the
+        // entire chain (cargo + rustc + the eventual server binary)
+        // atomically. Without this, killing `cargo` doesn't reliably
+        // take down its descendants. PLAN 10.3.6 process-hygiene.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
 
         let mut child = cmd.spawn().context("spawn server via cargo run")?;
         let stdout = child.stdout.take().unwrap();
@@ -188,6 +197,12 @@ impl TestServer {
             ])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        // Process group + group-kill, same rationale as `spawn`.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
 
         let mut child = cmd.spawn().context("spawn server via cargo run")?;
         let stdout = child.stdout.take().unwrap();
@@ -245,6 +260,15 @@ fn spawn_chromedriver() -> Result<(String, ChildGuard)> {
         .arg("--silent")
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    // PLAN 10.3.6: spawn into our own process group so killing the
+    // chromedriver guard takes down its forked Chromes too. Without
+    // this a panicked test leaves dozens of `Google Chrome Helper`
+    // processes orphaned (Chris flagged this 2026-05-02).
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
 
     let child = cmd.spawn().with_context(|| {
         format!(
@@ -424,17 +448,63 @@ fn repo_root() -> Result<PathBuf> {
     Ok(root.to_path_buf())
 }
 
-struct ChildGuard(Option<Child>);
+/// RAII guard for spawned subprocesses. On Drop (or explicit
+/// `kill_now`), kills the whole process group, not just the immediate
+/// child. The leverage matters for chromedriver: a panicked test
+/// would leave the chromedriver-spawned headless Chromes orphaned
+/// because they don't share chromedriver's parent (each `Phone::new`
+/// creates a new Chrome via the WebDriver session). PLAN 10.3.6
+/// process-hygiene note tracked this for ages — the fix is to spawn
+/// chromedriver into its own process group (`Command::process_group(0)`)
+/// and `kill -KILL -<pgid>` on cleanup.
+///
+/// Same treatment for the server child — `cargo run` forks a chain of
+/// rustc + the eventual server binary; killing only `cargo` itself
+/// can leave the server process running.
+struct ChildGuard {
+    child: Option<Child>,
+    /// Process group id of the spawned child. On Unix the child is
+    /// spawned with `process_group(0)`, which makes its PID the
+    /// pgid. On Windows we don't track this — std::process doesn't
+    /// expose process-group control, and the existing CI doesn't
+    /// run e2e on Windows. None when not on Unix.
+    #[cfg(unix)]
+    pgid: Option<i32>,
+}
 
 impl ChildGuard {
     fn new(child: Child) -> Self {
-        Self(Some(child))
+        #[cfg(unix)]
+        let pgid = Some(child.id() as i32);
+        Self {
+            child: Some(child),
+            #[cfg(unix)]
+            pgid,
+        }
     }
 
-    /// Kill the wrapped child immediately and detach. Used by
-    /// `TestServer::kill_server` to simulate a server crash mid-test.
+    /// Kill the wrapped child + its entire process group immediately
+    /// and detach. Used by `TestServer::kill_server` to simulate a
+    /// server crash mid-test, and by Drop to ensure no Chrome /
+    /// cargo-rustc / server zombies survive a panicked test.
     fn kill_now(&mut self) {
-        if let Some(mut child) = self.0.take() {
+        if let Some(mut child) = self.child.take() {
+            #[cfg(unix)]
+            if let Some(pgid) = self.pgid.take() {
+                // `kill -KILL -<pgid>` (negative = group). SIGKILL is
+                // uncatchable so the whole group dies in one syscall;
+                // ignore the kill subprocess's exit (errors here mean
+                // "group already gone" — fine for cleanup).
+                let _ = std::process::Command::new("kill")
+                    .arg("-KILL")
+                    .arg(format!("-{pgid}"))
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+            // Belt-and-suspenders: kill the leader directly too, in
+            // case the group-kill missed it (e.g. the leader had
+            // already escaped the original group).
             let _ = child.kill();
             let _ = child.wait();
         }

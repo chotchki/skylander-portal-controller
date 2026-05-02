@@ -242,6 +242,19 @@ jobs:
       - name: cargo test smoke (chromedriver, mock driver)
         run: cargo test -p skylander-e2e-tests --test smoke -- --ignored --nocapture
 
+      - name: cargo test connection_lost (chromedriver, mock driver)
+        run: cargo test -p skylander-e2e-tests --test connection_lost -- --ignored --nocapture
+
+      # hmac + shutdown don't actually use chromedriver (no Phone
+      # instances) — they exercise raw HTTP against the spawned
+      # server. Run them here anyway so the chromedriver lane covers
+      # the full HTTP API surface, not just selector-driven flows.
+      - name: cargo test hmac (HTTP-only)
+        run: cargo test -p skylander-e2e-tests --test hmac -- --ignored --nocapture
+
+      - name: cargo test shutdown (HTTP-only)
+        run: cargo test -p skylander-e2e-tests --test shutdown -- --ignored --nocapture
+
   # iOS-Simulator-driven e2e (PLAN 10.4). Heavy: cold-boots simulators,
   # spawns one ios_webkit_debug_proxy per device. Gated to label
   # `run-ios-sim` on PRs + manual workflow_dispatch — running on every

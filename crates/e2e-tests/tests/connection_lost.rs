@@ -128,23 +128,30 @@ async fn overlay_appears_and_persists_through_reconnect_cycle() {
 
     // Grace is 1s in `connection_lost.rs`; allow generous slack for the
     // backoff timer + browser repaint.
-    let overlay = match phone
+    if let Err(e) = phone
         .wait_for(
             Locator::Css("[data-testid=connection-lost]"),
             Duration::from_secs(8),
         )
         .await
     {
-        Ok(el) => el,
-        Err(e) => {
-            let logs = fetch_console_logs(&phone).await;
-            panic!(
-                "ConnectionLost overlay should appear after server dies: {e}\n--- captured browser console ---\n{logs}"
-            );
-        }
-    };
+        let logs = fetch_console_logs(&phone).await;
+        panic!(
+            "ConnectionLost overlay should appear after server dies: {e}\n--- captured browser console ---\n{logs}"
+        );
+    }
 
-    let text = overlay.text().await.unwrap();
+    // Read the overlay text via element.innerText (Phone::inner_text)
+    // rather than WebDriver's getElementText. The "LOST CONNECTION"
+    // heading is rendered through `<DisplayHeading>` which uses
+    // `-webkit-text-stroke` on the gold fill — getElementText returns
+    // "" for those elements (PLAN 10.3.6); innerText surfaces the
+    // rendered string.
+    let text = phone
+        .inner_text("[data-testid=connection-lost]")
+        .await
+        .unwrap()
+        .unwrap_or_default();
     assert!(
         text.contains("LOST CONNECTION"),
         "overlay should carry the LOST CONNECTION heading; got: {text}"

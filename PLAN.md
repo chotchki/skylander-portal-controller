@@ -497,66 +497,95 @@ suite green on macOS.
   mismatch troubleshooting (Chrome ↔ ChromeDriver major-version
   pin), per-OS screenshot baseline note (CoreText vs DirectWrite).
 - [~] 10.3.6 — **Reconcile chromedriver suite with current SPA.**
-  Foundational selector + helper modernization done; per-test flow
-  rewrites pending (multi-PR workstream).
+  Foundational work done across two rounds; per-test flow rewrites
+  remain (multi-PR workstream — see 10.3.6a–10.3.6e below for the
+  per-file bites).
 
-  **Done in this pass:**
-  - `Phone` helpers in `crates/e2e-tests/src/lib.rs` modernized:
-    `wait_for_portal` → `.portal-p4`, `tap_slot/slot_text` →
-    `.portal-p4 .p4-slot[*-label]`, `tap_figure_named` →
-    `.fig-card-p4:not(.scan-new) .fig-name-p4`, `search` →
-    `.search-input-p4`. New `Phone::inner_text` helper reads via
-    `element.innerText` JS so `-webkit-text-stroke` headings
-    (DisplayHeading family) surface their text content — WebDriver's
-    native `getElementText` returns "" for those.
-  - `regressions.rs` + `working_copies.rs` direct-selector references
-    swept: `.card` → `.fig-card-p4:not(.scan-new)`,
-    `.portal .slot .slot-btn.danger` →
-    `.portal-p4 .p4-slot .p4-slot-action--remove`. Slot-label string
-    constants updated to lowercase Phase-4 values
+  **Round 1 (committed):**
+  - `Phone` helpers modernized for Phase-4 selectors
+    (`.portal-p4`, `.fig-card-p4:not(.scan-new)`, `.search-input-p4`,
+    etc.) and a new `Phone::inner_text(selector)` helper that reads
+    via `element.innerText` JS so `-webkit-text-stroke` headings
+    (DisplayHeading family) actually return their rendered text —
+    WebDriver's `getElementText` returns "" for those.
+  - `regressions.rs` + `working_copies.rs` direct-selector tokens
+    swept; slot-label string constants moved to Phase-4 lowercase
     (`"Empty"` → `"empty"`, `"Loading…"` → `"…"`).
-  - Smoke test verified still green after the helper rewrite.
+  - Smoke verified still green.
 
-  **Real finding from the per-test triage** (the reason this is
-  bigger than originally scoped): the SPA's *flow* changed too, not
-  just selectors. Three concrete examples:
-  - `regressions.rs` calls `phone.search("Spyro")` immediately after
-    `wait_for_portal`. Phase-4 hides `.search-input-p4` behind the
-    toy-box lid + a `.search-toggle-p4` toggle. Test needs to open
-    the lid and toggle search before the input is reachable.
+  **Round 2 (committed):**
+  - Process-group cleanup landed on `ChildGuard`: the spawned
+    `cargo run`-server child and the chromedriver child are both
+    now spawned with `Command::process_group(0)` (Unix), and
+    `kill_now`/`Drop` send SIGKILL to the entire group via
+    `kill -KILL -<pgid>`. A panicked test no longer leaves dozens
+    of orphaned `Google Chrome Helper` processes — verified by
+    deliberately running a panicking test and observing zero
+    residual `enable-automation.*webdriver` Chromes. Side-leak:
+    Chrome's user-data scoped temp dirs survive SIGKILL (Chrome
+    can't run cleanup hooks under SIGKILL); they're filesystem-only
+    and the OS reaps `/var/folders` eventually.
+  - `connection_lost.rs` ported to the new `inner_text` helper —
+    test passes (~22 s).
+  - CI lane (`e2e-mock-macos`) expanded to run `connection_lost`,
+    `hmac`, and `shutdown` alongside `smoke`. The hmac + shutdown
+    tests don't use chromedriver (raw HTTP against the spawned
+    server) but were never wired into CI before; rolling them in
+    now adds a bit of HTTP-API coverage essentially for free.
+
+  **Why the rest is multi-PR — the SPA's *flow* changed too, not
+  just selectors:**
   - PLAY_TEST PLAN 8.3 made empty portal slots inert
     (`<Show when=!is_empty>`). Tests that did "tap empty slot → see
     figure picker" no longer have anything to tap. Placement is
     now via the toy-box lid only.
-  - `profiles.rs` walks a form-based create flow; profile picker
-    redesign moved to a wizard + PIN-pad UX. Selectors AND
-    interaction sequence both changed.
+  - Phase-4 hides `.search-input-p4` behind the toy-box lid +
+    a `.search-toggle-p4` toggle. `phone.search()` from the portal
+    screen no longer finds an input.
+  - Profile picker moved from form-based create to wizard + PIN-pad
+    UX. Selectors AND interaction sequence both changed
+    (`profiles.rs::profile_create_and_unlock_lands_on_game_picker`
+    is the worst-affected file).
 
-  **Pending per-test** (each is its own follow-up bite):
-  - `connection_lost.rs` — heading text via `inner_text` helper.
-  - `regressions.rs` — open toy-box lid before search/figure-tap.
-  - `working_copies.rs` — same lid-open dance.
-  - `profiles.rs` — full rewrite for the wizard + PIN-pad flow.
-  - `multi_phone.rs` — selector + flow rewrites + verify
-    `wait_for_session_id` timing assumptions match post-8.1
-    ghost-session lifecycle.
-  - `screenshot_tour.rs` — already uses modern selectors; rebaseline
-    PNGs as part of 10.3.4.
-  - `live_integration.rs`, `live_lifecycle_switch.rs` — already
-    modern; Windows-live-RPCS3-only, can't be exercised on Mac.
-  - `visual_*` — already modern; visual-only, no functional asserts.
+- [ ] 10.3.6a — **regressions.rs (6 tests).** Each test needs the
+  toy-box lid opened before figure cards / search are reachable.
+  Pattern after lid-open is settled: `phone.tap_lid_open(); phone
+  .search(...); phone.tap_figure_named(...);`. Likely add a
+  `Phone::open_toy_box_lid()` helper that clicks `.lid-grabber-p4`
+  and waits for `.fig-card-p4` to render.
+- [ ] 10.3.6b — **working_copies.rs (2 tests).** Same lid-open
+  dance as 10.3.6a; after that lands, the existing assertion shape
+  (slot text contains "spyro", resume modal appears, etc.) should
+  carry over.
+- [ ] 10.3.6c — **multi_phone.rs (6 tests).** Heaviest single
+  file. Three classes of update needed: (1) selector freshness for
+  `.profile-chip` → `.header-identity .header-profile-name` etc.,
+  (2) toy-box lid + search dance same as 10.3.6a, (3) verify
+  `wait_for_session_id` timing assumptions match the ghost-session
+  lifecycle — the parallel-run failures saw "phone never received
+  Event::Welcome" within 5 s, which may be real WS handshake
+  drift or just resource contention from intra-file parallelism
+  (cap with `--test-threads=1` while iterating).
+- [ ] 10.3.6d — **profiles.rs.** Full rewrite. The form-based
+  create flow it walks no longer exists; profile picker is now a
+  wizard + PIN-pad. Either rewrite to walk the wizard or replace
+  with a coarser "profile picker → PIN entry → game picker" smoke
+  that doesn't depend on the create flow specifics.
+- [ ] 10.3.6e — **screenshot_tour.rs.** Already uses modern
+  selectors; the work here is purely re-baselining the per-scene
+  PNGs on macOS (PLAN 10.3.4 — same lane, can be done together).
 
-  **Process hygiene reminder:** `Phone::new` spawns a headless
-  Chrome that gets orphaned when the test panics before
-  `Phone::close` — manual `pkill -9 -f 'enable-automation.*webdriver'`
-  + `find /var/folders -maxdepth 5 -type d -name
-  'org.chromium.Chromium.scoped_dir.*' -exec rm -rf {} +` cleans
-  up between iteration runs. Worth a `Drop` impl on `Phone` long
-  term.
-
-  **Iterate cadence note:** rerun a single test file at a time
-  with `--test-threads=1` to avoid Chrome contention; full-suite
-  parallel runs were timing out tests that pass solo.
+  **Iteration tips for any of the above:**
+  - Run a single test file at a time with `--test-threads=1` to
+    avoid Chrome contention.
+  - `export CHROMEDRIVER=$HOME/Library/Application\ Support/skylander-portal-controller/chromedriver-147`
+    until brew chromedriver and local Chrome land on a matched
+    pair.
+  - Process-group cleanup is now automatic — no manual `pkill`
+    between runs needed. (If a test ever leaks again, that's a
+    real bug in `ChildGuard`'s Drop, not a missing cleanup step.)
+  - Add each test back to `e2e-mock-macos` in `ci.yml` as it
+    goes green, so we don't regress what we've fixed.
 
 ### 10.4 Simultaneous iPad + iPhone simulator e2e
 This is the core user value: drive both an iPad and an iPhone
