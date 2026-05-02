@@ -472,12 +472,18 @@ suite green on macOS.
   (`brew install --cask chromedriver`) in
   `crates/e2e-tests/README.md`. Windows-only winget fallback stays
   cfg-gated.
-- [ ] 10.3.3 — Run the existing mock-driver e2e suite on Mac:
-  `cargo test -p skylander-e2e-tests -- --ignored --nocapture`. Triage
-  failures — most likely path-separator assumptions in
-  `working_copies.rs`, `paths.rs::working_copy_path_shape` (which
-  already does `.replace('\\', '/')` so should be safe), and any tests
-  that assert on Windows-line-ending log output.
+- [~] 10.3.3 — Harness end-to-end works on Mac under the matched
+  ChromeDriver (`smoke.rs` passes after a one-line selector update).
+  Server boot, Bonjour URL scrape, dev-data pack auto-resolve all
+  green. Real triage finding: the rest of the chromedriver suite has
+  significant DOM drift (assertions still target pre-Phase-4 selectors
+  like `.game-picker h2` that were replaced by the `DisplayHeading`
+  component, and headless Chrome's `getElementText` returns "" for
+  text styled with `-webkit-text-stroke` even when visually present).
+  Concrete failures observed: `multi_phone.rs` 5/6 fail (DOM drift in
+  2-phone scenarios). Pulled out as **10.3.6** so 10.3.3 itself
+  closes on the harness fitness; the SPA-vs-test reconciliation gets
+  its own tracked workstream.
 - [ ] 10.3.4 — `tests/screenshot_tour.rs`: lock the Mac-rendered baseline.
   The headless-Chrome viewport is fixed at 420×900 and seeds are
   deterministic, but Mac CoreText vs. Windows DirectWrite font rendering
@@ -485,10 +491,35 @@ suite green on macOS.
   accept platform-specific tour outputs in
   `docs/assets/screens/{macos,windows}/`. Update
   `crates/e2e-tests/README.md` with the chosen workflow + diff command.
-- [ ] 10.3.5 — Add a `Running on macOS` section to
-  `crates/e2e-tests/README.md`: prereqs (Chrome stable + chromedriver +
-  `phone/dist/` built), expected first-run command sequence, known
-  caveats vs. the Windows lane.
+  Blocked on 10.3.6 reaching most-tests-green.
+- [x] 10.3.5 — `crates/e2e-tests/README.md` rewritten with macOS
+  install commands (`brew install --cask chromedriver`), version-
+  mismatch troubleshooting (Chrome ↔ ChromeDriver major-version
+  pin), per-OS screenshot baseline note (CoreText vs DirectWrite).
+- [ ] 10.3.6 — **Reconcile chromedriver suite with current SPA.** The
+  bulk of `crates/e2e-tests/tests/*.rs` still target selectors and
+  text from before Phase 4's design-system pass (`DisplayHeading`,
+  `GoldBezel`, etc.) and Phase 9's pending Tailwind migration.
+  Concrete known issues: (a) `.game-picker h2` doesn't exist —
+  picker title is now in `<div class="display-heading"><span
+  class="dh-text">…</span></div>` (smoke.rs fixed in 10.3.3 by
+  asserting on `.game-card` count instead). (b) Headless Chrome's
+  `getElementText` returns "" for `-webkit-text-stroke` titles, so
+  text-content assertions on display headings need to switch to
+  structural assertions or read `textContent` via JS. (c)
+  `multi_phone.rs` 5/6 failing — likely a mix of DOM drift +
+  pre-8.1 ghost-session timing assumptions. Inventory all failures
+  per-file, fix per-test, commit incrementally. Side-effect:
+  improvements to the harness's Phone helpers (selector patterns
+  worth extracting, retry semantics) likely fall out of this pass
+  and get folded back into `src/lib.rs`. Not gating Phase 10 close
+  but worth completing before the screenshot tour rebaseline (10.3.4).
+  **Process hygiene reminder:** `Phone::new` spawns a headless
+  Chrome that gets orphaned when the test panics before
+  `Phone::close` — manual `pkill -9 -f 'enable-automation.*webdriver'`
+  + `rm -rf /var/folders/*/T/org.chromium.Chromium.scoped_dir.*`
+  cleans up between iteration runs. Worth a `Drop` impl on `Phone`
+  long term.
 
 ### 10.4 Simultaneous iPad + iPhone simulator e2e
 This is the core user value: drive both an iPad and an iPhone

@@ -20,13 +20,28 @@ async fn smoke_game_picker_renders() {
         .await
         .expect("connect phone");
 
-    // The GamePicker shows an h2 with "Pick a game". Wait for it.
-    let heading = phone
-        .wait_for(Locator::Css(".game-picker h2"), Duration::from_secs(10))
+    // GamePicker renders one `.game-card` per supported Skylanders game
+    // — six of them since the mock driver enumerates the full
+    // `SKYLANDERS_SERIALS` table. Asserting on card count is more robust
+    // than chasing the heading text: the title is rendered via
+    // `<DisplayHeading>` with `-webkit-text-stroke` + a custom font, and
+    // headless Chrome's `getElementText` returns "" for those even though
+    // the text is visually present in the DOM.
+    phone
+        .wait_for(Locator::Css(".game-picker .game-card"), Duration::from_secs(10))
         .await
-        .expect("game picker heading");
-    let text = heading.text().await.unwrap();
-    assert_eq!(text, "Pick a game");
+        .expect("first game card");
+    let cards = phone
+        .client
+        .find_all(Locator::Css(".game-picker .game-card"))
+        .await
+        .expect("all game cards");
+    assert_eq!(
+        cards.len(),
+        6,
+        "expected six Skylanders game cards in the picker, found {}",
+        cards.len()
+    );
 
     phone.close().await.unwrap();
 }

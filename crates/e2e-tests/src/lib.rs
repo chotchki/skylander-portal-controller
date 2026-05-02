@@ -7,7 +7,7 @@
 //! convenience selectors.
 
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
@@ -30,21 +30,7 @@ pub struct TestServer {
 impl TestServer {
     pub fn spawn() -> Result<Self> {
         let repo = repo_root()?;
-        // The phone SPA renders one `.card` per indexed figure, so the tests
-        // need a real pack — `tools/inventory` has no `.sky` files. Use the
-        // dev pack at the path documented in CLAUDE.md, overridable with
-        // `SKYLANDER_PACK_ROOT`.
-        let default_pack =
-            PathBuf::from(r"C:\Users\chris\workspace\Skylanders Characters Pack for RPCS3");
-        let firmware = std::env::var("SKYLANDER_PACK_ROOT")
-            .map(PathBuf::from)
-            .unwrap_or(default_pack);
-        if !firmware.is_dir() {
-            bail!(
-                "firmware pack not found at {} — set SKYLANDER_PACK_ROOT to your local pack",
-                firmware.display()
-            );
-        }
+        let firmware = resolve_firmware_pack(&repo)?;
 
         let phone_dist = repo.join("phone").join("dist");
         if !phone_dist.join("index.html").is_file() {
@@ -157,17 +143,7 @@ impl TestServer {
             );
         }
 
-        let default_pack =
-            PathBuf::from(r"C:\Users\chris\workspace\Skylanders Characters Pack for RPCS3");
-        let firmware = std::env::var("SKYLANDER_PACK_ROOT")
-            .map(PathBuf::from)
-            .unwrap_or(default_pack);
-        if !firmware.is_dir() {
-            bail!(
-                "firmware pack not found at {} — set SKYLANDER_PACK_ROOT to your local pack",
-                firmware.display()
-            );
-        }
+        let firmware = resolve_firmware_pack(&repo)?;
 
         let phone_dist = repo.join("phone").join("dist");
         if !phone_dist.join("index.html").is_file() {
@@ -345,6 +321,25 @@ fn locate_chromedriver() -> Result<PathBuf> {
     if let Ok(p) = which::which("chromedriver") {
         return Ok(p);
     }
+    // macOS: Homebrew installs to /opt/homebrew/bin (Apple Silicon) or
+    // /usr/local/bin (Intel). Cargo tests don't always inherit a shell
+    // PATH that includes brew, so check both directly before failing.
+    #[cfg(target_os = "macos")]
+    {
+        for cand in [
+            "/opt/homebrew/bin/chromedriver",
+            "/usr/local/bin/chromedriver",
+        ] {
+            let pb = PathBuf::from(cand);
+            if pb.is_file() {
+                return Ok(pb);
+            }
+        }
+    }
+    // Windows: winget installs ChromeDriver under
+    // %LOCALAPPDATA%\Microsoft\WinGet\Packages\Chromium.ChromeDriver_*
+    // — walk that one dir-deep to find the versioned subfolder.
+    #[cfg(windows)]
     if let Ok(local) = std::env::var("LOCALAPPDATA") {
         let winget_root = PathBuf::from(local).join("Microsoft/WinGet/Packages");
         if let Ok(entries) = std::fs::read_dir(&winget_root) {
@@ -364,14 +359,60 @@ fn locate_chromedriver() -> Result<PathBuf> {
         }
     }
     Err(anyhow!(
-        "chromedriver not found — set $CHROMEDRIVER, add it to PATH, or install via \
-         `winget install --id=Chromium.ChromeDriver`"
+        "chromedriver not found — set $CHROMEDRIVER, add it to PATH, or install \
+         via `brew install --cask chromedriver` (macOS) / \
+         `winget install --id=Chromium.ChromeDriver` (Windows)"
     ))
 }
 
 fn pick_free_port() -> Result<u16> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
     Ok(listener.local_addr()?.port())
+}
+
+/// Resolve the firmware pack to feed the spawned server. The phone SPA
+/// renders one `.card` per indexed figure, so the e2e suite needs a
+/// real pack — `tools/inventory` has no `.sky` files and the bundled
+/// fixtures don't cover enough surface area.
+///
+/// Resolution order:
+/// 1. `$SKYLANDER_PACK_ROOT` env var (explicit override).
+/// 2. `<repo>/dev-data/firmware-pack/` — the standard contributor
+///    layout. Mac users + Windows users with the dev-data sibling
+///    directory both land here without configuration.
+/// 3. The Windows HTPC default (`C:\Users\chris\workspace\Skylanders
+///    Characters Pack for RPCS3`) — kept because Chris's HTPC has
+///    the pack outside the repo tree, predates the dev-data
+///    convention, and is documented in CLAUDE.md.
+///
+/// Errors with a hint about `SKYLANDER_PACK_ROOT` if none of the
+/// candidates exist.
+fn resolve_firmware_pack(repo: &Path) -> Result<PathBuf> {
+    if let Ok(p) = std::env::var("SKYLANDER_PACK_ROOT") {
+        let pb = PathBuf::from(&p);
+        if !pb.is_dir() {
+            bail!(
+                "SKYLANDER_PACK_ROOT={} is not an existing directory",
+                pb.display()
+            );
+        }
+        return Ok(pb);
+    }
+    let dev_data = repo.join("dev-data").join("firmware-pack");
+    if dev_data.is_dir() {
+        return Ok(dev_data);
+    }
+    let chris_htpc = PathBuf::from(
+        r"C:\Users\chris\workspace\Skylanders Characters Pack for RPCS3",
+    );
+    if chris_htpc.is_dir() {
+        return Ok(chris_htpc);
+    }
+    bail!(
+        "no firmware pack found — tried {} and {}. Set SKYLANDER_PACK_ROOT to your local pack.",
+        dev_data.display(),
+        chris_htpc.display(),
+    )
 }
 
 fn repo_root() -> Result<PathBuf> {
