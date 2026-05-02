@@ -202,6 +202,16 @@ jobs:
         working-directory: phone
         run: trunk build
 
+      # The TestServer harness's `resolve_firmware_pack` requires the
+      # firmware-pack directory to exist (per the docstring's three-step
+      # lookup). On CI runners we don't ship a real `.sky` pack — the
+      # mock driver enumerates 6 games regardless of pack contents, so
+      # an empty pack dir is enough to clear the existence check. The
+      # smoke test asserts on game-card count which doesn't depend on
+      # any indexed figures.
+      - name: Stub empty firmware pack
+        run: mkdir -p dev-data/firmware-pack
+
       # ChromeDriver via the Chrome-for-Testing CDN — the matched
       # ChromeDriver / Chrome pair ships together so we don't get
       # the version-mismatch error a brew install would risk. Pin
@@ -266,6 +276,12 @@ jobs:
       - name: trunk build (phone bundle)
         working-directory: phone
         run: trunk build
+
+      # Same stub-pack trick as the chromedriver lane — TestServer's
+      # firmware-pack lookup requires the dir to exist; mock driver
+      # doesn't care if it's empty.
+      - name: Stub empty firmware pack
+        run: mkdir -p dev-data/firmware-pack
 
       # iOS runtimes pre-installed on macos-14: at least iOS 17 for
       # iPhone 15 Pro family. The ios-inspect tool's auto-pick

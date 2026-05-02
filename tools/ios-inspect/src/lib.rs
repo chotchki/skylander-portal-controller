@@ -114,29 +114,24 @@ pub async fn wait_for_selector(
         "!!document.querySelector({})",
         serde_json::to_string(selector)?
     );
-    let mut last_err: Option<anyhow::Error> = None;
     loop {
-        match try_eval_bool(device, &expr).await {
-            Ok(true) => return Ok(()),
-            Ok(false) => {
-                // Tab + WS healthy, page just hasn't rendered the
-                // selector yet — keep polling.
-                last_err = None;
-            }
-            Err(e) => {
-                // Tab not registered yet, WS hand-off racing, etc. —
-                // keep polling, surface the most recent error if we
-                // run out of time.
-                last_err = Some(e);
-            }
+        // try_eval_bool returns Err for transient states (tab not
+        // registered yet, WS hand-off racing) AND for genuine failures.
+        // Either way, keep polling until the deadline; on timeout,
+        // surface the most recent error (if any) for diagnostic value.
+        let attempt = try_eval_bool(device, &expr).await;
+        if let Ok(true) = attempt {
+            return Ok(());
         }
         if std::time::Instant::now() >= deadline {
+            let detail = match attempt {
+                Err(e) => format!(" — last error: {e}"),
+                _ => String::new(),
+            };
             return Err(anyhow::anyhow!(
                 "timed out after {timeout:?} waiting for `{selector}` on {}{}",
                 device.device_name,
-                last_err
-                    .map(|e| format!(" — last error: {e}"))
-                    .unwrap_or_default(),
+                detail,
             ));
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
