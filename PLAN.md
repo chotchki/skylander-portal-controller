@@ -337,6 +337,17 @@ becomes additive, not a separate stylesheet branch.
   portal slot row layout, Header chip density). Drop `md:` /
   `lg:` overrides per-component; verify on iOS Simulator + a real
   iPad via the Tour gallery.
+- [ ] 9.7.1 — *[bug]* Suppress `PwaHint` on iPad. The "Pin this to
+  your home screen" banner exists to escape iOS Safari's bottom
+  address bar that crowds iPhone portrait layouts (PLAN 4.18.1b).
+  iPad Safari puts the address bar at the *top* and the viewport is
+  much larger — the pin prompt is mostly noise there. Found while
+  driving the iPad Pro 13" sim during 10.2 verification (Chris,
+  2026-05-02). Fix: extend `pwa::should_show_hint` to also return
+  false on tablet-class viewports (UA includes "iPad" OR width >=
+  ~768px AND `is_ios_safari`). Pure-fn change, easy to unit-test.
+  Folds into the broader 9.7 audit but worth its own bullet because
+  it's a single component change with a clear gate.
 
 ## Phase 10 Items
 
@@ -415,28 +426,32 @@ independently. `xcrun simctl` and `ios-webkit-debug-proxy` both support
 multiple simulators concurrently — the limitation is purely in
 `ios-inspect`'s state model.
 
-- [ ] 10.2.1 — `ios-inspect boot --device "<name>" [--device "<name>"]`:
-  accept multiple `--device` flags, boot each, persist the full UDID
-  list in `/tmp/ios-inspect-state.json`. Default (no flag) keeps the
-  current single-iPhone behavior for back-compat.
-- [ ] 10.2.2 — Per-device targeting on every read/eval command (`open`,
-  `eval`, `computed-style`, `dump-dom`, `screenshot`, `tabs`): add
-  `--device <name|udid>`. Without filter, fan out to all booted devices
-  and prefix output with the device label.
-- [ ] 10.2.3 — Restructure `proxy.rs` to track per-device proxy sockets
-  + active tab IDs in `state.json`. The proxy itself enumerates booted
-  sims and exposes one socket per device — adapt the lookup + self-heal
-  paths to the multi-socket world.
-- [ ] 10.2.4 — `ios-inspect screenshot --output <dir>` with no
-  `--device`: writes one PNG per booted device, device label in the
-  filename (`iphone17pro.png`, `ipadpro13.png`). Useful for two-up
-  visual comparison without scripting.
-- [ ] 10.2.5 — `ios-inspect shutdown` cleans up *all* booted devices
-  tracked in state, not just the cached one. Idempotent.
-- [ ] 10.2.6 — Update `tools/ios-inspect/README.md` with a multi-device
-  session walkthrough: boot both, open same URL, paired screenshot,
-  per-device eval. Keep the simulator-fidelity caveats list intact
-  (`safe-area-inset-bottom = 0` still applies per-device).
+- [x] 10.2.1 — `ios-inspect boot --device <name>` is now repeatable; UDID
+  list persists in `/tmp/ios-inspect-state.json`. Re-running boot
+  against an existing session adds new devices without re-spawning
+  proxies for already-booted ones. Pre-10.2 single-device JSON is
+  auto-migrated on read.
+- [x] 10.2.2 — `--device <name|udid>` added to every read/eval command;
+  no-filter fans out to all booted devices and prefixes each line with
+  the device label (`[iphone-17-pro]`, `[ipad-pro-13-inch-m5]`).
+  Verified end-to-end with `eval`, `computed-style`, `tabs`.
+- [x] 10.2.3 — Restructured `proxy.rs` for multi-device. Each device
+  gets its own proxy on a deterministic port pair (`9221+2N` control,
+  `+1` device); state pins both ports so commands skip the HTML re-
+  parse. Boot-time socket attribution via diff (`find_live_sim_sockets`
+  before/after `simctl boot`). The proxy uses `-c "null:<ctrl>,:<dev>"`
+  config CSV — earlier `-p` attempt was the wrong flag (silent crash).
+- [x] 10.2.4 — `screenshot --output <dir>` with multiple booted devices
+  writes one PNG per device using `<label>.png`. Single-device case
+  still takes a file path. Verified: iPhone 17 Pro produced 402×714,
+  iPad Pro 13" produced 1032×1290 in one command.
+- [x] 10.2.5 — `shutdown` iterates every device in state, killing each
+  proxy + shutting each sim. Idempotent. Stale state entries (proxy
+  PID dead) get reaped at next `boot` so they don't pile up.
+- [x] 10.2.6 — `tools/ios-inspect/README.md` rewritten with a
+  single-device "legacy default" section + a multi-device walkthrough.
+  Caveats list updated: same-name-across-runtimes ambiguity called
+  out as a known wart (substring match picks first by HashMap order).
 
 ### 10.3 E2E harness portable to macOS
 The fantoccini suite in `crates/e2e-tests/` already exercises the mock

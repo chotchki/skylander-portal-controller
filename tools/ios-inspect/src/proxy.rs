@@ -1,38 +1,30 @@
 //! `ios_webkit_debug_proxy` lifecycle + HTTP discovery.
 //!
 //! The proxy binary must be on `PATH` (installed via `brew install
-//! ios-webkit-debug-proxy`). The sim-webinspector socket path is dynamic
-//! (created per launchd boot under `/private/tmp/com.apple.launchd.*/`),
-//! so we glob for it at boot time.
+//! ios-webkit-debug-proxy`). The sim-webinspector socket path is
+//! dynamic (created per launchd boot under
+//! `/private/tmp/com.apple.launchd.*/`), so we discover it via `lsof`
+//! at boot time.
+//!
+//! **Multi-device model (PLAN 10.2):** one proxy per booted simulator,
+//! each with its own port pair (control + device). Spawned with
+//! `-s unix:<sock> -p <ctrl>:<dev>`. The control port serves the
+//! HTML root listing; the device port serves the WS endpoints. State
+//! pins both ports so cross-process commands don't have to re-parse
+//! HTML to find the right endpoint.
 
 use anyhow::{Context, Result, bail};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-/// Find the *live* webinspectord_sim.socket path. Uses `lsof -U` to find
-/// the socket that `launchd_s` is currently holding open — glob-based
-/// discovery is unreliable because the sim creates new sockets under fresh
-/// `launchd.*` paths each time webinspectord_sim restarts (which happens
-/// whenever our proxy dies, causing stale files to linger alongside live
-/// ones in `/private/tmp` + `/private/var/tmp`).
-pub async fn wait_for_sim_socket(timeout: Duration) -> Result<PathBuf> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if let Some(p) = find_live_sim_socket().await? {
-            return Ok(p);
-        }
-        if Instant::now() >= deadline {
-            bail!(
-                "no live webinspectord_sim.socket found — is Simulator running? \
-                 Try `open -a Simulator` manually and re-run."
-            );
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-}
 
-/// Use `lsof -U` to find the webinspectord_sim unix socket that `launchd_s`
-/// is currently serving. Returns None if no such socket is open.
-pub async fn find_live_sim_socket() -> Result<Option<PathBuf>> {
+/// Find every *live* webinspectord_sim.socket open by `launchd_s`.
+/// Returns the deduplicated set of paths. Uses `lsof -U` because
+/// glob-based discovery is unreliable — the sim creates new sockets
+/// under fresh `launchd.*` paths each time webinspectord_sim restarts
+/// (which happens whenever a proxy attached to it dies, leaving stale
+/// files alongside live ones).
+pub async fn find_live_sim_sockets() -> Result<Vec<PathBuf>> {
     let out = tokio::process::Command::new("lsof")
         .args(["-U", "-c", "launchd_s"])
         .output()
@@ -40,40 +32,75 @@ pub async fn find_live_sim_socket() -> Result<Option<PathBuf>> {
         .context("run lsof")?;
     // lsof returns non-zero if there are no matches; ignore status.
     let stdout = String::from_utf8_lossy(&out.stdout);
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    let mut out_paths: Vec<PathBuf> = Vec::new();
     for line in stdout.lines() {
         if !line.contains("webinspectord_sim.socket") {
             continue;
         }
-        // Last whitespace-delimited token is the socket path.
         if let Some(path) = line.split_whitespace().last() {
             let pb = PathBuf::from(path);
-            if pb.exists() {
-                return Ok(Some(pb));
+            if pb.exists() && seen.insert(pb.clone()) {
+                out_paths.push(pb);
             }
         }
     }
-    Ok(None)
+    Ok(out_paths)
 }
 
-/// Spawn `ios_webkit_debug_proxy -s unix:<socket> -f chrome-devtools://...`
-/// detached from this process so it survives across CLI invocations. Returns
-/// the child PID.
-pub async fn spawn(socket: &Path) -> Result<u32> {
+/// Wait for at least one new webinspectord_sim socket to appear that
+/// wasn't in the `before` snapshot. Returns the first new path. Used
+/// at boot time to attribute a freshly-created socket to the
+/// just-booted simulator (boot sequentially, snapshot-diff, claim).
+pub async fn wait_for_new_socket(
+    before: &HashSet<PathBuf>,
+    timeout: Duration,
+) -> Result<PathBuf> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let now = find_live_sim_sockets().await?;
+        for p in now {
+            if !before.contains(&p) {
+                return Ok(p);
+            }
+        }
+        if Instant::now() >= deadline {
+            bail!(
+                "no new webinspectord_sim.socket appeared within {timeout:?} — \
+                 is Simulator running and did the sim finish booting?"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
+/// Spawn `ios_webkit_debug_proxy -s unix:<socket> -c
+/// "null:<ctrl>,:<dev>"` detached from this process so it survives
+/// across CLI invocations. Returns the child PID.
+///
+/// Flag note: the proxy uses `-c` (config CSV) for port mapping, NOT
+/// `-p`. `null:<port>` is the listing/control port; the bare `:<port>`
+/// is "any device on this port". Spawning per-device with a single-
+/// port range pins each device's WS endpoint to a deterministic port.
+pub async fn spawn(socket: &Path, control_port: u16, device_port: u16) -> Result<u32> {
     use std::os::unix::process::CommandExt;
 
     let sock_arg = format!("unix:{}", socket.display());
+    let cfg_arg = format!("null:{control_port},:{device_port}");
     let mut cmd = std::process::Command::new("ios_webkit_debug_proxy");
     cmd.args([
         "-s",
         &sock_arg,
+        "-c",
+        &cfg_arg,
         "-f",
         "chrome-devtools://devtools/bundled/inspector.html",
     ])
     .stdout(std::process::Stdio::null())
     .stderr(std::process::Stdio::null());
 
-    // `setsid` puts the child in a new process group so when our CLI exits,
-    // the proxy doesn't receive SIGHUP.
+    // `setsid` puts the child in a new process group so when our CLI
+    // exits, the proxy doesn't receive SIGHUP.
     unsafe {
         cmd.pre_exec(|| {
             nix_setsid()?;
@@ -88,8 +115,8 @@ pub async fn spawn(socket: &Path) -> Result<u32> {
     Ok(child.id())
 }
 
-/// Poor-man's setsid via libc — avoid pulling in the `nix` crate for one
-/// syscall. Returns io::Result so pre_exec is happy.
+/// Poor-man's setsid via libc — avoid pulling in the `nix` crate for
+/// one syscall. Returns io::Result so pre_exec is happy.
 fn nix_setsid() -> std::io::Result<()> {
     // SAFETY: setsid is async-signal-safe (per POSIX).
     let rc = unsafe { libc_setsid() };
@@ -131,13 +158,15 @@ extern "C" {
     fn libc_kill(pid: i32, sig: i32) -> i32;
 }
 
-/// Wait for the proxy's HTTP endpoint at localhost:9221 to become ready.
-pub async fn wait_for_ready(timeout: Duration) -> Result<()> {
+/// Wait for a specific proxy's HTTP control port to start accepting
+/// requests.
+pub async fn wait_for_ready(control_port: u16, timeout: Duration) -> Result<()> {
     let deadline = Instant::now() + timeout;
     let client = reqwest::Client::new();
+    let url = format!("http://localhost:{control_port}/");
     loop {
         match client
-            .get("http://localhost:9221/")
+            .get(&url)
             .timeout(Duration::from_millis(400))
             .send()
             .await
@@ -146,7 +175,7 @@ pub async fn wait_for_ready(timeout: Duration) -> Result<()> {
             _ => {}
         }
         if Instant::now() >= deadline {
-            bail!("ios_webkit_debug_proxy didn't become ready within {timeout:?}");
+            bail!("ios_webkit_debug_proxy on :{control_port} didn't become ready within {timeout:?}");
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
@@ -159,48 +188,24 @@ pub struct Tab {
     pub ws_url: String,
 }
 
-/// Query the proxy for the simulator's device page, then parse the listing
-/// of tabs out of its HTML. The proxy doesn't expose a JSON endpoint (at
-/// least not a documented one); HTML parsing is stable enough for our use
-/// since the output is mechanical.
-pub async fn list_tabs() -> Result<Vec<Tab>> {
-    let port = device_port().await?;
-    let html = reqwest::get(format!("http://localhost:{port}/"))
+/// Query the device-port HTML listing for the tabs visible on a
+/// specific device. The proxy doesn't expose a JSON tab endpoint;
+/// HTML parsing is stable enough for our use since the output is
+/// mechanical and the format hasn't changed in years.
+pub async fn list_tabs(device_port: u16) -> Result<Vec<Tab>> {
+    let html = reqwest::get(format!("http://localhost:{device_port}/"))
         .await?
         .text()
         .await?;
-    Ok(parse_tabs_html(&html, port))
-}
-
-async fn device_port() -> Result<u16> {
-    let html = reqwest::get("http://localhost:9221/").await?.text().await?;
-    // Proxy formats the device list in one of two ways:
-    //   <a href="http://localhost:9222/">localhost:9222</a>    (USB device)
-    //   <a>localhost:9222</a>                                  (simulator)
-    // Both contain "localhost:<port>" — grab the first such occurrence.
-    let needle = "localhost:";
-    let start = html
-        .find(needle)
-        .context("proxy root has no device entries — is the simulator booted?")?
-        + needle.len();
-    let tail = &html[start..];
-    let digits_end = tail
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(tail.len());
-    if digits_end == 0 {
-        bail!("proxy HTML had `localhost:` with no port number");
-    }
-    tail[..digits_end]
-        .parse::<u16>()
-        .context("parse device port from proxy HTML")
+    Ok(parse_tabs_html(&html, device_port))
 }
 
 fn parse_tabs_html(html: &str, port: u16) -> Vec<Tab> {
     // Each tab entry looks like:
     //   <li value="1"><a href="chrome-devtools://...?ws=localhost:9222/devtools/page/1"
     //                    title="Skylander Portal">http://192.168.1.155:8090/</a></li>
-    // Pull out the `ws=localhost:<port>/devtools/page/<N>`, the title, and the
-    // visible URL (the `<a>` text node).
+    // Pull out the `ws=localhost:<port>/devtools/page/<N>`, the title,
+    // and the visible URL (the `<a>` text node).
     let mut tabs = Vec::new();
     let ws_needle = format!("ws=localhost:{port}/devtools/page/");
     let mut cursor = 0;
@@ -240,13 +245,16 @@ fn extract_attr(s: &str, key: &str) -> Option<String> {
     Some(s[start..start + end].to_string())
 }
 
-/// Pick the most recently-registered tab (highest page number) — matches
-/// the spike's "just grab the active page" heuristic. If the user wants
-/// explicit control, they can add `--tab N` later.
-pub async fn pick_current_tab() -> Result<Tab> {
-    let tabs = list_tabs().await?;
+/// Pick the most recently-registered tab (highest page number) for a
+/// given device. Matches the spike's "just grab the active page"
+/// heuristic.
+pub async fn pick_current_tab(device_port: u16) -> Result<Tab> {
+    let tabs = list_tabs(device_port).await?;
     if tabs.is_empty() {
-        bail!("no Safari tabs visible to the proxy — open a page with `ios-inspect open <url>`");
+        bail!(
+            "no Safari tabs visible to the proxy on :{device_port} — \
+             open a page with `ios-inspect open <url>`"
+        );
     }
     Ok(tabs.into_iter().max_by_key(|t| t.page_num).unwrap())
 }
