@@ -818,23 +818,34 @@ impl Phone {
     }
 
     /// Text inside a specific slot's name label (1-indexed).
-    /// Reads via `innerText` so `-webkit-text-stroke` titles surface
-    /// the actual rendered text (WebDriver `getElementText` returns
-    /// "" for those — see [`Phone::inner_text`]).
+    /// Resolves the slot by its rendered `.p4-slot-index` value rather
+    /// than DOM position — PLAY_TEST PLAN 8.3 hides empty slots from
+    /// the DOM (`<Show when=!is_empty>`), so a positional `:nth-of-type`
+    /// would land on the wrong slot any time the lower-numbered ones
+    /// were unoccupied. Reads via `innerText` so `-webkit-text-stroke`
+    /// titles surface their text (WebDriver `getElementText` returns
+    /// "" for those). Returns `Err` if no slot with that index is
+    /// currently visible — the slot is empty (and therefore not in the
+    /// DOM), or the portal hasn't rendered yet.
     pub async fn slot_text(&self, slot: u8) -> Result<String> {
-        let idx = (slot as usize).saturating_sub(1);
-        let labels = self
-            .client
-            .find_all(Locator::Css(".portal-p4 .p4-slot-label"))
-            .await?;
-        let _ = labels
-            .get(idx)
-            .ok_or_else(|| anyhow!("no slot {slot} found"))?;
-        // Use innerText via JS — Phase-4 slot labels can be styled
-        // with text-stroke or absolute-positioned via `::before`
-        // pseudo-elements that confuse WebDriver's getText.
-        let selector = format!(".portal-p4 .p4-slot:nth-of-type({slot}) .p4-slot-label");
-        Ok(self.inner_text(&selector).await?.unwrap_or_default())
+        let script = format!(
+            r#"
+            const target = {slot};
+            const slots = document.querySelectorAll('.portal-p4 .p4-slot');
+            for (const s of slots) {{
+              const idx = s.querySelector('.p4-slot-index');
+              if (idx && Number(idx.textContent.trim()) === target) {{
+                const label = s.querySelector('.p4-slot-label');
+                return label ? label.innerText : '';
+              }}
+            }}
+            return null;
+            "#
+        );
+        let val = self.client.execute(&script, vec![]).await?;
+        val.as_str()
+            .map(str::to_string)
+            .ok_or_else(|| anyhow!("no slot {slot} visible in the portal"))
     }
 
     /// Tap the Nth slot (1-indexed).
@@ -854,6 +865,10 @@ impl Phone {
     /// Tap the first figure card whose visible name matches.
     /// Skips the synthetic `.scan-new` "SCAN NEW" sentinel card so
     /// callers can search by figure name without false positives.
+    /// Note: clicking a card now opens the [`FigureDetail`] panel
+    /// (Phase-4 changed the placement model from one-tap-to-place
+    /// to two-tap detail + confirm). For end-to-end "place this
+    /// figure into a slot" use [`Phone::place_figure_named`].
     pub async fn tap_figure_named(&self, name: &str) -> Result<()> {
         let cards = self
             .client
@@ -874,7 +889,70 @@ impl Phone {
         Err(anyhow!("no card named {name:?}"))
     }
 
-    /// Filter the browser by typing into the search box.
+    /// End-to-end placement helper: tap the named card → wait for the
+    /// FigureDetail panel → click the primary "place" button. Mirrors
+    /// the single-user gesture of "I want this figure on the portal."
+    /// PLAY_TEST PLAN 8.3 + the toy-box-lid UX moved placement off the
+    /// portal-tap interaction; this helper hides the two-step dance
+    /// from each test.
+    pub async fn place_figure_named(&self, name: &str) -> Result<()> {
+        self.tap_figure_named(name).await?;
+        let place = self
+            .wait_for(Locator::Css(".detail-btn-primary"), Duration::from_secs(5))
+            .await?;
+        place.click().await?;
+        Ok(())
+    }
+
+    /// Tap the toy-box lid grabber so the lid opens (Closed → Compact).
+    /// Idempotent: if the lid is already open (no `.closed` modifier
+    /// on `.lid-open-p4`), no-op. Required before [`Phone::open_search`]
+    /// since the search toggle button is part of the lid header.
+    pub async fn open_toy_box_lid(&self) -> Result<()> {
+        // `apply_tap` cycles Closed → Compact → Expanded → Closed; we
+        // only want to advance from Closed → Compact, so check first.
+        let already_open = self
+            .client
+            .find(Locator::Css(".lid-open-p4:not(.closed)"))
+            .await
+            .is_ok();
+        if already_open {
+            return Ok(());
+        }
+        let grabber = self.client.find(Locator::Css(".lid-grabber-p4")).await?;
+        grabber.click().await?;
+        Ok(())
+    }
+
+    /// Surface the search input so [`Phone::search`] can type into it.
+    /// Two-step: open the lid (if not already open), then click
+    /// `.search-toggle-p4` if `.search-input-p4` isn't already
+    /// rendered. Idempotent.
+    pub async fn open_search(&self) -> Result<()> {
+        self.open_toy_box_lid().await?;
+        // search-input-p4 lives inside `.search-expanded-p4`, which is
+        // gated by `box_state == Expanded`. If the input is already
+        // there we're done; otherwise toggle.
+        if self
+            .client
+            .find(Locator::Css(".search-input-p4"))
+            .await
+            .is_ok()
+        {
+            return Ok(());
+        }
+        let toggle = self.client.find(Locator::Css(".search-toggle-p4")).await?;
+        toggle.click().await?;
+        // Wait for the input to actually mount.
+        self.wait_for(Locator::Css(".search-input-p4"), Duration::from_secs(2))
+            .await?;
+        Ok(())
+    }
+
+    /// Filter the browser by typing into the search box. Caller is
+    /// responsible for ensuring the search input is visible — call
+    /// [`Phone::open_search`] first if you've just landed on the
+    /// portal screen (lid starts Closed).
     pub async fn search(&self, q: &str) -> Result<()> {
         let input = self.client.find(Locator::Css(".search-input-p4")).await?;
         input.send_keys(q).await?;

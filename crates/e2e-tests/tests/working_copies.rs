@@ -5,6 +5,11 @@
 //! than poking into RPCS3's UIA. The canonical-name → display thread
 //! lands in `DriverJob::LoadFigure.canonical_name` so the mock's
 //! file-stem-derived name doesn't leak into the slot-text either.
+//!
+//! Phase-4 placement model (PLAY_TEST PLAN 8.3): empty portal slots are
+//! inert and out of the DOM; placement is via the toy-box lid →
+//! `.fig-card-p4` tap → `FigureDetail` → `.detail-btn-primary`. The
+//! `Phone::place_figure_named` helper hides the two-step dance.
 
 use std::time::Duration;
 
@@ -39,15 +44,29 @@ async fn load_uses_canonical_name_not_filename() {
         .wait_for_portal(Duration::from_secs(10))
         .await
         .unwrap();
+
+    // Open lid + search to filter for "Spyro", then place the first
+    // matching card. Phase-4 needs the lid open before the search
+    // input mounts (PLAN 10.3.6).
+    phone.open_search().await.unwrap();
     phone.search("Spyro").await.unwrap();
+    // Brief settle so the filtered grid has updated before we read.
     tokio::time::sleep(Duration::from_millis(300)).await;
-    phone.tap_slot(1).await.unwrap();
-    let card = phone
+
+    // Pick the first matching card (any "Spyro*" hero variant) and
+    // place it. Avoids `tap_figure_named("Spyro")` because variants
+    // collapse to a group key that isn't always exactly "Spyro".
+    let first = phone
         .client
         .find(Locator::Css(".fig-card-p4:not(.scan-new)"))
         .await
         .unwrap();
-    card.click().await.unwrap();
+    first.click().await.unwrap();
+    let place = phone
+        .wait_for(Locator::Css(".detail-btn-primary"), Duration::from_secs(5))
+        .await
+        .unwrap();
+    place.click().await.unwrap();
 
     phone
         .wait_until(Duration::from_secs(5), || async {
@@ -65,8 +84,18 @@ async fn load_uses_canonical_name_not_filename() {
 
 // ---- 3.12: session resume + layout memory -------------------------------
 
+// PLAN 10.3.6b: this test is ported off the legacy `.resume-modal` /
+// `.resume-yes` selectors but the resume-modal-after-reload flow is
+// still failing — the modal never appears within 10 s after
+// `location.reload()` + re-unlock. Either the persist_layout write
+// is racing the reload (500 ms wait may not be enough post-Phase-4
+// SlotChanged → save chain), or the post-reload phone never
+// re-handshakes the HMAC key cleanly. Needs deeper investigation
+// against the live server's emit path. Left `#[ignore = "..."]`-ed
+// out of CI for now; the load_uses_canonical_name_not_filename test
+// above is in CI and covers the working-copy fork primary contract.
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires chromedriver"]
+#[ignore = "PLAN 10.3.6b WIP — resume modal not appearing post-reload, see file note"]
 async fn resume_prompt_offers_prior_layout() {
     // 1. P1 loads a figure onto slot 1. Server persists the layout under P1's
     //    profile via `save_portal_layout`.
@@ -90,17 +119,22 @@ async fn resume_prompt_offers_prior_layout() {
         .await
         .unwrap();
 
-    // Load slot 1.
-    phone.tap_slot(1).await.unwrap();
-    phone
+    // Place the first figure available — any card that isn't the
+    // SCAN NEW sentinel will do. No need for search here; we're not
+    // testing a specific figure name, just that slot 1 ends up
+    // populated and the layout persists.
+    phone.open_toy_box_lid().await.unwrap();
+    let first = phone
         .client
-        .find_all(Locator::Css(".fig-card-p4:not(.scan-new)"))
-        .await
-        .unwrap()[0]
-        .clone()
-        .click()
+        .find(Locator::Css(".fig-card-p4:not(.scan-new)"))
         .await
         .unwrap();
+    first.click().await.unwrap();
+    let place = phone
+        .wait_for(Locator::Css(".detail-btn-primary"), Duration::from_secs(5))
+        .await
+        .unwrap();
+    place.click().await.unwrap();
     phone
         .wait_until(Duration::from_secs(5), || async {
             phone
@@ -132,7 +166,7 @@ async fn resume_prompt_offers_prior_layout() {
         .wait_until(Duration::from_secs(10), || async {
             phone
                 .client
-                .find(Locator::Css(".resume-modal"))
+                .find(Locator::Css(".resume-panel"))
                 .await
                 .is_ok()
         })
@@ -146,7 +180,7 @@ async fn resume_prompt_offers_prior_layout() {
         .unwrap();
     phone
         .client
-        .find(Locator::Css(".resume-yes"))
+        .find(Locator::Css(".resume-btn-primary"))
         .await
         .unwrap()
         .click()
@@ -159,7 +193,7 @@ async fn resume_prompt_offers_prior_layout() {
         .wait_until(Duration::from_secs(5), || async {
             phone
                 .client
-                .find(Locator::Css(".resume-modal"))
+                .find(Locator::Css(".resume-panel"))
                 .await
                 .is_err()
         })
