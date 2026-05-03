@@ -80,6 +80,7 @@ A Windows app that wraps RPCS3 (PS3 emulator) so kids can manage the emulated Sk
 - Match Skylanders game UI: starfield blue backgrounds, circular gold-bezeled figure portraits, bold white titles with gold outline, cartoony feel. Reference: `docs/aesthetic/ui_style_example.png`.
 - Implement via CSS (wiki asset resolution isn't enough for high-res phones).
 - Phone UI is theme-able (prepping for the Kaos "mind magic" takeover skin — dark purple/pink).
+- **Launcher badge is 3D** (PLAN 10.7). The QR card / back-face title cards / orbiting player pips all share one GL pipeline (`crates/server/src/badge.rs::BadgeRig`): cylinder coin geometry (front fan + back fan + side wall + flatter elliptical torus), Lambert diffuse + Blinn-Phong specular, multi-turn intro spin via `LaunchPhase::badge_rotation_y`, 360° flip-on-state-change for back-face text swaps. Each unique front-face texture (QR raster, per-`BackFace` text, per-profile pip face) is rasterised once via `badge_text` (TitanOne via `ab_glyph`, faux-emboss in 3 glyph passes) and cached as a GL texture. Surfaces other than Main (Crashed / Farewell / ServerError) route through `paint_centered_3d_back_card` so the visual language is consistent across screens. The legacy 2D `paint_titled_card` / `paint_bezel` family is gone.
 - **Mocks live in `docs/aesthetic/mocks/`** as standalone HTML files — open directly or via a local server. `docs/aesthetic/mocks/index.html` lists every mock grouped by flow.
 - **Review mocks on a real iPhone, not just desktop preview.** Safe-area insets, Dynamic Island collisions, mobile Safari viewport behavior (address-bar hiding, pinch-zoom, orientation lock) all differ from desktop devtools. Serve with `python3 -m http.server 8089` from `docs/aesthetic/mocks/` and open `http://<mac-en0-ip>:8089/` on the iPhone (`ipconfig getifaddr en0` to find the IP). Requires the iPhone and Mac to share a network — Mac-as-hotspot (Internet Sharing) works; iPhone-as-hotspot blocks incoming connections to the Mac.
 - **Safe-area pattern for top-of-screen padding:** `max(Npx, calc(env(safe-area-inset-top) + 12px))` where N is the desktop-preview value. Preserves desktop look; adapts on devices with a notch/island. Same pattern applies to L/R when content hugs screen edges.
@@ -124,8 +125,10 @@ A Windows app that wraps RPCS3 (PS3 emulator) so kids can manage the emulated Sk
   `docs/dev/macos-bringup.md`.
 - iOS Simulator iteration: `tools/ios-inspect/README.md`. The CLI
   drives `xcrun simctl` + `ios-webkit-debug-proxy` for layout/CSS
-  probes against booted simulators. Multi-device (iPad + iPhone) is
-  PLAN 10.2 — not landed yet.
+  probes against booted simulators; multi-device (iPad + iPhone)
+  in parallel is supported (PLAN 10.2 — `ios-inspect boot
+  --device <udid>` per simulator, then `--device` on every
+  read/eval/screenshot).
 - Release artifact: macOS tar.gz attached to GitHub Releases alongside
   the Windows zip (PLAN 10.6). No `.app` bundle / code signing /
   notarization in v1 — users right-click + Open the binary to bypass

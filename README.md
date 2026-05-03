@@ -4,7 +4,7 @@ Remote-control the RPCS3 emulated Skylanders portal from a phone or iPad over yo
 
 The Windows app boots from Steam Big Picture and shows a QR code on the TV; phones scan in, pick a profile (PIN-gated), pick a game, and drive RPCS3's emulated portal slot-by-slot.
 
-**Latest release:** [v1.1.0](https://github.com/chotchki/skylander-portal-controller/releases/tag/v1.1.0) — sticky disconnects (figures stay on the portal across PWA backgrounding / brief network blips), Kaos mid-game swap (per-profile opt-in), kickback cooldown countdown, kid-friendly empty-portal UI.
+**Latest release:** [v1.2.0](https://github.com/chotchki/skylander-portal-controller/releases/tag/v1.2.0) — 3D rotating launcher badge (replaces the 2D card surface; gold ring + side wall + flatter torus, Lambert + Blinn-Phong, multi-turn coin spin, per-profile pip mini-coins on the orbit), macOS as a production target (mock driver only), iOS-Simulator e2e harness for layout/CSS regression hunting, in-game branch goes reactive so the launcher stops cooking the fan.
 
 For a higher-level pitch see the project site: <https://chotchki.github.io/skylander-portal-controller/>. Source-of-truth docs are in this repo: `SPEC.md` (long-form spec + Q&A), `PLAN.md` (execution checklist), and `CLAUDE.md` (compact working reference). Research writeups are under `docs/research/`.
 
@@ -16,11 +16,11 @@ For a higher-level pitch see the project site: <https://chotchki.github.io/skyla
 4. Launch `skylander-portal-controller.exe`. First-run wizard asks for the RPCS3 path and the firmware-pack root; settings persist to `%APPDATA%\skylander-portal-controller\`.
 5. Add the resulting `.exe` to Steam (Add a Non-Steam Game) so it launches in Big Picture mode.
 
-The phone bundle is embedded in the exe; no separate web server, no node, no extra files to ship. Only Windows 11 x64 builds are published — the project uses Windows-only UIA + Win32 plumbing for the RPCS3 driver and isn't portable.
+The phone bundle is embedded in the binary; no separate web server, no node, no extra files to ship. Two release artifacts per tag: **Windows x86_64 zip** (production target with the UIA driver against a real RPCS3) and **macOS arm64 tar.gz** (production target with the mock driver only — no AXUIElement port, useful for demo / family-member play / dev iteration / the iOS-Simulator e2e harness, but it doesn't drive a real RPCS3). The macOS binary isn't notarised; right-click → Open the first time to clear Gatekeeper.
 
 ## Running in dev
 
-Needs: Rust toolchain (incl. `wasm32-unknown-unknown`), `trunk`, Windows 11 for the UIA driver. Mock driver works on any platform.
+Needs: Rust toolchain (incl. `wasm32-unknown-unknown`), `trunk`. Windows 11 for the UIA driver against a real RPCS3; macOS works with the mock driver (set `SKYLANDER_PORTAL_DRIVER=mock` in `.env.dev`). Full macOS dev bringup steps in `docs/dev/macos-bringup.md`.
 
 1. Copy `.env.dev.example` to `.env.dev` and fill in paths to RPCS3 and your firmware-pack root.
 2. Build the phone SPA:
