@@ -17,6 +17,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
+use crate::badge::BadgeRig;
 use crate::state::{LauncherScreen, LauncherStatus};
 use crate::vortex::{self, ShaderRig, VortexParams};
 use crate::{fonts, palette};
@@ -108,6 +109,11 @@ pub struct LauncherApp {
     /// applied at draw time based on the launch phase; the rest of
     /// the params come from this struct unchanged.
     vortex_idle: VortexParams,
+    /// 3D badge shader rig (PLAN 10.7.1 spike). Coexists with
+    /// `vortex_rig` in the same shared GL context — separate program
+    /// + VAO, separate `egui::PaintCallback` per frame. Lazy-init
+    /// alongside the vortex so first-frame ordering matches.
+    badge_rig: Arc<Mutex<Option<BadgeRig>>>,
 }
 
 impl LauncherApp {
@@ -145,6 +151,7 @@ impl LauncherApp {
             window_on_top_state: None,
             vortex_rig: Arc::new(Mutex::new(None)),
             vortex_idle: vortex::idle_params(),
+            badge_rig: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -181,6 +188,15 @@ impl eframe::App for LauncherApp {
             match ShaderRig::new(gl) {
                 Ok(rig) => *self.vortex_rig.lock().unwrap() = Some(rig),
                 Err(e) => tracing::error!("vortex shader init failed: {e}"),
+            }
+        }
+        // Same lazy-init for the badge rig (PLAN 10.7.1).
+        if self.badge_rig.lock().unwrap().is_none()
+            && let Some(gl) = frame.gl()
+        {
+            match BadgeRig::new(gl) {
+                Ok(rig) => *self.badge_rig.lock().unwrap() = Some(rig),
+                Err(e) => tracing::error!("badge shader init failed: {e}"),
             }
         }
 
@@ -574,6 +590,9 @@ impl eframe::App for LauncherApp {
         // explicitly avoids spurious "leaked GL handle" warnings on
         // some drivers.
         if let (Some(gl), Some(rig)) = (gl, self.vortex_rig.lock().unwrap().as_ref()) {
+            rig.destroy(gl);
+        }
+        if let (Some(gl), Some(rig)) = (gl, self.badge_rig.lock().unwrap().as_ref()) {
             rig.destroy(gl);
         }
     }

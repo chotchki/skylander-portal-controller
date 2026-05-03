@@ -1,6 +1,7 @@
 //! Library surface. `main.rs` wires these modules together into the binary;
 //! integration tests under `tests/` import what they need directly.
 
+pub mod badge;
 pub mod config;
 pub mod display_mode;
 pub mod embedded_assets;

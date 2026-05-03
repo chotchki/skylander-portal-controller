@@ -830,14 +830,23 @@ Independent of 10.6.3 (.app bundle) — purely a quality-of-launch-
 experience improvement. Sequencing-wise can land before 10.6.3
 or after, doesn't matter.
 
-- [ ] 10.7.1 — **Spike:** prove the GL pipeline works end-to-end
-  by getting a static 3D disc rendered into the badge's egui rect
-  via `egui::PaintCallback`, mirroring the vortex shader's
-  approach (`crates/server/src/vortex.rs` + `vortex_presets/`).
-  Sanity-check perspective projection, winding order, and that
-  the badge's existing positioning math still maps onto the new
-  paint surface. No animation yet — just a stationary disc with
-  a placeholder colour on the front face.
+- [x] 10.7.1 — Spike landed. New `crates/server/src/badge.rs`
+  ships a `BadgeRig` mirroring `vortex.rs`'s shape (program +
+  empty VAO, since the vertex shader generates a 64-segment
+  TRIANGLE_FAN disc procedurally from `gl_VertexID`). Hardcoded
+  60° FOV perspective projection, camera at +Z=2.5; gold-orange
+  placeholder fill with rim falloff; back-face culled so the
+  front face is solo. Lazy-init alongside the vortex rig in
+  `LauncherApp::update`, destroyed in `on_exit`. Gated behind
+  the `LAUNCHER_3D_BADGE` env var — set it to swap the legacy
+  2D `qr_card_flip` body for `badge::paint_badge` in the same
+  rect, no other UI changes. Verified against `cargo run`: a
+  round disc renders in the middle of the launcher, no
+  shader-init errors, no crash, vortex backdrop still paints
+  underneath. Three load-bearing assumptions confirmed —
+  second `ShaderRig` shape coexists in egui_glow's GL context,
+  PaintCallback maps to the badge rect cleanly, and
+  perspective-projected disc renders inside it.
 
 - [ ] 10.7.2 — **Texture pipeline:** the QR PNG is already
   pre-rendered once at startup as a `Vec<u8>` (see

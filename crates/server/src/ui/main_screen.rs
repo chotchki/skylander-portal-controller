@@ -160,6 +160,7 @@ impl LauncherApp {
                     launch_phase.badge_scale(),
                     launch_phase.badge_alpha(),
                     launch_phase.badge_text_alpha(),
+                    self.badge_rig.clone(),
                 );
                 // Any halo-spinning face needs continuous frames; egui
                 // is lazy by default and would only repaint on input.
@@ -307,6 +308,7 @@ fn qr_card_flip(
     phase_scale: f32,
     bezel_alpha: f32,
     content_alpha: f32,
+    badge_rig: std::sync::Arc<std::sync::Mutex<Option<crate::badge::BadgeRig>>>,
 ) {
     // `animate_bool_with_time` interpolates 0.0 → 1.0 when the back
     // face is wanted, and back to 0 when it's not. Driven by
@@ -332,6 +334,17 @@ fn qr_card_flip(
     // animation.
     let (rect, _resp) =
         ui.allocate_exact_size(egui::vec2(CARD_SIZE, CARD_SIZE), egui::Sense::hover());
+
+    // PLAN 10.7.1 spike: when LAUNCHER_3D_BADGE is set in the env,
+    // route the badge through the 3D shader rig instead of the 2D
+    // card flip. Lets us A/B compare without removing the legacy
+    // path. Static rotation = 0 (face-on) for the spike — 10.7.3
+    // wires it to launch_phase / flip state. Returns early so the
+    // 2D path below doesn't paint over the GL surface.
+    if std::env::var_os("LAUNCHER_3D_BADGE").is_some() {
+        crate::badge::paint_badge(ui.painter(), rect, badge_rig, 0.0);
+        return;
+    }
 
     // Squish horizontally, keep vertical alignment.
     let half_w = (rect.width() * scale) * 0.5;
