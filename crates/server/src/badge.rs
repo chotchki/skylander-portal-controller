@@ -13,12 +13,26 @@
 //!
 //! 10.7.3: rotation driven by `LaunchPhase::badge_rotation_y`.
 //!
-//! 10.7.4 (this iteration): cylinder-cap geometry so the disc has
-//! visible thickness during the edge-on phase, and directional
-//! Lambert lighting so the rotation is shaded as a physical object
-//! instead of reading as a flat decal that vanishes at 90°. Three
-//! draw calls per frame share one shader program, dispatched via the
-//! `u_face` uniform:
+//! 10.7.4: cylinder-cap geometry so the disc has visible thickness
+//! during the edge-on phase, and directional Lambert lighting.
+//!
+//! 10.7.5 (this iteration): a flatter torus around the disc as a
+//! decorative gold ring — Skylanders' visual language leans hard on
+//! framed-medallion shapes and the bare cylinder reads naked
+//! without one. The torus has an elliptical cross-section (radial
+//! half-width > z half-width) so it sits like a flat band rather
+//! than a donut, and overlaps the disc's body in radius (its inner
+//! cross-section is inside the disc rim). To resolve the overlap
+//! we enable `DEPTH_TEST` and clear the depth buffer at the start
+//! of each paint — the disc's solid interior occludes the torus
+//! inner surface cleanly, so only the visually-meaningful outer
+//! ring renders. With depth test on, the back-face winding flip
+//! from 10.7.4 becomes load-bearing only at θ near 0 (where the
+//! back fan and front fan share screen pixels but differ in z) —
+//! depth would also resolve it, but cull-face is cheaper.
+//!
+//! Four draw calls per frame share one shader program, dispatched
+//! via the `u_face` uniform:
 //!
 //!   - **Face 0 — front:** textured QR fan at z = +HALF_THICKNESS,
 //!     standard CCW winding so the front face is `front` to GL when
@@ -27,17 +41,15 @@
 //!     **reversed** rim winding (negative angle step) so the back
 //!     face is `front` to GL only when the disc has rotated past
 //!     edge-on and the original back side is now facing the camera.
-//!     Without the reversal both fans would draw at θ=0 and the
-//!     no-depth-test paint would race for the centre pixels.
 //!   - **Face 2 — side wall:** gold cylinder triangle-strip
 //!     connecting the two rims. Outward normal is radial in the
 //!     XY plane, so the lit gold reads as a coin's milled edge.
-//!
-//! The `front` vs `back` selection above is a normal-direction
-//! statement: GL's `CULL_FACE BACK` actually keys off the projected
-//! winding, but with `HALF_THICKNESS` small relative to
-//! `CAM_DISTANCE` the projection preserves the object-space winding
-//! of each face, so the two are interchangeable here.
+//!   - **Face 3 — torus ring:** flatter elliptical torus wrapping
+//!     the disc rim (TRIANGLES, generated procedurally from a
+//!     `(u, v)` grid via `gl_VertexID`). Same gold material as the
+//!     other backing faces. Inner half is occluded by the disc body
+//!     via depth test; only the outer half + the rim's "lip" above
+//!     and below the disc faces is visible.
 
 use std::sync::{Arc, Mutex};
 
@@ -55,8 +67,21 @@ use glow::HasContext;
 /// in Rust because no Rust code consumes it.
 const SEGMENTS: i32 = 64;
 
-/// Vertex shader: branches on `u_face` to emit one of three pieces
-/// of geometry, all rotated together around the Y axis by
+/// Torus tessellation: `TORUS_MAJOR` segments around the disc rim,
+/// `TORUS_MINOR` segments around each cross-section. Mirror
+/// `TORUS_MAJOR` / `TORUS_MINOR` in the GLSL source — keep in sync.
+/// Total triangle count = 2 × MAJOR × MINOR = 2048 tris (6144
+/// verts at 6 per quad). Cheap enough for a per-frame draw.
+///
+/// Cross-section geometry (`TORUS_R`, `TORUS_W_RAD`, `TORUS_W_Z`)
+/// is GLSL-only — see the VS_SRC source for the elliptical-band
+/// values.
+const TORUS_MAJOR: i32 = 64;
+const TORUS_MINOR: i32 = 16;
+
+/// Vertex shader: branches on `u_face` to emit one of four pieces
+/// of geometry (disc front, disc back, disc side wall, surrounding
+/// torus ring), all rotated together around the Y axis by
 /// `u_rotation_y` and projected with a shared 60° FOV perspective.
 /// Object space is a unit disc in the XY plane centred at origin
 /// (Z is thickness). Geometry is generated procedurally from
@@ -73,14 +98,48 @@ const SEGMENTS: i32 = 64;
 ///   - **2 (side wall):** TRIANGLE_STRIP, 2*(SEGMENTS+1) verts,
 ///     alternating top/bottom rim. Outward normal radial in XY.
 ///     Solid gold; visible as the disc rotates through edge-on.
+///   - **3 (torus ring):** TRIANGLES, 6*TORUS_MAJOR*TORUS_MINOR
+///     verts. Procedural (u, v) grid quad-fan: each `tri_idx =
+///     vid / 6` picks one quad of the torus surface, `vert_in_tri
+///     = vid % 6` picks one of the two triangles' three corners.
+///     Cross-section is an ellipse with `TORUS_W_RAD` radial half-
+///     width and `TORUS_W_Z` z half-width — flatter than tall, so
+///     the ring reads as a band rather than a donut. The torus
+///     overlaps the disc body radially (its inner cross-section is
+///     inside the disc rim); depth test handles the occlusion.
 ///
 /// Per-vertex normal in object space is then rotated through the
 /// same Y-rotation matrix as the position, and passed to the
 /// fragment shader for Lambert shading.
 const VS_SRC: &str = r#"#version 330
 const int SEGMENTS = 64;
+const int TORUS_MAJOR = 64;
+const int TORUS_MINOR = 16;
 const float PI = 3.14159265359;
 const float HALF_THICKNESS = 0.04;
+// Disc geometry. The QR raster fills the *inscribed* unit disc
+// (`QR_RADIUS = 1.0`) but the disc body itself extends to
+// `OUTER_RADIUS = 1.04` — the extra annulus is painted as solid
+// lit gold in the fragment shader, bridging the QR's outer edge
+// to the torus's inner edge so the disc reads as one continuous
+// gold-framed medallion. Started at 0.08 thick; ChrisCheck →
+// "cut the gold ring thickness in half" → 0.04.
+const float QR_RADIUS = 1.0;
+const float OUTER_RADIUS = 1.04;
+// Torus geometry. R is the major radius (centre of cross-section
+// to disc centre); W_RAD/W_Z are the cross-section half-widths.
+// W_RAD > W_Z gives the "flatter band" feel Chris asked for at
+// 10.7.5. Inner cross-section at R - W_RAD = 1.03 sits *just
+// inside* OUTER_RADIUS so the torus's interior overlaps the disc
+// body by ~0.01 — depth test occludes the inner sliver, and the
+// visible torus reads as starting flush against the disc's gold
+// rim with no dark gap. Cross-section shape restored after
+// shrinking it lost the chunky-band feel; only the major radius
+// was actually too far out — pulled R from 1.20 → 1.16 to seat
+// against the now-thinner 0.04 gold ring.
+const float TORUS_R = 1.16;
+const float TORUS_W_RAD = 0.13;
+const float TORUS_W_Z = 0.05;
 
 uniform float u_rotation_y;
 uniform int u_face;
@@ -88,6 +147,12 @@ uniform int u_face;
 out vec3 v_obj;
 out vec2 v_uv;
 out vec3 v_normal_view;
+// View-space position (camera at origin, looking down -Z) so the
+// fragment shader can build a per-pixel view direction for the
+// Blinn-Phong specular highlight on the gold faces. Pass it
+// after the CAM_DISTANCE shift so `-v_view_pos` is the camera-
+// to-fragment vector and `normalize(-v_view_pos)` is V.
+out vec3 v_view_pos;
 
 void main() {
     int vid = gl_VertexID;
@@ -96,51 +161,106 @@ void main() {
 
     if (u_face == 0) {
         // Front face fan: vid 0 = centre, vid 1..=SEGMENTS = rim,
-        // vid SEGMENTS+1 = duplicate first rim vert (closes the fan).
+        // vid SEGMENTS+1 = duplicate first rim vert (closes the
+        // fan). Rim is at OUTER_RADIUS, not 1.0 — the disc body
+        // extends past the QR's QR_RADIUS to fill the gap to the
+        // torus's inner edge with a lit-gold annulus.
         if (vid == 0) {
             obj = vec3(0.0, 0.0, HALF_THICKNESS);
         } else {
             int rim_idx = (vid - 1) % SEGMENTS;
             float angle = 2.0 * PI * float(rim_idx) / float(SEGMENTS);
-            obj = vec3(cos(angle), sin(angle), HALF_THICKNESS);
+            obj = vec3(cos(angle) * OUTER_RADIUS, sin(angle) * OUTER_RADIUS, HALF_THICKNESS);
         }
         obj_normal = vec3(0.0, 0.0, 1.0);
     } else if (u_face == 1) {
         // Back face fan: same vert layout, z negated, AND angle
-        // negated so the rim winds CW from +Z view. Without the
-        // angle flip both fans would have CCW screen-space winding
-        // at θ=0 and CULL_FACE BACK couldn't hide the back face
-        // behind the front (no depth test in this pass).
+        // negated so the rim winds CW from +Z view. Cull-face
+        // hides it before edge-on; depth test (10.7.5) would also
+        // resolve front-vs-back at θ=0, but cull is cheaper.
         if (vid == 0) {
             obj = vec3(0.0, 0.0, -HALF_THICKNESS);
         } else {
             int rim_idx = (vid - 1) % SEGMENTS;
             float angle = -2.0 * PI * float(rim_idx) / float(SEGMENTS);
-            obj = vec3(cos(angle), sin(angle), -HALF_THICKNESS);
+            obj = vec3(cos(angle) * OUTER_RADIUS, sin(angle) * OUTER_RADIUS, -HALF_THICKNESS);
         }
         obj_normal = vec3(0.0, 0.0, -1.0);
-    } else {
-        // Side-wall strip: 2*(SEGMENTS+1) verts; even vid = top
-        // rim (+H), odd vid = bottom rim (-H), rim_idx = vid/2.
-        // The closing vert at rim_idx == SEGMENTS wraps back to
-        // angle 0 so the strip seams cleanly. GL_TRIANGLE_STRIP
-        // alternates triangle orientation per vert; the resulting
-        // outward normal of each tri is radial (+XY plane), which
-        // is what we compute below.
+    } else if (u_face == 2) {
+        // Side-wall strip at OUTER_RADIUS: 2*(SEGMENTS+1) verts;
+        // even vid = top rim (+H), odd vid = bottom rim (-H),
+        // rim_idx = vid/2. The closing vert at rim_idx == SEGMENTS
+        // wraps back to angle 0 so the strip seams cleanly.
+        // GL_TRIANGLE_STRIP alternates triangle orientation per
+        // vert; the resulting outward normal of each tri is radial
+        // (+XY plane), which is what we compute below.
         int rim_idx = vid / 2;
         float z_sign = (vid % 2 == 0) ? 1.0 : -1.0;
         float angle = 2.0 * PI * float(rim_idx) / float(SEGMENTS);
         float ca = cos(angle);
         float sa = sin(angle);
-        obj = vec3(ca, sa, z_sign * HALF_THICKNESS);
+        obj = vec3(ca * OUTER_RADIUS, sa * OUTER_RADIUS, z_sign * HALF_THICKNESS);
         obj_normal = vec3(ca, sa, 0.0);
+    } else {
+        // Torus ring (u_face == 3). Procedural (u, v) grid as
+        // independent triangles: each "quad" of the surface is two
+        // triangles, 6 verts. vid layout:
+        //   tri_idx     = vid / 6      → which quad
+        //   vert_in_tri = vid % 6      → which corner of that quad
+        //   u_idx       = tri_idx % TORUS_MAJOR
+        //   v_idx       = tri_idx / TORUS_MAJOR
+        // The two triangles of each quad use vertices (du, dv) ∈
+        // {(0,0),(1,0),(0,1)} and {(1,0),(1,1),(0,1)} so winding
+        // comes out CCW from outside (parametric outward).
+        int tri_idx = vid / 6;
+        int vert_in_tri = vid % 6;
+        int u_idx = tri_idx % TORUS_MAJOR;
+        int v_idx = tri_idx / TORUS_MAJOR;
+
+        int du, dv;
+        if (vert_in_tri == 0)      { du = 0; dv = 0; }
+        else if (vert_in_tri == 1) { du = 1; dv = 0; }
+        else if (vert_in_tri == 2) { du = 0; dv = 1; }
+        else if (vert_in_tri == 3) { du = 1; dv = 0; }
+        else if (vert_in_tri == 4) { du = 1; dv = 1; }
+        else                       { du = 0; dv = 1; }
+
+        float u = 2.0 * PI * float(u_idx + du) / float(TORUS_MAJOR);
+        float v = 2.0 * PI * float(v_idx + dv) / float(TORUS_MINOR);
+        float cu = cos(u);
+        float su = sin(u);
+        float cv = cos(v);
+        float sv = sin(v);
+
+        obj = vec3(
+            (TORUS_R + TORUS_W_RAD * cv) * cu,
+            (TORUS_R + TORUS_W_RAD * cv) * su,
+            TORUS_W_Z * sv
+        );
+        // Outward normal of an elliptical-cross-section torus —
+        // derived from ∂P/∂u × ∂P/∂v then normalized. For a
+        // circular cross-section (W_RAD == W_Z) this collapses to
+        // the familiar (cv*cu, cv*su, sv); when W_RAD ≠ W_Z each
+        // component is scaled by the *other* axis's half-width
+        // (so the ellipse's normal is steeper at the wide axis,
+        // shallower at the narrow one).
+        obj_normal = normalize(vec3(
+            TORUS_W_Z * cv * cu,
+            TORUS_W_Z * cv * su,
+            TORUS_W_RAD * sv
+        ));
     }
 
     v_obj = obj;
     // Front-face QR sample maps obj.xy ∈ [-1,1] to UV ∈ [0,1] with
-    // V flipped for GL's bottom-left texture origin. Other faces
-    // ignore v_uv (they use solid material) so the back-face's
-    // negative-angle path can leave this unconditional.
+    // V flipped for GL's bottom-left texture origin. The QR raster
+    // is rendered at the unit disc inscribed in a unit square — so
+    // this mapping picks up the QR pixels exactly for radius ≤
+    // QR_RADIUS = 1.0. For OUTER_RADIUS ≥ radius > QR_RADIUS (the
+    // gold-ring annulus) the UV exceeds [0, 1] and would clamp to
+    // the texture edge, but the fragment shader overrides with
+    // solid lit gold for r > QR_RADIUS so the bogus UV never gets
+    // sampled. Other faces ignore v_uv (solid material).
     v_uv = vec2(obj.x * 0.5 + 0.5, 1.0 - (obj.y * 0.5 + 0.5));
 
     // Y-axis rotation applied to position. Reduces to the
@@ -166,25 +286,64 @@ void main() {
         -s * obj_normal.x + c * obj_normal.z
     );
 
-    const float CAM_DISTANCE = 2.5;
+    // Perspective parameters. CAM_DISTANCE bumped 2.5 → 3.5 and F
+    // bumped 1.732 → 2.425 (tighter ~45° FOV) so the face-on disc
+    // projects to the same NDC size (1.04 * F / CAM_DISTANCE ≈
+    // 0.72) but the rotation-asymmetry from perspective is gentler
+    // — the torus's near rim at θ ≈ 45° was reaching NDC.x ≈
+    // -0.995 with the old perspective and clipping the rect on
+    // its left edge for slightly larger angles. The new params
+    // give ~15% margin from the clip plane across the whole
+    // rotation arc.
+    //
+    // Depth mapping: pre-10.7.5e gl_Position.z was just view.z,
+    // which made NDC.z = view.z / -view.z = -1 for *every*
+    // fragment — depth_test had nothing to compare. Proper map:
+    //   NDC.z = (A * view.z + B) / -view.z
+    // with A = -(F+N)/(F-N) and B = -2*F*N/(F-N) so view.z = -N
+    // → NDC.z = -1 and view.z = -F → NDC.z = +1. With NEAR=1.0
+    // and FAR=6.0 our geometry (view.z ranging roughly -2.21 to
+    // -4.79 across all rotations + faces) sits comfortably inside
+    // the mapped [-1, +1] NDC.z band, so the depth test now
+    // actually sorts the torus inner sliver against the disc
+    // body the way the comments have always claimed it did.
+    const float CAM_DISTANCE = 3.5;
+    const float F = 2.425;
     view.z -= CAM_DISTANCE;
+    v_view_pos = view;
 
-    const float F = 1.732;
-    gl_Position = vec4(view.x * F, view.y * F, view.z, -view.z);
+    const float NEAR = 1.0;
+    const float FAR = 6.0;
+    const float DEPTH_A = -(FAR + NEAR) / (FAR - NEAR);
+    const float DEPTH_B = -2.0 * FAR * NEAR / (FAR - NEAR);
+    gl_Position = vec4(
+        view.x * F,
+        view.y * F,
+        DEPTH_A * view.z + DEPTH_B,
+        -view.z
+    );
 }
 "#;
 
-/// Fragment shader: per-face material × Lambert-diffuse intensity.
-/// Light is a hardcoded directional source from upper-right and
-/// slightly toward camera (`normalize(0.3, 0.5, 1.0)`) so the
-/// face-on pose (normal = +Z) gets the brightest reading and the
-/// edge-on side wall picks up a moving highlight as the disc
-/// rotates. Ambient term keeps the unlit side legible — without it
-/// the back face would go fully black at θ=π and read as a hole.
+/// Fragment shader: per-face material × Lambert diffuse +
+/// Blinn-Phong specular on the gold faces. Light is a hardcoded
+/// directional source from upper-right and slightly toward camera
+/// (`normalize(0.3, 0.5, 1.0)`); ambient term keeps the unlit side
+/// legible.
+///
+/// The QR front face stays Lambert-only — printed paper (or the
+/// in-app raster equivalent) shouldn't catch a specular highlight,
+/// and adding one washed the QR data out under the highlight band
+/// when the disc was face-on. Gold faces (back, side wall, torus)
+/// get a Blinn-Phong specular term using the half-vector between
+/// `LIGHT_DIR` and the per-fragment view direction so the highlight
+/// sweeps physically as the disc rotates and reads as polished
+/// metal rather than a flat gold sticker.
 const FS_SRC: &str = r#"#version 330
 in vec3 v_obj;
 in vec2 v_uv;
 in vec3 v_normal_view;
+in vec3 v_view_pos;
 
 uniform sampler2D u_qr;
 uniform int u_face;
@@ -193,30 +352,63 @@ out vec4 frag_color;
 
 const vec3 LIGHT_DIR = normalize(vec3(0.3, 0.5, 1.0));
 const float AMBIENT = 0.4;
-// Skylanders-y warm gold for the back face + milled edge. Matches
-// the bezel ring baked into the QR texture closely enough that the
-// disc reads as one material when rotating between front and back.
+// Skylanders-y warm gold for the back face + milled edge + torus.
 const vec3 GOLD = vec3(0.82, 0.62, 0.20);
+// Specular highlight: warm-white tint (gold reflects whitish at
+// grazing angles) with a moderately tight power so the highlight
+// reads as a discrete sweep rather than a diffuse sheen.
+const vec3 SPEC_TINT = vec3(1.0, 0.92, 0.65);
+const float SHININESS = 48.0;
+const float SPEC_STRENGTH = 0.85;
+// Mirror of the VS_SRC constants — keep in sync. Used by the
+// front-face's gold-vs-QR split and by the disc clip on the
+// fan faces (front + back).
+const float QR_RADIUS = 1.0;
+const float OUTER_RADIUS = 1.04;
 
 void main() {
-    float lambert = max(0.0, dot(normalize(v_normal_view), LIGHT_DIR));
+    vec3 N = normalize(v_normal_view);
+    float lambert = max(0.0, dot(N, LIGHT_DIR));
     float intensity = AMBIENT + (1.0 - AMBIENT) * lambert;
 
+    // Blinn-Phong specular. View vector is from fragment to
+    // camera; camera sits at view-space origin so V = -view_pos
+    // normalized. Computed once and reused across all gold faces
+    // (back fan, side wall, torus, gold-ring annulus on the
+    // front face) so the highlight tracks the same physical
+    // light source consistently across the whole "frame" of the
+    // medallion.
+    vec3 V = normalize(-v_view_pos);
+    vec3 H = normalize(LIGHT_DIR + V);
+    float spec = pow(max(0.0, dot(N, H)), SHININESS) * SPEC_STRENGTH;
+    vec3 gold_lit = GOLD * intensity + SPEC_TINT * spec;
+
     if (u_face == 0) {
-        // Front face: QR texture, with the analytic disc clip kept
-        // as belt-and-suspenders against the polygon-vs-circle
-        // sliver at the 64-gon rim spokes. (See 10.7.2 note.)
-        vec4 c = texture(u_qr, v_uv);
-        if (length(v_obj.xy) > 1.0) discard;
-        frag_color = vec4(c.rgb * intensity, c.a);
+        // Front face: QR texture inside QR_RADIUS, lit gold ring
+        // for QR_RADIUS < r ≤ OUTER_RADIUS, discard outside. The
+        // gold ring fills the gap between the QR's outer edge and
+        // the torus's inner cross-section (10.7.5).
+        float r = length(v_obj.xy);
+        if (r > OUTER_RADIUS) discard;
+        if (r > QR_RADIUS) {
+            frag_color = vec4(gold_lit, 1.0);
+        } else {
+            // QR area: Lambert-only (printed surface, no spec) so
+            // the highlight band doesn't wash out the QR data
+            // when the disc sits face-on near the highlight.
+            vec4 c = texture(u_qr, v_uv);
+            frag_color = vec4(c.rgb * intensity, c.a);
+        }
     } else if (u_face == 1) {
-        // Back face: solid lit gold. Same disc clip.
-        if (length(v_obj.xy) > 1.0) discard;
-        frag_color = vec4(GOLD * intensity, 1.0);
+        // Back face: lit gold across the whole disc body. Same
+        // OUTER_RADIUS clip as the front so the back matches.
+        if (length(v_obj.xy) > OUTER_RADIUS) discard;
+        frag_color = vec4(gold_lit, 1.0);
     } else {
-        // Side wall: solid lit gold. No disc clip — the wall lives
-        // exactly on the unit cylinder, no overshoot to trim.
-        frag_color = vec4(GOLD * intensity, 1.0);
+        // Side wall + torus ring: same gold material — both are
+        // "frame" geometry. No analytic clip — their geometry is
+        // exact (no overshoot to trim).
+        frag_color = vec4(gold_lit, 1.0);
     }
 }
 "#;
@@ -331,7 +523,20 @@ impl BadgeRig {
             );
             gl.enable(glow::BLEND);
             gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
-            gl.disable(glow::DEPTH_TEST);
+
+            // Depth test on so the torus's inner half (which dives
+            // into the disc body) gets occluded by the disc faces
+            // without any sort-order tricks. The depth buffer state
+            // at callback entry could be anything (egui doesn't use
+            // it, doesn't clear it), so we clear it ourselves to
+            // 1.0 first. Egui doesn't read depth, so we don't have
+            // to restore the previous depth contents.
+            gl.enable(glow::DEPTH_TEST);
+            gl.depth_func(glow::LESS);
+            gl.depth_mask(true);
+            gl.clear_depth_f32(1.0);
+            gl.clear(glow::DEPTH_BUFFER_BIT);
+
             gl.enable(glow::CULL_FACE);
             gl.cull_face(glow::BACK);
 
@@ -356,11 +561,26 @@ impl BadgeRig {
             gl.uniform_1_i32(self.u_face.as_ref(), 2);
             gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 2 * (SEGMENTS + 1));
 
+            // Torus ring (gold). 6 verts per (u, v) quad ×
+            // TORUS_MAJOR × TORUS_MINOR quads = 6144 verts at
+            // 64 × 16. Independent triangles, not strips, because
+            // the procedural vid → quad mapping is simpler than
+            // strip-with-degenerates and the triangle count is
+            // small enough that the redundant-vertex overhead is
+            // immaterial.
+            gl.uniform_1_i32(self.u_face.as_ref(), 3);
+            gl.draw_arrays(glow::TRIANGLES, 0, 6 * TORUS_MAJOR * TORUS_MINOR);
+
             gl.bind_vertex_array(None);
             gl.bind_texture(glow::TEXTURE_2D, None);
             gl.use_program(None);
 
+            // Restore egui's expected state: cull-face off (egui
+            // assumes none); depth test off (egui doesn't sort).
+            // Don't bother restoring depth_mask — egui doesn't
+            // touch the depth buffer either way.
             gl.disable(glow::CULL_FACE);
+            gl.disable(glow::DEPTH_TEST);
         }
     }
 

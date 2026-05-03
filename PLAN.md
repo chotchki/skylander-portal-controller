@@ -896,18 +896,26 @@ or after, doesn't matter.
   — 8% diameter ratio reads as poker-chip / heavy-coin chunk
   without overweighing the front face. 10.7.5 is the next decision.
 
-- [ ] 10.7.5 — **Composition decision:** the badge currently
-  renders inside a gold bezel ring (egui-drawn) with a starfield
-  twinkle orbiting it (`ui/main_screen.rs` `RayHalo`-equivalent
-  in egui). Two options: (a) bezel ring becomes part of the disc
-  geometry — one mesh, lit consistently, rotates with the front
-  face — preserving the visual unity of "the badge is one
-  object." (b) bezel + halo stay as 2D egui overlays around the
-  3D disc cutout — simpler implementation, but during rotation
-  the 3D disc turns while the 2D bezel stays flat-on, which
-  undermines the whole point of the rewrite. (a) is the right
-  call; flagged as its own substep because it's the visually
-  load-bearing piece.
+- [x] 10.7.5 — Bezel ring landed as 3D geometry (path (a) from
+  the original decision). Added a flatter elliptical torus
+  around the disc as `u_face=3` in the shader (procedural
+  TRIANGLES via gl_VertexID, 64×16 quad grid → 6144 verts), plus
+  a lit-gold annulus on the disc face from `QR_RADIUS=1.0` to
+  `OUTER_RADIUS=1.04` so there's no gap between the QR's outer
+  edge and the torus's inner cross-section. All four faces share
+  a Blinn-Phong specular term (warm-white tint, shininess 48,
+  strength 0.85) so the highlight sweeps consistently across the
+  whole gold "frame" as the disc rotates — the QR front face is
+  Lambert-only since printed surfaces don't catch a highlight.
+  Final geometry after iteration: torus R=1.16, W_RAD=0.13,
+  W_Z=0.05 (cross-section the user landed on as "perfect
+  shape"), gold ring 0.04 thick, perspective bumped to
+  CAM_DISTANCE=3.5 / F=2.425 to stop the torus's near rim
+  clipping the rect at θ≈45°. Same projection change fixed a
+  long-standing depth-mapping bug (NDC.z was flat at -1 for
+  every fragment, so depth_test was a no-op and the
+  cylinder/torus interaction had been carried entirely by
+  cull-face).
 
 - [ ] 10.7.6 — **Easing + alpha touch-ups:** the existing
   `badge_alpha` curve was tuned around the 2D scale hack — it
