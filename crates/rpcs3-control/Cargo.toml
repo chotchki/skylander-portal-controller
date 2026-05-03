@@ -45,6 +45,10 @@ name = "boot_via_eboot"
 required-features = ["uia-examples"]
 
 [[example]]
+name = "production_open_dialog"
+required-features = ["uia-examples"]
+
+[[example]]
 name = "dump_menu_tree"
 required-features = ["uia-examples"]
 

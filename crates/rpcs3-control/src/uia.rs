@@ -14,7 +14,9 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow, bail};
 use skylander_core::{SLOT_COUNT, SlotIndex, SlotState};
 use tracing::{debug, info, instrument, warn};
-use uiautomation::patterns::{UIInvokePattern, UIScrollItemPattern, UIValuePattern};
+use uiautomation::patterns::{
+    UIExpandCollapsePattern, UIInvokePattern, UIScrollItemPattern, UIValuePattern,
+};
 use uiautomation::types::{ControlType, UIProperty};
 use uiautomation::{UIAutomation, UIElement, UITreeWalker};
 
@@ -24,7 +26,7 @@ use windows::Win32::Graphics::Gdi::ScreenToClient;
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
-    VIRTUAL_KEY, VK_DOWN, VK_ESCAPE, VK_MENU, VK_RETURN, VK_RIGHT, VK_UP,
+    VIRTUAL_KEY, VK_DOWN, VK_ESCAPE, VK_MENU, VK_RETURN, VK_UP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClassNameW, GetForegroundWindow, GetWindowRect, GetWindowTextLengthW,
@@ -41,30 +43,6 @@ const DIALOG_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
 const MENU_STEP_PAUSE: Duration = Duration::from_millis(200);
 const POLL_INTERVAL: Duration = Duration::from_millis(30);
 const OFFSCREEN_POS: (i32, i32) = (-4000, -4000);
-
-/// Which kind of RPCS3 window a UIElement represents. Distinguished by Qt
-/// classname — matches the observations in docs/research/rpcs3-control.md.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WindowKind {
-    /// The RPCS3 main window (`classname = "main_window"`).
-    Main,
-    /// Skylanders Manager dialog (`classname = "skylander_dialog"`).
-    SkylanderDialog,
-    /// "Select Skylander File" native common dialog (`classname = "#32770"`).
-    FileDialog,
-    /// The boot game viewport — exact class TBD on first real-game launch;
-    /// for now we return `Other` so Phase 3 can refine.
-    Other,
-}
-
-pub fn window_kind(el: &UIElement) -> WindowKind {
-    match el.get_classname().as_deref().unwrap_or("") {
-        "main_window" => WindowKind::Main,
-        "skylander_dialog" => WindowKind::SkylanderDialog,
-        "#32770" => WindowKind::FileDialog,
-        _ => WindowKind::Other,
-    }
-}
 
 /// Drives the Skylanders Manager dialog via Windows UI Automation.
 ///
@@ -113,9 +91,14 @@ impl UiaPortalDriver {
     }
 
     fn find_dialog(&self, walker: &UITreeWalker, main: &UIElement) -> Option<UIElement> {
+        // Current RPCS3 (Qt 6.11) gives every Qt window the same generic
+        // class `Qt6110QWindowIcon` — main, dialog, and game viewport are
+        // only distinguishable by title. Use the dialog's exact title.
+        // (Older RPCS3 builds had `classname = "skylander_dialog"`; that
+        // detection broke silently when Qt unified its class names.)
         find_descendant(walker, main, |el| {
-            el.get_classname()
-                .map(|c| c == "skylander_dialog")
+            el.get_name()
+                .map(|n| n == "Skylanders Manager")
                 .unwrap_or(false)
         })
     }
@@ -158,149 +141,79 @@ impl UiaPortalDriver {
         Err(anyhow!("row for {slot} not found in the portal dialog"))
     }
 
-    /// Open the Skylanders Manager dialog by driving the Manage menu with
-    /// synthesised keystrokes.
+    /// Open the Skylanders Manager dialog by driving the Manage menu via
+    /// pure UIA pattern calls — `ExpandCollapse.expand()` on each parent
+    /// MenuItem, then `Invoke.invoke()` on the leaf.
     ///
-    /// Why not UIA patterns? Qt6 menus don't honour UIA `Invoke`/
-    /// `ExpandCollapse` — both patterns return success but the submenu never
-    /// populates in the UIA tree. Keyboard navigation is the only reliable
-    /// mechanism we found (see `docs/research/game-launch-window-mgmt.md`).
+    /// History (PLAN 10.8.4): older RPCS3 + Qt 6 builds didn't honour
+    /// UIA `Invoke` / `ExpandCollapse` on menu items, so we drove the
+    /// menu with synthesised Alt + arrow keys. That worked but failed
+    /// often in the field — game viewport, RPCS3 update popup, and Steam
+    /// Overlay all competed for keyboard focus mid-navigation. Current
+    /// RPCS3 (Qt ~6.11) exposes both patterns natively (verified via
+    /// `tools/uia-probe`), so we drop the keystroke pipeline entirely.
+    /// Pattern calls don't depend on focus, so the dialog opens reliably
+    /// even when RPCS3 was launched directly with an EBOOT.BIN argument
+    /// and the game viewport is fullscreen.
     ///
-    /// Sequence: minimise the game viewport → move the main window off-screen
-    /// → AttachThreadInput + SetForegroundWindow on main → `Alt` → `Right`×3
-    /// (to Manage) → `Down` (open submenu) → `Down`×3 (to "Portals and
-    /// Gates") → `Right` (expand) → `Enter`. After each keystroke we verify
-    /// via UIA `has_keyboard_focus` that the expected MenuItem is focused —
-    /// if RPCS3 ever reorders its menu this fails fast with a clear error.
-    /// As soon as the dialog appears we sling it off-screen so the user
-    /// doesn't see it linger.
-    ///
-    /// Runs once per RPCS3 session; subsequent `open_dialog` calls hit the
-    /// short-circuit in the caller.
+    /// Runs once per RPCS3 session; subsequent `open_dialog` calls hit
+    /// the short-circuit in the caller. Once opened the dialog is slung
+    /// off-screen via Win32 SetWindowPos so the user doesn't see it.
     fn trigger_dialog_via_menu(&self, walker: &UITreeWalker, main: &UIElement) -> Result<()> {
-        let main_hwnd: isize = main
-            .get_native_window_handle()
-            .context("main window has no native HWND")?
-            .into();
-        let main_hwnd = HWND(main_hwnd as _);
-        let _guard = prep_main_offscreen(main_hwnd);
+        let manage = find_menu_item_by_name(walker, main, "Manage")
+            .ok_or_else(|| anyhow!("'Manage' menu item not found"))?;
+        manage
+            .get_pattern::<UIExpandCollapsePattern>()
+            .context("Manage MenuItem doesn't expose ExpandCollapsePattern")?
+            .expand()
+            .context("ExpandCollapse.expand() on 'Manage' failed")?;
+        // Qt populates submenu children asynchronously on the GUI thread
+        // after expand. The 100ms beat lets the children land in the UIA
+        // tree before we walk for "Portals and Gates".
+        sleep(Duration::from_millis(100));
 
-        // Retry the whole nav — RPCS3 drops menu events during heavy work
-        // (shader compile, update check popup, etc.). On failure we Esc out of
-        // any partial menu state, back off briefly, then try again. Total
-        // budget: `NAV_BUDGET`. First attempt has no idle wait; subsequent
-        // attempts wait 250ms * attempt_number.
-        const NAV_BUDGET: Duration = Duration::from_secs(30);
-        let start = Instant::now();
-        let mut attempt = 0u32;
-        let mut last_err: Option<anyhow::Error> = None;
-        while Instant::now().saturating_duration_since(start) < NAV_BUDGET {
-            attempt += 1;
-            if attempt > 1 {
-                // Dismiss whatever partial state we left — two Esc presses
-                // exit menu focus mode regardless of nesting depth, and
-                // `SetForegroundWindow` + short sleep lets the GUI settle.
-                let _ = send_key(VK_ESCAPE);
-                let _ = send_key(VK_ESCAPE);
-                sleep(Duration::from_millis(250 * attempt as u64));
-            }
-            match self.attempt_menu_nav(walker, main, main_hwnd) {
-                Ok(()) => {
-                    // Navigation complete; wait for the dialog window. If it
-                    // doesn't appear, treat as a full-nav failure and retry.
-                    let deadline = Instant::now() + DIALOG_OPEN_TIMEOUT;
-                    while Instant::now() < deadline {
-                        if let Ok(dialog_hwnd) = crate::hide::find_dialog_hwnd() {
-                            unsafe {
-                                let _ = SetWindowPos(
-                                    dialog_hwnd,
-                                    None,
-                                    OFFSCREEN_POS.0,
-                                    OFFSCREEN_POS.1,
-                                    0,
-                                    0,
-                                    SWP_NOSIZE | SWP_NOZORDER,
-                                );
-                            }
-                            info!(
-                                attempt,
-                                "Skylanders Manager dialog opened and moved off-screen"
-                            );
-                            return Ok(());
-                        }
-                        sleep(POLL_INTERVAL);
-                    }
-                    last_err = Some(anyhow!(
-                        "attempt {attempt}: Enter sent but dialog never appeared"
-                    ));
+        let portals = find_menu_item_by_name(walker, main, "Portals and Gates")
+            .ok_or_else(|| anyhow!("'Portals and Gates' menu item not found"))?;
+        portals
+            .get_pattern::<UIExpandCollapsePattern>()
+            .context("'Portals and Gates' doesn't expose ExpandCollapsePattern")?
+            .expand()
+            .context("ExpandCollapse.expand() on 'Portals and Gates' failed")?;
+        sleep(Duration::from_millis(100));
+
+        let leaf = find_menu_item_by_name(walker, main, "Skylanders Portal")
+            .ok_or_else(|| anyhow!("'Skylanders Portal' menu item not found"))?;
+        leaf.get_pattern::<UIInvokePattern>()
+            .context("'Skylanders Portal' doesn't expose InvokePattern")?
+            .invoke()
+            .context("Invoke.invoke() on 'Skylanders Portal' failed")?;
+
+        // Dialog window appears asynchronously after invoke. Poll for it
+        // and sling it off-screen as soon as it shows so the user doesn't
+        // see a flash on top of the game viewport.
+        let deadline = Instant::now() + DIALOG_OPEN_TIMEOUT;
+        while Instant::now() < deadline {
+            if let Ok(dialog_hwnd) = crate::hide::find_dialog_hwnd() {
+                unsafe {
+                    let _ = SetWindowPos(
+                        dialog_hwnd,
+                        None,
+                        OFFSCREEN_POS.0,
+                        OFFSCREEN_POS.1,
+                        0,
+                        0,
+                        SWP_NOSIZE | SWP_NOZORDER,
+                    );
                 }
-                Err(e) => {
-                    debug!(attempt, "nav failed: {e}");
-                    last_err = Some(e);
-                }
+                info!("Skylanders Manager dialog opened via UIA + moved off-screen");
+                return Ok(());
             }
+            sleep(POLL_INTERVAL);
         }
-
-        // Budget exhausted — dismiss menu so we don't leave RPCS3 weird.
-        let _ = send_key(VK_ESCAPE);
-        let _ = send_key(VK_ESCAPE);
-        Err(last_err.unwrap_or_else(|| {
-            anyhow!("Skylanders Manager dialog didn't appear within {NAV_BUDGET:?}")
-        }))
-    }
-
-    /// One attempt at the keyboard navigation sequence (Alt → Right×3 → Down
-    /// → Down×3 → Right → Enter). Returns Err if any focus-verification step
-    /// fails so the caller can retry.
-    fn attempt_menu_nav(
-        &self,
-        walker: &UITreeWalker,
-        main: &UIElement,
-        main_hwnd: HWND,
-    ) -> Result<()> {
-        focus_main_window(main_hwnd).context("focus main window")?;
-        sleep(MENU_STEP_PAUSE);
-
-        send_key(VK_MENU)?;
-        sleep(MENU_STEP_PAUSE);
-        expect_focused_menu_item(walker, main, "File", "Alt tap")?;
-
-        for _ in 0..3 {
-            focus_main_window(main_hwnd).ok();
-            send_key(VK_RIGHT)?;
-            sleep(MENU_STEP_PAUSE);
-        }
-        expect_focused_menu_item(walker, main, "Manage", "Right×3 to Manage")?;
-
-        focus_main_window(main_hwnd).ok();
-        send_key(VK_DOWN)?;
-        sleep(MENU_STEP_PAUSE);
-        expect_focused_menu_item(walker, main, "Virtual File System", "open Manage submenu")?;
-
-        for _ in 0..3 {
-            focus_main_window(main_hwnd).ok();
-            send_key(VK_DOWN)?;
-            sleep(MENU_STEP_PAUSE);
-        }
-        expect_focused_menu_item(
-            walker,
-            main,
-            "Portals and Gates",
-            "Down×3 to Portals and Gates",
-        )?;
-
-        focus_main_window(main_hwnd).ok();
-        send_key(VK_RIGHT)?;
-        sleep(MENU_STEP_PAUSE);
-        expect_focused_menu_item(
-            walker,
-            main,
-            "Skylanders Portal",
-            "expand Portals and Gates",
-        )?;
-
-        send_key(VK_RETURN)?;
-        Ok(())
+        Err(anyhow!(
+            "Skylanders Manager dialog didn't appear within {DIALOG_OPEN_TIMEOUT:?} \
+             after Invoke (UIA call returned Ok but Qt action may have been suppressed)"
+        ))
     }
 
     /// Wait for a top-level or nested window matching `title` to appear.
@@ -1255,6 +1168,23 @@ fn dismiss_modal(walker: &UITreeWalker, modal: &UIElement) {
             let _ = inv.invoke();
         }
     }
+}
+
+/// Walk the UIA subtree and return the first MenuItem (or Menu) whose Name
+/// equals `name`. Used by the menu-pattern nav in `trigger_dialog_via_menu`.
+/// Submenus populate lazily on `ExpandCollapse.expand()`, so call this
+/// AFTER expanding the parent.
+fn find_menu_item_by_name(
+    walker: &UITreeWalker,
+    root: &UIElement,
+    name: &str,
+) -> Option<UIElement> {
+    find_descendant(walker, root, |el| {
+        matches!(
+            el.get_control_type().ok(),
+            Some(ControlType::MenuItem) | Some(ControlType::Menu)
+        ) && el.get_name().map(|n| n == name).unwrap_or(false)
+    })
 }
 
 fn find_descendant<F>(walker: &UITreeWalker, root: &UIElement, pred: F) -> Option<UIElement>

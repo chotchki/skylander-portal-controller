@@ -105,6 +105,34 @@ impl UiaRpcsProcess {
         Self::wrap_spawned(child, exe)
     }
 
+    /// Launch RPCS3 with an **EBOOT.BIN argument** so the game starts directly,
+    /// skipping the library view + UI-driven boot sequence (PLAN 10.8.4).
+    ///
+    /// Older notes warned that direct-boot mode breaks menu-bar nav via
+    /// synthesised keystrokes — true, but no longer relevant: the menu nav
+    /// in `UiaPortalDriver::trigger_dialog_via_menu` is now pattern-driven
+    /// (`ExpandCollapse.expand()` + `Invoke.invoke()`), and UIA pattern
+    /// calls don't depend on keyboard focus.
+    pub fn launch_with_eboot(exe: &Path, eboot: &Path) -> Result<Self> {
+        if !exe.is_file() {
+            bail!("rpcs3.exe not found at {}", exe.display());
+        }
+        if !eboot.is_file() {
+            bail!("EBOOT.BIN not found at {}", eboot.display());
+        }
+        info!(
+            exe = %exe.display(),
+            eboot = %eboot.display(),
+            "launching RPCS3 (direct-boot)"
+        );
+
+        let child = Command::new(exe)
+            .arg(eboot)
+            .spawn()
+            .with_context(|| format!("spawn {}", exe.display()))?;
+        Self::wrap_spawned(child, exe)
+    }
+
     fn wrap_spawned(child: Child, exe: &Path) -> Result<Self> {
         let pid = child.id();
         let job = match create_kill_on_close_job_for_pid(pid) {
