@@ -372,6 +372,9 @@ Deliverables, in dependency order:
 - 10.4 — new simulator-driven tests exercise iPad + iPhone simultaneously.
 - 10.5 — CI lane on a Mac runner so the suite stays green automatically.
 - 10.6 — macOS release artifact published alongside the Windows zip.
+- 10.7 — replace the launcher's 2D "badge spin" with a real 3D rotating
+  disc rendered through the existing glow / egui_glow plumbing
+  (visual polish, independent of the macOS work).
 
 ### 10.1 Server builds and runs on macOS (mock-driver only)
 Today: workspace mostly cfg-gates Windows-only code paths, but
@@ -798,6 +801,112 @@ deferred unless a real user reports the bare-binary UX as blocking.
   a hobby project. If signed: integrate `codesign` + `notarytool` into
   the release lane; if not: keep the right-click-open instruction in
   the setup doc.
+
+### 10.7 Real 3D rotating badge for the launcher intro
+Today the launcher's centre badge (QR card / error card / brand
+intro) "spins in" via a 2D horizontal-scale hack — `LaunchPhase
+::badge_scale` returns `sin(progress * π/2)`, the renderer
+applies it as `rect.shrink_x(...)`, and an alpha-gate hides the
+line-shaped phase so the user doesn't see a vertical line slide
+across the screen. End result: a flat circle that gets thin and
+fat, with no honest depth, lighting, or perspective. Chris
+2026-05-02 watching it during a long CI wait: "killing me with
+how awful it looks." It's not a regression — it's been like this
+since the Phase 4 launcher polish — but with the rest of the
+launcher choreography now solid, the badge is the conspicuous
+weak point.
+
+Goal: replace the 2D scale trick with an actual 3D disc rendered
+via the existing glow / egui_glow plumbing (PLAN 4.19.6 promoted
+that stack from spike to runtime for the vortex backdrop). The
+disc is a textured cylinder cap — front face textured with the
+QR + brand text, edge has visible thickness, lit so rotation
+reads as physical motion rather than a CSS animation. Rotation is
+y-axis around the disc's vertical centre, driven from the same
+`LaunchPhase` state machine so the new motion plugs into the
+existing intro / closing transitions without ripple.
+
+Independent of 10.6.3 (.app bundle) — purely a quality-of-launch-
+experience improvement. Sequencing-wise can land before 10.6.3
+or after, doesn't matter.
+
+- [ ] 10.7.1 — **Spike:** prove the GL pipeline works end-to-end
+  by getting a static 3D disc rendered into the badge's egui rect
+  via `egui::PaintCallback`, mirroring the vortex shader's
+  approach (`crates/server/src/vortex.rs` + `vortex_presets/`).
+  Sanity-check perspective projection, winding order, and that
+  the badge's existing positioning math still maps onto the new
+  paint surface. No animation yet — just a stationary disc with
+  a placeholder colour on the front face.
+
+- [ ] 10.7.2 — **Texture pipeline:** the QR PNG is already
+  pre-rendered once at startup as a `Vec<u8>` (see
+  `state.rs::join_qr_png` and `round_qr.rs`). Upload it to a GL
+  texture once during launcher init; sample on the disc's front
+  face. The brand text ("SCAN TO CONNECT", profile name on the
+  in-game return surface, error messages) currently lives as
+  egui calls — easiest path is a separate offscreen rasteriser
+  that emits a second texture from a string + style; or, lower-
+  effort, render text via egui *into* the same paint callback's
+  framebuffer before the disc geometry runs. Pick after the
+  spike answers how much GL state plumbing is reasonable.
+
+- [ ] 10.7.3 — **Drive rotation off `LaunchPhase`:** add
+  `badge_rotation_y(self) -> f32` (radians) replacing
+  `badge_scale`. Map intro/closing 0..1 progress to π..0 (or 0..π
+  on close) so the front face rotates from edge-on to face-on
+  matching the current "coin tipping flat" intent. Update
+  `ui/main_screen.rs` + `ui/server_error.rs` + `ui/farewell.rs`
+  to call the new accessor and feed it into the PaintCallback's
+  uniform set. Drop the `badge_scale` API entirely once the call
+  sites are migrated.
+
+- [ ] 10.7.4 — **Edge thickness + lighting:** the cylinder cap
+  geometry from 10.7.1 needs a non-zero z-extent so the edge-on
+  phase reads as a thin disc on its side rather than disappearing
+  (the whole reason the 2D hack needed an alpha gate). Add a
+  cheap directional light + simple Lambert diffuse so the disc
+  shades as it rotates — surface normal × light direction is
+  enough; no need for specular or shadow maps for a disc this
+  small. Edge gets the bezel's gold tint baked in so it reads as
+  the same material continuous around the front face.
+
+- [ ] 10.7.5 — **Composition decision:** the badge currently
+  renders inside a gold bezel ring (egui-drawn) with a starfield
+  twinkle orbiting it (`ui/main_screen.rs` `RayHalo`-equivalent
+  in egui). Two options: (a) bezel ring becomes part of the disc
+  geometry — one mesh, lit consistently, rotates with the front
+  face — preserving the visual unity of "the badge is one
+  object." (b) bezel + halo stay as 2D egui overlays around the
+  3D disc cutout — simpler implementation, but during rotation
+  the 3D disc turns while the 2D bezel stays flat-on, which
+  undermines the whole point of the rewrite. (a) is the right
+  call; flagged as its own substep because it's the visually
+  load-bearing piece.
+
+- [ ] 10.7.6 — **Easing + alpha touch-ups:** the existing
+  `badge_alpha` curve was tuned around the 2D scale hack — it
+  rampt up coordinately with `badge_scale`'s sine to hide the
+  edge-on phase. With real 3D the back-of-disc face shouldn't
+  bleed through during fade-in (depth test + cull-back-face
+  handle this in GL), but the alpha curve still wants tuning so
+  the disc materialises *into* its rotation rather than cross-
+  fading mid-spin. Try: hold alpha at 0 while the rotation is
+  still > 70 ° from face-on, then ease 0→1 over the last 30 °.
+  Iterate against on-device feel — easier to land once the
+  geometry is real and we can see what reads vs. what doesn't.
+
+- [ ] 10.7.7 — **Performance + cross-platform pass:** the
+  PaintCallback runs in egui_glow's GL context which is shared
+  with the vortex shader; ensure no GL state leaks (depth-test,
+  blend-mode, vertex-array bindings — same hygiene the vortex
+  PaintCallback already documents in its source). Verify on
+  Mac (eframe's glow backend on Mac is Metal-translated via
+  ANGLE / MoltenGL — could surface platform-specific GLSL
+  validation issues that the Windows build doesn't see). Drop
+  any `badge_scale`-era deadcode + the alpha-gate work-around;
+  smoke-run the launcher in dev + release builds on both
+  Windows + macOS before declaring done.
 
 ## Non-goals
 
