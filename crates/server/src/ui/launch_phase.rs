@@ -227,62 +227,6 @@ impl LaunchPhase {
         }
     }
 
-    /// Horizontal scale for the centre badge (QR card / error card).
-    /// 0 = edge-on (invisible), 1 = face-on (full size). Sine curve
-    /// so the spin reads as a coin tipping flat — slowest near
-    /// edge-on where rotation rate looks fastest, fastest near
-    /// face-on where it slows into the parked pose.
-    ///
-    /// Legacy 2D path; `badge_rotation_y` is the 3D replacement
-    /// (PLAN 10.7). Both coexist while the 3D path is still gated
-    /// behind the `LAUNCHER_3D_BADGE` env; once the 3D path is
-    /// the default this method goes away (10.7.7).
-    pub(crate) fn badge_scale(self) -> f32 {
-        use std::f32::consts::FRAC_PI_2;
-        match self {
-            Self::IntroTransitioning { progress } | Self::ReturnFromGame { progress } => {
-                // Spin starts 20% into intro, lands at 100%.
-                let p = ((progress - 0.2) / 0.8).clamp(0.0, 1.0);
-                (p * FRAC_PI_2).sin()
-            }
-            Self::AwaitingConnect => 1.0,
-            Self::ClosingToInGame { progress } => {
-                // Spin out across the first 60% of close.
-                let p = (progress / 0.6).clamp(0.0, 1.0);
-                ((1.0 - p) * FRAC_PI_2).sin()
-            }
-        }
-    }
-
-    /// Alpha for the badge body (bezel layers). Tracks badge_scale
-    /// loosely but offset so the bezel can fade independently of the
-    /// spin — during close the bezel fades out before the spin hits
-    /// edge-on, so the badge dissolves rather than collapsing.
-    ///
-    /// Multiplied by a scale-gate (smoothstep 0.05 → 0.25) so the
-    /// bezel is invisible while it's a thin sliver; without the gate
-    /// the spin's early/late "edge-on" phase reads as a vertical
-    /// line on screen rather than a circular badge becoming
-    /// visible (Chris flagged 2026-04-19). The gate also handles
-    /// the close: as the badge spins out and gets thin, its alpha
-    /// drops to 0 before it reaches the line-shaped phase.
-    pub(crate) fn badge_alpha(self) -> f32 {
-        let in_window = match self {
-            Self::IntroTransitioning { progress } | Self::ReturnFromGame { progress } => {
-                ((progress - 0.2) / 0.6).clamp(0.0, 1.0)
-            }
-            Self::AwaitingConnect => 1.0,
-            Self::ClosingToInGame { progress } => {
-                let p = ((progress - 0.2) / 0.4).clamp(0.0, 1.0);
-                1.0 - p
-            }
-        };
-        let scale = self.badge_scale();
-        let t = ((scale - 0.05) / 0.20).clamp(0.0, 1.0);
-        let scale_gate = t * t * (3.0 - 2.0 * t);
-        in_window * scale_gate
-    }
-
     /// Alpha for text/QR content inside (or beneath) the badge. Fades
     /// in late during intro so the spin isn't reading illegible
     /// mid-rotation, fades out early during close so the badge spins
@@ -482,43 +426,6 @@ mod tests {
         assert_eq!(
             LaunchPhase::ClosingToInGame { progress: 0.5 }.iris_mode(),
             IrisMode::DarkHole
-        );
-    }
-
-    #[test]
-    fn badge_scale_full_during_steady_state() {
-        assert!(approx(LaunchPhase::AwaitingConnect.badge_scale(), 1.0));
-    }
-
-    #[test]
-    fn badge_scale_zero_at_phase_endpoints() {
-        // Beginning of intro spin window (20%): still 0.
-        assert!(approx(
-            LaunchPhase::IntroTransitioning { progress: 0.2 }.badge_scale(),
-            0.0
-        ));
-        // End of close spin window (60%): back to 0.
-        assert!(approx(
-            LaunchPhase::ClosingToInGame { progress: 0.6 }.badge_scale(),
-            0.0
-        ));
-        // After close spin window: stays 0.
-        assert!(approx(
-            LaunchPhase::ClosingToInGame { progress: 0.9 }.badge_scale(),
-            0.0
-        ));
-    }
-
-    #[test]
-    fn text_fades_before_badge_during_close() {
-        // 30% into close: text already mostly faded, badge mostly
-        // intact. This is the "text leads, badge follows" timing.
-        let p30 = LaunchPhase::ClosingToInGame { progress: 0.3 };
-        let text = p30.badge_text_alpha();
-        let badge = p30.badge_alpha();
-        assert!(
-            text < badge,
-            "text ({text}) should fade before badge ({badge})"
         );
     }
 

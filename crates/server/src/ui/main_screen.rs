@@ -146,36 +146,32 @@ impl LauncherApp {
                 None
             };
 
-            if let Some(tex) = &self.qr_texture {
-                // The card-flip helper reserves a fixed-size square and
-                // paints the front / back face directly via Painter so the
-                // Y-axis rotation reads as a horizontal scale without any
-                // custom matrix math — egui-native, see the helper doc.
-                // The launch_phase factors layer ONTO the flip scale.
-                qr_card_flip(
-                    ui,
-                    ctx,
-                    tex,
-                    back_face,
-                    launch_phase.badge_scale(),
-                    launch_phase.badge_alpha(),
-                    launch_phase.badge_text_alpha(),
-                    self.badge_rig.clone(),
-                    launch_phase.badge_rotation_y(),
-                    launch_phase.badge_scale_3d(),
-                    launch_phase.badge_alpha_3d(),
-                );
-                // Any halo-spinning face needs continuous frames; egui
-                // is lazy by default and would only repaint on input.
-                // The launcher's outer update loop already hits 60fps,
-                // so this is defensive — safe to leave in case the
-                // outer loop is ever gated.
-                if matches!(
-                    back_face,
-                    Some(BackFace::Starting | BackFace::Loading | BackFace::Switching),
-                ) {
-                    ctx.request_repaint_after(std::time::Duration::from_millis(16));
-                }
+            // 3D badge takes over Main entirely (PLAN 10.7.7); the
+            // shader rig owns the QR + back-face texture uploads, so
+            // the egui-side `qr_texture` only feeds the in-game
+            // reconnect overlay now.
+            qr_card_flip(
+                ui,
+                ctx,
+                back_face,
+                self.badge_rig.clone(),
+                launch_phase.badge_rotation_y(),
+                launch_phase.badge_scale_3d(),
+                launch_phase.badge_alpha_3d(),
+            );
+            // Mid-flip the qr_card_flip helper requests its own
+            // repaints, but the multi-turn rotation curve in
+            // `badge_rotation_y` itself runs from intro start
+            // through the spin window, and egui won't repaint
+            // unless something tells it to. The outer launcher
+            // update loop hits 60fps already; keep this defensive
+            // request for back-face states that previously relied
+            // on the 2D halos for continuous frames.
+            if matches!(
+                back_face,
+                Some(BackFace::Starting | BackFace::Loading | BackFace::Switching),
+            ) {
+                ctx.request_repaint_after(std::time::Duration::from_millis(16));
             }
 
             ui.add_space(24.0);
@@ -352,296 +348,99 @@ impl BackFace {
 fn qr_card_flip(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
-    tex: &egui::TextureHandle,
     back_face: Option<BackFace>,
-    phase_scale: f32,
-    bezel_alpha: f32,
-    content_alpha: f32,
     badge_rig: std::sync::Arc<std::sync::Mutex<Option<crate::badge::BadgeRig>>>,
     badge_rotation_y: f32,
     badge_scale_3d: f32,
     badge_alpha_3d: f32,
 ) {
-    // `animate_bool_with_time` interpolates 0.0 → 1.0 when the back
-    // face is wanted, and back to 0 when it's not. Driven by
-    // `back_face.is_some()` so any back face (MaxPlayers OR Loading)
-    // triggers the same coin-flip.
-    let id = egui::Id::new("launcher_qr_card_flip");
-    let progress = ctx.animate_bool_with_time(id, back_face.is_some(), FLIP_DURATION);
-
-    // Tent wave: 1 at the edges, 0 in the middle. Represents the x-scale
-    // of the visible face from the flip animation; hits 0 at the flip
-    // midpoint where we swap content.
-    let flip_scale = (progress * 2.0 - 1.0).abs();
-    let show_back = progress > 0.5;
-
-    // Final horizontal scale = flip × phase. The phase factor handles
-    // the intro spin-in (0 → 1) and close spin-out (1 → 0); the flip
-    // factor handles the in-place QR↔back-face card flip. Multiplying
-    // composes them — a flip mid-intro reads as both layers
-    // contributing to the squish.
-    let scale = flip_scale * phase_scale;
-
-    // Reserve the full square so layout below doesn't shift during the
-    // animation.
+    // Reserve the full square so layout below doesn't shift during
+    // the animation, regardless of whether the badge is currently a
+    // pinpoint at the start of the intro spin or full-size at
+    // steady state.
     let (rect, _resp) =
         ui.allocate_exact_size(egui::vec2(CARD_SIZE, CARD_SIZE), egui::Sense::hover());
 
-    // PLAN 10.7.1 spike: when LAUNCHER_3D_BADGE is set in the env,
-    // route the badge through the 3D shader rig instead of the 2D
-    // card flip. Lets us A/B compare without removing the legacy
-    // path. Rotation is `LaunchPhase::badge_rotation_y` (PLAN
-    // 10.7.3); on top of that, PLAN 10.7.6b adds a 360° flip
-    // animation whenever the back-face state changes — texture
-    // swap happens at flip midpoint (when the disc is showing its
-    // gold back face and any swap would be hidden) so the new
-    // text/QR is on the disc by the time it rotates back to
-    // face-on. Returns early so the 2D path below doesn't paint
-    // over the GL surface.
-    if std::env::var_os("LAUNCHER_3D_BADGE").is_some() {
-        // Persistent state in egui memory: which back face the disc
-        // is currently *displaying* (lags behind `back_face` by up
-        // to one flip), and the wall-clock time the current flip
-        // began (negative sentinel = no flip in progress). Stored
-        // by Id rather than passed through LauncherApp because
-        // they're purely a function of the state-machine here, not
-        // anything the rest of the app needs to read.
-        let state_id = egui::Id::new("badge_3d_displayed_back_face");
-        let flip_id = egui::Id::new("badge_3d_flip_start");
+    // PLAN 10.7.6b: rotate the disc whenever the displayed back-face
+    // text would change. Persistent state lives in egui memory:
+    // `displayed` is the back face the disc is currently *showing*
+    // (lags behind `back_face` by up to one flip); `flip_start` is
+    // the wall-clock time the current flip began (negative sentinel
+    // = no flip in progress). Texture swap happens at flip midpoint
+    // when the disc is showing its gold back face and the swap is
+    // invisible.
+    let state_id = egui::Id::new("badge_3d_displayed_back_face");
+    let flip_id = egui::Id::new("badge_3d_flip_start");
 
-        let now = ctx.input(|i| i.time);
-        let mut displayed = ctx
-            .memory(|m| m.data.get_temp::<Option<BackFace>>(state_id))
-            .unwrap_or(back_face);
-        let mut flip_start = ctx
-            .memory(|m| m.data.get_temp::<f64>(flip_id))
-            .unwrap_or(-1.0);
+    let now = ctx.input(|i| i.time);
+    let mut displayed = ctx
+        .memory(|m| m.data.get_temp::<Option<BackFace>>(state_id))
+        .unwrap_or(back_face);
+    let mut flip_start = ctx
+        .memory(|m| m.data.get_temp::<f64>(flip_id))
+        .unwrap_or(-1.0);
 
-        // Detect new state changes; if there's no flip in flight
-        // and the state has shifted, start one. Mid-flip changes
-        // are deliberately ignored — the disc continues with the
-        // *previous* target until it lands face-on, then a fresh
-        // flip kicks off if the state has shifted again. Avoids
-        // chained flips visually compounding into a fast spin.
-        if back_face != displayed && flip_start < 0.0 {
-            flip_start = now;
-        }
-
-        let flip_progress = if flip_start >= 0.0 {
-            ((now - flip_start) / FLIP_DURATION as f64).clamp(0.0, 1.0) as f32
-        } else {
-            0.0
-        };
-
-        // Texture swap at the flip midpoint — the disc is showing
-        // its gold back face here, so the swap is invisible.
-        if flip_progress >= 0.5 && displayed != back_face {
-            displayed = back_face;
-        }
-        // End the flip once it's run its full window so the next
-        // state change can start its own flip from a clean slate.
-        if flip_progress >= 1.0 {
-            flip_start = -1.0;
-        }
-
-        ctx.memory_mut(|m| {
-            m.data.insert_temp(state_id, displayed);
-            m.data.insert_temp(flip_id, flip_start);
-        });
-
-        if flip_start >= 0.0 {
-            // Mid-flip — keep frames coming so the rotation reads
-            // smoothly even if nothing else in the launcher would
-            // request a repaint this frame.
-            ctx.request_repaint();
-        }
-
-        let texture_index = displayed.map(|bf| bf.texture_index()).unwrap_or(0);
-        // Spec on for back-face metal text; off for the QR raster
-        // so its data stays legible under the highlight band.
-        let apply_spec = displayed.is_some();
-        let additional_rotation = flip_progress * 2.0 * std::f32::consts::PI;
-
-        crate::badge::paint_badge(
-            ui.painter(),
-            rect,
-            badge_rig,
-            badge_rotation_y + additional_rotation,
-            badge_scale_3d,
-            badge_alpha_3d,
-            texture_index,
-            apply_spec,
-        );
-        return;
+    // Detect new state changes; if there's no flip in flight and
+    // the state has shifted, start one. Mid-flip changes are
+    // deliberately ignored — the disc continues with the *previous*
+    // target until it lands face-on, then a fresh flip kicks off if
+    // the state has shifted again. Avoids chained flips visually
+    // compounding into a fast spin.
+    if back_face != displayed && flip_start < 0.0 {
+        flip_start = now;
     }
 
-    // Squish horizontally, keep vertical alignment.
-    let half_w = (rect.width() * scale) * 0.5;
-    let inner =
-        egui::Rect::from_center_size(rect.center(), egui::vec2(half_w * 2.0, rect.height()));
-
-    // Guard against zero-width rendering — egui's rounding + stroke paint
-    // gets messy at 0 extent, and nothing's visible anyway at the midpoint.
-    if inner.width() < 1.0 {
-        return;
-    }
-
-    let painter = ui.painter();
-    if show_back {
-        // Pick the lines based on which back face is wanted. If the
-        // caller passed `None` but we're past the midpoint (rare race
-        // — `back_face` flipped to None mid-animation), fall back to
-        // the LAST visible back face by re-using whatever's stored —
-        // simpler to just default to MaxPlayers; the next frame will
-        // pick the right side.
-        let lines: &[&str] = match back_face.unwrap_or(BackFace::MaxPlayers) {
-            BackFace::Starting => &["STARTING"],
-            // PLAN 4.19.9 — spec copy is "PORTAL IS FULL"; previously
-            // "MAXIMUM PLAYERS REACHED". Shorter line reads better at
-            // TV distance.
-            BackFace::MaxPlayers => &["PORTAL", "IS", "FULL"],
-            BackFace::Loading => &["LOADING"],
-            BackFace::Switching => &["SWITCHING", "GAMES"],
-            BackFace::Farewell => &["GOODBYE"],
-            BackFace::Crashed => &["SOMETHING", "WENT", "WRONG"],
-            BackFace::ServerError => &["SERVER", "FAILED", "TO START"],
-        };
-        paint_titled_card(painter, inner, lines, bezel_alpha, content_alpha);
-        // "Waiting" faces (Starting / Loading / Switching) get two
-        // rotating halos around the bezel rim — same look as
-        // `mocks/transitions.html`'s `.state-loading` (slow outer halo
-        // + fast inner halo, both gold conic gradients sweeping around
-        // the badge). The badge content itself stays static; rotation
-        // lives in the halos so the word stays readable. Sharing the
-        // halos across Starting → Loading → Switching keeps their
-        // transitions reading as one continuous spin.
-        if matches!(
-            back_face,
-            Some(BackFace::Starting | BackFace::Loading | BackFace::Switching),
-        ) && bezel_alpha > 0.001
-            && inner.width() >= 1.0
-        {
-            paint_loading_halos(painter, inner, ctx.input(|i| i.time) as f32, bezel_alpha);
-        }
+    let flip_progress = if flip_start >= 0.0 {
+        ((now - flip_start) / FLIP_DURATION as f64).clamp(0.0, 1.0) as f32
     } else {
-        paint_qr_front(painter, inner, tex, bezel_alpha, content_alpha);
+        0.0
+    };
+
+    if flip_progress >= 0.5 && displayed != back_face {
+        displayed = back_face;
     }
-}
+    if flip_progress >= 1.0 {
+        flip_start = -1.0;
+    }
 
-/// Paint the rotating loading halos around the badge — matches the
-/// mock's `.state-loading` look from `docs/aesthetic/mocks/
-/// transitions.html`: slow outer halo (1.4s period) + fast inner
-/// halo (0.9s period), both gold conic-gradient arcs that sweep
-/// around the bezel rim.
-///
-/// Multiplied by `outer_alpha` so the halos fade with the bezel
-/// during the launch-phase intro/close transitions (badge_alpha =
-/// 0 → 1 spin-in, then back to 0 on close).
-fn paint_loading_halos(painter: &egui::Painter, rect: egui::Rect, time_s: f32, outer_alpha: f32) {
-    let center = rect.center();
-    let outer_r = rect.width().min(rect.height()) / 2.0;
+    ctx.memory_mut(|m| {
+        m.data.insert_temp(state_id, displayed);
+        m.data.insert_temp(flip_id, flip_start);
+    });
 
-    // Slow halo: broad bright sweep + secondary trailing sweep, both
-    // at the same radius (just past the bezel) on a 1.4s rotation.
-    paint_halo_arc(
-        painter,
-        center,
-        outer_r + 18.0,
-        5.0,
-        time_s / 1.4,
-        130.0,
-        palette::GOLD_BRIGHT,
-        0.7 * outer_alpha,
-    );
-    paint_halo_arc(
-        painter,
-        center,
-        outer_r + 18.0,
-        4.0,
-        time_s / 1.4 + 0.5,
-        80.0,
-        palette::GOLD,
-        0.4 * outer_alpha,
-    );
+    if flip_start >= 0.0 {
+        // Mid-flip — keep frames coming so the rotation reads
+        // smoothly even if nothing else in the launcher would
+        // request a repaint this frame.
+        ctx.request_repaint();
+    }
 
-    // Fast halo: single tight bright sweep right at the bezel edge,
-    // 0.9s rotation. Reads as the "spinner needle" against the
-    // wider slow halo's diffuse gold glow.
-    paint_halo_arc(
-        painter,
-        center,
-        outer_r + 6.0,
-        3.0,
-        time_s / 0.9,
-        30.0,
-        palette::GOLD_BRIGHT,
-        outer_alpha,
+    let texture_index = displayed.map(|bf| bf.texture_index()).unwrap_or(0);
+    // Spec on for back-face metal text; off for the QR raster so
+    // its data stays legible under the highlight band.
+    let apply_spec = displayed.is_some();
+    let additional_rotation = flip_progress * 2.0 * std::f32::consts::PI;
+
+    crate::badge::paint_badge(
+        ui.painter(),
+        rect,
+        badge_rig,
+        badge_rotation_y + additional_rotation,
+        badge_scale_3d,
+        badge_alpha_3d,
+        texture_index,
+        apply_spec,
     );
 }
 
-/// Paint a partial arc with a hump-shaped alpha (transparent → full
-/// → transparent across the arc's span), giving the conic-gradient
-/// sweep look. `rotation_cycles` = current rotation in turns (1.0 =
-/// full revolution); the start angle is `rotation_cycles * 2π`.
-///
-/// Painted as THREE concentric stroke passes at decreasing alpha to
-/// fake a Gaussian-ish blur — egui doesn't ship a real shape blur,
-/// but stacking a wide-dim, mid-medium, narrow-bright triplet reads
-/// as the soft glow the mock's `filter: blur(6px)` produces.
-#[allow(clippy::too_many_arguments)]
-fn paint_halo_arc(
-    painter: &egui::Painter,
-    center: egui::Pos2,
-    radius: f32,
-    stroke_width: f32,
-    rotation_cycles: f32,
-    span_deg: f32,
-    color: egui::Color32,
-    alpha: f32,
-) {
-    use std::f32::consts::{PI, TAU};
-    let segments = ((span_deg / 3.0).ceil() as usize).max(8);
-    let start_angle = rotation_cycles * TAU;
-    let span_rad = span_deg.to_radians();
-    let alpha = alpha.clamp(0.0, 1.0);
-
-    // Three passes simulating a soft outer glow → bright core. Wider
-    // strokes at lower alpha sit underneath; the bright narrow core
-    // sits on top.
-    let passes: [(f32, f32); 3] = [
-        (stroke_width * 3.0, 0.20), // wide dim halo
-        (stroke_width * 1.8, 0.40), // mid
-        (stroke_width, 1.0),        // bright core
-    ];
-
-    let mut last_points: Vec<egui::Pos2> = Vec::with_capacity(segments + 1);
-    for i in 0..=segments {
-        let t = i as f32 / segments as f32;
-        let angle = start_angle + t * span_rad;
-        last_points.push(egui::pos2(
-            center.x + angle.cos() * radius,
-            center.y + angle.sin() * radius,
-        ));
-    }
-
-    for (pass_width, pass_alpha) in passes {
-        for i in 0..segments {
-            let t = i as f32 / segments as f32;
-            // Hump shape on the segment's leading vertex's t.
-            let local_alpha = (PI * t).sin() * alpha * pass_alpha;
-            let alpha_byte = (255.0 * local_alpha) as u8;
-            if alpha_byte == 0 {
-                continue;
-            }
-            let stroke_color =
-                egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha_byte);
-            painter.line_segment(
-                [last_points[i], last_points[i + 1]],
-                egui::Stroke::new(pass_width, stroke_color),
-            );
-        }
-    }
-}
+// Removed at PLAN 10.7.7: `paint_loading_halos` + `paint_halo_arc`
+// drove the rotating gold halos around the 2D back-face card during
+// Starting / Loading / Switching states. The 3D badge owns those
+// states now and conveys "something is happening" via the disc's
+// per-state-change coin spin (PLAN 10.7.6b's flip-on-text-change),
+// so a continuous-motion halo is no longer needed. If we want one
+// back, prefer GL geometry attached to `BadgeRig` over re-introducing
+// 2D egui paint — keeps the disc + halo lit by the same light source.
 
 /// Paint the circular gold bezel — matches the phone SPA's `.bezel-ring`
 /// (`phone/assets/app.css` line 547). The phone is the source of truth
@@ -883,52 +682,15 @@ fn lerp_color(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 {
     )
 }
 
-/// Front face — circular gold bezel + dark "screen rim" + round QR
-/// composition. Layered outermost-to-innermost:
-///
-///   1. Gold bezel disc (`paint_bezel`)
-///   2. SF_3 screen disc inset by `BEZEL_RING_PX` — visible as a thin
-///      dark ring between gold and content, like a recessed monitor
-///      screen sitting inside the gold frame
-///   3. Thin GOLD_SHADOW stroke around the SF_3 disc for definition
-///   4. QR texture inset by `BEZEL_RING_PX + SCREEN_RIM_PX` so the
-///      SF_3 ring is visible around the white screen content
-///
-/// The texture's transparent corners (outside its inscribed circle)
-/// land in the SF_3 disc area, so they read as continuous SF_3 rim
-/// rather than gold — visually the noise/QR composition sits inside
-/// a clean dark monitor frame with a gold bezel around the whole.
-fn paint_qr_front(
-    painter: &egui::Painter,
-    rect: egui::Rect,
-    tex: &egui::TextureHandle,
-    bezel_alpha: f32,
-    content_alpha: f32,
-) {
-    paint_bezel(painter, rect, bezel_alpha);
-
-    let center = rect.center();
-    let outer_r = rect.width().min(rect.height()) / 2.0;
-    let screen_r = outer_r - BEZEL_RING_PX;
-    // SF_3 inner disc + thin gold rim track the bezel's alpha so the
-    // whole "monitor screen" face dissolves in/out together with the
-    // surrounding gold frame.
-    painter.circle_filled(center, screen_r, with_alpha(palette::SF_3, bezel_alpha));
-    painter.circle_stroke(
-        center,
-        screen_r,
-        egui::Stroke::new(1.0, with_alpha(palette::GOLD_SHADOW, bezel_alpha)),
-    );
-
-    let qr_rect = rect.shrink(BEZEL_RING_PX + SCREEN_RIM_PX);
-    let tint_a = (content_alpha.clamp(0.0, 1.0) * 255.0) as u8;
-    painter.image(
-        tex.id(),
-        qr_rect,
-        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-        egui::Color32::from_rgba_unmultiplied(255, 255, 255, tint_a),
-    );
-}
+// Removed at PLAN 10.7.7: `paint_qr_front` painted the 2D
+// gold-bezeled-monitor composition for the launcher's QR face. The
+// 3D `BadgeRig` now owns the QR rendering — gold ring + side wall +
+// torus all come from the shader, QR texture sampled inside
+// `QR_RADIUS`. Bezel/screen-rim constants and the `paint_bezel` /
+// `paint_radial_gradient_disc` helpers stay because the back-face
+// title cards (`paint_titled_card`, used by Crashed / Farewell /
+// ServerError) still want the same monitor silhouette in 2D for
+// the non-Main screens.
 
 /// Paint a circular bezel + dark "monitor screen" rim + SF_1 inner
 /// disc carrying centred Titan One title text. Used by the QR card's

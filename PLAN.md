@@ -967,17 +967,38 @@ or after, doesn't matter.
   is legibly on the face well before landing — no texture
   pop-in. ChrisCheck 2026-05-02: "looks so much better."
 
-- [ ] 10.7.7 — **Performance + cross-platform pass:** the
-  PaintCallback runs in egui_glow's GL context which is shared
-  with the vortex shader; ensure no GL state leaks (depth-test,
-  blend-mode, vertex-array bindings — same hygiene the vortex
-  PaintCallback already documents in its source). Verify on
-  Mac (eframe's glow backend on Mac is Metal-translated via
-  ANGLE / MoltenGL — could surface platform-specific GLSL
-  validation issues that the Windows build doesn't see). Drop
-  any `badge_scale`-era deadcode + the alpha-gate work-around;
-  smoke-run the launcher in dev + release builds on both
-  Windows + macOS before declaring done.
+- [x] 10.7.7 — Default 3D badge on; 2D deadcode dropped.
+  Removed the `LAUNCHER_3D_BADGE` env gate from
+  `qr_card_flip` — Main now always renders through the GL rig.
+  Trimmed the call site to the four args the 3D path actually
+  consumes (`back_face`, `badge_rig`, `badge_rotation_y`,
+  `badge_scale_3d`, `badge_alpha_3d`); dropped `tex`,
+  `phase_scale`, `bezel_alpha`, `content_alpha` from
+  `qr_card_flip`'s signature. Deleted `LaunchPhase::badge_scale`
+  + `badge_alpha` (only consumers were the now-gone 2D path)
+  and their tests. Deleted `paint_qr_front`, `paint_loading_halos`
+  and `paint_halo_arc` — also only used by the 2D path. Kept
+  `paint_titled_card`, `paint_bezel`, `paint_radial_gradient_disc`
+  because the non-Main screens (Crashed / Farewell / ServerError)
+  still render their title cards in 2D via
+  `paint_centered_back_card`. Smoke-launched without the env
+  prefix to confirm 3D is the default. Mac smoke ✓; Windows smoke
+  via CI's Windows lane (release build path through the same
+  PaintCallback machinery).
+
+- [ ] 10.7.8 — **Iris masks egui overlays too:** the
+  player-orbit pips (`paint_player_orbit`) sit in the egui paint
+  layer, drawn on top of the GL badge + vortex iris. The iris
+  wipe (intro reveal, close dark-hole) only masks GL content —
+  egui overlays stay visible through it, breaking the visual
+  consistency Chris flagged 2026-05-03 ("orbiting player and
+  stars don't get caught in the iris wipe"). Two paths: (a)
+  port the pips to a GL rig (similar to `BadgeRig` / `vortex`)
+  so the iris affects them naturally, (b) fade the egui-painted
+  pips by an iris-derived alpha so they dim out in step. (a) is
+  more work but is the consistency win Chris is after; (b) is
+  the cheap stopgap if we want to ship the iris fix without
+  another GL rig. Decide before starting.
 
 ## Non-goals
 
