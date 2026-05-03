@@ -1070,6 +1070,202 @@ or after, doesn't matter.
   pip per BadgeRig lifetime, useful if a future regression
   turns the cache off.
 
+### 10.8 v1.2 HTPC field-test bugs
+First non-dev install pass on the living-room HTPC (2026-05-03,
+v1.2.0 zip). Binary launches and the phone reaches the QR, but a
+cluster of distribution / Windows-integration rough edges showed up
+that don't surface on the dev box. Triage individually — most are
+independent.
+
+- [ ] 10.8.1 **Windows Defender SmartScreen "unknown publisher" gate
+  on first launch.** Non-technical users will bounce off the
+  "Windows protected your PC" dialog. Likely needs Authenticode
+  code-signing for the released `.exe` (~$200/yr third-party CA, or
+  EV cert for instant SmartScreen reputation). Investigate cheaper
+  paths first — winget submission, Microsoft Store listing — before
+  committing to a yearly cert spend. Pairs with 10.8.2 (any signed
+  installer can request firewall + SmartScreen handling in one UAC
+  prompt instead of three separate gates).
+- [ ] 10.8.2 **Windows Firewall doesn't auto-create the inbound
+  listening rule.** Phone can't reach the server on first launch
+  until the user clicks through the per-network firewall prompt —
+  and on Steam Big Picture there's no UAC affordance to click.
+  Resolution path: fold into 10.9.1's MSI installer (decided
+  2026-05-03) — the installer's one-time UAC elevation registers
+  the inbound rule via `netsh advfirewall firewall add rule …`.
+  Closes when 10.9.1 lands.
+- [ ] 10.8.3 **Launcher "exit to desktop" affordance cut off after
+  phone connect.** Suspected fullscreen / overflow bug in the eframe
+  launcher on the 86" TV at 4K — connected-state layout pushes the
+  exit control past the visible area. Reproduce on an external
+  display; check whether the in-game branch's panel positions the
+  exit button at a coordinate beyond the viewport edge or whether
+  fullscreen scaling clips it.
+- [ ] 10.8.4 **"Couldn't access the file dialog for portal" via
+  Steam Big Picture (also reproduced from regular Windows).** UIA
+  driver's `open_dialog` flow failed mid-nav on the HTPC. First
+  diagnostic: pull launcher logs from the failed run and check
+  whether RPCS3's auto-update popup stole focus (CLAUDE.md "Focus
+  thieves" — disable RPCS3 Settings → Advanced → "Automatically
+  check for updates at startup" on the HTPC and retry). Second: rule
+  in/out Steam Overlay interaction with the menu-key synthesis path.
+- [ ] 10.8.5 **Steam Big Picture: missing icon + banner artwork.**
+  Steam library tile shows the generic placeholder; needs `.ico` +
+  `library_capsule` / `library_hero` / `library_logo` images
+  registered with the non-Steam shortcut. Add an asset-bundling pass
+  to the release zip (icons + Steam Grid artwork in a `steam/`
+  subdir) plus a setup-doc step for "right-click shortcut → Manage →
+  Set custom artwork" on Big Picture.
+- [~] 10.8.6 **Phone app: figure + game images all render as
+  placeholders on HTPC install.** Diagnosis confirmed: release
+  binary's `data_root` resolves to `<exe_parent>/data/`
+  (`wizard.rs::from_user_paths` and `::macos_default`), but
+  `release.yml`'s staging step only copied the binary + README +
+  LICENSE — the ~20 MB committed `data/` tree (`images/<id>/thumb.png`
+  ×474, `games/<serial>.png` ×6, `figures.json`, `LICENSE.md`)
+  never made it into the zip/tarball. On HTPC install, figure thumbs
+  fell through to the firmware-pack element-icon fallback at
+  `http.rs:460` (what Chris saw as "the placeholder"); game box-art
+  has no fallback so those `<img>` tags rendered broken. Fix landed
+  in the release workflow: both lanes now `Copy-Item -Recurse data`
+  / `cp -R data` into the staged folder. `data/scanned/` and
+  `data/images/**/hero.png` are gitignored so the CI checkout
+  doesn't include them — only the committed thumbs + box-art ship.
+  Verify on next tag (or `workflow_dispatch` rehearsal): inspect the
+  release zip → confirm `data/images/000000-0000/thumb.png` is
+  present, install on a clean Windows host → curl
+  `/api/figures/000000-0000/image?size=thumb` returns the scraped
+  PNG (not the element icon) and `/api/games/BLUS30906/image`
+  returns 200.
+
+### 10.9 Real installers (.msi / .dmg)
+v1.2 + 10.8.6's data-bundle fix mean the release artifact is no
+longer a single exe — it's a folder containing the binary, ~20 MB
+of tracked figure / box-art assets, and (after 10.8.5) a `steam/`
+artwork subdir. "Unzip and run" doesn't scale with that shape;
+real installer packaging is the next step. Pairs with 10.8.1 +
+10.8.2 (a signed installer can carry SmartScreen reputation +
+register the inbound firewall rule from the same UAC prompt) and
+subsumes 10.6.3 (Mac `.app`) as the delivery wrapper rather than
+the artifact itself.
+
+Reshapes 10.8.5 too: with an installer carrying a proper Start
+Menu shortcut + embedded icon, only the Steam-Grid artwork
+(capsule / hero / logo) needs to ship as loose files for users to
+hand-import. The `.ico` half of 10.8.5 collapses into 10.9.3.
+
+- [~] 10.9.1 **Windows `.msi`** via `cargo-wix` (WiX 3 toolset).
+  Initial scaffold landed on Mac for CI iteration on a Windows
+  remote (verification can't happen locally — WiX 3 is Windows-only):
+  - `wix/main.wxs` — Product + Package + MajorUpgrade scaffold
+    matching `cargo wix init`'s default template, customised:
+    binary lives directly under `APPLICATIONFOLDER` (not `bin/`)
+    so `data_root = <exe_parent>/data` resolves; Start Menu +
+    Desktop shortcuts with `Icon='ProductICO'` and
+    `Advertise='yes'`; `<fire:FirewallException>` on port 8765
+    (folds 10.8.2); `ARPPRODUCTICON`/`ARPHELPLINK`/
+    `ARPURLINFOABOUT` for Add/Remove Programs polish. Stable
+    UpgradeCode `E6FC979F-…-44D5E` and Path GUID
+    `57B7D393-…-7F11` committed (must not change across
+    releases or Windows treats future MSIs as new products).
+  - `crates/server/Cargo.toml` `[package.metadata.wix]` block
+    pointing at `../../wix/main.wxs` + heat fragments;
+    `license = false` + `eula = false` (MIT doesn't warrant a
+    click-through dialog).
+  - `release.yml` Windows lane gains: WiX 3 toolset path
+    discovery, `cargo install cargo-wix --locked`, heat invocation
+    for `data/` (and `steam/` once 10.8.5 lands — placeholder
+    empty fragment generated for now), `cargo wix --no-build
+    --install-version <tag>`, MSI artifact upload alongside the
+    existing zip.
+  - Zip stays as the "portable" fallback artifact (PLAN 10.9.5).
+  CI iteration steps for the Windows remote once it picks up:
+  (a) confirm WiX path discovery finds `heat.exe` + `candle.exe`,
+  (b) heat output column conventions match my `DataDir`/`DataFiles`
+      / `SteamDir`/`SteamFiles` references,
+  (c) `<fire:FirewallException>` validates against the ext (may
+      need `-ext WixFirewallExtension` flag passed through cargo-wix —
+      open question; will iterate),
+  (d) MSI install + uninstall cleanly on a clean Windows VM
+      (data/ files present in `C:\Program Files\Skylander Portal
+      Controller\data\`, Start Menu shortcut launches the binary,
+      firewall rule shows up in `wf.msc`, Add/Remove Programs
+      removes everything).
+- [~] 10.9.2 **Code signing + notarization.**
+  - **macOS Tier-2 (Developer ID + notarization)** wired and
+    ready, blocked on user creating GitHub Secrets. Chris already
+    has an Apple Developer license — the remaining work is
+    one-time setup of the `release` GitHub Environment + 7 secrets
+    documented in `docs/dev/release-signing.md`.
+    `release.yml`'s macOS lane gains: cert import to throwaway
+    keychain → build signed `.app`+`.dmg` (via
+    `tools/build-macos-app.sh` with `SIGN_IDENTITY`) → `xcrun
+    notarytool submit --wait` → `xcrun stapler staple` →
+    `spctl -a` verify → upload to draft release alongside the
+    unsigned tarball fallback. Security model: `release`
+    Environment scopes secrets, branch-restricts to `v*.*.*`
+    tags; `github.repository == ...` belt-and-suspenders guard;
+    `release.yml` has no `pull_request_target` trigger so fork
+    PRs structurally cannot exfiltrate secrets.
+    `tools/build-macos-app.sh` extended with `codesign --options
+    runtime --timestamp` for binary + bundle + dmg when
+    `SIGN_IDENTITY` is set; no-ops cleanly on local unsigned
+    iteration when it isn't.
+  - **Windows Authenticode** still deferred. Cert procurement is
+    the gate — third-party CA ~$200/yr, EV cert for instant
+    SmartScreen reputation, or skip the cert spend and document
+    the "More info → Run anyway" workaround. Punt the decision
+    until after 10.9.1's MSI lands so we have something concrete
+    to sign + can measure SmartScreen friction with vs. without.
+- [~] 10.9.3 **Embedded `.exe` icon + `VERSIONINFO` via
+  `winresource`.** `crates/server/build.rs` extended (existing
+  `BUILD_TOKEN` stamper kept) with a `cfg(windows)`-gated
+  `embed_windows_resources()` that calls
+  `winresource::WindowsResource::new()` / `set_icon` /
+  `set("ProductName", …)` / `compile()`. Icon path
+  `../../assets/branding/icon.ico` (the multi-res `.ico` baked
+  by 10.9.4's `tools/installer-bake/`). VERSIONINFO strings:
+  ProductName + FileDescription = "Skylander Portal Controller",
+  CompanyName + LegalCopyright = "Christopher Hotchkiss",
+  ProductVersion + FileVersion from `CARGO_PKG_VERSION`,
+  OriginalFilename = `skylander-portal-controller.exe`.
+  Mac build verified clean — `winresource` is in
+  `[target.'cfg(windows)'.build-dependencies]` so it compiles
+  in lockfile only on non-Windows. Windows-side verification
+  pending CI run on next push.
+- [~] 10.9.4 **macOS `.dmg`** wrapping a `.app` bundle (subsumes
+  10.6.3). Local build path landed:
+  - `tools/installer-bake/` (Rust, resvg + ico + icns) bakes
+    `assets/branding/icon.{ico,icns}` from
+    `phone/assets/icons/icon.svg`. 6-entry `.ico` (16/32/48/64/
+    128/256), 11-entry `.icns` modern RGBA32 set @1x and @2x
+    through 1024px.
+  - `tools/build-macos-app.sh` assembles the `.app`
+    (`Contents/MacOS/{binary,data/}` + `Contents/Resources/icon.icns`
+    + `Info.plist` with bundle ID
+    `io.hotchkiss.skylander-portal-controller`, version from
+    `GITHUB_REF_NAME`/`git describe`/dev fallback) and `hdiutil
+    create -format UDZO` into `dist/`. `data/` ships next to the
+    binary in `Contents/MacOS/` rather than `Contents/Resources/`
+    so the existing `data_root = <exe_parent>/data` resolution
+    works without code changes — same convention as the Windows
+    zip layout.
+  - 29 MB UDZO `.dmg` smoke-tested locally — mounts, bundle
+    structure validated via `plutil -lint` and `plutil -p`,
+    `Skylander Portal Controller.app` launches cleanly from the
+    mounted volume.
+  Steam Grid artwork (post-10.8.5) will land in
+  `Contents/MacOS/steam/` alongside `data/` once that's done.
+  Remaining: wire into release.yml (10.9.5). Skip codesigning +
+  notarization unless real Gatekeeper friction reports surface
+  (same rationale as 10.6.3 — $99/yr Apple Developer ID is
+  non-trivial overhead for a hobby project).
+- [ ] 10.9.5 **`release.yml` rewire.** Replace the current zip /
+  tarball staging with installer builds on each lane. Keep the
+  zip / tarball as a "portable" fallback artifact for users who
+  prefer not to run an installer (and for CI smoke-testing
+  without an MSI install step in the loop).
+
 ## Non-goals
 
 - No bundling of RPCS3 or `.sky` files (piracy concern).

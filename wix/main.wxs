@@ -1,0 +1,184 @@
+<?xml version='1.0' encoding='windows-1252'?>
+<!--
+  Skylander Portal Controller installer (PLAN 10.9.1).
+
+  Built by `cargo wix` from the Cargo workspace + the
+  `[package.metadata.wix]` block in `crates/server/Cargo.toml`.
+  The CI release lane invokes:
+
+      heat dir data -ag -gg -srd -dr DataDir -cg DataFiles -out wix/data.wxs
+      heat dir steam -ag -gg -srd -dr SteamDir -cg SteamFiles -out wix/steam.wxs
+      cargo wix -p skylander-server --nocapture
+
+  to harvest the runtime asset trees (PLAN 10.8.6 figure portraits +
+  10.8.5 Steam Grid artwork) before linking. heat runs at CI-time so
+  the wxs fragments stay out of git history — every release re-walks
+  the directories.
+
+  The `data/` and `steam/` ComponentGroupRefs reference these
+  generated fragments by id.
+-->
+
+<!-- Standard cargo-wix preprocessor block. Resolves Program Files
+     to the 64-bit folder on x64/arm64 builds; we ship 64-bit only
+     so the else-branch is theoretically dead, but keeping the
+     scaffold matches what `cargo wix init` would have written. -->
+<?if $(sys.BUILDARCH) = x64 or $(sys.BUILDARCH) = arm64 ?>
+    <?define PlatformProgramFilesFolder = "ProgramFiles64Folder" ?>
+<?else ?>
+    <?define PlatformProgramFilesFolder = "ProgramFilesFolder" ?>
+<?endif ?>
+
+<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'
+     xmlns:fire='http://schemas.microsoft.com/wix/FirewallExtension'
+     xmlns:util='http://schemas.microsoft.com/wix/UtilExtension'>
+
+    <Product
+        Id='*'
+        Name='Skylander Portal Controller'
+        UpgradeCode='E6FC979F-32C8-48C9-92BF-5CFFDF544D5E'
+        Manufacturer='Christopher Hotchkiss'
+        Language='1033'
+        Codepage='1252'
+        Version='$(var.Version)'>
+
+        <Package Id='*'
+            Keywords='Installer'
+            Description='Skylander Portal Controller — phone-driven RPCS3 portal manager'
+            Manufacturer='Christopher Hotchkiss'
+            InstallerVersion='450'
+            Languages='1033'
+            Compressed='yes'
+            InstallScope='perMachine'
+            SummaryCodepage='1252'/>
+
+        <MajorUpgrade
+            Schedule='afterInstallInitialize'
+            DowngradeErrorMessage='A newer version of [ProductName] is already installed. Setup will now exit.'/>
+
+        <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1'/>
+        <Property Id='DiskPrompt' Value='Skylander Portal Controller Installation'/>
+
+        <Directory Id='TARGETDIR' Name='SourceDir'>
+            <Directory Id='$(var.PlatformProgramFilesFolder)' Name='PFiles'>
+                <Directory Id='APPLICATIONFOLDER' Name='Skylander Portal Controller'>
+                    <!-- Binary lives directly under APPLICATIONFOLDER (not
+                         a `bin/` subdir like cargo-wix's default), so
+                         data_root = <exe_parent>/data resolves to
+                         APPLICATIONFOLDER\data — same convention as
+                         the zip layout. PLAN 10.8.6. -->
+                    <Component Id='MainExe' Guid='*'>
+                        <File
+                            Id='MainExeFile'
+                            Name='skylander-portal-controller.exe'
+                            DiskId='1'
+                            Source='$(var.CargoTargetBinDir)\skylander-portal-controller.exe'
+                            KeyPath='yes'>
+                            <!-- Start Menu shortcut. Advertise='yes' lets
+                                 Windows lazy-resolve the target so the
+                                 shortcut survives a repair-install. -->
+                            <Shortcut Id='StartMenuShortcut'
+                                Directory='ApplicationProgramsFolder'
+                                Name='Skylander Portal Controller'
+                                WorkingDirectory='APPLICATIONFOLDER'
+                                Icon='ProductICO'
+                                IconIndex='0'
+                                Advertise='yes'/>
+                            <Shortcut Id='DesktopShortcut'
+                                Directory='DesktopFolder'
+                                Name='Skylander Portal Controller'
+                                WorkingDirectory='APPLICATIONFOLDER'
+                                Icon='ProductICO'
+                                IconIndex='0'
+                                Advertise='yes'/>
+                        </File>
+                        <!-- PLAN 10.8.2 / 10.9.1: open the listening
+                             port at install time so the phone can reach
+                             the server without a per-launch firewall
+                             prompt. Default port 8765 — if the user
+                             reconfigures via config.json, they'll need
+                             to add a manual rule (acceptable: the
+                             default-port path is the common one). -->
+                        <fire:FirewallException
+                            Id='ServerInbound'
+                            Name='Skylander Portal Controller'
+                            Description='Allow phone clients to reach the local Skylander Portal Controller server.'
+                            Port='8765'
+                            Protocol='tcp'
+                            Scope='any'
+                            IgnoreFailure='yes'/>
+                    </Component>
+                    <!-- data/ + steam/ subdirs resolve here via heat-
+                         generated fragments referenced below. heat is
+                         invoked with `-dr DataDir` / `-dr SteamDir`
+                         pointing at these placeholders. -->
+                    <Directory Id='DataDir' Name='data'/>
+                    <Directory Id='SteamDir' Name='steam'/>
+                </Directory>
+            </Directory>
+            <Directory Id='ProgramMenuFolder'>
+                <Directory Id='ApplicationProgramsFolder'
+                           Name='Skylander Portal Controller'/>
+            </Directory>
+            <Directory Id='DesktopFolder' Name='Desktop'/>
+        </Directory>
+
+        <!-- Cleanup: ApplicationProgramsFolder is created on install
+             and won't be removed by Windows automatically since it
+             lives under ProgramMenuFolder. KeyPath the cleanup so
+             MSI counts it as a component. -->
+        <Component Id='ApplicationProgramsFolderCleanup'
+                   Directory='ApplicationProgramsFolder'
+                   Guid='57B7D393-8B21-4B8D-86A6-699E5D177F11'>
+            <RemoveFolder Id='RemoveApplicationProgramsFolder'
+                          On='uninstall'/>
+            <RegistryValue Root='HKCU'
+                           Key='Software\Hotchkiss\SkylanderPortalController'
+                           Name='installed'
+                           Type='integer'
+                           Value='1'
+                           KeyPath='yes'/>
+        </Component>
+
+        <Feature
+            Id='Main'
+            Title='Skylander Portal Controller'
+            Description='Installs the server binary, figure portraits, and Steam library artwork.'
+            Level='1'
+            ConfigurableDirectory='APPLICATIONFOLDER'
+            AllowAdvertise='no'
+            Display='expand'
+            Absent='disallow'>
+            <ComponentRef Id='MainExe'/>
+            <ComponentRef Id='ApplicationProgramsFolderCleanup'/>
+            <!-- heat-generated; see the comment at the top of this file. -->
+            <ComponentGroupRef Id='DataFiles'/>
+            <ComponentGroupRef Id='SteamFiles'/>
+        </Feature>
+
+        <SetProperty Id='ARPINSTALLLOCATION'
+                     Value='[APPLICATIONFOLDER]'
+                     After='CostFinalize'/>
+
+        <!-- Add/Remove Programs entry: icon, help URL, contact. -->
+        <Icon Id='ProductICO'
+              SourceFile='..\assets\branding\icon.ico'/>
+        <Property Id='ARPPRODUCTICON' Value='ProductICO'/>
+        <Property Id='ARPHELPLINK'
+                  Value='https://github.com/chotchki/skylander-portal-controller'/>
+        <Property Id='ARPURLINFOABOUT'
+                  Value='https://github.com/chotchki/skylander-portal-controller'/>
+
+        <!-- Standard cargo-wix UI flow: WelcomeDlg → CustomizeDlg →
+             VerifyReadyDlg → ProgressDlg → ExitDlg. WixUI_FeatureTree
+             is the variant that lets the user pick install location
+             (we want this for users with non-standard drive layouts). -->
+        <UI>
+            <UIRef Id='WixUI_FeatureTree'/>
+            <Publish Dialog='WelcomeDlg' Control='Next' Event='NewDialog' Value='CustomizeDlg' Order='99'>1</Publish>
+            <Publish Dialog='CustomizeDlg' Control='Back' Event='NewDialog' Value='WelcomeDlg' Order='99'>1</Publish>
+        </UI>
+
+    </Product>
+
+</Wix>

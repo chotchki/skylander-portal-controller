@@ -89,27 +89,123 @@ jobs:
           Copy-Item "target/release/skylander-portal-controller.exe" "$stage/"
           Copy-Item "README.md" "$stage/" -ErrorAction SilentlyContinue
           Copy-Item "LICENSE*" "$stage/" -ErrorAction SilentlyContinue
+          # Tracked-asset bundle (PLAN 10.8.6). The release binary's
+          # `data_root` defaults to `<exe_parent>/data/`, so figure
+          # portraits (`/api/figures/:id/image`) and game box-art
+          # (`/api/games/:serial/image`) only resolve when this
+          # directory ships next to the .exe. Ships the committed
+          # `thumb.png` set + game PNGs + figures.json metadata;
+          # `data/scanned/` and `data/images/**/hero.png` are
+          # gitignored so the CI checkout doesn't include them.
+          Copy-Item -Recurse "data" "$stage/"
           $zip = "skylander-portal-controller-$tag-windows-x86_64.zip"
           Compress-Archive -Path "$stage/*" -DestinationPath $zip -Force
           "RELEASE_ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Upload artifact (always)
+      - name: Upload zip artifact (always)
         # Up the chain even on workflow_dispatch (no tag) so we can
         # download + smoke-test the build without publishing a release.
+        # The zip is the "portable" fallback artifact (PLAN 10.9.5);
+        # the MSI built below is the primary install path.
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.RELEASE_ZIP }}
           path: ${{ env.RELEASE_ZIP }}
           retention-days: 30
 
+      # PLAN 10.9.1 — Windows .msi via cargo-wix. WiX 3 ships pre-
+      # installed on windows-latest GitHub runners (path is
+      # `C:\Program Files (x86)\WiX Toolset v3.*\bin`). Add it to
+      # the PATH so `heat.exe` is discoverable, then harvest the
+      # asset trees and link the MSI.
+      - name: Locate WiX 3 toolset
+        shell: pwsh
+        run: |
+          $wix = Get-ChildItem 'C:\Program Files (x86)' -Filter 'WiX Toolset v3.*' -Directory |
+                   Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $wix) {
+            throw "WiX 3 toolset not found under Program Files (x86)"
+          }
+          $bin = Join-Path $wix.FullName 'bin'
+          Write-Host "WiX bin: $bin"
+          "$bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Install cargo-wix
+        run: cargo install cargo-wix --locked
+
+      - name: Harvest data/ + steam/ trees with heat
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path wix | Out-Null
+          # heat flags:
+          #   -ag                auto-generate component GUIDs
+          #   -gg                generate GUIDs (alias / older flag)
+          #   -srd               suppress Directory root creation
+          #                      (we provide DataDir / SteamDir in main.wxs)
+          #   -dr <ref>          parent directory ref id
+          #   -cg <name>         component group name (matches main.wxs ref)
+          #   -var <name>        $(var.<name>) prefix for source paths
+          #                      (lets us pass an absolute path through
+          #                       -d at light/candle time)
+          heat dir data -ag -srd -dr DataDir -cg DataFiles -sfrag -suid `
+            -t (Resolve-Path .)/wix/heat-fix-source.xslt -ErrorAction SilentlyContinue `
+            -out wix/data.wxs 2>&1 | Tee-Object -Variable heatOut
+          # The XSLT step above is best-effort — if the file doesn't
+          # exist heat ignores `-t` and emits straight harvest output.
+          # Falling back: re-run without the transform on first iter.
+          if ($LASTEXITCODE -ne 0) {
+            heat dir data -ag -srd -dr DataDir -cg DataFiles -sfrag -suid -out wix/data.wxs
+          }
+          # steam/ doesn't exist yet (PLAN 10.8.5 not landed). Create
+          # an empty wxs fragment so the cargo-wix include list still
+          # resolves; harvest for real once the assets ship.
+          if (Test-Path steam) {
+            heat dir steam -ag -srd -dr SteamDir -cg SteamFiles -sfrag -suid -out wix/steam.wxs
+          } else {
+            @"
+          <?xml version='1.0' encoding='windows-1252'?>
+          <Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
+            <Fragment>
+              <ComponentGroup Id='SteamFiles'/>
+            </Fragment>
+          </Wix>
+          "@ | Out-File -Encoding utf8 wix/steam.wxs
+          }
+
+      - name: Build MSI with cargo-wix
+        shell: pwsh
+        run: |
+          $tag = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME -replace '^v','' } else { '0.0.0' }
+          # cargo-wix consumes the [package.metadata.wix] block in
+          # crates/server/Cargo.toml plus the wxs fragments listed
+          # there (main.wxs + heat-generated data.wxs / steam.wxs).
+          # `--no-build` because we already built the binary above.
+          # `--install-version` overrides the Cargo.toml placeholder
+          # 0.1.0 with the real release tag.
+          cargo wix -p skylander-server --no-build --nocapture --install-version $tag
+          $msi = Get-ChildItem target/wix -Filter '*.msi' | Select-Object -First 1
+          if (-not $msi) { throw "no MSI produced under target/wix" }
+          $renamed = "skylander-portal-controller-$tag-windows-x86_64.msi"
+          Move-Item $msi.FullName $renamed
+          "RELEASE_MSI=$renamed" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload MSI artifact (always)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_MSI }}
+          path: ${{ env.RELEASE_MSI }}
+          retention-days: 30
+
       - name: Create draft release
         # Only on actual tag pushes — manual dispatch leaves the
-        # uploaded artifact for inspection but doesn't publish.
+        # uploaded artifacts for inspection but doesn't publish.
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           draft: true
-          files: ${{ env.RELEASE_ZIP }}
+          files: |
+            ${{ env.RELEASE_ZIP }}
+            ${{ env.RELEASE_MSI }}
           generate_release_notes: true
           # Tag and name come from `github.ref` automatically.
 
@@ -121,6 +217,12 @@ jobs:
     # Mac users targeted by this distribution are on Apple Silicon
     # by 2026.
     runs-on: macos-14
+    # `release` Environment scopes the signing/notarization secrets
+    # (PLAN 10.9.2). Configure it in repo Settings → Environments →
+    # release with deployment-branch restriction to `v*.*.*` tags
+    # so a pushed-tag is the only way to flow secrets into this
+    # job. Setup steps + secret list: docs/dev/release-signing.md.
+    environment: release
     permissions:
       contents: write
 
@@ -169,7 +271,7 @@ jobs:
       - name: cargo build --release -p skylander-server (production features)
         run: cargo build --release -p skylander-server --no-default-features --features sky-stats,mock-driver-runtime
 
-      - name: Stage release artifacts
+      - name: Stage portable tarball (unsigned)
         shell: bash
         run: |
           set -euo pipefail
@@ -181,17 +283,122 @@ jobs:
           # bare repo somehow lacks them.
           cp README.md "$stage/" || true
           cp LICENSE* "$stage/" 2>/dev/null || true
+          # Tracked-asset bundle (PLAN 10.8.6). Same reasoning as the
+          # Windows lane: release binary's `data_root` resolves to
+          # `<exe_parent>/data/` so figure portraits + game box-art
+          # only render when this directory ships next to the binary.
+          cp -R data "$stage/"
           tarball="skylander-portal-controller-${tag}-macos-arm64.tar.gz"
           # -C + relative dir so the tar root is the staged folder
           # name, not the absolute checkout path.
           tar -czf "$tarball" -C release-stage "skylander-portal-controller-${tag}"
           echo "RELEASE_TARBALL=${tarball}" >> "$GITHUB_ENV"
 
-      - name: Upload artifact (always)
+      - name: Upload tarball artifact (always)
+        # Portable fallback for users who'd rather not run an
+        # installer (PLAN 10.9.5). Always-upload so workflow_dispatch
+        # rehearsals can pull it down without publishing a release.
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.RELEASE_TARBALL }}
           path: ${{ env.RELEASE_TARBALL }}
+          retention-days: 30
+
+      # PLAN 10.9.2 / 10.9.4 — signed + notarized .dmg. The Tier-2
+      # path: import the Developer ID Application cert into a
+      # throwaway keychain, build the .app+.dmg with SIGN_IDENTITY
+      # set so `codesign` runs inside `tools/build-macos-app.sh`,
+      # then notarize the .dmg via `xcrun notarytool` and staple
+      # the result so the notarization travels with the artifact
+      # (offline-verifiable).
+      #
+      # Security model: `release` Environment scopes these secrets
+      # to this job + branch-restricts deployments to `v*.*.*` tags
+      # (configured in repo Settings → Environments). The
+      # `github.repository == ...` guard is belt-and-suspenders so
+      # if a fork ever runs this workflow, the steps no-op before
+      # touching any secret.
+
+      - name: Import Developer ID certificate
+        if: github.repository == 'chotchki/skylander-portal-controller'
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+          # Write the .p12 to a tmp file. base64 --decode reads from
+          # stdin; piping through avoids leaving the b64 blob on
+          # disk where a misconfigured `actions/upload-artifact: '*'`
+          # could grab it.
+          echo "$MACOS_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          # Fresh keychain per run, locked after 6h (job timeout
+          # cap). `set-keychain-settings -lut` = lock-on-user-timeout
+          # in seconds.
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$RUNNER_TEMP/cert.p12" -P "$MACOS_CERT_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          # `set-key-partition-list` grants codesign + Apple tools
+          # access to the imported key without prompting. Without
+          # this, codesign hangs on a non-interactive runner.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" >/dev/null
+          # Add the keychain to the search list so codesign finds
+          # the cert by identity name.
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          rm "$RUNNER_TEMP/cert.p12"
+
+      - name: Build signed .app + .dmg
+        if: github.repository == 'chotchki/skylander-portal-controller'
+        env:
+          # Cert common name, e.g.
+          # "Developer ID Application: Christopher Hotchkiss (TEAMID)".
+          # Surfaced via secrets to keep the team-id off public CI logs.
+          SIGN_IDENTITY: ${{ secrets.MACOS_CERT_IDENTITY }}
+        run: tools/build-macos-app.sh
+
+      - name: Notarize and staple .dmg
+        if: github.repository == 'chotchki/skylander-portal-controller'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          DMG=$(ls dist/*.dmg | head -1)
+          if [[ -z "$DMG" ]]; then
+            echo "no dmg found under dist/" >&2
+            exit 1
+          fi
+          # `notarytool submit --wait` blocks until Apple's verdict
+          # (typically <2min for our artifact size). Without --wait
+          # we'd need a separate poll loop. App-specific password is
+          # generated at appleid.apple.com → "Sign-in and Security"
+          # — it's NOT the Apple ID password.
+          xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --wait
+          # Staple bakes the notarization ticket into the .dmg so
+          # Gatekeeper's offline check passes (the user's machine
+          # doesn't need to phone Apple to verify on first launch).
+          xcrun stapler staple "$DMG"
+          # Final verify — `spctl -a -t open --context context:primary-signature`
+          # is the same check Gatekeeper runs at launch time.
+          spctl -a -t open --context context:primary-signature -vv "$DMG"
+          # Stash the path for the upload step.
+          echo "RELEASE_DMG=$DMG" >> "$GITHUB_ENV"
+
+      - name: Upload signed DMG artifact
+        if: github.repository == 'chotchki/skylander-portal-controller'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_DMG }}
+          path: ${{ env.RELEASE_DMG }}
           retention-days: 30
 
       - name: Create draft release
@@ -205,5 +412,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           draft: true
-          files: ${{ env.RELEASE_TARBALL }}
+          files: |
+            ${{ env.RELEASE_TARBALL }}
+            ${{ env.RELEASE_DMG }}
           generate_release_notes: true

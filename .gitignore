@@ -52,6 +52,17 @@ Thumbs.db
 /phone/target/
 /phone/dist/
 
+# Local installer artifacts from tools/build-macos-app.sh
+# (and eventually the Windows .msi build). Release builds publish
+# these via GitHub Releases — not for repo storage.
+/dist/
+
+# heat-generated wxs fragments for the Windows MSI (PLAN 10.9.1).
+# Re-walked at CI build time — committing them would just churn
+# every release. main.wxs is committed; the harvest fragments are not.
+/wix/data.wxs
+/wix/steam.wxs
+
 # Scraped hero images are not committed by default — they'd blow past the
 # repo size budget at ~150-200KB × 500 figures. Only thumbs are versioned.
 # Re-generate locally with `cargo run -p skylander-wiki-scrape` if you need

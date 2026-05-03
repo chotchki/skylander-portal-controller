@@ -108,6 +108,13 @@ windows = { version = "0.61", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
+# Windows-only build-time tooling. Active fork of the unmaintained
+# `winres` crate — same API. Used by `build.rs` to embed the .ico
+# and a VERSIONINFO block (ProductName, CompanyName, etc.) into
+# the compiled .exe. PLAN 10.9.3.
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
 [dev-dependencies]
 tempfile = "3"
 # `util` brings `ServiceExt::oneshot`, used by axum-handler unit tests
@@ -116,6 +123,20 @@ tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 # (egui_glow + glow promoted to runtime deps above for the production
 # vortex shader; spike uses the same crates.)
+
+[package.metadata.wix]
+# cargo-wix reads this block (PLAN 10.9.1). The wxs lives at
+# `<workspace>/wix/main.wxs` not `<crate>/wix/main.wxs` because
+# the installer harvests files from `<workspace>/data/` and
+# `<workspace>/assets/branding/` — keeping the wxs at workspace
+# root means relative `..\` paths point at workspace siblings.
+# `cargo wix --include` is the canonical way to point at it.
+include = ["../../wix/main.wxs", "../../wix/data.wxs", "../../wix/steam.wxs"]
+# Disable both license + EULA sidecars: LICENSE ships in the zip
+# (and at the Program Files install root via heat), and the MIT
+# license doesn't warrant a click-through dialog.
+license = false
+eula = false
 
 [features]
 default = ["dev-tools", "sky-stats"]

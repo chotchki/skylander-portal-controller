@@ -1,0 +1,30 @@
+[package]
+name = "skylander-installer-bake"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "skylander-installer-bake"
+path = "src/main.rs"
+
+# One-shot tool. Rasterises phone/assets/icons/icon.svg into the
+# installer-tier brand assets that the Windows MSI build (PLAN 10.9.1
+# + 10.9.3 via winres) and macOS .app bundle (PLAN 10.9.4) need:
+#
+#   - assets/branding/icon.ico  (Windows multi-res 16/32/48/64/128/256)
+#   - assets/branding/icon.icns (macOS RGBA32 modern set)
+#
+# Output is committed to the repo so the release pipeline doesn't
+# need this tool installed — re-run `cargo run -p skylander-installer-bake`
+# after editing the source SVG.
+#
+# Distinct from `tools/icon-bake` which targets phone PWA PNGs at
+# the sizes browsers + iOS PWAs + Android adaptive icons need.
+# Same SVG source, different output formats / consumers.
+
+[dependencies]
+anyhow = { workspace = true }
+ico = "0.5"
+icns = "0.4"
+resvg = "0.43"
