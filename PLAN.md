@@ -616,20 +616,25 @@ suite green on macOS.
   modal mid-test that blocks every click. Caught while running
   the screenshot tour; root-caused via curl /api/version vs.
   strings on the wasm bundle.
-- [ ] 10.3.6f — **CI fixture-pack story.** The chromedriver lane
-  in CI stubs an empty `dev-data/firmware-pack/` so the harness
-  can boot, but tests that need actual figure cards
-  (`regressions.rs`, `working_copies.rs`, eventually `multi_phone.rs`,
-  `screenshot_tour.rs`) can't run in CI without a real `.sky`
-  pack. CLAUDE.md is explicit about not bundling `.sky` files
-  (copyright). Options: (a) generate synthetic stub-`.sky` files
-  at CI time that the indexer accepts as a tiny fixture library,
-  (b) commit an obfuscated/zeroed pack of a few representative
-  figures small enough to dodge the copyright concern, or (c)
-  accept "real-pack tests are local-only" and don't gate them on
-  CI. Decision deferred until one of the affected files needs to
-  ship. For now the local-only tests still catch regressions
-  during dev; CI just isn't the safety net.
+- [x] 10.3.6f — **CI fixture-pack story: synthetic stub pack.**
+  The indexer is lenient — when sky-parser fails on a `.sky` file
+  it logs a warning and falls back to `FigureId::new("sha:<hash>")`
+  + the filename stem as the canonical name. So a tree of empty
+  stub files produces a tiny but valid library of pseudo-figures
+  for CI tests to find / click. CLAUDE.md's "no bundling .sky"
+  rule is satisfied — the stubs aren't real firmware, they're
+  empty files with names that match what the tests select for.
+  CI lane (`e2e-mock-macos` + `e2e-ios-sim`) generates the stub
+  tree before running tests via `mkdir -p` + `touch`:
+  Spyro / Eruptor / Voodood / Bash / Gill Grunt / Whirlwind under
+  Skylanders Giants/{Fire,Magic,Earth,Water,Air}/. This unlocks
+  working_copies::load_uses_canonical_name (searches "Spyro"),
+  all 6 regressions tests, all 6 multi_phone tests, and
+  screenshot_tour — bringing the e2e CI lane from 4 → 18 tests.
+  Verified locally: every previously-local-only test passes
+  against the stub pack. CI uploads no PNGs from
+  screenshot_tour — the per-scene captures are just ephemeral
+  artifacts of the tour-script-not-crashing regression contract.
 
   **Iteration tips for any of the above:**
   - Run a single test file at a time with `--test-threads=1` to

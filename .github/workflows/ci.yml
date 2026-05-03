@@ -206,14 +206,33 @@ jobs:
         run: BUILD_TOKEN=e2e-test trunk build
 
       # The TestServer harness's `resolve_firmware_pack` requires the
-      # firmware-pack directory to exist (per the docstring's three-step
-      # lookup). On CI runners we don't ship a real `.sky` pack — the
-      # mock driver enumerates 6 games regardless of pack contents, so
-      # an empty pack dir is enough to clear the existence check. The
-      # smoke test asserts on game-card count which doesn't depend on
-      # any indexed figures.
-      - name: Stub empty firmware pack
-        run: mkdir -p dev-data/firmware-pack
+      # firmware-pack directory to exist. We can't ship real `.sky`
+      # files (copyright, per CLAUDE.md), but the indexer is lenient
+      # — it reads each file, attempts to parse via sky-parser, and on
+      # failure falls back to `FigureId::new("sha:<hash>")` and uses
+      # the filename stem as the canonical name. So a tree of empty
+      # stub files produces a tiny but valid library of pseudo-figures
+      # we can find / click in CI tests (PLAN 10.3.6f).
+      #
+      # Names + folder mapping pick representative entries from the
+      # tests' selectors: Spyro is the canonical-name target for
+      # working_copies; the rest fill out a couple of elements + games
+      # so the figure grid renders and tests that "click any card"
+      # have something to click.
+      - name: Generate stub firmware pack
+        run: |
+          set -euo pipefail
+          mkdir -p "dev-data/firmware-pack/Skylanders Giants/Fire"
+          mkdir -p "dev-data/firmware-pack/Skylanders Giants/Magic"
+          mkdir -p "dev-data/firmware-pack/Skylanders Giants/Earth"
+          mkdir -p "dev-data/firmware-pack/Skylanders Giants/Water"
+          mkdir -p "dev-data/firmware-pack/Skylanders Giants/Air"
+          touch "dev-data/firmware-pack/Skylanders Giants/Fire/Spyro.sky"
+          touch "dev-data/firmware-pack/Skylanders Giants/Fire/Eruptor.sky"
+          touch "dev-data/firmware-pack/Skylanders Giants/Magic/Voodood.sky"
+          touch "dev-data/firmware-pack/Skylanders Giants/Earth/Bash.sky"
+          touch "dev-data/firmware-pack/Skylanders Giants/Water/Gill Grunt.sky"
+          touch "dev-data/firmware-pack/Skylanders Giants/Air/Whirlwind.sky"
 
       # ChromeDriver via the Chrome-for-Testing CDN — the matched
       # ChromeDriver / Chrome pair ships together so we don't get
@@ -253,12 +272,34 @@ jobs:
       - name: cargo test profiles (chromedriver, mock driver)
         run: cargo test -p skylander-e2e-tests --test profiles -- --ignored --nocapture
 
-      # working_copies + regressions + multi_phone + screenshot_tour
-      # need a real `.sky` firmware pack to find figure cards (the CI
-      # lane stubs an empty dev-data/firmware-pack/, which is enough
-      # for smoke + connection_lost + profiles but not for tests that
-      # filter by figure name or count cards). Keep them local-only
-      # until CI gets a fixture-pack story (PLAN 10.3.6f).
+      # The stub firmware pack from the earlier step gives the indexer
+      # ~6 pseudo-figures that fail to parse but still emit Figure
+      # entries with filename-derived names. Enough for the rest of
+      # the suite — search for "Spyro", click "first card", count
+      # `.fig-card-p4`, etc.
+      #
+      # working_copies::resume_prompt_offers_prior_layout is
+      # `#[ignore]`-ed (PLAN 10.3.6b WIP), so filter to the green
+      # test by name.
+      - name: cargo test working_copies/load_uses_canonical_name
+        run: |
+          cargo test -p skylander-e2e-tests --test working_copies \
+            load_uses_canonical_name_not_filename -- --ignored --nocapture
+
+      - name: cargo test regressions (all 6, mock driver)
+        run: cargo test -p skylander-e2e-tests --test regressions -- --ignored --nocapture
+
+      - name: cargo test multi_phone (all 6, mock driver)
+        run: cargo test -p skylander-e2e-tests --test multi_phone -- --ignored --nocapture
+
+      # screenshot_tour writes per-scene PNGs to docs/assets/screens/
+      # within the CI checkout. The runner discards those at job
+      # end; what matters is the tour-script doesn't crash, which is
+      # the regression contract. Stub-pack output won't match the
+      # macOS-rendered baselines we committed (PLAN 10.3.4), but the
+      # baselines aren't compared in CI today.
+      - name: cargo test screenshot_tour (mock driver)
+        run: cargo test -p skylander-e2e-tests --test screenshot_tour -- --ignored --nocapture
 
       # hmac + shutdown don't actually use chromedriver (no Phone
       # instances) — they exercise raw HTTP against the spawned
@@ -308,11 +349,15 @@ jobs:
         # the same value via `.env("BUILD_TOKEN", "e2e-test")`).
         run: BUILD_TOKEN=e2e-test trunk build
 
-      # Same stub-pack trick as the chromedriver lane — TestServer's
-      # firmware-pack lookup requires the dir to exist; mock driver
-      # doesn't care if it's empty.
-      - name: Stub empty firmware pack
-        run: mkdir -p dev-data/firmware-pack
+      # Same stub-pack trick as the chromedriver lane (PLAN 10.3.6f).
+      - name: Generate stub firmware pack
+        run: |
+          set -euo pipefail
+          mkdir -p "dev-data/firmware-pack/Skylanders Giants/Fire"
+          mkdir -p "dev-data/firmware-pack/Skylanders Giants/Magic"
+          touch "dev-data/firmware-pack/Skylanders Giants/Fire/Spyro.sky"
+          touch "dev-data/firmware-pack/Skylanders Giants/Fire/Eruptor.sky"
+          touch "dev-data/firmware-pack/Skylanders Giants/Magic/Voodood.sky"
 
       # iOS runtimes pre-installed on macos-14: at least iOS 17 for
       # iPhone 15 Pro family. The ios-inspect tool's auto-pick
