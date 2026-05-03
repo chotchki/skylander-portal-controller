@@ -185,9 +185,19 @@ impl eframe::App for LauncherApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        // 60 FPS repaint cadence — the vortex animation needs smooth motion.
-        // Before 4.15.5 this was 250ms; the old rate would strobe the arms.
-        ctx.request_repaint_after(std::time::Duration::from_millis(16));
+        // 60 FPS repaint cadence is requested *per branch* below
+        // rather than unconditionally here (PLAN 10.7.9). The
+        // launcher's animated surfaces (Main vortex + 3D badge,
+        // Crashed / Farewell / ServerError intros) want smooth
+        // 60fps; the in-game surface paints next to nothing
+        // (transparent panel + occasional reconnect-QR fade-in)
+        // and was burning constant CPU + GPU on empty redraws.
+        // Empirically that idled the laptop in the high-80s%
+        // CPU even with the launcher window offscreen and the
+        // game (RPCS3) on top. Anything that mutates server
+        // status from a background task already wakes egui via
+        // its own `Context::request_repaint`, so this branch-
+        // local approach doesn't miss state transitions.
 
         // Lazy-init the vortex shader rig on the first frame. The eframe
         // glow context isn't exposed until `update()` runs, so we can't
@@ -489,6 +499,20 @@ impl eframe::App for LauncherApp {
                     );
                 });
             self.was_in_game = true;
+            // In-game repaint cadence — only stay at 60fps while
+            // the reconnect-QR fade is animating in (clients=0
+            // case). Otherwise let egui go reactive: status
+            // changes (game crashes, switching, new client) wake
+            // us via background tokio tasks' own
+            // `Context::request_repaint`, so we won't miss a
+            // transition. Burning 60fps on an empty transparent
+            // panel was the laptop-heat culprit Chris flagged
+            // 2026-05-03 (PLAN 10.7.9).
+            if reconnect_fade_elapsed_s > 0.0
+                && reconnect_fade_elapsed_s < in_game::RECONNECT_FADE_IN_S
+            {
+                ctx.request_repaint_after(std::time::Duration::from_millis(16));
+            }
             // Loading is over — the launch handler intentionally
             // left `loading_game` set so the LOADING badge persisted
             // through compile; clear it now that the launcher is
@@ -508,6 +532,13 @@ impl eframe::App for LauncherApp {
         // fresh rather than inheriting elapsed time from an earlier
         // session.
         self.reconnect_qr_shown_at = None;
+        // Launcher-active branch: vortex shader animates clouds
+        // continuously, the 3D badge has multi-turn intro + flip
+        // animations, the CPU starfield twinkles every frame.
+        // 60fps is the right cadence for all of those. Other
+        // surfaces (in-game) gate their own repaint cadence
+        // above (PLAN 10.7.9).
+        ctx.request_repaint_after(std::time::Duration::from_millis(16));
 
         egui::CentralPanel::default().show(ctx, |ui| {
             let rect = ui.max_rect();

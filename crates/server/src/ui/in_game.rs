@@ -32,7 +32,7 @@ use crate::{fonts, palette};
 /// Duration of the reconnect QR's ease-out fade-in (PLAN 4.19.12).
 /// Measured from the moment `clients` hits 0 while the in-game
 /// surface is being rendered.
-const RECONNECT_FADE_IN_S: f32 = 1.0;
+pub(super) const RECONNECT_FADE_IN_S: f32 = 1.0;
 
 /// Render the in-game transparent surface. Called from the top-level
 /// dispatcher in [`super`] when `LauncherStatus::rpcs3_running` is true

@@ -1030,15 +1030,36 @@ or after, doesn't matter.
   "the goodbye screen didn't look the same so the changes
   probably need to be woven into each screen."
 
-- [ ] 10.7.9 — **Investigate launcher GPU usage growth:**
-  Chris flagged 2026-05-03: "steadily increasing its gpu
-  usage. sounds like some kind of leak." Cache check in
-  `pip_cache` should prevent texture churn (verify HashMap key
-  stability for the `(color, initial, ghost)` triple) and
-  egui memory `insert_temp` with a stable Id should overwrite,
-  not accumulate (verify with the per-pip slot Ids). Run a
-  GPU-frame profiler against a long-running launcher session
-  to isolate the source.
+- [x] 10.7.9 — Not actually a leak; in-game surface was burning
+  60fps cycles on an empty transparent panel. Diagnostic log
+  on pip texture uploads confirmed the cache works (one
+  upload per unique `(color, initial, ghost)` triple per
+  BadgeRig lifetime); RSS snapshots over a 6-minute window
+  showed memory steady (292 MB → 228 MB, even decreased).
+  Real culprit: `mod.rs::update`'s unconditional
+  `request_repaint_after(16ms)` ran for every surface,
+  including in-game where the launcher paints a transparent
+  panel + occasional reconnect-QR fade-in. Even with the
+  launcher window offscreen behind RPCS3, egui kept
+  redrawing 60× / second + the compositor was alpha-blending
+  the transparent panel against the game underneath →
+  laptop fans kicked in.
+  Fix: moved the 60fps repaint request *out* of `update`'s
+  prologue and into per-branch positions:
+    - Launcher branch (Main / Crashed / Farewell /
+      ServerError) keeps 60fps — vortex shader animates
+      clouds continuously, badge has multi-turn animations.
+    - In-game branch only requests 60fps when the
+      reconnect-QR fade-in is live (`reconnect_fade_elapsed_s`
+      ∈ (0, RECONNECT_FADE_IN_S)). Otherwise reactive —
+      tokio status-change handlers wake egui via
+      `Context::request_repaint`, so we don't miss
+      transitions (game crash, switching, new client).
+  ChrisCheck 2026-05-03: "worked perfectly" — laptop temp +
+  CPU drop materially once in-game. Pip-texture diagnostic
+  log left in place at info level — fires once per unique
+  pip per BadgeRig lifetime, useful if a future regression
+  turns the cache off.
 
 ## Non-goals
 

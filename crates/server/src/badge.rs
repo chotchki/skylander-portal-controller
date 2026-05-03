@@ -783,6 +783,20 @@ impl BadgeRig {
             let idx = self.textures.len();
             self.textures.push(tex);
             self.pip_cache.insert(key, idx);
+            // Diagnostic for PLAN 10.7.9 (GPU usage growth): every
+            // pip texture upload logs once. Steady-state gameplay
+            // should bottom out at one entry per (active profile,
+            // ghost-state) seen — repeated logs at the same key
+            // means the cache isn't holding and we're churning
+            // GPU memory.
+            tracing::info!(
+                "pip texture uploaded color={:02x}{:02x}{:02x} initial={initial:?} ghost={ghost} (cache={} textures={})",
+                color[0],
+                color[1],
+                color[2],
+                self.pip_cache.len(),
+                self.textures.len(),
+            );
             idx
         }
     }
