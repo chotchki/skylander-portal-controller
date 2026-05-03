@@ -15,9 +15,14 @@ macOS — the mock-driver path is fully cross-platform (PLAN 10.3).
    - **Windows:** `winget install --id=Chromium.ChromeDriver`, or grab
      a matching build from
      <https://googlechromelabs.github.io/chrome-for-testing/>.
-3. Build the **phone SPA** at least once so `phone/dist/` exists:
+3. Build the **phone SPA** at least once so `phone/dist/` exists.
+   **Always pass `BUILD_TOKEN=e2e-test`** so the bundle's stale-
+   version check matches what the test harness pins on the spawned
+   server (otherwise the phone's `<git-hash>-dirty` and the
+   server's drift apart whenever you edit anything between builds,
+   raising a StaleVersion overlay mid-test):
    ```
-   cd phone && trunk build
+   cd phone && BUILD_TOKEN=e2e-test trunk build
    ```
 4. Provide a **firmware pack** with `.sky` files. The harness needs a
    real pack so the SPA renders one card per indexed figure.

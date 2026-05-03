@@ -200,7 +200,10 @@ jobs:
 
       - name: trunk build (phone bundle)
         working-directory: phone
-        run: trunk build
+        # BUILD_TOKEN pinned so the phone bundle's stale-version check
+        # matches the test harness's server (TestServer::spawn passes
+        # the same value via `.env("BUILD_TOKEN", "e2e-test")`).
+        run: BUILD_TOKEN=e2e-test trunk build
 
       # The TestServer harness's `resolve_firmware_pack` requires the
       # firmware-pack directory to exist (per the docstring's three-step
@@ -295,7 +298,10 @@ jobs:
 
       - name: trunk build (phone bundle)
         working-directory: phone
-        run: trunk build
+        # BUILD_TOKEN pinned so the phone bundle's stale-version check
+        # matches the test harness's server (TestServer::spawn passes
+        # the same value via `.env("BUILD_TOKEN", "e2e-test")`).
+        run: BUILD_TOKEN=e2e-test trunk build
 
       # Same stub-pack trick as the chromedriver lane — TestServer's
       # firmware-pack lookup requires the dir to exist; mock driver

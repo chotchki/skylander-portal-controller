@@ -57,6 +57,17 @@ impl TestServer {
         cmd.current_dir(tmp.path())
             .env("CARGO_MANIFEST_DIR", &repo)
             .env("CARGO_TARGET_DIR", repo.join("target"))
+            // Pin BUILD_TOKEN so the spawned server's stale-bundle
+            // check matches the phone bundle. Without this the phone's
+            // baked-in `<git-hash>-dirty` value drifts away from the
+            // server's whenever the working tree's dirty state changes
+            // independently (e.g., editing tests after the last
+            // `trunk build`), which raises a StaleVersion overlay
+            // mid-test and blocks every click. Contributors should
+            // build the phone the same way: `BUILD_TOKEN=e2e-test
+            // trunk build`. Documented in
+            // `crates/e2e-tests/README.md`.
+            .env("BUILD_TOKEN", "e2e-test")
             .args([
                 "run",
                 "--manifest-path",
@@ -196,7 +207,9 @@ impl TestServer {
                 "test-hooks",
             ])
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::piped())
+            // Same BUILD_TOKEN pin as `spawn` — see comment there.
+            .env("BUILD_TOKEN", "e2e-test");
         // Process group + group-kill, same rationale as `spawn`.
         #[cfg(unix)]
         {

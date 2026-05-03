@@ -484,14 +484,16 @@ suite green on macOS.
   2-phone scenarios). Pulled out as **10.3.6** so 10.3.3 itself
   closes on the harness fitness; the SPA-vs-test reconciliation gets
   its own tracked workstream.
-- [ ] 10.3.4 — `tests/screenshot_tour.rs`: lock the Mac-rendered baseline.
-  The headless-Chrome viewport is fixed at 420×900 and seeds are
-  deterministic, but Mac CoreText vs. Windows DirectWrite font rendering
-  may produce non-byte-identical PNGs. Decide: re-baseline on Mac, or
-  accept platform-specific tour outputs in
-  `docs/assets/screens/{macos,windows}/`. Update
-  `crates/e2e-tests/README.md` with the chosen workflow + diff command.
-  Blocked on 10.3.6 reaching most-tests-green.
+- [x] 10.3.4 — Decision: **re-baseline on Mac.** All 10 tour PNGs
+  in `docs/assets/screens/` were regenerated from the macOS
+  CoreText-rendered tour run (file sizes ~10–25 % bigger than
+  the previous Windows DirectWrite originals; visually clean +
+  expected). New baseline committed alongside 10.3.6e. Mac is the
+  primary contributor platform now (Phase 10), so re-baselining
+  there is straightforward. The README screenshot-baseline note
+  already calls out the per-OS gotcha — anyone editing a screen
+  regenerates on the same OS that committed the baseline. Folded
+  into 10.3.6e's commit.
 - [x] 10.3.5 — `crates/e2e-tests/README.md` rewritten with macOS
   install commands (`brew install --cask chromedriver`), version-
   mismatch troubleshooting (Chrome ↔ ChromeDriver major-version
@@ -584,9 +586,23 @@ suite green on macOS.
   wizard + PIN-pad. Either rewrite to walk the wizard or replace
   with a coarser "profile picker → PIN entry → game picker" smoke
   that doesn't depend on the create flow specifics.
-- [ ] 10.3.6e — **screenshot_tour.rs.** Already uses modern
-  selectors; the work here is purely re-baselining the per-scene
-  PNGs on macOS (PLAN 10.3.4 — same lane, can be done together).
+- [x] 10.3.6e — `screenshot_tour.rs` already used modern
+  selectors + a custom `tap_via_pointer` helper (the tour predates
+  the broader test drift). After the BUILD_TOKEN-pin fix landed
+  on the harness it ran clean (~38 s for the full 10-scene tour).
+  All 10 PNGs in `docs/assets/screens/` re-baselined on macOS;
+  closes 10.3.4 too.
+
+- [x] **BUILD_TOKEN pin** (cross-cut): `TestServer::spawn` +
+  `spawn_live` now pass `BUILD_TOKEN=e2e-test` to the cargo-run
+  server child, and the README + CI both build the phone bundle
+  with the same env. Without this the phone's
+  `<git-hash>-dirty` baked at trunk-build-time and the server's
+  same value rebuilt later drift apart whenever the working tree's
+  dirty state changes between builds, raising a StaleVersion
+  modal mid-test that blocks every click. Caught while running
+  the screenshot tour; root-caused via curl /api/version vs.
+  strings on the wasm bundle.
 - [ ] 10.3.6f — **CI fixture-pack story.** The chromedriver lane
   in CI stubs an empty `dev-data/firmware-pack/` so the harness
   can boot, but tests that need actual figure cards
