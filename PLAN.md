@@ -1086,14 +1086,13 @@ independent.
   committing to a yearly cert spend. Pairs with 10.8.2 (any signed
   installer can request firewall + SmartScreen handling in one UAC
   prompt instead of three separate gates).
-- [ ] 10.8.2 **Windows Firewall doesn't auto-create the inbound
-  listening rule.** Phone can't reach the server on first launch
-  until the user clicks through the per-network firewall prompt —
-  and on Steam Big Picture there's no UAC affordance to click.
-  Resolution path: fold into 10.9.1's MSI installer (decided
-  2026-05-03) — the installer's one-time UAC elevation registers
-  the inbound rule via `netsh advfirewall firewall add rule …`.
-  Closes when 10.9.1 lands.
+- [x] 10.8.2 **Windows Firewall doesn't auto-create the inbound
+  listening rule.** Closed by 10.9.1: the MSI ships a
+  `<fire:FirewallException>` element that registers the inbound
+  TCP/8765 rule at install time under the same UAC prompt that
+  drops the binary in Program Files. Smoke-tested on the HTPC —
+  `Get-NetFirewallRule -DisplayName 'Skylander Portal Controller'`
+  shows the rule post-install and gone post-uninstall.
 - [ ] 10.8.3 **Launcher "exit to desktop" affordance cut off after
   phone connect.** Suspected fullscreen / overflow bug in the eframe
   launcher on the 86" TV at 4K — connected-state layout pushes the
@@ -1154,43 +1153,65 @@ Menu shortcut + embedded icon, only the Steam-Grid artwork
 (capsule / hero / logo) needs to ship as loose files for users to
 hand-import. The `.ico` half of 10.8.5 collapses into 10.9.3.
 
-- [~] 10.9.1 **Windows `.msi`** via `cargo-wix` (WiX 3 toolset).
-  Initial scaffold landed on Mac for CI iteration on a Windows
-  remote (verification can't happen locally — WiX 3 is Windows-only):
+- [x] 10.9.1 **Windows `.msi`** via `cargo-wix` (WiX 3 toolset).
+  Scaffold + four iteration fixes shipped on the HTPC, smoke-tested
+  install/uninstall locally, MSI lane re-dispatched against CI:
   - `wix/main.wxs` — Product + Package + MajorUpgrade scaffold
     matching `cargo wix init`'s default template, customised:
     binary lives directly under `APPLICATIONFOLDER` (not `bin/`)
     so `data_root = <exe_parent>/data` resolves; Start Menu +
-    Desktop shortcuts with `Icon='ProductICO'` and
-    `Advertise='yes'`; `<fire:FirewallException>` on port 8765
-    (folds 10.8.2); `ARPPRODUCTICON`/`ARPHELPLINK`/
-    `ARPURLINFOABOUT` for Add/Remove Programs polish. Stable
-    UpgradeCode `E6FC979F-…-44D5E` and Path GUID
-    `57B7D393-…-7F11` committed (must not change across
-    releases or Windows treats future MSIs as new products).
+    Desktop shortcuts (Advertise='yes', no explicit `Icon=` — they
+    inherit the exe's embedded icon from winresource per 10.9.3,
+    avoiding ICE50 keyfile-extension validation);
+    `<fire:FirewallException>` on port 8765 (folds 10.8.2);
+    `ARPPRODUCTICON`/`ARPHELPLINK`/`ARPURLINFOABOUT` for
+    Add/Remove Programs polish. Stable UpgradeCode
+    `E6FC979F-…-44D5E` and Path GUID `57B7D393-…-7F11` committed
+    (must not change across releases or Windows treats future
+    MSIs as new products).
   - `crates/server/Cargo.toml` `[package.metadata.wix]` block
     pointing at `../../wix/main.wxs` + heat fragments;
     `license = false` + `eula = false` (MIT doesn't warrant a
     click-through dialog).
-  - `release.yml` Windows lane gains: WiX 3 toolset path
-    discovery, `cargo install cargo-wix --locked`, heat invocation
-    for `data/` (and `steam/` once 10.8.5 lands — placeholder
-    empty fragment generated for now), `cargo wix --no-build
-    --install-version <tag>`, MSI artifact upload alongside the
-    existing zip.
+  - `release.yml` Windows lane: WiX 3 toolset path discovery,
+    `cargo install cargo-wix --locked`, heat harvest (`-var
+    var.DataSourceDir` so paths resolve via `-dDataSourceDir=
+    <abspath>` at candle time), `cargo wix --no-build
+    --install-version <tag>` invoked with `Push-Location
+    crates/server` (cargo-wix v0.3.9 resolves `[metadata.wix]
+    include` paths from cwd, not manifest dir), MSI artifact
+    upload alongside the existing zip.
   - Zip stays as the "portable" fallback artifact (PLAN 10.9.5).
-  CI iteration steps for the Windows remote once it picks up:
-  (a) confirm WiX path discovery finds `heat.exe` + `candle.exe`,
-  (b) heat output column conventions match my `DataDir`/`DataFiles`
-      / `SteamDir`/`SteamFiles` references,
-  (c) `<fire:FirewallException>` validates against the ext (may
-      need `-ext WixFirewallExtension` flag passed through cargo-wix —
-      open question; will iterate),
-  (d) MSI install + uninstall cleanly on a clean Windows VM
-      (data/ files present in `C:\Program Files\Skylander Portal
-      Controller\data\`, Start Menu shortcut launches the binary,
-      firewall rule shows up in `wf.msc`, Add/Remove Programs
-      removes everything).
+
+  Open questions resolved during HTPC iteration:
+  (a) WiX path discovery — finds `heat.exe`/`candle.exe`/`light.exe`
+      under `C:\Program Files (x86)\WiX Toolset v3.14\bin`. ✓
+  (b) heat output references — matches `DataDir`/`DataFiles`
+      placeholders in `main.wxs`; the only catch was `Source=
+      "SourceDir\..."` resolving from cargo-wix's cwd
+      (`crates/server/`) instead of workspace root, fixed by
+      switching to `-var var.DataSourceDir`. ✓
+  (c) `<fire:FirewallException>` — needs both `-C -ext -C
+      WixFirewallExtension` (candle) AND `-L -ext -L
+      WixFirewallExtension` (light). `WixUIExtension` is
+      auto-loaded by cargo-wix; passing it explicitly causes
+      LGHT0091 duplicate-symbol on `WixUI_FeatureTree`. ✓
+  (d) MSI install + uninstall cleanly — verified on the HTPC:
+      `C:\Program Files\Skylander Portal Controller\` populated
+      (~14 MB exe + 83 MB data/ tree), Start Menu + Public Desktop
+      shortcuts present, inbound TCP/8765 firewall rule registered
+      (`Get-NetFirewallRule`), ARP entry shows publisher + version
+      1.2.1 + help/about URLs, uninstall removes every artifact
+      (folder, shortcuts, firewall rule, ARP entry). ✓
+
+  Side fixes during iteration: stripped `--` literals from the
+  `wix/main.wxs` comment block (XML disallows it), corrected
+  `..\assets\branding\icon.ico` to `..\..\assets\...` (relative
+  to candle's cwd `crates/server/`), removed broken heat `-t
+  XSLT` fallback in `release.yml` (referenced a non-existent
+  file), guarded the `--install-version` parser against non-tag
+  refs (`workflow_dispatch` from a branch sets `GITHUB_REF_NAME=
+  main`, which broke cargo-wix's semver parser).
 - [~] 10.9.2 **Code signing + notarization.**
   - **macOS Tier-2 (Developer ID + notarization)** wired and
     ready, blocked on user creating GitHub Secrets. Chris already
@@ -1217,7 +1238,7 @@ hand-import. The `.ico` half of 10.8.5 collapses into 10.9.3.
     the "More info → Run anyway" workaround. Punt the decision
     until after 10.9.1's MSI lands so we have something concrete
     to sign + can measure SmartScreen friction with vs. without.
-- [~] 10.9.3 **Embedded `.exe` icon + `VERSIONINFO` via
+- [x] 10.9.3 **Embedded `.exe` icon + `VERSIONINFO` via
   `winresource`.** `crates/server/build.rs` extended (existing
   `BUILD_TOKEN` stamper kept) with a `cfg(windows)`-gated
   `embed_windows_resources()` that calls
@@ -1229,10 +1250,11 @@ hand-import. The `.ico` half of 10.8.5 collapses into 10.9.3.
   CompanyName + LegalCopyright = "Christopher Hotchkiss",
   ProductVersion + FileVersion from `CARGO_PKG_VERSION`,
   OriginalFilename = `skylander-portal-controller.exe`.
-  Mac build verified clean — `winresource` is in
-  `[target.'cfg(windows)'.build-dependencies]` so it compiles
-  in lockfile only on non-Windows. Windows-side verification
-  pending CI run on next push.
+  Verified on the HTPC: `Get-Item ...exe | Select VersionInfo`
+  shows every field populated, and the MSI's Start Menu / Desktop
+  shortcuts inherit the embedded icon directly off the exe (which
+  is why the wxs `Icon='ProductICO'` attribute on shortcuts could
+  be dropped to clear ICE50 — the embedded icon does the job).
 - [~] 10.9.4 **macOS `.dmg`** wrapping a `.app` bundle (subsumes
   10.6.3). Local build path landed:
   - `tools/installer-bake/` (Rust, resvg + ico + icns) bakes
