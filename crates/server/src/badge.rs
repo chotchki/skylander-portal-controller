@@ -143,6 +143,13 @@ const float TORUS_W_Z = 0.05;
 
 uniform float u_rotation_y;
 uniform int u_face;
+// Whole-disc 2D scale (PLAN 10.7.6). Applied to gl_Position.xy
+// after the perspective projection so the disc inflates from
+// `SCALE_MIN_3D` to 1.0 over the spin window — independent of
+// rotation, so the multi-turn coin-spin's natural cosine cycles
+// don't pulse the envelope. Scaling clip-space rather than
+// object/view-space leaves perspective and depth untouched.
+uniform float u_scale;
 
 out vec3 v_obj;
 out vec2 v_uv;
@@ -317,8 +324,8 @@ void main() {
     const float DEPTH_A = -(FAR + NEAR) / (FAR - NEAR);
     const float DEPTH_B = -2.0 * FAR * NEAR / (FAR - NEAR);
     gl_Position = vec4(
-        view.x * F,
-        view.y * F,
+        view.x * F * u_scale,
+        view.y * F * u_scale,
         DEPTH_A * view.z + DEPTH_B,
         -view.z
     );
@@ -347,6 +354,11 @@ in vec3 v_view_pos;
 
 uniform sampler2D u_qr;
 uniform int u_face;
+// Whole-badge opacity (PLAN 10.7.6). Multiplied against every
+// fragment's output alpha so the disc fades in/out coherently
+// during intro / close transitions instead of popping in once
+// the iris reveals it.
+uniform float u_alpha;
 
 out vec4 frag_color;
 
@@ -410,6 +422,10 @@ void main() {
         // exact (no overshoot to trim).
         frag_color = vec4(gold_lit, 1.0);
     }
+    // Whole-badge fade. Multiplies *after* the per-face material
+    // pick so QR + gold + spec all fade in lockstep — no risk of
+    // the QR briefly outpacing the gold ring during the ramp.
+    frag_color.a *= u_alpha;
 }
 "#;
 
@@ -429,6 +445,8 @@ pub struct BadgeRig {
     u_rotation_y: Option<glow::UniformLocation>,
     u_qr: Option<glow::UniformLocation>,
     u_face: Option<glow::UniformLocation>,
+    u_alpha: Option<glow::UniformLocation>,
+    u_scale: Option<glow::UniformLocation>,
 }
 
 impl BadgeRig {
@@ -506,6 +524,8 @@ impl BadgeRig {
                 u_rotation_y: gl.get_uniform_location(program, "u_rotation_y"),
                 u_qr: gl.get_uniform_location(program, "u_qr"),
                 u_face: gl.get_uniform_location(program, "u_face"),
+                u_alpha: gl.get_uniform_location(program, "u_alpha"),
+                u_scale: gl.get_uniform_location(program, "u_scale"),
                 program,
                 vao,
                 qr_texture,
@@ -513,7 +533,22 @@ impl BadgeRig {
         }
     }
 
-    pub fn paint(&self, gl: &glow::Context, rotation_y: f32, viewport_px: [i32; 4]) {
+    pub fn paint(
+        &self,
+        gl: &glow::Context,
+        rotation_y: f32,
+        scale: f32,
+        alpha: f32,
+        viewport_px: [i32; 4],
+    ) {
+        // Skip the whole draw when the badge is functionally
+        // invisible. Covers the early startup-hold beat (alpha=0)
+        // and any pose where the disc has shrunk to a sub-pixel
+        // mote — saves shading the ~6000 torus + cylinder verts
+        // when there's nothing to show.
+        if alpha < 0.001 || scale < 0.001 {
+            return;
+        }
         unsafe {
             gl.viewport(
                 viewport_px[0],
@@ -542,6 +577,8 @@ impl BadgeRig {
 
             gl.use_program(Some(self.program));
             gl.uniform_1_f32(self.u_rotation_y.as_ref(), rotation_y);
+            gl.uniform_1_f32(self.u_alpha.as_ref(), alpha);
+            gl.uniform_1_f32(self.u_scale.as_ref(), scale);
 
             gl.active_texture(glow::TEXTURE0);
             gl.bind_texture(glow::TEXTURE_2D, Some(self.qr_texture));
@@ -613,11 +650,21 @@ unsafe fn compile_shader(gl: &glow::Context, kind: u32, src: &str) -> Result<glo
 /// Mirrors `vortex::paint_vortex`'s shape — the rig is captured
 /// `Arc`-shared so the callback closure can outlive this stack
 /// frame, and a `None` rig (first-frame race) silently no-ops.
+///
+/// `rotation_y` / `scale` / `alpha` are the three animation
+/// outputs from `LaunchPhase::badge_*_3d` (PLAN 10.7.6) —
+/// rotation drives the multi-turn coin spin, scale inflates the
+/// disc from 10% to full size over the spin, alpha handles the
+/// quick fade-in at the start of intro and the post-spin fade-out
+/// at the end of close. `paint` short-circuits the draw entirely
+/// when either scale or alpha is negligible.
 pub fn paint_badge(
     painter: &egui::Painter,
     rect: Rect,
     rig: Arc<Mutex<Option<BadgeRig>>>,
     rotation_y: f32,
+    scale: f32,
+    alpha: f32,
 ) {
     let cb = egui::PaintCallback {
         rect,
@@ -625,7 +672,7 @@ pub fn paint_badge(
             let vp = info.viewport_in_pixels();
             let viewport_px = [vp.left_px, vp.from_bottom_px, vp.width_px, vp.height_px];
             if let Some(rig) = rig.lock().unwrap().as_ref() {
-                rig.paint(painter.gl(), rotation_y, viewport_px);
+                rig.paint(painter.gl(), rotation_y, scale, alpha, viewport_px);
             }
         })),
     };

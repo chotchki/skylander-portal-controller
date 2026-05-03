@@ -162,6 +162,8 @@ impl LauncherApp {
                     launch_phase.badge_text_alpha(),
                     self.badge_rig.clone(),
                     launch_phase.badge_rotation_y(),
+                    launch_phase.badge_scale_3d(),
+                    launch_phase.badge_alpha_3d(),
                 );
                 // Any halo-spinning face needs continuous frames; egui
                 // is lazy by default and would only repaint on input.
@@ -311,6 +313,8 @@ fn qr_card_flip(
     content_alpha: f32,
     badge_rig: std::sync::Arc<std::sync::Mutex<Option<crate::badge::BadgeRig>>>,
     badge_rotation_y: f32,
+    badge_scale_3d: f32,
+    badge_alpha_3d: f32,
 ) {
     // `animate_bool_with_time` interpolates 0.0 → 1.0 when the back
     // face is wanted, and back to 0 when it's not. Driven by
@@ -346,7 +350,14 @@ fn qr_card_flip(
     // of squashing a circle. Returns early so the 2D path below
     // doesn't paint over the GL surface.
     if std::env::var_os("LAUNCHER_3D_BADGE").is_some() {
-        crate::badge::paint_badge(ui.painter(), rect, badge_rig, badge_rotation_y);
+        crate::badge::paint_badge(
+            ui.painter(),
+            rect,
+            badge_rig,
+            badge_rotation_y,
+            badge_scale_3d,
+            badge_alpha_3d,
+        );
         return;
     }
 

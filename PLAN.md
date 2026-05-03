@@ -917,17 +917,30 @@ or after, doesn't matter.
   cylinder/torus interaction had been carried entirely by
   cull-face).
 
-- [ ] 10.7.6 — **Easing + alpha touch-ups:** the existing
-  `badge_alpha` curve was tuned around the 2D scale hack — it
-  rampt up coordinately with `badge_scale`'s sine to hide the
-  edge-on phase. With real 3D the back-of-disc face shouldn't
-  bleed through during fade-in (depth test + cull-back-face
-  handle this in GL), but the alpha curve still wants tuning so
-  the disc materialises *into* its rotation rather than cross-
-  fading mid-spin. Try: hold alpha at 0 while the rotation is
-  still > 70 ° from face-on, then ease 0→1 over the last 30 °.
-  Iterate against on-device feel — easier to land once the
-  geometry is real and we can see what reads vs. what doesn't.
+- [x] 10.7.6 — Choreography landed: `LaunchPhase::badge_alpha_3d`
+  / `badge_scale_3d` plus a multi-turn `badge_rotation_y`
+  rewrite, all plumbed to the badge shader as `u_alpha` and
+  `u_scale` uniforms. Curves:
+    - **Startup hold (intro 0–20%)**: badge invisible while the
+      iris reveal beat plays.
+    - **Fade-in (20–25%)**: alpha smoothsteps 0→1 with the disc
+      held edge-on at `SCALE_MIN_3D = 0.10`.
+    - **Spin + grow (25–100%)**: `SPIN_TURNS = 3` full
+      revolutions + 90° landing-lap (3.25 turns total) on
+      ease-out cubic, with the 2D scale envelope smoothstepping
+      0.10 → 1.0 *independent* of rotation so the multi-turn
+      cosine cycles don't pulse the envelope (Chris's
+      "growing spin" feedback — pure rotation lost the physical-
+      object materialising beat the legacy 2D `badge_scale`
+      sine provided).
+    - **Close mirrors**: 3-turn spin out from face-on shrinking
+      to 0.10 over the first 60% of close, then alpha
+      smoothsteps 1→0 over the last 40% so the badge dissolves
+      into the iris-close beat instead of freezing as a sliver.
+  QR texture is always sampled; the smoothstep growth puts the
+  disc at ~77% size by the start of the final rotation so the QR
+  is legibly on the face well before landing — no texture
+  pop-in. ChrisCheck 2026-05-02: "looks so much better."
 
 - [ ] 10.7.7 — **Performance + cross-platform pass:** the
   PaintCallback runs in egui_glow's GL context which is shared
