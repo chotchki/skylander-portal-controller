@@ -917,6 +917,31 @@ or after, doesn't matter.
   cylinder/torus interaction had been carried entirely by
   cull-face).
 
+- [x] 10.7.6b — Rotate-on-text-change + back-face textures landed.
+  ab_glyph promoted to a direct dep of `crates/server`; new
+  `badge_text` module rasterises each `BackFace` variant's lines
+  via TitanOne onto a starfield-blue (`palette::SF_1`) inscribed
+  disc with corners transparent. Faux-emboss in three glyph
+  passes per line — black shadow at +emboss_offset, white
+  highlight at -emboss_offset, near-white body at zero — sized
+  as 2 % of the chosen px_size and clamped to [1, 4] px so small
+  text stays crisp and large text gets readable depth.
+  `BadgeRig` now owns a Vec<glow::Texture> (index 0 = QR, 1.. =
+  back faces in `BackFace::ALL` order); `paint` takes a
+  `texture_index` + `apply_texture_spec` so the Blinn-Phong
+  highlight tracks across the back-face metal but stays off the
+  QR raster (where it'd wash out the data). Flip choreography in
+  `qr_card_flip`'s 3D branch detects `back_face` changes via
+  egui-memory-tracked `displayed` state, kicks off a 360°
+  additional rotation via `flip_start` timestamp, and swaps
+  `displayed` at flip midpoint when the disc is on its gold back
+  face and the swap is invisible. `request_repaint` while a flip
+  is in flight so the rotation reads smoothly even if no other
+  state would request frames. ChrisCheck 2026-05-03: rotate
+  "looked good", blue bg + faux-emboss "acceptable" — defers
+  per-pixel normal-map embossing (10.7.6c) unless future polish
+  demands it.
+
 - [x] 10.7.6 — Choreography landed: `LaunchPhase::badge_alpha_3d`
   / `badge_scale_3d` plus a multi-turn `badge_rotation_y`
   rewrite, all plumbed to the badge shader as `u_alpha` and

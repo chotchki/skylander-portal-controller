@@ -359,6 +359,13 @@ uniform int u_face;
 // during intro / close transitions instead of popping in once
 // the iris reveals it.
 uniform float u_alpha;
+// Whether to add the Blinn-Phong specular term to the texture-
+// sampled disc area on the front face. False for the QR raster
+// (printed-paper look — spec washes out the QR data); true for the
+// back-face text textures (gold material — spec reads as polished
+// metal under the same highlight that sweeps the side wall +
+// torus). 0 / 1 used in lieu of `bool` for older driver mileage.
+uniform int u_apply_texture_spec;
 
 out vec4 frag_color;
 
@@ -396,20 +403,28 @@ void main() {
     vec3 gold_lit = GOLD * intensity + SPEC_TINT * spec;
 
     if (u_face == 0) {
-        // Front face: QR texture inside QR_RADIUS, lit gold ring
+        // Front face: bound texture inside QR_RADIUS, lit gold ring
         // for QR_RADIUS < r ≤ OUTER_RADIUS, discard outside. The
-        // gold ring fills the gap between the QR's outer edge and
-        // the torus's inner cross-section (10.7.5).
+        // gold ring fills the gap between the texture's outer edge
+        // and the torus's inner cross-section (10.7.5). Texture
+        // sample picks up either the QR raster or one of the back-
+        // face text textures depending on what the call site bound.
         float r = length(v_obj.xy);
         if (r > OUTER_RADIUS) discard;
         if (r > QR_RADIUS) {
             frag_color = vec4(gold_lit, 1.0);
         } else {
-            // QR area: Lambert-only (printed surface, no spec) so
-            // the highlight band doesn't wash out the QR data
-            // when the disc sits face-on near the highlight.
             vec4 c = texture(u_qr, v_uv);
-            frag_color = vec4(c.rgb * intensity, c.a);
+            // QR raster: Lambert-only — spec washes out the QR
+            // data and the printed-paper look is the right
+            // material analogy. Back-face text on gold: same spec
+            // sweep as the surrounding ring/torus so the metal
+            // reads as one polished material.
+            vec3 lit = c.rgb * intensity;
+            if (u_apply_texture_spec == 1) {
+                lit += SPEC_TINT * spec;
+            }
+            frag_color = vec4(lit, c.a);
         }
     } else if (u_face == 1) {
         // Back face: lit gold across the whole disc body. Same
@@ -434,30 +449,60 @@ void main() {
 /// frame after the eframe `Frame` hands us a `glow::Context`; reused
 /// every frame; dropped in `on_exit`.
 ///
-/// Owns the QR texture too. The same RGBA bytes that power the
-/// egui-side `qr_texture` (via `main_screen::render_qr_pixels`) get
-/// uploaded to a GL texture here, so the disc's front face renders
-/// the round QR pixels at-source rather than re-rasterising.
+/// Owns the bound textures: index 0 is always the QR raster (same
+/// bytes that power the egui-side `qr_texture` via
+/// `main_screen::render_qr_pixels`); indices 1.. are the
+/// `badge_text`-rasterised back-face strings (PLAN 10.7.6b), one
+/// per `BackFace` enum variant in the order the call site uploads
+/// them. The shader binds whichever index `paint` is told to so the
+/// flip-on-state-change animation (intro/close-style coin spin
+/// triggered when the displayed text would change) lands face-on
+/// with the new text already on the disc, not popping in.
 pub struct BadgeRig {
     program: glow::Program,
     vao: glow::VertexArray,
-    qr_texture: glow::Texture,
+    textures: Vec<glow::Texture>,
     u_rotation_y: Option<glow::UniformLocation>,
     u_qr: Option<glow::UniformLocation>,
     u_face: Option<glow::UniformLocation>,
     u_alpha: Option<glow::UniformLocation>,
     u_scale: Option<glow::UniformLocation>,
+    u_apply_texture_spec: Option<glow::UniformLocation>,
+}
+
+/// One texture's worth of RGBA pixels destined for `BadgeRig`.
+/// `width = height` (the disc geometry is square in object space
+/// and the shader UV mapping assumes square textures). Carried as a
+/// plain struct so callers can build a heterogeneous list without
+/// the QR / back-face textures sharing a wrapper type.
+pub struct TextureSource<'a> {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: &'a [u8],
+}
+
+impl<'a> From<&'a crate::round_qr::RoundQrPixels> for TextureSource<'a> {
+    fn from(p: &'a crate::round_qr::RoundQrPixels) -> Self {
+        Self {
+            width: p.width,
+            height: p.height,
+            rgba: &p.rgba,
+        }
+    }
 }
 
 impl BadgeRig {
-    /// Build the rig, compile shaders, and upload the QR pixels as
-    /// a GL texture in one go. `qr_pixels` is the same buffer
-    /// `crate::round_qr::render` produces; bytes layout is RGBA8
-    /// row-major from the top-left.
-    pub fn new(
-        gl: &glow::Context,
-        qr_pixels: &crate::round_qr::RoundQrPixels,
-    ) -> Result<Self, String> {
+    /// Build the rig, compile shaders, and upload all the disc
+    /// front-face textures as a single contiguous GL texture array
+    /// (one entry per call-site-supplied source). Index 0 is bound
+    /// when `paint` is called with `texture_index = 0`, etc. Caller
+    /// is expected to pass the QR raster at index 0 followed by the
+    /// back-face text rasters in `BackFace`-variant order so the
+    /// `main_screen` flip-state can map to indices statically.
+    pub fn new(gl: &glow::Context, sources: &[TextureSource<'_>]) -> Result<Self, String> {
+        if sources.is_empty() {
+            return Err("badge: at least one texture source required".into());
+        }
         unsafe {
             let program = gl
                 .create_program()
@@ -483,41 +528,45 @@ impl BadgeRig {
                 .create_vertex_array()
                 .map_err(|e| format!("badge create_vao: {e}"))?;
 
-            let qr_texture = gl
-                .create_texture()
-                .map_err(|e| format!("badge create_texture: {e}"))?;
-            gl.bind_texture(glow::TEXTURE_2D, Some(qr_texture));
-            gl.tex_parameter_i32(
-                glow::TEXTURE_2D,
-                glow::TEXTURE_MIN_FILTER,
-                glow::LINEAR as i32,
-            );
-            gl.tex_parameter_i32(
-                glow::TEXTURE_2D,
-                glow::TEXTURE_MAG_FILTER,
-                glow::LINEAR as i32,
-            );
-            gl.tex_parameter_i32(
-                glow::TEXTURE_2D,
-                glow::TEXTURE_WRAP_S,
-                glow::CLAMP_TO_EDGE as i32,
-            );
-            gl.tex_parameter_i32(
-                glow::TEXTURE_2D,
-                glow::TEXTURE_WRAP_T,
-                glow::CLAMP_TO_EDGE as i32,
-            );
-            gl.tex_image_2d(
-                glow::TEXTURE_2D,
-                0,
-                glow::RGBA8 as i32,
-                qr_pixels.width as i32,
-                qr_pixels.height as i32,
-                0,
-                glow::RGBA,
-                glow::UNSIGNED_BYTE,
-                Some(qr_pixels.rgba.as_slice()),
-            );
+            let mut textures = Vec::with_capacity(sources.len());
+            for source in sources {
+                let tex = gl
+                    .create_texture()
+                    .map_err(|e| format!("badge create_texture: {e}"))?;
+                gl.bind_texture(glow::TEXTURE_2D, Some(tex));
+                gl.tex_parameter_i32(
+                    glow::TEXTURE_2D,
+                    glow::TEXTURE_MIN_FILTER,
+                    glow::LINEAR as i32,
+                );
+                gl.tex_parameter_i32(
+                    glow::TEXTURE_2D,
+                    glow::TEXTURE_MAG_FILTER,
+                    glow::LINEAR as i32,
+                );
+                gl.tex_parameter_i32(
+                    glow::TEXTURE_2D,
+                    glow::TEXTURE_WRAP_S,
+                    glow::CLAMP_TO_EDGE as i32,
+                );
+                gl.tex_parameter_i32(
+                    glow::TEXTURE_2D,
+                    glow::TEXTURE_WRAP_T,
+                    glow::CLAMP_TO_EDGE as i32,
+                );
+                gl.tex_image_2d(
+                    glow::TEXTURE_2D,
+                    0,
+                    glow::RGBA8 as i32,
+                    source.width as i32,
+                    source.height as i32,
+                    0,
+                    glow::RGBA,
+                    glow::UNSIGNED_BYTE,
+                    Some(source.rgba),
+                );
+                textures.push(tex);
+            }
             gl.bind_texture(glow::TEXTURE_2D, None);
 
             Ok(Self {
@@ -526,9 +575,10 @@ impl BadgeRig {
                 u_face: gl.get_uniform_location(program, "u_face"),
                 u_alpha: gl.get_uniform_location(program, "u_alpha"),
                 u_scale: gl.get_uniform_location(program, "u_scale"),
+                u_apply_texture_spec: gl.get_uniform_location(program, "u_apply_texture_spec"),
                 program,
                 vao,
-                qr_texture,
+                textures,
             })
         }
     }
@@ -539,6 +589,8 @@ impl BadgeRig {
         rotation_y: f32,
         scale: f32,
         alpha: f32,
+        texture_index: usize,
+        apply_texture_spec: bool,
         viewport_px: [i32; 4],
     ) {
         // Skip the whole draw when the badge is functionally
@@ -549,6 +601,20 @@ impl BadgeRig {
         if alpha < 0.001 || scale < 0.001 {
             return;
         }
+        let texture = match self.textures.get(texture_index) {
+            Some(t) => *t,
+            // Out-of-range index is a programming error in the call
+            // site; falling back to index 0 (QR) keeps the launcher
+            // visible rather than blanking the badge while a logged
+            // warning surfaces the bug.
+            None => {
+                tracing::warn!(
+                    "badge paint with out-of-range texture_index {texture_index} (have {})",
+                    self.textures.len()
+                );
+                self.textures[0]
+            }
+        };
         unsafe {
             gl.viewport(
                 viewport_px[0],
@@ -579,9 +645,13 @@ impl BadgeRig {
             gl.uniform_1_f32(self.u_rotation_y.as_ref(), rotation_y);
             gl.uniform_1_f32(self.u_alpha.as_ref(), alpha);
             gl.uniform_1_f32(self.u_scale.as_ref(), scale);
+            gl.uniform_1_i32(
+                self.u_apply_texture_spec.as_ref(),
+                if apply_texture_spec { 1 } else { 0 },
+            );
 
             gl.active_texture(glow::TEXTURE0);
-            gl.bind_texture(glow::TEXTURE_2D, Some(self.qr_texture));
+            gl.bind_texture(glow::TEXTURE_2D, Some(texture));
             gl.uniform_1_i32(self.u_qr.as_ref(), 0);
 
             gl.bind_vertex_array(Some(self.vao));
@@ -625,7 +695,9 @@ impl BadgeRig {
         unsafe {
             gl.delete_program(self.program);
             gl.delete_vertex_array(self.vao);
-            gl.delete_texture(self.qr_texture);
+            for tex in &self.textures {
+                gl.delete_texture(*tex);
+            }
         }
     }
 }
@@ -656,8 +728,12 @@ unsafe fn compile_shader(gl: &glow::Context, kind: u32, src: &str) -> Result<glo
 /// rotation drives the multi-turn coin spin, scale inflates the
 /// disc from 10% to full size over the spin, alpha handles the
 /// quick fade-in at the start of intro and the post-spin fade-out
-/// at the end of close. `paint` short-circuits the draw entirely
-/// when either scale or alpha is negligible.
+/// at the end of close. `texture_index` selects which of the
+/// `BadgeRig`'s pre-uploaded textures to bind (0 = QR, 1.. =
+/// back-face strings); `apply_texture_spec` toggles the
+/// Blinn-Phong term on the texture sample (off for QR's printed-
+/// paper look, on for back-face metal). `paint` short-circuits the
+/// draw entirely when either scale or alpha is negligible.
 pub fn paint_badge(
     painter: &egui::Painter,
     rect: Rect,
@@ -665,6 +741,8 @@ pub fn paint_badge(
     rotation_y: f32,
     scale: f32,
     alpha: f32,
+    texture_index: usize,
+    apply_texture_spec: bool,
 ) {
     let cb = egui::PaintCallback {
         rect,
@@ -672,7 +750,15 @@ pub fn paint_badge(
             let vp = info.viewport_in_pixels();
             let viewport_px = [vp.left_px, vp.from_bottom_px, vp.width_px, vp.height_px];
             if let Some(rig) = rig.lock().unwrap().as_ref() {
-                rig.paint(painter.gl(), rotation_y, scale, alpha, viewport_px);
+                rig.paint(
+                    painter.gl(),
+                    rotation_y,
+                    scale,
+                    alpha,
+                    texture_index,
+                    apply_texture_spec,
+                    viewport_px,
+                );
             }
         })),
     };

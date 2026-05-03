@@ -204,13 +204,32 @@ impl eframe::App for LauncherApp {
             }
         }
         // Same lazy-init for the badge rig (PLAN 10.7.1). Hands the
-        // pre-rendered QR pixels in so the GL texture upload happens
-        // here, on-thread, with the GL context available — the
-        // texture stays alive until on_exit.
+        // pre-rendered QR pixels in plus a per-`BackFace`
+        // text-on-gold raster (PLAN 10.7.6b) so the GL texture
+        // uploads happen here, on-thread, with the GL context
+        // available — they stay alive until on_exit.
         if self.badge_rig.lock().unwrap().is_none()
             && let Some(gl) = frame.gl()
         {
-            match BadgeRig::new(gl, &self.qr_pixels) {
+            // Pre-rasterise back-face texts at the QR's pixel
+            // resolution so the `BadgeRig`'s LINEAR mag filter
+            // gives both the same on-screen sharpness when bound.
+            let size = self.qr_pixels.width.max(self.qr_pixels.height);
+            let back_face_pixels: Vec<Vec<u8>> = main_screen::BackFace::ALL
+                .iter()
+                .map(|bf| crate::badge_text::render(bf.lines(), size))
+                .collect();
+
+            let mut sources = vec![crate::badge::TextureSource::from(&self.qr_pixels)];
+            for px in &back_face_pixels {
+                sources.push(crate::badge::TextureSource {
+                    width: size,
+                    height: size,
+                    rgba: px.as_slice(),
+                });
+            }
+
+            match BadgeRig::new(gl, &sources) {
                 Ok(rig) => *self.badge_rig.lock().unwrap() = Some(rig),
                 Err(e) => tracing::error!("badge shader init failed: {e}"),
             }

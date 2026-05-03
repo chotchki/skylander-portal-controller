@@ -2,6 +2,7 @@
 //! integration tests under `tests/` import what they need directly.
 
 pub mod badge;
+pub mod badge_text;
 pub mod config;
 pub mod display_mode;
 pub mod embedded_assets;

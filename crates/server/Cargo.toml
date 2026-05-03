@@ -44,6 +44,12 @@ egui_glow = "0.29"
 glow = "0.14"
 qrcode = "0.14"
 image = { version = "0.25", default-features = false, features = ["png"] }
+# Glyph rasterisation for the 3D badge's back-face textures (PLAN
+# 10.7.6b). ab_glyph is already a transitive dep through egui's
+# epaint, but we depend on it directly so we can render text into
+# our own RGBA buffers (rather than going through egui's font
+# atlas) and upload them as GL textures bound to the disc front.
+ab_glyph = "0.2"
 local-ip-address = "0.6"
 # mDNS advertisement uses the Windows native DnsServiceRegister API
 # (see crates/server/src/mdns.rs). Why not a cross-platform Rust crate

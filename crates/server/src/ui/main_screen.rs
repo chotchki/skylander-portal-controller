@@ -262,7 +262,7 @@ impl LauncherApp {
 /// — so suppress the dead-code warning until that wiring lands.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum BackFace {
+pub(crate) enum BackFace {
     /// "STARTING" — server is booting (indexer, driver warmup, axum
     /// bind). Halo-spinning same as Loading so the transition from
     /// Starting → Loading (picked a game) / Starting → QR (ready to
@@ -290,6 +290,52 @@ pub(super) enum BackFace {
     /// server finished booting (port busy, DB corrupt, etc.). Caller
     /// paints the error message as a separate overlay below the card.
     ServerError,
+}
+
+impl BackFace {
+    /// Every variant in a fixed enumeration order. The order doubles
+    /// as the `BadgeRig` texture index (offset by 1 — index 0 is
+    /// reserved for the QR raster), so don't reshuffle without
+    /// also updating `texture_index`.
+    pub(crate) const ALL: [BackFace; 7] = [
+        BackFace::Starting,
+        BackFace::MaxPlayers,
+        BackFace::Loading,
+        BackFace::Switching,
+        BackFace::Farewell,
+        BackFace::Crashed,
+        BackFace::ServerError,
+    ];
+
+    /// The static stack of words this back face shows on the disc
+    /// — same content the legacy 2D `paint_titled_card` path
+    /// renders via egui. Used at startup by `badge_text::render`
+    /// to bake one texture per variant.
+    pub(crate) fn lines(self) -> &'static [&'static str] {
+        match self {
+            BackFace::Starting => &["STARTING"],
+            BackFace::MaxPlayers => &["PORTAL", "IS", "FULL"],
+            BackFace::Loading => &["LOADING"],
+            BackFace::Switching => &["SWITCHING", "GAMES"],
+            BackFace::Farewell => &["GOODBYE"],
+            BackFace::Crashed => &["SOMETHING", "WENT", "WRONG"],
+            BackFace::ServerError => &["SERVER", "FAILED", "TO START"],
+        }
+    }
+
+    /// The `BadgeRig` texture index this back face's text was
+    /// uploaded to. Index 0 is the QR; back faces start at 1 in
+    /// the order of `ALL`.
+    pub(crate) fn texture_index(self) -> usize {
+        // Position in `ALL` plus 1 for the QR offset. Linear search
+        // is fine — the array has 7 entries and this runs once per
+        // frame.
+        Self::ALL
+            .iter()
+            .position(|bf| *bf == self)
+            .map(|p| p + 1)
+            .unwrap_or(0)
+    }
 }
 
 /// Card-flip container (PLAN 4.15.6). Reserves a `CARD_SIZE × CARD_SIZE`
@@ -345,18 +391,86 @@ fn qr_card_flip(
     // route the badge through the 3D shader rig instead of the 2D
     // card flip. Lets us A/B compare without removing the legacy
     // path. Rotation is `LaunchPhase::badge_rotation_y` (PLAN
-    // 10.7.3) so the intro / closing transitions still
-    // choreograph the badge — they just spin a real disc instead
-    // of squashing a circle. Returns early so the 2D path below
-    // doesn't paint over the GL surface.
+    // 10.7.3); on top of that, PLAN 10.7.6b adds a 360° flip
+    // animation whenever the back-face state changes — texture
+    // swap happens at flip midpoint (when the disc is showing its
+    // gold back face and any swap would be hidden) so the new
+    // text/QR is on the disc by the time it rotates back to
+    // face-on. Returns early so the 2D path below doesn't paint
+    // over the GL surface.
     if std::env::var_os("LAUNCHER_3D_BADGE").is_some() {
+        // Persistent state in egui memory: which back face the disc
+        // is currently *displaying* (lags behind `back_face` by up
+        // to one flip), and the wall-clock time the current flip
+        // began (negative sentinel = no flip in progress). Stored
+        // by Id rather than passed through LauncherApp because
+        // they're purely a function of the state-machine here, not
+        // anything the rest of the app needs to read.
+        let state_id = egui::Id::new("badge_3d_displayed_back_face");
+        let flip_id = egui::Id::new("badge_3d_flip_start");
+
+        let now = ctx.input(|i| i.time);
+        let mut displayed = ctx
+            .memory(|m| m.data.get_temp::<Option<BackFace>>(state_id))
+            .unwrap_or(back_face);
+        let mut flip_start = ctx
+            .memory(|m| m.data.get_temp::<f64>(flip_id))
+            .unwrap_or(-1.0);
+
+        // Detect new state changes; if there's no flip in flight
+        // and the state has shifted, start one. Mid-flip changes
+        // are deliberately ignored — the disc continues with the
+        // *previous* target until it lands face-on, then a fresh
+        // flip kicks off if the state has shifted again. Avoids
+        // chained flips visually compounding into a fast spin.
+        if back_face != displayed && flip_start < 0.0 {
+            flip_start = now;
+        }
+
+        let flip_progress = if flip_start >= 0.0 {
+            ((now - flip_start) / FLIP_DURATION as f64).clamp(0.0, 1.0) as f32
+        } else {
+            0.0
+        };
+
+        // Texture swap at the flip midpoint — the disc is showing
+        // its gold back face here, so the swap is invisible.
+        if flip_progress >= 0.5 && displayed != back_face {
+            displayed = back_face;
+        }
+        // End the flip once it's run its full window so the next
+        // state change can start its own flip from a clean slate.
+        if flip_progress >= 1.0 {
+            flip_start = -1.0;
+        }
+
+        ctx.memory_mut(|m| {
+            m.data.insert_temp(state_id, displayed);
+            m.data.insert_temp(flip_id, flip_start);
+        });
+
+        if flip_start >= 0.0 {
+            // Mid-flip — keep frames coming so the rotation reads
+            // smoothly even if nothing else in the launcher would
+            // request a repaint this frame.
+            ctx.request_repaint();
+        }
+
+        let texture_index = displayed.map(|bf| bf.texture_index()).unwrap_or(0);
+        // Spec on for back-face metal text; off for the QR raster
+        // so its data stays legible under the highlight band.
+        let apply_spec = displayed.is_some();
+        let additional_rotation = flip_progress * 2.0 * std::f32::consts::PI;
+
         crate::badge::paint_badge(
             ui.painter(),
             rect,
             badge_rig,
-            badge_rotation_y,
+            badge_rotation_y + additional_rotation,
             badge_scale_3d,
             badge_alpha_3d,
+            texture_index,
+            apply_spec,
         );
         return;
     }
