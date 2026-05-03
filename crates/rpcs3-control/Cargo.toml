@@ -41,6 +41,10 @@ name = "boot_game"
 required-features = ["uia-examples"]
 
 [[example]]
+name = "boot_via_eboot"
+required-features = ["uia-examples"]
+
+[[example]]
 name = "dump_menu_tree"
 required-features = ["uia-examples"]
 

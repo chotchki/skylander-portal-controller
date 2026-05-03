@@ -6,6 +6,11 @@
 //!
 //! Prereq: RPCS3 is already running, showing the library (no game booted).
 //! Tries multiple strategies in order and reports which one worked:
+//!   0. `Select` the cell via UIA + `Invoke` the toolbar's Play button.
+//!      Pure UIA, no keystrokes, no focus dependency — added 2026-05-03
+//!      after `tools/uia-probe` confirmed the toolbar Play button advertises
+//!      InvokePattern (PLAN 10.8.4). If this works it replaces the existing
+//!      keystroke pipeline.
 //!   1. `UIInvokePattern::invoke()` on the serial cell.
 //!   2. Select via `UISelectionItemPattern::select()` + `Enter` keystroke.
 //!   3. Synthesised mouse double-click at the cell's centre (last resort).
@@ -55,6 +60,42 @@ fn main() -> Result<()> {
     // Bring main forward so any mouse fallback works.
     focus_main(main_hwnd).ok();
     sleep(Duration::from_millis(200));
+
+    // Strategy 0: Select cell + Invoke the Play toolbar button. Pure UIA,
+    // no keystrokes. Confirmed via `tools/uia-probe` that the toolbar
+    // Play button advertises InvokePattern. Should be the production
+    // path if it works under load.
+    if let Ok(sel) = cell.get_pattern::<UISelectionItemPattern>() {
+        if let Err(e) = sel.select() {
+            eprintln!("[s0] select err: {e}");
+        } else if let Some(play) = find_play_button(&walker, &main) {
+            eprintln!(
+                "[s0] selected cell + found Play button at {:?}",
+                play.get_bounding_rectangle().ok()
+            );
+            match play.get_pattern::<UIInvokePattern>() {
+                Ok(inv) => {
+                    if let Err(e) = inv.invoke() {
+                        eprintln!("[s0] Play.invoke err: {e}");
+                    } else {
+                        eprintln!("[s0] Play.invoke dispatched");
+                        if wait_viewport(Duration::from_secs(15)) {
+                            eprintln!(
+                                "✅ Strategy 0 (Select + Play button Invoke) booted the game"
+                            );
+                            return Ok(());
+                        }
+                        eprintln!("[s0] no viewport within 15s — falling through");
+                    }
+                }
+                Err(e) => eprintln!("[s0] Play button has no InvokePattern: {e}"),
+            }
+        } else {
+            eprintln!("[s0] no Play button found in toolbar");
+        }
+    } else {
+        eprintln!("[s0] no SelectionItemPattern on cell — skipping");
+    }
 
     // Strategy 1: UIA Invoke.
     match cell.get_pattern::<UIInvokePattern>() {
@@ -117,6 +158,28 @@ fn main() -> Result<()> {
         return Ok(());
     }
     bail!("none of the strategies booted the game");
+}
+
+fn find_play_button(walker: &UITreeWalker, root: &UIElement) -> Option<UIElement> {
+    // Toolbar lives directly under the main window. The Play QToolButton's
+    // Name property is "Play" — unique among the toolbar's children.
+    let mut stack: Vec<UIElement> = vec![root.clone()];
+    while let Some(node) = stack.pop() {
+        let ct = node.get_control_type().ok();
+        if matches!(ct, Some(ControlType::Button))
+            && node.get_name().ok().as_deref() == Some("Play")
+        {
+            return Some(node);
+        }
+        if let Ok(child) = walker.get_first_child(&node) {
+            let mut cur = Some(child);
+            while let Some(c) = cur {
+                stack.push(c.clone());
+                cur = walker.get_next_sibling(&c).ok();
+            }
+        }
+    }
+    None
 }
 
 fn find_cell_by_name(walker: &UITreeWalker, root: &UIElement, name: &str) -> Option<UIElement> {
