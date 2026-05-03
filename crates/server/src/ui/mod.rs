@@ -111,7 +111,7 @@ pub struct LauncherApp {
     vortex_idle: VortexParams,
     /// 3D badge shader rig (PLAN 10.7.1 spike). Coexists with
     /// `vortex_rig` in the same shared GL context — separate program
-    /// + VAO, separate `egui::PaintCallback` per frame. Lazy-init
+    /// and VAO, separate `egui::PaintCallback` per frame. Lazy-init
     /// alongside the vortex so first-frame ordering matches.
     badge_rig: Arc<Mutex<Option<BadgeRig>>>,
     /// Round-QR raster bytes, generated once at startup. Same buffer

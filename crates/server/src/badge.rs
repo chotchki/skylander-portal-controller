@@ -807,6 +807,7 @@ impl BadgeRig {
     /// PaintCallback's viewport (`viewport_px`) and supplies a
     /// rotation if the orbit should tilt the disc; first cut keeps
     /// pips face-on (rotation=0, scale=1).
+    #[allow(clippy::too_many_arguments)]
     pub fn paint_pip(
         &mut self,
         gl: &glow::Context,
@@ -872,6 +873,7 @@ unsafe fn compile_shader(gl: &glow::Context, kind: u32, src: &str) -> Result<glo
 /// Blinn-Phong term on the texture sample (off for QR's printed-
 /// paper look, on for back-face metal). `paint` short-circuits the
 /// draw entirely when either scale or alpha is negligible.
+#[allow(clippy::too_many_arguments)]
 pub fn paint_badge(
     painter: &egui::Painter,
     rect: Rect,
