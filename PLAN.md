@@ -867,15 +867,20 @@ or after, doesn't matter.
   10.7.5 when we decide whether to bake the text into the disc
   geometry or keep it as a 2D egui overlay.
 
-- [ ] 10.7.3 — **Drive rotation off `LaunchPhase`:** add
-  `badge_rotation_y(self) -> f32` (radians) replacing
-  `badge_scale`. Map intro/closing 0..1 progress to π..0 (or 0..π
-  on close) so the front face rotates from edge-on to face-on
-  matching the current "coin tipping flat" intent. Update
-  `ui/main_screen.rs` + `ui/server_error.rs` + `ui/farewell.rs`
-  to call the new accessor and feed it into the PaintCallback's
-  uniform set. Drop the `badge_scale` API entirely once the call
-  sites are migrated.
+- [x] 10.7.3 — `LaunchPhase::badge_rotation_y(self) -> f32`
+  added alongside (not replacing) `badge_scale`. Linear
+  interpolation between π/2 (edge-on) and 0 (face-on) — the 2D
+  badge_scale's sine warp was a perceptual hack to fake what
+  perspective gives you for free in real 3D, so we don't need to
+  bake the ease into the rotation curve. Same 20%-into-intro
+  start as badge_scale so the choreography stays in lockstep.
+  `qr_card_flip` gains a `badge_rotation_y` parameter and feeds
+  it to `paint_badge` when the env-gate is set; the 2D path is
+  untouched. Verified with `cargo run` — Chris confirmed "it
+  rotates!" — disc spins from edge-on to face-on during intro,
+  the existing flip animation (QR → Loading back-face) still
+  reads on the 2D fallback. `badge_scale` survives until 10.7.7
+  cleanup.
 
 - [ ] 10.7.4 — **Edge thickness + lighting:** the cylinder cap
   geometry from 10.7.1 needs a non-zero z-extent so the edge-on

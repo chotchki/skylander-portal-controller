@@ -119,11 +119,48 @@ impl LaunchPhase {
         }
     }
 
+    /// Y-axis rotation (radians) for the 3D badge, replacing
+    /// `badge_scale`'s sine-warped horizontal squash under PLAN
+    /// 10.7. 0 = face-on (front face directly toward camera),
+    /// π/2 = edge-on (the disc collapses to a vertical line from
+    /// the camera's POV — but with real 3D the cylinder cap edge
+    /// is still visible, no alpha gating needed).
+    ///
+    /// Curve is linear in `progress` rather than sine-warped: the
+    /// 2D `badge_scale`'s sine was a perceptual hack to fake the
+    /// "fast at edge-on, slow at face-on" feel a real rotating
+    /// object has under perspective projection. With actual
+    /// perspective the perceptual ease comes from the geometry,
+    /// so we don't need to bake it into the rotation curve too —
+    /// linear interpolation reads as physical motion.
+    pub(crate) fn badge_rotation_y(self) -> f32 {
+        use std::f32::consts::FRAC_PI_2;
+        match self {
+            Self::IntroTransitioning { progress } | Self::ReturnFromGame { progress } => {
+                // Same 20%-into-intro start as badge_scale so the
+                // intro choreography stays in lockstep with the
+                // legacy 2D path during the transition.
+                let p = ((progress - 0.2) / 0.8).clamp(0.0, 1.0);
+                (1.0 - p) * FRAC_PI_2
+            }
+            Self::AwaitingConnect => 0.0,
+            Self::ClosingToInGame { progress } => {
+                let p = (progress / 0.6).clamp(0.0, 1.0);
+                p * FRAC_PI_2
+            }
+        }
+    }
+
     /// Horizontal scale for the centre badge (QR card / error card).
     /// 0 = edge-on (invisible), 1 = face-on (full size). Sine curve
     /// so the spin reads as a coin tipping flat — slowest near
     /// edge-on where rotation rate looks fastest, fastest near
     /// face-on where it slows into the parked pose.
+    ///
+    /// Legacy 2D path; `badge_rotation_y` is the 3D replacement
+    /// (PLAN 10.7). Both coexist while the 3D path is still gated
+    /// behind the `LAUNCHER_3D_BADGE` env; once the 3D path is
+    /// the default this method goes away (10.7.7).
     pub(crate) fn badge_scale(self) -> f32 {
         use std::f32::consts::FRAC_PI_2;
         match self {
