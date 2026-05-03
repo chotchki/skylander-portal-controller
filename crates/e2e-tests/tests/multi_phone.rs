@@ -65,21 +65,35 @@ async fn concurrent_edits_both_phones() {
     p1.wait_for_portal(Duration::from_secs(10)).await.unwrap();
     p2.wait_for_portal(Duration::from_secs(10)).await.unwrap();
 
-    // P1 loads a figure into slot 1.
-    p1.tap_slot(1).await.unwrap();
-    p1.client.find_all(Locator::Css(".card")).await.unwrap()[0]
-        .clone()
-        .click()
-        .await
-        .unwrap();
+    // P1 places into the next empty slot (auto-picks slot 1).
+    p1.open_toy_box_lid().await.unwrap();
+    p1.place_first_figure().await.unwrap();
+    // Wait for slot 1 to settle on P1 before P2 acts so the next
+    // place auto-picks slot 2 (not slot 1 again).
+    p1.wait_until(Duration::from_secs(8), || async {
+        p1.slot_text(1)
+            .await
+            .map(|t| t != "empty" && t != "…")
+            .unwrap_or(false)
+    })
+    .await
+    .unwrap();
 
-    // P2 loads a different figure into slot 2.
-    p2.tap_slot(2).await.unwrap();
-    p2.client.find_all(Locator::Css(".card")).await.unwrap()[1]
-        .clone()
-        .click()
+    // P2 places — picks a different card (P1's first card now has
+    // the on-portal ribbon and would be rejected). Click the second
+    // non-`.scan-new` card; the auto-slot-pick lands on slot 2.
+    p2.open_toy_box_lid().await.unwrap();
+    let p2_cards = p2
+        .client
+        .find_all(Locator::Css(".fig-card-p4:not(.scan-new)"))
         .await
         .unwrap();
+    p2_cards[1].clone().click().await.unwrap();
+    let p2_place = p2
+        .wait_for(Locator::Css(".detail-btn-primary"), Duration::from_secs(5))
+        .await
+        .unwrap();
+    p2_place.click().await.unwrap();
 
     // Both phones should see both slots loaded via WS broadcast.
     for phone in [&p1, &p2] {
@@ -88,11 +102,11 @@ async fn concurrent_edits_both_phones() {
                 let s1 = phone.slot_text(1).await.unwrap_or_default();
                 let s2 = phone.slot_text(2).await.unwrap_or_default();
                 !s1.is_empty()
-                    && s1 != "Empty"
-                    && s1 != "Loading…"
+                    && s1 != "empty"
+                    && s1 != "…"
                     && !s2.is_empty()
-                    && s2 != "Empty"
-                    && s2 != "Loading…"
+                    && s2 != "empty"
+                    && s2 != "…"
             })
             .await
             .unwrap();
@@ -124,13 +138,13 @@ async fn third_connection_evicts_oldest() {
 
     // P1 should flip to the Kaos "taken over" screen.
     p1.wait_until(Duration::from_secs(10), || async {
-        p1.client.find(Locator::Css(".takeover")).await.is_ok()
+        p1.client.find(Locator::Css(".takeover-void")).await.is_ok()
     })
     .await
     .expect("P1 should see takeover screen");
 
     // P2 should be unaffected — still on the portal/game view.
-    let p2_takeover = p2.client.find(Locator::Css(".takeover")).await;
+    let p2_takeover = p2.client.find(Locator::Css(".takeover-void")).await;
     assert!(
         p2_takeover.is_err(),
         "P2 should NOT see the takeover screen"
@@ -238,7 +252,7 @@ async fn independent_profile_unlock() {
     // Use `wait_until` — the `ProfileChanged` broadcast is async.
     p1.wait_until(Duration::from_secs(5), || async {
         p1.client
-            .find(Locator::Css(".profile-chip"))
+            .find(Locator::Css(".header-identity .header-profile-name"))
             .await
             .ok()
             .map(|_| true)
@@ -248,7 +262,7 @@ async fn independent_profile_unlock() {
     .unwrap();
     p2.wait_until(Duration::from_secs(5), || async {
         p2.client
-            .find(Locator::Css(".profile-chip"))
+            .find(Locator::Css(".header-identity .header-profile-name"))
             .await
             .ok()
             .map(|_| true)
@@ -259,7 +273,7 @@ async fn independent_profile_unlock() {
 
     let chip1 = p1
         .client
-        .find(Locator::Css(".profile-chip"))
+        .find(Locator::Css(".header-identity .header-profile-name"))
         .await
         .unwrap()
         .text()
@@ -267,7 +281,7 @@ async fn independent_profile_unlock() {
         .unwrap();
     let chip2 = p2
         .client
-        .find(Locator::Css(".profile-chip"))
+        .find(Locator::Css(".header-identity .header-profile-name"))
         .await
         .unwrap()
         .text()
@@ -333,28 +347,31 @@ async fn ownership_pip_shows_correct_owner_per_slot() {
             .unwrap();
     }
 
-    // P1 (Alice) places into slot 1; P2 (Bob) places into slot 2.
-    let p1_slots = p1.client.find_all(Locator::Css(".p4-slot")).await.unwrap();
-    p1_slots[0].clone().click().await.unwrap();
-    p1.client
-        .find_all(Locator::Css(".fig-card-p4"))
-        .await
-        .unwrap()[0]
-        .clone()
-        .click()
-        .await
-        .unwrap();
+    // P1 (Alice) places into slot 1, then P2 (Bob) places into slot 2
+    // — sequential so the auto-slot-pick lands them in 1 + 2.
+    p1.open_toy_box_lid().await.unwrap();
+    p1.place_first_figure().await.unwrap();
+    p1.wait_until(Duration::from_secs(8), || async {
+        p1.slot_text(1)
+            .await
+            .map(|t| t != "empty" && t != "…")
+            .unwrap_or(false)
+    })
+    .await
+    .unwrap();
 
-    let p2_slots = p2.client.find_all(Locator::Css(".p4-slot")).await.unwrap();
-    p2_slots[1].clone().click().await.unwrap();
-    p2.client
-        .find_all(Locator::Css(".fig-card-p4"))
-        .await
-        .unwrap()[1]
-        .clone()
-        .click()
+    p2.open_toy_box_lid().await.unwrap();
+    let p2_cards = p2
+        .client
+        .find_all(Locator::Css(".fig-card-p4:not(.scan-new)"))
         .await
         .unwrap();
+    p2_cards[1].clone().click().await.unwrap();
+    let p2_place = p2
+        .wait_for(Locator::Css(".detail-btn-primary"), Duration::from_secs(5))
+        .await
+        .unwrap();
+    p2_place.click().await.unwrap();
 
     // Poll until both phones see both ownership plates settled (not pending).
     // The `--pending` class is stripped once the slot flips from Loading
@@ -482,28 +499,31 @@ async fn disconnect_ghosts_session_keeps_slots() {
             .unwrap();
     }
 
-    // Alice places in slot 1; Bob places in slot 2.
-    let p1_slots = p1.client.find_all(Locator::Css(".p4-slot")).await.unwrap();
-    p1_slots[0].clone().click().await.unwrap();
-    p1.client
-        .find_all(Locator::Css(".fig-card-p4"))
-        .await
-        .unwrap()[0]
-        .clone()
-        .click()
-        .await
-        .unwrap();
+    // Alice places into slot 1, then Bob places into slot 2 —
+    // sequential so the auto-slot-pick lands them in 1 + 2.
+    p1.open_toy_box_lid().await.unwrap();
+    p1.place_first_figure().await.unwrap();
+    p1.wait_until(Duration::from_secs(8), || async {
+        p1.slot_text(1)
+            .await
+            .map(|t| t != "empty" && t != "…")
+            .unwrap_or(false)
+    })
+    .await
+    .unwrap();
 
-    let p2_slots = p2.client.find_all(Locator::Css(".p4-slot")).await.unwrap();
-    p2_slots[1].clone().click().await.unwrap();
-    p2.client
-        .find_all(Locator::Css(".fig-card-p4"))
-        .await
-        .unwrap()[1]
-        .clone()
-        .click()
+    p2.open_toy_box_lid().await.unwrap();
+    let p2_cards = p2
+        .client
+        .find_all(Locator::Css(".fig-card-p4:not(.scan-new)"))
         .await
         .unwrap();
+    p2_cards[1].clone().click().await.unwrap();
+    let p2_place = p2
+        .wait_for(Locator::Css(".detail-btn-primary"), Duration::from_secs(5))
+        .await
+        .unwrap();
+    p2_place.click().await.unwrap();
 
     // Wait for both slots to settle Loaded on P2 (the witness).
     p2.wait_until(Duration::from_secs(10), || async {

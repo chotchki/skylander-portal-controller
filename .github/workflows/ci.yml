@@ -248,12 +248,17 @@ jobs:
       - name: cargo test connection_lost (chromedriver, mock driver)
         run: cargo test -p skylander-e2e-tests --test connection_lost -- --ignored --nocapture
 
-      # working_copies + regressions need a real `.sky` firmware pack
-      # to find figure cards (the CI lane stubs an empty
-      # dev-data/firmware-pack/, which is enough for smoke +
-      # connection_lost but not for tests that filter by figure name
-      # or count cards). Keep them local-only until CI gets a fixture-
-      # pack story (PLAN 10.3.6 follow-up).
+      # profiles uses inject_profile + PIN-pad keypress + asserts on
+      # game-card count — none of which need a real firmware pack.
+      - name: cargo test profiles (chromedriver, mock driver)
+        run: cargo test -p skylander-e2e-tests --test profiles -- --ignored --nocapture
+
+      # working_copies + regressions + multi_phone + screenshot_tour
+      # need a real `.sky` firmware pack to find figure cards (the CI
+      # lane stubs an empty dev-data/firmware-pack/, which is enough
+      # for smoke + connection_lost + profiles but not for tests that
+      # filter by figure name or count cards). Keep them local-only
+      # until CI gets a fixture-pack story (PLAN 10.3.6f).
 
       # hmac + shutdown don't actually use chromedriver (no Phone
       # instances) — they exercise raw HTTP against the spawned

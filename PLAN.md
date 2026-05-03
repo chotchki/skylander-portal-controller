@@ -572,20 +572,33 @@ suite green on macOS.
   post-Phase-4 SlotChanged → save chain) or the post-reload phone
   never re-handshakes the HMAC key cleanly. Needs deeper
   investigation against the live emit path.
-- [ ] 10.3.6c — **multi_phone.rs (6 tests).** Heaviest single
-  file. Three classes of update needed: (1) selector freshness for
-  `.profile-chip` → `.header-identity .header-profile-name` etc.,
-  (2) toy-box lid + search dance same as 10.3.6a, (3) verify
-  `wait_for_session_id` timing assumptions match the ghost-session
-  lifecycle — the parallel-run failures saw "phone never received
-  Event::Welcome" within 5 s, which may be real WS handshake
-  drift or just resource contention from intra-file parallelism
-  (cap with `--test-threads=1` while iterating).
-- [ ] 10.3.6d — **profiles.rs.** Full rewrite. The form-based
-  create flow it walks no longer exists; profile picker is now a
-  wizard + PIN-pad. Either rewrite to walk the wizard or replace
-  with a coarser "profile picker → PIN entry → game picker" smoke
-  that doesn't depend on the create flow specifics.
+- [x] 10.3.6c — All 6 multi_phone tests green (~45 s for the file
+  serial). `forced_eviction_cooldown` worked as-is once
+  BUILD_TOKEN was pinned. `independent_profile_unlock` +
+  `third_connection_evicts_oldest` were one-line selector swaps
+  (`.profile-chip` → `.header-identity .header-profile-name`,
+  `.takeover` → `.takeover-void`). The three "P1 places, P2
+  places" tests (`concurrent_edits`, `ownership_pip`,
+  `disconnect_ghosts`) needed the new place flow — rewritten with
+  P1 placing serially (waits for slot 1 loaded) before P2's
+  place picks `.fig-card-p4:not(.scan-new)[1]` (a different card
+  to avoid the on-portal short-circuit). Wall-clock acceptable:
+  the supposed Event::Welcome timing concern from the original
+  triage ran turned out to be Chrome-resource contention from
+  intra-file parallelism, not a real WS regression.
+- [x] 10.3.6d — Replaced `profile_create_and_unlock_lands_on_game_picker`
+  with `existing_profile_unlock_lands_on_game_picker` (~5 s). The
+  original walked the form-based create wizard which no longer
+  exists; the new test exercises the daily-use flow (inject
+  profile → tap card → tap 4 PIN keys → land on game picker).
+  PIN keypad uses `.pin-keypad-heraldic .pin-hkey` per the
+  current SPA; auto-submits on the 4th digit. The create-wizard
+  itself isn't covered by automation any more — `inject_profile`
+  + the wizard's own unit tests are sufficient given the
+  cost/benefit of automating a multi-step Konami-gated form.
+  Added to the CI lane (no fixture pack needed — uses
+  inject_profile + asserts on game-card count from the mock
+  driver's fixed 6-game enumeration).
 - [x] 10.3.6e — `screenshot_tour.rs` already used modern
   selectors + a custom `tap_via_pointer` helper (the tour predates
   the broader test drift). After the BUILD_TOKEN-pin fix landed

@@ -1,54 +1,72 @@
-//! End-to-end: profile picker → create profile → unlock → game picker.
+//! End-to-end: profile picker → PIN entry → game picker (PLAN 3.9 +
+//! 10.3.6d). The original Phase-3 test walked the in-SPA "create
+//! profile" wizard; that's now a multi-step Konami-gated flow whose
+//! steps don't add coverage we can't get more cheaply via the
+//! `inject_profile` test-hook. This test instead exercises the
+//! daily-use flow: an existing profile is on the picker, user taps it,
+//! enters PIN, lands on the game picker.
 //!
-//! This test drives the full UI (no test-hook bypass) to pin down the
-//! 3.9 flow. Prereqs: chromedriver + built phone SPA.
+//! Prereqs: chromedriver + built phone SPA. See
+//! `crates/e2e-tests/README.md`.
 
 use std::time::Duration;
 
 use fantoccini::Locator;
-use skylander_e2e_tests::{Phone, TestServer};
+use skylander_e2e_tests::{Phone, TestServer, inject_profile};
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver + built phone SPA"]
-async fn profile_create_and_unlock_lands_on_game_picker() {
+async fn existing_profile_unlock_lands_on_game_picker() {
     let server = TestServer::spawn().expect("spawn");
+    // Seed a profile via the test-hook so we don't have to drive the
+    // multi-step Konami-gated create wizard. PIN matches what we'll
+    // type into the keypad below.
+    inject_profile(&server.url, "TestKid", "1234", "#39d39f")
+        .await
+        .expect("inject profile");
+
     let phone_url = server.phone_url().await.unwrap();
     let phone = Phone::new(&phone_url, &server.chromedriver_url)
         .await
         .expect("connect phone");
 
-    // Should land on the ProfilePicker ("Welcome, portal master").
-    let welcome = phone
-        .wait_for(Locator::Css(".profile-picker h2"), Duration::from_secs(15))
+    // Land on the ProfilePicker — wait for the named profile card to
+    // populate after the async fetch_profiles roundtrip.
+    phone
+        .wait_for(Locator::Css(".profile-picker"), Duration::from_secs(15))
         .await
-        .expect("profile picker heading");
-    let txt = welcome.text().await.unwrap();
-    assert!(
-        txt.to_lowercase().contains("welcome") || txt.to_lowercase().contains("portal master"),
-        "unexpected heading: {txt:?}",
-    );
-
-    // Tap "+ Create profile".
-    let create_btn = phone
-        .wait_for(Locator::Css(".create-profile-btn"), Duration::from_secs(5))
+        .expect("profile picker");
+    phone
+        .wait_until(Duration::from_secs(8), || async {
+            phone
+                .client
+                .find(Locator::Css(".profile-card:not(.add)"))
+                .await
+                .is_ok()
+        })
         .await
-        .expect("create button");
-    create_btn.click().await.unwrap();
-
-    // Fill the form.
-    let name_input = phone
-        .wait_for(
-            Locator::Css(".create-profile-form input[type=text]"),
-            Duration::from_secs(5),
-        )
+        .expect("seeded profile card appears");
+    let card = phone
+        .client
+        .find(Locator::Css(".profile-card:not(.add)"))
         .await
         .unwrap();
-    name_input.send_keys("TestKid").await.unwrap();
+    card.click().await.unwrap();
 
-    // Tap digits 1,2,3,4 on the keypad.
+    // PIN keypad surfaces in the heraldic variant for the post-tap
+    // unlock prompt (`.pin-keypad-heraldic` wraps the digit buttons).
+    // Tap 1, 2, 3, 4 — pad auto-submits on the fourth keystroke.
+    phone
+        .wait_for(Locator::Css(".pin-keypad-heraldic"), Duration::from_secs(5))
+        .await
+        .expect("pin keypad");
     for d in ["1", "2", "3", "4"] {
+        // Heraldic keys use `.pin-hkey`; ghost + backspace are
+        // disabled so a positional/text match is enough. Use XPath
+        // because each `.pin-hkey` button renders the digit as its
+        // text content directly (no inner span to target by class).
         let xpath =
-            format!("//button[contains(@class,'pin-key') and normalize-space(text())='{d}']");
+            format!("//button[contains(@class,'pin-hkey') and normalize-space(text())='{d}']");
         let key = phone
             .client
             .find(Locator::XPath(&xpath))
@@ -57,62 +75,28 @@ async fn profile_create_and_unlock_lands_on_game_picker() {
         key.click().await.unwrap();
     }
 
-    // Submit create.
-    let create_submit = phone
-        .client
-        .find(Locator::Css(
-            ".create-profile-form .form-actions button.primary",
-        ))
-        .await
-        .unwrap();
-    create_submit.click().await.unwrap();
-
-    // Back on the grid. Wait for the profile card to appear.
+    // GamePicker should mount now that the unlock landed. The post-
+    // Phase-4 picker uses `.game-picker .game-card` (no `<h2>` —
+    // title is rendered through `<DisplayHeading>`); count cards as
+    // the structural marker matching `tests/smoke.rs`.
     phone
-        .wait_until(Duration::from_secs(5), || async {
-            phone
-                .client
-                .find(Locator::Css(".profile-card"))
-                .await
-                .is_ok()
-        })
+        .wait_for(
+            Locator::Css(".game-picker .game-card"),
+            Duration::from_secs(10),
+        )
         .await
-        .unwrap();
-
-    // Tap the profile to unlock.
-    let card = phone
+        .expect("game picker .game-card");
+    let cards = phone
         .client
-        .find(Locator::Css(".profile-card"))
+        .find_all(Locator::Css(".game-picker .game-card"))
         .await
         .unwrap();
-    card.click().await.unwrap();
-
-    // PIN entry screen → punch 1 2 3 4 again.
-    phone
-        .wait_for(Locator::Css(".pin-entry"), Duration::from_secs(5))
-        .await
-        .expect("pin entry view");
-    for d in ["1", "2", "3", "4"] {
-        let xpath = format!(
-            "//div[contains(@class,'pin-entry')]//button[contains(@class,'pin-key') and normalize-space(text())='{d}']"
-        );
-        let key = phone.client.find(Locator::XPath(&xpath)).await.unwrap();
-        key.click().await.unwrap();
-    }
-    let unlock_btn = phone
-        .client
-        .find(Locator::Css(".pin-entry .form-actions button.primary"))
-        .await
-        .unwrap();
-    unlock_btn.click().await.unwrap();
-
-    // Unlocked → GamePicker should render ("Pick a game").
-    let heading = phone
-        .wait_for(Locator::Css(".game-picker h2"), Duration::from_secs(10))
-        .await
-        .expect("game picker heading");
-    let text = heading.text().await.unwrap();
-    assert_eq!(text, "Pick a game");
+    assert_eq!(
+        cards.len(),
+        6,
+        "expected six Skylanders game cards in the picker, found {}",
+        cards.len()
+    );
 
     phone.close().await.unwrap();
 }
