@@ -175,7 +175,15 @@ jobs:
       - name: Build MSI with cargo-wix
         shell: pwsh
         run: |
-          $tag = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME -replace '^v','' } else { '0.0.0' }
+          # On a tag push GITHUB_REF_NAME is "v1.2.3"; strip the v.
+          # On workflow_dispatch it's the branch name ("main"), which
+          # cargo-wix can't parse as a semver — fall back to 0.0.0 so
+          # the dispatch dry-run still produces an MSI we can inspect.
+          $tag = if ($env:GITHUB_REF_NAME -match '^v\d') {
+            $env:GITHUB_REF_NAME -replace '^v',''
+          } else {
+            '0.0.0'
+          }
           $dataAbs = (Resolve-Path data).Path
           # cargo-wix consumes the [package.metadata.wix] block in
           # crates/server/Cargo.toml plus the wxs fragments listed
