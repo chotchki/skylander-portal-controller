@@ -882,15 +882,19 @@ or after, doesn't matter.
   reads on the 2D fallback. `badge_scale` survives until 10.7.7
   cleanup.
 
-- [ ] 10.7.4 — **Edge thickness + lighting:** the cylinder cap
-  geometry from 10.7.1 needs a non-zero z-extent so the edge-on
-  phase reads as a thin disc on its side rather than disappearing
-  (the whole reason the 2D hack needed an alpha gate). Add a
-  cheap directional light + simple Lambert diffuse so the disc
-  shades as it rotates — surface normal × light direction is
-  enough; no need for specular or shadow maps for a disc this
-  small. Edge gets the bezel's gold tint baked in so it reads as
-  the same material continuous around the front face.
+- [x] 10.7.4 — Cylinder-cap geometry + Lambert lighting landed.
+  One shader, three draw calls per frame branched on a `u_face`
+  uniform: front fan (textured QR, CCW winding, z=+0.04), back fan
+  (gold, **reversed angle step** so screen-space winding is CW from
+  +Z view — without this both fans would draw at θ=0 and the
+  no-depth-test pass would race for centre pixels), side-wall
+  TRIANGLE_STRIP cylinder (gold, radial outward normals).
+  Directional Lambert from `normalize(0.3, 0.5, 1.0)` with a 0.4
+  ambient floor; light direction is in view space (which here =
+  world space) so it sweeps across the side wall as the disc
+  rotates. Chris confirmed 2026-05-02: "coin was a good thickness"
+  — 8% diameter ratio reads as poker-chip / heavy-coin chunk
+  without overweighing the front face. 10.7.5 is the next decision.
 
 - [ ] 10.7.5 — **Composition decision:** the badge currently
   renders inside a gold bezel ring (egui-drawn) with a starfield

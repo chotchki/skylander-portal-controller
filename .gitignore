@@ -43,6 +43,8 @@ Thumbs.db
 # isolation: "worktree" is requested — each is its own git checkout
 # and shouldn't end up in the main repo.
 .claude/worktrees/
+# Local Claude Code session state (ScheduleWakeup lock, etc.)
+.claude/*.lock
 
 # Standalone tool crates and trunk output
 /tools/*/target/

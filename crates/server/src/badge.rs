@@ -6,115 +6,218 @@
 //! same plumbing the vortex backdrop already uses
 //! (`crates/server/src/vortex.rs`).
 //!
-//! This file is the **10.7.1 spike**: static (or trivially-rotated)
-//! solid-colour disc, no texture, no edge thickness, no lighting.
-//! The shape proves out three load-bearing assumptions before the
-//! richer 10.7.2–10.7.7 layers land on top:
+//! 10.7.1 (spike): solid-colour textureless disc proved the GL +
+//! `egui::PaintCallback` pipeline.
 //!
-//!  1. A second `ShaderRig`-shaped GL pipeline can coexist with the
-//!     vortex's `ShaderRig` inside `egui_glow`'s shared GL context,
-//!     dispatched from a separate `egui::PaintCallback` per frame.
-//!  2. A perspective-projected disc renders cleanly inside the
-//!     badge's existing `egui::Rect` (the same square the legacy
-//!     `qr_card_flip` allocates), with NDC mapping that doesn't
-//!     require touching egui's layout.
-//!  3. The disc's Y-axis rotation reads as physical motion (front
-//!     face → edge → back face → edge → front face) rather than a
-//!     2D squish — this is the visual contract the rest of 10.7
-//!     builds on.
+//! 10.7.2: front-face QR texture sample.
+//!
+//! 10.7.3: rotation driven by `LaunchPhase::badge_rotation_y`.
+//!
+//! 10.7.4 (this iteration): cylinder-cap geometry so the disc has
+//! visible thickness during the edge-on phase, and directional
+//! Lambert lighting so the rotation is shaded as a physical object
+//! instead of reading as a flat decal that vanishes at 90°. Three
+//! draw calls per frame share one shader program, dispatched via the
+//! `u_face` uniform:
+//!
+//!   - **Face 0 — front:** textured QR fan at z = +HALF_THICKNESS,
+//!     standard CCW winding so the front face is `front` to GL when
+//!     the +Z side of the disc faces the camera.
+//!   - **Face 1 — back:** solid gold fan at z = -HALF_THICKNESS,
+//!     **reversed** rim winding (negative angle step) so the back
+//!     face is `front` to GL only when the disc has rotated past
+//!     edge-on and the original back side is now facing the camera.
+//!     Without the reversal both fans would draw at θ=0 and the
+//!     no-depth-test paint would race for the centre pixels.
+//!   - **Face 2 — side wall:** gold cylinder triangle-strip
+//!     connecting the two rims. Outward normal is radial in the
+//!     XY plane, so the lit gold reads as a coin's milled edge.
+//!
+//! The `front` vs `back` selection above is a normal-direction
+//! statement: GL's `CULL_FACE BACK` actually keys off the projected
+//! winding, but with `HALF_THICKNESS` small relative to
+//! `CAM_DISTANCE` the projection preserves the object-space winding
+//! of each face, so the two are interchangeable here.
 
 use std::sync::{Arc, Mutex};
 
 use egui::Rect;
 use glow::HasContext;
 
-/// Vertex shader: builds a 64-segment disc procedurally from
-/// `gl_VertexID` (no VBO geometry needed — pure shader-side fan).
+/// Number of rim segments in the disc fan / cylinder strip. Mirrors
+/// `SEGMENTS` in the GLSL source — keep in sync. 64 reads as smooth
+/// at the badge's typical on-screen size (~`CARD_SIZE` of
+/// `crate::ui::main_screen`); polygon-vs-circle gap at the rim is
+/// below 1 px when the badge fills the card.
 ///
-/// Object space is a unit disc in the XY plane, centered at origin.
-/// We rotate around the Y axis (the "coin tip" axis) by `u_rotation_y`,
-/// translate the camera back along Z, and project with a hardcoded
-/// 60° FOV perspective. Aspect is locked to 1.0 because the badge's
-/// rect is always square (`CARD_SIZE × CARD_SIZE` per
-/// `main_screen.rs`).
+/// Disc thickness is set in GLSL as `HALF_THICKNESS = 0.04` (8 %
+/// of the disc's diameter — coin / poker-chip aspect). Not mirrored
+/// in Rust because no Rust code consumes it.
+const SEGMENTS: i32 = 64;
+
+/// Vertex shader: branches on `u_face` to emit one of three pieces
+/// of geometry, all rotated together around the Y axis by
+/// `u_rotation_y` and projected with a shared 60° FOV perspective.
+/// Object space is a unit disc in the XY plane centred at origin
+/// (Z is thickness). Geometry is generated procedurally from
+/// `gl_VertexID` — no VBO needed.
 ///
-/// Vertex layout (TRIANGLE_FAN draw mode, vertex count = SEGMENTS + 2):
-///   - vid 0: center (0, 0, 0)
-///   - vid 1..=SEGMENTS: rim at angle (vid-1) * 2π/SEGMENTS
-///   - vid SEGMENTS+1: same as vid 1 (closes the fan)
+/// Faces:
+///   - **0 (front):** TRIANGLE_FAN, SEGMENTS+2 verts, z=+HALF_THICKNESS,
+///     standard CCW rim. Carries the QR texture.
+///   - **1 (back):** TRIANGLE_FAN, SEGMENTS+2 verts, z=-HALF_THICKNESS,
+///     reversed rim (negative angle step) so screen-space winding
+///     comes out CW when the disc's +Z side faces camera — GL's
+///     CULL_FACE BACK keeps it hidden until rotation flips the disc
+///     past edge-on. Solid gold.
+///   - **2 (side wall):** TRIANGLE_STRIP, 2*(SEGMENTS+1) verts,
+///     alternating top/bottom rim. Outward normal radial in XY.
+///     Solid gold; visible as the disc rotates through edge-on.
+///
+/// Per-vertex normal in object space is then rotated through the
+/// same Y-rotation matrix as the position, and passed to the
+/// fragment shader for Lambert shading.
 const VS_SRC: &str = r#"#version 330
 const int SEGMENTS = 64;
 const float PI = 3.14159265359;
+const float HALF_THICKNESS = 0.04;
 
 uniform float u_rotation_y;
+uniform int u_face;
 
 out vec3 v_obj;
 out vec2 v_uv;
+out vec3 v_normal_view;
 
 void main() {
     int vid = gl_VertexID;
     vec3 obj;
-    if (vid == 0) {
-        obj = vec3(0.0, 0.0, 0.0);
-    } else {
-        int rim_idx = (vid - 1) % SEGMENTS;
-        float angle = 2.0 * PI * float(rim_idx) / float(SEGMENTS);
-        obj = vec3(cos(angle), sin(angle), 0.0);
-    }
-    v_obj = obj;
+    vec3 obj_normal;
 
-    // Map object-space xy ∈ [-1, 1] to UV ∈ [0, 1] for sampling
-    // the QR texture. The QR is rendered as a square with the
-    // round disc inscribed (corners are transparent), so this
-    // mapping picks up the disc's pixels exactly. Flip Y because
-    // GL textures origin at bottom-left, our QR raster origin is
-    // top-left.
+    if (u_face == 0) {
+        // Front face fan: vid 0 = centre, vid 1..=SEGMENTS = rim,
+        // vid SEGMENTS+1 = duplicate first rim vert (closes the fan).
+        if (vid == 0) {
+            obj = vec3(0.0, 0.0, HALF_THICKNESS);
+        } else {
+            int rim_idx = (vid - 1) % SEGMENTS;
+            float angle = 2.0 * PI * float(rim_idx) / float(SEGMENTS);
+            obj = vec3(cos(angle), sin(angle), HALF_THICKNESS);
+        }
+        obj_normal = vec3(0.0, 0.0, 1.0);
+    } else if (u_face == 1) {
+        // Back face fan: same vert layout, z negated, AND angle
+        // negated so the rim winds CW from +Z view. Without the
+        // angle flip both fans would have CCW screen-space winding
+        // at θ=0 and CULL_FACE BACK couldn't hide the back face
+        // behind the front (no depth test in this pass).
+        if (vid == 0) {
+            obj = vec3(0.0, 0.0, -HALF_THICKNESS);
+        } else {
+            int rim_idx = (vid - 1) % SEGMENTS;
+            float angle = -2.0 * PI * float(rim_idx) / float(SEGMENTS);
+            obj = vec3(cos(angle), sin(angle), -HALF_THICKNESS);
+        }
+        obj_normal = vec3(0.0, 0.0, -1.0);
+    } else {
+        // Side-wall strip: 2*(SEGMENTS+1) verts; even vid = top
+        // rim (+H), odd vid = bottom rim (-H), rim_idx = vid/2.
+        // The closing vert at rim_idx == SEGMENTS wraps back to
+        // angle 0 so the strip seams cleanly. GL_TRIANGLE_STRIP
+        // alternates triangle orientation per vert; the resulting
+        // outward normal of each tri is radial (+XY plane), which
+        // is what we compute below.
+        int rim_idx = vid / 2;
+        float z_sign = (vid % 2 == 0) ? 1.0 : -1.0;
+        float angle = 2.0 * PI * float(rim_idx) / float(SEGMENTS);
+        float ca = cos(angle);
+        float sa = sin(angle);
+        obj = vec3(ca, sa, z_sign * HALF_THICKNESS);
+        obj_normal = vec3(ca, sa, 0.0);
+    }
+
+    v_obj = obj;
+    // Front-face QR sample maps obj.xy ∈ [-1,1] to UV ∈ [0,1] with
+    // V flipped for GL's bottom-left texture origin. Other faces
+    // ignore v_uv (they use solid material) so the back-face's
+    // negative-angle path can leave this unconditional.
     v_uv = vec2(obj.x * 0.5 + 0.5, 1.0 - (obj.y * 0.5 + 0.5));
 
-    // Rotate around Y axis. With obj.z = 0 the math reduces to:
-    //   view.x = cos(theta) * obj.x
-    //   view.z = -sin(theta) * obj.x
-    //   view.y unchanged
+    // Y-axis rotation applied to position. Reduces to the
+    // 10.7.1/10.7.2 form when obj.z = 0; the +obj.z * sin term
+    // is what makes the side wall and back face translate
+    // correctly as the disc tips.
     float c = cos(u_rotation_y);
     float s = sin(u_rotation_y);
-    vec3 view = vec3(c * obj.x, obj.y, -s * obj.x);
+    vec3 view = vec3(
+        c * obj.x + s * obj.z,
+        obj.y,
+        -s * obj.x + c * obj.z
+    );
 
-    // Camera at +Z looking down -Z. Push the disc back so it's in
-    // front of the camera at view.z = -CAM_DISTANCE.
+    // Same rotation applied to the normal. For a rigid Y rotation
+    // (no scale, no shear) the normal matrix is just the rotation
+    // itself, so we don't need a transpose-inverse. View space
+    // here = world space — there's no separate model/view split,
+    // the camera is fixed at +Z looking down -Z.
+    v_normal_view = vec3(
+        c * obj_normal.x + s * obj_normal.z,
+        obj_normal.y,
+        -s * obj_normal.x + c * obj_normal.z
+    );
+
     const float CAM_DISTANCE = 2.5;
     view.z -= CAM_DISTANCE;
 
-    // Hardcoded 60° vertical FOV perspective. f = 1/tan(fov/2) ≈
-    // 1.732 for 60°. Aspect = 1.0 (badge rect is square).
     const float F = 1.732;
     gl_Position = vec4(view.x * F, view.y * F, view.z, -view.z);
 }
 "#;
 
-/// Fragment shader: sample the QR texture on the disc's front face.
-/// The QR raster (rendered by `crate::round_qr::render`) already
-/// has the round shape baked in — the corners outside the
-/// inscribed circle are transparent — so a straight texture
-/// sample at the polygon-projected UV gives the right pixels for
-/// the disc surface, including the bezel ring drawn around the
-/// QR data.
+/// Fragment shader: per-face material × Lambert-diffuse intensity.
+/// Light is a hardcoded directional source from upper-right and
+/// slightly toward camera (`normalize(0.3, 0.5, 1.0)`) so the
+/// face-on pose (normal = +Z) gets the brightest reading and the
+/// edge-on side wall picks up a moving highlight as the disc
+/// rotates. Ambient term keeps the unlit side legible — without it
+/// the back face would go fully black at θ=π and read as a hole.
 const FS_SRC: &str = r#"#version 330
 in vec3 v_obj;
 in vec2 v_uv;
+in vec3 v_normal_view;
 
 uniform sampler2D u_qr;
+uniform int u_face;
 
 out vec4 frag_color;
 
+const vec3 LIGHT_DIR = normalize(vec3(0.3, 0.5, 1.0));
+const float AMBIENT = 0.4;
+// Skylanders-y warm gold for the back face + milled edge. Matches
+// the bezel ring baked into the QR texture closely enough that the
+// disc reads as one material when rotating between front and back.
+const vec3 GOLD = vec3(0.82, 0.62, 0.20);
+
 void main() {
-    vec4 c = texture(u_qr, v_uv);
-    // Drop pixels outside the analytic disc. The QR raster's
-    // corners are transparent so this is mostly belt-and-
-    // suspenders, but the polygon-vs-circle gap on a 64-gon at
-    // the edge can pull in a sliver of corner pixel near the
-    // 22.5° spokes.
-    if (length(v_obj.xy) > 1.0) discard;
-    frag_color = c;
+    float lambert = max(0.0, dot(normalize(v_normal_view), LIGHT_DIR));
+    float intensity = AMBIENT + (1.0 - AMBIENT) * lambert;
+
+    if (u_face == 0) {
+        // Front face: QR texture, with the analytic disc clip kept
+        // as belt-and-suspenders against the polygon-vs-circle
+        // sliver at the 64-gon rim spokes. (See 10.7.2 note.)
+        vec4 c = texture(u_qr, v_uv);
+        if (length(v_obj.xy) > 1.0) discard;
+        frag_color = vec4(c.rgb * intensity, c.a);
+    } else if (u_face == 1) {
+        // Back face: solid lit gold. Same disc clip.
+        if (length(v_obj.xy) > 1.0) discard;
+        frag_color = vec4(GOLD * intensity, 1.0);
+    } else {
+        // Side wall: solid lit gold. No disc clip — the wall lives
+        // exactly on the unit cylinder, no overshoot to trim.
+        frag_color = vec4(GOLD * intensity, 1.0);
+    }
 }
 "#;
 
@@ -124,15 +227,16 @@ void main() {
 /// every frame; dropped in `on_exit`.
 ///
 /// Owns the QR texture too. The same RGBA bytes that power the
-/// egui-side `qr_texture` (via `main_screen::render_qr_texture`)
-/// also get uploaded to a GL texture here, so the disc's front face
-/// renders the round QR pixels at-source rather than re-rasterising.
+/// egui-side `qr_texture` (via `main_screen::render_qr_pixels`) get
+/// uploaded to a GL texture here, so the disc's front face renders
+/// the round QR pixels at-source rather than re-rasterising.
 pub struct BadgeRig {
     program: glow::Program,
     vao: glow::VertexArray,
     qr_texture: glow::Texture,
     u_rotation_y: Option<glow::UniformLocation>,
     u_qr: Option<glow::UniformLocation>,
+    u_face: Option<glow::UniformLocation>,
 }
 
 impl BadgeRig {
@@ -165,21 +269,10 @@ impl BadgeRig {
             gl.delete_shader(vs);
             gl.delete_shader(fs);
 
-            // Empty VAO — the vertex shader generates positions from
-            // `gl_VertexID`, no buffer needed. We still need a bound
-            // VAO for the draw call to be legal in core-profile GL.
             let vao = gl
                 .create_vertex_array()
                 .map_err(|e| format!("badge create_vao: {e}"))?;
 
-            // Upload the QR PNG bytes as a GL texture. RGBA8, no
-            // mipmaps (the disc fills ~80 % of the badge rect at
-            // face-on; minification would only happen at extreme
-            // edge-on poses where the texture is barely visible).
-            // LINEAR min/mag filter so the rotation reads smoothly
-            // without crawling pixel artifacts on the QR's cell
-            // boundaries — NEAREST would alias as the disc
-            // sub-rotates per frame.
             let qr_texture = gl
                 .create_texture()
                 .map_err(|e| format!("badge create_texture: {e}"))?;
@@ -220,6 +313,7 @@ impl BadgeRig {
             Ok(Self {
                 u_rotation_y: gl.get_uniform_location(program, "u_rotation_y"),
                 u_qr: gl.get_uniform_location(program, "u_qr"),
+                u_face: gl.get_uniform_location(program, "u_face"),
                 program,
                 vao,
                 qr_texture,
@@ -235,20 +329,6 @@ impl BadgeRig {
                 viewport_px[2],
                 viewport_px[3],
             );
-            // Spike state set: alpha-blend so the surrounding egui
-            // pixels don't get clobbered if the disc doesn't fill
-            // the viewport (rotation pose dependent). Disable
-            // depth-test (no other 3D in the badge rect to sort
-            // against). Enable face-cull so back-of-disc doesn't
-            // draw — we'll want this anyway for 10.7.4's lit
-            // cylinder. Vortex uses `ONE / ONE_MINUS_SRC_ALPHA`
-            // (premultiplied); we match for consistency with the
-            // rest of the launcher's GL state convention. The QR
-            // PNG is straight (non-premultiplied) sRGB, so we
-            // emit straight alpha and let GL premultiply via
-            // SRC_ALPHA blending instead — matches the egui-side
-            // texture upload's NEAREST + Color32::from_rgba_unmultiplied
-            // path's expectations.
             gl.enable(glow::BLEND);
             gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
             gl.disable(glow::DEPTH_TEST);
@@ -258,25 +338,28 @@ impl BadgeRig {
             gl.use_program(Some(self.program));
             gl.uniform_1_f32(self.u_rotation_y.as_ref(), rotation_y);
 
-            // Bind QR texture to texture unit 0 + tell the sampler
-            // uniform to read from it.
             gl.active_texture(glow::TEXTURE0);
             gl.bind_texture(glow::TEXTURE_2D, Some(self.qr_texture));
             gl.uniform_1_i32(self.u_qr.as_ref(), 0);
 
             gl.bind_vertex_array(Some(self.vao));
-            // SEGMENTS + 2 = 66 vertices (center + 64 rim + closing
-            // duplicate). TRIANGLE_FAN consumes them as 64 triangles
-            // sharing the centre vertex.
-            gl.draw_arrays(glow::TRIANGLE_FAN, 0, 66);
+
+            // Front face fan (textured QR).
+            gl.uniform_1_i32(self.u_face.as_ref(), 0);
+            gl.draw_arrays(glow::TRIANGLE_FAN, 0, SEGMENTS + 2);
+
+            // Back face fan (gold).
+            gl.uniform_1_i32(self.u_face.as_ref(), 1);
+            gl.draw_arrays(glow::TRIANGLE_FAN, 0, SEGMENTS + 2);
+
+            // Side-wall cylinder strip (gold).
+            gl.uniform_1_i32(self.u_face.as_ref(), 2);
+            gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 2 * (SEGMENTS + 1));
+
             gl.bind_vertex_array(None);
             gl.bind_texture(glow::TEXTURE_2D, None);
             gl.use_program(None);
 
-            // Reset state egui's renderer assumes — it doesn't expect
-            // CULL_FACE on coming back to the painter pass. Leave
-            // BLEND on (egui wants it). Mirror what vortex.rs does
-            // implicitly by not touching state egui owns.
             gl.disable(glow::CULL_FACE);
         }
     }
