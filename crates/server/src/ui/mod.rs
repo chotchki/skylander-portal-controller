@@ -615,7 +615,13 @@ impl eframe::App for LauncherApp {
                     self.render_main(ui, ctx, &status_snapshot, launch_phase);
                 }
                 LauncherScreen::Crashed { message } => {
-                    crashed::render(ui, &self.status, message, screen_intro);
+                    crashed::render(
+                        ui,
+                        &self.status,
+                        self.badge_rig.clone(),
+                        message,
+                        screen_intro,
+                    );
                 }
                 LauncherScreen::Farewell => {
                     // Render the farewell badge IMMEDIATELY on screen
@@ -639,12 +645,19 @@ impl eframe::App for LauncherApp {
                     farewell::render(
                         ui,
                         ctx,
+                        self.badge_rig.clone(),
                         &mut self.farewell_started_at,
                         launch_phase::ScreenIntro::landed(),
                     );
                 }
                 LauncherScreen::ServerError { message } => {
-                    server_error::render(ui, ctx, message, screen_intro);
+                    server_error::render(
+                        ui,
+                        ctx,
+                        self.badge_rig.clone(),
+                        message,
+                        screen_intro,
+                    );
                 }
             }
         });

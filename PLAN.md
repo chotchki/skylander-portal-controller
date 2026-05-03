@@ -1016,19 +1016,28 @@ or after, doesn't matter.
   instead of leaving them as full-opacity orbiting dots. Chris
   confirmed 2026-05-03: "looked good".
 
-- [ ] 10.7.10 — **Port back-face screens (Crashed / Farewell /
-  ServerError) to the 3D badge:** these still render via the
-  2D `paint_centered_back_card` → `paint_titled_card` path
-  because the 3D wiring only landed on Main. Result is the
-  Goodbye / crash / server-error screens read in a different
-  visual language than the launcher's QR/back-face flow now
-  that Main is fully 3D. Replace each screen's
-  `paint_centered_back_card` call with a 3D equivalent that
-  binds the matching `BackFace` variant's texture
-  (`Farewell`, `Crashed`, `ServerError` are already in the
-  `BadgeRig` texture array). Chris flagged 2026-05-03:
-  "the goodbye screen didn't look the same so the changes
-  probably need to be woven into each screen."
+- [x] 10.7.10 — Crashed / Farewell / ServerError now render
+  through the 3D badge. New
+  `paint_centered_3d_back_card(ui, back_face, badge_rig,
+  scale, alpha)` helper allocates the same `CARD_SIZE` square
+  the legacy 2D path used and drives it through the existing
+  `BadgeRig::paint` with the matching `BackFace` variant's
+  texture bound + `apply_texture_spec=true` so the gold-on-
+  blue title catches the same Blinn-Phong sheen as the
+  surrounding ring/torus. Each screen's render fn now takes
+  `badge_rig: Arc<Mutex<Option<BadgeRig>>>` and the dispatcher
+  in `mod.rs` clones it through; `BackFace::Farewell.lines()`
+  updated from `["GOODBYE"]` → `["FAREWELL", "PORTAL",
+  "MASTER"]` to keep the legacy farewell copy. Farewell's
+  breathe pulse multiplies into the single `u_scale`
+  uniform (3D rotation handles the foreshortening, no
+  separate horizontal/vertical squash needed). Big code
+  cleanup followed: dropped the entire 2D back-card surface
+  — `paint_centered_back_card`, `paint_titled_card`,
+  `paint_bezel`, `paint_radial_gradient_disc`, `lerp_color`,
+  `BEZEL_RING_PX`, `SCREEN_RIM_PX` — all dead now that no
+  call site uses the 2D path. `main_screen.rs` shrank by
+  ~245 lines. ChrisCheck 2026-05-03: "looked good".
 
 - [x] 10.7.9 — Not actually a leak; in-game surface was burning
   60fps cycles on an empty transparent panel. Diagnostic log

@@ -49,18 +49,12 @@ const ORBIT_SPEED: f32 = 0.08;
 /// after Chris noted the dark inner ring was out of proportion with
 /// the gold on a 420px bezel — at 14px the gold read as thinner than
 /// the combined dark (GOLD_INK inset + SF_3 rim) inside it.
-const BEZEL_RING_PX: f32 = 24.0;
-
-/// Visible thickness of the dark "screen bezel" between the gold ring
-/// and the QR/text content. Matches the look of a recessed monitor
-/// screen sitting inside a gold frame — the screen rim is a darker
-/// inner ring that frames the content. Total inset from the bezel
-/// rect to the QR texture / text is `BEZEL_RING_PX + SCREEN_RIM_PX`.
-/// Bounced 8→3→8→14 on 2026-04-19: 14 finally gives the dark border
-/// enough screen presence that the QR doesn't read as kissing the
-/// gold. Gold ring (24px) still dominates the dark (14px) ~1.7:1,
-/// matching the phone pip's gold-dominant proportion.
-const SCREEN_RIM_PX: f32 = 14.0;
+// Removed at PLAN 10.7.10 along with the rest of the 2D back-card
+// surface: BEZEL_RING_PX / SCREEN_RIM_PX were the inset distances
+// the now-deleted `paint_titled_card` used to lay out the SF_3
+// "monitor screen" ring inside the gold bezel disc. The 3D badge
+// has its own analytic disc geometry (QR_RADIUS / OUTER_RADIUS in
+// the shader) and doesn't need these.
 
 /// Width (in QR modules) of the clear quiet-zone ring between the QR
 /// data and the surrounding circular noise field. Spike on 2026-04-19
@@ -317,7 +311,10 @@ impl BackFace {
             BackFace::MaxPlayers => &["PORTAL", "IS", "FULL"],
             BackFace::Loading => &["LOADING"],
             BackFace::Switching => &["SWITCHING", "GAMES"],
-            BackFace::Farewell => &["GOODBYE"],
+            // Three lines (heraldic farewell rhythm) — matches the
+            // navigation-doc spec §3.5 and the legacy 2D farewell
+            // copy that PLAN 4.19.14 landed on.
+            BackFace::Farewell => &["FAREWELL", "PORTAL", "MASTER"],
             BackFace::Crashed => &["SOMETHING", "WENT", "WRONG"],
             BackFace::ServerError => &["SERVER", "FAILED", "TO START"],
         }
@@ -446,255 +443,14 @@ fn qr_card_flip(
 // back, prefer GL geometry attached to `BadgeRig` over re-introducing
 // 2D egui paint — keeps the disc + halo lit by the same light source.
 
-/// Paint the circular gold bezel — matches the phone SPA's `.bezel-ring`
-/// (`phone/assets/app.css` line 547). The phone is the source of truth
-/// for the design language; the launcher mirrors it so the TV and
-/// phone read as one product.
-///
-/// Phone CSS recipe:
-/// ```css
-/// background: radial-gradient(circle at 30% 25%,
-///     var(--gb), var(--g) 22%, var(--gm) 55%, var(--gs) 100%);
-/// box-shadow:
-///     inset 0 0 0 2px var(--gi),                  /* dark inner border */
-///     inset 0 3px 4px rgba(255,255,255,0.3),      /* top white highlight */
-///     inset 0 -3px 4px rgba(0,0,0,0.5),           /* bottom dark shadow */
-///     0 0 0 1px #000,                             /* outer black border */
-///     0 4px 10px rgba(0,0,0,0.6);                 /* drop shadow */
-/// ```
-///
-/// We approximate in egui as:
-///   1. Halo glow (4.19.7).
-///   2. 4-stop radial gradient disc with the highlight offset to
-///      top-left — gives the embossed-metal look the phone has.
-///   3. Inset top white highlight (thin bright crescent at the top
-///      inner edge).
-///   4. Inset bottom dark shadow (thin dark crescent at the bottom
-///      inner edge).
-///   5. Inner GOLD_INK ring (the inset 2px dark border).
-///   6. Outer dark border (the 1px black halo around the whole disc).
-///
-/// Note for future bezel consumers: this is a *filled disc*, not a
-/// ring. If you call `paint_bezel` and then paint nothing on top, you
-/// get a solid gold circle. To make a ring visible, paint your screen
-/// content (SF_3 / SF_1 / texture) inset enough that the gold shows
-/// around it — see `paint_qr_front` for the pattern.
-fn paint_bezel(painter: &egui::Painter, rect: egui::Rect, alpha: f32) {
-    if alpha <= 0.001 {
-        return;
-    }
-    let center = rect.center();
-    let outer_r = rect.width().min(rect.height()) / 2.0;
 
-    // 1. Halo glow — soft gold radial behind the disc.
-    crate::vortex::paint_radial_ellipse(
-        painter,
-        center,
-        outer_r * 1.7,
-        outer_r * 1.7,
-        with_alpha(
-            egui::Color32::from_rgba_unmultiplied(
-                palette::GOLD_BRIGHT.r(),
-                palette::GOLD_BRIGHT.g(),
-                palette::GOLD_BRIGHT.b(),
-                55,
-            ),
-            alpha,
-        ),
-    );
-
-    // 2. 4-stop radial gradient disc, highlight offset to (30%, 25%)
-    // of the bounding rect — matches the phone CSS exactly. The
-    // highlight position simulates a light source above-and-left of
-    // the bezel; without the offset the gradient looks flat.
-    let highlight_offset = egui::vec2(-0.4 * outer_r, -0.5 * outer_r);
-    paint_radial_gradient_disc(
-        painter,
-        center,
-        outer_r,
-        center + highlight_offset,
-        &[
-            (0.00, with_alpha(palette::GOLD_BRIGHT, alpha)),
-            (0.22, with_alpha(palette::GOLD, alpha)),
-            (0.55, with_alpha(palette::GOLD_MID, alpha)),
-            (1.00, with_alpha(palette::GOLD_SHADOW, alpha)),
-        ],
-    );
-
-    // 3. Inset top highlight — thin crescent of white at the top
-    // inner edge (the phone's `inset 0 3px 4px rgba(255,255,255,0.3)`).
-    // We approximate as a stroke just inside the rim, top-half only,
-    // by stacking two strokes with progressively tighter alpha and
-    // smaller radii.
-    let highlight = with_alpha(
-        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 76),
-        alpha,
-    );
-    painter.circle_stroke(
-        center - egui::vec2(0.0, 1.0),
-        outer_r - 2.0,
-        egui::Stroke::new(2.0, highlight),
-    );
-
-    // 4. Inset bottom shadow — same trick, dark crescent at the
-    // bottom inner edge.
-    let shadow = with_alpha(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 127), alpha);
-    painter.circle_stroke(
-        center + egui::vec2(0.0, 1.0),
-        outer_r - 2.0,
-        egui::Stroke::new(2.0, shadow),
-    );
-
-    // 5. Inner dark ring — the phone's `inset 0 0 0 2px var(--gi)`,
-    // a thin GOLD_INK band just inside the rim that frames the gold.
-    painter.circle_stroke(
-        center,
-        outer_r - 1.0,
-        egui::Stroke::new(2.0, with_alpha(palette::GOLD_INK, alpha)),
-    );
-
-    // 6. Outer black border — the phone's `0 0 0 1px #000`, a 1px
-    // black halo around the whole disc separating bezel from sky.
-    painter.circle_stroke(
-        center,
-        outer_r + 0.5,
-        egui::Stroke::new(1.0, with_alpha(egui::Color32::BLACK, alpha)),
-    );
-}
-
-/// Paint a filled disc with a multi-stop RADIAL colour gradient
-/// emanating from `highlight_center`. `stops` is `(distance_t, color)`
-/// pairs where `distance_t` is normalised against the maximum distance
-/// from `highlight_center` to any point on the disc rim — so `t=0`
-/// is at the highlight, `t=1` is at the farthest rim point.
-///
-/// Implementation: a triangle fan from `highlight_center` plus a ring
-/// of internal "rib" vertices to densify the mesh. Each vertex is
-/// coloured by interpolating the stops at its `t = distance / max_d`.
-/// Without rib vertices the gradient steps would be visible as
-/// straight lines from the highlight outward; with them the mesh has
-/// enough density to read as smooth.
-///
-/// The disc rim is approximated by 96 segments (slightly higher than
-/// the linear gradient's 64 — the offset highlight makes any flat
-/// edges more obvious).
-///
-/// **Stops MUST be sorted by `distance_t` ascending.** No bounds
-/// checking — internal use only.
-fn paint_radial_gradient_disc(
-    painter: &egui::Painter,
-    center: egui::Pos2,
-    radius: f32,
-    highlight_center: egui::Pos2,
-    stops: &[(f32, egui::Color32)],
-) {
-    use egui::epaint::{Mesh, Vertex, WHITE_UV};
-
-    let segments: usize = 96;
-    let rings: usize = 8; // intermediate radial rings for smoothness
-    let mut mesh = Mesh::default();
-
-    // Compute the maximum distance from highlight_center to any rim
-    // point. Used to normalise distances into the [0, 1] stop range.
-    let highlight_to_disc = highlight_center - center;
-    let h_dist = highlight_to_disc.length();
-    let max_d = radius + h_dist;
-
-    let color_at = |t: f32| -> egui::Color32 {
-        let t = t.clamp(0.0, 1.0);
-        for w in stops.windows(2) {
-            let (t0, c0) = w[0];
-            let (t1, c1) = w[1];
-            if t <= t1 {
-                let span = (t1 - t0).max(1e-6);
-                let local = ((t - t0) / span).clamp(0.0, 1.0);
-                return lerp_color(c0, c1, local);
-            }
-        }
-        stops.last().unwrap().1
-    };
-
-    let push_vertex = |mesh: &mut Mesh, pos: egui::Pos2| {
-        let d = (pos - highlight_center).length();
-        let t = (d / max_d).clamp(0.0, 1.0);
-        mesh.vertices.push(Vertex {
-            pos,
-            uv: WHITE_UV,
-            color: color_at(t),
-        });
-    };
-
-    // Vertex 0: highlight centre.
-    push_vertex(&mut mesh, highlight_center);
-
-    // Ring 1..=rings: vertices on concentric circles around the disc
-    // centre (NOT the highlight centre — we want the rings to follow
-    // the disc shape so the outermost ring is the rim). The first
-    // ring is small, the last is the rim.
-    for ring in 1..=rings {
-        let r = radius * (ring as f32) / (rings as f32);
-        for seg in 0..segments {
-            let angle = TAU * (seg as f32) / (segments as f32);
-            let (s, c) = angle.sin_cos();
-            let pos = egui::pos2(center.x + r * c, center.y + r * s);
-            push_vertex(&mut mesh, pos);
-        }
-    }
-
-    // Triangulate. First ring fans from vertex 0 to the first ring's
-    // segments. Subsequent rings tile as quads between consecutive
-    // rings.
-    let seg = segments as u32;
-    // Fan from highlight to ring 1.
-    for s in 0..seg {
-        let next = (s + 1) % seg;
-        mesh.indices.push(0);
-        mesh.indices.push(1 + s);
-        mesh.indices.push(1 + next);
-    }
-    // Quad strips between rings.
-    for ring in 0..(rings - 1) {
-        let inner_base = 1 + (ring as u32) * seg;
-        let outer_base = 1 + ((ring + 1) as u32) * seg;
-        for s in 0..seg {
-            let next = (s + 1) % seg;
-            // Triangle 1: inner_s, outer_s, outer_next
-            mesh.indices.push(inner_base + s);
-            mesh.indices.push(outer_base + s);
-            mesh.indices.push(outer_base + next);
-            // Triangle 2: inner_s, outer_next, inner_next
-            mesh.indices.push(inner_base + s);
-            mesh.indices.push(outer_base + next);
-            mesh.indices.push(inner_base + next);
-        }
-    }
-
-    painter.add(egui::Shape::Mesh(mesh));
-}
-
-/// Linear RGBA interpolation for `Color32`. egui stores premultiplied
-/// alpha so this only does the right thing for opaque or
-/// fully-transparent endpoints — fine for our gold gradient where both
-/// stops are 255-alpha.
-fn lerp_color(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 {
-    let inv = 1.0 - t;
-    egui::Color32::from_rgba_premultiplied(
-        ((a.r() as f32) * inv + (b.r() as f32) * t) as u8,
-        ((a.g() as f32) * inv + (b.g() as f32) * t) as u8,
-        ((a.b() as f32) * inv + (b.b() as f32) * t) as u8,
-        ((a.a() as f32) * inv + (b.a() as f32) * t) as u8,
-    )
-}
-
-// Removed at PLAN 10.7.7: `paint_qr_front` painted the 2D
-// gold-bezeled-monitor composition for the launcher's QR face. The
-// 3D `BadgeRig` now owns the QR rendering — gold ring + side wall +
-// torus all come from the shader, QR texture sampled inside
-// `QR_RADIUS`. Bezel/screen-rim constants and the `paint_bezel` /
-// `paint_radial_gradient_disc` helpers stay because the back-face
-// title cards (`paint_titled_card`, used by Crashed / Farewell /
-// ServerError) still want the same monitor silhouette in 2D for
-// the non-Main screens.
+// Removed at PLAN 10.7.10: the entire 2D back-card surface
+// (`paint_bezel`, `paint_radial_gradient_disc`, `lerp_color`,
+// `paint_qr_front`, `paint_titled_card`, `paint_centered_back_card`,
+// `BEZEL_RING_PX`, `SCREEN_RIM_PX`) is gone now that Crashed /
+// Farewell / ServerError route through `paint_centered_3d_back_card`
+// like Main does. The 3D `BadgeRig` owns every front-face render
+// path — QR + back-face text + per-session pip alike.
 
 /// Paint a circular bezel + dark "monitor screen" rim + SF_1 inner
 /// disc carrying centred Titan One title text. Used by the QR card's
@@ -724,80 +480,60 @@ fn lerp_color(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 {
 /// the screens that only use the coin-flip horizontal spin (Crashed,
 /// ServerError); Farewell passes its breathe pulse here so the badge
 /// pulses in both axes during the goodbye countdown.
-pub(super) fn paint_centered_back_card(
+/// PLAN 10.7.10: 3D version of `paint_centered_back_card`. Allocates
+/// the same `CARD_SIZE × CARD_SIZE` square at Main's vertical anchor
+/// and paints the 3D `BadgeRig` with the back-face's pre-rasterised
+/// text texture bound — so the goodbye / crash / server-error
+/// surfaces read in the same visual language as Main now that the
+/// 2D back-card path is gone.
+///
+/// `scale` carries both the intro spin-up and any per-screen scale
+/// multipliers (Farewell passes its breathe pulse pre-multiplied);
+/// uniform across both axes since 3D rotation handles the coin-flip
+/// foreshortening, no separate horizontal vs vertical squash.
+/// `alpha` is the badge body opacity after any per-screen fades
+/// (Farewell breathes its alpha too). Returns the allocated full
+/// square so callers can stack their own content (subtitle,
+/// buttons, fade overlays) below at the natural cursor.
+pub(super) fn paint_centered_3d_back_card(
     ui: &mut egui::Ui,
-    lines: &[&str],
-    badge_scale: f32,
-    vertical_scale: f32,
-    bezel_alpha: f32,
-    text_alpha: f32,
+    back_face: BackFace,
+    badge_rig: std::sync::Arc<std::sync::Mutex<Option<crate::badge::BadgeRig>>>,
+    scale: f32,
+    alpha: f32,
 ) -> egui::Rect {
-    // Same vertical centring `render_main` uses for the QR card so
-    // the badge silhouette anchors at the vortex iris regardless of
-    // which screen the user lands on.
     let avail = ui.available_height();
     ui.add_space(((avail - CARD_SIZE) * 0.5).max(24.0));
 
-    let (full_rect, _) =
+    let (rect, _) =
         ui.allocate_exact_size(egui::vec2(CARD_SIZE, CARD_SIZE), egui::Sense::hover());
-    let half_w = (full_rect.width() * badge_scale) * 0.5;
-    let height = full_rect.height() * vertical_scale;
-    let badge_rect =
-        egui::Rect::from_center_size(full_rect.center(), egui::vec2(half_w * 2.0, height));
-    if badge_rect.width() >= 1.0 {
-        paint_titled_card(ui.painter(), badge_rect, lines, bezel_alpha, text_alpha);
-    }
-    full_rect
-}
 
-pub(super) fn paint_titled_card(
-    painter: &egui::Painter,
-    rect: egui::Rect,
-    lines: &[&str],
-    bezel_alpha: f32,
-    text_alpha: f32,
-) {
-    paint_bezel(painter, rect, bezel_alpha);
-
-    // Layered identically to paint_qr_front: SF_3 screen rim + thin
-    // GOLD_SHADOW stroke + inner SF_1 disc. Same screen geometry as
-    // the QR-front so the card-flip silhouette is stable. All three
-    // layers track the bezel_alpha so the whole card dissolves
-    // together.
-    let center = rect.center();
-    let outer_r = rect.width().min(rect.height()) / 2.0;
-    let screen_r = outer_r - BEZEL_RING_PX;
-    painter.circle_filled(center, screen_r, with_alpha(palette::SF_3, bezel_alpha));
-    painter.circle_stroke(
-        center,
-        screen_r,
-        egui::Stroke::new(1.0, with_alpha(palette::GOLD_SHADOW, bezel_alpha)),
+    crate::badge::paint_badge(
+        ui.painter(),
+        rect,
+        badge_rig,
+        // No rotation — back-face screens land face-on. The
+        // multi-turn coin-spin choreography belongs to Main; here
+        // the badge appears, scales up, and stays put while the
+        // surrounding text + buttons fade in.
+        0.0,
+        scale,
+        alpha,
+        back_face.texture_index(),
+        // apply_texture_spec=true so the gold-on-blue back-face
+        // text catches the same Blinn-Phong sheen as the
+        // surrounding ring/torus/side-wall.
+        true,
     );
 
-    let inner_r = screen_r - SCREEN_RIM_PX;
-    painter.circle_filled(center, inner_r, with_alpha(palette::SF_1, bezel_alpha));
-
-    // Layout box is the inscribed square so text never strays into the
-    // curved edges of the inner disc where it would clip visually.
-    let inscribed_half = inner_r * std::f32::consts::FRAC_1_SQRT_2;
-    let n = lines.len().max(1) as f32;
-    let line_h = (inscribed_half * 2.0) / n;
-    // Font size = 55% of line height, clamped so single-word lines
-    // don't blow up and tight 4-line cards stay readable. Bounds tied
-    // to palette tokens so a global retune cascades here too.
-    let font_size = (line_h * 0.55).clamp(palette::SUBHEAD, palette::COUNTDOWN);
-    let text_color = with_alpha(palette::GOLD_BRIGHT, text_alpha);
-    for (i, word) in lines.iter().enumerate() {
-        let y = center.y - inscribed_half + line_h * (i as f32 + 0.5);
-        painter.text(
-            egui::pos2(center.x, y),
-            egui::Align2::CENTER_CENTER,
-            *word,
-            egui::FontId::new(font_size, egui::FontFamily::Name(fonts::TITAN_ONE.into())),
-            text_color,
-        );
-    }
+    rect
 }
+
+// Removed at PLAN 10.7.10: `paint_centered_back_card` +
+// `paint_titled_card` painted the legacy 2D back-face card that the
+// Crashed / Farewell / ServerError screens used. All three render
+// paths now route through `paint_centered_3d_back_card` (above) so
+// the back-face surfaces share the Main screen's 3D `BadgeRig` look.
 
 /// Re-tint a (likely solid) `Color32` by an additional alpha factor.
 /// Used to fade text + content layers during launch-phase transitions

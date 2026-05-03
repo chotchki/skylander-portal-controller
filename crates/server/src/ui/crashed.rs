@@ -14,16 +14,17 @@
 //! dispatcher pairs the badge spin with an iris reveal so the
 //! launcher reasserts itself rather than snapping in opaque.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use super::launch_phase::ScreenIntro;
-use super::main_screen::{paint_centered_back_card, with_alpha};
+use super::main_screen::{paint_centered_3d_back_card, with_alpha, BackFace};
 use crate::state::{LauncherScreen, LauncherStatus};
 use crate::{fonts, palette};
 
 pub(super) fn render(
     ui: &mut egui::Ui,
-    status: &Arc<std::sync::Mutex<LauncherStatus>>,
+    status: &Arc<Mutex<LauncherStatus>>,
+    badge_rig: Arc<Mutex<Option<crate::badge::BadgeRig>>>,
     message: &str,
     intro: ScreenIntro,
 ) {
@@ -32,13 +33,12 @@ pub(super) fn render(
     let text_alpha = intro.content_alpha();
 
     ui.vertical_centered(|ui| {
-        paint_centered_back_card(
+        paint_centered_3d_back_card(
             ui,
-            &["SOMETHING", "WENT", "WRONG"],
+            BackFace::Crashed,
+            badge_rig,
             badge_scale,
-            1.0,
             badge_alpha,
-            text_alpha,
         );
 
         ui.add_space(24.0);

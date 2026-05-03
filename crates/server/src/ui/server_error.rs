@@ -16,23 +16,30 @@
 //! gives the user a clean way out so they can address the root
 //! cause and relaunch.
 
+use std::sync::{Arc, Mutex};
+
 use super::launch_phase::ScreenIntro;
-use super::main_screen::{paint_centered_back_card, with_alpha};
+use super::main_screen::{paint_centered_3d_back_card, with_alpha, BackFace};
 use crate::palette;
 
-pub(super) fn render(ui: &mut egui::Ui, ctx: &egui::Context, message: &str, intro: ScreenIntro) {
+pub(super) fn render(
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    badge_rig: Arc<Mutex<Option<crate::badge::BadgeRig>>>,
+    message: &str,
+    intro: ScreenIntro,
+) {
     let badge_scale = intro.badge_scale();
     let badge_alpha = intro.badge_alpha();
     let text_alpha = intro.content_alpha();
 
     ui.vertical_centered(|ui| {
-        paint_centered_back_card(
+        paint_centered_3d_back_card(
             ui,
-            &["SERVER", "FAILED", "TO START"],
+            BackFace::ServerError,
+            badge_rig,
             badge_scale,
-            1.0,
             badge_alpha,
-            text_alpha,
         );
 
         ui.add_space(24.0);

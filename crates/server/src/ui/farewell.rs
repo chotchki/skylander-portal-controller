@@ -7,10 +7,11 @@
 //! uses). Badge spin-in matches every other surface so the goodbye
 //! feels deliberate, not a snap-out.
 
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use super::launch_phase::ScreenIntro;
-use super::main_screen::{paint_centered_back_card, with_alpha};
+use super::main_screen::{paint_centered_3d_back_card, with_alpha, BackFace};
 use crate::{fonts, palette};
 
 /// How long the farewell message lingers before the fade-to-black
@@ -43,6 +44,7 @@ const BREATHE_OPACITY_AMP: f32 = 0.025;
 pub(super) fn render(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
+    badge_rig: Arc<Mutex<Option<crate::badge::BadgeRig>>>,
     started_at: &mut Option<Instant>,
     intro: ScreenIntro,
 ) {
@@ -98,18 +100,18 @@ pub(super) fn render(
     let panel_rect = ui.max_rect();
 
     ui.vertical_centered(|ui| {
-        // Horizontal scales via `badge_scale` (carries the intro
-        // coin-flip + the breathe pulse). Vertical scales via the
-        // breathe only — coin-flip is a horizontal-only spin axis.
-        // Three lines mirror the "Portal Master" farewell rhythm;
-        // paint_titled_card's auto-scale font fits cleanly.
-        paint_centered_back_card(
+        // 3D badge scales uniformly across both axes (coin-flip
+        // foreshortening lives in the rotation, not in a separate
+        // horizontal squash). Combine the intro spin-up scale with
+        // the breathe pulse so the badge rises in *and* breathes
+        // in lockstep — single multiplier feeds the GL u_scale
+        // uniform.
+        paint_centered_3d_back_card(
             ui,
-            &["FAREWELL", "PORTAL", "MASTER"],
-            badge_scale,
-            breathe_scale,
+            BackFace::Farewell,
+            badge_rig,
+            badge_scale * breathe_scale,
             badge_alpha,
-            text_alpha,
         );
 
         ui.add_space(24.0);
