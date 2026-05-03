@@ -96,17 +96,21 @@ impl LauncherApp {
         status_snapshot: &LauncherStatus,
         launch_phase: LaunchPhase,
     ) {
-        // Paint the orbit pips *before* any widgets lay out. Immediate-mode
-        // egui paints shapes in submission order, so these land above the
-        // vortex (already drawn by the dispatcher) but below the QR + label
-        // rendered below — matching the mock's z-index 9 orbit passing
-        // behind z-index 10 text.
+        // Paint the orbit pips *before* any widgets lay out. Each pip
+        // is rendered as a shrunken `BadgeRig` coin (PLAN 10.7.8) so
+        // it inherits the badge's GL pipeline + iris-aware
+        // choreography — pips fade in/out with the same
+        // `badge_alpha_3d` curve as the main badge so they don't
+        // hang around as full-opacity dots through the iris close.
         let panel_rect = ui.max_rect();
-        paint_player_orbit(
-            ui.painter(),
+        paint_player_orbit_3d(
+            ui,
+            ctx,
             panel_rect,
             ctx.input(|i| i.time) as f32,
             &status_snapshot.session_profiles,
+            self.badge_rig.clone(),
+            launch_phase.badge_alpha_3d(),
         );
 
         ui.vertical_centered(|ui| {
@@ -820,107 +824,152 @@ pub(super) fn with_alpha(color: egui::Color32, alpha: f32) -> egui::Color32 {
 /// express the ellipse as a fraction of the panel's shorter axis so it
 /// scales with the launcher's actual rect — dev builds are 900×1000, the
 /// HTPC is 3840×2160, and both should look proportionate.
-fn paint_player_orbit(painter: &egui::Painter, rect: egui::Rect, time_s: f32, pips: &[SessionPip]) {
-    if pips.is_empty() {
+/// PLAN 10.7.8: paint each session's orbiting pip as a shrunken
+/// `BadgeRig` coin so the pip inherits the badge's GL pipeline +
+/// iris-respecting alpha. Replaces the 2D `paint_player_orbit` /
+/// `paint_pip` pair that lived above the vortex iris and survived
+/// the wipe instead of fading with it.
+///
+/// Per-pip choreography mirrors the back-face flip-on-text-change
+/// from `qr_card_flip` (PLAN 10.7.6b): each slot's *displayed*
+/// face lags behind the actual session profile by up to one flip,
+/// and a 360° spin transitions between them — texture swap
+/// happens at flip midpoint when the disc is on its gold back
+/// face and the swap is invisible.
+///
+/// Default pip face = starfield blue + white "?" (matches the
+/// back-face card aesthetic). Filled in to profile colour +
+/// initial when the session unlocks; flips back to default on
+/// disconnect (next frame the slot has a different `SessionPip`
+/// or no pip at all).
+fn paint_player_orbit_3d(
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    rect: egui::Rect,
+    time_s: f32,
+    pips: &[SessionPip],
+    badge_rig: std::sync::Arc<std::sync::Mutex<Option<crate::badge::BadgeRig>>>,
+    badge_alpha: f32,
+) {
+    if pips.is_empty() || badge_alpha < 0.001 {
         return;
     }
     let centre = rect.center();
-    // Ellipse proportions matched to the mock (560×400 on a 1920×1080
-    // frame → rx = 29% of width, ry = 37% of height). Clamped against
-    // the shorter axis so portrait and landscape surfaces both stay
-    // sensible.
     let rx = (rect.width() * 0.29).min(rect.width() * 0.45);
     let ry = (rect.height() * 0.37).min(rect.height() * 0.45);
 
     let base_phase = time_s * ORBIT_SPEED;
+    let painter = ui.painter().clone();
+    let now = ctx.input(|i| i.time);
+
     for (i, pip) in pips.iter().enumerate().take(crate::profiles::MAX_SESSIONS) {
-        // Distribute pips evenly around the orbit — 2 pips → 180° apart.
         let offset = TAU * (i as f32) / (crate::profiles::MAX_SESSIONS as f32);
         let t = base_phase + offset;
         let x = centre.x + t.cos() * rx;
         let y = centre.y + t.sin() * ry;
         let pip_rect =
             egui::Rect::from_center_size(egui::pos2(x, y), egui::vec2(PIP_DIAMETER, PIP_DIAMETER));
-        paint_pip(painter, pip_rect, pip);
+
+        let target_face = pip_face_for(pip);
+
+        // Per-slot flip-on-change tracking via egui memory. Each
+        // pip's slot has its own `displayed` + `flip_start` keys
+        // so flips on slot 0 don't affect slot 1, etc.
+        let state_id = egui::Id::new(("pip_3d_displayed", i));
+        let flip_id = egui::Id::new(("pip_3d_flip_start", i));
+        let mut displayed = ctx
+            .memory(|m| m.data.get_temp::<PipFace>(state_id))
+            .unwrap_or(target_face);
+        let mut flip_start = ctx
+            .memory(|m| m.data.get_temp::<f64>(flip_id))
+            .unwrap_or(-1.0);
+
+        if target_face != displayed && flip_start < 0.0 {
+            flip_start = now;
+        }
+
+        let flip_progress = if flip_start >= 0.0 {
+            ((now - flip_start) / FLIP_DURATION as f64).clamp(0.0, 1.0) as f32
+        } else {
+            0.0
+        };
+
+        if flip_progress >= 0.5 && displayed != target_face {
+            displayed = target_face;
+        }
+        if flip_progress >= 1.0 {
+            flip_start = -1.0;
+        }
+
+        ctx.memory_mut(|m| {
+            m.data.insert_temp(state_id, displayed);
+            m.data.insert_temp(flip_id, flip_start);
+        });
+
+        if flip_start >= 0.0 {
+            ctx.request_repaint();
+        }
+
+        let additional_rotation = flip_progress * 2.0 * std::f32::consts::PI;
+
+        crate::badge::paint_pip(
+            &painter,
+            pip_rect,
+            badge_rig.clone(),
+            additional_rotation,
+            1.0,
+            badge_alpha,
+            displayed.color,
+            displayed.initial,
+            displayed.ghost,
+        );
     }
 }
 
-/// Single pip — a gold-bezeled circle with the profile's colour as fill
-/// and the initial rendered in Titan One. Unknown profile (None fields)
-/// falls back to neutral gold + a small dot. Ghosted sessions (PLAN
-/// 8.1.6) render the same pip but desaturated + half-alpha as a
-/// "(away)" hint — figures still on the portal, but the phone isn't
-/// responsive.
-fn paint_pip(painter: &egui::Painter, rect: egui::Rect, pip: &SessionPip) {
-    let centre = rect.center();
-    let radius = rect.width() * 0.5;
+/// One pip's visual face — colour + glyph + ghost-state. `Copy +
+/// Eq + 'static` so it can sit in egui memory and the flip-on-
+/// change comparison is straightforward.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct PipFace {
+    color: [u8; 3],
+    initial: char,
+    ghost: bool,
+}
 
-    // Outer gold bezel — reuses the QR card's `paint_bezel` (halo,
-    // 4-stop radial gradient, inset highlight, inset shadow, inner
-    // GOLD_INK ring, outer black). Visual consistency with every
-    // other gold-rimmed surface in the launcher and a 1:1 match for
-    // the phone's `.player-pip` design language (Chris flagged
-    // 2026-04-19, "use the nice coloring of the phone profile badge").
-    let bezel_alpha = if pip.is_ghost { 0.5 } else { 1.0 };
-    paint_bezel(painter, rect, bezel_alpha);
-
-    // Inner profile-colour disc with a soft radial gradient for
-    // depth — highlight offset to top-left mimics ambient light from
-    // above, the same "embossed" treatment paint_bezel uses for the
-    // gold ring. Proportions match the phone: ~78% of pip diameter
-    // for the inner disc leaves a ~11% gold-ring rim visible.
-    //
-    // Ghost treatment: lerp the profile colour halfway to neutral
-    // grey so the pip reads as "muted" without losing the player
-    // attribution entirely (you can still tell which player is
-    // away). Combined with the half-alpha bezel + glyph, this lands
-    // the desaturated-and-dimmed look the PLAN spec calls for.
-    let inner_radius = radius * 0.78;
-    let mut base = pip
+/// Translate a `SessionPip` into its rendered face. Unauthorised
+/// sessions (no profile yet) and explicitly empty colour/initial
+/// fields fall back to the default starfield-blue + "?" face;
+/// authenticated profiles supply their colour and the first char
+/// of their display name.
+fn pip_face_for(pip: &SessionPip) -> PipFace {
+    let color = pip
         .color
         .as_deref()
         .and_then(parse_hex_color)
-        .unwrap_or(palette::GOLD_BRIGHT);
-    if pip.is_ghost {
-        base = lerp_color(base, egui::Color32::from_gray(120), 0.55);
+        .map(|c| [c.r(), c.g(), c.b()])
+        // Default = `palette::SF_1` (top starfield blue) so an
+        // unauthenticated pip matches the back-face card's blue
+        // aesthetic; flips to profile colour on unlock.
+        .unwrap_or([palette::SF_1.r(), palette::SF_1.g(), palette::SF_1.b()]);
+    let initial = pip
+        .initial
+        .as_deref()
+        .and_then(|s| s.chars().next())
+        .unwrap_or('?');
+    PipFace {
+        color,
+        initial,
+        ghost: pip.is_ghost,
     }
-    let highlight = lerp_color(base, egui::Color32::WHITE, 0.25);
-    let shadow = lerp_color(base, egui::Color32::BLACK, 0.30);
-    paint_radial_gradient_disc(
-        painter,
-        centre,
-        inner_radius,
-        centre + egui::vec2(-inner_radius * 0.30, -inner_radius * 0.40),
-        &[(0.0, highlight), (0.4, base), (1.0, shadow)],
-    );
-
-    // Glyph — white Titan One with a soft drop shadow so it reads
-    // cleanly on any profile colour. "?" fallback when a session is
-    // registered but the player hasn't unlocked a profile yet.
-    let glyph = match pip.initial.as_deref() {
-        Some(ch) if !ch.is_empty() => ch,
-        _ => "?",
-    };
-    let font = egui::FontId::new(
-        palette::HEADING,
-        egui::FontFamily::Name(fonts::TITAN_ONE.into()),
-    );
-    let glyph_alpha: u8 = if pip.is_ghost { 150 } else { 255 };
-    painter.text(
-        centre + egui::vec2(0.0, 2.0),
-        egui::Align2::CENTER_CENTER,
-        glyph,
-        font.clone(),
-        egui::Color32::from_rgba_unmultiplied(0, 0, 0, if pip.is_ghost { 60 } else { 120 }),
-    );
-    painter.text(
-        centre,
-        egui::Align2::CENTER_CENTER,
-        glyph,
-        font,
-        egui::Color32::from_rgba_unmultiplied(255, 255, 255, glyph_alpha),
-    );
 }
+
+// Removed at PLAN 10.7.8: 2D `paint_pip` painted each orbiting
+// session indicator as an egui-side composition (gold bezel + radial
+// gradient + glyph). It survived the iris wipe because it lived
+// above the GL vortex layer. Replaced by `paint_player_orbit_3d`
+// which renders each pip via `crate::badge::paint_pip` — a shrunken
+// `BadgeRig` coin so pips inherit the same iris-aware alpha curve
+// the main badge uses.
 
 /// Parse `#rrggbb` / `#rgb` into an `egui::Color32`. Profiles stored in
 /// SQLite are validated to one of those two shapes, but be defensive —

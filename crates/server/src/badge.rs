@@ -51,6 +51,7 @@
 //!     via depth test; only the outer half + the rim's "lip" above
 //!     and below the disc faces is visible.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use egui::Rect;
@@ -458,10 +459,29 @@ void main() {
 /// flip-on-state-change animation (intro/close-style coin spin
 /// triggered when the displayed text would change) lands face-on
 /// with the new text already on the disc, not popping in.
+/// Cache key for the pip-face textures rendered through `paint_pip`
+/// (PLAN 10.7.8). Encodes everything that distinguishes one pip
+/// from another visually — colour packed into a `u32`, profile
+/// initial, ghost-state flag — so identical pips share one GL
+/// texture instead of re-uploading per frame.
+pub type PipKey = (u32, char, bool);
+
 pub struct BadgeRig {
     program: glow::Program,
     vao: glow::VertexArray,
     textures: Vec<glow::Texture>,
+    /// Cache of pip-face textures lazily uploaded on first
+    /// `paint_pip` for each `(color, initial, ghost)` triple. Maps
+    /// to the `textures` index — we never evict, since profile
+    /// count stays small (`profiles::MAX_SESSIONS`) and the cost
+    /// of holding ~8 small RGBA textures is trivial.
+    pip_cache: HashMap<PipKey, usize>,
+    /// Pixel size used for newly rasterised pip-face textures.
+    /// Matches the QR's per-axis size so all front-face textures
+    /// upload at the same resolution and the LINEAR mag filter
+    /// gives consistent on-screen sharpness across QR / back-face
+    /// / pip.
+    pip_texture_size: u32,
     u_rotation_y: Option<glow::UniformLocation>,
     u_qr: Option<glow::UniformLocation>,
     u_face: Option<glow::UniformLocation>,
@@ -569,6 +589,10 @@ impl BadgeRig {
             }
             gl.bind_texture(glow::TEXTURE_2D, None);
 
+            // Pip textures get lazily uploaded at the same per-axis
+            // resolution as the QR raster (index 0) so every front-
+            // face texture has matching pixel density.
+            let pip_texture_size = sources[0].width.max(sources[0].height);
             Ok(Self {
                 u_rotation_y: gl.get_uniform_location(program, "u_rotation_y"),
                 u_qr: gl.get_uniform_location(program, "u_qr"),
@@ -579,6 +603,8 @@ impl BadgeRig {
                 program,
                 vao,
                 textures,
+                pip_cache: HashMap::new(),
+                pip_texture_size,
             })
         }
     }
@@ -691,6 +717,104 @@ impl BadgeRig {
         }
     }
 
+    /// Look up (or rasterise + upload, on cache miss) the pip-face
+    /// texture for a `(color, initial, ghost)` triple and return its
+    /// `textures` index. Called from `paint_pip` so the upload
+    /// happens on the GL thread inside a `PaintCallback`. Cache is
+    /// keyed on the same triple so repeated frames hit it cleanly.
+    fn ensure_pip_texture(
+        &mut self,
+        gl: &glow::Context,
+        color: [u8; 3],
+        initial: char,
+        ghost: bool,
+    ) -> usize {
+        let key = (
+            u32::from_be_bytes([color[0], color[1], color[2], 0]),
+            initial,
+            ghost,
+        );
+        if let Some(&idx) = self.pip_cache.get(&key) {
+            return idx;
+        }
+        let pixels =
+            crate::badge_text::render_pip(color, initial, ghost, self.pip_texture_size);
+        unsafe {
+            let tex = match gl.create_texture() {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::error!("badge: pip texture create failed: {e}");
+                    return 0;
+                }
+            };
+            gl.bind_texture(glow::TEXTURE_2D, Some(tex));
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MIN_FILTER,
+                glow::LINEAR as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MAG_FILTER,
+                glow::LINEAR as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_S,
+                glow::CLAMP_TO_EDGE as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_T,
+                glow::CLAMP_TO_EDGE as i32,
+            );
+            gl.tex_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                glow::RGBA8 as i32,
+                self.pip_texture_size as i32,
+                self.pip_texture_size as i32,
+                0,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                Some(pixels.as_slice()),
+            );
+            gl.bind_texture(glow::TEXTURE_2D, None);
+            let idx = self.textures.len();
+            self.textures.push(tex);
+            self.pip_cache.insert(key, idx);
+            idx
+        }
+    }
+
+    /// Paint a single pip — same coin geometry as the main badge,
+    /// just with a profile-coloured + initial-glyph front face
+    /// instead of the QR. Caller positions the pip via the
+    /// PaintCallback's viewport (`viewport_px`) and supplies a
+    /// rotation if the orbit should tilt the disc; first cut keeps
+    /// pips face-on (rotation=0, scale=1).
+    pub fn paint_pip(
+        &mut self,
+        gl: &glow::Context,
+        rotation_y: f32,
+        scale: f32,
+        alpha: f32,
+        color: [u8; 3],
+        initial: char,
+        ghost: bool,
+        viewport_px: [i32; 4],
+    ) {
+        if alpha < 0.001 || scale < 0.001 {
+            return;
+        }
+        let idx = self.ensure_pip_texture(gl, color, initial, ghost);
+        // `apply_texture_spec = true` so the pip's profile-coloured
+        // disc picks up the same Blinn-Phong sweep as the
+        // surrounding gold ring + side wall + torus — reads as
+        // "coloured face on a polished gold coin", not a flat dot.
+        self.paint(gl, rotation_y, scale, alpha, idx, true, viewport_px);
+    }
+
     pub fn destroy(&self, gl: &glow::Context) {
         unsafe {
             gl.delete_program(self.program);
@@ -757,6 +881,47 @@ pub fn paint_badge(
                     alpha,
                     texture_index,
                     apply_texture_spec,
+                    viewport_px,
+                );
+            }
+        })),
+    };
+    painter.add(cb);
+}
+
+/// Paint a single pip into `rect` via an `egui::PaintCallback`
+/// (PLAN 10.7.8). Pip = a shrunken coin reusing the badge's GL
+/// pipeline (gold ring + side wall + torus + Lambert + spec) with
+/// a per-profile front-face texture (coloured disc + centred
+/// initial). Texture is rasterised + uploaded on cache miss inside
+/// the callback so call sites don't need GL access — they just
+/// supply the profile spec, the pip rect, and the alpha curve.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_pip(
+    painter: &egui::Painter,
+    rect: Rect,
+    rig: Arc<Mutex<Option<BadgeRig>>>,
+    rotation_y: f32,
+    scale: f32,
+    alpha: f32,
+    color: [u8; 3],
+    initial: char,
+    ghost: bool,
+) {
+    let cb = egui::PaintCallback {
+        rect,
+        callback: Arc::new(egui_glow::CallbackFn::new(move |info, painter| {
+            let vp = info.viewport_in_pixels();
+            let viewport_px = [vp.left_px, vp.from_bottom_px, vp.width_px, vp.height_px];
+            if let Some(rig) = rig.lock().unwrap().as_mut() {
+                rig.paint_pip(
+                    painter.gl(),
+                    rotation_y,
+                    scale,
+                    alpha,
+                    color,
+                    initial,
+                    ghost,
                     viewport_px,
                 );
             }

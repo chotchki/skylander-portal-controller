@@ -986,19 +986,59 @@ or after, doesn't matter.
   via CI's Windows lane (release build path through the same
   PaintCallback machinery).
 
-- [ ] 10.7.8 — **Iris masks egui overlays too:** the
-  player-orbit pips (`paint_player_orbit`) sit in the egui paint
-  layer, drawn on top of the GL badge + vortex iris. The iris
-  wipe (intro reveal, close dark-hole) only masks GL content —
-  egui overlays stay visible through it, breaking the visual
-  consistency Chris flagged 2026-05-03 ("orbiting player and
-  stars don't get caught in the iris wipe"). Two paths: (a)
-  port the pips to a GL rig (similar to `BadgeRig` / `vortex`)
-  so the iris affects them naturally, (b) fade the egui-painted
-  pips by an iris-derived alpha so they dim out in step. (a) is
-  more work but is the consistency win Chris is after; (b) is
-  the cheap stopgap if we want to ship the iris fix without
-  another GL rig. Decide before starting.
+- [x] 10.7.8 — Pips ported to GL via the existing badge rig.
+  Chris's insight: instead of building a new pip shader, just
+  reuse the `BadgeRig` shrunken down — a pip is a single-letter
+  + colour disc, exactly what the badge already renders for
+  back-face textures. Made it work end-to-end:
+    - New `badge_text::render_pip(color, initial, ghost, size)`:
+      profile-coloured (or desaturated for ghost) inscribed disc
+      with the initial centred in TitanOne + the same faux-emboss
+      the back-face textures use.
+    - `BadgeRig` gained a `pip_cache: HashMap<(u32 colour-key,
+      char, bool), usize>` and lazy `ensure_pip_texture(gl, …)`
+      that rasterises + uploads on first sight of a `(color,
+      initial, ghost)` triple, returns the cached texture index
+      on subsequent calls. `paint_pip` glues that to the existing
+      `paint` so each pip draws the same coin geometry as the
+      main badge.
+    - `main_screen::paint_player_orbit_3d` replaces the old 2D
+      `paint_player_orbit` / `paint_pip`. Per-slot flip-on-
+      profile-change choreography mirrors `qr_card_flip`'s back-
+      face flip: each slot tracks `displayed` + `flip_start` in
+      egui memory, kicks off a 360° spin when the session's
+      face changes, swaps texture at flip midpoint.
+    - Default pip face = `palette::SF_1` blue + white "?", so
+      unauthenticated sessions match the back-face card aesthetic
+      and flip to profile colour on PIN unlock.
+  Pips now fade with the same `badge_alpha_3d` curve as the
+  main badge, so the iris-close beat dims them out together
+  instead of leaving them as full-opacity orbiting dots. Chris
+  confirmed 2026-05-03: "looked good".
+
+- [ ] 10.7.10 — **Port back-face screens (Crashed / Farewell /
+  ServerError) to the 3D badge:** these still render via the
+  2D `paint_centered_back_card` → `paint_titled_card` path
+  because the 3D wiring only landed on Main. Result is the
+  Goodbye / crash / server-error screens read in a different
+  visual language than the launcher's QR/back-face flow now
+  that Main is fully 3D. Replace each screen's
+  `paint_centered_back_card` call with a 3D equivalent that
+  binds the matching `BackFace` variant's texture
+  (`Farewell`, `Crashed`, `ServerError` are already in the
+  `BadgeRig` texture array). Chris flagged 2026-05-03:
+  "the goodbye screen didn't look the same so the changes
+  probably need to be woven into each screen."
+
+- [ ] 10.7.9 — **Investigate launcher GPU usage growth:**
+  Chris flagged 2026-05-03: "steadily increasing its gpu
+  usage. sounds like some kind of leak." Cache check in
+  `pip_cache` should prevent texture churn (verify HashMap key
+  stability for the `(color, initial, ghost)` triple) and
+  egui memory `insert_temp` with a stable Id should overwrite,
+  not accumulate (verify with the per-pip slot Ids). Run a
+  GPU-frame profiler against a long-running launcher session
+  to isolate the source.
 
 ## Non-goals
 

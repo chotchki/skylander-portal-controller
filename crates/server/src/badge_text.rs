@@ -232,3 +232,114 @@ fn widest_line_px(lines: &[&str], scaled: &PxScaleFont<&FontRef>) -> f32 {
         })
         .fold(0.0_f32, f32::max)
 }
+
+/// Render a single-glyph "pip face" texture for the orbiting
+/// player-pip discs (PLAN 10.7.8). Inscribed disc is filled with
+/// the profile's colour (desaturated when `ghost` is true), and
+/// the profile's initial is centred in TitanOne with the same
+/// faux-emboss the back-face textures use. The result feeds the
+/// 3D `BadgeRig` exactly the same way the back-face textures do —
+/// pips render through the badge shader (gold ring + side wall +
+/// torus + Lambert + spec all come for free), shrunk down to pip
+/// size by the call site's smaller PaintCallback rect.
+pub fn render_pip(color: [u8; 3], initial: char, ghost: bool, size: u32) -> Vec<u8> {
+    let font = FontRef::try_from_slice(FONT_BYTES).expect("TitanOne TTF parses");
+    let mut buffer = vec![0u8; (size * size * 4) as usize];
+
+    let bg = if ghost { desaturate(color) } else { color };
+    fill_inscribed_disc_with_color(&mut buffer, size, [bg[0], bg[1], bg[2], 0xff]);
+    draw_centred_glyph(&mut buffer, size, &font, initial, ghost);
+
+    buffer
+}
+
+/// Lerp a colour ~halfway toward neutral grey to mute a profile's
+/// pip when its session has gone ghost (PLAN 8.1.6's "(away)"
+/// treatment). Same factor as the legacy 2D `paint_pip` used.
+fn desaturate(rgb: [u8; 3]) -> [u8; 3] {
+    let gray = ((rgb[0] as u16 + rgb[1] as u16 + rgb[2] as u16) / 3) as u8;
+    let blend = |c: u8, t: f32| ((c as f32) * (1.0 - t) + (gray as f32) * t) as u8;
+    [blend(rgb[0], 0.55), blend(rgb[1], 0.55), blend(rgb[2], 0.55)]
+}
+
+/// Pre-bake the pip's coloured background. Pixels outside radius
+/// `size/2` stay transparent — the front-face shader's analytic
+/// `r > OUTER_RADIUS` clip handles the rim, but transparent
+/// corners stop any stray sample at the polygon-vs-circle spokes
+/// from pulling profile colour onto the gold ring.
+fn fill_inscribed_disc_with_color(buffer: &mut [u8], size: u32, color: [u8; 4]) {
+    let centre = size as f32 / 2.0;
+    let radius = centre;
+    let r2 = radius * radius;
+    for py in 0..size {
+        for px in 0..size {
+            let dx = px as f32 + 0.5 - centre;
+            let dy = py as f32 + 0.5 - centre;
+            if dx * dx + dy * dy <= r2 {
+                let idx = ((py * size + px) * 4) as usize;
+                buffer[idx..idx + 4].copy_from_slice(&color);
+            }
+        }
+    }
+}
+
+/// Centre a single glyph in the inscribed disc, sized to ~60 % of
+/// the disc's diameter (single letters read best big — leaves room
+/// for the same shadow / highlight emboss layers as multi-line
+/// back-face text). Ghost pips get a half-alpha white body so the
+/// glyph reads as muted alongside the desaturated background.
+fn draw_centred_glyph(buffer: &mut [u8], size: u32, font: &FontRef, ch: char, ghost: bool) {
+    // Empty / whitespace glyphs paint nothing — the coloured disc
+    // alone is the pip in that case (e.g. unauthorised session
+    // before the player has unlocked a profile).
+    if ch.is_whitespace() || ch == '\0' {
+        return;
+    }
+    let px_size = (size as f32 * 0.60).max(8.0);
+    let scale = PxScale::from(px_size);
+    let scaled = font.as_scaled(scale);
+    let glyph_id = font.glyph_id(ch);
+    let advance = scaled.h_advance(glyph_id);
+
+    let baseline = size as f32 / 2.0 + scaled.ascent() * 0.45;
+    let x = (size as f32 - advance) / 2.0;
+    let emboss = (px_size * 0.02).clamp(1.0, 4.0);
+    let body_alpha = if ghost { 0.55 } else { 1.0 };
+
+    draw_glyph_at(buffer, size, font, ch, scale, x + emboss, baseline + emboss, [0, 0, 0], 0.85);
+    draw_glyph_at(buffer, size, font, ch, scale, x - emboss, baseline - emboss, [255, 255, 255], 0.65 * body_alpha);
+    draw_glyph_at(buffer, size, font, ch, scale, x, baseline, [247, 247, 251], body_alpha);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_glyph_at(
+    buffer: &mut [u8],
+    size: u32,
+    font: &FontRef,
+    ch: char,
+    scale: PxScale,
+    x: f32,
+    baseline: f32,
+    color: [u8; 3],
+    alpha_scale: f32,
+) {
+    let glyph = font.glyph_id(ch).with_scale_and_position(scale, ab_glyph::point(x, baseline));
+    let Some(outlined) = font.outline_glyph(glyph) else {
+        return;
+    };
+    let bounds = outlined.px_bounds();
+    outlined.draw(|gx, gy, coverage| {
+        let px = bounds.min.x as i32 + gx as i32;
+        let py = bounds.min.y as i32 + gy as i32;
+        if px < 0 || py < 0 || px >= size as i32 || py >= size as i32 {
+            return;
+        }
+        let idx = ((py * size as i32 + px) * 4) as usize;
+        let t = (coverage * alpha_scale).clamp(0.0, 1.0);
+        for c in 0..3 {
+            let bg = buffer[idx + c] as f32;
+            let fg = color[c] as f32;
+            buffer[idx + c] = (bg * (1.0 - t) + fg * t) as u8;
+        }
+    });
+}
