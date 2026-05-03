@@ -139,28 +139,28 @@ jobs:
           New-Item -ItemType Directory -Force -Path wix | Out-Null
           # heat flags:
           #   -ag                auto-generate component GUIDs
-          #   -gg                generate GUIDs (alias / older flag)
           #   -srd               suppress Directory root creation
           #                      (we provide DataDir / SteamDir in main.wxs)
           #   -dr <ref>          parent directory ref id
           #   -cg <name>         component group name (matches main.wxs ref)
-          #   -var <name>        $(var.<name>) prefix for source paths
-          #                      (lets us pass an absolute path through
-          #                       -d at light/candle time)
+          #   -sfrag             suppress per-component <Fragment> wrappers
+          #   -suid              suppress unique-id MD5 suffixes
+          #   -var var.<name>    emit Source="$(var.<name>)\..." so light
+          #                      can resolve via -d<name>=<abspath>. Without
+          #                      this, paths use a literal `SourceDir\`
+          #                      prefix that light resolves from cargo-wix's
+          #                      cwd (`crates/server/`) — wrong for our
+          #                      workspace-root data/.
           heat dir data -ag -srd -dr DataDir -cg DataFiles -sfrag -suid `
-            -t (Resolve-Path .)/wix/heat-fix-source.xslt -ErrorAction SilentlyContinue `
-            -out wix/data.wxs 2>&1 | Tee-Object -Variable heatOut
-          # The XSLT step above is best-effort — if the file doesn't
-          # exist heat ignores `-t` and emits straight harvest output.
-          # Falling back: re-run without the transform on first iter.
-          if ($LASTEXITCODE -ne 0) {
-            heat dir data -ag -srd -dr DataDir -cg DataFiles -sfrag -suid -out wix/data.wxs
-          }
+            -var var.DataSourceDir -out wix/data.wxs
+          if ($LASTEXITCODE -ne 0) { throw "heat (data) failed: $LASTEXITCODE" }
           # steam/ doesn't exist yet (PLAN 10.8.5 not landed). Create
           # an empty wxs fragment so the cargo-wix include list still
           # resolves; harvest for real once the assets ship.
           if (Test-Path steam) {
-            heat dir steam -ag -srd -dr SteamDir -cg SteamFiles -sfrag -suid -out wix/steam.wxs
+            heat dir steam -ag -srd -dr SteamDir -cg SteamFiles -sfrag -suid `
+              -var var.SteamSourceDir -out wix/steam.wxs
+            if ($LASTEXITCODE -ne 0) { throw "heat (steam) failed: $LASTEXITCODE" }
           } else {
             @"
           <?xml version='1.0' encoding='windows-1252'?>
@@ -176,13 +176,34 @@ jobs:
         shell: pwsh
         run: |
           $tag = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME -replace '^v','' } else { '0.0.0' }
+          $dataAbs = (Resolve-Path data).Path
           # cargo-wix consumes the [package.metadata.wix] block in
           # crates/server/Cargo.toml plus the wxs fragments listed
           # there (main.wxs + heat-generated data.wxs / steam.wxs).
-          # `--no-build` because we already built the binary above.
-          # `--install-version` overrides the Cargo.toml placeholder
-          # 0.1.0 with the real release tag.
-          cargo wix -p skylander-server --no-build --nocapture --install-version $tag
+          # IMPORTANT: cargo-wix resolves the `include = [...]` paths
+          # relative to its own cwd, not the manifest dir. Our paths
+          # are `../../wix/main.wxs` (workspace-root relative when
+          # interpreted from `crates/server/`), so we must invoke from
+          # the crate dir for the includes to resolve.
+          # Pass-through args:
+          #   -C -ext -C WixFirewallExtension  candle: load fire: ns
+          #   -L -ext -L WixFirewallExtension  light:  link fire: ext
+          #   -C -dDataSourceDir=<abspath>     candle: define preprocessor
+          #                                    var so heat-emitted
+          #                                    Source="$(var.DataSourceDir)\..."
+          #                                    paths resolve to workspace
+          #                                    data/ (candle's cwd is
+          #                                    crates/server/).
+          # NB: WixUIExtension is auto-loaded by cargo-wix; passing it
+          # explicitly causes LGHT0091 duplicate-symbol on WixUI_FeatureTree.
+          Push-Location crates/server
+          try {
+            cargo wix -p skylander-server --no-build --nocapture --install-version $tag `
+              -C -ext -C WixFirewallExtension `
+              -C "-dDataSourceDir=$dataAbs" `
+              -L -ext -L WixFirewallExtension
+            if ($LASTEXITCODE -ne 0) { throw "cargo wix failed: $LASTEXITCODE" }
+          } finally { Pop-Location }
           $msi = Get-ChildItem target/wix -Filter '*.msi' | Select-Object -First 1
           if (-not $msi) { throw "no MSI produced under target/wix" }
           $renamed = "skylander-portal-controller-$tag-windows-x86_64.msi"

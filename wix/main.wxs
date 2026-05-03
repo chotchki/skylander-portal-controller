@@ -6,9 +6,9 @@
   `[package.metadata.wix]` block in `crates/server/Cargo.toml`.
   The CI release lane invokes:
 
-      heat dir data -ag -gg -srd -dr DataDir -cg DataFiles -out wix/data.wxs
-      heat dir steam -ag -gg -srd -dr SteamDir -cg SteamFiles -out wix/steam.wxs
-      cargo wix -p skylander-server --nocapture
+      heat dir data ... -dr DataDir -cg DataFiles -out wix/data.wxs
+      heat dir steam ... -dr SteamDir -cg SteamFiles -out wix/steam.wxs
+      cargo wix -p skylander-server (see release.yml for full flags)
 
   to harvest the runtime asset trees (PLAN 10.8.6 figure portraits +
   10.8.5 Steam Grid artwork) before linking. heat runs at CI-time so
@@ -81,15 +81,11 @@
                                 Directory='ApplicationProgramsFolder'
                                 Name='Skylander Portal Controller'
                                 WorkingDirectory='APPLICATIONFOLDER'
-                                Icon='ProductICO'
-                                IconIndex='0'
                                 Advertise='yes'/>
                             <Shortcut Id='DesktopShortcut'
                                 Directory='DesktopFolder'
                                 Name='Skylander Portal Controller'
                                 WorkingDirectory='APPLICATIONFOLDER'
-                                Icon='ProductICO'
-                                IconIndex='0'
                                 Advertise='yes'/>
                         </File>
                         <!-- PLAN 10.8.2 / 10.9.1: open the listening
@@ -162,7 +158,7 @@
 
         <!-- Add/Remove Programs entry: icon, help URL, contact. -->
         <Icon Id='ProductICO'
-              SourceFile='..\assets\branding\icon.ico'/>
+              SourceFile='..\..\assets\branding\icon.ico'/>
         <Property Id='ARPPRODUCTICON' Value='ProductICO'/>
         <Property Id='ARPHELPLINK'
                   Value='https://github.com/chotchki/skylander-portal-controller'/>
