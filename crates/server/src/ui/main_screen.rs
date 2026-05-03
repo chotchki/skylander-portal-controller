@@ -1195,31 +1195,39 @@ pub(super) fn paint_heraldic_title(
     );
 }
 
-/// Rasterise the pairing URL into a round QR texture. Called once from
-/// [`LauncherApp::new`]; the texture is cached on the app for the life
-/// of the viewport and reused by the corner reconnect panel in
-/// `ui/in_game.rs`.
+/// Rasterise the pairing URL into raw round-QR RGBA pixels. Called
+/// once from [`LauncherApp::new`]; the pixels are kept on the app
+/// for the life of the viewport, fed into both the egui-side
+/// texture (via [`pixels_to_egui_texture`]) and the GL-side
+/// `BadgeRig` (PLAN 10.7.2) so the two consumers stay byte-
+/// identical.
 ///
-/// Pixel composition (circular disc, noise ring, transparent corners)
-/// lives in `crate::round_qr` so the phone's `/api/join-qr.png`
-/// endpoint renders an identical image. `QR_NOISE_GAP_MODULES` overrides
-/// the shared default gap — the TV-distance scan tests settled on 2,
-/// which is tighter than the 4-module standard quiet zone but still
-/// locks quickly at ECC level H.
-pub(super) fn render_qr_texture(ctx: &egui::Context, url: &str) -> egui::TextureHandle {
+/// Pixel composition (circular disc, noise ring, transparent
+/// corners) lives in `crate::round_qr` so the phone's
+/// `/api/join-qr.png` endpoint renders an identical image.
+/// `QR_NOISE_GAP_MODULES` overrides the shared default gap — the
+/// TV-distance scan tests settled on 2, which is tighter than the
+/// 4-module standard quiet zone but still locks quickly at ECC
+/// level H.
+pub(super) fn render_qr_pixels(url: &str) -> crate::round_qr::RoundQrPixels {
     use crate::round_qr::{RoundQrConfig, render};
-
     let cfg = RoundQrConfig {
         gap_modules: QR_NOISE_GAP_MODULES,
         ..RoundQrConfig::launcher_default()
     };
-    let pixels = render(url, &cfg).expect("render round QR");
+    render(url, &cfg).expect("render round QR")
+}
 
-    // Repack RGBA bytes into egui's premultiplied `Color32` vec. The
-    // shared renderer returns straight sRGB with alpha=0 in the corner
-    // triangles; `Color32::from_rgba_unmultiplied` does the egui-side
-    // premultiplication and preserves the transparency so the bezel
-    // plate shows through.
+/// Repack the round-QR RGBA bytes into egui's premultiplied
+/// `Color32` vec and load as a texture. The shared renderer returns
+/// straight sRGB with alpha=0 in the corner triangles;
+/// `Color32::from_rgba_unmultiplied` does the egui-side
+/// premultiplication and preserves the transparency so the bezel
+/// plate shows through.
+pub(super) fn pixels_to_egui_texture(
+    ctx: &egui::Context,
+    pixels: &crate::round_qr::RoundQrPixels,
+) -> egui::TextureHandle {
     let color_pixels: Vec<egui::Color32> = pixels
         .rgba
         .chunks_exact(4)

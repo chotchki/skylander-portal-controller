@@ -49,6 +49,7 @@ const float PI = 3.14159265359;
 uniform float u_rotation_y;
 
 out vec3 v_obj;
+out vec2 v_uv;
 
 void main() {
     int vid = gl_VertexID;
@@ -61,6 +62,14 @@ void main() {
         obj = vec3(cos(angle), sin(angle), 0.0);
     }
     v_obj = obj;
+
+    // Map object-space xy ∈ [-1, 1] to UV ∈ [0, 1] for sampling
+    // the QR texture. The QR is rendered as a square with the
+    // round disc inscribed (corners are transparent), so this
+    // mapping picks up the disc's pixels exactly. Flip Y because
+    // GL textures origin at bottom-left, our QR raster origin is
+    // top-left.
+    v_uv = vec2(obj.x * 0.5 + 0.5, 1.0 - (obj.y * 0.5 + 0.5));
 
     // Rotate around Y axis. With obj.z = 0 the math reduces to:
     //   view.x = cos(theta) * obj.x
@@ -82,32 +91,30 @@ void main() {
 }
 "#;
 
-/// Fragment shader: solid gold-orange placeholder colour for the
-/// spike. The 10.7.2 texture pipeline replaces this body with a
-/// `texture(u_qr, v_obj.xy * 0.5 + 0.5).rgb` sample on the front
-/// face. For now the goal is just "is the geometry clearly a disc?"
+/// Fragment shader: sample the QR texture on the disc's front face.
+/// The QR raster (rendered by `crate::round_qr::render`) already
+/// has the round shape baked in — the corners outside the
+/// inscribed circle are transparent — so a straight texture
+/// sample at the polygon-projected UV gives the right pixels for
+/// the disc surface, including the bezel ring drawn around the
+/// QR data.
 const FS_SRC: &str = r#"#version 330
 in vec3 v_obj;
+in vec2 v_uv;
+
+uniform sampler2D u_qr;
+
 out vec4 frag_color;
 
 void main() {
-    // Clip to the unit disc in object space — TRIANGLE_FAN draws a
-    // polygon which is technically a 64-gon, not a perfect circle.
-    // For the spike that's fine; no edge clip needed. Keeping this
-    // hook in the source as a comment so 10.7.2's texture sampler
-    // knows where the analytic disc boundary lives.
-    //
-    //   if (length(v_obj.xy) > 1.0) discard;
-
-    // Gold-bezel placeholder: warm orange in the centre, slightly
-    // darker toward the rim so the disc reads as a 3D object even
-    // before lighting lands in 10.7.4. Matches the `--gb` /
-    // `--gi` palette tokens the SPA uses for the same family.
-    float r = length(v_obj.xy);
-    vec3 centre = vec3(0.96, 0.78, 0.20);
-    vec3 rim    = vec3(0.55, 0.36, 0.07);
-    vec3 col = mix(centre, rim, smoothstep(0.0, 1.0, r));
-    frag_color = vec4(col, 1.0);
+    vec4 c = texture(u_qr, v_uv);
+    // Drop pixels outside the analytic disc. The QR raster's
+    // corners are transparent so this is mostly belt-and-
+    // suspenders, but the polygon-vs-circle gap on a 64-gon at
+    // the edge can pull in a sliver of corner pixel near the
+    // 22.5° spokes.
+    if (length(v_obj.xy) > 1.0) discard;
+    frag_color = c;
 }
 "#;
 
@@ -115,14 +122,28 @@ void main() {
 /// the same way `vortex::ShaderRig` is. Created lazily on the first
 /// frame after the eframe `Frame` hands us a `glow::Context`; reused
 /// every frame; dropped in `on_exit`.
+///
+/// Owns the QR texture too. The same RGBA bytes that power the
+/// egui-side `qr_texture` (via `main_screen::render_qr_texture`)
+/// also get uploaded to a GL texture here, so the disc's front face
+/// renders the round QR pixels at-source rather than re-rasterising.
 pub struct BadgeRig {
     program: glow::Program,
     vao: glow::VertexArray,
+    qr_texture: glow::Texture,
     u_rotation_y: Option<glow::UniformLocation>,
+    u_qr: Option<glow::UniformLocation>,
 }
 
 impl BadgeRig {
-    pub fn new(gl: &glow::Context) -> Result<Self, String> {
+    /// Build the rig, compile shaders, and upload the QR pixels as
+    /// a GL texture in one go. `qr_pixels` is the same buffer
+    /// `crate::round_qr::render` produces; bytes layout is RGBA8
+    /// row-major from the top-left.
+    pub fn new(
+        gl: &glow::Context,
+        qr_pixels: &crate::round_qr::RoundQrPixels,
+    ) -> Result<Self, String> {
         unsafe {
             let program = gl
                 .create_program()
@@ -151,10 +172,57 @@ impl BadgeRig {
                 .create_vertex_array()
                 .map_err(|e| format!("badge create_vao: {e}"))?;
 
+            // Upload the QR PNG bytes as a GL texture. RGBA8, no
+            // mipmaps (the disc fills ~80 % of the badge rect at
+            // face-on; minification would only happen at extreme
+            // edge-on poses where the texture is barely visible).
+            // LINEAR min/mag filter so the rotation reads smoothly
+            // without crawling pixel artifacts on the QR's cell
+            // boundaries — NEAREST would alias as the disc
+            // sub-rotates per frame.
+            let qr_texture = gl
+                .create_texture()
+                .map_err(|e| format!("badge create_texture: {e}"))?;
+            gl.bind_texture(glow::TEXTURE_2D, Some(qr_texture));
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MIN_FILTER,
+                glow::LINEAR as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MAG_FILTER,
+                glow::LINEAR as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_S,
+                glow::CLAMP_TO_EDGE as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_T,
+                glow::CLAMP_TO_EDGE as i32,
+            );
+            gl.tex_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                glow::RGBA8 as i32,
+                qr_pixels.width as i32,
+                qr_pixels.height as i32,
+                0,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                Some(qr_pixels.rgba.as_slice()),
+            );
+            gl.bind_texture(glow::TEXTURE_2D, None);
+
             Ok(Self {
                 u_rotation_y: gl.get_uniform_location(program, "u_rotation_y"),
+                u_qr: gl.get_uniform_location(program, "u_qr"),
                 program,
                 vao,
+                qr_texture,
             })
         }
     }
@@ -175,11 +243,14 @@ impl BadgeRig {
             // draw — we'll want this anyway for 10.7.4's lit
             // cylinder. Vortex uses `ONE / ONE_MINUS_SRC_ALPHA`
             // (premultiplied); we match for consistency with the
-            // rest of the launcher's GL state convention even
-            // though the spike's fragment shader outputs alpha=1
-            // everywhere.
+            // rest of the launcher's GL state convention. The QR
+            // PNG is straight (non-premultiplied) sRGB, so we
+            // emit straight alpha and let GL premultiply via
+            // SRC_ALPHA blending instead — matches the egui-side
+            // texture upload's NEAREST + Color32::from_rgba_unmultiplied
+            // path's expectations.
             gl.enable(glow::BLEND);
-            gl.blend_func(glow::ONE, glow::ONE_MINUS_SRC_ALPHA);
+            gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
             gl.disable(glow::DEPTH_TEST);
             gl.enable(glow::CULL_FACE);
             gl.cull_face(glow::BACK);
@@ -187,12 +258,19 @@ impl BadgeRig {
             gl.use_program(Some(self.program));
             gl.uniform_1_f32(self.u_rotation_y.as_ref(), rotation_y);
 
+            // Bind QR texture to texture unit 0 + tell the sampler
+            // uniform to read from it.
+            gl.active_texture(glow::TEXTURE0);
+            gl.bind_texture(glow::TEXTURE_2D, Some(self.qr_texture));
+            gl.uniform_1_i32(self.u_qr.as_ref(), 0);
+
             gl.bind_vertex_array(Some(self.vao));
             // SEGMENTS + 2 = 66 vertices (center + 64 rim + closing
             // duplicate). TRIANGLE_FAN consumes them as 64 triangles
             // sharing the centre vertex.
             gl.draw_arrays(glow::TRIANGLE_FAN, 0, 66);
             gl.bind_vertex_array(None);
+            gl.bind_texture(glow::TEXTURE_2D, None);
             gl.use_program(None);
 
             // Reset state egui's renderer assumes — it doesn't expect
@@ -207,6 +285,7 @@ impl BadgeRig {
         unsafe {
             gl.delete_program(self.program);
             gl.delete_vertex_array(self.vao);
+            gl.delete_texture(self.qr_texture);
         }
     }
 }

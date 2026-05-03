@@ -114,6 +114,11 @@ pub struct LauncherApp {
     /// + VAO, separate `egui::PaintCallback` per frame. Lazy-init
     /// alongside the vortex so first-frame ordering matches.
     badge_rig: Arc<Mutex<Option<BadgeRig>>>,
+    /// Round-QR raster bytes, generated once at startup. Same buffer
+    /// `main_screen::render_qr_texture` consumes for the egui-side
+    /// texture; held here so the GL-side `BadgeRig` lazy-init in
+    /// `update()` can upload them without re-rasterising. PLAN 10.7.2.
+    qr_pixels: crate::round_qr::RoundQrPixels,
 }
 
 impl LauncherApp {
@@ -134,7 +139,14 @@ impl LauncherApp {
         // field after 4.19.10a / 4.19.22 dropped the on-screen URL
         // text and brand heading. `figure_count` previously rode along
         // for the "504 figures indexed" debug counter; same drop.
-        let qr_texture = Some(main_screen::render_qr_texture(&cc.egui_ctx, &url));
+        // Render once into raw RGBA pixels; the egui-side texture and
+        // the GL-side BadgeRig texture (PLAN 10.7.2) both consume the
+        // same buffer so they stay byte-identical.
+        let qr_pixels = main_screen::render_qr_pixels(&url);
+        let qr_texture = Some(main_screen::pixels_to_egui_texture(
+            &cc.egui_ctx,
+            &qr_pixels,
+        ));
         Self {
             clients,
             status,
@@ -152,6 +164,7 @@ impl LauncherApp {
             vortex_rig: Arc::new(Mutex::new(None)),
             vortex_idle: vortex::idle_params(),
             badge_rig: Arc::new(Mutex::new(None)),
+            qr_pixels,
         }
     }
 }
@@ -190,11 +203,14 @@ impl eframe::App for LauncherApp {
                 Err(e) => tracing::error!("vortex shader init failed: {e}"),
             }
         }
-        // Same lazy-init for the badge rig (PLAN 10.7.1).
+        // Same lazy-init for the badge rig (PLAN 10.7.1). Hands the
+        // pre-rendered QR pixels in so the GL texture upload happens
+        // here, on-thread, with the GL context available — the
+        // texture stays alive until on_exit.
         if self.badge_rig.lock().unwrap().is_none()
             && let Some(gl) = frame.gl()
         {
-            match BadgeRig::new(gl) {
+            match BadgeRig::new(gl, &self.qr_pixels) {
                 Ok(rig) => *self.badge_rig.lock().unwrap() = Some(rig),
                 Err(e) => tracing::error!("badge shader init failed: {e}"),
             }

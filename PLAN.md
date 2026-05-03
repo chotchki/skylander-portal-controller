@@ -848,17 +848,24 @@ or after, doesn't matter.
   PaintCallback maps to the badge rect cleanly, and
   perspective-projected disc renders inside it.
 
-- [ ] 10.7.2 — **Texture pipeline:** the QR PNG is already
-  pre-rendered once at startup as a `Vec<u8>` (see
-  `state.rs::join_qr_png` and `round_qr.rs`). Upload it to a GL
-  texture once during launcher init; sample on the disc's front
-  face. The brand text ("SCAN TO CONNECT", profile name on the
-  in-game return surface, error messages) currently lives as
-  egui calls — easiest path is a separate offscreen rasteriser
-  that emits a second texture from a string + style; or, lower-
-  effort, render text via egui *into* the same paint callback's
-  framebuffer before the disc geometry runs. Pick after the
-  spike answers how much GL state plumbing is reasonable.
+- [x] 10.7.2 — QR texture wired through. Refactored
+  `main_screen::render_qr_texture` into `render_qr_pixels` (raw
+  RGBA + dims via `round_qr::render`) + `pixels_to_egui_texture`
+  (the egui-side packing). `LauncherApp` keeps the pixels around
+  in `qr_pixels: RoundQrPixels`; the lazy-init in `update()`
+  hands them to `BadgeRig::new(gl, &qr_pixels)`, which uploads a
+  single RGBA8 texture (LINEAR min/mag, CLAMP_TO_EDGE wrap, no
+  mipmaps — the disc fills ~80 % of the badge rect at face-on
+  and edge-on poses are barely visible anyway). Fragment shader
+  samples `texture(u_qr, v_uv).rgba` and discards pixels outside
+  the analytic disc to clean up the 64-gon polygon-vs-circle
+  sliver near the spokes. Verified: with `LAUNCHER_3D_BADGE=1`
+  the round QR pixels render directly on the disc face, sharing
+  the exact buffer the egui-side texture uses (no
+  re-rasterisation). Brand-text texture (the "SCAN TO CONNECT"
+  caption + the in-game profile-name surface) is deferred to
+  10.7.5 when we decide whether to bake the text into the disc
+  geometry or keep it as a 2D egui overlay.
 
 - [ ] 10.7.3 — **Drive rotation off `LaunchPhase`:** add
   `badge_rotation_y(self) -> f32` (radians) replacing
