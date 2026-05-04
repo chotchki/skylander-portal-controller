@@ -1100,14 +1100,55 @@ independent.
   display; check whether the in-game branch's panel positions the
   exit button at a coordinate beyond the viewport edge or whether
   fullscreen scaling clips it.
-- [ ] 10.8.4 **"Couldn't access the file dialog for portal" via
-  Steam Big Picture (also reproduced from regular Windows).** UIA
-  driver's `open_dialog` flow failed mid-nav on the HTPC. First
-  diagnostic: pull launcher logs from the failed run and check
-  whether RPCS3's auto-update popup stole focus (CLAUDE.md "Focus
-  thieves" — disable RPCS3 Settings → Advanced → "Automatically
-  check for updates at startup" on the HTPC and retry). Second: rule
-  in/out Steam Overlay interaction with the menu-key synthesis path.
+- [~] 10.8.4 **"Couldn't access the file dialog for portal."** Root
+  cause: synthesised-keystroke menu nav for both `open_dialog` (Manage
+  → Portals → Skylanders Portal) and `quit_via_file_menu` (File →
+  Exit) was fragile — game viewport, RPCS3 update popup, Steam Overlay,
+  and shader-compile load all competed for keyboard focus mid-nav.
+
+  Driver layer **fixed** (commits 1ebbbc9, 6d05f65, 0991814):
+  - `tools/uia-probe` confirmed current RPCS3 (Qt 6.11) advertises
+    `Invoke` + `ExpandCollapse` + `LegacyIAccessible` on every
+    MenuItem — the CLAUDE.md gotcha that Qt6 menus didn't honour
+    these patterns is stale.
+  - `trigger_dialog_via_menu` rewritten as three pattern calls
+    (`Manage.expand()`, `Portals_and_Gates.expand()`,
+    `Skylanders_Portal.invoke()`). No focus dependency, no
+    keystroke synthesis. ~120 lines of retry loop deleted.
+  - `quit_via_file_menu` rewritten as Expand File / Invoke Exit
+    pattern calls. Same ~75 lines deleted.
+  - Detection switched from classname (`skylander_dialog`) to title
+    (`"Skylanders Manager"`) — current Qt unifies every Qt window
+    under `Qt6110QWindowIcon` so class-match silently mis-resolved.
+  - `UiaRpcsProcess::launch_with_eboot(exe, eboot)` added — direct
+    EBOOT.BIN launch works with pattern menu nav (the CLAUDE.md
+    "EBOOT-arg launch breaks menu nav" caveat was keystroke-specific).
+  - `games_yml` module: tiny line-by-line parser for RPCS3's
+    `<install>/config/games.yml` serial → game_dir map.
+  - `examples/production_open_dialog.rs` end-to-end smoke verified
+    on the HTPC: spawn rpcs3.exe + EBOOT, wait for FPS:, call
+    `UiaPortalDriver::open_dialog()` against live process, dialog
+    opens cleanly. **The fragility is gone at the driver layer.**
+
+  Server-side rewire **pending** (deferred from this commit's scope —
+  it touches the launch state machine + auto-respawn behaviour +
+  BootGame/StopEmulation job contracts, coupled enough to want its
+  own PR):
+  - main.rs at startup: skip `launch_library`, parse games.yml for
+    the catalogue instead of UIA `enumerate_games`. RPCS3 stays dead
+    until the user picks a game.
+  - http.rs `/api/launch`: dispatch a new BootDirect job that
+    spawns RPCS3 via `launch_with_eboot`, waits for FPS:, then
+    `open_dialog()`.
+  - state.rs `DriverJob::BootGame` retired — replaced by `BootDirect
+    { eboot_path }`. `StopEmulation` becomes a full process kill
+    (no library-view fallback).
+  - Auto-respawn: only re-spawn if a game was running pre-crash;
+    relaunch with the same EBOOT (track `current_game.eboot` in
+    `RpcsState`).
+  - `PortalDriver::boot_game_by_serial` + its UIA impl + Mock impl
+    + `examples/zorder_probe.rs` + `tests/live_lifecycle.rs` boot
+    block: all retired with the server cutover.
 - [ ] 10.8.5 **Steam Big Picture: missing icon + banner artwork.**
   Steam library tile shows the generic placeholder; needs `.ico` +
   `library_capsule` / `library_hero` / `library_logo` images
