@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use anyhow::Context;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
