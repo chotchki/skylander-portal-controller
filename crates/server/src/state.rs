@@ -1169,7 +1169,14 @@ async fn handle_job(
                 let d = driver.clone();
                 let exe_owned = rpcs3_exe.to_path_buf();
                 let eboot_owned = eboot_path.clone();
-                let expected_owned = expected_name.clone();
+                // Match the viewport title on `[<SERIAL>]` (e.g.
+                // `[BLUS30968]`). Serial brackets are deterministic;
+                // matching on display_name fails when RPCS3's
+                // viewport title drops punctuation we put in
+                // SKYLANDERS_SERIALS — `"Skylanders: Giants"` (catalogue)
+                // vs `"Skylanders Giants [BLUS30968]"` (viewport).
+                let expected_marker = format!("[{}]", serial);
+                let _ = &expected_name;
                 tokio::task::spawn_blocking(move || -> Result<Option<RpcsProcess>> {
                     let mut proc = RpcsProcess::launch_with_eboot(&exe_owned, &eboot_owned)?;
                     proc.wait_ready(std::time::Duration::from_secs(45))
@@ -1177,13 +1184,13 @@ async fn handle_job(
                     let deadline = std::time::Instant::now() + timeout;
                     loop {
                         if let Some(title) = skylander_rpcs3_control::read_viewport_title()
-                            && title.contains(&expected_owned)
+                            && title.contains(&expected_marker)
                         {
                             break;
                         }
                         if std::time::Instant::now() >= deadline {
                             return Err(anyhow::anyhow!(
-                                "FPS: viewport with title containing {expected_owned:?} \
+                                "FPS: viewport with serial marker {expected_marker:?} \
                                  never appeared within {:?}",
                                 timeout
                             ));

@@ -98,11 +98,12 @@ fn open_and_boot() -> (RpcsProcess, UiaPortalDriver) {
     // Wait for the game viewport before opening the Manager dialog —
     // open_dialog needs the menu bar responsive, which it is in
     // direct-boot mode (PLAN 10.8.4 verified).
+    let expected_marker = format!("[{}]", serial);
     let expected_name = expected_game_name_for_serial(&serial);
     let viewport_deadline = std::time::Instant::now() + Duration::from_secs(120);
     while std::time::Instant::now() < viewport_deadline {
         if let Some(t) = skylander_rpcs3_control::read_viewport_title()
-            && t.contains(expected_name)
+            && t.contains(&expected_marker)
         {
             break;
         }
