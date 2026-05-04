@@ -77,36 +77,42 @@ fn open_and_boot() -> (RpcsProcess, UiaPortalDriver) {
         let _ = std::fs::remove_file(dir.join("RPCS3.buf"));
     }
 
-    let mut proc = RpcsProcess::launch_library(&exe).expect("launch RPCS3 library view");
+    // PLAN 10.8.4 direct-boot: spawn RPCS3 with the game's EBOOT.BIN
+    // directly. games.yml provides the dir; EBOOT.BIN is at the
+    // standard PS3 disc layout below. No more library-view + select.
+    let install_dir = exe.parent().expect("rpcs3 exe parent");
+    let games_yml = skylander_rpcs3_control::games_yml::read_games_yml(install_dir)
+        .expect("read games.yml");
+    let game_dir = games_yml
+        .get(&serial)
+        .unwrap_or_else(|| panic!("serial {serial} not in games.yml"));
+    let eboot = skylander_rpcs3_control::games_yml::eboot_for(game_dir)
+        .unwrap_or_else(|| panic!("EBOOT.BIN missing for {serial} at {}", game_dir.display()));
+
+    let mut proc = RpcsProcess::launch_with_eboot(&exe, &eboot).expect("launch RPCS3 with EBOOT");
     proc.wait_ready(Duration::from_secs(45))
         .expect("RPCS3 window ready within 45s");
 
     let driver = UiaPortalDriver::new().expect("construct driver");
 
-    // Open dialog from the cold library view — this is the 3.6b-proven path.
+    // Wait for the game viewport before opening the Manager dialog —
+    // open_dialog needs the menu bar responsive, which it is in
+    // direct-boot mode (PLAN 10.8.4 verified).
+    let expected_name = expected_game_name_for_serial(&serial);
+    let viewport_deadline = std::time::Instant::now() + Duration::from_secs(120);
+    while std::time::Instant::now() < viewport_deadline {
+        if let Some(t) = skylander_rpcs3_control::read_viewport_title()
+            && t.contains(expected_name)
+        {
+            break;
+        }
+        thread::sleep(Duration::from_millis(250));
+    }
     driver
         .open_dialog()
         .expect("open Skylanders Manager dialog");
 
-    // Now boot the game by serial. The dialog is already off-screen; it
-    // stays open for the rest of the session and the driver short-circuits
-    // subsequent `open_dialog` calls. `boot_game_by_serial` does its own
-    // post-boot title verification using `expected_name`; we redundantly
-    // verify below because that check is "title contains a peer-game
-    // keyword" — broader than the exact-substring match we want here.
-    let expected_name = expected_game_name_for_serial(&serial);
-    driver
-        .boot_game_by_serial(&serial, expected_name, Duration::from_secs(60))
-        .expect("UIA-boot game by serial");
-
-    // Verify the booted game matches the requested serial. Without this
-    // check the test silently passed even when `boot_game_by_serial` booted
-    // the default game instead of the target, because `load()` operates on
-    // the Skylanders Manager (cross-game) and doesn't care which game is
-    // running. The viewport title contains the game's display name; we
-    // match that against a serial→name map rather than the serial itself
-    // (RPCS3 doesn't put the serial in the title).
-    // Give Qt a beat to finalise the title once the FPS counter starts.
+    // Verify the booted game matches the requested serial.
     thread::sleep(Duration::from_secs(1));
     let title = driver
         .running_viewport_title()

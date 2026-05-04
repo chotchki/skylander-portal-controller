@@ -35,48 +35,6 @@ pub trait PortalDriver: Send + Sync {
     /// Clear `slot`. Returns once the slot shows "None".
     fn clear(&self, slot: SlotIndex) -> Result<()>;
 
-    /// Boot the game with PS3 serial `serial` from the library view. Prereq:
-    /// RPCS3 was just launched via `RpcsProcess::launch_library` and is
-    /// sitting at the game list. The UIA impl clicks the matching `DataItem`
-    /// and synthesises Enter; the mock impl is a no-op (mock has no RPCS3
-    /// process to boot). Called by the server's `/api/launch` handler after
-    /// `open_dialog()` so Qt's focus state is cold when boot runs.
-    ///
-    /// `expected_name` is the canonical display name from the game catalogue
-    /// (e.g. `"Skylanders: Trap Team"`). After the viewport appears, the UIA
-    /// impl reads its title and fails fast if the title identifies a
-    /// *different* known Skylanders game — a defence against the library-
-    /// cell click landing on the wrong cell (library scrolled, stale
-    /// bounding rect, etc.) and booting the wrong game. If the title is
-    /// unrecognisable (some future RPCS3 title format) the boot is trusted.
-    fn boot_game_by_serial(
-        &self,
-        serial: &str,
-        expected_name: &str,
-        timeout: Duration,
-    ) -> Result<()>;
-
-    /// Enumerate every game serial currently visible in RPCS3's library
-    /// view. Prereq: RPCS3 is at the game-list table (same prereq as
-    /// `boot_game_by_serial`). The UIA impl walks `game_list_table` for
-    /// `DataItem`s and returns each item's name (the PS3 serial, e.g.
-    /// `"BLUS31076"`). The mock impl returns whatever was previously
-    /// `set_enumerated_games`d (default empty). Used by `/api/launch` to
-    /// verify a requested serial actually exists in the library before
-    /// committing to a boot, so a stale `games.yml` entry produces a
-    /// fast specific error instead of a slow generic boot timeout
-    /// (PLAN 3.7.8 phase 1).
-    fn enumerate_games(&self, timeout: Duration) -> Result<Vec<String>>;
-
-    /// Stop the currently-running game and return RPCS3 to its library
-    /// view. Prereq: a game is actually running (viewport window
-    /// present). The UIA impl finds a "Stop Emulation" / "Stop" menu
-    /// item or toolbar button and invokes it; the mock impl is a no-op
-    /// (mock has no real RPCS3 to stop). Used by `/api/quit` so the
-    /// RPCS3 process stays alive across game changes — PLAN 4.15.16's
-    /// "always-running RPCS3" contract. Returns once the game viewport
-    /// has disappeared or `timeout` elapses.
-    fn stop_emulation(&self, timeout: Duration) -> Result<()>;
 }
 
 #[cfg(windows)]

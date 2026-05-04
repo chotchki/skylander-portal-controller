@@ -1366,31 +1366,15 @@ async fn shutdown_launcher(State(state): State<Arc<AppState>>, Signed(_body): Si
         // into a fully-dark screen before the mode flip hits.
         tokio::time::sleep(Duration::from_millis(1200)).await;
 
-        let has_game = {
-            let guard = detached_state.rpcs3.lock().await;
-            guard.current.is_some()
-        };
-        if has_game {
-            let (tx, rx) = tokio::sync::oneshot::channel();
-            if detached_state
-                .driver_tx
-                .send(crate::state::DriverJob::StopEmulation {
-                    timeout: Duration::from_secs(5),
-                    done: tx,
-                })
-                .await
-                .is_ok()
-            {
-                match rx.await {
-                    Ok(Ok(())) => info!("shutdown: stop_emulation ok"),
-                    Ok(Err(e)) => warn!("shutdown: stop_emulation failed: {e}"),
-                    Err(e) => warn!("shutdown: StopEmulation ack dropped: {e}"),
-                }
-            }
+        // PLAN 10.8.4 direct-boot: shutdown is a single kill — there's
+        // no library-view fallback, so a UIA stop_emulation step is
+        // redundant. Just clear `current` + take the process and let
+        // `shutdown_graceful` send WM_CLOSE / TerminateProcess below.
+        {
             let mut guard = detached_state.rpcs3.lock().await;
             guard.current = None;
+            guard.current_eboot = None;
         }
-
         let process = detached_state.rpcs3.lock().await.process.take();
         if let Some(mut proc) = process {
             let result =

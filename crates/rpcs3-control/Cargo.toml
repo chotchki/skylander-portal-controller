@@ -72,10 +72,3 @@ required-features = ["uia-examples"]
 name = "show_main"
 required-features = ["uia-examples"]
 
-[[example]]
-name = "stop_probe"
-required-features = ["uia-examples"]
-
-[[example]]
-name = "zorder_probe"
-required-features = ["uia-examples"]

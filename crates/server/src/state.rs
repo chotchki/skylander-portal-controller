@@ -643,35 +643,6 @@ pub enum DriverJob {
         timeout: std::time::Duration,
         done: tokio::sync::oneshot::Sender<Result<()>>,
     },
-    /// **Legacy: library-view + select+Enter boot.** Retired by
-    /// PLAN 10.8.4 — the keystroke nav was the fragility this task
-    /// existed to address. Kept temporarily so existing test scaffolding
-    /// (live_lifecycle.rs) compiles; will be deleted once those callers
-    /// migrate.
-    BootGame {
-        serial: String,
-        expected_name: String,
-        timeout: std::time::Duration,
-        done: tokio::sync::oneshot::Sender<Result<()>>,
-    },
-    /// Walk RPCS3's library view and return every visible serial. PLAN
-    /// 3.7.8 phase 1 — `/api/launch` calls this between `wait_ready` and
-    /// `BootGame` so a request for a stale `games.yml` serial fails fast
-    /// with a specific error instead of hitting `boot_game_by_serial`'s
-    /// generic timeout.
-    EnumerateGames {
-        timeout: std::time::Duration,
-        done: tokio::sync::oneshot::Sender<Result<Vec<String>>>,
-    },
-    /// Stop the current game and return RPCS3 to library view without
-    /// killing the process. Replaces `/api/quit`'s old `shutdown_graceful`
-    /// path under the always-running RPCS3 contract (PLAN 4.15.16). The
-    /// worker calls `driver.stop_emulation(timeout)`; result comes back
-    /// through the oneshot so the handler can sync on it.
-    StopEmulation {
-        timeout: std::time::Duration,
-        done: tokio::sync::oneshot::Sender<Result<()>>,
-    },
 }
 
 /// Spawn the RPCS3 shader-compile watchdog. Tails RPCS3's log file
@@ -1252,47 +1223,6 @@ async fn handle_job(
                 Err(e) => Err(e),
             };
             let _ = done.send(outcome);
-        }
-        DriverJob::BootGame {
-            serial,
-            expected_name,
-            timeout,
-            done,
-        } => {
-            let d = driver.clone();
-            let serial_for_blocking = serial.clone();
-            let expected_for_blocking = expected_name.clone();
-            // Dialog first, game second — same order as the 3.7.x live tests.
-            // Cold library view is the easiest UIA case; once a game is
-            // running, Qt's focus state is too scrambled to re-open the
-            // Manage menu reliably.
-            let result = tokio::task::spawn_blocking(move || -> Result<()> {
-                d.open_dialog()?;
-                d.boot_game_by_serial(&serial_for_blocking, &expected_for_blocking, timeout)
-            })
-            .await
-            .map_err(|e| anyhow::anyhow!("boot task panicked: {e}"))
-            .and_then(|r| r);
-            // If the receiver dropped (handler timed out or errored),
-            // silently ignore — the worker's contract is fulfilled by
-            // having driven the driver; nobody is listening for the ack.
-            let _ = done.send(result);
-        }
-        DriverJob::EnumerateGames { timeout, done } => {
-            let d = driver.clone();
-            let result = tokio::task::spawn_blocking(move || d.enumerate_games(timeout))
-                .await
-                .map_err(|e| anyhow::anyhow!("enumerate task panicked: {e}"))
-                .and_then(|r| r);
-            let _ = done.send(result);
-        }
-        DriverJob::StopEmulation { timeout, done } => {
-            let d = driver.clone();
-            let result = tokio::task::spawn_blocking(move || d.stop_emulation(timeout))
-                .await
-                .map_err(|e| anyhow::anyhow!("stop_emulation task panicked: {e}"))
-                .and_then(|r| r);
-            let _ = done.send(result);
         }
     }
     Ok(())

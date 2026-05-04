@@ -142,28 +142,6 @@ impl PortalDriver for MockPortalDriver {
         Ok(())
     }
 
-    fn boot_game_by_serial(
-        &self,
-        _serial: &str,
-        _expected_name: &str,
-        _timeout: Duration,
-    ) -> Result<()> {
-        // Mock has no RPCS3 process to boot. Tests that need to exercise the
-        // launch flow against the mock use `/api/_test/set_game` to inject a
-        // running game directly into server state.
-        Ok(())
-    }
-
-    fn enumerate_games(&self, _timeout: Duration) -> Result<Vec<String>> {
-        Ok(self.enumerated_games.lock().unwrap().clone())
-    }
-
-    fn stop_emulation(&self, _timeout: Duration) -> Result<()> {
-        // Mock has no RPCS3 process, so "return to library" is a no-op.
-        // Tests that want to observe the lifecycle use `/api/_test/set_game`
-        // to flip `current_game` back to None directly.
-        Ok(())
-    }
 }
 
 /// Seed `enumerate_games` with every supported Skylanders serial so
@@ -226,29 +204,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn enumerate_games_defaults_to_all_skylanders_and_round_trips_set() {
-        let d = MockPortalDriver::with_latency(Duration::ZERO);
-        // Default: every supported Skylanders serial.
-        let got = d.enumerate_games(Duration::ZERO).unwrap();
-        assert_eq!(got.len(), skylander_core::SKYLANDERS_SERIALS.len());
-        assert_eq!(got[0], skylander_core::SKYLANDERS_SERIALS[0].0);
-
-        d.set_enumerated_games(vec!["BLUS31076".into(), "BLUS31442".into()]);
-        let serials = d.enumerate_games(Duration::ZERO).unwrap();
-        assert_eq!(serials, vec!["BLUS31076", "BLUS31442"]);
-
-        // Replaces, doesn't append.
-        d.set_enumerated_games(vec!["BLUS30968".into()]);
-        assert_eq!(
-            d.enumerate_games(Duration::ZERO).unwrap(),
-            vec!["BLUS30968"]
-        );
-
-        // Explicit empty models "no library / nothing installed".
-        d.set_enumerated_games(vec![]);
-        assert!(d.enumerate_games(Duration::ZERO).unwrap().is_empty());
-    }
+    // enumerate_games / boot_game_by_serial / stop_emulation tests
+    // retired alongside the library-view boot path (PLAN 10.8.4). The
+    // mock's `set_enumerated_games` setter survives because the field
+    // is still readable via the (private) `enumerated_games` Mutex —
+    // useful for forthcoming launch-flow tests that want to assert
+    // the catalogue contents without spinning up a real RPCS3.
 
     #[test]
     fn load_then_clear() {
