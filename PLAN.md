@@ -1100,55 +1100,77 @@ independent.
   display; check whether the in-game branch's panel positions the
   exit button at a coordinate beyond the viewport edge or whether
   fullscreen scaling clips it.
-- [~] 10.8.4 **"Couldn't access the file dialog for portal."** Root
+- [x] 10.8.4 **"Couldn't access the file dialog for portal."** Root
   cause: synthesised-keystroke menu nav for both `open_dialog` (Manage
   → Portals → Skylanders Portal) and `quit_via_file_menu` (File →
   Exit) was fragile — game viewport, RPCS3 update popup, Steam Overlay,
   and shader-compile load all competed for keyboard focus mid-nav.
 
-  Driver layer **fixed** (commits 1ebbbc9, 6d05f65, 0991814):
+  Closed end-to-end across `main`. The library-view + select+Enter
+  architecture is retired entirely; RPCS3 is now spawned on demand
+  with the picked game's EBOOT.BIN as a CLI arg, and the Manager
+  dialog opens via three UIA pattern calls with no focus dependency.
+
+  Driver layer (commits `1ebbbc9`, `6d05f65`, `0991814`):
   - `tools/uia-probe` confirmed current RPCS3 (Qt 6.11) advertises
     `Invoke` + `ExpandCollapse` + `LegacyIAccessible` on every
-    MenuItem — the CLAUDE.md gotcha that Qt6 menus didn't honour
-    these patterns is stale.
-  - `trigger_dialog_via_menu` rewritten as three pattern calls
-    (`Manage.expand()`, `Portals_and_Gates.expand()`,
-    `Skylanders_Portal.invoke()`). No focus dependency, no
-    keystroke synthesis. ~120 lines of retry loop deleted.
-  - `quit_via_file_menu` rewritten as Expand File / Invoke Exit
-    pattern calls. Same ~75 lines deleted.
+    `MenuItem` — the old CLAUDE.md gotcha that Qt6 menus didn't
+    honour these patterns is stale.
+  - `trigger_dialog_via_menu` and `quit_via_file_menu` both rewritten
+    as Expand+Invoke pattern calls. ~200 lines of retry loop +
+    keystroke-synthesis machinery deleted (`focus_main_window`,
+    `send_key`, `key_input`, `expect_focused_menu_item`,
+    `collect_focused_menu_items`, `normalise_menu_name` — all gone).
   - Detection switched from classname (`skylander_dialog`) to title
     (`"Skylanders Manager"`) — current Qt unifies every Qt window
     under `Qt6110QWindowIcon` so class-match silently mis-resolved.
-  - `UiaRpcsProcess::launch_with_eboot(exe, eboot)` added — direct
+  - `UiaRpcsProcess::launch_with_eboot(exe, eboot)` added; direct
     EBOOT.BIN launch works with pattern menu nav (the CLAUDE.md
     "EBOOT-arg launch breaks menu nav" caveat was keystroke-specific).
-  - `games_yml` module: tiny line-by-line parser for RPCS3's
+  - `games_yml` module: parser for RPCS3's
     `<install>/config/games.yml` serial → game_dir map.
   - `examples/production_open_dialog.rs` end-to-end smoke verified
-    on the HTPC: spawn rpcs3.exe + EBOOT, wait for FPS:, call
-    `UiaPortalDriver::open_dialog()` against live process, dialog
-    opens cleanly. **The fragility is gone at the driver layer.**
+    twice on the HTPC against Skylanders Giants — boots, opens
+    dialog, kills cleanly.
 
-  Server-side rewire **pending** (deferred from this commit's scope —
-  it touches the launch state machine + auto-respawn behaviour +
-  BootGame/StopEmulation job contracts, coupled enough to want its
-  own PR):
-  - main.rs at startup: skip `launch_library`, parse games.yml for
-    the catalogue instead of UIA `enumerate_games`. RPCS3 stays dead
+  Server cutover (commit `616fdf2` + cleanup `9e20233`):
+  - main.rs at startup: skipped `launch_library`, populates
+    catalogue from `games_yml::read_games_yml` (mock driver still
+    seeds the full SKYLANDERS_SERIALS list). RPCS3 stays dead
     until the user picks a game.
-  - http.rs `/api/launch`: dispatch a new BootDirect job that
-    spawns RPCS3 via `launch_with_eboot`, waits for FPS:, then
-    `open_dialog()`.
-  - state.rs `DriverJob::BootGame` retired — replaced by `BootDirect
-    { eboot_path }`. `StopEmulation` becomes a full process kill
-    (no library-view fallback).
-  - Auto-respawn: only re-spawn if a game was running pre-crash;
-    relaunch with the same EBOOT (track `current_game.eboot` in
-    `RpcsState`).
-  - `PortalDriver::boot_game_by_serial` + its UIA impl + Mock impl
-    + `examples/zorder_probe.rs` + `tests/live_lifecycle.rs` boot
-    block: all retired with the server cutover.
+  - http.rs `/api/launch`: looks up the picked serial in
+    `state.games_yml`, dispatches `DriverJob::BootDirect
+    { eboot_path, expected_name, display_name, serial }`. 180s
+    timeout (first-launch shader compile can hit 60–120s). Drops
+    the pre-boot UIA `EnumerateGames` validation — the games.yml
+    lookup either resolves to a real EBOOT or returns 404 with
+    the same "isn't in RPCS3's library" message.
+  - state.rs `BootDirect` handler: `launch_with_eboot` →
+    `wait_ready` → poll `read_viewport_title` for `"FPS:"` +
+    expected name → `driver.open_dialog()`. Updates
+    `RpcsLifecycle.process / current / current_eboot`,
+    `LauncherStatus.rpcs3_running / current_game`, broadcasts
+    `Event::GameChanged`.
+  - state.rs crash watchdog: captures `current_eboot` at crash
+    detect; auto-respawn via `launch_with_eboot` re-launches the
+    same game (no library-view fallback). Without an EBOOT
+    recorded, skip respawn and leave the user on Crashed.
+  - http.rs `/api/quit`: kills RPCS3 entirely (no
+    library-view return). `?force=true` is now a no-op
+    (kill is the only path); `?switch=true` still arms the
+    launcher transition.
+  - Retired: `DriverJob::{BootGame, EnumerateGames, StopEmulation}`,
+    `PortalDriver::{boot_game_by_serial, enumerate_games,
+    stop_emulation}` trait methods + UIA + Mock impls,
+    `verify_viewport_title` + 4 unit tests, `post_click` /
+    `post_key` / `pack_xy_lparam` (Z-order-bypass synthesis),
+    `prep_main_offscreen` / `OffscreenMainGuard` (off-screen
+    menu nav), `examples/zorder_probe.rs`,
+    `examples/stop_probe.rs`. **Net diff: ~600 lines deleted.**
+  - `tests/live_lifecycle.rs` migrated to direct-boot via
+    `launch_with_eboot` + `read_viewport_title` polling.
+
+  All 41 workspace test groups pass post-refactor.
 - [ ] 10.8.5 **Steam Big Picture: missing icon + banner artwork.**
   Steam library tile shows the generic placeholder; needs `.ico` +
   `library_capsule` / `library_hero` / `library_logo` images
