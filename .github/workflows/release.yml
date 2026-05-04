@@ -225,13 +225,17 @@ jobs:
           path: ${{ env.RELEASE_MSI }}
           retention-days: 30
 
-      - name: Create draft release
+      - name: Publish release (pre-release)
         # Only on actual tag pushes — manual dispatch leaves the
         # uploaded artifacts for inspection but doesn't publish.
+        # Pre-release flag instead of draft so assets are downloadable
+        # without unhiding a draft, but the "Latest" badge stays on
+        # the most recent stable v*.*.* (we'll flip a release to
+        # non-prerelease manually once a tag is fully validated).
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          draft: true
+          prerelease: true
           files: |
             ${{ env.RELEASE_ZIP }}
             ${{ env.RELEASE_MSI }}
@@ -430,17 +434,16 @@ jobs:
           path: ${{ env.RELEASE_DMG }}
           retention-days: 30
 
-      - name: Create draft release
+      - name: Publish release (pre-release)
         # Only on actual tag pushes. softprops/action-gh-release is
         # idempotent across multiple jobs uploading to the same tag —
-        # the Windows job creates the draft if absent, this one
-        # appends. `generate_release_notes: true` is set in both jobs
-        # so whichever lands first writes the notes; the other no-ops
-        # the field.
+        # whichever lane lands first creates the release, the other
+        # appends. `generate_release_notes: true` is set in both;
+        # whichever runs first writes the notes.
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          draft: true
+          prerelease: true
           files: |
             ${{ env.RELEASE_TARBALL }}
             ${{ env.RELEASE_DMG }}
