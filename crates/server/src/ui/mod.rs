@@ -378,18 +378,29 @@ impl eframe::App for LauncherApp {
             .returning_from_game_at
             .map(|t| t.elapsed().as_secs_f32());
 
-        // Farewell drives its iris-wipe close through the same
-        // `ClosingToInGame { progress }` timeline the Main branch uses,
-        // just fed by `close_timers.shutdown_at` instead of `in_game_at`.
-        // Without this, the Farewell branch would land on
-        // AwaitingConnect below (iris pinned at IRIS_FULL) and the
-        // `IRIS_FULL - iris_radius()` vortex override would produce a
-        // static 0 — no visible close.
+        // PLAN 10.8.7d: Farewell now does 0→open (ReturnFromGame
+        // style) with the GOODBYE badge spinning in, matching the
+        // grammar of every other "cover transition." The iris-close
+        // animation it used to do is the only state in the launcher
+        // that visually resembled "going dark," but the strict
+        // invariant is "only Farewell's black-fade overlay shows
+        // black" — and that overlay is rendered separately in
+        // `farewell::render` regardless of iris direction. So:
+        //   - feed `close_timers.shutdown_at` as the returning
+        //     timeline (was: closing) so launch_phase resolves to
+        //     `ReturnFromGame { progress }` instead of
+        //     `ClosingToInGame { progress }`.
+        //   - iris animates 0 → IRIS_FULL with `iris_mode = Reveal`
+        //     (default for ReturnFromGame), badge spins in,
+        //     vortex retreats to a ring around the iris.
+        //   - black-fade kicks in after FAREWELL_COUNTDOWN (3 s)
+        //     in `farewell::render`, painting a full-viewport
+        //     `Color32::from_rgba(0,0,0,alpha)` over everything.
         let launch_phase = if matches!(status_snapshot.screen, LauncherScreen::Farewell) {
             LaunchPhase::compute(
                 self.started.elapsed().as_secs_f32(),
-                closing_elapsed_s,
                 None,
+                closing_elapsed_s,
                 false,
             )
         } else if matches!(status_snapshot.screen, LauncherScreen::Main) {
@@ -643,21 +654,22 @@ impl eframe::App for LauncherApp {
                     );
                 }
                 LauncherScreen::Farewell => {
-                    // Render the farewell badge IMMEDIATELY on screen
-                    // change — no pre-close render_main intermediate.
-                    // The iris-close animation is still running
-                    // (`launch_phase = ClosingToInGame { progress }`,
-                    // wired into `vortex_params` above), so the
-                    // vortex closes AROUND the farewell badge rather
-                    // than the badge replacing a "Scan to Connect"
-                    // beat (Chris 2026-04-19, "shutdown via phone
-                    // resulted in scan to connect").
+                    // PLAN 10.8.7d: badge spins in WITH the iris-open
+                    // animation (was: badge already landed while iris
+                    // closed around it). Pass the live `screen_intro`
+                    // — `screen_entered_at` resets on screen-variant
+                    // change so the intro starts at 0 the first frame
+                    // of Farewell, the badge grows + spins + fades in
+                    // over `ScreenIntro::DURATION_S` (1.2 s), iris
+                    // opens 0→IRIS_FULL over `INTRO_TRANSITION_S`
+                    // (1.8 s) — they land together.
                     //
-                    // Countdown starts on the first call to
+                    // Countdown still starts on the first call to
                     // farewell::render → first frame of screen=
-                    // Farewell, so the 3s window covers the iris
-                    // close + the visible-farewell beat together
-                    // (1s close + 2s of badge on dark backdrop).
+                    // Farewell, covering the iris-open + steady
+                    // GOODBYE beat together (1.8 s open + 1.2 s
+                    // hold = 3 s, then the 0.8 s black-fade overlay
+                    // kicks in).
                     if self.farewell_started_at.is_none() {
                         tracing::info!("farewell countdown starting");
                     }
@@ -666,7 +678,7 @@ impl eframe::App for LauncherApp {
                         ctx,
                         self.badge_rig.clone(),
                         &mut self.farewell_started_at,
-                        launch_phase::ScreenIntro::landed(),
+                        screen_intro,
                     );
                 }
                 LauncherScreen::ServerError { message } => {

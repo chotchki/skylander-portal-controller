@@ -1399,18 +1399,50 @@ flash of desktop or a black panel.
 
   41 workspace test groups still green; release-features build
   also clean.
-- [ ] 10.8.7d **`BackFace::Returning` + Farewell iris flip.** New
-  `BackFace::Returning` variant with "RETURNING TO PORTAL" copy.
-  Wired into the back-face precedence in `main_screen.rs` based on
-  `cover_active && !switching` (the "just quitting, not switching"
-  case). Flip Farewell's iris animation: today it drives through
-  `close_timers.shutdown_at` → `IRIS_FULL → 0` (closing). Change
-  to a screen-intro-style 0 → IRIS_FULL trigger so it matches the
-  "iris opens with badge" pattern of every other cover. The
-  black-fade overlay timeline (kicks in after the GOODBYE
-  countdown) is unchanged — it's still the only legitimate black
-  render. Audit badge-flip continuity: 3D rotation should chain
-  back-face changes naturally (e.g. in-game → Returning → QR-front).
+- [x] 10.8.7d **`BackFace::Returning` + Farewell iris flip.**
+  Landed:
+  - `BackFace::Returning` already added in 10.8.7b along with the
+    cover_active back-face precedence wiring.
+  - Farewell iris direction flipped from `IRIS_FULL → 0` (close)
+    to `0 → IRIS_FULL` (open). Implementation: in `ui/mod.rs`'s
+    launch_phase computation for `screen == Farewell`, the
+    `close_timers.shutdown_at`-derived `closing_elapsed_s` is
+    now passed as the *returning* argument (was: closing). So
+    `LaunchPhase::compute` returns `ReturnFromGame { progress }`
+    instead of `ClosingToInGame { progress }`. Iris animates
+    `0 → IRIS_FULL` over `INTRO_TRANSITION_S` (1.8 s), badge
+    spins in / grows / fades in over `ScreenIntro::DURATION_S`
+    (1.2 s).
+  - `farewell::render` now receives the live `screen_intro`
+    (was: `ScreenIntro::landed()`), so the badge animates in
+    alongside the iris. Iris-open + badge spin-in land together,
+    then the GOODBYE pose holds for the rest of the 3 s
+    countdown, then the existing black-fade overlay kicks in
+    (in `farewell::render`, painting `Color32::from_rgba(0,0,0,
+    alpha)` across the panel — this is the strict-invariant's
+    only legitimate flat-black render).
+  - `ScreenIntro::landed()` deleted as dead code (only caller
+    was the Farewell render that no longer needs it).
+
+  Badge-flip continuity audit: the back-face card uses
+  `qr_card_flip` which animates a 3D Y-rotation between
+  back-face changes. Transitions in scope:
+  - in-game → cover (`cover_active=true` flips back-face to
+    `Returning`): card flips from QR (front) → Returning (back).
+    Smooth, no jump.
+  - in-game → switch (`switching=true` flips back-face to
+    `Switching`): same flip mechanics.
+  - in-game → shutdown (`screen=Farewell` switches the per-
+    screen render entirely): launcher's `Main` → `Farewell`
+    branch transition. The Farewell badge is rendered via
+    `paint_centered_3d_back_card(BackFace::Farewell, …)` which
+    is a fresh card, not a flip; visual reset is acceptable
+    because the iris-open animation supplies new motion.
+  - Returning → QR (after quit completes): cover_active flips
+    false, back-face precedence falls through to `None` (QR
+    front), card flips back. ✓
+
+  41 workspace test groups still green.
 - [ ] 10.8.7e **`Compiling` → `Playable` (in-game) transition spec.**
   This is the *inverse* of the cover transitions, with its own
   two-phase animation. **No iris-close-to-dark.** The launcher
