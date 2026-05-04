@@ -1200,6 +1200,171 @@ independent.
   PNG (not the element icon) and `/api/games/BLUS30906/image`
   returns 200.
 
+### 10.8.7 Game-launch state machine + cover-before-kill (sequel to 10.8.4)
+
+10.8.4 closed the keystroke-fragility bug at the driver layer (UIA
+pattern menu nav) and rewired the server flow to direct-boot. Field
+testing v1.3.0 → v1.3.4 surfaced a sequence of UI-layer issues that
+aren't separate bugs but symptoms of an implicit, ad-hoc state
+machine for game-launch lifecycle:
+
+- **v1.3.3** "iris jumped open before shaders compile" — the
+  game_playable signal was a fragile log-quiet heuristic that
+  defaulted to "playable" when the watchdog hadn't seen any compile
+  lines yet (race against RPCS3's freshly-spawned log writes).
+- **v1.3.4** "screen black during launch" — premature transparent
+  in-game render over a still-compiling (visually black) RPCS3
+  viewport. Tweaked watchdog moved the bug, didn't kill it.
+- **v1.3.4** "launcher hung on /api/shutdown" — the in-game branch
+  was fully reactive (no `request_repaint`) and never woke for the
+  `screen = Farewell` flip. Fixed by 4 Hz heartbeat in 10.8.4 final
+  commit, but the underlying lesson is that state transitions need
+  to be observable, not "set a flag and hope a frame fires".
+- The proposed graceful-quit flow has a race: kill RPCS3 →
+  in-game transparent panel briefly shows desktop through, before
+  the launcher transitions to AwaitingConnect.
+
+Decision (Chris 2026-05-04): replace the implicit launch state
+machine with explicit, contract-tested states. Ground the "playable"
+signal in RPCS3's own per-frame FPS counter (which it embeds in the
+viewport title), not log tails. Add a cover-before-kill mechanic for
+graceful exits so the launcher's opaque cover is up before RPCS3
+dies. **Strict invariant: the only legitimate black render anywhere
+in the app is the Farewell black-fade overlay.** Any other "screen
+goes black" symptom is a bug.
+
+States + render contract:
+
+| State | Launcher render | Iris radius |
+|---|---|---|
+| `Idle` | Main, AwaitingConnect (QR front) | open, steady |
+| `Spawning` / `Booting` / `Compiling` | Main, AwaitingConnect (LOADING back-face) | open, steady |
+| `Playable` | in-game (transparent CentralPanel) | 0 (closed, conceptual — no launcher visible) |
+| `QuitCovering` | Main, **`BackFace::Returning`** ("RETURNING TO PORTAL") | **0→open** (ReturnFromGame animation) |
+| `SwitchCovering` | Main, `BackFace::Switching` ("SWITCHING GAMES") | **0→open**, holds open until next launch closes back to 0 |
+| `Crashed` | Crashed screen, message + RESTART | **0→open** (uses `screen_intro` on crash-from-game, already wired) |
+| `ShuttingDown` | Farewell screen, GOODBYE back-face, then black-fade overlay | **0→open**, then fade (the only black) |
+
+Cover-before-kill mechanic: server sets `cover_active = true`,
+sleeps ~200 ms (≥1 tick of the in-game branch's 4 Hz heartbeat,
+giving the launcher time to render the cover), then proceeds with
+the kill. RPCS3 dies *behind* the opaque cover; user never sees a
+flash of desktop or a black panel.
+
+- [ ] 10.8.7a **Black-screen audit (read-only).** Walk every render
+  path in `crates/server/src/ui/`. `clear_color` returns
+  `[0,0,0,0]` (transparent), and the in-game branch is the only
+  intentional transparent CentralPanel. Confirm every other
+  branch (Main / Crashed / Farewell / ServerError) paints opaque
+  (sky_background + starfield + vortex + badge or the screen's
+  own surface). Identify any path where the launcher could render
+  black or transparent-without-coverage — those are bugs to fix
+  in subsequent phases. Document findings inline in this PLAN
+  entry.
+- [ ] 10.8.7b **Cover-before-kill mechanic.** Add
+  `LauncherStatus.cover_active: bool`. In-game render predicate
+  gains `&& !status_snapshot.cover_active`. Update the
+  `/api/quit`, `/api/quit?switch=true`, and `/api/shutdown`
+  handlers: set `cover_active = true`, sleep ~200 ms, then run the
+  existing kill / state-cleanup logic. After kill: clear
+  `current_game` / `current_eboot` / `cover_active`, server
+  proceeds with state-specific cleanup. Track a synthetic
+  `was_in_game_or_covering` so `detect_returning_from_game`
+  fires the iris-open animation after the cover lifts (without
+  this, the cover transition pre-empts in-game render and
+  `was_in_game` flips to false silently → no return animation).
+- [ ] 10.8.7c **FPS-based playable signal.** New viewport-FPS
+  sampler task. Parses RPCS3's title (format
+  `"FPS: %F | %R | %V | %T [%t]"`). Maintains a rolling 4-sample
+  buffer at 250 ms cadence; `game_playable = all 4 samples ≥ 10
+  fps`. Replaces `last_compile_at` quiet heuristic. Drop the
+  shader-compile-watchdog `quiet`/playable derivation entirely;
+  keep the watchdog's `shader_compile_text` subtitle parsing as
+  optional UX (decoupled from playable detection now).
+- [ ] 10.8.7d **`BackFace::Returning` + Farewell iris flip.** New
+  `BackFace::Returning` variant with "RETURNING TO PORTAL" copy.
+  Wired into the back-face precedence in `main_screen.rs` based on
+  `cover_active && !switching` (the "just quitting, not switching"
+  case). Flip Farewell's iris animation: today it drives through
+  `close_timers.shutdown_at` → `IRIS_FULL → 0` (closing). Change
+  to a screen-intro-style 0 → IRIS_FULL trigger so it matches the
+  "iris opens with badge" pattern of every other cover. The
+  black-fade overlay timeline (kicks in after the GOODBYE
+  countdown) is unchanged — it's still the only legitimate black
+  render. Audit badge-flip continuity: 3D rotation should chain
+  back-face changes naturally (e.g. in-game → Returning → QR-front).
+- [ ] 10.8.7e **`Compiling` → `Playable` (in-game) transition spec.**
+  This is the *inverse* of the cover transitions, with its own
+  two-phase animation. **No iris-close-to-dark.** The launcher
+  retreats by spinning its badge away and then opening
+  transparency from the centre outward.
+
+  *Trigger:* state machine reaches `Playable` (FPS ≥ 10 sustained
+  for 1 s, per 10.8.7c).
+
+  *Animation:*
+
+  | Phase | Duration | Iris | Badge | Panel |
+  |---|---|---|---|---|
+  | **1: badge spin-out** | ~300 ms | stays at `IRIS_FULL`, `iris_mode = Reveal` | reverse of the intro spin: 3D rotation + scale → 0 + alpha → 0 (existing `badge_*_3d` curves played backward) | opaque (sky + starfield + vortex still painting) |
+  | **2: transparency expands from centre** | ~400 ms | `iris_radius` grows from `IRIS_FULL` to a screen-filling value, `iris_mode = Reveal` (iris area = transparent passthrough) | absent (already gone) | becomes effectively transparent inside the expanding iris; outside vortex retreats then vanishes |
+  | (post) | — | — | — | in-game branch's predicate becomes true, `CentralPanel` switches to transparent, game viewport visible |
+
+  *Implementation sketch:*
+  - New `LaunchPhase` variant `RevealingGame { progress }` (NOT
+    reusing `ClosingToInGame`). `progress` covers both phases:
+    `0..0.43` is phase 1 (spin-out), `0.43..1.0` is phase 2
+    (iris expand). 0.43 chosen to roughly match phase-1 duration.
+  - `iris_mode()` for `RevealingGame` is `Reveal` throughout —
+    never `DarkHole`. The dark-iris look is forbidden during this
+    transition.
+  - `iris_radius()` for `RevealingGame`:
+    - phase 1: `IRIS_FULL`
+    - phase 2: linear ramp from `IRIS_FULL` to `IRIS_FILL_SCREEN`
+      (a constant we'll add — needs to be ≥ `sqrt(width² +
+      height²)` so a corner-to-corner diagonal is fully inside
+      the iris). With `iris_mode = Reveal` this means the iris
+      area covers the whole panel at the end → effectively
+      transparent reveal of the game.
+  - Badge curves for `RevealingGame`:
+    - `badge_rotation_y()`: reverse of `IntroTransitioning` —
+      same axis, opposite direction, scaled to phase-1 window.
+    - `badge_scale_3d()`: from current scale → 0 over phase 1.
+    - `badge_alpha_3d()`: from 1.0 → 0 over phase 1.
+  - In-game predicate checks `launch_phase.reveal_complete()`
+    instead of `close_complete()`. `reveal_complete = matches!(self,
+    Self::RevealingGame { progress } if progress >= 1.0)`.
+
+  *Why this matches the strict "only Farewell shows black"
+  rule:* nothing here renders black or dark-vortex. Phase 1 keeps
+  the launcher fully opaque with the badge dissolving naturally.
+  Phase 2 grows transparency from the centre — the user sees the
+  game reveal under a vortex ring that retreats outward. Coherent
+  with the cover transitions (which go `0 → open` with badge
+  spin-in); this one goes `open → fill` with badge spin-out.
+  Symmetric grammar.
+
+  *Dependencies:* requires changes to `launch_phase.rs`
+  (`LaunchPhase` enum, `iris_radius`, `iris_mode`, badge curves)
+  and the in-game predicate in `ui/mod.rs`. Vortex shader needs
+  to handle `iris_radius` greater than `IRIS_FULL` cleanly (most
+  likely already does — verify in 10.8.7a audit).
+- [ ] 10.8.7f **Local-cycle testing per phase.** Each phase ends
+  with `tools/build-msi.sh --install` on the HTPC, walk through
+  the affected flows visually, confirm behavior matches the
+  contract before the next phase. Tag a CI release only after
+  all phases land + a clean full-flow local pass (start →
+  picker → game → quit → switch → game → shutdown).
+
+Pre-req tooling already shipped:
+- `tools/build-msi.sh` — local Windows MSI build for HTPC
+  iteration (commit `9c7e1d1`). Sub-minute build cycle.
+- `release.yml` auto-publishes as prerelease so MSI is
+  downloadable from the Releases page without unhiding drafts
+  (commit `71e6d01`).
+- Direct-boot driver layer (commits in the 10.8.4 chain
+  `1ebbbc9` → `ca7af77`).
+
 ### 10.9 Real installers (.msi / .dmg)
 v1.2 + 10.8.6's data-bundle fix mean the release artifact is no
 longer a single exe — it's a folder containing the binary, ~20 MB
