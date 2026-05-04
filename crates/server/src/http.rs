@@ -948,20 +948,11 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
         None => return (StatusCode::NOT_FOUND, "unknown serial").into_response(),
     };
 
-    // Hold the rpcs3 lock across the whole launch so we can't race.
-    // Under the always-running RPCS3 contract (PLAN 4.15.16): the
-    // process should already exist from server startup. If it's
-    // missing, either startup is still in flight or the crash watchdog
-    // is mid-respawn — return 503 so the phone retries rather than
-    // mis-reporting a "conflict".
+    // PLAN 10.8.4 direct-boot: RPCS3 is launched on demand, not at
+    // server startup. `process` being None here just means "no game is
+    // running yet" — it's the normal pre-launch state. We only refuse
+    // if a game is *already* running (caller must /api/quit first).
     let guard = state.rpcs3.lock().await;
-    if guard.process.is_none() {
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "RPCS3 isn't ready yet; hold tight",
-        )
-            .into_response();
-    }
     if guard.current.is_some() {
         return (
             StatusCode::CONFLICT,
@@ -969,9 +960,6 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
         )
             .into_response();
     }
-    // Drop the lock before we start sending driver jobs so other
-    // handlers (crash-aware status reads, /api/quit) aren't serialised
-    // behind the enumerate + boot round-trip.
     drop(guard);
 
     info!(
@@ -997,57 +985,11 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
     }
     let mut loading_guard = LoadingGuard::armed(&state.launcher_status);
 
-    // PLAN 3.7.8 phase 1: verify the requested serial is actually in
-    // RPCS3's library before committing to a boot. Under 4.15.16 we
-    // don't kill RPCS3 on miss anymore — it stays at library view so
-    // the user can pick a different game without waiting for a
-    // respawn. Empty-list / UIA-error fall through to boot's own
-    // error handling as before.
-    let (etx, erx) = tokio::sync::oneshot::channel();
-    if let Err(e) = state
-        .driver_tx
-        .send(crate::state::DriverJob::EnumerateGames {
-            timeout: Duration::from_secs(5),
-            done: etx,
-        })
-        .await
-    {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("queue EnumerateGames: {e}"),
-        )
-            .into_response();
-    }
-    match erx.await {
-        Ok(Ok(serials)) if !serials.is_empty() => {
-            if !serials.iter().any(|s| s == body.serial.as_str()) {
-                warn!(
-                    serial = %body.serial,
-                    available = serials.len(),
-                    "requested serial not in RPCS3 library — refusing boot",
-                );
-                return (
-                    StatusCode::NOT_FOUND,
-                    format!(
-                        "{} ({}) isn't in RPCS3's library. \
-                         Re-scan games in RPCS3 and try again.",
-                        game.display_name,
-                        body.serial.as_str(),
-                    ),
-                )
-                    .into_response();
-            }
-        }
-        Ok(Ok(_empty)) => {
-            warn!("library enumeration returned empty; skipping pre-boot verify");
-        }
-        Ok(Err(e)) => {
-            warn!("library enumeration failed: {e}; falling through to boot");
-        }
-        Err(e) => {
-            warn!("EnumerateGames ack dropped: {e}; falling through to boot");
-        }
-    }
+    // PLAN 10.8.4: serial-validation lives in the BootDirect path now.
+    // The games.yml lookup below either resolves to a real EBOOT or
+    // returns 404 with the same "isn't in RPCS3's library" message the
+    // old UIA enumeration produced. UIA EnumerateGames is gone — RPCS3
+    // doesn't run at startup any more, so there's no library to walk.
 
     // PLAN 4.20.x — pre-set the primary display mode if we've captured
     // one for this serial on a prior boot. RPCS3's launch sequence
@@ -1080,91 +1022,81 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
         }
     }
 
+    // Resolve serial → game directory → EBOOT.BIN via games.yml
+    // (PLAN 10.8.4). 404 if the picked serial isn't in RPCS3's library.
+    let game_dir = match state.games_yml.get(body.serial.as_str()) {
+        Some(d) => d.clone(),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                format!(
+                    "{} ({}) isn't in RPCS3's library. \
+                     Re-scan games in RPCS3 and try again.",
+                    game.display_name,
+                    body.serial.as_str(),
+                ),
+            )
+                .into_response();
+        }
+    };
+    let eboot_path = match skylander_rpcs3_control::games_yml::eboot_for(&game_dir) {
+        Some(p) => p,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                format!(
+                    "EBOOT.BIN missing for {} at {} — game may be corrupted",
+                    game.display_name,
+                    game_dir.display(),
+                ),
+            )
+                .into_response();
+        }
+    };
+
     let (tx, rx) = tokio::sync::oneshot::channel();
     if let Err(e) = state
         .driver_tx
-        .send(crate::state::DriverJob::BootGame {
-            serial: body.serial.as_str().to_string(),
+        .send(crate::state::DriverJob::BootDirect {
+            eboot_path,
             expected_name: game.display_name.clone(),
-            timeout: Duration::from_secs(60),
+            display_name: game.display_name.clone(),
+            serial: body.serial.as_str().to_string(),
+            timeout: Duration::from_secs(180),
             done: tx,
         })
         .await
     {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("queue BootGame: {e}"),
+            format!("queue BootDirect: {e}"),
         )
             .into_response();
     }
     match rx.await {
         Ok(Ok(())) => {}
         Ok(Err(e)) => {
-            // Boot failed — the driver may have left a game running that
-            // the verifier rejected (wrong-game boot, 2026-04-24). Queue
-            // a stop_emulation so RPCS3 returns to the library view; the
-            // next launch then starts from a clean state instead of the
-            // user having to manually quit the wrongly-booted game.
-            // Best-effort; don't let the recovery path mask the original
-            // error. Time-boxed to 5s so a genuinely-wedged RPCS3 doesn't
-            // pin the handler.
-            let err_msg = e.to_string();
-            warn!("UIA-boot failed: {err_msg}; attempting stop_emulation recovery");
-            let (stx, srx) = tokio::sync::oneshot::channel();
-            if state
-                .driver_tx
-                .send(crate::state::DriverJob::StopEmulation {
-                    timeout: Duration::from_secs(5),
-                    done: stx,
-                })
-                .await
-                .is_ok()
-            {
-                match srx.await {
-                    Ok(Ok(())) => info!("recovery stop_emulation succeeded"),
-                    Ok(Err(se)) => warn!("recovery stop_emulation errored: {se}"),
-                    Err(se) => warn!("recovery stop_emulation ack dropped: {se}"),
-                }
-            }
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("UIA-boot failed: {err_msg}"),
+                format!("direct-boot failed: {e}"),
             )
                 .into_response();
         }
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("BootGame ack dropped: {e}"),
+                format!("BootDirect ack dropped: {e}"),
             )
                 .into_response();
         }
     }
 
-    let launched = GameLaunched {
-        serial: game.serial.clone(),
-        display_name: game.display_name.clone(),
-    };
-    // Re-acquire the rpcs3 lock to publish `current`. The window between
-    // drop + reacquire is fine: /api/quit and /api/shutdown both check
-    // `current` (not `process`) to decide whether a game is running, and
-    // neither can preempt us because of the driver worker's serialisation.
-    state.rpcs3.lock().await.current = Some(launched.clone());
-
-    // Publish to the launcher status snapshot (PLAN 4.15.4). `rpcs3_running`
-    // stayed true across the boot (the process was live the whole time
-    // under 4.15.16); only `current_game` flips here.
-    if let Ok(mut st) = state.launcher_status.lock() {
-        st.current_game = Some(game.display_name.clone());
-    }
-    // Boot succeeded — disarm the loading guard so `loading_game`
-    // persists through shader/cache compile until the launcher
-    // dispatcher clears it on the in-game transition.
+    // BootDirect handler already published current + current_eboot in
+    // RpcsLifecycle, set rpcs3_running + current_game in launcher_status,
+    // and broadcast Event::GameChanged. The handler still needs to
+    // disarm the loading guard so the LOADING surface persists across
+    // shader-compile (handler closes that out on the in-game transition).
     loading_guard.disarm();
-
-    let _ = state.events.send(Event::GameChanged {
-        current: Some(launched),
-    });
 
     // PLAN 4.20.x — capture the display mode after the first
     // skylander hits the portal. Earlier we used `game_playable + 2s`
@@ -1336,91 +1268,42 @@ async fn quit_game(
     axum::extract::Query(q): axum::extract::Query<QuitQuery>,
     Signed(_body): Signed,
 ) -> Response {
-    // Under the always-running RPCS3 contract (PLAN 4.15.16), "quit"
-    // means "stop the current game and return RPCS3 to library view".
-    // The process stays alive; only `current` clears. `force=true`
-    // keeps the old escape hatch — kill the process and let the crash
-    // watchdog respawn it — for cases where the UIA stop path is
-    // wedged or the game is unresponsive.
+    // PLAN 10.8.4 direct-boot: "quit" now means "kill RPCS3 entirely"
+    // — there's no library-view fallback to return to since we no
+    // longer launch RPCS3 at startup. The next /api/launch spawns a
+    // fresh RPCS3 with a different EBOOT. `?force=true` is preserved
+    // semantically (it's a hard kill either way now), but `?switch=true`
+    // still arms the launcher's transition animation.
     let mut guard = state.rpcs3.lock().await;
     if guard.current.is_none() {
         return (StatusCode::CONFLICT, "no game is running").into_response();
     }
-    // Reset current immediately — the quit is committed the moment we
-    // decide to stop, whether the UIA click takes a moment or not.
     guard.current = None;
+    guard.current_eboot = None;
 
-    // PLAN 4.15.9 — if the phone signalled switch intent, arm the
-    // launcher-side "switching" state before we stop emulation so the
-    // transition from in-game → iris-closed happens in one frame.
-    // Cleared either by the next `/api/launch` or by the shutdown
-    // path (screen flipping to Farewell overrides).
     if q.switch
         && let Ok(mut st) = state.launcher_status.lock()
     {
         st.switching = true;
     }
 
-    if q.force {
-        // Force path: take the process, kill it, let the watchdog
-        // respawn a fresh library-view RPCS3. Rare; useful when
-        // UIA stop doesn't work and the user needs a hard reset.
-        let mut proc = match guard.process.take() {
-            Some(p) => p,
-            None => {
-                drop(guard);
-                return (StatusCode::CONFLICT, "no RPCS3 process to force-kill").into_response();
-            }
-        };
-        drop(guard);
+    let proc = guard.process.take();
+    drop(guard);
+    if let Some(mut proc) = proc {
         let result =
             tokio::task::spawn_blocking(move || proc.shutdown_graceful(Duration::from_millis(500)))
                 .await;
         match result {
-            Ok(Ok(path)) => info!(?path, "force-quit: process killed"),
-            Ok(Err(e)) => warn!("force-quit errored: {e}"),
-            Err(e) => warn!("force-quit task panicked: {e}"),
-        }
-        if let Ok(mut st) = state.launcher_status.lock() {
-            st.rpcs3_running = false;
-            st.current_game = None;
-        }
-    } else {
-        // Normal path: stop emulation via UIA. Process stays alive at
-        // library view; next launch is a BootGame away.
-        drop(guard);
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        if let Err(e) = state
-            .driver_tx
-            .send(crate::state::DriverJob::StopEmulation {
-                timeout: Duration::from_secs(10),
-                done: tx,
-            })
-            .await
-        {
-            warn!("queue StopEmulation: {e}");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("queue StopEmulation: {e}"),
-            )
-                .into_response();
-        }
-        match rx.await {
-            Ok(Ok(())) => info!("stop_emulation succeeded; RPCS3 back at library"),
-            Ok(Err(e)) => {
-                warn!("stop_emulation failed: {e}; leaving current cleared anyway");
-                // Don't revert `current` — the user's intent was to
-                // quit, and retrying with ?force=true is the escape
-                // hatch for a wedged stop.
-            }
-            Err(e) => warn!("StopEmulation ack dropped: {e}"),
-        }
-        if let Ok(mut st) = state.launcher_status.lock() {
-            // rpcs3_running stays true — process is alive. Only the
-            // current-game field clears.
-            st.current_game = None;
+            Ok(Ok(path)) => info!(?path, "quit: RPCS3 killed"),
+            Ok(Err(e)) => warn!("quit errored: {e}"),
+            Err(e) => warn!("quit task panicked: {e}"),
         }
     }
+    if let Ok(mut st) = state.launcher_status.lock() {
+        st.rpcs3_running = false;
+        st.current_game = None;
+    }
+    let _ = q.force; // kept for handler-signature compatibility
 
     // Reset the portal snapshot since the game is no longer loaded.
     *state.portal.lock().await = std::array::from_fn(|_| SlotState::Empty);

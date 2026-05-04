@@ -318,6 +318,15 @@ pub fn read_main_window_title() -> Option<String> {
     enum_first_visible_window(|title| title.starts_with(WINDOW_TITLE_PREFIX))
 }
 
+/// Read the title of the running game's viewport window — present only
+/// while a game is booted. Title format is `"FPS: <n> | <vulkan-spec> |
+/// <version> | <Game Name> [<SERIAL>]"`. Returns `None` when no game is
+/// running. Used by the direct-boot launch path (PLAN 10.8.4) to wait
+/// for the game to actually start before driving the Skylanders dialog.
+pub fn read_viewport_title() -> Option<String> {
+    enum_first_visible_window(|title| title.starts_with("FPS:"))
+}
+
 /// Find ANY top-level visible window whose title contains `"compil"`
 /// (case-insensitive) or `"cache"`. Returns the matched title.
 pub fn find_compile_progress_text() -> Option<String> {

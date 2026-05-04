@@ -101,6 +101,7 @@ pub use process_mock::MockRpcsProcess;
 #[cfg(windows)]
 pub use process::{
     find_compile_progress_text, list_all_visible_window_titles, read_main_window_title,
+    read_viewport_title,
 };
 
 #[cfg(feature = "mock")]
@@ -141,6 +142,21 @@ impl RpcsProcess {
                 "RPCS3 process management is only supported on Windows; \
                  use SKYLANDER_PORTAL_DRIVER=mock on this platform"
             )
+        }
+    }
+
+    /// Launch RPCS3 with `EBOOT.BIN` so the game starts directly (PLAN
+    /// 10.8.4 direct-boot). Windows only — returns an error on
+    /// non-Windows.
+    pub fn launch_with_eboot(exe: &Path, eboot: &Path) -> Result<Self> {
+        #[cfg(windows)]
+        {
+            UiaRpcsProcess::launch_with_eboot(exe, eboot).map(Self::Uia)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (exe, eboot);
+            bail!("RPCS3 process management is only supported on Windows")
         }
     }
 

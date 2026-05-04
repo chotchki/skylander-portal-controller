@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use skylander_core::{
     Event, Figure, FigureId, GameLaunched, GameSerial, SLOT_COUNT, SlotIndex, SlotState,
 };
@@ -34,6 +34,13 @@ pub struct AppState {
 
     /// Installed Skylanders games, loaded from RPCS3's games.yml at startup.
     pub games: Vec<InstalledGame>,
+    /// Full serial → game-directory map from `<rpcs3>/config/games.yml`.
+    /// Used by `/api/launch` to resolve a picked serial to its on-disk
+    /// EBOOT.BIN path so RPCS3 can be spawned directly into that game
+    /// (PLAN 10.8.4 direct-boot flow). `games` filters this down to
+    /// known Skylanders titles for the phone picker; this map keeps the
+    /// raw paths for every game RPCS3 knows about.
+    pub games_yml: HashMap<String, PathBuf>,
     pub rpcs3_exe: PathBuf,
     /// Root of the committed static-data bundle served at `/api/figures/:id/image`.
     /// Points at `<repo>/data/` in dev; populated at startup from config.
@@ -82,6 +89,11 @@ pub struct AppState {
 pub struct RpcsLifecycle {
     pub process: Option<RpcsProcess>,
     pub current: Option<GameLaunched>,
+    /// EBOOT.BIN path of the game RPCS3 was launched with — populated
+    /// by the BootDirect flow (PLAN 10.8.4) and consumed by the crash
+    /// watchdog so an auto-respawn re-launches the same game rather
+    /// than dropping into library view (which we no longer use).
+    pub current_eboot: Option<PathBuf>,
 }
 
 /// UI-polled snapshot of the launcher's status indicators (PLAN 4.15.4).
@@ -611,19 +623,33 @@ pub enum DriverJob {
         slot: SlotIndex,
     },
     RefreshPortal,
-    /// Boot a game into the already-running RPCS3. Prereq: the `/api/launch`
-    /// handler just spawned RPCS3 via `RpcsProcess::launch_library` and
-    /// `wait_ready`'d it, so the library view is visible. The worker calls
-    /// `driver.open_dialog()` (cold-library 3.6b-proven nav path) then
-    /// `driver.boot_game_by_serial(...)`. Result is delivered via the
-    /// oneshot so the handler can wait synchronously — the REST caller wants
-    /// a success/failure response for the launch, not fire-and-forget.
+    /// **PLAN 10.8.4 direct-boot path.** Spawn RPCS3 with the given
+    /// game's EBOOT.BIN as the first CLI arg, wait for the FPS: viewport
+    /// (game running), then `driver.open_dialog()` so the Skylanders
+    /// Manager dialog is ready before the user touches their first
+    /// figure. `expected_name` lets the worker verify the booted game's
+    /// viewport title matches what the user picked (catches a stale
+    /// games.yml mapping or a path-collision mis-launch).
+    BootDirect {
+        eboot_path: PathBuf,
+        expected_name: String,
+        /// Display name of the picked serial — fed to `current_game`
+        /// in `RpcsLifecycle` after a successful boot.
+        display_name: String,
+        serial: String,
+        /// Total budget for spawn → ready → viewport → open_dialog.
+        /// First-launch shader compile can take 60–120s, so this
+        /// runs longer than the old `BootGame` timeout.
+        timeout: std::time::Duration,
+        done: tokio::sync::oneshot::Sender<Result<()>>,
+    },
+    /// **Legacy: library-view + select+Enter boot.** Retired by
+    /// PLAN 10.8.4 — the keystroke nav was the fragility this task
+    /// existed to address. Kept temporarily so existing test scaffolding
+    /// (live_lifecycle.rs) compiles; will be deleted once those callers
+    /// migrate.
     BootGame {
         serial: String,
-        /// Canonical display name from the game catalogue (`Skylanders:
-        /// Trap Team` etc). Handed to the driver so the post-boot
-        /// viewport-title check can reject a mis-click that booted a
-        /// different known Skylanders game.
         expected_name: String,
         timeout: std::time::Duration,
         done: tokio::sync::oneshot::Sender<Result<()>>,
@@ -900,6 +926,9 @@ pub fn spawn_crash_watchdog(
             // Drop the dead handle so we never double-report.
             let _dead = guard.process.take();
             let game = guard.current.take();
+            // Capture the EBOOT so auto-respawn can re-launch the same
+            // game (PLAN 10.8.4 direct-boot — no library-view fallback).
+            let crashed_eboot = guard.current_eboot.take();
             drop(guard);
 
             let had_game = game.is_some();
@@ -939,15 +968,35 @@ pub fn spawn_crash_watchdog(
                 }
             }
 
-            // Auto-respawn. Small delay so OS cleanup (handle release,
-            // child process teardown) doesn't collide with the new
-            // launch. 500ms matches the watchdog tick and is
-            // empirically enough on Windows 11.
+            // Auto-respawn (PLAN 10.8.4 direct-boot): only if a game was
+            // running and we know its EBOOT. Without an EBOOT we have
+            // nothing useful to launch — RPCS3 with no args drops into
+            // library view, but the launcher no longer drives that
+            // surface, so the user would see a foreign window. Skip
+            // respawn instead and leave the user on the Crashed screen
+            // with RESTART (re-fires /api/launch) or RETURN TO GAMES.
+            let Some(eboot) = crashed_eboot else {
+                if had_game {
+                    info!(
+                        "RPCS3 crashed mid-game but no EBOOT recorded; \
+                         leaving user on Crashed screen to manually restart"
+                    );
+                }
+                continue;
+            };
+            // Small delay so OS cleanup (handle release, child process
+            // teardown) doesn't collide with the new launch. 500ms
+            // matches the watchdog tick and is empirically enough on
+            // Windows 11.
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             let exe = rpcs3_exe.clone();
+            let eboot_for_blocking = eboot.clone();
             let respawn = tokio::task::spawn_blocking(
                 move || -> anyhow::Result<skylander_rpcs3_control::RpcsProcess> {
-                    let mut proc = skylander_rpcs3_control::RpcsProcess::launch_library(&exe)?;
+                    let mut proc = skylander_rpcs3_control::RpcsProcess::launch_with_eboot(
+                        &exe,
+                        &eboot_for_blocking,
+                    )?;
                     proc.wait_ready(std::time::Duration::from_secs(45))?;
                     Ok(proc)
                 },
@@ -957,13 +1006,14 @@ pub fn spawn_crash_watchdog(
                 Ok(Ok(proc)) => {
                     let mut guard = rpcs3.lock().await;
                     guard.process = Some(proc);
+                    guard.current = game.clone();
+                    guard.current_eboot = Some(eboot.clone());
                     drop(guard);
                     if let Ok(mut st) = launcher_status.lock() {
                         st.rpcs3_running = true;
-                        // Leave `.screen` in Crashed if it was a
-                        // game-crash — the user taps RESTART or
-                        // RETURN TO GAMES to dismiss it. A library-
-                        // view respawn silently returns to Main.
+                        if let Some(g) = &game {
+                            st.current_game = Some(g.display_name.clone());
+                        }
                     }
                     consecutive_failures = 0;
                     info!("RPCS3 auto-respawn succeeded");
@@ -1007,6 +1057,9 @@ pub fn spawn_driver_worker(
     profiles: crate::profiles::ProfileStore,
     sessions: Arc<crate::profiles::SessionRegistry>,
     figures: Arc<Vec<Figure>>,
+    rpcs3: Arc<Mutex<RpcsLifecycle>>,
+    rpcs3_exe: PathBuf,
+    launcher_status: Arc<std::sync::Mutex<LauncherStatus>>,
 ) -> mpsc::Sender<DriverJob> {
     let (tx, mut rx) = mpsc::channel::<DriverJob>(32);
 
@@ -1022,7 +1075,18 @@ pub fn spawn_driver_worker(
                 &job,
                 DriverJob::LoadFigure { .. } | DriverJob::ClearSlot { .. }
             );
-            if let Err(e) = handle_job(job, &driver, &portal, &events, &figures).await {
+            if let Err(e) = handle_job(
+                job,
+                &driver,
+                &portal,
+                &events,
+                &figures,
+                &rpcs3,
+                &rpcs3_exe,
+                &launcher_status,
+            )
+            .await
+            {
                 error!("driver job error: {e}");
                 let _ = events.send(Event::Error {
                     message: e.to_string(),
@@ -1048,6 +1112,9 @@ async fn handle_job(
     portal: &Arc<Mutex<[SlotState; SLOT_COUNT]>>,
     events: &broadcast::Sender<Event>,
     figures: &[Figure],
+    rpcs3: &Arc<Mutex<RpcsLifecycle>>,
+    rpcs3_exe: &Path,
+    launcher_status: &Arc<std::sync::Mutex<LauncherStatus>>,
 ) -> Result<()> {
     match job {
         DriverJob::LoadFigure {
@@ -1110,6 +1177,81 @@ async fn handle_job(
         }
         DriverJob::RefreshPortal => {
             refresh(driver, portal, events, figures).await?;
+        }
+        DriverJob::BootDirect {
+            eboot_path,
+            expected_name,
+            display_name,
+            serial,
+            timeout,
+            done,
+        } => {
+            let d = driver.clone();
+            let exe_owned = rpcs3_exe.to_path_buf();
+            let eboot_owned = eboot_path.clone();
+            let expected_owned = expected_name.clone();
+            let result = tokio::task::spawn_blocking(move || -> Result<RpcsProcess> {
+                let mut proc = RpcsProcess::launch_with_eboot(&exe_owned, &eboot_owned)?;
+                // Wait for main window (RPCS3 booting). 45s allowed.
+                proc.wait_ready(std::time::Duration::from_secs(45))
+                    .context("RPCS3 main window never appeared after EBOOT spawn")?;
+                // Wait for FPS: viewport — poll the cheap UIA-free
+                // `running_viewport_title` helper. First-launch shader
+                // compile can stretch this to 60–120s.
+                let deadline = std::time::Instant::now() + timeout;
+                loop {
+                    if let Some(title) = skylander_rpcs3_control::read_viewport_title()
+                        && title.contains(&expected_owned)
+                    {
+                        break;
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        return Err(anyhow::anyhow!(
+                            "FPS: viewport with title containing {expected_owned:?} \
+                             never appeared within {:?}",
+                            timeout
+                        ));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                }
+                // Open the Skylanders Manager dialog so the driver is
+                // ready to handle figure load/clear immediately.
+                d.open_dialog().context("open_dialog after EBOOT boot")?;
+                Ok(proc)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("BootDirect task panicked: {e}"))
+            .and_then(|r| r);
+
+            // Update lifecycle on success: set process + current.
+            let outcome = match result {
+                Ok(proc) => {
+                    let mut guard = rpcs3.lock().await;
+                    // If the previous BootDirect / startup left a process
+                    // around, drop it now (Drop impl kills via JobObject).
+                    let _ = guard.process.take();
+                    guard.process = Some(proc);
+                    guard.current = Some(GameLaunched {
+                        serial: skylander_core::GameSerial::new(&serial),
+                        display_name: display_name.clone(),
+                    });
+                    guard.current_eboot = Some(eboot_path.clone());
+                    drop(guard);
+                    if let Ok(mut st) = launcher_status.lock() {
+                        st.rpcs3_running = true;
+                        st.current_game = Some(display_name.clone());
+                    }
+                    let _ = events.send(Event::GameChanged {
+                        current: Some(GameLaunched {
+                            serial: skylander_core::GameSerial::new(&serial),
+                            display_name: display_name.clone(),
+                        }),
+                    });
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            };
+            let _ = done.send(outcome);
         }
         DriverJob::BootGame {
             serial,

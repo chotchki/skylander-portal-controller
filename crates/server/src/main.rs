@@ -295,6 +295,9 @@ fn main() -> Result<()> {
                     profile_store.clone(),
                     sessions.clone(),
                     figures_for_driver,
+                    rpcs3_for_task.clone(),
+                    rpcs3_exe.clone(),
+                    status_for_task.clone(),
                 );
                 // Watchdog for unexpected RPCS3 exits (PLAN 4.15.14). Polls
                 // the lifecycle handle every 500ms; on the first frame a
@@ -345,96 +348,74 @@ fn main() -> Result<()> {
                         return;
                     }
                 };
-                // Spawn RPCS3 at startup (PLAN 4.15.16) so the emulator
-                // is ready by the time the phone reaches the game
-                // picker. Under the mock driver we install a Mock
-                // variant that always reports alive — same lifecycle
-                // shape, no real process — so `/api/launch` passes its
-                // `process.is_some()` gate on Mac/Linux dev without
-                // `/api/_test/*` hacks. Hard-fails on spawn error per
-                // the "starting-screen makes sense" decision: egui's
-                // LaunchPhase::Startup already gates on rpcs3_running,
-                // so the cloud vortex persists while we wait, and on
-                // error flips straight to ServerError with the
-                // diagnostic.
+                // PLAN 10.8.4 direct-boot: don't spawn RPCS3 at server
+                // startup any more. The launch state is "no game running"
+                // until the user picks one in the phone picker; /api/launch
+                // then spawns rpcs3.exe with the picked game's EBOOT.BIN
+                // and only at that point does RPCS3 come up. This removes
+                // the always-running RPCS3 + library-table boot path from
+                // PLAN 4.15.16 (the keystroke menu nav was the fragility
+                // PLAN 10.8.4 set out to fix).
                 //
-                // This block intentionally runs BEFORE the "serving on"
-                // log: test harnesses (TestServer::spawn_live) scrape
-                // that line as their readiness signal, so it must imply
-                // "RPCS3 is up + axum is about to accept connections",
-                // not "listener bound but RPCS3 still starting up".
-                let spawn_result: Result<RpcsProcess, anyhow::Error> = match driver_kind {
-                    crate::config::DriverKind::Uia => {
-                        let rpcs3_exe_clone = rpcs3_exe.clone();
-                        match tokio::task::spawn_blocking(move || -> anyhow::Result<RpcsProcess> {
-                            let mut proc = RpcsProcess::launch_library(&rpcs3_exe_clone)?;
-                            proc.wait_ready(std::time::Duration::from_secs(45))?;
-                            Ok(proc)
-                        })
-                        .await
-                        {
-                            Ok(inner) => inner,
-                            Err(e) => Err(anyhow::anyhow!("RPCS3 spawn task panicked: {e}")),
-                        }
+                // Mock driver still installs a Mock variant so /api/launch
+                // can flow through unchanged on Mac/Linux dev.
+                if matches!(driver_kind, crate::config::DriverKind::Mock) {
+                    let mut guard = rpcs3_for_task.lock().await;
+                    guard.process = Some(RpcsProcess::mock());
+                    drop(guard);
+                    if let Ok(mut st) = status_for_task.lock() {
+                        st.rpcs3_running = true;
                     }
-                    crate::config::DriverKind::Mock => Ok(RpcsProcess::mock()),
-                };
-                match spawn_result {
-                    Ok(proc) => {
-                        let mut guard = rpcs3_for_task.lock().await;
-                        guard.process = Some(proc);
-                        drop(guard);
-                        if let Ok(mut st) = status_for_task.lock() {
-                            st.rpcs3_running = true;
-                        }
-                        info!(?driver_kind, "RPCS3 lifecycle ready");
-                    }
-                    Err(e) => {
-                        report_fatal("spawn RPCS3 at startup", &e);
-                        return;
-                    }
+                    info!("Mock RPCS3 lifecycle ready");
                 }
 
-                // PLAN 3.7.8 phase 2: game catalogue is now truth-from-UIA.
-                // Enumerate the library via the driver worker (same job the
-                // /api/launch handler uses for verify-at-launch), then filter
-                // to supported Skylanders serials using SKYLANDERS_SERIALS.
-                // Drops the games.yml dependency entirely — if a user removes
-                // a game from RPCS3's library, the picker reflects that on
-                // the next server restart. A failure here logs + starts with
-                // an empty catalogue rather than aborting; user sees "no games
-                // installed" in the picker and can re-scan in RPCS3.
-                let games = {
-                    let (etx, erx) = tokio::sync::oneshot::channel();
-                    if let Err(e) = driver_tx
-                        .send(crate::state::DriverJob::EnumerateGames {
-                            timeout: std::time::Duration::from_secs(5),
-                            done: etx,
-                        })
-                        .await
-                    {
-                        warn!("queue EnumerateGames at startup: {e}");
-                        Vec::<skylander_core::InstalledGame>::new()
-                    } else {
-                        match erx.await {
-                            Ok(Ok(serials)) => {
-                                let catalogue = serials_to_catalogue(&serials);
-                                info!(
-                                    installed = catalogue.len(),
-                                    enumerated = serials.len(),
-                                    "loaded Skylanders game catalogue from RPCS3 library",
-                                );
-                                catalogue
-                            }
-                            Ok(Err(e)) => {
-                                warn!("enumerate_games at startup failed: {e}");
-                                Vec::new()
+                // PLAN 10.8.4 — read RPCS3's games.yml so /api/launch can
+                // resolve a picked serial to the EBOOT path it needs to spawn
+                // RPCS3 directly into the game. Failure here is non-fatal:
+                // the catalogue ends up empty, picker shows "no games"
+                // and the user can fix games.yml + restart.
+                let games_yml = {
+                    let install_dir = rpcs3_exe.parent().map(std::path::Path::to_path_buf);
+                    match install_dir {
+                        Some(dir) => match skylander_rpcs3_control::games_yml::read_games_yml(&dir)
+                        {
+                            Ok(map) => {
+                                info!(entries = map.len(), "loaded RPCS3 games.yml");
+                                map
                             }
                             Err(e) => {
-                                warn!("EnumerateGames ack dropped: {e}");
-                                Vec::new()
+                                warn!("read games.yml failed: {e}");
+                                std::collections::HashMap::new()
                             }
+                        },
+                        None => {
+                            warn!("rpcs3 exe has no parent dir; skipping games.yml read");
+                            std::collections::HashMap::new()
                         }
+                    }
+                };
+
+                // Game catalogue: filter games.yml against the supported
+                // Skylanders SKYLANDERS_SERIALS list. Mock driver gets the
+                // full list so dev/test on Mac/Linux still sees a populated
+                // picker without needing a games.yml.
+                let games: Vec<skylander_core::InstalledGame> = match driver_kind {
+                    crate::config::DriverKind::Uia => {
+                        let serials: Vec<String> = games_yml.keys().cloned().collect();
+                        let catalogue = serials_to_catalogue(&serials);
+                        info!(
+                            installed = catalogue.len(),
+                            yml_entries = serials.len(),
+                            "loaded Skylanders game catalogue from RPCS3 games.yml",
+                        );
+                        catalogue
+                    }
+                    crate::config::DriverKind::Mock => {
+                        let all_serials: Vec<String> = skylander_core::SKYLANDERS_SERIALS
+                            .iter()
+                            .map(|(s, _)| (*s).to_string())
+                            .collect();
+                        serials_to_catalogue(&all_serials)
                     }
                 };
 
@@ -447,6 +428,7 @@ fn main() -> Result<()> {
                     connected_clients: clients_for_task,
                     launcher_status: status_for_task,
                     games,
+                    games_yml,
                     rpcs3_exe,
                     data_root,
                     phone_dist: phone_dist.clone(),
