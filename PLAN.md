@@ -1375,14 +1375,30 @@ flash of desktop or a black panel.
   detected. No new state needed.
 
   41 workspace test groups still green.
-- [ ] 10.8.7c **FPS-based playable signal.** New viewport-FPS
-  sampler task. Parses RPCS3's title (format
-  `"FPS: %F | %R | %V | %T [%t]"`). Maintains a rolling 4-sample
-  buffer at 250 ms cadence; `game_playable = all 4 samples ≥ 10
-  fps`. Replaces `last_compile_at` quiet heuristic. Drop the
-  shader-compile-watchdog `quiet`/playable derivation entirely;
-  keep the watchdog's `shader_compile_text` subtitle parsing as
-  optional UX (decoupled from playable detection now).
+- [x] 10.8.7c **FPS-based playable signal.** Landed:
+  - New `state::spawn_fps_sampler` background task. Polls
+    `read_viewport_title()` every 250 ms; parses the FPS field
+    via `parse_fps_from_title` (substring after `"FPS: "`,
+    parsed as `f32`). Rolling 4-sample `VecDeque`. `game_playable
+    = rpcs3_running && all_samples ≥ 10.0`. Sample buffer
+    cleared when `rpcs3_running` flips false so a fresh
+    BootDirect for a different game starts clean.
+  - Spawn point in `main.rs` next to the existing crash watchdog
+    + shader-compile watchdog.
+  - `spawn_shader_compile_watchdog` retained but reduced to
+    subtitle-only role (`shader_compile_text` for the LOADING
+    badge subtitle text). Dropped the `last_compile_at` quiet
+    heuristic, `rpcs3_running_since` fallback timer, and
+    `game_playable` write. The "FPS in title is RPCS3's
+    authoritative per-frame counter" replaces every log-tail
+    proxy.
+  - 7 unit tests for `parse_fps_from_title`: typical title,
+    integer FPS, zero (pre-first-frame), low decimal
+    (mid-compile), no-prefix (RPCS3 main window not viewport),
+    prefix-but-garbage (defensive), empty.
+
+  41 workspace test groups still green; release-features build
+  also clean.
 - [ ] 10.8.7d **`BackFace::Returning` + Farewell iris flip.** New
   `BackFace::Returning` variant with "RETURNING TO PORTAL" copy.
   Wired into the back-face precedence in `main_screen.rs` based on

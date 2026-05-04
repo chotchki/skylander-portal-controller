@@ -22,7 +22,7 @@ use tracing::{info, warn};
 
 use crate::config::DriverKind;
 use crate::state::{
-    AppState, RpcsLifecycle, spawn_crash_watchdog, spawn_driver_worker,
+    AppState, RpcsLifecycle, spawn_crash_watchdog, spawn_driver_worker, spawn_fps_sampler,
     spawn_shader_compile_watchdog,
 };
 use crate::ui::LauncherApp;
@@ -314,14 +314,25 @@ fn main() -> Result<()> {
                     rpcs3_exe.clone(),
                     std::time::Duration::from_millis(500),
                 );
-                // Shader-compile watchdog — polls RPCS3's main window
-                // title for "Compiling shaders…" progress so the
-                // launcher's loading surface can show the count
-                // (first-run compile can take several minutes).
+                // Shader-compile watchdog — tails RPCS3.log for
+                // SPU/PPU/RSX compile lines and surfaces the latest
+                // category as a subtitle on the LOADING badge
+                // (PLAN 10.8.7c — purely cosmetic now; game_playable
+                // moved to the FPS sampler below).
                 spawn_shader_compile_watchdog(
                     status_for_task.clone(),
                     rpcs3_exe.clone(),
                     std::time::Duration::from_millis(500),
+                );
+                // FPS-in-viewport-title sampler — drives game_playable
+                // off RPCS3's own per-frame counter. Rolling 4-sample
+                // buffer at 250 ms; playable when all 4 samples are
+                // ≥ 10 fps (PLAN 10.8.7c). Replaces the log-quiet
+                // heuristic that raced with RPCS3's freshly-spawned
+                // log writes.
+                spawn_fps_sampler(
+                    status_for_task.clone(),
+                    std::time::Duration::from_millis(250),
                 );
                 // NFC scanner worker (PLAN 6.5.1 + 6.5.5a). Feature-gated:
                 // off by default so users without an ACR122U aren't

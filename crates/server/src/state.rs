@@ -660,17 +660,13 @@ pub enum DriverJob {
 /// Spawn the RPCS3 shader-compile watchdog. Tails RPCS3's log file
 /// (`RPCS3.log` next to the exe) and surfaces any line containing
 /// shader-compile / cache-rebuild markers as
-/// `LauncherStatus.shader_compile_text`. The window-title scan we
-/// tried first didn't work for RPCS3 0.0.40 — that version surfaces
-/// the state as an in-viewport overlay rendered into the OpenGL/
-/// Vulkan surface, not in any window title — but the same state is
-/// always written to the log as it happens, so tailing is the
-/// reliable signal.
-///
-/// File is opened lazily (RPCS3.log doesn't exist until the first
-/// time RPCS3 runs) and the read position is seeked to the end on
-/// open so we only see new content. Truncation (RPCS3 rotated its
-/// log) is detected by the file shrinking and we re-seek to 0.
+/// `LauncherStatus.shader_compile_text`. **Subtitle UX only** —
+/// PLAN 10.8.7c moved the `game_playable` derivation onto the
+/// FPS-in-viewport-title sampler ([`spawn_fps_sampler`]). Log
+/// content is fragile for liveness detection (race between RPCS3
+/// flushing compile lines and our open / read window) but stays
+/// useful as a "what phase is RPCS3 in" hint for the LOADING
+/// subtitle text.
 pub fn spawn_shader_compile_watchdog(
     launcher_status: Arc<std::sync::Mutex<LauncherStatus>>,
     rpcs3_exe: PathBuf,
@@ -695,22 +691,7 @@ pub fn spawn_shader_compile_watchdog(
             }
         })
         .unwrap_or_else(|| PathBuf::from("RPCS3.log"));
-    info!(path = %log_path.display(), "tailing rpcs3 log for shader-compile progress");
-
-    /// How long the watchdog waits after the last compile/cache line
-    /// before declaring the game "playable" (assuming RPCS3 is also
-    /// running). 2s strikes a balance — long enough that brief gaps
-    /// between compile bursts don't trigger the close prematurely,
-    /// short enough that the user doesn't wait noticeably after the
-    /// last shader finishes.
-    const PLAYABLE_QUIET_SECS: f32 = 2.0;
-
-    /// Fallback: if the watchdog never observes any compile activity
-    /// (cached shaders, log path mismatch, log buffering, etc.) we
-    /// can't use the compile-quiet heuristic. After this many seconds
-    /// of `rpcs3_running` with no compile lines seen, declare the
-    /// game playable so the iris doesn't sit on LOADING forever.
-    const MAX_NO_ACTIVITY_WAIT_SECS: f32 = 30.0;
+    info!(path = %log_path.display(), "tailing rpcs3 log for shader-compile subtitle");
 
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(interval);
@@ -721,88 +702,126 @@ pub fn spawn_shader_compile_watchdog(
         let mut pos: u64 = 0;
         let mut carry = String::new();
         let mut last_text: Option<String> = None;
-        // Time of the most recent compile/cache log hit. Used for the
-        // playable-detection heuristic: rpcs3_running + no hit in
-        // PLAYABLE_QUIET_SECS = game is actually ready.
-        let mut last_compile_at: Option<std::time::Instant> = None;
-        // Wall time `rpcs3_running` first flipped true (cleared on
-        // false). Drives the no-activity fallback.
-        let mut rpcs3_running_since: Option<std::time::Instant> = None;
 
         loop {
             ticker.tick().await;
 
             let new_compile_text =
                 read_new_compile_text(&log_path, &mut file, &mut pos, &mut carry);
-
             if let Some(text) = new_compile_text {
-                last_compile_at = Some(std::time::Instant::now());
                 if Some(&text) != last_text.as_ref() {
                     info!(text = %text, "rpcs3 compile/cache progress detected");
                     last_text = Some(text.clone());
                 }
             }
 
-            let now = std::time::Instant::now();
-
-            // Two ways to land on `quiet = true`:
-            //   1. We've seen at least one compile line AND there's
-            //      been silence for PLAYABLE_QUIET_SECS — the normal
-            //      case for a first-launch shader compile that finishes.
-            //   2. We've never seen a compile line, but rpcs3_running
-            //      has been true for MAX_NO_ACTIVITY_WAIT_SECS. Covers
-            //      cached shaders / unreadable log / log path mismatch.
-            //
-            // Default for `last_compile_at = None` is now `false` (NOT
-            // quiet). PLAN 10.8.4: previously this defaulted to `true`,
-            // but with direct-boot the watchdog can race against
-            // RPCS3's freshly-spawned log writes — opening the log
-            // mid-write and seeking to end misses the early compile
-            // lines, so `last_compile_at` stays None even though
-            // shaders ARE compiling. The iris would jump open
-            // prematurely. The MAX_NO_ACTIVITY_WAIT_SECS fallback
-            // protects against the genuine cached-shader case.
-            let saw_quiet = last_compile_at
-                .map(|t| now.duration_since(t).as_secs_f32() >= PLAYABLE_QUIET_SECS)
-                .unwrap_or(false);
-            let max_wait_elapsed = rpcs3_running_since
-                .map(|t| now.duration_since(t).as_secs_f32() >= MAX_NO_ACTIVITY_WAIT_SECS)
-                .unwrap_or(false);
-            let quiet = saw_quiet || (last_compile_at.is_none() && max_wait_elapsed);
-
             if let Ok(mut st) = launcher_status.lock() {
-                // Track when rpcs3_running first flipped true so the
-                // no-activity fallback has a starting point.
-                if st.rpcs3_running {
-                    rpcs3_running_since.get_or_insert(now);
-                } else {
-                    rpcs3_running_since = None;
-                    // Reset compile state when RPCS3 stops so a
-                    // subsequent BootDirect for a different game
-                    // doesn't inherit the previous session's
-                    // last_compile_at timestamp.
-                    last_compile_at = None;
+                // Reset shader subtitle when RPCS3 stops so a fresh
+                // BootDirect doesn't inherit the previous session's
+                // text.
+                if !st.rpcs3_running {
                     last_text = None;
                 }
-                if last_text.is_some() && st.shader_compile_text != last_text {
+                if st.shader_compile_text != last_text {
                     st.shader_compile_text = last_text.clone();
-                }
-                let playable = st.rpcs3_running && quiet;
-                if st.game_playable != playable {
-                    if playable {
-                        info!(
-                            via_compile_quiet = saw_quiet,
-                            via_no_activity_fallback = max_wait_elapsed && !saw_quiet,
-                            "rpcs3 game playable",
-                        );
-                    } else if st.game_playable {
-                        info!("rpcs3 game no longer playable (compile activity resumed)");
-                    }
-                    st.game_playable = playable;
                 }
             }
         }
     });
+}
+
+/// **PLAN 10.8.7c — FPS-based playable signal.** Polls the RPCS3
+/// game viewport's window title (format
+/// `"FPS: %F | %R | %V | %T [%t]"`) and parses the FPS number.
+/// Maintains a rolling 4-sample buffer at 250 ms cadence;
+/// `game_playable = all 4 samples ≥ FPS_PLAYABLE_THRESHOLD`. This
+/// replaces the log-quiet heuristic that raced with RPCS3's
+/// freshly-spawned log writes (PLAN 10.8.4 → 10.8.7 history).
+///
+/// Why FPS-in-title rather than a different signal:
+/// - It's RPCS3's own per-frame counter — most authoritative
+///   "the game is rendering" signal. No proxy.
+/// - It's already in the title we read for BootDirect's viewport
+///   detection, so no new IPC.
+/// - Robust to shader-compile bursts and cached-shader fast-boots:
+///   FPS reads 0 / very low until shaders are warm, then jumps
+///   to 30+ once gameplay is rendering. The 4-sample buffer
+///   bridges single-frame stutters during early compile.
+pub fn spawn_fps_sampler(
+    launcher_status: Arc<std::sync::Mutex<LauncherStatus>>,
+    interval: std::time::Duration,
+) {
+    /// Below this FPS we consider the game NOT playable. Splash
+    /// videos and cutscenes typically run at 30; gameplay at 30+.
+    /// Compile-induced stutters can dip to single digits but not
+    /// for 4 sustained samples (1 s) once the game is past the
+    /// initial compile burst.
+    const FPS_PLAYABLE_THRESHOLD: f32 = 10.0;
+    /// Number of consecutive samples required above threshold.
+    /// 4 samples × 250 ms = 1 s of sustained rendering before we
+    /// declare playable.
+    const SAMPLE_BUFFER: usize = 4;
+
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        ticker.tick().await;
+
+        let mut samples: std::collections::VecDeque<f32> =
+            std::collections::VecDeque::with_capacity(SAMPLE_BUFFER);
+
+        loop {
+            ticker.tick().await;
+
+            let fps = skylander_rpcs3_control::read_viewport_title()
+                .as_deref()
+                .and_then(parse_fps_from_title)
+                .unwrap_or(0.0);
+
+            if samples.len() == SAMPLE_BUFFER {
+                samples.pop_front();
+            }
+            samples.push_back(fps);
+
+            let playable = samples.len() == SAMPLE_BUFFER
+                && samples.iter().all(|s| *s >= FPS_PLAYABLE_THRESHOLD);
+
+            if let Ok(mut st) = launcher_status.lock() {
+                // Reset the buffer when RPCS3 stops so a fresh
+                // BootDirect for a different game starts clean.
+                if !st.rpcs3_running {
+                    samples.clear();
+                }
+                let new_playable = st.rpcs3_running && playable;
+                if st.game_playable != new_playable {
+                    if new_playable {
+                        info!(
+                            samples = ?samples,
+                            "rpcs3 game playable (FPS sustained ≥ {FPS_PLAYABLE_THRESHOLD})",
+                        );
+                    } else if st.game_playable {
+                        info!("rpcs3 game no longer playable (FPS dipped)");
+                    }
+                    st.game_playable = new_playable;
+                }
+            }
+        }
+    });
+}
+
+/// Parse RPCS3's window-title FPS field. Format is
+/// `"FPS: 30.65 | <renderer> | <version> | <name> [<serial>]"`;
+/// we want the `30.65` after `"FPS: "` and before the first ` `.
+/// Returns `None` if the title doesn't have the expected prefix
+/// or the number can't be parsed (window present but not yet
+/// emitting frames, etc.).
+pub(crate) fn parse_fps_from_title(title: &str) -> Option<f32> {
+    title
+        .strip_prefix("FPS: ")?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
 }
 
 /// Read any new bytes appended to RPCS3's log file since the last
@@ -1739,5 +1758,56 @@ mod tests {
                 placed_by: None,
             }
         ));
+    }
+
+    // ---- PLAN 10.8.7c: FPS title parser ----
+
+    #[test]
+    fn parse_fps_typical_title() {
+        let title = "FPS: 30.65 | Vulkan | 0.0.40-19296 | Skylanders Giants [BLUS30968]";
+        assert_eq!(parse_fps_from_title(title), Some(30.65));
+    }
+
+    #[test]
+    fn parse_fps_integer() {
+        let title = "FPS: 60 | Vulkan | 0.0.40 | Trap Team [BLUS31442]";
+        assert_eq!(parse_fps_from_title(title), Some(60.0));
+    }
+
+    #[test]
+    fn parse_fps_zero() {
+        // RPCS3 emits FPS: 0.00 before the first frame is rendered.
+        // Must parse cleanly so the rolling buffer can include zero
+        // samples (which fail the threshold).
+        let title = "FPS: 0.00 | Vulkan | 0.0.40 | Giants [BLUS30968]";
+        assert_eq!(parse_fps_from_title(title), Some(0.00));
+    }
+
+    #[test]
+    fn parse_fps_low_decimal() {
+        // Mid-shader-compile FPS dips low.
+        let title = "FPS: 4.2 | Vulkan | 0.0.40 | Giants [BLUS30968]";
+        assert_eq!(parse_fps_from_title(title), Some(4.2));
+    }
+
+    #[test]
+    fn parse_fps_no_prefix() {
+        // Main RPCS3 window (not the viewport) doesn't have the FPS
+        // prefix.
+        let title = "RPCS3 0.0.40-19296 Alpha | master";
+        assert_eq!(parse_fps_from_title(title), None);
+    }
+
+    #[test]
+    fn parse_fps_prefix_but_garbage() {
+        // Defensive: if the format ever drifts to non-numeric content
+        // after the prefix, return None instead of panicking.
+        let title = "FPS: --- | Vulkan";
+        assert_eq!(parse_fps_from_title(title), None);
+    }
+
+    #[test]
+    fn parse_fps_empty() {
+        assert_eq!(parse_fps_from_title(""), None);
     }
 }
