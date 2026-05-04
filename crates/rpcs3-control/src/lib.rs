@@ -86,6 +86,8 @@ pub use uia::UiaPortalDriver;
 #[cfg(windows)]
 pub mod hide;
 
+pub mod games_yml;
+
 #[cfg(windows)]
 pub mod process;
 pub mod process_mock;

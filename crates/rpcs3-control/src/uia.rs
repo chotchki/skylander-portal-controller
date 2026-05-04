@@ -23,16 +23,11 @@ use uiautomation::{UIAutomation, UIElement, UITreeWalker};
 use windows::Win32::Foundation::POINT;
 use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::ScreenToClient;
-use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
-use windows::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
-    VIRTUAL_KEY, VK_DOWN, VK_ESCAPE, VK_MENU, VK_RETURN, VK_UP,
-};
+use windows::Win32::UI::Input::KeyboardAndMouse::{VIRTUAL_KEY, VK_RETURN};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClassNameW, GetForegroundWindow, GetWindowRect, GetWindowTextLengthW,
-    GetWindowTextW, GetWindowThreadProcessId, PostMessageW, SW_MINIMIZE, SW_RESTORE, SWP_NOSIZE,
-    SWP_NOZORDER, SetForegroundWindow, SetWindowPos, ShowWindow, WM_KEYDOWN, WM_KEYUP,
-    WM_LBUTTONDOWN, WM_LBUTTONUP,
+    EnumWindows, GetClassNameW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW, PostMessageW,
+    SW_MINIMIZE, SW_RESTORE, SWP_NOSIZE, SWP_NOZORDER, SetWindowPos, ShowWindow, WM_KEYDOWN,
+    WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
 };
 use windows::core::BOOL;
 
@@ -309,60 +304,45 @@ impl UiaPortalDriver {
     pub fn quit_via_file_menu(&self) -> Result<()> {
         let walker = self.walker()?;
         let main = self.main_window(&walker)?;
-        let main_hwnd: isize = main.get_native_window_handle().context("main HWND")?.into();
-        let main_hwnd = HWND(main_hwnd as _);
-        let _guard = prep_main_offscreen(main_hwnd);
 
-        focus_main_window(main_hwnd).context("focus main window")?;
-        sleep(MENU_STEP_PAUSE);
+        // Same UIA pattern path as `trigger_dialog_via_menu` (PLAN 10.8.4).
+        // ExpandCollapse on File populates the submenu, then Invoke on
+        // "Exit" fires. No focus dependency, no key synthesis.
+        let file = find_menu_item_by_name(&walker, &main, "File")
+            .ok_or_else(|| anyhow!("'File' menu item not found"))?;
+        file.get_pattern::<UIExpandCollapsePattern>()
+            .context("'File' has no ExpandCollapsePattern")?
+            .expand()
+            .context("ExpandCollapse.expand() on 'File' failed")?;
+        sleep(Duration::from_millis(100));
 
-        // Alt tap: File is the leftmost menu, so it takes focus immediately.
-        send_key(VK_MENU)?;
-        sleep(MENU_STEP_PAUSE);
-        expect_focused_menu_item(&walker, &main, "File", "Alt tap")?;
+        let exit = find_menu_item_by_name(&walker, &main, "Exit")
+            .ok_or_else(|| anyhow!("'Exit' menu item not found under File"))?;
+        exit.get_pattern::<UIInvokePattern>()
+            .context("'Exit' has no InvokePattern")?
+            .invoke()
+            .context("Invoke.invoke() on 'Exit' failed")?;
+        info!("invoked File → Exit via UIA");
 
-        // Down opens the File submenu (first item focused), then Up wraps to
-        // the last item — which is "Exit" on every RPCS3 build we've seen.
-        // Beats walking the full menu with Down×N. If Qt ever stops wrapping
-        // or Exit moves off the bottom, the expect_focused_menu_item check
-        // below catches it.
-        focus_main_window(main_hwnd).ok();
-        send_key(VK_DOWN)?;
-        sleep(MENU_STEP_PAUSE);
-        focus_main_window(main_hwnd).ok();
-        send_key(VK_UP)?;
-        sleep(MENU_STEP_PAUSE);
-
-        // Collect focused items across main + desktop-popup trees — Qt keeps
-        // "File" keyboard-focused on the menubar *in addition to* the focused
-        // dropdown item, so a single-match helper returned "File" repeatedly.
-        let mut focused = Vec::new();
-        collect_focused_menu_items(&walker, &main, &mut focused);
+        // RPCS3 may pop a "confirm quit" dialog when a game is running.
+        // The default focused button is "Yes", which has Invoke. Look for
+        // it briefly; harmless no-op if no dialog appeared.
+        sleep(Duration::from_millis(200));
         if let Ok(root) = self.automation.get_root_element() {
-            collect_focused_menu_items(&walker, &root, &mut focused);
+            // The confirmation is a top-level dialog; walk one level deep
+            // to find a Yes button, click it.
+            if let Some(yes) = find_descendant(&walker, &root, |el| {
+                matches!(el.get_control_type().ok(), Some(ControlType::Button))
+                    && el
+                        .get_name()
+                        .map(|n| n.eq_ignore_ascii_case("yes") || n == "&Yes")
+                        .unwrap_or(false)
+            }) && let Ok(inv) = yes.get_pattern::<UIInvokePattern>()
+            {
+                let _ = inv.invoke();
+                debug!("invoked confirmation dialog Yes");
+            }
         }
-        let on_exit = focused
-            .iter()
-            .any(|n| normalise_menu_name(n).eq_ignore_ascii_case("exit"));
-        if !on_exit {
-            // Dismiss so we don't leave RPCS3 in menu mode.
-            let _ = send_key(VK_ESCAPE);
-            let _ = send_key(VK_ESCAPE);
-            bail!(
-                "expected Up-wrap to land on 'Exit' at bottom of File menu; \
-                 focused items: {focused:?}"
-            );
-        }
-        debug!(?focused, "File → Exit focused via Up-wrap");
-
-        send_key(VK_RETURN)?;
-        info!("sent Enter on File → Exit");
-
-        // RPCS3 sometimes pops a "confirm quit" dialog when a game is
-        // running. A second Enter after a brief settle lands on the default
-        // (Yes) button. If there's no dialog it's harmlessly ignored.
-        sleep(MENU_STEP_PAUSE);
-        let _ = send_key(VK_RETURN);
         Ok(())
     }
 
@@ -1477,75 +1457,6 @@ fn read_class(hwnd: HWND) -> Option<String> {
     }
 }
 
-/// AttachThreadInput + SetForegroundWindow dance. Windows' foreground-lock
-/// rules make this flaky on the first attempt after the user clicks elsewhere;
-/// callers should be tolerant of transient failures on re-focus (we re-focus
-/// before every keystroke in the nav loop anyway).
-fn focus_main_window(hwnd: HWND) -> Result<()> {
-    let our_thread = unsafe { GetCurrentThreadId() };
-    let fg = unsafe { GetForegroundWindow() };
-    if fg.0 == hwnd.0 {
-        return Ok(());
-    }
-    let mut fg_tid = 0u32;
-    unsafe {
-        let _ = GetWindowThreadProcessId(fg, Some(&mut fg_tid));
-    }
-    let mut target_pid = 0u32;
-    let target_thread = unsafe { GetWindowThreadProcessId(hwnd, Some(&mut target_pid)) };
-    let mut fg_attached = false;
-    let mut target_attached = false;
-    unsafe {
-        if fg_tid != 0 && fg_tid != our_thread {
-            fg_attached = AttachThreadInput(our_thread, fg_tid, true).as_bool();
-        }
-        if target_thread != 0 && target_thread != our_thread {
-            target_attached = AttachThreadInput(our_thread, target_thread, true).as_bool();
-        }
-        let ok = SetForegroundWindow(hwnd).as_bool();
-        if fg_attached {
-            let _ = AttachThreadInput(our_thread, fg_tid, false);
-        }
-        if target_attached {
-            let _ = AttachThreadInput(our_thread, target_thread, false);
-        }
-        if !ok {
-            bail!("SetForegroundWindow returned false for {hwnd:?}");
-        }
-    }
-    Ok(())
-}
-
-fn send_key(vk: VIRTUAL_KEY) -> Result<()> {
-    let inputs = [key_input(vk, false), key_input(vk, true)];
-    unsafe {
-        let n = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
-        if n as usize != inputs.len() {
-            bail!("SendInput only dispatched {n}/{} events", inputs.len());
-        }
-    }
-    Ok(())
-}
-
-fn key_input(vk: VIRTUAL_KEY, key_up: bool) -> INPUT {
-    INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 {
-            ki: KEYBDINPUT {
-                wVk: vk,
-                wScan: 0,
-                dwFlags: if key_up {
-                    KEYEVENTF_KEYUP
-                } else {
-                    KEYBD_EVENT_FLAGS(0)
-                },
-                time: 0,
-                dwExtraInfo: 0,
-            },
-        },
-    }
-}
-
 /// Post a left mouse click to `hwnd` at window-client-relative `(x, y)` via
 /// `PostMessageW`. Bypasses screen Z-order (synthesised input via
 /// `SendInput` lands on whichever window is topmost at those screen coords;
@@ -1597,88 +1508,6 @@ fn pack_xy_lparam(x: i32, y: i32) -> LPARAM {
     let xl = (x as u16 as u32) & 0xFFFF;
     let yl = (y as u16 as u32) & 0xFFFF;
     LPARAM((xl | (yl << 16)) as isize)
-}
-
-/// After a navigation keystroke, confirm via UIA that the expected menu item
-/// has keyboard focus *somewhere* in the tree. Polls for up to
-/// `FOCUS_POLL_BUDGET` because UIA's focus-change events can lag a few hundred
-/// ms behind the actual keystroke, especially when the owning window is
-/// off-screen.
-///
-/// **Why "somewhere"**: when Qt auto-opens a dropdown during Right-arrow
-/// navigation across the menubar, both the menubar item (e.g. "Manage") and
-/// the dropdown's first item (e.g. "Virtual File System") report
-/// `has_keyboard_focus == true`. A single-match search returns whichever the
-/// tree walker encounters first — usually the menubar item, because it's
-/// under the main window while the dropdown is in a detached popup. So we
-/// collect *all* focused menu items across both main and the desktop root
-/// and succeed if any of them matches. If the menu ever gets reordered, the
-/// error reports every focused item so diagnostics are obvious.
-fn expect_focused_menu_item(
-    walker: &UITreeWalker,
-    main: &UIElement,
-    expected: &str,
-    step: &str,
-) -> Result<()> {
-    const FOCUS_POLL_BUDGET: Duration = Duration::from_millis(1500);
-    const FOCUS_POLL_INTERVAL: Duration = Duration::from_millis(50);
-
-    let automation = UIAutomation::new().context("UIA init")?;
-    let root = automation.get_root_element().context("UIA root")?;
-
-    let deadline = Instant::now() + FOCUS_POLL_BUDGET;
-    let last_seen = loop {
-        let mut seen: Vec<String> = Vec::new();
-        for search_root in [main, &root] {
-            collect_focused_menu_items(walker, search_root, &mut seen);
-        }
-        if seen.iter().any(|n| n == expected) {
-            debug!(step, expected, ?seen, "menu item focused");
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            break seen;
-        }
-        sleep(FOCUS_POLL_INTERVAL);
-    };
-    if last_seen.is_empty() {
-        bail!("at step {step:?}: expected {expected:?} focused, no menu item has focus");
-    }
-    bail!("at step {step:?}: expected {expected:?} focused, focused items: {last_seen:?}")
-}
-
-/// Walk `root`, pushing the name of every `MenuItem` with keyboard focus into
-/// `out`. Deduplicates by name (Qt may expose the same item under both the
-/// menubar tree and a popup window).
-fn collect_focused_menu_items(walker: &UITreeWalker, root: &UIElement, out: &mut Vec<String>) {
-    let mut stack: Vec<UIElement> = vec![root.clone()];
-    while let Some(node) = stack.pop() {
-        let is_menu_item = node
-            .get_control_type()
-            .map(|c| c == ControlType::MenuItem)
-            .unwrap_or(false);
-        if is_menu_item && node.has_keyboard_focus().unwrap_or(false) {
-            let name = node.get_name().unwrap_or_default();
-            if !out.contains(&name) {
-                out.push(name);
-            }
-        }
-        if let Ok(child) = walker.get_first_child(&node) {
-            let mut cur = Some(child);
-            while let Some(c) = cur {
-                stack.push(c.clone());
-                cur = walker.get_next_sibling(&c).ok();
-            }
-        }
-    }
-}
-
-/// Strip Qt-style accelerator markers (`&`) and trim tab-separated shortcut
-/// hints (e.g. "Exit\tCtrl+Q") so menu items can be matched by their human
-/// name regardless of accelerator/shortcut decoration.
-fn normalise_menu_name(raw: &str) -> String {
-    let without_shortcut = raw.split('\t').next().unwrap_or(raw);
-    without_shortcut.replace('&', "").trim().to_string()
 }
 
 #[cfg(test)]
