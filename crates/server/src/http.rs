@@ -1268,25 +1268,43 @@ async fn quit_game(
     axum::extract::Query(q): axum::extract::Query<QuitQuery>,
     Signed(_body): Signed,
 ) -> Response {
-    // PLAN 10.8.4 direct-boot: "quit" now means "kill RPCS3 entirely"
-    // — there's no library-view fallback to return to since we no
-    // longer launch RPCS3 at startup. The next /api/launch spawns a
-    // fresh RPCS3 with a different EBOOT. `?force=true` is preserved
-    // semantically (it's a hard kill either way now), but `?switch=true`
-    // still arms the launcher's transition animation.
-    let mut guard = state.rpcs3.lock().await;
-    if guard.current.is_none() {
-        return (StatusCode::CONFLICT, "no game is running").into_response();
+    // PLAN 10.8.4 direct-boot: "quit" means "kill RPCS3 entirely" —
+    // there's no library-view fallback. PLAN 10.8.7b adds a
+    // cover-before-kill window: set `cover_active` (or `switching`,
+    // for the switch flavour), wait for the launcher to render the
+    // opaque cover (≥1 tick of its 4 Hz in-game heartbeat), THEN
+    // kill RPCS3 underneath the cover. Without this gap RPCS3 dies
+    // before the launcher's next frame and the still-rendered
+    // transparent in-game panel briefly reveals the desktop.
+    {
+        let guard = state.rpcs3.lock().await;
+        if guard.current.is_none() {
+            return (StatusCode::CONFLICT, "no game is running").into_response();
+        }
     }
+
+    // Phase 1: arm cover. switching=true takes precedence over
+    // cover_active in back-face selection (gives SWITCHING badge for
+    // ?switch=true, RETURNING badge otherwise).
+    if let Ok(mut st) = state.launcher_status.lock() {
+        if q.switch {
+            st.switching = true;
+        } else {
+            st.cover_active = true;
+        }
+    }
+
+    // Phase 2: let the launcher render the cover. 4 Hz heartbeat
+    // means up to 250 ms between frames; 300 ms gives a safety
+    // margin for any frame already in flight.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Phase 3: kill RPCS3 behind the cover. Now safe — the launcher
+    // is rendering opaque (Main with iris animating 0→IRIS_FULL,
+    // Returning or Switching back-face).
+    let mut guard = state.rpcs3.lock().await;
     guard.current = None;
     guard.current_eboot = None;
-
-    if q.switch
-        && let Ok(mut st) = state.launcher_status.lock()
-    {
-        st.switching = true;
-    }
-
     let proc = guard.process.take();
     drop(guard);
     if let Some(mut proc) = proc {
@@ -1299,9 +1317,15 @@ async fn quit_game(
             Err(e) => warn!("quit task panicked: {e}"),
         }
     }
+
+    // Phase 4: clear lifecycle flags. Leave switching=true if it was
+    // a switch (next /api/launch clears it on entry); clear
+    // cover_active so the launcher's ReturnFromGame animation can
+    // land on AwaitingConnect.
     if let Ok(mut st) = state.launcher_status.lock() {
         st.rpcs3_running = false;
         st.current_game = None;
+        st.cover_active = false;
     }
     let _ = q.force; // kept for handler-signature compatibility
 

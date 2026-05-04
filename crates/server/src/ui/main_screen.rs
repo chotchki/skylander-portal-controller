@@ -136,6 +136,12 @@ impl LauncherApp {
                 Some(BackFace::Starting)
             } else if status_snapshot.switching {
                 Some(BackFace::Switching)
+            } else if status_snapshot.cover_active {
+                // PLAN 10.8.7b: graceful quit cover (no switch flag).
+                // Sits below switching in precedence so a switch
+                // request that briefly toggles cover_active still
+                // shows the SWITCHING badge.
+                Some(BackFace::Returning)
             } else if status_snapshot.loading_game.is_some() {
                 Some(BackFace::Loading)
             } else if status_snapshot.session_slots_full {
@@ -167,7 +173,12 @@ impl LauncherApp {
             // on the 2D halos for continuous frames.
             if matches!(
                 back_face,
-                Some(BackFace::Starting | BackFace::Loading | BackFace::Switching),
+                Some(
+                    BackFace::Starting
+                        | BackFace::Loading
+                        | BackFace::Switching
+                        | BackFace::Returning
+                ),
             ) {
                 ctx.request_repaint_after(std::time::Duration::from_millis(16));
             }
@@ -190,6 +201,10 @@ impl LauncherApp {
                 // than an empty subtitle lane.
                 (Some(BackFace::Switching), _) => "CHOOSE YOUR NEXT ADVENTURE",
                 (Some(BackFace::Loading), Some(name)) => name,
+                // Returning: brief beat between in-game and AwaitingConnect.
+                // No subtitle — the badge text + iris-open animation
+                // carry the "you quit, here's the launcher" message.
+                (Some(BackFace::Returning), _) => "",
                 _ => "SCAN TO CONNECT",
             };
             let label_height = 96.0;
@@ -284,6 +299,13 @@ pub(crate) enum BackFace {
     /// server finished booting (port busy, DB corrupt, etc.). Caller
     /// paints the error message as a separate overlay below the card.
     ServerError,
+    /// "RETURNING TO PORTAL" — user quit a game (without switching).
+    /// Bridges the in-game→AwaitingConnect transition: the launcher
+    /// flips out of the transparent in-game render with this back-
+    /// face during the cover-before-kill window so RPCS3 dies behind
+    /// an opaque cover (PLAN 10.8.7b). Same halo-spin family as
+    /// Loading / Switching for visual continuity.
+    Returning,
 }
 
 impl BackFace {
@@ -291,7 +313,7 @@ impl BackFace {
     /// as the `BadgeRig` texture index (offset by 1 — index 0 is
     /// reserved for the QR raster), so don't reshuffle without
     /// also updating `texture_index`.
-    pub(crate) const ALL: [BackFace; 7] = [
+    pub(crate) const ALL: [BackFace; 8] = [
         BackFace::Starting,
         BackFace::MaxPlayers,
         BackFace::Loading,
@@ -299,6 +321,7 @@ impl BackFace {
         BackFace::Farewell,
         BackFace::Crashed,
         BackFace::ServerError,
+        BackFace::Returning,
     ];
 
     /// The static stack of words this back face shows on the disc
@@ -317,6 +340,7 @@ impl BackFace {
             BackFace::Farewell => &["FAREWELL", "PORTAL", "MASTER"],
             BackFace::Crashed => &["SOMETHING", "WENT", "WRONG"],
             BackFace::ServerError => &["SERVER", "FAILED", "TO START"],
+            BackFace::Returning => &["RETURNING", "TO PORTAL"],
         }
     }
 

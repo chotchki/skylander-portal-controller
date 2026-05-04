@@ -479,6 +479,7 @@ impl eframe::App for LauncherApp {
             && status_snapshot.rpcs3_running
             && status_snapshot.current_game.is_some()
             && !status_snapshot.switching
+            && !status_snapshot.cover_active
             && matches!(status_snapshot.screen, LauncherScreen::Main)
         {
             // PLAN 4.19.12 — stamp/clear the reconnect-QR fade-in timer

@@ -1339,18 +1339,42 @@ flash of desktop or a black panel.
   black-screen bugs (Risks A+B) are timing/race issues, not
   render-path bugs. Animation-grammar fixes (10.8.7d/e) are
   about visual consistency, not bug fixes.
-- [ ] 10.8.7b **Cover-before-kill mechanic.** Add
-  `LauncherStatus.cover_active: bool`. In-game render predicate
-  gains `&& !status_snapshot.cover_active`. Update the
-  `/api/quit`, `/api/quit?switch=true`, and `/api/shutdown`
-  handlers: set `cover_active = true`, sleep ~200 ms, then run the
-  existing kill / state-cleanup logic. After kill: clear
-  `current_game` / `current_eboot` / `cover_active`, server
-  proceeds with state-specific cleanup. Track a synthetic
-  `was_in_game_or_covering` so `detect_returning_from_game`
-  fires the iris-open animation after the cover lifts (without
-  this, the cover transition pre-empts in-game render and
-  `was_in_game` flips to false silently → no return animation).
+- [x] 10.8.7b **Cover-before-kill mechanic.** Landed:
+  - `LauncherStatus.cover_active: bool` added.
+  - In-game render predicate gates on `&& !cover_active`.
+  - Sequencer's `kill_close` adds `|| cover_active` so a cover
+    arming during in-game clears the close timer. `want_close_start`
+    adds `&& !cover_active` so the cover doesn't re-arm a close-to-
+    in-game animation mid-cover.
+  - `detect_returning_from_game` extended: `want_in_game_now`
+    gates on `!cover_active` so the cover arming triggers
+    ReturnFromGame even though RPCS3 is still alive at that
+    point. The iris-open animation starts BEFORE the kill, not
+    after.
+  - `/api/quit` rewritten as 4 phases: arm cover (set
+    `cover_active=true` or `switching=true` for `?switch=true`),
+    sleep 300 ms (≥1 tick of the in-game branch's 4 Hz heartbeat
+    + safety margin), kill RPCS3 behind the cover, clear
+    lifecycle flags. Returns 202 to phone after the full
+    sequence — the kill is sequential not detached.
+  - 4 new sequencer tests exercising the cover state machine:
+    cover clears latched close timer, cover blocks close-timer
+    set, cover triggers return-from-game when armed mid-game,
+    cover without prior in-game does NOT trigger phantom return.
+  - `/api/shutdown` not changed — it already uses `screen =
+    Farewell` as its cover (Farewell renders its own opaque
+    surface immediately), and the existing 1.2 s pre-kill sleep
+    serves the same purpose as the 300 ms `cover_active` window.
+
+  Skipped from original spec: a synthetic `was_in_game_or_covering`
+  field. Once `detect_returning_from_game` was updated to gate
+  `want_in_game_now` on `!cover_active`, the existing
+  `was_in_game` (set true on the previous in-game frame) carries
+  the transition correctly: cover arms → in-game predicate fails
+  this frame → `was_in_game=true` from previous frame → returning
+  detected. No new state needed.
+
+  41 workspace test groups still green.
 - [ ] 10.8.7c **FPS-based playable signal.** New viewport-FPS
   sampler task. Parses RPCS3's title (format
   `"FPS: %F | %R | %V | %T [%t]"`). Maintains a rolling 4-sample

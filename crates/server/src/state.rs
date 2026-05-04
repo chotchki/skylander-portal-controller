@@ -169,6 +169,18 @@ pub struct LauncherStatus {
     /// and shows a "SWITCHING GAMES" heading until the new boot fires.
     /// Cleared by `/api/launch` on entry.
     pub switching: bool,
+    /// `true` during a graceful-quit transition (PLAN 10.8.7b): set
+    /// at the start of `/api/quit`, held while the launcher renders
+    /// its opaque cover (sky + starfield + vortex + RETURNING badge),
+    /// cleared after RPCS3 has been killed and post-quit cleanup is
+    /// done. The in-game render predicate gates on
+    /// `!cover_active` so the launcher flips out of the transparent
+    /// CentralPanel BEFORE the kill runs — RPCS3 dies behind an
+    /// opaque cover, no flash of desktop. Distinct from `switching`
+    /// (which signals "next /api/launch is coming") so the
+    /// back-face precedence can render `Returning` vs `Switching`
+    /// correctly.
+    pub cover_active: bool,
 }
 
 /// UI-polled view of one connected phone session. Colour / initial are
