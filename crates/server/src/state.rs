@@ -1169,6 +1169,7 @@ async fn handle_job(
                 let d = driver.clone();
                 let exe_owned = rpcs3_exe.to_path_buf();
                 let eboot_owned = eboot_path.clone();
+                let display_name_for_blocking = display_name.clone();
                 // Match the viewport title on `[<SERIAL>]` (e.g.
                 // `[BLUS30968]`). Serial brackets are deterministic;
                 // matching on display_name fails when RPCS3's
@@ -1177,6 +1178,7 @@ async fn handle_job(
                 // vs `"Skylanders Giants [BLUS30968]"` (viewport).
                 let expected_marker = format!("[{}]", serial);
                 let _ = &expected_name;
+                let status_for_blocking = launcher_status.clone();
                 tokio::task::spawn_blocking(move || -> Result<Option<RpcsProcess>> {
                     let mut proc = RpcsProcess::launch_with_eboot(&exe_owned, &eboot_owned)?;
                     proc.wait_ready(std::time::Duration::from_secs(45))
@@ -1196,6 +1198,21 @@ async fn handle_job(
                             ));
                         }
                         std::thread::sleep(std::time::Duration::from_millis(250));
+                    }
+                    // Flip rpcs3_running + current_game on launcher_status
+                    // BEFORE open_dialog. The launcher's per-frame
+                    // `push_rpcs3_main_to_bottom_via_win32` is gated on
+                    // `rpcs3_running && current_game.is_some()`; without
+                    // that gate satisfied first, open_dialog's UIA Invoke
+                    // transiently promotes the main window over the game
+                    // viewport and the launcher doesn't push it down,
+                    // leaving the RPCS3 menu bar visible on top of the
+                    // game (HTPC bug 2026-05-04). This `std::sync::Mutex`
+                    // lock is fine from spawn_blocking — it's not the
+                    // tokio Mutex.
+                    if let Ok(mut st) = status_for_blocking.lock() {
+                        st.rpcs3_running = true;
+                        st.current_game = Some(display_name_for_blocking.clone());
                     }
                     d.open_dialog().context("open_dialog after EBOOT boot")?;
                     Ok(Some(proc))

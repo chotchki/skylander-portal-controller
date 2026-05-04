@@ -200,6 +200,30 @@ pub fn load() -> Result<Config> {
         }
     };
 
+    // PLAN 10.8.4: data_root + phone_dist_dir are derived from the
+    // binary location, not user preferences. Always recompute from
+    // `current_exe()` on launch so an MSI upgrade or relocation
+    // (e.g. "C:\emuluators\portal_controller\" → "C:\Program Files\
+    // Skylander Portal Controller\") doesn't leave the persisted
+    // config pointing at the old install dir. The persisted values
+    // in config.json are kept (write_through) so external tools can
+    // still inspect, but the runtime resolution always wins.
+    let exe_parent = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."));
+    let phone_dist_dir = exe_parent.join("phone-dist");
+    let data_root = exe_parent.join("data");
+    if persisted.phone_dist_dir != phone_dist_dir
+        || persisted.data_root != data_root
+    {
+        info!(
+            old_data_root = %persisted.data_root.display(),
+            new_data_root = %data_root.display(),
+            "overriding stale data_root/phone_dist_dir from config.json with current_exe-derived paths",
+        );
+    }
+
     Ok(Config {
         rpcs3_exe: persisted.rpcs3_exe,
         firmware_pack_root: persisted.firmware_pack_root,
@@ -209,8 +233,8 @@ pub fn load() -> Result<Config> {
             PersistedDriverKind::Mock => DriverKind::Mock,
         },
         log_dir: persisted.log_dir,
-        phone_dist_dir: persisted.phone_dist_dir,
-        data_root: persisted.data_root,
+        phone_dist_dir,
+        data_root,
         hmac_key,
     })
 }
