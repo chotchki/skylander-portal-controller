@@ -1251,16 +1251,94 @@ giving the launcher time to render the cover), then proceeds with
 the kill. RPCS3 dies *behind* the opaque cover; user never sees a
 flash of desktop or a black panel.
 
-- [ ] 10.8.7a **Black-screen audit (read-only).** Walk every render
-  path in `crates/server/src/ui/`. `clear_color` returns
-  `[0,0,0,0]` (transparent), and the in-game branch is the only
-  intentional transparent CentralPanel. Confirm every other
-  branch (Main / Crashed / Farewell / ServerError) paints opaque
-  (sky_background + starfield + vortex + badge or the screen's
-  own surface). Identify any path where the launcher could render
-  black or transparent-without-coverage — those are bugs to fix
-  in subsequent phases. Document findings inline in this PLAN
-  entry.
+- [x] 10.8.7a **Black-screen audit (read-only).** Walked every
+  render path. Findings:
+
+  *Render dispatch* (`ui/mod.rs::update`):
+  - `clear_color = [0,0,0,0]` (transparent). Only matters when
+    the CentralPanel ALSO doesn't paint a given pixel.
+  - One transparent CentralPanel: the in-game branch (line ~478).
+    Predicate: `close_complete && rpcs3_running &&
+    current_game.is_some() && !switching && screen=Main`. If
+    true, panel is `Frame::none().fill(TRANSPARENT)` — only the
+    optional reconnect QR paints. RPCS3 viewport shows through.
+  - Every other path uses an opaque CentralPanel that always
+    paints (in order): `paint_sky_background` (dark-blue
+    gradient ellipses), `paint_starfield`, vortex shader,
+    `paint_starfield` again on top, then per-screen content
+    (`render_main` / `crashed::render` / `farewell::render` /
+    `server_error::render`). Each per-screen branch paints its
+    own opaque surface (badge + text + buttons). No path leaves
+    a hole.
+
+  *Vortex shader iris semantics* (`vortex.rs:280–285`):
+  - `edge = smoothstep(iris_radius - softness, iris_radius, radius)`
+    is 0 inside the iris boundary, 1 outside.
+  - `iris_mode = Reveal`: `iris = 1 - edge`. Clouds visible
+    INSIDE the iris radius, transparent outside (sky+starfield
+    show through).
+  - `iris_mode = DarkHole`: `iris = edge`. Transparent INSIDE
+    (sky+starfield show through, including the dark-blue sky
+    gradient + stars), clouds outside.
+  - **Critical finding**: `DarkHole` is misnamed. The "dark
+    hole" isn't an opaque black region — it's a transparent
+    region revealing the sky+starfield underneath. So the
+    current `ClosingToInGame` animation that uses `DarkHole` +
+    `iris_radius → 0` does NOT render flat black. It renders
+    "vortex cloud pattern grows inward over the dark-blue sky +
+    starfield." Animated, never flat black. Same for Farewell
+    (uses the same `ClosingToInGame` phase). The user-perceived
+    "darkness" of these transitions is the dark-blue sky +
+    starfield, which is what every other launcher state shows
+    behind its content too — just no per-screen content drawn
+    over it once the iris fully closes (clouds + stars only).
+
+  *Black-render risks identified* (the actual bugs):
+  - **Risk A — in-game branch with RPCS3 not rendering**: when
+    the in-game predicate fires but RPCS3's game viewport hasn't
+    started rendering frames (early shader compile, splash
+    screens that render black), the transparent CentralPanel
+    reveals a black RPCS3 viewport. **This is the v1.3.4 "screen
+    is black when game launches" bug.** Fix: 10.8.7c (FPS-based
+    `game_playable` so we only enter in-game when RPCS3 is
+    actually rendering).
+  - **Risk B — cover-before-kill race**: `/api/quit` clears
+    `current_game` then kills RPCS3. Between the state flip and
+    the launcher's next frame, the launcher's last-rendered
+    frame might be the transparent in-game one, and if RPCS3 is
+    already dead, the user sees through to desktop. With the 4 Hz
+    in-game heartbeat (commit `ca7af77`) the lag is at most
+    ~250 ms but it's still visible. Fix: 10.8.7b (`cover_active`
+    flag forces the launcher out of in-game render BEFORE the
+    server starts the kill).
+  - **Risk C — Farewell black-fade overlay**: legitimate, the
+    only intentional flat-black render. Stays as-is.
+
+  *Animation-grammar findings* (not bugs, just design
+  consistency):
+  - `ClosingToInGame` and Farewell both use `DarkHole + iris→0`,
+    which reads as "vortex closes in." The user's preferred
+    grammar is `0→open` for cover transitions and a different
+    "transparency expands from centre" for the launch-to-game
+    transition (10.8.7d/e). The current animation isn't showing
+    black, but it's not the model we want either. Replacing it
+    is a polish/consistency change, not a black-render fix.
+
+  *Vortex shader `iris_radius > IRIS_FULL` behavior*: the
+  smoothstep clamps cleanly — at `radius < iris_radius - softness`
+  the edge stays 0, so a very-large `iris_radius` in `Reveal`
+  mode means the "inside" iris area covers the entire panel,
+  giving a fully-cloud-visible state with no boundary edge
+  visible. With `iris_softness` defaulted, this transitions
+  smoothly. **No shader changes needed for 10.8.7e** — the
+  proposed `RevealingGame` phase can extend `iris_radius`
+  beyond `IRIS_FULL` and the shader will render correctly.
+
+  *Conclusion*: the strict "only Farewell shows black"
+  invariant is currently met for static states. The two real
+  black-screen bugs (Risks A+B) are timing/race issues, not
+  render-path bugs. Animation-grammar fixes (10.8.7d/e) are
+  about visual consistency, not bug fixes.
 - [ ] 10.8.7b **Cover-before-kill mechanic.** Add
   `LauncherStatus.cover_active: bool`. In-game render predicate
   gains `&& !status_snapshot.cover_active`. Update the
