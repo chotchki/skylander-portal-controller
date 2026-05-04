@@ -62,6 +62,15 @@ pub use process::{
     read_viewport_title,
 };
 
+// Non-Windows stubs so server code that polls for an FPS: viewport
+// (BootDirect handler) compiles on Mac/Linux. The mock-driver lifecycle
+// never spawns a real RPCS3, so a viewport never exists — `None`
+// always is the correct answer there.
+#[cfg(not(windows))]
+pub fn read_viewport_title() -> Option<String> {
+    None
+}
+
 #[cfg(feature = "mock")]
 pub mod mock;
 #[cfg(feature = "mock")]

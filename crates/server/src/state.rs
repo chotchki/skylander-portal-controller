@@ -1157,51 +1157,63 @@ async fn handle_job(
             timeout,
             done,
         } => {
-            let d = driver.clone();
-            let exe_owned = rpcs3_exe.to_path_buf();
-            let eboot_owned = eboot_path.clone();
-            let expected_owned = expected_name.clone();
-            let result = tokio::task::spawn_blocking(move || -> Result<RpcsProcess> {
-                let mut proc = RpcsProcess::launch_with_eboot(&exe_owned, &eboot_owned)?;
-                // Wait for main window (RPCS3 booting). 45s allowed.
-                proc.wait_ready(std::time::Duration::from_secs(45))
-                    .context("RPCS3 main window never appeared after EBOOT spawn")?;
-                // Wait for FPS: viewport — poll the cheap UIA-free
-                // `running_viewport_title` helper. First-launch shader
-                // compile can stretch this to 60–120s.
-                let deadline = std::time::Instant::now() + timeout;
-                loop {
-                    if let Some(title) = skylander_rpcs3_control::read_viewport_title()
-                        && title.contains(&expected_owned)
-                    {
-                        break;
+            // PLAN 10.8.4: spawn RPCS3 with the picked game's EBOOT.BIN,
+            // wait for the FPS: viewport, then open the Skylanders dialog.
+            // The whole spawn-and-wait dance is Windows-only — on non-
+            // Windows (Mac/Linux dev with the mock driver) we skip the
+            // spawn but still update lifecycle state so /api/launch
+            // round-trips cleanly. Mock-driver tests don't have a real
+            // RPCS3 to talk to anyway.
+            #[cfg(windows)]
+            let result: Result<Option<RpcsProcess>> = {
+                let d = driver.clone();
+                let exe_owned = rpcs3_exe.to_path_buf();
+                let eboot_owned = eboot_path.clone();
+                let expected_owned = expected_name.clone();
+                tokio::task::spawn_blocking(move || -> Result<Option<RpcsProcess>> {
+                    let mut proc = RpcsProcess::launch_with_eboot(&exe_owned, &eboot_owned)?;
+                    proc.wait_ready(std::time::Duration::from_secs(45))
+                        .context("RPCS3 main window never appeared after EBOOT spawn")?;
+                    let deadline = std::time::Instant::now() + timeout;
+                    loop {
+                        if let Some(title) = skylander_rpcs3_control::read_viewport_title()
+                            && title.contains(&expected_owned)
+                        {
+                            break;
+                        }
+                        if std::time::Instant::now() >= deadline {
+                            return Err(anyhow::anyhow!(
+                                "FPS: viewport with title containing {expected_owned:?} \
+                                 never appeared within {:?}",
+                                timeout
+                            ));
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(250));
                     }
-                    if std::time::Instant::now() >= deadline {
-                        return Err(anyhow::anyhow!(
-                            "FPS: viewport with title containing {expected_owned:?} \
-                             never appeared within {:?}",
-                            timeout
-                        ));
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(250));
-                }
-                // Open the Skylanders Manager dialog so the driver is
-                // ready to handle figure load/clear immediately.
-                d.open_dialog().context("open_dialog after EBOOT boot")?;
-                Ok(proc)
-            })
-            .await
-            .map_err(|e| anyhow::anyhow!("BootDirect task panicked: {e}"))
-            .and_then(|r| r);
+                    d.open_dialog().context("open_dialog after EBOOT boot")?;
+                    Ok(Some(proc))
+                })
+                .await
+                .map_err(|e| anyhow::anyhow!("BootDirect task panicked: {e}"))
+                .and_then(|r| r)
+            };
+            #[cfg(not(windows))]
+            let result: Result<Option<RpcsProcess>> = {
+                let _ = (driver, rpcs3_exe, expected_name, timeout);
+                // Mock driver: no real RPCS3, no spawn, no viewport poll.
+                // Keep whatever process handle the lifecycle already has
+                // (a `RpcsProcess::mock()` installed at startup).
+                Ok(None)
+            };
 
-            // Update lifecycle on success: set process + current.
             let outcome = match result {
-                Ok(proc) => {
+                Ok(maybe_proc) => {
                     let mut guard = rpcs3.lock().await;
-                    // If the previous BootDirect / startup left a process
-                    // around, drop it now (Drop impl kills via JobObject).
-                    let _ = guard.process.take();
-                    guard.process = Some(proc);
+                    if let Some(new_proc) = maybe_proc {
+                        // Drop any previous process (Drop kills via JobObject).
+                        let _ = guard.process.take();
+                        guard.process = Some(new_proc);
+                    }
                     guard.current = Some(GameLaunched {
                         serial: skylander_core::GameSerial::new(&serial),
                         display_name: display_name.clone(),
