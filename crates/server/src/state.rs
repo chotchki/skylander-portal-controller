@@ -693,6 +693,13 @@ pub fn spawn_shader_compile_watchdog(
     /// last shader finishes.
     const PLAYABLE_QUIET_SECS: f32 = 2.0;
 
+    /// Fallback: if the watchdog never observes any compile activity
+    /// (cached shaders, log path mismatch, log buffering, etc.) we
+    /// can't use the compile-quiet heuristic. After this many seconds
+    /// of `rpcs3_running` with no compile lines seen, declare the
+    /// game playable so the iris doesn't sit on LOADING forever.
+    const MAX_NO_ACTIVITY_WAIT_SECS: f32 = 30.0;
+
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(interval);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -706,6 +713,9 @@ pub fn spawn_shader_compile_watchdog(
         // playable-detection heuristic: rpcs3_running + no hit in
         // PLAYABLE_QUIET_SECS = game is actually ready.
         let mut last_compile_at: Option<std::time::Instant> = None;
+        // Wall time `rpcs3_running` first flipped true (cleared on
+        // false). Drives the no-activity fallback.
+        let mut rpcs3_running_since: Option<std::time::Instant> = None;
 
         loop {
             ticker.tick().await;
@@ -721,24 +731,58 @@ pub fn spawn_shader_compile_watchdog(
                 }
             }
 
-            // Compute playability: rpcs3_running AND quiet on compile
-            // for PLAYABLE_QUIET_SECS. If we've never seen a compile
-            // line yet (e.g. fully cached on second launch), treat
-            // last_compile_at = None as "instantly playable once
-            // rpcs3_running is true".
             let now = std::time::Instant::now();
-            let quiet = last_compile_at
+
+            // Two ways to land on `quiet = true`:
+            //   1. We've seen at least one compile line AND there's
+            //      been silence for PLAYABLE_QUIET_SECS — the normal
+            //      case for a first-launch shader compile that finishes.
+            //   2. We've never seen a compile line, but rpcs3_running
+            //      has been true for MAX_NO_ACTIVITY_WAIT_SECS. Covers
+            //      cached shaders / unreadable log / log path mismatch.
+            //
+            // Default for `last_compile_at = None` is now `false` (NOT
+            // quiet). PLAN 10.8.4: previously this defaulted to `true`,
+            // but with direct-boot the watchdog can race against
+            // RPCS3's freshly-spawned log writes — opening the log
+            // mid-write and seeking to end misses the early compile
+            // lines, so `last_compile_at` stays None even though
+            // shaders ARE compiling. The iris would jump open
+            // prematurely. The MAX_NO_ACTIVITY_WAIT_SECS fallback
+            // protects against the genuine cached-shader case.
+            let saw_quiet = last_compile_at
                 .map(|t| now.duration_since(t).as_secs_f32() >= PLAYABLE_QUIET_SECS)
-                .unwrap_or(true);
+                .unwrap_or(false);
+            let max_wait_elapsed = rpcs3_running_since
+                .map(|t| now.duration_since(t).as_secs_f32() >= MAX_NO_ACTIVITY_WAIT_SECS)
+                .unwrap_or(false);
+            let quiet = saw_quiet || (last_compile_at.is_none() && max_wait_elapsed);
 
             if let Ok(mut st) = launcher_status.lock() {
+                // Track when rpcs3_running first flipped true so the
+                // no-activity fallback has a starting point.
+                if st.rpcs3_running {
+                    rpcs3_running_since.get_or_insert(now);
+                } else {
+                    rpcs3_running_since = None;
+                    // Reset compile state when RPCS3 stops so a
+                    // subsequent BootDirect for a different game
+                    // doesn't inherit the previous session's
+                    // last_compile_at timestamp.
+                    last_compile_at = None;
+                    last_text = None;
+                }
                 if last_text.is_some() && st.shader_compile_text != last_text {
                     st.shader_compile_text = last_text.clone();
                 }
                 let playable = st.rpcs3_running && quiet;
                 if st.game_playable != playable {
                     if playable {
-                        info!("rpcs3 game playable (compile activity quiet)");
+                        info!(
+                            via_compile_quiet = saw_quiet,
+                            via_no_activity_fallback = max_wait_elapsed && !saw_quiet,
+                            "rpcs3 game playable",
+                        );
                     } else if st.game_playable {
                         info!("rpcs3 game no longer playable (compile activity resumed)");
                     }
@@ -769,7 +813,17 @@ fn read_new_compile_text(
         let f = std::fs::File::open(log_path).ok()?;
         let len = f.metadata().ok()?.len();
         *file = Some(f);
-        *pos = len; // seek to end on first open — only care about NEW content
+        // PLAN 10.8.4: with direct-boot RPCS3 is spawned mid-session
+        // and writes its initial shader-compile lines to a freshly-
+        // created log BEFORE the watchdog's first tick gets to open
+        // it. Seeking to end on first open missed those — the iris
+        // then jumped open prematurely (no compile activity ever
+        // recorded). Read the most recent ~1 MB instead, which
+        // captures any compile activity that landed before the
+        // watchdog opened. Older / pre-existing logs are still
+        // tail-bounded so we don't replay ancient sessions.
+        const TAIL_BYTES: u64 = 1_000_000;
+        *pos = len.saturating_sub(TAIL_BYTES);
     }
     let f = file.as_mut()?;
 

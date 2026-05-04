@@ -363,6 +363,15 @@ impl eframe::App for LauncherApp {
         // spin-in without the brand intro.
         if detect_returning_from_game(self.was_in_game, &status_snapshot) {
             self.returning_from_game_at = Some(now);
+            // Defensive: if a fast quit sequence skipped the in-game
+            // render's `loading_game = None` clear (e.g. game
+            // launched + quit before the close animation completed),
+            // belt-and-suspenders clear it here so the launcher
+            // doesn't return to Main with a stale LOADING badge
+            // pinned over the QR (Chris 2026-05-04).
+            if let Ok(mut st) = self.status.lock() {
+                st.loading_game = None;
+            }
         }
 
         let returning_elapsed_s = self
@@ -499,20 +508,29 @@ impl eframe::App for LauncherApp {
                     );
                 });
             self.was_in_game = true;
-            // In-game repaint cadence — only stay at 60fps while
-            // the reconnect-QR fade is animating in (clients=0
-            // case). Otherwise let egui go reactive: status
-            // changes (game crashes, switching, new client) wake
-            // us via background tokio tasks' own
-            // `Context::request_repaint`, so we won't miss a
-            // transition. Burning 60fps on an empty transparent
-            // panel was the laptop-heat culprit Chris flagged
-            // 2026-05-03 (PLAN 10.7.9).
-            if reconnect_fade_elapsed_s > 0.0
+            // In-game repaint cadence — 60fps while the reconnect-QR
+            // fade is animating in (clients=0 case), otherwise a
+            // 4 Hz heartbeat so we catch background status flips
+            // (screen → Farewell from /api/shutdown, rpcs3_running →
+            // false from /api/quit) without anyone needing to
+            // explicitly wake us. Without this heartbeat the
+            // launcher sat fully idle in-game under direct-boot
+            // (PLAN 10.8.4) — there's no longer an always-running
+            // shader-compile watchdog firing 60fps repaints — and a
+            // /api/shutdown setting screen=Farewell never reached a
+            // render, so the Farewell countdown never started and
+            // the launcher process never closed (Chris 2026-05-04).
+            // 4Hz on a fully-transparent panel is essentially
+            // free; the laptop-heat regression PLAN 10.7.9 fixed
+            // was 60fps on empty repaints, not 4Hz.
+            let in_game_repaint = if reconnect_fade_elapsed_s > 0.0
                 && reconnect_fade_elapsed_s < in_game::RECONNECT_FADE_IN_S
             {
-                ctx.request_repaint_after(std::time::Duration::from_millis(16));
-            }
+                std::time::Duration::from_millis(16)
+            } else {
+                std::time::Duration::from_millis(250)
+            };
+            ctx.request_repaint_after(in_game_repaint);
             // Loading is over — the launch handler intentionally
             // left `loading_game` set so the LOADING badge persisted
             // through compile; clear it now that the launcher is

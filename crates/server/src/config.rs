@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use anyhow::Context;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+#[cfg(not(feature = "dev-tools"))]
 use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
