@@ -334,24 +334,32 @@ screenshot tour acting as the per-tranche regression contract.
   + commit any intentional drift.
 
 ### 9.7 iPad + iPhone layout pass
-Once 9.1–9.6 land, tackle the responsive pass that the monolithic CSS
-made painful. With utility-first markup, breakpoint variants
-(`md:`, `lg:`) live next to the base utilities and the iPad layout
-becomes additive, not a separate stylesheet branch.
+Now that 9.1–9.6 have landed plus Phase 10 (Mac server, multi-device
+`tools/ios-inspect/`, iOS-Simulator e2e), tackle the responsive pass
+that the monolithic CSS made painful. With utility-first markup,
+breakpoint variants (`md:`, `lg:`) live next to the base utilities
+and the iPad layout becomes additive, not a separate stylesheet
+branch.
 
-**Blocked on Phase 10.** This pass needs `tools/ios-inspect/` (Mac-only
-CLI driving the iOS Simulator + Safari Web Inspector — see CLAUDE.md
-"Aesthetic" section) and a real iPad for the device-fidelity gap that
-the simulator can't surface. Picking up 9.7 from the Windows HTPC
-would mean eyeballing dev-tools at 768/1024 width, which is the exact
-trap the migration was supposed to make obsolete. Phase 10 stands up
-the Mac path; resume 9.7 once 10.1 lands.
+Driver: 2026-05-04 son-playtest on a real iPad surfaced text-too-small
+across every screen. Phone-first px-pinned typography tokens
+(`--text-display-*` / `--text-body-*` in `phone/styles/input.css`)
+don't scale on iPad's wider viewport.
 
 - [ ] 9.7 — Optimize for iPad + iPhone layouts. Inventory which
   components need a wider-viewport variant (toy-box grid columns,
   portal slot row layout, Header chip density). Drop `md:` /
   `lg:` overrides per-component; verify on iOS Simulator + a real
   iPad via the Tour gallery.
+- [ ] 9.7.2 — *[bug]* iPad typography too small (playtest 2026-05-04).
+  Convert `@theme` text tokens (`--text-display-hero` … `--text-body-sm`)
+  from `px` to `rem`. Bump `:root { font-size }` at a tablet
+  breakpoint (~`min-width: 700px`) so every `text-display-*` /
+  `text-body-*` utility scales proportionally without per-component
+  `md:` overrides. Also rev the legacy `:root` `--t-*` mirror to rem
+  so unmigrated `var(--t-*)` callsites in `phone/styles/components/*`
+  scale with it. Validate on iPad 10th gen sim via `tools/ios-inspect`
+  + screenshot tour.
 - [x] 9.7.1 — *[bug]* `PwaHint` suppressed on iPad. `pwa.rs` gains
   `is_tablet_ua` (pure: UA contains "ipad" OR macintosh + touch-mac
   probe) + an `is_tablet()` web_sys wrapper; `should_show_hint`
@@ -377,9 +385,7 @@ surfaces and unifies those duplicates so the design system has one
 source of truth per pattern.
 
 **Sequenced after 9.7** so the consolidation pass sees the full set
-of patterns (including responsive variants) at once. Like 9.7,
-benefits from running on the Mac path with iOS Simulator open for
-quick visual verification — held alongside 9.7 pending Phase 10.
+of patterns (including responsive variants) at once.
 
 - [ ] 9.8 — Sweep the `phone/styles/components/*.css` files for
   repeated patterns and consolidate. Three target shapes, in order
