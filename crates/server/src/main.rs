@@ -665,7 +665,7 @@ fn decorate_vehicle_terrain(mut figures: Vec<Figure>, data_root: &Path) -> Vec<F
             Some((k, terrain))
         })
         .collect();
-    entries.sort_by(|(a, _), (b, _)| b.len().cmp(&a.len()));
+    entries.sort_by_key(|(k, _)| std::cmp::Reverse(k.len()));
 
     let mut decorated = 0usize;
     for f in figures.iter_mut() {
