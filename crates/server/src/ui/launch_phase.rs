@@ -27,6 +27,7 @@
 //!         still paint underneath (panel is still opaque); the
 //!         game isn't visible *yet*, but the launcher visually
 //!         "opens up" to a calm sky.
+//!
 //!     Once `progress` hits 1.0 the dispatcher's in-game predicate
 //!     flips true and the transparent panel takes over, swapping
 //!     the sky backdrop for the live game viewport. (One-frame pop

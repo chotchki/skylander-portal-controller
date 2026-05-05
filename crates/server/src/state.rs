@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use skylander_core::{
     Event, Figure, FigureId, GameLaunched, GameSerial, SLOT_COUNT, SlotIndex, SlotState,
 };
@@ -715,11 +715,11 @@ pub fn spawn_shader_compile_watchdog(
 
             let new_compile_text =
                 read_new_compile_text(&log_path, &mut file, &mut pos, &mut carry);
-            if let Some(text) = new_compile_text {
-                if Some(&text) != last_text.as_ref() {
-                    info!(text = %text, "rpcs3 compile/cache progress detected");
-                    last_text = Some(text.clone());
-                }
+            if let Some(text) = new_compile_text
+                && Some(&text) != last_text.as_ref()
+            {
+                info!(text = %text, "rpcs3 compile/cache progress detected");
+                last_text = Some(text.clone());
             }
 
             if let Ok(mut st) = launcher_status.lock() {
@@ -1113,6 +1113,7 @@ pub fn spawn_crash_watchdog(
 /// current portal layout after each successful mutation (PLAN 3.12.1) —
 /// each unlocked profile's `sessions` row gets the fresh JSON so that on
 /// next unlock we can offer a resume prompt.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_driver_worker(
     driver: Arc<dyn PortalDriver>,
     portal: Arc<Mutex<[SlotState; SLOT_COUNT]>>,
@@ -1169,6 +1170,7 @@ pub fn spawn_driver_worker(
     tx
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_job(
     job: DriverJob,
     driver: &Arc<dyn PortalDriver>,
@@ -1493,6 +1495,7 @@ mod tests {
             game: GameOfOrigin::SpyrosAdventure,
             element: Some(Element::Fire),
             category: Category::Figure,
+            vehicle_terrain: None,
             sky_path: PathBuf::from("/dev/null"),
             element_icon_path: None,
             tag_identity: None,

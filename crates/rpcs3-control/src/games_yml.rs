@@ -53,7 +53,7 @@ fn parse(body: &str) -> HashMap<String, PathBuf> {
         // Strip a single trailing separator if present — RPCS3 emits
         // both `.../Game/` and `.../Game` depending on how the entry
         // was added.
-        let path = path.trim_end_matches(|c| c == '/' || c == '\\');
+        let path = path.trim_end_matches(['/', '\\']);
         if serial.is_empty() || path.is_empty() {
             continue;
         }

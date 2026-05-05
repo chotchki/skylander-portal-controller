@@ -42,19 +42,15 @@ const PIP_DIAMETER: f32 = 84.0;
 /// `navigation.md` §3.3 spec value.
 const ORBIT_SPEED: f32 = 0.08;
 
-/// Visible thickness of the gold ring around the inner content disc,
-/// in screen pixels. The bezel paints a full filled gold disc; the
-/// inner SF_3 / SF_1 content disc is drawn smaller by this amount so
-/// the gold shows around it as a ring. Bumped 14→24 on 2026-04-19
-/// after Chris noted the dark inner ring was out of proportion with
-/// the gold on a 420px bezel — at 14px the gold read as thinner than
-/// the combined dark (GOLD_INK inset + SF_3 rim) inside it.
 // Removed at PLAN 10.7.10 along with the rest of the 2D back-card
 // surface: BEZEL_RING_PX / SCREEN_RIM_PX were the inset distances
 // the now-deleted `paint_titled_card` used to lay out the SF_3
 // "monitor screen" ring inside the gold bezel disc. The 3D badge
 // has its own analytic disc geometry (QR_RADIUS / OUTER_RADIUS in
-// the shader) and doesn't need these.
+// the shader) and doesn't need these. (Original doc said: visible
+// thickness of the gold ring around the inner content disc; bumped
+// 14→24 on 2026-04-19 after the dark inner ring read out of
+// proportion with the gold.)
 
 /// Width (in QR modules) of the clear quiet-zone ring between the QR
 /// data and the surrounding circular noise field. Spike on 2026-04-19

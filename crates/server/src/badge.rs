@@ -609,6 +609,7 @@ impl BadgeRig {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn paint(
         &self,
         gl: &glow::Context,

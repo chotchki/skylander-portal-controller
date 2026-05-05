@@ -84,6 +84,7 @@ mod tests {
             game: GameOfOrigin::SpyrosAdventure,
             element: Some(Element::Fire),
             category: Category::Figure,
+            vehicle_terrain: None,
             sky_path: pack_path,
             element_icon_path: None,
             tag_identity: None,

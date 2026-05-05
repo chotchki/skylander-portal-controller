@@ -120,6 +120,7 @@ mod tests {
             game: GameOfOrigin::SpyrosAdventure,
             element: Some(Element::Fire),
             category: Category::Figure,
+            vehicle_terrain: None,
             sky_path: PathBuf::from("C:/pack/fire/Eruptor.sky"),
             element_icon_path: Some(PathBuf::from("C:/pack/fire/FireSymbolSkylanders.png")),
             tag_identity: None,

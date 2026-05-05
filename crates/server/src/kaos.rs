@@ -190,6 +190,7 @@ mod tests {
             game,
             element: Some(Element::Fire),
             category,
+            vehicle_terrain: None,
             sky_path: PathBuf::from(format!("/fake/{id}.sky")),
             element_icon_path: None,
             tag_identity: None,
