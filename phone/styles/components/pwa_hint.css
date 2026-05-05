@@ -1,0 +1,73 @@
+/*
+ * <PwaHint> — "Add to Home Screen" banner (PLAN 4.18.1b).
+ * (PLAN 9.6 — slipped through 9.4 and ported as part of the
+ * sweep tranche.)
+ *
+ * Sits at the top of the ProfilePicker when the page is loaded in
+ * an iOS Safari tab (not as an installed PWA). Dismiss is persistent
+ * via localStorage. One concrete sentence + a small dismiss pill.
+ *
+ * Class names unchanged.
+ */
+
+@layer components {
+  .pwa-hint {
+    @apply flex items-center justify-between rounded-[14px];
+    gap: 12px;
+    margin: 12px 18px 14px;
+    padding: 12px 14px;
+    background: linear-gradient(180deg,
+      rgba(32, 58, 120, 0.92),
+      rgba(14, 30, 78, 0.96));
+    border: 1.5px solid rgba(245, 198, 52, 0.45);
+    color: #f5edc6;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.55);
+    box-shadow:
+      0 3px 10px rgba(0, 0, 0, 0.45),
+      inset 0 1px 0 rgba(255, 230, 150, 0.08);
+  }
+
+  .pwa-hint-body {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .pwa-hint-title {
+    font-family: var(--font-display);
+    font-size: var(--text-body);
+    letter-spacing: 0.04em;
+    color: var(--color-gold-bright);
+    margin-bottom: 2px;
+  }
+  .pwa-hint-copy {
+    font-size: var(--text-body-italic);
+    line-height: 1.35;
+    color: #f5edc6;
+  }
+  .pwa-hint-icon {
+    @apply inline-block;
+    font-size: var(--text-body);
+    color: #fff;
+    opacity: 0.9;
+    transform: translateY(1px);
+  }
+
+  .pwa-hint-dismiss {
+    @apply rounded-lg cursor-pointer select-none;
+    flex: 0 0 auto;
+    padding: 8px 12px;
+    font-family: var(--font-display);
+    font-size: var(--text-body-sm);
+    letter-spacing: 0.08em;
+    color: var(--color-gold-bright);
+    background: rgba(8, 18, 48, 0.7);
+    border: 1.5px solid rgba(245, 198, 52, 0.35);
+    /* iOS touch hygiene — kill double-tap zoom + grey tap overlay. */
+    touch-action: pan-x pan-y;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none;
+  }
+  .pwa-hint-dismiss:active:not(:disabled) {
+    background: rgba(16, 32, 72, 0.9);
+    border-color: rgba(245, 198, 52, 0.55);
+  }
+}

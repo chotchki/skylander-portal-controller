@@ -1,0 +1,17 @@
+[package]
+name = "tailwind-build"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "tailwind-build"
+path = "src/main.rs"
+
+[dependencies]
+# Synchronous HTTP — no async runtime needed for a one-shot CLI helper
+# that downloads the standalone tailwindcss binary on first run. `ureq`
+# at default features pulls in `rustls` (no system OpenSSL dependency)
+# which keeps Windows + Linux + macOS happy with no extra build setup.
+ureq = "2"
+anyhow = { workspace = true }

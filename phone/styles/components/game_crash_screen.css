@@ -1,0 +1,152 @@
+/*
+ * <GameCrashScreen> overlay (PLAN 4.15.14).
+ * (PLAN 9.4b — overlays tranche.)
+ *
+ * Full-screen amber-tinted overlay shown when the server broadcasts
+ * `Event::GameCrashed`. Sits at z-70, beaten only by ConnectionLost
+ * (z-90) so a network drop during a crash still surfaces "you're
+ * disconnected" first.
+ *
+ * Palette is amber, *not* magenta — the Kaos takeover has its own
+ * void palette and this crash screen must read as "something broke",
+ * not "Kaos struck."
+ *
+ * Class names unchanged.
+ */
+
+@layer components {
+  .crash-overlay {
+    @apply fixed inset-0 z-[70];
+    background:
+      radial-gradient(ellipse 80% 60% at 50% 30%, rgba(245, 198, 52, 0.12) 0%, transparent 55%),
+      radial-gradient(ellipse 60% 50% at 30% 80%, rgba(255, 140, 60, 0.10) 0%, transparent 55%),
+      linear-gradient(180deg, var(--color-sf-1) 0%, var(--color-sf-2) 55%, var(--color-sf-3) 100%);
+    animation: crash-overlay-in 340ms cubic-bezier(.2, .8, .3, 1) both;
+  }
+
+  /* Soft amber backdrop pulse — conveys "alert state" without going full
+     Kaos-emergency-red. Slow 3.2s cycle so it stays ambient. */
+  .crash-backdrop {
+    @apply absolute inset-0 pointer-events-none;
+    background:
+      radial-gradient(ellipse 70% 55% at 50% 35%, rgba(245, 198, 52, 0.08), transparent 60%);
+    animation: crash-backdrop-pulse 3.2s ease-in-out infinite;
+  }
+
+  /* Sparse amber-spark layer — echoes the takeover sparks but dimmer and
+     gold-tinted rather than magenta. */
+  .crash-sparks {
+    @apply absolute inset-0 pointer-events-none;
+    background-image:
+      radial-gradient(1.5px 1.5px at 48px 120px,  var(--color-gold-bright), transparent),
+      radial-gradient(1px 1px     at 210px 72px,  #ffd66b, transparent),
+      radial-gradient(1.5px 1.5px at 320px 240px, var(--color-gold-bright), transparent),
+      radial-gradient(1px 1px     at 96px 420px,  #ffd66b, transparent),
+      radial-gradient(1.5px 1.5px at 280px 520px, var(--color-gold-bright), transparent),
+      radial-gradient(1px 1px     at 60px 660px,  #ffd66b, transparent),
+      radial-gradient(1px 1px     at 340px 720px, var(--color-gold-bright), transparent);
+    background-size: 400px 800px;
+    opacity: 0.55;
+    animation: crash-sparks-flicker 4.5s ease-in-out infinite alternate;
+  }
+
+  .crash-viewport {
+    @apply relative h-full flex flex-col items-center justify-center text-center;
+    padding: 56px 28px 40px;
+    gap: 22px;
+  }
+
+  /* Warning sigil — oversized warm-glow triangle. Distinct from the Kaos
+     sigil (sphere/burst) so the two overlays never read the same. */
+  .crash-warning-mark {
+    font-size: 72px;
+    line-height: 1;
+    color: var(--color-gold-bright);
+    text-shadow:
+      0 2px 0 rgba(0, 0, 0, 0.6),
+      0 0 18px rgba(245, 198, 52, 0.55),
+      0 0 36px rgba(245, 198, 52, 0.35);
+    animation: crash-warning-pulse 2s ease-in-out infinite;
+  }
+
+  .crash-body {
+    font-family: var(--font-body);
+    font-style: italic;
+    font-size: var(--text-display-sm);
+    line-height: 1.45;
+    color: var(--color-text);
+    max-width: 320px;
+    margin: 4px auto 0;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.6);
+  }
+
+  /* Secondary diagnostic line — monospaced so it visually reads as
+     "technical detail" vs the italic reassurance above. */
+  .crash-detail {
+    font-family: var(--font-mono);
+    font-size: var(--text-display-xs);
+    letter-spacing: 0.04em;
+    color: var(--color-text-dim);
+    max-width: 320px;
+    margin: -6px auto 0;
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: rgba(2, 8, 24, 0.55);
+    border: 1px solid rgba(245, 198, 52, 0.18);
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.7);
+    word-break: break-word;
+  }
+
+  /* Return-to-games gold button — same shape as the Takeover kick-back
+     button but in the standard gold palette (recoverable crash, not Kaos). */
+  .crash-return-btn {
+    @apply w-full rounded-[14px] cursor-pointer;
+    max-width: 320px;
+    margin-top: 10px;
+    padding: 16px;
+    font-family: var(--font-display), "Fredoka One", sans-serif;
+    font-size: var(--text-display-sm);
+    letter-spacing: 0.22em;
+    color: #2a1a00;
+    background: linear-gradient(180deg, var(--color-gold-bright) 0%, var(--color-gold) 45%, #a87a17 100%);
+    border: 2px solid #8a5f10;
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.35);
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.55),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.25),
+      0  4px 0 #6b480a,
+      0  8px 20px rgba(245, 198, 52, 0.35),
+      0  0 28px rgba(255, 229, 138, 0.28);
+    animation: crash-return-pulse 2.8s ease-in-out infinite;
+  }
+  .crash-return-btn:active {
+    transform: translateY(3px);
+    box-shadow:
+      inset 0 2px 0 rgba(255, 255, 255, 0.45),
+      0 1px 0 #6b480a,
+      0 4px 12px rgba(245, 198, 52, 0.28);
+  }
+}
+
+@keyframes crash-overlay-in       { from { opacity: 0; } to { opacity: 1; } }
+@keyframes crash-backdrop-pulse   { 0%, 100% { opacity: 0.75; } 50% { opacity: 1.0; } }
+@keyframes crash-sparks-flicker   { 50% { opacity: 0.3; transform: scale(1.02); } }
+@keyframes crash-warning-pulse    { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+@keyframes crash-return-pulse {
+  50% {
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.6),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.25),
+      0  4px 0 #6b480a,
+      0  8px 24px rgba(245, 198, 52, 0.5),
+      0  0 38px rgba(255, 229, 138, 0.42);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crash-overlay,
+  .crash-backdrop,
+  .crash-sparks,
+  .crash-warning-mark,
+  .crash-return-btn { animation: none !important; }
+}

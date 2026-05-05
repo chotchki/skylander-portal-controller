@@ -1,0 +1,323 @@
+/*
+ * <FigureDetail> screen (PLAN 4.6b — lifted hero overlay).
+ * (PLAN 9.4c — screens tranche.)
+ *
+ * Full-screen overlay that absolute-positions over `.screen-portal`
+ * to cover the portal strip + toy box grid beneath it. State machine
+ * (Default / Loading / Placing / Errored) drives modifier classes
+ * on `.detail-viewport`; the surface, hero, action row, stats strip,
+ * and primary/secondary buttons all respond.
+ *
+ * The reverse-lift exit (Placing) plays for ~380ms after a successful
+ * /api/load — surface slides + fades while the hero lifts + grows.
+ *
+ * Class names unchanged. The `.figure-hero .gold-bezel
+ * .detail-hero-image` cross-component selector targets a portrait
+ * mounted inside FigureHero's bezel; FigureHero migrates with 9.4d.
+ */
+
+@layer components {
+  .detail-viewport {
+    @apply absolute inset-0 z-[10] flex flex-col;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .detail-viewport .detail-surface {
+    @apply relative flex flex-col z-[20];
+    padding: 20px;
+  }
+
+  /* Hero wrap — lifted above the panel edge. */
+  .detail-hero-wrap {
+    @apply relative flex justify-center z-[30];
+    margin-top: -10px;
+    margin-bottom: 8px;
+  }
+
+  /* Hero portrait sitting on top of the bezel's letter fallback. */
+  .figure-hero .gold-bezel .detail-hero-image {
+    @apply absolute inset-0 w-full h-full pointer-events-none z-[2];
+    object-fit: contain;
+  }
+  .detail-hero-initial {
+    @apply z-[1];
+  }
+
+  .detail-name-wrap {
+    @apply text-center;
+    margin-top: 12px;
+  }
+
+  .detail-meta {
+    font-family: var(--font-body);
+    font-style: italic;
+    font-size: var(--text-display-xs);
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--color-gold-bright);
+    margin-top: 6px;
+    text-shadow:
+      0 0 10px rgba(255, 107, 42, 0.4),
+      0 1px 0 rgba(0, 0, 0, 0.5);
+  }
+
+  /* Action icon row — each action is an icon button stacked above
+     its visible text label (PLAN 4.18.18). */
+  .detail-action-row {
+    @apply flex justify-center items-start;
+    gap: 16px;
+    margin-top: 22px;
+  }
+  .detail-action {
+    @apply flex flex-col items-center;
+    gap: 6px;
+  }
+  .detail-action-label {
+    @apply text-center uppercase;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    color: var(--color-gold-bright);
+    opacity: 0.85;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.45);
+  }
+  .detail-action-btn {
+    @apply w-14 h-14 rounded-full grid place-items-center cursor-pointer;
+    background: radial-gradient(circle at 30% 25%,
+      rgba(22, 40, 88, 0.88), rgba(8, 20, 54, 0.95) 60%, rgba(4, 12, 36, 0.98));
+    border: 2px solid var(--color-gold-bright);
+    color: var(--color-gold-bright);
+    font-size: 24px;
+    text-shadow:
+      0 1px 0 var(--color-gold-shadow),
+      0 0 8px rgba(245, 198, 52, 0.4);
+    box-shadow:
+      inset 0  1px 0 rgba(255, 255, 255, 0.08),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.4),
+      0  2px 6px rgba(0, 0, 0, 0.5);
+    transition:
+      transform 0.15s ease,
+      box-shadow var(--dur-quick),
+      background var(--dur-quick);
+  }
+  .detail-action-btn:disabled {
+    @apply cursor-not-allowed;
+    opacity: 0.45;
+  }
+  .detail-action-btn:hover:not(:disabled) {
+    background: radial-gradient(circle at 30% 25%,
+      rgba(36, 62, 130, 0.9), rgba(16, 34, 84, 0.96) 60%, rgba(6, 18, 48, 0.98));
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.15),
+      0 0 16px rgba(245, 198, 52, 0.45),
+      0 3px 8px rgba(0, 0, 0, 0.5);
+    transform: translateY(-2px);
+  }
+
+  /* Stats strip. */
+  .detail-stats-strip {
+    @apply flex justify-around rounded-[14px];
+    margin-top: 28px;
+    padding: 12px 6px;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(245, 198, 52, 0.2);
+  }
+  .detail-stat-cell {
+    @apply text-center;
+  }
+  .detail-stat-l {
+    font-family: var(--font-body);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(232, 228, 216, 0.72);
+    margin-bottom: 2px;
+  }
+  .detail-stat-v {
+    font-family: var(--font-display);
+    font-size: 18px;
+    color: var(--color-gold-bright);
+    text-shadow:
+      0 1px 0 var(--color-gold-shadow),
+      0 0 10px rgba(245, 198, 52, 0.3);
+    letter-spacing: 0.04em;
+  }
+  /* "Coming soon" placeholder before PLAN 6.3 wired real stats.
+     Currently rendered when stats LocalResource resolves to None. */
+  .detail-stats-soon {
+    @apply justify-center items-center;
+    opacity: 0.6;
+  }
+  .detail-stats-soon-label {
+    @apply uppercase;
+    font-family: var(--font-body);
+    font-style: italic;
+    font-size: var(--text-body-sm);
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    color: #e8e4d8;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+  }
+  .detail-stat-k {
+    @apply uppercase;
+    font-family: var(--font-body);
+    font-style: italic;
+    font-size: var(--text-body-sm);
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    color: #e8e4d8;
+    margin-top: 2px;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+  }
+
+  .detail-spacer {
+    flex: 1;
+    min-height: 16px;
+  }
+
+  /* Primary gold "PLACE ON PORTAL". */
+  .detail-btn-primary {
+    @apply w-full rounded-[14px] cursor-pointer;
+    padding: 14px;
+    margin-top: 10px;
+    font-family: var(--font-display);
+    font-size: var(--text-body);
+    letter-spacing: 0.2em;
+    color: #1a1203;
+    background: linear-gradient(180deg,
+      var(--color-gold-bright),
+      var(--color-gold) 50%,
+      var(--color-gold-mid));
+    border: 2px solid var(--color-gold-deep);
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.45),
+      inset 0 -2px 0 rgba(110, 74, 0, 0.3),
+      0  4px 0 var(--color-gold-deep),
+      0  6px 14px rgba(245, 198, 52, 0.3);
+  }
+  .detail-btn-primary:active {
+    transform: translateY(2px);
+    box-shadow:
+      inset 0 2px 0 rgba(255, 255, 255, 0.45),
+      0 2px 0 var(--color-gold-deep);
+  }
+  .detail-btn-primary:disabled {
+    @apply cursor-not-allowed;
+    opacity: 0.35;
+  }
+
+  /* Secondary blue "BACK TO BOX". */
+  .detail-btn-secondary {
+    @apply w-full rounded-[14px] cursor-pointer;
+    padding: 14px;
+    margin-top: 10px;
+    font-family: var(--font-display);
+    font-size: var(--text-body);
+    letter-spacing: 0.2em;
+    color: #fff;
+    background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
+    border: 2px solid var(--color-gold-bright);
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.25),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.25),
+      0  3px 0 rgba(0, 0, 0, 0.4),
+      0  5px 12px rgba(0, 0, 0, 0.4);
+  }
+  .detail-btn-secondary:hover {
+    background: linear-gradient(180deg, #4286f0 0%, #2a62cd 55%, #1b46a0 100%);
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.35),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.25),
+      0  3px 0 rgba(0, 0, 0, 0.4),
+      0  0 18px rgba(245, 198, 52, 0.3);
+  }
+  .detail-btn-secondary:active {
+    transform: translateY(2px);
+    box-shadow:
+      inset 0 2px 0 rgba(255, 255, 255, 0.25),
+      0 1px 0 rgba(0, 0, 0, 0.4);
+  }
+
+  /* === Loading state === */
+  .detail-loading .detail-action-row,
+  .detail-loading .detail-stats-strip,
+  .detail-loading .detail-btn-primary {
+    @apply pointer-events-none;
+    opacity: 0.35;
+    transition: opacity 0.25s ease;
+  }
+  /* Back button stays highlighted during loading. */
+  .detail-loading .detail-btn-secondary {
+    background: linear-gradient(180deg, #5fa2ff 0%, #3874d6 55%, #1f4fa8 100%);
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.4),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.25),
+      0  3px 0 rgba(0, 0, 0, 0.4),
+      0  0 22px rgba(245, 198, 52, 0.45);
+  }
+  .detail-loading .detail-meta::after {
+    content: " \00B7  loading";
+    color: var(--color-gold-bright);
+    animation: blink 1s ease-in-out infinite;
+  }
+
+  /* === Placing state — reverse-lift exit (~560ms). === */
+  .detail-placing {
+    @apply pointer-events-none;
+  }
+  .detail-placing .detail-surface {
+    animation: detail-surface-out 560ms cubic-bezier(.4, 0, .6, 1) both;
+  }
+  .detail-placing .detail-hero-wrap {
+    animation: detail-hero-lift-out 560ms cubic-bezier(.3, .1, .3, 1) both;
+  }
+
+  /* === Error state. === */
+  .detail-error-banner {
+    @apply absolute left-0 right-0 top-0 z-[50] flex items-center gap-3 rounded-[14px] pointer-events-none;
+    padding: 12px 16px;
+    background: rgba(227, 76, 76, 0.92);
+    border: 2px solid #7a1818;
+    color: #fff;
+    font-family: var(--font-body);
+    font-weight: 600;
+    font-size: var(--text-body-italic);
+    line-height: 1.3;
+    box-shadow: 0 8px 20px rgba(227, 76, 76, 0.4);
+    transform: translateY(-20px);
+    opacity: 0;
+    transition: transform 0.3s ease, opacity 0.3s ease;
+  }
+  .detail-err-icon {
+    @apply w-7 h-7 rounded-full grid place-items-center shrink-0;
+    font-family: var(--font-display);
+    font-size: 18px;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.3);
+  }
+  .detail-errored .detail-error-banner {
+    transform: translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+@keyframes blink { 50% { opacity: 0.4; } }
+
+@keyframes detail-surface-out {
+  from { transform: translateY(0);    opacity: 1; }
+  to   { transform: translateY(48px); opacity: 0; }
+}
+
+@keyframes detail-hero-lift-out {
+  from { transform: translateY(0)     scale(1);    opacity: 1; }
+  to   { transform: translateY(-56px) scale(1.12); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .detail-viewport .detail-surface { animation: none !important; }
+}

@@ -1,0 +1,106 @@
+/*
+ * <StaleVersion> overlay.
+ * (PLAN 9.4b — overlays tranche.)
+ *
+ * Full-screen blocker shown when the phone's baked-in `BUILD_TOKEN`
+ * disagrees with the server's. Companion to <PairingRequired>; both
+ * are gold-bordered cards over a dark scrim. StaleVersion's panel
+ * has a slightly red-tinted base (bundle drift is "you're holding
+ * an old app", a user-actionable error, not a setup step).
+ *
+ * Class names unchanged.
+ */
+
+@layer components {
+  .stale-version {
+    @apply fixed inset-0 z-[91] flex items-center justify-center;
+    padding: calc(env(safe-area-inset-top) + 24px) 20px
+             calc(env(safe-area-inset-bottom) + 24px);
+    background: rgba(8, 4, 18, 0.82);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+
+  .stale-card {
+    @apply relative w-full rounded-[22px];
+    max-width: 420px;
+    padding: 28px 28px 24px;
+    background:
+      linear-gradient(180deg, rgba(55, 15, 30, 0.95), rgba(30, 6, 18, 0.95)),
+      linear-gradient(180deg, rgba(26, 58, 138, 0.08), rgba(6, 20, 54, 0.08));
+    box-shadow:
+      0 24px 60px rgba(0, 0, 0, 0.65),
+      inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  }
+  .stale-card::before {
+    content: "";
+    @apply absolute inset-0 pointer-events-none rounded-[22px];
+    padding: 2px;
+    background: linear-gradient(180deg,
+      rgba(245, 198, 52, 0.9),
+      rgba(245, 198, 52, 0.35) 40%,
+      rgba(110, 74, 0, 0.7));
+    -webkit-mask:
+      linear-gradient(#000, #000) content-box,
+      linear-gradient(#000, #000);
+    -webkit-mask-composite: xor;
+            mask-composite: exclude;
+  }
+
+  .stale-title {
+    margin: 0 0 12px 0;
+    font-family: var(--font-display);
+    font-size: var(--text-display-md);
+    letter-spacing: 0.1em;
+    color: var(--color-gold-bright);
+    text-shadow:
+      0 2px 0 var(--color-gold-shadow),
+      0 4px 12px rgba(0, 0, 0, 0.6);
+  }
+
+  .stale-body {
+    margin: 0 0 16px 0;
+    font-family: var(--font-body);
+    font-size: var(--text-body);
+    line-height: 1.55;
+    color: var(--color-text);
+  }
+
+  .stale-refresh-btn {
+    @apply block w-full rounded-xl cursor-pointer;
+    padding: 14px;
+    margin: 0 0 14px 0;
+    font-family: var(--font-display);
+    font-size: var(--text-body);
+    letter-spacing: 0.18em;
+    color: #1a1203;
+    background: linear-gradient(180deg, var(--color-gold-bright), var(--color-gold-mid));
+    border: 2px solid var(--color-gold-deep);
+    box-shadow:
+      0 2px 0 rgba(0, 0, 0, 0.4),
+      inset 0 1px 0 rgba(255, 255, 255, 0.4);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .stale-refresh-btn:active { transform: translateY(1px); }
+
+  .stale-hint {
+    margin: 0 0 10px 0;
+    font-family: var(--font-body);
+    font-style: italic;
+    font-size: var(--text-body-sm);
+    color: #d9c88a;
+    line-height: 1.5;
+  }
+
+  .stale-diag {
+    margin: 14px 0 0 0;
+    padding: 8px 10px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.45;
+    color: #9aa2c8;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 8px;
+    word-break: break-all;
+  }
+}

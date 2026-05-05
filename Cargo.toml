@@ -11,6 +11,7 @@ members = [
     "tools/icon-bake",
     "tools/installer-bake",
     "tools/rekey-figure-ids",
+    "tools/tailwind-build",
     "tools/wiki-scrape",
 ]
 # tools/ios-inspect is a standalone Mac-only crate with its own

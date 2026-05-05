@@ -1,0 +1,163 @@
+/*
+ * <ActionButton> — design_language.md §6.6.
+ * (PLAN 9.4a — shared primitive tranche.)
+ *
+ * The blue-card / gold-border button used in MenuOverlay (SWITCH
+ * PROFILE, MANAGE PROFILES, HOLD TO SHUT DOWN, HOLD TO SWITCH GAMES).
+ *
+ * Two variants × two modes:
+ *   - Default / Danger background (red palette for irreversible).
+ *   - Single-tap / Press-and-hold (`.menu-action--hold`).
+ *
+ * In hold mode, `.hold-fill` is an absolute child whose `scaleX`
+ * sweeps L→R during the hold; `.fired` triggers the post-fire
+ * flash via the `menu-action-fire(-danger)?` keyframes.
+ *
+ * Class names (`.menu-action*`, `.hold-fill`) are unchanged so
+ * MenuOverlay (still legacy) keeps rendering correctly. The
+ * `.menu-actions` flex container that wraps these buttons stays in
+ * app.css until 9.4b — it's a layout primitive of MenuOverlay, not
+ * of the button itself.
+ */
+
+@layer components {
+  .menu-action {
+    @apply flex items-center gap-3 rounded-xl text-left cursor-pointer;
+    padding: 12px 14px;
+    color: var(--color-text);
+    background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
+    border: 2px solid var(--color-gold-bright);
+    font-family: var(--font-body);
+    transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.25),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.25),
+      0  3px 0 rgba(0, 0, 0, 0.45),
+      0  5px 12px rgba(0, 0, 0, 0.4);
+  }
+  .menu-action:hover {
+    transform: translateX(2px);
+    background: linear-gradient(180deg, #4286f0 0%, #2a62cd 55%, #1b46a0 100%);
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.30),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.25),
+      0  3px 0 rgba(0, 0, 0, 0.45),
+      0  0 20px rgba(245, 198, 52, 0.35),
+      0  5px 14px rgba(0, 0, 0, 0.4);
+  }
+
+  .menu-action-icon {
+    @apply w-[38px] h-[38px] rounded-full grid place-items-center shrink-0 font-bold text-[17px];
+    background: radial-gradient(circle at 30% 25%,
+      var(--color-gold-bright) 0%,
+      var(--color-gold) 40%,
+      var(--color-gold-mid) 80%);
+    border: 1.5px solid var(--color-gold-deep);
+    color: var(--color-gold-ink);
+    box-shadow:
+      inset 0  1px 2px rgba(255, 255, 255, 0.4),
+      inset 0 -1px 2px rgba(0, 0, 0, 0.3),
+      0  2px 4px rgba(0, 0, 0, 0.4);
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.3);
+  }
+
+  .menu-action-title {
+    font-family: var(--font-display);
+    font-size: var(--text-body-italic);
+    letter-spacing: 0.08em;
+    color: var(--color-gold-bright);
+    text-shadow:
+      0 1px 0 var(--color-gold-shadow),
+      0 0 6px rgba(0, 0, 0, 0.5);
+  }
+
+  .menu-action-desc {
+    font-family: var(--font-body);
+    font-style: italic;
+    font-weight: 600;
+    font-size: var(--text-body-sm);
+    color: #e8e4d8;
+    margin-top: 2px;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+  }
+
+  /* === Hold-to-confirm base === */
+  .menu-action--hold {
+    @apply relative overflow-hidden isolate select-none;
+    touch-action: pan-x pan-y;
+    -webkit-user-select: none;
+  }
+  .menu-action--hold > *:not(.hold-fill) {
+    @apply relative z-[2];
+  }
+  .menu-action--hold .hold-fill {
+    @apply absolute inset-0 pointer-events-none origin-left;
+    background: linear-gradient(90deg, rgba(255, 220, 140, 0.9), #fffaf0);
+    transform: scaleX(0);
+    transition: transform var(--dur-quick) ease-out;
+    z-index: 1;
+    mix-blend-mode: screen;
+  }
+  .menu-action--hold.holding .hold-fill {
+    transform: scaleX(1);
+    transition: transform var(--dur-hold-confirm, 1200ms) linear;
+  }
+  .menu-action--hold.fired {
+    animation: menu-action-fire 0.42s ease-out;
+  }
+  .menu-action--hold.fired .hold-fill {
+    transform: scaleX(1);
+    background: #fff;
+  }
+
+  /* === Danger variant === */
+  .menu-action--danger {
+    background: linear-gradient(180deg, #c23a3a 0%, #9a2424 55%, #6e1414 100%);
+    border-color: #ffc0c0;
+  }
+  .menu-action--danger:hover {
+    background: linear-gradient(180deg, #dc4d4d 0%, #b02e2e 55%, #821818 100%);
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.30),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.25),
+      0  3px 0 rgba(0, 0, 0, 0.45),
+      0  0 20px rgba(227, 76, 76, 0.45),
+      0  5px 14px rgba(0, 0, 0, 0.4);
+  }
+  .menu-action--danger .menu-action-icon {
+    background: radial-gradient(circle at 30% 25%, #ffb0b0 0%, #e34c4c 40%, #7a1818 80%);
+    border-color: #3a0808;
+    color: #fff;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  }
+  .menu-action--danger .menu-action-title {
+    color: #ffd0d0;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.7), 0 0 8px rgba(0, 0, 0, 0.4);
+  }
+  .menu-action--danger .menu-action-desc { color: #ffd6d6; }
+  .menu-action--danger.menu-action--hold .hold-fill {
+    background: linear-gradient(90deg, rgba(255, 200, 200, 0.95), #fff);
+  }
+  .menu-action--danger.menu-action--hold.fired {
+    animation: menu-action-fire-danger 0.42s ease-out;
+  }
+}
+
+@keyframes menu-action-fire {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(1.02); box-shadow: 0 0 44px rgba(255, 230, 120, 0.7), 0 0 22px rgba(245, 198, 52, 0.45); }
+  100% { transform: scale(1); }
+}
+
+@keyframes menu-action-fire-danger {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(1.02); box-shadow: 0 0 44px rgba(255, 255, 255, 0.85), 0 0 22px rgba(227, 76, 76, 0.6); }
+  100% { transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu-action--hold.fired,
+  .menu-action--danger.menu-action--hold.fired {
+    animation: none !important;
+  }
+}

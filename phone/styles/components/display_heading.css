@@ -1,0 +1,57 @@
+/*
+ * <DisplayHeading> — design_language.md §2.
+ * (PLAN 9.4a — shared primitive tranche.)
+ *
+ * Gold-fill + dark-stroke + drop-shadow Titan One heading. Five
+ * sizes (Hero / Lg / Md / Sm / Xs) scale the font + letter-spacing
+ * + stroke width; smaller sizes thin the stroke for legibility.
+ *
+ * `.title-rays` is the optional radial halo that renders behind
+ * the text when `with_rays = true`. Lives here because it's only
+ * emitted by this component.
+ *
+ * Class names (`.display-heading`, `.dh-text`, `.dh-{size}`,
+ * `.title-rays`) are unchanged.
+ */
+
+@layer components {
+  .display-heading {
+    @apply relative text-center;
+    line-height: 0.95;
+  }
+
+  .dh-text {
+    font-family: var(--font-display);
+    color: var(--color-gold-bright);
+    -webkit-text-stroke: 1.5px var(--color-gold-deep);
+    text-shadow:
+      0 2px 0 var(--color-gold-shadow),
+      0 3px 0 var(--color-gold-deep),
+      0 5px 10px rgba(0, 0, 0, 0.5),
+      0 0 24px rgba(245, 198, 52, 0.3);
+  }
+
+  /* Size scale — font + letter-spacing + stroke width. */
+  .dh-hero .dh-text { font-size: var(--text-display-hero); letter-spacing: 0.04em; }
+  .dh-lg   .dh-text { font-size: var(--text-display-lg);   letter-spacing: 0.04em; }
+  .dh-md   .dh-text { font-size: var(--text-display-md);   letter-spacing: 0.06em; }
+  .dh-sm   .dh-text {
+    font-size: var(--text-display-sm);
+    letter-spacing: 0.12em;
+    -webkit-text-stroke-width: 1px;
+  }
+  .dh-xs   .dh-text {
+    font-size: var(--text-display-xs);
+    letter-spacing: 0.18em;
+    -webkit-text-stroke-width: 0.75px;
+  }
+
+  /* Optional gold halo behind the text — emitted only when
+     `<DisplayHeading with_rays=true>`. */
+  .title-rays {
+    @apply absolute pointer-events-none;
+    inset: -40px -20px -20px;
+    background: radial-gradient(ellipse 80% 80% at 50% 50%,
+      rgba(255, 230, 120, 0.12), transparent 60%);
+  }
+}

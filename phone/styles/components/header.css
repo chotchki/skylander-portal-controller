@@ -1,0 +1,126 @@
+/*
+ * <Header> — design_language.md §6.2.
+ * (PLAN 9.4a — shared primitive tranche.)
+ *
+ * The persistent app top bar. Three logical regions:
+ *
+ *   .app-header
+ *   ├── .header-left
+ *   │   ├── .kebab-btn          ⋮ menu trigger
+ *   │   ├── .header-swatch      ⟶ profile-coloured GoldBezel
+ *   │   └── .header-identity
+ *   │       ├── .header-profile-name
+ *   │       └── .header-game-name
+ *   └── .header-right
+ *       └── .status-dot { connecting | connected | disconnected }
+ *
+ * `.header-swatch` overrides `.bezel-plate`'s background with the
+ * profile colour via a `--profile-color` custom property set inline
+ * on the swatch element. That cascade reaches into a GoldBezel
+ * internal class — fine for now per the 9.x migration philosophy
+ * (structural class names stay until their consumer moves).
+ *
+ * `status-breathe` keyframe powers the `connecting` pip; the
+ * legacy `pulse` keyframe that used to live alongside it had no
+ * remaining references and was dropped in this migration.
+ *
+ * Class names unchanged.
+ */
+
+@layer components {
+  .app-header {
+    @apply flex items-center justify-between gap-[10px] flex-wrap;
+    margin-bottom: 12px;
+  }
+
+  .header-left {
+    @apply flex items-center gap-[10px];
+  }
+
+  .header-right {
+    @apply flex items-center gap-[10px];
+  }
+
+  /* Kebab / hamburger menu trigger. */
+  .kebab-btn {
+    @apply w-[42px] h-[42px] rounded-xl grid place-items-center cursor-pointer bg-transparent;
+    border: 1.5px solid rgba(245, 198, 52, 0.3);
+    color: var(--color-gold-bright);
+    font-family: var(--font-display);
+    font-size: 22px;
+    transition: border-color 0.15s ease;
+  }
+  .kebab-btn:hover {
+    border-color: rgba(245, 198, 52, 0.6);
+  }
+
+  /* Profile colour swatch — small GoldBezel containing the initial. */
+  .header-swatch {
+    @apply w-10 h-10 flex-none flex items-center justify-center;
+  }
+  .header-swatch .bezel-plate {
+    background: var(--profile-color, linear-gradient(135deg, #1a2a4a, #0a1630));
+  }
+  .header-swatch-initial {
+    font-family: var(--font-display);
+    color: #fff;
+    line-height: 1;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
+  }
+
+  /* Profile + current-game name, stacked, ellipsised. */
+  .header-identity {
+    @apply flex flex-col gap-[1px] min-w-0;
+    line-height: 1.2;
+  }
+  .header-profile-name {
+    @apply whitespace-nowrap overflow-hidden text-ellipsis;
+    font-family: var(--font-display);
+    font-size: 15px;
+    color: var(--color-text);
+    letter-spacing: 0.3px;
+  }
+  .header-game-name {
+    @apply whitespace-nowrap overflow-hidden text-ellipsis;
+    font-size: var(--text-display-xs);
+    font-weight: 500;
+    color: var(--color-gold);
+    letter-spacing: 0.2px;
+  }
+
+  /* Connection pip — see PLAN 4.14.2.
+       connecting   → breathe (pip + halo grow/contract, 1.6s)
+       connected    → steady green glow
+       disconnected → soft red glow (calm, not alarming) */
+  .status-dot {
+    @apply relative inline-block w-[10px] h-[10px] rounded-full;
+    margin-right: 6px;
+  }
+  .status-dot.connected {
+    background: var(--color-success);
+    box-shadow: 0 0 8px var(--color-success);
+  }
+  .status-dot.connecting {
+    background: #e9a714;
+    animation: status-breathe 1.6s ease-in-out infinite;
+  }
+  .status-dot.disconnected {
+    background: var(--color-danger);
+    box-shadow: 0 0 6px rgba(227, 76, 76, 0.55);
+  }
+}
+
+@keyframes status-breathe {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 4px rgba(245, 198, 52, 0.45);
+    opacity: 0.65;
+  }
+  50% {
+    transform: scale(1.25);
+    box-shadow:
+      0  0 14px rgba(245, 198, 52, 0.85),
+      0  0 22px rgba(245, 198, 52, 0.35);
+    opacity: 1;
+  }
+}

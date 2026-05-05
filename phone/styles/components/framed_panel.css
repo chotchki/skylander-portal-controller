@@ -1,0 +1,50 @@
+/*
+ * <FramedPanel> — design_language.md §3.3.
+ * (PLAN 9.4a — shared primitive tranche.)
+ *
+ * The parchment-blue surface every modal / overlay sits on: PIN
+ * keypad, figure detail, menu overlay, resume prompt, confirms,
+ * Kaos takeover. Gold gradient border via `::before`; no corner
+ * brackets — the gradient does the framing.
+ *
+ * `.panel-in` is the entrance animation many callers opt into; kept
+ * here next to its keyframe so the whole panel module is in one
+ * place.
+ *
+ * Class names (`.framed-panel`, `.panel-in`) are unchanged so callers
+ * don't move during the migration.
+ */
+
+@layer components {
+  .framed-panel {
+    @apply relative px-5 py-[22px] rounded-[22px];
+    background:
+      radial-gradient(ellipse 120% 80% at 50% 0%, rgba(255, 230, 120, 0.09), transparent 60%),
+      linear-gradient(180deg,
+        rgba(26, 58, 138, 0.94),
+        rgba(10, 36, 100, 0.96) 50%,
+        rgba(6, 20, 54, 0.98));
+  }
+
+  /* Gold gradient frame as a -1 z-pseudo so children stack above. */
+  .framed-panel::before {
+    content: "";
+    @apply absolute inset-[-2px] rounded-[24px];
+    z-index: -1;
+    background: linear-gradient(135deg,
+      var(--color-gold-bright) 0%,
+      var(--color-gold-mid) 30%,
+      var(--color-gold-bright) 50%,
+      var(--color-gold-mid) 70%,
+      var(--color-gold-bright) 100%);
+  }
+
+  .panel-in {
+    animation: panel-in var(--dur-panel-in) var(--ease-spring) both;
+  }
+}
+
+@keyframes panel-in {
+  from { opacity: 0; transform: scale(0.92) translateY(10px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}

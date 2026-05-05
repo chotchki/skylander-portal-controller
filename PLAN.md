@@ -246,7 +246,7 @@ component, and future iteration is locally-scoped to whatever element
 is being changed. Bounded migration by tranche, with the Phase 8
 screenshot tour acting as the per-tranche regression contract.
 
-- [ ] 9.1 — Stand up Tailwind v4 + cached CLI downloader. New
+- [x] 9.1 — Stand up Tailwind v4 + cached CLI downloader. New
   `tools/tailwind-build/` Rust helper crate: pins `TAILWIND_VERSION`,
   downloads the standalone `tailwindcss` CLI binary into
   `phone/.tailwind-cache/` (gitignored) on first run, reuses on
@@ -263,7 +263,7 @@ screenshot tour acting as the per-tranche regression contract.
   `TAILWIND_VERSION + os` so the binary doesn't re-download every
   run.
 
-- [ ] 9.2 — Pilot on a shared primitive. Pick `GoldBezel` or
+- [x] 9.2 — Pilot on a shared primitive. Pick `GoldBezel` or
   `FramedPanel` (small, used widely; better proof of the migration
   pattern + `@theme` token plumbing than starting on the elaborate
   Kaos overlays). Port its rules from `app.css` to utility classes
@@ -273,7 +273,7 @@ screenshot tour acting as the per-tranche regression contract.
   `input.css`. Run the screenshot tour, eyeball the diff, commit the
   pilot.
 
-- [ ] 9.3 — Lock the screenshot-tour baseline as the regression
+- [x] 9.3 — Lock the screenshot-tour baseline as the regression
   contract. Document the per-tranche workflow in
   `crates/e2e-tests/README.md`: "rebuild phone bundle → run tour
   → `git diff docs/assets/screens/` → reconcile any visual drift
@@ -282,31 +282,38 @@ screenshot tour acting as the per-tranche regression contract.
   should be byte-stable; visible drift means a real regression or an
   intentional design tweak.
 
-- [ ] 9.4 — Migrate components in tranches. Bottom-up so containers
+- [x] 9.4 — Migrate components in tranches. Bottom-up so containers
   inherit migrated primitives:
-  - 9.4a — Shared primitives: `GoldBezel`, `FramedPanel`, `RayHalo`,
+  - [x] 9.4a — Shared primitives: `GoldBezel`, `FramedPanel`, `RayHalo`,
     `ActionButton`, `DisplayHeading`, `Header`.
-  - 9.4b — Overlays: `ConnectionLost`, `GameCrashScreen`,
+  - [x] 9.4b — Overlays: `ConnectionLost`, `GameCrashScreen`,
     `PairingRequired`, `StaleVersion`, `ScanOverlay`, `MenuOverlay`,
     `ResumeModal`, `ResetConfirmModal`.
-  - 9.4c — Screens: `ProfilePicker` (largest — Konami gate,
+  - [x] 9.4c — Screens: `ProfilePicker` (largest — Konami gate,
     PIN keypad, profile grid), `GamePicker`, `FigureDetail`.
-  - 9.4d — Portal + toy box: `Portal`, `ToyBoxLid`, `Browser`. Most
+  - [x] 9.4d — Portal + toy box: `Portal`, `ToyBoxLid`, `Browser`. Most
     visually complex; expect `@apply` escape hatches for the lid's
     swipe-state CSS + `:has()` selectors that drive the
     `.screen-portal:has(.lid-open-p4.closed)` cross-component
     coupling. Migration may also be the natural moment to remove
     those `:has()` selectors entirely in favor of explicit
     Leptos-signal-driven classes.
-  - 9.4e — Kaos overlays: `KaosOverlay`. Multi-layer pseudo-element
+    (FigureHero rode along — it should have shipped in 9.4a but
+    slipped through. The `:has()` coupling stayed as raw CSS per
+    9.5 escape-hatch policy; lifting `box_state` up to
+    `.screen-portal` is on the table for 9.8 / a future refactor.)
+  - [x] 9.4e — Kaos overlays: `KaosOverlay`. Multi-layer pseudo-element
     decoration + conic-gradient lens + custom keyframes; almost
     certainly retains a small per-component CSS file with raw
     `@keyframes` + `@apply`. Acceptable.
+    (Result: ~280 lines, seven keyframes, mostly raw CSS as
+    expected. Six-layer composition — void / hexgrid / sparks /
+    vignette / viewport / sigil — kept identical to source.)
 
   Each tranche: port → trunk build → screenshot tour → diff PNGs →
   commit if intentional.
 
-- [ ] 9.5 — Escape-hatch policy. Document in `CLAUDE.md` when to
+- [x] 9.5 — Escape-hatch policy. Document in `CLAUDE.md` when to
   reach for a per-component CSS file vs inline utilities:
   - **Inline utilities (default):** layout, spacing, typography,
     colour, single-layer effects.
@@ -317,7 +324,7 @@ screenshot tour acting as the per-tranche regression contract.
     pseudo-element content, `:has()` selectors that can't be
     expressed with utilities. Co-located with the component.
 
-- [ ] 9.6 — Sweep + post-condition. Diff `app.css` before/after.
+- [x] 9.6 — Sweep + post-condition. Diff `app.css` before/after.
   Final state: `app.css` slims to design-token `:root` vars +
   `@font-face` declarations + body baseline + the handful of
   component CSS files imported by `input.css`. Rename to
@@ -331,6 +338,14 @@ Once 9.1–9.6 land, tackle the responsive pass that the monolithic CSS
 made painful. With utility-first markup, breakpoint variants
 (`md:`, `lg:`) live next to the base utilities and the iPad layout
 becomes additive, not a separate stylesheet branch.
+
+**Blocked on Phase 10.** This pass needs `tools/ios-inspect/` (Mac-only
+CLI driving the iOS Simulator + Safari Web Inspector — see CLAUDE.md
+"Aesthetic" section) and a real iPad for the device-fidelity gap that
+the simulator can't surface. Picking up 9.7 from the Windows HTPC
+would mean eyeballing dev-tools at 768/1024 width, which is the exact
+trap the migration was supposed to make obsolete. Phase 10 stands up
+the Mac path; resume 9.7 once 10.1 lands.
 
 - [ ] 9.7 — Optimize for iPad + iPhone layouts. Inventory which
   components need a wider-viewport variant (toy-box grid columns,
@@ -348,6 +363,65 @@ becomes additive, not a separate stylesheet branch.
   sims, opens the SPA, asserts `.pwa-hint` count == 1 on iPhone +
   == 0 on iPad. First load-bearing demonstration that the iOS-sim
   e2e lane (PLAN 10.4) catches and pins real product bugs.
+
+### 9.8 Collapse + standardize repeated patterns
+Once every component lives in its own file (9.4) and responsive
+variants are in (9.7), the per-tranche escape-hatch CSS will have
+accumulated duplicate declarations across files — same multi-layer
+shadow stacks, same gradient stops, same hex literals that should
+have been tokens, same text-shadow combinations on the heraldic
+text treatment. The migration emphasised *identity preservation*
+(class names + visuals stay byte-stable), so consolidation was
+deliberately deferred. 9.8 is the after-the-fact refactor pass that
+surfaces and unifies those duplicates so the design system has one
+source of truth per pattern.
+
+**Sequenced after 9.7** so the consolidation pass sees the full set
+of patterns (including responsive variants) at once. Like 9.7,
+benefits from running on the Mac path with iOS Simulator open for
+quick visual verification — held alongside 9.7 pending Phase 10.
+
+- [ ] 9.8 — Sweep the `phone/styles/components/*.css` files for
+  repeated patterns and consolidate. Three target shapes, in order
+  of preference:
+  1. **`@theme` token** — add to `phone/styles/input.css`'s `@theme`
+     block when the value is a design constant (a colour, a font, a
+     duration, a gradient stop set). Example candidates: the
+     "blue-card" gradient `linear-gradient(180deg, #2f6edc 0%,
+     #1e4fb3 55%, #153a8a 100%)` (currently inlined in
+     `action_button.css`; will recur in MenuOverlay), the "gold
+     radial" `radial-gradient(circle at 30% 25%, var(--gold-bright)
+     0%, var(--gold) 40%, var(--gold-mid) 80%)` (in `gold_bezel.css`
+     ring + `action_button.css` icon), the dark-stroked heraldic
+     text-shadow stack from `display_heading.css`. Promote to
+     `--gradient-blue-card`, `--gradient-gold-radial`, etc.
+  2. **`@utility`** — Tailwind v4's mechanism for a custom utility
+     that composes other utilities. Use when a pattern is utility-
+     shaped (single property or a tight cluster) and gets applied
+     in markup. Example: the "raised button" elevation shadow
+     (`inset 0 2px 0 rgba(...)`, `inset 0 -2px 0 ...`, `0 3px 0 ...`,
+     `0 5px 12px ...`) appears on `.menu-action` and probably on
+     ResetConfirmModal's HOLD button; lift to `@utility shadow-raised
+     { box-shadow: ... }` so callers get `class="shadow-raised"`.
+  3. **Shared `@layer components` class** — last resort for
+     multi-property patterns that cross several declarations and
+     can't be expressed as a utility. Co-locate in a new
+     `phone/styles/components/_shared.css` (underscore prefix flags
+     "not a component, a kit").
+
+  Procedure per consolidation:
+  - Identify the duplicate (`grep -F` against component CSS files).
+  - Extract to whichever shape fits.
+  - Update the component files to reference the new token /
+     utility / shared class.
+  - Run `trunk build` + screenshot tour; reconcile any drift before
+     committing per the 9.3 contract. Most consolidations should be
+     pixel-identical because the underlying declaration is the same.
+
+  Out of scope: chasing single-occurrence values into tokens (`--color-foo`
+  used once isn't a token, it's an indirection). The bar is "this
+  pattern shows up in ≥2 component files" or "this hex literal is
+  brand-meaningful and should be discoverable in `@theme`."
 
 ## Phase 10 Items
 

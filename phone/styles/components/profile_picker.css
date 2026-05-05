@@ -1,0 +1,1266 @@
+/*
+ * <ProfilePicker> + <PinPad> + <KonamiGate> + <AdminHub> +
+ * <AdminEdit> + <AdminPinReset> + <CreateProfileWizard>.
+ * (PLAN 9.4c — screens tranche; the largest single component file
+ * in the migration per CLAUDE.md.)
+ *
+ * The profile-picker screen is a finite state machine — picker grid →
+ * PIN entry → unlocked, with two side branches (Konami gate → admin
+ * hub → edit / pin-reset / delete-confirm) and the create-profile
+ * wizard. Every state has its own visual surface but they all live in
+ * the same `.screen-profile-picker` so they share one stylesheet.
+ *
+ * Sub-sections in order of FSM:
+ *   1. Profile picker grid (welcome heading + cards + tagline)
+ *   2. PIN entry screen (heraldic dots + keypad)
+ *   3. PIN success choreography
+ *   4. Konami gate (dpad + A/B + progress dots + actions)
+ *   5. Admin hub (rows + delete-confirm + add)
+ *   6. Admin edit (identity bezel + name input + color swatches)
+ *   7. Admin PIN reset
+ *   8. Create-profile wizard (step chip + title + body + mismatch)
+ *   9. Shared button/back-nav primitives (.btn, .btn-back, etc.)
+ *  10. Legacy non-reskin PinPad path (still emitted from the wizard
+ *      and AdminPinReset — they pass `locked_out=None` which flips
+ *      `has_reskin` off in profile_picker.rs:1126).
+ *
+ * The dead Phase-3 placeholder rules from the original app.css block
+ * (`.profile-controls`, `.profile-swatch`, `.profile-manage-hint`,
+ * `.color-picker`/`.swatch`, `.form-actions`, `.admin-menu`) were
+ * confirmed unreferenced in current source and dropped on migration.
+ *
+ * Class names unchanged.
+ */
+
+@layer components {
+  /* ============================================================
+     1. Profile picker grid (PHASE 4.8 reskin).
+     ============================================================ */
+  .profile-picker {
+    @apply relative flex flex-col items-stretch justify-center mx-auto;
+    /* `flex: 1; min-height: 0;` piggybacks on the `.screen` flex
+       column above so the section sizes to whatever space the
+       header left, not the full viewport. */
+    flex: 1;
+    min-height: 0;
+    max-width: 480px;
+    padding: 16px 24px 32px;
+  }
+
+  /* Welcome heading wrapper. */
+  .pp-welcome-wrap {
+    @apply relative text-center;
+    margin-bottom: 40px;
+  }
+  .pp-welcome-sub {
+    @apply uppercase;
+    font-family: var(--font-body);
+    font-style: italic;
+    font-weight: 600;
+    font-size: var(--text-body-italic);
+    letter-spacing: 0.24em;
+    color: #fff4e0;
+    margin-bottom: 6px;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+    order: -1;
+  }
+  /* Sub sits above the heading visually. */
+  .pp-welcome-wrap .display-heading { @apply flex flex-col; }
+  .pp-welcome-wrap .dh-text { @apply flex flex-col items-center; }
+  .pp-welcome-line2 {
+    @apply block;
+    font-size: 48px;
+    margin-top: 2px;
+  }
+
+  /* 2x2 grid. */
+  .profile-picker .profile-grid {
+    @apply grid w-full mx-auto;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+    max-width: 340px;
+    margin-bottom: 20px;
+  }
+
+  /* Heraldic profile card. */
+  .profile-picker .profile-card {
+    @apply relative flex flex-col items-center cursor-pointer rounded-[20px];
+    gap: 10px;
+    padding: 20px 12px 16px;
+    color: var(--color-text);
+    background: linear-gradient(180deg, rgba(16, 40, 90, 0.6), rgba(8, 22, 60, 0.65));
+    border: 1.5px solid rgba(245, 198, 52, 0.25);
+    transition:
+      transform 0.15s var(--ease-tap),
+      border-color var(--dur-quick),
+      box-shadow var(--dur-quick);
+    animation: pp-card-in 0.5s var(--ease-spring) both;
+  }
+  .profile-picker .profile-card:hover,
+  .profile-picker .profile-card:active {
+    transform: scale(1.03);
+    border-color: rgba(245, 198, 52, 0.6);
+    box-shadow:
+      0 0 28px rgba(245, 198, 52, 0.25),
+      inset 0 0 20px rgba(245, 198, 52, 0.06);
+  }
+  .profile-picker .profile-card::before {
+    content: "";
+    @apply absolute inset-0 pointer-events-none rounded-[20px];
+    background: radial-gradient(ellipse 100% 80% at 50% 0%, rgba(255, 230, 120, 0.06), transparent 55%);
+  }
+
+  /* Stagger-rise — 80ms per card. */
+  .profile-picker .profile-card:nth-child(1) { animation-delay:   0ms; }
+  .profile-picker .profile-card:nth-child(2) { animation-delay:  80ms; }
+  .profile-picker .profile-card:nth-child(3) { animation-delay: 160ms; }
+  .profile-picker .profile-card:nth-child(4) { animation-delay: 240ms; }
+  .profile-picker .profile-card:nth-child(5) { animation-delay: 320ms; }
+
+  /* Profile color tints the bezel plate via custom property set inline. */
+  .profile-card .bezel-plate {
+    background: var(--profile-color, linear-gradient(135deg, #1a2a4a, #0a1630));
+  }
+  /* Profile bezel sized to 88px on the picker. */
+  .profile-card .gold-bezel { width: 88px; }
+  .profile-card .bezel-plate { font-size: var(--text-display-lg); }
+
+  .pp-initial {
+    font-family: var(--font-display);
+    color: #fff;
+    text-shadow: 0 3px 6px rgba(0, 0, 0, 0.6);
+    line-height: 1;
+  }
+
+  .profile-picker .profile-name {
+    @apply text-center;
+    font-family: var(--font-display);
+    font-size: var(--text-display-sm);
+    letter-spacing: 0.06em;
+    color: var(--color-gold-bright);
+    text-shadow:
+      0 1px 0 var(--color-gold-shadow),
+      0 0 6px rgba(245, 198, 52, 0.3);
+  }
+
+  .pp-manage-hint {
+    @apply uppercase;
+    font-family: var(--font-body);
+    font-style: italic;
+    font-weight: 600;
+    font-size: var(--text-body-sm);
+    color: #d9c88a;
+    letter-spacing: 0.12em;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+  }
+
+  /* Add-profile card — dashed, dimmed bezel. */
+  .profile-picker .profile-card.add { border-style: dashed; }
+  .profile-card.add .pp-add-glyph {
+    font-size: 42px;
+    color: #d9c88a;
+    text-shadow: none;
+  }
+  .profile-picker .profile-card.add .profile-name { color: #d9c88a; }
+
+  /* Credits-footer button (PLAN 3.19.6). Anchored bottom via
+     `margin-top: auto` so the picker's flex column pushes it down. */
+  .pp-tagline {
+    @apply self-center cursor-pointer uppercase rounded-full appearance-none bg-transparent;
+    margin-top: auto;
+    margin-bottom: max(8px, env(safe-area-inset-bottom));
+    padding: 10px 28px;
+    min-height: 40px;
+    border: 1px solid rgba(217, 200, 138, 0.35);
+    font-family: var(--font-body);
+    font-size: var(--text-body-sm);
+    font-weight: 600;
+    letter-spacing: 0.28em;
+    color: #d9c88a;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+    transition: border-color 180ms ease, color 180ms ease, background 180ms ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .pp-tagline:hover,
+  .pp-tagline:focus-visible {
+    border-color: rgba(245, 198, 52, 0.7);
+    color: var(--color-gold-bright);
+    background: rgba(245, 198, 52, 0.08);
+    outline: none;
+  }
+  .pp-tagline:active { transform: scale(0.97); }
+
+  /* ============================================================
+     2. PIN entry screen (PLAN 4.9 — heraldic treatment).
+     ============================================================ */
+  .pin-entry-screen {
+    @apply relative flex flex-col items-center justify-start;
+    padding: 16px 24px 16px;
+    gap: 8px;
+  }
+
+  .pin-identity {
+    @apply flex flex-col items-center;
+    margin-bottom: 10px;
+  }
+  .pin-profile-bezel {
+    margin-bottom: 6px;
+  }
+  /* Shrink the Lg bezel (128px) to 72px so identity + keypad fit
+     in a single iPhone viewport. */
+  .pin-profile-bezel .gold-bezel { width: 72px; }
+  .pin-profile-bezel .bezel-plate { font-size: 32px; }
+
+  .pin-prompt-name {
+    font-family: var(--font-display);
+    font-size: 26px;
+    letter-spacing: 0.08em;
+    color: var(--color-gold-bright);
+    -webkit-text-stroke: 1px var(--color-gold-deep);
+    text-shadow:
+      0 2px 0 var(--color-gold-shadow),
+      0 3px 0 var(--color-gold-deep),
+      0 0 20px rgba(245, 198, 52, 0.4),
+      0 5px 10px rgba(0, 0, 0, 0.5);
+    margin-bottom: 6px;
+  }
+  .pin-prompt-label {
+    @apply uppercase;
+    font-style: italic;
+    font-weight: 600;
+    font-size: var(--text-body-italic);
+    letter-spacing: 0.2em;
+    color: #fff4e0;
+    margin-bottom: 16px;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+  }
+
+  /* PIN dots — mini gold bezels. */
+  .pin-dots {
+    @apply flex justify-center gap-[14px];
+  }
+  .pin-entry-screen .pin-dot,
+  .pin-dots-heraldic .pin-dot {
+    @apply relative w-6 h-6 rounded-full;
+    background: transparent;
+    border: 0;
+  }
+  .pin-dot-ring {
+    @apply absolute inset-0 rounded-full;
+    background: radial-gradient(circle at 30% 25%,
+      var(--color-gold-bright),
+      var(--color-gold-mid) 60%,
+      var(--color-gold-shadow));
+    box-shadow:
+      inset 0  0 0 1.5px var(--color-gold-deep),
+      inset 0  1px 2px rgba(255, 255, 255, 0.3),
+      inset 0 -1px 2px rgba(0, 0, 0, 0.5),
+      0 2px 6px rgba(0, 0, 0, 0.4);
+  }
+  .pin-dot-fill {
+    @apply absolute rounded-full;
+    inset: 4px;
+    background: rgba(10, 26, 54, 0.85);
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
+    transition: background 0.15s ease, box-shadow 0.15s ease;
+  }
+  .pin-entry-screen .pin-dot.filled .pin-dot-fill,
+  .pin-dots-heraldic .pin-dot.filled .pin-dot-fill {
+    background: radial-gradient(circle at 40% 30%, #fff8d0, var(--color-gold-bright) 40%, var(--color-gold));
+    box-shadow:
+      0 0 12px rgba(245, 198, 52, 0.7),
+      inset 0 1px 2px rgba(255, 255, 255, 0.5);
+    animation: pin-dot-pop var(--dur-quick) var(--ease-tap);
+  }
+
+  /* FramedPanel overrides for the keypad. */
+  .pin-keypad-panel {
+    @apply w-full;
+    max-width: 310px;
+  }
+  .pin-keypad-panel.framed-panel {
+    padding: 12px 14px 10px;
+  }
+
+  /* Heraldic 3x4 keypad. */
+  .pin-keypad-heraldic {
+    @apply grid mx-auto;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    max-width: 280px;
+  }
+  .pin-hkey {
+    @apply grid place-items-center cursor-pointer rounded-[14px] select-none;
+    min-height: 48px;
+    min-width: 48px;
+    font-family: var(--font-display);
+    font-size: 22px;
+    letter-spacing: 0.04em;
+    color: var(--color-gold-bright);
+    background: linear-gradient(180deg, rgba(16, 40, 90, 0.7), rgba(8, 22, 60, 0.8));
+    border: 1.5px solid rgba(245, 198, 52, 0.25);
+    transition:
+      transform 0.1s ease,
+      background 0.1s ease,
+      border-color 0.1s ease,
+      box-shadow 0.1s ease;
+    text-shadow:
+      0 1px 0 var(--color-gold-shadow),
+      0 0 8px rgba(245, 198, 52, 0.3);
+    box-shadow:
+      0 3px 0 rgba(0, 0, 0, 0.4),
+      inset 0 1px 0 rgba(255, 230, 120, 0.08);
+    /* iOS touch hygiene — kill double-tap-to-zoom + grey overlay
+       so the .pressed flash below is the only press reaction. */
+    touch-action: pan-x pan-y;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none;
+  }
+  .pin-hkey:hover:not(:disabled) {
+    border-color: rgba(245, 198, 52, 0.5);
+  }
+  .pin-hkey:active:not(:disabled),
+  .pin-hkey.pressed:not(:disabled) {
+    transform: translateY(2px);
+    box-shadow:
+      0 1px 0 rgba(0, 0, 0, 0.4),
+      inset 0 2px 4px rgba(0, 0, 0, 0.3);
+    background: linear-gradient(180deg, rgba(16, 40, 90, 0.95), rgba(8, 22, 60, 1));
+    border-color: rgba(245, 198, 52, 0.55);
+  }
+  .pin-hkey-ghost {
+    background: transparent !important;
+    border-color: transparent !important;
+    cursor: default !important;
+    box-shadow: none !important;
+  }
+  /* Backspace ⌫ glyph reads thinner than a digit at the same font;
+     bump it so the key feels like a peer rather than a footnote. */
+  .pin-hkey-backspace { font-size: 34px; }
+  .pin-hkey:disabled:not(.pin-hkey-ghost) {
+    @apply cursor-not-allowed;
+    opacity: 0.4;
+  }
+
+  /* Lockout banner (post-3-failed-attempts cooldown). */
+  .pin-lockout-banner {
+    @apply flex items-center justify-center w-full rounded-xl;
+    gap: 8px;
+    padding: 10px 14px;
+    max-width: 310px;
+    background: rgba(227, 76, 76, 0.18);
+    border: 1px solid rgba(227, 76, 76, 0.4);
+    color: #ffc8c8;
+    font-size: var(--text-display-xs);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    margin-top: 14px;
+  }
+  .pin-lockout-countdown {
+    font-family: var(--font-display);
+    font-size: 18px;
+    color: var(--color-danger-p4);
+    text-shadow: 0 0 6px rgba(227, 76, 76, 0.5);
+    margin-left: 4px;
+  }
+
+  /* ============================================================
+     3. PIN unlock-success choreography (PLAN 4.9.3).
+     ============================================================ */
+  .pin-entry-screen.pin-success {
+    animation: pin-screen-fade 600ms ease-out 120ms forwards;
+  }
+  .pin-success .pin-profile-bezel {
+    @apply relative;
+  }
+  .pin-success .pin-profile-bezel::after {
+    content: "";
+    @apply absolute inset-0 rounded-full pointer-events-none;
+    border: 4px solid var(--color-gold-bright);
+    box-shadow: 0 0 20px rgba(255, 229, 138, 0.6);
+    opacity: 0;
+    animation: pin-shockwave 700ms ease-out forwards;
+  }
+  .pin-success::after {
+    content: "";
+    @apply absolute pointer-events-none z-[10];
+    top: 0; bottom: 0; left: -30%;
+    width: 30%;
+    background: linear-gradient(90deg,
+      transparent,
+      rgba(255, 229, 138, 0.7) 50%,
+      transparent);
+    animation: pin-streak 700ms ease-out forwards;
+  }
+
+  /* ============================================================
+     4. Konami gate (PLAN 4.18.5c).
+     ============================================================ */
+  .konami-gate {
+    @apply relative flex flex-col;
+    gap: 12px;
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+  }
+  .konami-header { @apply text-center; }
+
+  .gate-progress {
+    @apply flex justify-center shrink-0;
+    gap: 8px;
+    margin: 6px 0 0;
+  }
+  .gate-dot {
+    @apply rounded-full;
+    width: 14px; height: 14px;
+    background: rgba(245, 198, 52, 0.1);
+    border: 1.5px solid var(--color-gold-deep);
+    transition: all var(--dur-quick) ease;
+  }
+  .gate-dot.filled {
+    background: radial-gradient(circle at 30% 25%,
+      var(--color-gold-bright), var(--color-gold) 55%, var(--color-gold-mid));
+    border-color: var(--color-gold-deep);
+    box-shadow:
+      0 0 10px rgba(245, 198, 52, 0.7),
+      inset 0 1px 1px rgba(255, 255, 255, 0.5);
+    transform: scale(1.08);
+  }
+  .gate-progress.error .gate-dot {
+    animation: gate-wrong-empty 0.5s ease;
+  }
+  .gate-progress.error .gate-dot.was-filled {
+    animation: gate-wrong-filled 0.55s ease;
+  }
+
+  .gate-hint {
+    @apply text-center uppercase;
+    font-family: var(--font-body);
+    font-style: italic;
+    font-weight: 600;
+    font-size: var(--text-body-sm);
+    letter-spacing: 0.18em;
+    color: #d9c88a;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+    margin-top: -4px;
+  }
+
+  .gate-pad {
+    @apply flex items-center justify-around shrink-0;
+    gap: 20px;
+    padding: 8px 4px 16px;
+    margin-top: 8px;
+  }
+
+  /* D-pad */
+  .dpad {
+    @apply relative shrink-0;
+    width: 108px; height: 108px;
+  }
+  .dpad-btn {
+    @apply absolute grid place-items-center cursor-pointer rounded-[10px];
+    width: 36px; height: 36px;
+    background: linear-gradient(180deg, #3a3a4a, #1a1a2a);
+    border: 1.5px solid var(--color-gold-deep);
+    color: var(--color-gold-bright);
+    font-size: 20px;
+    transition:
+      transform 0.08s ease,
+      background 0.08s ease,
+      box-shadow 0.12s ease;
+    box-shadow:
+      inset 0  1px 0 rgba(255, 255, 255, 0.15),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.4),
+      0  2px 4px rgba(0, 0, 0, 0.6);
+    text-shadow:
+      0 1px 0 rgba(0, 0, 0, 0.6),
+      0 0 6px rgba(245, 198, 52, 0.4);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .dpad-btn.up    { top: 0;    left: 36px; }
+  .dpad-btn.down  { top: 72px; left: 36px; }
+  .dpad-btn.left  { top: 36px; left: 0;    }
+  .dpad-btn.right { top: 36px; left: 72px; }
+  .dpad-btn:active,
+  .dpad-btn.pressed {
+    background: linear-gradient(180deg, var(--color-gold-bright), var(--color-gold-mid));
+    color: #1a1203;
+    box-shadow:
+      inset 0 0 12px rgba(245, 198, 52, 0.9),
+      0 0 18px rgba(245, 198, 52, 0.8);
+    transform: scale(0.9);
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+  }
+
+  /* A / B buttons */
+  .ab-wrap {
+    @apply flex items-center shrink-0;
+    gap: 14px;
+  }
+  .ab-btn {
+    @apply w-[50px] h-[50px] rounded-full grid place-items-center cursor-pointer text-white;
+    border: 2.5px solid var(--color-gold-deep);
+    font-family: var(--font-display);
+    font-size: 22px;
+    text-shadow:
+      0 2px 0 rgba(0, 0, 0, 0.6),
+      0 0 6px rgba(0, 0, 0, 0.4);
+    box-shadow:
+      inset 0  3px 0 rgba(255, 255, 255, 0.3),
+      inset 0 -3px 0 rgba(0, 0, 0, 0.4),
+      0  4px 10px rgba(0, 0, 0, 0.65);
+    transition: transform 0.08s ease, box-shadow 0.12s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .ab-b {
+    background: radial-gradient(circle at 30% 25%, #6bb1ff 0%, #2677cc 40%, #0f3d6f 100%);
+  }
+  .ab-a {
+    background: radial-gradient(circle at 30% 25%, #ff8f6b 0%, #cc3d26 40%, #7a1818 100%);
+  }
+  .ab-btn:active,
+  .ab-btn.pressed {
+    transform: scale(0.88);
+    box-shadow:
+      inset 0 3px 6px rgba(0, 0, 0, 0.5),
+      0 0 24px rgba(245, 198, 52, 0.85);
+    filter: brightness(1.25);
+  }
+
+  /* Gate Clear / Submit row. */
+  .gate-actions {
+    @apply flex shrink-0;
+    gap: 10px;
+  }
+  .gate-actions .btn {
+    @apply flex-1 cursor-pointer rounded-[14px] text-center;
+    padding: 14px;
+    font-family: var(--font-display);
+    font-size: var(--text-body);
+    letter-spacing: 0.22em;
+    border: none;
+  }
+
+  .btn-clear {
+    flex: 0 0 110px !important;
+    color: var(--color-gold-bright);
+    background: transparent;
+    border: 2px solid #c9a84a !important;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+    letter-spacing: 0.18em !important;
+  }
+  .btn-clear:hover {
+    border-color: var(--color-gold-bright) !important;
+    background: rgba(245, 198, 52, 0.08);
+  }
+  .btn-submit {
+    color: #1a1203;
+    background: linear-gradient(180deg,
+      var(--color-gold-bright) 0%,
+      var(--color-gold) 45%,
+      var(--color-gold-mid) 100%);
+    border: 2px solid var(--color-gold-deep);
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.45),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.25),
+      0  4px 0 var(--color-gold-shadow),
+      0  6px 14px rgba(0, 0, 0, 0.45);
+  }
+  .btn-submit:disabled {
+    @apply cursor-not-allowed;
+    filter: saturate(0.35) brightness(0.65);
+  }
+
+  /* Unlock flash overlay. */
+  .konami-unlock-flash {
+    @apply fixed inset-0 z-[50] pointer-events-none opacity-0;
+    background: radial-gradient(ellipse 80% 70% at 50% 50%, rgba(255, 230, 120, 0.9), transparent 80%);
+  }
+  .konami-unlock-flash.active { animation: konami-flash 0.8s ease-out; }
+
+  /* ============================================================
+     5. Profile admin — list / rows / delete-confirm.
+     ============================================================ */
+  .admin-hub {
+    @apply flex flex-col;
+    gap: 14px;
+    flex: 1;
+    min-height: 0;
+  }
+  .admin-header { @apply text-center; }
+  .admin-list-panel {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .manage-list {
+    @apply flex flex-col;
+    gap: 10px;
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+    padding-right: 2px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(212, 168, 74, 0.5) transparent;
+  }
+  .manage-list::-webkit-scrollbar { width: 5px; }
+  .manage-list::-webkit-scrollbar-thumb {
+    background: rgba(212, 168, 74, 0.45);
+    border-radius: 3px;
+  }
+
+  .profile-row {
+    @apply relative flex items-center gap-3 rounded-[14px] overflow-hidden;
+    padding: 12px 14px;
+    background: linear-gradient(180deg,
+      rgba(26, 58, 138, 0.6),
+      rgba(10, 36, 100, 0.75) 50%,
+      rgba(6, 20, 54, 0.85));
+    border: 1.5px solid rgba(245, 198, 52, 0.35);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.08),
+      0 2px 6px rgba(0, 0, 0, 0.4);
+  }
+
+  .profile-bezel {
+    @apply relative w-[46px] h-[46px] rounded-full shrink-0;
+    background: radial-gradient(circle at 30% 25%,
+      var(--color-gold-bright),
+      var(--color-gold) 22%,
+      var(--color-gold-mid) 55%,
+      var(--color-gold-shadow));
+    box-shadow:
+      inset 0 0 0 2px var(--color-gold-deep),
+      0 3px 6px rgba(0, 0, 0, 0.5);
+  }
+  .profile-bezel::before {
+    content: "";
+    @apply absolute rounded-full;
+    inset: 10%;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.6);
+  }
+  .profile-bezel[data-el="fire"]::before    { background: linear-gradient(135deg, #ff6b2a, #b13310); }
+  .profile-bezel[data-el="water"]::before   { background: linear-gradient(135deg, #2aa6ff, #0f4d8a); }
+  .profile-bezel[data-el="life"]::before    { background: linear-gradient(135deg, #5ac96b, #26612e); }
+  .profile-bezel[data-el="magic"]::before   { background: linear-gradient(135deg, #da5ad6, #651564); }
+  .profile-bezel[data-el="tech"]::before    { background: linear-gradient(135deg, #ffb84d, #a56500); }
+  .profile-bezel[data-el="undead"]::before  { background: linear-gradient(135deg, #9a5aaa, #4a1a5a); }
+  .profile-bezel[data-el="earth"]::before   { background: linear-gradient(135deg, #a77b3a, #5a3a13); }
+  .profile-bezel[data-el="air"]::before     { background: linear-gradient(135deg, #c6e6ff, #7ea9cc); }
+  .profile-bezel::after {
+    content: attr(data-initial);
+    @apply absolute inset-0 grid place-items-center text-white;
+    font-family: var(--font-display);
+    font-size: 20px;
+    text-shadow: 0 2px 0 rgba(0, 0, 0, 0.5);
+  }
+
+  .profile-meta {
+    flex: 1;
+    min-width: 0;
+  }
+  .profile-row .profile-name {
+    font-family: var(--font-display);
+    font-size: var(--text-display-sm);
+    letter-spacing: 0.04em;
+    color: var(--color-gold-bright);
+    text-shadow:
+      0 1px 0 var(--color-gold-shadow),
+      0 2px 0 var(--color-gold-deep);
+    line-height: 1.1;
+  }
+
+  .profile-actions {
+    @apply flex shrink-0;
+    gap: 6px;
+  }
+  .act-btn {
+    @apply rounded-lg cursor-pointer whitespace-nowrap;
+    padding: 6px 10px;
+    background: linear-gradient(180deg, rgba(255, 230, 120, 0.18), rgba(58, 37, 0, 0.28));
+    border: 1.5px solid var(--color-gold-deep);
+    color: var(--color-gold-bright);
+    font-family: var(--font-display);
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    text-shadow:
+      0 1px 0 var(--color-gold-shadow),
+      0 0 4px rgba(245, 198, 52, 0.3);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 230, 120, 0.15),
+      0 2px 4px rgba(0, 0, 0, 0.4);
+  }
+  .act-btn:hover {
+    background: linear-gradient(180deg, rgba(255, 230, 120, 0.3), rgba(58, 37, 0, 0.35));
+    box-shadow:
+      inset 0 1px 0 rgba(255, 230, 120, 0.2),
+      0 0 10px rgba(245, 198, 52, 0.3);
+  }
+  .act-btn.danger {
+    background: linear-gradient(180deg, rgba(227, 76, 76, 0.5), rgba(122, 24, 24, 0.6));
+    border-color: #ffc0c0;
+    color: #fff;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.6);
+  }
+  .act-btn.danger:hover {
+    background: linear-gradient(180deg, rgba(227, 76, 76, 0.7), rgba(122, 24, 24, 0.8));
+  }
+
+  /* Delete-confirm overlay — slides over the row when DELETE tapped. */
+  .del-confirm {
+    @apply absolute inset-0 flex items-center justify-center text-white rounded-[14px] overflow-hidden isolate select-none pointer-events-none;
+    background: linear-gradient(90deg, rgba(194, 58, 58, 0.98), rgba(154, 36, 36, 0.98));
+    font-family: var(--font-display);
+    font-size: var(--text-body);
+    letter-spacing: 0.22em;
+    text-shadow:
+      0 0 2px rgba(0, 0, 0, 0.9),
+      0 1px 0 rgba(0, 0, 0, 0.7),
+      0 2px 6px rgba(0, 0, 0, 0.5);
+    opacity: 0;
+    transform: scaleX(0.85);
+    transform-origin: right center;
+    transition: opacity 0.18s ease, transform 0.22s cubic-bezier(.3, 1.5, .5, 1);
+    touch-action: pan-x pan-y;
+    -webkit-user-select: none;
+  }
+  .profile-row.deleting .del-confirm {
+    opacity: 1;
+    pointer-events: auto;
+    transform: scaleX(1);
+  }
+  .del-confirm-label { @apply relative z-[2]; }
+  .del-cancel {
+    @apply absolute w-[22px] h-[22px] rounded-full grid place-items-center cursor-pointer text-white z-[3];
+    top: 6px; right: 8px;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 200, 200, 0.5);
+    font-family: system-ui;
+    font-size: var(--text-body);
+    line-height: 1;
+  }
+
+  .add-row {
+    @apply flex items-center justify-center cursor-pointer rounded-[14px];
+    gap: 10px;
+    padding: 12px;
+    background: transparent;
+    border: 2px dashed rgba(245, 198, 52, 0.4);
+    color: var(--color-gold-bright);
+    font-family: var(--font-display);
+    font-size: var(--text-body-italic);
+    letter-spacing: 0.22em;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+  }
+  .add-row:hover {
+    border-color: var(--color-gold-bright);
+    background: rgba(245, 198, 52, 0.06);
+  }
+  .add-row::before {
+    content: "\FF0B";
+    font-size: 20px;
+    line-height: 1;
+    color: var(--color-gold-bright);
+  }
+
+  /* ============================================================
+     6. Admin edit (identity + name input + color swatches).
+     ============================================================ */
+  .admin-edit {
+    @apply flex flex-col;
+    gap: 14px;
+    min-height: 0;
+  }
+
+  .pin-heading {
+    @apply flex items-center justify-center flex-wrap;
+    gap: 12px;
+  }
+  .pin-heading-text { @apply text-left; }
+  .pin-heading-sub {
+    @apply uppercase;
+    font-family: var(--font-body);
+    font-style: italic;
+    font-weight: 600;
+    font-size: var(--text-body-sm);
+    letter-spacing: 0.16em;
+    color: #d9c88a;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+  }
+  .pin-heading-title {
+    font-family: var(--font-display);
+    font-size: 22px;
+    letter-spacing: 0.06em;
+    color: var(--color-gold-bright);
+    -webkit-text-stroke: 1px var(--color-gold-deep);
+    text-shadow:
+      0 2px 0 var(--color-gold-shadow),
+      0 3px 0 var(--color-gold-deep),
+      0 4px 8px rgba(0, 0, 0, 0.5),
+      0 0 18px rgba(245, 198, 52, 0.3);
+    margin-top: -2px;
+  }
+
+  /* Element-tinted identity bezel — mini version of the picker bezel
+     for the admin edit header. Uses data-el / data-initial attrs
+     instead of children so the markup stays a single empty div. */
+  .identity-bezel {
+    @apply relative w-[46px] h-[46px] rounded-full shrink-0;
+    background: radial-gradient(circle at 30% 25%,
+      var(--color-gold-bright),
+      var(--color-gold) 22%,
+      var(--color-gold-mid) 55%,
+      var(--color-gold-shadow));
+    box-shadow:
+      inset 0 0 0 2px var(--color-gold-deep),
+      0 3px 8px rgba(0, 0, 0, 0.5);
+  }
+  .identity-bezel::before {
+    content: "";
+    @apply absolute rounded-full;
+    inset: 10%;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.6);
+  }
+  .identity-bezel[data-el="fire"]::before    { background: linear-gradient(135deg, #ff6b2a, #b13310); }
+  .identity-bezel[data-el="water"]::before   { background: linear-gradient(135deg, #2aa6ff, #0f4d8a); }
+  .identity-bezel[data-el="life"]::before    { background: linear-gradient(135deg, #5ac96b, #26612e); }
+  .identity-bezel[data-el="magic"]::before   { background: linear-gradient(135deg, #da5ad6, #651564); }
+  .identity-bezel[data-el="tech"]::before    { background: linear-gradient(135deg, #ffb84d, #a56500); }
+  .identity-bezel[data-el="undead"]::before  { background: linear-gradient(135deg, #9a5aaa, #4a1a5a); }
+  .identity-bezel[data-el="earth"]::before   { background: linear-gradient(135deg, #a77b3a, #5a3a13); }
+  .identity-bezel[data-el="air"]::before     { background: linear-gradient(135deg, #c6e6ff, #7ea9cc); }
+  .identity-bezel::after {
+    content: attr(data-initial);
+    @apply absolute inset-0 grid place-items-center text-white;
+    font-family: var(--font-display);
+    font-size: 20px;
+    text-shadow: 0 2px 0 rgba(0, 0, 0, 0.5);
+  }
+
+  .edit-wrap {
+    @apply flex flex-col;
+    flex: 1;
+    justify-content: center;
+    gap: 18px;
+    padding: 0 2px;
+    min-height: 0;
+  }
+
+  .edit-input-row {
+    @apply flex items-stretch w-full;
+    gap: 10px;
+  }
+  .edit-input {
+    @apply w-full rounded-[14px] text-center text-white;
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 14px 16px;
+    background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
+    border: 2px solid var(--color-gold-bright);
+    font-family: var(--font-display);
+    font-size: 22px;
+    letter-spacing: 0.04em;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.25),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.3),
+      0  3px 8px rgba(0, 0, 0, 0.5);
+    outline: none;
+  }
+  .edit-input:focus {
+    outline: 2px solid rgba(255, 230, 120, 0.6);
+    outline-offset: 2px;
+  }
+
+  /* Name reroll (↻) coin button, sits flush with the input. */
+  .roll-btn {
+    @apply rounded-[14px] cursor-pointer;
+    flex: 0 0 54px;
+    width: 54px;
+    aspect-ratio: 1;
+    padding: 0;
+    background: radial-gradient(circle at 30% 25%,
+      var(--color-gold-bright) 0%,
+      var(--color-gold) 40%,
+      var(--color-gold-mid) 80%);
+    border: 2px solid var(--color-gold-deep);
+    color: #1a1203;
+    font-size: 24px;
+    line-height: 1;
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.4),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.25),
+      0  4px 0 var(--color-gold-shadow),
+      0  6px 12px rgba(0, 0, 0, 0.4);
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+  }
+  .roll-btn:active {
+    transform: translateY(2px) rotate(-60deg);
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.4),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.25),
+      0  2px 0 var(--color-gold-shadow),
+      0  3px 6px rgba(0, 0, 0, 0.5);
+  }
+
+  .create-name-hint {
+    @apply text-center;
+    font-family: var(--font-body);
+    font-style: italic;
+    font-weight: 600;
+    font-size: var(--text-body-sm);
+    letter-spacing: 0.08em;
+    color: #d9c88a;
+    margin-top: 6px;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+  }
+
+  .edit-color-label {
+    @apply text-center uppercase;
+    font-family: var(--font-body);
+    font-style: italic;
+    font-weight: 600;
+    font-size: var(--text-body-sm);
+    letter-spacing: 0.2em;
+    color: #d9c88a;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+    margin-top: 4px;
+  }
+
+  /* 8 element swatches; wraps to 2 rows on narrow viewports. */
+  .edit-color-row {
+    @apply flex flex-wrap justify-center;
+    gap: 10px 8px;
+  }
+  .edit-swatch {
+    @apply relative w-[38px] h-[38px] rounded-full cursor-pointer;
+    background: radial-gradient(circle at 30% 25%,
+      var(--color-gold-bright),
+      var(--color-gold) 22%,
+      var(--color-gold-mid) 55%,
+      var(--color-gold-shadow));
+    box-shadow:
+      inset 0 0 0 1.5px var(--color-gold-deep),
+      0 2px 6px rgba(0, 0, 0, 0.5);
+    transition: transform 0.12s ease;
+  }
+  .edit-swatch::before {
+    content: "";
+    @apply absolute rounded-full;
+    inset: 12%;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.5);
+  }
+  .edit-swatch[data-color="fire"]::before    { background: linear-gradient(135deg, #ff6b2a, #b13310); }
+  .edit-swatch[data-color="water"]::before   { background: linear-gradient(135deg, #2aa6ff, #0f4d8a); }
+  .edit-swatch[data-color="life"]::before    { background: linear-gradient(135deg, #5ac96b, #26612e); }
+  .edit-swatch[data-color="magic"]::before   { background: linear-gradient(135deg, #da5ad6, #651564); }
+  .edit-swatch[data-color="tech"]::before    { background: linear-gradient(135deg, #ffb84d, #a56500); }
+  .edit-swatch[data-color="undead"]::before  { background: linear-gradient(135deg, #9a5aaa, #4a1a5a); }
+  .edit-swatch[data-color="earth"]::before   { background: linear-gradient(135deg, #a77b3a, #5a3a13); }
+  .edit-swatch[data-color="air"]::before     { background: linear-gradient(135deg, #c6e6ff, #7ea9cc); }
+  .edit-swatch:hover { transform: translateY(-2px); }
+  .edit-swatch.selected {
+    transform: scale(1.12);
+    box-shadow:
+      inset 0 0 0 1.5px var(--color-gold-deep),
+      0 0 0 2px var(--color-gold-bright),
+      0 0 16px rgba(245, 198, 52, 0.6),
+      0 2px 8px rgba(0, 0, 0, 0.5);
+  }
+
+  /* ============================================================
+     7. Admin PIN reset.
+     ============================================================ */
+  .admin-pin-reset {
+    @apply flex flex-col;
+    gap: 14px;
+    min-height: 0;
+  }
+  .pin-wrap {
+    @apply flex flex-col;
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* Shared action buttons (used by edit + pin-reset). */
+  .actions {
+    @apply flex shrink-0;
+    gap: 10px;
+    margin-top: auto;
+  }
+  .btn {
+    @apply flex-1 cursor-pointer rounded-[14px] text-center;
+    padding: 14px;
+    font-family: var(--font-display);
+    font-size: 15px;
+    letter-spacing: 0.22em;
+    border: none;
+  }
+  .btn-primary {
+    color: #1a1203;
+    background: linear-gradient(180deg,
+      var(--color-gold-bright) 0%,
+      var(--color-gold) 45%,
+      var(--color-gold-mid) 100%);
+    border: 2px solid var(--color-gold-deep);
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.45),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.25),
+      0  4px 0 var(--color-gold-shadow),
+      0  6px 14px rgba(0, 0, 0, 0.45);
+  }
+  .btn-primary:disabled {
+    @apply cursor-not-allowed;
+    filter: saturate(0.35) brightness(0.65);
+  }
+  .btn-cancel {
+    flex: 0 0 96px;
+    color: var(--color-gold-bright);
+    background: transparent;
+    border: 2px solid #c9a84a;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+    letter-spacing: 0.18em;
+  }
+
+  /* ============================================================
+     8. Create-profile wizard (PLAN 4.18.27).
+     ============================================================ */
+  .create-profile-wizard {
+    @apply flex flex-col;
+    gap: 14px;
+  }
+  .create-step-chip {
+    @apply self-center uppercase rounded-full;
+    font-family: var(--font-body);
+    font-style: italic;
+    font-size: var(--text-body-sm);
+    letter-spacing: 0.18em;
+    color: var(--color-gold-mid);
+    padding: 2px 12px;
+    border: 1px solid rgba(245, 198, 52, 0.35);
+    background: rgba(2, 8, 24, 0.35);
+  }
+  .create-step-title {
+    @apply self-center text-center w-full;
+    font-family: var(--font-display);
+    font-size: var(--text-display-md);
+    letter-spacing: 0.08em;
+    color: var(--color-gold-bright);
+    text-shadow:
+      0 2px 0 var(--color-gold-shadow),
+      0 0 8px rgba(245, 198, 52, 0.25);
+    box-sizing: border-box;
+  }
+  .create-step-body {
+    @apply flex flex-col items-stretch;
+    gap: 10px;
+    min-height: 0;
+  }
+
+  .create-profile-panel {
+    @apply w-full;
+    margin-bottom: 12px;
+    box-sizing: border-box;
+  }
+
+  /* PIN-confirm-mismatch shake target (PLAN 4.18.8). The wrapper
+     itself is layout-neutral; the `.shake` modifier is the only
+     thing this class does today. */
+  .pin-confirm-wrap {
+    /* layout intentionally inherits parent flex column */
+  }
+  .pin-confirm-wrap.shake {
+    animation: pin-mismatch-shake 0.5s ease;
+  }
+  .pin-mismatch-banner {
+    @apply text-center rounded-xl;
+    margin-top: 10px;
+    padding: 10px 14px;
+    background: linear-gradient(180deg, rgba(180, 40, 40, 0.9), rgba(120, 20, 20, 0.95));
+    border: 1.5px solid rgba(255, 120, 120, 0.55);
+    color: #ffe8e8;
+    font-size: var(--text-body);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+    box-shadow:
+      0 3px 10px rgba(180, 40, 40, 0.35),
+      inset 0 1px 0 rgba(255, 200, 200, 0.12);
+  }
+
+  /* ============================================================
+     9. Shared back/lock button + reusable title-sub.
+     ============================================================ */
+  /* Sits on the starfield to the right of the Header's kebab — the
+     PIN-entry pattern Chris picked as canonical (2026-04-24). */
+  .btn-back {
+    @apply fixed cursor-pointer bg-transparent z-[20];
+    top: calc(env(safe-area-inset-top) + 22px);
+    left: calc(env(safe-area-inset-left) + 64px);
+    padding: 4px 8px;
+    color: var(--color-gold-bright);
+    border: 0;
+    font-family: var(--font-display);
+    font-size: var(--text-display-sm);
+    letter-spacing: 0.08em;
+    text-shadow:
+      0 1px 0 var(--color-gold-shadow),
+      0 0 10px rgba(245, 198, 52, 0.4);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .btn-back::before { content: "\2190 "; }
+  .btn-back:active { transform: scale(0.95); }
+
+  .title-sub {
+    @apply text-center uppercase;
+    font-family: var(--font-body);
+    font-style: italic;
+    font-weight: 600;
+    font-size: var(--text-body-italic);
+    letter-spacing: 0.25em;
+    color: #fff4e0;
+    margin-bottom: 2px;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+  }
+
+  /* ============================================================
+     10. Legacy non-reskin PinPad path.
+     Still emitted from CreateProfileForm + AdminPinReset where
+     `locked_out=None` flips `has_reskin` off in
+     profile_picker.rs:1126. The reskin path uses
+     .pin-keypad-heraldic + .pin-hkey above; this path is the
+     pre-Phase-4 placeholder kept around because those callers
+     don't need lockout behaviour.
+     ============================================================ */
+  .pin-display {
+    @apply flex justify-center;
+    gap: 14px;
+    margin: 10px 0 16px;
+  }
+  .pin-dot {
+    @apply w-4 h-4 rounded-full;
+    background: transparent;
+    border: 2px solid #666;
+  }
+  .pin-dot.filled {
+    background: #fff;
+    border-color: #fff;
+  }
+  .pin-keypad {
+    @apply grid mx-auto;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    max-width: 320px;
+  }
+  .pin-key {
+    @apply rounded-[10px] select-none;
+    min-height: 64px;
+    min-width: 64px;
+    font-size: 22px;
+    font-weight: 600;
+    border: 1px solid #333;
+    background: #222;
+    color: #eee;
+    touch-action: pan-x pan-y;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none;
+  }
+  .pin-key:disabled {
+    background: transparent;
+    border-color: transparent;
+  }
+  .pin-key:active:not(:disabled),
+  .pin-key.pressed:not(:disabled) {
+    background: #444;
+  }
+
+  /* ============================================================
+     Profile-picker scroll container.
+     ============================================================ */
+  .screen-profile-picker {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+  }
+}
+
+/* ============ Keyframes (outside @layer for global addressability). ============ */
+
+@keyframes pp-card-in {
+  from { opacity: 0; transform: scale(0.85) translateY(20px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0); }
+}
+
+@keyframes pin-dot-pop {
+  from { transform: scale(0.5); }
+  to   { transform: scale(1); }
+}
+
+@keyframes pin-shockwave {
+  0%   { transform: scale(1);   opacity: 0.9; border-width: 4px; }
+  100% { transform: scale(2.4); opacity: 0;   border-width: 1px; }
+}
+@keyframes pin-screen-fade {
+  to { opacity: 0; transform: translateY(-8px); }
+}
+@keyframes pin-streak {
+  to { left: 130%; }
+}
+
+@keyframes gate-wrong-empty {
+  0%   { background: rgba(245, 198, 52, 0.1); border-color: var(--color-gold-deep); transform: scale(1)    translateX(0); }
+  30%  { background: #e34c4c;                 border-color: #ff8080;                transform: scale(1.05) translateX(-5px); }
+  60%  {                                                                            transform: scale(1.05) translateX(5px); }
+  100% { background: rgba(245, 198, 52, 0.1); border-color: var(--color-gold-deep); transform: scale(1)    translateX(0); }
+}
+@keyframes gate-wrong-filled {
+  0% {
+    background: radial-gradient(circle at 30% 25%, var(--color-gold-bright), var(--color-gold) 55%, var(--color-gold-mid));
+    border-color: var(--color-gold-deep);
+    box-shadow:
+      0 0 10px rgba(245, 198, 52, 0.7),
+      inset 0 1px 1px rgba(255, 255, 255, 0.5);
+    transform: scale(1.08) translateX(0);
+  }
+  25% {
+    background: radial-gradient(circle at 30% 25%, #ff8080, #e34c4c 55%, #7a1818);
+    border-color: #ff8080;
+    box-shadow: 0 0 18px rgba(227, 76, 76, 0.85);
+    transform: scale(1.14) translateX(-6px);
+  }
+  55% {
+    background: #7a1818;
+    border-color: #ff8080;
+    transform: scale(1.08) translateX(6px);
+  }
+  100% {
+    background: rgba(245, 198, 52, 0.1);
+    border-color: var(--color-gold-deep);
+    box-shadow: none;
+    transform: scale(1) translateX(0);
+  }
+}
+
+@keyframes konami-flash {
+  0%   { opacity: 0; }
+  30%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes pin-mismatch-shake {
+  0%, 100% { transform: translateX(0); }
+  15%      { transform: translateX(-8px); }
+  30%      { transform: translateX(7px); }
+  45%      { transform: translateX(-5px); }
+  60%      { transform: translateX(4px); }
+  80%      { transform: translateX(-2px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pin-success .pin-profile-bezel::after,
+  .pin-success::after {
+    animation: none !important;
+    opacity: 0;
+  }
+  .pin-entry-screen.pin-success { animation-duration: var(--dur-quick); }
+}

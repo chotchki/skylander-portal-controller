@@ -51,6 +51,14 @@ Thumbs.db
 /tools/*/dist/
 /phone/target/
 /phone/dist/
+# Cached download of the standalone tailwindcss CLI (PLAN 9.1).
+# tools/tailwind-build downloads the binary on first run, ~50MB,
+# version-suffixed so a `TAILWIND_VERSION` bump invalidates cleanly.
+/phone/.tailwind-cache/
+# Generated Tailwind utility bundle. Source of truth is
+# `phone/styles/input.css`; the tailwindcss CLI emits this on every
+# trunk build via the pre_build hook.
+/phone/styles/tailwind.css
 
 # Local installer artifacts from tools/build-macos-app.sh
 # (and eventually the Windows .msi build). Release builds publish

@@ -1,0 +1,180 @@
+/*
+ * <MenuOverlay> (PLAN 4.12.4b, design_language.md §6.8).
+ * (PLAN 9.4b — overlays tranche.)
+ *
+ * Header-kebab menu surface: profile chip + join-QR + ActionButton
+ * stack. Translates docs/aesthetic/mocks/menu_overlay.html.
+ *
+ * The buttons themselves (.menu-action*) live in
+ * `phone/styles/components/action_button.css` (migrated in 9.4a) —
+ * this file owns the surrounding scrim, panel, close button, chip,
+ * QR card, and the .menu-actions flex wrapper.
+ *
+ * Token-driven (uses gold scale + font-display + typography tokens)
+ * so the Kaos skin (4.1.4) repalettes for free.
+ *
+ * Class names unchanged.
+ */
+
+@layer components {
+  .menu-scrim {
+    @apply fixed inset-0 z-[200] cursor-pointer;
+    background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0.85));
+    animation: menu-scrim-in 220ms ease-out;
+  }
+
+  .menu-overlay-panel {
+    @apply fixed z-[210] rounded-[24px] overflow-hidden;
+    top: 50%; left: 20px; right: 20px;
+    transform: translateY(-50%);
+    padding: 26px 22px 22px;
+    background:
+      radial-gradient(ellipse 120% 80% at 50% 0%, rgba(255, 230, 120, 0.10), transparent 60%),
+      linear-gradient(180deg, rgba(26, 58, 138, 0.95), rgba(10, 36, 100, 0.95) 50%, rgba(6, 20, 54, 0.98));
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    animation: menu-panel-in 0.35s cubic-bezier(.3, 1.3, .5, 1) both;
+    /* No internal scroll on the menu panel — `overflow: hidden` matches
+       the rest of the app's no-page-scroll contract. If the menu's
+       content ever exceeds `max-height`, the layout needs a real fix
+       (tighter padding, drop an optional row) rather than a scrollbar. */
+    max-height: calc(100vh - 40px);
+    max-height: calc(100svh - 40px);
+  }
+  .menu-overlay-panel::before {
+    content: "";
+    @apply absolute inset-[-2px] rounded-[26px];
+    z-index: -1;
+    background: linear-gradient(135deg,
+      var(--color-gold-bright) 0%,
+      var(--color-gold-mid) 30%,
+      var(--color-gold-bright) 50%,
+      var(--color-gold-mid) 70%,
+      var(--color-gold-bright) 100%);
+  }
+
+  .menu-close {
+    @apply absolute w-[30px] h-[30px] grid place-items-center rounded-lg cursor-pointer bg-transparent;
+    top: 12px; right: 12px;
+    border: 1px solid rgba(245, 198, 52, 0.3);
+    color: var(--color-gold-bright);
+    font-size: var(--text-body);
+  }
+  .menu-close:hover {
+    border-color: var(--color-gold-bright);
+    background: rgba(245, 198, 52, 0.1);
+  }
+
+  .menu-current-chip {
+    @apply flex items-center gap-[10px] rounded-full;
+    padding: 6px 16px 6px 6px;
+    background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
+    border: 1.5px solid var(--color-gold-bright);
+    width: fit-content;
+    margin: 0 auto 18px;
+    box-shadow:
+      inset 0  1.5px 0 rgba(255, 255, 255, 0.25),
+      inset 0 -1.5px 0 rgba(0, 0, 0, 0.25),
+      0  2px 0 rgba(0, 0, 0, 0.4),
+      0  4px 10px rgba(0, 0, 0, 0.35);
+  }
+  .menu-current-swatch {
+    @apply w-8 h-8 rounded-full grid place-items-center text-white;
+    background: linear-gradient(135deg, #da5ad6, #651564);
+    font-family: var(--font-display);
+    font-size: var(--text-body);
+    box-shadow:
+      inset 0 0 0 1.5px var(--color-gold-deep),
+      inset 0 0 0 4px var(--color-gold),
+      inset 0 2px 0 2px var(--color-gold-bright);
+  }
+  .menu-current-meta { @apply flex flex-col; }
+  .menu-current-name {
+    font-family: var(--font-display);
+    font-size: var(--text-body-italic);
+    color: var(--color-gold-bright);
+    letter-spacing: 0.06em;
+    text-shadow: 0 1px 0 var(--color-gold-shadow), 0 0 6px rgba(0, 0, 0, 0.4);
+  }
+  .menu-current-game {
+    font-family: var(--font-body);
+    font-style: italic;
+    font-weight: 600;
+    font-size: var(--text-body-sm);
+    letter-spacing: 0.12em;
+    color: #e8e4d8;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+    margin-top: 1px;
+  }
+
+  .menu-join-card {
+    @apply flex flex-col items-center rounded-2xl;
+    padding: 14px 16px;
+    margin-bottom: 18px;
+    background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
+    border: 2px solid var(--color-gold-bright);
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.25),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.25),
+      0  3px 0 rgba(0, 0, 0, 0.45),
+      0  5px 12px rgba(0, 0, 0, 0.4);
+  }
+  .menu-join-label {
+    @apply text-center uppercase;
+    font-family: var(--font-display);
+    font-size: var(--text-body-italic);
+    letter-spacing: 0.2em;
+    color: var(--color-gold-bright);
+    margin-bottom: 12px;
+    text-shadow: 0 1px 0 var(--color-gold-shadow), 0 0 8px rgba(0, 0, 0, 0.4);
+  }
+  /* Circular gold bezel matching the TV launcher's QR card. The QR PNG
+     served by `/api/join-qr.png` has transparent corners so the gold
+     ring + the white disc inside the image read as a round coin. */
+  .menu-qr-frame {
+    @apply rounded-full;
+    width: 180px;
+    aspect-ratio: 1;
+    padding: 6px;
+    background: linear-gradient(135deg,
+      var(--color-gold-bright) 0%,
+      var(--color-gold-mid) 30%,
+      var(--color-gold-bright) 50%,
+      var(--color-gold-mid) 70%,
+      var(--color-gold-bright) 100%);
+    box-shadow:
+      0 4px 14px rgba(0, 0, 0, 0.5),
+      inset 0  2px 4px rgba(255, 255, 255, 0.3),
+      inset 0 -2px 4px rgba(0, 0, 0, 0.35);
+  }
+  .menu-qr-img {
+    @apply w-full h-full block rounded-full;
+    background: #fff;
+  }
+  .menu-join-hint {
+    @apply text-center;
+    font-family: var(--font-body);
+    font-style: italic;
+    font-weight: 600;
+    font-size: var(--text-body-italic);
+    color: #fff4e0;
+    margin-top: 10px;
+    letter-spacing: 0.06em;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+  }
+
+  .menu-actions {
+    @apply flex flex-col gap-2;
+  }
+}
+
+@keyframes menu-scrim-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes menu-panel-in {
+  from { opacity: 0; transform: translateY(-46%) scale(0.92); }
+  to   { opacity: 1; transform: translateY(-50%) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu-overlay-panel,
+  .menu-scrim { animation: none !important; }
+}
