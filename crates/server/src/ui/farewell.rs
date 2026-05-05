@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use super::launch_phase::ScreenIntro;
-use super::main_screen::{paint_centered_3d_back_card, with_alpha, BackFace};
+use super::main_screen::{BackFace, paint_centered_3d_back_card, with_alpha};
 use crate::{fonts, palette};
 
 /// How long the farewell message lingers before the fade-to-black

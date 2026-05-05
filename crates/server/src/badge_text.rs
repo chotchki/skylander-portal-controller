@@ -162,16 +162,7 @@ fn draw_centred_lines(buffer: &mut [u8], size: u32, font: &FontRef, lines: &[&st
             0.65,
         );
         draw_line_pass(
-            buffer,
-            size,
-            font,
-            &scaled,
-            scale,
-            line,
-            line_x,
-            baseline,
-            body_color,
-            1.0,
+            buffer, size, font, &scaled, scale, line, line_x, baseline, body_color, 1.0,
         );
     }
 }
@@ -259,7 +250,11 @@ pub fn render_pip(color: [u8; 3], initial: char, ghost: bool, size: u32) -> Vec<
 fn desaturate(rgb: [u8; 3]) -> [u8; 3] {
     let gray = ((rgb[0] as u16 + rgb[1] as u16 + rgb[2] as u16) / 3) as u8;
     let blend = |c: u8, t: f32| ((c as f32) * (1.0 - t) + (gray as f32) * t) as u8;
-    [blend(rgb[0], 0.55), blend(rgb[1], 0.55), blend(rgb[2], 0.55)]
+    [
+        blend(rgb[0], 0.55),
+        blend(rgb[1], 0.55),
+        blend(rgb[2], 0.55),
+    ]
 }
 
 /// Pre-bake the pip's coloured background. Pixels outside radius
@@ -306,9 +301,39 @@ fn draw_centred_glyph(buffer: &mut [u8], size: u32, font: &FontRef, ch: char, gh
     let emboss = (px_size * 0.02).clamp(1.0, 4.0);
     let body_alpha = if ghost { 0.55 } else { 1.0 };
 
-    draw_glyph_at(buffer, size, font, ch, scale, x + emboss, baseline + emboss, [0, 0, 0], 0.85);
-    draw_glyph_at(buffer, size, font, ch, scale, x - emboss, baseline - emboss, [255, 255, 255], 0.65 * body_alpha);
-    draw_glyph_at(buffer, size, font, ch, scale, x, baseline, [247, 247, 251], body_alpha);
+    draw_glyph_at(
+        buffer,
+        size,
+        font,
+        ch,
+        scale,
+        x + emboss,
+        baseline + emboss,
+        [0, 0, 0],
+        0.85,
+    );
+    draw_glyph_at(
+        buffer,
+        size,
+        font,
+        ch,
+        scale,
+        x - emboss,
+        baseline - emboss,
+        [255, 255, 255],
+        0.65 * body_alpha,
+    );
+    draw_glyph_at(
+        buffer,
+        size,
+        font,
+        ch,
+        scale,
+        x,
+        baseline,
+        [247, 247, 251],
+        body_alpha,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -323,7 +348,9 @@ fn draw_glyph_at(
     color: [u8; 3],
     alpha_scale: f32,
 ) {
-    let glyph = font.glyph_id(ch).with_scale_and_position(scale, ab_glyph::point(x, baseline));
+    let glyph = font
+        .glyph_id(ch)
+        .with_scale_and_position(scale, ab_glyph::point(x, baseline));
     let Some(outlined) = font.outline_glyph(glyph) else {
         return;
     };

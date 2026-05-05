@@ -81,8 +81,8 @@ fn open_and_boot() -> (RpcsProcess, UiaPortalDriver) {
     // directly. games.yml provides the dir; EBOOT.BIN is at the
     // standard PS3 disc layout below. No more library-view + select.
     let install_dir = exe.parent().expect("rpcs3 exe parent");
-    let games_yml = skylander_rpcs3_control::games_yml::read_games_yml(install_dir)
-        .expect("read games.yml");
+    let games_yml =
+        skylander_rpcs3_control::games_yml::read_games_yml(install_dir).expect("read games.yml");
     let game_dir = games_yml
         .get(&serial)
         .unwrap_or_else(|| panic!("serial {serial} not in games.yml"));

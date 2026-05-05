@@ -17,7 +17,7 @@
 use std::sync::{Arc, Mutex};
 
 use super::launch_phase::ScreenIntro;
-use super::main_screen::{paint_centered_3d_back_card, with_alpha, BackFace};
+use super::main_screen::{BackFace, paint_centered_3d_back_card, with_alpha};
 use crate::state::{LauncherScreen, LauncherStatus};
 use crate::{fonts, palette};
 
@@ -33,13 +33,7 @@ pub(super) fn render(
     let text_alpha = intro.content_alpha();
 
     ui.vertical_centered(|ui| {
-        paint_centered_3d_back_card(
-            ui,
-            BackFace::Crashed,
-            badge_rig,
-            badge_scale,
-            badge_alpha,
-        );
+        paint_centered_3d_back_card(ui, BackFace::Crashed, badge_rig, badge_scale, badge_alpha);
 
         ui.add_space(24.0);
 

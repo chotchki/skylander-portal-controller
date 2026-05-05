@@ -19,7 +19,7 @@
 use std::sync::{Arc, Mutex};
 
 use super::launch_phase::ScreenIntro;
-use super::main_screen::{paint_centered_3d_back_card, with_alpha, BackFace};
+use super::main_screen::{BackFace, paint_centered_3d_back_card, with_alpha};
 use crate::palette;
 
 pub(super) fn render(

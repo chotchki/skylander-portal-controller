@@ -66,11 +66,10 @@ fn main() -> Result<()> {
         .join("icons")
         .join("icon.svg");
     let out_dir = repo_root.join("assets").join("branding");
-    std::fs::create_dir_all(&out_dir)
-        .with_context(|| format!("create {}", out_dir.display()))?;
+    std::fs::create_dir_all(&out_dir).with_context(|| format!("create {}", out_dir.display()))?;
 
-    let svg_data = std::fs::read(&svg_path)
-        .with_context(|| format!("read SVG: {}", svg_path.display()))?;
+    let svg_data =
+        std::fs::read(&svg_path).with_context(|| format!("read SVG: {}", svg_path.display()))?;
     // Default options — the SVG is self-contained, no external refs,
     // no fonts, no images. Same setup as `tools/icon-bake/src/main.rs`.
     let opts = Options::default();
@@ -95,8 +94,8 @@ fn bake_ico(tree: &Tree, out_path: &Path) -> Result<()> {
         // any background, so the slight over-darkening on partial
         // alpha is invisible at icon scale.
         let image = IconImage::from_rgba_data(size, size, pixmap.data().to_vec());
-        let entry = IconDirEntry::encode(&image)
-            .with_context(|| format!("encode {size}px ico entry"))?;
+        let entry =
+            IconDirEntry::encode(&image).with_context(|| format!("encode {size}px ico entry"))?;
         dir.add_entry(entry);
     }
     let mut file = std::fs::File::create(out_path)

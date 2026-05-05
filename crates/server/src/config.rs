@@ -216,9 +216,7 @@ pub fn load() -> Result<Config> {
         .unwrap_or_else(|| PathBuf::from("."));
     let phone_dist_dir = exe_parent.join("phone-dist");
     let data_root = exe_parent.join("data");
-    if persisted.phone_dist_dir != phone_dist_dir
-        || persisted.data_root != data_root
-    {
+    if persisted.phone_dist_dir != phone_dist_dir || persisted.data_root != data_root {
         info!(
             old_data_root = %persisted.data_root.display(),
             new_data_root = %data_root.display(),

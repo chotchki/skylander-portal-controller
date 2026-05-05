@@ -463,7 +463,6 @@ fn qr_card_flip(
 // back, prefer GL geometry attached to `BadgeRig` over re-introducing
 // 2D egui paint — keeps the disc + halo lit by the same light source.
 
-
 // Removed at PLAN 10.7.10: the entire 2D back-card surface
 // (`paint_bezel`, `paint_radial_gradient_disc`, `lerp_color`,
 // `paint_qr_front`, `paint_titled_card`, `paint_centered_back_card`,
@@ -525,8 +524,7 @@ pub(super) fn paint_centered_3d_back_card(
     let avail = ui.available_height();
     ui.add_space(((avail - CARD_SIZE) * 0.5).max(24.0));
 
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(CARD_SIZE, CARD_SIZE), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(CARD_SIZE, CARD_SIZE), egui::Sense::hover());
 
     crate::badge::paint_badge(
         ui.painter(),

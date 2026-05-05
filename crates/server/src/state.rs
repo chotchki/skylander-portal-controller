@@ -5,6 +5,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Result;
+// `Context` is only consumed inside the `cfg(windows)` BootDirect path
+// below; gating the import this way keeps non-Windows clippy clean
+// (no `unused_imports`) without breaking the Windows lane (which
+// failed the v1.4.2 release).
+#[cfg(windows)]
+use anyhow::Context;
 use skylander_core::{
     Event, Figure, FigureId, GameLaunched, GameSerial, SLOT_COUNT, SlotIndex, SlotState,
 };

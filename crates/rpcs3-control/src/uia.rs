@@ -317,7 +317,6 @@ impl UiaPortalDriver {
         }
         Ok(())
     }
-
 }
 
 impl crate::PortalDriver for UiaPortalDriver {
@@ -534,9 +533,7 @@ impl crate::PortalDriver for UiaPortalDriver {
         wait_for_value(&edit, "None", CLEAR_TIMEOUT)?;
         Ok(())
     }
-
 }
-
 
 fn interpret_slot_value(value: &str) -> SlotState {
     if value.is_empty() || value == "None" {

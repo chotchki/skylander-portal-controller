@@ -34,7 +34,6 @@ pub trait PortalDriver: Send + Sync {
 
     /// Clear `slot`. Returns once the slot shows "None".
     fn clear(&self, slot: SlotIndex) -> Result<()>;
-
 }
 
 #[cfg(windows)]

@@ -26,9 +26,7 @@ use windows::Win32::System::JobObjects::{
     JobObjectExtendedLimitInformation, SetInformationJobObject,
 };
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE};
-use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowTextLengthW, GetWindowTextW,
-};
+use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowTextLengthW, GetWindowTextW};
 use windows::core::BOOL;
 
 const RPCS3_EXE: &str = r"C:\emuluators\rpcs3\rpcs3.exe";
@@ -88,12 +86,17 @@ fn main() -> Result<()> {
 }
 
 fn lookup_game_dir(serial: &str) -> Result<PathBuf> {
-    let body = std::fs::read_to_string(GAMES_YML)
-        .with_context(|| format!("read {GAMES_YML}"))?;
+    let body = std::fs::read_to_string(GAMES_YML).with_context(|| format!("read {GAMES_YML}"))?;
     for line in body.lines() {
-        let Some((k, v)) = line.split_once(':') else { continue; };
+        let Some((k, v)) = line.split_once(':') else {
+            continue;
+        };
         if k.trim() == serial {
-            let path = v.trim().trim_matches('"').trim_end_matches('/').trim_end_matches('\\');
+            let path = v
+                .trim()
+                .trim_matches('"')
+                .trim_end_matches('/')
+                .trim_end_matches('\\');
             return Ok(PathBuf::from(path));
         }
     }
@@ -110,11 +113,7 @@ fn find_top_level_with_prefix(prefix: &str) -> Option<windows::Win32::Foundation
 
 fn find_top_level_with_exact_title(title: &str) -> Option<windows::Win32::Foundation::HWND> {
     let want = title.to_string();
-    enum_top_level(move |hwnd| {
-        read_title(hwnd)
-            .map(|t| t == want)
-            .unwrap_or(false)
-    })
+    enum_top_level(move |hwnd| read_title(hwnd).map(|t| t == want).unwrap_or(false))
 }
 
 fn enum_top_level<F>(mut pred: F) -> Option<windows::Win32::Foundation::HWND>

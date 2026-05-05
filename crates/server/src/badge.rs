@@ -738,8 +738,7 @@ impl BadgeRig {
         if let Some(&idx) = self.pip_cache.get(&key) {
             return idx;
         }
-        let pixels =
-            crate::badge_text::render_pip(color, initial, ghost, self.pip_texture_size);
+        let pixels = crate::badge_text::render_pip(color, initial, ghost, self.pip_texture_size);
         unsafe {
             let tex = match gl.create_texture() {
                 Ok(t) => t,

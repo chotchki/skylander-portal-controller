@@ -141,7 +141,6 @@ impl PortalDriver for MockPortalDriver {
         self.slots.lock().unwrap()[slot.as_usize()] = SlotState::Empty;
         Ok(())
     }
-
 }
 
 /// Seed `enumerate_games` with every supported Skylanders serial so
