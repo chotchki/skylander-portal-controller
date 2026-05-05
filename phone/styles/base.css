@@ -158,17 +158,26 @@ body::after {
 
 /* Suppress text selection on interactive chrome — long-pressing a
    profile card or menu button shouldn't pop the iOS text-select
-   callout. Inputs + textareas override below so typed content works. */
-button, [role="button"] {
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
-  user-select: none;
-  -webkit-user-select: none;
-}
-input, textarea {
-  user-select: text;
-  -webkit-user-select: text;
+   callout. Inputs + textareas override below so typed content works.
+   Wrapped in `@layer base` so component-scoped overrides in
+   `@layer components` (every file under `phone/styles/components/`)
+   correctly win on the cascade. Without the layer, these rules are
+   unlayered and beat layered component rules regardless of
+   selector specificity — which manifested as the credits button
+   showing white text in PLAN 9.7.2 instead of the muted gold the
+   `.pp-tagline` rule explicitly sets. */
+@layer base {
+  button, [role="button"] {
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  input, textarea {
+    user-select: text;
+    -webkit-user-select: text;
+  }
 }
 
 /* App container — flex column that fills the body. Header is a
