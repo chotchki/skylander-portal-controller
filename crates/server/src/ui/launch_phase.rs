@@ -12,11 +12,26 @@
 //!     immediately and the user sees one continuous spin-up.
 //!   - **AwaitingConnect** — steady state. Vortex parked at 1.5, badge
 //!     face-on, text full opacity.
-//!   - **ClosingToInGame** — triggered when RPCS3 starts. Reverse
-//!     choreography: text fades first (badge goes blank), badge spins
-//!     edge-on while alpha fades, then dark-hole iris accelerates to
-//!     cover the screen. Once `progress` hits 1.0 the dispatcher flips
-//!     to `in_game::render` and the transparent panel reveals RPCS3.
+//!   - **RevealingGame** — triggered when the game becomes playable
+//!     (FPS sustained ≥ threshold, PLAN 10.8.7c). Two-phase
+//!     animation that hands control to the in-game transparent
+//!     panel (PLAN 10.8.7e):
+//!       - Phase 1 (progress 0..0.43, ~300ms): badge spins out
+//!         (reverse of intro), iris stays at IRIS_FULL with
+//!         iris_mode = Reveal. Launcher stays fully opaque
+//!         (badge dissolves into a still vortex backdrop).
+//!       - Phase 2 (0.43..1.0, ~400ms): iris_mode flips to
+//!         DarkHole and iris_radius grows 0 → IRIS_FILL_SCREEN.
+//!         The cloudless inner region expands from centre outward
+//!         — the cloud ring retreats off-screen. Sky + starfield
+//!         still paint underneath (panel is still opaque); the
+//!         game isn't visible *yet*, but the launcher visually
+//!         "opens up" to a calm sky.
+//!     Once `progress` hits 1.0 the dispatcher's in-game predicate
+//!     flips true and the transparent panel takes over, swapping
+//!     the sky backdrop for the live game viewport. (One-frame pop
+//!     at the swap; smoothing it would require fading the sky
+//!     paint itself — deferred.)
 //!
 //! All four animation outputs (`iris_radius`, `badge_scale`,
 //! `badge_alpha`, `badge_text_alpha`) are derived from the same
@@ -25,7 +40,21 @@
 //! without further edits.
 
 const INTRO_TRANSITION_S: f32 = 1.8;
-const CLOSE_TRANSITION_S: f32 = 1.0;
+/// Total duration of the launch-to-game reveal animation
+/// (PLAN 10.8.7e). 700 ms reads as a deliberate hand-off without
+/// dragging — phase 1 (spin-out) takes the first 43 %, phase 2
+/// (transparency expansion) takes the remaining 57 %.
+const REVEAL_TRANSITION_S: f32 = 0.7;
+/// Fraction of `REVEAL_TRANSITION_S` allocated to phase 1
+/// (badge spin-out). Phase 2 begins at this point: iris_mode
+/// flips to DarkHole and iris_radius starts growing from 0.
+const REVEAL_PHASE_SPLIT: f32 = 0.43;
+/// `iris_radius` value that's guaranteed to be larger than any
+/// fragment's distance-from-centre, so a `DarkHole` iris of this
+/// size is fully transparent across the whole panel — no cloud
+/// ring left to render. Stops phase 2's expansion at "fully
+/// revealed" rather than continuing to grow off into infinity.
+pub(crate) const IRIS_FILL_SCREEN: f32 = 3.0;
 
 /// Fraction of intro reserved for the "calm starfield only" hold
 /// before the badge starts animating in. Keeps the iris-reveal
@@ -60,7 +89,12 @@ pub(crate) enum LaunchPhase {
         progress: f32,
     },
     AwaitingConnect,
-    ClosingToInGame {
+    /// **PLAN 10.8.7e — replaces ClosingToInGame.** Two-phase
+    /// hand-off from the launcher's opaque Main render to the
+    /// in-game transparent panel. Phase 1 spins the badge out;
+    /// phase 2 grows transparency from centre. See module doc
+    /// comment for the full description.
+    RevealingGame {
         progress: f32,
     },
     /// Returning to the launcher after an in-game session ended. Plays
@@ -94,8 +128,8 @@ impl LaunchPhase {
         has_activity: bool,
     ) -> Self {
         if let Some(close) = closing_elapsed_s {
-            let progress = (close / CLOSE_TRANSITION_S).clamp(0.0, 1.0);
-            return Self::ClosingToInGame { progress };
+            let progress = (close / REVEAL_TRANSITION_S).clamp(0.0, 1.0);
+            return Self::RevealingGame { progress };
         }
         if let Some(returning) = returning_elapsed_s {
             let progress = (returning / INTRO_TRANSITION_S).clamp(0.0, 1.0);
@@ -122,12 +156,23 @@ impl LaunchPhase {
                 IRIS_FULL * ease_out_cubic(progress)
             }
             Self::AwaitingConnect => IRIS_FULL,
-            Self::ClosingToInGame { progress } => {
-                // Iris growth lags the badge by 20% so the focal
-                // element (badge) starts moving before the screen-
-                // wide iris dominates attention.
-                let p = ((progress - 0.2) / 0.8).clamp(0.0, 1.0);
-                IRIS_FULL * ease_in_cubic(p)
+            Self::RevealingGame { progress } => {
+                // PLAN 10.8.7e two-phase iris:
+                //   Phase 1 (0..REVEAL_PHASE_SPLIT): hold at IRIS_FULL.
+                //     Combined with mode=Reveal (handled in
+                //     `iris_mode`), the screen is fully opaque while
+                //     the badge spins out.
+                //   Phase 2 (REVEAL_PHASE_SPLIT..1.0): grow 0 →
+                //     IRIS_FILL_SCREEN. With mode=DarkHole now, the
+                //     transparent inner region expands from a point
+                //     at centre out past the screen edges.
+                if progress < REVEAL_PHASE_SPLIT {
+                    IRIS_FULL
+                } else {
+                    let p2 = ((progress - REVEAL_PHASE_SPLIT) / (1.0 - REVEAL_PHASE_SPLIT))
+                        .clamp(0.0, 1.0);
+                    IRIS_FILL_SCREEN * p2
+                }
             }
         }
     }
@@ -136,7 +181,12 @@ impl LaunchPhase {
     /// visible region; DarkHole grows the hidden region.
     pub(crate) fn iris_mode(self) -> IrisMode {
         match self {
-            Self::ClosingToInGame { .. } => IrisMode::DarkHole,
+            // Phase 2 of RevealingGame: DarkHole grows the
+            // transparent inner region as the iris radius expands,
+            // exposing the game viewport behind the launcher.
+            Self::RevealingGame { progress } if progress >= REVEAL_PHASE_SPLIT => {
+                IrisMode::DarkHole
+            }
             _ => IrisMode::Reveal,
         }
     }
@@ -172,9 +222,12 @@ impl LaunchPhase {
                 FRAC_PI_2 - SWEEP * eased
             }
             Self::AwaitingConnect => 0.0,
-            Self::ClosingToInGame { progress } => {
-                let p = (progress / 0.6).clamp(0.0, 1.0);
-                let eased = ease_out_cubic(p);
+            Self::RevealingGame { progress } => {
+                // Spin out (reverse of intro) over phase 1 only;
+                // locked at edge-on through phase 2 while the iris
+                // grows transparency.
+                let p1 = (progress / REVEAL_PHASE_SPLIT).clamp(0.0, 1.0);
+                let eased = ease_out_cubic(p1);
                 -SWEEP * eased
             }
         }
@@ -197,9 +250,12 @@ impl LaunchPhase {
                 SCALE_MIN_3D + eased * (1.0 - SCALE_MIN_3D)
             }
             Self::AwaitingConnect => 1.0,
-            Self::ClosingToInGame { progress } => {
-                let p = (progress / 0.6).clamp(0.0, 1.0);
-                let eased = smoothstep(1.0 - p);
+            Self::RevealingGame { progress } => {
+                // Shrink 1.0 → SCALE_MIN_3D over phase 1; held at
+                // SCALE_MIN_3D through phase 2 (alpha is 0 by then
+                // anyway, so the size doesn't matter).
+                let p1 = (progress / REVEAL_PHASE_SPLIT).clamp(0.0, 1.0);
+                let eased = smoothstep(1.0 - p1);
                 SCALE_MIN_3D + eased * (1.0 - SCALE_MIN_3D)
             }
         }
@@ -220,9 +276,13 @@ impl LaunchPhase {
                 smoothstep(p)
             }
             Self::AwaitingConnect => 1.0,
-            Self::ClosingToInGame { progress } => {
-                let p = ((progress - 0.6) / 0.4).clamp(0.0, 1.0);
-                1.0 - smoothstep(p)
+            Self::RevealingGame { progress } => {
+                // Fade 1 → 0 over phase 1 — by the time phase 2
+                // begins (transparency expanding from centre), the
+                // badge is fully gone, so the iris-grow has
+                // nothing to dissolve through.
+                let p1 = (progress / REVEAL_PHASE_SPLIT).clamp(0.0, 1.0);
+                1.0 - smoothstep(p1)
             }
         }
     }
@@ -237,26 +297,28 @@ impl LaunchPhase {
                 ((progress - 0.5) / 0.5).clamp(0.0, 1.0)
             }
             Self::AwaitingConnect => 1.0,
-            Self::ClosingToInGame { progress } => (1.0 - progress / 0.4).clamp(0.0, 1.0),
+            Self::RevealingGame { progress } => {
+                // Fade text out fast — same window as the badge
+                // alpha so the badge text disappears as the badge
+                // does.
+                let p1 = (progress / REVEAL_PHASE_SPLIT).clamp(0.0, 1.0);
+                1.0 - smoothstep(p1)
+            }
         }
     }
 
-    /// True once the close transition has fully run. The dispatcher
-    /// uses this to flip from rendering Main-with-close-animation to
-    /// rendering the in-game surface (which uses a transparent panel
-    /// so RPCS3 shows through).
-    pub(crate) fn close_complete(self) -> bool {
-        matches!(self, Self::ClosingToInGame { progress } if progress >= 1.0)
+    /// True once the launch-to-in-game reveal has fully run. The
+    /// dispatcher uses this to flip from rendering Main-with-reveal-
+    /// animation to rendering the in-game surface (transparent
+    /// panel reveals RPCS3 directly).
+    pub(crate) fn reveal_complete(self) -> bool {
+        matches!(self, Self::RevealingGame { progress } if progress >= 1.0)
     }
 }
 
 fn ease_out_cubic(t: f32) -> f32 {
     let inv = 1.0 - t;
     1.0 - inv * inv * inv
-}
-
-fn ease_in_cubic(t: f32) -> f32 {
-    t * t * t
 }
 
 fn smoothstep(t: f32) -> f32 {
@@ -364,19 +426,20 @@ mod tests {
 
     #[test]
     fn close_overrides_intro() {
-        // Close in flight → ClosingToInGame regardless of where intro
-        // would have placed us. Startup-time + close = close.
+        // PLAN 10.8.7e: closing_elapsed_s now drives RevealingGame
+        // (replaces ClosingToInGame). Same precedence: in-flight
+        // launch transition overrides intro.
         match LaunchPhase::compute(0.5, Some(0.0), None, false) {
-            LaunchPhase::ClosingToInGame { progress } => assert!(approx(progress, 0.0)),
-            other => panic!("expected ClosingToInGame, got {other:?}"),
+            LaunchPhase::RevealingGame { progress } => assert!(approx(progress, 0.0)),
+            other => panic!("expected RevealingGame, got {other:?}"),
         }
     }
 
     #[test]
     fn close_progress_clamps_at_one() {
-        match LaunchPhase::compute(0.0, Some(CLOSE_TRANSITION_S * 5.0), None, false) {
-            LaunchPhase::ClosingToInGame { progress } => assert!(approx(progress, 1.0)),
-            other => panic!("expected ClosingToInGame, got {other:?}"),
+        match LaunchPhase::compute(0.0, Some(REVEAL_TRANSITION_S * 5.0), None, false) {
+            LaunchPhase::RevealingGame { progress } => assert!(approx(progress, 1.0)),
+            other => panic!("expected RevealingGame, got {other:?}"),
         }
     }
 
@@ -394,35 +457,79 @@ mod tests {
             LaunchPhase::AwaitingConnect.iris_radius(),
             IRIS_FULL
         ));
+        // PLAN 10.8.7e RevealingGame iris semantics:
+        //   Phase 1 (0 .. REVEAL_PHASE_SPLIT): held at IRIS_FULL.
+        //   Phase 2 (REVEAL_PHASE_SPLIT .. 1.0): grows 0 →
+        //     IRIS_FILL_SCREEN.
+        // Phase 1 mid-window:
         assert!(approx(
-            LaunchPhase::ClosingToInGame { progress: 0.0 }.iris_radius(),
-            0.0
+            LaunchPhase::RevealingGame { progress: 0.0 }.iris_radius(),
+            IRIS_FULL
         ));
         assert!(approx(
-            LaunchPhase::ClosingToInGame { progress: 1.0 }.iris_radius(),
+            LaunchPhase::RevealingGame {
+                progress: REVEAL_PHASE_SPLIT - 0.01
+            }
+            .iris_radius(),
             IRIS_FULL
+        ));
+        // Phase 2 start: iris snaps to 0 (mode also flipping to
+        // DarkHole at this boundary — see iris_mode tests).
+        assert!(approx(
+            LaunchPhase::RevealingGame {
+                progress: REVEAL_PHASE_SPLIT
+            }
+            .iris_radius(),
+            0.0
+        ));
+        // Phase 2 end: filled past screen.
+        assert!(approx(
+            LaunchPhase::RevealingGame { progress: 1.0 }.iris_radius(),
+            IRIS_FILL_SCREEN
         ));
     }
 
     #[test]
-    fn iris_mode_flips_during_close() {
+    fn iris_mode_flips_during_phase_two_of_revealing() {
         assert_eq!(
             LaunchPhase::IntroTransitioning { progress: 0.5 }.iris_mode(),
             IrisMode::Reveal,
         );
         assert_eq!(LaunchPhase::AwaitingConnect.iris_mode(), IrisMode::Reveal);
+        // RevealingGame phase 1: mode stays Reveal so the launcher
+        // is fully opaque while the badge spins out.
         assert_eq!(
-            LaunchPhase::ClosingToInGame { progress: 0.5 }.iris_mode(),
-            IrisMode::DarkHole
+            LaunchPhase::RevealingGame { progress: 0.0 }.iris_mode(),
+            IrisMode::Reveal,
+        );
+        assert_eq!(
+            LaunchPhase::RevealingGame {
+                progress: REVEAL_PHASE_SPLIT - 0.01
+            }
+            .iris_mode(),
+            IrisMode::Reveal,
+        );
+        // Phase 2: flips to DarkHole so the iris-grow expands
+        // transparency from centre.
+        assert_eq!(
+            LaunchPhase::RevealingGame {
+                progress: REVEAL_PHASE_SPLIT
+            }
+            .iris_mode(),
+            IrisMode::DarkHole,
+        );
+        assert_eq!(
+            LaunchPhase::RevealingGame { progress: 1.0 }.iris_mode(),
+            IrisMode::DarkHole,
         );
     }
 
     #[test]
-    fn close_complete_only_at_progress_one() {
-        assert!(!LaunchPhase::AwaitingConnect.close_complete());
-        assert!(!LaunchPhase::ClosingToInGame { progress: 0.5 }.close_complete());
-        assert!(!LaunchPhase::ClosingToInGame { progress: 0.99 }.close_complete());
-        assert!(LaunchPhase::ClosingToInGame { progress: 1.0 }.close_complete());
+    fn reveal_complete_only_at_progress_one() {
+        assert!(!LaunchPhase::AwaitingConnect.reveal_complete());
+        assert!(!LaunchPhase::RevealingGame { progress: 0.5 }.reveal_complete());
+        assert!(!LaunchPhase::RevealingGame { progress: 0.99 }.reveal_complete());
+        assert!(LaunchPhase::RevealingGame { progress: 1.0 }.reveal_complete());
     }
 
     #[test]
@@ -455,15 +562,24 @@ mod tests {
     }
 
     #[test]
-    fn badge_alpha_3d_zero_at_close_end() {
-        // Spin parks at 60% of close, then alpha fades to 0 over
-        // the remaining 40%.
+    fn badge_alpha_3d_fades_through_phase_one_of_revealing() {
+        // PLAN 10.8.7e: badge alpha fades 1 → 0 across phase 1
+        // (progress 0..REVEAL_PHASE_SPLIT) and stays 0 through
+        // phase 2. By the time phase 2 begins (transparency
+        // expanding from centre), the badge is fully gone.
         assert!(approx(
-            LaunchPhase::ClosingToInGame { progress: 0.6 }.badge_alpha_3d(),
+            LaunchPhase::RevealingGame { progress: 0.0 }.badge_alpha_3d(),
             1.0
         ));
         assert!(approx(
-            LaunchPhase::ClosingToInGame { progress: 1.0 }.badge_alpha_3d(),
+            LaunchPhase::RevealingGame {
+                progress: REVEAL_PHASE_SPLIT
+            }
+            .badge_alpha_3d(),
+            0.0
+        ));
+        assert!(approx(
+            LaunchPhase::RevealingGame { progress: 1.0 }.badge_alpha_3d(),
             0.0
         ));
     }

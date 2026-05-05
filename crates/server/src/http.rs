@@ -1294,10 +1294,16 @@ async fn quit_game(
         }
     }
 
-    // Phase 2: let the launcher render the cover. 4 Hz heartbeat
-    // means up to 250 ms between frames; 300 ms gives a safety
-    // margin for any frame already in flight.
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // Phase 2: let the cover land before killing RPCS3. The iris-open
+    // (`ReturnFromGame`) animation takes `INTRO_TRANSITION_S = 1.8s`
+    // to grow from `iris_radius=0` to `IRIS_FULL`. Under the
+    // 10.8.7e+ punch-through model, killing RPCS3 mid-animation
+    // leaves a half-grown opaque disc surrounded by
+    // see-through-to-desktop transparency — exactly the "sudden
+    // flip" we just removed. Wait for the cover to fully land
+    // (~1.5s — slight overlap with the tail of the ease-out cubic,
+    // imperceptible to the user) before killing.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
 
     // Phase 3: kill RPCS3 behind the cover. Now safe — the launcher
     // is rendering opaque (Main with iris animating 0→IRIS_FULL,

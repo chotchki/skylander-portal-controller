@@ -557,6 +557,50 @@ pub fn paint_vortex(
 // this CPU one is only used during the Startup beat where the vortex
 // shader is gated off by iris_radius=0 in Reveal mode).
 
+/// Iris parameters needed for CPU-side alpha masking. Mirrors the
+/// shader's iris computation (`(v_uv - 0.5) * res / min(res.x, res.y)`,
+/// `length(uv)`, `smoothstep(R - softness, R, radius)`). Pass to the
+/// `_masked` paint helpers below to make sky + starfield punch through
+/// to whatever's behind the launcher window (RPCS3 viewport during
+/// in-game / cover transitions, PLAN 10.8.7e).
+#[derive(Debug, Clone, Copy)]
+pub struct IrisMask {
+    pub iris_radius: f32,
+    pub iris_softness: f32,
+    pub iris_mode: IrisMode,
+}
+
+/// Per-point iris factor matching the vortex shader's `iris` value.
+/// 1.0 = launcher fully opaque at this point, 0.0 = fully transparent
+/// (see-through to whatever's behind the launcher window). The two
+/// modes give the same factor at radius=0 (DarkHole) and radius=R+
+/// (Reveal) — the steady states — so a mode flip while both factors
+/// equal 0 is visually continuous (used at the in-game-steady ↔
+/// cover-transition boundary).
+pub fn iris_factor(rect: Rect, p: Pos2, mask: IrisMask) -> f32 {
+    let scale = rect.width().min(rect.height()).max(1.0);
+    let nx = (p.x - rect.center().x) / scale;
+    let ny = (p.y - rect.center().y) / scale;
+    let radius = (nx * nx + ny * ny).sqrt();
+    let edge = smoothstep_f32(
+        mask.iris_radius - mask.iris_softness,
+        mask.iris_radius,
+        radius,
+    );
+    match mask.iris_mode {
+        IrisMode::Reveal => 1.0 - edge,
+        IrisMode::DarkHole => edge,
+    }
+}
+
+fn smoothstep_f32(edge0: f32, edge1: f32, x: f32) -> f32 {
+    if edge1 <= edge0 {
+        return if x < edge0 { 0.0 } else { 1.0 };
+    }
+    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 /// Paint the full sky backdrop: vertical base gradient + top/bottom
 /// hue ellipses. Always-on; the shader vortex layers on top.
 pub fn paint_sky_background(painter: &egui::Painter, rect: Rect) {
@@ -584,6 +628,78 @@ pub fn paint_sky_background(painter: &egui::Painter, rect: Rect) {
         rect.height() * 0.25,
         Color32::from_rgba_unmultiplied(0x0e, 0x24, 0x64, 60),
     );
+}
+
+/// Iris-masked sky backdrop. Same vertical gradient as
+/// `paint_sky_background`, tessellated as a fine grid so each vertex
+/// can carry an alpha multiplier driven by `iris_factor`. The
+/// decorative top/bottom radial-ellipse glows are skipped — they're
+/// subtle enough that omitting them in punch-through mode is
+/// imperceptible, and tessellating them adds complexity for no gain.
+pub fn paint_sky_background_masked(painter: &egui::Painter, rect: Rect, mask: IrisMask) {
+    use egui::epaint::WHITE_UV;
+
+    // 33×33 grid → 1024 quads, 2048 triangles. Vertex spacing ~30px on a
+    // 1080p screen, well below the iris softness band (~200px) so the
+    // alpha falloff reads as continuous.
+    const GRID: usize = 33;
+
+    let mid_pos: f32 = 0.85;
+    let top_color = palette::SF_1;
+    let mid_color = palette::SF_2;
+    let bot_color = palette::SF_3;
+
+    let mut mesh = Mesh::default();
+    for j in 0..GRID {
+        let t_y = j as f32 / (GRID - 1) as f32;
+        let py = rect.top() + rect.height() * t_y;
+        // Sample the 3-stop vertical gradient at this y.
+        let base = if t_y <= mid_pos {
+            let t = (t_y / mid_pos).clamp(0.0, 1.0);
+            lerp_color32(top_color, mid_color, t)
+        } else {
+            let t = ((t_y - mid_pos) / (1.0 - mid_pos)).clamp(0.0, 1.0);
+            lerp_color32(mid_color, bot_color, t)
+        };
+        for i in 0..GRID {
+            let t_x = i as f32 / (GRID - 1) as f32;
+            let px = rect.left() + rect.width() * t_x;
+            let factor = iris_factor(rect, Pos2::new(px, py), mask);
+            let color = scale_alpha(base, factor);
+            mesh.vertices.push(Vertex {
+                pos: Pos2::new(px, py),
+                uv: WHITE_UV,
+                color,
+            });
+        }
+    }
+    let stride = GRID as u32;
+    for j in 0..(GRID - 1) as u32 {
+        for i in 0..(GRID - 1) as u32 {
+            let v00 = j * stride + i;
+            let v10 = v00 + 1;
+            let v01 = v00 + stride;
+            let v11 = v01 + 1;
+            mesh.indices.extend([v00, v10, v01, v10, v11, v01]);
+        }
+    }
+    painter.add(egui::Shape::mesh(mesh));
+}
+
+fn lerp_color32(a: Color32, b: Color32, t: f32) -> Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let lerp_u8 = |x: u8, y: u8| ((x as f32) * (1.0 - t) + (y as f32) * t) as u8;
+    Color32::from_rgba_unmultiplied(
+        lerp_u8(a.r(), b.r()),
+        lerp_u8(a.g(), b.g()),
+        lerp_u8(a.b(), b.b()),
+        lerp_u8(a.a(), b.a()),
+    )
+}
+
+fn scale_alpha(c: Color32, factor: f32) -> Color32 {
+    let f = factor.clamp(0.0, 1.0);
+    Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (c.a() as f32 * f) as u8)
 }
 
 /// Paint a vertical 3-stop linear gradient as a rect-filling mesh.
@@ -681,6 +797,17 @@ pub fn paint_radial_ellipse(
 /// `star_brightness = 0` on the shader and renders this CPU field
 /// AFTER the vortex so the stars sit visibly on top of the clouds.
 pub fn paint_starfield(painter: &egui::Painter, rect: Rect, time_s: f32) {
+    paint_starfield_inner(painter, rect, time_s, None);
+}
+
+/// Iris-masked starfield. Stars whose centre falls inside the iris
+/// hole have their alpha multiplied by `iris_factor` — soft fade at
+/// the boundary, fully suppressed at the centre of a punch-through.
+pub fn paint_starfield_masked(painter: &egui::Painter, rect: Rect, time_s: f32, mask: IrisMask) {
+    paint_starfield_inner(painter, rect, time_s, Some(mask));
+}
+
+fn paint_starfield_inner(painter: &egui::Painter, rect: Rect, time_s: f32, mask: Option<IrisMask>) {
     const NUM_STARS: u32 = 36;
     const SEED: u32 = 0xCAFE_BABE;
     const DRIFT_PX_PER_SEC: f32 = 5.0;
@@ -735,7 +862,14 @@ pub fn paint_starfield(painter: &egui::Painter, rect: Rect, time_s: f32) {
 
         let phase = (h3 as f32 / u32::MAX as f32) * std::f32::consts::TAU;
         let twinkle = 0.5 + 0.5 * (0.5 * (time_s * 1.05 + phase).sin() + 0.5);
-        let alpha = (255.0 * twinkle * life_alpha) as u8;
+        let mut alpha_f = 255.0 * twinkle * life_alpha;
+        if let Some(m) = mask {
+            alpha_f *= iris_factor(rect, egui::pos2(x, y), m);
+        }
+        let alpha = alpha_f as u8;
+        if alpha == 0 {
+            continue;
+        }
 
         painter.circle_filled(
             egui::pos2(x, y),

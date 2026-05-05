@@ -1443,7 +1443,24 @@ flash of desktop or a black panel.
     front), card flips back. ✓
 
   41 workspace test groups still green.
-- [ ] 10.8.7e **`Compiling` → `Playable` (in-game) transition spec.**
+- [x] 10.8.7e **`Compiling` → `Playable` (in-game) transition spec.**
+  Landed: `crates/server/src/ui/launch_phase.rs` replaces
+  `ClosingToInGame` with `RevealingGame { progress }`, two-phase
+  animation. Phase 1 (`progress 0..REVEAL_PHASE_SPLIT=0.43`) keeps
+  iris at `IRIS_FULL` with `iris_mode = Reveal`, plays badge
+  spin-out (`badge_rotation_y`, `badge_scale_3d`, `badge_alpha_3d`
+  curves run reverse of `IntroTransitioning`). Phase 2 (`0.43..1.0`)
+  grows iris from 0 → `IRIS_FILL_SCREEN = 3.0` with `iris_mode =
+  DarkHole` (the *iris hole* is the transparent passthrough; outer
+  vortex retreats). In-game predicate in `ui/mod.rs` now gates on
+  `launch_phase.reveal_complete()`. Dead helpers `ScreenIntro::landed`
+  and `ease_in_cubic` removed. Tests:
+  `iris_radius_progresses_with_phase`,
+  `iris_mode_flips_during_phase_two_of_revealing`,
+  `reveal_complete_only_at_progress_one`,
+  `badge_alpha_3d_fades_through_phase_one_of_revealing` — all 15
+  `launch_phase` tests pass; full workspace `cargo test` clean.
+
   This is the *inverse* of the cover transitions, with its own
   two-phase animation. **No iris-close-to-dark.** The launcher
   retreats by spinning its badge away and then opening
@@ -1452,53 +1469,38 @@ flash of desktop or a black panel.
   *Trigger:* state machine reaches `Playable` (FPS ≥ 10 sustained
   for 1 s, per 10.8.7c).
 
-  *Animation:*
+  *Animation (as built):*
 
   | Phase | Duration | Iris | Badge | Panel |
   |---|---|---|---|---|
-  | **1: badge spin-out** | ~300 ms | stays at `IRIS_FULL`, `iris_mode = Reveal` | reverse of the intro spin: 3D rotation + scale → 0 + alpha → 0 (existing `badge_*_3d` curves played backward) | opaque (sky + starfield + vortex still painting) |
-  | **2: transparency expands from centre** | ~400 ms | `iris_radius` grows from `IRIS_FULL` to a screen-filling value, `iris_mode = Reveal` (iris area = transparent passthrough) | absent (already gone) | becomes effectively transparent inside the expanding iris; outside vortex retreats then vanishes |
-  | (post) | — | — | — | in-game branch's predicate becomes true, `CentralPanel` switches to transparent, game viewport visible |
+  | **1: badge spin-out** | ~300 ms | held at `IRIS_FULL`, `iris_mode = Reveal` (vortex visible everywhere, same as `AwaitingConnect`) | reverse of intro: rotation runs backward across the same `SWEEP`, scale 1 → 0.1, alpha 1 → 0 | opaque (sky + starfield + full vortex) |
+  | **2: vortex retreats from centre** | ~400 ms | `iris_radius` grows `0 → IRIS_FILL_SCREEN (3.0)`, `iris_mode = DarkHole` (cloudless area expands from centre, clouds get pushed outward) | already gone | still opaque (sky + stars beneath, vortex retreating) |
+  | (post) | — | `reveal_complete()` flips true | — | in-game branch takes over, `CentralPanel` switches to transparent, game viewport shows through |
 
-  *Implementation sketch:*
-  - New `LaunchPhase` variant `RevealingGame { progress }` (NOT
-    reusing `ClosingToInGame`). `progress` covers both phases:
-    `0..0.43` is phase 1 (spin-out), `0.43..1.0` is phase 2
-    (iris expand). 0.43 chosen to roughly match phase-1 duration.
-  - `iris_mode()` for `RevealingGame` is `Reveal` throughout —
-    never `DarkHole`. The dark-iris look is forbidden during this
-    transition.
-  - `iris_radius()` for `RevealingGame`:
-    - phase 1: `IRIS_FULL`
-    - phase 2: linear ramp from `IRIS_FULL` to `IRIS_FILL_SCREEN`
-      (a constant we'll add — needs to be ≥ `sqrt(width² +
-      height²)` so a corner-to-corner diagonal is fully inside
-      the iris). With `iris_mode = Reveal` this means the iris
-      area covers the whole panel at the end → effectively
-      transparent reveal of the game.
-  - Badge curves for `RevealingGame`:
-    - `badge_rotation_y()`: reverse of `IntroTransitioning` —
-      same axis, opposite direction, scaled to phase-1 window.
-    - `badge_scale_3d()`: from current scale → 0 over phase 1.
-    - `badge_alpha_3d()`: from 1.0 → 0 over phase 1.
-  - In-game predicate checks `launch_phase.reveal_complete()`
-    instead of `close_complete()`. `reveal_complete = matches!(self,
-    Self::RevealingGame { progress } if progress >= 1.0)`.
+  *Why DarkHole, not Reveal:* the shader fragment is `iris = (mode == Reveal) ? (1 - edge) : edge`. With `Reveal` and growing radius, the visible-clouds region expands outward — the OPPOSITE of what we want. With `DarkHole`, the cloudless inner region expands as the radius grows, which is the visible "vortex retreats from centre" effect. The earlier spec line ("Reveal throughout") was wrong — it confused `DarkHole` (cloudless inner region; sky beneath shows through) with literal black, but `DarkHole` only suppresses the shader's cloud output, not the underlying sky. The "only Farewell shows black" rule is preserved: phase 2 shows sky + stars + retreating vortex ring, never a black hole.
 
-  *Why this matches the strict "only Farewell shows black"
-  rule:* nothing here renders black or dark-vortex. Phase 1 keeps
-  the launcher fully opaque with the badge dissolving naturally.
-  Phase 2 grows transparency from the centre — the user sees the
-  game reveal under a vortex ring that retreats outward. Coherent
-  with the cover transitions (which go `0 → open` with badge
-  spin-in); this one goes `open → fill` with badge spin-out.
-  Symmetric grammar.
+  *Implementation:*
+  - `LaunchPhase::RevealingGame { progress }` replaces `ClosingToInGame`. `progress` covers both phases: `0..REVEAL_PHASE_SPLIT (0.43)` is phase 1, `REVEAL_PHASE_SPLIT..1.0` is phase 2.
+  - `iris_radius()`: phase 1 holds at `IRIS_FULL`; phase 2 grows `0 → IRIS_FILL_SCREEN (3.0)` linearly (large enough to cover any corner of the screen).
+  - `iris_mode()`: phase 1 = `Reveal`; phase 2 = `DarkHole`.
+  - Badge curves (`badge_rotation_y`, `badge_scale_3d`, `badge_alpha_3d`): driven by `p1 = progress / REVEAL_PHASE_SPLIT`, so the spin-out completes at the phase boundary and the badge stays gone through phase 2.
+  - In-game predicate gates on `launch_phase.reveal_complete()`. Dead helpers `ScreenIntro::landed` and `ease_in_cubic` removed.
 
-  *Dependencies:* requires changes to `launch_phase.rs`
-  (`LaunchPhase` enum, `iris_radius`, `iris_mode`, badge curves)
-  and the in-game predicate in `ui/mod.rs`. Vortex shader needs
-  to handle `iris_radius` greater than `IRIS_FULL` cleanly (most
-  likely already does — verify in 10.8.7a audit).
+  *Known seam (resolved in 10.8.7e2):* at `progress = 1.0`, the launcher panel originally flipped from opaque (sky beneath the retreated vortex) to transparent (game shows through). 10.8.7e2 removes the panel-flip entirely.
+- [x] 10.8.7e2 **Iris-as-real-punch-through (no panel flip).** Followup to 10.8.7e after Chris flagged the residual 1-frame pop: "the whole point of the iris is so opening and closing shows the game window underneath, NO sudden flips." The iris must be a literal alpha-mask through to whatever's behind the launcher window (the RPCS3 viewport during in-game / cover transitions), not a state-transition signal that flips between opaque/transparent panels.
+
+  *Architecture:*
+  - One render branch in `LauncherApp::update`. Always uses `Frame::none().fill(TRANSPARENT)` for the `CentralPanel`. The legacy "in-game branch" is gone — its predicate (`reveal_complete && rpcs3_running && current_game.is_some() && Main && !switching && !cover_active`) is now `is_in_game`, a logical state used only to (a) drive the reconnect-QR overlay paint, (b) pick the 4 Hz repaint cadence, (c) feed `was_in_game` into `detect_returning_from_game`. No panel flip.
+  - **`game_underneath`** = `rpcs3_running && current_game.is_some()`. When true, the CPU sky/starfield paints route through `_masked` variants in `vortex.rs` that alpha-multiply by `iris_factor` per vertex/star. When false (boot, picker, post-shutdown), the legacy unmasked paths fire so the launcher is fully opaque (eframe window is transparent — without an opaque sky, the user would see the desktop).
+  - `vortex::iris_factor(rect, point, mask)` mirrors the shader's `iris` computation — `uv = (point - center) * scale`, `radius = length(uv)`, `edge = smoothstep(R - softness, R, radius)`, `factor = (mode == Reveal) ? 1 - edge : edge`. Same math the GPU uses, so CPU and GPU layers align at the boundary.
+  - `vortex::paint_sky_background_masked` tessellates the rect into a 33×33 grid mesh with per-vertex alpha = `iris_factor`. The decorative top/bottom radial-glow ellipses are skipped during punch-through (subtle enough that omission is imperceptible, and they're not radial about the iris centre so tessellating them is awkward).
+  - `vortex::paint_starfield_masked` multiplies each star's alpha by `iris_factor` at the star's centre. Stars at factor=0 are skipped.
+
+  *Mode-flip continuity at the in-game boundary:* the cover→game transition does `Reveal + R = IRIS_FULL` (steady launcher) → `DarkHole + R = 0` (start of phase 2 of `RevealingGame`). At both endpoints, `iris_factor = 1` everywhere — `Reveal+1.5` because edge=0 inside R=1.5; `DarkHole+0` because edge=1 outside R=0. No visible flip across the mode change. Symmetric on the way out.
+
+  *Cover-before-kill timing:* `/api/quit`'s sleep was 300 ms ("4 Hz heartbeat + safety"). With true punch-through, killing RPCS3 mid-iris-animation drops the game viewport behind a half-grown opaque disc — desktop visible at the corners. Bumped to 1500 ms so the cover lands (`ease_out_cubic(1500/1800) ≈ 0.97 → R ≈ 1.45 ≥ corner_radius + softness`) before the kill executes. The shutdown handler's existing 1200 ms is unchanged — Farewell uses `screen_intro` (`DURATION_S = 1.2`) so the Farewell badge lands at 1200 ms anyway, and 1200 ms is enough for `iris_radius` to fully cover corners under `INTRO_TRANSITION_S`.
+
+  *Tests:* full workspace `cargo test` passes (15 launch_phase, 127 server-lib, 26 sky-parser, etc.). The mask helpers + `iris_factor` aren't separately unit-tested — visual correctness depends on continuity properties that are easier to validate with the eyeball-on-HTPC pass in 10.8.7f than with a CPU-side raster comparison.
 - [ ] 10.8.7f **Local-cycle testing per phase.** Each phase ends
   with `tools/build-msi.sh --install` on the HTPC, walk through
   the affected flows visually, confirm behavior matches the

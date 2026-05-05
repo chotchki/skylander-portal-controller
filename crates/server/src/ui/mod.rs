@@ -456,47 +456,35 @@ impl eframe::App for LauncherApp {
             self.returning_from_game_at = None;
         }
 
-        // Close animation has finished — for the in-game close path
-        // (game running + Main screen), hand off to the transparent
-        // in-game surface so RPCS3 shows through. The close can also
-        // fire for shutdown (screen=Farewell), in which case we DON'T
-        // want to flip to in-game — the Farewell arm below renders
-        // the closed-iris backdrop + farewell badge instead.
-        // In-game render fires on `rpcs3_running` (NOT game_playable)
-        // so mid-game shader compile flapping doesn't bounce the
-        // launcher back to the Main view. game_playable is the
-        // signal to START closing; once close is complete we stay
-        // in-game as long as RPCS3 is alive.
+        // PLAN 10.8.7e+: single-branch render. The launcher CentralPanel
+        // is always transparent and always painted; the iris animation
+        // (sky + starfield + vortex) is alpha-masked when a game is
+        // running underneath, so the launcher punches through to the
+        // RPCS3 viewport instead of doing a hard panel-flip at
+        // `reveal_complete`. Cover transitions (graceful quit, switch,
+        // crash) drive the same iris machinery in reverse: the
+        // launcher disc grows from the centre, with the game still
+        // visible at the corners until cover is fully landed.
         //
-        // PLAN 4.15.9 — gate on `current_game.is_some()` too. Under
-        // 4.15.16 rpcs3_running stays true during game-switching
-        // (process alive at library view), so without this gate the
-        // launcher would keep rendering transparent and the user
-        // would see RPCS3's library view peeking through during the
-        // switch. current_game only flips back to Some when the next
-        // boot completes, which is exactly when we want transparency
-        // to resume.
-        //
-        // 2026-04-24 — also gate on `!switching`: between switching=true
-        // being set and `current_game` clearing on stop_emulation
-        // completion, this branch would fire (current_game still Some)
-        // and paint transparent just as RPCS3 was minimising the game
-        // viewport — the player saw a brief flash of desktop before the
-        // launcher flipped to the opaque SWITCHING GAMES heading. With
-        // the `!switching` gate, the moment the phone requests a switch
-        // the main-branch takes over and paints the closed-iris backdrop
-        // over whatever RPCS3 is doing underneath.
-        if launch_phase.close_complete()
+        // Logical "in-game" state (iris fully open over a live game,
+        // no cover transition mid-flight) drives the reconnect-QR
+        // overlay + the 4Hz repaint cadence. Same predicate as the
+        // old in-game branch — just no longer tied to a panel flip.
+        let is_in_game = launch_phase.reveal_complete()
             && status_snapshot.rpcs3_running
             && status_snapshot.current_game.is_some()
             && !status_snapshot.switching
             && !status_snapshot.cover_active
-            && matches!(status_snapshot.screen, LauncherScreen::Main)
-        {
-            // PLAN 4.19.12 — stamp/clear the reconnect-QR fade-in timer
-            // only while we're on the in-game surface, so the fade
-            // always plays on re-entry rather than carrying stale
-            // elapsed time from an earlier session.
+            && matches!(status_snapshot.screen, LauncherScreen::Main);
+
+        // Cache for the next frame's `detect_returning_from_game`.
+        let prev_was_in_game = self.was_in_game;
+        self.was_in_game = is_in_game;
+
+        // PLAN 4.19.12 — reconnect-QR fade timer. Stamps when in-game
+        // with no clients, clears otherwise so a subsequent in-game
+        // entry with clients=0 starts the fade fresh.
+        let reconnect_fade_elapsed_s = if is_in_game {
             let clients_now = self.clients.load(Ordering::Relaxed);
             if clients_now == 0 {
                 if self.reconnect_qr_shown_at.is_none() {
@@ -505,36 +493,19 @@ impl eframe::App for LauncherApp {
             } else {
                 self.reconnect_qr_shown_at = None;
             }
-            let reconnect_fade_elapsed_s = self
-                .reconnect_qr_shown_at
+            self.reconnect_qr_shown_at
                 .map(|t| t.elapsed().as_secs_f32())
-                .unwrap_or(0.0);
-            egui::CentralPanel::default()
-                .frame(egui::Frame::none().fill(egui::Color32::TRANSPARENT))
-                .show(ctx, |ui| {
-                    in_game::render(
-                        ui,
-                        &self.clients,
-                        self.qr_texture.as_ref(),
-                        reconnect_fade_elapsed_s,
-                    );
-                });
-            self.was_in_game = true;
-            // In-game repaint cadence — 60fps while the reconnect-QR
-            // fade is animating in (clients=0 case), otherwise a
-            // 4 Hz heartbeat so we catch background status flips
-            // (screen → Farewell from /api/shutdown, rpcs3_running →
-            // false from /api/quit) without anyone needing to
-            // explicitly wake us. Without this heartbeat the
-            // launcher sat fully idle in-game under direct-boot
-            // (PLAN 10.8.4) — there's no longer an always-running
-            // shader-compile watchdog firing 60fps repaints — and a
-            // /api/shutdown setting screen=Farewell never reached a
-            // render, so the Farewell countdown never started and
-            // the launcher process never closed (Chris 2026-05-04).
-            // 4Hz on a fully-transparent panel is essentially
-            // free; the laptop-heat regression PLAN 10.7.9 fixed
-            // was 60fps on empty repaints, not 4Hz.
+                .unwrap_or(0.0)
+        } else {
+            self.reconnect_qr_shown_at = None;
+            0.0
+        };
+
+        // In-game repaint cadence: 60fps while the reconnect-QR fade
+        // is animating in (clients=0 case), 4Hz heartbeat once it
+        // settles. Otherwise (launcher animations, vortex, badge
+        // motion) a full 60fps. PLAN 10.7.9 + 10.8.7.
+        if is_in_game {
             let in_game_repaint = if reconnect_fade_elapsed_s > 0.0
                 && reconnect_fade_elapsed_s < in_game::RECONNECT_FADE_IN_S
             {
@@ -545,153 +516,182 @@ impl eframe::App for LauncherApp {
             ctx.request_repaint_after(in_game_repaint);
             // Loading is over — the launch handler intentionally
             // left `loading_game` set so the LOADING badge persisted
-            // through compile; clear it now that the launcher is
-            // rendering the actual game so the next launcher boot
+            // through compile; clear it now that the iris is fully
+            // open over the live game so the next launcher boot
             // starts clean.
             if let Ok(mut st) = self.status.lock() {
                 st.loading_game = None;
             }
-            return;
+        } else {
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
         }
-        // Cache for the next frame's transition detection.
-        let prev_was_in_game = self.was_in_game;
-        self.was_in_game = false;
-        // PLAN 4.19.12 — reset the reconnect-QR fade timer whenever
-        // we're NOT rendering the in-game surface this frame, so a
-        // subsequent in-game entry with clients=0 starts the fade
-        // fresh rather than inheriting elapsed time from an earlier
-        // session.
-        self.reconnect_qr_shown_at = None;
-        // Launcher-active branch: vortex shader animates clouds
-        // continuously, the 3D badge has multi-turn intro + flip
-        // animations, the CPU starfield twinkles every frame.
-        // 60fps is the right cadence for all of those. Other
-        // surfaces (in-game) gate their own repaint cadence
-        // above (PLAN 10.7.9).
-        ctx.request_repaint_after(std::time::Duration::from_millis(16));
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let rect = ui.max_rect();
+        // Punch-through is only meaningful when there's something to
+        // show through to. With no RPCS3 alive (boot, picker, post-
+        // shutdown), the launcher must paint fully opaque or the
+        // user sees the desktop behind the transparent eframe window.
+        let game_underneath =
+            status_snapshot.rpcs3_running && status_snapshot.current_game.is_some();
 
-            // Layer 0: soft top + bottom sky-glow ellipses. Static
-            // backdrop that gives the dark panel ambient depth — what
-            // the mock's `.sky` element does with two CSS radial
-            // gradients (tv_launcher_v3.html lines 36-43).
-            vortex::paint_sky_background(ui.painter(), rect);
+        egui::CentralPanel::default()
+            .frame(egui::Frame::none().fill(egui::Color32::TRANSPARENT))
+            .show(ctx, |ui| {
+                let rect = ui.max_rect();
 
-            // Layer 1: tuned CPU starfield (gold/blue tints, radial
-            // outward drift, twinkle). Painted before the vortex so
-            // the shader's iris alpha mask determines whether stars
-            // show: alpha=0 (Startup, outside iris during Intro,
-            // dark hole during Close) → stars visible through;
-            // alpha=1 (AwaitingConnect interior) → vortex covers
-            // them. Matches the pre-shader rendering order Chris
-            // settled on, ref `Screenshot 2026-04-19 093358.png`.
-            vortex::paint_starfield(ui.painter(), rect, time_s);
+                // Iris geometry shared by sky/starfield/vortex. The
+                // Crashed-from-in-game case overrides the radius with
+                // screen_intro's reveal so the vortex grows in alongside
+                // the badge spin (without it, the launcher would snap
+                // from transparent to full vortex on screen-variant
+                // change). Other states use launch_phase directly.
+                let iris_radius = match (&status_snapshot.screen, prev_was_in_game) {
+                    (LauncherScreen::Crashed { .. }, true) => screen_intro.iris_radius(),
+                    _ => launch_phase.iris_radius(),
+                };
+                let iris_mode = launch_phase.iris_mode();
+                let iris_softness = self.vortex_idle.iris_softness;
 
-            // Layer 2: GPU vortex shader. Most params (noise, colors,
-            // motion, streaks) come from the bundled `idle.json`
-            // preset. Iris radius/mode come from launch_phase, with
-            // one override: Crashed coming from in-game uses the
-            // ScreenIntro reveal so the vortex grows in alongside
-            // the badge spin — without it, the launcher would snap
-            // from transparent (in-game) to full vortex instantly.
-            // `star_brightness` is forced to 0; production uses the
-            // CPU starfield (Layer 1).
-            let mut vortex_params = self.vortex_idle;
-            vortex_params.iris_radius = match (&status_snapshot.screen, prev_was_in_game) {
-                (LauncherScreen::Crashed { .. }, true) => screen_intro.iris_radius(),
-                _ => launch_phase.iris_radius(),
-            };
-            vortex_params.iris_mode = launch_phase.iris_mode();
-            vortex_params.star_brightness = 0.0;
-            // Add the preset's `time_offset` to the launcher's
-            // elapsed time so the very first frame's `u_time`
-            // matches the spike-tuned starting snapshot. Without
-            // this, every launcher boot shows the noise field at
-            // wall-clock-zero (uninteresting flat-looking phase);
-            // with it, the visible vortex matches what was dialled
-            // in the spike at the moment the preset was saved.
-            let vortex_time_s = time_s + self.vortex_idle.time_offset;
-            vortex::paint_vortex(
-                ui.painter(),
-                rect,
-                self.vortex_rig.clone(),
-                vortex_params,
-                vortex_time_s,
-            );
-
-            // Layer 2: CPU starfield. Painted AFTER the shader so the
-            // tuned stars (gold + blue tints, radial outward drift,
-            // per-star twinkle) sit on top of the vortex clouds
-            // rather than being obscured by the shader's opaque
-            // output. Reads as "stars in space, with clouds drifting
-            // among them" — the design language the launcher's been
-            // tuned to.
-            vortex::paint_starfield(ui.painter(), rect, time_s);
-
-            // Layer 3: per-screen content.
-            match &status_snapshot.screen {
-                LauncherScreen::Main => {
-                    // 2026-04-24 — two prior special cases retired from
-                    // this branch as part of the ring-badge standard-
-                    // isation:
-                    //   1. The `switching` heading was folded into the
-                    //      card's `BackFace::Switching` (halo spin).
-                    //   2. The heraldic `STARTING` brand intro title
-                    //      was folded into `BackFace::Starting`.
-                    // `render_main` owns the whole centre layout now;
-                    // the back-face carries every non-QR state.
-                    self.render_main(ui, ctx, &status_snapshot, launch_phase);
+                // Layer 0: sky backdrop. Iris-masked when a game's
+                // underneath so the launcher disc punches through to the
+                // RPCS3 viewport at `iris_factor = 0`. The decorative
+                // top/bottom radial-glow ellipses are skipped during
+                // punch-through (subtle enough that omitting them is
+                // imperceptible).
+                if game_underneath {
+                    let mask = vortex::IrisMask {
+                        iris_radius,
+                        iris_softness,
+                        iris_mode,
+                    };
+                    vortex::paint_sky_background_masked(ui.painter(), rect, mask);
+                } else {
+                    vortex::paint_sky_background(ui.painter(), rect);
                 }
-                LauncherScreen::Crashed { message } => {
-                    crashed::render(
-                        ui,
-                        &self.status,
-                        self.badge_rig.clone(),
-                        message,
-                        screen_intro,
-                    );
+
+                // Layer 1: tuned CPU starfield. Same iris-mask treatment
+                // — stars inside the iris hole get alpha=0 so the game
+                // viewport is unobstructed.
+                if game_underneath {
+                    let mask = vortex::IrisMask {
+                        iris_radius,
+                        iris_softness,
+                        iris_mode,
+                    };
+                    vortex::paint_starfield_masked(ui.painter(), rect, time_s, mask);
+                } else {
+                    vortex::paint_starfield(ui.painter(), rect, time_s);
                 }
-                LauncherScreen::Farewell => {
-                    // PLAN 10.8.7d: badge spins in WITH the iris-open
-                    // animation (was: badge already landed while iris
-                    // closed around it). Pass the live `screen_intro`
-                    // — `screen_entered_at` resets on screen-variant
-                    // change so the intro starts at 0 the first frame
-                    // of Farewell, the badge grows + spins + fades in
-                    // over `ScreenIntro::DURATION_S` (1.2 s), iris
-                    // opens 0→IRIS_FULL over `INTRO_TRANSITION_S`
-                    // (1.8 s) — they land together.
-                    //
-                    // Countdown still starts on the first call to
-                    // farewell::render → first frame of screen=
-                    // Farewell, covering the iris-open + steady
-                    // GOODBYE beat together (1.8 s open + 1.2 s
-                    // hold = 3 s, then the 0.8 s black-fade overlay
-                    // kicks in).
-                    if self.farewell_started_at.is_none() {
-                        tracing::info!("farewell countdown starting");
+
+                // Layer 2: GPU vortex shader. Already iris-aware (same
+                // `iris_factor` math the masked CPU paths use, just on
+                // the GPU). `star_brightness` is forced to 0; production
+                // uses the CPU starfield (Layer 1).
+                let mut vortex_params = self.vortex_idle;
+                vortex_params.iris_radius = iris_radius;
+                vortex_params.iris_mode = iris_mode;
+                vortex_params.star_brightness = 0.0;
+                // Add the preset's `time_offset` to the launcher's
+                // elapsed time so the very first frame's `u_time`
+                // matches the spike-tuned starting snapshot. Without
+                // this, every launcher boot shows the noise field at
+                // wall-clock-zero (uninteresting flat-looking phase);
+                // with it, the visible vortex matches what was dialled
+                // in the spike at the moment the preset was saved.
+                let vortex_time_s = time_s + self.vortex_idle.time_offset;
+                vortex::paint_vortex(
+                    ui.painter(),
+                    rect,
+                    self.vortex_rig.clone(),
+                    vortex_params,
+                    vortex_time_s,
+                );
+
+                // Layer 2: CPU starfield. Painted AFTER the shader so the
+                // tuned stars (gold + blue tints, radial outward drift,
+                // per-star twinkle) sit on top of the vortex clouds
+                // rather than being obscured by the shader's opaque
+                // output. Reads as "stars in space, with clouds drifting
+                // among them" — the design language the launcher's been
+                // tuned to.
+                vortex::paint_starfield(ui.painter(), rect, time_s);
+
+                // Layer 3: per-screen content.
+                match &status_snapshot.screen {
+                    LauncherScreen::Main => {
+                        // 2026-04-24 — two prior special cases retired from
+                        // this branch as part of the ring-badge standard-
+                        // isation:
+                        //   1. The `switching` heading was folded into the
+                        //      card's `BackFace::Switching` (halo spin).
+                        //   2. The heraldic `STARTING` brand intro title
+                        //      was folded into `BackFace::Starting`.
+                        // `render_main` owns the whole centre layout now;
+                        // the back-face carries every non-QR state.
+                        self.render_main(ui, ctx, &status_snapshot, launch_phase);
                     }
-                    farewell::render(
+                    LauncherScreen::Crashed { message } => {
+                        crashed::render(
+                            ui,
+                            &self.status,
+                            self.badge_rig.clone(),
+                            message,
+                            screen_intro,
+                        );
+                    }
+                    LauncherScreen::Farewell => {
+                        // PLAN 10.8.7d: badge spins in WITH the iris-open
+                        // animation (was: badge already landed while iris
+                        // closed around it). Pass the live `screen_intro`
+                        // — `screen_entered_at` resets on screen-variant
+                        // change so the intro starts at 0 the first frame
+                        // of Farewell, the badge grows + spins + fades in
+                        // over `ScreenIntro::DURATION_S` (1.2 s), iris
+                        // opens 0→IRIS_FULL over `INTRO_TRANSITION_S`
+                        // (1.8 s) — they land together.
+                        //
+                        // Countdown still starts on the first call to
+                        // farewell::render → first frame of screen=
+                        // Farewell, covering the iris-open + steady
+                        // GOODBYE beat together (1.8 s open + 1.2 s
+                        // hold = 3 s, then the 0.8 s black-fade overlay
+                        // kicks in).
+                        if self.farewell_started_at.is_none() {
+                            tracing::info!("farewell countdown starting");
+                        }
+                        farewell::render(
+                            ui,
+                            ctx,
+                            self.badge_rig.clone(),
+                            &mut self.farewell_started_at,
+                            screen_intro,
+                        );
+                    }
+                    LauncherScreen::ServerError { message } => {
+                        server_error::render(
+                            ui,
+                            ctx,
+                            self.badge_rig.clone(),
+                            message,
+                            screen_intro,
+                        );
+                    }
+                }
+
+                // In-game reconnect-QR overlay. Iris is fully open over a
+                // live game (`is_in_game`); the launcher's sky/stars/
+                // vortex are all alpha=0 across the screen, so painting
+                // here lays the QR coin directly on top of the game
+                // viewport — same effect as the old transparent in-game
+                // panel, just folded into the single-branch render.
+                if is_in_game {
+                    in_game::render(
                         ui,
-                        ctx,
-                        self.badge_rig.clone(),
-                        &mut self.farewell_started_at,
-                        screen_intro,
+                        &self.clients,
+                        self.qr_texture.as_ref(),
+                        reconnect_fade_elapsed_s,
                     );
                 }
-                LauncherScreen::ServerError { message } => {
-                    server_error::render(
-                        ui,
-                        ctx,
-                        self.badge_rig.clone(),
-                        message,
-                        screen_intro,
-                    );
-                }
-            }
-        });
+            });
     }
 
     fn on_exit(&mut self, gl: Option<&egui_glow::glow::Context>) {
