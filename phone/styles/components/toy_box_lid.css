@@ -47,24 +47,46 @@
       0  6px 20px rgba(0, 0, 0, 0.7);
     transition: max-height 0.35s var(--ease-smooth);
     max-height: 52px;
-    /* Bleed edge-to-edge through .app's horizontal + bottom padding so
-       the lid paints the iOS home-indicator safe-area with wood. Inner
-       padding re-applies the safe-area insets so grabber/title stay
-       above the home indicator. */
-    margin-left:   calc(-1 * (env(safe-area-inset-left) + 12px));
-    margin-right:  calc(-1 * (env(safe-area-inset-right) + 12px));
-    margin-bottom: calc(-1 * (env(safe-area-inset-bottom) + 16px));
-    padding: 6px 14px calc(8px + env(safe-area-inset-bottom) + 16px);
+    /* Bleed edge-to-edge horizontally through .app's side padding so
+       the wood plank spans the full viewport width. The bottom-anchored
+       bleed (negative `margin-bottom` + `safe-area-inset-bottom` padding)
+       lives on `.closed` only — that's the state where the lid sits at
+       the bottom of `.screen-portal` (portal grid takes the top, lid is
+       a bottom plank above the iOS home indicator). In Compact /
+       Expanded states the lid renders at the TOP of the flex column
+       (portal grid is `display: none`); a bottom bleed there pulls
+       `.box-body-bg` up under the lid and cuts off the first row of
+       figures (PLAN 9.7.2 sibling, surfaced 2026-05-04 son-playtest). */
+    margin-left:  calc(-1 * (env(safe-area-inset-left) + 12px));
+    margin-right: calc(-1 * (env(safe-area-inset-right) + 12px));
+    padding: 6px 14px 8px;
   }
   .lid-open-p4.expanded {
-    max-height: calc(320px + env(safe-area-inset-bottom) + 16px);
+    max-height: 320px;
   }
   .lid-open-p4.closed {
-    /* design_language.md §6.7: closed lid is a 64px wooden plank. Keep
-       the grabber + wood + gold trim visible; hide the search toggle. */
-    max-height:     calc(64px  + env(safe-area-inset-bottom) + 16px);
+    /* design_language.md §6.7: closed lid is a 64px wooden plank above
+       the iOS home indicator. Bottom-anchored: the wood paints the
+       safe-area-inset-bottom strip too, with inner padding re-applying
+       the inset so the title stays above the home indicator. */
+    max-height:     calc(64px + env(safe-area-inset-bottom) + 16px);
+    margin-bottom:  calc(-1 * (env(safe-area-inset-bottom) + 16px));
     padding-top:    10px;
     padding-bottom: calc(10px + env(safe-area-inset-bottom) + 16px);
+  }
+  /* iPad+ — bump every state ~2× so the lid feels proportional to the
+     larger viewport + rem-scaled content (PLAN 9.7.2 driver feedback,
+     "open toy box lid should be twice as tall on iPad"). */
+  @media (min-width: 700px) {
+    .lid-open-p4 {
+      max-height: 104px;
+    }
+    .lid-open-p4.expanded {
+      max-height: 640px;
+    }
+    .lid-open-p4.closed {
+      max-height: calc(128px + env(safe-area-inset-bottom) + 16px);
+    }
   }
   .lid-open-p4.closed .search-expanded-p4 {
     display: none;
@@ -80,12 +102,26 @@
   }
   .lid-open-p4.closed .lid-top-row-p4::after {
     content: "\25B2";
-    font-size: 12px;
+    /* Sized at ~50% of the closed-lid `max-height` (PLAN 9.7 playtest
+       2026-05-04 — "the hint to swipe or tap is way too subtle";
+       previous 12px was a hairline against a 64px lid and even worse
+       against the iPad's 128px lid). Phone closed lid = 64px → 32px
+       chevron; iPad closed lid = 128px → 64px chevron via the
+       breakpoint below. */
+    font-size: 32px;
+    line-height: 1;
     color: var(--color-wood-gold-b);
-    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+    text-shadow:
+      0 1px 0 rgba(0, 0, 0, 0.5),
+      0 0 8px rgba(212, 168, 74, 0.4);
     animation: lid-chevron-pulse 1.8s ease-in-out infinite;
     /* Decorative — don't intercept the lid's pointerdown. */
     pointer-events: none;
+  }
+  @media (min-width: 700px) {
+    .lid-open-p4.closed .lid-top-row-p4::after {
+      font-size: 64px;
+    }
   }
 
   /* Gesture zone — grabber + header own the touch scroll, expanded
@@ -118,6 +154,14 @@
     min-height: 36px;
   }
   .lid-open-title-p4 {
+    @apply flex items-center;
+    /* Match `.search-toggle-p4`'s rendered height so the title text
+       and the SEARCH button visually share a baseline inside
+       `.lid-top-row-p4` — both sides center-align inside the row, but
+       the search toggle's padding made it taller than the bare title
+       text and the title appeared to sit below centre on iPhone
+       (2026-05-04 playtest). */
+    min-height: 35px;
     font-family: var(--font-display);
     font-size: var(--text-body);
     letter-spacing: 0.16em;
@@ -172,6 +216,21 @@
       inset 0 -2px 0 rgba(0, 0, 0, 0.25),
       0  2px 6px rgba(0, 0, 0, 0.4);
   }
+  /* Inline variant (PLAN 9.7 playtest 2026-05-04): shown in the lid's
+     top row in place of the SEARCH toggle while expanded. Doesn't span
+     full width — sits beside `.lid-open-title-p4` and grows to fill the
+     remaining row width. No margin-bottom: the row's own padding owns
+     the vertical rhythm. */
+  .search-input-p4.search-input-inline-p4 {
+    @apply w-auto;
+    flex: 1 1 auto;
+    margin-left: 12px;
+    margin-bottom: 0;
+    padding: 6px 14px;
+    /* Match `.search-toggle-p4`'s rendered min-height so swapping
+       between the button and input doesn't reflow the row. */
+    min-height: 35px;
+  }
   .search-input-p4::placeholder {
     color: #e8e4d8;
     font-style: italic;
@@ -188,33 +247,37 @@
     animation: search-shimmer 1.2s ease-in-out;
   }
 
-  /* Drill section: GAMES / ELEMENTS / CATEGORY chip rows. */
+  /* Drill section: GAMES / ELEMENTS / CATEGORY chip rows.
+     All sizing in `rem` so the iPad root-font-size bump (PLAN 9.7.2:
+     `:root { font-size: 24px }` at `min-width: 700px`) scales the
+     chips proportionally without a per-component breakpoint. iPhone
+     (16px root) renders the same px as before; iPad gets ~1.5×. */
   .drill-section-p4 {
-    margin-bottom: 10px;
+    margin-bottom: 0.625rem;
   }
   .drill-label-p4 {
     @apply uppercase;
     font-family: var(--font-display);
-    font-size: 9px;
+    font-size: 0.5625rem;
     letter-spacing: 0.18em;
     color: var(--color-gold-bright);
-    margin-bottom: 6px;
+    margin-bottom: 0.375rem;
     text-shadow:
       0 1px 0 rgba(0, 0, 0, 0.8),
       0 0 6px rgba(245, 198, 52, 0.3);
   }
   .drill-row-p4 {
     @apply flex flex-wrap;
-    gap: 6px;
+    gap: 0.375rem;
   }
   .drill-chip-p4 {
     @apply cursor-pointer shrink-0 rounded-lg;
-    padding: 6px 11px;
+    padding: 0.375rem 0.6875rem;
     border: 1.5px solid var(--color-gold-bright);
     background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
     color: var(--color-gold-bright);
     font-family: var(--font-display);
-    font-size: 9px;
+    font-size: 0.5625rem;
     letter-spacing: 0.08em;
     text-shadow:
       0 1px 0 var(--color-gold-shadow),
@@ -248,6 +311,36 @@
       0  2px 0 var(--color-gold-deep),
       0  0 10px rgba(245, 198, 52, 0.4);
   }
+
+  /* Element-tinted ELEMENTS chips (PLAN 9.7 playtest 2026-05-04 —
+     "matching to the bezel color would also help a lot"). Each chip
+     paints with its element's gradient so the filter row mirrors the
+     ring colour the user is scanning for. The "All" chip stays on the
+     blue base because it doesn't represent a specific element.
+     White text everywhere — base `.drill-chip-p4` rule's text-shadow
+     stack keeps the labels legible against the lighter Air/Light
+     fills (Chris 2026-05-04 playtest: "instead of using black for
+     contrast, I'd use white text"). */
+  .drill-chip-element-p4.el-air,
+  .drill-chip-element-p4.el-dark,
+  .drill-chip-element-p4.el-earth,
+  .drill-chip-element-p4.el-fire,
+  .drill-chip-element-p4.el-life,
+  .drill-chip-element-p4.el-light,
+  .drill-chip-element-p4.el-magic,
+  .drill-chip-element-p4.el-tech,
+  .drill-chip-element-p4.el-undead,
+  .drill-chip-element-p4.el-water  { color: #fff; }
+  .drill-chip-element-p4.el-air    { background: var(--el-air); }
+  .drill-chip-element-p4.el-dark   { background: var(--el-dark); }
+  .drill-chip-element-p4.el-earth  { background: var(--el-earth); }
+  .drill-chip-element-p4.el-fire   { background: var(--el-fire); }
+  .drill-chip-element-p4.el-life   { background: var(--el-life); }
+  .drill-chip-element-p4.el-light  { background: var(--el-light); }
+  .drill-chip-element-p4.el-magic  { background: var(--el-magic); }
+  .drill-chip-element-p4.el-tech   { background: var(--el-tech); }
+  .drill-chip-element-p4.el-undead { background: var(--el-undead); }
+  .drill-chip-element-p4.el-water  { background: var(--el-water); }
 }
 
 /*

@@ -18,7 +18,14 @@
 @layer components {
   .figure-hero {
     @apply relative grid place-items-center;
-    width: 160px;
+    /* `rem` so the wrapper grows with the iPad root-font-size bump and
+       stays in step with `.bezel-hero`'s `w-40` (10rem) interior.
+       Pinning at 160px left the wrapper phone-sized while the bezel
+       inside scaled to 240px on iPad — the bezel overflowed
+       asymmetrically and the hero badge looked off-centre against
+       the panel (PLAN 9.7 playtest 2026-05-04 — "the badge isn't
+       centered on iPad"). 10rem matches `w-40`. */
+    width: 10rem;
   }
 
   .hero-aura {

@@ -74,17 +74,42 @@
   .bezel-hero .bezel-plate { font-size: 68px; }
 
   /* Element tinting — plate background swaps to the element gradient.
-     Air + light have darker glyph colour for legibility on lighter fills. */
-  .el-air    .bezel-plate { background: var(--el-air);    color: #1a2a4a; }
+     White glyph everywhere; the per-plate `text-shadow` from the base
+     `.bezel-plate` rule supplies enough darkening that white reads
+     against the lighter Air + Light gradients without needing a
+     dedicated dark-navy override (Chris 2026-05-04 playtest:
+     "instead of using black for contrast, I'd use white text"). */
+  .el-air    .bezel-plate { background: var(--el-air); }
   .el-dark   .bezel-plate { background: var(--el-dark); }
   .el-earth  .bezel-plate { background: var(--el-earth); }
   .el-fire   .bezel-plate { background: var(--el-fire); }
   .el-life   .bezel-plate { background: var(--el-life); }
-  .el-light  .bezel-plate { background: var(--el-light);  color: #1a2a4a; }
+  .el-light  .bezel-plate { background: var(--el-light); }
   .el-magic  .bezel-plate { background: var(--el-magic); }
   .el-tech   .bezel-plate { background: var(--el-tech); }
   .el-undead .bezel-plate { background: var(--el-undead); }
   .el-water  .bezel-plate { background: var(--el-water); }
+
+  /* Element-tinted ring (PLAN 9.7 playtest 2026-05-04 — "color code
+     the element instead of just a gold ring"). Scoped to figure-card
+     and portal-slot contexts only: profile bezels (PIN entry, header
+     swatch, profile-picker cards) tint the *plate* with the player's
+     colour but the *ring* stays gold so the gold remains the
+     "Skylander Portal Master" identity motif there. The plate's
+     element gradient is hidden behind the figure thumbnail
+     (`bezel-plate > img` covers it), so without lifting the colour
+     onto the ring the figure-card identification is silent — that's
+     why every figure context wants the coloured ring. */
+  :is(.fig-bezel-p4, .p4-slot-inner) .gold-bezel.el-air    .bezel-ring { background: var(--el-air); }
+  :is(.fig-bezel-p4, .p4-slot-inner) .gold-bezel.el-dark   .bezel-ring { background: var(--el-dark); }
+  :is(.fig-bezel-p4, .p4-slot-inner) .gold-bezel.el-earth  .bezel-ring { background: var(--el-earth); }
+  :is(.fig-bezel-p4, .p4-slot-inner) .gold-bezel.el-fire   .bezel-ring { background: var(--el-fire); }
+  :is(.fig-bezel-p4, .p4-slot-inner) .gold-bezel.el-life   .bezel-ring { background: var(--el-life); }
+  :is(.fig-bezel-p4, .p4-slot-inner) .gold-bezel.el-light  .bezel-ring { background: var(--el-light); }
+  :is(.fig-bezel-p4, .p4-slot-inner) .gold-bezel.el-magic  .bezel-ring { background: var(--el-magic); }
+  :is(.fig-bezel-p4, .p4-slot-inner) .gold-bezel.el-tech   .bezel-ring { background: var(--el-tech); }
+  :is(.fig-bezel-p4, .p4-slot-inner) .gold-bezel.el-undead .bezel-ring { background: var(--el-undead); }
+  :is(.fig-bezel-p4, .p4-slot-inner) .gold-bezel.el-water  .bezel-ring { background: var(--el-water); }
 
   /* Thumbnail + photo children fill the plate circle. */
   .bezel-plate > img {

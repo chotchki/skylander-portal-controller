@@ -28,6 +28,39 @@
     padding: 20px;
   }
 
+  /* Solid blue card behind hero / name / actions / stats so the
+     content reads on a contrast surface instead of fighting the gold
+     framed-panel pseudo. Width is constrained to the natural width
+     of the action-button row + a bit of padding (the stats strip's
+     `justify-around` was previously stretching the card to full
+     surface width when "NEVER PLACED" rendered). `width: fit-content`
+     + `align-self: center` (the surface is `flex flex-col`) keeps
+     the card centred and only as wide as its widest child (PLAN 9.7
+     playtest 2026-05-04). PLACE/BACK buttons stay outside the card
+     so they read against gold as before. */
+  .detail-content-card {
+    @apply relative flex flex-col rounded-[14px];
+    align-self: center;
+    width: fit-content;
+    max-width: 100%;
+    padding: 16px 24px;
+    margin-bottom: 12px;
+    background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
+    border: 1.5px solid var(--color-gold-bright);
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.18),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.25),
+      0  3px 8px rgba(0, 0, 0, 0.4);
+  }
+  /* Inside the blue card, the soon-strip is the wide child that was
+     stretching things; let it shrink to its content's intrinsic
+     width and centre under the action row. */
+  .detail-content-card .detail-stats-strip.detail-stats-soon {
+    align-self: center;
+    width: auto;
+    padding: 8px 18px;
+  }
+
   /* Hero wrap — lifted above the panel edge. */
   .detail-hero-wrap {
     @apply relative flex justify-center z-[30];
@@ -55,11 +88,14 @@
     font-size: var(--text-display-xs);
     letter-spacing: 0.22em;
     text-transform: uppercase;
-    color: var(--color-gold-bright);
+    /* White everywhere on the detail view (PLAN 9.7 playtest 2026-05-04
+       "contrast problem exists on the whole view"). The dark text-shadow
+       below carries the contrast against the gold-frame surface. */
+    color: #fff;
     margin-top: 6px;
     text-shadow:
-      0 0 10px rgba(255, 107, 42, 0.4),
-      0 1px 0 rgba(0, 0, 0, 0.5);
+      0 1px 0 rgba(0, 0, 0, 0.6),
+      0 0 10px rgba(0, 0, 0, 0.5);
   }
 
   /* Action icon row — each action is an icon button stacked above
@@ -75,27 +111,39 @@
   }
   .detail-action-label {
     @apply text-center uppercase;
-    font-size: 10px;
+    /* `rem` so the label scales with the iPad root-font-size bump. At
+       phone 16px root → 10px (same as before); at iPad 24px → 15px. */
+    font-size: 0.625rem;
     font-weight: 600;
     letter-spacing: 0.1em;
-    color: var(--color-gold-bright);
-    opacity: 0.85;
-    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.45);
+    /* White (PLAN 9.7 playtest 2026-05-04 contrast pass). Was
+       gold-bright on the gold panel which read as gold-on-gold. */
+    color: #fff;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.6);
   }
+  /* Gold-fill Appearance / Stats / Reset action buttons. Originally
+     blue (PLAN 9.7 first pass 2026-05-04) but the buttons now sit
+     inside the blue `.detail-content-card`, and blue-on-blue washed
+     them out — switched to gold so they pop against the card. */
   .detail-action-btn {
     @apply w-14 h-14 rounded-full grid place-items-center cursor-pointer;
-    background: radial-gradient(circle at 30% 25%,
-      rgba(22, 40, 88, 0.88), rgba(8, 20, 54, 0.95) 60%, rgba(4, 12, 36, 0.98));
-    border: 2px solid var(--color-gold-bright);
-    color: var(--color-gold-bright);
-    font-size: 24px;
+    background: linear-gradient(180deg,
+      var(--color-gold-bright) 0%,
+      var(--color-gold) 50%,
+      var(--color-gold-mid) 100%);
+    border: 2px solid var(--color-gold-deep);
+    color: #fff;
+    /* `rem` so the icon glyph scales with the iPad root-font-size
+       bump. Phone 16px root → 24px (unchanged); iPad → 36px. */
+    font-size: 1.5rem;
     text-shadow:
-      0 1px 0 var(--color-gold-shadow),
-      0 0 8px rgba(245, 198, 52, 0.4);
+      0 1px 0 rgba(0, 0, 0, 0.6),
+      0 0 8px rgba(0, 0, 0, 0.4);
     box-shadow:
-      inset 0  1px 0 rgba(255, 255, 255, 0.08),
-      inset 0 -1px 0 rgba(0, 0, 0, 0.4),
-      0  2px 6px rgba(0, 0, 0, 0.5);
+      inset 0  2px 0 rgba(255, 255, 255, 0.45),
+      inset 0 -2px 0 rgba(110, 74, 0, 0.3),
+      0  3px 0 var(--color-gold-deep),
+      0  4px 8px rgba(0, 0, 0, 0.4);
     transition:
       transform 0.15s ease,
       box-shadow var(--dur-quick),
@@ -103,15 +151,16 @@
   }
   .detail-action-btn:disabled {
     @apply cursor-not-allowed;
-    opacity: 0.45;
+    opacity: 0.5;
   }
   .detail-action-btn:hover:not(:disabled) {
-    background: radial-gradient(circle at 30% 25%,
-      rgba(36, 62, 130, 0.9), rgba(16, 34, 84, 0.96) 60%, rgba(6, 18, 48, 0.98));
+    filter: brightness(1.08);
     box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.15),
-      0 0 16px rgba(245, 198, 52, 0.45),
-      0 3px 8px rgba(0, 0, 0, 0.5);
+      inset 0  2px 0 rgba(255, 255, 255, 0.55),
+      inset 0 -2px 0 rgba(110, 74, 0, 0.3),
+      0  3px 0 var(--color-gold-deep),
+      0  0 16px rgba(245, 198, 52, 0.5),
+      0  4px 8px rgba(0, 0, 0, 0.4);
     transform: translateY(-2px);
   }
 
@@ -138,10 +187,11 @@
   .detail-stat-v {
     font-family: var(--font-display);
     font-size: 18px;
-    color: var(--color-gold-bright);
+    /* White (PLAN 9.7 playtest 2026-05-04 contrast pass). */
+    color: #fff;
     text-shadow:
-      0 1px 0 var(--color-gold-shadow),
-      0 0 10px rgba(245, 198, 52, 0.3);
+      0 1px 0 rgba(0, 0, 0, 0.6),
+      0 0 10px rgba(0, 0, 0, 0.4);
     letter-spacing: 0.04em;
   }
   /* "Coming soon" placeholder before PLAN 6.3 wired real stats.
@@ -157,8 +207,11 @@
     font-size: var(--text-body-sm);
     font-weight: 600;
     letter-spacing: 0.2em;
-    color: #e8e4d8;
-    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+    /* White (PLAN 9.7 playtest 2026-05-04 contrast pass). */
+    color: #fff;
+    text-shadow:
+      0 1px 0 rgba(0, 0, 0, 0.6),
+      0 0 6px rgba(0, 0, 0, 0.5);
   }
   .detail-stat-k {
     @apply uppercase;
@@ -167,9 +220,11 @@
     font-size: var(--text-body-sm);
     font-weight: 600;
     letter-spacing: 0.18em;
-    color: #e8e4d8;
+    color: #fff;
     margin-top: 2px;
-    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+    text-shadow:
+      0 1px 0 rgba(0, 0, 0, 0.6),
+      0 0 6px rgba(0, 0, 0, 0.5);
   }
 
   .detail-spacer {
@@ -185,13 +240,17 @@
     font-family: var(--font-display);
     font-size: var(--text-body);
     letter-spacing: 0.2em;
-    color: #1a1203;
+    /* White text (PLAN 9.7 playtest 2026-05-04 contrast pass). The
+       dark text-shadow stack carries legibility on the gold fill. */
+    color: #fff;
     background: linear-gradient(180deg,
       var(--color-gold-bright),
       var(--color-gold) 50%,
       var(--color-gold-mid));
     border: 2px solid var(--color-gold-deep);
-    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+    text-shadow:
+      0 1px 0 rgba(0, 0, 0, 0.6),
+      0 0 8px rgba(0, 0, 0, 0.4);
     box-shadow:
       inset 0  2px 0 rgba(255, 255, 255, 0.45),
       inset 0 -2px 0 rgba(110, 74, 0, 0.3),

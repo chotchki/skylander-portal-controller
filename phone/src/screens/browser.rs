@@ -147,8 +147,8 @@ pub(crate) fn Browser(
         <Show
             when=move || selected_figure.get().is_some()
             fallback=move || view! {
-                <ToyBoxLid box_state>
-                    <BrowserFilters element_filter game_filter category_filter search />
+                <ToyBoxLid box_state search=search>
+                    <BrowserFilters element_filter game_filter category_filter />
                 </ToyBoxLid>
                 <ToyBoxInterior box_state>
                     <Show
@@ -311,6 +311,38 @@ pub(crate) fn Browser(
                                             <Show when=move || loaded_for_badge() fallback=|| ()>
                                                 <div class="fig-on-portal-ribbon">"ON PORTAL"</div>
                                             </Show>
+                                            // Trap badge — small purple pill in the top-LEFT
+                                            // (variant-count badge owns top-right). Tags every
+                                            // trap card so the captured-villain figure image
+                                            // doesn't masquerade as a regular skylander
+                                            // (PLAN 9.7 playtest 2026-05-04). Reads through
+                                            // `current` so cycling reposes/variants doesn't
+                                            // strand the badge.
+                                            <Show
+                                                when=move || matches!(current.get().category, Category::Trap)
+                                                fallback=|| ()
+                                            >
+                                                <div class="fig-trap-badge" aria-label="Trap">"TRAP"</div>
+                                            </Show>
+                                            // Vehicle terrain badge — Land / Sky / Sea pill in
+                                            // the top-LEFT, parallels the trap badge slot
+                                            // (vehicles aren't traps so they never collide).
+                                            // Server populates `vehicle_terrain` from
+                                            // `data/vehicle_terrain.json`; vehicles missing a
+                                            // terrain entry render no badge (gracefully
+                                            // degrades, matches the "we have a curated table,
+                                            // not a wiki source" reality). PLAN 9.7 playtest.
+                                            <Show
+                                                when=move || current.get().vehicle_terrain.is_some()
+                                                fallback=|| ()
+                                            >
+                                                {move || {
+                                                    let t = current.get().vehicle_terrain
+                                                        .expect("Show predicate gates this branch");
+                                                    let cls = format!("fig-terrain-badge {}", t.css_class());
+                                                    view! { <div class=cls aria-label=t.label()>{t.label()}</div> }
+                                                }}
+                                            </Show>
                                             <Show when=move || (variant_count > 1) fallback=|| ()>
                                                 <button
                                                     class="fig-variant-badge"
@@ -368,7 +400,6 @@ fn BrowserFilters(
     element_filter: RwSignal<Option<Element>>,
     game_filter: RwSignal<Option<GameOfOrigin>>,
     category_filter: RwSignal<Option<Category>>,
-    search: RwSignal<String>,
 ) -> impl IntoView {
     let all_games: [(Option<GameOfOrigin>, &'static str); 7] = [
         (None, "All"),
@@ -409,13 +440,6 @@ fn BrowserFilters(
     ];
 
     view! {
-        <input
-            class="search-input-p4"
-            type="search"
-            placeholder="Search heroes\u{2026}"
-            prop:value=move || search.get()
-            on:input=move |e| search.set(event_target_value(&e))
-        />
         <div class="drill-section-p4">
             <div class="drill-label-p4">"GAMES"</div>
             <div class="drill-row-p4">
@@ -441,12 +465,12 @@ fn BrowserFilters(
             <div class="drill-row-p4">
                 {all_elements.into_iter().map(|(val, label)| {
                     let v = val;
+                    let el_class = v.map(|e| e.css_class()).unwrap_or("");
                     view! {
                         <button
-                            class=move || if element_filter.get() == v {
-                                "drill-chip-p4 active"
-                            } else {
-                                "drill-chip-p4"
+                            class=move || {
+                                let active = if element_filter.get() == v { " active" } else { "" };
+                                format!("drill-chip-p4 drill-chip-element-p4 {el_class}{active}")
                             }
                             on:click=move |_| element_filter.set(v)
                         >

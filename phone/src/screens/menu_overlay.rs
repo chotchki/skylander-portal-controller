@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use leptos::prelude::*;
 
-use crate::api::{post_quit_for_switch, post_shutdown, set_kaos_enabled};
+use crate::api::{post_quit_for_switch, post_shutdown};
 use crate::components::{ActionButton, ActionVariant};
 use crate::gloo_timer;
 use crate::model::{GameLaunched, UnlockedProfile};
@@ -89,28 +89,6 @@ pub(crate) fn MenuOverlay(
         leptos::task::spawn_local(async move {
             if let Err(e) = post_quit_for_switch().await {
                 push_toast(toasts, &format!("Quit failed: {e}"));
-            }
-        });
-        leptos::task::spawn_local(async move {
-            gloo_timer(380).await;
-            open.set(false);
-        });
-    });
-
-    // KAOS TOGGLE — single tap. Fires the /kaos POST; server echoes
-    // a ProfileChanged back so the label flips on both co-op phones.
-    // PLAN 8.2b.1. No confirmation prompt (the flag is cheap to flip
-    // either way) but we delay closing the menu ~380ms so the
-    // ActionButton's .fired flash plays before the overlay fades.
-    let on_toggle_kaos = Callback::new(move |_| {
-        let Some(p) = unlocked_profile.get_untracked() else {
-            return;
-        };
-        let new_enabled = !p.kaos_enabled;
-        let pid = p.id.clone();
-        leptos::task::spawn_local(async move {
-            if let Err(e) = set_kaos_enabled(&pid, new_enabled).await {
-                push_toast(toasts, &format!("Kaos toggle failed: {e}"));
             }
         });
         leptos::task::spawn_local(async move {
@@ -194,31 +172,12 @@ pub(crate) fn MenuOverlay(
                         />
                     </Show>
 
-                    // PLAN 8.2b.1 — Kaos opt-in toggle. Two action-buttons
-                    // under a Show/fallback swap; the one visible depends
-                    // on `unlocked_profile.kaos_enabled`. Only shown when
-                    // the profile is unlocked (the toggle is profile-
-                    // scoped).
-                    <Show
-                        when=move || unlocked_profile.get().map(|p| p.kaos_enabled).unwrap_or(false)
-                        fallback=move || view! {
-                            <Show when=move || unlocked_profile.get().is_some() fallback=|| ()>
-                                <ActionButton
-                                    title="ENABLE KAOS"
-                                    description="Let Kaos swap a figure at random while you play"
-                                    icon="\u{2620}"
-                                    on_fire=on_toggle_kaos
-                                />
-                            </Show>
-                        }
-                    >
-                        <ActionButton
-                            title="DISABLE KAOS"
-                            description="Stop random mid-game swaps for this profile"
-                            icon="\u{2620}"
-                            on_fire=on_toggle_kaos
-                        />
-                    </Show>
+                    // Kaos toggle relocated to the AdminEdit (Konami-gated
+                    // edit-profile) screen. The kebab-overlay button's
+                    // description "Let Kaos swap a figure at random while
+                    // you play" overflowed iPhone width during the 2026-
+                    // 05-04 playtest; profile-scoped settings are a
+                    // better home for an opt-in toggle anyway.
 
                     <ActionButton
                         title="HOLD TO SHUT DOWN"

@@ -415,6 +415,7 @@ fn ProfileAdminHub<F: Fn() + Send + Sync + 'static + Clone>(
                     view! {
                         <AdminList
                             profiles=profiles
+                            profiles_epoch=profiles_epoch
                             screen=screen
                             on_lock=move || on_lock()
                             toasts
@@ -451,11 +452,14 @@ fn ProfileAdminHub<F: Fn() + Send + Sync + 'static + Clone>(
 #[component]
 fn AdminList<F: Fn() + Send + Sync + 'static + Clone>(
     profiles: RwSignal<Vec<PublicProfile>>,
+    /// Threaded down so the per-row HOLD-TO-DELETE button can bump the
+    /// epoch on success and force the parent to re-fetch the profile
+    /// list (PLAN 9.7 playtest 2026-05-04).
+    profiles_epoch: RwSignal<u32>,
     screen: RwSignal<AdminScreen>,
     on_lock: F,
     toasts: RwSignal<Vec<ToastMsg>>,
 ) -> impl IntoView {
-    let _ = toasts; // consumed by nested admin views, not the list itself
     view! {
         <button class="btn-back" on:click=move |_| on_lock()>"LOCK"</button>
 
@@ -475,12 +479,51 @@ fn AdminList<F: Fn() + Send + Sync + 'static + Clone>(
                         {list.into_iter().map(|p| {
                             let p_edit = p.clone();
                             let p_pin = p.clone();
-                            let p_del = p.clone();
                             let initial = p.display_name.chars().next().unwrap_or('?').to_uppercase().to_string();
                             let color_attr = color_to_element(&p.color);
                             let name_upper = p.display_name.to_uppercase();
                             let deleting = RwSignal::new(false);
-                            let _p_del = p_del;
+                            // Hold-to-confirm wiring (PLAN 9.7 playtest 2026-05-04 —
+                            // restyle to match the destructive `<ActionButton
+                            // variant=Danger hold_duration=...>` pattern). Holding
+                            // animates `.hold-fill` and after `--dur-hold-confirm`
+                            // (1200ms) fires `delete_profile`. Lifting cancels.
+                            let holding = RwSignal::new(false);
+                            let fired = RwSignal::new(false);
+                            let p_id = p.id.clone();
+                            let p_name = p.display_name.clone();
+                            let on_hold_start = move |_: leptos::ev::PointerEvent| {
+                                if fired.get_untracked() { return; }
+                                holding.set(true);
+                                let id = p_id.clone();
+                                let name = p_name.clone();
+                                leptos::task::spawn_local(async move {
+                                    crate::gloo_timer(1200).await;
+                                    if !holding.get_untracked() || fired.get_untracked() { return; }
+                                    holding.set(false);
+                                    fired.set(true);
+                                    match crate::api::delete_profile(&id).await {
+                                        Ok(()) => {
+                                            push_toast_level(toasts, &format!("Deleted {name}."), ToastLevel::Success);
+                                            profiles_epoch.update(|v| *v += 1);
+                                        }
+                                        Err(e) => {
+                                            fired.set(false);
+                                            deleting.set(false);
+                                            push_toast(toasts, &format!("Delete failed: {e}"));
+                                        }
+                                    }
+                                });
+                            };
+                            let on_hold_end = move |_: leptos::ev::PointerEvent| {
+                                holding.set(false);
+                            };
+                            let confirm_class = move || {
+                                let mut s = String::from("del-confirm menu-action menu-action--hold menu-action--danger");
+                                if holding.get() { s.push_str(" holding"); }
+                                if fired.get() { s.push_str(" fired"); }
+                                s
+                            };
                             view! {
                                 <div class=move || if deleting.get() { "profile-row deleting" } else { "profile-row" }>
                                     <div class="profile-bezel" data-el=color_attr.clone() data-initial=initial.clone()></div>
@@ -498,7 +541,14 @@ fn AdminList<F: Fn() + Send + Sync + 'static + Clone>(
                                             "DEL"
                                         </button>
                                     </div>
-                                    <div class="del-confirm">
+                                    <button
+                                        class=confirm_class
+                                        on:pointerdown=on_hold_start
+                                        on:pointerup=on_hold_end
+                                        on:pointerleave=on_hold_end
+                                        on:pointercancel=on_hold_end
+                                    >
+                                        <span class="hold-fill"></span>
                                         <span class="del-confirm-label">
                                             {format!("HOLD TO DELETE {}", p.display_name.to_uppercase())}
                                         </span>
@@ -508,7 +558,7 @@ fn AdminList<F: Fn() + Send + Sync + 'static + Clone>(
                                         }>
                                             "\u{00d7}"
                                         </button>
-                                    </div>
+                                    </button>
                                 </div>
                             }
                         }).collect_view()}
@@ -533,6 +583,27 @@ fn AdminEdit<F: Fn() + Send + Sync + 'static + Clone>(
 ) -> impl IntoView {
     let name = RwSignal::new(profile.display_name.clone());
     let color = RwSignal::new(profile.color.clone());
+    // Kaos toggle — local mirror of the server-side per-profile flag,
+    // initialised from the row the picker handed us. Tapping the
+    // switch fires `/api/profiles/:id/kaos` immediately (no SAVE
+    // step — the flag is cheap to flip either way and there's no
+    // confirmation flow). PLAN 9.7 playtest 2026-05-04 (relocated
+    // from the kebab overlay).
+    let kaos_enabled = RwSignal::new(profile.kaos_enabled);
+    let kaos_profile_id = profile.id.clone();
+    let on_toggle_kaos = move |_| {
+        let new_enabled = !kaos_enabled.get_untracked();
+        kaos_enabled.set(new_enabled);
+        let pid = kaos_profile_id.clone();
+        leptos::task::spawn_local(async move {
+            if let Err(e) = crate::api::set_kaos_enabled(&pid, new_enabled).await {
+                push_toast(toasts, &format!("Kaos toggle failed: {e}"));
+                // Roll back the optimistic flip so the switch stays
+                // truthful when the network call fails.
+                kaos_enabled.update(|v| *v = !*v);
+            }
+        });
+    };
     let initial = Signal::derive(move || {
         name.with(|n| n.chars().next().unwrap_or('?').to_uppercase().to_string())
     });
@@ -591,6 +662,24 @@ fn AdminEdit<F: Fn() + Send + Sync + 'static + Clone>(
                         }
                     }).collect_view()}
                 </div>
+                <div class="edit-color-label">"kaos"</div>
+                <button
+                    type="button"
+                    class=move || if kaos_enabled.get() {
+                        "edit-toggle edit-toggle-on"
+                    } else {
+                        "edit-toggle"
+                    }
+                    aria-pressed=move || if kaos_enabled.get() { "true" } else { "false" }
+                    on:click=on_toggle_kaos
+                >
+                    <span class="edit-toggle-track">
+                        <span class="edit-toggle-knob"></span>
+                    </span>
+                    <span class="edit-toggle-label">
+                        {move || if kaos_enabled.get() { "ON" } else { "OFF" }}
+                    </span>
+                </button>
             </div>
 
             <div class="actions">
@@ -613,10 +702,17 @@ fn AdminPinReset<F: Fn() + Send + Sync + 'static + Clone>(
     on_back: F,
     toasts: RwSignal<Vec<ToastMsg>>,
 ) -> impl IntoView {
-    let current_pin = RwSignal::new(String::new());
+    // Single-step PIN reset (PLAN 9.7 playtest 2026-05-04). This is
+    // the Konami-gated "I forgot the PIN" recovery; Konami is the
+    // auth gate, no current-PIN re-entry. The previous 2-step flow
+    // (CURRENT PIN → NEW PIN) defeated the recovery purpose. Layout +
+    // behaviour mirror `PinEntry`: coloured `<GoldBezel>` with the
+    // profile's element, name, instruction, dots, keypad — and
+    // auto-fires the reset API on 4 digits (no SAVE button row to
+    // visually break from the rest of the PIN screens).
     let new_pin = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
-    let step = RwSignal::new(0u8); // 0 = enter current, 1 = enter new
+    let success = RwSignal::new(false);
 
     let initial = profile
         .display_name
@@ -626,91 +722,94 @@ fn AdminPinReset<F: Fn() + Send + Sync + 'static + Clone>(
         .to_uppercase()
         .to_string();
     let name_upper = profile.display_name.to_uppercase();
-    let color_el = color_to_element(&profile.color);
+    let bezel_element = color_to_element_enum(&profile.color);
     let id = profile.id.clone();
 
     let on_done = on_back.clone();
-    let on_cancel = on_back.clone();
+    let on_cancel = on_back;
+
+    // Auto-submit on 4 digits, mirroring PinEntry. Success → toast +
+    // on_done() (closes the screen). Failure → clear + error toast,
+    // user can retype.
+    let id_for_effect = id.clone();
+    Effect::new(move |_| {
+        let p = new_pin.get();
+        if p.len() == 4 && !busy.get() {
+            busy.set(true);
+            let id = id_for_effect.clone();
+            let pin_value = p.clone();
+            let on_done_inner = on_done.clone();
+            leptos::task::spawn_local(async move {
+                match reset_pin(&id, &pin_value).await {
+                    Ok(()) => {
+                        push_toast_level(toasts, "PIN updated.", ToastLevel::Success);
+                        success.set(true);
+                        on_done_inner();
+                    }
+                    Err(e) => {
+                        new_pin.set(String::new());
+                        push_toast(toasts, &format!("Reset failed: {e}"));
+                    }
+                }
+                busy.set(false);
+            });
+        }
+    });
+    let _ = success;
 
     view! {
-        <div class="admin-pin-reset">
+        <div class="pin-entry-screen">
             <button class="btn-back" on:click=move |_| on_cancel()>"BACK"</button>
 
-            <div class="pin-heading">
-                <div class="identity-bezel" data-el=color_el.clone() data-initial=initial.clone()></div>
-                <div class="pin-heading-text">
-                    <div class="pin-heading-sub">
-                        {move || if step.get() == 0 {
-                            format!("current PIN for {name_upper}")
-                        } else {
-                            format!("new PIN for {name_upper}")
-                        }}
-                    </div>
-                    <div class="pin-heading-title">
-                        {move || if step.get() == 0 { "CURRENT PIN" } else { "TYPE A NEW PIN" }}
-                    </div>
+            // Identity section on starfield (matches `PinEntry`).
+            <div class="pin-identity">
+                <div class="pin-profile-bezel">
+                    {
+                        let initial_for_bezel = initial.clone();
+                        match bezel_element {
+                            Some(el) => view! {
+                                <GoldBezel size=BezelSize::Lg element=Some(el) state=Signal::derive(|| BezelState::Default)>
+                                    <span class="pin-profile-initial" style="color: #fff; font-size: 40px; font-family: 'Titan One', sans-serif; text-shadow: 0 3px 6px rgba(0,0,0,0.6);">
+                                        {initial_for_bezel}
+                                    </span>
+                                </GoldBezel>
+                            }.into_any(),
+                            None => view! {
+                                <GoldBezel size=BezelSize::Lg state=Signal::derive(|| BezelState::Default)>
+                                    <span class="pin-profile-initial" style="color: #fff; font-size: 40px; font-family: 'Titan One', sans-serif; text-shadow: 0 3px 6px rgba(0,0,0,0.6);">
+                                        {initial_for_bezel}
+                                    </span>
+                                </GoldBezel>
+                            }.into_any(),
+                        }
+                    }
                 </div>
-            </div>
-
-            <div class="pin-wrap">
+                <div class="pin-prompt-name">{name_upper}</div>
+                <div class="pin-prompt-label">"type a new pin"</div>
                 <div class="pin-dots">
                     {move || {
-                        let pin_val = if step.get() == 0 { current_pin.get() } else { new_pin.get() };
+                        let p = new_pin.get();
                         (0..4).map(|i| {
-                            let cls = if i < pin_val.len() { "pin-dot filled" } else { "pin-dot" };
-                            view! { <div class=cls></div> }
+                            let filled = i < p.len();
+                            let cls = if filled { "pin-dot filled" } else { "pin-dot" };
+                            view! {
+                                <span class=cls>
+                                    <span class="pin-dot-ring"></span>
+                                    <span class="pin-dot-fill"></span>
+                                </span>
+                            }
                         }).collect_view()
                     }}
                 </div>
-
-                <FramedPanel class="pin-keypad-panel panel-in">
-                    {move || {
-                        let active_pin = if step.get() == 0 { current_pin } else { new_pin };
-                        view! { <PinPad pin=active_pin /> }
-                    }}
-                </FramedPanel>
             </div>
 
-            <div class="actions">
-                <button class="btn btn-cancel" on:click=move |_| {
-                    if step.get() == 1 {
-                        new_pin.set(String::new());
-                        step.set(0);
-                    } else {
-                        on_back();
-                    }
-                }>"CANCEL"</button>
-                <button
-                    class="btn btn-primary"
-                    disabled=move || {
-                        let pin_val = if step.get() == 0 { current_pin.get() } else { new_pin.get() };
-                        pin_val.len() != 4 || busy.get()
-                    }
-                    on:click=move |_| {
-                        if step.get() == 0 {
-                            step.set(1);
-                        } else {
-                            busy.set(true);
-                            let id = id.clone();
-                            let cur = current_pin.get();
-                            let new_ = new_pin.get();
-                            let on_done = on_done.clone();
-                            leptos::task::spawn_local(async move {
-                                match reset_pin(&id, &cur, &new_).await {
-                                    Ok(()) => {
-                                        push_toast_level(toasts, "PIN updated.", ToastLevel::Success);
-                                        on_done();
-                                    }
-                                    Err(e) => push_toast(toasts, &format!("Reset failed: {e}")),
-                                }
-                                busy.set(false);
-                            });
-                        }
-                    }
-                >
-                    {move || if step.get() == 0 { "NEXT" } else { "SAVE" }}
-                </button>
-            </div>
+            // `locked_out` passed (constant `false`) so PinPad takes the
+            // heraldic-reskin branch and DOESN'T render its own legacy
+            // `.pin-display` dots — without this the screen showed two
+            // dot rows (one mine, one PinPad's). Same trick PinEntry uses.
+            <FramedPanel class="pin-keypad-panel panel-in">
+                <PinPad pin=new_pin locked_out=Signal::derive(|| false) />
+            </FramedPanel>
         </div>
     }
 }
@@ -1018,7 +1117,11 @@ fn PinEntry<F: Fn() + Send + Sync + 'static + Clone>(
         .unwrap_or('?')
         .to_uppercase()
         .to_string();
-    let _color = profile.color.clone();
+    // Tint the bezel plate with the profile's chosen colour so the PIN
+    // screen reads as the player whose PIN they're entering. Was
+    // dropped before (`let _color = ...`) leaving every PIN screen
+    // showing the default dark-blue plate (PLAN 9.7 playtest 2026-05-04).
+    let bezel_element = color_to_element_enum(&profile.color);
 
     // Auto-submit when 4 digits entered.
     let id_for_effect = id.clone();
@@ -1072,11 +1175,26 @@ fn PinEntry<F: Fn() + Send + Sync + 'static + Clone>(
             // Identity section on starfield (not inside the panel).
             <div class="pin-identity">
                 <div class="pin-profile-bezel">
-                    <GoldBezel size=BezelSize::Lg state=Signal::derive(|| BezelState::Default)>
-                        <span class="pin-profile-initial" style=format!(
-                            "color: #fff; font-size: 40px; font-family: 'Titan One', sans-serif; text-shadow: 0 3px 6px rgba(0,0,0,0.6);"
-                        )>{initial}</span>
-                    </GoldBezel>
+                    {
+                        // Local copies for the closure-friendly element prop.
+                        let initial_for_bezel = initial.clone();
+                        match bezel_element {
+                            Some(el) => view! {
+                                <GoldBezel size=BezelSize::Lg element=Some(el) state=Signal::derive(|| BezelState::Default)>
+                                    <span class="pin-profile-initial" style=format!(
+                                        "color: #fff; font-size: 40px; font-family: 'Titan One', sans-serif; text-shadow: 0 3px 6px rgba(0,0,0,0.6);"
+                                    )>{initial_for_bezel}</span>
+                                </GoldBezel>
+                            }.into_any(),
+                            None => view! {
+                                <GoldBezel size=BezelSize::Lg state=Signal::derive(|| BezelState::Default)>
+                                    <span class="pin-profile-initial" style=format!(
+                                        "color: #fff; font-size: 40px; font-family: 'Titan One', sans-serif; text-shadow: 0 3px 6px rgba(0,0,0,0.6);"
+                                    )>{initial_for_bezel}</span>
+                                </GoldBezel>
+                            }.into_any(),
+                        }
+                    }
                 </div>
                 <div class="pin-prompt-name">{name_upper}</div>
                 <div class="pin-prompt-label">"enter your pin"</div>
@@ -1213,6 +1331,28 @@ fn PinPad(
 // --------- Helpers ---------
 
 /// Map a hex color string to an element name for CSS data-attributes.
+/// Typed counterpart to `color_to_element` — resolves a profile colour
+/// string to the matching `Element` enum so callers that need to feed
+/// `<GoldBezel element=...>` can do it without a string round-trip.
+/// `None` for unknown colours; the bezel falls back to its default
+/// dark-blue plate.
+fn color_to_element_enum(color: &str) -> Option<crate::model::Element> {
+    use crate::model::Element;
+    match color_to_element(color).as_str() {
+        "air" => Some(Element::Air),
+        "dark" => Some(Element::Dark),
+        "earth" => Some(Element::Earth),
+        "fire" => Some(Element::Fire),
+        "life" => Some(Element::Life),
+        "light" => Some(Element::Light),
+        "magic" => Some(Element::Magic),
+        "tech" => Some(Element::Tech),
+        "undead" => Some(Element::Undead),
+        "water" => Some(Element::Water),
+        _ => None,
+    }
+}
+
 fn color_to_element(color: &str) -> String {
     for (name, hex) in COLOR_SWATCHES.iter() {
         if color.eq_ignore_ascii_case(hex) {

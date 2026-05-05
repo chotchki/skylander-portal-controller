@@ -194,12 +194,15 @@
     object-fit: contain;
   }
 
-  /* Slot label below the bezel. */
+  /* Slot label below the bezel. Bumped from `--text-body-sm` (11px) to
+     `--text-display-sm` (16px / 24px on iPad) so the figure name reads
+     proportionally to the bezel; the smaller token left it tiny next
+     to a 240px iPad bezel (PLAN 9.7 playtest 2026-05-04). */
   .p4-slot-label {
     @apply text-center whitespace-nowrap overflow-hidden text-ellipsis max-w-full;
     margin-top: 6px;
     font-family: var(--font-display);
-    font-size: var(--text-body-sm);
+    font-size: var(--text-display-sm);
     letter-spacing: 0.08em;
     color: var(--color-gold-bright);
     text-shadow:
@@ -252,7 +255,10 @@
     padding: 0;
     border: 0;
     font-family: var(--font-display);
-    font-size: var(--text-body-sm);
+    /* Bumped from `--text-body-sm` (11px) to `--text-display-sm` (16px
+       / 24px on iPad) — the REMOVE button's previous size was tiny
+       under the iPad-scaled bezel (PLAN 9.7 playtest 2026-05-04). */
+    font-size: var(--text-display-sm);
     letter-spacing: 0.22em;
     text-shadow:
       0 1px 0 rgba(0, 0, 0, 0.8),

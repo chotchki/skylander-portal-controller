@@ -235,13 +235,28 @@ body::after {
 .screen-back { animation: screen-enter-back 240ms cubic-bezier(.2, .8, .3, 1) both; }
 .screen-takeover    { animation: screen-enter-takeover 320ms ease-out both; }
 .screen-game-crash  { animation: screen-enter-takeover 320ms ease-out both; }
+/* Opacity-only entrance — no `transform` in either keyframe. Any
+   transform value other than `none` (including identity `translateY(0)`
+   and `matrix(1,0,0,1,0,0)`) flags the element as a containing block
+   for descendant `position: fixed`. With `animation-fill-mode: both`,
+   the to-keyframe's transform is preserved post-animation forever,
+   which was pinning every `.btn-back` ~70px below the kebab on iPad
+   (and the same offset, less obvious, on iPhone). Webkit doesn't
+   honour `transform: none` in the to-keyframe (still computes the
+   interpolated end as `matrix(1,0,0,1,0,0)`), and omitting transform
+   from `to` doesn't help either — the only reliable fix is to never
+   touch the transform property on `.screen` at all. The 14px slide-in
+   is sacrificed; opacity-only is still a clean entrance. The
+   `will-change` workaround on `.screen` above is now redundant but
+   kept for the same defensive reason it was added. (PLAN 9.7.2
+   sibling fix, surfaced 2026-05-04 son-playtest.) */
 @keyframes screen-enter-fwd {
-  from { opacity: 0; transform: translateY(14px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 @keyframes screen-enter-back {
-  from { opacity: 0; transform: translateY(-14px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 @keyframes screen-enter-takeover {
   from { opacity: 0; }

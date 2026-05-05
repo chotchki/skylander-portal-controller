@@ -346,20 +346,31 @@ across every screen. Phone-first px-pinned typography tokens
 (`--text-display-*` / `--text-body-*` in `phone/styles/input.css`)
 don't scale on iPad's wider viewport.
 
-- [ ] 9.7 — Optimize for iPad + iPhone layouts. Inventory which
-  components need a wider-viewport variant (toy-box grid columns,
-  portal slot row layout, Header chip density). Drop `md:` /
-  `lg:` overrides per-component; verify on iOS Simulator + a real
-  iPad via the Tour gallery.
-- [ ] 9.7.2 — *[bug]* iPad typography too small (playtest 2026-05-04).
-  Convert `@theme` text tokens (`--text-display-hero` … `--text-body-sm`)
-  from `px` to `rem`. Bump `:root { font-size }` at a tablet
-  breakpoint (~`min-width: 700px`) so every `text-display-*` /
-  `text-body-*` utility scales proportionally without per-component
-  `md:` overrides. Also rev the legacy `:root` `--t-*` mirror to rem
-  so unmigrated `var(--t-*)` callsites in `phone/styles/components/*`
-  scale with it. Validate on iPad 10th gen sim via `tools/ios-inspect`
-  + screenshot tour.
+- [x] 9.7 — Optimize for iPad + iPhone layouts. Whole-session playtest
+  pass 2026-05-04: rem-based typography + tablet root-size bump,
+  Tailwind cascade-layer fix (button rule moved to `@layer base` so
+  component overrides win), opacity-only screen entrance animation
+  (kills the residual `transform` that pinned `.btn-back` to
+  `.screen` instead of the viewport), `.btn-back` top aligned to
+  `.app` padding-top, mock-driver `/api/launch` skips games.yml,
+  iPad lid 2× max-heights + bottom-bleed code scoped to `.closed`
+  only (was cutting off the top of the figure cards), search input
+  swapped inline with the SEARCH toggle when expanded, drill chips
+  rem-scaled, element-tinted bezel rings (scoped to figure-cards +
+  portal slots, not profile bezels), TRAP badge, vehicle terrain
+  badges (LAND/SKY/SEA from `data/vehicle_terrain.json`), white
+  text everywhere instead of dark-on-dark, variant-count badge
+  rem-scaled, kebab Kaos toggle relocated to AdminEdit, profile-
+  management cards stack on iPhone, PIN reset is single-step with
+  unlock-style layout + auto-fire, profile delete restyled to the
+  destructive ActionButton vocabulary + drops PIN check (Konami is
+  the gate), profile-bezel coloured on PIN entry, closed-lid chevron
+  ~50% lid height, Kaos overlay sigil mask asset (was 404'ing through
+  SPA fallback), Kaos title rem + tablet bump, swap variant centred
+  with `mx-auto` and now hold-to-dismiss with bordered pill instead
+  of tap-to-dismiss + 5s auto-clear.
+- [x] 9.7.2 — *[bug]* iPad typography too small (playtest 2026-05-04).
+  Folded into the 9.7 sweep above.
 - [x] 9.7.1 — *[bug]* `PwaHint` suppressed on iPad. `pwa.rs` gains
   `is_tablet_ua` (pure: UA contains "ipad" OR macintosh + touch-mac
   probe) + an `is_tablet()` web_sys wrapper; `should_show_hint`

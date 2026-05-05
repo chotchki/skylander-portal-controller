@@ -1,0 +1,24 @@
+{
+  "_doc": "PLAN 9.7 playtest 2026-05-04 — hand-curated SuperChargers vehicle terrain. Keys are lowercase base vehicle names; the indexer matches by substring (longest-first) so variant prefixes like 'Dark', 'Legendary', 'Power Blue', 'Nitro', 'Springtime', 'Eggcited' all resolve to the base vehicle's terrain. Values: 'Land' | 'Sky' | 'Sea'. Source: Chris's playtest list 2026-05-04 (matches Skylanders SuperChargers canon).",
+  "vehicles": {
+    "burn cycle":        "Land",
+    "crypt crusher":     "Land",
+    "gold rusher":       "Land",
+    "rusher":            "Land",
+    "hot streak":        "Land",
+    "shark tank":        "Land",
+    "shield striker":    "Land",
+    "thump truck":       "Land",
+    "tomb buggy":        "Land",
+    "buzz wing":         "Sky",
+    "jet stream":        "Sky",
+    "sky slicer":        "Sky",
+    "stealth stinger":   "Sky",
+    "sun runner":        "Sky",
+    "dive bomber":       "Sea",
+    "reef ripper":       "Sea",
+    "sea shadow":        "Sea",
+    "soda skimmer":      "Sea",
+    "splatter splasher": "Sea"
+  }
+}

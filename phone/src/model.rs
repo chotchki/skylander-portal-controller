@@ -70,6 +70,35 @@ pub enum GameOfOrigin {
     Unknown,
 }
 
+/// Land/Sky/Sea classification for SuperChargers vehicles. Mirrors
+/// `core::VehicleTerrain`. Server populates from `data/vehicle_terrain.json`
+/// (PLAN 9.7 playtest 2026-05-04).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum VehicleTerrain {
+    Land,
+    Sky,
+    Sea,
+}
+
+impl VehicleTerrain {
+    pub fn css_class(self) -> &'static str {
+        match self {
+            Self::Land => "vt-land",
+            Self::Sky => "vt-sky",
+            Self::Sea => "vt-sea",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Land => "LAND",
+            Self::Sky => "SKY",
+            Self::Sea => "SEA",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublicFigure {
     pub id: String,
@@ -79,6 +108,8 @@ pub struct PublicFigure {
     pub game: GameOfOrigin,
     pub element: Option<Element>,
     pub category: Category,
+    #[serde(default)]
+    pub vehicle_terrain: Option<VehicleTerrain>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -211,6 +242,13 @@ pub struct PublicProfile {
     pub id: String,
     pub display_name: String,
     pub color: String,
+    /// Mirrors the server-side field so the AdminEdit screen can render
+    /// an immediate-fire Kaos toggle (PLAN 9.7 playtest 2026-05-04 —
+    /// kaos toggle moved out of the kebab overlay because the
+    /// description text overflowed iPhone width). `serde(default)` so
+    /// older payloads round-trip cleanly.
+    #[serde(default)]
+    pub kaos_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

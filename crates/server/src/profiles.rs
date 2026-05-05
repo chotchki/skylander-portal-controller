@@ -52,6 +52,13 @@ pub struct PublicProfile {
     pub id: String,
     pub display_name: String,
     pub color: String,
+    /// Surfaced to the phone so the AdminEdit (Konami-gated) screen
+    /// can render an immediate-fire Kaos toggle without first unlocking
+    /// the profile via PIN. Previously only on `UnlockedProfile`, where
+    /// the menu-overlay button consumed it; that button overflowed the
+    /// iPhone screen and moved here per PLAN 9.7 playtest 2026-05-04.
+    #[serde(default)]
+    pub kaos_enabled: bool,
 }
 
 impl From<&ProfileRow> for PublicProfile {
@@ -60,6 +67,7 @@ impl From<&ProfileRow> for PublicProfile {
             id: r.id.clone(),
             display_name: r.display_name.clone(),
             color: r.color.clone(),
+            kaos_enabled: r.kaos_enabled,
         }
     }
 }

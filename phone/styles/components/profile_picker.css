@@ -609,7 +609,12 @@
   }
 
   .profile-row {
-    @apply relative flex items-center gap-3 rounded-[14px] overflow-hidden;
+    /* `flex-wrap` so the action buttons (EDIT / PIN / DEL) wrap to a
+       second line when the available width can't hold the bezel +
+       name + 3 action chips on one row — chiefly iPhone. iPad has
+       enough width to keep everything on one line, so the wrap is
+       harmless there. PLAN 9.7 playtest 2026-05-04. */
+    @apply relative flex flex-wrap items-center gap-3 rounded-[14px];
     padding: 12px 14px;
     background: linear-gradient(180deg,
       rgba(26, 58, 138, 0.6),
@@ -670,8 +675,22 @@
   }
 
   .profile-actions {
-    @apply flex shrink-0;
+    @apply flex shrink-0 justify-end;
     gap: 6px;
+    /* On phone, the bezel + name fill the first wrap line; the action
+       chips drop to a second line at full row width and right-align
+       (PLAN 9.7 playtest 2026-05-04 — "stacked set of cards instead
+       of one row"). On iPad the row is wide enough to fit everything
+       on a single line; `min-width: 0` + the row's `flex-wrap` mean
+       this just doesn't trigger. */
+    flex-basis: 100%;
+  }
+  @media (min-width: 700px) {
+    /* iPad: keep actions inline at the right edge of the row, no wrap. */
+    .profile-actions {
+      flex-basis: auto;
+      margin-left: auto;
+    }
   }
   .act-btn {
     @apply rounded-lg cursor-pointer whitespace-nowrap;
@@ -705,30 +724,39 @@
     background: linear-gradient(180deg, rgba(227, 76, 76, 0.7), rgba(122, 24, 24, 0.8));
   }
 
-  /* Delete-confirm overlay — slides over the row when DELETE tapped. */
+  /* Delete-confirm overlay — overlays the row when DELETE tapped. Now
+     a real `<button>` carrying the destructive `<ActionButton>` class
+     stack (`menu-action menu-action--hold menu-action--danger`) so it
+     inherits the same red gradient + hold-fill animation as HOLD TO
+     SHUT DOWN. The previous custom red bar didn't visually match the
+     destructive button vocabulary used elsewhere (PLAN 9.7 playtest
+     2026-05-04). The handful of overrides here just position it as
+     an overlay and re-tune the in-row sizing — the rest of the
+     visual treatment comes from `action_button.css`. */
   .del-confirm {
-    @apply absolute inset-0 flex items-center justify-center text-white rounded-[14px] overflow-hidden isolate select-none pointer-events-none;
-    background: linear-gradient(90deg, rgba(194, 58, 58, 0.98), rgba(154, 36, 36, 0.98));
-    font-family: var(--font-display);
-    font-size: var(--text-body);
-    letter-spacing: 0.22em;
-    text-shadow:
-      0 0 2px rgba(0, 0, 0, 0.9),
-      0 1px 0 rgba(0, 0, 0, 0.7),
-      0 2px 6px rgba(0, 0, 0, 0.5);
+    @apply absolute inset-0 flex items-center justify-center pointer-events-none;
+    border-radius: 14px;
+    padding: 0 14px;
     opacity: 0;
     transform: scaleX(0.85);
     transform-origin: right center;
     transition: opacity 0.18s ease, transform 0.22s cubic-bezier(.3, 1.5, .5, 1);
-    touch-action: pan-x pan-y;
-    -webkit-user-select: none;
   }
   .profile-row.deleting .del-confirm {
     opacity: 1;
     pointer-events: auto;
     transform: scaleX(1);
   }
-  .del-confirm-label { @apply relative z-[2]; }
+  .del-confirm-label {
+    @apply relative z-[2] uppercase;
+    color: #ffd0d0;
+    font-family: var(--font-display);
+    font-size: var(--text-body);
+    letter-spacing: 0.22em;
+    text-shadow:
+      0 1px 0 rgba(0, 0, 0, 0.7),
+      0 0 8px rgba(0, 0, 0, 0.4);
+  }
   .del-cancel {
     @apply absolute w-[22px] h-[22px] rounded-full grid place-items-center cursor-pointer text-white z-[3];
     top: 6px; right: 8px;
@@ -967,6 +995,67 @@
       0 2px 8px rgba(0, 0, 0, 0.5);
   }
 
+  /* Kaos toggle (PLAN 9.7 playtest 2026-05-04 — relocated from the
+     kebab-overlay where the description text overflowed iPhone width).
+     iOS-style switch: gold-bezel track, white knob, gold "ON" fill
+     when enabled. Tap fires the API immediately; the parent component
+     handles optimistic state + rollback on failure. */
+  .edit-toggle {
+    @apply flex items-center cursor-pointer rounded-full bg-transparent;
+    align-self: center;
+    gap: 10px;
+    padding: 6px 14px;
+    margin-top: 4px;
+    border: 1.5px solid rgba(245, 198, 52, 0.35);
+    color: var(--color-gold-bright);
+    font-family: var(--font-display);
+    font-size: var(--text-display-sm);
+    letter-spacing: 0.16em;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .edit-toggle:hover,
+  .edit-toggle:focus-visible {
+    border-color: var(--color-gold-bright);
+    background: rgba(245, 198, 52, 0.08);
+    outline: none;
+  }
+  .edit-toggle-track {
+    @apply relative inline-block rounded-full;
+    width: 2.75rem;
+    height: 1.5rem;
+    background: linear-gradient(180deg, #0a1a36 0%, #061436 100%);
+    border: 1.5px solid var(--color-gold-deep);
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5);
+    transition: background 0.18s var(--ease-smooth);
+  }
+  .edit-toggle-knob {
+    @apply absolute rounded-full;
+    top: 1px;
+    left: 1px;
+    width: 1.125rem;
+    height: 1.125rem;
+    background: linear-gradient(180deg,
+      var(--color-gold-bright) 0%,
+      var(--color-gold) 50%,
+      var(--color-gold-mid) 100%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.45),
+      0 1px 3px rgba(0, 0, 0, 0.5);
+    transition: transform 0.18s var(--ease-spring);
+  }
+  .edit-toggle-on .edit-toggle-track {
+    background: linear-gradient(180deg, #2f8c3e 0%, #1d5e2a 100%);
+    border-color: var(--color-gold-bright);
+  }
+  .edit-toggle-on .edit-toggle-knob {
+    transform: translateX(1.25rem);
+  }
+  .edit-toggle-label {
+    @apply uppercase;
+    min-width: 1.75rem;
+    text-align: center;
+  }
+
   /* ============================================================
      7. Admin PIN reset.
      ============================================================ */
@@ -1095,7 +1184,12 @@
      PIN-entry pattern Chris picked as canonical (2026-04-24). */
   .btn-back {
     @apply fixed cursor-pointer bg-transparent z-[20];
-    top: calc(env(safe-area-inset-top) + 22px);
+    /* Top matches `.app`'s `padding-top: 16px` so the back-button
+       row sits at the same y-baseline as the kebab inside `.header-
+       left` — they're nearly the same height (kebab 42px, back ~44px),
+       so top-aligning is visually equivalent to center-aligning and
+       doesn't require hard math against the kebab's height. */
+    top: calc(env(safe-area-inset-top) + 16px);
     left: calc(env(safe-area-inset-left) + 64px);
     padding: 4px 8px;
     color: var(--color-gold-bright);

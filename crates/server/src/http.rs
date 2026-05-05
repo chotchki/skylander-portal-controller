@@ -1024,33 +1024,46 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
 
     // Resolve serial → game directory → EBOOT.BIN via games.yml
     // (PLAN 10.8.4). 404 if the picked serial isn't in RPCS3's library.
-    let game_dir = match state.games_yml.get(body.serial.as_str()) {
-        Some(d) => d.clone(),
-        None => {
-            return (
-                StatusCode::NOT_FOUND,
-                format!(
-                    "{} ({}) isn't in RPCS3's library. \
-                     Re-scan games in RPCS3 and try again.",
-                    game.display_name,
-                    body.serial.as_str(),
-                ),
-            )
-                .into_response();
-        }
-    };
-    let eboot_path = match skylander_rpcs3_control::games_yml::eboot_for(&game_dir) {
-        Some(p) => p,
-        None => {
-            return (
-                StatusCode::NOT_FOUND,
-                format!(
-                    "EBOOT.BIN missing for {} at {} — game may be corrupted",
-                    game.display_name,
-                    game_dir.display(),
-                ),
-            )
-                .into_response();
+    //
+    // Skipped under the mock driver: BootDirect's mock branch ignores
+    // `eboot_path` entirely (no real RPCS3 to spawn), and on macOS
+    // there's typically no RPCS3 install at all so `games.yml` won't
+    // exist — the lookup would always 404 and every game-card click
+    // would dead-end on the picker. Gated on driver kind rather than
+    // `cfg(windows)` so a future Mac port with a real driver still
+    // gets the lookup. (PLAN 9.7 sibling fix, surfaced 2026-05-04
+    // playtest.)
+    let eboot_path = if matches!(state.driver_kind, crate::config::DriverKind::Mock) {
+        std::path::PathBuf::new()
+    } else {
+        let game_dir = match state.games_yml.get(body.serial.as_str()) {
+            Some(d) => d.clone(),
+            None => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    format!(
+                        "{} ({}) isn't in RPCS3's library. \
+                         Re-scan games in RPCS3 and try again.",
+                        game.display_name,
+                        body.serial.as_str(),
+                    ),
+                )
+                    .into_response();
+            }
+        };
+        match skylander_rpcs3_control::games_yml::eboot_for(&game_dir) {
+            Some(p) => p,
+            None => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    format!(
+                        "EBOOT.BIN missing for {} at {} — game may be corrupted",
+                        game.display_name,
+                        game_dir.display(),
+                    ),
+                )
+                    .into_response();
+            }
         }
     };
 
@@ -1751,20 +1764,14 @@ struct PinBody {
 async fn delete_profile(
     State(state): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
-    Signed(body_bytes): Signed,
+    Signed(_body_bytes): Signed,
 ) -> Response {
-    let body: PinBody = match serde_json::from_slice(&body_bytes) {
-        Ok(b) => b,
-        Err(e) => {
-            return (StatusCode::BAD_REQUEST, format!("bad delete body: {e}")).into_response();
-        }
-    };
-    match state.profiles.verify_pin(&id, &body.pin).await {
-        Ok(true) => {}
-        Ok(false) => return (StatusCode::UNAUTHORIZED, "wrong pin").into_response(),
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-    }
-
+    // No PIN re-verification (PLAN 9.7 playtest 2026-05-04). Delete
+    // lives behind the Konami-gated Manage Profiles flow and the
+    // hold-to-confirm action button — that's the auth gate. The
+    // `_body_bytes` capture keeps the `Signed` extractor wired so the
+    // HMAC check still runs; older phone bundles that send `{ "pin":
+    // "..." }` round-trip cleanly because we just ignore the body.
     match state.profiles.delete(&id).await {
         Ok(true) => (StatusCode::OK, "deleted").into_response(),
         Ok(false) => (StatusCode::NOT_FOUND, "no such profile").into_response(),
@@ -1934,6 +1941,14 @@ async fn clear_resume(
 
 #[derive(Deserialize)]
 struct ResetPinBody {
+    /// Kept as `serde(default)` for backwards-compat with older phone
+    /// builds that still send a `current_pin` field; the server no
+    /// longer checks it (PLAN 9.7 playtest 2026-05-04 — this is the
+    /// Konami-gated "I forgot the PIN" recovery flow, not a
+    /// re-authentication. Konami is the auth gate; requiring the
+    /// current PIN here defeats the recovery purpose).
+    #[serde(default)]
+    #[allow(dead_code)]
     current_pin: String,
     new_pin: String,
 }
@@ -1947,11 +1962,6 @@ async fn reset_pin(
         Ok(b) => b,
         Err(e) => return (StatusCode::BAD_REQUEST, format!("bad reset body: {e}")).into_response(),
     };
-    match state.profiles.verify_pin(&id, &body.current_pin).await {
-        Ok(true) => {}
-        Ok(false) => return (StatusCode::UNAUTHORIZED, "wrong pin").into_response(),
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-    }
     match state.profiles.reset_pin(&id, &body.new_pin).await {
         Ok(()) => (StatusCode::OK, "updated").into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),

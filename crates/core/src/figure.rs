@@ -270,6 +270,19 @@ pub enum Category {
     Other,
 }
 
+/// Terrain classification for SuperChargers vehicles. Hand-curated from
+/// `data/vehicle_terrain.json`; the indexer populates `Figure::vehicle_terrain`
+/// for any figure whose name matches an entry in that lookup. `None` for
+/// non-vehicles and for vehicles that fell through the lookup. PLAN 9.7
+/// playtest 2026-05-04.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum VehicleTerrain {
+    Land,
+    Sky,
+    Sea,
+}
+
 /// Game origin, used in `Figure` and surfaced in the filter UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -305,6 +318,11 @@ pub struct Figure {
     pub game: GameOfOrigin,
     pub element: Option<Element>,
     pub category: Category,
+    /// Land/Sky/Sea classification for SuperChargers vehicles. Populated by
+    /// the indexer from `data/vehicle_terrain.json` when the figure name
+    /// matches an entry there; `None` for non-vehicles. PLAN 9.7 playtest.
+    #[serde(default)]
+    pub vehicle_terrain: Option<VehicleTerrain>,
     /// Absolute path on disk. **Server-private.**
     pub sky_path: PathBuf,
     /// Path to the element-symbol PNG, if present in the pack. **Server-private.**
@@ -329,6 +347,7 @@ impl Figure {
             game: self.game,
             element: self.element,
             category: self.category,
+            vehicle_terrain: self.vehicle_terrain,
         }
     }
 }
@@ -344,6 +363,8 @@ pub struct PublicFigure {
     pub game: GameOfOrigin,
     pub element: Option<Element>,
     pub category: Category,
+    #[serde(default)]
+    pub vehicle_terrain: Option<VehicleTerrain>,
 }
 
 /// Game the user can launch. MVP-scope: Phase 2 just lists games; Phase 3

@@ -33,8 +33,11 @@ use wasm_bindgen::JsCast;
 
 use crate::{KaosSwapAnnouncement, TakeoverReason};
 
-/// How long the swap announcement stays on-screen before auto-dismissing.
-const SWAP_DISMISS_MS: i32 = 5_000;
+/// Hold duration to dismiss the Kaos swap announcement (PLAN 9.7
+/// playtest 2026-05-04 — "kaos swap screen needs to be hold to
+/// dismiss; goes away instantly and my son missed the insults").
+/// Long enough to be deliberate, short enough not to feel punishing.
+const SWAP_HOLD_DISMISS_MS: i32 = 800;
 
 /// Kaos overlay driving both the takeover and mid-game-swap variants.
 /// The enclosing `App()` controls mount via `<Show>` on "takeover OR
@@ -44,38 +47,14 @@ pub(crate) fn KaosOverlay(
     takeover: RwSignal<Option<TakeoverReason>>,
     kaos_swap: RwSignal<Option<KaosSwapAnnouncement>>,
 ) -> impl IntoView {
-    // Swap variant — 5s auto-dismiss timer. Fires whenever `kaos_swap`
-    // transitions to Some; each new arrival restarts the timer so a
-    // rapid-fire back-to-back swap (unusual but possible) doesn't get
-    // truncated by the previous one's timer.
-    {
-        let pending: Rc<Cell<Option<i32>>> = Rc::new(Cell::new(None));
-        let pending_for_effect = pending.clone();
-        Effect::new(move |_| {
-            if kaos_swap.get().is_none() {
-                return;
-            }
-            // Cancel any prior timer (overlapping swap case).
-            if let Some(h) = pending_for_effect.take() {
-                if let Some(w) = web_sys::window() {
-                    w.clear_timeout_with_handle(h);
-                }
-            }
-            let pending_for_cb = pending_for_effect.clone();
-            let cb = Closure::once_into_js(move || {
-                pending_for_cb.set(None);
-                kaos_swap.set(None);
-            });
-            if let Some(w) = web_sys::window() {
-                if let Ok(h) = w.set_timeout_with_callback_and_timeout_and_arguments_0(
-                    cb.as_ref().unchecked_ref(),
-                    SWAP_DISMISS_MS,
-                ) {
-                    pending_for_effect.set(Some(h));
-                }
-            }
-        });
-    }
+    // No auto-dismiss — the kid needs to be able to read the taunt
+    // (PLAN 9.7 playtest 2026-05-04). The previous 5-second timer +
+    // tap-anywhere-dismiss combo meant a stray pinky lift cleared the
+    // overlay before the message landed. Now the swap stays until the
+    // user explicitly holds to dismiss (handler below). Takeover variant
+    // already had no auto-dismiss; this just brings swap in line.
+    // Local hold-fill state for the swap dismiss button.
+    let dismiss_holding = RwSignal::new(false);
     // Kaos took the slot. "Kick back" does a full page reload — the browser
     // opens a fresh WS, server tries to re-admit via the FIFO path. If the
     // 1-minute cooldown is still active, the reload-WS gets an `Error` event
@@ -166,7 +145,19 @@ pub(crate) fn KaosOverlay(
 
                     <div
                         class="takeover-viewport takeover-viewport--swap"
-                        on:click=move |_| kaos_swap.set(None)
+                        on:pointerdown=move |_| {
+                            dismiss_holding.set(true);
+                            leptos::task::spawn_local(async move {
+                                crate::gloo_timer(SWAP_HOLD_DISMISS_MS).await;
+                                if dismiss_holding.get_untracked() {
+                                    dismiss_holding.set(false);
+                                    kaos_swap.set(None);
+                                }
+                            });
+                        }
+                        on:pointerup=move |_| dismiss_holding.set(false)
+                        on:pointerleave=move |_| dismiss_holding.set(false)
+                        on:pointercancel=move |_| dismiss_holding.set(false)
                     >
                         <div class="kaos-sigil"></div>
 
@@ -187,8 +178,14 @@ pub(crate) fn KaosOverlay(
                             <div class="takeover-quote-attrib">{"\u{2014} KAOS"}</div>
                         </div>
 
-                        <p class="takeover-info takeover-info--swap">
-                            "tap to dismiss"
+                        <p class=move || {
+                            if dismiss_holding.get() {
+                                "takeover-info takeover-info--swap takeover-info--holding"
+                            } else {
+                                "takeover-info takeover-info--swap"
+                            }
+                        }>
+                            "hold to dismiss"
                         </p>
                     </div>
 

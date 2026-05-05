@@ -74,6 +74,11 @@ pub fn scan(pack_root: &Path) -> Result<Vec<Figure>> {
             game,
             element,
             category,
+            // Decorated by the server post-scan from
+            // `<data_root>/vehicle_terrain.json` (PLAN 9.7 playtest).
+            // Indexer stays pure-firmware-pack — terrain is hand-curated
+            // metadata, not derivable from the .sky file alone.
+            vehicle_terrain: None,
             sky_path: sky.abs,
             element_icon_path,
             tag_identity,
@@ -173,6 +178,8 @@ pub fn scan_runtime(scanned_dir: &Path) -> Result<Vec<Figure>> {
             // the neutral bezel instead of a coloured one.
             element: None,
             category,
+            // Server post-pass populates from data/vehicle_terrain.json.
+            vehicle_terrain: None,
             sky_path: abs,
             element_icon_path: None,
             tag_identity,

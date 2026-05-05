@@ -20,6 +20,13 @@ pub struct AppState {
     pub figures: Vec<Figure>,
     /// Map figure_id → index into `figures` for quick lookup.
     pub figure_index: HashMap<FigureId, usize>,
+    /// Which portal driver is active. Read by the `/api/launch` handler
+    /// to skip the games.yml → EBOOT.BIN resolution under the mock
+    /// driver (BootDirect's mock branch ignores `eboot_path` entirely,
+    /// and on macOS there's no RPCS3 install so games.yml doesn't
+    /// exist — the lookup would always 404). Driven by config /
+    /// SKYLANDER_PORTAL_DRIVER env var (`config.rs::DriverKind`).
+    pub driver_kind: crate::config::DriverKind,
     pub driver_tx: mpsc::Sender<DriverJob>,
     pub portal: Arc<Mutex<[SlotState; SLOT_COUNT]>>,
     pub events: broadcast::Sender<Event>,

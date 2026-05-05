@@ -57,6 +57,16 @@ pub fn ToyBoxLid(
     /// Title shown in the compact top row (defaults to "COLLECTION").
     #[prop(into, optional)]
     title: Option<String>,
+    /// Optional search-input binding. When provided, the lid renders an
+    /// inline `<input>` in the top row in place of the SEARCH toggle
+    /// button while `BoxState::Expanded` — saves a vertical row vs. a
+    /// separate input above the filter chips, and removes the visual
+    /// redundancy of a SEARCH button next to a search box (PLAN 9.7
+    /// playtest 2026-05-04). The button still renders in Compact /
+    /// Closed states so the discoverable affordance for opening the
+    /// drawer stays put.
+    #[prop(optional)]
+    search: Option<RwSignal<String>>,
     /// Expanded-area content. Mounted inside a `<Show when=Expanded>` so
     /// it doesn't render at all in Compact / Closed states. `ChildrenFn`
     /// (not `Children`) because Show's body closure must be `Sync` and
@@ -174,20 +184,45 @@ pub fn ToyBoxLid(
                 on:pointercancel=on_lid_pointercancel
             >
                 <span class="lid-open-title-p4">{title}</span>
-                <button
-                    class="search-toggle-p4"
-                    on:pointerdown=on_search_pointerdown
-                    on:click=move |_| {
-                        if box_state.get_untracked() == BoxState::Expanded {
-                            box_state.set(BoxState::Compact);
-                        } else {
-                            box_state.set(BoxState::Expanded);
-                        }
+                <Show
+                    when=move || search.is_some() && box_state.get() == BoxState::Expanded
+                    fallback=move || view! {
+                        <button
+                            class="search-toggle-p4"
+                            on:pointerdown=on_search_pointerdown
+                            on:click=move |_| {
+                                if box_state.get_untracked() == BoxState::Expanded {
+                                    box_state.set(BoxState::Compact);
+                                } else {
+                                    box_state.set(BoxState::Expanded);
+                                }
+                            }
+                        >
+                            <span class="search-toggle-mag">{"\u{2315}"}</span>
+                            " SEARCH"
+                        </button>
                     }
                 >
-                    <span class="search-toggle-mag">{"\u{2315}"}</span>
-                    " SEARCH"
-                </button>
+                    {
+                        let s = search.expect("Show predicate gates this branch on search.is_some()");
+                        view! {
+                            <input
+                                class="search-input-p4 search-input-inline-p4"
+                                type="search"
+                                placeholder="Search heroes\u{2026}"
+                                prop:value=move || s.get()
+                                on:input=move |e| s.set(leptos::prelude::event_target_value(&e))
+                                // Pointer events bubble back to lid-top-row-p4 and trigger swipe
+                                // gestures otherwise — typing in the input would fight the lid's
+                                // pointer-capture handler. Stop propagation so the input owns its
+                                // own focus + caret behaviour.
+                                on:pointerdown=move |e| e.stop_propagation()
+                                on:pointermove=move |e| e.stop_propagation()
+                                on:pointerup=move |e| e.stop_propagation()
+                            />
+                        }
+                    }
+                </Show>
             </div>
 
             <Show when=move || box_state.get() == BoxState::Expanded fallback=|| ()>

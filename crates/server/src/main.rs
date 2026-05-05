@@ -11,6 +11,7 @@ use skylander_server::{config, http, logging, profiles, state, ui};
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
@@ -150,6 +151,16 @@ fn main() -> Result<()> {
     };
     #[cfg(not(feature = "nfc-import"))]
     let figures: Vec<Figure> = pack_figures;
+
+    // PLAN 9.7 playtest 2026-05-04 — decorate Vehicle figures with their
+    // hand-curated Land/Sky/Sea terrain from `data/vehicle_terrain.json`.
+    // The terrain isn't derivable from the .sky file or the wiki scrape
+    // alone (wiki coverage is patchy: 1/8 vehicles in `data/figures.json`
+    // had `terrain` populated). Substring match with longest-key-first
+    // so "gold rusher" beats "rusher" for the figure literally named
+    // "Power Blue Gold Rusher". Missing/malformed file → log + leave
+    // everything `None`; the badge just doesn't render. Non-fatal.
+    let figures = decorate_vehicle_terrain(figures, &cfg.data_root);
     info!(count = figures.len(), "total library figures");
 
     let figure_index: HashMap<_, _> = figures
@@ -433,6 +444,7 @@ fn main() -> Result<()> {
                 let state = Arc::new(AppState {
                     figures: figures_for_task,
                     figure_index: figure_index_for_task,
+                    driver_kind,
                     driver_tx,
                     portal: portal_for_task,
                     events: events_for_task,
@@ -591,6 +603,92 @@ type DriverBundle = (Arc<dyn PortalDriver>, TestMockHandle);
 /// Convert a list of RPCS3 library serials (from `enumerate_games`) into the
 /// phone-facing `InstalledGame` catalogue. Filters out non-Skylanders serials
 /// the library happens to hold and attaches the canonical display name from
+/// Decorate every `Vehicle`-category figure with a `vehicle_terrain` value
+/// from `<data_root>/vehicle_terrain.json`. Substring match against the
+/// figure's lowercased canonical name; the lookup table is sorted longest-
+/// key-first so "gold rusher" wins over "rusher" when both keys could match
+/// the same figure (e.g. "Power Blue Gold Rusher"). Missing file or parse
+/// error logs a warning and leaves every figure's `vehicle_terrain` as
+/// whatever it was (typically `None`). PLAN 9.7 playtest 2026-05-04.
+fn decorate_vehicle_terrain(mut figures: Vec<Figure>, data_root: &Path) -> Vec<Figure> {
+    use skylander_core::{Category, VehicleTerrain};
+
+    let path = data_root.join("vehicle_terrain.json");
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(
+                path = %path.display(),
+                error = %e,
+                "vehicle_terrain.json missing — vehicle badges will not render",
+            );
+            return figures;
+        }
+    };
+
+    #[derive(serde::Deserialize)]
+    struct File {
+        vehicles: HashMap<String, String>,
+    }
+    let file: File = match serde_json::from_slice(&bytes) {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::warn!(
+                path = %path.display(),
+                error = %e,
+                "vehicle_terrain.json failed to parse — vehicle badges will not render",
+            );
+            return figures;
+        }
+    };
+
+    // Sort by key length descending so longer matches (e.g. "gold rusher")
+    // get tried before shorter substrings ("rusher"). `String` keys are
+    // already lowercased per the file's contract.
+    let mut entries: Vec<(String, VehicleTerrain)> = file
+        .vehicles
+        .into_iter()
+        .filter_map(|(k, v)| {
+            let terrain = match v.as_str() {
+                "Land" => VehicleTerrain::Land,
+                "Sky" => VehicleTerrain::Sky,
+                "Sea" => VehicleTerrain::Sea,
+                other => {
+                    tracing::warn!(
+                        key = %k,
+                        value = %other,
+                        "vehicle_terrain.json: unknown terrain value, skipping",
+                    );
+                    return None;
+                }
+            };
+            Some((k, terrain))
+        })
+        .collect();
+    entries.sort_by(|(a, _), (b, _)| b.len().cmp(&a.len()));
+
+    let mut decorated = 0usize;
+    for f in figures.iter_mut() {
+        if !matches!(f.category, Category::Vehicle) {
+            continue;
+        }
+        let name_lc = f.canonical_name.to_lowercase();
+        if let Some((_, terrain)) = entries.iter().find(|(k, _)| name_lc.contains(k)) {
+            f.vehicle_terrain = Some(*terrain);
+            decorated += 1;
+        }
+    }
+    info!(
+        decorated,
+        total_vehicles = figures
+            .iter()
+            .filter(|f| matches!(f.category, Category::Vehicle))
+            .count(),
+        "decorated vehicle terrains from data/vehicle_terrain.json",
+    );
+    figures
+}
+
 /// `SKYLANDERS_SERIALS`. Return order matches `SKYLANDERS_SERIALS` (release
 /// order) so the phone picker is stable across sessions.
 fn serials_to_catalogue(serials: &[String]) -> Vec<skylander_core::InstalledGame> {

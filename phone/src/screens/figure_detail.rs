@@ -178,6 +178,13 @@ pub(crate) fn FigureDetail(
             </div>
 
             <div class="detail-surface framed-panel panel-in">
+                // PLAN 9.7 playtest 2026-05-04 — opaque blue card behind
+                // the badge/name/actions/stats so the content reads on a
+                // solid surface instead of fighting the framed-panel's
+                // gold pseudo. Same width as the PLACE/BACK buttons
+                // below; spacer + buttons stay outside the card so they
+                // sit on the gold panel as before.
+                <div class="detail-content-card">
                 <div class="detail-hero-wrap">
                     {
                         // Hero portrait + initial fallback. Initial sits
@@ -289,6 +296,7 @@ pub(crate) fn FigureDetail(
                         </div>
                     }.into_any(),
                 }}
+                </div>  // end .detail-content-card
 
                 <div class="detail-spacer"></div>
 

@@ -191,9 +191,14 @@
       0 0 10px rgba(245, 198, 52, 0.3);
   }
 
-  /* N-variants badge — top-right gold pill (PLAN 3.14.2). */
+  /* N-variants badge — top-right gold pill (PLAN 3.14.2). Size in rem
+     so it scales with the iPad root-font-size bump (PLAN 9.7 playtest
+     2026-05-04 — "on iPad the alternative marker is small compared to
+     the text"); previously the px-pinned 22×22 box stayed phone-sized
+     while the rem-based number inside grew, making the digit overflow
+     and the badge look tiny next to the now-bigger figure name. */
   .fig-variant-badge {
-    @apply absolute w-[22px] h-[22px] rounded-full cursor-pointer z-[6];
+    @apply absolute w-[1.375rem] h-[1.375rem] rounded-full cursor-pointer z-[6];
     top: -4px;
     right: -4px;
     padding: 0;
@@ -221,6 +226,81 @@
     transform: scale(0.9) rotate(45deg);
   }
   .fig-card-p4.on-portal .fig-variant-badge {
+    filter: saturate(0.5) brightness(0.85);
+  }
+
+  /* Trap badge — purple pill, top-LEFT (variant-count owns top-right).
+     The captured-villain figure image doesn't visually distinguish a
+     trap from a regular skylander (PLAN 9.7 playtest 2026-05-04 —
+     "impossible to see in the toy chest if something is a trap or
+     not because the villain overlays it"). Sized in `rem` so it
+     scales with the iPad root-font-size bump. */
+  .fig-trap-badge {
+    @apply absolute z-[6] uppercase rounded-md;
+    top: -4px;
+    left: -4px;
+    padding: 0.125rem 0.375rem;
+    border: 1.5px solid var(--color-gold-bright);
+    background: linear-gradient(180deg,
+      var(--k-magenta-bright) 0%,
+      var(--k-magenta) 55%,
+      var(--k-violet-deep) 100%);
+    color: #fff;
+    font-family: var(--font-display);
+    font-size: 0.5rem;
+    letter-spacing: 0.12em;
+    text-shadow:
+      0 1px 0 rgba(0, 0, 0, 0.7),
+      0 0 6px rgba(218, 40, 168, 0.5);
+    box-shadow:
+      0 0 0 1px #000,
+      0 2px 4px rgba(0, 0, 0, 0.5);
+    pointer-events: none;
+  }
+  .fig-card-p4.on-portal .fig-trap-badge {
+    filter: saturate(0.5) brightness(0.85);
+  }
+
+  /* Vehicle terrain badge — same shape + size as the trap badge so the
+     two slot interchangeably in the top-left corner (a figure is either
+     a trap or a vehicle, never both). Per-terrain colour: green for
+     Land, sky-blue for Sky, sea-blue for Sea. PLAN 9.7 playtest. */
+  .fig-terrain-badge {
+    @apply absolute z-[6] uppercase rounded-md;
+    top: -4px;
+    left: -4px;
+    padding: 0.125rem 0.375rem;
+    border: 1.5px solid var(--color-gold-bright);
+    color: #fff;
+    font-family: var(--font-display);
+    font-size: 0.5rem;
+    letter-spacing: 0.12em;
+    text-shadow:
+      0 1px 0 rgba(0, 0, 0, 0.7),
+      0 0 6px rgba(0, 0, 0, 0.5);
+    box-shadow:
+      0 0 0 1px #000,
+      0 2px 4px rgba(0, 0, 0, 0.5);
+    pointer-events: none;
+  }
+  /* Land = earth brown (PLAN 9.7 playtest 2026-05-04 — original green
+     was too close to the new Sea teal; brown reads as "ground/dirt"
+     and is unambiguously distinct from teal-Sea + gold-Sky). */
+  .fig-terrain-badge.vt-land {
+    background: linear-gradient(180deg, #c08a4e 0%, #7a4f1f 60%, #3a2614 100%);
+  }
+  /* Sky = sunny gold (PLAN 9.7 playtest 2026-05-04 — original sky-blue
+     was too close to the Sea badge AND the Air element ring; the
+     yellow/gold vs teal split is colour-blind-friendly and reads as
+     "sun" against "ocean". The dark text-shadow on the base badge
+     keeps the LAND/SKY/SEA label legible against this lighter fill. */
+  .fig-terrain-badge.vt-sky {
+    background: linear-gradient(180deg, #ffe88a 0%, #f0c040 60%, #a07820 100%);
+  }
+  .fig-terrain-badge.vt-sea {
+    background: linear-gradient(180deg, #2dd0c8 0%, #1a8e89 60%, #0a3a3a 100%);
+  }
+  .fig-card-p4.on-portal .fig-terrain-badge {
     filter: saturate(0.5) brightness(0.85);
   }
 

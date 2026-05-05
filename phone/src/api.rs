@@ -465,10 +465,13 @@ pub async fn create_profile(
     serde_json::from_str(&text).map_err(|e| e.to_string())
 }
 
-pub async fn delete_profile(id: &str, pin: &str) -> Result<(), String> {
+pub async fn delete_profile(id: &str) -> Result<(), String> {
     let url = format!("{}/api/profiles/{id}", origin());
-    let body = json!({ "pin": pin }).to_string();
-    do_fetch(&url, "DELETE", Some(&body)).await.map(|_| ())
+    // Empty body — server no longer verifies a PIN here (PLAN 9.7
+    // playtest 2026-05-04). Konami + hold-to-confirm together are the
+    // auth gate now. `do_fetch` requires a body for non-GET requests
+    // (HMAC signing operates on the body), so pass an empty JSON object.
+    do_fetch(&url, "DELETE", Some("{}")).await.map(|_| ())
 }
 
 pub async fn unlock_profile(id: &str, pin: &str) -> Result<UnlockedProfile, String> {
@@ -478,10 +481,12 @@ pub async fn unlock_profile(id: &str, pin: &str) -> Result<UnlockedProfile, Stri
     serde_json::from_str(&text).map_err(|e| e.to_string())
 }
 
-pub async fn reset_pin(id: &str, current_pin: &str, new_pin: &str) -> Result<(), String> {
+pub async fn reset_pin(id: &str, new_pin: &str) -> Result<(), String> {
     let url = format!("{}/api/profiles/{id}/reset_pin", origin());
+    // No `current_pin` — Konami is the auth gate for this flow (PLAN 9.7
+    // playtest 2026-05-04). Server still accepts the field for older
+    // clients but ignores it.
     let body = json!({
-        "current_pin": current_pin,
         "new_pin": new_pin,
     })
     .to_string();
