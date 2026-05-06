@@ -26,9 +26,9 @@ Added a real end-to-end test harness using fantoccini against ChromeDriver befor
 
 Rewrote the phone UI to match the Skylanders game aesthetic: gold-bezeled circular figure portraits, starfield background, bold titles with gold outline, Titan One type. Added safe-area handling for iPhones with a notch, service-worker scaffolding toward PWA install, toy-box-lid interaction for the collection overlay, and the egui launcher's cloud + iris boot animations. Per-game display-mode persistence so RPCS3 launches don't trigger a TV resolution flicker. Per-slot ownership chips when two phones are co-op'ing.
 
-## Phase 5 — Kaos (shipped in v1.1.0)
+## Phase 5 — Kaos (shipped in v1.1.0; refined in v1.4.x)
 
-The surprise feature, gated behind a per-profile opt-in toggle in the kebab menu. A wall-clock timer fires after a 20-minute warmup, then re-arms at uniformly random offsets between 1 minute and 1 hour. Each fire swaps a random placed figure for a compatibility-aware random pick from the owned collection (vehicles only get pulled in for SuperChargers, figures only swap into games at or after their game-of-origin). Text-only catchphrase overlay auto-dismisses after about five seconds. The taunt also routes through the v1.1.0 ghost-session replay buffer, so a backgrounded phone catches it on reconnect.
+The surprise feature, gated behind a per-profile opt-in toggle. (Originally on the kebab menu; v1.4.x moved it to the per-profile EDIT screen behind the manage-profiles Konami gate, where profile-scoped preferences belong.) A wall-clock timer fires after a 20-minute warmup, then re-arms at uniformly random offsets between 1 minute and 1 hour. Each fire swaps a random placed figure for a compatibility-aware random pick from the owned collection (vehicles only get pulled in for SuperChargers, figures only swap into games at or after their game-of-origin). Text-only catchphrase overlay sticks until the user holds the "hold to dismiss" pill — the v1.1 auto-dismiss timer was short-circuiting kids before they finished reading the insult. The taunt also routes through the v1.1.0 ghost-session replay buffer, so a backgrounded phone catches it on reconnect.
 
 ## Phase 6 — Post-Kaos polish (in progress)
 
@@ -42,14 +42,23 @@ Single-exe distribution. The phone SPA, images, figure metadata, fonts, and icon
 
 The first round of changes after a real session in front of the kids. Ghost sessions: a phone backgrounding no longer clears the user's portal — figures stay placed for an hour or until a reclaim, with a 32-event replay buffer catching up the phone on what landed during the gap. Kickback cooldown countdown so the takeover screen's "kick back" button reads honestly. The Kaos feature itself (Phase 5 above). Empty-portal-slot cleanup so kids don't tap inert bezels expecting them to do something. Round-trip ghost/reclaim test pins the contract. v1.1.0 packages it all.
 
-## Phase 9 and beyond — open
+## Phase 9 — Tailwind v4 + iPad/iPhone responsive pass (shipped in v1.4.x)
 
-CSS modularization to support iPad alongside the phone (post-1.0 commitment), service-worker for PWA cache + update detection, demo harness for screen recording, and the rest of the Phase 6 stat-decoding pass. None of these block daily use. Detailed checklist lives in `PLAN.md` in the repo.
+The phone CSS rewrite that 1.x deferred. The legacy ~5800-line monolithic stylesheet got replaced by a Tailwind v4 utility-first build (cached CLI downloader, Trunk pre_build hook, `@theme`-driven design tokens, per-component CSS files). Rem-based typography with a tablet root-size bump means iPad and iPhone share one stylesheet — no separate "iPad version". The v1.4.x playtest pass on top added element-tinted bezel rings, Trap and Land/Sky/Sea badges so unfamiliar figure thumbnails read at a glance, the Kaos sigil silhouette (the asset wasn't being copied into `dist/` — sigil never actually rendered before), and a flotilla of contrast and tap-target fixes that only showed up under a real kid using a real iPad.
+
+## Phase 10 — macOS as a first-class platform (in progress)
+
+Mac is a production target now. Server compiles + runs on macOS against the mock RPCS3 driver (no Mac UIA equivalent — that's a real product limitation, not a packaging oversight); release artefact is a notarized + signed `.app` inside a `.dmg`. The `tools/ios-inspect/` CLI drives the iOS Simulator + WebKit Web Inspector for layout probes during development. The chromedriver e2e harness ports cleanly to macOS. The simultaneous iPad + iPhone simulator e2e lane (PLAN 10.4) catches multi-device product bugs that a single browser viewport hides. A few items still landing: macOS bundle code-signing follow-ups, real installer polish.
+
+## Beyond Phase 10 — open
+
+Service-worker for PWA cache + update detection (so an iOS Add-to-Home-Screen survives long backgrounding), the rest of the Phase 6 per-kind `.sky` stat decoders (traps / vehicles / creation crystals), demo harness for screen recording. None of these block daily use. Detailed checklist lives in `PLAN.md` in the repo.
 
 ## Non-goals
 
 - No bundling of RPCS3, game ISOs, or figure firmware.
-- No Linux or macOS support.
+- No Linux support.
+- No AXUIElement-based macOS RPCS3 driver — Mac runs the mock driver only. Mac users get a working portal-controller against an in-memory mock, not a live emulator.
 - No live wiki scraping at runtime — figure data is committed to the repo.
 - No audio (text-only Kaos to dodge copyright).
 - No user-entered figure names.

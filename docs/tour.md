@@ -59,7 +59,7 @@ A walkthrough of the phone interface, captured straight from the e2e test harnes
   <figcaption>
     <span class="tour-step">05</span>
     <strong>Open the toy box.</strong>
-    The whole owned collection, filterable by element, by game-of-origin, by category, plus a free-text search. Reposes collapse behind a "N variants" badge so a stack of Spyros doesn't drown out everyone else.
+    The whole owned collection, filterable by element, game-of-origin, or category, with a free-text search inline in the lid header. Each card's bezel ring is tinted with the figure's element so air vs fire vs water reads at a glance; the ELEMENTS chip row mirrors those colours so the filter you tap matches the rings you're scanning for. Trap Team traps and SuperChargers vehicles get a corner badge (TRAP, LAND/SKY/SEA) since their thumbnail is a captured villain or a vehicle silhouette — "what is this?" otherwise depends on knowing the line. Reposes collapse behind a "N variants" badge so a stack of Spyros doesn't drown out everyone else.
   </figcaption>
 </figure>
 
@@ -92,7 +92,7 @@ A walkthrough of the phone interface, captured straight from the e2e test harnes
   <figcaption>
     <span class="tour-step">08</span>
     <strong>Hand the phone off.</strong>
-    The kebab menu carries the join QR (so an existing player can invite a new joiner) and the per-profile actions: switch profile, manage profiles, hold-to-switch-games, hold-to-shut-down. The ENABLE KAOS toggle lives here too.
+    The kebab menu carries the join QR (so an existing player can invite a new joiner) and the per-profile actions: switch profile, manage profiles, hold-to-switch-games, hold-to-shut-down. The Kaos opt-in toggle lives on the per-profile EDIT screen behind the manage-profiles Konami gate now — it's a profile-scoped preference, not a session-level toggle.
   </figcaption>
 </figure>
 
@@ -103,7 +103,7 @@ A walkthrough of the phone interface, captured straight from the e2e test harnes
   <figcaption>
     <span class="tour-step">09</span>
     <strong>KAOS strikes!</strong>
-    With Kaos opt-in turned on, the timer fires somewhere in every hour after the 20-minute warmup. A random placed figure swaps for a compatible random pick from the collection, taunt overlay lands for ~5 seconds, then vanishes. Vehicles only swap in for SuperChargers; figures only swap into games at or after their game-of-origin.
+    With Kaos opt-in turned on, the timer fires somewhere in every hour after the 20-minute warmup. A random placed figure swaps for a compatible random pick from the collection. The taunt overlay sticks until the user holds the "hold to dismiss" pill — kids couldn't read Kaos's insults before the auto-dismiss expired. Vehicles only swap in for SuperChargers; figures only swap into games at or after their game-of-origin.
   </figcaption>
 </figure>
 
