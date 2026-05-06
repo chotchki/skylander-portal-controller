@@ -192,6 +192,21 @@ impl PersistedConfig {
             .and_then(|p| p.parent().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| PathBuf::from("."));
 
+        // Inside a `.app` bundle, `current_exe` is
+        // `Contents/MacOS/skylander-portal-controller`, so the data
+        // dir lives one level up at `Contents/Resources/data`. Apple's
+        // expectation is that `Contents/MacOS/` contains only Mach-O
+        // executables — anything else there trips `codesign --deep`
+        // ("code object is not signed at all" / "In subcomponent: ..."
+        // walking non-binary files). PLAN 10.6 / v1.4.4 release fix.
+        // Fall back to `<exe_parent>/data` when we're not inside a
+        // bundle (dev `cargo run`, raw zip extracts, future tests).
+        let resources_data = exe_parent
+            .parent()
+            .map(|contents| contents.join("Resources").join("data"))
+            .filter(|p| p.is_dir());
+        let data_root = resources_data.unwrap_or_else(|| exe_parent.join("data"));
+
         PersistedConfig {
             rpcs3_exe: PathBuf::new(),
             firmware_pack_root: PathBuf::new(),
@@ -199,7 +214,7 @@ impl PersistedConfig {
             driver_kind: PersistedDriverKind::Mock,
             log_dir: runtime_dir.join("logs"),
             phone_dist_dir: exe_parent.join("phone-dist"),
-            data_root: exe_parent.join("data"),
+            data_root,
             hmac_key: Some(crate::config::generate_hmac_key()),
         }
     }

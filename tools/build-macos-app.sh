@@ -20,15 +20,16 @@
 #       Info.plist
 #       MacOS/
 #         skylander-portal-controller   (binary)
-#         data/                          (figure portraits + box-art —
-#                                         data_root resolves to
-#                                         <exe_parent>/data per
-#                                         wizard.rs::macos_default, so
-#                                         the bundle mirrors the zip
-#                                         layout instead of using
-#                                         Contents/Resources/.)
 #       Resources/
 #         icon.icns                      (referenced by CFBundleIconFile)
+#         data/                          (figure portraits + box-art —
+#                                         lives in Resources/ because
+#                                         non-Mach-O content under
+#                                         Contents/MacOS/ trips
+#                                         `codesign --deep` notarization
+#                                         walks. wizard.rs::macos_default
+#                                         resolves `Contents/Resources/data`
+#                                         when run from inside a bundle.)
 #
 # Local usage:
 #   cargo build --release -p skylander-server \
@@ -92,9 +93,12 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/skylander-portal-controller"
 chmod +x "$APP/Contents/MacOS/skylander-portal-controller"
 
-# data/ next to the binary, not under Resources/ — the running
-# binary computes data_root from its own exe location. PLAN 10.8.6.
-cp -R data "$APP/Contents/MacOS/"
+# data/ under Resources/ (NOT under MacOS/ — codesign --deep treats
+# any non-Mach-O file inside Contents/MacOS/ as an unsealed
+# subcomponent and refuses to sign the whole bundle, which is what
+# tanked the v1.4.x macOS releases). wizard.rs::macos_default knows
+# to resolve Contents/Resources/data when running inside a bundle.
+cp -R data "$APP/Contents/Resources/"
 
 cp "$ICON" "$APP/Contents/Resources/icon.icns"
 
