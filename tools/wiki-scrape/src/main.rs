@@ -55,7 +55,7 @@ const BOXART_WIDTH: u32 = 600;
 /// candidate and fall back to the bare title.
 const BOXART_GAMES: &[(&str, &[&str])] = &[
     (
-        "BLUS30906",
+        "BLUS30779",
         &["Skylanders: Spyro's Adventure", "Spyro's Adventure"],
     ),
     ("BLUS30968", &["Skylanders: Giants", "Giants"]),

@@ -33,7 +33,7 @@ fn release_index(g: GameOfOrigin) -> Option<u8> {
 /// unknown serials.
 pub fn game_of_origin_from_serial(serial: &GameSerial) -> Option<GameOfOrigin> {
     match serial.as_str() {
-        "BLUS30906" => Some(GameOfOrigin::SpyrosAdventure),
+        "BLUS30779" => Some(GameOfOrigin::SpyrosAdventure),
         "BLUS30968" => Some(GameOfOrigin::Giants),
         "BLUS31076" => Some(GameOfOrigin::SwapForce),
         "BLUS31442" => Some(GameOfOrigin::TrapTeam),

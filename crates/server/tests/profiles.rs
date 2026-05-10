@@ -190,7 +190,7 @@ async fn display_mode_persistence_roundtrip_and_overwrite() {
     );
 
     // Different serial reads independently — modes are per-game.
-    assert_eq!(store.get_display_mode("BLUS30906").await.unwrap(), None,);
+    assert_eq!(store.get_display_mode("BLUS30779").await.unwrap(), None,);
 }
 
 // ---- Ghost-session lifecycle (PLAN 8.1) -----------------------------------

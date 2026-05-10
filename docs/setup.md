@@ -18,7 +18,7 @@ This project intentionally ships as a thin wrapper. It does not bundle the emula
 
 - **[RPCS3](https://rpcs3.net/)**, the PS3 emulator, installed and working. You should be able to boot a Skylanders game in it before installing this project. RPCS3 also needs the PS3 system firmware, which you supply per [RPCS3's own setup guide](https://rpcs3.net/quickstart). *Mac users can skip RPCS3* — the macOS build only ships the mock driver, so a fake `rpcs3` path is enough.
 - **Your own backup of Skylanders figure firmware.** This app reads `.sky` files dumped from physical toys you own. Dumping your own figures is out of scope for this project. The [Portal Authority](https://portal-authority.fandom.com/) and [dumping wiki pages](https://rpcs3.net/wiki/Help%3A_Skylanders) cover the tools and hardware.
-- **The Skylanders games themselves**, installed into RPCS3. You dump those from physical discs you own, per RPCS3's normal disc-dump flow. Supported serials: BLUS30906 (SSA), BLUS30968 (Giants), BLUS31076 (Swap Force), BLUS31442 (Trap Team), BLUS31545 (SuperChargers), BLUS31600 (Imaginators).
+- **The Skylanders games themselves**, installed into RPCS3. You dump those from physical discs you own, per RPCS3's normal disc-dump flow. Supported serials: BLUS30779 (SSA), BLUS30968 (Giants), BLUS31076 (Swap Force), BLUS31442 (Trap Team), BLUS31545 (SuperChargers), BLUS31600 (Imaginators).
 
 ### Why we do not bundle any of that
 

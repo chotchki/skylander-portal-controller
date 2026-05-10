@@ -14,7 +14,7 @@ use uiautomation::types::ControlType;
 use uiautomation::{UIAutomation, UIElement, UITreeWalker};
 
 const SKYLANDERS_SERIALS: &[(&str, &str)] = &[
-    ("BLUS30906", "Spyro's Adventure"),
+    ("BLUS30779", "Spyro's Adventure"),
     ("BLUS30968", "Giants"),
     ("BLUS31076", "SWAP Force"),
     ("BLUS31442", "Trap Team"),

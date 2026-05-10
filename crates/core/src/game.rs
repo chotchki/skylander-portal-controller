@@ -11,7 +11,7 @@ use crate::GameSerial;
 /// Skylanders PS3 serials the app knows about, with canonical display names.
 /// Source: RPCS3's games.yml + Fandom release info.
 pub const SKYLANDERS_SERIALS: &[(&str, &str)] = &[
-    ("BLUS30906", "Skylanders: Spyro's Adventure"),
+    ("BLUS30779", "Skylanders: Spyro's Adventure"),
     ("BLUS30968", "Skylanders: Giants"),
     ("BLUS31076", "Skylanders: SWAP Force"),
     ("BLUS31442", "Skylanders: Trap Team"),

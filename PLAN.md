@@ -1288,7 +1288,7 @@ independent.
   release zip → confirm `data/images/000000-0000/thumb.png` is
   present, install on a clean Windows host → curl
   `/api/figures/000000-0000/image?size=thumb` returns the scraped
-  PNG (not the element icon) and `/api/games/BLUS30906/image`
+  PNG (not the element icon) and `/api/games/BLUS30779/image`
   returns 200.
 
 ### 10.8.7 Game-launch state machine + cover-before-kill (sequel to 10.8.4)
