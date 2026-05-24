@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 
-use crate::api::{clear_resume, post_load, post_reset};
+use crate::api::{clear_resume, post_load, post_reset, post_reset_figure};
 use crate::components::{BezelSize, DisplayHeading, FramedPanel, GoldBezel, HeadingSize};
 use crate::gloo_timer;
 use crate::model::{SlotState, UnlockedProfile};
@@ -219,14 +219,22 @@ pub(crate) fn ResetConfirmModal(
             holding.set(false);
             fired.set(true);
 
-            // Fire-and-forget the reset; the WS will broadcast SlotChanged
-            // once the working copy is rebuilt. Animation runs in parallel.
+            // Fire-and-forget the reset. For slot-context resets (figure on
+            // portal), the WS broadcasts SlotChanged once the working copy
+            // is rebuilt. For figure-detail resets, the figure isn't on a
+            // slot so we hit the figure-keyed endpoint (PLAN 11.12);
+            // FigureUpdated drives the stats-strip refresh. Animation runs
+            // in parallel in either case.
             let target = match reset_target.get_untracked() {
                 Some(t) => t,
                 None => return,
             };
             leptos::task::spawn_local(async move {
-                if let Err(e) = post_reset(target.slot, &target.figure_id).await {
+                let outcome = match target.slot {
+                    Some(slot) => post_reset(slot, &target.figure_id).await,
+                    None => post_reset_figure(&target.profile_id, &target.figure_id).await,
+                };
+                if let Err(e) = outcome {
                     push_toast(toasts, &format!("Reset failed: {e}"));
                 }
             });

@@ -72,6 +72,10 @@ pub(crate) fn Browser(
     /// — the detail view shouldn't be reachable in that state, but the
     /// signal keeps the wiring honest if the flow ever changes.
     unlocked_profile: RwSignal<Option<crate::model::UnlockedProfile>>,
+    /// Threaded through to FigureDetail so its RESET action can hand a
+    /// `ResetTarget { slot: None, profile_id, figure_id, display_name }`
+    /// to the app-root `ResetConfirmModal`. PLAN 11.12.
+    reset_target: RwSignal<Option<crate::ResetTarget>>,
 ) -> impl IntoView {
     let all_figures = StoredValue::new(figures);
     let selected_figure = RwSignal::new(None::<PublicFigure>);
@@ -375,6 +379,7 @@ pub(crate) fn Browser(
                     portal
                     toasts
                     unlocked_profile
+                    reset_target
                     on_close=Callback::new(move |_| selected_figure.set(None))
                     on_placed=Callback::new(move |_| {
                         // PLACE success: dismiss detail AND close the lid

@@ -23,8 +23,8 @@ use skylander_core::figure::{Category, FigureId, GameOfOrigin};
 use skylander_core::portal::SlotState;
 use skylander_core::protocol::Event;
 use skylander_sky_parser::{
-    SKY_FILE_LEN, SkyGeneration, decrypt_figure, distribute_xp, encrypt_figure, max_level_for,
-    set_gold, set_xp, xp_for_level,
+    SKY_FILE_LEN, SkyGeneration, decrypt_figure, distribute_xp,
+    encrypt_figure_preserving_unwritten, max_level_for, set_gold, set_xp, xp_for_level,
 };
 use tracing::{info, warn};
 
@@ -127,8 +127,12 @@ pub async fn edit_figure(
         );
         return (StatusCode::UNPROCESSABLE_ENTITY, "working copy is wrong size").into_response();
     }
-    let mut bytes = [0u8; SKY_FILE_LEN];
-    bytes.copy_from_slice(&raw);
+    // Keep the original ciphertext around so encrypt can preserve truly-
+    // unwritten blocks (PLAN 11.11.1 — RPCS3 rejects edited figures if those
+    // blocks aren't preserved at zero in the output).
+    let mut source_cipher = [0u8; SKY_FILE_LEN];
+    source_cipher.copy_from_slice(&raw);
+    let mut bytes = source_cipher;
 
     // 7. Decrypt → mutate → encrypt.
     decrypt_figure(&mut bytes);
@@ -136,7 +140,7 @@ pub async fn edit_figure(
     let slots = distribute_xp(target_xp, generation);
     set_gold(&mut bytes, body.gold);
     set_xp(&mut bytes, slots);
-    encrypt_figure(&mut bytes);
+    encrypt_figure_preserving_unwritten(&mut bytes, &source_cipher);
 
     // 8. Atomic write (tmp file + rename).
     let tmp_path = path.with_extension("sky.tmp");
@@ -164,6 +168,80 @@ pub async fn edit_figure(
         figure_id: figure_id_key,
         level: body.level,
         gold: body.gold,
+    });
+
+    StatusCode::ACCEPTED.into_response()
+}
+
+/// `POST /api/profiles/:profile_id/figures/:figure_id/reset` — reset a
+/// figure's working copy to pack-fresh bytes (PLAN 11.12).
+///
+/// Same validation chain as [`edit_figure`] except for the level/gold
+/// range check (no body to validate). On success calls
+/// `working_copies::reset_to_fresh` which overwrites the working copy
+/// with the pack master, then broadcasts `FigureUpdated { level: 1,
+/// gold: 0 }` so any figure-detail screen showing the figure refreshes
+/// its stats strip back to the pack-defaults state.
+pub async fn reset_figure(
+    State(state): State<Arc<AppState>>,
+    AxumPath((profile_id, figure_id)): AxumPath<(String, String)>,
+) -> Response {
+    let figure_id_key = FigureId(figure_id.clone());
+
+    let figure = match state.figures.iter().find(|f| f.id == figure_id_key) {
+        Some(f) => f.clone(),
+        None => {
+            return (StatusCode::NOT_FOUND, "figure not in catalog").into_response();
+        }
+    };
+
+    if !matches!(
+        figure.category,
+        Category::Figure | Category::Sidekick | Category::Giant | Category::Kaos
+    ) {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("reset not supported for {:?}", figure.category),
+        )
+            .into_response();
+    }
+
+    {
+        let portal = state.portal.lock().await;
+        for slot in portal.iter() {
+            let slot_fig_id = match slot {
+                SlotState::Loaded { figure_id, .. } | SlotState::Loading { figure_id, .. } => {
+                    figure_id.as_ref()
+                }
+                _ => None,
+            };
+            if slot_fig_id == Some(&figure_id_key) {
+                return (StatusCode::CONFLICT, "remove from portal before resetting")
+                    .into_response();
+            }
+        }
+    }
+
+    if let Err(e) = working_copies::reset_to_fresh(&profile_id, &figure) {
+        warn!(
+            error = ?e,
+            profile = %profile_id,
+            figure = %figure_id,
+            "reset_to_fresh failed"
+        );
+        return (StatusCode::INTERNAL_SERVER_ERROR, "reset failed").into_response();
+    }
+
+    info!(
+        profile = %profile_id,
+        figure = %figure_id,
+        "reset working copy to pack-fresh"
+    );
+
+    let _ = state.events.send(Event::FigureUpdated {
+        figure_id: figure_id_key,
+        level: 1,
+        gold: 0,
     });
 
     StatusCode::ACCEPTED.into_response()

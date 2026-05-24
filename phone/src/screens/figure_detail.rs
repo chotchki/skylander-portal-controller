@@ -4,7 +4,7 @@ use crate::api::{fetch_figure_stats, post_load, FigureStats};
 use crate::components::{DisplayHeading, FigureHero, HeadingSize, HeroState};
 use crate::model::{Category, GameOfOrigin, PublicFigure, Slot, SlotState, UnlockedProfile, SLOT_COUNT};
 use crate::screens::FigureEditSheet;
-use crate::{element_slug, first_empty_slot, push_toast_level, ToastLevel, ToastMsg};
+use crate::{element_slug, first_empty_slot, push_toast_level, ResetTarget, ToastLevel, ToastMsg};
 
 /// Detail view state machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +36,10 @@ pub(crate) fn FigureDetail(
     /// profile we'd have nothing to read. `None` while the user
     /// is on the join screen.
     unlocked_profile: RwSignal<Option<UnlockedProfile>>,
+    /// Shared signal driving the app-root `ResetConfirmModal`. RESET
+    /// on this screen sets it with `slot: None` so the modal routes
+    /// to the figure-keyed `/reset` endpoint (PLAN 11.12).
+    reset_target: RwSignal<Option<ResetTarget>>,
     /// Dismiss the detail view (BACK button path; browse state is
     /// preserved — toy-box lid stays in whatever open state it was).
     on_close: Callback<()>,
@@ -147,10 +151,13 @@ pub(crate) fn FigureDetail(
 
     let max_level = max_level_for_game(game);
 
-    // Owned clones for the edit sheet closure; the view! macro below moves
-    // the original `name_display` and `fig_id` into the main render closure.
+    // Owned clones for the edit sheet + reset closures; the view! macro
+    // below moves the original `name_display` and `fig_id` into the main
+    // render closure.
     let edit_name = name_display.clone();
     let edit_fig_id = fig_id.clone();
+    let reset_name = name_display.clone();
+    let reset_fig_id = fig_id.clone();
 
     let on_place = {
         let fig_id = fig_id.clone();
@@ -311,9 +318,21 @@ pub(crate) fn FigureDetail(
                     <div class="detail-action">
                         <button
                             class="detail-action-btn"
-                            disabled=true
-                            aria-label="Reset"
-                            title="Reset"
+                            disabled=move || !stats_editable.get()
+                            aria-label="Reset to pack-fresh"
+                            title=stats_tooltip
+                            on:click=move |_| {
+                                let pid = match unlocked_profile.get() {
+                                    Some(p) => p.id,
+                                    None => return,
+                                };
+                                reset_target.set(Some(ResetTarget {
+                                    slot: None,
+                                    profile_id: pid,
+                                    figure_id: reset_fig_id.clone(),
+                                    display_name: reset_name.clone(),
+                                }));
+                            }
                         >
                             "\u{21BA}"
                         </button>

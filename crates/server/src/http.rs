@@ -279,6 +279,10 @@ pub fn router(state: Arc<AppState>, _phone_dist: std::path::PathBuf) -> Router {
             .route(
                 "/api/profiles/:profile_id/figures/:figure_id/edit",
                 post(crate::sky_edit::edit_figure),
+            )
+            .route(
+                "/api/profiles/:profile_id/figures/:figure_id/reset",
+                post(crate::sky_edit::reset_figure),
             );
     }
 

@@ -145,8 +145,21 @@ pub fn decrypt_figure(bytes: &mut [u8; SKY_FILE_LEN]) {
     }
 }
 
-/// Encrypt a whole figure in place. Inverse of [`decrypt_figure`]; used by
-/// tests so fixtures can exercise the full decrypt path.
+/// Encrypt a whole figure in place. **Skips blocks whose plaintext is
+/// all-zero** — appropriate for synthetic fixtures where every empty block
+/// also has empty ciphertext, but NOT safe for round-tripping real `.sky`
+/// dumps. Use [`encrypt_figure_preserving_unwritten`] when you have the
+/// source ciphertext available (the production edit pipeline does).
+///
+/// Real `.sky` dumps have two distinct kinds of all-zero plaintext blocks:
+/// (a) truly-unwritten blocks where the ciphertext is also all-zero, and
+/// (b) blocks the game wrote with empty field data where the ciphertext is
+/// `AES_encrypt(key, zeros)` — non-zero bytes that decrypt back to zero.
+/// This function can't tell them apart from plaintext alone, so it leaves
+/// all-zero plaintext blocks at zero. That's wrong for case (b) — the
+/// real-world ciphertext bytes for those blocks get lost. RPCS3 rejects
+/// the resulting file because its keyed structure no longer holds. Hence
+/// the `_preserving_unwritten` variant for production use.
 pub fn encrypt_figure(bytes: &mut [u8; SKY_FILE_LEN]) {
     use aes::Aes128;
     use aes::cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray};
@@ -166,6 +179,52 @@ pub fn encrypt_figure(bytes: &mut [u8; SKY_FILE_LEN]) {
         let mut buf = GenericArray::clone_from_slice(block);
         cipher.encrypt_block(&mut buf);
         block.copy_from_slice(&buf);
+    }
+}
+
+/// Encrypt a mutated figure, using the *original ciphertext* to distinguish
+/// truly-unwritten blocks (preserved as zero) from blocks the game wrote
+/// with empty content (encrypted normally so RPCS3 sees real ciphertext at
+/// the same positions it expects).
+///
+/// This is the production path for any caller that decrypted real `.sky`
+/// bytes, mutated them, and needs RPCS3 to accept the result. Pass the
+/// original encrypted file bytes as `source_cipher`; this function uses
+/// the per-block all-zero check on `source_cipher` (not on the mutated
+/// plaintext) to decide which blocks to skip.
+///
+/// PLAN 11.11.1 — fixes the v1.5.0 "game refused to load edited figure"
+/// bug. Without this asymmetric handling, real played figures with empty
+/// nickname / hat / etc. fields would round-trip into all-zero ciphertext
+/// for those blocks and the game would reject the file.
+pub fn encrypt_figure_preserving_unwritten(
+    plain: &mut [u8; SKY_FILE_LEN],
+    source_cipher: &[u8; SKY_FILE_LEN],
+) {
+    use aes::Aes128;
+    use aes::cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray};
+
+    let template = hash_in_template(plain);
+    for i in 0..BLOCK_COUNT {
+        if is_plaintext_block(i) {
+            continue;
+        }
+        let off = i * BLOCK_LEN;
+        // Truly-unwritten block: source ciphertext was all zeros. Preserve
+        // that state — the game (or whoever wrote the original) chose to
+        // leave it zero.
+        if source_cipher[off..off + BLOCK_LEN].iter().all(|&b| b == 0) {
+            plain[off..off + BLOCK_LEN].fill(0);
+            continue;
+        }
+        // Otherwise encrypt unconditionally — even if the plaintext is
+        // all-zero (empty field), the game's original ciphertext for that
+        // block was a real AES encryption, so we re-produce it.
+        let key = block_key(&template, i as u8);
+        let cipher = Aes128::new(GenericArray::from_slice(&key));
+        let mut buf = GenericArray::clone_from_slice(&plain[off..off + BLOCK_LEN]);
+        cipher.encrypt_block(&mut buf);
+        plain[off..off + BLOCK_LEN].copy_from_slice(&buf);
     }
 }
 
@@ -1884,6 +1943,137 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn encrypt_preserving_unwritten_round_trips_written_empty_block() {
+        // PLAN 11.11.4 regression: the v1.5.0 ship had a parser-level round-
+        // trip bug where `decrypt → encrypt → decrypt` of a real `.sky`
+        // produced byte-different output. Root cause: `encrypt_figure`
+        // skipped any block whose PLAINTEXT was all-zero, on the
+        // assumption that those blocks were also zero in ciphertext.
+        // Real `.sky` dumps have a third category: blocks the game wrote
+        // with empty field data, where the ciphertext is the AES
+        // encryption of zeros (non-zero bytes) but the decrypted
+        // plaintext is all-zero. Skipping such blocks in re-encrypt
+        // produced all-zero ciphertext at those positions, which RPCS3
+        // rejected because the keyed structure no longer matched.
+        //
+        // `encrypt_figure_preserving_unwritten` takes the original
+        // ciphertext as input and uses the source's all-zero check (not
+        // the plaintext's) to distinguish truly-unwritten blocks
+        // (preserve at zero) from written-empty blocks (encrypt
+        // unconditionally so the AES output matches the original).
+        use aes::Aes128;
+        use aes::cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray};
+
+        // Build a normal fixture so we have a valid figure header + key
+        // derivation context.
+        let bytes = Fixture {
+            figure_id: 0x00001E,
+            variant: 0x0000,
+            ..Default::default()
+        }
+        .build();
+        let mut source_cipher = [0u8; SKY_FILE_LEN];
+        source_cipher.copy_from_slice(&bytes);
+
+        // Pick a non-plaintext block whose plaintext is currently all-zero
+        // (any unused block in the fixture — block 0x12 in region B is
+        // safe; the fixture doesn't populate it).
+        let target_block: usize = 0x12;
+        assert!(!is_plaintext_block(target_block));
+        let mut plain_baseline = source_cipher;
+        decrypt_figure(&mut plain_baseline);
+        let block_slice =
+            &plain_baseline[block_off(target_block)..block_off(target_block) + BLOCK_LEN];
+        assert!(
+            block_slice.iter().all(|&b| b == 0),
+            "test setup expects target block's plaintext to be all-zero \
+             (the fixture should not populate block {target_block:#04X})"
+        );
+
+        // Manually encrypt the all-zero plaintext for the target block,
+        // simulating what the game does when it writes an empty field.
+        // The injected ciphertext is non-zero (AES of any input with a
+        // non-trivial key produces non-zero output).
+        let template = hash_in_template(&plain_baseline);
+        let key = block_key(&template, target_block as u8);
+        let mut block = [0u8; BLOCK_LEN];
+        let cipher = Aes128::new(GenericArray::from_slice(&key));
+        cipher.encrypt_block(GenericArray::from_mut_slice(&mut block));
+        assert!(
+            !block.iter().all(|&b| b == 0),
+            "AES of zeros must produce non-zero ciphertext"
+        );
+
+        // Inject the non-zero ciphertext into our source.
+        source_cipher[block_off(target_block)..block_off(target_block) + BLOCK_LEN]
+            .copy_from_slice(&block);
+
+        // The fix: decrypt → encrypt_preserving_unwritten must round-trip.
+        let mut roundtripped = source_cipher;
+        decrypt_figure(&mut roundtripped);
+        encrypt_figure_preserving_unwritten(&mut roundtripped, &source_cipher);
+
+        assert_eq!(
+            roundtripped.as_slice(),
+            source_cipher.as_slice(),
+            "encrypt_figure_preserving_unwritten must reproduce the source \
+             byte-identically when no mutation is applied"
+        );
+    }
+
+    #[test]
+    fn encrypt_figure_legacy_loses_written_empty_blocks() {
+        // Documents the legacy `encrypt_figure` limitation that motivated
+        // `encrypt_figure_preserving_unwritten`. Keeping this test green
+        // ensures we don't accidentally change the legacy behaviour —
+        // fixture-based tests + the public API both rely on the
+        // "skip all-zero plaintext blocks" semantics for synthetic
+        // figures where every empty block has empty ciphertext.
+        use aes::Aes128;
+        use aes::cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray};
+
+        let bytes = Fixture {
+            figure_id: 0x00001E,
+            ..Default::default()
+        }
+        .build();
+        let mut source_cipher = [0u8; SKY_FILE_LEN];
+        source_cipher.copy_from_slice(&bytes);
+
+        let target_block: usize = 0x12;
+        let template_baseline = {
+            let mut p = source_cipher;
+            decrypt_figure(&mut p);
+            hash_in_template(&p)
+        };
+        let key = block_key(&template_baseline, target_block as u8);
+        let mut block = [0u8; BLOCK_LEN];
+        let cipher = Aes128::new(GenericArray::from_slice(&key));
+        cipher.encrypt_block(GenericArray::from_mut_slice(&mut block));
+        source_cipher[block_off(target_block)..block_off(target_block) + BLOCK_LEN]
+            .copy_from_slice(&block);
+
+        let mut roundtripped = source_cipher;
+        decrypt_figure(&mut roundtripped);
+        encrypt_figure(&mut roundtripped); // legacy path
+
+        // Legacy encrypt zeroed out the target block (its plaintext was
+        // all-zero post-decrypt, so the skip kicked in).
+        assert!(
+            roundtripped[block_off(target_block)..block_off(target_block) + BLOCK_LEN]
+                .iter()
+                .all(|&b| b == 0),
+            "legacy encrypt_figure should leave written-empty blocks at zero"
+        );
+        assert_ne!(
+            roundtripped.as_slice(),
+            source_cipher.as_slice(),
+            "legacy round-trip must differ — this is the bug \
+             encrypt_figure_preserving_unwritten fixes"
+        );
     }
 
     #[test]

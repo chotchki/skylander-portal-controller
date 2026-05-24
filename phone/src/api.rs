@@ -390,6 +390,21 @@ pub async fn post_clear(slot: u8) -> Result<(), String> {
 /// Reset the figure currently loaded in `slot` to pack-fresh bytes. PLAN
 /// 3.11.3. Caller confirms with the user before hitting this — the endpoint
 /// is destructive and intentionally has no built-in undo.
+/// `POST /api/profiles/:profile_id/figures/:figure_id/reset` — reset a
+/// figure's working copy to pack-fresh bytes, regardless of whether the
+/// figure is currently on the portal (server rejects with 409 if it is).
+/// PLAN 11.12; sibling to [`post_reset`] which is slot-keyed.
+pub async fn post_reset_figure(
+    profile_id: &str,
+    figure_id: &str,
+) -> Result<(), String> {
+    let url = format!(
+        "{}/api/profiles/{profile_id}/figures/{figure_id}/reset",
+        origin()
+    );
+    do_fetch(&url, "POST", None).await.map(|_| ())
+}
+
 pub async fn post_reset(slot: u8, figure_id: &str) -> Result<(), String> {
     let url = format!("{}/api/portal/slot/{slot}/reset", origin());
     let body = json!({ "figure_id": figure_id }).to_string();

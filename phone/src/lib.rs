@@ -93,12 +93,20 @@ pub(crate) enum ScanOverlayState {
 }
 
 /// In-flight "reset this figure to a fresh copy?" prompt. Set when the user
-/// taps RESET on a loaded slot; cleared on cancel, fire, or modal dismiss.
-/// `slot` is 1-indexed (matches the server route). `display_name` is what
-/// the modal heading uses ("All of <NAME>'s treasure ...").
+/// taps RESET on a loaded slot OR on the figure-detail screen; cleared on
+/// cancel, fire, or modal dismiss.
+///
+/// `slot` is 1-indexed when present (matches the server route for
+/// slot-context reset). `None` means the figure is being reset from the
+/// figure-detail screen with no portal involvement — the modal routes to
+/// the figure-keyed endpoint instead. `profile_id` is required in both
+/// cases (the server keys working copies by `(profile_id, figure_id)`).
+/// `display_name` is what the modal heading uses ("All of <NAME>'s
+/// treasure ...").
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ResetTarget {
-    pub slot: u8,
+    pub slot: Option<u8>,
+    pub profile_id: String,
     pub figure_id: String,
     pub display_name: String,
 }
@@ -398,6 +406,7 @@ pub fn App() -> impl IntoView {
                                 toasts
                                 scan_overlay
                                 unlocked_profile
+                                reset_target
                             />
                         })}
                     </Suspense>

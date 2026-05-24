@@ -2129,66 +2129,73 @@ reload), not a `.sky` mutation. Full design log:
     `docs/features.md` "Stat editing (v1.5.0)" section. Both
     pitched as the playtest-friction-killer they actually are.
 
-- [ ] 11.11 **Hotfix: stat-edit write path rejected by RPCS3.**
-  Discovered during the v1.5.0 Windows playtest: after editing a
-  single level on a figure via the new STATS sheet, RPCS3 refused
-  to load the resulting `.sky`. All unit tests (round-trip,
-  idempotence, CRC validity) pass — parser thinks the bytes are
-  valid, but the game disagrees. Something we don't validate is
-  wrong. **Blocks the v1.5.0 feature from actually being usable**
-  even though the code shipped clean. Faster iteration possible
-  once Phase 12 (real Mac driver) lands, but doesn't have to wait
-  on it — the bytes can be inspected here on Mac.
-  - [ ] 11.11.1 — Empirical reproduction on Mac. Edit Spyro's
-    level via the running dev server + iPhone sim. Locate the
-    resulting working copy at
-    `dev-data/working/<profile>/<figure_id>.sky`. Drop into Mac
-    RPCS3's Skylanders Manager dialog manually. Capture the exact
-    rejection message (RPCS3 log + on-screen modal) and the
-    relevant byte hex via `crc_probe`.
-  - [ ] 11.11.2 — Byte-diff against known-good. Take a real
-    played Spyro from `~/Games/ps3/skylanders/`. Apply the same
-    edit through our code. Compare bytes against a fresh dump of
-    the same figure with the same XP/gold reached via actual
-    in-game play. Diff narrows the suspect region.
-  - [ ] 11.11.3 — Suspect inventory (start here). Likely
-    culprits in order of suspicion:
-    - (a) Big-CRC at struct `0x0A` — copy_region preserves its
-      *data* but did we get its source-mirror version right?
-      Verify by reading both mirrors' CRCs at `0x0A` pre/post.
-    - (b) Region B's CRC range — we cover struct `0x72..0xB0`
-      per the spec, but bytes beyond 0xB0 (block 0x15) might
-      have a CRC of their own that we ignore.
-    - (c) Mifare sector-trailer corruption — `copy_region`
-      skips them, but maybe one slipped through somewhere.
-    - (d) Per-block AES re-encrypt: the key derivation includes
-      the block number, but is there a per-block CRC INSIDE the
-      encrypted payload we'd need to recompute?
-    - (e) A "this figure was modified" or "last-write timestamp"
-      field RPCS3 cross-checks against XP/gold (not in the
-      documented spec).
-  - [ ] 11.11.4 — Fix + regression test. Once root cause
-    identified, fix in `crates/sky-parser/src/lib.rs` and add a
-    test fixture or example that reproduces the failure mode
-    without needing real RPCS3 in the loop.
+- [x] 11.11 **Hotfix: stat-edit write path rejected by RPCS3** —
+  **Fixed.** Root cause was a parser-level round-trip bug in
+  `encrypt_figure`: it skipped blocks whose plaintext was all-zero
+  on the assumption those blocks were also zero in ciphertext. Real
+  `.sky` dumps have a third category — blocks the game wrote with
+  empty field data (empty nickname / unused hat slot / etc.) where
+  the ciphertext is `AES_encrypt(key, zeros)` (non-zero bytes that
+  decrypt back to zero). Skipping those in re-encrypt produced
+  all-zero ciphertext at positions where the game expected real
+  AES output, which RPCS3 rejected. Fix: new
+  `encrypt_figure_preserving_unwritten(plain, source_cipher)` uses
+  the original ciphertext (not the mutated plaintext) to decide
+  per-block whether to skip. Server's edit endpoint and `edit_diff`
+  example both switched. Legacy `encrypt_figure` kept for fixtures.
+  - [x] 11.11.1 — Empirical reproduction: new `edit_diff` example
+    (`crates/sky-parser/examples/edit_diff.rs`) reads a real `.sky`,
+    applies the edit pipeline, and diffs plaintext + ciphertext
+    against the source. Surfaced the round-trip failure cleanly —
+    "decrypt → encrypt of the source file does NOT match the
+    source bytes, 128 mismatched bytes."
+  - [x] 11.11.2 — ~~Byte-diff against known-good~~ **Not needed.**
+    The round-trip diagnostic (11.11.1) pinpointed the bug at the
+    parser layer without needing a known-good game-produced
+    reference file. User had a controller ready for play-to-level-2
+    diff as a fallback diagnostic; no longer required.
+  - [x] 11.11.3 — ~~Suspect inventory~~ **Obsoleted by 11.11.1.**
+    Actual cause wasn't any of the listed CRC / sector-trailer /
+    hidden-field hypotheses — it was the asymmetric encrypt skip.
+    All listed suspects (a)–(e) cleared.
+  - [x] 11.11.4 — Fix + regression tests. Two new unit tests in
+    `crates/sky-parser/src/lib.rs::tests`:
+    `encrypt_preserving_unwritten_round_trips_written_empty_block`
+    constructs the exact failure-mode scenario (manually
+    encrypting an all-zero plaintext block to simulate the game's
+    real ciphertext) and asserts the new path round-trips
+    byte-identically; `encrypt_figure_legacy_loses_written_empty_blocks`
+    documents the legacy skip behaviour as the failure mode the
+    new path fixes. 40/40 sky-parser tests pass; 151/151 real
+    `.sky` dumps still validate.
 
-- [ ] 11.12 **Wire up the RESET button (was placeholder).**
-  `phone/src/screens/figure_detail.rs:265-275` has the RESET action
-  button with `disabled=true` — same placeholder pattern STATS used
-  to have. Reset-to-fresh logic exists server-side already
-  (`working_copies::reset_to_fresh`); the phone just needs to call
-  it. User-discovered alongside 11.11.
-  - [ ] 11.12.1 — `post_reset_figure(profile_id, figure_id)` added
-    to `phone/src/api.rs`.
-  - [ ] 11.12.2 — `POST /api/profiles/:pid/figures/:fid/reset`
-    route on the server. Same portal-occupancy guard as edit
-    (don't reset while the figure is loaded; 409 otherwise).
-  - [ ] 11.12.3 — Wire the RESET button: remove `disabled=true`,
-    add confirm modal (destructive — kid taps shouldn't nuke
-    progress). Reuse `ResetConfirmModal` if it fits, else a new
-    modal in the same style.
-  - [ ] 11.12.4 — Broadcast `Event::FigureUpdated` so the stats
-    strip refreshes (same broadcast 11.4 already wired up).
+- [x] 11.12 **Wire up the RESET button** — **Done.** Hand-edit
+  pattern same as STATS in 11.6: same enable conditions
+  (editable category + off-portal), same per-case tooltip.
+  Reuses the existing `ResetConfirmModal` (extended
+  `ResetTarget` with `Option<u8>` slot + a required
+  `profile_id`); modal branches between `post_reset(slot, …)`
+  and `post_reset_figure(profile_id, …)` based on slot context.
+  No new modal component needed.
+  - [x] 11.12.1 — `post_reset_figure(profile_id, figure_id)`
+    added to `phone/src/api.rs:391-403`, mirrors
+    `post_edit_figure` shape.
+  - [x] 11.12.2 — `reset_figure` handler added to
+    `crates/server/src/sky_edit.rs`; route mounted in `http.rs`
+    at `POST /api/profiles/:profile_id/figures/:figure_id/reset`.
+    Same validation chain as edit (catalog 404, category 422,
+    portal-occupancy 409). Calls `working_copies::reset_to_fresh`.
+  - [x] 11.12.3 — `phone/src/screens/figure_detail.rs` RESET
+    button: removed `disabled=true`, on-click sets
+    `reset_target` with `slot: None` + the profile + figure ids;
+    the app-root `ResetConfirmModal` handles the rest with its
+    hold-to-confirm gesture + drain animation.
+  - [x] 11.12.4 — Server broadcasts `Event::FigureUpdated {
+    figure_id, level: 1, gold: 0 }` on success. **Phone-side
+    auto-refresh of the stats strip post-reset is deferred to
+    v1.5.2** — same as the cross-phone refresh deferral from
+    11.6.4. Workaround for v1.5.1: user backs out of detail
+    + re-enters to see the pack-fresh stats.
 
 ## Phase 12 — Real Mac driver (AXUIElement)
 
