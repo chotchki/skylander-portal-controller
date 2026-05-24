@@ -36,6 +36,7 @@ default-members = ["crates/server"]
 version = "0.1.0"
 edition = "2024"
 publish = false
+license = "MIT"
 
 [workspace.dependencies]
 # Shared across multiple crates. Version bumps happen here.
