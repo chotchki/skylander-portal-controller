@@ -563,12 +563,7 @@ pub fn set_gold(plain: &mut [u8; SKY_FILE_LEN], gold: u16) {
     } else {
         0x08
     };
-    copy_region(
-        plain,
-        src_a_base,
-        target.region_a_dst_base,
-        REGION_A_DELTAS,
-    );
+    copy_region(plain, src_a_base, target.region_a_dst_base, REGION_A_DELTAS);
     let dst = block_off(target.region_a_dst_base);
     plain[dst + 0x03..dst + 0x05].copy_from_slice(&gold.to_le_bytes());
     plain[dst + 0x09] = target.next_seq_a;
@@ -595,12 +590,7 @@ pub fn set_xp(plain: &mut [u8; SKY_FILE_LEN], slots: SlotXp) {
     } else {
         0x08
     };
-    copy_region(
-        plain,
-        src_a_base,
-        target.region_a_dst_base,
-        REGION_A_DELTAS,
-    );
+    copy_region(plain, src_a_base, target.region_a_dst_base, REGION_A_DELTAS);
     let dst_a = block_off(target.region_a_dst_base);
     let xp_2011_bytes = slots.xp_2011.to_le_bytes();
     plain[dst_a..dst_a + 3].copy_from_slice(&xp_2011_bytes[..3]);
@@ -614,12 +604,7 @@ pub fn set_xp(plain: &mut [u8; SKY_FILE_LEN], slots: SlotXp) {
     } else {
         0x11
     };
-    copy_region(
-        plain,
-        src_b_base,
-        target.region_b_dst_base,
-        REGION_B_DELTAS,
-    );
+    copy_region(plain, src_b_base, target.region_b_dst_base, REGION_B_DELTAS);
     let dst_b = block_off(target.region_b_dst_base);
     // Struct offset 0x72 → dst_b + 0x02 (sequence byte).
     // Struct offset 0x73 → dst_b + 0x03 (xp_2012, u16 LE).
@@ -1862,23 +1847,58 @@ mod tests {
     fn distribute_xp_ssa_caps_at_2011_slot() {
         // SSA only uses xp_2011; max level 10 = 33_000 XP.
         let d = distribute_xp(33_000, SkyGeneration::SpyrosAdventure);
-        assert_eq!(d, SlotXp { xp_2011: 33_000, xp_2012: 0, xp_2013: 0 });
+        assert_eq!(
+            d,
+            SlotXp {
+                xp_2011: 33_000,
+                xp_2012: 0,
+                xp_2013: 0
+            }
+        );
         // Overflow clamps to the gen's max level.
         let d = distribute_xp(99_999, SkyGeneration::Giants);
-        assert_eq!(d, SlotXp { xp_2011: 33_000, xp_2012: 0, xp_2013: 0 });
+        assert_eq!(
+            d,
+            SlotXp {
+                xp_2011: 33_000,
+                xp_2012: 0,
+                xp_2013: 0
+            }
+        );
     }
 
     #[test]
     fn distribute_xp_swap_force_cascades_into_2012_slot() {
         // Level 15 in SwapForce = 96_500 XP = 33_000 (2011) + 63_500 (2012).
         let d = distribute_xp(96_500, SkyGeneration::SwapForce);
-        assert_eq!(d, SlotXp { xp_2011: 33_000, xp_2012: 63_500, xp_2013: 0 });
+        assert_eq!(
+            d,
+            SlotXp {
+                xp_2011: 33_000,
+                xp_2012: 63_500,
+                xp_2013: 0
+            }
+        );
         // Below the 2011 cap → all in 2011 slot.
         let d = distribute_xp(8_122, SkyGeneration::SwapForce);
-        assert_eq!(d, SlotXp { xp_2011: 8_122, xp_2012: 0, xp_2013: 0 });
+        assert_eq!(
+            d,
+            SlotXp {
+                xp_2011: 8_122,
+                xp_2012: 0,
+                xp_2013: 0
+            }
+        );
         // Mid-range → 2011 maxed, partial 2012.
         let d = distribute_xp(50_000, SkyGeneration::SwapForce);
-        assert_eq!(d, SlotXp { xp_2011: 33_000, xp_2012: 17_000, xp_2013: 0 });
+        assert_eq!(
+            d,
+            SlotXp {
+                xp_2011: 33_000,
+                xp_2012: 17_000,
+                xp_2013: 0
+            }
+        );
     }
 
     #[test]

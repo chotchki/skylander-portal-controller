@@ -17,7 +17,9 @@ use skylander_sky_parser::{
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let path = args.next().expect("usage: edit_diff <file.sky> <level> <gold>");
+    let path = args
+        .next()
+        .expect("usage: edit_diff <file.sky> <level> <gold>");
     let level: u8 = args
         .next()
         .expect("missing level")
@@ -116,7 +118,10 @@ fn dump_diff(a: &[u8; SKY_FILE_LEN], b: &[u8; SKY_FILE_LEN]) {
     for (off, before, after) in &changes {
         let block = off / BLOCK_LEN;
         if current_block != Some(block) {
-            println!("  --- block 0x{block:02X} (file_off 0x{:03X}) ---", block * 16);
+            println!(
+                "  --- block 0x{block:02X} (file_off 0x{:03X}) ---",
+                block * 16
+            );
             current_block = Some(block);
         }
         let in_block = off % BLOCK_LEN;

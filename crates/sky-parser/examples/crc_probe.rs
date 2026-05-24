@@ -29,7 +29,11 @@ fn main() {
 fn probe(path: &std::path::Path) -> std::io::Result<()> {
     let raw = std::fs::read(path)?;
     if raw.len() != SKY_FILE_LEN {
-        eprintln!("{}: expected {SKY_FILE_LEN} bytes, got {}", path.display(), raw.len());
+        eprintln!(
+            "{}: expected {SKY_FILE_LEN} bytes, got {}",
+            path.display(),
+            raw.len()
+        );
         return Ok(());
     }
     let mut bytes = [0u8; SKY_FILE_LEN];
@@ -73,11 +77,19 @@ fn probe_region_a(bytes: &[u8], base_block: usize, label: &str) {
     );
     println!(
         "    crc14: stored={crc14_stored:#06X}  computed={crc14_computed:#06X}  {}",
-        if crc14_stored == crc14_computed { "OK" } else { "MISMATCH" }
+        if crc14_stored == crc14_computed {
+            "OK"
+        } else {
+            "MISMATCH"
+        }
     );
     println!(
         "    crc30: stored={crc30_stored:#06X}  computed={crc30_computed:#06X}  {}",
-        if crc30_stored == crc30_computed { "OK" } else { "MISMATCH" }
+        if crc30_stored == crc30_computed {
+            "OK"
+        } else {
+            "MISMATCH"
+        }
     );
     print!("    block0x{base_block:02X} bytes: ");
     for b in &bytes[b_base..b_base + 16] {

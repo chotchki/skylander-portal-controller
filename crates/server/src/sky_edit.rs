@@ -80,8 +80,7 @@ pub async fn edit_figure(
                 _ => None,
             };
             if slot_fig_id == Some(&figure_id_key) {
-                return (StatusCode::CONFLICT, "remove from portal before editing")
-                    .into_response();
+                return (StatusCode::CONFLICT, "remove from portal before editing").into_response();
             }
         }
     }
@@ -125,7 +124,11 @@ pub async fn edit_figure(
             expected = SKY_FILE_LEN,
             "working copy is wrong size"
         );
-        return (StatusCode::UNPROCESSABLE_ENTITY, "working copy is wrong size").into_response();
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "working copy is wrong size",
+        )
+            .into_response();
     }
     // Keep the original ciphertext around so encrypt can preserve truly-
     // unwritten blocks (PLAN 11.11.1 — RPCS3 rejects edited figures if those
