@@ -4,7 +4,7 @@ Remote-control the RPCS3 emulated Skylanders portal from a phone or iPad over yo
 
 The Windows app boots from Steam Big Picture and shows a QR code on the TV; phones scan in, pick a profile (PIN-gated), pick a game, and drive RPCS3's emulated portal slot-by-slot.
 
-**Latest release:** [v1.2.0](https://github.com/chotchki/skylander-portal-controller/releases/tag/v1.2.0) — 3D rotating launcher badge (replaces the 2D card surface; gold ring + side wall + flatter torus, Lambert + Blinn-Phong, multi-turn coin spin, per-profile pip mini-coins on the orbit), macOS as a production target (mock driver only), iOS-Simulator e2e harness for layout/CSS regression hunting, in-game branch goes reactive so the launcher stops cooking the fan.
+**Latest release:** [v1.5.0](https://github.com/chotchki/skylander-portal-controller/releases/tag/v1.5.0) — phone-side stat editing: tap STATS on any standard skylander to bump its level + gold without grinding through hours of gameplay; per-generation level caps (SSA / Giants 10, Swap Force 15, Trap Team+ 20) match what each game actually displays. Sky-parser also grew a public write path (`set_gold`, `set_xp`, area-sequence-aware) with round-trip + idempotence + CRC coverage, plus a blank-tag-CRC parser fix that brings factory-fresh figures from "won't validate" to "edits cleanly from first tap."
 
 For a higher-level pitch see the project site: <https://chotchki.github.io/skylander-portal-controller/>. Source-of-truth docs are in this repo: `SPEC.md` (long-form spec + Q&A), `PLAN.md` (execution checklist), and `CLAUDE.md` (compact working reference). Research writeups are under `docs/research/`.
 

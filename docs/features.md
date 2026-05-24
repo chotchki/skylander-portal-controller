@@ -25,6 +25,15 @@ What the app does today, grouped by what you actually interact with.
 - Reset-a-figure-to-fresh is an explicit user action. Imaginators creation crystals are never auto-reset without a confirm.
 - A working copy is shared across games per-figure per-profile — one Spyro save state follows that profile through every game, matching physical portal behaviour.
 
+## Stat editing (v1.5.0)
+
+- Phone tap on the **STATS** button (figure-detail screen, next to APPEARANCE and RESET) opens an edit sheet with level + gold steppers. Big thumb-friendly buttons — no keyboard, no fiddly precision targets.
+- The level stepper clamps to the figure's per-generation cap: SSA / Giants figures top out at 10, Swap Force at 15, Trap Team and later at 20. Matches what each game would actually display once read back.
+- Gold spans the full `u16` range (0–65 535) with `±100` and `±1000` chevron buttons so getting to a specific value is a few taps, not fifty.
+- The STATS button is only available when the figure is *off* the portal — RPCS3 caches the file once it's loaded, so editing under its nose would let it see stale state. Tooltip explains why if it's disabled.
+- Editable categories are limited to the player-controllable kinds (figures, sidekicks, giants, the Kaos boss figure). Traps, vehicles, adventure packs, items, and Imaginators creation crystals get a disabled button with a category-specific tooltip — their stat models are different and out of scope for v1.5.0.
+- Eliminates the "test a level-20-only feature ⇒ grind through hours of gameplay first" friction that was making playtest iteration painful.
+
 ## Multi-phone play
 
 - Up to two phones connected at once. Matches co-op player count in the games.

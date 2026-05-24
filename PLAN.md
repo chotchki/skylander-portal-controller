@@ -2093,25 +2093,41 @@ reload), not a `.sky` mutation. Full design log:
     iPad + iPhone simulator at the same time, confirm the sheet
     renders correctly at both viewport sizes.
 
-- [ ] 11.9 **E2E tests (`crates/e2e-tests/`).**
-  - [ ] 11.9.1 — New flow: boot server, scan a fixture figure,
-    navigate to detail, tap STATS, bump level to 10 + gold to
-    5000, save, reopen detail, assert displayed stats.
-  - [ ] 11.9.2 — Variant: try to edit a figure that's on the
-    portal; assert button is disabled and shows the tooltip.
+- [x] 11.9 **E2E tests** — **Done.** New file
+  `crates/e2e-tests/tests/figure_edit.rs` with two chromedriver
+  tests. Both pass locally against a freshly-spawned `TestServer`
+  + chromedriver-148. Run with
+  `CHROMEDRIVER=… cargo test -p skylander-e2e-tests --test figure_edit -- --ignored`
+  (the `--ignored` opt-in mirrors the rest of the e2e suite —
+  these don't run in CI, per CLAUDE.md "Testing" section).
+  - [x] 11.9.1 — `edit_level_and_gold_round_trips_through_stats_strip`:
+    open a Spyro-family detail screen → tap STATS → bump level to
+    5 (four `+` taps) → bump gold to 300 (three `+100` taps) →
+    SAVE → assert sheet closes → assert stats-strip LEVEL +
+    GOLD cells refresh to the new values. Server log line
+    "edited working copy ... level=5 gold=300" confirms the
+    server side of the round trip.
+  - [x] 11.9.2 — `stats_button_disabled_while_figure_on_portal`:
+    place a Spyro card → re-open the same figure's detail → assert
+    the STATS button has the `disabled` attribute AND a `title`
+    tooltip that mentions "portal".
 
-- [ ] 11.10 **Docs.**
-  - [ ] 11.10.1 — SPEC.md Q&A entry: editability scope
-    (Standard-only, off-portal-only, level+gold MVP),
-    level-setter semantics (drops sub-level progress within the
-    target level), explicit deferral of
-    nickname/heroic-challenges/Imaginator editing, and the
-    health-storage finding (not on `.sky` per current spec —
-    "full heal" deferred to a future GUI-automation phase).
-  - [ ] 11.10.2 — `docs/research/sky-format/SkylanderFormat.md`:
-    append **Write path notes** section from 11.1.2.
-  - [ ] 11.10.3 — README/feature list: stats editing is now a
-    thing; one-line mention.
+- [x] 11.10 **Docs** — **Done.**
+  - [x] 11.10.1 — SPEC.md gained a "Round 7 — Stat Editing
+    (PLAN 11)" Q&A section: scope + gating decisions,
+    per-generation level cap rationale (with the Tree Rex
+    empirical reference), edit semantics (set-N writes flat,
+    wipes unused-by-generation slots), healing/knockout
+    deferral, and cross-phone refresh deferral.
+  - [x] 11.10.2 — Already landed during 11.1.7 + 11.1.2:
+    `docs/research/sky-format/SkylanderFormat.md` has both
+    a "Blank-tag state (factory-fresh figures)" section
+    (read-side exemption rule) and a "Write path notes"
+    section (CRC region map + per-mutation recompute table +
+    area-sequence inversion rule).
+  - [x] 11.10.3 — `README.md` "Latest release" line + new
+    `docs/features.md` "Stat editing (v1.5.0)" section. Both
+    pitched as the playtest-friction-killer they actually are.
 
 ## Non-goals
 

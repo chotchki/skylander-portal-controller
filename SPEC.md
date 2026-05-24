@@ -401,3 +401,49 @@ Context: original spec assumed 1 concurrent phone with "last device wins" takeov
 - Phone UI: "show QR" action; ownership badge on portal slots; "taken over" screen already exists for evicted phones.
 - E2E harness: support 2 concurrent `Phone` instances; add scenarios for concurrent edits, 3rd-connection eviction, cooldown enforcement.
 
+## Follow-up Questions (Round 7) — Stat Editing (PLAN 11)
+
+Pinned during the May 2026 playtest push: kids were stuck grinding hours of gameplay to test level-20-only features, and the figure-detail screen already had a disabled `STATS` placeholder that begged to be wired up.
+
+### Scope & gating
+
+- **Q:** What does the phone let the user edit per figure?
+- **A:** Level + gold only for MVP. Nickname / heroic challenges / hat unlocks are deferred to a follow-up phase — each has its own offset + encoding (UTF-16LE caps, bitfield layouts) and would inflate the surface meaningfully without unblocking the playtest. The level threshold table at `docs/research/sky-format/SkylanderFormat.md:246-267` is global; per-figure max comes from generation (see below).
+
+- **Q:** Which figures get the edit affordance?
+- **A:** Only `Category::Figure | Sidekick | Giant | Kaos` (the indexer's classification). Traps, Vehicles, Adventure Packs, Items, Creation Crystals, and the fallback `Other` all get a disabled STATS button + a category-specific tooltip. Specifically excluded:
+    - **Imaginators creation crystals (`Cyos`):** the figure-format spec for CYOS isn't validated; until we have real Imaginators dumps we can't safely write to them.
+    - **Traps:** different stat model (captured-villain id, small XP pool — not the standard figure level/gold).
+    - **Vehicles:** would need SuperChargers-vehicle spec verification first.
+
+- **Q:** When can a figure be edited?
+- **A:** Only when it's *off* the portal. Editing the working copy while RPCS3 has the file loaded would let the game see stale state on the next read; cleanest UX is to make the user clear the slot, edit, then re-place. The STATS button greys out with a "Remove from portal before editing" tooltip whenever the figure occupies any slot.
+
+### Per-generation level cap
+
+- **Q:** Why does a Giants-era figure max out at level 10 in the UI, when the Giants *game* allowed level 15?
+- **A:** The parser at `crates/sky-parser/src/lib.rs:797-806` computes a figure's displayed level from a generation-specific XP pool, NOT from the spec's literal "sum of all experience values" rule. SSA / Giants figures count only `xp_2011` (cap = 33 000 = level 10); SwapForce counts `xp_2011 + xp_2012` (cap = 15); Trap Team / SuperChargers / Imaginators sum all three (cap = 20). Confirmed empirically against the user's 151-dump pack — a Giants-era Tree Rex with `xp_2013 = 101 000` reads as level 10 because Giants-era figures ignore xp_2013 when computing displayed level.
+
+  The phone stepper clamps to `max_level_for(generation)` so what the user sets is what the figure will *display* once read back. Going higher would write XP bytes that the parser then ignores — a confusing UX where "I set level 15 but it says level 10."
+
+### Edit semantics (what gets written / wiped)
+
+- **Q:** When you set level N, what exactly happens to the `.sky` bytes?
+- **A:** `distribute_xp(xp_for_level(N), generation)` produces a `SlotXp { xp_2011, xp_2012, xp_2013 }` triple following the per-generation cascade rules. **All three slots are then written unconditionally** — slots not used by the figure's generation get zero. This is intentional simplification for MVP: a Giants figure that was played in Imaginators and has `xp_2013 > 0` will have that slot wiped when the user sets a level here. Tradeoff accepted because (a) the typical use case is "I want to play with this figure in its native game," not cross-game inheritance; (b) the alternative — preserve-unused-slots — adds an Option-per-slot abstraction layer that complicates `distribute_xp` and `set_xp` for no MVP value.
+
+- **Q:** Setting level N preserves what about the figure's prior state?
+- **A:** Setting level N writes `xp_for_level(N)` flat — *no* sub-level progress preservation. If the figure was at 75% progress toward level N+1 and the user picks level N, the figure ends up at exactly the level-N threshold (0% progress within level N). Documented; revisit if playtest reveals confusion.
+
+- **Q:** What about gold?
+- **A:** `set_gold` writes the requested `u16` value directly. No clamping beyond the type bounds. Range 0..=65535.
+
+### Healing / knockout
+
+- **Q:** The early games (SSA, Giants) had a "knocked out — wait for the timer" friction. Why isn't there a heal button?
+- **A:** The documented `.sky` field spec at `docs/research/sky-format/SkylanderFormat.md` enumerates persistent figure state (XP, gold, nickname, playtime, hat history, trinkets, timestamps, heroic challenges, quests, hero ratings, catchphrases, CYOS parts) — no HP or knockout field. Strong evidence HP lives in the per-game save state, not on the figure. A heal affordance would have to live outside the `.sky` mutation path — likely a GUI-automation flow (clear slot → 1s wait → reload) that drives RPCS3 to trigger the game's own respawn. That's a separate phase with a fundamentally different mechanism; punted out of scope for PLAN 11.
+
+### Cross-phone refresh
+
+- **Q:** What happens to phone B's figure-detail screen when phone A edits the same figure?
+- **A:** The server broadcasts `Event::FigureUpdated { figure_id, level, gold }` on every successful edit. The phone Event enum has the variant wired (so WS deserialization doesn't fail) but the cross-phone refresh handler currently just logs. The single-phone save flow re-fetches stats locally via a `stats_rev` signal; multi-phone refresh is deferred until playtest reveals it's actually missed. Easy follow-up: subscribe `figure_detail.rs` to `FigureUpdated` and bump `stats_rev` when the broadcast's `figure_id` matches the currently-displayed figure.
+
