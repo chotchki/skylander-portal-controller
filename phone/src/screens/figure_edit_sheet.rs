@@ -91,7 +91,7 @@ pub(crate) fn FigureEditSheet(
                                 class="edit-stepper-btn"
                                 on:click=dec_level
                                 aria-label="Decrease level"
-                                disabled=move || level.get() <= 1 || saving.get()
+                                disabled=Signal::derive(move || level.get() <= 1 || saving.get())
                             >
                                 "\u{2212}"
                             </button>
@@ -100,7 +100,7 @@ pub(crate) fn FigureEditSheet(
                                 class="edit-stepper-btn"
                                 on:click=inc_level
                                 aria-label="Increase level"
-                                disabled=move || level.get() >= max_level || saving.get()
+                                disabled=Signal::derive(move || level.get() >= max_level || saving.get())
                             >
                                 "+"
                             </button>
@@ -115,7 +115,7 @@ pub(crate) fn FigureEditSheet(
                                 class="edit-stepper-btn edit-stepper-btn-small"
                                 on:click=dec_gold_big
                                 aria-label="Decrease gold by 1000"
-                                disabled=move || saving.get()
+                                disabled=Signal::derive(move || gold.get() == 0 || saving.get())
                             >
                                 "\u{226A}"
                             </button>
@@ -123,7 +123,7 @@ pub(crate) fn FigureEditSheet(
                                 class="edit-stepper-btn"
                                 on:click=dec_gold_small
                                 aria-label="Decrease gold by 100"
-                                disabled=move || saving.get()
+                                disabled=Signal::derive(move || gold.get() == 0 || saving.get())
                             >
                                 "\u{2212}"
                             </button>
@@ -132,7 +132,7 @@ pub(crate) fn FigureEditSheet(
                                 class="edit-stepper-btn"
                                 on:click=inc_gold_small
                                 aria-label="Increase gold by 100"
-                                disabled=move || saving.get()
+                                disabled=Signal::derive(move || gold.get() == u16::MAX || saving.get())
                             >
                                 "+"
                             </button>
@@ -140,7 +140,7 @@ pub(crate) fn FigureEditSheet(
                                 class="edit-stepper-btn edit-stepper-btn-small"
                                 on:click=inc_gold_big
                                 aria-label="Increase gold by 1000"
-                                disabled=move || saving.get()
+                                disabled=Signal::derive(move || gold.get() == u16::MAX || saving.get())
                             >
                                 "\u{226B}"
                             </button>
