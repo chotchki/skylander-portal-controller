@@ -268,6 +268,47 @@ Sum of all experience values. In SSCR instead, the experience value for each yea
 
 Note that vehicle experience in SuperChargers Racing uses the exact same experience amounts for levels, but instead of having different bytes for the 2012/13 experience etc... it is all self contained within the initial "2011" `uint24_t`.
 
+### Write path notes (for the level + gold edit pipeline)
+
+Cross-cutting reference for any code that mutates a `.sky` and needs to keep the figure parseable. Scoped to the Standard struct (Skylanders character figures); Trap / Vehicle / Racing Pack / CYOS layouts differ — see their respective structure tables above.
+
+**Complete CRC region map (Standard struct, single area copy at base `B` ∈ {block 0x08, 0x24} for Region A or {0x11, 0x2D} for Region B):**
+
+| CRC stored at         | Covers                                                    | Mutation targets in this range                                 |
+|-----------------------|-----------------------------------------------------------|----------------------------------------------------------------|
+| file `0x1E`           | file bytes `0x00..0x1E` (header only)                     | none — header is manufacturer-written and never touched by edits |
+| Region A `B + 0x0E`   | struct bytes `0x00..0x0E` + literal `0x05 0x00`           | XP_2011 (`0x00`), gold (`0x03`), playtime (`0x05`), area-A sequence (`0x09`) |
+| Region A `B + 0x0C`   | struct bytes `0x10..0x40` (blocks `+1`, `+2`, `+4`)        | flags1, owner ID, nickname, last_placed/last_reset, heroic challenges SSA, hero points |
+| Region A `B + 0x0A`   | struct bytes `0x40..0x70` (blocks `+5`, `+6`, `+8`) + `0xE0` zeros | usage/owner info, more timestamps — none of our edit targets |
+| Region B `B + 0x00`   | literal `0x06 0x01` + struct bytes `0x72..0xB0`           | area-B sequence (`0x72`), XP_2012 (`0x73`), hat_2012, flags2, XP_2013 (`0x78`), hat_2013, trinket, hat_2015, battlegrounds flags |
+
+**Header CRC at file `0x1E` is independent of all data-area mutations.** It covers only the first 30 bytes of the file (figure_id, serial, error byte, trading card, variant). Verified empirically: parser's `crate::sky_parser` computes it at `crates/sky-parser/src/lib.rs:619-620` and validates against all 512 figures in the firmware pack. Edits to gold / XP / playtime / nickname / etc. do **not** require header-CRC recompute.
+
+**Mutation → CRCs to recompute (after writing to destination region, see Area sequence below):**
+
+| Mutation              | CRCs to recompute (in destination region)                  |
+|-----------------------|------------------------------------------------------------|
+| gold (struct `0x03`)  | Region A's `B + 0x0E` (CRC14)                              |
+| XP_2011 (struct `0x00`) | Region A's `B + 0x0E` (CRC14)                            |
+| XP_2012 (struct `0x73`) | Region B's `B + 0x00` (CRC at start of B)                |
+| XP_2013 (struct `0x78`) | Region B's `B + 0x00` (CRC at start of B)                |
+| area-A sequence bump  | Region A's `B + 0x0E` (CRC14 — sequence byte is in range)  |
+| area-B sequence bump  | Region B's `B + 0x00` (sequence byte at `0x72` is in range) |
+
+For a combined level+gold write (the Phase 11 edit pipeline), the destination-region work is: write 4 byte ranges (XP_2011, gold, XP_2012, XP_2013) + bump 2 sequence bytes + recompute 2 CRCs (CRC14 for A, the 0x70-CRC for B). Source-region (the previously-active mirror) bytes are left intact — the area-sequence rule below means it becomes the historical copy.
+
+**Area sequence is the inverse of the read-side pick.** The parser at `crates/sky-parser/src/lib.rs:701-721` reads from whichever region has the higher (newer) sequence byte. Writes go to the **older** region with its sequence bumped to `newer + 1` (with `0xFF → 0x00` wraparound). After the write, the formerly-old region is now newer and becomes the next read target. Always bump A-sequence and B-sequence together, even if only one region's data changed — keeps the Trap Team out-of-sync error at bay (per the Area sequence section).
+
+Empirically (verified against ~520 real RPCS3 dumps in 2026-05): figures that have **never been written by any game** have entirely-zero data areas AND zero stored CRC bytes, even though the header (figure_id, serial, variant, header CRC at 0x1E) is well-formed. The manufacturer writes the header at production but does not pre-compute area CRCs for empty data; the game writes those on the first mutation.
+
+Parsers must treat this state as valid — if you require `crc14_stored == crc14_computed && crc30_stored == crc30_computed` unconditionally, every brand-new figure fails validation. Our implementation accepts the active region as valid when:
+
+* `crc14_stored == 0 && crc30_stored == 0`, AND
+* the 14-byte header bytes of the active region are all zero, AND
+* the 0x30-byte payload of the active region is all zero.
+
+Otherwise the populated-region CRC check applies as written above. Mutation pipelines (read → mutate → CRC → write) should compute and write real CRCs after touching any byte in a previously-blank area — the blank exemption is read-side only.
+
 ### Area sequence
 
 * The core skylanders at least store the tfbSpyroTagData struct twice, once from block 0x08/0x24 and again from block 0x11/0x2D, these are called data regions or data areas.

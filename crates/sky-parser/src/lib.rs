@@ -337,17 +337,248 @@ pub fn web_code_from_trading_card(trading_card_id: u64) -> String {
     String::from_utf8(out).expect("alphabet is ASCII")
 }
 
+/// XP thresholds per level. Index `i` = XP required to reach level `i + 1`.
+/// Lifted directly from `SkylanderFormat.md` "Experience" — single canonical
+/// table, applies to all generations (per-generation differences are in which
+/// **slots** the XP lives in, not in the level→XP relationship). See
+/// [`distribute_xp`] for the per-generation slot rules.
+pub const LEVEL_THRESHOLDS: [u32; 20] = [
+    0, 1000, 2200, 3800, 6000, 9000, 13000, 18200, 24800, 33000, 42700, 53900, 66600, 80800, 96500,
+    115735, 134435, 154635, 176335, 199535,
+];
+
+/// Highest level any figure can reach (Trap Team and later).
+pub const MAX_LEVEL: u8 = 20;
+
+// ===================================================================
+// Write path: area-aware mutation of decrypted `.sky` bytes.
+// ===================================================================
+// See `docs/research/sky-format/SkylanderFormat.md` "Write path notes"
+// for the CRC region map this code mirrors. Mutators below always:
+//   1. Pick the OLDER mirror for each region as the write target.
+//   2. Copy the active mirror's data wholesale to the target.
+//   3. Apply the field mutation.
+//   4. Bump the target's area-sequence byte (now the newer one).
+//   5. Recompute the affected CRC for the target only — the source
+//      mirror is left untouched and remains the historical copy.
+//
+// Calling `set_gold` then `set_xp` in sequence is safe: the second
+// call's `pick_write_region` sees the first's writes and selects the
+// (now-older) source mirror as its target. The redundant copy is fine.
+
+/// Where to write Region A and Region B data, with the sequence byte
+/// values to stamp on each. Returned by [`pick_write_region`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WriteRegion {
+    /// Block index for the Region A write destination (0x08 or 0x24).
+    pub region_a_dst_base: usize,
+    /// Block index for the Region B write destination (0x11 or 0x2D).
+    pub region_b_dst_base: usize,
+    /// Sequence byte to write at `region_a_dst_base + 0x09`.
+    pub next_seq_a: u8,
+    /// Sequence byte to write at `region_b_dst_base + 0x02`.
+    pub next_seq_b: u8,
+}
+
+/// Pick the older (write-target) mirror for each region, with the
+/// sequence byte to stamp. Inverse of the read-side pick at
+/// [`parse_standard`]: reader chooses the higher sequence; writer
+/// chooses the other one and bumps it past the current high.
+///
+/// On a tie (both mirrors at the same sequence — happens on
+/// factory-fresh figures), the read-side picks the first mirror
+/// (0x08 / 0x11), so the writer picks the second (0x24 / 0x2D).
+pub fn pick_write_region(plain: &[u8]) -> WriteRegion {
+    let seq_a0 = plain[block_off(0x08) + 0x09];
+    let seq_a1 = plain[block_off(0x24) + 0x09];
+    let seq_b0 = plain[block_off(0x11) + 0x02];
+    let seq_b1 = plain[block_off(0x2D) + 0x02];
+
+    let (region_a_dst_base, next_seq_a) = if seq_newer(seq_a1, seq_a0) {
+        // a1 is newer → reader reads from 0x24, writer writes to 0x08.
+        (0x08, seq_a1.wrapping_add(1))
+    } else {
+        // a0 is newer or tied → reader reads from 0x08, writer writes to 0x24.
+        (0x24, seq_a0.wrapping_add(1))
+    };
+    let (region_b_dst_base, next_seq_b) = if seq_newer(seq_b1, seq_b0) {
+        (0x11, seq_b1.wrapping_add(1))
+    } else {
+        (0x2D, seq_b0.wrapping_add(1))
+    };
+
+    WriteRegion {
+        region_a_dst_base,
+        region_b_dst_base,
+        next_seq_a,
+        next_seq_b,
+    }
+}
+
+/// Block deltas (from the region base) that make up Region A's data.
+/// Skips sector trailers at +3 and +7. Used by [`copy_region`] when
+/// duplicating data between mirrors.
+const REGION_A_DELTAS: &[usize] = &[0, 1, 2, 4, 5, 6, 8];
+
+/// Block deltas (from the region base) that make up Region B's data.
+/// Skips sector trailer at +2 (block 0x13 / 0x2F).
+const REGION_B_DELTAS: &[usize] = &[0, 1, 3, 4];
+
+/// Copy a region's blocks from `src_base` to `dst_base`, skipping
+/// sector trailers per `deltas`.
+fn copy_region(plain: &mut [u8], src_base: usize, dst_base: usize, deltas: &[usize]) {
+    for &delta in deltas {
+        let src = block_off(src_base + delta);
+        let dst = block_off(dst_base + delta);
+        let mut buf = [0u8; BLOCK_LEN];
+        buf.copy_from_slice(&plain[src..src + BLOCK_LEN]);
+        plain[dst..dst + BLOCK_LEN].copy_from_slice(&buf);
+    }
+}
+
+/// Compute the Region A "CRC14" at a given region base (0x08 or 0x24).
+/// CRC16-CCITT/FALSE over the first 14 bytes of the region + literal
+/// `0x05 0x00`. Spec doc structure table entry at `B + 0x0E`.
+fn compute_crc14(plain: &[u8], region_a_base: usize) -> u16 {
+    let off = block_off(region_a_base);
+    let mut buf = [0u8; 16];
+    buf[..14].copy_from_slice(&plain[off..off + 14]);
+    buf[14] = 0x05;
+    buf[15] = 0x00;
+    crc16_ccitt_false(&buf)
+}
+
+/// Compute the Region B start-of-region CRC at a given region base
+/// (0x11 or 0x2D). CRC16-CCITT/FALSE over literal `0x06 0x01` followed
+/// by 0x3E bytes from struct `0x72` (= `region_b_base + 0x02`). Spec
+/// doc structure table entry at struct `0x70`.
+fn compute_region_b_crc(plain: &[u8], region_b_base: usize) -> u16 {
+    let off = block_off(region_b_base);
+    let mut buf = Vec::with_capacity(2 + 0x3E);
+    buf.extend_from_slice(&[0x06, 0x01]);
+    // Bytes from struct 0x72 = region_b_base block-offset + 0x02. Region B
+    // spans blocks +0, +1, [trailer +2 = block 0x13], +3, +4. The 0x3E
+    // bytes starting at +0x02 of block +0 cross the trailer at +3, so we
+    // need to stitch around it.
+    //
+    // Layout in bytes from struct 0x70:
+    //   0x70..0x80 → block +0 (14 bytes: 0x72..0x80)
+    //   0x80..0x90 → block +1 (16 bytes)
+    //   0x90..0xA0 → SECTOR TRAILER (block +2 = 0x13/0x2F, skipped)
+    //   Actually wait — the parser at :735-738 says region B uses blocks
+    //   +0, +1, +3. That means struct 0x90..0xA0 maps to block +3, NOT
+    //   the trailer. Let me re-derive:
+    //     struct 0x70 → byte (block 0x11 + 0x00 if region_b_base == 0x11)
+    //     struct 0x80 → byte (block 0x12 + 0x00)
+    //     struct 0x90 → byte (block 0x14 + 0x00)  ← block 0x13 is trailer, skipped
+    //     struct 0xA0 → byte (block 0x15 + 0x00)
+    //   So the 0x3E = 62 bytes from struct 0x72 cover:
+    //     struct 0x72..0x80 → 14 bytes from block +0
+    //     struct 0x80..0x90 → 16 bytes from block +1
+    //     struct 0x90..0xA0 → 16 bytes from block +3 (NOT trailer)
+    //     struct 0xA0..0xB0 → 16 bytes from block +4
+    //   Total: 14 + 16 + 16 + 16 = 62 = 0x3E ✓
+    let b0 = block_off(region_b_base);
+    let b1 = block_off(region_b_base + 1);
+    let b3 = block_off(region_b_base + 3);
+    let b4 = block_off(region_b_base + 4);
+    buf.extend_from_slice(&plain[b0 + 0x02..b0 + BLOCK_LEN]); // 14 bytes
+    buf.extend_from_slice(&plain[b1..b1 + BLOCK_LEN]); // 16
+    buf.extend_from_slice(&plain[b3..b3 + BLOCK_LEN]); // 16
+    buf.extend_from_slice(&plain[b4..b4 + BLOCK_LEN]); // 16
+    debug_assert_eq!(buf.len(), 2 + 0x3E);
+    crc16_ccitt_false(&buf)
+}
+
+/// Set the gold value on a decrypted `.sky`, doing the full area-aware
+/// write cycle: copy Region A's active mirror to the inactive mirror,
+/// stamp the new gold value (struct `0x03`, u16 LE), bump Region A's
+/// sequence byte, recompute the destination mirror's CRC14. The source
+/// mirror is untouched and remains the previous-version snapshot.
+///
+/// Does NOT touch Region B (gold lives only in Region A). Composes
+/// cleanly with [`set_xp`]: each call independently picks its target.
+pub fn set_gold(plain: &mut [u8; SKY_FILE_LEN], gold: u16) {
+    let target = pick_write_region(plain);
+    let src_a_base = if target.region_a_dst_base == 0x08 {
+        0x24
+    } else {
+        0x08
+    };
+    copy_region(
+        plain,
+        src_a_base,
+        target.region_a_dst_base,
+        REGION_A_DELTAS,
+    );
+    let dst = block_off(target.region_a_dst_base);
+    plain[dst + 0x03..dst + 0x05].copy_from_slice(&gold.to_le_bytes());
+    plain[dst + 0x09] = target.next_seq_a;
+    let crc = compute_crc14(plain, target.region_a_dst_base);
+    plain[dst + 0x0E..dst + 0x10].copy_from_slice(&crc.to_le_bytes());
+}
+
+/// Set XP slot values on a decrypted `.sky`. Writes to both Region A
+/// (xp_2011 at struct `0x00`) and Region B (xp_2012 at struct `0x73`,
+/// xp_2013 at struct `0x78`) following the same copy-then-mutate
+/// pattern as [`set_gold`]. Bumps both sequence bytes, recomputes
+/// both affected CRCs (CRC14 for Region A, start-of-region CRC for
+/// Region B).
+///
+/// Use [`distribute_xp`] to compute `slots` from a target total XP +
+/// the figure's generation — that handles per-generation slot caps
+/// and the cascade order.
+pub fn set_xp(plain: &mut [u8; SKY_FILE_LEN], slots: SlotXp) {
+    let target = pick_write_region(plain);
+
+    // --- Region A: write xp_2011 (struct 0x00, u24 LE) ----------------
+    let src_a_base = if target.region_a_dst_base == 0x08 {
+        0x24
+    } else {
+        0x08
+    };
+    copy_region(
+        plain,
+        src_a_base,
+        target.region_a_dst_base,
+        REGION_A_DELTAS,
+    );
+    let dst_a = block_off(target.region_a_dst_base);
+    let xp_2011_bytes = slots.xp_2011.to_le_bytes();
+    plain[dst_a..dst_a + 3].copy_from_slice(&xp_2011_bytes[..3]);
+    plain[dst_a + 0x09] = target.next_seq_a;
+    let crc_a = compute_crc14(plain, target.region_a_dst_base);
+    plain[dst_a + 0x0E..dst_a + 0x10].copy_from_slice(&crc_a.to_le_bytes());
+
+    // --- Region B: write xp_2012 (struct 0x73) + xp_2013 (struct 0x78) -
+    let src_b_base = if target.region_b_dst_base == 0x11 {
+        0x2D
+    } else {
+        0x11
+    };
+    copy_region(
+        plain,
+        src_b_base,
+        target.region_b_dst_base,
+        REGION_B_DELTAS,
+    );
+    let dst_b = block_off(target.region_b_dst_base);
+    // Struct offset 0x72 → dst_b + 0x02 (sequence byte).
+    // Struct offset 0x73 → dst_b + 0x03 (xp_2012, u16 LE).
+    // Struct offset 0x78 → dst_b + 0x08 (xp_2013, u32 LE).
+    plain[dst_b + 0x02] = target.next_seq_b;
+    plain[dst_b + 0x03..dst_b + 0x05].copy_from_slice(&slots.xp_2012.to_le_bytes());
+    plain[dst_b + 0x08..dst_b + 0x0C].copy_from_slice(&slots.xp_2013.to_le_bytes());
+    let crc_b = compute_region_b_crc(plain, target.region_b_dst_base);
+    plain[dst_b..dst_b + 0x02].copy_from_slice(&crc_b.to_le_bytes());
+}
+
 /// Resolve a character level (1..=20) from cumulative XP.
 ///
-/// Table lifted directly from `SkylanderFormat.md` "Experience". Anything
-/// below 1000 XP is level 1; anything at or above 199535 is level 20.
+/// Anything below 1000 XP is level 1; anything at or above 199535 is level 20.
 pub fn level_from_xp(xp: u32) -> u8 {
-    const THRESHOLDS: [u32; 20] = [
-        0, 1000, 2200, 3800, 6000, 9000, 13000, 18200, 24800, 33000, 42700, 53900, 66600, 80800,
-        96500, 115735, 134435, 154635, 176335, 199535,
-    ];
     let mut level: u8 = 1;
-    for (idx, threshold) in THRESHOLDS.iter().enumerate() {
+    for (idx, threshold) in LEVEL_THRESHOLDS.iter().enumerate() {
         if xp >= *threshold {
             level = (idx as u8) + 1;
         } else {
@@ -355,6 +586,87 @@ pub fn level_from_xp(xp: u32) -> u8 {
         }
     }
     level
+}
+
+/// Inverse of [`level_from_xp`]: the minimum XP needed to reach `level`.
+/// Out-of-range inputs are clamped to `1..=MAX_LEVEL`.
+pub fn xp_for_level(level: u8) -> u32 {
+    let idx = level.clamp(1, MAX_LEVEL) - 1;
+    LEVEL_THRESHOLDS[idx as usize]
+}
+
+/// Per-figure level cap, derived from the figure's `year_code`. Reflects what
+/// the parser at [`parse`] actually computes — a Giants-era figure only counts
+/// `xp_2011` toward its level, so it physically cannot go above level 10 in
+/// any game's display. See `SkylanderFormat.md` "Write path notes".
+pub fn max_level_for(generation: SkyGeneration) -> u8 {
+    match generation {
+        SkyGeneration::SpyrosAdventure | SkyGeneration::Giants => 10,
+        SkyGeneration::SwapForce => 15,
+        SkyGeneration::TrapTeam
+        | SkyGeneration::SuperChargers
+        | SkyGeneration::Imaginators
+        | SkyGeneration::Unknown => MAX_LEVEL,
+    }
+}
+
+/// XP values for the three storage slots on a figure (`xp_2011` is a u24 stored
+/// as u32 with the high byte zero, `xp_2012` is the SwapForce-era u16,
+/// `xp_2013` is the Trap-Team+-era u32).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SlotXp {
+    pub xp_2011: u32,
+    pub xp_2012: u16,
+    pub xp_2013: u32,
+}
+
+/// Distribute a target total XP across the three storage slots, respecting
+/// per-generation rules. Slots not used by `gen` are returned as zero — the
+/// caller (typically `set_xp`) writes all three slots, which means setting a
+/// level on a Giants-gen figure wipes any per-tag progress recorded by later
+/// games. That tradeoff is intentional and documented in SPEC.md.
+///
+/// Per-slot caps come from `SkylanderFormat.md`: 2011 caps at 33 000 (= level
+/// 10 threshold), 2012 caps at 63 500 (= level-15 minus level-10 threshold —
+/// safe for both SSA/Giants u16 max and SSF+ figures), 2013 takes the rest
+/// (up to ~103 035 for level 20).
+pub fn distribute_xp(total: u32, generation: SkyGeneration) -> SlotXp {
+    const CAP_2011: u32 = 33_000;
+    const CAP_2012: u32 = 63_500;
+
+    let level_cap_xp = xp_for_level(max_level_for(generation));
+    let total = total.min(level_cap_xp);
+
+    match generation {
+        SkyGeneration::SpyrosAdventure | SkyGeneration::Giants => SlotXp {
+            xp_2011: total.min(CAP_2011),
+            xp_2012: 0,
+            xp_2013: 0,
+        },
+        SkyGeneration::SwapForce => {
+            let xp_2011 = total.min(CAP_2011);
+            let remainder = total - xp_2011;
+            SlotXp {
+                xp_2011,
+                xp_2012: remainder.min(CAP_2012) as u16,
+                xp_2013: 0,
+            }
+        }
+        SkyGeneration::TrapTeam
+        | SkyGeneration::SuperChargers
+        | SkyGeneration::Imaginators
+        | SkyGeneration::Unknown => {
+            let xp_2011 = total.min(CAP_2011);
+            let mut remainder = total - xp_2011;
+            let xp_2012 = remainder.min(CAP_2012);
+            remainder -= xp_2012;
+            SlotXp {
+                xp_2011,
+                xp_2012: xp_2012 as u16,
+                xp_2013: remainder,
+            }
+        }
+    }
 }
 
 /// CRC16-CCITT/FALSE (poly 0x1021, init 0xFFFF, no reflect, no xorout).
@@ -828,8 +1140,19 @@ fn parse_standard(bytes: &[u8], stats: &mut SkyFigureStats) {
     let crc14_stored = read_u16(bytes, b08 + 0x0E);
     let crc14_computed = crc16_ccitt_false(&c14);
 
-    stats.checksums_valid =
-        stats.checksums_valid && crc30_stored == crc30_computed && crc14_stored == crc14_computed;
+    // Blank-tag exemption: factory-fresh figures (never written by a game)
+    // have all-zero data areas and all-zero stored CRC bytes. Empirically
+    // verified against real RPCS3 dumps of unused Imaginators Senseis +
+    // SuperChargers vehicles. Without this exemption every brand-new
+    // figure would fail validation even though the bytes are well-formed.
+    let blank_active_area = crc30_stored == 0
+        && crc14_stored == 0
+        && bytes[b08..b08 + 14].iter().all(|&b| b == 0)
+        && c30.iter().all(|&b| b == 0);
+
+    stats.checksums_valid = stats.checksums_valid
+        && (blank_active_area
+            || (crc30_stored == crc30_computed && crc14_stored == crc14_computed));
 }
 
 // ---------------------------------------------------------------------------
@@ -1441,6 +1764,359 @@ mod tests {
         assert_eq!(stats.variant_decoded.year_code, SkyGeneration::Unknown);
         // All-zero bytes fail the header CRC (CRC of 30 zeros is 0xE1F0).
         assert!(!stats.checksums_valid);
+    }
+
+    #[test]
+    fn xp_for_level_round_trips_against_level_from_xp() {
+        for level in 1..=MAX_LEVEL {
+            let xp = xp_for_level(level);
+            assert_eq!(
+                level_from_xp(xp),
+                level,
+                "level={level} xp={xp} round-trip failed"
+            );
+        }
+        // Out-of-range clamps cleanly.
+        assert_eq!(xp_for_level(0), xp_for_level(1));
+        assert_eq!(xp_for_level(99), xp_for_level(MAX_LEVEL));
+    }
+
+    #[test]
+    fn max_level_for_matches_generation_caps() {
+        assert_eq!(max_level_for(SkyGeneration::SpyrosAdventure), 10);
+        assert_eq!(max_level_for(SkyGeneration::Giants), 10);
+        assert_eq!(max_level_for(SkyGeneration::SwapForce), 15);
+        assert_eq!(max_level_for(SkyGeneration::TrapTeam), 20);
+        assert_eq!(max_level_for(SkyGeneration::SuperChargers), 20);
+        assert_eq!(max_level_for(SkyGeneration::Imaginators), 20);
+        // Unknown is permissive (allows 20) — never block the user on a
+        // figure we couldn't classify.
+        assert_eq!(max_level_for(SkyGeneration::Unknown), 20);
+    }
+
+    #[test]
+    fn distribute_xp_ssa_caps_at_2011_slot() {
+        // SSA only uses xp_2011; max level 10 = 33_000 XP.
+        let d = distribute_xp(33_000, SkyGeneration::SpyrosAdventure);
+        assert_eq!(d, SlotXp { xp_2011: 33_000, xp_2012: 0, xp_2013: 0 });
+        // Overflow clamps to the gen's max level.
+        let d = distribute_xp(99_999, SkyGeneration::Giants);
+        assert_eq!(d, SlotXp { xp_2011: 33_000, xp_2012: 0, xp_2013: 0 });
+    }
+
+    #[test]
+    fn distribute_xp_swap_force_cascades_into_2012_slot() {
+        // Level 15 in SwapForce = 96_500 XP = 33_000 (2011) + 63_500 (2012).
+        let d = distribute_xp(96_500, SkyGeneration::SwapForce);
+        assert_eq!(d, SlotXp { xp_2011: 33_000, xp_2012: 63_500, xp_2013: 0 });
+        // Below the 2011 cap → all in 2011 slot.
+        let d = distribute_xp(8_122, SkyGeneration::SwapForce);
+        assert_eq!(d, SlotXp { xp_2011: 8_122, xp_2012: 0, xp_2013: 0 });
+        // Mid-range → 2011 maxed, partial 2012.
+        let d = distribute_xp(50_000, SkyGeneration::SwapForce);
+        assert_eq!(d, SlotXp { xp_2011: 33_000, xp_2012: 17_000, xp_2013: 0 });
+    }
+
+    #[test]
+    fn distribute_xp_trap_team_plus_uses_all_three_slots() {
+        // Level 20 = 199_535 XP = 33_000 + 63_500 + 103_035.
+        let d = distribute_xp(199_535, SkyGeneration::TrapTeam);
+        assert_eq!(
+            d,
+            SlotXp {
+                xp_2011: 33_000,
+                xp_2012: 63_500,
+                xp_2013: 103_035,
+            }
+        );
+        // Level 16 = 115_735 XP = 33_000 + 63_500 + 19_235.
+        let d = distribute_xp(115_735, SkyGeneration::Imaginators);
+        assert_eq!(
+            d,
+            SlotXp {
+                xp_2011: 33_000,
+                xp_2012: 63_500,
+                xp_2013: 19_235,
+            }
+        );
+        // Unknown gen behaves the same as TrapTeam+ (permissive).
+        let d = distribute_xp(199_535, SkyGeneration::Unknown);
+        assert_eq!(d.xp_2011 + d.xp_2012 as u32 + d.xp_2013, 199_535);
+    }
+
+    #[test]
+    fn distribute_xp_round_trips_through_level_from_xp_for_target_gen() {
+        // For each generation, every reachable level should produce a slot
+        // distribution whose summed value (over the slots that gen uses)
+        // matches xp_for_level(target).
+        let gens = [
+            SkyGeneration::SpyrosAdventure,
+            SkyGeneration::Giants,
+            SkyGeneration::SwapForce,
+            SkyGeneration::TrapTeam,
+            SkyGeneration::Imaginators,
+        ];
+        for generation in gens {
+            for level in 1..=max_level_for(generation) {
+                let target = xp_for_level(level);
+                let d = distribute_xp(target, generation);
+                let sum = d.xp_2011 + d.xp_2012 as u32 + d.xp_2013;
+                assert_eq!(
+                    sum, target,
+                    "generation={generation:?} level={level} target={target} got_sum={sum} dist={d:?}"
+                );
+                // And the parser's per-gen level computation should report
+                // back the original level (this is what the user will see).
+                let xp_visible_to_parser = match generation {
+                    SkyGeneration::SpyrosAdventure | SkyGeneration::Giants => d.xp_2011,
+                    SkyGeneration::SwapForce => d.xp_2011 + d.xp_2012 as u32,
+                    _ => sum,
+                };
+                assert_eq!(
+                    level_from_xp(xp_visible_to_parser),
+                    level,
+                    "generation={generation:?} level={level} parser sees {xp_visible_to_parser} → wrong level"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pick_write_region_inverts_read_side_pick() {
+        // Fresh figure (both regions tied at 0): reader picks 0x08 / 0x11,
+        // writer picks 0x24 / 0x2D with next_seq = 1.
+        let blob = vec![0u8; SKY_FILE_LEN];
+        let target = pick_write_region(&blob);
+        assert_eq!(target.region_a_dst_base, 0x24);
+        assert_eq!(target.region_b_dst_base, 0x2D);
+        assert_eq!(target.next_seq_a, 1);
+        assert_eq!(target.next_seq_b, 1);
+
+        // Asymmetric: A active at 0x24 (seq 5/4), B active at 0x11 (seq
+        // 9/8). Writer should target 0x08 (A) and 0x2D (B).
+        let mut blob = vec![0u8; SKY_FILE_LEN];
+        blob[block_off(0x08) + 0x09] = 4;
+        blob[block_off(0x24) + 0x09] = 5;
+        blob[block_off(0x11) + 0x02] = 9;
+        blob[block_off(0x2D) + 0x02] = 8;
+        let target = pick_write_region(&blob);
+        assert_eq!(target.region_a_dst_base, 0x08);
+        assert_eq!(target.next_seq_a, 6);
+        assert_eq!(target.region_b_dst_base, 0x2D);
+        assert_eq!(target.next_seq_b, 10);
+
+        // Wraparound: active seq at 0xFF → next wraps to 0x00.
+        let mut blob = vec![0u8; SKY_FILE_LEN];
+        blob[block_off(0x08) + 0x09] = 0xFF;
+        blob[block_off(0x24) + 0x09] = 0xFE;
+        let target = pick_write_region(&blob);
+        assert_eq!(target.region_a_dst_base, 0x24);
+        assert_eq!(target.next_seq_a, 0x00);
+    }
+
+    #[test]
+    fn set_gold_round_trip_preserves_other_fields() {
+        // Build a fixture with known XP, gold, playtime, nickname, hats.
+        // Apply set_gold(5000). After round-trip:
+        //  - gold = 5000
+        //  - all other fields unchanged
+        //  - checksums valid
+        let bytes = Fixture {
+            figure_id: 0x00001E, // Chop Chop
+            variant: 0x0000,
+            xp_2011: 8122,
+            gold: 2502,
+            playtime_secs: 886,
+            nickname: "TESTER".into(),
+            hat_2011: 9,
+            heroic_challenges_ssa: 0xABCD_1234,
+            ..Default::default()
+        }
+        .build();
+
+        // Decrypt → mutate → encrypt → parse.
+        let mut decrypted = [0u8; SKY_FILE_LEN];
+        decrypted.copy_from_slice(&bytes);
+        decrypt_figure(&mut decrypted);
+
+        set_gold(&mut decrypted, 5000);
+
+        let mut encrypted = decrypted;
+        encrypt_figure(&mut encrypted);
+
+        let stats = parse(&encrypted).unwrap();
+        assert_eq!(stats.gold, 5000, "gold should be updated");
+        assert_eq!(stats.xp_2011, 8122, "xp_2011 should be preserved");
+        assert_eq!(stats.playtime_secs, 886, "playtime should be preserved");
+        assert_eq!(stats.nickname, "TESTER", "nickname should be preserved");
+        assert_eq!(
+            stats.heroic_challenges_ssa, 0xABCD_1234,
+            "heroic challenges should be preserved (covered by CRC30 we didn't touch)"
+        );
+        assert!(
+            stats.checksums_valid,
+            "all CRCs must validate after mutation"
+        );
+    }
+
+    #[test]
+    fn set_xp_round_trip_writes_all_three_slots() {
+        // SSA-gen Chop Chop, set level 10 → xp_2011=33_000, others=0.
+        let bytes = Fixture {
+            figure_id: 0x00001E,
+            variant: 0x0000, // year_code 0 = Unknown (permissive — sum all 3 slots)
+            xp_2011: 100,
+            xp_2012: 7777,   // pre-existing later-game progress that we should wipe
+            xp_2013: 999999, // ditto
+            gold: 50,
+            ..Default::default()
+        }
+        .build();
+
+        let mut decrypted = [0u8; SKY_FILE_LEN];
+        decrypted.copy_from_slice(&bytes);
+        decrypt_figure(&mut decrypted);
+
+        let target_xp = xp_for_level(10);
+        let slots = distribute_xp(target_xp, SkyGeneration::SpyrosAdventure);
+        set_xp(&mut decrypted, slots);
+
+        let mut encrypted = decrypted;
+        encrypt_figure(&mut encrypted);
+
+        let stats = parse(&encrypted).unwrap();
+        assert_eq!(stats.xp_2011, 33_000, "xp_2011 set to level-10 threshold");
+        assert_eq!(stats.xp_2012, 0, "xp_2012 wiped for SSA-gen figure");
+        assert_eq!(stats.xp_2013, 0, "xp_2013 wiped for SSA-gen figure");
+        assert_eq!(
+            stats.level, 10,
+            "parser should report level 10 for SSA figure with xp_2011=33000"
+        );
+        assert_eq!(stats.gold, 50, "gold untouched");
+        assert!(stats.checksums_valid);
+    }
+
+    #[test]
+    fn set_gold_then_set_xp_composes_cleanly() {
+        // Bug magnet: each mutator independently picks its write target;
+        // the second call must see the first's writes and route around
+        // them correctly. After both, both fields should be set and
+        // unrelated fields should still be intact.
+        let bytes = Fixture {
+            figure_id: 0x00001E,
+            variant: 0x4000, // year_code high nibble = 4 → TrapTeam → all 3 slots count
+            playtime_secs: 12345,
+            nickname: "DURABLE".into(),
+            ..Default::default()
+        }
+        .build();
+
+        let mut decrypted = [0u8; SKY_FILE_LEN];
+        decrypted.copy_from_slice(&bytes);
+        decrypt_figure(&mut decrypted);
+
+        set_gold(&mut decrypted, 9999);
+        let slots = distribute_xp(xp_for_level(15), SkyGeneration::TrapTeam);
+        set_xp(&mut decrypted, slots);
+
+        let mut encrypted = decrypted;
+        encrypt_figure(&mut encrypted);
+
+        let stats = parse(&encrypted).unwrap();
+        assert_eq!(stats.gold, 9999);
+        assert_eq!(stats.level, 15);
+        assert_eq!(stats.xp_2011, 33_000);
+        assert_eq!(stats.xp_2012, 63_500);
+        assert_eq!(stats.xp_2013, 0); // level 15 fills 2011 + 2012 only
+        assert_eq!(stats.playtime_secs, 12345);
+        assert_eq!(stats.nickname, "DURABLE");
+        assert!(stats.checksums_valid);
+    }
+
+    #[test]
+    fn multi_write_idempotence_lands_in_alternating_mirrors() {
+        // Each subsequent write lands in the (now-older) mirror that the
+        // previous write left behind. After N writes the final value
+        // should be visible regardless of which mirror is now active.
+        let bytes = Fixture {
+            figure_id: 0x00001E,
+            variant: 0x2402,
+            ..Default::default()
+        }
+        .build();
+
+        let mut decrypted = [0u8; SKY_FILE_LEN];
+        decrypted.copy_from_slice(&bytes);
+        decrypt_figure(&mut decrypted);
+
+        // Five gold writes in a row — should alternate between 0x08 and
+        // 0x24 mirrors. Final value should be the last written.
+        for v in [1000_u16, 2000, 3000, 4000, 5000] {
+            set_gold(&mut decrypted, v);
+        }
+
+        let mut encrypted = decrypted;
+        encrypt_figure(&mut encrypted);
+        let stats = parse(&encrypted).unwrap();
+        assert_eq!(stats.gold, 5000, "final gold value should win");
+        assert!(stats.checksums_valid);
+
+        // And the inactive mirror should still hold the prior write
+        // (4000), not the original fixture default (0) — proves the
+        // copy-and-bump cycle is round-tripping cleanly.
+        let mut copy = encrypted;
+        decrypt_figure(&mut copy);
+        let seq_a0 = copy[block_off(0x08) + 0x09];
+        let seq_a1 = copy[block_off(0x24) + 0x09];
+        // After 5 writes from baseline (seq=1/0), seqs should be e.g.
+        // 5 and 6 (or 6 and 5). The newer holds 5000; the older holds
+        // 4000.
+        let (newer_base, older_base) = if seq_newer(seq_a1, seq_a0) {
+            (0x24, 0x08)
+        } else {
+            (0x08, 0x24)
+        };
+        let newer_gold = u16::from_le_bytes([
+            copy[block_off(newer_base) + 0x03],
+            copy[block_off(newer_base) + 0x04],
+        ]);
+        let older_gold = u16::from_le_bytes([
+            copy[block_off(older_base) + 0x03],
+            copy[block_off(older_base) + 0x04],
+        ]);
+        assert_eq!(newer_gold, 5000);
+        assert_eq!(older_gold, 4000);
+    }
+
+    #[test]
+    fn blank_data_areas_with_valid_header_pass_checksum() {
+        // Fresh-from-the-package figures (never written by any game) have a
+        // valid header (figure_id, serial, header CRC written at manufacture)
+        // but entirely-zero data areas + zero stored area CRCs. Empirically
+        // confirmed against real RPCS3 dumps of unused Imaginators Senseis +
+        // SuperChargers vehicles in `~/Games/ps3/skylanders/` (10 of 151
+        // dumps). The parser must accept this state — otherwise a kid who
+        // buys a brand-new figure and tries to edit its stats would hit a
+        // pre-mutation CRC-failure error.
+        let mut buf = vec![0u8; SKY_FILE_LEN];
+        // Real figure_id (Crash Bandicoot = 0x000276 in the real dump that
+        // motivated this test). All other fields stay zero.
+        buf[OFFSET_FIGURE_ID..OFFSET_FIGURE_ID + 3]
+            .copy_from_slice(&0x000276_u32.to_le_bytes()[..3]);
+        // Header CRC over the first 30 bytes (manufacturer always writes this).
+        let hdr = crc16_ccitt_false(&buf[0..OFFSET_HEADER_CRC]);
+        buf[OFFSET_HEADER_CRC..OFFSET_HEADER_CRC + 2].copy_from_slice(&hdr.to_le_bytes());
+
+        // Encrypt so parse()'s decrypt step round-trips back to our plaintext.
+        let mut blob: [u8; SKY_FILE_LEN] = buf.try_into().unwrap();
+        encrypt_figure(&mut blob);
+
+        let stats = parse(&blob).unwrap();
+        assert_eq!(stats.figure_id, skylander_core::ToyTypeId(0x000276));
+        assert!(
+            stats.checksums_valid,
+            "blank-area figure with valid header CRC should validate"
+        );
     }
 
     #[test]

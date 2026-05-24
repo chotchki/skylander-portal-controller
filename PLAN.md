@@ -1759,6 +1759,334 @@ hand-import. The `.ico` half of 10.8.5 collapses into 10.9.3.
   prefer not to run an installer (and for CI smoke-testing
   without an MSI install step in the loop).
 
+## Phase 11 — Skylander Stat Editing (level + gold)
+
+Wire the disabled **STATS** placeholder on the figure-detail screen
+(`phone/src/screens/figure_detail.rs:245-255`) into a real edit
+sheet so phone users can bump level + gold before placing a figure
+on the portal. Eliminates a huge playtest friction point: testing
+level-20-only features used to require hours of grinding.
+Confirmed scope: editable when `core::Category` is one of `Figure
+/ Sidekick / Giant / Kaos` (other categories — Item / Trap /
+AdventurePack / CreationCrystal / Vehicle / Other — get a
+disabled button + tooltip); edit allowed only when figure is off
+the portal; level + gold only (the level threshold table at
+`docs/research/sky-format/SkylanderFormat.md:246-267` is global,
+levels 1–20 → 0–199 535 XP, no per-era variants). Healing /
+respawn deferred: the documented spec has no HP or knockout field
+— strong evidence HP lives in the per-game save state, not on the
+figure — so any "full heal" affordance is a separate phase that
+would drive RPCS3 via GUI automation (clear-slot → wait →
+reload), not a `.sky` mutation. Full design log:
+`/Users/chotchki/.claude/plans/federated-sleeping-mochi.md`.
+
+**Research findings already in hand (informs the tasks below):**
+- The single canonical level→XP table is the spec doc table at
+  `:246-267`. No per-era variants for thresholds.
+- XP is stored across three slots (2011 u24 at block 0x08, 2012 u16
+  at block 0x11+0x03, 2013 u32 at block 0x11+0x08), and the game
+  reads "current XP" as the **sum**. Slot caps (33 000 / 63 500 /
+  ~103 035) define a fill-order: 2011 first, then 2012, then 2013.
+- Data is mirrored across two regions per area, with a sequence
+  byte determining the live region. The parser already handles
+  this on the read path (`crates/sky-parser/src/lib.rs:701-721`);
+  the **write path must write to the *other* (older-sequence)
+  region with the sequence bumped** — not just to a fixed offset.
+- Editability filter lives on the indexer's `Category` enum
+  (`crates/core/src/figure.rs:250-271`), not the parser's
+  `FigureKind` (which today only distinguishes `Trap` vs
+  `Standard` and lumps Vehicles, Creation Crystals, Senseis all
+  into `Standard` — too coarse for our gate).
+
+- [ ] 11.1 **Spec nail-downs (research-first, no code).** Confirm
+  CRC scopes, XP-table values, game-era detection, and kind
+  predicate against real `.sky` dumps before any write code lands.
+  - [x] 11.1.1 — ~~Confirm header CRC scope~~ **Done.** Header
+    CRC at file `0x1E` covers only file bytes `0x00..0x1E`
+    (figure_id, serial, error byte, trading card, variant) —
+    independent of all data-area mutations. Verified empirically:
+    parser code at `crates/sky-parser/src/lib.rs:619-620` matches
+    the spec, validates cleanly against all 512 figures in the
+    firmware pack post-11.1.7 fix. Edits to gold / XP / playtime
+    / etc. do NOT require header-CRC recompute. Documented in the
+    new **Write path notes** section of `SkylanderFormat.md`.
+  - [x] 11.1.2 — ~~Enumerate CRC regions~~ **Done.** Full
+    enumeration written up under **Write path notes** in
+    `docs/research/sky-format/SkylanderFormat.md`. Key result for
+    the level+gold pipeline: only 2 CRCs need recomputing per
+    edit — the Region-A CRC14 (covers struct `0x00..0x0E`, picks
+    up gold + XP_2011 + area-A sequence) and the Region-B 0x70-CRC
+    (covers `0x72..0xB0`, picks up XP_2012 + XP_2013 + area-B
+    sequence). The CRC30 at `B + 0x0C` and the big CRC at
+    `B + 0x0A` are NOT touched by level+gold edits (they cover
+    blocks holding nickname / heroic challenges / hat history /
+    timestamps — none of which we mutate).
+  - [x] 11.1.3 — ~~Lock in XP→level tables~~ **Done by spec doc.**
+    The level→XP table at `docs/research/sky-format/SkylanderFormat.md:246-267`
+    is canonical and global. 11.3 implements a single
+    `LEVEL_THRESHOLDS: [u32; 21]` constant — no per-era variant.
+  - [x] 11.1.4 — ~~Validate the slot-distribution algorithm~~
+    **Effectively done by `validate_samples` against the real pack
+    at `~/Games/ps3/skylanders/`** (151 figures, 141 with valid
+    CRC). All figures with `xp_2011 = 33000` reported level ≥ 10;
+    all Trap-Team-era figures with sum-of-slots crossing thresholds
+    reported the expected level. Slot-distribution implicit in the
+    parser's read-side logic is consistent with the planned
+    write-side `distribute_xp`. See 11.1.7 for the per-generation
+    nuance that this surfaced.
+  - [x] 11.1.5 — ~~Spot-check editable-categories~~ **Confirmed
+    against the real pack.** Trap IDs in the parser's range
+    `0x0D2..=0x0DC` (60 entries) all classify as Trap; Vehicle IDs
+    (e.g. Hot Streak `0x0C98`, Reef Ripper `0x0C96`, Sheep Creep
+    `0x0C82`) fall through the parser's coarse `FigureKind` as
+    `Standard` but the **indexer's `Category`** correctly puts them
+    in `Vehicle`. Trap Master skylander figures
+    (Blastermind `0x1D2`, Snap Shot `0x1CE`, etc.) classify as
+    `Category::Figure` and are editable as expected. Imaginators
+    Senseis (Crash `0x276`, Cortex `0x277`, Wild Storm `0x274`,
+    King Pen `0x259`) are editable — these are playable
+    characters. Adventure Packs (`0x131`..=`0x134` in this pack)
+    classify as `Category::AdventurePack` and are correctly
+    excluded.
+  - [ ] 11.1.6 — **Per-generation level model.** The parser
+    (`crates/sky-parser/src/lib.rs:797-806`) computes level from a
+    per-generation XP pool, NOT from the spec's "sum of all
+    experience values" rule: SSA/Giants figures use `xp_2011` only
+    (cap = level 10); SwapForce uses `xp_2011 + xp_2012` (cap =
+    level 15); TrapTeam/SuperChargers/Imaginators sum all three
+    (cap = level 20). This is empirically what playtest will see:
+    a Giants-era Tree Rex maxed in Imaginators still reads as
+    level 10 to a Giants game. **Implications:**
+    - `distribute_xp` needs a generation parameter to know which
+      slot(s) to fill. Update 11.3.3 accordingly.
+    - The phone-side level stepper must clamp to the per-figure
+      max (10/15/20) — pull `SkyGeneration` from the parser's
+      `variant_decoded.year_code` or from the indexer.
+    - Doc this in the SPEC.md Q&A (11.10.1).
+  - [x] 11.1.7 — ~~Blank-figure CRC failures~~ **Fixed.** Hypothesis
+    confirmed via `cargo run --example crc_probe`: fresh dumps
+    have entirely-zero data areas AND zero stored area-CRC bytes
+    (game writes the CRC on the first mutation, not at
+    manufacture). Added blank-area exemption to
+    `parse_standard`'s checksum check at
+    `crates/sky-parser/src/lib.rs:809-845`: if active region's
+    14-byte header + 0x30 payload are all zero AND both stored
+    CRCs are zero, accept as valid blank state. New unit test
+    `blank_data_areas_with_valid_header_pass_checksum` covers it.
+    Validation now reports **151/151 valid** on
+    `~/Games/ps3/skylanders` (was 141/151) and **512/512 valid**
+    on `~/Games/ps3/Skylanders Characters Pack for RPCS3`.
+    Existing tamper tests (`header_crc_tamper_flips_valid_flag`,
+    `area_crc_tamper_flips_valid_flag`) still pass — the fix
+    only relaxes the blank case, not the populated-but-wrong
+    case.
+
+- [x] 11.2 **`sky-parser` write path** — **Done.** Added to
+  `crates/sky-parser/src/lib.rs` adjacent to the read-side area
+  helpers. All mutators are area-sequence-aware: each picks the
+  older mirror, copies the active mirror's data wholesale to the
+  target, applies the field mutation, bumps the sequence byte,
+  and recomputes the affected CRC for the target only. CRC
+  recompute is encapsulated inside each mutator — callers can't
+  forget, which makes the planned separate `recompute_crcs` entry
+  point unnecessary (deviation from plan, simpler API). 5 new
+  unit tests added (38/38 sky-parser tests pass; 151/151 real
+  `.sky` dumps still validate).
+  - [x] 11.2.1 — `encrypt_figure` was already `pub` at
+    `crates/sky-parser/src/lib.rs:150` from earlier work; no
+    promotion needed.
+  - [x] 11.2.2 — `pub fn pick_write_region(plain: &[u8]) ->
+    WriteRegion` added. Inverts the parser's read-side pick at
+    `:701-721`. Returns `{region_a_dst_base, region_b_dst_base,
+    next_seq_a, next_seq_b}`. Test `pick_write_region_inverts_read_side_pick`
+    covers fresh / asymmetric / wraparound cases.
+  - [x] 11.2.3 — `pub fn set_gold(plain: &mut [u8;
+    SKY_FILE_LEN], gold: u16)` added. Test `set_gold_round_trip_preserves_other_fields`
+    confirms gold mutates and CRC30-covered fields (heroic
+    challenges, nickname, etc.) remain intact.
+  - [x] 11.2.4 — `pub fn set_xp(plain: &mut [u8; SKY_FILE_LEN],
+    slots: SlotXp)` added. Takes pre-computed `SlotXp` rather
+    than `(total_xp, generation)` — keeps `set_xp` byte-twiddling
+    only; the generation-aware distribution happens at the
+    caller via `distribute_xp` (11.3.3). Test
+    `set_xp_round_trip_writes_all_three_slots` confirms slot
+    values land correctly and pre-existing other-slot progress
+    is wiped per the documented MVP tradeoff.
+  - [x] 11.2.5 — ~~Separate `recompute_crcs` entry point~~ **Not
+    needed.** CRC recompute is encapsulated inside `set_gold` /
+    `set_xp` — they each handle their own affected CRC (CRC14
+    for Region A in `set_gold`; CRC14 + Region-B 0x70-CRC in
+    `set_xp`). The unchanged-by-edit CRCs (CRC30 at `B+0x0C`,
+    big-CRC at `B+0x0A`) ride along correctly because the
+    copy-then-mutate pattern preserves them with their original
+    data.
+  - [x] 11.2.6 — Round-trip property tests:
+    `set_gold_round_trip_preserves_other_fields` and
+    `set_xp_round_trip_writes_all_three_slots` both follow the
+    `decrypt → mutate → encrypt → parse` flow and assert mutated
+    field landed + unrelated fields preserved + checksums valid.
+  - [x] 11.2.7 — Multi-write idempotence test
+    `multi_write_idempotence_lands_in_alternating_mirrors` runs
+    five back-to-back `set_gold` calls with different values and
+    asserts (a) the final value is what the parser reads (b) the
+    older mirror holds the *previous* value, not the original.
+    Confirms the area-sequence dance works across repeated writes.
+    Plus `set_gold_then_set_xp_composes_cleanly` exercises the
+    cross-function composition case (each mutator independently
+    picking its write target after the other ran).
+  - [x] 11.2.8 — ~~Golden-byte test against a real `.sky` dump~~
+    **Skipped** per CLAUDE.md's no-`.sky`-in-repo rule
+    (committing a real dump would violate the no-piracy
+    distribution policy). The round-trip + idempotence tests
+    above plus the 151/151 + 512/512 `validate_samples` reality
+    check together cover the same ground without the brittle
+    byte-equality coupling. If we need higher-confidence
+    real-file coverage, the natural home is an env-gated
+    integration test that points at a user-supplied dump path —
+    deferrable until / unless a regression slips through.
+
+- [x] 11.3 **Level ↔ XP mapping** — **Done.** Added to
+  `crates/sky-parser/src/lib.rs` alongside the existing
+  `level_from_xp` (rather than a separate `xp.rs` module — kept the
+  existing single-file layout convention; the additions are ~100
+  lines so a new file wasn't justified). Single global threshold
+  table; per-slot fill order in `distribute_xp`. 6 new unit tests
+  added (33/33 sky-parser tests pass).
+  - [x] 11.3.1 — `pub const LEVEL_THRESHOLDS: [u32; 20]` populated
+    from spec doc `:246-267`. (Plan said `[u32; 21]` with index 0
+    unused; the actual layout uses 20 entries indexed by
+    `level - 1` to match the pre-existing inline constant — no
+    functional difference, less wasted space.)
+  - [x] 11.3.2 — `pub fn xp_for_level(level: u8) -> u32` added.
+    The existing `level_from_xp(xp: u32) -> u8` already serves
+    the inverse direction; kept its name to avoid call-site
+    churn (plan called it `level_for_xp` — minor variance).
+  - [x] 11.3.3 — `pub fn distribute_xp(total: u32, generation:
+    SkyGeneration) -> SlotXp` with per-generation slot rules. Note:
+    plan called the parameter `gen`; that's now a reserved keyword
+    in Rust 2024 edition, so it's `generation`. Semantics: slots
+    not used by the figure's generation get zero (set_xp will
+    write all three slots, which means setting level on a
+    Giants-era figure wipes any progress from later games it's
+    been played in — documented as intentional MVP tradeoff, will
+    surface in SPEC.md Q&A in 11.10.1).
+  - [x] 11.3.4 — `pub fn max_level_for(generation: SkyGeneration)
+    -> u8` returns 10 / 15 / 20. `Unknown` is permissive (treated
+    as 20) — never block the user on a figure we couldn't classify.
+  - [x] 11.3.5 — Unit tests added: `xp_for_level_round_trips_against_level_from_xp`
+    (monotonicity + boundary + clamp), `max_level_for_matches_generation_caps`,
+    `distribute_xp_ssa_caps_at_2011_slot`, `distribute_xp_swap_force_cascades_into_2012_slot`,
+    `distribute_xp_trap_team_plus_uses_all_three_slots`, and
+    `distribute_xp_round_trips_through_level_from_xp_for_target_gen`
+    (the big one — for every reachable level in every generation,
+    confirms the slot distribution sums to the target AND the
+    parser's per-gen level computation reads back the original
+    level).
+
+- [ ] 11.4 **Server edit endpoint (`crates/server/`).**
+  - [ ] 11.4.1 — `POST /api/profiles/:profile_id/figures/
+    :figure_id/edit`, body `{ level: u8, gold: u16 }`. Mount
+    alongside existing per-figure routes.
+  - [ ] 11.4.2 — Validation chain (4xx with toast-ready messages
+    on failure): figure exists → 404; `Category` is one of
+    `Figure | Sidekick | Giant | Kaos` → 422 "Editing not
+    supported for {category}"; not currently in any slot
+    (brief `Arc<Mutex<[SlotState; 8]>>` check) → 409 "Remove
+    from portal before editing"; `level ∈ 1..=20` and
+    `gold ∈ 0..=u16::MAX` → 422.
+  - [ ] 11.4.3 — Mutation pipeline: reuse
+    `working_copies::resolve_load_path` (forks on first edit) →
+    read → decrypt → set_gold + set_xp (area-aware per 11.2) →
+    recompute_crcs → encrypt → atomic write (tmp + rename).
+  - [ ] 11.4.4 — Broadcast `Event::FigureUpdated { figure_id,
+    level, gold }` so other connected phones (up to 2 sessions)
+    refresh their stats strip.
+  - [ ] 11.4.5 — Integration test: real SQLite, real fs under
+    tempdir, fixture figure, POST edit, re-read stats, assert.
+  - [ ] 11.4.6 — Integration test: portal-occupied figure returns
+    409 and the working copy is NOT modified.
+
+- [ ] 11.5 **Protocol additions (`crates/core/src/protocol.rs`).**
+  - [ ] 11.5.1 — `Command::EditFigure { figure_id, level, gold }`
+    (REST is primary entry; symmetric WS-command parity for
+    future use).
+  - [ ] 11.5.2 — `Event::FigureUpdated { figure_id, level, gold }`.
+  - [ ] 11.5.3 — Serde round-trip tests for both, matching
+    existing protocol-test conventions.
+
+- [ ] 11.6 **Phone UI: enable stats button
+  (`phone/src/screens/figure_detail.rs`).**
+  - [ ] 11.6.1 — Remove `disabled=true` at `:245-255`. Wire
+    `on:click` to open the edit sheet (signal-driven, no route
+    change).
+  - [ ] 11.6.2 — Derive a `stats_editable` signal:
+    `matches!(figure.category, Figure | Sidekick | Giant | Kaos)
+    && !portal_state.contains(figure_id)`. When false, render
+    with `aria-disabled` + a `title` tooltip explaining *why*
+    (category-specific message vs "remove from portal first").
+  - [ ] 11.6.3 — Subscribe to `Event::SlotChanged` /
+    `PortalSnapshot` so disabled state updates live as figures
+    move on/off the portal.
+  - [ ] 11.6.4 — Subscribe to `Event::FigureUpdated` so the stats
+    strip refreshes after a save (broadcast-bus pattern).
+
+- [ ] 11.7 **Phone UI: edit sheet
+  (`phone/src/screens/figure_edit_sheet.rs`).**
+  - [ ] 11.7.1 — New component, modal/sheet overlay above
+    figure_detail. Seed initial level/gold from the existing
+    `fetch_figure_stats` call already cached on the detail screen.
+  - [ ] 11.7.2 — Two stepper rows. LEVEL: step 1, clamp
+    `1..=max_level_for(figure.generation)` (10 / 15 / 20 per
+    11.3.4) — earlier-generation figures can't go above their
+    in-game cap. GOLD: step 1000 with long-press for ±100, clamp
+    `0..=u16::MAX`. Same stepper component for both — extract if
+    it doesn't exist yet.
+  - [ ] 11.7.3 — SAVE → POST edit endpoint → on 202, close sheet
+    (the `FigureUpdated` broadcast refreshes the stats strip).
+    CANCEL → close, no write.
+  - [ ] 11.7.4 — Error handling: 4xx → toast with server's
+    message; sheet stays open with current edits intact.
+  - [ ] 11.7.5 — CSS: follow the escape-hatch policy. Likely needs
+    `@apply` in `phone/styles/components/figure_edit_sheet.css`
+    (steppers + sheet layout exceed the 12-utility heuristic).
+    Reference: `framed_panel.css` for the basic two-rule shape.
+
+- [ ] 11.8 **Aesthetic polish.**
+  - [ ] 11.8.1 — Mock first: `docs/aesthetic/mocks/
+    figure-edit-sheet.html` per the "mocks vs code" feedback
+    memory. Add to `docs/aesthetic/mocks/index.html` under the
+    figure-detail flow group.
+  - [ ] 11.8.2 — Match Skylanders aesthetic: starfield bg behind
+    sheet (or semitransparent dim of detail screen), gold-bezel
+    around stepper values, bold-white-gold-outline numbers.
+    Reuse `gold_bezel.css` patterns.
+  - [ ] 11.8.3 — Validate on real iPhone (Mac → Bonjour → iPhone
+    Safari) per the post-Tailwind Mac-validation memory. Check
+    safe-area-insets if sheet pins to top/bottom edges.
+  - [ ] 11.8.4 — Multi-device sim parity via `tools/ios-inspect` —
+    iPad + iPhone simulator at the same time, confirm the sheet
+    renders correctly at both viewport sizes.
+
+- [ ] 11.9 **E2E tests (`crates/e2e-tests/`).**
+  - [ ] 11.9.1 — New flow: boot server, scan a fixture figure,
+    navigate to detail, tap STATS, bump level to 10 + gold to
+    5000, save, reopen detail, assert displayed stats.
+  - [ ] 11.9.2 — Variant: try to edit a figure that's on the
+    portal; assert button is disabled and shows the tooltip.
+
+- [ ] 11.10 **Docs.**
+  - [ ] 11.10.1 — SPEC.md Q&A entry: editability scope
+    (Standard-only, off-portal-only, level+gold MVP),
+    level-setter semantics (drops sub-level progress within the
+    target level), explicit deferral of
+    nickname/heroic-challenges/Imaginator editing, and the
+    health-storage finding (not on `.sky` per current spec —
+    "full heal" deferred to a future GUI-automation phase).
+  - [ ] 11.10.2 — `docs/research/sky-format/SkylanderFormat.md`:
+    append **Write path notes** section from 11.1.2.
+  - [ ] 11.10.3 — README/feature list: stats editing is now a
+    thing; one-line mention.
+
 ## Non-goals
 
 - No bundling of RPCS3 or `.sky` files (piracy concern).
