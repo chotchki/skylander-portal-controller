@@ -12,9 +12,9 @@ Conventions:
 ### 4.18 Phone UI drift reconciliation (residuals)
 Tags: **[bug]** wrong behavior, **[feature]** missing capability, **[judgment]** mock is one opinion shipped is another, **[verify]** may already be done.
 
-- [~] 4.18.1 **Mobile viewport / address-bar.** 100dvh + 100svh + safe-area-inset landed; PWA install is the workable path. Follow-up 4.18.1c open.
+- [-] 4.18.1 **Mobile viewport / address-bar.** 100dvh + 100svh + safe-area-inset landed; PWA install is the workable path. Follow-up 4.18.1c open.
 - [ ] 4.18.1c **Service worker for PWA cache + update detection.** Today static assets return `Cache-Control: no-store`. Add `phone/assets/sw.js`: hashed wasm/js/css/font immutable, `index.html` + manifest `no-cache`, delete stale cache entries on activation, post "new version" message to running SPA. Only mechanism that survives iOS PWA app-shell caching across long backgrounding.
-- [~] 4.18.5c **Menu overlay → Konami-gate transition.** Bug half-done (empty-chip hide, commit `439e0d4`). Judgment open: gate-rise + entry-cascade vs plain cross-fade.
+- [-] 4.18.5c **Menu overlay → Konami-gate transition.** Bug half-done (empty-chip hide, commit `439e0d4`). Judgment open: gate-rise + entry-cascade vs plain cross-fade.
 - [ ] 4.18.9 *[judgment]* PIN reset: 1-step vs 2-step (Konami as authentication vs defence-in-depth).
 - [ ] 4.18.10 *[feature]* Profile "last used N days ago" subtext. Needs `MAX(figure_usage.last_used_at)` or `profiles.last_used_at`.
 - [ ] 4.18.12 *[feature]* Per-card tagline + "currently playing" marker.
@@ -32,10 +32,11 @@ Tags: **[bug]** wrong behavior, **[feature]** missing capability, **[judgment]**
 
 ---
 
-## Phase 5 — Kaos
+## Phase 5 - Kaos
 
 Kaos is LAST among feature work. Do not start without explicit go-ahead.
 
+---
 - [ ] 5.1 Wall-clock timer: 20min warmup + randomized 60min windows.
 - [ ] 5.2 Text-only overlay with Kaos catchphrases (curated in-repo list; text avoids audio copyright). Two surfaces mocked in Phase 4: `kaos_takeover.html` + `kaos_swap.html`. **No auto-dismiss.** Multiple fires while asleep: latest-wins or queue (decide during impl).
 - [ ] 5.3 1-for-1 swap of a portal figure with a random compatible-with-current-game figure.
@@ -43,16 +44,18 @@ Kaos is LAST among feature work. Do not start without explicit go-ahead.
 - [ ] 5.5 Parent kill-switch (SPEC Q38) — hidden config knob, not in the phone UI.
 - [ ] 5.6 Kaos swap goes through the standard driver flow.
 
----
 
-## Phase 6 — Post-Kaos polish (residuals)
-
-- [ ] 6.1 **Suppress RPCS3 window flicker during menu navigation.** Launcher starts before RPCS3 → establish Z-order priority. Ideas: (a) launcher `WS_EX_TOPMOST` during `open_dialog` nav so Qt popups render behind, (b) `SetWinEventHook` / `EVENT_OBJECT_SHOW` filtered to RPCS3 PID to intercept dialog creation and move off-screen before first paint, (c) hook menu popups the same way.
+## Phase 6 - Post-Kaos polish (residuals)
 
 ### 6.2 Parse `.sky` firmware for per-figure stats (partial)
 Encryption handled (6.2.0 + 6.2.0b archived). Identity fields decode correctly; payload fields decode post-decryption. 141/151 CRC-valid on real dumps.
+### 6.3 Detailed-stats screen on the phone
+### 6.4 Demo harness for screen recording
+---
+- [ ] 6.1 **Suppress RPCS3 window flicker during menu navigation.** Launcher starts before RPCS3 → establish Z-order priority. Ideas: (a) launcher `WS_EX_TOPMOST` during `open_dialog` nav so Qt popups render behind, (b) `SetWinEventHook` / `EVENT_OBJECT_SHOW` filtered to RPCS3 PID to intercept dialog creation and move off-screen before first paint, (c) hook menu popups the same way.
 
-- [~] 6.2 parent `[~]` until per-kind coverage lands + all 22 tests have ciphertext-fixture counterparts.
+
+- [-] 6.2 parent `[~]` until per-kind coverage lands + all 22 tests have ciphertext-fixture counterparts.
 - [ ] 6.2.1 **UI determination pass for Trap / Vehicle / CYOS.** Mock reduced Figure Detail variants before parser work — fields we don't render aren't worth decoding. Targets: Trap → captured villain name + portrait headline, Vehicle → SSCR level headline + adornment names, CYOS → class + element + nickname with missing-field tolerance. Racing Pack keeps default "STATS COMING SOON" strip.
 - [ ] 6.2.3 **Trap payload: captured villain identity.** Parse villain cache per `docs/research/sky-format/SkylanderFormat.md` line 39ff. `SkyFigureStats.trap: Option<TrapData>`. `data/villains.json` lookup for display name + portrait. ~3 tests.
 - [ ] 6.2.4 **Vehicle payload: SSCR level.** Parse XP + level derivation. `SkyFigureStats.vehicle: Option<VehicleData>` + `data/vehicle_adornments.json`. Skip gearbits/flags/mod-flags this pass. ~3 tests.
@@ -61,15 +64,12 @@ Encryption handled (6.2.0 + 6.2.0b archived). Identity fields decode correctly; 
 - [ ] 6.2.8 **Investigate the 10 CRC-failing samples from 6.2.0b.** Trap Team Adventure Packs (fids 0x131–0x134), Imaginators Senseis/Creation-Crystal era (King Pen, Wild Storm, Crash Bandicoot, Dr. Neo Cortex, Air Strike, Sheep Creep 0xC82). Hypotheses: (a) different CRC scope, (b) extended Sensei data layout, (c) factory-blank never-played figures. Chris to load in emulator + compare observed vs parser output.
 - [ ] 6.2.9 **Pin Vehicle + CYOS `figure_id` ranges against real dumps.** 6.2.2 left these ranges commented out — community values missed every real sample. Observed vehicle-looking IDs cluster near `0x0C9x..=0x0CAx` (overlap with SuperChargers characters). First live CYOS data point: creation crystal fid=`0x0002AD`. Blocks 6.2.4 / 6.2.5. Deliverables: (a) more SuperChargers vehicle + CYOS dumps via 6.5.0's scan tool; (b) extend `FigureKind` range table with real-observed fids + tests; (c) smoke-test `decode_nickname` against new CYOS samples.
 
-### 6.3 Detailed-stats screen on the phone
 - [ ] 6.3 Level + XP, gold, current hat, playtime, nickname, hero points, hat history, trinket, quest progress. Hits stats endpoint; read-only. Non-standard layouts render reduced panel until 6.2 stubs fill. Placeholder today: `.detail-stats-soon` strip in `phone/assets/app.css`; when this ships, delete `.detail-stats-soon*` + soon-label span and reinstate the three `.detail-stat-cell` blocks wired to fetched stats.
 
-### 6.4 Demo harness for screen recording
 - [ ] 6.4 Browser-viewable test session driving the phone SPA through a representative flow (profile → PIN → game → portal → toy box → place → Kaos swap). Runs side-by-side with remote-desktop HTPC view for single-frame recording.
 
----
 
-## Phase 8 Items
+## Phase 8 - Items
 
 ### 8.1 Ghost sessions (sticky disconnect)
 Today: WS drop → server's `disconnect cleanup` clears the departing
@@ -78,6 +78,22 @@ constantly. Goal: keep a phone's figures on the portal across a
 disconnect, replay missed events on reconnect, and only evict when a
 new phone genuinely takes over the slot.
 
+### 8.2a Kickback cooldown countdown UI
+Today: kickback button is enabled immediately on the Kaos takeover
+screen; server returns 401-RetryAfter if the 60s cooldown hasn't
+elapsed. Should grey-out + count down instead.
+### 8.2b Kaos feature (CLAUDE.md "Kaos feature")
+The Skylanders-themed mid-game disruption — wall-clock timer fires,
+a portal figure gets swapped for a random compatible one from the
+owner's collection, a Kaos catchphrase overlays for ~5s.
+### 8.3 Hide empty portal spots
+PLAY_TEST round 2: kid tried to tap empty portal slots expecting
+something to happen. Empty slots are inert (placement happens via
+the toy-box lid), so they're a tap-target lie. Goal: hide empty
+slots entirely; let the toy-box arrow + hint be the only visible
+affordance when nothing is placed; populated slots reappear when a
+figure lands and push the arrow hint down.
+### 8.4 Release 1.1
 - [x] 8.1.1 — Introduce a *ghost session* state on the server. When a
   WS drops with an unlocked profile + placed slots, mark the session
   ghost (profile id + placed-slot snapshot + last-seen timestamp).
@@ -138,10 +154,6 @@ new phone genuinely takes over the slot.
   8.2b.4; the buffer's behavior is variant-agnostic so adding the
   new event will plug straight into the existing path.
 
-### 8.2a Kickback cooldown countdown UI
-Today: kickback button is enabled immediately on the Kaos takeover
-screen; server returns 401-RetryAfter if the 60s cooldown hasn't
-elapsed. Should grey-out + count down instead.
 
 - [x] 8.2a.1 — Server includes `cooldown_remaining_secs` in the
   `TakenOver` event payload. Sourced from `FORCED_EVICT_COOLDOWN`
@@ -158,10 +170,6 @@ elapsed. Should grey-out + count down instead.
   visual; label appends ` · {n}s` while ticking, reverts to plain
   "KICK BACK IN" on zero.
 
-### 8.2b Kaos feature (CLAUDE.md "Kaos feature")
-The Skylanders-themed mid-game disruption — wall-clock timer fires,
-a portal figure gets swapped for a random compatible one from the
-owner's collection, a Kaos catchphrase overlays for ~5s.
 
 - [x] 8.2b.1 — Per-profile Kaos enable toggle (kebab menu; off by
   default while we tune the cadence). `profiles.kaos_enabled`
@@ -209,13 +217,6 @@ owner's collection, a Kaos catchphrase overlays for ~5s.
   in the replay buffer). Kaos toggle round-trip in
   `tests/profiles.rs::kaos_toggle_roundtrips_against_store`.
 
-### 8.3 Hide empty portal spots
-PLAY_TEST round 2: kid tried to tap empty portal slots expecting
-something to happen. Empty slots are inert (placement happens via
-the toy-box lid), so they're a tap-target lie. Goal: hide empty
-slots entirely; let the toy-box arrow + hint be the only visible
-affordance when nothing is placed; populated slots reappear when a
-figure lands and push the arrow hint down.
 
 - [x] 8.3.1 — Wrap each `<SlotView>` in a `<Show when=!is_empty>` so
   Empty-state slots fall out of the DOM. Loading / Loaded / Error
@@ -229,13 +230,12 @@ figure lands and push the arrow hint down.
   between). Populated portal: hint sits below the visible slots,
   pushed down by the grid.
 
-### 8.4 Release 1.1
 - [ ] 8.4.1 — Release notes drafted from commits since v1.0.0
   (`generate_release_notes` already wired in `release.yml`).
 - [ ] 8.4.2 — Tag → CI release workflow → draft release with the new
   exe → publish.
 
-## Phase 9 Items
+## Phase 9 - Items
 
 ### 9.x Tailwind v4 migration (phone CSS rewrite)
 Today: ~3000-line monolithic `phone/assets/app.css` with active visual
@@ -246,6 +246,30 @@ component, and future iteration is locally-scoped to whatever element
 is being changed. Bounded migration by tranche, with the Phase 8
 screenshot tour acting as the per-tranche regression contract.
 
+### 9.7 iPad + iPhone layout pass
+Now that 9.1–9.6 have landed plus Phase 10 (Mac server, multi-device
+`tools/ios-inspect/`, iOS-Simulator e2e), tackle the responsive pass
+that the monolithic CSS made painful. With utility-first markup,
+breakpoint variants (`md:`, `lg:`) live next to the base utilities
+and the iPad layout becomes additive, not a separate stylesheet
+branch.
+Driver: 2026-05-04 son-playtest on a real iPad surfaced text-too-small
+across every screen. Phone-first px-pinned typography tokens
+(`--text-display-*` / `--text-body-*` in `phone/styles/input.css`)
+don't scale on iPad's wider viewport.
+### 9.8 Collapse + standardize repeated patterns
+Once every component lives in its own file (9.4) and responsive
+variants are in (9.7), the per-tranche escape-hatch CSS will have
+accumulated duplicate declarations across files — same multi-layer
+shadow stacks, same gradient stops, same hex literals that should
+have been tokens, same text-shadow combinations on the heraldic
+text treatment. The migration emphasised *identity preservation*
+(class names + visuals stay byte-stable), so consolidation was
+deliberately deferred. 9.8 is the after-the-fact refactor pass that
+surfaces and unifies those duplicates so the design system has one
+source of truth per pattern.
+**Sequenced after 9.7** so the consolidation pass sees the full set
+of patterns (including responsive variants) at once.
 - [x] 9.1 — Stand up Tailwind v4 + cached CLI downloader. New
   `tools/tailwind-build/` Rust helper crate: pins `TAILWIND_VERSION`,
   downloads the standalone `tailwindcss` CLI binary into
@@ -333,18 +357,7 @@ screenshot tour acting as the per-tranche regression contract.
   "use a utility" or "fix the markup"). Re-run full screenshot tour
   + commit any intentional drift.
 
-### 9.7 iPad + iPhone layout pass
-Now that 9.1–9.6 have landed plus Phase 10 (Mac server, multi-device
-`tools/ios-inspect/`, iOS-Simulator e2e), tackle the responsive pass
-that the monolithic CSS made painful. With utility-first markup,
-breakpoint variants (`md:`, `lg:`) live next to the base utilities
-and the iPad layout becomes additive, not a separate stylesheet
-branch.
 
-Driver: 2026-05-04 son-playtest on a real iPad surfaced text-too-small
-across every screen. Phone-first px-pinned typography tokens
-(`--text-display-*` / `--text-body-*` in `phone/styles/input.css`)
-don't scale on iPad's wider viewport.
 
 - [x] 9.7 — Optimize for iPad + iPhone layouts. Whole-session playtest
   pass 2026-05-04: rem-based typography + tablet root-size bump,
@@ -383,20 +396,7 @@ don't scale on iPad's wider viewport.
   == 0 on iPad. First load-bearing demonstration that the iOS-sim
   e2e lane (PLAN 10.4) catches and pins real product bugs.
 
-### 9.8 Collapse + standardize repeated patterns
-Once every component lives in its own file (9.4) and responsive
-variants are in (9.7), the per-tranche escape-hatch CSS will have
-accumulated duplicate declarations across files — same multi-layer
-shadow stacks, same gradient stops, same hex literals that should
-have been tokens, same text-shadow combinations on the heraldic
-text treatment. The migration emphasised *identity preservation*
-(class names + visuals stay byte-stable), so consolidation was
-deliberately deferred. 9.8 is the after-the-fact refactor pass that
-surfaces and unifies those duplicates so the design system has one
-source of truth per pattern.
 
-**Sequenced after 9.7** so the consolidation pass sees the full set
-of patterns (including responsive variants) at once.
 
 - [ ] 9.8 — Sweep the `phone/styles/components/*.css` files for
   repeated patterns and consolidate. Three target shapes, in order
@@ -440,7 +440,7 @@ of patterns (including responsive variants) at once.
   pattern shows up in ≥2 component files" or "this hex literal is
   brand-meaningful and should be discoverable in `@theme`."
 
-## Phase 10 Items
+## Phase 10 - Items
 
 Goal: bring macOS up as a first-class platform — production-ready
 server binary plus the multi-device iPad+iPhone simulator orchestration
@@ -475,6 +475,120 @@ on macOS fails with `bail!` not in scope inside the non-Windows arm of
 cross-platform scaffold needs a smoke-pass before the rest of Phase 10
 has anything to stand on.
 
+### 10.2 `ios-inspect` multi-device orchestration
+Today `ios-inspect boot` auto-picks the newest Dynamic-Island iPhone
+and `state.json` tracks one device + one webinspectord_sim socket. The
+2-phone product feature (PLAN 8.1, 8.2a) needs an iPad and an iPhone
+booted simultaneously, both pointed at the same server, each driveable
+independently. `xcrun simctl` and `ios-webkit-debug-proxy` both support
+multiple simulators concurrently — the limitation is purely in
+`ios-inspect`'s state model.
+### 10.3 E2E harness portable to macOS
+The fantoccini suite in `crates/e2e-tests/` already exercises the mock
+driver — which is the only driver available on Mac — but is hardcoded
+for Windows in two places: the firmware-pack default path and the
+chromedriver discovery fallback. Fix those, then drive the existing
+suite green on macOS.
+### 10.4 Simultaneous iPad + iPhone simulator e2e
+This is the core user value: drive both an iPad and an iPhone
+simulator against a single server instance, exactly the way the
+2-phone feature ships. Combines 10.2's multi-device `ios-inspect`
+with 10.3's portable harness.
+### 10.5 Continuous-integration lane
+CI was deferred until the app worked. With 10.1–10.4 in place, the
+e2e suite has a credible automated home and the "fully automated"
+half of the user goal becomes real. Decide CI host first since it
+shapes everything downstream.
+### 10.6 macOS production release artifact
+Today the release pipeline produces a Windows zip (`release.yml` runs
+`generate_release_notes` and uploads `skylander-portal-controller.exe`).
+Mac becomes a parallel artifact: same binary, mock-only driver, same
+GitHub Releases attachment shape. No `.app` bundle in the first cut —
+a CLI binary in a tar.gz mirrors the Windows zip's friction level and
+keeps the release pipeline simple. `.app` + signing + notarization are
+deferred unless a real user reports the bare-binary UX as blocking.
+### 10.7 Real 3D rotating badge for the launcher intro
+Today the launcher's centre badge (QR card / error card / brand
+intro) "spins in" via a 2D horizontal-scale hack — `LaunchPhase
+::badge_scale` returns `sin(progress * π/2)`, the renderer
+applies it as `rect.shrink_x(...)`, and an alpha-gate hides the
+line-shaped phase so the user doesn't see a vertical line slide
+across the screen. End result: a flat circle that gets thin and
+fat, with no honest depth, lighting, or perspective. Chris
+2026-05-02 watching it during a long CI wait: "killing me with
+how awful it looks." It's not a regression — it's been like this
+since the Phase 4 launcher polish — but with the rest of the
+launcher choreography now solid, the badge is the conspicuous
+weak point.
+Goal: replace the 2D scale trick with an actual 3D disc rendered
+via the existing glow / egui_glow plumbing (PLAN 4.19.6 promoted
+that stack from spike to runtime for the vortex backdrop). The
+disc is a textured cylinder cap — front face textured with the
+QR + brand text, edge has visible thickness, lit so rotation
+reads as physical motion rather than a CSS animation. Rotation is
+y-axis around the disc's vertical centre, driven from the same
+`LaunchPhase` state machine so the new motion plugs into the
+existing intro / closing transitions without ripple.
+Independent of 10.6.3 (.app bundle) — purely a quality-of-launch-
+experience improvement. Sequencing-wise can land before 10.6.3
+or after, doesn't matter.
+### 10.8 v1.2 HTPC field-test bugs
+First non-dev install pass on the living-room HTPC (2026-05-03,
+v1.2.0 zip). Binary launches and the phone reaches the QR, but a
+cluster of distribution / Windows-integration rough edges showed up
+that don't surface on the dev box. Triage individually — most are
+independent.
+### 10.8.7 Game-launch state machine + cover-before-kill (sequel to 10.8.4)
+10.8.4 closed the keystroke-fragility bug at the driver layer (UIA
+pattern menu nav) and rewired the server flow to direct-boot. Field
+testing v1.3.0 → v1.3.4 surfaced a sequence of UI-layer issues that
+aren't separate bugs but symptoms of an implicit, ad-hoc state
+machine for game-launch lifecycle:
+- **v1.3.3** "iris jumped open before shaders compile" — the
+- **v1.3.4** "screen black during launch" — premature transparent
+- **v1.3.4** "launcher hung on /api/shutdown" — the in-game branch
+- The proposed graceful-quit flow has a race: kill RPCS3 →
+Decision (Chris 2026-05-04): replace the implicit launch state
+machine with explicit, contract-tested states. Ground the "playable"
+signal in RPCS3's own per-frame FPS counter (which it embeds in the
+viewport title), not log tails. Add a cover-before-kill mechanic for
+graceful exits so the launcher's opaque cover is up before RPCS3
+dies. **Strict invariant: the only legitimate black render anywhere
+in the app is the Farewell black-fade overlay.** Any other "screen
+goes black" symptom is a bug.
+States + render contract:
+| State | Launcher render | Iris radius |
+|---|---|---|
+| `Idle` | Main, AwaitingConnect (QR front) | open, steady |
+| `Spawning` / `Booting` / `Compiling` | Main, AwaitingConnect (LOADING back-face) | open, steady |
+| `Playable` | in-game (transparent CentralPanel) | 0 (closed, conceptual — no launcher visible) |
+| `QuitCovering` | Main, **`BackFace::Returning`** ("RETURNING TO PORTAL") | **0→open** (ReturnFromGame animation) |
+| `SwitchCovering` | Main, `BackFace::Switching` ("SWITCHING GAMES") | **0→open**, holds open until next launch closes back to 0 |
+| `Crashed` | Crashed screen, message + RESTART | **0→open** (uses `screen_intro` on crash-from-game, already wired) |
+| `ShuttingDown` | Farewell screen, GOODBYE back-face, then black-fade overlay | **0→open**, then fade (the only black) |
+Cover-before-kill mechanic: server sets `cover_active = true`,
+sleeps ~200 ms (≥1 tick of the in-game branch's 4 Hz heartbeat,
+giving the launcher time to render the cover), then proceeds with
+the kill. RPCS3 dies *behind* the opaque cover; user never sees a
+flash of desktop or a black panel.
+Pre-req tooling already shipped:
+- `tools/build-msi.sh` — local Windows MSI build for HTPC
+- `release.yml` auto-publishes as prerelease so MSI is
+- Direct-boot driver layer (commits in the 10.8.4 chain
+### 10.9 Real installers (.msi / .dmg)
+v1.2 + 10.8.6's data-bundle fix mean the release artifact is no
+longer a single exe — it's a folder containing the binary, ~20 MB
+of tracked figure / box-art assets, and (after 10.8.5) a `steam/`
+artwork subdir. "Unzip and run" doesn't scale with that shape;
+real installer packaging is the next step. Pairs with 10.8.1 +
+10.8.2 (a signed installer can carry SmartScreen reputation +
+register the inbound firewall rule from the same UAC prompt) and
+subsumes 10.6.3 (Mac `.app`) as the delivery wrapper rather than
+the artifact itself.
+Reshapes 10.8.5 too: with an installer carrying a proper Start
+Menu shortcut + embedded icon, only the Steam-Grid artwork
+(capsule / hero / logo) needs to ship as loose files for users to
+hand-import. The `.ico` half of 10.8.5 collapses into 10.9.3.
 - [x] 10.1.1 — Imported `anyhow::bail` in `crates/rpcs3-control/src/lib.rs`
   for the non-Windows arms. `cargo check -p skylander-server
   --no-default-features --features dev-tools` is clean on macOS.
@@ -511,14 +625,6 @@ has anything to stand on.
   non-goal in the first place — only PLAN.md did, and that was
   flipped in the same commit as the Phase 10 expansion.
 
-### 10.2 `ios-inspect` multi-device orchestration
-Today `ios-inspect boot` auto-picks the newest Dynamic-Island iPhone
-and `state.json` tracks one device + one webinspectord_sim socket. The
-2-phone product feature (PLAN 8.1, 8.2a) needs an iPad and an iPhone
-booted simultaneously, both pointed at the same server, each driveable
-independently. `xcrun simctl` and `ios-webkit-debug-proxy` both support
-multiple simulators concurrently — the limitation is purely in
-`ios-inspect`'s state model.
 
 - [x] 10.2.1 — `ios-inspect boot --device <name>` is now repeatable; UDID
   list persists in `/tmp/ios-inspect-state.json`. Re-running boot
@@ -547,12 +653,6 @@ multiple simulators concurrently — the limitation is purely in
   Caveats list updated: same-name-across-runtimes ambiguity called
   out as a known wart (substring match picks first by HashMap order).
 
-### 10.3 E2E harness portable to macOS
-The fantoccini suite in `crates/e2e-tests/` already exercises the mock
-driver — which is the only driver available on Mac — but is hardcoded
-for Windows in two places: the firmware-pack default path and the
-chromedriver discovery fallback. Fix those, then drive the existing
-suite green on macOS.
 
 - [ ] 10.3.1 — `crates/e2e-tests/src/lib.rs::TestServer::spawn` +
   `spawn_live`: replace the hard-coded
@@ -566,7 +666,7 @@ suite green on macOS.
   (`brew install --cask chromedriver`) in
   `crates/e2e-tests/README.md`. Windows-only winget fallback stays
   cfg-gated.
-- [~] 10.3.3 — Harness end-to-end works on Mac under the matched
+- [-] 10.3.3 — Harness end-to-end works on Mac under the matched
   ChromeDriver (`smoke.rs` passes after a one-line selector update).
   Server boot, Bonjour URL scrape, dev-data pack auto-resolve all
   green. Real triage finding: the rest of the chromedriver suite has
@@ -592,7 +692,7 @@ suite green on macOS.
   install commands (`brew install --cask chromedriver`), version-
   mismatch troubleshooting (Chrome ↔ ChromeDriver major-version
   pin), per-OS screenshot baseline note (CoreText vs DirectWrite).
-- [~] 10.3.6 — **Reconcile chromedriver suite with current SPA.**
+- [-] 10.3.6 — **Reconcile chromedriver suite with current SPA.**
   Foundational work done across two rounds; per-test flow rewrites
   remain (multi-PR workstream — see 10.3.6a–10.3.6e below for the
   per-file bites).
@@ -657,7 +757,7 @@ suite green on macOS.
   button — the `already` short-circuit lives in
   `figure_detail.rs::on_place`). Not yet wired into CI — see
   10.3.6f below.
-- [~] 10.3.6b — **working_copies.rs (2 tests).** 1/2 green:
+- [-] 10.3.6b — **working_copies.rs (2 tests).** 1/2 green:
   `load_uses_canonical_name_not_filename` passes (~19 s). The
   `resume_prompt_offers_prior_layout` test is `#[ignore]`-ed with
   a WIP note — the resume modal isn't appearing after
@@ -742,11 +842,6 @@ suite green on macOS.
   - Add each test back to `e2e-mock-macos` in `ci.yml` as it
     goes green, so we don't regress what we've fixed.
 
-### 10.4 Simultaneous iPad + iPhone simulator e2e
-This is the core user value: drive both an iPad and an iPhone
-simulator against a single server instance, exactly the way the
-2-phone feature ships. Combines 10.2's multi-device `ios-inspect`
-with 10.3's portable harness.
 
 - [x] 10.4.1 — `tools/ios-inspect/` now ships a `[lib]` (`ios_inspect`)
   alongside the existing `[[bin]]`. `src/lib.rs` exposes the four
@@ -801,11 +896,6 @@ with 10.3's portable harness.
   non-deterministic; multi-thread tokio runtime required for the
   TeardownGuard Drop).
 
-### 10.5 Continuous-integration lane
-CI was deferred until the app worked. With 10.1–10.4 in place, the
-e2e suite has a credible automated home and the "fully automated"
-half of the user goal becomes real. Decide CI host first since it
-shapes everything downstream.
 
 - [x] 10.5.1 — `docs/dev/ci.md` captures the host-choice decision.
   GH-hosted `macos-14` for everything Mac-side (including the
@@ -844,14 +934,6 @@ shapes everything downstream.
   Doesn't run clippy — CI does that, and the gain over `cargo
   check` is small for the daily loop.
 
-### 10.6 macOS production release artifact
-Today the release pipeline produces a Windows zip (`release.yml` runs
-`generate_release_notes` and uploads `skylander-portal-controller.exe`).
-Mac becomes a parallel artifact: same binary, mock-only driver, same
-GitHub Releases attachment shape. No `.app` bundle in the first cut —
-a CLI binary in a tar.gz mirrors the Windows zip's friction level and
-keeps the release pipeline simple. `.app` + signing + notarization are
-deferred unless a real user reports the bare-binary UX as blocking.
 
 - [x] 10.6.1 — `.github/workflows/release.yml` gains a
   `build-macos-release` job on `macos-14` (Apple Silicon). Mirrors
@@ -893,33 +975,8 @@ deferred unless a real user reports the bare-binary UX as blocking.
   the release lane; if not: keep the right-click-open instruction in
   the setup doc.
 
-### 10.7 Real 3D rotating badge for the launcher intro
-Today the launcher's centre badge (QR card / error card / brand
-intro) "spins in" via a 2D horizontal-scale hack — `LaunchPhase
-::badge_scale` returns `sin(progress * π/2)`, the renderer
-applies it as `rect.shrink_x(...)`, and an alpha-gate hides the
-line-shaped phase so the user doesn't see a vertical line slide
-across the screen. End result: a flat circle that gets thin and
-fat, with no honest depth, lighting, or perspective. Chris
-2026-05-02 watching it during a long CI wait: "killing me with
-how awful it looks." It's not a regression — it's been like this
-since the Phase 4 launcher polish — but with the rest of the
-launcher choreography now solid, the badge is the conspicuous
-weak point.
 
-Goal: replace the 2D scale trick with an actual 3D disc rendered
-via the existing glow / egui_glow plumbing (PLAN 4.19.6 promoted
-that stack from spike to runtime for the vortex backdrop). The
-disc is a textured cylinder cap — front face textured with the
-QR + brand text, edge has visible thickness, lit so rotation
-reads as physical motion rather than a CSS animation. Rotation is
-y-axis around the disc's vertical centre, driven from the same
-`LaunchPhase` state machine so the new motion plugs into the
-existing intro / closing transitions without ripple.
 
-Independent of 10.6.3 (.app bundle) — purely a quality-of-launch-
-experience improvement. Sequencing-wise can land before 10.6.3
-or after, doesn't matter.
 
 - [x] 10.7.1 — Spike landed. New `crates/server/src/badge.rs`
   ships a `BadgeRig` mirroring `vortex.rs`'s shape (program +
@@ -1161,12 +1218,6 @@ or after, doesn't matter.
   pip per BadgeRig lifetime, useful if a future regression
   turns the cache off.
 
-### 10.8 v1.2 HTPC field-test bugs
-First non-dev install pass on the living-room HTPC (2026-05-03,
-v1.2.0 zip). Binary launches and the phone reaches the QR, but a
-cluster of distribution / Windows-integration rough edges showed up
-that don't surface on the dev box. Triage individually — most are
-independent.
 
 - [ ] 10.8.1 **Windows Defender SmartScreen "unknown publisher" gate
   on first launch.** Non-technical users will bounce off the
@@ -1269,7 +1320,7 @@ independent.
   to the release zip (icons + Steam Grid artwork in a `steam/`
   subdir) plus a setup-doc step for "right-click shortcut → Manage →
   Set custom artwork" on Big Picture.
-- [~] 10.8.6 **Phone app: figure + game images all render as
+- [-] 10.8.6 **Phone app: figure + game images all render as
   placeholders on HTPC install.** Diagnosis confirmed: release
   binary's `data_root` resolves to `<exe_parent>/data/`
   (`wizard.rs::from_user_paths` and `::macos_default`), but
@@ -1291,56 +1342,23 @@ independent.
   PNG (not the element icon) and `/api/games/BLUS30779/image`
   returns 200.
 
-### 10.8.7 Game-launch state machine + cover-before-kill (sequel to 10.8.4)
 
-10.8.4 closed the keystroke-fragility bug at the driver layer (UIA
-pattern menu nav) and rewired the server flow to direct-boot. Field
-testing v1.3.0 → v1.3.4 surfaced a sequence of UI-layer issues that
-aren't separate bugs but symptoms of an implicit, ad-hoc state
-machine for game-launch lifecycle:
 
-- **v1.3.3** "iris jumped open before shaders compile" — the
   game_playable signal was a fragile log-quiet heuristic that
   defaulted to "playable" when the watchdog hadn't seen any compile
   lines yet (race against RPCS3's freshly-spawned log writes).
-- **v1.3.4** "screen black during launch" — premature transparent
   in-game render over a still-compiling (visually black) RPCS3
   viewport. Tweaked watchdog moved the bug, didn't kill it.
-- **v1.3.4** "launcher hung on /api/shutdown" — the in-game branch
   was fully reactive (no `request_repaint`) and never woke for the
   `screen = Farewell` flip. Fixed by 4 Hz heartbeat in 10.8.4 final
   commit, but the underlying lesson is that state transitions need
   to be observable, not "set a flag and hope a frame fires".
-- The proposed graceful-quit flow has a race: kill RPCS3 →
   in-game transparent panel briefly shows desktop through, before
   the launcher transitions to AwaitingConnect.
 
-Decision (Chris 2026-05-04): replace the implicit launch state
-machine with explicit, contract-tested states. Ground the "playable"
-signal in RPCS3's own per-frame FPS counter (which it embeds in the
-viewport title), not log tails. Add a cover-before-kill mechanic for
-graceful exits so the launcher's opaque cover is up before RPCS3
-dies. **Strict invariant: the only legitimate black render anywhere
-in the app is the Farewell black-fade overlay.** Any other "screen
-goes black" symptom is a bug.
 
-States + render contract:
 
-| State | Launcher render | Iris radius |
-|---|---|---|
-| `Idle` | Main, AwaitingConnect (QR front) | open, steady |
-| `Spawning` / `Booting` / `Compiling` | Main, AwaitingConnect (LOADING back-face) | open, steady |
-| `Playable` | in-game (transparent CentralPanel) | 0 (closed, conceptual — no launcher visible) |
-| `QuitCovering` | Main, **`BackFace::Returning`** ("RETURNING TO PORTAL") | **0→open** (ReturnFromGame animation) |
-| `SwitchCovering` | Main, `BackFace::Switching` ("SWITCHING GAMES") | **0→open**, holds open until next launch closes back to 0 |
-| `Crashed` | Crashed screen, message + RESTART | **0→open** (uses `screen_intro` on crash-from-game, already wired) |
-| `ShuttingDown` | Farewell screen, GOODBYE back-face, then black-fade overlay | **0→open**, then fade (the only black) |
 
-Cover-before-kill mechanic: server sets `cover_active = true`,
-sleeps ~200 ms (≥1 tick of the in-game branch's 4 Hz heartbeat,
-giving the launcher time to render the cover), then proceeds with
-the kill. RPCS3 dies *behind* the opaque cover; user never sees a
-flash of desktop or a black panel.
 
 - [x] 10.8.7a **Black-screen audit (read-only).** Walked every
   render path. Findings:
@@ -1599,30 +1617,12 @@ flash of desktop or a black panel.
   all phases land + a clean full-flow local pass (start →
   picker → game → quit → switch → game → shutdown).
 
-Pre-req tooling already shipped:
-- `tools/build-msi.sh` — local Windows MSI build for HTPC
   iteration (commit `9c7e1d1`). Sub-minute build cycle.
-- `release.yml` auto-publishes as prerelease so MSI is
   downloadable from the Releases page without unhiding drafts
   (commit `71e6d01`).
-- Direct-boot driver layer (commits in the 10.8.4 chain
   `1ebbbc9` → `ca7af77`).
 
-### 10.9 Real installers (.msi / .dmg)
-v1.2 + 10.8.6's data-bundle fix mean the release artifact is no
-longer a single exe — it's a folder containing the binary, ~20 MB
-of tracked figure / box-art assets, and (after 10.8.5) a `steam/`
-artwork subdir. "Unzip and run" doesn't scale with that shape;
-real installer packaging is the next step. Pairs with 10.8.1 +
-10.8.2 (a signed installer can carry SmartScreen reputation +
-register the inbound firewall rule from the same UAC prompt) and
-subsumes 10.6.3 (Mac `.app`) as the delivery wrapper rather than
-the artifact itself.
 
-Reshapes 10.8.5 too: with an installer carrying a proper Start
-Menu shortcut + embedded icon, only the Steam-Grid artwork
-(capsule / hero / logo) needs to ship as loose files for users to
-hand-import. The `.ico` half of 10.8.5 collapses into 10.9.3.
 
 - [x] 10.9.1 **Windows `.msi`** via `cargo-wix` (WiX 3 toolset).
   Scaffold + four iteration fixes shipped on the HTPC, smoke-tested
@@ -1683,7 +1683,7 @@ hand-import. The `.ico` half of 10.8.5 collapses into 10.9.3.
   file), guarded the `--install-version` parser against non-tag
   refs (`workflow_dispatch` from a branch sets `GITHUB_REF_NAME=
   main`, which broke cargo-wix's semver parser).
-- [~] 10.9.2 **Code signing + notarization.**
+- [-] 10.9.2 **Code signing + notarization.**
   - **macOS Tier-2 (Developer ID + notarization)** wired and
     ready, blocked on user creating GitHub Secrets. Chris already
     has an Apple Developer license — the remaining work is
@@ -1703,6 +1703,14 @@ hand-import. The `.ico` half of 10.8.5 collapses into 10.9.3.
     runtime --timestamp` for binary + bundle + dmg when
     `SIGN_IDENTITY` is set; no-ops cleanly on local unsigned
     iteration when it isn't.
+    **Currently disabled in release.yml** (4 steps wrapped in
+    `if: false`) — the Apple secrets haven't been provisioned in
+    the `release` Environment yet, so each dispatch was failing on
+    the "Import Developer ID certificate" step. Tarball lane still
+    ships; users right-click → Open to bypass Gatekeeper. Flip the
+    `if:` guards back to the repo-owner check + re-add
+    `${{ env.RELEASE_DMG }}` to the publish step's `files:` list
+    once the secrets land.
   - **Windows Authenticode** still deferred. Cert procurement is
     the gate — third-party CA ~$200/yr, EV cert for instant
     SmartScreen reputation, or skip the cert spend and document
@@ -1726,7 +1734,7 @@ hand-import. The `.ico` half of 10.8.5 collapses into 10.9.3.
   shortcuts inherit the embedded icon directly off the exe (which
   is why the wxs `Icon='ProductICO'` attribute on shortcuts could
   be dropped to clear ICE50 — the embedded icon does the job).
-- [~] 10.9.4 **macOS `.dmg`** wrapping a `.app` bundle (subsumes
+- [-] 10.9.4 **macOS `.dmg`** wrapping a `.app` bundle (subsumes
   10.6.3). Local build path landed:
   - `tools/installer-bake/` (Rust, resvg + ico + icns) bakes
     `assets/branding/icon.{ico,icns}` from
@@ -1759,7 +1767,7 @@ hand-import. The `.ico` half of 10.8.5 collapses into 10.9.3.
   prefer not to run an installer (and for CI smoke-testing
   without an MSI install step in the loop).
 
-## Phase 11 — Skylander Stat Editing (level + gold)
+## Phase 11 - Skylander Stat Editing (level + gold)
 
 Wire the disabled **STATS** placeholder on the figure-detail screen
 (`phone/src/screens/figure_detail.rs:245-255`) into a real edit
@@ -2197,7 +2205,66 @@ reload), not a `.sky` mutation. Full design log:
     11.6.4. Workaround for v1.5.1: user backs out of detail
     + re-enters to see the pack-fresh stats.
 
-## Phase 12 — Real Mac driver (AXUIElement)
+- [x] 11.13 **Edit sheet UX hotfix.** Two real-world bugs from v1.5.1 play
+  testing: (a) iOS Safari's long-press selection callout fired on
+  any label in the sheet (heading, stepper labels, value, "max N"
+  caption) — toddlers tap-mashing the steppers were triggering the
+  "Look Up / Translate" popup. Fix: `user-select: none` +
+  `-webkit-touch-callout: none` on `.edit-panel` — the whole sheet
+  is button-driven, no text needs to be selectable. (b) Gold near
+  `u16::MAX` caused Skylanders games to reject the figure on load
+  (observed at 65535). Capped UI at `GOLD_MAX = 65000` and
+  repurposed the outer `<<` / `>>` chevrons as jump-to-bounds
+  buttons (0 and 65000 respectively) instead of ±1000 steppers.
+  Aria-labels updated accordingly. New e2e
+  `gold_chevrons_jump_to_bounds_and_max_round_trips` in
+  `crates/e2e-tests/tests/figure_edit.rs`: one `>>` tap → 65000
+  (asserts both the chevron + inner `+100` disable), one `<<` tap
+  → 0, save round-trips 65000 through the server's edit endpoint
+  + stats strip. Also smoke-tests `.edit-panel`'s computed
+  `user-select` for the (a) fix — chromedriver can't render iOS's
+  long-press callout but it can verify the CSS layer that blocks
+  it.
+
+- [x] 11.14 **Wire FigureUpdated WS broadcast to figure_detail
+  refresh + add save toast.** Server-side broadcast was correct
+  (`crates/server/src/sky_edit.rs:167`); phone WS handler was
+  log-only (`phone/src/ws.rs:360`), so cross-phone refresh + the
+  defense-in-depth path for the local same-phone race never
+  fired. Adds a `figure_updates_rev: RwSignal<u32>` that ws.rs
+  bumps on every `Event::FigureUpdated`; figure_detail's stats
+  LocalResource subscribes to it alongside the local
+  `stats_rev`. Plus a "Stats saved" toast on edit-sheet save
+  success so the user gets instant confirmation independent of
+  the LocalResource refresh latency.
+
+- [x] 11.15 **Gate ResumeModal on current_game.is_some().** Server
+  emits `Event::ResumePrompt` on profile unlock
+  (`crates/server/src/http.rs:1870`) — before the user picks +
+  launches a game, so RPCS3 isn't running yet. Tapping RESUME
+  fires `post_load`s that 500 because the driver isn't ready.
+  Phone-side fix: extend the `<Show>` predicate on the
+  ResumeModal mount (`phone/src/lib.rs:418`) with `&&
+  current_game.get().is_some()` so the modal queues until the
+  game actually launches, then surfaces.
+
+- [x] 11.16 **Wire the APPEARANCE button on figure detail.** Button
+  has been `disabled=true` placeholder since the detail screen
+  shipped (`phone/src/screens/figure_detail.rs:307-315`). Browser
+  already implements variant cycling via the per-card N-variants
+  badge; bring the same affordance to the detail screen so a user
+  who taps a figure to inspect it can also cycle to its other
+  reposes / skins without backing out to the toy box. Mechanism:
+  Browser computes the sorted variant cluster for the
+  currently-selected figure and hands FigureDetail a `siblings`
+  list + an `on_pick_variant` callback. APPEARANCE disabled when
+  cluster size ≤ 1; on click, picks the next variant in order
+  (base first, then alphabetical by `variant_tag`, same as the
+  toy-box card cycling). Selecting a new variant re-mounts
+  FigureDetail with the new figure_id — fresh stats fetch, fresh
+  edit/reset enablement evaluation.
+
+## Phase 12 - Real Mac driver (AXUIElement)
 
 macOS originally shipped as mock-driver-only — CLAUDE.md's "macOS
 support" section explicitly calls a real Mac driver "an explicit
@@ -2215,6 +2282,271 @@ If AX doesn't work, fallback paths are: (a) AppleScript via
 Windows driver moved away from in CLAUDE.md "RPCS3 window/menu
 gotchas"). Either fallback is its own meaningful detour; flag it at
 12.1.2 outcome.
+
+## Phase 13 - winget distribution
+
+Goal: ship the Windows MSI through `winget` so `winget install
+ChristopherHotchkiss.SkylanderPortalController` is the primary
+install path. Solves the SmartScreen "unknown publisher" problem
+without an Authenticode cert — winget runs as a trusted authority
+and bypasses the manual "More info → Run anyway" gate that plain
+MSI downloads hit. Per-machine scope retained (matches the v1.5.1
+install layout so the upgrade path stays clean); UAC prompt is
+acceptable because winget elevates automatically. Decisions locked
+2026-05-24: keep perMachine, auto-PR via `winget-releaser`, defer
+Authenticode signing indefinitely as superseded by winget.
+
+- [x] 13.1 **Pre-flight: MSI meets winget submission criteria.**
+  - [x] 13.1.1 Confirmed `wix/main.wxs` already has the required
+    identifiers — verified inline: stable `UpgradeCode`
+    `E6FC979F-32C8-48C9-92BF-5CFFDF544D5E`, `Manufacturer
+    'Christopher Hotchkiss'`, `InstallScope='perMachine'`,
+    `ProductVersion` from `CARGO_PKG_VERSION` via build script.
+    No wxs changes required.
+  - [x] 13.1.2 Package Identifier locked in:
+    `ChristopherHotchkiss.SkylanderPortalController` (winget
+    convention: `<Publisher>.<PackageName>`, PascalCase, no
+    spaces). License: **Unlicense** (per `LICENSE` — public
+    domain dedication, not MIT as the earlier plan draft
+    hand-waved).
+  - [x] 13.1.3 Released MSI confirmed publicly downloadable +
+    introspectable. Bootstrap target: **v1.5.1**, asset
+    `skylander-portal-controller-1.5.1-windows-x86_64.msi`,
+    SHA-256 `be8f250b09415369d13794427b7043ab0a32f1277a9d3096e8b7f6f336c97eb3`,
+    21.5 MB. URL:
+    `https://github.com/chotchki/skylander-portal-controller/releases/download/v1.5.1/skylander-portal-controller-1.5.1-windows-x86_64.msi`.
+    MSI metadata (ProductCode etc.) gets introspected by
+    `wingetcreate new` in 13.2.2; `winget validate` operates
+    on YAML manifests so it lands later in 13.2.3 against the
+    scaffolded output. Note: v1.5.1 is still flagged
+    `prerelease: true` in GitHub (the `prerelease=false` flip
+    lands on the next tag); winget moderation accepts
+    prerelease packages, so this doesn't gate submission.
+
+  - [x] 13.1.4 Relicense from Unlicense to MIT for winget moderation friendliness.
+- [ ] 13.2 **Manifest authoring (first submission).** Step-by-step
+  HTPC runbook: `docs/dev/winget-submission.md` — exact prompts,
+  expected outputs, troubleshooting. Work it cold when HTPC
+  keyboard time opens up.
+  - [ ] 13.2.1 Install `wingetcreate` on the HTPC
+    (`winget install Microsoft.WingetCreate`).
+  - [ ] 13.2.2 `wingetcreate new <release-asset-url>` to scaffold
+    the three-file manifest (installer.yaml, locale.yaml,
+    version.yaml). Hand-tune: ShortDescription (≤256 chars),
+    Description, Tags (`skylanders`, `rpcs3`, `portal`,
+    `emulator`), License (MIT — matches LICENSE file),
+    LicenseUrl, PublisherUrl, PackageUrl (GitHub repo),
+    ReleaseNotesUrl (release page).
+  - [ ] 13.2.3 Local install test:
+    `winget install --manifest .\manifests\c\ChristopherHotchkiss\SkylanderPortalController\<version>\`.
+    Confirm Start Menu shortcut, `%ProgramFiles%` install
+    location, `data\` dir present, server launches via the
+    shortcut + RPCS3 menu nav still works end-to-end.
+
+- [ ] 13.3 **First PR to microsoft/winget-pkgs.**
+  - [ ] 13.3.1 Fork `microsoft/winget-pkgs`, push the manifest
+    tree, open the PR. Title format: `New version:
+    ChristopherHotchkiss.SkylanderPortalController <version>`.
+  - [ ] 13.3.2 Address moderation feedback (typical SLA 1–7
+    days). Common asks: tighten ShortDescription, normalize
+    Tags, fix LicenseUrl 404s. **Don't** start 13.4 until 13.3
+    merges — auto-update can't bootstrap a non-existent package.
+  - [ ] 13.3.3 Post-merge smoke test:
+    `winget install ChristopherHotchkiss.SkylanderPortalController`
+    on a clean Windows install (or `winget uninstall` + reinstall
+    on the HTPC). Confirm install location, shortcuts, and that
+    `winget list` reports the package version correctly.
+
+- [ ] 13.4 **CI auto-PR for subsequent releases.**
+  - [ ] 13.4.1 Generate a fine-grained PAT scoped to a personal
+    fork of `microsoft/winget-pkgs` (scope: `Contents: read+write`
+    + `Pull requests: read+write` on the fork only). Store as
+    repo secret `WINGET_PAT`. Rotation: 90-day expiry; calendar
+    reminder is the only safety net (no auto-rotation).
+  - [ ] 13.4.2 Add `vedantmgoyal9/winget-releaser@latest` step
+    to `release.yml`'s `build-windows-release` job, gated on
+    `startsWith(github.ref, 'refs/tags/v')`, runs after the
+    `softprops/action-gh-release` step (the action needs the
+    release assets to exist before it computes the installer
+    hash). Inputs: `identifier`, `installers-regex` matching the
+    MSI asset name pattern, `token: ${{ secrets.WINGET_PAT }}`.
+  - [ ] 13.4.3 Smoke-test on the next real tag (v1.6.0 or later).
+    Verify the auto-PR appears within ~5min of the release going
+    live, merges through moderation cleanly, and that
+    `winget upgrade` on the HTPC picks up the new version.
+
+- [ ] 13.5 **Docs + supersede the disabled-signing block.**
+  - [ ] 13.5.1 `README.md` Install section: `winget install
+    ChristopherHotchkiss.SkylanderPortalController` as the
+    primary path; direct GitHub Release MSI as fallback for
+    Windows 10 < 1809 (winget unavailable there) and for users
+    who'd rather not use the package manager.
+  - [ ] 13.5.2 Mark PLAN 10.9.2 Windows Authenticode section as
+    **superseded by Phase 13** — winget eliminates the
+    SmartScreen friction that was the original motivation. The
+    macOS Tier-2 Developer ID/notarization half of 10.9.2 is
+    unaffected (it's still blocked on user-provisioned secrets).
+  - [ ] 13.5.3 Update the disabled-signing comment in
+    `release.yml` to reference winget as the primary path,
+    rather than the noncommittal "future signing work" framing.
+    The mac signing steps stay `if: false` (different OS, different
+    solution).
+  - [ ] 13.5.4 CLAUDE.md "Distribution" section: replace the
+    GitHub Releases bullet with the winget-first message, keep
+    the no-RPCS3/no-.sky non-goals.
+
+- [ ] 13.6 **Risks + fallbacks.**
+  - [ ] 13.6.1 Moderation rejection (publisher conflict, missing
+    metadata, license URL 404). Mitigation: GitHub Release MSI
+    download stays as permanent fallback. Document the manual
+    install path in README regardless of winget outcome.
+  - [ ] 13.6.2 PAT rotation lapse → auto-PR step fails silently.
+    Mitigation: 90-day calendar reminder; release.yml step
+    failure should surface as a CI red so the next tag catches
+    a stale token within one release cycle.
+  - [ ] 13.6.3 winget moderation latency on hotfix tags
+    (e.g. v1.5.2-style emergency ship). Mitigation: direct MSI
+    download stays the immediate path; winget catches up on its
+    own SLA. Don't gate a hotfix on the winget PR landing.
+
+## Phase 14 - macOS code-signing bring-up (walkthrough)
+
+Goal: unblock PLAN 10.9.2's macOS Tier-2 path by provisioning the
+Apple Developer cert + the 7 GitHub Environment secrets it depends
+on, then flipping the four `if: false` guards back on and verifying
+a tag push produces a signed + notarized + stapled `.dmg` that
+Gatekeeper accepts without the "unknown developer" prompt. Most of
+this phase is Chris executing steps on his Mac + GitHub UI; the
+code path (release.yml, tools/build-macos-app.sh,
+docs/dev/release-signing.md) already exists and is the canonical
+reference. This PLAN walks the order + the verification gates so
+the eventual flip-the-switch tag-push has zero surprises.
+
+## Non-goals
+- No bundling of RPCS3 or `.sky` files (piracy concern).
+- No Linux support — production targets are Windows + macOS. Both
+- No user-entered figure names.
+- No audio (text-only Kaos to dodge copyright).
+- No live wiki scraping at runtime — data is committed to the repo.
+## Risks (live list — update as we learn)
+- **R1:** UI Automation may not expose enough of the RPCS3 Qt dialog to drive it reliably. Resolved: Alt-keyboard-nav workaround (CLAUDE.md "RPCS3 window/menu gotchas").
+- **R2:** "Move portal dialog off-screen" may be blocked by Windows. Resolved: Win32 `SetWindowPos` works; `hide_dialog_offscreen` + RAII guard in `crates/rpcs3-control/src/hide.rs`.
+- **R3:** Wiki search hit rate might be below 80%. Resolved: 504/504 coverage (3.19.5).
+- **R4:** Leptos touch/mobile UX may prove rough. Mitigation: ongoing Phase 4.18 on-device iteration; PWA install fallback.
+- [ ] 14.1 **Apple Developer prereqs (on the Mac).**
+  - [ ] 14.1.1 Confirm Apple Developer membership active at
+    <https://developer.apple.com> → Membership. Capture the
+    10-char Team ID — feeds `APPLE_TEAM_ID` in 14.3.2.
+  - [ ] 14.1.2 Generate (or confirm existence of) "Developer ID
+    Application" cert. Xcode → Settings → Accounts → Manage
+    Certificates → `+` → Developer ID Application. Cert lands in
+    the login keychain. Distinct from the "Apple Development"
+    cert Xcode auto-creates for local builds — the Developer ID
+    flavor is what Gatekeeper trusts.
+  - [ ] 14.1.3 Generate an app-specific password at
+    <https://appleid.apple.com> → Sign-in and Security →
+    App-Specific Passwords. Label `spc-notarize`. Copy
+    immediately — Apple shows it once. Feeds `APPLE_APP_PASSWORD`.
+
+- [ ] 14.2 **Export cert + collect secret values.**
+  - [ ] 14.2.1 Keychain Access → My Certificates → right-click
+    `Developer ID Application: Christopher Hotchkiss (TEAMID)`
+    → Export. Format: Personal Information Exchange (`.p12`).
+    Set a strong passphrase (`MACOS_CERT_PASSWORD`).
+  - [ ] 14.2.2 `base64 -i <export.p12> | pbcopy` — paste
+    into `MACOS_CERT_P12_BASE64`. Stash the passphrase in
+    1Password (or equivalent) before moving on.
+  - [ ] 14.2.3 `security find-identity -v -p codesigning` — copy
+    the full `Developer ID Application: Christopher Hotchkiss
+    (TEAMID)` line into `MACOS_CERT_IDENTITY`. Has to match
+    exactly; the `(TEAMID)` suffix matters.
+  - [ ] 14.2.4 `openssl rand -base64 32` → throwaway
+    `KEYCHAIN_PASSWORD` for the CI keychain. Doesn't need to be
+    memorable, just unique per credential rotation.
+
+- [ ] 14.3 **GitHub Environment + 7 secrets.**
+  - [ ] 14.3.1 Repo Settings → Environments → New environment →
+    name `release`. Deployment tag rule: Selected → `v*.*.*`.
+    Optional: add yourself as Required Reviewer for a manual
+    gate before the macOS job runs (useful if surprise
+    tag-pushes are a concern).
+  - [ ] 14.3.2 Add 7 secrets per the table in
+    `docs/dev/release-signing.md`: `MACOS_CERT_P12_BASE64`,
+    `MACOS_CERT_PASSWORD`, `MACOS_CERT_IDENTITY`,
+    `KEYCHAIN_PASSWORD`, `APPLE_ID` (chris@hotchkiss.io),
+    `APPLE_APP_PASSWORD`, `APPLE_TEAM_ID`. Confirm the
+    environment shows "7 secrets" after.
+  - [ ] 14.3.3 Delete the local `.p12` export — no longer
+    needed once the secret's saved. The cert itself stays in
+    your login keychain for local builds.
+
+- [ ] 14.4 **Local end-to-end dry run (catches mistakes
+  before CI does).**
+  - [ ] 14.4.1 `SIGN_IDENTITY="Developer ID Application:
+    Christopher Hotchkiss (TEAMID)" tools/build-macos-app.sh` —
+    should produce a signed `dist/Skylander-Portal-Controller-*.dmg`.
+    `codesign -dvv dist/*.dmg` reports the signature info.
+  - [ ] 14.4.2 `xcrun notarytool submit dist/*.dmg --apple-id
+    chris@hotchkiss.io --team-id TEAMID --password
+    <app-specific> --wait` — catches team-id / password
+    mismatches locally. Expected runtime ~2 min for a ~30MB dmg.
+  - [ ] 14.4.3 `xcrun stapler staple dist/*.dmg` + `spctl -a -t
+    open --context context:primary-signature -vv dist/*.dmg`.
+    Green here = green in CI.
+
+- [ ] 14.5 **Re-enable the disabled CI steps.**
+  - [ ] 14.5.1 Flip the four `if: false` guards in `release.yml`
+    back to `if: github.repository ==
+    'chotchki/skylander-portal-controller'`. Steps: "Import
+    Developer ID certificate", "Build signed .app + .dmg",
+    "Notarize and staple .dmg", "Upload signed DMG artifact".
+  - [ ] 14.5.2 Add `${{ env.RELEASE_DMG }}` back to the
+    macOS-lane "Publish release" step's `files:` list (removed
+    in PLAN 11.13's signing-disable patch).
+  - [ ] 14.5.3 Update the disabled-signing comment block in
+    `release.yml` — drop the "secrets pending" framing,
+    reference `docs/dev/release-signing.md` as the live runbook.
+
+- [ ] 14.6 **CI dry run via `workflow_dispatch`.**
+  - [ ] 14.6.1 Actions tab → Release → Run workflow on `main`.
+    Non-tag run — secrets flow via the `release` Environment
+    only if 14.3.1's deployment-tag rule explicitly allows
+    `main`, so flip the rule temporarily (Selected branches:
+    `main`) OR push a throwaway `v0.0.0-dryrun` tag, your call.
+    Latter is cleaner — delete the tag + draft release after.
+  - [ ] 14.6.2 Watch the macOS job. The 5 signing-related steps
+    should all be green (Import cert / Build signed / Notarize
+    / Upload). Expected total runtime ~10-15 min.
+  - [ ] 14.6.3 Download the uploaded signed `.dmg` artifact,
+    mount on a clean Mac, confirm `spctl -a` green. If yes,
+    revert the 14.6.1 deployment-rule loosening (back to
+    `v*.*.*` only).
+
+- [ ] 14.7 **Real-tag validation + close out 10.9.2.**
+  - [ ] 14.7.1 Cut the next real release tag. Watch the
+    macOS lane; signed + notarized + stapled dmg lands on the
+    GitHub Release alongside the tarball.
+  - [ ] 14.7.2 Download from the Release page, open on a Mac
+    that's never seen this app before (or `xattr -d
+    com.apple.quarantine` first to simulate fresh download).
+    Confirm Gatekeeper allows direct double-click — no
+    "unknown developer" prompt, no right-click → Open dance.
+  - [ ] 14.7.3 Mark PLAN 10.9.2's macOS Tier-2 bullet **done**.
+    Update `docs/dev/release-signing.md` "Status" callout from
+    "secrets pending" to "live as of v<X.Y.Z>".
+  - [ ] 14.7.4 CLAUDE.md "macOS support" → "Release artifact"
+    line: replace "No `.app` bundle / code signing /
+    notarization in v1; users right-click + Open" with the
+    signed+notarized reality.
+
+- [ ] 14.8 **Rotation reminders (calendar).**
+  - [ ] 14.8.1 App-specific password — Apple revokes if dormant.
+    1-year calendar reminder to rotate
+    (`APPLE_APP_PASSWORD`).
+  - [ ] 14.8.2 Developer ID Application cert — 5-year validity
+    from issue date. Calendar reminder 11 months before expiry;
+    rotation playbook in `docs/dev/release-signing.md` "Cert
+    rotation / revocation".
 
 - [ ] 12.1 **Research + scaffolding (research-first, no code
   commits).**
@@ -2339,21 +2671,10 @@ gotchas"). Either fallback is its own meaningful detour; flag it at
     path" section explaining the AX permission grant + the same
     env var setup as Windows.
 
-## Non-goals
 
-- No bundling of RPCS3 or `.sky` files (piracy concern).
-- No Linux support — production targets are Windows + macOS. Both
   now ship with real drivers (Windows UIA, macOS AX); Linux can
   build and run with the mock driver but no plans to add Linux
   GUI automation. .app bundle + code signing on Mac are deferred
   (10.6.3) unless Gatekeeper friction proves blocking.
-- No user-entered figure names.
-- No audio (text-only Kaos to dodge copyright).
-- No live wiki scraping at runtime — data is committed to the repo.
 
-## Risks (live list — update as we learn)
 
-- **R1:** UI Automation may not expose enough of the RPCS3 Qt dialog to drive it reliably. Resolved: Alt-keyboard-nav workaround (CLAUDE.md "RPCS3 window/menu gotchas").
-- **R2:** "Move portal dialog off-screen" may be blocked by Windows. Resolved: Win32 `SetWindowPos` works; `hide_dialog_offscreen` + RAII guard in `crates/rpcs3-control/src/hide.rs`.
-- **R3:** Wiki search hit rate might be below 80%. Resolved: 504/504 coverage (3.19.5).
-- **R4:** Leptos touch/mobile UX may prove rough. Mitigation: ongoing Phase 4.18 on-device iteration; PWA install fallback.

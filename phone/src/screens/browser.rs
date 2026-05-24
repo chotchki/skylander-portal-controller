@@ -76,6 +76,9 @@ pub(crate) fn Browser(
     /// `ResetTarget { slot: None, profile_id, figure_id, display_name }`
     /// to the app-root `ResetConfirmModal`. PLAN 11.12.
     reset_target: RwSignal<Option<crate::ResetTarget>>,
+    /// Threaded through to FigureDetail so its stats LocalResource
+    /// refetches on every cross-phone `Event::FigureUpdated`. PLAN 11.14.
+    figure_updates_rev: RwSignal<u32>,
 ) -> impl IntoView {
     let all_figures = StoredValue::new(figures);
     let selected_figure = RwSignal::new(None::<PublicFigure>);
@@ -372,7 +375,31 @@ pub(crate) fn Browser(
                 </ToyBoxInterior>
             }
         >
-            {move || selected_figure.get().map(|fig| view! {
+            {move || selected_figure.get().map(|fig| {
+                // PLAN 11.16 — variant cluster for the selected figure
+                // (sorted "base" first, then alphabetical by variant_tag,
+                // matching the toy-box card cycling order). FigureDetail's
+                // APPEARANCE button uses it to advance to the next
+                // variant in the cluster.
+                let siblings: Vec<PublicFigure> = all_figures.with_value(|all| {
+                    let group = &fig.variant_group;
+                    let mut v: Vec<PublicFigure> = all
+                        .iter()
+                        .filter(|f| &f.variant_group == group)
+                        .cloned()
+                        .collect();
+                    v.sort_by(|a, b| {
+                        let a_base = a.variant_tag == "base";
+                        let b_base = b.variant_tag == "base";
+                        match (a_base, b_base) {
+                            (true, false) => std::cmp::Ordering::Less,
+                            (false, true) => std::cmp::Ordering::Greater,
+                            _ => a.variant_tag.cmp(&b.variant_tag),
+                        }
+                    });
+                    v
+                });
+                view! {
                 <FigureDetail
                     figure=fig
                     picking_for
@@ -380,6 +407,11 @@ pub(crate) fn Browser(
                     toasts
                     unlocked_profile
                     reset_target
+                    figure_updates_rev
+                    siblings
+                    on_pick_variant=Callback::new(move |next: PublicFigure| {
+                        selected_figure.set(Some(next));
+                    })
                     on_close=Callback::new(move |_| selected_figure.set(None))
                     on_placed=Callback::new(move |_| {
                         // PLACE success: dismiss detail AND close the lid
@@ -391,6 +423,7 @@ pub(crate) fn Browser(
                         box_state.set(BoxState::Closed);
                     })
                 />
+                }
             })}
         </Show>
     }

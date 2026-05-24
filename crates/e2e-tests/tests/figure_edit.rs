@@ -33,10 +33,7 @@ use skylander_e2e_tests::{
 /// the query.
 async fn open_first_matching_figure(phone: &Phone, query: &str) -> anyhow::Result<()> {
     phone.open_search().await?;
-    let input = phone
-        .client
-        .find(Locator::Css(".search-input-p4"))
-        .await?;
+    let input = phone.client.find(Locator::Css(".search-input-p4")).await?;
     input.clear().await?;
     input.send_keys(query).await?;
     tokio::time::sleep(Duration::from_millis(400)).await;
@@ -153,6 +150,180 @@ async fn edit_level_and_gold_round_trips_through_stats_strip() {
         .unwrap()
         .unwrap_or_default();
     assert_eq!(gold_after.trim(), "300", "stats strip GOLD should be 300");
+
+    phone.close().await.unwrap();
+}
+
+/// PLAN 11.13 (a + b). Two real-world bugs from v1.5.1 play testing:
+///
+/// (b) Gold near `u16::MAX` caused Skylanders games to reject the figure on
+///     load (observed 65535). The UI now caps at `GOLD_MAX = 65000` and the
+///     outer `<<` / `>>` chevrons are jump-to-bounds (0 / 65000) instead of
+///     ±1000 steppers. This test exercises both: one `>>` tap lands at
+///     65000 (disables itself + the inner `+`), one `<<` tap returns to 0
+///     (disables itself + the inner `-`), and the round-trip through the
+///     server's edit endpoint accepts the max value cleanly.
+///
+/// (a) The text-callout suppression is CSS-only — `.edit-panel` gets
+///     `user-select: none` + `-webkit-touch-callout: none`. Verifying the
+///     iOS Safari long-press popup doesn't fire would require a real
+///     device (or a sim with PWA standalone), neither of which the
+///     chromedriver harness reaches. Smoke-test the computed style
+///     instead so a future regression in the CSS layer surfaces here.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver"]
+async fn gold_chevrons_jump_to_bounds_and_max_round_trips() {
+    let server = TestServer::spawn().expect("spawn");
+    unlock_default_profile(&server.url).await.unwrap();
+    launch_giants(&server.url).await.unwrap();
+
+    let phone_url = server.phone_url().await.unwrap();
+    let phone = Phone::new(&phone_url, &server.chromedriver_url)
+        .await
+        .unwrap();
+    phone
+        .wait_for_portal(Duration::from_secs(10))
+        .await
+        .unwrap();
+
+    open_first_matching_figure(&phone, "Spyro").await.unwrap();
+
+    // Open the edit sheet.
+    let stats_btn = phone
+        .wait_for(
+            Locator::Css(".detail-action-btn[aria-label='Edit stats']"),
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+    stats_btn.click().await.unwrap();
+    phone
+        .wait_for(Locator::Css(".edit-scrim"), Duration::from_secs(3))
+        .await
+        .unwrap();
+
+    // PLAN 11.13(a) — `.edit-panel` must suppress text selection so iOS
+    // Safari's long-press selection callout never fires inside the modal.
+    // The chromedriver harness can't render the callout, but it can
+    // verify the underlying computed style is in place.
+    let user_select = phone
+        .client
+        .execute(
+            "return getComputedStyle(document.querySelector('.edit-panel')).webkitUserSelect \
+             || getComputedStyle(document.querySelector('.edit-panel')).userSelect;",
+            vec![],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        user_select.as_str(),
+        Some("none"),
+        "edit panel must have user-select: none to block iOS long-press callout"
+    );
+
+    let gold_value_sel = ".edit-stepper-row:nth-of-type(2) .edit-stepper-value";
+
+    // PLAN 11.13(b) — one tap on `>>` jumps to GOLD_MAX (65000), not +1000.
+    let max_btn = phone
+        .client
+        .find(Locator::Css("[aria-label='Set gold to max']"))
+        .await
+        .unwrap();
+    max_btn.click().await.unwrap();
+    phone
+        .wait_until(Duration::from_secs(2), || async {
+            phone
+                .inner_text(gold_value_sel)
+                .await
+                .ok()
+                .flatten()
+                .map(|t| t.trim() == "65000")
+                .unwrap_or(false)
+        })
+        .await
+        .expect("'>>' should jump straight to 65000");
+    // At the cap both the chevron and the inner `+100` must disable.
+    let max_btn = phone
+        .client
+        .find(Locator::Css("[aria-label='Set gold to max']"))
+        .await
+        .unwrap();
+    assert!(
+        max_btn.attr("disabled").await.unwrap().is_some(),
+        "'Set gold to max' should disable at GOLD_MAX"
+    );
+    let plus_btn = phone
+        .client
+        .find(Locator::Css("[aria-label='Increase gold by 100']"))
+        .await
+        .unwrap();
+    assert!(
+        plus_btn.attr("disabled").await.unwrap().is_some(),
+        "'+100' should disable at GOLD_MAX (caps at 65000, not u16::MAX)"
+    );
+
+    // One tap on `<<` jumps back to 0, not -1000.
+    let zero_btn = phone
+        .client
+        .find(Locator::Css("[aria-label='Set gold to zero']"))
+        .await
+        .unwrap();
+    zero_btn.click().await.unwrap();
+    phone
+        .wait_until(Duration::from_secs(2), || async {
+            phone
+                .inner_text(gold_value_sel)
+                .await
+                .ok()
+                .flatten()
+                .map(|t| t.trim() == "0")
+                .unwrap_or(false)
+        })
+        .await
+        .expect("'<<' should jump straight to 0");
+
+    // Re-arm to GOLD_MAX and save — exercises the server's edit endpoint
+    // with a gold value the UI now considers the maximum.
+    phone
+        .client
+        .find(Locator::Css("[aria-label='Set gold to max']"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    phone
+        .client
+        .find(Locator::Css(".edit-btn-primary"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    phone
+        .wait_until(Duration::from_secs(5), || async {
+            phone
+                .client
+                .find(Locator::Css(".edit-scrim"))
+                .await
+                .is_err()
+        })
+        .await
+        .expect("edit sheet should close after save");
+
+    // Stats strip below should reflect 65000.
+    phone
+        .wait_until(Duration::from_secs(5), || async {
+            phone
+                .inner_text(".detail-stat-cell:nth-of-type(2) .detail-stat-v")
+                .await
+                .ok()
+                .flatten()
+                .map(|t| t.trim() == "65000")
+                .unwrap_or(false)
+        })
+        .await
+        .expect("stats strip GOLD should round-trip to 65000");
 
     phone.close().await.unwrap();
 }

@@ -26,6 +26,13 @@
     @apply w-full;
     max-width: 360px;
     padding: 26px 22px 20px;
+    /* Modal is button-driven — no text needs to be selectable. Suppress
+       both the selection itself and the iOS long-press callout so a
+       toddler tap-mashing the steppers can't accidentally fire the
+       "Look Up / Translate" system popup. */
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
   }
 
   .edit-sub {

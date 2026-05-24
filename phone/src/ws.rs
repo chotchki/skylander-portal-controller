@@ -38,6 +38,12 @@ pub fn connect(
     reconnect_attempts: RwSignal<u32>,
     manual_retry: RwSignal<u32>,
     kaos_swap: RwSignal<Option<KaosSwapAnnouncement>>,
+    // PLAN 11.14 — bumps on every WS `Event::FigureUpdated` so
+    // figure_detail's stats LocalResource refetches without
+    // depending on the local edit-save callback path. Covers both
+    // cross-phone edits and the local same-phone race where the
+    // callback fires before the working copy hits disk.
+    figure_updates_rev: RwSignal<u32>,
 ) {
     let pending: PendingTimer = Rc::new(Cell::new(None));
 
@@ -66,6 +72,7 @@ pub fn connect(
                         reconnect_attempts,
                         manual_retry,
                         kaos_swap,
+                        figure_updates_rev,
                         pending.clone(),
                         0,
                     );
@@ -88,6 +95,7 @@ pub fn connect(
         reconnect_attempts,
         manual_retry,
         kaos_swap,
+        figure_updates_rev,
         pending,
         0,
     );
@@ -115,6 +123,12 @@ fn spawn_connect(
     reconnect_attempts: RwSignal<u32>,
     manual_retry: RwSignal<u32>,
     kaos_swap: RwSignal<Option<KaosSwapAnnouncement>>,
+    // PLAN 11.14 — bumps on every WS `Event::FigureUpdated` so
+    // figure_detail's stats LocalResource refetches without
+    // depending on the local edit-save callback path. Covers both
+    // cross-phone edits and the local same-phone race where the
+    // callback fires before the working copy hits disk.
+    figure_updates_rev: RwSignal<u32>,
     pending: PendingTimer,
     attempt: u32,
 ) {
@@ -157,6 +171,7 @@ fn spawn_connect(
                 reconnect_attempts,
                 manual_retry,
                 kaos_swap,
+                figure_updates_rev,
                 pending,
                 attempt,
             );
@@ -354,10 +369,15 @@ fn spawn_connect(
                         level,
                         gold,
                     }) => {
-                        // PLAN 11 — single-phone edit flow re-fetches its
-                        // own stats locally on save; cross-phone refresh is
-                        // a multi-phone playtest follow-up. Log-only for now.
+                        // PLAN 11.14 — bump the global revision so any
+                        // mounted figure_detail re-fetches stats. Covers
+                        // both cross-phone edits and the local
+                        // same-phone race (server returns 202 before the
+                        // working-copy write hits disk on some
+                        // filesystems; the WS arrives strictly after the
+                        // write, so this is the reliable refresh signal).
                         dev_log!("[ws] figure_updated: {figure_id} L{level} G{gold}");
+                        figure_updates_rev.update(|n| *n = n.wrapping_add(1));
                     }
                     Err(err) => {
                         dev_warn!("bad ws message: {err} — {text}");
@@ -401,6 +421,7 @@ fn spawn_connect(
                 reconnect_attempts,
                 manual_retry,
                 kaos_swap,
+                figure_updates_rev,
                 pending.clone(),
                 attempt + 1,
             );
@@ -431,6 +452,12 @@ fn schedule_reconnect(
     reconnect_attempts: RwSignal<u32>,
     manual_retry: RwSignal<u32>,
     kaos_swap: RwSignal<Option<KaosSwapAnnouncement>>,
+    // PLAN 11.14 — bumps on every WS `Event::FigureUpdated` so
+    // figure_detail's stats LocalResource refetches without
+    // depending on the local edit-save callback path. Covers both
+    // cross-phone edits and the local same-phone race where the
+    // callback fires before the working copy hits disk.
+    figure_updates_rev: RwSignal<u32>,
     pending: PendingTimer,
     attempt: u32,
 ) {
@@ -454,6 +481,7 @@ fn schedule_reconnect(
             reconnect_attempts,
             manual_retry,
             kaos_swap,
+            figure_updates_rev,
             pending_for_cb,
             attempt,
         );

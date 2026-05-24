@@ -40,6 +40,22 @@ pub(crate) fn FigureDetail(
     /// on this screen sets it with `slot: None` so the modal routes
     /// to the figure-keyed `/reset` endpoint (PLAN 11.12).
     reset_target: RwSignal<Option<ResetTarget>>,
+    /// PLAN 11.14 — bumps on every WS `Event::FigureUpdated`. The
+    /// stats `LocalResource` reads this alongside the local
+    /// `stats_rev`, so cross-phone edits + the same-phone race both
+    /// trigger a re-fetch of the working copy.
+    figure_updates_rev: RwSignal<u32>,
+    /// PLAN 11.16 — variant cluster the current figure belongs to,
+    /// sorted "base" first then alphabetical by `variant_tag`. Drives
+    /// the APPEARANCE button's enable state + next-pick logic. A
+    /// cluster of size 1 means no alternates exist and the button stays
+    /// disabled.
+    siblings: Vec<PublicFigure>,
+    /// PLAN 11.16 — called with the next variant in `siblings` when
+    /// the user taps APPEARANCE. Browser owns the `selected_figure`
+    /// signal so the swap re-mounts this component with the new
+    /// figure_id (fresh stats fetch, fresh edit/reset gates).
+    on_pick_variant: Callback<PublicFigure>,
     /// Dismiss the detail view (BACK button path; browse state is
     /// preserved — toy-box lid stays in whatever open state it was).
     on_close: Callback<()>,
@@ -101,8 +117,14 @@ pub(crate) fn FigureDetail(
     // available, the placeholder just makes that absence legible.
     let stats_fig_id = fig_id.clone();
     let stats: LocalResource<Option<FigureStats>> = LocalResource::new(move || {
-        // Re-fetch when stats_rev bumps (post-edit-save).
+        // Re-fetch when either rev bumps:
+        // - `stats_rev`: local edit-sheet save (instant local feedback path).
+        // - `figure_updates_rev`: WS `Event::FigureUpdated` from any phone
+        //   (PLAN 11.14 — covers cross-phone refresh + the same-phone race
+        //   where the server returns 202 before the working-copy write
+        //   strictly hits disk; the WS event fires after the write).
         let _rev = stats_rev.get();
+        let _ws_rev = figure_updates_rev.get();
         let profile_id = unlocked_profile.get().map(|p| p.id);
         let fig_id = stats_fig_id.clone();
         async move {
@@ -150,6 +172,33 @@ pub(crate) fn FigureDetail(
     };
 
     let max_level = max_level_for_game(game);
+
+    // PLAN 11.16 — APPEARANCE button enable + next-variant resolution.
+    // Cluster of size ≤ 1 means no alternates → keep the button disabled.
+    // Otherwise tapping it picks the next sibling in display order, which
+    // re-mounts this component with the new figure_id via Browser's
+    // `selected_figure` signal.
+    let variant_count = siblings.len();
+    let has_alternates = variant_count > 1;
+    let current_variant_idx = siblings
+        .iter()
+        .position(|f| f.id == fig_id)
+        .unwrap_or(0);
+    let appearance_tooltip = if has_alternates {
+        format!("Switch appearance ({variant_count} variants)")
+    } else {
+        "No other appearances available".to_string()
+    };
+    let on_pick_next = {
+        let siblings = siblings.clone();
+        move |_| {
+            if siblings.len() <= 1 {
+                return;
+            }
+            let next_idx = (current_variant_idx + 1) % siblings.len();
+            on_pick_variant.run(siblings[next_idx].clone());
+        }
+    };
 
     // Owned clones for the edit sheet + reset closures; the view! macro
     // below moves the original `name_display` and `fig_id` into the main
@@ -295,9 +344,10 @@ pub(crate) fn FigureDetail(
                     <div class="detail-action">
                         <button
                             class="detail-action-btn"
-                            disabled=true
-                            aria-label="Appearance"
-                            title="Appearance"
+                            disabled=!has_alternates
+                            aria-label="Switch appearance"
+                            title=appearance_tooltip
+                            on:click=on_pick_next
                         >
                             "\u{2726}"
                         </button>
@@ -418,6 +468,7 @@ pub(crate) fn FigureDetail(
                             initial_level=initial_level
                             initial_gold=initial_gold
                             max_level=max_level
+                            toasts
                             on_close=Callback::new(move |_| show_edit_sheet.set(false))
                             on_saved=Callback::new(move |_| stats_rev.update(|n| *n += 1))
                         />

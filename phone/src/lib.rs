@@ -226,6 +226,10 @@ pub fn App() -> impl IntoView {
     // the pending backoff and reconnect immediately). PLAN 4.18.21.
     let reconnect_attempts = RwSignal::new(0u32);
     let manual_retry = RwSignal::new(0u32);
+    // PLAN 11.14 — bumps on every WS `Event::FigureUpdated`. figure_detail
+    // subscribes alongside its local `stats_rev` so cross-phone edits +
+    // the local same-phone race both surface in the stats strip.
+    let figure_updates_rev = RwSignal::new(0u32);
 
     // Re-fetch the figure list whenever the current game changes —
     // the server filters `/api/figures` by what's compatible with the
@@ -260,6 +264,7 @@ pub fn App() -> impl IntoView {
         reconnect_attempts,
         manual_retry,
         kaos_swap,
+        figure_updates_rev,
     );
 
     // Watch `conn` for transitions into Connected (i.e. WS onopen after
@@ -407,6 +412,7 @@ pub fn App() -> impl IntoView {
                                 scan_overlay
                                 unlocked_profile
                                 reset_target
+                                figure_updates_rev
                             />
                         })}
                     </Suspense>
@@ -415,7 +421,12 @@ pub fn App() -> impl IntoView {
             </Show>
             </Show>
             </Show>
-            <Show when=move || resume_offer.get().is_some() fallback=|| ()>
+            // PLAN 11.15 — only surface the resume prompt once a game
+            // has actually launched. Server emits `ResumePrompt` on
+            // profile unlock, but RPCS3 isn't up yet so RESUME would
+            // fire `post_load`s into a 500. Modal stays queued in
+            // `resume_offer` until the user picks + launches a game.
+            <Show when=move || resume_offer.get().is_some() && current_game.get().is_some() fallback=|| ()>
                 <ResumeModal resume_offer unlocked_profile toasts />
             </Show>
             <ResetConfirmModal reset_target toasts />
