@@ -21,6 +21,17 @@ pub enum Command {
     /// Ask the server to re-read the portal from RPCS3 and broadcast a fresh
     /// `PortalSnapshot`.
     RefreshPortal,
+    /// Set the level + gold on a figure's working copy (PLAN 11). REST is the
+    /// primary entry — included here for WS-command parity. Server rejects
+    /// with 4xx if the figure is currently on the portal or the figure's
+    /// `Category` isn't player-controlled (Figure / Sidekick / Giant / Kaos).
+    EditFigure {
+        figure_id: FigureId,
+        /// Target level, clamped server-side to `1..=max_level_for(generation)`.
+        level: u8,
+        /// Target gold value (0..=u16::MAX).
+        gold: u16,
+    },
 }
 
 /// Server → client. Delivered on `/ws`.
@@ -136,6 +147,15 @@ pub enum Event {
         variant: u16,
         display_name: String,
         is_duplicate: bool,
+    },
+    /// A figure's stored stats changed (PLAN 11 — level + gold edit).
+    /// Broadcast to every session so any phone showing this figure's detail
+    /// screen refreshes its stats strip. The phone matches by `figure_id`
+    /// and re-fetches via the existing stats endpoint.
+    FigureUpdated {
+        figure_id: FigureId,
+        level: u8,
+        gold: u16,
     },
 }
 

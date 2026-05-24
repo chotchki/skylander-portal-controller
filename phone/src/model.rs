@@ -235,6 +235,19 @@ pub enum Event {
         #[serde(default)]
         taunt: String,
     },
+    /// A figure's stored stats (level + gold) changed via the edit endpoint
+    /// (PLAN 11). Phone uses this to refresh the stats strip on whichever
+    /// figure detail screen is open — currently a no-op log; the single-phone
+    /// edit flow uses a local re-fetch on save instead. Wired up here so WS
+    /// deserialization doesn't fail on the broadcast.
+    FigureUpdated {
+        #[serde(default)]
+        figure_id: String,
+        #[serde(default)]
+        level: u8,
+        #[serde(default)]
+        gold: u16,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

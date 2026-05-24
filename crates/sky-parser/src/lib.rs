@@ -453,7 +453,6 @@ fn compute_crc14(plain: &[u8], region_a_base: usize) -> u16 {
 /// by 0x3E bytes from struct `0x72` (= `region_b_base + 0x02`). Spec
 /// doc structure table entry at struct `0x70`.
 fn compute_region_b_crc(plain: &[u8], region_b_base: usize) -> u16 {
-    let off = block_off(region_b_base);
     let mut buf = Vec::with_capacity(2 + 0x3E);
     buf.extend_from_slice(&[0x06, 0x01]);
     // Bytes from struct 0x72 = region_b_base block-offset + 0x02. Region B
@@ -615,8 +614,14 @@ pub fn max_level_for(generation: SkyGeneration) -> u8 {
 /// `xp_2013` is the Trap-Team+-era u32).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SlotXp {
+    /// SSA/Giants-era XP slot (struct `0x00`, u24 LE stored as u32 with the
+    /// high byte zero). Caps at 33 000 = level 10 threshold.
     pub xp_2011: u32,
+    /// SwapForce-era XP slot (struct `0x73`, u16 LE). Caps at 63 500 =
+    /// `threshold_15 - threshold_10`.
     pub xp_2012: u16,
+    /// Trap-Team-and-later XP slot (struct `0x78`, u32 LE). Takes the
+    /// remainder up to ~103 035 at level 20.
     pub xp_2013: u32,
 }
 

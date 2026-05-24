@@ -328,6 +328,7 @@ mod tests {
             id: id.into(),
             display_name: name.into(),
             color: color.into(),
+            kaos_enabled: false,
         }
     }
 

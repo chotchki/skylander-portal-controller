@@ -522,6 +522,7 @@ mod tests {
             game: GameOfOrigin::SpyrosAdventure,
             element: None,
             category: Category::Figure,
+            vehicle_terrain: None,
         }
     }
 

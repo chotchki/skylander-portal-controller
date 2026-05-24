@@ -1,5 +1,6 @@
 mod browser;
 mod figure_detail;
+mod figure_edit_sheet;
 mod game_picker;
 mod menu_overlay;
 mod modals;
@@ -9,6 +10,7 @@ mod toasts;
 
 pub(crate) use browser::*;
 pub(crate) use figure_detail::*;
+pub(crate) use figure_edit_sheet::*;
 pub(crate) use game_picker::*;
 pub(crate) use menu_overlay::*;
 pub(crate) use modals::*;

@@ -1,0 +1,199 @@
+/*
+ * <FigureEditSheet> (PLAN 11).
+ *
+ * Modal overlay for editing a figure's level + gold. Shares the
+ * starfield-blue + gold aesthetic with ResumeModal; the steppers are
+ * the new visual primitive. Mounted by <FigureDetail> when the STATS
+ * action button fires.
+ */
+
+@layer components {
+  .edit-scrim {
+    @apply fixed inset-0 z-[50];
+    background: radial-gradient(ellipse 100% 70% at 50% 50%,
+      rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0.8) 100%);
+    animation: edit-scrim-in 250ms ease-out both;
+  }
+
+  .edit-panel-wrap {
+    @apply absolute inset-0 grid place-items-center;
+    padding: max(32px, calc(env(safe-area-inset-top) + 16px))
+             24px
+             max(32px, calc(env(safe-area-inset-bottom) + 16px));
+  }
+
+  .edit-panel {
+    @apply w-full;
+    max-width: 360px;
+    padding: 26px 22px 20px;
+  }
+
+  .edit-sub {
+    @apply text-center;
+    font-family: var(--font-body);
+    font-style: italic;
+    font-weight: 600;
+    font-size: 15px;
+    color: #fff4e0;
+    letter-spacing: 0.06em;
+    text-shadow:
+      0 1px 0 rgba(0, 0, 0, 0.55),
+      0 0 10px rgba(255, 230, 120, 0.18);
+    margin-bottom: 18px;
+  }
+
+  /* Stepper row — label on top, +/- value +/- in the middle,
+     "max N" caption below. */
+  .edit-stepper-row {
+    @apply flex flex-col items-center;
+    gap: 4px;
+    margin-bottom: 16px;
+    padding: 12px 8px 10px;
+    border-radius: 12px;
+    background: linear-gradient(180deg, rgba(8, 20, 54, 0.55), rgba(4, 12, 36, 0.65));
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 230, 120, 0.12),
+      inset 0 2px 4px rgba(0, 0, 0, 0.35);
+  }
+
+  .edit-stepper-label {
+    font-family: var(--font-display);
+    font-size: var(--text-display-xs);
+    letter-spacing: 0.22em;
+    color: var(--color-gold);
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+  }
+
+  .edit-stepper-controls {
+    @apply flex items-center justify-center;
+    gap: 12px;
+    margin: 2px 0 2px;
+  }
+  /* Gold row has 5 buttons (<< - V + >>) instead of 3 — tighten the gap. */
+  .edit-stepper-controls.edit-stepper-gold { gap: 8px; }
+
+  .edit-stepper-btn {
+    @apply flex items-center justify-center cursor-pointer;
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    font-family: var(--font-display);
+    font-size: 24px;
+    color: #1a1203;
+    background: linear-gradient(180deg, var(--color-gold-bright) 0%, var(--color-gold) 45%, var(--color-gold-mid) 100%);
+    border: 2px solid var(--color-gold-deep);
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.45),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.25),
+      0  3px 0 var(--color-gold-shadow),
+      0  4px 10px rgba(0, 0, 0, 0.4);
+    user-select: none;
+  }
+  .edit-stepper-btn:active {
+    transform: translateY(2px);
+    box-shadow:
+      inset 0 2px 0 rgba(255, 255, 255, 0.45),
+      0 1px 0 var(--color-gold-shadow);
+  }
+  .edit-stepper-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    transform: none;
+  }
+  /* Small chevron buttons for ±1000 on gold. */
+  .edit-stepper-btn-small {
+    width: 36px;
+    height: 36px;
+    font-size: 18px;
+    border-radius: 10px;
+  }
+
+  .edit-stepper-value {
+    @apply text-center;
+    min-width: 96px;
+    font-family: var(--font-display);
+    font-size: 28px;
+    line-height: 1;
+    color: #fff;
+    text-shadow:
+      0 1px 0 rgba(0, 0, 0, 0.7),
+      0 0 8px rgba(255, 230, 120, 0.35);
+    letter-spacing: 0.03em;
+  }
+
+  .edit-stepper-meta {
+    font-family: var(--font-body);
+    font-style: italic;
+    font-size: var(--text-body-sm);
+    color: #d9c88a;
+    letter-spacing: 0.06em;
+  }
+
+  .edit-error {
+    @apply text-center;
+    font-family: var(--font-body);
+    font-style: italic;
+    font-weight: 600;
+    font-size: 14px;
+    color: #ffb4a8;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+    margin: 4px 0 12px;
+  }
+
+  .edit-actions {
+    @apply flex flex-col;
+    gap: 10px;
+    margin-top: 12px;
+  }
+
+  .edit-btn-primary,
+  .edit-btn-secondary {
+    @apply w-full rounded-[14px] cursor-pointer text-center;
+    padding: 14px;
+    font-family: var(--font-display);
+    font-size: var(--text-display-sm);
+    letter-spacing: 0.22em;
+    border: none;
+  }
+  .edit-btn-primary {
+    color: #1a1203;
+    background: linear-gradient(180deg, var(--color-gold-bright) 0%, var(--color-gold) 45%, var(--color-gold-mid) 100%);
+    border: 2px solid var(--color-gold-deep);
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.45),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.25),
+      0  4px 0 var(--color-gold-shadow),
+      0  6px 14px rgba(0, 0, 0, 0.45),
+      0  0 20px rgba(245, 198, 52, 0.25);
+  }
+  .edit-btn-primary:active:not(:disabled) {
+    transform: translateY(3px);
+    box-shadow:
+      inset 0 2px 0 rgba(255, 255, 255, 0.45),
+      0 1px 0 var(--color-gold-shadow);
+  }
+  .edit-btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  .edit-btn-secondary {
+    color: #fff;
+    background: linear-gradient(180deg, #2f6edc 0%, #1e4fb3 55%, #153a8a 100%);
+    border: 2px solid var(--color-gold-bright);
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+    box-shadow:
+      inset 0  2px 0 rgba(255, 255, 255, 0.25),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.25),
+      0  4px 0 rgba(0, 0, 0, 0.45),
+      0  5px 12px rgba(0, 0, 0, 0.4);
+  }
+  .edit-btn-secondary:active:not(:disabled) {
+    transform: translateY(3px);
+    box-shadow:
+      inset 0 2px 0 rgba(255, 255, 255, 0.25),
+      0 1px 0 rgba(0, 0, 0, 0.45);
+  }
+  .edit-btn-secondary:disabled { opacity: 0.6; cursor: not-allowed; }
+}
+
+@keyframes edit-scrim-in { from { opacity: 0; } to { opacity: 1; } }

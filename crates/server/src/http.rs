@@ -271,10 +271,15 @@ pub fn router(state: Arc<AppState>, _phone_dist: std::path::PathBuf) -> Router {
 
     #[cfg(feature = "sky-stats")]
     {
-        api = api.route(
-            "/api/profiles/:profile_id/figures/:figure_id/stats",
-            get(crate::sky_stats::get_figure_stats),
-        );
+        api = api
+            .route(
+                "/api/profiles/:profile_id/figures/:figure_id/stats",
+                get(crate::sky_stats::get_figure_stats),
+            )
+            .route(
+                "/api/profiles/:profile_id/figures/:figure_id/edit",
+                post(crate::sky_edit::edit_figure),
+            );
     }
 
     #[cfg(feature = "dev-tools")]

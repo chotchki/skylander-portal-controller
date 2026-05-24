@@ -18,6 +18,8 @@ pub mod paths;
 pub mod profiles;
 pub mod round_qr;
 #[cfg(feature = "sky-stats")]
+pub mod sky_edit;
+#[cfg(feature = "sky-stats")]
 pub mod sky_stats;
 pub mod state;
 pub mod ui;

@@ -349,6 +349,16 @@ fn spawn_connect(
                         dev_log!("[ws] kaos taunt: {taunt}");
                         kaos_swap.set(Some(KaosSwapAnnouncement { taunt, profile_id }));
                     }
+                    Ok(Event::FigureUpdated {
+                        figure_id,
+                        level,
+                        gold,
+                    }) => {
+                        // PLAN 11 — single-phone edit flow re-fetches its
+                        // own stats locally on save; cross-phone refresh is
+                        // a multi-phone playtest follow-up. Log-only for now.
+                        dev_log!("[ws] figure_updated: {figure_id} L{level} G{gold}");
+                    }
                     Err(err) => {
                         dev_warn!("bad ws message: {err} — {text}");
                     }

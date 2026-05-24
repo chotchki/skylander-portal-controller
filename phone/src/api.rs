@@ -353,6 +353,23 @@ pub async fn fetch_figure_stats(profile_id: &str, figure_id: &str) -> Option<Fig
     }
 }
 
+/// `POST /api/profiles/:profile_id/figures/:figure_id/edit` — set level + gold
+/// on the figure's working copy (PLAN 11). Returns Ok on 202, Err with the
+/// server's message on 4xx/5xx for toast surfacing.
+pub async fn post_edit_figure(
+    profile_id: &str,
+    figure_id: &str,
+    level: u8,
+    gold: u16,
+) -> Result<(), String> {
+    let url = format!(
+        "{}/api/profiles/{profile_id}/figures/{figure_id}/edit",
+        origin()
+    );
+    let body = json!({ "level": level, "gold": gold }).to_string();
+    do_fetch(&url, "POST", Some(&body)).await.map(|_| ())
+}
+
 pub async fn post_load(slot: u8, figure_id: &str) -> Result<(), String> {
     let url = format!("{}/api/portal/slot/{slot}/load", origin());
     let body = json!({ "figure_id": figure_id }).to_string();

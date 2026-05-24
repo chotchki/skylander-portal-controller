@@ -258,6 +258,7 @@
 @import "./components/reset_confirm_modal.css";
 @import "./components/game_picker.css";
 @import "./components/figure_detail.css";
+@import "./components/figure_edit_sheet.css";
 @import "./components/profile_picker.css";
 @import "./components/figure_hero.css";
 @import "./components/portal.css";

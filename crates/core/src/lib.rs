@@ -78,6 +78,48 @@ mod tests {
         let j = serde_json::to_string(&clear).unwrap();
         assert!(j.contains(r#""kind":"clear_slot""#));
         assert!(j.contains(r#""slot":7"#));
+
+        let edit = Command::EditFigure {
+            figure_id: FigureId::new("abc"),
+            level: 15,
+            gold: 5000,
+        };
+        let j = serde_json::to_string(&edit).unwrap();
+        assert!(j.contains(r#""kind":"edit_figure""#));
+        assert!(j.contains(r#""level":15"#));
+        assert!(j.contains(r#""gold":5000"#));
+        // Round-trip.
+        let back: Command = serde_json::from_str(&j).unwrap();
+        if let Command::EditFigure { level, gold, .. } = back {
+            assert_eq!(level, 15);
+            assert_eq!(gold, 5000);
+        } else {
+            panic!("not an edit_figure");
+        }
+    }
+
+    #[test]
+    fn event_figure_updated_roundtrip() {
+        let evt = Event::FigureUpdated {
+            figure_id: FigureId::new("xyz"),
+            level: 10,
+            gold: 2502,
+        };
+        let j = serde_json::to_string(&evt).unwrap();
+        assert!(j.contains(r#""kind":"figure_updated""#));
+        let back: Event = serde_json::from_str(&j).unwrap();
+        if let Event::FigureUpdated {
+            figure_id,
+            level,
+            gold,
+        } = back
+        {
+            assert_eq!(figure_id, FigureId::new("xyz"));
+            assert_eq!(level, 10);
+            assert_eq!(gold, 2502);
+        } else {
+            panic!("not a figure_updated event");
+        }
     }
 
     #[test]

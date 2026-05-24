@@ -46,6 +46,24 @@ pub fn CreditsOverlay(open: RwSignal<bool>) -> impl IntoView {
                         </section>
 
                         <section>
+                            <h3>"RPCS3"</h3>
+                            <p>
+                                "This app wraps "
+                                <a href="https://rpcs3.net" target="_blank" rel="noopener">
+                                    "RPCS3"
+                                </a>
+                                ", the open-source PlayStation 3 emulator that runs every \
+                                 Skylanders title in this collection. None of this exists \
+                                 without the years of work the RPCS3 team has poured into \
+                                 reverse-engineering the PS3 hardware. Source on "
+                                <a href="https://github.com/RPCS3/rpcs3" target="_blank" rel="noopener">
+                                    "GitHub"
+                                </a>
+                                ", licensed under GPL-2.0. Huge thanks to every contributor."
+                            </p>
+                        </section>
+
+                        <section>
                             <h3>"Figure Data"</h3>
                             <p>
                                 "Names, wiki pages, and figure metadata are derived from the "

@@ -2,7 +2,8 @@ use leptos::prelude::*;
 
 use crate::api::{fetch_figure_stats, post_load, FigureStats};
 use crate::components::{DisplayHeading, FigureHero, HeadingSize, HeroState};
-use crate::model::{GameOfOrigin, PublicFigure, Slot, SlotState, UnlockedProfile, SLOT_COUNT};
+use crate::model::{Category, GameOfOrigin, PublicFigure, Slot, SlotState, UnlockedProfile, SLOT_COUNT};
+use crate::screens::FigureEditSheet;
 use crate::{element_slug, first_empty_slot, push_toast_level, ToastLevel, ToastMsg};
 
 /// Detail view state machine.
@@ -80,6 +81,14 @@ pub(crate) fn FigureDetail(
 
     let error_msg = RwSignal::new(String::new());
 
+    // PLAN 11 — bump on edit save so the stats LocalResource re-runs and
+    // picks up the new working-copy values without a manual refetch handle.
+    let stats_rev = RwSignal::new(0u32);
+
+    // PLAN 11 — set true when the user taps STATS to open the edit sheet
+    // overlay. Sheet closes by setting back to false.
+    let show_edit_sheet = RwSignal::new(false);
+
     // Per-figure stats (PLAN 6.3). Fetches the working copy's parsed
     // level/gold/playtime/nickname when both an unlocked profile and
     // figure id are available. `None` outcome (no working copy yet,
@@ -88,6 +97,8 @@ pub(crate) fn FigureDetail(
     // available, the placeholder just makes that absence legible.
     let stats_fig_id = fig_id.clone();
     let stats: LocalResource<Option<FigureStats>> = LocalResource::new(move || {
+        // Re-fetch when stats_rev bumps (post-edit-save).
+        let _rev = stats_rev.get();
         let profile_id = unlocked_profile.get().map(|p| p.id);
         let fig_id = stats_fig_id.clone();
         async move {
@@ -97,6 +108,49 @@ pub(crate) fn FigureDetail(
             }
         }
     });
+
+    // PLAN 11 — editability gate for the STATS button.
+    // (a) Category must be a player-controllable kind (figure / sidekick /
+    //     giant / kaos). Categories with no level/gold semantics (Trap,
+    //     Vehicle, CreationCrystal, AdventurePack, Item, Other) stay disabled.
+    // (b) Figure must not currently occupy any portal slot — editing the
+    //     working copy under the game's nose would let it see stale state
+    //     after the next read; user must clear the slot first.
+    let editable_category = matches!(
+        figure.category,
+        Category::Figure | Category::Sidekick | Category::Giant | Category::Kaos
+    );
+    let fig_id_for_portal_check = fig_id.clone();
+    let on_portal = Signal::derive(move || {
+        portal.get().iter().any(|slot| match &slot.state {
+            SlotState::Loaded {
+                figure_id: Some(id),
+                ..
+            } => id == &fig_id_for_portal_check,
+            SlotState::Loading {
+                figure_id: Some(id),
+                ..
+            } => id == &fig_id_for_portal_check,
+            _ => false,
+        })
+    });
+    let stats_editable = Signal::derive(move || editable_category && !on_portal.get());
+    let stats_tooltip = move || {
+        if !editable_category {
+            format!("Editing not supported for {:?}", figure.category)
+        } else if on_portal.get() {
+            "Remove from portal before editing".to_string()
+        } else {
+            "Edit level + gold".to_string()
+        }
+    };
+
+    let max_level = max_level_for_game(game);
+
+    // Owned clones for the edit sheet closure; the view! macro below moves
+    // the original `name_display` and `fig_id` into the main render closure.
+    let edit_name = name_display.clone();
+    let edit_fig_id = fig_id.clone();
 
     let on_place = {
         let fig_id = fig_id.clone();
@@ -245,9 +299,10 @@ pub(crate) fn FigureDetail(
                     <div class="detail-action">
                         <button
                             class="detail-action-btn"
-                            disabled=true
-                            aria-label="Stats"
-                            title="Stats"
+                            disabled=move || !stats_editable.get()
+                            aria-label="Edit stats"
+                            title=stats_tooltip
+                            on:click=move |_| show_edit_sheet.set(true)
                         >
                             "\u{2630}"
                         </button>
@@ -314,7 +369,59 @@ pub(crate) fn FigureDetail(
                     "BACK TO BOX"
                 </button>
             </div>
+
+            // PLAN 11 — edit sheet overlay. Mounted only when the user taps
+            // STATS. Seeds steppers from the current stats (or 1/0 if the
+            // figure has no working copy yet — first edit forks from pack).
+            {
+                let edit_pid_fn = move || unlocked_profile.get().map(|p| p.id);
+                move || {
+                    if !show_edit_sheet.get() {
+                        return ().into_any();
+                    }
+                    let Some(pid) = edit_pid_fn() else {
+                        // Should not happen — STATS button is hidden until
+                        // a profile is unlocked, but be defensive.
+                        show_edit_sheet.set(false);
+                        return ().into_any();
+                    };
+                    let (initial_level, initial_gold) = stats
+                        .get()
+                        .as_deref()
+                        .and_then(|opt| opt.as_ref())
+                        .map(|s| (s.level, s.gold))
+                        .unwrap_or((1, 0));
+                    view! {
+                        <FigureEditSheet
+                            figure_name=edit_name.clone()
+                            profile_id=pid
+                            figure_id=edit_fig_id.clone()
+                            initial_level=initial_level
+                            initial_gold=initial_gold
+                            max_level=max_level
+                            on_close=Callback::new(move |_| show_edit_sheet.set(false))
+                            on_saved=Callback::new(move |_| stats_rev.update(|n| *n += 1))
+                        />
+                    }.into_any()
+                }
+            }
         </div>
+    }
+}
+
+/// Per-figure level cap derived from game-of-origin. Mirrors
+/// `skylander_sky_parser::max_level_for(SkyGeneration)` server-side. Earlier
+/// generations cap lower because the parser only reads earlier-era XP slots
+/// for those figures (a Giants figure's "level" is computed from xp_2011
+/// alone — see `docs/research/sky-format/SkylanderFormat.md` "Write path notes").
+fn max_level_for_game(g: GameOfOrigin) -> u8 {
+    match g {
+        GameOfOrigin::SpyrosAdventure | GameOfOrigin::Giants => 10,
+        GameOfOrigin::SwapForce => 15,
+        GameOfOrigin::TrapTeam | GameOfOrigin::Superchargers | GameOfOrigin::Imaginators => 20,
+        // CrossGame / Unknown — permissive (matches server-side game_to_generation
+        // which maps to SkyGeneration::Unknown → max 20).
+        _ => 20,
     }
 }
 
