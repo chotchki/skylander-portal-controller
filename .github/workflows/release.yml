@@ -233,17 +233,17 @@ jobs:
           path: ${{ env.RELEASE_MSI }}
           retention-days: 30
 
-      - name: Publish release (pre-release)
+      - name: Publish release
         # Only on actual tag pushes — manual dispatch leaves the
         # uploaded artifacts for inspection but doesn't publish.
-        # Pre-release flag instead of draft so assets are downloadable
-        # without unhiding a draft, but the "Latest" badge stays on
-        # the most recent stable v*.*.* (we'll flip a release to
-        # non-prerelease manually once a tag is fully validated).
+        # Past v1.5.x the pipeline has proven itself end-to-end on real
+        # tags, so we flip straight to a regular release (drops the
+        # pre-release badge); the most recent v*.*.* gets "Latest"
+        # automatically.
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          prerelease: true
+          prerelease: false
           files: |
             ${{ env.RELEASE_ZIP }}
             ${{ env.RELEASE_MSI }}
@@ -360,8 +360,16 @@ jobs:
       # if a fork ever runs this workflow, the steps no-op before
       # touching any secret.
 
+      # Signing + notarization disabled pre-1.0 — the Apple Developer ID +
+      # notarization secrets aren't provisioned in the `release`
+      # Environment yet, so these steps blow up every dispatch. Users
+      # right-click → Open the unsigned tarball binary to bypass
+      # Gatekeeper (documented in docs/dev/macos-bringup.md). Flip the
+      # `if:` guards back to the repo-owner check once the secrets land
+      # (PLAN 10.9.2 / 10.9.4 reference).
+
       - name: Import Developer ID certificate
-        if: github.repository == 'chotchki/skylander-portal-controller'
+        if: false
         env:
           MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
           MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
@@ -393,7 +401,7 @@ jobs:
           rm "$RUNNER_TEMP/cert.p12"
 
       - name: Build signed .app + .dmg
-        if: github.repository == 'chotchki/skylander-portal-controller'
+        if: false
         env:
           # Cert common name, e.g.
           # "Developer ID Application: Christopher Hotchkiss (TEAMID)".
@@ -402,7 +410,7 @@ jobs:
         run: tools/build-macos-app.sh
 
       - name: Notarize and staple .dmg
-        if: github.repository == 'chotchki/skylander-portal-controller'
+        if: false
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
@@ -435,14 +443,14 @@ jobs:
           echo "RELEASE_DMG=$DMG" >> "$GITHUB_ENV"
 
       - name: Upload signed DMG artifact
-        if: github.repository == 'chotchki/skylander-portal-controller'
+        if: false
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.RELEASE_DMG }}
           path: ${{ env.RELEASE_DMG }}
           retention-days: 30
 
-      - name: Publish release (pre-release)
+      - name: Publish release
         # Only on actual tag pushes. softprops/action-gh-release is
         # idempotent across multiple jobs uploading to the same tag —
         # whichever lane lands first creates the release, the other
@@ -451,8 +459,10 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          prerelease: true
+          prerelease: false
+          # `RELEASE_DMG` removed while signing is disabled — see the
+          # block above. Add it back to `files:` when the signing
+          # steps are re-enabled.
           files: |
             ${{ env.RELEASE_TARBALL }}
-            ${{ env.RELEASE_DMG }}
           generate_release_notes: true
