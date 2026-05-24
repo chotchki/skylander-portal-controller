@@ -2566,6 +2566,177 @@ the eventual flip-the-switch tag-push has zero surprises.
     rotation playbook in `docs/dev/release-signing.md` "Cert
     rotation / revocation".
 
+## Phase 15 - Play-through capture harness
+
+Goal: a scripted harness that records a full demo run — egui
+launcher + two phone PWAs + timed narration text — and outputs an
+MP4 plus a scrollable HTML gallery for the docs site. Replaces
+the existing static `screenshot_tour` (which has bit-rotted; the
+stale-version overlay intercepts clicks now, and per-screen stills
+don't show the *flow* anyway). Per-surface capture pipelines run
+independently, ffmpeg stitches them in post — egui can't be
+iframed alongside the PWAs, and per-surface capture decouples the
+chromedriver lifecycle from the native window capture so a stutter
+in one doesn't desync the others.
+
+**Decisions locked in 2026-05-24:** per-surface capture +
+ffmpeg-stitch composite (not single-viewport iframes — egui is
+native), MP4 + scrollable HTML gallery output, web-overlay
+narration for the PWA streams, ffmpeg drawtext burn-in for any
+narration that needs to land over the launcher.
+
+- [ ] 15.1 **Architecture + scaffolding (research-first).**
+  - [ ] 15.1.1 Capture-mechanism choice per surface, written up
+    in this PLAN entry: macOS ffmpeg `-f avfoundation` for the
+    egui launcher (Windows: `-f gdigrab`); chromedriver-driven
+    per-frame screenshot loop for each PWA (simpler than
+    Page.screencast over CDP and gives deterministic frames);
+    ffmpeg drawtext + filter_complex for compositing.
+  - [ ] 15.1.2 Time-sync model. Single harness owns the wall
+    clock. Each surface emits a start-timestamp at first frame;
+    harness records a `(t_offset, action, narration?)` timeline
+    JSON. Compositor reads the JSON to align streams + overlay
+    narration. Decouples frame drops in one surface from
+    bricking the whole capture.
+  - [ ] 15.1.3 New crate at `tools/playthrough/` (Rust binary).
+    Reuses `skylander-e2e-tests` helpers for server spawn +
+    profile injection + game launch. Adds: native screen-region
+    capture spawning, ffmpeg child orchestration, timeline JSON
+    serialisation, scenario DSL.
+
+- [ ] 15.2 **Per-surface capture — egui launcher.**
+  - [ ] 15.2.1 Launch server in a known-geometry window (fixed
+    1920x1080 fullscreen on a virtual display, or a known-x-y
+    top-left at a fixed size). Determinism is the point — the
+    compositor crops to a known rect.
+  - [ ] 15.2.2 macOS: `ffmpeg -f avfoundation -framerate 30
+    -video_size 1920x1080 -i "<screen_idx>:none" -t <duration>
+    egui.mp4`. Screen index resolved by enumerating
+    `system_profiler SPDisplaysDataType` once at harness start.
+  - [ ] 15.2.3 Windows: `ffmpeg -f gdigrab -framerate 30
+    -offset_x X -offset_y Y -video_size 1920x1080 -i desktop
+    egui.mp4`. Same crop semantics, different input filter.
+  - [ ] 15.2.4 RAII guard around the ffmpeg child so a panic in
+    the scenario kills the recorder + flushes the MP4. No
+    orphaned ffmpeg processes after a failed run.
+
+- [ ] 15.3 **Per-surface capture — phone PWAs.**
+  - [ ] 15.3.1 Per-PWA chromedriver session (2× by default;
+    extensible to N). Each at a phone viewport (390x844, iPhone
+    13 Pro). Connect to the same server instance the egui
+    harness spawned.
+  - [ ] 15.3.2 30 Hz screenshot loop per phone — fantoccini's
+    `screenshot()` returns PNG bytes, write each to a
+    timestamped frame file. Async task per phone so neither
+    blocks the other.
+  - [ ] 15.3.3 Per-phone ffmpeg pass at scenario end:
+    `ffmpeg -framerate 30 -i frame_%05d.png phone-1.mp4`.
+    Lossless or near-lossless H.264 so the composite step can
+    re-encode without compounding artifacts.
+  - [ ] 15.3.4 Frame-drop tolerance: if a screenshot fails
+    (chromedriver hiccup), reuse the previous frame's bytes
+    rather than aborting. The compositor cares about steady
+    frame rate, not perfect frame freshness.
+
+- [ ] 15.4 **Narration scripting.**
+  - [ ] 15.4.1 Scenario DSL exposes a `narrate(text, surface)`
+    primitive. `surface = PhoneA|PhoneB|Both` injects an
+    overlay div into the corresponding chromedriver session via
+    `execute()`; `surface = Launcher|Composite` adds the
+    narration to the timeline JSON for the ffmpeg drawtext
+    burn-in pass.
+  - [ ] 15.4.2 PWA-side overlay: a Leptos component
+    `<NarrationOverlay>` gated on a `?demo=1` query-string flag
+    so it never renders in real user sessions. Position:
+    bottom-center, semi-translucent dark plate, Titan One. Same
+    aesthetic as the in-game subtitle bar (`docs/aesthetic/mocks/`
+    for reference).
+  - [ ] 15.4.3 Timeline JSON schema:
+    `{ events: [{ t: 0.5, kind: "narrate", text: "...", surface: "..."}], ... }`.
+    Compositor reads this on the burn-in pass.
+
+- [ ] 15.5 **ffmpeg compositing pipeline.**
+  - [ ] 15.5.1 Layout: 1920x1080 final canvas. Top half (1920x540)
+    is the launcher; bottom half is the two PWAs side-by-side
+    (960x540 each, viewport scaled). Narration burns into a 60px
+    strip across the bottom of the composite when `surface =
+    Composite`.
+  - [ ] 15.5.2 `ffmpeg -i egui.mp4 -i phone-1.mp4 -i phone-2.mp4
+    -filter_complex "[0]scale=1920:540[a];[1]scale=960:540[b];
+    [2]scale=960:540[c];[b][c]hstack=2[bc];[a][bc]vstack=2[full];
+    [full]drawtext=...[out]" -map "[out]" composite.mp4`.
+    drawtext reads from the timeline JSON via a generated
+    drawtext filter expression (or split into multiple drawtext
+    nodes per narration line — easier).
+  - [ ] 15.5.3 Audio track: silence by default (Skylanders
+    audio is copyrighted, per CLAUDE.md Kaos non-goal). Leave
+    the audio rail in the container so users can drop in their
+    own narration voiceover post-hoc.
+
+- [ ] 15.6 **Scenario library.**
+  - [ ] 15.6.1 First-time-user flow **from empty profile DB**:
+    server boots cold with no profiles → launcher shows the
+    "add your first profile" empty state → QR scan → first-
+    profile-create wizard → PIN set → game pick → portal
+    first-load. The empty-DB bootstrap is the point — shows
+    the genuine zero-state launcher + zero-state phone-side
+    create flow that a pre-seeded harness skips over.
+    ~60-90s.
+  - [ ] 15.6.2 Co-op flow: phone B joins, both phones place
+    figures, eviction demo. ~60-120s.
+  - [ ] 15.6.3 Stat-editing flow (Phase 11 hero): open figure
+    detail, STATS button, level + gold edit, save, see stats
+    refresh on Phone B simultaneously. ~45s. Showcases 11.14
+    cross-phone refresh.
+  - [ ] 15.6.4 APPEARANCE cycling demo (Phase 11.16 hero):
+    open Spyro detail, tap APPEARANCE, cycle Dark Spyro →
+    Legendary Spyro → base. ~30s.
+  - [ ] 15.6.5 Kaos surprise demo: mid-game taunt fires, swap
+    lands, dismiss flow. ~30s.
+  - [ ] 15.6.6 Admin / manage-profiles screen tour: from the
+    kebab menu's MANAGE PROFILES action, walk the Konami gate
+    → admin grid → per-profile EDIT screen (rename, recolour,
+    Kaos opt-in toggle, PIN reset, delete-with-confirm). The
+    only flow that surfaces the parent-side controls — non-
+    obvious if you haven't gone hunting for them. ~45-60s.
+
+- [ ] 15.7 **Output: MP4 + scrollable HTML gallery.**
+  - [ ] 15.7.1 Per-scenario MP4 dropped to `docs/assets/videos/`.
+  - [ ] 15.7.2 Scenario-driven HTML gallery generator pulls
+    scene boundaries from the timeline JSON, extracts a still
+    per scene via `ffmpeg -ss <t> -frames:v 1`, emits a Jekyll
+    page at `docs/tour.md` (replacing the current static
+    screenshot tour) that lists each scenario with embedded
+    `<video>` + per-scene stills + narration text.
+  - [ ] 15.7.3 Site integration: `docs/index.md` hero gets the
+    first-time-user MP4 embedded. `docs/features.md` each
+    feature section links to the matching scenario.
+
+- [ ] 15.8 **Retire `screenshot_tour`.**
+  - [ ] 15.8.1 Delete `crates/e2e-tests/tests/screenshot_tour.rs`
+    once 15.7 lands. The play-through harness produces both the
+    video AND the per-scene stills, so the static tour has no
+    job left.
+  - [ ] 15.8.2 Delete `docs/assets/screens/*.png` (May-6 stills
+    will be obsolete once `docs/assets/videos/` exists).
+  - [ ] 15.8.3 Update CLAUDE.md "Aesthetic" section: drop the
+    "screenshots TODO" comments in `docs/index.md` /
+    `docs/features.md`, point at the play-through harness as
+    the canonical demo path.
+
+- [ ] 15.9 **CI integration (optional).**
+  - [ ] 15.9.1 Decide: does the play-through harness run in CI
+    on every push (catches regressions in the demo flow), or
+    only on tag (regen the docs videos per release)? Tag-only
+    is cheaper; per-push is more useful as a UX-regression
+    canary. Per-push wins if runtime stays under 5min per
+    scenario; pin at tag-only otherwise.
+  - [ ] 15.9.2 `release.yml` hook to upload generated MP4s as
+    release assets so the docs site can reference them by tag
+    instead of bundling them into the repo (each MP4 is likely
+    10-30 MB; bundling 5+ scenarios at every tag is ~150MB into
+    git history per release — bad).
+
 - [ ] 12.1 **Research + scaffolding (research-first, no code
   commits).**
   - [ ] 12.1.1 — AX Rust crate audit. Candidates: `accessibility-sys`
