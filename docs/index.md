@@ -31,9 +31,9 @@ This app takes over that role. It runs on the HTPC, shows a QR code on the TV at
 
 ## Project status
 
-**v1.1.0 shipped.** Core portal control works end-to-end. Profiles, PINs, multi-phone takeover with FIFO eviction, game launching with display-mode persistence, and the Skylanders-themed aesthetic are all stable. v1.1.0 added sticky disconnects (your figures stay on the portal across a PWA backgrounding or short network blip), the Kaos surprise feature (mid-game figure swaps with text-only catchphrase overlay, opt-in per profile), and a kid-friendly empty-portal UI.
+**v1.6.0 shipped.** Core portal control works end-to-end. Profiles, PINs, multi-phone takeover with FIFO eviction, game launching with display-mode persistence, and the Skylanders-themed aesthetic are all stable. The v1.x line has added sticky disconnects (figures stay placed across a PWA backgrounding or short network blip), the Kaos surprise feature (mid-game figure swaps with text-only catchphrase overlay, opt-in per profile), a Tailwind v4 rewrite of the phone CSS with shared iPad/iPhone responsive layout, per-figure stat editing (level + gold) with safe-cap guard rails, and a figure-detail APPEARANCE button that cycles through reposes without backing out to the toy box. macOS joined as a first-class platform for demo / family-member play / iOS-Simulator e2e iteration (mock driver only; no Mac AXUIElement port).
 
-Releases: [github.com/chotchki/skylander-portal-controller/releases](https://github.com/chotchki/skylander-portal-controller/releases) — Windows zip with the phone bundle embedded. See the [roadmap]({{ '/roadmap/' | relative_url }}) for what's next.
+Releases: [github.com/chotchki/skylander-portal-controller/releases](https://github.com/chotchki/skylander-portal-controller/releases) — Windows MSI + zip and macOS tar.gz, all with the phone bundle embedded. See the [roadmap]({{ '/roadmap/' | relative_url }}) for what's next.
 
 Source: [github.com/chotchki/skylander-portal-controller](https://github.com/chotchki/skylander-portal-controller)
 

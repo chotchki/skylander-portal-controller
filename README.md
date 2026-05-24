@@ -4,19 +4,18 @@ Remote-control the RPCS3 emulated Skylanders portal from a phone or iPad over yo
 
 The Windows app boots from Steam Big Picture and shows a QR code on the TV; phones scan in, pick a profile (PIN-gated), pick a game, and drive RPCS3's emulated portal slot-by-slot.
 
-**Latest release:** [v1.5.1](https://github.com/chotchki/skylander-portal-controller/releases/tag/v1.5.1) — hotfix for the v1.5.0 stat editor: edited figures now actually load in-game (v1.5.0 produced bytes that RPCS3 rejected because the parser's encrypt path silently dropped real ciphertext for empty-but-keyed blocks; fixed via a new `encrypt_figure_preserving_unwritten` that uses the source ciphertext as the unwritten-vs-empty discriminator). Also wires up the RESET action on the figure-detail screen — same hold-to-confirm modal as the slot-context reset, now lets the user revert a figure's working copy back to pack-fresh from the toy box without the figure being on the portal.
+**Latest release:** [v1.6.0](https://github.com/chotchki/skylander-portal-controller/releases/tag/v1.6.0) — edit-sheet polish + APPEARANCE wire-up + MIT relicense. Gold edits cap at 65 000 (Skylanders games refused to load figures with gold at the `u16::MAX` ceiling); the outer chevrons on the gold stepper are now jump-to-bounds (0 / 65 000) instead of ±1000 steppers. The figure-detail APPEARANCE button finally cycles through a figure's variant_group (Spyro → Dark Spyro → Legendary Spyro → …) without backing out to the toy box. Cross-phone stat edits surface live on every connected detail view, plus a "Stats saved" toast for instant confirmation. The resume-last-setup modal now waits for a game to actually launch before offering to put the slots back on the portal — earlier it would fire `post_load`s into a not-yet-running RPCS3. The repo also relicensed from Unlicense to MIT for distribution-channel friendliness ahead of the planned winget submission.
 
 For a higher-level pitch see the project site: <https://chotchki.github.io/skylander-portal-controller/>. Source-of-truth docs are in this repo: `SPEC.md` (long-form spec + Q&A), `PLAN.md` (execution checklist), and `CLAUDE.md` (compact working reference). Research writeups are under `docs/research/`.
 
 ## Releases (end-user install)
 
-1. Grab the latest `.zip` from <https://github.com/chotchki/skylander-portal-controller/releases>.
-2. Unzip somewhere persistent (Steam library, `Documents\…`, etc.).
-3. Bring your own RPCS3 install (see <https://rpcs3.net>) and your own firmware-pack of `.sky` dumps.
-4. Launch `skylander-portal-controller.exe`. First-run wizard asks for the RPCS3 path and the firmware-pack root; settings persist to `%APPDATA%\skylander-portal-controller\`.
-5. Add the resulting `.exe` to Steam (Add a Non-Steam Game) so it launches in Big Picture mode.
+1. Grab the latest **MSI** (preferred — handles upgrades cleanly) or the portable **zip** from <https://github.com/chotchki/skylander-portal-controller/releases>. Both ship the same binary; the MSI installs to `Program Files`, the zip is unpack-anywhere.
+2. Bring your own RPCS3 install (see <https://rpcs3.net>) and your own firmware-pack of `.sky` dumps.
+3. Launch `skylander-portal-controller.exe`. First-run wizard asks for the RPCS3 path and the firmware-pack root; settings persist to `%APPDATA%\skylander-portal-controller\`.
+4. Add the resulting `.exe` to Steam (Add a Non-Steam Game) so it launches in Big Picture mode.
 
-The phone bundle is embedded in the binary; no separate web server, no node, no extra files to ship. Two release artifacts per tag: **Windows x86_64 zip** (production target with the UIA driver against a real RPCS3) and **macOS arm64 tar.gz** (production target with the mock driver only — no AXUIElement port, useful for demo / family-member play / dev iteration / the iOS-Simulator e2e harness, but it doesn't drive a real RPCS3). The macOS binary isn't notarised; right-click → Open the first time to clear Gatekeeper.
+The phone bundle is embedded in the binary; no separate web server, no node, no extra files to ship. Per tag we ship: **Windows x86_64** zip + MSI (production target with the UIA driver against a real RPCS3) and **macOS arm64** tar.gz (production target with the mock driver only — no AXUIElement port, useful for demo / family-member play / dev iteration / the iOS-Simulator e2e harness, but it doesn't drive a real RPCS3). The macOS binary isn't notarised; right-click → Open the first time to clear Gatekeeper. (Both Windows Authenticode signing and macOS Developer ID notarisation are tracked but currently disabled — the winget distribution path in Phase 13 supersedes Authenticode for SmartScreen friction; macOS Tier-2 signing is waiting on cert provisioning.)
 
 ## Running in dev
 

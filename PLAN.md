@@ -2264,6 +2264,24 @@ reload), not a `.sky` mutation. Full design log:
   FigureDetail with the new figure_id — fresh stats fetch, fresh
   edit/reset enablement evaluation.
 
+- [x] 11.17 **Doc sweep — README + project site brought up to
+  v1.6.0 reality.** README pointed at v1.5.1, `docs/index.md`
+  status callout still said "v1.1.0 shipped" with v1.1.0-only
+  feature list, `docs/roadmap.md` had no Phase 11/12/13/14
+  sections, `docs/features.md` "Stat editing" claimed gold
+  spans the full `u16` (0–65535) with ±100/±1000 chevrons
+  (both wrong post-11.13), didn't mention the wired APPEARANCE
+  button (11.16) or the resume-modal game-launch gate (11.15).
+  All four files rewritten to current state. Screenshot regen
+  attempted via `screenshot_tour` e2e but the test is currently
+  red on a `.stale-body` overlay intercepting clicks
+  (`phone/src/components/stale_version.rs` hard-modal triggers
+  during the harness's test-hook session bind, predates the
+  v1.6.0 changes). Screenshot refresh deferred to **Phase 15
+  play-through harness**, which will replace the static
+  screenshot tour with the side-by-side narrated capture flow
+  anyway.
+
 ## Phase 12 - Real Mac driver (AXUIElement)
 
 macOS originally shipped as mock-driver-only — CLAUDE.md's "macOS
