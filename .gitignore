@@ -76,3 +76,5 @@ Thumbs.db
 # Re-generate locally with `cargo run -p skylander-wiki-scrape` if you need
 # the higher-resolution assets.
 /data/images/**/hero.png
+.claude/plan-bridge-state.json
+.claude/plan-bridge-state.json.lock

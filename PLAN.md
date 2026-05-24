@@ -2129,13 +2129,217 @@ reload), not a `.sky` mutation. Full design log:
     `docs/features.md` "Stat editing (v1.5.0)" section. Both
     pitched as the playtest-friction-killer they actually are.
 
+- [ ] 11.11 **Hotfix: stat-edit write path rejected by RPCS3.**
+  Discovered during the v1.5.0 Windows playtest: after editing a
+  single level on a figure via the new STATS sheet, RPCS3 refused
+  to load the resulting `.sky`. All unit tests (round-trip,
+  idempotence, CRC validity) pass — parser thinks the bytes are
+  valid, but the game disagrees. Something we don't validate is
+  wrong. **Blocks the v1.5.0 feature from actually being usable**
+  even though the code shipped clean. Faster iteration possible
+  once Phase 12 (real Mac driver) lands, but doesn't have to wait
+  on it — the bytes can be inspected here on Mac.
+  - [ ] 11.11.1 — Empirical reproduction on Mac. Edit Spyro's
+    level via the running dev server + iPhone sim. Locate the
+    resulting working copy at
+    `dev-data/working/<profile>/<figure_id>.sky`. Drop into Mac
+    RPCS3's Skylanders Manager dialog manually. Capture the exact
+    rejection message (RPCS3 log + on-screen modal) and the
+    relevant byte hex via `crc_probe`.
+  - [ ] 11.11.2 — Byte-diff against known-good. Take a real
+    played Spyro from `~/Games/ps3/skylanders/`. Apply the same
+    edit through our code. Compare bytes against a fresh dump of
+    the same figure with the same XP/gold reached via actual
+    in-game play. Diff narrows the suspect region.
+  - [ ] 11.11.3 — Suspect inventory (start here). Likely
+    culprits in order of suspicion:
+    - (a) Big-CRC at struct `0x0A` — copy_region preserves its
+      *data* but did we get its source-mirror version right?
+      Verify by reading both mirrors' CRCs at `0x0A` pre/post.
+    - (b) Region B's CRC range — we cover struct `0x72..0xB0`
+      per the spec, but bytes beyond 0xB0 (block 0x15) might
+      have a CRC of their own that we ignore.
+    - (c) Mifare sector-trailer corruption — `copy_region`
+      skips them, but maybe one slipped through somewhere.
+    - (d) Per-block AES re-encrypt: the key derivation includes
+      the block number, but is there a per-block CRC INSIDE the
+      encrypted payload we'd need to recompute?
+    - (e) A "this figure was modified" or "last-write timestamp"
+      field RPCS3 cross-checks against XP/gold (not in the
+      documented spec).
+  - [ ] 11.11.4 — Fix + regression test. Once root cause
+    identified, fix in `crates/sky-parser/src/lib.rs` and add a
+    test fixture or example that reproduces the failure mode
+    without needing real RPCS3 in the loop.
+
+- [ ] 11.12 **Wire up the RESET button (was placeholder).**
+  `phone/src/screens/figure_detail.rs:265-275` has the RESET action
+  button with `disabled=true` — same placeholder pattern STATS used
+  to have. Reset-to-fresh logic exists server-side already
+  (`working_copies::reset_to_fresh`); the phone just needs to call
+  it. User-discovered alongside 11.11.
+  - [ ] 11.12.1 — `post_reset_figure(profile_id, figure_id)` added
+    to `phone/src/api.rs`.
+  - [ ] 11.12.2 — `POST /api/profiles/:pid/figures/:fid/reset`
+    route on the server. Same portal-occupancy guard as edit
+    (don't reset while the figure is loaded; 409 otherwise).
+  - [ ] 11.12.3 — Wire the RESET button: remove `disabled=true`,
+    add confirm modal (destructive — kid taps shouldn't nuke
+    progress). Reuse `ResetConfirmModal` if it fits, else a new
+    modal in the same style.
+  - [ ] 11.12.4 — Broadcast `Event::FigureUpdated` so the stats
+    strip refreshes (same broadcast 11.4 already wired up).
+
+## Phase 12 — Real Mac driver (AXUIElement)
+
+macOS originally shipped as mock-driver-only — CLAUDE.md's "macOS
+support" section explicitly calls a real Mac driver "an explicit
+non-goal." PLAN 11's v1.5.0 ship inverted the value calc: every
+write-path bug requires a Mac → Windows zip round-trip to validate,
+and 11.11 surfaced exactly how painful that is. AXUIElement is
+macOS's accessibility API — Qt apps generally expose accessibility
+on both platforms, so the Windows UIA driver's general shape should
+port. **Status of AX exposure in RPCS3 is unknown until we probe**
+(12.1.2 is the go/no-go gate).
+
+If AX doesn't work, fallback paths are: (a) AppleScript via
+`osascript` (cruder, less reliable); (b) keystroke synthesis via
+`cliclick` (Steam-Overlay-vulnerable, same class of problem the
+Windows driver moved away from in CLAUDE.md "RPCS3 window/menu
+gotchas"). Either fallback is its own meaningful detour; flag it at
+12.1.2 outcome.
+
+- [ ] 12.1 **Research + scaffolding (research-first, no code
+  commits).**
+  - [ ] 12.1.1 — AX Rust crate audit. Candidates: `accessibility-sys`
+    (raw bindings), `accessibility` (higher-level),
+    `objc2-app-kit` + `objc2-accessibility` (modern + actively
+    maintained). Pick one based on API completeness for menu
+    walking + action invocation, maintenance status, license.
+    Output: choice + rationale in this PLAN entry.
+  - [ ] 12.1.2 — **RPCS3 AX exposure probe (go/no-go gate).**
+    Mac equivalent of `tools/uia-probe/`. Walk RPCS3's process
+    tree and dump the AX hierarchy of (a) main window menu bar,
+    (b) running game window, (c) Skylanders Manager dialog
+    (open it manually first). Critical question: does Qt-on-Mac
+    expose `AXMenu` / `AXMenuItem` with usable `AXPress`
+    actions, or does it route everything through generic groups?
+    If the latter, drop to a fallback path before writing any
+    driver code.
+  - [ ] 12.1.3 — Permission flow research. `AXIsProcessTrusted()`
+    API; the System Settings deep-link URL
+    (`x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility`).
+    UX: on first launch, prompt the user, deep-link them to the
+    right pane, poll until granted.
+  - [ ] 12.1.4 — Restructure decision (recommended (C)):
+    - (A) Keep `crates/rpcs3-control/` shared with
+      `cfg(target_os = …)` modules alongside the existing Windows
+      ones. Simpler; shared trait + types.
+    - (B) Split into `rpcs3-control-windows` and
+      `rpcs3-control-macos` with shared trait in
+      `rpcs3-control-core`. Cleaner build; more file churn.
+    - (C) Hybrid: shared trait + mock in `rpcs3-control`,
+      platform-specific code via cfg-gated submodules. Lowest
+      churn; matches existing pattern. Pick + document.
+
+- [ ] 12.2 **AX probe tool (`tools/ax-probe/`).**
+  - [ ] 12.2.1 — New crate at `tools/ax-probe/` with Cargo.toml +
+    `src/main.rs`. CLI accepts `--pid <rpcs3_pid>` and walks the
+    AX tree printing roles / titles / positions / actions. Saves
+    output to `docs/research/mac-ax-probe.md` as a permanent
+    reference.
+  - [ ] 12.2.2 — Findings + Mac gotchas section added to
+    `docs/research/game-launch-window-mgmt.md` (or a Mac-specific
+    sibling) in the same format as the Windows section already
+    there.
+
+- [ ] 12.3 **`AxPortalDriver` implementation
+  (`crates/rpcs3-control/`).**
+  - [ ] 12.3.1 — Mac-side trait impl using the AX crate from
+    12.1.1. Mirror `UiaPortalDriver`'s public surface so the
+    `PortalDriver` trait abstraction holds.
+  - [ ] 12.3.2 — Menu navigation: walk Menu Bar → Manage →
+    Portals and Gates → Skylanders Portal. Use `AXPress` if
+    available; fall back to keystroke synthesis only if 12.1.2
+    confirms AX is unusable for menus.
+  - [ ] 12.3.3 — Slot operations (LoadFigure, ClearSlot) via
+    the Skylanders Manager dialog's per-slot buttons.
+  - [ ] 12.3.4 — File dialog (NSOpenPanel) interaction for the
+    file picker. Options: AX-driven path entry on the path field,
+    or `cmd-shift-G` "Go to Folder" + type path. Pick whichever
+    AX exposes cleanly.
+  - [ ] 12.3.5 — Off-screen window hide. Mac equivalent of Win32
+    `SetWindowPos`: AX `kAXPositionAttribute` (or fall back to
+    `osascript`). RAII guard like `hide_dialog_offscreen` on
+    Windows.
+
+- [ ] 12.4 **Mac `RpcsProcess`.**
+  - [ ] 12.4.1 — Spawn via `open -na <RPCS3.app> --args
+    <eboot_path>` OR direct exec of
+    `<RPCS3.app>/Contents/MacOS/rpcs3`. Decision documented
+    (open -na for proper bundle launch semantics; direct exec
+    for tighter process management).
+  - [ ] 12.4.2 — EBOOT.BIN CLI passthrough (`launch_with_eboot`
+    parity).
+  - [ ] 12.4.3 — Crash detection (parent process wait + reap).
+  - [ ] 12.4.4 — Force-kill on shutdown.
+  - [ ] 12.4.5 — `RPCS3.buf` lockfile cleanup (same hazard as
+    Windows — see CLAUDE.md "RPCS3 window/menu gotchas").
+
+- [ ] 12.5 **Wizard + config (Mac-aware).**
+  - [ ] 12.5.1 — RPCS3.app picker. Default search paths:
+    `/Applications/RPCS3.app`, `~/Applications/RPCS3.app`.
+  - [ ] 12.5.2 — Firmware-pack root picker. Same flow as Windows.
+  - [ ] 12.5.3 — AX permission detection + prompt-to-grant. If
+    `AXIsProcessTrusted()` is false, surface a modal explaining
+    what's needed and offer a deep-link button. Poll until
+    granted (or user dismisses).
+
+- [ ] 12.6 **Driver wiring + feature flags.**
+  - [ ] 12.6.1 — `SKYLANDER_PORTAL_DRIVER=ax` env var routing in
+    `main.rs`. `mock` and `uia` still work on their respective
+    platforms.
+  - [ ] 12.6.2 — `cfg(target_os = "macos")` gating for the AX
+    driver impl + its dependencies (Linux/Windows builds don't
+    pull in macOS-only deps).
+  - [ ] 12.6.3 — Default driver selection per platform: Windows →
+    `uia`, macOS → `ax`, others → `mock`. CLI/env override always
+    wins.
+
+- [ ] 12.7 **Tests.**
+  - [ ] 12.7.1 — `crates/e2e-tests/tests/live_mac_integration.rs`
+    — Mac equivalent of `live_integration.rs`. Spawn RPCS3 with a
+    real game, drive a load/clear cycle, assert via the WS event
+    stream. `#[ignore]` (requires real RPCS3 + game on the
+    running machine).
+  - [ ] 12.7.2 — AX-permission-missing path: unit test the
+    wizard's detection + error message (mock `AXIsProcessTrusted`).
+  - [ ] 12.7.3 — Manual verification checklist in
+    `docs/dev/macos-bringup.md`: install RPCS3 + Skylanders Trap
+    Team, grant AX permission, run server with
+    `SKYLANDER_PORTAL_DRIVER=ax`, edit a figure, verify it loads
+    in the actual game.
+
+- [ ] 12.8 **Docs.**
+  - [ ] 12.8.1 — SPEC.md Round 8 Q&A: why we reversed the
+    Mac-driver non-goal (v1.5.0 playtest friction; Mac → Windows
+    round-trips were dominating debug time).
+  - [ ] 12.8.2 — CLAUDE.md update: remove the "Mac driver is an
+    explicit non-goal" claim from the macOS section; add an AX
+    gotchas section paralleling the existing "RPCS3 window/menu
+    gotchas" for Windows.
+  - [ ] 12.8.3 — `docs/dev/macos-bringup.md` gets a "Real driver
+    path" section explaining the AX permission grant + the same
+    env var setup as Windows.
+
 ## Non-goals
 
 - No bundling of RPCS3 or `.sky` files (piracy concern).
-- No Linux support — production targets are Windows + macOS. macOS
-  ships the mock driver only (no AXUIElement-based driver to talk to
-  Mac RPCS3); .app bundle + code signing are deferred (10.6.3) unless
-  Gatekeeper friction proves blocking.
+- No Linux support — production targets are Windows + macOS. Both
+  now ship with real drivers (Windows UIA, macOS AX); Linux can
+  build and run with the mock driver but no plans to add Linux
+  GUI automation. .app bundle + code signing on Mac are deferred
+  (10.6.3) unless Gatekeeper friction proves blocking.
 - No user-entered figure names.
 - No audio (text-only Kaos to dodge copyright).
 - No live wiki scraping at runtime — data is committed to the repo.
