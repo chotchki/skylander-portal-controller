@@ -1,7 +1,8 @@
 # RPCS3 integration strategy — patched upstream + IPC (decision record)
 
-**Status:** Accepted; spike 16.1.1 done (seam location — strong go). Live
-prototyping (16.1.2 / 16.1.3) pending on the Windows HTPC.
+**Status:** Accepted; spike 16.1.1–16.1.4 **done — GO, validated in-game on the
+Windows HTPC (2026-05-28)**. P1 (portal control) + P2 (window handle) both proven
+over an AF_UNIX IPC channel with zero dialog/UIA. Proceed to 16.2 (vendoring + CI).
 **Date:** 2026-05-28.
 **Pin:** RPCS3 master `c11979d` (2026-05-29) — latest-master pin chosen for
 newest game-compat + crash fixes; rebase cadence is cheap because every patch is
@@ -174,3 +175,50 @@ is small).
 Go. P1 reuses the exact GUI-proven API on a stable 57-line file; P2's handle is
 already exposed and the no-gui mode already ships. Live in-game verification
 (16.1.2) + the window prototype (16.1.3) move to the Windows HTPC.
+
+## Live spike results — 16.1.2 + 16.1.3 (HTPC, 2026-05-28) — **GO confirmed**
+
+Built patched RPCS3 (master `c11979d`) on the Windows HTPC and validated both
+seams in-game. Build recipe + toolchain gotchas: `docs/dev/rpcs3-fork-htpc-bringup.md`.
+
+### P1 — portal control over IPC ✅ (16.1.2)
+- Patch is **one file + 3 one-line accessors**: a self-contained listener in
+  `Emu/Io/Skylander.cpp` (started once from the `usb_device_skylander` ctor) plus
+  `first_free_slot/slot_loaded/slot_serial` on `sky_portal` in `Skylander.h`. No new
+  `.cpp`, no `rpcs3.vcxproj` edit. Confirmed cheap-tier exactly as predicted.
+- **Transport = AF_UNIX domain socket**, not loopback TCP — no Windows-firewall
+  consent prompt, no port conflicts, native on Win10 1803+/Win11 + macOS (one
+  codepath). Mirrors the AF_UNIX server already in `Emu/GDB.cpp`. (Controller side
+  on Windows: tokio + a uds-windows shim; see the IPC-transport memory.)
+- Commands: `LOAD <path.sky>` → `g_skyportal.load_skylander` (mirrors
+  `skylander_dialog::load_skylander_path`), `CLEAR <slot>` → `remove_skylander`,
+  `STATUS`, `PING`. **Result:** booted Skylanders Giants `--no-gui` direct-EBOOT;
+  over the socket, `LOAD` made Stealth Elf appear on the in-game portal and `CLEAR`
+  removed her — **zero dialog interaction, zero UI automation.** USB
+  control/interrupt path untouched.
+- **Clean emulator-state signal (no log scraping / no shader-compile guessing):**
+  `STATE` + a 1 Hz **heartbeat** push `Emu.GetStatus()` (running/paused/frozen/…),
+  the `g_progr_*` boot/shader-compile progress, and the RSX `int_flip_index` frame
+  counter. Observed frames advancing +60/s while `status=running, progr=8/8`. This
+  is exactly the liveness/freeze signal the 16.7 supervisor needs (freeze =
+  `running` + frames stalled).
+
+### P2 — window lifecycle ✅ (16.1.3)
+- Patch is **two small hunks** in `rpcs3qt/gs_frame.cpp` + one `extern` global:
+  env-gated borderless + no-focus-steal flags (`Qt::FramelessWindowHint |
+  Qt::WindowDoesNotAcceptFocus` under `SKYLANDER_BORDERLESS`), and publish
+  `winId()` to `g_game_window_handle` after `create()`. IPC `WINDOW` command returns
+  it. (Global declared inline in the two `.cpp` that touch it — deliberately NOT in
+  the widely-included `GSFrameBase.h`, to keep the rebuild tiny.)
+- **Result:** controller read `handle=0x120412` over IPC, then `SetWindowPos`
+  (SWP_NOACTIVATE) moved/resized the borderless game window `(0,0,1728,894)` →
+  `(80,80,1280,720)` — verified by `GetWindowRect` and visually on the TV. Native
+  handle is real and positionable; no focus-steal.
+
+### 16.1.4 decision: **GO.**
+Both patches landed in the top two maintenance tiers as the thesis predicted (P1 ≈
+one file, P2 ≈ two small hunks; both shallow + additive on rarely-churning seams).
+No deeper-than-expected surprises. Proceed to **16.2** (vendor RPCS3 as a submodule
+at `c11979d` + the patch series + CI lane). Performance note: stock dev config runs
+Giants laggy (SPU Block Size `Safe` + verbose logging) — orthogonal to the portal
+redesign; addressed by the per-game config strategy (16.7.4 / 16.9).

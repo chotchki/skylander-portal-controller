@@ -2878,17 +2878,22 @@ isolation) and tracks upstream cheaply by keeping every patch shallow + additive
 Decision record + rejected alternatives (strip-down fork, virtual USB, in-process
 link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
 
-- [ ] 16.1 **Spike / go-no-go gate (no production code).**
+- [x] 16.1 **Spike / go-no-go gate (no production code).** — GO (HTPC 2026-05-28).
   - [x] 16.1.1 — Clone RPCS3 at a pinned tag; locate the emulated Skylander USB
     device + the GS-frame window-creation point. Record file paths + function
     seams in the decision doc.
-  - [ ] 16.1.2 — P1 prototype: feed figure bytes into the emulated Skylander
-    device over a loopback socket; confirm a no-GUI direct-boot game sees a
-    load/clear with zero dialog interaction.
-  - [ ] 16.1.3 — P2 prototype: create the game window borderless at a supplied
+  - [x] 16.1.2 — P1 prototype: feed figure bytes into the emulated Skylander
+    device over an AF_UNIX socket; confirm a no-GUI direct-boot game sees a
+    load/clear with zero dialog interaction. **DONE** — Giants saw Stealth Elf
+    load/clear over the socket; patch ≈ one file. Added a clean STATE query +
+    1 Hz heartbeat (Emu status + g_progr compile progress + RSX flip count).
+  - [x] 16.1.3 — P2 prototype: create the game window borderless at a supplied
     geometry without stealing focus, and report its native handle over IPC.
-  - [ ] 16.1.4 — Go/no-go decision recorded: patch depth confirmed shallow →
-    proceed; deeper than expected → revisit.
+    **DONE** — gs_frame env-gated borderless + no-focus-steal; IPC `WINDOW`
+    returned the HWND; controller `SetWindowPos`'d it (verified on-screen).
+  - [x] 16.1.4 — Go/no-go decision recorded: patch depth confirmed shallow →
+    proceed. **GO** — P1 ≈ one file, P2 ≈ two small hunks, both additive on
+    rarely-churning seams. See `docs/research/rpcs3-integration-strategy.md`.
 
 - [ ] 16.2 **Vendored RPCS3 + CI.**
   - [ ] 16.2.1 — Add RPCS3 as a git submodule pinned to the spike's known-good tag.
@@ -2942,3 +2947,17 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
     driver to fallback; drop the Mac-AX-as-production framing.
   - [ ] 16.8.4 — SPEC.md Q&A entry: why we moved from GUI automation to a
     patched-upstream IPC path.
+
+- [ ] 16.9 **Emulator configuration with the GUI hijacked (no-GUI runtime).**
+  RPCS3 config is file-based YAML and `--no-gui` is per-launch (not a build-time
+  removal) — the full settings GUI is one plain launch away. So:
+  - [ ] 16.9.1 — Controller writes/ships RPCS3 config files directly: global
+    `config.yml`, per-game `config/custom_configs/config_<SERIAL>.yml` (this IS
+    the 16.7.4 per-game tuning), `config/vfs.yml`, input configs. Curated,
+    version-controlled, applied before boot — no GUI.
+  - [ ] 16.9.2 — First-launch machine setup: firmware install via
+    `rpcs3 --installfw <PUP>` (headless) or one GUI pass; default Vulkan +
+    generated sane `config.yml`. Folds into the existing first-launch flow.
+  - [ ] 16.9.3 — On-demand escape hatch: launcher "RPCS3 Settings" action runs
+    the SAME binary WITHOUT `--no-gui` for rare/advanced config; it writes the
+    same YAML the `--no-gui` boots consume.
