@@ -2867,3 +2867,78 @@ narration that needs to land over the launcher.
   (10.6.3) unless Gatekeeper friction proves blocking.
 
 
+
+
+## Phase 16 - RPCS3 integration via patched upstream + IPC (research-first)
+
+Replace the fragile GUI-automation control path (Windows UIA / planned macOS
+AX) with a thin **patch series on a pinned upstream RPCS3** + arm's-length
+**IPC**, run in **no-GUI** mode. Keeps RPCS3 a separate process (crash
+isolation) and tracks upstream cheaply by keeping every patch shallow + additive.
+Decision record + rejected alternatives (strip-down fork, virtual USB, in-process
+link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
+
+- [ ] 16.1 **Spike / go-no-go gate (no production code).**
+  - [x] 16.1.1 — Clone RPCS3 at a pinned tag; locate the emulated Skylander USB
+    device + the GS-frame window-creation point. Record file paths + function
+    seams in the decision doc.
+  - [ ] 16.1.2 — P1 prototype: feed figure bytes into the emulated Skylander
+    device over a loopback socket; confirm a no-GUI direct-boot game sees a
+    load/clear with zero dialog interaction.
+  - [ ] 16.1.3 — P2 prototype: create the game window borderless at a supplied
+    geometry without stealing focus, and report its native handle over IPC.
+  - [ ] 16.1.4 — Go/no-go decision recorded: patch depth confirmed shallow →
+    proceed; deeper than expected → revisit.
+
+- [ ] 16.2 **Vendored RPCS3 + CI.**
+  - [ ] 16.2.1 — Add RPCS3 as a git submodule pinned to the spike's known-good tag.
+  - [ ] 16.2.2 — Patch-series layout (P1/P2 as ordered patches or a tracked
+    branch) + a documented rebase-onto-new-tag procedure.
+  - [ ] 16.2.3 — CI lane: apply the patch series to the pinned tag and build the
+    patched RPCS3 for Windows + macOS.
+
+- [ ] 16.3 **P1 — IPC portal control patch (upstream side).**
+  - [ ] 16.3.1 — IPC endpoint on the emulated Skylander device exposing
+    load(slot, bytes) / clear(slot) / query_state().
+  - [ ] 16.3.2 — Protocol definition (framing, slot model, error responses)
+    shared with the controller; documented in the decision doc.
+
+- [ ] 16.4 **P2 — window-lifecycle patch (upstream side).**
+  - [ ] 16.4.1 — Game window created borderless/undecorated at a
+    controller-supplied geometry, no focus-steal.
+  - [ ] 16.4.2 — Window emits its native handle over the IPC channel on creation.
+
+- [ ] 16.5 **`IpcPortalDriver` (controller side).**
+  - [ ] 16.5.1 — New PortalDriver impl talking the P1 protocol over the socket;
+    drops in beside UiaPortalDriver / MockPortalDriver.
+  - [ ] 16.5.2 — Driver selection: IpcPortalDriver becomes the default production
+    driver on Windows + macOS; mock unchanged; UIA retained as fallback behind
+    the env var.
+
+- [ ] 16.6 **No-GUI launch + window coordination.**
+  - [ ] 16.6.1 — Launch patched RPCS3 in no-GUI mode with direct EBOOT boot
+    (reuse `launch_with_eboot`).
+  - [ ] 16.6.2 — Host-side window coordination: position/z-order the borderless
+    viewport against the egui launcher (single-app feel). Windows: optional
+    `SetParent` nesting. macOS: coordinated windows (no cross-process embed).
+  - [ ] 16.6.3 — Retire the Skylanders Manager dialog navigation + off-screen-hide
+    path once IPC control is proven.
+
+- [ ] 16.7 **Crash/freeze supervisor (independent of portal path).**
+  - [ ] 16.7.1 — Detect crash (process exit) and freeze (liveness signal —
+    frame/log progress stall).
+  - [ ] 16.7.2 — Auto-restart: relaunch RPCS3, re-boot the game, restore portal
+    slot state.
+  - [ ] 16.7.3 — Phone-side "reconnecting…" overlay during recovery.
+  - [ ] 16.7.4 — Per-game pinned-build + config presets (SPU block size,
+    accuracy, renderer, framelimit).
+
+- [ ] 16.8 **Supersede obsoleted work + docs.**
+  - [ ] 16.8.1 — Mark Phase 12 (Mac AX driver) superseded — IPC control is
+    cross-platform; defer/delete the AX-driver tasks.
+  - [ ] 16.8.2 — Fold Phase 6.1 (window-flicker suppression) into 16.6 — no
+    dialog means no flicker hack.
+  - [ ] 16.8.3 — CLAUDE.md: new "RPCS3 integration (IPC)" section; demote UIA
+    driver to fallback; drop the Mac-AX-as-production framing.
+  - [ ] 16.8.4 — SPEC.md Q&A entry: why we moved from GUI automation to a
+    patched-upstream IPC path.

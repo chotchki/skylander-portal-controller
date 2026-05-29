@@ -1,0 +1,176 @@
+# RPCS3 integration strategy — patched upstream + IPC (decision record)
+
+**Status:** Accepted; spike 16.1.1 done (seam location — strong go). Live
+prototyping (16.1.2 / 16.1.3) pending on the Windows HTPC.
+**Date:** 2026-05-28.
+**Pin:** RPCS3 master `c11979d` (2026-05-29) — latest-master pin chosen for
+newest game-compat + crash fixes; rebase cadence is cheap because every patch is
+shallow + additive (see patch-depth table).
+**HTPC handoff:** `docs/dev/rpcs3-fork-htpc-bringup.md`.
+**Supersedes:** Phase 12 (Mac AX driver), Phase 6.1 (RPCS3 window-flicker
+suppression), and the existing Windows UIA portal driver as the *production*
+control path. Those remain the fallback until the IPC path is proven.
+
+## Problem
+
+The controller currently wraps a stock RPCS3 by **driving its GUI** — UI
+Automation on Windows (`UiaPortalDriver`), a planned AXUIElement port on macOS
+(Phase 12), plus a pile of Win32 window juggling to hide the Skylanders Manager
+dialog and suppress flicker (Phase 6.1). Two standing pains:
+
+1. **GUI automation is fragile.** Driving the Skylanders Manager dialog from
+   outside (UIA / AX) is brittle, platform-specific, and duplicated per OS.
+2. **Some games crash / freeze.** This is core-emulation instability, *not* a
+   portal problem — see "Crash resilience" below.
+
+## What we are NOT doing (rejected alternatives)
+
+### A. Strip-down fork — a "Skylanders-only" emulator
+Rejected. A Skylanders game is a full PS3 game; running it requires the entire
+PS3 stack (PPU + SPU recompilers, RSX/Vulkan, cell memory model, LV2
+kernel/syscalls, SELF loader, firmware modules). None of that is optional and
+none of it is Skylanders-specific. The only genuinely deletable code (Qt GUI,
+other USB peripherals) is the cheap ~5%; you'd keep every expensive piece.
+Worse, stripping/refactoring core code **destroys cheap upstream tracking** —
+game-compat and crash fixes come *from* upstream, and a divergent fork freezes
+you out of them. Stripping increases maintenance; it doesn't reduce it.
+
+### B. Host virtual-USB device + RPCS3 libusb passthrough
+Rejected. RPCS3 does support libusb passthrough, but presenting a *fake* Portal
+of Power on the host is an OS-kernel problem that is hardest on exactly our ship
+targets: Windows needs a **signed kernel-mode virtual USB driver** (or families
+disabling driver-signature enforcement — a non-starter); macOS DriverKit needs
+Apple-granted entitlements (effectively infeasible). Clean only on Linux, which
+we don't ship. It also forces us to re-implement the full portal USB protocol
+instead of reusing RPCS3's already-correct emulated device.
+
+### C. In-process / single-binary link (compile RPCS3 into the controller)
+Rejected on engineering grounds (licensing is a non-issue for this project — see
+below). Three killers:
+- **Crash isolation.** Games crash/freeze. As separate processes, a crash is
+  *recoverable* (supervisor restarts + restores state). Linked in-process, every
+  emulator crash takes down the web server, the phone WS sessions, and the
+  launcher with it.
+- **Two event-loop owners.** eframe/winit owns the main-thread event loop;
+  RPCS3's GS frame wants to own windows/events too. Merging two GUI frameworks'
+  event loops in one process is fragile.
+- **RPCS3 isn't a library.** Turning it into a linkable unit is a deep
+  restructuring patch on churning app/frame code — the expensive-to-rebase tier.
+
+## Decision: patch series on pinned upstream + arm's-length IPC
+
+Keep RPCS3 a **separate process**. Vendor it as a git submodule + a **thin patch
+series** applied to a **pinned upstream tag** in CI. Control the portal over a
+local **IPC** channel. Run RPCS3 in **no-GUI mode** with direct EBOOT boot.
+
+### The maintenance lever: patch depth × churn
+
+A carried patch is cheap to rebase only when it is **shallow + additive** and
+lands on **rarely-changing** code. It becomes fork-grade maintenance when it
+**rewrites churning core**. This is the rule that keeps "track upstream cheaply"
+true. Every patch must stay in the top two tiers:
+
+| Patch | Depth | Upstream churn | Rebase cost |
+|---|---|---|---|
+| **P1** — IPC control of the emulated Skylander USB device (load/clear/query) | shallow, one isolated file | near-zero | free |
+| **P2** — window-lifecycle hook: create the game window borderless at a supplied geometry, no focus-steal, report its native handle over IPC | shallow, additive, GS-frame seam | low–moderate | cheap |
+| **(P3)** — render RPCS3's output *into a host-owned surface* (true pixel-embed) | deep, rewrites GSFrame/swapchain | high + platform-specific | **avoid** |
+
+### Architecture
+- **`IpcPortalDriver`** drops in beside `UiaPortalDriver` / `MockPortalDriver`
+  behind the existing `PortalDriver` trait, and becomes the production driver on
+  **every** platform (Windows + macOS). This is why it supersedes the Mac AX
+  driver (Phase 12) entirely: portal control is platform-agnostic over a socket.
+- **No-GUI + direct EBOOT boot** → no menu nav, no Skylanders Manager dialog, no
+  UIA/AX, minimal windows. P2 gives launch control (geometry, z-order, no flicker)
+  without touching the renderer.
+- **Window "merge" = single-app feel, not single surface.** Coordinate two
+  borderless windows via host-side window management; on Windows optionally nest
+  the viewport via `SetParent`. macOS can't embed another process's window, so
+  the design degrades to coordinated windows rather than depending on true embed.
+  P3 (true embed) stays out of scope unless a single-surface look becomes a hard
+  requirement — it's now an engineering call, not a legal one.
+
+### Crash resilience (independent of the portal mechanism)
+Games crashing/freezing is upstream emulation quality; the portal redesign does
+not fix it. Levers, all in our wheelhouse:
+- Pin a **known-good RPCS3 build per game** (we pin anyway for the patch series).
+- **Per-game config tuning** (SPU block size, PPU/SPU accuracy, renderer,
+  framelimit).
+- A **Rust crash/freeze supervisor**: detect exit *and* freeze (process wait +
+  a liveness signal), auto-restart, re-boot the game, restore portal slot state,
+  drive the phone to a "reconnecting…" overlay. Generalizes the Phase 12.4.x
+  crash-detection tasks. This is the highest-value reliability work and is
+  independent of which portal path we choose.
+
+## Licensing
+
+The user has stated license is a non-issue for this project; **GPLv2 is
+acceptable**. This simplifies the build/repo story: vendor RPCS3 as a submodule +
+patch series and distribute the patched build with no boundary-keeping ceremony.
+Note the controller would remain a *separate process* regardless — for crash
+isolation, not for licensing.
+
+## Spike (the go/no-go gate)
+
+One spike validates the whole architecture before committing:
+clone RPCS3 at a pinned tag, locate the emulated Skylander device and the
+GS-frame creation point, prototype **P1** (loopback-socket figure feed) and
+**P2** (borderless window + handle report), and confirm a no-GUI direct-boot
+game sees figure changes and hands back a positionable window with **zero dialog
+interaction**. If that works, the patch depth is proven empirically and Phase 16
+proceeds; if the seam is deeper than expected, revisit.
+
+## Spike findings — 16.1.1 (seam location)
+
+Probed against RPCS3 `c11979d` (2026-05-29), shallow clone. **Result: strong
+go — both seams are shallow + additive, confirming the patch-depth thesis.**
+
+### P1 — portal control (`Emu/Io/Skylander.h`, 57 lines, stable)
+The emulated device exposes a process-global singleton and the exact API we need,
+already public and mutex-protected (`shared_mutex sky_mutex`):
+
+```cpp
+extern sky_portal g_skyportal;          // global singleton
+class sky_portal {
+  u8   load_skylander(u8* buf, fs::file in_file);  // load → returns portal slot
+  bool remove_skylander(u8 sky_num);               // clear
+  void activate(); void deactivate(); void set_leds(u8,u8,u8);
+  skylander skylanders[8];                          // the 8-slot model
+};
+```
+
+The GUI (`rpcs3qt/skylander_dialog.cpp`) drives the portal **entirely** through
+this global — `g_skyportal.load_skylander(data.data(), std::move(sky_file))` and
+`g_skyportal.remove_skylander(cur_slot)`. Our IPC server replicates exactly that,
+minus the Qt shell. **USB protocol untouched** — `control_transfer` /
+`interrupt_transfer` read from `g_skyportal` as before. P1 patch ≈ a small IPC
+listener thread that opens a `.sky` and calls these two functions. Confirmed
+cheap-tier (file is tiny and rarely churns).
+- Nuance: `load_skylander` takes `fs::file in_file` and keeps the handle to write
+  on-tag changes back (`skylander::save()`). The controller already manages
+  working-copy `.sky` paths on disk, so passing a path is natural.
+
+### P2 — window lifecycle (`Emu/RSX/GSFrameBase.h` + `rpcs3qt/gs_frame.cpp`)
+`GSFrameBase` is a clean 36-line pure-virtual interface that **already exposes the
+native handle** we need: `virtual display_handle_t handle() const = 0;` (plus
+`show/hide/shown/client_width/client_height/toggle_fullscreen`). The concrete Qt
+window is `gs_frame`.
+
+Mode already exists: `rpcs3.cpp` defines `--no-gui` (game window, **no** main GUI
+/ menus / Skylanders dialog) and `--fullscreen` ("only useful with no-gui").
+no-gui runs the normal `gui_application` with `SetShowGui(false)` — i.e. it still
+builds a `gs_frame` for the game. (`--headless` is different: no render window at
+all — not what we want.) So **`--no-gui` is our launch mode out of the box.**
+P2 patch ≈ borderless + supplied-geometry + no-focus-steal window flags in
+`gs_frame`'s ctor, and emit `handle()` over the P1 IPC channel. Confirmed
+cheap-tier (additive; `gs_frame.cpp` churns more than `Skylander.h` but the change
+is small).
+- Staging: a basic merged experience may need *no* P2 at all — stock
+  `--no-gui --fullscreen` gives a clean game window; the borderless/geometry/
+  `SetParent` nesting is the polish tier (16.4 / 16.6.2).
+
+### Verdict
+Go. P1 reuses the exact GUI-proven API on a stable 57-line file; P2's handle is
+already exposed and the no-gui mode already ships. Live in-game verification
+(16.1.2) + the window prototype (16.1.3) move to the Windows HTPC.
