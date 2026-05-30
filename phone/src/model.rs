@@ -214,6 +214,14 @@ pub enum Event {
         #[serde(default)]
         message: String,
     },
+    /// RPCS3's settings GUI opened (`open: true`) or closed (`open: false`) on
+    /// the TV for per-game config (PLAN 16.9.3). While open, the portal is
+    /// unavailable; the phone shows a "configuring on the TV…" overlay and
+    /// dismisses it on `open: false`.
+    Rpcs3SettingsChanged {
+        #[serde(default)]
+        open: bool,
+    },
     /// A figure was scanned on the attached NFC reader. PLAN 6.5.2 — phone
     /// listens for this to drive the scan-import overlay from Prompt →
     /// Success (if open) or to fire a passive "Scanned: <name>" toast

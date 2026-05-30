@@ -3212,7 +3212,8 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
   - [x] 16.8.4 — **DONE.** SPEC.md Q&A entry added: why GUI automation → patched-upstream
     IPC (fragility of the dialog/menu path vs. a thin, shallow, additive control patch).
 
-- [ ] 16.9 **Emulator configuration with the GUI hijacked (no-GUI runtime).**
+- [~] 16.9 **Emulator configuration with the GUI hijacked (no-GUI runtime).**
+  *(16.9.0/.0b/.3 done; 16.9.1 curated-YAML + 16.9.2 firmware-install deferred past v1.)*
   RPCS3 config is file-based YAML and `--no-gui` is per-launch (not a build-time
   removal) — the full settings GUI is one plain launch away. So:
   - [x] 16.9.0 — **`config_dir` decoupling (16.9-lite, done 2026-05-29).** The
@@ -3244,22 +3245,28 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
   - [ ] 16.9.2 — *(deferred past v1)* First-launch machine setup: firmware install via
     `rpcs3 --installfw <PUP>` (headless) or one GUI pass; default Vulkan +
     generated sane `config.yml`. Folds into the existing first-launch flow.
-  - [ ] 16.9.3 — **On-demand per-game config (design decided 2026-05-30; build deferred
-    past v1).** A **CONFIGURE GAME** action in the phone's Konami-gated admin menu
-    (next to MANAGE PROFILES) launches the bundled patched binary **WITHOUT** `--no-gui`
-    / without the `SKYLANDER_BORDERLESS` + `SKYLANDER_IPC_PATH` env (so it's a plain
-    upstream RPCS3 GUI), pointed at the persisted `config_dir`. The user picks the game
-    in RPCS3 and edits its **Custom Configuration**; RPCS3 itself persists
-    `config/custom_configs/config_<SERIAL>.yml`, which the normal `--no-gui` boots
-    already consume — so **we never read or write RPCS3's YAML** (retires 16.9.1's
-    per-game writer). Constraints captured for the build:
+  - [x] 16.9.3 — **On-demand per-game config. BUILT 2026-05-30** (design pinned then
+    built same day). A **HOLD FOR GAME SETTINGS** action in the phone's kebab/admin
+    menu (grown-ups-only, next to MANAGE PROFILES, shown only when no game is running)
+    POSTs `/api/rpcs3/settings`, which launches the bundled patched binary **WITHOUT**
+    `--no-gui` / without the `SKYLANDER_BORDERLESS` + `SKYLANDER_IPC_PATH` env (a plain
+    upstream RPCS3 GUI — `RpcsProcess::launch_gui_config`), pointed at the persisted
+    `config_dir`. The user picks the game in RPCS3 and edits its **Custom Configuration**;
+    RPCS3 itself persists `config/custom_configs/config_<SERIAL>.yml`, which the normal
+    `--no-gui` boots already consume — so **we never read or write RPCS3's YAML** (retires
+    16.9.1's per-game writer). As shipped:
     - **Editing is on the TV** (Qt settings dialog needs the HTPC keyboard/mouse). The
-      phone is a trigger + a "configuring on the TV…" status surface, not an in-phone
-      settings UI. Launcher shows an opaque "RPCS3 SETTINGS OPEN" cover meanwhile.
-    - **Disabled while a game is live** — the `--no-gui` instance holds the singleton
-      lockfile + IPC socket, so the action is greyed out during play; the user quits to
-      the game picker first. (No auto-stop.)
-    - Server side: a new endpoint launches the GUI process, tracked separately from the
-      game `RpcsLifecycle` so the crash/freeze supervisor (no `--no-gui` game ⇒ no IPC
-      socket ⇒ `process: None`) treats it as a no-op; on GUI exit the launcher reveals
-      the picker again. macOS (mock) hides the action entirely.
+      phone is a trigger + a "configuring on the TV…" overlay (`Rpcs3SettingsOverlay`,
+      driven by the new `Event::Rpcs3SettingsChanged { open }`). The egui launcher
+      **minimises itself** while open (with a slow self-repaint to notice the close) and
+      restores + refocuses on exit — the Qt window owns the whole TV meanwhile.
+    - **Refused while a game is live** (409) — the `--no-gui` instance holds the singleton
+      lockfile + IPC socket; `/api/launch` likewise refuses while settings are open. No
+      auto-stop; the user quits to the picker first. **409 on the mock driver** (no real
+      RPCS3); the phone button is hidden mid-game and the server gates the rest.
+    - Server: `RpcsLifecycle.config_gui` tracks the GUI process **apart** from the game
+      `process`, so the crash/freeze supervisor (which only watches `process`) no-ops on
+      it. A one-shot `spawn_config_gui_watcher` reaps it on close → clears
+      `LauncherStatus.config_gui_open` + broadcasts `open: false`. Tests: wire round-trip
+      for `Rpcs3SettingsChanged`; live launch is HTPC-gated. Follow-ups if wanted: a
+      curated global `config.yml` default (16.9.1) + first-launch firmware install (16.9.2).

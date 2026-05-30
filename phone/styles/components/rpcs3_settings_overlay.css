@@ -1,0 +1,67 @@
+/*
+ * <Rpcs3SettingsOverlay> — "configuring on the TV…" cover (PLAN 16.9.3).
+ *
+ * Shown while RPCS3's settings GUI is open on the TV for per-game config. The
+ * portal is unavailable, so this blocks the phone and points the user at the
+ * TV. Cool blue/cyan palette (a calm "hang on, a grown-up is tuning this" cast)
+ * — distinct from the amber crash overlay and the magenta Kaos takeover.
+ *
+ * Sits just under the crash overlay (z-60) so a real crash / disconnect still
+ * wins; nothing useful happens on the phone while settings are open anyway.
+ */
+
+@layer components {
+  .rpcs3-settings-overlay {
+    @apply fixed inset-0 z-[60];
+    background:
+      radial-gradient(ellipse 80% 60% at 50% 30%, rgba(96, 165, 250, 0.16) 0%, transparent 55%),
+      radial-gradient(ellipse 60% 50% at 30% 80%, rgba(56, 189, 248, 0.10) 0%, transparent 55%),
+      linear-gradient(180deg, var(--color-sf-1) 0%, var(--color-sf-2) 55%, var(--color-sf-3) 100%);
+    animation: rpcs3-settings-in 320ms cubic-bezier(.2, .8, .3, 1) both;
+  }
+
+  .rpcs3-settings-backdrop {
+    @apply absolute inset-0 pointer-events-none;
+    background:
+      radial-gradient(ellipse 70% 55% at 50% 35%, rgba(96, 165, 250, 0.10), transparent 60%);
+    animation: rpcs3-settings-pulse 3.4s ease-in-out infinite;
+  }
+
+  .rpcs3-settings-viewport {
+    @apply relative h-full flex flex-col items-center justify-center text-center;
+    padding: 56px 28px 40px;
+    gap: 22px;
+  }
+
+  /* Monitor glyph — oversized, cool glow. Reads as "look at the TV". */
+  .rpcs3-settings-mark {
+    font-size: 64px;
+    line-height: 1;
+    text-shadow:
+      0 2px 0 rgba(0, 0, 0, 0.6),
+      0 0 18px rgba(96, 165, 250, 0.55),
+      0 0 36px rgba(56, 189, 248, 0.30);
+    animation: rpcs3-settings-bob 2.6s ease-in-out infinite;
+  }
+
+  .rpcs3-settings-body {
+    font-family: var(--font-body);
+    font-style: italic;
+    font-size: var(--text-display-sm);
+    line-height: 1.45;
+    color: var(--color-text);
+    max-width: 320px;
+    margin: 4px auto 0;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.6);
+  }
+}
+
+@keyframes rpcs3-settings-in    { from { opacity: 0; } to { opacity: 1; } }
+@keyframes rpcs3-settings-pulse { 0%, 100% { opacity: 0.7; } 50% { opacity: 1.0; } }
+@keyframes rpcs3-settings-bob   { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .rpcs3-settings-overlay,
+  .rpcs3-settings-backdrop,
+  .rpcs3-settings-mark { animation: none !important; }
+}

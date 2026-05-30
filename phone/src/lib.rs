@@ -16,8 +16,8 @@ use leptos::prelude::*;
 
 use crate::api::{fetch_games, fetch_status, fetch_version_check, VersionCheck, BUILD_TOKEN};
 use crate::components::{
-    ConnectionLost, GameCrashScreen, Header, KaosOverlay, PairingRequired, ScanOverlay,
-    StaleVersion,
+    ConnectionLost, GameCrashScreen, Header, KaosOverlay, PairingRequired, Rpcs3SettingsOverlay,
+    ScanOverlay, StaleVersion,
 };
 use crate::model::{
     Category, ConnState, Element, GameLaunched, GameOfOrigin, PublicProfile, Slot, SlotState,
@@ -203,6 +203,10 @@ pub fn App() -> impl IntoView {
     let kaos_swap = RwSignal::new(None::<KaosSwapAnnouncement>);
     let resume_offer = RwSignal::new(None::<ResumeOffer>);
     let game_crash = RwSignal::new(None::<GameCrashReason>);
+    // PLAN 16.9.3 — true while RPCS3's settings GUI is open on the TV (set by the
+    // WS `Rpcs3SettingsChanged` handler). Drives the "configuring on the TV…"
+    // overlay; the portal is unavailable for its duration.
+    let rpcs3_settings_open = RwSignal::new(false);
     let scan_overlay = RwSignal::new(ScanOverlayState::Closed);
     let reset_target = RwSignal::new(None::<ResetTarget>);
     let menu_open = RwSignal::new(false);
@@ -271,6 +275,7 @@ pub fn App() -> impl IntoView {
         manual_retry,
         kaos_swap,
         figure_updates_rev,
+        rpcs3_settings_open,
     );
 
     // Watch `conn` for transitions into Connected (i.e. WS onopen after
@@ -437,6 +442,7 @@ pub fn App() -> impl IntoView {
             </Show>
             <ResetConfirmModal reset_target toasts />
             <ScanOverlay scan_overlay toasts />
+            <Rpcs3SettingsOverlay visible=rpcs3_settings_open />
             <MenuOverlay
                 open=menu_open
                 unlocked_profile

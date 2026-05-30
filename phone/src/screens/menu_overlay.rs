@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use leptos::prelude::*;
 
-use crate::api::{post_quit_for_switch, post_shutdown};
+use crate::api::{post_open_rpcs3_settings, post_quit_for_switch, post_shutdown};
 use crate::components::{ActionButton, ActionVariant};
 use crate::gloo_timer;
 use crate::model::{GameLaunched, UnlockedProfile};
@@ -80,6 +80,24 @@ pub(crate) fn MenuOverlay(
         unlocked_profile.set(None);
         manage_gate.set(true);
         open.set(false);
+    });
+
+    // HOLD FOR GAME SETTINGS (PLAN 16.9.3) — opens RPCS3's settings GUI on the
+    // TV so a grown-up can tune the per-game emulator config. Only shown when no
+    // game is running (the server refuses it mid-game — the two RPCS3 instances
+    // would collide on the lockfile + IPC socket). On success the server
+    // broadcasts `Rpcs3SettingsChanged`, which raises the phone's
+    // "configuring on the TV…" overlay; here we just fire + close the menu.
+    let on_configure = Callback::new(move |_| {
+        leptos::task::spawn_local(async move {
+            if let Err(e) = post_open_rpcs3_settings().await {
+                push_toast(toasts, &format!("Couldn't open RPCS3 settings: {e}"));
+            }
+        });
+        leptos::task::spawn_local(async move {
+            gloo_timer(380).await;
+            open.set(false);
+        });
     });
 
     // HOLD TO SWITCH GAMES — fires after 1200ms hold. ActionButton owns
@@ -161,6 +179,18 @@ pub(crate) fn MenuOverlay(
                         icon="\u{2699}"
                         on_fire=on_manage
                     />
+
+                    // PLAN 16.9.3 — per-game emulator config. Only when no game
+                    // is running (held-to-confirm; opens RPCS3 settings on the TV).
+                    <Show when=move || current_game.get().is_none() fallback=|| ()>
+                        <ActionButton
+                            title="HOLD FOR GAME SETTINGS"
+                            description="Grown-ups only \u{00B7} tune a game\u{2019}s emulator settings on the TV"
+                            icon="\u{1F39B}"
+                            hold_duration=Some(hold_dur)
+                            on_fire=on_configure
+                        />
+                    </Show>
 
                     <Show when=move || current_game.get().is_some() fallback=|| ()>
                         <ActionButton

@@ -44,6 +44,9 @@ pub fn connect(
     // cross-phone edits and the local same-phone race where the
     // callback fires before the working copy hits disk.
     figure_updates_rev: RwSignal<u32>,
+    // PLAN 16.9.3 — set true/false on `Event::Rpcs3SettingsChanged` so the
+    // "configuring on the TV…" overlay shows while RPCS3's settings GUI is open.
+    rpcs3_settings_open: RwSignal<bool>,
 ) {
     let pending: PendingTimer = Rc::new(Cell::new(None));
 
@@ -73,6 +76,7 @@ pub fn connect(
                         manual_retry,
                         kaos_swap,
                         figure_updates_rev,
+                        rpcs3_settings_open,
                         pending.clone(),
                         0,
                     );
@@ -96,6 +100,7 @@ pub fn connect(
         manual_retry,
         kaos_swap,
         figure_updates_rev,
+        rpcs3_settings_open,
         pending,
         0,
     );
@@ -129,6 +134,7 @@ fn spawn_connect(
     // cross-phone edits and the local same-phone race where the
     // callback fires before the working copy hits disk.
     figure_updates_rev: RwSignal<u32>,
+    rpcs3_settings_open: RwSignal<bool>,
     pending: PendingTimer,
     attempt: u32,
 ) {
@@ -172,6 +178,7 @@ fn spawn_connect(
                 manual_retry,
                 kaos_swap,
                 figure_updates_rev,
+                rpcs3_settings_open,
                 pending,
                 attempt,
             );
@@ -287,6 +294,12 @@ fn spawn_connect(
                             message,
                             recovering: true,
                         }));
+                    }
+                    Ok(Event::Rpcs3SettingsChanged { open }) => {
+                        // RPCS3's settings GUI opened/closed on the TV (PLAN
+                        // 16.9.3). While open the portal is unavailable; the
+                        // "configuring on the TV…" overlay covers the phone.
+                        rpcs3_settings_open.set(open);
                     }
                     Ok(Event::ProfileChanged {
                         session_id,
@@ -436,6 +449,7 @@ fn spawn_connect(
                 manual_retry,
                 kaos_swap,
                 figure_updates_rev,
+                rpcs3_settings_open,
                 pending.clone(),
                 attempt + 1,
             );
@@ -472,6 +486,7 @@ fn schedule_reconnect(
     // cross-phone edits and the local same-phone race where the
     // callback fires before the working copy hits disk.
     figure_updates_rev: RwSignal<u32>,
+    rpcs3_settings_open: RwSignal<bool>,
     pending: PendingTimer,
     attempt: u32,
 ) {
@@ -496,6 +511,7 @@ fn schedule_reconnect(
             manual_retry,
             kaos_swap,
             figure_updates_rev,
+            rpcs3_settings_open,
             pending_for_cb,
             attempt,
         );

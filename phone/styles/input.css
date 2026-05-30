@@ -253,6 +253,7 @@
 @import "./components/pairing_required.css";
 @import "./components/stale_version.css";
 @import "./components/scan_overlay.css";
+@import "./components/rpcs3_settings_overlay.css";
 @import "./components/menu_overlay.css";
 @import "./components/resume_modal.css";
 @import "./components/reset_confirm_modal.css";

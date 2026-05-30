@@ -573,6 +573,16 @@ pub async fn post_shutdown() -> Result<(), String> {
     do_fetch(&url, "POST", None).await.map(|_| ())
 }
 
+/// Phone's CONFIGURE GAMES admin action (PLAN 16.9.3). Opens RPCS3's full
+/// settings GUI on the TV so a grown-up can edit a game's Custom Configuration
+/// with the HTPC keyboard/mouse; the server minimises the launcher meanwhile and
+/// broadcasts `Event::Rpcs3SettingsChanged`. Refused (409) while a game is
+/// running or on the mock platform.
+pub async fn post_open_rpcs3_settings() -> Result<(), String> {
+    let url = format!("{}/api/rpcs3/settings", origin());
+    do_fetch(&url, "POST", None).await.map(|_| ())
+}
+
 async fn do_fetch(url: &str, method: &str, body: Option<&str>) -> Result<String, String> {
     let opts = RequestInit::new();
     opts.set_method(method);
