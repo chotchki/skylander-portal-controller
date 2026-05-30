@@ -3135,9 +3135,16 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
     captures the LOAD arg the fake P1 server receives and asserts `is_absolute()`.
     Live: figure placed from the phone, appeared in-game ("that worked!").
 
-- [ ] 16.7 **Crash/freeze supervisor (independent of portal path).**
-  - [ ] 16.7.1 — Detect crash (process exit) and freeze (liveness signal —
-    frame/log progress stall).
+- [ ] 16.7 **Crash/freeze supervisor (independent of portal path).** *(on branch
+  `phase-16.7-supervisor` — deferred past v1, built during the CI-build wait.)*
+  - [~] 16.7.1 — **Detection: crash done already; freeze DONE (2026-05-30, branch).**
+    Crash (process exit) is the existing `spawn_crash_watchdog` → `Event::GameCrashed`.
+    Freeze: the IPC STATE poller now feeds a pure `FreezeDetector` off the heartbeat's
+    RSX frame counter (`EmuState.frames`) — once the game is **playable**, a `running`
+    status whose frames stall for `FREEZE_AFTER` (8 s) sets `LauncherStatus.frozen`
+    (edge-logged). Gated on `playable` (no false-positive during compile) and on
+    `running` (a deliberate pause reports non-running). 5 unit tests. The flag is the
+    signal; the **reaction** (un-latch `game_playable`, auto-restart) is 16.7.2.
   - [ ] 16.7.2 — Auto-restart: relaunch RPCS3, re-boot the game, restore portal
     slot state.
   - [ ] 16.7.3 — Phone-side "reconnecting…" overlay during recovery.

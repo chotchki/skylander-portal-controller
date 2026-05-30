@@ -205,6 +205,12 @@ pub struct LauncherStatus {
     /// directly above this window in the z-order. Only meaningful while
     /// `rpcs3_running`; a stale value from a prior game is ignored.
     pub game_window_handle: Option<u64>,
+    /// `true` when the game has been **playable** but its frame counter
+    /// (`EmuState.frames`, the RSX flip index) has stalled while RPCS3 still
+    /// reports `running` for `FREEZE_AFTER` — i.e. the game hung (PLAN 16.7.1).
+    /// Detected by the IPC STATE poller off the 1 Hz heartbeat's frame field.
+    /// The recovery action (auto-restart) is 16.7.2; this flag is the signal.
+    pub frozen: bool,
 }
 
 /// UI-polled view of one connected phone session. Colour / initial are
@@ -681,6 +687,46 @@ pub enum DriverJob {
     },
 }
 
+/// Frame-stall freeze detector (PLAN 16.7.1). The patched RPCS3's 1 Hz heartbeat
+/// (and `STATE`) expose the RSX flip index (`EmuState.frames`), which advances
+/// ~60/s while a game renders — the heartbeat was built to carry it precisely
+/// because "certain games love to freeze". Once the game is **playable**, a
+/// `running` status whose `frames` stops advancing for `threshold` consecutive
+/// observations means the game hung. Pure + tick-driven, so it unit-tests without
+/// a live emulator. (Recovery / auto-restart is 16.7.2; this only raises the flag.)
+struct FreezeDetector {
+    stall_ticks: usize,
+    threshold: usize,
+}
+
+impl FreezeDetector {
+    fn new(threshold: usize) -> Self {
+        Self {
+            stall_ticks: 0,
+            threshold: threshold.max(1),
+        }
+    }
+
+    /// Feed one observation. `advancing` = frames increased since the previous
+    /// tick; `running` = RPCS3 reports `status == "running"`; `playable` = the
+    /// game reached the rendering state (no freeze is declared before then —
+    /// pre-play frame stalls are normal during compile/boot). Returns whether the
+    /// game is currently considered frozen (true once stalled `threshold` ticks,
+    /// and stays true until frames resume).
+    fn observe(&mut self, advancing: bool, running: bool, playable: bool) -> bool {
+        if playable && running && !advancing {
+            self.stall_ticks = self.stall_ticks.saturating_add(1);
+        } else {
+            self.stall_ticks = 0;
+        }
+        self.stall_ticks >= self.threshold
+    }
+
+    fn reset(&mut self) {
+        self.stall_ticks = 0;
+    }
+}
+
 /// IPC `STATE`-driven playability signal (PLAN 16.6.3.1) — the clean replacement
 /// for the FPS-title sampler under the IPC driver. Drives `game_playable` off the
 /// patched emulator's own state: `running`, frames advancing, AND boot/shader
@@ -700,6 +746,14 @@ pub fn spawn_state_poller(
     /// than the FPS sampler's 1 s to ride out the brief gaps between RPCS3's compile
     /// phases (progr-done before seg-start) so the reveal lands after the menu paints.
     const SAMPLE_BUFFER: usize = 8;
+    /// A playable game whose frames stall this long (while RPCS3 still reports
+    /// `running`) is treated as frozen. Generous enough to ride out in-game level
+    /// loads / cutscene transitions (which also pause frames but recover), short
+    /// enough to catch a real hang promptly. PLAN 16.7.1.
+    const FREEZE_AFTER: std::time::Duration = std::time::Duration::from_secs(8);
+
+    // Stall ticks before declaring a freeze, derived from the poll interval.
+    let freeze_ticks = (FREEZE_AFTER.as_millis() / interval.as_millis().max(1)) as usize;
 
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(interval);
@@ -708,6 +762,7 @@ pub fn spawn_state_poller(
 
         let mut ready_run = 0usize;
         let mut last_frames = 0u64;
+        let mut freeze = FreezeDetector::new(freeze_ticks);
 
         loop {
             ticker.tick().await;
@@ -723,17 +778,24 @@ pub fn spawn_state_poller(
                 };
 
             // Ready = compile complete + actually rendering (frames advancing).
-            let ready = match &state {
+            // `advancing` + `running` double as the freeze-detector inputs (16.7.1).
+            let advancing;
+            let running;
+            let ready;
+            match &state {
                 Some(s) => {
-                    let advancing = s.frames > last_frames;
+                    advancing = s.frames > last_frames;
+                    running = s.status == "running";
                     last_frames = s.frames;
-                    s.is_playable() && advancing
+                    ready = s.is_playable() && advancing;
                 }
                 None => {
+                    advancing = false;
+                    running = false;
                     last_frames = 0;
-                    false
+                    ready = false;
                 }
-            };
+            }
             ready_run = if ready { ready_run + 1 } else { 0 };
             let stable = ready_run >= SAMPLE_BUFFER;
 
@@ -747,6 +809,8 @@ pub fn spawn_state_poller(
                 if !st.rpcs3_running {
                     ready_run = 0;
                     last_frames = 0;
+                    freeze.reset();
+                    st.frozen = false;
                 }
                 // Latch: once playable, stay playable while running (freeze
                 // detection that un-latches is the 16.7 supervisor's job).
@@ -760,6 +824,21 @@ pub fn spawn_state_poller(
                         info!("rpcs3 game no longer playable (IPC STATE)");
                     }
                     st.game_playable = new_playable;
+                }
+                // Freeze detection (PLAN 16.7.1): once playable, a `running` status
+                // whose frame counter has stalled for FREEZE_AFTER means the game
+                // hung. Edge-logged; the flag is the signal the 16.7.2 recovery acts on.
+                let frozen_now = freeze.observe(advancing, running, st.game_playable);
+                if st.frozen != frozen_now {
+                    if frozen_now {
+                        warn!(
+                            stalled_at_frame = last_frames,
+                            "rpcs3 game FROZEN — frames stalled while running (PLAN 16.7.1)"
+                        );
+                    } else {
+                        info!("rpcs3 game recovered from freeze — frames advancing again");
+                    }
+                    st.frozen = frozen_now;
                 }
                 // Compile subtitle from the boot/shader progress, while it runs.
                 let subtitle = match &state {
@@ -1385,6 +1464,60 @@ mod tests {
     use super::*;
     use skylander_core::{Category, Element, GameOfOrigin};
     use std::path::PathBuf;
+
+    // ---- freeze detector (PLAN 16.7.1) --------------------------------------
+
+    #[test]
+    fn freeze_detector_fires_only_after_threshold() {
+        let mut d = FreezeDetector::new(3);
+        // Stalled (not advancing), running, playable — but not yet at threshold.
+        assert!(!d.observe(false, true, true));
+        assert!(!d.observe(false, true, true));
+        // 3rd consecutive stall tick → frozen.
+        assert!(d.observe(false, true, true));
+        // Stays frozen while still stalled.
+        assert!(d.observe(false, true, true));
+    }
+
+    #[test]
+    fn freeze_detector_resets_when_frames_advance() {
+        let mut d = FreezeDetector::new(2);
+        assert!(!d.observe(false, true, true)); // stall 1 (< threshold)
+        assert!(d.observe(false, true, true)); // stall 2 -> frozen
+        // A single advancing frame clears the stall and the frozen state.
+        assert!(!d.observe(true, true, true));
+        assert!(!d.observe(false, true, true)); // stall back to 1
+    }
+
+    #[test]
+    fn freeze_detector_ignores_stalls_before_playable() {
+        // During compile/boot the game isn't playable yet — frame stalls there
+        // are normal and must not be mistaken for a freeze.
+        let mut d = FreezeDetector::new(2);
+        assert!(!d.observe(false, true, false));
+        assert!(!d.observe(false, true, false));
+        assert!(!d.observe(false, true, false));
+    }
+
+    #[test]
+    fn freeze_detector_ignores_paused_status() {
+        // A deliberate pause reports a non-"running" status, so `running=false`;
+        // that's not a freeze no matter how long frames sit still.
+        let mut d = FreezeDetector::new(2);
+        assert!(!d.observe(false, false, true));
+        assert!(!d.observe(false, false, true));
+        assert!(!d.observe(false, false, true));
+    }
+
+    #[test]
+    fn freeze_detector_reset_clears_stall() {
+        let mut d = FreezeDetector::new(2);
+        assert!(!d.observe(false, true, true));
+        d.reset();
+        // After reset the next stall starts the count over.
+        assert!(!d.observe(false, true, true));
+        assert!(d.observe(false, true, true));
+    }
 
     fn fig(id: &str, canonical: &str) -> Figure {
         Figure {
