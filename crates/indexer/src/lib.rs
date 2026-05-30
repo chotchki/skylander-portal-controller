@@ -18,7 +18,33 @@ use sha2::{Digest, Sha256};
 use skylander_core::{Category, Element, Figure, FigureId, GameOfOrigin};
 use walkdir::WalkDir;
 
-/// Scan a firmware pack root directory and return every `.sky` entry, typed.
+/// Accepted Skylander figure-dump extensions (lowercase, with the dot). The
+/// format is a 1024-byte Mifare-tag dump regardless of extension — RPCS3 itself
+/// accepts all of these in its file picker (`skylander_dialog.cpp`:
+/// `"*.sky *.bin *.dmp *.dump"`), and its loader just reads 1024 bytes without
+/// checking the extension. We accept the same set so a user's pack can mix `.sky`
+/// with `.dump` / `.dmp` / `.bin` dumps from other tools.
+const DUMP_EXTS: [&str; 4] = [".sky", ".dump", ".dmp", ".bin"];
+
+/// True if the (already-lowercased) file name ends with a known dump extension.
+fn is_dump_file(name_lower: &str) -> bool {
+    DUMP_EXTS.iter().any(|ext| name_lower.ends_with(ext))
+}
+
+/// Strip a known dump extension (case-insensitive) from `name`, returning the
+/// stem. Falls back to the whole name if none matches.
+fn strip_dump_ext(name: &str) -> &str {
+    let lower = name.to_lowercase();
+    for ext in DUMP_EXTS {
+        if lower.ends_with(ext) {
+            return &name[..name.len() - ext.len()];
+        }
+    }
+    name
+}
+
+/// Scan a firmware pack root directory and return every figure-dump entry
+/// (`.sky` / `.dump` / `.dmp` / `.bin`), typed.
 pub fn scan(pack_root: &Path) -> Result<Vec<Figure>> {
     let (sky_files, element_icons) = walk(pack_root)?;
 
@@ -29,10 +55,7 @@ pub fn scan(pack_root: &Path) -> Result<Vec<Figure>> {
         let file_name = sky.file_name.clone();
 
         let (game, element, category) = classify(&segs, &file_name);
-        let stem = file_name
-            .strip_suffix(".sky")
-            .unwrap_or(&file_name)
-            .to_string();
+        let stem = strip_dump_ext(&file_name).to_string();
         let stem_clean = stem.strip_suffix(".key").unwrap_or(&stem).to_string();
         let (variant_group, variant_tag) = derive_group_and_tag(&segs, &stem_clean, category);
 
@@ -289,7 +312,7 @@ fn walk(pack_root: &Path) -> Result<(Vec<SkyFile>, HashMap<String, PathBuf>)> {
         {
             continue;
         }
-        if !lower.ends_with(".sky") {
+        if !is_dump_file(&lower) {
             continue;
         }
         // Top-level `Sidekicks/` is a known duplicate — ignore.
@@ -358,7 +381,7 @@ fn classify_inside_game(
         "Creation Crystals" => {
             let stem = segs
                 .last()
-                .and_then(|f| f.strip_suffix(".sky"))
+                .map(|f| strip_dump_ext(f))
                 .map(|s| s.strip_suffix(".key").unwrap_or(s))
                 .unwrap_or("");
             (
@@ -651,5 +674,46 @@ fn element_str(e: Element) -> &'static str {
         Element::Tech => "Tech",
         Element::Undead => "Undead",
         Element::Water => "Water",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn indexes_all_dump_extensions() {
+        // A figure dump is the same 1024-byte format regardless of extension; a
+        // pack may mix .sky / .dump / .dmp / .bin (RPCS3 accepts all four). Verify
+        // the pack walker picks up every one and derives the stem name correctly.
+        let dir = std::env::temp_dir().join(format!("sky-idx-dumpexts-{}", std::process::id()));
+        let elem = dir.join("Skylanders Spyros Adventure").join("Fire");
+        std::fs::create_dir_all(&elem).unwrap();
+        let bytes = [0u8; 1024];
+        for name in ["Spyro.sky", "Eruptor.dump", "Ignitor.dmp", "Sunburn.bin"] {
+            std::fs::write(elem.join(name), bytes).unwrap();
+        }
+        // A non-dump file (poster) must still be ignored.
+        std::fs::write(elem.join("poster.png"), b"x").unwrap();
+
+        let figures = scan(&dir).expect("scan");
+        let names: Vec<String> = figures
+            .iter()
+            .map(|f| f.canonical_name.to_lowercase())
+            .collect();
+
+        assert_eq!(
+            figures.len(),
+            4,
+            "all four dump extensions should index; got {names:?}"
+        );
+        for stem in ["spyro", "eruptor", "ignitor", "sunburn"] {
+            assert!(
+                names.iter().any(|n| n.contains(stem)),
+                "missing {stem} in {names:?}"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
