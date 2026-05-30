@@ -100,6 +100,16 @@ pub enum Event {
     /// Broadcast to all sessions — the portal is dead for everyone. PLAN
     /// 4.15.14; see `docs/aesthetic/navigation.md` §3.8.
     GameCrashed { message: String },
+    /// RPCS3 crashed *or* froze while a game was running and the supervisor is
+    /// **auto-recovering** it — killing the dead/hung emulator, relaunching the
+    /// same game, and re-placing the figures that were on the portal (PLAN
+    /// 16.7.2). Phones render a transient "RECONNECTING…" overlay (the recovering
+    /// branch of `GameCrashScreen`) instead of the terminal crash overlay. It is
+    /// dismissed by the next `GameChanged { current: Some(_) }` once the restart
+    /// lands; if every restart attempt fails the supervisor gives up and emits
+    /// `GameCrashed` instead, flipping the overlay to its terminal form.
+    /// Broadcast to all sessions — the portal is down for everyone during recovery.
+    GameRecovering { message: String },
     /// Kaos mid-game swap (PLAN 8.2b.4). The server timer picked a
     /// compatible replacement for one of `profile_id`'s currently-placed
     /// figures and just executed a clear+load pair on `slot`. Phones

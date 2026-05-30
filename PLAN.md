@@ -3135,19 +3135,37 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
     captures the LOAD arg the fake P1 server receives and asserts `is_absolute()`.
     Live: figure placed from the phone, appeared in-game ("that worked!").
 
-- [ ] 16.7 **Crash/freeze supervisor (independent of portal path).** *(on branch
-  `phase-16.7-supervisor` — deferred past v1, built during the CI-build wait.)*
-  - [~] 16.7.1 — **Detection: crash done already; freeze DONE (2026-05-30, branch).**
-    Crash (process exit) is the existing `spawn_crash_watchdog` → `Event::GameCrashed`.
+- [~] 16.7 **Crash/freeze supervisor (independent of portal path).** *(merged to
+  main 2026-05-30; 16.7.1/.2/.3 done, 16.7.4 deferred past v1.)*
+  - [x] 16.7.1 — **Detection: crash + freeze. DONE (2026-05-30).**
+    Crash (process exit) is the existing `spawn_crash_watchdog` lifecycle poll.
     Freeze: the IPC STATE poller now feeds a pure `FreezeDetector` off the heartbeat's
     RSX frame counter (`EmuState.frames`) — once the game is **playable**, a `running`
     status whose frames stall for `FREEZE_AFTER` (8 s) sets `LauncherStatus.frozen`
     (edge-logged). Gated on `playable` (no false-positive during compile) and on
-    `running` (a deliberate pause reports non-running). 5 unit tests. The flag is the
-    signal; the **reaction** (un-latch `game_playable`, auto-restart) is 16.7.2.
-  - [ ] 16.7.2 — Auto-restart: relaunch RPCS3, re-boot the game, restore portal
-    slot state.
-  - [ ] 16.7.3 — Phone-side "reconnecting…" overlay during recovery.
+    `running` (a deliberate pause reports non-running). 5 unit tests.
+  - [x] 16.7.2 — **Auto cover → restart → restore. DONE (2026-05-30).**
+    `spawn_crash_watchdog` is now the **unified supervisor**: one lifecycle poll that
+    reacts to *either* a dead process (crash) *or* the `frozen` flag (freeze). On
+    trigger it (1) snapshots the placed figures (`placed_figures_to_restore`), (2)
+    kills the dead/hung emulator (`shutdown_graceful_to_hwnd` → forced Job-Object kill,
+    `RPCS3.buf` cleanup), (3) flips the launcher to its **loading cover** (not the
+    Crashed screen) + broadcasts the new `Event::GameRecovering`, (4) relaunches the
+    **same** game via a `DriverJob::BootDirect` (reusing the worker's IPC/UIA-aware boot
+    path — no bespoke `launch_with_eboot`; the legacy UIA respawn block is gone), with
+    up to `MAX_RESPAWNS` retries, then (5) re-places the figures in their old slots with
+    ownership preserved (`restore_portal_figures` → per-profile working copies). Reveal
+    holds the cover until the STATE poller re-latches `game_playable`. Only if every
+    restart fails does it surface the terminal `GameCrashed` + `Crashed` screen.
+    Tests: `placed_figures_to_restore` (pure capture) + `restore_portal_figures`
+    (async: requeues owned loads, skips ownerless / unknown-figure). Live restart path
+    is HTPC-gated (`tests/live_launch.rs`).
+  - [x] 16.7.3 — **Phone "reconnecting…" overlay. DONE (2026-05-30).** `Event::GameRecovering`
+    flips `GameCrashScreen` into its `recovering` branch (spinner + "RECONNECTING…",
+    no RETURN-TO-GAMES button); the existing `GameChanged { current: Some(_) }`
+    auto-dismiss handles "back up". A terminal `GameCrashed` switches the same overlay
+    to its crash form. Reuses the existing `game_crash` signal (one `recovering: bool`
+    field on `GameCrashReason`) rather than threading a new signal everywhere.
   - [ ] 16.7.4 — Per-game pinned-build + config presets (SPU block size,
     accuracy, renderer, framelimit).
 

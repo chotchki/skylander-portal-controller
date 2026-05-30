@@ -50,10 +50,34 @@
     animation: crash-sparks-flicker 4.5s ease-in-out infinite alternate;
   }
 
+  /* Recovering ("RECONNECTING…") variant — cooler blue cast so it reads as
+     "hang on, coming back" rather than the amber "something broke". The
+     supervisor is auto-restarting RPCS3; this is a transient, hopeful state. */
+  .crash-overlay--recovering {
+    background:
+      radial-gradient(ellipse 80% 60% at 50% 30%, rgba(96, 165, 250, 0.14) 0%, transparent 55%),
+      radial-gradient(ellipse 60% 50% at 30% 80%, rgba(56, 189, 248, 0.10) 0%, transparent 55%),
+      linear-gradient(180deg, var(--color-sf-1) 0%, var(--color-sf-2) 55%, var(--color-sf-3) 100%);
+  }
+
   .crash-viewport {
     @apply relative h-full flex flex-col items-center justify-center text-center;
     padding: 56px 28px 40px;
     gap: 22px;
+  }
+
+  /* Reconnecting spinner — gold ring with one bright arc, slow steady spin.
+     Replaces the warning sigil in the recovering form. */
+  .crash-spinner {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    border: 6px solid rgba(245, 198, 52, 0.18);
+    border-top-color: var(--color-gold-bright);
+    box-shadow:
+      0 0 18px rgba(96, 165, 250, 0.35),
+      inset 0 0 12px rgba(96, 165, 250, 0.20);
+    animation: crash-spinner-spin 1s linear infinite;
   }
 
   /* Warning sigil — oversized warm-glow triangle. Distinct from the Kaos
@@ -128,6 +152,7 @@
   }
 }
 
+@keyframes crash-spinner-spin     { to { transform: rotate(360deg); } }
 @keyframes crash-overlay-in       { from { opacity: 0; } to { opacity: 1; } }
 @keyframes crash-backdrop-pulse   { 0%, 100% { opacity: 0.75; } 50% { opacity: 1.0; } }
 @keyframes crash-sparks-flicker   { 50% { opacity: 0.3; transform: scale(1.02); } }
@@ -148,5 +173,6 @@
   .crash-backdrop,
   .crash-sparks,
   .crash-warning-mark,
+  .crash-spinner,
   .crash-return-btn { animation: none !important; }
 }

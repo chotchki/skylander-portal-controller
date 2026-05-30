@@ -204,6 +204,16 @@ pub enum Event {
         #[serde(default)]
         message: String,
     },
+    /// RPCS3 crashed *or* froze and the server is auto-recovering it (kill →
+    /// relaunch the same game → re-place the portal figures). Phone shows the
+    /// transient "RECONNECTING…" form of `GameCrashScreen` (no action button);
+    /// the next `GameChanged { current: Some(_) }` dismisses it once the restart
+    /// lands. If recovery exhausts its retries the server sends `GameCrashed`,
+    /// which flips the same overlay to its terminal form. PLAN 16.7.2/.3.
+    GameRecovering {
+        #[serde(default)]
+        message: String,
+    },
     /// A figure was scanned on the attached NFC reader. PLAN 6.5.2 — phone
     /// listens for this to drive the scan-import overlay from Prompt →
     /// Success (if open) or to fire a passive "Scanned: <name>" toast

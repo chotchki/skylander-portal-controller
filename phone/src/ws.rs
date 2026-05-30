@@ -272,7 +272,21 @@ fn spawn_connect(
                         current_game.set(current);
                     }
                     Ok(Event::GameCrashed { message }) => {
-                        game_crash.set(Some(GameCrashReason { message }));
+                        // Terminal crash (or auto-recovery gave up) — show the
+                        // full overlay with the RETURN TO GAMES action.
+                        game_crash.set(Some(GameCrashReason {
+                            message,
+                            recovering: false,
+                        }));
+                    }
+                    Ok(Event::GameRecovering { message }) => {
+                        // Auto-recovery in flight — transient "reconnecting"
+                        // overlay (no action button). Dismissed by the
+                        // GameChanged { current: Some(_) } the restart emits.
+                        game_crash.set(Some(GameCrashReason {
+                            message,
+                            recovering: true,
+                        }));
                     }
                     Ok(Event::ProfileChanged {
                         session_id,

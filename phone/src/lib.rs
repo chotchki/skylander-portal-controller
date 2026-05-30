@@ -62,15 +62,21 @@ pub(crate) struct KaosSwapAnnouncement {
     pub profile_id: String,
 }
 
-/// The emulator died. Set when the server broadcasts `Event::GameCrashed`
-/// (PLAN 4.15.14); cleared when a new `GameChanged { current: Some(_) }`
-/// arrives or the user taps "RETURN TO GAMES" in the overlay. The `message`
-/// is the short diagnostic the server produced (`"<Game> exited
-/// unexpectedly"`); rendered underneath the heading for players who want
-/// context.
+/// The emulator died or hung. Set when the server broadcasts
+/// `Event::GameCrashed` (terminal — PLAN 4.15.14) or `Event::GameRecovering`
+/// (transient auto-recovery — PLAN 16.7.2/.3); cleared when a new
+/// `GameChanged { current: Some(_) }` arrives or the user taps "RETURN TO
+/// GAMES" in the terminal overlay. The `message` is the short diagnostic the
+/// server produced (`"<Game> exited unexpectedly"` / `"… stopped responding"`);
+/// rendered underneath the heading for players who want context.
+///
+/// `recovering` switches `GameCrashScreen` between its two forms: `true` →
+/// transient "RECONNECTING…" (spinner, no action button, the server is
+/// relaunching); `false` → terminal "GAME CRASHED" (RETURN TO GAMES button).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct GameCrashReason {
     pub message: String,
+    pub recovering: bool,
 }
 
 /// NFC scan-to-import overlay state (PLAN 6.5.2). `Closed` is the default;

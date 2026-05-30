@@ -313,25 +313,29 @@ fn main() -> Result<()> {
                     events_for_task.clone(),
                     profile_store.clone(),
                     sessions.clone(),
-                    figures_for_driver,
+                    figures_for_driver.clone(),
                     rpcs3_for_task.clone(),
                     rpcs3_exe.clone(),
                     config_dir.clone(),
                     status_for_task.clone(),
                 );
-                // Watchdog for unexpected RPCS3 exits (PLAN 4.15.14). Polls
-                // the lifecycle handle every 500ms; on the first frame a
-                // spawned process goes dead while `current` is still set,
-                // broadcasts `Event::GameCrashed` so phones can render the
-                // full-screen crash overlay. Clean quits drain `process` in
-                // `/api/quit` before the process actually dies, so the
-                // watchdog doesn't fire on those.
+                // Unified crash/freeze supervisor (PLAN 16.7). Polls the
+                // lifecycle handle every 500ms; on a dead process (crash) or a
+                // raised `frozen` flag (the IPC STATE poller's freeze detector)
+                // it runs auto cover → restart-via-BootDirect → restore the
+                // portal figures, falling back to the terminal crash overlay
+                // only if every restart attempt fails. Clean quits drain
+                // `process` in `/api/quit` before the process dies, so the
+                // supervisor doesn't fire on those. Needs `driver_tx` (to drive
+                // the restart through the worker's IPC/UIA boot path) and the
+                // figure library (to re-resolve working copies on restore).
                 spawn_crash_watchdog(
                     rpcs3_for_task.clone(),
                     portal_for_task.clone(),
                     events_for_task.clone(),
                     status_for_task.clone(),
-                    rpcs3_exe.clone(),
+                    driver_tx.clone(),
+                    figures_for_driver,
                     std::time::Duration::from_millis(500),
                 );
                 // Playable-signal source depends on the driver. IPC (PLAN 16.6.3.1):

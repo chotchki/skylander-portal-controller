@@ -868,176 +868,316 @@ pub fn spawn_state_poller(
     });
 }
 
-/// Spawn the RPCS3 crash watchdog. Polls the lifecycle lock once per
-/// `interval` and, the first frame it sees the spawned process has died
-/// while `current` is still set (i.e. nobody called `/api/quit`), treats it
-/// as an unexpected exit: takes the dead `RpcsProcess` out of the lifecycle,
-/// clears `current`, resets the portal snapshot, and broadcasts
-/// `Event::GameCrashed` + `Event::GameChanged { current: None }` so phones
-/// can render the "game crashed" overlay (PLAN 4.15.14 /
-/// `docs/aesthetic/navigation.md` §3.8).
+/// Capture the `(slot, figure, owner)` of every restorable slot from a portal
+/// snapshot so the supervisor can re-place them after an auto-restart (PLAN
+/// 16.7.2). Only `Loaded` slots carrying a `figure_id` qualify — those are the
+/// ones with a known library figure + a per-profile working copy to re-load.
+/// Skipped: `Empty` / `Error` (nothing there), `Loading` (mid-flight — the
+/// emulator's gone, the job will fail), and `Loaded` without a `figure_id`
+/// (name-only reads we can't map back to a working copy). Pure over an in-memory
+/// snapshot, so the restore-selection logic unit-tests without an emulator.
+fn placed_figures_to_restore(
+    slots: &[SlotState; SLOT_COUNT],
+) -> Vec<(SlotIndex, FigureId, Option<String>)> {
+    let mut out = Vec::new();
+    for (i, s) in slots.iter().enumerate() {
+        if let SlotState::Loaded {
+            figure_id: Some(fid),
+            placed_by,
+            ..
+        } = s
+            && let Ok(slot) = SlotIndex::new(i as u8)
+        {
+            out.push((slot, fid.clone(), placed_by.clone()));
+        }
+    }
+    out
+}
+
+/// Re-queue the figures that were on the portal before an auto-restart, in the
+/// same slots, preserving ownership (PLAN 16.7.2). For each captured entry we
+/// resolve the placing profile's working copy (so save progress carries over),
+/// flip the slot to `Loading` + broadcast `SlotChanged` (phones animate the
+/// re-place), and enqueue a `LoadFigure` job. Entries we can't restore are
+/// logged and skipped, never fatal:
+///   * **no owner** — `placed_by: None` (legacy / unauthenticated load) has no
+///     per-profile working copy to resolve;
+///   * **unknown figure** — the id no longer maps to a library figure.
+/// The driver worker serialises the loads after the restart's `BootDirect`, so
+/// they land on a booted emulator.
+async fn restore_portal_figures(
+    portal: &Arc<Mutex<[SlotState; SLOT_COUNT]>>,
+    events: &broadcast::Sender<Event>,
+    driver_tx: &mpsc::Sender<DriverJob>,
+    figures: &[Figure],
+    to_restore: &[(SlotIndex, FigureId, Option<String>)],
+) {
+    let mut requeued = 0usize;
+    for (slot, figure_id, placed_by) in to_restore {
+        let Some(profile_id) = placed_by else {
+            info!(
+                slot = slot.as_u8(),
+                figure = figure_id.as_str(),
+                "restore: slot had no owner — can't resolve a working copy; skipping"
+            );
+            continue;
+        };
+        let Some(figure) = figures.iter().find(|f| &f.id == figure_id) else {
+            warn!(
+                figure = figure_id.as_str(),
+                "restore: figure no longer in library; skipping"
+            );
+            continue;
+        };
+        let path = match crate::working_copies::resolve_load_path(profile_id, figure) {
+            Ok(p) => p,
+            Err(e) => {
+                warn!(
+                    profile_id,
+                    figure = figure_id.as_str(),
+                    "restore: resolve working copy failed: {e}"
+                );
+                continue;
+            }
+        };
+        let loading = SlotState::Loading {
+            figure_id: Some(figure_id.clone()),
+            placed_by: Some(profile_id.clone()),
+        };
+        portal.lock().await[slot.as_usize()] = loading.clone();
+        let _ = events.send(Event::SlotChanged {
+            slot: *slot,
+            state: loading,
+        });
+        let job = DriverJob::LoadFigure {
+            slot: *slot,
+            figure_id: figure_id.clone(),
+            path,
+            placed_by: Some(profile_id.clone()),
+            canonical_name: figure.canonical_name.clone(),
+        };
+        if driver_tx.send(job).await.is_err() {
+            warn!("restore: driver worker gone; aborting figure restore");
+            return;
+        }
+        requeued += 1;
+    }
+    info!(
+        requeued,
+        captured = to_restore.len(),
+        "supervisor: re-queued portal figures after restart"
+    );
+}
+
+/// Spawn the unified RPCS3 **crash/freeze supervisor** (PLAN 16.7). Polls the
+/// lifecycle lock once per `interval` and reacts to either failure mode:
+///   * **crash** — the spawned process has died while `current` is still set
+///     (nobody called `/api/quit`);
+///   * **freeze** — `LauncherStatus.frozen`, raised by the IPC STATE poller's
+///     `FreezeDetector` when a *playable* game's heartbeat frame counter stalls
+///     while RPCS3 still reports `running` (16.7.1).
 ///
-/// Auto-respawn (PLAN 4.15.16): after reporting the crash, the watchdog
-/// immediately tries to relaunch RPCS3 at library view so the
-/// always-running contract holds. If respawn fails `MAX_RESPAWNS` times
-/// the launcher flips to `ServerError` with a diagnostic.
+/// On either trigger it runs the chosen recovery UX — **auto cover → restart →
+/// restore** (decided 2026-05-30): kill the dead/hung emulator, flip the
+/// launcher to its loading cover + broadcast `Event::GameRecovering` (phones
+/// show a transient "reconnecting" overlay rather than the terminal crash
+/// screen), relaunch the **same** game via a `DriverJob::BootDirect` (so the
+/// restart goes through the one IPC/UIA-aware boot path the worker already
+/// owns — no bespoke `launch_with_eboot`), then re-place the figures that were
+/// on the portal via [`restore_portal_figures`]. Success is signalled by
+/// `BootDirect`'s own `GameChanged { current: Some(_) }`, which dismisses the
+/// phone overlay. If every restart attempt (up to `MAX_RESPAWNS`) fails it gives
+/// up: flips the launcher to `Crashed` and emits the terminal `GameCrashed`.
 ///
-/// `/api/quit` (in normal mode) uses `DriverJob::StopEmulation` which
-/// doesn't touch `guard.process` — the watchdog naturally won't fire on
-/// clean quits. `/api/quit?force=true` and `/api/shutdown` both take the
-/// process out of `guard.process` before killing it, so the watchdog
-/// won't treat those as crashes either.
+/// Clean shutdowns don't fire it: `/api/quit?force=true` and `/api/shutdown`
+/// drain `guard.process` before killing, and a graceful quit stops the game
+/// without the process dying under us.
 pub fn spawn_crash_watchdog(
     rpcs3: Arc<Mutex<RpcsLifecycle>>,
     portal: Arc<Mutex<[SlotState; SLOT_COUNT]>>,
     events: broadcast::Sender<Event>,
     launcher_status: Arc<std::sync::Mutex<LauncherStatus>>,
-    rpcs3_exe: std::path::PathBuf,
+    driver_tx: mpsc::Sender<DriverJob>,
+    figures: Arc<Vec<Figure>>,
     interval: std::time::Duration,
 ) {
-    /// Cap on consecutive respawn attempts before we give up and flip
-    /// the launcher to ServerError. If RPCS3 is crashing on launch
-    /// repeatedly something is fundamentally wrong (bad install,
-    /// missing firmware, etc.) — spamming retries just wastes cycles.
+    /// Cap on consecutive restart attempts within a single recovery before we
+    /// give up and surface the terminal crash overlay. Repeated boot failures
+    /// mean something fundamental is wrong (bad install, missing firmware) —
+    /// spamming relaunches just wastes cycles.
     const MAX_RESPAWNS: u32 = 3;
+    /// Budget for the polite kill of a (possibly hung) emulator before the Job
+    /// Object force-terminates it. A frozen RPCS3 won't honour `WM_CLOSE`, so
+    /// this is mostly the floor before the forced path runs.
+    const KILL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+    /// Budget for a single restart's spawn → playable. First-launch shader
+    /// compile is already cached by the time we're recovering, but keep it
+    /// generous to ride out a cold RSX cache after a hard kill.
+    const BOOT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+    /// After a successful restart, how long to hold the loading cover waiting
+    /// for the STATE poller to re-latch `game_playable` before revealing.
+    const REVEAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(interval);
         // Skip the immediate first tick — `interval` fires once on start.
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         ticker.tick().await;
-        let mut consecutive_failures: u32 = 0;
         loop {
             ticker.tick().await;
 
+            // Read the freeze flag (set by the IPC STATE poller) without holding
+            // the lifecycle lock.
+            let frozen = launcher_status.lock().map(|s| s.frozen).unwrap_or(false);
+
             let mut guard = rpcs3.lock().await;
-            // Fire if we own a process and it's dead. Under 4.15.16
-            // RPCS3 can be alive at library view (no current game),
-            // so we check process.is_alive() regardless of `current`.
             let crashed = match guard.process.as_mut() {
-                Some(proc) => !proc.is_alive(),
+                Some(p) => !p.is_alive(),
                 None => false,
             };
-            if !crashed {
+            if !crashed && !frozen {
+                drop(guard);
                 continue;
             }
-
-            // Drop the dead handle so we never double-report.
-            let _dead = guard.process.take();
+            // Capture recovery context and detach the (dead or hung) process so
+            // a second tick can't double-fire while we recover.
             let game = guard.current.take();
-            // Capture the EBOOT so auto-respawn can re-launch the same
-            // game (PLAN 10.8.4 direct-boot — no library-view fallback).
-            let crashed_eboot = guard.current_eboot.take();
+            let eboot = guard.current_eboot.take();
+            let proc = guard.process.take();
             drop(guard);
 
-            let had_game = game.is_some();
-            let message = match game.as_ref() {
-                Some(g) => format!("{} exited unexpectedly", g.display_name),
-                None => "RPCS3 exited unexpectedly".into(),
+            let game_name = game.as_ref().map(|g| g.display_name.clone());
+            let verb = if crashed {
+                "exited unexpectedly"
+            } else {
+                "stopped responding"
             };
-            warn!(message = %message, "detected RPCS3 crash");
+            let message = match &game_name {
+                Some(n) => format!("{n} {verb}"),
+                None => format!("RPCS3 {verb}"),
+            };
+            warn!(crashed, frozen, message = %message, "supervisor: recovery triggered");
 
-            // Reset the portal snapshot — the emulator is gone, so any
-            // previously-loaded slots are meaningless.
+            // Snapshot what's on the portal BEFORE we reset it, so we can
+            // re-place it after the restart.
+            let to_restore = {
+                let p = portal.lock().await;
+                placed_figures_to_restore(&p)
+            };
+
+            // Kill the process. For a crash it's already dead
+            // (`shutdown_graceful_to_hwnd` short-circuits on AlreadyExited);
+            // for a freeze it's hung — WM_CLOSE to the IPC game-window handle,
+            // then a forced Job-Object kill (which also cleans `RPCS3.buf`).
+            if let Some(mut proc) = proc {
+                let hwnd = launcher_status
+                    .lock()
+                    .ok()
+                    .and_then(|s| s.game_window_handle);
+                let _ = tokio::task::spawn_blocking(move || {
+                    let _ = proc.shutdown_graceful_to_hwnd(hwnd, KILL_TIMEOUT);
+                    // proc drops here — Job Object reaps any survivors.
+                })
+                .await;
+            }
+
+            // Enter the loading cover (NOT the Crashed screen — we're
+            // auto-recovering) and tell phones we're reconnecting.
+            if let Ok(mut st) = launcher_status.lock() {
+                st.rpcs3_running = false;
+                st.current_game = None;
+                st.game_playable = false;
+                st.frozen = false;
+                st.game_window_handle = None;
+                st.loading_game = game_name.clone();
+                st.screen = LauncherScreen::Main;
+            }
             *portal.lock().await = std::array::from_fn(|_| SlotState::Empty);
             let _ = events.send(Event::PortalSnapshot {
                 slots: std::array::from_fn(|_| SlotState::Empty),
             });
-            // Only surface the full crash overlay to phones + Crashed
-            // screen on the TV when a GAME was running. A library-view
-            // crash during auto-respawn is invisible to the user — the
-            // cloud vortex covers it on the TV; phones just see a
-            // transient `rpcs3_running = false` window.
-            if had_game {
+            let _ = events.send(Event::GameRecovering {
+                message: message.clone(),
+            });
+
+            // Without a game + EBOOT we have nothing to relaunch — fall back to
+            // the terminal crash overlay so the user can pick a game again.
+            let (Some(game), Some(eboot)) = (game, eboot) else {
+                warn!("supervisor: no game/EBOOT recorded — can't auto-restart; showing Crashed");
                 if let Ok(mut st) = launcher_status.lock() {
-                    st.rpcs3_running = false;
-                    st.current_game = None;
+                    st.loading_game = None;
                     st.screen = LauncherScreen::Crashed {
                         message: message.clone(),
                     };
                 }
-                let _ = events.send(Event::GameCrashed {
-                    message: message.clone(),
-                });
+                let _ = events.send(Event::GameCrashed { message });
                 let _ = events.send(Event::GameChanged { current: None });
-            } else {
-                if let Ok(mut st) = launcher_status.lock() {
-                    st.rpcs3_running = false;
-                    st.current_game = None;
-                }
-            }
-
-            // Auto-respawn (PLAN 10.8.4 direct-boot): only if a game was
-            // running and we know its EBOOT. Without an EBOOT we have
-            // nothing useful to launch — RPCS3 with no args drops into
-            // library view, but the launcher no longer drives that
-            // surface, so the user would see a foreign window. Skip
-            // respawn instead and leave the user on the Crashed screen
-            // with RESTART (re-fires /api/launch) or RETURN TO GAMES.
-            let Some(eboot) = crashed_eboot else {
-                if had_game {
-                    info!(
-                        "RPCS3 crashed mid-game but no EBOOT recorded; \
-                         leaving user on Crashed screen to manually restart"
-                    );
-                }
                 continue;
             };
-            // Small delay so OS cleanup (handle release, child process
-            // teardown) doesn't collide with the new launch. 500ms
-            // matches the watchdog tick and is empirically enough on
-            // Windows 11.
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            let exe = rpcs3_exe.clone();
-            let eboot_for_blocking = eboot.clone();
-            let respawn = tokio::task::spawn_blocking(
-                move || -> anyhow::Result<skylander_rpcs3_control::RpcsProcess> {
-                    let mut proc = skylander_rpcs3_control::RpcsProcess::launch_with_eboot(
-                        &exe,
-                        &eboot_for_blocking,
-                    )?;
-                    proc.wait_ready(std::time::Duration::from_secs(45))?;
-                    Ok(proc)
-                },
-            )
-            .await;
-            match respawn {
-                Ok(Ok(proc)) => {
-                    let mut guard = rpcs3.lock().await;
-                    guard.process = Some(proc);
-                    guard.current = game.clone();
-                    guard.current_eboot = Some(eboot.clone());
-                    drop(guard);
-                    if let Ok(mut st) = launcher_status.lock() {
-                        st.rpcs3_running = true;
-                        if let Some(g) = &game {
-                            st.current_game = Some(g.display_name.clone());
-                        }
+
+            // Relaunch the same game through the worker's BootDirect path, with
+            // retries. BootDirect re-establishes lifecycle + launcher state and
+            // broadcasts GameChanged { current: Some(_) } on success.
+            let mut attempt = 0u32;
+            let recovered = loop {
+                attempt += 1;
+                // Let OS cleanup (handle release, child teardown, socket
+                // re-bind) settle before the new launch.
+                tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+                let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+                let job = DriverJob::BootDirect {
+                    eboot_path: eboot.clone(),
+                    expected_name: game.display_name.clone(),
+                    display_name: game.display_name.clone(),
+                    serial: game.serial.as_str().to_string(),
+                    timeout: BOOT_TIMEOUT,
+                    done: done_tx,
+                };
+                if driver_tx.send(job).await.is_err() {
+                    warn!("supervisor: driver worker gone; aborting recovery");
+                    break false;
+                }
+                match done_rx.await {
+                    Ok(Ok(())) => {
+                        info!(attempt, "supervisor: RPCS3 restart succeeded");
+                        break true;
                     }
-                    consecutive_failures = 0;
-                    info!("RPCS3 auto-respawn succeeded");
+                    Ok(Err(e)) => warn!(attempt, "supervisor: restart failed: {e}"),
+                    Err(_) => warn!(attempt, "supervisor: restart done-channel dropped"),
                 }
-                Ok(Err(e)) => {
-                    consecutive_failures = consecutive_failures.saturating_add(1);
-                    warn!(consecutive_failures, "RPCS3 auto-respawn failed: {e}");
-                    if consecutive_failures >= MAX_RESPAWNS
-                        && let Ok(mut st) = launcher_status.lock()
-                    {
-                        st.screen = LauncherScreen::ServerError {
-                            message: format!(
-                                "RPCS3 keeps crashing ({} attempts): {}",
-                                consecutive_failures, e
-                            ),
-                        };
+                if attempt >= MAX_RESPAWNS {
+                    break false;
+                }
+            };
+
+            if recovered {
+                // Re-place the figures that were on the portal, then hold the
+                // cover until the STATE poller re-latches `game_playable` so the
+                // reveal lands on a rendering game rather than flashing the QR.
+                restore_portal_figures(&portal, &events, &driver_tx, &figures, &to_restore).await;
+                let reveal_deadline = tokio::time::Instant::now() + REVEAL_TIMEOUT;
+                loop {
+                    let playable = launcher_status
+                        .lock()
+                        .map(|s| s.game_playable)
+                        .unwrap_or(true);
+                    if playable || tokio::time::Instant::now() >= reveal_deadline {
+                        break;
                     }
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                 }
-                Err(e) => {
-                    consecutive_failures = consecutive_failures.saturating_add(1);
-                    warn!(
-                        consecutive_failures,
-                        "RPCS3 auto-respawn task panicked: {e}"
-                    );
+                if let Ok(mut st) = launcher_status.lock() {
+                    st.loading_game = None;
                 }
+            } else {
+                if let Ok(mut st) = launcher_status.lock() {
+                    st.loading_game = None;
+                    st.screen = LauncherScreen::Crashed {
+                        message: message.clone(),
+                    };
+                }
+                let _ = events.send(Event::GameCrashed { message });
+                let _ = events.send(Event::GameChanged { current: None });
             }
         }
     });
@@ -1526,6 +1666,108 @@ mod tests {
         // After reset the next stall starts the count over.
         assert!(!d.observe(false, true, true));
         assert!(d.observe(false, true, true));
+    }
+
+    // ---- portal restore (PLAN 16.7.2) ---------------------------------------
+
+    fn loaded_slot(fid: Option<&str>, owner: Option<&str>) -> SlotState {
+        SlotState::Loaded {
+            figure_id: fid.map(FigureId::new),
+            display_name: "X".into(),
+            placed_by: owner.map(|s| s.to_string()),
+        }
+    }
+
+    #[test]
+    fn restore_capture_takes_only_loaded_with_figure_id() {
+        let mut slots: [SlotState; SLOT_COUNT] = std::array::from_fn(|_| SlotState::Empty);
+        slots[0] = loaded_slot(Some("aaaa"), Some("alice"));
+        slots[1] = SlotState::Loading {
+            figure_id: Some(FigureId::new("bbbb")),
+            placed_by: Some("bob".into()),
+        }; // mid-flight — skipped
+        slots[2] = loaded_slot(None, Some("carol")); // name-only read — unrestorable
+        slots[3] = SlotState::Error {
+            message: "boom".into(),
+        };
+        slots[5] = loaded_slot(Some("ffff"), None); // no owner, but still captured
+
+        let got = placed_figures_to_restore(&slots);
+        assert_eq!(got.len(), 2, "only the two Loaded-with-id slots");
+        assert_eq!(got[0].0.as_u8(), 0);
+        assert_eq!(got[0].1.as_str(), "aaaa");
+        assert_eq!(got[0].2.as_deref(), Some("alice"));
+        // Ownerless Loaded is captured here (the owner check happens at restore
+        // time, where a None owner means "skip — no working copy to resolve").
+        assert_eq!(got[1].0.as_u8(), 5);
+        assert_eq!(got[1].1.as_str(), "ffff");
+        assert_eq!(got[1].2, None);
+    }
+
+    #[tokio::test]
+    async fn restore_requeues_owned_loads_and_skips_unrestorable() {
+        use tempfile::TempDir;
+        let tmp = TempDir::new().unwrap();
+        let pack = tmp.path().join("restore_known.sky");
+        std::fs::write(&pack, b"fresh-pack").unwrap();
+        let known = Figure {
+            sky_path: pack,
+            ..fig("restore_known_id", "Restore Knownburst")
+        };
+        let figures = vec![known.clone()];
+
+        let portal: Arc<Mutex<[SlotState; SLOT_COUNT]>> =
+            Arc::new(Mutex::new(std::array::from_fn(|_| SlotState::Empty)));
+        let (events, _erx) = broadcast::channel::<Event>(32);
+        let (tx, mut rx) = mpsc::channel::<DriverJob>(32);
+
+        let prof = "restore_test_profile";
+        let to_restore = vec![
+            // (a) restorable: known figure + owner.
+            (
+                SlotIndex::new(0).unwrap(),
+                known.id.clone(),
+                Some(prof.into()),
+            ),
+            // (b) skipped: no owner → no per-profile working copy.
+            (SlotIndex::new(1).unwrap(), known.id.clone(), None),
+            // (c) skipped: figure not in the library.
+            (
+                SlotIndex::new(2).unwrap(),
+                FigureId::new("ghost_not_in_library"),
+                Some(prof.into()),
+            ),
+        ];
+
+        restore_portal_figures(&portal, &events, &tx, &figures, &to_restore).await;
+        drop(tx); // close the channel so the drain terminates.
+
+        let mut jobs = Vec::new();
+        while let Some(j) = rx.recv().await {
+            jobs.push(j);
+        }
+        assert_eq!(jobs.len(), 1, "only the restorable slot enqueues a load");
+        let DriverJob::LoadFigure {
+            slot,
+            figure_id,
+            path,
+            placed_by,
+            canonical_name,
+        } = &jobs[0]
+        else {
+            panic!("expected a LoadFigure job, got {:?}", jobs[0]);
+        };
+        assert_eq!(slot.as_u8(), 0);
+        assert_eq!(figure_id.as_str(), "restore_known_id");
+        assert_eq!(placed_by.as_deref(), Some(prof));
+        assert_eq!(canonical_name, "Restore Knownburst");
+        assert!(path.exists(), "working copy forked from the pack");
+        assert_eq!(std::fs::read(path).unwrap(), b"fresh-pack");
+
+        // The restorable slot was flipped to Loading in the mirror.
+        assert!(matches!(portal.lock().await[0], SlotState::Loading { .. }));
+
+        let _ = std::fs::remove_file(path); // clean up the dev-data working copy.
     }
 
     fn fig(id: &str, canonical: &str) -> Figure {
