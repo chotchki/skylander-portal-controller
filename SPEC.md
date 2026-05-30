@@ -447,3 +447,16 @@ Pinned during the May 2026 playtest push: kids were stuck grinding hours of game
 - **Q:** What happens to phone B's figure-detail screen when phone A edits the same figure?
 - **A:** The server broadcasts `Event::FigureUpdated { figure_id, level, gold }` on every successful edit. The phone Event enum has the variant wired (so WS deserialization doesn't fail) but the cross-phone refresh handler currently just logs. The single-phone save flow re-fetches stats locally via a `stats_rev` signal; multi-phone refresh is deferred until playtest reveals it's actually missed. Easy follow-up: subscribe `figure_detail.rs` to `FigureUpdated` and bump `stats_rev` when the broadcast's `figure_id` matches the currently-displayed figure.
 
+
+## Follow-up Questions (Round 8) — RPCS3 control architecture (Phase 16)
+
+### From GUI automation to a patched-upstream IPC path
+
+- **Q:** Phases 1–11 drove RPCS3 by automating its Skylanders Manager dialog (UI Automation / menu nav). Why switch to patching RPCS3 and talking to it over a socket?
+- **A:** The GUI-automation path is fundamentally fragile: it depends on RPCS3's Qt window layout (multiple top-level windows sharing one generic class, distinguishable only by title), on the Skylanders Manager dialog's menu structure, on modal-vs-non-modal invoke timing, and on session-bound UIA (can't run under SSH). Every RPCS3 update risks breaking it, and liveness/readiness had to be guessed by scraping the FPS-in-title and log files (racey). The IPC path replaces all of that with a **thin, shallow, additive patch series** on a pinned upstream RPCS3: P1 adds an AF_UNIX listener on the emulated Skylander USB device that drives `g_skyportal` directly (LOAD/CLEAR/STATUS) plus a clean `STATE` query + 1 Hz heartbeat (status + RSX frame counter); P2 makes the game window borderless/no-focus-steal and publishes its native handle. Control becomes a direct function call into the emulated device instead of pantomiming a human at the dialog — no dialog, no menu nav, no keystroke synthesis, no title scraping. Readiness (compile-complete, playable) and freeze detection both read off the heartbeat's frame counter.
+
+- **Q:** Doesn't patching RPCS3 mean you can't tell users to "bring your own RPCS3" anymore?
+- **A:** Right — stock RPCS3 has no IPC listener, so the control path needs *our* patched build. v1 resolves this by **bundling the patched RPCS3** in the release while still having the user **point at their existing RPCS3 install for firmware + games** (their install's `config_dir`, decoupled from the bundled control binary). So users still supply their own (copyright-sensitive) firmware/games; we supply only the patched emulator binary. This makes the repo GPL-2.0-only (RPCS3 is GPLv2; the patches are a derivative work) — source is public, so shipping the binary is compliant.
+
+- **Q:** Is the old UIA driver gone?
+- **A:** No — it's demoted to a fallback (`SKYLANDER_PORTAL_DRIVER=uia`) for driving a stock RPCS3, and stays compiled. The production default on Windows is IPC; macOS is mock-only (no patched RPCS3, no IPC — an AXUIElement driver port is an explicit non-goal). The UIA driver is tagged for eventual deletion once the IPC path has soaked.

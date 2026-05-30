@@ -13,7 +13,7 @@ A Windows app that wraps RPCS3 (PS3 emulator) so kids can manage the emulated Sk
 - **Phone SPA:** Leptos (WASM). JS fallback acceptable if touch/UX forces it.
 - **PC-side launcher window:** egui via `eframe`, fullscreen, sized for 86" TV at 10 ft.
 - **DB:** SQLite via `sqlx` (async, compile-time-checked queries).
-- **GUI automation for RPCS3:** UI Automation (Windows accessibility API) first. Image/OCR second. Raw coordinates are a last resort.
+- **RPCS3 control:** AF_UNIX **IPC to a patched-upstream RPCS3** (Phase 16) — the production path on Windows, no GUI/dialog. The legacy UI Automation driver (Windows accessibility API; image/OCR, raw coordinates as last resorts) is kept only as a fallback for a *stock* RPCS3 (`SKYLANDER_PORTAL_DRIVER=uia`).
 - **QR code:** any standard Rust crate.
 - **E2E tests:** pure-Rust WebDriver (fantoccini or thirtyfour — no preference).
 
@@ -22,7 +22,7 @@ A Windows app that wraps RPCS3 (PS3 emulator) so kids can manage the emulated Sk
 - Cargo workspace:
   - `crates/core/` — shared types (Figure, SlotState, Command, Event). No I/O. Public/private split enforced via `Figure::to_public()`.
   - `crates/indexer/` — walks the firmware pack, emits `Vec<Figure>` with stable SHA-256-truncated IDs.
-  - `crates/rpcs3-control/` — `PortalDriver` trait, `UiaPortalDriver` (Windows UI Automation), `MockPortalDriver` (feature `mock`). Off-screen hiding via Win32 `SetWindowPos`.
+  - `crates/rpcs3-control/` — `PortalDriver` trait; `IpcPortalDriver` (Phase 16 — blocking AF_UNIX to the patched RPCS3 via `uds_windows`; the **Windows production driver**), `UiaPortalDriver` (legacy Windows UI Automation; the stock-RPCS3 fallback), `MockPortalDriver` (feature `mock`; the macOS/dev driver). RPCS3 process lifecycle (`RpcsProcess`, Job-Object kill) + Win32 window handling (`SetWindowPos`) live here too.
   - `crates/server/` — the binary: Axum + eframe + driver worker + config + logging. `dev-tools` feature on by default.
 - Separate from the workspace: `phone/` is a Leptos CSR crate that builds to WASM via trunk. Server's `tower_http::services::ServeDir` serves `phone/dist/`.
 - Threading: main OS thread owns eframe. Dedicated background thread hosts the tokio multi-thread runtime (Axum + driver worker).
@@ -171,17 +171,26 @@ Hidden costs to keep in mind: every `@apply` in a component file means class nam
 
 ## Distribution
 
-- GitHub Releases zip. Do **not** bundle `.sky` files or game/firmware content (no piracy).
-- Users supply their own firmware backups.
-- **RPCS3 is now vendored + patched (Phase 16).** `vendor/rpcs3` is a git submodule
-  pinned to a pristine upstream commit; the IPC patches live in `rpcs3-patches/`
-  (apply via `rpcs3-patches/apply.sh`; see its README for the pin + rebase
-  procedure). This makes the repo **GPL-2.0-only** (RPCS3 is GPLv2; the patches are
-  a derivative). Open question deferred to the Phase-16 distribution work: the
-  control path now needs *our patched* RPCS3, which users can't supply themselves —
-  so we'll ship a patched build (legal under GPL since source is public), which
-  revises the old "users supply their own RPCS3 install" stance. Full CLAUDE.md
-  "RPCS3 integration (IPC)" section rewrite is PLAN 16.8.3.
+- GitHub Releases zip + winget MSI. Do **not** bundle `.sky` files or game/firmware
+  content (no piracy).
+- **Users supply their own** PS3 firmware + game backups, via their **existing RPCS3
+  install** (the v1 model, below).
+- **RPCS3 is vendored + patched (Phase 16).** `vendor/rpcs3` is a git submodule pinned
+  to a pristine upstream commit; the IPC patches — **P1** (AF_UNIX portal control on the
+  emulated Skylander device) and **P2** (borderless, no-focus-steal game window +
+  native-handle publishing) — live in `rpcs3-patches/` (apply via
+  `rpcs3-patches/apply.sh`; README has the pin + rebase procedure). This makes the repo
+  **GPL-2.0-only** (RPCS3 is GPLv2; the patches are a derivative).
+- **v1 distribution model (decided 2026-05-30 — PLAN 16.9.0b).** The IPC control path
+  needs *our patched* RPCS3 (stock RPCS3 has no IPC listener), which users can't supply
+  themselves, so the Windows release **bundles the patched RPCS3 build** next to the app
+  at `<app>/rpcs3/rpcs3.exe` (legal under GPL — source is public; the binary comes from
+  the gated `rpcs3-patched.yml` Windows build). For **firmware + games**, the user still
+  **points the first-launch wizard at their existing RPCS3 install**; that becomes
+  `config_dir` (RPCS3's data/config root — installed firmware + `config/games.yml`),
+  decoupled from the bundled control binary (the `config_dir` decoupling, 16.9.0). So v1
+  ships no firmware/games and writes no RPCS3 config (16.9.1/.2 deferred). macOS ships the
+  **mock driver only** — no patched RPCS3, no IPC.
 - Steam Big Picture shell behavior is a compatibility-pass concern, not a day-1 constraint.
 
 ## Git workflow (pre-1.0)
@@ -192,7 +201,12 @@ Hidden costs to keep in mind: every `@apply` in a component file means class nam
 - Reserve PR ceremony for post-1.0 or for cases where a human reviewer genuinely adds value (e.g. first-time CI-bring-up or a dangerous rewrite where the diff view is the point).
 - Concurrent subagents modifying overlapping files → spawn with `isolation: "worktree"` so they don't entangle WIP; merge their branches into `main` locally when done.
 
-## RPCS3 window/menu gotchas (see `docs/research/game-launch-window-mgmt.md`)
+## RPCS3 window/menu gotchas (UIA fallback — see `docs/research/game-launch-window-mgmt.md`)
+
+> These apply to the **legacy UIA driver** (`SKYLANDER_PORTAL_DRIVER=uia`, stock RPCS3).
+> The production IPC path (Phase 16, patched RPCS3) has **no Skylanders Manager dialog and
+> no menu nav** — it drives `g_skyportal` directly over AF_UNIX and reads liveness from the
+> `STATE`/heartbeat, so most of these don't apply there. Kept because UIA is the fallback.
 
 - While a game runs, RPCS3 has **multiple top-level Qt windows that all share the same generic class** `Qt6110QWindowIcon` — main (title prefix `"RPCS3 "`), game viewport (title prefix `"FPS:"`), and the Skylanders Manager dialog (title `"Skylanders Manager"`) are only distinguishable by **title**, never by classname. Anything that grabs windows by class will mis-match. Older RPCS3 builds had distinct classes (`main_window`, `skylander_dialog`); current Qt 6.11 unified them.
 - **UIA pattern menu nav works on current Qt 6 RPCS3** (verified 2026-05-03 against `0.0.40-19296` via `tools/uia-probe`). Every `MenuItem` advertises `Invoke`, `ExpandCollapse`, `LegacyIAccessible`, and `Value`. The Manage → Portals and Gates → Skylanders Portal chain reduces to three pattern calls — no keystroke synthesis, no focus dependency, no Steam Overlay competition. Submenus populate lazily on `ExpandCollapse.expand()`, so re-walk the tree (or wait ~100ms) before searching for child items. Older notes claimed Qt 6 didn't honour these patterns — that was true at the time, but no longer.

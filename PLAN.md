@@ -3144,15 +3144,22 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
   - [ ] 16.7.4 — Per-game pinned-build + config presets (SPU block size,
     accuracy, renderer, framelimit).
 
-- [ ] 16.8 **Supersede obsoleted work + docs.**
-  - [ ] 16.8.1 — Mark Phase 12 (Mac AX driver) superseded — IPC control is
-    cross-platform; defer/delete the AX-driver tasks.
-  - [ ] 16.8.2 — Fold Phase 6.1 (window-flicker suppression) into 16.6 — no
-    dialog means no flicker hack.
-  - [ ] 16.8.3 — CLAUDE.md: new "RPCS3 integration (IPC)" section; demote UIA
-    driver to fallback; drop the Mac-AX-as-production framing.
-  - [ ] 16.8.4 — SPEC.md Q&A entry: why we moved from GUI automation to a
-    patched-upstream IPC path.
+- [~] 16.8 **Supersede obsoleted work + docs.** *(docs done 2026-05-30; CLAUDE/SPEC/PLAN
+  brought in line with the shipping IPC architecture.)*
+  - [x] 16.8.1 — **DONE.** Phase 12 (Mac AXUIElement driver) stays a **non-goal** —
+    macOS ships the mock driver only (CLAUDE.md "macOS support" already states this; the
+    cross-platform control story is IPC on Windows + mock on mac, not an AX port).
+  - [x] 16.8.2 — **DONE.** Phase 6.1 (window-flicker suppression) is folded into 16.6:
+    no Skylanders Manager dialog under IPC means no dialog-flicker hack; the residual
+    boot/reveal flicker was handled by 16.6.2.3 (cover) + 16.6.3.1 (STATE-gated reveal) +
+    the P2 `gs_frame::show()` HWND_BOTTOM fix.
+  - [x] 16.8.3 — **DONE.** CLAUDE.md updated: "RPCS3 control" tech-stack line + the
+    `rpcs3-control` architecture entry now lead with `IpcPortalDriver` (production) and
+    demote UIA to a stock-RPCS3 fallback; the Distribution section records the v1 model
+    (bundle patched RPCS3 + point at the user's install for firmware/games); the
+    "RPCS3 window/menu gotchas" section is flagged as the UIA-fallback path.
+  - [x] 16.8.4 — **DONE.** SPEC.md Q&A entry added: why GUI automation → patched-upstream
+    IPC (fragility of the dialog/menu path vs. a thin, shallow, additive control patch).
 
 - [ ] 16.9 **Emulator configuration with the GUI hijacked (no-GUI runtime).**
   RPCS3 config is file-based YAML and `--no-gui` is per-launch (not a build-time
