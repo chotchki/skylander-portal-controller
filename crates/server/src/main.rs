@@ -1,3 +1,10 @@
+// Release builds are a pure GUI app (eframe launcher + first-launch wizard),
+// so suppress the console window Windows otherwise spawns alongside the egui
+// surface — logs go to files (`logging::init`), not stdout. Gated to the
+// production build: `dev-tools` (on for `cargo run`) keeps the console so dev
+// iteration still sees tracing output. The release lane builds with
+// `--no-default-features` (no `dev-tools`), so the attribute takes effect there.
+#![cfg_attr(not(feature = "dev-tools"), windows_subsystem = "windows")]
 //! Skylander Portal Controller — entry point.
 //!
 //! Threading model:

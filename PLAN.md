@@ -3299,6 +3299,24 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
     + firmware) via the 16.9.0b fallback. Pure `migrate_install_paths` helper + 2 unit tests.
     **No save data touched**: per-profile working copies (figure progress) + `db.sqlite` live
     under the runtime dir, independent of every field this migrates.
+  - [x] 16.9.5 — **v1.9.4 launch trio (HTPC repro on v1.9.3, 2026-05-30).** Three independent
+    bugs the 16.9.4 migration surfaced once the bundled patched RPCS3 actually drove the boot:
+    - [x] **(a) `RPCS3_CONFIG_DIR` lost its last path component → firmware "welcome" wizard.**
+      RPCS3's `fs::get_config_dir()` normalises `\`→`/` then does `dir.resize(dir.rfind('/')+1)`
+      — file-path logic that *strips the trailing component* of a bare directory. We passed
+      `config_dir` (from `Path::parent()`, no trailing sep), so `C:\emu\rpcs3` collapsed to
+      `C:\emu\`; RPCS3 found no `dev_flash`/`games.yml` and popped its first-run setup. Fix:
+      `rpcs3_config_dir_env` appends a trailing separator at both launch sites (`launch_no_gui`
+      + `launch_gui_config`). The live HTPC tests passed the value with a hand-typed trailing
+      `\`, which is exactly why this only ever bit the production path. 3 unit tests.
+    - [x] **(b) Launcher console window.** The binary had no `windows_subsystem`, so the release
+      exe was a console-subsystem app and Windows spawned a terminal alongside the egui surface.
+      Added `#![cfg_attr(not(feature = "dev-tools"), windows_subsystem = "windows")]` — GUI
+      subsystem in release (verified PE Subsystem=2), console kept for `cargo run` (dev-tools).
+    - [x] **(c) "Open in Browser" fallback button invisible on the TV.** `render_main` floated
+      both action buttons to the very bottom with a `remaining*0.42` spacer; a real TV's overscan
+      cropped that band, so the connect-from-PC button never showed. Now anchored a fixed gap
+      below the "SCAN TO CONNECT" label, inside the safe (un-overscanned) centre region.
 
 ## Phase 17 - Connectivity diagnostics & firewall self-heal
 

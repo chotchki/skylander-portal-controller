@@ -126,7 +126,7 @@ impl UiaRpcsProcess {
         );
         let mut cmd = Command::new(exe);
         if let Some(dir) = config_dir {
-            cmd.env("RPCS3_CONFIG_DIR", dir);
+            cmd.env("RPCS3_CONFIG_DIR", rpcs3_config_dir_env(dir));
         }
         let child = cmd
             .spawn()
@@ -197,7 +197,7 @@ impl UiaRpcsProcess {
         // which may live apart from the exe (Phase 16). Omitted ⇒ RPCS3's own
         // resolution (portable next to the exe / its default).
         if let Some(dir) = config_dir {
-            cmd.env("RPCS3_CONFIG_DIR", dir);
+            cmd.env("RPCS3_CONFIG_DIR", rpcs3_config_dir_env(dir));
         }
         let child = cmd
             .spawn()
@@ -393,6 +393,30 @@ impl Drop for UiaRpcsProcess {
 }
 
 // --- helpers ---
+
+/// Build the `RPCS3_CONFIG_DIR` env value for a config-root directory.
+///
+/// RPCS3's `fs::get_config_dir()` treats this env var as a *path to strip a
+/// trailing component from*: after normalising `\` → `/` it does
+/// `dir.resize(dir.rfind('/') + 1)`, which lops off everything past the last
+/// separator. For a file path (its fallback `GetModuleFileName` case) that
+/// turns `…/rpcs3.exe` into `…/`, the intended directory. But for a *bare
+/// directory* like `C:\emu\rpcs3` it turns it into `C:\emu\` — one level too
+/// high — so RPCS3 looks for `dev_flash`/`games.yml` in the wrong place,
+/// finds no firmware, and pops its first-run "welcome" setup wizard.
+///
+/// Appending a trailing separator makes the last component survive the resize
+/// (`C:\emu\rpcs3\` → kept whole). The live HTPC tests pass the value with a
+/// trailing `\` by hand, which is why this only ever bit the production launch
+/// path (where `config_dir` comes from `Path::parent()`, never trailing-slashed).
+fn rpcs3_config_dir_env(dir: &Path) -> std::ffi::OsString {
+    let mut value = dir.as_os_str().to_os_string();
+    let already_terminated = dir.as_os_str().to_string_lossy().ends_with(['/', '\\']);
+    if !value.is_empty() && !already_terminated {
+        value.push(std::path::MAIN_SEPARATOR_STR);
+    }
+    value
+}
 
 fn find_rpcs3_main_window() -> Option<UIElement> {
     find_rpcs3_main_window_with_pid()
@@ -595,5 +619,47 @@ fn wait_handle_briefly(pid: u32, timeout: Duration) -> Result<bool> {
         let _ = CloseHandle(handle);
         // WAIT_OBJECT_0 == 0 means signalled (process exited).
         Ok(wait.0 == 0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::MAIN_SEPARATOR;
+
+    #[test]
+    fn config_dir_env_appends_trailing_separator() {
+        // A bare directory must come back with a trailing separator so RPCS3's
+        // `dir.resize(dir.rfind('/') + 1)` keeps the whole path (the firmware-
+        // welcome bug: without this it strips the last component).
+        let dir = PathBuf::from(format!("C:{sep}emu{sep}rpcs3", sep = MAIN_SEPARATOR));
+        let value = rpcs3_config_dir_env(&dir);
+        let s = value.to_string_lossy();
+        assert!(
+            s.ends_with(MAIN_SEPARATOR),
+            "expected a trailing separator, got {s:?}"
+        );
+        assert!(
+            s.starts_with(&dir.to_string_lossy().to_string()),
+            "original path must be preserved as a prefix, got {s:?}"
+        );
+    }
+
+    #[test]
+    fn config_dir_env_is_idempotent_when_already_terminated() {
+        // Already-trailing paths (e.g. the HTPC `.env.dev` value) must not gain
+        // a second separator.
+        let dir = PathBuf::from(format!("C:{sep}emu{sep}rpcs3{sep}", sep = MAIN_SEPARATOR));
+        let value = rpcs3_config_dir_env(&dir);
+        assert_eq!(value, dir.as_os_str());
+    }
+
+    #[test]
+    fn config_dir_env_accepts_forward_slash_terminator() {
+        // RPCS3 normalises `\` → `/` internally; a forward-slash-terminated
+        // value is equally valid and must not pick up an extra separator.
+        let dir = PathBuf::from("C:/emu/rpcs3/");
+        let value = rpcs3_config_dir_env(&dir);
+        assert_eq!(value, dir.as_os_str());
     }
 }

@@ -235,10 +235,15 @@ impl LauncherApp {
                 );
             }
 
-            // Push the action buttons toward the bottom of the panel. Leave room
-            // for the two stacked buttons (Open-in-Browser fallback + Exit).
-            let remaining = ui.available_height();
-            ui.add_space((remaining * 0.42).max(40.0));
+            // Action buttons sit just below the subtitle, in the centre band the
+            // QR already occupies — NOT pushed to the bottom edge. The previous
+            // layout used a `remaining * 0.42` spacer that floated both buttons to
+            // the very bottom of the panel, where a real TV's overscan cropped
+            // them out of view entirely, so the connect-from-PC fallback button
+            // never showed (Chris flagged 2026-05-30, v1.9.3). A fixed modest gap
+            // keeps them clear of the "SCAN TO CONNECT" label while staying inside
+            // the safe (un-overscanned) region at any TV resolution.
+            ui.add_space(40.0);
             // QR-scan fallback (user request 2026-05-30): open the same phone URL
             // the QR encodes in the PC's default browser, so a player can drive the
             // portal from the HTPC if their phone can't scan the code. On-brand
