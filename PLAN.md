@@ -2970,14 +2970,78 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
     Phone's `/api/portal/slot/:n/*` routes become "add/remove a figure" (the `:n`
     is already a holdover the UI doesn't surface). Bundle with 16.6.
 
-- [ ] 16.6 **No-GUI launch + window coordination.**
-  - [ ] 16.6.1 — Launch patched RPCS3 in no-GUI mode with direct EBOOT boot
-    (reuse `launch_with_eboot`).
-  - [ ] 16.6.2 — Host-side window coordination: position/z-order the borderless
-    viewport against the egui launcher (single-app feel). Windows: optional
-    `SetParent` nesting. macOS: coordinated windows (no cross-process embed).
-  - [ ] 16.6.3 — Retire the Skylanders Manager dialog navigation + off-screen-hide
-    path once IPC control is proven.
+- [ ] 16.6 **No-GUI launch + window coordination.** *(scoped 2026-05-29)*
+
+  **Design decisions (scoping):** (1) **Launcher stays overlaid** — keep the
+  current transparent fullscreen always-on-top eframe window compositing over the
+  game; the corner reconnect-QR is load-bearing. (2) **Coordinated siblings, not
+  `SetParent`** — position the borderless game fullscreen *under* the topmost
+  launcher; this is the only model that keeps the overlay on top (a `SetParent`
+  child renders *above* the parent's egui surface, occluding the overlay).
+  (3) **Resolution flicker is transition-only** (boot/launch + entering/leaving a
+  game — *not* mid-game or steady-state per the user) → fix with a **STATE-gated
+  opaque transition cover**, NOT `SetParent` and NOT a Vulkan/wgpu port (the
+  launcher is glow/OpenGL with custom `BadgeRig`+`ShaderRig` GL pipelines; porting
+  is a big rewrite for a benefit the cover already delivers). (4) **Keep UIA** as
+  an env-gated fallback (`SKYLANDER_PORTAL_DRIVER=uia`) through HTPC proving;
+  delete in 16.8. (5) **Readiness via IPC `STATE`/heartbeat**, retiring the
+  window-title FPS scraper + log-tail. (6) macOS = cross-platform position API +
+  **stub** (no patched mac binary yet — 16.2.3 mac build is gated). Critical files:
+  `crates/server/src/state.rs` (BootDirect + the scrapers to retire),
+  `crates/rpcs3-control/src/process.rs` (launch + window scrapers),
+  `crates/server/src/main.rs` (`build_driver`), `crates/server/src/ui/mod.rs`
+  (z-order + transition cover), `crates/server/src/config.rs` (`DriverKind`).
+
+  Depends on **16.5.2** (driver selection plumbing) + lands alongside **16.5.3**
+  (slot-model collapse). Sequence: 16.5.2 plumbing (keep UIA default) → 16.6.1
+  launch+readiness → 16.6.3.1 STATE poller (with 16.6.1, so `game_playable` never
+  goes dark) → 16.6.2 window position + flicker cover → flip default to IPC once
+  proven on the HTPC → 16.5.3 → delete scrapers (16.6.3.2-3). UIA stays compiled
+  throughout. Acceptance = `crates/rpcs3-control/tests/live_ipc.rs` on the HTPC.
+
+  - [ ] 16.6.1 — **No-GUI launch.**
+    - [ ] 16.6.1.1 — `UiaRpcsProcess::launch_no_gui(exe, eboot, ipc_path)` (+
+      `RpcsProcess::launch_no_gui`): spawn `--no-gui <EBOOT>` with env
+      `SKYLANDER_BORDERLESS=1` + `SKYLANDER_IPC_PATH` (+ `RPCS3_CONFIG_DIR`),
+      keeping the Job Object. Reuse the existing spawn/Job body (it has no UIA).
+    - [ ] 16.6.1.2 — `BootDirect` Windows arm: spawn via `launch_no_gui`; readiness
+      via `ipc.ping()` then `read_state().is_playable()` (replaces the
+      `read_viewport_title()` `[SERIAL]`-marker loop); drop the post-boot
+      `open_dialog()` and the FPS-title gate.
+    - [ ] 16.6.1.3 — Shutdown: `WM_CLOSE` to the IPC `WINDOW` handle, falling
+      through to the Job-Object force path (works without the `"RPCS3 "` title).
+      A clean IPC `QUIT`/`STOP` command is a 16.7 follow-up.
+  - [ ] 16.6.2 — **Window coordination + transition-flicker elimination.**
+    - [ ] 16.6.2.1 — Cross-platform `position_game_window(handle, monitor_rect)`
+      (Windows: extend `hide::set_position_raw` with size + `SWP_NOACTIVATE`;
+      macOS stub). After playable, read `ipc.window_handle()` and place the
+      borderless game fullscreen at the launcher's monitor, under the topmost
+      launcher (siblings).
+    - [ ] 16.6.2.2 — Kill the per-frame z-order churn: delete
+      `push_rpcs3_main_to_bottom_via_win32` (`ui/mod.rs:312`; no menu window under
+      borderless) and set launcher-topmost + game-position **once on state change**,
+      not every frame.
+    - [ ] 16.6.2.3 — **STATE-gated opaque transition cover (the flicker fix).**
+      Launcher paints an *opaque* starfield/loading cover during boot and on
+      enter/leave a game; fades to transparent to reveal the game only once
+      `STATE.is_playable()` is stable for N consecutive samples; on leave, cover
+      *before* tearing the game window down. Hides the boot + enter/leave resize
+      flicker entirely (the user's reported cases).
+    - [ ] 16.6.2.4 — *(deferred spike, optional)* `SetParent` nesting for
+      single-window alt-tab/minimize — only if desired later; needs the overlay
+      re-layered above the game child. NOT on the 16.6 critical path (the cover
+      solves the flicker that motivated it).
+  - [ ] 16.6.3 — **Retire obsoleted scrapers (UIA kept as fallback).**
+    - [ ] 16.6.3.1 — `spawn_state_poller` (IPC `STATE` → `game_playable`, optional
+      `progr=a/b` → compile subtitle). Lands with 16.6.1.
+    - [ ] 16.6.3.2 — Delete `spawn_fps_sampler` + `spawn_shader_compile_watchdog` +
+      `parse_fps_from_title` once the STATE poller is proven.
+    - [ ] 16.6.3.3 — Delete the window-title scrapers `read_viewport_title` /
+      `find_compile_progress_text` / `read_main_window_title` /
+      `list_all_visible_window_titles` (exports in `lib.rs`, bodies in `process.rs`)
+      after confirming no remaining callers.
+    - [ ] 16.6.3.4 — Leave `uia.rs` + dialog-nav + `hide.rs` dialog fns intact
+      behind the `uia` env fallback; tag for deletion in 16.8.
 
 - [ ] 16.7 **Crash/freeze supervisor (independent of portal path).**
   - [ ] 16.7.1 — Detect crash (process exit) and freeze (liveness signal —
