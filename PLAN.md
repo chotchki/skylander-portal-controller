@@ -2348,24 +2348,26 @@ Authenticode signing indefinitely as superseded by winget.
     prerelease packages, so this doesn't gate submission.
 
   - [x] 13.1.4 Relicense from Unlicense to MIT for winget moderation friendliness.
-- [ ] 13.2 **Manifest authoring (first submission).** Step-by-step
-  HTPC runbook: `docs/dev/winget-submission.md` — exact prompts,
-  expected outputs, troubleshooting. Work it cold when HTPC
-  keyboard time opens up.
-  - [ ] 13.2.1 Install `wingetcreate` on the HTPC
-    (`winget install Microsoft.WingetCreate`).
-  - [ ] 13.2.2 `wingetcreate new <release-asset-url>` to scaffold
-    the three-file manifest (installer.yaml, locale.yaml,
-    version.yaml). Hand-tune: ShortDescription (≤256 chars),
-    Description, Tags (`skylanders`, `rpcs3`, `portal`,
-    `emulator`), License (MIT — matches LICENSE file),
-    LicenseUrl, PublisherUrl, PackageUrl (GitHub repo),
-    ReleaseNotesUrl (release page).
-  - [ ] 13.2.3 Local install test:
-    `winget install --manifest .\manifests\c\ChristopherHotchkiss\SkylanderPortalController\<version>\`.
-    Confirm Start Menu shortcut, `%ProgramFiles%` install
-    location, `data\` dir present, server launches via the
-    shortcut + RPCS3 menu nav still works end-to-end.
+- [~] 13.2 **Manifest authoring (first submission).** *(manifest authored +
+  `winget validate`-clean for v1.9.2, 2026-05-30. Lives at
+  `C:\Users\chris\workspace\manifests\c\ChristopherHotchkiss\SkylanderPortalController\1.9.2\`.)*
+  Bootstrap target moved from the old v1.5.1 plan to the current **v1.9.2**.
+  - [x] 13.2.1 — **DONE.** `wingetcreate` + `winget` present on this machine.
+  - [x] 13.2.2 — **DONE.** Three-file manifest authored for **1.9.2** (schema
+    1.12.0): enriched `locale.en-US.yaml` (Description, Tags `skylanders`/`rpcs3`/
+    `portal`/`emulator`/`toys-to-life`/`ps3`, Moniker `skylander-portal-controller`,
+    Publisher/Support/Package/License/ReleaseNotes URLs, Copyright). License is
+    **GPL-2.0-only** (correct post-Phase-16; the old "MIT" note is stale). The
+    `installer.yaml` carries the real per-build values pulled from the published
+    MSI: `InstallerType: wix`, `Scope: machine`, `InstallModes`, `UpgradeBehavior:
+    install`, `ProductCode {6F85E3EC-AF99-4620-8768-46390CD3AEE3}`,
+    `InstallerSha256 895729…3814C`. (ProductCode/SHA extracted by parsing the MSI
+    Property table with olefile — self-checked: the parsed UpgradeCode matched the
+    known WiX `E6FC979F-…`; no msilib/PowerShell needed.) `winget validate` → clean.
+  - [ ] 13.2.3 Local install test (optional pre-submit):
+    `winget install --manifest C:\Users\chris\workspace\manifests\c\ChristopherHotchkiss\SkylanderPortalController\1.9.2\`.
+    Confirm Start Menu shortcut (now with the icon fix), `%ProgramFiles%` install
+    location, `data\`/`rpcs3\`/`steam\` present, server launches via the shortcut.
 
 - [ ] 13.3 **First PR to microsoft/winget-pkgs.**
   - [ ] 13.3.1 Fork `microsoft/winget-pkgs`, push the manifest
