@@ -227,6 +227,10 @@ jobs:
           }
           $dataAbs = (Resolve-Path data).Path
           $rpcs3Abs = (Resolve-Path rpcs3).Path
+          # steam/ may be absent (heat then emits an empty SteamFiles group with
+          # no SteamSourceDir reference); fall back to '.' so Resolve-Path can't
+          # throw and the unused -d define is harmless.
+          $steamAbs = if (Test-Path steam) { (Resolve-Path steam).Path } else { '.' }
           # cargo-wix consumes the [package.metadata.wix] block in
           # crates/server/Cargo.toml plus the wxs fragments listed
           # there (main.wxs + heat-generated data.wxs / steam.wxs).
@@ -252,6 +256,7 @@ jobs:
               -C -ext -C WixFirewallExtension `
               -C "-dDataSourceDir=$dataAbs" `
               -C "-dRpcs3SourceDir=$rpcs3Abs" `
+              -C "-dSteamSourceDir=$steamAbs" `
               -L -ext -L WixFirewallExtension
             if ($LASTEXITCODE -ne 0) { throw "cargo wix failed: $LASTEXITCODE" }
           } finally { Pop-Location }
