@@ -3290,7 +3290,7 @@ firewall. So detection is (a) a passive "nobody's connected" symptom watchdog +
 
 **Scope (decided 2026-05-30): diagnose + one-click fix.**
 
-- [ ] 17.1 — **Passive connectivity watchdog + "Trouble connecting?" launcher card.**
+- [x] 17.1 — **Passive connectivity watchdog + "Trouble connecting?" launcher card.**
   Track `ever_connected` (any client this session) + time since `server_ready`. If
   ≥ ~60–90s up while showing the QR with zero clients ever, set a
   `LauncherStatus.connectivity_warning` flag and render a non-blocking TV card:
@@ -3298,20 +3298,20 @@ firewall. So detection is (a) a passive "nobody's connected" symptom watchdog +
   same-Wi-Fi reminder, + the firewall status/fix from 17.2/17.3. Auto-clears the
   moment a client connects. Catches *every* cause (firewall, mDNS, wrong network),
   near-zero false positives in the real failure case.
-- [ ] 17.2 — **Windows Firewall rule check (read-only).** Win-only module querying
+- [x] 17.2 — **Windows Firewall rule check (read-only).** Win-only module querying
   whether an enabled inbound TCP Allow rule for the bind port exists on the **active
   profile** — via the `INetFwPolicy2` COM API (`windows` crate) or `netsh` fallback.
   Also read `FirewallEnabled` for the active profile + program-scoped rules to avoid
   false positives (firewall off ⇒ no rule needed; broader rule already covers us).
   Returns `Healthy / RuleMissing / FirewallOff / Unknown` to specialise the card copy.
   Unit-test the decision logic / netsh parse.
-- [ ] 17.3 — **One-click firewall fix (elevated).** A launcher button (+ API) that
+- [x] 17.3 — **One-click firewall fix (elevated).** A launcher button (+ API) that
   runs `netsh advfirewall firewall add rule name="Skylander Portal Controller"
   dir=in action=allow protocol=TCP localport=8765` **elevated** (ShellExecute `runas`
   → one UAC prompt). Idempotent (check-then-add, or delete-by-name then add). On
   success re-run 17.2 and clear the warning. Handles UAC-declined gracefully. This is
   the actual fix for zip installs. Non-Windows: hidden (mock platform).
-- [ ] 17.4 — **Raw-IP fallback QR on the card.** Render a second QR encoding the
+- [x] 17.4 — **Raw-IP fallback QR on the card.** Render a second QR encoding the
   raw-IP URL (`http://<ip>:8765/?…`) so a phone that failed to resolve `<hostname>.local`
   (the Android mDNS case) can scan the IP form. Reuses the existing round-QR rasteriser.
 - [ ] 17.5 — *(stretch)* Authenticode/SmartScreen tie-in: revisit signing (Phase 13/14)

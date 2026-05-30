@@ -23,7 +23,8 @@ use tracing::{info, warn};
 
 use crate::config::DriverKind;
 use crate::state::{
-    AppState, RpcsLifecycle, spawn_crash_watchdog, spawn_driver_worker, spawn_state_poller,
+    AppState, RpcsLifecycle, spawn_connectivity_watchdog, spawn_crash_watchdog,
+    spawn_driver_worker, spawn_state_poller,
 };
 use crate::ui::LauncherApp;
 
@@ -195,6 +196,9 @@ fn main() -> Result<()> {
     } else {
         tracing::warn!("OS hostname unavailable; QR will use the raw-IP URL: {phone_url}");
     }
+    // Raw-IP form for the PLAN 17.1 connectivity card / 17.4 fallback QR — always
+    // the literal IP, even when the QR above uses the `.local` hostname.
+    let raw_ip_url = skylander_server::mdns::raw_ip_url(ip, cfg.bind_port, &key_hex);
 
     // Pre-render the round-QR PNG once — the URL is fixed for the life
     // of the server, so `/api/join-qr.png` is just an `Arc<Vec<u8>>`
@@ -359,6 +363,18 @@ fn main() -> Result<()> {
                         let _ = driver_for_poller;
                     }
                 }
+                // Connectivity watchdog (PLAN 17.1): if no phone connects within
+                // a grace window after the QR is up, raise the "Trouble
+                // connecting?" diagnostic (raw-IP URL + firewall check/fix). 90s
+                // grace, 5s poll — long enough that a user walking over to scan
+                // the QR doesn't trip it, short enough to help promptly.
+                spawn_connectivity_watchdog(
+                    status_for_task.clone(),
+                    clients_for_task.clone(),
+                    bind.port(),
+                    std::time::Duration::from_secs(90),
+                    std::time::Duration::from_secs(5),
+                );
                 // NFC scanner worker (PLAN 6.5.1 + 6.5.5a). Feature-gated:
                 // off by default so users without an ACR122U aren't
                 // pulling in pcsc linkage. Dumps land under
@@ -599,12 +615,19 @@ fn main() -> Result<()> {
         ..Default::default()
     };
     let url_for_ui = phone_url.clone();
+    let raw_ip_url_for_ui = raw_ip_url.clone();
+    let ui_bind_port = bind.port();
     eframe::run_native(
         "skylander-portal-controller",
         native_options,
         Box::new(move |cc| {
             Ok(Box::new(LauncherApp::new(
-                cc, ui_clients, ui_status, url_for_ui,
+                cc,
+                ui_clients,
+                ui_status,
+                url_for_ui,
+                raw_ip_url_for_ui,
+                ui_bind_port,
             )))
         }),
     )

@@ -129,6 +129,19 @@ pub struct LauncherApp {
     /// "Open in Browser" button can launch it in the PC's default browser as a
     /// QR-scan fallback (user request 2026-05-30).
     url: String,
+    /// The raw-IP form of the join URL (`http://<ip>:<port>/?k=…`), shown by the
+    /// PLAN 17.1 "Trouble connecting?" card as a fallback when the `.local` URL
+    /// the QR usually encodes doesn't resolve on the phone (Android mDNS). Also
+    /// the payload of the 17.4 raw-IP QR. Equals `url` when mDNS wasn't used.
+    raw_ip_url: String,
+    /// Pre-rendered round-QR pixels for `raw_ip_url` (PLAN 17.4), uploaded to an
+    /// egui texture lazily on first use so the connectivity card can show a
+    /// scannable raw-IP code.
+    raw_ip_qr_texture: Option<egui::TextureHandle>,
+    raw_ip_qr_pixels: crate::round_qr::RoundQrPixels,
+    /// Bind port (PLAN 17.3) — the connectivity card's "Fix Firewall" button
+    /// passes it to the elevated `netsh` rule-add.
+    bind_port: u16,
 }
 
 impl LauncherApp {
@@ -137,6 +150,8 @@ impl LauncherApp {
         clients: Arc<AtomicUsize>,
         status: Arc<std::sync::Mutex<LauncherStatus>>,
         url: String,
+        raw_ip_url: String,
+        bind_port: u16,
     ) -> Self {
         // Apply the shared TV-launcher palette + Titan One display face.
         // Both must happen before any widgets render their first frame
@@ -156,6 +171,9 @@ impl LauncherApp {
             &cc.egui_ctx,
             &qr_pixels,
         ));
+        // PLAN 17.4: pre-render the raw-IP QR pixels too (texture uploads lazily
+        // in the connectivity card, only when it actually shows).
+        let raw_ip_qr_pixels = main_screen::render_qr_pixels(&raw_ip_url);
         Self {
             clients,
             status,
@@ -176,7 +194,158 @@ impl LauncherApp {
             badge_rig: Arc::new(Mutex::new(None)),
             qr_pixels,
             url,
+            raw_ip_url,
+            raw_ip_qr_texture: None,
+            raw_ip_qr_pixels,
+            bind_port,
         }
+    }
+
+    /// "Trouble connecting?" diagnostic card (PLAN 17.1/17.3/17.4). Rendered as a
+    /// centered floating window over the Main screen when the connectivity
+    /// watchdog has raised `connectivity_warning` (no phone connected within the
+    /// grace window). Shows the **raw-IP** join URL + a scannable raw-IP QR (the
+    /// `.local`-mDNS fallback), a same-Wi-Fi reminder, and a firewall line that
+    /// specialises on `firewall_status` — including a one-click "FIX FIREWALL"
+    /// button that adds the inbound rule via an elevated `netsh` (17.3) when a
+    /// rule is missing.
+    fn paint_connectivity_card(&mut self, ctx: &egui::Context, status: &LauncherStatus) {
+        use crate::firewall::FirewallStatus;
+
+        // Upload the raw-IP QR texture lazily, the first frame the card shows.
+        if self.raw_ip_qr_texture.is_none() {
+            self.raw_ip_qr_texture = Some(main_screen::pixels_to_egui_texture(
+                ctx,
+                &self.raw_ip_qr_pixels,
+            ));
+        }
+        let firewall = status.firewall_status;
+        let gold = egui::Color32::from_rgb(245, 198, 52);
+        let body = egui::Color32::from_rgb(220, 228, 245);
+
+        egui::Window::new("trouble_connecting")
+            .title_bar(false)
+            .resizable(false)
+            .collapsible(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .frame(
+                egui::Frame::none()
+                    .fill(egui::Color32::from_rgb(8, 14, 36))
+                    .stroke(egui::Stroke::new(2.0, gold))
+                    .rounding(egui::Rounding::same(16.0))
+                    .inner_margin(egui::Margin::same(28.0)),
+            )
+            .show(ctx, |ui| {
+                ui.set_max_width(540.0);
+                ui.vertical_centered(|ui| {
+                    ui.label(
+                        egui::RichText::new("TROUBLE CONNECTING?")
+                            .size(34.0)
+                            .strong()
+                            .color(gold),
+                    );
+                    ui.add_space(8.0);
+                    ui.label(
+                        egui::RichText::new(
+                            "No phone has joined yet. On your phone, make sure you're on \
+                             the same Wi-Fi, then open this address:",
+                        )
+                        .size(18.0)
+                        .color(body),
+                    );
+                    ui.add_space(10.0);
+                    ui.label(
+                        egui::RichText::new(&self.raw_ip_url)
+                            .size(22.0)
+                            .monospace()
+                            .strong()
+                            .color(egui::Color32::WHITE),
+                    );
+                    ui.add_space(14.0);
+                    if let Some(tex) = &self.raw_ip_qr_texture {
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(180.0, 180.0), egui::Sense::hover());
+                        ui.painter().image(
+                            tex.id(),
+                            rect,
+                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                            egui::Color32::WHITE,
+                        );
+                    }
+                    ui.add_space(14.0);
+                    match firewall {
+                        FirewallStatus::RuleMissing => {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "Windows Firewall is blocking port {}.",
+                                    self.bind_port
+                                ))
+                                .size(17.0)
+                                .color(egui::Color32::from_rgb(255, 180, 120)),
+                            );
+                            ui.add_space(8.0);
+                            let btn = egui::Button::new(
+                                egui::RichText::new("FIX FIREWALL (ALLOW PORT)")
+                                    .size(18.0)
+                                    .strong()
+                                    .color(egui::Color32::from_rgb(42, 26, 0)),
+                            )
+                            .fill(gold)
+                            .min_size(egui::vec2(300.0, 46.0));
+                            if ui.add(btn).clicked() {
+                                // Elevated netsh runs off the UI thread (UAC
+                                // prompt can block); on success re-check and
+                                // update the status so the card flips to Healthy.
+                                let status_arc = self.status.clone();
+                                let port = self.bind_port;
+                                std::thread::spawn(move || {
+                                    match crate::firewall::add_inbound_rule_elevated(port) {
+                                        Ok(()) => {
+                                            let re = crate::firewall::check_inbound_rule(port);
+                                            if let Ok(mut st) = status_arc.lock() {
+                                                st.firewall_status = re;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!("firewall one-click fix failed: {e}")
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                        FirewallStatus::Healthy => {
+                            ui.label(
+                                egui::RichText::new(
+                                    "\u{2713} Firewall rule is in place \u{2014} \
+                                     double-check the phone is on the same Wi-Fi.",
+                                )
+                                .size(16.0)
+                                .color(egui::Color32::from_rgb(150, 220, 160)),
+                            );
+                        }
+                        FirewallStatus::FirewallOff => {
+                            ui.label(
+                                egui::RichText::new(
+                                    "Firewall is off \u{2014} not the problem. \
+                                     Make sure the phone is on the same Wi-Fi network.",
+                                )
+                                .size(16.0)
+                                .color(body),
+                            );
+                        }
+                        FirewallStatus::Unknown => {
+                            ui.label(
+                                egui::RichText::new(
+                                    "If it still won't connect, allow this app through \
+                                     Windows Firewall and confirm the phone shares this Wi-Fi.",
+                                )
+                                .size(15.0)
+                                .color(egui::Color32::from_rgb(180, 190, 210)),
+                            );
+                        }
+                    }
+                });
+            });
     }
 }
 
@@ -768,6 +937,17 @@ impl eframe::App for LauncherApp {
                     );
                 }
             });
+
+        // PLAN 17.1: overlay the "Trouble connecting?" diagnostic on the join
+        // screen when the watchdog has flagged that no phone has reached us.
+        // Only on Main (not in-game / Crashed / Farewell) — it's about getting
+        // the first phone connected.
+        if status_snapshot.connectivity_warning
+            && !is_in_game
+            && matches!(status_snapshot.screen, LauncherScreen::Main)
+        {
+            self.paint_connectivity_card(ctx, &status_snapshot);
+        }
     }
 
     fn on_exit(&mut self, gl: Option<&egui_glow::glow::Context>) {

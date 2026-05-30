@@ -22,7 +22,7 @@
 pub const RULE_NAME: &str = "Skylander Portal Controller";
 
 /// Result of the inbound-rule check.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FirewallStatus {
     /// An enabled inbound Allow rule covers our port on the active profile —
     /// phones should be able to reach us (firewall-wise).
@@ -36,6 +36,7 @@ pub enum FirewallStatus {
     FirewallOff,
     /// Couldn't determine (COM error, or non-Windows). Don't alarm on the
     /// firewall specifically; the card still shows the generic guidance.
+    #[default]
     Unknown,
 }
 

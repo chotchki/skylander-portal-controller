@@ -233,6 +233,16 @@ pub struct LauncherStatus {
     /// Detected by the IPC STATE poller off the 1 Hz heartbeat's frame field.
     /// The recovery action (auto-restart) is 16.7.2; this flag is the signal.
     pub frozen: bool,
+    /// `true` once the connectivity watchdog (PLAN 17.1) has decided phones are
+    /// probably unable to reach us: the server's been up + showing the QR past a
+    /// grace window with **zero** clients ever connected this session. Drives the
+    /// launcher's "Trouble connecting?" card (raw-IP URL + firewall fix). Cleared
+    /// the instant any client connects.
+    pub connectivity_warning: bool,
+    /// Firewall-rule health snapshot (PLAN 17.2), filled in when
+    /// `connectivity_warning` is raised so the card can specialise its copy
+    /// ("no firewall rule for port …" vs "firewall is off — check Wi-Fi/mDNS").
+    pub firewall_status: crate::firewall::FirewallStatus,
 }
 
 /// UI-polled view of one connected phone session. Colour / initial are
@@ -1247,6 +1257,93 @@ pub fn spawn_config_gui_watcher(
     });
 }
 
+/// Pure decision for the connectivity watchdog (PLAN 17.1): raise the "phones
+/// can't reach us" warning only once the server is ready, the grace window has
+/// elapsed since it became ready, and **no** client has ever connected this
+/// session. Split out so the threshold logic unit-tests without a runtime.
+fn should_warn_no_connectivity(
+    server_ready: bool,
+    ever_connected: bool,
+    ready_elapsed: std::time::Duration,
+    grace: std::time::Duration,
+) -> bool {
+    server_ready && !ever_connected && ready_elapsed >= grace
+}
+
+/// Spawn the connectivity watchdog (PLAN 17.1). Once the server is up and
+/// showing the join QR, if **no** phone has connected within `grace`, it raises
+/// `LauncherStatus.connectivity_warning` (and snapshots the firewall status via
+/// PLAN 17.2 so the card can explain it) — the launcher then shows a "Trouble
+/// connecting?" card with the raw-IP URL + a one-click firewall fix. The instant
+/// any client connects it clears the warning and stops watching: a successful
+/// connection proves reachability, so there's nothing left to diagnose this
+/// session. Idle after that — re-armed only on the next server start.
+pub fn spawn_connectivity_watchdog(
+    launcher_status: Arc<std::sync::Mutex<LauncherStatus>>,
+    connected_clients: Arc<std::sync::atomic::AtomicUsize>,
+    bind_port: u16,
+    grace: std::time::Duration,
+    interval: std::time::Duration,
+) {
+    use std::sync::atomic::Ordering;
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        ticker.tick().await;
+
+        let mut ready_at: Option<tokio::time::Instant> = None;
+        let mut ever_connected = false;
+        let mut warned = false;
+
+        loop {
+            ticker.tick().await;
+
+            if connected_clients.load(Ordering::Relaxed) > 0 {
+                ever_connected = true;
+            }
+            if ever_connected {
+                // Reachability proven — clear any warning and stop watching.
+                if let Ok(mut st) = launcher_status.lock() {
+                    st.connectivity_warning = false;
+                }
+                info!("connectivity watchdog: a phone connected — diagnostics dismissed");
+                return;
+            }
+
+            let server_ready = launcher_status
+                .lock()
+                .map(|s| s.server_ready)
+                .unwrap_or(false);
+            if server_ready && ready_at.is_none() {
+                ready_at = Some(tokio::time::Instant::now());
+            }
+            let ready_elapsed = ready_at.map(|t| t.elapsed()).unwrap_or_default();
+
+            if !warned
+                && should_warn_no_connectivity(server_ready, ever_connected, ready_elapsed, grace)
+            {
+                // Off-reactor: the firewall check is a blocking COM round-trip.
+                let status = tokio::task::spawn_blocking(move || {
+                    crate::firewall::check_inbound_rule(bind_port)
+                })
+                .await
+                .unwrap_or(crate::firewall::FirewallStatus::Unknown);
+                if let Ok(mut st) = launcher_status.lock() {
+                    st.firewall_status = status;
+                    st.connectivity_warning = true;
+                }
+                warned = true;
+                warn!(
+                    ?status,
+                    grace_secs = grace.as_secs(),
+                    "no phone connected within the grace window — raising connectivity warning"
+                );
+                // Keep ticking: a later connection still clears + exits above.
+            }
+        }
+    });
+}
+
 /// Spawn the driver worker. Owns the `PortalDriver` and serialises all access.
 ///
 /// `profiles` + `sessions` are threaded in so the worker can persist the
@@ -1730,6 +1827,41 @@ mod tests {
         // After reset the next stall starts the count over.
         assert!(!d.observe(false, true, true));
         assert!(d.observe(false, true, true));
+    }
+
+    // ---- connectivity watchdog (PLAN 17.1) ----------------------------------
+
+    #[test]
+    fn connectivity_warns_only_after_grace_with_no_clients() {
+        let grace = std::time::Duration::from_secs(60);
+        // Not ready yet → never warn, regardless of elapsed.
+        assert!(!should_warn_no_connectivity(
+            false,
+            false,
+            std::time::Duration::from_secs(120),
+            grace
+        ));
+        // Ready, no clients, but still inside the grace window → don't warn yet.
+        assert!(!should_warn_no_connectivity(
+            true,
+            false,
+            std::time::Duration::from_secs(30),
+            grace
+        ));
+        // Ready, no clients, past grace → warn.
+        assert!(should_warn_no_connectivity(
+            true,
+            false,
+            std::time::Duration::from_secs(75),
+            grace
+        ));
+        // A client has connected → never warn, even past grace.
+        assert!(!should_warn_no_connectivity(
+            true,
+            true,
+            std::time::Duration::from_secs(75),
+            grace
+        ));
     }
 
     // ---- portal restore (PLAN 16.7.2) ---------------------------------------

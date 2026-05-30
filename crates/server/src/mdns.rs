@@ -93,13 +93,28 @@ pub fn build_phone_url(ip: Ipv4Addr, port: u16, hex_key: &str) -> (String, bool)
             ),
             true,
         ),
-        _ => (format!("http://{ip}:{port}/?k={hex_key}"), false),
+        _ => (raw_ip_url(ip, port, hex_key), false),
     }
+}
+
+/// The raw-IP form of the phone join URL (`http://<ip>:<port>/?k=<hex>`),
+/// independent of mDNS. Used by the PLAN 17.1 "Trouble connecting?" card as a
+/// fallback to surface when the `.local` URL doesn't resolve on the phone (the
+/// Android mDNS case), and by the 17.4 raw-IP QR. Mirrors `build_phone_url`'s
+/// raw-IP arm so the two never drift.
+pub fn raw_ip_url(ip: Ipv4Addr, port: u16, hex_key: &str) -> String {
+    format!("http://{ip}:{port}/?k={hex_key}")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn raw_ip_url_is_literal_ip_form() {
+        let url = raw_ip_url(Ipv4Addr::new(192, 168, 1, 147), 8765, "deadbeef");
+        assert_eq!(url, "http://192.168.1.147:8765/?k=deadbeef");
+    }
 
     #[test]
     fn url_uses_lowercased_hostname_when_available() {
