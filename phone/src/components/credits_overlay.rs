@@ -46,6 +46,17 @@ pub fn CreditsOverlay(open: RwSignal<bool>) -> impl IntoView {
                         </section>
 
                         <section>
+                            <h3>"Artwork"</h3>
+                            <p>
+                                "Original app icon, logo, and Steam library art by "
+                                <strong>"Alicea Hotchkiss"</strong>
+                                " — the starfield-and-gold portal look across the desktop \
+                                 icon, installer, and store art is all her work, drawn \
+                                 from scratch (no game assets)."
+                            </p>
+                        </section>
+
+                        <section>
                             <h3>"RPCS3"</h3>
                             <p>
                                 "This app wraps "
