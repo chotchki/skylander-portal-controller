@@ -79,6 +79,8 @@ jobs:
     name: patched RPCS3 (Windows)
     if: github.event_name == 'workflow_dispatch' && inputs.full_build
     runs-on: windows-2025   # upstream uses windows-2025-vs2026; adjust if the v143/msvc2022 toolset mismatches Qt
+    permissions:
+      contents: write   # publish the trimmed bin/ as the rpcs3-patched-<pin> prerelease
     defaults:
       run:
         shell: bash
@@ -151,12 +153,45 @@ jobs:
         # submodule.)
         run: msbuild rpcs3.sln /p:Configuration=Release /v:minimal /p:Platform=x64 /p:PreferredToolArchitecture=x64 /p:CLToolPath=${{ env.CCACHE_BIN_DIR }} /p:UseMultiToolTask=true /p:CustomAfterMicrosoftCommonTargets="${{ github.workspace }}\vendor\rpcs3\buildfiles\msvc\ci_only.targets"
 
-      - name: Upload patched rpcs3.exe
+      - name: Upload patched rpcs3.exe (full bin/, incl. PDB — for debugging)
         uses: actions/upload-artifact@v4
         with:
           name: rpcs3-patched-windows
           path: vendor/rpcs3/bin/
           if-no-files-found: warn
+
+      # Publish the TRIMMED bin/ as the durable `rpcs3-patched-<pin>` prerelease so
+      # release.yml (and users) can fetch a checksummed copy. The pin is the pristine
+      # upstream commit = HEAD~2 of the patched submodule (apply.sh lands 2 commits on
+      # top). Idempotent: creates the release if absent, then clobber-uploads the
+      # assets. PLAN 16.9.0b.
+      - name: Publish patched RPCS3 prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $pin = (git -C vendor/rpcs3 rev-parse --short HEAD~2).Trim()
+          $tag = "rpcs3-patched-$pin"
+          # Trim debug/link/test artifacts (the .pdb alone is ~68 MB).
+          Push-Location vendor/rpcs3/bin
+          Remove-Item -Force -ErrorAction SilentlyContinue rpcs3.pdb, rpcs3.exp, rpcs3.lib
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue test
+          Pop-Location
+          $zip = "rpcs3-patched-windows-x64.zip"
+          Compress-Archive -Path vendor/rpcs3/bin/* -DestinationPath $zip -Force
+          $sha = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+          "$sha  $zip" | Out-File -Encoding ascii "$zip.sha256"
+          $mb = [math]::Round((Get-Item $zip).Length / 1MB, 1)
+          Write-Host "publishing $tag ($mb MB, sha256=$sha)"
+          gh release view $tag --repo $env:GITHUB_REPOSITORY 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --repo $env:GITHUB_REPOSITORY --prerelease `
+              --title "Patched RPCS3 (Windows) — $pin + P1/P2 IPC patches" `
+              --notes "Patched RPCS3 dependency artifact for the Skylander Portal Controller (GPL-2.0; full source in this repo, see rpcs3-patches/). Bundled by release.yml; users still supply firmware + games via their own RPCS3 install. SHA-256: $sha"
+            if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
+          }
+          gh release upload $tag --repo $env:GITHUB_REPOSITORY --clobber $zip "$zip.sha256"
+          if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
 
   # ---------------------------------------------------------------------------
   # Gated full build (macOS). Upstream's .ci/build-mac.sh is self-contained
@@ -166,6 +201,10 @@ jobs:
   build-macos:
     name: patched RPCS3 (macOS, Apple Silicon)
     if: github.event_name == 'workflow_dispatch' && inputs.full_build
+    # macOS ships the MOCK driver — a patched mac RPCS3 is an explicit non-goal.
+    # This job is a soft portability check only; its failure must not fail the run
+    # (the Windows build is the product artifact). PLAN 16.8.1.
+    continue-on-error: true
     runs-on: macos-14
     env:
       CCACHE_DIR: /tmp/ccache_dir
