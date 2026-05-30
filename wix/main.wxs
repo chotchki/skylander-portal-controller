@@ -76,16 +76,26 @@
                             KeyPath='yes'>
                             <!-- Start Menu shortcut. Advertise='yes' lets
                                  Windows lazy-resolve the target so the
-                                 shortcut survives a repair-install. -->
+                                 shortcut survives a repair-install. The
+                                 explicit Icon/IconIndex is load-bearing:
+                                 advertised shortcuts do NOT reliably inherit
+                                 the exe's embedded icon, so without this the
+                                 Start Menu / Desktop tiles render the generic
+                                 blank icon. The Icon Id must carry the `.ico`
+                                 extension for MSI's Icon table. -->
                             <Shortcut Id='StartMenuShortcut'
                                 Directory='ApplicationProgramsFolder'
                                 Name='Skylander Portal Controller'
                                 WorkingDirectory='APPLICATIONFOLDER'
+                                Icon='SkylanderPortalController.ico'
+                                IconIndex='0'
                                 Advertise='yes'/>
                             <Shortcut Id='DesktopShortcut'
                                 Directory='DesktopFolder'
                                 Name='Skylander Portal Controller'
                                 WorkingDirectory='APPLICATIONFOLDER'
+                                Icon='SkylanderPortalController.ico'
+                                IconIndex='0'
                                 Advertise='yes'/>
                         </File>
                         <!-- PLAN 10.8.2 / 10.9.1: open the listening
@@ -161,10 +171,13 @@
                      Value='[APPLICATIONFOLDER]'
                      After='CostFinalize'/>
 
-        <!-- Add/Remove Programs entry: icon, help URL, contact. -->
-        <Icon Id='ProductICO'
+        <!-- Single shared icon, used by both the Start Menu / Desktop
+             shortcuts (above) and the Add/Remove Programs entry. The Id
+             carries the `.ico` extension so MSI's Icon table treats it as
+             an icon (required for advertised-shortcut Icon references). -->
+        <Icon Id='SkylanderPortalController.ico'
               SourceFile='..\..\assets\branding\icon.ico'/>
-        <Property Id='ARPPRODUCTICON' Value='ProductICO'/>
+        <Property Id='ARPPRODUCTICON' Value='SkylanderPortalController.ico'/>
         <Property Id='ARPHELPLINK'
                   Value='https://github.com/chotchki/skylander-portal-controller'/>
         <Property Id='ARPURLINFOABOUT'
