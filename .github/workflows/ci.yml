@@ -146,6 +146,11 @@ jobs:
   clippy-build-test-macos:
     name: clippy + build + test (macos)
     runs-on: macos-14
+    # DISABLED 2026-05-30 — macOS runners bill 10x and we keep not fixing the
+    # mac lane; stop burning the budget. The Windows + Ubuntu lanes already
+    # cover clippy/build/test on the production driver. Re-enable by removing
+    # this `if: false` once the mac build is worth maintaining again.
+    if: false
     steps:
       - uses: actions/checkout@v4
 
@@ -193,6 +198,9 @@ jobs:
   e2e-mock-macos:
     name: e2e (mock chromedriver, macos)
     runs-on: macos-14
+    # DISABLED 2026-05-30 — see clippy-build-test-macos above. Re-enable by
+    # removing this `if: false`.
+    if: false
     steps:
       - uses: actions/checkout@v4
 

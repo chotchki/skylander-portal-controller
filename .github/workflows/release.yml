@@ -290,6 +290,12 @@ jobs:
     # Mac users targeted by this distribution are on Apple Silicon
     # by 2026.
     runs-on: macos-14
+    # DISABLED 2026-05-30 — the macOS release artifact (mock-driver only, no
+    # real RPCS3) keeps failing/burning 10x Actions minutes for little value;
+    # ship Windows-only for now. Re-enable by removing this `if: false` once the
+    # mac build is worth maintaining. (The Windows job publishes the Release
+    # independently, so a tag still produces the zip + MSI.)
+    if: false
     # `release` Environment scopes the signing/notarization secrets
     # (PLAN 10.9.2). Configure it in repo Settings → Environments →
     # release with deployment-branch restriction to `v*.*.*` tags
