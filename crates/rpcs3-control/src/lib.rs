@@ -84,13 +84,13 @@ pub mod process_mock;
 pub use process::UiaRpcsProcess;
 pub use process_mock::MockRpcsProcess;
 
-// Windows-only internal helpers (UIA progress-text scraping + window
-// enumeration). Not used by the server crate.
+// Windows-only window-title read used by the legacy UIA boot path
+// (`BootDirect` waits for the `FPS: … [SERIAL]` viewport before driving the
+// dialog). The diagnostic scrapers (main-window / compile-progress / all-titles)
+// and the FPS-based readiness sampler were retired in PLAN 16.6.3.2/.3 — the IPC
+// STATE poller supersedes them.
 #[cfg(windows)]
-pub use process::{
-    find_compile_progress_text, list_all_visible_window_titles, read_main_window_title,
-    read_viewport_title,
-};
+pub use process::read_viewport_title;
 
 // Non-Windows stubs so server code that polls for an FPS: viewport
 // (BootDirect handler) compiles on Mac/Linux. The mock-driver lifecycle

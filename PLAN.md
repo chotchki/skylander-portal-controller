@@ -3103,12 +3103,19 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
       over the game → the unmasked Layer-2 CPU starfield (`ui/mod.rs`) now skips when
       `game_underneath`. Result confirmed "much much better" — clean loading cover
       through compile, one reveal at the end, alt-tab solid.
-    - [ ] 16.6.3.2 — Delete `spawn_fps_sampler` + `spawn_shader_compile_watchdog` +
-      `parse_fps_from_title` once the STATE poller is proven.
-    - [ ] 16.6.3.3 — Delete the window-title scrapers `read_viewport_title` /
+    - [x] 16.6.3.2 — **DONE (2026-05-30).** Deleted `spawn_fps_sampler`,
+      `spawn_shader_compile_watchdog`, `parse_fps_from_title`, `read_new_compile_text`,
+      `classify_log_line` (+ all their unit tests) from `state.rs`, and removed the
+      UIA/Mock readiness arm in `main.rs`. The IPC `STATE` poller is now the sole
+      playable-signal source for IPC; the UIA fallback sets `game_playable` **in-band**
+      from `BootDirect` (its loop already waits for the rendering `FPS:` viewport), and
+      Mock stays unset (no game underneath → no iris punch-through, which is correct).
+    - [x] 16.6.3.3 — **DONE (2026-05-30).** Deleted the diagnostic scrapers
       `find_compile_progress_text` / `read_main_window_title` /
-      `list_all_visible_window_titles` (exports in `lib.rs`, bodies in `process.rs`)
-      after confirming no remaining callers.
+      `list_all_visible_window_titles` (`process.rs` bodies + `lib.rs` exports).
+      **Kept `read_viewport_title`** — it's load-bearing for the UIA boot path
+      (`BootDirect` waits on the `FPS: … [SERIAL]` viewport title before driving the
+      dialog), so it stays for as long as UIA is a fallback (retire with `uia.rs` in 16.8).
     - [ ] 16.6.3.4 — Leave `uia.rs` + dialog-nav + `hide.rs` dialog fns intact
       behind the `uia` env fallback; tag for deletion in 16.8.
 

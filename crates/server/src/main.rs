@@ -23,8 +23,7 @@ use tracing::{info, warn};
 
 use crate::config::DriverKind;
 use crate::state::{
-    AppState, RpcsLifecycle, spawn_crash_watchdog, spawn_driver_worker, spawn_fps_sampler,
-    spawn_shader_compile_watchdog, spawn_state_poller,
+    AppState, RpcsLifecycle, spawn_crash_watchdog, spawn_driver_worker, spawn_state_poller,
 };
 use crate::ui::LauncherApp;
 
@@ -338,8 +337,12 @@ fn main() -> Result<()> {
                 // Playable-signal source depends on the driver. IPC (PLAN 16.6.3.1):
                 // the clean STATE poller — `game_playable` waits for compile-complete
                 // (not just FPS), so the launcher reveals the game only once it's
-                // truly rendering (no early iris / compile→in-game flicker). UIA/mock:
-                // the log-tail compile subtitle + the FPS-in-viewport-title sampler.
+                // truly rendering (no early iris / compile→in-game flicker). The
+                // legacy UIA fallback sets `game_playable` in-band from BootDirect
+                // (which already waits for the rendering `FPS:` viewport before it
+                // returns); Mock has no real game underneath, so it stays unset (no
+                // iris punch-through) — both correct without the retired FPS/shader
+                // title scrapers (PLAN 16.6.3.2/.3).
                 match driver_kind {
                     crate::config::DriverKind::Ipc => {
                         spawn_state_poller(
@@ -350,15 +353,6 @@ fn main() -> Result<()> {
                     }
                     _ => {
                         let _ = driver_for_poller;
-                        spawn_shader_compile_watchdog(
-                            status_for_task.clone(),
-                            rpcs3_exe.clone(),
-                            std::time::Duration::from_millis(500),
-                        );
-                        spawn_fps_sampler(
-                            status_for_task.clone(),
-                            std::time::Duration::from_millis(250),
-                        );
                     }
                 }
                 // NFC scanner worker (PLAN 6.5.1 + 6.5.5a). Feature-gated:
