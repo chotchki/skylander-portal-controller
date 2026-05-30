@@ -259,6 +259,7 @@ pub fn router(state: Arc<AppState>, _phone_dist: std::path::PathBuf) -> Router {
         .route("/api/launch", post(launch_game))
         .route("/api/quit", post(quit_game))
         .route("/api/shutdown", post(shutdown_launcher))
+        .route("/api/rpcs3/settings", post(open_rpcs3_settings))
         .route("/api/profiles", get(list_profiles).post(create_profile))
         .route("/api/profiles/:id", axum::routing::delete(delete_profile))
         .route("/api/profiles/:id/unlock", post(unlock_profile))
@@ -961,11 +962,20 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
     // server startup. `process` being None here just means "no game is
     // running yet" — it's the normal pre-launch state. We only refuse
     // if a game is *already* running (caller must /api/quit first).
-    let guard = state.rpcs3.lock().await;
+    let mut guard = state.rpcs3.lock().await;
     if guard.current.is_some() {
         return (
             StatusCode::CONFLICT,
             "another game is already running; quit it first",
+        )
+            .into_response();
+    }
+    // PLAN 16.9.3: refuse to boot while the settings GUI is open — a second
+    // RPCS3 instance would collide on the singleton lockfile + IPC socket.
+    if guard.config_gui.as_mut().is_some_and(|p| p.is_alive()) {
+        return (
+            StatusCode::CONFLICT,
+            "close RPCS3 settings before launching a game",
         )
             .into_response();
     }
@@ -1463,6 +1473,94 @@ async fn shutdown_launcher(State(state): State<Arc<AppState>>, Signed(_body): Si
     });
 
     (StatusCode::ACCEPTED, "farewell").into_response()
+}
+
+/// POST /api/rpcs3/settings — open RPCS3's full settings GUI on the TV for
+/// on-demand per-game configuration (PLAN 16.9.3 — the CONFIGURE GAME admin
+/// action). Launches a **separate** RPCS3 instance in plain-GUI mode (no
+/// `--no-gui`, none of the borderless/IPC env) pointed at `config_dir`; the user
+/// edits a game's Custom Configuration with the HTPC keyboard/mouse and RPCS3
+/// persists `config/custom_configs/config_<SERIAL>.yml` for the `--no-gui` boots
+/// to consume — the controller never reads or writes that YAML. The launcher
+/// minimises while it's open (the Qt window needs the whole TV); a one-shot
+/// watcher restores everything when the user closes RPCS3.
+///
+/// - **409** while a game is running (the two RPCS3 instances would collide on
+///   the singleton lockfile + IPC socket) — the user quits to the picker first.
+///   No auto-stop.
+/// - **202** (no-op) if the settings GUI is already open.
+/// - **409** on the mock driver (no real RPCS3 to configure).
+async fn open_rpcs3_settings(
+    State(state): State<Arc<AppState>>,
+    Signed(_body): Signed,
+) -> Response {
+    if matches!(state.driver_kind, crate::config::DriverKind::Mock) {
+        return (
+            StatusCode::CONFLICT,
+            "RPCS3 settings aren't available on this platform",
+        )
+            .into_response();
+    }
+
+    {
+        let mut guard = state.rpcs3.lock().await;
+        if guard.current.is_some() {
+            return (
+                StatusCode::CONFLICT,
+                "stop the running game before opening RPCS3 settings",
+            )
+                .into_response();
+        }
+        if guard.config_gui.as_mut().is_some_and(|p| p.is_alive()) {
+            return (StatusCode::ACCEPTED, "settings already open").into_response();
+        }
+        // A dead handle the watcher hasn't reaped yet — drop it before relaunch.
+        guard.config_gui = None;
+    }
+
+    let exe = state.rpcs3_exe.clone();
+    let config_dir = state.config_dir.clone();
+    let launched = tokio::task::spawn_blocking(move || {
+        skylander_rpcs3_control::RpcsProcess::launch_gui_config(&exe, Some(&config_dir))
+    })
+    .await;
+    let proc = match launched {
+        Ok(Ok(p)) => p,
+        Ok(Err(e)) => {
+            warn!("open RPCS3 settings: launch failed: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("couldn't launch RPCS3: {e}"),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            warn!("open RPCS3 settings: launch task panicked: {e}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "launch task panicked").into_response();
+        }
+    };
+
+    {
+        let mut guard = state.rpcs3.lock().await;
+        guard.config_gui = Some(proc);
+    }
+    if let Ok(mut st) = state.launcher_status.lock() {
+        st.config_gui_open = true;
+    }
+    let _ = state
+        .events
+        .send(Event::Rpcs3SettingsChanged { open: true });
+    info!("RPCS3 settings GUI opened for per-game config");
+
+    // One-shot watcher restores the launcher + phones when the user closes it.
+    crate::state::spawn_config_gui_watcher(
+        state.rpcs3.clone(),
+        state.launcher_status.clone(),
+        state.events.clone(),
+        Duration::from_millis(750),
+    );
+
+    (StatusCode::ACCEPTED, "settings opening").into_response()
 }
 
 /// Optional WS query string. `?reclaim=<profile_id>` lets a reconnecting

@@ -105,6 +105,35 @@ impl UiaRpcsProcess {
         Self::wrap_spawned(child, exe)
     }
 
+    /// Launch RPCS3 with its **full settings GUI** (PLAN 16.9.3): no EBOOT, no
+    /// `--no-gui`, and **none** of the no-GUI / `SKYLANDER_BORDERLESS` /
+    /// `SKYLANDER_IPC_PATH` env — i.e. a plain upstream RPCS3 window. Pointed at
+    /// `config_dir` so RPCS3 reads the user's game list and persists each game's
+    /// **Custom Configuration** (`config/custom_configs/config_<SERIAL>.yml`) that
+    /// the normal `--no-gui` boots already auto-apply. The controller never parses
+    /// or writes that YAML — it just opens RPCS3's own editor for the user to edit
+    /// on the TV. Lifecycle (Job Object, `is_alive`, shutdown) is identical to the
+    /// other launch modes. Must not run alongside a `--no-gui` game (singleton
+    /// lockfile + IPC socket) — the caller gates on that.
+    pub fn launch_gui_config(exe: &Path, config_dir: Option<&Path>) -> Result<Self> {
+        if !exe.is_file() {
+            bail!("rpcs3.exe not found at {}", exe.display());
+        }
+        info!(
+            exe = %exe.display(),
+            config_dir = ?config_dir,
+            "launching RPCS3 (settings GUI for per-game config)"
+        );
+        let mut cmd = Command::new(exe);
+        if let Some(dir) = config_dir {
+            cmd.env("RPCS3_CONFIG_DIR", dir);
+        }
+        let child = cmd
+            .spawn()
+            .with_context(|| format!("spawn {} (settings GUI)", exe.display()))?;
+        Self::wrap_spawned(child, exe)
+    }
+
     /// Launch RPCS3 with an **EBOOT.BIN argument** so the game starts directly,
     /// skipping the library view + UI-driven boot sequence (PLAN 10.8.4).
     ///

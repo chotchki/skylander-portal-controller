@@ -123,6 +123,36 @@ mod tests {
     }
 
     #[test]
+    fn event_game_recovering_roundtrip() {
+        let evt = Event::GameRecovering {
+            message: "Skylanders: Giants stopped responding".into(),
+        };
+        let j = serde_json::to_string(&evt).unwrap();
+        assert!(j.contains(r#""kind":"game_recovering""#));
+        let back: Event = serde_json::from_str(&j).unwrap();
+        match back {
+            Event::GameRecovering { message } => {
+                assert_eq!(message, "Skylanders: Giants stopped responding")
+            }
+            _ => panic!("not a game_recovering event"),
+        }
+    }
+
+    #[test]
+    fn event_rpcs3_settings_changed_roundtrip() {
+        for open in [true, false] {
+            let evt = Event::Rpcs3SettingsChanged { open };
+            let j = serde_json::to_string(&evt).unwrap();
+            assert!(j.contains(r#""kind":"rpcs3_settings_changed""#));
+            let back: Event = serde_json::from_str(&j).unwrap();
+            match back {
+                Event::Rpcs3SettingsChanged { open: o } => assert_eq!(o, open),
+                _ => panic!("not a rpcs3_settings_changed event"),
+            }
+        }
+    }
+
+    #[test]
     fn event_snapshot_roundtrip() {
         let snap = Event::PortalSnapshot {
             slots: std::array::from_fn(|i| {

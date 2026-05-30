@@ -85,6 +85,12 @@ pub struct LauncherApp {
     /// launcher overlays the game window for in-game testing —
     /// otherwise `Normal`, so alt-tab works during code iteration.
     window_on_top_state: Option<bool>,
+    /// `true` while we've minimised the launcher window for the RPCS3 settings
+    /// GUI (PLAN 16.9.3). The Qt settings window needs the whole TV + input, so
+    /// the always-on-top launcher steps fully aside while `config_gui_open`, then
+    /// restores + refocuses when the user closes RPCS3. Tracked so the
+    /// `Minimized` viewport command only fires on the transitions, not per frame.
+    config_gui_minimized: bool,
     /// When the launcher started returning from an in-game session.
     /// Drives `LaunchPhase::ReturnFromGame` (skips the Startup beat,
     /// no brand intro). Cleared once the animation completes.
@@ -164,6 +170,7 @@ impl LauncherApp {
             returning_from_game_at: None,
             reconnect_qr_shown_at: None,
             window_on_top_state: None,
+            config_gui_minimized: false,
             vortex_rig: Arc::new(Mutex::new(None)),
             vortex_idle: vortex::idle_params(),
             badge_rig: Arc::new(Mutex::new(None)),
@@ -259,6 +266,30 @@ impl eframe::App for LauncherApp {
         // ServerError before this latches and the spin never fires.
         if status_snapshot.server_ready && self.server_ready_at.is_none() {
             self.server_ready_at = Some(Instant::now());
+        }
+
+        // PLAN 16.9.3: while RPCS3's settings GUI is open on the TV, step the
+        // launcher fully out of the way. The Qt settings window needs the whole
+        // screen + the HTPC keyboard/mouse, and the launcher is otherwise
+        // always-on-top — so minimise it for the duration and restore + refocus
+        // when the user closes RPCS3. We keep a slow repaint going while
+        // minimised so the loop notices the close (the config watcher flips
+        // `config_gui_open` from a background task) even though nothing else is
+        // animating, and early-return so the always-on-top / render logic below
+        // doesn't fight the minimise.
+        if status_snapshot.config_gui_open {
+            if !self.config_gui_minimized {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                self.config_gui_minimized = true;
+            }
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+            return;
+        }
+        if self.config_gui_minimized {
+            // Settings just closed — bring the launcher back to the foreground.
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            self.config_gui_minimized = false;
         }
 
         // Always-on-top toggle. Release: always on. Dev: only while

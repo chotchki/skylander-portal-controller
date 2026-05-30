@@ -470,6 +470,7 @@ fn main() -> Result<()> {
                     games,
                     games_yml,
                     rpcs3_exe,
+                    config_dir,
                     data_root,
                     phone_dist: phone_dist.clone(),
                     hmac_key,

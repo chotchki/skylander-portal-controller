@@ -177,6 +177,23 @@ impl RpcsProcess {
         }
     }
 
+    /// Launch RPCS3's **full settings GUI** for on-demand per-game config (PLAN
+    /// 16.9.3): plain GUI (no `--no-gui`, no borderless/IPC env), pointed at
+    /// `config_dir` so it reads the user's games and persists per-game Custom
+    /// Configurations. Windows only — returns an error on non-Windows (the mock
+    /// platform has no real RPCS3 to configure).
+    pub fn launch_gui_config(exe: &Path, config_dir: Option<&Path>) -> Result<Self> {
+        #[cfg(windows)]
+        {
+            UiaRpcsProcess::launch_gui_config(exe, config_dir).map(Self::Uia)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (exe, config_dir);
+            bail!("RPCS3 process management is only supported on Windows")
+        }
+    }
+
     /// Adopt an already-running RPCS3 (Windows only).
     pub fn attach() -> Result<Self> {
         #[cfg(windows)]

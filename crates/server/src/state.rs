@@ -55,6 +55,13 @@ pub struct AppState {
     /// raw paths for every game RPCS3 knows about.
     pub games_yml: HashMap<String, PathBuf>,
     pub rpcs3_exe: PathBuf,
+    /// RPCS3's data/config root (installed firmware + `config/games.yml` + the
+    /// per-game `config/custom_configs/`). May live apart from `rpcs3_exe` under
+    /// the Phase-16 bundled-binary model. Used to read `games.yml` at startup and
+    /// passed to RPCS3 launches as `RPCS3_CONFIG_DIR` — including the on-demand
+    /// settings GUI (PLAN 16.9.3), which persists per-game Custom Configurations
+    /// here for the `--no-gui` boots to consume.
+    pub config_dir: PathBuf,
     /// Root of the committed static-data bundle served at `/api/figures/:id/image`.
     /// Points at `<repo>/data/` in dev; populated at startup from config.
     pub data_root: PathBuf,
@@ -107,6 +114,15 @@ pub struct RpcsLifecycle {
     /// watchdog so an auto-respawn re-launches the same game rather
     /// than dropping into library view (which we no longer use).
     pub current_eboot: Option<PathBuf>,
+    /// A **separate** RPCS3 instance launched in full-GUI mode for on-demand
+    /// per-game configuration (PLAN 16.9.3 — the CONFIGURE GAME admin action).
+    /// Tracked apart from `process` (the `--no-gui` game) on purpose: it's not a
+    /// game, so the crash/freeze supervisor — which only watches `process` —
+    /// never treats it as a crash, and `/api/launch` refuses to boot a game while
+    /// it's alive (the two RPCS3 instances would fight over the singleton
+    /// lockfile + IPC socket). A one-shot watcher clears it when the user closes
+    /// the settings window.
+    pub config_gui: Option<RpcsProcess>,
 }
 
 /// UI-polled snapshot of the launcher's status indicators (PLAN 4.15.4).
@@ -205,6 +221,12 @@ pub struct LauncherStatus {
     /// directly above this window in the z-order. Only meaningful while
     /// `rpcs3_running`; a stale value from a prior game is ignored.
     pub game_window_handle: Option<u64>,
+    /// `true` while the on-demand RPCS3 **settings GUI** is open (PLAN 16.9.3).
+    /// The full Qt settings window needs the whole TV + the HTPC keyboard/mouse,
+    /// so the always-on-top launcher **minimises itself** for the duration and
+    /// restores when the user closes RPCS3. Set by `/api/rpcs3/settings`, cleared
+    /// by the config watcher on GUI exit.
+    pub config_gui_open: bool,
     /// `true` when the game has been **playable** but its frame counter
     /// (`EmuState.frames`, the RSX flip index) has stalled while RPCS3 still
     /// reports `running` for `FREEZE_AFTER` — i.e. the game hung (PLAN 16.7.1).
@@ -1180,6 +1202,47 @@ pub fn spawn_crash_watchdog(
                 let _ = events.send(Event::GameCrashed { message });
                 let _ = events.send(Event::GameChanged { current: None });
             }
+        }
+    });
+}
+
+/// One-shot watcher for the on-demand RPCS3 **settings GUI** (PLAN 16.9.3).
+/// Spawned by `/api/rpcs3/settings` right after it launches the GUI. Polls the
+/// `config_gui` handle every `interval`, and the first time it sees the user has
+/// closed RPCS3, it reaps the handle, clears `LauncherStatus.config_gui_open`
+/// (the launcher un-minimises), and broadcasts `Event::Rpcs3SettingsChanged {
+/// open: false }` so phones dismiss the "configuring on the TV…" overlay. Then it
+/// returns — one watcher per settings session, no permanent task.
+pub fn spawn_config_gui_watcher(
+    rpcs3: Arc<Mutex<RpcsLifecycle>>,
+    launcher_status: Arc<std::sync::Mutex<LauncherStatus>>,
+    events: broadcast::Sender<Event>,
+    interval: std::time::Duration,
+) {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        ticker.tick().await;
+        loop {
+            ticker.tick().await;
+            let mut guard = rpcs3.lock().await;
+            let still_open = match guard.config_gui.as_mut() {
+                Some(p) => p.is_alive(),
+                // Already reaped (e.g. by a relaunch's stale-handle drop) — nothing
+                // left for this watcher to do.
+                None => false,
+            };
+            if still_open {
+                continue;
+            }
+            let _ = guard.config_gui.take();
+            drop(guard);
+            if let Ok(mut st) = launcher_status.lock() {
+                st.config_gui_open = false;
+            }
+            let _ = events.send(Event::Rpcs3SettingsChanged { open: false });
+            info!("RPCS3 settings GUI closed — launcher restored, portal available again");
+            return;
         }
     });
 }

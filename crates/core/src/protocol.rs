@@ -110,6 +110,13 @@ pub enum Event {
     /// `GameCrashed` instead, flipping the overlay to its terminal form.
     /// Broadcast to all sessions — the portal is down for everyone during recovery.
     GameRecovering { message: String },
+    /// The on-demand RPCS3 **settings GUI** opened (`open: true`) or closed
+    /// (`open: false`) on the TV (PLAN 16.9.3 — the CONFIGURE GAME admin action).
+    /// While open, the emulator's full settings window is up on the HTPC for the
+    /// user to edit a game's Custom Configuration; the portal is unavailable, so
+    /// phones show a "configuring on the TV…" overlay and dismiss it on the
+    /// matching `open: false`. Broadcast to all sessions.
+    Rpcs3SettingsChanged { open: bool },
     /// Kaos mid-game swap (PLAN 8.2b.4). The server timer picked a
     /// compatible replacement for one of `profile_id`'s currently-placed
     /// figures and just executed a clear+load pair on `slot`. Phones
