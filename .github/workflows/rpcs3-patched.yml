@@ -96,7 +96,11 @@ jobs:
       CCACHE_DIR: 'C:\ccache'
       CCACHE_INODECACHE: 'true'
       CCACHE_SLOPPINESS: 'time_macros'
-      DEPS_CACHE_DIR: ./vendor/rpcs3/dependency_cache
+      # Relative to the rpcs3 root, which for us is the working-directory
+      # (vendor/rpcs3) that setup-windows.sh runs in — matching upstream RPCS3's
+      # own `./dependency_cache`. (Was `./vendor/rpcs3/dependency_cache`, which
+      # doubled to vendor/rpcs3/vendor/rpcs3/... from that cwd and broke `mkdir`.)
+      DEPS_CACHE_DIR: ./dependency_cache
     steps:
       - name: Checkout (recursive — full build needs 3rdparty)
         uses: actions/checkout@v4
