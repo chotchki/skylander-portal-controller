@@ -20,6 +20,11 @@ use tracing::info;
 pub struct Config {
     #[allow(dead_code)] // used for game launching in Phase 3
     pub rpcs3_exe: PathBuf,
+    /// RPCS3 data/config root (holds `config/games.yml`, firmware, dev_hdd0).
+    /// Defaults to `rpcs3_exe.parent()`; set independently via `RPCS3_CONFIG_DIR`
+    /// when the patched binary lives apart from its config (Phase 16). Used to read
+    /// `games.yml` and passed to the patched RPCS3 as `RPCS3_CONFIG_DIR`.
+    pub config_dir: PathBuf,
     pub firmware_pack_root: PathBuf,
     pub bind_port: u16,
     pub driver_kind: DriverKind,
@@ -119,8 +124,23 @@ pub fn load() -> Result<Config> {
     // .env.dev without committing secrets.
     let hmac_key = load_or_create_dev_hmac_key()?;
 
+    // Phase 16: the patched RPCS3 can live apart from its data/config root, so
+    // RPCS3_CONFIG_DIR is independent. Default to the exe's parent (a normal
+    // install keeps `config/` next to the exe).
+    let config_dir = env
+        .get("RPCS3_CONFIG_DIR")
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            rpcs3_exe
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| PathBuf::from("."))
+        });
+
     Ok(Config {
         rpcs3_exe,
+        config_dir,
         firmware_pack_root,
         bind_port,
         driver_kind,
@@ -229,8 +249,16 @@ pub fn load() -> Result<Config> {
         );
     }
 
+    // Release: config root defaults to the exe's parent (config_dir-shipping for a
+    // bundled patched RPCS3 is the full 16.9 work; this keeps current behavior).
+    let config_dir = persisted
+        .rpcs3_exe
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
     Ok(Config {
         rpcs3_exe: persisted.rpcs3_exe,
+        config_dir,
         firmware_pack_root: persisted.firmware_pack_root,
         bind_port: persisted.bind_port,
         driver_kind: match persisted.driver_kind {

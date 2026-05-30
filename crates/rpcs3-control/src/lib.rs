@@ -160,14 +160,19 @@ impl RpcsProcess {
     /// Launch the **patched** RPCS3 in **no-GUI** mode (Phase 16): `--no-gui`
     /// direct-EBOOT boot, borderless game window, and the Skylander IPC socket at
     /// `ipc_path`. Windows only — returns an error on non-Windows.
-    pub fn launch_no_gui(exe: &Path, eboot: &Path, ipc_path: &Path) -> Result<Self> {
+    pub fn launch_no_gui(
+        exe: &Path,
+        eboot: &Path,
+        ipc_path: &Path,
+        config_dir: Option<&Path>,
+    ) -> Result<Self> {
         #[cfg(windows)]
         {
-            UiaRpcsProcess::launch_no_gui(exe, eboot, ipc_path).map(Self::Uia)
+            UiaRpcsProcess::launch_no_gui(exe, eboot, ipc_path, config_dir).map(Self::Uia)
         }
         #[cfg(not(windows))]
         {
-            let _ = (exe, eboot, ipc_path);
+            let _ = (exe, eboot, ipc_path, config_dir);
             bail!("RPCS3 process management is only supported on Windows")
         }
     }

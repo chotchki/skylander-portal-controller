@@ -3025,10 +3025,10 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
       also satisfies **16.5.2.2**. clippy/fmt clean. **Live-validated** via
       `crates/rpcs3-control/tests/live_launch.rs` (HTPC 2026-05-29): `launch_no_gui`
       → playable in ~23s (`status=running frames=15 progr=8/8`) → window handle
-      `0x403AC` → shutdown. The full server-through-`/api/launch` path still awaits
-      the **16.9** config slice (the patched exe at `D:\workspace\rpcs3\bin` vs the
-      firmware/`games.yml` at `C:\emuluators\rpcs3` — the server resolves `games.yml`
-      from `<rpcs3_exe>/config`).
+      `0x403AC` → shutdown. The full server-through-`/api/launch` path is now
+      **unblocked by 16.9.0** (the `config_dir` decoupling); a live full-app run
+      (server + `SKYLANDER_PORTAL_DRIVER=ipc` + a real launch) is the remaining
+      validation.
     - [ ] 16.6.1.3 — Shutdown: `WM_CLOSE` to the IPC `WINDOW` handle, falling
       through to the Job-Object force path (works without the `"RPCS3 "` title).
       Today shutdown force-kills via the Job Object (fine); refinement pending.
@@ -3087,6 +3087,14 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
 - [ ] 16.9 **Emulator configuration with the GUI hijacked (no-GUI runtime).**
   RPCS3 config is file-based YAML and `--no-gui` is per-launch (not a build-time
   removal) — the full settings GUI is one plain launch away. So:
+  - [x] 16.9.0 — **`config_dir` decoupling (16.9-lite, done 2026-05-29).** The
+    patched binary can live apart from its data/config root, so `Config.config_dir`
+    is now independent of `rpcs3_exe`: dev reads `RPCS3_CONFIG_DIR` from `.env.dev`
+    (else `rpcs3_exe.parent()`), the server reads `games.yml` from it, and
+    `launch_no_gui` passes it to RPCS3 as `RPCS3_CONFIG_DIR`. Unblocks running the
+    full app with `SKYLANDER_PORTAL_DRIVER=ipc` against the patched binary
+    (`RPCS3_EXE=…\rpcs3\bin\rpcs3.exe` + `RPCS3_CONFIG_DIR=C:\emuluators\rpcs3`).
+    Threaded `config_dir` through `spawn_driver_worker` → `handle_job` → `BootDirect`.
   - [ ] 16.9.1 — Controller writes/ships RPCS3 config files directly: global
     `config.yml`, per-game `config/custom_configs/config_<SERIAL>.yml` (this IS
     the 16.7.4 per-game tuning), `config/vfs.yml`, input configs. Curated,

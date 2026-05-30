@@ -232,6 +232,7 @@ fn main() -> Result<()> {
     let bind_addr = bind;
     let driver_kind = cfg.driver_kind;
     let rpcs3_exe = cfg.rpcs3_exe.clone();
+    let config_dir = cfg.config_dir.clone();
     let data_root = cfg.data_root.clone();
     // Only consumed under `nfc-import` (used by the scanner spawn
     // below). Bind unconditionally so the feature flag doesn't leak
@@ -308,6 +309,7 @@ fn main() -> Result<()> {
                     figures_for_driver,
                     rpcs3_for_task.clone(),
                     rpcs3_exe.clone(),
+                    config_dir.clone(),
                     status_for_task.clone(),
                 );
                 // Watchdog for unexpected RPCS3 exits (PLAN 4.15.14). Polls
@@ -397,7 +399,9 @@ fn main() -> Result<()> {
                 // the catalogue ends up empty, picker shows "no games"
                 // and the user can fix games.yml + restart.
                 let games_yml = {
-                    let install_dir = rpcs3_exe.parent().map(std::path::Path::to_path_buf);
+                    // Phase 16: read games.yml from config_dir (the data/config root),
+                    // which may differ from the exe's location for a patched binary.
+                    let install_dir = Some(config_dir.clone());
                     match install_dir {
                         Some(dir) => match skylander_rpcs3_control::games_yml::read_games_yml(&dir)
                         {

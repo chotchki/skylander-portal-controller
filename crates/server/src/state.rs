@@ -1129,6 +1129,7 @@ pub fn spawn_driver_worker(
     figures: Arc<Vec<Figure>>,
     rpcs3: Arc<Mutex<RpcsLifecycle>>,
     rpcs3_exe: PathBuf,
+    config_dir: PathBuf,
     launcher_status: Arc<std::sync::Mutex<LauncherStatus>>,
 ) -> mpsc::Sender<DriverJob> {
     let (tx, mut rx) = mpsc::channel::<DriverJob>(32);
@@ -1153,6 +1154,7 @@ pub fn spawn_driver_worker(
                 &figures,
                 &rpcs3,
                 &rpcs3_exe,
+                &config_dir,
                 &launcher_status,
             )
             .await
@@ -1185,6 +1187,7 @@ async fn handle_job(
     figures: &[Figure],
     rpcs3: &Arc<Mutex<RpcsLifecycle>>,
     rpcs3_exe: &Path,
+    config_dir: &Path,
     launcher_status: &Arc<std::sync::Mutex<LauncherStatus>>,
 ) -> Result<()> {
     match job {
@@ -1268,6 +1271,7 @@ async fn handle_job(
             let result: Result<Option<RpcsProcess>> = {
                 let d = driver.clone();
                 let exe_owned = rpcs3_exe.to_path_buf();
+                let config_dir_owned = config_dir.to_path_buf();
                 let eboot_owned = eboot_path.clone();
                 let display_name_for_blocking = display_name.clone();
                 // Match the viewport title on `[<SERIAL>]` (e.g.
@@ -1286,8 +1290,12 @@ async fn handle_job(
                     // scraping the FPS viewport title. No Skylanders Manager dialog, so
                     // no open_dialog. Falls through to the legacy UIA path otherwise.
                     if let Some(ipc_path) = d.ipc_socket_path() {
-                        let mut proc =
-                            RpcsProcess::launch_no_gui(&exe_owned, &eboot_owned, &ipc_path)?;
+                        let mut proc = RpcsProcess::launch_no_gui(
+                            &exe_owned,
+                            &eboot_owned,
+                            &ipc_path,
+                            Some(&config_dir_owned),
+                        )?;
                         let deadline = std::time::Instant::now() + timeout;
                         loop {
                             if !proc.is_alive() {
@@ -1359,7 +1367,7 @@ async fn handle_job(
             };
             #[cfg(not(windows))]
             let result: Result<Option<RpcsProcess>> = {
-                let _ = (driver, rpcs3_exe, expected_name, timeout);
+                let _ = (driver, rpcs3_exe, config_dir, expected_name, timeout);
                 // Mock driver: no real RPCS3, no spawn, no viewport poll.
                 // Keep whatever process handle the lifecycle already has
                 // (a `RpcsProcess::mock()` installed at startup).

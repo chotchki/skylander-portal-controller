@@ -56,7 +56,9 @@ fn no_gui_launch_reaches_playable() {
     );
 
     // Exactly what BootDirect's IPC branch does.
-    let mut proc = RpcsProcess::launch_no_gui(&exe, &eboot, &ipc_path).expect("launch_no_gui");
+    let config_dir = std::env::var_os("RPCS3_CONFIG_DIR").map(PathBuf::from);
+    let mut proc = RpcsProcess::launch_no_gui(&exe, &eboot, &ipc_path, config_dir.as_deref())
+        .expect("launch_no_gui");
     let driver = IpcPortalDriver::with_path(&ipc_path);
 
     // Readiness: poll the liveness signal until playable, bailing if RPCS3 dies.

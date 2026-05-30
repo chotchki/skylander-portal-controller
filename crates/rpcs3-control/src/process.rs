@@ -139,7 +139,12 @@ impl UiaRpcsProcess {
     /// Skylander IPC socket the controller's `IpcPortalDriver` connects to. The
     /// process lifecycle (Job Object, is_alive, shutdown) is identical to the
     /// other launch modes — only the args/env differ.
-    pub fn launch_no_gui(exe: &Path, eboot: &Path, ipc_path: &Path) -> Result<Self> {
+    pub fn launch_no_gui(
+        exe: &Path,
+        eboot: &Path,
+        ipc_path: &Path,
+        config_dir: Option<&Path>,
+    ) -> Result<Self> {
         if !exe.is_file() {
             bail!("rpcs3.exe not found at {}", exe.display());
         }
@@ -150,14 +155,22 @@ impl UiaRpcsProcess {
             exe = %exe.display(),
             eboot = %eboot.display(),
             ipc = %ipc_path.display(),
+            config_dir = ?config_dir,
             "launching patched RPCS3 (no-GUI + borderless + IPC)"
         );
 
-        let child = Command::new(exe)
-            .arg("--no-gui")
+        let mut cmd = Command::new(exe);
+        cmd.arg("--no-gui")
             .arg(eboot)
             .env("SKYLANDER_BORDERLESS", "1")
-            .env("SKYLANDER_IPC_PATH", ipc_path)
+            .env("SKYLANDER_IPC_PATH", ipc_path);
+        // Point the patched RPCS3 at its data/config root (firmware + games.yml),
+        // which may live apart from the exe (Phase 16). Omitted ⇒ RPCS3's own
+        // resolution (portable next to the exe / its default).
+        if let Some(dir) = config_dir {
+            cmd.env("RPCS3_CONFIG_DIR", dir);
+        }
+        let child = cmd
             .spawn()
             .with_context(|| format!("spawn {} (--no-gui)", exe.display()))?;
         Self::wrap_spawned(child, exe)
