@@ -132,6 +132,14 @@ pub fn default_firmware_pack_guess() -> Option<PathBuf> {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PersistedConfig {
     pub rpcs3_exe: PathBuf,
+    /// RPCS3 data/config root — `games.yml`, installed firmware, per-game
+    /// configs. Phase 16 v1 (16.9-lite): the control binary is *our bundled
+    /// patched RPCS3*, but firmware + games come from the user's *existing*
+    /// RPCS3 install, so this points there (decoupled from `rpcs3_exe`).
+    /// `#[serde(default)]` (empty) for pre-16.9 configs → `config::load`
+    /// falls back to `rpcs3_exe.parent()`.
+    #[serde(default)]
+    pub config_dir: PathBuf,
     pub firmware_pack_root: PathBuf,
     pub bind_port: u16,
     pub driver_kind: PersistedDriverKind,
@@ -156,8 +164,15 @@ pub enum PersistedDriverKind {
 impl PersistedConfig {
     /// Build a persisted config from the wizard's user-entered paths plus
     /// sensible derived defaults for everything else.
+    ///
+    /// Phase 16 v1 (16.9-lite): the user points at *their existing* RPCS3
+    /// install (`install_rpcs3_exe`) — we use it only for its data/config root
+    /// (`config_dir` = its parent: `games.yml` + installed firmware live there).
+    /// Portal **control** runs our *bundled patched* RPCS3 staged next to the
+    /// app at `<app>/rpcs3/rpcs3.exe`, so `rpcs3_exe` is set to that, not the
+    /// user's stock binary (stock RPCS3 has no IPC listener).
     pub fn from_user_paths(
-        rpcs3_exe: PathBuf,
+        install_rpcs3_exe: PathBuf,
         firmware_pack_root: PathBuf,
         runtime_dir: &Path,
     ) -> Self {
@@ -166,8 +181,17 @@ impl PersistedConfig {
             .and_then(|p| p.parent().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| PathBuf::from("."));
 
+        // Control binary = the bundled patched RPCS3 (release packaging stages it
+        // under `<app>/rpcs3/`). Data/config root = the user's existing install.
+        let bundled_rpcs3 = exe_parent.join("rpcs3").join("rpcs3.exe");
+        let config_dir = install_rpcs3_exe
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or(install_rpcs3_exe);
+
         PersistedConfig {
-            rpcs3_exe,
+            rpcs3_exe: bundled_rpcs3,
+            config_dir,
             firmware_pack_root,
             bind_port: 8765,
             // Phase 16 (16.5.2.3): a Windows end-user install ships the *patched*
@@ -213,6 +237,7 @@ impl PersistedConfig {
 
         PersistedConfig {
             rpcs3_exe: PathBuf::new(),
+            config_dir: PathBuf::new(), // mock driver — no RPCS3, unused
             firmware_pack_root: PathBuf::new(),
             bind_port: 8765,
             driver_kind: PersistedDriverKind::Mock,
@@ -375,7 +400,7 @@ pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<Per
                     // Centre a constrained content column so the form
                     // doesn't stretch across an 86" TV — readable at
                     // 10 ft without eye-scan fatigue.
-                    let col_w = (rect.width() * 0.6).min(1100.0).max(720.0);
+                    let col_w = (rect.width() * 0.6).clamp(720.0, 1100.0);
                     ui.vertical_centered(|ui| {
                         ui.add_space(rect.height() * 0.08);
                         ui.allocate_ui_with_layout(
@@ -536,19 +561,25 @@ pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<Per
         heading(ui, "STEP 1 OF 2");
         subhead(ui, "RPCS3");
         ui.add_space(24.0);
-        body(ui, "Path to rpcs3.exe:");
+        body(ui, "Path to your existing RPCS3 (rpcs3.exe):");
+        ui.add_space(6.0);
+        body(
+            ui,
+            "We use your install only to find your firmware and games. Portal \
+             control runs a bundled, patched RPCS3 that ships with this app - \
+             you don't need to set that up.",
+        );
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             styled_input(ui, &mut s.rpcs3_input, 620.0);
             ui.add_space(8.0);
-            if ghost_button(ui, "BROWSE").clicked() {
-                if let Some(p) = rfd::FileDialog::new()
+            if ghost_button(ui, "BROWSE").clicked()
+                && let Some(p) = rfd::FileDialog::new()
                     .add_filter("rpcs3.exe", &["exe"])
                     .set_title("Select rpcs3.exe")
                     .pick_file()
-                {
-                    s.rpcs3_input = p.display().to_string();
-                }
+            {
+                s.rpcs3_input = p.display().to_string();
             }
         });
         ui.add_space(12.0);
@@ -585,13 +616,12 @@ pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<Per
         ui.horizontal(|ui| {
             styled_input(ui, &mut s.pack_input, 620.0);
             ui.add_space(8.0);
-            if ghost_button(ui, "BROWSE").clicked() {
-                if let Some(p) = rfd::FileDialog::new()
+            if ghost_button(ui, "BROWSE").clicked()
+                && let Some(p) = rfd::FileDialog::new()
                     .set_title("Select firmware pack folder")
                     .pick_folder()
-                {
-                    s.pack_input = p.display().to_string();
-                }
+            {
+                s.pack_input = p.display().to_string();
             }
             if !s.pack_input.trim().is_empty() {
                 ui.add_space(8.0);
@@ -782,7 +812,15 @@ mod tests {
 
         let reloaded = PersistedConfig::read(&json_path).unwrap();
         assert_eq!(cfg, reloaded);
-        assert_eq!(reloaded.rpcs3_exe, rpcs3);
+        // v1 (16.9-lite): the user's pointed rpcs3.exe becomes the data/config
+        // root (`config_dir` = its parent); control uses the bundled patched
+        // binary, so `rpcs3_exe` is derived (…/rpcs3/rpcs3.exe), not the input.
+        assert_eq!(reloaded.config_dir, rpcs3.parent().unwrap());
+        assert_eq!(
+            reloaded.rpcs3_exe.file_name().unwrap(),
+            std::ffi::OsStr::new("rpcs3.exe")
+        );
+        assert!(reloaded.rpcs3_exe.parent().unwrap().ends_with("rpcs3"));
         assert_eq!(reloaded.firmware_pack_root, pack);
         assert_eq!(reloaded.bind_port, 8765);
         assert_eq!(reloaded.driver_kind, PersistedDriverKind::Ipc);

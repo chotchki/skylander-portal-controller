@@ -3165,11 +3165,21 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
     full app with `SKYLANDER_PORTAL_DRIVER=ipc` against the patched binary
     (`RPCS3_EXE=…\rpcs3\bin\rpcs3.exe` + `RPCS3_CONFIG_DIR=C:\emuluators\rpcs3`).
     Threaded `config_dir` through `spawn_driver_worker` → `handle_job` → `BootDirect`.
-  - [ ] 16.9.1 — Controller writes/ships RPCS3 config files directly: global
-    `config.yml`, per-game `config/custom_configs/config_<SERIAL>.yml` (this IS
-    the 16.7.4 per-game tuning), `config/vfs.yml`, input configs. Curated,
+  - [x] 16.9.0b — **v1 release model: "point at your own install" (decided 2026-05-30).**
+    For the initial release we **don't** ship RPCS3 config or auto-install firmware
+    (16.9.1/.2 deferred). Instead the first-launch wizard captures the user's
+    *existing* RPCS3 install and we read firmware + games from it. `PersistedConfig`
+    gained a persisted `config_dir` (`#[serde(default)]`); `from_user_paths` now sets
+    `config_dir = <user's rpcs3.exe>.parent()` and `rpcs3_exe = <app>/rpcs3/rpcs3.exe`
+    (the bundled patched control binary — stock RPCS3 has no IPC listener). `config::load`
+    uses the persisted `config_dir`, falling back to `rpcs3_exe.parent()` for pre-16.9
+    configs. Wizard STEP 1 copy updated to say so. (Bundling the patched binary into the
+    release artifact = the packaging work below.)
+  - [ ] 16.9.1 — *(deferred past v1)* Controller writes/ships RPCS3 config files
+    directly: global `config.yml`, per-game `config/custom_configs/config_<SERIAL>.yml`
+    (this IS the 16.7.4 per-game tuning), `config/vfs.yml`, input configs. Curated,
     version-controlled, applied before boot — no GUI.
-  - [ ] 16.9.2 — First-launch machine setup: firmware install via
+  - [ ] 16.9.2 — *(deferred past v1)* First-launch machine setup: firmware install via
     `rpcs3 --installfw <PUP>` (headless) or one GUI pass; default Vulkan +
     generated sane `config.yml`. Folds into the existing first-launch flow.
   - [ ] 16.9.3 — On-demand escape hatch: launcher "RPCS3 Settings" action runs

@@ -266,13 +266,19 @@ pub fn load() -> Result<Config> {
         );
     }
 
-    // Release: config root defaults to the exe's parent (config_dir-shipping for a
-    // bundled patched RPCS3 is the full 16.9 work; this keeps current behavior).
-    let config_dir = persisted
-        .rpcs3_exe
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."));
+    // Phase 16 v1 (16.9-lite): the wizard persists `config_dir` = the user's
+    // existing RPCS3 install (firmware + games), distinct from `rpcs3_exe` (the
+    // bundled patched control binary). Pre-16.9 configs have no `config_dir`
+    // (empty) — fall back to the exe's parent, the old behavior.
+    let config_dir = if persisted.config_dir.as_os_str().is_empty() {
+        persisted
+            .rpcs3_exe
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."))
+    } else {
+        persisted.config_dir.clone()
+    };
     Ok(Config {
         rpcs3_exe: persisted.rpcs3_exe,
         config_dir,
