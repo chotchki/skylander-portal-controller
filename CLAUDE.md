@@ -114,6 +114,21 @@ Hidden costs to keep in mind: every `@apply` in a component file means class nam
 - (2) Integration tests for DB + filesystem.
 - (3) E2E: pure-Rust WebDriver drives a headless browser against the phone SPA; test harness reads the QR URL from the log file by pattern. Run locally, not in CI.
 - CI deferred until the app works.
+- **Every change ships with a test — including the C++ emulator patches
+  (`rpcs3-patches/`), tested from Rust.** Two layers, so each side of the IPC
+  contract is pinned:
+  - **Controller side / wire contract (runs in CI):** `crates/rpcs3-control/src/ipc/proto.rs`
+    unit-tests the codec, and `tests/ipc_loopback.rs` runs the real
+    `IpcPortalDriver` against an in-process fake AF_UNIX server speaking the P1
+    protocol — no RPCS3 needed (Win+mac CI).
+  - **Emulator side (HTPC, `#[ignore]`d):** `tests/live_ipc.rs` drives the **real
+    patched binary** over IPC — proving the C++ listener comes up, `g_skyportal`
+    actually loads/clears, the STATE/heartbeat frame counter advances, and the
+    window handle is published. This is how we test the C++ without C++ test
+    infra: a Rust e2e test against the running emulator (mirrors the `live*.rs`
+    UIA suites). If a patch (P1/P2) changes wire behaviour, update the fake
+    server in `ipc_loopback.rs` to match — the loopback doubles as the executable
+    spec the live binary must satisfy.
 
 ## Dev mode (`dev-tools` feature flag)
 

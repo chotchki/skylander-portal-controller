@@ -2925,11 +2925,20 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
     domain"), `docs/dev/winget-submission.md`. Follow-up: the WiX installer
     (`license = false`/`eula = false`, PLAN 13.x) may want to surface the GPL now.
 
-- [ ] 16.3 **P1 — IPC portal control patch (upstream side).**
-  - [ ] 16.3.1 — IPC endpoint on the emulated Skylander device exposing
-    load(slot, bytes) / clear(slot) / query_state().
-  - [ ] 16.3.2 — Protocol definition (framing, slot model, error responses)
-    shared with the controller; documented in the decision doc.
+- [x] 16.3 **P1 — IPC portal control patch (upstream side).** — landed in the
+  16.1 spike; formalised here. The patch is in `rpcs3-patches/0001-P1…`.
+  - [x] 16.3.1 — IPC endpoint on the emulated Skylander device exposing
+    load / clear(slot) / query_state(). **DONE** — `LOAD <path>` (emulator
+    assigns the slot, see the slot-model note), `CLEAR <slot>`, `STATUS`, `STATE`,
+    `WINDOW`, `PING` + 1 Hz `HB`. **Slot model (decision 2026-05-29):** the
+    *emulator* owns slot numbering — `LOAD` is **not** slot-targeted; it places in
+    the first free slot and reports which. The user cares about portal *contents*,
+    not positions, and the phone never surfaced a slot choice, so no slot-targeted
+    `load_skylander` variant is needed (which kept the P1 patch a one-file add).
+  - [x] 16.3.2 — Protocol definition (framing, slot model, error responses)
+    shared with the controller. **DONE** — codified as the controller's
+    `crates/rpcs3-control/src/ipc/proto.rs` (pure codec + unit tests) with the
+    wire grammar in its module doc; cross-referenced from `rpcs3-patches/README.md`.
 
 - [ ] 16.4 **P2 — window-lifecycle patch (upstream side).**
   - [ ] 16.4.1 — Game window created borderless/undecorated at a
@@ -2937,11 +2946,29 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
   - [ ] 16.4.2 — Window emits its native handle over the IPC channel on creation.
 
 - [ ] 16.5 **`IpcPortalDriver` (controller side).**
-  - [ ] 16.5.1 — New PortalDriver impl talking the P1 protocol over the socket;
-    drops in beside UiaPortalDriver / MockPortalDriver.
+  - [x] 16.5.1 — New PortalDriver impl talking the P1 protocol over the socket;
+    drops in beside UiaPortalDriver / MockPortalDriver. **DONE** —
+    `crates/rpcs3-control/src/ipc/` (driver `mod.rs` + codec `proto.rs`). Blocking
+    AF_UNIX (`std::os::unix::net` on unix, `uds_windows` 1.x on Windows — sync, to
+    match the sync trait + the server's `spawn_blocking` worker; chose the mature
+    blocking crate over async `uds-stream-windows` 0.0.1). One connection per op
+    (stateless), heartbeat lines skipped while awaiting a reply. `open_dialog` is a
+    no-op (no dialog). Extra non-trait methods `read_state` / `window_handle` /
+    `ping` for the 16.6/16.7 consumers. Tested by `tests/ipc_loopback.rs` — an
+    in-process fake P1 server (runs in CI on Win+mac, no real RPCS3) + proto unit
+    tests. clippy/fmt clean.
   - [ ] 16.5.2 — Driver selection: IpcPortalDriver becomes the default production
     driver on Windows + macOS; mock unchanged; UIA retained as fallback behind
-    the env var.
+    the env var. **Deferred — gated on 16.6.** Selecting IPC only makes sense once
+    no-GUI launch spawns a *patched* RPCS3 for it to talk to; wiring
+    `DriverKind::Ipc` into the launch path now would be half-built. Do it with 16.6.
+  - [ ] 16.5.3 — **Collapse the positional-slot model server-side** (the other
+    half of the 16.3.1 slot-model decision). Today the worker sets
+    `portal[phone_chosen_slot]`; under emulator-owned numbering the mirror must
+    reflect the *emulator-assigned* slot (thread the assigned slot back from
+    `load`, or rebuild the mirror from `STATUS`), preserving `placed_by` ownership.
+    Phone's `/api/portal/slot/:n/*` routes become "add/remove a figure" (the `:n`
+    is already a holdover the UI doesn't surface). Bundle with 16.6.
 
 - [ ] 16.6 **No-GUI launch + window coordination.**
   - [ ] 16.6.1 — Launch patched RPCS3 in no-GUI mode with direct EBOOT boot

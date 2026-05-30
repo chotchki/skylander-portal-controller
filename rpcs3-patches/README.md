@@ -92,6 +92,21 @@ see `.github/workflows/rpcs3-patched.yml`. That lane is the guard against silent
 patch-rot when the pin moves; the full patched build (Windows + macOS) is a
 manual, gated lane in the same workflow.
 
+## Tests
+
+These C++ patches are tested **from Rust** (no C++ test infra added — keeps the
+patch shallow). Two layers pin both sides of the IPC contract:
+
+- **Wire contract (CI, no RPCS3):** `crates/rpcs3-control/src/ipc/proto.rs` (codec
+  unit tests) + `crates/rpcs3-control/tests/ipc_loopback.rs` (the real
+  `IpcPortalDriver` against an in-process fake P1 server).
+- **Real emulator (HTPC, `#[ignore]`d):** `crates/rpcs3-control/tests/live_ipc.rs`
+  drives the patched binary over the socket (listener up, `g_skyportal`
+  load/clear, STATE frame counter advancing, window handle published).
+
+**If a patch changes wire behaviour, update the fake server in `ipc_loopback.rs`
+to match** — it doubles as the executable spec the live binary must satisfy.
+
 ## License
 
 These patches are a derivative work of RPCS3 and are therefore **GPL-2.0** (RPCS3's

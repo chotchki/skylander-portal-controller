@@ -4577,6 +4577,7 @@ dependencies = [
  "skylander-core",
  "thiserror 1.0.69",
  "tracing",
+ "uds_windows",
  "uiautomation",
  "windows 0.61.3",
 ]

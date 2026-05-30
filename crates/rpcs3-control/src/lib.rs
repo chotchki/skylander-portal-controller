@@ -1,9 +1,11 @@
 //! RPCS3 portal control.
 //!
-//! The `PortalDriver` trait is the abstraction boundary. `UiaPortalDriver`
-//! drives the emulated Skylanders portal dialog via Windows UI Automation
-//! (see `docs/research/rpcs3-control.md` for the research basis).
-//! `MockPortalDriver` (feature `mock`) is an in-memory stand-in for tests.
+//! The `PortalDriver` trait is the abstraction boundary. `IpcPortalDriver`
+//! (PLAN 16.5) drives the patched RPCS3 portal over an AF_UNIX socket — the
+//! Phase-16 production control path, no GUI/dialog. `UiaPortalDriver` drives the
+//! emulated Skylanders portal dialog via Windows UI Automation (the legacy /
+//! fallback path; see `docs/research/rpcs3-control.md`). `MockPortalDriver`
+//! (feature `mock`) is an in-memory stand-in for tests.
 
 use std::path::Path;
 use std::time::Duration;
@@ -44,6 +46,12 @@ pub use uia::UiaPortalDriver;
 pub mod hide;
 
 pub mod games_yml;
+
+// IPC portal driver (PLAN 16.5). Cross-platform (std UnixStream on unix,
+// uds_windows on Windows) — the production control path for the patched-RPCS3 +
+// no-GUI architecture (Phase 16), superseding UIA as the portal mechanism.
+pub mod ipc;
+pub use ipc::IpcPortalDriver;
 
 #[cfg(windows)]
 pub mod process;

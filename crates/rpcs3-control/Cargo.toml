@@ -12,6 +12,13 @@ tracing = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 uiautomation = "0.20"
+# Blocking AF_UNIX UnixStream/UnixListener for Windows (Win10 1803+/Win11),
+# mirroring std::os::unix::net. Used by the IPC portal driver (PLAN 16.5) to
+# talk to the patched RPCS3's AF_UNIX socket. Chosen over the async
+# `uds-stream-windows` (0.0.1, unproven) because the PortalDriver trait is
+# synchronous and the server already drives it inside spawn_blocking; `uds_windows`
+# 1.x is mature (zbus depends on it). On unix we use std's UnixStream directly.
+uds_windows = "1"
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
