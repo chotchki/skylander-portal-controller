@@ -34,7 +34,7 @@
 # Local usage:
 #   cargo build --release -p skylander-server \
 #     --no-default-features --features sky-stats,mock-driver-runtime
-#   cargo run -p skylander-installer-bake     # bakes assets/branding/icon.icns
+#   cargo run -p skylander-brand-bake -- icon # bakes assets/branding/icon.icns
 #   tools/build-macos-app.sh
 
 set -euo pipefail
@@ -73,7 +73,7 @@ fi
 ICON="assets/branding/icon.icns"
 if [[ ! -f "$ICON" ]]; then
   echo "error: icon not found: $ICON" >&2
-  echo "bake it first: cargo run -p skylander-installer-bake" >&2
+  echo "bake it first: cargo run -p skylander-brand-bake -- icon" >&2
   exit 1
 fi
 

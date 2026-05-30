@@ -5,3 +5,8 @@ rpcs3-patches/*.patch -text
 # Shell scripts must be LF on every platform — a CRLF checkout breaks them under
 # bash on the Linux/Windows CI runners (`\r: command not found`, shebang errors).
 *.sh text eol=lf
+
+# Brand SVGs are authored on macOS (the designer) and re-baked on Windows
+# (`tools/brand-bake -- outline`). Pin LF so the two don't fight over EOLs and
+# produce phantom whole-file diffs on every cross-platform touch.
+*.svg text eol=lf

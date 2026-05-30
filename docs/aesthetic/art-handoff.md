@@ -5,12 +5,18 @@ marketing + app artwork (Steam library cards, app icon, etc.). It's written to
 be forwarded directly — you don't need any of the project's code context, just
 this page.
 
-The whole point: an automated pipeline (`tools/steam-art/generate.py`) composes
-the final images (Steam needs ~6 different sizes/aspect ratios, plus icons in
-every platform size). So the most useful thing you can hand over is the **set of
-building blocks**, not finished compositions. Deliver layers and the pipeline
-re-frames, resizes, and recolors them for every target — and re-runs for free
-when you tweak something.
+The whole point: an automated pipeline (`tools/brand-bake`, run with
+`cargo run -p skylander-brand-bake`) composes the final images (Steam needs ~6
+different sizes/aspect ratios, plus icons in every platform size). So the most
+useful thing you can hand over is the **set of building blocks**, not finished
+compositions. Deliver layers and the pipeline re-frames, resizes, and recolors
+them for every target — and re-runs for free when you tweak something.
+
+> **Status (filled by PR #3, Alicea Hotchkiss):** the shopping list below is
+> delivered as SVGs in `assets/branding/` — `logo.svg` (+ mono variants),
+> `icon-1024.svg`, `character.svg`, and `bg-layer-{gradient,stars,vortex}.svg`.
+> They're wired into `tools/brand-bake`. To tweak: edit a source SVG, then
+> `cargo run -p skylander-brand-bake` to re-bake the icon + Steam set.
 
 ## The one principle: components, not compositions
 
@@ -117,5 +123,5 @@ them into the pipeline:
 - `background.png` (~4000px) → cropped/positioned per aspect ratio.
 - `character.png` (optional cutout) → layered into the hero + portrait.
 
-Then it's a single `python tools/steam-art/generate.py` to re-bake everything,
+Then it's a single `cargo run -p skylander-brand-bake` to re-bake everything,
 and every future tweak is the same one command. Thank you! 💛

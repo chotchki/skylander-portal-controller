@@ -1,0 +1,243 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="3000" viewBox="0 0 2000 3000">
+  <defs>
+    <radialGradient id="portalCore" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="#ffffff" stop-opacity="1"/>
+      <stop offset="15%"  stop-color="#c8f0ff" stop-opacity="0.95"/>
+      <stop offset="40%"  stop-color="#4ec0ff" stop-opacity="0.80"/>
+      <stop offset="70%"  stop-color="#1a4fa0" stop-opacity="0.50"/>
+      <stop offset="100%" stop-color="#020818" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="portalRing" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="#4ec0ff" stop-opacity="0"/>
+      <stop offset="60%"  stop-color="#4ec0ff" stop-opacity="0"/>
+      <stop offset="78%"  stop-color="#8fd4ff" stop-opacity="0.45"/>
+      <stop offset="88%"  stop-color="#c8f0ff" stop-opacity="0.70"/>
+      <stop offset="100%" stop-color="#ffffff"  stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="goldV" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#ffe58a"/>
+      <stop offset="40%"  stop-color="#f5c634"/>
+      <stop offset="100%" stop-color="#7a4e00"/>
+    </linearGradient>
+    <linearGradient id="goldH" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#c58c18"/>
+      <stop offset="30%"  stop-color="#ffe58a"/>
+      <stop offset="70%"  stop-color="#f5c634"/>
+      <stop offset="100%" stop-color="#c58c18"/>
+    </linearGradient>
+    <linearGradient id="goldArch" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#ffe58a"/>
+      <stop offset="50%"  stop-color="#f5c634"/>
+      <stop offset="100%" stop-color="#3a2500"/>
+    </linearGradient>
+    <linearGradient id="pillarL" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#1a0e00"/>
+      <stop offset="25%"  stop-color="#7a4e00"/>
+      <stop offset="55%"  stop-color="#f5c634"/>
+      <stop offset="75%"  stop-color="#c58c18"/>
+      <stop offset="100%" stop-color="#3a2500"/>
+    </linearGradient>
+    <linearGradient id="baseTop" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#3a2500"/>
+      <stop offset="20%"  stop-color="#c58c18"/>
+      <stop offset="50%"  stop-color="#ffe58a"/>
+      <stop offset="80%"  stop-color="#c58c18"/>
+      <stop offset="100%" stop-color="#3a2500"/>
+    </linearGradient>
+    <linearGradient id="baseFront" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#c58c18"/>
+      <stop offset="40%"  stop-color="#7a4e00"/>
+      <stop offset="100%" stop-color="#1a0e00"/>
+    </linearGradient>
+    <linearGradient id="stepTop" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#2a1a00"/>
+      <stop offset="50%"  stop-color="#c58c18"/>
+      <stop offset="100%" stop-color="#2a1a00"/>
+    </linearGradient>
+    <linearGradient id="stepFront" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#7a4e00"/>
+      <stop offset="100%" stop-color="#0e0900"/>
+    </linearGradient>
+    <linearGradient id="crystalB" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#8fd4ff" stop-opacity="0.9"/>
+      <stop offset="60%"  stop-color="#1a4fa0" stop-opacity="0.7"/>
+      <stop offset="100%" stop-color="#020818" stop-opacity="0.4"/>
+    </linearGradient>
+    <linearGradient id="crystalG" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#a0ffb0" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#0a3a10" stop-opacity="0.5"/>
+    </linearGradient>
+    <linearGradient id="crystalP" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#d4a0ff" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#2a0050" stop-opacity="0.5"/>
+    </linearGradient>
+    <linearGradient id="crystalR" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#ff9a70" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#5a1000" stop-opacity="0.5"/>
+    </linearGradient>
+    <radialGradient id="groundGlow" cx="50%" cy="30%" r="50%">
+      <stop offset="0%"   stop-color="#4ec0ff" stop-opacity="0.35"/>
+      <stop offset="50%"  stop-color="#1a4fa0" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#020818" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="runeGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="#4ec0ff" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#4ec0ff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- GROUND GLOW -->
+  <ellipse cx="1000" cy="2820" rx="700" ry="80" fill="url(#groundGlow)"/>
+
+  <!-- STEPS -->
+  <polygon points="400,2820 1600,2820 1540,2780 460,2780" fill="url(#stepFront)"/>
+  <polygon points="460,2780 1540,2780 1520,2760 480,2760" fill="url(#stepTop)"/>
+  <polygon points="480,2760 1520,2760 1460,2720 540,2720" fill="url(#stepFront)"/>
+  <polygon points="540,2720 1460,2720 1440,2700 560,2700" fill="url(#stepTop)"/>
+  <polygon points="560,2700 1440,2700 1380,2660 620,2660" fill="url(#stepFront)"/>
+  <polygon points="620,2660 1380,2660 1360,2640 640,2640" fill="url(#stepTop)"/>
+
+  <!-- PEDESTAL BASE -->
+  <polygon points="640,2640 1360,2640 1340,2380 660,2380" fill="url(#baseFront)"/>
+  <polygon points="660,2380 1340,2380 1320,2360 680,2360" fill="url(#baseTop)"/>
+  <polygon points="640,2640 660,2380 680,2360 660,2600" fill="#2a1a00" opacity="0.8"/>
+  <polygon points="1360,2640 1340,2380 1320,2360 1340,2600" fill="#1a0e00" opacity="0.9"/>
+  <!-- Runes -->
+  <g opacity="0.7">
+    <ellipse cx="1000" cy="2510" rx="22" ry="22" fill="url(#runeGlow)"/>
+    <line x1="1000" y1="2488" x2="1000" y2="2532" stroke="#8fd4ff" stroke-width="4" stroke-linecap="round"/>
+    <line x1="978"  y1="2510" x2="1022" y2="2510" stroke="#8fd4ff" stroke-width="4" stroke-linecap="round"/>
+    <line x1="984"  y1="2494" x2="1016" y2="2526" stroke="#8fd4ff" stroke-width="3" stroke-linecap="round"/>
+    <line x1="1016" y1="2494" x2="984"  y2="2526" stroke="#8fd4ff" stroke-width="3" stroke-linecap="round"/>
+  </g>
+  <g opacity="0.5">
+    <ellipse cx="820" cy="2510" rx="16" ry="16" fill="url(#runeGlow)"/>
+    <polygon points="820,2494 834,2522 806,2522" fill="none" stroke="#8fd4ff" stroke-width="3" stroke-linejoin="round"/>
+  </g>
+  <g opacity="0.5">
+    <ellipse cx="1180" cy="2510" rx="16" ry="16" fill="url(#runeGlow)"/>
+    <polygon points="1180,2494 1194,2510 1180,2526 1166,2510" fill="none" stroke="#8fd4ff" stroke-width="3" stroke-linejoin="round"/>
+  </g>
+  <polygon points="660,2395 1340,2395 1340,2380 660,2380" fill="url(#goldH)" opacity="0.9"/>
+
+  <!-- CRYSTALS LEFT -->
+  <polygon points="580,2640 560,2520 590,2510 610,2610" fill="url(#crystalB)" opacity="0.85"/>
+  <polygon points="550,2660 520,2560 548,2548 565,2640" fill="url(#crystalB)" opacity="0.65"/>
+  <polygon points="610,2620 598,2530 622,2522 632,2600" fill="url(#crystalB)" opacity="0.75"/>
+  <polygon points="490,2680 468,2580 498,2565 515,2660" fill="url(#crystalG)" opacity="0.70"/>
+  <polygon points="530,2650 510,2568 534,2558 548,2630" fill="url(#crystalP)" opacity="0.60"/>
+  <!-- CRYSTALS RIGHT -->
+  <polygon points="1420,2640 1440,2520 1410,2510 1390,2610" fill="url(#crystalB)" opacity="0.85"/>
+  <polygon points="1450,2660 1480,2560 1452,2548 1435,2640" fill="url(#crystalB)" opacity="0.65"/>
+  <polygon points="1390,2620 1402,2530 1378,2522 1368,2600" fill="url(#crystalB)" opacity="0.75"/>
+  <polygon points="1510,2680 1532,2580 1502,2565 1485,2660" fill="url(#crystalR)" opacity="0.70"/>
+  <polygon points="1470,2650 1490,2568 1466,2558 1452,2630" fill="url(#crystalP)" opacity="0.60"/>
+
+  <!-- LEFT PILLAR -->
+  <polygon points="680,2360 780,2360 780,620 680,620" fill="url(#pillarL)"/>
+  <polygon points="660,640 800,640 780,620 680,620" fill="url(#goldH)"/>
+  <polygon points="660,640 800,640 810,620 650,620" fill="url(#baseTop)" opacity="0.6"/>
+  <polygon points="660,2380 800,2380 780,2360 680,2360" fill="url(#goldH)"/>
+  <line x1="706" y1="640" x2="706" y2="2360" stroke="#ffe58a" stroke-width="1"   opacity="0.30"/>
+  <line x1="730" y1="640" x2="730" y2="2360" stroke="#ffe58a" stroke-width="0.8" opacity="0.20"/>
+  <line x1="754" y1="640" x2="754" y2="2360" stroke="#3a2500" stroke-width="1"   opacity="0.40"/>
+  <rect x="680" y="900"  width="100" height="12" fill="url(#goldH)" opacity="0.8"/>
+  <rect x="680" y="1300" width="100" height="12" fill="url(#goldH)" opacity="0.8"/>
+  <rect x="680" y="1700" width="100" height="12" fill="url(#goldH)" opacity="0.8"/>
+  <rect x="680" y="2100" width="100" height="12" fill="url(#goldH)" opacity="0.8"/>
+
+  <!-- RIGHT PILLAR -->
+  <polygon points="1220,2360 1320,2360 1320,620 1220,620" fill="url(#pillarL)"/>
+  <polygon points="1200,640 1340,640 1320,620 1220,620" fill="url(#goldH)"/>
+  <polygon points="1200,640 1340,640 1350,620 1190,620" fill="url(#baseTop)" opacity="0.6"/>
+  <polygon points="1200,2380 1340,2380 1320,2360 1220,2360" fill="url(#goldH)"/>
+  <line x1="1246" y1="640" x2="1246" y2="2360" stroke="#ffe58a" stroke-width="1"   opacity="0.30"/>
+  <line x1="1270" y1="640" x2="1270" y2="2360" stroke="#ffe58a" stroke-width="0.8" opacity="0.20"/>
+  <line x1="1294" y1="640" x2="1294" y2="2360" stroke="#3a2500" stroke-width="1"   opacity="0.40"/>
+  <rect x="1220" y="900"  width="100" height="12" fill="url(#goldH)" opacity="0.8"/>
+  <rect x="1220" y="1300" width="100" height="12" fill="url(#goldH)" opacity="0.8"/>
+  <rect x="1220" y="1700" width="100" height="12" fill="url(#goldH)" opacity="0.8"/>
+  <rect x="1220" y="2100" width="100" height="12" fill="url(#goldH)" opacity="0.8"/>
+
+  <!-- ARCH TOP BEAM -->
+  <polygon points="650,620 1350,620 1340,540 660,540" fill="url(#goldArch)"/>
+  <polygon points="640,560 1360,560 1350,540 650,540" fill="url(#baseTop)"/>
+  <polygon points="660,620 1340,620 1340,610 660,610" fill="#ffe58a" opacity="0.5"/>
+  <!-- Keystone -->
+  <polygon points="1000,480 1060,540 1000,600 940,540" fill="url(#goldV)"/>
+  <polygon points="1000,494 1046,540 1000,586 954,540" fill="#0b1e52"/>
+  <polygon points="1000,508 1032,540 1000,572 968,540" fill="url(#portalCore)" opacity="0.8"/>
+  <circle cx="1000" cy="540" r="18" fill="#8fd4ff" opacity="0.7"/>
+  <circle cx="1000" cy="540" r="10" fill="#ffffff" opacity="0.9"/>
+  <!-- Side finials -->
+  <polygon points="650,540 680,500 710,540 680,580" fill="url(#goldV)"/>
+  <circle cx="680" cy="540" r="12" fill="#f5c634" opacity="0.8"/>
+  <polygon points="1290,540 1320,500 1350,540 1320,580" fill="url(#goldV)"/>
+  <circle cx="1320" cy="540" r="12" fill="#f5c634" opacity="0.8"/>
+  <!-- Crown caps -->
+  <polygon points="668,620 692,560 730,540 768,560 792,620" fill="url(#goldV)"/>
+  <circle cx="692" cy="572" r="8" fill="#8fd4ff" opacity="0.85"/>
+  <circle cx="730" cy="556" r="10" fill="#f5c634" opacity="0.9"/>
+  <circle cx="768" cy="572" r="8" fill="#d4a0ff" opacity="0.85"/>
+  <polygon points="1208,620 1232,560 1270,540 1308,560 1332,620" fill="url(#goldV)"/>
+  <circle cx="1232" cy="572" r="8" fill="#a0ffb0" opacity="0.85"/>
+  <circle cx="1270" cy="556" r="10" fill="#f5c634" opacity="0.9"/>
+  <circle cx="1308" cy="572" r="8" fill="#ff9a70" opacity="0.85"/>
+
+  <!-- PORTAL OPENING -->
+  <!-- Portal is centred at cx=1000, cy=1490, rx=280, ry=340 -->
+  <ellipse cx="1000" cy="1490" rx="280" ry="340" fill="#020818"/>
+  <ellipse cx="1000" cy="1490" rx="280" ry="340" fill="url(#portalCore)" opacity="0.9"/>
+  <!-- Vortex rings — concentric, matching the ellipse shape -->
+  <ellipse cx="1000" cy="1490" rx="240" ry="290" fill="none" stroke="#8fd4ff" stroke-width="4" opacity="0.60"/>
+  <ellipse cx="1000" cy="1490" rx="190" ry="230" fill="none" stroke="#c8f0ff" stroke-width="3" opacity="0.55"/>
+  <ellipse cx="1000" cy="1490" rx="140" ry="170" fill="none" stroke="#ffffff"  stroke-width="2.5" opacity="0.45"/>
+  <ellipse cx="1000" cy="1490" rx="90"  ry="110" fill="none" stroke="#ffffff"  stroke-width="2" opacity="0.40"/>
+  <ellipse cx="1000" cy="1490" rx="45"  ry="55"  fill="none" stroke="#ffffff"  stroke-width="2" opacity="0.50"/>
+  <!-- Portal core -->
+  <ellipse cx="1000" cy="1490" rx="20" ry="24" fill="#ffffff" opacity="0.95"/>
+  <ellipse cx="1000" cy="1490" rx="10" ry="12" fill="#e8f8ff"/>
+  <!-- Portal outer glow spill -->
+  <ellipse cx="1000" cy="1490" rx="380" ry="460" fill="url(#portalRing)" opacity="0.6"/>
+  <ellipse cx="1000" cy="1490" rx="320" ry="390" fill="url(#portalRing)" opacity="0.4"/>
+  <!-- Gold bezel ring -->
+  <ellipse cx="1000" cy="1490" rx="300" ry="362" fill="none" stroke="url(#goldH)" stroke-width="18"/>
+  <ellipse cx="1000" cy="1490" rx="292" ry="354" fill="none" stroke="#c58c18" stroke-width="3" opacity="0.6"/>
+  <ellipse cx="1000" cy="1490" rx="285" ry="347" fill="none" stroke="#ffe58a" stroke-width="1.5" opacity="0.4"/>
+
+  <!-- Gold highlight arc — near the top of the bezel ellipse -->
+  <!-- endpoints calculated to lie on the bezel ellipse (cx=1000,cy=1490,rx=300,ry=362) -->
+  <path d="M 820,1200 A 300,362 0 0,1 1180,1200"
+    fill="none" stroke="#ffe58a" stroke-width="6" opacity="0.70" stroke-linecap="round"/>
+  <path d="M 868,1165 A 300,362 0 0,1 1132,1165"
+    fill="none" stroke="#ffe58a" stroke-width="3" opacity="0.40" stroke-linecap="round"/>
+
+  <!-- Energy sparks rising from portal top — short upward dashes, no swooping curves -->
+  <line x1="880"  y1="1148" x2="860"  y2="1080" stroke="#8fd4ff" stroke-width="2.5" opacity="0.50" stroke-linecap="round"/>
+  <line x1="940"  y1="1132" x2="928"  y2="1060" stroke="#c8f0ff" stroke-width="2"   opacity="0.40" stroke-linecap="round"/>
+  <line x1="1000" y1="1128" x2="1000" y2="1055" stroke="#ffffff"  stroke-width="2.5" opacity="0.45" stroke-linecap="round"/>
+  <line x1="1060" y1="1132" x2="1072" y2="1060" stroke="#c8f0ff" stroke-width="2"   opacity="0.40" stroke-linecap="round"/>
+  <line x1="1120" y1="1148" x2="1140" y2="1080" stroke="#8fd4ff" stroke-width="2.5" opacity="0.50" stroke-linecap="round"/>
+  <!-- Spark dots at tips -->
+  <circle cx="860"  cy="1078" r="4" fill="#8fd4ff" opacity="0.7"/>
+  <circle cx="928"  cy="1058" r="3" fill="#c8f0ff" opacity="0.6"/>
+  <circle cx="1000" cy="1053" r="5" fill="#ffffff"  opacity="0.8"/>
+  <circle cx="1072" cy="1058" r="3" fill="#c8f0ff" opacity="0.6"/>
+  <circle cx="1140" cy="1078" r="4" fill="#8fd4ff" opacity="0.7"/>
+
+  <!-- FLOATING ORB -->
+  <circle cx="1000" cy="300" r="120" fill="url(#portalCore)" opacity="0.35"/>
+  <circle cx="1000" cy="300" r="80"  fill="#0b1e52"/>
+  <circle cx="1000" cy="300" r="74"  fill="url(#portalCore)" opacity="0.85"/>
+  <ellipse cx="1000" cy="300" rx="74" ry="26" fill="none" stroke="#f5c634" stroke-width="5" opacity="0.9"/>
+  <ellipse cx="1000" cy="300" rx="60" ry="21" fill="none" stroke="#ffe58a" stroke-width="2" opacity="0.5"/>
+  <circle cx="1000" cy="300" r="28" fill="#ffffff" opacity="0.9"/>
+  <circle cx="980"  cy="282" r="12"  fill="#ffffff" opacity="0.5"/>
+  <line x1="1000" y1="380" x2="1000" y2="540"
+    stroke="#8fd4ff" stroke-width="3" opacity="0.40" stroke-dasharray="12,8"/>
+  <circle cx="940"  cy="240" r="5" fill="#f5c634" opacity="0.8"/>
+  <circle cx="1068" cy="260" r="4" fill="#8fd4ff" opacity="0.7"/>
+  <circle cx="958"  cy="368" r="4" fill="#d4a0ff" opacity="0.7"/>
+  <circle cx="1050" cy="355" r="3" fill="#a0ffb0" opacity="0.6"/>
+  <circle cx="910"  cy="310" r="3" fill="#ff9a70" opacity="0.6"/>
+</svg>

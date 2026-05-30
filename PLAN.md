@@ -3364,3 +3364,41 @@ firewall. So detection is (a) a passive "nobody's connected" symptom watchdog +
 - [ ] 17.5 — *(stretch)* Authenticode/SmartScreen tie-in: revisit signing (Phase 13/14)
   so the MSI runs without SmartScreen sidestepping and the firewall prompt shows a
   verified publisher. Tracked, not blocking.
+
+## Phase 18 - Branding asset integration (PR #3, Alicea Hotchkiss)
+
+Alicea delivered the hand-authored brand source art the `docs/aesthetic/art-handoff.md`
+shopping list asked for — logo (+ mono white/dark), a 1024 icon master with a
+gold-bezel "S" portal emblem, a 2000×3000 "Portal of Power" character cutout, and the
+starfield background as three layers (gradient · stars · vortex). This phase wires them
+into the real consumed artifacts and unifies the bake pipeline.
+
+**New tool `tools/brand-bake`** (resvg + tiny-skia + ico + icns) supersedes the two
+older one-shot tools — `tools/installer-bake` (icon.ico/icns) and `tools/steam-art`
+(Python/Pillow Steam set), both deleted. One Rust toolchain, no Python, no brand fonts
+needed at bake time. `cargo run -p skylander-brand-bake` re-bakes everything.
+
+- [x] 18.1 — **Outline brand text → vector paths.** `brand-bake outline` parses the
+  logo/icon SVGs through usvg with Titan One (repo) + Georgia (system font) loaded and
+  rewrites them with glyphs flattened to `<path>` — so the committed SVGs render
+  identically with no fonts installed, the old remote-Google-Fonts `@import` is gone,
+  and the icon/steam bakes need zero font setup. Idempotent (re-run = byte-identical).
+- [x] 18.2 — **App icon.** `brand-bake icon` bakes `assets/branding/icon.{ico,icns}`
+  from `icon-1024.svg` — the multi-res `.ico` the exe (`crates/server/build.rs`/winres)
+  + MSI shortcut (`wix/main.wxs`) embed, and the `.icns` the macOS `.app` bundle uses.
+  Consumers reference by path, so they pick up the rebake automatically. "S" reads at 32px.
+- [x] 18.3 — **Steam library art.** `brand-bake steam` composes `steam/*.png`
+  (`library_600x900`, `library_hero_1920x620`, `library_header_920x430`, `logo.png`,
+  `icon_256`) from the real SVG layers: background = gradient + stars/vortex screened;
+  character cutout as the capsule/hero subject; outlined wordmark over a bottom scrim.
+  Hero keeps its left ~40% clear for Steam's own logo overlay.
+- [x] 18.4 — **Phone + launcher icon alignment.** `brand-bake phone-icons` emits the
+  phone's two icon SVGs from the single emblem master — prod = the outlined emblem
+  verbatim, dev = a Kaos hex-remap (magenta/void) — then `tools/icon-bake` rasterises
+  the 8 PNGs. Unifies the phone favicon/PWA icon **and** the desktop launcher window
+  icon (which `include_bytes!`s `icon-192.png`, `crates/server/src/main.rs`) with the
+  desktop/Steam emblem. Window-icon dimension test still green (192×192).
+- [x] 18.5 — **Credit + hygiene.** Alicea credited in the in-app credits overlay
+  ("Artwork" section, `phone/src/components/credits_overlay.rs`). `*.svg` pinned to
+  `eol=lf` in `.gitattributes` (authored on macOS, re-baked on Windows).
+  `art-handoff.md` updated to the new one-command pipeline.
