@@ -11,11 +11,15 @@ that plain MSI downloads hit.
 This is the HTPC-side runbook for PLAN 13.2 → 13.4. All commands
 run in PowerShell on the Windows HTPC; no Mac involvement.
 
-> **Status (PLAN 13):** pre-flight done (13.1.x ✅). First
-> submission + CI wiring blocked on HTPC keyboard time. Once
-> 13.2 → 13.3 land, the existing CI hook in 13.4 auto-PRs each
-> subsequent release tag to microsoft/winget-pkgs — manual flow
-> only matters for the bootstrap.
+> **Status (2026-05-30):** pre-flight ✅ (13.1.x). **Bootstrap target is now
+> v1.9.2** (not the old v1.5.1). The three-file manifest is **authored +
+> `winget validate`-clean + install-tested** at
+> `C:\Users\chris\workspace\manifests\c\ChristopherHotchkiss\SkylanderPortalController\1.9.2\`.
+> **Next step is the PR (13.3):** `wingetcreate submit "<that dir>"`. Then 13.4
+> (CI auto-PR) + 13.5 (docs) after it merges. The interactive `wingetcreate new`
+> flow below is the original plan; the v1.9.2 manifest was instead authored
+> headlessly (enriched locale by hand + installer values from the published MSI —
+> see "Authoring headlessly" below).
 
 ## Decisions locked in (PLAN 13.1)
 
@@ -27,13 +31,30 @@ run in PowerShell on the Windows HTPC; no Mac involvement.
 | Moniker               | `skylander-portal-controller`                                          |
 | License               | `GPL-2.0-only` (per repo `LICENSE`; relicensed from MIT in PLAN 16.2 — see note) |
 | Install scope         | perMachine (matches `wix/main.wxs::InstallScope`)                      |
-| Bootstrap version     | v1.5.1 (currently flagged prerelease in GitHub — winget accepts these) |
-| Bootstrap MSI URL     | `https://github.com/chotchki/skylander-portal-controller/releases/download/v1.5.1/skylander-portal-controller-1.5.1-windows-x86_64.msi` |
-| Bootstrap MSI SHA-256 | `be8f250b09415369d13794427b7043ab0a32f1277a9d3096e8b7f6f336c97eb3`     |
+| Bootstrap version     | **v1.9.2** (full release, not prerelease)                              |
+| Bootstrap MSI URL     | `https://github.com/chotchki/skylander-portal-controller/releases/download/v1.9.2/skylander-portal-controller-1.9.2-windows-x86_64.msi` |
+| Bootstrap MSI SHA-256 | `895729516230C2F936FF212F9B9B013C8B9E8FB36D414BEFB68C1FC914A3814C`     |
+| Bootstrap ProductCode | `{6F85E3EC-AF99-4620-8768-46390CD3AEE3}` (regenerates each build)      |
+| Stable UpgradeCode    | `{E6FC979F-32C8-48C9-92BF-5CFFDF544D5E}` (WiX-fixed; use to self-check)|
 
-If you bootstrap against a later tag instead of v1.5.1, swap the
-URL + SHA-256; everything else stays the same. The SHA-256 is in
-`gh release view <tag> --json assets`.
+If you bootstrap against a later tag, swap the URL + SHA-256 + ProductCode;
+everything else stays the same.
+
+### Authoring headlessly (when `wingetcreate new` can't run interactively)
+
+`wingetcreate new` requires an interactive console (it crashes piped/headless).
+To author a manifest without it:
+
+- **SHA-256:** `curl -L -o x.msi <url>; sha256sum x.msi` (uppercase the hex).
+- **ProductCode:** Python 3.13 dropped `msilib` and PowerShell may be restricted,
+  so parse the MSI Property table with `olefile` (`pip install olefile`): decode the
+  OLE stream names (MSI mangling), read `_StringPool`/`_StringData` into the string
+  list, then read the `Property` table's two string columns and pick the row whose
+  name is `ProductCode`. **Self-check:** the same parse's `UpgradeCode` must equal the
+  stable WiX value above — if it matches, the `ProductCode` is trustworthy.
+- Copy a prior version's three YAMLs, bump `PackageVersion`, set
+  `InstallerUrl`/`InstallerSha256`/`ProductCode`, keep the enriched
+  `locale.en-US.yaml`, then `winget validate --manifest <dir>`.
 
 ## Why winget instead of an Authenticode cert
 
@@ -303,6 +324,27 @@ Cut a real release tag (v1.6.0 or whatever's next). Within
   new version on any machine.
 
 ## Troubleshooting
+
+### `winget install --manifest` hangs / nothing installs (this dev box)
+
+Symptom: winget prints `Successfully verified installer hash`, returns to the
+prompt, but nothing installs (no ARP entry, files unchanged). The install log
+(`%LOCALAPPDATA%\Packages\Microsoft.DesktopAppInstaller_*\LocalState\DiagOutputDir\WinGet-*.log`)
+ends at `Started applying motw using IAttachmentExecute` — `msiexec` never runs.
+
+This is **environmental** (Defender / the attachment manager stalling winget's
+Mark-of-the-Web step), not the MSI/manifest — an unrelated older MSI hit the
+identical halt. It does **not** affect a direct install, the winget-pkgs sandbox,
+or normal users. To test an install **here**, bypass winget:
+
+```powershell
+msiexec /i "<msi>" /l*v "$env:TEMP\spc-install.log"
+```
+
+winget's downloaded copy is hash-named (no extension) under
+`%LOCALAPPDATA%\Temp\WinGet\<Id>.<ver>\`. Verify the ARP entry with
+`reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{ProductCode}" /reg:64`
+(the `/reg:64` matters — a 32-bit shell view won't see the perMachine x64 entry).
 
 ### Submission validation flagged my MSI
 

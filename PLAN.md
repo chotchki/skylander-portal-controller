@@ -2364,10 +2364,17 @@ Authenticode signing indefinitely as superseded by winget.
     `InstallerSha256 895729…3814C`. (ProductCode/SHA extracted by parsing the MSI
     Property table with olefile — self-checked: the parsed UpgradeCode matched the
     known WiX `E6FC979F-…`; no msilib/PowerShell needed.) `winget validate` → clean.
-  - [ ] 13.2.3 Local install test (optional pre-submit):
-    `winget install --manifest C:\Users\chris\workspace\manifests\c\ChristopherHotchkiss\SkylanderPortalController\1.9.2\`.
-    Confirm Start Menu shortcut (now with the icon fix), `%ProgramFiles%` install
-    location, `data\`/`rpcs3\`/`steam\` present, server launches via the shortcut.
+  - [x] 13.2.3 — **Install test DONE (2026-05-30).** v1.9.2 installs perMachine to
+    `%ProgramFiles%\Skylander Portal Controller\` with `data\` + `rpcs3\rpcs3.exe` +
+    `steam\` (all 5 art PNGs — confirms the `-dSteamSourceDir` cargo-wix fix) + the
+    Start-Menu shortcut **now showing the icon** (the e6aa96a fix). ARP registers
+    DisplayName/DisplayVersion 1.9.2 under ProductCode `{6F85E3EC-…}` (matches the
+    manifest → `winget upgrade` correlation works; query with `reg … /reg:64`).
+    **Gotcha:** `winget install --manifest` (and any winget install) **hangs at the
+    Mark-of-the-Web step** (`IAttachmentExecute`) on this dev box — proven environmental
+    (the old 1.5.1 MSI hit the identical halt; nothing reaches `msiexec`). Not our
+    MSI/manifest. Test via a **direct `msiexec /i`** (or double-click) here; the
+    winget-pkgs moderation sandbox + normal users are unaffected.
 
 - [ ] 13.3 **First PR to microsoft/winget-pkgs.**
   - [ ] 13.3.1 Fork `microsoft/winget-pkgs`, push the manifest
