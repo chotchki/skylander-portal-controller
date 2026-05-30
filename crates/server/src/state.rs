@@ -194,6 +194,17 @@ pub struct LauncherStatus {
     /// back-face precedence can render `Returning` vs `Switching`
     /// correctly.
     pub cover_active: bool,
+    /// `true` when the production driver is the Phase-16 IPC driver (no-GUI +
+    /// borderless). Set once at startup. Tells the launcher to use the simplified
+    /// z-order (overlay directly above the game, never desktop-topmost — so the
+    /// user can alt-tab away) instead of the legacy UIA topmost-fighting, since
+    /// there are no Skylanders Manager / menu-bar windows to out-fight (PLAN 16.6.2.2).
+    pub driver_is_ipc: bool,
+    /// Native handle of the borderless game window, reported by RPCS3 over IPC once
+    /// the game is playable (PLAN 16.6.2). `Some` ⇒ the launcher slots itself
+    /// directly above this window in the z-order. Only meaningful while
+    /// `rpcs3_running`; a stale value from a prior game is ignored.
+    pub game_window_handle: Option<u64>,
 }
 
 /// UI-polled view of one connected phone session. Colour / initial are
@@ -1317,9 +1328,14 @@ async fn handle_job(
                             }
                             std::thread::sleep(std::time::Duration::from_millis(250));
                         }
+                        // Publish the borderless game-window handle so the launcher
+                        // can slot itself directly above it (PLAN 16.6.2). Read it
+                        // before taking the status lock — it's an IPC round-trip.
+                        let game_window_handle = d.game_window_handle().ok().flatten();
                         if let Ok(mut st) = status_for_blocking.lock() {
                             st.rpcs3_running = true;
                             st.current_game = Some(display_name_for_blocking.clone());
+                            st.game_window_handle = game_window_handle;
                         }
                         return Ok(Some(proc));
                     }

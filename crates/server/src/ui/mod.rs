@@ -119,6 +119,10 @@ pub struct LauncherApp {
     /// texture; held here so the GL-side `BadgeRig` lazy-init in
     /// `update()` can upload them without re-rasterising. PLAN 10.7.2.
     qr_pixels: crate::round_qr::RoundQrPixels,
+    /// Last game-window handle the launcher slotted itself above (PLAN 16.6.2.2,
+    /// IPC mode). The relative z-order is re-asserted only when this changes — not
+    /// every frame. `None` when no game is live.
+    placed_game_handle: Option<u64>,
 }
 
 impl LauncherApp {
@@ -165,6 +169,7 @@ impl LauncherApp {
             vortex_idle: vortex::idle_params(),
             badge_rig: Arc::new(Mutex::new(None)),
             qr_pixels,
+            placed_game_handle: None,
         }
     }
 }
@@ -278,38 +283,69 @@ impl eframe::App for LauncherApp {
         // running. Earlier this only flipped on `rpcs3_running`,
         // which meant the loading surface drew BEHIND RPCS3's main
         // window for the ~30s of boot (Chris flagged 2026-04-19).
-        let want_on_top = if cfg!(feature = "dev-tools") {
-            status_snapshot.rpcs3_running || status_snapshot.loading_game.is_some()
+        // PLAN 16.6.2.2 — z-order. Under IPC + no-GUI there are no dialog / menu
+        // windows to out-fight (no Skylanders Manager, no RPCS3 menu bar), so the
+        // launcher need not be desktop-topmost — it only sits directly above the
+        // borderless game window. That keeps the overlay over the game AND lets the
+        // user alt-tab away (the old absolute-topmost trapped the screen). The
+        // legacy UIA path keeps the topmost-fighting it still needs.
+        if status_snapshot.driver_is_ipc {
+            // Never desktop-topmost: keep the OS window level Normal.
+            if self.window_on_top_state != Some(false) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
+                    egui::WindowLevel::Normal,
+                ));
+                self.window_on_top_state = Some(false);
+            }
+            // Once a game is live, slot the launcher directly above its window —
+            // re-asserted only when the handle changes, not every frame.
+            match (
+                status_snapshot.rpcs3_running,
+                status_snapshot.game_window_handle,
+            ) {
+                (true, Some(game_hwnd)) => {
+                    if self.placed_game_handle != Some(game_hwnd) {
+                        place_game_below_launcher_via_win32(frame, game_hwnd);
+                        self.placed_game_handle = Some(game_hwnd);
+                    }
+                }
+                _ => self.placed_game_handle = None,
+            }
         } else {
-            true
-        };
-        if self.window_on_top_state != Some(want_on_top) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(if want_on_top {
-                egui::WindowLevel::AlwaysOnTop
+            // Legacy UIA z-order. Two layers: egui WindowLevel for the Normal ↔
+            // AlwaysOnTop transition, plus a per-frame raw SetWindowPos(HWND_TOPMOST,
+            // SWP_NOACTIVATE) — the egui/winit path isn't aggressive enough to beat
+            // Win32 menus + the Skylanders Manager dialog. In dev, on top only while
+            // a game session is in flight (loading or running) so alt-tab works
+            // during normal code iteration.
+            let want_on_top = if cfg!(feature = "dev-tools") {
+                status_snapshot.rpcs3_running || status_snapshot.loading_game.is_some()
             } else {
-                egui::WindowLevel::Normal
-            }));
-            self.window_on_top_state = Some(want_on_top);
-        }
-        if want_on_top {
-            force_topmost_via_win32(frame);
-        }
+                true
+            };
+            if self.window_on_top_state != Some(want_on_top) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(if want_on_top {
+                    egui::WindowLevel::AlwaysOnTop
+                } else {
+                    egui::WindowLevel::Normal
+                }));
+                self.window_on_top_state = Some(want_on_top);
+            }
+            if want_on_top {
+                force_topmost_via_win32(frame);
+            }
 
-        // While a game is actually being played, demote RPCS3's main
-        // (library / menu-bar) window to the bottom of the z-order.
-        // UIA `Invoke` on the Skylanders Manager dialog's Load/Clear
-        // buttons transiently promotes main over the game viewport —
-        // visible to the player as the library flashing through the
-        // launcher's transparent in-game surface each time a figure
-        // is swapped. Gate on `!switching` so the mid-game-switch
-        // window (where `trigger_dialog_via_menu` briefly needs main
-        // foregrounded to drive the menu) isn't kneecapped. Chris
-        // flagged 2026-04-24.
-        let game_live = status_snapshot.rpcs3_running
-            && status_snapshot.current_game.is_some()
-            && !status_snapshot.switching;
-        if game_live {
-            push_rpcs3_main_to_bottom_via_win32();
+            // While a game is played, demote RPCS3's main (library / menu-bar)
+            // window to the bottom: UIA Invoke on the Skylanders Manager dialog
+            // transiently promotes main over the game viewport (the library flashes
+            // through the transparent in-game surface on each figure swap). Gate on
+            // `!switching` so the mid-game-switch menu drive isn't kneecapped.
+            let game_live = status_snapshot.rpcs3_running
+                && status_snapshot.current_game.is_some()
+                && !status_snapshot.switching;
+            if game_live {
+                push_rpcs3_main_to_bottom_via_win32();
+            }
         }
 
         // Per-screen entry detection — compare variant discriminants
@@ -764,3 +800,45 @@ fn push_rpcs3_main_to_bottom_via_win32() {
 
 #[cfg(not(windows))]
 fn push_rpcs3_main_to_bottom_via_win32() {}
+
+/// IPC/no-GUI z-order (PLAN 16.6.2.2): slot the borderless game window directly
+/// BELOW the launcher, so the overlay sits just above the game WITHOUT making the
+/// launcher desktop-topmost — the user can still alt-tab to other apps. There are
+/// no menu / dialog windows under no-GUI + IPC, so the old absolute-topmost +
+/// push-to-bottom dance is unnecessary. Called only when the game handle changes
+/// (not every frame).
+#[cfg(windows)]
+fn place_game_below_launcher_via_win32(frame: &eframe::Frame, game_hwnd: u64) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
+    };
+
+    let Ok(handle) = frame.window_handle() else {
+        return;
+    };
+    let RawWindowHandle::Win32(win32) = handle.as_raw() else {
+        return;
+    };
+    let launcher = HWND(win32.hwnd.get() as *mut _);
+    let game = HWND(game_hwnd as *mut _);
+    // SAFETY: `launcher` is eframe's owned handle this frame; `game` is the HWND
+    // RPCS3 published over IPC. Inserting `game` immediately after `launcher` in the
+    // z-order puts the launcher directly above the game. SWP_NOACTIVATE avoids
+    // stealing focus; NOMOVE/NOSIZE leave geometry untouched.
+    unsafe {
+        let _ = SetWindowPos(
+            game,
+            Some(launcher),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+fn place_game_below_launcher_via_win32(_frame: &eframe::Frame, _game_hwnd: u64) {}

@@ -3041,8 +3041,10 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
       (Windows: extend `hide::set_position_raw` with size + `SWP_NOACTIVATE`;
       macOS stub). After playable, read `ipc.window_handle()` and place the
       borderless game fullscreen at the launcher's monitor, under the topmost
-      launcher (siblings).
-    - [ ] 16.6.2.2 — **Simplify z-order to "overlay above the game", not absolute
+      launcher (siblings). *(Deferred — verify live first whether the borderless
+      `--no-gui` game already fills the launcher's monitor; 16.6.2.2's z-order
+      doesn't require explicit repositioning. Build only if the game under-fills.)*
+    - [x] 16.6.2.2 — **Simplify z-order to "overlay above the game", not absolute
       topmost.** The whole topmost-fighting machinery existed to out-fight RPCS3's
       dialogs + menu-bar window (Skylanders Manager pop-ups, UIA Invoke promoting
       the main window). Under no-GUI + borderless + IPC, **those windows don't
@@ -3055,12 +3057,26 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
       not every frame. Keeps the QR/Kaos overlay over the game **and** lets the user
       alt-tab away. *(The per-frame `HWND_TOPMOST` is exactly what trapped the screen
       in the 16.6.1 full-app test 2026-05-30 — can't alt-tab out. This fixes it.)*
+      **DONE (impl 2026-05-30):** IPC-gated via `LauncherStatus.driver_is_ipc` (set
+      at startup) + `game_window_handle` (published by `BootDirect` on playable). In
+      IPC mode the launcher keeps OS window level **Normal** (never desktop-topmost)
+      and, when a game is live, calls `place_game_below_launcher_via_win32`
+      (`SetWindowPos(game, launcher, NOMOVE|NOSIZE|NOACTIVATE)`) **once per handle
+      change** — not every frame; `force_topmost` / `push_rpcs3_main_to_bottom` are
+      skipped entirely. The legacy UIA path is preserved byte-for-byte in the `else`.
+      clippy/fmt clean; 144 server tests pass. **Pending live validation** (alt-tab
+      works + overlay stays over the game).
     - [ ] 16.6.2.3 — **STATE-gated opaque transition cover (the flicker fix).**
       Launcher paints an *opaque* starfield/loading cover during boot and on
       enter/leave a game; fades to transparent to reveal the game only once
       `STATE.is_playable()` is stable for N consecutive samples; on leave, cover
       *before* tearing the game window down. Hides the boot + enter/leave resize
-      flicker entirely (the user's reported cases).
+      flicker entirely (the user's reported cases). *(Finding 2026-05-30:
+      `game_playable` already gates the game reveal — the launcher waits for it (not
+      just `rpcs3_running`) before opening the iris, and the FPS sampler still sets it
+      under IPC, so the boot flicker may already be covered. **Verify live whether
+      flicker remains under IPC before building a separate cover;** 16.6.3.1's STATE
+      poller keeps `game_playable` working once the FPS sampler is retired.)*
     - [ ] 16.6.2.4 — *(deferred spike, optional)* `SetParent` nesting for
       single-window alt-tab/minimize — only if desired later; needs the overlay
       re-layered above the game child. NOT on the 16.6 critical path (the cover

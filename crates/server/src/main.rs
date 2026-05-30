@@ -219,7 +219,12 @@ fn main() -> Result<()> {
     let (events_tx, _) = broadcast::channel::<skylander_core::Event>(64);
     let connected_clients = Arc::new(AtomicUsize::new(0));
     let launcher_status = Arc::new(std::sync::Mutex::new(
-        skylander_server::state::LauncherStatus::default(),
+        skylander_server::state::LauncherStatus {
+            // Drives the launcher's z-order strategy (PLAN 16.6.2.2): IPC = overlay
+            // above the game, never desktop-topmost; UIA = legacy topmost-fighting.
+            driver_is_ipc: matches!(cfg.driver_kind, crate::config::DriverKind::Ipc),
+            ..Default::default()
+        },
     ));
 
     // --- Start the Axum server + driver worker on a dedicated thread. ---
