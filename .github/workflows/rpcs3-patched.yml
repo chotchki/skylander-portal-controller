@@ -143,7 +143,13 @@ jobs:
       - name: Compile patched RPCS3
         shell: pwsh
         working-directory: vendor/rpcs3
-        run: msbuild rpcs3.sln /p:Configuration=Release /v:minimal /p:Platform=x64 /p:PreferredToolArchitecture=x64 /p:CLToolPath=${{ env.CCACHE_BIN_DIR }} /p:UseMultiToolTask=true
+        # Mirror upstream rpcs3.yml exactly, incl. ci_only.targets — it sets
+        # DebugInformationFormat=None, which is REQUIRED for the ccache build:
+        # the default /Zi shared PDB collides under the parallel /MP build
+        # (UseMultiToolTask) + CLToolPath=ccache → `C1041: cannot open program
+        # database`. (Path is absolute via github.workspace since cwd is the
+        # submodule.)
+        run: msbuild rpcs3.sln /p:Configuration=Release /v:minimal /p:Platform=x64 /p:PreferredToolArchitecture=x64 /p:CLToolPath=${{ env.CCACHE_BIN_DIR }} /p:UseMultiToolTask=true /p:CustomAfterMicrosoftCommonTargets="${{ github.workspace }}\vendor\rpcs3\buildfiles\msvc\ci_only.targets"
 
       - name: Upload patched rpcs3.exe
         uses: actions/upload-artifact@v4
