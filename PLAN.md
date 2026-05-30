@@ -3402,3 +3402,7 @@ needed at bake time. `cargo run -p skylander-brand-bake` re-bakes everything.
   ("Artwork" section, `phone/src/components/credits_overlay.rs`). `*.svg` pinned to
   `eol=lf` in `.gitattributes` (authored on macOS, re-baked on Windows).
   `art-handoff.md` updated to the new one-command pipeline.
+- [ ] 18.6 — *(backlog, post-test)* README "Latest release" line → v1.9.5 (lags at
+  v1.9.3) + a short blurb for the new icon/Steam art.
+- [ ] 18.7 — *(backlog, post-test)* winget manifest bump for v1.9.5 (the Phase 13.4
+  auto-PR flow) once the release is validated.
