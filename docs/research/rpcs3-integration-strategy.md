@@ -254,6 +254,13 @@ foundation 16.6 (no-GUI launch + window coordination) builds on is confirmed sol
 `RpcsProcess::launch_no_gui` booted Giants `--no-gui` + borderless, the IPC readiness
 loop saw it reach playable in ~23s (`status=running frames=15 progr=8/8`) with the
 window handle `0x403AC` published — i.e. the server's `BootDirect` IPC path works end
-to end (launch → liveness → handle → shutdown), no FPS-title scraping. The
-full-through-`/api/launch` run awaits the 16.9 config slice (patched-exe vs
-firmware/`games.yml` path split).
+to end (launch → liveness → handle → shutdown), no FPS-title scraping.
+
+**Full app validated through `/api/launch` (2026-05-30).** With 16.9-lite's
+`config_dir` decoupling, the real server (`SKYLANDER_PORTAL_DRIVER=ipc`) selected the
+IPC driver, loaded the catalogue from `config_dir`, and a phone-API `/api/launch`
+(Giants) drove `BootDirect` → `launch_no_gui` (exe + EBOOT + IPC socket +
+`config_dir=C:/emuluators/rpcs3/`) → playable (`STATE running frames=1689`). The whole
+phone-API → patched-binary no-GUI IPC path now works. Remaining for the full no-GUI
+experience: 16.6.2 window coordination + flicker cover, 16.6.3 retire the scrapers,
+flip the default to IPC.

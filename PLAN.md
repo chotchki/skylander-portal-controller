@@ -3026,9 +3026,12 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
       `crates/rpcs3-control/tests/live_launch.rs` (HTPC 2026-05-29): `launch_no_gui`
       → playable in ~23s (`status=running frames=15 progr=8/8`) → window handle
       `0x403AC` → shutdown. The full server-through-`/api/launch` path is now
-      **unblocked by 16.9.0** (the `config_dir` decoupling); a live full-app run
-      (server + `SKYLANDER_PORTAL_DRIVER=ipc` + a real launch) is the remaining
-      validation.
+      **VALIDATED end-to-end** (HTPC 2026-05-30): server with
+      `SKYLANDER_PORTAL_DRIVER=ipc` selected the IPC driver, loaded the catalogue
+      from `config_dir`, and `/api/launch` (Giants, unsigned dev-bypass) drove
+      `BootDirect` → `launch_no_gui` (exe + EBOOT + IPC socket +
+      `config_dir=C:/emuluators/rpcs3/`) → playable (`STATE running frames=1689`).
+      Whole phone-API → patched-binary path works.
     - [ ] 16.6.1.3 — Shutdown: `WM_CLOSE` to the IPC `WINDOW` handle, falling
       through to the Job-Object force path (works without the `"RPCS3 "` title).
       Today shutdown force-kills via the Job Object (fine); refinement pending.
@@ -3039,10 +3042,19 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
       macOS stub). After playable, read `ipc.window_handle()` and place the
       borderless game fullscreen at the launcher's monitor, under the topmost
       launcher (siblings).
-    - [ ] 16.6.2.2 — Kill the per-frame z-order churn: delete
-      `push_rpcs3_main_to_bottom_via_win32` (`ui/mod.rs:312`; no menu window under
-      borderless) and set launcher-topmost + game-position **once on state change**,
-      not every frame.
+    - [ ] 16.6.2.2 — **Simplify z-order to "overlay above the game", not absolute
+      topmost.** The whole topmost-fighting machinery existed to out-fight RPCS3's
+      dialogs + menu-bar window (Skylanders Manager pop-ups, UIA Invoke promoting
+      the main window). Under no-GUI + borderless + IPC, **those windows don't
+      exist** — only the launcher overlay + the game viewport. So:
+      delete `push_rpcs3_main_to_bottom_via_win32` (`ui/mod.rs:312`) entirely, and
+      replace the per-frame `force_topmost_via_win32` (`HWND_TOPMOST`) with a
+      **one-shot relative placement** — insert the launcher directly above the game
+      window (`SetWindowPos(launcher, game_hwnd, …, NOMOVE|NOSIZE|NOACTIVATE)`) on
+      state change (game launched / window created), re-asserted on focus-return,
+      not every frame. Keeps the QR/Kaos overlay over the game **and** lets the user
+      alt-tab away. *(The per-frame `HWND_TOPMOST` is exactly what trapped the screen
+      in the 16.6.1 full-app test 2026-05-30 — can't alt-tab out. This fixes it.)*
     - [ ] 16.6.2.3 — **STATE-gated opaque transition cover (the flicker fix).**
       Launcher paints an *opaque* starfield/loading cover during boot and on
       enter/leave a game; fades to transparent to reveal the game only once
