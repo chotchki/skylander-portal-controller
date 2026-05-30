@@ -2895,12 +2895,35 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
     proceed. **GO** — P1 ≈ one file, P2 ≈ two small hunks, both additive on
     rarely-churning seams. See `docs/research/rpcs3-integration-strategy.md`.
 
-- [ ] 16.2 **Vendored RPCS3 + CI.**
-  - [ ] 16.2.1 — Add RPCS3 as a git submodule pinned to the spike's known-good tag.
-  - [ ] 16.2.2 — Patch-series layout (P1/P2 as ordered patches or a tracked
+- [x] 16.2 **Vendored RPCS3 + CI.** — done 2026-05-29.
+  - [x] 16.2.1 — Add RPCS3 as a git submodule pinned to the spike's known-good tag.
+    **DONE** — `vendor/rpcs3` → `RPCS3/rpcs3` pinned (commit, not branch) at
+    `c11979d` (pristine upstream; patches stay external). Added with
+    `--reference D:\workspace\rpcs3 --dissociate` so it borrowed the local clone's
+    objects (no multi-hundred-MB re-download) yet is self-contained.
+  - [x] 16.2.2 — Patch-series layout (P1/P2 as ordered patches or a tracked
     branch) + a documented rebase-onto-new-tag procedure.
-  - [ ] 16.2.3 — CI lane: apply the patch series to the pinned tag and build the
+    **DONE** — `rpcs3-patches/0001-P1…`, `0002-P2…` (git format-patch, apply in
+    order; P2 depends on P1's global), `apply.sh` (`git am --3way`), and a
+    `README.md` with the pin table + step-by-step rebase-onto-newer-commit
+    procedure. Editable home = dev clone branch `spike-patches`. `.gitattributes`
+    pins `*.patch` to `-text` so EOL conversion can't corrupt them.
+  - [x] 16.2.3 — CI lane: apply the patch series to the pinned tag and build the
     patched RPCS3 for Windows + macOS.
+    **DONE (tiered)** — `.github/workflows/rpcs3-patched.yml`: (1) `patch-apply-check`
+    (Ubuntu, always-on, path-filtered) `git am`'s the series onto the pinned
+    submodule + asserts the touched-file set — the real anti-patch-rot guard
+    (verified locally). (2) `build-windows` / `build-macos` mirror upstream RPCS3's
+    own `.ci/` recipe but are **gated** behind `workflow_dispatch` + a `full_build`
+    input (a from-scratch RPCS3 build is ~1h — opt-in, not every push). The
+    canonical build stays the HTPC recipe; the gated jobs are a best-effort CI
+    mirror, not yet run-green.
+  - [x] 16.2.4 — **Relicense MIT → GPL-2.0-only.** `rpcs3-patches/` is a derivative
+    of RPCS3's GPLv2 source, so the published combined work must be GPL-2.0 (RPCS3
+    is GPL-2.0-*only* → can't be v3). `/LICENSE` = verbatim GPLv2; updated
+    `Cargo.toml` (`license`), `README.md`, `docs/about.md` (was stale "public
+    domain"), `docs/dev/winget-submission.md`. Follow-up: the WiX installer
+    (`license = false`/`eula = false`, PLAN 13.x) may want to surface the GPL now.
 
 - [ ] 16.3 **P1 — IPC portal control patch (upstream side).**
   - [ ] 16.3.1 — IPC endpoint on the emulated Skylander device exposing

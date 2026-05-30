@@ -1,0 +1,184 @@
+name: RPCS3 patched
+
+# PLAN 16.2.3 — guard the RPCS3 patch series (rpcs3-patches/) against silent
+# patch-rot, and provide a reusable lane to build the patched emulator.
+#
+# Two tiers, mirroring this repo's CI philosophy (cheap always-on; heavy gated):
+#   * patch-apply-check  — always-on, ~2 min. The real guard: does the series
+#                          still apply cleanly onto the pinned submodule?
+#   * build-{windows,macos} — manual / gated. A from-scratch patched RPCS3 build
+#                          (Qt + Vulkan + LLVM + the full PS3 stack) is ~1h; it
+#                          reuses upstream RPCS3's own .ci/ recipe. The canonical
+#                          build remains the HTPC recipe in
+#                          docs/dev/rpcs3-fork-htpc-bringup.md — these jobs are a
+#                          best-effort CI mirror, opt-in so they don't burn an
+#                          hour of runner time on every push.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'rpcs3-patches/**'
+      - 'vendor/rpcs3'          # the submodule gitlink (pin bump)
+      - '.gitmodules'
+      - '.gitattributes'
+      - '.github/workflows/rpcs3-patched.yml'
+  pull_request:
+    paths:
+      - 'rpcs3-patches/**'
+      - 'vendor/rpcs3'
+      - '.gitmodules'
+      - '.gitattributes'
+      - '.github/workflows/rpcs3-patched.yml'
+  workflow_dispatch:
+    inputs:
+      full_build:
+        description: 'Also run the full patched RPCS3 build (Windows + macOS) — slow (~1h), opt-in'
+        type: boolean
+        default: false
+
+concurrency:
+  group: rpcs3-patched-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Always-on, cheap. Checks the series applies onto the pinned upstream commit.
+  # Only the main rpcs3 tree is needed (the 3 patched files live there, not in
+  # 3rdparty), so the submodule is initialised NON-recursively — fast.
+  # ---------------------------------------------------------------------------
+  patch-apply-check:
+    name: patch series applies to pinned RPCS3
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with vendor/rpcs3 at the pinned commit, non-recursive)
+        uses: actions/checkout@v4
+        with:
+          submodules: true   # vendor/rpcs3 only; NOT recursive (no 3rdparty download)
+
+      - name: git am the patch series onto the pin
+        run: bash rpcs3-patches/apply.sh
+
+      - name: Confirm the expected files changed
+        working-directory: vendor/rpcs3
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only HEAD~2 HEAD | sort | tr '\n' ' ')"
+          echo "changed since pin: $changed"
+          expected="rpcs3/Emu/Io/Skylander.cpp rpcs3/Emu/Io/Skylander.h rpcs3/rpcs3qt/gs_frame.cpp "
+          [ "$changed" = "$expected" ] || { echo "::error::unexpected patched file set"; exit 1; }
+          echo "✅ series applies cleanly and touches only the expected files"
+
+  # ---------------------------------------------------------------------------
+  # Gated full build (Windows). Mirrors upstream RPCS3 .github/workflows/rpcs3.yml
+  # Windows_Build: NuGet restore → .ci/setup-windows.sh (Qt/Vulkan/LLVM/ccache) →
+  # msbuild rpcs3.sln. We only add: recursive submodule + apply our patch series.
+  # Deploy / code-signing / cache-save steps are intentionally dropped.
+  # ---------------------------------------------------------------------------
+  build-windows:
+    name: patched RPCS3 (Windows)
+    if: github.event_name == 'workflow_dispatch' && inputs.full_build
+    runs-on: windows-2025   # upstream uses windows-2025-vs2026; adjust if the v143/msvc2022 toolset mismatches Qt
+    defaults:
+      run:
+        shell: bash
+    env:
+      COMPILER: msvc
+      QT_VER_MAIN: '6'
+      QT_VER: '6.11.1'
+      QT_VER_MSVC: 'msvc2022'
+      QT_DATE: '202605090529'
+      LLVM_VER: '19.1.7'
+      VULKAN_VER: '1.4.341.1'
+      VULKAN_SDK_SHA: 'bcf2d75aa9556889ab974858666e20b3655b6055a0db704ccb47279ff33b5bfe'
+      CCACHE_SHA: '859141059ac950e1e8cd042c66f842f26b9e3a62a1669a69fe6ba180cb58bbdf'
+      CCACHE_BIN_DIR: 'C:\ccache_bin'
+      CCACHE_DIR: 'C:\ccache'
+      CCACHE_INODECACHE: 'true'
+      CCACHE_SLOPPINESS: 'time_macros'
+      DEPS_CACHE_DIR: ./vendor/rpcs3/dependency_cache
+    steps:
+      - name: Checkout (recursive — full build needs 3rdparty)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Apply patch series
+        run: bash rpcs3-patches/apply.sh
+
+      - name: Setup NuGet
+        uses: nuget/setup-nuget@v4
+
+      - name: Restore NuGet packages
+        working-directory: vendor/rpcs3
+        run: nuget restore rpcs3.sln
+
+      - name: Setup env (Qt / Vulkan dirs)
+        shell: pwsh
+        run: |
+          "QTDIR=C:\Qt\${{ env.QT_VER }}\${{ env.QT_VER_MSVC }}_64" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "VULKAN_SDK=C:\VulkanSDK\${{ env.VULKAN_VER }}"          | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Download and unpack dependencies (Qt / Vulkan / LLVM / ccache)
+        working-directory: vendor/rpcs3
+        run: |
+          ./.ci/setup-windows.sh
+          ./.ci/setup-windows-ci-vars.sh win64 msvc
+
+      - name: Export upstream CI variables
+        working-directory: vendor/rpcs3
+        run: |
+          while IFS='=' read -r key val; do
+            [[ -z "$key" || "$key" =~ ^# ]] && continue
+            echo "$key=$val" >> "$GITHUB_ENV"
+          done < .ci/ci-vars.env
+
+      - name: Add msbuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Compile patched RPCS3
+        shell: pwsh
+        working-directory: vendor/rpcs3
+        run: msbuild rpcs3.sln /p:Configuration=Release /v:minimal /p:Platform=x64 /p:PreferredToolArchitecture=x64 /p:CLToolPath=${{ env.CCACHE_BIN_DIR }} /p:UseMultiToolTask=true
+
+      - name: Upload patched rpcs3.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpcs3-patched-windows
+          path: vendor/rpcs3/bin/
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # Gated full build (macOS). Upstream's .ci/build-mac.sh is self-contained
+  # (downloads Qt, runs cmake + build), so this job is thin: recursive submodule
+  # + apply patches + run their script with the env from rpcs3.yml's Mac_Build.
+  # ---------------------------------------------------------------------------
+  build-macos:
+    name: patched RPCS3 (macOS, Apple Silicon)
+    if: github.event_name == 'workflow_dispatch' && inputs.full_build
+    runs-on: macos-14
+    env:
+      CCACHE_DIR: /tmp/ccache_dir
+      QT_VER: '6.11.1'
+      QT_VER_MAIN: '6'
+      LLVM_COMPILER_VER: '21'
+      AARCH64: '1'
+    steps:
+      - name: Checkout (recursive — full build needs 3rdparty)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Apply patch series
+        run: bash rpcs3-patches/apply.sh
+
+      - name: Build patched RPCS3 (upstream .ci/build-mac.sh)
+        working-directory: vendor/rpcs3
+        run: ./.ci/build-mac.sh
+
+      - name: Upload patched build
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpcs3-patched-macos-arm64
+          path: vendor/rpcs3/build/
+          if-no-files-found: warn

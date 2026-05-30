@@ -36,7 +36,9 @@ default-members = ["crates/server"]
 version = "0.1.0"
 edition = "2024"
 publish = false
-license = "MIT"
+# GPL-2.0-only to match RPCS3: the Phase-16 patch series (rpcs3-patches/) is a
+# derivative of RPCS3's GPLv2 source, so the combined work is GPL-2.0. See /LICENSE.
+license = "GPL-2.0-only"
 
 [workspace.dependencies]
 # Shared across multiple crates. Version bumps happen here.

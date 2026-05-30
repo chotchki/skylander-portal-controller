@@ -1,0 +1,61 @@
+From aa5d88df727bb3290769b5a98a5be869d4cd650e Mon Sep 17 00:00:00 2001
+From: Christopher Hotchkiss <chris@hotchkiss.io>
+Date: Fri, 29 May 2026 16:34:01 -0700
+Subject: [PATCH 2/2] P2: borderless, no-focus-steal game window + native
+ handle over IPC
+
+gs_frame: when $SKYLANDER_BORDERLESS is set, create the game window with
+Qt::FramelessWindowHint | Qt::WindowDoesNotAcceptFocus, and publish the native
+winId() into g_game_window_handle (defined in Emu/Io/Skylander.cpp by P1) right
+after create(), so the controller can read it via the IPC WINDOW command and
+position / embed the window without stealing focus.
+
+The global is extern-declared inline in the two .cpp that touch it rather than
+in the widely-included GSFrameBase.h, to keep the rebuild tiny.
+
+Shallow + additive. Depends on P1 (defines the global). PLAN 16.1.3 / 16.4.x.
+---
+ rpcs3/rpcs3qt/gs_frame.cpp | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/rpcs3/rpcs3qt/gs_frame.cpp b/rpcs3/rpcs3qt/gs_frame.cpp
+index bcc148d9a..232e0b83b 100644
+--- a/rpcs3/rpcs3qt/gs_frame.cpp
++++ b/rpcs3/rpcs3qt/gs_frame.cpp
+@@ -65,6 +65,11 @@ namespace pad
+ 	extern atomic_t<bool> g_home_menu_requested;
+ }
+ 
++// PLAN 16.1.3 — defined in emucore (Emu/Io/Skylander.cpp); published here on window creation
++// so the controller can read it over IPC (avoids touching the widely-included GSFrameBase.h).
++#include <atomic>
++extern std::atomic<unsigned long long> g_game_window_handle;
++
+ gs_frame::gs_frame(QScreen* screen, const QRect& geometry, const QIcon& appIcon, std::shared_ptr<gui_settings> gui_settings, bool force_fullscreen)
+ 	: QWindow()
+ 	, m_initial_geometry(geometry)
+@@ -115,12 +120,21 @@ gs_frame::gs_frame(QScreen* screen, const QRect& geometry, const QIcon& appIcon,
+ 	setGeometry(geometry);
+ 	setTitle(QString::fromStdString(m_window_title));
+ 
++	// PLAN 16.1.3 — controller-embedded play: borderless + no focus-steal (env-gated, additive).
++	if (::getenv("SKYLANDER_BORDERLESS"))
++	{
++		setFlags(flags() | Qt::FramelessWindowHint | Qt::WindowDoesNotAcceptFocus);
++	}
++
+ 	if (g_cfg.video.renderer != video_renderer::opengl)
+ 	{
+ 		// Do not display the window before OpenGL is configured!
+ 		// This works fine in windows and X11 but wayland-egl will crash later.
+ 		setVisibility(startup_visibility);
+ 		create();
++
++		// PLAN 16.1.3 — publish the native window handle for the controller (read via the IPC WINDOW cmd).
++		g_game_window_handle = static_cast<unsigned long long>(this->winId());
+ 	}
+ 
+ 	load_gui_settings();
+-- 
+2.53.0.windows.3
+

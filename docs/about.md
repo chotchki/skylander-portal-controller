@@ -24,4 +24,4 @@ This project is the fix: a phone interface the kids can drive themselves, with t
 
 ## License
 
-Public domain. The project code is free to use, fork, or adapt. The attribution above covers the metadata and imagery specifically.
+The project code is licensed under the **GNU General Public License v2.0** (GPL-2.0-only), to match RPCS3, which it vendors and patches (the patch series is a GPLv2 derivative). You may use, fork, or adapt it under those terms. The attribution above covers the bundled metadata and imagery specifically.

@@ -1,0 +1,384 @@
+From 32ea9c18b3a557cc095a62d82363ed633036473f Mon Sep 17 00:00:00 2001
+From: Christopher Hotchkiss <chris@hotchkiss.io>
+Date: Fri, 29 May 2026 16:34:01 -0700
+Subject: [PATCH 1/2] P1: drive the emulated Skylander portal over an AF_UNIX
+ IPC socket
+
+Adds a self-contained IPC listener to the emulated Skylander USB device so an
+external controller (skylander-portal-controller) can load/clear figures and
+read emulator state without touching the Skylanders Manager GUI dialog.
+
+- Skylander.h: 3 read-only slot accessors on sky_portal
+  (first_free_slot / slot_loaded / slot_serial).
+- Skylander.cpp: an AF_UNIX SOCK_STREAM listener started once from the
+  usb_device_skylander ctor (mirrors the AF_UNIX server already in Emu/GDB.cpp).
+  Commands: PING / STATE / WINDOW / STATUS / LOAD <path.sky> / CLEAR <slot>,
+  plus a 1 Hz heartbeat push (Emu.GetStatus + g_progr_* boot/shader-compile
+  progress + RSX int_flip_index frame counter). LOAD/CLEAR call the same
+  g_skyportal API the GUI uses. Socket path via $SKYLANDER_IPC_PATH.
+  WinSock2 headers are included before any transitive <windows.h> (RSXThread.h)
+  to avoid winsock v1/v2 redefinition clashes.
+- Defines g_game_window_handle here in emucore; P2 (gs_frame) publishes into it.
+
+Shallow + additive; no new .cpp / no rpcs3.vcxproj entry. PLAN 16.1.2 / 16.3.x.
+---
+ rpcs3/Emu/Io/Skylander.cpp | 307 +++++++++++++++++++++++++++++++++++++
+ rpcs3/Emu/Io/Skylander.h   |   5 +
+ 2 files changed, 312 insertions(+)
+
+diff --git a/rpcs3/Emu/Io/Skylander.cpp b/rpcs3/Emu/Io/Skylander.cpp
+index 974e9a887..9f47b5f2d 100644
+--- a/rpcs3/Emu/Io/Skylander.cpp
++++ b/rpcs3/Emu/Io/Skylander.cpp
+@@ -1,11 +1,45 @@
+ #include "stdafx.h"
++
++// WinSock2 MUST precede any <windows.h> (pulled in transitively by RSXThread.h
++// below) or winsock.h (v1) clashes with WinSock2.h's redefinitions. Same reason
++// Emu/GDB.cpp includes it early; GDB.cpp only avoids reordering because it never
++// includes RSXThread.h.
++#ifdef _WIN32
++#include <WinSock2.h>
++#include <WS2tcpip.h>
++#include <afunix.h> // sockaddr_un
++#endif
++
+ #include "Skylander.h"
+ #include "Emu/Cell/lv2/sys_usbd.h"
+ 
++// --- Skylander IPC (PLAN 16.1.2 / 16.3.1) ---
++#include "Emu/System.h"            // Emu, system_state
++#include "Emu/system_progress.hpp" // g_progr_* boot/shader-compile progress
++#include "Emu/RSX/RSXThread.h"     // rsx::get_current_renderer()->int_flip_index
++#include "Utilities/StrUtil.h"     // strcpy_trunc
++
++#ifndef _WIN32
++#include <sys/socket.h>
++#include <sys/un.h> // sockaddr_un
++#include <unistd.h>
++#endif
++
++#include <thread>
++#include <mutex>
++#include <string>
++#include <atomic>
++#include <cstdio>
++#include <cstdlib>
++
+ LOG_CHANNEL(skylander_log, "skylander");
+ 
+ sky_portal g_skyportal;
+ 
++// PLAN 16.1.3 — defined here (emucore); set by gs_frame on window creation (rpcs3qt),
++// read by the IPC WINDOW command below.
++std::atomic<unsigned long long> g_game_window_handle{0};
++
+ void skylander::save()
+ {
+ 	if (!sky_file)
+@@ -191,6 +225,276 @@ u8 sky_portal::load_skylander(u8* buf, fs::file in_file)
+ 	return found_slot;
+ }
+ 
++// ============================================================================
++// Skylander IPC (PLAN 16.1.2 / 16.3.1). Drive g_skyportal over an AF_UNIX socket
++// so the controller never touches the Skylanders Manager dialog. Also exposes a
++// clean STATE query + a 1 Hz heartbeat (Emu status + boot/shader-compile progress
++// + RSX frame index) so the controller reads emulator state programmatically
++// instead of scraping logs. Shallow + additive; inline here so no new
++// .cpp/vcxproj entry. WSAStartup is done globally in rpcs3.cpp. Mirrors the
++// AF_UNIX pattern already used by Emu/GDB.cpp.
++// ============================================================================
++
++u8 sky_portal::first_free_slot()
++{
++	std::lock_guard lock(sky_mutex);
++	for (u8 i = 0; i < 8; i++)
++	{
++		if ((skylanders[i].status & 1) == 0)
++			return i;
++	}
++	return 0xFF;
++}
++
++bool sky_portal::slot_loaded(u8 sky_num)
++{
++	if (sky_num >= 8)
++		return false;
++	std::lock_guard lock(sky_mutex);
++	return (skylanders[sky_num].status & 1) != 0;
++}
++
++u32 sky_portal::slot_serial(u8 sky_num)
++{
++	if (sky_num >= 8)
++		return 0;
++	std::lock_guard lock(sky_mutex);
++	return (skylanders[sky_num].status & 1) ? skylanders[sky_num].last_id : 0;
++}
++
++namespace
++{
++#ifdef _WIN32
++	void sky_close(int s) { closesocket(s); }
++#else
++	void sky_close(int s) { ::close(s); }
++#endif
++
++	std::string sky_state_name(system_state s)
++	{
++		switch (s)
++		{
++		case system_state::stopped:  return "stopped";
++		case system_state::loading:  return "loading";
++		case system_state::stopping: return "stopping";
++		case system_state::running:  return "running";
++		case system_state::paused:   return "paused";
++		case system_state::frozen:   return "frozen";
++		case system_state::ready:    return "ready";
++		case system_state::starting: return "starting";
++		}
++		return "unknown";
++	}
++
++	// "<prefix> status=<s> frames=<n> progr=<pdone>/<ptotal> seg=<fdone>/<ftotal>"
++	// ready-to-use := status==running && progr complete && frames advancing.
++	std::string sky_state_line(const char* prefix)
++	{
++		u64 frames = 0;
++		if (rsx::thread* r = rsx::get_current_renderer())
++			frames = r->int_flip_index;
++
++		const u32 pdone = g_progr_pdone, ptotal = g_progr_ptotal;
++		const u32 fdone = g_progr_fdone, ftotal = g_progr_ftotal;
++
++		std::string s = prefix;
++		s += " status=" + sky_state_name(Emu.GetStatus());
++		s += " frames=" + std::to_string(frames);
++		s += " progr=" + std::to_string(pdone) + "/" + std::to_string(ptotal);
++		s += " seg=" + std::to_string(fdone) + "/" + std::to_string(ftotal);
++		s += "\n";
++		return s;
++	}
++
++	void sky_ipc_handle(const std::string& line, std::string& out)
++	{
++		const usz sp = line.find(' ');
++		const std::string cmd = line.substr(0, sp);
++		const std::string arg = (sp == umax) ? std::string{} : line.substr(sp + 1);
++
++		if (cmd == "PING")
++		{
++			out = "PONG\n";
++		}
++		else if (cmd == "STATE")
++		{
++			out = sky_state_line("OK");
++		}
++		else if (cmd == "WINDOW")
++		{
++			// PLAN 16.1.3 — native game-window handle (hex) for controller positioning/embed.
++			char hx[24]{};
++			std::snprintf(hx, sizeof(hx), "%llX", g_game_window_handle.load());
++			out = std::string("OK handle=") + hx + "\n";
++		}
++		else if (cmd == "STATUS")
++		{
++			out = "OK";
++			for (u8 i = 0; i < 8; i++)
++			{
++				out += ' ';
++				out += std::to_string(i);
++				if (g_skyportal.slot_loaded(i))
++				{
++					char hex[16]{};
++					std::snprintf(hex, sizeof(hex), ":%08X", g_skyportal.slot_serial(i));
++					out += hex;
++				}
++				else
++				{
++					out += ":empty";
++				}
++			}
++			out += "\n";
++		}
++		else if (cmd == "LOAD")
++		{
++			// arg = absolute path to a working-copy .sky. Mirrors load_skylander_path().
++			if (g_skyportal.first_free_slot() == 0xFF)
++			{
++				out = "ERR portal_full\n";
++				return;
++			}
++			fs::file sky_file(arg, fs::read + fs::write + fs::lock);
++			if (!sky_file)
++			{
++				out = "ERR open_failed\n";
++				return;
++			}
++			std::array<u8, 0x40 * 0x10> data{};
++			if (sky_file.read(data.data(), data.size()) != data.size())
++			{
++				out = "ERR read_failed\n";
++				return;
++			}
++			const u8 slot = g_skyportal.load_skylander(data.data(), std::move(sky_file));
++			out = "OK slot=" + std::to_string(slot) + "\n";
++		}
++		else if (cmd == "CLEAR")
++		{
++			const int slot = arg.empty() ? -1 : std::atoi(arg.c_str());
++			if (slot < 0 || slot > 7)
++			{
++				out = "ERR bad_slot\n";
++				return;
++			}
++			out = g_skyportal.remove_skylander(static_cast<u8>(slot)) ? "OK\n" : "ERR not_loaded\n";
++		}
++		else
++		{
++			out = "ERR unknown_cmd\n";
++		}
++	}
++
++	void sky_ipc_conn(int c)
++	{
++		std::string inbuf;
++		char buf[512];
++		for (;;)
++		{
++			fd_set rfds;
++			FD_ZERO(&rfds);
++			FD_SET(c, &rfds);
++			timeval tv{};
++			tv.tv_sec = 1; // 1 Hz heartbeat cadence
++
++			const int sel = select(c + 1, &rfds, nullptr, nullptr, &tv);
++			if (sel < 0)
++				break;
++
++			if (sel == 0)
++			{
++				const std::string hb = sky_state_line("HB");
++				if (send(c, hb.data(), static_cast<int>(hb.size()), 0) < 0)
++					break;
++				continue;
++			}
++
++			const int n = static_cast<int>(recv(c, buf, sizeof(buf), 0));
++			if (n <= 0)
++				break;
++
++			inbuf.append(buf, static_cast<usz>(n));
++			usz nl;
++			while ((nl = inbuf.find('\n')) != umax)
++			{
++				std::string l = inbuf.substr(0, nl);
++				while (!l.empty() && (l.back() == '\r' || l.back() == ' '))
++					l.pop_back();
++				inbuf.erase(0, nl + 1);
++
++				std::string out;
++				sky_ipc_handle(l, out);
++				if (send(c, out.data(), static_cast<int>(out.size()), 0) < 0)
++				{
++					sky_close(c);
++					return;
++				}
++			}
++		}
++		sky_close(c);
++	}
++
++	std::string sky_ipc_path()
++	{
++		if (const char* e = std::getenv("SKYLANDER_IPC_PATH"))
++			return e;
++#ifdef _WIN32
++		const char* tmp = std::getenv("TEMP");
++		return std::string(tmp ? tmp : "C:\\Windows\\Temp") + "\\rpcs3-skylander.sock";
++#else
++		return "/tmp/rpcs3-skylander.sock";
++#endif
++	}
++
++	void sky_ipc_serve()
++	{
++		const std::string path = sky_ipc_path();
++
++		const int srv = static_cast<int>(socket(AF_UNIX, SOCK_STREAM, 0));
++		if (srv < 0)
++		{
++			skylander_log.error("Skylander IPC: socket() failed");
++			return;
++		}
++
++		fs::remove_file(path); // drop a stale socket file before bind
++
++		sockaddr_un sa{};
++		sa.sun_family = AF_UNIX;
++		strcpy_trunc(sa.sun_path, path);
++
++		if (bind(srv, reinterpret_cast<sockaddr*>(&sa), sizeof(sa)) != 0)
++		{
++			skylander_log.error("Skylander IPC: bind '%s' failed", path);
++			sky_close(srv);
++			return;
++		}
++		if (listen(srv, 4) != 0)
++		{
++			skylander_log.error("Skylander IPC: listen failed");
++			sky_close(srv);
++			return;
++		}
++
++		skylander_log.success("Skylander IPC: listening on AF_UNIX %s", path);
++
++		for (;;)
++		{
++			const int c = static_cast<int>(accept(srv, nullptr, nullptr));
++			if (c < 0)
++				continue;
++			std::thread(sky_ipc_conn, c).detach();
++		}
++	}
++
++	void skylander_ipc_start_once()
++	{
++		static std::once_flag once;
++		std::call_once(once, [] { std::thread(sky_ipc_serve).detach(); });
++	}
++}
++
+ usb_device_skylander::usb_device_skylander(const std::array<u8, 7>& location)
+ 	: usb_device_emulated(location)
+ {
+@@ -200,6 +504,9 @@ usb_device_skylander::usb_device_skylander(const std::array<u8, 7>& location)
+ 	config0.add_node(UsbDescriptorNode(USB_DESCRIPTOR_HID, UsbDeviceHID{0x0111, 0x00, 0x01, 0x22, 0x001d}));
+ 	config0.add_node(UsbDescriptorNode(USB_DESCRIPTOR_ENDPOINT, UsbDeviceEndpoint{0x81, 0x03, 0x40, 0x01}));
+ 	config0.add_node(UsbDescriptorNode(USB_DESCRIPTOR_ENDPOINT, UsbDeviceEndpoint{0x02, 0x03, 0x40, 0x01}));
++
++	// PLAN 16.1.2 — start the portal IPC listener once per RPCS3 process.
++	skylander_ipc_start_once();
+ }
+ 
+ usb_device_skylander::~usb_device_skylander()
+diff --git a/rpcs3/Emu/Io/Skylander.h b/rpcs3/Emu/Io/Skylander.h
+index be67c8c3c..061ef56aa 100644
+--- a/rpcs3/Emu/Io/Skylander.h
++++ b/rpcs3/Emu/Io/Skylander.h
+@@ -28,6 +28,11 @@ public:
+ 	bool remove_skylander(u8 sky_num);
+ 	u8 load_skylander(u8* buf, fs::file in_file);
+ 
++	// IPC spike accessors (PLAN 16.3.1) — read slot state without the raw status format
++	u8   first_free_slot();       // lowest unoccupied slot, 0xFF if full
++	bool slot_loaded(u8 sky_num);
++	u32  slot_serial(u8 sky_num); // last_id (LE NUID serial) or 0 if empty
++
+ protected:
+ 	shared_mutex sky_mutex;
+ 
+-- 
+2.53.0.windows.3
+

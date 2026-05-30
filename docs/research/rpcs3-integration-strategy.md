@@ -2,7 +2,10 @@
 
 **Status:** Accepted; spike 16.1.1–16.1.4 **done — GO, validated in-game on the
 Windows HTPC (2026-05-28)**. P1 (portal control) + P2 (window handle) both proven
-over an AF_UNIX IPC channel with zero dialog/UIA. Proceed to 16.2 (vendoring + CI).
+over an AF_UNIX IPC channel with zero dialog/UIA. **16.2 (vendoring) done
+(2026-05-29):** RPCS3 vendored at `vendor/rpcs3` (pinned `c11979d`); patch series
+in `rpcs3-patches/`; CI patch-apply guard + gated full-build lane; repo relicensed
+to GPL-2.0-only. Next: 16.3/16.5 (productionise P1 + the Rust `IpcPortalDriver`).
 **Date:** 2026-05-28.
 **Pin:** RPCS3 master `c11979d` (2026-05-29) — latest-master pin chosen for
 newest game-compat + crash fixes; rebase cadence is cheap because every patch is
@@ -111,6 +114,15 @@ acceptable**. This simplifies the build/repo story: vendor RPCS3 as a submodule 
 patch series and distribute the patched build with no boundary-keeping ceremony.
 Note the controller would remain a *separate process* regardless — for crash
 isolation, not for licensing.
+
+**Acted on (16.2, 2026-05-29): repo relicensed MIT → GPL-2.0-only.** RPCS3 is
+GPL-2.0-**only**, and `rpcs3-patches/` is a derivative of its source, so the
+combined published work must be GPL-2.0 (it can't be GPLv3 — incompatible with
+v2-only). Rather than keep a permissive boundary around the separate-process
+controller, we relicensed the whole repo to GPL-2.0-only to match (simplest, and
+what the no-boundary-ceremony decision implies). `/LICENSE` is the verbatim GPLv2
+text; `Cargo.toml`, `README.md`, `docs/about.md` updated. The separate-process
+split stays — for crash isolation, not licensing.
 
 ## Spike (the go/no-go gate)
 

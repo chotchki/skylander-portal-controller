@@ -65,4 +65,6 @@ The `--ignored` tests require a real firmware pack / interactive RPCS3 and are n
 
 ## License
 
-MIT (see `LICENSE`). Skylanders characters, images, and trademarks belong to Activision. This project ships no game or firmware content — users supply their own RPCS3 install and firmware backups.
+Copyright © 2026 Christopher Hotchkiss. Licensed under the **GNU General Public License v2.0** (GPL-2.0-only — see `LICENSE`). The project vendors RPCS3 (`vendor/rpcs3`) and carries a patch series against it (`rpcs3-patches/`); RPCS3 is GPLv2, so those patches and the combined work are GPL-2.0 too.
+
+Skylanders characters, images, and trademarks belong to Activision. This project ships no game or firmware content — users supply their own RPCS3 install and firmware backups.

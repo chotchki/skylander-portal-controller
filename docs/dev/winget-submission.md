@@ -25,7 +25,7 @@ run in PowerShell on the Windows HTPC; no Mac involvement.
 | Publisher             | `Christopher Hotchkiss`                                                |
 | Package Name          | `Skylander Portal Controller`                                          |
 | Moniker               | `skylander-portal-controller`                                          |
-| License               | `MIT` (per repo `LICENSE`)                                             |
+| License               | `GPL-2.0-only` (per repo `LICENSE`; relicensed from MIT in PLAN 16.2 — see note) |
 | Install scope         | perMachine (matches `wix/main.wxs::InstallScope`)                      |
 | Bootstrap version     | v1.5.1 (currently flagged prerelease in GitHub — winget accepts these) |
 | Bootstrap MSI URL     | `https://github.com/chotchki/skylander-portal-controller/releases/download/v1.5.1/skylander-portal-controller-1.5.1-windows-x86_64.msi` |
@@ -116,7 +116,7 @@ below:
 | Tags                    | `skylanders;rpcs3;portal;emulator;skylander`                          |
 | ShortDescription        | `Phone-driven control of the RPCS3-emulated Skylanders portal over Wi-Fi.` |
 | Description             | Paste the first paragraph of `README.md`.                             |
-| License                 | `MIT`                                                                 |
+| License                 | `GPL-2.0-only`                                                        |
 | LicenseUrl              | `https://github.com/chotchki/skylander-portal-controller/blob/main/LICENSE` |
 | Copyright               | `Christopher Hotchkiss`                                               |
 | PublisherUrl            | `https://github.com/chotchki`                                         |

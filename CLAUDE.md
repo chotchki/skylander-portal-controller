@@ -154,8 +154,17 @@ Hidden costs to keep in mind: every `@apply` in a component file means class nam
 
 ## Distribution
 
-- GitHub Releases zip. Do **not** bundle RPCS3 or `.sky` files (no piracy).
-- Users supply their own RPCS3 install and firmware backups.
+- GitHub Releases zip. Do **not** bundle `.sky` files or game/firmware content (no piracy).
+- Users supply their own firmware backups.
+- **RPCS3 is now vendored + patched (Phase 16).** `vendor/rpcs3` is a git submodule
+  pinned to a pristine upstream commit; the IPC patches live in `rpcs3-patches/`
+  (apply via `rpcs3-patches/apply.sh`; see its README for the pin + rebase
+  procedure). This makes the repo **GPL-2.0-only** (RPCS3 is GPLv2; the patches are
+  a derivative). Open question deferred to the Phase-16 distribution work: the
+  control path now needs *our patched* RPCS3, which users can't supply themselves —
+  so we'll ship a patched build (legal under GPL since source is public), which
+  revises the old "users supply their own RPCS3 install" stance. Full CLAUDE.md
+  "RPCS3 integration (IPC)" section rewrite is PLAN 16.8.3.
 - Steam Big Picture shell behavior is a compatibility-pass concern, not a day-1 constraint.
 
 ## Git workflow (pre-1.0)

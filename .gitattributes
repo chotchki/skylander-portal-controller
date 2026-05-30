@@ -1,0 +1,7 @@
+# Patch files must keep their exact bytes / line endings, or `git am` / `git apply`
+# corrupts them (whitespace-error / "patch does not apply"). Never EOL-convert them.
+rpcs3-patches/*.patch -text
+
+# Shell scripts must be LF on every platform — a CRLF checkout breaks them under
+# bash on the Linux/Windows CI runners (`\r: command not found`, shebang errors).
+*.sh text eol=lf

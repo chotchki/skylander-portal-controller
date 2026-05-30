@@ -4,6 +4,14 @@ Self-contained handoff for continuing PLAN Phase 16 on the Windows HTPC, in case
 the Mac session that did the 16.1.1 spike does not resume. Strategy + rationale:
 `docs/research/rpcs3-integration-strategy.md`. This doc is the **what to do next**.
 
+> **Update (2026-05-29): 16.1 spike + 16.2 vendoring are DONE.** RPCS3 is now a
+> submodule at `vendor/rpcs3` (pinned `c11979d`); the P1/P2 patches are exported to
+> `rpcs3-patches/` (apply with `rpcs3-patches/apply.sh`); CI guards the series in
+> `.github/workflows/rpcs3-patched.yml`; repo relicensed to GPL-2.0. The build
+> recipe + toolchain table below remain the canonical way to build the patched
+> binary. The dev clone at `D:\workspace\rpcs3` keeps the patches on branch
+> `spike-patches` (= pin + 2 commits) as their editable home.
+
 ## State as of this handoff
 
 - ✅ **16.1.1 done** (seam location). Probed RPCS3 master `c11979d` (2026-05-29).
