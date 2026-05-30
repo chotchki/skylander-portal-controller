@@ -2940,12 +2940,16 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
     `crates/rpcs3-control/src/ipc/proto.rs` (pure codec + unit tests) with the
     wire grammar in its module doc; cross-referenced from `rpcs3-patches/README.md`.
 
-- [ ] 16.4 **P2 — window-lifecycle patch (upstream side).**
-  - [ ] 16.4.1 — Game window created borderless/undecorated at a
-    controller-supplied geometry, no focus-steal.
-  - [ ] 16.4.2 — Window emits its native handle over the IPC channel on creation.
+- [x] 16.4 **P2 — window-lifecycle patch (upstream side).** — landed in
+  `rpcs3-patches/0002-P2-…patch`, live-validated on the HTPC; shipped in v1.7.0.
+  - [x] 16.4.1 — **Done.** `SKYLANDER_BORDERLESS`-gated borderless/undecorated
+    game window, no focus-steal; `gs_frame::show()` also pins it `HWND_BOTTOM`
+    so the launcher overlay stays on top (kills the compile-screen lift-flash).
+  - [x] 16.4.2 — **Done.** The window publishes its native handle over the IPC
+    `WINDOW` command (read controller-side via `game_window_handle()`), consumed
+    by the STATE poller's z-ordering + the supervisor's `shutdown_graceful_to_hwnd`.
 
-- [ ] 16.5 **`IpcPortalDriver` (controller side).**
+- [~] 16.5 **`IpcPortalDriver` (controller side).** *(16.5.1/.2 done; 16.5.3 deferred.)*
   - [x] 16.5.1 — New PortalDriver impl talking the P1 protocol over the socket;
     drops in beside UiaPortalDriver / MockPortalDriver. **DONE** —
     `crates/rpcs3-control/src/ipc/` (driver `mod.rs` + codec `proto.rs`). Blocking
@@ -2957,9 +2961,9 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
     `ping` for the 16.6/16.7 consumers. Tested by `tests/ipc_loopback.rs` — an
     in-process fake P1 server (runs in CI on Win+mac, no real RPCS3) + proto unit
     tests. clippy/fmt clean.
-  - [ ] 16.5.2 — Driver selection: IpcPortalDriver becomes the default production
-    driver on Windows + macOS; mock unchanged; UIA retained as fallback behind
-    the env var.
+  - [x] 16.5.2 — **DONE.** Driver selection: IpcPortalDriver is the default
+    production driver on Windows (macOS → mock); UIA retained as fallback behind
+    `SKYLANDER_PORTAL_DRIVER=uia`. (All three sub-items below done.)
     - [x] 16.5.2.1 — **Selection plumbing done.** `DriverKind::Ipc` (+
       `PersistedDriverKind::Ipc`), selectable via `SKYLANDER_PORTAL_DRIVER=ipc`;
       `build_driver` constructs `IpcPortalDriver` (cross-platform, no cfg gate); IPC
@@ -2975,15 +2979,30 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
       keeps the legacy GUI path for stock-RPCS3 dev (`.env.dev` now sets it
       explicitly). `config.rs` env-default + `wizard.rs::from_user_paths`
       (Windows first-launch) both persist `Ipc`; `macos_default` stays `Mock`.
-  - [ ] 16.5.3 — **Collapse the positional-slot model server-side** (the other
-    half of the 16.3.1 slot-model decision). Today the worker sets
-    `portal[phone_chosen_slot]`; under emulator-owned numbering the mirror must
-    reflect the *emulator-assigned* slot (thread the assigned slot back from
-    `load`, or rebuild the mirror from `STATUS`), preserving `placed_by` ownership.
-    Phone's `/api/portal/slot/:n/*` routes become "add/remove a figure" (the `:n`
-    is already a holdover the UI doesn't surface). Bundle with 16.6.
+  - [ ] 16.5.3 — **Collapse the positional-slot model server-side.** *(Assessed
+    2026-05-30 → DEFERRED; unreachable through today's UI. Gated on the per-slot
+    picker ever returning.)* The other half of the 16.3.1 slot-model decision.
+    The worker sets `portal[phone_chosen_slot]`; under emulator-owned numbering
+    the IPC `LOAD` actually places the figure in the emulator's *first free* slot
+    and reports it (`parse_load` → assigned), which the `load` trait currently
+    discards. So a phone-chosen slot that differs from the emulator's assignment
+    would diverge, and the positional `clear` would target the wrong slot. **Why
+    it doesn't bite today:** the phone UI provides **no way to choose a slot** —
+    PLAY_TEST #22 (2026-04-24) dropped the per-slot picker; `picking_for` is never
+    set, so every Add falls through to `first_empty_slot`, which tracks the
+    emulator's first-free choice. The phone doesn't surface or care about position
+    — the positional model is already collapsed at the UI. The remaining server
+    cleanup (thread the emulator-assigned slot back from `load` — change its return
+    to carry the slot — or rebuild the mirror from `STATUS`, preserving `placed_by`)
+    only matters if the explicit per-slot picker is reintroduced. **Revisit then,
+    or as part of a post-v1 portal-UI pass.** Trait-change blast radius noted:
+    `PortalDriver::load` + its 3 impls + the worker call site + ~10 test sites.
 
-- [ ] 16.6 **No-GUI launch + window coordination.** *(scoped 2026-05-29)*
+- [~] 16.6 **No-GUI launch + window coordination.** *(scoped 2026-05-29; core
+  shipped in v1.7.0 + HTPC-validated. Remaining open items are optional polish:
+  16.6.2.1 explicit window positioning — not needed, the `--no-gui` game already
+  fills the launcher's monitor and z-order handles the rest; 16.6.2.4 `SetParent`
+  spike — deferred; 16.6.3.4 — "keep UIA intact" standing item.)*
 
   **Design decisions (scoping):** (1) **Launcher stays overlaid** — keep the
   current transparent fullscreen always-on-top eframe window compositing over the
@@ -3012,8 +3031,8 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
   proven on the HTPC → 16.5.3 → delete scrapers (16.6.3.2-3). UIA stays compiled
   throughout. Acceptance = `crates/rpcs3-control/tests/live_ipc.rs` on the HTPC.
 
-  - [ ] 16.6.1 — **No-GUI launch.** *(launch + readiness live-validated on the HTPC
-    2026-05-29; only 16.6.1.3 shutdown refinement + the full server-API path remain)*
+  - [x] 16.6.1 — **No-GUI launch. DONE** *(launch + readiness + shutdown all
+    live-validated; full server-API path shipped in v1.7.0).*
     - [x] 16.6.1.1 — **Done.** `UiaRpcsProcess::launch_no_gui(exe, eboot, ipc_path)`
       (+ `RpcsProcess::launch_no_gui`): spawns `--no-gui <EBOOT>` with env
       `SKYLANDER_BORDERLESS=1` + `SKYLANDER_IPC_PATH`, keeping the Job Object; reuses
@@ -3043,14 +3062,17 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
       read `LauncherStatus.game_window_handle` and pass it. `shutdown_graceful` is now a
       thin `(None, timeout)` wrapper, so the UIA path is unchanged.
       A clean IPC `QUIT`/`STOP` command is a 16.7 follow-up.
-  - [ ] 16.6.2 — **Window coordination + transition-flicker elimination.**
+  - [~] 16.6.2 — **Window coordination + transition-flicker elimination.** *(z-order
+    + flicker cover done + HTPC-validated; explicit positioning 16.6.2.1 proved
+    unnecessary and `SetParent` 16.6.2.4 stays a deferred spike.)*
     - [ ] 16.6.2.1 — Cross-platform `position_game_window(handle, monitor_rect)`
       (Windows: extend `hide::set_position_raw` with size + `SWP_NOACTIVATE`;
       macOS stub). After playable, read `ipc.window_handle()` and place the
       borderless game fullscreen at the launcher's monitor, under the topmost
-      launcher (siblings). *(Deferred — verify live first whether the borderless
-      `--no-gui` game already fills the launcher's monitor; 16.6.2.2's z-order
-      doesn't require explicit repositioning. Build only if the game under-fills.)*
+      launcher (siblings). *(NOT NEEDED as of v1.7.0 HTPC validation — the
+      borderless `--no-gui` game already fills the launcher's monitor and
+      16.6.2.2's z-order handles compositing; no explicit reposition required.
+      Left open only as a guard if a multi-monitor / under-fill case turns up.)*
     - [x] 16.6.2.2 — **Simplify z-order to "overlay above the game", not absolute
       topmost.** The whole topmost-fighting machinery existed to out-fight RPCS3's
       dialogs + menu-bar window (Skylanders Manager pop-ups, UIA Invoke promoting
@@ -3090,7 +3112,9 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
       single-window alt-tab/minimize — only if desired later; needs the overlay
       re-layered above the game child. NOT on the 16.6 critical path (the cover
       solves the flicker that motivated it).
-  - [ ] 16.6.3 — **Retire obsoleted scrapers (UIA kept as fallback).**
+  - [~] 16.6.3 — **Retire obsoleted scrapers (UIA kept as fallback).** *(scrapers
+    deleted + STATE poller live-validated; 16.6.3.4 is a standing "keep UIA intact"
+    item, not pending work.)*
     - [x] 16.6.3.1 — **DONE + live-validated (HTPC 2026-05-30).** `spawn_state_poller`
       (`state.rs`, spawned for the IPC driver instead of the FPS sampler + shader
       watchdog) drives `game_playable` off the emulator's own `STATE`: `running` +
