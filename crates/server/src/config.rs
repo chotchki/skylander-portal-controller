@@ -266,34 +266,101 @@ pub fn load() -> Result<Config> {
         );
     }
 
-    // Phase 16 v1 (16.9-lite): the wizard persists `config_dir` = the user's
-    // existing RPCS3 install (firmware + games), distinct from `rpcs3_exe` (the
-    // bundled patched control binary). Pre-16.9 configs have no `config_dir`
-    // (empty) — fall back to the exe's parent, the old behavior.
-    let config_dir = if persisted.config_dir.as_os_str().is_empty() {
-        persisted
-            .rpcs3_exe
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."))
-    } else {
-        persisted.config_dir.clone()
+    // Phase 16 bundled-RPCS3 model: on Windows the portal *control* binary is
+    // ALWAYS the patched RPCS3 we ship next to the app at `<app>/rpcs3/rpcs3.exe`,
+    // driven over IPC. Neither is a user preference — both are determined by the
+    // install layout — so, exactly like data_root/phone_dist_dir above (PLAN
+    // 10.8.4), recompute them from `current_exe` every launch instead of trusting
+    // config.json. This transparently repairs configs written by pre-16.5.2.3 /
+    // pre-16.9 versions, which persisted `driver_kind: uia` pointed at the user's
+    // *stock* RPCS3: stock RPCS3 has no IPC listener, so after an upgrade-in-place
+    // (the wizard is skipped when config.json already exists) those boxes silently
+    // run the legacy UIA path and figures never load onto the portal. The user's
+    // stock install is still used — as `config_dir` (games.yml + firmware). The
+    // per-profile working copies that hold figure progress live under the runtime
+    // dir keyed by profile+figure id, so nothing here rewrites a `.sky`.
+    #[cfg(not(target_os = "macos"))]
+    let (rpcs3_exe, driver_kind, config_dir) = {
+        let (rpcs3_exe, driver_kind, config_dir) =
+            migrate_install_paths(&persisted.rpcs3_exe, &persisted.config_dir, &exe_parent);
+        if persisted.rpcs3_exe != rpcs3_exe
+            || !matches!(persisted.driver_kind, PersistedDriverKind::Ipc)
+        {
+            info!(
+                old_rpcs3_exe = %persisted.rpcs3_exe.display(),
+                new_rpcs3_exe = %rpcs3_exe.display(),
+                old_driver = ?persisted.driver_kind,
+                "config predates the bundled-RPCS3/IPC model — driving the bundled patched RPCS3 over IPC (working copies untouched)",
+            );
+        }
+        (rpcs3_exe, driver_kind, config_dir)
     };
-    Ok(Config {
-        rpcs3_exe: persisted.rpcs3_exe,
-        config_dir,
-        firmware_pack_root: persisted.firmware_pack_root,
-        bind_port: persisted.bind_port,
-        driver_kind: match persisted.driver_kind {
+    // macOS has no patched RPCS3 — keep the persisted (Mock) driver + paths as-is.
+    #[cfg(target_os = "macos")]
+    let (rpcs3_exe, driver_kind, config_dir) = (
+        persisted.rpcs3_exe.clone(),
+        match persisted.driver_kind {
             PersistedDriverKind::Uia => DriverKind::Uia,
             PersistedDriverKind::Ipc => DriverKind::Ipc,
             PersistedDriverKind::Mock => DriverKind::Mock,
         },
+        if persisted.config_dir.as_os_str().is_empty() {
+            persisted
+                .rpcs3_exe
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| PathBuf::from("."))
+        } else {
+            persisted.config_dir.clone()
+        },
+    );
+
+    Ok(Config {
+        rpcs3_exe,
+        config_dir,
+        firmware_pack_root: persisted.firmware_pack_root,
+        bind_port: persisted.bind_port,
+        driver_kind,
         log_dir: persisted.log_dir,
         phone_dist_dir,
         data_root,
         hmac_key,
     })
+}
+
+/// (Windows release) Resolve the install-layout-derived RPCS3 fields from the
+/// persisted `rpcs3_exe` / `config_dir` plus the running binary's parent dir.
+/// Pure; touches no files.
+///
+/// Under the Phase-16 bundled-RPCS3 model the control binary is ALWAYS the
+/// patched RPCS3 shipped at `<exe_parent>/rpcs3/rpcs3.exe`, and the only driver
+/// is IPC — both install-layout-derived, not user prefs — so callers recompute
+/// them each launch (mirroring data_root/phone_dist_dir, PLAN 10.8.4). This
+/// repairs pre-IPC configs that pinned `driver_kind: uia` to the user's *stock*
+/// RPCS3 (no IPC listener → figures never load onto the portal after upgrade).
+/// The returned `config_dir` (the user's install: games.yml + firmware) is the
+/// persisted `config_dir`, falling back to the persisted stock `rpcs3_exe`'s
+/// parent for pre-16.9 configs that have no `config_dir`.
+///
+/// Returns `(rpcs3_exe, driver_kind, config_dir)`. It deliberately ignores the
+/// persisted `rpcs3_exe`/`driver_kind` for the first two outputs; figure progress
+/// lives in per-profile working copies under the runtime dir, untouched by this.
+#[allow(dead_code)] // sole call site is release + non-macOS (`config::load`)
+fn migrate_install_paths(
+    persisted_rpcs3_exe: &std::path::Path,
+    persisted_config_dir: &std::path::Path,
+    exe_parent: &std::path::Path,
+) -> (PathBuf, DriverKind, PathBuf) {
+    let rpcs3_exe = exe_parent.join("rpcs3").join("rpcs3.exe");
+    let config_dir = if persisted_config_dir.as_os_str().is_empty() {
+        persisted_rpcs3_exe
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."))
+    } else {
+        persisted_config_dir.to_path_buf()
+    };
+    (rpcs3_exe, DriverKind::Ipc, config_dir)
 }
 
 #[cfg(feature = "dev-tools")]
@@ -317,4 +384,61 @@ fn read_env_file(path: &str) -> Result<HashMap<String, String>> {
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    // The reported bug: a box with an existing (pre-IPC) install. An older app
+    // version's wizard persisted the legacy UIA driver pointed at the user's
+    // *stock* RPCS3 and no `config_dir`; on upgrade the first-launch wizard is
+    // skipped (config.json exists), so without migration the app keeps driving
+    // stock RPCS3 over UIA — which has no IPC listener, so figures never load.
+    // After migration the control binary is the bundled patched RPCS3 over IPC,
+    // and `config_dir` falls back to the stock exe's parent (the user's install:
+    // games.yml + firmware).
+    #[test]
+    fn migrates_pre_ipc_uia_config_to_bundled_ipc() {
+        let install = Path::new("stock-install");
+        let stock_exe = install.join("rpcs3.exe");
+        let exe_parent = Path::new("app-dir");
+
+        // Empty persisted config_dir = a pre-16.9 config.
+        let (rpcs3_exe, driver, config_dir) =
+            migrate_install_paths(&stock_exe, Path::new(""), exe_parent);
+
+        assert_eq!(
+            rpcs3_exe,
+            exe_parent.join("rpcs3").join("rpcs3.exe"),
+            "control binary must be the bundled patched RPCS3, not the persisted stock path",
+        );
+        assert_eq!(
+            driver,
+            DriverKind::Ipc,
+            "must drive IPC, not the legacy UIA fallback",
+        );
+        assert_eq!(
+            config_dir, install,
+            "config_dir must fall back to the user's stock install (games.yml + firmware)",
+        );
+    }
+
+    // A current (post-16.9 wizard) config: `config_dir` is set explicitly and is
+    // preserved; `rpcs3_exe` is still recomputed to the bundled binary so an MSI
+    // relocation of the install is picked up rather than left stale.
+    #[test]
+    fn keeps_explicit_config_dir_and_rebinds_rpcs3_exe() {
+        let exe_parent = Path::new("app-dir");
+        let users_install = Path::new("users-rpcs3-install");
+        let persisted_exe = exe_parent.join("rpcs3").join("rpcs3.exe");
+
+        let (rpcs3_exe, driver, config_dir) =
+            migrate_install_paths(&persisted_exe, users_install, exe_parent);
+
+        assert_eq!(rpcs3_exe, exe_parent.join("rpcs3").join("rpcs3.exe"));
+        assert_eq!(driver, DriverKind::Ipc);
+        assert_eq!(config_dir, users_install);
+    }
 }

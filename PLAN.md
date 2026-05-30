@@ -3229,7 +3229,7 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
     IPC (fragility of the dialog/menu path vs. a thin, shallow, additive control patch).
 
 - [~] 16.9 **Emulator configuration with the GUI hijacked (no-GUI runtime).**
-  *(16.9.0/.0b/.3 done; 16.9.1 curated-YAML + 16.9.2 firmware-install deferred past v1.)*
+  *(16.9.0/.0b/.3/.4 done; 16.9.1 curated-YAML + 16.9.2 firmware-install deferred past v1.)*
   RPCS3 config is file-based YAML and `--no-gui` is per-launch (not a build-time
   removal) — the full settings GUI is one plain launch away. So:
   - [x] 16.9.0 — **`config_dir` decoupling (16.9-lite, done 2026-05-29).** The
@@ -3286,6 +3286,19 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
       `LauncherStatus.config_gui_open` + broadcasts `open: false`. Tests: wire round-trip
       for `Rpcs3SettingsChanged`; live launch is HTPC-gated. Follow-ups if wanted: a
       curated global `config.yml` default (16.9.1) + first-launch firmware install (16.9.2).
+  - [x] 16.9.4 — **Upgrade-in-place config migration (fix, 2026-05-30, v1.9.3).** A box
+    with a *pre-IPC* `config.json` (legacy `driver_kind: uia` + `rpcs3_exe` = the user's
+    **stock** RPCS3, no `config_dir`) skips the first-launch wizard on upgrade (config.json
+    already exists), so v1.9.2 ran the legacy UIA path against stock RPCS3 — which has no
+    IPC listener — and **figures never loaded onto the portal** (HTPC repro: log shows
+    `driver=Uia` + "RPCS3 main window not found"). Fix: under the bundled model `rpcs3_exe`
+    (`<app>/rpcs3/rpcs3.exe`) and `driver_kind` (IPC on Windows) are install-layout-derived,
+    not user prefs, so `config::load` now **recomputes them from `current_exe` every launch**
+    — the same treatment `data_root`/`phone_dist_dir` already get (10.8.4) — instead of
+    trusting the persisted values. The stock install is still used as `config_dir` (games.yml
+    + firmware) via the 16.9.0b fallback. Pure `migrate_install_paths` helper + 2 unit tests.
+    **No save data touched**: per-profile working copies (figure progress) + `db.sqlite` live
+    under the runtime dir, independent of every field this migrates.
 
 ## Phase 17 - Connectivity diagnostics & firewall self-heal
 
