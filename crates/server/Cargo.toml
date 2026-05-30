@@ -109,6 +109,12 @@ windows = { version = "0.61", features = [
     "Win32_Graphics_Gdi",
     "Win32_System_SystemInformation",
     "Win32_UI_WindowsAndMessaging",
+    # PLAN 17 connectivity diagnostics: read the Windows Firewall via the
+    # INetFwPolicy2 COM API (locale-independent, unlike `netsh` text), and
+    # ShellExecuteW with the `runas` verb for the one-click elevated rule-add.
+    "Win32_System_Com",
+    "Win32_NetworkManagement_WindowsFirewall",
+    "Win32_UI_Shell",
 ] }
 
 # Windows-only build-time tooling. Active fork of the unmaintained
