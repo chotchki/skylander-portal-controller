@@ -2,7 +2,9 @@ use leptos::prelude::*;
 
 use crate::api::{fetch_figure_stats, post_load, FigureStats};
 use crate::components::{DisplayHeading, FigureHero, HeadingSize, HeroState};
-use crate::model::{Category, GameOfOrigin, PublicFigure, Slot, SlotState, UnlockedProfile, SLOT_COUNT};
+use crate::model::{
+    Category, GameOfOrigin, PublicFigure, Slot, SlotState, UnlockedProfile, SLOT_COUNT,
+};
 use crate::screens::FigureEditSheet;
 use crate::{element_slug, first_empty_slot, push_toast_level, ResetTarget, ToastLevel, ToastMsg};
 
@@ -180,10 +182,7 @@ pub(crate) fn FigureDetail(
     // `selected_figure` signal.
     let variant_count = siblings.len();
     let has_alternates = variant_count > 1;
-    let current_variant_idx = siblings
-        .iter()
-        .position(|f| f.id == fig_id)
-        .unwrap_or(0);
+    let current_variant_idx = siblings.iter().position(|f| f.id == fig_id).unwrap_or(0);
     let appearance_tooltip = if has_alternates {
         format!("Switch appearance ({variant_count} variants)")
     } else {

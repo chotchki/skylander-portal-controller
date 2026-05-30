@@ -394,10 +394,7 @@ pub async fn post_clear(slot: u8) -> Result<(), String> {
 /// figure's working copy to pack-fresh bytes, regardless of whether the
 /// figure is currently on the portal (server rejects with 409 if it is).
 /// PLAN 11.12; sibling to [`post_reset`] which is slot-keyed.
-pub async fn post_reset_figure(
-    profile_id: &str,
-    figure_id: &str,
-) -> Result<(), String> {
+pub async fn post_reset_figure(profile_id: &str, figure_id: &str) -> Result<(), String> {
     let url = format!(
         "{}/api/profiles/{profile_id}/figures/{figure_id}/reset",
         origin()
