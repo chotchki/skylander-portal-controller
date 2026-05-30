@@ -7,8 +7,9 @@
 //! `#[ignore]`d** — it runs in CI on Windows + macOS (both ship AF_UNIX).
 
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 #[cfg(unix)]
@@ -32,11 +33,17 @@ fn unique_sock() -> PathBuf {
 /// Bind a fake P1 server at `path` (synchronously, before returning, so the
 /// driver can't lose a connect race), then service connections on a detached
 /// thread. `prepend_hb` makes it emit a heartbeat line before every reply, to
-/// exercise the driver's HB-skip. Returns the bound path.
-fn spawn_fake_server(prepend_hb: bool) -> PathBuf {
+/// exercise the driver's HB-skip. Returns the bound path plus a shared log of
+/// every `LOAD` arg the server received — so a test can assert the *exact* path
+/// that reached the wire (the patched RPCS3 opens it against its own CWD, so the
+/// driver must send it absolute).
+fn spawn_fake_server(prepend_hb: bool) -> (PathBuf, Arc<Mutex<Vec<String>>>) {
     let path = unique_sock();
     let _ = std::fs::remove_file(&path); // AF_UNIX bind needs no stale file
     let listener = UnixListener::bind(&path).expect("bind fake IPC socket");
+
+    let loads: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let loads_srv = Arc::clone(&loads);
 
     thread::spawn(move || {
         // Emulator-side portal model: serial per occupied slot, persists across
@@ -57,6 +64,9 @@ fn spawn_fake_server(prepend_hb: bool) -> PathBuf {
                 if cmd.is_empty() {
                     continue;
                 }
+                if let Some(arg) = cmd.strip_prefix("LOAD ") {
+                    loads_srv.lock().unwrap().push(arg.to_string());
+                }
                 let reply = handle(cmd, &mut portal);
                 if prepend_hb {
                     let _ = writer.write_all(b"HB status=running frames=1 progr=8/8 seg=0/0\n");
@@ -68,7 +78,7 @@ fn spawn_fake_server(prepend_hb: bool) -> PathBuf {
         }
     });
 
-    path
+    (path, loads)
 }
 
 /// Minimal P1 server command handler over the fake portal.
@@ -114,7 +124,7 @@ fn handle(cmd: &str, portal: &mut [Option<u32>; 8]) -> String {
 
 #[test]
 fn load_clear_status_roundtrip() {
-    let sock = spawn_fake_server(false);
+    let (sock, _loads) = spawn_fake_server(false);
     let d = IpcPortalDriver::with_path(&sock);
 
     // All empty initially.
@@ -156,7 +166,7 @@ fn load_clear_status_roundtrip() {
 
 #[test]
 fn heartbeats_are_skipped_before_reply() {
-    let sock = spawn_fake_server(true); // server prepends HB before every reply
+    let (sock, _loads) = spawn_fake_server(true); // server prepends HB before every reply
     let d = IpcPortalDriver::with_path(&sock);
 
     let name = d
@@ -174,7 +184,7 @@ fn heartbeats_are_skipped_before_reply() {
 
 #[test]
 fn clear_empty_slot_surfaces_emulator_error() {
-    let sock = spawn_fake_server(false);
+    let (sock, _loads) = spawn_fake_server(false);
     let d = IpcPortalDriver::with_path(&sock);
 
     let err = d.clear(SlotIndex::new(2).unwrap()).unwrap_err().to_string();
@@ -185,7 +195,7 @@ fn clear_empty_slot_surfaces_emulator_error() {
 
 #[test]
 fn ping_pongs() {
-    let sock = spawn_fake_server(false);
+    let (sock, _loads) = spawn_fake_server(false);
     let d = IpcPortalDriver::with_path(&sock);
     d.ping().expect("PING should PONG");
     let _ = std::fs::remove_file(&sock);
@@ -193,7 +203,7 @@ fn ping_pongs() {
 
 #[test]
 fn portal_full_is_an_error() {
-    let sock = spawn_fake_server(false);
+    let (sock, _loads) = spawn_fake_server(false);
     let d = IpcPortalDriver::with_path(&sock);
     // Fill all 8 slots, then the 9th load must error.
     for i in 0..8 {
@@ -211,5 +221,33 @@ fn portal_full_is_an_error() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("portal_full"), "got: {err}");
+    let _ = std::fs::remove_file(&sock);
+}
+
+#[test]
+fn load_path_is_sent_absolute() {
+    // The patched RPCS3 P1 `LOAD` handler opens the path arg against *its own*
+    // process CWD — which is not the server's. A server-relative working-copy path
+    // (`dev-data/working/…/x.sky`) therefore resolves to nothing and the emulator
+    // answers `ERR open_failed`. The driver must absolutize before sending. (Live
+    // bug, 2026-05-30: figures failed to place with exactly that error.)
+    let (sock, loads) = spawn_fake_server(false);
+    let d = IpcPortalDriver::with_path(&sock);
+
+    d.load(
+        SlotIndex::new(0).unwrap(),
+        &PathBuf::from("dev-data/working/profile/fig.sky"), // deliberately relative
+    )
+    .unwrap();
+
+    let received = loads.lock().unwrap();
+    assert_eq!(received.len(), 1, "expected exactly one LOAD on the wire");
+    assert!(
+        Path::new(&received[0]).is_absolute(),
+        "driver must send an absolute path, got {:?}",
+        received[0]
+    );
+
+    drop(received);
     let _ = std::fs::remove_file(&sock);
 }

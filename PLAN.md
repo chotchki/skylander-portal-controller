@@ -3064,19 +3064,21 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
       (`SetWindowPos(game, launcher, NOMOVE|NOSIZE|NOACTIVATE)`) **once per handle
       change** — not every frame; `force_topmost` / `push_rpcs3_main_to_bottom` are
       skipped entirely. The legacy UIA path is preserved byte-for-byte in the `else`.
-      clippy/fmt clean; 144 server tests pass. **Pending live validation** (alt-tab
-      works + overlay stays over the game).
-    - [ ] 16.6.2.3 — **STATE-gated opaque transition cover (the flicker fix).**
-      Launcher paints an *opaque* starfield/loading cover during boot and on
-      enter/leave a game; fades to transparent to reveal the game only once
-      `STATE.is_playable()` is stable for N consecutive samples; on leave, cover
-      *before* tearing the game window down. Hides the boot + enter/leave resize
-      flicker entirely (the user's reported cases). *(Finding 2026-05-30:
-      `game_playable` already gates the game reveal — the launcher waits for it (not
-      just `rpcs3_running`) before opening the iris, and the FPS sampler still sets it
-      under IPC, so the boot flicker may already be covered. **Verify live whether
-      flicker remains under IPC before building a separate cover;** 16.6.3.1's STATE
-      poller keeps `game_playable` working once the FPS sampler is retired.)*
+      clippy/fmt clean; 144 server tests pass. **LIVE-VALIDATED (HTPC 2026-05-30):**
+      alt-tab works, overlay stays over the game, no window sandwiching.
+    - [x] 16.6.2.3 — **STATE-gated opaque transition cover (the flicker fix). DONE +
+      live-validated (HTPC 2026-05-30).** The opaque loading cover was already in
+      place (16.6.3.1: `game_playable` gates the iris, not `rpcs3_running`), so no
+      separate cover was needed — but a **window-lift flash** remained: RPCS3 creates
+      the game viewport `Hidden` and first shows it in `gs_frame::show()`, where a
+      normal `show()` raises it to the TOP of the z-order, flashing the still-compiling
+      viewport over the launcher for ~1 frame before the controller pushes it under.
+      `WindowDoesNotAcceptFocus` stops focus-steal but not the z-order raise. **Fix in
+      P2** (`rpcs3-patches/0002`, `gs_frame::show()`): on `_WIN32` + `SKYLANDER_BORDERLESS`,
+      insert the window at `HWND_BOTTOM` (one-shot, `SWP_NOACTIVATE`) right after show —
+      the compile now happens entirely beneath the opaque overlay and never surfaces;
+      ongoing placement stays the controller's job over IPC. Live result: "perfect!" —
+      loading screen holds through compile, single clean iris reveal at the end.
     - [ ] 16.6.2.4 — *(deferred spike, optional)* `SetParent` nesting for
       single-window alt-tab/minimize — only if desired later; needs the overlay
       re-layered above the game child. NOT on the 16.6 critical path (the cover
@@ -3106,6 +3108,18 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
       after confirming no remaining callers.
     - [ ] 16.6.3.4 — Leave `uia.rs` + dialog-nav + `hide.rs` dialog fns intact
       behind the `uia` env fallback; tag for deletion in 16.8.
+
+  - [x] 16.6.4 — **IPC `LOAD` path must be absolute. DONE + live-validated (HTPC
+    2026-05-30).** Live bug: placing a figure from the phone failed with `ERR
+    open_failed`. Root cause: the server hands the driver a *server-relative*
+    working-copy path (`dev-data/working/<profile>/<figure>.sky`), but the patched
+    RPCS3 P1 `LOAD` handler opens its arg against **its own** process CWD (the
+    handler comment even says "arg = absolute path"), so the relative path resolved
+    to nothing emulator-side. Fix: `IpcPortalDriver::load` now `std::path::absolute`s
+    the path (lexical, against the server CWD — no `\\?\` prefix that `canonicalize`
+    would add) before sending. Test: `ipc_loopback.rs::load_path_is_sent_absolute`
+    captures the LOAD arg the fake P1 server receives and asserts `is_absolute()`.
+    Live: figure placed from the phone, appeared in-game ("that worked!").
 
 - [ ] 16.7 **Crash/freeze supervisor (independent of portal path).**
   - [ ] 16.7.1 — Detect crash (process exit) and freeze (liveness signal —

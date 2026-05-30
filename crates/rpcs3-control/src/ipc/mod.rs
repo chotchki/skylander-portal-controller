@@ -160,7 +160,16 @@ impl PortalDriver for IpcPortalDriver {
     /// name (the file stem) — the server overrides it with the pack's canonical
     /// name regardless (`DriverJob::LoadFigure.canonical_name`).
     fn load(&self, _slot_hint: SlotIndex, path: &Path) -> Result<String> {
-        let reply = self.roundtrip(&Command::Load(path))?;
+        // The patched RPCS3 P1 `LOAD` handler opens the path against *its own*
+        // process CWD (which differs from the server's), so a server-relative
+        // working-copy path like `dev-data/working/…/x.sky` resolves to nothing on
+        // the emulator side and comes back `ERR open_failed`. Resolve to an absolute
+        // path here — lexically, against the server's CWD — to honour the handler's
+        // documented contract ("arg = absolute path"). `std::path::absolute` (vs
+        // `canonicalize`) avoids the `\\?\` extended-length prefix, which RPCS3's
+        // `fs::file` path-handling doesn't expect.
+        let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+        let reply = self.roundtrip(&Command::Load(&abs))?;
         let assigned = proto::parse_load(&reply)?;
 
         let name = path

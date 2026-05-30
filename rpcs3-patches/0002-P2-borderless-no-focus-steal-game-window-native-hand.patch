@@ -1,8 +1,11 @@
-From aa5d88df727bb3290769b5a98a5be869d4cd650e Mon Sep 17 00:00:00 2001
+From aa49f280f65244372fad763b1a35a1bc6013e9d9 Mon Sep 17 00:00:00 2001
 From: Christopher Hotchkiss <chris@hotchkiss.io>
 Date: Fri, 29 May 2026 16:34:01 -0700
 Subject: [PATCH 2/2] P2: borderless, no-focus-steal game window + native
  handle over IPC
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
 gs_frame: when $SKYLANDER_BORDERLESS is set, create the game window with
 Qt::FramelessWindowHint | Qt::WindowDoesNotAcceptFocus, and publish the native
@@ -10,16 +13,25 @@ winId() into g_game_window_handle (defined in Emu/Io/Skylander.cpp by P1) right
 after create(), so the controller can read it via the IPC WINDOW command and
 position / embed the window without stealing focus.
 
+The window is created Hidden and first surfaces in gs_frame::show(), where a
+normal show() raises it to the TOP of the z-order — flashing the still-compiling
+viewport over the controller's launcher overlay for a frame before the controller
+can push it back under. WindowDoesNotAcceptFocus stops focus-steal but not that
+z-order raise, so show() also inserts the window at HWND_BOTTOM (one-shot,
+no-activate, _WIN32 + env-gated). The compile then happens beneath the opaque
+overlay and never surfaces; ongoing placement stays the controller's job over IPC.
+
 The global is extern-declared inline in the two .cpp that touch it rather than
 in the widely-included GSFrameBase.h, to keep the rebuild tiny.
 
-Shallow + additive. Depends on P1 (defines the global). PLAN 16.1.3 / 16.4.x.
+Shallow + additive. Depends on P1 (defines the global).
+PLAN 16.1.3 / 16.4.x / 16.6.2.x.
 ---
- rpcs3/rpcs3qt/gs_frame.cpp | 14 ++++++++++++++
- 1 file changed, 14 insertions(+)
+ rpcs3/rpcs3qt/gs_frame.cpp | 31 +++++++++++++++++++++++++++++++
+ 1 file changed, 31 insertions(+)
 
 diff --git a/rpcs3/rpcs3qt/gs_frame.cpp b/rpcs3/rpcs3qt/gs_frame.cpp
-index bcc148d9a..232e0b83b 100644
+index bcc148d9a..c91b050c3 100644
 --- a/rpcs3/rpcs3qt/gs_frame.cpp
 +++ b/rpcs3/rpcs3qt/gs_frame.cpp
 @@ -65,6 +65,11 @@ namespace pad
@@ -56,6 +68,30 @@ index bcc148d9a..232e0b83b 100644
  	}
  
  	load_gui_settings();
+@@ -718,6 +732,23 @@ void gs_frame::show()
+ 				setVisibility(visibility);
+ 			}
+ 		}
++
++#ifdef _WIN32
++		// PLAN 16.6.2.x — controller-embedded play (env-gated, additive). The game
++		// window is created Hidden (above) and first surfaces here once the renderer
++		// is ready. A normal show() raises it to the TOP of the z-order, flashing the
++		// still-compiling viewport over the controller's launcher overlay for a frame
++		// before the controller can push it back under. Insert at the BOTTOM of the
++		// z-order at the show moment so the compile happens beneath the opaque overlay
++		// and never surfaces. One-shot + no-activate; ongoing placement stays the
++		// controller's job over IPC. WindowDoesNotAcceptFocus (set in the ctor) stops
++		// focus-steal but not this z-order raise — hence the explicit push here.
++		if (::getenv("SKYLANDER_BORDERLESS"))
++		{
++			SetWindowPos(reinterpret_cast<HWND>(this->winId()), HWND_BOTTOM, 0, 0, 0, 0,
++				SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
++		}
++#endif
+ 	});
+ }
+ 
 -- 
 2.53.0.windows.3
 
