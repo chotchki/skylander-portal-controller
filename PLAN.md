@@ -3270,3 +3270,50 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
       `LauncherStatus.config_gui_open` + broadcasts `open: false`. Tests: wire round-trip
       for `Rpcs3SettingsChanged`; live launch is HTPC-gated. Follow-ups if wanted: a
       curated global `config.yml` default (16.9.1) + first-launch firmware install (16.9.2).
+
+## Phase 17 - Connectivity diagnostics & firewall self-heal
+
+**Motivation (2026-05-30).** A user couldn't connect a phone to the QR; no repro
+details. Likely causes (ranked): the **portable zip** install adds no Windows
+Firewall rule (the MSI's `fire:FirewallException` for TCP 8765 only applies to MSI
+installs), so inbound is blocked / the first-run prompt was missed under Steam Big
+Picture; **mDNS `.local` not resolving** on the phone (Android is flaky) so the
+`<hostname>.local` QR URL fails even with the firewall open; less likely, the MSI
+rule silently failed (`IgnoreFailure='yes'`). Authenticode signing is *not* the
+firewall root cause (the rule is signing-independent) — it only helps indirectly
+(SmartScreen friction → users sidestep the MSI; "Unknown publisher" prompt declined).
+
+**Key constraint:** a PC can't honestly self-test "can a phone reach me" —
+connecting to its own LAN IP uses the loopback fast-path and *bypasses* the inbound
+firewall. So detection is (a) a passive "nobody's connected" symptom watchdog +
+(b) a firewall-**rule** check to explain it, not a real external probe.
+
+**Scope (decided 2026-05-30): diagnose + one-click fix.**
+
+- [ ] 17.1 — **Passive connectivity watchdog + "Trouble connecting?" launcher card.**
+  Track `ever_connected` (any client this session) + time since `server_ready`. If
+  ≥ ~60–90s up while showing the QR with zero clients ever, set a
+  `LauncherStatus.connectivity_warning` flag and render a non-blocking TV card:
+  the **raw-IP URL** (`http://<ip>:8765/`) as a fallback to the `.local` one, a
+  same-Wi-Fi reminder, + the firewall status/fix from 17.2/17.3. Auto-clears the
+  moment a client connects. Catches *every* cause (firewall, mDNS, wrong network),
+  near-zero false positives in the real failure case.
+- [ ] 17.2 — **Windows Firewall rule check (read-only).** Win-only module querying
+  whether an enabled inbound TCP Allow rule for the bind port exists on the **active
+  profile** — via the `INetFwPolicy2` COM API (`windows` crate) or `netsh` fallback.
+  Also read `FirewallEnabled` for the active profile + program-scoped rules to avoid
+  false positives (firewall off ⇒ no rule needed; broader rule already covers us).
+  Returns `Healthy / RuleMissing / FirewallOff / Unknown` to specialise the card copy.
+  Unit-test the decision logic / netsh parse.
+- [ ] 17.3 — **One-click firewall fix (elevated).** A launcher button (+ API) that
+  runs `netsh advfirewall firewall add rule name="Skylander Portal Controller"
+  dir=in action=allow protocol=TCP localport=8765` **elevated** (ShellExecute `runas`
+  → one UAC prompt). Idempotent (check-then-add, or delete-by-name then add). On
+  success re-run 17.2 and clear the warning. Handles UAC-declined gracefully. This is
+  the actual fix for zip installs. Non-Windows: hidden (mock platform).
+- [ ] 17.4 — **Raw-IP fallback QR on the card.** Render a second QR encoding the
+  raw-IP URL (`http://<ip>:8765/?…`) so a phone that failed to resolve `<hostname>.local`
+  (the Android mDNS case) can scan the IP form. Reuses the existing round-QR rasteriser.
+- [ ] 17.5 — *(stretch)* Authenticode/SmartScreen tie-in: revisit signing (Phase 13/14)
+  so the MSI runs without SmartScreen sidestepping and the firewall prompt shows a
+  verified publisher. Tracked, not blocking.
