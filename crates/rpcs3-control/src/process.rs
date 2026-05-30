@@ -249,20 +249,38 @@ impl UiaRpcsProcess {
     /// spawned children, or `TerminateProcess` via a process handle for
     /// attached ones. Returns the path taken.
     pub fn shutdown_graceful(&mut self, timeout: Duration) -> Result<ShutdownPath> {
+        self.shutdown_graceful_to_hwnd(None, timeout)
+    }
+
+    /// Like [`shutdown_graceful`], but posts `WM_CLOSE` to an explicit window
+    /// handle when one is known. Under no-GUI + IPC there's no `"RPCS3 "` titled
+    /// main window to find — only the borderless game viewport, whose native
+    /// handle the patched RPCS3 publishes over the IPC `WINDOW` command — so the
+    /// caller passes that handle here. `None` falls back to the legacy UIA
+    /// main-window lookup. Either way, an unresponsive RPCS3 is force-killed via
+    /// the Job Object after `timeout` (with the `RPCS3.buf` cleanup). PLAN 16.6.1.3.
+    pub fn shutdown_graceful_to_hwnd(
+        &mut self,
+        hwnd: Option<u64>,
+        timeout: Duration,
+    ) -> Result<ShutdownPath> {
         if !self.is_alive() {
             return Ok(ShutdownPath::AlreadyExited);
         }
 
-        // Try a polite WM_CLOSE.
-        if let Some(el) = find_rpcs3_main_window() {
-            if let Some(hwnd) = native_hwnd(&el) {
-                debug!(?hwnd, "posting WM_CLOSE to RPCS3");
-                unsafe {
-                    let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
-                }
+        // Try a polite WM_CLOSE — to the IPC-published game-window handle if we
+        // have one, else the UIA-found `"RPCS3 "` main window (legacy path).
+        let target: Option<HWND> = match hwnd {
+            Some(raw) => Some(HWND(raw as *mut _)),
+            None => find_rpcs3_main_window().and_then(|el| native_hwnd(&el)),
+        };
+        if let Some(h) = target {
+            debug!(?h, "posting WM_CLOSE to RPCS3");
+            unsafe {
+                let _ = PostMessageW(Some(h), WM_CLOSE, WPARAM(0), LPARAM(0));
             }
         } else {
-            warn!("no RPCS3 main window found; skipping WM_CLOSE and waiting anyway");
+            warn!("no RPCS3 window (IPC handle or main) found; skipping WM_CLOSE, waiting anyway");
         }
 
         self.wait_for_exit_or_force(timeout)

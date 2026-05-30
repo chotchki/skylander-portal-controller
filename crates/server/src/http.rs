@@ -1336,9 +1336,18 @@ async fn quit_game(
     let proc = guard.process.take();
     drop(guard);
     if let Some(mut proc) = proc {
-        let result =
-            tokio::task::spawn_blocking(move || proc.shutdown_graceful(Duration::from_millis(500)))
-                .await;
+        // PLAN 16.6.1.3: under no-GUI + IPC there's no "RPCS3 " main window — pass
+        // the IPC-published game-window handle so WM_CLOSE has a real target
+        // (else it falls back to the legacy main-window lookup / force path).
+        let hwnd = state
+            .launcher_status
+            .lock()
+            .ok()
+            .and_then(|st| st.game_window_handle);
+        let result = tokio::task::spawn_blocking(move || {
+            proc.shutdown_graceful_to_hwnd(hwnd, Duration::from_millis(500))
+        })
+        .await;
         match result {
             Ok(Ok(path)) => info!(?path, "quit: RPCS3 killed"),
             Ok(Err(e)) => warn!("quit errored: {e}"),
@@ -1429,9 +1438,17 @@ async fn shutdown_launcher(State(state): State<Arc<AppState>>, Signed(_body): Si
         }
         let process = detached_state.rpcs3.lock().await.process.take();
         if let Some(mut proc) = process {
-            let result =
-                tokio::task::spawn_blocking(move || proc.shutdown_graceful(Duration::from_secs(5)))
-                    .await;
+            // PLAN 16.6.1.3: WM_CLOSE the IPC game-window handle (no "RPCS3 " main
+            // window exists under no-GUI); falls back to legacy lookup / force.
+            let hwnd = detached_state
+                .launcher_status
+                .lock()
+                .ok()
+                .and_then(|st| st.game_window_handle);
+            let result = tokio::task::spawn_blocking(move || {
+                proc.shutdown_graceful_to_hwnd(hwnd, Duration::from_secs(5))
+            })
+            .await;
             match result {
                 Ok(Ok(path)) => info!(?path, "shutdown: RPCS3 exited"),
                 Ok(Err(e)) => warn!("shutdown: RPCS3 shutdown errored: {e}"),

@@ -3035,9 +3035,13 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
       `BootDirect` → `launch_no_gui` (exe + EBOOT + IPC socket +
       `config_dir=C:/emuluators/rpcs3/`) → playable (`STATE running frames=1689`).
       Whole phone-API → patched-binary path works.
-    - [ ] 16.6.1.3 — Shutdown: `WM_CLOSE` to the IPC `WINDOW` handle, falling
-      through to the Job-Object force path (works without the `"RPCS3 "` title).
-      Today shutdown force-kills via the Job Object (fine); refinement pending.
+    - [x] 16.6.1.3 — **DONE (2026-05-30).** `UiaRpcsProcess::shutdown_graceful_to_hwnd`
+      (+ `RpcsProcess` enum delegate) posts `WM_CLOSE` to the IPC-published game-window
+      handle, falling back to the legacy `"RPCS3 "` main-window lookup when no handle is
+      known, then through the Job-Object force path (with `RPCS3.buf` cleanup) on
+      timeout. Both server shutdown call sites (`/api/quit`, graceful server shutdown)
+      read `LauncherStatus.game_window_handle` and pass it. `shutdown_graceful` is now a
+      thin `(None, timeout)` wrapper, so the UIA path is unchanged.
       A clean IPC `QUIT`/`STOP` command is a 16.7 follow-up.
   - [ ] 16.6.2 — **Window coordination + transition-flicker elimination.**
     - [ ] 16.6.2.1 — Cross-platform `position_game_window(handle, monitor_rect)`

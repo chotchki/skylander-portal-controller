@@ -227,6 +227,24 @@ impl RpcsProcess {
         }
     }
 
+    /// Graceful shutdown targeting an explicit (IPC-published) window handle when
+    /// known — see [`UiaRpcsProcess::shutdown_graceful_to_hwnd`]. The mock ignores
+    /// the handle. PLAN 16.6.1.3.
+    pub fn shutdown_graceful_to_hwnd(
+        &mut self,
+        hwnd: Option<u64>,
+        timeout: Duration,
+    ) -> Result<ShutdownPath> {
+        match self {
+            #[cfg(windows)]
+            Self::Uia(p) => p.shutdown_graceful_to_hwnd(hwnd, timeout),
+            Self::Mock(p) => {
+                let _ = hwnd;
+                p.shutdown_graceful(timeout)
+            }
+        }
+    }
+
     pub fn wait_for_exit_or_force(&mut self, timeout: Duration) -> Result<ShutdownPath> {
         match self {
             #[cfg(windows)]
