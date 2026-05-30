@@ -2376,10 +2376,11 @@ Authenticode signing indefinitely as superseded by winget.
     MSI/manifest. Test via a **direct `msiexec /i`** (or double-click) here; the
     winget-pkgs moderation sandbox + normal users are unaffected.
 
-- [ ] 13.3 **First PR to microsoft/winget-pkgs.**
-  - [ ] 13.3.1 Fork `microsoft/winget-pkgs`, push the manifest
-    tree, open the PR. Title format: `New version:
-    ChristopherHotchkiss.SkylanderPortalController <version>`.
+- [~] 13.3 **First PR to microsoft/winget-pkgs.** *(PR open + in moderation 2026-05-30.)*
+  - [x] 13.3.1 — **DONE.** PR opened via `wingetcreate submit`:
+    **https://github.com/microsoft/winget-pkgs/pull/381659** —
+    "ChristopherHotchkiss.SkylanderPortalController version 1.9.2". CLA check
+    passed; awaiting Microsoft's automated lint + sandbox-install validation.
   - [ ] 13.3.2 Address moderation feedback (typical SLA 1–7
     days). Common asks: tighten ShortDescription, normalize
     Tags, fix LicenseUrl 404s. **Don't** start 13.4 until 13.3
