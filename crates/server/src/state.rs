@@ -763,6 +763,9 @@ pub fn spawn_state_poller(
         let mut ready_run = 0usize;
         let mut last_frames = 0u64;
         let mut freeze = FreezeDetector::new(freeze_ticks);
+        // Sticky: the game has rendered at least once this session. Gates freeze
+        // detection so it survives un-latching `game_playable` for the cover.
+        let mut ever_playable = false;
 
         loop {
             ticker.tick().await;
@@ -810,25 +813,17 @@ pub fn spawn_state_poller(
                     ready_run = 0;
                     last_frames = 0;
                     freeze.reset();
+                    ever_playable = false;
                     st.frozen = false;
                 }
-                // Latch: once playable, stay playable while running (freeze
-                // detection that un-latches is the 16.7 supervisor's job).
-                let new_playable = st.rpcs3_running && (st.game_playable || stable);
-                if st.game_playable != new_playable {
-                    if new_playable {
-                        info!(
-                            "rpcs3 game playable (IPC STATE: compile complete + frames advancing)"
-                        );
-                    } else if st.game_playable {
-                        info!("rpcs3 game no longer playable (IPC STATE)");
-                    }
-                    st.game_playable = new_playable;
+                if stable {
+                    ever_playable = true;
                 }
-                // Freeze detection (PLAN 16.7.1): once playable, a `running` status
-                // whose frame counter has stalled for FREEZE_AFTER means the game
-                // hung. Edge-logged; the flag is the signal the 16.7.2 recovery acts on.
-                let frozen_now = freeze.observe(advancing, running, st.game_playable);
+                // Freeze detection (PLAN 16.7.1) FIRST — once the game has been
+                // playable, a `running` status whose frame counter stalls for
+                // FREEZE_AFTER means it hung. Gated on the sticky `ever_playable`
+                // (not the live latch, which we drop below) so it doesn't oscillate.
+                let frozen_now = freeze.observe(advancing, running, ever_playable);
                 if st.frozen != frozen_now {
                     if frozen_now {
                         warn!(
@@ -839,6 +834,20 @@ pub fn spawn_state_poller(
                         info!("rpcs3 game recovered from freeze — frames advancing again");
                     }
                     st.frozen = frozen_now;
+                }
+                // Latch: playable while running + stable, but DROP it on freeze so the
+                // launcher covers the hung game with its opaque loading surface
+                // (16.7.2 "cover" step). Recovery re-latches once frames resume.
+                let new_playable = st.rpcs3_running && (st.game_playable || stable) && !frozen_now;
+                if st.game_playable != new_playable {
+                    if new_playable {
+                        info!(
+                            "rpcs3 game playable (IPC STATE: compile complete + frames advancing)"
+                        );
+                    } else if st.game_playable {
+                        info!("rpcs3 game no longer playable (IPC STATE)");
+                    }
+                    st.game_playable = new_playable;
                 }
                 // Compile subtitle from the boot/shader progress, while it runs.
                 let subtitle = match &state {
