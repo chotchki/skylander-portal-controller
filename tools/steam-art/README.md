@@ -20,3 +20,7 @@ Outputs (committed, re-run to refresh after a branding change):
 End users apply these via Steam's right-click → **Manage → Set Custom Artwork**
 (Steam can't auto-apply artwork to a non-Steam shortcut). See the README's
 "Releases" section.
+
+**Working with a designer?** `docs/aesthetic/art-handoff.md` is a forwardable
+spec for the source assets (logo / icon master / background plate / character
+cutout) that drop into this generator as layers.
