@@ -45,36 +45,51 @@ fn spawn_fake_server(prepend_hb: bool) -> (PathBuf, Arc<Mutex<Vec<String>>>) {
     let loads: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let loads_srv = Arc::clone(&loads);
 
+    // Emulator-side portal model: serial per occupied slot, persists across the
+    // (one-per-op) connections the driver opens. Behind a Mutex so each connection
+    // can be serviced on its own thread (below).
+    let portal: Arc<Mutex<[Option<u32>; 8]>> = Arc::new(Mutex::new([None; 8]));
+
     thread::spawn(move || {
-        // Emulator-side portal model: serial per occupied slot, persists across
-        // the (one-per-op) connections the driver opens.
-        let mut portal: [Option<u32>; 8] = [None; 8];
         for conn in listener.incoming() {
             let Ok(stream) = conn else { break };
-            let mut writer = stream.try_clone().expect("clone fake conn");
-            let mut reader = BufReader::new(stream);
-            let mut line = String::new();
-            loop {
-                line.clear();
-                match reader.read_line(&mut line) {
-                    Ok(0) | Err(_) => break, // client closed after its one op
-                    Ok(_) => {}
+            // One thread per connection. The driver opens a fresh connection per op;
+            // a single-threaded accept loop that stays inside one connection's read
+            // loop can starve acceptance of the next op's connection under parallel
+            // CI load, which surfaced as a uds_windows read timeout (os error 10060)
+            // on `load_clear_status_roundtrip`. Per-connection threads accept + reply
+            // immediately regardless of any lingering connection.
+            let loads_conn = Arc::clone(&loads_srv);
+            let portal_conn = Arc::clone(&portal);
+            thread::spawn(move || {
+                let mut writer = stream.try_clone().expect("clone fake conn");
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    match reader.read_line(&mut line) {
+                        Ok(0) | Err(_) => break, // client closed after its one op
+                        Ok(_) => {}
+                    }
+                    let cmd = line.trim_end_matches(['\r', '\n']);
+                    if cmd.is_empty() {
+                        continue;
+                    }
+                    if let Some(arg) = cmd.strip_prefix("LOAD ") {
+                        loads_conn.lock().unwrap().push(arg.to_string());
+                    }
+                    let reply = {
+                        let mut p = portal_conn.lock().unwrap();
+                        handle(cmd, &mut p)
+                    };
+                    if prepend_hb {
+                        let _ = writer.write_all(b"HB status=running frames=1 progr=8/8 seg=0/0\n");
+                    }
+                    if writer.write_all(reply.as_bytes()).is_err() {
+                        break;
+                    }
                 }
-                let cmd = line.trim_end_matches(['\r', '\n']);
-                if cmd.is_empty() {
-                    continue;
-                }
-                if let Some(arg) = cmd.strip_prefix("LOAD ") {
-                    loads_srv.lock().unwrap().push(arg.to_string());
-                }
-                let reply = handle(cmd, &mut portal);
-                if prepend_hb {
-                    let _ = writer.write_all(b"HB status=running frames=1 progr=8/8 seg=0/0\n");
-                }
-                if writer.write_all(reply.as_bytes()).is_err() {
-                    break;
-                }
-            }
+            });
         }
     });
 
