@@ -66,6 +66,10 @@ pub fn generate_hmac_key() -> Vec<u8> {
 #[allow(dead_code)] // Mock only exists under `dev-tools`; kept for config-file round-trip
 pub enum DriverKind {
     Uia,
+    /// Patched-RPCS3 IPC driver (Phase 16) — cross-platform AF_UNIX portal control,
+    /// no GUI/dialog. Opt-in via `SKYLANDER_PORTAL_DRIVER=ipc` for now; becomes the
+    /// default once the no-GUI launch path (PLAN 16.6) is proven. UIA stays fallback.
+    Ipc,
     Mock,
 }
 
@@ -94,6 +98,7 @@ pub fn load() -> Result<Config> {
 
     let driver_kind = match env.get("SKYLANDER_PORTAL_DRIVER").map(String::as_str) {
         Some("mock") => DriverKind::Mock,
+        Some("ipc") => DriverKind::Ipc,
         _ => DriverKind::Uia,
     };
 
@@ -230,6 +235,7 @@ pub fn load() -> Result<Config> {
         bind_port: persisted.bind_port,
         driver_kind: match persisted.driver_kind {
             PersistedDriverKind::Uia => DriverKind::Uia,
+            PersistedDriverKind::Ipc => DriverKind::Ipc,
             PersistedDriverKind::Mock => DriverKind::Mock,
         },
         log_dir: persisted.log_dir,

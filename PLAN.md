@@ -2959,9 +2959,16 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
     tests. clippy/fmt clean.
   - [ ] 16.5.2 — Driver selection: IpcPortalDriver becomes the default production
     driver on Windows + macOS; mock unchanged; UIA retained as fallback behind
-    the env var. **Deferred — gated on 16.6.** Selecting IPC only makes sense once
-    no-GUI launch spawns a *patched* RPCS3 for it to talk to; wiring
-    `DriverKind::Ipc` into the launch path now would be half-built. Do it with 16.6.
+    the env var.
+    - [x] 16.5.2.1 — **Selection plumbing done.** `DriverKind::Ipc` (+
+      `PersistedDriverKind::Ipc`), selectable via `SKYLANDER_PORTAL_DRIVER=ipc`;
+      `build_driver` constructs `IpcPortalDriver` (cross-platform, no cfg gate); IPC
+      resolves games from `games.yml` exactly like UIA. **Default stays UIA** until
+      proven. clippy/fmt clean on both the `()` and `test-hooks` feature branches.
+    - [ ] 16.5.2.2 — Thread the concrete `Arc<IpcPortalDriver>` (for `read_state` /
+      `window_handle` / `ping`) to the STATE poller + window step — lands with 16.6.1.
+    - [ ] 16.5.2.3 — Flip the default to IPC (Win+mac) once 16.6.1-2 are proven on
+      the HTPC; keep `uia` as the env fallback.
   - [ ] 16.5.3 — **Collapse the positional-slot model server-side** (the other
     half of the 16.3.1 slot-model decision). Today the worker sets
     `portal[phone_chosen_slot]`; under emulator-owned numbering the mirror must

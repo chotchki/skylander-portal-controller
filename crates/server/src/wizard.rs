@@ -149,6 +149,7 @@ pub struct PersistedConfig {
 #[serde(rename_all = "snake_case")]
 pub enum PersistedDriverKind {
     Uia,
+    Ipc,
     Mock,
 }
 

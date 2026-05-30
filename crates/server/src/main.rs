@@ -422,7 +422,8 @@ fn main() -> Result<()> {
                 // full list so dev/test on Mac/Linux still sees a populated
                 // picker without needing a games.yml.
                 let games: Vec<skylander_core::InstalledGame> = match driver_kind {
-                    crate::config::DriverKind::Uia => {
+                    // IPC (patched RPCS3) resolves games from games.yml exactly like UIA.
+                    crate::config::DriverKind::Uia | crate::config::DriverKind::Ipc => {
                         let serials: Vec<String> = games_yml.keys().cloned().collect();
                         let catalogue = serials_to_catalogue(&serials);
                         info!(
@@ -716,6 +717,18 @@ fn build_driver(kind: DriverKind) -> Result<DriverBundle> {
             }
             #[cfg(not(windows))]
             anyhow::bail!("UIA driver only available on Windows");
+        }
+        DriverKind::Ipc => {
+            // Patched-RPCS3 IPC driver (PLAN 16.5) — cross-platform (no #[cfg(windows)]).
+            // It is the production portal path for Phase 16; the no-GUI launch that
+            // gives it a socket to talk to lands in 16.6.
+            let d = skylander_rpcs3_control::IpcPortalDriver::new()?;
+            let arc: Arc<dyn PortalDriver> = Arc::new(d);
+            #[cfg(feature = "test-hooks")]
+            let mock: TestMockHandle = None;
+            #[cfg(not(feature = "test-hooks"))]
+            let mock: TestMockHandle = ();
+            Ok((arc, mock))
         }
         DriverKind::Mock => {
             // Available under EITHER dev-tools (the standard
