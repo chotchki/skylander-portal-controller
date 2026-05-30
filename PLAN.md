@@ -3166,8 +3166,10 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
     auto-dismiss handles "back up". A terminal `GameCrashed` switches the same overlay
     to its crash form. Reuses the existing `game_crash` signal (one `recovering: bool`
     field on `GameCrashReason`) rather than threading a new signal everywhere.
-  - [ ] 16.7.4 — Per-game pinned-build + config presets (SPU block size,
-    accuracy, renderer, framelimit).
+  - [ ] 16.7.4 — Per-game config presets (SPU block size, accuracy, renderer,
+    framelimit). **Design decided 2026-05-30 — folds into 16.9.3** (don't
+    hand-write YAML; launch RPCS3's own GUI per game and let it persist the
+    custom config). Deferred past v1. See 16.9.3.
 
 - [~] 16.8 **Supersede obsoleted work + docs.** *(docs done 2026-05-30; CLAUDE/SPEC/PLAN
   brought in line with the shipping IPC architecture.)*
@@ -3207,13 +3209,33 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
     uses the persisted `config_dir`, falling back to `rpcs3_exe.parent()` for pre-16.9
     configs. Wizard STEP 1 copy updated to say so. (Bundling the patched binary into the
     release artifact = the packaging work below.)
-  - [ ] 16.9.1 — *(deferred past v1)* Controller writes/ships RPCS3 config files
-    directly: global `config.yml`, per-game `config/custom_configs/config_<SERIAL>.yml`
-    (this IS the 16.7.4 per-game tuning), `config/vfs.yml`, input configs. Curated,
-    version-controlled, applied before boot — no GUI.
+  - [ ] 16.9.1 — *(deferred past v1; per-game tuning SUPERSEDED by 16.9.3 — decided
+    2026-05-30)* Controller writes/ships RPCS3 config files directly: global
+    `config.yml`, per-game `config/custom_configs/config_<SERIAL>.yml`, `config/vfs.yml`,
+    input configs. Curated, version-controlled, applied before boot — no GUI.
+    **Per-game tuning won't go this route**: rather than parse/emit RPCS3's YAML
+    ourselves (brittle across RPCS3 versions), 16.9.3 launches RPCS3's own settings
+    GUI and lets it persist `config_<SERIAL>.yml`, which `--no-gui` boots already
+    auto-apply. A curated global `config.yml` default may still live here later.
   - [ ] 16.9.2 — *(deferred past v1)* First-launch machine setup: firmware install via
     `rpcs3 --installfw <PUP>` (headless) or one GUI pass; default Vulkan +
     generated sane `config.yml`. Folds into the existing first-launch flow.
-  - [ ] 16.9.3 — On-demand escape hatch: launcher "RPCS3 Settings" action runs
-    the SAME binary WITHOUT `--no-gui` for rare/advanced config; it writes the
-    same YAML the `--no-gui` boots consume.
+  - [ ] 16.9.3 — **On-demand per-game config (design decided 2026-05-30; build deferred
+    past v1).** A **CONFIGURE GAME** action in the phone's Konami-gated admin menu
+    (next to MANAGE PROFILES) launches the bundled patched binary **WITHOUT** `--no-gui`
+    / without the `SKYLANDER_BORDERLESS` + `SKYLANDER_IPC_PATH` env (so it's a plain
+    upstream RPCS3 GUI), pointed at the persisted `config_dir`. The user picks the game
+    in RPCS3 and edits its **Custom Configuration**; RPCS3 itself persists
+    `config/custom_configs/config_<SERIAL>.yml`, which the normal `--no-gui` boots
+    already consume — so **we never read or write RPCS3's YAML** (retires 16.9.1's
+    per-game writer). Constraints captured for the build:
+    - **Editing is on the TV** (Qt settings dialog needs the HTPC keyboard/mouse). The
+      phone is a trigger + a "configuring on the TV…" status surface, not an in-phone
+      settings UI. Launcher shows an opaque "RPCS3 SETTINGS OPEN" cover meanwhile.
+    - **Disabled while a game is live** — the `--no-gui` instance holds the singleton
+      lockfile + IPC socket, so the action is greyed out during play; the user quits to
+      the game picker first. (No auto-stop.)
+    - Server side: a new endpoint launches the GUI process, tracked separately from the
+      game `RpcsLifecycle` so the crash/freeze supervisor (no `--no-gui` game ⇒ no IPC
+      socket ⇒ `process: None`) treats it as a no-op; on GUI exit the launcher reveals
+      the picker again. macOS (mock) hides the action entirely.
