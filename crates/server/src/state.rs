@@ -903,6 +903,7 @@ fn placed_figures_to_restore(
 ///   * **no owner** — `placed_by: None` (legacy / unauthenticated load) has no
 ///     per-profile working copy to resolve;
 ///   * **unknown figure** — the id no longer maps to a library figure.
+///
 /// The driver worker serialises the loads after the restart's `BootDirect`, so
 /// they land on a booted emulator.
 async fn restore_portal_figures(
