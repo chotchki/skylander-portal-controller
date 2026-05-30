@@ -235,12 +235,32 @@ impl LauncherApp {
                 );
             }
 
-            // Push the Exit to Desktop button toward the bottom of the
-            // panel. Visible escape hatch — kept regardless of mock per
-            // user 2026-04-19. Distinct red so it doesn't read as a
-            // primary action competing with the QR.
+            // Push the action buttons toward the bottom of the panel. Leave room
+            // for the two stacked buttons (Open-in-Browser fallback + Exit).
             let remaining = ui.available_height();
-            ui.add_space((remaining * 0.55).max(48.0));
+            ui.add_space((remaining * 0.42).max(40.0));
+            // QR-scan fallback (user request 2026-05-30): open the same phone URL
+            // the QR encodes in the PC's default browser, so a player can drive the
+            // portal from the HTPC if their phone can't scan the code. On-brand
+            // blue/gold so it reads as a secondary action, not competing with the
+            // QR or the red Exit.
+            let open_btn = egui::Button::new(
+                egui::RichText::new("Open in Browser")
+                    .size(palette::BODY)
+                    .color(palette::GOLD_BRIGHT),
+            )
+            .fill(palette::SF_1)
+            .rounding(egui::Rounding::same(16.0))
+            .min_size(egui::vec2(260.0, 52.0));
+            if ui.add(open_btn).clicked()
+                && let Err(e) = open::that(&self.url)
+            {
+                tracing::warn!(url = %self.url, "failed to open phone URL in browser: {e}");
+            }
+            ui.add_space(14.0);
+            // Visible escape hatch — kept regardless of mock per user 2026-04-19.
+            // Distinct red so it doesn't read as a primary action competing with
+            // the QR.
             let btn = egui::Button::new(
                 egui::RichText::new("Exit to Desktop")
                     .size(palette::HEADING)

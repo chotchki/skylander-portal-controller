@@ -24,6 +24,9 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-appender = "0.2"
+# Open the phone URL in the PC's default browser from the launcher (QR-scan
+# fallback). Tiny, cross-platform (ShellExecute / `open` / `xdg-open`).
+open = "5"
 serde = { workspace = true }
 serde_json = { workspace = true }
 

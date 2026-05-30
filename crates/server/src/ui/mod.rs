@@ -119,6 +119,10 @@ pub struct LauncherApp {
     /// texture; held here so the GL-side `BadgeRig` lazy-init in
     /// `update()` can upload them without re-rasterising. PLAN 10.7.2.
     qr_pixels: crate::round_qr::RoundQrPixels,
+    /// The phone join URL (same one the QR encodes). Kept so the Main screen's
+    /// "Open in Browser" button can launch it in the PC's default browser as a
+    /// QR-scan fallback (user request 2026-05-30).
+    url: String,
 }
 
 impl LauncherApp {
@@ -134,14 +138,13 @@ impl LauncherApp {
         // immediately (PLAN 4.15.1 / 4.15.2).
         palette::apply(&cc.egui_ctx);
         fonts::register(&cc.egui_ctx);
-        // QR texture is generated once at startup and cached. We
-        // consume the URL here — render_main no longer needs it as a
-        // field after 4.19.10a / 4.19.22 dropped the on-screen URL
-        // text and brand heading. `figure_count` previously rode along
-        // for the "504 figures indexed" debug counter; same drop.
-        // Render once into raw RGBA pixels; the egui-side texture and
-        // the GL-side BadgeRig texture (PLAN 10.7.2) both consume the
-        // same buffer so they stay byte-identical.
+        // QR texture is generated once at startup and cached. The URL is also
+        // retained on the struct (below) for the Main screen's "Open in Browser"
+        // fallback button (user request 2026-05-30). `figure_count` previously
+        // rode along for the "504 figures indexed" debug counter; that was dropped.
+        // Render once into raw RGBA pixels; the egui-side texture and the GL-side
+        // BadgeRig texture (PLAN 10.7.2) both consume the same buffer so they stay
+        // byte-identical.
         let qr_pixels = main_screen::render_qr_pixels(&url);
         let qr_texture = Some(main_screen::pixels_to_egui_texture(
             &cc.egui_ctx,
@@ -165,6 +168,7 @@ impl LauncherApp {
             vortex_idle: vortex::idle_params(),
             badge_rig: Arc::new(Mutex::new(None)),
             qr_pixels,
+            url,
         }
     }
 }
