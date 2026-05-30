@@ -3406,3 +3406,8 @@ needed at bake time. `cargo run -p skylander-brand-bake` re-bakes everything.
   v1.9.3) + a short blurb for the new icon/Steam art.
 - [ ] 18.7 — *(backlog, post-test)* winget manifest bump for v1.9.5 (the Phase 13.4
   auto-PR flow) once the release is validated.
+- [ ] 18.8 — *(backlog, cosmetic)* Mute the 29 `HEAT5150` "SelfReg DLL" warnings in the
+  release log by adding `-sw5150` to the `heat dir rpcs3 …` call in `release.yml`. They're
+  benign + pre-existing (heat is 32-bit, can't `LoadLibrary` the 64-bit bundled RPCS3
+  binaries to probe for COM self-reg → error 193; the DLLs ship fine as plain files), and
+  unrelated to the branding work — log noise only.
