@@ -110,6 +110,10 @@
                          pointing at these placeholders. -->
                     <Directory Id='DataDir' Name='data'/>
                     <Directory Id='SteamDir' Name='steam'/>
+                    <!-- Bundled patched RPCS3 (PLAN 16.9.0b) — heat-harvested into
+                         Rpcs3Files; the wizard defaults rpcs3_exe to
+                         APPLICATIONFOLDER\rpcs3\rpcs3.exe. -->
+                    <Directory Id='Rpcs3Dir' Name='rpcs3'/>
                 </Directory>
             </Directory>
             <Directory Id='ProgramMenuFolder'>
@@ -150,6 +154,7 @@
             <!-- heat-generated; see the comment at the top of this file. -->
             <ComponentGroupRef Id='DataFiles'/>
             <ComponentGroupRef Id='SteamFiles'/>
+            <ComponentGroupRef Id='Rpcs3Files'/>
         </Feature>
 
         <SetProperty Id='ARPINSTALLLOCATION'

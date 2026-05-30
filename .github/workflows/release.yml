@@ -88,6 +88,30 @@ jobs:
       - name: cargo build --release -p skylander-server (production features)
         run: cargo build --release -p skylander-server --no-default-features --features sky-stats
 
+      # PLAN 16.9.0b — v1 bundles our patched RPCS3 (the IPC control binary; stock
+      # RPCS3 has no IPC listener). Pull it from the durable prerelease published by
+      # rpcs3-patched.yml, verify SHA-256, extract to <workspace>/rpcs3/ — staged into
+      # both the zip and the MSI below (the wizard defaults rpcs3_exe to
+      # <app>/rpcs3/rpcs3.exe). Firmware + games still come from the user's own install.
+      - name: Download + verify bundled patched RPCS3
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = 'rpcs3-patched-c11979d'
+          gh release download $tag --repo $env:GITHUB_REPOSITORY `
+            --pattern 'rpcs3-patched-windows-x64.zip' `
+            --pattern 'rpcs3-patched-windows-x64.zip.sha256' --dir rpcs3-dl
+          if ($LASTEXITCODE -ne 0) { throw "download patched RPCS3 ($tag) failed" }
+          $expected = (Get-Content rpcs3-dl/rpcs3-patched-windows-x64.zip.sha256).Split(' ')[0].Trim().ToLower()
+          $actual = (Get-FileHash -Algorithm SHA256 rpcs3-dl/rpcs3-patched-windows-x64.zip).Hash.ToLower()
+          if ($actual -ne $expected) { throw "patched RPCS3 SHA-256 mismatch: expected $expected got $actual" }
+          New-Item -ItemType Directory -Force -Path rpcs3 | Out-Null
+          Expand-Archive -Path rpcs3-dl/rpcs3-patched-windows-x64.zip -DestinationPath rpcs3 -Force
+          if (-not (Test-Path rpcs3/rpcs3.exe)) { throw "patched RPCS3 extract missing rpcs3.exe" }
+          $mb = [math]::Round((Get-ChildItem rpcs3 -Recurse -File | Measure-Object Length -Sum).Sum / 1MB, 1)
+          Write-Host "bundled patched RPCS3: $mb MB extracted"
+
       - name: Stage release artifacts
         shell: pwsh
         run: |
@@ -106,6 +130,8 @@ jobs:
           # `data/scanned/` and `data/images/**/hero.png` are
           # gitignored so the CI checkout doesn't include them.
           Copy-Item -Recurse "data" "$stage/"
+          # PLAN 16.9.0b — bundled patched RPCS3 next to the app at rpcs3/rpcs3.exe.
+          Copy-Item -Recurse "rpcs3" "$stage/"
           $zip = "skylander-portal-controller-$tag-windows-x86_64.zip"
           Compress-Archive -Path "$stage/*" -DestinationPath $zip -Force
           "RELEASE_ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -162,6 +188,10 @@ jobs:
           heat dir data -ag -srd -dr DataDir -cg DataFiles -sfrag -suid `
             -var var.DataSourceDir -out wix/data.wxs
           if ($LASTEXITCODE -ne 0) { throw "heat (data) failed: $LASTEXITCODE" }
+          # PLAN 16.9.0b — harvest the bundled patched RPCS3 tree into the MSI.
+          heat dir rpcs3 -ag -srd -dr Rpcs3Dir -cg Rpcs3Files -sfrag -suid `
+            -var var.Rpcs3SourceDir -out wix/rpcs3.wxs
+          if ($LASTEXITCODE -ne 0) { throw "heat (rpcs3) failed: $LASTEXITCODE" }
           # steam/ doesn't exist yet (PLAN 10.8.5 not landed). Create
           # an empty wxs fragment so the cargo-wix include list still
           # resolves; harvest for real once the assets ship.
@@ -193,6 +223,7 @@ jobs:
             '0.0.0'
           }
           $dataAbs = (Resolve-Path data).Path
+          $rpcs3Abs = (Resolve-Path rpcs3).Path
           # cargo-wix consumes the [package.metadata.wix] block in
           # crates/server/Cargo.toml plus the wxs fragments listed
           # there (main.wxs + heat-generated data.wxs / steam.wxs).
@@ -217,6 +248,7 @@ jobs:
             cargo wix -p skylander-server --no-build --nocapture --install-version $tag `
               -C -ext -C WixFirewallExtension `
               -C "-dDataSourceDir=$dataAbs" `
+              -C "-dRpcs3SourceDir=$rpcs3Abs" `
               -L -ext -L WixFirewallExtension
             if ($LASTEXITCODE -ne 0) { throw "cargo wix failed: $LASTEXITCODE" }
           } finally { Pop-Location }

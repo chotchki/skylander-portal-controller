@@ -131,7 +131,7 @@ http-body-util = "0.1"
 # `<workspace>/assets/branding/` — keeping the wxs at workspace
 # root means relative `..\` paths point at workspace siblings.
 # `cargo wix --include` is the canonical way to point at it.
-include = ["../../wix/main.wxs", "../../wix/data.wxs", "../../wix/steam.wxs"]
+include = ["../../wix/main.wxs", "../../wix/data.wxs", "../../wix/steam.wxs", "../../wix/rpcs3.wxs"]
 # Disable both license + EULA sidecars: LICENSE ships in the zip
 # (and at the Program Files install root via heat), and the MIT
 # license doesn't warrant a click-through dialog.
