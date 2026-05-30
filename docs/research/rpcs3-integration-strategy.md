@@ -249,3 +249,11 @@ the `live_ipc.rs` acceptance test against the **live patched binary** (Giants,
 
 Both sides of the IPC contract now proven (controller Rust driver ⇄ C++ patch). The
 foundation 16.6 (no-GUI launch + window coordination) builds on is confirmed solid.
+
+**16.6.1 no-GUI launch also live-validated (same day)** via `live_launch.rs`:
+`RpcsProcess::launch_no_gui` booted Giants `--no-gui` + borderless, the IPC readiness
+loop saw it reach playable in ~23s (`status=running frames=15 progr=8/8`) with the
+window handle `0x403AC` published — i.e. the server's `BootDirect` IPC path works end
+to end (launch → liveness → handle → shutdown), no FPS-title scraping. The
+full-through-`/api/launch` run awaits the 16.9 config slice (patched-exe vs
+firmware/`games.yml` path split).

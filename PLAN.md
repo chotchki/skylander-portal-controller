@@ -3009,7 +3009,8 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
   proven on the HTPC → 16.5.3 → delete scrapers (16.6.3.2-3). UIA stays compiled
   throughout. Acceptance = `crates/rpcs3-control/tests/live_ipc.rs` on the HTPC.
 
-  - [ ] 16.6.1 — **No-GUI launch.** *(core implemented; live end-to-end pending)*
+  - [ ] 16.6.1 — **No-GUI launch.** *(launch + readiness live-validated on the HTPC
+    2026-05-29; only 16.6.1.3 shutdown refinement + the full server-API path remain)*
     - [x] 16.6.1.1 — **Done.** `UiaRpcsProcess::launch_no_gui(exe, eboot, ipc_path)`
       (+ `RpcsProcess::launch_no_gui`): spawns `--no-gui <EBOOT>` with env
       `SKYLANDER_BORDERLESS=1` + `SKYLANDER_IPC_PATH`, keeping the Job Object; reuses
@@ -3021,8 +3022,13 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
       is unchanged. **Driver capability via the trait** (not a threaded concrete
       handle): added default-`None` `ipc_socket_path` / `emu_state` /
       `game_window_handle` to `PortalDriver`, overridden by `IpcPortalDriver` — this
-      also satisfies **16.5.2.2**. clippy/fmt clean. *Live end-to-end run (server +
-      `SKYLANDER_PORTAL_DRIVER=ipc` + a real launch) still to do on the HTPC.*
+      also satisfies **16.5.2.2**. clippy/fmt clean. **Live-validated** via
+      `crates/rpcs3-control/tests/live_launch.rs` (HTPC 2026-05-29): `launch_no_gui`
+      → playable in ~23s (`status=running frames=15 progr=8/8`) → window handle
+      `0x403AC` → shutdown. The full server-through-`/api/launch` path still awaits
+      the **16.9** config slice (the patched exe at `D:\workspace\rpcs3\bin` vs the
+      firmware/`games.yml` at `C:\emuluators\rpcs3` — the server resolves `games.yml`
+      from `<rpcs3_exe>/config`).
     - [ ] 16.6.1.3 — Shutdown: `WM_CLOSE` to the IPC `WINDOW` handle, falling
       through to the Job-Object force path (works without the `"RPCS3 "` title).
       Today shutdown force-kills via the Job Object (fine); refinement pending.

@@ -121,12 +121,14 @@ Hidden costs to keep in mind: every `@apply` in a component file means class nam
     unit-tests the codec, and `tests/ipc_loopback.rs` runs the real
     `IpcPortalDriver` against an in-process fake AF_UNIX server speaking the P1
     protocol — no RPCS3 needed (Win+mac CI).
-  - **Emulator side (HTPC, `#[ignore]`d):** `tests/live_ipc.rs` drives the **real
-    patched binary** over IPC — proving the C++ listener comes up, `g_skyportal`
-    actually loads/clears, the STATE/heartbeat frame counter advances, and the
-    window handle is published. This is how we test the C++ without C++ test
-    infra: a Rust e2e test against the running emulator (mirrors the `live*.rs`
-    UIA suites). If a patch (P1/P2) changes wire behaviour, update the fake
+  - **Emulator side (HTPC, `#[ignore]`d):** `tests/live_ipc.rs` (attach to a
+    running instance) and `tests/live_launch.rs` (the 16.6.1 `launch_no_gui` +
+    IPC-readiness + window-handle path) drive the **real patched binary** — proving
+    the C++ listener comes up, `g_skyportal` actually loads/clears, the STATE/
+    heartbeat frame counter advances, the window handle is published, and a no-GUI
+    boot reaches a playable state. This is how we test the C++ without C++ test
+    infra: Rust e2e tests against the running emulator (mirror the `live*.rs` UIA
+    suites). Both self-manage the RPCS3 lifecycle / clean up the socket + lockfile. If a patch (P1/P2) changes wire behaviour, update the fake
     server in `ipc_loopback.rs` to match — the loopback doubles as the executable
     spec the live binary must satisfy.
 
