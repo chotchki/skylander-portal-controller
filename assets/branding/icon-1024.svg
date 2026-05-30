@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 140 140">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0b1e52"/>
+      <stop offset="100%" stop-color="#020818"/>
+    </radialGradient>
+    <radialGradient id="pg" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#6dceff" stop-opacity="0.9"/>
+      <stop offset="60%" stop-color="#1a6fbf" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#020818" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="pf" cx="45%" cy="42%" r="55%">
+      <stop offset="0%" stop-color="#c8f0ff"/>
+      <stop offset="40%" stop-color="#4ec0ff"/>
+      <stop offset="100%" stop-color="#0b2a7a"/>
+    </radialGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffe58a"/>
+      <stop offset="50%" stop-color="#f5c634"/>
+      <stop offset="100%" stop-color="#c58c18"/>
+    </linearGradient>
+    <clipPath id="squircle">
+      <rect width="140" height="140" rx="32"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background -->
+  <rect width="140" height="140" rx="32" fill="url(#bg)"/>
+
+  <!-- Portal glow -->
+  <g clip-path="url(#squircle)">
+    <circle cx="70" cy="70" r="75" fill="url(#pg)" opacity="0.5"/>
+  </g>
+
+  <!-- Gold bezel ring -->
+  <circle cx="70" cy="70" r="58" fill="none" stroke="url(#gold)" stroke-width="9"/>
+  <!-- Inner bezel edge -->
+  <circle cx="70" cy="70" r="50" fill="none" stroke="#c58c18" stroke-width="1.5" opacity="0.5"/>
+
+  <!-- Portal interior -->
+  <circle cx="70" cy="70" r="48" fill="#0b1e52"/>
+  <!-- Portal glow fill -->
+  <circle cx="70" cy="70" r="42" fill="url(#pf)" opacity="0.6"/>
+
+  <!-- Vortex rings -->
+  <circle cx="70" cy="70" r="30" fill="none" stroke="#8fd4ff" stroke-width="2" opacity="0.6"/>
+  <circle cx="70" cy="70" r="20" fill="none" stroke="#c8f0ff" stroke-width="1.5" opacity="0.45"/>
+
+  <!-- Gold highlight arc top -->
+  <path d="M30,44 A44,44 0 0,1 110,44" fill="none" stroke="#ffe58a" stroke-width="2.5" stroke-linecap="round" opacity="0.6"/>
+
+  <!-- S monogram — ink stroke -->
+  <text x="70" y="88"
+    text-anchor="middle"
+    font-family="Georgia, 'Times New Roman', serif"
+    font-size="40"
+    font-weight="700"
+    fill="none"
+    stroke="#3a2500"
+    stroke-width="8"
+    stroke-linejoin="round"
+  >S</text>
+  <!-- S monogram — gold stroke -->
+  <text x="70" y="88"
+    text-anchor="middle"
+    font-family="Georgia, 'Times New Roman', serif"
+    font-size="40"
+    font-weight="700"
+    fill="none"
+    stroke="#f5c634"
+    stroke-width="4"
+    stroke-linejoin="round"
+  >S</text>
+  <!-- S monogram — cream fill -->
+  <text x="70" y="88"
+    text-anchor="middle"
+    font-family="Georgia, 'Times New Roman', serif"
+    font-size="40"
+    font-weight="700"
+    fill="#fdf5dc"
+  >S</text>
+
+  <!-- Outer gold border on squircle -->
+  <rect width="140" height="140" rx="32" fill="none" stroke="url(#gold)" stroke-width="3"/>
+</svg>

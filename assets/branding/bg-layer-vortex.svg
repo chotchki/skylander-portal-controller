@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="2400" viewBox="0 0 4000 2400">
+  <defs>
+    <radialGradient id="glow1" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="#8fd4ff" stop-opacity="0.38"/>
+      <stop offset="30%"  stop-color="#4ec0ff" stop-opacity="0.22"/>
+      <stop offset="65%"  stop-color="#1a4fa0" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#020818" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="#6db8ff" stop-opacity="0.22"/>
+      <stop offset="50%"  stop-color="#0b4fa0" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#020818" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow3" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="#a07fff" stop-opacity="0.16"/>
+      <stop offset="50%"  stop-color="#3a1a80" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#020818" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="vring" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="#8fd4ff" stop-opacity="0"/>
+      <stop offset="70%"  stop-color="#4ec0ff" stop-opacity="0.12"/>
+      <stop offset="85%"  stop-color="#8fd4ff" stop-opacity="0.20"/>
+      <stop offset="100%" stop-color="#c8f0ff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="goldring" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="#f5c634" stop-opacity="0"/>
+      <stop offset="78%"  stop-color="#f5c634" stop-opacity="0"/>
+      <stop offset="88%"  stop-color="#ffe58a" stop-opacity="0.18"/>
+      <stop offset="95%"  stop-color="#f5c634" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="#c58c18" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="4000" height="2400" fill="#020818"/>
+  <ellipse cx="1700" cy="1200" rx="1400" ry="1100" fill="url(#glow1)"/>
+  <ellipse cx="3200" cy="600" rx="900" ry="700" fill="url(#glow2)"/>
+  <ellipse cx="500" cy="1900" rx="800" ry="600" fill="url(#glow3)"/>
+  <ellipse cx="1700" cy="1200" rx="820" ry="820" fill="url(#vring)"/>
+  <ellipse cx="1700" cy="1200" rx="560" ry="560" fill="url(#vring)" opacity="0.7"/>
+  <ellipse cx="1700" cy="1200" rx="340" ry="340" fill="url(#vring)" opacity="0.5"/>
+  <ellipse cx="1700" cy="1200" rx="950" ry="950" fill="url(#goldring)"/>
+  <path d="M 900,900 A 900,900 0 0,1 2500,900"
+    fill="none" stroke="#ffe58a" stroke-width="2" opacity="0.07" stroke-linecap="round"/>
+  <path d="M 1100,950 A 700,700 0 0,1 2300,950"
+    fill="none" stroke="#ffe58a" stroke-width="1.5" opacity="0.10" stroke-linecap="round"/>
+</svg>

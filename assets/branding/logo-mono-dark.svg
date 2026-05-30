@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320">
+  <defs>
+    <style>@import url('https://fonts.googleapis.com/css2?family=Titan+One&amp;display=swap');</style>
+  </defs>
+
+  <!-- SKYLANDER — light halo stroke for separation on mid tones -->
+  <text x="640" y="210" text-anchor="middle"
+    font-family="'Titan One', cursive" font-size="190" letter-spacing="8"
+    fill="none" stroke="#ffffff" stroke-width="22" stroke-linejoin="round" opacity="0.15">SKYLANDER</text>
+  <!-- SKYLANDER — dark fill -->
+  <text x="640" y="210" text-anchor="middle"
+    font-family="'Titan One', cursive" font-size="190" letter-spacing="8"
+    fill="#0b1e52">SKYLANDER</text>
+
+  <!-- Rule lines + diamond -->
+  <line x1="80" y1="238" x2="556" y2="238" stroke="#0b1e52" stroke-width="1.5" opacity="0.5"/>
+  <line x1="724" y1="238" x2="1200" y2="238" stroke="#0b1e52" stroke-width="1.5" opacity="0.5"/>
+  <polygon points="640,229 652,238 640,247 628,238" fill="#0b1e52" opacity="0.7"/>
+
+  <!-- PORTAL CONTROLLER — dark fill -->
+  <text x="640" y="298" text-anchor="middle"
+    font-family="'Georgia', 'Times New Roman', serif"
+    font-size="52" font-weight="600" letter-spacing="18"
+    fill="#061436">PORTAL CONTROLLER</text>
+</svg>
