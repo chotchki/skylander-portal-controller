@@ -24,7 +24,7 @@ use tracing::{info, warn};
 use crate::config::DriverKind;
 use crate::state::{
     AppState, RpcsLifecycle, spawn_crash_watchdog, spawn_driver_worker, spawn_fps_sampler,
-    spawn_shader_compile_watchdog,
+    spawn_shader_compile_watchdog, spawn_state_poller,
 };
 use crate::ui::LauncherApp;
 
@@ -305,6 +305,9 @@ fn main() -> Result<()> {
                 };
                 let sessions = Arc::new(crate::profiles::SessionRegistry::default());
                 let figures_for_driver: Arc<Vec<Figure>> = Arc::new(figures_for_task.clone());
+                // Clone the driver handle for the IPC STATE poller — the worker
+                // takes `driver` by value below.
+                let driver_for_poller = driver.clone();
                 let driver_tx = spawn_driver_worker(
                     driver,
                     portal_for_task.clone(),
@@ -332,26 +335,32 @@ fn main() -> Result<()> {
                     rpcs3_exe.clone(),
                     std::time::Duration::from_millis(500),
                 );
-                // Shader-compile watchdog — tails RPCS3.log for
-                // SPU/PPU/RSX compile lines and surfaces the latest
-                // category as a subtitle on the LOADING badge
-                // (PLAN 10.8.7c — purely cosmetic now; game_playable
-                // moved to the FPS sampler below).
-                spawn_shader_compile_watchdog(
-                    status_for_task.clone(),
-                    rpcs3_exe.clone(),
-                    std::time::Duration::from_millis(500),
-                );
-                // FPS-in-viewport-title sampler — drives game_playable
-                // off RPCS3's own per-frame counter. Rolling 4-sample
-                // buffer at 250 ms; playable when all 4 samples are
-                // ≥ 10 fps (PLAN 10.8.7c). Replaces the log-quiet
-                // heuristic that raced with RPCS3's freshly-spawned
-                // log writes.
-                spawn_fps_sampler(
-                    status_for_task.clone(),
-                    std::time::Duration::from_millis(250),
-                );
+                // Playable-signal source depends on the driver. IPC (PLAN 16.6.3.1):
+                // the clean STATE poller — `game_playable` waits for compile-complete
+                // (not just FPS), so the launcher reveals the game only once it's
+                // truly rendering (no early iris / compile→in-game flicker). UIA/mock:
+                // the log-tail compile subtitle + the FPS-in-viewport-title sampler.
+                match driver_kind {
+                    crate::config::DriverKind::Ipc => {
+                        spawn_state_poller(
+                            driver_for_poller,
+                            status_for_task.clone(),
+                            std::time::Duration::from_millis(250),
+                        );
+                    }
+                    _ => {
+                        let _ = driver_for_poller;
+                        spawn_shader_compile_watchdog(
+                            status_for_task.clone(),
+                            rpcs3_exe.clone(),
+                            std::time::Duration::from_millis(500),
+                        );
+                        spawn_fps_sampler(
+                            status_for_task.clone(),
+                            std::time::Duration::from_millis(250),
+                        );
+                    }
+                }
                 // NFC scanner worker (PLAN 6.5.1 + 6.5.5a). Feature-gated:
                 // off by default so users without an ACR122U aren't
                 // pulling in pcsc linkage. Dumps land under

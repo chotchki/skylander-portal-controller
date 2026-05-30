@@ -119,10 +119,6 @@ pub struct LauncherApp {
     /// texture; held here so the GL-side `BadgeRig` lazy-init in
     /// `update()` can upload them without re-rasterising. PLAN 10.7.2.
     qr_pixels: crate::round_qr::RoundQrPixels,
-    /// Last game-window handle the launcher slotted itself above (PLAN 16.6.2.2,
-    /// IPC mode). The relative z-order is re-asserted only when this changes — not
-    /// every frame. `None` when no game is live.
-    placed_game_handle: Option<u64>,
 }
 
 impl LauncherApp {
@@ -169,7 +165,6 @@ impl LauncherApp {
             vortex_idle: vortex::idle_params(),
             badge_rig: Arc::new(Mutex::new(None)),
             qr_pixels,
-            placed_game_handle: None,
         }
     }
 }
@@ -297,19 +292,14 @@ impl eframe::App for LauncherApp {
                 ));
                 self.window_on_top_state = Some(false);
             }
-            // Once a game is live, slot the launcher directly above its window —
-            // re-asserted only when the handle changes, not every frame.
-            match (
-                status_snapshot.rpcs3_running,
-                status_snapshot.game_window_handle,
-            ) {
-                (true, Some(game_hwnd)) => {
-                    if self.placed_game_handle != Some(game_hwnd) {
-                        place_game_below_launcher_via_win32(frame, game_hwnd);
-                        self.placed_game_handle = Some(game_hwnd);
-                    }
-                }
-                _ => self.placed_game_handle = None,
+            // Re-assert every frame while a game is live: keep the game sandwiched
+            // directly below the launcher so no other window (e.g. a terminal the
+            // user alt-tabbed to) can drift *between* them and show through the
+            // transparent overlay. This is relative + SWP_NOACTIVATE — it positions
+            // the game beneath the launcher without raising the launcher to topmost,
+            // so alt-tabbing away to other apps still works (they go above both).
+            if let Some(game_hwnd) = status_snapshot.game_window_handle {
+                place_game_below_launcher_via_win32(frame, game_hwnd);
             }
         } else {
             // Legacy UIA z-order. Two layers: egui WindowLevel for the Normal ↔
@@ -566,8 +556,17 @@ impl eframe::App for LauncherApp {
         // show through to. With no RPCS3 alive (boot, picker, post-
         // shutdown), the launcher must paint fully opaque or the
         // user sees the desktop behind the transparent eframe window.
-        let game_underneath =
-            status_snapshot.rpcs3_running && status_snapshot.current_game.is_some();
+        // Punch-through (iris-masked starfield/vortex revealing the game) is enabled
+        // only once the game is actually PLAYABLE — not merely `rpcs3_running`. The
+        // boot path can flip `rpcs3_running` early (it breaks on the first
+        // `is_playable`, which flickers true in the gap between RPCS3's compile
+        // phases), so gating on `game_playable` (the stable end-of-compile signal)
+        // holds the opaque loading cover through the whole compile and gives exactly
+        // one clean iris reveal — instead of a jump-to-emulator then re-cover/replay
+        // (HTPC 2026-05-30 regression).
+        let game_underneath = status_snapshot.rpcs3_running
+            && status_snapshot.current_game.is_some()
+            && status_snapshot.game_playable;
 
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(egui::Color32::TRANSPARENT))
@@ -648,8 +647,14 @@ impl eframe::App for LauncherApp {
                 // rather than being obscured by the shader's opaque
                 // output. Reads as "stars in space, with clouds drifting
                 // among them" — the design language the launcher's been
-                // tuned to.
-                vortex::paint_starfield(ui.painter(), rect, time_s);
+                // tuned to. UNLIKE Layer 1 this one isn't iris-masked, so it
+                // must be SKIPPED once a game is being revealed — otherwise its
+                // white star dots paint on TOP of the game (visible over
+                // Giants' dark Activision intro for ~20-30s) instead of
+                // clearing with the iris (HTPC 2026-05-30).
+                if !game_underneath {
+                    vortex::paint_starfield(ui.painter(), rect, time_s);
+                }
 
                 // Layer 3: per-screen content.
                 match &status_snapshot.screen {
@@ -805,8 +810,8 @@ fn push_rpcs3_main_to_bottom_via_win32() {}
 /// BELOW the launcher, so the overlay sits just above the game WITHOUT making the
 /// launcher desktop-topmost — the user can still alt-tab to other apps. There are
 /// no menu / dialog windows under no-GUI + IPC, so the old absolute-topmost +
-/// push-to-bottom dance is unnecessary. Called only when the game handle changes
-/// (not every frame).
+/// push-to-bottom dance is unnecessary. Called every frame while a game is live —
+/// a relative SWP_NOACTIVATE re-order is cheap and a no-op once already in order.
 #[cfg(windows)]
 fn place_game_below_launcher_via_win32(frame: &eframe::Frame, game_hwnd: u64) {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};

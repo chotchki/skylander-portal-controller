@@ -67,13 +67,18 @@ pub struct EmuState {
 }
 
 impl EmuState {
-    /// True when the game is actually rendering: `running`, boot/shader progress
-    /// complete, and at least one frame has flipped. A `running` status with a
-    /// stalled `frames` counter is the freeze signal (PLAN 16.7.1).
+    /// True when the game is actually rendering: `running`, at least one frame
+    /// flipped, and **both** compile-progress phases complete — `progr` (e.g. PPU
+    /// module analysis) AND `seg` (e.g. shader segments). RPCS3 runs these as two
+    /// phases, so checking only `progr` reports playable while shaders are still
+    /// compiling — the launcher would reveal the game mid-compile (HTPC 2026-05-30).
+    /// A `running` status with a stalled `frames` counter is the freeze signal
+    /// (PLAN 16.7.1).
     pub fn is_playable(&self) -> bool {
         self.status == "running"
             && self.frames > 0
             && (self.progr_total == 0 || self.progr_done >= self.progr_total)
+            && (self.seg_total == 0 || self.seg_done >= self.seg_total)
     }
 }
 

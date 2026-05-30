@@ -3082,8 +3082,22 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
       re-layered above the game child. NOT on the 16.6 critical path (the cover
       solves the flicker that motivated it).
   - [ ] 16.6.3 — **Retire obsoleted scrapers (UIA kept as fallback).**
-    - [ ] 16.6.3.1 — `spawn_state_poller` (IPC `STATE` → `game_playable`, optional
-      `progr=a/b` → compile subtitle). Lands with 16.6.1.
+    - [x] 16.6.3.1 — **DONE + live-validated (HTPC 2026-05-30).** `spawn_state_poller`
+      (`state.rs`, spawned for the IPC driver instead of the FPS sampler + shader
+      watchdog) drives `game_playable` off the emulator's own `STATE`: `running` +
+      frames advancing + **both** compile phases complete (`is_playable` now checks
+      `progr` AND `seg`), sustained 2 s, latched while running; also publishes the
+      compile subtitle from `progr`. It also publishes `game_window_handle` **early**
+      (as soon as the window exists) so the launcher can slot it below itself
+      immediately. The live debugging fixed a chain of reveal bugs (all 2026-05-30):
+      (a) reveal fired mid-compile → gate on `progr`+`seg` complete; (b) launcher
+      jumped to the raw emulator during compile → the freshly-created game window sat
+      *above* the launcher because the handle was published late; publish it early +
+      slot it below on handle-exists; (c) punch-through (`game_underneath`) gated on
+      `rpcs3_running` (flips early) → gate on `game_playable`; (d) white star dots
+      over the game → the unmasked Layer-2 CPU starfield (`ui/mod.rs`) now skips when
+      `game_underneath`. Result confirmed "much much better" — clean loading cover
+      through compile, one reveal at the end, alt-tab solid.
     - [ ] 16.6.3.2 — Delete `spawn_fps_sampler` + `spawn_shader_compile_watchdog` +
       `parse_fps_from_title` once the STATE poller is proven.
     - [ ] 16.6.3.3 — Delete the window-title scrapers `read_viewport_title` /

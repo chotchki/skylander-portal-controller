@@ -833,6 +833,105 @@ pub fn spawn_fps_sampler(
     });
 }
 
+/// IPC `STATE`-driven playability signal (PLAN 16.6.3.1) — the clean replacement
+/// for the FPS-title sampler under the IPC driver. Drives `game_playable` off the
+/// patched emulator's own state: `running`, frames advancing, AND boot/shader
+/// compile complete (`progr_done >= progr_total`). Crucially it waits for the
+/// **compile** to finish, not just for the loading-screen FPS to rise — so the
+/// launcher holds its opaque cover over the PPU/SPU/shader compile and only reveals
+/// the game once it's truly rendering (no early iris, no compile→in-game flicker).
+/// Requires the signal sustained for `SAMPLE_BUFFER` ticks to ride out the brief
+/// gaps between compile phases, and latches `true` while running so a transient IPC
+/// hiccup doesn't strobe the reveal. Spawned only under the IPC driver.
+pub fn spawn_state_poller(
+    driver: Arc<dyn PortalDriver>,
+    launcher_status: Arc<std::sync::Mutex<LauncherStatus>>,
+    interval: std::time::Duration,
+) {
+    /// Consecutive ready ticks before declaring playable (8 × 250 ms = 2 s). Wider
+    /// than the FPS sampler's 1 s to ride out the brief gaps between RPCS3's compile
+    /// phases (progr-done before seg-start) so the reveal lands after the menu paints.
+    const SAMPLE_BUFFER: usize = 8;
+
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        ticker.tick().await;
+
+        let mut ready_run = 0usize;
+        let mut last_frames = 0u64;
+
+        loop {
+            ticker.tick().await;
+
+            // emu_state() + the window handle are blocking IPC round-trips — off-reactor.
+            let d = driver.clone();
+            let (state, game_window_handle) =
+                match tokio::task::spawn_blocking(move || (d.emu_state(), d.game_window_handle()))
+                    .await
+                {
+                    Ok((s, h)) => (s.ok().flatten(), h.ok().flatten()),
+                    Err(_) => (None, None),
+                };
+
+            // Ready = compile complete + actually rendering (frames advancing).
+            let ready = match &state {
+                Some(s) => {
+                    let advancing = s.frames > last_frames;
+                    last_frames = s.frames;
+                    s.is_playable() && advancing
+                }
+                None => {
+                    last_frames = 0;
+                    false
+                }
+            };
+            ready_run = if ready { ready_run + 1 } else { 0 };
+            let stable = ready_run >= SAMPLE_BUFFER;
+
+            if let Ok(mut st) = launcher_status.lock() {
+                // Publish the game-window handle as soon as the window exists (during
+                // boot/compile) so the launcher slots it BELOW itself right away —
+                // otherwise RPCS3's freshly-created window sits on TOP of the launcher
+                // and the user sees the compile through it for the whole boot, no
+                // matter what the launcher paints (PLAN 16.6.2, HTPC 2026-05-30).
+                st.game_window_handle = game_window_handle;
+                if !st.rpcs3_running {
+                    ready_run = 0;
+                    last_frames = 0;
+                }
+                // Latch: once playable, stay playable while running (freeze
+                // detection that un-latches is the 16.7 supervisor's job).
+                let new_playable = st.rpcs3_running && (st.game_playable || stable);
+                if st.game_playable != new_playable {
+                    if new_playable {
+                        info!(
+                            "rpcs3 game playable (IPC STATE: compile complete + frames advancing)"
+                        );
+                    } else if st.game_playable {
+                        info!("rpcs3 game no longer playable (IPC STATE)");
+                    }
+                    st.game_playable = new_playable;
+                }
+                // Compile subtitle from the boot/shader progress, while it runs.
+                let subtitle = match &state {
+                    Some(s)
+                        if st.rpcs3_running
+                            && s.progr_total > 0
+                            && s.progr_done < s.progr_total =>
+                    {
+                        Some(format!("Compiling {}/{}", s.progr_done, s.progr_total))
+                    }
+                    _ => None,
+                };
+                if st.shader_compile_text != subtitle {
+                    st.shader_compile_text = subtitle;
+                }
+            }
+        }
+    });
+}
+
 /// Parse RPCS3's window-title FPS field. Format is
 /// `"FPS: 30.65 | <renderer> | <version> | <name> [<serial>]"`;
 /// we want the `30.65` after `"FPS: "` and before the first ` `.
@@ -1328,14 +1427,11 @@ async fn handle_job(
                             }
                             std::thread::sleep(std::time::Duration::from_millis(250));
                         }
-                        // Publish the borderless game-window handle so the launcher
-                        // can slot itself directly above it (PLAN 16.6.2). Read it
-                        // before taking the status lock — it's an IPC round-trip.
-                        let game_window_handle = d.game_window_handle().ok().flatten();
+                        // game_window_handle is published continuously by the STATE
+                        // poller (early, as soon as the window exists) — not here.
                         if let Ok(mut st) = status_for_blocking.lock() {
                             st.rpcs3_running = true;
                             st.current_game = Some(display_name_for_blocking.clone());
-                            st.game_window_handle = game_window_handle;
                         }
                         return Ok(Some(proc));
                     }
