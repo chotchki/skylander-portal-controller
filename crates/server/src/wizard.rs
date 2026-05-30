@@ -170,7 +170,10 @@ impl PersistedConfig {
             rpcs3_exe,
             firmware_pack_root,
             bind_port: 8765,
-            driver_kind: PersistedDriverKind::Uia,
+            // Phase 16 (16.5.2.3): a Windows end-user install ships the *patched*
+            // RPCS3, so first-launch persists the IPC driver. (Stock-RPCS3 dev can
+            // still force the legacy path with SKYLANDER_PORTAL_DRIVER=uia.)
+            driver_kind: PersistedDriverKind::Ipc,
             log_dir: runtime_dir.join("logs"),
             phone_dist_dir: exe_parent.join("phone-dist"),
             data_root: exe_parent.join("data"),
@@ -782,6 +785,6 @@ mod tests {
         assert_eq!(reloaded.rpcs3_exe, rpcs3);
         assert_eq!(reloaded.firmware_pack_root, pack);
         assert_eq!(reloaded.bind_port, 8765);
-        assert_eq!(reloaded.driver_kind, PersistedDriverKind::Uia);
+        assert_eq!(reloaded.driver_kind, PersistedDriverKind::Ipc);
     }
 }

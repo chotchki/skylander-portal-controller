@@ -70,10 +70,13 @@ pub fn generate_hmac_key() -> Vec<u8> {
 #[serde(rename_all = "snake_case")]
 #[allow(dead_code)] // Mock only exists under `dev-tools`; kept for config-file round-trip
 pub enum DriverKind {
+    /// Legacy GUI-automation driver (UI Automation against the Skylanders Manager
+    /// dialog). Demoted to a fallback in Phase 16 (16.5.2.3) — opt-in via
+    /// `SKYLANDER_PORTAL_DRIVER=uia`, kept for dev against a *stock* RPCS3.
     Uia,
     /// Patched-RPCS3 IPC driver (Phase 16) — cross-platform AF_UNIX portal control,
-    /// no GUI/dialog. Opt-in via `SKYLANDER_PORTAL_DRIVER=ipc` for now; becomes the
-    /// default once the no-GUI launch path (PLAN 16.6) is proven. UIA stays fallback.
+    /// no GUI/dialog. **The production default on Windows** (16.5.2.3); the no-GUI
+    /// launch + window coordination (PLAN 16.6) is proven on the HTPC.
     Ipc,
     Mock,
 }
@@ -104,7 +107,21 @@ pub fn load() -> Result<Config> {
     let driver_kind = match env.get("SKYLANDER_PORTAL_DRIVER").map(String::as_str) {
         Some("mock") => DriverKind::Mock,
         Some("ipc") => DriverKind::Ipc,
-        _ => DriverKind::Uia,
+        Some("uia") => DriverKind::Uia,
+        // Phase 16 (16.5.2.3): IPC (patched RPCS3 over AF_UNIX) is the production
+        // default on Windows; macOS has no real driver and falls back to the
+        // in-memory mock. The explicit `uia` arm keeps the legacy GUI-automation
+        // path available for dev against a *stock* RPCS3 (`.env.dev` sets it).
+        _ => {
+            #[cfg(windows)]
+            {
+                DriverKind::Ipc
+            }
+            #[cfg(not(windows))]
+            {
+                DriverKind::Mock
+            }
+        }
     };
 
     let log_dir = PathBuf::from("logs");

@@ -2970,8 +2970,11 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
       (overridden by `IpcPortalDriver`), so consumers reach the IPC state/handle
       through the existing `Arc<dyn PortalDriver>` — no concrete-handle plumbing
       through `AppState`/worker. Used by 16.6.1's boot path; ready for 16.6.2/16.6.3.
-    - [ ] 16.5.2.3 — Flip the default to IPC (Win+mac) once 16.6.1-2 are proven on
-      the HTPC; keep `uia` as the env fallback.
+    - [x] 16.5.2.3 — **DONE (2026-05-30).** Flipped the compiled default: Windows →
+      `Ipc` (patched RPCS3), non-Windows → `Mock`. `SKYLANDER_PORTAL_DRIVER=uia`
+      keeps the legacy GUI path for stock-RPCS3 dev (`.env.dev` now sets it
+      explicitly). `config.rs` env-default + `wizard.rs::from_user_paths`
+      (Windows first-launch) both persist `Ipc`; `macos_default` stays `Mock`.
   - [ ] 16.5.3 — **Collapse the positional-slot model server-side** (the other
     half of the 16.3.1 slot-model decision). Today the worker sets
     `portal[phone_chosen_slot]`; under emulator-owned numbering the mirror must
