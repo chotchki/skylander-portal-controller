@@ -234,3 +234,18 @@ No deeper-than-expected surprises. Proceed to **16.2** (vendor RPCS3 as a submod
 at `c11979d` + the patch series + CI lane). Performance note: stock dev config runs
 Giants laggy (SPU Block Size `Safe` + verbose logging) — orthogonal to the portal
 redesign; addressed by the per-game config strategy (16.7.4 / 16.9).
+
+## IPC driver + protocol live-validated — 16.5.1 (HTPC, 2026-05-29) — **GREEN**
+
+The controller-side Rust `IpcPortalDriver` + the `proto.rs` wire codec, exercised by
+the `live_ipc.rs` acceptance test against the **live patched binary** (Giants,
+`--no-gui`, over RDP):
+- `STATE` frame counter advanced **4716 → 4782** (+66 / ~1.1s ≈ 60fps) — the clean
+  liveness signal (no log-scraping); the freeze-detection foundation for 16.7.
+- `WINDOW` returned the borderless game-window handle `0x20436` (P2) over the driver.
+- `LOAD` (Chop Chop, from a working copy) placed the figure on the in-game portal and
+  `CLEAR` removed it — `g_skyportal` driven entirely through the Rust driver, zero
+  dialog/UIA. Emulator-assigned slot; the master `.sky` was untouched (loaded a copy).
+
+Both sides of the IPC contract now proven (controller Rust driver ⇄ C++ patch). The
+foundation 16.6 (no-GUI launch + window coordination) builds on is confirmed solid.

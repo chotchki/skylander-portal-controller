@@ -36,6 +36,29 @@ pub trait PortalDriver: Send + Sync {
 
     /// Clear `slot`. Returns once the slot shows "None".
     fn clear(&self, slot: SlotIndex) -> Result<()>;
+
+    // --- IPC capability (PLAN 16.5/16.6). Default impls report "not supported"
+    // so UIA / mock are unaffected; only IpcPortalDriver overrides them. ---
+
+    /// The AF_UNIX socket this driver talks to, if it is the IPC driver. `Some`
+    /// ⇒ the launcher boots RPCS3 in **no-GUI** mode with this `SKYLANDER_IPC_PATH`
+    /// and uses the IPC readiness/liveness signal; `None` ⇒ the legacy UIA launch
+    /// + window-title polling. Default `None`.
+    fn ipc_socket_path(&self) -> Option<std::path::PathBuf> {
+        None
+    }
+
+    /// Programmatic emulator run state over IPC. `Ok(None)` for drivers without an
+    /// IPC channel (UIA/mock); `Err` is a transient IPC failure (retry during boot).
+    fn emu_state(&self) -> Result<Option<ipc::proto::EmuState>> {
+        Ok(None)
+    }
+
+    /// Native game-window handle over IPC, non-zero once the window exists.
+    /// `Ok(None)` when unavailable / not yet created.
+    fn game_window_handle(&self) -> Result<Option<u64>> {
+        Ok(None)
+    }
 }
 
 #[cfg(windows)]
@@ -130,6 +153,21 @@ impl RpcsProcess {
         #[cfg(not(windows))]
         {
             let _ = (exe, eboot);
+            bail!("RPCS3 process management is only supported on Windows")
+        }
+    }
+
+    /// Launch the **patched** RPCS3 in **no-GUI** mode (Phase 16): `--no-gui`
+    /// direct-EBOOT boot, borderless game window, and the Skylander IPC socket at
+    /// `ipc_path`. Windows only — returns an error on non-Windows.
+    pub fn launch_no_gui(exe: &Path, eboot: &Path, ipc_path: &Path) -> Result<Self> {
+        #[cfg(windows)]
+        {
+            UiaRpcsProcess::launch_no_gui(exe, eboot, ipc_path).map(Self::Uia)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (exe, eboot, ipc_path);
             bail!("RPCS3 process management is only supported on Windows")
         }
     }

@@ -133,6 +133,36 @@ impl UiaRpcsProcess {
         Self::wrap_spawned(child, exe)
     }
 
+    /// Launch the **patched** RPCS3 in **no-GUI** mode (PLAN 16.6.1): `--no-gui`
+    /// direct-EBOOT boot (game window only — no main GUI / menus / Skylanders
+    /// Manager dialog), the borderless + no-focus-steal window flag, and the
+    /// Skylander IPC socket the controller's `IpcPortalDriver` connects to. The
+    /// process lifecycle (Job Object, is_alive, shutdown) is identical to the
+    /// other launch modes — only the args/env differ.
+    pub fn launch_no_gui(exe: &Path, eboot: &Path, ipc_path: &Path) -> Result<Self> {
+        if !exe.is_file() {
+            bail!("rpcs3.exe not found at {}", exe.display());
+        }
+        if !eboot.is_file() {
+            bail!("EBOOT.BIN not found at {}", eboot.display());
+        }
+        info!(
+            exe = %exe.display(),
+            eboot = %eboot.display(),
+            ipc = %ipc_path.display(),
+            "launching patched RPCS3 (no-GUI + borderless + IPC)"
+        );
+
+        let child = Command::new(exe)
+            .arg("--no-gui")
+            .arg(eboot)
+            .env("SKYLANDER_BORDERLESS", "1")
+            .env("SKYLANDER_IPC_PATH", ipc_path)
+            .spawn()
+            .with_context(|| format!("spawn {} (--no-gui)", exe.display()))?;
+        Self::wrap_spawned(child, exe)
+    }
+
     fn wrap_spawned(child: Child, exe: &Path) -> Result<Self> {
         let pid = child.id();
         let job = match create_kill_on_close_job_for_pid(pid) {

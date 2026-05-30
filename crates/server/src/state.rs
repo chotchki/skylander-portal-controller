@@ -1280,6 +1280,42 @@ async fn handle_job(
                 let _ = &expected_name;
                 let status_for_blocking = launcher_status.clone();
                 tokio::task::spawn_blocking(move || -> Result<Option<RpcsProcess>> {
+                    // PLAN 16.6.1 — IPC path (patched RPCS3): launch --no-gui with the
+                    // borderless window + IPC socket, then wait on the clean liveness
+                    // signal (STATE: status=running + frames advancing) instead of
+                    // scraping the FPS viewport title. No Skylanders Manager dialog, so
+                    // no open_dialog. Falls through to the legacy UIA path otherwise.
+                    if let Some(ipc_path) = d.ipc_socket_path() {
+                        let mut proc =
+                            RpcsProcess::launch_no_gui(&exe_owned, &eboot_owned, &ipc_path)?;
+                        let deadline = std::time::Instant::now() + timeout;
+                        loop {
+                            if !proc.is_alive() {
+                                return Err(anyhow::anyhow!(
+                                    "patched RPCS3 exited during no-GUI boot"
+                                ));
+                            }
+                            // Transient IPC errors (socket not up yet, mid-boot) just
+                            // don't match here, so the loop retries until the deadline.
+                            if let Ok(Some(state)) = d.emu_state()
+                                && state.is_playable()
+                            {
+                                break;
+                            }
+                            if std::time::Instant::now() >= deadline {
+                                return Err(anyhow::anyhow!(
+                                    "patched RPCS3 never reached a playable state within {timeout:?}"
+                                ));
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(250));
+                        }
+                        if let Ok(mut st) = status_for_blocking.lock() {
+                            st.rpcs3_running = true;
+                            st.current_game = Some(display_name_for_blocking.clone());
+                        }
+                        return Ok(Some(proc));
+                    }
+
                     let mut proc = RpcsProcess::launch_with_eboot(&exe_owned, &eboot_owned)?;
                     proc.wait_ready(std::time::Duration::from_secs(45))
                         .context("RPCS3 main window never appeared after EBOOT spawn")?;

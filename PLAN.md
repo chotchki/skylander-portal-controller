@@ -2965,8 +2965,11 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
       `build_driver` constructs `IpcPortalDriver` (cross-platform, no cfg gate); IPC
       resolves games from `games.yml` exactly like UIA. **Default stays UIA** until
       proven. clippy/fmt clean on both the `()` and `test-hooks` feature branches.
-    - [ ] 16.5.2.2 — Thread the concrete `Arc<IpcPortalDriver>` (for `read_state` /
-      `window_handle` / `ping`) to the STATE poller + window step — lands with 16.6.1.
+    - [x] 16.5.2.2 — **Done via the trait, not threading.** Added default-`None`
+      `ipc_socket_path` / `emu_state` / `game_window_handle` to `PortalDriver`
+      (overridden by `IpcPortalDriver`), so consumers reach the IPC state/handle
+      through the existing `Arc<dyn PortalDriver>` — no concrete-handle plumbing
+      through `AppState`/worker. Used by 16.6.1's boot path; ready for 16.6.2/16.6.3.
     - [ ] 16.5.2.3 — Flip the default to IPC (Win+mac) once 16.6.1-2 are proven on
       the HTPC; keep `uia` as the env fallback.
   - [ ] 16.5.3 — **Collapse the positional-slot model server-side** (the other
@@ -3006,17 +3009,23 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
   proven on the HTPC → 16.5.3 → delete scrapers (16.6.3.2-3). UIA stays compiled
   throughout. Acceptance = `crates/rpcs3-control/tests/live_ipc.rs` on the HTPC.
 
-  - [ ] 16.6.1 — **No-GUI launch.**
-    - [ ] 16.6.1.1 — `UiaRpcsProcess::launch_no_gui(exe, eboot, ipc_path)` (+
-      `RpcsProcess::launch_no_gui`): spawn `--no-gui <EBOOT>` with env
-      `SKYLANDER_BORDERLESS=1` + `SKYLANDER_IPC_PATH` (+ `RPCS3_CONFIG_DIR`),
-      keeping the Job Object. Reuse the existing spawn/Job body (it has no UIA).
-    - [ ] 16.6.1.2 — `BootDirect` Windows arm: spawn via `launch_no_gui`; readiness
-      via `ipc.ping()` then `read_state().is_playable()` (replaces the
-      `read_viewport_title()` `[SERIAL]`-marker loop); drop the post-boot
-      `open_dialog()` and the FPS-title gate.
+  - [ ] 16.6.1 — **No-GUI launch.** *(core implemented; live end-to-end pending)*
+    - [x] 16.6.1.1 — **Done.** `UiaRpcsProcess::launch_no_gui(exe, eboot, ipc_path)`
+      (+ `RpcsProcess::launch_no_gui`): spawns `--no-gui <EBOOT>` with env
+      `SKYLANDER_BORDERLESS=1` + `SKYLANDER_IPC_PATH`, keeping the Job Object; reuses
+      the existing spawn/Job body. (Mirrors the validated `run_game.bat` launch.)
+    - [x] 16.6.1.2 — **Done.** `BootDirect` branches on `driver.ipc_socket_path()`:
+      the IPC arm spawns via `launch_no_gui` and waits on `driver.emu_state()`
+      `is_playable()` (status=running + frames advancing), replacing the
+      `read_viewport_title()` `[SERIAL]` loop; no `open_dialog`. The legacy UIA arm
+      is unchanged. **Driver capability via the trait** (not a threaded concrete
+      handle): added default-`None` `ipc_socket_path` / `emu_state` /
+      `game_window_handle` to `PortalDriver`, overridden by `IpcPortalDriver` — this
+      also satisfies **16.5.2.2**. clippy/fmt clean. *Live end-to-end run (server +
+      `SKYLANDER_PORTAL_DRIVER=ipc` + a real launch) still to do on the HTPC.*
     - [ ] 16.6.1.3 — Shutdown: `WM_CLOSE` to the IPC `WINDOW` handle, falling
       through to the Job-Object force path (works without the `"RPCS3 "` title).
+      Today shutdown force-kills via the Job Object (fine); refinement pending.
       A clean IPC `QUIT`/`STOP` command is a 16.7 follow-up.
   - [ ] 16.6.2 — **Window coordination + transition-flicker elimination.**
     - [ ] 16.6.2.1 — Cross-platform `position_game_window(handle, monitor_rect)`

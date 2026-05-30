@@ -182,6 +182,22 @@ impl PortalDriver for IpcPortalDriver {
         }
         Ok(())
     }
+
+    // --- IPC capability (PLAN 16.6): the launcher uses these to no-GUI-boot RPCS3,
+    // wait on the liveness signal, and position the window. ---
+
+    fn ipc_socket_path(&self) -> Option<std::path::PathBuf> {
+        Some(self.path.clone())
+    }
+
+    fn emu_state(&self) -> Result<Option<proto::EmuState>> {
+        Ok(Some(self.read_state()?))
+    }
+
+    fn game_window_handle(&self) -> Result<Option<u64>> {
+        let h = self.window_handle()?;
+        Ok((h != 0).then_some(h))
+    }
 }
 
 /// Mirror the patched RPCS3's socket-path resolution: `$SKYLANDER_IPC_PATH`,
