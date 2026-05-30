@@ -132,6 +132,9 @@ jobs:
           Copy-Item -Recurse "data" "$stage/"
           # PLAN 16.9.0b — bundled patched RPCS3 next to the app at rpcs3/rpcs3.exe.
           Copy-Item -Recurse "rpcs3" "$stage/"
+          # PLAN 10.8.5 — Steam library artwork (apply via Steam's "Set Custom
+          # Artwork"; see README). MSI ships it via heat; the zip needs it too.
+          if (Test-Path "steam") { Copy-Item -Recurse "steam" "$stage/" }
           $zip = "skylander-portal-controller-$tag-windows-x86_64.zip"
           Compress-Archive -Path "$stage/*" -DestinationPath $zip -Force
           "RELEASE_ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
