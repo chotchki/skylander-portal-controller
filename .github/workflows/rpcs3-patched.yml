@@ -63,9 +63,16 @@ jobs:
         working-directory: vendor/rpcs3
         run: |
           set -euo pipefail
-          changed="$(git diff --name-only HEAD~2 HEAD | sort | tr '\n' ' ')"
-          echo "changed since pin: $changed"
-          expected="rpcs3/Emu/Io/Skylander.cpp rpcs3/Emu/Io/Skylander.h rpcs3/rpcs3qt/gs_frame.cpp "
+          # apply.sh lands one commit per patch, so the pin is HEAD~<#patches>.
+          # Count dynamically so adding a patch (e.g. P3) doesn't silently skip
+          # earlier commits from the diff the way a hardcoded HEAD~2 would.
+          n="$(ls "$GITHUB_WORKSPACE"/rpcs3-patches/0*.patch | wc -l | tr -d ' ')"
+          changed="$(git diff --name-only "HEAD~$n" HEAD | sort | tr '\n' ' ')"
+          echo "changed since pin ($n patch(es)): $changed"
+          # Allowlist of every file the series may touch (P1: Skylander.{cpp,h};
+          # P2: gs_frame.cpp; P3: lv2_socket_native.cpp), sorted. Guards against a
+          # patch sprawling beyond its intended seam.
+          expected="rpcs3/Emu/Cell/lv2/sys_net/lv2_socket_native.cpp rpcs3/Emu/Io/Skylander.cpp rpcs3/Emu/Io/Skylander.h rpcs3/rpcs3qt/gs_frame.cpp "
           [ "$changed" = "$expected" ] || { echo "::error::unexpected patched file set"; exit 1; }
           echo "✅ series applies cleanly and touches only the expected files"
 
@@ -162,15 +169,17 @@ jobs:
 
       # Publish the TRIMMED bin/ as the durable `rpcs3-patched-<pin>` prerelease so
       # release.yml (and users) can fetch a checksummed copy. The pin is the pristine
-      # upstream commit = HEAD~2 of the patched submodule (apply.sh lands 2 commits on
-      # top). Idempotent: creates the release if absent, then clobber-uploads the
+      # upstream commit = HEAD~<#patches> of the patched submodule (apply.sh lands one
+      # commit per patch). Count dynamically so the pin stays correct as the series
+      # grows. Idempotent: creates the release if absent, then clobber-uploads the
       # assets. PLAN 16.9.0b.
       - name: Publish patched RPCS3 prerelease
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $pin = (git -C vendor/rpcs3 rev-parse --short HEAD~2).Trim()
+          $n = (Get-ChildItem "$env:GITHUB_WORKSPACE/rpcs3-patches/0*.patch").Count
+          $pin = (git -C vendor/rpcs3 rev-parse --short "HEAD~$n").Trim()
           $tag = "rpcs3-patched-$pin"
           # Trim debug/link/test artifacts (the .pdb alone is ~68 MB).
           Push-Location vendor/rpcs3/bin

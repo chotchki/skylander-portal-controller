@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Apply the RPCS3 patch series (P1 IPC portal control + P2 window lifecycle) onto a
-# checkout of the pinned upstream RPCS3 — the vendored submodule by default.
+# Apply the RPCS3 patch series (P1 IPC portal control + P2 window lifecycle +
+# P3 offline-connect errno) onto a checkout of the pinned upstream RPCS3 — the
+# vendored submodule by default.
 #
 #   rpcs3-patches/apply.sh [path-to-rpcs3-checkout]   # default: vendor/rpcs3
 #
 # The checkout must sit at the pinned commit (see rpcs3-patches/README.md). Patches
-# are applied in filename order via `git am --3way`, leaving two commits on top of
-# the pin — i.e. reproducing the dev clone's `spike-patches` branch. Used both by
-# the CI lane (.github/workflows/rpcs3-patched.yml) and for local patched builds.
+# are applied in filename order via `git am --3way`, leaving one commit per patch on
+# top of the pin — i.e. reproducing the dev clone's `spike-patches` branch. Used both
+# by the CI lane (.github/workflows/rpcs3-patched.yml) and for local patched builds.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
