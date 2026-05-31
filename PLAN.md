@@ -2348,7 +2348,7 @@ Authenticode signing indefinitely as superseded by winget.
     prerelease packages, so this doesn't gate submission.
 
   - [x] 13.1.4 Relicense from Unlicense to MIT for winget moderation friendliness.
-- [~] 13.2 **Manifest authoring (first submission).** *(manifest authored +
+- [-] 13.2 **Manifest authoring (first submission).** *(manifest authored +
   `winget validate`-clean for v1.9.2, 2026-05-30. Lives at
   `C:\Users\chris\workspace\manifests\c\ChristopherHotchkiss\SkylanderPortalController\1.9.2\`.)*
   Bootstrap target moved from the old v1.5.1 plan to the current **v1.9.2**.
@@ -2376,7 +2376,7 @@ Authenticode signing indefinitely as superseded by winget.
     MSI/manifest. Test via a **direct `msiexec /i`** (or double-click) here; the
     winget-pkgs moderation sandbox + normal users are unaffected.
 
-- [~] 13.3 **First PR to microsoft/winget-pkgs.** *(PR open + in moderation 2026-05-30.)*
+- [-] 13.3 **First PR to microsoft/winget-pkgs.** *(PR open + in moderation 2026-05-30.)*
   - [x] 13.3.1 — **DONE.** PR opened via `wingetcreate submit`:
     **https://github.com/microsoft/winget-pkgs/pull/381659** —
     "ChristopherHotchkiss.SkylanderPortalController version 1.9.2". CLA check
@@ -2965,7 +2965,7 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
     `WINDOW` command (read controller-side via `game_window_handle()`), consumed
     by the STATE poller's z-ordering + the supervisor's `shutdown_graceful_to_hwnd`.
 
-- [~] 16.5 **`IpcPortalDriver` (controller side).** *(16.5.1/.2 done; 16.5.3 deferred.)*
+- [-] 16.5 **`IpcPortalDriver` (controller side).** *(16.5.1/.2 done; 16.5.3 deferred.)*
   - [x] 16.5.1 — New PortalDriver impl talking the P1 protocol over the socket;
     drops in beside UiaPortalDriver / MockPortalDriver. **DONE** —
     `crates/rpcs3-control/src/ipc/` (driver `mod.rs` + codec `proto.rs`). Blocking
@@ -3014,7 +3014,7 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
     or as part of a post-v1 portal-UI pass.** Trait-change blast radius noted:
     `PortalDriver::load` + its 3 impls + the worker call site + ~10 test sites.
 
-- [~] 16.6 **No-GUI launch + window coordination.** *(scoped 2026-05-29; core
+- [-] 16.6 **No-GUI launch + window coordination.** *(scoped 2026-05-29; core
   shipped in v1.7.0 + HTPC-validated. Remaining open items are optional polish:
   16.6.2.1 explicit window positioning — not needed, the `--no-gui` game already
   fills the launcher's monitor and z-order handles the rest; 16.6.2.4 `SetParent`
@@ -3078,7 +3078,7 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
       read `LauncherStatus.game_window_handle` and pass it. `shutdown_graceful` is now a
       thin `(None, timeout)` wrapper, so the UIA path is unchanged.
       A clean IPC `QUIT`/`STOP` command is a 16.7 follow-up.
-  - [~] 16.6.2 — **Window coordination + transition-flicker elimination.** *(z-order
+  - [-] 16.6.2 — **Window coordination + transition-flicker elimination.** *(z-order
     + flicker cover done + HTPC-validated; explicit positioning 16.6.2.1 proved
     unnecessary and `SetParent` 16.6.2.4 stays a deferred spike.)*
     - [ ] 16.6.2.1 — Cross-platform `position_game_window(handle, monitor_rect)`
@@ -3128,7 +3128,7 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
       single-window alt-tab/minimize — only if desired later; needs the overlay
       re-layered above the game child. NOT on the 16.6 critical path (the cover
       solves the flicker that motivated it).
-  - [~] 16.6.3 — **Retire obsoleted scrapers (UIA kept as fallback).** *(scrapers
+  - [-] 16.6.3 — **Retire obsoleted scrapers (UIA kept as fallback).** *(scrapers
     deleted + STATE poller live-validated; 16.6.3.4 is a standing "keep UIA intact"
     item, not pending work.)*
     - [x] 16.6.3.1 — **DONE + live-validated (HTPC 2026-05-30).** `spawn_state_poller`
@@ -3175,7 +3175,7 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
     captures the LOAD arg the fake P1 server receives and asserts `is_absolute()`.
     Live: figure placed from the phone, appeared in-game ("that worked!").
 
-- [~] 16.7 **Crash/freeze supervisor (independent of portal path).** *(merged to
+- [-] 16.7 **Crash/freeze supervisor (independent of portal path).** *(merged to
   main 2026-05-30; 16.7.1/.2/.3 done, 16.7.4 deferred past v1.)*
   - [x] 16.7.1 — **Detection: crash + freeze. DONE (2026-05-30).**
     Crash (process exit) is the existing `spawn_crash_watchdog` lifecycle poll.
@@ -3211,7 +3211,7 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
     hand-write YAML; launch RPCS3's own GUI per game and let it persist the
     custom config). Deferred past v1. See 16.9.3.
 
-- [~] 16.8 **Supersede obsoleted work + docs.** *(docs done 2026-05-30; CLAUDE/SPEC/PLAN
+- [-] 16.8 **Supersede obsoleted work + docs.** *(docs done 2026-05-30; CLAUDE/SPEC/PLAN
   brought in line with the shipping IPC architecture.)*
   - [x] 16.8.1 — **DONE.** Phase 12 (Mac AXUIElement driver) stays a **non-goal** —
     macOS ships the mock driver only (CLAUDE.md "macOS support" already states this; the
@@ -3228,7 +3228,7 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
   - [x] 16.8.4 — **DONE.** SPEC.md Q&A entry added: why GUI automation → patched-upstream
     IPC (fragility of the dialog/menu path vs. a thin, shallow, additive control patch).
 
-- [~] 16.9 **Emulator configuration with the GUI hijacked (no-GUI runtime).**
+- [-] 16.9 **Emulator configuration with the GUI hijacked (no-GUI runtime).**
   *(16.9.0/.0b/.3/.4 done; 16.9.1 curated-YAML + 16.9.2 firmware-install deferred past v1.)*
   RPCS3 config is file-based YAML and `--no-gui` is per-launch (not a build-time
   removal) — the full settings GUI is one plain launch away. So:
@@ -3548,3 +3548,9 @@ needed at bake time. `cargo run -p skylander-brand-bake` re-bakes everything.
   benign + pre-existing (heat is 32-bit, can't `LoadLibrary` the 64-bit bundled RPCS3
   binaries to probe for COM self-reg → error 193; the DLLs ship fine as plain files), and
   unrelated to the branding work — log noise only.
+
+## Backlog (not yet phased)
+
+- **Wire UnixRpcsProcess into non-Windows RpcsProcess + server (driver=ipc on mac/linux)** — added 2026-05-31.
+- **Live IPC test: drive patched macOS RPCS3 against a real Skylanders game** — added 2026-05-31.
+- **macOS RPCS3 distribution polish: deployment target + .app codesigning** — added 2026-05-31.

@@ -80,6 +80,14 @@ pub use ipc::IpcPortalDriver;
 pub mod process;
 pub mod process_mock;
 
+/// Real RPCS3 process lifecycle for macOS/Linux (Phase 16 IPC path). Additive:
+/// the default non-Windows `RpcsProcess` alias is still the mock; wiring this in
+/// for `driver=ipc` is the documented next step (see docs/dev/macos-rpcs3-build.md).
+#[cfg(unix)]
+pub mod process_unix;
+#[cfg(unix)]
+pub use process_unix::UnixRpcsProcess;
+
 #[cfg(windows)]
 pub use process::UiaRpcsProcess;
 pub use process_mock::MockRpcsProcess;

@@ -4610,6 +4610,7 @@ name = "skylander-rpcs3-control"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "libc",
  "skylander-core",
  "thiserror 1.0.69",
  "tracing",

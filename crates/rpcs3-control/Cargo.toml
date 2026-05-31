@@ -10,6 +10,10 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 
+[target.'cfg(unix)'.dependencies]
+# SIGTERM-based graceful shutdown for the real Unix RPCS3 process (process_unix).
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
 uiautomation = "0.20"
 # Blocking AF_UNIX UnixStream/UnixListener for Windows (Win10 1803+/Win11),
