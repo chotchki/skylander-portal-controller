@@ -11,6 +11,7 @@ vendor/rpcs3/                         git submodule → RPCS3/rpcs3, pinned (pri
 rpcs3-patches/
   0001-P1-…-AF_UN….patch              P1 — IPC portal control (Skylander.cpp + .h)
   0002-P2-…-window-hand….patch        P2 — borderless window + native handle (gs_frame.cpp)
+  0003-P3-…-ENETUNREACH.patch         P3 — offline public-IP connect → ENETUNREACH (sys_net)
   apply.sh                            apply the series onto a checkout (git am --3way)
   README.md                           this file
 ```
@@ -18,11 +19,12 @@ rpcs3-patches/
 The submodule **always points at a pristine upstream commit** — it is never
 modified in place. The patches live here, in our repo, where the diff is
 reviewable. They apply in filename order; **0002 (P2) depends on 0001 (P1)**
-(P1 defines the `g_game_window_handle` global that P2 publishes into).
+(P1 defines the `g_game_window_handle` global that P2 publishes into). **P3 is
+independent** — a `sys_net` errno tweak unrelated to the portal device or window.
 
-These two patches are the entire Phase-16 footprint on RPCS3 — both shallow +
-additive on rarely-churning seams (the patch-depth thesis in the decision doc).
-What each does:
+These three patches are the entire footprint on RPCS3 — all shallow + additive
+on rarely-churning seams (the patch-depth thesis in the decision doc). What each
+does:
 
 - **P1** — a self-contained AF_UNIX listener on the emulated Skylander USB device
   (`Emu/Io/Skylander.cpp`) exposing `LOAD/CLEAR/STATUS/STATE/WINDOW/PING` + a 1 Hz
@@ -30,6 +32,14 @@ What each does:
   new `.cpp`, no `rpcs3.vcxproj` edit.
 - **P2** — env-gated (`SKYLANDER_BORDERLESS`) borderless + no-focus-steal flags in
   `gs_frame`'s ctor, and publishes the native `winId()` for the IPC `WINDOW` command.
+- **P3** (PLAN 16.10) — a one-line behaviour fix in
+  `Emu/Cell/lv2/sys_net/lv2_socket_native.cpp`: when networking is *Disconnected*,
+  a public-IP `connect()` returns `SYS_NET_ENETUNREACH` ("network unreachable",
+  which games treat as permanent → disable online and play on) instead of
+  upstream's `SYS_NET_EADDRNOTAVAIL`, which Skylanders: Spyro's Adventure busy-
+  retries into a CPU-pinning freeze. Inert under the controller's shipped
+  *Connected* config (where connects succeed, so the branch isn't taken); a fix
+  for the offline path. No automated test — see Tests below.
 
 ## The pin
 
@@ -106,6 +116,12 @@ patch shallow). Two layers pin both sides of the IPC contract:
 
 **If a patch changes wire behaviour, update the fake server in `ipc_loopback.rs`
 to match** — it doubles as the executable spec the live binary must satisfy.
+
+**P3 has no dedicated test.** It flips a single guest-visible errno on the
+offline `connect()` path, and the bug it fixes is gated on a real game's retry
+policy — a unit test would only re-assert the constant. It's validated by the
+controller's live freeze-repro (the freeze it cures). Called out here per the
+project's "no silent caps" rule rather than faking coverage.
 
 ## License
 

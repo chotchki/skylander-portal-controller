@@ -3317,6 +3317,142 @@ link): `docs/research/rpcs3-integration-strategy.md`. Gated on the 16.1 spike.
       both action buttons to the very bottom with a `remaining*0.42` spacer; a real TV's overscan
       cropped that band, so the connect-from-PC button never showed. Now anchored a fixed gap
       below the "SCAN TO CONNECT" label, inside the safe (un-overscanned) centre region.
+  - [x] 16.9.6 — **Bundled-RPCS3 firewall exception in the MSI (HTPC repro 2026-05-30).**
+    On a clean install the bundled patched RPCS3's AF_UNIX portal-control socket
+    (`Skylander.cpp::sky_ipc_serve` → `bind`/`listen`) trips the Windows Defender "allow this
+    program on the network" prompt. Windows gates the listen **per-program-path**, so the modal
+    stalls RPCS3 init behind the fullscreen window and the launcher hangs on its IPC-readiness
+    wait — read by the user as "the emulator froze." Windows had only auto-created allow rules
+    as the dev clicked through the prompt (6 stale `rpcs3` rules across three exe paths), so the
+    dev box stopped prompting while a fresh install elsewhere re-hits it. Fix: a program-scoped
+    `<fire:FirewallException Program='[APPLICATIONFOLDER]rpcs3\rpcs3.exe'>` in `wix/main.wxs`
+    beside the TCP-8765 rule (no Port/Protocol → covers TCP+UDP inbound, matching the
+    auto-created rules). **Plus a runtime fallback (16.9.6b)** so the zip + `cargo run` paths
+    self-heal too: `firewall.rs::ensure_rpcs3_program_rule(exe)` checks (COM `INetFwPolicy2`, no
+    elevation) for an enabled inbound-Allow rule named `"Skylander Portal Controller — RPCS3"`
+    pointing at the current exe, and only when missing/stale-path adds it via one elevated `netsh`
+    (`run_elevated_cmd`, shared with the port rule). Wired into the tokio-thread startup in
+    `main.rs`, IPC-driver-only (the socket only exists in the patched build), off-reactor +
+    fire-and-forget so a slow/declined UAC can't stall boot. MSI install → rule present → no
+    prompt; zip/dev first run → one UAC then quiet. Unit test:
+    `program_rule_path_compare_is_case_and_sep_insensitive`.
+  - [ ] 16.9.7 — **Figure "flapping" on the portal (HTPC repro 2026-05-30, bundled+IPC).**
+    Every couple of minutes a single placed figure fully *disappears* from the in-game portal,
+    then returns. **Controller exonerated:** the only CLEAR emitters are user-remove, Kaos (logs
+    `"kaos swap executed"` — never seen), disconnect-cleanup (needs real session loss), and the
+    freeze-watchdog (`FROZEN`/`recovery triggered` — never seen); `GHOST_TIMEOUT` is 1 h; NFC is
+    feature-gated, reader-absent, and never touches the driver. In `g_skyportal` a present figure
+    only goes *absent* via `remove_skylander`, which the game never calls (it only
+    query/write/get_status). The `'R'`/`'A'` re-advertise keeps the present bit set, so it can't
+    explain a disappear. ∴ the drop is at the **emulator/USB-portal level** — the game momentarily
+    loses the emulated portal device, then re-reads it. **Emulator-side ruled out so far:**
+    `cellUsbdResetDevice` is `UNIMPLEMENTED_FUNC` (no-op), and the only runtime detach path
+    (`disconnect_usb_device` in the libusb rescan loop) is **passthrough-only** — the emulated
+    Skylander is added once at boot and isn't rescanned, so it shouldn't detach. A real detach
+    would log `"USB device(VID=0x1430,PID=0x0150) ... unassigned"` at success level in
+    `RPCS3.log`. The captured 83 s Spyro's-Adventure session (Steam Big Picture, `steam` user,
+    bundled exe) shows the portal assigned once at 0:00:18 with **no** later detach — but it's
+    too short to contain a flap. Also present: 2× Cubeb "Output device invalidated" (HDMI/TV
+    audio renegotiation). **Next:** capture a ≥3-min session that actually hits a flap, then
+    cross-ref the server log (any CLEAR?) against `RPCS3.log` at that timestamp (any
+    `unassigned`/RSX stall/error?). If default verbosity is inconclusive, add temporary C++
+    logging in `usb_device_skylander` ctor/dtor + `activate`/`deactivate`/`remove_skylander`/
+    `load_skylander` + the 'A'/'R' control commands and read `RPCS3.log`. **Diagnostic logging
+    added 2026-05-30** to the `D:\workspace\rpcs3` clone (`Emu/Io/Skylander.cpp`, `DIAG`-prefixed
+    `notice` lines; `get_status` logs only on presence-word change so the ~45 Hz poll doesn't
+    flood) — clone-only scaffolding, NOT in the committed patch; revert or promote after the
+    repro. Capture via the isolated dev run: `.env.dev` IPC variant (RPCS3_EXE = the rebuilt
+    clone binary, driver=ipc), `cargo run` → state in ./dev-data, server log in ./logs, RPCS3.log
+    under `C:/emuluators/rpcs3/log/`.
+  - [x] 16.9.8 — **TV overscan still cropped the launcher's bottom buttons (HTPC re-flag
+    2026-05-30).** The 16.9.5(c) "fixed gap below the subtitle" didn't fix it: `render_main`
+    centres the 420px QR card on the panel (vortex-iris alignment), so the subtitle + both
+    action buttons *flow downward from centre* and the bottom button lands ~`CARD_SIZE/2 + ~290px`
+    below centre — inside a TV's overscan-cropped bottom band regardless of the gap size. Fix
+    (`ui/main_screen.rs`): anchor the button stack to a **title-safe bottom** = `panel.bottom() -
+    panel.height() * TV_OVERSCAN_FRAC` (0.06), pushing it down so its bottom lands on that line,
+    clamped to a ≥24px gap so it can't ride up into the subtitle on a short window. Fraction-based
+    ⇒ resolution-independent (overscan is a % of screen). Needs real-TV verify; bump
+    `TV_OVERSCAN_FRAC` if a heavier-overscanning panel still crops. NB: `crashed.rs` /
+    `server_error.rs` use the same `add_space(remaining*N)` bottom-push pattern and likely share
+    the bug — fold them onto the same title-safe anchor if confirmed.
+
+## Phase 16.10 — Spyro-stability fix: make the working config permanent + resilient
+
+**Root cause (HTPC live debug, 2026-05-30/31).** The "flapping", the freezes, and "crashed on
+placement" were ALL one bug: with RPCS3 `Net: Internet enabled: Disconnected`, Skylanders: Spyro's
+Adventure hits connect-errors (`EADDRNOTAVAIL`) on its **hardcoded `8.8.8.8` DNS probe** and
+**busy-retry-storms "DW Thread"s forever → 96% CPU on all cores → RSX/render starved → 8s
+freeze-watchdog → restart = the "flap".** The portal/controller, the AF_UNIX socket, and the Windows
+Firewall were all red herrings (the AF_UNIX socket listens clean at boot; the firewall prompt was
+RPCS3's network emulation, not the domain socket). **Proven config matrix:**
+- `Disconnected` (any PSN) → spin-hang freeze. P3 (`ENETUNREACH`, 16.10.3) softened it ~4× (frame
+  9973 vs 1862) but did NOT cure it — the game keeps periodically re-probing and eventually spins.
+- `Connected` + `Simulated` → `sceNpManagerRequestTicket` → `get_rpcn()` **RPCN-required FATAL**
+  (`np_handler.cpp:535`) → "Emulation has been frozen!" at ~72s. Simulated needs real RPCN.
+- `Connected` + `Disconnected` → **THE ONE WORKING MODE.** Connects succeed (no spin), the game's PSN
+  calls return "unavailable", it disables online and plays. Verified ~11 min clean.
+- `Connected` + `RPCN` → needs a real RPCN account/server (external) — out of scope.
+Residual: even in the working mode Spyro is an intrinsically flaky title under RPCS3 (~10-20 min
+crashes) = upstream emulation compat, not our code → *mitigated* by the watchdog-resilience fix
+(16.10.2), not curable here. (Resolves the 16.9.7 flapping investigation.)
+
+  - [x] 16.10.1 — **Ship the working Net config (the distribution deliverable).** The bundled RPCS3
+    uses the user's existing install as `config_dir` (16.9.0b), so the Net keys live in the USER's
+    `<config_dir>/config.yml`, not the bundle → the CONTROLLER must ensure them. Add
+    `ensure_rpcs3_net_config(config_dir)` (server, run once before the first launch) that **surgically**
+    sets `Net: { Internet enabled: Connected, PSN status: Disconnected, DNS address: 8.8.8.8 }` in
+    `<config_dir>/config.yml`: create the `Net:` block if absent, otherwise set just those 3 keys and
+    **preserve every other key**; idempotent. Narrow, justified exception to the 16.9.1/.2 "write no
+    RPCS3 config" deferral — without these keys games are unplayable (freeze), so it's *required*
+    config, not tuning. Wire `config_dir` to the call site near launch. Unit-test the YAML merge
+    (absent block / present block / siblings preserved / idempotent).
+  - [x] 16.10.2 — **Watchdog: recover RPCS3's fatal-frozen state.** Today the freeze detector needs
+    `status=="running"` + frames stalled; RPCS3's OWN fatal ("Emulation has been frozen!" — the
+    Simulated-RPCN fatal, unimplemented-stops, etc.) sets `Emu.GetStatus()==system_state::frozen` →
+    IPC STATE `status=="frozen"`, process stays ALIVE → neither `crashed` nor `frozen` fires → recovery
+    stuck (observed 2026-05-31, "watchdog isn't restarting"). Fix in `spawn_state_poller`
+    (state.rs ~815-869): once `ever_playable`, treat `status=="frozen"` as an **immediate** freeze
+    (`frozen_now=true`, no 8s wait — it's definitive). Leave `paused`/`stopped` alone (user pause /
+    clean quit). Unit-test FreezeDetector + a STATE parse for `"frozen"`. Turns Spyro's residual
+    crashes into ~15s blip-and-back instead of a dead screen — the key product-resilience win.
+  - [x] 16.10.3 — **Formalize P3 → `rpcs3-patches/0003-*.patch`.** P3 (`lv2_socket_native::connect`
+    returns `ENETUNREACH` not `EADDRNOTAVAIL` on the `Disconnected`+public-IP path) is clone-only.
+    AFTER 16.10.5 leaves `Skylander.cpp` clean, commit ONLY the `lv2_socket_native.cpp` change on the
+    clone's `spike-patches` branch and `git format-patch` per `rpcs3-patches/README`. Inert under the
+    working `Connected` config but a genuine fix for the offline path. Test: emulator-side net
+    behavior, validated by the live freeze-repro — add a code comment + README note; a full automated
+    test is low-ROI, so SAY that rather than fake one (`no silent caps`).
+  - [x] 16.10.4 — **Remove the firewall auto-fire UAC nag.** Delete the startup
+    `ensure_rpcs3_program_rule` `spawn_blocking` in `main.rs` (it nagged every launch, targeting the
+    disproven AF_UNIX-prompt theory). Remove the now-unused `firewall.rs` program-rule code
+    (`RPCS3_RULE_NAME`, `ensure_rpcs3_program_rule`, `program_rule_present`,
+    `add_program_rule_elevated`, `paths_equal` + its test; fold `run_elevated_cmd` back into
+    `add_rule_elevated` if it ends up the only caller). KEEP the MSI `fire:FirewallException` for
+    rpcs3.exe (harmless; covers any real listener under `Connected`). `cargo build`+fmt+test.
+  - [x] 16.10.5 — **Revert temporary DIAG logging** in the clone's `Skylander.cpp` (ctor/dtor,
+    activate/deactivate, remove/load_skylander, get_status presence-change). Do BEFORE 16.10.3 so the
+    P3 format-patch is clean. Rebuild via `build.sh` to confirm a clean compile.
+  - [x] 16.10.6 — **Buttons-don't-disappear gating.** `render_main` (main_screen.rs) renders the
+    "Open in Browser" + "Exit to Desktop" buttons unconditionally (only gated on `LauncherScreen::Main`).
+    Gate the action-button block on `back_face.is_none()` so they hide during the Starting/Loading/
+    Switching/Returning/MaxPlayers back-faces. Server rebuild; verify on the TV. **Also** (Chris
+    2026-05-31) laid the two buttons out **side by side** in one 60px-tall centred row instead of a
+    126px stack — reclaims ~66px of the overscan-squeezed bottom band so they clear the TV crop.
+
+  **Execution order:** Group B controller (16.10.1 + .2 + .4 + .6 → one `cargo build` + tests + fmt),
+  then Group A clone (16.10.5 revert DIAG → 16.10.3 format-patch P3 → `build.sh` rebuild). Then live
+  verify via `bash dev.sh`: net config auto-applied, a forced rpcs3 fatal auto-recovers, buttons hide
+  during loading. Commit + version bump = user's call.
+
+  **Status (2026-05-31): all six code tasks DONE.** Group B: `cargo build` + tests
+  (rpcs3_config ×7, proto `parse_state_frozen_status`, freeze_detector ×5, firewall ×4) + fmt +
+  clippy all green. Group A: DIAG reverted (`git restore` — pure-additive, no other edits lost), P3
+  committed on `spike-patches` (6c4e30d3) + re-exported as `rpcs3-patches/0003-P3-…ENETUNREACH….patch`
+  (0001/0002 only re-numbered `x/2`→`x/3`), README documents P3 + its no-automated-test rationale,
+  `build.sh` rebuild clean (MSBUILD_EXIT=0, 0 compile/link errors, fresh `bin/rpcs3.exe`). Remaining =
+  live TV verify (`bash dev.sh`) + commit/version-bump, both the user's call. All changes are
+  working-tree only (controller repo uncommitted; clone has the P3 commit on `spike-patches`).
 
 ## Phase 17 - Connectivity diagnostics & firewall self-heal
 
@@ -3402,10 +3538,11 @@ needed at bake time. `cargo run -p skylander-brand-bake` re-bakes everything.
   ("Artwork" section, `phone/src/components/credits_overlay.rs`). `*.svg` pinned to
   `eol=lf` in `.gitattributes` (authored on macOS, re-baked on Windows).
   `art-handoff.md` updated to the new one-command pipeline.
-- [ ] 18.6 — *(backlog, post-test)* README "Latest release" line → v1.9.5 (lags at
-  v1.9.3) + a short blurb for the new icon/Steam art.
-- [ ] 18.7 — *(backlog, post-test)* winget manifest bump for v1.9.5 (the Phase 13.4
-  auto-PR flow) once the release is validated.
+- [x] 18.6 — README "Latest release" line refreshed to **v1.9.6** (was lagging at v1.9.4 and
+  had skipped v1.9.5 entirely); added demoted v1.9.5 (art) + v1.9.4 entries. Done with the 16.10
+  release.
+- [ ] 18.7 — *(backlog, post-test)* winget manifest bump → **v1.9.6** (the Phase 13.4
+  auto-PR flow) once the release is validated. (Out-of-repo, in the winget-pkgs fork.)
 - [ ] 18.8 — *(backlog, cosmetic)* Mute the 29 `HEAT5150` "SelfReg DLL" warnings in the
   release log by adding `-sw5150` to the `heat dir rpcs3 …` call in `release.yml`. They're
   benign + pre-existing (heat is 32-bit, can't `LoadLibrary` the 64-bit bundled RPCS3

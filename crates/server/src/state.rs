@@ -855,12 +855,25 @@ pub fn spawn_state_poller(
                 // playable, a `running` status whose frame counter stalls for
                 // FREEZE_AFTER means it hung. Gated on the sticky `ever_playable`
                 // (not the live latch, which we drop below) so it doesn't oscillate.
-                let frozen_now = freeze.observe(advancing, running, ever_playable);
+                // RPCS3's OWN fatal freeze ("Emulation has been frozen!" — the
+                // Simulated-RPCN fatal, an unimplemented-syscall stop, etc.) sets
+                // the emulator to `frozen` while the *process stays alive*: neither
+                // the crash path (process dead) nor the frame-stall detector (which
+                // requires status=="running") catches it, so recovery would never
+                // fire (observed 2026-05-31 — "the watchdog isn't restarting").
+                // Once the game has been playable, treat a `frozen` status as an
+                // IMMEDIATE, definitive freeze — no 8 s stall wait. `paused` /
+                // `stopped` are deliberately left alone (user pause / clean quit).
+                // PLAN 16.10.2.
+                let status_frozen = matches!(&state, Some(s) if s.status == "frozen");
+                let frozen_now = freeze.observe(advancing, running, ever_playable)
+                    || (ever_playable && status_frozen);
                 if st.frozen != frozen_now {
                     if frozen_now {
                         warn!(
                             stalled_at_frame = last_frames,
-                            "rpcs3 game FROZEN — frames stalled while running (PLAN 16.7.1)"
+                            status_frozen,
+                            "rpcs3 game FROZEN — recovering (frame stall or RPCS3 status=frozen; PLAN 16.7.1/16.10.2)"
                         );
                     } else {
                         info!("rpcs3 game recovered from freeze — frames advancing again");

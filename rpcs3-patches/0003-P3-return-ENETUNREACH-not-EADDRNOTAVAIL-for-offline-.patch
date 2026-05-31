@@ -1,0 +1,62 @@
+From 6c4e30d358a3a10aa01ae9b40ec0824255c88a7c Mon Sep 17 00:00:00 2001
+From: Christopher Hotchkiss <chris@hotchkiss.io>
+Date: Sat, 30 May 2026 18:22:37 -0700
+Subject: [PATCH 3/3] P3: return ENETUNREACH (not EADDRNOTAVAIL) for offline
+ public-IP connects
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When networking is "Disconnected" (RPCS3 Net: Internet enabled: Disconnected,
+i.e. get_net_status() is false), lv2_socket_native::connect() to a public IP
+returns an error to the guest. Upstream returns SYS_NET_EADDRNOTAVAIL ("can't
+assign requested address"), which some titles — notably Skylanders: Spyro's
+Adventure — treat as a transient, retryable glitch: they busy-respawn
+download-worker threads forever, pinning every CPU core and starving the
+RSX/render thread until the controller's 8s freeze-watchdog restarts the
+emulator (HTPC repro 2026-05-30).
+
+A physically unplugged adapter returns SYS_NET_ENETUNREACH ("network is
+unreachable"), which games treat as permanent -> they disable online and play
+offline cleanly. Returning ENETUNREACH on this path makes "Disconnected" look
+like a yanked cable, which is the behaviour offline play actually wants.
+
+Inert under the controller's shipped config (Internet enabled: Connected + PSN
+Disconnected — the one stable mode, where connects succeed so this branch isn't
+taken), but a genuine fix for the offline path. Independent of P1/P2 (touches
+Emu/Cell/lv2/sys_net, not the portal device or the game window).
+
+Tested via the controller's live freeze-repro; no automated C++ test added —
+this is emulator-side net behaviour gated on a real game's retry policy, so a
+unit test would only re-assert the constant. See rpcs3-patches/README.md.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ rpcs3/Emu/Cell/lv2/sys_net/lv2_socket_native.cpp | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/rpcs3/Emu/Cell/lv2/sys_net/lv2_socket_native.cpp b/rpcs3/Emu/Cell/lv2/sys_net/lv2_socket_native.cpp
+index b422db814..dbe0ac43b 100644
+--- a/rpcs3/Emu/Cell/lv2/sys_net/lv2_socket_native.cpp
++++ b/rpcs3/Emu/Cell/lv2/sys_net/lv2_socket_native.cpp
+@@ -224,7 +224,16 @@ std::optional<s32> lv2_socket_native::connect(const sys_net_sockaddr& addr)
+ 	auto& nph = g_fxo->get<named_thread<np::np_handler>>();
+ 	if (!nph.get_net_status() && is_ip_public_address(native_addr))
+ 	{
+-		return -SYS_NET_EADDRNOTAVAIL;
++		// P3 (Skylander controller, PLAN 16.x): when networking is "Disconnected",
++		// a public-IP connect should look like a YANKED CABLE, not a transient
++		// source-address glitch. Upstream returns EADDRNOTAVAIL ("can't assign
++		// requested address"), which some titles (Skylanders: Spyro's Adventure)
++		// classify as retryable -> they busy-respawn download-worker threads
++		// forever, pinning every core and starving the RSX/render thread until the
++		// 8s freeze-watchdog restarts the emulator (HTPC repro 2026-05-30). A real
++		// unplugged adapter returns ENETUNREACH ("network is unreachable"), which
++		// games treat as permanent -> they disable online and play offline cleanly.
++		return -SYS_NET_ENETUNREACH;
+ 	}
+ 
+ 	if (psa_in->sin_port == 53)
+-- 
+2.53.0.windows.3
+

@@ -290,6 +290,23 @@ fn main() -> Result<()> {
                 }
             };
             rt.block_on(async move {
+                // PLAN 16.10.1 — ensure the user's RPCS3 config.yml carries the
+                // one Net configuration Skylanders games run under: Internet
+                // *Connected* (so the game's hardcoded 8.8.8.8 DNS probe connects
+                // instead of busy-retry-storming the CPU into the freeze-watchdog
+                // "flap") + PSN *Disconnected* (so it never hits the RPCN-required
+                // fatal) + DNS 8.8.8.8. Surgical: sets just those three keys and
+                // preserves every other RPCS3 setting; idempotent. Runs once at
+                // startup, well before the first phone-triggered launch reads the
+                // config. Real-emulator drivers only — Mock launches nothing.
+                // Non-fatal: a write failure just leaves the prior config (the
+                // pre-fix behaviour), so log and carry on rather than block boot.
+                if !matches!(driver_kind, crate::config::DriverKind::Mock)
+                    && let Err(e) =
+                        skylander_server::rpcs3_config::ensure_rpcs3_net_config(&config_dir)
+                {
+                    tracing::warn!("ensure RPCS3 Net config failed (non-fatal): {e}");
+                }
                 let (driver, test_mock): (Arc<dyn PortalDriver>, _) =
                     match build_driver(driver_kind) {
                         Ok(d) => d,

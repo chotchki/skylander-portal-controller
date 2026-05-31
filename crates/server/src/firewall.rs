@@ -182,13 +182,16 @@ mod win {
     pub(super) fn add_rule_elevated(port: u16) -> Result<()> {
         // Drop any prior rule with our name first (idempotent — avoids stacking
         // duplicates on repeated clicks), then add a fresh inbound TCP allow.
-        // `&&` chains both in one elevated shell so it's a single UAC prompt.
+        // `&` chains both in one elevated shell so it's a single UAC prompt.
         let args = format!(
             "/c netsh advfirewall firewall delete rule name=\"{name}\" >nul 2>&1 & \
              netsh advfirewall firewall add rule name=\"{name}\" \
              dir=in action=allow protocol=TCP localport={port}",
             name = RULE_NAME,
         );
+        // Run `cmd.exe /c <args>` elevated (UAC `runas`), hidden. Returns once the
+        // elevated process has been *launched* (not awaited); the caller re-checks
+        // the rule if it needs confirmation.
         let verb = HSTRING::from("runas"); // elevation → UAC prompt
         let file = HSTRING::from("cmd.exe");
         let params = HSTRING::from(args);

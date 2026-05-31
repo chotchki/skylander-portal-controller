@@ -307,6 +307,16 @@ mod tests {
     }
 
     #[test]
+    fn parse_state_frozen_status() {
+        // RPCS3's own fatal ("Emulation has been frozen!") reports status=frozen
+        // while the process stays alive — the wire value the freeze supervisor
+        // keys on (PLAN 16.10.2). It must parse cleanly and never read playable.
+        let st = parse_state("OK status=frozen frames=9973 progr=8/8 seg=4/4").unwrap();
+        assert_eq!(st.status, "frozen");
+        assert!(!st.is_playable(), "a frozen emulator is not playable");
+    }
+
+    #[test]
     fn playable_needs_frames_and_progress() {
         let stalled = EmuState {
             status: "running".into(),

@@ -33,6 +33,7 @@ target
 # sibling dirs (figures.json, images/, games/, LICENSE.md) stay in.
 /data/scanned/
 .env.dev
+.env.dev.bak
 .env
 node_modules/
 Thumbs.db

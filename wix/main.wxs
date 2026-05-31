@@ -113,6 +113,25 @@
                             Protocol='tcp'
                             Scope='any'
                             IgnoreFailure='yes'/>
+                        <!-- PLAN 16.9.6: pre-authorize the bundled patched
+                             RPCS3 so its AF_UNIX portal-control socket
+                             (Skylander.cpp `sky_ipc_serve` bind/listen) doesn't
+                             trip the Windows Defender "allow this program on the
+                             network" prompt on first launch. That modal stalls
+                             RPCS3 init behind the fullscreen window and the
+                             launcher hangs on the IPC-readiness wait — the
+                             "emulator freeze" users hit. A program-scoped rule
+                             (no Port/Protocol) covers both TCP+UDP inbound for
+                             the exe, matching what Windows auto-creates when the
+                             user clicks Allow. Path tracks the bundled install
+                             (APPLICATIONFOLDER\rpcs3\rpcs3.exe, Rpcs3Files). -->
+                        <fire:FirewallException
+                            Id='Rpcs3Inbound'
+                            Name='Skylander Portal Controller — RPCS3'
+                            Description='Allow the bundled patched RPCS3 to open its local portal-control socket without a per-launch firewall prompt.'
+                            Program='[APPLICATIONFOLDER]rpcs3\rpcs3.exe'
+                            Scope='any'
+                            IgnoreFailure='yes'/>
                     </Component>
                     <!-- data/ + steam/ subdirs resolve here via heat-
                          generated fragments referenced below. heat is

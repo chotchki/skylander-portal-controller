@@ -235,47 +235,80 @@ impl LauncherApp {
                 );
             }
 
-            // Action buttons sit just below the subtitle, in the centre band the
-            // QR already occupies — NOT pushed to the bottom edge. The previous
-            // layout used a `remaining * 0.42` spacer that floated both buttons to
-            // the very bottom of the panel, where a real TV's overscan cropped
-            // them out of view entirely, so the connect-from-PC fallback button
-            // never showed (Chris flagged 2026-05-30, v1.9.3). A fixed modest gap
-            // keeps them clear of the "SCAN TO CONNECT" label while staying inside
-            // the safe (un-overscanned) region at any TV resolution.
-            ui.add_space(40.0);
-            // QR-scan fallback (user request 2026-05-30): open the same phone URL
-            // the QR encodes in the PC's default browser, so a player can drive the
-            // portal from the HTPC if their phone can't scan the code. On-brand
-            // blue/gold so it reads as a secondary action, not competing with the
-            // QR or the red Exit.
-            let open_btn = egui::Button::new(
-                egui::RichText::new("Open in Browser")
-                    .size(palette::BODY)
-                    .color(palette::GOLD_BRIGHT),
-            )
-            .fill(palette::SF_1)
-            .rounding(egui::Rounding::same(16.0))
-            .min_size(egui::vec2(260.0, 52.0));
-            if ui.add(open_btn).clicked()
-                && let Err(e) = open::that(&self.url)
-            {
-                tracing::warn!(url = %self.url, "failed to open phone URL in browser: {e}");
-            }
-            ui.add_space(14.0);
-            // Visible escape hatch — kept regardless of mock per user 2026-04-19.
-            // Distinct red so it doesn't read as a primary action competing with
-            // the QR.
-            let btn = egui::Button::new(
-                egui::RichText::new("Exit to Desktop")
-                    .size(palette::HEADING)
-                    .color(palette::TEXT),
-            )
-            .fill(palette::DANGER)
-            .rounding(egui::Rounding::same(16.0))
-            .min_size(egui::vec2(260.0, 60.0));
-            if ui.add(btn).clicked() {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            // Action buttons — only on the QR front face (PLAN 16.10.6). During
+            // the Starting / Loading / Switching / Returning / MaxPlayers back-
+            // faces the spinning badge owns the surface and these buttons carry no
+            // useful action there, so they were getting cut off the TV bottom *and*
+            // showing under the wrong screens; gate them on `back_face.is_none()`
+            // so they appear (and re-anchor) only when we're back on the QR.
+            if back_face.is_none() {
+                // Anchor the buttons to the **title-safe bottom**, not a fixed gap
+                // below the subtitle. The QR card is centred on the panel (iris
+                // alignment), so the buttons flow ~CARD_SIZE/2 + ~290px below
+                // centre — and a fixed gap (the v1.9.3 attempt, PLAN 16.9.5c) still
+                // put them inside the TV's overscan-cropped bottom band, so all the
+                // buttons vanished (Chris re-flagged 2026-05-30). Overscan is a
+                // *fraction* of the screen, so we inset by a fraction
+                // (`TV_OVERSCAN_FRAC`) and push the row down so its bottom lands at
+                // that safe line — clamped to a minimum gap so it can never ride up
+                // into the subtitle on a short window. Resolution-independent:
+                // works at 1080p- or 4K-logical panels. PLAN 16.9.8.
+                //
+                // Side-by-side, not stacked (Chris 2026-05-31: "if we need the
+                // vertical space, it's fine to put them side by side"). A single
+                // 60px-tall row instead of a 126px stack reclaims ~66px of the
+                // overscan-squeezed bottom band — the safety margin that keeps the
+                // buttons clear of the crop on a real TV. PLAN 16.10.6.
+                const TV_OVERSCAN_FRAC: f32 = 0.06; // ~6% inset ≈ typical TV title-safe
+                const BTN_W: f32 = 260.0;
+                const BTN_GAP: f32 = 18.0;
+                let row_h = 60.0_f32; // tallest button drives the row height
+                let safe_bottom = panel_rect.bottom() - panel_rect.height() * TV_OVERSCAN_FRAC;
+                let cursor_y = ui.min_rect().bottom();
+                ui.add_space((safe_bottom - row_h - cursor_y).max(24.0));
+
+                // QR-scan fallback (user request 2026-05-30): open the same phone
+                // URL the QR encodes in the PC's default browser, so a player can
+                // drive the portal from the HTPC if their phone can't scan the
+                // code. On-brand blue/gold so it reads as a secondary action, not
+                // competing with the QR or the red Exit. Exit is the visible escape
+                // hatch — kept regardless of mock (user 2026-04-19), distinct red.
+                let open_btn = egui::Button::new(
+                    egui::RichText::new("Open in Browser")
+                        .size(palette::BODY)
+                        .color(palette::GOLD_BRIGHT),
+                )
+                .fill(palette::SF_1)
+                .rounding(egui::Rounding::same(16.0))
+                .min_size(egui::vec2(BTN_W, 52.0));
+                let exit_btn = egui::Button::new(
+                    egui::RichText::new("Exit to Desktop")
+                        .size(palette::HEADING)
+                        .color(palette::TEXT),
+                )
+                .fill(palette::DANGER)
+                .rounding(egui::Rounding::same(16.0))
+                .min_size(egui::vec2(BTN_W, row_h));
+
+                // Lay the pair out as one centred row: allocate exactly the row's
+                // bounding box so `vertical_centered` centres the whole cluster
+                // (a bare `ui.horizontal` would start at the column centre and run
+                // off to the right instead of straddling it).
+                ui.allocate_ui_with_layout(
+                    egui::vec2(BTN_W * 2.0 + BTN_GAP, row_h),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        if ui.add(open_btn).clicked()
+                            && let Err(e) = open::that(&self.url)
+                        {
+                            tracing::warn!(url = %self.url, "failed to open phone URL in browser: {e}");
+                        }
+                        ui.add_space(BTN_GAP);
+                        if ui.add(exit_btn).clicked() {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                    },
+                );
             }
         });
     }

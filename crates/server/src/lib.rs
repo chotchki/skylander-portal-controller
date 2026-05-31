@@ -18,6 +18,7 @@ pub mod palette;
 pub mod paths;
 pub mod profiles;
 pub mod round_qr;
+pub mod rpcs3_config;
 #[cfg(feature = "sky-stats")]
 pub mod sky_edit;
 #[cfg(feature = "sky-stats")]
