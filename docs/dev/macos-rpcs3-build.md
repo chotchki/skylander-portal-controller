@@ -30,8 +30,12 @@ The control layer was already cross-platform before any of this:
 | P2 patch (borderless window + handle) | Qt-portable; the only Windows-specific bit (`SetWindowPos` z-order) is `#ifdef _WIN32`. |
 | Building the patched binary | The actual work — pure environment plumbing, now captured in `.ci-local/build-mac.sh`. |
 
-The remaining code gap is the **process lifecycle** (`RpcsProcess`), which is
-Windows-only and `bail!`s on non-Windows. See "Next steps" below.
+The remaining code gap *was* the **process lifecycle** (`RpcsProcess`), which
+was Windows-only and `bail!`'d on non-Windows. **Closed 2026-06-01 (PLAN
+16.11):** `UnixRpcsProcess` is now wired into the `RpcsProcess` enum (the `Unix`
+variant) and `BootDirect`'s IPC spawn path is cross-platform, so
+`SKYLANDER_PORTAL_DRIVER=ipc` drives the patched Mac binary the same way it
+drives Windows. See "Running the server against the patched Mac binary" below.
 
 ## The build gotchas (all handled by the script)
 
@@ -115,22 +119,44 @@ Pending (needs a Skylanders game + firmware, which this Mac lacks):
   `LOAD`/`CLEAR` can't be exercised here. Provable on the HTPC / a Mac with a
   game (mirror `tests/live_ipc.rs`).
 
-## Next steps (code)
+## Running the server against the patched Mac binary
 
-The server already supports `DriverKind::Ipc` cross-platform; the missing piece
-is a real Unix process lifecycle.
+The wiring (PLAN 16.11) is done — `SKYLANDER_PORTAL_DRIVER=ipc` on macOS spawns
+and supervises the real patched binary over AF_UNIX, exactly like Windows. The
+macOS *compiled default* stays `Mock` (Mac doesn't bundle a patched RPCS3 yet),
+so IPC is **opt-in via env**. In `.env.dev` (dev-tools build):
 
-1. **`UnixRpcsProcess`** (`crates/rpcs3-control/src/process_unix.rs`) — **done,
-   additive.** Spawns rpcs3 with `SKYLANDER_IPC_PATH` set, `wait_ready` polls the
-   socket, `shutdown_graceful` is SIGTERM→SIGKILL. Unit-tested with `/bin/sleep`.
-   Not yet wired into the `RpcsProcess` enum (mock is still the non-Windows
-   default, so dev flow is unchanged).
-2. **Wire it in** (the reviewed change): make the non-Windows `RpcsProcess` an
-   enum `Mock | Real(UnixRpcsProcess)`; have `lifecycle.rs::spawn_rpcs3` pick
-   `Real` when `driver == Ipc` (it already keys off `driver.ipc_socket_path()`);
-   thread `socket_path` + `boot=NoGui` through `LaunchConfig` (config.rs). The
-   `DriverKind::Mock` path stays the default and untouched. The BootDirect block
-   in `state.rs` is `#[cfg(windows)]` today — its IPC sub-branch is already
-   socket-keyed and would move behind a `cfg(any(windows, unix))` guard.
-3. **Live test** against a real game (HTPC or a Mac with a Skylanders title) to
-   close the `LOAD`/`CLEAR` gap.
+```sh
+SKYLANDER_PORTAL_DRIVER=ipc
+# The patched binary built by .ci-local/build-mac.sh:
+RPCS3_EXE=/abs/path/to/vendor/rpcs3/build/bin/rpcs3.app/Contents/MacOS/rpcs3
+# RPCS3's data/config root: holds dev_flash (firmware) + config/games.yml.
+# May live apart from the exe; defaults to the exe's parent if unset.
+RPCS3_CONFIG_DIR=/abs/path/to/your/rpcs3-config-root
+DATA_ROOT=./dev-data
+```
+
+Then `cargo run -p skylander-server`. On `/api/launch` the server runs
+`rpcs3 --no-gui <EBOOT.BIN>` with `SKYLANDER_IPC_PATH` + `RPCS3_CONFIG_DIR` set,
+waits on the IPC `STATE` liveness signal (status=running + frames advancing +
+compile complete), then drives load/clear over the socket. `RPCS3_CONFIG_DIR`
+gets a trailing separator appended automatically (the 16.9.5a `get_config_dir`
+gotcha is cross-platform — RPCS3 normalises `\`→`/` then strips the last
+component, so a bare dir would otherwise lose a level and trigger the firmware
+"welcome" wizard).
+
+**Out of scope on macOS (PLAN 16.11):** window coordination (z-order /
+positioning) is Win32-only, so the borderless `SKYLANDER_BORDERLESS` env is *not*
+set on Mac — RPCS3 shows a normal decorated, movable game window that coexists
+with the egui launcher as a plain sibling. Portal control over IPC is the
+cross-platform value; window choreography stays Windows-only.
+
+## Remaining follow-ons (backlog)
+
+1. **Live test** against a real game (a Mac with a Skylanders title) to close the
+   `LOAD`/`CLEAR` gap end-to-end — mirror `crates/rpcs3-control/tests/live_ipc.rs`
+   / `live_launch.rs`. The P1 listener only binds after a Skylanders game boots
+   and opens the USB peripheral, so a live handshake needs game + firmware.
+2. **Distribution polish:** pin one `CMAKE_OSX_DEPLOYMENT_TARGET`, de-dup
+   `libomp` in the bundle (drops the `KMP_DUPLICATE_LIB_OK` workaround), and
+   Developer-ID `.app` codesigning / notarization.

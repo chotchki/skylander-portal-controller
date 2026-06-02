@@ -1504,126 +1504,135 @@ async fn handle_job(
             timeout,
             done,
         } => {
-            // PLAN 10.8.4: spawn RPCS3 with the picked game's EBOOT.BIN,
-            // wait for the FPS: viewport, then open the Skylanders dialog.
-            // The whole spawn-and-wait dance is Windows-only — on non-
-            // Windows (Mac/Linux dev with the mock driver) we skip the
-            // spawn but still update lifecycle state so /api/launch
-            // round-trips cleanly. Mock-driver tests don't have a real
-            // RPCS3 to talk to anyway.
-            #[cfg(windows)]
-            let result: Result<Option<RpcsProcess>> = {
+            // PLAN 16.11: the IPC boot path (patched RPCS3 + AF_UNIX) is
+            // **cross-platform** — Windows *and* macOS/Linux drive the same
+            // --no-gui launch + STATE-liveness wait, the enum picking the
+            // platform process impl (UiaRpcsProcess / UnixRpcsProcess). The
+            // legacy UIA path (FPS:-viewport scrape + Skylanders Manager dialog)
+            // is Windows-only; the mock driver (any platform) spawns nothing.
+            // Keyed on the driver advertising an IPC socket — the mock returns
+            // `None` and falls to the no-spawn arm, so /api/launch still
+            // round-trips and mock-driver tests don't need a real RPCS3.
+            let result: Result<Option<RpcsProcess>> = if let Some(ipc_path) =
+                driver.ipc_socket_path()
+            {
                 let d = driver.clone();
                 let exe_owned = rpcs3_exe.to_path_buf();
                 let config_dir_owned = config_dir.to_path_buf();
                 let eboot_owned = eboot_path.clone();
                 let display_name_for_blocking = display_name.clone();
-                // Match the viewport title on `[<SERIAL>]` (e.g.
-                // `[BLUS30968]`). Serial brackets are deterministic;
-                // matching on display_name fails when RPCS3's
-                // viewport title drops punctuation we put in
-                // SKYLANDERS_SERIALS — `"Skylanders: Giants"` (catalogue)
-                // vs `"Skylanders Giants [BLUS30968]"` (viewport).
-                let expected_marker = format!("[{}]", serial);
-                let _ = &expected_name;
                 let status_for_blocking = launcher_status.clone();
+                let _ = &expected_name;
                 tokio::task::spawn_blocking(move || -> Result<Option<RpcsProcess>> {
-                    // PLAN 16.6.1 — IPC path (patched RPCS3): launch --no-gui with the
-                    // borderless window + IPC socket, then wait on the clean liveness
-                    // signal (STATE: status=running + frames advancing) instead of
-                    // scraping the FPS viewport title. No Skylanders Manager dialog, so
-                    // no open_dialog. Falls through to the legacy UIA path otherwise.
-                    if let Some(ipc_path) = d.ipc_socket_path() {
-                        let mut proc = RpcsProcess::launch_no_gui(
-                            &exe_owned,
-                            &eboot_owned,
-                            &ipc_path,
-                            Some(&config_dir_owned),
-                        )?;
-                        let deadline = std::time::Instant::now() + timeout;
-                        loop {
-                            if !proc.is_alive() {
-                                return Err(anyhow::anyhow!(
-                                    "patched RPCS3 exited during no-GUI boot"
-                                ));
-                            }
-                            // Transient IPC errors (socket not up yet, mid-boot) just
-                            // don't match here, so the loop retries until the deadline.
-                            if let Ok(Some(state)) = d.emu_state()
-                                && state.is_playable()
-                            {
-                                break;
-                            }
-                            if std::time::Instant::now() >= deadline {
-                                return Err(anyhow::anyhow!(
-                                    "patched RPCS3 never reached a playable state within {timeout:?}"
-                                ));
-                            }
-                            std::thread::sleep(std::time::Duration::from_millis(250));
-                        }
-                        // game_window_handle is published continuously by the STATE
-                        // poller (early, as soon as the window exists) — not here.
-                        if let Ok(mut st) = status_for_blocking.lock() {
-                            st.rpcs3_running = true;
-                            st.current_game = Some(display_name_for_blocking.clone());
-                        }
-                        return Ok(Some(proc));
-                    }
-
-                    let mut proc = RpcsProcess::launch_with_eboot(&exe_owned, &eboot_owned)?;
-                    proc.wait_ready(std::time::Duration::from_secs(45))
-                        .context("RPCS3 main window never appeared after EBOOT spawn")?;
+                    // PLAN 16.6.1 / 16.11 — patched RPCS3: launch --no-gui with the
+                    // IPC socket, then wait on the clean liveness signal (STATE:
+                    // status=running + frames advancing + compile complete) instead
+                    // of scraping a window title. No Skylanders Manager dialog → no
+                    // open_dialog.
+                    let mut proc = RpcsProcess::launch_no_gui(
+                        &exe_owned,
+                        &eboot_owned,
+                        &ipc_path,
+                        Some(&config_dir_owned),
+                    )?;
                     let deadline = std::time::Instant::now() + timeout;
                     loop {
-                        if let Some(title) = skylander_rpcs3_control::read_viewport_title()
-                            && title.contains(&expected_marker)
+                        if !proc.is_alive() {
+                            return Err(anyhow::anyhow!("patched RPCS3 exited during no-GUI boot"));
+                        }
+                        // Transient IPC errors (socket not up yet, mid-boot) just
+                        // don't match here, so the loop retries until the deadline.
+                        if let Ok(Some(state)) = d.emu_state()
+                            && state.is_playable()
                         {
                             break;
                         }
                         if std::time::Instant::now() >= deadline {
                             return Err(anyhow::anyhow!(
-                                "FPS: viewport with serial marker {expected_marker:?} \
-                                 never appeared within {:?}",
-                                timeout
+                                "patched RPCS3 never reached a playable state within {timeout:?}"
                             ));
                         }
                         std::thread::sleep(std::time::Duration::from_millis(250));
                     }
-                    // Flip rpcs3_running + current_game on launcher_status
-                    // BEFORE open_dialog. The launcher's per-frame
-                    // `push_rpcs3_main_to_bottom_via_win32` is gated on
-                    // `rpcs3_running && current_game.is_some()`; without
-                    // that gate satisfied first, open_dialog's UIA Invoke
-                    // transiently promotes the main window over the game
-                    // viewport and the launcher doesn't push it down,
-                    // leaving the RPCS3 menu bar visible on top of the
-                    // game (HTPC bug 2026-05-04). This `std::sync::Mutex`
-                    // lock is fine from spawn_blocking — it's not the
-                    // tokio Mutex.
+                    // game_window_handle is published continuously by the STATE
+                    // poller (early, as soon as the window exists) — not here.
                     if let Ok(mut st) = status_for_blocking.lock() {
                         st.rpcs3_running = true;
                         st.current_game = Some(display_name_for_blocking.clone());
-                        // UIA fallback playable signal (PLAN 16.6.3.2): the loop above
-                        // only breaks once the `FPS:` viewport with the serial marker
-                        // is up — i.e. the game is rendering — so reveal it now. The
-                        // retired FPS sampler used to derive this; in-band is simpler
-                        // and the one signal the UIA path still needs.
-                        st.game_playable = true;
                     }
-                    d.open_dialog().context("open_dialog after EBOOT boot")?;
                     Ok(Some(proc))
                 })
                 .await
                 .map_err(|e| anyhow::anyhow!("BootDirect task panicked: {e}"))
                 .and_then(|r| r)
-            };
-            #[cfg(not(windows))]
-            let result: Result<Option<RpcsProcess>> = {
-                let _ = (driver, rpcs3_exe, config_dir, expected_name, timeout);
-                // Mock driver: no real RPCS3, no spawn, no viewport poll.
-                // Keep whatever process handle the lifecycle already has
-                // (a `RpcsProcess::mock()` installed at startup).
-                Ok(None)
+            } else {
+                // Non-IPC driver. UIA (Windows, stock RPCS3) needs the real spawn
+                // + FPS:-viewport poll + Skylanders Manager dialog; the mock
+                // driver (any platform) spawns nothing and keeps the
+                // `RpcsProcess::mock()` installed at startup.
+                #[cfg(windows)]
+                let r: Result<Option<RpcsProcess>> = {
+                    let d = driver.clone();
+                    let exe_owned = rpcs3_exe.to_path_buf();
+                    let eboot_owned = eboot_path.clone();
+                    let display_name_for_blocking = display_name.clone();
+                    // Match the viewport title on `[<SERIAL>]` (e.g. `[BLUS30968]`).
+                    // Serial brackets are deterministic; matching on display_name
+                    // fails when RPCS3's viewport title drops punctuation we put in
+                    // SKYLANDERS_SERIALS — `"Skylanders: Giants"` (catalogue) vs
+                    // `"Skylanders Giants [BLUS30968]"` (viewport).
+                    let expected_marker = format!("[{}]", serial);
+                    let status_for_blocking = launcher_status.clone();
+                    tokio::task::spawn_blocking(move || -> Result<Option<RpcsProcess>> {
+                        let mut proc = RpcsProcess::launch_with_eboot(&exe_owned, &eboot_owned)?;
+                        proc.wait_ready(std::time::Duration::from_secs(45))
+                            .context("RPCS3 main window never appeared after EBOOT spawn")?;
+                        let deadline = std::time::Instant::now() + timeout;
+                        loop {
+                            if let Some(title) = skylander_rpcs3_control::read_viewport_title()
+                                && title.contains(&expected_marker)
+                            {
+                                break;
+                            }
+                            if std::time::Instant::now() >= deadline {
+                                return Err(anyhow::anyhow!(
+                                    "FPS: viewport with serial marker {expected_marker:?} \
+                                     never appeared within {:?}",
+                                    timeout
+                                ));
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(250));
+                        }
+                        // Flip rpcs3_running + current_game on launcher_status BEFORE
+                        // open_dialog: the launcher's per-frame
+                        // `push_rpcs3_main_to_bottom_via_win32` is gated on
+                        // `rpcs3_running && current_game.is_some()`; without that gate
+                        // first, open_dialog's UIA Invoke transiently promotes the main
+                        // window over the game viewport and leaves the menu bar on top
+                        // (HTPC bug 2026-05-04). This `std::sync::Mutex` lock is fine
+                        // from spawn_blocking — it's not the tokio Mutex.
+                        if let Ok(mut st) = status_for_blocking.lock() {
+                            st.rpcs3_running = true;
+                            st.current_game = Some(display_name_for_blocking.clone());
+                            // UIA fallback playable signal (PLAN 16.6.3.2): the loop
+                            // above only breaks once the rendering `FPS:` viewport is
+                            // up, so reveal now (the retired FPS sampler used to).
+                            st.game_playable = true;
+                        }
+                        d.open_dialog().context("open_dialog after EBOOT boot")?;
+                        Ok(Some(proc))
+                    })
+                    .await
+                    .map_err(|e| anyhow::anyhow!("BootDirect task panicked: {e}"))
+                    .and_then(|r| r)
+                };
+                #[cfg(not(windows))]
+                let r: Result<Option<RpcsProcess>> = {
+                    // Mock driver on Mac/Linux: no real RPCS3, no spawn, no poll.
+                    let _ = &serial;
+                    Ok(None)
+                };
+                r
             };
 
             let outcome = match result {

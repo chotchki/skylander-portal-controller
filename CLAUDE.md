@@ -141,12 +141,23 @@ Hidden costs to keep in mind: every `@apply` in a component file means class nam
 
 ## macOS support
 
-- **Production target on both Windows and macOS.** Windows uses the
-  UIA driver to talk to a real RPCS3; macOS gets the mock driver only
-  (no AXUIElement-based driver port — that's an explicit non-goal).
-  Mac users see the same SPA + launcher surface but the portal is an
-  in-memory mock, not a live emulator. Useful for demo, family-member
-  play, dev iteration, and the iOS-Simulator e2e harness.
+- **Production target on both Windows and macOS.** Both drive a real
+  patched RPCS3 over the cross-platform AF_UNIX **IPC** path
+  (`IpcPortalDriver`); UIA is the Windows-only fallback for a *stock*
+  RPCS3. The Phase-16 IPC pivot removed the Windows lock-in, so the
+  same control path works on macOS — `UnixRpcsProcess` is wired in
+  (PLAN 16.11) and `SKYLANDER_PORTAL_DRIVER=ipc` spawns/drives the
+  patched Mac binary (build: `.ci-local/build-mac.sh`; run:
+  `docs/dev/macos-rpcs3-build.md`). There is **no AXUIElement-based
+  driver** — that's an explicit non-goal; IPC supersedes it.
+  Caveats on macOS: (1) IPC is **opt-in** — the compiled default stays
+  **mock**, and the **shipped Mac release still bundles mock only** (no
+  patched RPCS3 binary, pending the live-test + distribution polish);
+  (2) **window coordination is Win32-only** (out of scope — the RPCS3
+  window and egui launcher coexist as plain siblings). With the mock
+  driver the portal is an in-memory stand-in (demo, family-member play,
+  dev iteration, iOS-Simulator e2e) and Mac users see the same SPA +
+  launcher surface.
 - Dev: `cargo run -p skylander-server` boots cleanly with
   `SKYLANDER_PORTAL_DRIVER=mock` + a sentinel `RPCS3_EXE` path. The QR
   URL uses Bonjour (`<LocalHostName>.local`, read via `scutil --get

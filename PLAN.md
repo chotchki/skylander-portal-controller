@@ -3454,6 +3454,36 @@ crashes) = upstream emulation compat, not our code → *mitigated* by the watchd
   live TV verify (`bash dev.sh`) + commit/version-bump, both the user's call. All changes are
   working-tree only (controller repo uncommitted; clone has the P3 commit on `spike-patches`).
 
+## Phase 16.11 — macOS / Unix IPC process lifecycle: wire `UnixRpcsProcess` into the server
+
+*(Renumbered from 16.10 to dodge the Spyro-stability phase that shipped under
+that id; this is the parallel-developed macOS-wiring work.)*
+
+**Status (code-wiring 16.11.1–.4 done 2026-06-01).** Compiles + unit-tested +
+clippy/fmt clean on Apple Silicon; `SKYLANDER_PORTAL_DRIVER=ipc` now
+spawns/drives the patched Mac binary. **NOT yet live-validated against a real
+game** — that + the distribution polish are the backlog follow-ons.
+
+The Phase-16 AF_UNIX IPC pivot removed the Windows-only lock-in (UIA), so the
+patched RPCS3 + IPC control path is cross-platform (proven on Apple Silicon —
+commit 9097a5b: the patched binary builds + runs, controller half green). The
+one remaining gap was the **process lifecycle**: `UnixRpcsProcess`
+(`crates/rpcs3-control/src/process_unix.rs`) spawns/supervises the real emulator
+but wasn't wired into the `RpcsProcess` enum or the server boot path — the
+non-Windows `launch_*` arms `bail!`'d, and `BootDirect`'s IPC spawn branch was
+`#[cfg(windows)]`-only. Scope decisions: `Mock` stays the macOS **compiled
+default** (IPC is opt-in via `SKYLANDER_PORTAL_DRIVER=ipc`; Mac doesn't bundle a
+patched RPCS3 yet); macOS **window coordination** (z-order/positioning,
+Win32-only) is explicitly **out of scope** — the RPCS3 window and egui launcher
+coexist as plain siblings. Live-test (real game) + distribution polish
+(deployment target, `.app` codesigning) stay in the backlog as the follow-ons.
+See `docs/dev/macos-rpcs3-build.md`.
+
+- [x] 16.11.1 - Add Unix(UnixRpcsProcess) variant to RpcsProcess enum + wire match arms
+- [x] 16.11.2 - Non-Windows launch_no_gui/launch_with_eboot delegate to UnixRpcsProcess (config_dir → RPCS3_CONFIG_DIR)
+- [x] 16.11.3 - Lift BootDirect IPC sub-branch to cfg(any(windows, unix)) so it spawns on macOS
+- [x] 16.11.4 - Unit tests + Mac clippy/check pass + document SKYLANDER_PORTAL_DRIVER=ipc Mac bringup
+
 ## Phase 17 - Connectivity diagnostics & firewall self-heal
 
 **Motivation (2026-05-30).** A user couldn't connect a phone to the QR; no repro

@@ -80,9 +80,10 @@ pub use ipc::IpcPortalDriver;
 pub mod process;
 pub mod process_mock;
 
-/// Real RPCS3 process lifecycle for macOS/Linux (Phase 16 IPC path). Additive:
-/// the default non-Windows `RpcsProcess` alias is still the mock; wiring this in
-/// for `driver=ipc` is the documented next step (see docs/dev/macos-rpcs3-build.md).
+/// Real RPCS3 process lifecycle for macOS/Linux (Phase 16 IPC path). Wired into
+/// the `RpcsProcess::Unix` variant (PLAN 16.11) — `SKYLANDER_PORTAL_DRIVER=ipc`
+/// drives the patched binary here. The compiled non-Windows *default* stays the
+/// mock (IPC is opt-in); see docs/dev/macos-rpcs3-build.md.
 #[cfg(unix)]
 pub mod process_unix;
 #[cfg(unix)]
@@ -116,12 +117,14 @@ pub use mock::{MockOutcome, MockPortalDriver};
 
 /// Lifecycle handle for an RPCS3 instance.
 ///
-/// Two variants: `Uia` wraps a real Windows process driven by UI Automation
-/// (spawned + job-object-bound, drivable via the menu bar). `Mock` is a
-/// portable fake — always reports alive until shutdown — used under
-/// `DriverKind::Mock` so Mac/Linux dev (and mock-driver tests on Windows)
-/// can satisfy PLAN 4.15.16's always-running-RPCS3 contract without a real
-/// emulator.
+/// Variants are platform-gated. `Uia` (Windows) wraps a real process driven by
+/// UI Automation (spawned + job-object-bound, drivable via the menu bar).
+/// `Unix` (macOS/Linux, PLAN 16.11) wraps a real patched-RPCS3 process driven
+/// over the AF_UNIX IPC socket — the cross-platform production control path
+/// (no UIA, no Job Object; SIGTERM→SIGKILL shutdown). `Mock` is the portable
+/// fake — always reports alive until shutdown — used under `DriverKind::Mock`
+/// so Mac/Linux dev (and mock-driver tests on Windows) can satisfy PLAN
+/// 4.15.16's always-running-RPCS3 contract without a real emulator.
 ///
 /// Callers use this enum directly so the server crate doesn't have to
 /// `cfg`-branch on driver kind for every lifecycle call site.
@@ -129,6 +132,8 @@ pub use mock::{MockOutcome, MockPortalDriver};
 pub enum RpcsProcess {
     #[cfg(windows)]
     Uia(UiaRpcsProcess),
+    #[cfg(unix)]
+    Unix(UnixRpcsProcess),
     Mock(MockRpcsProcess),
 }
 
@@ -166,8 +171,11 @@ impl RpcsProcess {
     }
 
     /// Launch the **patched** RPCS3 in **no-GUI** mode (Phase 16): `--no-gui`
-    /// direct-EBOOT boot, borderless game window, and the Skylander IPC socket at
-    /// `ipc_path`. Windows only — returns an error on non-Windows.
+    /// direct-EBOOT boot + the Skylander IPC socket at `ipc_path`. The
+    /// **cross-platform** production control path (PLAN 16.11): Windows drives
+    /// it via [`UiaRpcsProcess`] (borderless game window + Job Object), macOS /
+    /// Linux via [`UnixRpcsProcess`] (SIGTERM→SIGKILL, no borderless — see its
+    /// module note). Both rendezvous with `IpcPortalDriver` on `ipc_path`.
     pub fn launch_no_gui(
         exe: &Path,
         eboot: &Path,
@@ -178,10 +186,14 @@ impl RpcsProcess {
         {
             UiaRpcsProcess::launch_no_gui(exe, eboot, ipc_path, config_dir).map(Self::Uia)
         }
-        #[cfg(not(windows))]
+        #[cfg(unix)]
+        {
+            UnixRpcsProcess::launch_no_gui(exe, eboot, ipc_path, config_dir).map(Self::Unix)
+        }
+        #[cfg(not(any(windows, unix)))]
         {
             let _ = (exe, eboot, ipc_path, config_dir);
-            bail!("RPCS3 process management is only supported on Windows")
+            bail!("RPCS3 process management requires Windows or a Unix platform")
         }
     }
 
@@ -224,6 +236,8 @@ impl RpcsProcess {
         match self {
             #[cfg(windows)]
             Self::Uia(p) => p.pid(),
+            #[cfg(unix)]
+            Self::Unix(p) => p.pid(),
             Self::Mock(p) => p.pid(),
         }
     }
@@ -232,6 +246,13 @@ impl RpcsProcess {
         match self {
             #[cfg(windows)]
             Self::Uia(p) => p.wait_ready(timeout),
+            #[cfg(unix)]
+            Self::Unix(p) => match p.wait_ready(timeout)? {
+                process_unix::Readiness::Ready => Ok(()),
+                process_unix::Readiness::NotYet => {
+                    bail!("patched RPCS3 IPC socket not ready within {timeout:?}")
+                }
+            },
             Self::Mock(p) => p.wait_ready(timeout),
         }
     }
@@ -240,6 +261,8 @@ impl RpcsProcess {
         match self {
             #[cfg(windows)]
             Self::Uia(p) => p.is_alive(),
+            #[cfg(unix)]
+            Self::Unix(p) => p.is_alive(),
             Self::Mock(p) => p.is_alive(),
         }
     }
@@ -248,13 +271,16 @@ impl RpcsProcess {
         match self {
             #[cfg(windows)]
             Self::Uia(p) => p.shutdown_graceful(timeout),
+            #[cfg(unix)]
+            Self::Unix(p) => p.shutdown_graceful(timeout),
             Self::Mock(p) => p.shutdown_graceful(timeout),
         }
     }
 
     /// Graceful shutdown targeting an explicit (IPC-published) window handle when
-    /// known — see [`UiaRpcsProcess::shutdown_graceful_to_hwnd`]. The mock ignores
-    /// the handle. PLAN 16.6.1.3.
+    /// known — see [`UiaRpcsProcess::shutdown_graceful_to_hwnd`]. The Unix and
+    /// mock variants ignore the handle (no Win32 `WM_CLOSE`-to-HWND path). PLAN
+    /// 16.6.1.3.
     pub fn shutdown_graceful_to_hwnd(
         &mut self,
         hwnd: Option<u64>,
@@ -263,6 +289,11 @@ impl RpcsProcess {
         match self {
             #[cfg(windows)]
             Self::Uia(p) => p.shutdown_graceful_to_hwnd(hwnd, timeout),
+            #[cfg(unix)]
+            Self::Unix(p) => {
+                let _ = hwnd;
+                p.shutdown_graceful(timeout)
+            }
             Self::Mock(p) => {
                 let _ = hwnd;
                 p.shutdown_graceful(timeout)
@@ -274,6 +305,8 @@ impl RpcsProcess {
         match self {
             #[cfg(windows)]
             Self::Uia(p) => p.wait_for_exit_or_force(timeout),
+            #[cfg(unix)]
+            Self::Unix(p) => p.wait_for_exit_or_force(timeout),
             Self::Mock(p) => p.wait_for_exit_or_force(timeout),
         }
     }
@@ -284,4 +317,42 @@ pub enum ShutdownPath {
     AlreadyExited,
     Graceful,
     Forced,
+}
+
+#[cfg(all(test, unix))]
+mod unix_enum_tests {
+    use super::*;
+    use std::path::Path;
+    use std::time::Duration;
+
+    /// On Unix the only real driver is the cross-platform IPC path
+    /// (`launch_no_gui` → `Self::Unix`). The UIA-era constructors have no Unix
+    /// impl, so they must error cleanly (not panic) if ever reached — a phone
+    /// misconfig hitting the legacy path on Mac should surface an error, not UB.
+    #[test]
+    fn legacy_launch_modes_error_on_unix() {
+        assert!(RpcsProcess::launch_library(Path::new("/bin/true")).is_err());
+        assert!(
+            RpcsProcess::launch_with_eboot(Path::new("/bin/true"), Path::new("/bin/true")).is_err()
+        );
+        assert!(RpcsProcess::launch_gui_config(Path::new("/bin/true"), None).is_err());
+        assert!(RpcsProcess::attach().is_err());
+    }
+
+    /// The `Mock` variant is present on every platform and drives the enum arms
+    /// (so a Unix build that selects `DriverKind::Mock` still has a working
+    /// lifecycle alongside the `Unix` variant).
+    #[test]
+    fn mock_variant_lifecycle_on_unix() {
+        let mut p = RpcsProcess::mock();
+        assert!(p.is_alive());
+        assert_eq!(p.pid(), 0);
+        p.wait_ready(Duration::from_secs(1))
+            .expect("mock wait_ready");
+        assert_eq!(
+            p.shutdown_graceful(Duration::from_secs(1)).unwrap(),
+            ShutdownPath::Graceful
+        );
+        assert!(!p.is_alive());
+    }
 }
