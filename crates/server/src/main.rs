@@ -14,7 +14,7 @@
 //!  - Shared state lives inside `Arc<AppState>` and an `AtomicUsize` client
 //!    counter that both sides read.
 
-use skylander_server::{config, http, logging, profiles, state, ui};
+use skylander_server::{config, gl_fallback, http, logging, profiles, state, ui};
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -36,9 +36,20 @@ use crate::state::{
 use crate::ui::LauncherApp;
 
 fn main() -> Result<()> {
-    let cfg = config::load().context("load config")?;
+    // Decide the OpenGL backend BEFORE anything else — `config::load()` can
+    // pop the wizard window and the server binds a port; both must happen on
+    // the right GL stack. On a GPU-less box (winget validation VM, headless
+    // RDP) this RE-EXECS into the bundled Mesa software renderer (and the
+    // parent then exits), so the window actually appears instead of failing
+    // silently. PLAN 19. Runs before `logging::init` (which needs
+    // `cfg.log_dir`), so its decision is logged just below once the
+    // subscriber is up; if it re-execs, this call never returns.
+    let gl = gl_fallback::bootstrap();
+
+    let cfg = config::load(gl.software).context("load config")?;
     let _log_guard = logging::init(&cfg.log_dir)?;
 
+    info!(gl = %gl.detail, software = gl.software, "graphics backend selected");
     info!(
         rpcs3 = %cfg.rpcs3_exe.display(),
         pack = %cfg.firmware_pack_root.display(),

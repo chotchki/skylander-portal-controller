@@ -176,10 +176,7 @@ impl PersistedConfig {
         firmware_pack_root: PathBuf,
         runtime_dir: &Path,
     ) -> Self {
-        let exe_parent = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| PathBuf::from("."));
+        let exe_parent = crate::paths::app_asset_dir();
 
         // Control binary = the bundled patched RPCS3 (release packaging stages it
         // under `<app>/rpcs3/`). Data/config root = the user's existing install.
@@ -205,20 +202,18 @@ impl PersistedConfig {
         }
     }
 
-    /// Build a no-wizard default for a macOS production build (PLAN 10.6).
-    /// macOS has no AXUIElement-based driver so RPCS3 paths are unused —
-    /// `rpcs3_exe` + `firmware_pack_root` are empty and `driver_kind`
-    /// is `Mock`. Phone bundle + tracked data ship next to the binary
-    /// in the release tarball, same shape as the Windows zip.
+    /// Build a no-RPCS3 **mock-driver** config. Used by (a) the macOS
+    /// production build, which has no AXUIElement driver (PLAN 10.6), and
+    /// (b) the Windows demo / no-GPU path (PLAN 19): the dummy driver needs
+    /// no RPCS3 binary, firmware, or games — `rpcs3_exe` +
+    /// `firmware_pack_root` are empty and `driver_kind` is `Mock`. The phone
+    /// bundle + tracked data ship next to the binary in the release artifact.
     ///
     /// The user can later replace this `config.json` if they want a
     /// different bind port, custom data path, etc. — re-running the
     /// app picks up the edited file on next launch.
-    pub fn macos_default(runtime_dir: &Path) -> Self {
-        let exe_parent = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| PathBuf::from("."));
+    pub fn mock_default(runtime_dir: &Path) -> Self {
+        let exe_parent = crate::paths::app_asset_dir();
 
         // Inside a `.app` bundle, `current_exe` is
         // `Contents/MacOS/skylander-portal-controller`, so the data
@@ -286,8 +281,17 @@ mod hex_key_opt {
 
 // ---- egui wizard (release-only) ------------------------------------------
 
+/// `software_gl` is true when [`crate::gl_fallback`] routed the launcher onto
+/// the bundled Mesa software renderer — i.e. there's no GPU. In that case the
+/// wizard opens straight on the demo-mode page (RPCS3 can't run without a GPU),
+/// and the copy explains why. Either way the Welcome page offers an explicit
+/// "TRY DEMO MODE" entry (PLAN 19.4).
 #[cfg(not(feature = "dev-tools"))]
-pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<PersistedConfig> {
+pub fn run_wizard_blocking(
+    config_path: &Path,
+    runtime_dir: &Path,
+    software_gl: bool,
+) -> Result<PersistedConfig> {
     use std::sync::{Arc, Mutex};
 
     use crate::{fonts, palette, vortex};
@@ -295,6 +299,9 @@ pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<Per
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum Page {
         Welcome,
+        /// Dummy-driver path: no RPCS3 needed. Reached automatically when
+        /// there's no GPU, or via the Welcome "TRY DEMO MODE" button.
+        Demo,
         Rpcs3,
         FirmwarePack,
         Done,
@@ -314,6 +321,9 @@ pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<Per
         /// they want. The compile-time default with `nfc-import` off is
         /// `false`, so feature-less builds show the reader-absent flow.
         reader_present: bool,
+        /// No hardware GPU — the launcher is on the Mesa software renderer
+        /// (PLAN 19). Drives the demo-page copy and makes Demo the start page.
+        software_gl: bool,
     }
 
     impl WizardState {
@@ -356,13 +366,19 @@ pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<Per
         .unwrap_or_default();
 
     let state = Arc::new(Mutex::new(WizardState {
-        page: Page::Welcome,
+        // No GPU → RPCS3 can't run, so open straight on the demo page.
+        page: if software_gl {
+            Page::Demo
+        } else {
+            Page::Welcome
+        },
         rpcs3_input: rpcs3_default,
         pack_input: pack_default,
         result: None,
         cancelled: false,
         runtime_dir: runtime_dir.to_path_buf(),
         reader_present,
+        software_gl,
     }));
 
     struct App {
@@ -408,6 +424,7 @@ pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<Per
                             egui::Layout::top_down(egui::Align::LEFT),
                             |ui| match s.page {
                                 Page::Welcome => render_welcome(ui, ctx, &mut s),
+                                Page::Demo => render_demo(ui, ctx, &mut s),
                                 Page::Rpcs3 => render_rpcs3(ui, &mut s),
                                 Page::FirmwarePack => render_pack(ui, &mut s),
                                 Page::Done => render_done(ui, ctx),
@@ -548,6 +565,61 @@ pub fn run_wizard_blocking(config_path: &Path, runtime_dir: &Path) -> Result<Per
         ui.horizontal(|ui| {
             if primary_button(ui, true, "NEXT").clicked() {
                 s.page = Page::Rpcs3;
+            }
+            ui.add_space(12.0);
+            // Demo mode: skip RPCS3 entirely and run a built-in dummy portal.
+            // For a quick look, a recorded demo, or the PC-only ask (issue #2).
+            if ghost_button(ui, "TRY DEMO MODE").clicked() {
+                s.page = Page::Demo;
+            }
+            ui.add_space(12.0);
+            if ghost_button(ui, "CANCEL").clicked() {
+                s.cancelled = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        });
+    }
+
+    /// Demo / dummy-driver page. Reached automatically when there's no GPU
+    /// (RPCS3 can't run), or from the Welcome "TRY DEMO MODE" button. Persists
+    /// a `Mock` config (no RPCS3, firmware, or games) and finishes. PLAN 19.4.
+    fn render_demo(ui: &mut egui::Ui, ctx: &egui::Context, s: &mut WizardState) {
+        if s.software_gl {
+            heading(ui, "NO GPU DETECTED");
+            ui.add_space(8.0);
+            body(
+                ui,
+                "This PC has no hardware graphics, so the emulator (RPCS3) can't run \
+                 here. Skylander Portal Controller will start in DEMO MODE with a \
+                 built-in dummy portal - perfect for trying the interface.",
+            );
+            ui.add_space(12.0);
+            status_info(
+                ui,
+                "Launching games and controlling a real portal need a GPU plus your \
+                 own RPCS3 install. Set SKYLANDER_GL=hardware to override this check.",
+            );
+        } else {
+            heading(ui, "DEMO MODE");
+            ui.add_space(8.0);
+            body(
+                ui,
+                "Run with a built-in dummy portal - no RPCS3, firmware, or games \
+                 needed. Great for a quick look or recording a demo. Re-run setup any \
+                 time to connect your real RPCS3.",
+            );
+        }
+        ui.add_space(48.0);
+        ui.horizontal(|ui| {
+            if primary_button(ui, true, "START DEMO MODE").clicked() {
+                s.result = Some(PersistedConfig::mock_default(&s.runtime_dir));
+                s.page = Page::Done;
+            }
+            ui.add_space(12.0);
+            // Escape hatch: a user who knows they have a GPU the probe missed
+            // (or who wants full setup anyway) can proceed to the RPCS3 path.
+            if ghost_button(ui, "FULL SETUP INSTEAD").clicked() {
+                s.page = Page::Welcome;
             }
             ui.add_space(12.0);
             if ghost_button(ui, "CANCEL").clicked() {

@@ -159,6 +159,20 @@ impl LauncherApp {
         // immediately (PLAN 4.15.1 / 4.15.2).
         palette::apply(&cc.egui_ctx);
         fonts::register(&cc.egui_ctx);
+        // Log the OpenGL renderer eframe/glow actually bound to — proves
+        // whether we're on hardware GL or the bundled Mesa software fallback
+        // (PLAN 19) and is a handy support breadcrumb for "won't launch" reports.
+        if let Some(gl) = &cc.gl {
+            use glow::HasContext as _;
+            // SAFETY: `gl` is eframe's current glow context for this thread.
+            let (renderer, version) = unsafe {
+                (
+                    gl.get_parameter_string(glow::RENDERER),
+                    gl.get_parameter_string(glow::VERSION),
+                )
+            };
+            tracing::info!(%renderer, %version, "launcher OpenGL context");
+        }
         // QR texture is generated once at startup and cached. The URL is also
         // retained on the struct (below) for the Main screen's "Open in Browser"
         // fallback button (user request 2026-05-30). `figure_count` previously

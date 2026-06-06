@@ -81,8 +81,11 @@ pub enum DriverKind {
     Mock,
 }
 
+/// `software_gl` is the GPU-less signal from [`crate::gl_fallback`] — release
+/// builds use it to steer the wizard into demo mode. Dev builds read paths from
+/// `.env.dev` and never show the wizard, so they ignore it.
 #[cfg(feature = "dev-tools")]
-pub fn load() -> Result<Config> {
+pub fn load(_software_gl: bool) -> Result<Config> {
     let env = read_env_file(".env.dev").unwrap_or_default();
 
     let rpcs3_exe = require_path(&env, "RPCS3_EXE")?;
@@ -189,7 +192,7 @@ fn load_or_create_dev_hmac_key() -> Result<Vec<u8>> {
 }
 
 #[cfg(not(feature = "dev-tools"))]
-pub fn load() -> Result<Config> {
+pub fn load(software_gl: bool) -> Result<Config> {
     use crate::paths;
     use crate::wizard::{PersistedConfig, PersistedDriverKind};
     use anyhow::Context;
@@ -200,7 +203,21 @@ pub fn load() -> Result<Config> {
 
     let config_path = paths::config_json_path()?;
 
-    let persisted = if config_path.exists() {
+    // Explicit demo-mode override (PLAN 19.2): `SKYLANDER_PORTAL_DRIVER=mock`
+    // forces the dummy driver on any machine — no RPCS3, no firmware, no
+    // games — for a recorded demo or a quick PC-only look (issue #2). It
+    // short-circuits BEFORE reading/writing config.json so it's transient:
+    // unset the var and the next launch is back to the real install. The
+    // synthesised config already carries an HMAC key, so the block below
+    // doesn't persist anything either.
+    let force_mock = std::env::var("SKYLANDER_PORTAL_DRIVER")
+        .map(|v| v.eq_ignore_ascii_case("mock"))
+        .unwrap_or(false);
+
+    let persisted = if force_mock {
+        let runtime_dir = paths::resolve_runtime_dir()?;
+        PersistedConfig::mock_default(&runtime_dir)
+    } else if config_path.exists() {
         PersistedConfig::read(&config_path).with_context(|| {
             format!(
                 "parse {} — delete it to re-run the first-launch wizard",
@@ -218,13 +235,14 @@ pub fn load() -> Result<Config> {
         // different bind port, custom data path, etc.
         #[cfg(target_os = "macos")]
         {
-            let cfg = PersistedConfig::macos_default(&runtime_dir);
+            let _ = software_gl; // wizard (its only consumer) is Windows-only
+            let cfg = PersistedConfig::mock_default(&runtime_dir);
             cfg.write(&config_path)?;
             cfg
         }
         #[cfg(not(target_os = "macos"))]
         {
-            wizard::run_wizard_blocking(&config_path, &runtime_dir)?
+            wizard::run_wizard_blocking(&config_path, &runtime_dir, software_gl)?
         }
     };
 
@@ -252,10 +270,7 @@ pub fn load() -> Result<Config> {
     // config pointing at the old install dir. The persisted values
     // in config.json are kept (write_through) so external tools can
     // still inspect, but the runtime resolution always wins.
-    let exe_parent = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("."));
+    let exe_parent = paths::app_asset_dir();
     let phone_dist_dir = exe_parent.join("phone-dist");
     let data_root = exe_parent.join("data");
     if persisted.phone_dist_dir != phone_dist_dir || persisted.data_root != data_root {
@@ -281,10 +296,15 @@ pub fn load() -> Result<Config> {
     // dir keyed by profile+figure id, so nothing here rewrites a `.sky`.
     #[cfg(not(target_os = "macos"))]
     let (rpcs3_exe, driver_kind, config_dir) = {
-        let (rpcs3_exe, driver_kind, config_dir) =
-            migrate_install_paths(&persisted.rpcs3_exe, &persisted.config_dir, &exe_parent);
-        if persisted.rpcs3_exe != rpcs3_exe
-            || !matches!(persisted.driver_kind, PersistedDriverKind::Ipc)
+        let (rpcs3_exe, driver_kind, config_dir) = migrate_install_paths(
+            &persisted.rpcs3_exe,
+            &persisted.config_dir,
+            persisted.driver_kind,
+            &exe_parent,
+        );
+        if !matches!(persisted.driver_kind, PersistedDriverKind::Mock)
+            && (persisted.rpcs3_exe != rpcs3_exe
+                || !matches!(persisted.driver_kind, PersistedDriverKind::Ipc))
         {
             info!(
                 old_rpcs3_exe = %persisted.rpcs3_exe.display(),
@@ -349,8 +369,17 @@ pub fn load() -> Result<Config> {
 fn migrate_install_paths(
     persisted_rpcs3_exe: &std::path::Path,
     persisted_config_dir: &std::path::Path,
+    persisted_driver: crate::wizard::PersistedDriverKind,
     exe_parent: &std::path::Path,
 ) -> (PathBuf, DriverKind, PathBuf) {
+    use crate::wizard::PersistedDriverKind;
+    // A deliberately-chosen Mock config (the no-GPU wizard path or the
+    // `SKYLANDER_PORTAL_DRIVER=mock` demo override, PLAN 19) is NOT a stale
+    // pre-IPC config to repair — keep it. The mock driver uses no RPCS3 binary
+    // and no config dir at all.
+    if matches!(persisted_driver, PersistedDriverKind::Mock) {
+        return (PathBuf::new(), DriverKind::Mock, PathBuf::new());
+    }
     let rpcs3_exe = exe_parent.join("rpcs3").join("rpcs3.exe");
     let config_dir = if persisted_config_dir.as_os_str().is_empty() {
         persisted_rpcs3_exe
@@ -406,8 +435,12 @@ mod tests {
         let exe_parent = Path::new("app-dir");
 
         // Empty persisted config_dir = a pre-16.9 config.
-        let (rpcs3_exe, driver, config_dir) =
-            migrate_install_paths(&stock_exe, Path::new(""), exe_parent);
+        let (rpcs3_exe, driver, config_dir) = migrate_install_paths(
+            &stock_exe,
+            Path::new(""),
+            crate::wizard::PersistedDriverKind::Uia,
+            exe_parent,
+        );
 
         assert_eq!(
             rpcs3_exe,
@@ -434,11 +467,32 @@ mod tests {
         let users_install = Path::new("users-rpcs3-install");
         let persisted_exe = exe_parent.join("rpcs3").join("rpcs3.exe");
 
-        let (rpcs3_exe, driver, config_dir) =
-            migrate_install_paths(&persisted_exe, users_install, exe_parent);
+        let (rpcs3_exe, driver, config_dir) = migrate_install_paths(
+            &persisted_exe,
+            users_install,
+            crate::wizard::PersistedDriverKind::Ipc,
+            exe_parent,
+        );
 
         assert_eq!(rpcs3_exe, exe_parent.join("rpcs3").join("rpcs3.exe"));
         assert_eq!(driver, DriverKind::Ipc);
         assert_eq!(config_dir, users_install);
+    }
+
+    // PLAN 19.3: a deliberate Mock config (no-GPU wizard path or the
+    // `SKYLANDER_PORTAL_DRIVER=mock` demo override) must be preserved, not
+    // "repaired" into IPC like a stale pre-IPC UIA config would be.
+    #[test]
+    fn preserves_deliberate_mock_config() {
+        let exe_parent = Path::new("app-dir");
+        let (rpcs3_exe, driver, config_dir) = migrate_install_paths(
+            Path::new(""),
+            Path::new(""),
+            crate::wizard::PersistedDriverKind::Mock,
+            exe_parent,
+        );
+        assert_eq!(driver, DriverKind::Mock, "Mock must survive migration");
+        assert_eq!(rpcs3_exe, PathBuf::new(), "mock uses no RPCS3 binary");
+        assert_eq!(config_dir, PathBuf::new(), "mock uses no config dir");
     }
 }

@@ -85,8 +85,13 @@ jobs:
       # phone-side log payload, and `.env.dev` overrides the
       # pack/RPCS3 paths. None of that should be reachable in a
       # release build.
+      #
+      # `mock-driver-runtime` (same as the macOS lane below) ships the dummy
+      # portal driver so `DriverKind::Mock` is constructible — it powers the
+      # PLAN 19 no-GPU demo fallback + `SKYLANDER_PORTAL_DRIVER=mock` override.
+      # Unlike `dev-tools` it relaxes no security gates.
       - name: cargo build --release -p skylander-server (production features)
-        run: cargo build --release -p skylander-server --no-default-features --features sky-stats
+        run: cargo build --release -p skylander-server --no-default-features --features sky-stats,mock-driver-runtime
 
       # PLAN 16.9.0b — v1 bundles our patched RPCS3 (the IPC control binary; stock
       # RPCS3 has no IPC listener). Pull it from the durable prerelease published by
@@ -112,6 +117,37 @@ jobs:
           $mb = [math]::Round((Get-ChildItem rpcs3 -Recurse -File | Measure-Object Length -Sum).Sum / 1MB, 1)
           Write-Host "bundled patched RPCS3: $mb MB extracted"
 
+      # PLAN 19 — bundle Mesa llvmpipe (software OpenGL) so the launcher runs on
+      # GPU-less machines (winget validation VM / headless RDP). The minimal
+      # llvmpipe set is `opengl32.dll` + `libgallium_wgl.dll` (dxil.dll is for
+      # the d3d12 driver, not needed). We ALSO drop a copy of the launcher exe
+      # into `mesa/` so a GPU-less launch can re-exec `mesa/<exe>` — its app
+      # directory becomes `mesa/`, so the static `opengl32.dll` import resolves
+      # to bundled Mesa (an env var alone can't redirect glutin's statically
+      # linked WGL functions). See `crates/server/src/gl_fallback.rs`.
+      - name: Download + verify bundled Mesa (software OpenGL fallback)
+        shell: pwsh
+        run: |
+          $ver = '26.1.1'
+          $expected = 'd5e90e9ae4d620313b61fbbf8e9a55761454e38b6501c39be6d93449c88780e1'
+          $url = "https://github.com/pal1000/mesa-dist-win/releases/download/$ver/mesa3d-$ver-release-msvc.7z"
+          New-Item -ItemType Directory -Force -Path mesa-dl | Out-Null
+          Invoke-WebRequest -Uri $url -OutFile mesa-dl/mesa.7z
+          $actual = (Get-FileHash -Algorithm SHA256 mesa-dl/mesa.7z).Hash.ToLower()
+          if ($actual -ne $expected) { throw "Mesa $ver SHA-256 mismatch: expected $expected got $actual" }
+          # windows-latest ships 7-Zip (`7z` on PATH). Extract only the x64
+          # llvmpipe runtime to a flat `mesa/` dir next to the exe.
+          New-Item -ItemType Directory -Force -Path mesa | Out-Null
+          7z e mesa-dl/mesa.7z -omesa "x64/opengl32.dll" "x64/libgallium_wgl.dll" -y
+          if ($LASTEXITCODE -ne 0) { throw "7z extract (mesa) failed: $LASTEXITCODE" }
+          if (-not (Test-Path mesa/opengl32.dll)) { throw "mesa extract missing opengl32.dll" }
+          if (-not (Test-Path mesa/libgallium_wgl.dll)) { throw "mesa extract missing libgallium_wgl.dll" }
+          # The re-exec target: a copy of the launcher binary that runs WITH
+          # `mesa/` as its application directory.
+          Copy-Item "target/release/skylander-portal-controller.exe" "mesa/"
+          $mb = [math]::Round((Get-ChildItem mesa -Recurse -File | Measure-Object Length -Sum).Sum / 1MB, 1)
+          Write-Host "bundled Mesa software-GL runtime: $mb MB"
+
       - name: Stage release artifacts
         shell: pwsh
         run: |
@@ -132,6 +168,9 @@ jobs:
           Copy-Item -Recurse "data" "$stage/"
           # PLAN 16.9.0b — bundled patched RPCS3 next to the app at rpcs3/rpcs3.exe.
           Copy-Item -Recurse "rpcs3" "$stage/"
+          # PLAN 19 — bundled Mesa software-OpenGL runtime (opengl32.dll +
+          # libgallium_wgl.dll + a launcher-exe copy to re-exec into).
+          Copy-Item -Recurse "mesa" "$stage/"
           # PLAN 10.8.5 — Steam library artwork (apply via Steam's "Set Custom
           # Artwork"; see README). MSI ships it via heat; the zip needs it too.
           if (Test-Path "steam") { Copy-Item -Recurse "steam" "$stage/" }
@@ -195,6 +234,10 @@ jobs:
           heat dir rpcs3 -ag -srd -dr Rpcs3Dir -cg Rpcs3Files -sfrag -suid `
             -var var.Rpcs3SourceDir -out wix/rpcs3.wxs
           if ($LASTEXITCODE -ne 0) { throw "heat (rpcs3) failed: $LASTEXITCODE" }
+          # PLAN 19 — harvest the bundled Mesa software-GL runtime into the MSI.
+          heat dir mesa -ag -srd -dr MesaDir -cg MesaFiles -sfrag -suid `
+            -var var.MesaSourceDir -out wix/mesa.wxs
+          if ($LASTEXITCODE -ne 0) { throw "heat (mesa) failed: $LASTEXITCODE" }
           # steam/ doesn't exist yet (PLAN 10.8.5 not landed). Create
           # an empty wxs fragment so the cargo-wix include list still
           # resolves; harvest for real once the assets ship.
@@ -227,6 +270,7 @@ jobs:
           }
           $dataAbs = (Resolve-Path data).Path
           $rpcs3Abs = (Resolve-Path rpcs3).Path
+          $mesaAbs = (Resolve-Path mesa).Path
           # steam/ may be absent (heat then emits an empty SteamFiles group with
           # no SteamSourceDir reference); fall back to '.' so Resolve-Path can't
           # throw and the unused -d define is harmless.
@@ -256,6 +300,7 @@ jobs:
               -C -ext -C WixFirewallExtension `
               -C "-dDataSourceDir=$dataAbs" `
               -C "-dRpcs3SourceDir=$rpcs3Abs" `
+              -C "-dMesaSourceDir=$mesaAbs" `
               -C "-dSteamSourceDir=$steamAbs" `
               -L -ext -L WixFirewallExtension
             if ($LASTEXITCODE -ne 0) { throw "cargo wix failed: $LASTEXITCODE" }

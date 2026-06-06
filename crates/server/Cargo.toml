@@ -107,6 +107,12 @@ raw-window-handle = "0.6"
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
+    # PLAN 19.1 — the software-OpenGL fallback probe creates a throwaway WGL
+    # context (Graphics_OpenGL: wgl*/glGetString/pixel-format) on a hidden
+    # window (GetModuleHandleW from System_LibraryLoader) to read GL_VERSION
+    # and decide whether to route eframe/glow at the bundled Mesa renderer.
+    "Win32_Graphics_OpenGL",
+    "Win32_System_LibraryLoader",
     "Win32_System_SystemInformation",
     "Win32_UI_WindowsAndMessaging",
     # PLAN 17 connectivity diagnostics: read the Windows Firewall via the
@@ -140,7 +146,7 @@ http-body-util = "0.1"
 # `<workspace>/assets/branding/` — keeping the wxs at workspace
 # root means relative `..\` paths point at workspace siblings.
 # `cargo wix --include` is the canonical way to point at it.
-include = ["../../wix/main.wxs", "../../wix/data.wxs", "../../wix/steam.wxs", "../../wix/rpcs3.wxs"]
+include = ["../../wix/main.wxs", "../../wix/data.wxs", "../../wix/steam.wxs", "../../wix/rpcs3.wxs", "../../wix/mesa.wxs"]
 # Disable both license + EULA sidecars: LICENSE ships in the zip
 # (and at the Program Files install root via heat), and the MIT
 # license doesn't warrant a click-through dialog.

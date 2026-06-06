@@ -11,6 +11,23 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 
+/// Directory holding the launcher's shipped assets (`data/`, `phone-dist/`,
+/// `rpcs3/`) — normally the exe's own folder. The software-GL fallback
+/// re-execs a copy of the exe from the `mesa/` subdir (PLAN 19), so that child
+/// would otherwise resolve assets against `mesa/`; it gets the real install
+/// dir back via the [`crate::gl_fallback::APP_DIR_ENV`] env var. Every
+/// exe-relative asset path goes through here so the re-exec child stays
+/// correct.
+pub fn app_asset_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os(crate::gl_fallback::APP_DIR_ENV) {
+        return PathBuf::from(dir);
+    }
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
 /// Resolve the base runtime-state directory. Creates it if missing.
 pub fn resolve_runtime_dir() -> Result<PathBuf> {
     let dir = runtime_dir_unchecked()?;

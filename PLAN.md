@@ -3579,6 +3579,48 @@ needed at bake time. `cargo run -p skylander-brand-bake` re-bakes everything.
   binaries to probe for COM self-reg → error 193; the DLLs ship fine as plain files), and
   unrelated to the branding work — log noise only.
 
+## Phase 19 — Software-OpenGL fallback + demo mode (winget validation fix)
+
+**Trigger:** the winget submission ([PR #381659](https://github.com/microsoft/winget-pkgs/pull/381659))
+reviewer reported the package **installs but won't launch** on the validation VM — a
+clean, **GPU-less** machine. Root cause: the launcher + first-launch wizard are eframe
+apps on the **glow / OpenGL 3.x** backend, but a GPU-less box only exposes Microsoft's
+GDI-generic **OpenGL 1.1** ICD, so `eframe::run_native` fails and the
+`windows_subsystem = "windows"` process exits **silently** (no window, no dialog —
+matches the reviewer's video). The fix ships a **bundled Mesa llvmpipe** software-OpenGL
+runtime and, on a GPU-less machine, runs the launcher on it — which doubles as a usable
+**demo / dummy-driver mode** (aligns with issue #2's "PC-only mode" ask + a recorded demo).
+
+- [x] 19.1 — **Software-OpenGL fallback** (`crates/server/src/gl_fallback.rs`). Up-front
+  WGL probe reads `GL_VERSION` from a throwaway context (guarded — any anomaly defaults to
+  *hardware*, so a working GPU machine can't be pushed onto software). On `< 3.0`, **re-exec
+  `<app>/mesa/<exe>`**: glutin static-links the WGL context functions to the system
+  `opengl32.dll` (`glutin_wgl_sys` `StaticGenerator`), so an env var alone can't redirect
+  them — Mesa must be the *process* opengl32, which the loader resolves from the child's
+  app directory (`mesa/`). Override with `SKYLANDER_GL=software|hardware`. Verified on the
+  HTPC: GPU → `NVIDIA RTX 2080 Ti` (no re-exec); forced software → `llvmpipe ... Mesa 26.1.1`.
+- [x] 19.2 — **Demo env override.** `SKYLANDER_PORTAL_DRIVER=mock` honoured in the release
+  `config::load` — forces the dummy driver, skips the wizard, transient (no config.json
+  write). For scripted/recorded demos on any machine.
+- [x] 19.3 — **Respect a deliberate Mock config** in the Windows release load —
+  `migrate_install_paths` no longer rewrites a `Mock` driver to IPC (it still repairs stale
+  pre-IPC UIA configs). Without this the wizard's demo config reverted to IPC next launch.
+- [x] 19.4 — **Wizard demo page.** New `Page::Demo` with a no-GPU notice (auto-opened when
+  the software renderer is active) + a "TRY DEMO MODE" button on Welcome (any machine).
+  Persists `mock_default` (renamed from `macos_default` — now platform-neutral). Escape
+  hatch: "FULL SETUP INSTEAD".
+- [x] 19.5 — **Mock driver in the Windows release.** Added `mock-driver-runtime` to the
+  release build features (same feature the macOS lane ships) so `DriverKind::Mock` is
+  constructible instead of bailing. Relaxes no security gates (unlike `dev-tools`).
+- [x] 19.6 — **Package bundled Mesa** (`release.yml` + `wix/`). Download + SHA-256-verify
+  Mesa `26.1.1` llvmpipe, extract the minimal set (`opengl32.dll` + `libgallium_wgl.dll`;
+  `dxil.dll` is d3d12-only, not needed), drop a launcher-exe copy alongside → `mesa/` in
+  the zip + heat-harvested into the MSI (`MesaDir`/`MesaFiles`). Asset paths route through
+  `paths::app_asset_dir()` (honours `SKYLANDER_APP_DIR`) so the re-exec child still finds
+  `data/`/`phone-dist/`/`rpcs3/`.
+- [ ] 19.7 — **Ship + validate.** Cut the release, confirm the winget validation VM now
+  launches the app (demo mode), then reply on PR #381659 and resume the manifest bump.
+
 ## Backlog (not yet phased)
 
 - **Wire UnixRpcsProcess into non-Windows RpcsProcess + server (driver=ipc on mac/linux)** — added 2026-05-31.

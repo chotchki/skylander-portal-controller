@@ -143,6 +143,12 @@
                          Rpcs3Files; the wizard defaults rpcs3_exe to
                          APPLICATIONFOLDER\rpcs3\rpcs3.exe. -->
                     <Directory Id='Rpcs3Dir' Name='rpcs3'/>
+                    <!-- Bundled Mesa software-OpenGL runtime (PLAN 19) — heat-
+                         harvested into MesaFiles (opengl32.dll +
+                         libgallium_wgl.dll + a launcher-exe copy). A GPU-less
+                         launch re-execs APPLICATIONFOLDER\mesa\skylander-portal-controller.exe
+                         so the static opengl32 import resolves to Mesa. -->
+                    <Directory Id='MesaDir' Name='mesa'/>
                 </Directory>
             </Directory>
             <Directory Id='ProgramMenuFolder'>
@@ -184,6 +190,7 @@
             <ComponentGroupRef Id='DataFiles'/>
             <ComponentGroupRef Id='SteamFiles'/>
             <ComponentGroupRef Id='Rpcs3Files'/>
+            <ComponentGroupRef Id='MesaFiles'/>
         </Feature>
 
         <SetProperty Id='ARPINSTALLLOCATION'
