@@ -14,3 +14,9 @@ tokio = { workspace = true }
 fantoccini = "0.21"
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+# PLAN 15.10 — whole-desktop MP4 capture (Windows.Graphics.Capture + built-in
+# encoder, no external ffmpeg). MIT → GPL-2.0-compatible. Windows-only; the
+# capture module is cfg-stubbed elsewhere so the workspace still builds on mac.
+[target.'cfg(windows)'.dependencies]
+windows-capture = "2.0"

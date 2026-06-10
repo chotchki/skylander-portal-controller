@@ -1,20 +1,23 @@
-//! PLAN 15.11 — desktop-mode single-scene play-through (MVP).
+//! PLAN 15.10/15.11 — desktop-mode single-scene play-through recorder.
 //!
 //! Boots the launcher in Phase-20 **Desktop mode** (windowed) with the mock
-//! driver (no RPCS3) and drives the phone SPA in a VISIBLE Chrome window beside
-//! it via the `skylander-e2e-tests` harness, drops a screenshot, and holds the
-//! scene briefly so the desktop (launcher + phone) is observable. This MVP
-//! proves the harness reuse + headed drive; the `windows-capture` MP4 backend
-//! (PLAN 15.10) — capturing the whole desktop to video — layers on next.
+//! driver (no RPCS3), records the **whole primary monitor to an MP4** via
+//! `windows-capture` (no external ffmpeg), and — while recording — drives the
+//! phone SPA in a VISIBLE Chrome window beside the launcher through a
+//! profile → game → portal flow. Outputs an MP4 + a still PNG.
 //!
 //! Run (build the phone with the harness's pinned token first, else the
-//! stale-version overlay blocks every click):
+//! stale-version overlay blocks every click; and point CHROMEDRIVER at a build
+//! matching your installed Chrome):
 //!   cd phone && BUILD_TOKEN=e2e-test trunk build
-//!   cargo run -p skylander-playthrough
+//!   CHROMEDRIVER=<matching chromedriver.exe> cargo run -p skylander-playthrough
+
+mod capture;
 
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use capture::DesktopCapture;
 use fantoccini::Locator;
 use skylander_e2e_tests::{Phone, TestServer, inject_profile, launch_giants, unlock_session};
 
@@ -34,15 +37,20 @@ async fn main() -> Result<()> {
     let _bob = inject_profile(&server.url, "Bob", "2222", "#da28a8").await?;
     launch_giants(&server.url).await?;
 
-    // 3. Visible Chrome parked to the right of the windowed launcher (which
-    //    opens ~top-left at 1100x760).
+    // 3. Start whole-desktop MP4 capture (launcher is up + visible).
+    let mp4 = std::env::temp_dir().join("playthrough-desktop.mp4");
+    let cap = DesktopCapture::start(&mp4).context("start desktop capture")?;
+    tracing::info!(mp4 = %mp4.display(), "recording the desktop…");
+    tokio::time::sleep(Duration::from_secs(1)).await; // a beat with just the launcher
+
+    // 4. Visible Chrome parked to the right of the windowed launcher.
     let phone_url = server.phone_url().await?;
     let phone = Phone::new_headed(&phone_url, &server.chromedriver_url, 1180, 40, 470, 940)
         .await
         .context("open headed phone browser")?;
     tracing::info!("phone browser open (headed) — driving the flow");
 
-    // 4. Drive: profile picker → unlock Alice (PIN bypass) → portal.
+    // 5. Drive: profile picker → unlock Alice (PIN bypass) → portal.
     phone
         .wait_for(Locator::Css(".profile-picker"), Duration::from_secs(20))
         .await
@@ -53,16 +61,18 @@ async fn main() -> Result<()> {
         .await
         .is_err()
     {
-        tracing::warn!("portal view not reached in time — capturing whatever rendered");
+        tracing::warn!("portal view not reached in time — recording whatever rendered");
     }
-    tokio::time::sleep(Duration::from_secs(1)).await;
 
-    // 5. Artifact + hold so the desktop scene is observable.
-    let out = std::env::temp_dir().join("playthrough-desktop.png");
-    phone.screenshot(&out).await?;
-    tracing::info!(screenshot = %out.display(), "captured phone screenshot");
-    tracing::info!("holding 8s — look at the desktop (launcher + phone side-by-side)…");
-    tokio::time::sleep(Duration::from_secs(8)).await;
+    // 6. Hold so the portal is on screen for a few seconds of footage.
+    tokio::time::sleep(Duration::from_secs(6)).await;
+
+    // 7. Stop + flush the MP4, drop a still, tear down.
+    cap.stop().context("stop + flush desktop capture")?;
+    tracing::info!(mp4 = %mp4.display(), "MP4 written");
+    let png = std::env::temp_dir().join("playthrough-desktop.png");
+    phone.screenshot(&png).await?;
+    tracing::info!(screenshot = %png.display(), "still captured");
 
     phone.close().await.ok();
     tracing::info!("done");
