@@ -146,10 +146,6 @@ pub struct LauncherApp {
     /// window, so the RPCS3 game window is *fitted* to our client rect (20.4)
     /// rather than just z-ordered; `Tv` keeps the fullscreen behaviour.
     window_mode: crate::config::WindowMode,
-    /// PLAN 20.4 — last `(game_hwnd, x, y, w, h)` we fitted the game window to,
-    /// so an unchanged frame skips the move+resize `SetWindowPos` (re-asserting
-    /// only z-order). `None` until the first fit or after the game window changes.
-    last_game_fit: Option<(u64, i32, i32, i32, i32)>,
 }
 
 impl LauncherApp {
@@ -222,7 +218,6 @@ impl LauncherApp {
             raw_ip_qr_pixels,
             bind_port,
             window_mode,
-            last_game_fit: None,
         }
     }
 
@@ -548,11 +543,7 @@ impl eframe::App for LauncherApp {
                 // resize) as well as z-ordered below it; TV mode is fullscreen,
                 // so the game just needs the every-frame z-order assertion.
                 if matches!(self.window_mode, crate::config::WindowMode::Desktop) {
-                    if let Some(applied) =
-                        fit_game_below_launcher_via_win32(frame, game_hwnd, self.last_game_fit)
-                    {
-                        self.last_game_fit = Some(applied);
-                    }
+                    fit_game_below_launcher_via_win32(frame, game_hwnd);
                 } else {
                     place_game_below_launcher_via_win32(frame, game_hwnd);
                 }
@@ -1118,29 +1109,24 @@ fn place_game_below_launcher_via_win32(_frame: &eframe::Frame, _game_hwnd: u64) 
 /// PLAN 20.4 (Desktop window mode): keep the RPCS3 window fitted to the
 /// launcher's client rect (move + resize) AND directly below it in z-order, so
 /// the game fills the windowed launcher's content area and tracks its
-/// move/resize. Geometry is re-applied only when the `(hwnd, rect)` changes
-/// (the caller threads the previous value through `last`); an unchanged frame
-/// just re-asserts z-order (`SWP_NOMOVE | SWP_NOSIZE`, cheap) so no other window
-/// can drift between the launcher and the game. Returns the applied
-/// `(hwnd, x, y, w, h)` key for the caller to cache, or `None` if the launcher
-/// is unavailable / minimised (degenerate client rect) — so we never fit the
-/// game to a 0×0 box.
+/// move/resize. The full geometry is re-applied EVERY frame — RPCS3 comes up
+/// fullscreen and re-sizes its own window during boot, and a change-detected skip
+/// let that override drift out of the fit (the game looked unconstrained); always
+/// re-applying stops it (SetWindowPos to identical geometry is a near-no-op).
+/// No-op if the launcher is unavailable / minimised (degenerate client rect), so
+/// we never fit the game to a 0×0 box.
 #[cfg(windows)]
-fn fit_game_below_launcher_via_win32(
-    frame: &eframe::Frame,
-    game_hwnd: u64,
-    last: Option<(u64, i32, i32, i32, i32)>,
-) -> Option<(u64, i32, i32, i32, i32)> {
+fn fit_game_below_launcher_via_win32(frame: &eframe::Frame, game_hwnd: u64) {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use windows::Win32::Foundation::{HWND, POINT, RECT};
     use windows::Win32::Graphics::Gdi::ClientToScreen;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetClientRect, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
-    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, SWP_NOACTIVATE, SetWindowPos};
 
-    let handle = frame.window_handle().ok()?;
+    let Ok(handle) = frame.window_handle() else {
+        return;
+    };
     let RawWindowHandle::Win32(win32) = handle.as_raw() else {
-        return None;
+        return;
     };
     let launcher = HWND(win32.hwnd.get() as *mut _);
     let game = HWND(game_hwnd as *mut _);
@@ -1151,7 +1137,7 @@ fn fit_game_below_launcher_via_win32(
     unsafe {
         let mut rc = RECT::default();
         if GetClientRect(launcher, &mut rc).is_err() {
-            return None;
+            return;
         }
         // Client (0,0) → screen coords is the top-left; the rect's right/bottom
         // are the client width/height (left/top are always 0).
@@ -1159,34 +1145,13 @@ fn fit_game_below_launcher_via_win32(
         let _ = ClientToScreen(launcher, &mut tl);
         let (w, h) = (rc.right - rc.left, rc.bottom - rc.top);
         if w <= 0 || h <= 0 {
-            return None; // minimised / degenerate — don't fit the game to 0×0
+            return; // minimised / degenerate — don't fit the game to 0×0
         }
-        let key = (game_hwnd, tl.x, tl.y, w, h);
-        if Some(key) == last {
-            // Unchanged geometry — only re-assert z-order (cheap; no move/resize).
-            let _ = SetWindowPos(
-                game,
-                Some(launcher),
-                0,
-                0,
-                0,
-                0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-            );
-        } else {
-            // Moved/resized — apply the full geometry (this also re-orders the
-            // game directly below the launcher).
-            let _ = SetWindowPos(game, Some(launcher), tl.x, tl.y, w, h, SWP_NOACTIVATE);
-        }
-        Some(key)
+        // Move + resize + z-order every frame (re-orders the game directly below
+        // the launcher and keeps it sized to the client rect).
+        let _ = SetWindowPos(game, Some(launcher), tl.x, tl.y, w, h, SWP_NOACTIVATE);
     }
 }
 
 #[cfg(not(windows))]
-fn fit_game_below_launcher_via_win32(
-    _frame: &eframe::Frame,
-    _game_hwnd: u64,
-    _last: Option<(u64, i32, i32, i32, i32)>,
-) -> Option<(u64, i32, i32, i32, i32)> {
-    None
-}
+fn fit_game_below_launcher_via_win32(_frame: &eframe::Frame, _game_hwnd: u64) {}

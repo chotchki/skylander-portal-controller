@@ -256,33 +256,21 @@ impl LauncherApp {
                 );
             }
 
-            // Action buttons — only on the QR front face (PLAN 16.10.6). During
-            // the Starting / Loading / Switching / Returning / MaxPlayers back-
-            // faces the spinning badge owns the surface and these buttons carry no
-            // useful action there, so they were getting cut off the TV bottom *and*
-            // showing under the wrong screens; gate them on `back_face.is_none()`
-            // so they appear (and re-anchor) only when we're back on the QR.
-            if back_face.is_none() {
-                // Anchor the buttons to the **title-safe bottom**, not a fixed gap
-                // below the subtitle. The QR card is centred on the panel (iris
-                // alignment), so the buttons flow ~CARD_SIZE/2 + ~290px below
-                // centre — and a fixed gap (the v1.9.3 attempt, PLAN 16.9.5c) still
-                // put them inside the TV's overscan-cropped bottom band, so all the
-                // buttons vanished (Chris re-flagged 2026-05-30). Overscan is a
-                // *fraction* of the screen, so we inset by a fraction
-                // (`TV_OVERSCAN_FRAC`) and push the row down so its bottom lands at
-                // that safe line — clamped to a minimum gap so it can never ride up
-                // into the subtitle on a short window. Resolution-independent:
-                // works at 1080p- or 4K-logical panels. PLAN 16.9.8.
-                //
-                // Side-by-side, not stacked (Chris 2026-05-31: "if we need the
-                // vertical space, it's fine to put them side by side"). A single
-                // 60px-tall row instead of a 126px stack reclaims ~66px of the
-                // overscan-squeezed bottom band — the safety margin that keeps the
-                // buttons clear of the crop on a real TV. PLAN 16.10.6.
+            // Action buttons — shown only on the QR front face (PLAN 16.10.6) and
+            // NOT while a game is live. On the back faces (Starting / Loading /
+            // Switching / Returning / MaxPlayers) the spinning badge owns the
+            // surface. In-game the badge + label fade out via alpha, but these egui
+            // buttons aren't alpha-gated — so without the `game_in_progress` guard
+            // they'd sit on top of the game (the dispatcher still calls render_main
+            // while `game_underneath`, PLAN 20.4). They return on the portal/connect
+            // surface. Side-by-side as one ~60px row (Chris 2026-05-31).
+            let game_in_progress = status_snapshot.rpcs3_running
+                && status_snapshot.current_game.is_some()
+                && status_snapshot.game_playable;
+            if back_face.is_none() && !game_in_progress {
                 // The reserve-from-bottom budget at the top of this function already
                 // positioned the badge so this row lands above the bottom-safe line;
-                // just the fixed gap below the label now (no overscan arithmetic).
+                // just the fixed gap below the label (PLAN 20.5 — no overscan math).
                 const BTN_W: f32 = 260.0;
                 const BTN_GAP: f32 = 18.0;
                 let row_h = BTN_ROW_H; // matches the height the budget reserved
