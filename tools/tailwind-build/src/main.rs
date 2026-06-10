@@ -21,10 +21,10 @@
 //! - On Unix, `chmod +x` after download.
 //! - Invokes the binary with `--input phone/styles/input.css
 //!   --output phone/styles/tailwind.css --minify`. The matching
-//!   `<link data-trunk rel="copy-file" href="styles/tailwind.css">`
-//!   in `phone/index.html` carries the bundle into trunk's staged
-//!   `dist/` (writing straight to `dist/` doesn't survive trunk's
-//!   "apply new distribution" wholesale-replace step).
+//!   `<link data-trunk rel="css" href="styles/tailwind.css">` in
+//!   `phone/index.html` carries the bundle into trunk's staged `dist/`
+//!   under a CONTENT-HASHED name (writing straight to `dist/` doesn't
+//!   survive trunk's "apply new distribution" wholesale-replace step).
 //!
 //! CI hint: `actions/cache` keyed on `TAILWIND_VERSION + os` should
 //! point at `phone/.tailwind-cache/` so the download doesn't repeat.
@@ -76,9 +76,9 @@ fn main() -> Result<()> {
     // straight into `dist/`. Trunk's post-build "apply new
     // distribution" step replaces the dist directory wholesale, so
     // anything we drop there gets blown away. The matching
-    // `<link data-trunk rel="copy-file" href="styles/tailwind.css">`
-    // in `phone/index.html` carries the generated bundle into the
-    // staged dist + final dist atomically with the wasm.
+    // `<link data-trunk rel="css" href="styles/tailwind.css">` in
+    // `phone/index.html` carries the generated bundle into the staged
+    // dist + final dist (content-hashed) atomically with the wasm.
     let styles_dir = phone_dir.join("styles");
     std::fs::create_dir_all(&styles_dir)
         .with_context(|| format!("create styles dir {}", styles_dir.display()))?;
