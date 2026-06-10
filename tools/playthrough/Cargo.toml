@@ -12,6 +12,7 @@ skylander-e2e-tests = { path = "../../crates/e2e-tests" }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 fantoccini = "0.21"
+serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 

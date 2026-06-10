@@ -628,6 +628,50 @@ impl Phone {
             .with_context(|| format!("write screenshot to {}", path.as_ref().display()))?;
         Ok(())
     }
+
+    /// Dispatch a synthetic `pointerdown` + `pointerup` at the centre of the
+    /// first element matching `selector`, via JS. Some controls (the portal
+    /// lid grabber) listen to PointerEvents rather than `click`, and a
+    /// synthetic WebDriver click doesn't reach them. Used by the screenshot
+    /// tour + the play-through recorder.
+    pub async fn tap_pointer(&self, selector: &str) -> Result<()> {
+        let js = format!(
+            r#"
+            const el = document.querySelector('{sel}');
+            if (!el) return null;
+            const r = el.getBoundingClientRect();
+            const opts = {{
+                pointerId: 1, isPrimary: true, bubbles: true,
+                clientX: r.left + r.width / 2,
+                clientY: r.top + r.height / 2,
+            }};
+            el.dispatchEvent(new PointerEvent('pointerdown', opts));
+            el.dispatchEvent(new PointerEvent('pointerup',   opts));
+            return true;
+            "#,
+            sel = selector,
+        );
+        let _ = self.client.execute(&js, vec![]).await?;
+        Ok(())
+    }
+
+    /// Click the first element matching `selector` via JS (`el.click()`),
+    /// bypassing WebDriver's interactability check. Robust against controls
+    /// caught mid-animation or transiently covered by a closing overlay, which
+    /// fail a normal `click()` with "element not interactable" — common in a
+    /// headed (non-headless) browser. Returns `false` if nothing matched.
+    pub async fn js_click(&self, selector: &str) -> Result<bool> {
+        let js = format!(
+            "const el = document.querySelector('{sel}'); if (!el) {{ return false; }} el.click(); return true;",
+            sel = selector,
+        );
+        Ok(self
+            .client
+            .execute(&js, vec![])
+            .await?
+            .as_bool()
+            .unwrap_or(false))
+    }
 }
 
 // ---------------------------------------------------------------- REST
