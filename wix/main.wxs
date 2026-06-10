@@ -142,16 +142,25 @@
                          need the runtime too. The same DLLs are also dropped into
                          mesa\ (harvested via MesaFiles) for the re-exec child.
                          MS-redistributable + platform system library → GPL-2.0-OK.
-                         Sourced from target/release (staged in release.yml). -->
-                    <Component Id='VcRuntime' Guid='*'>
+                         Sourced from target/release (staged in release.yml).
+                         One component PER DLL: each is a versioned file, and an
+                         auto-GUID (`*`) component may hold only one such file
+                         (else WiX LGHT0368). -->
+                    <Component Id='Vcruntime140Comp' Guid='*'>
                         <File Id='Vcruntime140' Name='vcruntime140.dll' DiskId='1'
                               Source='$(var.CargoTargetBinDir)\vcruntime140.dll' KeyPath='yes'/>
+                    </Component>
+                    <Component Id='Vcruntime140_1Comp' Guid='*'>
                         <File Id='Vcruntime140_1' Name='vcruntime140_1.dll' DiskId='1'
-                              Source='$(var.CargoTargetBinDir)\vcruntime140_1.dll'/>
+                              Source='$(var.CargoTargetBinDir)\vcruntime140_1.dll' KeyPath='yes'/>
+                    </Component>
+                    <Component Id='Msvcp140Comp' Guid='*'>
                         <File Id='Msvcp140' Name='msvcp140.dll' DiskId='1'
-                              Source='$(var.CargoTargetBinDir)\msvcp140.dll'/>
+                              Source='$(var.CargoTargetBinDir)\msvcp140.dll' KeyPath='yes'/>
+                    </Component>
+                    <Component Id='Msvcp140_1Comp' Guid='*'>
                         <File Id='Msvcp140_1' Name='msvcp140_1.dll' DiskId='1'
-                              Source='$(var.CargoTargetBinDir)\msvcp140_1.dll'/>
+                              Source='$(var.CargoTargetBinDir)\msvcp140_1.dll' KeyPath='yes'/>
                     </Component>
                     <!-- data/ + steam/ subdirs resolve here via heat-
                          generated fragments referenced below. heat is
@@ -205,7 +214,10 @@
             Display='expand'
             Absent='disallow'>
             <ComponentRef Id='MainExe'/>
-            <ComponentRef Id='VcRuntime'/>
+            <ComponentRef Id='Vcruntime140Comp'/>
+            <ComponentRef Id='Vcruntime140_1Comp'/>
+            <ComponentRef Id='Msvcp140Comp'/>
+            <ComponentRef Id='Msvcp140_1Comp'/>
             <ComponentRef Id='ApplicationProgramsFolderCleanup'/>
             <!-- heat-generated; see the comment at the top of this file. -->
             <ComponentGroupRef Id='DataFiles'/>
