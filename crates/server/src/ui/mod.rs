@@ -475,6 +475,21 @@ impl eframe::App for LauncherApp {
             self.config_gui_minimized = false;
         }
 
+        // PLAN 20.1 spike: in windowed-launcher spike mode, slave the stand-in
+        // window to our client rect every frame so we can eyeball move/resize
+        // tracking + flicker. Gated on SKYLANDER_SPIKE_DESKTOP; never in release.
+        #[cfg(windows)]
+        if crate::spike_desktop::enabled() {
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            if let Ok(handle) = frame.window_handle() {
+                if let RawWindowHandle::Win32(win32) = handle.as_raw() {
+                    crate::spike_desktop::slave_to_launcher(win32.hwnd.get());
+                }
+            }
+            // Keep tracking smooth during a live drag/resize.
+            ctx.request_repaint();
+        }
+
         // Always-on-top toggle. Release: always on. Dev: only while
         // RPCS3 is running so the launcher overlays the game for
         // in-game testing without sticking on top during normal code

@@ -28,6 +28,9 @@ pub struct Config {
     pub firmware_pack_root: PathBuf,
     pub bind_port: u16,
     pub driver_kind: DriverKind,
+    /// Launcher window presentation (PLAN 20) — TV (fullscreen) vs Desktop
+    /// (resizable window). Consumed by `main.rs` for the eframe viewport.
+    pub window_mode: WindowMode,
     /// Directory where the log file(s) live. Differs dev vs release.
     pub log_dir: PathBuf,
     /// Directory containing the phone SPA's built assets.
@@ -79,6 +82,22 @@ pub enum DriverKind {
     /// launch + window coordination (PLAN 16.6) is proven on the HTPC.
     Ipc,
     Mock,
+}
+
+/// How the launcher presents its window (PLAN 20). Chosen once in the
+/// first-launch wizard, persisted in `config.json`, default [`WindowMode::Tv`]
+/// so existing installs keep the fullscreen living-room behaviour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowMode {
+    /// Living-room / Steam Big Picture: fullscreen launcher overlaying RPCS3,
+    /// the family drives the portal from phones. The original experience.
+    #[default]
+    Tv,
+    /// Desktop app: the launcher is a normal resizable window that still sits
+    /// above the emulator (PLAN 20.4). For a user at a desk; portal control via
+    /// a browser on the same PC.
+    Desktop,
 }
 
 /// `software_gl` is the GPU-less signal from [`crate::gl_fallback`] — release
@@ -137,6 +156,13 @@ pub fn load(_software_gl: bool) -> Result<Config> {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("data"));
 
+    // PLAN 20: dev parity for Desktop window mode via `.env.dev` (`WINDOW_MODE=
+    // desktop`). Default Tv — `cargo run` stays fullscreen like the HTPC.
+    let window_mode = match env.get("WINDOW_MODE").map(|s| s.as_str()) {
+        Some("desktop") => WindowMode::Desktop,
+        _ => WindowMode::Tv,
+    };
+
     // HMAC key lives in `./dev-data/hmac.key` so it survives `cargo clean`
     // but regenerates on `rm -rf dev-data/`. Dev mode doesn't push through
     // the full config.json round-trip because `.env.dev` is the source of
@@ -164,6 +190,7 @@ pub fn load(_software_gl: bool) -> Result<Config> {
         firmware_pack_root,
         bind_port,
         driver_kind,
+        window_mode,
         log_dir,
         phone_dist_dir,
         data_root,
@@ -341,6 +368,7 @@ pub fn load(software_gl: bool) -> Result<Config> {
         firmware_pack_root: persisted.firmware_pack_root,
         bind_port: persisted.bind_port,
         driver_kind,
+        window_mode: persisted.window_mode,
         log_dir: persisted.log_dir,
         phone_dist_dir,
         data_root,

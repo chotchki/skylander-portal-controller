@@ -3669,16 +3669,21 @@ it's extended**: whenever the launcher moves or resizes, the RPCS3 window must b
 **and resized** to track the launcher's client area. That geometry-slaving (the TV path only
 ever does z-order with `SWP_NOMOVE | SWP_NOSIZE`) is the real work of this phase.
 
-- [ ] 20.1 — **Spike (do this first).** On the dev box, confirm the core assumption: a windowed
-  launcher can overlay the RPCS3 window (iris reveal intact), stay z-ordered directly above it,
-  and **slave the game window to the launcher's client rect across a move + a resize** without
-  bad flicker. Go/no-go before the wizard work.
-- [ ] 20.2 — **`window_mode` config + wizard step.** Add `WindowMode { Tv, Desktop }` to
+- [x] 20.1 — **Spike — GO (2026-06-09).** Windowed launcher + a magenta stand-in window slaved
+  to the launcher's client rect via per-frame `SetWindowPos` (move **and** resize). Geometry math
+  **validated**: the stand-in snaps to the launcher's rect in lockstep on move/resize end.
+  Continuous-during-drag smoothness **inconclusive** — tested over RDP, where "show window
+  contents while dragging" is off (outline-only drag, single snap on release); and separately the
+  Win32 modal move/size loop (`WM_ENTERSIZEMOVE`→`WM_EXITSIZEMOVE`) suspends egui's frame loop, so
+  the slave fires at release, not continuously. Worst case = snap-on-release (acceptable). Spike
+  code: `crates/server/src/spike_desktop.rs` (gated `SKYLANDER_SPIKE_DESKTOP`; **temporary —
+  delete when 20.4 lands**). Live-tracking follow-up captured in 20.4.
+- [x] 20.2 — **`window_mode` config + wizard step** *(done 2026-06-09)*. `config::WindowMode { Tv, Desktop }` (serde `snake_case`, `#[default] Tv`) on both the runtime `Config` and `PersistedConfig` (`#[serde(default)]` → pre-20 configs load as `Tv`); release `load` passes `persisted.window_mode` straight through (untouched by `migrate_install_paths`); dev reads `.env.dev WINDOW_MODE=desktop`. New wizard `Page::Display` ("STEP 3 OF 3 — HOW WILL YOU USE THIS?") with TV/Desktop selectable buttons, threaded through `from_user_paths`. 4 serde/constructor unit tests green. Original task text: Add `WindowMode { Tv, Desktop }` to
   `PersistedConfig` (default `Tv`), persisted + respected on load like the Phase-19
   `mock_default` choice (`config.rs`); `migrate_install_paths` must not clobber it. New wizard
   step (`wizard.rs`) framed by use-case — "Living room (TV + phones)" vs "Desktop (windowed
   app)". +unit tests on the load/migrate path.
-- [ ] 20.3 — **Windowed `native_options` in Desktop mode** (`main.rs`, currently
+- [x] 20.3 — **Windowed `native_options` in Desktop mode** *(done 2026-06-09, folded in with 20.2)*. `main.rs` viewport: `windowed = spike || cfg.window_mode == Desktop` → resizable window, `min_inner_size 480×360`, decorated (default), not always-on-top; TV stays fullscreen. Transparency kept in both real modes (only the 20.1 spike is opaque) for the future in-game iris overlay. Original task text: (`main.rs`, currently
   `with_fullscreen(true)` + release always-on-top): Desktop → resizable window at a sane default
   size with a **minimum size** so the game viewport can't degenerate; launcher stays above the
   emulator but is not global-topmost. Decide decorated (standard title bar, user drags/resizes
@@ -3692,7 +3697,11 @@ ever does z-order with `SWP_NOMOVE | SWP_NOSIZE`) is the real work of this phase
   only on actual rect change (no per-frame thrash / flicker); **per-monitor DPI** when dragged
   across monitors; minimize/restore (the `config_gui_open` minimise path already exists);
   RPCS3's own aspect/letterbox inside the sized window (fine — the iris is circular). IPC portal
-  control is unchanged (mode ⟂ driver).
+  control is unchanged (mode ⟂ driver). **Live-tracking (from the 20.1 spike):** the Win32 modal
+  move/size loop suspends egui's frame loop, so a per-frame slave snaps on *release*, not
+  continuously. Snap-on-release is acceptable for v1; if continuous tracking is wanted, subclass
+  the launcher window (`SetWindowSubclass`) and re-slave on `WM_MOVING`/`WM_SIZING`/
+  `WM_WINDOWPOSCHANGED`. Confirm smoothness on a local (non-RDP) session before deciding.
 - [ ] 20.5 — **Desktop-mode launcher UI lead.** In Desktop mode demote the QR ("scan from a
   phone") and lead with the existing **"Open in Browser"** action (the control surface for a
   desk user). Light copy/layout pass for the windowed case.

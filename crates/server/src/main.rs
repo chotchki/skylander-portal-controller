@@ -624,17 +624,36 @@ fn main() -> Result<()> {
     // dev exception now that the kill path is reliable. Transparency is
     // always on so the in-game surface (PLAN 4.15.8) can render a
     // reconnect QR overlay with the game visible through the viewport.
+    // PLAN 20.3: Desktop window mode (chosen in the wizard / persisted in config,
+    // or `.env.dev` WINDOW_MODE=desktop in dev) makes the launcher a normal
+    // resizable window; TV mode stays fullscreen + (release) always-on-top. The
+    // PLAN 20.1 spike flag (`SKYLANDER_SPIKE_DESKTOP`) also forces windowed and
+    // additionally stays opaque so its stand-in window is visible.
+    #[cfg(windows)]
+    let spike_desktop = skylander_server::spike_desktop::enabled();
+    #[cfg(not(windows))]
+    let spike_desktop = false;
+    let windowed = spike_desktop || matches!(cfg.window_mode, config::WindowMode::Desktop);
     let viewport = {
-        let mut vb = egui::ViewportBuilder::default()
-            .with_title("Skylander Portal Controller")
-            .with_fullscreen(true);
-        if !cfg!(feature = "dev-tools") {
-            vb = vb.with_always_on_top();
+        let mut vb = egui::ViewportBuilder::default().with_title("Skylander Portal Controller");
+        if windowed {
+            vb = vb
+                .with_inner_size([1100.0, 720.0])
+                .with_min_inner_size([480.0, 360.0])
+                .with_resizable(true);
+        } else {
+            vb = vb.with_fullscreen(true);
+            if !cfg!(feature = "dev-tools") {
+                vb = vb.with_always_on_top();
+            }
         }
-        // Transparent window always — the panel still paints an opaque
-        // starfield background in Main / Crashed / Farewell, so only the
-        // in-game path actually sees through to RPCS3 behind egui.
-        vb = vb.with_transparent(true);
+        // Transparent in every mode except the 20.1 spike (which wants an opaque
+        // window so its stand-in is visible). The panel paints an opaque
+        // starfield in Main / Crashed / Farewell, so only the in-game path sees
+        // through to RPCS3 behind egui — Desktop mode (20.4) needs that too.
+        if !spike_desktop {
+            vb = vb.with_transparent(true);
+        }
         // Window icon — same gold/Kaos asset the phone PWA pins to the
         // home screen. Without this Windows shows the eframe default
         // "egui e" placeholder in the taskbar / alt-tab. Same
@@ -649,6 +668,13 @@ fn main() -> Result<()> {
         viewport,
         ..Default::default()
     };
+    #[cfg(windows)]
+    if spike_desktop {
+        skylander_server::spike_desktop::spawn_standin();
+        info!(
+            "PLAN 20.1 spike active: windowed launcher + stand-in window (SKYLANDER_SPIKE_DESKTOP)"
+        );
+    }
     let url_for_ui = phone_url.clone();
     let raw_ip_url_for_ui = raw_ip_url.clone();
     let ui_bind_port = bind.port();

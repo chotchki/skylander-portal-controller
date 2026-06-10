@@ -151,6 +151,10 @@ pub struct PersistedConfig {
     /// regenerates and persists if missing.
     #[serde(default, with = "crate::wizard::hex_key_opt")]
     pub hmac_key: Option<Vec<u8>>,
+    /// Launcher window presentation (PLAN 20). `#[serde(default)]` so pre-20
+    /// configs load as `Tv` (the prior fullscreen behaviour).
+    #[serde(default)]
+    pub window_mode: crate::config::WindowMode,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -174,6 +178,7 @@ impl PersistedConfig {
     pub fn from_user_paths(
         install_rpcs3_exe: PathBuf,
         firmware_pack_root: PathBuf,
+        window_mode: crate::config::WindowMode,
         runtime_dir: &Path,
     ) -> Self {
         let exe_parent = crate::paths::app_asset_dir();
@@ -199,6 +204,7 @@ impl PersistedConfig {
             phone_dist_dir: exe_parent.join("phone-dist"),
             data_root: exe_parent.join("data"),
             hmac_key: Some(crate::config::generate_hmac_key()),
+            window_mode,
         }
     }
 
@@ -240,6 +246,7 @@ impl PersistedConfig {
             phone_dist_dir: exe_parent.join("phone-dist"),
             data_root,
             hmac_key: Some(crate::config::generate_hmac_key()),
+            window_mode: crate::config::WindowMode::Tv,
         }
     }
 
@@ -294,6 +301,7 @@ pub fn run_wizard_blocking(
 ) -> Result<PersistedConfig> {
     use std::sync::{Arc, Mutex};
 
+    use crate::config::WindowMode;
     use crate::{fonts, palette, vortex};
 
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -304,6 +312,8 @@ pub fn run_wizard_blocking(
         Demo,
         Rpcs3,
         FirmwarePack,
+        /// PLAN 20 — pick TV (fullscreen) vs Desktop (windowed) launcher.
+        Display,
         Done,
     }
 
@@ -324,6 +334,9 @@ pub fn run_wizard_blocking(
         /// No hardware GPU — the launcher is on the Mesa software renderer
         /// (PLAN 19). Drives the demo-page copy and makes Demo the start page.
         software_gl: bool,
+        /// PLAN 20 — TV (fullscreen) vs Desktop (windowed). Chosen on the
+        /// `Page::Display` step; flows into the final `PersistedConfig`.
+        window_mode: WindowMode,
     }
 
     impl WizardState {
@@ -379,6 +392,7 @@ pub fn run_wizard_blocking(
         runtime_dir: runtime_dir.to_path_buf(),
         reader_present,
         software_gl,
+        window_mode: WindowMode::Tv,
     }));
 
     struct App {
@@ -427,6 +441,7 @@ pub fn run_wizard_blocking(
                                 Page::Demo => render_demo(ui, ctx, &mut s),
                                 Page::Rpcs3 => render_rpcs3(ui, &mut s),
                                 Page::FirmwarePack => render_pack(ui, &mut s),
+                                Page::Display => render_display(ui, &mut s),
                                 Page::Done => render_done(ui, ctx),
                             },
                         );
@@ -630,7 +645,7 @@ pub fn run_wizard_blocking(
     }
 
     fn render_rpcs3(ui: &mut egui::Ui, s: &mut WizardState) {
-        heading(ui, "STEP 1 OF 2");
+        heading(ui, "STEP 1 OF 3");
         subhead(ui, "RPCS3");
         ui.add_space(24.0);
         body(ui, "Path to your existing RPCS3 (rpcs3.exe):");
@@ -672,7 +687,7 @@ pub fn run_wizard_blocking(
     }
 
     fn render_pack(ui: &mut egui::Ui, s: &mut WizardState) {
-        heading(ui, "STEP 2 OF 2");
+        heading(ui, "STEP 2 OF 3");
         subhead(ui, "FIRMWARE PACK (OPTIONAL)");
         ui.add_space(24.0);
         let copy = if s.reader_present {
@@ -718,13 +733,74 @@ pub fn run_wizard_blocking(
             }
             ui.add_space(12.0);
             let label = if s.pack_skipped() {
-                "FINISH (SKIP PACK)"
+                "NEXT (SKIP PACK)"
             } else {
-                "FINISH"
+                "NEXT"
             };
             if primary_button(ui, s.pack_valid().is_ok(), label).clicked() {
-                let cfg =
-                    PersistedConfig::from_user_paths(s.rpcs3_path(), s.pack_path(), &s.runtime_dir);
+                s.page = Page::Display;
+            }
+        });
+    }
+
+    /// PLAN 20 — final setup step: choose TV (fullscreen) vs Desktop (windowed)
+    /// launcher. Builds the `PersistedConfig` with the chosen `window_mode`.
+    fn render_display(ui: &mut egui::Ui, s: &mut WizardState) {
+        heading(ui, "STEP 3 OF 3");
+        subhead(ui, "HOW WILL YOU USE THIS?");
+        ui.add_space(24.0);
+        body(
+            ui,
+            "Pick how the launcher window behaves. Re-run setup any time to change it.",
+        );
+        ui.add_space(20.0);
+
+        // Living-room (TV) option — fullscreen, phone-driven (the default).
+        let tv_label = "LIVING ROOM - TV + PHONES";
+        let tv = if matches!(s.window_mode, WindowMode::Tv) {
+            primary_button(ui, true, tv_label)
+        } else {
+            ghost_button(ui, tv_label)
+        };
+        if tv.clicked() {
+            s.window_mode = WindowMode::Tv;
+        }
+        ui.add_space(4.0);
+        status_info(
+            ui,
+            "Fullscreen on the TV; the family drives the portal from their phones (scan the QR).",
+        );
+        ui.add_space(16.0);
+
+        // Desktop option — a normal resizable window; portal control via a browser.
+        let desk_label = "DESKTOP - WINDOWED APP";
+        let desk = if matches!(s.window_mode, WindowMode::Desktop) {
+            primary_button(ui, true, desk_label)
+        } else {
+            ghost_button(ui, desk_label)
+        };
+        if desk.clicked() {
+            s.window_mode = WindowMode::Desktop;
+        }
+        ui.add_space(4.0);
+        status_info(
+            ui,
+            "A resizable window on this PC; control the portal from a web browser on the same machine.",
+        );
+        ui.add_space(36.0);
+
+        ui.horizontal(|ui| {
+            if ghost_button(ui, "BACK").clicked() {
+                s.page = Page::FirmwarePack;
+            }
+            ui.add_space(12.0);
+            if primary_button(ui, true, "FINISH").clicked() {
+                let cfg = PersistedConfig::from_user_paths(
+                    s.rpcs3_path(),
+                    s.pack_path(),
+                    s.window_mode,
+                    &s.runtime_dir,
+                );
                 s.result = Some(cfg);
                 s.page = Page::Done;
             }
@@ -869,6 +945,52 @@ mod tests {
         let _ = default_firmware_pack_guess();
     }
 
+    // PLAN 20.2: a config.json written before the window-mode step has no
+    // `window_mode` key — it must default to Tv (the prior fullscreen behaviour).
+    #[test]
+    fn persisted_config_defaults_window_mode_to_tv_when_absent() {
+        let json = r#"{
+            "rpcs3_exe": "C:/rpcs3/rpcs3.exe",
+            "firmware_pack_root": "C:/pack",
+            "bind_port": 8765,
+            "driver_kind": "ipc",
+            "log_dir": "C:/logs",
+            "phone_dist_dir": "C:/phone",
+            "data_root": "C:/data"
+        }"#;
+        let cfg: PersistedConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.window_mode, crate::config::WindowMode::Tv);
+    }
+
+    #[test]
+    fn persisted_config_roundtrips_desktop_window_mode() {
+        let runtime = tempdir().unwrap();
+        let mut cfg = PersistedConfig::mock_default(runtime.path());
+        cfg.window_mode = crate::config::WindowMode::Desktop;
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: PersistedConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.window_mode, crate::config::WindowMode::Desktop);
+    }
+
+    #[test]
+    fn from_user_paths_carries_window_mode() {
+        let runtime = tempdir().unwrap();
+        let cfg = PersistedConfig::from_user_paths(
+            PathBuf::from("C:/rpcs3/rpcs3.exe"),
+            PathBuf::from("C:/pack"),
+            crate::config::WindowMode::Desktop,
+            runtime.path(),
+        );
+        assert_eq!(cfg.window_mode, crate::config::WindowMode::Desktop);
+    }
+
+    #[test]
+    fn mock_default_window_mode_is_tv() {
+        let runtime = tempdir().unwrap();
+        let cfg = PersistedConfig::mock_default(runtime.path());
+        assert_eq!(cfg.window_mode, crate::config::WindowMode::Tv);
+    }
+
     #[test]
     fn persisted_config_round_trip() {
         let d = tempdir().unwrap();
@@ -878,7 +1000,12 @@ mod tests {
         std::fs::create_dir_all(&pack).unwrap();
         std::fs::write(pack.join("a.sky"), b"").unwrap();
 
-        let cfg = PersistedConfig::from_user_paths(rpcs3.clone(), pack.clone(), d.path());
+        let cfg = PersistedConfig::from_user_paths(
+            rpcs3.clone(),
+            pack.clone(),
+            crate::config::WindowMode::Tv,
+            d.path(),
+        );
         let json_path = d.path().join("config.json");
         cfg.write(&json_path).unwrap();
 
