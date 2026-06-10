@@ -142,6 +142,14 @@ pub struct LauncherApp {
     /// Bind port (PLAN 17.3) — the connectivity card's "Fix Firewall" button
     /// passes it to the elevated `netsh` rule-add.
     bind_port: u16,
+    /// PLAN 20 launcher window mode. In `Desktop` the launcher is a resizable
+    /// window, so the RPCS3 game window is *fitted* to our client rect (20.4)
+    /// rather than just z-ordered; `Tv` keeps the fullscreen behaviour.
+    window_mode: crate::config::WindowMode,
+    /// PLAN 20.4 — last `(game_hwnd, x, y, w, h)` we fitted the game window to,
+    /// so an unchanged frame skips the move+resize `SetWindowPos` (re-asserting
+    /// only z-order). `None` until the first fit or after the game window changes.
+    last_game_fit: Option<(u64, i32, i32, i32, i32)>,
 }
 
 impl LauncherApp {
@@ -152,6 +160,7 @@ impl LauncherApp {
         url: String,
         raw_ip_url: String,
         bind_port: u16,
+        window_mode: crate::config::WindowMode,
     ) -> Self {
         // Apply the shared TV-launcher palette + Titan One display face.
         // Both must happen before any widgets render their first frame
@@ -212,6 +221,8 @@ impl LauncherApp {
             raw_ip_qr_texture: None,
             raw_ip_qr_pixels,
             bind_port,
+            window_mode,
+            last_game_fit: None,
         }
     }
 
@@ -532,7 +543,19 @@ impl eframe::App for LauncherApp {
             // the game beneath the launcher without raising the launcher to topmost,
             // so alt-tabbing away to other apps still works (they go above both).
             if let Some(game_hwnd) = status_snapshot.game_window_handle {
-                place_game_below_launcher_via_win32(frame, game_hwnd);
+                // PLAN 20.4: in Desktop window mode the launcher is a resizable
+                // window, so the game is *fitted* to its client rect (move +
+                // resize) as well as z-ordered below it; TV mode is fullscreen,
+                // so the game just needs the every-frame z-order assertion.
+                if matches!(self.window_mode, crate::config::WindowMode::Desktop) {
+                    if let Some(applied) =
+                        fit_game_below_launcher_via_win32(frame, game_hwnd, self.last_game_fit)
+                    {
+                        self.last_game_fit = Some(applied);
+                    }
+                } else {
+                    place_game_below_launcher_via_win32(frame, game_hwnd);
+                }
             }
         } else {
             // Legacy UIA z-order. Two layers: egui WindowLevel for the Normal ↔
@@ -1091,3 +1114,79 @@ fn place_game_below_launcher_via_win32(frame: &eframe::Frame, game_hwnd: u64) {
 
 #[cfg(not(windows))]
 fn place_game_below_launcher_via_win32(_frame: &eframe::Frame, _game_hwnd: u64) {}
+
+/// PLAN 20.4 (Desktop window mode): keep the RPCS3 window fitted to the
+/// launcher's client rect (move + resize) AND directly below it in z-order, so
+/// the game fills the windowed launcher's content area and tracks its
+/// move/resize. Geometry is re-applied only when the `(hwnd, rect)` changes
+/// (the caller threads the previous value through `last`); an unchanged frame
+/// just re-asserts z-order (`SWP_NOMOVE | SWP_NOSIZE`, cheap) so no other window
+/// can drift between the launcher and the game. Returns the applied
+/// `(hwnd, x, y, w, h)` key for the caller to cache, or `None` if the launcher
+/// is unavailable / minimised (degenerate client rect) — so we never fit the
+/// game to a 0×0 box.
+#[cfg(windows)]
+fn fit_game_below_launcher_via_win32(
+    frame: &eframe::Frame,
+    game_hwnd: u64,
+    last: Option<(u64, i32, i32, i32, i32)>,
+) -> Option<(u64, i32, i32, i32, i32)> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows::Win32::Foundation::{HWND, POINT, RECT};
+    use windows::Win32::Graphics::Gdi::ClientToScreen;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetClientRect, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
+    };
+
+    let handle = frame.window_handle().ok()?;
+    let RawWindowHandle::Win32(win32) = handle.as_raw() else {
+        return None;
+    };
+    let launcher = HWND(win32.hwnd.get() as *mut _);
+    let game = HWND(game_hwnd as *mut _);
+
+    // SAFETY: `launcher` is eframe's owned handle this frame; `game` is the HWND
+    // RPCS3 published over IPC. The calls read the launcher's client rect and
+    // re-order/resize the game — no ownership transfer, valid for this call.
+    unsafe {
+        let mut rc = RECT::default();
+        if GetClientRect(launcher, &mut rc).is_err() {
+            return None;
+        }
+        // Client (0,0) → screen coords is the top-left; the rect's right/bottom
+        // are the client width/height (left/top are always 0).
+        let mut tl = POINT { x: 0, y: 0 };
+        let _ = ClientToScreen(launcher, &mut tl);
+        let (w, h) = (rc.right - rc.left, rc.bottom - rc.top);
+        if w <= 0 || h <= 0 {
+            return None; // minimised / degenerate — don't fit the game to 0×0
+        }
+        let key = (game_hwnd, tl.x, tl.y, w, h);
+        if Some(key) == last {
+            // Unchanged geometry — only re-assert z-order (cheap; no move/resize).
+            let _ = SetWindowPos(
+                game,
+                Some(launcher),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+        } else {
+            // Moved/resized — apply the full geometry (this also re-orders the
+            // game directly below the launcher).
+            let _ = SetWindowPos(game, Some(launcher), tl.x, tl.y, w, h, SWP_NOACTIVATE);
+        }
+        Some(key)
+    }
+}
+
+#[cfg(not(windows))]
+fn fit_game_below_launcher_via_win32(
+    _frame: &eframe::Frame,
+    _game_hwnd: u64,
+    _last: Option<(u64, i32, i32, i32, i32)>,
+) -> Option<(u64, i32, i32, i32, i32)> {
+    None
+}

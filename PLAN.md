@@ -3689,7 +3689,7 @@ ever does z-order with `SWP_NOMOVE | SWP_NOSIZE`) is the real work of this phase
   emulator but is not global-topmost. Decide decorated (standard title bar, user drags/resizes
   via chrome — simpler) vs borderless (custom drag/resize handles — cleaner overlay); lean
   decorated for v1.
-- [ ] 20.4 — **Extend window coordination to track launcher geometry (the resize work).** In
+- [x] 20.4 — **Extend window coordination to track launcher geometry (the resize work).** *(code-complete 2026-06-09; live RPCS3 + non-RDP validation PENDING — mock mode has no game window to fit)* — `fit_game_below_launcher_via_win32` (`ui/mod.rs`), gated on `LauncherApp.window_mode == Desktop`: moves+resizes the game to the launcher's client rect (re-applying only on `(hwnd, rect)` change, re-asserting z-order otherwise) and guards minimised/degenerate rects; `window_mode` threaded into `LauncherApp::new`. In
   Desktop mode, when the launcher's client rect changes, reposition **and resize** the RPCS3
   window to match — drop the TV path's `SWP_NOMOVE | SWP_NOSIZE` and compute the game's screen
   rect from the launcher client rect (`GetClientRect` + `ClientToScreen`), keeping z-order (game
@@ -3705,6 +3705,13 @@ ever does z-order with `SWP_NOMOVE | SWP_NOSIZE`) is the real work of this phase
 - [ ] 20.5 — **Desktop-mode launcher UI lead.** In Desktop mode demote the QR ("scan from a
   phone") and lead with the existing **"Open in Browser"** action (the control surface for a
   desk user). Light copy/layout pass for the windowed case.
+- [ ] 20.6 — **Switch window mode after first launch.** The wizard only runs on first launch
+  (no `config.json`), so an existing install can't change `window_mode` without deleting
+  `config.json` or hand-editing it (gap noted 2026-06-09). Add an in-app switch — simplest: a
+  "grown-ups" action (like the per-game-settings kebab, 16.9.3) that rewrites `window_mode` in
+  `config.json` and prompts a restart. A *live* toggle would need viewport recreation (the
+  fullscreen/resizable flags are fixed at `eframe::run_native`), so restart-to-apply is the
+  honest v1.
 
 ## Backlog (not yet phased)
 

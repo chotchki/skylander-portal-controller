@@ -678,6 +678,7 @@ fn main() -> Result<()> {
     let url_for_ui = phone_url.clone();
     let raw_ip_url_for_ui = raw_ip_url.clone();
     let ui_bind_port = bind.port();
+    let ui_window_mode = cfg.window_mode;
     eframe::run_native(
         "skylander-portal-controller",
         native_options,
@@ -689,6 +690,7 @@ fn main() -> Result<()> {
                 url_for_ui,
                 raw_ip_url_for_ui,
                 ui_bind_port,
+                ui_window_mode,
             )))
         }),
     )
