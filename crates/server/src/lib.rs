@@ -24,9 +24,6 @@ pub mod rpcs3_config;
 pub mod sky_edit;
 #[cfg(feature = "sky-stats")]
 pub mod sky_stats;
-// PLAN 20.1 spike (temporary, Windows-only, gated on SKYLANDER_SPIKE_DESKTOP).
-#[cfg(windows)]
-pub mod spike_desktop;
 pub mod state;
 pub mod ui;
 pub mod vortex;
