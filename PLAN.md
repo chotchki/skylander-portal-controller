@@ -2769,14 +2769,33 @@ from the Phase-20 scoping:
     10-30 MB; bundling 5+ scenarios at every tag is ~150MB into
     git history per release — bad).
 
-- [ ] 15.10 — **`windows-capture` capture backend.** Add the MIT `windows-capture` crate to
+- [x] 15.10 — **`windows-capture` capture backend.** Add the MIT `windows-capture` crate to
   `tools/playthrough/`; capture a chosen monitor/window straight to MP4. Make it the default
   Windows backend; fall back to the 15.2.3 `gdigrab` path. Verify no `tao`/Apache-2.0-only or
   other GPL-2.0-incompatible transitive deps land (`cargo tree`).
-- [ ] 15.11 — **Desktop-mode single-scene scenario.** A scenario that boots the launcher in
+  - **DONE 2026-06-10.** `windows-capture = "2.0"` (Windows-only, cfg-stubbed elsewhere) →
+    `tools/playthrough/src/capture.rs`: `DesktopCapture::start/stop` wraps a free-threaded
+    `GraphicsCaptureApiHandler` recording the **primary monitor** to MP4 (built-in H.264 encoder,
+    no ffmpeg); `stop()` joins the capture thread so `on_closed` flushes/finalises the file.
+    `cargo tree`-clean (windows/rayon/crossbeam are MIT-OR-Apache, no tao/winit). Verified on the
+    dev box — **WGC capture works over RDP**, writes a valid ~16MB MP4. gdigrab fallback NOT
+    wired yet (deferred; WGC suffices on the dev box). `Monitor` API note: use `.width()`/`.height()`
+    (no `.size()`); `Settings::new` takes 8 args incl Secondary/MinimumUpdateInterval/DirtyRegion.
+- [x] 15.11 — **Desktop-mode single-scene scenario.** A scenario that boots the launcher in
   Phase-20 **Desktop mode**, opens the portal in a driver-controlled browser beside it, and
   captures the whole desktop in one pass (no composite). Reuses the `skylander-e2e-tests`
   harness in non-headless mode. The cheaper additive path alongside the 15.5 couch composite.
+  - **DONE 2026-06-10 (MVP).** `tools/playthrough` (new crate, PLAN 15.1.3) drives
+    picker→unlock-Alice→Giants→**portal** in a HEADED Chrome beside the windowed launcher while
+    recording the desktop to MP4 + a still PNG. Non-breaking harness additions:
+    `TestServer::spawn_with_env_lines("WINDOW_MODE=desktop\n")` + `Phone::new_headed(x,y,w,h)`.
+    Run: `cd phone && BUILD_TOKEN=e2e-test trunk build` then
+    `CHROMEDRIVER=<matching chromedriver.exe> cargo run -p skylander-playthrough`.
+    **Gotcha:** the harness's ChromeDriver must match the installed Chrome major version (Chrome
+    auto-updates ahead of winget's ChromeDriver) — fetch a matched build from Chrome-for-Testing
+    and point `$CHROMEDRIVER` at it. **Next (build upon it):** richer scenarios (15.6 — place
+    figures, stat-edit, Kaos), `<NarrationOverlay>` (15.4.2), output to `docs/assets/videos/`
+    (15.7), optional auto-match ChromeDriver in the harness, downscale/crop the capture.
 
 - [ ] 12.1 **Research + scaffolding (research-first, no code
   commits).**
