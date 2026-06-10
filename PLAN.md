@@ -3705,13 +3705,21 @@ ever does z-order with `SWP_NOMOVE | SWP_NOSIZE`) is the real work of this phase
 - [x] 20.5 — **Desktop-mode launcher UI lead / windowed layout** *(done 2026-06-09, user-confirmed on the dev box)*. Replaced the fragile overscan jump-anchor (v1.9.3→16.10.6, which "never worked completely right") in `render_main` with a deterministic layout: centre the badge when there's room, else slide it up just enough to keep the action row above a **mode-aware bottom-safe margin** (TV overscan fraction vs a small fixed desktop margin); button-row height reserved even on back-face frames so the badge doesn't jump; windowed `min_inner_size` bumped to 640×680. Fixes the cut-off buttons in a windowed/DPI-scaled surface AND hardens the TV case. *Deferred (optional):* fully demoting the QR in Desktop mode — it still works (scannable, or use the now-visible "Open in Browser"), so not blocking. Original task text: In Desktop mode demote the QR ("scan from a
   phone") and lead with the existing **"Open in Browser"** action (the control surface for a
   desk user). Light copy/layout pass for the windowed case.
-- [ ] 20.6 — **Switch window mode after first launch.** The wizard only runs on first launch
+- [x] 20.6 — **Switch window mode after first launch.** The wizard only runs on first launch
   (no `config.json`), so an existing install can't change `window_mode` without deleting
   `config.json` or hand-editing it (gap noted 2026-06-09). Add an in-app switch — simplest: a
   "grown-ups" action (like the per-game-settings kebab, 16.9.3) that rewrites `window_mode` in
   `config.json` and prompts a restart. A *live* toggle would need viewport recreation (the
   fullscreen/resizable flags are fixed at `eframe::run_native`), so restart-to-apply is the
   honest v1.
+  - **DONE 2026-06-10.** Placed in the **Konami-gated admin area** (not the kebab — Chris's call):
+    an app-level TV↔Desktop toggle on the `AdminList` screen, using the `edit-toggle` switch that
+    mirrors the Kaos toggle. New endpoints `GET`/`POST /api/launcher/window-mode` (`http.rs`): GET
+    returns `AppState.window_mode` (set from `cfg` at startup, `state.rs`/`main.rs`); POST (signed)
+    rewrites `config.json` via `PersistedConfig::read`+`write` → 202, restart-to-apply. Phone:
+    `model::WindowMode` mirror + `api::{fetch,set}_window_mode` + an optimistic toggle (rollback on
+    failure, "restart to apply" toast). Dev builds read `.env.dev` not `config.json`, so the POST is
+    a logged no-op there. Wire form pinned by `config::tests::window_mode_json_wire_form`.
 
 ## Backlog (not yet phased)
 

@@ -266,6 +266,9 @@ fn main() -> Result<()> {
     #[cfg_attr(not(feature = "nfc-import"), allow(unused_variables))]
     let runtime_dir_for_task = runtime_dir.clone();
     let hmac_key = cfg.hmac_key.clone();
+    // PLAN 20.6 — the running window mode, surfaced via AppState so the admin
+    // window-mode toggle can read it back. Copy (fieldless enum).
+    let window_mode = cfg.window_mode;
     let rpcs3_lifecycle = Arc::new(tokio::sync::Mutex::new(RpcsLifecycle::default()));
     let rpcs3_for_task = rpcs3_lifecycle.clone();
     let portal_for_task = portal.clone();
@@ -525,6 +528,7 @@ fn main() -> Result<()> {
                     data_root,
                     phone_dist: phone_dist.clone(),
                     hmac_key,
+                    window_mode,
                     boot_id: {
                         // Random u64 from OsRng (already a dep via argon2's
                         // rand_core re-export). Phones compare against the

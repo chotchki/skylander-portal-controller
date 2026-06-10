@@ -33,6 +33,10 @@ pub struct AppState {
     /// exist — the lookup would always 404). Driven by config /
     /// SKYLANDER_PORTAL_DRIVER env var (`config.rs::DriverKind`).
     pub driver_kind: crate::config::DriverKind,
+    /// How the launcher window is presented (PLAN 20.6). Set from
+    /// `cfg.window_mode` at startup; read by `GET /api/launcher/window-mode`
+    /// so the phone's Konami-gated admin toggle reflects the running mode.
+    pub window_mode: crate::config::WindowMode,
     pub driver_tx: mpsc::Sender<DriverJob>,
     pub portal: Arc<Mutex<[SlotState; SLOT_COUNT]>>,
     pub events: broadcast::Sender<Event>,

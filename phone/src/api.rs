@@ -542,6 +542,32 @@ pub async fn set_kaos_enabled(profile_id: &str, enabled: bool) -> Result<(), Str
     do_fetch(&url, "POST", Some(&body)).await.map(|_| ())
 }
 
+#[derive(serde::Deserialize)]
+struct WindowModeBody {
+    window_mode: crate::model::WindowMode,
+}
+
+/// PLAN 20.6 — the launcher's current window mode, for the admin toggle to
+/// render. `None` if the read fails (the UI shows "checking…" until it lands).
+pub async fn fetch_window_mode() -> Option<crate::model::WindowMode> {
+    let url = format!("{}/api/launcher/window-mode", origin());
+    match do_fetch(&url, "GET", None).await {
+        Ok(text) => serde_json::from_str::<WindowModeBody>(&text)
+            .ok()
+            .map(|b| b.window_mode),
+        Err(_) => None,
+    }
+}
+
+/// PLAN 20.6 — set the launcher window mode (Konami-gated grown-ups action).
+/// The server rewrites config.json; it takes effect on the next launcher
+/// restart. Returns `()` on 2xx (202).
+pub async fn set_window_mode(mode: crate::model::WindowMode) -> Result<(), String> {
+    let url = format!("{}/api/launcher/window-mode", origin());
+    let body = serde_json::json!({ "window_mode": mode }).to_string();
+    do_fetch(&url, "POST", Some(&body)).await.map(|_| ())
+}
+
 pub async fn post_quit(force: bool) -> Result<(), String> {
     let url = if force {
         format!("{}/api/quit?force=true", origin())

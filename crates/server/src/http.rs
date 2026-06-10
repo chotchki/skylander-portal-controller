@@ -260,6 +260,12 @@ pub fn router(state: Arc<AppState>, _phone_dist: std::path::PathBuf) -> Router {
         .route("/api/quit", post(quit_game))
         .route("/api/shutdown", post(shutdown_launcher))
         .route("/api/rpcs3/settings", post(open_rpcs3_settings))
+        // PLAN 20.6 — GET current window mode (admin toggle state) + POST to
+        // change it (rewrites config.json; restart-to-apply).
+        .route(
+            "/api/launcher/window-mode",
+            get(get_window_mode).post(set_window_mode),
+        )
         .route("/api/profiles", get(list_profiles).post(create_profile))
         .route("/api/profiles/:id", axum::routing::delete(delete_profile))
         .route("/api/profiles/:id/unlock", post(unlock_profile))
@@ -893,6 +899,70 @@ async fn get_version(Signed(_body): Signed) -> Response {
         build_token: BUILD_TOKEN,
     })
     .into_response()
+}
+
+/// PLAN 20.6 — current launcher window mode, so the phone's Konami-gated admin
+/// toggle renders the correct state. Unsigned read (mirrors `get_status`).
+#[derive(Serialize)]
+struct WindowModeStatus {
+    window_mode: crate::config::WindowMode,
+}
+
+async fn get_window_mode(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    axum::Json(WindowModeStatus {
+        window_mode: state.window_mode,
+    })
+}
+
+#[derive(Deserialize)]
+struct SetWindowModeBody {
+    window_mode: crate::config::WindowMode,
+}
+
+/// POST /api/launcher/window-mode — grown-ups action (Konami-gated on the
+/// phone). Rewrites `window_mode` in config.json; takes effect on the next
+/// launcher restart (the viewport flags are fixed at `eframe::run_native`, so a
+/// live flip would mean recreating the window). Returns 202. Dev builds read
+/// `.env.dev` rather than config.json, so there the write is a logged no-op and
+/// the phone's "restart to apply" hint is advisory only. PLAN 20.6.
+async fn set_window_mode(Signed(body): Signed) -> Response {
+    let req: SetWindowModeBody = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::BAD_REQUEST, format!("bad body: {e}")).into_response(),
+    };
+    let path = match crate::paths::config_json_path() {
+        Ok(p) => p,
+        Err(e) => {
+            warn!("window-mode: config path error: {e}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "config path error").into_response();
+        }
+    };
+    match crate::wizard::PersistedConfig::read(&path) {
+        Ok(mut persisted) => {
+            persisted.window_mode = req.window_mode;
+            if let Err(e) = persisted.write(&path) {
+                warn!("window-mode: write config.json failed: {e}");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "couldn't persist window mode",
+                )
+                    .into_response();
+            }
+            info!(
+                "window mode set to {:?} (restart to apply)",
+                req.window_mode
+            );
+        }
+        Err(e) => {
+            // Dev builds (no config.json — `.env.dev` is the source) land here.
+            warn!("window-mode: no config.json to update ({e}); dev build? not persisted");
+        }
+    }
+    (
+        StatusCode::ACCEPTED,
+        "window mode saved — restart the launcher to apply",
+    )
+        .into_response()
 }
 
 #[derive(Deserialize)]

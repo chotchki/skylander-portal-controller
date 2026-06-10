@@ -38,6 +38,17 @@ impl Element {
     }
 }
 
+/// How the launcher presents its window (PLAN 20). Mirrors the server's
+/// `config::WindowMode` (snake_case wire form). Used by the Konami-gated admin
+/// window-mode toggle in the profile picker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowMode {
+    #[default]
+    Tv,
+    Desktop,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Category {

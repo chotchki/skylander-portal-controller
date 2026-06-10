@@ -5,7 +5,7 @@ use crate::components::{
     BezelSize, BezelState, CreditsOverlay, DisplayHeading, FramedPanel, GoldBezel, HeadingSize,
     PwaHint,
 };
-use crate::model::PublicProfile;
+use crate::model::{PublicProfile, WindowMode};
 use crate::{event_target_value, push_toast, push_toast_level, ToastLevel, ToastMsg};
 
 // --------- Constants ---------
@@ -460,6 +460,39 @@ fn AdminList<F: Fn() + Send + Sync + 'static + Clone>(
     on_lock: F,
     toasts: RwSignal<Vec<ToastMsg>>,
 ) -> impl IntoView {
+    // PLAN 20.6 — app-level window-mode toggle (Konami-gated, grown-ups).
+    // Fetched once on mount; flipping it rewrites config.json server-side and
+    // takes effect on the next launcher restart.
+    let window_mode = RwSignal::new(None::<WindowMode>);
+    leptos::task::spawn_local(async move {
+        if let Some(m) = crate::api::fetch_window_mode().await {
+            window_mode.set(Some(m));
+        }
+    });
+    let on_toggle_mode = move |_| {
+        let Some(cur) = window_mode.get_untracked() else {
+            return;
+        };
+        let next = match cur {
+            WindowMode::Tv => WindowMode::Desktop,
+            WindowMode::Desktop => WindowMode::Tv,
+        };
+        window_mode.set(Some(next)); // optimistic
+        leptos::task::spawn_local(async move {
+            match crate::api::set_window_mode(next).await {
+                Ok(()) => push_toast_level(
+                    toasts,
+                    "Saved \u{2014} restart the launcher to apply the new window mode.",
+                    ToastLevel::Success,
+                ),
+                Err(e) => {
+                    push_toast(toasts, &format!("Window mode change failed: {e}"));
+                    window_mode.set(Some(cur)); // roll back
+                }
+            }
+        });
+    };
+
     view! {
         <button class="btn-back" on:click=move |_| on_lock()>"LOCK"</button>
 
@@ -569,6 +602,39 @@ fn AdminList<F: Fn() + Send + Sync + 'static + Clone>(
                 // creation lives on the main picker "+" card only.
                 // Profile management is edit/PIN/delete only.
             </div>
+        </FramedPanel>
+
+        // PLAN 20.6 — app-level window-mode toggle. TV = fullscreen living-room
+        // launcher; Desktop = a resizable window. Restart-to-apply (the viewport
+        // flags are fixed at eframe::run_native). Mirrors the AdminEdit toggle.
+        <FramedPanel class="admin-list-panel">
+            <div class="edit-color-label">"window mode (this PC)"</div>
+            <Show
+                when=move || window_mode.get().is_some()
+                fallback=|| view! { <div class="edit-color-label">"checking\u{2026}"</div> }
+            >
+                <button
+                    type="button"
+                    class=move || if matches!(window_mode.get(), Some(WindowMode::Desktop)) {
+                        "edit-toggle edit-toggle-on"
+                    } else {
+                        "edit-toggle"
+                    }
+                    aria-pressed=move || if matches!(window_mode.get(), Some(WindowMode::Desktop)) { "true" } else { "false" }
+                    on:click=on_toggle_mode
+                >
+                    <span class="edit-toggle-track">
+                        <span class="edit-toggle-knob"></span>
+                    </span>
+                    <span class="edit-toggle-label">
+                        {move || match window_mode.get() {
+                            Some(WindowMode::Desktop) => "DESKTOP",
+                            _ => "TV",
+                        }}
+                    </span>
+                </button>
+            </Show>
+            <div class="edit-color-label">"restart the launcher to apply"</div>
         </FramedPanel>
     }
 }

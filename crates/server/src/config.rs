@@ -448,6 +448,23 @@ mod tests {
     use super::*;
     use std::path::Path;
 
+    // PLAN 20.6 — the window-mode wire form is a contract shared by config.json,
+    // the `/api/launcher/window-mode` request/response bodies, AND the phone's
+    // hand-mirrored `model::WindowMode` enum. Pin it so a rename can't silently
+    // desync the phone (which can't share this crate).
+    #[test]
+    fn window_mode_json_wire_form() {
+        assert_eq!(serde_json::to_string(&WindowMode::Tv).unwrap(), "\"tv\"");
+        assert_eq!(
+            serde_json::to_string(&WindowMode::Desktop).unwrap(),
+            "\"desktop\"",
+        );
+        let parsed: WindowMode = serde_json::from_str("\"desktop\"").unwrap();
+        assert_eq!(parsed, WindowMode::Desktop);
+        // Existing installs (no persisted value) keep the fullscreen TV mode.
+        assert_eq!(WindowMode::default(), WindowMode::Tv);
+    }
+
     // The reported bug: a box with an existing (pre-IPC) install. An older app
     // version's wizard persisted the legacy UIA driver pointed at the user's
     // *stock* RPCS3 and no `config_dir`; on upgrade the first-launch wizard is
