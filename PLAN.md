@@ -2796,6 +2796,36 @@ from the Phase-20 scoping:
     and point `$CHROMEDRIVER` at it. **Next (build upon it):** richer scenarios (15.6 — place
     figures, stat-edit, Kaos), `<NarrationOverlay>` (15.4.2), output to `docs/assets/videos/`
     (15.7), optional auto-match ChromeDriver in the harness, downscale/crop the capture.
+  - **DONE 2026-06-10: place-figures scenario** (PLAN 15.6 hero). `tools/playthrough` takes a
+    scenario arg (`portal`|`place`); `place` opens the toy box + places two figures on the portal,
+    recorded. Reusable harness helpers: `Phone::tap_pointer` (PointerEvent for the lid grabber) +
+    `Phone::js_click` (JS `el.click()`, bypasses WebDriver interactability — fixed "element not
+    interactable" in a headed browser). Commit `c529e8b`.
+
+- [ ] 15.12 — **In-game portal tier (real RPCS3) — SAVE-STATE approach + PORTAL_EVENT signal.**
+  Show figures on the GAME's own portal screen (not just the app UI). **Decision (2026-06-10):** do
+  NOT navigate the game's menus with synthesized controller input — too fragile, and an
+  image-matching / LLM-navigator is overkill + non-deterministic for a recorder. Instead **boot
+  RPCS3 directly into a pre-made save state parked at the in-game portal screen** (zero menu nav,
+  zero input synthesis), place a figure via the app (IPC `LOAD`), capture.
+  - **15.12.1 — `PORTAL_EVENT` IPC signal (P4).** Robust "game reached/activated the portal" push
+    (STATE/heartbeat is only emulator liveness; STATUS is only *our* slot state). **Wire codec
+    DONE** — `ipc/proto.rs`: `PE cmd=<name>` + `PortalEvent` + `parse_portal_event`, unit-tested,
+    commit `48ab6d8`. **Remaining:** (a) driver consumes the `PE` push (`ipc/mod.rs`) + exposes
+    "portal activated"; (b) `tests/ipc_loopback.rs` fake server emits `PE` → driver picks it up;
+    (c) **P4 C++ patch** — hook `usb_device_skylander::control_transfer()` in the RPCS3 clone to
+    emit `PE cmd=activate|status|query` when the guest talks to the portal (peer event-queue
+    drained by `sky_ipc_conn`, like the heartbeat); (d) build the patched binary + live-test.
+  - **15.12.2 — save-state boot (GATE — user/HTPC validation first).** Confirm the patched RPCS3
+    boots a `.SAVESTAT` (ideally `--no-gui`) straight to the portal screen, and the portal
+    re-activates on resume (a figure placed via the app appears in-game → `PORTAL_EVENT` fires).
+    Then point `launch_no_gui` at the savestate instead of the EBOOT. Savestates are build-specific
+    (we pin the bundled build) + contain copyrighted game memory (user-local, never committed).
+    **Fallback if savestates are flaky for a title:** deterministic template-matching before any
+    LLM navigator.
+  - **15.12.3 — in-game scenario** in `tools/playthrough`: boot savestate → wait `PORTAL_EVENT` →
+    app places a figure → capture. No controller input. (The `examples/boot_game.rs`
+    `SendInput`/keyboard-pad-config work stays shelved unless we later demo in-game *movement*.)
 
 - [ ] 12.1 **Research + scaffolding (research-first, no code
   commits).**
