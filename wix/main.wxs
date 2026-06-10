@@ -133,6 +133,26 @@
                             Scope='any'
                             IgnoreFailure='yes'/>
                     </Component>
+                    <!-- v1.9.8: app-local Visual C++ runtime next to the exe so
+                         the launcher (and the Mesa re-exec child) load on a clean
+                         machine with no VC++ Redistributable — the winget
+                         validation VM, which exits 0xC0000135 (DLL not found)
+                         without these (sandbox-confirmed 2026-06-10). The Rust exe
+                         uses the dynamic MSVC CRT and the Mesa "release-msvc" DLLs
+                         need the runtime too. The same DLLs are also dropped into
+                         mesa\ (harvested via MesaFiles) for the re-exec child.
+                         MS-redistributable + platform system library → GPL-2.0-OK.
+                         Sourced from target/release (staged in release.yml). -->
+                    <Component Id='VcRuntime' Guid='*'>
+                        <File Id='Vcruntime140' Name='vcruntime140.dll' DiskId='1'
+                              Source='$(var.CargoTargetBinDir)\vcruntime140.dll' KeyPath='yes'/>
+                        <File Id='Vcruntime140_1' Name='vcruntime140_1.dll' DiskId='1'
+                              Source='$(var.CargoTargetBinDir)\vcruntime140_1.dll'/>
+                        <File Id='Msvcp140' Name='msvcp140.dll' DiskId='1'
+                              Source='$(var.CargoTargetBinDir)\msvcp140.dll'/>
+                        <File Id='Msvcp140_1' Name='msvcp140_1.dll' DiskId='1'
+                              Source='$(var.CargoTargetBinDir)\msvcp140_1.dll'/>
+                    </Component>
                     <!-- data/ + steam/ subdirs resolve here via heat-
                          generated fragments referenced below. heat is
                          invoked with `-dr DataDir` / `-dr SteamDir`
@@ -185,6 +205,7 @@
             Display='expand'
             Absent='disallow'>
             <ComponentRef Id='MainExe'/>
+            <ComponentRef Id='VcRuntime'/>
             <ComponentRef Id='ApplicationProgramsFolderCleanup'/>
             <!-- heat-generated; see the comment at the top of this file. -->
             <ComponentGroupRef Id='DataFiles'/>

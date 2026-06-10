@@ -148,6 +148,29 @@ jobs:
           $mb = [math]::Round((Get-ChildItem mesa -Recurse -File | Measure-Object Length -Sum).Sum / 1MB, 1)
           Write-Host "bundled Mesa software-GL runtime: $mb MB"
 
+      # v1.9.8 — bundle the Visual C++ runtime app-local. A clean machine with no
+      # VC++ Redistributable (the winget validation VM) can't load the Rust exe
+      # (dynamic MSVC CRT) NOR the Mesa "release-msvc" DLLs → launch fails with
+      # 0xC0000135 (DLL not found). Sandbox-confirmed 2026-06-10. Drop the
+      # redistributable runtime DLLs next to the exe (target/release → the MSI's
+      # MainExe dir via $(var.CargoTargetBinDir), and the zip root) AND into mesa/
+      # (the re-exec child's application dir — heat-harvested into the MSI, and
+      # copied into the zip by the existing mesa/ recurse below). These are MS
+      # app-local-redistributable + a platform system library, so GPL-2.0-OK.
+      - name: Stage VC++ runtime DLLs (app-local)
+        shell: pwsh
+        run: |
+          $crt = Get-ChildItem 'C:\Program Files\Microsoft Visual Studio\*\*\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT' -Directory -ErrorAction SilentlyContinue |
+                   Sort-Object FullName -Descending | Select-Object -First 1
+          $dlls = 'vcruntime140.dll','vcruntime140_1.dll','msvcp140.dll','msvcp140_1.dll'
+          foreach ($d in $dlls) {
+            $src = if ($crt) { Join-Path $crt.FullName $d } else { Join-Path $env:WINDIR "System32\$d" }
+            if (-not (Test-Path $src)) { throw "VC++ runtime DLL not found: $d (looked in $src)" }
+            Copy-Item $src 'target/release/' -Force
+            Copy-Item $src 'mesa/' -Force
+          }
+          Write-Host "staged VC++ runtime DLLs from $(if ($crt) { $crt.FullName } else { 'System32 fallback' })"
+
       - name: Stage release artifacts
         shell: pwsh
         run: |
@@ -155,6 +178,9 @@ jobs:
           $stage = "release-stage/skylander-portal-controller-$tag"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item "target/release/skylander-portal-controller.exe" "$stage/"
+          # v1.9.8 — app-local VC++ runtime next to the exe (staged into
+          # target/release above; mesa/ copies ride along via the recurse below).
+          Copy-Item "target/release/vcruntime140.dll","target/release/vcruntime140_1.dll","target/release/msvcp140.dll","target/release/msvcp140_1.dll" "$stage/"
           Copy-Item "README.md" "$stage/" -ErrorAction SilentlyContinue
           Copy-Item "LICENSE*" "$stage/" -ErrorAction SilentlyContinue
           # Tracked-asset bundle (PLAN 10.8.6). The release binary's
