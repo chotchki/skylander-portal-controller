@@ -2601,6 +2601,22 @@ native), MP4 + scrollable HTML gallery output, web-overlay
 narration for the PWA streams, ffmpeg drawtext burn-in for any
 narration that needs to land over the launcher.
 
+**Decision update (2026-06-09 — the "B" demo-recorder track):** keep this a **standalone
+dev/CI tool, never shipped in the app** (it already lives at `tools/playthrough/`, so this
+just reaffirms the user's "the demo doesn't have to go in the main app"). Two refinements
+from the Phase-20 scoping:
+- **Capture backend:** prefer the **`windows-capture` crate** (MIT → GPL-2.0-only-compatible;
+  `Windows.Graphics.Capture` + built-in MP4 encoder) over shelling to ffmpeg `gdigrab`, so
+  the recorder needs **no external ffmpeg binary** and handles per-window/occluded capture
+  better. Keep the ffmpeg path (15.2/15.5) as the cross-platform + compositing fallback;
+  ffmpeg, if used, stays a dev/CI dependency, never bundled into the release.
+- **Single-scene option via Phase 20 Desktop mode:** with the launcher windowed + the portal
+  in a real browser (Phase 20), a "desktop-app" scenario can be captured as **one real
+  desktop scene** (no per-surface composite), driving the SPA with the existing
+  `skylander-e2e-tests` harness in **non-headless** mode. The couch scenario (launcher + two
+  phone PWAs composited, 15.5) stays the hero; the desktop single-scene capture is the
+  cheaper additive path. (Embedded-webview-on-launcher was descoped — see Phase 20.)
+
 - [ ] 15.1 **Architecture + scaffolding (research-first).**
   - [ ] 15.1.1 Capture-mechanism choice per surface, written up
     in this PLAN entry: macOS ffmpeg `-f avfoundation` for the
@@ -2752,6 +2768,15 @@ narration that needs to land over the launcher.
     instead of bundling them into the repo (each MP4 is likely
     10-30 MB; bundling 5+ scenarios at every tag is ~150MB into
     git history per release — bad).
+
+- [ ] 15.10 — **`windows-capture` capture backend.** Add the MIT `windows-capture` crate to
+  `tools/playthrough/`; capture a chosen monitor/window straight to MP4. Make it the default
+  Windows backend; fall back to the 15.2.3 `gdigrab` path. Verify no `tao`/Apache-2.0-only or
+  other GPL-2.0-incompatible transitive deps land (`cargo tree`).
+- [ ] 15.11 — **Desktop-mode single-scene scenario.** A scenario that boots the launcher in
+  Phase-20 **Desktop mode**, opens the portal in a driver-controlled browser beside it, and
+  captures the whole desktop in one pass (no composite). Reuses the `skylander-e2e-tests`
+  harness in non-headless mode. The cheaper additive path alongside the 15.5 couch composite.
 
 - [ ] 12.1 **Research + scaffolding (research-first, no code
   commits).**
@@ -3620,6 +3645,57 @@ runtime and, on a GPU-less machine, runs the launcher on it — which doubles as
   `data/`/`phone-dist/`/`rpcs3/`.
 - [ ] 19.7 — **Ship + validate.** Cut the release, confirm the winget validation VM now
   launches the app (demo mode), then reply on PR #381659 and resume the manifest bump.
+
+## Phase 20 — Desktop window mode (resizable launcher, still overlaying the emulator)
+
+**Trigger:** first user ask — don't make the RPCS3 game window *truly* fullscreen, so the
+portal view can live beside it. Embedding a webview in the launcher was scoped and then
+**descoped outright (2026-06-09)**: eframe owns winit's single per-process event loop and
+exposes no hook to attach a child WebView2, so an embedded view would need a separate
+companion process + WebView2-runtime packaging + a `tao`/Apache-2.0-only license audit — too
+much surface for the payoff. Instead, expose a **display-mode toggle in the first-launch
+wizard**: the existing **"Living room — TV + phones"** experience (default, fullscreen,
+unchanged) vs a new **"Desktop — windowed app"** mode for a user at a desk. The on-screen
+portal stays the user's **own browser** (the existing "Open in Browser" button → the keyed
+`…/?k=…` URL) — no embedded webview, no new GUI dep, no bundled Chromium; interactive control
+is then free (a desktop browser already *is* the SPA controller). Windows-first; macOS window
+coordination stays a non-goal.
+
+**Key constraint (clarified 2026-06-09):** Desktop mode keeps the launcher **on top of the
+emulator** — the same overlay as TV mode (transparent iris reveals the game through the
+launcher's client area; launcher z-ordered directly above the RPCS3 window) — just in a
+**resizable window** instead of fullscreen. So the per-frame coordination is **not relaxed,
+it's extended**: whenever the launcher moves or resizes, the RPCS3 window must be repositioned
+**and resized** to track the launcher's client area. That geometry-slaving (the TV path only
+ever does z-order with `SWP_NOMOVE | SWP_NOSIZE`) is the real work of this phase.
+
+- [ ] 20.1 — **Spike (do this first).** On the dev box, confirm the core assumption: a windowed
+  launcher can overlay the RPCS3 window (iris reveal intact), stay z-ordered directly above it,
+  and **slave the game window to the launcher's client rect across a move + a resize** without
+  bad flicker. Go/no-go before the wizard work.
+- [ ] 20.2 — **`window_mode` config + wizard step.** Add `WindowMode { Tv, Desktop }` to
+  `PersistedConfig` (default `Tv`), persisted + respected on load like the Phase-19
+  `mock_default` choice (`config.rs`); `migrate_install_paths` must not clobber it. New wizard
+  step (`wizard.rs`) framed by use-case — "Living room (TV + phones)" vs "Desktop (windowed
+  app)". +unit tests on the load/migrate path.
+- [ ] 20.3 — **Windowed `native_options` in Desktop mode** (`main.rs`, currently
+  `with_fullscreen(true)` + release always-on-top): Desktop → resizable window at a sane default
+  size with a **minimum size** so the game viewport can't degenerate; launcher stays above the
+  emulator but is not global-topmost. Decide decorated (standard title bar, user drags/resizes
+  via chrome — simpler) vs borderless (custom drag/resize handles — cleaner overlay); lean
+  decorated for v1.
+- [ ] 20.4 — **Extend window coordination to track launcher geometry (the resize work).** In
+  Desktop mode, when the launcher's client rect changes, reposition **and resize** the RPCS3
+  window to match — drop the TV path's `SWP_NOMOVE | SWP_NOSIZE` and compute the game's screen
+  rect from the launcher client rect (`GetClientRect` + `ClientToScreen`), keeping z-order (game
+  directly below launcher, `ui/mod.rs` `place_game_below_launcher_via_win32`). Handle: re-apply
+  only on actual rect change (no per-frame thrash / flicker); **per-monitor DPI** when dragged
+  across monitors; minimize/restore (the `config_gui_open` minimise path already exists);
+  RPCS3's own aspect/letterbox inside the sized window (fine — the iris is circular). IPC portal
+  control is unchanged (mode ⟂ driver).
+- [ ] 20.5 — **Desktop-mode launcher UI lead.** In Desktop mode demote the QR ("scan from a
+  phone") and lead with the existing **"Open in Browser"** action (the control surface for a
+  desk user). Light copy/layout pass for the windowed case.
 
 ## Backlog (not yet phased)
 
