@@ -638,8 +638,8 @@ fn main() -> Result<()> {
         let mut vb = egui::ViewportBuilder::default().with_title("Skylander Portal Controller");
         if windowed {
             vb = vb
-                .with_inner_size([1100.0, 720.0])
-                .with_min_inner_size([480.0, 360.0])
+                .with_inner_size([1100.0, 760.0])
+                .with_min_inner_size([640.0, 680.0])
                 .with_resizable(true);
         } else {
             vb = vb.with_fullscreen(true);

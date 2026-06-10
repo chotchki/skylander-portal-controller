@@ -3702,7 +3702,7 @@ ever does z-order with `SWP_NOMOVE | SWP_NOSIZE`) is the real work of this phase
   continuously. Snap-on-release is acceptable for v1; if continuous tracking is wanted, subclass
   the launcher window (`SetWindowSubclass`) and re-slave on `WM_MOVING`/`WM_SIZING`/
   `WM_WINDOWPOSCHANGED`. Confirm smoothness on a local (non-RDP) session before deciding.
-- [ ] 20.5 — **Desktop-mode launcher UI lead.** In Desktop mode demote the QR ("scan from a
+- [x] 20.5 — **Desktop-mode launcher UI lead / windowed layout** *(done 2026-06-09, user-confirmed on the dev box)*. Replaced the fragile overscan jump-anchor (v1.9.3→16.10.6, which "never worked completely right") in `render_main` with a deterministic layout: centre the badge when there's room, else slide it up just enough to keep the action row above a **mode-aware bottom-safe margin** (TV overscan fraction vs a small fixed desktop margin); button-row height reserved even on back-face frames so the badge doesn't jump; windowed `min_inner_size` bumped to 640×680. Fixes the cut-off buttons in a windowed/DPI-scaled surface AND hardens the TV case. *Deferred (optional):* fully demoting the QR in Desktop mode — it still works (scannable, or use the now-visible "Open in Browser"), so not blocking. Original task text: In Desktop mode demote the QR ("scan from a
   phone") and lead with the existing **"Open in Browser"** action (the control surface for a
   desk user). Light copy/layout pass for the windowed case.
 - [ ] 20.6 — **Switch window mode after first launch.** The wizard only runs on first launch

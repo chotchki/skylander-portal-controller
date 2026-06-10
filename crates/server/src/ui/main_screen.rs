@@ -104,14 +104,35 @@ impl LauncherApp {
         );
 
         ui.vertical_centered(|ui| {
-            // Centre the **QR card** at the panel midpoint — same point
-            // the vortex's iris hole sits on. (Earlier cuts centred the
-            // whole QR + label cluster, which put the QR ~60px above
-            // the vortex centre — the cluster was visibly off-axis from
-            // the swirl.) The label hangs below; the button takes the
-            // remainder of the bottom space.
+            // PLAN 20.5 — deterministic layout that keeps the action row visible on
+            // BOTH a fullscreen TV and a (smaller / DPI-scaled) desktop window.
+            // Replaces the fragile overscan jump-anchor (v1.9.3 → 16.9.8 → 16.10.6,
+            // which never worked completely right and broke outright when windowed).
+            //
+            // Rule: centre the badge on the panel when there's room; when the window
+            // is too short for [centred badge + label + button row + bottom-safe
+            // margin], slide the badge UP just enough to keep the button row above
+            // the safe line. The bottom-safe margin is mode-aware — a TV overscan
+            // fraction (TVs crop their edges) vs a small fixed margin in a desktop
+            // window (windows don't crop). The button-row height is reserved even on
+            // back-face frames (the buttons draw only on the QR front, below) so the
+            // badge doesn't jump as the centre card flips between states.
+            const LABEL_H: f32 = 96.0;
+            const GAP_BADGE_LABEL: f32 = 24.0;
+            const GAP_LABEL_BTNS: f32 = 24.0;
+            const BTN_ROW_H: f32 = 60.0;
+            const MIN_TOP: f32 = 24.0;
+            const TV_OVERSCAN_FRAC: f32 = 0.06; // ~6% ≈ typical TV title-safe inset
             let avail = ui.available_height();
-            ui.add_space(((avail - CARD_SIZE) * 0.5).max(24.0));
+            let bottom_safe = if matches!(self.window_mode, crate::config::WindowMode::Desktop) {
+                28.0
+            } else {
+                panel_rect.height() * TV_OVERSCAN_FRAC
+            };
+            let below_badge = GAP_BADGE_LABEL + LABEL_H + GAP_LABEL_BTNS + BTN_ROW_H;
+            let centered_top = (avail - CARD_SIZE) * 0.5;
+            let max_top = avail - bottom_safe - CARD_SIZE - below_badge;
+            ui.add_space(centered_top.min(max_top).max(MIN_TOP));
 
             // Decide which face the centre card should show this frame.
             // Precedence: Starting > Switching > Loading > MaxPlayers >
@@ -179,7 +200,7 @@ impl LauncherApp {
                 ctx.request_repaint_after(std::time::Duration::from_millis(16));
             }
 
-            ui.add_space(24.0);
+            ui.add_space(GAP_BADGE_LABEL);
 
             // Subtitle below the card. The text changes with the
             // back-face state so the loading state reads as "LOADING
@@ -203,7 +224,7 @@ impl LauncherApp {
                 (Some(BackFace::Returning), _) => "",
                 _ => "SCAN TO CONNECT",
             };
-            let label_height = 96.0;
+            let label_height = LABEL_H;
             let label_rect = ui
                 .allocate_exact_size(
                     egui::vec2(ui.available_width(), label_height),
@@ -259,13 +280,13 @@ impl LauncherApp {
                 // 60px-tall row instead of a 126px stack reclaims ~66px of the
                 // overscan-squeezed bottom band — the safety margin that keeps the
                 // buttons clear of the crop on a real TV. PLAN 16.10.6.
-                const TV_OVERSCAN_FRAC: f32 = 0.06; // ~6% inset ≈ typical TV title-safe
+                // The reserve-from-bottom budget at the top of this function already
+                // positioned the badge so this row lands above the bottom-safe line;
+                // just the fixed gap below the label now (no overscan arithmetic).
                 const BTN_W: f32 = 260.0;
                 const BTN_GAP: f32 = 18.0;
-                let row_h = 60.0_f32; // tallest button drives the row height
-                let safe_bottom = panel_rect.bottom() - panel_rect.height() * TV_OVERSCAN_FRAC;
-                let cursor_y = ui.min_rect().bottom();
-                ui.add_space((safe_bottom - row_h - cursor_y).max(24.0));
+                let row_h = BTN_ROW_H; // matches the height the budget reserved
+                ui.add_space(GAP_LABEL_BTNS);
 
                 // QR-scan fallback (user request 2026-05-30): open the same phone
                 // URL the QR encodes in the PC's default browser, so a player can
