@@ -13,6 +13,7 @@
 //! ->  LOAD <abs .sky path>     <-  OK slot=<n>   | ERR <reason>
 //! ->  CLEAR <slot 0-7>         <-  OK            | ERR <reason>
 //! (push, ~1 Hz)                <-  HB status=<s> frames=<n> progr=<a>/<b> seg=<c>/<d>
+//! (push, on guest portal cmd)  <-  PE cmd=<activate|status|query|...>   (P4)
 //! ```
 
 use std::path::Path;
@@ -95,6 +96,50 @@ pub enum SlotOccupancy {
 /// True for a heartbeat push line (skipped while awaiting a command reply).
 pub fn is_heartbeat(line: &str) -> bool {
     line == "HB" || line.starts_with("HB ")
+}
+
+/// A push from the patched emulator when the GUEST game talks to the emulated
+/// portal device (P4 — hooked in `Skylander.cpp` where the guest issues the
+/// portal its activate / status / read commands). The play-through recorder
+/// waits for this to know the game reached the in-game portal screen, instead
+/// of guessing from boot timing — every Skylanders title activates + polls the
+/// portal once it's at that screen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortalEvent {
+    /// The portal command the guest issued, lowercased: `activate`, `status`,
+    /// `query`, `color`, … Unknown/new commands pass through verbatim.
+    pub cmd: String,
+}
+
+impl PortalEvent {
+    /// The game turned the portal on — the cleanest "reached the portal
+    /// screen" signal (the activate command fires when the game gets there).
+    pub fn is_activate(&self) -> bool {
+        self.cmd == "activate"
+    }
+}
+
+/// True for a portal-event push line (skipped while awaiting a command reply,
+/// the same way the heartbeat is).
+pub fn is_portal_event(line: &str) -> bool {
+    line == "PE" || line.starts_with("PE ")
+}
+
+/// `PE cmd=<name>` → the portal command the guest issued. Unknown fields are
+/// ignored for forward-compat.
+pub fn parse_portal_event(line: &str) -> Result<PortalEvent> {
+    let body = line
+        .strip_prefix("PE ")
+        .with_context(|| format!("not a PE line: {line:?}"))?;
+    let mut cmd = None;
+    for field in body.split_whitespace() {
+        if let Some(("cmd", v)) = field.split_once('=') {
+            cmd = Some(v.to_string());
+        }
+    }
+    Ok(PortalEvent {
+        cmd: cmd.context("PE missing `cmd=`")?,
+    })
 }
 
 /// Split an `OK ...` / `OK` / `ERR <reason>` reply, returning the payload after
@@ -314,6 +359,28 @@ mod tests {
         let st = parse_state("OK status=frozen frames=9973 progr=8/8 seg=4/4").unwrap();
         assert_eq!(st.status, "frozen");
         assert!(!st.is_playable(), "a frozen emulator is not playable");
+    }
+
+    #[test]
+    fn parse_portal_event_push() {
+        assert!(is_portal_event("PE cmd=activate"));
+        assert!(is_portal_event("PE"));
+        assert!(!is_portal_event(
+            "HB status=running frames=1 progr=0/0 seg=0/0"
+        ));
+        assert!(!is_portal_event("OK slot=0"));
+
+        let pe = parse_portal_event("PE cmd=activate").unwrap();
+        assert_eq!(pe.cmd, "activate");
+        assert!(pe.is_activate());
+
+        // Carries unknown extra fields fine; non-activate commands aren't activate.
+        let q = parse_portal_event("PE cmd=query block=10").unwrap();
+        assert_eq!(q.cmd, "query");
+        assert!(!q.is_activate());
+
+        assert!(parse_portal_event("PE").is_err()); // missing cmd=
+        assert!(parse_portal_event("OK slot=0").is_err()); // not a PE line
     }
 
     #[test]
