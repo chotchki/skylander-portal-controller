@@ -334,11 +334,17 @@ fn KonamiGate<S: Fn() + Send + Sync + 'static + Clone, B: Fn() + Send + Sync + '
                 <div class="dpad">
                     {["up", "down", "left", "right"].iter().map(|k| {
                         let k = *k;
+                        // Append U+FE0E (text-presentation selector) so the
+                        // browser renders these as plain text glyphs in the
+                        // button font. Without it, ◀ (U+25C0) and ▶ (U+25B6) —
+                        // which have emoji variants (◀️/▶️) — fall back to the
+                        // system emoji font (Segoe UI Emoji) and look unstyled
+                        // next to ▲/▼ (which have no emoji form). PLAN 20.6 fixup.
                         let glyph = match k {
-                            "up" => "\u{25B2}",
-                            "down" => "\u{25BC}",
-                            "left" => "\u{25C0}",
-                            "right" => "\u{25B6}",
+                            "up" => "\u{25B2}\u{FE0E}",
+                            "down" => "\u{25BC}\u{FE0E}",
+                            "left" => "\u{25C0}\u{FE0E}",
+                            "right" => "\u{25B6}\u{FE0E}",
                             _ => "",
                         };
                         let dir_cls = k;
@@ -607,7 +613,7 @@ fn AdminList<F: Fn() + Send + Sync + 'static + Clone>(
         // PLAN 20.6 — app-level window-mode toggle. TV = fullscreen living-room
         // launcher; Desktop = a resizable window. Restart-to-apply (the viewport
         // flags are fixed at eframe::run_native). Mirrors the AdminEdit toggle.
-        <FramedPanel class="admin-list-panel">
+        <FramedPanel class="admin-display-panel">
             <div class="edit-color-label">"window mode (this PC)"</div>
             <Show
                 when=move || window_mode.get().is_some()

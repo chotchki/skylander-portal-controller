@@ -591,6 +591,14 @@
     flex: 1;
     min-height: 0;
   }
+  /* PLAN 20.6 — app-level window-mode toggle panel. Fixed height (does NOT
+     grow), so it sits BELOW the scrollable profile list instead of competing
+     for flex space with `.admin-list-panel` and overlapping it. */
+  .admin-display-panel {
+    @apply flex flex-col items-center;
+    flex: 0 0 auto;
+    gap: 10px;
+  }
 
   .manage-list {
     @apply flex flex-col;
