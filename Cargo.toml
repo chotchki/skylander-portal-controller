@@ -10,6 +10,7 @@ members = [
     "crates/e2e-tests",
     "tools/brand-bake",
     "tools/icon-bake",
+    "tools/playthrough",
     "tools/rekey-figure-ids",
     "tools/tailwind-build",
     "tools/wiki-scrape",

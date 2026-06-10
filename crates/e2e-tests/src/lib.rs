@@ -29,6 +29,14 @@ pub struct TestServer {
 
 impl TestServer {
     pub fn spawn() -> Result<Self> {
+        Self::spawn_with_env_lines("")
+    }
+
+    /// Like [`spawn`] but appends `extra_env` to the generated `.env.dev`
+    /// (newline-terminated lines, e.g. `"WINDOW_MODE=desktop\n"`). Used by
+    /// the play-through recorder (PLAN 15.11), which needs the launcher in
+    /// Phase-20 windowed Desktop mode.
+    pub fn spawn_with_env_lines(extra_env: &str) -> Result<Self> {
         let repo = repo_root()?;
         let firmware = resolve_firmware_pack(&repo)?;
 
@@ -42,13 +50,14 @@ impl TestServer {
 
         let tmp = tempfile::tempdir().context("create temp dir")?;
         let port = pick_free_port()?;
-        let env = format!(
+        let mut env = format!(
             "RPCS3_EXE={rpcs3}\nFIRMWARE_PACK_ROOT={pack}\nBIND_PORT={port}\nSKYLANDER_PORTAL_DRIVER=mock\nPHONE_DIST={phone}\n",
             rpcs3 = repo.join("crates/e2e-tests/src/lib.rs").display(), // any real file — mock doesn't launch
             pack = firmware.display(),
             port = port,
             phone = phone_dist.display(),
         );
+        env.push_str(extra_env);
         std::fs::write(tmp.path().join(".env.dev"), env)?;
 
         // Build once up front so subsequent spawns are fast; re-invoking
@@ -544,6 +553,34 @@ impl Phone {
         let caps = serde_json::from_str::<serde_json::Value>(
             r#"{"goog:chromeOptions": {"args": ["--headless=new", "--no-sandbox", "--disable-gpu", "--window-size=420,900"]}}"#,
         )?;
+        let client = ClientBuilder::native()
+            .capabilities(caps.as_object().unwrap().clone())
+            .connect(chromedriver_url)
+            .await
+            .with_context(|| format!("connect to chromedriver at {chromedriver_url}"))?;
+        client.goto(server_url).await?;
+        Ok(Self { client })
+    }
+
+    /// Like [`Phone::new`] but a VISIBLE (non-headless) Chrome window pinned
+    /// at a fixed screen position + size. For the play-through recorder
+    /// (PLAN 15.11), which captures the real desktop with the launcher and
+    /// this browser side-by-side — dropping `--headless` makes the window
+    /// real, and the fixed geometry keeps the capture rect deterministic.
+    pub async fn new_headed(
+        server_url: &str,
+        chromedriver_url: &str,
+        x: i32,
+        y: i32,
+        w: u32,
+        h: u32,
+    ) -> Result<Self> {
+        let args = format!(
+            r#"["--no-sandbox", "--disable-gpu", "--window-position={x},{y}", "--window-size={w},{h}", "--disable-infobars"]"#
+        );
+        let caps = serde_json::from_str::<serde_json::Value>(&format!(
+            r#"{{"goog:chromeOptions": {{"args": {args}}}}}"#
+        ))?;
         let client = ClientBuilder::native()
             .capabilities(caps.as_object().unwrap().clone())
             .connect(chromedriver_url)

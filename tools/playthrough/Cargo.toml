@@ -1,0 +1,16 @@
+[package]
+name = "skylander-playthrough"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# PLAN 15 — standalone dev/CI demo recorder. Never shipped in the app
+# (it drives the e2e harness + a headed browser). The windows-capture
+# MP4 backend (PLAN 15.10) lands on top of this scaffold.
+[dependencies]
+skylander-e2e-tests = { path = "../../crates/e2e-tests" }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+fantoccini = "0.21"
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
