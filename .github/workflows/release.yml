@@ -361,6 +361,21 @@ jobs:
           generate_release_notes: true
           # Tag and name come from `github.ref` automatically.
 
+      - name: Publish to winget (auto-PR to microsoft/winget-pkgs)
+        # PLAN 13.4 — fires only on tag pushes, AFTER the release assets exist
+        # (the action downloads the MSI from the just-published release, computes
+        # its SHA-256, and opens a winget-pkgs PR via wingetcreate update). Needs
+        # the WINGET_PAT secret: a fine-grained PAT on chotchki/winget-pkgs with
+        # Contents + Pull requests read/write. Intentionally NOT continue-on-error
+        # — a red step here is the signal that the PAT expired/missing
+        # (docs/dev/winget-submission.md).
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: vedantmgoyal9/winget-releaser@latest
+        with:
+          identifier: ChristopherHotchkiss.SkylanderPortalController
+          installers-regex: '\.msi$'
+          token: ${{ secrets.WINGET_PAT }}
+
   build-macos-release:
     name: build + release (macos)
     # macos-14 is Apple Silicon (M-series); arm64 is the only Mac
