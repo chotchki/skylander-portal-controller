@@ -102,9 +102,12 @@ Extract today's drive bodies into beat fns, almost verbatim:
 ## 4. Capture topology — **single desktop capture** (decided)
 
 `capture.rs` records `Monitor::primary()` to one MP4 (windows-capture, built-in
-H.264, **no ffmpeg**, background thread). Both surfaces — the egui launcher (the
-"TV") and the headed Chrome phone (positioned at `1180,40,470,940`) — share one
-frame.
+H.264, **no ffmpeg at capture time**, background thread). Both surfaces — the egui
+launcher (the "TV") and the headed Chrome phone (positioned at `1180,40,470,940`) —
+share one frame. The raw H.264 capture is an **intermediate**: the post-render (§5)
+**transcodes the final cut to H.265 or AV1** (smaller, modern) in the same ffmpeg
+pass that does the speed-ramp / crop / concat — so the deliverable is never the raw
+H.264.
 
 **Decision: keep the single full-desktop capture.** Rationale:
 
@@ -117,10 +120,15 @@ frame.
    knows each window's rect, so the **post step can crop** per beat (§5) — e.g.
    crop to just the phone for a UI beat, full frame for the in-game reveal.
 
+This is **provisional**: how the side-by-side framing + per-beat crops actually look
+can only be judged from real output, so v1 ships the single full-desktop capture and
+we iterate from there (the v2 separate-window door below stays open).
+
 **Deferred to v2 (only if post-crop proves insufficient):** capture the launcher
 and Chrome windows *separately* (windows-capture supports a `Window` target, not
 just `Monitor`) and composite — for true PiP overlays or per-window resolution.
 Not needed for v1; flagged so the door stays open.
+
 
 ---
 
@@ -155,11 +163,14 @@ pass renders the final cut.
   beats. (Richer per-moment marks — a `ctx.mark("reveal")` the drive calls — are a
   v2+ refinement if head/tail brackets prove too coarse.)
 
-**Tooling note:** the **no-ffmpeg rule applies to *capture*** (windows-capture's
-built-in encoder). The **post-render is a separate dev-only stage** where ffmpeg
-(speed `setpts`/`atempo`, `crop`, `concat`) is the pragmatic choice — or a Rust
-video crate; decide at implementation. This keeps capture dependency-free while
-allowing real editing downstream.
+**Tooling: ffmpeg (decided).** The no-ffmpeg rule applies only to *capture*
+(windows-capture's built-in encoder keeps the capture stage dependency-free). The
+**post-render is a separate dev-only stage and uses ffmpeg** — it's already on the
+box and in heavy use, and it does everything we need in one invocation: per-beat
+speed-ramp (`setpts` / `atempo`), `crop`, `concat`, **and the H.265/AV1 transcode**
+of the final cut. So the render pass takes the raw H.264 + `timeline.json` and emits
+a single edited, modern-codec MP4. (A pure-Rust video crate was the alternative —
+dropped; ffmpeg is simpler and already available.)
 
 **Staging:** v1 emits the manifest (raw MP4 + `timeline.json`); the post-render is
 its own phase (§9.4). So even before the renderer exists, every run is annotated.
@@ -207,6 +218,7 @@ overlay layer (an always-on-top borderless egui/winit window, or a Chrome data-U
 tab, drawn over the desktop during a beat and captured incidentally — Skylanders
 gold-outlined titles). Build *after* the beat skeleton + flow + editorial render
 work. Do not build the overlay now.
+- Comment: I'm also open to using other tools for the captions/cuts if its better suited.
 
 ---
 
