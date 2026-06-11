@@ -370,7 +370,7 @@ jobs:
         # — a red step here is the signal that the PAT expired/missing
         # (docs/dev/winget-submission.md).
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: vedantmgoyal9/winget-releaser@latest
+        uses: vedantmgoyal9/winget-releaser@v2
         with:
           identifier: ChristopherHotchkiss.SkylanderPortalController
           installers-regex: '\.msi$'

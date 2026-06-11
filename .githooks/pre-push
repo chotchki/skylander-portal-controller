@@ -10,12 +10,12 @@
 # Order matters: cheapest first so failures fail fast.
 #   1. cargo fmt --check (workspace + phone) — seconds.
 #   2. cargo check --workspace — fast incremental.
-#   3. cargo test --workspace — typically <60 s on warm cargo cache,
+#   3. cargo clippy --workspace --all-targets -- -D warnings — mirrors the CI
+#      lint lane (added 2026-06-11: a clippy-only regression in an example
+#      slipped past check+test+fmt and was only caught by CI — after a release
+#      tag had already been cut. Worth the extra ~30 s).
+#   4. cargo test --workspace — typically <60 s on warm cargo cache,
 #      slower on cold.
-#
-# Doesn't run clippy (CI does); the workspace's clippy-clean status
-# rarely regresses between local check and clippy lint, and skipping
-# saves ~30 s on a typical loop.
 
 set -euo pipefail
 
@@ -34,6 +34,9 @@ step "cargo fmt --all --check (phone)"
 
 step "cargo check --workspace"
 cargo check --workspace
+
+step "cargo clippy --workspace --all-targets -- -D warnings"
+cargo clippy --workspace --all-targets -- -D warnings
 
 step "cargo test --workspace"
 cargo test --workspace

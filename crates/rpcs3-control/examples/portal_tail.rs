@@ -3,12 +3,11 @@
 //!
 //! Boot a game (or **resume a save state**) on the patched RPCS3, then run this
 //! to see what the *guest game* asks of the emulated portal:
-//!   * `PE cmd=activate` — the game turned the portal on (reached the screen).
-//!   * `PE cmd=status`   — the interrupt presence-poll (rate-limited to ~4 Hz on
-//!                         the emulator side); a steady stream means the game IS
-//!                         polling the portal.
-//!   * `PE cmd=query`    — a block read; a *burst* right after a `LOAD` means the
-//!                         game noticed the new figure and read it back.
+//! * `PE cmd=activate` — the game turned the portal on (reached the screen).
+//! * `PE cmd=status` — the interrupt presence-poll (rate-limited to ~4 Hz on the
+//!   emulator side); a steady stream means the game IS polling the portal.
+//! * `PE cmd=query` — a block read; a *burst* right after a `LOAD` means the game
+//!   noticed the new figure and read it back.
 //!
 //! With `--load`, it fires one `LOAD` on a side connection at `--at` seconds, so
 //! a single run produces the before/after timeline that answers the open
@@ -116,7 +115,7 @@ fn main() -> anyhow::Result<()> {
             return;
         }
         if proto::is_portal_event(line) {
-            let after = load_at.map_or(false, |t| elapsed.as_secs() >= t);
+            let after = load_at.is_some_and(|t| elapsed.as_secs() >= t);
             let cmd = proto::parse_portal_event(line)
                 .map(|pe| pe.cmd)
                 .unwrap_or_else(|_| "??".to_string());
