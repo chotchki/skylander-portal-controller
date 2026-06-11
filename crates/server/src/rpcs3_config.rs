@@ -28,7 +28,7 @@
 //! preserves the file byte-for-byte except the keys we touch — safer than a
 //! parse→reserialize round-trip that would reorder/reformat the whole file.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
@@ -164,6 +164,121 @@ fn line_key(line: &str) -> Option<&str> {
     Some(k.trim_end())
 }
 
+// ---------------------------------------------------------------------------
+// PLAN 15.12 — transient save-state config for the play-through recorder's
+// in-game tier. Resuming a save state needs the ASMJIT SPU recompiler it was
+// taken under + RPCS3's compatible-savestate mode — settings the user does NOT
+// run generally — so the recorder swaps them in only around a recording run and
+// restores afterwards. Target RPCS3's REAL global config: that's
+// `<RPCS3_CONFIG_DIR>/config/config.yml` (the full 8 KB file), NOT the bare
+// `<dir>/config.yml` the Net writer touches.
+// ---------------------------------------------------------------------------
+
+/// The two settings a save state needs to RESUME (not just capture).
+const SAVESTATE_KEYS: &[(&str, &str)] = &[
+    ("SPU Decoder", "Recompiler (ASMJIT)"),
+    ("Compatible Savestate Mode", "true"),
+];
+
+/// Pure core of [`apply_savestate_config`]: set the [`SAVESTATE_KEYS`] in place
+/// wherever they already appear (a full `config.yml` always has them),
+/// preserving indentation, every other line, line endings, and the trailing
+/// newline. Unlike the `Net` merge this never inserts — the keys live in
+/// different blocks (Core / Savestate) and are always present, so an absent key
+/// is simply left alone.
+fn set_savestate_keys(existing: &str) -> String {
+    let newline = if existing.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let had_trailing_newline = existing.is_empty() || existing.ends_with('\n');
+    let mut lines: Vec<String> = if existing.is_empty() {
+        Vec::new()
+    } else {
+        existing
+            .split('\n')
+            .map(|l| l.strip_suffix('\r').unwrap_or(l).to_string())
+            .collect()
+    };
+    if existing.ends_with('\n') {
+        lines.pop();
+    }
+    for line in lines.iter_mut() {
+        if let Some(key) = line_key(line)
+            && let Some((k, v)) = SAVESTATE_KEYS.iter().find(|(kk, _)| *kk == key)
+        {
+            let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+            *line = format!("{indent}{k}: {v}");
+        }
+    }
+    let mut out = lines.join(newline);
+    if had_trailing_newline {
+        out.push_str(newline);
+    }
+    out
+}
+
+/// RAII guard from [`apply_savestate_config`]: restores the original config on
+/// drop (and removes the backup). On a restore failure the backup is kept for
+/// manual recovery.
+pub struct SavestateConfigGuard {
+    path: PathBuf,
+    backup: PathBuf,
+}
+
+impl Drop for SavestateConfigGuard {
+    fn drop(&mut self) {
+        if !self.backup.exists() {
+            return;
+        }
+        match std::fs::copy(&self.backup, &self.path) {
+            Ok(_) => {
+                let _ = std::fs::remove_file(&self.backup);
+                tracing::info!(path = %self.path.display(), "restored RPCS3 config after recording");
+            }
+            Err(e) => tracing::warn!(
+                error = %e,
+                backup = %self.backup.display(),
+                "failed to restore RPCS3 config — backup kept for manual recovery"
+            ),
+        }
+    }
+}
+
+/// Transiently apply the save-state settings to `config_yml` for the life of the
+/// returned guard (restored on drop). Backs up to `<name>.recorder-bak` and
+/// self-heals a prior crashed run (a leftover backup means the live file is the
+/// modified one → restore it first, then re-apply). Pass RPCS3's real global
+/// config — `<RPCS3_CONFIG_DIR>/config/config.yml`.
+pub fn apply_savestate_config(config_yml: &Path) -> Result<SavestateConfigGuard> {
+    let name = config_yml
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("config.yml");
+    let backup = config_yml.with_file_name(format!("{name}.recorder-bak"));
+
+    if backup.exists() {
+        std::fs::copy(&backup, config_yml)
+            .with_context(|| format!("restore stale backup {}", backup.display()))?;
+    }
+    let original = std::fs::read_to_string(config_yml)
+        .with_context(|| format!("read {}", config_yml.display()))?;
+    std::fs::write(&backup, &original)
+        .with_context(|| format!("write backup {}", backup.display()))?;
+    let swapped = set_savestate_keys(&original);
+    std::fs::write(config_yml, &swapped)
+        .with_context(|| format!("write save-state config {}", config_yml.display()))?;
+    tracing::info!(
+        path = %config_yml.display(),
+        "applied transient save-state config (SPU=ASMJIT, Compatible Savestate Mode=true)"
+    );
+    Ok(SavestateConfigGuard {
+        path: config_yml.to_path_buf(),
+        backup,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,5 +395,47 @@ System:
         let out = merge_net_config(input);
         assert!(out.contains("\r\n"), "CRLF style should be preserved");
         assert!(out.contains("  Internet enabled: Connected\r\n"));
+    }
+
+    #[test]
+    fn savestate_swap_sets_both_keys_in_place() {
+        let input = "\
+Core:
+  PPU Decoder: Recompiler (LLVM)
+  SPU Decoder: Recompiler (LLVM)
+Savestate:
+  Compatible Savestate Mode: false
+  Maximum SaveState Files: 4
+";
+        let out = set_savestate_keys(input);
+        assert!(out.contains("  SPU Decoder: Recompiler (ASMJIT)"));
+        assert!(out.contains("  Compatible Savestate Mode: true"));
+        // PPU + the savestate sibling are untouched; no key duplicated.
+        assert!(out.contains("  PPU Decoder: Recompiler (LLVM)"));
+        assert!(out.contains("  Maximum SaveState Files: 4"));
+        assert_eq!(out.matches("SPU Decoder:").count(), 1);
+        assert_eq!(out.matches("Compatible Savestate Mode:").count(), 1);
+    }
+
+    #[test]
+    fn savestate_swap_is_idempotent_and_keeps_crlf() {
+        let input = "  SPU Decoder: Recompiler (LLVM)\r\n  Compatible Savestate Mode: false\r\n";
+        let once = set_savestate_keys(input);
+        assert!(once.contains("  SPU Decoder: Recompiler (ASMJIT)\r\n"));
+        assert!(once.ends_with("\r\n"));
+        assert_eq!(
+            set_savestate_keys(&once),
+            once,
+            "second pass must be a no-op"
+        );
+    }
+
+    #[test]
+    fn savestate_swap_leaves_absent_keys_alone() {
+        // No SPU Decoder line present → nothing inserted, file otherwise intact.
+        let input = "Savestate:\n  Compatible Savestate Mode: false\n";
+        let out = set_savestate_keys(input);
+        assert!(!out.contains("SPU Decoder"));
+        assert!(out.contains("  Compatible Savestate Mode: true"));
     }
 }
