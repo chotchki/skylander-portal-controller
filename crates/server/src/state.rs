@@ -1533,9 +1533,33 @@ async fn handle_job(
                     // status=running + frames advancing + compile complete) instead
                     // of scraping a window title. No Skylanders Manager dialog → no
                     // open_dialog.
+                    //
+                    // PLAN 15.12 (recorder in-game tier): SKYLANDER_BOOT_SAVESTATE
+                    // boots a pre-made save state (straight to the in-game portal)
+                    // instead of the EBOOT, with the save-state-only RPCS3 settings
+                    // (ASMJIT SPU + Compatible Savestate Mode) swapped into the real
+                    // global config transiently for the boot and restored once the
+                    // emulator is up — the guard drops when this closure returns,
+                    // after `is_playable`, by which point RPCS3 has read the config.
+                    // Dev/recorder knob only; unset in normal use.
+                    let savestate = std::env::var_os("SKYLANDER_BOOT_SAVESTATE").map(PathBuf::from);
+                    let _config_guard = match &savestate {
+                        Some(_) => Some(crate::rpcs3_config::apply_savestate_config(
+                            &config_dir_owned.join("config").join("config.yml"),
+                        )?),
+                        None => None,
+                    };
+                    let boot_target: &std::path::Path =
+                        savestate.as_deref().unwrap_or(&eboot_owned);
+                    if savestate.is_some() {
+                        info!(
+                            savestate = %boot_target.display(),
+                            "PLAN 15.12: booting save state (recorder in-game tier)"
+                        );
+                    }
                     let mut proc = RpcsProcess::launch_no_gui(
                         &exe_owned,
-                        &eboot_owned,
+                        boot_target,
                         &ipc_path,
                         Some(&config_dir_owned),
                     )?;

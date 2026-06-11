@@ -178,7 +178,13 @@ impl UiaRpcsProcess {
             bail!("rpcs3.exe not found at {}", exe.display());
         }
         if !eboot.is_file() {
-            bail!("EBOOT.BIN not found at {}", eboot.display());
+            // PLAN 15.12: the boot target may be an EBOOT.BIN *or* a save state
+            // (`.SAVESTAT(.zst)`) — the recorder boots a save state straight to the
+            // in-game portal. RPCS3 boots whichever path it's handed.
+            bail!(
+                "boot target not found at {} (expected an EBOOT.BIN or a save state)",
+                eboot.display()
+            );
         }
         info!(
             exe = %exe.display(),
