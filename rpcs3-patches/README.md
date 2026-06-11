@@ -12,6 +12,7 @@ rpcs3-patches/
   0001-P1-…-AF_UN….patch              P1 — IPC portal control (Skylander.cpp + .h)
   0002-P2-…-window-hand….patch        P2 — borderless window + native handle (gs_frame.cpp)
   0003-P3-…-ENETUNREACH.patch         P3 — offline public-IP connect → ENETUNREACH (sys_net)
+  0004-P4-…-PE-events.patch           P4 — push guest portal-events (PE) over IPC (Skylander.cpp)
   apply.sh                            apply the series onto a checkout (git am --3way)
   README.md                           this file
 ```
@@ -19,10 +20,12 @@ rpcs3-patches/
 The submodule **always points at a pristine upstream commit** — it is never
 modified in place. The patches live here, in our repo, where the diff is
 reviewable. They apply in filename order; **0002 (P2) depends on 0001 (P1)**
-(P1 defines the `g_game_window_handle` global that P2 publishes into). **P3 is
-independent** — a `sys_net` errno tweak unrelated to the portal device or window.
+(P1 defines the `g_game_window_handle` global that P2 publishes into), and
+**0004 (P4) builds on 0001 (P1)** — it extends P1's AF_UNIX listener in the same
+`Skylander.cpp` with a portal-event push feed. **P3 is independent** — a
+`sys_net` errno tweak unrelated to the portal device or window.
 
-These three patches are the entire footprint on RPCS3 — all shallow + additive
+These four patches are the entire footprint on RPCS3 — all shallow + additive
 on rarely-churning seams (the patch-depth thesis in the decision doc). What each
 does:
 
@@ -40,6 +43,14 @@ does:
   retries into a CPU-pinning freeze. Inert under the controller's shipped
   *Connected* config (where connects succeed, so the branch isn't taken); a fix
   for the offline path. No automated test — see Tests below.
+- **P4** (PLAN 15.12) — extends P1's listener in `Emu/Io/Skylander.cpp` with a
+  *portal-event push* (`PE cmd=<name>`): the device mirrors what the guest game
+  asks of the portal (`activate` / `query` / `write` / `status` presence-poll / …)
+  to the IPC peer, drained beside the 1 Hz heartbeat. Lets the controller see
+  when the game reaches/polls/reads the portal — used by the play-through
+  recorder and to diagnose whether a save-state-resumed game re-reads a *late*
+  LOAD. Per-command rate-limited so a steady `status` pulse isn't starved; tested
+  from Rust via the loopback (`PE`-skip in `roundtrip` + a `watch_events` tail).
 
 ## The pin
 

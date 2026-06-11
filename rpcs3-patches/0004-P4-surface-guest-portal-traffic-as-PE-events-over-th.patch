@@ -1,0 +1,178 @@
+From 761be5065802aeddf806914319c1922942530e83 Mon Sep 17 00:00:00 2001
+From: Christopher Hotchkiss <chris@hotchkiss.io>
+Date: Wed, 10 Jun 2026 19:58:43 -0700
+Subject: [PATCH] P4: surface guest portal traffic as PE events over the IPC
+ socket
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Adds a portal-event push feed to the emulated Skylander USB device so an
+external controller can observe what the GUEST game asks of the portal — the
+play-through recorder waits for `PE cmd=activate` (the game reached the in-game
+portal screen) and the save-state diagnostic watches whether `PE cmd=status`
+(the interrupt presence-poll) keeps flowing after a resume and whether a
+`PE cmd=query` burst follows a late LOAD (= the resumed game re-read the newly
+placed figure).
+
+- A process-global PE queue + mutex. portal_event_emit() pushes `PE cmd=<name>\n`,
+  per-command rate-limited (250ms) for the high-frequency feeds (status / color /
+  sync / audio) so a steady status pulse is never starved by unrelated chatter,
+  and unthrottled for the meaningful edges (activate / reset / write) and the
+  finite block-read burst (query). Bounded at 256 entries (drop-newest).
+- portal_event_for_cmd() maps the control_transfer command byte to a name.
+- sky_drain_portal_events() flushes the queue to the peer, drained by
+  sky_ipc_conn beside the 1 Hz heartbeat (the select-timeout path and after input).
+- Hooks: control_transfer (after the buf[0] switch) and interrupt_transfer's
+  get_status branch (the per-slot presence poll).
+
+Shallow + additive on the same Skylander.cpp seam P1 owns; no new .cpp and no
+rpcs3.vcxproj entry. The Rust controller already carries the wire codec, the
+roundtrip PE-skip, and a watch_events tail. PLAN 15.12 P4.
+---
+ rpcs3/Emu/Io/Skylander.cpp | 94 ++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 94 insertions(+)
+
+diff --git a/rpcs3/Emu/Io/Skylander.cpp b/rpcs3/Emu/Io/Skylander.cpp
+index 9f47b5f2d..87e29ee10 100644
+--- a/rpcs3/Emu/Io/Skylander.cpp
++++ b/rpcs3/Emu/Io/Skylander.cpp
+@@ -31,6 +31,9 @@
+ #include <atomic>
+ #include <cstdio>
+ #include <cstdlib>
++#include <queue>
++#include <chrono>
++#include <unordered_map>
+ 
+ LOG_CHANNEL(skylander_log, "skylander");
+ 
+@@ -270,6 +273,86 @@ namespace
+ 	void sky_close(int s) { ::close(s); }
+ #endif
+ 
++	// --- P4 portal-event push (PLAN 15.12) ----------------------------------
++	// Surface the GUEST game's portal traffic to the IPC peer so the controller
++	// can tell when the game reaches / polls / reads the in-game portal. The
++	// recorder waits for `PE cmd=activate` (game turned the portal on); the
++	// save-state diagnostic watches whether `PE cmd=status` (the interrupt
++	// presence-poll) keeps flowing after a resume, and whether a `PE cmd=query`
++	// burst follows a late LOAD (= the game re-read the newly placed figure).
++	//
++	// Producer: the emulated-USB thread (control_transfer / interrupt_transfer).
++	// Consumer: sky_ipc_conn, draining this beside the 1 Hz heartbeat. One shared
++	// queue — correct for the single controller connection; with multiple
++	// connections events split across them (fine — this is a diagnostic feed).
++	std::mutex g_pe_mutex;
++	std::queue<std::string> g_pe_queue;
++
++	void portal_event_emit(const char* cmd, bool rate_limited)
++	{
++		std::lock_guard lock(g_pe_mutex);
++
++		// Throttle the high-frequency feeds (the ~45 Hz interrupt presence-poll,
++		// periodic colour/sync/audio commands) to a steady ~4 Hz pulse so they do
++		// not flood the socket. The throttle is PER COMMAND — a steady `status`
++		// presence-pulse (the headline diagnostic signal) must not be starved by
++		// unrelated colour/sync chatter sharing one gate. Edge events
++		// (activate/reset/write) and the finite block-read burst (query) pass
++		// through unthrottled — they are the signal.
++		if (rate_limited)
++		{
++			static std::unordered_map<std::string, std::chrono::steady_clock::time_point> last;
++			const auto now = std::chrono::steady_clock::now();
++			auto& t = last[cmd];
++			if (t != std::chrono::steady_clock::time_point{}
++				&& now - t < std::chrono::milliseconds(250))
++				return;
++			t = now;
++		}
++
++		// Bound the backlog if nothing is draining yet, so a long unattended run
++		// cannot grow it without limit (drop newest when full). 256 comfortably
++		// holds a full 64-block read burst plus a second of status between the
++		// ~1 Hz drains, so the query burst that proves a re-read is never truncated.
++		if (g_pe_queue.size() < 256)
++			g_pe_queue.push(std::string("PE cmd=") + cmd + "\n");
++	}
++
++	// Map a guest control_transfer command byte (buf[0]) to a portal-event name.
++	// Unknown / no-op commands (S, V, L, ...) are ignored.
++	void portal_event_for_cmd(u8 c)
++	{
++		switch (c)
++		{
++		case 'A': portal_event_emit("activate", false); break; // portal turned on
++		case 'R': portal_event_emit("reset", false); break;    // portal shut down
++		case 'W': portal_event_emit("write", false); break;    // block write
++		case 'Q': portal_event_emit("query", false); break;    // block read (burst)
++		case 'C': portal_event_emit("color", true); break;
++		case 'J': portal_event_emit("sync", true); break;
++		case 'M': portal_event_emit("audio", true); break;
++		default: break;
++		}
++	}
++
++	// Flush queued portal events to the peer. Returns false if the socket died.
++	bool sky_drain_portal_events(int c)
++	{
++		for (;;)
++		{
++			std::string pe;
++			{
++				std::lock_guard lock(g_pe_mutex);
++				if (g_pe_queue.empty())
++					return true;
++				pe = std::move(g_pe_queue.front());
++				g_pe_queue.pop();
++			}
++			if (send(c, pe.data(), static_cast<int>(pe.size()), 0) < 0)
++				return false;
++		}
++	}
++
+ 	std::string sky_state_name(system_state s)
+ 	{
+ 		switch (s)
+@@ -407,6 +490,8 @@ namespace
+ 				const std::string hb = sky_state_line("HB");
+ 				if (send(c, hb.data(), static_cast<int>(hb.size()), 0) < 0)
+ 					break;
++				if (!sky_drain_portal_events(c)) // P4: flush queued portal events
++					break;
+ 				continue;
+ 			}
+ 
+@@ -431,6 +516,8 @@ namespace
+ 					return;
+ 				}
+ 			}
++			if (!sky_drain_portal_events(c)) // P4: flush after handling input too
++				break;
+ 		}
+ 		sky_close(c);
+ 	}
+@@ -640,6 +727,12 @@ void usb_device_skylander::control_transfer(u8 bmRequestType, u8 bRequest, u16 w
+ 				skylander_log.error("Unhandled Query: buf_size=0x%02X, Type=0x%02X, bRequest=0x%02X, bmRequestType=0x%02X", buf_size, (buf_size > 0) ? buf[0] : -1, bRequest, bmRequestType);
+ 				break;
+ 			}
++
++			// P4 (PLAN 15.12): surface the guest's portal command to the IPC peer
++			// so the controller can see the game reach / poll / read the portal.
++			if (buf_size > 0)
++				portal_event_for_cmd(buf[0]);
++
+ 			break;
+ 		}
+ 		break;
+@@ -676,6 +769,7 @@ void usb_device_skylander::interrupt_transfer(u32 buf_size, u8* buf, u32 endpoin
+ 		else
+ 		{
+ 			g_skyportal.get_status(buf);
++			portal_event_emit("status", true); // P4: rate-limited presence-poll pulse
+ 		}
+ 	}
+ }
+-- 
+2.53.0.windows.3
+

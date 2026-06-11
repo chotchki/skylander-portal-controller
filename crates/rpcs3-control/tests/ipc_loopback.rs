@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 #[cfg(unix)]
 use std::os::unix::net::UnixListener;
@@ -37,7 +38,10 @@ fn unique_sock() -> PathBuf {
 /// every `LOAD` arg the server received — so a test can assert the *exact* path
 /// that reached the wire (the patched RPCS3 opens it against its own CWD, so the
 /// driver must send it absolute).
-fn spawn_fake_server(prepend_hb: bool) -> (PathBuf, Arc<Mutex<Vec<String>>>) {
+fn spawn_fake_server_pushes(
+    prepend_hb: bool,
+    prepend_pe: bool,
+) -> (PathBuf, Arc<Mutex<Vec<String>>>) {
     let path = unique_sock();
     let _ = std::fs::remove_file(&path); // AF_UNIX bind needs no stale file
     let listener = UnixListener::bind(&path).expect("bind fake IPC socket");
@@ -85,6 +89,10 @@ fn spawn_fake_server(prepend_hb: bool) -> (PathBuf, Arc<Mutex<Vec<String>>>) {
                     if prepend_hb {
                         let _ = writer.write_all(b"HB status=running frames=1 progr=8/8 seg=0/0\n");
                     }
+                    if prepend_pe {
+                        // P4 portal-event push interleaved before the reply.
+                        let _ = writer.write_all(b"PE cmd=status\n");
+                    }
                     if writer.write_all(reply.as_bytes()).is_err() {
                         break;
                     }
@@ -94,6 +102,40 @@ fn spawn_fake_server(prepend_hb: bool) -> (PathBuf, Arc<Mutex<Vec<String>>>) {
     });
 
     (path, loads)
+}
+
+/// Back-compat shim: a fake server with no `PE` pushes (most tests use this).
+fn spawn_fake_server(prepend_hb: bool) -> (PathBuf, Arc<Mutex<Vec<String>>>) {
+    spawn_fake_server_pushes(prepend_hb, false)
+}
+
+/// Bind a server that, on each connection, immediately writes the given push
+/// lines (each newline-terminated) and then idles — modelling the patched
+/// emulator's *unsolicited* push feed (1 Hz `HB` + `PE`), which `watch_events`
+/// reads on a connection that sends nothing.
+fn spawn_pushing_server(lines: &'static [&'static str]) -> PathBuf {
+    let path = unique_sock();
+    let _ = std::fs::remove_file(&path);
+    let listener = UnixListener::bind(&path).expect("bind fake IPC socket");
+    thread::spawn(move || {
+        for conn in listener.incoming() {
+            let Ok(mut stream) = conn else { break };
+            thread::spawn(move || {
+                for l in lines {
+                    if stream.write_all(l.as_bytes()).is_err() {
+                        return;
+                    }
+                    if stream.write_all(b"\n").is_err() {
+                        return;
+                    }
+                }
+                // Idle so the client read times out and re-checks its deadline,
+                // exactly like the real emulator between pushes.
+                thread::sleep(Duration::from_secs(2));
+            });
+        }
+    });
+    path
 }
 
 /// Minimal P1 server command handler over the fake portal.
@@ -264,5 +306,54 @@ fn load_path_is_sent_absolute() {
     );
 
     drop(received);
+    let _ = std::fs::remove_file(&sock);
+}
+
+#[test]
+fn portal_events_are_skipped_before_reply() {
+    // A `PE` portal-event push (P4) interleaved before a reply must be skipped by
+    // the driver's roundtrip exactly like an `HB` — otherwise a live run
+    // mis-parses the push as the command's answer. Push BOTH before every reply.
+    let (sock, _loads) = spawn_fake_server_pushes(true, true);
+    let d = IpcPortalDriver::with_path(&sock);
+
+    d.ping().expect("HB+PE pushes before PONG must be skipped");
+    let name = d
+        .load(SlotIndex::new(0).unwrap(), &PathBuf::from("Eruptor.sky"))
+        .unwrap();
+    assert_eq!(name, "Eruptor", "PE noise must not corrupt the reply");
+
+    let _ = std::fs::remove_file(&sock);
+}
+
+#[test]
+fn watch_events_surfaces_portal_events() {
+    // The diagnostic tail must receive the emulator's *unsolicited* pushes
+    // (HB + PE) on a connection that sends nothing. (PLAN 15.12 P4.)
+    static PUSHES: &[&str] = &[
+        "HB status=running frames=10 progr=8/8 seg=0/0",
+        "PE cmd=activate",
+        "PE cmd=status",
+        "PE cmd=query block=0",
+    ];
+    let sock = spawn_pushing_server(PUSHES);
+    let d = IpcPortalDriver::with_path(&sock);
+
+    let seen = Mutex::new(Vec::<String>::new());
+    d.watch_events(Duration::from_millis(900), |_elapsed, line| {
+        seen.lock().unwrap().push(line.to_string());
+    })
+    .unwrap();
+
+    let seen = seen.into_inner().unwrap();
+    assert!(
+        seen.iter().any(|l| l == "PE cmd=activate"),
+        "activate push not surfaced; got {seen:?}"
+    );
+    assert!(
+        seen.iter().any(|l| l.starts_with("PE cmd=query")),
+        "query push not surfaced; got {seen:?}"
+    );
+
     let _ = std::fs::remove_file(&sock);
 }

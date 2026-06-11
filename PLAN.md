@@ -2810,23 +2810,34 @@ from the Phase-20 scoping:
     (SPU=ASMJIT + Compatible Savestate Mode=true on the **real** `<config_dir>/config/config.yml`)
     swapped in transiently for the boot + restored after `is_playable`; (b) `rpcs3_config::apply_savestate_config`
     RAII helper (commit `dd124e8`, unit-tested); (c) `tools/playthrough -- ingame` +
-    `TestServer::spawn_ipc_savestate` (commit `c1d276e`). **Remaining = (d) live HTPC run** (confirms
-    skylander-load on a *resumed* save state + records `playthrough-ingame.mp4`). `PORTAL_EVENT`/P4
-    deferred to a robustness pass (the save state already lands at the portal). Net-writer targets
-    the 85-byte root `config.yml` while RPCS3 reads `config/config.yml` — separate thread to look at.
+    `TestServer::spawn_ipc_savestate` (commit `c1d276e`). **(d) live HTPC run (2026-06-10):** the
+    save state boots to the in-game portal + IPC `LOAD` succeeds on the phone, BUT the figure does
+    NOT appear on the GAME's in-game portal. Root cause: the Skylander USB device has no save-state
+    serialization, so on resume the open question is whether the game re-polls the portal. **→ P4
+    `PORTAL_EVENT` built to diagnose (15.12.1); user rebuilds RPCS3 + runs `examples/portal_tail` to
+    see whether `status` polling continues after resume and a `query` burst follows a late `LOAD`.**
+    Net-writer targets the 85-byte root `config.yml` while RPCS3 reads `config/config.yml` —
+    separate thread to look at.
   Show figures on the GAME's own portal screen (not just the app UI). **Decision (2026-06-10):** do
   NOT navigate the game's menus with synthesized controller input — too fragile, and an
   image-matching / LLM-navigator is overkill + non-deterministic for a recorder. Instead **boot
   RPCS3 directly into a pre-made save state parked at the in-game portal screen** (zero menu nav,
   zero input synthesis), place a figure via the app (IPC `LOAD`), capture.
-  - **15.12.1 — `PORTAL_EVENT` IPC signal (P4).** Robust "game reached/activated the portal" push
-    (STATE/heartbeat is only emulator liveness; STATUS is only *our* slot state). **Wire codec
-    DONE** — `ipc/proto.rs`: `PE cmd=<name>` + `PortalEvent` + `parse_portal_event`, unit-tested,
-    commit `48ab6d8`. **Remaining:** (a) driver consumes the `PE` push (`ipc/mod.rs`) + exposes
-    "portal activated"; (b) `tests/ipc_loopback.rs` fake server emits `PE` → driver picks it up;
-    (c) **P4 C++ patch** — hook `usb_device_skylander::control_transfer()` in the RPCS3 clone to
-    emit `PE cmd=activate|status|query` when the guest talks to the portal (peer event-queue
-    drained by `sky_ipc_conn`, like the heartbeat); (d) build the patched binary + live-test.
+  - **15.12.1 — `PORTAL_EVENT` IPC signal (P4). BUILT 2026-06-10 — only the live HTPC build+run
+    remains.** Robust "game reached / polls / reads the portal" push (STATE/heartbeat is only
+    emulator liveness; STATUS is only *our* slot state). Shipped: wire codec (`ipc/proto.rs`:
+    `PE cmd=<name>` + `PortalEvent` + `parse_portal_event`, commit `48ab6d8`); driver tolerates +
+    observes `PE` — `roundtrip` skips `PE` like `HB` (else a push between a command and its reply
+    breaks a live run) + a new `watch_events` tail (`ipc/mod.rs`); `tests/ipc_loopback.rs` exercises
+    both (PE-skip in roundtrip + `watch_events` collection); **P4 C++ patch**
+    `rpcs3-patches/0004-P4-*.patch` extends P1's `Skylander.cpp` listener with a
+    per-command-rate-limited PE feed (queue drained by `sky_ipc_conn` beside the heartbeat), hooking
+    `control_transfer` (the `buf[0]` switch) + `interrupt_transfer`'s `get_status` presence-poll —
+    clean-applies P1–P4 onto pristine `vendor/rpcs3`, committed on the dev clone's `spike-patches`,
+    adversarially reviewed (4 agents: compile ✓, no races/deadlock ✓, wire-consistent ✓).
+    Diagnostic tool: `examples/portal_tail.rs` (tail `PE` + optional mid-stream `LOAD` →
+    before/after `cmd` tally). **Remaining = (d): user rebuilds RPCS3 + runs `portal_tail` to answer
+    the (d) question above** (does a resumed game re-poll / re-read a late LOAD).
   - **15.12.2 — save-state boot (GATE — user/HTPC validation first).** Confirm the patched RPCS3
     boots a `.SAVESTAT` (ideally `--no-gui`) straight to the portal screen, and the portal
     re-activates on resume (a figure placed via the app appears in-game → `PORTAL_EVENT` fires).

@@ -13,7 +13,7 @@
 //! ->  LOAD <abs .sky path>     <-  OK slot=<n>   | ERR <reason>
 //! ->  CLEAR <slot 0-7>         <-  OK            | ERR <reason>
 //! (push, ~1 Hz)                <-  HB status=<s> frames=<n> progr=<a>/<b> seg=<c>/<d>
-//! (push, on guest portal cmd)  <-  PE cmd=<activate|status|query|...>   (P4)
+//! (push, on guest portal cmd)  <-  PE cmd=<activate|reset|write|query|color|sync|audio|status>  (P4)
 //! ```
 
 use std::path::Path;
@@ -106,8 +106,9 @@ pub fn is_heartbeat(line: &str) -> bool {
 /// portal once it's at that screen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PortalEvent {
-    /// The portal command the guest issued, lowercased: `activate`, `status`,
-    /// `query`, `color`, … Unknown/new commands pass through verbatim.
+    /// The portal command the guest issued, lowercased — one of `activate`,
+    /// `reset`, `write`, `query`, `color`, `sync`, `audio`, `status` (the set the
+    /// P4 patch emits). Unknown/new commands pass through verbatim.
     pub cmd: String,
 }
 

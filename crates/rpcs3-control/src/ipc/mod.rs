@@ -19,7 +19,7 @@ pub mod proto;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use skylander_core::{SLOT_COUNT, SlotIndex, SlotState};
@@ -100,9 +100,12 @@ impl IpcPortalDriver {
                 bail!("RPCS3 IPC connection closed before a reply");
             }
             let trimmed = line.trim_end_matches(['\r', '\n']);
-            // Heartbeats interleave with replies (~1 Hz push); skip them while
-            // waiting for this command's answer.
-            if trimmed.is_empty() || proto::is_heartbeat(trimmed) {
+            // Pushes (the ~1 Hz `HB` heartbeat and `PE` portal-events, P4)
+            // interleave with replies; skip them while waiting for this command's
+            // answer. Without the PE skip a portal-event pushed between a command
+            // and its reply would be mis-parsed as the reply and break a live run.
+            if trimmed.is_empty() || proto::is_heartbeat(trimmed) || proto::is_portal_event(trimmed)
+            {
                 continue;
             }
             return Ok(trimmed.to_string());
@@ -131,6 +134,61 @@ impl IpcPortalDriver {
         } else {
             bail!("unexpected PING reply: {reply:?}")
         }
+    }
+
+    /// Open **one persistent connection** and stream every *pushed* line — the
+    /// 1 Hz `HB` heartbeat and the `PE` portal-event pushes (P4) — to `on_line`
+    /// until `dur` elapses. The patched emulator pushes on its own 1 s `select`
+    /// timeout, so a connection that sends nothing still receives the full feed.
+    /// Each call gets `(elapsed_since_start, line)`, trimmed of CR/LF.
+    ///
+    /// Diagnostic for PLAN 15.12: watch whether the guest game keeps polling the
+    /// portal (`PE cmd=status`) after a save-state resume, and whether a
+    /// `PE cmd=query` burst follows a late `LOAD` (= the game re-read the figure).
+    /// Not part of the `PortalDriver` trait.
+    pub fn watch_events<F: FnMut(Duration, &str)>(
+        &self,
+        dur: Duration,
+        mut on_line: F,
+    ) -> Result<()> {
+        let start = Instant::now();
+        let stream = UnixStream::connect(&self.path)
+            .with_context(|| format!("connect RPCS3 IPC socket {}", self.path.display()))?;
+        // A read timeout shorter than the deadline lets us re-check `dur` between
+        // pushes (and notice a stream that has gone silent — the very signal we
+        // are looking for). A timeout normally fires on an empty socket; if it
+        // ever lands mid-frame, the loop below preserves the partial bytes.
+        stream
+            .set_read_timeout(Some(Duration::from_millis(300)))
+            .ok();
+
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        while start.elapsed() < dur {
+            match reader.read_line(&mut line) {
+                Ok(0) => bail!("RPCS3 IPC connection closed while watching events"),
+                Ok(_) => {
+                    // read_line stops at '\n'; pushes are newline-framed. Hand the
+                    // (trimmed) line to the callback, then reset for the next one.
+                    let trimmed = line.trim_end_matches(['\r', '\n']);
+                    if !trimmed.is_empty() {
+                        on_line(start.elapsed(), trimmed);
+                    }
+                    line.clear();
+                }
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::TimedOut =>
+                {
+                    // Read timeout on an idle (or mid-frame) socket. Leave any
+                    // partial bytes in `line` — AF_UNIX is SOCK_STREAM, so a frame
+                    // can split across reads and the next read_line resumes it —
+                    // and loop to re-check the deadline.
+                }
+                Err(e) => return Err(e).context("read IPC push stream"),
+            }
+        }
+        Ok(())
     }
 }
 
