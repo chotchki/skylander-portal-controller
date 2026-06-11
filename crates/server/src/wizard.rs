@@ -73,6 +73,45 @@ pub fn validate_firmware_pack(p: &Path) -> Result<(), ValidationError> {
     }
 }
 
+/// Outcome of checking an RPCS3 install for a *recognized* Skylanders game. The
+/// wizard validates the binary, but an install with no supported game in its
+/// library can't launch anything — and the serial→game map
+/// (`core::game_of_origin_from_serial`) is currently US-centric, so a non-US
+/// edition reads as unrecognized. **Advisory only**: a "none recognized" result
+/// asks the user for logs (so we can add the edition) rather than blocking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SupportedGameCheck {
+    /// `n` games in `games.yml` map to a known Skylanders title.
+    Recognized(usize),
+    /// `total` games present, but none are recognized Skylanders serials.
+    NoneRecognized(usize),
+    /// No `games.yml` / empty RPCS3 library.
+    NoGames,
+}
+
+/// Inspect an RPCS3 install's `config/games.yml` for a recognized Skylanders
+/// game. `config_dir` is the RPCS3 install root (the wizard derives it from the
+/// chosen `rpcs3.exe`'s parent, matching [`PersistedConfig::from_user_paths`]).
+pub fn check_supported_game(config_dir: &Path) -> SupportedGameCheck {
+    let map = skylander_rpcs3_control::games_yml::read_games_yml(config_dir).unwrap_or_default();
+    let total = map.len();
+    if total == 0 {
+        return SupportedGameCheck::NoGames;
+    }
+    let recognized = map
+        .keys()
+        .filter(|s| {
+            skylander_core::game_of_origin_from_serial(&skylander_core::GameSerial::new(s.as_str()))
+                .is_some()
+        })
+        .count();
+    if recognized > 0 {
+        SupportedGameCheck::Recognized(recognized)
+    } else {
+        SupportedGameCheck::NoneRecognized(total)
+    }
+}
+
 // ---- Heuristic defaults --------------------------------------------------
 
 /// Best-guess RPCS3 install path. Returns the first candidate that exists
@@ -337,6 +376,12 @@ pub fn run_wizard_blocking(
         /// PLAN 20 — TV (fullscreen) vs Desktop (windowed). Chosen on the
         /// `Page::Display` step; flows into the final `PersistedConfig`.
         window_mode: WindowMode,
+        /// Memoized supported-game advisory: recognize a Skylanders game in the
+        /// chosen install, not just the binary. Recomputed only when
+        /// `rpcs3_input` differs from `game_check_for`, so games.yml isn't
+        /// re-read every frame.
+        game_check_for: String,
+        game_check: Option<SupportedGameCheck>,
     }
 
     impl WizardState {
@@ -360,6 +405,23 @@ pub fn run_wizard_blocking(
         }
         fn pack_skipped(&self) -> bool {
             self.pack_input.trim().is_empty()
+        }
+        /// Memoized supported-game check for the current `rpcs3_input`. `None`
+        /// until a valid `rpcs3.exe` is entered; recomputes (one games.yml read)
+        /// only when the path changes, never per frame.
+        fn supported_game(&mut self) -> Option<SupportedGameCheck> {
+            if self.rpcs3_valid().is_err() {
+                return None;
+            }
+            if self.game_check_for != self.rpcs3_input {
+                self.game_check_for = self.rpcs3_input.clone();
+                let exe = self.rpcs3_path();
+                self.game_check = Some(match exe.parent() {
+                    Some(dir) => check_supported_game(dir),
+                    None => SupportedGameCheck::NoGames,
+                });
+            }
+            self.game_check
         }
     }
 
@@ -393,6 +455,8 @@ pub fn run_wizard_blocking(
         reader_present,
         software_gl,
         window_mode: WindowMode::Tv,
+        game_check_for: String::new(),
+        game_check: None,
     }));
 
     struct App {
@@ -674,6 +738,44 @@ pub fn run_wizard_blocking(
             Ok(()) => status_ok(ui, "rpcs3.exe found."),
             Err(e) => status_err(ui, &e.to_string()),
         }
+        // The binary alone isn't enough — check the install actually has a
+        // recognized Skylanders game. Advisory only (NEXT stays enabled): the
+        // recognized-serial set is region-incomplete, so a false "unrecognized"
+        // asks for logs rather than trapping the user.
+        if let Some(check) = s.supported_game() {
+            ui.add_space(6.0);
+            match check {
+                SupportedGameCheck::Recognized(n) => status_ok(
+                    ui,
+                    &format!(
+                        "Found {n} supported Skylanders game{} in your library.",
+                        if n == 1 { "" } else { "s" }
+                    ),
+                ),
+                SupportedGameCheck::NoneRecognized(total) => {
+                    status_err(
+                        ui,
+                        &format!(
+                            "Found {total} game{} in your RPCS3 library, but none are recognized \
+                             Skylanders titles — the app likely won't work here.",
+                            if total == 1 { "" } else { "s" }
+                        ),
+                    );
+                    status_info(
+                        ui,
+                        "If you DO have a Skylanders game installed (especially a non-US edition), \
+                         this is likely a gap on our end — please report it with your logs \
+                         (%APPDATA%\\skylander-portal-controller\\logs\\) at \
+                         github.com/chotchki/skylander-portal-controller/issues so we can add it.",
+                    );
+                }
+                SupportedGameCheck::NoGames => status_info(
+                    ui,
+                    "No PS3 games found in your RPCS3 library yet — boot a Skylanders game in \
+                     RPCS3 once so it's added, then continue.",
+                ),
+            }
+        }
         ui.add_space(36.0);
         ui.horizontal(|ui| {
             if ghost_button(ui, "BACK").clicked() {
@@ -889,6 +991,47 @@ mod tests {
         let p = d.path().join("totally-not-rpcs3.exe");
         std::fs::write(&p, b"stub").unwrap();
         assert_eq!(validate_rpcs3_path(&p), Err(ValidationError::NotRpcs3Exe));
+    }
+
+    #[test]
+    fn supported_game_recognized() {
+        let d = tempdir().unwrap();
+        let cfg = d.path().join("config");
+        std::fs::create_dir_all(&cfg).unwrap();
+        // One recognized (Spyro, BLUS30779) + one unknown serial.
+        std::fs::write(
+            cfg.join("games.yml"),
+            "BLUS30779: /games/spyro\nNOPE00000: /games/other\n",
+        )
+        .unwrap();
+        assert_eq!(
+            check_supported_game(d.path()),
+            SupportedGameCheck::Recognized(1)
+        );
+    }
+
+    #[test]
+    fn supported_game_none_recognized() {
+        let d = tempdir().unwrap();
+        let cfg = d.path().join("config");
+        std::fs::create_dir_all(&cfg).unwrap();
+        // Two games, neither a recognized serial (e.g. non-US / digital editions).
+        std::fs::write(
+            cfg.join("games.yml"),
+            "BLES01290: /games/eu-spyro\nNPUB00000: /games/digital\n",
+        )
+        .unwrap();
+        assert_eq!(
+            check_supported_game(d.path()),
+            SupportedGameCheck::NoneRecognized(2)
+        );
+    }
+
+    #[test]
+    fn supported_game_no_library() {
+        // No config/games.yml at all → empty library.
+        let d = tempdir().unwrap();
+        assert_eq!(check_supported_game(d.path()), SupportedGameCheck::NoGames);
     }
 
     #[test]
