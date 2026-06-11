@@ -2891,8 +2891,10 @@ from the Phase-20 scoping:
     `pick_game` and the LOAD — the re-run had **no RSX stall / no supervisor recovery** and `see_in_game`
     ran the full 16s clean. So loading too soon after the hot-plug RECONNECT was the cause; the settle lets
     the guest finish re-enumerating the portal first. Marquee now = [connect, pick_profile, pick_game,
-    settle_after_reconnect, open_toybox, place_figure(ipc), see_in_game]. (Pending: visual confirm that
-    Eruptor renders on the in-game portal — the logs show the LOAD landed + the game stayed playable.)
+    settle_after_reconnect, open_toybox, place_figure(ipc), see_in_game]. **CONFIRMED 2026-06-11 (Chris):
+    Eruptor lands cleanly on the in-game portal — the automated in-game marquee demo WORKS end-to-end.** The
+    full arc (P4 diagnose → P5 RECONNECT → 15.12.4 auto-fire → beats framework → the post-RECONNECT settle)
+    is complete. Optional polish: shrink the 20s settle (GHL re-attach is ~5s) for a snappier clip.
 
 - [ ] 12.1 **Research + scaffolding (research-first, no code
   commits).**
