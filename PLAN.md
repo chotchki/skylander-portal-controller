@@ -2810,22 +2810,24 @@ from the Phase-20 scoping:
     (SPU=ASMJIT + Compatible Savestate Mode=true on the **real** `<config_dir>/config/config.yml`)
     swapped in transiently for the boot + restored after `is_playable`; (b) `rpcs3_config::apply_savestate_config`
     RAII helper (commit `dd124e8`, unit-tested); (c) `tools/playthrough -- ingame` +
-    `TestServer::spawn_ipc_savestate` (commit `c1d276e`). **(d) DIAGNOSED 2026-06-10 via P4 on the HTPC —
-    save-state live-load is a DEAD END.** Two findings: (1) booting Spyro directly with `Net → Internet
-    enabled: Connected` CPU-pin-freezes (busy-retry `sys_net`, ~439M yields, black screen) — cured by
+    `TestServer::spawn_ipc_savestate` (commit `c1d276e`). **(d) SOLVED 2026-06-10 — save-state live-load
+    WORKS (via P5).** Diagnosis chain (P4): (1) booting Spyro directly with `Net → Internet enabled:
+    Connected` CPU-pin-freezes (busy-retry `sys_net`, ~439M yields, black screen) — cured by
     **Internet=Disconnected** (P3 ENETUNREACH); the server's boot path sets this, a bare `rpcs3.exe` does
-    not. (2) THE blocker: on a save-state resume the game's `sys_usbd_transfer_data` to the portal all fail
-    `0x80010002 CELL_EINVAL` — RPCS3 re-creates the USB device fresh but the game's *restored* pipe handles
-    are stale, so transfers are rejected **before** reaching `control_transfer`/`interrupt_transfer` (zero PE
-    on both resumed runs). The game cannot talk to the portal on a resumed save state → a live LOAD can never
-    appear. **Positive control (fresh EBOOT boot, no save state):** the game polls normally and a LOAD at +6s
-    produced a 20-event `query` burst + `activate` (query 0→20, status 19→68) — **P4 works end-to-end and
-    live IPC loading WORKS on a normal boot**; only the resume breaks it. **Next-step options:** (A) fresh
-    boot + reach a portal-polling screen (live-load works; game even detects figures at the main menu);
-    (B) capture-with-figure save state (figure baked into game RAM, no live swap — static demo only);
-    (C) P5 patch to serialize the USB device + pipe handles across save states (deep USB-stack C++,
-    uncertain). Recommend (A); decision pending. Net-writer targets the 85-byte root `config.yml` while
-    RPCS3 reads `config/config.yml` — separate thread to look at.
+    not. (2) The real blocker: on a save-state resume RPCS3 rebuilds the USB handler + its **empty LDD
+    registry**, but the resumed game keeps its stale pipe handles and never re-registers its LDD, so the
+    portal is never `connect_usb_device`'d (assigned_number=0) and every `sys_usbd_transfer_data` fails
+    `0x80010002 CELL_EINVAL` (game shows "reconnect the Portal of Power"). **P5 fixes it:** an IPC
+    `RECONNECT` command re-registers the portal LDD (re-connecting the device) then hot-plug-cycles it
+    (DETACH+ATTACH) so the guest re-enumerates with fresh handles. **Live-verified on the HTPC:** boot save
+    state → settle → `RECONNECT` → the game re-inits the portal (clean `activate`, reset-loop gone) → a LOAD
+    then produced a 46-event `query` burst + `write`s, and **Eruptor appeared on the in-game portal**
+    (user-confirmed visually). (Positive control — fresh EBOOT boot, no save state — also gave a clean
+    `query` burst: live-load was always fine on a normal boot; only the resume needed P5.) **Remaining =
+    wire it into the recorder** (15.12.4): the server's save-state `BootDirect` should auto-fire `RECONNECT`
+    once the game reaches the "reconnect portal" state (~10s post-resume; timing can tighten now it's
+    proven), then place + capture. Net-writer targets the 85-byte root `config.yml` while RPCS3 reads
+    `config/config.yml` — separate thread to look at.
   Show figures on the GAME's own portal screen (not just the app UI). **Decision (2026-06-10):** do
   NOT navigate the game's menus with synthesized controller input — too fragile, and an
   image-matching / LLM-navigator is overkill + non-deterministic for a recorder. Instead **boot
@@ -2856,6 +2858,14 @@ from the Phase-20 scoping:
   - **15.12.3 — in-game scenario** in `tools/playthrough`: boot savestate → wait `PORTAL_EVENT` →
     app places a figure → capture. No controller input. (The `examples/boot_game.rs`
     `SendInput`/keyboard-pad-config work stays shelved unless we later demo in-game *movement*.)
+  - [ ] **15.12.4 — wire the P5 `RECONNECT` into the save-state boot path.** The mechanism is proven
+    (P5, live-verified — see (d)); now make it automatic. After `BootDirect` resumes a
+    `SKYLANDER_BOOT_SAVESTATE` and the game reaches the "reconnect portal" state (~10s post-`is_playable`),
+    the server fires `IpcPortalDriver::reconnect()` once, *then* proceeds to place figures + capture
+    (the save-state boot must also use `Net → Internet enabled: Disconnected` to dodge the Spyro freeze).
+    Then the `ingame` scenario yields the figure-on-the-game's-portal MP4 in one command. Manual repro:
+    boot the save state (Disconnected + ASMJIT + Compatible Savestate Mode), then
+    `cargo run -p skylander-rpcs3-control --example portal_tail -- 55 --reconnect-at 3 --load <abs .sky> --at 30`.
 
 - [ ] 12.1 **Research + scaffolding (research-first, no code
   commits).**

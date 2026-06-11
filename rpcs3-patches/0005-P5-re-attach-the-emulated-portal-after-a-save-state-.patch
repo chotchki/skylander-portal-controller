@@ -1,0 +1,132 @@
+From 3a8c42e05895fb9145fba4fbc71da245c167e0f7 Mon Sep 17 00:00:00 2001
+From: Christopher Hotchkiss <chris@hotchkiss.io>
+Date: Wed, 10 Jun 2026 21:18:08 -0700
+Subject: [PATCH] P5: re-attach the emulated portal after a save-state resume
+ (RECONNECT IPC)
+
+A save-state resume rebuilds the emulated-USB handler thread (and its LDD
+registry) from scratch, but the guest game's restored RAM still holds its old USB
+pipe handles. The emulator's LDD table comes back empty and the resumed game never
+re-registers its LDD (it believes it already did), so the portal is never
+connect_usb_device'd (assigned_number stays 0) and every guest sys_usbd_transfer_data
+to it fails CELL_EINVAL -- the game shows "reconnect the Portal of Power" and sees
+no figures.
+
+P5 adds an IPC RECONNECT command that re-establishes the device:
+- usb_handler_thread::reconnect_device(): re-registers the LDD (add_ldd connects the
+  matching emulated device + fires SYS_USBD_ATTACH), then hot-plug-cycles it
+  (disconnect+connect = DETACH+ATTACH) so the guest sees a clean remove+insert -- the
+  "reconnect the Portal of Power" path the game handles -- and re-enumerates with fresh
+  pipe handles. Without the remove the resumed game only half-detects the device and
+  loops on reset.
+- register_ldd_and_connect() free function (declared in sys_usbd.h) wraps it for
+  callers outside sys_usbd.cpp.
+- Skylander.cpp: the RECONNECT IPC command calls it for the portal (VID 0x1430 /
+  PID 0x0150). g_skyportal (loaded figures) is untouched, so contents survive.
+
+Verified live on the HTPC: boot a Spyro save state parked at the in-game portal, fire
+RECONNECT, and a subsequent IPC LOAD is read by the game (query burst) with the figure
+appearing in-game -- the save-state live-load the play-through recorder needs. PLAN 15.12 P5.
+---
+ rpcs3/Emu/Cell/lv2/sys_usbd.cpp | 44 +++++++++++++++++++++++++++++++++
+ rpcs3/Emu/Cell/lv2/sys_usbd.h   |  1 +
+ rpcs3/Emu/Io/Skylander.cpp      | 11 +++++++++
+ 3 files changed, 56 insertions(+)
+
+diff --git a/rpcs3/Emu/Cell/lv2/sys_usbd.cpp b/rpcs3/Emu/Cell/lv2/sys_usbd.cpp
+index b84e3457c..514adee17 100644
+--- a/rpcs3/Emu/Cell/lv2/sys_usbd.cpp
++++ b/rpcs3/Emu/Cell/lv2/sys_usbd.cpp
+@@ -126,6 +126,9 @@ public:
+ 	// LDDs handling functions
+ 	bool add_ldd(std::string_view product, u16 id_vendor, u16 id_product_min, u16 id_product_max);
+ 	bool remove_ldd(std::string_view product);
++	// PLAN 15.12 P5 — re-register an LDD then hot-plug-cycle (DETACH+ATTACH) the
++	// matching device, so a save-state-resumed guest re-enumerates it cleanly.
++	void reconnect_device(std::string_view product, u16 id_vendor, u16 id_product_min, u16 id_product_max);
+ 
+ 	// Pipe functions
+ 	u32 open_pipe(u32 device_handle, u8 endpoint);
+@@ -1104,6 +1107,47 @@ void reconnect_usb(u32 assigned_number)
+ 	usbh->reconnect_usb_device(assigned_number);
+ }
+ 
++void usb_handler_thread::reconnect_device(std::string_view product, u16 id_vendor, u16 id_product_min, u16 id_product_max)
++{
++	std::lock_guard lock(mutex);
++
++	// Re-register the LDD (rebuilt empty on a save-state resume) so the device
++	// connects (assigned_number set, SYS_USBD_ATTACH fired).
++	add_ldd(product, id_vendor, id_product_min, id_product_max);
++
++	// Then hot-plug-cycle it: DETACH + ATTACH, so the guest sees a clean
++	// remove+insert — the "reconnect the Portal of Power" path the game handles.
++	// Without the remove, the resumed game only half-detects the device and loops
++	// on reset (observed). disconnect/connect_usb_device don't lock (we hold it).
++	for (const auto& dev : usb_devices)
++	{
++		if (dev->assigned_number &&
++			dev->device._device.idVendor == id_vendor &&
++			dev->device._device.idProduct >= id_product_min &&
++			dev->device._device.idProduct <= id_product_max)
++		{
++			disconnect_usb_device(dev, false);
++			connect_usb_device(dev, false);
++			break;
++		}
++	}
++}
++
++// PLAN 15.12 P5 — re-register a guest LDD + hot-plug-cycle the matching emulated
++// device from the emulator side. The LDD registry is rebuilt empty on a save-state
++// resume, so a device whose guest never re-registers (the Skylanders portal) stays
++// unconnected and its transfers fail CELL_EINVAL; this reconnects it and gives the
++// guest a clean DETACH+ATTACH so it re-enumerates with fresh pipe handles.
++void register_ldd_and_connect(std::string_view product, u16 id_vendor, u16 id_product_min, u16 id_product_max)
++{
++	auto usbh = g_fxo->try_get<named_thread<usb_handler_thread>>();
++	if (!usbh || !usbh->is_init)
++	{
++		return;
++	}
++	usbh->reconnect_device(product, id_vendor, id_product_min, id_product_max);
++}
++
+ void handle_hotplug_event(bool connected, bool source_is_libusb)
+ {
+ 	if (auto usbh = g_fxo->try_get<named_thread<usb_handler_thread>>())
+diff --git a/rpcs3/Emu/Cell/lv2/sys_usbd.h b/rpcs3/Emu/Cell/lv2/sys_usbd.h
+index 01a7891bb..b7afe3947 100644
+--- a/rpcs3/Emu/Cell/lv2/sys_usbd.h
++++ b/rpcs3/Emu/Cell/lv2/sys_usbd.h
+@@ -90,4 +90,5 @@ error_code sys_usbd_unregister_extra_ldd(ppu_thread& ppu, u32 handle, vm::cptr<c
+ 
+ void connect_usb_controller(u8 index, input::product_type);
+ void reconnect_usb(u32 assigned_number);
++void register_ldd_and_connect(std::string_view product, u16 id_vendor, u16 id_product_min, u16 id_product_max);
+ void handle_hotplug_event(bool connected, bool source_is_libusb);
+diff --git a/rpcs3/Emu/Io/Skylander.cpp b/rpcs3/Emu/Io/Skylander.cpp
+index 87e29ee10..7b7456eb7 100644
+--- a/rpcs3/Emu/Io/Skylander.cpp
++++ b/rpcs3/Emu/Io/Skylander.cpp
+@@ -463,6 +463,17 @@ namespace
+ 			}
+ 			out = g_skyportal.remove_skylander(static_cast<u8>(slot)) ? "OK\n" : "ERR not_loaded\n";
+ 		}
++		else if (cmd == "RECONNECT")
++		{
++			// PLAN 15.12 P5 — the emulator's USB LDD registry is rebuilt EMPTY on a
++			// save-state resume, so the portal never connects (assigned_number stays
++			// 0, guest transfers fail CELL_EINVAL). Re-register the portal LDD: that
++			// re-scans + connect_usb_device's the emulated portal and fires
++			// SYS_USBD_ATTACH, so the guest re-enumerates with fresh pipe handles —
++			// exactly the fresh-boot path. g_skyportal (loaded figures) is untouched.
++			register_ldd_and_connect("Skylanders Portal", 0x1430, 0x0150, 0x0150);
++			out = "OK\n";
++		}
+ 		else
+ 		{
+ 			out = "ERR unknown_cmd\n";
+-- 
+2.53.0.windows.3
+

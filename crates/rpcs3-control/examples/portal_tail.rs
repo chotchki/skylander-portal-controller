@@ -35,14 +35,18 @@ fn main() -> anyhow::Result<()> {
     let mut secs = 30u64;
     let mut load: Option<PathBuf> = None;
     let mut at = 8u64;
+    let mut reconnect_at: Option<u64> = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--load" => load = args.next().map(PathBuf::from),
             "--at" => at = args.next().and_then(|s| s.parse().ok()).unwrap_or(at),
+            "--reconnect-at" => reconnect_at = args.next().and_then(|s| s.parse().ok()),
             "-h" | "--help" => {
-                eprintln!("usage: portal_tail [SECONDS] [--load <abs .sky>] [--at <SECONDS>]");
+                eprintln!(
+                    "usage: portal_tail [SECONDS] [--reconnect-at <SECONDS>] [--load <abs .sky>] [--at <SECONDS>]"
+                );
                 return Ok(());
             }
             other => match other.parse::<u64>() {
@@ -63,6 +67,23 @@ fn main() -> anyhow::Result<()> {
             sock.display()
         )
     })?;
+
+    // Optionally hot-plug-cycle the portal (P5) at `--reconnect-at`, on its own
+    // connection — used after a save-state resume to refresh the guest's USB
+    // handles (else its transfers fail CELL_EINVAL and it can't see the portal).
+    if let Some(rt) = reconnect_at {
+        let sock = sock.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(rt));
+            let d = IpcPortalDriver::with_path(&sock);
+            match d.reconnect() {
+                Ok(()) => {
+                    eprintln!("\n>>> [{rt:>3}.0s] RECONNECT -> ok (portal hot-plug cycled)\n")
+                }
+                Err(e) => eprintln!("\n>>> [{rt:>3}.0s] RECONNECT FAILED: {e:#}\n"),
+            }
+        });
+    }
 
     // Optionally fire one LOAD partway through, on its own connection.
     let load_at = load.as_ref().map(|_| at);

@@ -175,6 +175,7 @@ fn handle(cmd: &str, portal: &mut [Option<u32>; 8]) -> String {
             }
             _ => "ERR bad_slot\n".to_string(),
         },
+        "RECONNECT" => "OK\n".to_string(),
         _ => "ERR unknown_cmd\n".to_string(),
     }
 }
@@ -323,6 +324,15 @@ fn portal_events_are_skipped_before_reply() {
         .unwrap();
     assert_eq!(name, "Eruptor", "PE noise must not corrupt the reply");
 
+    let _ = std::fs::remove_file(&sock);
+}
+
+#[test]
+fn reconnect_roundtrips_ok() {
+    // P5: the RECONNECT command (portal hot-plug cycle) round-trips to OK.
+    let (sock, _loads) = spawn_fake_server(false);
+    let d = IpcPortalDriver::with_path(&sock);
+    d.reconnect().expect("RECONNECT should return OK");
     let _ = std::fs::remove_file(&sock);
 }
 

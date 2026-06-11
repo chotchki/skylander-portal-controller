@@ -13,6 +13,7 @@ rpcs3-patches/
   0002-P2-…-window-hand….patch        P2 — borderless window + native handle (gs_frame.cpp)
   0003-P3-…-ENETUNREACH.patch         P3 — offline public-IP connect → ENETUNREACH (sys_net)
   0004-P4-…-PE-events.patch           P4 — push guest portal-events (PE) over IPC (Skylander.cpp)
+  0005-P5-…-RECONNECT.patch           P5 — re-attach the portal after a save-state resume (Skylander.cpp + sys_usbd)
   apply.sh                            apply the series onto a checkout (git am --3way)
   README.md                           this file
 ```
@@ -20,12 +21,13 @@ rpcs3-patches/
 The submodule **always points at a pristine upstream commit** — it is never
 modified in place. The patches live here, in our repo, where the diff is
 reviewable. They apply in filename order; **0002 (P2) depends on 0001 (P1)**
-(P1 defines the `g_game_window_handle` global that P2 publishes into), and
-**0004 (P4) builds on 0001 (P1)** — it extends P1's AF_UNIX listener in the same
-`Skylander.cpp` with a portal-event push feed. **P3 is independent** — a
-`sys_net` errno tweak unrelated to the portal device or window.
+(P1 defines the `g_game_window_handle` global that P2 publishes into), **0004 (P4)
+builds on 0001 (P1)** — it extends P1's AF_UNIX listener in the same `Skylander.cpp`
+with a portal-event push feed — and **0005 (P5) builds on 0001 (P1)** too, adding a
+`RECONNECT` command beside it (plus a small additive `sys_usbd` helper). **P3 is
+independent** — a `sys_net` errno tweak unrelated to the portal device or window.
 
-These four patches are the entire footprint on RPCS3 — all shallow + additive
+These five patches are the entire footprint on RPCS3 — all shallow + additive
 on rarely-churning seams (the patch-depth thesis in the decision doc). What each
 does:
 
@@ -51,6 +53,17 @@ does:
   recorder and to diagnose whether a save-state-resumed game re-reads a *late*
   LOAD. Per-command rate-limited so a steady `status` pulse isn't starved; tested
   from Rust via the loopback (`PE`-skip in `roundtrip` + a `watch_events` tail).
+- **P5** (PLAN 15.12) — adds an IPC `RECONNECT` command that re-attaches the emulated
+  portal after a **save-state resume**. On resume RPCS3 rebuilds the USB handler + its
+  (empty) LDD registry, but the resumed game keeps its stale pipe handles and never
+  re-registers its LDD, so the portal never connects and its `sys_usbd_transfer_data`s
+  fail `CELL_EINVAL` (the game shows "reconnect the Portal of Power"). `RECONNECT`
+  re-registers the LDD (re-connecting the device) then hot-plug-cycles it (DETACH+ATTACH)
+  so the guest re-enumerates with fresh handles — `usb_handler_thread::reconnect_device`
+  + a `register_ldd_and_connect` free function in `sys_usbd.cpp`/`.h`, called from
+  `Skylander.cpp`. Live-verified: a figure LOADed after RECONNECT appears in-game on a
+  resumed save state. Driver side: `Command::Reconnect` + `IpcPortalDriver::reconnect`,
+  loopback-tested (`reconnect_roundtrips_ok`).
 
 ## The pin
 

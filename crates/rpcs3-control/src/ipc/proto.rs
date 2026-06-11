@@ -12,6 +12,7 @@
 //! ->  WINDOW                   <-  OK handle=<hex>
 //! ->  LOAD <abs .sky path>     <-  OK slot=<n>   | ERR <reason>
 //! ->  CLEAR <slot 0-7>         <-  OK            | ERR <reason>
+//! ->  RECONNECT                <-  OK            | ERR no_device    (P5)
 //! (push, ~1 Hz)                <-  HB status=<s> frames=<n> progr=<a>/<b> seg=<c>/<d>
 //! (push, on guest portal cmd)  <-  PE cmd=<activate|reset|write|query|color|sync|audio|status>  (P4)
 //! ```
@@ -28,6 +29,10 @@ pub enum Command<'a> {
     State,
     Status,
     Window,
+    /// Hot-plug-cycle the emulated portal (P5): detach + reattach so a
+    /// save-state-resumed guest re-enumerates it and refreshes the stale USB
+    /// pipe handles that otherwise fail every portal transfer with `CELL_EINVAL`.
+    Reconnect,
     /// Load the `.sky` at this path. The **emulator** assigns the slot (it
     /// places into its first free slot and reports which); the controller does
     /// not dictate a position.
@@ -44,6 +49,7 @@ impl Command<'_> {
             Command::State => "STATE\n".to_string(),
             Command::Status => "STATUS\n".to_string(),
             Command::Window => "WINDOW\n".to_string(),
+            Command::Reconnect => "RECONNECT\n".to_string(),
             // The server takes everything after the first space as the path
             // (verbatim, to end-of-line), so paths with spaces need no quoting.
             Command::Load(p) => format!("LOAD {}\n", p.display()),
