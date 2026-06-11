@@ -2879,7 +2879,14 @@ from the Phase-20 scoping:
     workflow (1 implementer + 3 adversarial reviewers; fixes folded in). build + clippy `-D warnings` + tests
     + fmt green. **Remaining: phase 4** (`-- render` post-pass — speed-ramp/crop/concat + **H.265/AV1**
     transcode via ffmpeg, consuming `timeline.json`) and **phase 5** (caption/title-card overlay) +
-    `kaos_teaser`. The marquee `-- narrative ingame` is ready for a live HTPC MP4 run.
+    `kaos_teaser`. **First marquee `-- narrative ingame` live run (2026-06-11):** ran end-to-end —
+    auto-RECONNECT fired, Eruptor placed via real IPC LOAD, MP4 + timeline.json (6 beats) produced — BUT the
+    game froze (RSX flip-stall ~10s in; the freeze supervisor then killed+relaunched RPCS3, so the tail is a
+    mid-resume). NOT the network freeze (Internet=Disconnected was applied). Suspected **timing** (the LOAD
+    fires ~2s after RECONNECT vs ~27s in the working manual P5 test — loading before the guest finishes
+    re-enumerating). Other suspects: the Desktop-mode window-fit (swapchain-recreate RSX stall) + the freeze
+    supervisor over-recovering (recorder should run with it gated off). The in-game LOAD itself is proven
+    (manual P5); this is automated-demo polish. Diagnosis + re-run recipe in the recorder memory.
 
 - [ ] 12.1 **Research + scaffolding (research-first, no code
   commits).**
