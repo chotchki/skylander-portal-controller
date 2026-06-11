@@ -2803,6 +2803,17 @@ from the Phase-20 scoping:
     interactable" in a headed browser). Commit `c529e8b`.
 
 - [ ] 15.12 — **In-game portal tier (real RPCS3) — SAVE-STATE approach + PORTAL_EVENT signal.**
+  - **DONE 2026-06-10 (build complete; only the live HTPC run remains).** Save-state boot confirmed
+    (`rpcs3.exe <…>.SAVESTAT.zst` → straight to the in-game portal; the earlier freeze was a
+    double-instance collision, not Spyro). Shipped: (a) `launch_no_gui` boots an EBOOT *or* a save
+    state; (a2) `BootDirect` boots `SKYLANDER_BOOT_SAVESTATE` when set, with `apply_savestate_config`
+    (SPU=ASMJIT + Compatible Savestate Mode=true on the **real** `<config_dir>/config/config.yml`)
+    swapped in transiently for the boot + restored after `is_playable`; (b) `rpcs3_config::apply_savestate_config`
+    RAII helper (commit `dd124e8`, unit-tested); (c) `tools/playthrough -- ingame` +
+    `TestServer::spawn_ipc_savestate` (commit `c1d276e`). **Remaining = (d) live HTPC run** (confirms
+    skylander-load on a *resumed* save state + records `playthrough-ingame.mp4`). `PORTAL_EVENT`/P4
+    deferred to a robustness pass (the save state already lands at the portal). Net-writer targets
+    the 85-byte root `config.yml` while RPCS3 reads `config/config.yml` — separate thread to look at.
   Show figures on the GAME's own portal screen (not just the app UI). **Decision (2026-06-10):** do
   NOT navigate the game's menus with synthesized controller input — too fragile, and an
   image-matching / LLM-navigator is overkill + non-deterministic for a recorder. Instead **boot
