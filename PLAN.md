@@ -2867,6 +2867,14 @@ from the Phase-20 scoping:
     Then the `ingame` scenario yields the figure-on-the-game's-portal MP4 in one command. Manual repro:
     boot the save state (Disconnected + ASMJIT + Compatible Savestate Mode), then
     `cargo run -p skylander-rpcs3-control --example portal_tail -- 55 --reconnect-at 3 --load <abs .sky> --at 30`.
+  - [ ] **15.13 — beats & narrative framework for the recorder.** Replace the monolithic
+    `portal`/`place`/`ingame` scenarios with composable **beats** + **narratives**, so the recorder
+    renders the full user-journey demo (connect → profile → game → browse → place → **see-it-in-game** →
+    optional Kaos teaser) AND a single beat as a per-screen clip. **Design doc:**
+    `docs/dev/recorder-beats-framework.md` (decided: single full-desktop capture, not separate-window
+    stitch; dead-space handled by a per-beat editorial timeline — `timeline.json` manifest + a staged
+    `-- render` post pass that speed-ramps/crops/concats; narratives locked to one mock-vs-IPC flavor).
+    Phases in the doc; implement after review.
 
 - [ ] 12.1 **Research + scaffolding (research-first, no code
   commits).**
