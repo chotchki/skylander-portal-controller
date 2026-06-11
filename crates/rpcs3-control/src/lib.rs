@@ -59,6 +59,14 @@ pub trait PortalDriver: Send + Sync {
     fn game_window_handle(&self) -> Result<Option<u64>> {
         Ok(None)
     }
+
+    /// Hot-plug-cycle the emulated portal (P5) — detach+reattach so a
+    /// save-state-resumed guest re-enumerates it and refreshes the stale USB
+    /// handles that otherwise fail every portal transfer with `CELL_EINVAL`.
+    /// Default no-op for non-IPC drivers (UIA / mock); `IpcPortalDriver` overrides.
+    fn reconnect(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 #[cfg(windows)]

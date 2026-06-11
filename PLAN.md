@@ -2858,7 +2858,8 @@ from the Phase-20 scoping:
   - **15.12.3 — in-game scenario** in `tools/playthrough`: boot savestate → wait `PORTAL_EVENT` →
     app places a figure → capture. No controller input. (The `examples/boot_game.rs`
     `SendInput`/keyboard-pad-config work stays shelved unless we later demo in-game *movement*.)
-  - [ ] **15.12.4 — wire the P5 `RECONNECT` into the save-state boot path.** The mechanism is proven
+  - **15.12.4 — wire P5 `RECONNECT` into the save-state boot path. WIRED 2026-06-10 (compile+tests green;
+    only the end-to-end ingame MP4 run remains).** The mechanism is proven
     (P5, live-verified — see (d)); now make it automatic. After `BootDirect` resumes a
     `SKYLANDER_BOOT_SAVESTATE` and the game reaches the "reconnect portal" state (~10s post-`is_playable`),
     the server fires `IpcPortalDriver::reconnect()` once, *then* proceeds to place figures + capture

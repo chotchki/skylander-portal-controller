@@ -174,10 +174,17 @@ fn line_key(line: &str) -> Option<&str> {
 // `<dir>/config.yml` the Net writer touches.
 // ---------------------------------------------------------------------------
 
-/// The two settings a save state needs to RESUME (not just capture).
+/// The settings a save state needs to RESUME (not just capture) — swapped into
+/// the real `config/config.yml` transiently for the boot, restored after.
 const SAVESTATE_KEYS: &[(&str, &str)] = &[
     ("SPU Decoder", "Recompiler (ASMJIT)"),
     ("Compatible Savestate Mode", "true"),
+    // PLAN 15.12.4 — a save state captured at the in-game portal carries live
+    // network sockets aimed at the (dead) Skylanders servers; on resume with
+    // `Internet enabled: Connected` the game busy-retries them into a CPU-pin
+    // freeze (the OPPOSITE of the first-boot config, which wants Connected). P3
+    // turns the offline connect into ENETUNREACH so the game abandons online + runs.
+    ("Internet enabled", "Disconnected"),
 ];
 
 /// Pure core of [`apply_savestate_config`]: set the [`SAVESTATE_KEYS`] in place

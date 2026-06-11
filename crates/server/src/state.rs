@@ -1582,6 +1582,24 @@ async fn handle_job(
                         }
                         std::thread::sleep(std::time::Duration::from_millis(250));
                     }
+                    // PLAN 15.12.4 — a save-state resume leaves the guest's USB portal
+                    // handles stale (RPCS3 rebuilds the LDD registry empty), so the game
+                    // can't see the portal and shows "reconnect the Portal of Power".
+                    // Once it's playable and has reached that state, hot-plug the portal
+                    // (RECONNECT: re-register the LDD + DETACH/ATTACH) so the game
+                    // re-enumerates it — subsequent live LOADs are then read in-game.
+                    // No-op on a normal (EBOOT) boot. Timing can tighten (proven 2026-06-10).
+                    if savestate.is_some() {
+                        std::thread::sleep(std::time::Duration::from_secs(10));
+                        match d.reconnect() {
+                            Ok(()) => info!(
+                                "PLAN 15.12.4: hot-plugged the portal (RECONNECT) after save-state resume"
+                            ),
+                            Err(e) => {
+                                warn!(error = %e, "PLAN 15.12.4: portal RECONNECT after resume failed")
+                            }
+                        }
+                    }
                     // game_window_handle is published continuously by the STATE
                     // poller (early, as soon as the window exists) — not here.
                     if let Ok(mut st) = status_for_blocking.lock() {

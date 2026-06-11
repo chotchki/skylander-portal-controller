@@ -136,16 +136,6 @@ impl IpcPortalDriver {
         }
     }
 
-    /// Hot-plug-cycle the emulated portal (`RECONNECT`, P5) — detach + reattach so
-    /// a save-state-resumed guest re-enumerates the device and refreshes the stale
-    /// USB pipe handles that otherwise fail every portal transfer with
-    /// `CELL_EINVAL`. Loaded figures survive the cycle (the emulator's `g_skyportal`
-    /// is untouched). Not part of the `PortalDriver` trait.
-    pub fn reconnect(&self) -> Result<()> {
-        let reply = self.roundtrip(&Command::Reconnect)?;
-        proto::parse_ok(&reply)
-    }
-
     /// Open **one persistent connection** and stream every *pushed* line — the
     /// 1 Hz `HB` heartbeat and the `PE` portal-event pushes (P4) — to `on_line`
     /// until `dur` elapses. The patched emulator pushes on its own 1 s `select`
@@ -207,6 +197,15 @@ impl PortalDriver for IpcPortalDriver {
     /// drops in behind the trait (the server calls this before every load/clear).
     fn open_dialog(&self) -> Result<()> {
         Ok(())
+    }
+
+    /// Hot-plug-cycle the emulated portal (`RECONNECT`, P5) — detach+reattach so a
+    /// save-state-resumed guest re-enumerates the device and refreshes the stale USB
+    /// pipe handles that otherwise fail every portal transfer with `CELL_EINVAL`.
+    /// Loaded figures survive the cycle (the emulator's `g_skyportal` is untouched).
+    fn reconnect(&self) -> Result<()> {
+        let reply = self.roundtrip(&Command::Reconnect)?;
+        proto::parse_ok(&reply)
     }
 
     fn read_slots(&self) -> Result<[SlotState; SLOT_COUNT]> {
