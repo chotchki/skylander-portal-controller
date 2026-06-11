@@ -2887,6 +2887,12 @@ from the Phase-20 scoping:
     re-enumerating). Other suspects: the Desktop-mode window-fit (swapchain-recreate RSX stall) + the freeze
     supervisor over-recovering (recorder should run with it gated off). The in-game LOAD itself is proven
     (manual P5); this is automated-demo polish. Diagnosis + re-run recipe in the recorder memory.
+    **FREEZE FIXED 2026-06-11 (timing confirmed):** added a `settle_after_reconnect` beat (20s) between
+    `pick_game` and the LOAD — the re-run had **no RSX stall / no supervisor recovery** and `see_in_game`
+    ran the full 16s clean. So loading too soon after the hot-plug RECONNECT was the cause; the settle lets
+    the guest finish re-enumerating the portal first. Marquee now = [connect, pick_profile, pick_game,
+    settle_after_reconnect, open_toybox, place_figure(ipc), see_in_game]. (Pending: visual confirm that
+    Eruptor renders on the in-game portal — the logs show the LOAD landed + the game stayed playable.)
 
 - [ ] 12.1 **Research + scaffolding (research-first, no code
   commits).**

@@ -333,6 +333,17 @@ async fn hold_portal(_ctx: &BeatCtx<'_>) -> Result<()> {
     Ok(())
 }
 
+/// `settle_after_reconnect` (IPC marquee only) — after the save-state RECONNECT
+/// (the hot-plug re-attach fired server-side during `pick_game`), let the guest
+/// finish re-enumerating the portal before the live LOAD. The first marquee run
+/// loaded ~2s after RECONNECT and the RSX stalled; the working manual P5 test
+/// spaced the LOAD ~27s after RECONNECT. No DOM — just a settle (the render's
+/// fast filler skips it).
+async fn settle_after_reconnect(_ctx: &BeatCtx<'_>) -> Result<()> {
+    tokio::time::sleep(Duration::from_secs(20)).await;
+    Ok(())
+}
+
 /// Tap the first card matching `card_sel`, hit PLACE ON PORTAL, return to box.
 /// All clicks go through `js_click` (bypasses WebDriver interactability so a
 /// card caught mid-animation or behind a closing overlay still fires), and we
@@ -445,6 +456,21 @@ fn beat_pick_game_ipc() -> Beat {
     }
 }
 
+/// `settle_after_reconnect` — IPC marquee only; let the guest re-enumerate the
+/// portal after RECONNECT before the LOAD (the timing fix). Fast filler.
+fn beat_settle_after_reconnect() -> Beat {
+    Beat {
+        name: "settle_after_reconnect",
+        drive: |c| Box::pin(settle_after_reconnect(c)),
+        requires_ipc: false,
+        realtime_head: Duration::from_secs(1),
+        realtime_tail: Duration::from_secs(1),
+        filler_speed: 8.0,
+        crop: None,
+        caption: None,
+    }
+}
+
 /// `open_toybox` — browse the collection grid in the drawer.
 fn beat_open_toybox() -> Beat {
     Beat {
@@ -531,8 +557,8 @@ pub fn narratives() -> Result<Vec<Narrative>> {
                 beat_place_figure_mock(),
             ],
         },
-        // `ingame` / "marquee" = [connect, pick_profile, pick_game, open_toybox,
-        // place_figure(ipc), see_in_game] — IPC.
+        // `ingame` / "marquee" = [connect, pick_profile, pick_game,
+        // settle_after_reconnect, open_toybox, place_figure(ipc), see_in_game] — IPC.
         Narrative {
             name: "ingame",
             flavor: ServerFlavor::IpcSavestate,
@@ -540,6 +566,7 @@ pub fn narratives() -> Result<Vec<Narrative>> {
                 beat_connect(),
                 beat_pick_profile(),
                 beat_pick_game_ipc(),
+                beat_settle_after_reconnect(),
                 beat_open_toybox(),
                 beat_place_figure_ipc(),
                 beat_see_in_game(),
