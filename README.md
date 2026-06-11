@@ -28,7 +28,7 @@ For a higher-level pitch see the project site: <https://chotchki.github.io/skyla
 
 ## Releases (end-user install)
 
-1. Grab the latest **MSI** (preferred — handles upgrades cleanly) or the portable **zip** from <https://github.com/chotchki/skylander-portal-controller/releases>. Both ship the same binary; the MSI installs to `Program Files`, the zip is unpack-anywhere.
+1. **Install.** Recommended: `winget install ChristopherHotchkiss.SkylanderPortalController` — winget runs as a trusted authority (no SmartScreen "unknown publisher" prompt) and handles upgrades cleanly. Or grab the latest **MSI** or portable **zip** from <https://github.com/chotchki/skylander-portal-controller/releases> — both ship the same binary; the MSI installs to `Program Files`, the zip is unpack-anywhere.
 2. Bring your own RPCS3 install (see <https://rpcs3.net>) and your own firmware-pack of `.sky` dumps.
 3. Launch `skylander-portal-controller.exe`. First-run wizard asks for the RPCS3 path and the firmware-pack root; settings persist to `%APPDATA%\skylander-portal-controller\`.
 4. Add the resulting `.exe` to Steam (Add a Non-Steam Game) so it launches in Big Picture mode.
