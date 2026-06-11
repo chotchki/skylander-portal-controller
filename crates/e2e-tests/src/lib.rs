@@ -293,7 +293,10 @@ impl TestServer {
         let tmp = tempfile::tempdir().context("create temp dir")?;
         let port = pick_free_port()?;
         let env = format!(
-            "RPCS3_EXE={rpcs3}\nRPCS3_CONFIG_DIR={cfg}\nFIRMWARE_PACK_ROOT={pack}\nBIND_PORT={port}\nSKYLANDER_PORTAL_DRIVER=ipc\nSKYLANDER_BOOT_SAVESTATE={ss}\nPHONE_DIST={phone}\n",
+            // WINDOW_MODE=desktop so the launcher is windowed and 20.4 fits the
+            // RPCS3 game window to it — both visible in the capture (TV mode would
+            // fullscreen the launcher over RPCS3, hiding the in-game portal).
+            "RPCS3_EXE={rpcs3}\nRPCS3_CONFIG_DIR={cfg}\nFIRMWARE_PACK_ROOT={pack}\nBIND_PORT={port}\nSKYLANDER_PORTAL_DRIVER=ipc\nSKYLANDER_BOOT_SAVESTATE={ss}\nWINDOW_MODE=desktop\nPHONE_DIST={phone}\n",
             rpcs3 = rpcs3_exe.display(),
             cfg = config_dir,
             pack = firmware.display(),
