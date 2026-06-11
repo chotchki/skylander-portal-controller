@@ -181,9 +181,9 @@ async fn ingame() -> Result<()> {
     tracing::info!("portal reached — RPCS3 resumed the save state at the in-game portal");
     tokio::time::sleep(Duration::from_secs(2)).await; // let the portal settle
 
-    // Place a figure — a REAL IPC LOAD onto the resumed save state (NO mock
-    // outcomes). It should appear on the GAME's portal, captured via RPCS3's
-    // window.
+    // Place a recognizable figure — a REAL IPC LOAD onto the resumed save state
+    // (NO mock outcomes). It should appear on the GAME's own portal, captured
+    // via RPCS3's window.
     phone.tap_pointer(".lid-grabber-p4").await?;
     tokio::time::sleep(Duration::from_millis(300)).await;
     phone.tap_pointer(".lid-grabber-p4").await?;
@@ -192,7 +192,38 @@ async fn ingame() -> Result<()> {
         .await
         .context("toy box cards never appeared")?;
     tokio::time::sleep(Duration::from_millis(400)).await;
-    place_one(&phone, ".fig-card-p4:not(.scan-new)").await?;
+
+    // Pick by name from the toy box (the `.fig-name-p4` label holds the group
+    // name), so the demo places an iconic figure rather than whatever sorts
+    // first. Falls back Eruptor → Spyro → first card; scrolls it into view so
+    // the click lands.
+    let picked = phone
+        .client
+        .execute(
+            r#"const cards=[...document.querySelectorAll('.fig-card-p4:not(.scan-new):not(.on-portal)')];
+               const byName=re=>cards.find(c=>{const n=c.querySelector('.fig-name-p4');return n&&re.test((n.textContent||'').trim());});
+               const pick=byName(/^eruptor$/i)||byName(/spyro/i)||cards[0];
+               if(pick){pick.scrollIntoView({block:'center'});pick.click();
+                 return ((pick.querySelector('.fig-name-p4')||{}).textContent||'?').trim();}
+               return '';"#,
+            vec![],
+        )
+        .await?;
+    let figure_name = picked.as_str().unwrap_or("").to_string();
+    if figure_name.is_empty() {
+        anyhow::bail!("no figure card available to place in the toy box");
+    }
+    tracing::info!(figure = %figure_name, "picked figure from toy box → opening detail");
+
+    // PLACE-ON-PORTAL flow (the card click above opened the detail overlay).
+    phone
+        .wait_for(Locator::Css(".detail-btn-primary"), Duration::from_secs(6))
+        .await
+        .context("figure detail PLACE button never appeared")?;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    phone.js_click(".detail-btn-primary").await?; // PLACE ON PORTAL
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    phone.js_click(".detail-btn-secondary").await.ok(); // BACK TO BOX (best-effort)
     let _ = phone
         .wait_until(Duration::from_secs(15), || async {
             phone
@@ -202,11 +233,12 @@ async fn ingame() -> Result<()> {
                 .is_ok()
         })
         .await;
-    tracing::info!("figure placed — real IPC LOAD onto the save state");
+    tracing::info!(figure = %figure_name, "figure placed — real IPC LOAD onto the save state");
 
-    // Hold so the in-game portal (with the placed figure) is on screen, then
-    // stop + flush the MP4.
-    tokio::time::sleep(Duration::from_secs(4)).await;
+    // Hold ~16s so the resumed game re-reads the portal and the figure visibly
+    // LANDS on the in-game portal (and stays on screen for the clip). The
+    // previous 4s wasn't enough to catch it landing.
+    tokio::time::sleep(Duration::from_secs(16)).await;
     cap.stop().context("stop + flush desktop capture")?;
     tracing::info!(mp4 = %mp4.display(), "MP4 written");
     let png = std::env::temp_dir().join("playthrough-ingame.png");
