@@ -2810,14 +2810,22 @@ from the Phase-20 scoping:
     (SPU=ASMJIT + Compatible Savestate Mode=true on the **real** `<config_dir>/config/config.yml`)
     swapped in transiently for the boot + restored after `is_playable`; (b) `rpcs3_config::apply_savestate_config`
     RAII helper (commit `dd124e8`, unit-tested); (c) `tools/playthrough -- ingame` +
-    `TestServer::spawn_ipc_savestate` (commit `c1d276e`). **(d) live HTPC run (2026-06-10):** the
-    save state boots to the in-game portal + IPC `LOAD` succeeds on the phone, BUT the figure does
-    NOT appear on the GAME's in-game portal. Root cause: the Skylander USB device has no save-state
-    serialization, so on resume the open question is whether the game re-polls the portal. **→ P4
-    `PORTAL_EVENT` built to diagnose (15.12.1); user rebuilds RPCS3 + runs `examples/portal_tail` to
-    see whether `status` polling continues after resume and a `query` burst follows a late `LOAD`.**
-    Net-writer targets the 85-byte root `config.yml` while RPCS3 reads `config/config.yml` —
-    separate thread to look at.
+    `TestServer::spawn_ipc_savestate` (commit `c1d276e`). **(d) DIAGNOSED 2026-06-10 via P4 on the HTPC —
+    save-state live-load is a DEAD END.** Two findings: (1) booting Spyro directly with `Net → Internet
+    enabled: Connected` CPU-pin-freezes (busy-retry `sys_net`, ~439M yields, black screen) — cured by
+    **Internet=Disconnected** (P3 ENETUNREACH); the server's boot path sets this, a bare `rpcs3.exe` does
+    not. (2) THE blocker: on a save-state resume the game's `sys_usbd_transfer_data` to the portal all fail
+    `0x80010002 CELL_EINVAL` — RPCS3 re-creates the USB device fresh but the game's *restored* pipe handles
+    are stale, so transfers are rejected **before** reaching `control_transfer`/`interrupt_transfer` (zero PE
+    on both resumed runs). The game cannot talk to the portal on a resumed save state → a live LOAD can never
+    appear. **Positive control (fresh EBOOT boot, no save state):** the game polls normally and a LOAD at +6s
+    produced a 20-event `query` burst + `activate` (query 0→20, status 19→68) — **P4 works end-to-end and
+    live IPC loading WORKS on a normal boot**; only the resume breaks it. **Next-step options:** (A) fresh
+    boot + reach a portal-polling screen (live-load works; game even detects figures at the main menu);
+    (B) capture-with-figure save state (figure baked into game RAM, no live swap — static demo only);
+    (C) P5 patch to serialize the USB device + pipe handles across save states (deep USB-stack C++,
+    uncertain). Recommend (A); decision pending. Net-writer targets the 85-byte root `config.yml` while
+    RPCS3 reads `config/config.yml` — separate thread to look at.
   Show figures on the GAME's own portal screen (not just the app UI). **Decision (2026-06-10):** do
   NOT navigate the game's menus with synthesized controller input — too fragile, and an
   image-matching / LLM-navigator is overkill + non-deterministic for a recorder. Instead **boot
