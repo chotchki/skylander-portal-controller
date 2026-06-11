@@ -1,111 +1,259 @@
-//! PLAN 15 — desktop-mode play-through recorder.
+//! PLAN 15 — desktop-mode play-through recorder, **beats & narrative** edition.
 //!
-//! Boots the launcher in Phase-20 **Desktop mode** (windowed) with the mock
-//! driver (no RPCS3), records the **whole primary monitor to an MP4** via
-//! `windows-capture` (no external ffmpeg), and — while recording — drives the
-//! phone SPA in a VISIBLE Chrome window beside the launcher through a chosen
-//! scenario. Outputs an MP4 + a still PNG.
+//! Boots the launcher in Phase-20 **Desktop mode** (windowed), records the
+//! **whole primary monitor to an MP4** via `windows-capture` (no external
+//! ffmpeg), and — while recording — drives the phone SPA in a VISIBLE Chrome
+//! window beside the launcher through a chosen **narrative** (an ordered set of
+//! **beats**; see `beats.rs` + `docs/dev/recorder-beats-framework.md`). Outputs
+//! one MP4 spanning all beats, a `<out>.timeline.json` editorial manifest
+//! (beat-boundary timestamps for the later `-- render` post-pass), and a still
+//! PNG.
 //!
-//! Scenarios (first CLI arg, default `place`):
-//!   - `portal` — reach the empty portal and hold (mock driver).
-//!   - `place`  — open the toy box and place two figures on the portal (mock, hero).
-//!   - `ingame` — PLAN 15.12: boot a real Spyro SAVE STATE on the patched RPCS3
-//!     over IPC (straight to the in-game portal) and place a figure from the
-//!     phone (a real IPC LOAD) so it shows up on the GAME's own portal. HTPC-only;
-//!     requires RPCS3_EXE + RPCS3_CONFIG_DIR + SKYLANDER_BOOT_SAVESTATE in the env.
+//! Modes (design §6):
+//!   - `-- narrative <name>` — one capture spanning all the narrative's beats,
+//!     run sequentially. Default name is the IPC marquee (`ingame`).
+//!   - `-- beat <name>`      — boot the flavor of that beat's owning narrative,
+//!     run just that one beat → a per-screen clip (+ still PNG).
+//!   - bare `portal` / `place` / `ingame` — BACK-COMPAT aliases to those
+//!     narratives.
+//!
+//! A narrative is locked to one [`ServerFlavor`] (design §7): **Mock** (mock
+//! driver, Desktop window mode, Giants pre-launched, no RPCS3) or
+//! **IpcSavestate** (real Spyro save state on the patched RPCS3 over IPC —
+//! HTPC-only; requires RPCS3_EXE + RPCS3_CONFIG_DIR + SKYLANDER_BOOT_SAVESTATE
+//! in the env).
 //!
 //! Run (build the phone with the harness's pinned token first; point
 //! CHROMEDRIVER at a build matching your installed Chrome):
 //!   cd phone && BUILD_TOKEN=e2e-test trunk build
-//!   CHROMEDRIVER=<matching chromedriver.exe> cargo run -p skylander-playthrough -- place
-//!   # in-game (HTPC, patched RPCS3 + a Spyro save state at the portal):
+//!   CHROMEDRIVER=<matching chromedriver.exe> cargo run -p skylander-playthrough -- narrative place
+//!   # in-game marquee (HTPC, patched RPCS3 + a Spyro save state at the portal):
 //!   RPCS3_EXE=…\rpcs3.exe  RPCS3_CONFIG_DIR=…\rpcs3\  \
 //!     SKYLANDER_BOOT_SAVESTATE=…\BLUS30779_1_0.SAVESTAT.zst  \
-//!     CHROMEDRIVER=…  cargo run -p skylander-playthrough -- ingame
+//!     CHROMEDRIVER=…  cargo run -p skylander-playthrough -- narrative ingame
+//!   # a single per-screen clip:
+//!   CHROMEDRIVER=…  cargo run -p skylander-playthrough -- beat open_toybox
 
+mod beats;
 mod capture;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use beats::{Beat, BeatCtx, MARQUEE, Narrative, ServerFlavor};
 use capture::DesktopCapture;
-use fantoccini::Locator;
-use serde_json::json;
-use skylander_e2e_tests::{
-    Phone, TestServer, inject_load_outcomes, inject_profile, launch_giants, unlock_session,
-};
+use serde::Serialize;
+use skylander_e2e_tests::{Phone, TestServer, inject_profile, launch_giants};
+
+/// One row of the editorial manifest (`<out>.timeline.json`, design §5).
+/// Beat-boundary wall-clock timestamps relative to `DesktopCapture` start, plus
+/// the beat's editorial intent (durations flattened to ms, `filler_speed`,
+/// `crop`) for the later `-- render` post-pass.
+#[derive(Debug, Serialize)]
+struct TimelineEntry {
+    beat: &'static str,
+    t_start_ms: u128,
+    t_end_ms: u128,
+    realtime_head_ms: u128,
+    realtime_tail_ms: u128,
+    filler_speed: f32,
+    crop: Option<beats::CropRect>,
+}
+
+/// Parsed CLI intent.
+#[derive(Debug, PartialEq, Eq)]
+enum Mode {
+    Narrative(String),
+    Beat(String),
+}
+
+/// The no-arg / empty-args default narrative: the self-contained Mock `place`
+/// flow (design fix 4). Works on any dev box — the IPC marquee (`MARQUEE`)
+/// hard-requires the patched RPCS3 + a save state, so it is opt-in via an
+/// explicit `-- narrative ingame` / bare `ingame`, never the bare default.
+const DEFAULT_NARRATIVE: &str = "place";
+
+fn parse_mode(args: &[String]) -> Result<Mode> {
+    // args[0] is the program name; the recorder is invoked `… -- <rest>`, and
+    // cargo strips the `--`, so we see e.g. ["narrative", "place"] or
+    // ["beat", "open_toybox"] or a bare ["place"].
+    let rest = &args[1..];
+    match rest {
+        [] => Ok(Mode::Narrative(DEFAULT_NARRATIVE.to_string())),
+        [kw, name, ..] if kw == "narrative" => Ok(Mode::Narrative(name.clone())),
+        [kw, name, ..] if kw == "beat" => Ok(Mode::Beat(name.clone())),
+        [kw] if kw == "narrative" => Ok(Mode::Narrative(MARQUEE.to_string())),
+        [kw] if kw == "beat" => {
+            anyhow::bail!("`-- beat` needs a beat name (e.g. `-- beat open_toybox`)")
+        }
+        // Bare back-compat aliases: `portal` / `place` / `ingame`.
+        [alias, ..] => match beats::resolve_alias(alias) {
+            Some(narr) => Ok(Mode::Narrative(narr.to_string())),
+            None => anyhow::bail!(
+                "unknown arg {alias:?} — use `-- narrative <name>`, `-- beat <name>`, \
+                 or a bare alias (portal/place/ingame)"
+            ),
+        },
+    }
+}
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .init();
-    let scenario = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "place".to_string());
-    tracing::info!(%scenario, "play-through scenario");
 
-    // PLAN 15.12 — the in-game tier is a different harness (real IPC + patched
-    // RPCS3 booting a save state), so it runs its own path, not the mock setup.
-    if scenario == "ingame" {
-        return ingame().await;
+    let args: Vec<String> = std::env::args().collect();
+    let mode = parse_mode(&args)?;
+
+    // Build + validate the registry up front (flavor-lock enforced inside
+    // `narratives()` — design §7: a clear failure at startup, not mid-run).
+    // The lookups consume the owned `Vec<Narrative>`, so each rebuilds a fresh
+    // validated copy (cheap — a handful of beats).
+    beats::narratives().context("build + validate narrative registry")?;
+
+    match mode {
+        Mode::Narrative(name) => {
+            let narr = beats::find_narrative(beats::narratives()?, &name)
+                .with_context(|| format!("no narrative named {name:?}"))?;
+            tracing::info!(narrative = %narr.name, flavor = ?narr.flavor, "running narrative");
+            run_narrative(narr).await
+        }
+        Mode::Beat(name) => {
+            let (flavor, beat) = beats::find_beat(beats::narratives()?, &name)
+                .with_context(|| format!("no beat named {name:?} in any narrative"))?;
+            tracing::info!(beat = %beat.name, flavor = ?flavor, "running single beat");
+            run_single_beat(flavor, beat).await
+        }
+    }
+}
+
+/// Spawn the server for `flavor`, seed Alice (+ Bob for Mock), start the
+/// desktop capture, and open the headed phone parked beside the launcher.
+/// Returns the live pieces the beats drive. Mirrors the shared boot the old
+/// monolithic scenarios did (design §6).
+struct Boot {
+    server: TestServer,
+    phone: Phone,
+    phone_url: String,
+    alice: String,
+    cap: DesktopCapture,
+    mp4: std::path::PathBuf,
+    /// Wall-clock instant captured at `DesktopCapture::start` — i.e. capture
+    /// frame 0 (design §5: `timeline.json` timestamps are relative to
+    /// DesktopCapture start, NOT to first-beat-start). Both `run_narrative` and
+    /// `run_single_beat` derive every beat's `t_*_ms` from this origin, so the
+    /// ~1s lead-in (capture start + just-the-launcher hold + Chrome open) is
+    /// included in the offsets and t=0 lines up with the first captured frame
+    /// (design fix 3).
+    timeline_origin: Instant,
+}
+
+async fn boot(flavor: ServerFlavor, out_stem: &str) -> Result<Boot> {
+    // 1. Server by flavor (design §6/§7).
+    let server = match flavor {
+        ServerFlavor::Mock => TestServer::spawn_with_env_lines("WINDOW_MODE=desktop\n")
+            .context("spawn server in desktop window mode (mock)")?,
+        ServerFlavor::IpcSavestate => TestServer::spawn_ipc_savestate().context(
+            "spawn IPC server (in-game tier) — set RPCS3_EXE, RPCS3_CONFIG_DIR, SKYLANDER_BOOT_SAVESTATE",
+        )?,
+    };
+    tracing::info!(url = %server.url, ?flavor, "server up");
+
+    // 2. Seed the family. Alice is the driven profile; Bob exists in the Mock
+    //    flow for a fuller picker (matches the old scenarios). The IPC flow
+    //    injected only Alice. The Mock flow pre-launches Giants at boot
+    //    (test-hook; no RPCS3) so the portal is reachable — verbatim from the
+    //    old mock `main()` body. The IPC flow launches a real game from the
+    //    picker in the `pick_game` beat instead.
+    let alice = inject_profile(&server.url, "Alice", "1111", "#f5c634").await?;
+    if flavor == ServerFlavor::Mock {
+        let _bob = inject_profile(&server.url, "Bob", "2222", "#da28a8").await?;
+        launch_giants(&server.url).await?;
     }
 
-    // 1. Launcher in Desktop mode (windowed), mock driver + test-hooks.
-    let server = TestServer::spawn_with_env_lines("WINDOW_MODE=desktop\n")
-        .context("spawn server in desktop window mode")?;
-    tracing::info!(url = %server.url, "server up — desktop mode, mock driver");
-
-    // 2. Seed a small family + boot Giants (test-hooks; no RPCS3 needed).
-    let alice = inject_profile(&server.url, "Alice", "1111", "#f5c634").await?;
-    let _bob = inject_profile(&server.url, "Bob", "2222", "#da28a8").await?;
-    launch_giants(&server.url).await?;
-
-    // 3. Start whole-desktop MP4 capture (launcher is up + visible).
-    let mp4 = std::env::temp_dir().join("playthrough-desktop.mp4");
+    // 3. Start whole-desktop MP4 capture (launcher is up + visible) BEFORE the
+    //    heavy work so the boot is recorded.
+    let mp4 = std::env::temp_dir().join(format!("{out_stem}.mp4"));
+    // Anchor the editorial timeline at the capture's frame 0 (design §5 / fix
+    // 3): take the origin at the `DesktopCapture::start` call, BEFORE the ~1s
+    // lead-in + Chrome open, so manifest `t_*_ms` are relative to capture start.
+    let timeline_origin = Instant::now();
     let cap = DesktopCapture::start(&mp4).context("start desktop capture")?;
     tracing::info!(mp4 = %mp4.display(), "recording the desktop…");
     tokio::time::sleep(Duration::from_secs(1)).await; // a beat with just the launcher
 
-    // 4. Visible Chrome parked to the right of the windowed launcher.
+    // 4. Visible Chrome parked to the right of the windowed launcher (the
+    //    fixed geometry keeps the capture rect deterministic — design §10).
     let phone_url = server.phone_url().await?;
     let phone = Phone::new_headed(&phone_url, &server.chromedriver_url, 1180, 40, 470, 940)
         .await
         .context("open headed phone browser")?;
     tracing::info!("phone browser open (headed) — driving the flow");
 
-    // 5. Reach the portal: profile picker → unlock Alice (PIN bypass) → portal.
-    phone
-        .wait_for(Locator::Css(".profile-picker"), Duration::from_secs(20))
-        .await
-        .context("profile picker never mounted")?;
-    unlock_session(&server.url, &alice).await?;
-    if phone
-        .wait_for(Locator::Css(".portal-p4"), Duration::from_secs(15))
-        .await
-        .is_err()
-    {
-        tracing::warn!("portal view not reached in time — recording whatever rendered");
+    Ok(Boot {
+        server,
+        phone,
+        phone_url,
+        alice,
+        cap,
+        mp4,
+        timeline_origin,
+    })
+}
+
+/// Run all of a narrative's beats inside ONE `DesktopCapture` (design §6: do
+/// NOT per-beat-capture — each `stop()` finalizes a separate MP4). Emits the
+/// raw MP4 + `<out>.timeline.json` + a still PNG.
+async fn run_narrative(narr: Narrative) -> Result<()> {
+    let out_stem = format!("playthrough-{}", narr.name);
+    let boot = boot(narr.flavor, &out_stem).await?;
+    let Boot {
+        server,
+        phone,
+        phone_url,
+        alice,
+        cap,
+        mp4,
+        timeline_origin,
+    } = boot;
+
+    let ctx = BeatCtx {
+        phone: &phone,
+        server: &server,
+        phone_url: &phone_url,
+        alice: &alice,
+    };
+
+    // Stamp wall-clock at each beat boundary, relative to `timeline_origin`
+    // (captured at `DesktopCapture::start` in `boot()`) — so `t=0` lines up
+    // with capture frame 0 and the ~1s lead-in is reflected in the first beat's
+    // `t_start_ms` (design §5 / fix 3).
+    // PLAN 15.13 phase-4: the render pass assumes contiguous beat brackets
+    // ([t_start..t_end] back-to-back) and ignores the trailing 3s post-beat
+    // hold below; contiguity polish + a manifest entry for that trailing hold
+    // land with the `-- render` post-pass.
+    let mut timeline: Vec<TimelineEntry> = Vec::with_capacity(narr.beats.len());
+
+    for beat in &narr.beats {
+        let t_start = timeline_origin.elapsed().as_millis();
+        tracing::info!(beat = %beat.name, "beat start");
+        (beat.drive)(&ctx)
+            .await
+            .with_context(|| format!("beat {:?}", beat.name))?;
+        let t_end = timeline_origin.elapsed().as_millis();
+        tracing::info!(beat = %beat.name, t_start_ms = t_start, t_end_ms = t_end, "beat done");
+        timeline.push(entry_for(beat, t_start, t_end));
     }
 
-    // 6. Scenario-specific drive.
-    match scenario.as_str() {
-        "portal" => {
-            tokio::time::sleep(Duration::from_secs(5)).await;
-        }
-        _ => {
-            // "place" (default): open the toy box + place two figures.
-            place_figures(&phone, &server, &phone_url)
-                .await
-                .context("place-figures scenario")?;
-        }
-    }
-
-    // 7. Hold so the final state is on screen, then stop + flush the MP4.
+    // Hold so the final state is on screen, then stop + flush the MP4.
     tokio::time::sleep(Duration::from_secs(3)).await;
     cap.stop().context("stop + flush desktop capture")?;
     tracing::info!(mp4 = %mp4.display(), "MP4 written");
-    let png = std::env::temp_dir().join("playthrough-desktop.png");
+
+    write_timeline(&mp4, &timeline)?;
+
+    let png = std::env::temp_dir().join(format!("{out_stem}.png"));
     phone.screenshot(&png).await?;
     tracing::info!(screenshot = %png.display(), "still captured");
 
@@ -114,232 +262,160 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// PLAN 15.12 — in-game tier. Boots a real Spyro SAVE STATE on the patched RPCS3
-/// over IPC (straight to the in-game portal, no menu nav), then places a figure
-/// from the phone — a REAL IPC `LOAD` onto the resumed game — so it appears on
-/// the GAME's own portal. The whole desktop (launcher + RPCS3 window + phone) is
-/// recorded. HTPC-only; the server reads RPCS3_EXE / RPCS3_CONFIG_DIR /
-/// SKYLANDER_BOOT_SAVESTATE from the env (see `spawn_ipc_savestate`), and the
-/// save-state RPCS3 config (ASMJIT + Compatible Savestate Mode) is swapped in
-/// transiently by the server for the boot.
-async fn ingame() -> Result<()> {
-    let server = TestServer::spawn_ipc_savestate().context(
-        "spawn IPC server (in-game tier) — set RPCS3_EXE, RPCS3_CONFIG_DIR, SKYLANDER_BOOT_SAVESTATE",
-    )?;
-    tracing::info!(url = %server.url, "server up — IPC driver, save-state boot armed");
+/// Run a single beat (design §6: `-- beat <name>` boots the flavor of that
+/// beat's owning narrative, runs just that beat → a per-screen clip + PNG).
+/// Still emits a one-entry timeline so the render pass works uniformly.
+async fn run_single_beat(flavor: ServerFlavor, beat: Beat) -> Result<()> {
+    let out_stem = format!("playthrough-beat-{}", beat.name);
+    let boot = boot(flavor, &out_stem).await?;
+    let Boot {
+        server,
+        phone,
+        phone_url,
+        alice,
+        cap,
+        mp4,
+        timeline_origin,
+    } = boot;
 
-    let alice = inject_profile(&server.url, "Alice", "1111", "#f5c634").await?;
+    let ctx = BeatCtx {
+        phone: &phone,
+        server: &server,
+        phone_url: &phone_url,
+        alice: &alice,
+    };
 
-    // Start whole-desktop capture before the heavy work so the boot is recorded.
-    let mp4 = std::env::temp_dir().join("playthrough-ingame.mp4");
-    let cap = DesktopCapture::start(&mp4).context("start desktop capture")?;
-    tracing::info!(mp4 = %mp4.display(), "recording the desktop…");
-    tokio::time::sleep(Duration::from_secs(1)).await;
-
-    let phone_url = server.phone_url().await?;
-    let phone = Phone::new_headed(&phone_url, &server.chromedriver_url, 1180, 40, 470, 940)
+    // `timeline_origin` is capture frame 0 (set in `boot()`), so this single
+    // beat's `t_start_ms` includes the ~1s capture lead-in (design fix 3).
+    let t_start = timeline_origin.elapsed().as_millis();
+    tracing::info!(beat = %beat.name, "beat start (single)");
+    (beat.drive)(&ctx)
         .await
-        .context("open headed phone browser")?;
+        .with_context(|| format!("beat {:?}", beat.name))?;
+    let t_end = timeline_origin.elapsed().as_millis();
+    let timeline = vec![entry_for(&beat, t_start, t_end)];
 
-    // Profile picker → unlock Alice → GAME PICKER (no game launched yet — unlike
-    // the mock scenarios, we want the phone to fire a real /api/launch).
-    phone
-        .wait_for(Locator::Css(".profile-picker"), Duration::from_secs(20))
-        .await
-        .context("profile picker never mounted")?;
-    unlock_session(&server.url, &alice).await?;
-    phone
-        .wait_for(Locator::Css(".game-card"), Duration::from_secs(15))
-        .await
-        .context("game picker never showed game cards")?;
-
-    // Tap the Spyro card (falls back to the first) — a REAL signed /api/launch,
-    // which the server turns into a save-state boot (SKYLANDER_BOOT_SAVESTATE
-    // overrides the resolved EBOOT).
-    let launched = phone
-        .client
-        .execute(
-            r#"const cards=[...document.querySelectorAll('.game-card')];
-               const c=cards.find(el=>/spyro/i.test(el.textContent||''))||cards[0];
-               if(c){c.click();return true;} return false;"#,
-            vec![],
-        )
-        .await?
-        .as_bool()
-        .unwrap_or(false);
-    if !launched {
-        anyhow::bail!("no game card to launch in the picker");
-    }
-    tracing::info!("launched a game from the picker → server booting the save state");
-
-    // Save-state resume + the server's is_playable wait can take a while
-    // (shader compile is mostly cached for a resumed state, but allow headroom).
-    phone
-        .wait_for(Locator::Css(".portal-p4"), Duration::from_secs(180))
-        .await
-        .context("in-game portal never reached (save-state boot)")?;
-    tracing::info!("portal reached — RPCS3 resumed the save state at the in-game portal");
-    tokio::time::sleep(Duration::from_secs(2)).await; // let the portal settle
-
-    // Place a recognizable figure — a REAL IPC LOAD onto the resumed save state
-    // (NO mock outcomes). It should appear on the GAME's own portal, captured
-    // via RPCS3's window.
-    phone.tap_pointer(".lid-grabber-p4").await?;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    phone.tap_pointer(".lid-grabber-p4").await?;
-    phone
-        .wait_for(Locator::Css(".fig-card-p4"), Duration::from_secs(8))
-        .await
-        .context("toy box cards never appeared")?;
-    tokio::time::sleep(Duration::from_millis(400)).await;
-
-    // Pick by name from the toy box (the `.fig-name-p4` label holds the group
-    // name), so the demo places an iconic figure rather than whatever sorts
-    // first. Falls back Eruptor → Spyro → first card; scrolls it into view so
-    // the click lands.
-    let picked = phone
-        .client
-        .execute(
-            r#"const cards=[...document.querySelectorAll('.fig-card-p4:not(.scan-new):not(.on-portal)')];
-               const byName=re=>cards.find(c=>{const n=c.querySelector('.fig-name-p4');return n&&re.test((n.textContent||'').trim());});
-               const pick=byName(/^eruptor$/i)||byName(/spyro/i)||cards[0];
-               if(pick){pick.scrollIntoView({block:'center'});pick.click();
-                 return ((pick.querySelector('.fig-name-p4')||{}).textContent||'?').trim();}
-               return '';"#,
-            vec![],
-        )
-        .await?;
-    let figure_name = picked.as_str().unwrap_or("").to_string();
-    if figure_name.is_empty() {
-        anyhow::bail!("no figure card available to place in the toy box");
-    }
-    tracing::info!(figure = %figure_name, "picked figure from toy box → opening detail");
-
-    // PLACE-ON-PORTAL flow (the card click above opened the detail overlay).
-    phone
-        .wait_for(Locator::Css(".detail-btn-primary"), Duration::from_secs(6))
-        .await
-        .context("figure detail PLACE button never appeared")?;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    phone.js_click(".detail-btn-primary").await?; // PLACE ON PORTAL
-    tokio::time::sleep(Duration::from_millis(400)).await;
-    phone.js_click(".detail-btn-secondary").await.ok(); // BACK TO BOX (best-effort)
-    let _ = phone
-        .wait_until(Duration::from_secs(15), || async {
-            phone
-                .client
-                .find(Locator::Css(".p4-slot--loaded"))
-                .await
-                .is_ok()
-        })
-        .await;
-    tracing::info!(figure = %figure_name, "figure placed — real IPC LOAD onto the save state");
-
-    // Hold ~16s so the resumed game re-reads the portal and the figure visibly
-    // LANDS on the in-game portal (and stays on screen for the clip). The
-    // previous 4s wasn't enough to catch it landing.
-    tokio::time::sleep(Duration::from_secs(16)).await;
+    tokio::time::sleep(Duration::from_secs(3)).await;
     cap.stop().context("stop + flush desktop capture")?;
     tracing::info!(mp4 = %mp4.display(), "MP4 written");
-    let png = std::env::temp_dir().join("playthrough-ingame.png");
+
+    write_timeline(&mp4, &timeline)?;
+
+    let png = std::env::temp_dir().join(format!("{out_stem}.png"));
     phone.screenshot(&png).await?;
     tracing::info!(screenshot = %png.display(), "still captured");
 
     phone.close().await.ok();
-    tracing::info!("done (in-game tier)");
+    tracing::info!("done (single beat)");
     Ok(())
 }
 
-/// Hero interaction: open the toy box and place two figures on the portal,
-/// then reload to the lid-closed foreground so the loaded slots are the focus.
-/// Mirrors the `screenshot_tour` §05–07 flow. Mock load outcomes are injected
-/// so the slots complete (Loading → Loaded) without a real portal.
-async fn place_figures(phone: &Phone, server: &TestServer, phone_url: &str) -> Result<()> {
-    inject_load_outcomes(&server.url, json!([{"kind": "ok"}, {"kind": "ok"}])).await?;
+// `fantoccini` is still a direct dependency (the harness re-exports use it), but
+// the recorder's own selectors now live in the beats; no top-level `Locator`
+// import is needed here.
 
-    // Open the toy box: the lid grabber cycles Closed → Compact → Expanded
-    // on PointerEvents (two taps to fully open).
-    phone.tap_pointer(".lid-grabber-p4").await?;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    phone.tap_pointer(".lid-grabber-p4").await?;
-    phone
-        .wait_for(Locator::Css(".fig-card-p4"), Duration::from_secs(8))
-        .await
-        .context("toy box cards never appeared")?;
-    tokio::time::sleep(Duration::from_millis(400)).await;
-
-    // Place the first figure, wait for a Loaded slot.
-    place_one(phone, ".fig-card-p4:not(.scan-new)").await?;
-    let _ = phone
-        .wait_until(Duration::from_secs(8), || async {
-            phone
-                .client
-                .find(Locator::Css(".p4-slot--loaded"))
-                .await
-                .is_ok()
-        })
-        .await;
-
-    // Place a second (skipping the one now on the portal), wait for two Loaded.
-    place_one(phone, ".fig-card-p4:not(.scan-new):not(.on-portal)").await?;
-    let _ = phone
-        .wait_until(Duration::from_secs(8), || async {
-            phone
-                .client
-                .find_all(Locator::Css(".p4-slot--loaded"))
-                .await
-                .unwrap_or_default()
-                .len()
-                >= 2
-        })
-        .await;
-
-    // Reload to the default lid-Closed foreground (synthetic lid taps don't
-    // reliably reach the tap detector); placed figures persist via ghost
-    // reclaim, so the loaded slots come back as the focus.
-    phone.client.goto(phone_url).await?;
-    phone
-        .wait_for(Locator::Css(".portal-p4"), Duration::from_secs(15))
-        .await?;
-    let _ = phone
-        .wait_until(Duration::from_secs(8), || async {
-            phone
-                .client
-                .find(Locator::Css(".p4-slot--loaded"))
-                .await
-                .is_ok()
-        })
-        .await;
-    Ok(())
-}
-
-/// Tap the first card matching `card_sel`, hit PLACE ON PORTAL, return to box.
-/// All clicks go through `js_click` (bypasses WebDriver interactability so a
-/// card caught mid-animation or behind a closing overlay still fires), and we
-/// wait for the detail overlay to fully dismiss before returning so the next
-/// pick lands on an interactable grid.
-async fn place_one(phone: &Phone, card_sel: &str) -> Result<()> {
-    if !phone.js_click(card_sel).await? {
-        tracing::warn!(card_sel, "no figure card to place");
-        return Ok(());
+/// Build a manifest row from a beat + its measured boundaries.
+fn entry_for(beat: &Beat, t_start_ms: u128, t_end_ms: u128) -> TimelineEntry {
+    TimelineEntry {
+        beat: beat.name,
+        t_start_ms,
+        t_end_ms,
+        realtime_head_ms: beat.realtime_head.as_millis(),
+        realtime_tail_ms: beat.realtime_tail.as_millis(),
+        filler_speed: beat.filler_speed,
+        crop: beat.crop,
     }
-    phone
-        .wait_for(Locator::Css(".detail-btn-primary"), Duration::from_secs(5))
-        .await
-        .context("figure detail PLACE button")?;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    phone.js_click(".detail-btn-primary").await?; // PLACE ON PORTAL
-    tokio::time::sleep(Duration::from_millis(400)).await;
-    phone.js_click(".detail-btn-secondary").await.ok(); // BACK TO BOX (best-effort)
-    let _ = phone
-        .wait_until(Duration::from_secs(4), || async {
-            phone
-                .client
-                .find(Locator::Css(".detail-btn-primary"))
-                .await
-                .is_err()
-        })
-        .await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
+}
+
+/// Write `<mp4-stem>.timeline.json` next to the MP4 (design §5). `foo.mp4` →
+/// `foo.timeline.json`.
+fn write_timeline(mp4: &std::path::Path, timeline: &[TimelineEntry]) -> Result<()> {
+    let json_path = mp4.with_extension("timeline.json");
+    let body = serde_json::to_string_pretty(timeline).context("serialize timeline.json")?;
+    std::fs::write(&json_path, body)
+        .with_context(|| format!("write timeline manifest to {}", json_path.display()))?;
+    tracing::info!(timeline = %json_path.display(), beats = timeline.len(), "timeline.json written");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `parse_mode` sees `args[0]` as the program name and `args[1..]` as the
+    /// CLI rest, so prepend a dummy program name like the real `args()` does.
+    fn parse(rest: &[&str]) -> Result<Mode> {
+        let mut argv = vec!["skylander-playthrough".to_string()];
+        argv.extend(rest.iter().map(|s| s.to_string()));
+        parse_mode(&argv)
+    }
+
+    /// Fix 4: a bare / empty invocation defaults to the self-contained Mock
+    /// `place` narrative (NOT the IPC marquee, which needs RPCS3).
+    #[test]
+    fn no_args_defaults_to_place() {
+        assert_eq!(
+            parse(&[]).unwrap(),
+            Mode::Narrative(DEFAULT_NARRATIVE.to_string())
+        );
+        assert_eq!(parse(&[]).unwrap(), Mode::Narrative("place".to_string()));
+    }
+
+    #[test]
+    fn narrative_keyword_takes_explicit_name() {
+        assert_eq!(
+            parse(&["narrative", "portal"]).unwrap(),
+            Mode::Narrative("portal".to_string())
+        );
+        assert_eq!(
+            parse(&["narrative", "ingame"]).unwrap(),
+            Mode::Narrative("ingame".to_string())
+        );
+    }
+
+    /// `-- narrative` with no name keeps the marquee default (design §6); only
+    /// the *bare* no-arg case flips to `place` (fix 4).
+    #[test]
+    fn bare_narrative_keyword_defaults_to_marquee() {
+        assert_eq!(
+            parse(&["narrative"]).unwrap(),
+            Mode::Narrative(MARQUEE.to_string())
+        );
+    }
+
+    #[test]
+    fn beat_keyword_takes_name() {
+        assert_eq!(
+            parse(&["beat", "open_toybox"]).unwrap(),
+            Mode::Beat("open_toybox".to_string())
+        );
+    }
+
+    #[test]
+    fn beat_keyword_without_name_errors() {
+        let err = parse(&["beat"]).expect_err("`-- beat` with no name must error");
+        assert!(err.to_string().contains("beat"), "got: {err}");
+    }
+
+    #[test]
+    fn bare_aliases_map_to_narratives() {
+        assert_eq!(
+            parse(&["portal"]).unwrap(),
+            Mode::Narrative("portal".to_string())
+        );
+        assert_eq!(
+            parse(&["place"]).unwrap(),
+            Mode::Narrative("place".to_string())
+        );
+        assert_eq!(
+            parse(&["ingame"]).unwrap(),
+            Mode::Narrative("ingame".to_string())
+        );
+    }
+
+    #[test]
+    fn unknown_bare_arg_errors() {
+        let err = parse(&["bogus"]).expect_err("an unknown bare arg must error");
+        assert!(err.to_string().contains("unknown arg"), "got: {err}");
+    }
 }

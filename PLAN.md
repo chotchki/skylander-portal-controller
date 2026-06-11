@@ -2867,14 +2867,19 @@ from the Phase-20 scoping:
     Then the `ingame` scenario yields the figure-on-the-game's-portal MP4 in one command. Manual repro:
     boot the save state (Disconnected + ASMJIT + Compatible Savestate Mode), then
     `cargo run -p skylander-rpcs3-control --example portal_tail -- 55 --reconnect-at 3 --load <abs .sky> --at 30`.
-  - [ ] **15.13 — beats & narrative framework for the recorder.** Replace the monolithic
-    `portal`/`place`/`ingame` scenarios with composable **beats** + **narratives**, so the recorder
-    renders the full user-journey demo (connect → profile → game → browse → place → **see-it-in-game** →
-    optional Kaos teaser) AND a single beat as a per-screen clip. **Design doc:**
-    `docs/dev/recorder-beats-framework.md` (decided: single full-desktop capture, not separate-window
-    stitch; dead-space handled by a per-beat editorial timeline — `timeline.json` manifest + a staged
-    `-- render` post pass that speed-ramps/crops/concats; narratives locked to one mock-vs-IPC flavor).
-    Phases in the doc; implement after review.
+  - **15.13 — beats & narrative framework for the recorder. PHASES 1-3 DONE 2026-06-11.** Replaced the
+    monolithic `portal`/`place`/`ingame` scenarios with composable **beats** + **narratives**
+    (`tools/playthrough/src/beats.rs` + rewritten `main.rs`), per `docs/dev/recorder-beats-framework.md`.
+    Shipped: the `Beat`/`Narrative`/`BeatCtx`/`ServerFlavor` types (HRTB `DriveFn` + `Box::pin` shims);
+    beats extracted verbatim (connect, pick_profile, reach_portal, hold_portal, pick_game_ipc, open_toybox,
+    place_figure mock+ipc, see_in_game); registry — `portal`/`place` (Mock), `ingame`/marquee (IPC);
+    **data-driven flavor lock** (`requires_ipc` bool, fails fast at registry build); `-- narrative <name>` /
+    `-- beat <name>` dispatch + bare-alias back-compat (no-arg → `place`); ONE `DesktopCapture` per narrative
+    emitting `<out>.timeline.json` (editorial manifest anchored at capture start); 14 unit tests. Built via a
+    workflow (1 implementer + 3 adversarial reviewers; fixes folded in). build + clippy `-D warnings` + tests
+    + fmt green. **Remaining: phase 4** (`-- render` post-pass — speed-ramp/crop/concat + **H.265/AV1**
+    transcode via ffmpeg, consuming `timeline.json`) and **phase 5** (caption/title-card overlay) +
+    `kaos_teaser`. The marquee `-- narrative ingame` is ready for a live HTPC MP4 run.
 
 - [ ] 12.1 **Research + scaffolding (research-first, no code
   commits).**
