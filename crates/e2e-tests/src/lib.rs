@@ -247,6 +247,103 @@ impl TestServer {
             _tmpdir: tmp,
         })
     }
+
+    /// Spawn the server for the **IPC driver + a real patched RPCS3 booting a
+    /// save state** — the play-through recorder's in-game tier (PLAN 15.12).
+    /// Reads three env vars: `RPCS3_EXE` (the patched binary), `RPCS3_CONFIG_DIR`
+    /// (the user's RPCS3 install — firmware, `games.yml`, the save state; pass it
+    /// trailing-slashed per the RPCS3 quirk), and `SKYLANDER_BOOT_SAVESTATE` (the
+    /// `.SAVESTAT(.zst)` path). The server boots that save state straight to the
+    /// in-game portal with the save-state RPCS3 config (ASMJIT + Compatible
+    /// Savestate Mode) swapped in transiently. `test-hooks` stays on for profile
+    /// inject / unlock; the phone then drives a real `/api/launch`, which is what
+    /// triggers the save-state boot.
+    pub fn spawn_ipc_savestate() -> Result<Self> {
+        let repo = repo_root()?;
+
+        let rpcs3_exe = std::env::var("RPCS3_EXE")
+            .map(PathBuf::from)
+            .context("RPCS3_EXE env var required for the in-game recorder scenario")?;
+        if !rpcs3_exe.is_file() {
+            bail!(
+                "RPCS3_EXE does not point to a file: {}",
+                rpcs3_exe.display()
+            );
+        }
+        let config_dir = std::env::var("RPCS3_CONFIG_DIR").context(
+            "RPCS3_CONFIG_DIR env var required (your RPCS3 install: firmware + games.yml + savestates/)",
+        )?;
+        let savestate = std::env::var("SKYLANDER_BOOT_SAVESTATE")
+            .context("SKYLANDER_BOOT_SAVESTATE env var required (path to the .SAVESTAT(.zst))")?;
+
+        let firmware = resolve_firmware_pack(&repo)?;
+        let phone_dist = repo.join("phone").join("dist");
+        if !phone_dist.join("index.html").is_file() {
+            bail!(
+                "phone SPA not built — run `cd phone && BUILD_TOKEN=e2e-test trunk build` first (looking in {})",
+                phone_dist.display()
+            );
+        }
+        // Defensive RPCS3.buf clear — a prior forced shutdown otherwise blocks
+        // the next launch with "Another instance of RPCS3 is running".
+        if let Some(dir) = rpcs3_exe.parent() {
+            let _ = std::fs::remove_file(dir.join("RPCS3.buf"));
+        }
+
+        let tmp = tempfile::tempdir().context("create temp dir")?;
+        let port = pick_free_port()?;
+        let env = format!(
+            "RPCS3_EXE={rpcs3}\nRPCS3_CONFIG_DIR={cfg}\nFIRMWARE_PACK_ROOT={pack}\nBIND_PORT={port}\nSKYLANDER_PORTAL_DRIVER=ipc\nSKYLANDER_BOOT_SAVESTATE={ss}\nPHONE_DIST={phone}\n",
+            rpcs3 = rpcs3_exe.display(),
+            cfg = config_dir,
+            pack = firmware.display(),
+            port = port,
+            ss = savestate,
+            phone = phone_dist.display(),
+        );
+        std::fs::write(tmp.path().join(".env.dev"), env)?;
+
+        let mut cmd = Command::new("cargo");
+        cmd.current_dir(tmp.path())
+            .env("CARGO_MANIFEST_DIR", &repo)
+            .env("CARGO_TARGET_DIR", repo.join("target"))
+            .args([
+                "run",
+                "--manifest-path",
+                repo.join("Cargo.toml").to_str().unwrap(),
+                "-p",
+                "skylander-server",
+                "--features",
+                "test-hooks",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .env("BUILD_TOKEN", "e2e-test");
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
+
+        let mut child = cmd.spawn().context("spawn server via cargo run")?;
+        let stdout = child.stdout.take().unwrap();
+        let stderr = child.stderr.take().unwrap();
+        let (tx, rx) = mpsc::channel::<String>();
+        spawn_reader("stdout", stdout, tx.clone());
+        spawn_reader("stderr", stderr, tx);
+
+        let url = wait_for_url(&rx, Duration::from_secs(120))?;
+        let guard = ChildGuard::new(child);
+        let (chromedriver_url, chromedriver_guard) = spawn_chromedriver()?;
+
+        Ok(Self {
+            url,
+            chromedriver_url,
+            _child: guard,
+            _chromedriver: chromedriver_guard,
+            _tmpdir: tmp,
+        })
+    }
 }
 
 async fn fetch_hmac_key_hex(base: &str) -> anyhow::Result<String> {
