@@ -268,25 +268,26 @@ Confirm:
 
 ### 13.4.1 Generate the WINGET_PAT secret
 
-GitHub → Settings → Developer settings → Personal access tokens
-→ Fine-grained tokens → Generate new token.
+**Use a CLASSIC token with the `public_repo` scope — NOT a fine-grained token.**
+winget-releaser opens a **cross-repo PR to `microsoft/winget-pkgs`** (head = your
+`chotchki/winget-pkgs` fork). A fine-grained PAT can only be scoped to repos you own,
+so it can't create a PR on `microsoft/winget-pkgs` — it fails with
+`Resource not accessible by personal access token` (observed 2026-06-11 on the
+v1.9.11 release: the GitHub Release published fine but the winget step errored). The
+classic `public_repo` scope grants the all-public-repos access the cross-repo PR +
+upstream-manifest read need.
 
-- **Resource owner:** `chotchki` (personal).
-- **Repository access:** Only select repositories →
-  `chotchki/winget-pkgs` (the fork from 13.3.1).
-- **Repository permissions:**
-  - Contents: Read and write
-  - Pull requests: Read and write
-  - Metadata: Read-only (always required)
-- **Expiration:** 90 days. Calendar reminder to rotate (PLAN
-  13.6.2).
+GitHub → Settings → Developer settings → Personal access tokens → **Tokens (classic)**
+→ Generate new token (classic).
 
-Save the token immediately — GitHub shows it once. Add it to
-the upstream repo as a secret:
+- **Scope:** check **`public_repo`** (the sub-box under `repo`) — nothing else.
+- **Expiration:** 90 days. Calendar reminder to rotate (PLAN 13.6.2).
 
-GitHub → `chotchki/skylander-portal-controller` → Settings →
-Secrets and variables → Actions → New repository secret →
-Name: `WINGET_PAT`, Value: paste.
+Save the token immediately — GitHub shows it once. Add it to the upstream repo as a
+secret (replacing any prior fine-grained one):
+
+GitHub → `chotchki/skylander-portal-controller` → Settings → Secrets and variables →
+Actions → New repository secret (or update existing) → Name: `WINGET_PAT`, Value: paste.
 
 ### 13.4.2 Wire winget-releaser into release.yml
 
