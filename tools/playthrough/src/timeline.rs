@@ -63,14 +63,24 @@ impl TimelineFile {
         Self::parse(&body).with_context(|| format!("parse timeline manifest {}", path.display()))
     }
 
-    /// Accept the v2 object first, then fall back to the v1 bare array.
+    /// Dispatch on the body's leading JSON token: `{` → v2 object, `[` → v1
+    /// bare array. Branching (rather than try-v2-then-fall-back-to-v1) is
+    /// deliberate: a typo'd field in a hand-edited v2 manifest must surface
+    /// as that object's field-level serde error, not as the v1 attempt's
+    /// misleading "expected a sequence".
     pub fn parse(body: &str) -> Result<Self> {
-        if let Ok(v2) = serde_json::from_str::<TimelineFile>(body) {
-            return Ok(v2);
+        match body.trim_start().chars().next() {
+            Some('{') => serde_json::from_str::<TimelineFile>(body)
+                .context("manifest is not a valid v2 {stage, beats} object"),
+            Some('[') => {
+                let beats = serde_json::from_str::<Vec<TimelineEntry>>(body)
+                    .context("manifest is not a valid v1 entry array")?;
+                Ok(Self { stage: None, beats })
+            }
+            _ => anyhow::bail!(
+                "manifest is neither a v2 {{stage, beats}} object nor a v1 entry array"
+            ),
         }
-        let beats = serde_json::from_str::<Vec<TimelineEntry>>(body)
-            .context("manifest is neither a v2 {stage, beats} object nor a v1 entry array")?;
-        Ok(Self { stage: None, beats })
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
@@ -136,9 +146,39 @@ mod tests {
         assert_eq!(back.beats[0].crop, tl.beats[0].crop);
     }
 
+    /// A v2 object WITHOUT the `stage` key (hand-trimmed/external manifests)
+    /// must keep parsing via `#[serde(default)]`, as must the explicit-null
+    /// form the recorder writes on degraded (placement-failed) runs.
+    #[test]
+    fn v2_object_without_stage_key_defaults_to_none() {
+        let tl = TimelineFile::parse(r#"{"beats": []}"#).expect("stage key is optional");
+        assert_eq!(tl.stage, None);
+        assert!(tl.beats.is_empty());
+
+        let tl = TimelineFile::parse(r#"{"stage": null, "beats": []}"#)
+            .expect("explicit-null stage parses");
+        assert_eq!(tl.stage, None);
+    }
+
+    /// A malformed v2 object (the hand-edit-typo case) surfaces the
+    /// field-level serde error — not the v1 attempt's "expected a sequence".
+    #[test]
+    fn malformed_v2_object_pinpoints_the_bad_field() {
+        let err = TimelineFile::parse(r#"{"beats": [{"beat": "x"}]}"#).expect_err("must reject");
+        // `{err:#}` prints the whole context chain incl. the serde cause.
+        let chain = format!("{err:#}");
+        assert!(chain.contains("v2"), "got: {chain}");
+        assert!(chain.contains("t_start_ms"), "got: {chain}");
+    }
+
     #[test]
     fn garbage_is_a_clear_error() {
+        // An object missing `beats` entirely is still a v2-shaped error…
         let err = TimelineFile::parse("{\"nope\": true}").expect_err("must reject");
+        let chain = format!("{err:#}");
+        assert!(chain.contains("beats"), "got: {chain}");
+        // …while a non-JSON body gets the explicit neither-shape message.
+        let err = TimelineFile::parse("not json at all").expect_err("must reject");
         assert!(err.to_string().contains("neither"), "got: {err}");
     }
 }

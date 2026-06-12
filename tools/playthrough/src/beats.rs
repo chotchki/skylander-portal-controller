@@ -9,12 +9,12 @@
 //!
 //! The framework adds **editorial** metadata per beat ([`Beat::realtime_head`]
 //! / `realtime_tail` / `filler_speed` / `crop`) that the recorder stamps into a
-//! `timeline.json` manifest (design §5). That manifest drives a later
-//! `-- render` post-pass (phase 4, NOT implemented here) — it does not change
-//! what the recorder captures.
+//! `timeline.json` manifest (design §5). That manifest drives the `-- render`
+//! post-pass (phase 4, `render.rs`) — it does not change what the recorder
+//! captures.
 //!
-//! Deferred (NOT in this file): the `kaos_teaser` beat, captions overlay
-//! (`Beat::caption` is reserved/unused), and the render post-pass.
+//! Deferred (NOT in this file): the `kaos_teaser` beat and the captions
+//! overlay (`Beat::caption` is reserved/unused).
 
 use std::time::Duration;
 

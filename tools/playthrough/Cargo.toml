@@ -22,3 +22,14 @@ tracing-subscriber = { workspace = true }
 # capture module is cfg-stubbed elsewhere so the workspace still builds on mac.
 [target.'cfg(windows)'.dependencies]
 windows-capture = "2.0"
+# PLAN 15.14 — Win32 window tiling for the recorder (per-monitor-v2 DPI
+# awareness, SPI_GETWORKAREA, EnumWindows exact-title find, SetWindowPos,
+# DWM frame-bounds compensation + cloak filtering, primary-monitor DPI).
+# Windows-only; stage.rs carries the non-Windows stubs (capture.rs pattern).
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_HiDpi",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+] }

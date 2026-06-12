@@ -2895,16 +2895,29 @@ from the Phase-20 scoping:
     Eruptor lands cleanly on the in-game portal — the automated in-game marquee demo WORKS end-to-end.** The
     full arc (P4 diagnose → P5 RECONNECT → 15.12.4 auto-fire → beats framework → the post-RECONNECT settle)
     is complete. Optional polish: shrink the 20s settle (GHL re-attach is ~5s) for a snappier clip.
-  - [ ] **15.13.4 — `-- render` post-pass (phase 4).** ffmpeg-driven editorial render consuming
+  - [x] **15.13.4 — `-- render` post-pass (phase 4). DONE 2026-06-12** (`render.rs`; built via a
+    workflow — 2 implementers + 3 adversarial reviewers; a verified-on-box **major** fixed:
+    `force_original_aspect_ratio` emits non-1:1 SARs that ffmpeg `concat` rejects → `setsar=1`
+    in every segment chain). ffmpeg-driven editorial render consuming
     `<out>.timeline.json`: per-beat speed-ramp (head/tail @1×, dead middle @`filler_speed`),
     gap-fill so the whole input is covered (pre-roll / inter-beat / trailing hold @1×, no manifest
     entry needed for the trailing hold), crop (per-beat override, else the narrative `stage`),
     coalescing of adjacent same-speed/same-crop segments, one `filter_complex` pass →
-    **H.265** (libx265, `hvc1` tag, faststart; AV1 stays a documented door — gyan
-    essentials has only slow libaom). CLI: `-- render <raw.mp4> [timeline.json] [final.mp4]`
-    with both optionals derived from the raw path. Pure planning/filtergraph logic unit-tested
-    (CI-safe, no ffmpeg); ffmpeg/ffprobe resolved from PATH (env `FFMPEG`/`FFPROBE` override).
-  - [ ] **15.14 — recorder framing cleanup: de-chrome the phone + tile windows + stage crop.**
+    **H.265** (libx265, `hvc1` tag, faststart, ≤1920-wide delivery downscale; AV1 stays a
+    documented door — gyan essentials has only slow libaom). CLI: `-- render <raw.mp4>
+    [timeline.json] [final.mp4]` with both optionals derived from the raw path. Pure
+    planning/filtergraph logic unit-tested (CI-safe, no ffmpeg; the real marquee manifest is a
+    fixture); ffmpeg/ffprobe resolved from PATH (env `FFMPEG`/`FFPROBE` override). **Live-proven
+    2026-06-12:** old 62.9s/118MB marquee raw → 25.5s/6.3MB final (planned 25 522 ms vs probed
+    25 533 ms); new framed marquee 67.8s raw → **27.0s/6.9MB final**.
+  - [x] **15.14 — recorder framing cleanup: de-chrome the phone + tile windows + stage crop.
+    DONE 2026-06-12** (same workflow; live-verified on both the mock `place` narrative and the
+    full in-game marquee — Eruptor lands on the in-game portal in a clean tiled frame: no tab
+    strip/omnibox/automation banner, no taskbar, no desktop clutter, no DWM border slivers).
+    Review hardening folded in: DWM invisible-border rect inflation (GetWindowRect vs
+    DWMWA_EXTENDED_FRAME_BOUNDS) + post-place read-back verification (2px/edge tolerance),
+    IsIconic/DWM-cloaked window filtering in the exact-title find, and a DIP-converted Chrome
+    geometry hint (`GetDpiForMonitor`) so the app window lands near its tile pre-placement.
     The raw capture today shows Chrome's tab strip/omnibox/automation banner, the taskbar, and
     unrelated desktop windows around the launcher. Fix in three parts: (a) **app-mode Chrome** —
     `Phone::new_headed_app` (`--app=<url>` + `excludeSwitches:["enable-automation"]`) so the

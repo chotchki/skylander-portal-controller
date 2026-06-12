@@ -663,10 +663,12 @@ impl Phone {
     }
 
     /// Like [`Phone::new`] but a VISIBLE (non-headless) Chrome window pinned
-    /// at a fixed screen position + size. For the play-through recorder
-    /// (PLAN 15.11), which captures the real desktop with the launcher and
-    /// this browser side-by-side — dropping `--headless` makes the window
-    /// real, and the fixed geometry keeps the capture rect deterministic.
+    /// at a fixed screen position + size, keeping the normal tab strip /
+    /// omnibox. Legacy fallback with no current callers: the play-through
+    /// recorder that motivated it (PLAN 15.11) moved to
+    /// [`Phone::new_headed_app`] (chromeless app mode, PLAN 15.14) — kept
+    /// for flows where visible browser chrome is the point (e.g. debugging
+    /// navigation by hand against a harness-managed server).
     pub async fn new_headed(
         server_url: &str,
         chromedriver_url: &str,
@@ -681,6 +683,52 @@ impl Phone {
         let caps = serde_json::from_str::<serde_json::Value>(&format!(
             r#"{{"goog:chromeOptions": {{"args": {args}}}}}"#
         ))?;
+        let client = ClientBuilder::native()
+            .capabilities(caps.as_object().unwrap().clone())
+            .connect(chromedriver_url)
+            .await
+            .with_context(|| format!("connect to chromedriver at {chromedriver_url}"))?;
+        client.goto(server_url).await?;
+        Ok(Self { client })
+    }
+
+    /// Like [`Phone::new_headed`] but as a **chromeless app-mode window**
+    /// (`--app=<url>`: no tab strip / omnibox) with the "controlled by
+    /// automated test software" banner suppressed
+    /// (`excludeSwitches: ["enable-automation"]`). For the play-through
+    /// recorder's framing cleanup (PLAN 15.14) — the captured phone column
+    /// must show only the SPA, not browser chrome.
+    ///
+    /// Chrome interprets `--window-position` / `--window-size` in **DIPs**,
+    /// not physical pixels, so on a scaled display the window lands off the
+    /// requested rect. Callers needing physical-pixel placement must correct
+    /// via Win32 afterwards (the recorder does — `stage::place_window`);
+    /// `x/y/w/h` here are only the initial hint.
+    ///
+    /// The `goto` after connect is idempotent (the app window already opened
+    /// `server_url`) but binds the WebDriver session to the app window, and
+    /// app-mode windows navigate normally afterwards — mid-run `goto` calls
+    /// (e.g. the mock place-figure beat's reload) need no special handling.
+    pub async fn new_headed_app(
+        server_url: &str,
+        chromedriver_url: &str,
+        x: i32,
+        y: i32,
+        w: u32,
+        h: u32,
+    ) -> Result<Self> {
+        let caps = serde_json::json!({
+            "goog:chromeOptions": {
+                "args": [
+                    "--no-sandbox",
+                    "--disable-gpu",
+                    format!("--app={server_url}"),
+                    format!("--window-position={x},{y}"),
+                    format!("--window-size={w},{h}"),
+                ],
+                "excludeSwitches": ["enable-automation"],
+            }
+        });
         let client = ClientBuilder::native()
             .capabilities(caps.as_object().unwrap().clone())
             .connect(chromedriver_url)

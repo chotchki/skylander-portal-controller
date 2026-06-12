@@ -1,6 +1,9 @@
 # Demo recorder — beats & narrative framework (design)
 
-**Status:** DESIGN — 2026-06-10. Not yet implemented; implement after review.
+**Status:** IMPLEMENTED through phase 4 — phases 1-3 (beats/narratives/manifest)
+2026-06-11, phase 4 (`-- render`, `render.rs`) + the PLAN-15.14 framing cleanup
+(app-mode Chrome, Win32 tiling, manifest `stage` crop) 2026-06-12. Phase 5
+(captions) + `kaos_teaser` remain.
 **Scope:** `tools/playthrough/` (crate `skylander-playthrough`), Windows-focused,
 dev/CI-only, never shipped. Builds on the `skylander-e2e-tests` harness.
 
@@ -124,6 +127,24 @@ This is **provisional**: how the side-by-side framing + per-beat crops actually 
 can only be judged from real output, so v1 ships the single full-desktop capture and
 we iterate from there (the v2 separate-window door below stays open).
 
+**First iteration landed (PLAN 15.14, 2026-06-12)** — judged from real output, the
+raw frames showed Chrome's tab strip/omnibox/automation banner, the taskbar, and
+unrelated desktop windows around the launcher. Fixes, all capture-side + manifest:
+
+1. **App-mode Chrome** — `Phone::new_headed_app` (`--app=<url>` +
+   `excludeSwitches:["enable-automation"]`): the phone window is chromeless (a thin
+   native title bar only, retitled "Skylander Portal Phone" via `document.title`).
+2. **Win32 tiling** (`stage.rs`) — the recorder (PER_MONITOR_AWARE_V2) tiles the
+   launcher (exact title match) + phone edge-to-edge across the primary work area
+   (phone column at 1:2 of work-area height; launcher absorbs the rest; RPCS3
+   follows the launcher via the PLAN-20.4 window-fit). Placement compensates for
+   DWM invisible borders (GetWindowRect vs DWMWA_EXTENDED_FRAME_BOUNDS rect
+   inflation) and verifies the achieved rect by read-back — otherwise the run
+   degrades to `stage: null` rather than emitting a lying crop.
+3. **`stage` in the manifest** — the tiled union goes out as `stage` in a v2
+   manifest object (`{stage, beats}`; v1 bare arrays still load), and `-- render`
+   crops every segment to it: taskbar + desktop clutter never reach the final cut.
+
 **Deferred to v2 (only if post-crop proves insufficient):** capture the launcher
 and Chrome windows *separately* (windows-capture supports a `Window` target, not
 just `Monitor`) and composite — for true PiP overlays or per-window resolution.
@@ -174,6 +195,22 @@ dropped; ffmpeg is simpler and already available.)
 
 **Staging:** v1 emits the manifest (raw MP4 + `timeline.json`); the post-render is
 its own phase (§9.4). So even before the renderer exists, every run is annotated.
+
+**Implemented (phase 4, `render.rs` — 2026-06-12).** `-- render <raw.mp4>
+[timeline.json] [final.mp4]` (optionals derive from the raw path) plans pure
+segments from the manifest — per-beat head/tail @1× + filler @`filler_speed`,
+**gap-fill** so the whole input is covered (pre-roll, inter-beat slack, and the
+trailing post-beat hold all render @1× with the `stage` crop; no manifest entry
+needed), degenerate beats (head+tail ≥ duration) collapse to one realtime span,
+adjacent same-speed/same-crop segments coalesce, sub-50ms slivers drop — then
+renders ONE ffmpeg `filter_complex` pass: per segment
+`trim,setpts/(speed),crop(,scale+pad),setsar=1,fps` → `concat` → a Rust-computed
+≤1920-wide downscale → `libx265 -crf 22 -preset medium -tag:v hvc1 -movflags
++faststart`. (`setsar=1` is load-bearing: `force_original_aspect_ratio` emits
+non-1:1 SARs that ffmpeg's `concat` rejects.) AV1 remains a door, not built —
+the local ffmpeg (gyan *essentials*) carries only slow libaom; H.265 everywhere
+that matters. First real renders: the 62.9s/118MB marquee raw → 25.5s/6.3MB
+final (planned 25 522 ms vs probed 25 533 ms).
 
 ---
 
@@ -234,6 +271,8 @@ work. Do not build the overlay now.
    open_toybox` yields a clean per-screen clip.
 4. **Post-render** (`-- render`) — speed-ramp / trim / crop / concat per the
    manifest (the dead-space fix). Pick the tool (ffmpeg vs Rust crate).
+   **DONE 2026-06-12** (`render.rs`, ffmpeg — see §5), plus the PLAN-15.14
+   framing cleanup (§4).
 5. **Later** — `kaos_teaser` beat; then the caption/title-card overlay.
 
 ---

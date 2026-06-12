@@ -14,6 +14,10 @@
 //!     run sequentially. Default name is the IPC marquee (`ingame`).
 //!   - `-- beat <name>`      — boot the flavor of that beat's owning narrative,
 //!     run just that one beat → a per-screen clip (+ still PNG).
+//!   - `-- render <raw.mp4> [timeline.json] [final.mp4]` — pure post-pass (no
+//!     server / registry / Chrome): apply the editorial manifest to the raw
+//!     capture → one H.265 final cut (`render.rs`, design §5; PLAN 15.13.4).
+//!     The optionals derive from the raw path.
 //!   - bare `portal` / `place` / `ingame` — BACK-COMPAT aliases to those
 //!     narratives.
 //!
@@ -36,8 +40,11 @@
 
 mod beats;
 mod capture;
+mod render;
+mod stage;
 mod timeline;
 
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -51,6 +58,14 @@ use timeline::{TimelineEntry, TimelineFile};
 enum Mode {
     Narrative(String),
     Beat(String),
+    /// `-- render` post-pass (PLAN 15.13.4): pure post-processing of an
+    /// existing raw capture + manifest — never boots the server, the
+    /// narrative registry, or chromedriver.
+    Render {
+        raw: PathBuf,
+        manifest: PathBuf,
+        out: PathBuf,
+    },
 }
 
 /// The no-arg / empty-args default narrative: the self-contained Mock `place`
@@ -72,6 +87,35 @@ fn parse_mode(args: &[String]) -> Result<Mode> {
         [kw] if kw == "beat" => {
             anyhow::bail!("`-- beat` needs a beat name (e.g. `-- beat open_toybox`)")
         }
+        // `-- render <raw.mp4> [timeline.json] [final.mp4]` (PLAN 15.13.4).
+        // Both optionals derive from the raw path: `foo.mp4` →
+        // `foo.timeline.json` (what the recorder writes next to the capture)
+        // and a sibling `foo-final.mp4`.
+        [kw, raw, manifest, out, ..] if kw == "render" => Ok(Mode::Render {
+            raw: PathBuf::from(raw),
+            manifest: PathBuf::from(manifest),
+            out: PathBuf::from(out),
+        }),
+        [kw, raw, manifest] if kw == "render" => {
+            let raw = PathBuf::from(raw);
+            Ok(Mode::Render {
+                manifest: PathBuf::from(manifest),
+                out: render::default_out_path(&raw),
+                raw,
+            })
+        }
+        [kw, raw] if kw == "render" => {
+            let raw = PathBuf::from(raw);
+            Ok(Mode::Render {
+                manifest: render::default_manifest_path(&raw),
+                out: render::default_out_path(&raw),
+                raw,
+            })
+        }
+        [kw] if kw == "render" => anyhow::bail!(
+            "`-- render` needs a raw capture \
+             (usage: `-- render <raw.mp4> [timeline.json] [final.mp4]`)"
+        ),
         // Bare back-compat aliases: `portal` / `place` / `ingame`.
         [alias, ..] => match beats::resolve_alias(alias) {
             Some(narr) => Ok(Mode::Narrative(narr.to_string())),
@@ -85,6 +129,11 @@ fn parse_mode(args: &[String]) -> Result<Mode> {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
+    // PER_MONITOR_AWARE_V2 must be set before ANY window/monitor API runs
+    // (capture's Monitor::primary, the tiling's SPI_GETWORKAREA /
+    // SetWindowPos) so they all speak physical pixels — PLAN 15.14.
+    stage::set_dpi_aware();
+
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .init();
@@ -92,32 +141,39 @@ async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let mode = parse_mode(&args)?;
 
-    // Build + validate the registry up front (flavor-lock enforced inside
-    // `narratives()` — design §7: a clear failure at startup, not mid-run).
-    // The lookups consume the owned `Vec<Narrative>`, so each rebuilds a fresh
-    // validated copy (cheap — a handful of beats).
-    beats::narratives().context("build + validate narrative registry")?;
-
+    // The recording modes build + validate the registry inside their lookup
+    // (flavor-lock enforced in `narratives()` — design §7: a clear failure
+    // before any heavy work; the lookup consumes the owned, freshly-validated
+    // `Vec<Narrative>`). Render deliberately never touches it — it must work
+    // on a box with only ffmpeg and the recorded artifacts.
     match mode {
+        Mode::Render { raw, manifest, out } => render::run(&raw, &manifest, &out),
         Mode::Narrative(name) => {
-            let narr = beats::find_narrative(beats::narratives()?, &name)
-                .with_context(|| format!("no narrative named {name:?}"))?;
+            let narr = beats::find_narrative(
+                beats::narratives().context("build + validate narrative registry")?,
+                &name,
+            )
+            .with_context(|| format!("no narrative named {name:?}"))?;
             tracing::info!(narrative = %narr.name, flavor = ?narr.flavor, "running narrative");
             run_narrative(narr).await
         }
         Mode::Beat(name) => {
-            let (flavor, beat) = beats::find_beat(beats::narratives()?, &name)
-                .with_context(|| format!("no beat named {name:?} in any narrative"))?;
+            let (flavor, beat) = beats::find_beat(
+                beats::narratives().context("build + validate narrative registry")?,
+                &name,
+            )
+            .with_context(|| format!("no beat named {name:?} in any narrative"))?;
             tracing::info!(beat = %beat.name, flavor = ?flavor, "running single beat");
             run_single_beat(flavor, beat).await
         }
     }
 }
 
-/// Spawn the server for `flavor`, seed Alice (+ Bob for Mock), start the
-/// desktop capture, and open the headed phone parked beside the launcher.
-/// Returns the live pieces the beats drive. Mirrors the shared boot the old
-/// monolithic scenarios did (design §6).
+/// Spawn the server for `flavor`, seed Alice (+ Bob for Mock), tile the
+/// launcher into the work area (PLAN 15.14), start the desktop capture, and
+/// open the headed app-mode phone in the right-hand column. Returns the live
+/// pieces the beats drive. Mirrors the shared boot the old monolithic
+/// scenarios did (design §6).
 struct Boot {
     server: TestServer,
     phone: Phone,
@@ -135,8 +191,12 @@ struct Boot {
     timeline_origin: Instant,
     /// The tiled launcher+phone region in physical capture pixels (PLAN
     /// 15.14), emitted as the manifest's `stage` so the render pass can crop
-    /// out taskbar/desktop clutter. `None` until the window-placement wire-up
-    /// lands (and as the degraded value when placement fails).
+    /// out taskbar/desktop clutter. `Some` only when BOTH window placements
+    /// verifiably succeeded — `stage::place_window` reads the visible frame
+    /// back after `SetWindowPos` and errors on a mismatch (min-size clamps
+    /// report success otherwise) — because a half-tiled frame cropped to the
+    /// stage would cut content off, so any failure degrades to `None`
+    /// (full-frame; the render still works).
     stage: Option<timeline::CropRect>,
 }
 
@@ -163,7 +223,38 @@ async fn boot(flavor: ServerFlavor, out_stem: &str) -> Result<Boot> {
         launch_giants(&server.url).await?;
     }
 
-    // 3. Start whole-desktop MP4 capture (launcher is up + visible) BEFORE the
+    // 3. Tiling (PLAN 15.14): compute the edge-to-edge layout from the
+    //    primary work area, then place the launcher BEFORE capture starts so
+    //    frame 0 is already tiled. RPCS3 later fits itself to the launcher
+    //    via the server's PLAN-20.4 window-fit — no recorder action. Every
+    //    step degrades on failure (warn, keep recording untiled): the demo
+    //    must never abort over framing.
+    let layout = match stage::work_area() {
+        Ok(work) => Some(stage::compute_layout(work)),
+        Err(e) => {
+            tracing::warn!(error = %e, "no work area — recording untiled (stage = None)");
+            None
+        }
+    };
+    let mut launcher_placed = false;
+    if let Some(l) = &layout {
+        // Exact title — dev boxes have editor/terminal windows whose titles
+        // CONTAIN "skylander-portal-controller" (stage.rs).
+        match stage::wait_find_window_exact("Skylander Portal Controller", Duration::from_secs(10))
+            .await
+        {
+            Some(hwnd) => match stage::place_window(hwnd, l.launcher) {
+                Ok(()) => {
+                    tracing::info!("placed launcher at {:?}", l.launcher);
+                    launcher_placed = true;
+                }
+                Err(e) => tracing::warn!(error = %e, "launcher placement failed — untiled"),
+            },
+            None => tracing::warn!("launcher window not found by exact title — untiled"),
+        }
+    }
+
+    // 4. Start whole-desktop MP4 capture (launcher is up + tiled) BEFORE the
     //    heavy work so the boot is recorded.
     let mp4 = std::env::temp_dir().join(format!("{out_stem}.mp4"));
     // Anchor the editorial timeline at the capture's frame 0 (design §5 / fix
@@ -174,13 +265,67 @@ async fn boot(flavor: ServerFlavor, out_stem: &str) -> Result<Boot> {
     tracing::info!(mp4 = %mp4.display(), "recording the desktop…");
     tokio::time::sleep(Duration::from_secs(1)).await; // a beat with just the launcher
 
-    // 4. Visible Chrome parked to the right of the windowed launcher (the
-    //    fixed geometry keeps the capture rect deterministic — design §10).
+    // 5. Visible app-mode (chromeless) phone window in the right-hand column.
+    //    Chrome reads --window-position/--window-size in DIPs, so the
+    //    physical-pixel tile is divided by the primary monitor's effective
+    //    scale first — passed raw on a scaled display, the window opens
+    //    scale× too large and flashes over the launcher in the already-
+    //    rolling capture's pre-roll until the placement below corrects it.
+    //    The hint stays approximate either way (the Win32 placement is the
+    //    physical-pixel authority); with no layout, fall back to the legacy
+    //    fixed geometry (pre-15.14) with no placement.
     let phone_url = server.phone_url().await?;
-    let phone = Phone::new_headed(&phone_url, &server.chromedriver_url, 1180, 40, 470, 940)
+    let (px, py, pw, ph) = match &layout {
+        Some(l) => {
+            let hint = stage::to_dips(l.phone, stage::primary_scale());
+            (hint.x, hint.y, hint.w as u32, hint.h as u32)
+        }
+        None => (1180, 40, 470, 940),
+    };
+    let phone = Phone::new_headed_app(&phone_url, &server.chromedriver_url, px, py, pw, ph)
         .await
-        .context("open headed phone browser")?;
-    tracing::info!("phone browser open (headed) — driving the flow");
+        .context("open headed app-mode phone browser")?;
+    tracing::info!("phone browser open (headed, app-mode) — driving the flow");
+
+    // 6. Retitle the page so the exact-title find is unambiguous (the
+    //    app-mode window title IS the document title — it also reads nicely
+    //    in the captured title bar), then snap the window to the phone tile.
+    let mut phone_placed = false;
+    if let Some(l) = &layout {
+        match phone
+            .client
+            .execute("document.title='Skylander Portal Phone'", vec![])
+            .await
+        {
+            Ok(_) => {
+                match stage::wait_find_window_exact(
+                    "Skylander Portal Phone",
+                    Duration::from_secs(5),
+                )
+                .await
+                {
+                    Some(hwnd) => match stage::place_window(hwnd, l.phone) {
+                        Ok(()) => {
+                            tracing::info!("placed phone at {:?}", l.phone);
+                            phone_placed = true;
+                        }
+                        Err(e) => tracing::warn!(error = %e, "phone placement failed — untiled"),
+                    },
+                    None => tracing::warn!("phone window not found by exact title — untiled"),
+                }
+            }
+            Err(e) => tracing::warn!(error = %e, "phone retitle failed — skipping placement"),
+        }
+    }
+
+    // Emit the stage crop ONLY when both windows verifiably sit at their
+    // tiled rects (Boot::stage docs) — else the manifest degrades to
+    // full-frame.
+    let stage = match (&layout, launcher_placed && phone_placed) {
+        (Some(l), true) => Some(l.stage),
+        _ => None,
+    };
+    tracing::info!("stage = {stage:?}");
 
     Ok(Boot {
         server,
@@ -190,7 +335,7 @@ async fn boot(flavor: ServerFlavor, out_stem: &str) -> Result<Boot> {
         cap,
         mp4,
         timeline_origin,
-        stage: None,
+        stage,
     })
 }
 
@@ -407,6 +552,50 @@ mod tests {
             parse(&["ingame"]).unwrap(),
             Mode::Narrative("ingame".to_string())
         );
+    }
+
+    #[test]
+    fn render_raw_only_derives_manifest_and_out() {
+        // `foo.mp4` → `foo.timeline.json` (the recorder's `write_timeline`
+        // naming) + a sibling `foo-final.mp4`.
+        assert_eq!(
+            parse(&["render", "captures/run.mp4"]).unwrap(),
+            Mode::Render {
+                raw: PathBuf::from("captures/run.mp4"),
+                manifest: PathBuf::from("captures/run.timeline.json"),
+                out: PathBuf::from("captures/run-final.mp4"),
+            }
+        );
+    }
+
+    #[test]
+    fn render_with_manifest_keeps_out_default() {
+        assert_eq!(
+            parse(&["render", "run.mp4", "custom.timeline.json"]).unwrap(),
+            Mode::Render {
+                raw: PathBuf::from("run.mp4"),
+                manifest: PathBuf::from("custom.timeline.json"),
+                out: PathBuf::from("run-final.mp4"),
+            }
+        );
+    }
+
+    #[test]
+    fn render_fully_explicit_paths_pass_through() {
+        assert_eq!(
+            parse(&["render", "a.mp4", "b.json", "c.mp4"]).unwrap(),
+            Mode::Render {
+                raw: PathBuf::from("a.mp4"),
+                manifest: PathBuf::from("b.json"),
+                out: PathBuf::from("c.mp4"),
+            }
+        );
+    }
+
+    #[test]
+    fn bare_render_errors_with_usage() {
+        let err = parse(&["render"]).expect_err("`-- render` with no raw must error");
+        assert!(err.to_string().contains("render"), "got: {err}");
     }
 
     #[test]
