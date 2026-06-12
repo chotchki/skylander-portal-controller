@@ -20,9 +20,10 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use fantoccini::Locator;
-use serde::Serialize;
 use serde_json::json;
 use skylander_e2e_tests::{Phone, TestServer, inject_load_outcomes, unlock_session};
+
+use crate::timeline::CropRect;
 
 /// Per-beat execution context. The harness is `&self`-async throughout, so a
 /// beat just borrows these for the duration of its drive. The profile id
@@ -48,18 +49,10 @@ pub type BeatFut<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = Result
 /// context borrow to the returned future.
 pub type DriveFn = for<'a> fn(&'a BeatCtx<'a>) -> BeatFut<'a>;
 
-/// A post-crop framing rectangle (design §2). Serialised into `timeline.json`
-/// for the later render pass. All v1 beats use `crop: None` (full desktop
-/// frame); the type exists so the manifest schema is stable.
-#[derive(Debug, Clone, Copy, Serialize)]
-pub struct CropRect {
-    pub x: u32,
-    pub y: u32,
-    pub w: u32,
-    pub h: u32,
-}
-
 /// One beat: a named drive plus editorial intent for the render post-pass.
+/// The crop type lives in [`crate::timeline`] (the manifest schema module);
+/// all v1 beats use `crop: None` — the narrative-wide `stage` (PLAN 15.14)
+/// provides the framing instead.
 pub struct Beat {
     /// CLI key for `-- beat <name>`.
     pub name: &'static str,

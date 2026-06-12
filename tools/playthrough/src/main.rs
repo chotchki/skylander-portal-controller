@@ -36,29 +36,15 @@
 
 mod beats;
 mod capture;
+mod timeline;
 
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use beats::{Beat, BeatCtx, MARQUEE, Narrative, ServerFlavor};
 use capture::DesktopCapture;
-use serde::Serialize;
 use skylander_e2e_tests::{Phone, TestServer, inject_profile, launch_giants};
-
-/// One row of the editorial manifest (`<out>.timeline.json`, design §5).
-/// Beat-boundary wall-clock timestamps relative to `DesktopCapture` start, plus
-/// the beat's editorial intent (durations flattened to ms, `filler_speed`,
-/// `crop`) for the later `-- render` post-pass.
-#[derive(Debug, Serialize)]
-struct TimelineEntry {
-    beat: &'static str,
-    t_start_ms: u128,
-    t_end_ms: u128,
-    realtime_head_ms: u128,
-    realtime_tail_ms: u128,
-    filler_speed: f32,
-    crop: Option<beats::CropRect>,
-}
+use timeline::{TimelineEntry, TimelineFile};
 
 /// Parsed CLI intent.
 #[derive(Debug, PartialEq, Eq)]
@@ -147,6 +133,11 @@ struct Boot {
     /// included in the offsets and t=0 lines up with the first captured frame
     /// (design fix 3).
     timeline_origin: Instant,
+    /// The tiled launcher+phone region in physical capture pixels (PLAN
+    /// 15.14), emitted as the manifest's `stage` so the render pass can crop
+    /// out taskbar/desktop clutter. `None` until the window-placement wire-up
+    /// lands (and as the degraded value when placement fails).
+    stage: Option<timeline::CropRect>,
 }
 
 async fn boot(flavor: ServerFlavor, out_stem: &str) -> Result<Boot> {
@@ -199,6 +190,7 @@ async fn boot(flavor: ServerFlavor, out_stem: &str) -> Result<Boot> {
         cap,
         mp4,
         timeline_origin,
+        stage: None,
     })
 }
 
@@ -216,6 +208,7 @@ async fn run_narrative(narr: Narrative) -> Result<()> {
         cap,
         mp4,
         timeline_origin,
+        stage,
     } = boot;
 
     let ctx = BeatCtx {
@@ -228,11 +221,10 @@ async fn run_narrative(narr: Narrative) -> Result<()> {
     // Stamp wall-clock at each beat boundary, relative to `timeline_origin`
     // (captured at `DesktopCapture::start` in `boot()`) — so `t=0` lines up
     // with capture frame 0 and the ~1s lead-in is reflected in the first beat's
-    // `t_start_ms` (design §5 / fix 3).
-    // PLAN 15.13 phase-4: the render pass assumes contiguous beat brackets
-    // ([t_start..t_end] back-to-back) and ignores the trailing 3s post-beat
-    // hold below; contiguity polish + a manifest entry for that trailing hold
-    // land with the `-- render` post-pass.
+    // `t_start_ms` (design §5 / fix 3). The render pass (15.13.4) gap-fills
+    // anything the brackets don't cover — the pre-roll, inter-beat slack, and
+    // the trailing 3s post-beat hold below — at 1×, so no manifest entry is
+    // needed for them.
     let mut timeline: Vec<TimelineEntry> = Vec::with_capacity(narr.beats.len());
 
     for beat in &narr.beats {
@@ -251,7 +243,7 @@ async fn run_narrative(narr: Narrative) -> Result<()> {
     cap.stop().context("stop + flush desktop capture")?;
     tracing::info!(mp4 = %mp4.display(), "MP4 written");
 
-    write_timeline(&mp4, &timeline)?;
+    write_timeline(&mp4, stage, timeline)?;
 
     let png = std::env::temp_dir().join(format!("{out_stem}.png"));
     phone.screenshot(&png).await?;
@@ -276,6 +268,7 @@ async fn run_single_beat(flavor: ServerFlavor, beat: Beat) -> Result<()> {
         cap,
         mp4,
         timeline_origin,
+        stage,
     } = boot;
 
     let ctx = BeatCtx {
@@ -299,7 +292,7 @@ async fn run_single_beat(flavor: ServerFlavor, beat: Beat) -> Result<()> {
     cap.stop().context("stop + flush desktop capture")?;
     tracing::info!(mp4 = %mp4.display(), "MP4 written");
 
-    write_timeline(&mp4, &timeline)?;
+    write_timeline(&mp4, stage, timeline)?;
 
     let png = std::env::temp_dir().join(format!("{out_stem}.png"));
     phone.screenshot(&png).await?;
@@ -317,24 +310,27 @@ async fn run_single_beat(flavor: ServerFlavor, beat: Beat) -> Result<()> {
 /// Build a manifest row from a beat + its measured boundaries.
 fn entry_for(beat: &Beat, t_start_ms: u128, t_end_ms: u128) -> TimelineEntry {
     TimelineEntry {
-        beat: beat.name,
-        t_start_ms,
-        t_end_ms,
-        realtime_head_ms: beat.realtime_head.as_millis(),
-        realtime_tail_ms: beat.realtime_tail.as_millis(),
+        beat: beat.name.to_string(),
+        t_start_ms: t_start_ms as u64,
+        t_end_ms: t_end_ms as u64,
+        realtime_head_ms: beat.realtime_head.as_millis() as u64,
+        realtime_tail_ms: beat.realtime_tail.as_millis() as u64,
         filler_speed: beat.filler_speed,
         crop: beat.crop,
     }
 }
 
-/// Write `<mp4-stem>.timeline.json` next to the MP4 (design §5). `foo.mp4` →
-/// `foo.timeline.json`.
-fn write_timeline(mp4: &std::path::Path, timeline: &[TimelineEntry]) -> Result<()> {
+/// Write `<mp4-stem>.timeline.json` next to the MP4 (design §5; v2 object
+/// schema with the 15.14 `stage`). `foo.mp4` → `foo.timeline.json`.
+fn write_timeline(
+    mp4: &std::path::Path,
+    stage: Option<timeline::CropRect>,
+    beats: Vec<TimelineEntry>,
+) -> Result<()> {
     let json_path = mp4.with_extension("timeline.json");
-    let body = serde_json::to_string_pretty(timeline).context("serialize timeline.json")?;
-    std::fs::write(&json_path, body)
-        .with_context(|| format!("write timeline manifest to {}", json_path.display()))?;
-    tracing::info!(timeline = %json_path.display(), beats = timeline.len(), "timeline.json written");
+    let n = beats.len();
+    TimelineFile { stage, beats }.save(&json_path)?;
+    tracing::info!(timeline = %json_path.display(), beats = n, "timeline.json written");
     Ok(())
 }
 

@@ -2895,9 +2895,27 @@ from the Phase-20 scoping:
     Eruptor lands cleanly on the in-game portal — the automated in-game marquee demo WORKS end-to-end.** The
     full arc (P4 diagnose → P5 RECONNECT → 15.12.4 auto-fire → beats framework → the post-RECONNECT settle)
     is complete. Optional polish: shrink the 20s settle (GHL re-attach is ~5s) for a snappier clip.
-
-- [ ] 12.1 **Research + scaffolding (research-first, no code
-  commits).**
+  - [ ] **15.13.4 — `-- render` post-pass (phase 4).** ffmpeg-driven editorial render consuming
+    `<out>.timeline.json`: per-beat speed-ramp (head/tail @1×, dead middle @`filler_speed`),
+    gap-fill so the whole input is covered (pre-roll / inter-beat / trailing hold @1×, no manifest
+    entry needed for the trailing hold), crop (per-beat override, else the narrative `stage`),
+    coalescing of adjacent same-speed/same-crop segments, one `filter_complex` pass →
+    **H.265** (libx265, `hvc1` tag, faststart; AV1 stays a documented door — gyan
+    essentials has only slow libaom). CLI: `-- render <raw.mp4> [timeline.json] [final.mp4]`
+    with both optionals derived from the raw path. Pure planning/filtergraph logic unit-tested
+    (CI-safe, no ffmpeg); ffmpeg/ffprobe resolved from PATH (env `FFMPEG`/`FFPROBE` override).
+  - [ ] **15.14 — recorder framing cleanup: de-chrome the phone + tile windows + stage crop.**
+    The raw capture today shows Chrome's tab strip/omnibox/automation banner, the taskbar, and
+    unrelated desktop windows around the launcher. Fix in three parts: (a) **app-mode Chrome** —
+    `Phone::new_headed_app` (`--app=<url>` + `excludeSwitches:["enable-automation"]`) so the
+    phone window is chromeless; (b) **Win32 tiling** — the (DPI-aware, PER_MONITOR_AWARE_V2)
+    recorder places the launcher (exact window title "Skylander Portal Controller") and the
+    phone window (retitled via `document.title` for an unambiguous find) edge-to-edge in the
+    primary work area — phone column at 1:2 aspect of work-area height, launcher gets the rest;
+    RPCS3 follows the launcher via the 20.4 window-fit; (c) **stage crop** — the tiled union is
+    emitted as `stage` in a v2 manifest object (`{stage, beats}`; the v1 bare-array still
+    loads), and `-- render` crops the cut to it, removing taskbar/background clutter. Placement
+    failure degrades to warn + `stage: null` (manifest stays valid).
   - [ ] 12.1.1 — AX Rust crate audit. Candidates: `accessibility-sys`
     (raw bindings), `accessibility` (higher-level),
     `objc2-app-kit` + `objc2-accessibility` (modern + actively
