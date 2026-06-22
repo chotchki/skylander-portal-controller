@@ -1,0 +1,18 @@
+diff --git a/rpcs3/Emu/Cell/SPUCommonRecompiler.cpp b/rpcs3/Emu/Cell/SPUCommonRecompiler.cpp
+index 813915820..fb08652b6 100644
+--- a/rpcs3/Emu/Cell/SPUCommonRecompiler.cpp
++++ b/rpcs3/Emu/Cell/SPUCommonRecompiler.cpp
+@@ -5257,6 +5257,13 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
+ 
+ 	const auto initiate_patterns = [&](block_reg_state_iterator& block_state_it, u32 bpc, bool is_multi_block)
+ 	{
++		// bpc may have been removed by cleanup while a dangling target edge to it
++		// survived (e.g. a stop-trap call return); skip it as get_block_targets does.
++		if (!m_block_info[bpc / 4] || !m_bbs.count(bpc))
++		{
++			return;
++		}
++
+ 		// Initiate patterns (that are initiated on block start)
+ 		const auto& bb_body = ::at32(m_bbs, bpc);
+ 

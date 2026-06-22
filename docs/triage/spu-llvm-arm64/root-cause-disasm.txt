@@ -1,0 +1,16 @@
+Root-cause disasm (FMOD entry 0xf0 megafunction, from RPCS3.log function dump):
+
+  A: [0x00170] Chunk   F: 0x000f0   <- 0x0015c
+  >  00000170:  33 1d 75 00   brsl   lr,0xed18      ; CALL; return addr = 0x174
+     -> 0x00174 (null)                              ; return successor: NO block
+     -> 0x0ed18                                     ; call target
+
+  A: [0x00178] Entry   F: 0x00178   <- 0x001f8   <- 0x00250
+  >  00000178:  40 80 02 05   il     r5,4           ; separately-discovered function entry
+
+0x174 is the brsl return address. It is an orphan: in NO basic block
+(block_info[0x174/4]=0, not in m_bbs), because it sits between the call
+site at 0x170 and the function entry at 0x178 (reached directly from 0x1f8
+and 0x250). The analyser recorded the 0x170->0x174 successor edge but never
+created a block for the return point. In giga mode the reg-state walk follows
+that dangling edge -> ::at32(m_bbs, 0x174) -> Range check failed.

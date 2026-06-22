@@ -1,8 +1,8 @@
-From 3a8c42e05895fb9145fba4fbc71da245c167e0f7 Mon Sep 17 00:00:00 2001
+From c6a8eb9d32c076d4786b8c874721d7ca2b3f3f95 Mon Sep 17 00:00:00 2001
 From: Christopher Hotchkiss <chris@hotchkiss.io>
 Date: Wed, 10 Jun 2026 21:18:08 -0700
-Subject: [PATCH] P5: re-attach the emulated portal after a save-state resume
- (RECONNECT IPC)
+Subject: [PATCH 5/5] P5: re-attach the emulated portal after a save-state
+ resume (RECONNECT IPC)
 
 A save-state resume rebuilds the emulated-USB handler thread (and its LDD
 registry) from scratch, but the guest game's restored RAM still holds its old USB
@@ -128,5 +128,5 @@ index 87e29ee10..7b7456eb7 100644
  		{
  			out = "ERR unknown_cmd\n";
 -- 
-2.53.0.windows.3
+2.50.1 (Apple Git-155)
 

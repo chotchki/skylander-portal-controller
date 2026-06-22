@@ -70,7 +70,7 @@ does:
 | | |
 |---|---|
 | Submodule | `vendor/rpcs3` → `https://github.com/RPCS3/rpcs3.git` |
-| Pinned commit | `c11979d1245509478145da11d7fcbe4e8815dd15` (master, 2026-05-29) |
+| Pinned commit | `927e2492ef720d2223bd8b149a02af875e11c398` (master, 2026-06-22, `v0.0.40-637`) |
 | Patches generated against | that same commit |
 
 Pin is by **commit**, not branch — `.gitmodules` has no `branch =`, so

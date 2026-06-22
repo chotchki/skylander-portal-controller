@@ -7,9 +7,11 @@ over an AF_UNIX IPC channel with zero dialog/UIA. **16.2 (vendoring) done
 in `rpcs3-patches/`; CI patch-apply guard + gated full-build lane; repo relicensed
 to GPL-2.0-only. Next: 16.3/16.5 (productionise P1 + the Rust `IpcPortalDriver`).
 **Date:** 2026-05-28.
-**Pin:** RPCS3 master `c11979d` (2026-05-29) — latest-master pin chosen for
-newest game-compat + crash fixes; rebase cadence is cheap because every patch is
-shallow + additive (see patch-depth table).
+**Pin:** RPCS3 master `927e2492e` (2026-06-22, `v0.0.40-637`) — latest-master pin
+chosen for newest game-compat + crash fixes; rebase cadence is cheap because every
+patch is shallow + additive (see patch-depth table). *(Bumped 2026-06-22 from
+`c11979d` (2026-05-29); 109-commit window, replayed clean — P1/P3 seams untouched,
+P2 context-shift only. Picked up Apple-Silicon JIT fixes for the Mac build.)*
 **HTPC handoff:** `docs/dev/rpcs3-fork-htpc-bringup.md`.
 **Supersedes:** Phase 12 (Mac AX driver), Phase 6.1 (RPCS3 window-flicker
 suppression), and the existing Windows UIA portal driver as the *production*

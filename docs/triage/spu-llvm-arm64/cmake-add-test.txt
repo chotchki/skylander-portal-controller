@@ -1,0 +1,4 @@
+Upstream PR also adds the test to rpcs3/CMakeLists.txt (rpcs3_test target_sources),
+after tests/test_dmux_pamf.cpp:
+
+            tests/test_spu_analyser.cpp

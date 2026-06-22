@@ -1,7 +1,7 @@
-From 6c4e30d358a3a10aa01ae9b40ec0824255c88a7c Mon Sep 17 00:00:00 2001
+From 0bc5a9b9cf206753be50ed35fa2161c158eff717 Mon Sep 17 00:00:00 2001
 From: Christopher Hotchkiss <chris@hotchkiss.io>
 Date: Sat, 30 May 2026 18:22:37 -0700
-Subject: [PATCH 3/3] P3: return ENETUNREACH (not EADDRNOTAVAIL) for offline
+Subject: [PATCH 3/5] P3: return ENETUNREACH (not EADDRNOTAVAIL) for offline
  public-IP connects
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -58,5 +58,5 @@ index b422db814..dbe0ac43b 100644
  
  	if (psa_in->sin_port == 53)
 -- 
-2.53.0.windows.3
+2.50.1 (Apple Git-155)
 

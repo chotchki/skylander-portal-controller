@@ -1,0 +1,60 @@
+### SPU analyser error flood (representative tail) ###
+·E 0:00:13.998487 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x018b0: [0x018b0] bad fallthrough to 0x18c4
+·E 0:00:13.998488 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x02478: [0x02478] bad fallthrough to 0x248c
+·E 0:00:13.998489 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x02830: [0x02830] bad fallthrough to 0x2844
+·E 0:00:13.998491 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x02990: [0x02990] bad fallthrough to 0x29f8
+·E 0:00:13.998492 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x02b30: [0x02b30] bad fallthrough to 0x2990
+·E 0:00:13.998493 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x03790: [0x03790] bad fallthrough to 0x40000
+·E 0:00:13.998494 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x06030: [0x06030] bad fallthrough to 0xcb0
+·E 0:00:13.998495 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x06450: [0x06450] bad fallthrough to 0x6474
+·E 0:00:13.998497 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x06c00: [0x06c00] bad fallthrough to 0x6c4c
+·E 0:00:13.998498 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x06ed8: [0x06ed8] bad fallthrough to 0x6f24
+·E 0:00:13.998499 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x07258: [0x07258] bad stack frame
+·E 0:00:13.998501 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x07498: [0x07498] bad fallthrough to 0x40000
+·E 0:00:13.998502 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x074a8: [0x074a8] bad fallthrough to 0x7498
+·E 0:00:13.998503 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x074c8: [0x074c8] bad fallthrough to 0x7528
+·E 0:00:13.998506 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x07b70: [0x07b70] bad fallthrough to 0x40000
+·E 0:00:13.998507 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x07b90: [0x07b90] bad fallthrough to 0x7b70
+·E 0:00:13.998508 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x07c88: [0x07c88] bad fallthrough to 0x7b90
+·E 0:00:13.998509 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x07ca8: [0x07ca8] bad fallthrough to 0x2478
+·E 0:00:13.998513 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x08298: [0x08298] bad fallthrough to 0x40000
+·E 0:00:13.998514 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x082c8: [0x082c8] bad fallthrough to 0x8298
+·E 0:00:13.998515 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x082e8: [0x082e8] bad stack frame
+·E 0:00:13.998517 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x084d0: [0x084d0] bad fallthrough to 0x84f4
+·E 0:00:13.998520 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x09e20: [0x09e20] bad fallthrough to 0x9e9c
+·E 0:00:13.998525 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x0b4c0: [0x0b4c0] bad fallthrough to 0xb568
+·E 0:00:13.998529 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x0c258: [0x0c258] bad fallthrough to 0x2830
+·E 0:00:13.998536 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x0dd48: [0x0dd48] bad fallthrough to 0xdd9c
+·E 0:00:13.998537 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x0dfa0: [0x0dfa0] bad fallthrough to 0xe008
+·E 0:00:13.998539 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x0e138: [0x0e244] bad fallthrough to 0xe1ec
+·E 0:00:13.998540 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x0e2a8: [0x0e3a8] bad fallthrough to 0xe358
+·E 0:00:13.998541 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x0e4a0: [0x0e4a0] bad fallthrough to 0xe62c
+·E 0:00:13.998543 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x0e848: [0x0e8e8] bad fallthrough to 0xe864
+·E 0:00:13.998544 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x0e900: [0x0e900] bad fallthrough to 0x40000
+·E 0:00:13.998545 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x0e948: [0x0e9a0] bad fallthrough to 0xe9d4
+·E 0:00:13.998546 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x0ea08: [0x0ea44] bad fallthrough to 0xea44
+·E 0:00:13.998547 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x0eb48: [0x0eb48] bad fallthrough to 0xebbc
+·E 0:00:13.998548 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x0ed18: [0x0ed18] bad fallthrough to 0xed38
+·E 0:00:13.998549 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x0ed40: [0x0ed40] bad fallthrough to 0xed48
+·E 0:00:13.998550 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x0edc0: [0x0edc0] bad fallthrough to 0xede0
+·E 0:00:13.998552 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x0ee38: [0x0ee38] bad fallthrough to 0x40000
+·E 0:00:13.998552 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x0eee8: [0x0eee8] bad fallthrough to 0xef00
+·E 0:00:13.998555 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x0f9a0: [0x0f9a0] bad fallthrough to 0xf9c0
+·E 0:00:13.998557 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x10460: [0x10468] bad fallthrough to 0x10468
+·E 0:00:13.998558 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x104a8: [0x104a8] bad fallthrough to 0x104c0
+·E 0:00:13.998559 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x10500: [0x10500] bad fallthrough to 0x10518
+·E 0:00:13.998560 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SPU: Function 0x00250: calls bad function (0x00178)
+·! 0:00:13.998901 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SYS: 
+
+### Primary fatal (SPU analyser range-check) ###
+69076:·F 0:00:13.998914 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SIG: Thread terminated due to fatal error: Range check failed (index: 372, container_size: 992)
+69078:·W 0:00:13.999902 {SPU[0x0000200] Thread (FMOD) [0x000f0]} SYS: Emulation has been frozen! You can either use debugger tools to inspect current emulation state or terminate it.
+69080:·W 0:00:14.001959 {CPU Thread Cleanup Logger} SYS: CPU Thread 'SPU[0x0000200] FMOD' terminated abnormally!
+71523:·W 0:00:44.785731 {CPU Thread Cleanup Logger} SYS: CPU Thread 'rsx::thread' terminated abnormally!
+
+### Secondary cascade (RSX segfault) ###
+·F 0:00:44.772721 {RSX [0x00101d8]} SIG: Thread terminated due to fatal error: Segfault reading location c6fc8cab9d00e40b at 0000000102c2cf90.
+Emu Thread Name: 'rsx::thread'.
+
+·! 0:00:44.785682 {rsx::thread} SIG: Thread time: 0.000000s (0.000000Gc); Faults: 0 [rsx:0, spu:0]; [soft:0 hard:0]; Switches:[vol:0 unvol:0]; Wait:[34.688s, spur:0]
+·W 0:00:44.785731 {CPU Thread Cleanup Logger} SYS: CPU Thread 'rsx::thread' terminated abnormally!

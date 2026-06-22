@@ -3658,6 +3658,51 @@ See `docs/dev/macos-rpcs3-build.md`.
 - [x] 16.11.3 - Lift BootDirect IPC sub-branch to cfg(any(windows, unix)) so it spawns on macOS
 - [x] 16.11.4 - Unit tests + Mac clippy/check pass + document SKYLANDER_PORTAL_DRIVER=ipc Mac bringup
 
+## Phase 16.12 — Bump pinned RPCS3 (c11979d → 927e2492e) + macOS re-validation
+
+**Motivation (2026-06-22).** The pin (`c11979d`, 2026-05-29) was ~3.5 weeks
+stale. Bump to latest master to pick up newer game-compat/crash fixes and —
+the trigger for this pass — **Apple-Silicon JIT improvements** that may improve
+the patched Mac build (i8mm advertise, AArch64 TBL/ROTQBY shuffles,
+exclusion_callback type fix, Mac CI runner → OS 15). Window = 109 commits.
+Patch-seam churn: P1 (Skylander.cpp/.h) and P3 (lv2_socket_native.cpp)
+**untouched**; P2 (gs_frame.cpp) saw 3 unrelated commits (exit-game shortcut,
+opengl-in-title, windowState strings) — replay is context-shift-only.
+
+- [x] 16.12.1 - Fetch origin/master; new pin **927e2492e** (`v0.0.40-637`, 2026-06-22); confirm seam churn (P1/P3 clean, P2 context-only)
+- [x] 16.12.2 - Replay 3-patch series via `git am --3way` (clean); re-export with `git format-patch`; verify byte-stability (only `From <sha>` + one auto-shifted P2 hunk header `@@ -718→-726`)
+- [x] 16.12.3 - Move submodule gitlink to pristine `927e2492e`; update canonical pin refs (rpcs3-patches/README table, integration-strategy `**Pin:**`, release.yml artifact tag `rpcs3-patched-927e2492e`)
+- [x] 16.12.4 - Rebuild patched RPCS3 on Mac at new pin (warm ccache, `.ci-local/build-mac.sh`); smoke `rpcs3 --version` → `RPCS3 0.0.41-local_build Alpha`, exit 0; build HEAD `245d41017` (P3/P2/P1 atop `927e2492e`)
+  - [x] 16.12.4a - Lift `live_launch.rs` off `#![cfg(windows)]` to `cfg(any(windows, unix))` + add sustained-fps sampling (compiles on Mac, produces test exe)
+  - [x] 16.12.4b - Set RPCS3 perf config for the test: backed up `config.yml`; **SPU Decoder → Recompiler (LLVM)** (was Interpreter dynamic), Renderer = Vulkan/MoltenVK confirmed
+  - [x] 16.12.4c - **Playable-perf validated via the lifted harness**: SPU LLVM + **Mega** block size → Skylanders Giants boots no-GUI and holds **~59–60 fps sustained on the M3 Max** (P2 window handle published `0xA5A71BC00`, graceful shutdown). Caveat: SPU LLVM + **Giga** block size **crashes** (standing flaw → Phase 16.13). Config used `config_dir` = `~/Library/Application Support/rpcs3`.
+  - [ ] 16.12.4d - (deferred) Full server **desktop-mode** run (`SKYLANDER_PORTAL_DRIVER=ipc`, open SPA in on-device browser, boot via SPA, portal load round-trips) — superseded for now by the Giga-crash triage (16.13)
+- [x] 16.12.5 - Assess macOS-support delta — **improved, empirically confirmed: Giants is fully playable at ~60 fps with the LLVM recompiler on Apple Silicon** (Mega). Workflow verdict (high confidence): i8mm SPU path now active on this M3 Max (FEAT_I8MM=1) + TBL ROTQBY / FSM→NEON, Vulkan/MoltenVK descriptor fixes, MoltenVK→GL fallback. NB: old pin `c11979d` predates BOTH i8mm emission + fix → NOT boot-broken before (perf gain, not crash fix). Update `project_rpcs3_ipc_fork` memory note with the new pin
+- [ ] 16.12.6 - (release follow-up) before next Windows release, trigger the gated `rpcs3-patched.yml` full build (`workflow_dispatch full_build=true`) so the `rpcs3-patched-927e2492e` prerelease exists for release.yml to download
+
+## Phase 16.13 — SPU-LLVM **Giga** block-size crash isolation (upstream PR)
+
+**Found 2026-06-22 while validating 16.12.** SPU Decoder = Recompiler (LLVM) **+ SPU
+Block Size = Giga** crashes the *game* (not the emulator) on Skylanders Giants
+(BLUS30968): the **FMOD** audio SPU program drives the shared analyser
+(`SPUCommonRecompiler.cpp`) to flag **1190** functions malformed (`bad
+fallthrough` / `bad stack frame` / `calls bad function`), then `::at32(...)`
+throws `Range check failed (index: 372 = 0x174, container_size: 992)` →
+SPU thread frozen → ~30s later a cascade RSX segfault (garbage command buffer).
+**Mega block size + LLVM is unaffected (60 fps).** The interpreter is unaffected
+(no analysis). So this is **Giga-block-size-specific**, in the megafunction/
+reg-state build *after* `SPUCommonRecompiler.cpp:5021`. Goal: a **precise upstream
+patch**, not an AI bug report (maintainers reject drive-by AI reports). Evidence in
+`docs/triage/spu-llvm-arm64/`.
+
+- [x] 16.13.1 - Iteration enabler: the IPC-poll fast-fail in `live_launch.rs` proved **unreliable** (P1 `read_state` returns Err the whole time when the game crashes during early boot → harness burned the full 180s). The working tool is **log-based**: `docs/triage/spu-llvm-arm64/boot-watch.sh` watches RPCS3.log for the emulator's own `·F` fatal → **CRASH verdict in ~9s** (the emulator already knows; we read it, don't poll)
+- [x] 16.13.2 - Exact site pinned **without lldb**: the `ensure`/`at32` `std::source_location` is printed even in the stripped Release build → **`SPUCommonRecompiler.cpp:5261`**, `::at32(m_bbs, bpc)` in `spu_recompiler_base::analyse()`'s `initiate_patterns` lambda
+- [x] 16.13.3 - **Root cause identified.** `initiate_patterns` dereferences `::at32(m_bbs, bpc)` (5261) + `::at32(m_bbs, first_pred_of_loop|bpc)` (5279) **unguarded**, while sibling lambdas `get_block_targets`/`get_block_preds` (5238–5256) guard with `m_block_info[pc/4] && m_bbs.count(pc)`. In Giga the reg-state walk passes `bpc`=0x174 that FMOD's malformed control flow left out of `m_bbs` (992 entries) → range error. **Candidate minimal fix:** guard `initiate_patterns` to early-return for a non-block `bpc` (patterns are optimizations — safe to skip). Open: minimal guard vs deeper caller fix (5988/6037/6047)
+- [x] 16.13.4 - **Fix A verified.** Guard `initiate_patterns` (`+10/−0`, matches sibling lambdas) → rebuilt → Giga+LLVM boots Giants with **zero fatals** (`boot-watch` OK 60s; FMOD compiles past 0x174) and **reaches playable at ~59.4 fps sustained** (same as Mega). Mega regression check + config restored to Giga (now works).
+- [x] 16.13.5 - **Deeper root cause confirmed (not a band-aid).** The crashing `bpc` (0x174) is the *return address of a `brsl` (call)*; that return word is a `stop` (0x0) — a no-return trap. Discovery creates the return block + a `m_targets` edge, then the "cleanup block info" pass deletes the block (`result.data[idx]==0`) **without** removing the edge, leaving it dangling. The guard is the missing instance of the codebase's own *filter-at-use* idiom (5769 + `get_block_targets`/`get_block_preds`), so it's the in-pattern fix. Dropped (a) cleanup-edge-prune (against the filter-at-use design); (b) is_no_return STOP-detection = optional follow-up.
+- [x] 16.13.6 - **Guard + regression test done & verified for upstream.** Guard = `+7/−0`, terse comment. Test `vendor/rpcs3/rpcs3/tests/test_spu_analyser.cpp` (wired into `rpcs3/CMakeLists.txt`, `BUILD_RPCS3_TESTS=ON`): a **made-up** SPU program (inline encoder, no game bytes) that reproduces the crash — **PASSES with the guard, ABORTS without it** (Range check failed). Matches RPCS3 style (tabs, anon-ns helpers). Ready for the fork `github.com/chotchki/rpcs3`.
+- [ ] 16.13.7 - (chotchki) File the upstream PR (guard + test) from the fork; project keeps the local guard in `vendor/rpcs3` working tree until merged (NOT carried as a P4 — see 16.13.5)
+
 ## Phase 17 - Connectivity diagnostics & firewall self-heal
 
 **Motivation (2026-05-30).** A user couldn't connect a phone to the QR; no repro
