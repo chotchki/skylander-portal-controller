@@ -3917,6 +3917,7 @@ ever does z-order with `SWP_NOMOVE | SWP_NOSIZE`) is the real work of this phase
 
 ## Backlog (not yet phased)
 
-- **Wire UnixRpcsProcess into non-Windows RpcsProcess + server (driver=ipc on mac/linux)** — added 2026-05-31.
-- **Live IPC test: drive patched macOS RPCS3 against a real Skylanders game** — added 2026-05-31.
+- **Wire UnixRpcsProcess into non-Windows RpcsProcess + server (driver=ipc on mac/linux)** — added 2026-05-31. DONE (16.11).
+- **Live IPC test: drive patched macOS RPCS3 against a real Skylanders game** — added 2026-05-31. DONE 2026-06-22: Giants ~60fps SPU-LLVM on M3 Max (16.12.4c).
 - **macOS RPCS3 distribution polish: deployment target + .app codesigning** — added 2026-05-31.
+- **Extract `tools/ios-inspect` to its own repo (github.com/chotchki/ios-inspect); remove here + repoint** — added 2026-06-22. Blocked on the split landing. Touches: delete `tools/ios-inspect/`, `Cargo.toml` exclude, the CLAUDE.md ios-inspect section, `crates/e2e-tests/{README,Cargo.toml}`, `docs/{roadmap,dev/macos-bringup,dev/ci}.md`, and the `ci.yml` iOS-sim lane (repoint at the external tool / `cargo install --git`).
