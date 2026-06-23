@@ -175,8 +175,15 @@ fn line_key(line: &str) -> Option<&str> {
 // ---------------------------------------------------------------------------
 
 /// The settings a save state needs to RESUME (not just capture) — swapped into
-/// the real `config/config.yml` transiently for the boot, restored after.
+/// the real `config.yml` transiently for the boot, restored after.
 const SAVESTATE_KEYS: &[(&str, &str)] = &[
+    // ASMJIT is an x86-only SPU recompiler — on Apple Silicon RPCS3 aborts the
+    // Emu State Load with "Unsupported spu decoder 'Recompiler (ASMJIT)'". Only
+    // force it on x86; on ARM (Apple Silicon) we leave the user's SPU decoder
+    // untouched — the save state was captured with it, so it resumes cleanly
+    // (e.g. Interpreter (dynamic) on this Mac). Forcing a decoder the save state
+    // wasn't made with risks a resume mismatch anyway.
+    #[cfg(target_arch = "x86_64")]
     ("SPU Decoder", "Recompiler (ASMJIT)"),
     ("Compatible Savestate Mode", "true"),
     // PLAN 15.12.4 — a save state captured at the in-game portal carries live
@@ -278,7 +285,8 @@ pub fn apply_savestate_config(config_yml: &Path) -> Result<SavestateConfigGuard>
         .with_context(|| format!("write save-state config {}", config_yml.display()))?;
     tracing::info!(
         path = %config_yml.display(),
-        "applied transient save-state config (SPU=ASMJIT, Compatible Savestate Mode=true)"
+        spu_forced = cfg!(target_arch = "x86_64"),
+        "applied transient save-state config (SPU→ASMJIT on x86 / left as-is on ARM, Compatible Savestate Mode=true)"
     );
     Ok(SavestateConfigGuard {
         path: config_yml.to_path_buf(),
@@ -415,7 +423,11 @@ Savestate:
   Maximum SaveState Files: 4
 ";
         let out = set_savestate_keys(input);
+        // SPU override is x86-only (ASMJIT is x86); on ARM it's left as the input's.
+        #[cfg(target_arch = "x86_64")]
         assert!(out.contains("  SPU Decoder: Recompiler (ASMJIT)"));
+        #[cfg(not(target_arch = "x86_64"))]
+        assert!(out.contains("  SPU Decoder: Recompiler (LLVM)"));
         assert!(out.contains("  Compatible Savestate Mode: true"));
         // PPU + the savestate sibling are untouched; no key duplicated.
         assert!(out.contains("  PPU Decoder: Recompiler (LLVM)"));
@@ -428,7 +440,10 @@ Savestate:
     fn savestate_swap_is_idempotent_and_keeps_crlf() {
         let input = "  SPU Decoder: Recompiler (LLVM)\r\n  Compatible Savestate Mode: false\r\n";
         let once = set_savestate_keys(input);
+        #[cfg(target_arch = "x86_64")]
         assert!(once.contains("  SPU Decoder: Recompiler (ASMJIT)\r\n"));
+        #[cfg(not(target_arch = "x86_64"))]
+        assert!(once.contains("  SPU Decoder: Recompiler (LLVM)\r\n"));
         assert!(once.ends_with("\r\n"));
         assert_eq!(
             set_savestate_keys(&once),
