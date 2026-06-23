@@ -2,8 +2,21 @@
 
 **Status:** IMPLEMENTED through phase 4 — phases 1-3 (beats/narratives/manifest)
 2026-06-11, phase 4 (`-- render`, `render.rs`) + the PLAN-15.14 framing cleanup
-(app-mode Chrome, Win32 tiling, manifest `stage` crop) 2026-06-12. Phase 5
-(captions) + `kaos_teaser` remain.
+(app-mode Chrome, Win32 tiling, manifest `stage` crop) 2026-06-12. **Phase 5
+captions IMPLEMENTED 2026-06-23 (PLAN A.5)**, alongside the 2-pane composite +
+AV1/HEVC dual-encode. `kaos_teaser` remains.
+
+> **Captions (PLAN A.5).** `TimelineEntry.caption: Option<String>` (serde-default,
+> back-compat) flows `Beat::caption` → manifest → render. The render maps each
+> beat's input window through the speed-ramps to its OUTPUT window
+> (`input_ms_to_output_ms`) and overlays a caption image gated by
+> `enable=between(t,…)` at a centred lower-third. **This ffmpeg build (Homebrew
+> 8.1.2) has NO `drawtext`/libfreetype**, so captions are rasterised in Rust via
+> `ab_glyph` + the project's TitanOne font (`src/caption.rs`) and `overlay`-ed —
+> a single-frame PNG input persists across its `enable` window (no `-loop`).
+> v1 style is a plain white-on-dark-box placeholder; the gold-outline Skylanders
+> look + the narration copy (`Beat::caption` is `None` everywhere today) are the
+> remaining aesthetic/content work.
 **Scope:** `tools/playthrough/` (crate `skylander-playthrough`), Windows-focused,
 dev/CI-only, never shipped. Builds on the `skylander-e2e-tests` harness.
 
