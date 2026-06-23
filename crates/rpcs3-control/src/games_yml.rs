@@ -20,12 +20,18 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-/// Read RPCS3's `<install>/config/games.yml` and return a serial → game
-/// directory map. Trailing slashes / backslashes are stripped so callers
-/// can join sub-paths like `PS3_GAME/USRDIR/EBOOT.BIN` without
-/// double-separators.
+/// Read RPCS3's `games.yml` and return a serial → game directory map. Trailing
+/// slashes / backslashes are stripped so callers can join sub-paths like
+/// `PS3_GAME/USRDIR/EBOOT.BIN` without double-separators.
+///
+/// Current RPCS3 keeps `games.yml` at the **config-dir root**
+/// (`<install>/games.yml`); older layouts used `<install>/config/games.yml`.
+/// Prefer the root, fall back to the legacy path — on macOS the root is where
+/// it actually lives, so the old config-only lookup silently loaded 0 games.
 pub fn read_games_yml(rpcs3_install_dir: &Path) -> Result<HashMap<String, PathBuf>> {
-    let path = rpcs3_install_dir.join("config").join("games.yml");
+    let root = rpcs3_install_dir.join("games.yml");
+    let legacy = rpcs3_install_dir.join("config").join("games.yml");
+    let path = if root.is_file() { root } else { legacy };
     let body = std::fs::read_to_string(&path)
         .with_context(|| format!("read games.yml at {}", path.display()))?;
     Ok(parse(&body))
