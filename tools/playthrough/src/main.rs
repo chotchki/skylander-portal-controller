@@ -39,6 +39,7 @@
 //!   CHROMEDRIVER=…  cargo run -p skylander-playthrough -- beat open_toybox
 
 mod beats;
+mod caption;
 mod capture;
 mod render;
 mod stage;
@@ -522,6 +523,9 @@ fn entry_for(beat: &Beat, t_start_ms: u128, t_end_ms: u128) -> TimelineEntry {
         realtime_tail_ms: beat.realtime_tail.as_millis() as u64,
         filler_speed: beat.filler_speed,
         crop: beat.crop,
+        // PLAN A.5 — flows the beat's caption into the manifest → render overlay.
+        // All beats are `None` today; the narration copy is chotchki's to set.
+        caption: beat.caption.map(str::to_string),
     }
 }
 

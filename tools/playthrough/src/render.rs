@@ -355,6 +355,24 @@ pub fn planned_output_ms(segs: &[Segment]) -> u64 {
         .round() as u64
 }
 
+/// Map an INPUT-time millisecond to its OUTPUT-time after the editorial
+/// speed-ramps (PLAN A.5 captions): walk the gap-filled, ordered segments
+/// accumulating each one's output duration `(end-start)/speed`. Consistent with
+/// [`planned_output_ms`] (its return for the last segment's end). A caption's
+/// on-screen window is `[map(beat.t_start), map(beat.t_end)]`.
+fn input_ms_to_output_ms(input_ms: u64, segs: &[Segment]) -> f64 {
+    let mut out = 0.0f64;
+    for s in segs {
+        let speed = f64::from(s.speed);
+        if input_ms < s.end_ms {
+            let within = input_ms.saturating_sub(s.start_ms) as f64;
+            return out + within / speed;
+        }
+        out += (s.end_ms - s.start_ms) as f64 / speed;
+    }
+    out
+}
+
 /// Round down to even — libx265 + yuv420p need even frame dims, and crop
 /// offsets must be even for clean 4:2:0 chroma siting.
 fn even(v: u32) -> u32 {
@@ -510,21 +528,89 @@ pub fn composite(controller: &Path, game: &Path, out: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Run the dual-encode (PLAN A.5). The editorial `filter_complex` graph is
-/// decoded + run ONCE and `split` to feed both encoders: **SVT-AV1** (the
-/// primary `<video>` source) and **H.265** (`hvc1`, the Safari/QuickTime
-/// fallback). Stdio is inherited so ffmpeg's `-stats` line shows; everything
-/// else is `-v error`-quiet.
-fn encode(raw: &Path, graph: &str, out_label: &str, av1_out: &Path, hevc_out: &Path) -> Result<()> {
+/// One timed caption: a pre-rendered PNG ([`crate::caption`]) + its OUTPUT-time
+/// window in seconds (PLAN A.5).
+struct CaptionOverlay {
+    png: PathBuf,
+    start_s: f64,
+    end_s: f64,
+}
+
+/// Render a caption PNG for each captioned beat + compute its OUTPUT-time window
+/// (map the beat's input window through the speed-ramps). PNGs land beside `out`
+/// (`<stem>.capN.png`) so the render's `overlay` can consume them as inputs.
+fn build_caption_overlays(
+    beats: &[TimelineEntry],
+    segs: &[Segment],
+    out: &Path,
+) -> Result<Vec<CaptionOverlay>> {
+    const CAPTION_PX: f32 = 56.0; // ~5% of a 1080 delivery; tunable
+    let stem = out
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "reel".to_owned());
+    let mut overlays = Vec::new();
+    for (i, b) in beats.iter().enumerate() {
+        let Some(text) = b
+            .caption
+            .as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+        else {
+            continue;
+        };
+        let png = out.with_file_name(format!("{stem}.cap{i}.png"));
+        crate::caption::render_caption_png(text, CAPTION_PX, &png)
+            .with_context(|| format!("render caption for beat {:?}", b.beat))?;
+        overlays.push(CaptionOverlay {
+            png,
+            start_s: input_ms_to_output_ms(b.t_start_ms, segs) / 1000.0,
+            end_s: input_ms_to_output_ms(b.t_end_ms, segs) / 1000.0,
+        });
+    }
+    if !overlays.is_empty() {
+        tracing::info!(captions = overlays.len(), "render: caption overlays");
+    }
+    Ok(overlays)
+}
+
+/// Run the dual-encode (PLAN A.5), overlaying any timed captions first. The
+/// editorial graph is decoded + run ONCE; captions are `overlay`-ed onto its
+/// output (this ffmpeg has no `drawtext`) at a centred lower-third, each gated
+/// to its beat's output window via `enable=between(t,…)`; then `split` feeds
+/// both encoders (SVT-AV1 primary + libx265/hvc1 fallback). Stdio is inherited
+/// so ffmpeg's `-stats` line shows; everything else is `-v error`-quiet.
+fn encode(
+    raw: &Path,
+    graph: &str,
+    out_label: &str,
+    captions: &[CaptionOverlay],
+    av1_out: &Path,
+    hevc_out: &Path,
+) -> Result<()> {
+    const MARGIN: u32 = 80; // px from the bottom edge (lower third)
     let bin = tool("FFMPEG", "ffmpeg");
-    // Fan the single graph output to both encoders so the edit runs once.
-    let graph = format!("{graph};{out_label}split=2[venc_av1][venc_hevc]");
-    let status = Command::new(&bin)
-        .args(["-y", "-v", "error", "-stats", "-i"])
-        .arg(raw)
-        .args(["-filter_complex", &graph])
-        // AV1 primary (SVT-AV1): preset 6 is a solid quality point for an
-        // offline reel; crf 32 ≈ the libx265 crf 22 below.
+    // Chain caption overlays onto out_label, then split to both encoders.
+    let mut g = graph.to_string();
+    let mut cur = out_label.to_string();
+    for (i, c) in captions.iter().enumerate() {
+        let inp = i + 1; // input 0 is `raw`; captions are inputs 1..=N
+        g.push_str(&format!(
+            ";{cur}[{inp}:v]overlay=x=(W-w)/2:y=H-h-{MARGIN}:\
+             enable='between(t,{:.3},{:.3})'[cap{i}]",
+            c.start_s, c.end_s
+        ));
+        cur = format!("[cap{i}]");
+    }
+    g.push_str(&format!(";{cur}split=2[venc_av1][venc_hevc]"));
+
+    let mut cmd = Command::new(&bin);
+    cmd.args(["-y", "-v", "error", "-stats", "-i"]).arg(raw);
+    for c in captions {
+        cmd.arg("-i").arg(&c.png);
+    }
+    cmd.args(["-filter_complex", &g])
+        // AV1 primary (SVT-AV1): preset 6 ≈ the libx265 crf 22 below.
         .args([
             "-map",
             "[venc_av1]",
@@ -565,9 +651,8 @@ fn encode(raw: &Path, graph: &str, out_label: &str, av1_out: &Path, hevc_out: &P
             "-movflags",
             "+faststart",
         ])
-        .arg(hevc_out)
-        .status()
-        .with_context(|| spawn_hint(&bin, "FFMPEG"))?;
+        .arg(hevc_out);
+    let status = cmd.status().with_context(|| spawn_hint(&bin, "FFMPEG"))?;
     ensure!(status.success(), "ffmpeg exited with {status}");
     Ok(())
 }
@@ -617,7 +702,8 @@ pub fn run(raw: &Path, manifest: &Path, out: &Path) -> Result<()> {
     // `out` is the H.265 fallback (back-compat default path); AV1 is a sibling
     // `<stem>.av1.mp4` and the primary `<video>` source (PLAN A.5).
     let av1_out = variant_path(out, "av1");
-    encode(raw, &graph, &out_label, &av1_out, out)?;
+    let captions = build_caption_overlays(&tl.beats, &segs, out)?;
+    encode(raw, &graph, &out_label, &captions, &av1_out, out)?;
 
     // >10% drift between plan and output means the trim maths and the encode
     // disagree (bad bracket clamps / fps mismatch) — warn, don't fail: the
@@ -671,6 +757,7 @@ mod tests {
             realtime_tail_ms,
             filler_speed,
             crop,
+            caption: None,
         }
     }
 
@@ -713,6 +800,24 @@ mod tests {
         assert_eq!(ctrl_pane_width(1080, 1080, 1920, 1080), 1080);
         // an absurdly wide controller is capped so the game pane keeps ≥2px.
         assert_eq!(ctrl_pane_width(4000, 1000, 1920, 1080), 1918);
+    }
+
+    #[test]
+    fn input_to_output_time_respects_speed_ramps() {
+        let segs = vec![
+            seg(0, 1000, 1.0, None),
+            seg(1000, 3000, 2.0, None),
+            seg(3000, 4000, 1.0, None),
+        ];
+        assert_eq!(input_ms_to_output_ms(0, &segs), 0.0);
+        assert_eq!(input_ms_to_output_ms(1000, &segs), 1000.0); // start of the 2× span
+        assert_eq!(input_ms_to_output_ms(2000, &segs), 1500.0); // 1000ms into 2× → +500
+        assert_eq!(input_ms_to_output_ms(3000, &segs), 2000.0); // end of the 2× span
+        // end of input → the full planned output duration.
+        assert_eq!(
+            input_ms_to_output_ms(4000, &segs),
+            planned_output_ms(&segs) as f64
+        );
     }
 
     // --- ffprobe JSON parsing ------------------------------------------------

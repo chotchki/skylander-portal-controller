@@ -43,6 +43,11 @@ pub struct TimelineEntry {
     pub filler_speed: f32,
     /// Per-beat framing override; `None` falls back to [`TimelineFile::stage`].
     pub crop: Option<CropRect>,
+    /// Lower-third narration shown during this beat's OUTPUT window (PLAN A.5).
+    /// `None` = no caption. Rendered via ab_glyph → `overlay` (this ffmpeg build
+    /// has no `drawtext`/libfreetype). Serde-default so pre-A.5 manifests load.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption: Option<String>,
 }
 
 /// The whole manifest. See the module docs for the v1/v2 shapes.
@@ -137,6 +142,7 @@ mod tests {
                     w: 640,
                     h: 480,
                 }),
+                caption: Some("Welcome, Portal Master!".into()),
             }],
         };
         let body = serde_json::to_string(&tl).unwrap();
