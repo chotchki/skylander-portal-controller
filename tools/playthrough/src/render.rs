@@ -445,6 +445,71 @@ pub fn build_filtergraph(segs: &[Segment], meta: &VideoMeta, scale_cap_w: u32) -
     }
 }
 
+/// Controller pane width on a `canvas_w`×`canvas_h` canvas: the controller
+/// scaled to full height, even-rounded (yuv420p), capped so the game pane keeps
+/// ≥2px. Its natural width at full height IS the left/right split (PLAN A.5).
+fn ctrl_pane_width(ctrl_w: u32, ctrl_h: u32, canvas_w: u32, canvas_h: u32) -> u32 {
+    let w = even(((u64::from(canvas_h) * u64::from(ctrl_w)) / u64::from(ctrl_h.max(1))) as u32);
+    w.clamp(2, canvas_w - 2)
+}
+
+/// PLAN A.5 — the 2-pane composite (the layout chotchki chose): controller
+/// (portrait SPA) at full canvas height on the LEFT, game (landscape) fit into
+/// the remaining width on the RIGHT, letterboxed — 16:9 canvas, **nothing
+/// cropped**. Emits a high-quality H.264 intermediate that the editorial [`run`]
+/// pass then speed-ramps + dual-encodes (composite + editorial stay decoupled,
+/// one concern each). The controller's natural width at full height is the split.
+pub fn composite(controller: &Path, game: &Path, out: &Path) -> Result<()> {
+    const CANVAS_W: u32 = 1920;
+    const CANVAS_H: u32 = 1080;
+    let cm = probe(controller).context("probe controller pane")?;
+    let ctrl_w = ctrl_pane_width(cm.w, cm.h, CANVAS_W, CANVAS_H);
+    let game_w = CANVAS_W - ctrl_w; // remaining width for the game pane
+    // Controller padded onto the left of a black 16:9 canvas; the game scaled to
+    // fit the right column (aspect-preserved → letterboxed) + overlaid centred.
+    // `\` line-continuations strip to one contiguous filtergraph.
+    let graph = format!(
+        "[0:v]scale=-2:{CANVAS_H}[c];\
+         [c]pad={CANVAS_W}:{CANVAS_H}:0:0:black[base];\
+         [1:v]scale={game_w}:{CANVAS_H}:force_original_aspect_ratio=decrease[g];\
+         [base][g]overlay=x={ctrl_w}+({game_w}-overlay_w)/2:y=({CANVAS_H}-overlay_h)/2:\
+         eof_action=endall[canvas]"
+    );
+    let bin = tool("FFMPEG", "ffmpeg");
+    let status = Command::new(&bin)
+        .args(["-y", "-v", "error", "-stats", "-i"])
+        .arg(controller)
+        .arg("-i")
+        .arg(game)
+        .args(["-filter_complex", &graph, "-map", "[canvas]", "-an"])
+        // High-quality intermediate — the editorial pass re-encodes to AV1/HEVC.
+        .args([
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "14",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+        ])
+        .arg(out)
+        .status()
+        .with_context(|| spawn_hint(&bin, "FFMPEG"))?;
+    ensure!(status.success(), "ffmpeg compositing exited with {status}");
+    tracing::info!(
+        controller = %controller.display(),
+        game = %game.display(),
+        out = %out.display(),
+        ctrl_w,
+        game_w,
+        "composite: 2-pane reel written"
+    );
+    Ok(())
+}
+
 /// Run the dual-encode (PLAN A.5). The editorial `filter_complex` graph is
 /// decoded + run ONCE and `split` to feed both encoders: **SVT-AV1** (the
 /// primary `<video>` source) and **H.265** (`hvc1`, the Safari/QuickTime
@@ -638,6 +703,16 @@ mod tests {
             variant_path(out, "hevc"),
             PathBuf::from("/tmp/demo-final.hevc.mp4")
         );
+    }
+
+    #[test]
+    fn ctrl_pane_width_portrait_phone_sets_split() {
+        // 1:2 portrait phone at 1080 tall → 540 wide; the game gets the rest.
+        assert_eq!(ctrl_pane_width(470, 940, 1920, 1080), 540);
+        // square controller → 1080.
+        assert_eq!(ctrl_pane_width(1080, 1080, 1920, 1080), 1080);
+        // an absurdly wide controller is capped so the game pane keeps ≥2px.
+        assert_eq!(ctrl_pane_width(4000, 1000, 1920, 1080), 1918);
     }
 
     // --- ffprobe JSON parsing ------------------------------------------------

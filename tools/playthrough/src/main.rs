@@ -73,6 +73,15 @@ enum Mode {
         secs: u64,
         out: PathBuf,
     },
+    /// `-- composite <controller.mp4> <game.mp4> <out.mp4>` — PLAN A.5 2-pane
+    /// composite (controller-left + game-right) → a high-quality intermediate
+    /// the `-- render` pass then speed-ramps + dual-encodes. Pure ffmpeg post-
+    /// pass; never boots the server/registry/Chrome.
+    Composite {
+        controller: PathBuf,
+        game: PathBuf,
+        out: PathBuf,
+    },
 }
 
 /// The no-arg / empty-args default narrative: the self-contained Mock `place`
@@ -133,6 +142,15 @@ fn parse_mode(args: &[String]) -> Result<Mode> {
         [kw, ..] if kw == "capture-smoke" => {
             anyhow::bail!("`-- capture-smoke` needs <secs> <out.mp4>")
         }
+        // `-- composite <controller.mp4> <game.mp4> <out.mp4>` (PLAN A.5).
+        [kw, controller, game, out] if kw == "composite" => Ok(Mode::Composite {
+            controller: PathBuf::from(controller),
+            game: PathBuf::from(game),
+            out: PathBuf::from(out),
+        }),
+        [kw, ..] if kw == "composite" => {
+            anyhow::bail!("`-- composite` needs <controller.mp4> <game.mp4> <out.mp4>")
+        }
         // Bare back-compat aliases: `portal` / `place` / `ingame`.
         [alias, ..] => match beats::resolve_alias(alias) {
             Some(narr) => Ok(Mode::Narrative(narr.to_string())),
@@ -166,6 +184,11 @@ async fn main() -> Result<()> {
     match mode {
         Mode::Render { raw, manifest, out } => render::run(&raw, &manifest, &out),
         Mode::CaptureSmoke { secs, out } => capture_smoke(secs, &out),
+        Mode::Composite {
+            controller,
+            game,
+            out,
+        } => render::composite(&controller, &game, &out),
         Mode::Narrative(name) => {
             let narr = beats::find_narrative(
                 beats::narratives().context("build + validate narrative registry")?,
