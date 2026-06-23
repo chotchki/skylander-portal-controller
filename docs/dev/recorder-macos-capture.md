@@ -107,8 +107,20 @@ async bridging, window targeting, frame delivery) are all solved either way.
 
 - SCKit needs a real logged-in windowserver session — no headless/CI/SSH (same
   class as the documented UIA session-0 gotcha). Local interactive desktop only.
-- Screen Recording (TCC) grant attaches to the *parent terminal*; children inherit,
-  so `cargo run` rebuilds reuse it. Takes effect after a full relaunch.
+- **Screen Recording (TCC) — sign dev builds; run via `tools/playthrough/run.sh`.**
+  TCC keys the grant to the binary's Designated Requirement. An unsigned/ad-hoc cargo
+  binary's DR is *just its cdhash*, which changes every `cargo build` → macOS treats
+  each build as a new app and re-prompts. `run.sh` codesigns with an Apple
+  *Development* identity + a fixed `--identifier`, giving a stable DR
+  (`identifier "io.hotchkiss.skylander.playthrough" and …Apple Development…`, no
+  cdhash) — grant Screen Recording once and it survives rebuilds. Two caveats: (1)
+  macOS Sequoia/Tahoe *also* re-prompts ~monthly for ANY granted app ("Allow For One
+  Month") — fires on the terminal regardless of signing, just click allow; it is NOT
+  the rebuild thrash. (2) The old "grant attaches to the parent terminal, children
+  inherit" holds ONLY while requests are attributed to Ghostty — the default for a
+  plain child, but a `.app`/`open`/disclaim path attributes to the binary instead, so
+  signing is the robust fix. Recover a confused grant: `tccutil reset ScreenCapture
+  com.mitchellh.ghostty` (never hand-edit the SIP-protected `TCC.db`).
 - A window that is minimized/occluded/off-screen stops producing frames; the
   recorder must keep the captured windows visible (it already arranges them).
 - `CMTime` is `#[repr(packed)]` — copy fields to a local before formatting (no
