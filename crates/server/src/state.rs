@@ -1544,9 +1544,18 @@ async fn handle_job(
                     // Dev/recorder knob only; unset in normal use.
                     let savestate = std::env::var_os("SKYLANDER_BOOT_SAVESTATE").map(PathBuf::from);
                     let _config_guard = match &savestate {
-                        Some(_) => Some(crate::rpcs3_config::apply_savestate_config(
-                            &config_dir_owned.join("config").join("config.yml"),
-                        )?),
+                        Some(_) => {
+                            // RPCS3 keeps config.yml at the config-dir ROOT in the
+                            // current layout; older installs used config/config.yml.
+                            // Prefer the root, fall back to the legacy path — the same
+                            // macOS fix as games.yml (config/ lookup found nothing, so
+                            // apply_savestate_config errored before its first log and
+                            // the save-state boot silently never started).
+                            let root = config_dir_owned.join("config.yml");
+                            let legacy = config_dir_owned.join("config").join("config.yml");
+                            let cfg = if root.is_file() { root } else { legacy };
+                            Some(crate::rpcs3_config::apply_savestate_config(&cfg)?)
+                        }
                         None => None,
                     };
                     let boot_target: &std::path::Path =
