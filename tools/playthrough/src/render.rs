@@ -10,10 +10,13 @@
 //! override, else the narrative `stage`), coalescing, trim+setpts+concat, and
 //! the delivery transcode.
 //!
-//! **Codec: H.265** (libx265, `hvc1` tag so QuickTime/Safari recognise the
-//! track, `+faststart` for streamable playback). AV1 stays a documented door:
-//! the gyan "essentials" ffmpeg build only carries the slow libaom encoder,
-//! so switching means a build with SVT-AV1 — revisit when that's on the box.
+//! **Codecs: AV1 + H.265 dual-encode** (PLAN A.5). One decode/filter pass is
+//! `split` into two encoders: **SVT-AV1** (`libsvtav1`, the primary `<video>`
+//! source — smaller, broad modern-browser support) and **H.265** (`libx265`,
+//! `hvc1` tag so QuickTime/Safari recognise the track, the fallback); both
+//! `+faststart`. Emits `<stem>.av1.mp4` (primary) beside the bare
+//! `<stem>.mp4` HEVC, so a `<video>` element lists AV1 first and falls back to
+//! HEVC. (SVT-AV1 is now on the box — the old libaom-only blocker is gone.)
 //!
 //! Layering: everything that *decides* — segment planning
 //! ([`plan_segments`]), filtergraph text ([`build_filtergraph`]), probe-JSON
@@ -49,13 +52,25 @@ pub fn default_manifest_path(raw: &Path) -> PathBuf {
     raw.with_extension("timeline.json")
 }
 
-/// `foo.mp4` → sibling `foo-final.mp4` (the CLI's defaulted output path).
+/// `foo.mp4` → sibling `foo-final.mp4` (the CLI's defaulted output path — the
+/// H.265 fallback; the AV1 primary lands beside it, see [`variant_path`]).
 pub fn default_out_path(raw: &Path) -> PathBuf {
     let stem = raw
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "capture".to_owned());
     raw.with_file_name(format!("{stem}-final.mp4"))
+}
+
+/// `foo-final.mp4` + `"av1"` → sibling `foo-final.av1.mp4`. The dual-encode
+/// (PLAN A.5) emits one file per codec; the `<video>` embed lists them in
+/// preference order (AV1 first, the bare `foo-final.mp4` HEVC as fallback).
+fn variant_path(out: &Path, codec_tag: &str) -> PathBuf {
+    let stem = out
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "final".to_owned());
+    out.with_file_name(format!("{stem}.{codec_tag}.mp4"))
 }
 
 /// Resolve a tool binary: env override first (`FFMPEG` / `FFPROBE`), else the
@@ -430,16 +445,53 @@ pub fn build_filtergraph(segs: &[Segment], meta: &VideoMeta, scale_cap_w: u32) -
     }
 }
 
-/// Run the encode. Stdio is inherited so ffmpeg's `-stats` progress line is
-/// visible in the terminal (everything else is `-v error`-quiet). H.265
-/// deliverable — see the module docs for the AV1 door.
-fn encode(raw: &Path, graph: &str, out_label: &str, out: &Path) -> Result<()> {
+/// Run the dual-encode (PLAN A.5). The editorial `filter_complex` graph is
+/// decoded + run ONCE and `split` to feed both encoders: **SVT-AV1** (the
+/// primary `<video>` source) and **H.265** (`hvc1`, the Safari/QuickTime
+/// fallback). Stdio is inherited so ffmpeg's `-stats` line shows; everything
+/// else is `-v error`-quiet.
+fn encode(raw: &Path, graph: &str, out_label: &str, av1_out: &Path, hevc_out: &Path) -> Result<()> {
     let bin = tool("FFMPEG", "ffmpeg");
+    // Fan the single graph output to both encoders so the edit runs once.
+    let graph = format!("{graph};{out_label}split=2[venc_av1][venc_hevc]");
     let status = Command::new(&bin)
         .args(["-y", "-v", "error", "-stats", "-i"])
         .arg(raw)
-        .args(["-filter_complex", graph, "-map", out_label, "-an"])
-        .args(["-c:v", "libx265", "-preset", "medium", "-crf", "22"])
+        .args(["-filter_complex", &graph])
+        // AV1 primary (SVT-AV1): preset 6 is a solid quality point for an
+        // offline reel; crf 32 ≈ the libx265 crf 22 below.
+        .args([
+            "-map",
+            "[venc_av1]",
+            "-an",
+            "-c:v",
+            "libsvtav1",
+            "-preset",
+            "6",
+            "-crf",
+            "32",
+        ])
+        .args([
+            "-pix_fmt",
+            "yuv420p",
+            "-g",
+            "120",
+            "-movflags",
+            "+faststart",
+        ])
+        .arg(av1_out)
+        // H.265 fallback (hvc1 tag so QuickTime/Safari recognise the track).
+        .args([
+            "-map",
+            "[venc_hevc]",
+            "-an",
+            "-c:v",
+            "libx265",
+            "-preset",
+            "medium",
+            "-crf",
+            "22",
+        ])
         .args([
             "-tag:v",
             "hvc1",
@@ -448,7 +500,7 @@ fn encode(raw: &Path, graph: &str, out_label: &str, out: &Path) -> Result<()> {
             "-movflags",
             "+faststart",
         ])
-        .arg(out)
+        .arg(hevc_out)
         .status()
         .with_context(|| spawn_hint(&bin, "FFMPEG"))?;
     ensure!(status.success(), "ffmpeg exited with {status}");
@@ -497,7 +549,10 @@ pub fn run(raw: &Path, manifest: &Path, out: &Path) -> Result<()> {
 
     let (graph, out_label) = build_filtergraph(&segs, &meta, SCALE_CAP_W);
     tracing::debug!(%graph, "render: filtergraph");
-    encode(raw, &graph, &out_label, out)?;
+    // `out` is the H.265 fallback (back-compat default path); AV1 is a sibling
+    // `<stem>.av1.mp4` and the primary `<video>` source (PLAN A.5).
+    let av1_out = variant_path(out, "av1");
+    encode(raw, &graph, &out_label, &av1_out, out)?;
 
     // >10% drift between plan and output means the trim maths and the encode
     // disagree (bad bracket clamps / fps mismatch) — warn, don't fail: the
@@ -518,8 +573,15 @@ pub fn run(raw: &Path, manifest: &Path, out: &Path) -> Result<()> {
         }
     }
 
-    let bytes = std::fs::metadata(out).map(|m| m.len()).unwrap_or(0);
-    tracing::info!(out = %out.display(), bytes, "render: final cut written");
+    let av1_bytes = std::fs::metadata(&av1_out).map(|m| m.len()).unwrap_or(0);
+    let hevc_bytes = std::fs::metadata(out).map(|m| m.len()).unwrap_or(0);
+    tracing::info!(
+        av1 = %av1_out.display(),
+        av1_bytes,
+        hevc = %out.display(),
+        hevc_bytes,
+        "render: dual-encode written (AV1 primary + HEVC fallback)"
+    );
     Ok(())
 }
 
@@ -562,6 +624,21 @@ mod tests {
         w: 470,
         h: 940,
     };
+
+    // --- output paths --------------------------------------------------------
+
+    #[test]
+    fn variant_path_inserts_codec_tag_before_mp4() {
+        let out = Path::new("/tmp/demo-final.mp4");
+        assert_eq!(
+            variant_path(out, "av1"),
+            PathBuf::from("/tmp/demo-final.av1.mp4")
+        );
+        assert_eq!(
+            variant_path(out, "hevc"),
+            PathBuf::from("/tmp/demo-final.hevc.mp4")
+        );
+    }
 
     // --- ffprobe JSON parsing ------------------------------------------------
 
