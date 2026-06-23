@@ -158,12 +158,26 @@ mod imp_mac {
     pub struct DesktopCapture {
         stream: Option<SCStream>,
         /// Held for the stream's lifetime — the recording writes through it.
-        _recording: SCRecordingOutput,
+        /// `None` when capture is skipped (`SKYLANDER_RECORDER_NO_CAPTURE`).
+        _recording: Option<SCRecordingOutput>,
     }
 
     impl DesktopCapture {
+        /// Capture the whole main display (the A.1 baseline).
         pub fn start(out_path: &Path) -> Result<Self> {
             ensure_cg_init();
+            // Dev knob: validate the recorder flow (boot → beats → game launch)
+            // WITHOUT capturing — e.g. when the Screen Recording grant is missing.
+            // No file is written; the render pass is skipped by the caller.
+            if std::env::var_os("SKYLANDER_RECORDER_NO_CAPTURE").is_some() {
+                tracing::warn!(
+                    "SKYLANDER_RECORDER_NO_CAPTURE set — skipping screen capture (flow validation only)"
+                );
+                return Ok(Self {
+                    stream: None,
+                    _recording: None,
+                });
+            }
             let content =
                 SCShareableContent::get().map_err(|e| anyhow!("shareable content: {e:?}"))?;
             let display = content
@@ -176,15 +190,60 @@ mod imp_mac {
                 .with_display(&display)
                 .with_excluding_windows(&[])
                 .build();
-            let config = SCStreamConfiguration::new().with_width(w).with_height(h);
+            Self::start_with_filter(filter, w, h, out_path)
+        }
 
+        /// Capture ONE on-screen window, matched by owning-application name +
+        /// a title substring (PLAN A.5 per-window 2-stream capture). The two
+        /// demo panes — the SPA phone window and the RPCS3 game window — are
+        /// each captured this way, then composited side-by-side by the render.
+        /// Not yet wired into the recorder (the 2-stream Boot refactor); kept
+        /// ready + verified via the spike.
+        #[allow(dead_code)]
+        pub fn start_window(app: &str, title_contains: &str, out_path: &Path) -> Result<Self> {
+            ensure_cg_init();
+            let content =
+                SCShareableContent::get().map_err(|e| anyhow!("shareable content: {e:?}"))?;
+            let window = content
+                .windows()
+                .into_iter()
+                .find(|w| {
+                    w.is_on_screen()
+                        && w.owning_application()
+                            .map(|a| a.application_name())
+                            .as_deref()
+                            == Some(app)
+                        && w.title()
+                            .map(|t| t.contains(title_contains))
+                            .unwrap_or(false)
+                })
+                .with_context(|| {
+                    format!("no on-screen window for app {app:?} with title ~{title_contains:?}")
+                })?;
+            let f = window.frame();
+            // Capture at backing pixels (≈2× points) for a crisp pane.
+            let (w, h) = ((f.size.width as u32) * 2, (f.size.height as u32) * 2);
+            let filter = SCContentFilter::create().with_window(&window).build();
+            Self::start_with_filter(filter, w, h, out_path)
+        }
+
+        /// Shared: build the stream + recording output for a filter + dims and
+        /// start it. Dims are forced even (yuv420p / HEVC).
+        fn start_with_filter(
+            filter: SCContentFilter,
+            w: u32,
+            h: u32,
+            out_path: &Path,
+        ) -> Result<Self> {
+            let config = SCStreamConfiguration::new()
+                .with_width((w & !1).max(2))
+                .with_height((h & !1).max(2));
             let rec_config = SCRecordingOutputConfiguration::new()
                 .with_output_url(out_path)
                 .with_video_codec(SCRecordingOutputCodec::HEVC)
                 .with_output_file_type(SCRecordingOutputFileType::MP4);
             let recording =
                 SCRecordingOutput::new(&rec_config).context("create SCRecordingOutput")?;
-
             let stream = SCStream::new(&filter, &config);
             stream
                 .add_recording_output(&recording)
@@ -194,7 +253,7 @@ mod imp_mac {
                 .map_err(|e| anyhow!("start_capture: {e:?}"))?;
             Ok(Self {
                 stream: Some(stream),
-                _recording: recording,
+                _recording: Some(recording),
             })
         }
 
