@@ -59,37 +59,49 @@ feature — there are no separate features for them.)
 8. **No-op delegates** (`SCStreamDelegate`, `SCRecordingOutputDelegate`) compile via
    `define_class!`; all `SCRecordingOutputDelegate` methods are `#[optional]`.
 
-## The ONE open issue → the file-writer choice
+## The open issue → the file-writer choice (raw objc2 is fiddly)
 
-`SCRecordingOutput` (the macOS-15+ convenience capture-to-file) **fails on the first
-buffer** here: `recordingOutputDidStartRecording` fires, then
-`recordingOutput:didFailWithError:` → *"Failed due to failure to process first
-sample buffer"*, `recordedFileSize == 0`, no file — **even though the raw
-SCStreamOutput on the same stream receives 144 frames fine**, across every pixel
-format (default/BGRA/420v), file type (.mp4 MPEG4 / .mov QuickTime), and resolution
-(retina 3262×2168 and logical 1630×1084). So it is not codec/format/visibility —
-`SCRecordingOutput`'s internal AVAssetWriter just won't take the buffers in this
-main-thread setup.
+Both objc2 capture-to-file routes were tried and **both stall at the encode/write
+step despite the raw frame path being proven** (144 CMSampleBuffers delivered):
 
-**Next step (decision):**
-- **(A) AVAssetWriter ourselves** — pure objc2, uses the *proven* flowing buffers.
-  Bindings confirmed: `AVAssetWriter::initWithURL_fileType_error`, `addInput`,
-  `startWriting`, `startSessionAtSourceTime(firstPTS)`, `finishWritingWithCompletionHandler`;
-  `AVAssetWriterInput::initWithMediaType_outputSettings` (NSDictionary of
-  `AVVideoCodecKey→AVVideoCodecTypeH264`, `AVVideoWidthKey`, `AVVideoHeightKey`),
-  `isReadyForMoreMediaData` / `appendSampleBuffer` / `markAsFinished`. The delegate
-  holds the writer+input; **serialize all writer ops on the capture dispatch queue**
-  (append in `didOutputSampleBuffer`, dispatch `markAsFinished`+`finishWriting` to the
-  same queue on `stop()`); start the session on the first buffer's PTS. Recommended —
-  stays pure-Rust, no Swift toolchain.
+- **`SCRecordingOutput`** (the macOS-15+ convenience writer): `didStartRecording`
+  fires, then `didFailWithError` → *"Failed due to failure to process first sample
+  buffer"*, `recordedFileSize == 0`. Identical across every pixel format
+  (default/BGRA/420v), file type (.mp4 MPEG4 / .mov QuickTime), and resolution
+  (3262×2168 and 1630×1084). Not codec/format/visibility — its internal writer just
+  won't take the buffers in this setup.
+- **Hand-rolled `AVAssetWriter`** (statics hold writer+input so the off-queue
+  `didOutputSampleBuffer` can append): setup works, `startWriting()` returns true,
+  but `appendSampleBuffer` is rejected and the writer goes to `status==Failed`
+  ("The operation could not be completed"). Two real findings here, both needed by
+  *any* writer:
+  1. **Filter idle frames.** SCKit emits `SCFrameStatus.Idle/Blank` buffers (no
+     image) for an unchanged window; appending an image-less buffer fails the writer.
+     Cheap test: `objc2_core_media::CMSampleBufferGetImageBuffer(buf).is_some()`
+     (None ⇒ skip). A *static* test window (a terminal) is mostly idle frames — test
+     against a genuinely changing window (the recorder's real Chrome SPA + RPCS3
+     viewport both animate, so this is largely a scratch-test artifact).
+  2. **Writer-state / exceptions.** Once a complete frame reaches `appendSampleBuffer`
+     it throws an Obj-C/foreign exception that `objc2::exception::catch` did not tame
+     — points at a writer-state race (start/session/append ordering) that needs
+     careful serialization on one queue, not the main-thread pump.
+
+**Revised recommendation — re-decide before sinking more objc2 time:**
+- **(A) Finish hand-rolled AVAssetWriter in objc2** — pure Rust, ~80% there (frames
+  flow). Remaining: SCFrameStatus/image-buffer filter (known) + exception-safe,
+  single-queue-serialized `startWriting → startSession(firstPTS) → append → markAsFinished
+  → finishWriting`. Real but fiddly; the foreign-exception state bug needs care.
 - **(B) `screencapturekit` crate** (doom-fish, v8) — wraps SCRecordingOutput +
-  threading; likely a working capture-to-file in far less code, but it's a
-  **swift-bridge** crate (adds a Swift build step), so it doesn't compose with the
-  objc2 work above and pulls a toolchain dep into a dev-only tool.
+  threading + frame-status filtering internally; almost certainly a working
+  capture-to-file in far less code. Cost: it's a **swift-bridge** crate → a Swift
+  build step. **Already acceptable here**: the macOS RPCS3 build
+  (`.ci-local/build-mac.sh`) requires Xcode/Swift on dev machines anyway, and the
+  recorder is a dev/CI-only tool (never shipped). This now looks like the
+  lower-risk path.
 
-Recommendation: **A** — finish the AVAssetWriter writer on top of the proven
-SCStreamOutput frame path. The hard/uncertain parts (TCC, CG-init, async bridging,
-window targeting, frame delivery) are all solved; the writer is mechanical objc2.
+Leaning **(B)** given how layered the raw path proved — but it reverses the
+objc2-only stance, so it's chotchki's call. The hard/uncertain parts (TCC, CG-init,
+async bridging, window targeting, frame delivery) are all solved either way.
 
 ## Gotchas (carry into capture.rs)
 
