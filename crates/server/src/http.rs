@@ -326,6 +326,7 @@ pub fn router(state: Arc<AppState>, _phone_dist: std::path::PathBuf) -> Router {
             )
             .route("/api/_test/layout/:profile_id", get(layout_testhook))
             .route("/api/_test/fire_kaos_taunt", post(fire_kaos_taunt_testhook))
+            .route("/api/_test/fire_kaos_swap", post(fire_kaos_swap_testhook))
             .route("/api/_test/fire_takeover", post(fire_takeover_testhook));
     }
 
@@ -2552,6 +2553,49 @@ async fn fire_kaos_taunt_testhook(
         taunt: body.taunt,
     });
     (StatusCode::OK, "fired").into_response()
+}
+
+#[cfg(feature = "test-hooks")]
+#[derive(Deserialize)]
+struct FireKaosSwapBody {
+    profile_id: String,
+}
+
+/// Fire a REAL Kaos swap on demand (the demo reel's Kaos beat, PLAN A.3) —
+/// runs the same `select_swap` + `execute_kaos_swap` path the 20-min timer
+/// uses, so a portal figure is genuinely cleared and a compatible replacement
+/// LOADed onto the slot (the overlay + taunt broadcast fall out of
+/// `execute_kaos_swap`). Bypasses the warmup timer + the `kaos_enabled` gate
+/// — the demo forces the swap deterministically. Returns "no eligible swap"
+/// (still 200) when the portal has nothing this profile placed, or the current
+/// game has no compatible library match.
+#[cfg(feature = "test-hooks")]
+async fn fire_kaos_swap_testhook(
+    State(state): State<Arc<AppState>>,
+    axum::Json(body): axum::Json<FireKaosSwapBody>,
+) -> Response {
+    let portal = state.portal.lock().await.clone();
+    let current_game = state
+        .current_game_of_origin()
+        .await
+        .unwrap_or(skylander_core::GameOfOrigin::Imaginators);
+    let mut rng = rand_core::OsRng;
+    match crate::kaos::select_swap(
+        current_game,
+        &portal,
+        &state.figures,
+        &body.profile_id,
+        &mut rng,
+    ) {
+        Some(swap) => {
+            let taunt = crate::kaos::random_swap_taunt(&mut rng);
+            state
+                .execute_kaos_swap(&swap, &body.profile_id, taunt)
+                .await;
+            (StatusCode::OK, "swapped").into_response()
+        }
+        None => (StatusCode::OK, "no eligible swap").into_response(),
+    }
 }
 
 #[cfg(feature = "test-hooks")]

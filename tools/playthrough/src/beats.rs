@@ -13,15 +13,19 @@
 //! post-pass (phase 4, `render.rs`) — it does not change what the recorder
 //! captures.
 //!
-//! Deferred (NOT in this file): the `kaos_teaser` beat and the captions
-//! overlay (`Beat::caption` is reserved/unused).
+//! The IPC marquee ends with a `kaos` beat that fires a REAL Kaos swap
+//! (PLAN A.3 — `fire_kaos_swap` → server `select_swap` + `execute_kaos_swap`).
+//! Per-beat `caption` text (PLAN A.5) flows through the manifest into the
+//! render pass's lower-third overlay.
 
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use fantoccini::Locator;
 use serde_json::json;
-use skylander_e2e_tests::{Phone, TestServer, inject_load_outcomes, unlock_session};
+use skylander_e2e_tests::{
+    Phone, TestServer, fire_kaos_swap, inject_load_outcomes, unlock_session,
+};
 
 use crate::timeline::CropRect;
 
@@ -72,10 +76,9 @@ pub struct Beat {
     pub filler_speed: f32,
     /// Post-crop framing (None = full desktop frame).
     pub crop: Option<CropRect>,
-    /// LATER (title-card text) — reserved, unused in v1 (design §8). Kept on
-    /// the struct so the captions phase (5) is a pure additive wire-up; the
-    /// `dead_code` allow is the explicit "reserved field" marker.
-    #[allow(dead_code)]
+    /// Lower-third caption shown during this beat's OUTPUT window (PLAN A.5).
+    /// `None` = no caption. Flows through `entry_for` → the manifest →
+    /// `render_caption_png` → an `overlay` (this ffmpeg has no `drawtext`).
     pub caption: Option<&'static str>,
 }
 
@@ -316,6 +319,23 @@ async fn see_in_game(_ctx: &BeatCtx<'_>) -> Result<()> {
     Ok(())
 }
 
+/// `kaos` (IPC marquee ending) — the playful twist: pause, then fire a REAL
+/// Kaos swap (PLAN A.3) so a portal figure is cleared and a compatible
+/// replacement LOADs in its place (the overlay + taunt show on the phone, the
+/// new figure lands in-game). Holds while it lands so the swap reads on the clip.
+async fn kaos_swap(ctx: &BeatCtx<'_>) -> Result<()> {
+    // Let `see_in_game` settle so the swap reads as a separate "and then… Kaos
+    // strikes" beat rather than blurring into the placement.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    // Real swap: ClearSlot -> LoadFigure on Alice's portal slot + the taunt
+    // overlay. Non-fatal server-side if the portal has nothing swappable.
+    fire_kaos_swap(&ctx.server.url, ctx.alice).await?;
+    // Hold while the overlay plays + the new figure loads onto the portal and
+    // re-reads in-game (mirrors see_in_game's landing window).
+    tokio::time::sleep(Duration::from_secs(14)).await;
+    Ok(())
+}
+
 /// `hold_portal` (Mock, `portal` narrative only) — hold the empty portal for
 /// 5s so the QR → profile → empty-portal arc reads on the clip. Extracted
 /// verbatim from the old `portal` scenario's trailing `sleep(5s)` (on top of
@@ -386,7 +406,7 @@ fn beat_connect() -> Beat {
         realtime_tail: Duration::from_secs(2),
         filler_speed: 1.0,
         crop: None,
-        caption: None,
+        caption: Some("Scan the code. Your phone's the portal now."),
     }
 }
 
@@ -400,7 +420,7 @@ fn beat_pick_profile() -> Beat {
         realtime_tail: Duration::from_secs(1),
         filler_speed: 1.0,
         crop: None,
-        caption: None,
+        caption: Some("Welcome back, Portal Master."),
     }
 }
 
@@ -445,7 +465,7 @@ fn beat_pick_game_ipc() -> Beat {
         realtime_tail: Duration::from_secs(3),
         filler_speed: 8.0,
         crop: None,
-        caption: None,
+        caption: Some("Pick a game — it boots on the TV."),
     }
 }
 
@@ -474,7 +494,7 @@ fn beat_open_toybox() -> Beat {
         realtime_tail: Duration::from_secs(2),
         filler_speed: 1.0,
         crop: None,
-        caption: None,
+        caption: Some("Your collection, digital."),
     }
 }
 
@@ -503,7 +523,7 @@ fn beat_place_figure_ipc() -> Beat {
         realtime_tail: Duration::from_secs(2),
         filler_speed: 1.0,
         crop: None,
-        caption: None,
+        caption: Some("Tap a figure onto the portal."),
     }
 }
 
@@ -518,7 +538,23 @@ fn beat_see_in_game() -> Beat {
         realtime_tail: Duration::from_secs(6),
         filler_speed: 8.0,
         crop: None,
-        caption: None,
+        caption: Some("It's in the game. No toy touched."),
+    }
+}
+
+/// `kaos` — the IPC marquee's playful ending: fire a real Kaos swap. Small
+/// head (the taunt hits), large tail (the new figure lands — the reveal), fast
+/// filler for the dead hold. IPC-only (the swap LOADs onto the save state).
+fn beat_kaos() -> Beat {
+    Beat {
+        name: "kaos",
+        drive: |c| Box::pin(kaos_swap(c)),
+        requires_ipc: true,
+        realtime_head: Duration::from_secs(2),
+        realtime_tail: Duration::from_secs(6),
+        filler_speed: 4.0,
+        crop: None,
+        caption: Some("Beware, Kaos can strike anytime!"),
     }
 }
 
@@ -563,6 +599,7 @@ pub fn narratives() -> Result<Vec<Narrative>> {
                 beat_open_toybox(),
                 beat_place_figure_ipc(),
                 beat_see_in_game(),
+                beat_kaos(),
             ],
         },
     ];

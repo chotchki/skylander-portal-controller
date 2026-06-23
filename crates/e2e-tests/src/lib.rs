@@ -1008,6 +1008,29 @@ pub async fn fire_kaos_taunt(
     Ok(())
 }
 
+/// Fire a REAL Kaos swap on demand (PLAN A.3 demo beat) — POSTs to the
+/// server's `fire_kaos_swap` test hook, which runs the genuine
+/// `select_swap` + `execute_kaos_swap` path: a real ClearSlot -> LoadFigure
+/// on the portal (the placed figure visibly changes, in-game too) plus the
+/// overlay/taunt broadcast. Unlike `fire_kaos_taunt` (overlay only), this
+/// actually swaps the figure. A 200 with body "no eligible swap" means the
+/// portal had nothing swappable — the caller can treat that as non-fatal.
+pub async fn fire_kaos_swap(base: &str, profile_id: &str) -> Result<()> {
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/api/_test/fire_kaos_swap"))
+        .json(&serde_json::json!({ "profile_id": profile_id }))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        bail!(
+            "fire_kaos_swap returned {}: {}",
+            resp.status(),
+            resp.text().await?
+        );
+    }
+    Ok(())
+}
+
 /// Fire a synthetic TakenOver event for the targeted session, so the
 /// Kaos takeover overlay can be screenshotted without running the
 /// FIFO eviction path with a 3rd phone. `cooldown_remaining_secs = 0`

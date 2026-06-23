@@ -44,6 +44,11 @@ const SCALE_CAP_W: u32 = 1920;
 /// trims at lower capture rates, so such slivers are dropped (and logged).
 const MIN_SEG_MS: u64 = 50;
 
+/// The reel fades to black over this many seconds at the very end — the outro
+/// (PLAN A.5; the Kaos beat lands, then we fade). Applied after captions,
+/// before the dual-encode split.
+const FADE_OUT_S: f64 = 1.2;
+
 /// `foo.mp4` → sibling `foo.timeline.json`. MUST mirror `write_timeline` in
 /// `main.rs` — the recorder writes the manifest with the same
 /// `with_extension` call, so the bare `-- render <raw>` default always finds
@@ -585,6 +590,7 @@ fn encode(
     graph: &str,
     out_label: &str,
     captions: &[CaptionOverlay],
+    planned_ms: u64,
     av1_out: &Path,
     hevc_out: &Path,
 ) -> Result<()> {
@@ -602,7 +608,14 @@ fn encode(
         ));
         cur = format!("[cap{i}]");
     }
-    g.push_str(&format!(";{cur}split=2[venc_av1][venc_hevc]"));
+    // Fade to black over the final FADE_OUT_S — the reel's outro (the Kaos
+    // beat lands, then we fade). `st` is OUTPUT time (post speed-ramp), so it
+    // keys off planned_ms; clamp so a very short reel still fades from t=0.
+    let fade_st = (planned_ms as f64 / 1000.0 - FADE_OUT_S).max(0.0);
+    g.push_str(&format!(
+        ";{cur}fade=t=out:st={fade_st:.3}:d={FADE_OUT_S:.3}[faded];\
+         [faded]split=2[venc_av1][venc_hevc]"
+    ));
 
     let mut cmd = Command::new(&bin);
     cmd.args(["-y", "-v", "error", "-stats", "-i"]).arg(raw);
@@ -703,7 +716,9 @@ pub fn run(raw: &Path, manifest: &Path, out: &Path) -> Result<()> {
     // `<stem>.av1.mp4` and the primary `<video>` source (PLAN A.5).
     let av1_out = variant_path(out, "av1");
     let captions = build_caption_overlays(&tl.beats, &segs, out)?;
-    encode(raw, &graph, &out_label, &captions, &av1_out, out)?;
+    encode(
+        raw, &graph, &out_label, &captions, planned_ms, &av1_out, out,
+    )?;
 
     // >10% drift between plan and output means the trim maths and the encode
     // disagree (bad bracket clamps / fps mismatch) — warn, don't fail: the
