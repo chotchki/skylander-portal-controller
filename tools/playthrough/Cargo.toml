@@ -17,6 +17,14 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
+# PLAN A.1 — macOS capture backend (the B-spike winner). The `screencapturekit`
+# crate wraps SCRecordingOutput (direct-to-file) + handles the SCKit threading /
+# run-loop / idle-frame filtering that raw objc2 stumbled on. swift-bridge — needs
+# the Swift toolchain (already required for the Mac RPCS3 build) and a Swift-runtime
+# rpath on the consuming binary (build.rs). macOS 15+ for the recording output.
+[target.'cfg(target_os = "macos")'.dependencies]
+screencapturekit = { version = "8", features = ["macos_15_0"] }
+
 # PLAN 15.10 — whole-desktop MP4 capture (Windows.Graphics.Capture + built-in
 # encoder, no external ffmpeg). MIT → GPL-2.0-compatible. Windows-only; the
 # capture module is cfg-stubbed elsewhere so the workspace still builds on mac.

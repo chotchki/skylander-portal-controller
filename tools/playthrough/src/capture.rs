@@ -6,11 +6,15 @@
 //! launcher + browser. Start it once both windows are up; `stop()` finalises
 //! and flushes the file.
 //!
-//! Windows-only. On other targets `DesktopCapture` is a no-op stub so the
-//! workspace still builds (mac capture would use the ffmpeg avfoundation path,
-//! PLAN 15.2.2 — not wired here).
+//! Two backends behind one `DesktopCapture` API: Windows uses `windows-capture`
+//! (whole monitor); **macOS** uses the `screencapturekit` crate to capture the
+//! main display to an HEVC MP4 via `SCRecordingOutput` (PLAN A.1 — the B-spike
+//! winner; the crate handles the SCKit threading / run-loop / idle-frame
+//! filtering that raw objc2 stumbled on). Per-window capture + the 2-pane
+//! composite are PLAN A.5. Other targets keep a no-op stub so the workspace
+//! still builds.
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 use std::path::Path;
 
 #[cfg(windows)]
@@ -121,13 +125,103 @@ mod imp {
 #[cfg(windows)]
 pub use imp::DesktopCapture;
 
-#[cfg(not(windows))]
+// --- macOS: ScreenCaptureKit via the `screencapturekit` crate (PLAN A.1) ---
+#[cfg(target_os = "macos")]
+mod imp_mac {
+    use std::path::Path;
+    use std::time::Duration;
+
+    use anyhow::{Context, Result, anyhow};
+    use screencapturekit::prelude::*;
+    use screencapturekit::recording_output::{
+        SCRecordingOutput, SCRecordingOutputCodec, SCRecordingOutputConfiguration,
+        SCRecordingOutputFileType,
+    };
+
+    /// CG/window-server init for a bare CLI — without it `SCStream` aborts with
+    /// `CGS_REQUIRE_INIT`. AppKit's lightweight loader does it (no heavy
+    /// objc2-app-kit dep). Must run on the main thread, which the recorder's
+    /// `current_thread` tokio runtime guarantees; idempotent (AppKit caches).
+    fn ensure_cg_init() {
+        #[link(name = "AppKit", kind = "framework")]
+        unsafe extern "C" {
+            fn NSApplicationLoad() -> bool;
+        }
+        unsafe {
+            NSApplicationLoad();
+        }
+    }
+
+    /// Captures the main display to an HEVC MP4 through `SCRecordingOutput`; the
+    /// crate handles the SCKit threading / run-loop / idle-frame filtering
+    /// internally. `stop()` halts the stream + lets the file flush.
+    pub struct DesktopCapture {
+        stream: Option<SCStream>,
+        /// Held for the stream's lifetime — the recording writes through it.
+        _recording: SCRecordingOutput,
+    }
+
+    impl DesktopCapture {
+        pub fn start(out_path: &Path) -> Result<Self> {
+            ensure_cg_init();
+            let content =
+                SCShareableContent::get().map_err(|e| anyhow!("shareable content: {e:?}"))?;
+            let display = content
+                .displays()
+                .into_iter()
+                .next()
+                .context("no display to capture")?;
+            let (w, h) = (display.width(), display.height());
+            let filter = SCContentFilter::create()
+                .with_display(&display)
+                .with_excluding_windows(&[])
+                .build();
+            let config = SCStreamConfiguration::new().with_width(w).with_height(h);
+
+            let rec_config = SCRecordingOutputConfiguration::new()
+                .with_output_url(out_path)
+                .with_video_codec(SCRecordingOutputCodec::HEVC)
+                .with_output_file_type(SCRecordingOutputFileType::MP4);
+            let recording =
+                SCRecordingOutput::new(&rec_config).context("create SCRecordingOutput")?;
+
+            let stream = SCStream::new(&filter, &config);
+            stream
+                .add_recording_output(&recording)
+                .map_err(|e| anyhow!("add_recording_output: {e:?}"))?;
+            stream
+                .start_capture()
+                .map_err(|e| anyhow!("start_capture: {e:?}"))?;
+            Ok(Self {
+                stream: Some(stream),
+                _recording: recording,
+            })
+        }
+
+        pub fn stop(mut self) -> Result<()> {
+            if let Some(stream) = self.stream.take() {
+                stream
+                    .stop_capture()
+                    .map_err(|e| anyhow!("stop_capture: {e:?}"))?;
+                // Let SCRecordingOutput flush + finalise the moov atom.
+                std::thread::sleep(Duration::from_millis(800));
+            }
+            Ok(())
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub use imp_mac::DesktopCapture;
+
+// --- other non-Windows (e.g. Linux/CI): no-op stub so the workspace builds ---
+#[cfg(all(not(windows), not(target_os = "macos")))]
 pub struct DesktopCapture;
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 impl DesktopCapture {
     pub fn start(_out_path: &Path) -> anyhow::Result<Self> {
-        tracing::warn!("desktop capture is Windows-only — recording skipped on this platform");
+        tracing::warn!("desktop capture unimplemented on this platform — recording skipped");
         Ok(Self)
     }
     pub fn stop(self) -> anyhow::Result<()> {

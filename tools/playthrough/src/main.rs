@@ -66,6 +66,13 @@ enum Mode {
         manifest: PathBuf,
         out: PathBuf,
     },
+    /// `-- capture-smoke <secs> <out.mp4>` — dev smoke test of the capture
+    /// backend in isolation (no server / browser): record the screen for `secs`
+    /// and assert a non-empty file. PLAN A.1 (verifies the macOS backend).
+    CaptureSmoke {
+        secs: u64,
+        out: PathBuf,
+    },
 }
 
 /// The no-arg / empty-args default narrative: the self-contained Mock `place`
@@ -116,6 +123,16 @@ fn parse_mode(args: &[String]) -> Result<Mode> {
             "`-- render` needs a raw capture \
              (usage: `-- render <raw.mp4> [timeline.json] [final.mp4]`)"
         ),
+        // `-- capture-smoke <secs> <out.mp4>` (PLAN A.1).
+        [kw, secs, out] if kw == "capture-smoke" => Ok(Mode::CaptureSmoke {
+            secs: secs
+                .parse()
+                .with_context(|| format!("capture-smoke <secs> must be a number, got {secs:?}"))?,
+            out: PathBuf::from(out),
+        }),
+        [kw, ..] if kw == "capture-smoke" => {
+            anyhow::bail!("`-- capture-smoke` needs <secs> <out.mp4>")
+        }
         // Bare back-compat aliases: `portal` / `place` / `ingame`.
         [alias, ..] => match beats::resolve_alias(alias) {
             Some(narr) => Ok(Mode::Narrative(narr.to_string())),
@@ -148,6 +165,7 @@ async fn main() -> Result<()> {
     // on a box with only ffmpeg and the recorded artifacts.
     match mode {
         Mode::Render { raw, manifest, out } => render::run(&raw, &manifest, &out),
+        Mode::CaptureSmoke { secs, out } => capture_smoke(secs, &out),
         Mode::Narrative(name) => {
             let narr = beats::find_narrative(
                 beats::narratives().context("build + validate narrative registry")?,
@@ -167,6 +185,25 @@ async fn main() -> Result<()> {
             run_single_beat(flavor, beat).await
         }
     }
+}
+
+/// PLAN A.1 — dev smoke test: exercise the capture backend (macOS:
+/// ScreenCaptureKit; Windows: windows-capture) in isolation, no server/browser.
+/// Records the screen for `secs`, then asserts a non-empty file. Run via
+/// `tools/playthrough/run.sh` so the binary carries a stable Screen Recording grant.
+fn capture_smoke(secs: u64, out: &std::path::Path) -> Result<()> {
+    tracing::info!(secs, out = %out.display(), "capture-smoke: recording the screen…");
+    let cap = DesktopCapture::start(out).context("start capture")?;
+    std::thread::sleep(Duration::from_secs(secs));
+    cap.stop().context("stop capture")?;
+    let bytes = std::fs::metadata(out).map(|m| m.len()).unwrap_or(0);
+    tracing::info!(out = %out.display(), bytes, "capture-smoke: done");
+    anyhow::ensure!(
+        bytes > 0,
+        "capture produced an empty file: {}",
+        out.display()
+    );
+    Ok(())
 }
 
 /// Spawn the server for `flavor`, seed Alice (+ Bob for Mock), tile the

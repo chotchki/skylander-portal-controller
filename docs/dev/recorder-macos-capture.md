@@ -1,16 +1,49 @@
 # macOS ScreenCaptureKit capture backend for the recorder (PLAN A.1)
 
-Working notes + proven groundwork for the Phase-A macOS per-window capture backend
-(`tools/playthrough/src/capture.rs`, today a no-op stub on non-Windows). Validated
-on this M3 Max / macOS 26.5 with Screen Recording permission granted to the
-terminal (Ghostty).
+Notes on the Phase-A macOS capture backend (`tools/playthrough/src/capture.rs`).
+Validated on this M3 Max / macOS 26.5.
 
-## Decision: objc2-screen-capture-kit (pure Rust), per-window, capture-to-file
+## IMPLEMENTED (PLAN A.1): the `screencapturekit` crate (decision B)
 
-Crates (macOS-gated), all resolve + link clean here:
+Both paths were spiked; the **`screencapturekit` crate** (doom-fish v8, swift-bridge)
+won over hand-rolled objc2 — it produced a working capture-to-file in ~25 LOC where
+raw objc2's `SCRecordingOutput` / AVAssetWriter kept stalling (the A-path record is
+below). The macOS backend captures the **main display** to an HEVC MP4 via the crate's
+`SCRecordingOutput`; the crate handles the SCKit threading / run-loop / idle-frame
+filtering internally. Per-window + the 2-pane composite are PLAN A.5.
+
+**Dep** (`tools/playthrough/Cargo.toml`, macOS-gated) — the whole thing, no objc2:
 
 ```toml
 [target.'cfg(target_os = "macos")'.dependencies]
+screencapturekit = { version = "8", features = ["macos_15_0"] }
+```
+
+**Three integration details, each a real gotcha:**
+1. **CG-init.** A bare CLI aborts with `CGS_REQUIRE_INIT` the moment it touches
+   `SCStream`. Fixed with a 3-line `NSApplicationLoad()` extern
+   (`#[link(name = "AppKit", kind = "framework")]`) — no heavy objc2-app-kit. Must run
+   on the main thread; `#[tokio::main(flavor = "current_thread")]` guarantees it.
+2. **Swift-runtime rpath.** The swift-bridge dylibs (`libswift_Concurrency`) don't
+   resolve at launch without an rpath; `build.rs` emits
+   `cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift` on macOS (the crate doesn't set it).
+3. **TCC.** Run via `tools/playthrough/run.sh` (codesigns with a stable identity) so the
+   Screen Recording grant survives rebuilds — see the gotcha below.
+
+**Verify:** `tools/playthrough/run.sh capture-smoke 3 /tmp/x.mp4` → a valid HEVC MP4.
+The `-- capture-smoke <secs> <out>` dev mode exercises the backend with no
+server/browser (it captures the main display).
+
+---
+
+## A-path record — raw objc2 (ABANDONED, kept for reference)
+
+The pure-objc2 route got ~80% there (frames flowed) but its capture-to-file step
+never landed; see "the open issue" below for why. These crates resolve + link clean
+but are **NOT used**:
+
+```toml
+# (not in Cargo.toml — the raw-objc2 path we did not ship)
 objc2 = "0.6"                 # 0.6.4
 objc2-foundation = { version = "0.3", features = ["NSString","NSArray","NSURL","NSError","NSGeometry","NSEnumerator","NSRunLoop","NSDate","NSThread"] }
 objc2-app-kit = { version = "0.3", features = ["NSApplication","NSResponder"] }
