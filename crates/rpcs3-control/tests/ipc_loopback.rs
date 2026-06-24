@@ -189,6 +189,20 @@ fn handle(cmd: &str, portal: &mut [Option<u32>; 8]) -> String {
                 _ => "ERR bad_args\n".to_string(),
             }
         }
+        // P7: the real emulator re-frames its game window; the fake validates the wire
+        // shape ("WINDOW_SET <x> <y> <w> <h>", w/h >= the emulator minimum) and acks.
+        "WINDOW_SET" => {
+            let mut parts = arg.split_whitespace();
+            match (
+                parts.next().and_then(|v| v.parse::<i32>().ok()),
+                parts.next().and_then(|v| v.parse::<i32>().ok()),
+                parts.next().and_then(|v| v.parse::<u32>().ok()),
+                parts.next().and_then(|v| v.parse::<u32>().ok()),
+            ) {
+                (Some(_x), Some(_y), Some(w), Some(h)) if w >= 160 && h >= 90 => "OK\n".to_string(),
+                _ => "ERR invalid_geometry\n".to_string(),
+            }
+        }
         _ => "ERR unknown_cmd\n".to_string(),
     }
 }
@@ -199,6 +213,14 @@ fn press_button_round_trips() {
     let d = IpcPortalDriver::with_path(&sock);
     d.press_button(PadButton::Cross, 120)
         .expect("BUTTON_PRESS CROSS 120 should ack OK");
+}
+
+#[test]
+fn window_set_round_trips() {
+    let (sock, _loads) = spawn_fake_server(false);
+    let d = IpcPortalDriver::with_path(&sock);
+    d.window_set(0, 24, 1280, 720)
+        .expect("WINDOW_SET 0 24 1280 720 should ack OK");
 }
 
 #[test]

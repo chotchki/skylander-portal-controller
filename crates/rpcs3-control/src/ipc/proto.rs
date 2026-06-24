@@ -85,6 +85,15 @@ pub enum Command<'a> {
         button: PadButton,
         ms: u32,
     },
+    /// Move + resize the game window (P7) — the controller tiling the game instead of
+    /// letting it go fullscreen. `x`/`y`/`w`/`h` are screen pixels; the emulator clamps to
+    /// a minimum and marshals the resize onto its GUI thread.
+    WindowSet {
+        x: i32,
+        y: i32,
+        w: u32,
+        h: u32,
+    },
 }
 
 impl Command<'_> {
@@ -103,6 +112,7 @@ impl Command<'_> {
             Command::PressButton { button, ms } => {
                 format!("BUTTON_PRESS {} {ms}\n", button.wire_name())
             }
+            Command::WindowSet { x, y, w, h } => format!("WINDOW_SET {x} {y} {w} {h}\n"),
         }
     }
 }
@@ -338,6 +348,16 @@ mod tests {
             }
             .encode(),
             "BUTTON_PRESS CROSS 120\n"
+        );
+        assert_eq!(
+            Command::WindowSet {
+                x: 0,
+                y: 24,
+                w: 1280,
+                h: 720
+            }
+            .encode(),
+            "WINDOW_SET 0 24 1280 720\n"
         );
         // Paths with spaces are not quoted (server takes the line remainder).
         assert_eq!(

@@ -1,0 +1,126 @@
+From 3f5a80be5586942455ea4d7a9666f40a2d7947c6 Mon Sep 17 00:00:00 2001
+From: Christopher Hotchkiss <christopher.hotchkiss@gmail.com>
+Date: Tue, 23 Jun 2026 21:21:20 -0800
+Subject: [PATCH] P7: tile the game window over the AF_UNIX IPC (WINDOW_SET)
+
+Adds a WINDOW_SET <x> <y> <w> <h> command to the Skylander IPC server so the
+launcher can position + size the game window (tile it under the launcher in
+Desktop mode) instead of letting it go fullscreen. The handler marshals
+QWindow::setGeometry onto the GUI thread via a hook the gs_frame installs in its
+ctor (an atomic function pointer, so the IPC thread never touches Qt directly;
+cleared in the dtor). The cross-platform replacement for the Win32 launcher fit
+(fit_game_below_launcher_via_win32) -- RPCS3 moves its own window on command, so
+no external window-manipulation API is needed.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ rpcs3/Emu/Io/Skylander.cpp | 26 ++++++++++++++++++++++++++
+ rpcs3/rpcs3qt/gs_frame.cpp | 34 ++++++++++++++++++++++++++++++++++
+ 2 files changed, 60 insertions(+)
+
+diff --git a/rpcs3/Emu/Io/Skylander.cpp b/rpcs3/Emu/Io/Skylander.cpp
+index 39f931a44..a2bc260fd 100644
+--- a/rpcs3/Emu/Io/Skylander.cpp
++++ b/rpcs3/Emu/Io/Skylander.cpp
+@@ -44,6 +44,12 @@ sky_portal g_skyportal;
+ // read by the IPC WINDOW command below.
+ std::atomic<unsigned long long> g_game_window_handle{0};
+ 
++// PLAN P7 — controller window tiling. gs_frame (rpcs3qt) installs a hook here that
++// re-frames the live game window on the GUI thread; the IPC WINDOW_SET command calls it.
++// A raw function pointer (not std::function) so it stays lock-free atomic across the IPC
++// thread (reader) <-> GUI thread (writer) boundary, and no Qt types leak into emucore.
++std::atomic<void (*)(int, int, int, int)> g_game_window_set_geometry{nullptr};
++
+ void skylander::save()
+ {
+ 	if (!sky_file)
+@@ -465,6 +471,26 @@ namespace
+ 			std::snprintf(hx, sizeof(hx), "%llX", g_game_window_handle.load());
+ 			out = std::string("OK handle=") + hx + "\n";
+ 		}
++		else if (cmd == "WINDOW_SET")
++		{
++			// PLAN P7 — tile the game window: the controller positions + sizes it instead of
++			// letting it go fullscreen. "WINDOW_SET <x> <y> <w> <h>". The hook (installed by
++			// gs_frame) marshals the actual setGeometry onto the GUI thread.
++			int x = 0, y = 0, w = 0, h = 0;
++			if (std::sscanf(arg.c_str(), "%d %d %d %d", &x, &y, &w, &h) != 4 || w < 160 || h < 90)
++			{
++				out = "ERR invalid_geometry\n";
++			}
++			else if (const auto fn = g_game_window_set_geometry.load())
++			{
++				fn(x, y, w, h);
++				out = "OK\n";
++			}
++			else
++			{
++				out = "ERR no_window\n";
++			}
++		}
+ 		else if (cmd == "STATUS")
+ 		{
+ 			out = "OK";
+diff --git a/rpcs3/rpcs3qt/gs_frame.cpp b/rpcs3/rpcs3qt/gs_frame.cpp
+index 584b533e8..8506e4e89 100644
+--- a/rpcs3/rpcs3qt/gs_frame.cpp
++++ b/rpcs3/rpcs3qt/gs_frame.cpp
+@@ -69,6 +69,29 @@ namespace pad
+ // so the controller can read it over IPC (avoids touching the widely-included GSFrameBase.h).
+ #include <atomic>
+ extern std::atomic<unsigned long long> g_game_window_handle;
++// PLAN P7 — the controller's IPC WINDOW_SET tiling hook (defined in emucore; installed below).
++extern std::atomic<void (*)(int, int, int, int)> g_game_window_set_geometry;
++
++namespace
++{
++	// PLAN P7 — the live game-window frame. Set/cleared in the gs_frame ctor/dtor and read
++	// ONLY inside the CallFromMainThread lambda below — all on the GUI thread — so it never
++	// races the IPC thread (which only ever loads the atomic fn-pointer above).
++	std::atomic<gs_frame*> g_live_gs_frame{nullptr};
++
++	// Installed into g_game_window_set_geometry; the IPC WINDOW_SET handler calls this. Qt
++	// windows must only be touched on the GUI thread, so marshal the resize there.
++	void sky_set_game_window_geometry(int x, int y, int w, int h)
++	{
++		Emu.CallFromMainThread([x, y, w, h]()
++		{
++			if (gs_frame* f = g_live_gs_frame.load())
++			{
++				f->setGeometry(x, y, w, h);
++			}
++		});
++	}
++}
+ 
+ gs_frame::gs_frame(QScreen* screen, const QRect& geometry, const QIcon& appIcon, std::shared_ptr<gui_settings> gui_settings, bool force_fullscreen)
+ 	: QWindow()
+@@ -126,6 +149,12 @@ gs_frame::gs_frame(QScreen* screen, const QRect& geometry, const QIcon& appIcon,
+ 		setFlags(flags() | Qt::FramelessWindowHint | Qt::WindowDoesNotAcceptFocus);
+ 	}
+ 
++	// PLAN P7 — expose this frame to the controller's IPC WINDOW_SET tiling (the cross-platform
++	// replacement for the Win32 launcher fit). Renderer-agnostic, so install it outside the
++	// OpenGL-gated create() below; setGeometry applies whenever the controller asks.
++	g_live_gs_frame = this;
++	g_game_window_set_geometry = &sky_set_game_window_geometry;
++
+ 	if (g_cfg.video.renderer != video_renderer::opengl)
+ 	{
+ 		// Do not display the window before OpenGL is configured!
+@@ -165,6 +194,11 @@ gs_frame::gs_frame(QScreen* screen, const QRect& geometry, const QIcon& appIcon,
+ 
+ gs_frame::~gs_frame()
+ {
++	// PLAN P7 — stop the controller from tiling a frame that is going away: clear the hook
++	// first so the IPC side no-ops, then drop the live pointer (both on the GUI thread).
++	g_game_window_set_geometry = nullptr;
++	g_live_gs_frame = nullptr;
++
+ 	g_user_asked_for_screenshot = false;
+ 	g_user_asked_for_recording = false;
+ 	g_user_asked_for_frame_capture = false;
+-- 
+2.50.1 (Apple Git-155)
+
