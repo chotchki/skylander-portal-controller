@@ -146,9 +146,20 @@ pub struct LauncherApp {
     /// window, so the RPCS3 game window is *fitted* to our client rect (20.4)
     /// rather than just z-ordered; `Tv` keeps the fullscreen behaviour.
     window_mode: crate::config::WindowMode,
+    /// Channel to the driver worker (PLAN B.2). On macOS the launcher can't move
+    /// another app's window via Win32, so the Desktop-mode game-window fit is
+    /// dispatched as a `DriverJob::WindowSet` that the worker routes over the IPC
+    /// P7 command. `update()` is sync, so we `try_send` (never `.await`).
+    driver_tx: tokio::sync::mpsc::Sender<crate::state::DriverJob>,
+    /// Last game-window rect (screen coords) we sent over IPC, to suppress
+    /// per-frame `WindowSet` spam — only re-send when the launcher's content rect
+    /// actually changes. `None` until the first fit. macOS-only path (the Win32
+    /// fit on Windows re-applies every frame and tracks its own state).
+    last_window_set: Option<(i32, i32, u32, u32)>,
 }
 
 impl LauncherApp {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         clients: Arc<AtomicUsize>,
@@ -157,6 +168,7 @@ impl LauncherApp {
         raw_ip_url: String,
         bind_port: u16,
         window_mode: crate::config::WindowMode,
+        driver_tx: tokio::sync::mpsc::Sender<crate::state::DriverJob>,
     ) -> Self {
         // Apply the shared TV-launcher palette + Titan One display face.
         // Both must happen before any widgets render their first frame
@@ -218,6 +230,8 @@ impl LauncherApp {
             raw_ip_qr_pixels,
             bind_port,
             window_mode,
+            driver_tx,
+            last_window_set: None,
         }
     }
 
@@ -527,10 +541,47 @@ impl eframe::App for LauncherApp {
                 // window, so the game is *fitted* to its client rect (move +
                 // resize) as well as z-ordered below it; TV mode is fullscreen,
                 // so the game just needs the every-frame z-order assertion.
+                #[cfg(windows)]
                 if matches!(self.window_mode, crate::config::WindowMode::Desktop) {
                     fit_game_below_launcher_via_win32(frame, game_hwnd);
                 } else {
                     place_game_below_launcher_via_win32(frame, game_hwnd);
+                }
+                // PLAN B.2 — macOS can't move another app's window via Win32, so
+                // the Desktop-mode fit goes over IPC (P7 `WINDOW_SET`). TV mode is
+                // a no-op here (the RPCS3 window and egui launcher coexist as plain
+                // siblings — window coordination is Win32-only). `game_hwnd` is
+                // unused on this path (the IPC fit doesn't need the handle).
+                #[cfg(not(windows))]
+                {
+                    let _ = game_hwnd;
+                    if matches!(self.window_mode, crate::config::WindowMode::Desktop)
+                        // Only fit once the game is past boot — RPCS3 resizes its
+                        // own window during compile/boot, and an IPC round-trip per
+                        // frame is expensive; gate on the stable playable signal.
+                        && status_snapshot.game_playable
+                        && let Some(rect) =
+                            ctx.input(|i| i.viewport().inner_rect)
+                    {
+                        // `inner_rect` is the launcher content rect. Round to
+                        // integers for the WINDOW_SET geometry. See the FLAG in the
+                        // PR notes: whether this is screen vs window-relative and
+                        // points vs physical px needs live verification on macOS.
+                        let x = rect.min.x.round() as i32;
+                        let y = rect.min.y.round() as i32;
+                        let w = rect.width().round().max(0.0) as u32;
+                        let h = rect.height().round().max(0.0) as u32;
+                        let next = (x, y, w, h);
+                        if self.last_window_set != Some(next) {
+                            let _ = self.driver_tx.try_send(crate::state::DriverJob::WindowSet {
+                                x,
+                                y,
+                                w,
+                                h,
+                            });
+                            self.last_window_set = Some(next);
+                        }
+                    }
                 }
             }
         } else {
@@ -1088,9 +1139,6 @@ fn place_game_below_launcher_via_win32(frame: &eframe::Frame, game_hwnd: u64) {
     }
 }
 
-#[cfg(not(windows))]
-fn place_game_below_launcher_via_win32(_frame: &eframe::Frame, _game_hwnd: u64) {}
-
 /// PLAN 20.4 (Desktop window mode): keep the RPCS3 window fitted to the
 /// launcher's client rect (move + resize) AND directly below it in z-order, so
 /// the game fills the windowed launcher's content area and tracks its
@@ -1137,6 +1185,3 @@ fn fit_game_below_launcher_via_win32(frame: &eframe::Frame, game_hwnd: u64) {
         let _ = SetWindowPos(game, Some(launcher), tl.x, tl.y, w, h, SWP_NOACTIVATE);
     }
 }
-
-#[cfg(not(windows))]
-fn fit_game_below_launcher_via_win32(_frame: &eframe::Frame, _game_hwnd: u64) {}

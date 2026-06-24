@@ -60,6 +60,17 @@ pub trait PortalDriver: Send + Sync {
         Ok(None)
     }
 
+    /// Move + resize the running game window (P7) — the launcher tiling the game
+    /// below itself in Desktop mode. On Windows the launcher repositions the
+    /// game HWND directly via `SetWindowPos`; on macOS it can't touch another
+    /// app's window, so it routes the fit through this IPC command instead.
+    /// Default errors so non-IPC drivers (UIA / mock) report "no window control"
+    /// rather than silently no-op; `IpcPortalDriver` overrides.
+    fn window_set(&self, x: i32, y: i32, w: u32, h: u32) -> Result<()> {
+        let _ = (x, y, w, h);
+        anyhow::bail!("window_set: this driver has no window control")
+    }
+
     /// Hot-plug-cycle the emulated portal (P5) — detach+reattach so a
     /// save-state-resumed guest re-enumerates it and refreshes the stale USB
     /// handles that otherwise fail every portal transfer with `CELL_EINVAL`.

@@ -283,6 +283,13 @@ fn main() -> Result<()> {
 
     let status_for_errors = launcher_status.clone();
     let status_for_ready = launcher_status.clone();
+    // PLAN B.2 — the driver worker (and its `driver_tx`) is built deep inside the
+    // tokio thread, but the eframe `LauncherApp` lives on this main thread and
+    // needs the sender to dispatch the macOS Desktop-mode game-window fit
+    // (`DriverJob::WindowSet`). Ship the sender back across the thread boundary
+    // once it exists; the main thread blocks on `recv` below before `run_native`.
+    let (driver_tx_back_tx, driver_tx_back_rx) =
+        std::sync::mpsc::sync_channel::<tokio::sync::mpsc::Sender<crate::state::DriverJob>>(1);
     let _server_thread = std::thread::Builder::new()
         .name("tokio".into())
         .spawn(move || {
@@ -361,6 +368,10 @@ fn main() -> Result<()> {
                     config_dir.clone(),
                     status_for_task.clone(),
                 );
+                // PLAN B.2 — hand the worker's sender to the main-thread launcher
+                // UI so it can dispatch the macOS game-window fit. Best-effort: if
+                // the receiver is already gone (UI never came up) this just drops.
+                let _ = driver_tx_back_tx.send(driver_tx.clone());
                 // Unified crash/freeze supervisor (PLAN 16.7). Polls the
                 // lifecycle handle every 500ms; on a dead process (crash) or a
                 // raised `frozen` flag (the IPC STATE poller's freeze detector)
@@ -667,6 +678,16 @@ fn main() -> Result<()> {
     let raw_ip_url_for_ui = raw_ip_url.clone();
     let ui_bind_port = bind.port();
     let ui_window_mode = cfg.window_mode;
+    // PLAN B.2 — block for the driver worker's sender (built on the tokio thread)
+    // so the launcher can dispatch the macOS Desktop-mode game-window fit. If the
+    // server thread died before building it (a fatal-startup path that already
+    // routed to the ServerError surface), `recv` errors — fall back to a closed
+    // dummy channel so the UI still comes up and shows the error (any `try_send`
+    // on it just fails, which is fine: there's no game window to fit anyway).
+    let ui_driver_tx = driver_tx_back_rx.recv().unwrap_or_else(|_| {
+        let (tx, _rx) = tokio::sync::mpsc::channel::<crate::state::DriverJob>(1);
+        tx
+    });
     eframe::run_native(
         "skylander-portal-controller",
         native_options,
@@ -679,6 +700,7 @@ fn main() -> Result<()> {
                 raw_ip_url_for_ui,
                 ui_bind_port,
                 ui_window_mode,
+                ui_driver_tx,
             )))
         }),
     )

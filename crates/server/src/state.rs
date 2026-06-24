@@ -721,6 +721,17 @@ pub enum DriverJob {
         timeout: std::time::Duration,
         done: tokio::sync::oneshot::Sender<Result<()>>,
     },
+    /// **PLAN B.2 (macOS window fit).** Move + resize the running game window to
+    /// the given screen-space rect via the IPC P7 `WINDOW_SET` command. On
+    /// Windows the launcher repositions the game HWND directly (`SetWindowPos`);
+    /// on macOS it can't touch another app's window, so the Desktop-mode fit is
+    /// routed through the driver here. Not a portal mutation — no layout persist.
+    WindowSet {
+        x: i32,
+        y: i32,
+        w: u32,
+        h: u32,
+    },
 }
 
 /// Frame-stall freeze detector (PLAN 16.7.1). The patched RPCS3's 1 Hz heartbeat
@@ -1719,6 +1730,18 @@ async fn handle_job(
                 Err(e) => Err(e),
             };
             let _ = done.send(outcome);
+        }
+        DriverJob::WindowSet { x, y, w, h } => {
+            // PLAN B.2 — route the macOS Desktop-mode game-window fit through the
+            // driver's IPC P7 `WINDOW_SET`. Runs off-reactor (the blocking IPC
+            // round-trip) like the load/clear ops. Not a mutation — no layout
+            // persist. `Context` is gated to `cfg(windows)` at module scope, so
+            // pull the extension trait in locally for the cross-platform `.context`.
+            use anyhow::Context as _;
+            let d = driver.clone();
+            tokio::task::spawn_blocking(move || d.window_set(x, y, w, h))
+                .await
+                .context("window_set task")??;
         }
     }
     Ok(())

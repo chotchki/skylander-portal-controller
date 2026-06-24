@@ -145,14 +145,6 @@ impl IpcPortalDriver {
         proto::parse_ok(&reply)
     }
 
-    /// Move + resize the running game window (P7) — the launcher tiling the game in
-    /// Desktop mode (the cross-platform replacement for the Win32 window-fit). The
-    /// emulator marshals the resize onto its GUI thread and acks once queued.
-    pub fn window_set(&self, x: i32, y: i32, w: u32, h: u32) -> Result<()> {
-        let reply = self.roundtrip(&Command::WindowSet { x, y, w, h })?;
-        proto::parse_ok(&reply)
-    }
-
     /// Open **one persistent connection** and stream every *pushed* line — the
     /// 1 Hz `HB` heartbeat and the `PE` portal-event pushes (P4) — to `on_line`
     /// until `dur` elapses. The patched emulator pushes on its own 1 s `select`
@@ -290,6 +282,14 @@ impl PortalDriver for IpcPortalDriver {
     fn game_window_handle(&self) -> Result<Option<u64>> {
         let h = self.window_handle()?;
         Ok((h != 0).then_some(h))
+    }
+
+    /// Move + resize the running game window (P7) — the launcher tiling the game in
+    /// Desktop mode (the cross-platform replacement for the Win32 window-fit). The
+    /// emulator marshals the resize onto its GUI thread and acks once queued.
+    fn window_set(&self, x: i32, y: i32, w: u32, h: u32) -> Result<()> {
+        let reply = self.roundtrip(&Command::WindowSet { x, y, w, h })?;
+        proto::parse_ok(&reply)
     }
 }
 
