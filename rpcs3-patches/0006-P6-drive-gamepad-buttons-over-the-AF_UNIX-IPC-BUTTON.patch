@@ -1,0 +1,179 @@
+From a561238f1c5a7105500fb4e947c13144470787df Mon Sep 17 00:00:00 2001
+From: Christopher Hotchkiss <christopher.hotchkiss@gmail.com>
+Date: Tue, 23 Jun 2026 14:16:47 -0800
+Subject: [PATCH] P6: drive gamepad buttons over the AF_UNIX IPC (BUTTON_PRESS)
+
+Adds a BUTTON_PRESS <NAME> <DURATION_MS> command to the Skylander IPC server so the play-through recorder can navigate the game's menus to the in-game portal (classifier-led: press X until the portal appears) without the fragile savestate-resume path and without stealing window focus (unlike synthesised keystrokes).
+
+The press is injected as a per-pad override mask (Pad::m_ipc_force_digital1/2); apply_copilots() re-applies it onto m_buttons_external every poll so it survives the per-poll rebuild from m_buttons. The handler holds the press for the requested duration then clears the mask. Port 0 only; near-free for normal play.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ rpcs3/Emu/Io/Skylander.cpp | 86 ++++++++++++++++++++++++++++++++++++++
+ rpcs3/Emu/Io/pad_types.h   |  9 ++++
+ rpcs3/Input/pad_thread.cpp | 18 ++++++++
+ 3 files changed, 113 insertions(+)
+
+diff --git a/rpcs3/Emu/Io/Skylander.cpp b/rpcs3/Emu/Io/Skylander.cpp
+index 7b7456eb7..39f931a44 100644
+--- a/rpcs3/Emu/Io/Skylander.cpp
++++ b/rpcs3/Emu/Io/Skylander.cpp
+@@ -18,6 +18,7 @@
+ #include "Emu/system_progress.hpp" // g_progr_* boot/shader-compile progress
+ #include "Emu/RSX/RSXThread.h"     // rsx::get_current_renderer()->int_flip_index
+ #include "Utilities/StrUtil.h"     // strcpy_trunc
++#include "Input/pad_thread.h"      // P6: inject pad button presses over the IPC
+ 
+ #ifndef _WIN32
+ #include <sys/socket.h>
+@@ -389,6 +390,60 @@ namespace
+ 		return s;
+ 	}
+ 
++	// P6 (recorder pad nav): map an IPC button name -> (digital offset,
++	// CELL_PAD_CTRL_* bit). Returns false for an unknown name.
++	bool sky_resolve_pad_button(const std::string& name, u32& offset, u16& bit)
++	{
++		struct entry { const char* name; u32 offset; u16 bit; };
++		static const entry table[] = {
++			{"CROSS",    CELL_PAD_BTN_OFFSET_DIGITAL2, CELL_PAD_CTRL_CROSS},
++			{"CIRCLE",   CELL_PAD_BTN_OFFSET_DIGITAL2, CELL_PAD_CTRL_CIRCLE},
++			{"SQUARE",   CELL_PAD_BTN_OFFSET_DIGITAL2, CELL_PAD_CTRL_SQUARE},
++			{"TRIANGLE", CELL_PAD_BTN_OFFSET_DIGITAL2, CELL_PAD_CTRL_TRIANGLE},
++			{"L1",       CELL_PAD_BTN_OFFSET_DIGITAL2, CELL_PAD_CTRL_L1},
++			{"R1",       CELL_PAD_BTN_OFFSET_DIGITAL2, CELL_PAD_CTRL_R1},
++			{"START",    CELL_PAD_BTN_OFFSET_DIGITAL1, CELL_PAD_CTRL_START},
++			{"SELECT",   CELL_PAD_BTN_OFFSET_DIGITAL1, CELL_PAD_CTRL_SELECT},
++			{"UP",       CELL_PAD_BTN_OFFSET_DIGITAL1, CELL_PAD_CTRL_UP},
++			{"DOWN",     CELL_PAD_BTN_OFFSET_DIGITAL1, CELL_PAD_CTRL_DOWN},
++			{"LEFT",     CELL_PAD_BTN_OFFSET_DIGITAL1, CELL_PAD_CTRL_LEFT},
++			{"RIGHT",    CELL_PAD_BTN_OFFSET_DIGITAL1, CELL_PAD_CTRL_RIGHT},
++		};
++		for (const auto& e : table)
++		{
++			if (name == e.name)
++			{
++				offset = e.offset;
++				bit    = e.bit;
++				return true;
++			}
++		}
++		return false;
++	}
++
++	// P6: set/clear a forced-press override bit on the primary pad (port 0).
++	// Returns false if no pad is connected yet. Holds pad::g_pad_mutex only to
++	// flip the mask — apply_copilots re-applies it onto m_buttons_external each
++	// poll, so the press survives until cleared.
++	bool sky_force_pad_button(u32 offset, u16 bit, bool pressed)
++	{
++		std::lock_guard lock(pad::g_pad_mutex);
++		auto* pt = pad::get_pad_thread(true); // relaxed: null until pads are up
++		if (!pt)
++			return false;
++		auto& pads = pt->GetPads();
++		if (!pads[0] || !pads[0]->is_connected())
++			return false;
++		u16& mask = (offset == CELL_PAD_BTN_OFFSET_DIGITAL1)
++			? pads[0]->m_ipc_force_digital1
++			: pads[0]->m_ipc_force_digital2;
++		if (pressed)
++			mask |= bit;
++		else
++			mask &= ~bit;
++		return true;
++	}
++
+ 	void sky_ipc_handle(const std::string& line, std::string& out)
+ 	{
+ 		const usz sp = line.find(' ');
+@@ -474,6 +529,37 @@ namespace
+ 			register_ldd_and_connect("Skylanders Portal", 0x1430, 0x0150, 0x0150);
+ 			out = "OK\n";
+ 		}
++		else if (cmd == "BUTTON_PRESS")
++		{
++			// P6 (recorder pad nav): "BUTTON_PRESS <NAME> <DURATION_MS>" — hold a
++			// pad button on port 0 for the given time, then release. Drives the
++			// recorder's classifier-led menu navigation over this same socket (no
++			// focus-steal, unlike synthesised keystrokes). Blocks this connection
++			// thread for the press; the controller waits on the OK reply.
++			const usz bsp = arg.find(' ');
++			const std::string name = arg.substr(0, bsp);
++			const int ms = (bsp == umax) ? 120 : std::atoi(arg.substr(bsp + 1).c_str());
++			u32 offset = 0;
++			u16 bit = 0;
++			if (!sky_resolve_pad_button(name, offset, bit))
++			{
++				out = "ERR unknown_button\n";
++				return;
++			}
++			if (ms < 1 || ms > 5000)
++			{
++				out = "ERR bad_duration\n";
++				return;
++			}
++			if (!sky_force_pad_button(offset, bit, true))
++			{
++				out = "ERR pad_not_ready\n";
++				return;
++			}
++			std::this_thread::sleep_for(std::chrono::milliseconds(ms));
++			sky_force_pad_button(offset, bit, false);
++			out = "OK\n";
++		}
+ 		else
+ 		{
+ 			out = "ERR unknown_cmd\n";
+diff --git a/rpcs3/Emu/Io/pad_types.h b/rpcs3/Emu/Io/pad_types.h
+index 238e03ff1..c3068fd19 100644
+--- a/rpcs3/Emu/Io/pad_types.h
++++ b/rpcs3/Emu/Io/pad_types.h
+@@ -539,6 +539,15 @@ struct Pad
+ 	std::vector<ButtonExternal> m_buttons_external;
+ 	std::array<AnalogStickExternal, 4> m_sticks_external{};
+ 
++	// P6 (recorder IPC pad): forced presses injected over the AF_UNIX IPC for the
++	// demo play-through recorder. apply_copilots() re-applies these onto
++	// m_buttons_external every poll, so an injected press survives the rebuild
++	// from m_buttons. Each bit is a CELL_PAD_CTRL_* value for the matching DIGITAL
++	// offset; 0 = no override (zero-cost for normal play). Written/cleared by the
++	// IPC server thread and read by apply_copilots, all under pad::g_pad_mutex.
++	u16 m_ipc_force_digital1 = 0;
++	u16 m_ipc_force_digital2 = 0;
++
+ 	std::vector<std::shared_ptr<Pad>> copilots;
+ 
+ 	CellPadData data {};
+diff --git a/rpcs3/Input/pad_thread.cpp b/rpcs3/Input/pad_thread.cpp
+index 6d9e4e939..5a63cc3e5 100644
+--- a/rpcs3/Input/pad_thread.cpp
++++ b/rpcs3/Input/pad_thread.cpp
+@@ -330,6 +330,24 @@ void pad_thread::apply_copilots()
+ 			dst.m_value = src.m_value;
+ 		}
+ 
++		// P6 (recorder IPC pad): re-apply forced button presses injected over the
++		// AF_UNIX IPC so they survive this per-poll rebuild of m_buttons_external.
++		// Near-free when no override is set.
++		const u16 force1 = pad->m_ipc_force_digital1;
++		const u16 force2 = pad->m_ipc_force_digital2;
++		if (force1 || force2)
++		{
++			for (ButtonExternal& btn : pad->m_buttons_external)
++			{
++				if ((btn.m_offset == CELL_PAD_BTN_OFFSET_DIGITAL1 && (force1 & btn.m_outKeyCode)) ||
++					(btn.m_offset == CELL_PAD_BTN_OFFSET_DIGITAL2 && (force2 & btn.m_outKeyCode)))
++				{
++					btn.m_pressed = true;
++					btn.m_value = 255;
++				}
++			}
++		}
++
+ 		if (pad->copilots.empty() || pad->is_copilot())
+ 		{
+ 			continue;
+-- 
+2.50.1 (Apple Git-155)
+

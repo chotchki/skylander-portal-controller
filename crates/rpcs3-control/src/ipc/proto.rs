@@ -22,6 +22,45 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use skylander_core::SLOT_COUNT;
 
+/// A PS3 controller button the recorder can inject over the IPC (P6). The wire
+/// names match the patched emulator's `sky_resolve_pad_button` table in
+/// `Emu/Io/Skylander.cpp`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PadButton {
+    Cross,
+    Circle,
+    Square,
+    Triangle,
+    Start,
+    Select,
+    Up,
+    Down,
+    Left,
+    Right,
+    L1,
+    R1,
+}
+
+impl PadButton {
+    /// The on-wire token (matches the emulator's resolver table).
+    pub fn wire_name(self) -> &'static str {
+        match self {
+            PadButton::Cross => "CROSS",
+            PadButton::Circle => "CIRCLE",
+            PadButton::Square => "SQUARE",
+            PadButton::Triangle => "TRIANGLE",
+            PadButton::Start => "START",
+            PadButton::Select => "SELECT",
+            PadButton::Up => "UP",
+            PadButton::Down => "DOWN",
+            PadButton::Left => "LEFT",
+            PadButton::Right => "RIGHT",
+            PadButton::L1 => "L1",
+            PadButton::R1 => "R1",
+        }
+    }
+}
+
 /// A command the controller sends to the patched emulator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command<'a> {
@@ -39,6 +78,13 @@ pub enum Command<'a> {
     Load(&'a Path),
     /// Clear the figure currently in this slot (`0..SLOT_COUNT`).
     Clear(u8),
+    /// Hold a controller button on port 0 for `ms` milliseconds, then release
+    /// (P6). Drives the recorder's classifier-led menu navigation over the same
+    /// socket — no focus-steal, unlike synthesised keystrokes.
+    PressButton {
+        button: PadButton,
+        ms: u32,
+    },
 }
 
 impl Command<'_> {
@@ -54,6 +100,9 @@ impl Command<'_> {
             // (verbatim, to end-of-line), so paths with spaces need no quoting.
             Command::Load(p) => format!("LOAD {}\n", p.display()),
             Command::Clear(slot) => format!("CLEAR {slot}\n"),
+            Command::PressButton { button, ms } => {
+                format!("BUTTON_PRESS {} {ms}\n", button.wire_name())
+            }
         }
     }
 }
@@ -282,6 +331,14 @@ mod tests {
         assert_eq!(Command::Ping.encode(), "PING\n");
         assert_eq!(Command::Status.encode(), "STATUS\n");
         assert_eq!(Command::Clear(3).encode(), "CLEAR 3\n");
+        assert_eq!(
+            Command::PressButton {
+                button: PadButton::Cross,
+                ms: 120
+            }
+            .encode(),
+            "BUTTON_PRESS CROSS 120\n"
+        );
         // Paths with spaces are not quoted (server takes the line remainder).
         assert_eq!(
             Command::Load(Path::new("/pack/Fire/Gill Grunt.sky")).encode(),

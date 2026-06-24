@@ -1,0 +1,8 @@
+{
+  "__doc__": "A.2.3/A.2.4 gates manifest. Giants nav (chotchki, 2026-06-23): pure CROSS (= keyboard X) mashed repeatedly drives the whole opening chain (videos -> menu -> story -> save slot -> Eon's unskippable monologue) to the in-game portal-placement prompt. So the gates collapse to: `default` = press CROSS (mash through everything), and the one real gate = portal_ready -> stop. The unskippable monologue is fast-forwarded by the render storyboard, not skipped in-game. `refs` are PNGs relative to this dir; `crop` is the game-window [x,y,w,h] within the captured display (null = whole frame).",
+  "crop": null,
+  "default": { "do": "press", "button": "CROSS", "ms": 120 },
+  "gates": [
+    { "label": "portal_ready", "refs": ["refs/portal_ready.png"], "action": { "do": "stop" } }
+  ]
+}

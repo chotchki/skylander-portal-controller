@@ -3917,12 +3917,21 @@ ever does z-order with `SWP_NOMOVE | SWP_NOSIZE`) is the real work of this phase
     failure, "restart to apply" toast). Dev builds read `.env.dev` not `config.json`, so the POST is
     a logged no-op there. Wire form pinned by `config::tests::window_mode_json_wire_form`.
 ## Phase A - Auto-generated in-game demo reel (macOS, ScreenCaptureKit per-window)
-- [ ] A.1 - macOS ScreenCaptureKit per-window capture backend
+- [x] A.1 - macOS ScreenCaptureKit per-window capture backend
 - [ ] A.2 - Fake pad input to walk the in-game character
-- [ ] A.3 - Kaos demo beat (wire the existing test hook)
+  - [x] A.2.1 - P6 pad-button IPC (patch + proto + driver)
+  - [x] A.2.2 - Reference screens: capture + label
+  - [x] A.2.3 - Image classifier (frame grab + match)
+  - [ ] A.2.4 - Classifier nav loop wired into ingame narrative
+- [x] A.3 - Kaos demo beat (wire the existing test hook)
 - [ ] A.4 - Hero narrative: login → launch → place → walk → Kaos
 - [ ] A.5 - Render: 2-pane composite + captions + AV1/HEVC dual-encode
 - [ ] A.6 - One-command generate chain + README video embed
+## Phase B - macOS window coordination (Desktop-mode "drive from the desktop")
+- [ ] B.1 - Spike: position the RPCS3 game window on macOS
+- [ ] B.2 - Implement the chosen game-window positioning
+- [ ] B.3 - Launcher-side macOS game-window fit
+- [ ] B.4 - Live-validate macOS window coordination
 
 ## Backlog (not yet phased)
 

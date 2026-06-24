@@ -4682,6 +4682,7 @@ dependencies = [
  "serde",
  "serde_json",
  "skylander-e2e-tests",
+ "skylander-rpcs3-control",
  "tokio",
  "tracing",
  "tracing-subscriber",

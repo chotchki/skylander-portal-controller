@@ -21,6 +21,7 @@ use uds_windows::UnixListener;
 use skylander_core::{SlotIndex, SlotState};
 use skylander_rpcs3_control::PortalDriver;
 use skylander_rpcs3_control::ipc::IpcPortalDriver;
+use skylander_rpcs3_control::ipc::proto::PadButton;
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 
@@ -176,8 +177,28 @@ fn handle(cmd: &str, portal: &mut [Option<u32>; 8]) -> String {
             _ => "ERR bad_slot\n".to_string(),
         },
         "RECONNECT" => "OK\n".to_string(),
+        // P6: the real emulator presses+holds+releases the pad; the fake just
+        // validates the wire shape ("BUTTON_PRESS <NAME> <MS>") and acks.
+        "BUTTON_PRESS" => {
+            let mut parts = arg.split_whitespace();
+            match (
+                parts.next(),
+                parts.next().and_then(|m| m.parse::<u32>().ok()),
+            ) {
+                (Some(name), Some(_ms)) if !name.is_empty() => "OK\n".to_string(),
+                _ => "ERR bad_args\n".to_string(),
+            }
+        }
         _ => "ERR unknown_cmd\n".to_string(),
     }
+}
+
+#[test]
+fn press_button_round_trips() {
+    let (sock, _loads) = spawn_fake_server(false);
+    let d = IpcPortalDriver::with_path(&sock);
+    d.press_button(PadButton::Cross, 120)
+        .expect("BUTTON_PRESS CROSS 120 should ack OK");
 }
 
 #[test]

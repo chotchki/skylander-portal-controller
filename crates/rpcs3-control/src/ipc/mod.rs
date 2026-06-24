@@ -25,7 +25,7 @@ use anyhow::{Context, Result, bail};
 use skylander_core::{SLOT_COUNT, SlotIndex, SlotState};
 
 use crate::PortalDriver;
-use proto::{Command, SlotOccupancy};
+use proto::{Command, PadButton, SlotOccupancy};
 
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
@@ -134,6 +134,15 @@ impl IpcPortalDriver {
         } else {
             bail!("unexpected PING reply: {reply:?}")
         }
+    }
+
+    /// Hold controller button `button` on port 0 for `ms` milliseconds, then
+    /// release (P6). Used by the recorder's classifier-led nav loop to advance
+    /// the game's menus over the IPC socket — no window-focus steal. Blocks for
+    /// the press duration (the emulator replies `OK` only after releasing).
+    pub fn press_button(&self, button: PadButton, ms: u32) -> Result<()> {
+        let reply = self.roundtrip(&Command::PressButton { button, ms })?;
+        proto::parse_ok(&reply)
     }
 
     /// Open **one persistent connection** and stream every *pushed* line — the

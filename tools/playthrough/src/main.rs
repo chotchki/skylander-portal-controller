@@ -42,6 +42,7 @@ mod beats;
 mod caption;
 mod capture;
 mod render;
+mod screen;
 mod stage;
 mod timeline;
 
@@ -81,6 +82,21 @@ enum Mode {
     Composite {
         controller: PathBuf,
         game: PathBuf,
+        out: PathBuf,
+    },
+    /// `-- nav-portal <EBOOT.BIN>` (PLAN A.2.4) — cold-boot the game and mash
+    /// CROSS (per the gates manifest) until the classifier sees the in-game
+    /// portal. No server/SPA, just RPCS3 + the IPC. Needs RPCS3_EXE in the env.
+    NavPortal {
+        eboot: PathBuf,
+    },
+    /// `-- capture-window <APP> <TITLE-SUBSTR> <SECS> <out.mp4>` (Phase B.1 spike) —
+    /// per-window SCKit capture of ONE named window for `secs`, to test whether an
+    /// occluded window (behind the fullscreen game) captures real content or black.
+    CaptureWindow {
+        app: String,
+        title: String,
+        secs: u64,
         out: PathBuf,
     },
 }
@@ -152,6 +168,25 @@ fn parse_mode(args: &[String]) -> Result<Mode> {
         [kw, ..] if kw == "composite" => {
             anyhow::bail!("`-- composite` needs <controller.mp4> <game.mp4> <out.mp4>")
         }
+        // `-- nav-portal <EBOOT.BIN>` (PLAN A.2.4): cold boot + mash CROSS to the portal.
+        [kw, eboot] if kw == "nav-portal" => Ok(Mode::NavPortal {
+            eboot: PathBuf::from(eboot),
+        }),
+        [kw, ..] if kw == "nav-portal" => {
+            anyhow::bail!("`-- nav-portal` needs <path/to/EBOOT.BIN>")
+        }
+        // `-- capture-window <APP> <TITLE-SUBSTR> <SECS> <out.mp4>` (Phase B.1 occlusion spike).
+        [kw, app, title, secs, out] if kw == "capture-window" => Ok(Mode::CaptureWindow {
+            app: app.clone(),
+            title: title.clone(),
+            secs: secs
+                .parse()
+                .with_context(|| format!("capture-window <secs> must be a number, got {secs:?}"))?,
+            out: PathBuf::from(out),
+        }),
+        [kw, ..] if kw == "capture-window" => {
+            anyhow::bail!("`-- capture-window` needs <app> <title-substr> <secs> <out.mp4>")
+        }
         // Bare back-compat aliases: `portal` / `place` / `ingame`.
         [alias, ..] => match beats::resolve_alias(alias) {
             Some(narr) => Ok(Mode::Narrative(narr.to_string())),
@@ -190,6 +225,13 @@ async fn main() -> Result<()> {
             game,
             out,
         } => render::composite(&controller, &game, &out),
+        Mode::NavPortal { eboot } => nav_portal(&eboot),
+        Mode::CaptureWindow {
+            app,
+            title,
+            secs,
+            out,
+        } => capture_window(&app, &title, secs, &out),
         Mode::Narrative(name) => {
             let narr = beats::find_narrative(
                 beats::narratives().context("build + validate narrative registry")?,
@@ -225,6 +267,70 @@ fn capture_smoke(secs: u64, out: &std::path::Path) -> Result<()> {
     anyhow::ensure!(
         bytes > 0,
         "capture produced an empty file: {}",
+        out.display()
+    );
+    Ok(())
+}
+
+/// PLAN A.2.4 — cold-boot the game and mash CROSS (per `assets/screens/gates.json`)
+/// until the classifier sees the in-game portal-placement prompt. No server / SPA:
+/// just RPCS3 + the AF_UNIX IPC. Needs `RPCS3_EXE` in the env (RPCS3 reads its own
+/// `RPCS3_CONFIG_DIR`). Leaves RPCS3 running on success so the portal stays up.
+fn nav_portal(eboot: &std::path::Path) -> Result<()> {
+    use std::process::Command;
+
+    let rpcs3 = std::env::var("RPCS3_EXE").context("RPCS3_EXE must be set (see .env.dev)")?;
+    let sock = skylander_rpcs3_control::ipc::default_socket_path();
+    let _ = std::fs::remove_file(&sock);
+
+    tracing::info!(eboot = %eboot.display(), "nav-portal: cold-booting the game");
+    let mut child = Command::new(&rpcs3)
+        .arg(eboot)
+        .spawn()
+        .with_context(|| format!("spawn RPCS3 {rpcs3:?}"))?;
+
+    // Wait for the portal device's IPC socket (= the game is past initial boot).
+    let start = Instant::now();
+    while !sock.exists() {
+        if start.elapsed() > Duration::from_secs(120) {
+            let _ = child.kill();
+            anyhow::bail!("IPC socket never appeared — RPCS3 didn't reach the portal device");
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+    tracing::info!("nav-portal: IPC up; mashing CROSS to the portal");
+    std::thread::sleep(Duration::from_secs(2)); // let cellPadInit land so presses register
+
+    let driver = skylander_rpcs3_control::ipc::IpcPortalDriver::with_path(&sock);
+    let gates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/screens/gates.json");
+    let lib = screen::ScreenLibrary::load(&gates).context("load gates.json")?;
+
+    let result = screen::nav_to_portal(&driver, &lib, Duration::from_secs(300));
+    match &result {
+        Ok(()) => tracing::info!("nav-portal: reached the portal, leaving RPCS3 running"),
+        Err(e) => {
+            tracing::error!(error = %e, "nav-portal: failed");
+            let _ = child.kill();
+        }
+    }
+    result
+}
+
+/// Phase B.1 occlusion spike — capture ONE named window for `secs` via SCKit
+/// per-window capture (`DesktopCapture::start_window`, the recorder's real path).
+/// Run it with the target window shoved behind the fullscreen game, then extract a
+/// frame: real content = SCKit captures occluded windows (recorder needs no window
+/// coordination); black = it doesn't (recorder also needs Phase B).
+fn capture_window(app: &str, title: &str, secs: u64, out: &std::path::Path) -> Result<()> {
+    tracing::info!(app, title, secs, out = %out.display(), "capture-window: recording one window");
+    let cap = DesktopCapture::start_window(app, title, out).context("start per-window capture")?;
+    std::thread::sleep(Duration::from_secs(secs));
+    cap.stop().context("stop per-window capture")?;
+    let bytes = std::fs::metadata(out).map(|m| m.len()).unwrap_or(0);
+    tracing::info!(out = %out.display(), bytes, "capture-window: done");
+    anyhow::ensure!(
+        bytes > 0,
+        "window capture produced an empty file: {}",
         out.display()
     );
     Ok(())

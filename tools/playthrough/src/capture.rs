@@ -111,6 +111,14 @@ mod imp {
             })
         }
 
+        /// Per-window capture is macOS-only (Phase B.1 spike); stubbed on Windows.
+        #[allow(dead_code)]
+        pub fn start_window(_app: &str, _title: &str, _out_path: &Path) -> Result<Self> {
+            Err(anyhow!(
+                "per-window capture is macOS-only (Phase B.1 spike)"
+            ))
+        }
+
         pub fn stop(mut self) -> Result<()> {
             if let Some(control) = self.control.take() {
                 control
@@ -163,20 +171,29 @@ mod imp_mac {
     }
 
     impl DesktopCapture {
-        /// Capture the whole main display (the A.1 baseline).
-        pub fn start(out_path: &Path) -> Result<Self> {
-            ensure_cg_init();
-            // Dev knob: validate the recorder flow (boot → beats → game launch)
-            // WITHOUT capturing — e.g. when the Screen Recording grant is missing.
-            // No file is written; the render pass is skipped by the caller.
+        /// Dev knob shared by BOTH capture entry points: when
+        /// `SKYLANDER_RECORDER_NO_CAPTURE` is set, validate the recorder flow
+        /// (boot → beats → game launch) WITHOUT capturing — e.g. when the
+        /// Screen Recording grant is missing. No file is written; the render
+        /// pass is skipped by the caller, and `stop()` is a no-op on the result.
+        fn no_capture() -> Option<Self> {
             if std::env::var_os("SKYLANDER_RECORDER_NO_CAPTURE").is_some() {
                 tracing::warn!(
                     "SKYLANDER_RECORDER_NO_CAPTURE set — skipping screen capture (flow validation only)"
                 );
-                return Ok(Self {
+                return Some(Self {
                     stream: None,
                     _recording: None,
                 });
+            }
+            None
+        }
+
+        /// Capture the whole main display (the A.1 baseline).
+        pub fn start(out_path: &Path) -> Result<Self> {
+            ensure_cg_init();
+            if let Some(noop) = Self::no_capture() {
+                return Ok(noop);
             }
             let content =
                 SCShareableContent::get().map_err(|e| anyhow!("shareable content: {e:?}"))?;
@@ -202,10 +219,23 @@ mod imp_mac {
         #[allow(dead_code)]
         pub fn start_window(app: &str, title_contains: &str, out_path: &Path) -> Result<Self> {
             ensure_cg_init();
+            if let Some(noop) = Self::no_capture() {
+                return Ok(noop);
+            }
             let content =
                 SCShareableContent::get().map_err(|e| anyhow!("shareable content: {e:?}"))?;
-            let window = content
-                .windows()
+            let windows = content.windows();
+            // Phase B.1 debug: what SCKit enumerates (incl. is_on_screen for occluded).
+            for w in &windows {
+                let a = w
+                    .owning_application()
+                    .map(|x| x.application_name())
+                    .unwrap_or_default();
+                if !a.is_empty() {
+                    tracing::debug!(app = %a, title = ?w.title(), on_screen = w.is_on_screen(), "sckit candidate");
+                }
+            }
+            let window = windows
                 .into_iter()
                 .find(|w| {
                     w.is_on_screen()
@@ -282,6 +312,10 @@ impl DesktopCapture {
     pub fn start(_out_path: &Path) -> anyhow::Result<Self> {
         tracing::warn!("desktop capture unimplemented on this platform — recording skipped");
         Ok(Self)
+    }
+    #[allow(dead_code)]
+    pub fn start_window(_app: &str, _title: &str, _out: &Path) -> anyhow::Result<Self> {
+        anyhow::bail!("per-window capture unimplemented on this platform")
     }
     pub fn stop(self) -> anyhow::Result<()> {
         Ok(())

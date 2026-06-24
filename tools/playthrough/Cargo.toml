@@ -9,6 +9,7 @@ publish.workspace = true
 # MP4 backend (PLAN 15.10) lands on top of this scaffold.
 [dependencies]
 skylander-e2e-tests = { path = "../../crates/e2e-tests" }
+skylander-rpcs3-control = { path = "../../crates/rpcs3-control" }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 fantoccini = "0.21"

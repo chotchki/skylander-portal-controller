@@ -43,8 +43,7 @@ const DEFAULT_EBOOT: &str = r"C:\games\ps3\Skylanders Giants\PS3_GAME\USRDIR\EBO
 // macOS dev defaults (this repo's bundled patched build + the user's game backups).
 // Any of these can be overridden via the matching env var.
 #[cfg(all(unix, target_os = "macos"))]
-const DEFAULT_EXE: &str =
-    "vendor/rpcs3/build/bin/rpcs3.app/Contents/MacOS/rpcs3";
+const DEFAULT_EXE: &str = "vendor/rpcs3/build/bin/rpcs3.app/Contents/MacOS/rpcs3";
 #[cfg(all(unix, not(target_os = "macos")))]
 const DEFAULT_EXE: &str = "/usr/bin/rpcs3";
 #[cfg(unix)]
@@ -172,7 +171,10 @@ fn no_gui_launch_reaches_playable() {
             // kill the emulator and fail fast rather than sampling dead air.
             if state.status == "frozen" || state.status == "stopped" {
                 let outcome = proc.shutdown_graceful(Duration::from_secs(10));
-                eprintln!("CRASH mid-sample: status={}; killed emulator: {outcome:?}", state.status);
+                eprintln!(
+                    "CRASH mid-sample: status={}; killed emulator: {outcome:?}",
+                    state.status
+                );
                 cleanup(&ipc_path, &exe);
                 panic!("game crashed mid-sample (status={})", state.status);
             }

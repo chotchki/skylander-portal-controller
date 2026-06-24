@@ -81,3 +81,6 @@ Thumbs.db
 /data/images/**/hero.png
 .claude/plan-bridge-state.json
 .claude/plan-bridge-state.json.lock
+
+# Recorder scratch capture frames — refs/ is the committed reference set, raw/ is throwaway
+tools/playthrough/assets/screens/raw/
