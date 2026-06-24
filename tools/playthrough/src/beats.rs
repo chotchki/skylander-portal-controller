@@ -92,6 +92,10 @@ pub enum ServerFlavor {
     Mock,
     /// IPC driver booting a real Spyro save state on the patched RPCS3.
     IpcSavestate,
+    /// IPC driver COLD-booting the real game (Giants, no savestate); the
+    /// `pick_game` beat mashes CROSS through the menus to the in-game portal via
+    /// the `screen.rs` classifier (A.2.4) — the production demo path.
+    IpcCold,
 }
 
 /// An ordered, flavor-locked sequence of beats rendered to one stitched MP4.
@@ -178,6 +182,64 @@ async fn pick_game_ipc(ctx: &BeatCtx<'_>) -> Result<()> {
         .await
         .context("in-game portal never reached (save-state boot)")?;
     tracing::info!("portal reached — RPCS3 resumed the save state at the in-game portal");
+    tokio::time::sleep(Duration::from_secs(2)).await; // let the portal settle
+    Ok(())
+}
+
+/// `pick_game` (IPC cold-boot, A.2.4) — tap the Giants card to fire a REAL
+/// signed `/api/launch` (the server cold-boots the resolved EBOOT; no save
+/// state), then wait for the portal device's IPC socket and mash CROSS over a
+/// SEPARATE IPC connection (the `screen.rs` classifier) until the in-game
+/// portal-placement screen. Replaces the retired fixed save-state wait. The nav
+/// and the server's 250ms STATE poller share the socket fine — RPCS3 is
+/// per-connection threaded and the server driver does short-lived roundtrips.
+async fn pick_game_ipc_cold(ctx: &BeatCtx<'_>) -> Result<()> {
+    let phone = ctx.phone;
+    phone
+        .wait_for(Locator::Css(".game-card"), Duration::from_secs(15))
+        .await
+        .context("game picker never showed game cards")?;
+
+    // Tap the Giants card (the gates.json reference frames are Giants); fall
+    // back to the first card. A REAL signed /api/launch → cold boot of the
+    // resolved EBOOT (SKYLANDER_BOOT_SAVESTATE is unset in the cold flavor).
+    let launched = phone
+        .client
+        .execute(
+            r#"const cards=[...document.querySelectorAll('.game-card')];
+               const c=cards.find(el=>/giants/i.test(el.textContent||''))||cards[0];
+               if(c){c.click();return true;} return false;"#,
+            vec![],
+        )
+        .await?
+        .as_bool()
+        .unwrap_or(false);
+    if !launched {
+        anyhow::bail!("no game card to launch in the picker");
+    }
+    tracing::info!("launched a game from the picker → server cold-booting the game");
+
+    // Wait for the portal device's IPC socket (the cold boot is in flight), then
+    // mash CROSS to the in-game portal on a SEPARATE connection.
+    let sock = skylander_rpcs3_control::ipc::default_socket_path();
+    let deadline = std::time::Instant::now() + Duration::from_secs(150);
+    while !sock.exists() {
+        if std::time::Instant::now() >= deadline {
+            anyhow::bail!("RPCS3 IPC socket never appeared after launch (cold boot)");
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    let driver = skylander_rpcs3_control::ipc::IpcPortalDriver::with_path(&sock);
+    let gates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/screens/gates.json");
+    let lib = crate::screen::ScreenLibrary::load(&gates).context("load gates.json")?;
+    // nav_to_portal is sync + blocking (screencapture + sleeps) → off-reactor.
+    tokio::task::spawn_blocking(move || {
+        crate::screen::nav_to_portal(&driver, &lib, Duration::from_secs(300))
+    })
+    .await
+    .context("nav-to-portal task panicked")?
+    .context("classifier nav to the in-game portal failed")?;
+    tracing::info!("in-game portal reached via classifier pad-nav");
     tokio::time::sleep(Duration::from_secs(2)).await; // let the portal settle
     Ok(())
 }
@@ -469,6 +531,22 @@ fn beat_pick_game_ipc() -> Beat {
     }
 }
 
+/// `pick_game` — IPC cold-boot variant (A.2.4): real `/api/launch` → cold boot,
+/// then classifier pad-nav to the portal. The dead boot+nav middle (incl. the
+/// unskippable opening monologue) runs fast; the portal reveal is kept at 1×.
+fn beat_pick_game_ipc_cold() -> Beat {
+    Beat {
+        name: "pick_game",
+        drive: |c| Box::pin(pick_game_ipc_cold(c)),
+        requires_ipc: true,
+        realtime_head: Duration::from_secs(1),
+        realtime_tail: Duration::from_secs(3),
+        filler_speed: 10.0,
+        crop: None,
+        caption: Some("Pick a game — it boots on the TV."),
+    }
+}
+
 /// `settle_after_reconnect` — IPC marquee only; let the guest re-enumerate the
 /// portal after RECONNECT before the LOAD (the timing fix). Fast filler.
 fn beat_settle_after_reconnect() -> Beat {
@@ -586,10 +664,28 @@ pub fn narratives() -> Result<Vec<Narrative>> {
                 beat_place_figure_mock(),
             ],
         },
-        // `ingame` / "marquee" = [connect, pick_profile, pick_game,
-        // settle_after_reconnect, open_toybox, place_figure(ipc), see_in_game] — IPC.
+        // `ingame` / "marquee" (A.2.4) = [connect, pick_profile, pick_game(cold
+        // boot + classifier pad-nav), open_toybox, place_figure(ipc), see_in_game,
+        // kaos] — IPC cold boot. The production demo path.
         Narrative {
             name: "ingame",
+            flavor: ServerFlavor::IpcCold,
+            beats: vec![
+                beat_connect(),
+                beat_pick_profile(),
+                beat_pick_game_ipc_cold(),
+                beat_open_toybox(),
+                beat_place_figure_ipc(),
+                beat_see_in_game(),
+                beat_kaos(),
+            ],
+        },
+        // `ingame-savestate` = the retired-but-kept save-state path (boots a real
+        // Spyro save state straight to the portal via RECONNECT + settle). Needs
+        // SKYLANDER_BOOT_SAVESTATE; kept for non-capture validation + so the
+        // save-state config fixes stay exercised.
+        Narrative {
+            name: "ingame-savestate",
             flavor: ServerFlavor::IpcSavestate,
             beats: vec![
                 beat_connect(),
@@ -688,7 +784,7 @@ mod tests {
     fn registry_builds_and_validates() {
         let narrs = narratives().expect("registry should build + validate");
         let names: Vec<_> = narrs.iter().map(|n| n.name).collect();
-        assert_eq!(names, vec!["portal", "place", "ingame"]);
+        assert_eq!(names, vec!["portal", "place", "ingame", "ingame-savestate"]);
     }
 
     /// Fix 1: the Mock `portal`/`place` narratives include the `reach_portal`
@@ -758,6 +854,7 @@ mod tests {
     #[test]
     fn requires_ipc_flag_is_set_on_ipc_beats_only() {
         assert!(beat_pick_game_ipc().requires_ipc);
+        assert!(beat_pick_game_ipc_cold().requires_ipc);
         assert!(beat_place_figure_ipc().requires_ipc);
         assert!(beat_see_in_game().requires_ipc);
         assert!(!beat_connect().requires_ipc);
@@ -782,17 +879,17 @@ mod tests {
 
         // IPC-only beat → IPC flavor.
         let (flavor, beat) = find_beat(narratives().unwrap(), "see_in_game").unwrap();
-        assert_eq!(flavor, ServerFlavor::IpcSavestate);
+        assert_eq!(flavor, ServerFlavor::IpcCold);
         assert_eq!(beat.name, "see_in_game");
 
         // `open_toybox` lives in BOTH `place` (Mock) and `ingame` (IPC); the
         // marquee wins, so it resolves to the IPC flavor (design §6).
         let (flavor, _) = find_beat(narratives().unwrap(), "open_toybox").unwrap();
-        assert_eq!(flavor, ServerFlavor::IpcSavestate);
+        assert_eq!(flavor, ServerFlavor::IpcCold);
 
         // Dual-flavor `place_figure` → IPC marquee wins (richer path).
         let (flavor, beat) = find_beat(narratives().unwrap(), "place_figure").unwrap();
-        assert_eq!(flavor, ServerFlavor::IpcSavestate);
+        assert_eq!(flavor, ServerFlavor::IpcCold);
         assert!(beat.requires_ipc);
 
         // Unknown beat → None.

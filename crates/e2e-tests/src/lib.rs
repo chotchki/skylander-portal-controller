@@ -258,7 +258,10 @@ impl TestServer {
     /// Savestate Mode) swapped in transiently. `test-hooks` stays on for profile
     /// inject / unlock; the phone then drives a real `/api/launch`, which is what
     /// triggers the save-state boot.
-    pub fn spawn_ipc_savestate() -> Result<Self> {
+    /// Shared IPC-server bringup. `savestate = Some(path)` boots that save state
+    /// (straight to the in-game portal); `None` cold-boots the EBOOT the server
+    /// resolves from games.yml (A.2.4 — the recorder then pad-navs to the portal).
+    fn spawn_ipc_inner(savestate: Option<String>) -> Result<Self> {
         let repo = repo_root()?;
 
         let rpcs3_exe = std::env::var("RPCS3_EXE")
@@ -273,8 +276,6 @@ impl TestServer {
         let config_dir = std::env::var("RPCS3_CONFIG_DIR").context(
             "RPCS3_CONFIG_DIR env var required (your RPCS3 install: firmware + games.yml + savestates/)",
         )?;
-        let savestate = std::env::var("SKYLANDER_BOOT_SAVESTATE")
-            .context("SKYLANDER_BOOT_SAVESTATE env var required (path to the .SAVESTAT(.zst))")?;
 
         let firmware = resolve_firmware_pack(&repo)?;
         let phone_dist = repo.join("phone").join("dist");
@@ -292,16 +293,21 @@ impl TestServer {
 
         let tmp = tempfile::tempdir().context("create temp dir")?;
         let port = pick_free_port()?;
+        // Savestate boot is opt-in: present → boot that state; absent → cold boot.
+        let savestate_line = match &savestate {
+            Some(ss) => format!("SKYLANDER_BOOT_SAVESTATE={ss}\n"),
+            None => String::new(),
+        };
         let env = format!(
             // WINDOW_MODE=desktop so the launcher is windowed and 20.4 fits the
             // RPCS3 game window to it — both visible in the capture (TV mode would
             // fullscreen the launcher over RPCS3, hiding the in-game portal).
-            "RPCS3_EXE={rpcs3}\nRPCS3_CONFIG_DIR={cfg}\nFIRMWARE_PACK_ROOT={pack}\nBIND_PORT={port}\nSKYLANDER_PORTAL_DRIVER=ipc\nSKYLANDER_BOOT_SAVESTATE={ss}\nWINDOW_MODE=desktop\nPHONE_DIST={phone}\n",
+            "RPCS3_EXE={rpcs3}\nRPCS3_CONFIG_DIR={cfg}\nFIRMWARE_PACK_ROOT={pack}\nBIND_PORT={port}\nSKYLANDER_PORTAL_DRIVER=ipc\n{ss}WINDOW_MODE=desktop\nPHONE_DIST={phone}\n",
             rpcs3 = rpcs3_exe.display(),
             cfg = config_dir,
             pack = firmware.display(),
             port = port,
-            ss = savestate,
+            ss = savestate_line,
             phone = phone_dist.display(),
         );
         std::fs::write(tmp.path().join(".env.dev"), env)?;
@@ -346,6 +352,21 @@ impl TestServer {
             _chromedriver: chromedriver_guard,
             _tmpdir: tmp,
         })
+    }
+
+    /// Boot the IPC server resuming a real save state straight to the in-game
+    /// portal. Requires `RPCS3_EXE`, `RPCS3_CONFIG_DIR`, `SKYLANDER_BOOT_SAVESTATE`.
+    pub fn spawn_ipc_savestate() -> Result<Self> {
+        let savestate = std::env::var("SKYLANDER_BOOT_SAVESTATE")
+            .context("SKYLANDER_BOOT_SAVESTATE env var required (path to the .SAVESTAT(.zst))")?;
+        Self::spawn_ipc_inner(Some(savestate))
+    }
+
+    /// Cold-boot the real game (no save state) for the A.2.4 recorder flow: the
+    /// server boots the EBOOT resolved from games.yml; the recorder pad-navs to
+    /// the portal. Requires `RPCS3_EXE`, `RPCS3_CONFIG_DIR` (firmware + games.yml).
+    pub fn spawn_ipc_cold() -> Result<Self> {
+        Self::spawn_ipc_inner(None)
     }
 }
 

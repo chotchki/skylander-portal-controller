@@ -373,7 +373,10 @@ async fn boot(flavor: ServerFlavor, out_stem: &str) -> Result<Boot> {
         ServerFlavor::Mock => TestServer::spawn_with_env_lines("WINDOW_MODE=desktop\n")
             .context("spawn server in desktop window mode (mock)")?,
         ServerFlavor::IpcSavestate => TestServer::spawn_ipc_savestate().context(
-            "spawn IPC server (in-game tier) — set RPCS3_EXE, RPCS3_CONFIG_DIR, SKYLANDER_BOOT_SAVESTATE",
+            "spawn IPC server (savestate tier) — set RPCS3_EXE, RPCS3_CONFIG_DIR, SKYLANDER_BOOT_SAVESTATE",
+        )?,
+        ServerFlavor::IpcCold => TestServer::spawn_ipc_cold().context(
+            "spawn IPC server (cold-boot in-game tier) — set RPCS3_EXE, RPCS3_CONFIG_DIR (firmware + games.yml)",
         )?,
     };
     tracing::info!(url = %server.url, ?flavor, "server up");
