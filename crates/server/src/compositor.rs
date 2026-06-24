@@ -179,6 +179,21 @@ mod imp {
             CATransaction::commit();
         }
 
+        /// Show or hide the hosted game layer. A CALayer sublayer always
+        /// composites ABOVE its superlayer's GL content, so egui's opaque
+        /// loading cover can't hide it — we toggle the layer's own visibility
+        /// instead. The launcher keeps it hidden behind the badge during the
+        /// PPU/SPU/shader compile and shows it only once `game_playable`. No-op
+        /// when not attached.
+        pub fn set_hidden(&self, hidden: bool) {
+            if let Some(host_layer) = self.host_layer.as_ref() {
+                CATransaction::begin();
+                CATransaction::setDisableActions(true);
+                host_layer.setHidden(hidden);
+                CATransaction::commit();
+            }
+        }
+
         /// Tear the hosted layer out of the view tree. Safe to call when not
         /// attached.
         pub fn detach(&mut self) {
@@ -231,6 +246,7 @@ mod imp {
         /// No-op; the pointer is never dereferenced on this platform.
         pub unsafe fn attach(&mut self, _ns_view: *mut c_void, _context_id: u32) {}
         pub fn set_frame(&mut self, _x: f64, _y: f64, _w: f64, _h: f64) {}
+        pub fn set_hidden(&self, _hidden: bool) {}
         pub fn detach(&mut self) {}
     }
 }

@@ -328,6 +328,14 @@ impl LauncherApp {
                 .set_frame(gx as f64, gy as f64, gw.max(0.0) as f64, gh.max(0.0) as f64);
         }
 
+        // Keep the hosted game layer HIDDEN behind the launcher's badge/loading
+        // chrome until RPCS3 reports the game is truly playable (compile done +
+        // frames advancing — `game_playable` already waits for the PPU/SPU/shader
+        // compile to finish). A CALayer sublayer always composites ABOVE egui's
+        // GL, so the opaque loading cover can't hide it — gate the layer's own
+        // visibility on the same signal the iris reveal uses.
+        self.compositor.set_hidden(!status.game_playable);
+
         true
     }
 
@@ -694,31 +702,14 @@ impl eframe::App for LauncherApp {
                         // reuse the same WINDOW_SET send + dedup/re-assert path the
                         // fallback uses — only the target rect differs.
                         let target = if surface_embedded {
-                            // LIVE-TUNE SPOT (P8 / ISSUE 1): park RPCS3's window in
-                            // a small VISIBLE bottom-right corner box, NOT fully
-                            // off-screen. A window dragged entirely off-screen on
-                            // macOS can stop being composited, which would blank the
-                            // CAMetalLayer we host via CALayerHost — so we keep it
-                            // on-screen (composited) but out from under the
-                            // launcher. The human may later prefer fully off-screen
-                            // or an orderBack-style patch; this corner is the safe
-                            // default to validate first.
-                            //
-                            // Computed against the egui MONITOR size (full display),
-                            // not the launcher inner_rect — we want a screen-global
-                            // corner, and WINDOW_SET takes screen coords.
-                            // FLAG: monitor_size units (points vs physical px) and
-                            // the screen-vs-window coordinate convention of
-                            // WINDOW_SET both need live verification on macOS.
-                            ctx.input(|i| i.viewport().monitor_size).map(|mon| {
-                                let mon_w = mon.x;
-                                let mon_h = mon.y;
-                                let w = 400u32;
-                                let h = 225u32;
-                                let x = (mon_w - 420.0).round() as i32;
-                                let y = (mon_h - 250.0).round() as i32;
-                                (x, y, w, h)
-                            })
+                            // P8 (dedicated off-view layer + hidden window): the game
+                            // renders into a CAMetalLayer we host via CALayerHost, and
+                            // RPCS3's own window is never shown — the patch suppresses
+                            // its on-screen presentation under SKYLANDER_BORDERLESS. So
+                            // there is no window to position; skip the WINDOW_SET
+                            // entirely. (Was a bottom-right corner-park — obsolete now
+                            // the window is hidden at the source, not shoved aside.)
+                            None
                         } else {
                             // Fit as soon as the game window exists (the enclosing
                             // `if let Some(game_hwnd)` already gates on that), NOT on
@@ -1040,26 +1031,17 @@ impl eframe::App for LauncherApp {
         // holds the opaque loading cover through the whole compile and gives exactly
         // one clean iris reveal — instead of a jump-to-emulator then re-cover/replay
         // (HTPC 2026-05-30 regression).
+        // P8 (surface-embed): reveal the hosted game layer on the SAME `game_playable`
+        // transition the window path uses — NOT on surface-attach. The CAMetalLayer
+        // exists (and renders RPCS3's loading screen) long before the game is playable;
+        // revealing on attach would show that loading screen, which the launcher's own
+        // badge/loading state deliberately covers. The CALayerHost attaches early but
+        // stays hidden behind the badge until this gate opens the iris at end-of-compile.
+        // (A prior attempt forced `|| surface_embedded` here — that showed the loading
+        // screen and was reverted; the reveal is purely state-driven via game_playable.)
         let game_underneath = status_snapshot.rpcs3_running
             && status_snapshot.current_game.is_some()
             && status_snapshot.game_playable;
-
-        // ISSUE 2 (P8 surface-embed): when the game's render layer is hosted
-        // in-window via CALayerHost, the opaque vortex/sky/starfield backdrop sits
-        // ON TOP of that layer (the host is sublayer-0, behind egui's GL chrome)
-        // and hides it. Force the punch-through ON whenever a surface is embedded,
-        // independent of `game_playable` — the iris-mask drives the whole backdrop
-        // transparent so the hosted layer shows through. (The CALayerHost is only
-        // ever attached on macOS Desktop mode with a live game, so this can't punch
-        // a hole to the desktop on the boot / picker / post-shutdown surfaces.)
-        //
-        // FLAG (needs live confirmation): this is the smallest change that reveals
-        // the layer, but it (a) bypasses the `game_playable` gate that normally
-        // gives a single clean iris reveal at end-of-compile, and (b) assumes the
-        // hosted layer fully fills the iris hole. If it reads wrong live, the
-        // alternative is forcing `in_game::render`'s transparent surface, or zeroing
-        // only the vortex backdrop instead of opening the iris.
-        let game_underneath = game_underneath || surface_embedded;
 
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(egui::Color32::TRANSPARENT))
