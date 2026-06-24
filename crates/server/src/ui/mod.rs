@@ -591,6 +591,15 @@ impl eframe::App for LauncherApp {
             self.config_gui_minimized = false;
         }
 
+        // P8 surface-embed flag, function-scoped so the `game_underneath`
+        // punch-through computation (further down, cross-platform) can read it.
+        // Set true below only when the macOS CALayerHost host is attached this
+        // frame. `mut` + `allow(unused)` because the only writer is the
+        // macOS-gated branch — on Windows / non-macOS it stays false and is read
+        // by the punch-through gate.
+        #[allow(unused_mut, unused_assignments)]
+        let mut surface_embedded = false;
+
         // Always-on-top toggle. Release: always on. Dev: only while
         // RPCS3 is running so the launcher overlays the game for
         // in-game testing without sticking on top during normal code
@@ -632,19 +641,15 @@ impl eframe::App for LauncherApp {
             // second top-level window beneath us. This is the PRIMARY macOS path;
             // the `WindowSet` fit below is the fallback for when no contextId is
             // present. The contextId is stable for the session, so we attach once.
-            // Only consumed by the `#[cfg(not(windows))]` fit block below, so it's
-            // only bound there (Windows tiles via Win32 and never embeds).
-            #[cfg(not(windows))]
-            let surface_embedded = {
-                #[cfg(target_os = "macos")]
-                {
-                    self.try_embed_game_surface(frame, ctx, &status_snapshot)
-                }
-                #[cfg(not(target_os = "macos"))]
-                {
-                    false
-                }
-            };
+            // Consumed by the `#[cfg(not(windows))]` fit block below (corner-park
+            // vs 16:9 tile) AND by the cross-platform `game_underneath`
+            // punch-through gate (ISSUE 2 — so the opaque vortex goes transparent
+            // over the hosted layer). Windows tiles via Win32 and never embeds, so
+            // this only flips on macOS.
+            #[cfg(target_os = "macos")]
+            {
+                surface_embedded = self.try_embed_game_surface(frame, ctx, &status_snapshot);
+            }
 
             // Re-assert every frame while a game is live: keep the game sandwiched
             // directly below the launcher so no other window (e.g. a terminal the
@@ -671,62 +676,103 @@ impl eframe::App for LauncherApp {
                 #[cfg(not(windows))]
                 {
                     let _ = game_hwnd;
-                    // Fit as soon as the game window exists (the enclosing
-                    // `if let Some(game_hwnd)` already gates on that), NOT on
-                    // `game_playable` — that gate fired too late, after RPCS3's
-                    // boot-time self-resize had already stranded the game out of
-                    // the pane. We instead absorb the boot churn with a low-rate
-                    // re-assert (the ≥0.5s branch below).
-                    //
-                    // FALLBACK ONLY: when the surface is embedded in-window via
-                    // CALayerHost (P8) there's no separate window to tile, so skip
-                    // the WINDOW_SET fit entirely.
-                    if !surface_embedded
-                        && matches!(self.window_mode, crate::config::WindowMode::Desktop)
-                        && let Some(rect) = ctx.input(|i| i.viewport().inner_rect)
-                    {
-                        // The game renders 16:9; the launcher pane is not. Fit the
-                        // largest 16:9 sub-rect centered in the pane so the game
-                        // WINDOW is all-game (no letterbox black bars inside it).
-                        let pane = rect;
-                        let ar = 16.0_f32 / 9.0;
-                        let (gw, gh) = if pane.width() / pane.height() > ar {
-                            (pane.height() * ar, pane.height())
+                    if matches!(self.window_mode, crate::config::WindowMode::Desktop) {
+                        // Two macOS Desktop-mode paths, picked by whether the
+                        // game surface is hosted in-window (P8) or tiled as a
+                        // sibling window (the P7 fallback):
+                        //
+                        //  - surface_embedded == false (FALLBACK): fit RPCS3's
+                        //    own window to the largest 16:9 sub-rect centered in
+                        //    the launcher pane (the B.3 tile).
+                        //  - surface_embedded == true (P8, PRIMARY): we own the
+                        //    game's render layer via CALayerHost, so RPCS3's own
+                        //    top-level window must NOT cover the launcher. Move it
+                        //    OFF the launcher into a far corner.
+                        //
+                        // ISSUE 1 (P8): without this, RPCS3's window sits on top of
+                        // the launcher and hides the hosted layer entirely. We
+                        // reuse the same WINDOW_SET send + dedup/re-assert path the
+                        // fallback uses — only the target rect differs.
+                        let target = if surface_embedded {
+                            // LIVE-TUNE SPOT (P8 / ISSUE 1): park RPCS3's window in
+                            // a small VISIBLE bottom-right corner box, NOT fully
+                            // off-screen. A window dragged entirely off-screen on
+                            // macOS can stop being composited, which would blank the
+                            // CAMetalLayer we host via CALayerHost — so we keep it
+                            // on-screen (composited) but out from under the
+                            // launcher. The human may later prefer fully off-screen
+                            // or an orderBack-style patch; this corner is the safe
+                            // default to validate first.
+                            //
+                            // Computed against the egui MONITOR size (full display),
+                            // not the launcher inner_rect — we want a screen-global
+                            // corner, and WINDOW_SET takes screen coords.
+                            // FLAG: monitor_size units (points vs physical px) and
+                            // the screen-vs-window coordinate convention of
+                            // WINDOW_SET both need live verification on macOS.
+                            ctx.input(|i| i.viewport().monitor_size).map(|mon| {
+                                let mon_w = mon.x;
+                                let mon_h = mon.y;
+                                let w = 400u32;
+                                let h = 225u32;
+                                let x = (mon_w - 420.0).round() as i32;
+                                let y = (mon_h - 250.0).round() as i32;
+                                (x, y, w, h)
+                            })
                         } else {
-                            (pane.width(), pane.width() / ar)
+                            // Fit as soon as the game window exists (the enclosing
+                            // `if let Some(game_hwnd)` already gates on that), NOT on
+                            // `game_playable` — that gate fired too late, after
+                            // RPCS3's boot-time self-resize had already stranded the
+                            // game out of the pane. We absorb the boot churn with a
+                            // low-rate re-assert (the ≥0.5s branch below).
+                            ctx.input(|i| i.viewport().inner_rect).map(|rect| {
+                                // The game renders 16:9; the launcher pane is not.
+                                // Fit the largest 16:9 sub-rect centered in the pane
+                                // so the game WINDOW is all-game (no letterbox bars).
+                                let pane = rect;
+                                let ar = 16.0_f32 / 9.0;
+                                let (gw, gh) = if pane.width() / pane.height() > ar {
+                                    (pane.height() * ar, pane.height())
+                                } else {
+                                    (pane.width(), pane.width() / ar)
+                                };
+                                let gx = pane.min.x + (pane.width() - gw) / 2.0;
+                                let gy = pane.min.y + (pane.height() - gh) / 2.0;
+                                // Round to the WINDOW_SET geometry. See the FLAG in
+                                // the PR notes: whether this is screen vs
+                                // window-relative and points vs physical px needs
+                                // live verification on macOS.
+                                let x = gx.round() as i32;
+                                let y = gy.round() as i32;
+                                let w = gw.round().max(0.0) as u32;
+                                let h = gh.round().max(0.0) as u32;
+                                (x, y, w, h)
+                            })
                         };
-                        let gx = pane.min.x + (pane.width() - gw) / 2.0;
-                        let gy = pane.min.y + (pane.height() - gh) / 2.0;
 
-                        // Round to the WINDOW_SET geometry. See the FLAG in the PR
-                        // notes: whether this is screen vs window-relative and points
-                        // vs physical px needs live verification on macOS.
-                        let x = gx.round() as i32;
-                        let y = gy.round() as i32;
-                        let w = gw.round().max(0.0) as u32;
-                        let h = gh.round().max(0.0) as u32;
-                        let next = (x, y, w, h);
-                        // Re-send on a genuine rect change OR if ≥0.5s elapsed since
-                        // the last send (the low-rate re-assert that beats RPCS3's
-                        // boot-time self-resize without an IPC round-trip per frame).
-                        let now = ctx.input(|i| i.time);
-                        let changed = self.last_window_set != Some(next);
-                        if changed || self.last_window_set_at.is_none_or(|t| now - t >= 0.5) {
-                            if changed {
-                                tracing::info!(
-                                    pane = ?(pane.min.x, pane.min.y, pane.width(), pane.height()),
-                                    set = ?(x, y, w, h),
-                                    "B.3 fit: inner_rect -> WINDOW_SET"
-                                );
+                        if let Some(next) = target {
+                            // Re-send on a genuine rect change OR if ≥0.5s elapsed
+                            // since the last send (the low-rate re-assert that beats
+                            // RPCS3's boot-time self-resize without an IPC round-trip
+                            // per frame).
+                            let now = ctx.input(|i| i.time);
+                            let changed = self.last_window_set != Some(next);
+                            if changed || self.last_window_set_at.is_none_or(|t| now - t >= 0.5) {
+                                if changed {
+                                    tracing::info!(
+                                        set = ?next,
+                                        surface_embedded,
+                                        "macOS Desktop-mode WINDOW_SET (embedded=corner-park, else=16:9 fit)"
+                                    );
+                                }
+                                let (x, y, w, h) = next;
+                                let _ = self
+                                    .driver_tx
+                                    .try_send(crate::state::DriverJob::WindowSet { x, y, w, h });
+                                self.last_window_set = Some(next);
+                                self.last_window_set_at = Some(now);
                             }
-                            let _ = self.driver_tx.try_send(crate::state::DriverJob::WindowSet {
-                                x,
-                                y,
-                                w,
-                                h,
-                            });
-                            self.last_window_set = Some(next);
-                            self.last_window_set_at = Some(now);
                         }
                     }
                 }
@@ -997,6 +1043,23 @@ impl eframe::App for LauncherApp {
         let game_underneath = status_snapshot.rpcs3_running
             && status_snapshot.current_game.is_some()
             && status_snapshot.game_playable;
+
+        // ISSUE 2 (P8 surface-embed): when the game's render layer is hosted
+        // in-window via CALayerHost, the opaque vortex/sky/starfield backdrop sits
+        // ON TOP of that layer (the host is sublayer-0, behind egui's GL chrome)
+        // and hides it. Force the punch-through ON whenever a surface is embedded,
+        // independent of `game_playable` — the iris-mask drives the whole backdrop
+        // transparent so the hosted layer shows through. (The CALayerHost is only
+        // ever attached on macOS Desktop mode with a live game, so this can't punch
+        // a hole to the desktop on the boot / picker / post-shutdown surfaces.)
+        //
+        // FLAG (needs live confirmation): this is the smallest change that reveals
+        // the layer, but it (a) bypasses the `game_playable` gate that normally
+        // gives a single clean iris reveal at end-of-compile, and (b) assumes the
+        // hosted layer fully fills the iris hole. If it reads wrong live, the
+        // alternative is forcing `in_game::render`'s transparent surface, or zeroing
+        // only the vortex backdrop instead of opening the iris.
+        let game_underneath = game_underneath || surface_embedded;
 
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(egui::Color32::TRANSPARENT))
