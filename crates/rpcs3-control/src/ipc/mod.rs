@@ -126,6 +126,16 @@ impl IpcPortalDriver {
         proto::parse_window(&reply)
     }
 
+    /// Read the macOS `CAContextID` (`SURFACE`, P8), `0` until the game's
+    /// CAMetalLayer has been wrapped in a published `CAContext` at Vulkan
+    /// surface creation. The launcher hosts this id via `CALayerHost` to
+    /// composite the game's render layer INSIDE its own window. Not part of the
+    /// trait — the `game_surface_context_id` trait method wraps this.
+    pub fn surface_context_id(&self) -> Result<u32> {
+        let reply = self.roundtrip(&Command::Surface)?;
+        proto::parse_surface(&reply)
+    }
+
     /// Liveness check (`PING` → `PONG`).
     pub fn ping(&self) -> Result<()> {
         let reply = self.roundtrip(&Command::Ping)?;
@@ -282,6 +292,11 @@ impl PortalDriver for IpcPortalDriver {
     fn game_window_handle(&self) -> Result<Option<u64>> {
         let h = self.window_handle()?;
         Ok((h != 0).then_some(h))
+    }
+
+    fn game_surface_context_id(&self) -> Result<Option<u32>> {
+        let c = self.surface_context_id()?;
+        Ok((c != 0).then_some(c))
     }
 
     /// Move + resize the running game window (P7) — the launcher tiling the game in

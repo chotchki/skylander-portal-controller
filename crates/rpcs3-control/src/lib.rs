@@ -60,6 +60,14 @@ pub trait PortalDriver: Send + Sync {
         Ok(None)
     }
 
+    /// macOS `CAContextID` over IPC (P8), non-zero once the game's render layer
+    /// has a published `CAContext` the launcher hosts via `CALayerHost` to
+    /// composite the game INSIDE its own window. `Ok(None)` when unavailable /
+    /// not yet published. Default is `None` (non-IPC + non-macOS drivers).
+    fn game_surface_context_id(&self) -> Result<Option<u32>> {
+        Ok(None)
+    }
+
     /// Move + resize the running game window (P7) — the launcher tiling the game
     /// below itself in Desktop mode. On Windows the launcher repositions the
     /// game HWND directly via `SetWindowPos`; on macOS it can't touch another

@@ -78,6 +78,11 @@ impl UnixRpcsProcess {
     ) -> Result<Self> {
         let mut cmd = Command::new(exe);
         cmd.args(args).env("SKYLANDER_IPC_PATH", socket_path);
+        // PLAN Phase B: now that macOS window coordination exists (P7 WINDOW_SET
+        // + the launcher fit), the game window should be borderless like Windows
+        // — the launcher places + frames it. (Was omitted while coordination was
+        // Win32-only; the module note above is now stale.)
+        cmd.env("SKYLANDER_BORDERLESS", "1");
         // Point the patched RPCS3 at its data/config root (firmware + games.yml),
         // which may live apart from the exe (Phase 16). Omitted ⇒ RPCS3's own
         // resolution (the bundle's default / `~/.config/rpcs3`).

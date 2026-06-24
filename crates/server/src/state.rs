@@ -225,6 +225,17 @@ pub struct LauncherStatus {
     /// directly above this window in the z-order. Only meaningful while
     /// `rpcs3_running`; a stale value from a prior game is ignored.
     pub game_window_handle: Option<u64>,
+    /// macOS `CAContextID` of the game's published render layer, reported by
+    /// RPCS3 over IPC (P8 surface-embed). `Some(non-zero)` ⇒ the launcher hosts
+    /// this layer tree INSIDE its own egui window via `CALayerHost`
+    /// (`crate::compositor::CompositorHost`) — compositing the game behind
+    /// egui's chrome — instead of tiling a second top-level window beneath
+    /// itself (the P7 `WINDOW_SET` fallback). The id is **stable for the whole
+    /// game session** (survives swapchain recreate / resize / resolution
+    /// change), so the launcher attaches once and never re-fetches. Only
+    /// meaningful while `rpcs3_running`; a stale value from a prior game is
+    /// ignored. `None` on non-IPC / non-macOS drivers.
+    pub game_surface_context_id: Option<u32>,
     /// `true` while the on-demand RPCS3 **settings GUI** is open (PLAN 16.9.3).
     /// The full Qt settings window needs the whole TV + the HTPC keyboard/mouse,
     /// so the always-on-top launcher **minimises itself** for the duration and
@@ -817,14 +828,23 @@ pub fn spawn_state_poller(
         loop {
             ticker.tick().await;
 
-            // emu_state() + the window handle are blocking IPC round-trips — off-reactor.
+            // emu_state() + the window handle + the macOS surface contextId are
+            // blocking IPC round-trips — off-reactor. (P8: `game_surface_context_id`
+            // rides the same poll as `game_window_handle`; non-zero ⇒ the launcher
+            // hosts the game's render layer in-window via CALayerHost.)
             let d = driver.clone();
-            let (state, game_window_handle) =
-                match tokio::task::spawn_blocking(move || (d.emu_state(), d.game_window_handle()))
-                    .await
+            let (state, game_window_handle, game_surface_context_id) =
+                match tokio::task::spawn_blocking(move || {
+                    (
+                        d.emu_state(),
+                        d.game_window_handle(),
+                        d.game_surface_context_id(),
+                    )
+                })
+                .await
                 {
-                    Ok((s, h)) => (s.ok().flatten(), h.ok().flatten()),
-                    Err(_) => (None, None),
+                    Ok((s, h, c)) => (s.ok().flatten(), h.ok().flatten(), c.ok().flatten()),
+                    Err(_) => (None, None, None),
                 };
 
             // Ready = compile complete + actually rendering (frames advancing).
@@ -856,6 +876,11 @@ pub fn spawn_state_poller(
                 // and the user sees the compile through it for the whole boot, no
                 // matter what the launcher paints (PLAN 16.6.2, HTPC 2026-05-30).
                 st.game_window_handle = game_window_handle;
+                // P8 surface-embed: publish the macOS render-layer contextId the
+                // same way as the window handle — the launcher reads it each frame
+                // and attaches a CALayerHost the moment it goes Some (the id is
+                // stable for the session, so it attaches once).
+                st.game_surface_context_id = game_surface_context_id;
                 if !st.rpcs3_running {
                     ready_run = 0;
                     last_frames = 0;
@@ -1150,6 +1175,10 @@ pub fn spawn_crash_watchdog(
                 st.game_playable = false;
                 st.frozen = false;
                 st.game_window_handle = None;
+                // Drop the stale render-layer contextId too — the freshly-booted
+                // game publishes a new CAContextID; clearing it makes the launcher
+                // detach the old CALayerHost and re-attach on the new id (P8).
+                st.game_surface_context_id = None;
                 st.loading_game = game_name.clone();
                 st.screen = LauncherScreen::Main;
             }

@@ -162,6 +162,13 @@ pub struct LauncherApp {
     /// otherwise leave the game stranded outside the launcher pane until the next
     /// genuine launcher-rect change. macOS-only path. `None` until the first send.
     last_window_set_at: Option<f64>,
+    /// macOS surface-embed host (P8 / Phase C). When the driver publishes the
+    /// game's `CAContextID` (`status.game_surface_context_id`), the launcher
+    /// hosts that render-layer tree INSIDE its own egui view via `CALayerHost`
+    /// — compositing the game behind egui's chrome — rather than tiling a
+    /// second top-level window beneath itself (the `WindowSet` fallback). A
+    /// no-op stub on non-macOS targets, so this field exists on every platform.
+    compositor: crate::compositor::CompositorHost,
 }
 
 impl LauncherApp {
@@ -239,7 +246,89 @@ impl LauncherApp {
             driver_tx,
             last_window_set: None,
             last_window_set_at: None,
+            compositor: crate::compositor::CompositorHost::new(),
         }
+    }
+
+    /// macOS surface-embed (P8 / Phase C). If the driver has published the
+    /// game's `CAContextID` (`status.game_surface_context_id`), host that
+    /// render-layer tree inside THIS launcher window via `CALayerHost` and fit
+    /// it to the same 16:9 sub-rect the `WindowSet` fallback would have tiled a
+    /// second window into — but **view-relative** (origin at the launcher's
+    /// content, not screen-global). Returns `true` when the surface is hosted
+    /// (so the caller skips the `WindowSet` fallback).
+    ///
+    /// Attaches once (the contextId is stable for the session); subsequent
+    /// frames only re-fit. Detaches when the contextId goes away (game stopped
+    /// / recovering) so a fresh boot re-attaches on its new id.
+    #[cfg(target_os = "macos")]
+    fn try_embed_game_surface(
+        &mut self,
+        frame: &eframe::Frame,
+        ctx: &egui::Context,
+        status: &LauncherStatus,
+    ) -> bool {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+        // No published surface → detach any prior host and let the WindowSet
+        // fallback take over.
+        let Some(context_id) = status.game_surface_context_id.filter(|c| *c != 0) else {
+            self.compositor.detach();
+            return false;
+        };
+
+        // Only embed in Desktop window mode — TV mode is fullscreen and the
+        // game/launcher coexist as plain siblings (window coordination is a
+        // Desktop-mode concern). In TV mode, fall back to the sibling behaviour.
+        if !matches!(self.window_mode, crate::config::WindowMode::Desktop) {
+            self.compositor.detach();
+            return false;
+        }
+
+        // Pull the launcher window's NSView* out of raw-window-handle (the
+        // AppKit equivalent of the Win32 HWND path used elsewhere in this file).
+        let Ok(handle) = frame.window_handle() else {
+            return false;
+        };
+        let RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
+            return false;
+        };
+        let ns_view: *mut std::ffi::c_void = appkit.ns_view.as_ptr();
+
+        // Attach once — idempotent if already on this contextId (stable for the
+        // session).
+        if !self.compositor.is_attached_to(context_id) {
+            // SAFETY: `ns_view` is eframe's owned AppKit window handle for this
+            // frame — a valid live NSView*. The compositor retains it.
+            unsafe { self.compositor.attach(ns_view, context_id) };
+        }
+
+        // Fit the hosted layer to the same largest-16:9-centered sub-rect the
+        // WindowSet fallback computes, but VIEW-RELATIVE: the egui inner_rect is
+        // screen-global, so subtract its own min to get a (0,0)-origin pane
+        // inside the launcher's content. (The compositor's set_frame then
+        // applies the AppKit flip — see LIVE-TWEAK SPOT #2 there.)
+        if let Some(rect) = ctx.input(|i| i.viewport().inner_rect) {
+            let pane_w = rect.width();
+            let pane_h = rect.height();
+            let ar = 16.0_f32 / 9.0;
+            let (gw, gh) = if pane_w / pane_h > ar {
+                (pane_h * ar, pane_h)
+            } else {
+                (pane_w, pane_w / ar)
+            };
+            // View-relative origin: centered within the (0,0)-anchored content
+            // rect. Note inner_rect's own min is the window's screen position,
+            // which we deliberately drop here (the hosted layer lives in the
+            // view's coordinate space, not the screen's).
+            let gx = (pane_w - gw) / 2.0;
+            let gy = (pane_h - gh) / 2.0;
+
+            self.compositor
+                .set_frame(gx as f64, gy as f64, gw.max(0.0) as f64, gh.max(0.0) as f64);
+        }
+
+        true
     }
 
     /// "Trouble connecting?" diagnostic card (PLAN 17.1/17.3/17.4). Rendered as a
@@ -537,6 +626,26 @@ impl eframe::App for LauncherApp {
                 ));
                 self.window_on_top_state = Some(false);
             }
+            // P8 surface-embed (macOS, Phase C): when the driver has published the
+            // game's CAContextID, host its render layer INSIDE this launcher view
+            // via CALayerHost (composited behind egui's chrome) instead of tiling a
+            // second top-level window beneath us. This is the PRIMARY macOS path;
+            // the `WindowSet` fit below is the fallback for when no contextId is
+            // present. The contextId is stable for the session, so we attach once.
+            // Only consumed by the `#[cfg(not(windows))]` fit block below, so it's
+            // only bound there (Windows tiles via Win32 and never embeds).
+            #[cfg(not(windows))]
+            let surface_embedded = {
+                #[cfg(target_os = "macos")]
+                {
+                    self.try_embed_game_surface(frame, ctx, &status_snapshot)
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    false
+                }
+            };
+
             // Re-assert every frame while a game is live: keep the game sandwiched
             // directly below the launcher so no other window (e.g. a terminal the
             // user alt-tabbed to) can drift *between* them and show through the
@@ -568,7 +677,12 @@ impl eframe::App for LauncherApp {
                     // boot-time self-resize had already stranded the game out of
                     // the pane. We instead absorb the boot churn with a low-rate
                     // re-assert (the ≥0.5s branch below).
-                    if matches!(self.window_mode, crate::config::WindowMode::Desktop)
+                    //
+                    // FALLBACK ONLY: when the surface is embedded in-window via
+                    // CALayerHost (P8) there's no separate window to tile, so skip
+                    // the WINDOW_SET fit entirely.
+                    if !surface_embedded
+                        && matches!(self.window_mode, crate::config::WindowMode::Desktop)
                         && let Some(rect) = ctx.input(|i| i.viewport().inner_rect)
                     {
                         // The game renders 16:9; the launcher pane is not. Fit the
@@ -598,6 +712,13 @@ impl eframe::App for LauncherApp {
                         let now = ctx.input(|i| i.time);
                         let changed = self.last_window_set != Some(next);
                         if changed || self.last_window_set_at.is_none_or(|t| now - t >= 0.5) {
+                            if changed {
+                                tracing::info!(
+                                    pane = ?(pane.min.x, pane.min.y, pane.width(), pane.height()),
+                                    set = ?(x, y, w, h),
+                                    "B.3 fit: inner_rect -> WINDOW_SET"
+                                );
+                            }
                             let _ = self.driver_tx.try_send(crate::state::DriverJob::WindowSet {
                                 x,
                                 y,

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Apply the RPCS3 patch series (P1 IPC portal control, P2 window lifecycle,
 # P3 offline-connect errno, P4 guest portal-event pushes, P5 save-state portal
-# re-attach, P6 gamepad BUTTON_PRESS injection, P7 game-window tiling WINDOW_SET)
+# re-attach, P6 gamepad BUTTON_PRESS injection, P7 game-window tiling WINDOW_SET,
+# P8 macOS CAMetalLayer CAContext publish for cross-process CALayerHost (SURFACE))
 # onto a checkout of the pinned
 # upstream RPCS3 — the vendored submodule by default.
 #

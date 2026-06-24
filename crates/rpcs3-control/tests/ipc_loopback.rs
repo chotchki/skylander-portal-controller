@@ -189,6 +189,9 @@ fn handle(cmd: &str, portal: &mut [Option<u32>; 8]) -> String {
                 _ => "ERR bad_args\n".to_string(),
             }
         }
+        // P8: the real emulator publishes its CAMetalLayer's CAContextID (decimal);
+        // the fake replies with a fixed non-zero id.
+        "SURFACE" => "OK context=456586159\n".to_string(),
         // P7: the real emulator re-frames its game window; the fake validates the wire
         // shape ("WINDOW_SET <x> <y> <w> <h>", w/h >= the emulator minimum) and acks.
         "WINDOW_SET" => {
@@ -221,6 +224,17 @@ fn window_set_round_trips() {
     let d = IpcPortalDriver::with_path(&sock);
     d.window_set(0, 24, 1280, 720)
         .expect("WINDOW_SET 0 24 1280 720 should ack OK");
+}
+
+#[test]
+fn surface_context_id_round_trips() {
+    let (sock, _loads) = spawn_fake_server(false);
+    let d = IpcPortalDriver::with_path(&sock);
+    // The fake publishes the fixed id 0x1B36F3AF == 456_586_159.
+    assert_eq!(d.surface_context_id().unwrap(), 456_586_159);
+    // The trait method maps a non-zero id to Some (game_surface_context_id is
+    // what the launcher's state poller calls).
+    assert_eq!(d.game_surface_context_id().unwrap(), Some(456_586_159));
 }
 
 #[test]

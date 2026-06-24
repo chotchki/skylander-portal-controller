@@ -3,6 +3,7 @@
 
 pub mod badge;
 pub mod badge_text;
+pub mod compositor;
 pub mod config;
 pub mod display_mode;
 pub mod embedded_assets;

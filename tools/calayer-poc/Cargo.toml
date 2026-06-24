@@ -1,0 +1,68 @@
+# Throwaway proof-of-concept: macOS cross-process CALayer sharing via the
+# private CAContext / CALayerHost (CARemoteLayer) mechanism.
+#
+# This is DELIBERATELY isolated from the main cargo workspace via the empty
+# `[workspace]` table below — `cargo` treats this directory as its own
+# workspace root and will not try to fold it into the repo's root workspace.
+[workspace]
+
+[package]
+name = "calayer-poc"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "producer"
+path = "src/bin/producer.rs"
+
+[[bin]]
+name = "consumer"
+path = "src/bin/consumer.rs"
+
+[dependencies]
+# objc2 0.6 family (objc2-foundation/app-kit/quartz-core 0.3.2 all depend on
+# objc2 0.6). NOTE: winit 0.30 internally uses objc2 0.5 — that is fine because
+# we never share objc2 *types* with winit; we only take a raw `*mut NSView`
+# pointer out of raw-window-handle and re-wrap it with our own objc2 0.6 types.
+objc2 = "0.6"
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSString",
+    "NSDictionary",
+    "NSGeometry",      # NSRect / CGRect bridging
+] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSApplication",
+    "NSResponder",
+    "NSRunningApplication",   # NSApplicationActivationPolicy lives here
+    "NSView",
+    "NSWindow",
+    "objc2-core-foundation",
+    "objc2-quartz-core",   # enables NSView::layer() -> CALayer
+] }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CABase",
+    "CALayer",
+    "CAAnimation",      # pulls in CABasicAnimation
+    "CAMediaTiming",
+    "CATransaction",
+    "objc2-core-foundation",
+    "objc2-core-graphics",   # enables CALayer::setBackgroundColor(CGColor)
+] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CFBase",
+    "CFRunLoop",
+] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CGColor",
+    "CGColorSpace",
+] }
+
+# Consumer window + handle extraction.
+winit = "0.30"
+raw-window-handle = "0.6"

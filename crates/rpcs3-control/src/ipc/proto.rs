@@ -10,6 +10,7 @@
 //! ->  STATE                    <-  OK status=<s> frames=<n> progr=<a>/<b> seg=<c>/<d>
 //! ->  STATUS                   <-  OK 0:<serial|empty> 1:<..> .. 7:<..>
 //! ->  WINDOW                   <-  OK handle=<hex>
+//! ->  SURFACE                  <-  OK context=<dec>           (P8)
 //! ->  LOAD <abs .sky path>     <-  OK slot=<n>   | ERR <reason>
 //! ->  CLEAR <slot 0-7>         <-  OK            | ERR <reason>
 //! ->  RECONNECT                <-  OK            | ERR no_device    (P5)
@@ -68,6 +69,11 @@ pub enum Command<'a> {
     State,
     Status,
     Window,
+    /// Read the cross-process layer-share handle (P8) — the macOS `CAContextID`
+    /// the launcher hosts via `CALayerHost` to composite the game's render layer
+    /// INSIDE its own window (no second top-level window to choreograph). `0`
+    /// until the Vulkan surface (hence the CAMetalLayer's CAContext) exists.
+    Surface,
     /// Hot-plug-cycle the emulated portal (P5): detach + reattach so a
     /// save-state-resumed guest re-enumerates it and refreshes the stale USB
     /// pipe handles that otherwise fail every portal transfer with `CELL_EINVAL`.
@@ -104,6 +110,7 @@ impl Command<'_> {
             Command::State => "STATE\n".to_string(),
             Command::Status => "STATUS\n".to_string(),
             Command::Window => "WINDOW\n".to_string(),
+            Command::Surface => "SURFACE\n".to_string(),
             Command::Reconnect => "RECONNECT\n".to_string(),
             // The server takes everything after the first space as the path
             // (verbatim, to end-of-line), so paths with spaces need no quoting.
@@ -252,6 +259,21 @@ pub fn parse_window(line: &str) -> Result<u64> {
         .strip_prefix("handle=")
         .with_context(|| format!("WINDOW reply missing `handle=`: {line:?}"))?;
     u64::from_str_radix(h.trim(), 16).with_context(|| format!("WINDOW reply bad hex: {h:?}"))
+}
+
+/// `OK context=<decimal>` → the macOS `CAContextID` for cross-process
+/// `CALayerHost` embedding (P8). `0` until the game's CAMetalLayer has been
+/// wrapped in a published CAContext at Vulkan surface creation. Decimal (not
+/// hex like `WINDOW`'s handle): the emulator emits `std::to_string(contextId)`,
+/// matching the POC's `CONTEXT_ID=` format.
+pub fn parse_surface(line: &str) -> Result<u32> {
+    let rest = expect_ok(line)?;
+    let c = rest
+        .strip_prefix("context=")
+        .with_context(|| format!("SURFACE reply missing `context=`: {line:?}"))?;
+    c.trim()
+        .parse::<u32>()
+        .with_context(|| format!("SURFACE reply bad context id: {c:?}"))
 }
 
 /// `OK 0:<serial|empty> .. 7:<..>` → per-slot occupancy. Used by `STATUS`.
@@ -416,6 +438,16 @@ mod tests {
         assert_eq!(parse_window("OK handle=120412").unwrap(), 0x0012_0412);
         assert_eq!(parse_window("OK handle=0").unwrap(), 0);
         assert!(parse_window("OK handle=zzz").is_err());
+    }
+
+    #[test]
+    fn surface_encode_and_parse() {
+        assert_eq!(Command::Surface.encode(), "SURFACE\n");
+        // Decimal CAContextID — the emulator emits `std::to_string(contextId)`.
+        assert_eq!(parse_surface("OK context=456586159").unwrap(), 456_586_159);
+        assert_eq!(parse_surface("OK context=0").unwrap(), 0); // not yet published
+        assert!(parse_surface("OK context=zzz").is_err());
+        assert!(parse_surface("OK").is_err()); // missing context=
     }
 
     #[test]

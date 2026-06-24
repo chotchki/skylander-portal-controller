@@ -130,6 +130,33 @@ windows = { version = "0.61", features = [
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
 
+# macOS surface-embed (P8 / Phase C): host the RPCS3 game's render layer INSIDE
+# the egui launcher window via the private `CALayerHost` (CARemoteLayer) class.
+# objc2 0.6 family — same versions/features the proven cross-process POC uses
+# (`tools/calayer-poc/`): we pull the launcher window's `NSView*` out of
+# raw-window-handle and re-wrap it with our own objc2 0.6 types, make it
+# layer-backed, create a `CALayerHost`, `setContextId:` it to the game's
+# published `CAContextID`, and parent it as a sublayer. See `src/compositor.rs`.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSGeometry", # NSRect / NSPoint / NSSize / CGRect bridging
+] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSResponder",
+    "NSView",
+    "objc2-quartz-core", # enables NSView::layer() -> CALayer
+] }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CABase",
+    "CALayer",
+    "CATransaction",       # disable implicit animations while (re)framing the host layer
+    "objc2-core-foundation", # enables CALayer::setFrame(CGRect) — the host-layer fit
+] }
+
 [dev-dependencies]
 tempfile = "3"
 # `util` brings `ServiceExt::oneshot`, used by axum-handler unit tests
