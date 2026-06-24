@@ -146,6 +146,43 @@ mod imp_mac {
         SCRecordingOutputFileType,
     };
 
+    /// Locate ONE on-screen window owned by `app` whose title contains
+    /// `title_contains`. The shared predicate for per-window capture
+    /// (`start_window`) and the classifier's per-window grab
+    /// (`screen::grab_frame`) — both must target the SAME RPCS3 game viewport
+    /// (NOT the RPCS3 main GUI window), so the predicate lives here once.
+    ///
+    /// Emits a `debug` line per non-empty candidate (incl. `is_on_screen` for
+    /// occluded windows) to aid live triage of which window resolves.
+    pub fn find_window(app: &str, title_contains: &str) -> Result<SCWindow> {
+        let content = SCShareableContent::get().map_err(|e| anyhow!("shareable content: {e:?}"))?;
+        let windows = content.windows();
+        for w in &windows {
+            let a = w
+                .owning_application()
+                .map(|x| x.application_name())
+                .unwrap_or_default();
+            if !a.is_empty() {
+                tracing::debug!(app = %a, title = ?w.title(), on_screen = w.is_on_screen(), "sckit candidate");
+            }
+        }
+        windows
+            .into_iter()
+            .find(|w| {
+                w.is_on_screen()
+                    && w.owning_application()
+                        .map(|a| a.application_name())
+                        .as_deref()
+                        == Some(app)
+                    && w.title()
+                        .map(|t| t.contains(title_contains))
+                        .unwrap_or(false)
+            })
+            .with_context(|| {
+                format!("no on-screen window for app {app:?} with title ~{title_contains:?}")
+            })
+    }
+
     /// CG/window-server init for a bare CLI — without it `SCStream` aborts with
     /// `CGS_REQUIRE_INIT`. AppKit's lightweight loader does it (no heavy
     /// objc2-app-kit dep). Must run on the main thread, which the recorder's
@@ -222,34 +259,7 @@ mod imp_mac {
             if let Some(noop) = Self::no_capture() {
                 return Ok(noop);
             }
-            let content =
-                SCShareableContent::get().map_err(|e| anyhow!("shareable content: {e:?}"))?;
-            let windows = content.windows();
-            // Phase B.1 debug: what SCKit enumerates (incl. is_on_screen for occluded).
-            for w in &windows {
-                let a = w
-                    .owning_application()
-                    .map(|x| x.application_name())
-                    .unwrap_or_default();
-                if !a.is_empty() {
-                    tracing::debug!(app = %a, title = ?w.title(), on_screen = w.is_on_screen(), "sckit candidate");
-                }
-            }
-            let window = windows
-                .into_iter()
-                .find(|w| {
-                    w.is_on_screen()
-                        && w.owning_application()
-                            .map(|a| a.application_name())
-                            .as_deref()
-                            == Some(app)
-                        && w.title()
-                            .map(|t| t.contains(title_contains))
-                            .unwrap_or(false)
-                })
-                .with_context(|| {
-                    format!("no on-screen window for app {app:?} with title ~{title_contains:?}")
-                })?;
+            let window = find_window(app, title_contains)?;
             let f = window.frame();
             // Capture at backing pixels (≈2× points) for a crisp pane.
             let (w, h) = ((f.size.width as u32) * 2, (f.size.height as u32) * 2);
@@ -302,6 +312,10 @@ mod imp_mac {
 
 #[cfg(target_os = "macos")]
 pub use imp_mac::DesktopCapture;
+// The classifier's per-window grab (`screen::grab_frame`) reuses the same
+// game-window predicate as the recorder's per-window capture.
+#[cfg(target_os = "macos")]
+pub use imp_mac::find_window;
 
 // --- other non-Windows (e.g. Linux/CI): no-op stub so the workspace builds ---
 #[cfg(all(not(windows), not(target_os = "macos")))]

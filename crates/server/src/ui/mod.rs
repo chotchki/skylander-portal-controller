@@ -156,6 +156,12 @@ pub struct LauncherApp {
     /// actually changes. `None` until the first fit. macOS-only path (the Win32
     /// fit on Windows re-applies every frame and tracks its own state).
     last_window_set: Option<(i32, i32, u32, u32)>,
+    /// Wall-clock (egui `input.time`, seconds) of the last `WindowSet` send. Drives
+    /// a low-rate re-assert (≥0.5s) on top of the change-detection above: RPCS3
+    /// resizes its own window during boot, and a stale `last_window_set` would
+    /// otherwise leave the game stranded outside the launcher pane until the next
+    /// genuine launcher-rect change. macOS-only path. `None` until the first send.
+    last_window_set_at: Option<f64>,
 }
 
 impl LauncherApp {
@@ -232,6 +238,7 @@ impl LauncherApp {
             window_mode,
             driver_tx,
             last_window_set: None,
+            last_window_set_at: None,
         }
     }
 
@@ -555,24 +562,42 @@ impl eframe::App for LauncherApp {
                 #[cfg(not(windows))]
                 {
                     let _ = game_hwnd;
+                    // Fit as soon as the game window exists (the enclosing
+                    // `if let Some(game_hwnd)` already gates on that), NOT on
+                    // `game_playable` — that gate fired too late, after RPCS3's
+                    // boot-time self-resize had already stranded the game out of
+                    // the pane. We instead absorb the boot churn with a low-rate
+                    // re-assert (the ≥0.5s branch below).
                     if matches!(self.window_mode, crate::config::WindowMode::Desktop)
-                        // Only fit once the game is past boot — RPCS3 resizes its
-                        // own window during compile/boot, and an IPC round-trip per
-                        // frame is expensive; gate on the stable playable signal.
-                        && status_snapshot.game_playable
-                        && let Some(rect) =
-                            ctx.input(|i| i.viewport().inner_rect)
+                        && let Some(rect) = ctx.input(|i| i.viewport().inner_rect)
                     {
-                        // `inner_rect` is the launcher content rect. Round to
-                        // integers for the WINDOW_SET geometry. See the FLAG in the
-                        // PR notes: whether this is screen vs window-relative and
-                        // points vs physical px needs live verification on macOS.
-                        let x = rect.min.x.round() as i32;
-                        let y = rect.min.y.round() as i32;
-                        let w = rect.width().round().max(0.0) as u32;
-                        let h = rect.height().round().max(0.0) as u32;
+                        // The game renders 16:9; the launcher pane is not. Fit the
+                        // largest 16:9 sub-rect centered in the pane so the game
+                        // WINDOW is all-game (no letterbox black bars inside it).
+                        let pane = rect;
+                        let ar = 16.0_f32 / 9.0;
+                        let (gw, gh) = if pane.width() / pane.height() > ar {
+                            (pane.height() * ar, pane.height())
+                        } else {
+                            (pane.width(), pane.width() / ar)
+                        };
+                        let gx = pane.min.x + (pane.width() - gw) / 2.0;
+                        let gy = pane.min.y + (pane.height() - gh) / 2.0;
+
+                        // Round to the WINDOW_SET geometry. See the FLAG in the PR
+                        // notes: whether this is screen vs window-relative and points
+                        // vs physical px needs live verification on macOS.
+                        let x = gx.round() as i32;
+                        let y = gy.round() as i32;
+                        let w = gw.round().max(0.0) as u32;
+                        let h = gh.round().max(0.0) as u32;
                         let next = (x, y, w, h);
-                        if self.last_window_set != Some(next) {
+                        // Re-send on a genuine rect change OR if ≥0.5s elapsed since
+                        // the last send (the low-rate re-assert that beats RPCS3's
+                        // boot-time self-resize without an IPC round-trip per frame).
+                        let now = ctx.input(|i| i.time);
+                        let changed = self.last_window_set != Some(next);
+                        if changed || self.last_window_set_at.is_none_or(|t| now - t >= 0.5) {
                             let _ = self.driver_tx.try_send(crate::state::DriverJob::WindowSet {
                                 x,
                                 y,
@@ -580,6 +605,7 @@ impl eframe::App for LauncherApp {
                                 h,
                             });
                             self.last_window_set = Some(next);
+                            self.last_window_set_at = Some(now);
                         }
                     }
                 }

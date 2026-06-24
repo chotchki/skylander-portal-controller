@@ -10,7 +10,6 @@
 //! `GateAction` → drive the IPC (`press_button` / wait) → repeat until `Stop`.
 
 use std::path::Path;
-use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use image::{DynamicImage, GrayImage};
@@ -79,24 +78,87 @@ pub fn hash_frame(img: &DynamicImage, crop: CropRect) -> ScreenHash {
     dhash(&gray)
 }
 
-/// Grab the current screen to a temp PNG via macOS `screencapture` and load it.
-/// A lightweight single-frame grab — unlike continuous SCKit capture it does NOT
-/// perturb RPCS3 (which crashed the save-state boot under continuous capture).
-/// Whole display; the library's `crop` narrows the match to the game window.
+/// Owning-application name of the RPCS3 game window, as ScreenCaptureKit reports
+/// it. Overridable via `SKYLANDER_GAME_WINDOW_APP` for live tuning — the exact
+/// `application_name()` string SCKit hands back needs empirical confirmation on
+/// the HTPC (see the FLAG in the PR notes).
+const GAME_WINDOW_APP_DEFAULT: &str = "RPCS3";
+/// Title substring that picks the RPCS3 *game viewport* (NOT the main GUI
+/// window). The game window's title carries the `FPS:` prefix (matches the
+/// Windows UIA convention — `find_top_level_with_prefix("FPS:")`). Overridable
+/// via `SKYLANDER_GAME_WINDOW_TITLE`.
+const GAME_WINDOW_TITLE_DEFAULT: &str = "FPS:";
+
+/// Grab the current **RPCS3 game window** as a `DynamicImage` via ScreenCaptureKit's
+/// single-frame screenshot API (`SCScreenshotManager::capture_image`).
+///
+/// Phase B tiles the game window under the egui launcher, so a whole-display grab
+/// no longer matches the fullscreen reference screens (`portal_ready.png` et al.)
+/// — the classifier must see ONLY the game pane. We locate the same RPCS3 viewport
+/// the recorder's per-window capture targets (`capture::find_window`, matched by
+/// owning-app + `FPS:` title), build a single-window `SCContentFilter`, and capture
+/// it. Single-shot (not a continuous `SCStream`), so it doesn't perturb RPCS3 the
+/// way continuous capture did during the save-state boot.
+///
+/// If the game window can't be found, this errors — it does NOT fall back to a
+/// whole-display grab (that reintroduces the tiling/classifier mismatch).
 #[allow(dead_code)] // wired into the nav loop in A.2.4
+#[cfg(target_os = "macos")]
 pub fn grab_frame() -> Result<DynamicImage> {
-    let tmp = std::env::temp_dir().join(format!("sky-navframe-{}.png", std::process::id()));
-    let status = Command::new("/usr/sbin/screencapture")
-        .arg("-x") // silent (no shutter sound)
-        .arg(&tmp)
-        .status()
-        .context("spawn /usr/sbin/screencapture")?;
-    if !status.success() {
-        bail!("screencapture exited with {status}");
+    use screencapturekit::prelude::{SCContentFilter, SCStreamConfiguration};
+    use screencapturekit::screenshot_manager::{CGImageExt, SCScreenshotManager};
+
+    let app = std::env::var("SKYLANDER_GAME_WINDOW_APP")
+        .unwrap_or_else(|_| GAME_WINDOW_APP_DEFAULT.to_string());
+    let title = std::env::var("SKYLANDER_GAME_WINDOW_TITLE")
+        .unwrap_or_else(|_| GAME_WINDOW_TITLE_DEFAULT.to_string());
+
+    let window = crate::capture::find_window(&app, &title)
+        .with_context(|| format!("locate RPCS3 game window (app {app:?}, title ~{title:?})"))?;
+
+    // Capture at backing pixels (≈2× points on Retina) for a crisp frame — the
+    // classifier downscales to a 9×8 dHash anyway, but exact pixels avoid any
+    // resample artefacts skewing the hash.
+    let f = window.frame();
+    let w = ((f.size.width as u32) * 2).max(1);
+    let h = ((f.size.height as u32) * 2).max(1);
+
+    let filter = SCContentFilter::create().with_window(&window).build();
+    let config = SCStreamConfiguration::new().with_width(w).with_height(h);
+    let cgimage = SCScreenshotManager::capture_image(&filter, &config)
+        .map_err(|e| anyhow::anyhow!("SCScreenshotManager::capture_image: {e:?}"))?;
+
+    // `rgba_data()` returns tightly-packed `width*height*4` RGBA (no row padding),
+    // so `RgbaImage::from_raw` lines up 1:1 with the CGImage dims. The capture's
+    // own width/height (not our requested w/h) are authoritative — SCKit may round.
+    let (cw, ch) = (cgimage.width(), cgimage.height());
+    let data = cgimage
+        .rgba_data()
+        .map_err(|e| anyhow::anyhow!("CGImage::rgba_data: {e:?}"))?;
+    let expected = cw
+        .checked_mul(ch)
+        .and_then(|n| n.checked_mul(4))
+        .context("captured CGImage dimensions overflow")?;
+    if data.len() != expected {
+        bail!(
+            "captured RGBA buffer is {} bytes, expected {cw}x{ch}x4 = {expected} \
+             (unexpected row padding/stride from rgba_data)",
+            data.len()
+        );
     }
-    let img = image::open(&tmp).with_context(|| format!("load grabbed frame {}", tmp.display()))?;
-    let _ = std::fs::remove_file(&tmp);
-    Ok(img)
+    let rgba = image::RgbaImage::from_raw(cw as u32, ch as u32, data)
+        .context("RgbaImage::from_raw: buffer/dimension mismatch")?;
+    Ok(DynamicImage::ImageRgba8(rgba))
+}
+
+/// Non-macOS stub: per-window SCKit capture is macOS-only. The nav loop that
+/// drives this is a macOS recorder feature; on other targets it errors clearly
+/// rather than silently capturing the whole display.
+#[allow(dead_code)]
+#[cfg(not(target_os = "macos"))]
+pub fn grab_frame() -> Result<DynamicImage> {
+    let _ = (GAME_WINDOW_APP_DEFAULT, GAME_WINDOW_TITLE_DEFAULT);
+    bail!("per-window frame grab (classifier nav) is macOS-only")
 }
 
 // --- manifest (the JSON the user fills after reviewing the A.2.2 capture) ---
