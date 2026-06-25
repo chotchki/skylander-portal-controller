@@ -194,6 +194,10 @@ pub struct PersistedConfig {
     /// configs load as `Tv` (the prior fullscreen behaviour).
     #[serde(default)]
     pub window_mode: crate::config::WindowMode,
+    /// 2× (1440p) render pass for the macOS surface-embed (PLAN S). `#[serde(default)]`
+    /// so pre-S configs load as `false`. Toggled via the Konami-gated admin UI.
+    #[serde(default)]
+    pub render_2x: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -244,6 +248,7 @@ impl PersistedConfig {
             data_root: exe_parent.join("data"),
             hmac_key: Some(crate::config::generate_hmac_key()),
             window_mode,
+            render_2x: false,
         }
     }
 
@@ -286,6 +291,7 @@ impl PersistedConfig {
             data_root,
             hmac_key: Some(crate::config::generate_hmac_key()),
             window_mode: crate::config::WindowMode::Tv,
+            render_2x: false,
         }
     }
 

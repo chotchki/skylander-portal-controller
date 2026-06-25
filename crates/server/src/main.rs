@@ -269,6 +269,16 @@ fn main() -> Result<()> {
     // PLAN 20.6 — the running window mode, surfaced via AppState so the admin
     // window-mode toggle can read it back. Copy (fieldless enum).
     let window_mode = cfg.window_mode;
+    // PLAN S — the 2× render-pass setting, surfaced via AppState for the admin
+    // toggle. When on, export SKYLANDER_SURFACE_2X here (main thread, before the
+    // tokio runtime + any RPCS3 spawn) so the patched RPCS3 child inherits it and
+    // sizes its render surface to 2560×1440. Applies on next launcher boot.
+    let render_2x = cfg.render_2x;
+    if render_2x {
+        // SAFETY: startup is still single-threaded here — no other thread reads or
+        // writes the process env yet (the tokio runtime + RPCS3 spawn come later).
+        unsafe { std::env::set_var("SKYLANDER_SURFACE_2X", "1") };
+    }
     let rpcs3_lifecycle = Arc::new(tokio::sync::Mutex::new(RpcsLifecycle::default()));
     let rpcs3_for_task = rpcs3_lifecycle.clone();
     let portal_for_task = portal.clone();
@@ -540,6 +550,7 @@ fn main() -> Result<()> {
                     phone_dist: phone_dist.clone(),
                     hmac_key,
                     window_mode,
+                    render_2x,
                     boot_id: {
                         // Random u64 from OsRng (already a dep via argon2's
                         // rand_core re-export). Phones compare against the

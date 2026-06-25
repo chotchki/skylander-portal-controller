@@ -97,10 +97,10 @@ on the next launcher boot — mirroring the PLAN 20.6 window-mode toggle (`set_w
 the patched binary reads it to size the surface. Needs its own stability validation.
 
 - [x] S.1 - **C++**: env-drive the surface size — `SKYLANDER_SURFACE_2X` → 2560×1440 (else 1280×720) in `surface_publish.mm` `SKY_SURFACE_W/H_PX` + `gs_frame::client_width/height`; patch series regenerated (P8 amended, only `0010` changed). No wire change (env, not an IPC command), so loopback/proto unaffected.
-- [ ] S.2 - **Config**: `render_2x: bool` on `PersistedConfig` + runtime `Config` (mirror `window_mode`); loaded at startup.
-- [ ] S.3 - **Launcher apply**: `process_unix.rs::spawn` sets `SKYLANDER_SURFACE_2X=1` when `render_2x` (thread `Config.render_2x` to the spawn).
-- [ ] S.4 - **Server endpoint**: `GET/POST /api/render-2x` (`fetch_render_2x` / `set_render_2x`) — persist config.json, 202 "restart to apply" (mirror `set_window_mode`).
-- [ ] S.5 - **Phone UI**: Konami-gated "2× render" toggle in `profile_picker.rs` (mirror the window-mode toggle) + `model` + `api`.
+- [x] S.2 - **Config**: `render_2x: bool` on `PersistedConfig` + runtime `Config` (mirror `window_mode`); loaded at startup.
+- [x] S.3 - **Launcher apply**: `process_unix.rs::spawn` sets `SKYLANDER_SURFACE_2X=1` when `render_2x` (thread `Config.render_2x` to the spawn).
+- [x] S.4 - **Server endpoint**: `GET/POST /api/render-2x` (`fetch_render_2x` / `set_render_2x`) — persist config.json, 202 "restart to apply" (mirror `set_window_mode`).
+- [x] S.5 - **Phone UI**: Konami-gated "2× render" toggle in `profile_picker.rs` (mirror the window-mode toggle) + `model` + `api`.
 - [ ] S.6 - **Stability validation** (chotchki, M3 Max): 1440p cold-boot + sustained play — perf, crashes, thermal vs 720p.
 - [ ] S.7 - **Final pin decision**: keep the toggle default-off, flip the default, or auto-by-display.
 

@@ -37,6 +37,9 @@ pub struct AppState {
     /// `cfg.window_mode` at startup; read by `GET /api/launcher/window-mode`
     /// so the phone's Konami-gated admin toggle reflects the running mode.
     pub window_mode: crate::config::WindowMode,
+    /// 2× render-pass setting (PLAN S), surfaced so `GET /api/launcher/render-2x`
+    /// reflects it for the phone's admin toggle. Set from `cfg.render_2x` at startup.
+    pub render_2x: bool,
     pub driver_tx: mpsc::Sender<DriverJob>,
     pub portal: Arc<Mutex<[SlotState; SLOT_COUNT]>>,
     pub events: broadcast::Sender<Event>,

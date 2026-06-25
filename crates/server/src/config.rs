@@ -31,6 +31,10 @@ pub struct Config {
     /// Launcher window presentation (PLAN 20) — TV (fullscreen) vs Desktop
     /// (resizable window). Consumed by `main.rs` for the eframe viewport.
     pub window_mode: WindowMode,
+    /// 2× (1440p) render pass for the macOS surface-embed (PLAN S). When true the
+    /// launcher sets `SKYLANDER_SURFACE_2X` so the patched RPCS3 renders 2560×1440.
+    /// Konami-gated admin toggle; applies on next launcher boot.
+    pub render_2x: bool,
     /// Directory where the log file(s) live. Differs dev vs release.
     pub log_dir: PathBuf,
     /// Directory containing the phone SPA's built assets.
@@ -162,6 +166,8 @@ pub fn load(_software_gl: bool) -> Result<Config> {
         Some("desktop") => WindowMode::Desktop,
         _ => WindowMode::Tv,
     };
+    // PLAN S: dev parity for the 2× render pass via `.env.dev` (`RENDER_2X=1`).
+    let render_2x = matches!(env.get("RENDER_2X").map(|s| s.as_str()), Some("1" | "true"));
 
     // HMAC key lives in `./dev-data/hmac.key` so it survives `cargo clean`
     // but regenerates on `rm -rf dev-data/`. Dev mode doesn't push through
@@ -191,6 +197,7 @@ pub fn load(_software_gl: bool) -> Result<Config> {
         bind_port,
         driver_kind,
         window_mode,
+        render_2x,
         log_dir,
         phone_dist_dir,
         data_root,
@@ -369,6 +376,7 @@ pub fn load(software_gl: bool) -> Result<Config> {
         bind_port: persisted.bind_port,
         driver_kind,
         window_mode: persisted.window_mode,
+        render_2x: persisted.render_2x,
         log_dir: persisted.log_dir,
         phone_dist_dir,
         data_root,

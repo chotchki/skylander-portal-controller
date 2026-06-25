@@ -499,6 +499,36 @@ fn AdminList<F: Fn() + Send + Sync + 'static + Clone>(
         });
     };
 
+    // PLAN S — app-level 2× render toggle (Konami-gated, grown-ups). Fetched once on
+    // mount; flipping it rewrites config.json server-side and takes effect on the next
+    // launcher restart (the launcher exports SKYLANDER_SURFACE_2X from cfg at startup).
+    let render_2x = RwSignal::new(None::<bool>);
+    leptos::task::spawn_local(async move {
+        if let Some(v) = crate::api::fetch_render_2x().await {
+            render_2x.set(Some(v));
+        }
+    });
+    let on_toggle_2x = move |_| {
+        let Some(cur) = render_2x.get_untracked() else {
+            return;
+        };
+        let next = !cur;
+        render_2x.set(Some(next)); // optimistic
+        leptos::task::spawn_local(async move {
+            match crate::api::set_render_2x(next).await {
+                Ok(()) => push_toast_level(
+                    toasts,
+                    "Saved \u{2014} restart the launcher to apply the new render setting.",
+                    ToastLevel::Success,
+                ),
+                Err(e) => {
+                    push_toast(toasts, &format!("2\u{00d7} render change failed: {e}"));
+                    render_2x.set(Some(cur)); // roll back
+                }
+            }
+        });
+    };
+
     view! {
         <button class="btn-back" on:click=move |_| on_lock()>"LOCK"</button>
 
@@ -637,6 +667,35 @@ fn AdminList<F: Fn() + Send + Sync + 'static + Clone>(
                             Some(WindowMode::Desktop) => "DESKTOP",
                             _ => "TV",
                         }}
+                    </span>
+                </button>
+            </Show>
+            <div class="edit-color-label">"restart the launcher to apply"</div>
+        </FramedPanel>
+
+        // PLAN S — app-level 2× render toggle (macOS surface-embed sharpness). 2× =
+        // 1440p render; default off. Restart-to-apply. Mirrors the window-mode toggle.
+        <FramedPanel class="admin-display-panel">
+            <div class="edit-color-label">"2\u{00d7} render (sharper, macOS)"</div>
+            <Show
+                when=move || render_2x.get().is_some()
+                fallback=|| view! { <div class="edit-color-label">"checking\u{2026}"</div> }
+            >
+                <button
+                    type="button"
+                    class=move || if matches!(render_2x.get(), Some(true)) {
+                        "edit-toggle edit-toggle-on"
+                    } else {
+                        "edit-toggle"
+                    }
+                    aria-pressed=move || if matches!(render_2x.get(), Some(true)) { "true" } else { "false" }
+                    on:click=on_toggle_2x
+                >
+                    <span class="edit-toggle-track">
+                        <span class="edit-toggle-knob"></span>
+                    </span>
+                    <span class="edit-toggle-label">
+                        {move || if matches!(render_2x.get(), Some(true)) { "2\u{00d7}" } else { "1\u{00d7}" }}
                     </span>
                 </button>
             </Show>

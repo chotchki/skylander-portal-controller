@@ -266,6 +266,12 @@ pub fn router(state: Arc<AppState>, _phone_dist: std::path::PathBuf) -> Router {
             "/api/launcher/window-mode",
             get(get_window_mode).post(set_window_mode),
         )
+        // PLAN S — GET current 2× render setting (admin toggle state) + POST to
+        // change it (rewrites config.json; restart-to-apply).
+        .route(
+            "/api/launcher/render-2x",
+            get(get_render_2x).post(set_render_2x),
+        )
         .route("/api/profiles", get(list_profiles).post(create_profile))
         .route("/api/profiles/:id", axum::routing::delete(delete_profile))
         .route("/api/profiles/:id/unlock", post(unlock_profile))
@@ -915,6 +921,19 @@ async fn get_window_mode(State(state): State<Arc<AppState>>) -> impl IntoRespons
     })
 }
 
+/// PLAN S — current 2× render-pass setting, so the phone's admin toggle renders the
+/// correct state. Unsigned read (mirrors `get_window_mode`).
+#[derive(Serialize)]
+struct Render2xStatus {
+    render_2x: bool,
+}
+
+async fn get_render_2x(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    axum::Json(Render2xStatus {
+        render_2x: state.render_2x,
+    })
+}
+
 #[derive(Deserialize)]
 struct SetWindowModeBody {
     window_mode: crate::config::WindowMode,
@@ -962,6 +981,52 @@ async fn set_window_mode(Signed(body): Signed) -> Response {
     (
         StatusCode::ACCEPTED,
         "window mode saved — restart the launcher to apply",
+    )
+        .into_response()
+}
+
+#[derive(Deserialize)]
+struct SetRender2xBody {
+    render_2x: bool,
+}
+
+/// POST /api/launcher/render-2x — grown-ups action (Konami-gated). Rewrites
+/// `render_2x` in config.json; takes effect on the next launcher boot (the launcher
+/// exports `SKYLANDER_SURFACE_2X` from cfg at startup, inherited by the RPCS3 child).
+/// Returns 202. Dev builds read `.env.dev`, so there the write is a logged no-op.
+/// PLAN S.
+async fn set_render_2x(Signed(body): Signed) -> Response {
+    let req: SetRender2xBody = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::BAD_REQUEST, format!("bad body: {e}")).into_response(),
+    };
+    let path = match crate::paths::config_json_path() {
+        Ok(p) => p,
+        Err(e) => {
+            warn!("render-2x: config path error: {e}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "config path error").into_response();
+        }
+    };
+    match crate::wizard::PersistedConfig::read(&path) {
+        Ok(mut persisted) => {
+            persisted.render_2x = req.render_2x;
+            if let Err(e) = persisted.write(&path) {
+                warn!("render-2x: write config.json failed: {e}");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "couldn't persist render-2x",
+                )
+                    .into_response();
+            }
+            info!("2x render set to {} (restart to apply)", req.render_2x);
+        }
+        Err(e) => {
+            warn!("render-2x: no config.json to update ({e}); dev build? not persisted");
+        }
+    }
+    (
+        StatusCode::ACCEPTED,
+        "2x render saved — restart the launcher to apply",
     )
         .into_response()
 }

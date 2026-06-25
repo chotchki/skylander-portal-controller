@@ -568,6 +568,31 @@ pub async fn set_window_mode(mode: crate::model::WindowMode) -> Result<(), Strin
     do_fetch(&url, "POST", Some(&body)).await.map(|_| ())
 }
 
+#[derive(serde::Deserialize)]
+struct Render2xBody {
+    render_2x: bool,
+}
+
+/// PLAN S — the launcher's current 2× render setting, for the admin toggle to
+/// render. `None` if the read fails (the UI shows "checking…" until it lands).
+pub async fn fetch_render_2x() -> Option<bool> {
+    let url = format!("{}/api/launcher/render-2x", origin());
+    match do_fetch(&url, "GET", None).await {
+        Ok(text) => serde_json::from_str::<Render2xBody>(&text)
+            .ok()
+            .map(|b| b.render_2x),
+        Err(_) => None,
+    }
+}
+
+/// PLAN S — set the 2× render pass (Konami-gated grown-ups action). The server
+/// rewrites config.json; takes effect on the next launcher restart. `()` on 2xx.
+pub async fn set_render_2x(on: bool) -> Result<(), String> {
+    let url = format!("{}/api/launcher/render-2x", origin());
+    let body = serde_json::json!({ "render_2x": on }).to_string();
+    do_fetch(&url, "POST", Some(&body)).await.map(|_| ())
+}
+
 pub async fn post_quit(force: bool) -> Result<(), String> {
     let url = if force {
         format!("{}/api/quit?force=true", origin())
