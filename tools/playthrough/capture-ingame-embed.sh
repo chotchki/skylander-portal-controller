@@ -93,6 +93,16 @@ if [[ "$#" -eq 0 ]]; then
   set -- narrative ingame
 fi
 
+# --- Pre-run cleanup ----------------------------------------------------------
+# A *killed* (not gracefully-quit) RPCS3 leaves its AF_UNIX socket behind, and the
+# next listener's bind() then fails → the IPC never comes up → classifier nav dies
+# with "connect RPCS3 IPC socket … Connection refused". Clear strays + stale
+# sockets so a re-run after a kill (or a crashed prior run) starts clean.
+pkill -f "skylander-playthrough" 2>/dev/null || true
+pkill -f "vendor/rpcs3/build/bin/rpcs3.app" 2>/dev/null || true
+pkill -f "target/debug/skylander-portal-controller" 2>/dev/null || true
+rm -f /tmp/rpcs3-skylander.sock "${TMPDIR:-/tmp}/rpcs3-skylander.sock" 2>/dev/null || true
+
 echo "capture-ingame-embed.sh: launching capture" >&2
 echo "  RPCS3_EXE                 = $RPCS3_EXE" >&2
 echo "  RPCS3_CONFIG_DIR          = ${RPCS3_CONFIG_DIR:-(unset!)}" >&2
