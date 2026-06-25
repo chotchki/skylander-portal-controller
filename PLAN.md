@@ -17,6 +17,14 @@ Conventions:
 
 ---
 
+## Phase 21 - ios-inspect de-vendor (external tool landed at github.com/chotchki/ios-inspect)
+- [ ] 21.1 - Confirm external ios-inspect exposes the library API e2e imports
+- [ ] 21.2 - Repoint e2e-tests dep: ios-inspect path → git
+- [ ] 21.3 - Repoint CI e2e-ios-sim lane at the git dep
+- [ ] 21.4 - Delete vendored tools/ios-inspect + Cargo exclude
+- [ ] 21.5 - Repoint docs at the external ios-inspect repo
+- [ ] 21.6 - Verify e2e compiles + iOS-sim lane runs
+
 ## Phase A - Auto-generated demo reel (macOS) — LIVE
 
 Pipeline **DONE + chotchki-approved (2026-06-24)**: per-window SCKit capture → `hstack`
@@ -80,29 +88,20 @@ of this is chotchki executing steps on his Mac + GitHub UI; the code path (`rele
 - [ ] R.3 - Trigger the gated `rpcs3-patched.yml` full build for the current pin `927e2492e` so the bundled patched RPCS3 binary exists for release (was 16.12.6) — **verify it hasn't already run** before doing.
 
 ## Backlog (not yet phased)
-
 **Near-term / real:**
-- **Extract `tools/ios-inspect` to its own repo** (github.com/chotchki/ios-inspect) — blocked on the split landing; touches `Cargo.toml` exclude, the CLAUDE.md ios-inspect section, `crates/e2e-tests/{README,Cargo.toml}`, `docs/{roadmap,dev/macos-bringup,dev/ci}.md`, the `ci.yml` iOS-sim lane.
 - **2× render pass for the surface-embed (1440p)** — needs its own stability validation (2026-06-25).
 - **Bump RPCS3 pin past #18935 → drop the 2 local SPU-Giga patches** (back to clean P1–P8) (2026-06-25).
-- **3-stream per-window capture variant** (phone + launcher + game; ex A.5.1/.2) — richer reel than the shipped 2-pane; deferred 2026-06-24.
-- **Windows Authenticode / SmartScreen signing** (ex 10.8.1) — the Windows analogue of Phase 14.
-
 **Phone UI polish** (ex 4.18.x / 9.8 — all defer-quality nice-to-haves):
 - Service worker for PWA cache + update detection (4.18.1c) — gates an iOS browser smoke re-test.
 - Profile "last used N days ago" subtext (4.18.10); per-card tagline + "currently playing" marker (4.18.12).
 - Figure-detail ghost-grid backdrop (4.18.20); ResumeModal element-tinted bezels (4.18.22) + relative-time subtext (4.18.23); MenuOverlay post-action transitions (4.18.24).
 - CSS component consolidation sweep (9.8).
-
 **Stat parsing** (ex 6.2.x — needs real-dump samples):
 - Trap / Vehicle / CYOS payload parse + display (6.2.1/.3/.4/.5); investigate 10 CRC-failing samples (6.2.8); pin Vehicle + CYOS `figure_id` ranges against real dumps (6.2.9).
 - Suppress RPCS3 menu-nav window flicker (6.1 — UIA fallback only).
-
 **iOS device validation:**
 - Paired visual-regression snapshots (10.4.5); real-iPhone Bonjour check (11.8.3); iPad + iPhone sim parity (11.8.4).
-
 **Demo-reel extras** (post-A.6):
 - Extra scenario flows: co-op / eviction, stat-edit, appearance-cycle, admin-tour (ex 15.6.x); PWA NarrationOverlay (15.4.2); retire `screenshot_tour` (15.8.x); CI hook to upload generated MP4s as release assets (15.9.x).
-
 **Misc:**
 - Collapse positional-slot model server-side (16.5.3); mute HEAT5150 SelfReg DLL warnings in the release log (18.8).
