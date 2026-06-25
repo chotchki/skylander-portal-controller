@@ -101,6 +101,13 @@ fi
 pkill -f "skylander-playthrough" 2>/dev/null || true
 pkill -f "vendor/rpcs3/build/bin/rpcs3.app" 2>/dev/null || true
 pkill -f "target/debug/skylander-portal-controller" 2>/dev/null || true
+# A force-killed capture skips ChildGuard's Drop, so chromedriver + its Chrome
+# children orphan and accumulate across runs — they then pin the CPU and wreck
+# the next capture's boot timing. Reap the test-tool processes too (these match
+# only automation Chrome, never a normal browsing session).
+pkill -f "chromedriver" 2>/dev/null || true
+pkill -f "enable-automation" 2>/dev/null || true
+pkill -f "Chrome for Testing" 2>/dev/null || true
 rm -f /tmp/rpcs3-skylander.sock "${TMPDIR:-/tmp}/rpcs3-skylander.sock" 2>/dev/null || true
 
 echo "capture-ingame-embed.sh: launching capture" >&2
