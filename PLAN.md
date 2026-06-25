@@ -87,9 +87,21 @@ of this is chotchki executing steps on his Mac + GitHub UI; the code path (`rele
 - [ ] R.2 - Distribution docs are winget-first (was 13.5.3 / 13.5.4) — update the `release.yml` comment + CLAUDE.md "Distribution" section (drop the GitHub-Releases-first framing).
 - [ ] R.3 - Trigger the gated `rpcs3-patched.yml` full build for the current pin `927e2492e` so the bundled patched RPCS3 binary exists for release (was 16.12.6) — **verify it hasn't already run** before doing.
 
+## Phase S - 2× render pass (1440p surface-embed)
+
+The macOS surface-embed pins RPCS3's render to **720p** (`SKY_SURFACE_W/H_PX` in
+`surface_publish.mm` + `gs_frame::client_width/height` under `SKYLANDER_BORDERLESS`) for one
+clean resample into the launcher pane. This phase tries a **doubled 1440p** (2560×1440) pass
+for a sharper embed; it needs its **own stability validation** (perf / crashes / thermal on
+the M3 Max) before it can replace 720p. **chotchki has design ideas to fold in here.**
+
+- [ ] S.1 - Bump the published surface 720p → 1440p (`surface_publish.mm` `SKY_SURFACE_W/H_PX` + `gs_frame` `client_width/height` pins)
+- [ ] S.2 - CALayerHost scale / fit for the 2× surface (`compositor.rs::set_frame` — host bounds + transform)
+- [ ] S.3 - Stability validation: 1440p cold-boot + sustained play on the M3 Max (perf, crashes, thermal); compare vs 720p
+- [ ] S.4 - Decide the final pin — fixed 1440p vs configurable (quality setting / auto-by-display) vs keep 720p
+
 ## Backlog (not yet phased)
 **Near-term / real:**
-- **2× render pass for the surface-embed (1440p)** — needs its own stability validation (2026-06-25).
 - **Bump RPCS3 pin past #18935 → drop the 2 local SPU-Giga patches** (back to clean P1–P8) (2026-06-25).
 **Phone UI polish** (ex 4.18.x / 9.8 — all defer-quality nice-to-haves):
 - Service worker for PWA cache + update detection (4.18.1c) — gates an iOS browser smoke re-test.
