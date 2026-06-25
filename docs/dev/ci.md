@@ -43,7 +43,7 @@ The iOS-Simulator e2e suite (`tests/ios_*.rs`) is the most expensive lane: cold-
 
 Skipped by default on `push` to `main` (the assumption is reviewers add the label when a PR touches phone/iOS-sensitive code; if it slips through and breaks main, the next phone-touching PR catches it).
 
-PRs whose diff touches `phone/`, `tools/ios-inspect/`, or `crates/server/src/http.rs` are flagged in the bot reminder (TBD — for now, reviewer judgement).
+PRs whose diff touches `phone/`, `crates/e2e-tests/`, or `crates/server/src/http.rs` are flagged in the bot reminder (TBD — for now, reviewer judgement).
 
 ## Pre-push hook (opt-in)
 

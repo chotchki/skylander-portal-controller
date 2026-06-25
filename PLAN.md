@@ -18,12 +18,12 @@ Conventions:
 ---
 
 ## Phase 21 - ios-inspect de-vendor (external tool landed at github.com/chotchki/ios-inspect)
-- [ ] 21.1 - Confirm external ios-inspect exposes the library API e2e imports
-- [ ] 21.2 - Repoint e2e-tests dep: ios-inspect path → git
-- [ ] 21.3 - Repoint CI e2e-ios-sim lane at the git dep
-- [ ] 21.4 - Delete vendored tools/ios-inspect + Cargo exclude
-- [ ] 21.5 - Repoint docs at the external ios-inspect repo
-- [ ] 21.6 - Verify e2e compiles + iOS-sim lane runs
+- [x] 21.1 - Confirm external ios-inspect exposes the library API e2e imports
+- [x] 21.2 - Repoint e2e-tests dep: ios-inspect path → git
+- [x] 21.3 - Repoint CI e2e-ios-sim lane at the git dep
+- [x] 21.4 - Delete vendored tools/ios-inspect + Cargo exclude
+- [x] 21.5 - Repoint docs at the external ios-inspect repo
+- [x] 21.6 - Verify e2e compiles + iOS-sim lane runs
 
 ## Phase A - Auto-generated demo reel (macOS) — LIVE
 
@@ -106,3 +106,4 @@ of this is chotchki executing steps on his Mac + GitHub UI; the code path (`rele
 - Extra scenario flows: co-op / eviction, stat-edit, appearance-cycle, admin-tour (ex 15.6.x); PWA NarrationOverlay (15.4.2); retire `screenshot_tour` (15.8.x); CI hook to upload generated MP4s as release assets (15.9.x).
 **Misc:**
 - Collapse positional-slot model server-side (16.5.3); mute HEAT5150 SelfReg DLL warnings in the release log (18.8).
+

@@ -23,12 +23,10 @@ hex = "0.4"
 tokio-tungstenite = "0.24"
 futures-util = "0.3"
 
-# iOS-Simulator-driven tests (PLAN 10.4) link the standalone
-# tools/ios-inspect crate as a library so the harness gets type-safe
-# access to boot / open / wait_for_selector / screenshot. ios-inspect
-# stays out of the workspace (it's still a standalone CLI tool with
-# its own [workspace] block); Cargo handles path deps to outside-the-
-# workspace crates fine. Macos-only since the underlying xcrun simctl
-# + ios_webkit_debug_proxy stack only exists there.
+# iOS-Simulator-driven tests (PLAN 10.4) link the external `ios-inspect`
+# crate (github.com/chotchki/ios-inspect — de-vendored from tools/ in
+# PLAN 21) as a library, so the harness gets type-safe access to boot /
+# open / wait_for_selector / screenshot. Macos-only: the underlying
+# xcrun simctl + ios_webkit_debug_proxy stack only exists there.
 [target.'cfg(target_os = "macos")'.dependencies]
-ios-inspect = { path = "../../tools/ios-inspect" }
+ios-inspect = { git = "https://github.com/chotchki/ios-inspect", tag = "v0.0.1" }

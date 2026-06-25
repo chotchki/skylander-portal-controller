@@ -148,8 +148,10 @@ Practical caveats:
 
 ## iOS Simulator lane (macOS only)
 
-Drives real iOS Safari inside the Simulator via the standalone
-`tools/ios-inspect/` library (PLAN 10.4). Lives alongside the
+Drives real iOS Safari inside the Simulator via the external
+[`ios-inspect`](https://github.com/chotchki/ios-inspect) crate,
+consumed as a git dependency pinned to tag `v0.0.1` (PLAN 10.4).
+Lives alongside the
 chromedriver lane but with a different test-engine and an extra
 prereq stack — runs the 2-phone product feature end-to-end against
 real iPhone + iPad form factors instead of headless Chrome.

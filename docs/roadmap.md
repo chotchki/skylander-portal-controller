@@ -48,7 +48,7 @@ The phone CSS rewrite that 1.x deferred. The legacy ~5800-line monolithic styles
 
 ## Phase 10 — macOS as a first-class platform (shipped; signing tracked under Phase 14)
 
-Mac is a production target. Server compiles + runs on macOS against the mock RPCS3 driver. The `tools/ios-inspect/` CLI drives the iOS Simulator + WebKit Web Inspector for layout probes during development. The chromedriver e2e harness ports cleanly to macOS. The simultaneous iPad + iPhone simulator e2e lane catches multi-device product bugs that a single browser viewport hides. The release artefact ships as a tar.gz today; the Developer ID notarisation flow is wired in CI but disabled pending secret provisioning (Phase 14 tracks the bring-up). In the interim, Mac users right-click → Open to clear Gatekeeper.
+Mac is a production target. Server compiles + runs on macOS against the mock RPCS3 driver. The external [`ios-inspect`](https://github.com/chotchki/ios-inspect) CLI drives the iOS Simulator + WebKit Web Inspector for layout probes during development. The chromedriver e2e harness ports cleanly to macOS. The simultaneous iPad + iPhone simulator e2e lane catches multi-device product bugs that a single browser viewport hides. The release artefact ships as a tar.gz today; the Developer ID notarisation flow is wired in CI but disabled pending secret provisioning (Phase 14 tracks the bring-up). In the interim, Mac users right-click → Open to clear Gatekeeper.
 
 ## Phase 11 — Stat editing (shipped v1.5.0 → v1.6.0)
 

@@ -11,7 +11,7 @@ iteration the mock-only constraint isn't a limitation.
 ## Prereqs
 
 - Xcode + at least one iOS runtime (Settings → Platforms) — needed for
-  `tools/ios-inspect/` and the iOS-sim e2e lane.
+  [`ios-inspect`](https://github.com/chotchki/ios-inspect) and the iOS-sim e2e lane.
 - Rust toolchain with `wasm32-unknown-unknown` target:
   ```
   rustup target add wasm32-unknown-unknown
@@ -21,7 +21,7 @@ iteration the mock-only constraint isn't a limitation.
   cargo install trunk
   ```
 - (Optional) `brew install ios-webkit-debug-proxy` — only needed for
-  iOS Simulator iteration via `tools/ios-inspect/`.
+  iOS Simulator iteration via `ios-inspect`.
 
 No PS3/RPCS3 install on Mac. The mock driver replaces the emulator
 end-to-end (`SKYLANDER_PORTAL_DRIVER=mock` in `.env.dev`); the
@@ -105,7 +105,8 @@ endpoints from the same Mac, use the en0 IP.
 
 ## Connect from the iOS Simulator
 
-See `tools/ios-inspect/README.md` for the simulator-driven dev loop.
+Install the CLI with `cargo install --git https://github.com/chotchki/ios-inspect --tag v0.0.1`;
+see [its README](https://github.com/chotchki/ios-inspect) for the simulator-driven dev loop.
 The simulator and the server share the host's network stack, so
 `http://<mac-en0-ip>:8765/` works the same as on a real phone. PWA
 standalone mode (Add-to-Home-Screen) inside the sim is the only way

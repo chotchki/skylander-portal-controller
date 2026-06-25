@@ -79,7 +79,7 @@ html, body {
    *visual* viewport taller than the layout viewport by ~34–52px;
    the strip below the layout viewport exposed html's then-flat sf-3
    bg, producing a visible colour seam against the gradient (diagnosed
-   2026-04-21 via tools/ios-inspect/, PLAN 4.21.4). Painting on html
+   2026-04-21 via ios-inspect, PLAN 4.21.4). Painting on html
    avoids the layout-vs-visual-viewport mismatch entirely. */
 html {
   /* 100vh on iOS Safari == the URL-bar-retracted (large) viewport,
