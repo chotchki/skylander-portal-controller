@@ -270,6 +270,28 @@ pub enum Category {
     Other,
 }
 
+impl Category {
+    /// Whether a figure of this category is a **playable character** the Kaos
+    /// swap may pull onto the portal (#25). The swap replaces a portal character
+    /// with another *character*, so non-character pack pieces are excluded:
+    /// `Item` (magic items), `AdventurePack` (locations / scenario expansions),
+    /// `Trap` (captures a villain — not a character we place + control),
+    /// `Kaos` (the villain trophy), and `Other` (unclassified). `Vehicle` counts
+    /// — `is_compatible` already gates vehicles to SuperChargers; `Sidekick` and
+    /// `CreationCrystal` are placed + played as characters. Positive allow-list
+    /// so a newly-added category defaults to ineligible.
+    pub fn is_kaos_swap_eligible(self) -> bool {
+        matches!(
+            self,
+            Category::Figure
+                | Category::Sidekick
+                | Category::Giant
+                | Category::CreationCrystal
+                | Category::Vehicle
+        )
+    }
+}
+
 /// Terrain classification for SuperChargers vehicles. Hand-curated from
 /// `data/vehicle_terrain.json`; the indexer populates `Figure::vehicle_terrain`
 /// for any figure whose name matches an entry in that lookup. `None` for

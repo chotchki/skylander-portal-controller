@@ -98,7 +98,9 @@ pub fn select_swap<R: RngCore>(
             if on_portal.contains(&&f.id) {
                 return false;
             }
-            is_compatible(f.game, f.category, current_game)
+            // Only swap in a playable character — never an Item / Adventure Pack
+            // / Trap / other scenario-expansion piece (#25).
+            f.category.is_kaos_swap_eligible() && is_compatible(f.game, f.category, current_game)
         })
         .collect();
     if pool.is_empty() {
@@ -339,6 +341,73 @@ mod tests {
         )
         .expect("eruptor is compatible with imaginators");
         assert_eq!(swap.new_figure_id, FigureId::new("eruptor"));
+    }
+
+    #[test]
+    fn scenario_expansions_never_swapped_in() {
+        // #25 — the swap must only ever pull in a playable *character*. An Item,
+        // Adventure Pack, Trap, or Kaos trophy that is game-compatible must be
+        // excluded from the pool, so the only valid pick here is Eruptor — across
+        // every seed, never an expansion piece.
+        let mut portal = empty_portal();
+        portal[0] = loaded("spyro", "alice");
+        let figures = vec![
+            fig("spyro", GameOfOrigin::SpyrosAdventure, Category::Figure),
+            fig("eruptor", GameOfOrigin::SpyrosAdventure, Category::Figure),
+            fig("healing-elixir", GameOfOrigin::CrossGame, Category::Item),
+            fig(
+                "dragons-peak",
+                GameOfOrigin::SpyrosAdventure,
+                Category::AdventurePack,
+            ),
+            fig("kaos-trap", GameOfOrigin::TrapTeam, Category::Trap),
+            fig("kaos-trophy", GameOfOrigin::TrapTeam, Category::Kaos),
+        ];
+        for seed in 1..64u64 {
+            let mut rng = XorShift64::new(seed);
+            let swap = select_swap(
+                GameOfOrigin::Imaginators,
+                &portal,
+                &figures,
+                "alice",
+                &mut rng,
+            )
+            .expect("eruptor is an eligible character swap");
+            assert_eq!(
+                swap.new_figure_id,
+                FigureId::new("eruptor"),
+                "Kaos must swap in characters only, never items/adventure-packs/traps (seed {seed})",
+            );
+        }
+    }
+
+    #[test]
+    fn no_swap_when_only_expansions_available() {
+        // The complement: when the only game-compatible non-portal figures are
+        // expansion pieces, there's nothing eligible to swap in → None.
+        let mut portal = empty_portal();
+        portal[0] = loaded("spyro", "alice");
+        let figures = vec![
+            fig("spyro", GameOfOrigin::SpyrosAdventure, Category::Figure),
+            fig("healing-elixir", GameOfOrigin::CrossGame, Category::Item),
+            fig(
+                "dragons-peak",
+                GameOfOrigin::SpyrosAdventure,
+                Category::AdventurePack,
+            ),
+        ];
+        let mut rng = seeded_rng();
+        let swap = select_swap(
+            GameOfOrigin::Imaginators,
+            &portal,
+            &figures,
+            "alice",
+            &mut rng,
+        );
+        assert!(
+            swap.is_none(),
+            "items + adventure packs are not eligible swap characters",
+        );
     }
 
     #[test]
