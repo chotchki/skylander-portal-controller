@@ -87,3 +87,22 @@ of this is chotchki executing steps on his Mac + GitHub UI; the code path (`rele
 - [ ] R.2 - Distribution docs are winget-first (was 13.5.3 / 13.5.4) — update the `release.yml` comment + CLAUDE.md "Distribution" section (drop the GitHub-Releases-first framing).
 - [ ] R.3 - Trigger the gated `rpcs3-patched.yml` full build for the current pin `927e2492e` so the bundled patched RPCS3 binary exists for release (was 16.12.6) — **verify it hasn't already run** before doing.
 
+## Backlog (not yet phased)
+**Near-term / real:**
+- **Bump RPCS3 pin past #18935 → drop the 2 local SPU-Giga patches** (back to clean P1–P8) (2026-06-25).
+- **Spike (stretch): live 2× flip while a game runs** (ex S.8) — uncertain; needs an IPC `SURFACE_SCALE` command + a runtime size flag (not the env) + mid-render swapchain recreation + CAMetalLayer extent update + controller re-fit. The swapchain-recreate-under-load is the resize path the 720p pin avoids (top-left-subrect risk). Attempt only once Phase S's boot-time toggle is solid.
+- **Phase S 2× sustained/thermal validation** (ex S.6) — the toggle is shipped + smoke-tested (cold-boot + recorder narrative clean, surface confirmed 2560×1440, no crash). Remaining: a long *warm* session on the M3 Max — sustained framerate + thermals vs 720p. Non-blocking (default off); needs real kid-play time on the laptop, which ties up the work machine — hence deferred.
+**Phone UI polish** (ex 4.18.x / 9.8 — all defer-quality nice-to-haves):
+- Service worker for PWA cache + update detection (4.18.1c) — gates an iOS browser smoke re-test.
+- Profile "last used N days ago" subtext (4.18.10); per-card tagline + "currently playing" marker (4.18.12).
+- Figure-detail ghost-grid backdrop (4.18.20); ResumeModal element-tinted bezels (4.18.22) + relative-time subtext (4.18.23); MenuOverlay post-action transitions (4.18.24).
+- CSS component consolidation sweep (9.8).
+**Stat parsing** (ex 6.2.x — needs real-dump samples):
+- Trap / Vehicle / CYOS payload parse + display (6.2.1/.3/.4/.5); investigate 10 CRC-failing samples (6.2.8); pin Vehicle + CYOS `figure_id` ranges against real dumps (6.2.9).
+- Suppress RPCS3 menu-nav window flicker (6.1 — UIA fallback only).
+**iOS device validation:**
+- Paired visual-regression snapshots (10.4.5); real-iPhone Bonjour check (11.8.3); iPad + iPhone sim parity (11.8.4).
+**Demo-reel extras** (post-A.6):
+- Extra scenario flows: co-op / eviction, stat-edit, appearance-cycle, admin-tour (ex 15.6.x); PWA NarrationOverlay (15.4.2); retire `screenshot_tour` (15.8.x); CI hook to upload generated MP4s as release assets (15.9.x).
+**Misc:**
+- Collapse positional-slot model server-side (16.5.3); mute HEAT5150 SelfReg DLL warnings in the release log (18.8).
