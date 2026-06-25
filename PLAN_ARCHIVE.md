@@ -749,3 +749,44 @@ A full plan triage (12-reviewer audit, each verifying against code) reclassified
 - **Phase B — macOS window coordination: SUPERSEDED by the surface-embed** (CALayerHost; game composited inside the launcher window).
 
 ---
+
+---
+
+## 2026-06-25
+
+## Phase S - 2× render pass (1440p surface-embed) — admin toggle, applies on next boot
+
+The surface-embed pins RPCS3's render to **720p** (`SKY_SURFACE_W/H_PX` in `surface_publish.mm`
++ `gs_frame::client_width/height` under `SKYLANDER_BORDERLESS`). This phase adds a **2× (1440p,
+2560×1440)** option behind a **Konami-gated admin toggle**, persisted to config.json + applied
+on the next launcher boot — mirroring the PLAN 20.6 window-mode toggle (`set_window_mode` /
+`fetch_window_mode` / `profile_picker.rs`). The launcher passes the choice to RPCS3 over an env;
+the patched binary reads it to size the surface. Needs its own stability validation.
+
+## Backlog (not yet phased)
+**Near-term / real:**
+- **Bump RPCS3 pin past #18935 → drop the 2 local SPU-Giga patches** (back to clean P1–P8) (2026-06-25).
+- **Spike (stretch): live 2× flip while a game runs** (ex S.8) — uncertain; needs an IPC `SURFACE_SCALE` command + a runtime size flag (not the env) + mid-render swapchain recreation + CAMetalLayer extent update + controller re-fit. The swapchain-recreate-under-load is the resize path the 720p pin avoids (top-left-subrect risk). Attempt only once Phase S's boot-time toggle is solid.
+- **Phase S 2× sustained/thermal validation** (ex S.6) — the toggle is shipped + smoke-tested (cold-boot + recorder narrative clean, surface confirmed 2560×1440, no crash). Remaining: a long *warm* session on the M3 Max — sustained framerate + thermals vs 720p. Non-blocking (default off); needs real kid-play time on the laptop, which ties up the work machine — hence deferred.
+**Phone UI polish** (ex 4.18.x / 9.8 — all defer-quality nice-to-haves):
+- Service worker for PWA cache + update detection (4.18.1c) — gates an iOS browser smoke re-test.
+- Profile "last used N days ago" subtext (4.18.10); per-card tagline + "currently playing" marker (4.18.12).
+- Figure-detail ghost-grid backdrop (4.18.20); ResumeModal element-tinted bezels (4.18.22) + relative-time subtext (4.18.23); MenuOverlay post-action transitions (4.18.24).
+- CSS component consolidation sweep (9.8).
+**Stat parsing** (ex 6.2.x — needs real-dump samples):
+- Trap / Vehicle / CYOS payload parse + display (6.2.1/.3/.4/.5); investigate 10 CRC-failing samples (6.2.8); pin Vehicle + CYOS `figure_id` ranges against real dumps (6.2.9).
+- Suppress RPCS3 menu-nav window flicker (6.1 — UIA fallback only).
+**iOS device validation:**
+- Paired visual-regression snapshots (10.4.5); real-iPhone Bonjour check (11.8.3); iPad + iPhone sim parity (11.8.4).
+**Demo-reel extras** (post-A.6):
+- Extra scenario flows: co-op / eviction, stat-edit, appearance-cycle, admin-tour (ex 15.6.x); PWA NarrationOverlay (15.4.2); retire `screenshot_tour` (15.8.x); CI hook to upload generated MP4s as release assets (15.9.x).
+**Misc:**
+- Collapse positional-slot model server-side (16.5.3); mute HEAT5150 SelfReg DLL warnings in the release log (18.8).
+- [x] S.1 - **C++**: env-drive the surface size — `SKYLANDER_SURFACE_2X` → 2560×1440 (else 1280×720) in `surface_publish.mm` `SKY_SURFACE_W/H_PX` + `gs_frame::client_width/height`; patch series regenerated (P8 amended, only `0010` changed). No wire change (env, not an IPC command), so loopback/proto unaffected.
+- [x] S.2 - **Config**: `render_2x: bool` on `PersistedConfig` + runtime `Config` (mirror `window_mode`); loaded at startup.
+- [x] S.3 - **Launcher apply**: `process_unix.rs::spawn` sets `SKYLANDER_SURFACE_2X=1` when `render_2x` (thread `Config.render_2x` to the spawn).
+- [x] S.4 - **Server endpoint**: `GET/POST /api/render-2x` (`fetch_render_2x` / `set_render_2x`) — persist config.json, 202 "restart to apply" (mirror `set_window_mode`).
+- [x] S.5 - **Phone UI**: Konami-gated "2× render" toggle in `profile_picker.rs` (mirror the window-mode toggle) + `model` + `api`.
+- [x] S.7 - **Final pin decision** — keep the toggle **default-off** (opt-in; 2× is 4× the pixels/heat). Decided 2026-06-25; already the implementation (`render_2x` defaults `false`). Cold-boot + recorder-narrative smoke test passed (surface confirmed 2560×1440, no crash); sustained-play/thermal validation → Backlog.
+
+
