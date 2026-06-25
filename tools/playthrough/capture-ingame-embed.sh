@@ -119,4 +119,15 @@ echo "  SKYLANDER_GAME_WINDOW_APP = $SKYLANDER_GAME_WINDOW_APP" >&2
 echo "  SKYLANDER_GAME_WINDOW_TITLE = $SKYLANDER_GAME_WINDOW_TITLE" >&2
 echo "  mode                      = $*" >&2
 
-exec tools/playthrough/run.sh "$@"
+# Run the capture, then reap the emulator + automation Chrome it leaves behind.
+# They orphan on macOS (no Win32 Job-Object equivalent kills RPCS3 on drop), and
+# a follow-on transcode/render then fights them for CPU (chotchki, Image #23:
+# ffmpeg 829% vs RPCS3 198% + Chrome 364%). NOT `exec`, so this cleanup runs;
+# `|| status=$?` keeps `set -e` from skipping it on a non-zero capture exit.
+status=0
+tools/playthrough/run.sh "$@" || status=$?
+pkill -f "vendor/rpcs3/build/bin/rpcs3" 2>/dev/null || true
+pkill -f "enable-automation" 2>/dev/null || true
+pkill -f "Chrome for Testing" 2>/dev/null || true
+pkill -f chromedriver 2>/dev/null || true
+exit "$status"
