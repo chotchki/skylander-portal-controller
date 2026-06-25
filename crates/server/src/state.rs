@@ -234,8 +234,11 @@ pub struct LauncherStatus {
     /// game session** (survives swapchain recreate / resize / resolution
     /// change), so the launcher attaches once and never re-fetches. Only
     /// meaningful while `rpcs3_running`; a stale value from a prior game is
-    /// ignored. `None` on non-IPC / non-macOS drivers.
-    pub game_surface_context_id: Option<u32>,
+    /// ignored. `None` on non-IPC / non-macOS drivers. Carries the surface's
+    /// native size (points) alongside the id so the compositor can scale the
+    /// hosted layer to its pane (`CALayerHost` renders the remote tree at native
+    /// size — it does not auto-fit the host bounds).
+    pub game_surface: Option<skylander_rpcs3_control::ipc::proto::GameSurface>,
     /// `true` while the on-demand RPCS3 **settings GUI** is open (PLAN 16.9.3).
     /// The full Qt settings window needs the whole TV + the HTPC keyboard/mouse,
     /// so the always-on-top launcher **minimises itself** for the duration and
@@ -828,18 +831,15 @@ pub fn spawn_state_poller(
         loop {
             ticker.tick().await;
 
-            // emu_state() + the window handle + the macOS surface contextId are
-            // blocking IPC round-trips — off-reactor. (P8: `game_surface_context_id`
-            // rides the same poll as `game_window_handle`; non-zero ⇒ the launcher
-            // hosts the game's render layer in-window via CALayerHost.)
+            // emu_state() + the window handle + the macOS surface (contextId +
+            // native size) are blocking IPC round-trips — off-reactor. (P8:
+            // `game_surface` rides the same poll as `game_window_handle`; a
+            // non-zero id ⇒ the launcher hosts the game's render layer in-window
+            // via CALayerHost, scaled to its pane with the reported size.)
             let d = driver.clone();
-            let (state, game_window_handle, game_surface_context_id) =
+            let (state, game_window_handle, game_surface) =
                 match tokio::task::spawn_blocking(move || {
-                    (
-                        d.emu_state(),
-                        d.game_window_handle(),
-                        d.game_surface_context_id(),
-                    )
+                    (d.emu_state(), d.game_window_handle(), d.game_surface())
                 })
                 .await
                 {
@@ -880,7 +880,7 @@ pub fn spawn_state_poller(
                 // same way as the window handle — the launcher reads it each frame
                 // and attaches a CALayerHost the moment it goes Some (the id is
                 // stable for the session, so it attaches once).
-                st.game_surface_context_id = game_surface_context_id;
+                st.game_surface = game_surface;
                 if !st.rpcs3_running {
                     ready_run = 0;
                     last_frames = 0;
@@ -1178,7 +1178,7 @@ pub fn spawn_crash_watchdog(
                 // Drop the stale render-layer contextId too — the freshly-booted
                 // game publishes a new CAContextID; clearing it makes the launcher
                 // detach the old CALayerHost and re-attach on the new id (P8).
-                st.game_surface_context_id = None;
+                st.game_surface = None;
                 st.loading_game = game_name.clone();
                 st.screen = LauncherScreen::Main;
             }

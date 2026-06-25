@@ -163,8 +163,8 @@ pub struct LauncherApp {
     /// genuine launcher-rect change. macOS-only path. `None` until the first send.
     last_window_set_at: Option<f64>,
     /// macOS surface-embed host (P8 / Phase C). When the driver publishes the
-    /// game's `CAContextID` (`status.game_surface_context_id`), the launcher
-    /// hosts that render-layer tree INSIDE its own egui view via `CALayerHost`
+    /// game's surface (`status.game_surface` — `CAContextID` + native size), the
+    /// launcher hosts that render-layer tree INSIDE its own egui view via `CALayerHost`
     /// — compositing the game behind egui's chrome — rather than tiling a
     /// second top-level window beneath itself (the `WindowSet` fallback). A
     /// no-op stub on non-macOS targets, so this field exists on every platform.
@@ -251,8 +251,8 @@ impl LauncherApp {
     }
 
     /// macOS surface-embed (P8 / Phase C). If the driver has published the
-    /// game's `CAContextID` (`status.game_surface_context_id`), host that
-    /// render-layer tree inside THIS launcher window via `CALayerHost` and fit
+    /// game's surface (`status.game_surface` — `CAContextID` + native size), host
+    /// that render-layer tree inside THIS launcher window via `CALayerHost` and fit
     /// it to the same 16:9 sub-rect the `WindowSet` fallback would have tiled a
     /// second window into — but **view-relative** (origin at the launcher's
     /// content, not screen-global). Returns `true` when the surface is hosted
@@ -272,10 +272,11 @@ impl LauncherApp {
 
         // No published surface → detach any prior host and let the WindowSet
         // fallback take over.
-        let Some(context_id) = status.game_surface_context_id.filter(|c| *c != 0) else {
+        let Some(surface) = status.game_surface.filter(|s| s.context_id != 0) else {
             self.compositor.detach();
             return false;
         };
+        let context_id = surface.context_id;
 
         // Only embed in Desktop window mode — TV mode is fullscreen and the
         // game/launcher coexist as plain siblings (window coordination is a
@@ -296,11 +297,19 @@ impl LauncherApp {
         let ns_view: *mut std::ffi::c_void = appkit.ns_view.as_ptr();
 
         // Attach once — idempotent if already on this contextId (stable for the
-        // session).
+        // session). The native surface size (points) rides along so set_frame can
+        // scale the hosted layer to its pane (CALayerHost won't auto-fit it).
         if !self.compositor.is_attached_to(context_id) {
             // SAFETY: `ns_view` is eframe's owned AppKit window handle for this
             // frame — a valid live NSView*. The compositor retains it.
-            unsafe { self.compositor.attach(ns_view, context_id) };
+            unsafe {
+                self.compositor.attach(
+                    ns_view,
+                    context_id,
+                    surface.width as f64,
+                    surface.height as f64,
+                )
+            };
         }
 
         // Fit the hosted layer to the same largest-16:9-centered sub-rect the
@@ -488,18 +497,34 @@ impl LauncherApp {
 }
 
 impl eframe::App for LauncherApp {
-    /// Fully transparent GL clear every frame. eframe's default pulls
-    /// from `visuals.window_fill` (dark grey in the default dark theme),
-    /// which painted a dim grey-black over RPCS3 during the in-game
-    /// transparent surface — the `Frame::none().fill(TRANSPARENT)` on
-    /// the CentralPanel only skips the panel's own paint, it does not
-    /// change the pre-panel GL clear. Main / Crashed / Farewell are
-    /// unaffected because they paint opaque `paint_sky_background` +
-    /// starfield + vortex on top of the clear; only in-game, which
-    /// deliberately paints nothing below the reconnect QR, exposes the
-    /// clear color to the compositor. Chris flagged 2026-04-24.
+    /// GL clear color (the very bottom z-layer).
+    ///
+    /// On the **macOS Desktop surface-embed path (P8)** the game renders into a
+    /// `CALayer` composited ABOVE egui, so the launcher window itself must be
+    /// OPAQUE — a transparent clear bleeds the desktop through every gap around
+    /// the hosted game (and through the in-game iris, which paints nothing).
+    /// Clear to starfield-blue so "showing through" is always the launcher's own
+    /// background, never the desktop — and so we can tell a transparent gap
+    /// (blue) from the game's own letterboxing (black). chotchki 2026-06-25.
+    ///
+    /// Every OTHER path keeps the fully-transparent clear: the Windows / macOS
+    /// sibling-window fallback tiles RPCS3 as a real window BEHIND a transparent
+    /// launcher, so an opaque clear would paint over it. (Main / Crashed /
+    /// Farewell are unaffected either way — they paint opaque `paint_sky_background`
+    /// over the clear; only the in-game surface exposes the clear.)
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        [0.0, 0.0, 0.0, 0.0]
+        if cfg!(target_os = "macos")
+            && matches!(self.window_mode, crate::config::WindowMode::Desktop)
+        {
+            // Starfield navy from the sky palette (the SF_2 mid-tone), so the
+            // letterbox/gaps around the hosted game read as the SAME blue as the
+            // launcher's sky — not black. `to_normalized_gamma_f32()` matches what
+            // eframe's default clear_color expects (gamma/sRGB space); converting
+            // to LINEAR instead (Rgba::from) crushes it to near-black.
+            crate::palette::SF_2.to_normalized_gamma_f32()
+        } else {
+            [0.0, 0.0, 0.0, 0.0]
+        }
     }
 
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {

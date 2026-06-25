@@ -12,11 +12,12 @@
 //!     (The server's actual boot-readiness gate is `driver.emu_state()
 //!     .is_playable()` — see `state.rs` BootDirect — so [`wait_ready`] here is
 //!     a lower-level socket probe, not the playable signal.)
-//!   * **No `SKYLANDER_BORDERLESS`.** macOS window coordination (z-order /
-//!     positioning) is Win32-only and explicitly out of scope (PLAN 16.11), so
-//!     we let RPCS3 show its normal decorated, movable game window on Mac rather
-//!     than a borderless one we can't place. Portal control over IPC is the
-//!     cross-platform value; window choreography stays Windows-only.
+//!   * **`SKYLANDER_BORDERLESS=1`.** Set on the child (see `spawn`). It drives
+//!     the P8 surface-embed on macOS: the patched emulator publishes its render
+//!     CAMetalLayer via a `CAContext` (instead of an on-screen game window) and
+//!     the launcher hosts it INSIDE its own window via `CALayerHost`. (Earlier
+//!     this was omitted while macOS window coordination was Win32-only — Phase B
+//!     / P7+P8 changed that.)
 //!
 //! The launcher sets `SKYLANDER_IPC_PATH` on the child so the emulator's
 //! listener and our [`crate::IpcPortalDriver`] rendezvous on the same socket

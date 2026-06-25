@@ -37,6 +37,13 @@
 //! The probe is fully guarded — any anomaly defaults to *hardware* so a working
 //! GPU machine can never be pushed onto the slow software path by a probe bug.
 
+// This is a Windows-oriented module: off Windows, `bootstrap` is a no-op stub and
+// the real probe/decision subsystem (Plan/ProbeResult/decide/decide_auto/… and the
+// path imports they need) is never reached — so it reads as dead there. Silence
+// dead_code/unused_imports OFF Windows only; the Windows build, where it's wired,
+// still lints fully.
+#![cfg_attr(not(windows), allow(dead_code, unused_imports))]
+
 use std::path::{Path, PathBuf};
 
 /// Operator override: `software` forces the Mesa re-exec, `hardware` forces

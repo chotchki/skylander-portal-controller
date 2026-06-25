@@ -10,7 +10,7 @@
 //! ->  STATE                    <-  OK status=<s> frames=<n> progr=<a>/<b> seg=<c>/<d>
 //! ->  STATUS                   <-  OK 0:<serial|empty> 1:<..> .. 7:<..>
 //! ->  WINDOW                   <-  OK handle=<hex>
-//! ->  SURFACE                  <-  OK context=<dec>           (P8)
+//! ->  SURFACE                  <-  OK context=<dec> size=<w>x<h>   (P8)
 //! ->  LOAD <abs .sky path>     <-  OK slot=<n>   | ERR <reason>
 //! ->  CLEAR <slot 0-7>         <-  OK            | ERR <reason>
 //! ->  RECONNECT                <-  OK            | ERR no_device    (P5)
@@ -261,19 +261,72 @@ pub fn parse_window(line: &str) -> Result<u64> {
     u64::from_str_radix(h.trim(), 16).with_context(|| format!("WINDOW reply bad hex: {h:?}"))
 }
 
-/// `OK context=<decimal>` → the macOS `CAContextID` for cross-process
-/// `CALayerHost` embedding (P8). `0` until the game's CAMetalLayer has been
-/// wrapped in a published CAContext at Vulkan surface creation. Decimal (not
-/// hex like `WINDOW`'s handle): the emulator emits `std::to_string(contextId)`,
-/// matching the POC's `CONTEXT_ID=` format.
-pub fn parse_surface(line: &str) -> Result<u32> {
+/// The macOS render surface the patched emulator publishes (P8): the
+/// cross-process `CAContextID` the launcher hosts via `CALayerHost`, plus the
+/// surface's native size in **points**.
+///
+/// The size matters because `CALayerHost` renders the hosted remote layer tree
+/// at the producer's native size, anchored — it does **not** auto-fit the host's
+/// bounds (proven live: a 640×360 game stayed 640×360 in a larger pane, with
+/// black fill). The launcher needs the native size to apply the scale transform
+/// that fits the game to its pane. `width`/`height` are `0` when the emulator
+/// didn't report a size (an older patch, or before the layer is configured) — in
+/// that case the launcher hosts unscaled (clipped to the pane).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GameSurface {
+    /// The `CAContextID` (decimal on the wire). `0` until published.
+    pub context_id: u32,
+    /// Native surface width in points (`0` if not reported).
+    pub width: u32,
+    /// Native surface height in points (`0` if not reported).
+    pub height: u32,
+}
+
+/// `OK context=<dec> [size=<w>x<h>]` → the macOS `CAContextID` + native surface
+/// size (points) for cross-process `CALayerHost` embedding (P8). `context=0`
+/// until the game's CAMetalLayer has been wrapped in a published CAContext at
+/// Vulkan surface creation. Decimal (not hex like `WINDOW`'s handle): the
+/// emulator emits `std::to_string(contextId)`. `size=` is appended once the
+/// dedicated layer is configured; absent on older patches → `0×0` (the launcher
+/// then hosts the layer unscaled). Unknown fields are ignored for forward-compat.
+pub fn parse_surface(line: &str) -> Result<GameSurface> {
     let rest = expect_ok(line)?;
-    let c = rest
-        .strip_prefix("context=")
-        .with_context(|| format!("SURFACE reply missing `context=`: {line:?}"))?;
-    c.trim()
-        .parse::<u32>()
-        .with_context(|| format!("SURFACE reply bad context id: {c:?}"))
+    let mut context_id = None;
+    let mut size = None;
+    for field in rest.split_whitespace() {
+        match field.split_once('=') {
+            Some(("context", v)) => {
+                context_id = Some(
+                    v.trim()
+                        .parse::<u32>()
+                        .with_context(|| format!("SURFACE reply bad context id: {v:?}"))?,
+                );
+            }
+            Some(("size", v)) => size = Some(parse_dims(v)?),
+            _ => {} // forward-compat: ignore fields we don't know
+        }
+    }
+    let context_id =
+        context_id.with_context(|| format!("SURFACE reply missing `context=`: {line:?}"))?;
+    let (width, height) = size.unwrap_or((0, 0));
+    Ok(GameSurface {
+        context_id,
+        width,
+        height,
+    })
+}
+
+/// `<w>x<h>` → `(w, h)`. The size field's value form in a `SURFACE` reply.
+fn parse_dims(v: &str) -> Result<(u32, u32)> {
+    let (w, h) = v
+        .split_once('x')
+        .with_context(|| format!("SURFACE size missing 'x': {v:?}"))?;
+    Ok((
+        w.parse()
+            .with_context(|| format!("SURFACE bad width {w:?}"))?,
+        h.parse()
+            .with_context(|| format!("SURFACE bad height {h:?}"))?,
+    ))
 }
 
 /// `OK 0:<serial|empty> .. 7:<..>` → per-slot occupancy. Used by `STATUS`.
@@ -443,10 +496,25 @@ mod tests {
     #[test]
     fn surface_encode_and_parse() {
         assert_eq!(Command::Surface.encode(), "SURFACE\n");
-        // Decimal CAContextID — the emulator emits `std::to_string(contextId)`.
-        assert_eq!(parse_surface("OK context=456586159").unwrap(), 456_586_159);
-        assert_eq!(parse_surface("OK context=0").unwrap(), 0); // not yet published
+        // Published: decimal CAContextID + native size in points.
+        let s = parse_surface("OK context=456586159 size=640x360").unwrap();
+        assert_eq!(s.context_id, 456_586_159);
+        assert_eq!((s.width, s.height), (640, 360));
+        // Not yet published — context 0, no size.
+        let z = parse_surface("OK context=0").unwrap();
+        assert_eq!(z.context_id, 0);
+        assert_eq!((z.width, z.height), (0, 0));
+        // Older patch without `size=` still parses → 0×0 (launcher hosts unscaled).
+        let nosize = parse_surface("OK context=42").unwrap();
+        assert_eq!((nosize.context_id, nosize.width, nosize.height), (42, 0, 0));
+        // Field order / unknown fields don't matter (forward-compat).
+        let reordered = parse_surface("OK size=1280x720 context=7 foo=bar").unwrap();
+        assert_eq!(
+            (reordered.context_id, reordered.width, reordered.height),
+            (7, 1280, 720)
+        );
         assert!(parse_surface("OK context=zzz").is_err());
+        assert!(parse_surface("OK context=5 size=640").is_err()); // malformed size
         assert!(parse_surface("OK").is_err()); // missing context=
     }
 

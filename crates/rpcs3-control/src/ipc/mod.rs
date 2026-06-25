@@ -126,12 +126,12 @@ impl IpcPortalDriver {
         proto::parse_window(&reply)
     }
 
-    /// Read the macOS `CAContextID` (`SURFACE`, P8), `0` until the game's
-    /// CAMetalLayer has been wrapped in a published `CAContext` at Vulkan
-    /// surface creation. The launcher hosts this id via `CALayerHost` to
-    /// composite the game's render layer INSIDE its own window. Not part of the
-    /// trait — the `game_surface_context_id` trait method wraps this.
-    pub fn surface_context_id(&self) -> Result<u32> {
+    /// Read the macOS render surface (`SURFACE`, P8): the `CAContextID` (`0`
+    /// until the game's CAMetalLayer has a published `CAContext` at Vulkan
+    /// surface creation) plus its native size in points. The launcher hosts the
+    /// id via `CALayerHost` and scales the hosted layer to its pane using the
+    /// size. Not part of the trait — the `game_surface` trait method wraps this.
+    pub fn surface(&self) -> Result<proto::GameSurface> {
         let reply = self.roundtrip(&Command::Surface)?;
         proto::parse_surface(&reply)
     }
@@ -294,9 +294,9 @@ impl PortalDriver for IpcPortalDriver {
         Ok((h != 0).then_some(h))
     }
 
-    fn game_surface_context_id(&self) -> Result<Option<u32>> {
-        let c = self.surface_context_id()?;
-        Ok((c != 0).then_some(c))
+    fn game_surface(&self) -> Result<Option<proto::GameSurface>> {
+        let s = self.surface()?;
+        Ok((s.context_id != 0).then_some(s))
     }
 
     /// Move + resize the running game window (P7) — the launcher tiling the game in

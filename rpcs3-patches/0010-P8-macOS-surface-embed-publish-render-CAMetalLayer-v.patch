@@ -1,0 +1,516 @@
+From 24dce9b1021d08eb5e84a6fbeee34ea7329feb0f Mon Sep 17 00:00:00 2001
+From: Christopher Hotchkiss <christopher.hotchkiss@gmail.com>
+Date: Wed, 24 Jun 2026 18:48:13 -0700
+Subject: [PATCH 10/10] =?UTF-8?q?P8:=20macOS=20surface-embed=20=E2=80=94?=
+ =?UTF-8?q?=20publish=20render=20CAMetalLayer=20via=20CAContext=20for=20CA?=
+ =?UTF-8?q?LayerHost=20(SURFACE)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Combines the P8 series (was P8 + P8-v2 + the 720p follow-up) into one patch.
+
+macOS analogue of P2's window-handle publish: instead of choreographing a
+second top-level game window, the emulator hands its render layer to the
+launcher, which hosts it INSIDE its own egui window via the private
+CALayerHost / CARemoteLayer SPI.
+
+- Dedicated off-view CAMetalLayer (surface_publish.mm): MoltenVK renders into a
+  standalone layer (NOT the gs_frame NSView's backing layer — an already-attached
+  backing layer won't also serialize through a CAContext), published via a private
+  CAContext. The contextId is read over IPC by the SURFACE command.
+- Window hidden (gs_frame.cpp show() suppressed under SKYLANDER_BORDERLESS): there
+  is no on-screen game window; the launcher owns the frame.
+- FIXED 16:9 720p render extent: gs_frame::client_width/height pinned to 1280x720
+  under SKYLANDER_BORDERLESS, and the layer drawableSize sized to match. RPCS3 uses
+  client_width/height for BOTH the swapchain extent AND the present blit target; the
+  near-fullscreen window self-resizes during boot, which would otherwise shrink the
+  blit target without recreating the swapchain (game rendered into a top-left
+  sub-rect, black elsewhere). Pinning keeps swapchain == present == published layer,
+  all 16:9 at the PS3's native 720p — one clean resample on the launcher side.
+- SURFACE reply carries the surface size (OK context=<dec> size=<w>x<h>) so the
+  launcher scales the hosted layer to its pane (CALayerHost renders the remote tree
+  at native size; it does not auto-fit the host bounds).
+
+Tested from Rust via the loopback (proto codec + ipc_loopback SURFACE round-trip);
+live-validated on macOS (M3 Max) — Skylanders Giants composites in the launcher
+window, filling the pane at 720p with a starfield-navy letterbox.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ rpcs3/Emu/CMakeLists.txt                     |   7 +
+ rpcs3/Emu/Io/Skylander.cpp                   |  53 +++++
+ rpcs3/Emu/RSX/VK/vkutils/metal_layer.h       |  14 ++
+ rpcs3/Emu/RSX/VK/vkutils/surface_publish.mm  | 230 +++++++++++++++++++
+ rpcs3/Emu/RSX/VK/vkutils/swapchain_macos.hpp |  26 ++-
+ rpcs3/rpcs3qt/gs_frame.cpp                   |  39 ++++
+ 6 files changed, 368 insertions(+), 1 deletion(-)
+ create mode 100644 rpcs3/Emu/RSX/VK/vkutils/surface_publish.mm
+
+diff --git a/rpcs3/Emu/CMakeLists.txt b/rpcs3/Emu/CMakeLists.txt
+index 045fa3076..9dfc64784 100644
+--- a/rpcs3/Emu/CMakeLists.txt
++++ b/rpcs3/Emu/CMakeLists.txt
+@@ -655,6 +655,7 @@ if(TARGET 3rdparty_vulkan)
+     if(APPLE)
+         target_sources(rpcs3_emu PRIVATE
+             RSX/VK/vkutils/metal_layer.mm
++            RSX/VK/vkutils/surface_publish.mm
+         )
+     endif()
+ endif()
+@@ -700,6 +701,12 @@ if(APPLE)
+     if (HAVE_CLOCK_GETTIME)
+         target_compile_definitions(rpcs3_emu PUBLIC -DHAVE_CLOCK_GETTIME)
+     endif()
++
++    # PLAN P8 — surface_publish.mm references the private CAContext class (QuartzCore)
++    # and CGSMainConnectionID (CoreGraphics). metal_layer.mm only needed plain message
++    # sends so these frameworks weren't on the link line before; the CAContext *class*
++    # symbol forces them. PUBLIC so the final rpcs3 binary inherits the link.
++    target_link_libraries(rpcs3_emu PUBLIC "-framework QuartzCore" "-framework CoreGraphics")
+ endif()
+ 
+ 
+diff --git a/rpcs3/Emu/Io/Skylander.cpp b/rpcs3/Emu/Io/Skylander.cpp
+index a2bc260fd..2f8ed7180 100644
+--- a/rpcs3/Emu/Io/Skylander.cpp
++++ b/rpcs3/Emu/Io/Skylander.cpp
+@@ -50,6 +50,28 @@ std::atomic<unsigned long long> g_game_window_handle{0};
+ // thread (reader) <-> GUI thread (writer) boundary, and no Qt types leak into emucore.
+ std::atomic<void (*)(int, int, int, int)> g_game_window_set_geometry{nullptr};
+ 
++// PLAN P8 — macOS CAMetalLayer CAContext id for cross-process CALayerHost embedding.
++// Defined here (emucore); set ONCE by the VK macOS surface-creation site (make_WSI_surface)
++// when SKYLANDER_BORDERLESS is set, and read by the IPC SURFACE command below. The layer
++// survives every swapchain recreate / resize, so there is no re-publish. Stays 0 on
++// non-Apple builds and when not in our control mode.
++std::atomic<unsigned int> g_game_surface_context_id{0};
++
++// PLAN P8 — the published surface's native size in POINTS, set alongside the
++// contextId by the VK macOS surface-creation site and read by the IPC SURFACE
++// command so the launcher's CALayerHost can scale the hosted layer to its pane
++// (CALayerHost renders the remote tree at native size; it does not auto-fit the
++// host bounds). 0 until published.
++std::atomic<unsigned int> g_game_surface_w{0};
++std::atomic<unsigned int> g_game_surface_h{0};
++
++// PLAN P8 — installed by the VK macOS surface-publish site; reads the published layer's
++// LIVE size in points (the real swapchain drawable extent, which can differ from the
++// window bounds captured at creation). The SURFACE handler prefers this over the cached
++// w/h above. nullptr on non-macOS / before publish (the VK/main-thread <-> IPC-thread
++// boundary, mirroring g_game_window_set_geometry).
++std::atomic<bool (*)(unsigned int*, unsigned int*)> g_game_surface_size_fn{nullptr};
++
+ void skylander::save()
+ {
+ 	if (!sky_file)
+@@ -471,6 +493,37 @@ namespace
+ 			std::snprintf(hx, sizeof(hx), "%llX", g_game_window_handle.load());
+ 			out = std::string("OK handle=") + hx + "\n";
+ 		}
++		else if (cmd == "SURFACE")
++		{
++			// PLAN P8 — macOS CAMetalLayer CAContext id (decimal) + the surface's
++			// native size in points for cross-process CALayerHost embedding. 0 until
++			// the VK surface site publishes it (or on non-macOS / non-control-mode
++			// launches). The size lets the launcher scale the hosted layer to its
++			// pane; it's appended only once non-zero (the publish site stores the
++			// size BEFORE the contextId, so a non-zero id always carries a size).
++			// Published once; stable for the game's lifetime.
++			const unsigned int cid = g_game_surface_context_id.load();
++			unsigned int sw = g_game_surface_w.load();
++			unsigned int sh = g_game_surface_h.load();
++			// Prefer the LIVE drawable extent (real render size) over the cached
++			// creation-time bounds — the swapchain extent can differ from the window
++			// bounds we read when the surface was created.
++			if (auto fn = g_game_surface_size_fn.load())
++			{
++				unsigned int lw = 0, lh = 0;
++				if (fn(&lw, &lh) && lw != 0 && lh != 0)
++				{
++					sw = lw;
++					sh = lh;
++				}
++			}
++			out = std::string("OK context=") + std::to_string(cid);
++			if (sw != 0 && sh != 0)
++			{
++				out += " size=" + std::to_string(sw) + "x" + std::to_string(sh);
++			}
++			out += "\n";
++		}
+ 		else if (cmd == "WINDOW_SET")
+ 		{
+ 			// PLAN P7 — tile the game window: the controller positions + sizes it instead of
+diff --git a/rpcs3/Emu/RSX/VK/vkutils/metal_layer.h b/rpcs3/Emu/RSX/VK/vkutils/metal_layer.h
+index d587b55bf..7583eb1bf 100644
+--- a/rpcs3/Emu/RSX/VK/vkutils/metal_layer.h
++++ b/rpcs3/Emu/RSX/VK/vkutils/metal_layer.h
+@@ -1,2 +1,16 @@
+ #pragma once
+ void* GetCAMetalLayerFromMetalView(void* view);
++
++// PLAN P8 — create a DEDICATED, off-view CAMetalLayer, configure it with a valid render
++// geometry (sized from `nsview`, the gs_frame NSView / macOS display_handle_t — or a
++// 1280x720 fallback), publish it through a private CAContext (writing its contextId into
++// g_game_surface_context_id for the IPC SURFACE command), and return the layer
++// (type-erased to void*) for use as VkMetalSurfaceCreateInfoEXT::pLayer. The same
++// dedicated layer is BOTH the render target and the published surface — that is what lets
++// the launcher's CALayerHost show live frames (an already-on-view backing layer publishes
++// blank; the standalone-layer POC proved an off-view one crosses the boundary). The layer
++// is configured (device/pixelFormat/drawableSize) rather than left bare because MoltenVK
++// reads drawableSize as the surface currentExtent too early to tolerate a 0x0 layer.
++// Returns nullptr when not in our control mode (SKYLANDER_BORDERLESS unset). Defined in
++// surface_publish.mm.
++extern "C" void* sky_make_published_metal_layer(void* nsview);
+diff --git a/rpcs3/Emu/RSX/VK/vkutils/surface_publish.mm b/rpcs3/Emu/RSX/VK/vkutils/surface_publish.mm
+new file mode 100644
+index 000000000..68756ea14
+--- /dev/null
++++ b/rpcs3/Emu/RSX/VK/vkutils/surface_publish.mm
+@@ -0,0 +1,230 @@
++// PLAN P8 — publish the game's CAMetalLayer to another process so our launcher can
++// host it via CALayerHost (the macOS surface-embed, mirroring the P2 WINDOW handle
++// publish). The launcher then reconstructs the layer tree remotely with CALayerHost.
++//
++// IMPORTANT — DEDICATED OFF-VIEW LAYER (the POC fix):
++// The first cut of P8 published the gs_frame NSView's *backing* layer
++// (GetCAMetalLayerFromMetalView). That layer is already owned by an on-screen
++// NSView, and CoreAnimation will not let an already-attached backing layer ALSO
++// serialize through a CAContext — the remote CALayerHost got a blank tree. The
++// standalone-CAMetalLayer POC (tools/calayer-poc/src/bin/producer_metal.rs) proved a
++// *dedicated, off-view* CAMetalLayer crosses the CAContext -> CALayerHost boundary
++// perfectly (live, animated, confirmed on screen). So here we hand MoltenVK a
++// dedicated CAMetalLayer that belongs to NOBODY's view, publish THAT through the
++// CAContext, and (separately, in gs_frame) suppress the on-screen game window. The
++// real Vulkan renderer is fully intact — MoltenVK renders into this layer via
++// vkCreateMetalSurfaceEXT exactly as it would the view's layer; we just changed which
++// layer it targets and who hosts it.
++//
++// CONFIGURED, NOT BARE (the live-test fix):
++// A bare [CAMetalLayer layer] has drawableSize 0x0. MoltenVK reads the layer's
++// drawableSize as the surface's currentExtent in vkGetPhysicalDeviceSurfaceCapabilities
++// at surface-creation time — BEFORE RPCS3's swapchain init(client_width, client_height)
++// runs — so a 0x0 layer makes the swapchain setup abort with "Invalid swapchain setup.
++// Resizing the game window failed. (object: 0x0)". The standalone POC worked only
++// because it set device/pixelFormat/bounds/drawableSize itself. So we configure the
++// dedicated layer with a valid render geometry here, before publishing: device,
++// pixelFormat (BGRA8Unorm), contentsScale, bounds, drawableSize. The launcher's
++// CALayerHost rescales the hosted layer to its own rect, so the absolute size only has
++// to be a VALID resolution, not pixel-perfect.
++//
++// The private-API incantation (CGSMainConnectionID + +contextWithCGSConnection:options:)
++// is the one proven by tools/calayer-poc/. CAContext + CAMetalLayer live in QuartzCore;
++// CGSMainConnectionID in CoreGraphics; Metal/AppKit for the device + NSView size probe.
++
++#pragma GCC diagnostic push
++#pragma GCC diagnostic ignored "-Wold-style-cast"
++#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
++#pragma GCC diagnostic ignored "-Wmissing-declarations"
++#import <Foundation/Foundation.h>
++#import <AppKit/AppKit.h>
++#import <QuartzCore/QuartzCore.h>
++#import <Metal/Metal.h>
++#include <atomic>
++#include <cstdlib>
++
++// --- PRIVATE API declarations (linked, but not in any public header) ----------
++// Returns this process's main CGSConnectionID. Lives in CoreGraphics.
++extern "C" unsigned int CGSMainConnectionID(void);
++
++// The server-side handle that owns a layer tree and exposes it for remote hosting.
++// Safari/Chrome use +contextWithCGSConnection:options:.
++@interface CAContext : NSObject
+++ (instancetype)contextWithCGSConnection:(unsigned int)cid options:(NSDictionary*)opts;
++@property (readonly) unsigned int contextId;
++@property (strong) CALayer* layer;
++@end
++
++// PLAN P8 — the published CAMetalLayer CAContext id, defined in emucore (Skylander.cpp,
++// beside g_game_window_handle) and read by the IPC SURFACE command.
++extern std::atomic<unsigned int> g_game_surface_context_id;
++
++// PLAN P8 — the published surface's native size in POINTS, defined in emucore and
++// read by the IPC SURFACE command so the launcher's CALayerHost can scale the
++// hosted layer to its pane. Stored here BEFORE the contextId so a non-zero id
++// always carries a valid size.
++extern std::atomic<unsigned int> g_game_surface_w;
++extern std::atomic<unsigned int> g_game_surface_h;
++
++// PLAN P8 — function pointer (installed by the publish below) the IPC SURFACE handler
++// calls to read the layer's LIVE size in points. The size we publish at surface-creation
++// (from the view bounds) can differ from the swapchain's actual drawable extent, so the
++// live read is what makes the launcher's CALayerHost scale fit exactly.
++extern std::atomic<bool (*)(unsigned int*, unsigned int*)> g_game_surface_size_fn;
++
++// The dedicated published CAMetalLayer (retained for the process lifetime). File-scope so
++// the lazy size reader can query its live drawableSize. nil until published.
++static CAMetalLayer* s_published_layer = nil;
++
++// Read the published layer's LIVE size in points (drawableSize / contentsScale) — the real
++// render extent. With the fixed 16:9 pin (below) this equals the creation-time size, but
++// reading it back keeps the SURFACE size authoritative if a future render path resizes the
++// swapchain (e.g. the 2x render pass). Returns false until usable; installed into
++// g_game_surface_size_fn after publishing.
++static bool sky_current_surface_points(unsigned int* out_w, unsigned int* out_h)
++{
++	if (!s_published_layer)
++	{
++		return false;
++	}
++	const CGSize draw = [s_published_layer drawableSize];
++	double scale = [s_published_layer contentsScale];
++	if (scale <= 0.0) scale = 1.0;
++
++	const double pw = draw.width / scale;
++	const double ph = draw.height / scale;
++	if (pw < 1.0 || ph < 1.0)
++	{
++		return false;
++	}
++	*out_w = (unsigned int)(pw + 0.5);
++	*out_h = (unsigned int)(ph + 0.5);
++	return true;
++}
++
++// Create a DEDICATED, off-view CAMetalLayer, configure it with a valid render geometry,
++// publish it through a private CAContext (stashing its contextId in
++// g_game_surface_context_id), and return the layer (type-erased to void*) so the VK
++// surface site can hand it to vkCreateMetalSurfaceEXT as createInfo.pLayer. The SAME
++// layer is both the render target AND the published surface — that is what makes the
++// remote CALayerHost show live frames (the POC's standalone layer was likewise both
++// rendered-into and published).
++//
++// `nsview` is the gs_frame's NSView (the macOS display_handle_t). We size the dedicated
++// layer from the view's bounds x backing scale, since that mirrors RPCS3's own swapchain
++// extent (VKGSRender uses gs_frame::client_width/height = width()*devicePixelRatio()).
++// If the (hidden, borderless) view's bounds aren't usable yet, fall back to a valid
++// 1280x720 — the launcher rescales the hosted layer anyway, so this only needs to be a
++// valid resolution. drawableSize is what MoltenVK reads as the surface currentExtent at
++// surface-creation time, so it MUST be non-zero before vkCreateMetalSurfaceEXT.
++//
++// Returns nullptr when not in our control mode (SKYLANDER_BORDERLESS unset) so the
++// caller falls back to the stock NSView-backing-layer path. Both the CAContext and the
++// CAMetalLayer are retained for the process lifetime (file-statics); publish-once guard.
++extern "C" void* sky_make_published_metal_layer(void* nsview)
++{
++	// Gate behind SKYLANDER_BORDERLESS, exactly like P2/P7 — only divert the layer in
++	// our controller mode so a stock-style launch is untouched.
++	if (!std::getenv("SKYLANDER_BORDERLESS"))
++	{
++		return nullptr;
++	}
++
++	// Retain the dedicated layer + its CAContext for the whole process: the remote
++	// CALayerHost must keep resolving this contextId for as long as the game renders.
++	// (s_published_layer is file-scope so the lazy size reader can query it.)
++	[[maybe_unused]] static CAContext* s_published_ctx = nil;
++	if (s_published_layer)
++	{
++		// Already created + published (defensive — the caller also guards once).
++		return (void*)s_published_layer;
++	}
++
++	CAMetalLayer* layer = [CAMetalLayer layer];
++	if (!layer)
++	{
++		return nullptr;
++	}
++	[layer retain]; // hold for the process lifetime
++
++	// --- Geometry: FIXED 16:9 render extent ----------------------------------------
++	// MUST match the pinned gs_frame::client_width/height (2560x1440). RPCS3 uses those
++	// for BOTH the swapchain extent AND the present blit target; MoltenVK reads THIS
++	// layer's drawableSize as the surface currentExtent. Keeping all three equal (and
++	// 16:9) is what makes the game fill the layer. We deliberately do NOT use the hidden
++	// gs_frame window's bounds: it comes up near-fullscreen (non-16:9) and self-resizes
++	// during boot, which would leave the game rendered into a top-left sub-rect of an
++	// over-sized, wrong-aspect swapchain (proven live 2026-06-25). The launcher hosts
++	// this layer and scales its POINT size (px / contentsScale) to its pane.
++	//
++	// 1280x720 = the PS3's native 720p output, so RPCS3 presents 1:1 (no internal
++	// upscale) and the only resample is the compositor's single scale-to-pane.
++	// Keep SKY_SURFACE_W/H_PX in sync with gs_frame::client_width/height.
++	static const double SKY_SURFACE_W_PX = 1280.0;
++	static const double SKY_SURFACE_H_PX = 720.0;
++
++	double scale = 1.0;
++	if (NSView* view = (NSView*)nsview)
++	{
++		scale = (view.window ? view.window.backingScaleFactor
++		                     : (view.layer ? view.layer.contentsScale : 1.0));
++	}
++	if (scale <= 0.0) scale = 1.0;
++	const double px_w = SKY_SURFACE_W_PX;
++	const double px_h = SKY_SURFACE_H_PX;
++
++	// Explicitly configure the dedicated layer — the live test proved MoltenVK does NOT
++	// fill a bare layer (it reads drawableSize too early). device + pixelFormat must be
++	// set; drawableSize must be non-zero (it IS the surface currentExtent MoltenVK reads).
++	id<MTLDevice> device = MTLCreateSystemDefaultDevice();
++	if (device)
++	{
++		layer.device = device;
++	}
++	layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
++	// NB: do NOT force framebufferOnly here — MoltenVK sets the drawable usage itself
++	// from the swapchain's VkImageUsageFlags (it may want TRANSFER_SRC for screenshots/
++	// recording). Only device/pixelFormat/size need to be valid before surface creation.
++	const double pt_w = px_w / scale;
++	const double pt_h = px_h / scale;
++	layer.contentsScale = scale;
++	layer.bounds = NSMakeRect(0.0, 0.0, pt_w, pt_h); // bounds are in points
++	layer.drawableSize = NSMakeSize(px_w, px_h);     // drawableSize is in pixels
++
++	// Pin the layer's placement in the hosted tree to a deterministic frame
++	// (0,0,pt_w,pt_h): anchor bottom-left at the host's origin. The launcher hosts
++	// it at the SAME (0,0,pt_w,pt_h) bounds and applies a centred scale transform,
++	// so the remote tree fills the host bounds exactly before scaling. Without a
++	// fixed anchor, the CALayer default (anchorPoint 0.5,0.5 / position 0,0) would
++	// centre the layer on the host's origin and the hosted game would land off-pane.
++	layer.anchorPoint = CGPointMake(0.0, 0.0);
++	layer.position = CGPointMake(0.0, 0.0);
++
++	CAContext* ctx = [CAContext contextWithCGSConnection:CGSMainConnectionID() options:@{}];
++	if (!ctx)
++	{
++		[layer release];
++		return nullptr;
++	}
++
++	ctx.layer = layer;
++	[ctx retain]; // hold for the process lifetime
++
++	s_published_layer = layer;
++	s_published_ctx = ctx;
++
++	// Install the live-size reader BEFORE the contextId so the SURFACE handler can
++	// query the real drawable extent the moment the id goes non-zero.
++	g_game_surface_size_fn.store(&sky_current_surface_points);
++
++	// Publish the native size FIRST (points), then the contextId — the SURFACE
++	// command keys "published" off a non-zero contextId, so storing the size
++	// before it guarantees a non-zero id always carries a valid size. (This is the
++	// creation-time fallback; the SURFACE handler prefers the live reader above.)
++	g_game_surface_w.store(static_cast<unsigned int>(pt_w + 0.5));
++	g_game_surface_h.store(static_cast<unsigned int>(pt_h + 0.5));
++	g_game_surface_context_id.store(ctx.contextId);
++
++	return (void*)layer;
++}
++#pragma GCC diagnostic pop
+diff --git a/rpcs3/Emu/RSX/VK/vkutils/swapchain_macos.hpp b/rpcs3/Emu/RSX/VK/vkutils/swapchain_macos.hpp
+index e4485324d..4f8f7395e 100644
+--- a/rpcs3/Emu/RSX/VK/vkutils/swapchain_macos.hpp
++++ b/rpcs3/Emu/RSX/VK/vkutils/swapchain_macos.hpp
+@@ -3,6 +3,11 @@
+ #include "swapchain_core.h"
+ #include "metal_layer.h"
+ 
++// PLAN P8 — the published CAMetalLayer CAContext id lives in emucore (Skylander.cpp,
++// beside g_game_window_handle) and is written by sky_make_published_metal_layer()
++// (surface_publish.mm) at surface creation. It is read by the IPC SURFACE command. The
++// dedicated layer survives every swapchain recreate / resize, so it is published once.
++
+ namespace vk
+ {
+ #if defined(__APPLE__)
+@@ -12,10 +17,29 @@ namespace vk
+ 	[[maybe_unused]] static
+ 	VkSurfaceKHR make_WSI_surface(VkInstance vk_instance, display_handle_t window_handle, WSI_config* /*config*/)
+ 	{
++		// PLAN P8 — controller-embedded play: render into a DEDICATED, off-view
++		// CAMetalLayer that is published (once, internally) through a private CAContext,
++		// instead of the gs_frame NSView's backing layer. An already-on-view backing
++		// layer publishes BLANK through a CAContext; a dedicated off-view layer crosses
++		// the CALayerHost boundary live (proven by tools/calayer-poc/). The dedicated
++		// layer is both the render target (createInfo.pLayer below) and the published
++		// surface — and gs_frame separately suppresses the on-screen window so no game
++		// window ever appears. SKYLANDER_BORDERLESS-gated inside the helper; returns
++		// nullptr outside our control mode, so a stock launch falls back to the NSView
++		// backing layer untouched.
++		// Pass the NSView (window_handle) so the dedicated layer can be sized from the
++		// gs_frame's geometry — MoltenVK reads the layer's drawableSize as the surface
++		// currentExtent here, so it must be valid before vkCreateMetalSurfaceEXT.
++		void* metal_layer = sky_make_published_metal_layer(window_handle);
++		if (!metal_layer)
++		{
++			metal_layer = GetCAMetalLayerFromMetalView(window_handle);
++		}
++
+ 		VkSurfaceKHR result = VK_NULL_HANDLE;
+ 		VkMetalSurfaceCreateInfoEXT createInfo = {};
+ 		createInfo.sType = VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT;
+-		createInfo.pLayer = GetCAMetalLayerFromMetalView(window_handle);
++		createInfo.pLayer = metal_layer;
+ 
+ 		CHECK_RESULT(vkCreateMetalSurfaceEXT(vk_instance, &createInfo, NULL, &result));
+ 		return result;
+diff --git a/rpcs3/rpcs3qt/gs_frame.cpp b/rpcs3/rpcs3qt/gs_frame.cpp
+index 8506e4e89..a0d864143 100644
+--- a/rpcs3/rpcs3qt/gs_frame.cpp
++++ b/rpcs3/rpcs3qt/gs_frame.cpp
+@@ -760,6 +760,21 @@ void gs_frame::show()
+ {
+ 	Emu.CallFromMainThread([this]()
+ 	{
++#ifdef __APPLE__
++		// PLAN P8 — controller-embedded play (macOS): the game renders into a DEDICATED,
++		// off-view CAMetalLayer that is published to the launcher via CAContext/CALayerHost
++		// (see surface_publish.mm). That layer renders independently of any on-screen window
++		// (the standalone-layer POC had no window at all), so suppress ALL on-screen
++		// presentation of the gs_frame window here — no QWindow::show(), no setVisibility() —
++		// so NO game window ever appears; the launcher hosts the frames instead. Env-gated +
++		// additive, mirroring P2's borderless gating. The Win32 path below pushes the window
++		// to the z-order BOTTOM instead, because Windows surface-embed isn't done yet.
++		if (::getenv("SKYLANDER_BORDERLESS"))
++		{
++			return;
++		}
++#endif
++
+ 		QWindow::show();
+ 
+ 		if (g_cfg.misc.start_fullscreen || m_start_games_fullscreen)
+@@ -840,6 +855,24 @@ void gs_frame::delete_context(draw_context_t context)
+ 
+ int gs_frame::client_width()
+ {
++#ifdef __APPLE__
++	// PLAN P8 — pin the render extent for the embedded surface. The game window is
++	// hidden (SKYLANDER_BORDERLESS) and its render layer is hosted in the launcher
++	// via CALayerHost, so the on-screen window size is irrelevant. RPCS3 uses
++	// client_width/height for BOTH the swapchain extent AND the present blit target;
++	// the near-fullscreen window self-resizes during boot, which would shrink the
++	// blit target without recreating the swapchain → the game renders into only the
++	// top-left of the swapchain (black elsewhere). Pinning to a fixed 16:9 keeps
++	// swapchain == present == the published CAMetalLayer (see surface_publish.mm,
++	// which sizes the layer drawableSize to the SAME extent). Keep in sync.
++	// 1280x720 = the PS3's native 720p output → RPCS3 presents 1:1, no internal
++	// upscale; the compositor does the single scale-to-pane. (A 2x render pass is
++	// future work — it needs its own stability validation.)
++	if (::getenv("SKYLANDER_BORDERLESS"))
++	{
++		return 1280; // 16:9 720p, matches surface_publish.mm SKY_SURFACE_W_PX
++	}
++#endif // __APPLE__
+ #ifdef _WIN32
+ 	RECT rect;
+ 	if (GetClientRect(reinterpret_cast<HWND>(winId()), &rect))
+@@ -852,6 +885,12 @@ int gs_frame::client_width()
+ 
+ int gs_frame::client_height()
+ {
++#ifdef __APPLE__
++	if (::getenv("SKYLANDER_BORDERLESS"))
++	{
++		return 720; // 16:9 720p, matches surface_publish.mm SKY_SURFACE_H_PX
++	}
++#endif // __APPLE__
+ #ifdef _WIN32
+ 	RECT rect;
+ 	if (GetClientRect(reinterpret_cast<HWND>(winId()), &rect))
+-- 
+2.50.1 (Apple Git-155)
+

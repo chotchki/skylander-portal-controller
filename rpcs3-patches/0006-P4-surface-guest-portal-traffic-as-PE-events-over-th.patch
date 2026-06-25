@@ -1,7 +1,7 @@
-From 06e8e6c19d446098f7270a02cb490bc9a99c90b8 Mon Sep 17 00:00:00 2001
+From fae37eb2894d891ec1ffdbc8113d15e827c5fbb7 Mon Sep 17 00:00:00 2001
 From: Christopher Hotchkiss <chris@hotchkiss.io>
 Date: Wed, 10 Jun 2026 19:58:43 -0700
-Subject: [PATCH 4/5] P4: surface guest portal traffic as PE events over the
+Subject: [PATCH 06/10] P4: surface guest portal traffic as PE events over the
  IPC socket
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

@@ -1,0 +1,378 @@
+From 5d1e667ce4a97e774cc49560ae23e2799f0ec374 Mon Sep 17 00:00:00 2001
+From: Christopher Hotchkiss <christopher.hotchkiss@gmail.com>
+Date: Tue, 23 Jun 2026 11:58:10 -0800
+Subject: [PATCH 04/10] SPU Analyzer: prune dead in-range targets from
+ m_targets (Giga)
+
+Giga cleanup clears m_block_info for removed blocks but left their in-range edges in m_targets, so the register-state walk dereferenced a stale target and aborted ("Range check failed") - e.g. a brsl whose return is a stop-trap, hit in Skylanders Giants. Prune those edges at the m_targets cleanup; export out_target_list after the prune so callers see the cleaned map; keep the initiate_patterns and cond_next-walk guards as defense in depth.
+
+Adds made-up-data regression tests (the exported-map test fails without the prune) and the rpcs3_test.vcxproj entry.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ rpcs3/CMakeLists.txt                   |   1 +
+ rpcs3/Emu/Cell/SPUCommonRecompiler.cpp |  43 ++++-
+ rpcs3/tests/rpcs3_test.vcxproj         |   1 +
+ rpcs3/tests/test_spu_analyser.cpp      | 244 +++++++++++++++++++++++++
+ 4 files changed, 282 insertions(+), 7 deletions(-)
+ create mode 100644 rpcs3/tests/test_spu_analyser.cpp
+
+diff --git a/rpcs3/CMakeLists.txt b/rpcs3/CMakeLists.txt
+index 6178f9c7d..2fa497467 100644
+--- a/rpcs3/CMakeLists.txt
++++ b/rpcs3/CMakeLists.txt
+@@ -192,6 +192,7 @@ if(BUILD_RPCS3_TESTS)
+             tests/test_rsx_cfg.cpp
+             tests/test_rsx_fp_asm.cpp
+             tests/test_dmux_pamf.cpp
++            tests/test_spu_analyser.cpp
+     )
+ 
+     target_link_libraries(rpcs3_test
+diff --git a/rpcs3/Emu/Cell/SPUCommonRecompiler.cpp b/rpcs3/Emu/Cell/SPUCommonRecompiler.cpp
+index 813915820..f4c3027d9 100644
+--- a/rpcs3/Emu/Cell/SPUCommonRecompiler.cpp
++++ b/rpcs3/Emu/Cell/SPUCommonRecompiler.cpp
+@@ -3973,11 +3973,6 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
+ 		it++;
+ 	}
+ 
+-	if (out_target_list)
+-	{
+-		out_target_list->insert(m_targets.begin(), m_targets.end());
+-	}
+-
+ 	// Remove unnecessary target lists
+ 	for (auto it = m_targets.begin(); it != m_targets.end();)
+ 	{
+@@ -3991,7 +3986,13 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
+ 
+ 		for (auto it2 = it->second.begin(); it2 != it->second.end();)
+ 		{
+-			if (*it2 < lsa || *it2 >= limit)
++			// Drop targets out of range, OR pointing at a block that cleanup
++			// removed above (m_block_info cleared) - the dead in-range edges
++			// that otherwise leave dangling targets in m_bbs. Pruning them here
++			// keeps m_targets self-consistent. The pre-existing get_block_targets
++			// / get_block_preds guards are retained, plus a belt-and-suspenders
++			// initiate_patterns guard added below - all defense in depth.
++			if (*it2 < lsa || *it2 >= limit || !m_block_info[*it2 / 4])
+ 			{
+ 				it2 = it->second.erase(it2);
+ 				removed = true;
+@@ -4010,6 +4011,14 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
+ 		it++;
+ 	}
+ 
++	// Export the now-pruned, self-consistent target map AFTER the prune above,
++	// so callers don't see the dead in-range edges (or stale out-of-range keys)
++	// we just removed from m_targets.
++	if (out_target_list)
++	{
++		out_target_list->insert(m_targets.begin(), m_targets.end());
++	}
++
+ 	// Fill holes which contain only NOP and LNOP instructions (TODO: compile)
+ 	for (u32 i = 0, nnop = 0, vsize = 0; i <= result.data.size(); i++)
+ 	{
+@@ -5257,6 +5266,14 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
+ 
+ 	const auto initiate_patterns = [&](block_reg_state_iterator& block_state_it, u32 bpc, bool is_multi_block)
+ 	{
++		// Defense in depth: cleanup now prunes dead in-range edges from m_targets,
++		// but still skip a bpc whose block was removed (matches get_block_targets)
++		// so no consumer can ever deref a stale target (e.g. a stop-trap return).
++		if (!m_block_info[bpc / 4] || !m_bbs.count(bpc))
++		{
++			return;
++		}
++
+ 		// Initiate patterns (that are initiated on block start)
+ 		const auto& bb_body = ::at32(m_bbs, bpc);
+ 
+@@ -5319,7 +5336,19 @@ spu_program spu_recompiler_base::analyse(const be_t<u32>* ls, u32 entry_point, s
+ 		{
+ 			targets_count = 0;
+ 
+-			const u32 cond_next = block_pc + ::at32(m_bbs, block_pc).size * 4;
++			// Belt-and-suspenders (PR #18935): block_pc is the previous block's
++			// fall-through (cond_next), a live m_bbs key only because the m_targets
++			// prune keeps dead edges out of block.targets. If that ever regressed,
++			// the ::at32 below would abort with the same "Range check failed" as
++			// the bug we fixed - bail cleanly instead of dereferencing a non-block.
++			const auto block_it = m_bbs.find(block_pc);
++			if (block_it == m_bbs.end() || !m_block_info[block_pc / 4])
++			{
++				invalid = true;
++				break;
++			}
++
++			const u32 cond_next = block_pc + block_it->second.size * 4;
+ 			valid = false;
+ 
+ 			bool is_end = false;
+diff --git a/rpcs3/tests/rpcs3_test.vcxproj b/rpcs3/tests/rpcs3_test.vcxproj
+index 0c2457bc9..fb96921ef 100644
+--- a/rpcs3/tests/rpcs3_test.vcxproj
++++ b/rpcs3/tests/rpcs3_test.vcxproj
+@@ -96,6 +96,7 @@
+     <ClCompile Include="test_dmux_pamf.cpp">
+       <ExcludedFromBuild>true</ExcludedFromBuild>
+     </ClCompile>
++    <ClCompile Include="test_spu_analyser.cpp" />
+     <ClCompile Include="test_fmt.cpp" />
+     <ClCompile Include="test_rsx_cfg.cpp" />
+     <ClCompile Include="test_rsx_fp_asm.cpp" />
+diff --git a/rpcs3/tests/test_spu_analyser.cpp b/rpcs3/tests/test_spu_analyser.cpp
+new file mode 100644
+index 000000000..57881edaa
+--- /dev/null
++++ b/rpcs3/tests/test_spu_analyser.cpp
+@@ -0,0 +1,244 @@
++#include <gtest/gtest.h>
++
++#include <array>
++#include <bit>
++#include <ios>
++#include <map>
++#include <vector>
++
++#include "util/types.hpp"
++#include "Emu/Cell/SPURecompiler.h"
++#include "Emu/Cell/SPUThread.h"
++#include "Emu/system_config.h"
++#include "Emu/system_config_types.h"
++
++// Giga SPU analyser regression: a brsl whose return address is a stop-trap leaves
++// a dangling target edge after block cleanup, which the reg-state walk must not
++// dereference. The SPU program below is made-up data (not from any game).
++namespace
++{
++	constexpr u32 SPU_STOP = 0x00000000u; // stop 0x0 — the no-return trap word
++
++	// RI16: il rt, i16  (opcode 0x081)
++	constexpr u32 enc_il(u32 rt, u32 imm)
++	{
++		return (0x081u << 23) | ((imm & 0xffff) << 7) | (rt & 0x7f);
++	}
++
++	// RI16: brsl rt, target  (opcode 0x066). Branch-relative-and-set-link (call).
++	constexpr u32 enc_brsl(u32 pos, u32 target)
++	{
++		const u32 rel = ((target - pos) / 4) & 0xffff;
++		return (0x066u << 23) | (rel << 7) | 0u /* rt = $lr ($0) */;
++	}
++
++	// RR: bi $0  (opcode 0x1a8) — branch indirect to $lr, i.e. function return.
++	constexpr u32 enc_bi_lr()
++	{
++		return 0x1a8u << 21;
++	}
++}
++
++TEST(SpuAnalyserGiga, ReturnToStopTrapDoesNotRangeCheckFail)
++{
++	const auto saved = g_cfg.core.spu_block_size.get();
++	g_cfg.core.spu_block_size.set(spu_block_size_type::giga);
++
++	auto rec = spu_recompiler_base::make_asmjit_recompiler();
++	ASSERT_TRUE(rec);
++
++	std::array<be_t<u32>, SPU_LS_SIZE / 4> ls{};
++	const auto w = [&](u32 addr, u32 instr) { ls[addr / 4] = instr; };
++
++	// entry@0x00 calls funcA@0x10; the call's return address (0x04) is a stop
++	// trap, sitting immediately before funcB@0x08 which funcA also calls — so the
++	// return-point block at 0x04 is created, then removed (stop word), orphaning it.
++	w(0x00, enc_brsl(0x00, 0x10)); // entry -> funcA ; return = 0x04
++	w(0x04, SPU_STOP);             // <- the trap that drives the bug
++	w(0x08, enc_il(3, 7));         // funcB@0x08
++	w(0x0c, enc_bi_lr());          // funcB return
++	w(0x10, enc_brsl(0x10, 0x08)); // funcA@0x10 -> funcB ; return = 0x14
++	w(0x14, enc_bi_lr());          // funcA return
++
++	std::map<u32, std::vector<u32>> targets;
++
++	// Pre-fix this aborts inside analyse() (Range check failed); reaching the
++	// assertions is the regression check.
++	const spu_program prog = rec->analyse(ls.data(), 0x00, &targets);
++	EXPECT_EQ(prog.entry_point, 0x00u);
++	EXPECT_FALSE(prog.data.empty());
++
++	g_cfg.core.spu_block_size.set(saved);
++}
++
++// Encoders for the added coverage tests below. enc2_ prefix avoids clashing with
++// the reused enc_il / enc_brsl / enc_bi_lr / SPU_STOP above; every word is
++// MADE-UP data encoded from the SPU opcode tables.
++namespace
++{
++	// RI16 (magn 2): opcode<<23 | i16<<7 | rt
++	constexpr u32 enc2_il(u32 rt, u32 imm)
++	{
++		return (0x081u << 23) | ((imm & 0xffff) << 7) | (rt & 0x7f);
++	}
++
++	// RI18 (magn 4): opcode<<25 | i18<<7 | rt
++	constexpr u32 enc2_ila(u32 rt, u32 imm18)
++	{
++		return (0x021u << 25) | ((imm18 & 0x3ffff) << 7) | (rt & 0x7f);
++	}
++
++	// br target - unconditional relative branch (single successor).
++	constexpr u32 enc2_br(u32 pos, u32 target)
++	{
++		const u32 rel = ((target - pos) / 4) & 0xffff;
++		return (0x064u << 23) | (rel << 7);
++	}
++
++	// brnz rt, target - conditional relative branch (branch target + fall-through).
++	constexpr u32 enc2_brnz(u32 rt, u32 pos, u32 target)
++	{
++		const u32 rel = ((target - pos) / 4) & 0xffff;
++		return (0x042u << 23) | (rel << 7) | (rt & 0x7f);
++	}
++}
++
++// FIX #1 (DISCRIMINATING): the exported target map must be the post-prune,
++// self-consistent map. Cleanup removes the 0x04 STOP-trap return block
++// (m_block_info[0x04/4] cleared); the prune drops the dead in-range edge
++// 0x00 -> 0x04 and appends the SPU_LS_SIZE sentinel. The export was MOVED to run
++// AFTER the prune, so callers no longer see 0x04. PASS with the fix; FAIL without
++// it (pre-fix the export ran before the prune and leaked 0x04 into m_targets[0x00]).
++TEST(SpuAnalyserGiga, OutTargetListHasNoDeadInRangeEdge)
++{
++	const auto saved = g_cfg.core.spu_block_size.get();
++	g_cfg.core.spu_block_size.set(spu_block_size_type::giga);
++
++	auto rec = spu_recompiler_base::make_asmjit_recompiler();
++	ASSERT_TRUE(rec);
++
++	std::array<be_t<u32>, SPU_LS_SIZE / 4> ls{};
++	const auto w = [&](u32 addr, u32 instr) { ls[addr / 4] = instr; };
++
++	w(0x00, enc_brsl(0x00, 0x10)); // entry -> funcA ; return-point block = 0x04
++	w(0x04, SPU_STOP);             // STOP: kills the 0x04 return block
++	w(0x08, enc2_il(3, 7));        // funcB@0x08
++	w(0x0c, enc_bi_lr());          // funcB return
++	w(0x10, enc_brsl(0x10, 0x08)); // funcA@0x10 -> funcB ; return-point = 0x14
++	w(0x14, enc_bi_lr());          // funcA return
++
++	std::map<u32, std::vector<u32>> targets;
++	const spu_program prog = rec->analyse(ls.data(), 0x00, &targets);
++
++	EXPECT_EQ(prog.entry_point, 0x00u);
++	EXPECT_FALSE(prog.data.empty());
++
++	constexpr u32 kDeadBlock = 0x04u;
++
++	for (const auto& [key, succ] : targets)
++	{
++		EXPECT_LT(key, static_cast<u32>(SPU_LS_SIZE))
++			<< "target-map key out of range: 0x" << std::hex << key;
++		EXPECT_NE(key, kDeadBlock)
++			<< "removed block 0x04 must not be a key in the exported map";
++
++		for (u32 t : succ)
++		{
++			EXPECT_NE(t, kDeadBlock)
++				<< "exported edge from 0x" << std::hex << key
++				<< " still points at removed block 0x04 (export ran before prune)";
++
++			const bool in_range = (t < static_cast<u32>(SPU_LS_SIZE));
++			const bool sentinel = (t == static_cast<u32>(SPU_LS_SIZE));
++			EXPECT_TRUE(in_range || sentinel)
++				<< "exported edge from 0x" << std::hex << key
++				<< " has bad successor 0x" << t;
++		}
++	}
++
++	g_cfg.core.spu_block_size.set(saved);
++}
++
++// FIX #2 (POSITIVE walk - does NOT fire the guard): a giga function whose body is
++// a multi-block loop, so the loop-body walk advances block_pc through cond_next
++// fall-through hops. The guard is belt-and-suspenders and cannot trigger on valid
++// input (the prune keeps dead edges out of block.targets). Asserts only that
++// analyse() completes and returns a sane program.
++TEST(SpuAnalyserGiga, MultiBlockLoopBodyWalkCompletes)
++{
++	const auto saved = g_cfg.core.spu_block_size.get();
++	g_cfg.core.spu_block_size.set(spu_block_size_type::giga);
++
++	auto rec = spu_recompiler_base::make_asmjit_recompiler();
++	ASSERT_TRUE(rec);
++
++	std::array<be_t<u32>, SPU_LS_SIZE / 4> ls{};
++	const auto w = [&](u32 addr, u32 instr) { ls[addr / 4] = instr; };
++
++	w(0x00, enc2_il(3, 4));            // r3 = 4 (loop counter seed)
++	w(0x04, enc2_il(4, 1));            // r4 = 1
++	w(0x08, enc2_brnz(3, 0x08, 0x10)); // if r3 != 0 -> 0x10, else fall to 0x0c
++	w(0x0c, enc_bi_lr());              // exit path: return
++	w(0x10, enc2_il(5, 9));            // body block B @0x10
++	w(0x14, enc2_brnz(4, 0x14, 0x1c)); // -> 0x1c, else fall to 0x18
++	w(0x18, enc2_il(6, 2));            // body block C @0x18 (fall-through chain)
++	w(0x1c, enc2_br(0x1c, 0x00));      // back-edge to loop head
++
++	std::map<u32, std::vector<u32>> targets;
++	const spu_program prog = rec->analyse(ls.data(), 0x00, &targets);
++
++	EXPECT_EQ(prog.entry_point, 0x00u);
++	EXPECT_FALSE(prog.data.empty());
++
++	for (const auto& [key, succ] : targets)
++	{
++		EXPECT_LT(key, static_cast<u32>(SPU_LS_SIZE));
++		for (u32 t : succ)
++		{
++			EXPECT_TRUE(t < static_cast<u32>(SPU_LS_SIZE)
++				|| t == static_cast<u32>(SPU_LS_SIZE));
++		}
++	}
++
++	g_cfg.core.spu_block_size.set(saved);
++}
++
++// FIX #3 (POSITIVE, NON-DISCRIMINATING): the /41 -> /4 typo lives in the giga
++// secondary "Fill more block info" re-decode loop and only corrupts internal
++// bb.reg_const / bb.reg_val32 (-> stack_sub / func.good) - none of which reaches
++// analyse()'s public outputs (spu_program / out_target_list), and BI/BISL targets
++// come from the untouched first pass. So this can only exercise the re-decode loop
++// over a multi-instruction block + assert completion + data round-trip; it PASSES
++// under both /4 and /41. Discriminating coverage needs a test accessor on the
++// internal block state (flagged in the PR notes).
++TEST(SpuAnalyserGiga, ReDecodeConstPropCompletes)
++{
++	const auto saved = g_cfg.core.spu_block_size.get();
++	g_cfg.core.spu_block_size.set(spu_block_size_type::giga);
++
++	auto rec = spu_recompiler_base::make_asmjit_recompiler();
++	ASSERT_TRUE(rec);
++
++	std::array<be_t<u32>, SPU_LS_SIZE / 4> ls{};
++	const auto w = [&](u32 addr, u32 instr) { ls[addr / 4] = instr; };
++
++	w(0x00, enc2_il(3, 0x1234));   // index 0 : const into r3
++	w(0x04, enc2_ila(4, 0x208));   // index 1 : const into r4 (distinct word)
++	w(0x08, enc2_il(5, 0x22));     // index 2 : const into r5
++	w(0x0c, enc2_ila(6, 0x108));   // index 3 : const into r6
++	w(0x10, enc2_il(7, 0x33));     // index 4 : const into r7
++	w(0x14, enc_bi_lr());          // return ($lr)
++
++	std::map<u32, std::vector<u32>> targets;
++	const spu_program prog = rec->analyse(ls.data(), 0x00, &targets);
++
++	EXPECT_EQ(prog.entry_point, 0x00u);
++	EXPECT_FALSE(prog.data.empty());
++
++	// data stores std::bit_cast<u32>(ls_word); compare underlying u32 forms.
++	ASSERT_GE(prog.data.size(), (0x10u / 4) + 1);
++	EXPECT_EQ(prog.data[0x00 / 4], std::bit_cast<u32>(be_t<u32>{enc2_il(3, 0x1234)}));
++	EXPECT_EQ(prog.data[0x10 / 4], std::bit_cast<u32>(be_t<u32>{enc2_il(7, 0x33)}));
++
++	g_cfg.core.spu_block_size.set(saved);
++}
+-- 
+2.50.1 (Apple Git-155)
+

@@ -60,11 +60,13 @@ pub trait PortalDriver: Send + Sync {
         Ok(None)
     }
 
-    /// macOS `CAContextID` over IPC (P8), non-zero once the game's render layer
-    /// has a published `CAContext` the launcher hosts via `CALayerHost` to
-    /// composite the game INSIDE its own window. `Ok(None)` when unavailable /
-    /// not yet published. Default is `None` (non-IPC + non-macOS drivers).
-    fn game_surface_context_id(&self) -> Result<Option<u32>> {
+    /// macOS render surface over IPC (P8): the `CAContextID` the launcher hosts
+    /// via `CALayerHost` to composite the game INSIDE its own window, plus the
+    /// surface's native size in points (so the launcher can scale the hosted
+    /// layer to its pane). `Some` once the game's render layer has a published
+    /// `CAContext`; `Ok(None)` when unavailable / not yet published. Default is
+    /// `None` (non-IPC + non-macOS drivers).
+    fn game_surface(&self) -> Result<Option<ipc::proto::GameSurface>> {
         Ok(None)
     }
 

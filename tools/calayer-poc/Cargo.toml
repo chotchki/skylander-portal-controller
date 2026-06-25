@@ -20,6 +20,10 @@ path = "src/bin/producer.rs"
 name = "consumer"
 path = "src/bin/consumer.rs"
 
+[[bin]]
+name = "producer_metal"
+path = "src/bin/producer_metal.rs"
+
 [dependencies]
 # objc2 0.6 family (objc2-foundation/app-kit/quartz-core 0.3.2 all depend on
 # objc2 0.6). NOTE: winit 0.30 internally uses objc2 0.5 — that is fine because
@@ -31,6 +35,9 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "NSString",
     "NSDictionary",
     "NSGeometry",      # NSRect / CGRect bridging
+    "NSDate",          # NSTimeInterval used by NSTimer block scheduler
+    "NSTimer",         # producer_metal: main-runloop frame timer
+    "block2",          # producer_metal: block-based NSTimer scheduler
 ] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "std",
@@ -49,9 +56,28 @@ objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
     "CAAnimation",      # pulls in CABasicAnimation
     "CAMediaTiming",
     "CATransaction",
+    "CAMetalLayer",     # producer_metal: the Metal-backed root layer
     "objc2-core-foundation",
     "objc2-core-graphics",   # enables CALayer::setBackgroundColor(CGColor)
+    "objc2-metal",      # producer_metal: MTL-typed CAMetalLayer methods (device, nextDrawable)
 ] }
+
+# producer_metal: Metal device / queue / command-buffer / render-pass.
+objc2-metal = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "MTLDevice",
+    "MTLCommandQueue",
+    "MTLCommandBuffer",
+    "MTLCommandEncoder",        # endEncoding lives on the base encoder protocol
+    "MTLRenderCommandEncoder",
+    "MTLRenderPass",            # MTLRenderPassDescriptor + clear color / load action
+    "MTLPixelFormat",
+    "MTLTexture",
+    "MTLDrawable",
+] }
+
+# producer_metal: block-based NSTimer frame driver.
+block2 = "0.6"
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = [
     "std",
     "CFBase",

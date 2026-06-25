@@ -11,4 +11,6 @@ fn main() {
     println!("cargo:rustc-link-lib=framework=CoreGraphics");
     println!("cargo:rustc-link-lib=framework=AppKit");
     println!("cargo:rustc-link-lib=framework=Foundation");
+    // producer_metal: MTLCreateSystemDefaultDevice + Metal types live in Metal.
+    println!("cargo:rustc-link-lib=framework=Metal");
 }

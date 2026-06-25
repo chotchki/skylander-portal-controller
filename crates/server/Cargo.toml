@@ -154,6 +154,7 @@ objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
     "CABase",
     "CALayer",
     "CATransaction",       # disable implicit animations while (re)framing the host layer
+    "CATransform3D",       # CALayer::setTransform — scale the hosted surface to its pane (P8 offset fix)
     "objc2-core-foundation", # enables CALayer::setFrame(CGRect) — the host-layer fit
 ] }
 

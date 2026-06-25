@@ -3922,14 +3922,17 @@ ever does z-order with `SWP_NOMOVE | SWP_NOSIZE`) is the real work of this phase
   - [x] A.2.1 - P6 pad-button IPC (patch + proto + driver)
   - [x] A.2.2 - Reference screens: capture + label
   - [x] A.2.3 - Image classifier (frame grab + match)
-  - [ ] A.2.4 - Classifier nav loop wired into ingame narrative
+  - [x] A.2.4 - Classifier nav loop wired into ingame narrative
 - [x] A.3 - Kaos demo beat (wire the existing test hook)
 - [ ] A.4 - Hero narrative: login → launch → place → walk → Kaos
 - [ ] A.5 - Render: 2-pane composite + captions + AV1/HEVC dual-encode
+  - [>] A.5.1 - A.5.1 - 3-stream per-window capture (phone + launcher + game)
+  - [>] A.5.2 - A.5.2 - Right-pane launcher→game concat + composite
+  - [>] A.5.3 - A.5.3 - Live-validate the per-window 2-pane reel
 - [ ] A.6 - One-command generate chain + README video embed
 ## Phase B - macOS window coordination (Desktop-mode "drive from the desktop")
-- [ ] B.1 - Spike: position the RPCS3 game window on macOS
-- [ ] B.2 - Implement the chosen game-window positioning
+- [x] B.1 - Spike: position the RPCS3 game window on macOS
+- [x] B.2 - Implement the chosen game-window positioning
 - [ ] B.3 - Launcher-side macOS game-window fit
 - [ ] B.4 - Live-validate macOS window coordination
 
@@ -3939,3 +3942,7 @@ ever does z-order with `SWP_NOMOVE | SWP_NOSIZE`) is the real work of this phase
 - **Live IPC test: drive patched macOS RPCS3 against a real Skylanders game** — added 2026-05-31. DONE 2026-06-22: Giants ~60fps SPU-LLVM on M3 Max (16.12.4c).
 - **macOS RPCS3 distribution polish: deployment target + .app codesigning** — added 2026-05-31.
 - **Extract `tools/ios-inspect` to its own repo (github.com/chotchki/ios-inspect); remove here + repoint** — added 2026-06-22. Blocked on the split landing. Touches: delete `tools/ios-inspect/`, `Cargo.toml` exclude, the CLAUDE.md ios-inspect section, `crates/e2e-tests/{README,Cargo.toml}`, `docs/{roadmap,dev/macos-bringup,dev/ci}.md`, and the `ci.yml` iOS-sim lane (repoint at the external tool / `cargo install --git`).
+- **A.5.1 - 3-stream per-window capture (phone + launcher + game)** — deferred from A.5.1 on 2026-06-24.
+- **A.5.2 - Right-pane launcher→game concat + composite** — deferred from A.5.2 on 2026-06-24.
+- **A.5.3 - Live-validate the per-window 2-pane reel** — deferred from A.5.3 on 2026-06-24.
+- **2× render pass for macOS surface-embed (1440p) — needs stability validation** — added 2026-06-25.

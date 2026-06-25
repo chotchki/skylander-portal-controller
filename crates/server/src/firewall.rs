@@ -44,6 +44,9 @@ pub enum FirewallStatus {
 /// and whether an enabled inbound rule covers our port, classify the status.
 /// Split from the COM glue so the logic unit-tests without touching the live
 /// firewall.
+// Off Windows, its only non-test caller (`check`, the Windows COM path) is
+// cfg'd out, so the lib build sees it as dead. It's live on Windows + under test.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn classify(firewall_enabled: bool, rule_covers_port: bool) -> FirewallStatus {
     if !firewall_enabled {
         FirewallStatus::FirewallOff
