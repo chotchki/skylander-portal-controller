@@ -728,3 +728,24 @@ Pack figures now keyed by `{toy_type:06x}-{variant:04x}` (was SHA-of-path); scan
 - DB wipe lost dev-data profile state. Acceptable (no real users).
 
 ---
+
+## Triage sweep — 2026-06-24 (Phases 5–20, A.1–A.5, B)
+
+A full plan triage (12-reviewer audit, each verifying against code) reclassified the active PLAN's 191 unchecked boxes: ~108 were done-in-code / superseded / obsolete. Swept here; the few real survivors + a pruned backlog stay in PLAN.md. Per-phase outcome:
+
+- **Phase 5 — Kaos: DONE.** Wall-clock timer (20-min warmup, 60-min windows), text-only taunts, 1-for-1 compatible swap, purple/pink skin, parent kill-switch, standard driver flow — all in `crates/server/src/kaos.rs` + `profiles.rs` + `phone/.../kaos_overlay.rs`. Swap-eligibility hardened 2026-06-25 (#25, commit 17d72fc).
+- **Phase 6 — Post-Kaos polish: mostly DONE.** Residual stat-payload parsing (Trap/Vehicle/CYOS 6.2.x, menu-flicker 6.1) → Backlog (needs real-dump samples).
+- **Phases 8–10 — Items / phone SPA: DONE.** Collection, drill-down chip rows (GAMES/ELEMENT/CATEGORY), figure detail, portal drawer, toy-box — all in `phone/src/screens/`. Launcher exit-button 4K cutoff (10.8.3) → PLAN Phase R.
+- **Phase 11 — Stat editing (level + gold): DONE.** Edit sheet + cross-phone refresh; iOS-device validation (11.8.3/.4) → Backlog.
+- **Phase 12 — AXUIElement macOS driver: STRUCK.** Explicit non-goal — the Phase-16 IPC path to the patched RPCS3 supersedes it. Never implemented; deleted, not done.
+- **Phase 13 — winget distribution: DONE.** winget manifest + release lane ship; doc-wording residuals (13.5.x) → PLAN Phase R.
+- **Phase 15 — Play-through capture harness: SUPERSEDED by Phase A.** The classifier + cold-boot + 2-pane reel re-pivot replaced it; the site/README embed (15.7) survives as Phase A.6, extra scenario flows (15.6) → Backlog.
+- **Phase 16 — RPCS3 integration via patched upstream + IPC: DONE.** P1–P8 patch series, IPC driver, macOS lifecycle, pin 927e2492e live-validated ~60fps on M3 Max. Gated patched-build trigger (16.12.6) → PLAN Phase R; pin-bump-past-#18935 → Backlog; upstream SPU PR merged (#18935).
+- **Phase 17 — Connectivity diagnostics / firewall self-heal: DONE** (`crates/server/src/firewall.rs`).
+- **Phase 18 — Branding asset integration: DONE** (PR #3). DLL-warning mute (18.8) → Backlog.
+- **Phase 19 — Software-OpenGL fallback + demo mode: DONE** (`gl_fallback.rs`, Mesa packaging).
+- **Phase 20 — Desktop window mode: DONE** (windowed launcher + Win32 game-window fit).
+- **Phase A.1–A.5 — demo reel capture + render: DONE** (per-window SCKit, 2-pane `hstack` composite, dual-encode). A.6 embed survives in PLAN.
+- **Phase B — macOS window coordination: SUPERSEDED by the surface-embed** (CALayerHost; game composited inside the launcher window).
+
+---
