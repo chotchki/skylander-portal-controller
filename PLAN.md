@@ -39,27 +39,27 @@ notarized + stapled `.dmg` Gatekeeper accepts without the "unknown developer" pr
 of this is chotchki executing steps on his Mac + GitHub UI; the code path (`release.yml`,
 `tools/build-macos-app.sh`, `docs/dev/release-signing.md`) already exists and is canonical.
 
-- [ ] 14.1 - **Apple Developer prereqs (on the Mac).**
-  - [ ] 14.1.1 - Confirm Apple Developer membership active at <https://developer.apple.com> → Membership. Capture the 10-char Team ID — feeds `APPLE_TEAM_ID` in 14.3.2.
-  - [ ] 14.1.2 - Generate (or confirm) the "Developer ID Application" cert (Xcode → Settings → Accounts → Manage Certificates → `+`). Distinct from the auto-created "Apple Development" cert; the Developer ID flavor is what Gatekeeper trusts.
-  - [ ] 14.1.3 - Generate an app-specific password at <https://appleid.apple.com> → Sign-in and Security → App-Specific Passwords. Label `spc-notarize`. Copy immediately. Feeds `APPLE_APP_PASSWORD`.
-- [ ] 14.2 - **Export cert + collect secret values.**
-  - [ ] 14.2.1 - Keychain Access → My Certificates → right-click `Developer ID Application: Christopher Hotchkiss (TEAMID)` → Export as `.p12` with a strong passphrase (`MACOS_CERT_PASSWORD`).
-  - [ ] 14.2.2 - `base64 -i <export.p12> | pbcopy` → `MACOS_CERT_P12_BASE64`. Stash the passphrase before moving on.
-  - [ ] 14.2.3 - `security find-identity -v -p codesigning` → copy the full identity line into `MACOS_CERT_IDENTITY` (the `(TEAMID)` suffix must match exactly).
-  - [ ] 14.2.4 - `openssl rand -base64 32` → throwaway `KEYCHAIN_PASSWORD` for the CI keychain.
+- [x] 14.1 - **Apple Developer prereqs (on the Mac).**
+  - [x] 14.1.1 - Confirm Apple Developer membership active at <https://developer.apple.com> → Membership. Capture the 10-char Team ID — feeds `APPLE_TEAM_ID` in 14.3.2.
+  - [x] 14.1.2 - Generate (or confirm) the "Developer ID Application" cert (Xcode → Settings → Accounts → Manage Certificates → `+`). Distinct from the auto-created "Apple Development" cert; the Developer ID flavor is what Gatekeeper trusts.
+  - [x] 14.1.3 - Generate an app-specific password at <https://appleid.apple.com> → Sign-in and Security → App-Specific Passwords. Label `spc-notarize`. Copy immediately. Feeds `APPLE_APP_PASSWORD`.
+- [x] 14.2 - **Export cert + collect secret values.**
+  - [x] 14.2.1 - Keychain Access → My Certificates → right-click `Developer ID Application: Christopher Hotchkiss (TEAMID)` → Export as `.p12` with a strong passphrase (`MACOS_CERT_PASSWORD`).
+  - [x] 14.2.2 - `base64 -i <export.p12> | pbcopy` → `MACOS_CERT_P12_BASE64`. Stash the passphrase before moving on.
+  - [x] 14.2.3 - `security find-identity -v -p codesigning` → copy the full identity line into `MACOS_CERT_IDENTITY` (the `(TEAMID)` suffix must match exactly).
+  - [x] 14.2.4 - `openssl rand -base64 32` → throwaway `KEYCHAIN_PASSWORD` for the CI keychain.
 - [ ] 14.3 - **GitHub Environment + 7 secrets.**
-  - [ ] 14.3.1 - Repo Settings → Environments → New `release`. Deployment tag rule: Selected → `v*.*.*`. Optionally add yourself as Required Reviewer.
-  - [ ] 14.3.2 - Add 7 secrets per `docs/dev/release-signing.md`: `MACOS_CERT_P12_BASE64`, `MACOS_CERT_PASSWORD`, `MACOS_CERT_IDENTITY`, `KEYCHAIN_PASSWORD`, `APPLE_ID` (chris@hotchkiss.io), `APPLE_APP_PASSWORD`, `APPLE_TEAM_ID`.
+  - [x] 14.3.1 - Repo Settings → Environments → New `release`. Deployment tag rule: Selected → `v*.*.*`. Optionally add yourself as Required Reviewer.
+  - [x] 14.3.2 - Add 7 secrets per `docs/dev/release-signing.md`: `MACOS_CERT_P12_BASE64`, `MACOS_CERT_PASSWORD`, `MACOS_CERT_IDENTITY`, `KEYCHAIN_PASSWORD`, `APPLE_ID` (chris@hotchkiss.io), `APPLE_APP_PASSWORD`, `APPLE_TEAM_ID`.
   - [ ] 14.3.3 - Delete the local `.p12` export (cert stays in your login keychain for local builds).
 - [ ] 14.4 - **Local end-to-end dry run.**
   - [ ] 14.4.1 - `SIGN_IDENTITY="Developer ID Application: Christopher Hotchkiss (TEAMID)" tools/build-macos-app.sh` → signed `dist/*.dmg`; `codesign -dvv dist/*.dmg` reports the signature.
   - [ ] 14.4.2 - `xcrun notarytool submit dist/*.dmg --apple-id chris@hotchkiss.io --team-id TEAMID --password <app-specific> --wait` (catches team-id / password mismatches locally).
   - [ ] 14.4.3 - `xcrun stapler staple dist/*.dmg` + `spctl -a -t open --context context:primary-signature -vv dist/*.dmg`. Green here = green in CI.
-- [ ] 14.5 - **Re-enable the disabled CI steps.**
-  - [ ] 14.5.1 - Flip the four `if: false` guards in `release.yml` back to the repo-owner check. Steps: Import cert / Build signed .app+.dmg / Notarize and staple / Upload signed DMG.
-  - [ ] 14.5.2 - Add `${{ env.RELEASE_DMG }}` back to the macOS "Publish release" `files:` list.
-  - [ ] 14.5.3 - Update the disabled-signing comment block in `release.yml` — drop "secrets pending"; reference `docs/dev/release-signing.md` as the live runbook.
+- [x] 14.5 - **Re-enable the disabled CI steps.**
+  - [x] 14.5.1 - Flip the four `if: false` guards in `release.yml` back to the repo-owner check. Steps: Import cert / Build signed .app+.dmg / Notarize and staple / Upload signed DMG.
+  - [x] 14.5.2 - Add `${{ env.RELEASE_DMG }}` back to the macOS "Publish release" `files:` list.
+  - [x] 14.5.3 - Update the disabled-signing comment block in `release.yml` — drop "secrets pending"; reference `docs/dev/release-signing.md` as the live runbook.
 - [ ] 14.6 - **CI dry run via `workflow_dispatch`.**
   - [ ] 14.6.1 - Actions → Release → Run workflow (loosen the deployment-tag rule to `main` temporarily, OR push a throwaway `v0.0.0-dryrun` tag — latter is cleaner).
   - [ ] 14.6.2 - Watch the macOS job; the 5 signing steps should be green (~10–15 min).

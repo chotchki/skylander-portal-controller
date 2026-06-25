@@ -6,13 +6,12 @@ to exist before the next tag-push will produce a fully-signed
 `.dmg`. Also covers the security model so the answer to "can a fork
 steal my Apple Developer keys" is documented in one place.
 
-> **Status (PLAN 10.9.2):** code path landed; secrets pending
-> creation. Until the secrets exist on the repo, the release lane
-> still produces an unsigned `.tar.gz` portable artifact (which
-> always works) and the signing/notarization steps fail loudly when
-> they hit a missing secret. Once secrets are in place, every
-> `v*.*.*` tag push produces a signed + notarized + stapled `.dmg`
-> alongside the tarball.
+> **Status (Phase 14, 2026-06-25):** LIVE. The 7 secrets are
+> provisioned in the `release` Environment and the signing /
+> notarization steps are enabled, so every `v*.*.*` tag push now
+> produces a signed + notarized + stapled `.dmg` alongside the
+> unsigned `.tar.gz` portable fallback. Pending: first real
+> tag-push validation (PLAN 14.7).
 
 ## Security model — why fork PRs can't exfiltrate the keys
 
@@ -61,6 +60,22 @@ Configure:
   approve gate before the macOS job runs — useful for catching a
   surprise tag-push, friction otherwise. Skip for now; flip on if
   the release cadence is slow enough that the friction is OK.
+
+### Dry-run via `workflow_dispatch`
+
+The `v*.*.*` deployment-tag rule above means a `workflow_dispatch`
+run **on a branch** (e.g. `main`) receives **no** environment
+secrets — the signing steps fail on empty values. To rehearse the
+pipeline without cutting a real release, either:
+
+- **Push a throwaway tag** that matches the rule —
+  `git tag v0.0.0-dryrun && git push origin v0.0.0-dryrun` — so the
+  secrets flow; delete the tag + any draft release afterwards
+  (cleaner); or
+- **Temporarily loosen** the deployment rule to your working branch,
+  dispatch, then revert the rule.
+
+(PLAN 14.6 tracks the dry-run.)
 
 ## Secrets to create
 
