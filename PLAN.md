@@ -107,6 +107,7 @@ the patched binary reads it to size the surface. Needs its own stability validat
 ## Backlog (not yet phased)
 **Near-term / real:**
 - **Bump RPCS3 pin past #18935 → drop the 2 local SPU-Giga patches** (back to clean P1–P8) (2026-06-25).
+- **Spike (stretch): live 2× flip while a game runs** (ex S.8) — uncertain; needs an IPC `SURFACE_SCALE` command + a runtime size flag (not the env) + mid-render swapchain recreation + CAMetalLayer extent update + controller re-fit. The swapchain-recreate-under-load is the resize path the 720p pin avoids (top-left-subrect risk). Attempt only once Phase S's boot-time toggle is solid.
 **Phone UI polish** (ex 4.18.x / 9.8 — all defer-quality nice-to-haves):
 - Service worker for PWA cache + update detection (4.18.1c) — gates an iOS browser smoke re-test.
 - Profile "last used N days ago" subtext (4.18.10); per-card tagline + "currently playing" marker (4.18.12).
