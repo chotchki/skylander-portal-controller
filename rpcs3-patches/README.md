@@ -86,7 +86,8 @@ controller feature.) What each does:
   instead of a second top-level window, the emulator hands its render layer to the
   launcher. A dedicated off-view `CAMetalLayer` is published through a private `CAContext`;
   the launcher hosts it INSIDE its own egui window via `CALayerHost` (CARemoteLayer SPI).
-  `gs_frame::show()` is suppressed and `client_width/height` are pinned to 720p under
+  `gs_frame::show()` is suppressed and `client_width/height` are pinned to 720p (or 1440p
+  under `SKYLANDER_SURFACE_2X` — the opt-in 2× render pass, PLAN S) under
   `SKYLANDER_BORDERLESS` so swapchain == present == the published layer (the game fills it,
   one clean resample on the launcher). The `SURFACE` IPC reply carries the contextId +
   the surface size. macOS-only; inert elsewhere. Loopback-tested (`SURFACE` round-trip)

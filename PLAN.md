@@ -87,18 +87,22 @@ of this is chotchki executing steps on his Mac + GitHub UI; the code path (`rele
 - [ ] R.2 - Distribution docs are winget-first (was 13.5.3 / 13.5.4) — update the `release.yml` comment + CLAUDE.md "Distribution" section (drop the GitHub-Releases-first framing).
 - [ ] R.3 - Trigger the gated `rpcs3-patched.yml` full build for the current pin `927e2492e` so the bundled patched RPCS3 binary exists for release (was 16.12.6) — **verify it hasn't already run** before doing.
 
-## Phase S - 2× render pass (1440p surface-embed)
+## Phase S - 2× render pass (1440p surface-embed) — admin toggle, applies on next boot
 
-The macOS surface-embed pins RPCS3's render to **720p** (`SKY_SURFACE_W/H_PX` in
-`surface_publish.mm` + `gs_frame::client_width/height` under `SKYLANDER_BORDERLESS`) for one
-clean resample into the launcher pane. This phase tries a **doubled 1440p** (2560×1440) pass
-for a sharper embed; it needs its **own stability validation** (perf / crashes / thermal on
-the M3 Max) before it can replace 720p. **chotchki has design ideas to fold in here.**
+The surface-embed pins RPCS3's render to **720p** (`SKY_SURFACE_W/H_PX` in `surface_publish.mm`
++ `gs_frame::client_width/height` under `SKYLANDER_BORDERLESS`). This phase adds a **2× (1440p,
+2560×1440)** option behind a **Konami-gated admin toggle**, persisted to config.json + applied
+on the next launcher boot — mirroring the PLAN 20.6 window-mode toggle (`set_window_mode` /
+`fetch_window_mode` / `profile_picker.rs`). The launcher passes the choice to RPCS3 over an env;
+the patched binary reads it to size the surface. Needs its own stability validation.
 
-- [ ] S.1 - Bump the published surface 720p → 1440p (`surface_publish.mm` `SKY_SURFACE_W/H_PX` + `gs_frame` `client_width/height` pins)
-- [ ] S.2 - CALayerHost scale / fit for the 2× surface (`compositor.rs::set_frame` — host bounds + transform)
-- [ ] S.3 - Stability validation: 1440p cold-boot + sustained play on the M3 Max (perf, crashes, thermal); compare vs 720p
-- [ ] S.4 - Decide the final pin — fixed 1440p vs configurable (quality setting / auto-by-display) vs keep 720p
+- [x] S.1 - **C++**: env-drive the surface size — `SKYLANDER_SURFACE_2X` → 2560×1440 (else 1280×720) in `surface_publish.mm` `SKY_SURFACE_W/H_PX` + `gs_frame::client_width/height`; patch series regenerated (P8 amended, only `0010` changed). No wire change (env, not an IPC command), so loopback/proto unaffected.
+- [ ] S.2 - **Config**: `render_2x: bool` on `PersistedConfig` + runtime `Config` (mirror `window_mode`); loaded at startup.
+- [ ] S.3 - **Launcher apply**: `process_unix.rs::spawn` sets `SKYLANDER_SURFACE_2X=1` when `render_2x` (thread `Config.render_2x` to the spawn).
+- [ ] S.4 - **Server endpoint**: `GET/POST /api/render-2x` (`fetch_render_2x` / `set_render_2x`) — persist config.json, 202 "restart to apply" (mirror `set_window_mode`).
+- [ ] S.5 - **Phone UI**: Konami-gated "2× render" toggle in `profile_picker.rs` (mirror the window-mode toggle) + `model` + `api`.
+- [ ] S.6 - **Stability validation** (chotchki, M3 Max): 1440p cold-boot + sustained play — perf, crashes, thermal vs 720p.
+- [ ] S.7 - **Final pin decision**: keep the toggle default-off, flip the default, or auto-by-display.
 
 ## Backlog (not yet phased)
 **Near-term / real:**

@@ -1,4 +1,4 @@
-From 24dce9b1021d08eb5e84a6fbeee34ea7329feb0f Mon Sep 17 00:00:00 2001
+From 76789bfc1c27dabbd388c31f0a3b2eca6be519ee Mon Sep 17 00:00:00 2001
 From: Christopher Hotchkiss <christopher.hotchkiss@gmail.com>
 Date: Wed, 24 Jun 2026 18:48:13 -0700
 Subject: [PATCH 10/10] =?UTF-8?q?P8:=20macOS=20surface-embed=20=E2=80=94?=
@@ -41,10 +41,10 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
  rpcs3/Emu/CMakeLists.txt                     |   7 +
  rpcs3/Emu/Io/Skylander.cpp                   |  53 +++++
  rpcs3/Emu/RSX/VK/vkutils/metal_layer.h       |  14 ++
- rpcs3/Emu/RSX/VK/vkutils/surface_publish.mm  | 230 +++++++++++++++++++
+ rpcs3/Emu/RSX/VK/vkutils/surface_publish.mm  | 234 +++++++++++++++++++
  rpcs3/Emu/RSX/VK/vkutils/swapchain_macos.hpp |  26 ++-
  rpcs3/rpcs3qt/gs_frame.cpp                   |  39 ++++
- 6 files changed, 368 insertions(+), 1 deletion(-)
+ 6 files changed, 372 insertions(+), 1 deletion(-)
  create mode 100644 rpcs3/Emu/RSX/VK/vkutils/surface_publish.mm
 
 diff --git a/rpcs3/Emu/CMakeLists.txt b/rpcs3/Emu/CMakeLists.txt
@@ -166,10 +166,10 @@ index d587b55bf..7583eb1bf 100644
 +extern "C" void* sky_make_published_metal_layer(void* nsview);
 diff --git a/rpcs3/Emu/RSX/VK/vkutils/surface_publish.mm b/rpcs3/Emu/RSX/VK/vkutils/surface_publish.mm
 new file mode 100644
-index 000000000..68756ea14
+index 000000000..f980dfda8
 --- /dev/null
 +++ b/rpcs3/Emu/RSX/VK/vkutils/surface_publish.mm
-@@ -0,0 +1,230 @@
+@@ -0,0 +1,234 @@
 +// PLAN P8 — publish the game's CAMetalLayer to another process so our launcher can
 +// host it via CALayerHost (the macOS surface-embed, mirroring the P2 WINDOW handle
 +// publish). The launcher then reconstructs the layer tree remotely with CALayerHost.
@@ -320,7 +320,8 @@ index 000000000..68756ea14
 +	[layer retain]; // hold for the process lifetime
 +
 +	// --- Geometry: FIXED 16:9 render extent ----------------------------------------
-+	// MUST match the pinned gs_frame::client_width/height (2560x1440). RPCS3 uses those
++	// MUST match the pinned gs_frame::client_width/height (1280x720, or 2560x1440 under
++	// SKYLANDER_SURFACE_2X). RPCS3 uses those
 +	// for BOTH the swapchain extent AND the present blit target; MoltenVK reads THIS
 +	// layer's drawableSize as the surface currentExtent. Keeping all three equal (and
 +	// 16:9) is what makes the game fill the layer. We deliberately do NOT use the hidden
@@ -331,9 +332,12 @@ index 000000000..68756ea14
 +	//
 +	// 1280x720 = the PS3's native 720p output, so RPCS3 presents 1:1 (no internal
 +	// upscale) and the only resample is the compositor's single scale-to-pane.
-+	// Keep SKY_SURFACE_W/H_PX in sync with gs_frame::client_width/height.
-+	static const double SKY_SURFACE_W_PX = 1280.0;
-+	static const double SKY_SURFACE_H_PX = 720.0;
++	// SKYLANDER_SURFACE_2X opts into a 2x (2560x1440) render pass for a sharper embed
++	// (PLAN S, admin toggle) — needs its own stability validation. Keep SKY_SURFACE_W/H_PX
++	// in sync with gs_frame::client_width/height.
++	static const bool sky_2x = std::getenv("SKYLANDER_SURFACE_2X") != nullptr;
++	static const double SKY_SURFACE_W_PX = sky_2x ? 2560.0 : 1280.0;
++	static const double SKY_SURFACE_H_PX = sky_2x ? 1440.0 : 720.0;
 +
 +	double scale = 1.0;
 +	if (NSView* view = (NSView*)nsview)
@@ -448,7 +452,7 @@ index e4485324d..4f8f7395e 100644
  		CHECK_RESULT(vkCreateMetalSurfaceEXT(vk_instance, &createInfo, NULL, &result));
  		return result;
 diff --git a/rpcs3/rpcs3qt/gs_frame.cpp b/rpcs3/rpcs3qt/gs_frame.cpp
-index 8506e4e89..a0d864143 100644
+index 8506e4e89..ef4d6f216 100644
 --- a/rpcs3/rpcs3qt/gs_frame.cpp
 +++ b/rpcs3/rpcs3qt/gs_frame.cpp
 @@ -760,6 +760,21 @@ void gs_frame::show()
@@ -488,11 +492,11 @@ index 8506e4e89..a0d864143 100644
 +	// swapchain == present == the published CAMetalLayer (see surface_publish.mm,
 +	// which sizes the layer drawableSize to the SAME extent). Keep in sync.
 +	// 1280x720 = the PS3's native 720p output → RPCS3 presents 1:1, no internal
-+	// upscale; the compositor does the single scale-to-pane. (A 2x render pass is
-+	// future work — it needs its own stability validation.)
++	// upscale; the compositor does the single scale-to-pane. SKYLANDER_SURFACE_2X opts
++	// into a 2x (2560x1440) pass (PLAN S) — needs its own stability validation.
 +	if (::getenv("SKYLANDER_BORDERLESS"))
 +	{
-+		return 1280; // 16:9 720p, matches surface_publish.mm SKY_SURFACE_W_PX
++		return ::getenv("SKYLANDER_SURFACE_2X") ? 2560 : 1280; // matches surface_publish.mm SKY_SURFACE_W_PX
 +	}
 +#endif // __APPLE__
  #ifdef _WIN32
@@ -505,7 +509,7 @@ index 8506e4e89..a0d864143 100644
 +#ifdef __APPLE__
 +	if (::getenv("SKYLANDER_BORDERLESS"))
 +	{
-+		return 720; // 16:9 720p, matches surface_publish.mm SKY_SURFACE_H_PX
++		return ::getenv("SKYLANDER_SURFACE_2X") ? 1440 : 720; // matches surface_publish.mm SKY_SURFACE_H_PX
 +	}
 +#endif // __APPLE__
  #ifdef _WIN32
