@@ -790,3 +790,16 @@ the patched binary reads it to size the surface. Needs its own stability validat
 - [x] S.7 - **Final pin decision** — keep the toggle **default-off** (opt-in; 2× is 4× the pixels/heat). Decided 2026-06-25; already the implementation (`render_2x` defaults `false`). Cold-boot + recorder-narrative smoke test passed (surface confirmed 2560×1440, no crash); sustained-play/thermal validation → Backlog.
 
 
+---
+
+## 2026-06-25
+
+## Phase 21 - ios-inspect de-vendor (external tool landed at github.com/chotchki/ios-inspect)
+- [x] 21.1 - Confirm external ios-inspect exposes the library API e2e imports
+- [x] 21.2 - Repoint e2e-tests dep: ios-inspect path → git
+- [x] 21.3 - Repoint CI e2e-ios-sim lane at the git dep
+- [x] 21.4 - Delete vendored tools/ios-inspect + Cargo exclude
+- [x] 21.5 - Repoint docs at the external ios-inspect repo
+- [x] 21.6 - Verify e2e compiles + iOS-sim lane runs
+
+
