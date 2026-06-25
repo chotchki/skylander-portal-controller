@@ -49,6 +49,7 @@ impl TestServer {
         }
 
         let tmp = tempfile::tempdir().context("create temp dir")?;
+        link_repo_images(tmp.path(), &repo);
         let port = pick_free_port()?;
         let mut env = format!(
             "RPCS3_EXE={rpcs3}\nFIRMWARE_PACK_ROOT={pack}\nBIND_PORT={port}\nSKYLANDER_PORTAL_DRIVER=mock\nPHONE_DIST={phone}\n",
@@ -190,6 +191,7 @@ impl TestServer {
         }
 
         let tmp = tempfile::tempdir().context("create temp dir")?;
+        link_repo_images(tmp.path(), &repo);
         let port = pick_free_port()?;
         // Omit SKYLANDER_PORTAL_DRIVER so config's default (`Uia`) wins —
         // setting it to anything else would downgrade back to the mock.
@@ -292,6 +294,7 @@ impl TestServer {
         }
 
         let tmp = tempfile::tempdir().context("create temp dir")?;
+        link_repo_images(tmp.path(), &repo);
         let port = pick_free_port()?;
         // Savestate boot is opt-in: present → boot that state; absent → cold boot.
         let savestate_line = match &savestate {
@@ -390,6 +393,29 @@ async fn fetch_hmac_key_hex(base: &str) -> anyhow::Result<String> {
 /// connections. Returns the base URL and an owning guard that kills the
 /// process on drop.
 ///
+/// Symlink the repo's scraped figure portraits into a temp server's data_root so
+/// the phone's `/api/figures/:id/image?size=…` requests resolve in the recorder
+/// and e2e harness (#26). The server's `data_root` defaults to `./data` relative
+/// to its CWD (the temp dir), but the ~474 scraped thumbnails live in the repo's
+/// `data/images/`; without this link every portrait 404s and the phone shows
+/// blank bezels. Best-effort, unix-only (the recorder is macOS; a real install
+/// ships the images inside its own data_root).
+fn link_repo_images(tmp_path: &std::path::Path, repo: &std::path::Path) {
+    let repo_images = repo.join("data").join("images");
+    if !repo_images.is_dir() {
+        return;
+    }
+    let link = tmp_path.join("data").join("images");
+    if link.exists() {
+        return;
+    }
+    if let Some(parent) = link.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    #[cfg(unix)]
+    let _ = std::os::unix::fs::symlink(&repo_images, &link);
+}
+
 /// Resolution order for the chromedriver binary:
 ///   1. `$CHROMEDRIVER` env var (explicit override).
 ///   2. `chromedriver` on PATH.
