@@ -476,27 +476,38 @@ fn ctrl_pane_width(ctrl_w: u32, ctrl_h: u32, canvas_w: u32, canvas_h: u32) -> u3
     w.clamp(2, canvas_w - 2)
 }
 
-/// PLAN A.5 — the 2-pane composite (the layout chotchki chose): controller
-/// (portrait SPA) at full canvas height on the LEFT, game (landscape) fit into
-/// the remaining width on the RIGHT, letterboxed — 16:9 canvas, **nothing
-/// cropped**. Emits a high-quality H.264 intermediate that the editorial [`run`]
-/// pass then speed-ramps + dual-encodes (composite + editorial stay decoupled,
-/// one concern each). The controller's natural width at full height is the split.
+/// PLAN A.5 — the 2-pane composite (the layout chotchki chose): game (launcher,
+/// landscape — the "TV") fit into the LEFT column with its macOS title bar cropped
+/// so it matches the chrome-free phone, and controller (portrait SPA — the
+/// "phone") at full canvas height on the RIGHT. 16:9 canvas, nothing else cropped.
+/// Emits a high-quality H.264 intermediate that the editorial [`run`] pass then
+/// speed-ramps + dual-encodes (composite + editorial stay decoupled, one concern
+/// each). The controller's natural width at full height is the split.
 pub fn composite(controller: &Path, game: &Path, out: &Path) -> Result<()> {
     const CANVAS_W: u32 = 1920;
     const CANVAS_H: u32 = 1080;
+    // macOS title-bar height to crop off the TOP of BOTH panes so they read
+    // chrome-free + matched (28pt title bar × the capture's 2× backing, plus a
+    // few px so no sliver remains — chotchki saw a sliver at 56). Tunable.
+    const TITLEBAR_PX: u32 = 72;
     let cm = probe(controller).context("probe controller pane")?;
-    let ctrl_w = ctrl_pane_width(cm.w, cm.h, CANVAS_W, CANVAS_H);
-    let game_w = CANVAS_W - ctrl_w; // remaining width for the game pane
-    // Controller padded onto the left of a black 16:9 canvas; the game scaled to
-    // fit the right column (aspect-preserved → letterboxed) + overlaid centred.
-    // `\` line-continuations strip to one contiguous filtergraph.
+    // Split from the CROPPED phone height so the forced ctrl_w×H scale below
+    // preserves its aspect (no vertical squish).
+    let ctrl_h = cm.h.saturating_sub(TITLEBAR_PX).max(1);
+    let ctrl_w = ctrl_pane_width(cm.w, ctrl_h, CANVAS_W, CANVAS_H);
+    let game_w = CANVAS_W - ctrl_w; // the game column width (LEFT); ctrl is the rest (RIGHT)
+    // Two equal-height columns `hstack`ed — game (launcher) LEFT, controller (phone)
+    // RIGHT. BOTH panes have their title bar cropped so they match; the game is then
+    // letterbox-fit + centred in a game_w×H column, and the phone scaled to exactly
+    // ctrl_w×H, so the two columns sum to exactly CANVAS_W×CANVAS_H. hstack avoids the
+    // pad/overlay-at-an-odd-offset chroma quirk that yields a 1-px-odd canvas under
+    // yuv420p. `\` line-continuations strip to one contiguous filtergraph.
     let graph = format!(
-        "[0:v]scale=-2:{CANVAS_H}[c];\
-         [c]pad={CANVAS_W}:{CANVAS_H}:0:0:black[base];\
-         [1:v]scale={game_w}:{CANVAS_H}:force_original_aspect_ratio=decrease[g];\
-         [base][g]overlay=x={ctrl_w}+({game_w}-overlay_w)/2:y=({CANVAS_H}-overlay_h)/2:\
-         eof_action=endall[canvas]"
+        "[1:v]crop=iw:ih-{TITLEBAR_PX}:0:{TITLEBAR_PX},\
+         scale={game_w}:{CANVAS_H}:force_original_aspect_ratio=decrease,\
+         pad={game_w}:{CANVAS_H}:(ow-iw)/2:(oh-ih)/2:black[gcol];\
+         [0:v]crop=iw:ih-{TITLEBAR_PX}:0:{TITLEBAR_PX},scale={ctrl_w}:{CANVAS_H}[pcol];\
+         [gcol][pcol]hstack=inputs=2,fps=60[canvas]"
     );
     let bin = tool("FFMPEG", "ffmpeg");
     let status = Command::new(&bin)

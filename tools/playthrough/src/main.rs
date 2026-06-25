@@ -51,7 +51,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use beats::{Beat, BeatCtx, MARQUEE, Narrative, ServerFlavor};
-use capture::DesktopCapture;
+use capture::{DesktopCapture, SceneCapture};
 use skylander_e2e_tests::{Phone, TestServer, inject_profile, launch_giants};
 use timeline::{TimelineEntry, TimelineFile};
 
@@ -346,7 +346,7 @@ struct Boot {
     phone: Phone,
     phone_url: String,
     alice: String,
-    cap: DesktopCapture,
+    cap: SceneCapture,
     mp4: std::path::PathBuf,
     /// Wall-clock instant captured at `DesktopCapture::start` — i.e. capture
     /// frame 0 (design §5: `timeline.json` timestamps are relative to
@@ -424,16 +424,12 @@ async fn boot(flavor: ServerFlavor, out_stem: &str) -> Result<Boot> {
         }
     }
 
-    // 4. Start whole-desktop MP4 capture (launcher is up + tiled) BEFORE the
-    //    heavy work so the boot is recorded.
+    // 4. The raw MP4 path. The capture starts LATER — after BOTH windows
+    //    (launcher + phone) are up + titled — because the macOS 2-pane path
+    //    (SceneCapture) records them as per-window streams, which need the windows
+    //    present and matchable by title. Windows still captures the whole desktop,
+    //    just from the same (slightly later) anchor.
     let mp4 = std::env::temp_dir().join(format!("{out_stem}.mp4"));
-    // Anchor the editorial timeline at the capture's frame 0 (design §5 / fix
-    // 3): take the origin at the `DesktopCapture::start` call, BEFORE the ~1s
-    // lead-in + Chrome open, so manifest `t_*_ms` are relative to capture start.
-    let timeline_origin = Instant::now();
-    let cap = DesktopCapture::start(&mp4).context("start desktop capture")?;
-    tracing::info!(mp4 = %mp4.display(), "recording the desktop…");
-    tokio::time::sleep(Duration::from_secs(1)).await; // a beat with just the launcher
 
     // 5. Visible app-mode (chromeless) phone window in the right-hand column.
     //    Chrome reads --window-position/--window-size in DIPs, so the
@@ -457,45 +453,90 @@ async fn boot(flavor: ServerFlavor, out_stem: &str) -> Result<Boot> {
         .context("open headed app-mode phone browser")?;
     tracing::info!("phone browser open (headed, app-mode) — driving the flow");
 
-    // 6. Retitle the page so the exact-title find is unambiguous (the
-    //    app-mode window title IS the document title — it also reads nicely
-    //    in the captured title bar), then snap the window to the phone tile.
+    // 6. Retitle the page ALWAYS (the app-mode window title IS the document
+    //    title) — both the Win32 exact-find placement AND the macOS per-window
+    //    capture (SceneCapture) match the phone pane on this title, and it reads
+    //    nicely in the captured title bar.
+    if let Err(e) = phone
+        .client
+        .execute("document.title='Skylander Portal Phone'", vec![])
+        .await
+    {
+        tracing::warn!(error = %e, "phone retitle failed — capture/placement may not find it");
+    }
+
+    // 6b. Inject a tap-ripple visualiser into the phone page (PLAN A.5 — chotchki).
+    //     The capture hides the OS cursor, so make interaction obvious instead: a
+    //     gold ripple blooms at each tap. The beats tap via `el.click()` (JS) which
+    //     dispatches ONLY a `click` event (no pointerdown) with clientX/Y=0, so we
+    //     listen for click/pointerdown/mousedown/touchstart and fall back to the
+    //     target element's centre when there's no real pointer position; a short
+    //     dedupe window collapses the multiple events of one real tap into one
+    //     ripple. The SPA is a CSR (no full reloads), so one injection lasts the
+    //     whole session.
+    const TAP_RIPPLE_JS: &str = "(function(){\
+        if(window.__skyTap)return;window.__skyTap=1;\
+        var s=document.createElement('style');\
+        s.textContent='@keyframes skytap{from{transform:translate(-50%,-50%) scale(.3);opacity:.9}to{transform:translate(-50%,-50%) scale(1.7);opacity:0}}';\
+        document.head.appendChild(s);\
+        var lt=0,lx=-1e4,ly=-1e4;\
+        function ripple(x,y){\
+            if(x==null||y==null)return;var t=Date.now();\
+            if(t-lt<400&&Math.abs(x-lx)<60&&Math.abs(y-ly)<60)return;\
+            lt=t;lx=x;ly=y;\
+            var d=document.createElement('div');\
+            d.style.cssText='position:fixed;left:'+x+'px;top:'+y+'px;width:64px;height:64px;border-radius:50%;border:4px solid #f5c634;background:rgba(245,198,52,.25);pointer-events:none;z-index:2147483647;animation:skytap .6s ease-out forwards';\
+            document.body.appendChild(d);setTimeout(function(){d.remove();},650);\
+        }\
+        function pos(e){\
+            if(e.changedTouches&&e.changedTouches[0])return[e.changedTouches[0].clientX,e.changedTouches[0].clientY];\
+            var x=e.clientX,y=e.clientY;\
+            if((!x&&!y)&&e.target&&e.target.getBoundingClientRect){var r=e.target.getBoundingClientRect();return[r.left+r.width/2,r.top+r.height/2];}\
+            return[x,y];\
+        }\
+        ['pointerdown','mousedown','click','touchstart'].forEach(function(ev){\
+            addEventListener(ev,function(e){var p=pos(e);ripple(p[0],p[1]);},true);\
+        });\
+    })();";
+    if let Err(e) = phone.client.execute(TAP_RIPPLE_JS, vec![]).await {
+        tracing::warn!(error = %e, "tap-ripple injection failed — taps won't be visualised");
+    }
+
+    // Win32 placement (tiling) — Windows-only; on macOS `layout` is None, so the
+    // windows stay where they opened and the per-window capture handles framing.
     let mut phone_placed = false;
     if let Some(l) = &layout {
-        match phone
-            .client
-            .execute("document.title='Skylander Portal Phone'", vec![])
-            .await
+        match stage::wait_find_window_exact("Skylander Portal Phone", Duration::from_secs(5)).await
         {
-            Ok(_) => {
-                match stage::wait_find_window_exact(
-                    "Skylander Portal Phone",
-                    Duration::from_secs(5),
-                )
-                .await
-                {
-                    Some(hwnd) => match stage::place_window(hwnd, l.phone) {
-                        Ok(()) => {
-                            tracing::info!("placed phone at {:?}", l.phone);
-                            phone_placed = true;
-                        }
-                        Err(e) => tracing::warn!(error = %e, "phone placement failed — untiled"),
-                    },
-                    None => tracing::warn!("phone window not found by exact title — untiled"),
+            Some(hwnd) => match stage::place_window(hwnd, l.phone) {
+                Ok(()) => {
+                    tracing::info!("placed phone at {:?}", l.phone);
+                    phone_placed = true;
                 }
-            }
-            Err(e) => tracing::warn!(error = %e, "phone retitle failed — skipping placement"),
+                Err(e) => tracing::warn!(error = %e, "phone placement failed — untiled"),
+            },
+            None => tracing::warn!("phone window not found by exact title — untiled"),
         }
     }
 
-    // Emit the stage crop ONLY when both windows verifiably sit at their
-    // tiled rects (Boot::stage docs) — else the manifest degrades to
-    // full-frame.
+    // Emit the stage crop ONLY when both windows verifiably sit at their tiled
+    // rects (Boot::stage docs) — else the manifest degrades to full-frame. On
+    // macOS this is always None: the 2-pane composite IS the framing.
     let stage = match (&layout, launcher_placed && phone_placed) {
         (Some(l), true) => Some(l.stage),
         _ => None,
     };
     tracing::info!("stage = {stage:?}");
+
+    // 7. Both windows are now up + titled → start the capture. Anchor the
+    //    editorial timeline at frame 0 here. A short settle lets the freshly-set
+    //    phone title propagate to the window server before the per-window find,
+    //    and gives a brief both-panes lead-in.
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    let timeline_origin = Instant::now();
+    let cap = SceneCapture::start(out_stem, &mp4).context("start scene capture")?;
+    tracing::info!(mp4 = %mp4.display(), "recording…");
+    tokio::time::sleep(Duration::from_secs(1)).await; // brief both-panes lead-in
 
     Ok(Boot {
         server,
@@ -555,7 +596,8 @@ async fn run_narrative(narr: Narrative) -> Result<()> {
 
     // Hold so the final state is on screen, then stop + flush the MP4.
     tokio::time::sleep(Duration::from_secs(3)).await;
-    cap.stop().context("stop + flush desktop capture")?;
+    cap.finalize(&mp4)
+        .context("finalize capture → raw mp4 (macOS: composite the 2 panes)")?;
     tracing::info!(mp4 = %mp4.display(), "MP4 written");
 
     write_timeline(&mp4, stage, timeline)?;
@@ -604,7 +646,8 @@ async fn run_single_beat(flavor: ServerFlavor, beat: Beat) -> Result<()> {
     let timeline = vec![entry_for(&beat, t_start, t_end)];
 
     tokio::time::sleep(Duration::from_secs(3)).await;
-    cap.stop().context("stop + flush desktop capture")?;
+    cap.finalize(&mp4)
+        .context("finalize capture → raw mp4 (macOS: composite the 2 panes)")?;
     tracing::info!(mp4 = %mp4.display(), "MP4 written");
 
     write_timeline(&mp4, stage, timeline)?;

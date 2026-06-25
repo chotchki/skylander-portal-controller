@@ -277,7 +277,11 @@ mod imp_mac {
         ) -> Result<Self> {
             let config = SCStreamConfiguration::new()
                 .with_width((w & !1).max(2))
-                .with_height((h & !1).max(2));
+                .with_height((h & !1).max(2))
+                // Hide the OS cursor — it gets captured resting over a pane and
+                // reads as an accidental artifact. Intentional interaction is shown
+                // by the injected tap-ripple on the phone instead (boot()).
+                .with_shows_cursor(false);
             let rec_config = SCRecordingOutputConfiguration::new()
                 .with_output_url(out_path)
                 .with_video_codec(SCRecordingOutputCodec::HEVC)
@@ -332,6 +336,95 @@ impl DesktopCapture {
         anyhow::bail!("per-window capture unimplemented on this platform")
     }
     pub fn stop(self) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+// --- SceneCapture: the recorder's 2-pane scene capture (PLAN A.5) -------------
+// Encapsulates the platform split so `boot()` / `run_narrative` stay platform-
+// agnostic:
+//   * macOS — TWO per-window SCKit streams (the launcher window, which now hosts
+//     the embedded game, + the phone/Chrome window), composited side-by-side into
+//     the raw by `finalize` (`render::composite`: phone portrait left, launcher
+//     landscape right, 16:9, nothing cropped). True per-surface — no desktop
+//     bleed, independent of where the windows sit.
+//   * Windows / other — the whole-desktop stream (the existing path); the Win32
+//     stage-crop frames it later in the render.
+//
+// `start` requires BOTH windows to already be on-screen + titled (the per-window
+// find matches by app + title), so the recorder opens the launcher + phone first.
+pub struct SceneCapture {
+    #[cfg(target_os = "macos")]
+    game: DesktopCapture,
+    #[cfg(target_os = "macos")]
+    phone: DesktopCapture,
+    #[cfg(target_os = "macos")]
+    game_mp4: std::path::PathBuf,
+    #[cfg(target_os = "macos")]
+    phone_mp4: std::path::PathBuf,
+    #[cfg(not(target_os = "macos"))]
+    desktop: DesktopCapture,
+}
+
+impl SceneCapture {
+    /// Start capturing the 2-pane scene. `stem` names the per-pane temp files
+    /// (macOS); `final_mp4` is where the desktop stream writes (non-macOS) and the
+    /// composite lands (macOS, via `finalize`). Window targets are env-overridable
+    /// (`SKYLANDER_GAME_WINDOW_{APP,TITLE}` for the launcher pane — shared with the
+    /// classifier — and `SKYLANDER_PHONE_WINDOW_{APP,TITLE}` for the phone).
+    pub fn start(stem: &str, final_mp4: &std::path::Path) -> anyhow::Result<Self> {
+        #[cfg(target_os = "macos")]
+        {
+            let game_app = std::env::var("SKYLANDER_GAME_WINDOW_APP")
+                .unwrap_or_else(|_| "skylander-portal-controller".to_string());
+            let game_title = std::env::var("SKYLANDER_GAME_WINDOW_TITLE")
+                .unwrap_or_else(|_| "Skylander Portal Controller".to_string());
+            let phone_app = std::env::var("SKYLANDER_PHONE_WINDOW_APP")
+                .unwrap_or_else(|_| "Google Chrome".to_string());
+            let phone_title = std::env::var("SKYLANDER_PHONE_WINDOW_TITLE")
+                .unwrap_or_else(|_| "Skylander Portal Phone".to_string());
+            let game_mp4 = std::env::temp_dir().join(format!("{stem}-game.mp4"));
+            let phone_mp4 = std::env::temp_dir().join(format!("{stem}-phone.mp4"));
+            let game = DesktopCapture::start_window(&game_app, &game_title, &game_mp4)?;
+            let phone = DesktopCapture::start_window(&phone_app, &phone_title, &phone_mp4)?;
+            tracing::info!(
+                game = %game_mp4.display(),
+                phone = %phone_mp4.display(),
+                "2-pane capture: launcher + phone per-window streams"
+            );
+            let _ = final_mp4;
+            Ok(Self {
+                game,
+                phone,
+                game_mp4,
+                phone_mp4,
+            })
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = stem;
+            Ok(Self {
+                desktop: DesktopCapture::start(final_mp4)?,
+            })
+        }
+    }
+
+    /// Stop the capture(s) and produce the raw `final_mp4`. macOS: stop both panes
+    /// then composite them (phone = controller/left, launcher = game/right). Else
+    /// the desktop stream already wrote `final_mp4`; just stop + flush it.
+    pub fn finalize(self, final_mp4: &std::path::Path) -> anyhow::Result<()> {
+        #[cfg(target_os = "macos")]
+        {
+            self.game.stop()?;
+            self.phone.stop()?;
+            crate::render::composite(&self.phone_mp4, &self.game_mp4, final_mp4)?;
+            let _ = (&self.game_mp4, &self.phone_mp4);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.desktop.stop()?;
+            let _ = final_mp4;
+        }
         Ok(())
     }
 }
