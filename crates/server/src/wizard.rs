@@ -46,6 +46,23 @@ pub fn validate_rpcs3_path(p: &Path) -> Result<(), ValidationError> {
     }
 }
 
+/// macOS: validate the user's existing RPCS3 **data/config root** — the dir that
+/// holds `config/games.yml` + `dev_flash` (firmware). macOS RPCS3 ships as
+/// `RPCS3.app` and keeps its data in a *separate* config root (there's no
+/// `rpcs3.exe`), so the mac wizard points at that directory. Lenient on contents
+/// (exists + is_dir); the recognized-game advisory is surfaced separately by
+/// [`check_supported_game`], exactly as the Windows binary check is advisory-only.
+#[cfg(target_os = "macos")]
+pub fn validate_rpcs3_config_dir(p: &Path) -> Result<(), ValidationError> {
+    if !p.exists() {
+        return Err(ValidationError::NotFound);
+    }
+    if !p.is_dir() {
+        return Err(ValidationError::ExpectedDirectory);
+    }
+    Ok(())
+}
+
 /// True if `p` is a directory containing at least one `.sky` file (recursive).
 pub fn validate_firmware_pack(p: &Path) -> Result<(), ValidationError> {
     if !p.exists() {
@@ -134,6 +151,26 @@ pub fn default_rpcs3_path_guess() -> Option<PathBuf> {
     candidates
         .into_iter()
         .find(|p| validate_rpcs3_path(p).is_ok())
+}
+
+/// macOS best-guess for the user's existing RPCS3 data/config root. Prefers a
+/// candidate that actually has `config/games.yml`, else the first dir that
+/// exists. Best-effort — returns None (empty prefill) over a wrong guess; the
+/// user can always BROWSE.
+#[cfg(target_os = "macos")]
+pub fn default_rpcs3_config_dir_guess() -> Option<PathBuf> {
+    let home = PathBuf::from(std::env::var_os("HOME")?);
+    let candidates = [
+        home.join("Library")
+            .join("Application Support")
+            .join("rpcs3"),
+        home.join(".config").join("rpcs3"),
+    ];
+    candidates
+        .iter()
+        .find(|p| p.join("config").join("games.yml").is_file())
+        .or_else(|| candidates.iter().find(|p| p.is_dir()))
+        .map(|p| p.to_path_buf())
 }
 
 /// Best-guess firmware-pack path. Returns the first candidate that exists
@@ -246,6 +283,39 @@ impl PersistedConfig {
             log_dir: runtime_dir.join("logs"),
             phone_dist_dir: exe_parent.join("phone-dist"),
             data_root: exe_parent.join("data"),
+            hmac_key: Some(crate::config::generate_hmac_key()),
+            window_mode,
+            render_2x: false,
+        }
+    }
+
+    /// macOS twin of [`from_user_paths`]. The user points at their existing RPCS3
+    /// **data/config root** directly (no `rpcs3.exe` on macOS), so `config_dir`
+    /// is the prompted dir verbatim. Portal **control** still runs the bundled
+    /// patched RPCS3 nested in the launcher `.app`
+    /// ([`crate::paths::bundled_rpcs3_exe`]), driven over IPC.
+    #[cfg(target_os = "macos")]
+    pub fn from_user_config_dir(
+        config_dir: PathBuf,
+        firmware_pack_root: PathBuf,
+        window_mode: crate::config::WindowMode,
+        runtime_dir: &Path,
+    ) -> Self {
+        let exe_parent = crate::paths::app_asset_dir();
+        PersistedConfig {
+            rpcs3_exe: crate::paths::bundled_rpcs3_exe(),
+            config_dir,
+            firmware_pack_root,
+            bind_port: 8765,
+            driver_kind: PersistedDriverKind::Ipc,
+            log_dir: runtime_dir.join("logs"),
+            phone_dist_dir: exe_parent.join("phone-dist"),
+            // Static data ships under Contents/Resources/ inside the .app
+            // (codesign rejects non-Mach-O payloads in Contents/MacOS/);
+            // `app_data_root` resolves it there, matching `config::load`'s
+            // per-launch recompute so the persisted value isn't immediately
+            // discarded as "stale".
+            data_root: crate::paths::app_data_root(),
             hmac_key: Some(crate::config::generate_hmac_key()),
             window_mode,
             render_2x: false,
@@ -398,7 +468,14 @@ pub fn run_wizard_blocking(
             PathBuf::from(self.pack_input.trim())
         }
         fn rpcs3_valid(&self) -> Result<(), ValidationError> {
-            validate_rpcs3_path(&self.rpcs3_path())
+            #[cfg(target_os = "macos")]
+            {
+                validate_rpcs3_config_dir(&self.rpcs3_path())
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                validate_rpcs3_path(&self.rpcs3_path())
+            }
         }
         /// Empty input is now **explicitly valid** — it means "skip the
         /// pack, I'll scan". Non-empty goes through the normal validator.
@@ -421,11 +498,19 @@ pub fn run_wizard_blocking(
             }
             if self.game_check_for != self.rpcs3_input {
                 self.game_check_for = self.rpcs3_input.clone();
-                let exe = self.rpcs3_path();
-                self.game_check = Some(match exe.parent() {
-                    Some(dir) => check_supported_game(dir),
-                    None => SupportedGameCheck::NoGames,
-                });
+                #[cfg(target_os = "macos")]
+                {
+                    // The mac input is the RPCS3 data/config root itself.
+                    self.game_check = Some(check_supported_game(&self.rpcs3_path()));
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let exe = self.rpcs3_path();
+                    self.game_check = Some(match exe.parent() {
+                        Some(dir) => check_supported_game(dir),
+                        None => SupportedGameCheck::NoGames,
+                    });
+                }
             }
             self.game_check
         }
@@ -439,6 +524,11 @@ pub fn run_wizard_blocking(
     #[cfg(not(feature = "nfc-import"))]
     let reader_present = false;
 
+    #[cfg(target_os = "macos")]
+    let rpcs3_default = default_rpcs3_config_dir_guess()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    #[cfg(not(target_os = "macos"))]
     let rpcs3_default = default_rpcs3_path_guess()
         .map(|p| p.display().to_string())
         .unwrap_or_default();
@@ -718,6 +808,13 @@ pub fn run_wizard_blocking(
         heading(ui, "STEP 1 OF 3");
         subhead(ui, "RPCS3");
         ui.add_space(24.0);
+        #[cfg(target_os = "macos")]
+        body(
+            ui,
+            "Path to your existing RPCS3 data folder (the one with config/games.yml \
+             and dev_flash):",
+        );
+        #[cfg(not(target_os = "macos"))]
         body(ui, "Path to your existing RPCS3 (rpcs3.exe):");
         ui.add_space(6.0);
         body(
@@ -730,17 +827,26 @@ pub fn run_wizard_blocking(
         ui.horizontal(|ui| {
             styled_input(ui, &mut s.rpcs3_input, 620.0);
             ui.add_space(8.0);
-            if ghost_button(ui, "BROWSE").clicked()
-                && let Some(p) = rfd::FileDialog::new()
+            if ghost_button(ui, "BROWSE").clicked() {
+                #[cfg(target_os = "macos")]
+                let picked = rfd::FileDialog::new()
+                    .set_title("Select your RPCS3 data folder")
+                    .pick_folder();
+                #[cfg(not(target_os = "macos"))]
+                let picked = rfd::FileDialog::new()
                     .add_filter("rpcs3.exe", &["exe"])
                     .set_title("Select rpcs3.exe")
-                    .pick_file()
-            {
-                s.rpcs3_input = p.display().to_string();
+                    .pick_file();
+                if let Some(p) = picked {
+                    s.rpcs3_input = p.display().to_string();
+                }
             }
         });
         ui.add_space(12.0);
         match s.rpcs3_valid() {
+            #[cfg(target_os = "macos")]
+            Ok(()) => status_ok(ui, "RPCS3 data folder found."),
+            #[cfg(not(target_os = "macos"))]
             Ok(()) => status_ok(ui, "rpcs3.exe found."),
             Err(e) => status_err(ui, &e.to_string()),
         }
@@ -767,6 +873,15 @@ pub fn run_wizard_blocking(
                             if total == 1 { "" } else { "s" }
                         ),
                     );
+                    #[cfg(target_os = "macos")]
+                    status_info(
+                        ui,
+                        "If you DO have a Skylanders game installed (especially a non-US edition), \
+                         this is likely a gap on our end — please report it with your logs \
+                         (~/Library/Application Support/skylander-portal-controller/logs/) at \
+                         github.com/chotchki/skylander-portal-controller/issues so we can add it.",
+                    );
+                    #[cfg(not(target_os = "macos"))]
                     status_info(
                         ui,
                         "If you DO have a Skylanders game installed (especially a non-US edition), \
@@ -903,6 +1018,17 @@ pub fn run_wizard_blocking(
             }
             ui.add_space(12.0);
             if primary_button(ui, true, "FINISH").clicked() {
+                // macOS prompts for the data/config root directly (config_dir);
+                // control = bundled nested RPCS3. Windows prompts for rpcs3.exe
+                // and derives config_dir from its parent.
+                #[cfg(target_os = "macos")]
+                let cfg = PersistedConfig::from_user_config_dir(
+                    s.rpcs3_path(),
+                    s.pack_path(),
+                    s.window_mode,
+                    &s.runtime_dir,
+                );
+                #[cfg(not(target_os = "macos"))]
                 let cfg = PersistedConfig::from_user_paths(
                     s.rpcs3_path(),
                     s.pack_path(),
@@ -1172,5 +1298,58 @@ mod tests {
         assert_eq!(reloaded.firmware_pack_root, pack);
         assert_eq!(reloaded.bind_port, 8765);
         assert_eq!(reloaded.driver_kind, PersistedDriverKind::Ipc);
+    }
+
+    // U.6: the mac constructor takes the data/config root verbatim (no .parent())
+    // and seeds IPC against the bundled patched RPCS3 (file_name == "rpcs3", no
+    // `.exe`).
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn from_user_config_dir_sets_ipc_and_keeps_config_dir_verbatim() {
+        let d = tempdir().unwrap();
+        let cfg_root = d.path().join("rpcs3-data");
+        std::fs::create_dir_all(&cfg_root).unwrap();
+        let cfg = PersistedConfig::from_user_config_dir(
+            cfg_root.clone(),
+            PathBuf::new(),
+            crate::config::WindowMode::Tv,
+            d.path(),
+        );
+        assert_eq!(cfg.driver_kind, PersistedDriverKind::Ipc);
+        assert_eq!(cfg.config_dir, cfg_root); // verbatim — no .parent()
+        assert_eq!(
+            cfg.rpcs3_exe.file_name().unwrap(),
+            std::ffi::OsStr::new("rpcs3")
+        );
+    }
+
+    // The mac data-dir validator: exists + is_dir passes; a file or a missing
+    // path is rejected (mirrors `validate_firmware_pack`'s shape).
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn config_dir_validator_accepts_dir_rejects_file_and_missing() {
+        let d = tempdir().unwrap();
+        assert_eq!(validate_rpcs3_config_dir(d.path()), Ok(()));
+
+        let file = d.path().join("a-file");
+        std::fs::write(&file, b"x").unwrap();
+        assert_eq!(
+            validate_rpcs3_config_dir(&file),
+            Err(ValidationError::ExpectedDirectory)
+        );
+
+        let missing = d.path().join("nope");
+        assert_eq!(
+            validate_rpcs3_config_dir(&missing),
+            Err(ValidationError::NotFound)
+        );
+    }
+
+    // The mac default-guess probes real filesystem candidates and may return
+    // Some or None depending on the host — just exercise it (no panic).
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn config_dir_guess_returns_option() {
+        let _ = default_rpcs3_config_dir_guess();
     }
 }

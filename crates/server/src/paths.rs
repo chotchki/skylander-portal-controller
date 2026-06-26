@@ -28,6 +28,46 @@ pub fn app_asset_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// Path to the bundled, *patched* RPCS3 control binary shipped inside the app
+/// (the IPC production path — NEVER user-prompted; the wizard only asks for the
+/// user's existing RPCS3 *data dir*). macOS analogue of the Windows
+/// `<app>/rpcs3/rpcs3.exe` placement: the nested `rpcs3.app` lives under
+/// `Contents/Resources/rpcs3/`, because codesign rejects non-Mach-O payloads
+/// inside `Contents/MacOS/` (the same constraint [`app_data_root`] works
+/// around). Falls back to a flat `<exe_parent>/rpcs3/...` for non-bundle dev /
+/// raw-tar extracts.
+///
+/// SHARED CONTRACT (U.5.1 ↔ U.6): the first-launch wizard persists this value
+/// and `config::load`'s per-launch macOS migration recomputes the identical
+/// value, so a `.app` relocation is picked up rather than left stale (mirrors
+/// Windows' `migrate_install_paths`). Both call sites MUST route through this one
+/// fn. No existence check on the fallback — callers test `.exists()` to decide
+/// IPC-vs-Mock.
+#[cfg(target_os = "macos")]
+pub fn bundled_rpcs3_exe() -> PathBuf {
+    let exe_parent = app_asset_dir();
+    let nested = exe_parent
+        .parent() // Contents/MacOS -> Contents
+        .map(|contents| {
+            contents
+                .join("Resources")
+                .join("rpcs3")
+                .join("rpcs3.app")
+                .join("Contents")
+                .join("MacOS")
+                .join("rpcs3")
+        })
+        .filter(|p| p.exists());
+    nested.unwrap_or_else(|| {
+        exe_parent
+            .join("rpcs3")
+            .join("rpcs3.app")
+            .join("Contents")
+            .join("MacOS")
+            .join("rpcs3")
+    })
+}
+
 /// Resolve the shipped `data/` root (figure portraits + box-art + figures.json).
 /// Inside a macOS `.app`, non-Mach-O content lives under `Contents/Resources/`
 /// (codesign rejects it under `Contents/MacOS/`), so prefer

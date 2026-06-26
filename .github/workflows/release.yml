@@ -491,6 +491,46 @@ jobs:
           path: ${{ env.RELEASE_TARBALL }}
           retention-days: 30
 
+      # Phase U.3 — bundle our patched RPCS3 into the SIGNED macOS .app, mirroring
+      # the Windows lane's `gh release download rpcs3-patched-<pin>`. Pull the macOS
+      # arm64 build from the SAME durable prerelease, verify SHA-256, extract, and
+      # hand the .app path to build-macos-app.sh via RPCS3_APP_SRC (which nests +
+      # signs it inside-out, U.4). Owner-gated like the signing steps below: forks
+      # have no prerelease and ship the unsigned mock-only tarball staged above
+      # instead. NOTE (pin coupling): the tag is hardcoded to the same pin the
+      # Windows lane uses (rpcs3-patched-09d602fd5); a submodule pin bump must
+      # update BOTH lanes (see feedback_rpcs3_patched_build_ci).
+      - name: Download + verify bundled patched RPCS3 (macOS)
+        if: github.repository == 'chotchki/skylander-portal-controller'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag='rpcs3-patched-09d602fd5'
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'rpcs3-patched-macos-arm64.tar.gz' \
+            --pattern 'rpcs3-patched-macos-arm64.tar.gz.sha256' --dir rpcs3-dl
+          expected=$(awk '{print tolower($1)}' rpcs3-dl/rpcs3-patched-macos-arm64.tar.gz.sha256)
+          actual=$(shasum -a 256 rpcs3-dl/rpcs3-patched-macos-arm64.tar.gz | awk '{print tolower($1)}')
+          if [[ "$actual" != "$expected" ]]; then
+            echo "patched RPCS3 (mac) SHA-256 mismatch: expected $expected got $actual" >&2
+            exit 1
+          fi
+          mkdir -p rpcs3-mac
+          tar -xzf rpcs3-dl/rpcs3-patched-macos-arm64.tar.gz -C rpcs3-mac
+          # Locate the .app case-insensitively (build emits lowercase rpcs3.app;
+          # publish side may capitalize). ditto in build-macos-app.sh normalizes
+          # the nested name to RPCS3.app regardless.
+          app_src=$(find rpcs3-mac -maxdepth 3 -type d -name '*.app' | head -1)
+          if [[ -z "$app_src" || ! -x "$app_src/Contents/MacOS/rpcs3" ]]; then
+            echo "patched RPCS3 (mac) archive missing a runnable .app/Contents/MacOS/rpcs3" >&2
+            exit 1
+          fi
+          abs="$(cd "$(dirname "$app_src")" && pwd)/$(basename "$app_src")"
+          echo "RPCS3_APP_SRC=$abs" >> "$GITHUB_ENV"
+          mb=$(du -sm "$app_src" | awk '{print $1}')
+          echo "bundled patched RPCS3 (mac): ${mb} MB at $abs"
+
       # PLAN 10.9.2 / 10.9.4 — signed + notarized .dmg. The Tier-2
       # path: import the Developer ID Application cert into a
       # throwaway keychain, build the .app+.dmg with SIGN_IDENTITY
@@ -551,6 +591,11 @@ jobs:
           # "Developer ID Application: Christopher Hotchkiss (TEAMID)".
           # Surfaced via secrets to keep the team-id off public CI logs.
           SIGN_IDENTITY: ${{ secrets.MACOS_CERT_IDENTITY }}
+          # Phase U.3 — extracted patched RPCS3.app; the script nests it under
+          # Contents/Resources/rpcs3/RPCS3.app and signs it inside-out (U.4).
+          # Already exported to the process env via $GITHUB_ENV above; re-declared
+          # here for readability. Unset on forks → script runs mock-only.
+          RPCS3_APP_SRC: ${{ env.RPCS3_APP_SRC }}
         run: tools/build-macos-app.sh
 
       - name: Notarize and staple .dmg

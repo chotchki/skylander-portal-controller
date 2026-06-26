@@ -230,9 +230,8 @@ pub fn load(software_gl: bool) -> Result<Config> {
     use crate::paths;
     use crate::wizard::{PersistedConfig, PersistedDriverKind};
     use anyhow::Context;
-    // The wizard module itself is only referenced on non-macOS (PLAN
-    // 10.6.4 short-circuits the Mac path with a default config).
-    #[cfg(not(target_os = "macos"))]
+    // U.6: the wizard now runs on macOS too (it bundles the patched RPCS3 +
+    // drives IPC, like Windows), so the import is no longer Windows-only.
     use crate::wizard;
 
     let config_path = paths::config_json_path()?;
@@ -260,24 +259,14 @@ pub fn load(software_gl: bool) -> Result<Config> {
         })?
     } else {
         let runtime_dir = paths::resolve_runtime_dir()?;
-        // PLAN 10.6.4: macOS production builds skip the wizard
-        // entirely. The wizard is RPCS3-shaped (validates `rpcs3.exe`
-        // filename, expects a firmware-pack root), and macOS has no
-        // AXUIElement-based driver — the only available DriverKind on
-        // Mac is Mock. Write a sensible default + move on. User can
-        // hand-edit the resulting `config.json` if they want a
-        // different bind port, custom data path, etc.
-        #[cfg(target_os = "macos")]
-        {
-            let _ = software_gl; // wizard (its only consumer) is Windows-only
-            let cfg = PersistedConfig::mock_default(&runtime_dir);
-            cfg.write(&config_path)?;
-            cfg
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            wizard::run_wizard_blocking(&config_path, &runtime_dir, software_gl)?
-        }
+        // U.6: macOS now runs the first-launch wizard too — it bundles the
+        // patched RPCS3 and drives IPC, exactly like Windows. The mac wizard
+        // prompts for the user's existing RPCS3 *data dir* (config_dir =
+        // firmware + games.yml) instead of an rpcs3.exe; portal control uses
+        // the bundled nested RPCS3, resolved at runtime. `mock_default` is
+        // still reachable via the wizard's DEMO MODE page and the
+        // SKYLANDER_PORTAL_DRIVER=mock override above.
+        wizard::run_wizard_blocking(&config_path, &runtime_dir, software_gl)?
     };
 
     // Ensure the persisted config has an HMAC key. The wizard writes a
@@ -352,25 +341,41 @@ pub fn load(software_gl: bool) -> Result<Config> {
         }
         (rpcs3_exe, driver_kind, config_dir)
     };
-    // macOS has no patched RPCS3 — keep the persisted (Mock) driver + paths as-is.
+    // U.5.1 — macOS now ships the patched RPCS3 inside the .app (a later U task
+    // stages it), so mirror the Windows bundled-RPCS3/IPC model: the control
+    // binary + driver are install-layout-derived, not user prefs, so recompute
+    // them every launch. Two macOS-only twists vs `migrate_install_paths`:
+    //   * the emulator is a `.app` nested under Resources, not a bare exe
+    //     (`paths::bundled_rpcs3_exe()` resolves it);
+    //   * it may be ABSENT (dev `cargo run --release`, or a build made before the
+    //     emulator was staged) → fall back to Mock so the launcher still boots
+    //     instead of pointing IPC at a socket the never-launched emulator can't
+    //     create.
+    // The ONLY deliberate Mock on macOS is the `SKYLANDER_PORTAL_DRIVER=mock` env
+    // override (`force_mock`, honoured below). Unlike Windows we do NOT treat a
+    // *persisted* Mock as deliberate: every legacy mock-only mac release seeded
+    // Mock, and once the emulator is bundled we WANT to auto-promote those to IPC.
     #[cfg(target_os = "macos")]
-    let (rpcs3_exe, driver_kind, config_dir) = (
-        persisted.rpcs3_exe.clone(),
-        match persisted.driver_kind {
-            PersistedDriverKind::Uia => DriverKind::Uia,
-            PersistedDriverKind::Ipc => DriverKind::Ipc,
-            PersistedDriverKind::Mock => DriverKind::Mock,
-        },
-        if persisted.config_dir.as_os_str().is_empty() {
-            persisted
-                .rpcs3_exe
-                .parent()
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| PathBuf::from("."))
-        } else {
-            persisted.config_dir.clone()
-        },
-    );
+    let (rpcs3_exe, driver_kind, config_dir) = {
+        let bundled = paths::bundled_rpcs3_exe();
+        let (rpcs3_exe, driver_kind, config_dir) =
+            migrate_install_paths_macos(&persisted.config_dir, &bundled, force_mock);
+        let persisted_equiv = match driver_kind {
+            DriverKind::Ipc => PersistedDriverKind::Ipc,
+            DriverKind::Uia => PersistedDriverKind::Uia,
+            DriverKind::Mock => PersistedDriverKind::Mock,
+        };
+        if persisted.driver_kind != persisted_equiv || persisted.rpcs3_exe != rpcs3_exe {
+            info!(
+                old_rpcs3_exe = %persisted.rpcs3_exe.display(),
+                new_rpcs3_exe = %rpcs3_exe.display(),
+                old_driver = ?persisted.driver_kind,
+                new_driver = ?driver_kind,
+                "macOS: driving the bundled patched RPCS3 over IPC (Mock when the emulator isn't bundled or SKYLANDER_PORTAL_DRIVER=mock)",
+            );
+        }
+        (rpcs3_exe, driver_kind, config_dir)
+    };
 
     Ok(Config {
         rpcs3_exe,
@@ -429,6 +434,49 @@ fn migrate_install_paths(
         persisted_config_dir.to_path_buf()
     };
     (rpcs3_exe, DriverKind::Ipc, config_dir)
+}
+
+/// (macOS release) RPCS3's conventional config/data root on macOS:
+/// `~/Library/Application Support/rpcs3/` (holds `games.yml` + installed
+/// firmware). With no interactive entry point here, a user whose RPCS3 data
+/// lives elsewhere relies on the U.6 wizard to set `config_dir`; this is only the
+/// fallback for a pre-16.9-style config with an empty `config_dir`.
+#[cfg(target_os = "macos")]
+#[allow(dead_code)] // sole non-test caller is release + the macOS `config::load`
+fn default_macos_rpcs3_config_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(|h| PathBuf::from(h).join("Library/Application Support/rpcs3"))
+        .unwrap_or_default()
+}
+
+/// (macOS release) Resolve the install-layout-derived RPCS3 fields, mirroring the
+/// Windows [`migrate_install_paths`]. `bundled_rpcs3_exe` is
+/// [`crate::paths::bundled_rpcs3_exe`] resolved by the caller (so this stays pure
+/// + unit-testable). Returns `(rpcs3_exe, driver_kind, config_dir)`.
+///
+/// `force_mock` is the `SKYLANDER_PORTAL_DRIVER=mock` env override — the only
+/// deliberate Mock on macOS; when set, stay Mock even with a bundled emulator.
+/// When the emulator isn't present (`!bundled_rpcs3_exe.exists()` — a build made
+/// before it was staged, or a dev `cargo run`), fall back to Mock so the launcher
+/// still boots. Otherwise auto-promote to IPC against the bundled patched RPCS3,
+/// keeping the persisted `config_dir` (falling back to the macOS default when
+/// empty).
+#[cfg(target_os = "macos")]
+#[allow(dead_code)] // sole non-test caller is release + the macOS `config::load`
+fn migrate_install_paths_macos(
+    persisted_config_dir: &std::path::Path,
+    bundled_rpcs3_exe: &std::path::Path,
+    force_mock: bool,
+) -> (PathBuf, DriverKind, PathBuf) {
+    if force_mock || !bundled_rpcs3_exe.exists() {
+        return (PathBuf::new(), DriverKind::Mock, PathBuf::new());
+    }
+    let config_dir = if persisted_config_dir.as_os_str().is_empty() {
+        default_macos_rpcs3_config_dir()
+    } else {
+        persisted_config_dir.to_path_buf()
+    };
+    (bundled_rpcs3_exe.to_path_buf(), DriverKind::Ipc, config_dir)
 }
 
 #[cfg(feature = "dev-tools")]
@@ -550,5 +598,73 @@ mod tests {
         assert_eq!(driver, DriverKind::Mock, "Mock must survive migration");
         assert_eq!(rpcs3_exe, PathBuf::new(), "mock uses no RPCS3 binary");
         assert_eq!(config_dir, PathBuf::new(), "mock uses no config dir");
+    }
+
+    // U.5.1 — macOS auto-promotes to IPC when the bundled patched RPCS3 is
+    // present in the .app, keeping the persisted `config_dir` verbatim.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_promotes_to_ipc_when_emulator_bundled() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Simulate the emulator nested under the host .app's Resources.
+        let bundled = tmp
+            .path()
+            .join("Contents/Resources/rpcs3/rpcs3.app/Contents/MacOS/rpcs3");
+        std::fs::create_dir_all(bundled.parent().unwrap()).unwrap();
+        std::fs::write(&bundled, b"stub").unwrap();
+
+        let (exe, driver, config_dir) =
+            migrate_install_paths_macos(Path::new("/users/custom/rpcs3-data"), &bundled, false);
+        assert_eq!(
+            exe, bundled,
+            "control binary = bundled rpcs3.app inner Mach-O"
+        );
+        assert_eq!(driver, DriverKind::Ipc);
+        assert_eq!(config_dir, Path::new("/users/custom/rpcs3-data"));
+    }
+
+    // SAFETY property: with no bundled emulator (today, before a later U task
+    // stages it) macOS stays Mock — no behavior change.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_falls_back_to_mock_when_emulator_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        // A path that is never created on disk.
+        let bundled = tmp.path().join("rpcs3/rpcs3.app/Contents/MacOS/rpcs3");
+        let (exe, driver, config_dir) = migrate_install_paths_macos(Path::new(""), &bundled, false);
+        assert_eq!(driver, DriverKind::Mock, "no bundled emulator → Mock");
+        assert_eq!(exe, PathBuf::new());
+        assert_eq!(config_dir, PathBuf::new());
+    }
+
+    // `SKYLANDER_PORTAL_DRIVER=mock` (the only deliberate Mock on macOS) wins
+    // even when the emulator is bundled.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_env_override_forces_mock_even_when_bundled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bundled = tmp
+            .path()
+            .join("Contents/Resources/rpcs3/rpcs3.app/Contents/MacOS/rpcs3");
+        std::fs::create_dir_all(bundled.parent().unwrap()).unwrap();
+        std::fs::write(&bundled, b"stub").unwrap();
+        let (_, driver, _) = migrate_install_paths_macos(Path::new(""), &bundled, true);
+        assert_eq!(driver, DriverKind::Mock);
+    }
+
+    // An empty persisted `config_dir` (a pre-16.9-style mac config) falls back to
+    // the conventional `~/Library/Application Support/rpcs3` root.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_empty_config_dir_falls_back_to_default_rpcs3_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bundled = tmp
+            .path()
+            .join("Contents/Resources/rpcs3/rpcs3.app/Contents/MacOS/rpcs3");
+        std::fs::create_dir_all(bundled.parent().unwrap()).unwrap();
+        std::fs::write(&bundled, b"stub").unwrap();
+        let (_, driver, config_dir) = migrate_install_paths_macos(Path::new(""), &bundled, false);
+        assert_eq!(driver, DriverKind::Ipc);
+        assert_eq!(config_dir, default_macos_rpcs3_config_dir());
     }
 }

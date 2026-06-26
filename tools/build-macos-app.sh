@@ -102,6 +102,25 @@ cp -R data "$APP/Contents/Resources/"
 
 cp "$ICON" "$APP/Contents/Resources/icon.icns"
 
+# Phase U.3 — nest the bundled patched RPCS3 (a full, self-contained .app with
+# its macdeployqt-bundled Qt/MoltenVK frameworks) under Resources/, mirroring the
+# Windows bundle's <app>/rpcs3/rpcs3.exe. Resources/ (not MacOS/) for the same
+# reason data/ is. config.rs (U.5) resolves
+# Contents/Resources/rpcs3/RPCS3.app/Contents/MacOS/rpcs3 as the IPC control
+# binary. No-op when RPCS3_APP_SRC is unset (local mock-only builds) so the
+# script still runs without a patched-RPCS3 artifact on hand.
+if [[ -n "${RPCS3_APP_SRC:-}" ]]; then
+  if [[ ! -x "$RPCS3_APP_SRC/Contents/MacOS/rpcs3" ]]; then
+    echo "error: RPCS3_APP_SRC has no runnable Contents/MacOS/rpcs3: $RPCS3_APP_SRC" >&2
+    exit 1
+  fi
+  mkdir -p "$APP/Contents/Resources/rpcs3"
+  # ditto = Apple's bundle-aware copy: preserves Versions/Current symlinks,
+  # xattrs, and the exact tree macdeployqt produced. Normalizes the name to
+  # RPCS3.app regardless of the source's case.
+  ditto "$RPCS3_APP_SRC" "$APP/Contents/Resources/rpcs3/RPCS3.app"
+fi
+
 PLIST="$APP/Contents/Info.plist"
 cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -140,22 +159,98 @@ EOF
 # easy-to-make typo of unbalanced <key>/<string> pairs.
 plutil -lint "$PLIST" >/dev/null
 
-# Optional codesigning (PLAN 10.9.2). If SIGN_IDENTITY is set, sign
-# the binary + bundle with --options runtime (hardened runtime, a
-# notarization prerequisite) and --timestamp (Apple's secure
-# timestamp authority — also required for notarization). Without
-# this env var the script no-ops, producing an unsigned bundle —
-# fine for local dev; CI sets it from the imported Developer ID
-# cert. The `--deep` flag walks the bundle and signs every embedded
-# Mach-O — for our single-binary layout that's just the binary
-# itself, but `--deep` is the conventional choice and covers any
-# future helper-tool additions.
+# Notarization-grade signing (PLAN U.4). Apple REJECTS `--deep` for notarized
+# apps and requires: hardened runtime (--options runtime) on EVERY executable, a
+# secure --timestamp, ONE Developer ID Application identity throughout, and NO
+# unsigned nested Mach-O. So we sign INSIDE-OUT by hand — deepest dylibs /
+# framework binaries / Qt plugins / helpers first, then the nested rpcs3 main
+# Mach-O (with JIT entitlements), then the nested RPCS3.app, then the launcher's
+# own binary, then the OUTER launcher .app LAST. (Refs: Apple TN3147 "Migrating
+# to the latest notarization tool"; "Signing a Mac Product For Distribution" —
+# sign nested code before its container, never rely on --deep, which re-signs
+# nested code WITHOUT per-binary entitlements.) Without SIGN_IDENTITY the script
+# no-ops, producing an unsigned bundle — fine for local dev. When there is no
+# nested RPCS3.app (local mock-only builds), this falls back to launcher-only
+# signing.
 if [[ -n "${SIGN_IDENTITY:-}" ]]; then
-  codesign --force --options runtime --timestamp \
-    --sign "$SIGN_IDENTITY" "$APP/Contents/MacOS/skylander-portal-controller"
-  codesign --force --deep --options runtime --timestamp \
-    --sign "$SIGN_IDENTITY" "$APP"
+  # Hardened runtime + secure timestamp + force-replace the ad-hoc ('-')
+  # signatures macdeployqt / the rpcs3 build left on the bundled dylibs.
+  sign() { codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$@"; }
+
+  RPCS3_APP="$APP/Contents/Resources/rpcs3/RPCS3.app"
+  if [[ -d "$RPCS3_APP" ]]; then
+    MAIN_RPCS3="$RPCS3_APP/Contents/MacOS/rpcs3"
+
+    # ditto can carry com.apple.quarantine / com.apple.provenance xattrs in from
+    # extraction; strip them recursively so codesign / Gatekeeper don't trip on
+    # the nested app.
+    xattr -cr "$RPCS3_APP"
+
+    # RPCS3 is an LLVM-JIT emulator: under the hardened runtime it SIGKILLs at
+    # first recompile WITHOUT the JIT entitlements. It also dlopen's the Vulkan
+    # loader -> MoltenVK, so disable library validation (everything bundled is
+    # re-signed with THIS identity below; this only widens to tolerate the
+    # dlopen chain + any dylib we failed to enumerate). Mirrors upstream RPCS3's
+    # own notarized-build entitlements. Written OUTSIDE $STAGE — $STAGE is the
+    # dmg srcfolder, so a file there would leak into the .dmg root.
+    ENT_DIR="$(mktemp -d)"
+    RPCS3_ENT="$ENT_DIR/rpcs3.entitlements"
+    cat > "$RPCS3_ENT" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key><true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+  <key>com.apple.security.cs.disable-executable-page-protection</key><true/>
+  <key>com.apple.security.cs.disable-library-validation</key><true/>
+</dict>
+</plist>
+PLIST
+
+    # 1. Sign EVERY nested Mach-O — loose dylibs, framework binaries (incl.
+    #    extension-less Versions/A/<Name>), Qt plugins (which macdeployqt drops
+    #    under Contents/MacOS/share/qt6/plugins, NOT Frameworks/), and any helper
+    #    tools. Enumerated BY FILE TYPE (`file … | grep Mach-O`), NOT by
+    #    extension, so extension-less binaries are caught. The walk is rooted at
+    #    the always-present RPCS3.app dir, so `find` can't exit 1 on a missing
+    #    path under `set -e`. `find -type f` skips the Versions/Current symlinks;
+    #    the real Mach-O under Versions/A is a regular file and is caught. The
+    #    main rpcs3 binary is skipped here — it's signed WITH entitlements next.
+    while IFS= read -r f; do
+      [[ "$f" == "$MAIN_RPCS3" ]] && continue
+      if file "$f" | grep -q 'Mach-O'; then
+        sign "$f"
+      fi
+    done < <(find "$RPCS3_APP" -type f)
+
+    # 2. rpcs3's own main Mach-O — WITH the JIT entitlements.
+    sign --entitlements "$RPCS3_ENT" "$MAIN_RPCS3"
+
+    # 3. Seal the nested RPCS3.app — WITH the JIT entitlements (re-signs its main
+    #    binary with them; its CodeResources now seals every item signed in 1-2).
+    sign --entitlements "$RPCS3_ENT" "$RPCS3_APP"
+
+    rm -rf "$ENT_DIR"
+  fi
+
+  # 4. Launcher's own inner Mach-O (egui/eframe — no JIT, default entitlements).
+  #    Runs in both the nested-RPCS3 and local mock-only cases.
+  sign "$APP/Contents/MacOS/skylander-portal-controller"
+
+  # 5. Seal the OUTER launcher .app LAST — NO --deep. Every nested item is
+  #    already individually signed above; --deep would re-sign them, dropping
+  #    the per-binary entitlements (and is what Apple tells you not to do).
+  sign "$APP"
+
+  # Verify the whole tree the way Gatekeeper will (verify MAY use --deep).
   codesign --verify --deep --strict --verbose=2 "$APP"
+
+  # TODO(U.4.3): staple the launcher .app itself (not just the .dmg below) so a
+  # user who drags it out of the .dmg gets an offline-verifiable ticket on first
+  # launch. Deferred — needs reordering to notarize the .app BEFORE building the
+  # .dmg (notarize app → `xcrun stapler staple` app → hdiutil create dmg from
+  # the stapled app), which the release.yml flow doesn't do yet.
 fi
 
 mkdir -p "$OUT_DIR"
