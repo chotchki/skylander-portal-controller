@@ -146,7 +146,12 @@ impl UnixRpcsProcess {
         unsafe {
             libc::kill(self.child.id() as libc::pid_t, libc::SIGTERM);
         }
-        self.wait_for_exit_or_force(timeout)
+        // We confirmed it was alive *before* the SIGTERM above, so any exit from
+        // here is OUR graceful shutdown — never `AlreadyExited`. Don't route through
+        // `wait_for_exit_or_force`: its own already-exited early-return would, on a
+        // fast runner that reaps the SIGTERM'd child before the check, mislabel a
+        // Graceful exit as AlreadyExited (the CI race this fixes).
+        Ok(self.wait_or_kill(timeout))
     }
 
     /// Wait up to `timeout` for the process to exit on its own; SIGKILL it if it
@@ -159,11 +164,20 @@ impl UnixRpcsProcess {
             self.cleanup_socket();
             return Ok(ShutdownPath::AlreadyExited);
         }
+        Ok(self.wait_or_kill(timeout))
+    }
+
+    /// Poll for exit up to `timeout`, SIGKILL if it overruns. `Graceful` if it
+    /// exited within the window, `Forced` if we had to kill it. The caller has
+    /// already established the process was alive (and `shutdown_graceful` has
+    /// signalled it), so this deliberately never returns `AlreadyExited` — a
+    /// post-SIGTERM exit is Graceful, not "already gone".
+    fn wait_or_kill(&mut self, timeout: Duration) -> ShutdownPath {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
             if let Ok(Some(_)) = self.child.try_wait() {
                 self.cleanup_socket();
-                return Ok(ShutdownPath::Graceful);
+                return ShutdownPath::Graceful;
             }
             std::thread::sleep(Duration::from_millis(100));
         }
@@ -174,7 +188,7 @@ impl UnixRpcsProcess {
         let _ = self.child.kill();
         let _ = self.child.wait();
         self.cleanup_socket();
-        Ok(ShutdownPath::Forced)
+        ShutdownPath::Forced
     }
 
     fn cleanup_socket(&self) {
