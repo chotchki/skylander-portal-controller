@@ -28,7 +28,7 @@ SPU-LLVM perf commits. The 4 new commits are all SPU-only, orthogonal to the P-p
 - [x] T.3 - Bump the pin docs (rpcs3-patches/README + patch-list, research strategy, release.yml download tag, memory)
 - [x] T.4 - Fix `rpcs3-patched.yml` apply-clean allowlist → P1–P8 file set (LC_ALL=C deterministic sort)
 - [x] T.5 - Commit the bump + trigger the gated `rpcs3-patched.yml` full build (= R.3) → `rpcs3-patched-09d602fd5`
-- [ ] T.6 - Verify the build green (compile proof) + the bundled prerelease published
+- [x] T.6 - Verify the build green (compile proof) + the bundled prerelease published — `rpcs3-patched-09d602fd5` (53.7MB) up; needed apply.sh CRLF normalization (3 iters) + a pin-from-gitlink fix
 - [ ] T.7 - Cut v1.9.13 — fully green (mac signing + Windows bundled-RPCS3 download)
 
 ## Phase A - Auto-generated demo reel (macOS) — LIVE
@@ -91,7 +91,7 @@ of this is chotchki executing steps on his Mac + GitHub UI; the code path (`rele
 
 - [ ] R.1 - Launcher exit button cut off on the 86" 4K TV (was 10.8.3) — layout fix in the launcher action row at 4K/overscan.
 - [ ] R.2 - Distribution docs are winget-first (was 13.5.3 / 13.5.4) — update the `release.yml` comment + CLAUDE.md "Distribution" section (drop the GitHub-Releases-first framing).
-- [ ] R.3 - Trigger the gated `rpcs3-patched.yml` full build for the current pin `927e2492e` so the bundled patched RPCS3 binary exists for release (was 16.12.6) — **verify it hasn't already run** before doing.
+- [x] R.3 - Trigger the gated `rpcs3-patched.yml` full build (done via Phase T at pin `09d602fd5`) — `rpcs3-patched-09d602fd5` Windows binary published (was 16.12.6).
 
 ## Backlog (not yet phased)
 
