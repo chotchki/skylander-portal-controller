@@ -173,17 +173,17 @@ jobs:
 
       # Publish the TRIMMED bin/ as the durable `rpcs3-patched-<pin>` prerelease so
       # release.yml (and users) can fetch a checksummed copy. The pin is the pristine
-      # upstream commit = HEAD~<#patches> of the patched submodule (apply.sh lands one
-      # commit per patch). Count dynamically so the pin stays correct as the series
-      # grows. Idempotent: creates the release if absent, then clobber-uploads the
+      # upstream commit = the committed submodule gitlink (canonical pristine pin), read
+      # via `git ls-tree HEAD vendor/rpcs3`. NOT HEAD~<#patches> of the patched submodule
+      # — apply.sh adds a CRLF-normalization commit below the patches that shifts that.
+      # Idempotent: creates the release if absent, then clobber-uploads the
       # assets. PLAN 16.9.0b.
       - name: Publish patched RPCS3 prerelease
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $n = (Get-ChildItem "$env:GITHUB_WORKSPACE/rpcs3-patches/0*.patch").Count
-          $pin = (git -C vendor/rpcs3 rev-parse --short "HEAD~$n").Trim()
+          $pin = ((git ls-tree HEAD vendor/rpcs3) -split '\s+')[2].Substring(0,9)
           $tag = "rpcs3-patched-$pin"
           # Trim debug/link/test artifacts (the .pdb alone is ~68 MB).
           Push-Location vendor/rpcs3/bin
