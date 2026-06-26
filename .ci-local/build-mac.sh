@@ -137,6 +137,38 @@ if ! otool -l "$BIN" | grep -q "@executable_path/../Frameworks"; then
   install_name_tool -add_rpath @executable_path/../Frameworks "$BIN" || true
 fi
 
+# ---- relocate: make the bundle fully self-contained (Phase U.2.4) -----------
+# macdeployqt relocates the rpcs3 binary's deps to @executable_path/../Frameworks
+# but leaves a few bundled dylibs' OWN install-name id (LC_ID_DYLIB) pointing at
+# their Homebrew keg (libbrotlicommon / libgcc_s / libc++abi). Those refs make the
+# .app non-relocatable → it won't run on a Mac without Homebrew, and would fail
+# notarization + library validation in the signed release. Rewrite every
+# /opt/homebrew|/usr/local id + (bundled) dependency across all Mach-O to
+# @executable_path/../Frameworks. A general pass (no hardcoded list) so a Qt/dep
+# bump can't silently reintroduce a stray ref; warns on a brew dep whose target
+# ISN'T bundled (a genuine gap). Validated: `otool -L` reports zero brew refs
+# afterward and `rpcs3 --version` still runs.
+echo "==> relocating Homebrew install-names → @executable_path/../Frameworks"
+while IFS= read -r f; do
+  file "$f" 2>/dev/null | grep -q "Mach-O" || continue
+  dylib_id="$(otool -D "$f" 2>/dev/null | tail -n +2 | head -1)"
+  case "$dylib_id" in
+    /opt/homebrew/*|/usr/local/*)
+      install_name_tool -id "@executable_path/../Frameworks/$(basename "$dylib_id")" "$f" ;;
+  esac
+  while IFS= read -r dep; do
+    case "$dep" in
+      /opt/homebrew/*|/usr/local/*)
+        b="$(basename "$dep")"
+        if [ -f "$APP/Contents/Frameworks/$b" ]; then
+          install_name_tool -change "$dep" "@executable_path/../Frameworks/$b" "$f"
+        else
+          echo "    WARNING: unbundled Homebrew dep $dep in ${f#"$APP"/}" >&2
+        fi ;;
+    esac
+  done < <(otool -L "$f" 2>/dev/null | tail -n +2 | awk '{print $1}')
+done < <(find "$APP" -type f)
+
 echo "==> ad-hoc signing the bundle for local execution (NOT for distribution)"
 codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
 

@@ -199,48 +199,112 @@ jobs:
           gh release view $tag --repo $env:GITHUB_REPOSITORY 2>$null
           if ($LASTEXITCODE -ne 0) {
             gh release create $tag --repo $env:GITHUB_REPOSITORY --prerelease `
-              --title "Patched RPCS3 (Windows) — $pin + P1/P2 IPC patches" `
+              --title "Patched RPCS3 — $pin + P1-P8 IPC/surface patches" `
               --notes "Patched RPCS3 dependency artifact for the Skylander Portal Controller (GPL-2.0; full source in this repo, see rpcs3-patches/). Bundled by release.yml; users still supply firmware + games via their own RPCS3 install. SHA-256: $sha"
-            if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
+            # Tolerate a create race with the macOS lane (both target this tag in one
+            # full_build dispatch): if our create lost, the release now exists → continue.
+            if ($LASTEXITCODE -ne 0) {
+              gh release view $tag --repo $env:GITHUB_REPOSITORY 2>$null
+              if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
+            }
           }
           gh release upload $tag --repo $env:GITHUB_REPOSITORY --clobber $zip "$zip.sha256"
           if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
 
   # ---------------------------------------------------------------------------
-  # Gated full build (macOS). Upstream's .ci/build-mac.sh is self-contained
-  # (downloads Qt, runs cmake + build), so this job is thin: recursive submodule
-  # + apply patches + run their script with the env from rpcs3.yml's Mac_Build.
+  # Gated full build (macOS, Apple Silicon). Phase U — macOS now SHIPS the patched
+  # RPCS3 (no longer mock-only), so this is a load-bearing PRODUCT build. Runs OUR
+  # proven recipe (.ci-local/build-mac.sh: Homebrew Qt6 + static llvm@21, filtered
+  # submodule checkout, cmake/ninja, macdeployqt, the U.2.4 relocate pass → a fully
+  # self-contained ad-hoc-signed rpcs3.app) instead of upstream's flaky qt-downloader
+  # .ci/build-mac.sh. Gated (~1-2h) — run via workflow_dispatch + full_build when
+  # bumping the pin, before a release that bundles it. Mirror of build-windows;
+  # publishes the .app tarball to the SAME rpcs3-patched-<pin> prerelease. PLAN U.2.
   # ---------------------------------------------------------------------------
   build-macos:
     name: patched RPCS3 (macOS, Apple Silicon)
     if: github.event_name == 'workflow_dispatch' && inputs.full_build
-    # macOS ships the MOCK driver — a patched mac RPCS3 is an explicit non-goal.
-    # This job is a soft portability check only; its failure must not fail the run
-    # (the Windows build is the product artifact). PLAN 16.8.1.
-    continue-on-error: true
-    runs-on: macos-14
+    runs-on: macos-15   # arm64; matches release.yml + avoids the macos-14 VirtualApple fatal-error check
+    permissions:
+      contents: write    # publish the .app tarball to the rpcs3-patched-<pin> prerelease
+    defaults:
+      run:
+        shell: bash
     env:
-      CCACHE_DIR: /tmp/ccache_dir
-      QT_VER: '6.11.1'
-      QT_VER_MAIN: '6'
-      LLVM_COMPILER_VER: '21'
-      AARCH64: '1'
+      CCACHE_DIR: /tmp/ccache_dir   # build-mac.sh's default; pin it for the cache step
     steps:
-      - name: Checkout (recursive — full build needs 3rdparty)
+      - name: Checkout (vendor/rpcs3 at the pin, non-recursive)
+        # build-mac.sh does its OWN filtered nested-submodule init (skips the ~1.9 GB
+        # vendored llvm/opencv/SDL we satisfy from Homebrew), so just the gitlink here.
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: true
 
-      - name: Apply patch series
-        run: bash rpcs3-patches/apply.sh
+      - name: Resolve RPCS3 pin (committed gitlink)
+        id: pin
+        run: echo "pin=$(git ls-tree HEAD vendor/rpcs3 | awk '{print substr($3,1,9)}')" >> "$GITHUB_OUTPUT"
 
-      - name: Build patched RPCS3 (upstream .ci/build-mac.sh)
-        working-directory: vendor/rpcs3
-        run: ./.ci/build-mac.sh
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/ccache_dir
+          key: rpcs3-mac-ccache-${{ steps.pin.outputs.pin }}-${{ github.run_id }}
+          restore-keys: |
+            rpcs3-mac-ccache-${{ steps.pin.outputs.pin }}-
+            rpcs3-mac-ccache-
 
-      - name: Upload patched build
+      - name: Build patched RPCS3 (.ci-local/build-mac.sh)
+        # Applies P1-P8, installs brew deps, builds, macdeployqt, the U.2.4 relocate
+        # pass → self-contained rpcs3.app, ad-hoc signed. ~1-2h cold, minutes warm.
+        timeout-minutes: 150
+        run: .ci-local/build-mac.sh
+
+      - name: Smoke-check + verify self-contained
+        run: |
+          set -uo pipefail
+          BIN=vendor/rpcs3/build/bin/rpcs3.app/Contents/MacOS/rpcs3
+          test -x "$BIN" || { echo "::error::rpcs3 binary not produced"; exit 1; }
+          # build-mac.sh only WARNS on launch failure — hard-gate a DOA artifact.
+          # KMP_DUPLICATE_LIB_OK works around the dual-libomp abort (UnixRpcsProcess
+          # ::spawn sets it at runtime too). --version exits before GUI/Vulkan init.
+          KMP_DUPLICATE_LIB_OK=TRUE "$BIN" --version || { echo "::error::rpcs3 --version failed"; exit 1; }
+          # U.2.4: fail if any Mach-O still references Homebrew (won't run on a clean Mac).
+          brewrefs=$(find vendor/rpcs3/build/bin/rpcs3.app -type f -exec sh -c 'file "$1" 2>/dev/null | grep -q Mach-O && otool -L "$1" 2>/dev/null | grep -qE "/opt/homebrew|/usr/local/" && echo "$1"' _ {} \;)
+          if [ -n "$brewrefs" ]; then echo "::error::rpcs3.app still references Homebrew:"; echo "$brewrefs"; exit 1; fi
+          echo "OK: --version clean + zero Homebrew refs (relocatable)"
+
+      - name: Package rpcs3.app tarball + sha256
+        run: |
+          set -euo pipefail
+          tarball="rpcs3-patched-macos-arm64.tar.gz"
+          COPYFILE_DISABLE=1 tar -czf "$tarball" -C vendor/rpcs3/build/bin rpcs3.app
+          shasum -a 256 "$tarball" > "$tarball.sha256"
+          echo "RELEASE_TARBALL=$tarball" >> "$GITHUB_ENV"
+
+      - name: Upload tarball artifact (debug convenience)
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: rpcs3-patched-macos-arm64
-          path: vendor/rpcs3/build/
+          path: ${{ env.RELEASE_TARBALL }}
           if-no-files-found: warn
+          retention-days: 30
+
+      - name: Publish patched RPCS3 prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pin="${{ steps.pin.outputs.pin }}"
+          tag="rpcs3-patched-$pin"
+          tarball="$RELEASE_TARBALL"
+          sha="$(awk '{print $1}' "$tarball.sha256")"
+          mb=$(( $(stat -f%z "$tarball") / 1048576 ))
+          echo "publishing $tag (${mb} MB, sha256=$sha)"
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --prerelease \
+              --title "Patched RPCS3 — $pin + P1-P8 IPC/surface patches" \
+              --notes "Patched RPCS3 dependency artifact for the Skylander Portal Controller (GPL-2.0; full source in this repo, see rpcs3-patches/). Bundled by release.yml; users supply firmware + games via their own RPCS3 install. The macOS arm64 build is self-contained + ad-hoc-signed; release.yml re-signs the nested bundle with the Developer ID and notarizes." \
+              || gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1   # tolerate a create race with the Windows lane
+          fi
+          gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber "$tarball" "$tarball.sha256"
