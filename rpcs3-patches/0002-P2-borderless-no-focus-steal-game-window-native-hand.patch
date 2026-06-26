@@ -1,7 +1,7 @@
-From f34a7d69bb819c4c4e721d6518c44f2e450206a0 Mon Sep 17 00:00:00 2001
+From ed5bef5c715fcbee954385fcb3ee29c419b86134 Mon Sep 17 00:00:00 2001
 From: Christopher Hotchkiss <chris@hotchkiss.io>
 Date: Fri, 29 May 2026 16:34:01 -0700
-Subject: [PATCH 02/10] P2: borderless, no-focus-steal game window + native
+Subject: [PATCH 2/8] P2: borderless, no-focus-steal game window + native
  handle over IPC
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

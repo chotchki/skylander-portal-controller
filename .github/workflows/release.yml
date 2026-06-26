@@ -106,7 +106,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = 'rpcs3-patched-927e2492e'
+          $tag = 'rpcs3-patched-09d602fd5'
           gh release download $tag --repo $env:GITHUB_REPOSITORY `
             --pattern 'rpcs3-patched-windows-x64.zip' `
             --pattern 'rpcs3-patched-windows-x64.zip.sha256' --dir rpcs3-dl

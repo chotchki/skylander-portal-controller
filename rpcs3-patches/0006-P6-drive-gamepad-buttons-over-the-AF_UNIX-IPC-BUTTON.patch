@@ -1,7 +1,7 @@
-From a561238f1c5a7105500fb4e947c13144470787df Mon Sep 17 00:00:00 2001
+From c9e15de671d4d94a1798c7cc42b0535ca387ca83 Mon Sep 17 00:00:00 2001
 From: Christopher Hotchkiss <christopher.hotchkiss@gmail.com>
 Date: Tue, 23 Jun 2026 14:16:47 -0800
-Subject: [PATCH 08/10] P6: drive gamepad buttons over the AF_UNIX IPC
+Subject: [PATCH 6/8] P6: drive gamepad buttons over the AF_UNIX IPC
  (BUTTON_PRESS)
 
 Adds a BUTTON_PRESS <NAME> <DURATION_MS> command to the Skylander IPC server so the play-through recorder can navigate the game's menus to the in-game portal (classifier-led: press X until the portal appears) without the fragile savestate-resume path and without stealing window focus (unlike synthesised keystrokes).

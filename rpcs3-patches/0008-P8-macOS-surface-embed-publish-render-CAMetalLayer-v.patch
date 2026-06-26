@@ -1,9 +1,9 @@
-From 76789bfc1c27dabbd388c31f0a3b2eca6be519ee Mon Sep 17 00:00:00 2001
+From c302a468db7480c297cd5f93b98e462545bcd010 Mon Sep 17 00:00:00 2001
 From: Christopher Hotchkiss <christopher.hotchkiss@gmail.com>
 Date: Wed, 24 Jun 2026 18:48:13 -0700
-Subject: [PATCH 10/10] =?UTF-8?q?P8:=20macOS=20surface-embed=20=E2=80=94?=
- =?UTF-8?q?=20publish=20render=20CAMetalLayer=20via=20CAContext=20for=20CA?=
- =?UTF-8?q?LayerHost=20(SURFACE)?=
+Subject: [PATCH 8/8] =?UTF-8?q?P8:=20macOS=20surface-embed=20=E2=80=94=20p?=
+ =?UTF-8?q?ublish=20render=20CAMetalLayer=20via=20CAContext=20for=20CALaye?=
+ =?UTF-8?q?rHost=20(SURFACE)?=
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit

@@ -67,12 +67,16 @@ jobs:
           # Count dynamically so adding a patch (e.g. P3) doesn't silently skip
           # earlier commits from the diff the way a hardcoded HEAD~2 would.
           n="$(ls "$GITHUB_WORKSPACE"/rpcs3-patches/0*.patch | wc -l | tr -d ' ')"
-          changed="$(git diff --name-only "HEAD~$n" HEAD | sort | tr '\n' ' ')"
+          changed="$(git diff --name-only "HEAD~$n" HEAD | LC_ALL=C sort | tr '\n' ' ')"
           echo "changed since pin ($n patch(es)): $changed"
-          # Allowlist of every file the series may touch (P1: Skylander.{cpp,h};
-          # P2: gs_frame.cpp; P3: lv2_socket_native.cpp), sorted. Guards against a
-          # patch sprawling beyond its intended seam.
-          expected="rpcs3/Emu/Cell/lv2/sys_net/lv2_socket_native.cpp rpcs3/Emu/Io/Skylander.cpp rpcs3/Emu/Io/Skylander.h rpcs3/rpcs3qt/gs_frame.cpp "
+          # Allowlist of every file the P1-P8 series may touch, LC_ALL=C-sorted
+          # (P8 adds rpcs3/Emu/CMakeLists.txt, which sorts before Cell/ only in C
+          # locale — pin the sort so this comparison is deterministic). Seams:
+          # P1 Skylander.{cpp,h}; P2/P7 gs_frame.cpp; P3 lv2_socket_native.cpp;
+          # P5 sys_usbd.{cpp,h}; P6 pad_thread.cpp + pad_types.h; P8 Emu/CMakeLists.txt
+          # + metal_layer.h + surface_publish.mm + swapchain_macos.hpp. Guards against
+          # a patch sprawling beyond its intended seam.
+          expected="rpcs3/Emu/CMakeLists.txt rpcs3/Emu/Cell/lv2/sys_net/lv2_socket_native.cpp rpcs3/Emu/Cell/lv2/sys_usbd.cpp rpcs3/Emu/Cell/lv2/sys_usbd.h rpcs3/Emu/Io/Skylander.cpp rpcs3/Emu/Io/Skylander.h rpcs3/Emu/Io/pad_types.h rpcs3/Emu/RSX/VK/vkutils/metal_layer.h rpcs3/Emu/RSX/VK/vkutils/surface_publish.mm rpcs3/Emu/RSX/VK/vkutils/swapchain_macos.hpp rpcs3/Input/pad_thread.cpp rpcs3/rpcs3qt/gs_frame.cpp "
           [ "$changed" = "$expected" ] || { echo "::error::unexpected patched file set"; exit 1; }
           echo "✅ series applies cleanly and touches only the expected files"
 

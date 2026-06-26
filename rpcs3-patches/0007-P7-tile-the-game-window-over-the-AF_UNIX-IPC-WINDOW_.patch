@@ -1,7 +1,7 @@
-From 3f5a80be5586942455ea4d7a9666f40a2d7947c6 Mon Sep 17 00:00:00 2001
+From 73c296d50270ad776eff82eed11477d79ce97e2f Mon Sep 17 00:00:00 2001
 From: Christopher Hotchkiss <christopher.hotchkiss@gmail.com>
 Date: Tue, 23 Jun 2026 21:21:20 -0800
-Subject: [PATCH 09/10] P7: tile the game window over the AF_UNIX IPC
+Subject: [PATCH 7/8] P7: tile the game window over the AF_UNIX IPC
  (WINDOW_SET)
 
 Adds a WINDOW_SET <x> <y> <w> <h> command to the Skylander IPC server so the

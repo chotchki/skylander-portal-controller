@@ -12,20 +12,15 @@ rpcs3-patches/
   0001-P1-…-AF_UN….patch              P1 — IPC portal control (Skylander.cpp + .h)
   0002-P2-…-window-hand….patch        P2 — borderless window + native handle (gs_frame.cpp)
   0003-P3-…-ENETUNREACH.patch         P3 — offline public-IP connect → ENETUNREACH (sys_net)
-  0004-SPU-Analyzer-prune-….patch     SPU — prune dead in-range targets, Giga const-prop †
-  0005-SPU-Analyzer-fix-divisor-….patch  SPU — fix wrong divisor in Giga const-prop re-decode †
-  0006-P4-…-PE-events.patch           P4 — push guest portal-events (PE) over IPC (Skylander.cpp)
-  0007-P5-…-RECONNECT.patch           P5 — re-attach the portal after a save-state resume (Skylander.cpp + sys_usbd)
-  0008-P6-…-BUTTON_PRESS.patch        P6 — inject gamepad buttons over IPC (Skylander.cpp + pad_thread)
-  0009-P7-…-WINDOW_SET.patch          P7 — tile the game window over IPC (gs_frame.cpp + Skylander.cpp)
-  0010-P8-…-SURFACE.patch             P8 — macOS surface-embed: publish CAMetalLayer via CAContext (CALayerHost)
+  0004-P4-…-PE-events.patch           P4 — push guest portal-events (PE) over IPC (Skylander.cpp)
+  0005-P5-…-RECONNECT.patch           P5 — re-attach the portal after a save-state resume (Skylander.cpp + sys_usbd)
+  0006-P6-…-BUTTON_PRESS.patch        P6 — inject gamepad buttons over IPC (Skylander.cpp + pad_thread)
+  0007-P7-…-WINDOW_SET.patch          P7 — tile the game window over IPC (gs_frame.cpp + Skylander.cpp)
+  0008-P8-…-SURFACE.patch             P8 — macOS surface-embed: publish CAMetalLayer via CAContext (CALayerHost)
   apply.sh                            apply the series onto a checkout (git am --3way)
   README.md                           this file
 ```
-† 0004/0005 are the two local SPU-LLVM Giga crash fixes (merged upstream as RPCS3
-  #18935). They sit between P3 and P4 because that's where they landed in the dev
-  branch; they are NOT a controller feature, and the next pin bump (past the #18935
-  merge) drops them — at which point the series is back to a clean P1–P8.
+(The two local SPU-LLVM Giga crash fixes that used to sit between P3 and P4 were merged upstream as RPCS3 #18935 and dropped on the 2026-06-24 pin bump to `09d602fd5` — the series is now a clean P1-P8.)
 
 The submodule **always points at a pristine upstream commit** — it is never
 modified in place. The patches live here, in our repo, where the diff is
@@ -38,8 +33,7 @@ independent** — a `sys_net` errno tweak unrelated to the portal device or wind
 
 The P-patches are the entire *controller* footprint on RPCS3 — all shallow +
 additive on rarely-churning seams (the patch-depth thesis in the decision doc).
-(0004/0005 are the transient SPU-LLVM Giga crash fixes noted above — not a
-controller feature.) What each does:
+What each does:
 
 - **P1** — a self-contained AF_UNIX listener on the emulated Skylander USB device
   (`Emu/Io/Skylander.cpp`) exposing `LOAD/CLEAR/STATUS/STATE/WINDOW/PING` + a 1 Hz
@@ -98,7 +92,7 @@ controller feature.) What each does:
 | | |
 |---|---|
 | Submodule | `vendor/rpcs3` → `https://github.com/RPCS3/rpcs3.git` |
-| Pinned commit | `927e2492ef720d2223bd8b149a02af875e11c398` (master, 2026-06-22, `v0.0.40-637`) |
+| Pinned commit | `09d602fd5a15d1ca92c9ab9927322d0b185eb45b` (master, 2026-06-24, `v0.0.41`) |
 | Patches generated against | that same commit |
 
 Pin is by **commit**, not branch — `.gitmodules` has no `branch =`, so
@@ -110,16 +104,16 @@ shallow + additive.
 
 ```bash
 git submodule update --init --recursive vendor/rpcs3   # full build needs 3rdparty
-rpcs3-patches/apply.sh                                  # → 10 commits on top of the pin
+rpcs3-patches/apply.sh                                  # → 8 commits on top of the pin
 # then build per docs/dev/rpcs3-fork-htpc-bringup.md (Windows: sln + msbuild Release|x64)
 ```
 
-`apply.sh` uses `git am --3way`, so a clean tree ends ten commits ahead of the pin.
+`apply.sh` uses `git am --3way`, so a clean tree ends eight commits ahead of the pin.
 To undo and return to pristine: `git -C vendor/rpcs3 checkout <pinned-commit>` (or
 `git am --abort` if an apply is in progress).
 
 The **editable home** of these patches is the dev clone at `D:\workspace\rpcs3`,
-branch `spike-patches` (= pin + the ten commits). Edit there, then re-export (below).
+branch `spike-patches` (= pin + the eight commits). Edit there, then re-export (below).
 
 ## Rebase onto a newer upstream commit (bumping the pin)
 

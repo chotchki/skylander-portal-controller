@@ -1,7 +1,7 @@
-From 18d9908a5f08f0a3bce115625143b503506fffe6 Mon Sep 17 00:00:00 2001
+From 8cb996f98a6bf6a83620cfaeac86659e8daf461a Mon Sep 17 00:00:00 2001
 From: Christopher Hotchkiss <chris@hotchkiss.io>
 Date: Wed, 10 Jun 2026 21:18:08 -0700
-Subject: [PATCH 07/10] P5: re-attach the emulated portal after a save-state
+Subject: [PATCH 5/8] P5: re-attach the emulated portal after a save-state
  resume (RECONNECT IPC)
 
 A save-state resume rebuilds the emulated-USB handler thread (and its LDD
