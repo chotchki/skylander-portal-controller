@@ -37,7 +37,7 @@ base="$(git rev-parse --short HEAD)"
 # this base commit stays out of the patch diff. Auto-detected from the patches'
 # `+++ b/<file>` targets — no hardcoded list, so future patches are covered too.
 norm=0
-for f in $(grep -h '^+++ b/' "$here"/0*.patch | sed 's#^+++ b/##' | sort -u); do
+for f in $(grep -h '^+++ b/' "$here"/0*.patch | sed 's#^+++ b/##' | tr -d '\r' | sort -u); do
   if [ -f "$f" ] && LC_ALL=C grep -qI $'\r' "$f"; then
     perl -i -pe 's/\r\n/\n/g' "$f"; norm=1
   fi
