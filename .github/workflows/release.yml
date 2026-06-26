@@ -376,7 +376,12 @@ jobs:
         # Contents + Pull requests read/write. Intentionally NOT continue-on-error
         # — a red step here is the signal that the PAT expired/missing
         # (docs/dev/winget-submission.md).
-        if: startsWith(github.ref, 'refs/tags/v')
+        # DISABLED 2026-06-26 (chotchki): the mac-signing patch iterations (v1.9.14+)
+        # don't change the Windows MSI, so each tag would re-submit the SAME package to
+        # winget — churn that risks the winget-pkgs maintainers' patience. Re-enable by
+        # restoring the tag condition once a release goes fully green and there's a real
+        # Windows update worth a PR. Tracked: PLAN 14.6.4.
+        if: false  # was: startsWith(github.ref, 'refs/tags/v')
         uses: vedantmgoyal9/winget-releaser@v2
         with:
           identifier: ChristopherHotchkiss.SkylanderPortalController

@@ -78,6 +78,7 @@ of this is chotchki executing steps on his Mac + GitHub UI; the code path (`rele
   - [ ] 14.6.1 - Cut the next patch tag `v1.9.12` (matches the `v*.*.*` env rule, so secrets flow with no loosening).
   - [ ] 14.6.2 - Watch the macOS job; the 5 signing steps should be green (~10–15 min).
   - [ ] 14.6.3 - Download the signed `.dmg`, confirm `spctl -a` green on a clean Mac. If signing fails, fix forward + cut the next patch.
+  - [ ] 14.6.4 - Re-enable the winget auto-PR (`release.yml` — restore the tag `if:` on the "Publish to winget" step) once a release goes fully green (signed mac dmg present). Disabled 2026-06-26 so the mac-signing patch iterations don't churn microsoft/winget-pkgs with no-op Windows resubmissions.
 - [ ] 14.7 - **Real-tag validation + close out 10.9.2.**
   - [ ] 14.7.1 - Cut the next real release tag; signed + notarized + stapled dmg lands on the Release.
   - [ ] 14.7.2 - Download from the Release page on a fresh Mac (or `xattr -d com.apple.quarantine`); confirm Gatekeeper allows direct double-click.
