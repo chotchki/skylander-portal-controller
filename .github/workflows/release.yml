@@ -566,16 +566,33 @@ jobs:
             echo "no dmg found under dist/" >&2
             exit 1
           fi
-          # `notarytool submit --wait` blocks until Apple's verdict
-          # (typically <2min for our artifact size). Without --wait
-          # we'd need a separate poll loop. App-specific password is
-          # generated at appleid.apple.com → "Sign-in and Security"
-          # — it's NOT the Apple ID password.
-          xcrun notarytool submit "$DMG" \
+          # `notarytool submit --wait` blocks until Apple's verdict (typically
+          # <2min for our artifact size) but exits 0 even when the verdict is
+          # Invalid — so we parse the status ourselves and, on anything but
+          # Accepted, dump Apple's notary log (the authoritative issue list:
+          # wrong cert type / missing timestamp / unsigned nested code) before
+          # failing. App-specific password is from appleid.apple.com →
+          # "Sign-in and Security" — it's NOT the Apple ID password.
+          set +e
+          SUBMIT_OUT=$(xcrun notarytool submit "$DMG" \
             --apple-id "$APPLE_ID" \
             --team-id "$APPLE_TEAM_ID" \
             --password "$APPLE_APP_PASSWORD" \
-            --wait
+            --wait 2>&1)
+          SUBMIT_RC=$?
+          set -e
+          printf '%s\n' "$SUBMIT_OUT"
+          SUBMISSION_ID=$(printf '%s\n' "$SUBMIT_OUT" | awk '/id:/{print $2; exit}')
+          if [[ "$SUBMIT_RC" -ne 0 ]] || ! printf '%s\n' "$SUBMIT_OUT" | grep -q "status: Accepted"; then
+            echo "::error::Notarization not Accepted (rc=$SUBMIT_RC). Apple notary log follows:"
+            if [[ -n "$SUBMISSION_ID" ]]; then
+              xcrun notarytool log "$SUBMISSION_ID" \
+                --apple-id "$APPLE_ID" \
+                --team-id "$APPLE_TEAM_ID" \
+                --password "$APPLE_APP_PASSWORD" || true
+            fi
+            exit 1
+          fi
           # Staple bakes the notarization ticket into the .dmg so
           # Gatekeeper's offline check passes (the user's machine
           # doesn't need to phone Apple to verify on first launch).
