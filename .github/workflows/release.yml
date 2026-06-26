@@ -386,7 +386,7 @@ jobs:
     # is doable later via macos-13 + a separate artifact, but ~all
     # Mac users targeted by this distribution are on Apple Silicon
     # by 2026.
-    runs-on: macos-14
+    runs-on: macos-15
     # Signing live as of Phase 14 (2026-06-25): the `release` Environment holds
     # the Apple Developer ID + notarization secrets (runbook:
     # docs/dev/release-signing.md). The Windows job publishes the Release

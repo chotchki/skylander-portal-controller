@@ -141,11 +141,13 @@ jobs:
   # Mac coverage of the workspace, including the production-flavored
   # release build and the Mac-only mdns/scutil branch (PLAN 10.1.6 +
   # 10.6.4). Mirrors the Windows lane structure: clippy + build + test.
-  # macos-14 is Apple Silicon (M-series) — same arch as the macOS
-  # release artifact ships against.
+  # macos-15 is Apple Silicon (M-series) — same arch as the macOS
+  # release artifact ships against. (macos-15 = Xcode 16 SDK, needed by
+  # tools/playthrough → screencapturekit → apple-metal; macos-14's SDK
+  # lacks MTLResidencySet/MTLLogState and the Swift bridge won't build.)
   clippy-build-test-macos:
     name: clippy + build + test (macos)
-    runs-on: macos-14
+    runs-on: macos-15
     # DISABLED 2026-05-30 — macOS runners bill 10x and we keep not fixing the
     # mac lane; stop burning the budget. The Windows + Ubuntu lanes already
     # cover clippy/build/test on the production driver. Re-enable by removing
