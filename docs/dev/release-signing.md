@@ -61,21 +61,24 @@ Configure:
   surprise tag-push, friction otherwise. Skip for now; flip on if
   the release cadence is slow enough that the friction is OK.
 
-### Dry-run via `workflow_dispatch`
+### Validating the signed pipeline
 
-The `v*.*.*` deployment-tag rule above means a `workflow_dispatch`
-run **on a branch** (e.g. `main`) receives **no** environment
-secrets — the signing steps fail on empty values. To rehearse the
-pipeline without cutting a real release, either:
+The `v*.*.*` deployment-tag rule means a `workflow_dispatch` run **on
+a branch** (e.g. `main`) receives **no** environment secrets — the
+signing steps fail on empty values. This repo has a **hard
+no-delete-tags rule**, so the validation path is **real patch
+releases**: a real `vX.Y.Z` tag matches the deployment rule, the
+secrets flow with no loosening, and the signed `.dmg` lands on the
+release. If a release's signing breaks, **fix forward and cut the next
+patch** — never delete a tag. The first signed patch is both the
+rehearsal and the proof.
 
-- **Push a throwaway tag** that matches the rule —
-  `git tag v0.0.0-dryrun && git push origin v0.0.0-dryrun` — so the
-  secrets flow; delete the tag + any draft release afterwards
-  (cleaner); or
-- **Temporarily loosen** the deployment rule to your working branch,
-  dispatch, then revert the rule.
+(For a no-release rehearsal you could instead temporarily loosen the
+deployment rule to your branch, `workflow_dispatch`, then revert it —
+a settings toggle, no tag. The patch-release path is simpler and
+preferred.)
 
-(PLAN 14.6 tracks the dry-run.)
+(PLAN 14.6 tracks the first signed patch.)
 
 ## Secrets to create
 

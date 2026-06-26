@@ -60,10 +60,10 @@ of this is chotchki executing steps on his Mac + GitHub UI; the code path (`rele
   - [x] 14.5.1 - Flip the four `if: false` guards in `release.yml` back to the repo-owner check. Steps: Import cert / Build signed .app+.dmg / Notarize and staple / Upload signed DMG.
   - [x] 14.5.2 - Add `${{ env.RELEASE_DMG }}` back to the macOS "Publish release" `files:` list.
   - [x] 14.5.3 - Update the disabled-signing comment block in `release.yml` — drop "secrets pending"; reference `docs/dev/release-signing.md` as the live runbook.
-- [ ] 14.6 - **CI dry run via `workflow_dispatch`.**
-  - [ ] 14.6.1 - Actions → Release → Run workflow (loosen the deployment-tag rule to `main` temporarily, OR push a throwaway `v0.0.0-dryrun` tag — latter is cleaner).
+- [ ] 14.6 - **Validate signing via a real patch release** (hard no-delete-tags rule — fix forward, no throwaway tags).
+  - [ ] 14.6.1 - Cut the next patch tag `v1.9.12` (matches the `v*.*.*` env rule, so secrets flow with no loosening).
   - [ ] 14.6.2 - Watch the macOS job; the 5 signing steps should be green (~10–15 min).
-  - [ ] 14.6.3 - Download the signed `.dmg`, mount on a clean Mac, confirm `spctl -a` green; revert the deployment-rule loosening.
+  - [ ] 14.6.3 - Download the signed `.dmg`, confirm `spctl -a` green on a clean Mac. If signing fails, fix forward + cut the next patch.
 - [ ] 14.7 - **Real-tag validation + close out 10.9.2.**
   - [ ] 14.7.1 - Cut the next real release tag; signed + notarized + stapled dmg lands on the Release.
   - [ ] 14.7.2 - Download from the Release page on a fresh Mac (or `xattr -d com.apple.quarantine`); confirm Gatekeeper allows direct double-click.
