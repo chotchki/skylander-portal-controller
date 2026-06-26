@@ -78,7 +78,11 @@ jobs:
       # interactive desktop and aren't runnable on Actions; CI never
       # passes `-- --ignored` per CLAUDE.md.
       - name: cargo test --workspace
-        run: cargo test --workspace
+        # Exclude skylander-playthrough (the demo-reel SCKit capture tool): it pulls
+        # screencapturekit -> apple-metal, whose Swift bridge needs the macOS-26 SDK
+        # (MTLResidencySet/MTLLogState) the macos-15 runner lacks. Not shipped; the
+        # release artifact is `-p skylander-server`, which doesn't depend on it.
+        run: cargo test --workspace --exclude skylander-playthrough
 
       # `--no-default-features --features sky-stats` strips the
       # `dev-tools` feature out of the shipped exe. dev-tools is on
@@ -430,7 +434,11 @@ jobs:
       # mDNSResponder); same skip behaviour as the Windows lane's
       # live-RPCS3 ignores.
       - name: cargo test --workspace
-        run: cargo test --workspace
+        # Exclude skylander-playthrough (the demo-reel SCKit capture tool): it pulls
+        # screencapturekit -> apple-metal, whose Swift bridge needs the macOS-26 SDK
+        # (MTLResidencySet/MTLLogState) the macos-15 runner lacks. Not shipped; the
+        # release artifact is `-p skylander-server`, which doesn't depend on it.
+        run: cargo test --workspace --exclude skylander-playthrough
 
       # Production features for macOS (PLAN 10.6):
       # - `sky-stats`: same as Windows; enables the per-figure stats
