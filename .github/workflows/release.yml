@@ -605,9 +605,14 @@ jobs:
 
       - name: Upload signed DMG artifact
         if: github.repository == 'chotchki/skylander-portal-controller'
+        # Debug-convenience only — the release dmg is delivered by the Publish step
+        # below (files:). Never let a failed artifact upload gate the release.
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.RELEASE_DMG }}
+          # upload-artifact@v4 forbids "/" in the NAME — must be a bare label, NOT the
+          # dist/… path (RELEASE_DMG, which is what tanked v1.9.17). path: takes the path.
+          name: macos-signed-dmg
           path: ${{ env.RELEASE_DMG }}
           retention-days: 30
 
