@@ -8,7 +8,7 @@ Conventions:
 - Don't skip a review checkpoint; the point is to re-plan with new information.
 
 ## Non-goals
-- No bundling of RPCS3 or `.sky` files (piracy concern).
+- No bundling of `.sky` files or game backups (piracy). The patched RPCS3 *itself* IS bundled — GPL, source public — per the v1 distribution model (16.9.0b): Windows today, macOS via Phase U.
 - No Linux support — production targets are Windows + macOS.
 - No user-entered figure names.
 - No audio (text-only Kaos to dodge copyright).
@@ -16,6 +16,35 @@ Conventions:
 - **No AXUIElement macOS driver** (ex-Phase 12) — IPC to the patched RPCS3 supersedes it.
 
 ---
+
+## Phase U - Ship the patched RPCS3 emulator in the macOS release (mock → ipc)
+
+The mac .dmg currently bundles MOCK only, so "launch game" can't boot a real emulator —
+wasting the Phase 16 IPC + P8 surface-embed work (live-validated ~60fps on the M3 Max via
+`.ci-local/build-mac.sh`). This phase packages that proven runtime into the release: bundle
++ sign the patched RPCS3, flip the mac default mock → ipc, mirroring the Windows v1
+distribution model (16.9.0b). The runtime is done — this is distribution plumbing.
+Reconnaissance: the Explore done|missing|blocker trace (2026-06-26). Windows is the template
+throughout (`release.yml` Windows job + `config.rs::migrate_install_paths`).
+
+- [x] U.1 - Fix the mock-mode game-launch hang: the non-Windows `BootDirect` branch spawns no process + never sets `game_playable`, so the launcher waits on the stable-timer fallback ("loading" hang). DONE — `no_real_process` reveal in `state.rs` + `boot_direct_mock_reveals_game_playable` test (passes, clippy-clean).
+- [ ] U.2 - Produce a distributable, RELOCATABLE macOS patched-RPCS3 from CI (THE blocker — `rpcs3-patched.yml`'s upstream mac build uses the flaky qt-downloader; `.ci-local/build-mac.sh` is the proven producer). Draft+verify reshaped this — the real risk is U.2.4.
+  - [ ] U.2.1 - Promote `.ci-local/build-mac.sh` to a gated CI lane on `macos-15` (arm64 — avoids the `VirtualApple` fatal-error landmine macos-14 trips; Homebrew Qt + `llvm@21`, filtered submodule checkout, `macdeployqt` + ad-hoc re-sign → `rpcs3.app`) + a `--version` smoke-gate (build-mac.sh only warns on launch failure).
+  - [ ] U.2.2 - Publish `rpcs3-patched-<pin>-macos-arm64.tar.gz` + `.sha256` to the `rpcs3-patched-<pin>` prerelease (pin from gitlink, mirror Windows). **Harden the existing Windows lane's `gh release create` against the now-dual-publish race (it `throw`s today; add the `|| gh release view` fallback).**
+  - [ ] U.2.3 - Smoke-verify the published artifact BOOTS to playable (extend `live_launch.rs`; `--version` isn't enough — leave unticked until a real boot check).
+  - [ ] U.2.4 - **Self-containment (the real blocker):** rpcs3 links Homebrew SDL3/opencv/MoltenVK that `macdeployqt` doesn't bundle → the `.app` references `/opt/homebrew/…` (won't run on a clean Mac; fails notarization + library-validation). Make it relocatable — copy + `install_name_tool` those dylibs into `Contents/Frameworks` (or static-link); kill the `libvulkan` keg-symlink. `otool -L` shows no `/opt/homebrew` refs.
+- [ ] U.3 - Bundle the patched RPCS3 into the mac release (`release.yml` build-macos-release + `tools/build-macos-app.sh`): download + sha-verify the macos artifact, nest it under the launcher `.app` (`Contents/Resources/rpcs3/…`), mirroring the Windows `rpcs3/` placement.
+- [ ] U.4 - Sign the nested RPCS3 for notarization (highest-risk — a mismatched/unsigned nested binary fails notarization).
+  - [ ] U.4.1 - Codesign inside-out with the Developer ID + hardened runtime (dylibs + Qt **plugins** (`Contents/MacOS/share/qt6/plugins`) + frameworks → `RPCS3.app` → launcher binary → launcher `.app`; drop blanket `--deep`). Enumerate Mach-O **by type** not extension; `xattr -cr` first; **JIT entitlements** on the rpcs3 binary (`allow-jit`+`allow-unsigned-executable-memory`+`disable-library-validation`) or it SIGKILLs on first recompile; **staple the `.app`** (not just the `.dmg`); guard `find` against missing dirs under `set -e`.
+  - [ ] U.4.2 - Validate notarization accepts the nested bundle (the 14.6 CI notary-log dump surfaces any "Code object is not signed" inline).
+- [ ] U.5 - Flip the mac default mock → ipc + wire the mac game-launch.
+  - [ ] U.5.1 - `config.rs`: on macOS derive the bundled rpcs3 path + force `DriverKind::Ipc` via `migrate_install_paths_macos` — an `.exists()` gate → Mock fallback until U.3 bundles the binary, so SAFE to land early (no flag day). **Auto-promote existing mock configs to IPC** (chotchki: mock = dev / software-GL winget fallback only; `SKYLANDER_PORTAL_DRIVER=mock` is the demo escape). Needs `#[allow(dead_code)]` on the 4 new helpers (pre-push clippy gate).
+  - [x] U.5.2 - **Already wired** — `BootDirect` discriminates by the `driver.ipc_socket_path()` capability probe (not `DriverKind`), and the IPC spawn (`launch_no_gui` → `UnixRpcsProcess`) + `is_playable()` poll is already cross-platform. Clarifying comment + `debug_assert` added (U.1). Goes live once U.5.1 makes the mac driver IPC.
+  - [ ] U.5.3 - `release.yml` mac build features: comment-only — IPC is NOT feature-gated (`IpcPortalDriver`/`UnixRpcsProcess` compile unconditionally), so the current `--features sky-stats,mock-driver-runtime` already includes the IPC runtime; `mock-driver-runtime` stays the fallback.
+  - [x] U.5.4 - Fix the macOS `data_root` clobber (figure portraits + box-art BROKEN on the CURRENT signed mac release): `config.rs` hard-coded `<exe_parent>/data` = `Contents/MacOS/data` (nonexistent) while assets ship in `Contents/Resources/data`. Routed through new `paths::app_data_root()`. Independent of the emulator — shipped in the U.1 batch. (Flagged by two draft-verifiers.)
+- [ ] U.6 - macOS first-launch wizard: prompt for the user's existing RPCS3 data dir (`config_dir` = firmware + `games.yml`) like Windows; the control binary is the bundled patched rpcs3. Remove the macOS wizard short-circuit (`config.rs`).
+- [ ] U.7 - End-to-end on a clean Mac (chotchki, real hardware): install the signed/notarized .dmg, run the wizard (point at firmware/games), launch Giants → the bundled emulator boots + composites into the launcher (P8 surface). No Gatekeeper wall.
+- [ ] U.8 - Docs: CLAUDE.md "macOS support"/"Distribution" (mac ships the patched RPCS3, ipc default — drop the mock-only caveat); `release-signing.md` nested-app note; `docs/dev/macos-rpcs3-build.md` (CI lane); bank the mac-signing + nested-app gotchas to memory.
 
 ## Phase T - RPCS3 pin bump (927e2492e → 09d602fd5; drop SPU patches → clean P1–P8)
 

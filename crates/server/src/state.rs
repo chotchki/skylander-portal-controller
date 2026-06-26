@@ -1727,6 +1727,17 @@ async fn handle_job(
                 #[cfg(not(windows))]
                 let r: Result<Option<RpcsProcess>> = {
                     // Mock driver on Mac/Linux: no real RPCS3, no spawn, no poll.
+                    // The IPC driver (patched-RPCS3 on mac) never reaches this arm
+                    // — it advertises `ipc_socket_path() = Some(_)` and is handled
+                    // by the cross-platform first branch above (launch_no_gui +
+                    // is_playable poll, UnixRpcsProcess under #[cfg(unix)]). So the
+                    // only driver here is mock: returning Ok(None) drives the
+                    // `no_real_process` reveal (see the match below, PLAN U.1).
+                    debug_assert!(
+                        driver.ipc_socket_path().is_none(),
+                        "IPC boot must be handled by the ipc_socket_path() branch, \
+                         not the non-Windows mock arm"
+                    );
                     let _ = &serial;
                     Ok(None)
                 };
@@ -1735,6 +1746,12 @@ async fn handle_job(
 
             let outcome = match result {
                 Ok(maybe_proc) => {
+                    // No real process spawned ⇒ mock driver (non-Windows): there's
+                    // nothing to poll for playability, so reveal immediately instead of
+                    // hanging on "loading" until the stable-timer fallback. The real
+                    // UIA/IPC paths return Some(proc) and set game_playable from the
+                    // emulator's own readiness signal.
+                    let no_real_process = maybe_proc.is_none();
                     let mut guard = rpcs3.lock().await;
                     if let Some(new_proc) = maybe_proc {
                         // Drop any previous process (Drop kills via JobObject).
@@ -1750,6 +1767,9 @@ async fn handle_job(
                     if let Ok(mut st) = launcher_status.lock() {
                         st.rpcs3_running = true;
                         st.current_game = Some(display_name.clone());
+                        if no_real_process {
+                            st.game_playable = true;
+                        }
                     }
                     let _ = events.send(Event::GameChanged {
                         current: Some(GameLaunched {
@@ -2096,6 +2116,85 @@ mod tests {
         assert!(matches!(portal.lock().await[0], SlotState::Loading { .. }));
 
         let _ = std::fs::remove_file(path); // clean up the dev-data working copy.
+    }
+
+    // ---- BootDirect mock reveal (PLAN U.1) ----------------------------------
+    //
+    // Regression guard: on the non-Windows mock path BootDirect spawns no real
+    // RPCS3, so there's no STATE poller / FPS sampler to latch playability — the
+    // handler must flip `game_playable = true` itself (the `no_real_process`
+    // arm), or the launcher hangs on "loading" until the stable-timer fallback.
+    // Windows-gated out: with the mock driver the Windows arm takes the UIA
+    // `launch_with_eboot` path (real spawn), which this fix doesn't cover and
+    // can't run in CI.
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn boot_direct_mock_reveals_game_playable() {
+        use skylander_rpcs3_control::MockPortalDriver;
+
+        let driver: Arc<dyn PortalDriver> = Arc::new(MockPortalDriver::new());
+        // Mock advertises no IPC socket ⇒ BootDirect takes the no-spawn arm,
+        // not the cross-platform IPC launch_no_gui path.
+        assert!(driver.ipc_socket_path().is_none());
+
+        let portal: Arc<Mutex<[SlotState; SLOT_COUNT]>> =
+            Arc::new(Mutex::new(std::array::from_fn(|_| SlotState::Empty)));
+        let (events, _erx) = broadcast::channel::<Event>(32);
+        let figures: Vec<Figure> = Vec::new();
+        let rpcs3: Arc<Mutex<RpcsLifecycle>> = Arc::new(Mutex::new(RpcsLifecycle::default()));
+        let launcher_status: Arc<std::sync::Mutex<LauncherStatus>> =
+            Arc::new(std::sync::Mutex::new(LauncherStatus::default()));
+
+        // Precondition: nothing revealed yet.
+        assert!(!launcher_status.lock().unwrap().game_playable);
+
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel::<Result<()>>();
+        let job = DriverJob::BootDirect {
+            eboot_path: PathBuf::new(), // ignored by the mock branch
+            expected_name: "Skylanders Spyro's Adventure".into(),
+            display_name: "Skylanders Spyro's Adventure".into(),
+            serial: "BLUS30617".into(),
+            timeout: std::time::Duration::from_secs(5),
+            done: done_tx,
+        };
+
+        handle_job(
+            job,
+            &driver,
+            &portal,
+            &events,
+            &figures,
+            &rpcs3,
+            Path::new("/nonexistent/rpcs3"), // mock branch never spawns
+            Path::new("/nonexistent/config"),
+            &launcher_status,
+        )
+        .await
+        .expect("handle_job(BootDirect) must not error on the mock path");
+
+        // Boot "succeeded" — there was no real process to fail.
+        assert!(matches!(done_rx.await, Ok(Ok(()))));
+
+        // The regression: no real process ⇒ reveal immediately. Scope the std
+        // MutexGuard in a block (not an explicit `drop`) so clippy's
+        // await_holding_lock sees it released before the tokio lock+await below.
+        {
+            let st = launcher_status.lock().unwrap();
+            assert!(st.game_playable, "mock BootDirect must flip game_playable");
+            assert!(st.rpcs3_running);
+            assert_eq!(
+                st.current_game.as_deref(),
+                Some("Skylanders Spyro's Adventure")
+            );
+        }
+
+        // Lifecycle recorded the launch; mock leaves the real process slot empty.
+        let life = rpcs3.lock().await;
+        assert!(life.process.is_none(), "mock driver spawns no real RpcsProcess");
+        assert_eq!(
+            life.current.as_ref().map(|g| g.serial.as_str()),
+            Some("BLUS30617")
+        );
     }
 
     fn fig(id: &str, canonical: &str) -> Figure {

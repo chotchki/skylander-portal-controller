@@ -306,7 +306,10 @@ pub fn load(software_gl: bool) -> Result<Config> {
     // still inspect, but the runtime resolution always wins.
     let exe_parent = paths::app_asset_dir();
     let phone_dist_dir = exe_parent.join("phone-dist");
-    let data_root = exe_parent.join("data");
+    // PLAN U.5: macOS bundles `data/` under Contents/Resources/ (codesign won't
+    // accept it beside the Mach-O in Contents/MacOS/); `app_data_root()` resolves
+    // it there. Windows/Linux: unchanged (`<exe_parent>/data`).
+    let data_root = paths::app_data_root();
     if persisted.phone_dist_dir != phone_dist_dir || persisted.data_root != data_root {
         info!(
             old_data_root = %persisted.data_root.display(),

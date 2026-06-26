@@ -28,6 +28,28 @@ pub fn app_asset_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// Resolve the shipped `data/` root (figure portraits + box-art + figures.json).
+/// Inside a macOS `.app`, non-Mach-O content lives under `Contents/Resources/`
+/// (codesign rejects it under `Contents/MacOS/`), so prefer
+/// `Contents/Resources/data` when present; otherwise (Windows flat install, raw
+/// tarball, `cargo run`) fall back to `<exe_parent>/data`. PLAN U.5: the macOS
+/// release bundle places `data/` in Resources, but `config::load` was hard-coding
+/// `<exe_parent>/data` (= `Contents/MacOS/data`, which doesn't exist) — breaking
+/// art on the signed mac build.
+pub fn app_data_root() -> PathBuf {
+    let exe_parent = app_asset_dir();
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(contents) = exe_parent.parent() {
+            let res = contents.join("Resources").join("data");
+            if res.is_dir() {
+                return res;
+            }
+        }
+    }
+    exe_parent.join("data")
+}
+
 /// Resolve the base runtime-state directory. Creates it if missing.
 pub fn resolve_runtime_dir() -> Result<PathBuf> {
     let dir = runtime_dir_unchecked()?;
