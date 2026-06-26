@@ -29,6 +29,22 @@ git config user.email >/dev/null 2>&1 || git config user.email "patch-bot@skylan
 git config user.name  >/dev/null 2>&1 || git config user.name  "skylander patch-bot"
 
 base="$(git rev-parse --short HEAD)"
+
+# Some RPCS3 sources are stored CRLF (e.g. swapchain_macos.hpp); our format-patch'd
+# series is LF, so `git am`'s text match fails on a clean checkout. Normalize the
+# EXISTING CRLF files the series touches to LF, committed BELOW the patch commits
+# (LF compiles identically). The CI's expected-files check diffs HEAD~<#patches>, so
+# this base commit stays out of the patch diff. Auto-detected from the patches'
+# `+++ b/<file>` targets — no hardcoded list, so future patches are covered too.
+norm=0
+for f in $(grep -h '^+++ b/' "$here"/0*.patch | sed 's#^+++ b/##' | sort -u); do
+  if [ -f "$f" ] && LC_ALL=C grep -qI $'\r' "$f"; then
+    perl -i -pe 's/\r\n/\n/g' "$f"; norm=1
+  fi
+done
+[ "$norm" = 1 ] && git commit -aqm "normalize CRLF->LF on series-touched files (pre-am base)" \
+  && echo "Normalized CRLF->LF on series-touched files (base commit below the series)."
+
 count="$(ls "$here"/0*.patch | wc -l | tr -d ' ')"
 echo "Applying $count RPCS3 patch(es) onto $base in $target ..."
 git am --3way "$here"/0*.patch
