@@ -278,13 +278,13 @@ impl LauncherApp {
         };
         let context_id = surface.context_id;
 
-        // Only embed in Desktop window mode — TV mode is fullscreen and the
-        // game/launcher coexist as plain siblings (window coordination is a
-        // Desktop-mode concern). In TV mode, fall back to the sibling behaviour.
-        if !matches!(self.window_mode, crate::config::WindowMode::Desktop) {
-            self.compositor.detach();
-            return false;
-        }
+        // The surface-embed runs in BOTH window modes on macOS — the patched
+        // emulator always renders borderless (SKYLANDER_BORDERLESS=1, no on-screen
+        // window), so hosting its CAContext layer is the ONLY way to show the game
+        // here. TV mode fills the fullscreen launcher; Desktop mode fits the pane.
+        // (The Windows "tile a sibling RPCS3 window in TV mode" model doesn't apply
+        // on mac — there's no window to tile. Gating to Desktop here left TV mode
+        // black: embed skipped + no window. PLAN U.7.)
 
         // Pull the launcher window's NSView* out of raw-window-handle (the
         // AppKit equivalent of the Win32 HWND path used elsewhere in this file).
