@@ -693,6 +693,117 @@ fn encode(
     Ok(())
 }
 
+/// `render-concat` (A.8.11) — stitch the standalone `install` wizard clip in
+/// FRONT of the already-rendered Tour body. The body (`*-final.mp4`) is complete
+/// (captioned + end-faded); the wizard is a raw single-window capture that needs
+/// (a) its own caption and (b) normalising onto the body's 1920×1080 delivery
+/// canvas. One ffmpeg pass: scale+pad the wizard, overlay its caption for the
+/// whole clip, scale+pad the body (a no-op when it's already 1920×1080), `concat`
+/// (hard cut), then `split` to the AV1 + H.265 dual-encode (matching [`encode`]).
+///
+/// The wizard clip carries NO fade — the body already ends on the Tour's
+/// fade-to-black, so the only fade is the real outro.
+pub fn concat_tour(out: &Path, wizard_raw: &Path, caption: &str, body_final: &Path) -> Result<()> {
+    const W: u32 = 1920;
+    const H: u32 = 1080;
+    const FPS: &str = "60";
+    const MARGIN: u32 = 80; // px from bottom — matches `encode`'s lower-third
+    const CAPTION_PX: f32 = 56.0;
+    const CAPTION_MAX_W: f32 = 1600.0;
+
+    ensure!(
+        wizard_raw.is_file(),
+        "wizard clip not found: {}",
+        wizard_raw.display()
+    );
+    ensure!(
+        body_final.is_file(),
+        "Tour body not found: {}",
+        body_final.display()
+    );
+
+    // Caption PNG for the wizard (same renderer as the body's captions).
+    let cap_png = out.with_file_name(format!(
+        "{}.install-cap.png",
+        out.file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "tour".to_owned())
+    ));
+    crate::caption::render_caption_png(caption.trim(), CAPTION_PX, CAPTION_MAX_W, &cap_png)
+        .context("render install caption")?;
+
+    let norm = |label: &str, out_label: &str| {
+        format!(
+            "{label}scale={W}:{H}:force_original_aspect_ratio=decrease,\
+             pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps={FPS}{out_label}"
+        )
+    };
+    let graph = format!(
+        "{wiz};[w0][2:v]overlay=x=(W-w)/2:y=H-h-{MARGIN}[w1];{body};[w1][b0]concat=n=2:v=1[catv];\
+         [catv]split=2[venc_av1][venc_hevc]",
+        wiz = norm("[0:v]", "[w0]"),
+        body = norm("[1:v]", "[b0]"),
+    );
+
+    let bin = tool("FFMPEG", "ffmpeg");
+    let av1_out = variant_path(out, "av1");
+    let status = Command::new(&bin)
+        .args(["-y", "-v", "error", "-stats", "-i"])
+        .arg(wizard_raw)
+        .arg("-i")
+        .arg(body_final)
+        .arg("-i")
+        .arg(&cap_png)
+        .args(["-filter_complex", &graph])
+        .args([
+            "-map",
+            "[venc_av1]",
+            "-an",
+            "-c:v",
+            "libsvtav1",
+            "-preset",
+            "6",
+            "-crf",
+            "32",
+            "-pix_fmt",
+            "yuv420p",
+            "-g",
+            "120",
+            "-movflags",
+            "+faststart",
+        ])
+        .arg(&av1_out)
+        .args([
+            "-map",
+            "[venc_hevc]",
+            "-an",
+            "-c:v",
+            "libx265",
+            "-preset",
+            "medium",
+            "-crf",
+            "22",
+            "-tag:v",
+            "hvc1",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+        ])
+        .arg(out)
+        .status()
+        .with_context(|| spawn_hint(&bin, "FFMPEG"))?;
+    ensure!(status.success(), "ffmpeg concat exited with {status}");
+    tracing::info!(
+        out = %out.display(),
+        av1 = %av1_out.display(),
+        wizard = %wizard_raw.display(),
+        body = %body_final.display(),
+        "render-concat: install opener stitched onto the Tour (AV1 + HEVC)"
+    );
+    Ok(())
+}
+
 /// The `-- render` entry point: load the manifest (v1 bare arrays parse
 /// transparently — [`TimelineFile::parse`]), probe the raw capture, plan the
 /// segments, log the editorial table, build the graph, encode, and

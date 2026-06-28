@@ -112,6 +112,15 @@ enum Mode {
         secs: u64,
         out: PathBuf,
     },
+    /// `-- render-concat <out> <wizard-raw> <caption> <body-final>` (A.8.11) —
+    /// stitch the standalone `install` wizard clip (captioned + normalised onto
+    /// the 1920×1080 canvas) in FRONT of the already-rendered Tour body.
+    RenderConcat {
+        out: PathBuf,
+        wizard_raw: PathBuf,
+        caption: String,
+        body_final: PathBuf,
+    },
 }
 
 /// The no-arg / empty-args default narrative: the self-contained Mock `place`
@@ -235,6 +244,17 @@ fn parse_mode(args: &[String]) -> Result<Mode> {
         [kw, ..] if kw == "capture-window" => {
             anyhow::bail!("`-- capture-window` needs <app> <title-substr> <secs> <out.mp4>")
         }
+        [kw, out, wizard, caption, body] if kw == "render-concat" => Ok(Mode::RenderConcat {
+            out: PathBuf::from(out),
+            wizard_raw: PathBuf::from(wizard),
+            caption: caption.clone(),
+            body_final: PathBuf::from(body),
+        }),
+        [kw, ..] if kw == "render-concat" => {
+            anyhow::bail!(
+                "`-- render-concat` needs <out.mp4> <wizard-raw.mp4> <caption> <body-final.mp4>"
+            )
+        }
         // Bare back-compat aliases: `portal` / `place` / `ingame`.
         [alias, ..] => match beats::resolve_alias(alias) {
             Some(narr) => Ok(Mode::Narrative(narr.to_string())),
@@ -267,6 +287,12 @@ async fn main() -> Result<()> {
     // on a box with only ffmpeg and the recorded artifacts.
     match mode {
         Mode::Render { raw, manifest, out } => render::run(&raw, &manifest, &out),
+        Mode::RenderConcat {
+            out,
+            wizard_raw,
+            caption,
+            body_final,
+        } => render::concat_tour(&out, &wizard_raw, &caption, &body_final),
         Mode::RenderReview { raw, manifest, out } => render::review(&raw, &manifest, &out),
         Mode::CaptureSmoke { secs, out } => capture_smoke(secs, &out),
         Mode::Composite {
@@ -969,5 +995,32 @@ mod tests {
     fn unknown_bare_arg_errors() {
         let err = parse(&["bogus"]).expect_err("an unknown bare arg must error");
         assert!(err.to_string().contains("unknown arg"), "got: {err}");
+    }
+
+    #[test]
+    fn render_concat_parses_four_positional_args() {
+        assert_eq!(
+            parse(&[
+                "render-concat",
+                "tour.mp4",
+                "wizard.mp4",
+                "Setup once.",
+                "body-final.mp4"
+            ])
+            .unwrap(),
+            Mode::RenderConcat {
+                out: PathBuf::from("tour.mp4"),
+                wizard_raw: PathBuf::from("wizard.mp4"),
+                caption: "Setup once.".to_string(),
+                body_final: PathBuf::from("body-final.mp4"),
+            }
+        );
+    }
+
+    #[test]
+    fn render_concat_with_missing_args_errors_with_usage() {
+        let err = parse(&["render-concat", "tour.mp4", "wizard.mp4"])
+            .expect_err("`-- render-concat` with too few args must error");
+        assert!(err.to_string().contains("render-concat"), "got: {err}");
     }
 }
