@@ -24,8 +24,8 @@ use anyhow::{Context, Result};
 use fantoccini::Locator;
 use serde_json::json;
 use skylander_e2e_tests::{
-    Phone, TestServer, fire_kaos_swap, fire_takeover, inject_load_outcomes, set_session_profile,
-    unlock_session,
+    Phone, TestServer, fire_kaos_swap, fire_takeover, inject_load_outcomes, post_shutdown,
+    set_session_profile, unlock_session,
 };
 
 use crate::timeline::CropRect;
@@ -1003,6 +1003,50 @@ async fn takeover(ctx: &BeatCtx<'_>) -> Result<()> {
     Ok(())
 }
 
+/// `farewell` — the narrative CLOSER. The phone's kebab HOLD TO SHUT DOWN
+/// gracefully quits the launcher: the eframe surface flips to the Farewell
+/// screen (GOODBYE badge → ~3s countdown → fade-to-black → window close,
+/// `ui/farewell.rs`). Must be the LAST beat — after it the launcher is gone.
+///
+/// Drive both paths: (1) the real phone gesture for the visual (a sustained
+/// `pointerdown` on the danger action, no `pointerup`, so the hold-to-confirm
+/// timer fires — action_button.rs ~1200ms), then (2) a guaranteed unsigned
+/// `post_shutdown` (dev-tools bypass) since the captured phone can't always
+/// sign after the takeover kick-back relock. The hold + the POST both land on
+/// the same Farewell flip (idempotent). Hold ~2.3s after so the badge renders
+/// + is captured inside the countdown, before the window closes.
+async fn farewell(ctx: &BeatCtx<'_>) -> Result<()> {
+    let phone = ctx.phone;
+    // (1) Show the phone-side HOLD TO SHUT DOWN gesture (best-effort).
+    phone.js_click(".kebab-btn").await.ok();
+    if phone
+        .wait_for(Locator::Css(".menu-action--danger"), Duration::from_secs(4))
+        .await
+        .is_ok()
+    {
+        // Sustained pointerdown with NO pointerup → the hold timer fires.
+        phone
+            .client
+            .execute(
+                "const b=document.querySelector('.menu-action--danger');\
+                 if(b){b.dispatchEvent(new PointerEvent('pointerdown',\
+                   {bubbles:true,cancelable:true,pointerId:1,pointerType:'touch'}));}\
+                 return !!b;",
+                vec![],
+            )
+            .await
+            .ok();
+        tokio::time::sleep(Duration::from_millis(1500)).await; // hold fill + fire
+    }
+    // (2) Guaranteed trigger regardless of phone state.
+    post_shutdown(&ctx.server.url).await.ok();
+    // Hold on the Farewell badge — stay inside the ~3s countdown (before the
+    // fade-to-black + ViewportCommand::Close) so the closer reads on the clip.
+    tokio::time::sleep(Duration::from_millis(2300)).await;
+    tracing::info!("farewell: launcher shutting down — Farewell surface held");
+    Ok(())
+}
+
 // ---------------------------------------------------------------- registry
 //
 // Each beat is constructed with a `|c| Box::pin(beat_x(c))` shim for the
@@ -1371,6 +1415,24 @@ fn beat_takeover() -> Beat {
     }
 }
 
+/// `farewell` — the graceful-shutdown closer (A.8.12). MUST run last: it quits
+/// the launcher, so the Farewell egui surface is the final frame. Tail-heavy so
+/// the GOODBYE badge lingers.
+fn beat_farewell() -> Beat {
+    Beat {
+        name: "farewell",
+        drive: |c| Box::pin(farewell(c)),
+        requires_ipc: false,
+        realtime_head: Duration::from_secs(1),
+        realtime_tail: Duration::from_secs(2),
+        filler_speed: 1.0,
+        crop: None,
+        caption: Some(
+            "Done for the night? HOLD to shut down — the emulator quits and the launcher waves goodbye.",
+        ),
+    }
+}
+
 /// Build every narrative. **Fails fast** (design §7) if a Mock narrative lists
 /// an IPC-only beat — a clear error at startup, not mid-run.
 pub fn narratives() -> Result<Vec<Narrative>> {
@@ -1417,6 +1479,7 @@ pub fn narratives() -> Result<Vec<Narrative>> {
                 beat_place_figure_mock(),
                 beat_remove(),
                 beat_takeover(),
+                beat_farewell(),
             ],
         },
         // `ingame` / "marquee" (A.2.4) = [connect, pick_profile, pick_game(cold
@@ -1486,6 +1549,7 @@ pub fn narratives() -> Result<Vec<Narrative>> {
                 beat_remove(),
                 beat_kaos(),
                 beat_takeover(),
+                beat_farewell(),
             ],
         },
     ];

@@ -971,6 +971,28 @@ pub async fn clear_eviction_cooldown(base: &str) -> Result<()> {
     Ok(())
 }
 
+/// Trigger the launcher's graceful shutdown — flips the eframe surface into the
+/// Farewell screen (GOODBYE badge → ~3s countdown → window close). Posts
+/// `/api/shutdown` unsigned, which the server accepts under `dev-tools` (the
+/// signed-request dev bypass). Used by the Tour's `farewell` closer beat to
+/// guarantee the Farewell surface renders regardless of the captured phone's
+/// state (it can't always sign post-takeover). The real phone path is the
+/// kebab's HOLD TO SHUT DOWN, exercised separately in-beat for the visual.
+pub async fn post_shutdown(base: &str) -> Result<()> {
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/api/shutdown"))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        bail!(
+            "post_shutdown returned {}: {}",
+            resp.status(),
+            resp.text().await?
+        );
+    }
+    Ok(())
+}
+
 /// Bind a specific session to a profile. Used by 2-phone tests that need to
 /// give each phone its own independent unlock — the lighter-touch
 /// `unlock_session` helper seeds `pending_unlock` which only affects the

@@ -684,17 +684,28 @@ async fn run_narrative(narr: Narrative) -> Result<()> {
         timeline.push(entry_for(beat, t_start, t_end));
     }
 
-    // Hold so the final state is on screen, then stop + flush the MP4.
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    // Hold so the final state is on screen, then stop + flush the MP4. The
+    // `farewell` closer QUITS the launcher (~3.8s after its shutdown POST:
+    // ui/farewell.rs 3s countdown + 0.8s fade), so skip the trailing hold there
+    // — the beat's own ~2.3s hold already captured the Farewell badge, and
+    // sleeping longer would finalize over a closed launcher window (dead left
+    // pane / ended SCKit stream). The final phone screenshot is skipped too: the
+    // server is mid-shutdown so the page is tearing down.
+    let last_closes_launcher = narr.beats.last().map(|b| b.name) == Some("farewell");
+    if !last_closes_launcher {
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    }
     cap.finalize(&mp4)
         .context("finalize capture → raw mp4 (macOS: composite the 2 panes)")?;
     tracing::info!(mp4 = %mp4.display(), "MP4 written");
 
     write_timeline(&mp4, stage, timeline)?;
 
-    let png = out_dir()?.join(format!("{out_stem}.png"));
-    phone.screenshot(&png).await?;
-    tracing::info!(screenshot = %png.display(), "still captured");
+    if !last_closes_launcher {
+        let png = out_dir()?.join(format!("{out_stem}.png"));
+        phone.screenshot(&png).await?;
+        tracing::info!(screenshot = %png.display(), "still captured");
+    }
 
     phone.close().await.ok();
     tracing::info!("done");
