@@ -24,7 +24,8 @@ use anyhow::{Context, Result};
 use fantoccini::Locator;
 use serde_json::json;
 use skylander_e2e_tests::{
-    Phone, TestServer, fire_kaos_swap, inject_load_outcomes, unlock_session,
+    Phone, TestServer, fire_kaos_swap, fire_takeover, inject_load_outcomes, set_session_profile,
+    unlock_session,
 };
 
 use crate::timeline::CropRect;
@@ -41,6 +42,12 @@ pub struct BeatCtx<'a> {
     /// Profile id from the boot's `inject_profile` — used by `pick_profile`'s
     /// PIN-bypass unlock.
     pub alice: &'a str,
+    /// Second profile id (the "Bob" injected at boot in every flavor). The
+    /// `ownership` beat binds a headless, non-captured phone to this profile
+    /// (`set_session_profile`) and places a figure as Bob so the captured
+    /// (Alice) phone renders the per-slot ownership pip (A.8.9). Chromedriver
+    /// for the headless phone is `ctx.server.chromedriver_url`.
+    pub bob: &'a str,
 }
 
 /// A beat's drive future. Boxed + pinned so the `fn`-pointer registry stays
@@ -739,6 +746,235 @@ async fn konami_admin(ctx: &BeatCtx<'_>) -> Result<()> {
     Ok(())
 }
 
+// -------------------------------------------------------- Tour Stage-2 beats
+//
+// A.8.7-A.8.9 — the multiplayer / lifecycle beats that today's single captured
+// phone can't reach alone. `remove` is pure-phone; `ownership` drives a SECOND
+// headless (non-captured) phone as Bob via `set_session_profile` so the
+// captured phone shows the per-slot ownership pip; `takeover` fires a synthetic
+// `TakenOver` at the captured phone's own session. All three are best-effort —
+// a miss logs + continues so a flake never aborts the long IpcCold capture.
+
+/// Indices (1-based) of the currently LOADED portal slots, sorted HIGH→low.
+/// `remove` takes the highest so slot 1 (the kaos closer's figure) survives.
+async fn loaded_slot_indices(phone: &Phone) -> Result<Vec<u8>> {
+    let v = phone
+        .client
+        .execute(
+            "return [...document.querySelectorAll('.portal-p4 .p4-slot--loaded')]\
+               .map(s=>Number((s.querySelector('.p4-slot-index')||{}).textContent||'0'))\
+               .filter(n=>n>0).sort((a,b)=>b-a);",
+            vec![],
+        )
+        .await?;
+    let mut out = Vec::new();
+    if let Some(arr) = v.as_array() {
+        out.extend(arr.iter().filter_map(|n| n.as_u64().map(|i| i as u8)));
+    }
+    Ok(out)
+}
+
+/// Scroll the portal slot strip to the top of the phone viewport so a
+/// slot-level gesture (remove / ownership pip) reads on the clip. The play
+/// screen is one scroll surface (portal grid on top, toy-box drawer below).
+async fn reveal_portal(phone: &Phone) {
+    phone
+        .client
+        .execute(
+            "const p=document.querySelector('.portal-p4');\
+             if(p){p.scrollIntoView({block:'start',behavior:'instant'});}return true;",
+            vec![],
+        )
+        .await
+        .ok();
+}
+
+/// `remove` — take a figure back OFF the portal. The portal slots are only
+/// reliably interactable when the toy-box lid is CLOSED ("the portal grid owns
+/// the viewport"); the robust way to close it mid-flow is to PLACE a figure —
+/// the detail's `on_placed` closes the lid (browser.rs). So `remove` places a
+/// throwaway (which also self-bootstraps a standalone run + never touches slot 1
+/// / Bob's ownership slot), then arms + removes the highest LOADED slot — both
+/// via `js_click`, since a WebDriver `.click()` on the REMOVE bar hit "element
+/// not interactable" mid-animation (A.8.7).
+async fn remove_figure(ctx: &BeatCtx<'_>) -> Result<()> {
+    let phone = ctx.phone;
+    // Reveal the portal: PLACE a throwaway and do NOT tap BACK TO BOX. Only the
+    // PLACE's on_placed closes the lid (figure_detail.rs fires it on post_load
+    // success; BACK TO BOX's on_close deliberately leaves the lid OPEN — that's
+    // why place_one/place_figure_ipc leave the toy box covering the portal).
+    // With the lid CLOSED the portal grid owns the viewport, so the slot + its
+    // REMOVE bar are on-screen + interactable.
+    phone.open_toy_box_lid().await.ok();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    if phone
+        .js_click(".fig-card-p4:not(.scan-new):not(.on-portal)")
+        .await
+        .unwrap_or(false)
+        && phone
+            .wait_for(Locator::Css(".detail-btn-primary"), Duration::from_secs(5))
+            .await
+            .is_ok()
+    {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        phone.js_click(".detail-btn-primary").await.ok(); // PLACE → on_placed closes lid
+    }
+    // Wait for the lid to close (portal owns the viewport). Best-effort: under
+    // the mock driver a 3rd placement has no injected outcome so on_placed may
+    // not fire — the removal below still works via js_click, just off-screen.
+    phone
+        .wait_for(Locator::Css(".lid-open-p4.closed"), Duration::from_secs(6))
+        .await
+        .ok();
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    reveal_portal(phone).await;
+    let loaded = loaded_slot_indices(phone).await?;
+    let Some(&target) = loaded.first() else {
+        tracing::warn!("remove: no loaded slot to remove — skipping");
+        return Ok(());
+    };
+    // Arm the slot (reveals its REMOVE bar) — js_click so an off-fold or
+    // mid-transition control still fires.
+    phone
+        .client
+        .execute(
+            "const t=arguments[0];\
+             const s=[...document.querySelectorAll('.portal-p4 .p4-slot')]\
+               .find(x=>Number((x.querySelector('.p4-slot-index')||{}).textContent||'0')===t);\
+             if(s){s.click();return true}return false",
+            vec![json!(target)],
+        )
+        .await?;
+    phone
+        .wait_for(
+            Locator::Css(".portal-p4 .p4-slot-action--remove"),
+            Duration::from_secs(3),
+        )
+        .await
+        .ok();
+    tokio::time::sleep(Duration::from_millis(600)).await; // let the REMOVE bar read
+    phone
+        .client
+        .execute(
+            "const b=document.querySelector('.portal-p4 .p4-slot--selected .p4-slot-action--remove')\
+               ||document.querySelector('.portal-p4 .p4-slot-action--remove');\
+             if(b){b.click();return true}return false",
+            vec![],
+        )
+        .await?;
+    let _ = phone
+        .wait_for_slot_empty(target, Duration::from_secs(6))
+        .await;
+    tokio::time::sleep(Duration::from_millis(900)).await;
+    tracing::info!(slot = target, "remove: figure taken off the portal");
+    Ok(())
+}
+
+/// Place a figure on the headless Bob phone, picking a name DISTINCT from
+/// Alice's so the two ownership pips contrast. Mirrors `place_figure_ipc`'s
+/// pick-by-name → detail → PLACE flow.
+async fn place_bob_figure(phone: &Phone) -> Result<()> {
+    let picked = phone
+        .client
+        .execute(
+            r#"const cards=[...document.querySelectorAll('.fig-card-p4:not(.scan-new):not(.on-portal)')];
+               const byName=re=>cards.find(c=>{const n=c.querySelector('.fig-name-p4');return n&&re.test((n.textContent||'').trim());});
+               const pick=byName(/trigger happy/i)||byName(/gill grunt/i)||byName(/stealth elf/i)||cards[0];
+               if(pick){pick.scrollIntoView({block:'center'});pick.click();
+                 return ((pick.querySelector('.fig-name-p4')||{}).textContent||'?').trim();}
+               return '';"#,
+            vec![],
+        )
+        .await?;
+    let name = picked.as_str().unwrap_or("").to_string();
+    if name.is_empty() {
+        anyhow::bail!("no figure card available for Bob to place");
+    }
+    phone
+        .wait_for(Locator::Css(".detail-btn-primary"), Duration::from_secs(6))
+        .await
+        .context("Bob: figure detail PLACE button never appeared")?;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    phone.js_click(".detail-btn-primary").await?; // PLACE ON PORTAL
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    tracing::info!(figure = %name, "ownership: Bob placed a figure (real LOAD, attributed to Bob)");
+    Ok(())
+}
+
+/// `ownership` — a SECOND, headless (non-captured) phone joins as Bob and
+/// places a figure, so the captured Alice phone shows the per-slot ownership
+/// pip (coloured initial). Bob joins the already-running game → portal + toy
+/// box (no game picker). Best-effort: a failure leaves the pip beat as a hold.
+async fn ownership(ctx: &BeatCtx<'_>) -> Result<()> {
+    let phone = ctx.phone;
+    match Phone::new(&ctx.server.url, &ctx.server.chromedriver_url).await {
+        Ok(bob_phone) => {
+            let res = ownership_inner(ctx, &bob_phone).await;
+            bob_phone.close().await.ok();
+            if let Err(e) = res {
+                tracing::warn!(error = %e, "ownership: Bob placement failed — pip beat is a hold");
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "ownership: headless Bob phone failed to open — skipping")
+        }
+    }
+    // Bring the portal into view on the CAPTURED phone + hold so both pips read.
+    reveal_portal(phone).await;
+    tokio::time::sleep(Duration::from_millis(2200)).await;
+    Ok(())
+}
+
+async fn ownership_inner(ctx: &BeatCtx<'_>, bob: &Phone) -> Result<()> {
+    // Wait for Bob's WS session to register, then bind it to Bob's profile
+    // (PIN-bypass) so his placement is attributed to him.
+    let mut sid = None;
+    for _ in 0..40 {
+        if let Ok(Some(s)) = bob.session_id().await {
+            sid = Some(s);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    let sid = sid.context("Bob's headless phone never got a session id")?;
+    set_session_profile(&ctx.server.url, sid, ctx.bob).await?;
+    // Bob joins the running game → portal + toy box. Open the lid + place.
+    bob.wait_for(Locator::Css(".lid-open-p4"), Duration::from_secs(15))
+        .await
+        .context("Bob's toy box never mounted after unlock (game picker instead?)")?;
+    bob.open_toy_box_lid().await.ok();
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    place_bob_figure(bob).await?;
+    // Let the LOAD round-trip so the pip reaches the captured phone.
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    Ok(())
+}
+
+/// `takeover` — the 2-session concurrency story. Fire a synthetic `TakenOver`
+/// at the captured phone's OWN session (no real 3rd phone needed —
+/// `fire_takeover` is built for exactly this), so the Kaos "KAOS REIGNS!"
+/// eviction surface shows on the recorded phone; hold it, then kick back
+/// (reloads → fresh session at the picker).
+async fn takeover(ctx: &BeatCtx<'_>) -> Result<()> {
+    let phone = ctx.phone;
+    let sid = phone
+        .session_id()
+        .await
+        .ok()
+        .flatten()
+        .context("captured phone has no session id to take over")?;
+    // cooldown 0 → the kick-back button is ENABLED (the friendly variant).
+    fire_takeover(&ctx.server.url, sid, "This portal is MINE now, fool!", 0).await?;
+    phone
+        .wait_for(Locator::Css(".takeover-void"), Duration::from_secs(6))
+        .await
+        .context("Kaos takeover surface never mounted")?;
+    tokio::time::sleep(Duration::from_millis(3200)).await; // hold the KAOS REIGNS screen
+    phone.js_click(".takeover-kick-btn").await.ok(); // kick back → page reload
+    tokio::time::sleep(Duration::from_millis(1500)).await; // reload settle
+    Ok(())
+}
+
 // ---------------------------------------------------------------- registry
 //
 // Each beat is constructed with a `|c| Box::pin(beat_x(c))` shim for the
@@ -1061,6 +1297,52 @@ fn beat_konami_admin() -> Beat {
     }
 }
 
+/// `remove` — take a figure back off the portal (A.8.7). Tail-heavy so the
+/// slot vanishing reads as the reveal.
+fn beat_remove() -> Beat {
+    Beat {
+        name: "remove",
+        drive: |c| Box::pin(remove_figure(c)),
+        requires_ipc: false,
+        realtime_head: Duration::from_secs(1),
+        realtime_tail: Duration::from_secs(2),
+        filler_speed: 1.0,
+        crop: None,
+        caption: Some(
+            "Done with a figure? Tap its slot, REMOVE — off the portal, out of the game.",
+        ),
+    }
+}
+
+/// `ownership` — Bob joins + places; the captured phone shows the per-slot
+/// ownership pip (A.8.9). Tail-heavy so both coloured pips read.
+fn beat_ownership() -> Beat {
+    Beat {
+        name: "ownership",
+        drive: |c| Box::pin(ownership(c)),
+        requires_ipc: false,
+        realtime_head: Duration::from_secs(1),
+        realtime_tail: Duration::from_secs(2),
+        filler_speed: 1.0,
+        crop: None,
+        caption: Some("Two kids, one portal — every figure wears the colour of WHOEVER placed it."),
+    }
+}
+
+/// `takeover` — the 3rd-connection eviction surface + kick-back (A.8.8).
+fn beat_takeover() -> Beat {
+    Beat {
+        name: "takeover",
+        drive: |c| Box::pin(takeover(c)),
+        requires_ipc: false,
+        realtime_head: Duration::from_secs(1),
+        realtime_tail: Duration::from_secs(2),
+        filler_speed: 1.0,
+        crop: None,
+        caption: Some("A third player bumps the oldest seat — they just tap to climb back in."),
+    }
+}
+
 /// Build every narrative. **Fails fast** (design §7) if a Mock narrative lists
 /// an IPC-only beat — a clear error at startup, not mid-run.
 pub fn narratives() -> Result<Vec<Narrative>> {
@@ -1087,6 +1369,26 @@ pub fn narratives() -> Result<Vec<Narrative>> {
                 beat_reach_portal(),
                 beat_open_toybox(),
                 beat_place_figure_mock(),
+            ],
+        },
+        // `lifecycle` — fast MOCK regression for the Stage-2 phone beats that
+        // are flavor-agnostic (`remove`, `takeover`): place two figures, take the
+        // top one off, then fire the Kaos takeover + kick-back. NO RPCS3, so it
+        // iterates in seconds vs the IpcCold walkthrough's cold boot. `ownership`
+        // is left out here — its headless-Bob placement is a REAL LOAD under IPC
+        // but needs a mock load-outcome injected here, so it's validated in the
+        // real `walkthrough` run instead.
+        Narrative {
+            name: "lifecycle",
+            flavor: ServerFlavor::Mock,
+            beats: vec![
+                beat_connect(),
+                beat_pick_profile(),
+                beat_reach_portal(),
+                beat_open_toybox(),
+                beat_place_figure_mock(),
+                beat_remove(),
+                beat_takeover(),
             ],
         },
         // `ingame` / "marquee" (A.2.4) = [connect, pick_profile, pick_game(cold
@@ -1126,11 +1428,14 @@ pub fn narratives() -> Result<Vec<Narrative>> {
         },
         // `walkthrough` / "the Tour" (A.8.1) — the comprehensive feature walk,
         // IpcCold (real RPCS3); reuses the `ingame` spine + Tour-only beats.
-        // STAGE 1 (Alice-only); ownership/takeover + install + farewell land in
-        // A.8.2 with the headless-Bob wiring. Order constraints (validated live):
-        // konami_admin's gate only routes from the LOCKED picker → it runs after
-        // create_profile, before pick_profile (grouped with profile mgmt); kaos
-        // needs a figure on the portal → it's the closer, no `remove` before it.
+        // STAGE 2 (A.8.7-A.8.9): ownership (headless Bob places → pip), remove,
+        // takeover are wired in; install + farewell land in A.8.10-A.8.12 (egui
+        // surfaces). Order constraints (validated live): konami_admin's gate only
+        // routes from the LOCKED picker → it runs after create_profile, before
+        // pick_profile; kaos needs a figure on the portal → `remove` runs BEFORE
+        // it and only ever removes the highest slot (Bob's, placed by ownership),
+        // leaving slot 1 for the swap; takeover reloads the page (kick-back) so
+        // it runs LAST (after kaos).
         Narrative {
             name: "walkthrough",
             flavor: ServerFlavor::IpcCold,
@@ -1149,7 +1454,10 @@ pub fn narratives() -> Result<Vec<Narrative>> {
                 beat_see_in_game(),
                 beat_pick_figure_stats(),
                 beat_join_qr(),
+                beat_ownership(),
+                beat_remove(),
                 beat_kaos(),
+                beat_takeover(),
             ],
         },
     ];
@@ -1243,6 +1551,7 @@ mod tests {
             vec![
                 "portal",
                 "place",
+                "lifecycle",
                 "ingame",
                 "ingame-savestate",
                 "walkthrough"

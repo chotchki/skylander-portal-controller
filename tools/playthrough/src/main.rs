@@ -395,6 +395,8 @@ struct Boot {
     phone: Phone,
     phone_url: String,
     alice: String,
+    /// Second profile id (Bob) for the `ownership` beat's headless placement.
+    bob: String,
     cap: SceneCapture,
     mp4: std::path::PathBuf,
     /// Wall-clock instant captured at `DesktopCapture::start` — i.e. capture
@@ -450,8 +452,12 @@ async fn boot(flavor: ServerFlavor, out_stem: &str) -> Result<Boot> {
     //    old mock `main()` body. The IPC flow launches a real game from the
     //    picker in the `pick_game` beat instead.
     let alice = inject_profile(&server.url, "Alice", "1111", "#f5c634").await?;
+    // Bob is the SECOND profile, now injected in EVERY flavor (was Mock-only):
+    // the Tour's `ownership` beat (A.8.9) binds a headless phone to Bob and
+    // places as him so the captured phone shows the per-slot ownership pip.
+    // His magenta matches the Kaos skin palette so the two pips read distinct.
+    let bob = inject_profile(&server.url, "Bob", "2222", "#da28a8").await?;
     if flavor == ServerFlavor::Mock {
-        let _bob = inject_profile(&server.url, "Bob", "2222", "#da28a8").await?;
         launch_giants(&server.url).await?;
     }
 
@@ -623,6 +629,7 @@ async fn boot(flavor: ServerFlavor, out_stem: &str) -> Result<Boot> {
         phone,
         phone_url,
         alice,
+        bob,
         cap,
         mp4,
         timeline_origin,
@@ -641,6 +648,7 @@ async fn run_narrative(narr: Narrative) -> Result<()> {
         phone,
         phone_url,
         alice,
+        bob,
         cap,
         mp4,
         timeline_origin,
@@ -652,6 +660,7 @@ async fn run_narrative(narr: Narrative) -> Result<()> {
         server: &server,
         phone_url: &phone_url,
         alice: &alice,
+        bob: &bob,
     };
 
     // Stamp wall-clock at each beat boundary, relative to `timeline_origin`
@@ -703,6 +712,7 @@ async fn run_single_beat(flavor: ServerFlavor, beat: Beat) -> Result<()> {
         phone,
         phone_url,
         alice,
+        bob,
         cap,
         mp4,
         timeline_origin,
@@ -714,6 +724,7 @@ async fn run_single_beat(flavor: ServerFlavor, beat: Beat) -> Result<()> {
         server: &server,
         phone_url: &phone_url,
         alice: &alice,
+        bob: &bob,
     };
 
     // `timeline_origin` is capture frame 0 (set in `boot()`), so this single
