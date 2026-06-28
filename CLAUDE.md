@@ -150,14 +150,21 @@ Hidden costs to keep in mind: every `@apply` in a component file means class nam
   patched Mac binary (build: `.ci-local/build-mac.sh`; run:
   `docs/dev/macos-rpcs3-build.md`). There is **no AXUIElement-based
   driver** — that's an explicit non-goal; IPC supersedes it.
-  Caveats on macOS: (1) IPC is **opt-in** — the compiled default stays
-  **mock**, and the **shipped Mac release still bundles mock only** (no
-  patched RPCS3 binary, pending the live-test + distribution polish);
-  (2) **window coordination is Win32-only** (out of scope — the RPCS3
-  window and egui launcher coexist as plain siblings). With the mock
-  driver the portal is an in-memory stand-in (demo, family-member play,
-  dev iteration, iOS-Simulator e2e) and Mac users see the same SPA +
-  launcher surface.
+  macOS status (Phase U, shipped v1.9.19+): (1) the **shipped Mac
+  release BUNDLES the patched RPCS3** (nested in the signed `.app`,
+  pulled from `rpcs3-patched-macos-arm64`) and **defaults to IPC** — the
+  wizard persists `Ipc`, so a fresh install drives the real emulator.
+  `SKYLANDER_PORTAL_DRIVER=mock` is the explicit **demo-mode** override
+  (in-memory portal: demo, family-member play, iOS-Sim e2e, no
+  firmware). **Dev `cargo run` mirrors prod** — the compile-time default
+  is IPC on both shipping targets (Win + macOS); only Linux/non-target
+  builds default to Mock (`config.rs` cfg-gate). `.env.dev` sets `=ipc`,
+  `.env.dev.mock` sets `=mock` for a no-emulator demo. (2) **window
+  coordination on macOS is surface-embed** (P8 /
+  `crates/server/src/compositor.rs` — the game's `CALayer` is hosted
+  INSIDE the launcher window via `CALayerHost`, one window, egui frames a
+  rect around it), NOT the Win32 `SetWindowPos` sibling-window path. Mac
+  users get the same SPA + launcher surface, now driving a real game.
 - Dev: `cargo run -p skylander-server` boots cleanly with
   `SKYLANDER_PORTAL_DRIVER=mock` + a sentinel `RPCS3_EXE` path. The QR
   URL uses Bonjour (`<LocalHostName>.local`, read via `scutil --get
@@ -171,10 +178,11 @@ Hidden costs to keep in mind: every `@apply` in a component file means class nam
   in parallel is supported (PLAN 10.2 — `ios-inspect boot
   --device <udid>` per simulator, then `--device` on every
   read/eval/screenshot).
-- Release artifact: macOS tar.gz attached to GitHub Releases alongside
-  the Windows zip (PLAN 10.6). No `.app` bundle / code signing /
-  notarization in v1 — users right-click + Open the binary to bypass
-  Gatekeeper.
+- Release artifact: a **signed + notarized + stapled `.dmg`** (a nested
+  `.app` bundling the patched RPCS3), attached to GitHub Releases
+  alongside the Windows zip (PLAN 10.9.2/.4 — Apple Developer ID import +
+  `xcrun notarytool` + `stapler`, live as of **v1.9.19**). Gatekeeper
+  opens it on a normal double-click; no right-click + Open dance.
 
 ## Error handling
 
@@ -200,8 +208,10 @@ Hidden costs to keep in mind: every `@apply` in a component file means class nam
   **points the first-launch wizard at their existing RPCS3 install**; that becomes
   `config_dir` (RPCS3's data/config root — installed firmware + `config/games.yml`),
   decoupled from the bundled control binary (the `config_dir` decoupling, 16.9.0). So v1
-  ships no firmware/games and writes no RPCS3 config (16.9.1/.2 deferred). macOS ships the
-  **mock driver only** — no patched RPCS3, no IPC.
+  ships no firmware/games and writes no RPCS3 config (16.9.1/.2 deferred). **macOS now ships
+  the same way** (Phase U, v1.9.19+): the signed/notarized `.dmg` bundles the patched RPCS3
+  (nested in the `.app`) and defaults to IPC; firmware + games still come from the user's own
+  RPCS3 install. The mock driver stays as the `SKYLANDER_PORTAL_DRIVER=mock` demo-mode override.
 - Steam Big Picture shell behavior is a compatibility-pass concern, not a day-1 constraint.
 
 ## Git workflow (pre-1.0)

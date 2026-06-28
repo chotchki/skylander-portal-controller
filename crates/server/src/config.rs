@@ -136,16 +136,19 @@ pub fn load(_software_gl: bool, _reconfigure: bool) -> Result<Config> {
         Some("mock") => DriverKind::Mock,
         Some("ipc") => DriverKind::Ipc,
         Some("uia") => DriverKind::Uia,
-        // Phase 16 (16.5.2.3): IPC (patched RPCS3 over AF_UNIX) is the production
-        // default on Windows; macOS has no real driver and falls back to the
-        // in-memory mock. The explicit `uia` arm keeps the legacy GUI-automation
-        // path available for dev against a *stock* RPCS3 (`.env.dev` sets it).
+        // Phase 16 / Phase U: IPC (patched RPCS3 over AF_UNIX) is the production
+        // default on BOTH shipping targets — Windows and macOS now bundle + drive
+        // the patched binary, so dev `cargo run` mirrors prod. `=mock` (in-memory
+        // demo portal) and `=uia` (legacy GUI automation vs a *stock* RPCS3) are
+        // explicit opt-ins (`.env.dev` / `.env.dev.mock` set them). Linux isn't a
+        // shipping target, so it keeps the Mock default — CI / non-target builds
+        // shouldn't try to spawn an emulator they can't build.
         _ => {
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "macos"))]
             {
                 DriverKind::Ipc
             }
-            #[cfg(not(windows))]
+            #[cfg(not(any(windows, target_os = "macos")))]
             {
                 DriverKind::Mock
             }

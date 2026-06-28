@@ -2190,7 +2190,10 @@ mod tests {
 
         // Lifecycle recorded the launch; mock leaves the real process slot empty.
         let life = rpcs3.lock().await;
-        assert!(life.process.is_none(), "mock driver spawns no real RpcsProcess");
+        assert!(
+            life.process.is_none(),
+            "mock driver spawns no real RpcsProcess"
+        );
         assert_eq!(
             life.current.as_ref().map(|g| g.serial.as_str()),
             Some("BLUS30617")
