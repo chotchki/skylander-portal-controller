@@ -34,6 +34,8 @@ On first run the app does a tiny one-time config flow from the HTPC keyboard:
 
 After that, every subsequent launch goes straight to the QR code. First-launch state is kept on disk, so you do this once per HTPC.
 
+**Re-running setup.** To change your RPCS3 path or firmware pack later, launch the app with `--reconfigure` — it re-runs the first-launch wizard over your existing config (non-destructive: it only rewrites `config.json` from the paths you pick; your profiles, working copies, and db are untouched). On Steam, add `--reconfigure` to the non-Steam game's launch options for a one-off, then remove it. Without the flag the only way to re-trigger setup was hand-deleting `config.json`.
+
 ## Steam Big Picture integration
 
 The app is designed to be added to Steam as a non-Steam game and launched from Big Picture as a "third game" (alongside RPCS3 itself). It starts up, shows the QR on the TV, and launches RPCS3 only once a phone has picked a game. Steam-shell edge cases are tracked as a compatibility-pass concern rather than a day-one constraint — if you run without Steam, the app still works.

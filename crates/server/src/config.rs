@@ -106,9 +106,11 @@ pub enum WindowMode {
 
 /// `software_gl` is the GPU-less signal from [`crate::gl_fallback`] — release
 /// builds use it to steer the wizard into demo mode. Dev builds read paths from
-/// `.env.dev` and never show the wizard, so they ignore it.
+/// `.env.dev` and never show the wizard, so they ignore it. `reconfigure`
+/// (the `--reconfigure` flag) forces the wizard even when config.json exists
+/// (release only; dev ignores it for the same reason it ignores the wizard).
 #[cfg(feature = "dev-tools")]
-pub fn load(_software_gl: bool) -> Result<Config> {
+pub fn load(_software_gl: bool, _reconfigure: bool) -> Result<Config> {
     let env = read_env_file(".env.dev").unwrap_or_default();
 
     let rpcs3_exe = require_path(&env, "RPCS3_EXE")?;
@@ -225,8 +227,18 @@ fn load_or_create_dev_hmac_key() -> Result<Vec<u8>> {
     Ok(key)
 }
 
+/// Whether the first-launch wizard should run, given we're already past the
+/// demo-mode (`force_mock`) short-circuit: there's no persisted config to read,
+/// OR `--reconfigure` forces a re-run over an existing one (A.8.10). Pure +
+/// ungated so it's unit-tested in the default (dev-tools) lane even though its
+/// only caller is the release `load` below.
+#[allow(dead_code)] // sole caller is the release (non-dev-tools) `load`
+fn wizard_needed(config_exists: bool, reconfigure: bool) -> bool {
+    !config_exists || reconfigure
+}
+
 #[cfg(not(feature = "dev-tools"))]
-pub fn load(software_gl: bool) -> Result<Config> {
+pub fn load(software_gl: bool, reconfigure: bool) -> Result<Config> {
     use crate::paths;
     use crate::wizard::{PersistedConfig, PersistedDriverKind};
     use anyhow::Context;
@@ -250,14 +262,11 @@ pub fn load(software_gl: bool) -> Result<Config> {
     let persisted = if force_mock {
         let runtime_dir = paths::resolve_runtime_dir()?;
         PersistedConfig::mock_default(&runtime_dir)
-    } else if config_path.exists() {
-        PersistedConfig::read(&config_path).with_context(|| {
-            format!(
-                "parse {} — delete it to re-run the first-launch wizard",
-                config_path.display()
-            )
-        })?
-    } else {
+    } else if wizard_needed(config_path.exists(), reconfigure) {
+        // Either first launch (no config.json) OR `--reconfigure` forcing a
+        // re-run over an existing config (A.8.10). The wizard re-writes
+        // config.json from the chosen paths, so a re-run is non-destructive to
+        // everything else under the runtime dir.
         let runtime_dir = paths::resolve_runtime_dir()?;
         // U.6: macOS now runs the first-launch wizard too — it bundles the
         // patched RPCS3 and drives IPC, exactly like Windows. The mac wizard
@@ -267,6 +276,13 @@ pub fn load(software_gl: bool) -> Result<Config> {
         // still reachable via the wizard's DEMO MODE page and the
         // SKYLANDER_PORTAL_DRIVER=mock override above.
         wizard::run_wizard_blocking(&config_path, &runtime_dir, software_gl)?
+    } else {
+        PersistedConfig::read(&config_path).with_context(|| {
+            format!(
+                "parse {} — delete it (or pass --reconfigure) to re-run the first-launch wizard",
+                config_path.display()
+            )
+        })?
     };
 
     // Ensure the persisted config has an HMAC key. The wizard writes a
@@ -506,6 +522,27 @@ fn read_env_file(path: &str) -> Result<HashMap<String, String>> {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    // A.8.10 — the `--reconfigure` gate. The wizard runs on first launch (no
+    // config) OR when `--reconfigure` forces a re-run; an existing config with
+    // no flag is read as-is. (The demo-mode `force_mock` short-circuit lives
+    // upstream of this in `load`, so it isn't a parameter here.)
+    #[test]
+    fn reconfigure_forces_the_wizard() {
+        assert!(wizard_needed(false, false), "first launch → wizard");
+        assert!(
+            wizard_needed(false, true),
+            "first launch, flag set → wizard"
+        );
+        assert!(
+            wizard_needed(true, true),
+            "--reconfigure over an existing config → wizard"
+        );
+        assert!(
+            !wizard_needed(true, false),
+            "existing config, no flag → read it, no wizard"
+        );
+    }
 
     // PLAN 20.6 — the window-mode wire form is a contract shared by config.json,
     // the `/api/launcher/window-mode` request/response bodies, AND the phone's

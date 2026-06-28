@@ -46,7 +46,13 @@ fn main() -> Result<()> {
     // subscriber is up; if it re-execs, this call never returns.
     let gl = gl_fallback::bootstrap();
 
-    let cfg = config::load(gl.software).context("load config")?;
+    // `--reconfigure` re-runs the first-launch wizard even when config.json
+    // already exists (release builds only — dev reads `.env.dev` and ignores
+    // it). Without it, re-running setup means hand-deleting config.json, a real
+    // gap on the shipped Mac/Windows app where there's no terminal in reach
+    // (A.8.10).
+    let reconfigure = std::env::args().any(|a| a == "--reconfigure");
+    let cfg = config::load(gl.software, reconfigure).context("load config")?;
     let _log_guard = logging::init(&cfg.log_dir)?;
 
     info!(gl = %gl.detail, software = gl.software, "graphics backend selected");
