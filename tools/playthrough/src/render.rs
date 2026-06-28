@@ -78,6 +78,16 @@ fn variant_path(out: &Path, codec_tag: &str) -> PathBuf {
     out.with_file_name(format!("{stem}.{codec_tag}.mp4"))
 }
 
+/// `foo.mp4` → sibling `foo-review.mp4` — the `render-review` default output
+/// (the 1× beat-labelled tuning cut, A.9.2).
+pub fn default_review_out_path(raw: &Path) -> PathBuf {
+    let stem = raw
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "capture".to_owned());
+    raw.with_file_name(format!("{stem}-review.mp4"))
+}
+
 /// Resolve a tool binary: env override first (`FFMPEG` / `FFPROBE`), else the
 /// bare name from PATH.
 fn tool(env_var: &str, default: &str) -> String {
@@ -561,6 +571,8 @@ fn build_caption_overlays(
     out: &Path,
 ) -> Result<Vec<CaptionOverlay>> {
     const CAPTION_PX: f32 = 56.0; // ~5% of a 1080 delivery; tunable
+    // Wrap budget: keep the box within the ≤1920 delivery with side margins (A.7).
+    const CAPTION_MAX_W: f32 = 1600.0;
     let stem = out
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
@@ -576,7 +588,7 @@ fn build_caption_overlays(
             continue;
         };
         let png = out.with_file_name(format!("{stem}.cap{i}.png"));
-        crate::caption::render_caption_png(text, CAPTION_PX, &png)
+        crate::caption::render_caption_png(text, CAPTION_PX, CAPTION_MAX_W, &png)
             .with_context(|| format!("render caption for beat {:?}", b.beat))?;
         overlays.push(CaptionOverlay {
             png,
@@ -758,6 +770,189 @@ pub fn run(raw: &Path, manifest: &Path, out: &Path) -> Result<()> {
         hevc = %out.display(),
         hevc_bytes,
         "render: dual-encode written (AV1 primary + HEVC fallback)"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------- review cut
+//
+// A.9.2 (option B): a `render-review` sibling pass for TUNING the speed-ramps.
+// It re-emits the raw at 1× — NO trims/setpts/concat, because the whole point is
+// that OUTPUT time == raw time, so QuickTime's scrubber timecode maps 1:1 to a
+// beat — with each beat's name + current plan (head / filler× / tail) banner-ed
+// across its [t_start,t_end] window. chotchki scrubs it, calls the speed-ups by
+// beat, then edits the manifest + re-`render`s. This is a tuning AID, NOT a
+// speed editor (that's the deferred option C).
+
+/// Review banner font size + distance from the TOP edge (the real captions sit
+/// at the lower third, so the debug banner reads clearly up top).
+const REVIEW_BANNER_PX: f32 = 40.0;
+const REVIEW_BANNER_Y: u32 = 24;
+/// Review banners are debug overlays — a wider wrap budget is fine.
+const REVIEW_BANNER_MAX_W: f32 = 1840.0;
+
+/// `8.0` → `"8"`, `1.5` → `"1.5"` — speed label without a trailing `.0`.
+fn fmt_speed(speed: f32) -> String {
+    let s = sanitize_speed(speed);
+    if s.fract() == 0.0 {
+        format!("{s:.0}")
+    } else {
+        format!("{s}")
+    }
+}
+
+/// `6000` → `"6"`, `500` → `"0.5"` — seconds label without a trailing `.0`.
+fn fmt_secs_ms(ms: u64) -> String {
+    let s = ms as f64 / 1000.0;
+    if s.fract() == 0.0 {
+        format!("{s:.0}")
+    } else {
+        format!("{s}")
+    }
+}
+
+/// One review banner: a pre-rendered name+plan PNG ([`crate::caption`]) and its
+/// RAW-time window in seconds (== output time, since review applies no speed-up).
+struct ReviewBanner {
+    png: PathBuf,
+    start_s: f64,
+    end_s: f64,
+}
+
+/// Build the review filtergraph: optionally crop to `stage`, then chain one
+/// centred TOP `overlay` per beat gated to its raw window. Pure (no PNG render,
+/// no shell) → unit-tested with golden strings. Returns `(graph, map_label)`;
+/// with no banners and no stage the graph is empty and the label is the bare
+/// source stream `0:v` (the encode maps it directly).
+pub fn build_review_filtergraph(
+    banner_windows: &[(f64, f64)],
+    stage: Option<CropRect>,
+    banner_y: u32,
+) -> (String, String) {
+    let mut chains: Vec<String> = Vec::new();
+    let mut cur = "[0:v]".to_string();
+    if let Some(c) = stage {
+        chains.push(format!(
+            "[0:v]crop={}:{}:{}:{}[base]",
+            even(c.w),
+            even(c.h),
+            even(c.x),
+            even(c.y)
+        ));
+        cur = "[base]".to_string();
+    }
+    if banner_windows.is_empty() {
+        if chains.is_empty() {
+            return (String::new(), "0:v".to_string());
+        }
+        return (chains.join(";"), "[base]".to_string());
+    }
+    for (i, (start, end)) in banner_windows.iter().enumerate() {
+        let inp = i + 1; // input 0 is the raw; banners are inputs 1..=N
+        let label = format!("[r{i}]");
+        chains.push(format!(
+            "{cur}[{inp}:v]overlay=x=(W-w)/2:y={banner_y}:\
+             enable='between(t,{start:.3},{end:.3})'{label}"
+        ));
+        cur = label;
+    }
+    (chains.join(";"), cur)
+}
+
+/// The `-- render-review` entry point (A.9.2): load the manifest, render a
+/// name+plan banner PNG per beat, overlay them onto the 1× raw → one cheap H.264
+/// `<stem>-review.mp4`. The durable raw (A.9.1) + this cut are the two halves of
+/// the tune→`render` loop.
+pub fn review(raw: &Path, manifest: &Path, out: &Path) -> Result<()> {
+    let tl = TimelineFile::load(manifest)?;
+    let meta = probe(raw)?;
+    tracing::info!(
+        raw = %raw.display(),
+        w = meta.w,
+        h = meta.h,
+        duration_ms = meta.duration_ms,
+        beats = tl.beats.len(),
+        stage = ?tl.stage,
+        "review: probed raw capture (1x beat-label pass)"
+    );
+
+    let stem = out
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "review".to_owned());
+    let mut banners = Vec::with_capacity(tl.beats.len());
+    for (i, b) in tl.beats.iter().enumerate() {
+        // Name + the CURRENT plan, so a scrub tells chotchki where he is AND what
+        // `render` will do here (e.g. `pick_game · h1s 10× t3s`).
+        let text = format!(
+            "{} · h{}s {}× t{}s",
+            b.beat,
+            fmt_secs_ms(b.realtime_head_ms),
+            fmt_speed(b.filler_speed),
+            fmt_secs_ms(b.realtime_tail_ms),
+        );
+        let png = out.with_file_name(format!("{stem}.rev{i}.png"));
+        crate::caption::render_caption_png(&text, REVIEW_BANNER_PX, REVIEW_BANNER_MAX_W, &png)
+            .with_context(|| format!("render review banner for beat {:?}", b.beat))?;
+        banners.push(ReviewBanner {
+            png,
+            start_s: b.t_start_ms as f64 / 1000.0,
+            end_s: b.t_end_ms as f64 / 1000.0,
+        });
+    }
+
+    let windows: Vec<(f64, f64)> = banners.iter().map(|b| (b.start_s, b.end_s)).collect();
+    let (graph, label) = build_review_filtergraph(&windows, tl.stage, REVIEW_BANNER_Y);
+    tracing::debug!(%graph, "review: filtergraph");
+    encode_review(raw, &banners, &graph, &label, out)?;
+
+    let bytes = std::fs::metadata(out).map(|m| m.len()).unwrap_or(0);
+    ensure!(
+        bytes > 0,
+        "review encode produced an empty file: {}",
+        out.display()
+    );
+    tracing::info!(out = %out.display(), bytes, "review: 1x beat-labelled cut written");
+    Ok(())
+}
+
+/// Shell out the review encode: raw + one PNG per banner → a single H.264 cut.
+fn encode_review(
+    raw: &Path,
+    banners: &[ReviewBanner],
+    graph: &str,
+    label: &str,
+    out: &Path,
+) -> Result<()> {
+    let bin = tool("FFMPEG", "ffmpeg");
+    let mut cmd = Command::new(&bin);
+    cmd.args(["-y", "-v", "error", "-stats", "-i"]).arg(raw);
+    for b in banners {
+        cmd.arg("-i").arg(&b.png);
+    }
+    if graph.is_empty() {
+        cmd.args(["-map", label]);
+    } else {
+        cmd.args(["-filter_complex", graph, "-map", label]);
+    }
+    cmd.args([
+        "-an",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "20",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+    ])
+    .arg(out);
+    let status = cmd.status().with_context(|| spawn_hint(&bin, "FFMPEG"))?;
+    ensure!(
+        status.success(),
+        "ffmpeg review encode exited with {status}"
     );
     Ok(())
 }
@@ -1167,5 +1362,70 @@ mod tests {
             default_out_path(raw),
             Path::new("captures/playthrough-ingame-final.mp4")
         );
+    }
+
+    // --- review cut (A.9.2) --------------------------------------------------
+
+    #[test]
+    fn review_filtergraph_single_banner_no_stage() {
+        let (graph, label) = build_review_filtergraph(&[(1.5, 3.2)], None, 24);
+        assert_eq!(label, "[r0]");
+        assert_eq!(
+            graph,
+            "[0:v][1:v]overlay=x=(W-w)/2:y=24:enable='between(t,1.500,3.200)'[r0]"
+        );
+    }
+
+    #[test]
+    fn review_filtergraph_two_banners_with_stage() {
+        let stage = CropRect {
+            x: 100,
+            y: 50,
+            w: 1600,
+            h: 900,
+        };
+        let (graph, label) = build_review_filtergraph(&[(0.0, 1.0), (1.0, 2.0)], Some(stage), 24);
+        assert_eq!(label, "[r1]");
+        assert_eq!(
+            graph,
+            "[0:v]crop=1600:900:100:50[base];\
+             [base][1:v]overlay=x=(W-w)/2:y=24:enable='between(t,0.000,1.000)'[r0];\
+             [r0][2:v]overlay=x=(W-w)/2:y=24:enable='between(t,1.000,2.000)'[r1]"
+        );
+    }
+
+    #[test]
+    fn review_filtergraph_no_banners_maps_source_or_crop() {
+        // No beats + no stage → map the source stream directly (empty graph).
+        assert_eq!(
+            build_review_filtergraph(&[], None, 24),
+            (String::new(), "0:v".to_string())
+        );
+        // No beats but a stage crop → just the crop, label the cropped pad.
+        let stage = CropRect {
+            x: 0,
+            y: 0,
+            w: 1600,
+            h: 900,
+        };
+        let (graph, label) = build_review_filtergraph(&[], Some(stage), 24);
+        assert_eq!(graph, "[0:v]crop=1600:900:0:0[base]");
+        assert_eq!(label, "[base]");
+    }
+
+    #[test]
+    fn default_review_out_path_inserts_suffix() {
+        assert_eq!(
+            default_review_out_path(Path::new("captures/playthrough-ingame.mp4")),
+            PathBuf::from("captures/playthrough-ingame-review.mp4")
+        );
+    }
+
+    #[test]
+    fn fmt_speed_and_secs_trim_whole_numbers() {
+        assert_eq!(fmt_speed(8.0), "8");
+        assert_eq!(fmt_speed(1.0), "1");
+        assert_eq!(fmt_secs_ms(6_000), "6");
+        assert_eq!(fmt_secs_ms(500), "0.5");
     }
 }

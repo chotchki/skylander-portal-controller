@@ -65,13 +65,38 @@ SPU-LLVM perf commits. The 4 new commits are all SPU-only, orthogonal to the P-p
 Pipeline **DONE + chotchki-approved (2026-06-24)**: per-window SCKit capture → `hstack`
 2-pane composite (TV-left / phone-right, 60fps, dual title-bar crop) → cursor-hide + gold
 tap-ripple → AV1/HEVC dual-encode. Content bugs #25 (Kaos swap) + #26 (portraits) fixed.
-Capture script reaps the orphaned emulator/chromedriver after each run. Remaining:
+Capture script reaps the orphaned emulator/chromedriver after each run.
 
-- [ ] A.6 - Site / README embed (was 15.7)
-  - [ ] A.6.1 - Per-scenario MP4 dropped to `docs/assets/videos/`
-  - [ ] A.6.2 - Scenario-driven HTML gallery generator (per-scene stills via `ffmpeg -ss`, Jekyll page at `docs/tour.md`)
-  - [ ] A.6.3 - Site integration on hotchkiss.io (`docs/index.md` hero embeds the reel; `docs/features.md` links scenarios)
-- [ ] A.7 - Beat content tweaks (chotchki) — `tools/playthrough/src/beats.rs` tap targets / flow + the timeline's captions / timing. Pipeline needs no changes: edit → re-capture → render.
+**Two videos ship off this one pipeline** — it's already scenario-keyed (a `Narrative` =
+name + flavor + beats; capture/render/composite/caption are generic, untouched), so a second
+video is new beats + one registry entry, not new infra:
+- **Video 1 — the Hook** (`ingame`, real RPCS3): the ~30-60s marquee — scan, the figure's
+  IN the game, no toy touched. Captured + approved 2026-06-24; it just needs its captions
+  rewritten in my voice (A.7).
+- **Video 2 — the Tour** (`walkthrough`, NEW, mock-driver): the full feature walk —
+  profiles, search, the portal, the admin menu, takeover. Self-contained (no RPCS3, no NFC),
+  re-records on any Mac (A.8).
+Both then embed on the site (A.6).
+
+- [ ] A.6 - Site / README embed — both videos (was 15.7)
+  - [ ] A.6.1 - Per-video MP4 dropped to `docs/assets/videos/` (Hook + Tour)
+  - [ ] A.6.2 - Scenario-driven HTML gallery generator (per-feature stills cut from the Tour's `timeline.json` beat boundaries via `ffmpeg -ss`, Jekyll page at `docs/tour.md`)
+  - [ ] A.6.3 - Site integration on hotchkiss.io (`docs/index.md` hero embeds the Hook; `docs/features.md` + `docs/tour.md` carry the Tour, each feature linked to its clip)
+- [x] A.7 - **Video 1 (the Hook) — voice pass on the `ingame` marquee.** Captions ARE the script; pipeline needs no changes (edit → re-capture → render).
+  - [x] A.7.1 - Rewrite the captioned `ingame` beats (`connect`, `pick_profile`, `pick_game`, `open_toybox`, `place_figure_ipc`, `see_in_game`, `kaos`) in chotchki voice — verdict-first, one CAPS word per beat, parenthetical asides; fix the tap-to-add vs drag-drop wording
+  - [x] A.7.2 - Minor flow/timing tweaks if the re-watch flags them — `beats.rs` editorial fields only (`realtime_head`/`realtime_tail`/`filler_speed`/`crop`, beat order)
+  - [x] A.7.3 - Re-capture `ingame` (real RPCS3, Mac) + render; chotchki sign-off on the Hook
+- [ ] A.8 - Video 2 (Tour) — comprehensive feature walkthrough (`walkthrough`, IpcCold / real RPCS3)
+  - [ ] A.8.1 - Author the new `beat_*` drive fns for screens the `ingame` narrative doesn't cover: create-profile wizard, search + GAMES/ELEMENTS/CATEGORY filters, repose "N variants" cycle, figure-detail APPEARANCE swap, slot REMOVE, resume modal, kebab "INVITE A PLAYER" join-QR, Konami admin tour (delete hold-confirm, PIN-reset, window-mode + 2× toggles). REUSE the existing `ingame` beats for the spine (`connect`, `pick_profile`, `pick_game_ipc_cold` + classifier nav, `place_figure_ipc`, `see_in_game`, `kaos`)
+  - [ ] A.8.2 - Harness wiring for beats today's `BeatCtx` can't reach: a second profile (`bob`) placing via REAL IPC for ownership pips, a non-captured background session (or `fire_takeover` test-hook) for the 3rd-conn takeover, `fire_kaos_swap` for the Kaos beat — extend `BeatCtx` / `crates/e2e-tests/src/lib.rs`. Single captured phone, NO composite change
+  - [x] A.8.3 - Register `Narrative{name: "walkthrough", flavor: IpcCold, beats}` in narratives(); update registry name-list test
+  - [ ] A.8.4 - Voice captions on every Tour beat (full voice + tics; short = a caption budget, NOT a register downshift); tap-to-add not drag-drop. Shared-spine beats may need Tour-specific caption variants vs the Hook (separate constructors or a caption override) — the Hook is punchy, the Tour explains
+  - [ ] A.8.5 - Capture + render the Tour via `capture-ingame-embed.sh` on the Mac (real RPCS3 env: `RPCS3_EXE`/`RPCS3_CONFIG_DIR`/`FIRMWARE_PACK_ROOT` + classifier gates; build `test-hooks` + `sky-stats`); it's a long live session — sequence beats so an RPCS3 crash is recoverable; verify collection populated, captions timed, 2-pane composite clean
+  - [ ] A.8.6 - chotchki review pass on the rendered Tour; iterate beats/captions
+- [x] A.9 - **Speed-tuning workflow — durable raw + readable timestamps → fast re-render loop.** The raw (un-sped) capture + `timeline.json` already get written, and `render` re-reads the manifest (editing the speed fields + re-running `render` needs NO re-capture, NO recompile). Make that loop ergonomic so the speed-ups get tuned by timestamp.
+  - [x] A.9.1 - Persist the raw mp4 + `timeline.json` to a stable, known, gitignored dir (not `$TMPDIR`) so the tuning loop + `render` have a fixed input path.
+  - [x] A.9.2 - **Burned beat-name "review" cut (chotchki picked B, 2026-06-28).** A `render`-review mode that re-emits the raw at 1× (no speed ramps) with each beat's NAME banner-ed on screen for its raw `[t_start,t_end]` window (reuse `caption::render_caption_png`); lean on QuickTime's scrubber for the timecode (this ffmpeg has no `drawtext`). One cheap H.264 encode → `<stem>-review.mp4`. NON-GOAL: a running burned timecode + the absolute `{start,end,speed}` speed-map (option C) — Backlog unless the per-beat model proves too coarse (scope: save editing rounds, NOT build an editor).
+  - [x] A.9.3 - Doc the loop in `docs/dev/recorder-beats-framework.md` (watch raw → tune → `render` → repeat; bake the final numbers back into `beats.rs` editorial fields so a re-capture reproduces the tuning — timeline.json tweaks are per-capture).
 
 ## Phase 14 - macOS code-signing + notarization — LIVE
 
@@ -129,6 +154,7 @@ of this is chotchki executing steps on his Mac + GitHub UI; the code path (`rele
 - **Bump RPCS3 pin past #18935 → drop the 2 local SPU-Giga patches** (back to clean P1–P8) (2026-06-25).
 - **Spike (stretch): live 2× flip while a game runs** (ex S.8) — uncertain; needs an IPC `SURFACE_SCALE` command + a runtime size flag (not the env) + mid-render swapchain recreation + CAMetalLayer extent update + controller re-fit. The swapchain-recreate-under-load is the resize path the 720p pin avoids (top-left-subrect risk). Attempt only once Phase S's boot-time toggle is solid.
 - **Phase S 2× sustained/thermal validation** (ex S.6) — the toggle is shipped + smoke-tested (cold-boot + recorder narrative clean, surface confirmed 2560×1440, no crash). Remaining: a long *warm* session on the M3 Max — sustained framerate + thermals vs 720p. Non-blocking (default off); needs real kid-play time on the laptop, which ties up the work machine — hence deferred.
+- **Wire profile rename/recolor SAVE** — phone admin EDIT (name + colour swatches) currently toasts "Profile edit saved (UI only - API pending)" over a `// TODO: wire to update_profile API`; the SAVE button is a no-op. PIN-reset / delete / Kaos-toggle DO persist. Surfaced 2026-06-28 scoping the demo Tour (excluded from A.8 — can't film a feature that doesn't work).
 **Phone UI polish** (ex 4.18.x / 9.8 — all defer-quality nice-to-haves):
 - Service worker for PWA cache + update detection (4.18.1c) — gates an iOS browser smoke re-test.
 - Profile "last used N days ago" subtext (4.18.10); per-card tagline + "currently playing" marker (4.18.12).
@@ -139,7 +165,7 @@ of this is chotchki executing steps on his Mac + GitHub UI; the code path (`rele
 - Suppress RPCS3 menu-nav window flicker (6.1 — UIA fallback only).
 **iOS device validation:**
 - Paired visual-regression snapshots (10.4.5); real-iPhone Bonjour check (11.8.3); iPad + iPhone sim parity (11.8.4).
-**Demo-reel extras** (post-A.6):
-- Extra scenario flows: co-op / eviction, stat-edit, appearance-cycle, admin-tour (ex 15.6.x); PWA NarrationOverlay (15.4.2); retire `screenshot_tour` (15.8.x); CI hook to upload generated MP4s as release assets (15.9.x).
+**Demo-reel extras** (post-A.8):
+- True 2-phone co-op composite (`SceneCapture` second phone window — A.8 ships single-captured-phone); absolute `{start,end,speed}` editorial speed-map sidecar (A.9 option C — only if the per-beat head/tail/filler model proves too coarse); PWA NarrationOverlay (15.4.2); retire `screenshot_tour` (15.8.x); CI hook to upload generated MP4s as release assets (15.9.x). (Co-op/eviction, stat-edit, appearance-cycle, admin-tour are folded into the A.8 Tour.)
 **Misc:**
 - Collapse positional-slot model server-side (16.5.3); mute HEAT5150 SelfReg DLL warnings in the release log (18.8).

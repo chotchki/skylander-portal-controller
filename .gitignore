@@ -84,3 +84,6 @@ Thumbs.db
 
 # Recorder scratch capture frames — refs/ is the committed reference set, raw/ is throwaway
 tools/playthrough/assets/screens/raw/
+# Recorder durable output (A.9.1) — the un-sped raw mp4 + timeline.json + review
+# cuts for the tune→render loop. Throwaway; published reels live in docs/assets.
+/tools/playthrough/out/

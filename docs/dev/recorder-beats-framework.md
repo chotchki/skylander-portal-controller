@@ -225,6 +225,34 @@ the local ffmpeg (gyan *essentials*) carries only slow libaom; H.265 everywhere
 that matters. First real renders: the 62.9s/118MB marquee raw → 25.5s/6.3MB
 final (planned 25 522 ms vs probed 25 533 ms).
 
+### 5.1 Tuning the speed-ramps — durable raw + the review cut (A.9, 2026-06-28)
+
+The capture is the slow part (a real cold-boot RPCS3 run is minutes); `render` is
+seconds of ffmpeg. And `render` reads the speed numbers from `timeline.json`, NOT
+from `beats.rs` — so the tuning loop is **capture once, re-render many**, no
+recompile and no re-capture:
+
+1. **Capture** writes the un-sped raw + `timeline.json` to a STABLE dir —
+   `tools/playthrough/out/` (gitignored), override `SKYLANDER_PLAYTHROUGH_OUT`.
+   (Was `$TMPDIR` — ephemeral, and reaped around `capture-ingame-embed.sh`. A.9.1.)
+2. **`-- render-review <raw>`** emits `<stem>-review.mp4`: the raw at **1×** (no
+   speed ramps) with each beat's name + current plan (e.g. `pick_game · h1s 10× t3s`)
+   banner-ed across its window. Because nothing is sped, QuickTime's scrubber
+   timecode maps 1:1 to a beat — scrub, read the banner, know exactly which beat
+   you're on AND what `render` currently does to it. Banners reuse `caption.rs`
+   (this ffmpeg has no `drawtext`); one cheap H.264 encode. (A.9.2 — option B.)
+3. **Tune** the beat's `realtime_head_ms` / `filler_speed` / `realtime_tail_ms` in
+   the `timeline.json`, then `-- render <raw>` again (seconds). Repeat 2-3 until
+   it's tight.
+4. **Bake back.** `timeline.json` edits are PER-CAPTURE — a fresh capture
+   regenerates it from the `beat_*()` editorial fields in `beats.rs`. So once the
+   numbers are right, copy them into those constructors, or the next capture loses
+   them. The manifest is the scratchpad; `beats.rs` is the source of truth.
+
+NON-GOAL: an absolute `{start,end,speed}` speed-map editor (option C) — parked in
+the PLAN Backlog. The per-beat head/tail/filler model fits the footage (the dead
+stretches ARE the beat middles); reach for C only if that proves too coarse.
+
 ---
 
 ## 6. Rendering modes (CLI)
@@ -241,6 +269,8 @@ final (planned 25 522 ms vs probed 25 533 ms).
   beat → a per-screen clip (+ still PNG).
 - `-- render <raw.mp4> <timeline.json> <final.mp4>` — apply the editorial timeline
   (§5). v2.
+- `-- render-review <raw.mp4> [timeline.json] [review.mp4]` — the 1× beat-labelled
+  tuning cut (§5.1); optionals derive from the raw path.
 - **Back-compat:** bare `portal` / `place` / `ingame` map to their narratives.
 
 ---

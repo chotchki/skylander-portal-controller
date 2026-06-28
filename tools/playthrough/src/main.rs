@@ -18,6 +18,9 @@
 //!     server / registry / Chrome): apply the editorial manifest to the raw
 //!     capture → one H.265 final cut (`render.rs`, design §5; PLAN 15.13.4).
 //!     The optionals derive from the raw path.
+//!   - `-- render-review <raw.mp4> [timeline.json] [review.mp4]` — A.9.2 tuning
+//!     cut: re-emit the raw at 1× with each beat's name+plan banner-ed on, so
+//!     the speed-ups can be called by scrubbing the un-sped footage.
 //!   - bare `portal` / `place` / `ingame` — BACK-COMPAT aliases to those
 //!     narratives.
 //!
@@ -68,6 +71,16 @@ enum Mode {
         manifest: PathBuf,
         out: PathBuf,
     },
+    /// `-- render-review <raw.mp4> [timeline.json] [review.mp4]` (A.9.2): a pure
+    /// post-pass like [`Mode::Render`], but re-emits the raw at 1× (NO speed
+    /// ramps) with each beat's name + current plan banner-ed on for its window —
+    /// the tuning cut chotchki scrubs to call the speed-ups. Optionals derive
+    /// from the raw path.
+    RenderReview {
+        raw: PathBuf,
+        manifest: PathBuf,
+        out: PathBuf,
+    },
     /// `-- capture-smoke <secs> <out.mp4>` — dev smoke test of the capture
     /// backend in isolation (no server / browser): record the screen for `secs`
     /// and assert a non-empty file. PLAN A.1 (verifies the macOS backend).
@@ -106,6 +119,13 @@ enum Mode {
 /// hard-requires the patched RPCS3 + a save state, so it is opt-in via an
 /// explicit `-- narrative ingame` / bare `ingame`, never the bare default.
 const DEFAULT_NARRATIVE: &str = "place";
+
+/// A.7.2 — minimum on-screen time for a CAPTIONED beat (chotchki's "minimum
+/// pause"). The test-hook unlock + an instantly-mounting screen can finish in
+/// <1s, which flashes the caption by; a captioned beat that drove faster than
+/// this holds the remainder at 1× so the lower-third stays legible. Uncaptioned
+/// beats are untouched (they can fly by). Tunable.
+const MIN_CAPTION_DWELL_MS: u128 = 2800;
 
 fn parse_mode(args: &[String]) -> Result<Mode> {
     // args[0] is the program name; the recorder is invoked `… -- <rest>`, and
@@ -148,6 +168,34 @@ fn parse_mode(args: &[String]) -> Result<Mode> {
         [kw] if kw == "render" => anyhow::bail!(
             "`-- render` needs a raw capture \
              (usage: `-- render <raw.mp4> [timeline.json] [final.mp4]`)"
+        ),
+        // `-- render-review <raw.mp4> [timeline.json] [review.mp4]` (A.9.2): the
+        // 1× beat-labelled tuning cut. Optionals derive from the raw path, same
+        // as `render` (manifest = sibling `.timeline.json`, out = `-review.mp4`).
+        [kw, raw, manifest, out, ..] if kw == "render-review" => Ok(Mode::RenderReview {
+            raw: PathBuf::from(raw),
+            manifest: PathBuf::from(manifest),
+            out: PathBuf::from(out),
+        }),
+        [kw, raw, manifest] if kw == "render-review" => {
+            let raw = PathBuf::from(raw);
+            Ok(Mode::RenderReview {
+                manifest: PathBuf::from(manifest),
+                out: render::default_review_out_path(&raw),
+                raw,
+            })
+        }
+        [kw, raw] if kw == "render-review" => {
+            let raw = PathBuf::from(raw);
+            Ok(Mode::RenderReview {
+                manifest: render::default_manifest_path(&raw),
+                out: render::default_review_out_path(&raw),
+                raw,
+            })
+        }
+        [kw] if kw == "render-review" => anyhow::bail!(
+            "`-- render-review` needs a raw capture \
+             (usage: `-- render-review <raw.mp4> [timeline.json] [review.mp4]`)"
         ),
         // `-- capture-smoke <secs> <out.mp4>` (PLAN A.1).
         [kw, secs, out] if kw == "capture-smoke" => Ok(Mode::CaptureSmoke {
@@ -219,6 +267,7 @@ async fn main() -> Result<()> {
     // on a box with only ffmpeg and the recorded artifacts.
     match mode {
         Mode::Render { raw, manifest, out } => render::run(&raw, &manifest, &out),
+        Mode::RenderReview { raw, manifest, out } => render::review(&raw, &manifest, &out),
         Mode::CaptureSmoke { secs, out } => capture_smoke(secs, &out),
         Mode::Composite {
             controller,
@@ -367,6 +416,19 @@ struct Boot {
     stage: Option<timeline::CropRect>,
 }
 
+/// A.9.1 — durable output dir for the raw capture + `timeline.json` (+ still
+/// PNG), so the un-sped raw survives for the tune→`render` loop. `$TMPDIR` is
+/// ephemeral AND reaped around `capture-ingame-embed.sh`, so default to a stable
+/// gitignored `tools/playthrough/out/`; override with `SKYLANDER_PLAYTHROUGH_OUT`.
+fn out_dir() -> Result<PathBuf> {
+    let dir = std::env::var_os("SKYLANDER_PLAYTHROUGH_OUT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("out"));
+    std::fs::create_dir_all(&dir)
+        .with_context(|| format!("create playthrough out dir {}", dir.display()))?;
+    Ok(dir)
+}
+
 async fn boot(flavor: ServerFlavor, out_stem: &str) -> Result<Boot> {
     // 1. Server by flavor (design §6/§7).
     let server = match flavor {
@@ -429,7 +491,7 @@ async fn boot(flavor: ServerFlavor, out_stem: &str) -> Result<Boot> {
     //    (SceneCapture) records them as per-window streams, which need the windows
     //    present and matchable by title. Windows still captures the whole desktop,
     //    just from the same (slightly later) anchor.
-    let mp4 = std::env::temp_dir().join(format!("{out_stem}.mp4"));
+    let mp4 = out_dir()?.join(format!("{out_stem}.mp4"));
 
     // 5. Visible app-mode (chromeless) phone window in the right-hand column.
     //    Chrome reads --window-position/--window-size in DIPs, so the
@@ -474,19 +536,37 @@ async fn boot(flavor: ServerFlavor, out_stem: &str) -> Result<Boot> {
     //     dedupe window collapses the multiple events of one real tap into one
     //     ripple. The SPA is a CSR (no full reloads), so one injection lasts the
     //     whole session.
+    //
+    //     EARLY-CLEAR (A.8.6 — chotchki): a tap that opens a detail / menu or
+    //     swaps screens left the ripple lingering 650ms over UI that no longer
+    //     exists at that point ("click targets against non-existent UI"). Fix:
+    //     snapshot `elementFromPoint(x,y)` at ripple time (our capture-phase
+    //     listener runs BEFORE Leptos's bubble-phase on:click, so it's the
+    //     original element), then poll — the instant that point resolves to
+    //     unrelated UI (element unmounted OR a modal covered it), kill the
+    //     ripple. A tap that DOESN'T navigate (filter chip, toggle) keeps the
+    //     point related and rides out the full 0.6s.
     const TAP_RIPPLE_JS: &str = "(function(){\
         if(window.__skyTap)return;window.__skyTap=1;\
         var s=document.createElement('style');\
         s.textContent='@keyframes skytap{from{transform:translate(-50%,-50%) scale(.3);opacity:.9}to{transform:translate(-50%,-50%) scale(1.7);opacity:0}}';\
         document.head.appendChild(s);\
         var lt=0,lx=-1e4,ly=-1e4;\
+        function related(a,b){return a===b||(a&&b&&(a.contains(b)||b.contains(a)));}\
         function ripple(x,y){\
             if(x==null||y==null)return;var t=Date.now();\
             if(t-lt<400&&Math.abs(x-lx)<60&&Math.abs(y-ly)<60)return;\
             lt=t;lx=x;ly=y;\
+            var origin=document.elementFromPoint(x,y);\
             var d=document.createElement('div');\
             d.style.cssText='position:fixed;left:'+x+'px;top:'+y+'px;width:64px;height:64px;border-radius:50%;border:4px solid #f5c634;background:rgba(245,198,52,.25);pointer-events:none;z-index:2147483647;animation:skytap .6s ease-out forwards';\
-            document.body.appendChild(d);setTimeout(function(){d.remove();},650);\
+            document.body.appendChild(d);\
+            var done=false;function kill(){if(done)return;done=true;clearInterval(iv);d.remove();}\
+            var n=0;var iv=setInterval(function(){\
+                if(++n>16){clearInterval(iv);return;}\
+                if(!related(origin,document.elementFromPoint(x,y)))kill();\
+            },40);\
+            setTimeout(kill,650);\
         }\
         function pos(e){\
             if(e.changedTouches&&e.changedTouches[0])return[e.changedTouches[0].clientX,e.changedTouches[0].clientY];\
@@ -589,6 +669,7 @@ async fn run_narrative(narr: Narrative) -> Result<()> {
         (beat.drive)(&ctx)
             .await
             .with_context(|| format!("beat {:?}", beat.name))?;
+        dwell_for_caption(beat, t_start, timeline_origin).await;
         let t_end = timeline_origin.elapsed().as_millis();
         tracing::info!(beat = %beat.name, t_start_ms = t_start, t_end_ms = t_end, "beat done");
         timeline.push(entry_for(beat, t_start, t_end));
@@ -602,7 +683,7 @@ async fn run_narrative(narr: Narrative) -> Result<()> {
 
     write_timeline(&mp4, stage, timeline)?;
 
-    let png = std::env::temp_dir().join(format!("{out_stem}.png"));
+    let png = out_dir()?.join(format!("{out_stem}.png"));
     phone.screenshot(&png).await?;
     tracing::info!(screenshot = %png.display(), "still captured");
 
@@ -642,6 +723,7 @@ async fn run_single_beat(flavor: ServerFlavor, beat: Beat) -> Result<()> {
     (beat.drive)(&ctx)
         .await
         .with_context(|| format!("beat {:?}", beat.name))?;
+    dwell_for_caption(&beat, t_start, timeline_origin).await;
     let t_end = timeline_origin.elapsed().as_millis();
     let timeline = vec![entry_for(&beat, t_start, t_end)];
 
@@ -652,7 +734,7 @@ async fn run_single_beat(flavor: ServerFlavor, beat: Beat) -> Result<()> {
 
     write_timeline(&mp4, stage, timeline)?;
 
-    let png = std::env::temp_dir().join(format!("{out_stem}.png"));
+    let png = out_dir()?.join(format!("{out_stem}.png"));
     phone.screenshot(&png).await?;
     tracing::info!(screenshot = %png.display(), "still captured");
 
@@ -664,6 +746,22 @@ async fn run_single_beat(flavor: ServerFlavor, beat: Beat) -> Result<()> {
 // `fantoccini` is still a direct dependency (the harness re-exports use it), but
 // the recorder's own selectors now live in the beats; no top-level `Locator`
 // import is needed here.
+
+/// Hold a captioned beat to [`MIN_CAPTION_DWELL_MS`] of 1× footage if its drive
+/// finished sooner, so the caption stays legible (A.7.2 — chotchki's "minimum
+/// pause"). No-op for uncaptioned beats or ones that already ran long enough.
+async fn dwell_for_caption(beat: &Beat, t_start_ms: u128, origin: Instant) {
+    if beat.caption.is_none() {
+        return;
+    }
+    let dwelled = origin.elapsed().as_millis().saturating_sub(t_start_ms);
+    if dwelled < MIN_CAPTION_DWELL_MS {
+        tokio::time::sleep(Duration::from_millis(
+            (MIN_CAPTION_DWELL_MS - dwelled) as u64,
+        ))
+        .await;
+    }
+}
 
 /// Build a manifest row from a beat + its measured boundaries.
 fn entry_for(beat: &Beat, t_start_ms: u128, t_end_ms: u128) -> TimelineEntry {
@@ -812,6 +910,37 @@ mod tests {
     fn bare_render_errors_with_usage() {
         let err = parse(&["render"]).expect_err("`-- render` with no raw must error");
         assert!(err.to_string().contains("render"), "got: {err}");
+    }
+
+    #[test]
+    fn render_review_raw_only_derives_manifest_and_out() {
+        // `foo.mp4` → `foo.timeline.json` + a sibling `foo-review.mp4` (A.9.2).
+        assert_eq!(
+            parse(&["render-review", "captures/run.mp4"]).unwrap(),
+            Mode::RenderReview {
+                raw: PathBuf::from("captures/run.mp4"),
+                manifest: PathBuf::from("captures/run.timeline.json"),
+                out: PathBuf::from("captures/run-review.mp4"),
+            }
+        );
+    }
+
+    #[test]
+    fn render_review_fully_explicit_paths_pass_through() {
+        assert_eq!(
+            parse(&["render-review", "a.mp4", "b.json", "c.mp4"]).unwrap(),
+            Mode::RenderReview {
+                raw: PathBuf::from("a.mp4"),
+                manifest: PathBuf::from("b.json"),
+                out: PathBuf::from("c.mp4"),
+            }
+        );
+    }
+
+    #[test]
+    fn bare_render_review_errors_with_usage() {
+        let err = parse(&["render-review"]).expect_err("`-- render-review` with no raw must error");
+        assert!(err.to_string().contains("render-review"), "got: {err}");
     }
 
     #[test]

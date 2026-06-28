@@ -125,7 +125,11 @@ echo "  mode                      = $*" >&2
 # ffmpeg 829% vs RPCS3 198% + Chrome 364%). NOT `exec`, so this cleanup runs;
 # `|| status=$?` keeps `set -e` from skipping it on a non-zero capture exit.
 status=0
-tools/playthrough/run.sh "$@" || status=$?
+# `caffeinate -d` holds the display awake for the whole capture: if the Mac
+# locks mid-run (screensaver / step-away), ScreenCaptureKit can't start a stream
+# and the classifier nav dies with "Failed to start stream" (A.8.5 — bit us on a
+# bathroom break). Keeping the display from sleeping keeps the session unlocked.
+caffeinate -d tools/playthrough/run.sh "$@" || status=$?
 pkill -f "vendor/rpcs3/build/bin/rpcs3" 2>/dev/null || true
 pkill -f "enable-automation" 2>/dev/null || true
 pkill -f "Chrome for Testing" 2>/dev/null || true

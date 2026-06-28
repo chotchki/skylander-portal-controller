@@ -112,6 +112,14 @@ pub struct Narrative {
 // `place_figures()`, `place_one()`). Keep the steps byte-for-byte so the
 // recorded flow is unchanged.
 
+/// `title` — opening caption card over the QR coin (the Hook's first beat). No
+/// drive, just dwell so the title reads before `connect` takes over; the render
+/// has no fade-in, so this is the hard open (chotchki, A.7).
+async fn title(_ctx: &BeatCtx<'_>) -> Result<()> {
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    Ok(())
+}
+
 /// `connect` — wait for the profile picker to mount. The QR/connect framing is
 /// the hold here.
 async fn connect(ctx: &BeatCtx<'_>) -> Result<()> {
@@ -122,8 +130,18 @@ async fn connect(ctx: &BeatCtx<'_>) -> Result<()> {
     Ok(())
 }
 
-/// `pick_profile` — unlock Alice via the PIN-bypass test hook.
+/// Pre-action hold (A.7.2): a fast screen-advancing beat dwells on its CURRENT
+/// screen this long BEFORE firing, so its caption sits on the matching screen
+/// rather than the one the instant action jumps to. Mirrors main.rs's
+/// `MIN_CAPTION_DWELL_MS` so the post-drive caption floor then adds nothing.
+const PRE_ACTION_DWELL: Duration = Duration::from_millis(2800);
+
+/// `pick_profile` — hold on the profile picker so the "Pick your profile"
+/// caption lands HERE, then unlock Alice via the PIN-bypass test hook. The
+/// unlock is instant and jumps straight to the game picker, so without the
+/// pre-hold the caption would show over the WRONG screen (A.7.2 — chotchki).
 async fn pick_profile(ctx: &BeatCtx<'_>) -> Result<()> {
+    tokio::time::sleep(PRE_ACTION_DWELL).await;
     unlock_session(&ctx.server.url, ctx.alice).await?;
     Ok(())
 }
@@ -450,6 +468,277 @@ async fn place_one(phone: &Phone, card_sel: &str) -> Result<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------- Tour beats
+//
+// A.8.1 — the `walkthrough` narrative's feature-tour beats (Alice-only; the
+// multiplayer beats land in A.8.2 with the headless-Bob wiring). Selectors +
+// gotchas are from the A.8.1 scout: controls are `on:click` → drive with
+// `js_click` (NOT `tap_pointer`, which dispatches no compat click); the search
+// + name fields are CONTROLLED inputs → real `send_keys` (not `el.value=`); the
+// heraldic PIN keys carry only a text label → click by text.
+
+/// Tap a numeric PIN on the heraldic keypad (keys are `.pin-hkey`, labelled by
+/// text). Used by the create-profile wizard's two PIN steps.
+async fn enter_pin(phone: &Phone, pin: &str) -> Result<()> {
+    for d in pin.chars() {
+        phone
+            .client
+            .execute(
+                "const w=arguments[0];\
+                 const b=[...document.querySelectorAll('.pin-keypad-heraldic .pin-hkey')]\
+                   .find(e=>e.textContent.trim()===w);\
+                 if(b){b.click();return true}return false",
+                vec![json!(d.to_string())],
+            )
+            .await?;
+        tokio::time::sleep(Duration::from_millis(180)).await;
+    }
+    Ok(())
+}
+
+/// Tap a filter chip by section label ("GAMES"/"ELEMENTS"/"CATEGORY") + chip
+/// text ("Fire"/"All"/…). "All" exists in every row, so scope by section.
+async fn tap_filter_chip(phone: &Phone, section: &str, chip: &str) -> Result<()> {
+    phone
+        .client
+        .execute(
+            "const sl=arguments[0],cl=arguments[1];\
+             const sec=[...document.querySelectorAll('.drill-section-p4')]\
+               .find(s=>((s.querySelector('.drill-label-p4')||{}).textContent||'').trim().toUpperCase()===sl);\
+             if(!sec)return false;\
+             const c=[...sec.querySelectorAll('.drill-chip-p4')]\
+               .find(e=>(e.textContent||'').trim()===cl);\
+             if(c){c.click();return true}return false",
+            vec![json!(section), json!(chip)],
+        )
+        .await?;
+    Ok(())
+}
+
+/// `create_profile` — the "+ ADD" wizard: name (reroll) → colour → PIN →
+/// confirm → CREATE. The forward button is one `.btn-primary` (NEXT on steps
+/// 1-3, CREATE on step 4); no auto-advance.
+async fn create_profile(ctx: &BeatCtx<'_>) -> Result<()> {
+    let phone = ctx.phone;
+    phone.js_click(".profile-card.add").await?;
+    phone
+        .wait_for(
+            Locator::Css(".create-profile-panel"),
+            Duration::from_secs(5),
+        )
+        .await
+        .context("create-profile wizard never mounted")?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Step 1 NAME — the field is pre-seeded with a random Skylander name; reroll
+    // for flavor, then NEXT.
+    phone.js_click(".roll-btn").await.ok();
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    phone.js_click(".btn-primary").await?; // → COLOR
+    phone
+        .wait_for(Locator::Css(".edit-swatch"), Duration::from_secs(4))
+        .await?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Step 2 COLOR — pick fire, then NEXT.
+    phone
+        .js_click(".edit-swatch[data-color=\"fire\"]")
+        .await
+        .ok();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    phone.js_click(".btn-primary").await?; // → PIN
+    phone
+        .wait_for(
+            Locator::Css(".pin-keypad-heraldic .pin-hkey"),
+            Duration::from_secs(4),
+        )
+        .await?;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    // Step 3 CHOOSE PIN — tap 1-2-3-4 (no auto-submit), then NEXT.
+    enter_pin(phone, "1234").await?;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    phone.js_click(".btn-primary").await?; // → CONFIRM
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Step 4 CONFIRM PIN — same digits, then CREATE.
+    enter_pin(phone, "1234").await?;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    phone.js_click(".btn-primary").await?; // CREATE → back to the picker grid
+    phone
+        .wait_for(Locator::Css(".profile-picker"), Duration::from_secs(6))
+        .await
+        .ok();
+    tracing::info!("created a demo profile via the wizard");
+    Ok(())
+}
+
+/// `filters` — narrow by ELEMENTS → Fire, then reset to All. Runs BEFORE
+/// `search` so the chips operate on the full grid (no stale query).
+async fn filter_collection(ctx: &BeatCtx<'_>) -> Result<()> {
+    let phone = ctx.phone;
+    tap_filter_chip(phone, "ELEMENTS", "Fire").await?;
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    tap_filter_chip(phone, "ELEMENTS", "All").await?; // reset for the search beat
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    Ok(())
+}
+
+/// `search` — type a name in the toy box; the grid filters live. Uses the proven
+/// `open_search` + `search` helpers: the search field is a Leptos-CONTROLLED
+/// input, and a manual `clear()` breaks its focus so the follow-up `send_keys`
+/// lands nowhere (A.8.1 capture finding) — `Phone::search` just `send_keys`. The
+/// "spyro" query intentionally persists into `appearance_swap`/`place_figure`
+/// (search Spyro → cycle Spyro → place Spyro reads as one story).
+async fn search_collection(ctx: &BeatCtx<'_>) -> Result<()> {
+    let phone = ctx.phone;
+    phone
+        .open_search()
+        .await
+        .context("open the toy box search")?;
+    phone
+        .search("spyro")
+        .await
+        .context("type the search query")?;
+    tokio::time::sleep(Duration::from_millis(1400)).await; // filter + read
+    Ok(())
+}
+
+/// `appearance_swap` — open a figure WITH variants (Spyro), cycle APPEARANCE,
+/// back to the box. The button is disabled (no-op) for singletons.
+async fn appearance_swap(ctx: &BeatCtx<'_>) -> Result<()> {
+    let phone = ctx.phone;
+    let opened = phone
+        .client
+        .execute(
+            r#"const cards=[...document.querySelectorAll('.fig-card-p4:not(.scan-new)')];
+               const byName=re=>cards.find(c=>{const n=c.querySelector('.fig-name-p4');return n&&re.test((n.textContent||'').trim())});
+               const pick=byName(/spyro/i)||cards[0];
+               if(pick){pick.scrollIntoView({block:'center'});pick.click();return true}return false"#,
+            vec![],
+        )
+        .await?
+        .as_bool()
+        .unwrap_or(false);
+    if !opened {
+        anyhow::bail!("no figure card to open for the appearance swap");
+    }
+    phone
+        .wait_for(Locator::Css(".detail-btn-primary"), Duration::from_secs(6))
+        .await?;
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    phone
+        .js_click(".detail-action-btn[aria-label='Switch appearance']")
+        .await
+        .ok(); // cycle (no-op if no alternates)
+    tokio::time::sleep(Duration::from_millis(1000)).await; // re-mount + read
+    phone.js_click(".detail-btn-secondary").await.ok(); // BACK TO BOX
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    Ok(())
+}
+
+/// `pick_figure` — open the just-placed figure's detail so the populated stats
+/// strip shows (working copy exists post-place; the strip renders even while
+/// on-portal — only the edit SHEET is gated off-portal, A.8.1 scout).
+async fn pick_figure_stats(ctx: &BeatCtx<'_>) -> Result<()> {
+    let phone = ctx.phone;
+    let opened = phone
+        .client
+        .execute(
+            r#"const cards=[...document.querySelectorAll('.fig-card-p4:not(.scan-new)')];
+               const byName=re=>cards.find(c=>{const n=c.querySelector('.fig-name-p4');return n&&re.test((n.textContent||'').trim())});
+               const pick=byName(/eruptor/i)||byName(/spyro/i)||cards[0];
+               if(pick){pick.scrollIntoView({block:'center'});pick.click();return true}return false"#,
+            vec![],
+        )
+        .await?
+        .as_bool()
+        .unwrap_or(false);
+    if !opened {
+        anyhow::bail!("no figure card to open for stats");
+    }
+    phone
+        .wait_for(Locator::Css(".detail-stats-strip"), Duration::from_secs(6))
+        .await?;
+    tokio::time::sleep(Duration::from_millis(1400)).await; // read the level/gold strip
+    phone.js_click(".detail-btn-secondary").await.ok(); // BACK TO BOX
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    Ok(())
+}
+
+/// `join_qr` — kebab → the "INVITE A PLAYER" join-QR card, hold it on screen,
+/// close. The kebab toggles, so open exactly once.
+async fn show_join_qr(ctx: &BeatCtx<'_>) -> Result<()> {
+    let phone = ctx.phone;
+    phone.js_click(".kebab-btn").await?;
+    phone
+        .wait_for(Locator::Css(".menu-overlay-panel"), Duration::from_secs(5))
+        .await?;
+    phone
+        .wait_for(Locator::Css(".menu-qr-img"), Duration::from_secs(5))
+        .await?;
+    tokio::time::sleep(Duration::from_millis(1800)).await; // hold the QR card
+    phone.js_click(".menu-close").await.ok();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    Ok(())
+}
+
+/// `konami_admin` — kebab → MANAGE PROFILES → the Konami gate (Contra code) →
+/// the admin hub → LOCK. Runs from the LOCKED profile picker (after
+/// `create_profile`, before `pick_profile`): the gate only routes from the
+/// picker state, NOT mid-game (confirmed against `visual_scroll_probes.rs`). No
+/// destructive toggles — just the reveal.
+async fn konami_admin(ctx: &BeatCtx<'_>) -> Result<()> {
+    let phone = ctx.phone;
+    phone.js_click(".kebab-btn").await?;
+    phone
+        .wait_for(Locator::Css(".menu-overlay-panel"), Duration::from_secs(5))
+        .await?;
+    tokio::time::sleep(Duration::from_millis(400)).await; // menu open settle
+    let clicked = phone
+        .client
+        .execute(
+            "const acts=[...document.querySelectorAll('.menu-action')];\
+             const b=acts.find(e=>/MANAGE PROFILES/i.test(e.textContent||''))\
+               ||acts.find(e=>/MANAGE/i.test(e.textContent||''));\
+             if(b){b.click();return true}return false",
+            vec![],
+        )
+        .await?
+        .as_bool()
+        .unwrap_or(false);
+    if !clicked {
+        anyhow::bail!("MANAGE PROFILES action not found in the menu");
+    }
+    phone
+        .wait_for(Locator::Css(".konami-gate"), Duration::from_secs(8))
+        .await
+        .context("Konami gate never mounted after MANAGE PROFILES")?;
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    // The Contra code: ↑ ↑ ↓ ↓ ← → ← → B A.
+    for sel in [
+        ".dpad-btn.up",
+        ".dpad-btn.up",
+        ".dpad-btn.down",
+        ".dpad-btn.down",
+        ".dpad-btn.left",
+        ".dpad-btn.right",
+        ".dpad-btn.left",
+        ".dpad-btn.right",
+        ".ab-btn.ab-b",
+        ".ab-btn.ab-a",
+    ] {
+        phone.js_click(sel).await.ok();
+        tokio::time::sleep(Duration::from_millis(170)).await;
+    }
+    phone.js_click(".btn-submit").await?;
+    // ~800ms unlock flash → admin hub mounts.
+    phone
+        .wait_for(Locator::Css(".admin-hub"), Duration::from_secs(5))
+        .await
+        .context("admin hub never mounted after the code")?;
+    tokio::time::sleep(Duration::from_millis(1800)).await; // hold the hub
+    phone.js_click(".btn-back").await.ok(); // LOCK
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    Ok(())
+}
+
 // ---------------------------------------------------------------- registry
 //
 // Each beat is constructed with a `|c| Box::pin(beat_x(c))` shim for the
@@ -457,6 +746,21 @@ async fn place_one(phone: &Phone, card_sel: &str) -> Result<()> {
 // (design §9.1): action beats get a short head + 1× filler; the `see_in_game`
 // reveal gets a small head, a large tail (the figure-appears moment), and a
 // fast filler for the dead resume.
+
+/// `title` — the Hook's opening card (caption-only hold over the QR coin). All
+/// 1× (head ≥ duration → one realtime span), no fade-in.
+fn beat_title() -> Beat {
+    Beat {
+        name: "title",
+        drive: |c| Box::pin(title(c)),
+        requires_ipc: false,
+        realtime_head: Duration::from_secs(3),
+        realtime_tail: Duration::from_secs(0),
+        filler_speed: 1.0,
+        crop: None,
+        caption: Some("Skylander Portal Controller - your device is the portal."),
+    }
+}
 
 /// `connect` — the QR/connect framing hold.
 fn beat_connect() -> Beat {
@@ -468,7 +772,7 @@ fn beat_connect() -> Beat {
         realtime_tail: Duration::from_secs(2),
         filler_speed: 1.0,
         crop: None,
-        caption: Some("Scan the code. Your phone's the portal now."),
+        caption: Some("You start by scanning the code on screen (NO APP to install)."),
     }
 }
 
@@ -482,7 +786,7 @@ fn beat_pick_profile() -> Beat {
         realtime_tail: Duration::from_secs(1),
         filler_speed: 1.0,
         crop: None,
-        caption: Some("Welcome back, Portal Master."),
+        caption: Some("Pick your profile — every kid gets their OWN figures (and their own PIN)."),
     }
 }
 
@@ -543,7 +847,9 @@ fn beat_pick_game_ipc_cold() -> Beat {
         realtime_tail: Duration::from_secs(3),
         filler_speed: 10.0,
         crop: None,
-        caption: Some("Pick a game — it boots on the TV."),
+        caption: Some(
+            "Pick your archived game — it BOOTS the real emulator on the TV (no disc, no menu-fishing).",
+        ),
     }
 }
 
@@ -572,7 +878,7 @@ fn beat_open_toybox() -> Beat {
         realtime_tail: Duration::from_secs(2),
         filler_speed: 1.0,
         crop: None,
-        caption: Some("Your collection, digital."),
+        caption: Some("Open the toy box — the family's WHOLE collection, no shelf-digging."),
     }
 }
 
@@ -601,7 +907,7 @@ fn beat_place_figure_ipc() -> Beat {
         realtime_tail: Duration::from_secs(2),
         filler_speed: 1.0,
         crop: None,
-        caption: Some("Tap a figure onto the portal."),
+        caption: Some("Tap a figure — it's ON the portal, loaded into the live game."),
     }
 }
 
@@ -616,7 +922,7 @@ fn beat_see_in_game() -> Beat {
         realtime_tail: Duration::from_secs(6),
         filler_speed: 8.0,
         crop: None,
-        caption: Some("It's in the game. No toy touched."),
+        caption: Some("It's IN the game. No toy touched."),
     }
 }
 
@@ -632,7 +938,126 @@ fn beat_kaos() -> Beat {
         realtime_tail: Duration::from_secs(6),
         filler_speed: 4.0,
         crop: None,
-        caption: Some("Beware, Kaos can strike anytime!"),
+        caption: Some("Then Kaos STRIKES — a figure swaps mid-game (optional chaos, on purpose)."),
+    }
+}
+
+// ------------------------------------------------------------- Tour constructors
+//
+// A.8.1 — the `walkthrough` feature-tour beats. Editorial is all 1× for now
+// (chotchki tunes the speed-ramps via `render-review`, A.9); captions are his
+// FINALs from `docs/dev/demo-reel-captions.md`.
+
+/// `create_profile` — onboarding a new player via the "+ ADD" wizard.
+fn beat_create_profile() -> Beat {
+    Beat {
+        name: "create_profile",
+        drive: |c| Box::pin(create_profile(c)),
+        requires_ipc: false,
+        realtime_head: Duration::from_secs(1),
+        realtime_tail: Duration::from_secs(1),
+        filler_speed: 1.0,
+        crop: None,
+        caption: Some("New player? Name, a colour, a PIN — they're in (4 profiles, one per kid)."),
+    }
+}
+
+/// `open_toybox` — Tour caption variant (reuses the shared `open_toybox` drive;
+/// the Hook's `beat_open_toybox` differs only in copy).
+fn beat_open_toybox_tour() -> Beat {
+    Beat {
+        name: "open_toybox",
+        drive: |c| Box::pin(open_toybox(c)),
+        requires_ipc: false,
+        realtime_head: Duration::from_secs(1),
+        realtime_tail: Duration::from_secs(2),
+        filler_speed: 1.0,
+        crop: None,
+        caption: Some("This is your collection! Everyone gets their own copy!"),
+    }
+}
+
+/// `search` — live-filter the collection by name.
+fn beat_search() -> Beat {
+    Beat {
+        name: "search",
+        drive: |c| Box::pin(search_collection(c)),
+        requires_ipc: false,
+        realtime_head: Duration::from_secs(1),
+        realtime_tail: Duration::from_secs(1),
+        filler_speed: 1.0,
+        crop: None,
+        caption: Some("Type a name — the whole collection filters as you go (reposes and all)."),
+    }
+}
+
+/// `filters` — narrow by GAMES / ELEMENTS / CATEGORY chips.
+fn beat_filters() -> Beat {
+    Beat {
+        name: "filters",
+        drive: |c| Box::pin(filter_collection(c)),
+        requires_ipc: false,
+        realtime_head: Duration::from_secs(1),
+        realtime_tail: Duration::from_secs(1),
+        filler_speed: 1.0,
+        crop: None,
+        caption: Some("Filter by game, element OR type — find the one figure in a pile of 300."),
+    }
+}
+
+/// `appearance_swap` — cycle a figure's reposes from the detail view.
+fn beat_appearance_swap() -> Beat {
+    Beat {
+        name: "appearance_swap",
+        drive: |c| Box::pin(appearance_swap(c)),
+        requires_ipc: false,
+        realtime_head: Duration::from_secs(1),
+        realtime_tail: Duration::from_secs(1),
+        filler_speed: 1.0,
+        crop: None,
+        caption: Some("Swap the look right from the figure — APPEARANCE flips between variants."),
+    }
+}
+
+/// `pick_figure` — the populated stats strip on the placed figure.
+fn beat_pick_figure_stats() -> Beat {
+    Beat {
+        name: "pick_figure",
+        drive: |c| Box::pin(pick_figure_stats(c)),
+        requires_ipc: false,
+        realtime_head: Duration::from_secs(1),
+        realtime_tail: Duration::from_secs(1),
+        filler_speed: 1.0,
+        crop: None,
+        caption: Some("Most stats load from the figure when you loaded it."),
+    }
+}
+
+/// `join_qr` — the "INVITE A PLAYER" join code.
+fn beat_join_qr() -> Beat {
+    Beat {
+        name: "join_qr",
+        drive: |c| Box::pin(show_join_qr(c)),
+        requires_ipc: false,
+        realtime_head: Duration::from_secs(1),
+        realtime_tail: Duration::from_secs(1),
+        filler_speed: 1.0,
+        crop: None,
+        caption: Some("Hand off the game — show the join code, a second phone hops IN."),
+    }
+}
+
+/// `konami_admin` — the Konami-gated grown-up menu (re-locks → runs last).
+fn beat_konami_admin() -> Beat {
+    Beat {
+        name: "konami_admin",
+        drive: |c| Box::pin(konami_admin(c)),
+        requires_ipc: false,
+        realtime_head: Duration::from_secs(1),
+        realtime_tail: Duration::from_secs(1),
+        filler_speed: 1.0,
+        crop: None,
+        caption: Some("Admin menu, requires some knowledge of gaming."),
     }
 }
 
@@ -671,6 +1096,7 @@ pub fn narratives() -> Result<Vec<Narrative>> {
             name: "ingame",
             flavor: ServerFlavor::IpcCold,
             beats: vec![
+                beat_title(),
                 beat_connect(),
                 beat_pick_profile(),
                 beat_pick_game_ipc_cold(),
@@ -695,6 +1121,34 @@ pub fn narratives() -> Result<Vec<Narrative>> {
                 beat_open_toybox(),
                 beat_place_figure_ipc(),
                 beat_see_in_game(),
+                beat_kaos(),
+            ],
+        },
+        // `walkthrough` / "the Tour" (A.8.1) — the comprehensive feature walk,
+        // IpcCold (real RPCS3); reuses the `ingame` spine + Tour-only beats.
+        // STAGE 1 (Alice-only); ownership/takeover + install + farewell land in
+        // A.8.2 with the headless-Bob wiring. Order constraints (validated live):
+        // konami_admin's gate only routes from the LOCKED picker → it runs after
+        // create_profile, before pick_profile (grouped with profile mgmt); kaos
+        // needs a figure on the portal → it's the closer, no `remove` before it.
+        Narrative {
+            name: "walkthrough",
+            flavor: ServerFlavor::IpcCold,
+            beats: vec![
+                beat_title(),
+                beat_connect(),
+                beat_create_profile(),
+                beat_konami_admin(),
+                beat_pick_profile(),
+                beat_pick_game_ipc_cold(),
+                beat_open_toybox_tour(),
+                beat_filters(),
+                beat_search(),
+                beat_appearance_swap(),
+                beat_place_figure_ipc(),
+                beat_see_in_game(),
+                beat_pick_figure_stats(),
+                beat_join_qr(),
                 beat_kaos(),
             ],
         },
@@ -784,7 +1238,16 @@ mod tests {
     fn registry_builds_and_validates() {
         let narrs = narratives().expect("registry should build + validate");
         let names: Vec<_> = narrs.iter().map(|n| n.name).collect();
-        assert_eq!(names, vec!["portal", "place", "ingame", "ingame-savestate"]);
+        assert_eq!(
+            names,
+            vec![
+                "portal",
+                "place",
+                "ingame",
+                "ingame-savestate",
+                "walkthrough"
+            ]
+        );
     }
 
     /// Fix 1: the Mock `portal`/`place` narratives include the `reach_portal`
