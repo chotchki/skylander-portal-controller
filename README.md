@@ -4,7 +4,7 @@ My kids love Skylanders, but the save data (your levels, gold and Imaginators) l
 
 It boots from Steam Big Picture and puts a QR code on the TV. Phones scan in and SHARE one portal — either kid can touch any slot (co-op, free-for-all), a colour dot per slot showing whose figure is whose.
 
-Higher-level pitch: <https://chotchki.github.io/skylander-portal-controller/>. The source-of-truth docs are in the repo: `SPEC.md` (the long-form spec + every decision's Q&A), `PLAN.md` (the execution checklist) and `CLAUDE.md` (the compact working reference). Research writeups under `docs/research/`.
+Higher-level pitch + the demo videos: <https://hotchkiss.io/pages/projects/skylander-portal-controller>. The source-of-truth docs are in the repo: `SPEC.md` (the long-form spec + every decision's Q&A), `PLAN.md` (the execution checklist) and `CLAUDE.md` (the compact working reference). Research writeups under `docs/research/`.
 
 Latest version + the full changelog: the [Releases page](https://github.com/chotchki/skylander-portal-controller/releases) (that's what it's FOR).
 

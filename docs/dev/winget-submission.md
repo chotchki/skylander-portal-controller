@@ -144,7 +144,7 @@ below:
 | PublisherSupportUrl     | `https://github.com/chotchki/skylander-portal-controller/issues`      |
 | PackageUrl              | `https://github.com/chotchki/skylander-portal-controller`             |
 | ReleaseNotesUrl         | `https://github.com/chotchki/skylander-portal-controller/releases/tag/v1.5.1` |
-| Homepage                | `https://chotchki.github.io/skylander-portal-controller/`             |
+| Homepage                | `https://hotchkiss.io/pages/projects/skylander-portal-controller`     |
 | Submit to GitHub now?   | **No** — local-test first.                                            |
 
 It writes three YAMLs to a path like

@@ -1,8 +1,4 @@
----
-layout: page
-title: Setup and requirements
-permalink: /setup/
----
+# Setup and requirements
 
 This project intentionally ships as a thin wrapper. It does not bundle the emulator, the games, or the Skylanders firmware. Users bring their own.
 
@@ -49,7 +45,7 @@ Releases ship on [GitHub Releases](https://github.com/chotchki/skylander-portal-
 
 ### Mac install notes
 
-`tar.gz` extracts to a single binary. The first time you run it, macOS Gatekeeper will refuse to launch the binary because it isn't code-signed. **Right-click the binary in Finder, choose "Open", then click "Open" in the dialog.** That records an exception so subsequent launches work normally. (Code signing + notarization is post-MVP — see the [roadmap]({{ '/roadmap/' | relative_url }}).)
+`tar.gz` extracts to a single binary. The first time you run it, macOS Gatekeeper will refuse to launch the binary because it isn't code-signed. **Right-click the binary in Finder, choose "Open", then click "Open" in the dialog.** That records an exception so subsequent launches work normally. (Code signing + notarization is post-MVP — see the [roadmap](roadmap.md).)
 
 The Mac binary skips the first-launch wizard entirely. On first run it writes a sensible `config.json` to `~/Library/Application Support/skylander-portal-controller/` (mock driver, no RPCS3 path, no firmware pack required) and goes straight to serving the QR. If you want to point it at a `.sky` firmware pack later, edit the `firmware_pack_root` field in that file and restart. SQLite db, logs, and working-copy `.sky` files all live under the same per-user directory.
 
@@ -68,7 +64,8 @@ cargo run
 
 Needs: Rust toolchain with the `wasm32-unknown-unknown` target, [`trunk`](https://trunkrs.dev/), Windows 11 for the UI-Automation driver. See the repo [README](https://github.com/chotchki/skylander-portal-controller#running-in-dev) for the full dev setup.
 
-{% comment %}
+<!--
 TODO: screenshots of the first-launch config flow and the Steam
 Big Picture launch target.
-{% endcomment %}
+-->
+

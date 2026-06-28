@@ -1,8 +1,4 @@
----
-layout: page
-title: About
-permalink: /about/
----
+# About
 
 A solo project by Chris Hotchkiss, built for his kids.
 
