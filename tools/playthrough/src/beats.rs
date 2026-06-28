@@ -789,24 +789,31 @@ async fn reveal_portal(phone: &Phone) {
         .ok();
 }
 
-/// `remove` — take a figure back OFF the portal. The portal slots are only
-/// reliably interactable when the toy-box lid is CLOSED ("the portal grid owns
-/// the viewport"); the robust way to close it mid-flow is to PLACE a figure —
-/// the detail's `on_placed` closes the lid (browser.rs). So `remove` places a
-/// throwaway (which also self-bootstraps a standalone run + never touches slot 1
-/// / Bob's ownership slot), then arms + removes the highest LOADED slot — both
-/// via `js_click`, since a WebDriver `.click()` on the REMOVE bar hit "element
-/// not interactable" mid-animation (A.8.7).
-async fn remove_figure(ctx: &BeatCtx<'_>) -> Result<()> {
-    let phone = ctx.phone;
-    // Reveal the portal: PLACE a throwaway and do NOT tap BACK TO BOX. Only the
-    // PLACE's on_placed closes the lid (figure_detail.rs fires it on post_load
-    // success; BACK TO BOX's on_close deliberately leaves the lid OPEN — that's
-    // why place_one/place_figure_ipc leave the toy box covering the portal).
-    // With the lid CLOSED the portal grid owns the viewport, so the slot + its
-    // REMOVE bar are on-screen + interactable.
+/// Clear the toy-box search input (if mounted) so the collection isn't still
+/// filtered from an earlier beat. A stale query (`search` types "spyro" and
+/// never clears it) can hide every placeable card, which is exactly what
+/// silently broke the old `remove` throwaway-place trick under IpcCold. No-op
+/// when the input isn't on screen.
+async fn clear_search(phone: &Phone) {
+    phone
+        .client
+        .execute(
+            "const i=document.querySelector('.search-input-p4');\
+             if(i){i.value='';i.dispatchEvent(new Event('input',{bubbles:true}));}return true;",
+            vec![],
+        )
+        .await
+        .ok();
+}
+
+/// Standalone-run bootstrap: put ONE figure on the portal so `remove` has a
+/// target when no narrative placed one first. Clears the filter (so a card is
+/// pickable), places the first available, then closes the lid.
+async fn bootstrap_one_on_portal(phone: &Phone) -> Result<()> {
     phone.open_toy_box_lid().await.ok();
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    clear_search(phone).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
     if phone
         .js_click(".fig-card-p4:not(.scan-new):not(.on-portal)")
         .await
@@ -819,16 +826,33 @@ async fn remove_figure(ctx: &BeatCtx<'_>) -> Result<()> {
         tokio::time::sleep(Duration::from_millis(300)).await;
         phone.js_click(".detail-btn-primary").await.ok(); // PLACE → on_placed closes lid
     }
-    // Wait for the lid to close (portal owns the viewport). Best-effort: under
-    // the mock driver a 3rd placement has no injected outcome so on_placed may
-    // not fire — the removal below still works via js_click, just off-screen.
-    phone
-        .wait_for(Locator::Css(".lid-open-p4.closed"), Duration::from_secs(6))
-        .await
-        .ok();
-    tokio::time::sleep(Duration::from_millis(800)).await;
+    phone.close_toy_box_lid().await.ok();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    Ok(())
+}
+
+/// `remove` — take a figure back OFF the portal. The portal slots only read +
+/// arm reliably when the toy-box lid is CLOSED ("the portal grid owns the
+/// viewport"). Reveal it by CLOSING the lid via the grabber
+/// ([`Phone::close_toy_box_lid`]) — place-independent, unlike the old
+/// throwaway-place trick, which a stale search filter could no-op (the card
+/// selector matched nothing, the lid stayed open, and the removal ran off-screen
+/// against the hidden DOM — A.8.7 redo). Then arm + remove the highest LOADED
+/// slot via `js_click` (a WebDriver `.click()` on the REMOVE bar hit "element
+/// not interactable" mid-animation), holding the armed bar + the emptied slot
+/// on-screen so the gesture reads on the clip.
+async fn remove_figure(ctx: &BeatCtx<'_>) -> Result<()> {
+    let phone = ctx.phone;
+    phone.close_toy_box_lid().await.ok();
+    tokio::time::sleep(Duration::from_millis(600)).await;
     reveal_portal(phone).await;
-    let loaded = loaded_slot_indices(phone).await?;
+    let mut loaded = loaded_slot_indices(phone).await?;
+    if loaded.is_empty() {
+        // Nothing on the portal (standalone single-beat run) — bootstrap one.
+        bootstrap_one_on_portal(phone).await.ok();
+        reveal_portal(phone).await;
+        loaded = loaded_slot_indices(phone).await?;
+    }
     let Some(&target) = loaded.first() else {
         tracing::warn!("remove: no loaded slot to remove — skipping");
         return Ok(());
@@ -852,7 +876,7 @@ async fn remove_figure(ctx: &BeatCtx<'_>) -> Result<()> {
         )
         .await
         .ok();
-    tokio::time::sleep(Duration::from_millis(600)).await; // let the REMOVE bar read
+    tokio::time::sleep(Duration::from_millis(1300)).await; // hold the armed REMOVE bar on-screen
     phone
         .client
         .execute(
@@ -865,7 +889,7 @@ async fn remove_figure(ctx: &BeatCtx<'_>) -> Result<()> {
     let _ = phone
         .wait_for_slot_empty(target, Duration::from_secs(6))
         .await;
-    tokio::time::sleep(Duration::from_millis(900)).await;
+    tokio::time::sleep(Duration::from_millis(1000)).await; // show the now-empty slot
     tracing::info!(slot = target, "remove: figure taken off the portal");
     Ok(())
 }
@@ -919,9 +943,13 @@ async fn ownership(ctx: &BeatCtx<'_>) -> Result<()> {
             tracing::warn!(error = %e, "ownership: headless Bob phone failed to open — skipping")
         }
     }
-    // Bring the portal into view on the CAPTURED phone + hold so both pips read.
+    // Reveal the portal on the CAPTURED phone (CLOSE the lid — earlier beats
+    // leave it open, and the grid only owns the viewport when closed) + hold so
+    // BOTH ownership pips read.
+    phone.close_toy_box_lid().await.ok();
+    tokio::time::sleep(Duration::from_millis(500)).await;
     reveal_portal(phone).await;
-    tokio::time::sleep(Duration::from_millis(2200)).await;
+    tokio::time::sleep(Duration::from_millis(2400)).await;
     Ok(())
 }
 

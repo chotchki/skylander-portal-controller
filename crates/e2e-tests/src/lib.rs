@@ -1311,6 +1311,44 @@ impl Phone {
         Ok(())
     }
 
+    /// Tap the lid grabber until the toy box is CLOSED — the portal grid then
+    /// owns the viewport. Inverse of [`Phone::open_toy_box_lid`], and the only
+    /// place-independent way to REVEAL the portal: otherwise the lid only
+    /// closes on a successful place's `on_placed` (browser.rs), which a remove /
+    /// ownership beat can't rely on. `apply_tap` cycles Closed → Compact →
+    /// Expanded → Closed, so the close takes one tap from Expanded and two from
+    /// Compact — loop + recheck rather than assume the entry state. Idempotent:
+    /// already-closed is a no-op.
+    pub async fn close_toy_box_lid(&self) -> Result<()> {
+        for _ in 0..4 {
+            if self
+                .client
+                .find(Locator::Css(".lid-open-p4.closed"))
+                .await
+                .is_ok()
+            {
+                return Ok(());
+            }
+            if let Ok(grabber) = self
+                .wait_for(Locator::Css(".lid-grabber-p4"), Duration::from_secs(2))
+                .await
+            {
+                grabber.click().await.ok();
+            }
+            tokio::time::sleep(Duration::from_millis(350)).await;
+        }
+        if self
+            .client
+            .find(Locator::Css(".lid-open-p4.closed"))
+            .await
+            .is_ok()
+        {
+            Ok(())
+        } else {
+            bail!("toy-box lid never reached the closed state after 4 grabber taps")
+        }
+    }
+
     /// Surface the search input so [`Phone::search`] can type into it.
     /// Two-step: open the lid (if not already open), then click
     /// `.search-toggle-p4` if `.search-input-p4` isn't already
