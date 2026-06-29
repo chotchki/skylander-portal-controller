@@ -40,12 +40,13 @@ throughout (`release.yml` Windows job + `config.rs::migrate_install_paths`).
 - [x] U.5 - Flip the mac default mock → ipc + wire the mac game-launch.
   - [x] U.5.1 - `config.rs`: on macOS derive the bundled rpcs3 path + force `DriverKind::Ipc` via `migrate_install_paths_macos` — an `.exists()` gate → Mock fallback until U.3 bundles the binary, so SAFE to land early (no flag day). **Auto-promote existing mock configs to IPC** (chotchki: mock = dev / software-GL winget fallback only; `SKYLANDER_PORTAL_DRIVER=mock` is the demo escape). Needs `#[allow(dead_code)]` on the 4 new helpers (pre-push clippy gate).
   - [x] U.5.2 - **Already wired** — `BootDirect` discriminates by the `driver.ipc_socket_path()` capability probe (not `DriverKind`), and the IPC spawn (`launch_no_gui` → `UnixRpcsProcess`) + `is_playable()` poll is already cross-platform. Clarifying comment + `debug_assert` added (U.1). Goes live once U.5.1 makes the mac driver IPC.
-  - [ ] U.5.3 - `release.yml` mac build features: comment-only — IPC is NOT feature-gated (`IpcPortalDriver`/`UnixRpcsProcess` compile unconditionally), so the current `--features sky-stats,mock-driver-runtime` already includes the IPC runtime; `mock-driver-runtime` stays the fallback.
+  - [x] U.5.3 - `release.yml` mac build features: comment-only — IPC is NOT feature-gated (`IpcPortalDriver`/`UnixRpcsProcess` compile unconditionally), so the current `--features sky-stats,mock-driver-runtime` already includes the IPC runtime; `mock-driver-runtime` stays the fallback.
   - [x] U.5.4 - Fix the macOS `data_root` clobber (figure portraits + box-art BROKEN on the CURRENT signed mac release): `config.rs` hard-coded `<exe_parent>/data` = `Contents/MacOS/data` (nonexistent) while assets ship in `Contents/Resources/data`. Routed through new `paths::app_data_root()`. Independent of the emulator — shipped in the U.1 batch. (Flagged by two draft-verifiers.)
 - [x] U.6 - macOS first-launch wizard: prompt for the user's existing RPCS3 data dir (`config_dir` = firmware + `games.yml`) like Windows; the control binary is the bundled patched rpcs3. Remove the macOS wizard short-circuit (`config.rs`).
 - [ ] U.7 - End-to-end on a clean Mac (chotchki, real hardware): install the signed/notarized .dmg, run the wizard (point at firmware/games), launch Giants → the bundled emulator boots + composites into the launcher (P8 surface). No Gatekeeper wall.
 - [ ] U.8 - Docs: CLAUDE.md "macOS support"/"Distribution" (mac ships the patched RPCS3, ipc default — drop the mock-only caveat); `release-signing.md` nested-app note; `docs/dev/macos-rpcs3-build.md` (CI lane); bank the mac-signing + nested-app gotchas to memory.
 
+- [x] U.9 - U.9 - games.yml relative paths anchor to config-dir (portable bundle)
 ## Phase T - RPCS3 pin bump (927e2492e → 09d602fd5; drop SPU patches → clean P1–P8)
 
 Unblocks the Windows side of the v1.9.13 signed release (was R.3). New pin = latest master

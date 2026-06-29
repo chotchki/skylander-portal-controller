@@ -10,13 +10,17 @@ name: Release
 # push a throwaway v0.0.0-dryrun tag or loosen the rule first
 # (docs/dev/release-signing.md → "Dry-run via workflow_dispatch").
 #
-# Per-platform notes:
-#   - Windows = production target with the UIA driver against real
-#     RPCS3 (PLAN Phase 7).
-#   - macOS = production target with the mock driver only (PLAN
-#     10.6); no AXUIElement-based driver port. Useful for demo,
-#     family-member play, dev iteration, and the iOS-Simulator e2e
-#     harness, but doesn't talk to a real RPCS3.
+# Per-platform notes — both are production targets driving our *bundled
+# patched* RPCS3 over AF_UNIX IPC (Phase 16 + Phase U). Each release bundles
+# the patched binary; firmware + games still come from the user's own install.
+#   - Windows = bundles the patched RPCS3 at <app>/rpcs3/rpcs3.exe (pulled from
+#     the rpcs3-patched-<pin> prerelease below). The legacy UIA driver survives
+#     only as a stock-RPCS3 fallback (SKYLANDER_PORTAL_DRIVER=uia).
+#   - macOS = bundles the patched RPCS3 nested in the SIGNED .app
+#     (Contents/Resources/rpcs3/RPCS3.app) and defaults to IPC (Phase U, shipped
+#     v1.9.19+). SKYLANDER_PORTAL_DRIVER=mock is the explicit demo-mode override
+#     (in-memory portal; no firmware/games) — still handy for demo, family-member
+#     play, and the iOS-Simulator e2e harness.
 #
 # CI (`ci.yml`) covers PRs + main pushes — clippy/build/test cycle.
 # This workflow assumes that's already green for the tagged commit;
