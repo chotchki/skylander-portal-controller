@@ -36,6 +36,15 @@ on:
         description: 'Also run the full patched RPCS3 build (Windows + macOS) — slow (~1h), opt-in'
         type: boolean
         default: false
+      targets:
+        # A pin bump that only breaks ONE leg (a stale dependency pin, a patch that
+        # fails to apply under Windows autocrlf) used to cost a full macOS hour to
+        # retry, for a rebuild of a leg that already passed. macOS minutes are the
+        # scarce budget here (docs/dev/ci.md), so let a retry say which leg it needs.
+        description: 'Which leg of the full build to run'
+        type: choice
+        options: [both, windows, macos]
+        default: both
 
 concurrency:
   group: rpcs3-patched-${{ github.ref }}
@@ -88,7 +97,7 @@ jobs:
   # ---------------------------------------------------------------------------
   build-windows:
     name: patched RPCS3 (Windows)
-    if: github.event_name == 'workflow_dispatch' && inputs.full_build
+    if: github.event_name == 'workflow_dispatch' && inputs.full_build && (inputs.targets == 'both' || inputs.targets == 'windows')
     runs-on: windows-2025   # upstream uses windows-2025-vs2026; adjust if the v143/msvc2022 toolset mismatches Qt
     permissions:
       contents: write   # publish the trimmed bin/ as the rpcs3-patched-<pin> prerelease
@@ -98,10 +107,15 @@ jobs:
     env:
       COMPILER: msvc
       QT_VER_MAIN: '6'
-      QT_VER: '6.11.1'
+      # These mirror upstream's Windows_Build env at the PINNED commit — they pick
+      # the prebuilt Qt / LLVM / Vulkan drops .ci/setup-windows.sh fetches, so they
+      # must move with the pin. The guard step below fails the job in seconds if
+      # they drift. (2026-09-20: 19.1.7 vs the pin's 22.1.8 cost a ~30min build,
+      # dying in JITLLVM.cpp on a setTargetTriple overload that only exists in 22.)
+      QT_VER: '6.11.2'
       QT_VER_MSVC: 'msvc2022'
-      QT_DATE: '202605090529'
-      LLVM_VER: '19.1.7'
+      QT_DATE: '202608131017'
+      LLVM_VER: '22.1.8'
       VULKAN_VER: '1.4.341.1'
       VULKAN_SDK_SHA: 'bcf2d75aa9556889ab974858666e20b3655b6055a0db704ccb47279ff33b5bfe'
       CCACHE_SHA: '859141059ac950e1e8cd042c66f842f26b9e3a62a1669a69fe6ba180cb58bbdf'
@@ -119,6 +133,37 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Guard - dependency pins match upstream at this pin
+        working-directory: vendor/rpcs3
+        run: |
+          set -euo pipefail
+          # Upstream's Windows_Build env block is the source of truth for which
+          # prebuilt Qt / LLVM / Vulkan / ccache drops `.ci/setup-windows.sh`
+          # pulls. We keep a hardcoded COPY above (readable, and lets us diverge
+          # deliberately if an upstream drop is broken) — and a copy ROTS on a pin
+          # bump. Silently, until the compiler disagrees half an hour in. Compare
+          # in seconds instead.
+          up=$(awk '/^  Windows_Build:/{f=1} f&&/^    env:/{e=1;next} e&&/^    [^ ]/{exit} e' \
+                 .github/workflows/rpcs3.yml)
+          fail=0
+          for var in QT_VER QT_VER_MSVC QT_DATE LLVM_VER VULKAN_VER VULKAN_SDK_SHA CCACHE_SHA; do
+            want=$(sed -n "s/^ *$var: *['\"]\{0,1\}\([^'\"]*\)['\"]\{0,1\}[[:space:]]*$/\1/p" <<<"$up" | head -1)
+            have=${!var}
+            if [ -z "$want" ]; then
+              echo "::warning::could not read $var from upstream's workflow — parser may need updating"
+              continue
+            fi
+            if [ "$want" != "$have" ]; then
+              echo "::error::$var drifted: ours='$have', upstream at this pin='$want'"
+              fail=1
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "Update the build-windows env block in .github/workflows/rpcs3-patched.yml."
+            exit 1
+          fi
+          echo "dependency pins match upstream at this pin"
 
       - name: Apply patch series
         run: bash rpcs3-patches/apply.sh
@@ -223,7 +268,7 @@ jobs:
   # ---------------------------------------------------------------------------
   build-macos:
     name: patched RPCS3 (macOS, Apple Silicon)
-    if: github.event_name == 'workflow_dispatch' && inputs.full_build
+    if: github.event_name == 'workflow_dispatch' && inputs.full_build && (inputs.targets == 'both' || inputs.targets == 'macos')
     runs-on: macos-15   # arm64; matches release.yml + avoids the macos-14 VirtualApple fatal-error check
     permissions:
       contents: write    # publish the .app tarball to the rpcs3-patched-<pin> prerelease

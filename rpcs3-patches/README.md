@@ -154,6 +154,15 @@ git add rpcs3-patches/
 #    update the pin in: this file, docs/research/rpcs3-integration-strategy.md,
 #    docs/dev/rpcs3-fork-htpc-bringup.md, the TWO hardcoded `rpcs3-patched-<pin>`
 #    download tags in .github/workflows/release.yml, and the memory note.
+#
+# 3b. Sync the Windows build's DEPENDENCY pins. `rpcs3-patched.yml`'s build-windows
+#    env block (QT_VER / QT_DATE / LLVM_VER / VULKAN_* / CCACHE_SHA) is a hardcoded
+#    copy of upstream's Windows_Build env, and it picks which prebuilt drops
+#    `.ci/setup-windows.sh` fetches. It rots on every bump that moves them:
+#      git show "$NEW":.github/workflows/rpcs3.yml | sed -n '/^  Windows_Build:/,/steps:/p'
+#    A guard step in that job now diffs the two and fails in seconds, so you will be
+#    told rather than finding out half an hour into a compile — but updating them
+#    here first saves the round trip.
 
 # 4. Rebuild + smoke-test (tools/rpcs3-ipc/) before committing the bump.
 ```
