@@ -150,17 +150,23 @@ pub struct LauncherApp {
     /// another app's window via Win32, so the Desktop-mode game-window fit is
     /// dispatched as a `DriverJob::WindowSet` that the worker routes over the IPC
     /// P7 command. `update()` is sync, so we `try_send` (never `.await`).
+    // Windows never reads this: the only consumers are the `cfg(not(windows))`
+    // game-window fit and the macOS `cfg(target_os = "macos")` compositor path.
+    // Held on every platform anyway so the struct shape stays uniform.
+    #[cfg_attr(windows, allow(dead_code))]
     driver_tx: tokio::sync::mpsc::Sender<crate::state::DriverJob>,
     /// Last game-window rect (screen coords) we sent over IPC, to suppress
     /// per-frame `WindowSet` spam — only re-send when the launcher's content rect
     /// actually changes. `None` until the first fit. macOS-only path (the Win32
     /// fit on Windows re-applies every frame and tracks its own state).
+    #[cfg_attr(windows, allow(dead_code))]
     last_window_set: Option<(i32, i32, u32, u32)>,
     /// Wall-clock (egui `input.time`, seconds) of the last `WindowSet` send. Drives
     /// a low-rate re-assert (≥0.5s) on top of the change-detection above: RPCS3
     /// resizes its own window during boot, and a stale `last_window_set` would
     /// otherwise leave the game stranded outside the launcher pane until the next
     /// genuine launcher-rect change. macOS-only path. `None` until the first send.
+    #[cfg_attr(windows, allow(dead_code))]
     last_window_set_at: Option<f64>,
     /// macOS surface-embed host (P8 / Phase C). When the driver publishes the
     /// game's surface (`status.game_surface` — `CAContextID` + native size), the
@@ -168,6 +174,7 @@ pub struct LauncherApp {
     /// — compositing the game behind egui's chrome — rather than tiling a
     /// second top-level window beneath itself (the `WindowSet` fallback). A
     /// no-op stub on non-macOS targets, so this field exists on every platform.
+    #[cfg_attr(windows, allow(dead_code))]
     compositor: crate::compositor::CompositorHost,
 }
 
@@ -630,7 +637,7 @@ impl eframe::App for LauncherApp {
         // frame. `mut` + `allow(unused)` because the only writer is the
         // macOS-gated branch — on Windows / non-macOS it stays false and is read
         // by the punch-through gate.
-        #[allow(unused_mut, unused_assignments)]
+        #[allow(unused_mut, unused_assignments, unused_variables)]
         let mut surface_embedded = false;
 
         // Always-on-top toggle. Release: always on. Dev: only while

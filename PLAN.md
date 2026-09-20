@@ -62,9 +62,12 @@ almost nil (1 commit on `Skylander.cpp`, 5 on `gs_frame.cpp`, 3 on `sys_usbd.cpp
 - [x] V.4 - Re-check `rpcs3-patched.yml`'s apply-clean allowlist against the regenerated P1-P8 file set - unchanged, the 12-file set is identical
 - [x] V.5 - Local compile proof: `.ci-local/build-mac.sh` builds the patched tree at the new pin - green (`rpcs3 --version` -> `0.0.42-local_build`, `surface_publish.mm.o` + the P1 IPC log strings present in the binary). Needed two script fixes along the way: the "already patched?" probe looked back 4 commits against an 8-patch series, and `apply.sh`'s normalization commit used `git commit -a`, which swept dirty `3rdparty/*` gitlinks into the base and blew up 1500 targets later on a stale Fusion API.
 - [x] V.6 - Rust-side wire-contract guard green (`cargo test -p skylander-rpcs3-control` + workspace) - 25 unit + 12 loopback, full workspace 0 failures. Also cleared 4 PRE-EXISTING clippy errors from toolchain drift (rust 1.98: `chunks_exact_to_as_chunks` x2, `f32: From<f64>` fallback x3) that were blocking the pre-push gate - unrelated to the bump.
-- [ ] V.7 - Commit the bump + trigger the gated `rpcs3-patched.yml` full build -> `rpcs3-patched-accfecd2d` (Windows + macOS artifacts)
+- [ ] V.7 - Publish the patched binaries at the new pin
+  - [x] V.7.1 - Commit + push the bump; `rpcs3-patched.yml`'s always-on apply-clean lane GREEN on `28b0bc7` (the full-build jobs correctly skipped - they are dispatch-gated)
+  - [~] V.7.2 - Trigger the gated full build (`gh workflow run rpcs3-patched.yml -f full_build=true`, ~1h) - FIRED, run `35536851380` -> publishes the `rpcs3-patched-accfecd2d` prerelease with the Windows zip + macOS arm64 tarball. **BLOCKS the next release tag** - `release.yml`'s two download steps already point at that tag and will fail until it exists.
+- [x] V.10 - Fix the RED Windows CI lane (pre-existing, red on the two commits before this phase): rust-1.98 `unused_variables` on `surface_embedded` + `dead_code` on the four macOS-only `LauncherApp` fields (`driver_tx`, `last_window_set`, `last_window_set_at`, `compositor`). All four are read only from `cfg(not(windows))` / `cfg(target_os = "macos")` blocks, so they are genuinely dead on Windows - `cfg_attr(windows, allow(dead_code))` rather than deleting a field the Mac path needs.
 - [ ] V.8 - Live-validate on real hardware (chotchki): boot Giants on the new binary - IPC listener up, LOAD/CLEAR, P8 surface composite
-- [ ] V.9 - Update the pin in the memory note (`project_rpcs3_ipc_fork`)
+- [x] V.9 - Update the pin in the memory note (`project_rpcs3_ipc_fork`) + the two new pin-bump footguns in `feedback_rpcs3_patched_build_ci`
 
 ## Phase T - RPCS3 pin bump (927e2492e → 09d602fd5; drop SPU patches → clean P1–P8)
 
