@@ -22,6 +22,11 @@ rpcs3-patches/
 ```
 (The two local SPU-LLVM Giga crash fixes that used to sit between P3 and P4 were merged upstream as RPCS3 #18935 and dropped on the 2026-06-24 pin bump to `09d602fd5` — the series is now a clean P1-P8.)
 
+Bump history for the curious: `c11979d` -> `09d602fd5` (109 commits) -> `accfecd2d`
+(**516 commits**, 2026-09-20). That last one is the widest window we have replayed and
+only two hunks needed hands — a neighbour-function collision in `sys_usbd` and one
+call-site signature change in P1. The seams are holding.
+
 The submodule **always points at a pristine upstream commit** — it is never
 modified in place. The patches live here, in our repo, where the diff is
 reviewable. They apply in filename order; **0002 (P2) depends on 0001 (P1)**
@@ -92,8 +97,8 @@ What each does:
 | | |
 |---|---|
 | Submodule | `vendor/rpcs3` → `https://github.com/RPCS3/rpcs3.git` |
-| Pinned commit | `09d602fd5a15d1ca92c9ab9927322d0b185eb45b` (master, 2026-06-24, `v0.0.41`) |
-| Patches generated against | that same commit |
+| Pinned commit | `accfecd2d13ec634e96d0edf97777e657f2d9359` (master, 2026-09-20, `v0.0.42-353`) |
+| Patches generated against | that commit **plus the CRLF->LF normalization `apply.sh` applies** (see below) |
 
 Pin is by **commit**, not branch — `.gitmodules` has no `branch =`, so
 `git submodule update` never silently moves it. Latest-master was chosen for
@@ -124,21 +129,31 @@ cd vendor/rpcs3
 git fetch origin
 NEW=<new-commit-sha>
 
-# 1. Try to replay the series onto the new base.
+# 1. Try to replay the series onto the new base. Use apply.sh, NOT a bare `git am` —
+#    it lays down the CRLF->LF normalization commit the series is generated against
+#    (see "The CRLF base commit" below). A bare `git am` fails on P8.
 git checkout "$NEW"
-git am --3way ../../rpcs3-patches/0*.patch
+../../rpcs3-patches/apply.sh .
 #    └─ clean? great. Conflicts? resolve each hunk, `git add`, `git am --continue`.
 #       (The seams rarely churn; expect this to be free or near-free.)
 
-# 2. Re-export the (possibly conflict-resolved) series back into the repo.
+# 2. Re-export the (possibly conflict-resolved) series back into the repo. Export
+#    from the NORMALIZATION commit (HEAD~8 after a clean apply), not from $NEW —
+#    exporting from $NEW would emit the normalization as a 9th patch.
+BASE=$(git rev-parse HEAD~8)
 rm ../../rpcs3-patches/0*.patch
-git format-patch "$NEW" -o ../../rpcs3-patches/
+git format-patch "$BASE" -o ../../rpcs3-patches/
 
-# 3. Record the new pin: move the submodule gitlink + update the docs.
+# 3. Record the new pin: move the submodule gitlink + update the docs. Stage the
+#    gitlink EXPLICITLY — a plain `git add vendor/rpcs3` records whatever the
+#    submodule worktree is sitting on, which after step 1 is the PATCHED tip. That
+#    breaks the pristine-pin invariant (and CI, which reads the pin from the gitlink).
 cd ../..
-git add vendor/rpcs3 rpcs3-patches/
+git update-index --cacheinfo 160000,"$NEW",vendor/rpcs3
+git add rpcs3-patches/
 #    update the pin in: this file, docs/research/rpcs3-integration-strategy.md,
-#    docs/dev/rpcs3-fork-htpc-bringup.md, and the memory note.
+#    docs/dev/rpcs3-fork-htpc-bringup.md, the TWO hardcoded `rpcs3-patched-<pin>`
+#    download tags in .github/workflows/release.yml, and the memory note.
 
 # 4. Rebuild + smoke-test (tools/rpcs3-ipc/) before committing the bump.
 ```
@@ -147,6 +162,27 @@ CI verifies step 1 (apply-clean) on every change to this directory or the pin �
 see `.github/workflows/rpcs3-patched.yml`. That lane is the guard against silent
 patch-rot when the pin moves; the full patched build (Windows + macOS) is a
 manual, gated lane in the same workflow.
+
+### The CRLF base commit
+
+One upstream file in the series set — `rpcs3/Emu/RSX/VK/vkutils/swapchain_macos.hpp` —
+is stored CRLF. `git am` strips CR from a patch body before applying (that is
+`--no-keep-cr`, the default), so a CRLF source file can never match an LF patch
+context and P8 fails with "patch does not apply" on a pristine checkout. `apply.sh`
+fixes this the only way that is stable across Windows git-bash and Unix: it normalizes
+BOTH sides to LF unconditionally, landing the source normalization in one commit
+*below* the eight patch commits. LF compiles identically, and CI's
+`HEAD~<#patches>` expected-files check is unaffected because the normalization sits
+under that window.
+
+The corollary, and the thing to remember when re-exporting: **the series is generated
+against that normalization commit, not against the bare pin.** `git format-patch $PIN`
+would emit nine patches. Use `HEAD~8`.
+
+(Before the 2026-09-20 bump the committed patch files still carried CRLF themselves,
+so every local `apply.sh` run rewrote them in place and left `rpcs3-patches/` dirty.
+They are now pure LF — byte-identical to what `git am` actually consumes, so that
+normalization step is a true no-op.)
 
 ## Tests
 

@@ -1,4 +1,4 @@
-From 3fda4de7f0efba72350a629236d493d41993f790 Mon Sep 17 00:00:00 2001
+From a0041a69b5b208ae212d6b944f1f62a25413adab Mon Sep 17 00:00:00 2001
 From: Christopher Hotchkiss <chris@hotchkiss.io>
 Date: Sat, 30 May 2026 18:22:37 -0700
 Subject: [PATCH 3/8] P3: return ENETUNREACH (not EADDRNOTAVAIL) for offline
@@ -36,7 +36,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
  1 file changed, 10 insertions(+), 1 deletion(-)
 
 diff --git a/rpcs3/Emu/Cell/lv2/sys_net/lv2_socket_native.cpp b/rpcs3/Emu/Cell/lv2/sys_net/lv2_socket_native.cpp
-index b422db814..dbe0ac43b 100644
+index 8bfcda66a..ce80b1b14 100644
 --- a/rpcs3/Emu/Cell/lv2/sys_net/lv2_socket_native.cpp
 +++ b/rpcs3/Emu/Cell/lv2/sys_net/lv2_socket_native.cpp
 @@ -224,7 +224,16 @@ std::optional<s32> lv2_socket_native::connect(const sys_net_sockaddr& addr)
@@ -58,5 +58,5 @@ index b422db814..dbe0ac43b 100644
  
  	if (psa_in->sin_port == 53)
 -- 
-2.50.1 (Apple Git-155)
+2.54.0 (Apple Git-157)
 

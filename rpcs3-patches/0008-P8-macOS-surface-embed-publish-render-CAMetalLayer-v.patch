@@ -1,4 +1,4 @@
-From c302a468db7480c297cd5f93b98e462545bcd010 Mon Sep 17 00:00:00 2001
+From 77e775fc7993d1ae16ea6b9190993f499ba8d361 Mon Sep 17 00:00:00 2001
 From: Christopher Hotchkiss <christopher.hotchkiss@gmail.com>
 Date: Wed, 24 Jun 2026 18:48:13 -0700
 Subject: [PATCH 8/8] =?UTF-8?q?P8:=20macOS=20surface-embed=20=E2=80=94=20p?=
@@ -48,10 +48,10 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
  create mode 100644 rpcs3/Emu/RSX/VK/vkutils/surface_publish.mm
 
 diff --git a/rpcs3/Emu/CMakeLists.txt b/rpcs3/Emu/CMakeLists.txt
-index 045fa3076..9dfc64784 100644
+index 0428f0d98..bf18e7701 100644
 --- a/rpcs3/Emu/CMakeLists.txt
 +++ b/rpcs3/Emu/CMakeLists.txt
-@@ -655,6 +655,7 @@ if(TARGET 3rdparty_vulkan)
+@@ -674,6 +674,7 @@ if(TARGET 3rdparty_vulkan)
      if(APPLE)
          target_sources(rpcs3_emu PRIVATE
              RSX/VK/vkutils/metal_layer.mm
@@ -59,7 +59,7 @@ index 045fa3076..9dfc64784 100644
          )
      endif()
  endif()
-@@ -700,6 +701,12 @@ if(APPLE)
+@@ -719,6 +720,12 @@ if(APPLE)
      if (HAVE_CLOCK_GETTIME)
          target_compile_definitions(rpcs3_emu PUBLIC -DHAVE_CLOCK_GETTIME)
      endif()
@@ -73,7 +73,7 @@ index 045fa3076..9dfc64784 100644
  
  
 diff --git a/rpcs3/Emu/Io/Skylander.cpp b/rpcs3/Emu/Io/Skylander.cpp
-index a2bc260fd..2f8ed7180 100644
+index 1dbcd4e47..458f02c23 100644
 --- a/rpcs3/Emu/Io/Skylander.cpp
 +++ b/rpcs3/Emu/Io/Skylander.cpp
 @@ -50,6 +50,28 @@ std::atomic<unsigned long long> g_game_window_handle{0};
@@ -405,7 +405,7 @@ index 000000000..f980dfda8
 +}
 +#pragma GCC diagnostic pop
 diff --git a/rpcs3/Emu/RSX/VK/vkutils/swapchain_macos.hpp b/rpcs3/Emu/RSX/VK/vkutils/swapchain_macos.hpp
-index e4485324d..4f8f7395e 100644
+index 653b4ac41..9c99c96b5 100644
 --- a/rpcs3/Emu/RSX/VK/vkutils/swapchain_macos.hpp
 +++ b/rpcs3/Emu/RSX/VK/vkutils/swapchain_macos.hpp
 @@ -3,6 +3,11 @@
@@ -452,10 +452,10 @@ index e4485324d..4f8f7395e 100644
  		CHECK_RESULT(vkCreateMetalSurfaceEXT(vk_instance, &createInfo, NULL, &result));
  		return result;
 diff --git a/rpcs3/rpcs3qt/gs_frame.cpp b/rpcs3/rpcs3qt/gs_frame.cpp
-index 8506e4e89..ef4d6f216 100644
+index a926fc1cf..cadfb0bca 100644
 --- a/rpcs3/rpcs3qt/gs_frame.cpp
 +++ b/rpcs3/rpcs3qt/gs_frame.cpp
-@@ -760,6 +760,21 @@ void gs_frame::show()
+@@ -766,6 +766,21 @@ void gs_frame::show()
  {
  	Emu.CallFromMainThread([this]()
  	{
@@ -477,7 +477,7 @@ index 8506e4e89..ef4d6f216 100644
  		QWindow::show();
  
  		if (g_cfg.misc.start_fullscreen || m_start_games_fullscreen)
-@@ -840,6 +855,24 @@ void gs_frame::delete_context(draw_context_t context)
+@@ -846,6 +861,24 @@ void gs_frame::delete_context(draw_context_t context)
  
  int gs_frame::client_width()
  {
@@ -502,7 +502,7 @@ index 8506e4e89..ef4d6f216 100644
  #ifdef _WIN32
  	RECT rect;
  	if (GetClientRect(reinterpret_cast<HWND>(winId()), &rect))
-@@ -852,6 +885,12 @@ int gs_frame::client_width()
+@@ -858,6 +891,12 @@ int gs_frame::client_width()
  
  int gs_frame::client_height()
  {
@@ -516,5 +516,5 @@ index 8506e4e89..ef4d6f216 100644
  	RECT rect;
  	if (GetClientRect(reinterpret_cast<HWND>(winId()), &rect))
 -- 
-2.50.1 (Apple Git-155)
+2.54.0 (Apple Git-157)
 

@@ -1,4 +1,4 @@
-From c9e15de671d4d94a1798c7cc42b0535ca387ca83 Mon Sep 17 00:00:00 2001
+From 38873218f3768f2d8ec49c7df0ba14cf4573ac3e Mon Sep 17 00:00:00 2001
 From: Christopher Hotchkiss <christopher.hotchkiss@gmail.com>
 Date: Tue, 23 Jun 2026 14:16:47 -0800
 Subject: [PATCH 6/8] P6: drive gamepad buttons over the AF_UNIX IPC
@@ -16,7 +16,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
  3 files changed, 113 insertions(+)
 
 diff --git a/rpcs3/Emu/Io/Skylander.cpp b/rpcs3/Emu/Io/Skylander.cpp
-index 7b7456eb7..39f931a44 100644
+index 7fbfe00e9..69846c9c1 100644
 --- a/rpcs3/Emu/Io/Skylander.cpp
 +++ b/rpcs3/Emu/Io/Skylander.cpp
 @@ -18,6 +18,7 @@
@@ -127,10 +127,10 @@ index 7b7456eb7..39f931a44 100644
  		{
  			out = "ERR unknown_cmd\n";
 diff --git a/rpcs3/Emu/Io/pad_types.h b/rpcs3/Emu/Io/pad_types.h
-index 238e03ff1..c3068fd19 100644
+index b7f844a22..4599098e5 100644
 --- a/rpcs3/Emu/Io/pad_types.h
 +++ b/rpcs3/Emu/Io/pad_types.h
-@@ -539,6 +539,15 @@ struct Pad
+@@ -546,6 +546,15 @@ struct Pad
  	std::vector<ButtonExternal> m_buttons_external;
  	std::array<AnalogStickExternal, 4> m_sticks_external{};
  
@@ -176,5 +176,5 @@ index 6d9e4e939..5a63cc3e5 100644
  		{
  			continue;
 -- 
-2.50.1 (Apple Git-155)
+2.54.0 (Apple Git-157)
 

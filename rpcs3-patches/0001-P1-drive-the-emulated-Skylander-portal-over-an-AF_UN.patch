@@ -1,4 +1,4 @@
-From 17fec685c5ad87344170ad25999839b04b5d893e Mon Sep 17 00:00:00 2001
+From 418e9f9240dc7e1a0835c0a45ff289a82b923105 Mon Sep 17 00:00:00 2001
 From: Christopher Hotchkiss <chris@hotchkiss.io>
 Date: Fri, 29 May 2026 16:34:01 -0700
 Subject: [PATCH 1/8] P1: drive the emulated Skylander portal over an AF_UNIX
@@ -27,7 +27,7 @@ Shallow + additive; no new .cpp / no rpcs3.vcxproj entry. PLAN 16.1.2 / 16.3.x.
  2 files changed, 312 insertions(+)
 
 diff --git a/rpcs3/Emu/Io/Skylander.cpp b/rpcs3/Emu/Io/Skylander.cpp
-index 974e9a887..9f47b5f2d 100644
+index 9cb909edf..3c3852074 100644
 --- a/rpcs3/Emu/Io/Skylander.cpp
 +++ b/rpcs3/Emu/Io/Skylander.cpp
 @@ -1,11 +1,45 @@
@@ -76,7 +76,7 @@ index 974e9a887..9f47b5f2d 100644
  void skylander::save()
  {
  	if (!sky_file)
-@@ -191,6 +225,276 @@ u8 sky_portal::load_skylander(u8* buf, fs::file in_file)
+@@ -191,6 +225,276 @@ u8 sky_portal::load_skylander(const std::array<u8, 0x40 * 0x10>& data, fs::file
  	return found_slot;
  }
  
@@ -222,7 +222,7 @@ index 974e9a887..9f47b5f2d 100644
 +				out = "ERR read_failed\n";
 +				return;
 +			}
-+			const u8 slot = g_skyportal.load_skylander(data.data(), std::move(sky_file));
++			const u8 slot = g_skyportal.load_skylander(data, std::move(sky_file));
 +			out = "OK slot=" + std::to_string(slot) + "\n";
 +		}
 +		else if (cmd == "CLEAR")
@@ -364,12 +364,12 @@ index 974e9a887..9f47b5f2d 100644
  
  usb_device_skylander::~usb_device_skylander()
 diff --git a/rpcs3/Emu/Io/Skylander.h b/rpcs3/Emu/Io/Skylander.h
-index be67c8c3c..061ef56aa 100644
+index 0522f1806..8a37ef764 100644
 --- a/rpcs3/Emu/Io/Skylander.h
 +++ b/rpcs3/Emu/Io/Skylander.h
-@@ -28,6 +28,11 @@ public:
+@@ -29,6 +29,11 @@ public:
  	bool remove_skylander(u8 sky_num);
- 	u8 load_skylander(u8* buf, fs::file in_file);
+ 	u8 load_skylander(const std::array<u8, 0x40 * 0x10>& data, fs::file in_file);
  
 +	// IPC spike accessors (PLAN 16.3.1) — read slot state without the raw status format
 +	u8   first_free_slot();       // lowest unoccupied slot, 0xFF if full
@@ -380,5 +380,5 @@ index be67c8c3c..061ef56aa 100644
  	shared_mutex sky_mutex;
  
 -- 
-2.50.1 (Apple Git-155)
+2.54.0 (Apple Git-157)
 

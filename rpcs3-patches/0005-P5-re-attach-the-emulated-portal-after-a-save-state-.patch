@@ -1,4 +1,4 @@
-From 8cb996f98a6bf6a83620cfaeac86659e8daf461a Mon Sep 17 00:00:00 2001
+From 05a991c6f69e5aa73c22199bd0d6115ebf3151b8 Mon Sep 17 00:00:00 2001
 From: Christopher Hotchkiss <chris@hotchkiss.io>
 Date: Wed, 10 Jun 2026 21:18:08 -0700
 Subject: [PATCH 5/8] P5: re-attach the emulated portal after a save-state
@@ -34,7 +34,7 @@ appearing in-game -- the save-state live-load the play-through recorder needs. P
  3 files changed, 56 insertions(+)
 
 diff --git a/rpcs3/Emu/Cell/lv2/sys_usbd.cpp b/rpcs3/Emu/Cell/lv2/sys_usbd.cpp
-index b84e3457c..514adee17 100644
+index 373fd020a..e22188d3d 100644
 --- a/rpcs3/Emu/Cell/lv2/sys_usbd.cpp
 +++ b/rpcs3/Emu/Cell/lv2/sys_usbd.cpp
 @@ -126,6 +126,9 @@ public:
@@ -47,8 +47,8 @@ index b84e3457c..514adee17 100644
  
  	// Pipe functions
  	u32 open_pipe(u32 device_handle, u8 endpoint);
-@@ -1104,6 +1107,47 @@ void reconnect_usb(u32 assigned_number)
- 	usbh->reconnect_usb_device(assigned_number);
+@@ -1155,6 +1158,47 @@ void set_usb_device_attached(usb_device* dev, bool attached)
+ 	usbh->set_usb_device_attached(dev, attached);
  }
  
 +void usb_handler_thread::reconnect_device(std::string_view product, u16 id_vendor, u16 id_product_min, u16 id_product_max)
@@ -96,17 +96,17 @@ index b84e3457c..514adee17 100644
  {
  	if (auto usbh = g_fxo->try_get<named_thread<usb_handler_thread>>())
 diff --git a/rpcs3/Emu/Cell/lv2/sys_usbd.h b/rpcs3/Emu/Cell/lv2/sys_usbd.h
-index 01a7891bb..b7afe3947 100644
+index 970395a66..2acbc2123 100644
 --- a/rpcs3/Emu/Cell/lv2/sys_usbd.h
 +++ b/rpcs3/Emu/Cell/lv2/sys_usbd.h
-@@ -90,4 +90,5 @@ error_code sys_usbd_unregister_extra_ldd(ppu_thread& ppu, u32 handle, vm::cptr<c
- 
+@@ -93,4 +93,5 @@ class usb_device;
  void connect_usb_controller(u8 index, input::product_type);
  void reconnect_usb(u32 assigned_number);
+ void set_usb_device_attached(usb_device* dev, bool attached);
 +void register_ldd_and_connect(std::string_view product, u16 id_vendor, u16 id_product_min, u16 id_product_max);
  void handle_hotplug_event(bool connected, bool source_is_libusb);
 diff --git a/rpcs3/Emu/Io/Skylander.cpp b/rpcs3/Emu/Io/Skylander.cpp
-index 87e29ee10..7b7456eb7 100644
+index 5942a140c..7fbfe00e9 100644
 --- a/rpcs3/Emu/Io/Skylander.cpp
 +++ b/rpcs3/Emu/Io/Skylander.cpp
 @@ -463,6 +463,17 @@ namespace
@@ -128,5 +128,5 @@ index 87e29ee10..7b7456eb7 100644
  		{
  			out = "ERR unknown_cmd\n";
 -- 
-2.50.1 (Apple Git-155)
+2.54.0 (Apple Git-157)
 

@@ -1,4 +1,4 @@
-From ad5a093fc4c20b03d275110e811b2d1ab2b27c17 Mon Sep 17 00:00:00 2001
+From 435f3340ee5ba6b85b41145c733afdcaf366f379 Mon Sep 17 00:00:00 2001
 From: Christopher Hotchkiss <chris@hotchkiss.io>
 Date: Wed, 10 Jun 2026 19:58:43 -0700
 Subject: [PATCH 4/8] P4: surface guest portal traffic as PE events over the
@@ -34,7 +34,7 @@ roundtrip PE-skip, and a watch_events tail. PLAN 15.12 P4.
  1 file changed, 94 insertions(+)
 
 diff --git a/rpcs3/Emu/Io/Skylander.cpp b/rpcs3/Emu/Io/Skylander.cpp
-index 9f47b5f2d..87e29ee10 100644
+index 3c3852074..5942a140c 100644
 --- a/rpcs3/Emu/Io/Skylander.cpp
 +++ b/rpcs3/Emu/Io/Skylander.cpp
 @@ -31,6 +31,9 @@
@@ -174,5 +174,5 @@ index 9f47b5f2d..87e29ee10 100644
  	}
  }
 -- 
-2.50.1 (Apple Git-155)
+2.54.0 (Apple Git-157)
 

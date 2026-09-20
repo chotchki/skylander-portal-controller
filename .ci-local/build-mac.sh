@@ -42,10 +42,14 @@ git -C "$VENDOR" submodule update --init --depth=1 --jobs=8 \
   $(awk '/path/ && !/llvm/ && !/opencv/ && !/SDL/ && !/feralinteractive/ { print $3 }' "$VENDOR/.gitmodules")
 
 # ---- patch series -----------------------------------------------------------
-# Apply P1/P2 if the working tree isn't already patched (idempotent — apply.sh
-# git-am's onto the pin, so it must only run once per checkout).
-if ! git -C "$VENDOR" log --oneline -4 | grep -q "P1: drive the emulated Skylander"; then
-  echo "==> applying RPCS3 patch series (P1 + P2)"
+# Apply the P-series if the working tree isn't already patched (idempotent —
+# apply.sh git-am's onto the pin, so it must only run once per checkout). The
+# lookback window is the series length, so P1 sits exactly that many commits
+# back on an already-patched tree; a hardcoded window silently breaks whenever
+# the series grows (it did: 4 vs the 8 patches we now carry).
+PATCH_COUNT="$(ls "$REPO_ROOT"/rpcs3-patches/0*.patch | wc -l | tr -d ' ')"
+if ! git -C "$VENDOR" log --oneline -"$PATCH_COUNT" | grep -q "P1: drive the emulated Skylander"; then
+  echo "==> applying RPCS3 patch series ($PATCH_COUNT patches)"
   bash "$REPO_ROOT/rpcs3-patches/apply.sh"
 else
   echo "==> patch series already applied"

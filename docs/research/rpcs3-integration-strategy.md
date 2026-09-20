@@ -7,13 +7,18 @@ over an AF_UNIX IPC channel with zero dialog/UIA. **16.2 (vendoring) done
 in `rpcs3-patches/`; CI patch-apply guard + gated full-build lane; repo relicensed
 to GPL-2.0-only. Next: 16.3/16.5 (productionise P1 + the Rust `IpcPortalDriver`).
 **Date:** 2026-05-28.
-**Pin:** RPCS3 master `09d602fd5` (2026-06-24, `v0.0.41`) — latest-master pin
+**Pin:** RPCS3 master `accfecd2d` (2026-09-20, `v0.0.42-353`) — latest-master pin
 chosen for newest game-compat + crash fixes; rebase cadence is cheap because every
 patch is shallow + additive (see patch-depth table). *(Bumped 2026-06-22 from
 `c11979d` (2026-05-29); 109-commit window, replayed clean — P1/P3 seams untouched,
 P2 context-shift only. Picked up Apple-Silicon JIT fixes for the Mac build. Re-bumped
 2026-06-24 to `09d602fd5` — drops the 2 local SPU-Giga patches (now upstream via
-PR #18935), back to a clean P1–P8.)*
+PR #18935), back to a clean P1–P8. Re-bumped 2026-09-20 to `accfecd2d` — a
+**516-commit** window, the widest yet, and still only 2 hunks needed hands: a
+`sys_usbd` neighbour-function collision (upstream added `set_usb_device_attached`
+right where P5 adds `register_ldd_and_connect`) and P1's call into
+`sky_portal::load_skylander`, whose signature went `u8*` -> `const std::array<u8,
+0x400>&`. Everything else replayed untouched.)*
 **HTPC handoff:** `docs/dev/rpcs3-fork-htpc-bringup.md`.
 **Supersedes:** Phase 12 (Mac AX driver), Phase 6.1 (RPCS3 window-flicker
 suppression), and the existing Windows UIA portal driver as the *production*

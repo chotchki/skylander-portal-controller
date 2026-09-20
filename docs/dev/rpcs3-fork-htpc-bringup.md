@@ -12,6 +12,12 @@ the Mac session that did the 16.1.1 spike does not resume. Strategy + rationale:
 > binary. The dev clone at `D:\workspace\rpcs3` keeps the patches on branch
 > `spike-patches` (= pin + 2 commits) as their editable home.
 
+> **Pin note (read this first).** Every commit SHA below is a dated record of what
+> was built at the time, NOT the pin to build today. The live pin has one home —
+> `rpcs3-patches/README.md` (and the `vendor/rpcs3` gitlink it mirrors). It has moved
+> three times since this doc was written: `c11979d` -> `09d602fd5` -> `accfecd2d`
+> (2026-09-20). Build the gitlink, not a SHA quoted in prose.
+
 ## State as of this handoff
 
 - ✅ **16.1.1 done** (seam location). Probed RPCS3 master `c11979d` (2026-05-29).

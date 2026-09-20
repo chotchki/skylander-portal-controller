@@ -43,14 +43,22 @@ base="$(git rev-parse --short HEAD)"
 perl -i -pe 's/\r\n/\n/g' "$here"/0*.patch
 
 # (b) Existing series-touched source files -> LF (auto-detected from `+++ b/<file>`).
+normalized=()
 for f in $(grep -h '^+++ b/' "$here"/0*.patch | sed -e 's#^+++ b/##' -e 's/\r$//' | sort -u); do
-  [ -f "$f" ] && perl -i -pe 's/\r\n/\n/g' "$f"
+  [ -f "$f" ] || continue
+  perl -i -pe 's/\r\n/\n/g' "$f"
+  git diff --quiet -- "$f" || normalized+=("$f")
 done
-if git diff --quiet; then
+# Stage ONLY the files we normalized. A blanket `git commit -a` here would sweep in
+# whatever else the checkout happens to have dirty — on a dev tree that means the
+# 3rdparty/* submodule gitlinks, which silently DOWNGRADES them into the base commit
+# and blows up the build hundreds of targets later (PadHandler.cpp vs a stale Fusion
+# API was the tell). Fresh-clone CI never sees it; a local run does.
+if [ ${#normalized[@]} -eq 0 ]; then
   echo "apply.sh: series-touched source already LF — no normalization commit."
 else
-  echo "apply.sh: normalized CRLF->LF on:"; git diff --name-only | sed 's/^/    /'
-  git commit -aqm "normalize CRLF->LF on series-touched files (pre-am base)"
+  echo "apply.sh: normalized CRLF->LF on:"; printf '    %s\n' "${normalized[@]}"
+  git commit -qm "normalize CRLF->LF on series-touched files (pre-am base)" -- "${normalized[@]}"
 fi
 
 count="$(ls "$here"/0*.patch | wc -l | tr -d ' ')"

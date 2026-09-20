@@ -1,4 +1,4 @@
-From 73c296d50270ad776eff82eed11477d79ce97e2f Mon Sep 17 00:00:00 2001
+From c3bdb4330bce7263ca1733563de52d3fc80675a6 Mon Sep 17 00:00:00 2001
 From: Christopher Hotchkiss <christopher.hotchkiss@gmail.com>
 Date: Tue, 23 Jun 2026 21:21:20 -0800
 Subject: [PATCH 7/8] P7: tile the game window over the AF_UNIX IPC
@@ -20,7 +20,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
  2 files changed, 60 insertions(+)
 
 diff --git a/rpcs3/Emu/Io/Skylander.cpp b/rpcs3/Emu/Io/Skylander.cpp
-index 39f931a44..a2bc260fd 100644
+index 69846c9c1..1dbcd4e47 100644
 --- a/rpcs3/Emu/Io/Skylander.cpp
 +++ b/rpcs3/Emu/Io/Skylander.cpp
 @@ -44,6 +44,12 @@ sky_portal g_skyportal;
@@ -64,10 +64,10 @@ index 39f931a44..a2bc260fd 100644
  		{
  			out = "OK";
 diff --git a/rpcs3/rpcs3qt/gs_frame.cpp b/rpcs3/rpcs3qt/gs_frame.cpp
-index 584b533e8..8506e4e89 100644
+index 8b2fa1936..a926fc1cf 100644
 --- a/rpcs3/rpcs3qt/gs_frame.cpp
 +++ b/rpcs3/rpcs3qt/gs_frame.cpp
-@@ -69,6 +69,29 @@ namespace pad
+@@ -71,6 +71,29 @@ namespace pad
  // so the controller can read it over IPC (avoids touching the widely-included GSFrameBase.h).
  #include <atomic>
  extern std::atomic<unsigned long long> g_game_window_handle;
@@ -97,7 +97,7 @@ index 584b533e8..8506e4e89 100644
  
  gs_frame::gs_frame(QScreen* screen, const QRect& geometry, const QIcon& appIcon, std::shared_ptr<gui_settings> gui_settings, bool force_fullscreen)
  	: QWindow()
-@@ -126,6 +149,12 @@ gs_frame::gs_frame(QScreen* screen, const QRect& geometry, const QIcon& appIcon,
+@@ -132,6 +155,12 @@ gs_frame::gs_frame(QScreen* screen, const QRect& geometry, const QIcon& appIcon,
  		setFlags(flags() | Qt::FramelessWindowHint | Qt::WindowDoesNotAcceptFocus);
  	}
  
@@ -110,7 +110,7 @@ index 584b533e8..8506e4e89 100644
  	if (g_cfg.video.renderer != video_renderer::opengl)
  	{
  		// Do not display the window before OpenGL is configured!
-@@ -165,6 +194,11 @@ gs_frame::gs_frame(QScreen* screen, const QRect& geometry, const QIcon& appIcon,
+@@ -171,6 +200,11 @@ gs_frame::gs_frame(QScreen* screen, const QRect& geometry, const QIcon& appIcon,
  
  gs_frame::~gs_frame()
  {
@@ -123,5 +123,5 @@ index 584b533e8..8506e4e89 100644
  	g_user_asked_for_recording = false;
  	g_user_asked_for_frame_capture = false;
 -- 
-2.50.1 (Apple Git-155)
+2.54.0 (Apple Git-157)
 

@@ -1,4 +1,4 @@
-From ed5bef5c715fcbee954385fcb3ee29c419b86134 Mon Sep 17 00:00:00 2001
+From 22510159847691fedf2729ebe3afb3c00f4d7cc1 Mon Sep 17 00:00:00 2001
 From: Christopher Hotchkiss <chris@hotchkiss.io>
 Date: Fri, 29 May 2026 16:34:01 -0700
 Subject: [PATCH 2/8] P2: borderless, no-focus-steal game window + native
@@ -31,10 +31,10 @@ PLAN 16.1.3 / 16.4.x / 16.6.2.x.
  1 file changed, 31 insertions(+)
 
 diff --git a/rpcs3/rpcs3qt/gs_frame.cpp b/rpcs3/rpcs3qt/gs_frame.cpp
-index 5d65a2c93..584b533e8 100644
+index 4814358d9..8b2fa1936 100644
 --- a/rpcs3/rpcs3qt/gs_frame.cpp
 +++ b/rpcs3/rpcs3qt/gs_frame.cpp
-@@ -65,6 +65,11 @@ namespace pad
+@@ -67,6 +67,11 @@ namespace pad
  	extern atomic_t<bool> g_home_menu_requested;
  }
  
@@ -46,7 +46,7 @@ index 5d65a2c93..584b533e8 100644
  gs_frame::gs_frame(QScreen* screen, const QRect& geometry, const QIcon& appIcon, std::shared_ptr<gui_settings> gui_settings, bool force_fullscreen)
  	: QWindow()
  	, m_initial_geometry(geometry)
-@@ -115,12 +120,21 @@ gs_frame::gs_frame(QScreen* screen, const QRect& geometry, const QIcon& appIcon,
+@@ -121,12 +126,21 @@ gs_frame::gs_frame(QScreen* screen, const QRect& geometry, const QIcon& appIcon,
  	setGeometry(geometry);
  	setTitle(QString::fromStdString(m_window_title));
  
@@ -68,7 +68,7 @@ index 5d65a2c93..584b533e8 100644
  	}
  
  	load_gui_settings();
-@@ -726,6 +740,23 @@ void gs_frame::show()
+@@ -732,6 +746,23 @@ void gs_frame::show()
  				setVisibility(visibility);
  			}
  		}
@@ -93,5 +93,5 @@ index 5d65a2c93..584b533e8 100644
  }
  
 -- 
-2.50.1 (Apple Git-155)
+2.54.0 (Apple Git-157)
 

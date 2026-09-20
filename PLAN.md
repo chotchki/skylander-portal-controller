@@ -47,6 +47,25 @@ throughout (`release.yml` Windows job + `config.rs::migrate_install_paths`).
 - [ ] U.8 - Docs: CLAUDE.md "macOS support"/"Distribution" (mac ships the patched RPCS3, ipc default — drop the mock-only caveat); `release-signing.md` nested-app note; `docs/dev/macos-rpcs3-build.md` (CI lane); bank the mac-signing + nested-app gotchas to memory.
 
 - [x] U.9 - U.9 - games.yml relative paths anchor to config-dir (portable bundle)
+- [ ] U.10 - U.10 - macOS RPCS3 ignores RPCS3_CONFIG_DIR (Windows-only upstream) — P-patch to honor it on Mac so config bundles aren't location-locked to ~/Library/Application Support/rpcs3
+## Phase V - RPCS3 pin bump (09d602fd5 -> accfecd2d; 3-month upstream catch-up)
+
+Pin went stale over the summer: `09d602fd5` is 2026-06-24, upstream master is **516 commits**
+ahead at `accfecd2d` (2026-09-20, past the `v0.0.42` tag). Churn on the P-patch seams is
+almost nil (1 commit on `Skylander.cpp`, 5 on `gs_frame.cpp`, 3 on `sys_usbd.cpp`, 0 on
+`pad_thread`) so the patch-depth thesis holds — 516 commits and only 2 hunks needed hands
+(see V.1). Mirrors Phase T.
+
+- [x] V.1 - Rebase P1-P8 onto pin `accfecd2d` (`git am --3way`); 2 hunks needed hands - a `sys_usbd` neighbour-function collision (upstream's new `set_usb_device_attached` landed where P5 adds `register_ldd_and_connect`) and P1's `load_skylander` call site (`u8*` -> `const std::array<u8, 0x400>&`). The `write_to_ptr_unsafe` rename 3-wayed itself.
+- [x] V.2 - Regenerate `rpcs3-patches/0*.patch` + reset the gitlink to pristine `accfecd2d`
+- [x] V.3 - Bump the pin in docs (`rpcs3-patches/README.md`, `docs/research/rpcs3-integration-strategy.md`) + `release.yml`'s two hardcoded `rpcs3-patched-<pin>` tags
+- [x] V.4 - Re-check `rpcs3-patched.yml`'s apply-clean allowlist against the regenerated P1-P8 file set - unchanged, the 12-file set is identical
+- [x] V.5 - Local compile proof: `.ci-local/build-mac.sh` builds the patched tree at the new pin - green (`rpcs3 --version` -> `0.0.42-local_build`, `surface_publish.mm.o` + the P1 IPC log strings present in the binary). Needed two script fixes along the way: the "already patched?" probe looked back 4 commits against an 8-patch series, and `apply.sh`'s normalization commit used `git commit -a`, which swept dirty `3rdparty/*` gitlinks into the base and blew up 1500 targets later on a stale Fusion API.
+- [x] V.6 - Rust-side wire-contract guard green (`cargo test -p skylander-rpcs3-control` + workspace) - 25 unit + 12 loopback, full workspace 0 failures. Also cleared 4 PRE-EXISTING clippy errors from toolchain drift (rust 1.98: `chunks_exact_to_as_chunks` x2, `f32: From<f64>` fallback x3) that were blocking the pre-push gate - unrelated to the bump.
+- [ ] V.7 - Commit the bump + trigger the gated `rpcs3-patched.yml` full build -> `rpcs3-patched-accfecd2d` (Windows + macOS artifacts)
+- [ ] V.8 - Live-validate on real hardware (chotchki): boot Giants on the new binary - IPC listener up, LOAD/CLEAR, P8 surface composite
+- [ ] V.9 - Update the pin in the memory note (`project_rpcs3_ipc_fork`)
+
 ## Phase T - RPCS3 pin bump (927e2492e → 09d602fd5; drop SPU patches → clean P1–P8)
 
 Unblocks the Windows side of the v1.9.13 signed release (was R.3). New pin = latest master

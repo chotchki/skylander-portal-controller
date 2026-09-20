@@ -114,7 +114,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = 'rpcs3-patched-09d602fd5'
+          $tag = 'rpcs3-patched-accfecd2d'
           gh release download $tag --repo $env:GITHUB_REPOSITORY `
             --pattern 'rpcs3-patched-windows-x64.zip' `
             --pattern 'rpcs3-patched-windows-x64.zip.sha256' --dir rpcs3-dl
@@ -502,7 +502,7 @@ jobs:
       # signs it inside-out, U.4). Owner-gated like the signing steps below: forks
       # have no prerelease and ship the unsigned mock-only tarball staged above
       # instead. NOTE (pin coupling): the tag is hardcoded to the same pin the
-      # Windows lane uses (rpcs3-patched-09d602fd5); a submodule pin bump must
+      # Windows lane uses (rpcs3-patched-accfecd2d); a submodule pin bump must
       # update BOTH lanes (see feedback_rpcs3_patched_build_ci).
       - name: Download + verify bundled patched RPCS3 (macOS)
         if: github.repository == 'chotchki/skylander-portal-controller'
@@ -510,7 +510,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag='rpcs3-patched-09d602fd5'
+          tag='rpcs3-patched-accfecd2d'
           gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
             --pattern 'rpcs3-patched-macos-arm64.tar.gz' \
             --pattern 'rpcs3-patched-macos-arm64.tar.gz.sha256' --dir rpcs3-dl
