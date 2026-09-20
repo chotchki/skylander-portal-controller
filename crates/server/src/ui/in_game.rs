@@ -139,14 +139,14 @@ fn reconnect_qr(ui: &mut egui::Ui, qr_texture: Option<&egui::TextureHandle>, alp
     painter.circle_stroke(
         coin_center,
         coin_r - 1.0,
-        egui::Stroke::new(1.0, with_alpha(palette::GOLD_SHADOW, alpha)),
+        egui::Stroke::new(1.0_f32, with_alpha(palette::GOLD_SHADOW, alpha)),
     );
     let screen_r = coin_r - BEZEL_RING_PX;
     painter.circle_filled(coin_center, screen_r, with_alpha(palette::SF_3, alpha));
     painter.circle_stroke(
         coin_center,
         screen_r,
-        egui::Stroke::new(1.0, with_alpha(palette::GOLD_INK, alpha)),
+        egui::Stroke::new(1.0_f32, with_alpha(palette::GOLD_INK, alpha)),
     );
 
     // QR texture sits inside the dark screen rim. Side = inscribed

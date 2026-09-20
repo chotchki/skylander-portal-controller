@@ -884,8 +884,8 @@ fn decode_nickname(bytes: &[u8]) -> String {
 
     if looks_like_utf16_le {
         let mut words = Vec::with_capacity(bytes.len() / 2);
-        for chunk in bytes.chunks_exact(2) {
-            let w = u16::from_le_bytes([chunk[0], chunk[1]]);
+        for chunk in bytes.as_chunks::<2>().0 {
+            let w = u16::from_le_bytes(*chunk);
             if w == 0 {
                 break;
             }
@@ -962,11 +962,7 @@ pub fn parse(bytes: &[u8]) -> Result<SkyFigureStats, ParseError> {
 
     // Split into 64 fixed-size blocks.
     let mut raw_blocks = Vec::with_capacity(BLOCK_COUNT);
-    for chunk in bytes.chunks_exact(BLOCK_LEN) {
-        let mut b = [0u8; BLOCK_LEN];
-        b.copy_from_slice(chunk);
-        raw_blocks.push(b);
-    }
+    raw_blocks.extend_from_slice(bytes.as_chunks::<BLOCK_LEN>().0);
 
     // --- Header -------------------------------------------------------
     let serial = read_u32(bytes, OFFSET_SERIAL);

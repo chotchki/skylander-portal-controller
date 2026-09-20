@@ -378,7 +378,7 @@ impl LauncherApp {
             .frame(
                 egui::Frame::none()
                     .fill(egui::Color32::from_rgb(8, 14, 36))
-                    .stroke(egui::Stroke::new(2.0, gold))
+                    .stroke(egui::Stroke::new(2.0_f32, gold))
                     .rounding(egui::Rounding::same(16.0))
                     .inner_margin(egui::Margin::same(28.0)),
             )

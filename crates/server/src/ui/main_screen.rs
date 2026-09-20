@@ -991,7 +991,9 @@ pub(super) fn pixels_to_egui_texture(
 ) -> egui::TextureHandle {
     let color_pixels: Vec<egui::Color32> = pixels
         .rgba
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|c| egui::Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]))
         .collect();
     let color_image = egui::ColorImage {
