@@ -43,22 +43,35 @@ base="$(git rev-parse --short HEAD)"
 perl -i -pe 's/\r\n/\n/g' "$here"/0*.patch
 
 # (b) Existing series-touched source files -> LF (auto-detected from `+++ b/<file>`).
-normalized=()
+touched=()
 for f in $(grep -h '^+++ b/' "$here"/0*.patch | sed -e 's#^+++ b/##' -e 's/\r$//' | sort -u); do
   [ -f "$f" ] || continue
   perl -i -pe 's/\r\n/\n/g' "$f"
-  git diff --quiet -- "$f" || normalized+=("$f")
+  touched+=("$f")
 done
-# Stage ONLY the files we normalized. A blanket `git commit -a` here would sweep in
-# whatever else the checkout happens to have dirty — on a dev tree that means the
-# 3rdparty/* submodule gitlinks, which silently DOWNGRADES them into the base commit
-# and blows up the build hundreds of targets later (PadHandler.cpp vs a stale Fusion
-# API was the tell). Fresh-clone CI never sees it; a local run does.
-if [ ${#normalized[@]} -eq 0 ]; then
+
+# Stage EVERY series-touched file, and ONLY those. Two constraints meet here and
+# both have already been learned the hard way:
+#
+#   * Not `git commit -a`. That sweeps in whatever else the checkout has dirty — on
+#     a dev tree the `3rdparty/*` submodule gitlinks, silently DOWNGRADED into the
+#     base commit, surfacing ~1500 targets later as an unrelated-looking upstream
+#     compile error (PadHandler.cpp against a stale Fusion API).
+#   * Every touched file, not just the ones `git diff` calls changed. Under Windows
+#     `autocrlf=true` the clean filter strips CRLF on the way to the index, so a file
+#     we just rewrote CRLF->LF reads as UNCHANGED to `git diff` while its stat entry
+#     is dirty. Skip it and `git am` aborts with "Your local changes to the following
+#     files would be overwritten by merge". `git add` re-stats it and clears that,
+#     whether or not the content moved.
+#
+# So: add them all, then commit only if the index actually moved.
+git add -- "${touched[@]}"
+if git diff --cached --quiet -- "${touched[@]}"; then
   echo "apply.sh: series-touched source already LF — no normalization commit."
 else
-  echo "apply.sh: normalized CRLF->LF on:"; printf '    %s\n' "${normalized[@]}"
-  git commit -qm "normalize CRLF->LF on series-touched files (pre-am base)" -- "${normalized[@]}"
+  echo "apply.sh: normalized CRLF->LF on:"
+  git diff --cached --name-only -- "${touched[@]}" | sed 's/^/    /'
+  git commit -qm "normalize CRLF->LF on series-touched files (pre-am base)" -- "${touched[@]}"
 fi
 
 count="$(ls "$here"/0*.patch | wc -l | tr -d ' ')"
