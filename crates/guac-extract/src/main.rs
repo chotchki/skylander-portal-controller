@@ -9,12 +9,14 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use guac_extract::census::find_ffprobe;
+use guac_extract::intros::{self, IrFormat};
 use guac_extract::known::KNOWN_DUMPS;
 use guac_extract::{DirState, ExtractRoot, RootMode};
 
 const USAGE: &str = "\
 usage: guac-extract identify <dump-dir>
        guac-extract census <dump-dir>
+       guac-extract intros <dump-dir>
        guac-extract [--help | --version]
 
 Extracts what guacamole plays from your own Skylanders disc dump.
@@ -27,6 +29,10 @@ Extracts what guacamole plays from your own Skylanders disc dump.
              audio tracks (ffprobe: GUAC_FFPROBE, else beside guac-extract,
              else PATH) and write census-<title>-<version>-<stamp>.json into
              GUAC_EXTRACT_DIR
+  intros     identify, then map each toy type's character archives to its
+             intro movie by their voice-over name and write the character
+             table to ir/characters.ron in the dump's folder; guacamole adds
+             the interim catalogue's names as a fallback, this doesn't
 ";
 
 /// The environment, else `.env.dev` in the current folder.
@@ -116,6 +122,45 @@ fn identify(dump: &Path) -> Result<(), guac_extract::ExtractError> {
     Ok(())
 }
 
+fn intros(dump: &Path) -> Result<(), guac_extract::ExtractError> {
+    let root = ExtractRoot::resolve(RootMode::Dev {
+        extract_dir: extract_dir(),
+    })?;
+    let mut opened = guac_extract::open(dump, &root, KNOWN_DUMPS, &|_| {})?;
+    let identity = opened.dir.manifest().identity.clone();
+    let started = Instant::now();
+    let idx = intros::index(dump, identity, &Default::default())?;
+    let out = intros::write(&mut opened.dir, &idx.table, IrFormat::Ron)?;
+    let with_intro = idx
+        .table
+        .characters
+        .values()
+        .filter(|c| c.intro.is_some())
+        .count();
+    println!(
+        "characters  {} toy types, {with_intro} with an intro",
+        idx.table.characters.len()
+    );
+    for (toy, c) in &idx.table.characters {
+        if c.intro.is_none() {
+            println!(
+                "  no intro  {toy} ({})",
+                c.vo_name.as_deref().unwrap_or("no voice-over")
+            );
+        }
+    }
+    println!("unclaimed   {}", idx.unclaimed_movies.join(" "));
+    for (movie, toys) in &idx.claimed_twice {
+        println!("  claimed twice  {movie} by {toys:?}");
+    }
+    println!(
+        "wrote       {}",
+        opened.dir.path().join(&out.path).display()
+    );
+    println!("took        {:.1} s", started.elapsed().as_secs_f64());
+    Ok(())
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args
@@ -138,6 +183,13 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         ["census", dump] => match census(Path::new(dump)) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("guac-extract: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        ["intros", dump] => match intros(Path::new(dump)) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("guac-extract: {e}");

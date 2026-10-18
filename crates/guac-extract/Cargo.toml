@@ -35,3 +35,6 @@ flate2 = "1"
 tempfile = "3"
 # SfoBuilder, for the synthetic dumps the identity tests build.
 guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }
+# The interim catalogue's base names, the intro index's fallback and the
+# roster cross-check in tests/giants_intros.rs.
+guac-server = { path = "../guac-server", default-features = false }

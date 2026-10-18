@@ -5,13 +5,15 @@
 //! resolves and checks where output goes, [`extract::open`] hashes the dump,
 //! checks it against [`known::KNOWN_DUMPS`] and opens its identity dir.
 //! [`census::census`] (AB.5) sniffs every file and IGA entry with
-//! [`magic`], the list the game-magic guard checks the repo against. The
-//! intro index (AB.6) and the transcode (AB.8) land here.
+//! [`magic`], the list the game-magic guard checks the repo against.
+//! [`intros`] (AB.6) maps each toy type to its intro movie into IR v1's
+//! character table. The transcode (AB.8) lands here.
 
 pub mod census;
 pub mod dump;
 mod error;
 pub mod extract;
+pub mod intros;
 pub mod known;
 pub mod magic;
 mod report;

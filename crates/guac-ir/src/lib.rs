@@ -9,8 +9,10 @@
 
 #![forbid(unsafe_code)]
 
+mod characters;
 mod identity;
 
+pub use characters::{Character, CharacterArchive, CharacterTable, Intro, IntroSource};
 pub use identity::{DumpIdentity, Sha256};
 
 use serde::de::DeserializeOwned;
@@ -173,6 +175,64 @@ mod tests {
         assert_eq!(from_ron::<Shapes>(&text).unwrap(), shapes());
         let bytes = to_postcard(&shapes()).unwrap();
         assert_eq!(from_postcard::<Shapes>(&bytes).unwrap(), shapes());
+    }
+
+    fn table() -> CharacterTable {
+        CharacterTable {
+            identity: identity(),
+            characters: BTreeMap::from([
+                (
+                    16,
+                    Character {
+                        archives: vec![
+                            CharacterArchive {
+                                stem: "016_spyro".into(),
+                                variant: None,
+                            },
+                            CharacterArchive {
+                                stem: "016_spyro_dark".into(),
+                                variant: Some("dark".into()),
+                            },
+                        ],
+                        vo_name: Some("spyro".into()),
+                        intro: Some(Intro {
+                            movie: "spyro".into(),
+                            source: IntroSource::Disc,
+                        }),
+                    },
+                ),
+                (
+                    100,
+                    Character {
+                        archives: vec![],
+                        vo_name: None,
+                        intro: Some(Intro {
+                            movie: "jetvac".into(),
+                            source: IntroSource::NameFallback,
+                        }),
+                    },
+                ),
+                (
+                    113,
+                    Character {
+                        archives: vec![CharacterArchive {
+                            stem: "113_sniper".into(),
+                            variant: None,
+                        }],
+                        vo_name: None,
+                        intro: None,
+                    },
+                ),
+            ]),
+        }
+    }
+
+    #[test]
+    fn the_character_table_round_trips_through_both() {
+        let text = to_ron(&table()).unwrap();
+        assert_eq!(from_ron::<CharacterTable>(&text).unwrap(), table());
+        let bytes = to_postcard(&table()).unwrap();
+        assert_eq!(from_postcard::<CharacterTable>(&bytes).unwrap(), table());
     }
 
     #[test]
