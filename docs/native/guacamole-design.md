@@ -747,7 +747,14 @@ that job; nothing in it needed decompiling. `guac_formats::edge`
   characters is a back-reference (368,718 of 368,718).
 - Streams: an 8-byte header plus 8-byte blocks, where the format code is RSX's own vertex type and the slot
   is the RSX input register, so each descriptor predicts a draw's vertex array. The disc uses F32, F16, U8N
-  and X11Y11Z10N (RSX's CMP word, big-endian, two's complement, read as signed normalized).
+  and X11Y11Z10N (RSX's CMP word, big-endian, two's complement).
+- Who reads a CMP word decides its decode. On the streams the SPU reads (the skinned characters' bind
+  normals and tangents) a b-bit field s is (2s + 1) / (2^b - 1), the SPU's own rule: AC.16 found it by brute
+  force over the captures (with a blend left unnormalized and the encode floor((x (2^b - 1) - 1) / 2), 16,691
+  of Eruptor's 16,708 posed words re-encode exactly, every miss 1 LSB at a rounding tie) and AC.23 moved the
+  decoder onto it from signed normalize, which sat up to 1.439e-3 rad off on his bind words. The RSX-only
+  stream the GPU reads in place stays signed normalized, s / (2^(b-1) - 1): the SPU's rule says nothing about
+  the GPU, the real RSX's is unmeasured and RPCS3's is within 0.2% of it.
 - Skin: 4 × (u8 weight, u8 local matrix) per vertex, summing to 255 on all 262,899 skinned vertices. Locals
   land in two DMA ranges of 48-byte 3×4 matrices, then palette slot → `_blendMatrixIndices` → the bone with
   that `_blendMatrixIndex`.
@@ -768,9 +775,8 @@ that job; nothing in it needed decompiling. `guac_formats::edge`
 - Palettes (the savestate's 43 skinned jobs over 8 NPC models): blend-index (`_inverseJointArray`) order,
   48-byte row-major 3×4, MODEL space with a separate local-to-world per job, the two DMA sources at
   `_skinMatricesByteOffsets[0]` and `[1]`, bones mapped by name.
-- Still for the hero's own draw (AC.16): the skinned output config, CMP normals (our signed normalize and
-  RPCS3's differ by up to 7.7e-4 rad, inside the 1e-3 tolerance with little margin) and Eruptor's 3
-  segments.
+- Still for the hero's own draw (AC.16): the skinned output config and Eruptor's 3 segments (CMP normals
+  are settled, above).
 - Reading aids, nothing copied: NoesisPlugins' `fmt_alchemy_igz.py`
   ([NoesisPlugins](https://github.com/NefariousTechSupport/NoesisPlugins)) for field order and the
   attribute tables (its unsigned CMP decode doesn't fit this data), the index layout as SkydraHeavy's port

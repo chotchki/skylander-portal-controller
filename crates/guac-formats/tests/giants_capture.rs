@@ -21,7 +21,9 @@ use std::sync::OnceLock;
 use std::time::Instant;
 
 use common::{env_or_dotenv, usrdir};
-use guac_formats::edge::{AttributeBlock, BoneMap, Segment, Semantic, StreamDesc, VertexFormat};
+use guac_formats::edge::{
+    AttributeBlock, BoneMap, Segment, Semantic, Stream, StreamDesc, VertexFormat,
+};
 use guac_formats::havok;
 use guac_formats::iga::Archive;
 use guac_formats::igz::Igz;
@@ -230,9 +232,15 @@ fn rpcs3_decode(word: u32) -> [f64; 3] {
     std::array::from_fn(|i| f64::from(f[i]) * f64::from(1 << (16 - CMP_BITS[i])) / 32767.0)
 }
 
-/// This crate's reading (`edge::x11y11z10n`): s / (2^(b-1) - 1).
+/// This crate's bind-input reading (`edge::x11y11z10n_spu`, AC.23): the SPU's, in f32.
 fn crate_decode(word: u32) -> [f64; 3] {
-    guac_formats::edge::x11y11z10n(word).map(f64::from)
+    guac_formats::edge::x11y11z10n_spu(word).map(f64::from)
+}
+
+/// This crate's RSX-only reading (`edge::x11y11z10n_rsx`): s / (2^(b-1) - 1), its bind-input
+/// reading before AC.23.
+fn snorm_decode(word: u32) -> [f64; 3] {
+    guac_formats::edge::x11y11z10n_rsx(word).map(f64::from)
 }
 
 // ---- the disc side ----
@@ -262,6 +270,9 @@ struct Seg {
     /// The stored bind CMP words, from SPU input stream 1.
     normal_words: Vec<u32>,
     tangent_words: Vec<u32>,
+    /// The same, as the segment's decoded attributes.
+    normals: Vec<[f64; 3]>,
+    tangents: Vec<[f64; 3]>,
     rsx_only: &'static [u8],
     rsx_stride: usize,
     uv0: AttributeBlock,
@@ -414,6 +425,13 @@ fn eruptor(usrdir: &Path) -> HeroData {
                     })
                     .collect()
             };
+            let decoded = |sem: Semantic| -> Vec<[f64; 3]> {
+                let a = s.attribute(sem).unwrap();
+                assert_eq!(a.stream, Stream::Spu1);
+                a.vertices()
+                    .map(|v| std::array::from_fn(|k| f64::from(v[k])))
+                    .collect()
+            };
             let rsx_desc = StreamDesc::parse(layout.rsx_only_stream_desc.unwrap().data).unwrap();
             let uv0 = *rsx_desc
                 .blocks
@@ -428,6 +446,8 @@ fn eruptor(usrdir: &Path) -> HeroData {
                 influences,
                 normal_words: words(Semantic::Normal),
                 tangent_words: words(Semantic::Tangent),
+                normals: decoded(Semantic::Normal),
+                tangents: decoded(Semantic::Tangent),
                 rsx_only: layout.rsx_only_vertexes.unwrap().data,
                 rsx_stride: usize::from(rsx_desc.stride),
                 uv0,
@@ -1294,11 +1314,15 @@ fn eruptor_segments_match_the_captures() {
     // unrounded field sat to the floor's boundary, in steps.
     let (mut worst_lsb, mut worst_components) = (0, 0);
     let mut worst_tie: f64 = 0.0;
-    let mut angles = [0.0f64; 3];
-    let mut crate_vs_spu: f64 = 0.0;
+    let mut angles = [0.0f64; 4];
+    // The segment's decoded bind normals and tangents against the SPU's reading of their words,
+    // and the old reading's distance from it.
+    let (mut crate_vs_spu, mut snorm_vs_spu): (f64, f64) = (0.0, 0.0);
     for seg in &hero.segments {
-        for &w in seg.normal_words.iter().chain(&seg.tangent_words) {
-            crate_vs_spu = crate_vs_spu.max(angle(crate_decode(w), spu_decode(w)));
+        let words = seg.normal_words.iter().chain(&seg.tangent_words);
+        for (&w, &n) in words.zip(seg.normals.iter().chain(&seg.tangents)) {
+            crate_vs_spu = crate_vs_spu.max(angle(n, spu_decode(w)));
+            snorm_vs_spu = snorm_vs_spu.max(angle(snorm_decode(w), spu_decode(w)));
         }
     }
     for (c, solved) in s.captures.iter().zip(&s.solves) {
@@ -1397,7 +1421,8 @@ fn eruptor_segments_match_the_captures() {
                 }
                 worst_components = worst_components.max(components);
             }
-            let decodes: [fn(u32) -> [f64; 3]; 3] = [spu_decode, crate_decode, rpcs3_decode];
+            let decodes: [fn(u32) -> [f64; 3]; 4] =
+                [spu_decode, crate_decode, snorm_decode, rpcs3_decode];
             for (a, decode) in angles.iter_mut().zip(decodes) {
                 *a = a.max(angle(decode(got), blend(decode)));
             }
@@ -1427,12 +1452,18 @@ fn eruptor_segments_match_the_captures() {
         "CMP under the SPU's rule (decode (2s+1)/(2^b-1), blend without renormalizing, encode floor((x(2^b-1)-1)/2)): {exact} of {words} words exact; over the misses at most {worst_components} component(s) off per word, {worst_lsb} LSB per component, the unrounded field within {worst_tie:.2e} of a step from the floor's boundary"
     );
     println!(
-        "  worst angle against our float blend: SPU decode {:.2e} rad, crate decode {:.2e}, RPCS3 decode {:.2e}; one z step is {:.2e} rad, so decision 5's 1e-3 rad can't hold by construction (chotchki's call); the crate and SPU decodes differ by up to {crate_vs_spu:.3e} rad on his bind words",
+        "  worst angle against our float blend: SPU decode {:.2e} rad, the crate's (f32) {:.2e}, signed normalize {:.2e}, RPCS3 decode {:.2e}; one z step is {:.2e} rad, so decision 5's 1e-3 rad can't hold by construction (chotchki's call)",
         angles[0],
         angles[1],
         angles[2],
+        angles[3],
         2.0 / 1023.0
     );
+    println!(
+        "  the crate's decoded bind normals and tangents sit within {crate_vs_spu:.2e} rad of the SPU's reading of their words; signed normalize, its reading before AC.23, up to {snorm_vs_spu:.3e} rad"
+    );
+    // AC.23: the bind input decodes the SPU's way, so only f32 rounding is left.
+    assert!(crate_vs_spu < 1e-6, "{crate_vs_spu:.2e} rad");
     // Upper bounds (an all-exact decode still passes): one component, one LSB, at a rounding tie;
     // 7e-4 pins the measured 6.1e-4 (2026-10-18) with headroom and isn't derived.
     assert!(

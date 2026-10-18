@@ -4,8 +4,9 @@
 //! - Two SPU configs exist on the characters ([`Kind`]); others are refused.
 //! - Descriptors give each attribute's format, semantic and RSX slot; SPU
 //!   input 0 is predefined F32x3 positions.
-//! - Formats: F32, F16, U8N and X11Y11Z10N (RSX's CMP word, signed
-//!   normalized); the rest are refused.
+//! - Formats: F32, F16, U8N and X11Y11Z10N (RSX's CMP word, read the
+//!   SPU's way on the streams the SPU reads and signed normalized on the
+//!   RSX-only one); the rest are refused.
 //! - Skin: 4 x (u8 weight, u8 local matrix) per vertex, summing to 255.
 
 pub mod indexes;
@@ -389,7 +390,10 @@ impl Attribute {
                 VertexFormat::U8N => values.extend(field.iter().map(|&b| f32::from(b) / 255.0)),
                 VertexFormat::X11Y11Z10N => {
                     let word = u32::from_be_bytes([field[0], field[1], field[2], field[3]]);
-                    values.extend(x11y11z10n(word));
+                    values.extend(match stream {
+                        Stream::Spu0 | Stream::Spu1 => x11y11z10n_spu(word),
+                        Stream::RsxOnly => x11y11z10n_rsx(word),
+                    });
                 }
             }
         }
@@ -404,21 +408,44 @@ impl Attribute {
     }
 }
 
-/// A `bits`-wide two's-complement field: max code 1.0, the extra negative
-/// code clamped to -1.
-fn snorm(v: u32, bits: u32) -> f32 {
-    let shift = 32 - bits;
-    let signed = ((v << shift) as i32) >> shift;
-    (signed as f32 / ((1 << (bits - 1)) - 1) as f32).max(-1.0)
+/// Bits per CMP field, low to high: x, y, z.
+const CMP_BITS: [u32; 3] = [11, 11, 10];
+
+/// A CMP word's x, y and z fields as two's-complement integers.
+fn cmp_fields(word: u32) -> [i32; 3] {
+    let mut shift = 0;
+    CMP_BITS.map(|bits| {
+        let field = word << (32 - bits - shift);
+        shift += bits;
+        (field as i32) >> (32 - bits)
+    })
 }
 
-/// RSX's CMP word as signed normalized x, y, z.
-pub fn x11y11z10n(word: u32) -> [f32; 3] {
-    [
-        snorm(word & 0x7FF, 11),
-        snorm((word >> 11) & 0x7FF, 11),
-        snorm(word >> 22, 10),
-    ]
+/// A CMP word as the SPU's EdgeGeometry job reads it, the decode for every
+/// stream the SPU reads (the disc's bind normals and tangents): a b-bit field
+/// s is (2s + 1) / (2^b - 1). The codes span exactly -1..=1, symmetric about
+/// zero, with no code at zero (word 0 is (1/2047, 1/2047, 1/1023)).
+///
+/// Evidence (AC.16, no Sony docs): brute force over AC.13's three RSX
+/// captures of Eruptor, 4 decodes x 12 encodes x renormalizing or not. Only
+/// this decode, a weighted blend of the bone rotations left unnormalized and
+/// the encode floor((x (2^b - 1) - 1) / 2) turn his bind words into the
+/// SPU's posed ones: 16,691 of 16,708 exact (next-best rule 9,141), each miss
+/// 1 LSB on one component at a rounding tie; the June savestate's frame 4,
+/// 5,721 of 5,722. Up to 1.439e-3 rad from [`x11y11z10n_rsx`] on his bind
+/// words. It says nothing about how the GPU reads a CMP word.
+pub fn x11y11z10n_spu(word: u32) -> [f32; 3] {
+    let s = cmp_fields(word);
+    std::array::from_fn(|i| (2 * s[i] + 1) as f32 / ((1 << CMP_BITS[i]) - 1) as f32)
+}
+
+/// A CMP word as signed normalized, the decode for the RSX-only stream the
+/// GPU reads in place: a b-bit field s is s / (2^(b-1) - 1), the extra
+/// negative code clamped to -1. How the real RSX reads CMP is unmeasured;
+/// RPCS3 reads s 2^(16-b) / 32767, within 0.2% of this (AC.16).
+pub fn x11y11z10n_rsx(word: u32) -> [f32; 3] {
+    let s = cmp_fields(word);
+    std::array::from_fn(|i| (s[i] as f32 / ((1 << (CMP_BITS[i] - 1)) - 1) as f32).max(-1.0))
 }
 
 /// IEEE half to f32, exactly.

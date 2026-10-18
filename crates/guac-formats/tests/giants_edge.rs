@@ -11,7 +11,9 @@ use std::path::Path;
 
 use common::usrdir;
 use guac_formats::FormatError;
-use guac_formats::edge::{BoneMap, Kind, Segment, Semantic};
+use guac_formats::edge::{
+    BoneMap, Kind, Segment, Semantic, Stream, x11y11z10n_rsx, x11y11z10n_spu,
+};
 use guac_formats::iga::Archive;
 use guac_formats::igz::Igz;
 use guac_formats::igz::layouts::{
@@ -167,8 +169,11 @@ struct Census {
     degenerate: u64,
     unreached: u64,
     winding: [u64; 2],
-    zero_normals: u64,
-    worst_unit: BTreeMap<Semantic, f64>,
+    /// By stream: CMP word 0 decodes to (0, 0, 0) on RSX-only streams and
+    /// to (1/2047, 1/2047, 1/1023) on SPU ones.
+    zero_normals: BTreeMap<String, u64>,
+    /// By stream and semantic.
+    worst_unit: BTreeMap<String, f64>,
     uv_extent: f32,
     groups: u64,
     worst_gap: f32,
@@ -228,13 +233,20 @@ impl Census {
         }
         for sem in [Semantic::Normal, Semantic::Tangent] {
             let Some(a) = s.attribute(sem) else { continue };
+            let zero = match a.stream {
+                Stream::RsxOnly => x11y11z10n_rsx(0),
+                Stream::Spu0 | Stream::Spu1 => x11y11z10n_spu(0),
+            };
+            let key = format!("{:?}/{sem:?}", a.stream);
             for v in a.vertices() {
-                if v.iter().all(|&x| x == 0.0) {
-                    self.zero_normals += u64::from(sem == Semantic::Normal);
+                if v == zero.as_slice() {
+                    if sem == Semantic::Normal {
+                        *self.zero_normals.entry(key.clone()).or_default() += 1;
+                    }
                     continue;
                 }
                 let dev = (length(v) - 1.0).abs();
-                let worst = self.worst_unit.entry(sem).or_default();
+                let worst = self.worst_unit.entry(key.clone()).or_default();
                 *worst = worst.max(dev);
             }
         }
@@ -378,7 +390,7 @@ impl Census {
             self.winding[0], self.winding[1]
         );
         println!(
-            "  all-zero normals {}, worst unit-length deviation {:?}, |uv| max {}",
+            "  all-zero normal words {:?}, worst unit-length deviation {:?}, |uv| max {}",
             self.zero_normals, self.worst_unit, self.uv_extent
         );
         println!(
