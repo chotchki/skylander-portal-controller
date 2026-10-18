@@ -4,10 +4,10 @@ use wasm_bindgen::JsCast;
 use crate::components::{BezelSize, BezelState, BoxState, GoldBezel, ToyBoxInterior, ToyBoxLid};
 use crate::model::{Category, Element, GameOfOrigin, PublicFigure, Slot, SlotState, SLOT_COUNT};
 use crate::screens::FigureDetail;
-use crate::{event_target_value, ScanOverlayState, ToastMsg};
+use crate::{event_target_value, ToastMsg};
 
 /// A cluster of figures that share a `variant_group` — e.g. every Spyro
-/// repose, every scanned Creation Crystal. Rendered as a single card in
+/// repose, every Creation Crystal in the pack. Rendered as a single card in
 /// the toy-box grid; the user cycles between the cluster's variants by
 /// tapping the N-variants badge. PLAN 3.14.1.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,7 +65,6 @@ pub(crate) fn Browser(
     category_filter: RwSignal<Option<Category>>,
     search: RwSignal<String>,
     toasts: RwSignal<Vec<ToastMsg>>,
-    scan_overlay: RwSignal<ScanOverlayState>,
     /// Threaded through to FigureDetail so the per-figure stats fetch
     /// (PLAN 6.3) can address the right `working/<profile_id>/<id>.sky`
     /// working copy. `None` while the user is still on the join screen
@@ -94,8 +93,7 @@ pub(crate) fn Browser(
                 .filter(|f| gf.map_or(true, |g| f.game == g))
                 .filter(|f| cf.map_or(true, |c| f.category == c))
                 // Search hits canonical_name (main card text), variant_tag
-                // (the small subtitle — e.g. "DELFOX" under "Creation
-                // Crystal" for a scan-only CC, or "Legendary" for a Spyro
+                // (the small subtitle — e.g. "Legendary" for a Spyro
                 // repose), OR variant_group (so searching "spyro" matches
                 // every reposed Spyro whose canonical_name has a prefix).
                 .filter(|f| {
@@ -168,22 +166,6 @@ pub(crate) fn Browser(
                         }
                     >
                         <div class="figure-grid-p4">
-                            // Plus-card (PLAN 6.5.2): pinned at position 0
-                            // so adding a figure feels like "there's
-                            // always a slot for a new one" rather than an
-                            // off-screen button. Opens the scan overlay;
-                            // the 6.5.1 scanner worker is already polling,
-                            // so success arrives as Event::FigureScanned.
-                            <button
-                                class="fig-card-p4 scan-new"
-                                aria-label="Add a figure by tapping it on the scanner"
-                                on:click=move |_| scan_overlay.set(ScanOverlayState::Prompt)
-                            >
-                                <div class="fig-bezel-p4">
-                                    <div class="scan-new-bezel"></div>
-                                </div>
-                                <div class="fig-name-p4 scan-new-label">"SCAN NEW"</div>
-                            </button>
                             <For
                                 each=move || grouped.get()
                                 key=|g: &GroupedCard| g.key.clone()
@@ -465,9 +447,8 @@ fn BrowserFilters(
     // the plain `Figure` + `Sidekick` / `Giant` / `Kaos` / `Other` rows:
     // those are either the default case (Figure) or niche enough that a
     // flat chip row would add clutter without helping a kid find what
-    // they want. `CreationCrystal` joined the list once 6.5.5a started
-    // surfacing scan-only CCs in the library — previously nothing in
-    // the pack fell in that bucket.
+    // they want. `CreationCrystal` is on it because the pack's
+    // `Creation Crystals` folders index into that bucket.
     let all_categories: [(Option<Category>, &'static str); 6] = [
         (None, "All"),
         (Some(Category::Vehicle), "Vehicles"),
@@ -627,26 +608,5 @@ mod tests {
     #[test]
     fn empty_input_produces_empty_output() {
         assert!(group_variants(vec![]).is_empty());
-    }
-
-    #[test]
-    fn scanned_creation_crystals_group_by_kind() {
-        // Scan figures share `variant_group = canonical_name = kind`
-        // (indexer::scan_runtime). Nicknames live in variant_tag.
-        let out = group_variants(vec![
-            fig("scan:1", "Creation Crystal", "DELFOX", "Creation Crystal"),
-            fig("scan:2", "Creation Crystal", "WAVEY", "Creation Crystal"),
-            fig("scan:3", "Creation Crystal", "ICEBLAST", "Creation Crystal"),
-        ]);
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].key, "Creation Crystal");
-        assert_eq!(out[0].variants.len(), 3);
-        // All nicknames end up sorted alphabetically since none is "base".
-        let tags: Vec<&str> = out[0]
-            .variants
-            .iter()
-            .map(|v| v.variant_tag.as_str())
-            .collect();
-        assert_eq!(tags, vec!["DELFOX", "ICEBLAST", "WAVEY"]);
     }
 }

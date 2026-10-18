@@ -64,117 +64,16 @@ fn main() -> Result<()> {
         "starting server",
     );
 
-    // --- Index the firmware pack + runtime scanned dir. ---
-    // PLAN 6.5.4 made the pack optional; PLAN 6.5.5a merges the scanned
-    // dir in alongside. Two rules govern the merge:
-    //   1. Pack .sky files are fresh-state masters (reset-to-zero); scans
-    //      capture the physical tag's *current* state. Pack wins on any
-    //      `(figure_id, variant)` collision so new-profile working copies
-    //      fork from a clean slate rather than the user's current XP.
-    //   2. A pack with zero hits + no scans = empty library; the phone
-    //      already handles that gracefully (empty-state copy).
-    let pack_figures: Vec<Figure> = if cfg.firmware_pack_root.as_os_str().is_empty() {
+    // --- Index the firmware pack. ---
+    // PLAN 6.5.4 made the pack optional: a pack with zero hits is an empty
+    // library, which the phone already handles (empty-state copy).
+    let figures: Vec<Figure> = if cfg.firmware_pack_root.as_os_str().is_empty() {
         info!("no firmware pack configured — starting with an empty library");
         Vec::new()
     } else {
         skylander_indexer::scan(&cfg.firmware_pack_root).context("scan firmware pack")?
     };
-    info!(count = pack_figures.len(), "indexed pack figures");
-
-    // Runtime state (profile db, scanned dumps, working copies) lives under
-    // `resolve_runtime_dir()` — `./dev-data/` in dev, `%APPDATA%/...` in
-    // release. Distinct from `cfg.data_root` which is the tracked-asset
-    // root (images/, figures.json, games/). Conflating the two earlier
-    // (setting DATA_ROOT=./dev-data in .env.dev) broke image lookup
-    // because the server then looked for `dev-data/images/...`.
-    let runtime_dir =
-        skylander_server::paths::resolve_runtime_dir().context("resolve runtime dir")?;
-
-    // Merge scanned figures + build the tag-identity map only when the
-    // NFC feature is enabled — without it there are no scans to dedup
-    // against, so the ~1s pack re-parse would be pure cost.
-    #[cfg(feature = "nfc-import")]
-    let (figures, tag_identity_map) = {
-        use skylander_core::{FigureId, TagIdentity};
-        use std::collections::HashMap as StdHashMap;
-
-        // PLAN 6.6.1e: `Figure.tag_identity` is populated by the indexer
-        // now, so we build the lookup from `f.tag_identity` directly
-        // instead of re-parsing every `.sky` at boot. Saves ~1s on a
-        // 500-figure pack and collapses a layer of "where does the
-        // identity come from" confusion.
-
-        let mut pack_figures = pack_figures;
-        let pack_index_by_id: StdHashMap<FigureId, usize> = pack_figures
-            .iter()
-            .enumerate()
-            .map(|(i, f)| (f.id.clone(), i))
-            .collect();
-
-        let mut tag_identity_map: StdHashMap<TagIdentity, FigureId> = StdHashMap::new();
-        for f in &pack_figures {
-            if let Some(id) = f.tag_identity {
-                tag_identity_map.entry(id).or_insert_with(|| f.id.clone());
-            }
-        }
-        info!(
-            count = tag_identity_map.len(),
-            "built tag-identity map from pack"
-        );
-
-        let scanned_dir = runtime_dir.join("scanned");
-        let scan_figures =
-            skylander_indexer::scan_runtime(&scanned_dir).context("walk scanned-figure dir")?;
-        let mut scanned_kept = 0usize;
-        let mut nicknames_promoted = 0usize;
-        let mut scan_only_figures: Vec<Figure> = Vec::new();
-        for f in scan_figures {
-            let Some(key) = f.tag_identity else {
-                // Parse failed inside scan_runtime — no identity, no dedup.
-                // Accept into the library as scan-only with whatever
-                // canonical_name/variant_tag the indexer produced.
-                scanned_kept += 1;
-                scan_only_figures.push(f);
-                continue;
-            };
-            if let Some(pack_id) = tag_identity_map.get(&key).cloned() {
-                // Pack wins — suppress the scan entry from the library
-                // (still exists on disk as a physical-tag record, just
-                // not a distinct library card). BUT: if the scan carried
-                // a user-chosen nickname AND the pack's variant_tag is
-                // still the default "base", promote the nickname onto
-                // the pack card so the user sees their customization
-                // (common for Creation Crystals — you name "DELFOX"
-                // what the pack just calls "CRYSTAL_-_FIRE_Reactor").
-                // PLAN 6.5.5a option B.
-                let scan_variant = f.variant_tag.trim();
-                if !scan_variant.is_empty()
-                    && scan_variant != "base"
-                    && let Some(&idx) = pack_index_by_id.get(&pack_id)
-                {
-                    let pack_fig = &mut pack_figures[idx];
-                    if pack_fig.variant_tag == "base" && pack_fig.canonical_name != scan_variant {
-                        pack_fig.variant_tag = scan_variant.to_string();
-                        nicknames_promoted += 1;
-                    }
-                }
-                continue;
-            }
-            tag_identity_map.insert(key, f.id.clone());
-            scanned_kept += 1;
-            scan_only_figures.push(f);
-        }
-        info!(
-            kept = scanned_kept,
-            nicknames_promoted, "merged scanned figures (pack wins on collision)"
-        );
-
-        let mut figures: Vec<Figure> = pack_figures;
-        figures.extend(scan_only_figures);
-        (figures, std::sync::Arc::new(tag_identity_map))
-    };
-    #[cfg(not(feature = "nfc-import"))]
-    let figures: Vec<Figure> = pack_figures;
+    info!(count = figures.len(), "indexed pack figures");
 
     // PLAN 9.7 playtest 2026-05-04 — decorate Vehicle figures with their
     // hand-curated Land/Sky/Sea terrain from `data/vehicle_terrain.json`.
@@ -266,11 +165,6 @@ fn main() -> Result<()> {
     let rpcs3_exe = cfg.rpcs3_exe.clone();
     let config_dir = cfg.config_dir.clone();
     let data_root = cfg.data_root.clone();
-    // Only consumed under `nfc-import` (used by the scanner spawn
-    // below). Bind unconditionally so the feature flag doesn't leak
-    // into this prep block; the cfg gate on the consumer is enough.
-    #[cfg_attr(not(feature = "nfc-import"), allow(unused_variables))]
-    let runtime_dir_for_task = runtime_dir.clone();
     let hmac_key = cfg.hmac_key.clone();
     // PLAN 20.6 — the running window mode, surfaced via AppState so the admin
     // window-mode toggle can read it back. Copy (fieldless enum).
@@ -293,8 +187,6 @@ fn main() -> Result<()> {
     let status_for_task = launcher_status.clone();
     let figures_for_task = figures.clone();
     let figure_index_for_task = figure_index.clone();
-    #[cfg(feature = "nfc-import")]
-    let tag_identity_map_for_task = tag_identity_map.clone();
     let join_qr_png_for_task = join_qr_png.clone();
 
     let status_for_errors = launcher_status.clone();
@@ -439,20 +331,6 @@ fn main() -> Result<()> {
                     bind.port(),
                     std::time::Duration::from_secs(90),
                     std::time::Duration::from_secs(5),
-                );
-                // NFC scanner worker (PLAN 6.5.1 + 6.5.5a). Feature-gated:
-                // off by default so users without an ACR122U aren't
-                // pulling in pcsc linkage. Dumps land under
-                // `<runtime_dir>/scanned/` as `<uid>.sky` (next to the
-                // profile db, per paths::resolve_runtime_dir); scanner
-                // emits `Event::FigureScanned` on the broadcast channel
-                // with `is_duplicate` set by consulting the library
-                // identity map (pack + prior scans).
-                #[cfg(feature = "nfc-import")]
-                skylander_server::nfc::spawn(
-                    events_for_task.clone(),
-                    runtime_dir_for_task.join("scanned"),
-                    tag_identity_map_for_task.clone(),
                 );
                 // Bind is the most common startup failure (port already
                 // in use, permission denied on a privileged port). Don't

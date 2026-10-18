@@ -11,8 +11,7 @@ use serde::{Deserialize, Serialize};
 // newtypes exist to keep those primitives from being passed around as bare
 // `u32` / `u16` — too easy to mix them up with array lengths, block offsets,
 // or each other. `ToyTypeId` is deliberately NOT named `FigureId` to avoid
-// collision with the [`FigureId`] string we use to key pack + scan entries
-// across the library.
+// collision with the [`FigureId`] string we use to key library entries.
 
 /// 24-bit "toy type" field from tag block 0 (`SkylanderFormat.md` — stored
 /// as 3 little-endian bytes at offset 0x10). Two figures with different
@@ -108,10 +107,10 @@ impl std::fmt::Display for MaskedVariant {
     }
 }
 
-/// Canonical identity pair used for pack-vs-scan dedup. Two physical tags
-/// with the same [`TagIdentity`] are the same canonical SKU (e.g. a pack-
-/// fresh Fire Reactor crystal and a scanned user-customized DELFOX both
-/// resolve to the same TagIdentity).
+/// Canonical identity pair: toy type plus masked variant. Every pack
+/// figure's [`FigureId`] is built from it, and two tags with the same
+/// [`TagIdentity`] are the same canonical SKU (e.g. a pack-fresh Fire
+/// Reactor crystal and a user-renamed DELFOX resolve to the same one).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct TagIdentity {
     pub toy_type: ToyTypeId,
@@ -137,42 +136,12 @@ impl std::fmt::Display for TagIdentity {
     }
 }
 
-/// 4-byte Mifare NUID (the physical tag's UID). Used to key scan-only
-/// library entries so two physical copies of the same SKU stay distinct
-/// even though they'd collapse to one [`TagIdentity`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct MifareNuid(pub [u8; 4]);
-
-impl MifareNuid {
-    pub const fn new(bytes: [u8; 4]) -> Self {
-        MifareNuid(bytes)
-    }
-    pub const fn as_bytes(&self) -> &[u8; 4] {
-        &self.0
-    }
-    /// Canonical hex form: 8 uppercase hex chars, no separator. Matches
-    /// the scanned-dump filename stem and the canonical form we've used
-    /// everywhere since 6.5.0 (`7FC1ADA3`).
-    pub fn to_hex_string(self) -> String {
-        self.0.iter().map(|b| format!("{:02X}", b)).collect()
-    }
-}
-
-impl std::fmt::Display for MifareNuid {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.to_hex_string())
-    }
-}
-
 // ---------------- Library-level identifier ----------------
 
 /// Stable figure identifier used across the library — opaque string. The
 /// format varies by origin:
 /// - Pack figures: `"{toy_type:06x}-{variant:04x}"` (via [`TagIdentity`]).
 ///   PLAN 6.6 switched this from the prior SHA-of-path scheme.
-/// - Scan-only figures: `"scan:{uid_hex}"` so each physical tag is its
-///   own library card even when SKUs collide.
 /// - Pack figures whose block 0 can't be parsed: `"sha:{old-hash}"` —
 ///   escape valve so nothing orphans silently.
 ///
@@ -193,11 +162,6 @@ impl FigureId {
     /// post-6.6 form.
     pub fn from_tag_identity(id: TagIdentity) -> Self {
         FigureId(id.to_canonical_id_string())
-    }
-
-    /// Build a scan-only id from its Mifare NUID.
-    pub fn from_scanned_nuid(uid: MifareNuid) -> Self {
-        FigureId(format!("scan:{}", uid.to_hex_string()))
     }
 }
 
@@ -318,10 +282,6 @@ pub enum GameOfOrigin {
     /// Cross-cutting Items / Adventure Packs / Sidekicks collections at the
     /// firmware pack root that don't tie to a single game of origin.
     CrossGame,
-    /// Scan-discovered figure whose `(figure_id, variant)` isn't in the pack
-    /// and for which we haven't resolved the game-of-origin yet. PLAN 6.5.5
-    /// landing spot; 6.5.5b will fill this in via a tag-id → metadata table.
-    Unknown,
 }
 
 /// Server-side figure record. Holds filesystem details — **never** serialize
@@ -353,8 +313,8 @@ pub struct Figure {
     /// from a parse of `sky_path`'s block 0. `None` only for the rare
     /// parse-failure case — the indexer falls back to a SHA-prefixed
     /// [`FigureId`] in that path and logs a warning. Consumers that want
-    /// to dedup pack-vs-scan (or build a `TagIdentity → FigureId` reverse
-    /// map) should read this directly rather than re-parsing `sky_path`.
+    /// a `TagIdentity → FigureId` reverse map should read this directly
+    /// rather than re-parsing `sky_path`.
     #[serde(default)]
     pub tag_identity: Option<TagIdentity>,
 }

@@ -12,7 +12,7 @@ pub mod protocol;
 
 pub use compat::{game_of_origin_from_serial, is_compatible};
 pub use figure::{
-    Category, Element, Figure, FigureId, Game, GameOfOrigin, GameSerial, MaskedVariant, MifareNuid,
+    Category, Element, Figure, FigureId, Game, GameOfOrigin, GameSerial, MaskedVariant,
     PublicFigure, TagIdentity, TagVariant, ToyTypeId, VARIANT_IDENTITY_MASK, VehicleTerrain,
 };
 pub use game::{InstalledGame, SKYLANDERS_SERIALS};

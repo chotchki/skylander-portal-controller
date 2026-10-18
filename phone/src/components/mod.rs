@@ -12,7 +12,6 @@ mod pairing_required;
 mod pwa_hint;
 mod ray_halo;
 mod rpcs3_settings_overlay;
-mod scan_overlay;
 mod stale_version;
 mod toy_box;
 
@@ -30,6 +29,5 @@ pub use pairing_required::*;
 pub use pwa_hint::*;
 pub use ray_halo::*;
 pub use rpcs3_settings_overlay::*;
-pub use scan_overlay::*;
 pub use stale_version::*;
 pub use toy_box::*;

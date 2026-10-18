@@ -439,13 +439,6 @@ pub fn run_wizard_blocking(
         result: Option<PersistedConfig>,
         cancelled: bool,
         runtime_dir: PathBuf,
-        /// PLAN 6.5.4 — probed once at wizard mount. Drives the Welcome
-        /// status line and the FirmwarePack copy (reader → pack optional,
-        /// no reader → pack strongly recommended). A later plug-in doesn't
-        /// retroactively change the messaging; user can re-run setup if
-        /// they want. The compile-time default with `nfc-import` off is
-        /// `false`, so feature-less builds show the reader-absent flow.
-        reader_present: bool,
         /// No hardware GPU — the launcher is on the Mesa software renderer
         /// (PLAN 19). Drives the demo-page copy and makes Demo the start page.
         software_gl: bool,
@@ -478,7 +471,7 @@ pub fn run_wizard_blocking(
             }
         }
         /// Empty input is now **explicitly valid** — it means "skip the
-        /// pack, I'll scan". Non-empty goes through the normal validator.
+        /// pack, start empty". Non-empty goes through the normal validator.
         fn pack_valid(&self) -> Result<(), ValidationError> {
             if self.pack_input.trim().is_empty() {
                 Ok(())
@@ -516,14 +509,6 @@ pub fn run_wizard_blocking(
         }
     }
 
-    // Reader probe is feature-gated; without `nfc-import` it's always
-    // `false`, which collapses the wizard to the original single-path
-    // (pack-required-ish) flow.
-    #[cfg(feature = "nfc-import")]
-    let reader_present = skylander_nfc_reader::probe_reader();
-    #[cfg(not(feature = "nfc-import"))]
-    let reader_present = false;
-
     #[cfg(target_os = "macos")]
     let rpcs3_default = default_rpcs3_config_dir_guess()
         .map(|p| p.display().to_string())
@@ -548,7 +533,6 @@ pub fn run_wizard_blocking(
         result: None,
         cancelled: false,
         runtime_dir: runtime_dir.to_path_buf(),
-        reader_present,
         software_gl,
         window_mode: WindowMode::Tv,
         game_check_for: String::new(),
@@ -720,22 +704,8 @@ pub fn run_wizard_blocking(
         body(
             ui,
             "We need your RPCS3 install path. A Skylanders firmware pack is optional - \
-             you can also scan figures with an NFC reader, or start empty and use \
-             in-game creation (Imaginators).",
+             you can start empty and use in-game creation (Imaginators).",
         );
-        ui.add_space(24.0);
-        if s.reader_present {
-            status_ok(
-                ui,
-                "NFC reader detected - you can scan figures to build your library.",
-            );
-        } else {
-            status_info(
-                ui,
-                "No NFC reader detected. Plug in an ACR122U and re-run setup if you'd \
-                 like to scan figures later.",
-            );
-        }
         ui.add_space(48.0);
         ui.horizontal(|ui| {
             if primary_button(ui, true, "NEXT").clicked() {
@@ -913,15 +883,11 @@ pub fn run_wizard_blocking(
         heading(ui, "STEP 2 OF 3");
         subhead(ui, "FIRMWARE PACK (OPTIONAL)");
         ui.add_space(24.0);
-        let copy = if s.reader_present {
-            "Pick the folder with your .sky files, or leave blank and scan figures in \
-             with your NFC reader."
-        } else {
+        body(
+            ui,
             "Pick the folder with your .sky files. You can leave this blank to start \
-             empty, but without a reader or a pack your library will stay empty until \
-             you plug one in."
-        };
-        body(ui, copy);
+             empty and re-run setup any time to add one.",
+        );
         ui.add_space(16.0);
         ui.horizontal(|ui| {
             styled_input(ui, &mut s.pack_input, 620.0);

@@ -17,7 +17,7 @@ use leptos::prelude::*;
 use crate::api::{fetch_games, fetch_status, fetch_version_check, VersionCheck, BUILD_TOKEN};
 use crate::components::{
     ConnectionLost, GameCrashScreen, Header, KaosOverlay, PairingRequired, Rpcs3SettingsOverlay,
-    ScanOverlay, StaleVersion,
+    StaleVersion,
 };
 use crate::model::{
     Category, ConnState, Element, GameLaunched, GameOfOrigin, PublicProfile, Slot, SlotState,
@@ -77,25 +77,6 @@ pub(crate) struct KaosSwapAnnouncement {
 pub(crate) struct GameCrashReason {
     pub message: String,
     pub recovering: bool,
-}
-
-/// NFC scan-to-import overlay state (PLAN 6.5.2). `Closed` is the default;
-/// tapping the `+` card in the toy box flips to `Prompt`; the WS handler
-/// for [`Event::FigureScanned`] flips `Prompt → Success` so the user sees
-/// what landed. The overlay component owns its own timeout timer that
-/// bumps `Prompt → Timeout` after ~30s of no scan.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ScanOverlayState {
-    Closed,
-    Prompt,
-    Success {
-        display_name: String,
-        /// Server says the tag has been scanned before (the `<uid>.sky`
-        /// existed prior to this dump). Drives copy: "Added to your
-        /// collection" vs "Already in your collection".
-        is_duplicate: bool,
-    },
-    Timeout,
 }
 
 /// In-flight "reset this figure to a fresh copy?" prompt. Set when the user
@@ -207,7 +188,6 @@ pub fn App() -> impl IntoView {
     // WS `Rpcs3SettingsChanged` handler). Drives the "configuring on the TV…"
     // overlay; the portal is unavailable for its duration.
     let rpcs3_settings_open = RwSignal::new(false);
-    let scan_overlay = RwSignal::new(ScanOverlayState::Closed);
     let reset_target = RwSignal::new(None::<ResetTarget>);
     let menu_open = RwSignal::new(false);
     // Konami-gate trigger shared between the kebab menu's MANAGE PROFILES action
@@ -270,7 +250,6 @@ pub fn App() -> impl IntoView {
         takeover,
         resume_offer,
         game_crash,
-        scan_overlay,
         reconnect_attempts,
         manual_retry,
         kaos_swap,
@@ -420,7 +399,6 @@ pub fn App() -> impl IntoView {
                                 category_filter
                                 search
                                 toasts
-                                scan_overlay
                                 unlocked_profile
                                 reset_target
                                 figure_updates_rev
@@ -441,7 +419,6 @@ pub fn App() -> impl IntoView {
                 <ResumeModal resume_offer unlocked_profile toasts />
             </Show>
             <ResetConfirmModal reset_target toasts />
-            <ScanOverlay scan_overlay toasts />
             <Rpcs3SettingsOverlay visible=rpcs3_settings_open />
             <MenuOverlay
                 open=menu_open

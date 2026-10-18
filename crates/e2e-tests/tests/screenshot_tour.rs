@@ -208,7 +208,7 @@ async fn capture_full_phone_tour() -> Result<()> {
     // distinct UI.
     let cards = phone
         .client
-        .find_all(Locator::Css(".fig-card-p4:not(.scan-new)"))
+        .find_all(Locator::Css(".fig-card-p4"))
         .await
         .unwrap_or_default();
     let first_card = cards.first().context("no figure cards in toy box")?.clone();
@@ -259,7 +259,7 @@ async fn capture_full_phone_tour() -> Result<()> {
     // card now has the `.on-portal` modifier).
     let cards = phone
         .client
-        .find_all(Locator::Css(".fig-card-p4:not(.scan-new):not(.on-portal)"))
+        .find_all(Locator::Css(".fig-card-p4:not(.on-portal)"))
         .await
         .unwrap_or_default();
     if let Some(card) = cards.first() {

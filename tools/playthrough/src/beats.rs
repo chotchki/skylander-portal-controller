@@ -300,7 +300,7 @@ async fn place_figure_mock(ctx: &BeatCtx<'_>) -> Result<()> {
     inject_load_outcomes(&server.url, json!([{"kind": "ok"}, {"kind": "ok"}])).await?;
 
     // Place the first figure, wait for a Loaded slot.
-    place_one(phone, ".fig-card-p4:not(.scan-new)").await?;
+    place_one(phone, ".fig-card-p4").await?;
     let _ = phone
         .wait_until(Duration::from_secs(8), || async {
             phone
@@ -312,7 +312,7 @@ async fn place_figure_mock(ctx: &BeatCtx<'_>) -> Result<()> {
         .await;
 
     // Place a second (skipping the one now on the portal), wait for two Loaded.
-    place_one(phone, ".fig-card-p4:not(.scan-new):not(.on-portal)").await?;
+    place_one(phone, ".fig-card-p4:not(.on-portal)").await?;
     let _ = phone
         .wait_until(Duration::from_secs(8), || async {
             phone
@@ -358,7 +358,7 @@ async fn place_figure_ipc(ctx: &BeatCtx<'_>) -> Result<()> {
     let picked = phone
         .client
         .execute(
-            r#"const cards=[...document.querySelectorAll('.fig-card-p4:not(.scan-new):not(.on-portal)')];
+            r#"const cards=[...document.querySelectorAll('.fig-card-p4:not(.on-portal)')];
                const byName=re=>cards.find(c=>{const n=c.querySelector('.fig-name-p4');return n&&re.test((n.textContent||'').trim());});
                const pick=byName(/^eruptor$/i)||byName(/spyro/i)||cards[0];
                if(pick){pick.scrollIntoView({block:'center'});pick.click();
@@ -614,7 +614,7 @@ async fn appearance_swap(ctx: &BeatCtx<'_>) -> Result<()> {
     let opened = phone
         .client
         .execute(
-            r#"const cards=[...document.querySelectorAll('.fig-card-p4:not(.scan-new)')];
+            r#"const cards=[...document.querySelectorAll('.fig-card-p4')];
                const byName=re=>cards.find(c=>{const n=c.querySelector('.fig-name-p4');return n&&re.test((n.textContent||'').trim())});
                const pick=byName(/spyro/i)||cards[0];
                if(pick){pick.scrollIntoView({block:'center'});pick.click();return true}return false"#,
@@ -648,7 +648,7 @@ async fn pick_figure_stats(ctx: &BeatCtx<'_>) -> Result<()> {
     let opened = phone
         .client
         .execute(
-            r#"const cards=[...document.querySelectorAll('.fig-card-p4:not(.scan-new)')];
+            r#"const cards=[...document.querySelectorAll('.fig-card-p4')];
                const byName=re=>cards.find(c=>{const n=c.querySelector('.fig-name-p4');return n&&re.test((n.textContent||'').trim())});
                const pick=byName(/eruptor/i)||byName(/spyro/i)||cards[0];
                if(pick){pick.scrollIntoView({block:'center'});pick.click();return true}return false"#,
@@ -815,7 +815,7 @@ async fn bootstrap_one_on_portal(phone: &Phone) -> Result<()> {
     clear_search(phone).await;
     tokio::time::sleep(Duration::from_millis(300)).await;
     if phone
-        .js_click(".fig-card-p4:not(.scan-new):not(.on-portal)")
+        .js_click(".fig-card-p4:not(.on-portal)")
         .await
         .unwrap_or(false)
         && phone
@@ -901,7 +901,7 @@ async fn place_bob_figure(phone: &Phone) -> Result<()> {
     let picked = phone
         .client
         .execute(
-            r#"const cards=[...document.querySelectorAll('.fig-card-p4:not(.scan-new):not(.on-portal)')];
+            r#"const cards=[...document.querySelectorAll('.fig-card-p4:not(.on-portal)')];
                const byName=re=>cards.find(c=>{const n=c.querySelector('.fig-name-p4');return n&&re.test((n.textContent||'').trim());});
                const pick=byName(/trigger happy/i)||byName(/gill grunt/i)||byName(/stealth elf/i)||cards[0];
                if(pick){pick.scrollIntoView({block:'center'});pick.click();

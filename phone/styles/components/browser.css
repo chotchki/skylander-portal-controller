@@ -5,13 +5,7 @@
  * The dark "interior" of the toy box: scrollable 4-column figure
  * grid with side rails, top/bottom fades, and a "no results" empty
  * state. Each card is a small <GoldBezel> + name label, with optional
- * variant badge, on-portal ribbon, and the +-card that opens the
- * <ScanOverlay>.
- *
- * The plus-card rules (.fig-card-p4.scan-new, .scan-new-bezel,
- * .scan-new-label) lived in app.css alongside ScanOverlay until 9.4b;
- * they were deferred to this tranche since they're a Browser concern,
- * not an overlay concern. Now folded in here.
+ * variant badge and on-portal ribbon.
  *
  * The legacy Phase-3 browser placeholder rules (.browser-head,
  * .search, .chip-row, .chip, .grid, .card, .card-icon, .card-thumb,
@@ -325,43 +319,5 @@
     color: #d9c88a;
     letter-spacing: 0.06em;
     text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
-  }
-
-  /* === Scan-new plus-card (PLAN 6.5.2). ===
-     Sits at grid-position 0 of the figure-grid. Same .fig-card-p4 frame;
-     swaps the bezel contents for a filled-gold disc with a chunky `+`
-     so it reads as "another slot" in the visual vocabulary. */
-  .fig-card-p4.scan-new .fig-bezel-p4 {
-    @apply relative;
-    aspect-ratio: 1;
-  }
-  .scan-new-bezel {
-    @apply absolute inset-0 rounded-full grid place-items-center;
-    background: radial-gradient(circle at 35% 30%,
-      var(--color-gold-bright),
-      var(--color-gold) 22%,
-      var(--color-gold-mid) 55%,
-      var(--color-gold-shadow));
-    box-shadow:
-      inset 0  0 0 2px var(--color-gold-deep),
-      inset 0  3px 4px rgba(255, 255, 255, 0.35),
-      inset 0 -3px 4px rgba(0, 0, 0, 0.5),
-      0  0 0 1px #000,
-      0  4px 10px rgba(0, 0, 0, 0.55);
-  }
-  .scan-new-bezel::before {
-    content: "+";
-    font-family: var(--font-display);
-    font-size: 46px;
-    line-height: 1;
-    color: #1a1203;
-    text-shadow: 0 2px 0 rgba(255, 255, 255, 0.5);
-    transform: translateY(-2px);
-  }
-  .scan-new-label {
-    @apply uppercase;
-    color: var(--color-gold-bright) !important;
-    letter-spacing: 0.12em;
-    font-weight: 800;
   }
 }

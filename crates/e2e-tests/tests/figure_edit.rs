@@ -25,7 +25,7 @@ use skylander_e2e_tests::{
 };
 
 /// Open the toy-box-lid search, type `query`, give the filtered grid a
-/// brief moment to render, then tap the first non-`scan-new` card it
+/// brief moment to render, then tap the first card it
 /// shows. Avoids the exact-name match in `tap_figure_named` so the test
 /// doesn't break when the indexer collapses variants under a slightly
 /// different canonical label. Clears any existing search-input value
@@ -38,10 +38,7 @@ async fn open_first_matching_figure(phone: &Phone, query: &str) -> anyhow::Resul
     input.send_keys(query).await?;
     tokio::time::sleep(Duration::from_millis(400)).await;
     let first = phone
-        .wait_for(
-            Locator::Css(".fig-card-p4:not(.scan-new)"),
-            Duration::from_secs(3),
-        )
+        .wait_for(Locator::Css(".fig-card-p4"), Duration::from_secs(3))
         .await?;
     first.click().await?;
     Ok(())
@@ -354,7 +351,7 @@ async fn stats_button_disabled_while_figure_on_portal() {
     tokio::time::sleep(Duration::from_millis(300)).await;
     let first = phone
         .client
-        .find(Locator::Css(".fig-card-p4:not(.scan-new)"))
+        .find(Locator::Css(".fig-card-p4"))
         .await
         .unwrap();
     first.click().await.unwrap();

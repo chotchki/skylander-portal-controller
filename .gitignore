@@ -28,10 +28,6 @@ target
 # Project-specific
 /logs/
 /dev-data/
-# Runtime-only subtree of the shared asset dir — server writes scanned
-# `.sky` dumps here when DATA_ROOT defaults to `./data/`. Tracked
-# sibling dirs (figures.json, images/, games/, LICENSE.md) stay in.
-/data/scanned/
 .env.dev
 .env.dev.bak
 .env

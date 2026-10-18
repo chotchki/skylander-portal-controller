@@ -258,7 +258,7 @@ fn game_to_generation(g: GameOfOrigin) -> SkyGeneration {
         GameOfOrigin::TrapTeam => SkyGeneration::TrapTeam,
         GameOfOrigin::Superchargers => SkyGeneration::SuperChargers,
         GameOfOrigin::Imaginators => SkyGeneration::Imaginators,
-        GameOfOrigin::CrossGame | GameOfOrigin::Unknown => SkyGeneration::Unknown,
+        GameOfOrigin::CrossGame => SkyGeneration::Unknown,
     }
 }
 
@@ -297,10 +297,6 @@ mod tests {
         );
         assert_eq!(
             game_to_generation(GameOfOrigin::CrossGame),
-            SkyGeneration::Unknown
-        );
-        assert_eq!(
-            game_to_generation(GameOfOrigin::Unknown),
             SkyGeneration::Unknown
         );
     }

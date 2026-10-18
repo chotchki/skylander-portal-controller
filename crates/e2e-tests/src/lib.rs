@@ -1197,17 +1197,12 @@ impl Phone {
     }
 
     /// Tap the first figure card whose visible name matches.
-    /// Skips the synthetic `.scan-new` "SCAN NEW" sentinel card so
-    /// callers can search by figure name without false positives.
     /// Note: clicking a card now opens the [`FigureDetail`] panel
     /// (Phase-4 changed the placement model from one-tap-to-place
     /// to two-tap detail + confirm). For end-to-end "place this
     /// figure into a slot" use [`Phone::place_figure_named`].
     pub async fn tap_figure_named(&self, name: &str) -> Result<()> {
-        let cards = self
-            .client
-            .find_all(Locator::Css(".fig-card-p4:not(.scan-new)"))
-            .await?;
+        let cards = self.client.find_all(Locator::Css(".fig-card-p4")).await?;
         for card in cards {
             let label = card
                 .find(Locator::Css(".fig-name-p4"))
@@ -1238,16 +1233,13 @@ impl Phone {
         Ok(())
     }
 
-    /// Place the first non-`.scan-new` figure card the browser shows.
+    /// Place the first figure card the browser shows.
     /// Useful for tests that don't care which figure goes onto the
     /// portal, only that *something* gets placed (back-pressure
     /// regressions, ws-reconnect-state-survives, etc.). Same two-step
     /// shape as `place_figure_named`.
     pub async fn place_first_figure(&self) -> Result<()> {
-        let card = self
-            .client
-            .find(Locator::Css(".fig-card-p4:not(.scan-new)"))
-            .await?;
+        let card = self.client.find(Locator::Css(".fig-card-p4")).await?;
         card.click().await?;
         let place = self
             .wait_for(Locator::Css(".detail-btn-primary"), Duration::from_secs(5))

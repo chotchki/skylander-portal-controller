@@ -58,7 +58,7 @@ async fn load_uses_canonical_name_not_filename() {
     // collapse to a group key that isn't always exactly "Spyro".
     let first = phone
         .client
-        .find(Locator::Css(".fig-card-p4:not(.scan-new)"))
+        .find(Locator::Css(".fig-card-p4"))
         .await
         .unwrap();
     first.click().await.unwrap();
@@ -119,14 +119,14 @@ async fn resume_prompt_offers_prior_layout() {
         .await
         .unwrap();
 
-    // Place the first figure available — any card that isn't the
-    // SCAN NEW sentinel will do. No need for search here; we're not
+    // Place the first figure available — any card will do. No need
+    // for search here; we're not
     // testing a specific figure name, just that slot 1 ends up
     // populated and the layout persists.
     phone.open_toy_box_lid().await.unwrap();
     let first = phone
         .client
-        .find(Locator::Css(".fig-card-p4:not(.scan-new)"))
+        .find(Locator::Css(".fig-card-p4"))
         .await
         .unwrap();
     first.click().await.unwrap();

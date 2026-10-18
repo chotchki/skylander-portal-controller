@@ -74,11 +74,6 @@ pub enum GameOfOrigin {
     Superchargers,
     Imaginators,
     CrossGame,
-    /// Scan-discovered figure with unresolved game-of-origin (PLAN 6.5.5).
-    /// Phone hides this from the game filter chip row to avoid an
-    /// empty-looking "Unknown" filter; figures with this game still
-    /// render normally in the unfiltered library view.
-    Unknown,
 }
 
 /// Land/Sky/Sea classification for SuperChargers vehicles. Mirrors
@@ -232,22 +227,6 @@ pub enum Event {
     Rpcs3SettingsChanged {
         #[serde(default)]
         open: bool,
-    },
-    /// A figure was scanned on the attached NFC reader. PLAN 6.5.2 — phone
-    /// listens for this to drive the scan-import overlay from Prompt →
-    /// Success (if open) or to fire a passive "Scanned: <name>" toast
-    /// otherwise.
-    FigureScanned {
-        #[serde(default)]
-        uid: String,
-        #[serde(default)]
-        figure_id: u32,
-        #[serde(default)]
-        variant: u16,
-        #[serde(default)]
-        display_name: String,
-        #[serde(default)]
-        is_duplicate: bool,
     },
     /// Kaos just swapped one of this profile's figures for a compat-eligible
     /// replacement. Phone renders the `kaos_swap` overlay variant with the

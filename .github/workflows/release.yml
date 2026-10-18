@@ -200,8 +200,8 @@ jobs:
           # (`/api/games/:serial/image`) only resolve when this
           # directory ships next to the .exe. Ships the committed
           # `thumb.png` set + game PNGs + figures.json metadata;
-          # `data/scanned/` and `data/images/**/hero.png` are
-          # gitignored so the CI checkout doesn't include them.
+          # `data/images/**/hero.png` is gitignored so the CI
+          # checkout doesn't include it.
           Copy-Item -Recurse "data" "$stage/"
           # PLAN 16.9.0b — bundled patched RPCS3 next to the app at rpcs3/rpcs3.exe.
           Copy-Item -Recurse "rpcs3" "$stage/"

@@ -488,9 +488,9 @@ fn max_level_for_game(g: GameOfOrigin) -> u8 {
         GameOfOrigin::SpyrosAdventure | GameOfOrigin::Giants => 10,
         GameOfOrigin::SwapForce => 15,
         GameOfOrigin::TrapTeam | GameOfOrigin::Superchargers | GameOfOrigin::Imaginators => 20,
-        // CrossGame / Unknown — permissive (matches server-side game_to_generation
-        // which maps to SkyGeneration::Unknown → max 20).
-        _ => 20,
+        // CrossGame — permissive (matches server-side game_to_generation,
+        // which maps it to SkyGeneration::Unknown → max 20).
+        GameOfOrigin::CrossGame => 20,
     }
 }
 
@@ -520,6 +520,5 @@ fn game_display_name(g: GameOfOrigin) -> &'static str {
         GameOfOrigin::Superchargers => "SUPERCHARGERS",
         GameOfOrigin::Imaginators => "IMAGINATORS",
         GameOfOrigin::CrossGame => "CROSS-GAME",
-        GameOfOrigin::Unknown => "SCANNED",
     }
 }

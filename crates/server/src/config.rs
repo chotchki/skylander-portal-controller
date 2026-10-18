@@ -114,9 +114,8 @@ pub fn load(_software_gl: bool, _reconfigure: bool) -> Result<Config> {
     let env = read_env_file(".env.dev").unwrap_or_default();
 
     let rpcs3_exe = require_path(&env, "RPCS3_EXE")?;
-    // `FIRMWARE_PACK_ROOT` is now optional (PLAN 6.5.4): reader-only users
-    // don't need a pack, and a zero-collection boot is valid (Imaginators
-    // "instant Skylander" flow, for one). Empty / unset collapses to
+    // `FIRMWARE_PACK_ROOT` is optional (PLAN 6.5.4): a zero-collection
+    // boot is valid (Imaginators "instant Skylander" flow, for one). Empty / unset collapses to
     // PathBuf::new(); `skylander_indexer::scan()` already returns Ok(vec![])
     // for a missing root, so main.rs's boot path is safe without changes.
     let firmware_pack_root = env

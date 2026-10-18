@@ -141,30 +141,6 @@ pub enum Event {
         new_figure_id: crate::figure::FigureId,
         taunt: String,
     },
-    /// A Skylanders figure was scanned on the attached NFC reader. Broadcast
-    /// to all sessions so the phone can refresh its toy-box library view and
-    /// surface a "new figure imported" toast. The raw 1024-byte tag dump
-    /// stays on the server (written to the scanned-figures dir) — phones
-    /// never see it. PLAN 6.5.1.
-    ///
-    /// - `uid`: 8-char uppercase hex of the Mifare NUID (doubles as filename stem).
-    /// - `figure_id`: tag's 24-bit toy type; 0 if parse failed.
-    /// - `variant`: tag's 16-bit variant word; 0 if parse failed.
-    /// - `display_name`: parser-derived nickname for the UI ("Snap Shot",
-    ///   "Eruptor", etc.). Best-effort — empty for parse failures, and for
-    ///   Creation Crystals / CYOS tags the default-nickname offset decodes
-    ///   as mojibake until 6.2.9 pins the CYOS layout (PLAN 6.5.0 notes).
-    /// - `is_duplicate`: true if we'd already seen this uid (the scanned
-    ///   `<uid>.sky` file existed before we re-wrote it). Phone branches
-    ///   the confirmation copy on this — "Added to your collection." vs
-    ///   "Already in your collection."
-    FigureScanned {
-        uid: String,
-        figure_id: u32,
-        variant: u16,
-        display_name: String,
-        is_duplicate: bool,
-    },
     /// A figure's stored stats changed (PLAN 11 — level + gold edit).
     /// Broadcast to every session so any phone showing this figure's detail
     /// screen refreshes its stats strip. The phone matches by `figure_id`

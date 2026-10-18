@@ -133,7 +133,7 @@ RPCS3_EXE=/abs/path/to/vendor/rpcs3/build/bin/rpcs3.app/Contents/MacOS/rpcs3
 # RPCS3's data/config root: holds dev_flash (firmware) + config/games.yml.
 # May live apart from the exe; defaults to the exe's parent if unset.
 RPCS3_CONFIG_DIR=/abs/path/to/your/rpcs3-config-root
-DATA_ROOT=./dev-data
+# DATA_ROOT defaults to ./data (tracked assets); never point it at ./dev-data
 ```
 
 Then `cargo run -p skylander-server`. On `/api/launch` the server runs

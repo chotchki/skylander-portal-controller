@@ -159,7 +159,7 @@ impl EmuState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlotOccupancy {
     Empty,
-    /// 4-byte little-endian Mifare NUID serial (the `<uid>.sky` key).
+    /// 4-byte little-endian Mifare NUID serial.
     Occupied {
         serial: u32,
     },

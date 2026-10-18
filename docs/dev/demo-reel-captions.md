@@ -122,7 +122,7 @@ _viewer sees: the TV the first step of the first run wizard_
 
 ### `install`
 _viewer sees: a STATIC held shot of the first-run wizard (no field-filling — the egui wizard isn't phone-drivable; needs a fresh-config capture path, A.8.5)._
-- **FINAL:** `First, point us at your RPCS3 install + dumped games (an NFC scanner's optional).`
+- **FINAL:** `First, point us at your RPCS3 install + dumped games.`
 
 ### `connect`
 

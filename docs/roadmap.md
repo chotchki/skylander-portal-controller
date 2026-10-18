@@ -28,7 +28,7 @@ The surprise feature, gated behind a per-profile opt-in toggle. (Originally on t
 
 ## Phase 6 — Post-Kaos polish (mostly shipped; per-kind decoders open)
 
-Known papercuts worth fixing but not blocking release. The `.sky` firmware parser for the core "figure" kind shipped in v1.1.x and surfaces level, XP, and gold on the phone's figure-detail screen. Per-kind decoders for traps (captured villain identity), vehicles (SuperChargers SSCR level), and Imaginators creation crystals (class / element / nickname) are scoped and waiting on a UI determination pass — the wire path is already in place. NFC-scan import of physical figures via a separate scanner tool landed; tag-identity dedup follow-ups are open. Window-Z-order work to suppress the brief RPCS3 flicker during menu navigation is also still open.
+Known papercuts worth fixing but not blocking release. The `.sky` firmware parser for the core "figure" kind shipped in v1.1.x and surfaces level, XP, and gold on the phone's figure-detail screen. Per-kind decoders for traps (captured villain identity), vehicles (SuperChargers SSCR level), and Imaginators creation crystals (class / element / nickname) are scoped and waiting on a UI determination pass — the wire path is already in place. NFC-scan import of physical figures (an ACR122U reader) landed, then left the product in change AD (`openspec/changes/ad-remove-acr122/`): Guacamole needs no figure dumps. Window-Z-order work to suppress the brief RPCS3 flicker during menu navigation is also still open.
 
 ## Phase 7 — Packaging and release (done in v1.0.0)
 

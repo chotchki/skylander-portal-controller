@@ -81,11 +81,11 @@ async fn concurrent_edits_both_phones() {
 
     // P2 places — picks a different card (P1's first card now has
     // the on-portal ribbon and would be rejected). Click the second
-    // non-`.scan-new` card; the auto-slot-pick lands on slot 2.
+    // card; the auto-slot-pick lands on slot 2.
     p2.open_toy_box_lid().await.unwrap();
     let p2_cards = p2
         .client
-        .find_all(Locator::Css(".fig-card-p4:not(.scan-new)"))
+        .find_all(Locator::Css(".fig-card-p4"))
         .await
         .unwrap();
     p2_cards[1].clone().click().await.unwrap();
@@ -363,7 +363,7 @@ async fn ownership_pip_shows_correct_owner_per_slot() {
     p2.open_toy_box_lid().await.unwrap();
     let p2_cards = p2
         .client
-        .find_all(Locator::Css(".fig-card-p4:not(.scan-new)"))
+        .find_all(Locator::Css(".fig-card-p4"))
         .await
         .unwrap();
     p2_cards[1].clone().click().await.unwrap();
@@ -515,7 +515,7 @@ async fn disconnect_ghosts_session_keeps_slots() {
     p2.open_toy_box_lid().await.unwrap();
     let p2_cards = p2
         .client
-        .find_all(Locator::Css(".fig-card-p4:not(.scan-new)"))
+        .find_all(Locator::Css(".fig-card-p4"))
         .await
         .unwrap();
     p2_cards[1].clone().click().await.unwrap();

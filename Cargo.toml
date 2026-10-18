@@ -3,7 +3,6 @@ resolver = "2"
 members = [
     "crates/core",
     "crates/indexer",
-    "crates/nfc-reader",
     "crates/rpcs3-control",
     "crates/server",
     "crates/sky-parser",

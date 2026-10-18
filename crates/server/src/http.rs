@@ -440,7 +440,6 @@ async fn figure_image(
 ) -> Response {
     // Input validation — canonical FigureId forms post-PLAN-6.6.3:
     //   - `{6-hex}-{4-hex}` — tag-identity pack figures (common case)
-    //   - `scan:{8-hex}` — scan-only by Mifare NUID
     //   - `sha:{16-hex}` — parse-failure fallback
     // Be strict about the charset so this endpoint can't be turned into
     // an arbitrary-file-read vector.
@@ -513,9 +512,8 @@ fn image_response(bytes: Vec<u8>) -> Response {
         .into_response()
 }
 
-/// PLAN 6.6.3 accepts three `FigureId` shapes:
+/// Accepts the two `FigureId` shapes the pack walk produces (PLAN 6.6.3):
 ///   - `{6-hex}-{4-hex}` — tag-identity pack figures
-///   - `scan:{uid}`      — scan-only (uid is uppercase hex, length 8)
 ///   - `sha:{hex}`       — parse-failure fallback (16 hex chars)
 ///
 /// Anything else is rejected so this endpoint can't be coerced into
@@ -534,9 +532,6 @@ fn is_safe_figure_id(id: &str) -> bool {
         {
             return true;
         }
-    }
-    if let Some(rest) = id.strip_prefix("scan:") {
-        return rest.len() == 8 && rest.chars().all(|c| c.is_ascii_hexdigit());
     }
     if let Some(rest) = id.strip_prefix("sha:") {
         return rest.len() == 16 && rest.chars().all(|c| c.is_ascii_hexdigit());
@@ -2690,6 +2685,25 @@ async fn fire_takeover_testhook(
         cooldown_remaining_secs: body.cooldown_remaining_secs,
     });
     (StatusCode::OK, "fired").into_response()
+}
+
+#[cfg(test)]
+mod figure_id_tests {
+    use super::*;
+
+    #[test]
+    fn accepts_only_the_pack_walks_id_forms() {
+        assert!(is_safe_figure_id("000009-0000"));
+        assert!(is_safe_figure_id("sha:0123456789abcdef"));
+        // The scanner's id form left with the ACR122 reader (AD).
+        assert!(!is_safe_figure_id("scan:7FC1ADA3"));
+        assert!(!is_safe_figure_id("00000A-0000"));
+        assert!(!is_safe_figure_id("000009-000"));
+        assert!(!is_safe_figure_id("sha:0123"));
+        // Path traversal, shaped to hit each branch's length check.
+        assert!(!is_safe_figure_id("../../etc/x"));
+        assert!(!is_safe_figure_id("sha:../../../../etcx"));
+    }
 }
 
 #[cfg(test)]

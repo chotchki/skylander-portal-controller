@@ -54,7 +54,7 @@ async fn spam_click_same_slot() {
     // Tap the first figure card to open its detail panel.
     let card = phone
         .client
-        .find(Locator::Css(".fig-card-p4:not(.scan-new)"))
+        .find(Locator::Css(".fig-card-p4"))
         .await
         .unwrap();
     card.click().await.unwrap();
@@ -151,7 +151,7 @@ async fn dup_figure_across_slots() {
     // .fig-card-p4 element).
     let _ribbon = phone
         .wait_for(
-            Locator::Css(".fig-card-p4:not(.scan-new) .fig-on-portal-ribbon"),
+            Locator::Css(".fig-card-p4 .fig-on-portal-ribbon"),
             Duration::from_secs(3),
         )
         .await
@@ -190,7 +190,7 @@ async fn clear_then_load_sequence() {
     // Place the first available figure into slot 1.
     let cards = phone
         .client
-        .find_all(Locator::Css(".fig-card-p4:not(.scan-new)"))
+        .find_all(Locator::Css(".fig-card-p4"))
         .await
         .unwrap();
     cards[0].clone().click().await.unwrap();
@@ -222,7 +222,7 @@ async fn clear_then_load_sequence() {
     phone.open_toy_box_lid().await.unwrap();
     let cards = phone
         .client
-        .find_all(Locator::Css(".fig-card-p4:not(.scan-new):not(.on-portal)"))
+        .find_all(Locator::Css(".fig-card-p4:not(.on-portal)"))
         .await
         .unwrap();
     cards[1].clone().click().await.unwrap();
@@ -389,7 +389,7 @@ async fn on_portal_figures_disabled() {
     // After placement, the card should render the on-portal ribbon.
     phone
         .wait_for(
-            Locator::Css(".fig-card-p4:not(.scan-new) .fig-on-portal-ribbon"),
+            Locator::Css(".fig-card-p4 .fig-on-portal-ribbon"),
             Duration::from_secs(3),
         )
         .await
@@ -400,9 +400,7 @@ async fn on_portal_figures_disabled() {
     phone.open_toy_box_lid().await.unwrap();
     let placed_card = phone
         .client
-        .find(Locator::Css(
-            ".fig-card-p4:not(.scan-new):has(.fig-on-portal-ribbon)",
-        ))
+        .find(Locator::Css(".fig-card-p4:has(.fig-on-portal-ribbon)"))
         .await
         .unwrap();
     placed_card.click().await.unwrap();
