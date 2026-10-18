@@ -801,9 +801,11 @@ replaces that job; nothing in it needed decompiling. `guac_formats::edge`
   triangle decisions on the session savestate's main pass.
 - Palettes (the savestate's 43 skinned jobs over 8 NPC models): blend-index (`_inverseJointArray`) order,
   48-byte row-major 3×4, MODEL space with a separate local-to-world per job, the two DMA sources at
-  `_skinMatricesByteOffsets[0]` and `[1]`, bones mapped by name. Eruptor's captures hold to the same layout:
-  a palette least-squares fitted to his captured vertices alone (33 joints) leaves a residual of
-  3.9e-7-4.4e-7.
+  `_skinMatricesByteOffsets[0]` and `[1]`, bones mapped by name. Eruptor's own jobs in the session's
+  savestate hold to the same layout: all 103 of his job records take their 33 matrices from those two
+  offsets, and his 4 surviving idle palettes, read that way, solve to `Eruptor_Idle` (Havok below, Eruptor's
+  own). His captures agree on model space: a palette least-squares fitted to his captured vertices alone (33
+  joints) leaves a residual of 3.9e-7-4.4e-7.
 - Eruptor against the captures (AC.16, `eruptor_segments_match_the_captures` in
   [`giants_capture.rs`](../../crates/guac-formats/tests/giants_capture.rs)). His 3 segments draw 14 times a
   frame over 5 passes, A to E (the 503-vertex one skips C), every draw indexed u16 triangles, segment-local
@@ -818,7 +820,7 @@ replaces that job; nothing in it needed decompiling. `guac_formats::edge`
   - Normals and tangents pass the word check: past the 16,691 exact words above, each of the other 17 is 1
     LSB on one component whose unrounded field sits within 6.1e-4 of a step from the rounding boundary. As
     angles that's 2.40e-3 rad from our float blend (2.92e-3 signed normalized, 2.87e-3 under RPCS3's
-    (v << 5) / 32767).
+    s × 2^(16-b) / 32767).
   - The session's savestate agrees: 50 of 50 intact hero draws in its ring are ordered subsets in the same
     rotation, positions within 8.55e-7 on all 2,861 vertices, UV0 exact, and its frame 4's main-pass words
     re-encode 5,721 of 5,722 exactly (the miss 1 LSB on one component).
@@ -826,10 +828,13 @@ replaces that job; nothing in it needed decompiling. `guac_formats::edge`
     stride 12 F32x3 for passes A and C and stride 20 (F32x3, CMP normal at +12, CMP tangent at +16) for B,
     D and E. Output 0, the unskinned config, isn't drawn in these frames, and neither are the 19 unskinned
     prop segments in his `level.bld`.
-- Model space reaches the vertex program: c8..c11 is the modelview and c4..c7 its inverse, both stored
-  transposed and identical in all three captures. c8..c11's translation is the savestate's eye-space
-  Eruptor, 16.76 in front of the eye, and c4..c6 is c8..c10 / 2.25 (his local-to-world scales by 1.5). How
-  the program uses them waits for AE; AC.18 needs them to match a frame.
+- Model space reaches the vertex program. On the main pass (B), c8..c11 hold the modelview row by row
+  (translation in `.w`, c11 = (0, 0, 0, 1)) and c4..c7 its inverse transposed (the inverse's translation,
+  the eye in model space, in c7), so c4..c6 = c8..c10 / 2.25 (his local-to-world scales by 1.5); c8..c11's
+  translation is the savestate's eye-space Eruptor, 16.76 from the eye. D and E keep that c4..c7 but load
+  the view alone (world to eye, the savestate's camera) into c8..c11, C loads the view and its inverse, and
+  A leaves c4..c11 zero. Each pass's c4..c11 are identical in all three captures. How the program uses
+  them waits for AE; AC.18 needs them to match a frame.
 - Reading aids, nothing copied: NoesisPlugins' `fmt_alchemy_igz.py`
   ([NoesisPlugins](https://github.com/NefariousTechSupport/NoesisPlugins)) for field order and the
   attribute tables (its unsigned CMP decode doesn't fit this data), the index layout as SkydraHeavy's port
@@ -906,11 +911,11 @@ The mirror argument that favoured Havok was the wrong lead for the game. Its geo
 mesh mirrors itself in x to 1e-4, Havok's joints mirror on all 10 L/R pairs within 3e-6, Alchemy's break
 only at the right wrist and palm, and skinned with Alchemy's bind at the reference pose the right hand moves
 up to 0.239 and sits up to 0.138 off that mirror), but it measured the asset, not what the game does with
-it: the game draws the twist. The
-savestate's NPC lean pointed the right way (where the two binds differ by more than 7e-7, Alchemy's fit 9
-of 9). `hero_view`'s default `--bind alchemy` is the game's bind; `--bind havok` still draws the other one
-until AC.22 drops it. The other 12 skeletons whose binds disagree haven't met the oracle, so Alchemy's bind
-for them is an inference from Eruptor and the NPC lean until one does.
+it: the game draws the twist. The savestate's NPC lean pointed the right way (where the two binds differ by
+more than 7e-7, Alchemy's fit 9 of 9). `hero_view`'s default `--bind alchemy` is the game's bind;
+`--bind havok` still draws the other one until AC.22 drops it. The other 12 skeletons whose binds disagree
+haven't met the oracle, so Alchemy's bind for them is an inference from Eruptor and the NPC lean until one
+does.
 
 ### What carries past Giants
 
@@ -952,26 +957,27 @@ SSA's wins are real, but none of them can sink it the way a missing oracle can. 
 better game one: it plays their SSA-era figures too, ships 48 intros (M0 needs only IGA and Bink 1, both
 already read) and already runs here.
 
-What flips it: AC's decoded hero not matching its RSX capture, and it didn't. The decode gate PASSED on
-2026-10-18 (AC.20): Eruptor decoded from the disc alone matches what the original fed RSX, all four layers
-inside the tolerances AC fixed before comparing (decision 5 in
+What flips it: AC's decoded hero not matching its RSX capture, and it didn't. Everything the oracle drew of
+Eruptor PASSED on 2026-10-18 (AC.20): decoded from the disc alone he matches what the original fed RSX, all
+four layers inside the tolerances AC fixed before comparing (decision 5 in
 [`ac-giants-decode-gate/design.md`](../../openspec/changes/ac-giants-decode-gate/design.md), with
-chotchki's two rewordings). `#[ignore]`d tests check it on three RSX captures from one attended session on
-the oracle, and research cross-checked it on the savestate taken in the same session (The oracle; the
-detail is in Giants in detail):
+chotchki's two rewordings). The gate itself stays open on one item, AC.21: L8's untile and the 16
+upgrade-menu images against the oracle (Giants in detail, Textures), none of which a frame showing him
+draws. It gates unless chotchki rules it out, and no ruling is in yet. `#[ignore]`d tests check the rest on
+three RSX captures from one attended session on the oracle, and research cross-checked it on the savestate
+taken in the same session (The oracle; the detail is in Giants in detail):
 
 | Layer | Tolerance | Measured on Eruptor |
 |---|---|---|
-| Textures | BC blocks byte-identical after the same untile | every unit of his 42 draws that holds one of his images holds the one his material binds, level for level (6 of his 60 drawn); 234 of each frame's 243 surfaces equal a disc image, the other 9 are zero render targets |
+| Textures | BC blocks byte-identical after the same untile | every unit of his 42 draws that holds one of his images holds the one his material binds, level for level (5 of his 60 in those draws, his collection portrait a 6th in a UI draw); 234 of each frame's 243 surfaces equal a disc image, the other 9 are zero render targets |
 | Geometry | indexes an ordered subset of ours (SPU culling); positions within 1e-4 of the diagonal; UVs 1/65536; CMP words within 1 LSB of ours re-encoded the SPU's way | 42 of 42 draws ordered subsets; UV0 byte-identical; posed positions through the skeleton within 1.56e-6 (3.4e-7 of the 4.643 diagonal); 16,691 of 16,708 CMP words exact, the other 17 1 LSB on one component |
 | Skeleton | 1e-4 of the extent and 1e-4 rad | the skeleton a palette fitted to the captured vertices implies matches ours within 2.48e-6 rad and 4.2e-7 of the 4.162 extent, with Alchemy's inverse joints as the bind (Havok's misses the right wrist's 5 bones by 0.3631 rad) |
 | Clip | 1e-3 of the diagonal at the solved time, two captures on different poses | `Eruptor_Idle` solved at three distinct times (0.23481, 1.09289, 0.62158 s), each minimum unique, worst vertex 3.4e-7 of the diagonal; the savestate's frames agree within 9.0e-7 |
 
 So Giants stays first, the ladder carries on to AE on it and AC never proposed the Trap Team fallback (same
-TfbTool island, reflection schema already public, Bink 2 for its M0). Not gating and still open: AC.18,
-a FLIP of `hero_view` against a rendered oracle frame for the record (The oracle says what it waits on; the
-viewer also needs camera options to match one), and AC.21, L8's untile and the 16 upgrade-menu images
-against the oracle (Giants in detail, Textures).
+TfbTool island, reflection schema already public, Bink 2 for its M0). Besides AC.21, still open and not
+gating: AC.18, a FLIP of `hero_view` against a rendered oracle frame for the record (The oracle says what
+it waits on; the viewer also needs camera options to match one).
 
 What the kids play most is unknown, and it matters less now that the phone offers the whole roster: it would
 reorder which figures and levels get attention first, not the game. The only signal is on the HTPC,
@@ -1080,9 +1086,11 @@ record in AC.13's note, both outside the repo:
 3. With Eruptor idling on screen, standing still and silent, upgrades recorded (none on his copy): Option+C
    on the focused, UNLOCKED game window. The next frame end arms the capture, the one after writes
    `<config>/captures/BLUS30968_<datetime>_capture.rrc.gz` (24-26 MB) and PAUSES the emulator; Cmd+P
-   resumes. AC.13 took three, at log 0:05:00.6, 0:05:22.6 and 0:05:33.8, which solved to three different
-   idle poses. On a locked screen the keystrokes land in the lock screen's password field, which is why the
-   overnight attempt sent none.
+   resumes. Wait for that write and its pause (2.4-2.5 s after Option+C here) before Cmd+P, or it pauses
+   instead. AC.13 took three, at log 0:05:00.6, 0:05:22.6 and 0:05:33.8, which solved to three different
+   idle poses; the third's Cmd+P landed 0.8 s before its write and paused the game, so it took a second
+   Cmd+P to resume. On a locked screen the keystrokes land in the lock screen's password field, which is
+   why the overnight attempt sent none.
 4. Cmd+S on the game window for the savestate (the guest memory: 92 MB, 56 regions with Inspection Mode
    on), then shut down. With `Suspend Emulation Savestate Mode` off RPCS3 saves, then restarts from the
    state WITHOUT the `--config` override, so every config line the log prints after that restart is the
@@ -1369,7 +1377,7 @@ beside the ladder in `openspec/backlog.md`, gates no rung and starts on chotchki
 |---|---|---|---|
 | AA | `aa-guacamole-shell` | place a figure on the phone, the TV shows its card (name, element, portrait), in `guacamole` | the embedded server, the native driver over a channel, Guacamole's one-question setup, its own database and profiles, the interim catalogue with no `.sky` and no firmware pack, one binary at a time, all on the Mac driving the TV (the MSI carrying both binaries is the bring-up's) |
 | AB, M0 | `ab-giants-extract-and-intros` | place a figure, its original intro video plays | `guac-extract` skeleton (identity, IGA, manifest, Bink 1 transcode, entropy scan); Bevy video playback is a spike. The 48 intros are named by character, not toy type; the voice-over folder in each character archive bridges most of them and AB maps the rest. A figure without one keeps its AA card |
-| AC | `ac-giants-decode-gate`, in parallel with AA and AB | nothing yet (a dev viewer) | IGZ v6, `igImage2`, Edge and a Havok 2011.2 skeleton plus one clip, matched against an RSX capture. PASSED 2026-10-18 on Eruptor, all four layers (Why Giants first), so Giants stays first |
+| AC | `ac-giants-decode-gate`, in parallel with AA and AB | nothing yet (a dev viewer) | IGZ v6, `igImage2`, Edge and a Havok 2011.2 skeleton plus one clip, matched against an RSX capture. PASSED 2026-10-18 on everything the oracle drew of Eruptor, all four layers, so Giants stays first; AC.21 (L8, the 16 upgrade-menu images) holds the gate open unless chotchki rules it out (Why Giants first) |
 | AE, M1 | backlog | their figure as an animated, textured turntable on the TV | the first 3D; the Mac's renderer floor measured; the disc roster replaces the interim catalogue |
 | AF | `af-oracle-foundation` | nothing | the oracle foundation: divergence measured, frame-locked two-pad input, tolerance metrics. Lands before any gameplay comparison |
 | AG, M2 | backlog | walk one level | level scene, collision, character controller, camera, feel checked against the oracle; the input spec, with prompts that match the physical pad |

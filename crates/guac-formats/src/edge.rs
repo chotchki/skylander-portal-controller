@@ -423,17 +423,19 @@ fn cmp_fields(word: u32) -> [i32; 3] {
 
 /// A CMP word as the SPU's EdgeGeometry job reads it, the decode for every
 /// stream the SPU reads (the disc's bind normals and tangents): a b-bit field
-/// s is (2s + 1) / (2^b - 1). The codes span exactly -1..=1, symmetric about
-/// zero, with no code at zero (word 0 is (1/2047, 1/2047, 1/1023)).
+/// s is (2s + 1) / (2^b - 1), spanning exactly -1..=1 symmetric about zero
+/// with no code at zero (word 0 is (1/2047, 1/2047, 1/1023)).
 ///
 /// Evidence (AC.16, no Sony docs): brute force over AC.13's three RSX
 /// captures of Eruptor, 4 decodes x 12 encodes x renormalizing or not. Only
 /// this decode, a weighted blend of the bone rotations left unnormalized and
 /// the encode floor((x (2^b - 1) - 1) / 2) turn his bind words into the
-/// SPU's posed ones: 16,691 of 16,708 exact (next-best rule 9,141), each miss
-/// 1 LSB on one component at a rounding tie; the June savestate's frame 4,
-/// 5,721 of 5,722. Up to 1.439e-3 rad from [`x11y11z10n_rsx`] on his bind
-/// words. It says nothing about how the GPU reads a CMP word.
+/// SPU's posed ones: 16,691 of 16,708 exact with our predicted palette, each
+/// miss 1 LSB on one component at a rounding tie (with a palette fitted to
+/// the captures, 16,700 against the next-best rule's 9,141); AC.13's session
+/// savestate, frame 4, 5,721 of 5,722. Up to 1.439e-3 rad from
+/// [`x11y11z10n_rsx`] on his bind words, and silent on how the GPU reads a
+/// CMP word.
 pub fn x11y11z10n_spu(word: u32) -> [f32; 3] {
     let s = cmp_fields(word);
     std::array::from_fn(|i| (2 * s[i] + 1) as f32 / ((1 << CMP_BITS[i]) - 1) as f32)
