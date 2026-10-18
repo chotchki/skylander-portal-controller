@@ -827,8 +827,8 @@ point opposite ways:
   more than 7e-7 the Alchemy bind fits 9 of 9 (23 of 29 above 3e-7). Not decisive: no resident skeleton's
   binds differ by more than 1e-6.
 
-Eruptor's own palette settles it (AC.17). Until then the working assumption (palette = Havok model pose ×
-Alchemy inverse joint) is `hero_view`'s default, and `--bind havok` draws the other one.
+Eruptor's own palette settles it (AC.17): palette = Havok model pose × Alchemy inverse joint, the one bind
+`hero_view` skins with (AC.22 dropped `--bind havok`).
 
 ### What carries past Giants
 
