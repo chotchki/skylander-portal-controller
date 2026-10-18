@@ -1,6 +1,8 @@
 //! Finding ffmpeg (design decision 8): the path in guacamole's settings
-//! (`GUAC_FFMPEG` in dev), else beside the running executable, else PATH.
-//! ffprobe for the census is found the same way. Nothing is bundled.
+//! (`GUAC_FFMPEG` in dev), else beside the running executable, else PATH,
+//! else (macOS) Homebrew's bin folders, since an app launchd starts gets a
+//! PATH without them. ffprobe for the census is found the same way. Nothing
+//! is bundled.
 
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
@@ -25,6 +27,8 @@ pub enum Where {
     Configured,
     BesideExe,
     Path,
+    /// A folder the OS's package manager installs to, after PATH.
+    Fallback,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +45,7 @@ pub fn find_tool(
     configured: Option<&Path>,
     exe_dir: Option<&Path>,
     path_var: Option<&OsStr>,
+    fallback: &[&Path],
 ) -> Result<Found, Option<PathBuf>> {
     if let Some(p) = configured {
         return if is_program(p) {
@@ -59,24 +64,32 @@ pub fn find_tool(
             how: Where::BesideExe,
         });
     }
-    path_var
+    let on_path = path_var
         .into_iter()
         .flat_map(std::env::split_paths)
-        .map(|d| d.join(&name))
-        .find(|p| is_program(p))
-        .map(|path| Found {
-            path,
-            how: Where::Path,
-        })
+        .map(|d| (d.join(&name), Where::Path));
+    let fallback = fallback.iter().map(|d| (d.join(&name), Where::Fallback));
+    on_path
+        .chain(fallback)
+        .find(|(p, _)| is_program(p))
+        .map(|(path, how)| Found { path, how })
         .ok_or(None)
 }
+
+/// Homebrew's bin folders (Apple silicon, then Intel); none off macOS.
+pub const FALLBACK_DIRS: &[&str] = if cfg!(target_os = "macos") {
+    &["/opt/homebrew/bin", "/usr/local/bin"]
+} else {
+    &[]
+};
 
 /// [`find_tool`] over this process: its executable's folder and its PATH.
 pub fn find_tool_here(tool: &str, configured: Option<&Path>) -> Result<Found, Option<PathBuf>> {
     let exe = std::env::current_exe().ok();
     let exe_dir = exe.as_deref().and_then(Path::parent);
     let path = std::env::var_os("PATH");
-    find_tool(tool, configured, exe_dir, path.as_deref())
+    let fallback: Vec<&Path> = FALLBACK_DIRS.iter().map(Path::new).collect();
+    find_tool(tool, configured, exe_dir, path.as_deref(), &fallback)
 }
 
 fn is_program(p: &Path) -> bool {
@@ -229,16 +242,18 @@ Encoders:
     }
 
     #[test]
-    fn discovery_order_is_settings_then_beside_then_path() {
+    fn discovery_order_is_settings_then_beside_then_path_then_fallback() {
         let tmp = tempfile::tempdir().unwrap();
         let t = tmp.path();
         let settings = fake(&t.join("settings"), "ffmpeg");
         let beside = fake(&t.join("app"), "ffmpeg");
         let path1 = fake(&t.join("p1"), "ffmpeg");
         let path2 = fake(&t.join("p2"), "ffmpeg");
+        let brew = fake(&t.join("brew"), "ffmpeg");
+        let brew_dir = t.join("brew");
         let path_var = std::env::join_paths([t.join("empty"), t.join("p1"), t.join("p2")]).unwrap();
         let find = |configured: Option<&Path>, exe_dir: Option<&Path>| {
-            find_tool("ffmpeg", configured, exe_dir, Some(&path_var))
+            find_tool("ffmpeg", configured, exe_dir, Some(&path_var), &[&brew_dir])
         };
         let app = t.join("app");
         assert_eq!(
@@ -255,7 +270,7 @@ Encoders:
                 how: Where::BesideExe
             })
         );
-        // Nothing beside: PATH, first folder holding it.
+        // Nothing beside: PATH, first folder holding it, ahead of the fallback.
         assert_eq!(
             find(None, Some(&t.join("empty"))),
             Ok(Found {
@@ -266,13 +281,21 @@ Encoders:
         std::fs::remove_file(&path1).unwrap();
         assert_eq!(find(None, None).map(|f| f.path), Ok(path2.clone()));
         std::fs::remove_file(&path2).unwrap();
+        assert_eq!(
+            find(None, Some(&t.join("empty"))),
+            Ok(Found {
+                path: brew.clone(),
+                how: Where::Fallback
+            })
+        );
+        std::fs::remove_file(&brew).unwrap();
         assert_eq!(find(None, Some(&t.join("empty"))), Err(None));
         // A broken setting is the answer, not a fall-through to `beside`.
         let gone = t.join("settings/nope");
         assert_eq!(find(Some(&gone), Some(&app)), Err(Some(gone)));
         // Another tool's name doesn't count.
         assert_eq!(
-            find_tool("ffprobe", None, Some(&app), Some(&path_var)),
+            find_tool("ffprobe", None, Some(&app), Some(&path_var), &[&brew_dir]),
             Err(None)
         );
     }
@@ -290,13 +313,22 @@ Encoders:
         let real = fake(&t.join("p3"), "ffmpeg");
         let path_var = std::env::join_paths([t.join("p1"), t.join("p2"), t.join("p3")]).unwrap();
         assert_eq!(
-            find_tool("ffmpeg", None, None, Some(&path_var)).map(|f| f.path),
+            find_tool("ffmpeg", None, None, Some(&path_var), &[]).map(|f| f.path),
             Ok(real)
         );
         assert_eq!(
-            find_tool("ffmpeg", Some(&plain), None, Some(&path_var)),
+            find_tool("ffmpeg", Some(&plain), None, Some(&path_var), &[]),
             Err(Some(plain))
         );
+    }
+
+    #[test]
+    fn the_fallback_is_homebrew_on_macos_only() {
+        if cfg!(target_os = "macos") {
+            assert_eq!(FALLBACK_DIRS, ["/opt/homebrew/bin", "/usr/local/bin"]);
+        } else {
+            assert!(FALLBACK_DIRS.is_empty());
+        }
     }
 
     #[test]

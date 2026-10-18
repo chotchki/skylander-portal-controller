@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use guac_extract::dump::HashProgress;
 use guac_extract::ffmpeg::Ffmpeg;
 use guac_extract::intros::{self, IrFormat};
@@ -546,13 +546,29 @@ fn start_on_pick(
     extraction.feed = Some(spawn(dump, job.clone()));
 }
 
+/// The next event, or none yet. A thread gone without `Finished` (a panic in
+/// [`run`]) is a failure, so the band never freezes on its last progress.
+fn next_event(feed: &Receiver<ExtractEvent>) -> Option<ExtractEvent> {
+    match feed.try_recv() {
+        Ok(event) => Some(event),
+        Err(TryRecvError::Empty) => None,
+        Err(TryRecvError::Disconnected) => {
+            error!("the extraction thread stopped without finishing");
+            Some(ExtractEvent::Finished(Err(Failure::Other {
+                code: "GUAC-E-EXTRACT-IO".into(),
+                message: "the extraction thread stopped without finishing".into(),
+            })))
+        }
+    }
+}
+
 fn drain_extraction(
     mut commands: Commands,
     mut extraction: ResMut<Extraction>,
     mut drawn: ResMut<ExtractBand>,
 ) {
-    let feed = extraction.feed.clone();
-    for event in feed.iter().flat_map(Receiver::try_iter) {
+    // A `Finished` clears `feed`, so the loop ends there.
+    while let Some(event) = extraction.feed.as_ref().and_then(next_event) {
         let status = step(&event);
         if status.kind() != extraction.status.kind() {
             info!(status = status.kind(), "extraction");
@@ -839,6 +855,99 @@ mod tests {
         };
         let s = step(&ExtractEvent::Finished(Err(f.clone())));
         assert_eq!(s, ExtractStatus::Failed(f));
+    }
+
+    /// An app draining `rx` the way guacamole does.
+    fn draining(rx: Receiver<ExtractEvent>) -> App {
+        let mut app = App::new();
+        app.insert_resource(Extraction {
+            feed: Some(rx),
+            ..Default::default()
+        })
+        .init_resource::<ExtractBand>()
+        .add_systems(Update, drain_extraction);
+        app
+    }
+
+    fn hashing() -> ExtractEvent {
+        ExtractEvent::Hashing(HashProgress {
+            files_done: 1,
+            files_total: 2,
+            bytes_done: 1,
+            bytes_total: 2,
+        })
+    }
+
+    #[test]
+    fn a_thread_gone_without_finishing_is_a_failure() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut app = draining(rx);
+        tx.send(hashing()).unwrap();
+        app.update();
+        let x = app.world().resource::<Extraction>();
+        assert_eq!(x.status.kind(), "Checking");
+        assert!(x.feed.is_some());
+        // The thread panics: its sender drops with no `Finished`.
+        drop(tx);
+        app.update();
+        let x = app.world().resource::<Extraction>();
+        assert!(x.feed.is_none());
+        let ExtractStatus::Failed(f) = &x.status else {
+            panic!("{:?}", x.status)
+        };
+        assert_eq!(f.code(), "GUAC-E-EXTRACT-IO");
+        let drawn = app.world().resource::<ExtractBand>();
+        assert!(drawn.0.is_some(), "the failure draws its band");
+    }
+
+    #[test]
+    fn a_real_finish_then_the_drop_stays_as_it_finished() {
+        use guac_ir::{DumpIdentity, Sha256};
+        let library = IntroLibrary {
+            dir: "/x".into(),
+            table: CharacterTable {
+                identity: DumpIdentity {
+                    title_id: "BLUS30968".into(),
+                    app_ver: "01.00".into(),
+                    manifest_hash: Sha256([0; 32]),
+                },
+                characters: BTreeMap::new(),
+            },
+        };
+        let ready = Ready {
+            library: library.clone(),
+            ran: false,
+            took: Duration::ZERO,
+        };
+        let no_ffmpeg = Failure::NoFfmpeg {
+            configured: None,
+            install: "brew install ffmpeg".into(),
+        };
+        for (finished, want) in [
+            (
+                Ok(ready),
+                ExtractStatus::Ready {
+                    intros: 0,
+                    ran: false,
+                },
+            ),
+            (Err(no_ffmpeg.clone()), ExtractStatus::Failed(no_ffmpeg)),
+        ] {
+            let (tx, rx) = crossbeam_channel::unbounded();
+            let mut app = draining(rx);
+            tx.send(hashing()).unwrap();
+            tx.send(ExtractEvent::Finished(finished)).unwrap();
+            drop(tx);
+            app.update();
+            app.update();
+            let x = app.world().resource::<Extraction>();
+            let ok = matches!(want, ExtractStatus::Ready { .. });
+            assert_eq!(x.status, want);
+            assert!(x.feed.is_none());
+            // Only the Ok run leaves the library AB.10 plays from.
+            let left = app.world().get_resource::<IntroLibrary>();
+            assert_eq!(left, ok.then_some(&library));
+        }
     }
 }
 

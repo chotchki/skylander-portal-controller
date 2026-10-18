@@ -43,13 +43,17 @@ pub enum ExtractError {
     )]
     NoExtractDir,
 
-    /// No ffmpeg in the settings, beside the executable or on PATH; `install`
-    /// is this OS's one-liner (the spec's missing-converter message).
+    /// No ffmpeg in the settings, beside the executable, on PATH or (macOS) in
+    /// Homebrew's bin folders; `install` is this OS's one-liner (the spec's
+    /// missing-converter message).
     #[error(
         "GUAC-E-NO-FFMPEG: ffmpeg is needed to extract the intros and {}; install it with `{install}`",
         match configured {
             Some(p) => format!("the configured {} isn't a program", p.display()),
-            None => "none was found beside guacamole or on the PATH".to_owned(),
+            None if crate::ffmpeg::FALLBACK_DIRS.is_empty() =>
+                "none was found beside guacamole or on the PATH".to_owned(),
+            None => "none was found beside guacamole, on the PATH or in Homebrew's folders"
+                .to_owned(),
         }
     )]
     NoFfmpeg {

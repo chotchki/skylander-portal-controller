@@ -30,16 +30,17 @@ Extracts what guacamole plays from your own Skylanders disc dump.
   census     sniff every file of any dump and every IGA entry, measure the
              entropy of whatever has no known magic, count each Bink file's
              audio tracks (ffprobe: GUAC_FFPROBE, else beside guac-extract,
-             else PATH) and write census-<title>-<version>-<stamp>.json into
-             GUAC_EXTRACT_DIR
+             else PATH, else Homebrew's bin folders on macOS) and write
+             census-<title>-<version>-<stamp>.json into GUAC_EXTRACT_DIR
   intros     identify, then map each toy type's character archives to its
              intro movie by their voice-over name and write the character
              table to ir/characters.ron in the dump's folder; guacamole adds
              the interim catalogue's names as a fallback, this doesn't
   transcode  intros, then turn each intro movie into video/intro/<name>.mp4
              and audio/intro/<name>.mp3 in the dump's folder (ffmpeg:
-             GUAC_FFMPEG, else beside guac-extract, else PATH); leaves the
-             extract unmarked, since guacamole's has the fallback names too
+             GUAC_FFMPEG, else beside guac-extract, else PATH, else Homebrew's
+             bin folders on macOS); leaves the extract unmarked, since
+             guacamole's has the fallback names too
 ";
 
 /// The environment, else `.env.dev` in the current folder.
