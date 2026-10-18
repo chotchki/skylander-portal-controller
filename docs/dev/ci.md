@@ -47,7 +47,7 @@ PRs whose diff touches `phone/`, `crates/e2e-tests/`, or `crates/guac-server/src
 
 ## Pre-push hook (opt-in)
 
-`.githooks/pre-push` runs `cargo check --workspace` + `cargo test --workspace` locally before push, catching everything the `clippy-build-test` lane would catch on either OS. Opt-in:
+`.githooks/pre-push` runs `cargo fmt --all --check` (workspace + phone), `cargo check --workspace`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` locally before push, catching everything the `clippy-build-test` lane would catch on either OS. Opt-in:
 
 ```sh
 git config core.hooksPath .githooks
@@ -60,3 +60,19 @@ git push --no-verify
 ```
 
 (`--no-verify` bypasses **all** hooks, not just pre-push — use sparingly.)
+
+### Bevy's cost (openspec AA.10)
+
+`crates/guacamole` puts Bevy 0.20 (the `ui` feature collection) in every `--workspace` step, so the hook compiles it. Measured on the M3 Max on 2026-10-18, default profile, the hook's steps with vs without `--exclude guacamole`:
+
+| Run | With guacamole | Without | Delta |
+|---|---|---|---|
+| cold, first sample (check / clippy / test) | 106 s (27 / 18 / 61) | 71 s (28 / 5 / 37) | +35 s |
+| cold, second sample | 101 s (27 / 18 / 55) | 59 s (20 / 4 / 35) | +42 s |
+| warm no-op | 18 s | 19 s | +0 (the test binaries running) |
+| warm, guac-server's `lib.rs` touched | 27 s | 24 s | +3 s |
+| target dir | 11 GB | 5.4 GB | +5.6 GB |
+
+Caveats: one sample per row, a fresh `CARGO_TARGET_DIR` for the cold rows, other builds sharing the CPU (load 5-23; a third cold run at load 20-54 took 163 s), so read the cold delta as +35 to +42 s at best and load-bound. The second sample's test step exited 101 at load 18 and the failure didn't come back in 3 warm runs and 1 cold run with output kept; if it recurs, keep the output so it names the test. The Windows lane's delta isn't measured; that's the Windows/HTPC bring-up's ([`openspec/backlog.md`](../../openspec/backlog.md)). If the hook gets painful, the fix is its own change, not a quiet skip of the guacamole crate.
+
+The warm rows are only meaningful since AA.10 fixed [`crates/guac-server/build.rs`](../../crates/guac-server/build.rs) and [`phone/build.rs`](../../phone/build.rs) to resolve HEAD and the index through `git rev-parse --git-path`: in a linked worktree `.git` is a file, the old literal `.git/HEAD` path never existed and cargo reran the build script, and rebuilt everything downstream, on every build.

@@ -24,7 +24,8 @@ macOS — the mock-driver path is fully cross-platform (PLAN 10.3).
    ```
    cd phone && BUILD_TOKEN=e2e-test trunk build
    ```
-4. Provide a **firmware pack** with `.sky` files. The harness needs a
+4. Provide a **firmware pack** with `.sky` files (product runs only;
+   `E2E_APP=guacamole` needs none, see below). The harness needs a
    real pack so the SPA renders one card per indexed figure.
    Resolution order in `TestServer::spawn`:
    1. `$SKYLANDER_PACK_ROOT` (explicit override).
@@ -64,8 +65,9 @@ cargo test -p skylander-e2e-tests -- --ignored --nocapture
 
 All tests are `#[ignore]`-gated so they don't run under the default
 `cargo test --workspace`. The harness spawns the server binary per
-test via `cargo run -p skylander-server --features test-hooks` with a
-temp working directory containing a generated `.env.dev`.
+test via `cargo run -p skylander-server --features test-hooks` (or
+`-p guacamole`, see `E2E_APP` below) with a temp working directory
+containing a generated env file.
 
 ### Single-test runs
 
@@ -78,6 +80,65 @@ Suite-wide `--nocapture` is recommended — the harness multiplexes the
 spawned server's stdout/stderr through `eprintln!` so you can see the
 server's `INFO` / `WARN` / `ERROR` lines interleaved with test
 progress.
+
+### Against guacamole (`E2E_APP`)
+
+`E2E_APP` picks the binary `TestServer::spawn` / `spawn_with_env_lines`
+run: `product` (the default) or `guacamole` (anything else panics, so a
+typo can't silently test the wrong app). openspec AA.10.
+
+```
+E2E_APP=guacamole cargo test -p skylander-e2e-tests -- --ignored --nocapture
+```
+
+Under `guacamole` the harness runs `cargo run -p guacamole --features
+test-hooks` with no firmware-pack lookup. The env file it generates in
+the temp working dir points `GUAC_DUMP_DIRS` at a temp dir of synthetic
+`PS3_GAME/PARAM.SFO` files (BLUS30968 unless a test asks for other
+titles), `DATA_ROOT` at the repo's `data/` (the interim figure
+catalogue) and sets `WINDOW_MODE=desktop`. `BUILD_TOKEN=e2e-test` is
+pinned the same way, so the phone bundle from step 3 serves both apps.
+`spawn_live` and `spawn_ipc_*` bail under it: they drive RPCS3.
+
+[`tests/guacamole_tv.rs`](tests/guacamole_tv.rs) (13 tests) is
+guacamole-only and skips with a message otherwise. It reads what the TV
+shows through `/api/_test/tv`, a JSON mirror of the laid-out Bevy UI
+tree (screen, join line, player count, each card's lines, portrait,
+owner pip and rect), not pixels.
+
+Product-only tests skip with `SKIPPED under E2E_APP=guacamole,
+product-only: <why>` instead of failing:
+
+- [`figure_edit.rs`](tests/figure_edit.rs) (needs a `.sky` figure
+  file): `edit_level_and_gold_round_trips_through_stats_strip`,
+  `gold_chevrons_jump_to_bounds_and_max_round_trips`,
+  `stats_button_disabled_while_figure_on_portal`.
+- [`working_copies.rs`](tests/working_copies.rs) (needs a `.sky`
+  working copy): `load_uses_canonical_name_not_filename`,
+  `resume_prompt_offers_prior_layout`.
+- [`live_integration.rs`](tests/live_integration.rs) (drives a live
+  RPCS3): `phone_drives_real_rpcs3_load_and_clear`,
+  `live_clear_then_load_different`, `live_spam_click_same_slot`,
+  `live_resume_after_reload`, `live_concurrent_edits_both_phones`,
+  `live_independent_profiles_loads`.
+- [`live_lifecycle_switch.rs`](tests/live_lifecycle_switch.rs) (live
+  RPCS3): `launch_stop_relaunch_switch`.
+- iOS Simulator: `ios_pwa_hint_shows_on_iphone_only`,
+  `ios_smoke_game_picker_renders`,
+  `ios_two_phone_independent_profiles`.
+- [`screenshot_tour.rs`](tests/screenshot_tour.rs):
+  `capture_full_phone_tour` (it writes the product's tracked gallery,
+  `docs/assets/screens/`).
+
+Every other mock-harness test runs against both apps. On the Mac
+(2026-10-18, serial, `--skip ios_`): guacamole 48 of 48 ok, 35 run for
+real (13 TV + 22 shared) and 13 product-only skips; the product 32 of
+35. Its 3 failures already failed at the pre-AA base (46866ce):
+`edit_level_and_gold_round_trips_through_stats_strip`,
+`gold_chevrons_jump_to_bounds_and_max_round_trips` and
+`resume_prompt_offers_prior_layout`. All three are product-only `.sky`
+tests, so under the product freeze they stay failing until chotchki
+calls a fix or G1 removes them with the `.sky` code.
 
 ## macOS specifics
 
@@ -104,6 +165,8 @@ progress.
 - `tests/ios_simulator_smoke.rs`, `tests/ios_two_phone.rs` —
   Mac-only iOS-Simulator-driven tests. See "iOS Simulator lane"
   below.
+- [`tests/guacamole_tv.rs`](tests/guacamole_tv.rs) — guacamole's TV
+  cards and setup, run only under `E2E_APP=guacamole` (see above).
 
 ## Screenshot tour as visual-regression contract
 

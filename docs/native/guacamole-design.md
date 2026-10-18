@@ -252,51 +252,163 @@ flowchart LR
 ```
 
 - Bevy owns the main thread (winit wants it, macOS insists). Axum, the phone SPA, SQLite and the driver
-  worker run on a tokio multi-thread runtime on a background OS thread, the same split the product uses
-  with eframe on main today (`crates/server/src/main.rs:309-645`).
-- The native PortalDriver backs the existing driver worker. A load carries the figure's identity (the
-  server's figure ids already are the tag form `<toy type>-<variant>`, `0007d6-0000`) and the profile that
-  placed it, and the driver sends both over a channel that a Bevy system drains each frame; `clear(slot)`
-  sends the removal. No file is involved: the trait's `load(slot, path)` takes a `.sky` path today, the
-  native arm skips the working-copy fork (`working_copies::resolve_load_path`) and how the trait carries
-  identity instead is AA's call. Of the trait's RPCS3-shaped methods (`crates/rpcs3-control/src/lib.rs:23`),
-  `open_dialog` is required and becomes a no-op, and the IPC-only ones (`ipc_socket_path`, `emu_state`,
-  `game_window_handle`, `game_surface`, `window_set`, `reconnect`) keep the trait's "not applicable"
-  defaults, as `MockPortalDriver` (`crates/rpcs3-control/src/mock.rs:92`) does. Trimming the trait waits
-  for G1, when its RPCS3 implementations leave.
+  worker run on a tokio multi-thread runtime on a background OS thread that `guac_server::boot` starts,
+  the same split the product has with eframe on main
+  ([`crates/guac-server/src/boot.rs`](../../crates/guac-server/src/boot.rs)).
+- The native PortalDriver backs the existing driver worker and places by identity: the server's figure
+  ids already are the tag form `<toy type>-<variant>` (`0007d6-0000`), and a placement carries that plus
+  the profile that placed it (the placement seam, below). No file is involved. Of the trait's RPCS3-shaped
+  methods ([`crates/rpcs3-control/src/lib.rs`](../../crates/rpcs3-control/src/lib.rs)), `open_dialog` is
+  required and is a no-op, and the IPC-only ones (`ipc_socket_path`, `emu_state`, `game_window_handle`,
+  `game_surface`, `window_set`, `reconnect`) keep the trait's "not applicable" defaults, as
+  `MockPortalDriver` does. Trimming the trait waits for G1, when its RPCS3 implementations leave.
 - The portal protocol doesn't change (REST commands return 202, WS carries the snapshot then
   `SlotChanged`). The visible differences: the figure list is the disc roster (AA's interim catalogue
   until it lands), the game list offers what `guacamole` can play from the dumps it was pointed at
   (Giants), a figure's details and edits read and write Guacamole's store (from AH; before that every
-  figure is fresh) and the grown-ups toggles that rewrite the product's RPCS3 and window settings answer
-  "unavailable".
+  figure is fresh, so STATS and RESET TO FRESH are disabled with a "not available yet" note) and the
+  grown-ups toggles that rewrite the product's RPCS3 and window settings answer 409. The phone says the
+  window-mode and 2× toggles aren't available in guacamole; the RPCS3-settings action still toasts a bare
+  `HTTP 409` (AA.19).
 - One binary at a time. Both bind the same HTTP port (8765, the default the controller's setup writes)
-  and advertise the same mDNS name, so the join address is the same for either. The second one to start
-  sees the port taken and says so on the TV instead of fighting. The pairing key is each app's own, so a
-  phone that last joined the other app gets the phone's existing pairing screen and scans the TV's join
-  code once. On the HTPC (the bring-up) Steam Big Picture gets two non-Steam shortcuts, with Steam Input
-  off on `guacamole`'s (Controllers).
+  and advertise the same mDNS name, so the join address is the same for either. The listener binds
+  before anything else happens, so the second one to start sees the port taken, opens no database and
+  says so on the TV instead of fighting (`guacamole` shows its already-running screen for 8 s and exits).
+  The pairing key is each app's own, so a phone that last joined the other app gets the phone's existing
+  pairing screen and scans the TV's join code once. On the HTPC (the bring-up) Steam Big Picture gets two
+  non-Steam shortcuts, with Steam Input off on `guacamole`'s (Controllers).
 - Data lives in `guacamole`'s own SQLite plus the extract dir, both under its own data root (Persistence
   and setup). No working copies, no scanned figures and no RPCS3 config, and the extract dir sits outside
   the tree in dev (the hard rule says why).
 
-Known friction for AA. "Stays as it is" means the product's behavior and window management, NOT its
-source, and the source moves more than a little:
+The crate cut (AA.1). Only what `guacamole` runs moved, into `crates/guac-server` (lib `guac_server`): the
+router (`http`), the driver worker and watchdogs (`state`), the profile store, Kaos, mDNS, the round QR,
+`paths`, `logging`, the embedded phone bundle, the config types both loaders fill and the `BUILD_TOKEN`
+half of the build script. `firewall` went too, because `LauncherStatus` carries its result and the
+connectivity watchdog calls it (leaving it would have cost a fifth hook). AA then added `boot`, `setup`,
+`dumps` and `native_catalogue` there. `crates/server` kept `.sky` editing and stats (`sky_edit`,
+`sky_stats`, still behind its `sky-stats` feature), `working_copies`, `display_mode`, `rpcs3_config`, its
+`config` loader and first-launch wizard (never ported: Guacamole's setup is one question), its three
+migrations, the eframe launcher (`ui/`, the badge and vortex rigs, `compositor`, `gl_fallback`) and the
+Windows resource stamping, and re-exports the moved modules so its own code reads as before. `cargo tree
+-p guac-server -e normal --no-default-features` has no eframe, egui, glow, winresource or sky-parser in it.
 
-- The bootstrap that builds the tokio thread, the driver worker and the watchdogs lives in `main.rs`
-  (947 lines), not the lib, and the lib (`crates/server/src/lib.rs`) exports the eframe modules beside
-  the server ones. AA moves only what `guacamole` runs into a new `crates/guac-server` that both binaries
-  link (the router, the phone SPA serving, the profile store, the driver worker and watchdogs, mDNS, the
-  QR, paths and logging), lifts the bootstrap into one `boot()` call there and gives every RPCS3-keyed
-  branch left in those modules an explicit native arm. `.sky` editing and stats, working copies, the
-  display-mode and RPCS3-config helpers and the eframe UI stay in `crates/server` (NFC is already gone:
-  AD, the ACR122 removal, lands before AA); the product hands the ones the shared code calls to `boot()`
-  and `guacamole` hands none. No behavior change for the product, and that matters more than it did: the
-  next tag ships this source's product, and the bring-up's MSI puts it on the HTPC. For AA the product's
-  e2e suite on the Mac at its pre-AA count proves it; the HTPC live smoke and a check of the installed MSI
-  prove it again at the bring-up.
-- The product's first-launch wizard (eframe, `crates/server/src/wizard.rs`) isn't a prerequisite and
-  isn't ported. Guacamole's setup is one question (Persistence and setup).
+Where moved code needs something that stayed, it calls one of four hook traits
+([`crates/guac-server/src/hooks.rs`](../../crates/guac-server/src/hooks.rs)), each implemented in
+[`crates/server/src/product_hooks.rs`](../../crates/server/src/product_hooks.rs) with the code that used to
+sit at the call site. The product passes all four to `boot`; `guacamole` passes none, and the missing hook
+IS its Native arm at that site.
+
+| Hook | Covers |
+|---|---|
+| `FigureFiles` | the figure stats, edit and reset routes; the working-copy fork on a load, Kaos swap or auto-restart restore; the rewrite on a slot reset |
+| `DisplayModes` | pre-setting and capturing the per-game Windows display mode around a launch |
+| `Rpcs3Config` | RPCS3's Net config at boot and the transient savestate settings |
+| `SettingsWriter` | the product's settings file behind the window-mode and 2× toggles |
+
+No behavior change for the product, and that matters more than it did: the next tag ships this source's
+product, and the bring-up's MSI puts it on the HTPC. `cargo test --workspace` ran 392 tests (350 passed +
+42 ignored) at the pre-AA base (46866ce) and after the cut, and the product's phone e2e suite on the Mac
+passes every test that passed at the base (AA.2, again at AA.10; what still fails failed there too, and
+the HTPC's check is the bring-up's).
+
+The boot call (AA.2). `guac_server::boot(BootOptions) -> Result<ServerHandles>` is everything between
+"config loaded" and the binary's UI; the product's entry point went from 825 lines at the base to 249 (GL
+bootstrap, config, logging, boot, eframe). The options: the loaded config (each binary has its own loader),
+the runtime root (`db.sqlite` sits directly under it), the migration set, a driver factory run ON the
+tokio thread (UIA initializes COM as MTA there), the hooks, extra routes merged into the router
+(`guacamole`'s `/api/_test/tv`, under `test-hooks` only) and the catalogue: `FirmwarePack { scan }` for the
+product (it hands `skylander_indexer::scan` in, since the indexer links sky-parser) or `Native { games }`
+for `guacamole`. Inside the thread the listener binds FIRST, then the RPCS3 Net config write (real
+emulators only), the driver, the database and the rest. An `AddrInUse` sets
+`LauncherStatus::port_in_use`, and the second app stops before it builds a driver, writes RPCS3's config
+or opens a database (a boot test checks all three). With no `bind_ip` it listens on 0.0.0.0 and
+puts the first non-loopback IPv4 in the QR, so the lock holds across a route change. Back come the
+launcher status, the client counter, the phone and raw-IP URLs, the join-QR PNG, the event sender, the
+game list (shared, so `guacamole`'s setup replaces it after boot), the worker's job sender and the server
+thread.
+
+The Native table (AA.3). `DriverKind::Native` gets an explicit arm at every site that assumed RPCS3 or a
+figure file, keyed on the driver kind or on the hook being absent, never on `cfg(windows)`:
+
+| Site | Product | `guacamole` (Native) |
+|---|---|---|
+| catalogue at boot | indexes the firmware pack, decorates vehicle terrain | the interim catalogue (Figures); a missing [`figures.json`](../../data/figures.json) fails boot before the bind |
+| RPCS3 Net config at boot | written for UIA and IPC | skipped |
+| IPC STATE poller | IPC only | not spawned |
+| tracked RPCS3 process | Mock installs a stand-in | none, ever |
+| game list | RPCS3's `games.yml` (Mock: every game) | the dump scan: Giants alone when a BLUS30968 dump was found, else empty |
+| load, Kaos swap, auto-restart restore | fork or rewrite the profile's `.sky` working copy, then `load(slot, path)` | no file: the job's path is `None` and the worker calls `place` |
+| slot reset; figure stats, edit and reset routes | rewrite or read the working copy | 409 |
+| launch | EBOOT lookup in `games.yml` (not for Mock); display mode pre-set, then captured after the first load | neither |
+| `BootDirect` | IPC spawn, else a UIA spawn on Windows | returns before any spawn arm, on any OS (the job carries the driver kind) |
+| window-mode and 2× toggles, RPCS3 settings | rewrite the settings file; open RPCS3's settings (409 for Mock) | 409 |
+| quit | kills RPCS3 under a cover | `DriverJob::ResetPortal` empties the driver's slots (the TV gets `Cleared`) and keeps the saved layout for "resume last setup?" |
+
+`BootDirect` was the dangerous one: its non-IPC arm was gated on `cfg(windows)`, so anything without an
+IPC socket would have launched RPCS3 on the HTPC. The unit test hands it a driver that advertises an IPC
+socket, so a missed arm would try `launch_no_gui`. A catalogue record has no file under Native (its path
+stays empty); making the path optional in the shared figure type waits for G1 with the rest of the
+file-shaped API.
+
+The placement seam (AA.3, AA.7). `DriverJob::LoadFigure.path` is `Option<PathBuf>`: `Some` for the RPCS3
+drivers and the mock exactly as before, `None` under Native. For `None` the worker builds one `Placement`
+([`crates/rpcs3-control/src/lib.rs`](../../crates/rpcs3-control/src/lib.rs)) and calls
+`PortalDriver::place(slot, &placement)`, which defaults to an error ("this driver loads figure files"), so
+a driver that loads files never quietly accepts one. A `Placement` is the figure id, its toy type and
+identity-masked variant parsed from the id (AB keys the intro on the toy type, not the id string), the
+name and element, the portrait path (server-private) and the owner (profile id, initial and colour; none
+when no profile is unlocked). `NativePortalDriver`
+([`crates/guacamole/src/driver.rs`](../../crates/guacamole/src/driver.rs)) errors on `load`, keeps its own
+8 slots for `read_slots` and sends `PortalChange::Placed` or `Cleared` over a bounded (64)
+`crossbeam-channel` with `try_send`: a full or closed channel drops the change, counts it and logs a warn,
+which costs a stale card, never a hung load. A `PreUpdate` system
+([`crates/guacamole/src/cards.rs`](../../crates/guacamole/src/cards.rs)) drains it into `PortalCards`
+through a pure reducer, and the TV rebuilds its cards from that. Failure injection works against either
+app: the mock and the native driver both implement `LoadInjector` (`skylander-rpcs3-control`'s `inject`),
+so `/api/_test/inject_load` drives both.
+
+### Running guacamole on the Mac
+
+Verdict: from `cargo`, never while the product runs (the port lock). The dmg stays product-only, and
+the Windows MSI that carries `guacamole` is the bring-up's (AA.13).
+
+Dev, from the repo root:
+
+```sh
+(cd phone && trunk build)    # same tree as the server, or the phone's stale-version overlay fires
+cargo run -p guacamole       # add --features test-hooks for the /api/_test/* endpoints
+```
+
+- It reads the dev env file the product reads (the keys are in
+  [`.env.dev.example`](../../.env.dev.example)), and only these matter: `GUAC_DUMP_DIRS` (folders in the
+  OS's path-list form; set, it overrides the stored folders and the TV skips setup), `BIND_PORT` (default
+  8765), `DATA_ROOT` (default `data`, the interim catalogue's source) and `WINDOW_MODE` (`desktop` is a
+  resizable 1280x720 window, anything else is borderless full screen on the primary display). Never
+  `RPCS3_EXE` or `FIRMWARE_PACK_ROOT`.
+- State goes under `./dev-data/guacamole/` (`db.sqlite`); logs go to `./logs/`, the same daily
+  `server.log` the product's dev build writes.
+- `GUAC_SHOT_DIR=<dir>` (process env, dev builds only) renders the TV offscreen at `GUAC_SHOT_SIZE`
+  (default 1920x1080) and saves a PNG each time it settles. AA.8 checked its screens that way, because
+  window captures on the locked Mac came back black.
+
+Release, the build AA.11 runs on the TV:
+
+```sh
+(cd phone && trunk build --release)    # rust-embed bakes phone/dist into the binary
+cargo build --release -p guacamole --no-default-features
+SKYLANDER_APP_DIR="$PWD" target/release/guacamole
+```
+
+- No dev env file and no dev shortcuts: the window is always borderless full screen on the primary
+  display, the data root is `~/Library/Application Support/guacamole/` (`db.sqlite` and `logs/`) and a
+  first start asks for the dumps folder (Persistence and setup). Deleting the data root goes back to
+  first run.
+- The catalogue's `data/` resolves next to the executable (`paths::app_data_root`) and `target/release/`
+  has none, so `SKYLANDER_APP_DIR` points it at the checkout. Without it there's no
+  [`figures.json`](../../data/figures.json) and the TV shows the server-error screen.
+- Measured 2026-10-18 (AA.6): 1 min 44 s cold on the M3 Max, 111 MB unstripped. Its first run on the TV
+  is AA.11.
 
 ### G1: one app
 
@@ -327,18 +439,29 @@ nothing else on disk is precious. Backing up the family's progress is copying on
   profile per game), achievements and settings (the dumps folders, the port, the pairing key). It starts
   in AA with the profiles and settings and grows a table set per rung (the figure store at AH).
 - Its own file, never the controller's (Decisions, third batch). The controller installed on the HTPC
-  opens its `db.sqlite` through `sqlx::migrate!` at its defaults (`crates/server/src/profiles.rs:556`),
-  which refuses a database carrying a migration the binary doesn't know, so one Guacamole table in that
-  file would stop the controller the kids still use for the other five games from starting. `guacamole`
-  never opens the controller's `db.sqlite` or `config.json`, and its migrations are a set of its own, so
-  nothing it adds can reach the controller's file even through the product binary it ships beside.
+  opens its `db.sqlite` through `sqlx::migrate!` at its defaults, which refuses a database carrying a
+  migration the binary doesn't know, so one Guacamole table in that file would stop the controller the
+  kids still use for the other five games from starting. `guacamole` never opens the controller's
+  `db.sqlite` or `config.json`, and its migrations are a set of its own, so nothing it adds can reach the
+  controller's file even through the product binary it ships beside.
+- Two migration sets (AA.1, AA.5). `ProfileStore::open` runs whichever `Migrator` the caller passes to
+  `boot`. The product passes its own three (`crates/server/migrations/`, frozen), `guacamole` passes
+  `setup::MIGRATOR` (`crates/guac-server/migrations/`): the product's three folded into one file, same
+  tables (`game_display_modes` included, because the store queries it), plus a `settings` table. A test
+  runs the store's queries against a database migrated by each set, so the two can't drift apart unseen.
+- Settings live in that table: the dumps folders, the port (8765; only the dev `BIND_PORT` changes it,
+  since nothing writes the stored one yet) and the pairing key, 32 random bytes made on the first start
+  and stored only once the server came up, so a second copy that lost the port never writes one. Its loader ([`crates/guac-server/src/setup.rs`](../../crates/guac-server/src/setup.rs))
+  writes nothing: it opens an existing `db.sqlite` read-write only so SQLite can roll back a crash's hot
+  journal, and a database with no `settings` table reads as never set.
 - Profiles aren't copied over. The kids set theirs up again in `guacamole` (name, colour, PIN, through the
   phone's existing create-profile flow), and each app keeps its own from then on.
 - Where: `~/Library/Application Support/guacamole/` on macOS (the target until the bring-up) and
   `%LOCALAPPDATA%\guacamole\` on Windows (machine-local, because the gigabyte extract dir lives under it
   and doesn't belong in a roaming profile), a root separate from the controller's on either OS (its
   `%APPDATA%\skylander-portal-controller\` on Windows). Dev uses `./dev-data/guacamole/`, gitignored with
-  the rest of `./dev-data/`. AA's design has the details.
+  the rest of `./dev-data/`. `paths::guac_data_root` picks it and `boot` takes it as the runtime root,
+  so the product's root doesn't move.
 - Not in it, and not needed anywhere: `.sky` working copies, `scanned/`, RPCS3 savedata, PS3 firmware or
   RPCS3's config. No files to copy around.
 - The extract dir is a regenerable CACHE, `extract/` under the data root in release and a path outside
@@ -347,10 +470,27 @@ nothing else on disk is precious. Backing up the family's progress is copying on
   backed up. The local Enhanced pack is the same kind of cache.
 - Story saves start fresh, like figures. The kids' RPCS3 Giants saves aren't imported.
 - Setup asks one thing: where the disc dumps are. No RPCS3 path, no PS3 firmware, no figure pack and no
-  `games.yml` scan. Guacamole identifies each dump itself (`PARAM.SFO` plus the extractor's identity key,
-  The extractor) and offers the games it can play. Release gets a first-run screen on the TV for it and
-  dev reads it from `.env.dev`; AA is the first change that needs it, since its run on the Mac driving the
-  TV (AA.11) is a release build.
+  `games.yml` scan. Guacamole identifies each dump itself and offers the games it can play. AA reads
+  TITLE_ID from `PARAM.SFO` and nothing else; the extractor's identity key (The extractor) is AB's.
+- The scan (AA.5, `dumps::scan`) looks in each chosen folder and up to two levels below it for
+  `PS3_GAME/PARAM.SFO`, reads at most 64 KiB of each and reports a folder it couldn't list or an SFO it
+  couldn't read instead of skipping it. Every dump it finds is listed by title; only Giants is offered
+  (the Native table).
+- The setup flow (AA.15). With no folder stored, the TV's Setup screen opens a native folder picker by
+  itself after 1 s (`rfd` 0.17.2, a sheet on the window awaited from a Bevy task, so frames keep running),
+  and Enter, Space or a click opens it again. A pick with Giants stores the folder, replaces the server's
+  game list in place (the phone sees Giants without a restart) and shows Found, every dump by title, for
+  8 s or until a click, then the join code. Without Giants, NoGiants lists what it found plus any
+  `Couldn't list` / `Couldn't read` lines and offers the picker again. Later starts go straight to the
+  join code.
+- The fallbacks, for a picker that won't show (whether it opens above the fullscreen window is AA.11's
+  question). `guacamole --setup` asks with a plain dialog on the main thread before the window exists,
+  stores the pick and starts on Found, or NoGiants when the pick has no Giants (a cancel keeps the stored
+  folder). `guacamole --setup <folder>...` stores without any picker, prints each dump by title, whether
+  Giants is ready and whether the dev `GUAC_DUMP_DIRS` overrides it, then exits (1 when a folder can't be
+  stored, nothing stored). On
+  Windows a release build has no console, so that report lands only in the log (the bring-up's call).
+  Nobody has looked at either dialog yet (the display was locked through AA.15); that's AA.17.
 
 ## The six games
 
@@ -736,15 +876,42 @@ Verdict: a figure is an identity, toy type + variant, out of the disc's own rost
 lives in Guacamole's store per profile. Guacamole never reads a `.sky`.
 
 - Identity: the phone picks a figure by id, and the server's figure ids already are the tag identity
-  (`<toy type>-<variant>`; `ToyTypeId` and `TagVariant` at `crates/core/src/figure.rs:24,50`). In Giants
+  (`<toy type>-<variant>`; `ToyTypeId` and `TagVariant` in
+  [`crates/core/src/figure.rs`](../../crates/core/src/figure.rs)). In Giants
   the toy type names the character archive directly (Giants in detail).
 - Catalogue: the disc roster, all of it, with no per-kid filter. Names, elements and portraits come from
   the disc (where each lives in Giants' data is for AC and AE to find), and the roster lands with the
   first decoded models in AE. It doubles as the compatibility list: Giants offers what Giants has
   characters for, which replaces today's origin-game-and-later heuristic (`crates/core/src/compat.rs:48`).
-- AA's catalogue is interim: the wiki data already in the repo (`data/figures.json`, keyed by the same
-  toy type + variant, plus `data/images/` portraits), cut to the figures Giants plays. No `.sky` and no
-  firmware pack. `guacamole` stops reading it once the disc roster lands, and the files themselves
+- AA's catalogue is interim (AA.4,
+  [`crates/guac-server/src/native_catalogue.rs`](../../crates/guac-server/src/native_catalogue.rs)): the
+  wiki data already in the repo ([`data/figures.json`](../../data/figures.json), keyed by the same toy
+  type + variant, plus `data/images/` portraits, under `DATA_ROOT`), cut to what Giants plays and checked
+  row by row at boot, the same list for every profile, no `.sky` and no firmware pack. Checked because the
+  data is patchy and partly mis-keyed (the rekey from wiki pages to tag ids put some pages on the wrong
+  rows) and wrong is worse than missing: a TV that calls Spyro "Cynder" is the failure, a missing repose
+  isn't. The rules:
+  - a row is in when its `firstrelease` is Spyro's Adventure or Giants;
+  - a base row needs a name, and a variant row's name must contain its own toy type's base name, which
+    drops the mis-keyed rows (a "Cynder" on Spyro's toy type) and keeps real variants ("Legendary
+    Ignitor", "Polar Whirlwind");
+  - one name keeps one toy type (Wrecking Ball's row also sits on three SWAP Force toy types, really
+    Stink Bomb, Rattle Shake and Wash Buckler, and only 0x17 keeps it), and a variant whose base lost its
+    name goes too;
+  - game, category (`alignment`), element (read case-insensitively), variant group and variant tag come
+    from the row, and the portrait is `data/images/<id>/thumb.png` when it exists;
+  - a hand-written supplement fills the four base characters the data lacks or mislabels: 0x06 Dino-Rang
+    (Earth), 0x0D Wham-Shell (Water), 0x15 Drill Sergeant (Tech) and 0x64 Jet-Vac (Air), with no portrait
+    (their `thumb.png` files show a screenshot, a crab and a building). chotchki's check of the four is
+    AA.14.
+
+  On the committed 489 rows: base 262 → 61 kept (197 later games, 1 nameless and 3 duplicate names
+  dropped), variant 227 → 12 kept (199 later games and 16 failing the name rule dropped), plus the 4 = 77
+  figures, every one on RPCS3's figure list after `& 0x0BFF`. The disc roster research
+  (`~/workspace/guacamole-research/ae-roster/FINDINGS.md`, outside the repo) found 123 figures on the
+  Giants disc (all 77 among them) and confirmed AA.14's four supplement rows.
+
+  `guacamole` stops reading it once the disc roster lands, and the files themselves
   (`data/images/`, `data/figures.json`, `data/figures.manual.json`, `data/rekey-log.json`,
   `data/vehicle_terrain.json`, `data/games/*.png`, `tools/wiki-scrape`) go at G1 with the product code
   that still reads them.
