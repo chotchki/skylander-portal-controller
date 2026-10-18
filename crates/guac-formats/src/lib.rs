@@ -13,6 +13,7 @@
 
 mod error;
 pub mod iga;
+pub mod igz;
 mod reader;
 pub mod sfo;
 
@@ -20,3 +21,11 @@ pub mod sfo;
 pub mod registry;
 
 pub use error::{ErrorKind, FormatError};
+
+/// FNV-1a 32: a `.bld`'s TOC hashes names with it, and IGZ imports name
+/// objects and namespaces by it.
+pub fn fnv1a32(bytes: &[u8]) -> u32 {
+    bytes.iter().fold(0x811C_9DC5, |h, b| {
+        (h ^ u32::from(*b)).wrapping_mul(0x0100_0193)
+    })
+}

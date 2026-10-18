@@ -52,6 +52,11 @@ impl<'a> Reader<'a> {
         Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
     }
 
+    pub(crate) fn u32_be(&self, offset: usize, field: &'static str) -> Result<u32, FormatError> {
+        let b = self.bytes(offset, 4, field)?;
+        Ok(u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+    }
+
     pub(crate) fn magic(
         &self,
         offset: usize,
@@ -110,6 +115,8 @@ mod tests {
     fn reads_past_the_end_fail_with_the_offset() {
         let r = Reader::new("T", &[1, 2, 3]);
         assert_eq!(r.u16_le(1, "f").unwrap(), 0x0302);
+        assert_eq!(r.u32_be(0, "f").map_err(|e| e.offset), Err(0));
+        assert!(r.u32_be(1, "f").is_err());
         let err = r.u32_le(1, "f").unwrap_err();
         assert_eq!(err.offset, 1);
         assert_eq!(

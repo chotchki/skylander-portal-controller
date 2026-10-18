@@ -9,12 +9,7 @@ use super::{CHUNK_LEN, HEADER_LEN, LZMA_CHUNK_HEADER_LEN, MAGIC, RECORD_LEN, STO
 /// The properties byte Giants writes on every chunk: lc 3, lp 0, pb 2.
 pub const GIANTS_LZMA_PROPS: u8 = 0x5D;
 
-/// FNV-1a 32, which a `.bld`'s TOC hashes its names with.
-pub fn fnv1a32(bytes: &[u8]) -> u32 {
-    bytes.iter().fold(0x811C_9DC5, |h, b| {
-        (h ^ u32::from(*b)).wrapping_mul(0x0100_0193)
-    })
-}
+pub use crate::fnv1a32;
 
 /// One chunk of `data` as raw LZMA1 with no end marker, as Giants packs it.
 pub fn lzma_chunk(data: &[u8]) -> Vec<u8> {

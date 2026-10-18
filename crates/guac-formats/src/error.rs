@@ -32,6 +32,9 @@ pub enum ErrorKind {
     Unsupported { value: u64 },
     #[error("duplicate entry")]
     Duplicate,
+    /// A part the format requires isn't there.
+    #[error("required but missing")]
+    Missing,
     #[error("version {found:#x} isn't read here ({supported})")]
     UnsupportedVersion { found: u64, supported: &'static str },
     /// Compressed data that didn't come out at the size its container

@@ -5,7 +5,7 @@
 //! it may hold at once for an input of a given length.
 
 use crate::FormatError;
-use crate::{iga, sfo};
+use crate::{iga, igz, sfo};
 
 pub struct RegisteredParser {
     /// Stable name: the property test reports it, the fuzz targets match on it.
@@ -40,6 +40,15 @@ pub const PARSERS: &[RegisteredParser] = &[
         // output, dictionary and literal coder stay under 128 KiB.
         heap_budget: |len| 4 * len + (256 << 10),
     },
+    RegisteredParser {
+        name: "igz",
+        parse: walk_igz,
+        seeds: igz::builder::seeds,
+        // Location lists hold up to two values a byte, kept as 8-byte markers
+        // or 12-byte objects, plus each list's decode before it's checked;
+        // string tables are 16 bytes per entry of at least 1 input byte.
+        heap_budget: |len| 64 * len + (64 << 10),
+    },
 ];
 
 /// How many unpacked bytes [`walk_iga`] reads before it stops. Chunks can
@@ -59,6 +68,27 @@ pub fn walk_iga(bytes: &[u8]) -> Result<(), FormatError> {
             if left == 0 {
                 return Ok(());
             }
+        }
+    }
+    Ok(())
+}
+
+/// Parses an IGZ, then resolves every marked word and reads each pointer as
+/// the second half of a memory ref, skipping errors. The property test and
+/// the fuzz targets run it.
+pub fn walk_igz(bytes: &[u8]) -> Result<(), FormatError> {
+    let file = igz::Igz::parse(bytes)?;
+    for object in file.objects() {
+        for (_, resolved) in file.refs_of(object) {
+            let _ = resolved;
+        }
+    }
+    for &(at, marker) in file.markers() {
+        let _ = file.reference(at, "walk");
+        if marker == igz::Marker::Pointer
+            && let Some(size_at) = at.0.checked_sub(4)
+        {
+            let _ = file.memory_ref(igz::Location(size_at), "walk");
         }
     }
     Ok(())

@@ -6,30 +6,13 @@
 //!
 //! `cargo test -p guac-formats --release --test giants_iga -- --ignored --nocapture`
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use common::{env_or_dotenv, usrdir};
 use guac_formats::iga::{Archive, Compression};
-
-fn env_or_dotenv(key: &str) -> Option<String> {
-    if let Ok(value) = std::env::var(key) {
-        return Some(value);
-    }
-    let dotenv = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.env.dev");
-    let text = std::fs::read_to_string(dotenv).ok()?;
-    text.lines().find_map(|line| {
-        let (k, v) = line.trim().split_once('=')?;
-        (k.trim() == key).then(|| v.trim().trim_matches('"').to_owned())
-    })
-}
-
-fn usrdir() -> PathBuf {
-    let root = env_or_dotenv("GUAC_GIANTS_DUMP")
-        .expect("set GUAC_GIANTS_DUMP (env or .env.dev) to the Giants dump");
-    let usrdir = Path::new(&root).join("PS3_GAME/USRDIR");
-    assert!(usrdir.is_dir(), "no PS3_GAME/USRDIR under {root}");
-    usrdir
-}
 
 fn archives_under(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(dir).unwrap() {
