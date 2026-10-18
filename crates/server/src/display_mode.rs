@@ -27,14 +27,9 @@ use windows::Win32::Graphics::Gdi::{
     ENUM_CURRENT_SETTINGS, EnumDisplaySettingsW,
 };
 
-/// Snapshot of a primary-display mode. Stored per-game so subsequent
-/// launches can pre-set the same mode and avoid a flicker.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DisplayMode {
-    pub width: u32,
-    pub height: u32,
-    pub refresh_hz: u32,
-}
+/// Snapshot of a primary-display mode. Lives in `guac_server::hooks` because
+/// the profile store persists it per game.
+pub use guac_server::hooks::DisplayMode;
 
 /// Read the current mode of the primary display. Returns `Ok(None)` on
 /// non-Windows platforms (the project is Windows-only but the cfg

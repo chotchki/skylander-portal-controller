@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/core",
+    "crates/guac-server",
     "crates/indexer",
     "crates/rpcs3-control",
     "crates/server",
@@ -14,13 +15,14 @@ members = [
     "tools/tailwind-build",
     "tools/wiki-scrape",
 ]
-# Bare cargo commands from the repo root narrow to just the server, which
-# has one bin (`skylander-portal-controller`). Without this, `cargo run`
+# Bare cargo commands from the repo root narrow to the server, which has
+# one bin (`skylander-portal-controller`), plus the guac-server library it
+# links (no bin, so `cargo run` stays unambiguous). Without this, `cargo run`
 # errors on bin-ambiguity vs the one-shot `skylander-wiki-scrape` tool.
 # Note this also affects `cargo test` / `cargo build` / `cargo check` —
 # use `--workspace` (or `-p <name>`) when you need the rest of the
 # workspace. Wiki-scrape stays reachable via `cargo run -p skylander-wiki-scrape`.
-default-members = ["crates/server"]
+default-members = ["crates/server", "crates/guac-server"]
 
 [workspace.package]
 version = "0.1.0"

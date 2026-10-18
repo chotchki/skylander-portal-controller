@@ -1,0 +1,91 @@
+[package]
+name = "guac-server"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# The server library both binaries link (openspec AA, design decision 1): the
+# Axum routes, driver worker, profile store, Kaos, mDNS and the shared config
+# types. No eframe/egui/glow here; where this code needs something that stays
+# with the product (`crates/server`), it calls a hook trait (`hooks.rs`).
+[lib]
+name = "guac_server"
+path = "src/lib.rs"
+
+[dependencies]
+skylander-core = { path = "../core" }
+skylander-rpcs3-control = { path = "../rpcs3-control" }
+
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = "0.2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+axum = { version = "0.7", features = ["ws"] }
+async-trait = "0.1"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "trace", "set-header"] }
+futures-util = "0.3"
+qrcode = "0.14"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+# Only the store's migrations go through a macro (`sqlx::migrate!`, run by the
+# caller, see `ProfileStore::open`); every query is a runtime `query_as`, so
+# there's no DATABASE_URL or `.sqlx` offline cache to keep in step.
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros", "chrono"] }
+argon2 = "0.5"
+rand_core = { version = "0.6", features = ["std"] }
+ulid = "1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# HMAC command signing (3.13): random key at startup, key embedded in QR
+# fragment, phone signs every mutating request.
+hmac = "0.12"
+sha2 = { workspace = true }
+subtle = "2"  # constant-time tag compare
+hex = "0.4"
+
+directories = "5"
+# Embeds the trunk-built phone bundle into the release exe. With the
+# `debug-embed` feature OFF (the default), debug builds read the
+# files from disk on every request — so `trunk serve --watch` still
+# iterates without needing a server restart. Release builds bake the
+# bundle into the binary (PLAN 7.1).
+rust-embed = "8"
+
+# Win32 surface area the shared server needs: GetComputerNameExW for the mDNS
+# hostname (mdns/win.rs), and the INetFwPolicy2 COM read + `runas`
+# ShellExecuteW for the PLAN 17 firewall diagnostic (firewall.rs).
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_SystemInformation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Com",
+    "Win32_NetworkManagement_WindowsFirewall",
+    "Win32_UI_Shell",
+] }
+
+[dev-dependencies]
+tempfile = "3"
+# `util` brings `ServiceExt::oneshot`, used by axum-handler unit tests
+# (e.g. dev_log handler) to drive a router without spinning up a server.
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+# The worker tests drive a `MockPortalDriver` whatever features the build has.
+skylander-rpcs3-control = { path = "../rpcs3-control", features = ["mock"] }
+
+[features]
+default = ["dev-tools"]
+# Relaxes behavior for development: unsigned requests, /api/_dev/log, the
+# dev-tinted PWA icons, the `./dev-data/` runtime root. The product forwards
+# its own `dev-tools` here and depends on this crate with default features
+# off, so a release build never picks it up.
+dev-tools = []
+# Enables the /api/_test/* endpoints used by the e2e harness to inject
+# mock-driver failure outcomes. Never enable in release builds.
+test-hooks = ["dev-tools", "skylander-rpcs3-control/mock"]

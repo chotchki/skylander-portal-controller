@@ -105,6 +105,10 @@ pub struct AppState {
     /// ~few-KB buffer per request.
     pub join_qr_png: Arc<Vec<u8>>,
 
+    /// The product's hooks (`crate::hooks`): figure files, display mode,
+    /// RPCS3 config and the settings writer. The product passes all four.
+    pub hooks: crate::hooks::Hooks,
+
     /// Concrete mock driver handle, populated only when running with the
     /// mock driver + test-hooks feature. The /api/_test/* endpoints use
     /// this to inject failure outcomes.
@@ -231,7 +235,7 @@ pub struct LauncherStatus {
     /// macOS `CAContextID` of the game's published render layer, reported by
     /// RPCS3 over IPC (P8 surface-embed). `Some(non-zero)` ⇒ the launcher hosts
     /// this layer tree INSIDE its own egui window via `CALayerHost`
-    /// (`crate::compositor::CompositorHost`) — compositing the game behind
+    /// (the product's `compositor::CompositorHost`) — compositing the game behind
     /// egui's chrome — instead of tiling a second top-level window beneath
     /// itself (the P7 `WINDOW_SET` fallback). The id is **stable for the whole
     /// game session** (survives swapchain recreate / resize / resolution
@@ -477,7 +481,16 @@ impl AppState {
             );
             return;
         };
-        let new_path = match crate::working_copies::resolve_load_path(profile_id, new_figure) {
+        // TODO(AA.3): the Native arm places by identity instead.
+        let Some(figure_files) = &self.hooks.figure_files else {
+            warn!(
+                profile_id,
+                new_figure_id = %swap.new_figure_id.as_str(),
+                "kaos swap: no figure-file hook to resolve a working copy — aborting",
+            );
+            return;
+        };
+        let new_path = match figure_files.resolve_load_path(profile_id, new_figure) {
             Ok(p) => p,
             Err(e) => {
                 warn!(
@@ -999,8 +1012,17 @@ async fn restore_portal_figures(
     events: &broadcast::Sender<Event>,
     driver_tx: &mpsc::Sender<DriverJob>,
     figures: &[Figure],
+    figure_files: Option<&dyn crate::hooks::FigureFiles>,
     to_restore: &[(SlotIndex, FigureId, Option<String>)],
 ) {
+    // TODO(AA.3): the Native arm re-places by identity instead.
+    let Some(figure_files) = figure_files else {
+        warn!(
+            captured = to_restore.len(),
+            "restore: no figure-file hook to resolve working copies; skipping"
+        );
+        return;
+    };
     let mut requeued = 0usize;
     for (slot, figure_id, placed_by) in to_restore {
         let Some(profile_id) = placed_by else {
@@ -1018,7 +1040,7 @@ async fn restore_portal_figures(
             );
             continue;
         };
-        let path = match crate::working_copies::resolve_load_path(profile_id, figure) {
+        let path = match figure_files.resolve_load_path(profile_id, figure) {
             Ok(p) => p,
             Err(e) => {
                 warn!(
@@ -1081,6 +1103,7 @@ async fn restore_portal_figures(
 /// Clean shutdowns don't fire it: `/api/quit?force=true` and `/api/shutdown`
 /// drain `guard.process` before killing, and a graceful quit stops the game
 /// without the process dying under us.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_crash_watchdog(
     rpcs3: Arc<Mutex<RpcsLifecycle>>,
     portal: Arc<Mutex<[SlotState; SLOT_COUNT]>>,
@@ -1088,6 +1111,7 @@ pub fn spawn_crash_watchdog(
     launcher_status: Arc<std::sync::Mutex<LauncherStatus>>,
     driver_tx: mpsc::Sender<DriverJob>,
     figures: Arc<Vec<Figure>>,
+    figure_files: Option<Arc<dyn crate::hooks::FigureFiles>>,
     interval: std::time::Duration,
 ) {
     /// Cap on consecutive restart attempts within a single recovery before we
@@ -1247,7 +1271,15 @@ pub fn spawn_crash_watchdog(
                 // Re-place the figures that were on the portal, then hold the
                 // cover until the STATE poller re-latches `game_playable` so the
                 // reveal lands on a rendering game rather than flashing the QR.
-                restore_portal_figures(&portal, &events, &driver_tx, &figures, &to_restore).await;
+                restore_portal_figures(
+                    &portal,
+                    &events,
+                    &driver_tx,
+                    &figures,
+                    figure_files.as_deref(),
+                    &to_restore,
+                )
+                .await;
                 let reveal_deadline = tokio::time::Instant::now() + REVEAL_TIMEOUT;
                 loop {
                     let playable = launcher_status
@@ -1422,6 +1454,7 @@ pub fn spawn_driver_worker(
     rpcs3_exe: PathBuf,
     config_dir: PathBuf,
     launcher_status: Arc<std::sync::Mutex<LauncherStatus>>,
+    rpcs3_config: Option<Arc<dyn crate::hooks::Rpcs3Config>>,
 ) -> mpsc::Sender<DriverJob> {
     let (tx, mut rx) = mpsc::channel::<DriverJob>(32);
 
@@ -1447,6 +1480,7 @@ pub fn spawn_driver_worker(
                 &rpcs3_exe,
                 &config_dir,
                 &launcher_status,
+                rpcs3_config.as_ref(),
             )
             .await
             {
@@ -1480,6 +1514,7 @@ async fn handle_job(
     rpcs3_exe: &Path,
     config_dir: &Path,
     launcher_status: &Arc<std::sync::Mutex<LauncherStatus>>,
+    rpcs3_config: Option<&Arc<dyn crate::hooks::Rpcs3Config>>,
 ) -> Result<()> {
     match job {
         DriverJob::LoadFigure {
@@ -1569,6 +1604,7 @@ async fn handle_job(
                 let eboot_owned = eboot_path.clone();
                 let display_name_for_blocking = display_name.clone();
                 let status_for_blocking = launcher_status.clone();
+                let rpcs3_config_owned = rpcs3_config.cloned();
                 let _ = &expected_name;
                 tokio::task::spawn_blocking(move || -> Result<Option<RpcsProcess>> {
                     // PLAN 16.6.1 / 16.11 — patched RPCS3: launch --no-gui with the
@@ -1597,7 +1633,13 @@ async fn handle_job(
                             let root = config_dir_owned.join("config.yml");
                             let legacy = config_dir_owned.join("config").join("config.yml");
                             let cfg = if root.is_file() { root } else { legacy };
-                            Some(crate::rpcs3_config::apply_savestate_config(&cfg)?)
+                            // TODO(AA.3): no hook means no save-state boot.
+                            let Some(rpcs3_config) = &rpcs3_config_owned else {
+                                return Err(anyhow::anyhow!(
+                                    "SKYLANDER_BOOT_SAVESTATE needs the RPCS3-config hook"
+                                ));
+                            };
+                            Some(rpcs3_config.apply_savestate_config(&cfg)?)
                         }
                         None => None,
                     };
@@ -2052,10 +2094,39 @@ mod tests {
         assert_eq!(got[1].2, None);
     }
 
+    /// Stand-in for the product's figure-file hook: forks the pack file into
+    /// `<root>/<profile>/<figure>.sky` on first use, the shape of
+    /// `working_copies::resolve_load_path` (which stays in `crates/server`
+    /// with its own tests).
+    struct ForkingFigureFiles {
+        root: PathBuf,
+    }
+
+    impl crate::hooks::FigureFiles for ForkingFigureFiles {
+        fn routes(&self) -> axum::Router<Arc<AppState>> {
+            axum::Router::new()
+        }
+        fn resolve_load_path(&self, profile_id: &str, figure: &Figure) -> Result<PathBuf> {
+            let dir = self.root.join(profile_id);
+            std::fs::create_dir_all(&dir)?;
+            let path = dir.join(format!("{}.sky", figure.id.as_str()));
+            if !path.exists() {
+                std::fs::copy(&figure.sky_path, &path)?;
+            }
+            Ok(path)
+        }
+        fn reset_to_fresh(&self, _profile_id: &str, _figure: &Figure) -> Result<PathBuf> {
+            unimplemented!("restore never resets")
+        }
+    }
+
     #[tokio::test]
     async fn restore_requeues_owned_loads_and_skips_unrestorable() {
         use tempfile::TempDir;
         let tmp = TempDir::new().unwrap();
+        let figure_files = ForkingFigureFiles {
+            root: tmp.path().join("working"),
+        };
         let pack = tmp.path().join("restore_known.sky");
         std::fs::write(&pack, b"fresh-pack").unwrap();
         let known = Figure {
@@ -2087,7 +2158,15 @@ mod tests {
             ),
         ];
 
-        restore_portal_figures(&portal, &events, &tx, &figures, &to_restore).await;
+        restore_portal_figures(
+            &portal,
+            &events,
+            &tx,
+            &figures,
+            Some(&figure_files),
+            &to_restore,
+        )
+        .await;
         drop(tx); // close the channel so the drain terminates.
 
         let mut jobs = Vec::new();
@@ -2114,8 +2193,6 @@ mod tests {
 
         // The restorable slot was flipped to Loading in the mirror.
         assert!(matches!(portal.lock().await[0], SlotState::Loading { .. }));
-
-        let _ = std::fs::remove_file(path); // clean up the dev-data working copy.
     }
 
     // ---- BootDirect mock reveal (PLAN U.1) ----------------------------------
@@ -2168,6 +2245,7 @@ mod tests {
             Path::new("/nonexistent/rpcs3"), // mock branch never spawns
             Path::new("/nonexistent/config"),
             &launcher_status,
+            None,
         )
         .await
         .expect("handle_job(BootDirect) must not error on the mock path");

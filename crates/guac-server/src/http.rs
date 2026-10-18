@@ -20,6 +20,7 @@ use tracing::{debug, info, warn};
 
 use skylander_core::InstalledGame;
 
+use crate::hooks::SettingsWriteError;
 use crate::profiles::{LockoutCheck, MAX_PROFILES, PublicProfile, RegistrationOutcome, SessionId};
 use crate::state::{AppState, DriverJob};
 
@@ -282,21 +283,12 @@ pub fn router(state: Arc<AppState>, _phone_dist: std::path::PathBuf) -> Router {
         .route("/api/version", get(get_version))
         .route("/ws", get(ws_handler));
 
-    #[cfg(feature = "sky-stats")]
-    {
-        api = api
-            .route(
-                "/api/profiles/:profile_id/figures/:figure_id/stats",
-                get(crate::sky_stats::get_figure_stats),
-            )
-            .route(
-                "/api/profiles/:profile_id/figures/:figure_id/edit",
-                post(crate::sky_edit::edit_figure),
-            )
-            .route(
-                "/api/profiles/:profile_id/figures/:figure_id/reset",
-                post(crate::sky_edit::reset_figure),
-            );
+    // Figure stats, edit and reset read or rewrite a `.sky` working copy, so
+    // their handlers stay with the product and arrive through the figure-file
+    // hook (registered only when the product's `sky-stats` feature is on).
+    // TODO(AA.3): with no hook, answer 409 on these three paths.
+    if let Some(figure_files) = &state.hooks.figure_files {
+        api = api.merge(figure_files.routes());
     }
 
     #[cfg(feature = "dev-tools")]
@@ -653,16 +645,22 @@ async fn load_slot(
     // so progress persists across loads. Without a profile (no session
     // unlocked yet), fall back to the pack's fresh file — read-only use.
     let path = match &placed_by {
-        Some(profile_id) => match crate::working_copies::resolve_load_path(profile_id, &figure) {
-            Ok(p) => p,
-            Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("working-copy resolve failed: {e}"),
-                )
-                    .into_response();
+        Some(profile_id) => {
+            // TODO(AA.3): Native places by identity, with no file to resolve.
+            let Some(figure_files) = &state.hooks.figure_files else {
+                return (StatusCode::CONFLICT, "figure files unavailable").into_response();
+            };
+            match figure_files.resolve_load_path(profile_id, &figure) {
+                Ok(p) => p,
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("working-copy resolve failed: {e}"),
+                    )
+                        .into_response();
+                }
             }
-        },
+        }
         None => figure.sky_path.clone(),
     };
 
@@ -745,6 +743,11 @@ async fn reset_slot(
     let Some(profile_id) = state.sessions.profile_of(sid).await else {
         return (StatusCode::FORBIDDEN, "unlock a profile first").into_response();
     };
+    // Checked before the slot flips to Loading, so a refusal leaves it as is.
+    // TODO(AA.3): the Native arm (and its test) for the slot reset.
+    let Some(figure_files) = state.hooks.figure_files.clone() else {
+        return (StatusCode::CONFLICT, "figure files unavailable").into_response();
+    };
 
     // Back pressure: reject if the slot is already mid-transition.
     let loading = SlotState::Loading {
@@ -765,7 +768,7 @@ async fn reset_slot(
 
     // Overwrite the working copy with fresh pack bytes. If this fails the
     // driver never gets called; surface the error to the phone as a toast.
-    let path = match crate::working_copies::reset_to_fresh(&profile_id, &figure) {
+    let path = match figure_files.reset_to_fresh(&profile_id, &figure) {
         Ok(p) => p,
         Err(e) => {
             let _ = state.events.send(skylander_core::Event::Error {
@@ -940,37 +943,26 @@ struct SetWindowModeBody {
 /// live flip would mean recreating the window). Returns 202. Dev builds read
 /// `.env.dev` rather than config.json, so there the write is a logged no-op and
 /// the phone's "restart to apply" hint is advisory only. PLAN 20.6.
-async fn set_window_mode(Signed(body): Signed) -> Response {
+async fn set_window_mode(State(state): State<Arc<AppState>>, Signed(body): Signed) -> Response {
     let req: SetWindowModeBody = match serde_json::from_slice(&body) {
         Ok(r) => r,
         Err(e) => return (StatusCode::BAD_REQUEST, format!("bad body: {e}")).into_response(),
     };
-    let path = match crate::paths::config_json_path() {
-        Ok(p) => p,
-        Err(e) => {
-            warn!("window-mode: config path error: {e}");
+    // TODO(AA.3): the Native arm (and its test) for the settings toggles.
+    let Some(settings) = &state.hooks.settings else {
+        return (StatusCode::CONFLICT, "settings unavailable").into_response();
+    };
+    match settings.set_window_mode(req.window_mode) {
+        Ok(()) => {}
+        Err(SettingsWriteError::ConfigPath) => {
             return (StatusCode::INTERNAL_SERVER_ERROR, "config path error").into_response();
         }
-    };
-    match crate::wizard::PersistedConfig::read(&path) {
-        Ok(mut persisted) => {
-            persisted.window_mode = req.window_mode;
-            if let Err(e) = persisted.write(&path) {
-                warn!("window-mode: write config.json failed: {e}");
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "couldn't persist window mode",
-                )
-                    .into_response();
-            }
-            info!(
-                "window mode set to {:?} (restart to apply)",
-                req.window_mode
-            );
-        }
-        Err(e) => {
-            // Dev builds (no config.json — `.env.dev` is the source) land here.
-            warn!("window-mode: no config.json to update ({e}); dev build? not persisted");
+        Err(SettingsWriteError::Persist) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "couldn't persist window mode",
+            )
+                .into_response();
         }
     }
     (
@@ -990,33 +982,25 @@ struct SetRender2xBody {
 /// exports `SKYLANDER_SURFACE_2X` from cfg at startup, inherited by the RPCS3 child).
 /// Returns 202. Dev builds read `.env.dev`, so there the write is a logged no-op.
 /// PLAN S.
-async fn set_render_2x(Signed(body): Signed) -> Response {
+async fn set_render_2x(State(state): State<Arc<AppState>>, Signed(body): Signed) -> Response {
     let req: SetRender2xBody = match serde_json::from_slice(&body) {
         Ok(r) => r,
         Err(e) => return (StatusCode::BAD_REQUEST, format!("bad body: {e}")).into_response(),
     };
-    let path = match crate::paths::config_json_path() {
-        Ok(p) => p,
-        Err(e) => {
-            warn!("render-2x: config path error: {e}");
+    let Some(settings) = &state.hooks.settings else {
+        return (StatusCode::CONFLICT, "settings unavailable").into_response();
+    };
+    match settings.set_render_2x(req.render_2x) {
+        Ok(()) => {}
+        Err(SettingsWriteError::ConfigPath) => {
             return (StatusCode::INTERNAL_SERVER_ERROR, "config path error").into_response();
         }
-    };
-    match crate::wizard::PersistedConfig::read(&path) {
-        Ok(mut persisted) => {
-            persisted.render_2x = req.render_2x;
-            if let Err(e) = persisted.write(&path) {
-                warn!("render-2x: write config.json failed: {e}");
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "couldn't persist render-2x",
-                )
-                    .into_response();
-            }
-            info!("2x render set to {} (restart to apply)", req.render_2x);
-        }
-        Err(e) => {
-            warn!("render-2x: no config.json to update ({e}); dev build? not persisted");
+        Err(SettingsWriteError::Persist) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "couldn't persist render-2x",
+            )
+                .into_response();
         }
     }
     (
@@ -1148,27 +1132,32 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
     // egui-side animations (Chris 2026-04-24). With the mode already
     // matching what RPCS3 wants, the boot stays at one resolution and
     // the launcher's animations survive.
-    match state.profiles.get_display_mode(body.serial.as_str()).await {
-        Ok(Some(mode)) => {
-            let was_set = crate::display_mode::try_set(mode);
-            info!(
-                serial = %body.serial.as_str(),
-                ?mode,
-                was_set,
-                "pre-set display mode from saved per-game preference",
-            );
-        }
-        Ok(None) => {
-            info!(
-                serial = %body.serial.as_str(),
-                "no saved display mode — first launch, will capture after boot",
-            );
-        }
-        Err(e) => {
-            warn!(
-                serial = %body.serial.as_str(),
-                "display mode lookup failed: {e}; proceeding without pre-set",
-            );
+    //
+    // TODO(AA.3): with no display-mode hook, both the pre-set and the capture
+    // below are skipped (the Native arm).
+    if let Some(display_modes) = &state.hooks.display_modes {
+        match state.profiles.get_display_mode(body.serial.as_str()).await {
+            Ok(Some(mode)) => {
+                let was_set = display_modes.try_set(mode);
+                info!(
+                    serial = %body.serial.as_str(),
+                    ?mode,
+                    was_set,
+                    "pre-set display mode from saved per-game preference",
+                );
+            }
+            Ok(None) => {
+                info!(
+                    serial = %body.serial.as_str(),
+                    "no saved display mode — first launch, will capture after boot",
+                );
+            }
+            Err(e) => {
+                warn!(
+                    serial = %body.serial.as_str(),
+                    "display mode lookup failed: {e}; proceeding without pre-set",
+                );
+            }
         }
     }
 
@@ -1270,74 +1259,76 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
     // gameplay frame, and the display mode has settled into whatever
     // the game is going to use. Run detached so the launch handler
     // returns immediately.
-    let capture_state = state.clone();
-    let capture_serial = body.serial.as_str().to_string();
-    tokio::spawn(async move {
-        use skylander_core::SlotState;
-        // Wait up to 5 minutes for the first portal load. Skylanders
-        // games gate the portal slot until the player gets through
-        // the intro / demands a figure on the portal — varies by
-        // game, but 5 min covers everything Chris's family hits.
-        let deadline = std::time::Instant::now() + Duration::from_secs(300);
-        loop {
-            tokio::time::sleep(Duration::from_millis(500)).await;
-            if std::time::Instant::now() > deadline {
-                info!(
-                    serial = %capture_serial,
-                    "display mode capture skipped — no portal load within 5 min",
-                );
-                return;
-            }
-            // current_game cleared (quit/switch) → bail.
-            let still_running = capture_state
-                .launcher_status
-                .lock()
-                .map(|s| s.current_game.is_some())
-                .unwrap_or(false);
-            if !still_running {
-                info!(
-                    serial = %capture_serial,
-                    "display mode capture aborted — game ended before first load",
-                );
-                return;
-            }
-            // Any slot occupied → first load has happened, capture now.
-            let any_loaded = {
-                let portal = capture_state.portal.lock().await;
-                portal.iter().any(|s| matches!(s, SlotState::Loaded { .. }))
-            };
-            if any_loaded {
-                break;
-            }
-        }
-        // Tiny settle so the game's display mode has fully stabilised
-        // after the first frame of "loaded figure on portal" finishes
-        // rendering. 200ms covers a handful of frames at the worst-
-        // case 30Hz.
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        match crate::display_mode::get_current() {
-            Ok(Some(mode)) => {
-                if let Err(e) = capture_state
-                    .profiles
-                    .save_display_mode(&capture_serial, mode)
-                    .await
-                {
-                    warn!(serial = %capture_serial, ?mode, "save_display_mode failed: {e}");
-                } else {
-                    info!(serial = %capture_serial, ?mode, "captured display mode for next launch");
+    if let Some(display_modes) = state.hooks.display_modes.clone() {
+        let capture_state = state.clone();
+        let capture_serial = body.serial.as_str().to_string();
+        tokio::spawn(async move {
+            use skylander_core::SlotState;
+            // Wait up to 5 minutes for the first portal load. Skylanders
+            // games gate the portal slot until the player gets through
+            // the intro / demands a figure on the portal — varies by
+            // game, but 5 min covers everything Chris's family hits.
+            let deadline = std::time::Instant::now() + Duration::from_secs(300);
+            loop {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                if std::time::Instant::now() > deadline {
+                    info!(
+                        serial = %capture_serial,
+                        "display mode capture skipped — no portal load within 5 min",
+                    );
+                    return;
+                }
+                // current_game cleared (quit/switch) → bail.
+                let still_running = capture_state
+                    .launcher_status
+                    .lock()
+                    .map(|s| s.current_game.is_some())
+                    .unwrap_or(false);
+                if !still_running {
+                    info!(
+                        serial = %capture_serial,
+                        "display mode capture aborted — game ended before first load",
+                    );
+                    return;
+                }
+                // Any slot occupied → first load has happened, capture now.
+                let any_loaded = {
+                    let portal = capture_state.portal.lock().await;
+                    portal.iter().any(|s| matches!(s, SlotState::Loaded { .. }))
+                };
+                if any_loaded {
+                    break;
                 }
             }
-            Ok(None) => {
-                info!(
-                    serial = %capture_serial,
-                    "EnumDisplaySettings returned no mode — capture skipped",
-                );
+            // Tiny settle so the game's display mode has fully stabilised
+            // after the first frame of "loaded figure on portal" finishes
+            // rendering. 200ms covers a handful of frames at the worst-
+            // case 30Hz.
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            match display_modes.get_current() {
+                Ok(Some(mode)) => {
+                    if let Err(e) = capture_state
+                        .profiles
+                        .save_display_mode(&capture_serial, mode)
+                        .await
+                    {
+                        warn!(serial = %capture_serial, ?mode, "save_display_mode failed: {e}");
+                    } else {
+                        info!(serial = %capture_serial, ?mode, "captured display mode for next launch");
+                    }
+                }
+                Ok(None) => {
+                    info!(
+                        serial = %capture_serial,
+                        "EnumDisplaySettings returned no mode — capture skipped",
+                    );
+                }
+                Err(e) => {
+                    warn!(serial = %capture_serial, "display mode read failed: {e}");
+                }
             }
-            Err(e) => {
-                warn!(serial = %capture_serial, "display mode read failed: {e}");
-            }
-        }
-    });
+        });
+    }
 
     (StatusCode::ACCEPTED, "launched").into_response()
 }

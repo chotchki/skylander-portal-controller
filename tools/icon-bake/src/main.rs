@@ -18,7 +18,7 @@
 //!   - `icon-dev-{32,180,192,512}.png` (dev)
 //!
 //! The server picks which of the two sets to serve at request time —
-//! see `crates/server/src/http.rs` `serve_icon` for the dev-tools-feature
+//! see `crates/guac-server/src/http.rs` `serve_icon` for the dev-tools-feature
 //! gate. PWA install captures the icon at install time, so the dev
 //! variant ends up on the home screen iff you pinned from a dev server.
 

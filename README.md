@@ -46,7 +46,7 @@ You need a Rust toolchain (with the `wasm32-unknown-unknown` target) and `trunk`
 
 ### One `cargo` gotcha
 
-`Cargo.toml` sets `default-members = ["crates/server"]`, so a bare `cargo run` / `test` / `build` at the repo root touches ONLY the server crate. That's what lets step 3 work without a `--bin` flag (the workspace also holds a one-shot wiki-scrape tool that would otherwise make `cargo run` ambiguous). The consequence that bit me: a bare `cargo test` skips everything but the server — use `cargo test --workspace` (or `-p <crate>`) to actually exercise the indexer / sky-parser / etc. CI runs `--workspace` on every push, so regressions still get caught, just not by your local `cargo test`.
+`Cargo.toml` sets `default-members = ["crates/server", "crates/guac-server"]`, so a bare `cargo run` / `test` / `build` at the repo root touches ONLY the server crates (skylander-server + guac-server). That's what lets step 3 work without a `--bin` flag (the workspace also holds a one-shot wiki-scrape tool that would otherwise make `cargo run` ambiguous). The consequence that bit me: a bare `cargo test` skips everything but the server crates — use `cargo test --workspace` (or `-p <crate>`) to actually exercise the indexer / sky-parser / etc. CI runs `--workspace` on every push, so regressions still get caught, just not by your local `cargo test`.
 
 ## Layout
 

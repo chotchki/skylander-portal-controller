@@ -16,6 +16,7 @@ use argon2::password_hash::{
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use sqlx::migrate::Migrator;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Pool, Sqlite};
 use tokio::sync::{Mutex, RwLock};
@@ -542,7 +543,11 @@ pub struct ProfileStore {
 }
 
 impl ProfileStore {
-    pub async fn open(db_path: &Path) -> Result<Self> {
+    /// Open (creating if missing) the database at `db_path` and run the
+    /// caller's migration set on it. Each binary owns its own set: the product
+    /// passes `crates/server/migrations/` (`skylander_server::MIGRATOR`), so
+    /// nothing another binary adds can reach the product's `db.sqlite`.
+    pub async fn open(db_path: &Path, migrator: &Migrator) -> Result<Self> {
         let opts = SqliteConnectOptions::new()
             .filename(db_path)
             .create_if_missing(true)
@@ -553,10 +558,7 @@ impl ProfileStore {
             .await
             .with_context(|| format!("open sqlite at {}", db_path.display()))?;
 
-        sqlx::migrate!("./migrations")
-            .run(&pool)
-            .await
-            .context("run migrations")?;
+        migrator.run(&pool).await.context("run migrations")?;
 
         Ok(Self {
             pool,
@@ -567,7 +569,7 @@ impl ProfileStore {
     /// In-memory pool for tests. Gated loosely (exposed for the
     /// `tests/profiles.rs` integration test) — no data-loss risk since
     /// callers must explicitly opt in.
-    pub async fn open_in_memory() -> Result<Self> {
+    pub async fn open_in_memory(migrator: &Migrator) -> Result<Self> {
         let opts = SqliteConnectOptions::new()
             .in_memory(true)
             .foreign_keys(true);
@@ -575,7 +577,7 @@ impl ProfileStore {
             .max_connections(1)
             .connect_with(opts)
             .await?;
-        sqlx::migrate!("./migrations").run(&pool).await?;
+        migrator.run(&pool).await?;
         Ok(Self {
             pool,
             lockouts: Arc::new(Lockouts::default()),
@@ -767,14 +769,14 @@ impl ProfileStore {
     pub async fn get_display_mode(
         &self,
         serial: &str,
-    ) -> Result<Option<crate::display_mode::DisplayMode>> {
+    ) -> Result<Option<crate::hooks::DisplayMode>> {
         let row: Option<(i64, i64, i64)> = sqlx::query_as(
             "SELECT width, height, refresh_hz FROM game_display_modes WHERE serial = ?1",
         )
         .bind(serial)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(|(w, h, r)| crate::display_mode::DisplayMode {
+        Ok(row.map(|(w, h, r)| crate::hooks::DisplayMode {
             width: w as u32,
             height: h as u32,
             refresh_hz: r as u32,
@@ -785,7 +787,7 @@ impl ProfileStore {
     pub async fn save_display_mode(
         &self,
         serial: &str,
-        mode: crate::display_mode::DisplayMode,
+        mode: crate::hooks::DisplayMode,
     ) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         sqlx::query(
@@ -863,6 +865,10 @@ fn validate_color(color: &str) -> Result<()> {
 mod tests {
     use super::*;
 
+    /// The product's migration set, the one the store's queries were written
+    /// against. TODO(AA.5): guacamole's own set lands in `migrations/` here.
+    static TEST_MIGRATOR: Migrator = sqlx::migrate!("../server/migrations");
+
     #[test]
     fn argon2_roundtrip() {
         let h = hash_pin("1234").unwrap();
@@ -925,7 +931,7 @@ mod tests {
 
     #[tokio::test]
     async fn crud_and_pin_verify() {
-        let s = ProfileStore::open_in_memory().await.unwrap();
+        let s = ProfileStore::open_in_memory(&TEST_MIGRATOR).await.unwrap();
         assert_eq!(s.count().await.unwrap(), 0);
         let id = s.create("Alice", "1234", "#ff00aa").await.unwrap();
         assert_eq!(s.count().await.unwrap(), 1);
@@ -942,7 +948,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_bad_pin_and_color() {
-        let s = ProfileStore::open_in_memory().await.unwrap();
+        let s = ProfileStore::open_in_memory(&TEST_MIGRATOR).await.unwrap();
         assert!(s.create("A", "12", "#ffffff").await.is_err());
         assert!(s.create("A", "abcd", "#ffffff").await.is_err());
         assert!(s.create("A", "1234", "red").await.is_err());

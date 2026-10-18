@@ -11,15 +11,20 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 
+/// Passed to the software-GL re-exec child (`gl_fallback` in the product) so it
+/// resolves shipped assets against the real install dir rather than its own
+/// `mesa/` folder. Read by [`app_asset_dir`].
+pub const APP_DIR_ENV: &str = "SKYLANDER_APP_DIR";
+
 /// Directory holding the launcher's shipped assets (`data/`, `phone-dist/`,
 /// `rpcs3/`) — normally the exe's own folder. The software-GL fallback
 /// re-execs a copy of the exe from the `mesa/` subdir (PLAN 19), so that child
 /// would otherwise resolve assets against `mesa/`; it gets the real install
-/// dir back via the [`crate::gl_fallback::APP_DIR_ENV`] env var. Every
+/// dir back via the [`APP_DIR_ENV`] env var. Every
 /// exe-relative asset path goes through here so the re-exec child stays
 /// correct.
 pub fn app_asset_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os(crate::gl_fallback::APP_DIR_ENV) {
+    if let Some(dir) = std::env::var_os(APP_DIR_ENV) {
         return PathBuf::from(dir);
     }
     std::env::current_exe()

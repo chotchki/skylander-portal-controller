@@ -13,6 +13,10 @@ name = "skylander-portal-controller"
 path = "src/main.rs"
 
 [dependencies]
+# The shared server (openspec AA.1). Default features off: the product forwards
+# its own `dev-tools` / `test-hooks` below, so a `--no-default-features` release
+# build can't pick up the library's dev defaults.
+guac-server = { path = "../guac-server", default-features = false }
 skylander-core = { path = "../core" }
 skylander-indexer = { path = "../indexer" }
 skylander-rpcs3-control = { path = "../rpcs3-control" }
@@ -21,19 +25,15 @@ skylander-sky-parser = { path = "../sky-parser", optional = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-tracing-appender = "0.2"
 # Open the phone URL in the PC's default browser from the launcher (QR-scan
 # fallback). Tiny, cross-platform (ShellExecute / `open` / `xdg-open`).
 open = "5"
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+# The figure stats/edit/reset handlers (`sky_stats`, `sky_edit`) the
+# figure-file hook routes.
 axum = { version = "0.7", features = ["ws"] }
-async-trait = "0.1"
-tower = "0.5"
-tower-http = { version = "0.6", features = ["fs", "trace", "set-header"] }
-futures-util = "0.3"
 eframe = { version = "0.29", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 egui = "0.29"
 # Direct GL access for the vortex fragment shader (PLAN 4.19.6). eframe
@@ -44,7 +44,6 @@ egui = "0.29"
 # graduated.
 egui_glow = "0.29"
 glow = "0.14"
-qrcode = "0.14"
 image = { version = "0.25", default-features = false, features = ["png"] }
 # Glyph rasterisation for the 3D badge's back-face textures (PLAN
 # 10.7.6b). ab_glyph is already a transitive dep through egui's
@@ -53,42 +52,18 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # atlas) and upload them as GL textures bound to the disc front.
 ab_glyph = "0.2"
 local-ip-address = "0.6"
-# mDNS advertisement uses the Windows native DnsServiceRegister API
-# (see crates/server/src/mdns.rs). Why not a cross-platform Rust crate
-# (mdns-sd, etc.): on Windows ≥10, the OS owns the mDNS responder and
-# third-party advertisers send packets that Windows's resolver doesn't
-# propagate to local lookups (iPhone-side resolution silently fails
-# even though the daemon reports register-success). Going through
-# DnsServiceRegister registers with the OS responder — same path
-# Windows uses for printer/Bonjour discovery — and the records actually
-# resolve. PLAN 4.18.1a / 4.19.10b. Project is Windows-only (PLAN
-# Phase 7), so a portable shim isn't needed.
 
+# The product's migration set (`MIGRATOR` in lib.rs, embedded by
+# `sqlx::migrate!`); the store that runs it lives in guac-server.
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros", "chrono"] }
-argon2 = "0.5"
 rand_core = { version = "0.6", features = ["std"] }
-ulid = "1"
 chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1", features = ["v4", "serde"] }
-
-# HMAC command signing (3.13): random key at startup, key embedded in QR
-# fragment, phone signs every mutating request.
-hmac = "0.12"
-sha2 = { workspace = true }
-subtle = "2"  # constant-time tag compare
 hex = "0.4"
 
-# First-launch wizard (3.16): native file pickers + APPDATA resolution + .sky recursion.
+# First-launch wizard (3.16): native file pickers + .sky recursion.
 rfd = "0.14"
-directories = "5"
 walkdir = { workspace = true }
 thiserror = { workspace = true }
-# Embeds the trunk-built phone bundle into the release exe. With the
-# `debug-embed` feature OFF (the default), debug builds read the
-# files from disk on every request — so `trunk serve --watch` still
-# iterates without needing a server restart. Release builds bake the
-# bundle into the binary (PLAN 7.1).
-rust-embed = "8"
 
 # `raw-window-handle` is needed to extract the HWND from eframe's
 # `Frame::window_handle()` for the Win32 SetWindowPos call below.
@@ -159,10 +134,9 @@ objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
 
 [dev-dependencies]
 tempfile = "3"
-# `util` brings `ServiceExt::oneshot`, used by axum-handler unit tests
-# (e.g. dev_log handler) to drive a router without spinning up a server.
-tower = { version = "0.5", features = ["util"] }
-http-body-util = "0.1"
+# `examples/round_qr_spike.rs` (an eframe spike) builds its QR directly; the
+# production round-QR renderer lives in guac-server.
+qrcode = "0.14"
 # (egui_glow + glow promoted to runtime deps above for the production
 # vortex shader; spike uses the same crates.)
 
@@ -184,7 +158,7 @@ eula = false
 default = ["dev-tools", "sky-stats"]
 # Relaxes behavior for development: reads .env.dev, logs to ./logs/,
 # accepts SKYLANDER_PORTAL_DRIVER=mock, allows insecure helpers, etc.
-dev-tools = ["skylander-rpcs3-control/mock", "mock-driver-runtime"]
+dev-tools = ["guac-server/dev-tools", "skylander-rpcs3-control/mock", "mock-driver-runtime"]
 # Allows `DriverKind::Mock` in release builds without pulling in the
 # rest of the dev-tools surface (relaxed HMAC, /api/_dev/log, etc.).
 # This is what the macOS production build uses (PLAN 10.6) — the Mac
@@ -195,7 +169,7 @@ mock-driver-runtime = ["skylander-rpcs3-control/mock"]
 # Enables the /api/_test/* endpoints used by the e2e harness to inject
 # mock-driver failure outcomes. Requires dev-tools and implicitly forces
 # the mock driver. Never enable in release builds.
-test-hooks = ["dev-tools"]
+test-hooks = ["dev-tools", "guac-server/test-hooks"]
 # Parses `.sky` working copies and exposes a per-figure stats endpoint at
 # `GET /api/profiles/:profile_id/figures/:figure_id/stats`. Gated while
 # the parser's decrypt path matures — see `crates/sky-parser/README.md`.

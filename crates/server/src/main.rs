@@ -179,6 +179,9 @@ fn main() -> Result<()> {
         // writes the process env yet (the tokio runtime + RPCS3 spawn come later).
         unsafe { std::env::set_var("SKYLANDER_SURFACE_2X", "1") };
     }
+    // The product's four `guac_server::hooks` (figure files, display mode, RPCS3
+    // config, settings writer): the product-only code the shared server calls.
+    let hooks = skylander_server::product_hooks::hooks();
     let rpcs3_lifecycle = Arc::new(tokio::sync::Mutex::new(RpcsLifecycle::default()));
     let rpcs3_for_task = rpcs3_lifecycle.clone();
     let portal_for_task = portal.clone();
@@ -231,8 +234,8 @@ fn main() -> Result<()> {
                 // Non-fatal: a write failure just leaves the prior config (the
                 // pre-fix behaviour), so log and carry on rather than block boot.
                 if !matches!(driver_kind, crate::config::DriverKind::Mock)
-                    && let Err(e) =
-                        skylander_server::rpcs3_config::ensure_rpcs3_net_config(&config_dir)
+                    && let Some(rpcs3_config) = &hooks.rpcs3_config
+                    && let Err(e) = rpcs3_config.ensure_net_config(&config_dir)
                 {
                     tracing::warn!("ensure RPCS3 Net config failed (non-fatal): {e}");
                 }
@@ -252,7 +255,12 @@ fn main() -> Result<()> {
                     }
                 };
                 info!(db = %db_path.display(), "opening profile db");
-                let profile_store = match crate::profiles::ProfileStore::open(&db_path).await {
+                let profile_store = match crate::profiles::ProfileStore::open(
+                    &db_path,
+                    &skylander_server::MIGRATOR,
+                )
+                .await
+                {
                     Ok(s) => s,
                     Err(e) => {
                         report_fatal("open profile store", &e);
@@ -275,6 +283,7 @@ fn main() -> Result<()> {
                     rpcs3_exe.clone(),
                     config_dir.clone(),
                     status_for_task.clone(),
+                    hooks.rpcs3_config.clone(),
                 );
                 // PLAN B.2 — hand the worker's sender to the main-thread launcher
                 // UI so it can dispatch the macOS game-window fit. Best-effort: if
@@ -297,6 +306,7 @@ fn main() -> Result<()> {
                     status_for_task.clone(),
                     driver_tx.clone(),
                     figures_for_driver,
+                    hooks.figure_files.clone(),
                     std::time::Duration::from_millis(500),
                 );
                 // Playable-signal source depends on the driver. IPC (PLAN 16.6.3.1):
@@ -446,6 +456,7 @@ fn main() -> Result<()> {
                     profiles: profile_store,
                     sessions,
                     join_qr_png: join_qr_png_for_task,
+                    hooks,
                     #[cfg(feature = "test-hooks")]
                     test_mock,
                 });
@@ -781,7 +792,7 @@ fn first_non_loopback_ipv4() -> Option<Ipv4Addr> {
 /// is the Android PWA standard — large enough that Windows downscales
 /// cleanly to the 16/24/32px sizes the OS shell uses, small enough to
 /// embed without bloating the binary. Same `debug_assertions` gate as
-/// the favicon (`crates/server/src/http.rs` `dev_swapped`) so dev and
+/// the favicon (`crates/guac-server/src/http.rs` `dev_swapped`) so dev and
 /// release builds are visually distinct in the taskbar too.
 ///
 /// PNG bytes are baked at compile time so a missing `phone/assets/icons/`

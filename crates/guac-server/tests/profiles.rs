@@ -8,14 +8,19 @@
 
 use std::time::{Duration, Instant};
 
-use skylander_server::profiles::{
+use guac_server::profiles::{
     GHOST_TIMEOUT, LOCKOUT_DURATION, LockoutCheck, ProfileStore, REPLAY_BUFFER_LIMIT,
     RegistrationOutcome, SessionRegistry,
 };
+use sqlx::migrate::Migrator;
+
+/// The product's migration set (`crates/server/migrations/`), the one the
+/// store's queries were written against. TODO(AA.5): guacamole's own set.
+static MIGRATOR: Migrator = sqlx::migrate!("../server/migrations");
 
 #[tokio::test]
 async fn three_strikes_then_lockout_with_retry_after() {
-    let store = ProfileStore::open_in_memory().await.expect("open");
+    let store = ProfileStore::open_in_memory(&MIGRATOR).await.expect("open");
     let id = store
         .create("Alice", "1234", "#ff00aa")
         .await
@@ -61,7 +66,7 @@ async fn three_strikes_then_lockout_with_retry_after() {
 async fn create_delete_roundtrip_and_max_profiles_enforced_externally() {
     // The store itself doesn't cap count (the HTTP handler does); verify
     // the count() helper is accurate so the handler can rely on it.
-    let store = ProfileStore::open_in_memory().await.unwrap();
+    let store = ProfileStore::open_in_memory(&MIGRATOR).await.unwrap();
     for i in 0..4 {
         let pin = format!("{i:04}");
         store
@@ -84,7 +89,7 @@ async fn create_delete_roundtrip_and_max_profiles_enforced_externally() {
 /// unlock. The clear step is the contract that broke that loop.
 #[tokio::test]
 async fn clear_portal_layout_drops_saved_layout() {
-    let store = ProfileStore::open_in_memory().await.unwrap();
+    let store = ProfileStore::open_in_memory(&MIGRATOR).await.unwrap();
     let id = store.create("Alice", "1234", "#abcdef").await.unwrap();
 
     // Empty load before any save.
@@ -121,7 +126,7 @@ async fn clear_portal_layout_drops_saved_layout() {
 /// when the id doesn't match a profile.
 #[tokio::test]
 async fn kaos_toggle_roundtrips_against_store() {
-    let store = ProfileStore::open_in_memory().await.unwrap();
+    let store = ProfileStore::open_in_memory(&MIGRATOR).await.unwrap();
     let id = store.create("Alice", "1234", "#ff00aa").await.unwrap();
 
     // Default — new profiles are opted-out.
@@ -156,9 +161,9 @@ async fn kaos_toggle_roundtrips_against_store() {
 /// the conflict-on-serial UPSERT overwrites cleanly.
 #[tokio::test]
 async fn display_mode_persistence_roundtrip_and_overwrite() {
-    use skylander_server::display_mode::DisplayMode;
+    use guac_server::hooks::DisplayMode;
 
-    let store = ProfileStore::open_in_memory().await.unwrap();
+    let store = ProfileStore::open_in_memory(&MIGRATOR).await.unwrap();
 
     // Cold cache — no mode for any serial yet.
     assert_eq!(store.get_display_mode("BLUS31442").await.unwrap(), None,);
@@ -226,7 +231,7 @@ async fn ghost_keeps_session_in_registry_and_returns_profile() {
 #[tokio::test]
 async fn ghost_unknown_session_is_noop() {
     let reg = SessionRegistry::default();
-    use skylander_server::profiles::SessionId;
+    use guac_server::profiles::SessionId;
     let returned = reg.ghost(SessionId(99_999), Instant::now()).await;
     assert_eq!(returned, None);
     assert!(reg.all_ids().await.is_empty());
@@ -593,7 +598,7 @@ async fn ghost_reclaim_full_roundtrip() {
 /// is what keeps the abandoned-PWA case from blocking real users.
 #[tokio::test]
 async fn ghost_counts_toward_max_sessions_and_can_be_force_evicted() {
-    use skylander_server::profiles::MAX_SESSIONS;
+    use guac_server::profiles::MAX_SESSIONS;
     assert_eq!(MAX_SESSIONS, 2, "test assumes the 2-slot cap");
 
     let reg = SessionRegistry::default();

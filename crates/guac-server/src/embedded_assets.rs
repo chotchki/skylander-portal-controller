@@ -17,7 +17,7 @@ use axum::response::{IntoResponse, Response};
 use rust_embed::RustEmbed;
 
 /// Embedded snapshot of `phone/dist/` at compile time. The path is
-/// relative to *this crate's* manifest (`crates/server/Cargo.toml`),
+/// relative to *this crate's* manifest (`crates/guac-server/Cargo.toml`),
 /// not the workspace root, so it walks up two levels to the `phone`
 /// crate.
 ///

@@ -62,7 +62,7 @@ mod tests {
     ///
     /// Run explicitly:
     ///
-    ///     cargo test -p skylander-server --lib mdns::mac::tests \
+    ///     cargo test -p guac-server --lib mdns::mac::tests \
     ///         -- --ignored --nocapture
     #[test]
     #[ignore = "requires working network + mDNSResponder; run explicitly"]

@@ -74,7 +74,7 @@ mod tests {
     /// Gated `#[ignore]` because it requires a working network +
     /// mDNS-enabled DNS Client service. Run explicitly with:
     ///
-    ///     cargo test -p skylander-server --lib mdns::win::tests \
+    ///     cargo test -p guac-server --lib mdns::win::tests \
     ///         -- --ignored --nocapture
     ///
     /// If this test fails on the dev box, the launcher will silently

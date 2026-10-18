@@ -46,6 +46,10 @@
 
 use std::path::{Path, PathBuf};
 
+// Passed to the child so it resolves shipped assets against the real install
+// dir rather than its own `mesa/` folder; `paths::app_asset_dir` reads it.
+use crate::paths::APP_DIR_ENV;
+
 /// Operator override: `software` forces the Mesa re-exec, `hardware` forces
 /// system GL. Anything else falls through to auto-detection.
 const FORCE_ENV: &str = "SKYLANDER_GL";
@@ -53,9 +57,6 @@ const FORCE_ENV: &str = "SKYLANDER_GL";
 /// flag the demo/no-GPU UX). Its presence means "we are running from `mesa/`
 /// on the bundled software renderer".
 const CHILD_ENV: &str = "SKYLANDER_GL_SOFTWARE";
-/// Passed to the child so it resolves shipped assets against the real install
-/// dir rather than its own `mesa/` folder. Read by [`crate::paths::app_asset_dir`].
-pub const APP_DIR_ENV: &str = "SKYLANDER_APP_DIR";
 
 /// What [`bootstrap`] decided, for the caller to log (after logging is
 /// initialised — `bootstrap` runs before the subscriber) and to drive the
