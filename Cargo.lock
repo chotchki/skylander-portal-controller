@@ -4227,6 +4227,7 @@ dependencies = [
  "crossbeam-channel",
  "guac-formats",
  "guac-server",
+ "image",
  "rfd 0.17.2",
  "skylander-core",
  "skylander-rpcs3-control",

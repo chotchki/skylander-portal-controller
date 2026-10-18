@@ -34,6 +34,8 @@ rfd = "0.17.2"
 [dev-dependencies]
 tokio = { workspace = true }
 tempfile = "3"
+# hero_view writes its screenshot PNG itself; the version bevy_image already pulls.
+image = { version = "0.25", default-features = false, features = ["png"] }
 # SfoBuilder, for the `--setup <folder>` tests; hero_view's decoders.
 guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }
 # hero_view (AC.10) draws in 3D; dev-only, so the binary's features stay `ui`.
