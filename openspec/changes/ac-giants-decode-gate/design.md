@@ -75,11 +75,11 @@ A 2011.2 packfile reader covering header, sections, class names and the local, g
 **9. Progress is measured; the gate closes on a condition.**
 - Each layer carries a status in AC.9's ledger, updated whenever a check runs: passed (with its numbers), decoding but outside tolerance (with the measured gap) or blocked (with every lead tried).
 - PASS is all four layers inside decision 5's tolerances.
-- A layer is out of leads when every lead this design names for it has been tried and failed: for layouts, the registry hunt and its statistical fallback (decision 4); for Edge and Havok, the public references plus a stage-by-stage diff against the capture that no longer points at a stage to fix (decisions 1, 7 and Risks); for textures, the capture has ruled out every untile order tried and points at no other. Out of leads goes straight to the verdict (AC.11), written as which layers passed and the exact gap on the rest.
+- A layer is out of leads when every lead this design names for it has been tried and failed: for layouts, the registry hunt and its statistical fallback (decision 4); for Edge and Havok, the public references plus a stage-by-stage diff against the capture that no longer points at a stage to fix (decisions 1, 7 and Risks); for textures, the capture has ruled out every untile order tried and points at no other. Out of leads goes straight to the verdict (AC.20, split from AC.11), written as which layers passed and the exact gap on the rest.
 - chotchki can call the verdict from the ledger at any point, and a layer still making progress keeps going until he does or it passes. No date, week count or effort figure decides it (design doc, Measuring progress).
 
 **10. Out of leads is a proposal, not a pivot.**
-When a layer runs out of leads, AC.11 writes the verdict and a proposed Trap Team change: Trap Team plus the ladder re-ordered, Bink 2 for its M0 and which of AC's work carries (the RRC reader, the method, IGA beyond 0x08). AC proposes nothing past that. chotchki decides.
+When a layer runs out of leads, AC.20 writes the verdict and a proposed Trap Team change: Trap Team plus the ladder re-ordered, Bink 2 for its M0 and which of AC's work carries (the RRC reader, the method, IGA beyond 0x08). AC proposes nothing past that. chotchki decides.
 
 ## Risks / Trade-offs
 
