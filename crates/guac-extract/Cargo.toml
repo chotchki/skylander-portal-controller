@@ -1,0 +1,27 @@
+[package]
+name = "guac-extract"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# Turns the user's own disc dump into what guacamole plays (openspec AB, design
+# decision 1). The library is what guacamole calls on first run; the bin is
+# the same code from a terminal. This crate owns the filesystem, hashing, the
+# manifest and ffmpeg; the parsing lives in guac-formats.
+[lib]
+name = "guac_extract"
+path = "src/lib.rs"
+
+[[bin]]
+name = "guac-extract"
+path = "src/main.rs"
+
+[dependencies]
+guac-formats = { path = "../guac-formats" }
+guac-ir = { path = "../guac-ir" }
+
+[dev-dependencies]
+# The game-magic guard (tests/no_game_bytes.rs) inflates gzip heads and builds
+# throwaway git repos to test itself in.
+flate2 = "1"
+tempfile = "3"

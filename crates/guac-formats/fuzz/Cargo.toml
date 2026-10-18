@@ -1,0 +1,26 @@
+[package]
+name = "guac-formats-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# cargo-fuzz targets for guac-formats (openspec AB, design decision 3). Nightly
+# only, so this is its own workspace and the root one excludes it. Run from
+# crates/guac-formats: `cargo +nightly fuzz run <target>`.
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+guac-formats = { path = "..", features = ["test-fixtures"] }
+
+[workspace]
+members = ["."]
+
+# Every registered parser behind one target: the first byte picks the parser.
+[[bin]]
+name = "all_parsers"
+path = "fuzz_targets/all_parsers.rs"
+test = false
+doc = false
+bench = false
