@@ -6,8 +6,9 @@ This file owns the Guacamole track ([`openspec/config.yaml`](../../openspec/conf
 changes under `openspec/changes/`: [`aa-guacamole-shell/`](../../openspec/changes/aa-guacamole-shell/proposal.md),
 [`ab-giants-extract-and-intros/`](../../openspec/changes/ab-giants-extract-and-intros/proposal.md),
 [`ac-giants-decode-gate/`](../../openspec/changes/ac-giants-decode-gate/proposal.md),
-[`ae-animated-turntable/`](../../openspec/changes/ae-animated-turntable/proposal.md) and
-[`af-oracle-foundation/`](../../openspec/changes/af-oracle-foundation/proposal.md); the later rungs of the
+[`ae-animated-turntable/`](../../openspec/changes/ae-animated-turntable/proposal.md),
+[`af-oracle-foundation/`](../../openspec/changes/af-oracle-foundation/proposal.md) and
+[`ap-tv-ui-on-bevy-widgets/`](../../openspec/changes/ap-tv-ui-on-bevy-widgets/proposal.md); the later rungs of the
 ladder are lines in the Guacamole section of [`openspec/backlog.md`](../../openspec/backlog.md). Until G1 the
 product ([CLAUDE.md](../../CLAUDE.md), [SPEC.md](../../SPEC.md), `docs/dev/*`) is owned where it always was,
 and it's frozen: the controller installed on the HTPC keeps playing the games and chotchki doesn't have to
@@ -1656,6 +1657,13 @@ beside the ladder in `openspec/backlog.md`, gates no rung and starts on chotchki
 | AM, M8 | backlog | chapter one | a run of levels with story and cutscenes; profile-owned story saves (the host's, no slot picker); achievements, by the co-op rules |
 | AN, M9 = G1 | backlog | the whole game | `guacamole` becomes the only thing this repo builds and ships; the launcher surface lives in Bevy; the installed controller keeps the other five games |
 | AO, G2 | backlog | parity | the oracle retires |
+
+AP ([`openspec/changes/ap-tv-ui-on-bevy-widgets/`](../../openspec/changes/ap-tv-ui-on-bevy-widgets/proposal.md))
+sits beside the ladder too: the TV's own screens on Bevy's UI stack (retained screens, one input router,
+`bevy_ui_widgets` buttons a pad works, titles through a shader) in the Skylanders look. It starts once AB
+has merged, and later TV surfaces (the Home menu, AK's upgrade screen) build on it. It took the first
+letter past the ladder's ids instead of the next free one, so the rungs kept theirs (its proposal says
+why).
 
 ## Risks
 
