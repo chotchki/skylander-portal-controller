@@ -52,8 +52,9 @@ pub struct AppState {
     /// ~250ms frame.
     pub launcher_status: Arc<std::sync::Mutex<LauncherStatus>>,
 
-    /// Installed Skylanders games, loaded from RPCS3's games.yml at startup.
-    pub games: Vec<InstalledGame>,
+    /// The phone's game list: RPCS3's games.yml at startup (the product), or
+    /// what guacamole's setup found, replaced after a folder is picked.
+    pub games: GameList,
     /// Full serial → game-directory map from `<rpcs3>/config/games.yml`.
     /// Used by `/api/launch` to resolve a picked serial to its on-disk
     /// EBOOT.BIN path so RPCS3 can be spawned directly into that game
@@ -325,9 +326,17 @@ pub enum LauncherScreen {
     ServerError { message: String },
 }
 
+/// The game list, shared so guacamole can replace it once setup picks a folder.
+pub type GameList = Arc<std::sync::RwLock<Vec<InstalledGame>>>;
+
 impl AppState {
-    pub fn lookup_game(&self, serial: &GameSerial) -> Option<&InstalledGame> {
-        self.games.iter().find(|g| &g.serial == serial)
+    pub fn lookup_game(&self, serial: &GameSerial) -> Option<InstalledGame> {
+        self.games_now().into_iter().find(|g| &g.serial == serial)
+    }
+
+    /// A copy of the game list as it is now.
+    pub fn games_now(&self) -> Vec<InstalledGame> {
+        self.games.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 }
 

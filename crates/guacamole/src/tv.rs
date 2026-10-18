@@ -10,7 +10,7 @@ use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::prelude::*;
 use bevy::text::FontSize;
 use bevy::window::PrimaryWindow;
-use guac_server::state::LauncherStatus;
+use guac_server::state::{GameList, LauncherStatus};
 use tracing::{error, info};
 
 use crate::cards::{PortalCards, drain_portal};
@@ -39,6 +39,8 @@ pub struct ServerLink {
     pub clients: Arc<AtomicUsize>,
     pub phone_url: String,
     pub join_qr_png: Arc<Vec<u8>>,
+    /// The phone's game list; a pick replaces it.
+    pub games: GameList,
 }
 
 #[derive(Resource, Clone)]
@@ -46,10 +48,10 @@ pub struct Setup(pub SetupView);
 
 /// The screen this frame, and since when.
 #[derive(Resource)]
-struct Current {
-    screen: TvScreen,
-    since: Instant,
-    clients: usize,
+pub(crate) struct Current {
+    pub(crate) screen: TvScreen,
+    pub(crate) since: Instant,
+    pub(crate) clients: usize,
 }
 
 #[derive(Resource)]
@@ -173,7 +175,7 @@ fn rebuild_screen(
     let (Some(current), Some(assets)) = (current, assets) else {
         return;
     };
-    if !current.is_changed() && !roots.is_empty() {
+    if !current.is_changed() && !setup.is_changed() && !roots.is_empty() {
         return;
     }
     for root in &roots {
@@ -212,9 +214,23 @@ fn escape_quits(
     }
 }
 
-/// Dev builds say how to set the folder until the picker lands (AA.15).
-fn folder_hint() -> Option<&'static str> {
-    cfg!(feature = "dev-tools").then_some("Dev: set GUAC_DUMP_DIRS in .env.dev, then restart.")
+/// What the folder picker is doing, under Setup and NoGiants.
+fn picker_lines(setup: &SetupView, choose: &str) -> Vec<(String, f32, Color)> {
+    let mut lines = Vec::new();
+    if let Some(error) = &setup.error {
+        lines.push((format!("Couldn't use that folder: {error}"), 32.0, GOLD));
+    }
+    if setup.picking {
+        lines.push((
+            "Choose a folder in the window that opened.".into(),
+            40.0,
+            WHITE,
+        ));
+    } else {
+        lines.push((format!("Press Enter or click to {choose}."), 40.0, WHITE));
+    }
+    lines.push(("Or run: guacamole --setup <folder>".into(), 28.0, DIM));
+    lines
 }
 
 fn spawn_screen(
@@ -264,8 +280,8 @@ fn spawn_screen(
                 40.0,
                 WHITE,
             ));
-            if let Some(hint) = folder_hint() {
-                ui.spawn(text(hint, 30.0, DIM));
+            for (line, size, color) in picker_lines(setup, "choose it") {
+                ui.spawn(text(&line, size, color));
             }
         }
         TvScreen::NoGiants => {
@@ -283,10 +299,17 @@ fn spawn_screen(
                     ui.spawn(text(title, 36.0, WHITE));
                 }
             }
-            ui.spawn(text("Choose another folder.", 40.0, WHITE));
-            if let Some(hint) = folder_hint() {
-                ui.spawn(text(hint, 30.0, DIM));
+            for (line, size, color) in picker_lines(setup, "choose another folder") {
+                ui.spawn(text(&line, size, color));
             }
+        }
+        TvScreen::Found => {
+            ui.spawn(text("Found your games", 88.0, GOLD));
+            for title in &setup.found_titles {
+                ui.spawn(text(title, 36.0, WHITE));
+            }
+            ui.spawn(text("Skylanders: Giants is ready!", 56.0, GOLD));
+            ui.spawn(text("Click to continue.", 32.0, DIM));
         }
         TvScreen::Join => {
             ui.spawn(text("Scan to play", 88.0, GOLD));

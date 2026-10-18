@@ -15,6 +15,12 @@ pub struct SetupView {
     pub found_titles: Vec<String>,
     /// The chosen folders, for the no-Giants screen.
     pub folders: Vec<String>,
+    /// The folder picker is open.
+    pub picking: bool,
+    /// The last pick couldn't be stored.
+    pub error: Option<String>,
+    /// A pick just found Giants: list what was found before the join code.
+    pub show_found: bool,
 }
 
 impl SetupView {
@@ -31,6 +37,16 @@ impl SetupView {
                 })
                 .collect(),
             folders: folders.iter().map(|f| f.display().to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    /// After a pick was stored: Giants shows what was found before the join code.
+    pub fn after_pick(folders: &[std::path::PathBuf], scan: &DumpScan) -> Self {
+        let view = Self::new(false, folders, scan);
+        Self {
+            show_found: view.giants_found,
+            ..view
         }
     }
 }
@@ -43,6 +59,8 @@ pub enum TvScreen {
     Setup,
     /// Folders chosen, no Giants dump among them.
     NoGiants,
+    /// A pick found Giants: what was found, then the join code.
+    Found,
     /// Serving: the join code (AA.8 adds the portal cards).
     Join,
     /// The port is taken: the controller or another guacamole is serving.
@@ -73,6 +91,7 @@ pub fn screen_for(status: &LauncherStatus, setup: &SetupView) -> TvScreen {
         LauncherScreen::Main if !status.server_ready => TvScreen::Starting,
         LauncherScreen::Main if setup.needs_setup => TvScreen::Setup,
         LauncherScreen::Main if !setup.giants_found => TvScreen::NoGiants,
+        LauncherScreen::Main if setup.show_found => TvScreen::Found,
         LauncherScreen::Main => TvScreen::Join,
     }
 }
@@ -193,6 +212,46 @@ mod tests {
         }
         assert!(!TvScreen::Farewell.escape_quits());
         assert!(!TvScreen::Join.escape_quits());
+    }
+
+    #[test]
+    fn a_pick_that_found_giants_shows_the_list_then_join() {
+        let found = SetupView {
+            show_found: true,
+            ..set_up()
+        };
+        assert_eq!(screen_for(&ready(), &found), TvScreen::Found);
+        assert!(!TvScreen::Found.escape_quits());
+        // Errors and the farewell still win.
+        assert_eq!(screen_for(&error(true), &found), TvScreen::AlreadyRunning);
+        let unfound = SetupView {
+            show_found: true,
+            ..no_giants()
+        };
+        assert_eq!(screen_for(&ready(), &unfound), TvScreen::NoGiants);
+    }
+
+    #[test]
+    fn after_pick_shows_found_only_with_giants() {
+        use guac_server::dumps::FoundDump;
+        let dump = |id: &str| FoundDump {
+            title_id: id.into(),
+            dir: "/d/x".into(),
+        };
+        let giants = DumpScan {
+            found: vec![dump("BLUS31076"), dump("BLUS30968")],
+            ..Default::default()
+        };
+        let view = SetupView::after_pick(&["/d".into()], &giants);
+        assert!(!view.needs_setup && view.giants_found && view.show_found);
+        assert_eq!(view.found_titles.len(), 2);
+        let swap_force = DumpScan {
+            found: vec![dump("BLUS31076")],
+            ..Default::default()
+        };
+        let view = SetupView::after_pick(&["/d".into()], &swap_force);
+        assert!(!view.needs_setup && !view.giants_found && !view.show_found);
+        assert_eq!(screen_for(&ready(), &view), TvScreen::NoGiants);
     }
 
     #[test]

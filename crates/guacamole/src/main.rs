@@ -8,11 +8,13 @@
 //! and driver worker on its own tokio thread.
 
 mod cards;
+mod cli;
 mod driver;
+mod picker;
 mod screen;
 mod tv;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
@@ -31,14 +33,36 @@ use guac_server::{logging, paths, setup};
 use tracing::{info, warn};
 
 use crate::cards::PortalFeed;
+use crate::cli::Command;
 use crate::driver::{NativePortalDriver, PortalChange, portal_channel};
+use crate::picker::{DataRoot, Picker};
 use crate::screen::SetupView;
 use crate::tv::{FAREWELL_BEAT, ServerBridge, ServerLink, Setup, Tv};
 
 fn main() -> Result<()> {
+    let command = match cli::parse(std::env::args_os().skip(1)) {
+        Ok(command) => command,
+        Err(e) => {
+            eprintln!("guacamole: {e}\n{}", cli::USAGE);
+            std::process::exit(2);
+        }
+    };
+    if command == Command::Help {
+        println!("{}", cli::USAGE);
+        return Ok(());
+    }
     let root = paths::guac_data_root()?;
     // Before `load`, so a settings failure is logged and shown, not silent.
     let log_guard = logging::init(&setup::log_dir(&root))?;
+    match command {
+        Command::SetupFolders(folders) => {
+            let code = cli::setup_folders(&root, &folders, &mut std::io::stdout());
+            drop(log_guard);
+            std::process::exit(code);
+        }
+        Command::SetupPick => pick_before_the_window(&root),
+        Command::Run | Command::Help => {}
+    }
     let (portal_tx, portal_rx) = portal_channel();
     // Writes nothing, so a second copy that loses the port leaves no trace.
     let loaded = match setup::load(&root).context("load guacamole's settings") {
@@ -48,7 +72,7 @@ fn main() -> Result<()> {
             let mode = setup::window_mode(&setup::env());
             let no_setup = SetupView::new(false, &[], &Default::default());
             let link = failed_link(format!("{e:#}"));
-            return run_tv(link, portal_rx, no_setup, mode, log_guard);
+            return run_tv(link, portal_rx, no_setup, mode, root, log_guard);
         }
     };
     let cfg = loaded.config.clone();
@@ -93,7 +117,31 @@ fn main() -> Result<()> {
             failed_link(format!("{e:#}"))
         }
     };
-    run_tv(link, portal_rx, setup_view, cfg.window_mode, log_guard)
+    run_tv(
+        link,
+        portal_rx,
+        setup_view,
+        cfg.window_mode,
+        root,
+        log_guard,
+    )
+}
+
+/// `--setup` alone: the plain dialog, on the main thread before the event
+/// loop exists, then a normal start. A cancel keeps the stored folders.
+fn pick_before_the_window(root: &Path) {
+    let picked = rfd::FileDialog::new()
+        .set_title(picker::PICKER_TITLE)
+        .pick_folder();
+    let Some(folder) = picked else {
+        info!("--setup: no folder chosen");
+        println!("No folder chosen; keeping the stored folder.");
+        return;
+    };
+    let code = cli::setup_folders(root, &[folder], &mut std::io::stdout());
+    if code != 0 {
+        warn!("--setup: the picked folder wasn't stored");
+    }
 }
 
 /// Runs the TV until it exits; the guard flushes the file log first.
@@ -102,6 +150,7 @@ fn run_tv(
     portal: Receiver<PortalChange>,
     setup_view: SetupView,
     mode: WindowMode,
+    root: PathBuf,
     log_guard: WorkerGuard,
 ) -> Result<()> {
     exit_after_farewell(link.status.clone());
@@ -119,7 +168,8 @@ fn run_tv(
         .insert_resource(link)
         .insert_resource(PortalFeed(portal))
         .insert_resource(Setup(setup_view))
-        .add_plugins((ServerBridge, Tv))
+        .insert_resource(DataRoot(root))
+        .add_plugins((ServerBridge, Tv, Picker))
         .run();
     info!(?exit, "guacamole exited");
     drop(log_guard);
@@ -164,6 +214,7 @@ fn link_to(server: &ServerHandles) -> ServerLink {
         clients: server.connected_clients.clone(),
         phone_url: server.phone_url.clone(),
         join_qr_png: server.join_qr_png.clone(),
+        games: server.games.clone(),
     }
 }
 
@@ -177,6 +228,7 @@ fn failed_link(message: String) -> ServerLink {
         clients: Arc::new(AtomicUsize::new(0)),
         phone_url: String::new(),
         join_qr_png: Arc::new(Vec::new()),
+        games: Default::default(),
     }
 }
 

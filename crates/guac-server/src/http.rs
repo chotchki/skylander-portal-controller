@@ -892,7 +892,7 @@ impl From<&InstalledGame> for PublicGame {
 }
 
 async fn list_games(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let list: Vec<PublicGame> = state.games.iter().map(PublicGame::from).collect();
+    let list: Vec<PublicGame> = state.games_now().iter().map(PublicGame::from).collect();
     axum::Json(list)
 }
 
@@ -1101,7 +1101,7 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
         }
     };
     let game = match state.lookup_game(&body.serial) {
-        Some(g) => g.clone(),
+        Some(g) => g,
         None => return (StatusCode::NOT_FOUND, "unknown serial").into_response(),
     };
 

@@ -21,7 +21,7 @@ use tracing::{info, warn};
 use crate::config::{Config, DriverKind};
 use crate::hooks::Hooks;
 use crate::state::{
-    AppState, DriverJob, LauncherScreen, LauncherStatus, RpcsLifecycle,
+    AppState, DriverJob, GameList, LauncherScreen, LauncherStatus, RpcsLifecycle,
     spawn_connectivity_watchdog, spawn_crash_watchdog, spawn_driver_worker, spawn_state_poller,
 };
 
@@ -110,6 +110,8 @@ pub struct ServerHandles {
     /// The round-QR PNG of `phone_url`, the same buffer `/api/join-qr.png` serves.
     pub join_qr_png: Arc<Vec<u8>>,
     pub events: broadcast::Sender<Event>,
+    /// The phone's game list (`/api/games`); guacamole replaces it after setup.
+    pub games: GameList,
     /// The driver worker's job queue (PLAN B.2's macOS game-window fit);
     /// closed when the server died before the worker started.
     pub driver_tx: mpsc::Sender<DriverJob>,
@@ -223,6 +225,12 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
     let figures_for_task = figures.clone();
     let figure_index_for_task = figure_index.clone();
     let join_qr_png_for_task = join_qr_png.clone();
+    // Native's list is known now; the product's is read from games.yml on the thread.
+    let games: GameList = Arc::new(std::sync::RwLock::new(match &catalogue {
+        Catalogue::Native { games } => games.clone(),
+        Catalogue::FirmwarePack { .. } => Vec::new(),
+    }));
+    let games_for_task = games.clone();
 
     let status_for_errors = launcher_status.clone();
     let status_for_ready = launcher_status.clone();
@@ -362,11 +370,13 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
                     DriverKind::Uia | DriverKind::Ipc | DriverKind::Native => {}
                 }
 
-                let (games, games_yml) = match catalogue {
+                let games_yml = match catalogue {
                     Catalogue::FirmwarePack { .. } => {
-                        games_from_games_yml(driver_kind, &config_dir)
+                        let (list, yml) = games_from_games_yml(driver_kind, &config_dir);
+                        *games_for_task.write().unwrap_or_else(|e| e.into_inner()) = list;
+                        yml
                     }
-                    Catalogue::Native { games } => (games, HashMap::new()),
+                    Catalogue::Native { .. } => HashMap::new(),
                 };
 
                 let state = Arc::new(AppState {
@@ -378,7 +388,7 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
                     events: events_for_task,
                     connected_clients: clients_for_task,
                     launcher_status: status_for_task,
-                    games,
+                    games: games_for_task,
                     games_yml,
                     rpcs3_exe,
                     config_dir,
@@ -460,6 +470,7 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
         raw_ip_url,
         join_qr_png,
         events: events_tx,
+        games,
         driver_tx,
         bind_addr: bind,
         server_thread,
@@ -901,6 +912,24 @@ mod tests {
         assert!(figures.contains("\"000009-0000\""), "{figures}");
         assert!(figures.contains("\"000064-0000\""), "{figures}");
         assert!(!figures.contains("Cynder"), "{figures}");
+        let games = get(handles.bind_addr, "/api/games");
+        assert!(games.contains("BLUS30968"), "{games}");
+    }
+
+    #[test]
+    fn a_native_game_list_replaced_after_boot_is_served() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("data")).unwrap();
+        std::fs::write(root.path().join("data/figures.json"), "[]").unwrap();
+        let catalogue = Catalogue::Native { games: Vec::new() };
+        let handles = native_boot(root.path(), catalogue).unwrap();
+        wait_until_ready(&handles);
+        assert!(!get(handles.bind_addr, "/api/games").contains("BLUS30968"));
+
+        *handles.games.write().unwrap() = vec![skylander_core::InstalledGame {
+            serial: skylander_core::GameSerial::new("BLUS30968"),
+            display_name: "Skylanders: Giants".into(),
+        }];
         let games = get(handles.bind_addr, "/api/games");
         assert!(games.contains("BLUS30968"), "{games}");
     }

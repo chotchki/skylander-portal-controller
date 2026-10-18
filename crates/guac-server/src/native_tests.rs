@@ -168,10 +168,10 @@ async fn native() -> Native {
         events,
         connected_clients: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         launcher_status,
-        games: vec![InstalledGame {
+        games: Arc::new(std::sync::RwLock::new(vec![InstalledGame {
             serial: GameSerial::new("BLUS30968"),
             display_name: "Skylanders: Giants".into(),
-        }],
+        }])),
         games_yml: HashMap::new(),
         rpcs3_exe: PathBuf::new(),
         config_dir: PathBuf::new(),

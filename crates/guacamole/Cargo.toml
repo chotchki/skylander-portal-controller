@@ -26,9 +26,16 @@ crossbeam-channel = "0.5"
 # Pinned by Cargo.lock; upgrades are their own change at milestone boundaries.
 # `ui` is the 2D UI collection (winit, wgpu, bevy_ui, text, png); no 3D or audio yet.
 bevy = { version = "0.20.0", default-features = false, features = ["ui"] }
+# The setup screen's folder picker (AA.15): a sheet on the window while frames
+# run, or a plain dialog for `--setup` before the window exists. 0.17 is on
+# objc2 0.6, as winit is; the product's 0.14 stays on its own copy.
+rfd = "0.17.2"
 
 [dev-dependencies]
 tokio = { workspace = true }
+tempfile = "3"
+# SfoBuilder, for the `--setup <folder>` tests.
+guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }
 
 [features]
 default = ["dev-tools"]
