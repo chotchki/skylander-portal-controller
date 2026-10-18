@@ -509,7 +509,7 @@ PARAM.SFO), not taken from the wiki.
 | Game | Engine | Container | Logic | Meshes | Physics / SPU | Audio | Video |
 |---|---|---|---|---|---|---|---|
 | Spyro's Adventure BLUS30779 | XPEC "Lux" port | loose `.lxb/.str/.apk/.lsa/.fnt` | Lua 5.1 (138 plaintext files) + native + `.lxb` trigger graphs | `.str`, encoding unknown | no Havok; SPURS jobs of unknown purpose | Wwise | Bink 1 |
-| Giants BLUS30968 | Alchemy + TfbTool | IGA v0x08 (LE header, LZMA), IGZ v6 | native + tfbScript op graphs | `igPS3EdgeGeometry` | Havok 2011.2, probably on PPU; 20 SPU images, all FMOD | FSB5 MPEG | Bink 1 `.mov` |
+| Giants BLUS30968 | Alchemy + TfbTool | IGA v0x08 (LE header, LZMA), IGZ v6 | native + tfbScript op graphs | `igPS3EdgeGeometry` | Havok 2011.2, probably on PPU; 20 SPU ELF images, all FMOD, plus Sony Edge's SPURS jobs inside the EBOOT | FSB5 MPEG | Bink 1 `.mov` |
 | Trap Team BLUS31442 | Alchemy + TfbTool | IGA 0x0B LE, IGZ v8 | native + tfbScript | Edge | Havok 2013.1; FMOD on SPU | FSB5 | Bink 2 |
 | Swap Force BLUS31076 | Alchemy + VV Laboratory | IGA 0x0A BE `.pak` (zlib), IGZ v7 | VVL (VV's .NET-like IL) | Edge | Havok 2012.1 + `.hkb` behavior graphs; 33 SPU images incl. Havok | FSB5 | Bink 2 (+ a few Bink 1) |
 | SuperChargers BLUS31545 | Alchemy + VV Laboratory | IGA 0x0B BE `.pak` (LZMA), IGZ v9 | VVL | Edge | Havok 2014.1; 31 SPU images | FSB5 | Bink 2 |
@@ -532,27 +532,6 @@ PARAM.SFO), not taken from the wiki.
 - Inner content: 85,310 entries, 17.56 GiB decompressed, of which 9.8 GiB is duplicate by name (every
   level and character bundle is self-contained). 79,509 FSB5 voice lines, 599 `level.bld` (one IGZ each),
   1,542 texture IGZ, 3,660 language packs.
-- IGZ v6: magic `IGZ\x01` + a big-endian version, section descriptors from 0x10, section 0 holds the
-  fixups. v6 numbers its fixups (0 TMET type names, 1 TSTR, 2 EXID, 3 EXNM, 5 RVTB, 0xA TMHN, 0xC MTSZ,
-  0xE RSTR; 6, 7, 8, 0xB, 0xF and 0x10 unknown) where v7+ uses 4CC tags. TMET names the igObject types but
-  the files do NOT carry field layouts; those live in the EBOOT's reflection registry, and that's the
-  hardest unknown in the decode gate. External refs are FNV-1a32 hashes (namespace `metaimages` =
-  0x843CD0C2, brute-forced).
-- `igImage2` textures: `dxt5_big_ps3`, `dxt5_tile_big_ps3`, `dxt1_tile_big_ps3`, `dxt1_big_ps3` and a
-  few `l8_tile_big_ps3`. DXT maps 1:1 onto BC1/BC3; what `_tile` means on PS3 is unknown.
-- Meshes: `igPS3EdgeGeometry` (+ `Segment`, `igEdgeGeometryAttr`), Sony's Edge format, decompressed on
-  SPU at runtime. Public references: the v6 Edge path in
-  [NoesisPlugins](https://github.com/NefariousTechSupport/NoesisPlugins) `fmt_alchemy_igz.py` (attribute
-  unpack, skinning bone maps), chrrox's Edge index decompression (credited in
-  [SkydraHeavy](https://github.com/spyrosadventure/SkydraHeavy)) and igCauldron's `EdgeStuff.cs`, which
-  targets the later IGA and is untested on v6.
-- Havok `hk_2011.2.0-r1` packfiles ride inside `level.bld` as blobs (271 in one arena file).
-  [Kovah](https://github.com/NefariousTechSupport/Kovah) has 2011.2 class metadata dumped from Giants on
-  Wii; [HavokLib](https://github.com/PredatorCZ/HavokLib) reads spline-compressed animation in that
-  version range. None of Giants' 20 SPU images is Havok (all FMOD), so Havok PROBABLY runs on the PPU
-  and physics parity needs no SPU decompilation. Not proven: the EBOOT imports `cellSpursJq` (12
-  functions), so non-ELF SPURS jobs could exist, and nobody knows yet where Edge decompression and
-  skinning run (AC's first capture answers that part).
 - tfbScript: character behavior (attacks, upgrades, projectiles) is serialized as op graphs inside IGZ
   (`ScriptSet`, `OpCodeList`, `OpUseMacro`, `OpMacroInterface`, `OpMacroParameter`, `OpCheckValue`,
   `OpDefineMacro`, `OpFlowMacro`, `OpFlowBuiltInBehavior`, `RHSValueStack`). The structure is documented
@@ -597,8 +576,11 @@ PARAM.SFO), not taken from the wiki.
   per playable character; 11 FMV (`fmv01`-`fmv12`, no `fmv05`); 2 logos. Ten carry 13 audio tracks
   (per-language voice), the rest carry one. FFmpeg decodes Bink 1 (probed on a Giants file).
 - EBOOT: an encrypted SELF, 5.65 MiB of `.text` (~1.48M PPU instructions), 277 imports from 22 libraries.
-  Stripped, but RTTI typeinfo strings, 115 `*MetaField` reflection names and engine API names
-  (`igPlatformVisualContext::drawEdgeGeometry`) survive.
+  Decrypted, Ghidra counts 20,511 functions (RE toolchain). Stripped, but RTTI typeinfo strings, 115
+  `*MetaField` reflection names, engine API names (`igPlatformVisualContext::drawEdgeGeometry`) and the
+  reflection registry's static tables (989 types, below) survive. Sony Edge's SPU jobs ride inside it as
+  SPURS job binaries, not ELFs: `EdgeGeometry` (its compress and decompress sources named in its strings),
+  then `ShaderPatching` and `IntraMeshSorting`.
 - Figure → asset: character archives are keyed by DECIMAL toy-type id, `character/009_eruptor.arc` ↔
   toy type 9, with variant suffixes (`_legendary`, `_alt`, `_dark`, `_red`). A placed figure resolves to
   its archive by filename, except where a toy type has no archive of its own number (Dark Spyro, toy 28,
@@ -607,6 +589,231 @@ PARAM.SFO), not taken from the wiki.
 - Roster: 48 playable characters by the intro count (one intro each), plus variants. Giants also plays
   SSA-era figures (origin-game-and-later rule, `crates/core/src/compat.rs:48`). The disc's roster is the
   catalogue the phone offers (Figures).
+
+#### IGZ v6 (AC.5)
+
+Verdict: every IGZ on the disc parses with nothing guessed. `guac_formats::igz`
+([`crates/guac-formats/src/igz.rs`](../../crates/guac-formats/src/igz.rs)) reads Eruptor's 29 (`009_eruptor.bld`
++ `.arc`), all 158 character `level.bld` (512,595 objects) and `permanent/global.bld`'s 13 with 0 failures,
+and the tfbScript census read all 5,801 through it.
+
+- Big-endian, 32-bit pointers. `IGZ\x01` + version 6, then a section table from 0x10: 16-byte entries
+  (offset, size, alignment, memory pool) ended by a zero offset, where a placeholder section (size
+  0xFFFFFFFF) has no bytes. Section 0 holds the fixups: magic and version again, the first record's offset
+  at +0xC, the record count at +0x10, then records of (kind, 0, 0, count, length, data start). v6 numbers
+  its kinds where v7+ uses 4CC tags.
+- A location is `(data section << 24) | offset`, data section 0 being the one after the fixups. Location
+  lists are nibble varints, low nibble first (3 data bits plus a continue bit), each value v stepping
+  v × 4 + 4 bytes.
+- An object opens with its TMET index (the vtable word, in a file) and its reference count as written (1
+  or 2). RVTB lists the objects and MTSZ is the step to the next one.
+- A memory ref is 8 bytes, a size word then a pointer. Present: bit 31 set, the size word unmarked and the
+  pointer marked kind 6, the byte count in bits 0-26 and the alignment 4 << bits 27-30 (4, 16 and 128
+  seen). Null: bit 31 clear and kind 0xF on the size word, which isn't always 0 (`global.bld` has 3,022
+  null refs at 0x7 and 324 at 0x10000007). Anything else is refused on read. A probe over every memory-ref
+  and vector field the registry declares found 234,179 present refs, all with unmarked size words, and
+  86,668 null ones, all marked 0xF. A vector is a count plus a memory ref (12 bytes).
+- The runtime rewrites kind-0xF words (AC.14, from the June savestate): an untouched null ref's size word
+  reads 0x11 in memory where the file has 0 (0x10000011 for 0x10000000), while present size words keep bit
+  31. What the 0x11 means is open, and nothing we read depends on it.
+- The loader works IN PLACE: the tutorial's `level.bld` data section (70,834 objects) sits in guest memory
+  at the file's RVTB offsets, nothing copied or re-stepped.
+- External refs by hash are FNV-1a32 (namespace `metaimages` = 0x843CD0C2, brute-forced).
+
+Every fixup kind on the disc, with AC.5's census as entries in files (blank: not broken out for the
+`level.bld` run):
+
+| Kind | Name | What it is | Eruptor's 29 IGZ | 158 character `level.bld` |
+|---|---|---|---|---|
+| 0 | TMET | type names | 247 in 29 | |
+| 1 | TSTR | the names EXNM indexes | 28 in 1 | |
+| 2 | EXID | imports by hash, (object, namespace) FNV-1a32 pairs | 175 in 17 | |
+| 3 | EXNM | imports by name, (namespace, name) TSTR indexes | 27 in 1 | |
+| 5 | RVTB | the objects, a location list | 6,769 in 29 | 512,595 |
+| 6 | | pointer words (object refs, memory-ref data) | 14,758 in 29 | 1,237,825 |
+| 7 | | import words, `0x80000000 \| EXID index` | 676 in 17 | 54,493 |
+| 8 | | unknown, below | 29 in 29 | 158 in 158 |
+| 0xA | TMHN | memory handle blocks, (size word, location) | 60 in 17 | |
+| 0xB | | memory handle words, a TMHN index | 60 in 17 | |
+| 0xC | MTSZ | instance size per TMET entry | 247 in 29 | |
+| 0xE | RSTR | string pointer words | 4,960 in 13 | 367,218 |
+| 0xF | | size words of NULL memory refs | 922 in 13 | 47,681 |
+| 0x10 | | named external refs, `0x80000000 \| EXNM index` | 3,103 in 1 (1,742 unflagged) | 262,747 (146,754 unflagged) |
+
+- Kinds 4, 9 and 0xD never appear.
+- Kind 8 stays OPEN. Giants writes it in every IGZ (5,801 of 5,801), always count 1 and one big-endian word,
+  0x00000004, which equals the first object's location (always 4), so a location and a constant can't be
+  told apart on this disc. It isn't a nibble list either: that reading needs a non-zero padding byte, and
+  none of 8,865 real lists has one. Nothing reads it; the parser keeps it raw and counts it.
+- Kind 0x10 is named external refs through EXNM: metaobjects (namespace `metaobject`) plus 208 named
+  object imports in the character `level.bld` (148 SpriteInfo, 16 StringInfo, 12 ActorInfo, 12 LightInfo,
+  10 ScriptStructure, 7 ValueInfo, 3 ParticleInfo). A word without the 0x80000000 flag (script types only)
+  stays unresolved (`Ref::UnresolvedMeta`); no gate type uses kind 0x10, so it went no further.
+- The parser refuses instead of guessing: a non-zero word no fixup marks, a word two kinds mark, any marker
+  on an object's type word, a dangling pointer or one into a placeholder section, an out-of-range import,
+  handle or EXNM index, and a null ref with a pointer.
+
+#### Field layouts: the static registry (AC.4, AC.14)
+
+Verdict: the files don't carry field layouts, and recovering them needed neither a memory dump nor
+statistics. The EBOOT registers every type from STATIC tables, readable straight out of the decrypted ELF,
+and the live registry agrees field for field.
+
+- How a type registers: one call per class with (meta slot, the parent's registration descriptor,
+  constructor, name, instance size, a field-registration descriptor). The field function appends a static
+  array of field-kind descriptors, then sets names, per-field key slots and u16 offsets from three more
+  static arrays. A constant-propagating scanner (RE toolchain) reads every such call in 0.8 s: 989 types,
+  609 with fields of their own. The per-field details (an object ref's target type, a memory ref's element
+  kind, array counts, bitfields, defaults) were read in Ghidra for the gate's types only.
+- Checked against the disc (AC.4): all 163 types the 158 character `level.bld` use are registered, 158 with
+  MTSZ equal to the registry size, and 1,346,793 reference fixups over 512,595 objects land on a reference
+  field the registry declares, 0 misses.
+- Confirmed live (AC.14), off the June savestate's memory read through the reflection system's own
+  registered layouts: 980 of 989 types are live (9 register lazily, none a gate type) and all 980 agree on
+  name, size, parent, field count and order. Own fields agree on 979 (the odd one,
+  `tfbSoundInfo._categoryInfo`, is a static the scanner labelled by its storage kind). The gate's 35
+  readers make 272 field reads and 272 of 272 match live offset, size and kind. No Rust constant disagrees.
+- AC.4's open question 2 is CLOSED. Five types are 4 bytes bigger in every file's MTSZ than registered
+  (`igAlphaStateAttr`, `igBlendStateAttr` and `igDepthWriteStateAttr` 0x14 vs 0x10, `igCullFaceAttr` 0x18 vs
+  0x14, `RHSReferenceStack` 0x30 vs 0x2C). Since the loader works in place, the tail sits in memory exactly
+  as on disc (3,768 of 3,768 objects), no fixup marks it and nothing reads it: step objects by the file's
+  MTSZ, read fields by the registry. None is a gate type.
+- In Rust: `guac_formats::igz::layouts`
+  ([`crates/guac-formats/src/igz/layouts.rs`](../../crates/guac-formats/src/igz/layouts.rs)), tagged
+  `IGZ v6 / BLUS30968 01.00`, for the gate's types only. A reader refuses another type, an MTSZ size off the
+  registry and a fixup on a word its layout doesn't read as a reference.
+- How a hero hangs together, which is where AE starts: `tfbPhysicsModel` → `_tfbBody` (a `tfbPhysicsBody`
+  whose `_data` is the Havok skeleton packfile) → `_node` (the `igActor2` scene graph) →
+  `igBlendMatrixSelect` palettes → `tfbRuntimeTechniqueInstance` → `igEdgeGeometryAttr` → the
+  `igPS3EdgeGeometry` segments. Beside it `_combinerPrototype` → `igSkeleton2` (the Alchemy skeleton and the
+  inverse joints the palette indexes), and `_animationSet` → `AnimationInfo` → `tfbPhysicsAnimation`, whose
+  `_data` is a Havok clip or a `0xDEADBEEF` lip-sync block. Eruptor: 34 bones, 33 inverse joints, 2 meshes
+  over 3 segments, 44 `igImage2`, a 185-slot clip table with 32 filled.
+
+#### Textures (AC.6)
+
+Verdict: `_tile` is RSX's swizzle, and all 4,527 character `igImage2` convert to KTX2 with their original
+blocks (`guac_formats::texture`, [`crates/guac-formats/src/texture.rs`](../../crates/guac-formats/src/texture.rs):
+our own writer, BC1_RGBA_UNORM, BC3_UNORM and R8_UNORM with an `rrr1` swizzle).
+
+- Five metaimages across the character archives: `dxt5_tile_big_ps3` 2,158, `dxt1_tile_big_ps3` 1,283,
+  `dxt5_big_ps3` 1,056, `dxt1_big_ps3` 20 and `l8_tile_big_ps3` 10, all depth 1 with one image. DXT maps 1:1
+  onto BC1 (RSX honours DXT1's one-bit alpha) and BC3.
+- The bytes decided `_tile` (the EBOOT's format table only pairs each canonical format with a `_big_ps3`
+  and a `_tile_big_ps3` name). Every tiled image is power-of-two (3,451 of 3,451) with its levels packed and
+  no row padding, every linear one is single-level and not power-of-two (1,076 of 1,076, a tight pitch),
+  and the pixel block is the mip chain rounded up to 128 bytes on all 4,527. That's RSX's swizzled layout
+  vs its pitched one.
+- RSX ignores the swizzle for DXT, so tiled DXT blocks still run in rows (smoother as rows than as Morton in
+  2,913 of 3,431 images). L8 under the swizzle IS Morton-ordered: all 10 `l8_tile` come out as two
+  identical rows after the unswizzle and not as stored.
+- Blocks are already in BC byte order, so the endian fix is the identity: read little-endian, 18,101,440
+  of 18,101,440 DXT5 colour blocks with distinct endpoints are four-colour.
+- Confirmed in the June savestate's RSX state: 1,092 resident `igImage2` are byte-identical to their file
+  blocks and equal level for level after our untile, and 22 bound texture units over 18 `_tile` DXT images
+  show the linear bit CLEAR (swizzled) with kind, size and mip count matching. Not exercised yet: a linear
+  image's pitch, a bound L8 and the hero's own 60 (AC.15).
+- Which unit is which (AC.10): `tfbRuntimeTechniqueInstance._materialPass` lists `tfbAlphaTextureUnitIDAttr`
+  binds and `igAttr._cachedUnitID` is the unit. All 2,243 character techniques bind unit 0 exactly once;
+  colour sits at 0, `_n`/`_nrm` only at 4 and `_s`/`_sp` only at 6, and Eruptor's rim map at 3.
+
+#### Edge meshes, and where skinning runs (AC.7)
+
+Verdict: the SPU skins. Edge decompression and skinning run in the `EdgeGeometry` SPURS job inside the
+EBOOT (which the 20-image SPU census missed, it only counted ELFs), and no vertex-shader variant compiles
+skinning (that bit is absent from all 5,120 compiled VS variants, per the AE materials research), so RSX
+only ever gets positions the SPU already posed. Our decoder replaces that job; nothing in it needed
+decompiling. `guac_formats::edge` ([`crates/guac-formats/src/edge.rs`](../../crates/guac-formats/src/edge.rs)).
+
+- Two SPU configs on the characters, unskinned (1,897 segments) and skinned (424); anything else is refused.
+  The rest of the disc holds 4 segments on other configs, left for the level reader that needs them.
+- Index compression, in our words: an 8-byte header (explicit count, bias, first-use bytes, a bit width
+  0-12), one first-use bit per consumed index (the next unseen vertex or the next explicit one), a 2-bit
+  code per triangle saying which edge it shares with the previous triangle (or three new indexes), and
+  explicit indexes delta-coded across 8 interleaved lanes under the bias. Every explicit index on the
+  characters is a back-reference (368,718 of 368,718).
+- Streams: an 8-byte header plus 8-byte blocks, where the format code is RSX's own vertex type and the slot
+  is the RSX input register, so each descriptor predicts a draw's vertex array. The disc uses F32, F16, U8N
+  and X11Y11Z10N (RSX's CMP word, big-endian, two's complement, read as signed normalized).
+- Skin: 4 × (u8 weight, u8 local matrix) per vertex, summing to 255 on all 262,899 skinned vertices. Locals
+  land in two DMA ranges of 48-byte 3×4 matrices, then palette slot → `_blendMatrixIndices` → the bone with
+  that `_blendMatrixIndex`.
+- Disc: 2,321 of 2,321 character segments decode (624,950 vertices, 698,924 triangles, 0 degenerate) and
+  every bound group's union equals its authored `igAABox` (2,005 of 2,005, gap 0). Eruptor is 3 skinned
+  segments, 2,861 vertices and 4,812 triangles, bounds (-1.9696, -0.0017, -0.6243)..(1.9696, 2.1768,
+  0.5144) exactly. The whole disc: 50,262 decode, the same 4 refused.
+- The June savestate, on non-hero data: 708 indexed draws over 12 unskinned `global.bld` segments, and
+  every drawn triangle is in our decode in the same order and vertex rotation (708 of 708). Indexes stay
+  segment-local u16, a segment is one draw split into batches of up to 256 indexes, RSX reads unskinned F32
+  positions in place from `_spuVertexes0` (difference exactly 0), F16 UVs and U8N colour are exact.
+- Edge culling is ON: `igPS3EdgeManager._cullingState` 1 and both `_disableStaticCulling` and
+  `_disableSkinnedCulling` 0 in the live state, and 10 of the 12 segments draw fewer triangles than they
+  hold (96 → 54, 240 → 202). So a capture holds an ordered SUBSET of the decode, and decision 5's "equal
+  triangle set" needs that wording or the two flags poked to 1 in guest memory first (chotchki's call,
+  AC.16).
+- Palettes (the savestate's 43 skinned jobs over 8 NPC models): blend-index (`_inverseJointArray`) order,
+  48-byte row-major 3×4, MODEL space with a separate local-to-world per job, the two DMA sources at
+  `_skinMatricesByteOffsets[0]` and `[1]`, bones mapped by name.
+- Still for the hero's own draw (AC.16): the skinned output config, CMP normals (our signed normalize and
+  RPCS3's differ by up to 7.7e-4 rad, inside the 1e-3 tolerance with little margin) and Eruptor's 3
+  segments.
+- Reading aids, nothing copied: NoesisPlugins' `fmt_alchemy_igz.py`
+  ([NoesisPlugins](https://github.com/NefariousTechSupport/NoesisPlugins)) for field order and the
+  attribute tables (its unsigned CMP decode doesn't fit this data), the index layout as SkydraHeavy's port
+  of chrrox's decompressor describes it ([SkydraHeavy](https://github.com/spyrosadventure/SkydraHeavy)) and
+  RPCS3's own vertex-type tables. igCauldron's `EdgeStuff.cs` wasn't needed.
+
+#### Havok skeletons and clips (AC.8)
+
+Verdict: one compression on the whole disc, decoded. `guac_formats::havok`
+([`crates/guac-formats/src/havok.rs`](../../crates/guac-formats/src/havok.rs)), written from our own notes and
+[Kovah](https://github.com/NefariousTechSupport/Kovah)'s Apache-2.0 2011.2 offsets (dumped from Giants on
+Wii); [HavokLib](https://github.com/PredatorCZ/HavokLib) is GPL-3.0 and was only read.
+
+- Packfiles ride inside `level.bld` as `tfbBuildDataInfo._data` (271 in one arena file): big-endian,
+  `hk_2011.2.0-r1`, file version 9, layout rules 4/0/1/1 (4-byte pointers, big-endian, reuse padding,
+  empty base), three sections, local, global and virtual fixups, classes pinned by signature.
+- Clips are `hkaSplineCompressedAnimation` only, mask byte 0x45 on all 108,527 tracks (16-bit positions and
+  scales, THREECOMP40 rotations), one block per clip (nothing past 256 frames), B-splines of degree 1 or 3
+  over u8 knots clamped at both ends.
+- THREECOMP40 is a 40-bit LITTLE-endian word: three 12-bit components scaled (v - 2047) / (2047 √2), two
+  bits naming the dropped component and one its sign, the dropped one rebuilt as the largest (it is, on all
+  1,576,123 quaternions; read big-endian, 102 of the idle's 391 break). The spline data is little-endian
+  inside the big-endian packfile (`endian` 0 on all 3,920 clips).
+- Census, every character archive: 120 skeletons, 3,920 clips and 12 empty containers parse, 0 failures;
+  30 fps on 3,822 clips, 24 fps on 96. 262 clips carry the ADDITIVE blend hint; how the game layers them
+  waits for an oracle comparison on one (the hero's idle doesn't use it).
+- Eruptor: `Eruptor.ma` is J_root plus 33 bones whose names and parents agree with `igSkeleton2`'s by name
+  in a different order (so bones map by name; the hero has no `_boneMappingTable`). `Eruptor_Idle.ma` is
+  1.3333 s, 41 frames at 30 fps, 33 tracks. The loop closes to 1.12e-8 and the ankles stay within 0.0047
+  while the root bobs 0.14, which needs the hierarchy, the rotations and the root translation right at
+  once.
+- On live NPC palettes (the savestate), solving the palette against every clip with our decode lands 13 of
+  18 instances on one sharp minimum within 9.4e-7 translation and 4.8e-7 rad (BoxTortoise_Idle at 1.1710 s
+  and 1.0225 s, Bird_Idle, FlyingFlocker_Flying, Butterfly_Fly, Cannon_Idle). The other 5 are blends or
+  layered poses.
+- None of the 20 SPU ELF images is Havok (all FMOD) and the SPURS jobs found so far are Edge's, so Havok
+  PROBABLY runs on the PPU and physics parity needs no SPU decompilation. Not proven: the EBOOT imports
+  `cellSpursJq` (12 functions), so other non-ELF jobs could exist; following those imports' callers in
+  Ghidra settles it before AG leans on it.
+
+Which bind the game skins with is OPEN, for AC.17. Eruptor's Havok reference pose and Alchemy inverse
+joints agree on 28 of 33 bones within 1e-4, and `J_wrist_R` plus its 4 children differ by a 20.80° turn
+about the wrist's local +Y (107 of the 120 skeletons agree on every bone, 13 don't). Two lines of evidence
+point opposite ways:
+
+- The mirror argument, for Havok's bind. The stored mesh mirrors itself in x to 1e-4 (median 0), Havok's
+  joints mirror on all 10 L/R pairs (within 3e-6) and Alchemy's break only at the right wrist and palm.
+  The 39 vertices `J_palm_R` dominates centre 0.148 from Havok's joint and 0.349 from Alchemy's (the left
+  palm's 53 sit 0.034 from theirs), and skinned with Alchemy's bind at the reference pose the right hand moves
+  up to 0.239 (5.1% of the 4.643 `igAABox` diagonal) and sits off the mirror by up to 0.138.
+- The savestate's statistical lean, for Alchemy's. On the live NPC palettes, where the two binds differ by
+  more than 7e-7 the Alchemy bind fits 9 of 9 (23 of 29 above 3e-7). Not decisive: no resident skeleton's
+  binds differ by more than 1e-6, and Eruptor's skin weights aren't mirror-symmetric (palm 39 vs 53
+  vertices).
+
+Eruptor's own palette settles it (AC.17). Until then the working assumption (palette = Havok model pose ×
+Alchemy inverse joint) is `hero_view`'s default, and `--bind havok` draws the other one.
 
 ### What carries past Giants
 
@@ -637,7 +844,7 @@ Scored on chotchki's own criterion, risk and leverage, then confirmed by him (qu
 | Oracle readiness | never registered in RPCS3 on the Mac (not in `games.yml`, no cache, no savedata); compat "Ingame" | in `games.yml`, PPU AOT cache, 155 FP / 62 VP shader cache, savedata; compat "Playable"; ~60 fps SPU-LLVM on the M3 Max on the v1.9.19 build (`09d602fd5`); the product drives it on the HTPC | Giants |
 | Mesh and animation decode | `.str`: no public decoder, not plain float32 | public references for v6 Edge and Havok 2011.2 | Giants |
 | Logic as data | over 95% native C++; Lua is per-actor glue (~7.6k code lines, 65% of it hub story) | attacks and upgrades are tfbScript data a VM can run | Giants |
-| SPU code | SPURS jobs of unknown purpose (solver/dynamics strings) | every SPU image is FMOD (job-queue imports leave non-ELF jobs unruled-out) | Giants |
+| SPU code | SPURS jobs of unknown purpose (solver/dynamics strings) | every SPU ELF image is FMOD; the SPURS jobs inside the EBOOT found so far are Sony Edge's, whose geometry format we decode instead of its code (Giants in detail) | Giants |
 | Carry-over | none | strong into Trap Team, readers into the VV games | Giants |
 | Closed middleware | none in gameplay | Havok-tuned physics feel, FMOD | SSA |
 | Field names | self-describing `.lxb` (CRC32 name tables) | reflection needed | SSA |
@@ -690,12 +897,14 @@ Why it's shaped this way:
 
 | Job | Tool | Notes |
 |---|---|---|
-| Decrypt the EBOOT | `rpcs3 --decrypt <copy>` (`vendor/rpcs3/rpcs3/rpcs3.cpp:392,835`) | Writes NEXT TO its input (`EBOOT.BIN` → `EBOOT.elf`), so only ever on a copy outside both the disc tree and the repo. RPCS3 has keys for all six EBOOTs. |
-| Static analysis | [Ghidra](https://github.com/NationalSecurityAgency/ghidra) 12.1.x + [clienthax/Ps3GhidraScripts](https://github.com/clienthax/Ps3GhidraScripts) | Language `PowerPC:BE:64:A2ALT-32addr`. The scripts name imports from NIDs and set the TOC (r2), which matters because the compiler builds addresses as `addis rX,r2,hi; addic` with no literal pointers, so there are no xrefs without it. Its README asks for r2 in `<unaffected>` in `ppc_64_32.cspec`; some Cell vector ops break decompilation. Not installed yet (`brew install --cask ghidra`; JDK 21 is there). |
-| SPU code | [aerosoul94/GhidraSPU](https://github.com/aerosoul94/GhidraSPU) | Only if SPU code matters. Giants' SPU images are all FMOD, so probably never for game one. |
-| Live debugging | RPCS3's GDB stub | Default `127.0.0.1:2345` (`vendor/rpcs3/rpcs3/Emu/system_config.h:379`). PPU only, Z0 software breakpoints only and breakpoints need the PPU interpreter (LLVM refuses them). Whether it's instantiated by default is medium confidence; the RPCS3 log says. |
-| Runtime state | Guest memory dump (`vendor/rpcs3/rpcs3/rpcs3qt/guest_memory_dumper.cpp`) | A sparse 4 GB file where offset = guest address, plus SPU local stores and a JSON manifest. The offline input for hunting the reflection registry. |
-| Frame ground truth | RSX capture (`.rrc.gz`) | Taken with the game window's RSX-capture shortcut into `<rpcs3 config>/captures/` (`vendor/rpcs3/rpcs3/Emu/RSX/RSXThread.cpp:3401`); `--rsx-capture <path>` REPLAYS one, it doesn't take one. Real vertex, index and texture bytes for one frame plus the register state. RPCS3's own serialization (magic `RRC`, version 6), no public spec. |
+| Decrypt the EBOOT | `rpcs3 --decrypt <copy>` (`vendor/rpcs3/rpcs3/rpcs3.cpp:392,835`) | Writes NEXT TO its input (`EBOOT.BIN` → `EBOOT.elf`), so only ever on a copy outside both the disc tree and the repo. RPCS3 has keys for all six EBOOTs. Giants' ran through the in-tree build under a throwaway HOME, with TMPDIR outside it (RPCS3 refuses a config dir under its temp dir), and came out bit-identical to an earlier decrypt. |
+| Static analysis | [Ghidra](https://github.com/NationalSecurityAgency/ghidra) 12.1.4 + [clienthax/Ps3GhidraScripts](https://github.com/clienthax/Ps3GhidraScripts) (`d7cb6fd3`) | Language `PowerPC:BE:64:A2ALT-32addr`. The release zip ships NO macOS decompiler (natives for Windows and Linux x86-64 only), so on the Mac its natives get built from source with Ghidra's own `gradlew buildNatives`. The scripts go in as an installed extension (headless only finds `nids.txt` that way) with `AnalyzePs3Binary` as a pre-script, and r2 goes in `<unaffected>` in `ppc_64_32.cspec`, or the decompiler assumes every call clobbers the TOC. Giants loads globals with a single `lwz rX,d(r2)` (13,085 in `.text`, plus 2,493 `lfs` for float constants); only 2 `addis rX,r2` words exist, because the whole TOC sits inside r2's 16-bit displacement. Headless analysis takes 82 s: 20,511 functions, 277 of 277 imports named, `TOC_BASE` 0x00723C00 as one global r2 (all 14,502 `.opd` descriptors agree), 99.2% of TOC operands resolved to references. Known gap: 824 Cell-only vector ops (`lvlx`, `lvrx`, `stvlx`, `stvrx`) have no SLEIGH constructors, so a function holding one decompiles with a hole. The patched Ghidra, the project and every decompile stay in the research dir outside the repo. |
+| Reflection registry | a constant-propagating PPC scanner (research dir, Python) | Walks `.text` once, tracking constants into the argument registers, and records the arguments at every call to the four registration entry points: 989 types with parents, sizes and fields in 0.8 s. It reads raw instruction words, so it walks straight through the vector-op holes that stop the decompiler. How AC.4 got the layouts (Giants in detail). |
+| SPU code | [aerosoul94/GhidraSPU](https://github.com/aerosoul94/GhidraSPU) | Only if SPU code matters. Probably never for game one (Why Giants first, SPU code). |
+| Live debugging | RPCS3's GDB stub | On by default at `127.0.0.1:2345` (`vendor/rpcs3/rpcs3/Emu/system_config.h:379`; the oracle's log shows it listening). PPU only, Z0 software breakpoints only and breakpoints need the PPU interpreter: under LLVM RPCS3 refuses them but the stub still answers OK, so the breakpoint silently never fires. A 0x03 byte pauses, `m` reads (about 600 bytes a packet), `vCont;c` resumes: good for targeted reads, too slow for bulk (PINE, next row). |
+| Bulk live reads | RPCS3's PINE server | Off by default; `IPC Server enabled: true` in `ipc.yml` under RPCS3's config dir turns it on (`--config` doesn't cover that file, so an isolated HOME carries its own), and it listens on `$TMPDIR/rpcs3.sock`. 8- to 64-bit reads batched up to 450,000 bytes a reply. No pause of its own, so reads race the game unless a capture or the GDB stub has paused it. |
+| Runtime state | Guest memory dump (`vendor/rpcs3/rpcs3/rpcs3qt/guest_memory_dumper.cpp`), or a savestate | The dumper writes a sparse 4 GB file where offset = guest address, plus SPU local stores and a JSON manifest. A savestate is a memory dump too: a parser outside the repo walks its memory section into regions (55 for the June Giants state) and fills the text segment from the decrypted EBOOT, which a state leaves out unless Inspection Mode saved it. AC.14's live-registry check ran on that. |
+| Frame ground truth | RSX capture (`.rrc.gz`), read by [`tools/rrc-dump`](../../tools/rrc-dump/FORMAT.md) | Taken with the game window's RSX-capture shortcut into `<rpcs3 config>/captures/` (`vendor/rpcs3/rpcs3/Emu/RSX/RSXThread.cpp:3401`); `--rsx-capture <path>` REPLAYS one, it doesn't take one. Real vertex, index and texture bytes for one frame plus the register state. RPCS3's own serialization (magic `RRC`, version 6), no public spec, so `rrc-dump` carries our write-up of it, pins version 6 and refuses to write inside any work tree of this repo. The oracle section has the recipe. |
 | SPU programs | SPU ELF dumper (`vendor/rpcs3/rpcs3/rpcs3qt/elf_memory_dumping_dialog.cpp`) | Carves SPU programs out of local store into ELF. |
 | Which files load when | RPCS3 `sys_fs` logging | Opens are logged by default; reads need the trace level. |
 | Glue | small Rust or Python scripts | Read inputs from a path, write outputs outside the tree. |
@@ -711,10 +920,64 @@ scripts or a Ghidra MCP server).
 
 What exists: the product's patched RPCS3 (P1 portal control over AF_UNIX, P4 portal-traffic events, P6
 `BUTTON_PRESS`), the Rust IPC client in `crates/rpcs3-control/src/ipc/` and `tools/playthrough`'s
-scripted beats. Giants has run on both machines on the `09d602fd5` build v1.9.19 shipped. The pin in the
-tree, `accfecd2d`, has never booted a game anywhere (V, the bump that brought it, was cancelled at the
-2026-10-17 review), so the oracle's first use checks it (AC.2) and falls back to `09d602fd5` if it
-doesn't reach gameplay.
+scripted beats. Giants has run on both machines on the `09d602fd5` build v1.9.19 shipped.
+
+Which build (AC.2, 2026-10-18): `09d602fd5`, from a copy. The in-tree pin `accfecd2d` (+P1-P8) dies at
+boot on the M3 Max (below). The RPCS3 nested in the installed v1.9.19 app doesn't launch here anymore
+either: its bundled `libopencv_imgproc` finds `libopencv_core` only through an rpath into a Homebrew
+cellar that's gone (a shipped Mac bug with its own backlog line). The copy adds two `@loader_path` rpaths
+and an ad-hoc signature, lives in the research dir outside the repo and reaches playable no-GUI Giants at
+54.9 fps over 30 s (`live_launch` passed).
+
+Why `accfecd2d` dies: Metal's `attachmentIndex(220) must be < 8`, right after GPU detection. Upstream
+`7022a322a` (2026-09-19, inside our pin window) warms the shader interpreter with 2-4 colour attachments
+against a render pass that has one, a Vulkan valid-usage violation. MoltenVK 1.4.2 (Homebrew's, not
+bundled) indexes its attachment table with no bounds check, reads garbage and Metal asserts on it (hence
+220, and why it can be intermittent). Upstream fixed it the day after our pin (`c938d3e049`,
+`d08d568d5e`), and `Shader Mode: Async Recompiler (multi-threaded)` skips the interpreter warm-up, so it
+should dodge the crash without a rebuild (one boot confirms). Windows drivers may tolerate it, untested.
+It matters to the product only if the v1.10.0 prerelease ever gets promoted
+([`openspec/backlog.md`](../../openspec/backlog.md)), and to AF's pin choice.
+
+The capture recipe (AC.13 as prepared; nothing is captured yet). Everything sits ready in the research
+dir, with the exact launch line in `~/workspace/guacamole-research/captures/BLUS30968/09d602fd5/SESSION.md`
+(outside the repo):
+
+1. Boot the oracle `--no-gui` with a per-run `--config` (RPCS3's own config file is then never read or
+   written): RPCS3's config plus FIFO reordering OFF (so RPCS3 doesn't merge draws, AC.12), `sys_fs: Trace`
+   (opens log at the default level anyway; trace adds reads and seeks inside an archive), capture hints off,
+   and Compatible plus Inspection Mode savestates (so a savestate carries the executable-backed memory
+   too). Add an input config that moves Circle and Left Stick Down off C and S: the keyboard pad sees the
+   hotkeys too, so Option+C would also press Circle and Cmd+S push the stick, either of which knocks the
+   hero out of idle.
+2. Don't set `SKYLANDER_BORDERLESS`: P8 hides the game window on the Mac and publishes a surface
+   instead, and the hotkeys live on that window.
+3. From a cold boot, mash CROSS over P6 (`BUTTON_PRESS CROSS`) to the "put a Skylander on the Portal of
+   Power" prompt, then P1 `LOAD` a COPY of the dev's Eruptor `.sky` (the game writes to it).
+4. With Eruptor idle on screen, standing still and silent, upgrades recorded: Option+C on the focused,
+   UNLOCKED game window. The next frame end arms the capture, the one after writes
+   `<config>/captures/BLUS30968_<datetime>_capture.rrc.gz` and PAUSES the emulator, which is also the
+   moment for a consistent memory read; Cmd+P resumes. Two more on visibly different idle poses, then
+   Cmd+S for a savestate (the guest memory), then shut down. On a locked screen the keystrokes land in the
+   lock screen's password field, which is why the overnight attempt sent none.
+5. Restore RPCS3's Giants savedata and trophies from the pre-session backup (the cold-boot nav writes a
+   save slot), then `rrc-dump --list` each capture (AC.12).
+
+No unattended trigger exists at either pin: a capture starts only from that hotkey or the main window's
+menu, and no config key, CLI flag or home-menu entry does it. AF's smallest fix is a dev-only `RSXCAP` +
+`RESUME` (+ `SAVESTATE`) on P1's listener, about 20 lines, which is the scripted-capture verb below.
+
+The savestate route, lighter than a capture for most of this. A savestate taken DURING GAMEPLAY carries
+nearly everything a capture gives except render targets: RPCS3 serializes the RSX state and the 2 MiB
+command ring lives in guest memory, so a replay is exact. On the June Giants state, replaying the ring
+(148,387 commands, 4,833 draws, 59 flips) reproduces the serialized state with 0 mismatches (547
+registers, 468 of 468 transform constants, 2,176 program words), and the last 3D frame's Edge job
+records and per-job scratch survive (that's where the skin palettes came from). Render targets come back
+zero, since RPCS3 doesn't write them back, so only AC.18's FLIP still needs a real capture. Taking one is
+the same attended Cmd+S on the game window, or AF's `SAVESTATE`. The June state itself (parked on a pause
+screen in `level_213_tutotial`, the game's own spelling, so no hero is drawn) loads at `09d602fd5` only:
+it lists global version 21, and `accfecd2d` accepts only 24. Every savestate check in Giants in detail
+ran on it.
 
 What it lacks:
 
@@ -726,8 +989,11 @@ What it lacks:
   through memory peeks (MEMSNAP, later P9) or what it shows on screen, never from diffing a `.sky`, which
   would drag the format the full reset skips back in. The oracle still needs a `.sky` to put a figure on
   its emulated portal; that's the dev's own pack, dev-only like the rest of RPCS3.
-- Determinism is unmeasured. RPCS3 is EXPECTED to diverge run to run (threaded PPU and SPU, LLVM,
-  wall-clock timers); nobody has measured by how much.
+- Determinism. RPCS3 has NO deterministic mode (no "determinis" anywhere under `rpcs3/Emu`): guest time
+  comes from the host TSC, PPU and SPU run as host threads under the OS scheduler and RSX runs
+  asynchronously, so replays from one savestate start identical and drift. By how much is unmeasured;
+  that's AF's first job, with `Start Paused` (every replay stops after the same 2 frames), a dev
+  `RESUME` and every input and comparison keyed to the flip counter P1's heartbeat already carries.
 - P9 (a per-frame state stream: camera, instances, poses, RNG, entity transforms) doesn't exist and can't
   until the Giants struct layouts are reverse engineered. It comes after that RE, not before.
 
@@ -743,9 +1009,10 @@ AF builds the foundation before anything gets called a regression test:
 4. More dev verbs as the rungs need them: FSTRACE (asset loads with the guest return address), MEMSNAP
    (bulk peek), RSXCAP (scripted capture).
 
-Pin policy: the oracle rides the in-tree pin (`accfecd2d`) if AC.2 finds it boots Giants, otherwise
-`09d602fd5`, the pin v1.9.19 booted it on.
-With the product frozen, a bump is chotchki's call, not a cadence. After G1 the pin moves only for OS
+Pin policy: the oracle rides the `09d602fd5` copy (AC.2). Moving it back to the in-tree pin takes the two
+upstream fixes (cherry-picked, or a bump past `d08d568d5e`) plus a boot that reaches gameplay, and costs
+every savestate taken at `09d602fd5`; that's AF's pin choice, made by chotchki. With the product frozen, a
+bump is his call, not a cadence. After G1 the pin moves only for OS
 breakage, and it retires at G2.
 
 ## The extractor
@@ -986,7 +1253,7 @@ Ranked by how much each could move the plan, each with the experiment that answe
 
 | Risk | Why it matters | Experiment | Where |
 |---|---|---|---|
-| IGZ v6 field layouts aren't in the files | no public Giants metaobject dump (ig-workshop's Giants data has enums and fields only; AlchemyMetadataDumper doesn't list Giants PS3 and is a PRX built with Sony's SDK) | find the igMetaObject registry in one guest-memory dump of Giants, cross-referenced with the RTTI and `*MetaField` strings in Ghidra | AC |
+| IGZ v6 field layouts aren't in the files | no public Giants metaobject dump (ig-workshop's Giants data has enums and fields only; AlchemyMetadataDumper doesn't list Giants PS3 and is a PRX built with Sony's SDK) | RETIRED 2026-10-18: the EBOOT registers every type from static tables, read out of the decrypted ELF with no memory dump (AC.4: 989 types, 0 misses over 1,346,793 reference fixups), and the live registry in the June savestate agrees (AC.14: 980 types live, 272 of 272 gate field reads) (Giants in detail) | done, AC |
 | Edge geometry on v6 | every mesh is Edge-compressed for SPU | decode one character mesh, compare to the vertex buffer in an RSX capture | AC |
 | Havok 2011.2 animation | likely compressed clips; skeletons feed everything after M1 | one skeleton and one clip, posed against a capture | AC |
 | RPCS3 run-to-run divergence | decides whether the oracle can be a test at all, and how loose the tolerances get | 10 replays from one savestate on the Mac, diff positions and RNG (the HTPC's at the bring-up) | AF |
