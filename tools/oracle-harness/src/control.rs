@@ -26,12 +26,83 @@ pub struct Shot {
 }
 
 /// An RSX capture copied out, with where the run stood when it was armed and
-/// at the pause it ends in.
+/// at the pause it ends in. That pause sits inside the captured frame's queue,
+/// before the flip that presents it ([`frame_bounds`]): a shot there is the
+/// frame before the captured one, and the captured frame is `paused_at + 1`'s.
 #[derive(Debug, Clone)]
 pub struct Captured {
     pub path: PathBuf,
     pub armed_at: EmuState,
     pub paused_at: EmuState,
+}
+
+/// GCM's flip-head methods (`0xE920`, `0xE924`) and display-queue methods
+/// (`0xE940`-`0xE95C`), as register indices, the way RPCS3's LLE GCM driver
+/// writes them (`gcm_enums.h`).
+const GCM_FLIP_HEAD: std::ops::RangeInclusive<u32> = (0xE920 >> 2)..=(0xE924 >> 2);
+const GCM_DRIVER_QUEUE: std::ops::RangeInclusive<u32> = (0xE940 >> 2)..=(0xE95C >> 2);
+
+/// Where a capture's frame sits against the flip counter, read off its own
+/// commands, which RPCS3 records before it runs each one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FrameBounds {
+    /// The first flip-head command (the flip of the frame queued just before
+    /// the capture armed, the one that took the counter to `paused_at`).
+    pub opening_flip: Option<usize>,
+    /// Draws begun before that flip; 0 when the capture is one whole frame.
+    pub draws_before_opening_flip: usize,
+    /// The last command when it's a display queue, with its buffer: the
+    /// captured frame's own queue, inside which RPCS3 wrote the capture and
+    /// paused.
+    pub closing_queue: Option<u32>,
+    /// Flip-head commands after the opening one: more than one frame flipped
+    /// inside the capture.
+    pub later_flips: usize,
+}
+
+impl FrameBounds {
+    /// The shape every Giants capture on the Mac has had (AF.5): one flip at
+    /// the start, before any draw, and the frame's own queue at the end. Then
+    /// the frame is the one the flip after the capture's pause presents.
+    pub fn is_one_queued_frame(&self) -> bool {
+        self.opening_flip.is_some()
+            && self.draws_before_opening_flip == 0
+            && self.closing_queue.is_some()
+            && self.later_flips == 0
+    }
+}
+
+/// One pass over the commands: draws counted by `SET_BEGIN_END` opening a
+/// primitive, the first flip head and those after it, and whether the last
+/// command is a display queue. Only an LLE-GCM game's flips show here (an HLE
+/// one flips through `GCM_FLIP_COMMAND`, and reads as no opening flip).
+pub fn frame_bounds(capture: &rrc_dump::Capture) -> FrameBounds {
+    use rrc_dump::nv4097 as m;
+    let mut bounds = FrameBounds {
+        opening_flip: None,
+        draws_before_opening_flip: 0,
+        closing_queue: None,
+        later_flips: 0,
+    };
+    let mut draws = 0;
+    for (i, cmd) in capture.commands.iter().enumerate() {
+        let reg = (cmd.header & m::HEADER_METHOD_MASK) >> 2;
+        if reg == m::SET_BEGIN_END && cmd.value & 0xff != 0 {
+            draws += 1;
+        } else if GCM_FLIP_HEAD.contains(&reg) {
+            if bounds.opening_flip.is_none() {
+                bounds.opening_flip = Some(i);
+                bounds.draws_before_opening_flip = draws;
+            } else {
+                bounds.later_flips += 1;
+            }
+        }
+    }
+    bounds.closing_queue = capture.commands.last().and_then(|cmd| {
+        let reg = (cmd.header & m::HEADER_METHOD_MASK) >> 2;
+        GCM_DRIVER_QUEUE.contains(&reg).then_some(cmd.value)
+    });
+    bounds
 }
 
 /// A savestate copied out, and the pause its reboot reached.
@@ -104,10 +175,26 @@ impl Control {
     }
 
     /// `PAUSE_AT flip`, then the pause: fails unless `STATE` reads
-    /// `status=paused frames=<flip>`.
+    /// `status=paused frames=<flip>`. At a pause the target goes in first and
+    /// then `RESUME`, so it can't race the counter (a checkpoint's step: observe,
+    /// next target, resume). O3 drops a target the RSX thread first sees past
+    /// rather than pause late, so the counter running past `flip` fails at once
+    /// instead of at the timeout.
     pub fn pause_at(&self, flip: u64, timeout: Duration) -> Result<EmuState> {
+        let before = self.state()?;
         self.verbs.send(Verb::PauseAt(flip))?;
-        let state = self.wait_state(timeout, |s| s.status == "paused")?;
+        if before.status == "paused" {
+            self.resume()?;
+        }
+        let state = self.wait_state(timeout, |s| s.status == "paused" || s.frames > flip)?;
+        if state.status != "paused" {
+            bail!(
+                "PAUSE_AT {flip} went by without a pause: STATE reads {} frames={} \
+                 (O3 drops a target the RSX thread first sees past; RPCS3's log says so)",
+                state.status,
+                state.frames
+            );
+        }
         if state.frames != flip {
             bail!("PAUSE_AT {flip} paused at frame {}", state.frames);
         }
@@ -183,5 +270,100 @@ impl Control {
             saved_at,
             rebooted,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use rrc_dump::capture::{RegState, ReplayCommand};
+    use rrc_dump::nv4097 as m;
+
+    use super::*;
+
+    /// A capture holding just these `(register index, value)` commands, each
+    /// with the header RPCS3 records (`reg << 2 | 1 << 18`).
+    fn capture(cmds: &[(u32, u32)]) -> rrc_dump::Capture {
+        rrc_dump::Capture {
+            version: 6,
+            tile_states: 0,
+            display_buffer_states: 0,
+            blocks: HashMap::new(),
+            data: HashMap::new(),
+            commands: cmds
+                .iter()
+                .map(|&(reg, value)| ReplayCommand {
+                    header: (reg << 2) | (1 << 18),
+                    value,
+                    memory_state: Vec::new(),
+                    tile_state: 0,
+                    display_buffer_state: 0,
+                })
+                .collect(),
+            reg_state: RegState {
+                transform_program: Vec::new(),
+                transform_constants: None,
+                registers: Vec::new(),
+            },
+        }
+    }
+
+    const FLIP_HEAD_1: u32 = 0xE924 >> 2;
+    const QUEUE_1: u32 = 0xE944 >> 2;
+    /// Two draws: a primitive opened and closed, twice.
+    const DRAWS: [(u32, u32); 4] = [
+        (m::SET_BEGIN_END, 5),
+        (m::SET_BEGIN_END, 0),
+        (m::SET_BEGIN_END, 6),
+        (m::SET_BEGIN_END, 0),
+    ];
+
+    #[test]
+    fn a_giants_capture_is_one_queued_frame() {
+        // The shape all three of AF.5's live captures had: the capture-start
+        // NOP, setup, the flip head, the frame's draws, its own queue last.
+        let mut cmds = vec![(m::NO_OPERATION, 0), (m::SET_TRANSFORM_PROGRAM, 9)];
+        cmds.push((FLIP_HEAD_1, 0x8000_010f));
+        cmds.extend(DRAWS);
+        cmds.push((QUEUE_1, 1));
+        let bounds = frame_bounds(&capture(&cmds));
+        assert_eq!(
+            bounds,
+            FrameBounds {
+                opening_flip: Some(2),
+                draws_before_opening_flip: 0,
+                closing_queue: Some(1),
+                later_flips: 0,
+            }
+        );
+        assert!(bounds.is_one_queued_frame());
+    }
+
+    #[test]
+    fn anything_else_is_not_one_queued_frame() {
+        let flip = (FLIP_HEAD_1, 0x8000_010f);
+        let queue = (QUEUE_1, 0);
+        let cases: [(&str, Vec<(u32, u32)>); 4] = [
+            // An HLE game's flips don't show as flip heads.
+            ("no flip head", [&DRAWS[..], &[queue]].concat()),
+            (
+                "draws before the flip",
+                [&DRAWS[..], &[flip], &DRAWS[..], &[queue]].concat(),
+            ),
+            ("no queue at the end", [&[flip][..], &DRAWS[..]].concat()),
+            (
+                "two flips",
+                [&[flip][..], &DRAWS[..], &[flip], &DRAWS[..], &[queue]].concat(),
+            ),
+        ];
+        for (label, cmds) in &cases {
+            let bounds = frame_bounds(&capture(cmds));
+            assert!(!bounds.is_one_queued_frame(), "{label}: {bounds:?}");
+        }
+        let two = frame_bounds(&capture(&cases[3].1));
+        assert_eq!((two.opening_flip, two.later_flips), (Some(0), 1));
+        let early = frame_bounds(&capture(&cases[1].1));
+        assert_eq!(early.draws_before_opening_flip, 2);
     }
 }

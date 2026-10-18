@@ -3,11 +3,12 @@
 //! `rpcs3-patches/oracle/0003-O3-*.patch` and models what RPCS3 does around
 //! it: a flip counter that advances while running, the PAUSE_AT target checked
 //! at each flip, a capture armed at one frame end, recorded through the next and
-//! written with a pause one flip on from where it was armed, a screenshot taken by the next
-//! present (or at once while paused, RSX's native-UI flip), and a savestate that
-//! stops, writes its file, boots again and holds at Start Paused's 2 flips. With
-//! the gate off every verb is `ERR unknown_cmd`. It's the executable spec the
-//! live binary has to match; `live_verbs` checks it does.
+//! written with a pause before that frame's flip (one flip on from where it was
+//! armed), a screenshot taken by the next present (or at once while paused, RSX's
+//! native-UI flip), and a savestate that stops, writes its file, boots again and
+//! holds at Start Paused's 2 flips. With the gate off every verb is
+//! `ERR unknown_cmd`. It's the executable spec the live binary has to match;
+//! `live_verbs` checks it does.
 
 #![cfg(unix)]
 
@@ -61,10 +62,17 @@ struct Emu {
     /// `g_user_asked_for_frame_capture` and `capture_current_frame`.
     cap_flag: bool,
     capturing: bool,
-    /// A capture's pause holds the next flip back. That reproduces what the
-    /// live runs read (armed at a pause at flip n, the capture's pause at
-    /// n+1); which of RPCS3's two frames the capture records isn't pinned.
+    /// A capture's pause holds the next flip back: RPCS3 writes the capture
+    /// and pauses inside the captured frame's display queue, before the flip
+    /// that presents it (every live capture opens with a flip head and ends
+    /// with its queue), so armed at a pause at flip n it pauses at n+1 and the
+    /// captured frame is n+2's.
     parked: bool,
+    /// Every `PAUSE_AT` target is first seen past by the flip check and
+    /// dropped, O3's drop path. After an `OK` it takes the target's store and
+    /// the counter's bump reaching the two threads out of order
+    /// (`int_flip_index` is a plain `u64`): not seen live, but not ruled out.
+    misses_targets: bool,
     /// `g_user_asked_for_screenshot`.
     shot_flag: bool,
     /// Off: no present ever happens (a swapchain that's gone), so a SCREENSHOT
@@ -89,6 +97,7 @@ impl Emu {
             cap_flag: false,
             capturing: false,
             parked: false,
+            misses_targets: false,
             shot_flag: false,
             presents: true,
             stop_for: Duration::from_millis(30),
@@ -150,7 +159,7 @@ impl Emu {
         }
         if self.pause_at != 0 && self.frames >= self.pause_at {
             // Dropped, never honoured late.
-            pause |= self.frames == self.pause_at;
+            pause |= self.frames == self.pause_at && !self.misses_targets;
             self.pause_at = 0;
         }
         if pause {
@@ -415,6 +424,52 @@ fn pause_at_lands_on_its_flip_and_resume_moves_on() {
 }
 
 #[test]
+fn pause_at_from_a_pause_sets_the_target_first_then_resumes() {
+    let fake = spawn();
+    let control = fake.control();
+    let first = control.state().unwrap().frames + 10;
+    control.pause_at(first, WAIT).unwrap();
+    // A checkpoint's step: from one pause straight to the next, exactly.
+    for step in [1, 7, 60] {
+        let from = control.state().unwrap();
+        assert_eq!(from.status, "paused");
+        let next = control.pause_at(from.frames + step, WAIT).unwrap();
+        assert_eq!(
+            (next.status.as_str(), next.frames),
+            ("paused", from.frames + step)
+        );
+    }
+    // Refused at the pause: nothing resumed it.
+    let held = control.state().unwrap();
+    let err = control.pause_at(held.frames, WAIT).unwrap_err();
+    assert_eq!(refusal(err), Refusal::Past);
+    thread::sleep(Duration::from_millis(20));
+    assert_eq!(control.state().unwrap(), held, "still held");
+}
+
+#[test]
+fn a_target_the_flip_check_drops_fails_at_once() {
+    let fake = spawn();
+    let control = fake.control();
+    fake.set(|e| e.misses_targets = true);
+    let target = control.state().unwrap().frames + 20;
+    let started = Instant::now();
+    let err = control
+        .pause_at(target, Duration::from_secs(30))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains(&format!("PAUSE_AT {target} went by without a pause")),
+        "{err}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "waited out the timeout: {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
 fn pause_at_takes_only_a_positive_decimal() {
     let fake = spawn();
     let verbs = fake.verbs();
@@ -524,11 +579,16 @@ fn a_capture_armed_at_a_pause_lands_a_flip_on_and_pauses_there() {
             .starts_with(out.path().canonicalize().unwrap())
     );
     assert!(captured.path.to_string_lossy().ends_with("_capture.rrc.gz"));
-    // And the capture's pause is a pause like any other: a shot shows its frame.
+    // The capture's pause is a pause like any other: a shot there is flip
+    // n+1's frame, the one before the captured frame.
     assert_eq!(control.screenshot(out.path(), WAIT).unwrap().flip, at + 1);
+    // The captured frame is the flip the pause held back, one target on.
+    let presented = control.pause_at(at + 2, WAIT).unwrap();
+    assert_eq!(presented.frames, at + 2);
+    assert_eq!(control.screenshot(out.path(), WAIT).unwrap().flip, at + 2);
     // And it goes on from there.
     control.resume().unwrap();
-    control.wait_state(WAIT, |s| s.frames > at + 3).unwrap();
+    control.wait_state(WAIT, |s| s.frames > at + 5).unwrap();
 }
 
 #[test]

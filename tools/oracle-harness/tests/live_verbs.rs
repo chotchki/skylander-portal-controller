@@ -3,8 +3,10 @@
 //! figure `LOAD` until the hero's archive opens in a level (AF.4's route,
 //! `common::reach_hero`), a few seconds of idle, then: `PAUSE_AT` a flip and
 //! hold it; two `SCREENSHOT`s of that frame; `RSXCAP` and `RESUME` until the
-//! capture lands and pauses, parsed with `rrc-dump`'s reader; a `SCREENSHOT` of
-//! the captured frame; `SAVESTATE`, the reboot's Start Paused pause, `RECONNECT`
+//! capture lands and pauses, parsed with `rrc-dump`'s reader and checked to be
+//! one queued frame (`control::frame_bounds`); a `SCREENSHOT` at the capture's
+//! pause (the frame before the captured one) and, `PAUSE_AT` one flip on, of the
+//! captured frame; `SAVESTATE`, the reboot's Start Paused pause, `RECONNECT`
 //! and a `SCREENSHOT` of the restored frame; `RESUME` and the run going on, a
 //! second capture from the restored session; the figure `CLEAR`ed and `LOAD`ed
 //! again after `RECONNECT`, with P4's portal events and before/after shots, and
@@ -30,7 +32,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use oracle_harness::control::{Captured, Control, Shot};
+use oracle_harness::control::{self, Captured, Control, Shot};
 use oracle_harness::env;
 use oracle_harness::identity::Identity;
 use oracle_harness::launch::{self, BootOptions};
@@ -132,11 +134,19 @@ fn read_capture(label: &str, cap: &Captured, out: &Path) -> String {
         .transform_constants
         .as_ref()
         .map_or("none".to_owned(), |c| c.len().to_string());
+    // The pairing with the flip counter: one flip head before any draw, the
+    // frame's own display queue last, so the frame is `paused_at + 1`'s.
+    let bounds = control::frame_bounds(&capture);
+    assert!(
+        bounds.is_one_queued_frame(),
+        "{label}: not one queued frame: {bounds:?}"
+    );
     format!(
         "{label}: {name} ({} bytes), armed at frame {} ({}), paused at frame {}; RRC v{}, \
          register state: {} transform-program words, {} registers, starting transform \
          constants {constants}; {} commands, {} memory blocks, {} data blobs; {} draws, \
-         {} unresolved memory ids, {} orphan commands, {} stray ends",
+         {} unresolved memory ids, {} orphan commands, {} stray ends; flip head at command \
+         {}, display queue (buffer {}) last, so the captured frame is flip {}'s",
         bytes.len(),
         cap.armed_at.frames,
         cap.armed_at.status,
@@ -151,6 +161,9 @@ fn read_capture(label: &str, cap: &Captured, out: &Path) -> String {
         stats.unresolved_blocks,
         stats.orphan_commands,
         stats.stray_ends,
+        bounds.opening_flip.unwrap_or_default(),
+        bounds.closing_queue.unwrap_or_default(),
+        cap.paused_at.frames + 1,
     )
 }
 
@@ -288,8 +301,19 @@ fn the_o_verbs_run_ac13s_scenario_unattended() {
     // Armed at a pause at n, the capture's pause reads n+1 (the fake's model).
     assert_eq!(cap1.paused_at.frames, cap1.armed_at.frames + 1);
     let shot3 = control.screenshot(&out, WAIT).unwrap();
-    rec.line(shot_line("SCREENSHOT at the capture's pause", &shot3));
+    rec.line(shot_line(
+        "SCREENSHOT at the capture's pause (the frame before the captured one)",
+        &shot3,
+    ));
     assert_eq!(shot3.flip, cap1.paused_at.frames);
+    // From that pause, the target set and then RESUME (Control::pause_at).
+    let presented = control.pause_at(cap1.paused_at.frames + 1, WAIT).unwrap();
+    let shot3b = control.screenshot(&out, WAIT).unwrap();
+    rec.line(shot_line(
+        "PAUSE_AT a flip on, SCREENSHOT of the captured frame",
+        &shot3b,
+    ));
+    assert_eq!(shot3b.flip, presented.frames);
 
     // ---- SAVESTATE, reboot, RECONNECT ------------------------------------
     let t = Instant::now();

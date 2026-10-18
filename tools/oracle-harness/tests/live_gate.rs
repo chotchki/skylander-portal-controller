@@ -1,7 +1,9 @@
 //! Live (openspec AF.5): the O-series is inert without its gate. The oracle
 //! boots with `GUAC_ORACLE` removed from its environment, and once RSX is
 //! flipping, each of the five O-verbs answers `ERR unknown_cmd` while P1's own
-//! words (`PING`, `STATE`, `STATUS`) work as in a product build. Mac, against
+//! words (`PING`, `STATE`, `STATUS`) work as in a product build, and none of
+//! them took: the counter runs on past the `PAUSE_AT` target without a pause,
+//! and RPCS3 writes no screenshot, capture or state. Mac, against
 //! `GUAC_ORACLE_EXE` from `GUAC_ORACLE_HOME`; skips when a key is unset.
 //!
 //! `cargo test -p oracle-harness --test live_gate -- --ignored --nocapture`
@@ -11,6 +13,7 @@
 mod common;
 
 use oracle_harness::launch::{self, BootOptions};
+use oracle_harness::outputs::Kind;
 use oracle_harness::snapshot::Snapshot;
 use oracle_harness::verbs::{Refusal, ReplyError, Verb};
 use skylander_rpcs3_control::PortalDriver;
@@ -36,8 +39,12 @@ fn without_the_gate_every_o_verb_is_an_unknown_command() {
     eprintln!("RSX flipping: {state:?}");
 
     let control = oracle.control();
+    const KINDS: [Kind; 3] = [Kind::Screenshot, Kind::Capture, Kind::SaveState];
+    let written = KINDS.map(|k| control.outputs().list(k));
+    // Near enough that the run below has to go past it.
+    let target = state.frames + 30;
     for verb in [
-        Verb::PauseAt(state.frames + 600),
+        Verb::PauseAt(target),
         Verb::Resume,
         Verb::RsxCap,
         Verb::Screenshot,
@@ -52,14 +59,19 @@ fn without_the_gate_every_o_verb_is_an_unknown_command() {
     }
     control.driver().ping().unwrap();
     control.driver().read_slots().unwrap();
-    // Nothing paused it: the counter moves on (early boot can sit on one frame for a while).
+    // Nothing took: the counter runs past the target without a pause (early
+    // boot can sit on one frame for a while), and no file appeared.
     let after = oracle
-        .wait_for(std::time::Duration::from_secs(60), |s| {
-            s.frames > state.frames
+        .wait_for(std::time::Duration::from_secs(120), |s| {
+            s.frames > target + 30
         })
         .unwrap();
+    assert_eq!(after.status, "running", "{after:?}");
+    for (kind, before) in KINDS.iter().zip(&written) {
+        assert_eq!(&control.outputs().list(*kind), before, "{kind:?} written");
+    }
     eprintln!(
-        "PING, STATUS and STATE answer; frames {} -> {}",
+        "PING, STATUS and STATE answer; frames {} -> {}, past PAUSE_AT {target} running; no file written",
         state.frames, after.frames
     );
     eprintln!("shutdown: {:?}", oracle.shutdown().unwrap());

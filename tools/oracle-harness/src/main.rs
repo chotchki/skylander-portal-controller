@@ -27,7 +27,9 @@ usage:
       inherited that can change a frame. --hold keeps it running, its P1 socket
       printed for the verbs below, until stdin closes; --ungated leaves
       GUAC_ORACLE unset, so the O-verbs answer ERR unknown_cmd
-  oracle pause-at --socket <p1> <flip>    pause when the flip counter reaches <flip>
+  oracle pause-at --socket <p1> <flip>
+      pause when the flip counter reaches <flip>; at a pause the target is set
+      first, then the run resumed
   oracle resume --socket <p1>
   oracle screenshot --socket <p1> --out <dir>
       a PNG of the frame the counter names, copied into <dir>

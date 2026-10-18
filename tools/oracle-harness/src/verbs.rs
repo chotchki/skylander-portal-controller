@@ -30,8 +30,11 @@ pub enum Verb {
     PauseAt(u64),
     /// Resume a paused emulator on its main thread.
     Resume,
-    /// Arm an RSX capture: RPCS3 records the second frame end after it, writes
-    /// `captures/<TITLE>_<time>_capture.rrc.gz` and pauses after that frame's flip.
+    /// Arm an RSX capture: RPCS3 starts recording at the next frame end and, at
+    /// the one after, writes `captures/<TITLE>_<time>_capture.rrc.gz` and pauses
+    /// there, after that frame's queue and before its flip (Giants' LLE GCM
+    /// path; [`crate::control::frame_bounds`]). Armed at a pause at flip n,
+    /// `STATE` reads n+1 and the captured frame is n+2's.
     RsxCap,
     /// A PNG of the frame the counter names (the next present while running; the
     /// current frame, re-presented, while paused).
