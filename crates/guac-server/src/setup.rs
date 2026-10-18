@@ -41,7 +41,8 @@ pub struct Settings {
     pub bind_port: Option<u16>,
     pub pairing_key: Option<Vec<u8>>,
     /// ffmpeg for the extraction (openspec AB, design decision 8); unset
-    /// looks beside the executable, then on PATH.
+    /// looks beside the executable, then on PATH, then (macOS) in Homebrew's
+    /// bin folders.
     pub ffmpeg_path: Option<PathBuf>,
     /// How far the speaker lags Bevy's audio clock, in ms; intros hold their
     /// video back by it (openspec AB, design decision 7). Unset is guacamole's

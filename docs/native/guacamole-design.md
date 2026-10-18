@@ -13,7 +13,7 @@ have to touch it until Guacamole is ready.
 
 A from-scratch Rust/Bevy reimplementation of the PS3 Skylanders games WITH the original gameplay,
 Skylanders Giants (BLUS30968) first, so the art can be upscaled and relit (on the Mac first, the HTPC
-later). Users supply their own disc dumps, `guac-extract` pulls the assets out at install time and nothing
+later). Users supply their own disc dumps, `guac-extract` pulls the assets out on first run and nothing
 read from a disc ever ships or lands in this repo. The phone stays the portal, and a figure is just an
 identity out of the disc's own roster, so nobody dumps a toy and nothing reads a `.sky`. It runs as a
 second binary, `guacamole`, beside the product launcher until it can play a whole game.
@@ -395,10 +395,9 @@ cargo run -p guacamole       # add --features test-hooks for the /api/_test/* en
   `GUAC_FFMPEG` and `GUAC_OUTPUT_LATENCY_MS` (The extractor; the first is required for any intro),
   `BIND_PORT` (default 8765), `DATA_ROOT` (default `data`, the interim catalogue's source) and
   `WINDOW_MODE` (`desktop` is a resizable 1280x720 window, anything else is borderless full screen on the
-  primary display). A
-  `test-hooks` build also reads `GUAC_TEST_KNOWN_DUMP` (`<TITLE_ID> <APP_VER> <manifest hash>`, the e2e
-  harness's synthetic dump, trusted beside the known table and logged as a warning). Never `RPCS3_EXE` or
-  `FIRMWARE_PACK_ROOT`.
+  primary display). A `test-hooks` build also reads `GUAC_TEST_KNOWN_DUMP` (`<TITLE_ID> <APP_VER>
+  <manifest hash>`, the synthetic dump the e2e harness writes into its own scratch `.env.dev`, trusted
+  beside the known table and logged as a warning). Never `RPCS3_EXE` or `FIRMWARE_PACK_ROOT`.
 - State goes under `./dev-data/guacamole/` (`db.sqlite`); logs go to `./logs/`, the same daily
   `server.log` the product's dev build writes. `GUAC_MUTE` (process env, not the file, dev builds only)
   plays intros muted; the e2e harness sets it.
@@ -485,8 +484,8 @@ nothing else on disk is precious. Backing up the family's progress is copying on
   RPCS3's config. No files to copy around.
 - The extract dir is a regenerable CACHE, `extract/` under the data root in release and a path outside
   the working tree in dev (the hard rule says why). Delete it and `guac-extract` rebuilds it from the
-  dumps (its manifest already forces a rebuild on an extractor or IR version bump), so nothing in it gets
-  backed up. The local Enhanced pack is the same kind of cache.
+  dumps, as it already does after a layout or IR change (The extractor), so nothing in it gets backed
+  up. The local Enhanced pack is the same kind of cache.
 - Story saves start fresh, like figures. The kids' RPCS3 Giants saves aren't imported.
 - Setup asks one thing: where the disc dumps are. No RPCS3 path, no PS3 firmware, no figure pack and no
   `games.yml` scan. Guacamole identifies each dump itself and offers the games it can play. AA reads
@@ -599,11 +598,12 @@ PARAM.SFO), not taken from the wiki.
   stereo track (id 0x0; 2 of those 51 at 48 kHz, the rest 44.1 kHz), so an intro's voice is its only track.
   Frame rates are 2997/100 on 23 files, 30/1 on 14 and odd rationals from 30000/1001 to 32.72 on the other
   24, and the transcode keeps each one.
-- Census (AB.5, `guac-extract census`, 3.6 s): 964 files, 19.32 GB. 893 little-endian IGA, 61 Bink 1, 3
-  PNG and one each of the EBOOT (SCE), PARAM.SFO, PS3_DISC.SFB, LIC.DAT, TROPHY.TRP, PS3UPDAT.PUP and
-  `alchemy.xml`; inside the IGAs 85,310 entries, 79,509 FSB5 and 5,801 IGZ, none unknown and none failing
-  to read. No file or entry has an unknown magic and the EBOOT is the only SCE container, the evidence
-  behind The extractor's "only the EBOOT is encrypted". The `#[ignore]`d
+- Census (AB.5, `guac-extract census`, 3.6 s): 964 files, 19.32 GB (every file under the dump, so
+  `PS3_DISC.SFB` and `PS3_UPDATE` too; the identity hashes USRDIR alone). 893 little-endian IGA, 61
+  Bink 1, 3 PNG and one each of the EBOOT (SCE), PARAM.SFO, PS3_DISC.SFB, LIC.DAT, TROPHY.TRP,
+  PS3UPDAT.PUP and `alchemy.xml`; inside the IGAs 85,310 entries, 79,509 FSB5 and 5,801 IGZ, none
+  unknown and none failing to read. No file or entry has an unknown magic and the EBOOT is the only SCE
+  container, the evidence behind The extractor's "only the EBOOT is encrypted". The `#[ignore]`d
   [`census_dumps.rs`](../../crates/guac-extract/tests/census_dumps.rs) fails on any file across the dumps
   it's given that's neither flagged nor allowed, and on Giants on any unknown entry or unread archive.
 - EBOOT: an encrypted SELF, 5.65 MiB of `.text` (~1.48M PPU instructions), 277 imports from 22 libraries.
@@ -1211,7 +1211,8 @@ into one cache dir outside any checkout; anything else gets a report and nothing
   encoder for the test writer and a strict end check), AC the IGZ, `igImage2`, Edge and Havok readers.
   Each registers with a property test `cargo test` runs (random and mutated bytes, no panic, bounded
   allocation) and has a cargo-fuzz target in `crates/guac-formats/fuzz/`, outside the workspace because
-  it needs nightly (all 8 ran 1 h each on 2026-10-18 with no crash, recorded in AB.0).
+  it needs nightly (all 8 ran 1 h each on 2026-10-18 with no crash, recorded in AB.0; that was
+  `guac-formats` as of 1789cb5, and AC.23 has since changed Edge's CMP decode).
 - `guac-ir`: serde types behind `IR_VERSION = 1`, every file an envelope `{ ir_version, body }`, so an
   older extract fails on its version instead of its shape. RON in dev for diffing, postcard in a release
   build.
@@ -1386,7 +1387,8 @@ on Bevy 0.9-0.19, the newest on FFmpeg). Measured on the M3 Max with the display
 - Sync: Bevy's MP3 decode gives exactly the Bink source's sample count at lag 0. Over the longest intro
   (12.31 s) the wall clock and the audio clock drift 0.3-1.9 ms apart, under 0.06 of a frame. The
   audio clock steps in whole device buffers (`AudioSink::position()` moves about 42 ms at a time), so
-  presenting by it skipped 76-80 of 369 frames; the anchored wall clock below skips none.
+  presenting by it skipped 76-80 of 369 frames, the spike's anchored wall clock 0-2 and AB.10's player
+  (below) none in its runs.
 - Nothing at runtime but the binary: OpenH264 links statically and symphonia is pure Rust. Building
   OpenH264 from source forgoes Cisco's patent coverage, which covers only Cisco's own binaries.
 
@@ -1651,7 +1653,7 @@ Ranked by how much each could move the plan, each with the experiment that answe
 | RPCS3 run-to-run divergence | decides whether the oracle can be a test at all, and how loose the tolerances get | 10 replays from one savestate on the Mac, diff positions and RNG (the HTPC's at the bring-up) | AF |
 | A tagged MSI reinstalls the product from current source | the kids' other five games run on it. (Guacamole tables in its `db.sqlite` were the old risk here; `guacamole`'s own database resolves that one by design.) | AA's split lands as moves only and passes the product's e2e suite on the Mac at its pre-AA count before any native code; the bring-up runs the HTPC live smoke and checks the installed product from the MSI | AA, then the Windows/HTPC bring-up and every tagged release |
 | How much of Giants is script data | sizes the VM vs the native built-ins | RETIRED 2026-10-18: the whole-disc census (Giants in detail, tfbScript) confirmed the Wii offsets on PS3 and sized the built-ins as 414 engine members in 66 namespaces; `OpFlowBuiltInBehavior` was the wrong yardstick | done, before AJ |
-| Bevy video playback | M0 depends on it, Bevy has no video player | RETIRED 2026-10-18: AB.7's spike picked openh264 (2.0-2.4 ms a frame against 33.4, an upload under 1 ms on average, A/V drift under 0.06 of a frame) and AB.10 plays every intro full screen with sound (The extractor). Still unmeasured: decode on the HTPC CPU (the bring-up) and lip sync over HDMI (the TV pass in the backlog) | done, AB |
+| Bevy video playback | M0 depends on it, Bevy has no video player | RETIRED 2026-10-18: AB.7's spike picked openh264 (2.0-2.4 ms a frame against 33.4, an upload under 1 ms on average, A/V drift under 0.06 of a frame), AB.10 plays intros full screen against the audio clock and AB.20 heard Eruptor's through the Mac's speakers (The extractor). Still unmeasured: decode on the HTPC CPU (the bring-up) and lip sync over HDMI (the TV pass in the backlog) | done, AB |
 | Embedding the server in a Bevy app | the bootstrap was eframe-shaped | RETIRED 2026-10-18: AA.2 lifted it into `guac_server::boot`, `guacamole` boots it from Bevy with the native driver (AA.6) and the product's phone e2e on the Mac passes every test that passed at the pre-AA base (AA.10: 32 of 35, the 3 failures the base's) | done, AA |
 | The Mac's renderer floor | the Enhanced stack at the TV's resolution with no temporal upscaler, plus synchronous pipeline compiles | a Bevy scene with CSM, SSAO, TAA and bloom at the TV's resolution on the M3 Max, GPU timings from `RenderDiagnosticsPlugin`, pipelines pre-warmed at load | AE |
 | HTPC performance floor | 4K on a 2080 Ti with the Enhanced stack | the same scene at 4K on the 2080 Ti, DLSS on Vulkan | the Windows/HTPC bring-up (backlog) |
@@ -1676,8 +1678,8 @@ disassembler output (Ghidra projects included), no RPCS3 memory dumps, no RSX ca
   [`crates/guac-extract/tests/no_game_bytes.rs`](../../crates/guac-extract/tests/no_game_bytes.rs), a
   `cargo test` that fails when any file git would commit or push starts with a game magic. That's the
   index (`git ls-files`) plus every blob HEAD or a local branch reaches that no remote-tracking ref does
-  (`git rev-list --objects --branches --not --remotes`), because a push sends commits and a file committed
-  then deleted still ships with its commit. The magics are `GAME_MAGICS` in
+  (`git rev-list --objects HEAD --branches --not --remotes`), because a push sends commits and a file
+  committed then deleted still ships with its commit. The magics are `GAME_MAGICS` in
   [`magic.rs`](../../crates/guac-extract/src/magic.rs), the same list AB.5's census sniffs with: IGA in
   both byte orders (`IGA\x1a` on Giants and Trap Team, `\x1aAGI` on every later `.pak`), IGZ in both
   (`IGZ`, `\x01ZGI`), `BIKi`, `KB2`, `FSB5`, the Havok packfile, Wwise `BKHD` and `AKPK`, Spyro's
