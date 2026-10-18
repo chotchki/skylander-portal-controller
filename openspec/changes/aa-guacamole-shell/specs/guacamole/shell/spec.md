@@ -91,6 +91,6 @@ The guacamole app SHALL NOT read or change any profile's figure files from the S
 ### Requirement: Shutting down from the phone closes guacamole
 SHUT DOWN on the phone SHALL show a farewell on guacamole's TV and close the app within 5 seconds, returning the screen to whatever launched it.
 
-#### Scenario: Shut down under Steam Big Picture
-- **WHEN** guacamole was launched from Steam Big Picture and a phone uses SHUT DOWN
-- **THEN** the TV shows the farewell, guacamole exits within 5 seconds and Steam Big Picture is back on screen
+#### Scenario: Shut down from the phone
+- **WHEN** guacamole was launched full screen on the TV and a phone uses SHUT DOWN
+- **THEN** the TV shows the farewell, guacamole exits within 5 seconds and what launched it is back on screen

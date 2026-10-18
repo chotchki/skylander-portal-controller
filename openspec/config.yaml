@@ -20,8 +20,11 @@ context: |
   dependency of the guacamole binary. Two gates: G1 (guacamole plays one game end to end) retires
   the product binary and everything RPCS3 from what ships, G2 (parity) retires the dev oracle.
   docs/native/guacamole-design.md owns the track: decisions, architecture, the milestone ladder,
-  the RE toolchain. Target hardware is the HTPC (Windows, RTX 2080 Ti, Steam Big Picture, 86" 4K
-  TV); the dev box is an M3 Max Mac.
+  the RE toolchain. Mac first (chotchki, 2026-10-17: "we're focused on mac for now, windows will come
+  much later"): the M3 Max Mac, the dev box, which drives the TV, is the current target, where every
+  rung is built, run and checked, and no rung's exit depends on Windows. The HTPC (Windows, RTX 2080 Ti,
+  Steam Big Picture, 86" 4K TV) is the eventual target, brought up later in one pass (the Windows/HTPC
+  bring-up line in openspec/backlog.md).
 
   A doc named for a subsystem owns it (CLAUDE.md sections, SPEC.md, docs/dev/*, docs/research/*,
   docs/native/*). Read the owning doc BEFORE proposing a change to that subsystem, and treat it as

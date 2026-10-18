@@ -64,6 +64,6 @@ The first time Giants is picked with a recognized dump and no current extraction
 ### Requirement: A missing video converter is named
 When the video converter guacamole uses for extraction (ffmpeg) can't be found, the TV SHALL say that ffmpeg is needed and give the one-line install command for that operating system. Figure cards SHALL keep working, and intros SHALL stay unavailable until guacamole is started with ffmpeg present.
 
-#### Scenario: ffmpeg absent on Windows
-- **WHEN** Giants is picked on Windows with no ffmpeg configured, beside guacamole or on the PATH
-- **THEN** the TV says ffmpeg is needed and shows the winget command that installs it, and placing a figure shows its card without an intro
+#### Scenario: ffmpeg absent on macOS
+- **WHEN** Giants is picked on macOS with no ffmpeg configured, beside guacamole or on the PATH
+- **THEN** the TV says ffmpeg is needed and shows the Homebrew command that installs it, and placing a figure shows its card without an intro

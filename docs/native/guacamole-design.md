@@ -1,6 +1,7 @@
 # Guacamole design
 
-Status: DESIGN, started 2026-10-17 and revised the same day for chotchki's second and third rounds of decisions.
+Status: DESIGN, started 2026-10-17 and revised the same day for chotchki's second, third and fourth rounds of
+decisions.
 This file owns the Guacamole track (`openspec/config.yaml` points here). Open changes:
 `openspec/changes/aa-guacamole-shell/`, `ab-giants-extract-and-intros/` and `ac-giants-decode-gate/`; the
 later rungs of the ladder are lines in the Guacamole section of `openspec/backlog.md`. Until G1 the
@@ -11,11 +12,11 @@ ready.
 ## What Guacamole is
 
 A from-scratch Rust/Bevy reimplementation of the PS3 Skylanders games WITH the original gameplay,
-Skylanders Giants (BLUS30968) first, so the art can be upscaled and relit on the HTPC. Users supply their
-own disc dumps, `guac-extract` pulls the assets out at install time and nothing read from a disc ever
-ships or lands in this repo. The phone stays the portal, and a figure is just an identity out of the
-disc's own roster, so nobody dumps a toy and nothing reads a `.sky`. It runs as a second binary,
-`guacamole`, beside the product launcher until it can play a whole game.
+Skylanders Giants (BLUS30968) first, so the art can be upscaled and relit (on the Mac first, the HTPC
+later). Users supply their own disc dumps, `guac-extract` pulls the assets out at install time and nothing
+read from a disc ever ships or lands in this repo. The phone stays the portal, and a figure is just an
+identity out of the disc's own roster, so nobody dumps a toy and nothing reads a `.sky`. It runs as a
+second binary, `guacamole`, beside the product launcher until it can play a whole game.
 
 The bar is parity: what the original game observably does, as seen through the patched RPCS3 (the
 oracle), at the original logic tick, EXCEPT the deliberate departures listed below. A Faithful render mode
@@ -33,12 +34,13 @@ USB/HID portal (never), anything online and reading a `.sky` file in any form.
 
 ## Decisions
 
-All chotchki's, all 2026-10-17. Quotes are his words (spelling fixed). The second and third batches came
-later that day and a later batch wins wherever two touched. What the second superseded (a one-way `.sky`
-import, sky-parser in the Guacamole path, stats read from `.sky`, finding dumps through RPCS3's
-`games.yml`, the product's wizard as a prerequisite, importing RPCS3 saves, trophies cut, PvP undecided)
-and the open questions the third answered are gone from this doc, not kept beside it. A proposal that
-needs one reversed says so and asks, it doesn't relitigate quietly.
+All chotchki's, all 2026-10-17. Quotes are his words (spelling fixed). The second, third and fourth
+batches came later that day and a later batch wins wherever two touched. What the second superseded (a
+one-way `.sky` import, sky-parser in the Guacamole path, stats read from `.sky`, finding dumps through
+RPCS3's `games.yml`, the product's wizard as a prerequisite, importing RPCS3 saves, trophies cut, PvP
+undecided), the open questions the third answered and the HTPC as the gate every early rung checked
+against (the fourth) are gone from this doc, not kept beside it. A proposal that needs one reversed says so
+and asks, it doesn't relitigate quietly.
 
 First batch:
 
@@ -67,7 +69,8 @@ First batch:
   at G1 with the product code that still reads them (Figures).
 - The phone is the portal. No USB/HID portal driver, ever.
 - Target hardware: "The HTPC has a 2080 Ti GPU." The HTPC (Windows, Steam Big Picture, 86" 4K TV, the
-  kids' machine) is the performance and feature floor; the M3 Max Mac is the dev box.
+  kids' machine) is the eventual performance and feature floor. Until its bring-up the M3 Max Mac is the
+  target as well as the dev box (fourth batch).
 - Tooling: the rea MCP isn't used (measured, see RE toolchain). Ghidra plus RPCS3's own tools.
 - Hard rule: no game bytes in the repo, ever (last section).
 - Method: observe in the oracle, write the behavior down in our own words as an OpenSpec spec, implement
@@ -88,8 +91,8 @@ Second batch:
   the whole disc roster.
 - The ACR122 reader leaves the product "as soon as it's convenient", as its own product-track removal
   (`crates/nfc-reader`, `scanned/<uid>.sky`, `FigureScanned`), not tied to G1: change AD
-  (`ad-remove-acr122`), which lands before AA. `crates/sky-parser` stays only as long as the product
-  binary does.
+  (`ad-remove-acr122`), which lands before AA and takes `GameOfOrigin::Unknown` with it (fourth batch).
+  `crates/sky-parser` stays only as long as the product binary does.
 - Persistence and setup: "what has to be persisted on disk for saves/progression should be way easier /
   simpler no files to copy around. the setup screens get way easier too." One SQLite database holds
   everything worth keeping, the extract dir is a regenerable cache and setup is pointing Guacamole at the
@@ -123,10 +126,10 @@ Third batch:
   `guacamole` never opens the controller's `db.sqlite` or `config.json`, so its pairing key is its own too
   and a phone switching apps scans the TV's join code once.
 - Distribution: "Eventually this will be MSI based, this is where dual binaries is a good starting point."
-  The Windows MSI carries both binaries until G1. A `v*` tag (only on chotchki's word, like every release)
-  installs the product rebuilt from current source beside `guacamole`, so the controller the kids use for
-  the other five games gets replaced on install and its behavior has to survive AA's split (Architecture
-  says how that's proven).
+  The Windows MSI carries both binaries until G1, starting with the Windows/HTPC bring-up (fourth batch).
+  A `v*` tag (only on chotchki's word, like every release) installs the product rebuilt from current
+  source beside `guacamole`, so the controller the kids use for the other five games gets replaced on
+  install and its behavior has to survive AA's split (Architecture says how that's proven).
 - The server split: "I'm good with it." `crates/guac-server` takes only what `guacamole` runs. `.sky`
   editing and stats, working copies and the eframe UI stay in `crates/server` and leave with it at G1.
   NFC isn't there to split: AD (the ACR122 removal) lands before AA and takes it out first.
@@ -148,6 +151,25 @@ Third batch:
   check). Physics sits behind a thin internal seam either way. Nothing needs it before AG, and a
   read-only census of what Giants uses from Havok (character proxy or its own controller, rigid bodies,
   constraints, ragdolls, collision shapes) comes first, since that decides what feel parity means.
+
+Fourth batch:
+
+- Mac first: "Meh doesn't matter, we're focused on mac for now, windows will come much later." That was
+  his answer to whether AD needed a Windows build before a tag, and it sets the whole track's order:
+  Guacamole is built, run and validated on the M3 Max Mac, which drives the TV, and no rung's exit depends
+  on Windows or the HTPC. The HTPC stays the eventual target (first batch) and gets ONE later bring-up, a
+  line beside the ladder in `openspec/backlog.md` that collects everything Windows the rungs used to gate
+  on: the MSI carrying both binaries (and the installed-product check that comes with it), Windows CI, the
+  firewall prompt, Steam Big Picture with Steam Input passthrough, DLSS and the 4K floor on the 2080 Ti,
+  the pad checks on Windows, the HTPC's own Giants dump and `guacamole.exe` running there. It starts on his
+  call, not on a rung. What Mac first costs the renderer is in Renderer (no temporal upscaler, synchronous
+  pipeline compiles).
+- The Mac's checks are by hand plus `.githooks/pre-push` ("Enable the hook": it's on in the dev clone,
+  `core.hooksPath=.githooks`). Push CI fires only on `main` (`ci.yml:3-5`) and the macOS lane has been off
+  since 2026-05-30 (`:150-155`), so on `2.0` the hook is the only automatic gate.
+- AD's open calls: `GameOfOrigin::Unknown` goes with the scanner ("Remove it."), the wizard copy AD
+  proposed stands ("Don't care, we're going to touch it again later.") and AD needs no Windows build
+  before a tag (the Mac-first quote above).
 
 ## Deliberate departures from the original
 
@@ -198,9 +220,10 @@ game.
 
 Verdict: the product binary (`crates/server`'s `skylander-portal-controller`: eframe launcher, patched
 RPCS3, P7/P8 window management) stays frozen in behavior and window management, and `guacamole` is a
-separate Bevy app that embeds the SAME server in-process, with a data root and database of its own. Both
-reach the HTPC in one Windows MSI: a `v*` tag, on chotchki's word, installs the product rebuilt from
-current source beside `guacamole` (Decisions, third batch).
+separate Bevy app that embeds the SAME server in-process, with a data root and database of its own. On
+the Mac `guacamole` runs from `cargo` beside the product. From the Windows/HTPC bring-up on, both reach
+the HTPC in one Windows MSI: a `v*` tag, on chotchki's word, installs the product rebuilt from current
+source beside `guacamole` (Decisions, third and fourth batches).
 
 ```mermaid
 flowchart LR
@@ -251,8 +274,8 @@ flowchart LR
   and advertise the same mDNS name, so the join address is the same for either. The second one to start
   sees the port taken and says so on the TV instead of fighting. The pairing key is each app's own, so a
   phone that last joined the other app gets the phone's existing pairing screen and scans the TV's join
-  code once. Steam Big Picture gets two non-Steam shortcuts, with Steam Input off on `guacamole`'s
-  (Controllers).
+  code once. On the HTPC (the bring-up) Steam Big Picture gets two non-Steam shortcuts, with Steam Input
+  off on `guacamole`'s (Controllers).
 - Data lives in `guacamole`'s own SQLite plus the extract dir, both under its own data root (Persistence
   and setup). No working copies, no scanned figures and no RPCS3 config, and the extract dir sits outside
   the tree in dev (the hard rule says why).
@@ -268,9 +291,10 @@ source, and the source moves more than a little:
   branch left in those modules an explicit native arm. `.sky` editing and stats, working copies, the
   display-mode and RPCS3-config helpers and the eframe UI stay in `crates/server` (NFC is already gone:
   AD, the ACR122 removal, lands before AA); the product hands the ones the shared code calls to `boot()`
-  and `guacamole` hands none. No behavior change for the product, and that matters more than it did: a
-  tagged MSI puts this source's product on the HTPC. The product's e2e suite at its pre-AA count, the
-  HTPC live smoke and a check of the installed MSI prove it.
+  and `guacamole` hands none. No behavior change for the product, and that matters more than it did: the
+  next tag ships this source's product, and the bring-up's MSI puts it on the HTPC. For AA the product's
+  e2e suite on the Mac at its pre-AA count proves it; the HTPC live smoke and a check of the installed MSI
+  prove it again at the bring-up.
 - The product's first-launch wizard (eframe, `crates/server/src/wizard.rs`) isn't a prerequisite and
   isn't ported. Guacamole's setup is one question (Persistence and setup).
 
@@ -310,10 +334,11 @@ nothing else on disk is precious. Backing up the family's progress is copying on
   nothing it adds can reach the controller's file even through the product binary it ships beside.
 - Profiles aren't copied over. The kids set theirs up again in `guacamole` (name, colour, PIN, through the
   phone's existing create-profile flow), and each app keeps its own from then on.
-- Where: `%LOCALAPPDATA%\guacamole\` on Windows (machine-local, because the gigabyte extract dir lives
-  under it and doesn't belong in a roaming profile) and `~/Library/Application Support/guacamole/` on
-  macOS, a root separate from the controller's `%APPDATA%\skylander-portal-controller\`. Dev uses
-  `./dev-data/guacamole/`, gitignored with the rest of `./dev-data/`. AA's design has the details.
+- Where: `~/Library/Application Support/guacamole/` on macOS (the target until the bring-up) and
+  `%LOCALAPPDATA%\guacamole\` on Windows (machine-local, because the gigabyte extract dir lives under it
+  and doesn't belong in a roaming profile), a root separate from the controller's on either OS (its
+  `%APPDATA%\skylander-portal-controller\` on Windows). Dev uses `./dev-data/guacamole/`, gitignored with
+  the rest of `./dev-data/`. AA's design has the details.
 - Not in it, and not needed anywhere: `.sky` working copies, `scanned/`, RPCS3 savedata, PS3 firmware or
   RPCS3's config. No files to copy around.
 - The extract dir is a regenerable CACHE, `extract/` under the data root in release and a path outside
@@ -324,8 +349,8 @@ nothing else on disk is precious. Backing up the family's progress is copying on
 - Setup asks one thing: where the disc dumps are. No RPCS3 path, no PS3 firmware, no figure pack and no
   `games.yml` scan. Guacamole identifies each dump itself (`PARAM.SFO` plus the extractor's identity key,
   The extractor) and offers the games it can play. Release gets a first-run screen on the TV for it and
-  dev reads it from `.env.dev`; AA is the first change that needs it, since its HTPC run is a release
-  build.
+  dev reads it from `.env.dev`; AA is the first change that needs it, since its run on the Mac driving the
+  TV (AA.11) is a release build.
 
 ## The six games
 
@@ -540,7 +565,8 @@ What it lacks:
 
 AF builds the foundation before anything gets called a regression test:
 
-1. Measure divergence: same savestate, same input, 10 runs, on the Mac and the HTPC.
+1. Measure divergence: same savestate, same input, 10 runs, on the Mac (the HTPC's runs wait for the
+   Windows/HTPC bring-up).
 2. A dev-only input patch in its own env-gated series, never in a product binary: frame-locked analog
    sticks, two pads, press-at-frame-N, an RNG peek and seed verb.
 3. Tolerance-based comparisons: trajectory envelopes, event-sequence equality (spawns, hits, pickups,
@@ -612,31 +638,45 @@ captures; RPCS3 already holds 155 fragment and 62 vertex programs for Giants). G
 output is unknown; an RSX capture's surface formats answer it.
 
 Enhanced keeps the stylized model as the look and modernizes the light transport around it:
-higher-resolution CSM with PCSS or contact shadows, GTAO, TAA or DLSS, tuned bloom and DoF, an HDR
-tonemap matched to the original grade, the upscaled pack. No wholesale PBR conversion and no de-lighting
-the albedo; that's re-art-direction, not a remaster. The toggle keeps both material sets resident per
-entity (or one `ExtendedMaterial` with a mode uniform) and swaps the camera's post components. Halo CE
-Anniversary and Unleashed Recompiled are the precedents: accuracy by default, enhancements opt-in.
+higher-resolution CSM with PCSS or contact shadows, GTAO, TAA (DLSS on the HTPC), tuned bloom and DoF,
+an HDR tonemap matched to the original grade, the upscaled pack. No wholesale PBR conversion and no
+de-lighting the albedo; that's re-art-direction, not a remaster. The toggle keeps both material sets
+resident per entity (or one `ExtendedMaterial` with a mode uniform) and swaps the camera's post
+components. Halo CE Anniversary and Unleashed Recompiled are the precedents: accuracy by default,
+enhancements opt-in.
 
 Frame rate: logic runs in `FixedUpdate` at the original tick and rendering interpolates transforms
 between ticks, so 60 fps+ doesn't touch game logic. Adventure co-op is one shared camera with leashed
 players, so parity needs no split screen.
 
-The floor is the HTPC:
+The floor is the Mac until the Windows/HTPC bring-up (Decisions, fourth batch): the M3 Max driving the
+TV, on Bevy's Metal backend. What that means now:
 
-- RTX 2080 Ti (Turing, 11 GB) is DLSS-capable, so the default plan for the 86" 4K TV is ~1440p internal
-  with DLSS up to 4K. Bevy's DLSS integration is Vulkan-only on Windows, so the HTPC runs Bevy's Vulkan
-  backend.
+- No temporal upscaler. Bevy has TAA but no DLSS, FSR or MetalFX on macOS, so every frame the TV shows is
+  either rendered at the TV's output resolution or upscaled with no temporal reconstruction. Enhanced gets
+  sized to what the M3 Max holds at that resolution, not to what DLSS would buy (the ~1440p-internal plan
+  below is the HTPC's).
+- Synchronous pipeline compiles. macOS compiles each render pipeline inside the frame that first needs it,
+  so a material, a post effect or the Faithful/Enhanced toggle seen for the first time hitches. Both
+  material sets and both post stacks get pre-warmed at level load, and on the target machine that's a
+  requirement, not polish.
+- An open macOS rendering-corruption bug to watch
+  ([bevy #25595](https://github.com/bevyengine/bevy/issues/25595)).
+- Not measured: a frame with CSM, SSAO, TAA and bloom at the TV's resolution on the M3 Max. AE measures it
+  (GPU timings from `RenderDiagnosticsPlugin`), and that number is the budget the Enhanced toggle has to
+  fit until the bring-up.
+
+The HTPC, at the bring-up:
+
+- RTX 2080 Ti (Turing, 11 GB) is DLSS-capable, so the plan for the 86" 4K TV is ~1440p internal with DLSS
+  up to 4K. Bevy's DLSS integration is Vulkan-only on Windows, so the HTPC runs Bevy's Vulkan backend.
 - First-generation RT cores make ray tracing an optional toggle at most, never a target. Bevy's RT GI
   (Solari) also only takes `StandardMaterial`, can't render skinned meshes and doesn't light from
   point or spot lights yet, so it doesn't fit the faithful material model in any case.
-- Bevy 0.20 has no HDR display output; the TV's HDR waits on Bevy.
-- Not measured: a 4K frame with CSM, SSAO, TAA and bloom on the 2080 Ti. AE measures it.
+- Not measured: a 4K frame with CSM, SSAO, TAA and bloom on the 2080 Ti, DLSS on Vulkan. The bring-up
+  measures it.
 
-The M3 Max is for development, not for looking good. It has no temporal upscaler besides TAA (no DLSS,
-FSR or MetalFX in Bevy), pipeline compilation is synchronous on macOS (so both material sets get
-pre-warmed at level load) and there's an open macOS rendering-corruption bug to watch
-([bevy #25595](https://github.com/bevyengine/bevy/issues/25595)).
+Bevy 0.20 has no HDR display output on either machine; the TV's HDR waits on Bevy.
 
 Bevy is 0.20.0, pinned per milestone. Upgrades land at milestone boundaries as their own change, because
 every 0.x release breaks API (0.20's switch to WESL broke every custom shader written for 0.19).
@@ -653,19 +693,21 @@ the pad in the player's hands.
 - Mapping is positional, because the original's controls are positional. Bevy already names face buttons
   by position (`GamepadButton::South`, `East`, `West`, `North`), so the game binds positions and only the
   prompt glyphs change per pad. Never the PS3's glyphs.
-- Steam Input passthrough is the decision: Steam Input off on the `guacamole` shortcut, so Guacamole sees
-  the real device instead of Steam's virtual pad. Telling the variants apart is probably SDL3-class
-  identification, vendor and product id against a gamepad database (SDL3 picks a pad's face labels that
-  way). Bevy's `Gamepad` does carry the vendor and product id its gilrs backend reports; whether that's
-  enough to tell the two 8BitDo variants apart on Windows is unverified, and if it isn't, the fallback is
-  a glyph-set choice in settings.
+- On the HTPC (the bring-up), Steam Input passthrough is the decision: Steam Input off on the `guacamole`
+  shortcut, so Guacamole sees the real device instead of Steam's virtual pad. Telling the variants apart
+  is probably SDL3-class identification, vendor and product id against a gamepad database (SDL3 picks a
+  pad's face labels that way). Bevy's `Gamepad` does carry the vendor and product id its gilrs backend
+  reports; whether that's enough to tell the two 8BitDo variants apart is unverified on the Mac and on
+  Windows, and if it isn't, the fallback is a glyph-set choice in settings.
 - What the Home button does in Guacamole is open (Open question 1).
 - Hardware checks, a backlog item and not a gate for any rung ("all non-urgent testing"):
-  - With Steam Input off, does each variant show up with an identity Guacamole can map to the right
-    glyphs? The Switch variant is the shakier one: if it presents as a Switch Pro-class pad, Windows has
-    no XInput path for it and only a HID-level driver reads it (SDL's HIDAPI is the reference).
-  - Does Home reach Guacamole, or does Steam keep it for its overlay?
-  - Can the per-shortcut Steam Input setting be applied automatically, or is it a one-time step by hand?
+  - On the Mac, with any `guacamole` build: does each variant show up with an identity Guacamole can map
+    to the right glyphs, and does Home reach Guacamole?
+  - On the HTPC at the bring-up, with Steam Input off: the same identity question, where the Switch
+    variant is the shakier one (if it presents as a Switch Pro-class pad, Windows has no XInput path for
+    it and only a HID-level driver reads it; SDL's HIDAPI is the reference). Does Home reach Guacamole, or
+    does Steam keep it for its overlay? Can the per-shortcut Steam Input setting be applied automatically,
+    or is it a one-time step by hand?
 - AG's input spec carries the prompt rule, since walking a level is the first rung with a pad in hand.
 
 ## Figures
@@ -703,7 +745,8 @@ lives in Guacamole's store per profile. Guacamole never reads a `.sky`.
 - Ownership: the "profile that placed it" rule stays, so two phones keep working and co-op progress lands
   on the right kid (Deliberate departures).
 - No scanned figures. The ACR122 reader leaves the product first, in AD (a product change that lands
-  before AA).
+  before AA), and `GameOfOrigin::Unknown`, which only scans produced, goes with it (Decisions, fourth
+  batch).
 - The AA card shows identity only (name, element, portrait). Level, XP and gold join it once the store
   exists (AH); before that every figure is fresh, so there's nothing to show.
 
@@ -714,14 +757,16 @@ foundation), which the rungs after them stand on. A rung starts when the ones it
 there are no dates. Ids past AC are provisional: `openspec/config.yaml` allocates the next id when a
 change is proposed, so a product change proposed first takes the next letter (Decisions, third batch).
 That has happened once: the ACR122 removal (`ad-remove-acr122`) took AD, so every rung after AC moved
-up a letter. The milestone names (M0-M9, G1, G2) are the stable handles.
+up a letter. The milestone names (M0-M9, G1, G2) are the stable handles. Every rung is built and checked
+on the Mac driving the TV (Decisions, fourth batch); the Windows/HTPC bring-up isn't a rung, it sits
+beside the ladder in `openspec/backlog.md`, gates no rung and starts on chotchki's call.
 
 | Rung | Where | What the kids see | What it proves |
 |---|---|---|---|
-| AA | `aa-guacamole-shell` | place a figure on the phone, the TV shows its card (name, element, portrait), in `guacamole` | the embedded server, the native driver over a channel, Guacamole's one-question setup, its own database and profiles, the interim catalogue with no `.sky` and no firmware pack, one binary at a time, both binaries in one MSI |
+| AA | `aa-guacamole-shell` | place a figure on the phone, the TV shows its card (name, element, portrait), in `guacamole` | the embedded server, the native driver over a channel, Guacamole's one-question setup, its own database and profiles, the interim catalogue with no `.sky` and no firmware pack, one binary at a time, all on the Mac driving the TV (the MSI carrying both binaries is the bring-up's) |
 | AB, M0 | `ab-giants-extract-and-intros` | place a figure, its original intro video plays | `guac-extract` skeleton (identity, IGA, manifest, Bink 1 transcode, entropy scan); Bevy video playback is a spike. The 48 intros are named by character, not toy type; the voice-over folder in each character archive bridges most of them and AB maps the rest. A figure without one keeps its AA card |
 | AC | `ac-giants-decode-gate`, in parallel with AA and AB | nothing yet (a dev viewer) | IGZ v6, `igImage2`, Edge and a Havok 2011.2 skeleton plus one clip, matched against an RSX capture. Starts once AB's IGA reader has landed. If the decoded hero doesn't match the capture, AC proposes Trap Team and chotchki decides |
-| AE, M1 | backlog | their figure as an animated, textured turntable on the TV | the first 3D; the HTPC performance floor measured; the disc roster replaces the interim catalogue |
+| AE, M1 | backlog | their figure as an animated, textured turntable on the TV | the first 3D; the Mac's renderer floor measured; the disc roster replaces the interim catalogue |
 | AF | backlog | nothing | the oracle foundation: divergence measured, frame-locked two-pad input, tolerance metrics. Lands before any gameplay comparison |
 | AG, M2 | backlog | walk one level | level scene, collision, character controller, camera, feel checked against the oracle; the input spec, with prompts that match the physical pad |
 | AH, M3 | backlog | first fight: one enemy, XP and gold earned and kept on the kid's profile | combat basics; the per-profile figure-progression store, with the phone's figure editor on it |
@@ -742,14 +787,15 @@ Ranked by how much each could move the plan, each with the experiment that answe
 | IGZ v6 field layouts aren't in the files | no public Giants metaobject dump (ig-workshop's Giants data has enums and fields only; AlchemyMetadataDumper doesn't list Giants PS3 and is a PRX built with Sony's SDK) | find the igMetaObject registry in one guest-memory dump of Giants, cross-referenced with the RTTI and `*MetaField` strings in Ghidra | AC |
 | Edge geometry on v6 | every mesh is Edge-compressed for SPU | decode one character mesh, compare to the vertex buffer in an RSX capture | AC |
 | Havok 2011.2 animation | likely compressed clips; skeletons feed everything after M1 | one skeleton and one clip, posed against a capture | AC |
-| RPCS3 run-to-run divergence | decides whether the oracle can be a test at all, and how loose the tolerances get | 10 replays from one savestate on each machine, diff positions and RNG | AF |
-| A tagged MSI reinstalls the product from current source | the kids' other five games run on it. (Guacamole tables in its `db.sqlite` were the old risk here; `guacamole`'s own database resolves that one by design.) | AA's split lands as moves only and passes the product's e2e suite at its pre-AA count plus the HTPC live smoke before any native code; AA.13 checks the installed product from the MSI | AA, then every tagged release |
+| RPCS3 run-to-run divergence | decides whether the oracle can be a test at all, and how loose the tolerances get | 10 replays from one savestate on the Mac, diff positions and RNG (the HTPC's at the bring-up) | AF |
+| A tagged MSI reinstalls the product from current source | the kids' other five games run on it. (Guacamole tables in its `db.sqlite` were the old risk here; `guacamole`'s own database resolves that one by design.) | AA's split lands as moves only and passes the product's e2e suite on the Mac at its pre-AA count before any native code; the bring-up runs the HTPC live smoke and checks the installed product from the MSI | AA, then the Windows/HTPC bring-up and every tagged release |
 | How much of Giants is script data | sizes the VM vs the native built-ins | a read-only census of `OpFlowBuiltInBehavior` and engine-import names across `character/*.bld`, confirming the PAL Wii offsets on PS3 | any time before AJ (backlog) |
-| Bevy video playback | M0 depends on it, Bevy has no video player | decode one transcoded intro into a texture on the Mac and the HTPC | AB |
+| Bevy video playback | M0 depends on it, Bevy has no video player | decode one transcoded intro into a texture on the Mac (the HTPC's decode cost at the bring-up) | AB |
 | Embedding the server in a Bevy app | the bootstrap is eframe-shaped today | `guacamole` boots the server from the lib with the native driver; the product's e2e lanes stay unchanged | AA |
-| HTPC performance floor | 4K on a 2080 Ti with the Enhanced stack | a Bevy scene with CSM, SSAO, TAA and bloom at 4K, GPU timings from `RenderDiagnosticsPlugin`, DLSS on Vulkan | AE |
+| The Mac's renderer floor | the Enhanced stack at the TV's resolution with no temporal upscaler, plus synchronous pipeline compiles | a Bevy scene with CSM, SSAO, TAA and bloom at the TV's resolution on the M3 Max, GPU timings from `RenderDiagnosticsPlugin`, pipelines pre-warmed at load | AE |
+| HTPC performance floor | 4K on a 2080 Ti with the Enhanced stack | the same scene at 4K on the 2080 Ti, DLSS on Vulkan | the Windows/HTPC bring-up (backlog) |
 | Feel parity (camera, controller, collision, Havok-tuned physics) | the long tail, never retired | not a spike: measured continuously by the oracle from AG on | AG onward |
-| Reading the real pads with Steam Input off | wrong prompts, or a Switch-variant pad Windows can't read without Steam | read both variants' ids in a Bevy app on the HTPC with Steam Input off for its shortcut | backlog (non-urgent) |
+| Reading the real pads | wrong prompts, or a Switch-variant pad Windows can't read without Steam | read both variants' ids in a Bevy app on the Mac, then on the HTPC with Steam Input off for its shortcut at the bring-up | backlog (non-urgent) |
 | Trophy data on the disc | achievements without the original names and icons | open `PS3_GAME/TROPDIR` on the Giants dump and see whether its container reads | before AM |
 | Encrypted data outside the EBOOT | the extractor assumes plaintext USRDIR | an entropy scan over USRDIR | AB |
 | Bevy churn | every 0.x release breaks API | pin per milestone, upgrade at boundaries as its own change | ongoing |
@@ -770,9 +816,10 @@ disassembler output (Ghidra projects included), no RPCS3 memory dumps, no RSX ca
   `RRC`, `\0PSF`). Two of the rule's items don't start with one: RPCS3 writes RSX captures gzipped
   (`.rrc.gz`, `RRC` only after inflating), and a decrypted EBOOT is a plain big-endian PPC64 ELF. So a
   gzip file is checked again after inflating its first bytes, and a 64-bit big-endian ELF with machine 21
-  fails too. `.githooks/pre-push` and the Windows CI lane both run `cargo test --workspace`, so
-  `--no-verify` doesn't get past it. A guest memory dump has no magic at all; only the outside-the-tree
-  rule above keeps it out.
+  fails too. `.githooks/pre-push` runs `cargo test --workspace` on every push from the dev clone. The
+  Windows CI lane runs it too, but push CI fires only on `main`, so on `2.0` a `--no-verify` push gets
+  past the guard until a merge to `main` or a dispatched run. A guest memory dump has no magic at all;
+  only the outside-the-tree rule above keeps it out.
 
 ## Measuring progress
 

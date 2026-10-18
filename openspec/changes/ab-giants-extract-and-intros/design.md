@@ -20,8 +20,8 @@ Motivation is in proposal.md. The track-level extractor plan is in `docs/native/
 
 **Goals:**
 - An extractor skeleton every later rung extends: identity, manifest, a parser crate with fuzzing from its first parser, an IR with a version and an output that can't leak into the repo.
-- A video path that adds no runtime dependency on ffmpeg and needs no system libraries on the Windows CI lane or the Mac.
-- M0 on the HTPC.
+- A video path that adds no runtime dependency on ffmpeg and needs no system libraries, checked on the Mac (Windows at the bring-up).
+- M0 on the TV, driven by the Mac (Mac first, design doc Decisions, fourth batch). M0 on the HTPC is the Windows/HTPC bring-up's (`openspec/backlog.md`).
 
 **Non-Goals:**
 - IGZ, textures, meshes, Havok, FSB5 audio: AC and AE.
@@ -47,9 +47,9 @@ The IGA chunk format is raw LZMA1 with externally supplied props and a known out
 A stable property test in `cargo test` throws random bytes and mutated synthetic files at every parser and asserts no panic and bounded memory. That's what CI and the pre-push hook run. cargo-fuzz targets live in `crates/guac-formats/fuzz/`, excluded from the workspace because they need nightly, and run locally before AB.0 with the hours recorded. A CI fuzz lane is out of scope until there are more parsers to justify one.
 
 **4. Identity and the known-dump table.**
-The identity is (TITLE_ID, disc APP_VER, manifest hash). The manifest hash is SHA-256 over the sorted list of (relative path, size, SHA-256 of contents) for every file under `PS3_GAME/USRDIR` except `EBOOT.BIN`. There's no title-update field. chotchki set the parity target on 2026-10-17: "HTPC's Giants doesn't have the title updates I couldn't figure out how to install them", so Giants is the 1.00 disc and setup only ever finds disc dumps. An update can still reach a dump by being merged into it (files changed under USRDIR, or a PARAM.SFO whose APP_VER is past 01.00), and either one misses the known table, so it's reported as an unknown dump and never handled. Hashing every plaintext file has a first-run cost nobody has measured, so AB.4 measures it on the Mac and the HTPC. The manifest caches each file's (path, size, mtime, hash), so later starts re-hash only what changed.
+The identity is (TITLE_ID, disc APP_VER, manifest hash). The manifest hash is SHA-256 over the sorted list of (relative path, size, SHA-256 of contents) for every file under `PS3_GAME/USRDIR` except `EBOOT.BIN`. There's no title-update field. chotchki set the parity target on 2026-10-17: "HTPC's Giants doesn't have the title updates I couldn't figure out how to install them", so Giants is the 1.00 disc and setup only ever finds disc dumps. An update can still reach a dump by being merged into it (files changed under USRDIR, or a PARAM.SFO whose APP_VER is past 01.00), and either one misses the known table, so it's reported as an unknown dump and never handled. Hashing every plaintext file has a first-run cost nobody has measured, so AB.4 measures it on the Mac (the HTPC's at the bring-up). The manifest caches each file's (path, size, mtime, hash), so later starts re-hash only what changed.
 
-The known table in `guac-extract` holds identities and hashes only, never content: one entry per hash chotchki's own BLUS30968 01.00 dumps produce (the Mac's and the HTPC's; AB.4 records whether they're the same). An unknown dump fails with `GUAC-E-UNKNOWN-DUMP` and writes `unknown-dump-<timestamp>.json` beside the extract root, so two dumps can be diffed by hand. The design's "unknown dumps get a report, not a guess" stays literal.
+The known table in `guac-extract` holds identities and hashes only, never content: one entry per hash chotchki's own BLUS30968 01.00 dumps produce: the Mac's from AB.4, and the HTPC's added at the bring-up if it hashes differently. An unknown dump fails with `GUAC-E-UNKNOWN-DUMP` and writes `unknown-dump-<timestamp>.json` beside the extract root, so two dumps can be diffed by hand. The design's "unknown dumps get a report, not a guess" stays literal.
 
 **5. Where output goes, and why it can't leak.**
 - Release extract root: `extract/` under guacamole's own data root (AA design decision 6), so `%LOCALAPPDATA%\guacamole\extract\` on Windows (the root is machine-local because gigabytes don't belong in a roaming profile) and `~/Library/Application Support/guacamole/extract/` on macOS. Nothing lands under the controller's root.
@@ -77,8 +77,8 @@ That table is the roster's groundwork (design doc, Figures): the toy types Giant
 
 **7. Video playback: a spike with fixed criteria (AB.7), and a lean.**
 Criteria:
-- (a) builds on the Windows CI lane and the Mac with no system library installed (the macOS CI lane is disabled, so the Mac half is checked by hand);
-- (b) decodes 1280×720 at the intro's frame rate in real time on the M3 Max and on the HTPC, with decode ms/frame recorded;
+- (a) builds with no system library installed, checked on the Mac by hand (the macOS CI lane is disabled; the Windows build is the bring-up's, so a candidate that would need one there loses on paper too);
+- (b) decodes 1280×720 at the intro's frame rate in real time on the M3 Max, with decode ms/frame recorded (the HTPC's number at the bring-up);
 - (c) puts frames into a Bevy 0.20 `Image` each frame without stalling the render;
 - (d) audio plays through Bevy's own audio, with A/V drift under one frame at the end of the longest intro;
 - (e) needs no ffmpeg at runtime.
@@ -101,20 +101,20 @@ The lean is openh264: it's the only candidate that meets (a) and (e) without ven
 - On a Giants pick, guacamole takes the Giants dump AA's setup found, checks the identity and either loads a current manifest or starts the extraction thread, with the progress screen on the TV.
 - Placements during extraction just make cards.
 - The intro player is a small state machine (idle → playing(slot) → idle, with a FIFO queue) driven by `Placed`/`Cleared` and input events. It's pure, so it's unit-tested without a window.
-- Skip input comes from Bevy's gamepad and keyboard input. With Steam Input off for guacamole's shortcut (design doc, Controllers), the pad Bevy sees is the real one. Any button skips, so no button prompt is shown and the prompt rule (AG) doesn't come up yet.
+- Skip input comes from Bevy's gamepad and keyboard input. On the HTPC later, Steam Input off for guacamole's shortcut (design doc, Controllers) keeps the pad Bevy sees the real one. Any button skips, so no button prompt is shown and the prompt rule (AG) doesn't come up yet.
 - AA's `/api/_test/tv` snapshot gains the playing intro and the queue, so the e2e test asserts "placement starts the intro" without decoding video in the browser.
 
 **10. The game-magic guard is a test, not a hook script.**
-`crates/guac-extract/tests/no_game_bytes.rs` runs `git ls-files` and fails if any tracked file begins with a listed magic. Two hard-rule items don't, so the guard covers them explicitly: a gzip file is inflated just far enough to check its head again (RPCS3 writes RSX captures as gzipped `.rrc.gz`, `RSXThread.cpp:3401`), and a 64-bit big-endian ELF with machine 21 (a decrypted EBOOT) fails. No tracked file is an ELF or a gzip today. `cargo test --workspace` already runs in `.githooks/pre-push` and the Windows CI lane (the macOS lane is `if: false`, `ci.yml:155`), so the guard needs no new plumbing and can't be bypassed by `--no-verify` without CI catching it. Synthetic fixtures are always built in code at test time, so they never trip it. The e2e intro video is generated by ffmpeg's `testsrc` at run time and never committed.
+`crates/guac-extract/tests/no_game_bytes.rs` runs `git ls-files` and fails if any tracked file begins with a listed magic. Two hard-rule items don't, so the guard covers them explicitly: a gzip file is inflated just far enough to check its head again (RPCS3 writes RSX captures as gzipped `.rrc.gz`, `RSXThread.cpp:3401`), and a 64-bit big-endian ELF with machine 21 (a decrypted EBOOT) fails. No tracked file is an ELF or a gzip today. `cargo test --workspace` already runs in `.githooks/pre-push` (on in the dev clone) and the Windows CI lane (the macOS lane is `if: false`, `ci.yml:155`), so the guard needs no new plumbing. Push CI fires only on `main`, so on `2.0` a `--no-verify` push gets past it until a merge or a dispatched run. Synthetic fixtures are always built in code at test time, so they never trip it. The e2e intro video is generated by ffmpeg's `testsrc` at run time and never committed.
 
 ## Risks / Trade-offs
 
 - [The known-dump table is too strict: a valid dump that differs in one irrelevant file is refused] → by design for now (no guessing). The report makes the difference visible, and loosening to per-directory hashes is a later, measured change.
-- [openh264 can't hold real time on the HTPC CPU, or its frame upload stalls Bevy] → the spike measures both machines before the transcode target is fixed. AV1 via vendored dav1d is the next candidate.
+- [openh264 can't hold real time, or its frame upload stalls Bevy] → the spike measures the M3 Max before the transcode target is fixed; the HTPC CPU is measured at the bring-up. AV1 via vendored dav1d is the next candidate either way.
 - [The voice-over naming heuristic picks the wrong name for an archive that voices two characters] → the dominant-name rule plus the disc test asserting all 48 intros map one-to-one, and a wrong mapping shows up in the census before it reaches a kid.
 - [The interim catalogue names a figure the disc has no character for, or lacks one it has] → the roster cross-check records both lists; a missing character goes into AA's supplement, and anything else waits for AE's roster.
 - [Entropy flags legitimately compressed data (LZMA chunks, Bink, FSB5 MPEG) as "encrypted"] → the census classifies by magic first and reports entropy only for unknown-magic files, so "high entropy + unknown magic" is the signal, not entropy alone.
-- [A first-run extraction on the HTPC takes long enough that the kids give up] → AB extracts only the 48 intros plus the hashing. The progress screen says what it's doing, cards work meanwhile and AB.11 records the measured HTPC time so AE knows the real cost before it adds textures.
+- [A first-run extraction takes long enough that the kids give up] → AB extracts only the 48 intros plus the hashing. The progress screen says what it's doing, cards work meanwhile and AB.11 records the measured Mac time so AE knows the real cost before it adds textures (the HTPC's at the bring-up).
 - [ffmpeg's output varies across versions (encoder defaults)] → outputs are content-hashed after the fact, not compared to expected hashes, and the manifest records the ffmpeg version used.
 
 ## Migration Plan

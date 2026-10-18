@@ -19,7 +19,7 @@ Motivation is in proposal.md. The track's architecture is in `docs/native/guacam
 ## Goals / Non-Goals
 
 **Goals:**
-- One server library both binaries link, with the product's observable behavior unchanged. The product's e2e suite and the HTPC live smoke are the proof, not inspection.
+- One server library both binaries link, with the product's observable behavior unchanged. The product's e2e suite on the Mac is the proof, not inspection (the HTPC live smoke joins at the Windows/HTPC bring-up).
 - A driver kind that means "no emulator and no figure file", with every RPCS3- or file-only branch handled explicitly rather than by accident of `cfg(windows)`.
 - A guacamole that starts on a machine with nothing but disc dumps: no controller setup, no RPCS3, no firmware, no figure pack, and its own data root and database whether or not the controller is installed.
 - A Bevy app that owns the TV and gets portal changes as data, ready for AB to hang intros on and AE to hang 3D on.
@@ -33,7 +33,8 @@ Motivation is in proposal.md. The track's architecture is in `docs/native/guacam
 - Player pips or Kaos overlays on the guacamole TV beyond each card's owner pip. The phone already shows them.
 - Trimming `PortalDriver` or removing anything RPCS3 (G1).
 - macOS packaging of guacamole (signing a second binary into the dmg is its own change).
-- Choosing the Windows render backend. wgpu's default here; AE picks Vulkan when it adds DLSS.
+- Anything checked on Windows or the HTPC (Mac first, design doc Decisions, fourth batch). The Windows MSI carrying both binaries, its firewall exception, guacamole under Steam Big Picture, the Windows CI lane's Bevy build and the HTPC live smoke are the Windows/HTPC bring-up's, a line beside the ladder in `openspec/backlog.md`. The code stays cross-platform (decision 3 keys on the driver, never on `cfg(windows)`); it just isn't checked on Windows here.
+- Choosing the Windows render backend. wgpu's default here; the Windows/HTPC bring-up picks Vulkan when it adds DLSS.
 
 ## Decisions
 
@@ -54,7 +55,7 @@ Alternatives:
 
 `rust-embed`'s `#[folder = "../../phone/dist"]` (`embedded_assets.rs:30`) stays valid from `crates/guac-server`. The product's release command line doesn't change. The name follows the codename rule (new crates are `guac-*`, never `skylander-*`): the product links it until G1 and `guacamole` keeps it after, so it's Guacamole's server from day one. The existing `skylander-*` packages keep their names.
 
-"Product untouched until G1" reads as behavior-untouched, and it carries more weight than it did: the MSI that ships guacamole also installs this source's product on the HTPC (proposal, Release reach). The moves and the hook seams land before any Native code and pass the product's e2e suite at its pre-AA count plus the HTPC live smoke (AA.1, AA.2).
+"Product untouched until G1" reads as behavior-untouched, and it carries more weight than it did: the next tag ships this source's product, and the bring-up's MSI installs it on the HTPC (proposal, Release reach). The moves and the hook seams land before any Native code and pass the product's e2e suite on the Mac at its pre-AA count (AA.1, AA.2).
 
 **2. Boot is one library call, and the listener binds first.**
 `boot(options) -> Result<ServerHandles>` takes six things:
@@ -87,7 +88,7 @@ Config loading splits by binary. The product keeps `config::load` with its wizar
 | `state.rs:1563-1742` (`BootDirect`) | IPC spawn, else on Windows a UIA spawn for any non-IPC driver | no spawn on any OS; reveal at once, as Mock does off Windows |
 | `http.rs:948`, `:998`, `:1629` | rewrite `config.json` (window mode, 2×) / open RPCS3 settings (409 for Mock) | 409 |
 
-The `BootDirect` row is the dangerous one. The non-IPC arm is gated on `cfg(windows)`, not on the driver, so anything without an IPC socket gets a real RPCS3 launch on the HTPC. The arms key on `DriverKind` (threaded into the job), never on platform. The rows whose code stays in `crates/server` (the working-copy, figure-stats, display-mode, RPCS3-config and `config.json` rows) are hooks (decision 1): guacamole passes none, so the step is skipped or the route answers 409. The routes stay in the shared router and answer 409 without the hook, so the phone gets the same "unavailable" answer from guacamole whatever features a workspace build unified.
+The `BootDirect` row is the dangerous one. The non-IPC arm is gated on `cfg(windows)`, not on the driver, so anything without an IPC socket gets a real RPCS3 launch on Windows (the HTPC, once it's brought up). The arms key on `DriverKind` (threaded into the job), never on platform. The rows whose code stays in `crates/server` (the working-copy, figure-stats, display-mode, RPCS3-config and `config.json` rows) are hooks (decision 1): guacamole passes none, so the step is skipped or the route answers 409. The routes stay in the shared router and answer 409 without the hook, so the phone gets the same "unavailable" answer from guacamole whatever features a workspace build unified.
 
 A catalogue record has no file under Native: its file path stays empty, and every arm above that would read it is skipped. Making the path optional in the shared figure type waits for G1 with the rest of the file-shaped API; AA.3's test is what holds it.
 
@@ -125,7 +126,7 @@ chotchki's call on 2026-10-17: guacamole gets its own SQLite, and the profiles a
 - Profiles: a first start has none. The phone's existing create-profile flow (name, colour, PIN) makes them and the existing PIN unlock and lockout apply, now against guacamole's database. Nothing is copied from the controller, and nothing guacamole does changes the controller's profiles.
 - Settings, in that database: the dumps folders, the port (8765 by default, the controller's own, so decision 2's port lock covers both apps) and a pairing key generated on the first start and reused after. Dev reads `GUAC_DUMP_DIRS` (a list in the OS's path-list form), `BIND_PORT`, `PHONE_DIST`, `DATA_ROOT` and `WINDOW_MODE` from `.env.dev` over them; the dev key lives in the dev database like the release one.
 - Pairing: the key is guacamole's own, so the join address (host name and port) is the same as the controller's but the key isn't. A phone that last joined the controller sends a key guacamole rejects, gets the phone's existing pairing screen (`phone/src/components/pairing_required.rs`) and scans guacamole's join code once.
-- Release setup: when no dumps folder is set, the TV's setup screen asks for one and opens a native folder picker on the PC (a grown-up with a keyboard and mouse, once). `guacamole --setup` asks again, and `guacamole --setup <folder>` stores a folder without the picker.
+- Release setup: when no dumps folder is set, the TV's setup screen asks for one and opens a native folder picker on the machine running it (a grown-up with a keyboard and mouse, once). `guacamole --setup` asks again, and `guacamole --setup <folder>` stores a folder without the picker.
 - The scan looks for `PS3_GAME/PARAM.SFO` in each chosen folder and up to two levels below it, reads TITLE_ID with AB.2's parser and reads nothing else from the dump. The TV lists every dump it found by title, and Giants (BLUS30968) is the one guacamole offers. The phone never sees a path.
 
 **7. Bevy app shape.**
@@ -147,22 +148,22 @@ guacamole adds `/api/_test/tv` through the extra-routes hook. A `PostUpdate` sys
 
 ## Risks / Trade-offs
 
-- [The split changes the product without anyone noticing, and a tagged MSI then installs that product over the frozen controller on the HTPC] → AA.1 and AA.2 are moves plus hook seams with the product's hooks wired to the code that was there, with the unit-test count equal before and after, and they land and pass the product's e2e suite on the Mac at its pre-AA count plus the HTPC live smoke BEFORE any Native code exists. AA.13 checks the installed product again from the MSI before anyone plays. A bad product release is fixed forward with a patch release (tags are never deleted).
+- [The split changes the product without anyone noticing, and the next tag ships that product (the bring-up's MSI installs it over the frozen controller on the HTPC)] → AA.1 and AA.2 are moves plus hook seams with the product's hooks wired to the code that was there, with the unit-test count equal before and after, and they land and pass the product's e2e suite on the Mac at its pre-AA count BEFORE any Native code exists. That suite runs the mock driver, so the product's IPC spawn and poller, which move with `state`, aren't exercised by AA; the bring-up's HTPC live smoke and its check of the installed product from the MSI cover them before anyone plays. A bad product release is fixed forward with a patch release (tags are never deleted).
 - [A Native arm is missed and something opens a figure file with an empty path] → AA.3 runs a load, a slot reset, a Kaos swap and an auto-restart restore under Native and asserts nothing was created under the runtime root and `load(slot, path)` was never called. The native driver's `load` errors, so a miss shows up as a failed placement, not a silent one.
 - [The interim catalogue shows a figure under the wrong name] → decision 5's rules plus a test over the committed data (no name on two toy types, every entry named). AB's cross-check against the disc finds what the rules can't.
-- [The native folder picker opens behind the fullscreen window under Steam Big Picture] → AA.11 checks it on the HTPC. The fallback is `guacamole --setup <folder>`, which AA.12 documents either way.
-- [Adding Bevy to a workspace that already has eframe 0.29 hits a `links` conflict or a duplicate-native-lib clash] → AA.6 starts by adding the dependency and running `cargo build --workspace --all-features` on the Windows CI lane and on the Mac before writing app code. The macOS CI lane has been `if: false` since 2026-05-30 (`ci.yml:150-155`), so the Mac is covered by hand and by `.githooks/pre-push`, not by CI. Duplicate pure-Rust versions (winit, wgpu, raw-window-handle) are fine across two binaries.
-- [Bevy makes CI and `.githooks/pre-push` slower] → `Swatinem/rust-cache` already caches the Windows lane (one `shared-key` per OS, `ci.yml:60-64`, not per feature set). AA.10 measures the cold and warm deltas there and on the Mac's pre-push run and records them. If the pre-push hook gets painful, the fix is its own change, not a quiet skip of the guacamole crate.
-- [Windows Defender's "allow this app on the network" prompt fires the first time `guacamole.exe` listens, hidden behind a fullscreen window under Big Picture] → the MSI's port-8765 rule (`wix/main.wxs:108-115`) keeps the product from prompting and should cover `guacamole.exe` on the same port. Unverified, so AA.11 records whether a prompt appears; if one does, AA.13 adds a program-scoped exception for it.
-- [A second instance on a different port slips past the port lock] → only possible with a dev `BIND_PORT` override or a controller whose `config.json` was hand-edited off 8765. AA.11 starts guacamole on the HTPC with the controller running and expects the already-running screen.
+- [The native folder picker opens behind the fullscreen window] → AA.11 checks it on the Mac driving the TV, and the bring-up checks it again under Steam Big Picture. The fallback is `guacamole --setup <folder>`, which AA.12 documents either way.
+- [Adding Bevy to a workspace that already has eframe 0.29 hits a `links` conflict or a duplicate-native-lib clash] → AA.6 starts by adding the dependency and running `cargo build --workspace --all-features` on the Mac before writing app code. The macOS CI lane has been `if: false` since 2026-05-30 (`ci.yml:150-155`), so the Mac is covered by hand and by `.githooks/pre-push`, not by CI. A conflict that only shows on Windows surfaces at the bring-up's first Windows CI run. Duplicate pure-Rust versions (winit, wgpu, raw-window-handle) are fine across two binaries.
+- [Bevy makes `.githooks/pre-push` (and later CI) slower] → AA.10 measures the cold and warm deltas on the Mac's pre-push run and records them. The Windows lane's delta is the bring-up's (`Swatinem/rust-cache` already caches it, one `shared-key` per OS, `ci.yml:60-64`, not per feature set). If the pre-push hook gets painful, the fix is its own change, not a quiet skip of the guacamole crate.
+- [The OS firewall asks to allow `guacamole` on the network the first time it listens, hidden behind the fullscreen window] → on the Mac, AA.11 records whether macOS asks. On Windows it's the bring-up's: the MSI's port-8765 rule (`wix/main.wxs:108-115`) keeps the product from prompting and should cover `guacamole.exe` on the same port; unverified, so the bring-up records whether Defender prompts and, if it does, adds a program-scoped exception to the MSI.
+- [A second instance on a different port slips past the port lock] → only possible with a dev `BIND_PORT` override or a controller whose `config.json` was hand-edited off 8765. AA.11 starts guacamole on the Mac with the product running and expects the already-running screen.
 - [Kids lose their profiles, or mix them up, across the two apps] → nothing is lost: the controller keeps its profiles untouched, and guacamole's are new ones the kids set up once (chotchki's call). The phone's profile picker shows only the running app's profiles, and a profile created in one never shows in the other (shell spec).
-- [Bevy's borderless fullscreen misbehaves under Steam Big Picture on the 4K TV (focus, overlay, scaling)] → AA.11 is a named HTPC bring-up box; the eframe launcher's always-on-top tricks aren't needed with one window.
+- [Bevy's borderless fullscreen misbehaves on the TV (focus, scaling)] → AA.11 runs it on the Mac driving the TV; Steam Big Picture's overlay on the HTPC is the bring-up's. The eframe launcher's always-on-top tricks aren't needed with one window.
 - [The phone gate changes the product's phone] → the product's `figure_edit.rs` e2e passes unchanged, and the gate only disables actions whose stats couldn't be read, where an edit couldn't have worked either.
 
 ## Migration Plan
 
-AA.1 and AA.2 land first as a pure refactor. Rollback is a revert, and nothing persisted changes shape. The Native work and the guacamole crate land after. guacamole adds its own data root and touches nothing the controller owns; rolling it back is a revert plus deleting that root (the guacamole profiles go with it). Once a tagged MSI has installed the product built from this source on the HTPC, rollback for the product is a patch release, not a revert.
+AA.1 and AA.2 land first as a pure refactor. Rollback is a revert, and nothing persisted changes shape. The Native work and the guacamole crate land after. guacamole adds its own data root and touches nothing the controller owns; rolling it back is a revert plus deleting that root (the guacamole profiles go with it). Once a tag has shipped the product built from this source, rollback for the product is a patch release, not a revert.
 
 ## Open Questions
 
-None of the design doc's open questions block AA. The ones AA waited on (which database, how guacamole reaches the HTPC, how much of `crates/server` moves) were settled on 2026-10-17 (design doc, Decisions, third batch).
+None of the design doc's open questions block AA. The ones AA waited on (which database, how guacamole reaches the HTPC, how much of `crates/server` moves) were settled on 2026-10-17 (design doc, Decisions, third batch), and the fourth batch moved reaching the HTPC to the Windows/HTPC bring-up.
