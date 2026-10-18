@@ -161,6 +161,19 @@ pub(crate) fn FigureDetail(
     let stats_editable = Signal::derive(move || gate.get().enabled());
     let stats_tooltip = move || gate.get().tooltip();
 
+    // A tap during the in-flight fetch can open the sheet or modal before the 409; close them.
+    let gate_fig_id = fig_id.clone();
+    Effect::new(move |_| {
+        if gate.get() != EditGate::NotAvailableYet {
+            return;
+        }
+        show_edit_sheet.set(false);
+        let ours = reset_target.with_untracked(|t| is_detail_reset_of(t.as_ref(), &gate_fig_id));
+        if ours {
+            reset_target.set(None);
+        }
+    });
+
     let max_level = max_level_for_game(game);
 
     // PLAN 11.16 — APPEARANCE button enable + next-variant resolution.
@@ -525,6 +538,11 @@ fn edit_gate(category: Category, on_portal: bool, stats: Option<&StatsFetch>) ->
     EditGate::Editable
 }
 
+/// True when `target` is this details screen's reset of `figure_id` (the portal's slot resets are left alone).
+fn is_detail_reset_of(target: Option<&ResetTarget>, figure_id: &str) -> bool {
+    target.is_some_and(|t| t.slot.is_none() && t.figure_id == figure_id)
+}
+
 /// Per-figure level cap derived from game-of-origin. Mirrors
 /// `skylander_sky_parser::max_level_for(SkyGeneration)` server-side. Earlier
 /// generations cap lower because the parser only reads earlier-era XP slots
@@ -667,5 +685,26 @@ mod tests {
         );
         assert!(EditGate::Editable.enabled());
         assert!(!EditGate::OnPortal.enabled());
+    }
+
+    /// Only this screen's reset of this figure closes when the gate turns off.
+    #[test]
+    fn detail_reset_matches_only_this_figure_off_portal() {
+        let target = |slot: Option<u8>, figure_id: &str| ResetTarget {
+            slot,
+            profile_id: "p1".to_string(),
+            figure_id: figure_id.to_string(),
+            display_name: "Eruptor".to_string(),
+        };
+        assert!(is_detail_reset_of(
+            Some(&target(None, "eruptor")),
+            "eruptor"
+        ));
+        assert!(!is_detail_reset_of(
+            Some(&target(Some(2), "eruptor")),
+            "eruptor"
+        ));
+        assert!(!is_detail_reset_of(Some(&target(None, "spyro")), "eruptor"));
+        assert!(!is_detail_reset_of(None, "eruptor"));
     }
 }
