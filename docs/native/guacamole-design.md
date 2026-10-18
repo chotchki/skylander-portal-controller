@@ -687,8 +687,9 @@ and the live registry agrees field for field.
   `igBlendMatrixSelect` palettes → `tfbRuntimeTechniqueInstance` → `igEdgeGeometryAttr` → the
   `igPS3EdgeGeometry` segments. Beside it `_combinerPrototype` → `igSkeleton2` (the Alchemy skeleton and the
   inverse joints the palette indexes), and `_animationSet` → `AnimationInfo` → `tfbPhysicsAnimation`, whose
-  `_data` is a Havok clip or a `0xDEADBEEF` lip-sync block. Eruptor: 34 bones, 33 inverse joints, 2 meshes
-  over 3 segments, 44 `igImage2`, a 185-slot clip table with 32 filled.
+  `_data` is a Havok clip or a `0xDEADBEEF` lip-sync block. Eruptor: 34 `igSkeleton2` bones, 33 inverse
+  joints, 2 meshes over 3 segments, 44 `igImage2` in `level.bld` (the `.arc` beside it adds 16
+  upgrade-screen textures, 60 in all), a 185-slot clip table with 32 filled.
 
 #### Textures (AC.6)
 
@@ -710,20 +711,27 @@ our own writer, BC1_RGBA_UNORM, BC3_UNORM and R8_UNORM with an `rrr1` swizzle).
 - Blocks are already in BC byte order, so the endian fix is the identity: read little-endian, 18,101,440
   of 18,101,440 DXT5 colour blocks with distinct endpoints are four-colour.
 - Confirmed in the June savestate's RSX state: 1,092 resident `igImage2` are byte-identical to their file
-  blocks and equal level for level after our untile, and 22 bound texture units over 18 `_tile` DXT images
-  show the linear bit CLEAR (swizzled) with kind, size and mip count matching. Not exercised yet: a linear
-  image's pitch, a bound L8 and the hero's own 60 (AC.15).
+  blocks and equal level for level after our untile, and 22 texture-unit states over 18 `_tile` DXT images
+  (seen across the ring's draws, on units 0 and 1 only) show the linear bit CLEAR (swizzled) with kind,
+  size and mip count matching. Not exercised yet: a linear image's pitch, a bound L8 and the hero's own 60
+  (AC.15).
 - Which unit is which (AC.10): `tfbRuntimeTechniqueInstance._materialPass` lists `tfbAlphaTextureUnitIDAttr`
   binds and `igAttr._cachedUnitID` is the unit. All 2,243 character techniques bind unit 0 exactly once;
   colour sits at 0, `_n`/`_nrm` only at 4 and `_s`/`_sp` only at 6, and Eruptor's rim map at 3.
 
 #### Edge meshes, and where skinning runs (AC.7)
 
-Verdict: the SPU skins. Edge decompression and skinning run in the `EdgeGeometry` SPURS job inside the
-EBOOT (which the 20-image SPU census missed, it only counted ELFs), and no vertex-shader variant compiles
-skinning (that bit is absent from all 5,120 compiled VS variants, per the AE materials research), so RSX
-only ever gets positions the SPU already posed. Our decoder replaces that job; nothing in it needed
-decompiling. `guac_formats::edge` ([`crates/guac-formats/src/edge.rs`](../../crates/guac-formats/src/edge.rs)).
+Verdict: the SPU skins the heroes, a strong inference no skinned draw has confirmed yet. Edge
+decompression and skinning run in the `EdgeGeometry` SPURS job inside the EBOOT (which the 20-image SPU
+census missed, it only counted ELFs), whose scratch holds the live skin palettes (below).
+`tfbmulti2.fx`, which draws 2,201 of the 2,243 character techniques, sets its skinning bit on none of its
+5,120 compiled vertex-shader variants (per the AE materials research). The other 42 use `tfbwarp.fx`,
+whose 2 skinning variants of 4 (like `tfbshadow.fx`'s) take an `ig_matrix_blending` constant, so RSX
+skinning does exist in the shader set (whether any of those 42 draw skinned segments is unchecked; the SPU
+config of the segments under each technique says). The savestate only caught unskinned draws, so the SPU's
+skinned output stays unobserved until AC.13 records posed vs bind on Eruptor's draw. Our decoder replaces
+that job; nothing in it needed decompiling. `guac_formats::edge`
+([`crates/guac-formats/src/edge.rs`](../../crates/guac-formats/src/edge.rs)).
 
 - Two SPU configs on the characters, unskinned (1,897 segments) and skinned (424); anything else is refused.
   The rest of the disc holds 4 segments on other configs, left for the level reader that needs them.
@@ -748,9 +756,10 @@ decompiling. `guac_formats::edge` ([`crates/guac-formats/src/edge.rs`](../../cra
   positions in place from `_spuVertexes0` (difference exactly 0), F16 UVs and U8N colour are exact.
 - Edge culling is ON: `igPS3EdgeManager._cullingState` 1 and both `_disableStaticCulling` and
   `_disableSkinnedCulling` 0 in the live state, and 10 of the 12 segments draw fewer triangles than they
-  hold (96 → 54, 240 → 202). So a capture holds an ordered SUBSET of the decode, and decision 5's "equal
-  triangle set" needs that wording or the two flags poked to 1 in guest memory first (chotchki's call,
-  AC.16).
+  hold (96 → 54, 240 → 202). So a capture holds an ordered SUBSET of the decode, and AC's index tolerance
+  ("each draw's triangle set is equal to ours", decision 5 in
+  [`ac-giants-decode-gate/design.md`](../../openspec/changes/ac-giants-decode-gate/design.md)) needs that
+  wording or the two flags poked to 1 in guest memory first (chotchki's call, AC.16).
 - Palettes (the savestate's 43 skinned jobs over 8 NPC models): blend-index (`_inverseJointArray`) order,
   48-byte row-major 3×4, MODEL space with a separate local-to-world per job, the two DMA sources at
   `_skinMatricesByteOffsets[0]` and `[1]`, bones mapped by name.
@@ -783,15 +792,16 @@ Wii); [HavokLib](https://github.com/PredatorCZ/HavokLib) is GPL-3.0 and was only
 - Census, every character archive: 120 skeletons, 3,920 clips and 12 empty containers parse, 0 failures;
   30 fps on 3,822 clips, 24 fps on 96. 262 clips carry the ADDITIVE blend hint; how the game layers them
   waits for an oracle comparison on one (the hero's idle doesn't use it).
-- Eruptor: `Eruptor.ma` is J_root plus 33 bones whose names and parents agree with `igSkeleton2`'s by name
-  in a different order (so bones map by name; the hero has no `_boneMappingTable`). `Eruptor_Idle.ma` is
-  1.3333 s, 41 frames at 30 fps, 33 tracks. The loop closes to 1.12e-8 and the ankles stay within 0.0047
-  while the root bobs 0.14, which needs the hierarchy, the rotations and the root translation right at
-  once.
-- On live NPC palettes (the savestate), solving the palette against every clip with our decode lands 13 of
-  18 instances on one sharp minimum within 9.4e-7 translation and 4.8e-7 rad (BoxTortoise_Idle at 1.1710 s
-  and 1.0225 s, Bird_Idle, FlyingFlocker_Flying, Butterfly_Fly, Cannon_Idle). The other 5 are blends or
-  layered poses.
+- Eruptor: `Eruptor.ma` is one 33-bone skeleton, named `J_root` after its root bone. `igSkeleton2` has the
+  same 33 names and parents plus an `Unnamed bone` root (34), in a different order (so bones map by name;
+  the hero has no `_boneMappingTable`). `Eruptor_Idle.ma` is 1.3333 s, 41 frames at 30 fps, 33 tracks. The
+  loop closes to 1.12e-8 and the ankles stay within 0.0047 while the root bobs 0.14, which needs the
+  hierarchy, the rotations and the root translation right at once.
+- On live NPC palettes (the savestate), solving the palette against every clip with our decode lands 12 of
+  18 instances on one sharp minimum within 9.4e-7 translation and 4.8e-7 rad (6 Bird_Idle, 2
+  BoxTortoise_Idle at 1.1710 s and 1.0225 s, 2 FlyingFlocker_Flying, Butterfly_Fly, Cannon_Idle). The other
+  6 are blends or layered poses (4 goats 0.034 off their idle, a tortoise 0.152 off look-right, Mabu 0.275
+  off a run).
 - None of the 20 SPU ELF images is Havok (all FMOD) and the SPURS jobs found so far are Edge's, so Havok
   PROBABLY runs on the PPU and physics parity needs no SPU decompilation. Not proven: the EBOOT imports
   `cellSpursJq` (12 functions), so other non-ELF jobs could exist; following those imports' callers in
@@ -806,11 +816,11 @@ point opposite ways:
   joints mirror on all 10 L/R pairs (within 3e-6) and Alchemy's break only at the right wrist and palm.
   The 39 vertices `J_palm_R` dominates centre 0.148 from Havok's joint and 0.349 from Alchemy's (the left
   palm's 53 sit 0.034 from theirs), and skinned with Alchemy's bind at the reference pose the right hand moves
-  up to 0.239 (5.1% of the 4.643 `igAABox` diagonal) and sits off the mirror by up to 0.138.
+  up to 0.239 (5.1% of the 4.643 `igAABox` diagonal) and sits off the mirror by up to 0.138. Weakening
+  it: the skin weights themselves aren't mirror-symmetric (the palm counts above, the wrists 138 vs 132).
 - The savestate's statistical lean, for Alchemy's. On the live NPC palettes, where the two binds differ by
   more than 7e-7 the Alchemy bind fits 9 of 9 (23 of 29 above 3e-7). Not decisive: no resident skeleton's
-  binds differ by more than 1e-6, and Eruptor's skin weights aren't mirror-symmetric (palm 39 vs 53
-  vertices).
+  binds differ by more than 1e-6.
 
 Eruptor's own palette settles it (AC.17). Until then the working assumption (palette = Havok model pose ×
 Alchemy inverse joint) is `hero_view`'s default, and `--bind havok` draws the other one.
@@ -929,13 +939,18 @@ cellar that's gone (a shipped Mac bug with its own backlog line). The copy adds 
 and an ad-hoc signature, lives in the research dir outside the repo and reaches playable no-GUI Giants at
 54.9 fps over 30 s (`live_launch` passed).
 
-Why `accfecd2d` dies: Metal's `attachmentIndex(220) must be < 8`, right after GPU detection. Upstream
-`7022a322a` (2026-09-19, inside our pin window) warms the shader interpreter with 2-4 colour attachments
-against a render pass that has one, a Vulkan valid-usage violation. MoltenVK 1.4.2 (Homebrew's, not
-bundled) indexes its attachment table with no bounds check, reads garbage and Metal asserts on it (hence
-220, and why it can be intermittent). Upstream fixed it the day after our pin (`c938d3e049`,
-`d08d568d5e`), and `Shader Mode: Async Recompiler (multi-threaded)` skips the interpreter warm-up, so it
-should dodge the crash without a rebuild (one boot confirms). Windows drivers may tolerate it, untested.
+Why `accfecd2d` dies, most likely (read from source, not confirmed by a run): Metal's
+`attachmentIndex(220) must be < 8`, right after GPU detection, and the crash report shows only the RSX
+thread creating a pipeline (`vk::glsl::program::link` into MoltenVK's `addFragmentOutputToPipeline`).
+Upstream `7022a322a` (2026-09-19, inside our pin window) warms the shader interpreter with 2-4 colour
+attachments against a render pass that has one, a Vulkan valid-usage violation. MoltenVK 1.4.2
+(Homebrew's, not bundled) indexes its attachment table with no bounds check, reads garbage and Metal
+asserts on it (which would explain 220, and why it can be intermittent). Upstream fixed it the day after
+our pin (`c938d3e049`, `d08d568d5e`), and `Shader Mode: Async Recompiler (multi-threaded)` skips the
+interpreter warm-up, so it should dodge the crash without a rebuild. None of the cheap confirmations has
+run: one boot in that mode (past the 24 s mark settles cause and workaround together), the log the crash
+probably left (`~/Library/Caches/rpcs3/RPCS3.log.gz`, mode 000) or a rebuild with the two fixes. Windows
+drivers may tolerate it, untested.
 It matters to the product only if the v1.10.0 prerelease ever gets promoted
 ([`openspec/backlog.md`](../../openspec/backlog.md)), and to AF's pin choice.
 
@@ -975,9 +990,10 @@ registers, 468 of 468 transform constants, 2,176 program words), and the last 3D
 records and per-job scratch survive (that's where the skin palettes came from). Render targets come back
 zero, since RPCS3 doesn't write them back, so only AC.18's FLIP still needs a real capture. Taking one is
 the same attended Cmd+S on the game window, or AF's `SAVESTATE`. The June state itself (parked on a pause
-screen in `level_213_tutotial`, the game's own spelling, so no hero is drawn) loads at `09d602fd5` only:
-it lists global version 21, and `accfecd2d` accepts only 24. Every savestate check in Giants in detail
-ran on it.
+screen in `level_213_tutotial`, the game's own spelling, so no hero is drawn) passes `09d602fd5`'s
+version check and fails `accfecd2d`'s (it lists global version 21, `accfecd2d` accepts only 24). That's a
+version-table check, not a load: no `--savestate` boot of it has run, and one settles it. Every savestate
+check in Giants in detail parsed it offline.
 
 What it lacks:
 
