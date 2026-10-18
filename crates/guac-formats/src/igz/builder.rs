@@ -293,7 +293,8 @@ impl IgzBuilder {
                 records.push((k, list.len() as u32, pack_locations(&list)));
             }
         }
-        // Giants' kind 8: one big-endian u32, the first object's location.
+        // Giants' kind 8: one big-endian u32, 4 on the disc (the first
+        // object's location, or a constant).
         if self.giants_kind_8 && !objects.is_empty() {
             records.push((8, 1, objects[0].0.to_be_bytes().to_vec()));
         }

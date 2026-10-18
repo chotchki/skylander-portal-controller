@@ -3,13 +3,15 @@
 //! (openspec AC.5). A header and section table come first, then the fixup
 //! section, then the data sections a [`Location`] indexes. Fixup records hold
 //! the tables and the nibble-packed lists saying which words are pointers,
-//! imports, handles, strings, null memory refs or metaobjects ([`kind`]);
+//! imports, handles, strings, null memory refs or named external refs ([`kind`]);
 //! kinds this reader doesn't know (Giants writes kind 8 in every file) are
 //! kept raw. Parsing checks every fixup against the file, and reads refuse an
 //! unmarked non-zero word rather than guess.
 
 #[cfg(any(test, feature = "test-fixtures"))]
 pub mod builder;
+
+use std::collections::HashSet;
 
 use crate::reader::Reader;
 use crate::{ErrorKind, FormatError, fnv1a32};
@@ -32,7 +34,7 @@ pub const RECORD_HEADER_LEN: usize = 0x18;
 pub const MEMORY_PRESENT: u32 = 0x8000_0000;
 /// Bits 0-26 of a size word: the byte count. Bits 27-30 are the alignment.
 pub const MEMORY_SIZE_MASK: u32 = 0x07FF_FFFF;
-/// The flag on import and metaobject words; the bits below index EXID or EXNM.
+/// The flag on import and named external words; the bits below index EXID or EXNM.
 pub const INDEX_FLAG: u32 = 0x8000_0000;
 /// Locations address 24 bits of offset in each section.
 pub const MAX_OFFSET: u32 = 0x00FF_FFFF;
@@ -66,7 +68,8 @@ pub mod kind {
     pub const RSTR: u32 = 0xE;
     /// Size words of null memory refs, a location list.
     pub const NULL_MEMORY_REFS: u32 = 0xF;
-    /// Metaobject words (`0x80000000 | EXNM index`), a location list.
+    /// Named external refs (`0x80000000 | EXNM index`), a location list:
+    /// metaobjects (namespace `metaobject`) and named objects in level.bld.
     pub const META_OBJECTS: u32 = 0x10;
 
     /// Every kind this reader interprets.
@@ -309,6 +312,8 @@ pub enum Ref<'a> {
     String(&'a [u8]),
     /// The size word of a memory ref the file marks null.
     NullMemoryRef,
+    /// A kind-0x10 word's EXNM entry. A class only when the namespace is
+    /// `metaobject`; level.bld also names objects (LightInfo, SpriteInfo, ...).
     MetaObject {
         index: u32,
         name: ExternalName<'a>,
@@ -335,6 +340,8 @@ pub struct Igz<'a> {
     objects: Vec<Object>,
     /// Every marked word, sorted, one marker each.
     markers: Vec<(Location, Marker)>,
+    /// Each kind-0xE target with its length, sorted.
+    string_lens: Vec<(Location, u32)>,
 }
 
 impl<'a> Igz<'a> {
@@ -381,6 +388,7 @@ impl<'a> Igz<'a> {
             handles: Vec::new(),
             objects: Vec::new(),
             markers: Vec::new(),
+            string_lens: Vec::new(),
         };
         igz.read_tables()?;
         igz.read_objects()?;
@@ -563,8 +571,8 @@ impl<'a> Igz<'a> {
     }
 
     /// The memory ref (size word, pointer) at `at`, `None` when bit 31 is
-    /// clear. A present one needs a pointer fixup on its pointer; a null one
-    /// must have none and a zero pointer.
+    /// clear. Present: unmarked size word, pointer-marked pointer; null:
+    /// kind 0xF on the size word, an unmarked zero pointer.
     pub fn memory_ref(
         &self,
         at: Location,
@@ -574,12 +582,24 @@ impl<'a> Igz<'a> {
         let ptr_at = self.next_word(at, field)?;
         let ptr = self.u32_at(ptr_at, field)?;
         let marked = self.marker_at(ptr_at);
+        let size_marker = self.marker_at(at);
         if size_word & MEMORY_PRESENT == 0 {
-            return if ptr == 0 && marked.is_none() {
-                Ok(None)
-            } else {
+            return if ptr != 0 || marked.is_some() {
                 Err(self.err_at(ptr_at, field, ErrorKind::Unsupported { value: ptr.into() }))
+            } else if size_marker != Some(Marker::NullMemoryRef) {
+                Err(self.err_at(at, field, ErrorKind::Missing))
+            } else {
+                Ok(None)
             };
+        }
+        if size_marker.is_some() {
+            return Err(self.err_at(
+                at,
+                field,
+                ErrorKind::Unsupported {
+                    value: size_word.into(),
+                },
+            ));
         }
         if marked != Some(Marker::Pointer) {
             return Err(self.err_at(ptr_at, field, ErrorKind::Missing));
@@ -674,11 +694,11 @@ impl<'a> Igz<'a> {
             Marker::String => {
                 let target = Location(value);
                 let start = self.file_offset(target, 1, field)?;
-                let section = &self.sections[1 + target.section()];
-                let end = section.offset as usize + section.len();
-                Reader::new(FORMAT, self.bytes)
-                    .cstr(start, end, field)
-                    .map(Ref::String)
+                let len = match self.string_lens.binary_search_by_key(&target, |&(l, _)| l) {
+                    Ok(i) => self.string_lens[i].1 as usize,
+                    Err(_) => self.cstr_at(target, start, field)?.len(),
+                };
+                Ok(Ref::String(&self.bytes[start..start + len]))
             }
             Marker::NullMemoryRef => Ok(Ref::NullMemoryRef),
             Marker::MetaObject if value & INDEX_FLAG == 0 => Ok(Ref::UnresolvedMeta(value)),
@@ -764,10 +784,9 @@ impl<'a> Igz<'a> {
         let tmet = self.required(kind::TMET, "TMET")?;
         self.type_names = read_strings(&r, &tmet, "TMET")?;
         // Lookups by name must be unambiguous.
-        for (i, name) in self.type_names.iter().enumerate() {
-            if self.type_names[..i].contains(name) {
-                return Err(r.err("TMET", tmet.payload_at, ErrorKind::Duplicate));
-            }
+        let mut seen = HashSet::with_capacity(self.type_names.len());
+        if !self.type_names.iter().all(|name| seen.insert(*name)) {
+            return Err(r.err("TMET", tmet.payload_at, ErrorKind::Duplicate));
         }
         let mtsz = self.required(kind::MTSZ, "MTSZ")?;
         if mtsz.count as usize != self.type_names.len() {
@@ -904,23 +923,25 @@ impl<'a> Igz<'a> {
         }
         let mut markers = Vec::with_capacity(total);
         for (marker, rec) in present {
-            for at in unpack_locations(&r, &rec, marker.field())? {
-                let value = self.u32_at(at, marker.field())?;
-                if marker == Marker::NullMemoryRef {
-                    let ptr = self.u32_at(self.next_word(at, marker.field())?, marker.field())?;
-                    if value & MEMORY_PRESENT != 0 || ptr != 0 {
-                        return Err(self.err_at(
-                            at,
-                            marker.field(),
-                            ErrorKind::Unsupported {
-                                value: value.into(),
-                            },
-                        ));
-                    }
-                } else {
-                    self.resolve(at, marker, value, marker.field())?;
+            let words = unpack_locations(&r, &rec, marker.field())?;
+            markers.extend(words.into_iter().map(|at| (at, marker)));
+        }
+        self.string_lens = self.index_strings(&markers)?;
+        for &(at, marker) in &markers {
+            let value = self.u32_at(at, marker.field())?;
+            if marker == Marker::NullMemoryRef {
+                let ptr = self.u32_at(self.next_word(at, marker.field())?, marker.field())?;
+                if value & MEMORY_PRESENT != 0 || ptr != 0 {
+                    return Err(self.err_at(
+                        at,
+                        marker.field(),
+                        ErrorKind::Unsupported {
+                            value: value.into(),
+                        },
+                    ));
                 }
-                markers.push((at, marker));
+            } else {
+                self.resolve(at, marker, value, marker.field())?;
             }
         }
         markers.sort_unstable();
@@ -928,6 +949,12 @@ impl<'a> Igz<'a> {
             return Err(self.err_at(w[1].0, w[1].1.field(), ErrorKind::Duplicate));
         }
         self.markers = markers;
+        // RVTB claims each object's type word, so no marker may sit on it.
+        for o in &self.objects {
+            if let Some(m) = self.marker_at(o.at) {
+                return Err(self.err_at(o.at, m.field(), ErrorKind::Duplicate));
+            }
+        }
         // A null memory ref's pointer word can't be marked too.
         for &(at, marker) in &self.markers {
             if marker == Marker::NullMemoryRef
@@ -938,6 +965,49 @@ impl<'a> Igz<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Each string target's length. Targets go in order and a NUL found
+    /// ahead is reused, so a section is scanned once however many point in.
+    fn index_strings(
+        &self,
+        markers: &[(Location, Marker)],
+    ) -> Result<Vec<(Location, u32)>, FormatError> {
+        let field = Marker::String.field();
+        let mut targets = Vec::new();
+        for &(at, marker) in markers {
+            if marker == Marker::String {
+                targets.push(Location(self.u32_at(at, field)?));
+            }
+        }
+        targets.sort_unstable();
+        targets.dedup();
+        let mut lens = Vec::with_capacity(targets.len());
+        // The section and file offset of the last NUL found.
+        let mut nul: Option<(usize, usize)> = None;
+        for target in targets {
+            let start = self.file_offset(target, 1, field)?;
+            let end = match nul {
+                Some((section, n)) if section == target.section() && n >= start => n,
+                _ => start + self.cstr_at(target, start, field)?.len(),
+            };
+            nul = Some((target.section(), end));
+            lens.push((target, (end - start) as u32));
+        }
+        Ok(lens)
+    }
+
+    /// The NUL-terminated bytes at `target` (file offset `start`), inside
+    /// its section.
+    fn cstr_at(
+        &self,
+        target: Location,
+        start: usize,
+        field: &'static str,
+    ) -> Result<&'a [u8], FormatError> {
+        let section = &self.sections[1 + target.section()];
+        let end = section.offset as usize + section.len();
+        Reader::new(FORMAT, self.bytes).cstr(start, end, field)
     }
 }
 
@@ -1043,6 +1113,7 @@ fn read_records<'a>(
         ));
     }
     let mut records: Vec<FixupRecord<'a>> = Vec::with_capacity(count);
+    let mut kinds = HashSet::with_capacity(count);
     let mut at = base + first;
     for _ in 0..count {
         if end - at < RECORD_HEADER_LEN {
@@ -1092,7 +1163,7 @@ fn read_records<'a>(
                 },
             ));
         }
-        if records.iter().any(|rec| rec.kind == kind) {
+        if !kinds.insert(kind) {
             return Err(r.err("record_kind", at, ErrorKind::Duplicate));
         }
         records.push(FixupRecord {

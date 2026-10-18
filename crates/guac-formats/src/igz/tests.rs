@@ -415,3 +415,82 @@ fn object_containing_finds_the_extent() {
     assert_eq!(image.field(0x60), None);
     assert_eq!(image.field(0x5C), Some(at(image.at, 0x5C)));
 }
+
+#[test]
+fn a_memory_ref_needs_the_fixups_its_kind_has() {
+    let (mut b, o) = one_object();
+    // An import, then a pointer: looks present, but the size word is marked.
+    b.import(at(o, 8), "metaobject", "igA");
+    b.pointer(at(o, 0xC), o);
+    // A handle word of 0, then a zero word: looks null, but isn't kind 0xF.
+    let data = b.section(4);
+    b.handle(at(o, 0x10), data, &[1, 2, 3, 4], 0);
+    let bytes = b.build();
+    let igz = Igz::parse(&bytes).unwrap();
+    let err = igz.memory_ref(at(o, 8), "_data").unwrap_err();
+    assert_eq!(
+        err.kind,
+        ErrorKind::Unsupported {
+            value: INDEX_FLAG.into()
+        }
+    );
+    let err = igz.memory_ref(at(o, 0x10), "_data").unwrap_err();
+    assert_eq!(err.kind, ErrorKind::Missing);
+    // Two unmarked zero words aren't a null ref either.
+    let err = igz.memory_ref(at(o, 0x18), "_data").unwrap_err();
+    assert_eq!(err.kind, ErrorKind::Missing);
+}
+
+#[test]
+fn a_marker_on_an_object_type_word_is_refused() {
+    let mut b = IgzBuilder::new();
+    b.object(0, "igA", 8);
+    let o = b.object(0, "igObjectList", 0x10);
+    b.marker(kind::POINTERS, o);
+    let err = refused(&b.build());
+    assert_eq!((err.field, err.kind), ("pointer", ErrorKind::Duplicate));
+}
+
+#[test]
+fn many_strings_into_one_run_resolve_from_one_scan() {
+    let mut b = IgzBuilder::new();
+    let o = b.object(0, "igTest", 0x400);
+    let text = b.section(1);
+    let run = b.block(text, b"abcdefghij\0klm\0", 1);
+    let other = b.section(1);
+    let tail = b.block(other, b"xyz\0", 1);
+    // Every byte of both runs, the NULs included, out of order.
+    let mut targets: Vec<(Location, &[u8])> = Vec::new();
+    for i in (0..15u32).rev() {
+        let s: &[u8] = b"abcdefghij\0klm\0";
+        let from = i as usize;
+        let len = s[from..].iter().position(|c| *c == 0).unwrap();
+        targets.push((at(run, i), &s[from..from + len]));
+    }
+    for i in 0..4u32 {
+        targets.push((at(tail, i), &b"xyz"[i as usize..]));
+    }
+    for (j, (target, _)) in targets.iter().enumerate() {
+        let word = at(o, 8 + 4 * j as u32);
+        b.put_u32(word, target.0);
+        b.marker(kind::RSTR, word);
+    }
+    let bytes = b.build();
+    let igz = Igz::parse(&bytes).unwrap();
+    for (j, (_, want)) in targets.iter().enumerate() {
+        let word = at(o, 8 + 4 * j as u32);
+        assert_eq!(igz.reference(word, "s").unwrap(), Ref::String(want));
+    }
+}
+
+#[test]
+fn a_duplicate_type_name_is_refused() {
+    let mut b = IgzBuilder::new();
+    b.object(0, "igA", 8);
+    b.object(0, "igB", 8);
+    let mut bytes = b.build();
+    let i = bytes.windows(4).position(|w| w == b"igB\0").unwrap();
+    bytes[i + 2] = b'A';
+    let err = refused(&bytes);
+    assert_eq!((err.field, err.kind), ("TMET", ErrorKind::Duplicate));
+}

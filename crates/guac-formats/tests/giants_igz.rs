@@ -69,7 +69,17 @@ impl Census {
 
         for &(at, marker) in file.markers() {
             match file.reference(at, "census") {
-                Ok(r) => self.bump(format!("ref {}", variant(&r)), 1),
+                Ok(r) => {
+                    self.bump(format!("ref {}", variant(&r)), 1);
+                    if let Ref::MetaObject { name, .. } = r
+                        && name.namespace != "metaobject"
+                    {
+                        self.bump(
+                            format!("kind 0x10 outside metaobject: {}", name.namespace),
+                            1,
+                        );
+                    }
+                }
                 Err(e) => self
                     .failures
                     .push(format!("{name}: {marker:?} at {at:?}: {e}")),
