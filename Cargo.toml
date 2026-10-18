@@ -2,6 +2,9 @@
 resolver = "2"
 members = [
     "crates/core",
+    "crates/guac-extract",
+    "crates/guac-formats",
+    "crates/guac-ir",
     "crates/guac-server",
     "crates/indexer",
     "crates/rpcs3-control",
@@ -16,6 +19,10 @@ members = [
     "tools/tailwind-build",
     "tools/wiki-scrape",
 ]
+# cargo-fuzz targets build on nightly with sanitizer flags, so they're their own
+# workspace (openspec AB, design decision 3); the stable property test in
+# guac-formats is what `cargo test --workspace` runs.
+exclude = ["crates/guac-formats/fuzz"]
 # Bare cargo commands from the repo root narrow to the server, which has
 # one bin (`skylander-portal-controller`), plus the guac-server library it
 # links (no bin, so `cargo run` stays unambiguous). Without this, `cargo run`
