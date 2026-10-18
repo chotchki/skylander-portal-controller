@@ -58,7 +58,7 @@ When a phone places the figure a slot already holds, for the profile that placed
 - **THEN** only the one taken off plays its intro
 
 ### Requirement: A resume re-places only the resuming kid's own figures
-The layout "resume last setup?" offers is the whole portal as it was, with the kid who placed each figure. When a kid accepts it, guacamole SHALL list and re-place only the figures that kid placed. Another kid's figure SHALL keep its owner and play no intro again, and a resume SHALL NOT put a figure into a slot that holds another kid's figure.
+The layout saved for "resume last setup?" is the whole portal as it was, with the kid who placed each figure. When a kid accepts it, guacamole SHALL list and re-place only the figures that kid placed. Another kid's figure SHALL keep its owner and play no intro again, and a resume SHALL NOT put a figure into a slot that holds another kid's figure.
 
 #### Scenario: The second kid resumes the same layout
 - **WHEN** two kids each placed a figure, and the one whose figure was taken off since accepts "resume last setup?"

@@ -374,13 +374,16 @@ sends nothing (AB.21: RESUME on "resume last setup?" re-sends the whole layout, 
 intro of every figure still on the portal); a slot whose last change was dropped isn't skipped, so placing
 it again repairs the card. The RPCS3 drivers still reload. The saved layout is the whole portal with each
 slot's owner, saved for every unlocked profile, so a second kid's RESUME used to re-send the first kid's
-figures as theirs: the pip moved and the intro replayed. AB.22 keeps that in the server, gated on the
+figures as theirs: the pip moved and the intro replayed. AB.22 stops that in the server, gated on the
 driver kind (`ServingApp` in [`http.rs`](../../crates/guac-server/src/http.rs)): guacamole's offer lists
-only the resumer's own slots, and its load answers 409 on a slot another profile's figure holds, which
-covers a slot another kid filled between the prompt and the tap (the phone's PLACE only targets an empty
-slot). The product keeps both as they were: its resume reloads every slot from the resumer's working copy,
-and SPEC Q105 leaves co-op resume open there. A `PreUpdate` system
-([`crates/guacamole/src/cards.rs`](../../crates/guacamole/src/cards.rs)) drains it into `PortalCards`
+only the resumer's own slots, and its load answers 409 on a slot another profile's figure holds. The
+offer comes from the saved layout, not the live portal, and a kid's layout is re-saved only while they're
+unlocked, so the 409 covers a saved slot another kid filled since (usually while the resumer was locked,
+before the prompt), plus two phones' PLACEs racing for the same empty slot. A resumed figure refused that
+way stays off and the phone toasts "Resume slot N: HTTP 409". The product keeps both as they were: its
+resume reloads every slot from the resumer's working copy, and SPEC Q105 leaves co-op resume open there.
+A `PreUpdate` system
+([`crates/guacamole/src/cards.rs`](../../crates/guacamole/src/cards.rs)) drains the channel into `PortalCards`
 through a pure reducer, and the TV rebuilds its cards from that. Failure injection works against either
 app: the mock and the native driver both implement `LoadInjector` (`skylander-rpcs3-control`'s `inject`),
 so `/api/_test/inject_load` drives both.

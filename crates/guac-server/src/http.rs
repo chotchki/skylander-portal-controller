@@ -961,9 +961,11 @@ impl ServingApp {
     }
 
     /// Whether a load by `loader` onto a slot holding `held` is refused.
-    /// guacamole refuses one onto another profile's figure (take it off first):
-    /// the phone's PLACE only targets an empty slot, so this is a RESUME whose
-    /// slot another kid filled after the prompt (AB.22). The product loads over
+    /// guacamole refuses one onto another profile's figure (take it off first),
+    /// so a RESUME can't claim a saved slot another kid filled since the
+    /// resumer's layout was last saved (only while they're unlocked, so usually
+    /// before the prompt), and a PLACE from a phone whose portal view is stale
+    /// can't knock another kid's figure off (AB.22). The product loads over
     /// anything.
     fn refuses_load_over(self, held: &SlotState, loader: Option<&str>) -> bool {
         match self {
