@@ -368,7 +368,10 @@ when no profile is unlocked). `NativePortalDriver`
 ([`crates/guacamole/src/driver.rs`](../../crates/guacamole/src/driver.rs)) errors on `load`, keeps its own
 8 slots for `read_slots` and sends `PortalChange::Placed` or `Cleared` over a bounded (64)
 `crossbeam-channel` with `try_send`: a full or closed channel drops the change, counts it and logs a warn,
-which costs a stale card, never a hung load. A `PreUpdate` system
+which costs a stale card, never a hung load. Placing the figure a slot already holds for the same owner
+sends nothing (AB.21: RESUME on "resume last setup?" re-sends the whole layout, and the TV replayed the
+intro of every figure still on the portal); a slot whose last change was dropped isn't skipped, so placing
+it again repairs the card. The RPCS3 drivers still reload. A `PreUpdate` system
 ([`crates/guacamole/src/cards.rs`](../../crates/guacamole/src/cards.rs)) drains it into `PortalCards`
 through a pure reducer, and the TV rebuilds its cards from that. Failure injection works against either
 app: the mock and the native driver both implement `LoadInjector` (`skylander-rpcs3-control`'s `inject`),

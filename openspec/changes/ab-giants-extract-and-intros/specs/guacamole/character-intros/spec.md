@@ -46,6 +46,17 @@ A placement while an intro is playing SHALL queue its intro to play after the cu
 - **WHEN** a button on the game controller is pressed during an intro
 - **THEN** that intro stops and the next queued intro, or the portal view, takes its place
 
+### Requirement: A figure already on the portal plays no intro again
+When a phone places the figure a slot already holds, for the profile that placed it there (as accepting "resume last setup?" does for a layout still on the portal), guacamole SHALL treat it as no placement: no intro plays or queues and the slot's card stays as it is. A figure taken off and put back is a new placement and plays its intro.
+
+#### Scenario: A resumed layout already on the portal
+- **WHEN** a kid accepts "resume last setup?" while the figures it lists are still on the portal, placed by that kid
+- **THEN** no intro plays or queues and the TV's cards don't change
+
+#### Scenario: A resumed layout with a figure since taken off
+- **WHEN** the layout being resumed holds one figure still on the portal and one taken off since
+- **THEN** only the one taken off plays its intro
+
 ### Requirement: Intros wait for extraction
 While extraction is still running or unavailable, a placement SHALL show the figure's card without an intro. Placements made after extraction finishes SHALL play their intros.
 

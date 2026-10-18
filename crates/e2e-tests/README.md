@@ -106,8 +106,8 @@ shows through `/api/_test/tv`, a JSON mirror of the laid-out Bevy UI
 tree (screen, join line, player count, each card's lines, portrait,
 owner pip and rect), not pixels.
 
-[`tests/guacamole_intro.rs`](tests/guacamole_intro.rs) (3 tests,
-openspec AB.11) is guacamole-only too and needs ffmpeg (`brew install
+[`tests/guacamole_intro.rs`](tests/guacamole_intro.rs) (4 tests,
+openspec AB.11 and AB.21) is guacamole-only too and needs ffmpeg (`brew install
 ffmpeg`; found on PATH or in Homebrew's folders). Each test builds an
 `IntroFixture` first: a synthetic Giants dump (a PARAM.SFO and a text
 file) and a finished extract of it whose intros are ffmpeg's `testsrc`
@@ -117,8 +117,11 @@ extract as `GUAC_EXTRACT_DIR` and trusts the dump through
 `GUAC_TEST_KNOWN_DUMP` (title id, version, manifest hash; read only by a
 `test-hooks` build), finds the extract current and runs no ffmpeg
 itself. The tests read `intro` and `intro_queue` off `/api/_test/tv` and
-skip through `/api/_test/tv/skip`. Every guacamole the harness spawns
-plays its intros muted (`GUAC_MUTE=1`).
+skip through `/api/_test/tv/skip`. AB.21's resume test re-unlocks through
+`/api/_test/unlock_session`, the hook that offers "resume last setup?"
+the way a PIN unlock does (`set_session_profile` binds the profile
+without offering it). Every guacamole the harness spawns plays its
+intros muted (`GUAC_MUTE=1`).
 
 Product-only tests skip with `SKIPPED under E2E_APP=guacamole,
 product-only: <why>` instead of failing:
