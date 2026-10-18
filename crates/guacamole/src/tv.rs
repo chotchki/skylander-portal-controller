@@ -128,6 +128,10 @@ pub(crate) struct JoinAddress;
 #[derive(Component)]
 pub(crate) struct PlayersLine;
 
+/// ServerError's message as drawn.
+#[derive(Component)]
+pub(crate) struct ErrorMessage;
+
 /// The extraction band's lines and bar fill (percent) as drawn.
 #[derive(Component)]
 pub(crate) struct ExtractTitle;
@@ -517,7 +521,23 @@ fn spawn_screen(
         }
         TvScreen::ServerError { message } => {
             ui.spawn(text("Something went wrong", 88.0, GOLD));
-            ui.spawn(text(message, 36.0, WHITE));
+            // The whole cause chain, wrapped inside the column; a path with
+            // no space to break at breaks between characters.
+            ui.spawn((
+                ErrorMessage,
+                Text::new(message),
+                TextFont {
+                    font: assets.font.clone().into(),
+                    font_size: FontSize::Px(36.0),
+                    ..default()
+                },
+                TextColor(WHITE),
+                TextLayout::new(Justify::Center, LineBreak::WordOrCharacter),
+                Node {
+                    max_width: percent(100),
+                    ..default()
+                },
+            ));
             ui.spawn(text("Press Esc or click to close.", 32.0, DIM));
         }
         TvScreen::Farewell => {
@@ -1467,6 +1487,64 @@ pub(crate) mod layout_tests {
                 "{lines:?}"
             );
             assert!(lines.contains(&"http://christophers-macbook-pro.local:8765".to_string()));
+        }
+    }
+
+    /// AA.21: a nested startup error reaches the screen whole, wrapped
+    /// inside the inset, including a deep path and a SHA-384 checksum
+    /// (96 hex digits, nowhere to break between words).
+    #[test]
+    fn a_server_error_draws_every_cause_wrapped_inside_the_inset() {
+        let deep = "/Users/someone/Library/Application Support/guacamole/and/a/much/deeper/folder/than/anyone/would/use/db.sqlite";
+        let causes = [
+            "open profile store".to_string(),
+            format!("open sqlite at {deep}"),
+            format!(
+                "migration 20261017000000 checksum {} does not match",
+                "0123456789abcdef".repeat(6)
+            ),
+        ];
+        // Formatted as boot formats a fatal error: the scope, then `{:#}`.
+        let chain = anyhow::anyhow!("{}", causes[2]).context(causes[1].clone());
+        let message = format!("{}: {chain:#}", causes[0]);
+        for (w, h, mode) in [
+            (1920, 1080, WindowMode::Tv),
+            (3840, 2160, WindowMode::Tv),
+            (1280, 720, WindowMode::Desktop),
+        ] {
+            let mut app = portal_app(w, h, mode, PortalCards::default());
+            let status = LauncherStatus {
+                screen: guac_server::state::LauncherScreen::ServerError {
+                    message: message.clone(),
+                },
+                ..Default::default()
+            };
+            app.world_mut().resource_mut::<Current>().screen =
+                screen_for(&status, &SetupView::default());
+            let laid = measure(&mut app);
+            let safe = safe_area(w, h, mode);
+            let world = app.world_mut();
+            let mut q = world
+                .query_filtered::<(&Text, &ComputedNode, &UiGlobalTransform), With<ErrorMessage>>();
+            let (drawn, node, t) = q.single(world).unwrap();
+            for cause in &causes {
+                assert!(
+                    drawn.0.contains(cause.as_str()),
+                    "{cause} not in {:?}",
+                    drawn.0
+                );
+            }
+            let rect = node_rect(node, t);
+            let line = 36.0 * h as f32 / DESIGN_HEIGHT;
+            assert!(rect.height() > 2.0 * line, "{w}x{h}: one line, {rect:?}");
+            assert!(contains(safe, rect), "{w}x{h}: {rect:?} leaves {safe:?}");
+            assert_eq!(laid.texts.len(), 3);
+            for (i, a) in laid.texts.iter().enumerate() {
+                assert!(contains(safe, *a), "{w}x{h}: {a:?} leaves {safe:?}");
+                for b in &laid.texts[i + 1..] {
+                    assert!(a.intersect(*b).is_empty(), "{a:?} overlaps {b:?}");
+                }
+            }
         }
     }
 

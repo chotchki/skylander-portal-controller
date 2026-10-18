@@ -5,16 +5,16 @@
 //! It decodes in memory: IGA, the `level.bld` IGZ, the hero walk, Edge
 //! segments, each technique's unit-0 colour texture as KTX2, the Havok
 //! skeleton and `Eruptor_Idle.ma`. Joints map by name between `igSkeleton2`
-//! and Havok, and skin with Havok's pose times an inverse bind: Alchemy's
-//! inverse joint by default (AC.8's working bind), or the inverse of Havok's
-//! reference model pose with `--bind havok`. The two disagree on J_wrist_R's
-//! subtree by 20.8 deg; AC.17 settles which the game uses. It writes nothing
-//! but `--screenshot`, refused inside any git work tree or through a symlink,
-//! and exits non-zero when the screenshot isn't written.
+//! and Havok, and skin with Havok's pose times Alchemy's inverse joint, the
+//! bind the game skins with: AC.17 fitted Eruptor's palette from three RSX
+//! captures and a savestate, and Havok's reference model pose misses
+//! J_wrist_R's subtree by 0.3631 rad on every frame, so the `--bind havok`
+//! comparison is gone (AC.22). It writes nothing but `--screenshot`, refused
+//! inside any git work tree or through a symlink, and exits non-zero when the
+//! screenshot isn't written.
 //!
 //! `cargo run -p guacamole --release --example hero_view -- [--at <s>]
-//! [--yaw <deg>] [--bind alchemy|havok] [--screenshot <png> [--frames <n>]
-//! [--offscreen]] [--unlit]`
+//! [--yaw <deg>] [--screenshot <png> [--frames <n>] [--offscreen]] [--unlit]`
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -69,19 +69,9 @@ fn main() -> Result<()> {
         .as_deref()
         .map(screenshot_path)
         .transpose()?;
-    let decoded = decode(&dump_root()?, args.bind)?;
+    let decoded = decode(&dump_root()?)?;
     ensure!(run(args, shot, decoded).is_success(), "hero_view failed");
     Ok(())
-}
-
-/// Which inverse bind the skin uses (AC.17 decides).
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
-enum Bind {
-    /// `igSkeleton2`'s inverse joints, AC.8's working bind.
-    #[default]
-    Alchemy,
-    /// The inverse of Havok's reference model pose.
-    Havok,
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -90,7 +80,6 @@ struct Args {
     at: Option<f64>,
     /// The turntable's angle while frozen, degrees.
     yaw: f32,
-    bind: Bind,
     /// Saves a frame after `frames` frames, then exits.
     screenshot: Option<PathBuf>,
     frames: u32,
@@ -111,13 +100,6 @@ impl Args {
             match arg.as_str() {
                 "--at" => a.at = Some(value()?.parse().context("--at")?),
                 "--yaw" => a.yaw = value()?.parse().context("--yaw")?,
-                "--bind" => {
-                    a.bind = match value()?.as_str() {
-                        "alchemy" => Bind::Alchemy,
-                        "havok" => Bind::Havok,
-                        v => bail!("--bind takes alchemy or havok, not {v}"),
-                    }
-                }
                 "--screenshot" => a.screenshot = Some(value()?.into()),
                 "--frames" => a.frames = value()?.parse().context("--frames")?,
                 "--offscreen" => a.offscreen = true,
@@ -228,7 +210,7 @@ struct Decoded {
     clip: havok::Clip<'static>,
 }
 
-fn decode(root: &Path, bind: Bind) -> Result<Decoded> {
+fn decode(root: &Path) -> Result<Decoded> {
     let started = Instant::now();
     let path = root.join(ARCHIVE);
     let bytes = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
@@ -280,27 +262,7 @@ fn decode(root: &Path, bind: Bind) -> Result<Decoded> {
         .clip
         .context("the idle holds no clip")?;
     let joints = JointMap::new(&skeleton, &hero.bones)?;
-    let alchemy = joints.inverse_bindposes(&hero.skeleton.inverse_joints)?;
-    let reference = havok_inverse_bindposes(&skeleton)?;
-    let off: Vec<(usize, f32)> = bind_disagreement(&reference, &alchemy)
-        .into_iter()
-        .enumerate()
-        .filter(|(_, (deg, moved))| *deg > 1e-3 || *moved > 1e-4)
-        .map(|(j, (deg, _))| (j, deg))
-        .collect();
-    println!(
-        "binds: Havok and Alchemy disagree on {} of {} joints {:?}, worst {:.2} deg; skinning with {bind:?}",
-        off.len(),
-        alchemy.len(),
-        off.iter()
-            .map(|(j, _)| skeleton.bones[*j].name.unwrap_or("?"))
-            .collect::<Vec<_>>(),
-        off.iter().map(|(_, d)| *d).fold(0.0, f32::max),
-    );
-    let inverse_bindposes = match bind {
-        Bind::Alchemy => alchemy,
-        Bind::Havok => reference,
-    };
+    let inverse_bindposes = joints.inverse_bindposes(&hero.skeleton.inverse_joints)?;
     let havoked = started.elapsed();
 
     let mut textures: Vec<(usize, DecodedTexture)> = Vec::new();
@@ -460,34 +422,6 @@ impl JointMap {
             })
             .collect()
     }
-}
-
-/// The inverse of each joint's Havok reference model pose.
-fn havok_inverse_bindposes(skeleton: &havok::Skeleton<'_>) -> Result<Vec<Mat4>> {
-    let model = skeleton
-        .model_pose(&skeleton.reference_pose)
-        .context("reference pose and parents differ in length")?;
-    Ok(model
-        .iter()
-        .map(|q| transform(q).to_matrix().inverse())
-        .collect())
-}
-
-/// Per joint, how far `havok^-1 x alchemy` is from identity: its rotation
-/// in degrees and how far it moves the joint's own origin.
-fn bind_disagreement(havok: &[Mat4], alchemy: &[Mat4]) -> Vec<(f32, f32)> {
-    havok
-        .iter()
-        .zip(alchemy)
-        .map(|(h, a)| {
-            let world = h.inverse();
-            let s = world * *a;
-            let (_, r, _) = s.to_scale_rotation_translation();
-            let origin = world.transform_point3(Vec3::ZERO);
-            let moved = (s.transform_point3(origin) - origin).length();
-            (r.angle_between(Quat::IDENTITY).to_degrees(), moved)
-        })
-        .collect()
 }
 
 /// Stored row-vector (translation in row 3), so its rows are the
@@ -900,41 +834,6 @@ mod tests {
     }
 
     #[test]
-    fn the_havok_bind_inverts_the_reference_model_pose() {
-        let mut sk = skeleton(&["J_root", "J_hip", "J_head"], &[-1, 0, 1]);
-        let quarter = [0.0, 0.5f64.sqrt(), 0.0, 0.5f64.sqrt()];
-        sk.reference_pose[0].translation = [0.0, 1.0, 0.0];
-        sk.reference_pose[1].rotation = quarter;
-        sk.reference_pose[2].translation = [2.0, 0.0, 0.0];
-        let inv = havok_inverse_bindposes(&sk).unwrap();
-        let model = sk.model_pose(&sk.reference_pose).unwrap();
-        for (i, q) in inv.iter().zip(&model) {
-            let id = transform(q).to_matrix() * *i;
-            assert!(id.abs_diff_eq(Mat4::IDENTITY, 1e-6), "{id}");
-        }
-        // J_head sits 2 along the hip's turned x: -z, so its inverse
-        // takes (0, 1, -2) home.
-        let home = inv[2].transform_point3(Vec3::new(0.0, 1.0, -2.0));
-        assert!(home.length() < 1e-6, "{home}");
-
-        // An Alchemy bind turned 20 deg about the hip shows on the hip and
-        // its child, nowhere else; the hip's own origin stays put.
-        let mut alchemy = inv.clone();
-        let hip = transform(&model[1]).to_matrix();
-        let twist = hip * Mat4::from_rotation_y(20f32.to_radians()) * hip.inverse();
-        for a in &mut alchemy[1..] {
-            *a *= twist;
-        }
-        let d = bind_disagreement(&inv, &alchemy);
-        assert!(d[0].0 < 1e-3 && d[0].1 < 1e-6, "{:?}", d[0]);
-        for (deg, _) in &d[1..] {
-            assert!((deg - 20.0).abs() < 1e-3, "{deg}");
-        }
-        assert!(d[1].1 < 1e-5, "{:?}", d[1]);
-        assert!(d[2].1 > 0.5, "{:?}", d[2]);
-    }
-
-    #[test]
     fn palette_slots_become_joint_indices() {
         let sk = skeleton(&["J_root", "J_hip", "J_head"], &[-1, 0, 0]);
         let bones = alchemy();
@@ -1198,9 +1097,8 @@ mod tests {
         assert!(parse("--frames 0").is_err());
         assert!(parse("--at").is_err());
         assert!(parse("--bogus").is_err());
-        assert_eq!(a.bind, Bind::Alchemy);
-        assert_eq!(parse("--bind havok").unwrap().bind, Bind::Havok);
-        assert_eq!(parse("--bind alchemy").unwrap().bind, Bind::Alchemy);
-        assert!(parse("--bind both").is_err());
+        // One bind, Alchemy's inverse joints (AC.17), so no switch (AC.22).
+        let e = parse("--bind havok").unwrap_err();
+        assert!(e.to_string().contains("unknown argument --bind"), "{e}");
     }
 }

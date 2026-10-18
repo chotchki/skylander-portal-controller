@@ -1,5 +1,8 @@
 //! The native portal driver (AA design decision 4): places by identity, keeps
 //! its own slots for `read_slots`, and tells the TV over a bounded channel.
+//! Placing the figure a slot already holds for the same owner (a resumed
+//! layout still on the portal, AB.21) tells the TV nothing, so no intro
+//! replays; the product's RPCS3 drivers still reload it.
 
 use std::collections::VecDeque;
 use std::path::Path;
@@ -8,9 +11,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender, TrySendError};
-use skylander_core::{SLOT_COUNT, SlotIndex, SlotState};
+use skylander_core::{FigureId, SLOT_COUNT, SlotIndex, SlotState};
 use skylander_rpcs3_control::{InjectedOutcome, LoadInjector, Placement, PortalDriver};
-use tracing::warn;
+use tracing::{info, warn};
 
 /// Room for a burst of changes; the TV drains it every frame.
 pub const PORTAL_CHANNEL_CAPACITY: usize = 64;
@@ -32,8 +35,29 @@ pub fn portal_channel() -> (Sender<PortalChange>, Receiver<PortalChange>) {
     crossbeam_channel::bounded(PORTAL_CHANNEL_CAPACITY)
 }
 
+/// The portal as the driver holds it.
+struct Slots {
+    held: [SlotState; SLOT_COUNT],
+    /// The TV got the slot's last change. A dropped one leaves it false, so
+    /// placing the same figure again repairs the card instead of skipping.
+    shown: [bool; SLOT_COUNT],
+}
+
+impl Slots {
+    /// The slot holds `figure_id` placed by `owner` and the TV shows it.
+    fn shows(&self, slot: SlotIndex, figure_id: &FigureId, owner: Option<&str>) -> bool {
+        let i = slot.as_usize();
+        self.shown[i]
+            && matches!(
+                &self.held[i],
+                SlotState::Loaded { figure_id: Some(held), placed_by, .. }
+                    if held == figure_id && placed_by.as_deref() == owner
+            )
+    }
+}
+
 pub struct NativePortalDriver {
-    slots: Mutex<[SlotState; SLOT_COUNT]>,
+    slots: Mutex<Slots>,
     tv: Sender<PortalChange>,
     /// Outcomes from `/api/_test/inject_load`, consumed by `place`.
     injected: Mutex<VecDeque<InjectedOutcome>>,
@@ -43,7 +67,10 @@ pub struct NativePortalDriver {
 impl NativePortalDriver {
     pub fn new(tv: Sender<PortalChange>) -> Self {
         Self {
-            slots: Mutex::new(std::array::from_fn(|_| SlotState::Empty)),
+            slots: Mutex::new(Slots {
+                held: std::array::from_fn(|_| SlotState::Empty),
+                shown: [true; SLOT_COUNT],
+            }),
             tv,
             injected: Mutex::new(VecDeque::new()),
             dropped: AtomicU64::new(0),
@@ -56,15 +83,15 @@ impl NativePortalDriver {
         self.dropped.load(Ordering::Relaxed)
     }
 
-    fn set(&self, slot: SlotIndex, state: SlotState) {
-        let mut slots = self.slots.lock().unwrap_or_else(|e| e.into_inner());
-        slots[slot.as_usize()] = state;
+    fn lock(&self) -> std::sync::MutexGuard<'_, Slots> {
+        self.slots.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Never blocks: a full channel costs a stale card, not a hung load.
-    fn tell_tv(&self, change: PortalChange) {
+    /// False when the TV didn't get it.
+    fn tell_tv(&self, change: PortalChange) -> bool {
         let why = match self.tv.try_send(change) {
-            Ok(()) => return,
+            Ok(()) => return true,
             Err(TrySendError::Full(_)) => "full",
             Err(TrySendError::Disconnected(_)) => "closed",
         };
@@ -73,6 +100,7 @@ impl NativePortalDriver {
             dropped,
             "the TV's portal channel is {why}; dropped a change"
         );
+        false
     }
 }
 
@@ -91,7 +119,7 @@ impl PortalDriver for NativePortalDriver {
     }
 
     fn read_slots(&self) -> Result<[SlotState; SLOT_COUNT]> {
-        Ok(self.slots.lock().unwrap_or_else(|e| e.into_inner()).clone())
+        Ok(self.lock().held.clone())
     }
 
     /// Always an error: under Native a file path means a missed arm.
@@ -103,8 +131,9 @@ impl PortalDriver for NativePortalDriver {
     }
 
     fn clear(&self, slot: SlotIndex) -> Result<()> {
-        self.set(slot, SlotState::Empty);
-        self.tell_tv(PortalChange::Cleared { slot });
+        let mut slots = self.lock();
+        slots.held[slot.as_usize()] = SlotState::Empty;
+        slots.shown[slot.as_usize()] = self.tell_tv(PortalChange::Cleared { slot });
         Ok(())
     }
 
@@ -117,15 +146,22 @@ impl PortalDriver for NativePortalDriver {
         if let Some(outcome) = injected {
             outcome.into_result()?;
         }
-        self.set(
-            slot,
-            SlotState::Loaded {
-                figure_id: Some(placement.figure_id.clone()),
-                display_name: placement.name.clone(),
-                placed_by: placement.owner.as_ref().map(|o| o.profile_id.clone()),
-            },
-        );
-        self.tell_tv(PortalChange::Placed {
+        let owner = placement.owner.as_ref().map(|o| o.profile_id.clone());
+        let mut slots = self.lock();
+        if slots.shows(slot, &placement.figure_id, owner.as_deref()) {
+            info!(
+                slot = slot.display(),
+                figure = %placement.figure_id.as_str(),
+                "already on the portal for the same owner; nothing to place"
+            );
+            return Ok(());
+        }
+        slots.held[slot.as_usize()] = SlotState::Loaded {
+            figure_id: Some(placement.figure_id.clone()),
+            display_name: placement.name.clone(),
+            placed_by: owner,
+        };
+        slots.shown[slot.as_usize()] = self.tell_tv(PortalChange::Placed {
             slot,
             placement: placement.clone(),
         });
@@ -341,6 +377,71 @@ mod tests {
                 .all(|s| matches!(s, SlotState::Empty))
         );
         assert!(w.tv.try_recv().is_err(), "an empty slot was cleared too");
+    }
+
+    /// AB.21: a resume re-sends the layout through the worker; what the
+    /// portal already holds reaches the TV once, the next new one in order.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resumed_figure_already_on_the_portal_reaches_the_tv_once() {
+        let w = worker().await;
+        let kaylee = w
+            .profiles
+            .create("Kaylee", "1234", "#e63946")
+            .await
+            .unwrap();
+        w.place(0, ERUPTOR, "Eruptor", Some(&kaylee)).await;
+        assert_eq!(placed(w.next().await).0, slot(0));
+        // The resume: Eruptor again, then Legendary Ignitor new in slot 2.
+        w.place(0, ERUPTOR, "Eruptor", Some(&kaylee)).await;
+        w.place(1, LEGENDARY_IGNITOR, "Legendary Ignitor", Some(&kaylee))
+            .await;
+        let (at, p) = placed(w.next().await);
+        assert_eq!((at, p.figure_id.as_str()), (slot(1), LEGENDARY_IGNITOR));
+        assert!(w.tv.try_recv().is_err());
+        match &w.driver.read_slots().unwrap()[0] {
+            SlotState::Loaded { placed_by, .. } => assert_eq!(placed_by, &Some(kaylee)),
+            other => panic!("expected Loaded, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn placing_what_a_slot_holds_for_the_same_owner_tells_the_tv_nothing() {
+        let (tx, tv) = portal_channel();
+        let d = NativePortalDriver::new(tx);
+        d.place(slot(0), &eruptor(Some("p1"))).unwrap();
+        assert!(matches!(tv.try_recv(), Ok(PortalChange::Placed { .. })));
+        let before = d.read_slots().unwrap();
+        d.place(slot(0), &eruptor(Some("p1"))).unwrap();
+        assert!(tv.try_recv().is_err(), "the TV heard it twice");
+        assert_eq!(d.read_slots().unwrap(), before);
+
+        // Anything else is a placement: another owner, no owner, another slot.
+        for (n, owner) in [(0, Some("p2")), (0, None), (1, Some("p2"))] {
+            d.place(slot(n), &eruptor(owner)).unwrap();
+            let (at, p) = placed(tv.try_recv().unwrap());
+            assert_eq!(at, slot(n));
+            assert_eq!(p.owner.map(|o| o.profile_id).as_deref(), owner);
+        }
+        // Lifted and put back: a new placement.
+        d.clear(slot(1)).unwrap();
+        d.place(slot(1), &eruptor(Some("p2"))).unwrap();
+        assert_eq!(tv.try_recv(), Ok(PortalChange::Cleared { slot: slot(1) }));
+        assert!(matches!(tv.try_recv(), Ok(PortalChange::Placed { .. })));
+    }
+
+    #[test]
+    fn a_placement_the_tv_missed_is_sent_again() {
+        let (tx, tv) = crossbeam_channel::bounded(1);
+        let d = NativePortalDriver::new(tx);
+        d.clear(slot(7)).unwrap();
+        d.place(slot(0), &eruptor(Some("p1"))).unwrap();
+        assert_eq!(d.dropped(), 1);
+        assert_eq!(tv.try_recv(), Ok(PortalChange::Cleared { slot: slot(7) }));
+        d.place(slot(0), &eruptor(Some("p1"))).unwrap();
+        assert!(matches!(tv.try_recv(), Ok(PortalChange::Placed { .. })));
+        // Now the TV has it, so a third is nothing.
+        d.place(slot(0), &eruptor(Some("p1"))).unwrap();
+        assert!(tv.try_recv().is_err());
     }
 
     #[test]

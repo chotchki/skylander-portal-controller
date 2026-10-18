@@ -7,8 +7,8 @@
  *
  * The buttons themselves (.menu-action*) live in
  * `phone/styles/components/action_button.css` (migrated in 9.4a) —
- * this file owns the surrounding scrim, panel, close button, chip,
- * QR card, and the .menu-actions flex wrapper.
+ * this file owns the surrounding scrim, panel, its content scroller,
+ * close button, chip, QR card, and the .menu-actions flex wrapper.
  *
  * Token-driven (uses gold scale + font-display + typography tokens)
  * so the Kaos skin (4.1.4) repalettes for free.
@@ -23,23 +23,37 @@
     animation: menu-scrim-in 220ms ease-out;
   }
 
+  /* Centred between safe-area gutters (CLAUDE.md's pattern), so a
+     notch or home bar never sits on it. The frame and its gold edge
+     stay put; `.menu-overlay-scroll` inside scrolls the content. */
   .menu-overlay-panel {
-    @apply fixed z-[210] rounded-[24px] overflow-hidden;
-    top: 50%; left: 20px; right: 20px;
+    @apply fixed z-[210] rounded-[24px] overflow-hidden flex flex-col;
+    --menu-gutter-top: max(20px, calc(env(safe-area-inset-top) + 12px));
+    --menu-gutter-bottom: max(20px, calc(env(safe-area-inset-bottom) + 12px));
+    top: calc(50% + (var(--menu-gutter-top) - var(--menu-gutter-bottom)) / 2);
+    left: 20px; right: 20px;
     transform: translateY(-50%);
-    padding: 26px 22px 22px;
     background:
       radial-gradient(ellipse 120% 80% at 50% 0%, rgba(255, 230, 120, 0.10), transparent 60%),
       linear-gradient(180deg, rgba(26, 58, 138, 0.95), rgba(10, 36, 100, 0.95) 50%, rgba(6, 20, 54, 0.98));
     border: 2px solid transparent;
     background-clip: padding-box;
     animation: menu-panel-in 0.35s cubic-bezier(.3, 1.3, .5, 1) both;
-    /* No internal scroll on the menu panel — `overflow: hidden` matches
-       the rest of the app's no-page-scroll contract. If the menu's
-       content ever exceeds `max-height`, the layout needs a real fix
-       (tighter padding, drop an optional row) rather than a scrollbar. */
-    max-height: calc(100vh - 40px);
-    max-height: calc(100svh - 40px);
+    /* The VISIBLE viewport: a browser tab that keeps its toolbars up
+       (Orion on an iPhone, AA.20) is far shorter than the screen. */
+    max-height: calc(100vh - var(--menu-gutter-top) - var(--menu-gutter-bottom));
+    max-height: calc(100dvh - var(--menu-gutter-top) - var(--menu-gutter-bottom));
+  }
+
+  /* The menu fits a phone's browser viewport with its toolbars up from
+     about 664px tall (the compact block below). Shorter than that
+     (an iPhone SE's Safari is 548px) the content scrolls here rather
+     than losing its last actions under a clipped edge: AA.20 found
+     HOLD TO SHUT DOWN unreachable that way. */
+  .menu-overlay-scroll {
+    @apply min-h-0 overflow-y-auto overscroll-contain;
+    padding: 26px 22px 22px;
+    -webkit-overflow-scrolling: touch;
   }
   .menu-overlay-panel::before {
     content: "";
@@ -54,7 +68,7 @@
   }
 
   .menu-close {
-    @apply absolute w-[30px] h-[30px] grid place-items-center rounded-lg cursor-pointer bg-transparent;
+    @apply absolute z-[1] w-[30px] h-[30px] grid place-items-center rounded-lg cursor-pointer bg-transparent;
     top: 12px; right: 12px;
     border: 1px solid rgba(245, 198, 52, 0.3);
     color: var(--color-gold-bright);
@@ -63,6 +77,15 @@
   .menu-close:hover {
     border-color: var(--color-gold-bright);
     background: rgba(245, 198, 52, 0.1);
+  }
+  /* At rest the X sits on the panel's gold, see-through as drawn. Once
+     the content scrolls under it (AA.20) it takes the panel's blue, so
+     nothing passing beneath shows through. */
+  .menu-scrolled .menu-close {
+    background: rgb(26, 58, 138);
+  }
+  .menu-scrolled .menu-close:hover {
+    background: linear-gradient(rgba(245, 198, 52, 0.1), rgba(245, 198, 52, 0.1)), rgb(26, 58, 138);
   }
 
   .menu-current-chip {
@@ -165,6 +188,17 @@
 
   .menu-actions {
     @apply flex flex-col gap-2;
+  }
+
+  /* Short viewports: the join QR and the gaps shrink so the whole menu
+     fits a current iPhone's browser tab (390x664) without scrolling. */
+  @media (max-height: 740px) {
+    .menu-overlay-scroll { padding: 18px 18px 16px; }
+    .menu-current-chip { margin-bottom: 10px; }
+    .menu-join-card { padding: 8px 14px; margin-bottom: 10px; }
+    .menu-join-label { margin-bottom: 6px; }
+    .menu-qr-frame { width: 7rem; padding: 4px; }
+    .menu-join-hint { margin-top: 4px; }
   }
 }
 

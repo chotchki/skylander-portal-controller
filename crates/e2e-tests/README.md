@@ -106,8 +106,8 @@ shows through `/api/_test/tv`, a JSON mirror of the laid-out Bevy UI
 tree (screen, join line, player count, each card's lines, portrait,
 owner pip and rect), not pixels.
 
-[`tests/guacamole_intro.rs`](tests/guacamole_intro.rs) (3 tests,
-openspec AB.11) is guacamole-only too and needs ffmpeg (`brew install
+[`tests/guacamole_intro.rs`](tests/guacamole_intro.rs) (4 tests,
+openspec AB.11 and AB.21) is guacamole-only too and needs ffmpeg (`brew install
 ffmpeg`; found on PATH or in Homebrew's folders). Each test builds an
 `IntroFixture` first: a synthetic Giants dump (a PARAM.SFO and a text
 file) and a finished extract of it whose intros are ffmpeg's `testsrc`
@@ -117,8 +117,15 @@ extract as `GUAC_EXTRACT_DIR` and trusts the dump through
 `GUAC_TEST_KNOWN_DUMP` (title id, version, manifest hash; read only by a
 `test-hooks` build), finds the extract current and runs no ffmpeg
 itself. The tests read `intro` and `intro_queue` off `/api/_test/tv` and
-skip through `/api/_test/tv/skip`. Every guacamole the harness spawns
-plays its intros muted (`GUAC_MUTE=1`).
+skip through `/api/_test/tv/skip`. AB.21's resume test re-unlocks through
+`/api/_test/unlock_session`, the hook that offers "resume last setup?"
+the way a PIN unlock does (`set_session_profile` binds the profile
+without offering it), and checks each RESUME's loads at the server over
+a WebSocket of its own (a Loading then a Loaded per slot, no error), so
+a resume that sent nothing can't pass for one that replayed nothing.
+That socket opens before the phone's: the unlock hook binds the newest
+session. Every guacamole the harness spawns plays its
+intros muted (`GUAC_MUTE=1`).
 
 Product-only tests skip with `SKIPPED under E2E_APP=guacamole,
 product-only: <why>` instead of failing:
@@ -145,11 +152,12 @@ product-only: <why>` instead of failing:
   `docs/assets/screens/`).
 
 Every other mock-harness test runs against both apps. On the Mac
-(2026-10-18, serial, `--skip ios_`, AB.11): guacamole 51 of 51 ok, 38
-run for real (13 TV + 3 intro + 22 shared) and 13 product-only skips;
-the product 48 of 51 ok, 28 run for real (25 passed, 3 failed), 7
-live-RPCS3 tests skip without `RPCS3_TEST_SERIAL` /
-`RPCS3_SKY_TEST_PATH`, plus 16 guacamole-only skips. Its 3 failures already failed at the pre-AA base (46866ce):
+(2026-10-18, serial, `--skip ios_`, after AB.21 and AA.20): guacamole
+55 of 55 ok, 42 run for real (13 TV + 4 intro + 25 shared) and 13
+product-only skips; the product 52 of 55 ok, 31 run for real (28
+passed, 3 failed), 7 live-RPCS3 tests skip without
+`RPCS3_TEST_SERIAL` / `RPCS3_SKY_TEST_PATH`, plus 17 guacamole-only
+skips. Its 3 failures already failed at the pre-AA base (46866ce):
 `edit_level_and_gold_round_trips_through_stats_strip`,
 `gold_chevrons_jump_to_bounds_and_max_round_trips` and
 `resume_prompt_offers_prior_layout`. All three are product-only `.sky`
@@ -178,6 +186,18 @@ calls a fix or G1 removes them with the `.sky` code.
   When you intentionally change a screen, regenerate on the
   same OS that committed the existing baseline and `git diff
   docs/assets/screens/` to review.
+- [`tests/smoke.rs`](tests/smoke.rs)'s
+  `every_menu_action_is_reachable_in_a_short_viewport` (openspec AA.20)
+  opens the kebab menu with a profile and a game, in Chrome's phone
+  emulation at 375x548 and 390x664 (a phone browser with its toolbars
+  up), and requires every action fully on screen once a finger scrolls
+  to it, with a tap at its centre landing on it, and the close button on
+  top and tappable, see-through at rest and filled once the content has
+  scrolled under it (the 375x548 menu scrolls). The probe is
+  `MENU_REACH_JS` in `src/lib.rs`, shared with
+  [`tests/ios_menu_reach.rs`](tests/ios_menu_reach.rs), which runs it in
+  the iOS Simulator's Safari (a tab, not the PWA). Both run against
+  either app.
 - `tests/ios_simulator_smoke.rs`, `tests/ios_two_phone.rs` —
   Mac-only iOS-Simulator-driven tests. See "iOS Simulator lane"
   below.

@@ -368,7 +368,10 @@ when no profile is unlocked). `NativePortalDriver`
 ([`crates/guacamole/src/driver.rs`](../../crates/guacamole/src/driver.rs)) errors on `load`, keeps its own
 8 slots for `read_slots` and sends `PortalChange::Placed` or `Cleared` over a bounded (64)
 `crossbeam-channel` with `try_send`: a full or closed channel drops the change, counts it and logs a warn,
-which costs a stale card, never a hung load. A `PreUpdate` system
+which costs a stale card, never a hung load. Placing the figure a slot already holds for the same owner
+sends nothing (AB.21: RESUME on "resume last setup?" re-sends the whole layout, and the TV replayed the
+intro of every figure still on the portal); a slot whose last change was dropped isn't skipped, so placing
+it again repairs the card. The RPCS3 drivers still reload. A `PreUpdate` system
 ([`crates/guacamole/src/cards.rs`](../../crates/guacamole/src/cards.rs)) drains it into `PortalCards`
 through a pure reducer, and the TV rebuilds its cards from that. Failure injection works against either
 app: the mock and the native driver both implement `LoadInjector` (`skylander-rpcs3-control`'s `inject`),
@@ -912,8 +915,8 @@ mesh mirrors itself in x to 1e-4, Havok's joints mirror on all 10 L/R pairs with
 only at the right wrist and palm, and skinned with Alchemy's bind at the reference pose the right hand moves
 up to 0.239 and sits up to 0.138 off that mirror), but it measured the asset, not what the game does with
 it: the game draws the twist. The savestate's NPC lean pointed the right way (where the two binds differ by
-more than 7e-7, Alchemy's fit 9 of 9). `hero_view`'s default `--bind alchemy` is the game's bind;
-`--bind havok` still draws the other one until AC.22 drops it. The other 12 skeletons whose binds disagree
+more than 7e-7, Alchemy's fit 9 of 9). `hero_view` skins with that bind alone
+(AC.22 dropped `--bind havok`). The other 12 skeletons whose binds disagree
 haven't met the oracle, so Alchemy's bind for them is an inference from Eruptor and the NPC lean until one
 does.
 
