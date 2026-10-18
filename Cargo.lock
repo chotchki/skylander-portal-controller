@@ -4208,6 +4208,7 @@ dependencies = [
  "ktx2",
  "lzma-rust2",
  "proptest",
+ "rrc-dump",
  "thiserror 1.0.69",
 ]
 
