@@ -30,8 +30,8 @@ const KEY: [u8; 32] = [3; 32];
 const ERUPTOR: &str = "000009-0000";
 const SPYRO: &str = "00001c-0000";
 
-/// Records every call; `load` fails so a stray file load shows up as an error
-/// too. Advertises an IPC socket, so a BootDirect that missed the Native arm
+/// Records every call and mirrors its slots like the native driver; `load`
+/// fails so a stray file load shows up as an error too. Advertises an IPC socket, so a BootDirect that missed the Native arm
 /// would take the IPC spawn.
 #[derive(Default)]
 pub(crate) struct RecordingDriver {
@@ -39,6 +39,7 @@ pub(crate) struct RecordingDriver {
     pub places: SyncMutex<Vec<(u8, Placement)>>,
     pub clears: SyncMutex<Vec<u8>>,
     pub ipc_queried: AtomicBool,
+    slots: SyncMutex<HashMap<usize, SlotState>>,
 }
 
 impl PortalDriver for RecordingDriver {
@@ -47,7 +48,10 @@ impl PortalDriver for RecordingDriver {
     }
 
     fn read_slots(&self) -> Result<[SlotState; SLOT_COUNT]> {
-        Ok(std::array::from_fn(|_| SlotState::Empty))
+        let slots = self.slots.lock().unwrap();
+        Ok(std::array::from_fn(|i| {
+            slots.get(&i).cloned().unwrap_or(SlotState::Empty)
+        }))
     }
 
     fn load(&self, slot: SlotIndex, path: &Path) -> Result<String> {
@@ -60,6 +64,7 @@ impl PortalDriver for RecordingDriver {
 
     fn clear(&self, slot: SlotIndex) -> Result<()> {
         self.clears.lock().unwrap().push(slot.as_u8());
+        self.slots.lock().unwrap().remove(&slot.as_usize());
         Ok(())
     }
 
@@ -68,6 +73,12 @@ impl PortalDriver for RecordingDriver {
             .lock()
             .unwrap()
             .push((slot.as_u8(), placement.clone()));
+        let loaded = SlotState::Loaded {
+            figure_id: Some(placement.figure_id.clone()),
+            display_name: placement.name.clone(),
+            placed_by: placement.owner.as_ref().map(|o| o.profile_id.clone()),
+        };
+        self.slots.lock().unwrap().insert(slot.as_usize(), loaded);
         Ok(())
     }
 
@@ -483,6 +494,56 @@ async fn a_restore_re_places_by_identity_and_writes_no_file() {
     );
     assert_eq!(places[1].1.owner, None);
     assert!(matches!(n.state.portal.lock().await[6], SlotState::Empty));
+}
+
+/// No process to kill under Native, so quit empties the driver too, and
+/// leaves the saved layout for "resume last setup?" alone.
+#[tokio::test(flavor = "multi_thread")]
+async fn quit_empties_the_drivers_portal_and_keeps_the_saved_layout() {
+    let n = native().await;
+    let (sid, profile_id) = n.unlocked_session().await;
+    let launch = r#"{"serial":"BLUS30968"}"#;
+    assert_eq!(
+        n.send("POST", "/api/launch", launch, Some(sid)).await,
+        StatusCode::ACCEPTED
+    );
+    let body = format!(r#"{{"figure_id":"{ERUPTOR}"}}"#);
+    let status = n
+        .send("POST", "/api/portal/slot/1/load", &body, Some(sid))
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    n.wait_loaded(0, ERUPTOR).await;
+    let saved = n
+        .state
+        .profiles
+        .load_portal_layout(&profile_id)
+        .await
+        .unwrap();
+    assert!(saved.as_deref().is_some_and(|j| j.contains(ERUPTOR)));
+
+    assert_eq!(
+        n.send("POST", "/api/quit", "", Some(sid)).await,
+        StatusCode::ACCEPTED
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while n.driver.clears.lock().unwrap().is_empty() {
+        assert!(Instant::now() < deadline, "the driver kept Eruptor");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    assert_eq!(*n.driver.clears.lock().unwrap(), vec![0]);
+    let driver_slots = n.driver.read_slots().unwrap();
+    assert!(driver_slots.iter().all(|s| matches!(s, SlotState::Empty)));
+    let portal = n.state.portal.lock().await.clone();
+    assert!(portal.iter().all(|s| matches!(s, SlotState::Empty)));
+    assert_eq!(
+        n.state
+            .profiles
+            .load_portal_layout(&profile_id)
+            .await
+            .unwrap(),
+        saved
+    );
 }
 
 #[tokio::test]

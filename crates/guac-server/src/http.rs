@@ -1540,6 +1540,10 @@ async fn quit_game(
         slots: std::array::from_fn(|_| SlotState::Empty),
     });
     let _ = state.events.send(Event::GameChanged { current: None });
+    // No process to kill under Native: empty the driver's portal and the TV's.
+    if matches!(state.driver_kind, crate::config::DriverKind::Native) {
+        let _ = state.driver_tx.send(DriverJob::ResetPortal).await;
+    }
 
     (StatusCode::ACCEPTED, "quit").into_response()
 }

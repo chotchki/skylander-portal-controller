@@ -324,6 +324,25 @@ mod tests {
         }
     }
 
+    /// Quit under Native: the driver's slots and the TV's cards both empty.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_reset_clears_the_tv_and_the_drivers_slots() {
+        let w = worker().await;
+        w.place(0, ERUPTOR, "Eruptor", None).await;
+        placed(w.next().await);
+
+        w.jobs.send(DriverJob::ResetPortal).await.unwrap();
+        assert_eq!(w.next().await, PortalChange::Cleared { slot: slot(0) });
+        assert!(
+            w.driver
+                .read_slots()
+                .unwrap()
+                .iter()
+                .all(|s| matches!(s, SlotState::Empty))
+        );
+        assert!(w.tv.try_recv().is_err(), "an empty slot was cleared too");
+    }
+
     #[test]
     fn clear_sends_cleared() {
         let (tx, tv) = portal_channel();

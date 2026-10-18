@@ -780,6 +780,10 @@ pub enum DriverJob {
         slot: SlotIndex,
     },
     RefreshPortal,
+    /// Empty the driver's own portal after a quit. Native has no process to
+    /// kill; quit already reset `portal`, so this neither broadcasts nor
+    /// persists a layout.
+    ResetPortal,
     /// **PLAN 10.8.4 direct-boot path.** Spawn RPCS3 with the given
     /// game's EBOOT.BIN as the first CLI arg, wait for the FPS: viewport
     /// (game running), then `driver.open_dialog()` so the Skylanders
@@ -1660,6 +1664,18 @@ async fn handle_job(
         }
         DriverJob::RefreshPortal => {
             refresh(driver, portal, events, figures).await?;
+        }
+        DriverJob::ResetPortal => {
+            let d = driver.clone();
+            tokio::task::spawn_blocking(move || -> Result<()> {
+                for (i, s) in d.read_slots()?.iter().enumerate() {
+                    if !matches!(s, SlotState::Empty) {
+                        d.clear(SlotIndex::new(i as u8)?)?;
+                    }
+                }
+                Ok(())
+            })
+            .await??;
         }
         DriverJob::BootDirect {
             driver_kind,
