@@ -51,11 +51,11 @@ A Series 2 or LightCore figure SHALL be an entry of its own with its own portrai
 - **THEN** both are placed, each in its own slot with its own card
 
 ### Requirement: guacamole reads no wiki data
-guacamole SHALL take its figures, names, elements and portraits from the user's disc alone, the names it matches intros by included. It SHALL start and list figures with the repository's scraped figure data (the figure list and its portrait images) absent.
+guacamole SHALL take its figures, names, elements and portraits from the user's disc alone, the names it matches intros by included, and the game picker's art from the dump's own icon. It SHALL start, offer Giants and list figures with the repository's scraped data (the figure list, its portrait images and the game box art) absent.
 
-#### Scenario: No scraped figure data
-- **WHEN** guacamole starts with the scraped figure list and portrait images missing from where it used to read them
-- **THEN** it starts normally, and once the roster has been read the collection lists all 123 figures with their portraits
+#### Scenario: No scraped data
+- **WHEN** guacamole starts with the scraped figure list, portrait images and box art missing from where it used to read them
+- **THEN** it starts normally, the game picker shows Giants with the disc's own icon, and once the roster has been read the collection lists all 123 figures with their portraits
 
 ### Requirement: No figures until the roster is read
 Until guacamole has read the roster of a recognized Giants dump, the phone's collection SHALL list no figures and SHALL say why: the figures are being read off the disc, or the dump isn't one guacamole recognizes. When the roster lands, the collection SHALL fill in within 2 seconds without the phone reloading.

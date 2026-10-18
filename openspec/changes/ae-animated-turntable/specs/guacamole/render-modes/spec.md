@@ -21,11 +21,15 @@ Drawn under the light rig of the oracle's chapter-one frame, Eruptor in REMASTER
 - **THEN** PARITY's lava reads yellow and REMASTER's reads orange, with fewer than 1% of his REMASTER pixels at full red and green
 
 ### Requirement: REMASTER decodes the disc's colours
-In REMASTER every colour the disc stores encoded for display SHALL be decoded into linear light before it's used: the colour, spec and rim textures plus the light, tint, fog and replace colours. Normal maps and plain numbers (weights, exponents, alpha references, fog distances) SHALL be used as stored, as in PARITY.
+In REMASTER every colour the disc stores encoded for display SHALL be decoded into linear light before it's used: the colour, spec and rim textures plus the light, fog and replace colours. Normal maps, tints and vertex colours (multipliers centred on half grey, not colours) and plain numbers (weights, exponents, alpha references, fog distances) SHALL be used as stored, as in PARITY.
 
 #### Scenario: The key light
 - **WHEN** a light's diffuse colour is stored as (172, 134, 18)
-- **THEN** REMASTER lights with its linear value, about (0.41, 0.21, 0.006), and PARITY with 172/255, 134/255 and 18/255
+- **THEN** REMASTER lights with its linear value, about (0.41, 0.24, 0.006), and PARITY with 172/255, 134/255 and 18/255
+
+#### Scenario: A neutral tint
+- **WHEN** a part with neutral tints is drawn in each look
+- **THEN** its tints scale it by 1.0079 in both
 
 ### Requirement: A grown-up picks the look
 A grown-up SHALL be able to switch the look from the guacamole PC without restarting it, with a key while the TV shows the portal or by starting guacamole with the look named. guacamole SHALL keep the choice across restarts.

@@ -2,12 +2,16 @@
 
 Status: DESIGN, started 2026-10-17 and revised the same day for chotchki's second, third and fourth rounds of
 decisions.
-This file owns the Guacamole track (`openspec/config.yaml` points here). Open changes:
-`openspec/changes/aa-guacamole-shell/`, `ab-giants-extract-and-intros/`, `ac-giants-decode-gate/`,
-[`ae-animated-turntable/`](../../openspec/changes/ae-animated-turntable/proposal.md) and `af-oracle-foundation/`;
-the later rungs of the ladder are lines in the Guacamole section of `openspec/backlog.md`. Until G1 the product (CLAUDE.md, SPEC.md, `docs/dev/*`) is owned where it always
-was, and it's frozen: the controller installed on the HTPC keeps playing the games and chotchki doesn't
-have to touch it until Guacamole is ready.
+This file owns the Guacamole track ([`openspec/config.yaml`](../../openspec/config.yaml) points here). Open
+changes under `openspec/changes/`: [`aa-guacamole-shell/`](../../openspec/changes/aa-guacamole-shell/proposal.md),
+[`ab-giants-extract-and-intros/`](../../openspec/changes/ab-giants-extract-and-intros/proposal.md),
+[`ac-giants-decode-gate/`](../../openspec/changes/ac-giants-decode-gate/proposal.md),
+[`ae-animated-turntable/`](../../openspec/changes/ae-animated-turntable/proposal.md) and
+[`af-oracle-foundation/`](../../openspec/changes/af-oracle-foundation/proposal.md); the later rungs of the
+ladder are lines in the Guacamole section of [`openspec/backlog.md`](../../openspec/backlog.md). Until G1 the
+product ([CLAUDE.md](../../CLAUDE.md), [SPEC.md](../../SPEC.md), `docs/dev/*`) is owned where it always was,
+and it's frozen: the controller installed on the HTPC keeps playing the games and chotchki doesn't have to
+touch it until Guacamole is ready.
 
 ## What Guacamole is
 

@@ -7,7 +7,7 @@ How the original Skylanders Giants shades a character, in our own words from wha
 ## ADDED Requirements
 
 ### Requirement: The material comes off the disc
-Each part of a character SHALL be drawn with the material the disc gives it: its textures, each texture's role (its position in the material, read against the sampler order of the material's feature set), its feature switches and its parameters. Where a material sets no value, the original's default SHALL apply: detail weights (1, 1, 1, 0.25), the rim added at scale 1, tints at neutral grey (128 of 255).
+Each part of a character SHALL be drawn with the material the disc gives it: its textures, each texture's role (its position in the material, read against the sampler order of the material's feature set), its feature switches and its parameters. Where a material sets no value, the original's default SHALL apply: a spec exponent of 1 and a detail weight of 0.25, the rim added at scale 1, tints at neutral grey (128 of 255).
 
 #### Scenario: Eruptor's body
 - **WHEN** Eruptor's body is drawn
@@ -54,6 +54,13 @@ Specular SHALL be the spec map's colour times the sum, over the three lights, of
 #### Scenario: Eruptor's sheen
 - **WHEN** Eruptor's body is drawn with fog on
 - **THEN** his spec map adds a broad sheen, his exponent being 1
+
+### Requirement: The normal specular reflects about
+Specular SHALL reflect each light about the mapped normal when the part has a normal map, else about the interpolated geometric normal when the part carries one. A part with neither SHALL use the light's own direction in place of the reflected one.
+
+#### Scenario: A spec map without a normal map or lighting
+- **WHEN** a part with a spec map and no normal map, rim layer, directional lighting or point light is drawn with fog on
+- **THEN** its specular takes each light's own direction in place of a reflection
 
 ### Requirement: No eye direction, no specular
 The eye direction SHALL exist only when the part has a spec map and the scene has fog, a point light or a rim looked up by position on. Otherwise it SHALL be zero, and a part with a spec map SHALL show no specular at all.
@@ -116,7 +123,7 @@ A material's glow SHALL come from a pass of its own: the drawn colour masked by 
 - **THEN** his body glows at its amount of 64 of 255 and his eyes by their colour map's alpha
 
 ### Requirement: The original look matches the oracle
-Drawn at the camera, pose, lights and fog of a frame the original rendered in the oracle, a character in the original look SHALL match that frame within the FLIP threshold set from the first such comparison and recorded with it.
+Drawn at the camera, pose, lights and fog of a frame the original rendered in the oracle, a character in the original look SHALL match that frame within a recorded FLIP threshold. The threshold SHALL be no looser than the first such comparison's measured error and SHALL be recorded with the residuals that comparison names (the shadowed area, any glow not yet drawn), so a later change can't drift past it.
 
 #### Scenario: Eruptor in chapter one
 - **WHEN** Eruptor is drawn at the camera, idle time, light rig and fog of an oracle frame of chapter one
