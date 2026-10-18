@@ -426,6 +426,22 @@ PARAM.SFO), not taken from the wiki.
   [madagascar-game-asset-tools](https://github.com/MaxStache/madagascar-game-asset-tools)
   `packages/tfbscript/FORMAT.md`). The VM is the documented half; the native built-ins and engine members
   behind it aren't, and they're where the reverse engineering is.
+  MEASURED on BLUS30968 (2026-10-18, a read-only census over all 5,801 IGZ through `guac-formats`, 0
+  errors; tool and tables in the research dir, outside the repo): every script offset the Wii project
+  gives holds on PS3, and the EBOOT's registry names the fields behind them (`_branchPC` is its control
+  word). 14,207 scripts (one `tfbScriptInfo` → one `OpCodeList` each, named by its `.ai` source path),
+  4,617,339 op positions over 2,596,478 shared op objects, 44 of the 61 registered op classes on disc
+  (the debug ones, `OpPrint`/`OpComment`/`OpBlock`/`OpIfElse`/`OpFlow`, never appear). Every script runs
+  on at least one actor through `Placement._script` (34,781 actors). `OpFlowBuiltInBehavior` turned out to
+  be the `flow continue` block terminator, one object per scripted file, so counting it measures nothing
+  native. The real built-in surface is the ENGINE MEMBERS: named get/set/reset properties the EBOOT
+  registers (592 across 67 classes, each with a measurement type, units and a min/max), imported by
+  (FNV-1a of the lowercased member name, FNV-1a of the namespace); the disc uses 414 of them in 66
+  namespaces, 553,024 references, UI sprites alone 18%. Most game logic is script macros
+  (`global.bld` carries 1,080 `OpDefineMacro`, the disc 212,525 `OpUseMacro` calls), not native code.
+  Control flow is a program counter over the op array with relative forward skips, and 21,774 else-if
+  skips cross the end of their enclosing block, so the VM steps a PC rather than walking a tree. The phone
+  portal plugs in at the `redoctane*` members.
 - Audio: FSB5 v1, one sample per bank, MPEG, 44.1 kHz for 97% of them. There are no FMOD event files on
   disc, so triggering lives in engine objects (`tfbSoundDataInfo`) and script macros ("Sound - VO
   Request").
@@ -793,7 +809,7 @@ Ranked by how much each could move the plan, each with the experiment that answe
 | Havok 2011.2 animation | likely compressed clips; skeletons feed everything after M1 | one skeleton and one clip, posed against a capture | AC |
 | RPCS3 run-to-run divergence | decides whether the oracle can be a test at all, and how loose the tolerances get | 10 replays from one savestate on the Mac, diff positions and RNG (the HTPC's at the bring-up) | AF |
 | A tagged MSI reinstalls the product from current source | the kids' other five games run on it. (Guacamole tables in its `db.sqlite` were the old risk here; `guacamole`'s own database resolves that one by design.) | AA's split lands as moves only and passes the product's e2e suite on the Mac at its pre-AA count before any native code; the bring-up runs the HTPC live smoke and checks the installed product from the MSI | AA, then the Windows/HTPC bring-up and every tagged release |
-| How much of Giants is script data | sizes the VM vs the native built-ins | a read-only census of `OpFlowBuiltInBehavior` and engine-import names across `character/*.bld`, confirming the PAL Wii offsets on PS3 | any time before AJ (backlog) |
+| How much of Giants is script data | sizes the VM vs the native built-ins | RETIRED 2026-10-18: the whole-disc census (Giants in detail, tfbScript) confirmed the Wii offsets on PS3 and sized the built-ins as 414 engine members in 66 namespaces; `OpFlowBuiltInBehavior` was the wrong yardstick | done, before AJ |
 | Bevy video playback | M0 depends on it, Bevy has no video player | decode one transcoded intro into a texture on the Mac (the HTPC's decode cost at the bring-up) | AB |
 | Embedding the server in a Bevy app | the bootstrap is eframe-shaped today | `guacamole` boots the server from the lib with the native driver; the product's e2e lanes stay unchanged | AA |
 | The Mac's renderer floor | the Enhanced stack at the TV's resolution with no temporal upscaler, plus synchronous pipeline compiles | a Bevy scene with CSM, SSAO, TAA and bloom at the TV's resolution on the M3 Max, GPU timings from `RenderDiagnosticsPlugin`, pipelines pre-warmed at load | AE |
@@ -845,3 +861,9 @@ deltas, what ran on which machine) and chotchki decides what comes next from tha
    (`spyrosadventure/ReSSA` is a recompilation template, not it), so it's private, unpublished or
    somewhere those searches don't reach. Nothing waits on it; it would help AJ read the Wii engine's side
    of the VM.
+   Searched again 2026-10-18 with the same result, plus a likely answer: every address the project's
+   helpers name is a decomp-toolkit auto-name (33 distinct `fn_`/`lbl_`, no symbolic name anywhere) and the
+   folder layout is [dtk-template](https://github.com/encounter/dtk-template)'s, so it's probably a local
+   auto-split of the owner's own `main.dol`, not a decompilation (hypothesis; asking xirba13 settles it).
+   Anyone with the disc can regenerate that layout, and the PS3 EBOOT plus its registry already tell AJ
+   more, so this stays closed unless something turns up.
