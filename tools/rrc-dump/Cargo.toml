@@ -1,0 +1,28 @@
+[package]
+name = "rrc-dump"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# AC.3 (openspec/changes/ac-giants-decode-gate, design decision 3). Dev tool:
+# reads an RPCS3 RSX capture (RRC v6) and writes each draw's vertex arrays,
+# index range, texture surfaces and vertex-program constants to a directory
+# OUTSIDE the repo. Never shipped. The format notes live in src/lib.rs.
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "rrc-dump"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+flate2 = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
