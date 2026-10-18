@@ -4,8 +4,9 @@
 //! Textures block for block, his segments' indexes, UVs, positions and CMP
 //! normals, the idle clip solved from the posed positions and which bind the
 //! game skins with. Ignored by default: it reads `GUAC_GIANTS_DUMP` and
-//! `GUAC_CAPTURE_DIR` (the folder holding the `*_capture.rrc.gz` files),
-//! each from the environment, else `.env.dev`:
+//! `GUAC_CAPTURE_DIR` (the folder holding AC.13's session; the three captures
+//! are pinned by name in [`CAPTURES`]), each from the environment, else
+//! `.env.dev`:
 //!
 //! `cargo test -p guac-formats --release --test giants_capture -- --ignored --nocapture`
 //!
@@ -29,18 +30,23 @@ use guac_formats::texture::{Format, MetaImage, Texture};
 use rrc_dump::Capture;
 use rrc_dump::replay::{Draw, DrawKind, VertexArray};
 
+/// AC.13's three captures, by name (timestamps, not game bytes). Pinned rather than globbed:
+/// AF writes its own RSXCAPs into `GUAC_CAPTURE_DIR`, and the asserts below are this session's
+/// (the pass pattern, three distinct idle times).
+const CAPTURES: [&str; 3] = [
+    "BLUS30968_20261018112455_capture.rrc.gz",
+    "BLUS30968_20261018112517_capture.rrc.gz",
+    "BLUS30968_20261018112528_capture.rrc.gz",
+];
 const MODEL: &str = "/Eruptor.mdl";
 const IDLE: &str = "/Eruptor_Idle.ma";
 /// Decision 5: posed positions within 1e-4 of the bounding-box diagonal.
 const POSITIONS: f64 = 1e-4;
 /// Decision 5's clip check: skinned positions within 1e-3 of the diagonal at the solved time.
 const CLIP: f64 = 1e-3;
-/// Decision 5's skeleton check: translation relative to the extent, and radians.
+/// Decision 5's skeleton check: translation relative to the extent, and radians. Also the bind
+/// gate: it already separates the binds (Alchemy's within 2.5e-6 rad, Havok's 0.36 rad off).
 const SKELETON: f64 = 1e-4;
-/// How closely the game's palette (fitted from the posed positions) must follow ours, per joint
-/// in radians and in translation, for a bind to count as the one the game skins with. The worst
-/// measured is 2.5e-6 rad and 5.5e-6 (2026-10-18); the other bind misses by 0.36 rad.
-const BIND_FIT: f64 = 1e-5;
 /// J_wrist_R's subtree: Havok's reference pose and the Alchemy inverse joints disagree on these
 /// five by a 20.8 deg (0.3631 rad) turn (AC.8).
 const WRIST_SUBTREE: [&str; 5] = [
@@ -611,18 +617,15 @@ struct Session {
 
 fn capture_paths() -> Vec<PathBuf> {
     let dir = env_or_dotenv("GUAC_CAPTURE_DIR")
-        .expect("set GUAC_CAPTURE_DIR (env or .env.dev) to the folder holding AC.13's captures");
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("{dir}: {e}"))
-        .map(|e| e.unwrap().path())
-        .filter(|p| {
-            p.file_name()
-                .is_some_and(|n| n.to_string_lossy().ends_with("_capture.rrc.gz"))
+        .expect("set GUAC_CAPTURE_DIR (env or .env.dev) to the folder holding AC.13's session");
+    CAPTURES
+        .iter()
+        .map(|name| {
+            let path = Path::new(&dir).join(name);
+            assert!(path.is_file(), "no {name} in {dir}");
+            path
         })
-        .collect();
-    paths.sort();
-    assert!(!paths.is_empty(), "no *_capture.rrc.gz in {dir}");
-    paths
+        .collect()
 }
 
 fn session() -> &'static Session {
@@ -1287,7 +1290,9 @@ fn eruptor_segments_match_the_captures() {
     let hero = &s.hero;
     let mut uv_bases: BTreeMap<usize, BTreeSet<u32>> = BTreeMap::new();
     let (mut words, mut exact) = (0usize, 0usize);
-    let mut worst_lsb = 0;
+    // Over the missed words: LSBs off per component, components off per word, and how close the
+    // unrounded field sat to the floor's boundary, in steps.
+    let (mut worst_lsb, mut worst_components) = (0, 0);
     let mut worst_tie: f64 = 0.0;
     let mut angles = [0.0f64; 3];
     let mut crate_vs_spu: f64 = 0.0;
@@ -1380,14 +1385,17 @@ fn eruptor_segments_match_the_captures() {
                 c_exact += 1;
             } else {
                 let (p, q) = (cmp_fields(predicted), cmp_fields(got));
+                let mut components = 0;
                 for k in 0..3 {
                     let lsb = (p[k] - q[k]).abs();
                     worst_lsb = worst_lsb.max(lsb);
                     if lsb > 0 {
+                        components += 1;
                         let u = spu_unrounded(ours[k], CMP_BITS[k]);
                         worst_tie = worst_tie.max((u - u.floor()).min(u.ceil() - u));
                     }
                 }
+                worst_components = worst_components.max(components);
             }
             let decodes: [fn(u32) -> [f64; 3]; 3] = [spu_decode, crate_decode, rpcs3_decode];
             for (a, decode) in angles.iter_mut().zip(decodes) {
@@ -1416,7 +1424,7 @@ fn eruptor_segments_match_the_captures() {
     );
     assert!(uv_bases.values().all(|b| b.len() == 1));
     println!(
-        "CMP under the SPU's rule (decode (2s+1)/(2^b-1), blend without renormalizing, encode floor((x(2^b-1)-1)/2)): {exact} of {words} words exact, every miss within {worst_lsb} LSB per component and {worst_tie:.1e} of a step from the rounding boundary"
+        "CMP under the SPU's rule (decode (2s+1)/(2^b-1), blend without renormalizing, encode floor((x(2^b-1)-1)/2)): {exact} of {words} words exact; over the misses at most {worst_components} component(s) off per word, {worst_lsb} LSB per component, the unrounded field within {worst_tie:.2e} of a step from the floor's boundary"
     );
     println!(
         "  worst angle against our float blend: SPU decode {:.2e} rad, crate decode {:.2e}, RPCS3 decode {:.2e}; one z step is {:.2e} rad, so decision 5's 1e-3 rad can't hold by construction (chotchki's call); the crate and SPU decodes differ by up to {crate_vs_spu:.3e} rad on his bind words",
@@ -1425,9 +1433,17 @@ fn eruptor_segments_match_the_captures() {
         angles[2],
         2.0 / 1023.0
     );
-    // The measured bound, asserted: misses are single-LSB rounding ties.
-    assert_eq!(worst_lsb, 1);
-    assert!(worst_tie < 1e-3);
+    // Upper bounds (an all-exact decode still passes): one component, one LSB, at a rounding tie;
+    // 7e-4 pins the measured 6.1e-4 (2026-10-18) with headroom and isn't derived.
+    assert!(
+        worst_components <= 1,
+        "a miss off on {worst_components} components"
+    );
+    assert!(worst_lsb <= 1, "a miss {worst_lsb} LSB off");
+    assert!(
+        worst_tie < 7e-4,
+        "a miss {worst_tie:.2e} of a step from the boundary"
+    );
     assert!(exact * 1000 > words * 998, "{exact} of {words}");
 }
 
@@ -1457,9 +1473,13 @@ fn eruptor_idle_and_bind_match_the_captures() {
             "a joint no captured vertex weights"
         );
         let fit: Vec<M4> = fit.into_iter().flatten().collect();
-        assert!(residual < BIND_FIT);
+        assert!(
+            residual <= POSITIONS * hero.diagonal,
+            "palette fit residual {residual:.2e}"
+        );
 
-        // Alchemy's inverse joints at the solved time: the palette, and the skeleton through it.
+        // Alchemy's inverse joints at the solved time: the palette, and the skeleton through it,
+        // both gated on decision 5's skeleton tolerance.
         let alchemy = hero.palette(solved.t, &hero.alchemy_inverse);
         let pose = hero.pose(solved.t);
         let (mut rot, mut trans, mut w_rot, mut w_trans) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
@@ -1470,7 +1490,7 @@ fn eruptor_idle_and_bind_match_the_captures() {
             w_rot = w_rot.max(rot_angle(&world, &pose[j]));
             w_trans = w_trans.max(dist(translation(&world), translation(&pose[j])));
         }
-        assert!(rot < BIND_FIT && trans < BIND_FIT);
+        assert!(rot < SKELETON && trans / hero.extent < SKELETON);
         assert!(w_rot < SKELETON && w_trans / hero.extent < SKELETON);
 
         // Havok's reference pose as the bind: the same palette misses J_wrist_R's subtree by the
@@ -1478,16 +1498,17 @@ fn eruptor_idle_and_bind_match_the_captures() {
         let havok = hero.palette(solved.t, &hero.havok_inverse);
         let misses: BTreeMap<usize, f64> = (0..fit.len())
             .map(|j| (j, rot_angle(&fit[j], &havok[j])))
-            .filter(|&(_, a)| a > 1e-3)
+            .filter(|&(_, a)| a > SKELETON)
             .collect();
         let havok_solve = solve(hero, &vertices, &hero.havok_inverse);
         println!(
-            "{}: Eruptor_Idle at t {:.5} s (of {d:.4}), worst vertex {:.3e} ({:.2e} of the diagonal), next best more than 0.1 s away {:.3e}; fitted palette residual {residual:.2e}, against Alchemy's bind {rot:.2e} rad / {trans:.2e}, skeleton through it {w_rot:.2e} rad / {:.2e} of the extent; Havok's bind misses {:?} by {:.4}..{:.4} rad and solves at best to {:.3} ({:.1}% of the diagonal) at t {:.5}",
+            "{}: Eruptor_Idle at t {:.5} s (of {d:.4}), worst vertex {:.3e} ({:.2e} of the diagonal), next best more than 0.1 s away {:.3e}; fitted palette residual {residual:.2e}, against Alchemy's bind {rot:.2e} rad / {trans:.2e} ({:.2e} of the extent), skeleton through it {w_rot:.2e} rad / {:.2e} of the extent (tolerance {SKELETON:.0e}); Havok's bind misses {:?} by {:.4}..{:.4} rad and solves at best to {:.3} ({:.1}% of the diagonal) at t {:.5}",
             c.name,
             solved.t,
             solved.error,
             solved.error / hero.diagonal,
             solved.far,
+            trans / hero.extent,
             w_trans / hero.extent,
             misses.keys().map(|&j| hero.joints[j]).collect::<Vec<_>>(),
             misses.values().copied().fold(f64::MAX, f64::min),
