@@ -1,0 +1,75 @@
+From 71b38b47604f39a7ecf2ed59e6a104e94adfead5 Mon Sep 17 00:00:00 2001
+From: kd-11 <karokidii@gmail.com>
+Date: Mon, 21 Sep 2026 15:46:12 +0300
+Subject: [PATCH 1/2] O1: vk: Support multiple attachments on renderpass key
+ generation
+
+(cherry picked from commit c938d3e049b976c6f00a209c7d25e8d56e75479e)
+---
+ rpcs3/Emu/RSX/VK/VKRenderPass.cpp | 14 ++++++++++----
+ rpcs3/Emu/RSX/VK/VKRenderPass.h   |  4 ++--
+ 2 files changed, 12 insertions(+), 6 deletions(-)
+
+diff --git a/rpcs3/Emu/RSX/VK/VKRenderPass.cpp b/rpcs3/Emu/RSX/VK/VKRenderPass.cpp
+index 0f3957a2d..7e99e6980 100644
+--- a/rpcs3/Emu/RSX/VK/VKRenderPass.cpp
++++ b/rpcs3/Emu/RSX/VK/VKRenderPass.cpp
+@@ -209,7 +209,7 @@ namespace vk
+ 		return key.encoded;
+ 	}
+ 
+-	u64 get_renderpass_key(VkFormat surface_format, u8 sample_count)
++	u64 get_renderpass_key(VkFormat surface_format, u8 color_attachment_count, u8 sample_count)
+ 	{
+ 		renderpass_key_blob key(0);
+ 		key.sample_count = sample_count;
+@@ -225,14 +225,17 @@ namespace vk
+ 			break;
+ 		default:
+ 			key.color_format = static_cast<u64>(surface_format);
+-			key.layout_blob = static_cast<u64>(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
++			for (u8 i = 0; i < color_attachment_count; ++i)
++			{
++				key.set_layout(i, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
++			}
+ 			break;
+ 		}
+ 
+ 		return key.encoded;
+ 	}
+ 
+-	u64 get_renderpass_key(VkFormat color_format, VkFormat depth_format, u8 sample_count)
++	u64 get_renderpass_key(VkFormat color_format, VkFormat depth_format, u8 color_attachment_count, u8 sample_count)
+ 	{
+ 		renderpass_key_blob key(0);
+ 		key.sample_count = sample_count;
+@@ -241,7 +244,10 @@ namespace vk
+ 		if (color_format != VK_FORMAT_UNDEFINED)
+ 		{
+ 			key.set_format(color_format);
+-			key.set_layout(image_index++, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
++			for (u8 i = 0; i < color_attachment_count; ++i)
++			{
++				key.set_layout(image_index++, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
++			}
+ 		}
+ 
+ 		if (depth_format != VK_FORMAT_UNDEFINED)
+diff --git a/rpcs3/Emu/RSX/VK/VKRenderPass.h b/rpcs3/Emu/RSX/VK/VKRenderPass.h
+index 4f05fb19c..bb36b81d1 100644
+--- a/rpcs3/Emu/RSX/VK/VKRenderPass.h
++++ b/rpcs3/Emu/RSX/VK/VKRenderPass.h
+@@ -10,8 +10,8 @@ namespace vk
+ 
+ 	u64 get_renderpass_key(const std::vector<vk::image*>& images, const std::vector<u8>& input_attachment_ids = {});
+ 	u64 get_renderpass_key(const std::vector<vk::image*>& images, u64 previous_key, const std::vector<u8>& input_attachment_ids = {});
+-	u64 get_renderpass_key(VkFormat surface_format, u8 sample_count = 1);
+-	u64 get_renderpass_key(VkFormat color_format, VkFormat depth_format, u8 sample_count = 1);
++	u64 get_renderpass_key(VkFormat surface_format, u8 color_attachment_count = 1, u8 sample_count = 1);
++	u64 get_renderpass_key(VkFormat color_format, VkFormat depth_format, u8 color_attachment_count = 1, u8 sample_count = 1);
+ 	VkRenderPass get_renderpass(VkDevice dev, u64 renderpass_key);
+ 
+ 	bool renderpass_has_input_attachments(u64 renderpass_key);
+-- 
+2.54.0 (Apple Git-157)
+

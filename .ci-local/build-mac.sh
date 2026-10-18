@@ -14,7 +14,17 @@
 # Prereqs: Homebrew + Xcode command line tools. Everything else is installed
 # here. Targets the same arm64 macOS the CI's build-macos job uses.
 #
-# Usage: .ci-local/build-mac.sh   (usually invoked via ../build-rpcs3.sh)
+# Usage: .ci-local/build-mac.sh [rpcs3-checkout]   (usually invoked via ../build-rpcs3.sh)
+#
+# With no argument it builds vendor/rpcs3, applying the P-series first when the
+# submodule isn't patched yet; that's the product's dev build. Any other checkout
+# (the AF oracle's, via rpcs3-patches/oracle/build.sh) must already carry the
+# series: the script builds it in <checkout>/build and patches nothing.
+#
+# BUILD_MAC_NO_BREW=1 skips the Homebrew step (install, relink, unlink) and only
+# checks the formulae are there. `brew install` upgrades a formula the local tap
+# calls outdated and the unlink pulls ffmpeg out of PATH, both machine-wide; on a
+# Mac other work shares, set it once the deps are in.
 set -euo pipefail
 
 if [ "$(uname -s)" != "Darwin" ]; then
@@ -28,7 +38,15 @@ fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENDOR="$REPO_ROOT/vendor/rpcs3"
-BUILD_DIR="$VENDOR/build"
+SRC="$VENDOR"
+if [ $# -gt 0 ]; then
+  SRC="$(cd "$1" && pwd -P)"
+fi
+IS_VENDOR=0
+if [ "$SRC" = "$VENDOR" ] || [ "$SRC" = "$(cd "$VENDOR" 2>/dev/null && pwd -P)" ]; then
+  IS_VENDOR=1
+fi
+BUILD_DIR="$SRC/build"
 BREW="$(brew --prefix)"
 
 # Pin matches CI (.github/workflows/rpcs3-patched.yml build-macos).
@@ -38,8 +56,8 @@ LLVM_VER=21
 # Pull every 3rdparty submodule EXCEPT the ones we satisfy from Homebrew
 # (llvm/opencv/SDL/feralinteractive) — exactly upstream build-mac.sh's filter.
 echo "==> submodule checkout (skipping brew-satisfied llvm/opencv/SDL)"
-git -C "$VENDOR" submodule update --init --depth=1 --jobs=8 \
-  $(awk '/path/ && !/llvm/ && !/opencv/ && !/SDL/ && !/feralinteractive/ { print $3 }' "$VENDOR/.gitmodules")
+git -C "$SRC" submodule update --init --depth=1 --jobs=8 \
+  $(awk '/path/ && !/llvm/ && !/opencv/ && !/SDL/ && !/feralinteractive/ { print $3 }' "$SRC/.gitmodules")
 
 # ---- patch series -----------------------------------------------------------
 # Apply the P-series if the working tree isn't already patched (idempotent —
@@ -48,7 +66,14 @@ git -C "$VENDOR" submodule update --init --depth=1 --jobs=8 \
 # back on an already-patched tree; a hardcoded window silently breaks whenever
 # the series grows (it did: 4 vs the 8 patches we now carry).
 PATCH_COUNT="$(ls "$REPO_ROOT"/rpcs3-patches/0*.patch | wc -l | tr -d ' ')"
-if ! git -C "$VENDOR" log --oneline -"$PATCH_COUNT" | grep -q "P1: drive the emulated Skylander"; then
+if [ "$IS_VENDOR" -eq 0 ]; then
+  # Someone else's checkout: never patch it, only refuse one without the series.
+  if [ -z "$(git -C "$SRC" log -1 --format=%h --grep='^P1: drive the emulated Skylander' HEAD)" ]; then
+    echo "error: $SRC doesn't carry the P-series; apply it first (rpcs3-patches/apply.sh $SRC)" >&2
+    exit 1
+  fi
+  echo "==> building $SRC as it stands"
+elif ! git -C "$VENDOR" log --oneline -"$PATCH_COUNT" | grep -q "P1: drive the emulated Skylander"; then
   echo "==> applying RPCS3 patch series ($PATCH_COUNT patches)"
   bash "$REPO_ROOT/rpcs3-patches/apply.sh"
 else
@@ -56,38 +81,51 @@ else
 fi
 
 # ---- Homebrew deps ----------------------------------------------------------
-export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_ENV_HINTS=1
-echo "==> installing build deps via Homebrew"
-brew install -f --overwrite --quiet \
-  cmake ninja nasm ccache "llvm@${LLVM_VER}" googletest \
-  opencv@4 sdl3 vulkan-headers vulkan-loader molten-vk \
-  qtbase qtsvg qtmultimedia qtdeclarative qtimageformats qttools
+BREW_FORMULAE=(cmake ninja nasm ccache "llvm@${LLVM_VER}" googletest
+  opencv@4 sdl3 vulkan-headers vulkan-loader molten-vk
+  qtbase qtsvg qtmultimedia qtdeclarative qtimageformats qttools)
+if [ "${BUILD_MAC_NO_BREW:-0}" = "1" ]; then
+  echo "==> BUILD_MAC_NO_BREW=1: leaving Homebrew alone, checking the deps are there"
+  for f in "${BREW_FORMULAE[@]}"; do
+    brew --prefix --installed "$f" >/dev/null 2>&1 || { echo "error: $f isn't installed (run once without BUILD_MAC_NO_BREW)" >&2; exit 1; }
+  done
+  [ -e "$BREW/opt/molten-vk/lib/libvulkan.dylib" ] || { echo "error: no libvulkan.dylib in the MoltenVK keg (run once without BUILD_MAC_NO_BREW)" >&2; exit 1; }
+  for f in qt protobuf ffmpeg fmt; do
+    if [ -e "$BREW/var/homebrew/linked/$f" ]; then
+      echo "    WARNING: $f is linked (the Homebrew step unlinks it); if the build trips on it, that's why" >&2
+    fi
+  done
+else
+  export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_ENV_HINTS=1
+  echo "==> installing build deps via Homebrew"
+  brew install -f --overwrite --quiet "${BREW_FORMULAE[@]}"
 
-# Homebrew ships Qt as split kegs (qtbase/qtsvg/qtmultimedia/...). The
-# monolithic `qt` formula, if present, owns conflicting symlinks; and the split
-# kegs may be only partially linked. RPCS3's find_package(Qt6 COMPONENTS ...)
-# resolves sub-components as *siblings of Qt6_DIR* with NO_DEFAULT_PATH, so
-# every component's cmake config must co-locate in $BREW/lib/cmake. Unlink the
-# umbrella and force-link the split formulae to guarantee that.
-echo "==> reconciling Homebrew Qt (split-keg layout)"
-brew unlink qt 2>/dev/null || true
-for f in qtbase qtsvg qtmultimedia qtdeclarative qtimageformats qttools; do
-  brew link --overwrite --force "$f" >/dev/null 2>&1 || true
-done
+  # Homebrew ships Qt as split kegs (qtbase/qtsvg/qtmultimedia/...). The
+  # monolithic `qt` formula, if present, owns conflicting symlinks; and the split
+  # kegs may be only partially linked. RPCS3's find_package(Qt6 COMPONENTS ...)
+  # resolves sub-components as *siblings of Qt6_DIR* with NO_DEFAULT_PATH, so
+  # every component's cmake config must co-locate in $BREW/lib/cmake. Unlink the
+  # umbrella and force-link the split formulae to guarantee that.
+  echo "==> reconciling Homebrew Qt (split-keg layout)"
+  brew unlink qt 2>/dev/null || true
+  for f in qtbase qtsvg qtmultimedia qtdeclarative qtimageformats qttools; do
+    brew link --overwrite --force "$f" >/dev/null 2>&1 || true
+  done
 
-# RPCS3 vendors protobuf/ffmpeg/fmt and compiles its pre-generated *.pb.h
-# gencode against the vendored protobuf. Homebrew's newer protobuf headers leak
-# in via $BREW/include (ahead of the vendored copy) and break the build with
-# "incompatible Protobuf C++ gencode". Unlink them so the vendored copies win
-# (mirrors upstream build-mac.sh, which uses USE_SYSTEM_FFMPEG=OFF too).
-echo "==> unlinking brew protobuf/ffmpeg/fmt (RPCS3 uses its vendored copies)"
-brew unlink protobuf ffmpeg fmt >/dev/null 2>&1 || true
+  # RPCS3 vendors protobuf/ffmpeg/fmt and compiles its pre-generated *.pb.h
+  # gencode against the vendored protobuf. Homebrew's newer protobuf headers leak
+  # in via $BREW/include (ahead of the vendored copy) and break the build with
+  # "incompatible Protobuf C++ gencode". Unlink them so the vendored copies win
+  # (mirrors upstream build-mac.sh, which uses USE_SYSTEM_FFMPEG=OFF too).
+  echo "==> unlinking brew protobuf/ffmpeg/fmt (RPCS3 uses its vendored copies)"
+  brew unlink protobuf ffmpeg fmt >/dev/null 2>&1 || true
 
-# RPCS3's Vulkan detection points at MoltenVK (VULKAN_SDK) but loads the real
-# loader's libvulkan.dylib; upstream symlinks it into the MoltenVK keg.
-echo "==> linking libvulkan into the MoltenVK keg"
-ln -sf "$BREW/opt/vulkan-loader/lib/libvulkan.dylib" \
-       "$BREW/opt/molten-vk/lib/libvulkan.dylib"
+  # RPCS3's Vulkan detection points at MoltenVK (VULKAN_SDK) but loads the real
+  # loader's libvulkan.dylib; upstream symlinks it into the MoltenVK keg.
+  echo "==> linking libvulkan into the MoltenVK keg"
+  ln -sf "$BREW/opt/vulkan-loader/lib/libvulkan.dylib" \
+         "$BREW/opt/molten-vk/lib/libvulkan.dylib"
+fi
 
 # ---- configure --------------------------------------------------------------
 export CC=clang CXX=clang++
@@ -101,7 +139,7 @@ export CMAKE_PREFIX_PATH="$BREW"
 export CCACHE_DIR="${CCACHE_DIR:-/tmp/ccache_dir}"
 
 echo "==> cmake configure (Ninja, brew Qt6, system MoltenVK/SDL/OpenCV, static LLVM)"
-cmake -S "$VENDOR" -B "$BUILD_DIR" -G Ninja \
+cmake -S "$SRC" -B "$BUILD_DIR" -G Ninja \
   -DBUILD_RPCS3_TESTS=OFF -DRUN_RPCS3_TESTS=OFF \
   -DCMAKE_OSX_DEPLOYMENT_TARGET=14.4 \
   -DCMAKE_OSX_SYSROOT="$(xcrun --sdk macosx --show-sdk-path)" \

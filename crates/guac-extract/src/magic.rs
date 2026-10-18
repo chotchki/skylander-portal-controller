@@ -41,6 +41,9 @@ pub const GAME_MAGICS: &[(&[u8], &str)] = &[
     (b".SFB", "PS3 disc boot file (PS3_DISC.SFB)"),
     (b"SCEUF", "PS3 system update (PS3UPDAT.PUP)"),
     (b"RRC", "RPCS3 RSX capture"),
+    // A whole-memory dump plus the hdd0/hdd1 tars; RPCS3 writes it raw, gzipped
+    // or zstd-compressed (`.SAVESTAT.zst`, its default), and the guard inflates both.
+    (b"RPCS3SAV", "RPCS3 savestate"),
 ];
 
 pub const PPC64_ELF: &str = "big-endian PPC64 ELF (a decrypted EBOOT)";

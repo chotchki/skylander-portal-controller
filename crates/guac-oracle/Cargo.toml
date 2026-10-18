@@ -1,0 +1,15 @@
+[package]
+name = "guac-oracle"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# The oracle's pure half (openspec AF, design decision 6): input scripts, traces,
+# envelopes, the comparisons and an MT19937 model, with no I/O and nothing of
+# RPCS3, so a later rung's test can depend on it without linking the emulator
+# side (tools/oracle-harness). Empty until AF.7 and AF.10 fill it.
+[lib]
+name = "guac_oracle"
+path = "src/lib.rs"
+
+[dependencies]

@@ -265,6 +265,22 @@ impl RpcsProcess {
         }
     }
 
+    /// Launch RPCS3 with an argv and environment the caller spells out in full
+    /// (openspec AF.3, the dev oracle's launch wrapper): no `SKYLANDER_BORDERLESS`
+    /// or `RPCS3_CONFIG_DIR` unless `spec.env` sets them. Unix only; Windows
+    /// reports it unsupported, since the oracle is Mac first.
+    pub fn launch_spec(spec: &LaunchSpec) -> Result<Self> {
+        #[cfg(unix)]
+        {
+            UnixRpcsProcess::launch_spec(spec).map(Self::Unix)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = spec;
+            anyhow::bail!("RpcsProcess::launch_spec is Unix only (the oracle is Mac first)")
+        }
+    }
+
     /// Launch RPCS3's **full settings GUI** for on-demand per-game config (PLAN
     /// 16.9.3): plain GUI (no `--no-gui`, no borderless/IPC env), pointed at
     /// `config_dir` so it reads the user's games and persists per-game Custom
@@ -378,6 +394,20 @@ impl RpcsProcess {
             Self::Mock(p) => p.wait_for_exit_or_force(timeout),
         }
     }
+}
+
+/// One RPCS3 launch spelled out in full, for [`RpcsProcess::launch_spec`].
+#[derive(Debug, Clone, Default)]
+pub struct LaunchSpec {
+    pub exe: PathBuf,
+    /// Everything after the executable on the command line.
+    pub args: Vec<std::ffi::OsString>,
+    /// `SKYLANDER_IPC_PATH` for the child; readiness probes and the post-exit
+    /// cleanup use it too.
+    pub ipc_path: PathBuf,
+    /// Applied in order over the caller's own environment: `Some` sets the key,
+    /// `None` removes one the child would otherwise inherit.
+    pub env: Vec<(std::ffi::OsString, Option<std::ffi::OsString>)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,0 +1,32 @@
+[package]
+name = "oracle-harness"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# openspec AF (design decisions 5 and 6). Dev tool: drives the patched RPCS3
+# oracle from an isolated HOME (home setup, the launch wrapper, the PINE client)
+# and writes only outside any work tree of this repo. Never shipped; nothing in
+# guacamole links it. The pure half (scripts, traces, comparisons) is
+# crates/guac-oracle.
+
+[lib]
+name = "oracle_harness"
+path = "src/lib.rs"
+
+[[bin]]
+name = "oracle"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+# The work-tree refusal every harness output goes through.
+rrc-dump = { path = "../rrc-dump" }
+# RpcsProcess (the launch and its lifecycle), the P1 codec and IpcPortalDriver.
+skylander-rpcs3-control = { path = "../../crates/rpcs3-control" }
+
+[dev-dependencies]
+# SlotIndex, for live_gameplay's P1 LOAD and CLEAR through the PortalDriver trait.
+skylander-core = { path = "../../crates/core" }
+tempfile = "3"

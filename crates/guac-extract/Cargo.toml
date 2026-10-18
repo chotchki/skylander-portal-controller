@@ -29,9 +29,13 @@ thiserror = { workspace = true }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 [dev-dependencies]
-# The game-magic guard (tests/no_game_bytes.rs) inflates gzip heads and builds
-# throwaway git repos to test itself in.
+# The game-magic guard (tests/no_game_bytes.rs) inflates gzip and zstd heads
+# (RPCS3's `.rrc.gz` captures and `.SAVESTAT.zst` savestates) and builds
+# throwaway git repos to test itself in. zstd (libzstd, built by zstd-sys)
+# rather than the pure-Rust ruzstd: ruzstd releases nothing of a frame until it
+# has decoded a whole window past it, more than the head the guard reads.
 flate2 = "1"
+zstd = "0.13"
 tempfile = "3"
 # SfoBuilder, for the synthetic dumps the identity tests build.
 guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }
