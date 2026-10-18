@@ -492,7 +492,7 @@ fn AdminList<F: Fn() + Send + Sync + 'static + Clone>(
                     ToastLevel::Success,
                 ),
                 Err(e) => {
-                    push_toast(toasts, &format!("Window mode change failed: {e}"));
+                    push_toast(toasts, &setting_write_failed("Window mode", &e));
                     window_mode.set(Some(cur)); // roll back
                 }
             }
@@ -522,7 +522,7 @@ fn AdminList<F: Fn() + Send + Sync + 'static + Clone>(
                     ToastLevel::Success,
                 ),
                 Err(e) => {
-                    push_toast(toasts, &format!("2\u{00d7} render change failed: {e}"));
+                    push_toast(toasts, &setting_write_failed("2\u{00d7} render", &e));
                     render_2x.set(Some(cur)); // roll back
                 }
             }
@@ -1504,5 +1504,32 @@ fn color_to_element(color: &str) -> String {
         "tech".to_string()
     } else {
         "magic".to_string() // default
+    }
+}
+
+/// Toast for a failed grown-ups setting write. Only guacamole answers 409 on
+/// these routes: the controller's settings aren't its to change.
+fn setting_write_failed(setting: &str, err: &str) -> String {
+    if err == "HTTP 409" {
+        format!("{setting} isn't available in guacamole")
+    } else {
+        format!("{setting} change failed: {err}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::setting_write_failed;
+
+    #[test]
+    fn a_409_reads_as_unavailable_in_guacamole() {
+        assert_eq!(
+            setting_write_failed("Window mode", "HTTP 409"),
+            "Window mode isn't available in guacamole"
+        );
+        assert_eq!(
+            setting_write_failed("2\u{00d7} render", "HTTP 500"),
+            "2\u{00d7} render change failed: HTTP 500"
+        );
     }
 }

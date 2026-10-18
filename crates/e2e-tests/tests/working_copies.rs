@@ -17,7 +17,7 @@ use fantoccini::Locator;
 use serde_json::json;
 
 use skylander_e2e_tests::{
-    Phone, TestServer, inject_load_outcomes, launch_giants, unlock_default_profile,
+    Phone, TestServer, inject_load_outcomes, launch_giants, product_only, unlock_default_profile,
 };
 
 // ---- 3.11: working-copy fork + reset ------------------------------------
@@ -25,6 +25,9 @@ use skylander_e2e_tests::{
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver"]
 async fn load_uses_canonical_name_not_filename() {
+    if product_only("needs a figure file (`.sky` working copies)") {
+        return;
+    }
     // Regression guard: when load_slot routes through the per-profile
     // working-copy path, that file is named `<figure_id>.sky` — a hex hash.
     // The displayed name in the slot must still be the figure's canonical
@@ -97,6 +100,9 @@ async fn load_uses_canonical_name_not_filename() {
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "PLAN 10.3.6b WIP — resume modal not appearing post-reload, see file note"]
 async fn resume_prompt_offers_prior_layout() {
+    if product_only("needs a figure file (`.sky` working copies)") {
+        return;
+    }
     // 1. P1 loads a figure onto slot 1. Server persists the layout under P1's
     //    profile via `save_portal_layout`.
     // 2. P1 reloads the page. New WS session, no resume prompt yet (no

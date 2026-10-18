@@ -4223,16 +4223,21 @@ name = "guacamole"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "bevy",
  "crossbeam-channel",
  "guac-formats",
  "guac-server",
+ "http-body-util",
  "image",
  "rfd 0.17.2",
+ "serde",
+ "serde_json",
  "skylander-core",
  "skylander-rpcs3-control",
  "tempfile",
  "tokio",
+ "tower",
  "tracing",
 ]
 
@@ -7704,6 +7709,7 @@ dependencies = [
  "anyhow",
  "fantoccini",
  "futures-util",
+ "guac-formats",
  "hex",
  "hmac",
  "ios-inspect",

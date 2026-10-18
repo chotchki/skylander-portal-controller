@@ -28,7 +28,8 @@ use fantoccini::Locator;
 use reqwest::Client;
 
 use skylander_e2e_tests::{
-    Phone, TestServer, inject_profile, set_session_profile, unlock_default_profile, unlock_session,
+    Phone, TestServer, inject_profile, product_only, set_session_profile, unlock_default_profile,
+    unlock_session,
 };
 
 // ======================================================================
@@ -287,6 +288,9 @@ async fn remove_slot(phone: &Phone, slot: u8) {
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires RPCS3_EXE, RPCS3_TEST_SERIAL, RPCS3_SKY_TEST_PATH, chromedriver, built phone SPA"]
 async fn phone_drives_real_rpcs3_load_and_clear() {
+    if product_only("drives a live RPCS3 (spawn_live)") {
+        return;
+    }
     let (serial, sky_path) = match require_env() {
         Some(t) => t,
         None => {
@@ -313,6 +317,9 @@ async fn phone_drives_real_rpcs3_load_and_clear() {
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires RPCS3_EXE, RPCS3_TEST_SERIAL, RPCS3_SKY_TEST_PATH, RPCS3_SKY_TEST_PATH_2"]
 async fn live_clear_then_load_different() {
+    if product_only("drives a live RPCS3 (spawn_live)") {
+        return;
+    }
     let (serial, sky_a, sky_b) = match require_env_two_figures() {
         Some(t) => t,
         None => {
@@ -347,6 +354,9 @@ async fn live_clear_then_load_different() {
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires RPCS3_EXE, RPCS3_TEST_SERIAL, RPCS3_SKY_TEST_PATH"]
 async fn live_spam_click_same_slot() {
+    if product_only("drives a live RPCS3 (spawn_live)") {
+        return;
+    }
     let (serial, sky_path) = match require_env() {
         Some(t) => t,
         None => {
@@ -428,6 +438,9 @@ async fn live_spam_click_same_slot() {
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires RPCS3_EXE, RPCS3_TEST_SERIAL, RPCS3_SKY_TEST_PATH, RPCS3_SKY_TEST_PATH_2"]
 async fn live_resume_after_reload() {
+    if product_only("drives a live RPCS3 (spawn_live)") {
+        return;
+    }
     let (serial, sky_a, sky_b) = match require_env_two_figures() {
         Some(t) => t,
         None => {
@@ -558,6 +571,9 @@ async fn click_game_card_for_serial(phone: &Phone, serial_short_name: &str) {
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires RPCS3_EXE, RPCS3_TEST_SERIAL, RPCS3_SKY_TEST_PATH, RPCS3_SKY_TEST_PATH_2"]
 async fn live_concurrent_edits_both_phones() {
+    if product_only("drives a live RPCS3 (spawn_live)") {
+        return;
+    }
     let (serial, sky_a, sky_b) = match require_env_two_figures() {
         Some(t) => t,
         None => {
@@ -630,6 +646,9 @@ async fn live_concurrent_edits_both_phones() {
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires RPCS3_EXE, RPCS3_TEST_SERIAL, RPCS3_SKY_TEST_PATH, RPCS3_SKY_TEST_PATH_2"]
 async fn live_independent_profiles_loads() {
+    if product_only("drives a live RPCS3 (spawn_live)") {
+        return;
+    }
     let (serial, sky_a, sky_b) = match require_env_two_figures() {
         Some(t) => t,
         None => {

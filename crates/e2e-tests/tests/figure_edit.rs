@@ -21,7 +21,7 @@ use fantoccini::Locator;
 use serde_json::json;
 
 use skylander_e2e_tests::{
-    Phone, TestServer, inject_load_outcomes, launch_giants, unlock_default_profile,
+    Phone, TestServer, inject_load_outcomes, launch_giants, product_only, unlock_default_profile,
 };
 
 /// Open the toy-box-lid search, type `query`, give the filtered grid a
@@ -47,6 +47,9 @@ async fn open_first_matching_figure(phone: &Phone, query: &str) -> anyhow::Resul
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver"]
 async fn edit_level_and_gold_round_trips_through_stats_strip() {
+    if product_only("needs a figure file (`.sky` stats, edit and reset)") {
+        return;
+    }
     let server = TestServer::spawn().expect("spawn");
     unlock_default_profile(&server.url).await.unwrap();
     launch_giants(&server.url).await.unwrap();
@@ -170,6 +173,9 @@ async fn edit_level_and_gold_round_trips_through_stats_strip() {
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver"]
 async fn gold_chevrons_jump_to_bounds_and_max_round_trips() {
+    if product_only("needs a figure file (`.sky` stats, edit and reset)") {
+        return;
+    }
     let server = TestServer::spawn().expect("spawn");
     unlock_default_profile(&server.url).await.unwrap();
     launch_giants(&server.url).await.unwrap();
@@ -328,6 +334,9 @@ async fn gold_chevrons_jump_to_bounds_and_max_round_trips() {
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver"]
 async fn stats_button_disabled_while_figure_on_portal() {
+    if product_only("needs a figure file (`.sky` stats, edit and reset)") {
+        return;
+    }
     let server = TestServer::spawn().expect("spawn");
     unlock_default_profile(&server.url).await.unwrap();
     launch_giants(&server.url).await.unwrap();

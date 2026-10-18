@@ -10,8 +10,11 @@
 mod cards;
 mod cli;
 mod driver;
+mod mirror;
 mod picker;
 mod screen;
+#[cfg(feature = "dev-tools")]
+mod shots;
 mod tv;
 
 use std::path::{Path, PathBuf};
@@ -35,9 +38,10 @@ use tracing::{info, warn};
 use crate::cards::PortalFeed;
 use crate::cli::Command;
 use crate::driver::{NativePortalDriver, PortalChange, portal_channel};
+use crate::mirror::TvMirror;
 use crate::picker::{DataRoot, Picker};
 use crate::screen::SetupView;
-use crate::tv::{FAREWELL_BEAT, ServerBridge, ServerLink, Setup, Tv};
+use crate::tv::{FAREWELL_BEAT, Framing, ServerBridge, ServerLink, Setup, Tv};
 
 fn main() -> Result<()> {
     let command = match cli::parse(std::env::args_os().skip(1)) {
@@ -64,6 +68,7 @@ fn main() -> Result<()> {
         Command::Run | Command::Help => false,
     };
     let (portal_tx, portal_rx) = portal_channel();
+    let mirror = TvMirror::default();
     // Writes nothing, so a second copy that loses the port leaves no trace.
     let loaded = match setup::load(&root).context("load guacamole's settings") {
         Ok(loaded) => loaded,
@@ -72,7 +77,7 @@ fn main() -> Result<()> {
             let mode = setup::window_mode(&setup::env());
             let no_setup = SetupView::new(false, &[], &Default::default());
             let link = failed_link(format!("{e:#}"));
-            return run_tv(link, portal_rx, no_setup, mode, root, log_guard);
+            return run_tv(link, portal_rx, no_setup, mode, root, mirror, log_guard);
         }
     };
     let cfg = loaded.config.clone();
@@ -101,7 +106,7 @@ fn main() -> Result<()> {
         migrator: &setup::MIGRATOR,
         driver_factory: Box::new(move |kind| build_driver(kind, portal_tx)),
         hooks: Hooks::default(),
-        extra_routes: None,
+        extra_routes: test_routes(&mirror),
         catalogue: Catalogue::Native {
             games: scan.games(),
         },
@@ -123,8 +128,16 @@ fn main() -> Result<()> {
         setup_view,
         cfg.window_mode,
         root,
+        mirror,
         log_guard,
     )
+}
+
+/// `/api/_test/tv` for the e2e harness; nothing outside `test-hooks`.
+fn test_routes(
+    mirror: &TvMirror,
+) -> Option<axum::Router<std::sync::Arc<guac_server::state::AppState>>> {
+    cfg!(feature = "test-hooks").then(|| mirror::routes(mirror))
 }
 
 /// `--setup` alone: the plain dialog, on the main thread before the event
@@ -153,26 +166,33 @@ fn run_tv(
     setup_view: SetupView,
     mode: WindowMode,
     root: PathBuf,
+    mirror: TvMirror,
     log_guard: WorkerGuard,
 ) -> Result<()> {
     exit_after_farewell(link.status.clone());
 
-    let exit = App::new()
-        .add_plugins(
-            DefaultPlugins
-                .set(WindowPlugin {
-                    primary_window: Some(window(mode)),
-                    ..default()
-                })
-                // `logging::init` owns the global subscriber.
-                .disable::<LogPlugin>(),
-        )
-        .insert_resource(link)
-        .insert_resource(PortalFeed(portal))
-        .insert_resource(Setup(setup_view))
-        .insert_resource(DataRoot(root))
-        .add_plugins((ServerBridge, Tv, Picker))
-        .run();
+    let mut app = App::new();
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(window(mode)),
+                ..default()
+            })
+            // `logging::init` owns the global subscriber.
+            .disable::<LogPlugin>(),
+    )
+    .insert_resource(link)
+    .insert_resource(PortalFeed(portal))
+    .insert_resource(Setup(setup_view))
+    .insert_resource(Framing(mode))
+    .insert_resource(DataRoot(root))
+    .add_plugins((ServerBridge, Tv, Picker));
+    #[cfg(feature = "dev-tools")]
+    app.add_plugins(shots::Shots);
+    if cfg!(feature = "test-hooks") {
+        app.insert_resource(mirror).add_plugins(mirror::Mirror);
+    }
+    let exit = app.run();
     info!(?exit, "guacamole exited");
     drop(log_guard);
     match exit {

@@ -165,17 +165,22 @@ fn finish_pick(mut picking: ResMut<Picking>, mut setup: ResMut<Setup>, link: Res
     }
 }
 
-/// The found list gives way to the join code after the beat or a press.
+/// The found list gives way to the join code after the beat or a press, and
+/// is dropped once a game starts over it (else a quit brings it back).
 fn leave_found(
     current: Option<Res<Current>>,
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     mut setup: ResMut<Setup>,
 ) {
-    let Some(current) = current.filter(|c| c.screen == TvScreen::Found) else {
-        return;
+    let Some(current) = current else { return };
+    let leave = match current.screen {
+        TvScreen::Found => current.since.elapsed() >= FOUND_BEAT || pressed(&keys, &mouse),
+        // Only Portal: `--setup` passes Starting on its way to Found.
+        TvScreen::Portal { .. } => true,
+        _ => false,
     };
-    if setup.0.show_found && (current.since.elapsed() >= FOUND_BEAT || pressed(&keys, &mouse)) {
+    if setup.0.show_found && leave {
         setup.0.show_found = false;
     }
 }
@@ -233,6 +238,10 @@ mod tests {
     }
 
     fn found_app(age: Duration, click: bool) -> App {
+        on_screen(TvScreen::Found, age, click)
+    }
+
+    fn on_screen(screen: TvScreen, age: Duration, click: bool) -> App {
         let mut app = App::new();
         let mut mouse = ButtonInput::<MouseButton>::default();
         if click {
@@ -241,7 +250,7 @@ mod tests {
         app.insert_resource(ButtonInput::<KeyCode>::default())
             .insert_resource(mouse)
             .insert_resource(Current {
-                screen: TvScreen::Found,
+                screen,
                 since: std::time::Instant::now().checked_sub(age).unwrap(),
                 clients: 0,
             })
@@ -398,5 +407,23 @@ mod tests {
         assert!(shown(found_app(Duration::ZERO, false)));
         assert!(!shown(found_app(FOUND_BEAT + LATE, false)));
         assert!(!shown(found_app(Duration::ZERO, true)));
+    }
+
+    #[test]
+    fn a_game_started_over_the_list_drops_it() {
+        let app = on_screen(
+            TvScreen::Portal {
+                game: "Skylanders: Giants".into(),
+            },
+            Duration::ZERO,
+            false,
+        );
+        let view = &app.world().resource::<Setup>().0;
+        assert!(!view.show_found);
+        // So the quit goes back to the join code, not the stale list.
+        assert_eq!(screen_for(&ready(), view), TvScreen::Join);
+        // `--setup` passes Starting before Found: the list survives it.
+        let starting = on_screen(TvScreen::Starting, Duration::ZERO, true);
+        assert!(starting.world().resource::<Setup>().0.show_found);
     }
 }
