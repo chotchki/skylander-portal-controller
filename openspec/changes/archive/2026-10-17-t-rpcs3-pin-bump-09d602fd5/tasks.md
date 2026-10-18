@@ -8,4 +8,4 @@
 - [x] T.4 Fix `rpcs3-patched.yml` apply-clean allowlist → P1–P8 file set (LC_ALL=C deterministic sort)
 - [x] T.5 Commit the bump + trigger the gated `rpcs3-patched.yml` full build (= R.3) → `rpcs3-patched-09d602fd5`
 - [x] T.6 Verify the build green (compile proof) + the bundled prerelease published — `rpcs3-patched-09d602fd5` (53.7MB) up; needed apply.sh CRLF normalization (3 iters) + a pin-from-gitlink fix
-- [ ] T.7 Cut v1.9.13 — fully green (mac signing + Windows bundled-RPCS3 download)
+- ~~T.7 Cut v1.9.13 — fully green (mac signing + Windows bundled-RPCS3 download)~~ (2026-10-17 review: superseded. v1.9.13 went red on macOS; v1.9.18 was the first release fully green on this pin)

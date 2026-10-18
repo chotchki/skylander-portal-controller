@@ -1,32 +1,28 @@
 # Backlog (not yet phased)
 
-Unphased ideas and tech debt, carried over verbatim from PLAN.md on 2026-10-17 (ids in older rows are PLAN-era). Promoting one means `/opsx:propose` and deleting its line here.
+Unphased ideas and tech debt, carried over verbatim from PLAN.md on 2026-10-17 (ids in older rows are PLAN-era). Promoting one means `/opsx:propose` and deleting its line here. Pruned at chotchki's 2026-10-17 review (the product is frozen): the emulator-only and .sky lines went, the phone lines stayed because the phone carries into Guacamole.
 
 **Near-term / real:**
-- **Bump RPCS3 pin past #18935 → drop the 2 local SPU-Giga patches** (back to clean P1–P8) (2026-06-25).
-- **Spike (stretch): live 2× flip while a game runs** (ex S.8) — uncertain; needs an IPC `SURFACE_SCALE` command + a runtime size flag (not the env) + mid-render swapchain recreation + CAMetalLayer extent update + controller re-fit. The swapchain-recreate-under-load is the resize path the 720p pin avoids (top-left-subrect risk). Attempt only once Phase S's boot-time toggle is solid.
-- **Phase S 2× sustained/thermal validation** (ex S.6) — the toggle is shipped + smoke-tested (cold-boot + recorder narrative clean, surface confirmed 2560×1440, no crash). Remaining: a long *warm* session on the M3 Max — sustained framerate + thermals vs 720p. Non-blocking (default off); needs real kid-play time on the laptop, which ties up the work machine — hence deferred.
 - **Wire profile rename/recolor SAVE** — phone admin EDIT (name + colour swatches) currently toasts "Profile edit saved (UI only - API pending)" over a `// TODO: wire to update_profile API`; the SAVE button is a no-op. PIN-reset / delete / Kaos-toggle DO persist. Surfaced 2026-06-28 scoping the demo Tour (excluded from A.8 — can't film a feature that doesn't work).
 **Phone UI polish** (ex 4.18.x / 9.8 — all defer-quality nice-to-haves):
 - Service worker for PWA cache + update detection (4.18.1c) — gates an iOS browser smoke re-test.
 - Profile "last used N days ago" subtext (4.18.10); per-card tagline + "currently playing" marker (4.18.12).
 - Figure-detail ghost-grid backdrop (4.18.20); ResumeModal element-tinted bezels (4.18.22) + relative-time subtext (4.18.23); MenuOverlay post-action transitions (4.18.24).
 - CSS component consolidation sweep (9.8).
-**Stat parsing** (ex 6.2.x — needs real-dump samples):
-- Trap / Vehicle / CYOS payload parse + display (6.2.1/.3/.4/.5); investigate 10 CRC-failing samples (6.2.8); pin Vehicle + CYOS `figure_id` ranges against real dumps (6.2.9).
-- Suppress RPCS3 menu-nav window flicker (6.1 — UIA fallback only).
 **iOS device validation:**
 - Paired visual-regression snapshots (10.4.5); real-iPhone Bonjour check (11.8.3); iPad + iPhone sim parity (11.8.4).
-**Demo-reel extras** (post-A.8):
-- True 2-phone co-op composite (`SceneCapture` second phone window — A.8 ships single-captured-phone); absolute `{start,end,speed}` editorial speed-map sidecar (A.9 option C — only if the per-beat head/tail/filler model proves too coarse); PWA NarrationOverlay (15.4.2); retire `screenshot_tour` (15.8.x); CI hook to upload generated MP4s as release assets (15.9.x). (Co-op/eviction, stat-edit, appearance-cycle, admin-tour are folded into the A.8 Tour.)
 **Misc:**
-- Collapse positional-slot model server-side (16.5.3); mute HEAT5150 SelfReg DLL warnings in the release log (18.8).
+- Collapse positional-slot model server-side (16.5.3).
+
+**Product leftovers** (from the 2026-10-17 review that closed T, A, 14 and U and cancelled V and R):
+- **After Guacamole is complete: macOS distribution** — "U will be address once the native implementation is complete, no rush" (chotchki). Carries U's struck boxes (U.2.3 a scripted boot check of the published build, U.7 the clean-Mac end-to-end, U.8 the docs, U.10 RPCS3_CONFIG_DIR on macOS) and U.4.1's `.app` staple that never shipped (`TODO(U.4.3)` at `tools/build-macos-app.sh:249`). Most of that is about the bundled-RPCS3 Mac release, which leaves at G1, so the real work is likely signing + shipping `guacamole` on the Mac; Phase 14's signing pipeline carries over. Facts to start from: the Developer ID Application cert expires 2027-02-01 (capped by Apple's 2012 intermediate), `APPLE_APP_PASSWORD` dates from 2026-05-03, and the winget auto-PR is off (`release.yml:388`, `if: false`).
+- **Personal chore: delete stray `.p12` cert exports** (was 14.3.3) — the cert stays in the login keychain; the 2026-06-26 re-issue likely left a second export behind.
 
 **Guacamole** (2026-10-17, revised the same day for chotchki's second round of decisions. `docs/native/guacamole-design.md` owns the detail; read it before promoting a line. No dates or estimates: a rung starts when what it stands on has landed, and reports what it measured.)
 
 **Ladder** (the rungs after AA/AB/AC, in order. Ids are provisional: `openspec/config.yaml` allocates the real one at `/opsx:propose`, so a product change proposed first shifts them, design doc Open question 7. The milestone names are the stable handles.)
 - **AD (M1): animated turntable** — the placed figure as its textured, animated model turning on the TV. Proves the first 3D, the HTPC floor measured (CSM + SSAO + TAA + bloom at 4K on the 2080 Ti, DLSS on Vulkan) and the disc roster (names, elements, portraits) replacing AA's interim wiki catalogue, after which `guacamole` reads no wiki data. Stands on AC's PASS.
-- **AE: oracle foundation** — nothing on the TV. Proves the oracle can be a test: RPCS3 run-to-run divergence measured (10 replays from one savestate, Mac + HTPC), a dev-only env-gated input series (frame-locked analog sticks, two pads, press-at-frame-N, RNG peek + seed), tolerance metrics. Stands on no rung; lands before AF, the first gameplay comparison.
+- **AE: oracle foundation** — nothing on the TV. Proves the oracle can be a test: first, the in-tree pin (`accfecd2d`, which has never booted a game: V was cancelled at the 2026-10-17 review) boots Giants on the Mac, falling back to `09d602fd5` (the pin v1.9.19 booted Giants on) if it doesn't; then RPCS3 run-to-run divergence measured (10 replays from one savestate, Mac + HTPC), a dev-only env-gated input series (frame-locked analog sticks, two pads, press-at-frame-N, RNG peek + seed), tolerance metrics. Stands on no rung; lands before AF, the first gameplay comparison.
 - **AF (M2): walk one level** — level scene, collision, character controller and camera, feel checked against the oracle; the input spec (positional mapping, prompts that match the pad in the player's hands). Stands on AD + AE.
 - **AG (M3): first fight** — one enemy, XP and gold earned and kept on the kid's profile. Proves combat basics and Guacamole's per-profile figure store (one instance per profile per figure, fresh on first placement), with the phone's figure editor moved onto its rows. Stands on AF; design doc Open question 1 (which SQLite file) is settled before its first migration.
 - **AH (M4): first couch battle** — one Giants PvP arena, two pads, two phones. Proves a second pad and a second profile's figure in play, and the battle rules as the oracle shows them (any figure progress a battle awards goes to whoever placed the figure). Stands on AG plus AE's two-pad input.

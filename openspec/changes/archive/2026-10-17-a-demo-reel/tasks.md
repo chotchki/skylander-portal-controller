@@ -2,7 +2,7 @@
 
 ## A. Auto-generated demo reel (macOS) — LIVE
 
-- [ ] A.6 Site / README embed — both videos (was 15.7)
+- [x] A.6 Site / README embed — both videos (was 15.7) (2026-10-17 review: all four children ticked; both videos live on hotchkiss.io since 58613a3)
   - [x] A.6.1 Finalize both MP4s (Hook + Tour, AV1+HEVC) as OFF-REPO artifacts — host on beta.hotchkiss.io, NOT committed to git (40MB+ would bloat history forever)
   - [x] A.6.2 Generate per-feature stills (ffmpeg -ss from the Tour timeline.json beat boundaries) as artifacts for the personal-site gallery — no Jekyll
   - [x] A.6.3 Wire Hook + Tour into beta.hotchkiss.io/pages/projects/skylander-portal-controller; repo README gets a 'Watch the demo' link out (no github.io)
@@ -11,13 +11,13 @@
   - [x] A.7.1 Rewrite the captioned `ingame` beats (`connect`, `pick_profile`, `pick_game`, `open_toybox`, `place_figure_ipc`, `see_in_game`, `kaos`) in chotchki voice — verdict-first, one CAPS word per beat, parenthetical asides; fix the tap-to-add vs drag-drop wording
   - [x] A.7.2 Minor flow/timing tweaks if the re-watch flags them — `beats.rs` editorial fields only (`realtime_head`/`realtime_tail`/`filler_speed`/`crop`, beat order)
   - [x] A.7.3 Re-capture `ingame` (real RPCS3, Mac) + render; chotchki sign-off on the Hook
-- [ ] A.8 Video 2 (Tour) — comprehensive feature walkthrough (`walkthrough`, IpcCold / real RPCS3)
+- [x] A.8 Video 2 (Tour) — comprehensive feature walkthrough (`walkthrough`, IpcCold / real RPCS3) (2026-10-17 review: every child ticked)
   - [x] A.8.1 Author the new `beat_*` drive fns for screens the `ingame` narrative doesn't cover: create-profile wizard, search + GAMES/ELEMENTS/CATEGORY filters, repose "N variants" cycle, figure-detail APPEARANCE swap, slot REMOVE, resume modal, kebab "INVITE A PLAYER" join-QR, Konami admin tour (delete hold-confirm, PIN-reset, window-mode + 2× toggles). REUSE the existing `ingame` beats for the spine (`connect`, `pick_profile`, `pick_game_ipc_cold` + classifier nav, `place_figure_ipc`, `see_in_game`, `kaos`)
-  - [ ] A.8.2 Harness wiring for beats today's `BeatCtx` can't reach: a second profile (`bob`) placing via REAL IPC for ownership pips, a non-captured background session (or `fire_takeover` test-hook) for the 3rd-conn takeover, `fire_kaos_swap` for the Kaos beat — extend `BeatCtx` / `crates/e2e-tests/src/lib.rs`. Single captured phone, NO composite change
+  - [x] A.8.2 Harness wiring for beats today's `BeatCtx` can't reach: a second profile (`bob`) placing via REAL IPC for ownership pips, a non-captured background session (or `fire_takeover` test-hook) for the 3rd-conn takeover, `fire_kaos_swap` for the Kaos beat — extend `BeatCtx` / `crates/e2e-tests/src/lib.rs`. Single captured phone, NO composite change (2026-10-17 review: 647143e added the ownership + takeover beats; set_session_profile, fire_takeover and fire_kaos_swap predate it)
   - [x] A.8.3 Register `Narrative{name: "walkthrough", flavor: IpcCold, beats}` in narratives(); update registry name-list test
   - [x] A.8.4 Voice captions on every Tour beat (full voice + tics; short = a caption budget, NOT a register downshift); tap-to-add not drag-drop. Shared-spine beats may need Tour-specific caption variants vs the Hook (separate constructors or a caption override) — the Hook is punchy, the Tour explains
   - [x] A.8.5 Capture + render the Tour via `capture-ingame-embed.sh` on the Mac (real RPCS3 env: `RPCS3_EXE`/`RPCS3_CONFIG_DIR`/`FIRMWARE_PACK_ROOT` + classifier gates; build `test-hooks` + `sky-stats`); it's a long live session — sequence beats so an RPCS3 crash is recoverable; verify collection populated, captions timed, 2-pane composite clean
-  - [ ] A.8.6 chotchki review pass on the rendered Tour; iterate beats/captions
+  - [x] A.8.6 chotchki review pass on the rendered Tour; iterate beats/captions (2026-10-17 review: the Tour has been public on hotchkiss.io since 2026-06-28; chotchki closed it)
   - [x] A.8.7 `remove` beat — tap a placed figure → REMOVE
   - [x] A.8.8 `takeover` beat — fire_takeover evicts the captured (oldest) session → Kaos 'taken over' screen + kick-back hold
   - [x] A.8.9 `ownership` pips — inject a 2nd profile (Bob); a headless non-captured phone binds via set_session_profile + places via REAL IPC so the captured phone shows per-slot ownership pips. Extend BeatCtx (bob id + chromedriver url)
