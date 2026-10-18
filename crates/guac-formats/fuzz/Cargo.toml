@@ -15,6 +15,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 guac-formats = { path = "..", features = ["test-fixtures"] }
+ktx2 = "0.5"
 
 [workspace]
 members = ["."]
@@ -30,6 +31,48 @@ bench = false
 [[bin]]
 name = "param_sfo"
 path = "fuzz_targets/param_sfo.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "iga"
+path = "fuzz_targets/iga.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "igz"
+path = "fuzz_targets/igz.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "igz_layouts"
+path = "fuzz_targets/igz_layouts.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "igimage2_ktx2"
+path = "fuzz_targets/igimage2_ktx2.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "edge_geometry"
+path = "fuzz_targets/edge_geometry.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "havok"
+path = "fuzz_targets/havok.rs"
 test = false
 doc = false
 bench = false

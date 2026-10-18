@@ -9,6 +9,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3bc62ac97cc33321f50863d514c3bc38a453947a8f9e781137e47c7401020aed"
 
 [[package]]
+name = "bitflags"
+version = "2.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
+
+[[package]]
 name = "cc"
 version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -47,6 +53,7 @@ dependencies = [
 name = "guac-formats"
 version = "0.1.0"
 dependencies = [
+ "lzma-rust2",
  "thiserror",
 ]
 
@@ -55,6 +62,7 @@ name = "guac-formats-fuzz"
 version = "0.0.0"
 dependencies = [
  "guac-formats",
+ "ktx2",
  "libfuzzer-sys",
 ]
 
@@ -66,6 +74,15 @@ checksum = "1c00acbd29eabad4a2392fa0e921c874934dbbf4194312ad20f04a0ed67a3cb3"
 dependencies = [
  "getrandom",
  "libc",
+]
+
+[[package]]
+name = "ktx2"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d50be8a24c37debdf3170be6ca396d5b5b165f37f94837891adac735ca416b8"
+dependencies = [
+ "bitflags",
 ]
 
 [[package]]
@@ -83,6 +100,12 @@ dependencies = [
  "arbitrary",
  "cc",
 ]
+
+[[package]]
+name = "lzma-rust2"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1c46f3fcd2e888afdb01a07efc071cb21300e07c68d32c3e8b01b5c8cb1fcaa"
 
 [[package]]
 name = "proc-macro2"

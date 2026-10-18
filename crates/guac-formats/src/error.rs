@@ -32,6 +32,26 @@ pub enum ErrorKind {
     Unsupported { value: u64 },
     #[error("duplicate entry")]
     Duplicate,
+    /// A part the format requires isn't there.
+    #[error("required but missing")]
+    Missing,
+    /// An object isn't the type a reader asked for, nor a subtype of it.
+    #[error("a {found} where a {expected} belongs")]
+    WrongType {
+        expected: &'static str,
+        found: String,
+    },
+    #[error("version {found:#x} isn't read here ({supported})")]
+    UnsupportedVersion { found: u64, supported: &'static str },
+    /// Compressed data that didn't come out at the size its container
+    /// declared: the decoder failed partway, ran out of input or had bytes
+    /// left past the declared end.
+    #[error("unpacked {unpacked} of the {expected} bytes declared: {reason}")]
+    Unpack {
+        expected: u64,
+        unpacked: u64,
+        reason: String,
+    },
 }
 
 impl FormatError {

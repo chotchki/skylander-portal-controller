@@ -13,9 +13,16 @@ path = "src/lib.rs"
 
 [dependencies]
 thiserror = { workspace = true }
+# Raw LZMA1 for IGA chunks (AB.3 records the pick over lzma-rs). Default
+# features off: `optimization` is the one that turns on `unsafe`.
+lzma-rust2 = { version = "0.23", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 proptest = "1"
+# Reads our KTX2 back in tests; the writer is ours.
+ktx2 = "0.5"
+# The IGA builder's LZMA encoder, for this crate's own unit tests.
+lzma-rust2 = { version = "0.23", default-features = false, features = ["std", "encoder"] }
 # The property harness (tests/properties.rs) needs the registry and the
 # builders, which only exist under `test-fixtures`.
 guac-formats = { path = ".", features = ["test-fixtures"] }
@@ -24,7 +31,7 @@ guac-formats = { path = ".", features = ["test-fixtures"] }
 # Builders that write each format in code, plus the parser registry the
 # property test and the fuzz targets walk. Test-only: other crates' tests
 # (AA.5, AA.10) enable it from their [dev-dependencies]; nothing that ships does.
-test-fixtures = []
+test-fixtures = ["lzma-rust2/encoder"]
 
 [[example]]
 name = "fuzz_seeds"

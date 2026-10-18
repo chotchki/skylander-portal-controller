@@ -372,8 +372,12 @@ PARAM.SFO), not taken from the wiki.
 - Disc: 964 files, 18 GiB. 294 `.arc` (11.2 GiB) and 599 `.bld` (3.7 GiB), all IGA; 61 `.mov`.
 - IGA v0x08: a 0x34-byte header that is LITTLE-endian even on PS3, 12-byte file records
   `{offset, size, blockWord}`. `blockWord` 0xFFFFFFFF means stored, otherwise the top nibble is the codec
-  (2 = LZMA) and data comes in 0x8000-byte chunks, each a u16 compressed size + 5 bytes of LZMA props +
-  raw LZMA1. `.arc` entries are stored, `.bld` entries are LZMA. A ~150-line reader opened every archive
+  (2 = LZMA) and the rest is the first slot in one of three block tables, picked by entry size: u8 small up
+  to 0x7F sectors, u16 medium up to 0x7FFF, u32 large past that. Data comes in 0x8000-byte chunks and an
+  entry of n chunks uses n+1 slots: slot j is chunk j's start in sectors from the entry's offset, with the
+  table's top bit set when the chunk is compressed, and slot j+1 is its end. A compressed chunk is a u16
+  packed length + 5 bytes of LZMA props + raw LZMA1; a chunk LZMA would grow is stored raw (1,384 on
+  Giants), so NOT every chunk of an LZMA entry is LZMA. Header flags are 0 on all 893 archives. `.arc` entries are stored, `.bld` entries are LZMA. A ~150-line reader opened every archive
   on all five Alchemy discs (16,310 of 16,310, 0 errors) and 522 random compressed entries decompressed to
   exactly their declared size. Cross-checked against [igArchiveLib](https://github.com/LG-RZ/igArchiveLib)
   and [igArchiveExtractor](https://github.com/NefariousTechSupport/igArchiveExtractor).
