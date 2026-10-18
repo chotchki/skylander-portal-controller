@@ -7,7 +7,7 @@ How the guacamole app gets set up and shares one machine with the Skylander Port
 ## ADDED Requirements
 
 ### Requirement: The TV's choices answer a controller
-Each choice guacamole's TV offers on its setup, found-games and startup-error screens SHALL be a button that is already selected when its screen appears. A connected game controller's bottom face button, Enter or Space SHALL press the selected button. On the setup and found-games screens a click SHALL press a button only when it lands on that button and SHALL do nothing anywhere else. The join code SHALL NOT react to any controller button, key or click.
+Each choice on guacamole's TV setup screens (asking for the dump folder, no Skylanders Giants dump found, the dumps found) and startup-error screens SHALL be a button already selected when its screen appears. A connected game controller's bottom face button, Enter or Space SHALL press the selected button. On the setup screens a click SHALL press a button only when it lands on it and SHALL do nothing elsewhere. The join code SHALL NOT react to any controller button, key or click.
 
 #### Scenario: Continuing from the found games with a controller
 - **WHEN** a folder holding a Skylanders Giants dump was chosen, the TV lists the dumps it found and a game controller's bottom face button is pressed
@@ -17,16 +17,20 @@ Each choice guacamole's TV offers on its setup, found-games and startup-error sc
 - **WHEN** the TV lists the dumps it found and a click lands outside its continue button
 - **THEN** the TV still lists the dumps it found right after the click
 
-#### Scenario: Asking for the folder with a controller
-- **WHEN** the TV asks for the folder that holds the disc dumps, no folder picker is open and a game controller's bottom face button is pressed
-- **THEN** the folder picker opens
+#### Scenario: Asking for the folder again with a controller
+- **WHEN** the TV asks for the folder that holds the disc dumps, the folder picker it opened by itself was closed without a choice and a game controller's bottom face button is pressed
+- **THEN** the folder picker opens again
 
 #### Scenario: A click beside the folder button
-- **WHEN** the TV asks for the folder that holds the disc dumps, no folder picker is open and a click lands outside its choose-the-folder button
+- **WHEN** the TV asks for the folder that holds the disc dumps, the folder picker it opened by itself was closed without a choice and a click lands outside its choose-the-folder button
 - **THEN** no folder picker opens
 
+#### Scenario: A click beside the folder button when no Giants dump was found
+- **WHEN** the TV says no Skylanders Giants dump was found in the chosen folder and a click lands outside its choose-the-folder button
+- **THEN** no folder picker opens and the TV still says no Skylanders Giants dump was found
+
 #### Scenario: Nothing on the join code reacts
-- **WHEN** the TV shows the join code and a game controller button, a key or a click is pressed
+- **WHEN** the TV shows the join code and a game controller button or a key is pressed, or a click lands anywhere on the screen
 - **THEN** the TV keeps showing the join code
 
 ### Requirement: The startup-error screens close from a controller
