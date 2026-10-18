@@ -74,7 +74,7 @@ The phone's game list SHALL contain Skylanders Giants and nothing else, and only
 - **THEN** the phone shows its no-games state, and guacamole's TV says no Skylanders Giants dump was found in the chosen folder and offers to choose another
 
 ### Requirement: The controller's settings and figures are left alone
-The guacamole app SHALL NOT read or change any profile's figure files from the Skylander Portal Controller, SHALL NOT change the controller's profiles, PINs or settings, and SHALL NOT change the controller's window mode, render scale, RPCS3 settings or per-game display mode. The phone's grown-ups actions for those settings SHALL report that they are unavailable in guacamole, and picking a game in guacamole SHALL NOT change the display's resolution or refresh rate.
+The guacamole app SHALL NOT read or change any profile's figure files from the Skylander Portal Controller, SHALL NOT change the controller's profiles, PINs or settings, and SHALL NOT change the controller's window mode, render scale, RPCS3 settings or per-game display mode. The phone's grown-ups toggles for the window mode and render scale SHALL report that they are unavailable in guacamole, and picking a game in guacamole SHALL NOT change the display's resolution or refresh rate.
 
 #### Scenario: Window-mode toggle under guacamole
 - **WHEN** a grown-up uses the phone's window-mode toggle while guacamole runs
@@ -87,6 +87,13 @@ The guacamole app SHALL NOT read or change any profile's figure files from the S
 #### Scenario: A figure played in guacamole keeps its progress in the controller
 - **WHEN** a kid places Eruptor in guacamole and later places Eruptor with the same profile in the controller
 - **THEN** the controller's Eruptor has the same level, experience and gold it had before guacamole ran
+
+### Requirement: guacamole's menu doesn't offer the RPCS3 settings
+While guacamole runs, the phone's menu SHALL NOT offer the action that opens the RPCS3 settings. The controller's menu SHALL keep offering it.
+
+#### Scenario: No RPCS3 settings in guacamole's menu
+- **WHEN** a grown-up opens the phone's menu while guacamole runs and no game is picked
+- **THEN** the menu has no action for the RPCS3 settings, and the controller's menu still offers it before a game is picked
 
 ### Requirement: Shutting down from the phone closes guacamole
 SHUT DOWN on the phone SHALL show a farewell on guacamole's TV and close the app within 5 seconds, returning the screen to whatever launched it.

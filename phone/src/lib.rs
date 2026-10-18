@@ -20,8 +20,8 @@ use crate::components::{
     StaleVersion,
 };
 use crate::model::{
-    Category, ConnState, Element, GameLaunched, GameOfOrigin, PublicProfile, Slot, SlotState,
-    UnlockedProfile, SLOT_COUNT,
+    Category, ConnState, Element, GameLaunched, GameOfOrigin, PublicProfile, ServerApp, Slot,
+    SlotState, UnlockedProfile, SLOT_COUNT,
 };
 use crate::screens::*;
 
@@ -179,6 +179,8 @@ pub fn App() -> impl IntoView {
     let category_filter = RwSignal::new(None::<Category>);
     let search = RwSignal::new(String::new());
     let current_game = RwSignal::new(None::<GameLaunched>);
+    // The controller or guacamole (AA.18, AA.19), from `/api/status` below.
+    let server_app = RwSignal::new(ServerApp::default());
     let unlocked_profile = RwSignal::new(None::<UnlockedProfile>);
     let takeover = RwSignal::new(None::<TakeoverReason>);
     let kaos_swap = RwSignal::new(None::<KaosSwapAnnouncement>);
@@ -235,9 +237,14 @@ pub fn App() -> impl IntoView {
     let games = LocalResource::new(fetch_games);
 
     // Fetch the current game on boot; the WS will keep it updated after.
+    // The app can't change under a live page: a restarted server sends a new
+    // `boot_id`, which reloads the page (`ws.rs`).
     leptos::task::spawn_local(async move {
-        if let Some(g) = fetch_status().await {
-            current_game.set(Some(g));
+        if let Some(status) = fetch_status().await {
+            server_app.set(status.app);
+            if let Some(g) = status.current_game {
+                current_game.set(Some(g));
+            }
         }
     });
 
@@ -402,6 +409,7 @@ pub fn App() -> impl IntoView {
                                 unlocked_profile
                                 reset_target
                                 figure_updates_rev
+                                server_app
                             />
                         })}
                     </Suspense>
@@ -426,6 +434,7 @@ pub fn App() -> impl IntoView {
                 current_game
                 manage_gate
                 toasts
+                server_app
             />
             <ToastStack toasts />
             <ConnectionLost reconnect_attempts manual_retry />
@@ -540,6 +549,22 @@ pub(crate) fn first_empty_slot(p: &[Slot; SLOT_COUNT]) -> Option<u8> {
     None
 }
 
+/// Names of the loaded figures `viewer` can't place again under `app`'s rule
+/// (AA.18): every one in the product, only the viewer's own in guacamole.
+pub(crate) fn placed_names(portal: &[Slot], app: ServerApp, viewer: Option<&str>) -> Vec<String> {
+    portal
+        .iter()
+        .filter_map(|s| match &s.state {
+            SlotState::Loaded {
+                display_name,
+                placed_by,
+                ..
+            } if app.blocks_place(placed_by.as_deref(), viewer) => Some(display_name.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
 pub(crate) fn empty_portal() -> [Slot; SLOT_COUNT] {
     std::array::from_fn(|_| Slot {
         state: SlotState::Empty,
@@ -584,6 +609,105 @@ pub(crate) fn event_target_value(e: &leptos::ev::Event) -> String {
         .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
         .map(|el| el.value())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn loaded(name: &str, placed_by: Option<&str>) -> Slot {
+        Slot {
+            state: SlotState::Loaded {
+                figure_id: Some(format!("{}-id", name.to_lowercase())),
+                display_name: name.to_string(),
+                placed_by: placed_by.map(str::to_string),
+            },
+        }
+    }
+
+    fn loading(placed_by: &str) -> Slot {
+        Slot {
+            state: SlotState::Loading {
+                figure_id: Some("spyro-id".to_string()),
+                placed_by: Some(placed_by.to_string()),
+            },
+        }
+    }
+
+    fn empty() -> Slot {
+        Slot {
+            state: SlotState::Empty,
+        }
+    }
+
+    /// The product's rule, unchanged: a loaded figure blocks every viewer,
+    /// whoever placed it; a loading slot blocks nothing.
+    #[test]
+    fn the_product_blocks_a_placed_figure_for_everyone() {
+        let portal = [
+            loaded("Eruptor", Some("alice")),
+            loaded("Spyro", None),
+            loading("bob"),
+            empty(),
+        ];
+        for viewer in [Some("alice"), Some("bob"), None] {
+            assert_eq!(
+                placed_names(&portal, ServerApp::Product, viewer),
+                ["Eruptor", "Spyro"],
+                "{viewer:?}"
+            );
+        }
+    }
+
+    /// guacamole: Bob can put his own Eruptor next to Alice's, and neither
+    /// can put theirs on twice.
+    #[test]
+    fn guacamole_blocks_only_the_viewers_own_placement() {
+        let app = ServerApp::Guacamole;
+        let alices = [loaded("Eruptor", Some("alice")), empty()];
+        assert_eq!(placed_names(&alices, app, Some("alice")), ["Eruptor"]);
+        assert!(placed_names(&alices, app, Some("bob")).is_empty());
+
+        let both = [
+            loaded("Eruptor", Some("alice")),
+            loaded("Eruptor", Some("bob")),
+            loaded("Spyro", Some("bob")),
+            loading("alice"),
+        ];
+        assert_eq!(placed_names(&both, app, Some("alice")), ["Eruptor"]);
+        assert_eq!(placed_names(&both, app, Some("bob")), ["Eruptor", "Spyro"]);
+        assert!(placed_names(&both, app, Some("carol")).is_empty());
+
+        // A placement no profile owns (only a raw load request from a locked
+        // session makes one; PLACE shows only with a profile unlocked)
+        // leaves every profile free to place theirs.
+        let unowned = [loaded("Eruptor", None)];
+        assert!(placed_names(&unowned, app, Some("alice")).is_empty());
+        assert_eq!(placed_names(&unowned, app, None), ["Eruptor"]);
+    }
+
+    #[test]
+    fn only_the_product_offers_the_rpcs3_settings() {
+        assert!(ServerApp::Product.offers_rpcs3_settings());
+        assert!(!ServerApp::Guacamole.offers_rpcs3_settings());
+    }
+
+    /// `/api/status` as each app answers it; a server without `app` is the
+    /// product.
+    #[test]
+    fn the_status_names_the_app() {
+        let read = |json: &str| serde_json::from_str::<api::StatusBody>(json).unwrap();
+        let guac = read(r#"{"rpcs3_running":false,"current_game":null,"app":"guacamole"}"#);
+        assert_eq!(guac.app, ServerApp::Guacamole);
+        assert!(guac.current_game.is_none());
+        let product = read(
+            r#"{"rpcs3_running":true,"current_game":{"serial":"BLUS30968","display_name":"Giants"},"app":"product"}"#,
+        );
+        assert_eq!(product.app, ServerApp::Product);
+        assert_eq!(product.current_game.unwrap().serial, "BLUS30968");
+        let old = read(r#"{"rpcs3_running":true,"current_game":null}"#);
+        assert_eq!(old.app, ServerApp::Product);
+    }
 }
 
 // ---------- entry ----------

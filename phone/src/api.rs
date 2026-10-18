@@ -35,7 +35,9 @@ use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Request, RequestInit, Response};
 
-use crate::model::{GameLaunched, InstalledGame, PublicFigure, PublicProfile, UnlockedProfile};
+use crate::model::{
+    GameLaunched, InstalledGame, PublicFigure, PublicProfile, ServerApp, UnlockedProfile,
+};
 
 // Session-id storage shared between `ws.rs` (writes it on `Event::Welcome`)
 // and this module (reads it for the `X-Session-Id` header on every mutating
@@ -440,17 +442,19 @@ pub async fn fetch_games() -> Vec<InstalledGame> {
     }
 }
 
-#[derive(serde::Deserialize)]
-struct StatusBody {
-    current_game: Option<GameLaunched>,
+/// The parts of `/api/status` the phone reads.
+#[derive(Debug, serde::Deserialize)]
+pub struct StatusBody {
+    pub current_game: Option<GameLaunched>,
+    /// Missing from a server that predates it: the product.
+    #[serde(default)]
+    pub app: ServerApp,
 }
 
-pub async fn fetch_status() -> Option<GameLaunched> {
+pub async fn fetch_status() -> Option<StatusBody> {
     let url = format!("{}/api/status", origin());
     match do_fetch(&url, "GET", None).await {
-        Ok(text) => serde_json::from_str::<StatusBody>(&text)
-            .ok()
-            .and_then(|s| s.current_game),
+        Ok(text) => serde_json::from_str::<StatusBody>(&text).ok(),
         Err(_) => None,
     }
 }

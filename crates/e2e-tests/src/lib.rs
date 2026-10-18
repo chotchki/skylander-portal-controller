@@ -1717,6 +1717,41 @@ impl Phone {
         Ok(())
     }
 
+    /// Opens the toy box's search, replaces its query with `name` and waits
+    /// up to 10 s for the grid to filter: a card named `name` shows and every
+    /// card's name contains it (case-insensitive). Tapping after a fixed beat
+    /// could catch a grid that hadn't filtered yet on a loaded machine.
+    pub async fn search_named(&self, name: &str) -> Result<()> {
+        self.open_search().await?;
+        let input = self.client.find(Locator::Css(".search-input-p4")).await?;
+        input.clear().await?;
+        input.send_keys(name).await?;
+        let want = name.to_lowercase();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let read = self
+                .client
+                .execute(
+                    "return Array.from(document.querySelectorAll('.fig-card-p4 .fig-name-p4'))
+                       .map(e => e.textContent.trim());",
+                    vec![],
+                )
+                .await?;
+            let names: Vec<String> = serde_json::from_value(read)?;
+            if names.iter().any(|n| n == name)
+                && names.iter().all(|n| n.to_lowercase().contains(&want))
+            {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(anyhow!(
+                    "the toy box never filtered to {name:?}; it shows {names:?}"
+                ));
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
     /// Filter the browser by typing into the search box. Caller is
     /// responsible for ensuring the search input is visible — call
     /// [`Phone::open_search`] first if you've just landed on the
@@ -1789,6 +1824,35 @@ impl Phone {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
         Err(anyhow!("wait_until timed out after {timeout:?}"))
+    }
+
+    /// The open kebab menu's action titles, read until `done` holds and
+    /// MANAGE PROFILES shows, for up to 4 s (the app's `/api/status` can land
+    /// after the menu's first draw). Returns the last read for the caller to
+    /// assert on.
+    pub async fn menu_actions_until(
+        &self,
+        done: impl Fn(&[String]) -> bool,
+    ) -> Result<Vec<String>> {
+        self.wait_for(Locator::Css(".menu-overlay-panel"), Duration::from_secs(4))
+            .await?;
+        let deadline = Instant::now() + Duration::from_secs(4);
+        loop {
+            let read = self
+                .client
+                .execute(
+                    "return Array.from(document.querySelectorAll('.menu-overlay-panel .menu-action-title'))
+                       .map(e => e.textContent.trim());",
+                    vec![],
+                )
+                .await?;
+            let titles: Vec<String> = serde_json::from_value(read)?;
+            let drawn = titles.iter().any(|t| t == "MANAGE PROFILES");
+            if (drawn && done(&titles)) || Instant::now() >= deadline {
+                return Ok(titles);
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
     }
 }
 

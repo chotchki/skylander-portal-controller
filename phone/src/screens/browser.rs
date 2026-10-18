@@ -2,9 +2,11 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
 use crate::components::{BezelSize, BezelState, BoxState, GoldBezel, ToyBoxInterior, ToyBoxLid};
-use crate::model::{Category, Element, GameOfOrigin, PublicFigure, Slot, SlotState, SLOT_COUNT};
+use crate::model::{
+    Category, Element, GameOfOrigin, PublicFigure, ServerApp, Slot, SlotState, SLOT_COUNT,
+};
 use crate::screens::FigureDetail;
-use crate::{event_target_value, ToastMsg};
+use crate::{event_target_value, placed_names, ToastMsg};
 
 /// A cluster of figures that share a `variant_group` — e.g. every Spyro
 /// repose, every Creation Crystal in the pack. Rendered as a single card in
@@ -78,6 +80,9 @@ pub(crate) fn Browser(
     /// Threaded through to FigureDetail so its stats LocalResource
     /// refetches on every cross-phone `Event::FigureUpdated`. PLAN 11.14.
     figure_updates_rev: RwSignal<u32>,
+    /// The controller or guacamole: whose placements mark a card as on the
+    /// portal follows its rule (AA.18).
+    server_app: RwSignal<ServerApp>,
 ) -> impl IntoView {
     let all_figures = StoredValue::new(figures);
     let selected_figure = RwSignal::new(None::<PublicFigure>);
@@ -113,25 +118,23 @@ pub(crate) fn Browser(
     // apart from "already loaded":
     //   - `loaded_names`  — canonical-name matches for fully-Loaded slots.
     //   - `loading_ids`   — figure_id markers for Loading slots.
-    let loaded_names = Memo::new(move |_| {
-        portal
-            .get()
-            .iter()
-            .filter_map(|s| match &s.state {
-                SlotState::Loaded { display_name, .. } => Some(display_name.clone()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-    });
+    // Both count only the placements that block this viewer (AA.18): all of
+    // them in the product, the viewer's own in guacamole, where another
+    // profile's Eruptor leaves this one's in the box.
+    let viewer = move || unlocked_profile.get().map(|p| p.id);
+    let loaded_names =
+        Memo::new(move |_| placed_names(&portal.get(), server_app.get(), viewer().as_deref()));
     let loading_ids = Memo::new(move |_| {
+        let app = server_app.get();
+        let viewer = viewer();
         portal
             .get()
             .iter()
             .filter_map(|s| match &s.state {
                 SlotState::Loading {
                     figure_id: Some(id),
-                    ..
-                } => Some(id.clone()),
+                    placed_by,
+                } if app.blocks_place(placed_by.as_deref(), viewer.as_deref()) => Some(id.clone()),
                 _ => None,
             })
             .collect::<Vec<_>>()
@@ -390,6 +393,7 @@ pub(crate) fn Browser(
                     unlocked_profile
                     reset_target
                     figure_updates_rev
+                    server_app
                     siblings
                     on_pick_variant=Callback::new(move |next: PublicFigure| {
                         selected_figure.set(Some(next));

@@ -3,10 +3,13 @@ use leptos::prelude::*;
 use crate::api::{fetch_figure_stats, post_load, StatsFetch};
 use crate::components::{DisplayHeading, FigureHero, HeadingSize, HeroState};
 use crate::model::{
-    Category, GameOfOrigin, PublicFigure, Slot, SlotState, UnlockedProfile, SLOT_COUNT,
+    Category, GameOfOrigin, PublicFigure, ServerApp, Slot, SlotState, UnlockedProfile, SLOT_COUNT,
 };
 use crate::screens::FigureEditSheet;
-use crate::{element_slug, first_empty_slot, push_toast_level, ResetTarget, ToastLevel, ToastMsg};
+use crate::{
+    element_slug, first_empty_slot, placed_names, push_toast_level, ResetTarget, ToastLevel,
+    ToastMsg,
+};
 
 /// Detail view state machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +50,9 @@ pub(crate) fn FigureDetail(
     /// `stats_rev`, so cross-phone edits + the same-phone race both
     /// trigger a re-fetch of the working copy.
     figure_updates_rev: RwSignal<u32>,
+    /// The controller or guacamole: whose placements make PLACE refuse this
+    /// figure follows its rule (AA.18).
+    server_app: RwSignal<ServerApp>,
     /// PLAN 11.16 — variant cluster the current figure belongs to,
     /// sorted "base" first then alphabetical by `variant_tag`. Drives
     /// the APPEARANCE button's enable state + next-pick logic. A
@@ -142,17 +148,13 @@ pub(crate) fn FigureDetail(
     let category = figure.category;
     let fig_id_for_portal_check = fig_id.clone();
     let on_portal = Signal::derive(move || {
-        portal.get().iter().any(|slot| match &slot.state {
-            SlotState::Loaded {
-                figure_id: Some(id),
-                ..
-            } => id == &fig_id_for_portal_check,
-            SlotState::Loading {
-                figure_id: Some(id),
-                ..
-            } => id == &fig_id_for_portal_check,
-            _ => false,
-        })
+        let viewer = unlocked_profile.get().map(|p| p.id);
+        on_portal_for(
+            &portal.get(),
+            &fig_id_for_portal_check,
+            server_app.get(),
+            viewer.as_deref(),
+        )
     });
     let gate = Signal::derive(move || {
         let fetched = stats.get();
@@ -215,13 +217,11 @@ pub(crate) fn FigureDetail(
             if state.get() == DetailState::Loading {
                 return;
             }
-            // Check if already on portal
+            // Already on the portal: whoever placed it in the product, only
+            // this viewer's own placement in guacamole (AA.18).
             let p = portal.get();
-            let already = p.iter().any(|s| match &s.state {
-                SlotState::Loaded { display_name, .. } => display_name == &name,
-                _ => false,
-            });
-            if already {
+            let viewer = unlocked_profile.get().map(|u| u.id);
+            if placed_names(&p, server_app.get(), viewer.as_deref()).contains(&name) {
                 error_msg.set(format!("{name} is already on the portal."));
                 state.set(DetailState::Errored);
                 return;
@@ -538,6 +538,25 @@ fn edit_gate(category: Category, on_portal: bool, stats: Option<&StatsFetch>) ->
     EditGate::Editable
 }
 
+/// Whether `figure_id` is on the portal for `viewer`'s STATS and RESET, loaded
+/// or loading, under `app`'s placement rule (AA.18): anyone's placement in the
+/// product, only the viewer's own in guacamole, where another profile's copy
+/// leaves this one's progress free to edit.
+fn on_portal_for(portal: &[Slot], figure_id: &str, app: ServerApp, viewer: Option<&str>) -> bool {
+    portal.iter().any(|slot| match &slot.state {
+        SlotState::Loaded {
+            figure_id: Some(id),
+            placed_by,
+            ..
+        }
+        | SlotState::Loading {
+            figure_id: Some(id),
+            placed_by,
+        } => id == figure_id && app.blocks_place(placed_by.as_deref(), viewer),
+        _ => false,
+    })
+}
+
 /// True when `target` is this details screen's reset of `figure_id` (the portal's slot resets are left alone).
 fn is_detail_reset_of(target: Option<&ResetTarget>, figure_id: &str) -> bool {
     target.is_some_and(|t| t.slot.is_none() && t.figure_id == figure_id)
@@ -706,5 +725,40 @@ mod tests {
         ));
         assert!(!is_detail_reset_of(Some(&target(None, "spyro")), "eruptor"));
         assert!(!is_detail_reset_of(None, "eruptor"));
+    }
+
+    /// STATS and RESET lock on the same placements PLACE refuses: anyone's in
+    /// the product, the viewer's own in guacamole, loaded or still loading.
+    #[test]
+    fn the_edit_lock_follows_the_apps_placement_rule() {
+        let slot = |state| Slot { state };
+        let portal = [
+            slot(SlotState::Loaded {
+                figure_id: Some("eruptor".to_string()),
+                display_name: "Eruptor".to_string(),
+                placed_by: Some("alice".to_string()),
+            }),
+            slot(SlotState::Loading {
+                figure_id: Some("spyro".to_string()),
+                placed_by: Some("bob".to_string()),
+            }),
+            slot(SlotState::Empty),
+        ];
+        for viewer in [Some("alice"), Some("bob"), None] {
+            assert!(on_portal_for(
+                &portal,
+                "eruptor",
+                ServerApp::Product,
+                viewer
+            ));
+            assert!(on_portal_for(&portal, "spyro", ServerApp::Product, viewer));
+            assert!(!on_portal_for(&portal, "bash", ServerApp::Product, viewer));
+        }
+        let guac = ServerApp::Guacamole;
+        assert!(on_portal_for(&portal, "eruptor", guac, Some("alice")));
+        assert!(!on_portal_for(&portal, "eruptor", guac, Some("bob")));
+        assert!(on_portal_for(&portal, "spyro", guac, Some("bob")));
+        assert!(!on_portal_for(&portal, "spyro", guac, Some("alice")));
+        assert!(!on_portal_for(&portal, "bash", guac, Some("alice")));
     }
 }

@@ -316,6 +316,23 @@ async fn launch_tracks_no_process_and_marks_the_game_current() {
     );
 }
 
+/// The phone tells the apps apart by `/api/status`'s `app` (AA.18, AA.19).
+#[tokio::test(flavor = "multi_thread")]
+async fn status_says_guacamole() {
+    let n = native().await;
+    let response = crate::http::router(n.state.clone(), n.root.path().join("phone-dist"))
+        .oneshot(Request::get("/api/status").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["app"], "guacamole", "{body}");
+    assert_eq!(body["rpcs3_running"], false, "{body}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn settings_endpoints_answer_409_and_leave_config_json_alone() {
     let n = native().await;

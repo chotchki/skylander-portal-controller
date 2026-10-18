@@ -43,6 +43,17 @@ For every occupied portal slot, guacamole's TV SHALL show one card, in slot orde
 - **WHEN** the placed figure has no portrait
 - **THEN** its card shows the name, element and the placing profile's colour and initial with no portrait
 
+### Requirement: A phone refuses only its own profile's figure already on the portal
+Each profile owns its own copy of every figure, so a phone SHALL place a figure that another profile has on the portal and SHALL refuse one its own profile already has there.
+
+#### Scenario: A figure another profile has on the portal
+- **WHEN** Alice's phone has placed Eruptor and Bob's phone opens Eruptor's details and places it
+- **THEN** Bob's phone doesn't mark Eruptor as on the portal and places his Eruptor in the next empty slot
+
+#### Scenario: One profile's figure placed twice
+- **WHEN** a phone tries to place a figure its own profile already has on the portal
+- **THEN** the phone says the figure is already on the portal and no second one is placed
+
 ### Requirement: Cards follow the portal
 When a figure leaves the portal its card SHALL leave the TV within 1 second. When a slot's figure is replaced, by a phone or by a Kaos swap, the TV SHALL show the new figure's card in that position instead. With all eight slots occupied the TV SHALL show eight cards, none hidden or overlapping.
 
