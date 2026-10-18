@@ -100,8 +100,37 @@ impl SfoBuilder {
     }
 }
 
+/// A file whose index entries alias, which [`SfoBuilder`] never writes:
+/// `entries` keys that are the suffixes of one run of `entries` `A`s, each with
+/// a `0x0004` value spanning the whole `data_len`-byte data table. Every entry
+/// fits the input on its own; together they'd copy about
+/// `entries * (entries / 2 + data_len)` bytes, so past a few entries the parser
+/// must refuse it.
+pub fn aliasing(entries: usize, data_len: usize) -> Vec<u8> {
+    let key_table = HEADER_LEN + entries * INDEX_ENTRY_LEN;
+    let data_table = key_table + entries + 1;
+    let mut out = Vec::with_capacity(data_table + data_len);
+    out.extend_from_slice(MAGIC);
+    out.extend_from_slice(&0x0101u32.to_le_bytes());
+    out.extend_from_slice(&(key_table as u32).to_le_bytes());
+    out.extend_from_slice(&(data_table as u32).to_le_bytes());
+    out.extend_from_slice(&(entries as u32).to_le_bytes());
+    for i in 0..entries {
+        out.extend_from_slice(&(i as u16).to_le_bytes()); // key i = entries - i `A`s
+        out.extend_from_slice(&FMT_UTF8_SPECIAL.to_le_bytes());
+        out.extend_from_slice(&(data_len as u32).to_le_bytes()); // used
+        out.extend_from_slice(&(data_len as u32).to_le_bytes()); // max
+        out.extend_from_slice(&0u32.to_le_bytes()); // data offset
+    }
+    out.resize(data_table - 1, b'A');
+    out.push(0);
+    out.resize(data_table + data_len, 0);
+    out
+}
+
 /// The property test's seeds: well-formed files covering every value format,
-/// padding and the empty table.
+/// padding, the empty table and two entries sharing one value (so mutation
+/// starts from an aliasing table).
 pub fn seeds() -> Vec<Vec<u8>> {
     vec![
         SfoBuilder::disc_game("BLUS30968", "01.00", "01.00").build(),
@@ -112,6 +141,7 @@ pub fn seeds() -> Vec<Vec<u8>> {
             .utf8("EMPTY", "")
             .build(),
         SfoBuilder::new().build(),
+        aliasing(2, 16),
     ]
 }
 

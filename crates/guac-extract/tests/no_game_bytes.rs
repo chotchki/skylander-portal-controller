@@ -1,18 +1,21 @@
 //! The game-magic guard (openspec AB, design decision 10; the HARD rule in
 //! docs/native/guacamole-design.md, "No game bytes in the repo"): fails when any
-//! file git tracks starts with a game magic, is a gzip whose inflated head does
-//! (RPCS3 writes RSX captures as `.rrc.gz`) or is a big-endian PPC64 ELF (a
-//! decrypted EBOOT).
+//! file git would commit or push starts with a game magic, is a gzip whose
+//! inflated head does (RPCS3 writes RSX captures as `.rrc.gz`) or is a
+//! big-endian PPC64 ELF (a decrypted EBOOT).
 //!
-//! It reads git's index, not the working tree, because the index is what the
-//! next commit holds. A guest memory dump has no magic at all; only keeping it
-//! outside the tree stops that one.
+//! It reads git, not the working tree: the index, because that's what the next
+//! commit holds, plus every blob reachable from HEAD or a local branch that no
+//! remote-tracking ref reaches yet, because that's what a push can send (a file
+//! committed and then deleted still ships with its commit). A guest memory dump
+//! has no magic at all; only keeping it outside the tree stops that one.
 //!
 //! Fixtures are built in code at test time in throwaway repos, so nothing here
 //! trips the guard on this repo.
 
+use std::collections::HashSet;
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -20,26 +23,42 @@ use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 
-/// Prefixes no file in this repo may start with.
+/// Prefixes no file in this repo may start with. Alchemy writes its magics in
+/// the platform's byte order, so IGA and IGZ come both ways round.
 const MAGICS: &[(&[u8], &str)] = &[
-    (b"IGA\x1a", "IGA archive (Alchemy .arc/.bld/.pak)"),
+    (
+        b"IGA\x1a",
+        "IGA archive, little-endian (Giants and Trap Team .arc/.bld)",
+    ),
+    (
+        b"\x1aAGI",
+        "IGA archive, big-endian (Swap Force, SuperChargers and Imaginators .pak)",
+    ),
     (b"IGZ", "IGZ object file"),
+    (b"\x01ZGI", "IGZ object file, little-endian"),
     (b"BIKi", "Bink 1 video"),
     (b"KB2", "Bink 2 video"),
     (b"FSB5", "FMOD sound bank"),
     (
         b"SCE\0",
-        "SCE container (SELF/SPRX/PKG, an encrypted executable)",
+        "SCE container (SELF/SPRX, an encrypted executable)",
     ),
+    (b"\x7fPKG", "PS3 PKG (update or DLC package)"),
     (b"NPD\0", "NPDRM EDAT/SDAT"),
     (b"\0PSF", "PARAM.SFO"),
+    (b"\xdc\xa2\x4d\x00", "PS3 trophy pack (TROPHY.TRP)"),
+    (b"PS3LICDA", "PS3 disc licence (LIC.DAT)"),
+    (b".SFB", "PS3 disc boot file (PS3_DISC.SFB)"),
+    (b"SCEUF", "PS3 system update (PS3UPDAT.PUP)"),
     (b"RRC", "RPCS3 RSX capture"),
 ];
 
 const EM_PPC64: u16 = 21;
 const GZIP: &[u8] = &[0x1f, 0x8b];
-/// Enough inflated bytes to hold any head above, and a nested gzip's header.
-const INFLATE_HEAD: u64 = 4096;
+/// How much of a blob, or of an inflated gzip, the guard reads: every check
+/// needs only the first bytes, and 64 KiB covers a gzip header's name and
+/// comment. A staged multi-GB disc image costs this, not its size.
+const HEAD: u64 = 64 * 1024;
 /// gzip inside gzip inside gzip is as deep as the guard looks.
 const MAX_GZIP_DEPTH: usize = 3;
 
@@ -58,18 +77,16 @@ fn classify(head: &[u8]) -> Option<&'static str> {
     is_ppc64_be_elf(head).then_some("big-endian PPC64 ELF (a decrypted EBOOT)")
 }
 
-/// What a blob would leak, or `None` when it's clean.
-fn offence(blob: &[u8], depth: usize) -> Option<String> {
-    if let Some(what) = classify(blob) {
+/// What a blob's head would leak, or `None` when it's clean.
+fn offence(head: &[u8], depth: usize) -> Option<String> {
+    if let Some(what) = classify(head) {
         return Some(what.to_string());
     }
-    if depth < MAX_GZIP_DEPTH && blob.starts_with(GZIP) {
-        let mut head = Vec::new();
+    if depth < MAX_GZIP_DEPTH && head.starts_with(GZIP) {
+        let mut inflated = Vec::new();
         // A truncated or corrupt stream keeps whatever inflated before the error.
-        let _ = GzDecoder::new(blob)
-            .take(INFLATE_HEAD)
-            .read_to_end(&mut head);
-        return offence(&head, depth + 1).map(|what| format!("gzip of a {what}"));
+        let _ = GzDecoder::new(head).take(HEAD).read_to_end(&mut inflated);
+        return offence(&inflated, depth + 1).map(|what| format!("gzip of a {what}"));
     }
     None
 }
@@ -90,11 +107,13 @@ fn git(repo: &Path, args: &[&str]) -> Vec<u8> {
     out.stdout
 }
 
-/// `(object id, path)` for every regular file in the index. Submodule
-/// gitlinks (mode 160000) and symlinks (120000) hold no file bytes.
-fn tracked_blobs(repo: &Path) -> Vec<(String, String)> {
+/// `(object id, path)` for every regular file in the index, then for every blob
+/// HEAD or a local branch reaches and no remote-tracking ref does, each object
+/// once. Submodule gitlinks (mode 160000) and symlinks (120000) in the index
+/// hold no file bytes.
+fn blobs_to_check(repo: &Path) -> Vec<(String, String)> {
     let listing = git(repo, &["ls-files", "--stage", "-z"]);
-    listing
+    let mut blobs: Vec<(String, String)> = listing
         .split(|b| *b == 0)
         .filter(|record| !record.is_empty())
         .filter_map(|record| {
@@ -105,12 +124,38 @@ fn tracked_blobs(repo: &Path) -> Vec<(String, String)> {
             let (mode, oid) = (meta.next()?, meta.next()?);
             (mode != "160000" && mode != "120000").then(|| (oid.to_string(), path.to_string()))
         })
-        .collect()
+        .collect();
+
+    // HEAD covers a detached checkout (CI's); a repo with only `git add`
+    // behind it has none, and naming it there would fail.
+    let has_head = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "--verify", "-q", "HEAD"])
+        .output()
+        .is_ok_and(|out| out.status.success());
+    let mut rev_list = vec!["rev-list", "--objects", "--filter=object:type=blob"];
+    if has_head {
+        rev_list.push("HEAD");
+    }
+    rev_list.extend(["--branches", "--not", "--remotes"]);
+    let history = git(repo, &rev_list);
+    // "<oid> <path>" per blob; a commit's line is its bare oid.
+    blobs.extend(
+        String::from_utf8_lossy(&history)
+            .lines()
+            .filter_map(|line| line.split_once(' '))
+            .map(|(oid, path)| (oid.to_string(), path.to_string())),
+    );
+
+    let mut seen = HashSet::new();
+    blobs.retain(|(oid, _)| seen.insert(oid.clone()));
+    blobs
 }
 
-/// Every tracked file that starts with a game magic, as `(path, what)`.
+/// Every blob to check that starts with a game magic, as `(path, what)`.
 fn scan(repo: &Path) -> Vec<(String, String)> {
-    let blobs = tracked_blobs(repo);
+    let blobs = blobs_to_check(repo);
     let mut child = Command::new("git")
         .arg("-C")
         .arg(repo)
@@ -129,16 +174,29 @@ fn scan(repo: &Path) -> Vec<(String, String)> {
         stdin.flush().unwrap();
         let mut header = String::new();
         stdout.read_line(&mut header).unwrap();
-        // "<oid> blob <size>", or "<oid> missing" for an intent-to-add entry.
+        // "<oid> <type> <size>", or "<oid> missing" (an intent-to-add entry)
+        // with no body after it.
         let mut fields = header.split_whitespace().skip(1);
-        if fields.next() != Some("blob") {
+        let (Some(kind), Some(size)) = (fields.next(), fields.next()) else {
+            continue;
+        };
+        let size: u64 = size.parse().unwrap();
+        // Only the head decides; the rest is drained unread.
+        let mut head = Vec::new();
+        (&mut stdout)
+            .take(size.min(HEAD))
+            .read_to_end(&mut head)
+            .unwrap();
+        let rest = size - head.len() as u64 + 1; // + the newline after each object
+        assert_eq!(
+            io::copy(&mut (&mut stdout).take(rest), &mut io::sink()).unwrap(),
+            rest,
+            "git cat-file cut {oid} short"
+        );
+        if kind != "blob" {
             continue;
         }
-        let size: usize = fields.next().and_then(|s| s.parse().ok()).unwrap();
-        let mut blob = vec![0; size + 1]; // + the newline after each object
-        stdout.read_exact(&mut blob).unwrap();
-        blob.pop();
-        if let Some(what) = offence(&blob, 0) {
+        if let Some(what) = offence(&head, 0) {
             findings.push((path, what));
         }
     }
@@ -148,7 +206,7 @@ fn scan(repo: &Path) -> Vec<(String, String)> {
 }
 
 #[test]
-fn tracked_files_carry_no_game_bytes() {
+fn the_index_and_unpushed_history_carry_no_game_bytes() {
     let top = git(
         Path::new(env!("CARGO_MANIFEST_DIR")),
         &["rev-parse", "--show-toplevel"],
@@ -157,8 +215,9 @@ fn tracked_files_carry_no_game_bytes() {
     let findings = scan(Path::new(top.trim()));
     assert!(
         findings.is_empty(),
-        "game bytes are tracked (HARD rule, docs/native/guacamole-design.md): \
-         `git rm --cached` each, and purge any commit that carried one\n{}",
+        "game bytes would be committed or pushed (HARD rule, docs/native/guacamole-design.md): \
+         `git rm --cached` each, and rewrite every unpushed commit that carried one before \
+         pushing\n{}",
         findings
             .iter()
             .map(|(path, what)| format!("  {path}: {what}"))
@@ -180,6 +239,27 @@ fn repo_with(files: &[(&str, Vec<u8>)]) -> tempfile::TempDir {
     }
     git(dir.path(), &["add", "-A"]);
     dir
+}
+
+/// Commits what's staged, whoever runs the test and whatever their git config.
+fn commit(repo: &Path, message: &str) {
+    git(
+        repo,
+        &[
+            "-c",
+            "user.name=guard",
+            "-c",
+            "user.email=guard@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-q",
+            "--no-verify",
+            "--allow-empty",
+            "-m",
+            message,
+        ],
+    );
 }
 
 /// A magic followed by zeros, so git sees a binary file.
@@ -222,6 +302,15 @@ fn flags_a_file_starting_with_iga() {
     let findings = scan(repo.path());
     assert_eq!(paths(&findings), ["assets/a.arc"]);
     assert!(findings[0].1.contains("IGA archive"), "{findings:?}");
+}
+
+#[test]
+fn flags_a_big_endian_iga() {
+    // Every .pak on Swap Force, SuperChargers and Imaginators starts this way.
+    let repo = repo_with(&[("a.pak", starting_with(b"\x1aAGI"))]);
+    let findings = scan(repo.path());
+    assert_eq!(paths(&findings), ["a.pak"]);
+    assert!(findings[0].1.contains("big-endian"), "{findings:?}");
 }
 
 #[test]
@@ -271,6 +360,72 @@ fn reads_the_index_not_the_working_tree() {
 }
 
 #[test]
+fn reads_blobs_bigger_than_the_head_and_stays_in_step() {
+    // Each big blob is drained past its head; if it weren't, the next object's
+    // header would be read out of the middle of it.
+    let mut big_clean = vec![0u8; 3 * HEAD as usize];
+    big_clean[..5].copy_from_slice(b"plain");
+    let mut big_bink = starting_with(b"BIKi");
+    big_bink.resize(3 * HEAD as usize + 7, 0xaa);
+    let repo = repo_with(&[
+        ("a.bin", big_clean),
+        ("b.bik", big_bink),
+        ("c.arc", starting_with(b"IGA\x1a")),
+    ]);
+    assert_eq!(paths(&scan(repo.path())), ["b.bik", "c.arc"]);
+}
+
+#[test]
+fn flags_a_file_committed_then_deleted() {
+    // The index is clean again, but the push would still send commit A.
+    let repo = repo_with(&[
+        ("README.md", b"hi\n".to_vec()),
+        ("x.arc", starting_with(b"IGA\x1a")),
+    ]);
+    commit(repo.path(), "A");
+    git(repo.path(), &["rm", "-q", "x.arc"]);
+    commit(repo.path(), "B");
+    assert_eq!(paths(&scan(repo.path())), ["x.arc"]);
+}
+
+#[test]
+fn flags_a_committed_file_only_unstaged() {
+    // `git rm --cached` alone cleans the index, not HEAD.
+    let repo = repo_with(&[("x.arc", starting_with(b"IGA\x1a"))]);
+    commit(repo.path(), "A");
+    git(repo.path(), &["rm", "-q", "--cached", "x.arc"]);
+    assert_eq!(paths(&scan(repo.path())), ["x.arc"]);
+}
+
+#[test]
+fn flags_a_blob_on_another_local_branch() {
+    // HEAD never had it, but `git push origin side` or `--all` would send it.
+    let repo = repo_with(&[("README.md", b"hi\n".to_vec())]);
+    commit(repo.path(), "base");
+    git(repo.path(), &["checkout", "-q", "-b", "side"]);
+    fs::write(repo.path().join("x.bik"), starting_with(b"BIKi")).unwrap();
+    git(repo.path(), &["add", "x.bik"]);
+    commit(repo.path(), "side");
+    git(repo.path(), &["checkout", "-q", "-"]);
+    assert_eq!(paths(&scan(repo.path())), ["x.bik"]);
+}
+
+#[test]
+fn leaves_history_a_remote_already_has() {
+    // Already pushed is past what a guard can stop, and walking it would make
+    // every run cost the whole history.
+    let repo = repo_with(&[("x.arc", starting_with(b"IGA\x1a"))]);
+    commit(repo.path(), "A");
+    git(
+        repo.path(),
+        &["update-ref", "refs/remotes/origin/main", "HEAD"],
+    );
+    git(repo.path(), &["rm", "-q", "x.arc"]);
+    commit(repo.path(), "B");
+    assert_eq!(scan(repo.path()), Vec::<(String, String)>::new());
+}
+
+#[test]
 fn passes_a_repo_with_none_of_them() {
     let repo = repo_with(&[
         (
@@ -285,6 +440,8 @@ fn passes_a_repo_with_none_of_them() {
         ("empty", Vec::new()),
         ("nested/dir/data.bin", vec![0xde, 0xad, 0xbe, 0xef]),
     ]);
+    // Committed, so the history walk runs too and finds the same clean blobs.
+    commit(repo.path(), "clean");
     // Untracked files aren't the guard's business: nothing pushes them.
     fs::write(repo.path().join("untracked.arc"), starting_with(b"IGA\x1a")).unwrap();
     assert_eq!(scan(repo.path()), Vec::<(String, String)>::new());

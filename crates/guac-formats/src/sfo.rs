@@ -111,6 +111,11 @@ impl ParamSfo {
 
         let mut entries = Vec::with_capacity(count);
         let mut seen = BTreeSet::new();
+        // Keys and values are copied out, and nothing stops index entries
+        // aliasing the same bytes, so each fitting the input isn't enough: the
+        // copies together can't outgrow it either. A real file's keys and
+        // values don't overlap, so it never gets near this.
+        let mut copied = 0usize;
         for i in 0..count {
             let at = index_entry_offset(i);
             let key_offset = r.u16_le(at, "key_offset")? as usize;
@@ -162,6 +167,18 @@ impl ParamSfo {
                 ));
             };
             let raw = r.bytes(value_at, used, "value")?;
+            // Can't overflow: each step adds at most 2 * len, and len stops it.
+            copied += key.len() + used;
+            if copied > r.len() {
+                return Err(r.err(
+                    "data_len",
+                    at + 4,
+                    ErrorKind::OutOfRange {
+                        value: copied as u64,
+                        limit: r.len() as u64,
+                    },
+                ));
+            }
 
             let value = match fmt {
                 FMT_UTF8 => match raw.split_last() {
@@ -263,7 +280,7 @@ impl ParamSfo {
 
 #[cfg(test)]
 mod tests {
-    use super::builder::SfoBuilder;
+    use super::builder::{SfoBuilder, aliasing};
     use super::*;
 
     fn u32_at(bytes: &[u8], at: usize) -> usize {
@@ -420,6 +437,29 @@ mod tests {
         let key0 = &good[index_entry_offset(0)..index_entry_offset(0) + 2];
         let err = patched(index_entry_offset(1), key0);
         assert_eq!(err.kind, ErrorKind::Duplicate);
+    }
+
+    #[test]
+    fn aliased_entries_are_capped_at_the_input_length() {
+        // Two entries sharing one value stay under the cap and parse.
+        let sfo = ParamSfo::parse(&aliasing(2, 16)).unwrap();
+        assert_eq!(sfo.entries().len(), 2);
+        assert_eq!(sfo.get("AA"), sfo.get("A"));
+        // 100 entries over one 2000-byte value would copy ~205 KB out of a
+        // 3721-byte file; the second one already passes the input's length.
+        let bytes = aliasing(100, 2000);
+        let err = ParamSfo::parse(&bytes).unwrap_err();
+        assert_eq!(
+            (err.field, err.offset),
+            ("data_len", index_entry_offset(1) + 4)
+        );
+        assert_eq!(
+            err.kind,
+            ErrorKind::OutOfRange {
+                value: (100 + 2000 + 99 + 2000) as u64,
+                limit: bytes.len() as u64,
+            }
+        );
     }
 
     #[test]

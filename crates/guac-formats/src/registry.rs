@@ -26,6 +26,7 @@ pub const PARSERS: &[RegisteredParser] = &[RegisteredParser {
     parse: |bytes| sfo::ParamSfo::parse(bytes).map(drop),
     seeds: sfo::builder::seeds,
     // Entries are at most 56 bytes each, one per 16 input bytes, plus the
-    // strings they copy and the duplicate-key set: well under 16x.
+    // duplicate-key set and the keys and values they copy, which the parser
+    // caps at the input length: well under 16x.
     heap_budget: |len| 16 * len + 4096,
 }];

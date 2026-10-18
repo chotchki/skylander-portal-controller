@@ -811,15 +811,20 @@ disassembler output (Ghidra projects included), no RPCS3 memory dumps, no RSX ca
 - The repo holds our code, our specs in our own words, synthetic test fixtures and links to public work.
 - Disc dumps are read-only. Nothing writes into them (`rpcs3 --decrypt` writes next to its input, so it
   only ever sees a copy).
-- Enforced by construction once AB lands (AB.1): a `cargo test` that fails when any tracked file
-  (`git ls-files`) starts with a game magic (`IGA\x1a`, `IGZ\x01`, `BIKi`, `KB2`, `FSB5`, `SCE\0`,
-  `RRC`, `\0PSF`). Two of the rule's items don't start with one: RPCS3 writes RSX captures gzipped
-  (`.rrc.gz`, `RRC` only after inflating), and a decrypted EBOOT is a plain big-endian PPC64 ELF. So a
-  gzip file is checked again after inflating its first bytes, and a 64-bit big-endian ELF with machine 21
-  fails too. `.githooks/pre-push` runs `cargo test --workspace` on every push from the dev clone. The
-  Windows CI lane runs it too, but push CI fires only on `main`, so on `2.0` a `--no-verify` push gets
-  past the guard until a merge to `main` or a dispatched run. A guest memory dump has no magic at all;
-  only the outside-the-tree rule above keeps it out.
+- Enforced by construction once AB lands (AB.1): a `cargo test` that fails when any file git would commit
+  or push starts with a game magic. That's the index (`git ls-files`) plus every blob HEAD or a local
+  branch reaches that no remote has yet, because a push sends commits and a file committed then deleted
+  still ships with its commit. The magics: IGA in both byte orders (`IGA\x1a` on Giants and Trap Team,
+  `\x1aAGI` on every later `.pak`), IGZ in both (`IGZ\x01`, `\x01ZGI`), `BIKi`, `KB2`, `FSB5`, `SCE\0`,
+  `NPD\0`, `\x7fPKG`, `RRC`, `\0PSF` and the disc's own TROPHY.TRP, LIC.DAT, PS3_DISC.SFB and
+  PS3UPDAT.PUP heads. Only each blob's first 64 KiB is read, so a staged disc image costs that, not its
+  size. Two of the rule's items don't start with a magic: RPCS3 writes RSX captures gzipped (`.rrc.gz`,
+  `RRC` only after inflating), and a decrypted EBOOT is a plain big-endian PPC64 ELF. So a gzip file is
+  checked again after inflating its first bytes, and a 64-bit big-endian ELF with machine 21 fails too.
+  `.githooks/pre-push` runs `cargo test --workspace` on every push from the dev clone. The Windows CI
+  lane runs it too, but push CI fires only on `main`, so on `2.0` a `--no-verify` push gets past the
+  guard until a merge to `main` or a dispatched run. A guest memory dump has no magic at all; only the
+  outside-the-tree rule above keeps it out.
 
 ## Measuring progress
 
