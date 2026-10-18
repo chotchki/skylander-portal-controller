@@ -99,7 +99,9 @@ pub(crate) fn resolved(path: &Path) -> Option<PathBuf> {
 
 /// Refuses a root inside the dump or a dump inside the root: the first would
 /// write into the dump, the second could delete from it when a stale identity
-/// dir is rebuilt.
+/// dir is rebuilt. On unix, by (dev, inode) as well as by path: macOS
+/// `realpath` keeps a firmlink spelling (`/System/Volumes/Data/...`), so two
+/// spellings of one folder can differ as strings.
 pub(crate) fn check_disjoint(root: &ExtractRoot, dump: &Path) -> Result<()> {
     let overlap = || ExtractError::OverlapsDump {
         root: root.path().to_path_buf(),
@@ -111,6 +113,20 @@ pub(crate) fn check_disjoint(root: &ExtractRoot, dump: &Path) -> Result<()> {
         .map_err(|e| ExtractError::unreadable(dump, e))?;
     if r.starts_with(&d) || d.starts_with(&r) {
         return Err(overlap());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let id = |p: &Path| std::fs::metadata(p).ok().map(|m| (m.dev(), m.ino()));
+        let dump_id = id(&d).ok_or_else(overlap)?;
+        if r.ancestors().filter_map(id).any(|a| a == dump_id) {
+            return Err(overlap());
+        }
+        if let Some(root_id) = id(&r)
+            && d.ancestors().filter_map(id).any(|a| a == root_id)
+        {
+            return Err(overlap());
+        }
     }
     Ok(())
 }

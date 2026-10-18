@@ -411,6 +411,80 @@ fn an_extract_root_overlapping_the_dump_is_refused() {
     }
 }
 
+/// macOS firmlinks: `/System/Volumes/Data/private/...` is `/private/...`, but
+/// `realpath` doesn't fold it, so only an identity check sees the overlap.
+#[cfg(target_os = "macos")]
+#[test]
+fn an_extract_root_spelled_through_a_firmlink_is_still_inside_the_dump() {
+    let data = Path::new("/System/Volumes/Data");
+    if !data.is_dir() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let dump = make_dump(tmp.path(), "01.00").canonicalize().unwrap();
+    let table = table_for(&dump, "01.00");
+    let firm = data.join(dump.strip_prefix("/").unwrap());
+    assert!(firm.is_dir(), "{}", firm.display());
+    for root in [firm.join("extract"), firm.clone()] {
+        let root = ExtractRoot::checked(&root).unwrap();
+        for known in [&table[..], &[]] {
+            let err = open(&dump, &root, known, &no_progress).unwrap_err();
+            assert_eq!(err.code(), "GUAC-E-EXTRACT-OVERLAPS-DUMP", "{err}");
+        }
+    }
+    // And a dump spelled through the firmlink, inside a plainly spelled root.
+    let err = open(
+        &firm,
+        &ExtractRoot::checked(tmp.path()).unwrap(),
+        &table,
+        &no_progress,
+    )
+    .unwrap_err();
+    assert_eq!(err.code(), "GUAC-E-EXTRACT-OVERLAPS-DUMP", "{err}");
+    let mut names: Vec<_> = fs::read_dir(&dump)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["PS3_GAME"]);
+}
+
+/// A re-dump or a `cp -p` of another dump keeps the disc's mtimes, so a
+/// same-size change with its mtime put back must still be read.
+#[test]
+fn a_same_size_change_with_its_mtime_restored_is_read_again() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dump = make_dump(tmp.path(), "01.00");
+    let f = dump.join("PS3_GAME/USRDIR/movies/x.mov");
+    // A whole-second 2012 stamp, like every file on the Giants disc.
+    let disc_time = SystemTime::UNIX_EPOCH + Duration::from_secs(1_344_622_654);
+    let stamp = |t| {
+        fs::File::options()
+            .write(true)
+            .open(&f)
+            .unwrap()
+            .set_modified(t)
+            .unwrap()
+    };
+    stamp(disc_time);
+    let table = table_for(&dump, "01.00");
+    let root = root_in(tmp.path());
+    let first = open(&dump, &root, &table, &no_progress).unwrap();
+    assert_eq!(first.state, DirState::Fresh);
+    assert_eq!(
+        open(&dump, &root, &table, &no_progress)
+            .unwrap()
+            .files_cached,
+        4
+    );
+
+    fs::write(&f, vec![0u8; 3000]).unwrap();
+    stamp(disc_time);
+    assert_eq!(fs::metadata(&f).unwrap().modified().unwrap(), disc_time);
+    let err = open(&dump, &root, &table, &no_progress).unwrap_err();
+    assert_eq!(err.code(), "GUAC-E-UNKNOWN-DUMP", "{err}");
+}
+
 #[test]
 fn a_dump_missing_its_pieces_is_unreadable_and_named() {
     let tmp = tempfile::tempdir().unwrap();

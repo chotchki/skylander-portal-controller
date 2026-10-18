@@ -36,11 +36,19 @@ pub struct SourceFile {
     /// Nanoseconds since the epoch; `None` when the filesystem gave none, and
     /// then the cache never matches.
     pub mtime_ns: Option<u64>,
+    /// Inode and status-change time (ns). A disc's dumps all carry its fixed
+    /// mtimes, and copy tools restore them, but no write can set ctime back.
+    /// `None` off unix (until the Windows bring-up) or in an older manifest:
+    /// the cache never matches.
+    #[serde(default)]
+    pub ino: Option<u64>,
+    #[serde(default)]
+    pub ctime_ns: Option<u64>,
     pub sha256: Sha256,
 }
 
 /// Earlier hashes by relative path, from previous manifests of the same dump.
-/// A file whose size and mtime both match isn't read again.
+/// A file whose size, mtime, inode and ctime all match isn't read again.
 #[derive(Debug, Default)]
 pub struct HashCache(HashMap<String, SourceFile>);
 
@@ -50,9 +58,14 @@ impl HashCache {
             .extend(files.into_iter().map(|f| (f.path.clone(), f)));
     }
 
-    fn hit(&self, path: &str, size: u64, mtime_ns: Option<u64>) -> Option<Sha256> {
-        let f = self.0.get(path)?;
-        (mtime_ns.is_some() && f.size == size && f.mtime_ns == mtime_ns).then_some(f.sha256)
+    fn hit(&self, l: &Listed) -> Option<Sha256> {
+        let f = self.0.get(&l.rel)?;
+        let stamped = l.mtime_ns.is_some() && l.ino.is_some() && l.ctime_ns.is_some();
+        let same = f.size == l.size
+            && f.mtime_ns == l.mtime_ns
+            && f.ino == l.ino
+            && f.ctime_ns == l.ctime_ns;
+        (stamped && same).then_some(f.sha256)
     }
 
     pub fn len(&self) -> usize {
@@ -112,6 +125,20 @@ struct Listed {
     abs: PathBuf,
     size: u64,
     mtime_ns: Option<u64>,
+    ino: Option<u64>,
+    ctime_ns: Option<u64>,
+}
+
+#[cfg(unix)]
+fn ino_ctime(meta: &fs::Metadata) -> (Option<u64>, Option<u64>) {
+    use std::os::unix::fs::MetadataExt;
+    let ns = i128::from(meta.ctime()) * 1_000_000_000 + i128::from(meta.ctime_nsec());
+    (Some(meta.ino()), u64::try_from(ns).ok())
+}
+
+#[cfg(not(unix))]
+fn ino_ctime(_: &fs::Metadata) -> (Option<u64>, Option<u64>) {
+    (None, None)
 }
 
 /// Every file under `usrdir` but the EBOOT, sorted by relative path.
@@ -141,11 +168,14 @@ fn list(usrdir: &Path) -> Result<Vec<Listed>> {
                     .ok()
                     .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
                     .and_then(|d| u64::try_from(d.as_nanos()).ok());
+                let (ino, ctime_ns) = ino_ctime(&meta);
                 out.push(Listed {
                     rel,
                     abs,
                     size: meta.len(),
                     mtime_ns,
+                    ino,
+                    ctime_ns,
                 });
             } else {
                 return Err(ExtractError::unreadable(
@@ -205,10 +235,7 @@ pub fn scan(
     let usrdir = dump.join("PS3_GAME").join("USRDIR");
     let listed = list(&usrdir)?;
 
-    let mut hashes: Vec<Option<Sha256>> = listed
-        .iter()
-        .map(|l| cache.hit(&l.rel, l.size, l.mtime_ns))
-        .collect();
+    let mut hashes: Vec<Option<Sha256>> = listed.iter().map(|l| cache.hit(l)).collect();
     let files_cached = hashes.iter().flatten().count();
     let todo: Vec<usize> = (0..listed.len()).filter(|&i| hashes[i].is_none()).collect();
 
@@ -265,6 +292,8 @@ pub fn scan(
             path: l.rel,
             size: l.size,
             mtime_ns: l.mtime_ns,
+            ino: l.ino,
+            ctime_ns: l.ctime_ns,
             sha256: h.expect("every listed file is hashed or cached"),
         })
         .collect();
@@ -289,7 +318,20 @@ mod tests {
             path: path.into(),
             size,
             mtime_ns: Some(1),
+            ino: Some(10),
+            ctime_ns: Some(100),
             sha256: Sha256([byte; 32]),
+        }
+    }
+
+    fn listed(path: &str, size: u64, mtime: u64, ino: u64, ctime: u64) -> Listed {
+        Listed {
+            rel: path.into(),
+            abs: PathBuf::new(),
+            size,
+            mtime_ns: Some(mtime),
+            ino: Some(ino),
+            ctime_ns: Some(ctime),
         }
     }
 
@@ -312,13 +354,35 @@ mod tests {
     }
 
     #[test]
-    fn the_cache_needs_size_and_mtime_to_match() {
+    fn the_cache_needs_size_mtime_inode_and_ctime_to_match() {
         let mut cache = HashCache::default();
         cache.extend([rec("a", 1, 1)]);
-        assert_eq!(cache.hit("a", 1, Some(1)), Some(Sha256([1; 32])));
-        assert_eq!(cache.hit("a", 2, Some(1)), None);
-        assert_eq!(cache.hit("a", 1, Some(2)), None);
-        assert_eq!(cache.hit("a", 1, None), None);
-        assert_eq!(cache.hit("b", 1, Some(1)), None);
+        assert_eq!(
+            cache.hit(&listed("a", 1, 1, 10, 100)),
+            Some(Sha256([1; 32]))
+        );
+        assert_eq!(cache.hit(&listed("a", 2, 1, 10, 100)), None);
+        assert_eq!(cache.hit(&listed("a", 1, 2, 10, 100)), None);
+        assert_eq!(cache.hit(&listed("a", 1, 1, 11, 100)), None);
+        assert_eq!(cache.hit(&listed("a", 1, 1, 10, 101)), None);
+        assert_eq!(cache.hit(&listed("b", 1, 1, 10, 100)), None);
+        let unstamped = |f: fn(&mut Listed)| {
+            let mut l = listed("a", 1, 1, 10, 100);
+            f(&mut l);
+            cache.hit(&l)
+        };
+        assert_eq!(unstamped(|l| l.mtime_ns = None), None);
+        assert_eq!(unstamped(|l| l.ino = None), None);
+        assert_eq!(unstamped(|l| l.ctime_ns = None), None);
+    }
+
+    #[test]
+    fn a_manifest_without_inode_or_ctime_reads_and_misses() {
+        let old = r#"{"path":"a","size":1,"mtime_ns":1,"sha256":"0101010101010101010101010101010101010101010101010101010101010101"}"#;
+        let f: SourceFile = serde_json::from_str(old).unwrap();
+        assert_eq!((f.ino, f.ctime_ns), (None, None));
+        let mut cache = HashCache::default();
+        cache.extend([f]);
+        assert_eq!(cache.hit(&listed("a", 1, 1, 10, 100)), None);
     }
 }
