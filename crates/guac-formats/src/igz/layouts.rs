@@ -15,6 +15,7 @@
 mod edge;
 mod hero;
 mod image;
+mod material;
 mod scene;
 mod skeleton;
 mod tfb;
@@ -25,6 +26,7 @@ pub mod builder;
 pub use edge::{Attr, EdgeGeometry, EdgeGeometryAttr, EdgeGeometrySegment};
 pub use hero::{Clip, Hero, Mesh, Palette};
 pub use image::{Image2, KNOWN_FORMATS, METAIMAGES};
+pub use material::{AlphaTextureUnitIdAttr, AttrList, TextureAttr2, TextureBindAttr2};
 pub use scene::{
     Actor2, AttrSet, BlendMatrixSelect, Group, IntList, Node, NodeList, RuntimeTechniqueInstance,
 };
@@ -87,6 +89,11 @@ pub const TYPES: &[TypeDef] = &[
     def("igVisualAttribute", "igAttr", 0x10),
     def("igDrawableAttr", "igVisualAttribute", 0x10),
     def("igEdgeGeometryAttr", "igDrawableAttr", 0x14),
+    // Materials.
+    def("igAttrList", "igObjectList", 0x18),
+    def("igTextureBindAttr2", "igVisualAttribute", 0x18),
+    def("tfbAlphaTextureUnitIDAttr", "igTextureBindAttr2", 0x20),
+    def("igTextureAttr2", "igVisualAttribute", 0x40),
     // Skeleton and skin palette.
     def("igSkeleton2", "igNamedObject", 0x18),
     def("igSkeletonBoneList", "igObjectList", 0x18),

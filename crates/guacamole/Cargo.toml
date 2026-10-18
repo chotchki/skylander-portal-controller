@@ -34,8 +34,26 @@ rfd = "0.17.2"
 [dev-dependencies]
 tokio = { workspace = true }
 tempfile = "3"
-# SfoBuilder, for the `--setup <folder>` tests.
+# hero_view writes its screenshot PNG itself; the version bevy_image already pulls.
+image = { version = "0.25", default-features = false, features = ["png"] }
+# SfoBuilder, for the `--setup <folder>` tests; hero_view's decoders.
 guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }
+# hero_view (AC.10) draws in 3D; dev-only, so the binary's features stay `ui`.
+bevy = { version = "0.20.0", default-features = false, features = [
+    "ui",
+    "bevy_pbr",
+    "bevy_light",
+    "ktx2",
+    "tonemapping_luts",
+    # ktx2 refuses to build without a zstd backend, though ours never compresses.
+    "zstd_rust",
+] }
+
+# The dev viewer for the decode gate (openspec AC.10); `test` runs its unit
+# tests under `cargo test`.
+[[example]]
+name = "hero_view"
+test = true
 
 [features]
 default = ["dev-tools"]

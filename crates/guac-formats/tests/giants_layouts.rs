@@ -15,10 +15,10 @@ use guac_formats::FormatError;
 use guac_formats::iga::Archive;
 use guac_formats::igz::Igz;
 use guac_formats::igz::layouts::{
-    self, Actor2, AnimationInfo, AnimationInfoList, BlendMatrixSelect, EdgeGeometry,
-    EdgeGeometryAttr, EdgeGeometrySegment, Hero, Image2, IntList, Layout, NodeList, Payload,
-    PhysicsAnimation, PhysicsBody, PhysicsCombinerLink, PhysicsModel, RuntimeTechniqueInstance,
-    Skeleton2, SkeletonBone, SkeletonBoneList,
+    self, Actor2, AlphaTextureUnitIdAttr, AnimationInfo, AnimationInfoList, AttrList,
+    BlendMatrixSelect, EdgeGeometry, EdgeGeometryAttr, EdgeGeometrySegment, Hero, Image2, IntList,
+    Layout, NodeList, Payload, PhysicsAnimation, PhysicsBody, PhysicsCombinerLink, PhysicsModel,
+    RuntimeTechniqueInstance, Skeleton2, SkeletonBone, SkeletonBoneList, TextureAttr2,
 };
 
 fn level_bld(path: &Path) -> Vec<u8> {
@@ -155,6 +155,18 @@ impl Tally {
         }
         self.all::<AnimationInfoList>(name, &igz);
         self.all::<AnimationInfo>(name, &igz);
+        self.all::<AttrList>(name, &igz);
+        self.all::<AlphaTextureUnitIdAttr>(name, &igz);
+        for t in self.all::<TextureAttr2>(name, &igz) {
+            self.bump(format!(
+                "igTextureAttr2 _image present: {}",
+                t.image.is_some()
+            ));
+        }
+        for (i, t) in layouts::read_all::<RuntimeTechniqueInstance>(&igz) {
+            let Ok(t) = t else { continue };
+            self.material(name, &igz, i, &t);
+        }
         for (i, model) in layouts::read_all::<PhysicsModel>(&igz) {
             let Ok(model) = model else { continue };
             // Heroes are the models with a combiner (a skeleton).
@@ -166,6 +178,46 @@ impl Tally {
                 Ok(_) => self.bump("hero walks"),
                 Err(e) => self.failures.push(format!("{name}: hero #{i}: {e}")),
             }
+        }
+    }
+}
+
+impl Tally {
+    /// A technique's material: its binds' units, each bound once.
+    fn material(&mut self, name: &str, igz: &Igz<'_>, i: usize, t: &RuntimeTechniqueInstance<'_>) {
+        let layouts::ObjectRef::Object(list) = t.material_pass else {
+            return self
+                .failures
+                .push(format!("{name}: technique #{i} no material"));
+        };
+        let attrs = match AttrList::read(igz, list) {
+            Ok(l) => l.attrs,
+            Err(e) => return self.failures.push(format!("{name}: material #{list}: {e}")),
+        };
+        let mut units = Vec::new();
+        for a in attrs {
+            let Some(a) = a else {
+                return self
+                    .failures
+                    .push(format!("{name}: material #{list} null slot"));
+            };
+            if !layouts::is_a(igz.type_name(&igz.objects()[a]), "igTextureBindAttr2") {
+                continue;
+            }
+            match AlphaTextureUnitIdAttr::read(igz, a) {
+                Ok(b) => units.push(b.bind.unit()),
+                Err(e) => return self.failures.push(format!("{name}: bind #{a}: {e}")),
+            }
+        }
+        units.sort_unstable();
+        let once = units.windows(2).all(|w| w[0] != w[1]);
+        self.bump(format!(
+            "techniques binding unit 0: {}, each unit once: {once}",
+            units.first() == Some(&0)
+        ));
+        if !once || units.first() != Some(&0) {
+            self.failures
+                .push(format!("{name}: technique #{i} units {units:?}"));
         }
     }
 }
@@ -306,6 +358,56 @@ fn eruptor_reads_with_the_recorded_numbers() {
     assert_eq!(havok(idle.info.data_info.payload()), 6_880);
     assert_eq!((slots.len(), hero.clips.len(), wrapped), (185, 32, 31));
     assert_eq!(images, 44);
+
+    // Colour is unit 0 on both meshes, and the body's normal map is unit 4.
+    type Units<'a> = Vec<(i16, &'a str)>;
+    let textures: Vec<(Option<&str>, Units<'_>)> = hero
+        .meshes
+        .iter()
+        .map(|m| {
+            let binds = [0, 3, 4, 6]
+                .into_iter()
+                .filter_map(|u| {
+                    let (_, t) = hero.texture_at(m, u)?;
+                    let image = Image2::read(&igz, t.image?).unwrap();
+                    Some((u, image.name.unwrap().rsplit('/').next().unwrap()))
+                })
+                .collect();
+            (m.technique.node.name, binds)
+        })
+        .collect();
+    println!("  textures by unit: {textures:?}");
+    assert_eq!(
+        textures,
+        [
+            (
+                Some("EruptorBody"),
+                vec![
+                    (0, "eruptor_c.png"),
+                    (3, "eruptorrim.png"),
+                    (4, "eruptor_n.png"),
+                    (6, "eruptor_sp.png")
+                ]
+            ),
+            (
+                Some("EruptorEyes_Teeth"),
+                vec![
+                    (0, "eruptor_c.png"),
+                    (3, "specrim_eye6.png"),
+                    (4, "eruptor_n.png"),
+                    (6, "eruptor_sp.png")
+                ]
+            )
+        ]
+    );
+    assert_eq!(
+        (
+            hero.materials.len(),
+            hero.texture_binds.len(),
+            hero.textures.len()
+        ),
+        (2, 8, 5)
+    );
     // Every skinned bone's blend index has an inverse joint.
     let max_blend = hero
         .bones

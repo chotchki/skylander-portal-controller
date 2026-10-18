@@ -68,6 +68,10 @@ fn the_table_is_closed_and_tagged() {
         AnimationInfoList::TYPE,
         AnimationInfo::TYPE,
         ObjectList::TYPE,
+        AttrList::TYPE,
+        TextureBindAttr2::TYPE,
+        AlphaTextureUnitIdAttr::TYPE,
+        TextureAttr2::TYPE,
     ];
     for r in readers {
         assert!(type_def(r).is_some(), "{r} has no TypeDef");
@@ -304,7 +308,10 @@ fn scene_graph_reads_back() {
     assert_eq!(t.geom_attr, Some(index(&igz, s.attrs[1])));
     assert_eq!(
         (t.material_anim, t.material_pass),
-        (ObjectRef::Null, ObjectRef::Null)
+        (
+            ObjectRef::Null,
+            ObjectRef::Object(index(&igz, s.materials[1]))
+        )
     );
     let ObjectRef::Import(effect) = t.effect else {
         panic!("an import")
@@ -319,6 +326,73 @@ fn scene_graph_reads_back() {
         Node::read(&igz, index(&igz, s.techniques[1])).unwrap(),
         t.node
     );
+}
+
+#[test]
+fn materials_read_back() {
+    let (s, bytes) = sampled();
+    let igz = Igz::parse(&bytes).unwrap();
+    let i = |l: Location| index(&igz, l);
+    let m0 = AttrList::read(&igz, i(s.materials[0])).unwrap();
+    assert_eq!(
+        m0.attrs,
+        [
+            Some(i(s.binds[0])),
+            Some(i(s.binds[1])),
+            Some(i(s.shader_mask))
+        ]
+    );
+    let m1 = AttrList::read(&igz, i(s.materials[1])).unwrap();
+    assert_eq!(m1.attrs, [Some(i(s.binds[2])), Some(i(s.binds[0]))]);
+
+    let unit = |l| AlphaTextureUnitIdAttr::read(&igz, i(l)).unwrap();
+    let b0 = unit(s.binds[0]);
+    assert_eq!(
+        b0.bind.attr,
+        Attr {
+            cached_unit_id: 0,
+            cached_attr_index: -1,
+            read_only_copy: false
+        }
+    );
+    assert_eq!(b0.bind.texture, Some(i(s.textures[0])));
+    assert_eq!((b0.bind.unit_id, b0.data), (-2, -3));
+    assert_eq!(b0.alpha_texture, ObjectRef::Null);
+    let b1 = unit(s.binds[1]);
+    assert_eq!((b1.bind.unit(), b1.bind.unit_id, b1.data), (4, -4, -5));
+    assert_eq!(b1.alpha_texture, ObjectRef::Object(i(s.textures[1])));
+    assert_eq!(unit(s.binds[2]).bind.unit(), 3);
+    // The base reader on the subtype.
+    assert_eq!(
+        TextureBindAttr2::read(&igz, i(s.binds[1])).unwrap(),
+        b1.bind
+    );
+
+    let t0 = TextureAttr2::read(&igz, i(s.textures[0])).unwrap();
+    assert_eq!(
+        t0,
+        TextureAttr2 {
+            attr: Attr {
+                cached_unit_id: -1,
+                cached_attr_index: 2,
+                read_only_copy: false
+            },
+            format_hint: 0x5446_4E31,
+            load_in_vram_for_ctr: true,
+            mag_filter: 1,
+            min_filter: 2,
+            wrap_s: 3,
+            wrap_t: 4,
+            msaa_type: 5,
+            source: 6,
+            image: Some(i(s.image)),
+            tex_handle: -1,
+            image_handle: 0x0A,
+            wrap_r: 0x0B,
+        }
+    );
+    let t1 = TextureAttr2::read(&igz, i(s.textures[1])).unwrap();
+    assert_eq!((t1.image, t1.mag_filter, t1.wrap_r), (None, 0x11, 0x0C));
 }
 
 #[test]
@@ -449,6 +523,25 @@ fn the_hero_walks_from_its_model() {
         .collect();
     assert_eq!(per_mesh, [2, 1]);
     assert_eq!(hero.segments.len(), 3);
+
+    let materials: Vec<_> = hero.meshes.iter().map(|m| m.material).collect();
+    assert_eq!(materials, s.materials.map(|m| Some(index(&igz, m))));
+    // Bind 0 is shared, read once; the shader mask stays unread.
+    assert_eq!(hero.materials.len(), 2);
+    assert_eq!(hero.texture_binds.len(), 3);
+    assert_eq!(hero.textures.len(), 2);
+    let colour = index(&igz, s.textures[0]);
+    for m in &hero.meshes {
+        let (t, attr) = hero.texture_at(m, 0).unwrap();
+        assert_eq!((t, attr.image), (colour, Some(index(&igz, s.image))));
+    }
+    let normal = hero.texture_at(&hero.meshes[0], 4).unwrap();
+    assert_eq!(
+        (normal.0, normal.1.image),
+        (index(&igz, s.textures[1]), None)
+    );
+    assert!(hero.texture_at(&hero.meshes[0], 3).is_none());
+    assert_eq!(hero.texture_at(&hero.meshes[1], 3).unwrap().0, colour);
 
     assert_eq!(hero.clip_slots, [Some(index(&igz, s.clip_info)), None]);
     let clip = &hero.clips[&index(&igz, s.clip_info)];
@@ -732,6 +825,34 @@ fn selects_sharing_an_int_list_share_one_copy() {
         hero.palettes
             .values()
             .all(|p| p.indices == hero.int_lists.keys().next().copied())
+    );
+}
+
+#[test]
+fn techniques_sharing_a_material_read_it_once() {
+    let bytes = builder::shared_material(300, 200, "tfbAlphaTextureUnitIDAttr");
+    let igz = Igz::parse(&bytes).unwrap();
+    let hero = Hero::read(&igz, 0).unwrap();
+    assert_eq!(hero.meshes.len(), 300);
+    assert_eq!(
+        (
+            hero.materials.len(),
+            hero.texture_binds.len(),
+            hero.textures.len()
+        ),
+        (1, 200, 1)
+    );
+    assert!(hero.meshes.iter().all(|m| hero.texture_at(m, 0).is_some()));
+}
+
+#[test]
+fn a_bind_other_than_the_alpha_unit_attr_is_refused() {
+    let bytes = builder::shared_material(1, 1, "igTextureBindAttr2");
+    let igz = Igz::parse(&bytes).unwrap();
+    let e = Hero::read(&igz, 0).unwrap_err();
+    assert_eq!(
+        wrong_type(e),
+        ("tfbAlphaTextureUnitIDAttr", "igTextureBindAttr2".to_owned())
     );
 }
 

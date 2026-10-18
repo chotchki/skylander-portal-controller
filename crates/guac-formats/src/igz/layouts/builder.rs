@@ -31,6 +31,14 @@ pub struct Sample {
     pub idle: Location,
     pub lip_sync: Location,
     pub image: Location,
+    /// Each technique's `_materialPass`.
+    pub materials: [Location; 2],
+    /// Units 0 (shared by both materials), 4 and 3.
+    pub binds: [Location; 3],
+    /// Colour (with the image) and a null-image normal map.
+    pub textures: [Location; 2],
+    /// An attribute outside the gate, in material 0.
+    pub shader_mask: Location,
 }
 
 /// The tag byte tells the skeleton's payload from the clip's.
@@ -161,6 +169,10 @@ pub fn sample() -> Sample {
     let idle = b.object(0, "tfbPhysicsAnimation", 0x2C);
     let lip_sync = b.object(0, "tfbPhysicsAnimation", 0x2C);
     let image = b.object(0, "igImage2", 0x60);
+    let materials = [(); 2].map(|_| b.object(0, "igAttrList", 0x18));
+    let binds = [(); 3].map(|_| b.object(0, "tfbAlphaTextureUnitIDAttr", 0x20));
+    let textures = [(); 2].map(|_| b.object(0, "igTextureAttr2", 0x40));
+    let shader_mask = b.object(0, "igPixelShaderVariantMaskAttr", 0x18);
     let blocks = b.section(0x80);
 
     // tfbPhysicsModel.
@@ -212,6 +224,7 @@ pub fn sample() -> Sample {
         b.put_u32(at(t, 0x20), 0x11);
         b.put_u32(at(t, 0x24), 0x22);
         b.pointer(at(t, 0x28), attrs[i]);
+        b.pointer(at(t, 0x30), materials[i]);
         b.import(at(t, 0x34), "effects", "skin_fx");
         b.put_bytes(at(attrs[i], 0x0A), &[0xFF, 0xFF]);
         b.pointer(at(attrs[i], 0x10), geometries[i]);
@@ -285,6 +298,45 @@ pub fn sample() -> Sample {
     b.put_u32(at(image, 0x50), u32::MAX);
     b.put_bytes(at(image, 0x58), &[1]);
 
+    // Materials: binds (unit, texture, `_unitID`, `_data`), then textures.
+    list(
+        &mut b,
+        materials[0],
+        blocks,
+        &[Some(binds[0]), Some(binds[1]), Some(shader_mask)],
+    );
+    list(
+        &mut b,
+        materials[1],
+        blocks,
+        &[Some(binds[2]), Some(binds[0])],
+    );
+    for (o, (unit, texture, unit_id, data)) in binds.into_iter().zip([
+        (0u16, textures[0], -2i32, -3i32),
+        (4, textures[1], -4, -5),
+        (3, textures[0], -6, -7),
+    ]) {
+        u16_be(&mut b, o, 0x08, &[unit, 0xFFFF]);
+        b.pointer(at(o, 0x10), texture);
+        b.put_u32(at(o, 0x14), unit_id as u32);
+        b.put_u32(at(o, 0x1C), data as u32);
+    }
+    b.pointer(at(binds[1], 0x18), textures[1]);
+    for (i, o) in textures.into_iter().enumerate() {
+        let i = i as u32;
+        u16_be(&mut b, o, 0x08, &[0xFFFF, 2 + i as u16]);
+        b.put_u32(at(o, 0x10), 0x5446_4E31 + i);
+        b.put_bytes(at(o, 0x14), &[1]);
+        for (k, offset) in [0x18, 0x1C, 0x20, 0x24, 0x28, 0x2C].into_iter().enumerate() {
+            b.put_u32(at(o, offset), 0x10 * i + 1 + k as u32);
+        }
+        b.put_u32(at(o, 0x34), u32::MAX - i);
+        b.put_u32(at(o, 0x38), 0x0A + i);
+        b.put_u32(at(o, 0x3C), 0x0B + i);
+    }
+    b.pointer(at(textures[0], 0x30), image);
+    u16_be(&mut b, shader_mask, 0x10, &[0, 0x1C]);
+
     Sample {
         bytes: b.build(),
         model,
@@ -307,6 +359,10 @@ pub fn sample() -> Sample {
         idle,
         lip_sync,
         image,
+        materials,
+        binds,
+        textures,
+        shader_mask,
     }
 }
 
@@ -377,6 +433,41 @@ pub fn shared_palette(selects: usize, ints: usize) -> Vec<u8> {
     })
 }
 
+/// `techniques` techniques under the actor sharing one empty geometry and
+/// one material of `binds` binds, all binding `bind_type` (a
+/// `tfbAlphaTextureUnitIDAttr` or not) to one texture.
+pub fn shared_material(techniques: usize, binds: usize, bind_type: &str) -> Vec<u8> {
+    bare_hero(|b, blocks, _, _| {
+        let attr = b.object(0, "igEdgeGeometryAttr", 0x14);
+        let geometry = b.object(0, "igPS3EdgeGeometry", 0x1C);
+        let material = b.object(0, "igAttrList", 0x18);
+        let texture = b.object(0, "igTextureAttr2", 0x40);
+        b.pointer(at(attr, 0x10), geometry);
+        list(b, geometry, blocks, &[]);
+        let size = if bind_type == "tfbAlphaTextureUnitIDAttr" {
+            0x20
+        } else {
+            0x18
+        };
+        let bs: Vec<_> = (0..binds)
+            .map(|_| {
+                let o = b.object(0, bind_type, size);
+                b.pointer(at(o, 0x10), texture);
+                Some(o)
+            })
+            .collect();
+        list(b, material, blocks, &bs);
+        (0..techniques)
+            .map(|_| {
+                let t = b.object(0, "tfbRuntimeTechniqueInstance", 0x38);
+                b.pointer(at(t, 0x28), attr);
+                b.pointer(at(t, 0x30), material);
+                t
+            })
+            .collect()
+    })
+}
+
 /// Seeds for the property test and the fuzz corpus; the shared shapes
 /// overrun the heap budget on a walk that copies per reference.
 pub fn seeds() -> Vec<Vec<u8>> {
@@ -384,5 +475,6 @@ pub fn seeds() -> Vec<Vec<u8>> {
         sample().bytes,
         shared_child_list(1000),
         shared_palette(400, 16_000),
+        shared_material(400, 400, "tfbAlphaTextureUnitIDAttr"),
     ]
 }
