@@ -87,6 +87,7 @@ Config loading splits by binary. The product keeps `config::load` with its wizar
 | `http.rs:1191` | EBOOT resolution unless Mock | skipped |
 | `state.rs:1563-1742` (`BootDirect`) | IPC spawn, else on Windows a UIA spawn for any non-IPC driver | no spawn on any OS; reveal at once, as Mock does off Windows |
 | `http.rs:948`, `:998`, `:1629` | rewrite `config.json` (window mode, 2×) / open RPCS3 settings (409 for Mock) | 409 |
+| `get_status` (`/api/status`, added by AA.18) | `"app": "product"` | `"app": "guacamole"`: the phone refuses only the viewer's own placement of a figure already on the portal (AA.18) and its menu leaves out the RPCS3 settings (AA.19) |
 
 The `BootDirect` row is the dangerous one. The non-IPC arm is gated on `cfg(windows)`, not on the driver, so anything without an IPC socket gets a real RPCS3 launch on Windows (the HTPC, once it's brought up). The arms key on `DriverKind` (threaded into the job), never on platform. The rows whose code stays in `crates/server` (the working-copy, figure-stats, display-mode, RPCS3-config and `config.json` rows) are hooks (decision 1): guacamole passes none, so the step is skipped or the route answers 409. The routes stay in the shared router and answer 409 without the hook, so the phone gets the same "unavailable" answer from guacamole whatever features a workspace build unified.
 

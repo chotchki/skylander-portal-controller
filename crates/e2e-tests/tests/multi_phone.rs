@@ -14,7 +14,7 @@ use fantoccini::Locator;
 use serde_json::json;
 
 use skylander_e2e_tests::{
-    Phone, TestServer, clear_eviction_cooldown, inject_load_outcomes, inject_profile,
+    E2eApp, Phone, TestServer, clear_eviction_cooldown, inject_load_outcomes, inject_profile,
     launch_giants, set_session_profile, unlock_default_profile, unlock_session,
 };
 
@@ -453,6 +453,145 @@ async fn ownership_pip_shows_correct_owner_per_slot() {
 
     p1.close().await.unwrap();
     p2.close().await.unwrap();
+}
+
+// ---- AA.18 the same figure from two profiles -----------------------------
+//
+// Each app's rule for a figure already on the portal. The product refuses it
+// whoever placed it (two profiles' working copies are byte copies of one pack
+// dump); guacamole refuses only the viewer's own placement, so Bob places his
+// Eruptor next to Alice's. Neither lets Alice place hers twice.
+
+/// Searches `name`, opens its card and presses PLACE.
+async fn search_and_place(phone: &Phone, name: &str) {
+    phone.open_search().await.unwrap();
+    let input = phone
+        .client
+        .find(Locator::Css(".search-input-p4"))
+        .await
+        .unwrap();
+    input.clear().await.unwrap();
+    input.send_keys(name).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    phone.place_figure_named(name).await.unwrap();
+}
+
+async fn wait_slot_named(phone: &Phone, slot: u8, name: &str) {
+    let want = name.to_lowercase();
+    phone
+        .wait_until(Duration::from_secs(8), || async {
+            phone
+                .slot_text(slot)
+                .await
+                .map(|t| t.to_lowercase().contains(&want))
+                .unwrap_or(false)
+        })
+        .await
+        .unwrap_or_else(|_| panic!("slot {slot} never showed {name}"));
+}
+
+/// Whether the toy box marks `name`'s card ON PORTAL (None: no such card).
+async fn marked_on_portal(phone: &Phone, name: &str) -> Option<bool> {
+    phone
+        .client
+        .execute(
+            "const card = Array.from(document.querySelectorAll('.fig-card-p4'))
+               .find(c => c.querySelector('.fig-name-p4')?.textContent.trim() === arguments[0]);
+             return card ? !!card.querySelector('.fig-on-portal-ribbon') : null;",
+            vec![json!(name)],
+        )
+        .await
+        .unwrap()
+        .as_bool()
+}
+
+/// Waits for the details' error banner and returns its text.
+async fn refusal(phone: &Phone) -> String {
+    let banner = ".detail-viewport.detail-errored .detail-error-banner";
+    phone
+        .wait_for(Locator::Css(banner), Duration::from_secs(3))
+        .await
+        .expect("the details refuse the placement");
+    phone.inner_text(banner).await.unwrap().unwrap_or_default()
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver"]
+async fn the_same_figure_from_two_profiles_follows_the_apps_rule() {
+    let app = E2eApp::from_env();
+    let server = TestServer::spawn().expect("spawn");
+    launch_giants(&server.url).await.unwrap();
+    let alice_id = inject_profile(&server.url, "Alice", "1111", "#ff6b2a")
+        .await
+        .unwrap();
+    let bob_id = inject_profile(&server.url, "Bob", "2222", "#5ac96b")
+        .await
+        .unwrap();
+    let alice = new_phone(&server).await;
+    let alice_sid = wait_for_session_id(&alice).await;
+    let bob = new_phone(&server).await;
+    let bob_sid = wait_for_session_id(&bob).await;
+    set_session_profile(&server.url, alice_sid, &alice_id)
+        .await
+        .unwrap();
+    set_session_profile(&server.url, bob_sid, &bob_id)
+        .await
+        .unwrap();
+    for phone in [&alice, &bob] {
+        phone
+            .wait_for_portal(Duration::from_secs(15))
+            .await
+            .unwrap();
+    }
+
+    search_and_place(&alice, "Eruptor").await;
+    wait_slot_named(&alice, 1, "Eruptor").await;
+    wait_slot_named(&bob, 1, "Eruptor").await;
+
+    // Bob's toy box: Alice's Eruptor marks his card only in the product.
+    bob.open_search().await.unwrap();
+    let input = bob
+        .client
+        .find(Locator::Css(".search-input-p4"))
+        .await
+        .unwrap();
+    input.clear().await.unwrap();
+    input.send_keys("Eruptor").await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let marked = marked_on_portal(&bob, "Eruptor").await;
+    eprintln!("{app:?}: Bob's Eruptor card marked ON PORTAL: {marked:?}");
+    assert_eq!(marked, Some(app == E2eApp::Product), "{app:?}");
+
+    bob.place_figure_named("Eruptor").await.unwrap();
+    match app {
+        E2eApp::Product => {
+            let said = refusal(&bob).await;
+            assert!(said.contains("Eruptor is already on the portal"), "{said}");
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            assert!(
+                bob.slot_text(2).await.is_err(),
+                "the product placed a second Eruptor"
+            );
+        }
+        E2eApp::Guacamole => wait_slot_named(&bob, 2, "Eruptor").await,
+    }
+
+    // Alice can't place her own Eruptor twice, in either app.
+    search_and_place(&alice, "Eruptor").await;
+    let said = refusal(&alice).await;
+    assert!(said.contains("Eruptor is already on the portal"), "{said}");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let next_free = match app {
+        E2eApp::Product => 2,
+        E2eApp::Guacamole => 3,
+    };
+    assert!(
+        alice.slot_text(next_free).await.is_err(),
+        "slot {next_free} took a second placement of Alice's Eruptor"
+    );
+
+    alice.close().await.unwrap();
+    bob.close().await.unwrap();
 }
 
 // ---- 8.1.4 disconnect_ghosts_session_keeps_slots --------------------------

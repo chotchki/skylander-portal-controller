@@ -74,11 +74,15 @@ The phone's game list SHALL contain Skylanders Giants and nothing else, and only
 - **THEN** the phone shows its no-games state, and guacamole's TV says no Skylanders Giants dump was found in the chosen folder and offers to choose another
 
 ### Requirement: The controller's settings and figures are left alone
-The guacamole app SHALL NOT read or change any profile's figure files from the Skylander Portal Controller, SHALL NOT change the controller's profiles, PINs or settings, and SHALL NOT change the controller's window mode, render scale, RPCS3 settings or per-game display mode. The phone's grown-ups actions for those settings SHALL report that they are unavailable in guacamole, and picking a game in guacamole SHALL NOT change the display's resolution or refresh rate.
+The guacamole app SHALL NOT read or change any profile's figure files from the Skylander Portal Controller, SHALL NOT change the controller's profiles, PINs or settings, and SHALL NOT change the controller's window mode, render scale, RPCS3 settings or per-game display mode. The phone's grown-ups toggles for the window mode and render scale SHALL report that they are unavailable in guacamole, the phone's menu SHALL NOT offer the action that opens the RPCS3 settings while guacamole runs, and picking a game in guacamole SHALL NOT change the display's resolution or refresh rate.
 
 #### Scenario: Window-mode toggle under guacamole
 - **WHEN** a grown-up uses the phone's window-mode toggle while guacamole runs
 - **THEN** the phone reports the setting is unavailable, and the controller's next start uses the window mode it had before
+
+#### Scenario: No RPCS3 settings in guacamole's menu
+- **WHEN** a grown-up opens the phone's menu while guacamole runs and no game is picked
+- **THEN** the menu has no action for the RPCS3 settings, and the controller's menu still offers it before a game is picked
 
 #### Scenario: Giants played in guacamole leaves the controller's display mode alone
 - **WHEN** Giants was picked and figures were placed in guacamole, and Giants is later launched in the controller

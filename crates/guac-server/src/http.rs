@@ -906,6 +906,28 @@ struct StatusBody {
     /// "emulator actually ready".
     rpcs3_running: bool,
     current_game: Option<GameLaunched>,
+    /// Which app is serving, so the phone can apply guacamole's portal rule
+    /// and leave out what guacamole doesn't have (openspec AA.18, AA.19).
+    app: ServingApp,
+}
+
+/// The app behind the router. guacamole is the only one that runs the
+/// native driver, so the driver kind says which.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ServingApp {
+    Product,
+    Guacamole,
+}
+
+impl ServingApp {
+    fn of(kind: crate::config::DriverKind) -> Self {
+        use crate::config::DriverKind;
+        match kind {
+            DriverKind::Native => Self::Guacamole,
+            DriverKind::Uia | DriverKind::Ipc | DriverKind::Mock => Self::Product,
+        }
+    }
 }
 
 async fn get_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -913,6 +935,7 @@ async fn get_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     axum::Json(StatusBody {
         rpcs3_running: rpcs3.process.is_some(),
         current_game: rpcs3.current.clone(),
+        app: ServingApp::of(state.driver_kind),
     })
 }
 
@@ -2737,6 +2760,29 @@ mod figure_id_tests {
         // Path traversal, shaped to hit each branch's length check.
         assert!(!is_safe_figure_id("../../etc/x"));
         assert!(!is_safe_figure_id("sha:../../../../etcx"));
+    }
+}
+
+#[cfg(test)]
+mod serving_app_tests {
+    use super::*;
+    use crate::config::DriverKind;
+
+    /// Every product driver reads `product`; only the native one is guacamole.
+    #[test]
+    fn only_the_native_driver_is_guacamole() {
+        for kind in [DriverKind::Uia, DriverKind::Ipc, DriverKind::Mock] {
+            assert_eq!(ServingApp::of(kind), ServingApp::Product, "{kind:?}");
+        }
+        assert_eq!(ServingApp::of(DriverKind::Native), ServingApp::Guacamole);
+        assert_eq!(
+            serde_json::to_value(ServingApp::Product).unwrap(),
+            "product"
+        );
+        assert_eq!(
+            serde_json::to_value(ServingApp::Guacamole).unwrap(),
+            "guacamole"
+        );
     }
 }
 

@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use fantoccini::Locator;
-use skylander_e2e_tests::{E2eApp, Phone, TestServer, unlock_default_profile};
+use skylander_e2e_tests::{E2eApp, Phone, TestServer, inject_profile, unlock_default_profile};
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver + built phone SPA"]
@@ -47,6 +47,47 @@ async fn smoke_game_picker_renders() {
         "expected {want} Skylanders game cards in the picker, found {}",
         cards.len()
     );
+
+    phone.close().await.unwrap();
+}
+
+/// The grown-ups menu's HOLD FOR GAME SETTINGS before a game is picked: the
+/// product offers it, guacamole leaves it out (openspec AA.19).
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver + built phone SPA"]
+async fn the_menu_offers_game_settings_only_in_the_product() {
+    let server = TestServer::spawn().expect("spawn server");
+    inject_profile(&server.url, "TestKid", "1234", "#39d39f")
+        .await
+        .expect("inject profile");
+    let phone = Phone::new(&server.phone_url().await.unwrap(), &server.chromedriver_url)
+        .await
+        .expect("connect phone");
+    phone
+        .wait_for(Locator::Css(".profile-picker"), Duration::from_secs(15))
+        .await
+        .expect("profile picker");
+    phone
+        .wait_for(Locator::Css(".kebab-btn"), Duration::from_secs(5))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+
+    let app = E2eApp::from_env();
+    let product = app == E2eApp::Product;
+    let offered = |a: &[String]| a.iter().any(|t| t == "HOLD FOR GAME SETTINGS");
+    let actions = phone
+        .menu_actions_until(move |a| offered(a) == product)
+        .await
+        .unwrap();
+    eprintln!("{app:?} menu: {actions:?}");
+    assert!(
+        actions.iter().any(|t| t == "MANAGE PROFILES"),
+        "{actions:?}"
+    );
+    assert_eq!(offered(&actions), product, "{app:?}: {actions:?}");
 
     phone.close().await.unwrap();
 }

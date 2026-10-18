@@ -268,8 +268,11 @@ flowchart LR
   (Giants), a figure's details and edits read and write Guacamole's store (from AH; before that every
   figure is fresh, so STATS and RESET TO FRESH are disabled with a "not available yet" note) and the
   grown-ups toggles that rewrite the product's RPCS3 and window settings answer 409. The phone says the
-  window-mode and 2× toggles aren't available in guacamole; the RPCS3-settings action still toasts a bare
-  `HTTP 409` (AA.19).
+  window-mode and 2× toggles aren't available in guacamole and its menu leaves out HOLD FOR GAME SETTINGS
+  (AA.19). It knows which app it's talking to from `/api/status`'s `app` (`product` or `guacamole`, keyed
+  on the driver kind), which also sets whose placements block a figure: the product refuses one already on
+  the portal whoever placed it, guacamole only when the viewer's own profile did, so two kids can each put
+  their own Eruptor on (AA.18).
 - One binary at a time. Both bind the same HTTP port (8765, the default the controller's setup writes)
   and advertise the same mDNS name, so the join address is the same for either. The listener binds
   before anything with a side effect (the boot call, below), so the second one to start sees the port

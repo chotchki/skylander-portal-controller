@@ -1638,6 +1638,35 @@ impl Phone {
         }
         Err(anyhow!("wait_until timed out after {timeout:?}"))
     }
+
+    /// The open kebab menu's action titles, read until `done` holds and
+    /// MANAGE PROFILES shows, for up to 4 s (the app's `/api/status` can land
+    /// after the menu's first draw). Returns the last read for the caller to
+    /// assert on.
+    pub async fn menu_actions_until(
+        &self,
+        done: impl Fn(&[String]) -> bool,
+    ) -> Result<Vec<String>> {
+        self.wait_for(Locator::Css(".menu-overlay-panel"), Duration::from_secs(4))
+            .await?;
+        let deadline = Instant::now() + Duration::from_secs(4);
+        loop {
+            let read = self
+                .client
+                .execute(
+                    "return Array.from(document.querySelectorAll('.menu-overlay-panel .menu-action-title'))
+                       .map(e => e.textContent.trim());",
+                    vec![],
+                )
+                .await?;
+            let titles: Vec<String> = serde_json::from_value(read)?;
+            let drawn = titles.iter().any(|t| t == "MANAGE PROFILES");
+            if (drawn && done(&titles)) || Instant::now() >= deadline {
+                return Ok(titles);
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
 }
 
 #[cfg(test)]

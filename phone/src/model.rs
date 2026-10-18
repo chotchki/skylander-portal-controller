@@ -49,6 +49,35 @@ pub enum WindowMode {
     Desktop,
 }
 
+/// Which app serves the phone, from `/api/status`'s `app` (openspec AA.18,
+/// AA.19). `Product` until the status comes back, so the controller's phone
+/// behaves exactly as it did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServerApp {
+    #[default]
+    Product,
+    Guacamole,
+}
+
+impl ServerApp {
+    /// Whether a figure `placed_by` put on the portal stops `viewer` placing
+    /// it again: the product blocks whoever placed it, guacamole only the
+    /// viewer's own (each profile owns its own instance, like two toys).
+    pub fn blocks_place(self, placed_by: Option<&str>, viewer: Option<&str>) -> bool {
+        match self {
+            Self::Product => true,
+            Self::Guacamole => placed_by == viewer,
+        }
+    }
+
+    /// guacamole has no RPCS3 to configure, so its menu leaves HOLD FOR GAME
+    /// SETTINGS out.
+    pub fn offers_rpcs3_settings(self) -> bool {
+        self == Self::Product
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Category {

@@ -100,8 +100,8 @@ fn id_named(figs: &[Value], name: &str) -> String {
         .to_string()
 }
 
-/// The request the phone's place button sends, for the steps the phone's
-/// own UI won't take (a figure already on the portal, a given slot).
+/// The request the phone's place button sends, for the step the phone's own
+/// UI won't take (a given slot).
 async fn load(server: &TestServer, sid: u64, slot: u8, figure_id: &str) {
     let resp = reqwest::Client::new()
         .post(format!("{}/api/portal/slot/{slot}/load", server.url))
@@ -346,7 +346,9 @@ async fn a_placement_shows_its_card_within_a_second() {
     assert_eq!(eruptor["figure_id"], "000009-0000");
     assert_eq!(eruptor["portrait"], true, "Eruptor has a thumb.png");
     assert_pip(eruptor, "A", ALICE, &pid);
-    let drawn = format!("{eruptor}").to_lowercase();
+    // The drawn lines only: the whole card's JSON carries the profile's ULID,
+    // which can spell "xp".
+    let drawn = texts(eruptor).join(" ").to_lowercase();
     for word in ["level", "xp", "experience", "gold"] {
         assert!(!drawn.contains(word), "card shows {word}: {eruptor}");
     }
@@ -362,17 +364,15 @@ async fn the_same_figure_on_two_profiles_is_two_cards() {
     let server = spawn();
     let (alice, alice_id, _) = phone_as(&server, "Alice", ALICE).await;
     pick_giants(&server, &alice).await;
-    let (bob, bob_id, bob_sid) = phone_as(&server, "Bob", BOB).await;
+    let (bob, bob_id, _) = phone_as(&server, "Bob", BOB).await;
     bob.wait_for_portal(Duration::from_secs(15)).await.unwrap();
 
     place_named(&alice, "Eruptor").await;
     let shown = wait_slot(&alice, 1, "Eruptor").await;
     tv_card(&server, 1, "Eruptor", shown).await;
-    // Bob's phone refuses a figure already on the portal, whoever placed it
-    // (figure_detail.rs's `already` check), so his copy goes as the request
-    // his place button would send.
-    let figs = figures(&server, bob_sid).await;
-    load(&server, bob_sid, 2, &id_named(&figs, "Eruptor")).await;
+    // Alice's Eruptor leaves Bob's own in his box (AA.18): his phone places it.
+    wait_slot(&bob, 1, "Eruptor").await;
+    place_named(&bob, "Eruptor").await;
     let shown = wait_slot(&bob, 2, "Eruptor").await;
     let snap = tv_card(&server, 2, "Eruptor", shown).await;
 
@@ -691,6 +691,20 @@ async fn the_controllers_settings_are_unavailable() {
         .click()
         .await
         .unwrap();
+    // No RPCS3 settings to offer (AA.19): the action is absent.
+    let actions = phone
+        .menu_actions_until(|a| !a.iter().any(|t| t.contains("GAME SETTINGS")))
+        .await
+        .unwrap();
+    eprintln!("guacamole's menu: {actions:?}");
+    assert!(
+        actions.iter().any(|t| t == "MANAGE PROFILES"),
+        "{actions:?}"
+    );
+    assert!(
+        !actions.iter().any(|t| t.contains("GAME SETTINGS")),
+        "guacamole's menu offers the RPCS3 settings: {actions:?}"
+    );
     phone
         .wait_until(Duration::from_secs(4), || async {
             phone

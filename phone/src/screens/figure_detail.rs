@@ -3,10 +3,13 @@ use leptos::prelude::*;
 use crate::api::{fetch_figure_stats, post_load, StatsFetch};
 use crate::components::{DisplayHeading, FigureHero, HeadingSize, HeroState};
 use crate::model::{
-    Category, GameOfOrigin, PublicFigure, Slot, SlotState, UnlockedProfile, SLOT_COUNT,
+    Category, GameOfOrigin, PublicFigure, ServerApp, Slot, SlotState, UnlockedProfile, SLOT_COUNT,
 };
 use crate::screens::FigureEditSheet;
-use crate::{element_slug, first_empty_slot, push_toast_level, ResetTarget, ToastLevel, ToastMsg};
+use crate::{
+    element_slug, first_empty_slot, placed_names, push_toast_level, ResetTarget, ToastLevel,
+    ToastMsg,
+};
 
 /// Detail view state machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +50,9 @@ pub(crate) fn FigureDetail(
     /// `stats_rev`, so cross-phone edits + the same-phone race both
     /// trigger a re-fetch of the working copy.
     figure_updates_rev: RwSignal<u32>,
+    /// The controller or guacamole: whose placements make PLACE refuse this
+    /// figure follows its rule (AA.18).
+    server_app: RwSignal<ServerApp>,
     /// PLAN 11.16 — variant cluster the current figure belongs to,
     /// sorted "base" first then alphabetical by `variant_tag`. Drives
     /// the APPEARANCE button's enable state + next-pick logic. A
@@ -215,13 +221,11 @@ pub(crate) fn FigureDetail(
             if state.get() == DetailState::Loading {
                 return;
             }
-            // Check if already on portal
+            // Already on the portal: whoever placed it in the product, only
+            // this viewer's own placement in guacamole (AA.18).
             let p = portal.get();
-            let already = p.iter().any(|s| match &s.state {
-                SlotState::Loaded { display_name, .. } => display_name == &name,
-                _ => false,
-            });
-            if already {
+            let viewer = unlocked_profile.get().map(|u| u.id);
+            if placed_names(&p, server_app.get(), viewer.as_deref()).contains(&name) {
                 error_msg.set(format!("{name} is already on the portal."));
                 state.set(DetailState::Errored);
                 return;

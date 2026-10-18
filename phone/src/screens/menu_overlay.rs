@@ -18,7 +18,7 @@ use leptos::prelude::*;
 use crate::api::{post_open_rpcs3_settings, post_quit_for_switch, post_shutdown};
 use crate::components::{ActionButton, ActionVariant};
 use crate::gloo_timer;
-use crate::model::{GameLaunched, UnlockedProfile};
+use crate::model::{GameLaunched, ServerApp, UnlockedProfile};
 use crate::{push_toast, ToastMsg};
 
 /// Actions:
@@ -44,6 +44,8 @@ pub(crate) fn MenuOverlay(
     current_game: RwSignal<Option<GameLaunched>>,
     manage_gate: RwSignal<bool>,
     toasts: RwSignal<Vec<ToastMsg>>,
+    /// The controller or guacamole; guacamole has no game settings (AA.19).
+    server_app: RwSignal<ServerApp>,
 ) -> impl IntoView {
     let initial = Signal::derive(move || {
         unlocked_profile
@@ -182,7 +184,13 @@ pub(crate) fn MenuOverlay(
 
                     // PLAN 16.9.3 — per-game emulator config. Only when no game
                     // is running (held-to-confirm; opens RPCS3 settings on the TV).
-                    <Show when=move || current_game.get().is_none() fallback=|| ()>
+                    // Never under guacamole, which has no RPCS3 (AA.19).
+                    <Show
+                        when=move || {
+                            current_game.get().is_none() && server_app.get().offers_rpcs3_settings()
+                        }
+                        fallback=|| ()
+                    >
                         <ActionButton
                             title="HOLD FOR GAME SETTINGS"
                             description="Grown-ups only \u{00B7} tune a game\u{2019}s emulator settings on the TV"
