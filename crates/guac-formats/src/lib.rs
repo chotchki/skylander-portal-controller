@@ -13,6 +13,7 @@
 
 pub mod edge;
 mod error;
+pub mod havok;
 pub mod iga;
 pub mod igz;
 mod reader;

@@ -69,3 +69,10 @@ path = "fuzz_targets/edge_geometry.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "havok"
+path = "fuzz_targets/havok.rs"
+test = false
+doc = false
+bench = false

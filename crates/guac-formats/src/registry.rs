@@ -5,7 +5,7 @@
 //! it may hold at once for an input of a given length.
 
 use crate::FormatError;
-use crate::{edge, iga, igz, sfo, texture};
+use crate::{edge, havok, iga, igz, sfo, texture};
 
 pub struct RegisteredParser {
     /// Stable name: the property test reports it, the fuzz targets match on it.
@@ -74,7 +74,38 @@ pub const PARSERS: &[RegisteredParser] = &[
         // are at most 4 floats per input byte (U8N, 16x).
         heap_budget: |len| 64 * len + 48 * len + (256 << 10),
     },
+    RegisteredParser {
+        name: "havok",
+        parse: walk_havok,
+        seeds: havok::builder::seeds,
+        // The fixup maps, then decoded tracks and one sampled pose: each
+        // track costs at least its 4 mask bytes, each element its own
+        // input bytes (overlapping arrays are refused).
+        heap_budget: |len| 160 * len + (64 << 10),
+    },
 ];
+
+/// Parses a packfile, then samples its clip at the start, middle and end,
+/// posed on each skeleton it fits. The property test and the fuzz targets
+/// run it.
+pub fn walk_havok(bytes: &[u8]) -> Result<(), FormatError> {
+    let c = havok::Container::parse(bytes)?;
+    for s in &c.skeletons {
+        drop(s.bind_pose());
+    }
+    if let Some(clip) = &c.clip {
+        let end = f64::from(clip.animation.duration);
+        for t in [0.0, end / 2.0, end] {
+            drop(clip.animation.sample(t));
+            for s in &c.skeletons {
+                if let Some(local) = clip.local_pose(s, t) {
+                    drop(s.model_pose(&local));
+                }
+            }
+        }
+    }
+    Ok(())
+}
 
 /// How many unpacked bytes [`walk_iga`] reads before it stops. Chunks can
 /// alias, so an input can declare far more output than it holds.
