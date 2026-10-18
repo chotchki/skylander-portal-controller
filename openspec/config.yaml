@@ -51,6 +51,10 @@ context: |
   sequenced by conditions (it starts when what it stands on has landed) and reports measured
   progress, and chotchki decides what comes next from that.
 
+  Every change lands on the 2.0 branch, which acts as main until some milestones are through (chotchki,
+  2026-10-17), while main holds the frozen product line, so "on main" in the archive guidance below
+  means 2.0 for now.
+
   Pre-OpenSpec history lives in PLAN_ARCHIVE.md (frozen) and git log. Unphased ideas and tech debt
   live in openspec/backlog.md: promoting one means proposing a change and deleting its backlog line.
 

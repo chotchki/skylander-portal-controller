@@ -2,7 +2,7 @@
 
 ## Context
 
-AA leaves guacamole as a Bevy app that embeds the server, finds the Giants dump through its own setup (the folders the user chose, each dump identified by its PARAM.SFO) and receives `Placed { slot, placement }` from the native driver, carrying the figure's identity (toy type + variant) from the phone's pick. AB adds the first disc reader behind it. Facts measured on chotchki's Giants dump (BLUS30968, APP_VER 01.00, no title update on the Mac):
+AA leaves guacamole as a Bevy app that embeds the server, finds the Giants dump through its own setup (the folders the user chose, each dump identified by its PARAM.SFO) and receives `Placed { slot, placement }` from the native driver, carrying the figure's identity (toy type + variant) from the phone's pick. AB adds the first disc reader behind it. Facts measured on chotchki's Giants dump (BLUS30968, APP_VER 01.00; no title update on the Mac, and none on the HTPC by chotchki's account):
 
 - `PS3_GAME/USRDIR` holds `character/`, `level/`, `item/`, `misc/`, `movies/`, `outfit/` and `permanent/`. `character/` has 227 files: 68 `.arc`/`.bld` pairs named `NNN_codename[_variant]` by decimal toy type, the card-game archives (`cardgame_streaming` plus 82 `cardgame_deck_NNN.bld`) and 7 other `.bld` bundles (lock puzzles, a stats screen, setup). Suffixes include `_legendary`, `_alt`, `_dark` and `_red`.
 - `movies/` holds 61 Bink 1 (`BIKi`) files at 1280×720: 48 named by character, `fmv01`-`fmv12` without `fmv05` and two logos. Ten of the 61 carry 13 audio tracks (per-language voice), the rest one; which ten isn't recorded yet.
@@ -31,7 +31,7 @@ Motivation is in proposal.md. The track-level extractor plan is in `docs/native/
 - Bundling ffmpeg, extracting from the EBOOT or any decryption.
 - Toy type → variant archive mapping beyond what the intro needs; AD needs it for models.
 - Names, elements and portraits from the disc, and the roster replacing AA's interim catalogue on the phone (AD).
-- Looking for title updates. Setup knows where the dumps are, not where an update lives, and whether the parity target includes one is the design doc's Open question 6.
+- Title updates. The parity target is the 1.00 disc (design doc, Decisions, third batch): nothing looks for an update, and a dump an update changed is an unknown dump (decision 4).
 
 ## Decisions
 
@@ -47,17 +47,17 @@ The IGA chunk format is raw LZMA1 with externally supplied props and a known out
 A stable property test in `cargo test` throws random bytes and mutated synthetic files at every parser and asserts no panic and bounded memory. That's what CI and the pre-push hook run. cargo-fuzz targets live in `crates/guac-formats/fuzz/`, excluded from the workspace because they need nightly, and run locally before AB.0 with the hours recorded. A CI fuzz lane is out of scope until there are more parsers to justify one.
 
 **4. Identity and the known-dump table.**
-The identity is (TITLE_ID, disc APP_VER, installed-update APP_VER or none, manifest hash). The manifest hash is SHA-256 over the sorted list of (relative path, size, SHA-256 of contents) for every file under `PS3_GAME/USRDIR` except `EBOOT.BIN`. The update field is always none in AB (Non-Goals); the key keeps it so a later change that adds updates doesn't change the identity's shape. Hashing every plaintext file has a first-run cost nobody has measured, so AB.4 measures it on the Mac and the HTPC. The manifest caches each file's (path, size, mtime, hash), so later starts re-hash only what changed.
+The identity is (TITLE_ID, disc APP_VER, manifest hash). The manifest hash is SHA-256 over the sorted list of (relative path, size, SHA-256 of contents) for every file under `PS3_GAME/USRDIR` except `EBOOT.BIN`. There's no title-update field. chotchki set the parity target on 2026-10-17: "HTPC's Giants doesn't have the title updates I couldn't figure out how to install them", so Giants is the 1.00 disc and setup only ever finds disc dumps. An update can still reach a dump by being merged into it (files changed under USRDIR, or a PARAM.SFO whose APP_VER is past 01.00), and either one misses the known table, so it's reported as an unknown dump and never handled. Hashing every plaintext file has a first-run cost nobody has measured, so AB.4 measures it on the Mac and the HTPC. The manifest caches each file's (path, size, mtime, hash), so later starts re-hash only what changed.
 
-The known table in `guac-extract` holds identities and hashes only, never content. An unknown dump fails with `GUAC-E-UNKNOWN-DUMP` and writes `unknown-dump-<timestamp>.json` beside the extract root, so two dumps can be diffed by hand. The design's "unknown dumps get a report, not a guess" stays literal.
+The known table in `guac-extract` holds identities and hashes only, never content: one entry per hash chotchki's own BLUS30968 01.00 dumps produce (the Mac's and the HTPC's; AB.4 records whether they're the same). An unknown dump fails with `GUAC-E-UNKNOWN-DUMP` and writes `unknown-dump-<timestamp>.json` beside the extract root, so two dumps can be diffed by hand. The design's "unknown dumps get a report, not a guess" stays literal.
 
 **5. Where output goes, and why it can't leak.**
-- Release extract root: `%LOCALAPPDATA%\skylander-portal-controller\guacamole\extract\` on Windows (machine-local, since gigabytes don't belong in a roaming profile) and `~/Library/Application Support/skylander-portal-controller/guacamole/extract/` on macOS.
-- Dev: `GUAC_EXTRACT_DIR` in `.env.dev`, required, with no default. A default inside `./dev-data/` would be one `git add -f` away from a leak (design doc, No game bytes in the repo).
+- Release extract root: `extract/` under guacamole's own data root (AA design decision 6), so `%LOCALAPPDATA%\guacamole\extract\` on Windows (the root is machine-local because gigabytes don't belong in a roaming profile) and `~/Library/Application Support/guacamole/extract/` on macOS. Nothing lands under the controller's root.
+- Dev: `GUAC_EXTRACT_DIR` in `.env.dev`, required, with no default. guacamole's dev data root (`./dev-data/guacamole/`) is inside the checkout, so the extract can't sit under it there: a default inside `./dev-data/` would be one `git add -f` away from a leak (design doc, No game bytes in the repo).
 - Both the app and the CLI walk up from the resolved root and refuse it if any ancestor holds a `.git`.
 - The dump is opened read-only and no code path takes a dump path as an output.
 - Layout v1:
-  - `<root>/<TITLE_ID>-<APP_VER>[-u<UPDATE_VER>]-<hash8>/manifest.json`, recording the extractor version, `IR_VERSION`, the identity, the source file records and every output with its content hash;
+  - `<root>/<TITLE_ID>-<APP_VER>-<hash8>/manifest.json`, recording the extractor version, `IR_VERSION`, the identity, the source file records and every output with its content hash;
   - `ir/characters.{ron,postcard}`;
   - `video/intro/<name>.<ext>` and `audio/intro/<name>.<ext>`.
 - Each output is written to `<file>.partial` and renamed when complete. Resume redoes anything without a finished output or whose recorded hash doesn't match.
@@ -92,7 +92,7 @@ Candidates:
 The lean is openh264: it's the only candidate that meets (a) and (e) without vendoring work, and baseline H.264 at 720p is a light decode. AV1 would buy smaller files that nobody needs at 48 short clips. Audio: MP3 through Bevy's `mp3` feature, encoded with `libmp3lame` (Homebrew's ffmpeg and the common Windows builds both carry it; `libvorbis` is missing from Homebrew's, which rules out Ogg without the experimental native encoder). The spike's numbers decide; the lean is what it has to beat. Spike code lives in an example, not in the shipped crate.
 
 **8. The transcode.**
-- ffmpeg discovery order: the `GUAC_FFMPEG` config value, then beside the guacamole executable, then PATH.
+- ffmpeg discovery order: the path in guacamole's settings (its own database; `GUAC_FFMPEG` in `.env.dev`), then beside the guacamole executable, then PATH.
 - One invocation per intro: `-map 0:v:0` plus the chosen voice track, no scaling, the source frame rate and `-progress pipe:1` parsed into progress events.
 - Track choice: a file with one audio track uses it. For the multi-track files, AB.5's census records which intros (if any) are multi-track, and the English track's index becomes data in the IR rather than a constant in code. The track language order isn't known yet and the files may not tag it.
 - The ffmpeg command-line builder is a pure function, unit-tested; the process run is the only untested-in-CI part, covered by an `#[ignore]`d disc test and the e2e run.

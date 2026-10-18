@@ -51,4 +51,4 @@ None.
   - the dev viewer as `crates/guacamole/examples/hero_view.rs`.
 - Disc-dependent tests are `#[ignore]`d and read `GUAC_GIANTS_DUMP` and the capture directory (`GUAC_CAPTURE_DIR`) from `.env.dev`. Captures, decoded output, the decrypted EBOOT and the Ghidra project all live outside the tree, and AB.1's game-magic guard catches an `RRC` or `IGZ\x01` file that slips into a commit.
 - Owning doc: `docs/native/guacamole-design.md`, in Giants in detail, Risks, RE toolchain, The oracle and Why Giants first (the gate's outcome). CLAUDE.md gains the new `.env.dev` keys.
-- Release reach: none. Research, parsers and dev tools land on main, and it archives on main once the verdict is written. No `v*` tag carries anything from AC.
+- Release reach: none. Research, parsers and dev tools land on the `2.0` branch (main until some milestones are through, `openspec/config.yaml`), and it archives there once the verdict is written. No `v*` tag carries anything from AC.

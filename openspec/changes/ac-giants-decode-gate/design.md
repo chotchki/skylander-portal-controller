@@ -9,7 +9,7 @@ What's already measured, from `docs/native/guacamole-design.md` (Giants in detai
 - Havok `hk_2011.2.0-r1` packfiles ride inside `level.bld` and the character bundles. [Kovah](https://github.com/NefariousTechSupport/Kovah) has 2011.2 class metadata dumped from Giants on Wii (same SDK version, also big-endian with 32-bit pointers), and [HavokLib](https://github.com/PredatorCZ/HavokLib) reads spline-compressed animation in that range.
 - The design doc lists Giants' 20 on-disc SPU images as all FMOD. Where Edge decompression and skinning actually run (an SPU job embedded in the EBOOT, the PPU or the RSX vertex program) is NOT known, and it decides what an RSX capture holds.
 
-AB.3 supplies the IGA reader. The oracle is the product's patched RPCS3 running Giants on the Mac (~60 fps SPU-LLVM), on the pin the product last shipped (`accfecd2d`); a bump is chotchki's call. The hero reaches its emulated portal from the dev's own figure pack, which only the oracle reads (design doc, The oracle).
+AB.3 supplies the IGA reader. The oracle is the product's patched RPCS3 running Giants on the Mac, on whichever pin boots it: the in-tree `accfecd2d` has never booted a game, while `09d602fd5` (the v1.9.19 build) ran Giants at ~60 fps SPU-LLVM. AC.2 settles which first; a bump past that is chotchki's call. The hero reaches its emulated portal from the dev's own figure pack, which only the oracle reads (design doc, The oracle).
 
 ## Goals / Non-Goals
 

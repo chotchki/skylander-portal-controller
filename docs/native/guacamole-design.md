@@ -1,6 +1,6 @@
 # Guacamole design
 
-Status: DESIGN, started 2026-10-17 and revised the same day for chotchki's second round of decisions.
+Status: DESIGN, started 2026-10-17 and revised the same day for chotchki's second and third rounds of decisions.
 This file owns the Guacamole track (`openspec/config.yaml` points here). Open changes:
 `openspec/changes/aa-guacamole-shell/`, `ab-giants-extract-and-intros/` and `ac-giants-decode-gate/`; the
 later rungs of the ladder are lines in the Guacamole section of `openspec/backlog.md`. Until G1 the
@@ -33,11 +33,12 @@ USB/HID portal (never), anything online and reading a `.sky` file in any form.
 
 ## Decisions
 
-All chotchki's, all 2026-10-17. Quotes are his words (spelling fixed). The second batch came later that
-day and wins wherever the two touched. What it superseded (a one-way `.sky` import, sky-parser in the
-Guacamole path, stats read from `.sky`, finding dumps through RPCS3's `games.yml`, the product's wizard as
-a prerequisite, importing RPCS3 saves, trophies cut, PvP undecided) is gone from this doc, not kept beside
-it. A proposal that needs one reversed says so and asks, it doesn't relitigate quietly.
+All chotchki's, all 2026-10-17. Quotes are his words (spelling fixed). The second and third batches came
+later that day and a later batch wins wherever two touched. What the second superseded (a one-way `.sky`
+import, sky-parser in the Guacamole path, stats read from `.sky`, finding dumps through RPCS3's
+`games.yml`, the product's wizard as a prerequisite, importing RPCS3 saves, trophies cut, PvP undecided)
+and the open questions the third answered are gone from this doc, not kept beside it. A proposal that
+needs one reversed says so and asks, it doesn't relitigate quietly.
 
 First batch:
 
@@ -54,7 +55,7 @@ First batch:
 - Two binaries for the transition: "I'm fine with keeping the existing window management structure (or
   even delivering two different binaries if that makes it easier)." The product binary's behavior and
   window management stay as they are until G1; `guacamole` is a separate Bevy app embedding the same
-  server. How much of the product's SOURCE moves for that is Open question 8.
+  server. How much of the product's SOURCE moves for that is the third batch's server split.
 - One app at the end: "there's no need for the multiple windows if I own the whole thing." G1 makes
   `guacamole` the only thing this repo builds and ships; G2 retires the oracle.
 - Planning is pure OpenSpec in this repo: "I recommend we nuke the hooks for this repo and just go pure
@@ -113,6 +114,40 @@ Second batch:
   on our progress what I want to do." This doc sequences by conditions and evidence and carries no hour,
   week or year figures.
 
+Third batch:
+
+- Guacamole gets its OWN database: one SQLite file under its own data root from AA on (Persistence and
+  setup). Sharing the controller's `db.sqlite` would brick the frozen controller (its migrator refuses a
+  migration it doesn't know), and the profiles don't come across: "set them up again, it's super simple."
+  `guacamole` never opens the controller's `db.sqlite` or `config.json`, so its pairing key is its own too
+  and a phone switching apps scans the TV's join code once.
+- Distribution: "Eventually this will be MSI based, this is where dual binaries is a good starting point."
+  The Windows MSI carries both binaries until G1. A `v*` tag (only on chotchki's word, like every release)
+  installs the product rebuilt from current source beside `guacamole`, so the controller the kids use for
+  the other five games gets replaced on install and its behavior has to survive AA's split (Architecture
+  says how that's proven).
+- The server split: "I'm good with it." `crates/guac-server` takes only what `guacamole` runs. `.sky`
+  editing and stats, working copies, NFC and the eframe UI stay in `crates/server` and leave with it at G1
+  (the ACR122 removal, if it lands first, takes NFC out sooner).
+- Achievements in co-op, for a counter both kids feed: each profile earns it from its own share, "I'm good
+  with that if we can detect it." Where Guacamole can't tell whose share it was, only the host earns it
+  (the question's other option). The co-op rules in Deliberate departures carry the whole set.
+- The parity target is Giants' 1.00 disc: "HTPC's Giants doesn't have the title updates I couldn't figure
+  out how to install them." The extractor reads the disc alone, and a dump a title update changed is an
+  unknown dump (The extractor).
+- Git: "Commit freely on a branch, we'll use a 2.0 branch as our 'main' until we've gotten through some
+  milestones." Guacamole and all OpenSpec work land on `2.0`; `main` holds the frozen product line
+  (CLAUDE.md, Git workflow).
+- Ladder ids float: `openspec/config.yaml` allocates each one at `/opsx:propose` (this doc's working
+  assumption, which round three left standing; no quote).
+- Physics: Avian replaces Havok, "probably avian if I had to guess." Avian 0.7.0 and its main branch were
+  still on Bevy 0.19 on 2026-10-17, so until its 0.20 release Guacamole takes the branch the developer
+  recommends, avianphysics/avian#1070 (Bevy 0.20 + Parry 0.31), as a git dependency pinned by rev
+  (`34c9b008d2f4` today; it was written against 0.20.0-rc.1, so the first compile against 0.20.0 is the
+  check). Physics sits behind a thin internal seam either way. Nothing needs it before AF, and a
+  read-only census of what Giants uses from Havok (character proxy or its own controller, rigid bodies,
+  constraints, ragdolls, collision shapes) comes first, since that decides what feel parity means.
+
 ## Deliberate departures from the original
 
 Parity means matching the original EXCEPT this list. Each item is chotchki's call (Decisions); the oracle
@@ -129,7 +164,7 @@ checks everything else.
   starts the game plays on its own save.
 - Trophies become per-profile achievements stored with the profile instead of PSN trophies. Names and
   icons come from the disc's `PS3_GAME/TROPDIR` if its container reads (unverified); if not, we define our
-  own from the unlock conditions the oracle shows. Who earns one in co-op is Open question 4.
+  own from the unlock conditions the oracle shows. Who earns one in co-op is in the co-op rules below.
 - Online is gone: DemonWare, PSN and anything else networked beyond the LAN link to the phone. The
   DemonWare evidence comes from SSA's EBOOT (103 matching strings, `cellHttp` and `sceNp` imports);
   Giants' online surface isn't measured, and the cut covers whatever is there.
@@ -147,6 +182,11 @@ Co-op, spelled out:
   (`placed_by` on each loaded slot), so both kids' characters advance.
 - In PvP no story save is in play; whatever figure progress a battle awards (the oracle will say) follows
   the same placed-by rule.
+- Achievements follow the same split. One tied to the story follows the host's save and one tied to a
+  figure follows the profile that placed it. A counter both kids feed counts each kid's own share toward
+  their own profile wherever Guacamole can tell whose share it was ("I'm good with that if we can detect
+  it"); where it can't, only the host earns it. Which counters can be attributed gets settled per
+  achievement when AL builds them.
 
 Not a departure: local PvP (Battle Mode, `pvp_maincontrol.arc` in Giants) is part of parity for every
 game.
@@ -157,14 +197,15 @@ game.
 
 Verdict: the product binary (`crates/server`'s `skylander-portal-controller`: eframe launcher, patched
 RPCS3, P7/P8 window management) stays frozen in behavior and window management, and `guacamole` is a
-separate Bevy app that embeds the SAME server in-process. How `guacamole` reaches the HTPC without
-touching the installed controller is Open question 2.
+separate Bevy app that embeds the SAME server in-process, with a data root and database of its own. Both
+reach the HTPC in one Windows MSI: a `v*` tag, on chotchki's word, installs the product rebuilt from
+current source beside `guacamole` (Decisions, third batch).
 
 ```mermaid
 flowchart LR
   phone["Phone SPA (Leptos)"] -- "REST + WS" --> axum
   subgraph g["guacamole process"]
-    subgraph bg["background OS thread: tokio runtime (shared server lib)"]
+    subgraph bg["background OS thread: tokio runtime (guac-server)"]
       axum["Axum"] --> worker["driver worker"]
       worker --> native["native PortalDriver"]
     end
@@ -173,10 +214,14 @@ flowchart LR
     end
     native -- "channel: placed / cleared (identity + owner)" --> bevy
   end
-  db[("guacamole SQLite: profiles, PINs, figure instances, story saves, achievements, settings")]
-  extract[("extract dir, a regenerable cache: KTX2, glTF, audio, video, IR")]
+  subgraph root["guacamole's own data root"]
+    db[("SQLite: profiles, PINs, figure instances, story saves, achievements, settings")]
+    extract[("extract/, a regenerable cache: KTX2, glTF, audio, video, IR (release; dev keeps it outside the tree)")]
+  end
+  ctrl[("the controller's db.sqlite + config.json")]
   dumps[("disc dumps (read-only)")]
   axum --- db
+  axum -.->|"never opens"| ctrl
   bevy -- "progress + saves" --- db
   bevy --- extract
   dumps --> gx["guac-extract (first run)"] --> extract
@@ -201,25 +246,29 @@ flowchart LR
   (Giants), a figure's details and edits read and write Guacamole's store (from AG; before that every
   figure is fresh) and the grown-ups toggles that rewrite the product's RPCS3 and window settings answer
   "unavailable".
-- One binary at a time. Both bind the same HTTP port and advertise the same mDNS name, so the QR and the
-  PWA bookmark work with either. The second one to start sees the port taken and says so on the TV
-  instead of fighting. Steam Big Picture gets two non-Steam shortcuts, with Steam Input off on
-  `guacamole`'s (Controllers).
-- Data lives in one SQLite plus the extract dir (Persistence and setup; which file is Open question 1).
-  No working copies, no scanned figures and no RPCS3 config, and the extract dir sits outside the tree in
-  dev (the hard rule says why).
+- One binary at a time. Both bind the same HTTP port (8765, the default the controller's setup writes)
+  and advertise the same mDNS name, so the join address is the same for either. The second one to start
+  sees the port taken and says so on the TV instead of fighting. The pairing key is each app's own, so a
+  phone that last joined the other app gets the phone's existing pairing screen and scans the TV's join
+  code once. Steam Big Picture gets two non-Steam shortcuts, with Steam Input off on `guacamole`'s
+  (Controllers).
+- Data lives in `guacamole`'s own SQLite plus the extract dir, both under its own data root (Persistence
+  and setup). No working copies, no scanned figures and no RPCS3 config, and the extract dir sits outside
+  the tree in dev (the hard rule says why).
 
 Known friction for AA. "Stays as it is" means the product's behavior and window management, NOT its
 source, and the source moves more than a little:
 
 - The bootstrap that builds the tokio thread, the driver worker and the watchdogs lives in `main.rs`
   (947 lines), not the lib, and the lib (`crates/server/src/lib.rs`) exports the eframe modules beside
-  the server ones. AA moves the non-UI modules into a new `crates/guac-server` that both binaries link,
-  lifts the bootstrap into one `boot()` call there and gives every RPCS3-keyed branch an explicit
-  native arm. No behavior change for the product, and the product's e2e suite plus the HTPC live smoke
-  prove it. Narrower alternative if chotchki reads "untouched" literally: `guacamole` links the existing
-  `skylander-server` lib as it is (eframe compiled in, never run) and only `boot()` and the native arms
-  land in it (Open question 8).
+  the server ones. AA moves only what `guacamole` runs into a new `crates/guac-server` that both binaries
+  link (the router, the phone SPA serving, the profile store, the driver worker and watchdogs, mDNS, the
+  QR, paths and logging), lifts the bootstrap into one `boot()` call there and gives every RPCS3-keyed
+  branch left in those modules an explicit native arm. `.sky` editing and stats, working copies, NFC, the
+  display-mode and RPCS3-config helpers and the eframe UI stay in `crates/server`; the product hands the
+  ones the shared code calls to `boot()` and `guacamole` hands none. No behavior change for the product,
+  and that matters more than it did: a tagged MSI puts this source's product on the HTPC. The product's
+  e2e suite at its pre-AA count, the HTPC live smoke and a check of the installed MSI prove it.
 - The product's first-launch wizard (eframe, `crates/server/src/wizard.rs`) isn't a prerequisite and
   isn't ported. Guacamole's setup is one question (Persistence and setup).
 
@@ -238,35 +287,43 @@ built on dev machines and never shipped, until G2 (parity) retires them.
 
 Nothing is lost on the HTPC. G1 stops BUILDING the product, it doesn't uninstall it: the controller
 already installed there is frozen and keeps playing Spyro's Adventure, Swap Force, Trap Team,
-SuperChargers and Imaginators until Guacamole covers them.
+SuperChargers and Imaginators until Guacamole covers them. One catch the MSI brings: the installer
+upgrades in place (`MajorUpgrade` under one `UpgradeCode` in `wix/main.wxs`), so a G1 MSI that carries
+only `guacamole` under that code would remove the controller. AM's packaging has to keep it installed;
+how is AM's call when it's proposed.
 
 ## Persistence and setup
 
-Verdict: one SQLite database holds everything worth keeping, and nothing else on disk is precious.
-Backing up the family's progress is copying one file.
+Verdict: `guacamole`'s own SQLite database, under its own data root, holds everything worth keeping, and
+nothing else on disk is precious. Backing up the family's progress is copying one file.
 
 - In it: profiles and PINs, per-profile figure instances (Figures), per-profile story saves (one per
-  profile per game), achievements and settings.
+  profile per game), achievements and settings (the dumps folders, the port, the pairing key). It starts
+  in AA with the profiles and settings and grows a table set per rung (the figure store at AG).
+- Its own file, never the controller's (Decisions, third batch). The controller installed on the HTPC
+  opens its `db.sqlite` through `sqlx::migrate!` at its defaults (`crates/server/src/profiles.rs:556`),
+  which refuses a database carrying a migration the binary doesn't know, so one Guacamole table in that
+  file would stop the controller the kids still use for the other five games from starting. `guacamole`
+  never opens the controller's `db.sqlite` or `config.json`, and its migrations are a set of its own, so
+  nothing it adds can reach the controller's file even through the product binary it ships beside.
+- Profiles aren't copied over. The kids set theirs up again in `guacamole` (name, colour, PIN, through the
+  phone's existing create-profile flow), and each app keeps its own from then on.
+- Where: `%LOCALAPPDATA%\guacamole\` on Windows (machine-local, because the gigabyte extract dir lives
+  under it and doesn't belong in a roaming profile) and `~/Library/Application Support/guacamole/` on
+  macOS, a root separate from the controller's `%APPDATA%\skylander-portal-controller\`. Dev uses
+  `./dev-data/guacamole/`, gitignored with the rest of `./dev-data/`. AA's design has the details.
 - Not in it, and not needed anywhere: `.sky` working copies, `scanned/`, RPCS3 savedata, PS3 firmware or
   RPCS3's config. No files to copy around.
-- The extract dir is a regenerable CACHE. Delete it and `guac-extract` rebuilds it from the dumps (its
-  manifest already forces a rebuild on an extractor or IR version bump), so nothing in it gets backed up.
-  The local Enhanced pack is the same kind of cache.
+- The extract dir is a regenerable CACHE, `extract/` under the data root in release and a path outside
+  the working tree in dev (the hard rule says why). Delete it and `guac-extract` rebuilds it from the
+  dumps (its manifest already forces a rebuild on an extractor or IR version bump), so nothing in it gets
+  backed up. The local Enhanced pack is the same kind of cache.
 - Story saves start fresh, like figures. The kids' RPCS3 Giants saves aren't imported.
 - Setup asks one thing: where the disc dumps are. No RPCS3 path, no PS3 firmware, no figure pack and no
   `games.yml` scan. Guacamole identifies each dump itself (`PARAM.SFO` plus the extractor's identity key,
   The extractor) and offers the games it can play. Release gets a first-run screen on the TV for it and
   dev reads it from `.env.dev`; AA is the first change that needs it, since its HTPC run is a release
   build.
-- Which SQLite file is still open (Open question 1), and the frozen controller is why it matters. Today's
-  profiles live in the product's `db.sqlite`, and the controller installed on the HTPC opens it through
-  `sqlx::migrate!` at its defaults (`crates/server/src/profiles.rs:556`), which refuses a database
-  carrying a migration the binary doesn't know. The first Guacamole table in that file (AG's figure store
-  at the latest) would stop the controller the kids still use for the other five games from starting.
-  Until it's settled nothing Guacamole adds goes in there: AA shares the controller's profiles and PINs
-  through the schema both binaries already carry (no migration, so a kid's PIN works in either app) and
-  keeps its few settings in a file of its own (AA design decision 6). Recommendation: `guacamole` gets
-  its own database under its own data root before its first table, AG's at the latest.
 
 ## The six games
 
@@ -320,14 +377,24 @@ PARAM.SFO), not taken from the wiki.
 - tfbScript: character behavior (attacks, upgrades, projectiles) is serialized as op graphs inside IGZ
   (`ScriptSet`, `OpCodeList`, `OpUseMacro`, `OpMacroInterface`, `OpMacroParameter`, `OpCheckValue`,
   `OpDefineMacro`, `OpFlowMacro`, `OpFlowBuiltInBehavior`, `RHSValueStack`). The structure is documented
-  for the Wii build by "Skylanders Giants in Spyro's Adventure (Wii)", a public tools-only project that
-  ports the eight Giants into Wii SSA (its URL wasn't recorded, Open question 5). What it documents: a
-  script is an `OpCodeList` whose ops carry a control word counting the ops in their block; op objects are
-  SHARED across positions (one `OpFlowBuiltInBehavior` serves 326 positions in Tree Rex's script); a
-  macro call is `OpUseMacro` → `OpMacroInterface` → one `OpMacroParameter` per argument → `OpFlowMacro`;
-  expressions are binary nodes (+ - * /); comparisons are codes 0-5; an else is an `OpAbstractFlow` jump;
-  engine members are named by FNV-1a hashes. PS3 offsets are unverified. The VM is the documented half;
-  the native built-ins and engine members behind it aren't, and they're where the reverse engineering is.
+  for the Wii build by
+  [Skylanders Giants in Spyro's Adventure (Wii)](https://github.com/xirba13/Skylanders-Giants-in-SSA)
+  (`xirba13`, one commit, 2026-10-06), a tools-only Python project that ports the
+  eight Giants plus four variants into Wii SSA by rewriting Giants' IGZ v6 files into SSA's v5. Its
+  `docs/FORMATS.md` ("Character scripts") is the write-up. What it documents: a script is an `OpCodeList`
+  whose ops carry a control word counting the ops in their block; op objects are SHARED across positions
+  (one `OpFlowBuiltInBehavior` serves 326 positions in Tree Rex's script); a macro call is `OpUseMacro` →
+  `OpMacroInterface` → one `OpMacroParameter` per argument → `OpFlowMacro`; expressions are binary nodes
+  (+ - * /); comparisons are codes 0-5; an else is an `OpAbstractFlow` jump; engine members are named by
+  FNV-1a hashes. Every offset it gives is for the PAL Wii discs it pins by `main.dol` hash (SSA `SSPP52`
+  revision 2, Giants `SKYZ52` and `SKYP52`; other regions and revisions untried, by its own account), so
+  nothing about BLUS30968's layout is verified. Some of its helpers read a Wii SSA decompilation nobody
+  could find (Open question 2). Other tfbScript reading aids, none checked against Giants:
+  SkydraHeavy's C# class stubs (`OpUseMacro.cs` and kin) and two write-ups for Madagascar 2, an older Toys
+  for Bob game ([mad2projects](https://github.com/unix-supremacist/mad2projects) `docs/SCRIPT_FORMAT.md`,
+  [madagascar-game-asset-tools](https://github.com/MaxStache/madagascar-game-asset-tools)
+  `packages/tfbscript/FORMAT.md`). The VM is the documented half; the native built-ins and engine members
+  behind it aren't, and they're where the reverse engineering is.
 - Audio: FSB5 v1, one sample per bank, MPEG, 44.1 kHz for 97% of them. There are no FMOD event files on
   disc, so triggering lives in engine objects (`tfbSoundDataInfo`) and script macros ("Sound - VO
   Request").
@@ -372,7 +439,7 @@ Scored on chotchki's own criterion, risk and leverage, then confirmed by him (qu
 
 | Lens | Spyro's Adventure (PS3, XPEC) | Giants | Winner |
 |---|---|---|---|
-| Oracle readiness | never registered in RPCS3 on the Mac (not in `games.yml`, no cache, no savedata); compat "Ingame" | in `games.yml`, PPU AOT cache, 155 FP / 62 VP shader cache, savedata; compat "Playable"; ~60 fps SPU-LLVM on the M3 Max; the product drives it on the HTPC | Giants |
+| Oracle readiness | never registered in RPCS3 on the Mac (not in `games.yml`, no cache, no savedata); compat "Ingame" | in `games.yml`, PPU AOT cache, 155 FP / 62 VP shader cache, savedata; compat "Playable"; ~60 fps SPU-LLVM on the M3 Max on the v1.9.19 build (`09d602fd5`); the product drives it on the HTPC | Giants |
 | Mesh and animation decode | `.str`: no public decoder, not plain float32 | public references for v6 Edge and Havok 2011.2 | Giants |
 | Logic as data | over 95% native C++; Lua is per-actor glue (~7.6k code lines, 65% of it hub story) | attacks and upgrades are tfbScript data a VM can run | Giants |
 | SPU code | SPURS jobs of unknown purpose (solver/dynamics strings) | every SPU image is FMOD (job-queue imports leave non-ELF jobs unruled-out) | Giants |
@@ -449,7 +516,10 @@ scripts or a Ghidra MCP server).
 
 What exists: the product's patched RPCS3 (P1 portal control over AF_UNIX, P4 portal-traffic events, P6
 `BUTTON_PRESS`), the Rust IPC client in `crates/rpcs3-control/src/ipc/` and `tools/playthrough`'s
-scripted beats. Giants runs on both machines.
+scripted beats. Giants has run on both machines on the `09d602fd5` build v1.9.19 shipped. The pin in the
+tree, `accfecd2d`, has never booted a game anywhere (V, the bump that brought it, was cancelled at the
+2026-10-17 review), so the oracle's first use checks it (AC.2) and falls back to `09d602fd5` if it
+doesn't reach gameplay.
 
 What it lacks:
 
@@ -477,7 +547,8 @@ AE builds the foundation before anything gets called a regression test:
 4. More dev verbs as the rungs need them: FSTRACE (asset loads with the guest return address), MEMSNAP
    (bulk peek), RSXCAP (scripted capture).
 
-Pin policy: the oracle rides the pin the product last shipped (`accfecd2d`, the v1.10.0 prerelease).
+Pin policy: the oracle rides the in-tree pin (`accfecd2d`) if AC.2 finds it boots Giants, otherwise
+`09d602fd5`, the pin v1.9.19 booted it on.
 With the product frozen, a bump is chotchki's call, not a cadence. After G1 the pin moves only for OS
 breakage, and it retires at G2.
 
@@ -490,13 +561,16 @@ run.
 
 - Input is plaintext `PS3_GAME/USRDIR` from the dump the user pointed setup at, plus `PS3_GAME/TROPDIR`
   for achievement names and icons if its container turns out readable. Never the EBOOT: the field layouts
-  RE recovers live in `guac-formats` as code, so an install needs no decryption and no firmware. A title
-  update (`dev_hdd0/game/<TITLE_ID>/USRDIR` in RPCS3's layout) only layers on if the parity target
-  includes one (Open question 6).
-- Identity key: `(TITLE_ID, disc APP_VER, installed-update APP_VER, plaintext-USRDIR manifest hash)`.
-  All six discs here are APP_VER 01.00 (Trap Team's PARAM.SFO VERSION says 01.01); only Swap Force has an
-  installed update, and it replaces only the EBOOT. An unknown dump gets its own error code and a report,
-  not a guess.
+  RE recovers live in `guac-formats` as code, so an install needs no decryption and no firmware.
+- Giants' parity target is the 1.00 disc (Decisions, third batch): the HTPC's Giants has no title update,
+  so the extractor reads the disc alone and never looks for an update (`dev_hdd0/game/<TITLE_ID>/USRDIR`
+  in RPCS3's layout, which setup doesn't know about anyway).
+- Identity key: `(TITLE_ID, disc APP_VER, plaintext-USRDIR manifest hash)`, with no update field. All six
+  discs here are APP_VER 01.00 (Trap Team's PARAM.SFO VERSION says 01.01); only Swap Force has an
+  installed update on the Mac, and it replaces only the EBOOT. An unknown dump gets its own error code and
+  a report, not a guess, and a dump a title update changed (files merged into USRDIR, a PARAM.SFO past
+  01.00) is one of those: reported, never handled. A later game's target gets settled when that game
+  starts.
 - "Only the EBOOT is encrypted" rests on magic sniffing (`SCE\0`, `NPD\0`). AB adds an entropy scan over
   USRDIR.
 - Output: one extract dir per identity with a manifest (extractor version, IR version, identity, source
@@ -583,7 +657,7 @@ the pad in the player's hands.
   way). Bevy's `Gamepad` does carry the vendor and product id its gilrs backend reports; whether that's
   enough to tell the two 8BitDo variants apart on Windows is unverified, and if it isn't, the fallback is
   a glyph-set choice in settings.
-- What the Home button does in Guacamole is open (Open question 3).
+- What the Home button does in Guacamole is open (Open question 1).
 - Hardware checks, a backlog item and not a gate for any rung ("all non-urgent testing"):
   - With Steam Input off, does each variant show up with an identity Guacamole can map to the right
     glyphs? The Switch variant is the shakier one: if it presents as a Switch Pro-class pad, Windows has
@@ -615,13 +689,15 @@ lives in Guacamole's store per profile. Guacamole never reads a `.sky`.
   Either way the Giants disc only covers the figures Giants plays; Swap Force through Imaginators figures
   arrive with their own discs.
 - Instances: one per profile per figure, keyed by profile + figure identity and shared across games, the
-  way today's working copies are (`working/<profile_id>/<figure_id>.sky`, minus the file). A figure a
-  profile has never placed starts fresh on its first placement. The store's columns grow with the rungs:
-  XP and gold at AG, upgrades and path at AJ, the rest (hats, nicknames, hero points ...) when a rung needs
-  them.
+  way today's working copies are (`working/<profile_id>/<figure_id>.sky`, minus the file). The profile is
+  one of `guacamole`'s own (Persistence and setup), so nothing is keyed to the controller's profile ids. A
+  figure a profile has never placed starts fresh on its first placement. The store's columns grow with
+  the rungs: XP and gold at AG, upgrades and path at AJ, the rest (hats, nicknames, hero points ...) when a
+  rung needs them.
 - Phone editing: the editor the phone already has (level and gold, plus reset to fresh) is buggy today
   because `crates/server/src/sky_edit.rs` has to decrypt, edit and re-encrypt a `.sky`. Under Guacamole it
-  edits rows in the store instead, from AG, and reset to fresh deletes the instance.
+  edits rows in the store instead, from AG, and reset to fresh deletes the instance. `sky_edit` and
+  `sky_stats` stay product-only in `crates/server` (the server split) and leave with it at G1.
 - Ownership: the "profile that placed it" rule stays, so two phones keep working and co-op progress lands
   on the right kid (Deliberate departures).
 - No scanned figures. The ACR122 reader leaves the product on its own track.
@@ -633,12 +709,12 @@ lives in Guacamole's store per profile. Guacamole never reads a `.sky`.
 Every rung ends in something the kids can see except AC (the decode gate) and AE (the oracle
 foundation), which the rungs after them stand on. A rung starts when the ones it stands on have landed;
 there are no dates. Ids past AC are provisional: `openspec/config.yaml` allocates the next id when a
-change is proposed, so a product change proposed first takes the next letter (Open question 7). The
-milestone names (M0-M9, G1, G2) are the stable handles.
+change is proposed, so a product change proposed first takes the next letter (Decisions, third batch).
+The milestone names (M0-M9, G1, G2) are the stable handles.
 
 | Rung | Where | What the kids see | What it proves |
 |---|---|---|---|
-| AA | `aa-guacamole-shell` | place a figure on the phone, the TV shows its card (name, element, portrait), in `guacamole` | the embedded server, the native driver over a channel, Guacamole's one-question setup, the interim catalogue with no `.sky` and no firmware pack, one binary at a time |
+| AA | `aa-guacamole-shell` | place a figure on the phone, the TV shows its card (name, element, portrait), in `guacamole` | the embedded server, the native driver over a channel, Guacamole's one-question setup, its own database and profiles, the interim catalogue with no `.sky` and no firmware pack, one binary at a time, both binaries in one MSI |
 | AB, M0 | `ab-giants-extract-and-intros` | place a figure, its original intro video plays | `guac-extract` skeleton (identity, IGA, manifest, Bink 1 transcode, entropy scan); Bevy video playback is a spike. The 48 intros are named by character, not toy type; the voice-over folder in each character archive bridges most of them and AB maps the rest. A figure without one keeps its AA card |
 | AC | `ac-giants-decode-gate`, in parallel with AA and AB | nothing yet (a dev viewer) | IGZ v6, `igImage2`, Edge and a Havok 2011.2 skeleton plus one clip, matched against an RSX capture. Starts once AB's IGA reader has landed. If the decoded hero doesn't match the capture, AC proposes Trap Team and chotchki decides |
 | AD, M1 | backlog | their figure as an animated, textured turntable on the TV | the first 3D; the HTPC performance floor measured; the disc roster replaces the interim catalogue |
@@ -649,7 +725,7 @@ milestone names (M0-M9, G1, G2) are the stable handles.
 | AI, M5 | backlog | the level comes alive | the tfbScript VM and its built-ins running the original scripts |
 | AJ, M6 | backlog | upgrades and the upgrade screen | upgrades and path kept in the store, movesets from script data |
 | AK, M7 | backlog | co-op, two pads and two figures in the adventure | the second player on the host's story, the shared camera, each kid's figure progress on their own profile |
-| AL, M8 | backlog | chapter one | a run of levels with story and cutscenes; profile-owned story saves (the host's, no slot picker); achievements |
+| AL, M8 | backlog | chapter one | a run of levels with story and cutscenes; profile-owned story saves (the host's, no slot picker); achievements, by the co-op rules |
 | AM, M9 = G1 | backlog | the whole game | `guacamole` becomes the only thing this repo builds and ships; the launcher surface lives in Bevy; the installed controller keeps the other five games |
 | AN, G2 | backlog | parity | the oracle retires |
 
@@ -663,8 +739,8 @@ Ranked by how much each could move the plan, each with the experiment that answe
 | Edge geometry on v6 | every mesh is Edge-compressed for SPU | decode one character mesh, compare to the vertex buffer in an RSX capture | AC |
 | Havok 2011.2 animation | likely compressed clips; skeletons feed everything after M1 | one skeleton and one clip, posed against a capture | AC |
 | RPCS3 run-to-run divergence | decides whether the oracle can be a test at all, and how loose the tolerances get | 10 replays from one savestate on each machine, diff positions and RNG | AE |
-| Guacamole tables in the frozen controller's `db.sqlite` | the installed controller's migrator refuses a migration it doesn't know, so it stops starting and the kids lose the other five games | settle Open question 1 before the first Guacamole migration | AA, AG at the latest |
-| How much of Giants is script data | sizes the VM vs the native built-ins | a read-only census of `OpFlowBuiltInBehavior` and engine-import names across `character/*.bld`, confirming the Wii offsets on PS3 | any time before AI (backlog) |
+| A tagged MSI reinstalls the product from current source | the kids' other five games run on it. (Guacamole tables in its `db.sqlite` were the old risk here; `guacamole`'s own database resolves that one by design.) | AA's split lands as moves only and passes the product's e2e suite at its pre-AA count plus the HTPC live smoke before any native code; AA.13 checks the installed product from the MSI | AA, then every tagged release |
+| How much of Giants is script data | sizes the VM vs the native built-ins | a read-only census of `OpFlowBuiltInBehavior` and engine-import names across `character/*.bld`, confirming the PAL Wii offsets on PS3 | any time before AI (backlog) |
 | Bevy video playback | M0 depends on it, Bevy has no video player | decode one transcoded intro into a texture on the Mac and the HTPC | AB |
 | Embedding the server in a Bevy app | the bootstrap is eframe-shaped today | `guacamole` boots the server from the lib with the native driver; the product's e2e lanes stay unchanged | AA |
 | HTPC performance floor | 4K on a 2080 Ti with the Enhanced stack | a Bevy scene with CSM, SSAO, TAA and bloom at 4K, GPU timings from `RenderDiagnosticsPlugin`, DLSS on Vulkan | AD |
@@ -701,26 +777,11 @@ deltas, what ran on which machine) and chotchki decides what comes next from tha
 
 ## Open questions
 
-1. Which SQLite file: `guacamole`'s own database under its own data root (recommended, Persistence and
-   setup), or the product's `db.sqlite`, which can't take a Guacamole migration while the frozen
-   controller reads it? If its own, does it copy the product's profiles (names, colours, PINs) over once,
-   or do the kids set theirs up again?
-2. Getting `guacamole` onto the HTPC before G1. A `v*` tag whose MSI carries it beside the product would
-   also replace the frozen controller on install. A tag that ships `guacamole` alone, a separate artifact
-   or a hand-copied build?
-3. What does the pad's Home button do in Guacamole?
-4. Achievements in co-op. One tied to the story follows the host's save and one tied to a figure follows
-   its owner, by the co-op rules; for the rest (counters both kids feed), does each profile earn it, or
-   only the host?
-5. The tfbScript Wii project ("Skylanders Giants in Spyro's Adventure (Wii)"): its URL wasn't recorded.
-   Does chotchki have it? Otherwise it gets found again before AI leans on it.
-6. Parity target build: the 1.00 disc, or a title update if the HTPC has one installed (none on the Mac)?
-   An update would also need setup to know where it lives.
-7. Ladder ids: reserve AD-AN for the Guacamole rungs, or let them float as `openspec/config.yaml`
-   allocates them (this doc assumes they float)?
-8. "Product untouched until G1": AA as written keeps the product's behavior and window management but
-   moves its server core into `crates/guac-server` (17 modules, the migrations and the bootstrap). OK, or
-   the narrower read where `guacamole` links today's `skylander-server` lib with eframe compiled in and
-   only a `boot()` call plus the native arms land in the product's source? With the product frozen and
-   no `.sky` in Guacamole, four of those 17 modules (`nfc`, `sky_edit`, `sky_stats`, `working_copies`)
-   would move only to be product-only code in a shared crate.
+1. What does the pad's Home button do in Guacamole?
+2. Where's the Wii SSA decompilation the tfbScript project's helpers read (`SSA_DECOMP`, a
+   [decomp-toolkit](https://github.com/encounter/decomp-toolkit) layout for `SSPP52`)? Not found on
+   2026-10-17: GitHub code search for its config files and symbol names, the project owner's repos and
+   stars, decomp.dev (shutting down, its project list gone) and web searches all came up empty
+   (`spyrosadventure/ReSSA` is a recompilation template, not it), so it's private, unpublished or
+   somewhere those searches don't reach. Nothing waits on it; it would help AI read the Wii engine's side
+   of the VM.

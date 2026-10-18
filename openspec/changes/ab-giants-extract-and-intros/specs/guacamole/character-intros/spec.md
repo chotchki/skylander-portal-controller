@@ -7,11 +7,14 @@ The first piece of Skylanders Giants itself that guacamole plays: placing a figu
 ## ADDED Requirements
 
 ### Requirement: Placing a figure plays its character's intro
-When a figure whose character has an intro on the Giants disc is placed on the portal, guacamole's TV SHALL play that intro full screen with its sound (the English voice track), starting within 2 seconds of the phone showing the figure on the portal. When the intro ends the TV SHALL return to the portal view with that figure's card. Variants and reposes of a character SHALL play that character's intro. Giants' own disc carries the intros for its Spyro's Adventure era characters, and those SHALL play too.
+When a figure whose character has an intro on the Giants disc is placed on the portal, guacamole's TV SHALL play that intro full screen with its sound (the English voice track), starting within 2 seconds of the phone showing the figure on the portal. When the intro ends the TV SHALL return to the portal view with that figure's card.
 
 #### Scenario: A Giants character
 - **WHEN** a phone places Eruptor after Giants was picked and extraction has finished
 - **THEN** within 2 seconds Eruptor's intro plays full screen with sound, and when it ends the portal view shows Eruptor's card
+
+### Requirement: Variants and Spyro's Adventure characters play their character's intro
+Variants and reposes of a character SHALL play that character's intro. Giants' own disc carries the intros for its Spyro's Adventure era characters, and those SHALL play too.
 
 #### Scenario: A variant
 - **WHEN** a phone places a variant of a character, such as Legendary Ignitor

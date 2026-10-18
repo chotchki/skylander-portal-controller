@@ -6,20 +6,27 @@ How guacamole turns the user's own Skylanders Giants disc dump, found through gu
 
 ## ADDED Requirements
 
-### Requirement: Only a recognized dump is extracted
-guacamole SHALL extract from a Skylanders Giants dump only when it recognizes the dump. Recognition covers its title (BLUS30968), its disc version and the contents of every game data file except the encrypted executable. For a dump it doesn't recognize, guacamole SHALL extract nothing. Its TV SHALL show a message with a distinct error code, and it SHALL write a report beside the extraction location listing the dump's title, versions and each file's name, size and content hash, with no file content. Figure cards SHALL keep working either way.
+### Requirement: Only the original Giants disc is extracted
+guacamole SHALL extract from a Skylanders Giants dump only when it recognizes the dump as the original version 01.00 disc. Recognition covers its title (BLUS30968), its disc version and the contents of every game data file except the encrypted executable. A dump that a title update changed SHALL count as one guacamole doesn't recognize. Figure cards SHALL keep working whether or not a dump is recognized.
 
 #### Scenario: The known Giants dump
 - **WHEN** Giants is picked and the folder guacamole was set up with holds an unmodified BLUS30968 version 01.00 dump
 - **THEN** guacamole extracts it
 
-#### Scenario: A dump with one changed file
-- **WHEN** the dump is otherwise identical but one game data file differs
-- **THEN** nothing is extracted, the TV shows the unknown-dump message with its error code, the report lists every file's name, size and hash and placing figures still shows their cards
+#### Scenario: A dump with a title update applied
+- **WHEN** the Giants dump's version or game data files were changed by installing a title update into it
+- **THEN** nothing is extracted and the TV shows the unknown-dump message with its error code
 
 #### Scenario: The Giants dump can't be read
 - **WHEN** Giants is picked and the Giants dump setup found has no readable game data any more
 - **THEN** the TV says the Giants dump couldn't be read and where it looked, and placing figures still shows their cards
+
+### Requirement: An unrecognized dump is reported, not guessed at
+For a dump it doesn't recognize, guacamole SHALL extract nothing and its TV SHALL show a message with a distinct error code. It SHALL write a report beside the extraction location listing the dump's title, version and each game data file's name, size and content hash, with no file content.
+
+#### Scenario: A dump with one changed file
+- **WHEN** the dump is otherwise identical but one game data file differs
+- **THEN** nothing is extracted, the TV shows the unknown-dump message with its error code, the report lists every file's name, size and hash and placing figures still shows their cards
 
 ### Requirement: The dump is never changed
 Extraction SHALL NOT create, modify or delete anything inside the dump's folder.
