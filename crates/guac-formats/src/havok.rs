@@ -38,6 +38,9 @@ pub const SECTION_HEADER_LEN: usize = 0x30;
 pub const CLASSNAMES: &str = "__classnames__";
 /// Class name entries: u32 signature, this byte, then the name.
 pub const CLASS_SEPARATOR: u8 = 0x09;
+/// The longest `hkStringPtr` read (the disc's is 29 bytes), so pointers
+/// sharing one long string can't make decode quadratic.
+pub const MAX_STRING: usize = 255;
 
 /// The classes read here and their 2011.2 signatures (a layout hash).
 pub const SIGNATURES: [(&str, u32); 5] = [
@@ -467,7 +470,8 @@ impl<'a> Packfile<'a> {
         Ok(self.pointers.get(&at.plus(offset)).copied())
     }
 
-    /// An `hkStringPtr`: NUL-terminated inside the section it points into.
+    /// An `hkStringPtr`: NUL-terminated inside the section it points into,
+    /// at most [`MAX_STRING`] bytes.
     pub fn string(
         &self,
         at: Ptr,
@@ -480,7 +484,8 @@ impl<'a> Packfile<'a> {
         let s = self.sections[p.section];
         let r = Reader::new(FORMAT, self.bytes);
         let start = s.start + p.offset;
-        let raw = r.cstr(start, s.start + s.data.len(), field)?;
+        let end = (s.start + s.data.len()).min(start + MAX_STRING + 1);
+        let raw = r.cstr(start, end, field)?;
         r.utf8(raw, start, field).map(Some)
     }
 }

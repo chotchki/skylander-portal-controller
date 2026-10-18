@@ -91,7 +91,8 @@ pub fn basis(span: usize, degree: usize, knots: &[u8], u: f64) -> [f64; 4] {
 
 /// THREECOMP40, a 40-bit little-endian word: three 12-bit components
 /// `(v - 2047) / (2047 sqrt 2)`, the dropped one's index in bits 36-37 and
-/// its sign in bit 38. `None` when bit 39 is set.
+/// its sign in bit 38. `None` when bit 39 is set or the rebuilt component
+/// isn't the largest (the encoder drops the largest; true on the whole disc).
 pub fn threecomp40(bytes: [u8; QUAT_BYTES]) -> Option<Quat> {
     let [b0, b1, b2, b3, b4] = bytes;
     let v = u64::from_le_bytes([b0, b1, b2, b3, b4, 0, 0, 0]);
@@ -104,6 +105,9 @@ pub fn threecomp40(bytes: [u8; QUAT_BYTES]) -> Option<Quat> {
     let missing = ((v >> 36) & 3) as usize;
     let s = 1.0 - kept.iter().map(|x| x * x).sum::<f64>();
     let w = if s > 0.0 { s.sqrt() } else { 0.0 };
+    if w + 2e-3 < kept.iter().fold(0.0, |m: f64, x| m.max(x.abs())) {
+        return None;
+    }
     let w = if (v >> 38) & 1 == 1 { -w } else { w };
     Some(std::array::from_fn(|i| match i.cmp(&missing) {
         std::cmp::Ordering::Less => kept[i],

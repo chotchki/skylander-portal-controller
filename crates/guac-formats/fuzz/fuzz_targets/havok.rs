@@ -1,6 +1,5 @@
 #![no_main]
 
-use guac_formats::havok::spline::QuatTrack;
 use guac_formats::havok::{Container, qs};
 use guac_formats::registry::walk_havok;
 use libfuzzer_sys::fuzz_target;
@@ -23,11 +22,9 @@ fuzz_target!(|data: &[u8]| {
     for t in [-1.0, 0.0, end / 3.0, end, end + 1.0] {
         let s = a.sample(t);
         assert_eq!(s.len(), a.tracks.len());
-        for (q, tr) in s.iter().zip(&a.tracks) {
-            // Spline rotations come out unit length, or the identity.
-            if let QuatTrack::Spline(_) = tr.rotation {
-                assert!((qs::length(q.rotation) - 1.0).abs() < 1e-9);
-            }
+        for q in &s {
+            // Every rotation comes out unit length.
+            assert!((qs::length(q.rotation) - 1.0).abs() < 1e-9);
             assert!(q.translation.iter().chain(&q.scale).all(|x| x.is_finite()));
         }
     }

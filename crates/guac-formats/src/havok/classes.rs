@@ -25,8 +25,8 @@ impl Array {
     }
 }
 
-/// Reads objects, refusing two arrays that share bytes so decode work stays
-/// linear in the input.
+/// Reads objects, refusing two arrays that share bytes (and strings past
+/// [`super::MAX_STRING`]) so decode work stays linear in the input.
 struct Ctx<'p, 'a> {
     pf: &'p Packfile<'a>,
     /// Array data claimed so far: start -> end offset.

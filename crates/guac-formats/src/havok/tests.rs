@@ -229,6 +229,8 @@ fn threecomp40_drops_the_largest_component_and_keeps_its_sign() {
         "{q:?}"
     );
     assert_eq!(threecomp40(word(identity | 1 << 39)), None);
+    // Kept components bigger than the dropped one: never encoded.
+    assert_eq!(threecomp40(word(0xFFF | 0xFFF << 12 | 0xFFF << 24)), None);
 
     // One per dropped index; y's is negative, so its sign bit is set.
     for (q, index, sign) in [
@@ -552,4 +554,22 @@ fn packfile_refusals_name_their_field() {
         ..PayloadSpec::default()
     });
     assert_eq!(field(&bad.bytes), "parentIndices");
+}
+
+#[test]
+fn a_string_past_max_string_is_refused() {
+    let named = |n: usize| {
+        let mut s = skeleton3();
+        s.name = "A".repeat(n).leak();
+        payload(&PayloadSpec {
+            skeletons: vec![s],
+            ..PayloadSpec::default()
+        })
+    };
+    let longest = named(MAX_STRING);
+    let ok = Container::parse(&longest.bytes).unwrap();
+    assert_eq!(ok.skeletons[0].name.map(str::len), Some(MAX_STRING));
+    let (field, kind) = refused(&named(MAX_STRING + 1).bytes);
+    assert_eq!(field, "name");
+    assert!(matches!(kind, ErrorKind::MissingNul { .. }), "{kind:?}");
 }
