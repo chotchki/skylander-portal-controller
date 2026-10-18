@@ -513,13 +513,21 @@ async fn quit_empties_the_drivers_portal_and_keeps_the_saved_layout() {
         .await;
     assert_eq!(status, StatusCode::ACCEPTED);
     n.wait_loaded(0, ERUPTOR).await;
-    let saved = n
-        .state
-        .profiles
-        .load_portal_layout(&profile_id)
-        .await
-        .unwrap();
-    assert!(saved.as_deref().is_some_and(|j| j.contains(ERUPTOR)));
+    // The layout save lands after the slot reads Loaded, so poll for it.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let saved = loop {
+        let saved = n
+            .state
+            .profiles
+            .load_portal_layout(&profile_id)
+            .await
+            .unwrap();
+        if saved.as_deref().is_some_and(|j| j.contains(ERUPTOR)) {
+            break saved;
+        }
+        assert!(Instant::now() < deadline, "the layout never saved Eruptor");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
 
     assert_eq!(
         n.send("POST", "/api/quit", "", Some(sid)).await,
