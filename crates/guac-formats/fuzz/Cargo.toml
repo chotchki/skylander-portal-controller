@@ -62,3 +62,10 @@ path = "fuzz_targets/igimage2_ktx2.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "edge_geometry"
+path = "fuzz_targets/edge_geometry.rs"
+test = false
+doc = false
+bench = false

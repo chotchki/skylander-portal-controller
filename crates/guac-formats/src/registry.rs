@@ -5,7 +5,7 @@
 //! it may hold at once for an input of a given length.
 
 use crate::FormatError;
-use crate::{iga, igz, sfo, texture};
+use crate::{edge, iga, igz, sfo, texture};
 
 pub struct RegisteredParser {
     /// Stable name: the property test reports it, the fuzz targets match on it.
@@ -64,6 +64,15 @@ pub const PARSERS: &[RegisteredParser] = &[
         // The IGZ parse, plus one image's levels and its KTX2 at a time:
         // each about its pixel block, which the input holds.
         heap_budget: |len| 64 * len + 2 * len + (64 << 10),
+    },
+    RegisteredParser {
+        name: "edge_geometry",
+        parse: walk_edge,
+        seeds: edge::builder::seeds,
+        // The IGZ parse, plus one segment at a time: indexes are 2 bytes
+        // each, at least 3 bits of input per triangle (24x), and attributes
+        // are at most 4 floats per input byte (U8N, 16x).
+        heap_budget: |len| 64 * len + 48 * len + (256 << 10),
     },
 ];
 
@@ -172,9 +181,66 @@ fn converted_textures(bytes: &[u8]) -> Result<usize, FormatError> {
     Ok(converted)
 }
 
+/// How many buffer bytes [`walk_edge`] hands the decoder before it stops.
+/// Segments can share buffers, so an input can ask for far more than it holds.
+pub const EDGE_WALK_BUDGET: usize = 4 << 20;
+
+/// Parses an IGZ, then decodes every `igPS3EdgeGeometrySegment`, dropping
+/// each and skipping errors, until [`EDGE_WALK_BUDGET`] is spent. Refused
+/// segments are charged too. The property test and the fuzz targets run it.
+pub fn walk_edge(bytes: &[u8]) -> Result<(), FormatError> {
+    decoded_segments(bytes).map(drop)
+}
+
+/// A segment's charge: its buffers plus its decoded indexes.
+pub fn edge_cost(s: &igz::layouts::EdgeGeometrySegment<'_>) -> usize {
+    let len = |m: Option<igz::MemoryRef<'_>>| m.map_or(0, |m| m.data.len());
+    let indexes = s.counts().map_or(0, |(_, i)| 2 * usize::from(i));
+    [
+        s.indexes,
+        s.spu_vertexes0,
+        s.spu_vertexes1,
+        s.rsx_only_vertexes,
+    ]
+    .into_iter()
+    .map(len)
+    .sum::<usize>()
+        + len(s.skin_indexes_and_weights)
+        + indexes
+}
+
+/// [`walk_edge`], counting the segments it decoded.
+fn decoded_segments(bytes: &[u8]) -> Result<usize, FormatError> {
+    use igz::layouts::{EdgeGeometrySegment, read_all};
+    let file = igz::Igz::parse(bytes)?;
+    let mut left = EDGE_WALK_BUDGET;
+    let mut decoded = 0;
+    for (i, layout) in read_all::<EdgeGeometrySegment>(&file) {
+        let Ok(layout) = layout else { continue };
+        left = left.saturating_sub(edge_cost(&layout).max(1));
+        decoded += usize::from(edge::Segment::decode(&file, i, &layout).is_ok());
+        if left == 0 {
+            break;
+        }
+    }
+    Ok(decoded)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn edge_walk_stops_at_its_budget_on_shared_buffers() {
+        // 600 positions (7,200 bytes), a 144-byte index stream and 1,200
+        // bytes of decoded indexes per segment: 491 fill the budget.
+        let bytes = edge::builder::shared(2000, 200);
+        assert_eq!(
+            decoded_segments(&bytes),
+            Ok(EDGE_WALK_BUDGET.div_ceil(8_544))
+        );
+        assert_eq!(decoded_segments(&edge::builder::shared(3, 40)), Ok(3));
+    }
 
     #[test]
     fn texture_walk_stops_at_its_budget_on_a_shared_block() {

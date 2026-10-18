@@ -11,6 +11,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod edge;
 mod error;
 pub mod iga;
 pub mod igz;
