@@ -12,6 +12,7 @@ members = [
     "tools/icon-bake",
     "tools/playthrough",
     "tools/rekey-figure-ids",
+    "tools/rrc-dump",
     "tools/tailwind-build",
     "tools/wiki-scrape",
 ]

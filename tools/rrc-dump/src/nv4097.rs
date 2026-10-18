@@ -1,0 +1,125 @@
+//! The NV4097 method registers the replay reads, as register indices (byte offset / 4).
+//! Offsets match RPCS3's `gcm_enums.h` at the vendored pin.
+
+pub const NO_OPERATION: u32 = 0x0100 >> 2;
+pub const SET_TRANSFORM_PROGRAM: u32 = 0x0b80 >> 2;
+pub const SET_VERTEX_DATA_ARRAY_OFFSET: u32 = 0x1680 >> 2;
+pub const SET_VERTEX_DATA_BASE_OFFSET: u32 = 0x1738 >> 2;
+pub const SET_VERTEX_DATA_BASE_INDEX: u32 = 0x173c >> 2;
+pub const SET_VERTEX_DATA_ARRAY_FORMAT: u32 = 0x1740 >> 2;
+pub const SET_BEGIN_END: u32 = 0x1808 >> 2;
+pub const DRAW_ARRAYS: u32 = 0x1814 >> 2;
+pub const SET_INDEX_ARRAY_ADDRESS: u32 = 0x181c >> 2;
+pub const SET_INDEX_ARRAY_DMA: u32 = 0x1820 >> 2;
+pub const DRAW_INDEX_ARRAY: u32 = 0x1824 >> 2;
+pub const SET_TEXTURE_CONTROL3: u32 = 0x1840 >> 2;
+pub const SET_TEXTURE_OFFSET: u32 = 0x1a00 >> 2;
+pub const SET_TEXTURE_FORMAT: u32 = 0x1a04 >> 2;
+pub const SET_TEXTURE_CONTROL0: u32 = 0x1a0c >> 2;
+pub const SET_TEXTURE_CONTROL1: u32 = 0x1a10 >> 2;
+pub const SET_TEXTURE_IMAGE_RECT: u32 = 0x1a18 >> 2;
+pub const SET_RESTART_INDEX_ENABLE: u32 = 0x1dac >> 2;
+pub const SET_RESTART_INDEX: u32 = 0x1db0 >> 2;
+pub const SET_TRANSFORM_CONSTANT_LOAD: u32 = 0x1efc >> 2;
+pub const SET_TRANSFORM_CONSTANT: u32 = 0x1f00 >> 2;
+pub const SET_VERTEX_ATTRIB_INPUT_MASK: u32 = 0x1ff0 >> 2;
+
+/// Register-index stride between consecutive fragment texture units (0x20 bytes).
+pub const TEXTURE_UNIT_STRIDE: u32 = 8;
+pub const FRAGMENT_TEXTURE_UNITS: u32 = 16;
+pub const VERTEX_ARRAYS: u32 = 16;
+/// Words in one constant or program upload window.
+pub const UPLOAD_WINDOW: u32 = 32;
+/// Constants the vertex program can address (RPCS3 ignores writes past 467).
+pub const TRANSFORM_CONSTANTS: usize = 468;
+
+/// Header bits of a recorded command.
+pub const HEADER_METHOD_MASK: u32 = 0x0000_fffc;
+pub const HEADER_COUNT_SHIFT: u32 = 18;
+pub const HEADER_COUNT_MASK: u32 = 0x7ff;
+pub const HEADER_NON_INCREMENT: u32 = 0x4000_0000;
+
+/// `SET_TEXTURE_FORMAT` format-byte flags.
+pub const TEXTURE_LN: u32 = 0x20;
+pub const TEXTURE_UN: u32 = 0x40;
+
+pub fn primitive_name(value: u32) -> &'static str {
+    match value {
+        1 => "points",
+        2 => "lines",
+        3 => "line_loop",
+        4 => "line_strip",
+        5 => "triangles",
+        6 => "triangle_strip",
+        7 => "triangle_fan",
+        8 => "quads",
+        9 => "quad_strip",
+        10 => "polygon",
+        _ => "unknown",
+    }
+}
+
+/// Vertex attribute base type (bits 0..3 of the array format) as (name, bytes per component).
+pub fn vertex_type(raw: u32) -> (&'static str, u32) {
+    match raw {
+        1 => ("snorm16", 2),
+        2 => ("f32", 4),
+        3 => ("f16", 2),
+        4 => ("unorm8", 1),
+        5 => ("sint16", 2),
+        6 => ("cmp32", 4),
+        7 => ("uint8", 1),
+        _ => ("undefined", 0),
+    }
+}
+
+/// Bytes one vertex of an array occupies in RSX memory (cmp32 packs all components in one word).
+pub fn vertex_element_size(type_raw: u32, components: u32) -> u32 {
+    match type_raw {
+        6 => 4,
+        t => vertex_type(t).1 * components,
+    }
+}
+
+/// Base texture format (format byte without the LN/UN flags) as a GCM name.
+pub fn texture_format_name(base: u32) -> &'static str {
+    match base {
+        0x81 => "B8",
+        0x82 => "A1R5G5B5",
+        0x83 => "A4R4G4B4",
+        0x84 => "R5G6B5",
+        0x85 => "A8R8G8B8",
+        0x86 => "COMPRESSED_DXT1",
+        0x87 => "COMPRESSED_DXT23",
+        0x88 => "COMPRESSED_DXT45",
+        0x8b => "G8B8",
+        0x8d => "COMPRESSED_B8R8_G8R8",
+        0x8e => "COMPRESSED_R8B8_R8G8",
+        0x8f => "R6G5B5",
+        0x90 => "DEPTH24_D8",
+        0x91 => "DEPTH24_D8_FLOAT",
+        0x92 => "DEPTH16",
+        0x93 => "DEPTH16_FLOAT",
+        0x94 => "X16",
+        0x95 => "Y16_X16",
+        0x97 => "R5G5B5A1",
+        0x98 => "COMPRESSED_HILO8",
+        0x99 => "COMPRESSED_HILO_S8",
+        0x9a => "W16_Z16_Y16_X16_FLOAT",
+        0x9b => "W32_Z32_Y32_X32_FLOAT",
+        0x9c => "X32_FLOAT",
+        0x9d => "D1R5G5B5",
+        0x9e => "D8R8G8B8",
+        0x9f => "Y16_X16_FLOAT",
+        _ => "unknown",
+    }
+}
+
+/// Folds the DMA-handle spellings of local/main memory onto locations 0 and 1.
+pub fn normalize_location(location: u32) -> u32 {
+    match location {
+        0xfeed_0000 => 0,
+        0xfeed_0001 => 1,
+        other => other,
+    }
+}
