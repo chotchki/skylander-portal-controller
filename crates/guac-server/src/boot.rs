@@ -247,11 +247,10 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
                 .expect("build tokio runtime");
             // Log and flip the launcher to ServerError; callers then return and the UI shows it.
             let report_fatal = |scope: &str, err: &dyn std::fmt::Display| {
-                tracing::error!("{scope}: {err}");
+                let message = fatal_message(scope, err);
+                tracing::error!("{message}");
                 if let Ok(mut st) = status_for_errors.lock() {
-                    st.screen = LauncherScreen::ServerError {
-                        message: format!("{scope}: {err}"),
-                    };
+                    st.screen = LauncherScreen::ServerError { message };
                 }
             };
             rt.block_on(async move {
@@ -479,6 +478,13 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
 }
 
 /// The product's figure library: the firmware pack, indexed and decorated.
+/// A startup failure as the log and the ServerError screen show it: the scope,
+/// then every cause in the chain (`{:#}` on an `anyhow::Error`, which `{}`
+/// cuts to the outermost context).
+fn fatal_message(scope: &str, err: &dyn std::fmt::Display) -> String {
+    format!("{scope}: {err:#}")
+}
+
 fn index_firmware_pack(
     cfg: &Config,
     scan: fn(&Path) -> Result<Vec<Figure>>,
@@ -769,6 +775,57 @@ mod tests {
         let token = format!("\"build_token\":\"{}\"", crate::http::BUILD_TOKEN);
         assert!(response.contains(&token), "{response}");
         assert!(root.path().join("db.sqlite").is_file());
+    }
+
+    #[test]
+    fn a_fatal_message_keeps_every_cause() {
+        let e = anyhow::anyhow!("migration 3 was previously applied but has been modified")
+            .context("run migrations");
+        assert_eq!(
+            fatal_message("open profile store", &e),
+            "open profile store: run migrations: migration 3 was previously applied but has been modified"
+        );
+        // A plain error reads as before.
+        let io = std::io::Error::other("Address already in use");
+        assert_eq!(
+            fatal_message("bind 0.0.0.0:8765", &io),
+            "bind 0.0.0.0:8765: Address already in use"
+        );
+    }
+
+    /// AA.21's case: a database whose applied migration no longer matches.
+    #[test]
+    fn a_changed_migration_shows_its_cause_on_the_error_screen() {
+        let root = tempfile::tempdir().unwrap();
+        let db = root.path().join("db.sqlite");
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let store = crate::profiles::ProfileStore::open(&db, &TEST_MIGRATOR)
+                    .await
+                    .unwrap();
+                sqlx::query("UPDATE _sqlx_migrations SET checksum = X'00'")
+                    .execute(&store.pool)
+                    .await
+                    .unwrap();
+                store.pool.close().await;
+            });
+        let handles = mock_boot(root.path(), ephemeral_port());
+        handles.server_thread.join().unwrap();
+        let screen = handles.launcher_status.lock().unwrap().screen.clone();
+        let LauncherScreen::ServerError { message } = screen else {
+            panic!("expected ServerError, got {screen:?}");
+        };
+        assert!(
+            message.starts_with("open profile store: run migrations: migration "),
+            "{message}"
+        );
+        assert!(
+            message.ends_with("was previously applied but has been modified"),
+            "{message}"
+        );
     }
 
     #[test]
