@@ -2,6 +2,7 @@
 //! profile store, Kaos, mDNS and the shared config types. Code that stays with
 //! the product (`crates/server`) is reached through the traits in [`hooks`].
 
+pub mod boot;
 pub mod config;
 pub mod embedded_assets;
 pub mod firewall;

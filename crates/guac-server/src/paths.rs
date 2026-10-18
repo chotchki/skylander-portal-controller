@@ -7,7 +7,7 @@
 //! All callers that touch the DB, working-copies, or `config.json` route
 //! through here so the dev/release split stays consistent across the crate.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
@@ -153,7 +153,14 @@ pub fn config_json_path() -> Result<PathBuf> {
 
 /// Path to the SQLite DB. Creates the parent directory.
 pub fn db_path() -> Result<PathBuf> {
-    Ok(resolve_runtime_dir()?.join("db.sqlite"))
+    db_path_under(&runtime_dir_unchecked()?)
+}
+
+/// `<root>/db.sqlite`, creating `root`.
+pub fn db_path_under(root: &Path) -> Result<PathBuf> {
+    std::fs::create_dir_all(root)
+        .with_context(|| format!("create runtime dir {}", root.display()))?;
+    Ok(root.join("db.sqlite"))
 }
 
 /// Path to the logs directory. Creates it.

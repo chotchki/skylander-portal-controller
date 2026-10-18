@@ -5,7 +5,7 @@
 //! `http.rs` and pull the pieces they need from [`ProfileStore`].
 
 use std::collections::{HashMap, VecDeque};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -71,17 +71,6 @@ impl From<&ProfileRow> for PublicProfile {
             kaos_enabled: r.kaos_enabled,
         }
     }
-}
-
-// ---- Path resolution ------------------------------------------------------
-
-/// Resolve the SQLite DB path. Dev builds put it under `./dev-data/`,
-/// release under `%APPDATA%/skylander-portal-controller/`.
-///
-/// Re-exported from [`crate::paths::db_path`] so existing callers keep
-/// working; the dev/release split lives in `paths.rs`.
-pub fn resolve_db_path() -> Result<PathBuf> {
-    crate::paths::db_path()
 }
 
 // ---- Lockout state machine ------------------------------------------------

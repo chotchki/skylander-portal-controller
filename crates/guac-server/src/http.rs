@@ -159,7 +159,13 @@ fn now_unix_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn compute_hmac(key: &[u8], ts_ms: u64, method: &str, path: &str, body: &[u8]) -> Vec<u8> {
+pub(crate) fn compute_hmac(
+    key: &[u8],
+    ts_ms: u64,
+    method: &str,
+    path: &str,
+    body: &[u8],
+) -> Vec<u8> {
     use hmac::{Hmac, Mac};
     type HmacSha256 = Hmac<sha2::Sha256>;
     let mut mac =
@@ -535,7 +541,7 @@ fn is_safe_figure_id(id: &str) -> bool {
 ///
 /// Pre-rendered round QR of the phone's join URL (same URL the TV
 /// launcher encodes — mDNS-stable when available, raw-IP fallback
-/// otherwise). Computed once at startup in `main.rs` and stored as
+/// otherwise). Computed once in [`crate::boot::boot`] and stored as
 /// `AppState.join_qr_png`; this handler just serves the bytes.
 ///
 /// Used by the phone menu overlay's INVITE card to hand the QR to a

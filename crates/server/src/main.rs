@@ -14,25 +14,15 @@
 //!  - Shared state lives inside `Arc<AppState>` and an `AtomicUsize` client
 //!    counter that both sides read.
 
-use skylander_server::{config, gl_fallback, http, logging, profiles, state, ui};
+use skylander_server::{config, gl_fallback, logging, ui};
 
-use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::AtomicUsize;
 
 use anyhow::{Context, Result};
-use skylander_core::{Figure, SLOT_COUNT, SlotState};
-use skylander_rpcs3_control::{PortalDriver, RpcsProcess};
-use tokio::sync::{Mutex, broadcast};
-use tracing::{info, warn};
+use guac_server::boot::{BootOptions, BuiltDriver, Catalogue, boot};
+use tracing::info;
 
 use crate::config::DriverKind;
-use crate::state::{
-    AppState, RpcsLifecycle, spawn_connectivity_watchdog, spawn_crash_watchdog,
-    spawn_driver_worker, spawn_state_poller,
-};
 use crate::ui::LauncherApp;
 
 fn main() -> Result<()> {
@@ -64,478 +54,33 @@ fn main() -> Result<()> {
         "starting server",
     );
 
-    // --- Index the firmware pack. ---
-    // PLAN 6.5.4 made the pack optional: a pack with zero hits is an empty
-    // library, which the phone already handles (empty-state copy).
-    let figures: Vec<Figure> = if cfg.firmware_pack_root.as_os_str().is_empty() {
-        info!("no firmware pack configured — starting with an empty library");
-        Vec::new()
-    } else {
-        skylander_indexer::scan(&cfg.firmware_pack_root).context("scan firmware pack")?
-    };
-    info!(count = figures.len(), "indexed pack figures");
-
-    // PLAN 9.7 playtest 2026-05-04 — decorate Vehicle figures with their
-    // hand-curated Land/Sky/Sea terrain from `data/vehicle_terrain.json`.
-    // The terrain isn't derivable from the .sky file or the wiki scrape
-    // alone (wiki coverage is patchy: 1/8 vehicles in `data/figures.json`
-    // had `terrain` populated). Substring match with longest-key-first
-    // so "gold rusher" beats "rusher" for the figure literally named
-    // "Power Blue Gold Rusher". Missing/malformed file → log + leave
-    // everything `None`; the badge just doesn't render. Non-fatal.
-    let figures = decorate_vehicle_terrain(figures, &cfg.data_root);
-    info!(count = figures.len(), "total library figures");
-
-    let figure_index: HashMap<_, _> = figures
-        .iter()
-        .enumerate()
-        .map(|(i, f)| (f.id.clone(), i))
-        .collect();
-
-    // Game catalogue now comes from `driver.list_installed_games()` —
-    // constructed inside the tokio task (COM apartment constraint) and
-    // populated into AppState there.
-
-    // --- Pick bind address. ---
-    let ip = first_non_loopback_ipv4().unwrap_or(Ipv4Addr::LOCALHOST);
-    let bind = SocketAddr::from((ip, cfg.bind_port));
-    let key_hex = hex::encode(&cfg.hmac_key);
-
-    // --- Phone-facing URL ---
-    //
-    // PLAN 4.18.1a / 4.19.10b: prefer `http://<os-hostname>.local:<port>/`
-    // so home-screen PWA bookmarks survive a DHCP-lease refresh. Windows
-    // ≥10 v2004 auto-publishes the local hostname via its built-in mDNS
-    // responder; we just read it and put it in the QR. Falls back to
-    // the raw-IP URL if the OS hostname can't be read.
-    //
-    // Earlier cuts tried to publish a custom `skylander-portal.local`
-    // hostname via mdns-sd then via Windows's `DnsServiceRegister` — see
-    // the `mdns` module doc for why both failed in practice.
-    let (phone_url, used_mdns) =
-        skylander_server::mdns::build_phone_url(ip, cfg.bind_port, &key_hex);
-    if used_mdns {
-        info!("phone URL {phone_url}");
-    } else {
-        tracing::warn!("OS hostname unavailable; QR will use the raw-IP URL: {phone_url}");
-    }
-    // Raw-IP form for the PLAN 17.1 connectivity card / 17.4 fallback QR — always
-    // the literal IP, even when the QR above uses the `.local` hostname.
-    let raw_ip_url = skylander_server::mdns::raw_ip_url(ip, cfg.bind_port, &key_hex);
-
-    // Pre-render the round-QR PNG once — the URL is fixed for the life
-    // of the server, so `/api/join-qr.png` is just an `Arc<Vec<u8>>`
-    // clone per request. Produced here (synchronously, cheap) so the
-    // eframe launcher and the HTTP endpoint share the same committed
-    // image buffer (one source of truth for the rendered QR).
-    let join_qr_png = match skylander_server::round_qr::render_png(
-        &phone_url,
-        &skylander_server::round_qr::RoundQrConfig::launcher_default(),
-    ) {
-        Ok(bytes) => Arc::new(bytes),
-        Err(e) => {
-            tracing::error!("render join QR PNG: {e}");
-            Arc::new(Vec::new())
-        }
-    };
-
-    // --- Shared between Axum and the eframe UI. ---
-    let portal: Arc<Mutex<[SlotState; SLOT_COUNT]>> =
-        Arc::new(Mutex::new(std::array::from_fn(|_| SlotState::Empty)));
-    let (events_tx, _) = broadcast::channel::<skylander_core::Event>(64);
-    let connected_clients = Arc::new(AtomicUsize::new(0));
-    let launcher_status = Arc::new(std::sync::Mutex::new(
-        skylander_server::state::LauncherStatus {
-            // Drives the launcher's z-order strategy (PLAN 16.6.2.2): IPC = overlay
-            // above the game, never desktop-topmost; UIA = legacy topmost-fighting.
-            driver_is_ipc: matches!(cfg.driver_kind, crate::config::DriverKind::Ipc),
-            ..Default::default()
-        },
-    ));
-
-    // --- Start the Axum server + driver worker on a dedicated thread. ---
-    //
-    // The UIA driver is constructed inside the tokio thread, not on main —
-    // `UIAutomation::new()` initializes COM as MTA on the calling thread, and
-    // eframe needs main to stay uninitialized so it can OleInitialize(STA).
-    // Doing both on the same thread crashes with RPC_E_CHANGED_MODE.
-    let phone_dist = cfg.phone_dist_dir.clone();
-    let bind_addr = bind;
-    let driver_kind = cfg.driver_kind;
-    let rpcs3_exe = cfg.rpcs3_exe.clone();
-    let config_dir = cfg.config_dir.clone();
-    let data_root = cfg.data_root.clone();
-    let hmac_key = cfg.hmac_key.clone();
-    // PLAN 20.6 — the running window mode, surfaced via AppState so the admin
-    // window-mode toggle can read it back. Copy (fieldless enum).
-    let window_mode = cfg.window_mode;
-    // PLAN S — the 2× render-pass setting, surfaced via AppState for the admin
-    // toggle. When on, export SKYLANDER_SURFACE_2X here (main thread, before the
-    // tokio runtime + any RPCS3 spawn) so the patched RPCS3 child inherits it and
-    // sizes its render surface to 2560×1440. Applies on next launcher boot.
-    let render_2x = cfg.render_2x;
-    if render_2x {
+    // PLAN S: exported before the tokio runtime exists so the patched RPCS3 child inherits it (2560×1440).
+    if cfg.render_2x {
         // SAFETY: startup is still single-threaded here — no other thread reads or
         // writes the process env yet (the tokio runtime + RPCS3 spawn come later).
         unsafe { std::env::set_var("SKYLANDER_SURFACE_2X", "1") };
     }
-    // The product's four `guac_server::hooks` (figure files, display mode, RPCS3
-    // config, settings writer): the product-only code the shared server calls.
-    let hooks = skylander_server::product_hooks::hooks();
-    let rpcs3_lifecycle = Arc::new(tokio::sync::Mutex::new(RpcsLifecycle::default()));
-    let rpcs3_for_task = rpcs3_lifecycle.clone();
-    let portal_for_task = portal.clone();
-    let events_for_task = events_tx.clone();
-    let clients_for_task = connected_clients.clone();
-    let status_for_task = launcher_status.clone();
-    let figures_for_task = figures.clone();
-    let figure_index_for_task = figure_index.clone();
-    let join_qr_png_for_task = join_qr_png.clone();
 
-    let status_for_errors = launcher_status.clone();
-    let status_for_ready = launcher_status.clone();
-    // PLAN B.2 — the driver worker (and its `driver_tx`) is built deep inside the
-    // tokio thread, but the eframe `LauncherApp` lives on this main thread and
-    // needs the sender to dispatch the macOS Desktop-mode game-window fit
-    // (`DriverJob::WindowSet`). Ship the sender back across the thread boundary
-    // once it exists; the main thread blocks on `recv` below before `run_native`.
-    let (driver_tx_back_tx, driver_tx_back_rx) =
-        std::sync::mpsc::sync_channel::<tokio::sync::mpsc::Sender<crate::state::DriverJob>>(1);
-    let _server_thread = std::thread::Builder::new()
-        .name("tokio".into())
-        .spawn(move || {
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .expect("build tokio runtime");
-            // Helper: log + flip the launcher screen to ServerError so the
-            // egui surface shows a real diagnostic instead of a QR that
-            // points at a server that isn't there. Each failure path below
-            // calls this and then returns — the tokio thread exits but
-            // egui keeps running and renders the message.
-            let report_fatal = |scope: &str, err: &dyn std::fmt::Display| {
-                tracing::error!("{scope}: {err}");
-                if let Ok(mut st) = status_for_errors.lock() {
-                    st.screen = state::LauncherScreen::ServerError {
-                        message: format!("{scope}: {err}"),
-                    };
-                }
-            };
-            rt.block_on(async move {
-                // PLAN 16.10.1 — ensure the user's RPCS3 config.yml carries the
-                // one Net configuration Skylanders games run under: Internet
-                // *Connected* (so the game's hardcoded 8.8.8.8 DNS probe connects
-                // instead of busy-retry-storming the CPU into the freeze-watchdog
-                // "flap") + PSN *Disconnected* (so it never hits the RPCN-required
-                // fatal) + DNS 8.8.8.8. Surgical: sets just those three keys and
-                // preserves every other RPCS3 setting; idempotent. Runs once at
-                // startup, well before the first phone-triggered launch reads the
-                // config. Real-emulator drivers only — Mock launches nothing.
-                // Non-fatal: a write failure just leaves the prior config (the
-                // pre-fix behaviour), so log and carry on rather than block boot.
-                if !matches!(driver_kind, crate::config::DriverKind::Mock)
-                    && let Some(rpcs3_config) = &hooks.rpcs3_config
-                    && let Err(e) = rpcs3_config.ensure_net_config(&config_dir)
-                {
-                    tracing::warn!("ensure RPCS3 Net config failed (non-fatal): {e}");
-                }
-                let (driver, test_mock): (Arc<dyn PortalDriver>, _) =
-                    match build_driver(driver_kind) {
-                        Ok(d) => d,
-                        Err(e) => {
-                            report_fatal("failed to construct driver", &e);
-                            return;
-                        }
-                    };
-                let db_path = match crate::profiles::resolve_db_path() {
-                    Ok(p) => p,
-                    Err(e) => {
-                        report_fatal("resolve db path", &e);
-                        return;
-                    }
-                };
-                info!(db = %db_path.display(), "opening profile db");
-                let profile_store = match crate::profiles::ProfileStore::open(
-                    &db_path,
-                    &skylander_server::MIGRATOR,
-                )
-                .await
-                {
-                    Ok(s) => s,
-                    Err(e) => {
-                        report_fatal("open profile store", &e);
-                        return;
-                    }
-                };
-                let sessions = Arc::new(crate::profiles::SessionRegistry::default());
-                let figures_for_driver: Arc<Vec<Figure>> = Arc::new(figures_for_task.clone());
-                // Clone the driver handle for the IPC STATE poller — the worker
-                // takes `driver` by value below.
-                let driver_for_poller = driver.clone();
-                let driver_tx = spawn_driver_worker(
-                    driver,
-                    portal_for_task.clone(),
-                    events_for_task.clone(),
-                    profile_store.clone(),
-                    sessions.clone(),
-                    figures_for_driver.clone(),
-                    rpcs3_for_task.clone(),
-                    rpcs3_exe.clone(),
-                    config_dir.clone(),
-                    status_for_task.clone(),
-                    hooks.rpcs3_config.clone(),
-                );
-                // PLAN B.2 — hand the worker's sender to the main-thread launcher
-                // UI so it can dispatch the macOS game-window fit. Best-effort: if
-                // the receiver is already gone (UI never came up) this just drops.
-                let _ = driver_tx_back_tx.send(driver_tx.clone());
-                // Unified crash/freeze supervisor (PLAN 16.7). Polls the
-                // lifecycle handle every 500ms; on a dead process (crash) or a
-                // raised `frozen` flag (the IPC STATE poller's freeze detector)
-                // it runs auto cover → restart-via-BootDirect → restore the
-                // portal figures, falling back to the terminal crash overlay
-                // only if every restart attempt fails. Clean quits drain
-                // `process` in `/api/quit` before the process dies, so the
-                // supervisor doesn't fire on those. Needs `driver_tx` (to drive
-                // the restart through the worker's IPC/UIA boot path) and the
-                // figure library (to re-resolve working copies on restore).
-                spawn_crash_watchdog(
-                    rpcs3_for_task.clone(),
-                    portal_for_task.clone(),
-                    events_for_task.clone(),
-                    status_for_task.clone(),
-                    driver_tx.clone(),
-                    figures_for_driver,
-                    hooks.figure_files.clone(),
-                    std::time::Duration::from_millis(500),
-                );
-                // Playable-signal source depends on the driver. IPC (PLAN 16.6.3.1):
-                // the clean STATE poller — `game_playable` waits for compile-complete
-                // (not just FPS), so the launcher reveals the game only once it's
-                // truly rendering (no early iris / compile→in-game flicker). The
-                // legacy UIA fallback sets `game_playable` in-band from BootDirect
-                // (which already waits for the rendering `FPS:` viewport before it
-                // returns); Mock has no real game underneath, so it stays unset (no
-                // iris punch-through) — both correct without the retired FPS/shader
-                // title scrapers (PLAN 16.6.3.2/.3).
-                match driver_kind {
-                    crate::config::DriverKind::Ipc => {
-                        spawn_state_poller(
-                            driver_for_poller,
-                            status_for_task.clone(),
-                            std::time::Duration::from_millis(250),
-                        );
-                    }
-                    _ => {
-                        let _ = driver_for_poller;
-                    }
-                }
-                // Connectivity watchdog (PLAN 17.1): if no phone connects within
-                // a grace window after the QR is up, raise the "Trouble
-                // connecting?" diagnostic (raw-IP URL + firewall check/fix). 90s
-                // grace, 5s poll — long enough that a user walking over to scan
-                // the QR doesn't trip it, short enough to help promptly.
-                spawn_connectivity_watchdog(
-                    status_for_task.clone(),
-                    clients_for_task.clone(),
-                    bind.port(),
-                    std::time::Duration::from_secs(90),
-                    std::time::Duration::from_secs(5),
-                );
-                // Bind is the most common startup failure (port already
-                // in use, permission denied on a privileged port). Don't
-                // panic — flip the launcher to ServerError so the user
-                // sees the actual reason instead of a closed window.
-                let listener = match tokio::net::TcpListener::bind(bind_addr).await {
-                    Ok(l) => l,
-                    Err(e) => {
-                        report_fatal(&format!("bind {bind_addr}"), &e);
-                        return;
-                    }
-                };
-                // PLAN 10.8.4 direct-boot: don't spawn RPCS3 at server
-                // startup any more. The launch state is "no game running"
-                // until the user picks one in the phone picker; /api/launch
-                // then spawns rpcs3.exe with the picked game's EBOOT.BIN
-                // and only at that point does RPCS3 come up. This removes
-                // the always-running RPCS3 + library-table boot path from
-                // PLAN 4.15.16 (the keystroke menu nav was the fragility
-                // PLAN 10.8.4 set out to fix).
-                //
-                // Mock driver still installs a Mock variant so /api/launch
-                // can flow through unchanged on Mac/Linux dev.
-                if matches!(driver_kind, crate::config::DriverKind::Mock) {
-                    let mut guard = rpcs3_for_task.lock().await;
-                    guard.process = Some(RpcsProcess::mock());
-                    drop(guard);
-                    if let Ok(mut st) = status_for_task.lock() {
-                        st.rpcs3_running = true;
-                    }
-                    info!("Mock RPCS3 lifecycle ready");
-                }
-
-                // PLAN 10.8.4 — read RPCS3's games.yml so /api/launch can
-                // resolve a picked serial to the EBOOT path it needs to spawn
-                // RPCS3 directly into the game. Failure here is non-fatal:
-                // the catalogue ends up empty, picker shows "no games"
-                // and the user can fix games.yml + restart.
-                let games_yml = {
-                    // Phase 16: read games.yml from config_dir (the data/config root),
-                    // which may differ from the exe's location for a patched binary.
-                    let install_dir = Some(config_dir.clone());
-                    match install_dir {
-                        Some(dir) => match skylander_rpcs3_control::games_yml::read_games_yml(&dir)
-                        {
-                            Ok(map) => {
-                                info!(entries = map.len(), "loaded RPCS3 games.yml");
-                                map
-                            }
-                            Err(e) => {
-                                warn!("read games.yml failed: {e}");
-                                std::collections::HashMap::new()
-                            }
-                        },
-                        None => {
-                            warn!("rpcs3 exe has no parent dir; skipping games.yml read");
-                            std::collections::HashMap::new()
-                        }
-                    }
-                };
-
-                // Game catalogue: filter games.yml against the supported
-                // Skylanders SKYLANDERS_SERIALS list. Mock driver gets the
-                // full list so dev/test on Mac/Linux still sees a populated
-                // picker without needing a games.yml.
-                let games: Vec<skylander_core::InstalledGame> = match driver_kind {
-                    // IPC (patched RPCS3) resolves games from games.yml exactly like UIA.
-                    crate::config::DriverKind::Uia | crate::config::DriverKind::Ipc => {
-                        let serials: Vec<String> = games_yml.keys().cloned().collect();
-                        let catalogue = serials_to_catalogue(&serials);
-                        info!(
-                            installed = catalogue.len(),
-                            yml_entries = serials.len(),
-                            "loaded Skylanders game catalogue from RPCS3 games.yml",
-                        );
-                        catalogue
-                    }
-                    crate::config::DriverKind::Mock => {
-                        let all_serials: Vec<String> = skylander_core::SKYLANDERS_SERIALS
-                            .iter()
-                            .map(|(s, _)| (*s).to_string())
-                            .collect();
-                        serials_to_catalogue(&all_serials)
-                    }
-                };
-
-                let state = Arc::new(AppState {
-                    figures: figures_for_task,
-                    figure_index: figure_index_for_task,
-                    driver_kind,
-                    driver_tx,
-                    portal: portal_for_task,
-                    events: events_for_task,
-                    connected_clients: clients_for_task,
-                    launcher_status: status_for_task,
-                    games,
-                    games_yml,
-                    rpcs3_exe,
-                    config_dir,
-                    data_root,
-                    phone_dist: phone_dist.clone(),
-                    hmac_key,
-                    window_mode,
-                    render_2x,
-                    boot_id: {
-                        // Random u64 from OsRng (already a dep via argon2's
-                        // rand_core re-export). Phones compare against the
-                        // last-seen value to detect a server restart.
-                        use rand_core::RngCore;
-                        rand_core::OsRng.next_u64()
-                    },
-                    rpcs3: rpcs3_for_task,
-                    profiles: profile_store,
-                    sessions,
-                    join_qr_png: join_qr_png_for_task,
-                    hooks,
-                    #[cfg(feature = "test-hooks")]
-                    test_mock,
-                });
-                // When `test-hooks` is disabled, `test_mock` is `()` and needs
-                // to be consumed so clippy doesn't warn about an unused binding.
-                // `let () = test_mock;` is the idiomatic way to assert+consume
-                // a unit value (avoids `clippy::let_unit_value`).
-                #[cfg(not(feature = "test-hooks"))]
-                let () = test_mock;
-
-                // Periodic ghost-expiry sweep (PLAN 8.1.4). Ghosts hold
-                // their portal slots until either the same profile
-                // reconnects with a `?reclaim=` hint, a 3rd connection
-                // forces eviction, or this sweep notices the ghost has
-                // sat past `GHOST_TIMEOUT`. 60s cadence keeps the
-                // wall-clock cleanup latency bounded without burning
-                // wakeups on a quiet day.
-                {
-                    let sweep_state = state.clone();
-                    tokio::spawn(async move {
-                        let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
-                        // Defaults to Burst — first tick fires immediately,
-                        // which would race with startup work; Skip waits a
-                        // full period instead.
-                        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-                        loop {
-                            tick.tick().await;
-                            sweep_state.sweep_expired_ghosts().await;
-                        }
-                    });
-                }
-
-                // Kaos timer ticker (PLAN 8.2b.2). Walks sessions every
-                // ~10s; for kaos_enabled profiles, seeds a 20-min
-                // warmup on first sight and fires swaps at uniformly-
-                // random 1min..=1hr gaps thereafter. Ticker cadence
-                // sets the precision on "fire at" — 10s means fires
-                // can happen up to ~10s after their scheduled instant,
-                // which is fine given the random gap is measured in
-                // minutes. Single task, not per-session, so no
-                // cancellation plumbing needed when sessions come
-                // and go.
-                {
-                    let kaos_state = state.clone();
-                    tokio::spawn(async move {
-                        let mut tick = tokio::time::interval(std::time::Duration::from_secs(10));
-                        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-                        loop {
-                            tick.tick().await;
-                            kaos_state.tick_kaos(std::time::Instant::now()).await;
-                        }
-                    });
-                }
-
-                let app = http::router(state.clone(), phone_dist);
-
-                info!("serving on http://{bind_addr}");
-                // Tell the launcher UI the server is healthy. Until
-                // this flips, the launcher's intro animations stay
-                // gated — calm starfield + brand intro only — so a
-                // startup failure routes straight to the error
-                // surface without first running the spin animation
-                // (PLAN 4.19.x).
-                if let Ok(mut st) = status_for_ready.lock() {
-                    st.server_ready = true;
-                }
-                if let Err(e) = axum::serve(listener, app).await {
-                    // axum exits non-cleanly: same surface as a startup
-                    // failure (the phone QR no longer points at a live
-                    // server, so showing it would be dishonest).
-                    report_fatal("axum server exited", &e);
-                }
-            });
-        })
-        .expect("spawn server thread");
+    // The shared server's startup (openspec AA.2): pack index, phone URL + QR,
+    // then the tokio thread (bind, driver, db, worker, watchdogs, serve).
+    let server = boot(BootOptions {
+        config: cfg.clone(),
+        runtime_root: skylander_server::paths::runtime_dir_unchecked()?,
+        migrator: &skylander_server::MIGRATOR,
+        driver_factory: Box::new(build_driver),
+        // The product's four `guac_server::hooks` (figure files, display mode,
+        // RPCS3 config, settings writer): the product-only code the shared server calls.
+        hooks: skylander_server::product_hooks::hooks(),
+        extra_routes: None,
+        catalogue: Catalogue::FirmwarePack {
+            scan: skylander_indexer::scan,
+        },
+        bind_ip: None,
+    })?;
 
     // --- Fullscreen eframe window on the main thread. ---
-    let ui_clients = connected_clients.clone();
-    let ui_status = launcher_status.clone();
+    let ui_clients = server.connected_clients.clone();
+    let ui_status = server.launcher_status.clone();
     // Both dev and release fullscreen on launch — same visual model, so
     // what you see at `cargo run` is what the HTPC user gets. Release
     // additionally pins always-on-top (Steam Big Picture invocation,
@@ -580,20 +125,13 @@ fn main() -> Result<()> {
         viewport,
         ..Default::default()
     };
-    let url_for_ui = phone_url.clone();
-    let raw_ip_url_for_ui = raw_ip_url.clone();
-    let ui_bind_port = bind.port();
+    let url_for_ui = server.phone_url.clone();
+    let raw_ip_url_for_ui = server.raw_ip_url.clone();
+    let ui_bind_port = server.bind_addr.port();
     let ui_window_mode = cfg.window_mode;
-    // PLAN B.2 — block for the driver worker's sender (built on the tokio thread)
-    // so the launcher can dispatch the macOS Desktop-mode game-window fit. If the
-    // server thread died before building it (a fatal-startup path that already
-    // routed to the ServerError surface), `recv` errors — fall back to a closed
-    // dummy channel so the UI still comes up and shows the error (any `try_send`
-    // on it just fails, which is fine: there's no game window to fit anyway).
-    let ui_driver_tx = driver_tx_back_rx.recv().unwrap_or_else(|_| {
-        let (tx, _rx) = tokio::sync::mpsc::channel::<crate::state::DriverJob>(1);
-        tx
-    });
+    // PLAN B.2 — the worker's sender, so the launcher can dispatch the macOS
+    // Desktop-mode game-window fit (closed if the server died at startup).
+    let ui_driver_tx = server.driver_tx.clone();
     eframe::run_native(
         "skylander-portal-controller",
         native_options,
@@ -613,126 +151,14 @@ fn main() -> Result<()> {
     .map_err(|e| anyhow::anyhow!("eframe error: {e}"))
 }
 
-#[cfg(feature = "test-hooks")]
-type TestMockHandle = Option<Arc<skylander_rpcs3_control::MockPortalDriver>>;
-#[cfg(not(feature = "test-hooks"))]
-type TestMockHandle = ();
-
-type DriverBundle = (Arc<dyn PortalDriver>, TestMockHandle);
-
-/// Convert a list of RPCS3 library serials (from `enumerate_games`) into the
-/// phone-facing `InstalledGame` catalogue. Filters out non-Skylanders serials
-/// the library happens to hold and attaches the canonical display name from
-/// Decorate every `Vehicle`-category figure with a `vehicle_terrain` value
-/// from `<data_root>/vehicle_terrain.json`. Substring match against the
-/// figure's lowercased canonical name; the lookup table is sorted longest-
-/// key-first so "gold rusher" wins over "rusher" when both keys could match
-/// the same figure (e.g. "Power Blue Gold Rusher"). Missing file or parse
-/// error logs a warning and leaves every figure's `vehicle_terrain` as
-/// whatever it was (typically `None`). PLAN 9.7 playtest 2026-05-04.
-fn decorate_vehicle_terrain(mut figures: Vec<Figure>, data_root: &Path) -> Vec<Figure> {
-    use skylander_core::{Category, VehicleTerrain};
-
-    let path = data_root.join("vehicle_terrain.json");
-    let bytes = match std::fs::read(&path) {
-        Ok(b) => b,
-        Err(e) => {
-            tracing::warn!(
-                path = %path.display(),
-                error = %e,
-                "vehicle_terrain.json missing — vehicle badges will not render",
-            );
-            return figures;
-        }
-    };
-
-    #[derive(serde::Deserialize)]
-    struct File {
-        vehicles: HashMap<String, String>,
-    }
-    let file: File = match serde_json::from_slice(&bytes) {
-        Ok(f) => f,
-        Err(e) => {
-            tracing::warn!(
-                path = %path.display(),
-                error = %e,
-                "vehicle_terrain.json failed to parse — vehicle badges will not render",
-            );
-            return figures;
-        }
-    };
-
-    // Sort by key length descending so longer matches (e.g. "gold rusher")
-    // get tried before shorter substrings ("rusher"). `String` keys are
-    // already lowercased per the file's contract.
-    let mut entries: Vec<(String, VehicleTerrain)> = file
-        .vehicles
-        .into_iter()
-        .filter_map(|(k, v)| {
-            let terrain = match v.as_str() {
-                "Land" => VehicleTerrain::Land,
-                "Sky" => VehicleTerrain::Sky,
-                "Sea" => VehicleTerrain::Sea,
-                other => {
-                    tracing::warn!(
-                        key = %k,
-                        value = %other,
-                        "vehicle_terrain.json: unknown terrain value, skipping",
-                    );
-                    return None;
-                }
-            };
-            Some((k, terrain))
-        })
-        .collect();
-    entries.sort_by_key(|(k, _)| std::cmp::Reverse(k.len()));
-
-    let mut decorated = 0usize;
-    for f in figures.iter_mut() {
-        if !matches!(f.category, Category::Vehicle) {
-            continue;
-        }
-        let name_lc = f.canonical_name.to_lowercase();
-        if let Some((_, terrain)) = entries.iter().find(|(k, _)| name_lc.contains(k)) {
-            f.vehicle_terrain = Some(*terrain);
-            decorated += 1;
-        }
-    }
-    info!(
-        decorated,
-        total_vehicles = figures
-            .iter()
-            .filter(|f| matches!(f.category, Category::Vehicle))
-            .count(),
-        "decorated vehicle terrains from data/vehicle_terrain.json",
-    );
-    figures
-}
-
-/// `SKYLANDERS_SERIALS`. Return order matches `SKYLANDERS_SERIALS` (release
-/// order) so the phone picker is stable across sessions.
-fn serials_to_catalogue(serials: &[String]) -> Vec<skylander_core::InstalledGame> {
-    skylander_core::SKYLANDERS_SERIALS
-        .iter()
-        .filter(|(serial, _)| serials.iter().any(|s| s == serial))
-        .map(|(serial, display)| skylander_core::InstalledGame {
-            serial: skylander_core::GameSerial::new(*serial),
-            display_name: (*display).to_string(),
-        })
-        .collect()
-}
-
-fn build_driver(kind: DriverKind) -> Result<DriverBundle> {
+/// The product's [`guac_server::boot::DriverFactory`], run on the tokio thread.
+fn build_driver(kind: DriverKind) -> Result<BuiltDriver> {
     match kind {
         DriverKind::Uia => {
             #[cfg(windows)]
             {
                 let d = skylander_rpcs3_control::UiaPortalDriver::new()?;
-                let arc: Arc<dyn PortalDriver> = Arc::new(d);
-                #[cfg(feature = "test-hooks")]
-                return Ok((arc, None));
-                #[cfg(not(feature = "test-hooks"))]
-                return Ok((arc, ()));
+                Ok(BuiltDriver::new(Arc::new(d)))
             }
             #[cfg(not(windows))]
             anyhow::bail!("UIA driver only available on Windows");
@@ -742,12 +168,7 @@ fn build_driver(kind: DriverKind) -> Result<DriverBundle> {
             // It is the production portal path for Phase 16; the no-GUI launch that
             // gives it a socket to talk to lands in 16.6.
             let d = skylander_rpcs3_control::IpcPortalDriver::new()?;
-            let arc: Arc<dyn PortalDriver> = Arc::new(d);
-            #[cfg(feature = "test-hooks")]
-            let mock: TestMockHandle = None;
-            #[cfg(not(feature = "test-hooks"))]
-            let mock: TestMockHandle = ();
-            Ok((arc, mock))
+            Ok(BuiltDriver::new(Arc::new(d)))
         }
         DriverKind::Mock => {
             // Available under EITHER dev-tools (the standard
@@ -758,9 +179,8 @@ fn build_driver(kind: DriverKind) -> Result<DriverBundle> {
             #[cfg(any(feature = "dev-tools", feature = "mock-driver-runtime"))]
             {
                 let mock = Arc::new(skylander_rpcs3_control::MockPortalDriver::new());
-                let arc: Arc<dyn PortalDriver> = mock.clone();
                 #[cfg(feature = "test-hooks")]
-                return Ok((arc, Some(mock)));
+                return Ok(BuiltDriver::with_test_mock(mock));
                 // The `return` on the branch below keeps the code symmetric
                 // with the `test-hooks` branch above and sidesteps a cfg-type
                 // mismatch that would otherwise require an outer `match`
@@ -768,8 +188,7 @@ fn build_driver(kind: DriverKind) -> Result<DriverBundle> {
                 #[cfg(not(feature = "test-hooks"))]
                 #[allow(clippy::needless_return)]
                 {
-                    let _ = mock;
-                    return Ok((arc, ()));
+                    return Ok(BuiltDriver::new(mock));
                 }
             }
             #[cfg(not(any(feature = "dev-tools", feature = "mock-driver-runtime")))]
@@ -777,13 +196,6 @@ fn build_driver(kind: DriverKind) -> Result<DriverBundle> {
                 "mock driver only available with the dev-tools or mock-driver-runtime feature"
             );
         }
-    }
-}
-
-fn first_non_loopback_ipv4() -> Option<Ipv4Addr> {
-    match local_ip_address::local_ip() {
-        Ok(IpAddr::V4(v4)) if !v4.is_loopback() => Some(v4),
-        _ => None,
     }
 }
 

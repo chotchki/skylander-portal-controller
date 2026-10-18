@@ -337,8 +337,8 @@ impl AppState {
     /// Sweep ghosted sessions whose `ghosted_at` exceeded the configured
     /// `GHOST_TIMEOUT` (PLAN 8.1.4). Each removed ghost has its placed
     /// figures cleared from the portal and a snapshot published so the
-    /// TV's player-orbit pip count updates. Schedule on a 60s tick from
-    /// `main.rs`; idempotent on quiet ticks.
+    /// TV's player-orbit pip count updates. [`crate::boot::boot`] runs it
+    /// on a 60s tick; idempotent on quiet ticks.
     pub async fn sweep_expired_ghosts(&self) {
         let evicted = self
             .sessions
@@ -379,7 +379,7 @@ impl AppState {
     /// nobody feels wasteful; the next tick picks them up if they
     /// reconnect).
     ///
-    /// Intended to be called on a ~10s tokio interval from main.rs;
+    /// Called on a ~10s tokio interval from [`crate::boot::boot`];
     /// no-ops when no session is eligible.
     pub async fn tick_kaos(&self, now: std::time::Instant) {
         use rand_core::RngCore;

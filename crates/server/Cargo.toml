@@ -51,7 +51,6 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # our own RGBA buffers (rather than going through egui's font
 # atlas) and upload them as GL textures bound to the disc front.
 ab_glyph = "0.2"
-local-ip-address = "0.6"
 
 # The product's migration set (`MIGRATOR` in lib.rs, embedded by
 # `sqlx::migrate!`); the store that runs it lives in guac-server.
