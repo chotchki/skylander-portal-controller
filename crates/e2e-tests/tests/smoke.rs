@@ -109,12 +109,41 @@ async fn the_menu_offers_game_settings_only_in_the_product() {
     phone.close().await.unwrap();
 }
 
+/// Scrolls the open menu's content to `top` and reads the close button: its
+/// computed background and whether a tap at its centre lands on it.
+async fn close_button_at(phone: &Phone, top: u32) -> (String, bool) {
+    phone
+        .client
+        .execute(
+            "document.querySelector('.menu-overlay-scroll').scrollTop = arguments[0]; return 1;",
+            vec![serde_json::json!(top)],
+        )
+        .await
+        .unwrap();
+    // The scroll event, and the class it sets, land a frame later.
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    let read = phone
+        .client
+        .execute(
+            "const x = document.querySelector('.menu-close');
+             const r = x.getBoundingClientRect();
+             const hit = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2);
+             return [getComputedStyle(x).backgroundColor, !!hit && x.contains(hit)];",
+            vec![],
+        )
+        .await
+        .unwrap();
+    serde_json::from_value(read).unwrap()
+}
+
 /// openspec AA.20: in a browser tab that keeps its toolbars on screen the
 /// visible viewport is short, and Orion on an iPhone hid HOLD TO SHUT DOWN
 /// below the menu's clipped bottom. With a profile open and a game running
 /// (the longest menu), every action has to come fully inside the viewport
 /// once scrolled to, with a tap at its centre landing on it. 375x548 is an
-/// iPhone SE's Safari with both bars up, 390x664 a current iPhone's.
+/// iPhone SE's Safari with both bars up, 390x664 a current iPhone's. The
+/// close button stays on top and tappable, see-through at rest and opaque
+/// once the content has scrolled under it.
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver + built phone SPA"]
 async fn every_menu_action_is_reachable_in_a_short_viewport() {
@@ -125,6 +154,7 @@ async fn every_menu_action_is_reachable_in_a_short_viewport() {
         .expect("unlock profile");
     launch_giants(&server.url).await.expect("launch Giants");
 
+    let mut scrolled_under = false;
     for (w, h) in [(375, 548), (390, 664)] {
         // Each phone is its own session, so the next one is unlocked too.
         unlock_session(&server.url, &pid).await.unwrap();
@@ -183,6 +213,26 @@ async fn every_menu_action_is_reachable_in_a_short_viewport() {
             assert!(inside(&a["rect"]), "{w}x{h}: {a} isn't fully on screen");
             assert_eq!(a["tappable"], true, "{w}x{h}: a tap misses {a}");
         }
+        let clear = "rgba(0, 0, 0, 0)";
+        assert_eq!(
+            close_button_at(&phone, 0).await,
+            (clear.into(), true),
+            "{w}x{h}: X at rest"
+        );
+        if reach["overflows"] == true {
+            scrolled_under = true;
+            assert_eq!(
+                close_button_at(&phone, 10_000).await,
+                ("rgb(26, 58, 138)".into(), true),
+                "{w}x{h}: X over scrolled content"
+            );
+            assert_eq!(
+                close_button_at(&phone, 0).await,
+                (clear.into(), true),
+                "{w}x{h}: X back at rest"
+            );
+        }
         phone.close().await.unwrap();
     }
+    assert!(scrolled_under, "no viewport scrolled the menu");
 }

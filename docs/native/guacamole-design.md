@@ -815,10 +815,10 @@ Wii); [HavokLib](https://github.com/PredatorCZ/HavokLib) is GPL-3.0 and was only
   `cellSpursJq` (12 functions), so other non-ELF jobs could exist; following those imports' callers in
   Ghidra settles it before AG leans on it.
 
-Which bind the game skins with is OPEN, for AC.17. Eruptor's Havok reference pose and Alchemy inverse
-joints agree on 28 of 33 bones within 1e-4, and `J_wrist_R` plus its 4 children differ by a 20.80° turn
-about the wrist's local +Y (107 of the 120 skeletons agree on every bone, 13 don't). Two lines of evidence
-point opposite ways:
+Which bind the game skins with was open until AC.17 settled it on Alchemy's (the last paragraph here).
+Eruptor's Havok reference pose and Alchemy inverse joints agree on 28 of 33 bones within 1e-4, and
+`J_wrist_R` plus its 4 children differ by a 20.80° turn about the wrist's local +Y (107 of the 120
+skeletons agree on every bone, 13 don't). Before AC.17 two lines of evidence pointed opposite ways:
 
 - The mirror argument, for Havok's bind. The stored mesh mirrors itself in x to 1e-4 (median 0), Havok's
   joints mirror on all 10 L/R pairs (within 3e-6) and Alchemy's break only at the right wrist and palm.

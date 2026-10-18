@@ -68,7 +68,7 @@
   }
 
   .menu-close {
-    @apply absolute w-[30px] h-[30px] grid place-items-center rounded-lg cursor-pointer bg-transparent;
+    @apply absolute z-[1] w-[30px] h-[30px] grid place-items-center rounded-lg cursor-pointer bg-transparent;
     top: 12px; right: 12px;
     border: 1px solid rgba(245, 198, 52, 0.3);
     color: var(--color-gold-bright);
@@ -77,6 +77,15 @@
   .menu-close:hover {
     border-color: var(--color-gold-bright);
     background: rgba(245, 198, 52, 0.1);
+  }
+  /* At rest the X sits on the panel's gold, see-through as drawn. Once
+     the content scrolls under it (AA.20) it takes the panel's blue, so
+     nothing passing beneath shows through. */
+  .menu-scrolled .menu-close {
+    background: rgb(26, 58, 138);
+  }
+  .menu-scrolled .menu-close:hover {
+    background: linear-gradient(rgba(245, 198, 52, 0.1), rgba(245, 198, 52, 0.1)), rgb(26, 58, 138);
   }
 
   .menu-current-chip {

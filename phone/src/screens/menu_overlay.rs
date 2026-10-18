@@ -69,6 +69,19 @@ pub(crate) fn MenuOverlay(
 
     let hold_dur = Duration::from_millis(1200);
 
+    // The content scrolls under the close button (AA.20); once it has, the
+    // button takes an opaque fill so nothing shows through it. A reopened
+    // menu starts unscrolled.
+    let scrolled = RwSignal::new(false);
+    Effect::new(move |_| {
+        if !open.get() {
+            scrolled.set(false);
+        }
+    });
+    let on_scroll = move |ev: leptos::ev::Event| {
+        scrolled.set(event_target::<web_sys::Element>(&ev).scroll_top() > 0);
+    };
+
     // SWITCH PROFILE — single tap. Local re-lock for now.
     let on_switch = Callback::new(move |_| {
         unlocked_profile.set(None);
@@ -136,11 +149,11 @@ pub(crate) fn MenuOverlay(
     view! {
         <Show when=move || open.get() fallback=|| ()>
             <div class="menu-scrim" on:click=move |_| open.set(false)></div>
-            <div class="menu-overlay-panel">
+            <div class="menu-overlay-panel" class:menu-scrolled=move || scrolled.get()>
                 <button class="menu-close" on:click=move |_| open.set(false)>"\u{2715}"</button>
 
                 // Scrolls when the viewport is too short for the menu (AA.20).
-                <div class="menu-overlay-scroll">
+                <div class="menu-overlay-scroll" on:scroll=on_scroll>
                     <Show when=move || unlocked_profile.get().is_some() fallback=|| ()>
                         <div class="menu-current-chip">
                             <div class="menu-current-swatch">{move || initial.get()}</div>

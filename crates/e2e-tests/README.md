@@ -120,7 +120,11 @@ itself. The tests read `intro` and `intro_queue` off `/api/_test/tv` and
 skip through `/api/_test/tv/skip`. AB.21's resume test re-unlocks through
 `/api/_test/unlock_session`, the hook that offers "resume last setup?"
 the way a PIN unlock does (`set_session_profile` binds the profile
-without offering it). Every guacamole the harness spawns plays its
+without offering it), and checks each RESUME's loads at the server over
+a WebSocket of its own (a Loading then a Loaded per slot, no error), so
+a resume that sent nothing can't pass for one that replayed nothing.
+That socket opens before the phone's: the unlock hook binds the newest
+session. Every guacamole the harness spawns plays its
 intros muted (`GUAC_MUTE=1`).
 
 Product-only tests skip with `SKIPPED under E2E_APP=guacamole,
@@ -187,7 +191,9 @@ calls a fix or G1 removes them with the `.sky` code.
   opens the kebab menu with a profile and a game, in Chrome's phone
   emulation at 375x548 and 390x664 (a phone browser with its toolbars
   up), and requires every action fully on screen once a finger scrolls
-  to it, with a tap at its centre landing on it. The probe is
+  to it, with a tap at its centre landing on it, and the close button on
+  top and tappable, see-through at rest and filled once the content has
+  scrolled under it (the 375x548 menu scrolls). The probe is
   `MENU_REACH_JS` in `src/lib.rs`, shared with
   [`tests/ios_menu_reach.rs`](tests/ios_menu_reach.rs), which runs it in
   the iOS Simulator's Safari (a tab, not the PWA). Both run against
