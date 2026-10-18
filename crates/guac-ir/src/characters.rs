@@ -41,6 +41,19 @@ pub struct Intro {
     /// `movies/<movie>.mov` on the disc.
     pub movie: String,
     pub source: IntroSource,
+    /// Which of the movie's audio tracks the transcode keeps.
+    pub voice: VoiceTrack,
+}
+
+/// Which audio the intro plays (design decision 8). Data, not a constant, so a
+/// later game's multi-track intros pick their English track here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum VoiceTrack {
+    /// The movie's one audio track: every Giants intro (AB.5's census).
+    Only,
+    /// Stream `index` (ffprobe's numbering) of a multi-track movie, mixed over
+    /// the stereo bed at stream `bed` when there is one.
+    Stream { index: u32, bed: Option<u32> },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]

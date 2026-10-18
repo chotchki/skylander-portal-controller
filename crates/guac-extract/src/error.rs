@@ -43,6 +43,26 @@ pub enum ExtractError {
     )]
     NoExtractDir,
 
+    /// No ffmpeg in the settings, beside the executable or on PATH; `install`
+    /// is this OS's one-liner (the spec's missing-converter message).
+    #[error(
+        "GUAC-E-NO-FFMPEG: ffmpeg is needed to extract the intros and {}; install it with `{install}`",
+        match configured {
+            Some(p) => format!("the configured {} isn't a program", p.display()),
+            None => "none was found beside guacamole or on the PATH".to_owned(),
+        }
+    )]
+    NoFfmpeg {
+        configured: Option<PathBuf>,
+        install: &'static str,
+    },
+
+    #[error("GUAC-E-FFMPEG-UNUSABLE: {}: {reason}", path.display())]
+    FfmpegUnusable { path: PathBuf, reason: String },
+
+    #[error("GUAC-E-TRANSCODE-FAILED: intro `{movie}`: {reason}")]
+    TranscodeFailed { movie: String, reason: String },
+
     #[error("GUAC-E-BAD-OUTPUT-PATH: `{path}` isn't a plain relative path inside the extract")]
     BadOutputPath { path: String },
 
@@ -62,6 +82,9 @@ impl ExtractError {
             Self::InCheckout { .. } => "GUAC-E-EXTRACT-IN-CHECKOUT",
             Self::OverlapsDump { .. } => "GUAC-E-EXTRACT-OVERLAPS-DUMP",
             Self::NoExtractDir => "GUAC-E-NO-EXTRACT-DIR",
+            Self::NoFfmpeg { .. } => "GUAC-E-NO-FFMPEG",
+            Self::FfmpegUnusable { .. } => "GUAC-E-FFMPEG-UNUSABLE",
+            Self::TranscodeFailed { .. } => "GUAC-E-TRANSCODE-FAILED",
             Self::BadOutputPath { .. } => "GUAC-E-BAD-OUTPUT-PATH",
             Self::Io { .. } => "GUAC-E-EXTRACT-IO",
         }
@@ -108,6 +131,22 @@ mod tests {
                 dump: "b".into(),
             },
             ExtractError::NoExtractDir,
+            ExtractError::NoFfmpeg {
+                configured: None,
+                install: "brew install ffmpeg",
+            },
+            ExtractError::NoFfmpeg {
+                configured: Some("f".into()),
+                install: "brew install ffmpeg",
+            },
+            ExtractError::FfmpegUnusable {
+                path: "f".into(),
+                reason: "x".into(),
+            },
+            ExtractError::TranscodeFailed {
+                movie: "m".into(),
+                reason: "x".into(),
+            },
             ExtractError::BadOutputPath { path: "..".into() },
             ExtractError::io("p")(io::Error::other("x")),
         ];

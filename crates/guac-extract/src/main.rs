@@ -9,14 +9,17 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use guac_extract::census::find_ffprobe;
+use guac_extract::ffmpeg::Ffmpeg;
 use guac_extract::intros::{self, IrFormat};
 use guac_extract::known::KNOWN_DUMPS;
+use guac_extract::transcode::{self, Done, Step};
 use guac_extract::{DirState, ExtractRoot, RootMode};
 
 const USAGE: &str = "\
 usage: guac-extract identify <dump-dir>
        guac-extract census <dump-dir>
        guac-extract intros <dump-dir>
+       guac-extract transcode <dump-dir>
        guac-extract [--help | --version]
 
 Extracts what guacamole plays from your own Skylanders disc dump.
@@ -33,6 +36,10 @@ Extracts what guacamole plays from your own Skylanders disc dump.
              intro movie by their voice-over name and write the character
              table to ir/characters.ron in the dump's folder; guacamole adds
              the interim catalogue's names as a fallback, this doesn't
+  transcode  intros, then turn each intro movie into video/intro/<name>.mp4
+             and audio/intro/<name>.mp3 in the dump's folder (ffmpeg:
+             GUAC_FFMPEG, else beside guac-extract, else PATH); leaves the
+             extract unmarked, since guacamole's has the fallback names too
 ";
 
 /// The environment, else `.env.dev` in the current folder.
@@ -160,6 +167,43 @@ fn intros(dump: &Path) -> Result<(), guac_extract::ExtractError> {
     Ok(())
 }
 
+fn transcode(dump: &Path) -> Result<(), guac_extract::ExtractError> {
+    let root = ExtractRoot::resolve(RootMode::Dev {
+        extract_dir: extract_dir(),
+    })?;
+    let ffmpeg = Ffmpeg::locate(dev_var("GUAC_FFMPEG").map(PathBuf::from).as_deref())?;
+    println!("ffmpeg      {} ({:?})", ffmpeg.path.display(), ffmpeg.how);
+    let mut opened = guac_extract::open(dump, &root, KNOWN_DUMPS, &|_| {})?;
+    let idx = intros::index(&opened.dir, &Default::default())?;
+    intros::write(&mut opened.dir, &idx.table, IrFormat::Ron)?;
+    let started = Instant::now();
+    let summary = transcode::transcode_intros(&mut opened.dir, &idx.table, &ffmpeg, &|e| {
+        if let Step::Done(d) = &e.step {
+            let how = match d {
+                Done::Transcoded => "transcoded".to_owned(),
+                Done::Resumed => "already done".to_owned(),
+                Done::Linked { from } => format!("linked from {from}"),
+            };
+            println!("  {:2}/{}  {:16} {how}", e.index + 1, e.total, e.movie);
+        }
+    })?;
+    let bytes: u64 = opened
+        .dir
+        .manifest()
+        .outputs
+        .iter()
+        .filter(|o| o.path.starts_with("video/") || o.path.starts_with("audio/"))
+        .map(|o| o.size)
+        .sum();
+    println!(
+        "intros      {} transcoded, {} already done, {} linked; {bytes} bytes",
+        summary.transcoded, summary.resumed, summary.linked
+    );
+    println!("extract     {}", opened.dir.path().display());
+    println!("took        {:.1} s", started.elapsed().as_secs_f64());
+    Ok(())
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args
@@ -189,6 +233,13 @@ fn main() -> ExitCode {
             }
         },
         ["intros", dump] => match intros(Path::new(dump)) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("guac-extract: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        ["transcode", dump] => match transcode(Path::new(dump)) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("guac-extract: {e}");

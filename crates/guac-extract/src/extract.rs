@@ -34,6 +34,17 @@ pub struct Manifest {
     /// Sorted by path. Doubles as the hash cache for the next start.
     pub sources: Vec<SourceFile>,
     pub outputs: Vec<OutputFile>,
+    /// The intro transcode's target and the ffmpeg that ran it (AB.8).
+    #[serde(default)]
+    pub transcode: Option<TranscodeRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TranscodeRecord {
+    /// [`crate::transcode::Target::tag`]; another tag redoes the intros.
+    pub target: String,
+    /// ffmpeg's version line. Recorded, not compared.
+    pub ffmpeg: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,7 +159,15 @@ pub fn open(
     };
     let (state, mut manifest) = match existing {
         None => (DirState::Fresh, None),
-        Some(Ok(m)) if m.complete => (DirState::Current, Some(m)),
+        // Complete, unless the intros were transcoded for another target.
+        Some(Ok(m))
+            if m.complete
+                && m.transcode
+                    .as_ref()
+                    .is_none_or(|t| t.target == crate::transcode::TARGET.tag()) =>
+        {
+            (DirState::Current, Some(m))
+        }
         Some(Ok(m)) => (DirState::Resume, Some(m)),
         Some(Err(stale)) => {
             fs::remove_dir_all(&path).map_err(ExtractError::io(&path))?;
@@ -163,6 +182,7 @@ pub fn open(
         Some(mut m) => {
             m.source_dir = source_dir;
             m.sources = files;
+            m.complete = state == DirState::Current;
             m
         }
         None => Manifest {
@@ -174,6 +194,7 @@ pub fn open(
             complete: false,
             sources: files,
             outputs: Vec::new(),
+            transcode: None,
         },
     };
     let dir = IdentityDir { path, manifest };
@@ -337,6 +358,42 @@ impl IdentityDir {
             return Ok(false);
         }
         Ok(hash_path(&path)? == (rec.size, rec.sha256))
+    }
+
+    /// Hard-links (or copies) the done output `from` to `to` and records it.
+    pub(crate) fn link_output(&mut self, from: &str, to: &str) -> Result<OutputFile> {
+        let src = self.output_path(from)?;
+        let partial = self.partial_path(to)?;
+        if partial.exists() {
+            fs::remove_file(&partial).map_err(ExtractError::io(&partial))?;
+        }
+        if fs::hard_link(&src, &partial).is_err() {
+            fs::copy(&src, &partial).map_err(ExtractError::io(&partial))?;
+        }
+        self.commit(to)
+    }
+
+    /// Drops every output under `prefix` (`video/intro/`), record and file.
+    pub(crate) fn forget_outputs(&mut self, prefix: &str) -> Result<()> {
+        let (gone, kept) = std::mem::take(&mut self.manifest.outputs)
+            .into_iter()
+            .partition(|o| o.path.starts_with(prefix));
+        self.manifest.outputs = kept;
+        let gone: Vec<OutputFile> = gone;
+        for o in gone {
+            let path = self.output_path(&o.path)?;
+            match fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(ExtractError::io(&path)(e)),
+            }
+        }
+        self.save()
+    }
+
+    pub(crate) fn set_transcode(&mut self, record: TranscodeRecord) -> Result<()> {
+        self.manifest.transcode = Some(record);
+        self.save()
     }
 
     pub fn mark_complete(&mut self) -> Result<()> {

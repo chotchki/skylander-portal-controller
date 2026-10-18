@@ -7,20 +7,23 @@
 //! [`census::census`] (AB.5) sniffs every file and IGA entry with
 //! [`magic`], the list the game-magic guard checks the repo against.
 //! [`intros`] (AB.6) maps each toy type to its intro movie into IR v1's
-//! character table. The transcode (AB.8) lands here.
+//! character table. [`transcode`] (AB.8) turns each intro movie into what
+//! guacamole plays, through the ffmpeg [`ffmpeg`] finds.
 
 pub mod census;
 pub mod dump;
 mod error;
 pub mod extract;
+pub mod ffmpeg;
 pub mod intros;
 pub mod known;
 pub mod magic;
 mod report;
 pub mod root;
+pub mod transcode;
 
 pub use error::{ExtractError, Result};
-pub use extract::{DirState, IdentityDir, Manifest, Opened, Stale, open};
+pub use extract::{DirState, IdentityDir, Manifest, Opened, Stale, TranscodeRecord, open};
 pub use guac_ir::IR_VERSION;
 pub use root::{ExtractRoot, RootMode};
 

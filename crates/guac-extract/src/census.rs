@@ -149,24 +149,12 @@ pub struct Census {
     pub files: Vec<CensusFile>,
 }
 
-/// `ffprobe`: `configured` if given, else beside this executable, else on PATH.
+/// `ffprobe` by ffmpeg's discovery order ([`crate::ffmpeg::find_tool`]):
+/// `configured` if given, else beside this executable, else on PATH.
 pub fn find_ffprobe(configured: Option<PathBuf>) -> Option<PathBuf> {
-    let exe = if cfg!(windows) {
-        "ffprobe.exe"
-    } else {
-        "ffprobe"
-    };
-    if let Some(p) = configured {
-        return Some(p);
-    }
-    let beside = std::env::current_exe()
+    crate::ffmpeg::find_tool_here("ffprobe", configured.as_deref())
         .ok()
-        .and_then(|e| Some(e.parent()?.join(exe)));
-    beside.filter(|p| p.is_file()).or_else(|| {
-        std::env::split_paths(&std::env::var_os("PATH")?)
-            .map(|d| d.join(exe))
-            .find(|p| p.is_file())
-    })
+        .map(|f| f.path)
 }
 
 fn ffprobe_version(ffprobe: &Path) -> Option<String> {

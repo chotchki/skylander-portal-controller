@@ -12,7 +12,7 @@
 mod characters;
 mod identity;
 
-pub use characters::{Character, CharacterArchive, CharacterTable, Intro, IntroSource};
+pub use characters::{Character, CharacterArchive, CharacterTable, Intro, IntroSource, VoiceTrack};
 pub use identity::{DumpIdentity, Sha256};
 
 use serde::de::DeserializeOwned;
@@ -198,6 +198,7 @@ mod tests {
                         intro: Some(Intro {
                             movie: "spyro".into(),
                             source: IntroSource::Disc,
+                            voice: VoiceTrack::Only,
                         }),
                     },
                 ),
@@ -209,6 +210,10 @@ mod tests {
                         intro: Some(Intro {
                             movie: "jetvac".into(),
                             source: IntroSource::NameFallback,
+                            voice: VoiceTrack::Stream {
+                                index: 3,
+                                bed: Some(13),
+                            },
                         }),
                     },
                 ),
@@ -220,6 +225,10 @@ mod tests {
                         intro: Some(Intro {
                             movie: "spyro".into(),
                             source: IntroSource::Variant { base: 16 },
+                            voice: VoiceTrack::Stream {
+                                index: 2,
+                                bed: None,
+                            },
                         }),
                     },
                 ),

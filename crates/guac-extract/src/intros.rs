@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use guac_formats::iga::Archive;
 use guac_ir::{
     Character, CharacterArchive, CharacterTable, DumpIdentity, Intro, IntroSource, IrError,
+    VoiceTrack,
 };
 use serde::Serialize;
 
@@ -27,6 +28,10 @@ use crate::extract::{IdentityDir, OutputFile};
 
 pub const CHARACTER_DIR: &str = "PS3_GAME/USRDIR/character";
 pub const MOVIE_DIR: &str = "PS3_GAME/USRDIR/movies";
+
+/// Every Giants intro carries one stereo track (AB.5's census), and only the
+/// known dump, whose bytes the table pins, gets this far.
+const GIANTS_VOICE: VoiceTrack = VoiceTrack::Only;
 
 /// Entry names past this are skipped unread; Giants' longest is far under.
 pub const MAX_ENTRY_NAME: usize = 1024;
@@ -206,6 +211,7 @@ pub fn build(
             .map(|&m| Intro {
                 movie: m.clone(),
                 source: IntroSource::Disc,
+                voice: GIANTS_VOICE,
             });
         if let Some(i) = &intro {
             claims.entry(i.movie.clone()).or_default().push(toy);
@@ -236,6 +242,7 @@ pub fn build(
         characters.entry(toy).or_insert_with(no_archive).intro = Some(Intro {
             movie: m.clone(),
             source: IntroSource::NameFallback,
+            voice: GIANTS_VOICE,
         });
     }
 
@@ -275,6 +282,7 @@ pub fn build(
         characters.entry(toy).or_insert_with(no_archive).intro = Some(Intro {
             movie,
             source: IntroSource::Variant { base },
+            voice: GIANTS_VOICE,
         });
     }
 
@@ -562,7 +570,8 @@ mod tests {
             c.intro,
             Some(Intro {
                 movie: "sonicboom".into(),
-                source: IntroSource::Disc
+                source: IntroSource::Disc,
+                voice: VoiceTrack::Only,
             })
         );
         assert_eq!(idx.unclaimed_movies, ["fmv01"]);
@@ -636,7 +645,8 @@ mod tests {
             dino.intro,
             Some(Intro {
                 movie: "dinorang".into(),
-                source: IntroSource::NameFallback
+                source: IntroSource::NameFallback,
+                voice: VoiceTrack::Only,
             })
         );
         // No archive of its own number: the name alone.
@@ -683,6 +693,7 @@ mod tests {
             Some(Intro {
                 movie: if base == 16 { "spyro" } else { "bash" }.into(),
                 source: IntroSource::Variant { base },
+                voice: VoiceTrack::Only,
             })
         };
         assert_eq!(c[&28].intro, variant(16));
