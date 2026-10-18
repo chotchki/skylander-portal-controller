@@ -31,6 +31,12 @@ bevy = { version = "0.20.0", default-features = false, features = ["ui"] }
 # objc2 0.6, as winit is; the product's 0.14 stays on its own copy.
 rfd = "0.17.2"
 
+# AB.7's playback spike only (`examples/video_spike.rs`), behind `video-spike`
+# so neither the shipped binary nor `cargo test` builds a C decoder for it.
+# `source` (the default) compiles OpenH264 with `cc`: no system library.
+openh264 = { version = "0.9.9", optional = true }
+mp4 = { version = "0.14", optional = true }
+
 [dev-dependencies]
 tokio = { workspace = true }
 tempfile = "3"
@@ -44,3 +50,9 @@ default = ["dev-tools"]
 dev-tools = ["guac-server/dev-tools"]
 # The /api/_test/* endpoints for the e2e harness. Never in release builds.
 test-hooks = ["dev-tools", "guac-server/test-hooks"]
+# AB.7: `cargo run --release -p guacamole --features video-spike --example video_spike`.
+video-spike = ["dep:openh264", "dep:mp4", "bevy/bevy_audio", "bevy/mp3"]
+
+[[example]]
+name = "video_spike"
+required-features = ["video-spike"]
