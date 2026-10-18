@@ -21,6 +21,9 @@ lzma-rust2 = { version = "0.23", default-features = false, features = ["std"] }
 proptest = "1"
 # Reads our KTX2 back in tests; the writer is ours.
 ktx2 = "0.5"
+# The RSX capture reader, for the `#[ignore]`d capture tests (tests/giants_capture.rs,
+# openspec AC.15-AC.17). A dev tool, and it doesn't depend on this crate: no cycle.
+rrc-dump = { path = "../../tools/rrc-dump" }
 # The IGA builder's LZMA encoder, for this crate's own unit tests.
 lzma-rust2 = { version = "0.23", default-features = false, features = ["std", "encoder"] }
 # The property harness (tests/properties.rs) needs the registry and the

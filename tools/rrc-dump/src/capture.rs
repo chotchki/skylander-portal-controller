@@ -167,6 +167,15 @@ fn words(bytes: &[u8]) -> Vec<u32> {
 }
 
 impl Capture {
+    /// Data blobs no memory block of this capture references. RPCS3 keys its data map by content
+    /// and never clears it between captures in one process, so a later capture carries every
+    /// earlier blob; the ones its own blocks don't reuse are stale (harmless, never replayed).
+    pub fn unreferenced_blobs(&self) -> usize {
+        let used: std::collections::HashSet<u64> =
+            self.blocks.values().map(|b| b.data_id).collect();
+        self.data.keys().filter(|id| !used.contains(id)).count()
+    }
+
     /// Reads a capture file's bytes, gzipped or not.
     pub fn from_file_bytes(file: &[u8]) -> Result<Self, CaptureError> {
         Self::parse(&decompress(file)?)

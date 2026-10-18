@@ -119,6 +119,14 @@ impl Builder {
         self
     }
 
+    /// A data blob no block references, the way an earlier capture in the same RPCS3 process
+    /// leaves one behind (its data map is never cleared).
+    pub fn stale_blob(&mut self, bytes: &[u8]) -> &mut Self {
+        let id = self.id();
+        self.data.push((id, bytes.to_vec()));
+        self
+    }
+
     pub fn stream(&self) -> Vec<u8> {
         let mut s = Vec::new();
         s.extend_from_slice(b"RRC\0");
@@ -352,10 +360,11 @@ mod tests {
         // Unit 0 is fully described but not enabled, so it must not show up.
         b.set_reg(m::SET_TEXTURE_OFFSET, 0x500)
             .set_reg(m::SET_TEXTURE_FORMAT, 1 | (2 << 4) | (0x85 << 8));
+        // Bit 3 set: CELL_GCM_TEXTURE_BORDER_COLOR, what every Giants unit carries.
         b.method(r(m::SET_TEXTURE_OFFSET), 0x0030_0000)
             .method(
                 r(m::SET_TEXTURE_FORMAT),
-                1 | (2 << 4) | (0xa6 << 8) | (3 << 16),
+                1 | (1 << 3) | (2 << 4) | (0xa6 << 8) | (3 << 16),
             )
             .method(r(m::SET_TEXTURE_IMAGE_RECT), (64 << 16) | 32)
             .method(m::SET_TEXTURE_CONTROL3 + unit, (1 << 20) | 128)
@@ -374,10 +383,19 @@ mod tests {
         assert_eq!((t.format_raw, t.format_name), (0xa6, "COMPRESSED_DXT1"));
         assert!(t.linear && !t.swizzled && !t.unnormalized);
         assert_eq!((t.dimension, t.cubemap, t.mipmaps), (2, false, 3));
+        assert!(
+            !t.border_texels,
+            "bit 3 set is the border colour, no border texels"
+        );
         assert_eq!((t.width, t.height, t.depth, t.pitch), (64, 32, 1, 128));
         assert_eq!(t.remap, 0xaae4);
         assert!(t.captured);
         assert_eq!(t.bytes, surface);
+        assert_eq!(
+            crate::output::list_line(&draws[0]),
+            "draw     0 cmd       9 triangles      arrays    vertices=3 arrays=0 [t2:COMPRESSED_DXT1:64x32]",
+            "the format name and the size stay apart"
+        );
     }
 
     #[test]
@@ -406,6 +424,7 @@ mod tests {
         assert!(!t[1].linear && t[1].swizzled);
         for t in t {
             assert!(!t.captured && t.bytes.is_empty(), "unit {}", t.unit);
+            assert!(t.border_texels, "bit 3 clear is a border in the image");
         }
     }
 
@@ -546,6 +565,25 @@ mod tests {
         assert!(stats.starting_constants);
         assert_eq!(draws[0].constants.known_ranges, [(0, 467)]);
         assert_eq!(draws[0].constants.values[467], [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn only_blobs_no_block_references_count_as_stale() {
+        let mut b = Builder::new();
+        b.stale_blob(&[9; 16]).stale_blob(&[7; 8]);
+        b.method(m::SET_BEGIN_END, 5)
+            .method(m::DRAW_ARRAYS, 2 << 24)
+            .method(m::SET_BEGIN_END, 0);
+        // Two blocks share one blob by content; the [7; 8] left over from "an earlier capture"
+        // is referenced again, so only [9; 16] is stale.
+        b.block(0, 0x100, &[1; 4])
+            .block(0, 0x200, &[1; 4])
+            .block(1, 0x300, &[7; 8]);
+        let capture = Capture::from_file_bytes(&b.gzip()).unwrap();
+        assert_eq!((capture.blocks.len(), capture.data.len()), (3, 3));
+        assert_eq!(capture.unreferenced_blobs(), 1);
+        let (draws, stats) = run(&b);
+        assert_eq!((draws.len(), stats.unresolved_blocks), (1, 0));
     }
 
     #[test]

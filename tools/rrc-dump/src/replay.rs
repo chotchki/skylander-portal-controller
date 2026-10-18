@@ -83,7 +83,10 @@ pub struct TextureUnit {
     pub unnormalized: bool,
     pub dimension: u32,
     pub cubemap: bool,
-    pub border: bool,
+    /// The image carries a one-texel border: `SET_TEXTURE_FORMAT` bit 3 clear
+    /// (`CELL_GCM_TEXTURE_BORDER_TEXTURE`). Set, the bit is `CELL_GCM_TEXTURE_BORDER_COLOR`: no
+    /// border texels, and samples outside the image take the border colour.
+    pub border_texels: bool,
     pub mipmaps: u32,
     pub width: u32,
     pub height: u32,
@@ -198,6 +201,8 @@ impl Tracker {
         for slot in 0..m::VERTEX_ARRAYS {
             let format = self.reg(m::SET_VERTEX_DATA_ARRAY_FORMAT + slot);
             let components = (format >> 4) & 0xf;
+            // A masked-in slot with zero components feeds the program RSX's immediate value
+            // (`SET_VERTEX_DATA*`), which isn't tracked: skipped, a known limit (FORMAT.md).
             if mask & (1 << slot) == 0 || components == 0 {
                 continue;
             }
@@ -313,6 +318,8 @@ impl Tracker {
 
     fn textures(&self) -> Vec<TextureUnit> {
         let mut out = Vec::new();
+        // Every ENABLED unit, sampled or not: units stay enabled across draws, so a draw also lists
+        // what the previous one left bound (FORMAT.md, known limits).
         for unit in 0..m::FRAGMENT_TEXTURE_UNITS {
             let r = |base: u32| self.reg(base + unit * m::TEXTURE_UNIT_STRIDE);
             if r(m::SET_TEXTURE_CONTROL0) >> 31 == 0 {
@@ -342,7 +349,7 @@ impl Tracker {
                 unnormalized: format_raw & m::TEXTURE_UN != 0,
                 dimension,
                 cubemap: (format >> 2) & 1 == 1,
-                border: (format >> 3) & 1 == 1,
+                border_texels: (format >> 3) & 1 == 0,
                 mipmaps: format >> 16,
                 width: rect >> 16,
                 height: if dimension == 1 { 1 } else { rect & 0xffff },

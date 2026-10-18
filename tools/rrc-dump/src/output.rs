@@ -93,6 +93,31 @@ pub fn refuse_repo_output(out: &Path) -> Result<PathBuf> {
     Ok(target)
 }
 
+/// `--list`'s line for one draw. Each texture reads `t<unit>:<format>:<width>x<height>`, the
+/// colon keeping the format name and the size apart (`COMPRESSED_DXT1:512x512`).
+pub fn list_line(d: &Draw) -> String {
+    let indices = d
+        .index_array
+        .as_ref()
+        .map_or(String::new(), |ia| format!(" indices={}", ia.index_count));
+    let textures: Vec<String> = d
+        .textures
+        .iter()
+        .map(|t| format!("t{}:{}:{}x{}", t.unit, t.format_name, t.width, t.height))
+        .collect();
+    format!(
+        "draw {:5} cmd {:7} {:14} {:9} vertices={}{} arrays={} [{}]",
+        d.draw,
+        d.command_index,
+        d.primitive_name,
+        format!("{:?}", d.kind).to_lowercase(),
+        d.vertex_count,
+        indices,
+        d.vertex_arrays.len(),
+        textures.join(" ")
+    )
+}
+
 fn fnv1a64(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, &b| {
         (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
