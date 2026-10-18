@@ -18,6 +18,9 @@ use crate::screen::{SetupView, TvScreen, screen_for};
 /// How long the farewell shows before the app exits (spec: under 5 s).
 pub const FAREWELL_BEAT: Duration = Duration::from_secs(3);
 
+/// How long AlreadyRunning shows before this copy closes itself.
+const ALREADY_RUNNING_BEAT: Duration = Duration::from_secs(8);
+
 /// The layout's design height; `UiScale` maps it to the window.
 const DESIGN_HEIGHT: f32 = 1080.0;
 
@@ -122,19 +125,23 @@ fn setup_tv(
 ) {
     commands.spawn(Camera2d);
     let font = fonts.add(Font::from_bytes(TITAN_ONE.to_vec()));
-    let qr = match Image::from_buffer(
-        &link.join_qr_png,
-        ImageType::Extension("png"),
-        CompressedImageFormats::NONE,
-        true,
-        ImageSampler::nearest(),
-        RenderAssetUsages::default(),
-    ) {
-        Ok(image) => Some(images.add(image)),
-        Err(e) => {
+    // A failed boot has no QR; nothing to decode.
+    let qr = match (!link.join_qr_png.is_empty()).then(|| {
+        Image::from_buffer(
+            &link.join_qr_png,
+            ImageType::Extension("png"),
+            CompressedImageFormats::NONE,
+            true,
+            ImageSampler::nearest(),
+            RenderAssetUsages::default(),
+        )
+    }) {
+        Some(Ok(image)) => Some(images.add(image)),
+        Some(Err(e)) => {
             error!("decode the join QR: {e}");
             None
         }
+        None => None,
     };
     commands.insert_resource(TvAssets { font, qr });
 }
@@ -183,12 +190,22 @@ fn farewell_exit(current: Option<Res<Current>>, mut exit: MessageWriter<AppExit>
     }
 }
 
+/// Esc or a click closes the error screens (a mouse-only TV PC has no Esc);
+/// AlreadyRunning also closes itself so it never hides the running app's TV.
 fn escape_quits(
     keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
     current: Option<Res<Current>>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    if keys.just_pressed(KeyCode::Escape) && current.is_some_and(|c| c.screen.escape_quits()) {
+    let Some(current) = current.filter(|c| c.screen.escape_quits()) else {
+        return;
+    };
+    let pressed = keys.just_pressed(KeyCode::Escape) || mouse.just_pressed(MouseButton::Left);
+    let timed_out = current.screen == TvScreen::AlreadyRunning
+        && current.since.elapsed() >= ALREADY_RUNNING_BEAT;
+    if pressed || timed_out {
+        info!(screen = ?current.screen, timed_out, "closing");
         exit.write(AppExit::Success);
     }
 }
@@ -295,15 +312,67 @@ fn spawn_screen(
                 40.0,
                 WHITE,
             ));
-            ui.spawn(text("Press Esc to close this one.", 32.0, DIM));
+            ui.spawn(text(
+                "Press Esc or click to close this one (it closes itself in a few seconds).",
+                32.0,
+                DIM,
+            ));
         }
         TvScreen::ServerError { message } => {
             ui.spawn(text("Something went wrong", 88.0, GOLD));
             ui.spawn(text(message, 36.0, WHITE));
-            ui.spawn(text("Press Esc to close.", 32.0, DIM));
+            ui.spawn(text("Press Esc or click to close.", 32.0, DIM));
         }
         TvScreen::Farewell => {
             ui.spawn(text("Goodbye, Portal Master!", 96.0, GOLD));
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Runs `escape_quits` once on `screen`, shown for `age`, with a left click or not.
+    fn closes(screen: TvScreen, age: Duration, click: bool) -> bool {
+        let mut app = App::new();
+        let mut mouse = ButtonInput::<MouseButton>::default();
+        if click {
+            mouse.press(MouseButton::Left);
+        }
+        app.insert_resource(ButtonInput::<KeyCode>::default())
+            .insert_resource(mouse)
+            .insert_resource(Current {
+                screen,
+                since: Instant::now().checked_sub(age).unwrap(),
+                clients: 0,
+            })
+            .add_systems(Update, escape_quits);
+        app.update();
+        app.should_exit().is_some()
+    }
+
+    #[test]
+    fn already_running_closes_itself_after_the_beat() {
+        let late = ALREADY_RUNNING_BEAT + Duration::from_secs(1);
+        assert!(closes(TvScreen::AlreadyRunning, late, false));
+        assert!(!closes(TvScreen::AlreadyRunning, Duration::ZERO, false));
+    }
+
+    #[test]
+    fn server_error_waits_for_a_click() {
+        let error = || TvScreen::ServerError {
+            message: "open profile store".into(),
+        };
+        let late = ALREADY_RUNNING_BEAT * 4;
+        assert!(!closes(error(), late, false));
+        assert!(closes(error(), Duration::ZERO, true));
+        assert!(closes(TvScreen::AlreadyRunning, Duration::ZERO, true));
+    }
+
+    #[test]
+    fn a_click_never_closes_the_join_screen() {
+        assert!(!closes(TvScreen::Join, Duration::ZERO, true));
+        assert!(!closes(TvScreen::Join, ALREADY_RUNNING_BEAT * 4, false));
+    }
 }

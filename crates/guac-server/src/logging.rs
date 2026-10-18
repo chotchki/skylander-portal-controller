@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use tracing_appender::non_blocking::WorkerGuard;
+pub use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 pub fn init(log_dir: &PathBuf) -> Result<WorkerGuard> {

@@ -23,6 +23,7 @@ use bevy::window::{MonitorSelection, WindowMode as BevyWindowMode};
 use guac_server::boot::{BootOptions, BuiltDriver, Catalogue, ServerHandles, boot};
 use guac_server::config::{DriverKind, WindowMode};
 use guac_server::hooks::Hooks;
+use guac_server::logging::WorkerGuard;
 use guac_server::state::{LauncherScreen, LauncherStatus};
 use guac_server::{logging, paths, setup};
 use tracing::{info, warn};
@@ -33,10 +34,19 @@ use crate::tv::{FAREWELL_BEAT, ServerBridge, ServerLink, Setup, Tv};
 
 fn main() -> Result<()> {
     let root = paths::guac_data_root()?;
+    // Before `load`, so a settings failure is logged and shown, not silent.
+    let log_guard = logging::init(&setup::log_dir(&root))?;
     // Writes nothing, so a second copy that loses the port leaves no trace.
-    let loaded = setup::load(&root).context("load guacamole's settings")?;
+    let loaded = match setup::load(&root).context("load guacamole's settings") {
+        Ok(loaded) => loaded,
+        Err(e) => {
+            tracing::error!("{e:#}");
+            let mode = setup::window_mode(&setup::env());
+            let no_setup = SetupView::new(false, &[], &Default::default());
+            return run_tv(failed_link(format!("{e:#}")), no_setup, mode, log_guard);
+        }
+    };
     let cfg = loaded.config.clone();
-    let _log_guard = logging::init(&cfg.log_dir)?;
 
     let needs_setup = loaded.needs_setup();
     let scan = if needs_setup {
@@ -78,13 +88,23 @@ fn main() -> Result<()> {
             failed_link(format!("{e:#}"))
         }
     };
+    run_tv(link, setup_view, cfg.window_mode, log_guard)
+}
+
+/// Runs the TV until it exits; the guard flushes the file log first.
+fn run_tv(
+    link: ServerLink,
+    setup_view: SetupView,
+    mode: WindowMode,
+    log_guard: WorkerGuard,
+) -> Result<()> {
     exit_after_farewell(link.status.clone());
 
     let exit = App::new()
         .add_plugins(
             DefaultPlugins
                 .set(WindowPlugin {
-                    primary_window: Some(window(cfg.window_mode)),
+                    primary_window: Some(window(mode)),
                     ..default()
                 })
                 // `logging::init` owns the global subscriber.
@@ -95,12 +115,10 @@ fn main() -> Result<()> {
         .add_plugins((ServerBridge, Tv))
         .run();
     info!(?exit, "guacamole exited");
+    drop(log_guard);
     match exit {
         AppExit::Success => Ok(()),
-        AppExit::Error(code) => {
-            drop(_log_guard);
-            std::process::exit(i32::from(code.get()))
-        }
+        AppExit::Error(code) => std::process::exit(i32::from(code.get())),
     }
 }
 
@@ -184,6 +202,8 @@ fn exit_after_farewell(status: Arc<std::sync::Mutex<LauncherStatus>>) {
             }
             std::thread::sleep(FAREWELL_BEAT + Duration::from_millis(1500));
             warn!("the TV didn't exit after the farewell; exiting now");
+            // The file log's worker writes asynchronously; let it catch up.
+            std::thread::sleep(Duration::from_millis(100));
             std::process::exit(0);
         })
         .expect("spawn the farewell thread");

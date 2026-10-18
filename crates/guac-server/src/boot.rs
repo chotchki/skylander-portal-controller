@@ -43,8 +43,9 @@ pub struct BootOptions {
     pub extra_routes: Option<Router<Arc<AppState>>>,
     /// Where the figures and games come from.
     pub catalogue: Catalogue,
-    /// The address to bind and put in the QR; `None` is the first
-    /// non-loopback IPv4, else loopback (the product's choice).
+    /// The address to bind and put in the QR. `None` puts the first
+    /// non-loopback IPv4 (else loopback) in the QR and listens on every
+    /// address, so the port lock holds across a route change.
     pub bind_ip: Option<Ipv4Addr>,
 }
 
@@ -157,6 +158,10 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
         .or_else(first_non_loopback_ipv4)
         .unwrap_or(Ipv4Addr::LOCALHOST);
     let bind = SocketAddr::from((ip, cfg.bind_port));
+    let listen = match bind_ip {
+        Some(_) => bind,
+        None => SocketAddr::from((Ipv4Addr::UNSPECIFIED, cfg.bind_port)),
+    };
     let key_hex = hex::encode(&cfg.hmac_key);
 
     // `<os-hostname>.local` survives a DHCP-lease refresh (PLAN 4.18.1a / 4.19.10b; `mdns` has the history).
@@ -196,6 +201,7 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
     // --- Start the Axum server + driver worker on a dedicated thread. ---
     let phone_dist = cfg.phone_dist_dir.clone();
     let bind_addr = bind;
+    let listen_addr = listen;
     let driver_kind = cfg.driver_kind;
     let rpcs3_exe = cfg.rpcs3_exe.clone();
     let config_dir = cfg.config_dir.clone();
@@ -238,7 +244,7 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
             };
             rt.block_on(async move {
                 // First, so a second copy (port taken) stops before any side effect.
-                let listener = match tokio::net::TcpListener::bind(bind_addr).await {
+                let listener = match tokio::net::TcpListener::bind(listen_addr).await {
                     Ok(l) => l,
                     Err(e) => {
                         if e.kind() == std::io::ErrorKind::AddrInUse
@@ -246,7 +252,7 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
                         {
                             st.port_in_use = true;
                         }
-                        report_fatal(&format!("bind {bind_addr}"), &e);
+                        report_fatal(&format!("bind {listen_addr}"), &e);
                         return;
                     }
                 };
@@ -424,7 +430,8 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
                     app = app.merge(extra.with_state(state.clone()));
                 }
 
-                info!("serving on http://{bind_addr}");
+                // The e2e harness reads the first token after "serving on".
+                info!("serving on http://{bind_addr} (listening on {listen_addr})");
                 // Ungates the launcher's intro animations (PLAN 4.19.x).
                 if let Ok(mut st) = status_for_ready.lock() {
                     st.server_ready = true;
@@ -798,6 +805,50 @@ mod tests {
 
         // The first copy keeps serving.
         assert!(get_version(first.bind_addr).starts_with("HTTP/1.1 200"));
+    }
+
+    #[test]
+    fn a_default_boot_listens_everywhere_so_a_second_one_loses_the_port() {
+        let port = ephemeral_port();
+        let unbound = |root: &Path| {
+            boot(BootOptions {
+                config: mock_config(root, port),
+                runtime_root: root.to_path_buf(),
+                migrator: &TEST_MIGRATOR,
+                driver_factory: Box::new(|_| {
+                    Ok(BuiltDriver::new(Arc::new(
+                        skylander_rpcs3_control::MockPortalDriver::new(),
+                    )))
+                }),
+                hooks: Hooks::default(),
+                extra_routes: None,
+                catalogue: Catalogue::FirmwarePack {
+                    scan: |_| anyhow::bail!("no pack is configured, so this never runs"),
+                },
+                bind_ip: None,
+            })
+            .expect("boot")
+        };
+        let first_root = tempfile::tempdir().unwrap();
+        let first = unbound(first_root.path());
+        wait_until_ready(&first);
+        // Loopback answers, so the listener isn't tied to the QR's address.
+        let loopback = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+        assert!(get_version(loopback).starts_with("HTTP/1.1 200"));
+
+        let second_root = tempfile::tempdir().unwrap();
+        let second = unbound(second_root.path());
+        second.server_thread.join().unwrap();
+        let status = second.launcher_status.lock().unwrap().clone();
+        assert!(status.port_in_use, "{:?}", status.screen);
+        let LauncherScreen::ServerError { message } = status.screen else {
+            panic!("expected ServerError, got {:?}", status.screen);
+        };
+        assert!(
+            message.starts_with(&format!("bind 0.0.0.0:{port}")),
+            "{message}"
+        );
+        assert!(get_version(loopback).starts_with("HTTP/1.1 200"));
     }
 
     fn native_boot(root: &Path, catalogue: Catalogue) -> Result<ServerHandles> {

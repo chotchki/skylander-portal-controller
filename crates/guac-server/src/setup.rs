@@ -60,12 +60,33 @@ impl Loaded {
 /// Dev reads `.env.dev` over the stored settings; release reads none.
 /// Never requires `RPCS3_EXE` or `FIRMWARE_PACK_ROOT`.
 pub fn load(root: &Path) -> Result<Loaded> {
-    let env = if cfg!(feature = "dev-tools") {
+    load_with(root, &env())
+}
+
+/// The env map [`load`] reads: `.env.dev` in dev, none in release.
+pub fn env() -> HashMap<String, String> {
+    if cfg!(feature = "dev-tools") {
         read_env_file(Path::new(".env.dev"))
     } else {
         HashMap::new()
-    };
-    load_with(root, &env)
+    }
+}
+
+/// The log folder; needs no stored settings, so logging can start before [`load`].
+pub fn log_dir(root: &Path) -> PathBuf {
+    if cfg!(feature = "dev-tools") {
+        PathBuf::from("logs")
+    } else {
+        root.join("logs")
+    }
+}
+
+/// `WINDOW_MODE=desktop` is a window; anything else is the TV.
+pub fn window_mode(env: &HashMap<String, String>) -> WindowMode {
+    match env.get("WINDOW_MODE").map(String::as_str) {
+        Some("desktop") => WindowMode::Desktop,
+        _ => WindowMode::Tv,
+    }
 }
 
 /// [`load`] over a given env map. Writes nothing; a first start gets a fresh
@@ -86,10 +107,7 @@ pub fn load_with(root: &Path, env: &HashMap<String, String>) -> Result<Loaded> {
         Some(v) => v.parse().context("BIND_PORT must be a port number")?,
         None => stored.bind_port.unwrap_or(DEFAULT_PORT),
     };
-    let window_mode = match env.get("WINDOW_MODE").map(String::as_str) {
-        Some("desktop") => WindowMode::Desktop,
-        _ => WindowMode::Tv,
-    };
+    let window_mode = window_mode(env);
     let path_or = |key: &str, dev_default: &str, release: fn() -> PathBuf| {
         env.get(key).map(PathBuf::from).unwrap_or_else(|| {
             if dev {
@@ -103,11 +121,7 @@ pub fn load_with(root: &Path, env: &HashMap<String, String>) -> Result<Loaded> {
         crate::paths::app_asset_dir().join("phone-dist")
     });
     let data_root = path_or("DATA_ROOT", "data", crate::paths::app_data_root);
-    let log_dir = if dev {
-        PathBuf::from("logs")
-    } else {
-        root.join("logs")
-    };
+    let log_dir = log_dir(root);
     let hmac_key = stored.pairing_key.unwrap_or_else(generate_key);
 
     Ok(Loaded {

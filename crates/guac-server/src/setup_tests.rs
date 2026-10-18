@@ -18,7 +18,7 @@ use crate::config::{DriverKind, WindowMode};
 use crate::dumps::GIANTS_TITLE_ID;
 use crate::hooks::Hooks;
 use crate::profiles::ProfileStore;
-use crate::setup::{DEFAULT_PORT, MIGRATOR, Setup, load_with};
+use crate::setup::{DEFAULT_PORT, MIGRATOR, Setup, load_with, log_dir, window_mode};
 
 static PRODUCT_MIGRATOR: Migrator = sqlx::migrate!("../server/migrations");
 
@@ -55,6 +55,28 @@ fn a_first_load_writes_nothing_and_needs_no_rpcs3() {
     assert_eq!(cfg.hmac_key.len(), 32);
     assert!(cfg.rpcs3_exe.as_os_str().is_empty());
     assert!(cfg.firmware_pack_root.as_os_str().is_empty());
+}
+
+#[test]
+fn the_pre_load_helpers_match_what_load_picks() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("guacamole");
+    let desktop: HashMap<_, _> = [("WINDOW_MODE".to_string(), "desktop".to_string())].into();
+    for env in [no_env(), desktop] {
+        let cfg = load_with(&root, &env).unwrap().config;
+        assert_eq!(log_dir(&root), cfg.log_dir);
+        assert_eq!(window_mode(&env), cfg.window_mode);
+    }
+}
+
+#[test]
+fn a_corrupt_database_fails_the_load() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("db.sqlite"), b"not a database, just text").unwrap();
+    let Err(err) = load_with(tmp.path(), &no_env()) else {
+        panic!("a corrupt database loaded");
+    };
+    assert!(format!("{err:#}").contains("not a database"), "{err:#}");
 }
 
 #[test]
