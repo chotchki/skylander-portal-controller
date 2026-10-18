@@ -21,11 +21,16 @@
 use std::time::Duration;
 
 use ios_inspect::state::DeviceState;
-use skylander_e2e_tests::{TestServer, inject_profile, set_session_profile, unlock_session};
+use skylander_e2e_tests::{
+    TestServer, inject_profile, product_only, set_session_profile, unlock_session,
+};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "boots two iOS Simulators; long-running; mac-only"]
 async fn ios_two_phone_independent_profiles() {
+    if product_only("iOS-Simulator test") {
+        return;
+    }
     let server = TestServer::spawn().expect("spawn server");
 
     // Two distinct profiles — same shape as multi_phone.rs's

@@ -106,6 +106,21 @@ pub enum TvScreen {
 }
 
 impl TvScreen {
+    /// The variant's name, for logs and the e2e mirror.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Starting => "Starting",
+            Self::Setup => "Setup",
+            Self::NoGiants => "NoGiants",
+            Self::Found => "Found",
+            Self::Join => "Join",
+            Self::Portal { .. } => "Portal",
+            Self::AlreadyRunning => "AlreadyRunning",
+            Self::ServerError { .. } => "ServerError",
+            Self::Farewell => "Farewell",
+        }
+    }
+
     /// Screens the keyboard's Escape may close: nothing is being served.
     pub fn escape_quits(&self) -> bool {
         matches!(self, Self::AlreadyRunning | Self::ServerError { .. })

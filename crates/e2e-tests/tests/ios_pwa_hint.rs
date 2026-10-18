@@ -24,11 +24,14 @@
 use std::time::Duration;
 
 use ios_inspect::state::DeviceState;
-use skylander_e2e_tests::TestServer;
+use skylander_e2e_tests::{TestServer, product_only};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "boots two iOS Simulators; long-running; mac-only"]
 async fn ios_pwa_hint_shows_on_iphone_only() {
+    if product_only("iOS-Simulator test") {
+        return;
+    }
     let server = TestServer::spawn().expect("spawn server");
     // No profile injection — both phones land on the ProfilePicker,
     // which is the screen that mounts <PwaHint />.

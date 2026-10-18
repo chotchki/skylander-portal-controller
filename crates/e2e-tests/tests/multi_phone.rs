@@ -403,14 +403,13 @@ async fn ownership_pip_shows_correct_owner_per_slot() {
             .await
             .unwrap_or_else(|_| panic!("{name}: slot 1 ownership pip should exist"));
         let slot1_style = slot1_owner.attr("style").await.unwrap().unwrap_or_default();
+        // innerText: WebDriver's visible text reads "" while the plate is
+        // still fading in, which guacamole's instant placements catch.
         let slot1_initial = phone
-            .client
-            .find(Locator::Css(".p4-slot:nth-child(1) .p4-slot-owner-plate"))
+            .inner_text(".p4-slot:nth-child(1) .p4-slot-owner-plate")
             .await
             .unwrap()
-            .text()
-            .await
-            .unwrap();
+            .unwrap_or_default();
         assert_eq!(
             slot1_initial.trim(),
             "A",
@@ -427,14 +426,13 @@ async fn ownership_pip_shows_correct_owner_per_slot() {
             .await
             .unwrap_or_else(|_| panic!("{name}: slot 2 ownership pip should exist"));
         let slot2_style = slot2_owner.attr("style").await.unwrap().unwrap_or_default();
+        // innerText: WebDriver's visible text reads "" while the plate is
+        // still fading in, which guacamole's instant placements catch.
         let slot2_initial = phone
-            .client
-            .find(Locator::Css(".p4-slot:nth-child(2) .p4-slot-owner-plate"))
+            .inner_text(".p4-slot:nth-child(2) .p4-slot-owner-plate")
             .await
             .unwrap()
-            .text()
-            .await
-            .unwrap();
+            .unwrap_or_default();
         assert_eq!(
             slot2_initial.trim(),
             "B",

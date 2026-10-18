@@ -34,7 +34,7 @@ use reqwest::{Client, StatusCode};
 use serde_json::json;
 use sha2::Sha256;
 
-use skylander_e2e_tests::TestServer;
+use skylander_e2e_tests::{TestServer, product_only};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -154,6 +154,9 @@ async fn fetch_status(client: &Client, base: &str) -> Status {
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "HTPC-only: needs RPCS3_EXE + 2 distinct RPCS3_TEST_SERIAL* envs"]
 async fn launch_stop_relaunch_switch() {
+    if product_only("drives a live RPCS3 (spawn_live)") {
+        return;
+    }
     let (serial_a, serial_b) = match require_env() {
         Some(pair) => pair,
         None => {

@@ -22,6 +22,9 @@ tracing = { workspace = true }
 # The native driver → TV channel: bounded, and its `Receiver` is `Sync`, so it
 # sits in a plain Bevy `Resource` (design decision 4).
 crossbeam-channel = "0.5"
+# `/api/_test/tv` (AA.10): an extra route on the shared server, its body JSON.
+axum = "0.7"
+serde = { workspace = true }
 
 # Pinned by Cargo.lock; upgrades are their own change at milestone boundaries.
 # `ui` is the 2D UI collection (winit, wgpu, bevy_ui, text, png); no 3D or audio yet.
@@ -33,6 +36,9 @@ rfd = "0.17.2"
 
 [dev-dependencies]
 tokio = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+serde_json = { workspace = true }
 tempfile = "3"
 # SfoBuilder, for the `--setup <folder>` tests.
 guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }

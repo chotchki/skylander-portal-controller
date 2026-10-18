@@ -27,6 +27,56 @@ pub struct TestServer {
     _tmpdir: TempDir,
 }
 
+/// Which binary `TestServer::spawn*` runs: `E2E_APP=product` (the default)
+/// or `E2E_APP=guacamole` (AA design decision 8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum E2eApp {
+    Product,
+    Guacamole,
+}
+
+impl E2eApp {
+    /// Panics on anything but `product` or `guacamole`, so a typo can't
+    /// quietly test the wrong binary.
+    pub fn from_env() -> Self {
+        match std::env::var("E2E_APP").as_deref() {
+            Err(_) | Ok("") | Ok("product") => Self::Product,
+            Ok("guacamole") => Self::Guacamole,
+            Ok(other) => panic!("E2E_APP={other:?}: expected `product` or `guacamole`"),
+        }
+    }
+
+    /// Games the phone's picker offers: the mock's six, or Giants alone.
+    pub fn game_count(self) -> usize {
+        match self {
+            Self::Product => 6,
+            Self::Guacamole => 1,
+        }
+    }
+}
+
+/// True (and says why on stderr) when a product-only test should skip
+/// because `E2E_APP=guacamole`.
+pub fn product_only(why: &str) -> bool {
+    let skip = E2eApp::from_env() == E2eApp::Guacamole;
+    if skip {
+        eprintln!("SKIPPED under E2E_APP=guacamole, product-only: {why}");
+    }
+    skip
+}
+
+/// True (and says so) when a guacamole-only test should skip.
+pub fn guacamole_only() -> bool {
+    let skip = E2eApp::from_env() != E2eApp::Guacamole;
+    if skip {
+        eprintln!("SKIPPED: guacamole-only, run with E2E_APP=guacamole");
+    }
+    skip
+}
+
+/// The disc serial guacamole offers.
+pub const GIANTS_SERIAL: &str = "BLUS30968";
+
 impl TestServer {
     pub fn spawn() -> Result<Self> {
         Self::spawn_with_env_lines("")
@@ -35,18 +85,18 @@ impl TestServer {
     /// Like [`spawn`] but appends `extra_env` to the generated `.env.dev`
     /// (newline-terminated lines, e.g. `"WINDOW_MODE=desktop\n"`). Used by
     /// the play-through recorder (PLAN 15.11), which needs the launcher in
-    /// Phase-20 windowed Desktop mode.
+    /// Phase-20 windowed Desktop mode. Runs the binary `E2E_APP` names.
     pub fn spawn_with_env_lines(extra_env: &str) -> Result<Self> {
+        match E2eApp::from_env() {
+            E2eApp::Product => Self::spawn_product(extra_env),
+            E2eApp::Guacamole => Self::spawn_guacamole(&[GIANTS_SERIAL], extra_env),
+        }
+    }
+
+    fn spawn_product(extra_env: &str) -> Result<Self> {
         let repo = repo_root()?;
         let firmware = resolve_firmware_pack(&repo)?;
-
-        let phone_dist = repo.join("phone").join("dist");
-        if !phone_dist.join("index.html").is_file() {
-            bail!(
-                "phone SPA not built — run `cd phone && trunk build` first (looking in {})",
-                phone_dist.display()
-            );
-        }
+        let phone_dist = built_phone_dist(&repo)?;
 
         let tmp = tempfile::tempdir().context("create temp dir")?;
         link_repo_images(tmp.path(), &repo);
@@ -60,12 +110,48 @@ impl TestServer {
         );
         env.push_str(extra_env);
         std::fs::write(tmp.path().join(".env.dev"), env)?;
+        Self::run(tmp, &repo, "skylander-server")
+    }
 
+    /// guacamole with no firmware pack or RPCS3: `GUAC_DUMP_DIRS` points at
+    /// one synthetic dump per title id, each just a `PS3_GAME/PARAM.SFO`
+    /// built in code (AA never reads anything else on a dump). Its window
+    /// opens desktop-sized unless `extra_env` says otherwise.
+    pub fn spawn_guacamole(title_ids: &[&str], extra_env: &str) -> Result<Self> {
+        let repo = repo_root()?;
+        let phone_dist = built_phone_dist(&repo)?;
+
+        let tmp = tempfile::tempdir().context("create temp dir")?;
+        let dumps = tmp.path().join("dumps");
+        for title_id in title_ids {
+            let game = dumps.join(title_id).join("PS3_GAME");
+            std::fs::create_dir_all(&game)?;
+            let sfo = guac_formats::sfo::builder::SfoBuilder::disc_game(title_id, "01.00", "01.00")
+                .build();
+            std::fs::write(game.join("PARAM.SFO"), sfo)?;
+        }
+        std::fs::create_dir_all(&dumps)?;
+        let port = pick_free_port()?;
+        // DATA_ROOT: the interim catalogue reads figures.json and the portraits.
+        let mut env = format!(
+            "BIND_PORT={port}\nPHONE_DIST={phone}\nGUAC_DUMP_DIRS={dumps}\nDATA_ROOT={data}\nWINDOW_MODE=desktop\n",
+            phone = phone_dist.display(),
+            dumps = dumps.display(),
+            data = repo.join("data").display(),
+        );
+        env.push_str(extra_env);
+        std::fs::write(tmp.path().join(".env.dev"), env)?;
+        Self::run(tmp, &repo, "guacamole")
+    }
+
+    /// `cargo run -p <package> --features test-hooks` in `tmp`, then a
+    /// chromedriver beside it.
+    fn run(tmp: TempDir, repo: &Path, package: &str) -> Result<Self> {
         // Build once up front so subsequent spawns are fast; re-invoking
         // cargo run also rebuilds incrementally if source changed.
         let mut cmd = Command::new("cargo");
         cmd.current_dir(tmp.path())
-            .env("CARGO_MANIFEST_DIR", &repo)
+            .env("CARGO_MANIFEST_DIR", repo)
             .env("CARGO_TARGET_DIR", repo.join("target"))
             // Pin BUILD_TOKEN so the spawned server's stale-bundle
             // check matches the phone bundle. Without this the phone's
@@ -83,7 +169,7 @@ impl TestServer {
                 "--manifest-path",
                 repo.join("Cargo.toml").to_str().unwrap(),
                 "-p",
-                "skylander-server",
+                package,
                 "--features",
                 "test-hooks",
             ])
@@ -161,6 +247,7 @@ impl TestServer {
     /// `/api/_test/hmac_key`, but no `inject_load_outcomes` call should be
     /// made — the real driver handles its own failure modes.
     pub fn spawn_live() -> Result<Self> {
+        ensure_product("spawn_live")?;
         let repo = repo_root()?;
 
         let rpcs3_exe = std::env::var("RPCS3_EXE")
@@ -264,6 +351,7 @@ impl TestServer {
     /// (straight to the in-game portal); `None` cold-boots the EBOOT the server
     /// resolves from games.yml (A.2.4 — the recorder then pad-navs to the portal).
     fn spawn_ipc_inner(savestate: Option<String>) -> Result<Self> {
+        ensure_product("spawn_ipc_*")?;
         let repo = repo_root()?;
 
         let rpcs3_exe = std::env::var("RPCS3_EXE")
@@ -371,6 +459,25 @@ impl TestServer {
     pub fn spawn_ipc_cold() -> Result<Self> {
         Self::spawn_ipc_inner(None)
     }
+}
+
+/// The RPCS3 spawns drive the product's emulator; guacamole has none.
+fn ensure_product(spawn: &str) -> Result<()> {
+    if E2eApp::from_env() == E2eApp::Guacamole {
+        bail!("{spawn} runs RPCS3, so it's product-only; unset E2E_APP=guacamole");
+    }
+    Ok(())
+}
+
+fn built_phone_dist(repo: &Path) -> Result<PathBuf> {
+    let phone_dist = repo.join("phone").join("dist");
+    if !phone_dist.join("index.html").is_file() {
+        bail!(
+            "phone SPA not built — run `cd phone && trunk build` first (looking in {})",
+            phone_dist.display()
+        );
+    }
+    Ok(phone_dist)
 }
 
 async fn fetch_hmac_key_hex(base: &str) -> anyhow::Result<String> {
@@ -1164,6 +1271,39 @@ pub async fn fire_takeover(
         );
     }
     Ok(())
+}
+
+/// guacamole's `/api/_test/tv`: what its TV shows (`TvSnapshot` in
+/// `crates/guacamole/src/mirror.rs`).
+pub async fn tv(base: &str) -> Result<serde_json::Value> {
+    let resp = reqwest::Client::new()
+        .get(format!("{base}/api/_test/tv"))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        bail!("/api/_test/tv returned {}", resp.status());
+    }
+    Ok(resp.json().await?)
+}
+
+/// Polls the TV every 25 ms until `pred` holds; the snapshot and when it
+/// first held. The error carries the last snapshot.
+pub async fn wait_for_tv(
+    base: &str,
+    timeout: Duration,
+    pred: impl Fn(&serde_json::Value) -> bool,
+) -> Result<(serde_json::Value, Instant)> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let snap = tv(base).await?;
+        if pred(&snap) {
+            return Ok((snap, Instant::now()));
+        }
+        if Instant::now() >= deadline {
+            bail!("TV didn't match within {timeout:?}; last: {snap}");
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
 }
 
 /// Convenience for the common "launch Giants" setup.

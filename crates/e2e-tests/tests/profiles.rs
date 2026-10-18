@@ -12,7 +12,7 @@
 use std::time::Duration;
 
 use fantoccini::Locator;
-use skylander_e2e_tests::{Phone, TestServer, inject_profile};
+use skylander_e2e_tests::{E2eApp, Phone, TestServer, inject_profile};
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver + built phone SPA"]
@@ -91,10 +91,12 @@ async fn existing_profile_unlock_lands_on_game_picker() {
         .find_all(Locator::Css(".game-picker .game-card"))
         .await
         .unwrap();
+    // Six under the mock; guacamole offers Giants alone.
+    let want = E2eApp::from_env().game_count();
     assert_eq!(
         cards.len(),
-        6,
-        "expected six Skylanders game cards in the picker, found {}",
+        want,
+        "expected {want} Skylanders game cards in the picker, found {}",
         cards.len()
     );
 

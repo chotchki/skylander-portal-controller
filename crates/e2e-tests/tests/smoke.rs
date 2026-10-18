@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use fantoccini::Locator;
-use skylander_e2e_tests::{Phone, TestServer, unlock_default_profile};
+use skylander_e2e_tests::{E2eApp, Phone, TestServer, unlock_default_profile};
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver + built phone SPA"]
@@ -39,10 +39,12 @@ async fn smoke_game_picker_renders() {
         .find_all(Locator::Css(".game-picker .game-card"))
         .await
         .expect("all game cards");
+    // Six under the mock; guacamole offers Giants alone.
+    let want = E2eApp::from_env().game_count();
     assert_eq!(
         cards.len(),
-        6,
-        "expected six Skylanders game cards in the picker, found {}",
+        want,
+        "expected {want} Skylanders game cards in the picker, found {}",
         cards.len()
     );
 

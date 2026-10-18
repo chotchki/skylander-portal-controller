@@ -574,11 +574,11 @@ pub fn safe_area(width: u32, height: u32, mode: WindowMode) -> Rect {
     Rect::new(dx - 1.0, dy - 1.0, w - dx + 1.0, h - dy + 1.0)
 }
 
-fn contains(outer: Rect, inner: Rect) -> bool {
+pub(crate) fn contains(outer: Rect, inner: Rect) -> bool {
     outer.contains(inner.min) && outer.contains(inner.max)
 }
 
-fn node_rect(node: &ComputedNode, at: &UiGlobalTransform) -> Rect {
+pub(crate) fn node_rect(node: &ComputedNode, at: &UiGlobalTransform) -> Rect {
     Rect::from_center_size(at.translation, node.size())
 }
 
@@ -1032,7 +1032,7 @@ mod tests {
 /// The portal screen laid out headless by `bevy_ui` itself (no window, no
 /// GPU): where each card lands at a given window size and mode.
 #[cfg(test)]
-mod layout_tests {
+pub(crate) mod layout_tests {
     use bevy::camera::{ComputedCameraValues, RenderTargetInfo};
     use skylander_core::{FigureId, SlotIndex};
 
@@ -1046,7 +1046,7 @@ mod layout_tests {
         texts: Vec<Rect>,
     }
 
-    fn placement(name: &str, owner: Option<&str>) -> Placement {
+    pub(crate) fn placement(name: &str, owner: Option<&str>) -> Placement {
         let figure_id = FigureId::new("000009-0000");
         let (toy_type, variant) = figure_id.tag_parts().unwrap();
         Placement {
@@ -1069,7 +1069,7 @@ mod layout_tests {
         measure(&mut app)
     }
 
-    fn portal_app(width: u32, height: u32, mode: WindowMode, cards: PortalCards) -> App {
+    pub(crate) fn portal_app(width: u32, height: u32, mode: WindowMode, cards: PortalCards) -> App {
         let mut app = App::new();
         app.add_plugins((
             MinimalPlugins,
