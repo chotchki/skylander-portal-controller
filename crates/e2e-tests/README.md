@@ -43,6 +43,12 @@ errors with `session not created: This version of ChromeDriver only
 supports Chrome version N`, either:
 - **Update Chrome** to match (open Chrome → menu → About Google
   Chrome → it auto-downloads → relaunch), or
+- **On macOS, drop a matching driver at**
+  `~/Library/Application Support/skylander-portal-controller/chromedriver-<major>`
+  (e.g. `chromedriver-155` for Chrome 155.x, from
+  <https://googlechromelabs.github.io/chrome-for-testing/>). The harness reads the
+  installed Chrome's major version and picks that file before PATH / Homebrew, so
+  no env var is needed. Or:
 - **Pin a specific ChromeDriver** by setting `$CHROMEDRIVER` to a
   matching binary (e.g. one from
   <https://googlechromelabs.github.io/chrome-for-testing/>).

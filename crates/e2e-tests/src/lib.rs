@@ -418,8 +418,11 @@ fn link_repo_images(tmp_path: &std::path::Path, repo: &std::path::Path) {
 
 /// Resolution order for the chromedriver binary:
 ///   1. `$CHROMEDRIVER` env var (explicit override).
-///   2. `chromedriver` on PATH.
-///   3. The winget install location
+///   2. macOS: a driver pinned to the installed Chrome's major version,
+///      `~/Library/Application Support/skylander-portal-controller/chromedriver-<major>`
+///      (Chrome and ChromeDriver must share a major; brew's cask often doesn't).
+///   3. `chromedriver` on PATH, then Homebrew's two prefixes.
+///   4. The winget install location
 ///      (`%LOCALAPPDATA%/Microsoft/WinGet/Packages/Chromium.ChromeDriver_*/chromedriver-win64/chromedriver.exe`).
 fn spawn_chromedriver() -> Result<(String, ChildGuard)> {
     let port = pick_free_port()?;
@@ -511,6 +514,10 @@ fn locate_chromedriver() -> Result<PathBuf> {
         }
         bail!("CHROMEDRIVER points at {} which doesn't exist", p.display());
     }
+    #[cfg(target_os = "macos")]
+    if let Some(p) = pinned_chromedriver_for_installed_chrome() {
+        return Ok(p);
+    }
     if let Ok(p) = which::which("chromedriver") {
         return Ok(p);
     }
@@ -556,6 +563,36 @@ fn locate_chromedriver() -> Result<PathBuf> {
          via `brew install --cask chromedriver` (macOS) / \
          `winget install --id=Chromium.ChromeDriver` (Windows)"
     ))
+}
+
+/// macOS: the chromedriver pinned beside the app's runtime data whose name
+/// carries the installed Chrome's major version (`chromedriver-155` for
+/// Chrome 155.x). `None` when Chrome isn't in /Applications or no pinned
+/// driver matches, so the caller falls back to PATH / Homebrew.
+#[cfg(target_os = "macos")]
+fn pinned_chromedriver_for_installed_chrome() -> Option<PathBuf> {
+    let out = Command::new("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+        .arg("--version")
+        .output()
+        .ok()?;
+    let major = chrome_major_version(&String::from_utf8_lossy(&out.stdout))?;
+    let home = std::env::var_os("HOME")?;
+    let p = PathBuf::from(home)
+        .join("Library/Application Support/skylander-portal-controller")
+        .join(format!("chromedriver-{major}"));
+    p.is_file().then_some(p)
+}
+
+/// Major version out of `Google Chrome 155.0.8059.85` (the `--version` line).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn chrome_major_version(version_line: &str) -> Option<u32> {
+    version_line
+        .split_whitespace()
+        .find(|w| w.chars().next().is_some_and(|c| c.is_ascii_digit()))?
+        .split('.')
+        .next()?
+        .parse()
+        .ok()
 }
 
 fn pick_free_port() -> Result<u16> {
@@ -1460,5 +1497,24 @@ impl Phone {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
         Err(anyhow!("wait_until timed out after {timeout:?}"))
+    }
+}
+
+#[cfg(test)]
+mod chrome_version_tests {
+    use super::chrome_major_version;
+
+    #[test]
+    fn reads_the_major_from_chromes_version_line() {
+        assert_eq!(
+            chrome_major_version("Google Chrome 155.0.8059.85 \n"),
+            Some(155)
+        );
+        assert_eq!(
+            chrome_major_version("Google Chrome for Testing 147.0.7727.138"),
+            Some(147)
+        );
+        assert_eq!(chrome_major_version(""), None);
+        assert_eq!(chrome_major_version("Google Chrome"), None);
     }
 }
