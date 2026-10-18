@@ -1,6 +1,9 @@
 //! `/api/_test/tv` (design decision 8): a `PostUpdate` copy of what the TV
-//! draws, read off the laid-out UI tree, so the e2e suite asserts on the TV
-//! without screenshots. Mounted only under `test-hooks`.
+//! draws, so the e2e suite asserts on the TV without screenshots. Mounted
+//! only under `test-hooks`. Read off the laid-out UI tree: the players line,
+//! join address, join QR and every card's lines, portrait, pip and rect.
+//! Copied from the resources that feed the tree: the screen, game, message,
+//! Setup's lists and each card's figure and owner ids.
 
 use std::sync::{Arc, Mutex};
 
@@ -11,8 +14,8 @@ use serde::Serialize;
 use crate::cards::PortalCards;
 use crate::screen::TvScreen;
 use crate::tv::{
-    CardSlot, Current, EmptySlot, Framing, Pip, ServerLink, Setup, contains, join_address,
-    node_rect, safe_area,
+    CardSlot, Current, EmptySlot, Framing, JoinAddress, JoinQr, Pip, PlayersLine, Setup, TvAssets,
+    contains, node_rect, safe_area,
 };
 
 /// What the TV shows this frame.
@@ -23,9 +26,13 @@ pub struct TvSnapshot {
     pub game: Option<String>,
     /// ServerError's message.
     pub message: Option<String>,
-    pub players: usize,
-    pub join_address: String,
-    /// Setup's lists, for Setup, NoGiants and Found.
+    /// The count in the drawn players line; none when it isn't drawn.
+    pub players: Option<usize>,
+    /// The drawn join address.
+    pub join_address: Option<String>,
+    /// The join QR image is drawn.
+    pub join_qr: bool,
+    /// Setup's lists (the resource, not the drawn text), for Setup, NoGiants and Found.
     pub found: Vec<String>,
     pub folders: Vec<String>,
     pub problems: Vec<String>,
@@ -45,6 +52,7 @@ pub struct TvSnapshot {
 pub struct CardShot {
     /// 1-based, as the phone numbers slots.
     pub slot: u8,
+    /// From `PortalCards`, not drawn.
     pub figure_id: String,
     /// Every line drawn on the card outside the pip, top to bottom.
     pub texts: Vec<String>,
@@ -60,6 +68,7 @@ pub struct PipShot {
     pub initial: String,
     /// The pip's fill as drawn, `#RRGGBB`.
     pub color: String,
+    /// From `PortalCards`, not drawn.
     pub profile_id: String,
 }
 
@@ -119,7 +128,7 @@ fn walk(
 fn mirror_tv(
     mirror: Res<TvMirror>,
     current: Option<Res<Current>>,
-    link: Res<ServerLink>,
+    assets: Option<Res<TvAssets>>,
     setup: Res<Setup>,
     framing: Res<Framing>,
     portal: Res<PortalCards>,
@@ -130,6 +139,9 @@ fn mirror_tv(
     texts: Query<&Text>,
     images: Query<(), With<ImageNode>>,
     pips: Query<(&Pip, &BackgroundColor)>,
+    players_line: Query<&Text, With<PlayersLine>>,
+    address: Query<&Text, With<JoinAddress>>,
+    qr: Query<&ImageNode, With<JoinQr>>,
 ) {
     let Some(current) = current else {
         return;
@@ -190,8 +202,14 @@ fn mirror_tv(
         screen: current.screen.kind().to_string(),
         game,
         message,
-        players: current.clients,
-        join_address: join_address(&link.phone_url).to_string(),
+        players: players_line
+            .iter()
+            .next()
+            .and_then(|t| t.0.split_whitespace().next()?.parse().ok()),
+        join_address: address.iter().next().map(|t| t.0.clone()),
+        join_qr: assets
+            .and_then(|a| a.qr.clone())
+            .is_some_and(|handle| qr.iter().any(|image| image.image == handle)),
         found: setup.0.found_titles.clone(),
         folders: setup.0.folders.clone(),
         problems: setup.0.problems.clone(),
@@ -248,11 +266,13 @@ mod tests {
         let shot = snapshot(cards, giants());
         assert_eq!(shot.screen, "Portal");
         assert_eq!(shot.game.as_deref(), Some("Skylanders: Giants"));
-        assert_eq!(shot.players, 2);
+        assert_eq!(shot.players, Some(2));
         assert_eq!(
-            shot.join_address,
-            "http://christophers-macbook-pro.local:8765"
+            shot.join_address.as_deref(),
+            Some("http://christophers-macbook-pro.local:8765")
         );
+        // The harness has no QR.
+        assert!(!shot.join_qr);
         assert_eq!(shot.cards.len(), 2);
         let first = &shot.cards[0];
         assert_eq!(first.slot, 1);
@@ -291,6 +311,51 @@ mod tests {
         assert_eq!(shot.screen, "Join");
         assert!(shot.game.is_none());
         assert!(shot.cards.is_empty() && shot.empty_slots.is_empty());
+    }
+
+    #[test]
+    fn the_join_screen_reads_back_its_qr_and_a_new_phone() {
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
+        let qr = app
+            .world_mut()
+            .resource_mut::<Assets<Image>>()
+            .add(Image::default());
+        app.world_mut().resource_mut::<TvAssets>().qr = Some(qr);
+        {
+            let mut current = app.world_mut().resource_mut::<Current>();
+            current.screen = TvScreen::Join;
+            current.clients = 0;
+        }
+        let mirror = TvMirror::default();
+        app.insert_resource(mirror.clone()).add_plugins(Mirror);
+        for _ in 0..3 {
+            app.update();
+        }
+        let shot = mirror.0.lock().unwrap().clone();
+        assert!(shot.join_qr);
+        assert_eq!(shot.players, Some(0));
+        assert_eq!(
+            shot.join_address.as_deref(),
+            Some("http://christophers-macbook-pro.local:8765")
+        );
+
+        // Read off the redrawn line, so a tree that missed the change shows 0.
+        app.world_mut().resource_mut::<Current>().clients = 1;
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(mirror.0.lock().unwrap().players, Some(1));
+
+        // Screens without the join block draw none of it.
+        app.world_mut().resource_mut::<Current>().screen = TvScreen::Farewell;
+        for _ in 0..3 {
+            app.update();
+        }
+        let shot = mirror.0.lock().unwrap().clone();
+        assert_eq!(
+            (shot.players, shot.join_address, shot.join_qr),
+            (None, None, false)
+        );
     }
 
     #[tokio::test]

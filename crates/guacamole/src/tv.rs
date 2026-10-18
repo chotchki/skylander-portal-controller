@@ -110,10 +110,22 @@ pub(crate) struct Current {
 }
 
 #[derive(Resource)]
-struct TvAssets {
+pub(crate) struct TvAssets {
     font: Handle<Font>,
-    qr: Option<Handle<Image>>,
+    pub(crate) qr: Option<Handle<Image>>,
 }
+
+/// The join QR as drawn (Join and the portal header), for the mirror.
+#[derive(Component)]
+pub(crate) struct JoinQr;
+
+/// The join address line as drawn.
+#[derive(Component)]
+pub(crate) struct JoinAddress;
+
+/// The "N phones connected" line as drawn.
+#[derive(Component)]
+pub(crate) struct PlayersLine;
 
 /// Marks the root node; the whole tree is rebuilt when the screen changes.
 #[derive(Component)]
@@ -458,6 +470,7 @@ fn spawn_screen(
             ui.spawn(text("Scan to play", 88.0, GOLD));
             if let Some(qr) = &assets.qr {
                 ui.spawn((
+                    JoinQr,
                     ImageNode::new(qr.clone()),
                     Node {
                         width: px(420),
@@ -466,8 +479,8 @@ fn spawn_screen(
                     },
                 ));
             }
-            ui.spawn(text(join_address(&link.phone_url), 32.0, DIM));
-            ui.spawn(text(&players_line(current.clients), 40.0, WHITE));
+            ui.spawn((JoinAddress, text(join_address(&link.phone_url), 32.0, DIM)));
+            ui.spawn((PlayersLine, text(&players_line(current.clients), 40.0, WHITE)));
         }
         // Drawn by `spawn_portal`.
         TvScreen::Portal { .. } => {}
@@ -751,21 +764,18 @@ fn spawn_portal(
                         })
                         .with_children(|join| {
                             join.spawn(text_at("Scan to join", 32.0, WHITE, Justify::Right));
-                            join.spawn(text_at(
-                                &players_line(current.clients),
-                                28.0,
-                                DIM,
-                                Justify::Right,
+                            join.spawn((
+                                PlayersLine,
+                                text_at(&players_line(current.clients), 28.0, DIM, Justify::Right),
                             ));
-                            join.spawn(text_at(
-                                join_address(&link.phone_url),
-                                24.0,
-                                DIM,
-                                Justify::Right,
+                            join.spawn((
+                                JoinAddress,
+                                text_at(join_address(&link.phone_url), 24.0, DIM, Justify::Right),
                             ));
                         });
                     if let Some(qr) = &assets.qr {
                         right.spawn((
+                            JoinQr,
                             ImageNode::new(qr.clone()),
                             Node {
                                 width: px(176),

@@ -25,7 +25,7 @@ use anyhow::{Context, Result};
 use fantoccini::Locator;
 use skylander_e2e_tests::{
     Phone, TestServer, fire_kaos_taunt, fire_takeover, inject_load_outcomes, inject_profile,
-    launch_giants, set_session_profile, unlock_session,
+    launch_giants, product_only, set_session_profile, unlock_session,
 };
 
 /// Where we drop the captured PNGs. Resolved at test start so any
@@ -82,6 +82,9 @@ async fn tap_via_pointer(phone: &Phone, selector: &str) -> Result<()> {
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver + manual run; populates docs/assets/screens/"]
 async fn capture_full_phone_tour() -> Result<()> {
+    if product_only("writes the product's tracked gallery, docs/assets/screens/") {
+        return Ok(());
+    }
     let server = TestServer::spawn().context("spawn test server")?;
     let dir = screens_dir()?;
 

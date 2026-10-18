@@ -295,6 +295,23 @@ async fn independent_profile_unlock() {
     p2.close().await.unwrap();
 }
 
+/// WebDriver's visible text of `sel`, polled for 2 s until it reads `want`
+/// (the plate fades in; guacamole's instant placements can catch it at
+/// opacity 0). Returns the last read, so a plate that never shows fails.
+async fn visible_text_until(phone: &Phone, sel: &str, want: &str) -> String {
+    let mut last = String::new();
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        if let Ok(el) = phone.client.find(Locator::Css(sel)).await {
+            last = el.text().await.unwrap_or_default();
+        }
+        if last.trim() == want || std::time::Instant::now() >= deadline {
+            return last;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 // ---- 3.10e.6 ownership_pip_shows_correct_owner_per_slot ------------------
 //
 // Companion to 3.10.7's aesthetic pass. Two profiles with distinct colours
@@ -403,13 +420,8 @@ async fn ownership_pip_shows_correct_owner_per_slot() {
             .await
             .unwrap_or_else(|_| panic!("{name}: slot 1 ownership pip should exist"));
         let slot1_style = slot1_owner.attr("style").await.unwrap().unwrap_or_default();
-        // innerText: WebDriver's visible text reads "" while the plate is
-        // still fading in, which guacamole's instant placements catch.
-        let slot1_initial = phone
-            .inner_text(".p4-slot:nth-child(1) .p4-slot-owner-plate")
-            .await
-            .unwrap()
-            .unwrap_or_default();
+        let slot1_initial =
+            visible_text_until(phone, ".p4-slot:nth-child(1) .p4-slot-owner-plate", "A").await;
         assert_eq!(
             slot1_initial.trim(),
             "A",
@@ -426,13 +438,8 @@ async fn ownership_pip_shows_correct_owner_per_slot() {
             .await
             .unwrap_or_else(|_| panic!("{name}: slot 2 ownership pip should exist"));
         let slot2_style = slot2_owner.attr("style").await.unwrap().unwrap_or_default();
-        // innerText: WebDriver's visible text reads "" while the plate is
-        // still fading in, which guacamole's instant placements catch.
-        let slot2_initial = phone
-            .inner_text(".p4-slot:nth-child(2) .p4-slot-owner-plate")
-            .await
-            .unwrap()
-            .unwrap_or_default();
+        let slot2_initial =
+            visible_text_until(phone, ".p4-slot:nth-child(2) .p4-slot-owner-plate", "B").await;
         assert_eq!(
             slot2_initial.trim(),
             "B",

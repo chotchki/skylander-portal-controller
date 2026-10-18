@@ -114,7 +114,8 @@ async fn load(server: &TestServer, sid: u64, slot: u8, figure_id: &str) {
 }
 
 /// Search, tap the card, PLACE: lands in the first empty slot.
-async fn place_named(phone: &Phone, name: &str) {
+/// Searches, opens the figure and presses PLACE; returns when PLACE was clicked.
+async fn place_named(phone: &Phone, name: &str) -> Instant {
     phone.open_search().await.unwrap();
     let input = phone
         .client
@@ -124,7 +125,14 @@ async fn place_named(phone: &Phone, name: &str) {
     input.clear().await.unwrap();
     input.send_keys(name).await.unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
-    phone.place_figure_named(name).await.unwrap();
+    phone.tap_figure_named(name).await.unwrap();
+    let place = phone
+        .wait_for(Locator::Css(".detail-btn-primary"), Duration::from_secs(5))
+        .await
+        .unwrap();
+    let clicked = Instant::now();
+    place.click().await.unwrap();
+    clicked
 }
 
 async fn wait_slot(phone: &Phone, slot: u8, name: &str) -> Instant {
@@ -175,8 +183,10 @@ async fn tv_card(server: &TestServer, slot: u8, name: &str, since: Instant) -> V
     })
     .await
     .unwrap_or_else(|e| panic!("TV slot {slot} didn't show {name} within 1 s: {e}"));
+    // A lower bound on the TV's lag: `since` is when the phone poll (every
+    // 100 ms) saw the figure, so the TV has usually drawn it already.
     eprintln!(
-        "TV showed {name} in slot {slot} {} ms after the phone",
+        "TV showing {name} in slot {slot} {} ms after the phone poll saw it",
         at.duration_since(since).as_millis()
     );
     snap
@@ -206,7 +216,8 @@ async fn the_tv_shows_the_join_code_and_counts_phones() {
     })
     .await
     .unwrap();
-    assert_eq!(snap["players"], 0);
+    assert_eq!(snap["players"], 0, "{snap}");
+    assert_eq!(snap["join_qr"], true, "the join QR is drawn: {snap}");
     let address = snap["join_address"].as_str().unwrap();
     assert!(
         address.starts_with("http://") && !address.contains("k="),
@@ -322,11 +333,13 @@ async fn a_placement_shows_its_card_within_a_second() {
     assert!(card_slots(&empty).is_empty());
     assert_eq!(empty["game"], "Skylanders: Giants");
 
-    let clicked = Instant::now();
-    place_named(&phone, "Eruptor").await;
+    let clicked = place_named(&phone, "Eruptor").await;
     let shown = wait_slot(&phone, 1, "Eruptor").await;
     let snap = tv_card(&server, 1, "Eruptor", shown).await;
-    eprintln!("click to TV card: {} ms", clicked.elapsed().as_millis());
+    eprintln!(
+        "PLACE click to TV card: {} ms",
+        clicked.elapsed().as_millis()
+    );
     assert_eq!(card_slots(&snap), [1], "{snap}");
     let eruptor = card(&snap, 1).unwrap();
     assert_eq!(texts(eruptor), ["Eruptor", "Fire"], "name and element only");
@@ -720,7 +733,7 @@ async fn the_controllers_settings_are_unavailable() {
         .await
         .expect("grown-ups list");
 
-    // The window-mode toggle: the phone says it failed and rolls back.
+    // The window-mode toggle: the phone says it's unavailable and rolls back.
     let label = ".admin-display-panel .edit-toggle-label";
     phone
         .wait_until(Duration::from_secs(5), || async {
@@ -741,7 +754,7 @@ async fn the_controllers_settings_are_unavailable() {
                 .await
                 .ok()
                 .flatten()
-                .is_some_and(|t| t.contains("Window mode change failed"))
+                .is_some_and(|t| t.contains("Window mode isn't available in guacamole"))
         })
         .await
         .expect("the phone reports the window mode as unavailable");

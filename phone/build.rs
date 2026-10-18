@@ -5,13 +5,16 @@
 //! "stale bundle" overlay so iOS PWAs holding cached wasm don't
 //! silently diverge from the current server build.
 
+use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
-    // `../.git` because `phone/` lives directly beneath the workspace
-    // root (unlike `crates/server/` which is one deeper).
-    println!("cargo:rerun-if-changed=../.git/HEAD");
-    println!("cargo:rerun-if-changed=../.git/index");
+    // Re-run when HEAD moves or the index changes (uncommitted edits).
+    for name in ["HEAD", "index"] {
+        if let Some(path) = git_path(name) {
+            println!("cargo:rerun-if-changed={}", path.display());
+        }
+    }
     println!("cargo:rerun-if-env-changed=BUILD_TOKEN");
 
     let token = std::env::var("BUILD_TOKEN").unwrap_or_else(|_| compute_token());
@@ -40,4 +43,24 @@ fn compute_token() -> String {
     } else {
         hash
     }
+}
+
+/// `git rev-parse --git-path`: right in a linked worktree too, where `.git`
+/// is a file and a literal `.git/HEAD` never exists (cargo then reruns this
+/// script, and rebuilds everything downstream, on every build). None when
+/// the path is missing, so a non-git build doesn't rerun forever either.
+fn git_path(name: &str) -> Option<PathBuf> {
+    let out = Command::new("git")
+        .args(["rev-parse", "--git-path", name])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    let path = PathBuf::from(String::from_utf8(out.stdout).ok()?.trim());
+    // Relative paths are relative to the cwd, the crate dir.
+    let path = if path.is_relative() {
+        PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR")?).join(path)
+    } else {
+        path
+    };
+    path.exists().then_some(path)
 }
