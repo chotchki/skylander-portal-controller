@@ -49,6 +49,14 @@ pub const PARSERS: &[RegisteredParser] = &[
         // string tables are 16 bytes per entry of at least 1 input byte.
         heap_budget: |len| 64 * len + (64 << 10),
     },
+    RegisteredParser {
+        name: "igz_layouts",
+        parse: walk_layouts,
+        seeds: igz::layouts::builder::seeds,
+        // The IGZ parse, plus one reader's output at a time and a hero's
+        // maps, each entry read from at least 4 input bytes.
+        heap_budget: |len| 128 * len + (64 << 10),
+    },
 ];
 
 /// How many unpacked bytes [`walk_iga`] reads before it stops. Chunks can
@@ -90,6 +98,37 @@ pub fn walk_igz(bytes: &[u8]) -> Result<(), FormatError> {
         {
             let _ = file.memory_ref(igz::Location(size_at), "walk");
         }
+    }
+    Ok(())
+}
+
+/// Parses an IGZ, then runs every AC.4 layout reader and the hero walk on
+/// every object, dropping each result. The property test and the fuzz
+/// targets run it.
+pub fn walk_layouts(bytes: &[u8]) -> Result<(), FormatError> {
+    use igz::layouts::*;
+    let file = igz::Igz::parse(bytes)?;
+    for i in 0..file.objects().len() {
+        let _ = ObjectList::read(&file, i);
+        let _ = Image2::read(&file, i);
+        let _ = EdgeGeometrySegment::read(&file, i);
+        let _ = EdgeGeometry::read(&file, i);
+        let _ = EdgeGeometryAttr::read(&file, i);
+        let _ = Skeleton2::read(&file, i);
+        let _ = SkeletonBoneList::read(&file, i);
+        let _ = SkeletonBone::read(&file, i);
+        let _ = PhysicsCombinerLink::read(&file, i);
+        let _ = NodeList::read(&file, i);
+        let _ = BlendMatrixSelect::read(&file, i);
+        let _ = IntList::read(&file, i);
+        let _ = Actor2::read(&file, i);
+        let _ = RuntimeTechniqueInstance::read(&file, i);
+        let _ = PhysicsAnimation::read(&file, i);
+        let _ = PhysicsBody::read(&file, i);
+        let _ = PhysicsModel::read(&file, i);
+        let _ = AnimationInfoList::read(&file, i);
+        let _ = AnimationInfo::read(&file, i);
+        let _ = Hero::read(&file, i);
     }
     Ok(())
 }

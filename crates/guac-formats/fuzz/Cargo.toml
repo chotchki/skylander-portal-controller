@@ -47,3 +47,10 @@ path = "fuzz_targets/igz.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "igz_layouts"
+path = "fuzz_targets/igz_layouts.rs"
+test = false
+doc = false
+bench = false

@@ -35,6 +35,12 @@ pub enum ErrorKind {
     /// A part the format requires isn't there.
     #[error("required but missing")]
     Missing,
+    /// An object isn't the type a reader asked for, nor a subtype of it.
+    #[error("a {found} where a {expected} belongs")]
+    WrongType {
+        expected: &'static str,
+        found: String,
+    },
     #[error("version {found:#x} isn't read here ({supported})")]
     UnsupportedVersion { found: u64, supported: &'static str },
     /// Compressed data that didn't come out at the size its container

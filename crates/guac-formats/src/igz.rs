@@ -10,6 +10,7 @@
 
 #[cfg(any(test, feature = "test-fixtures"))]
 pub mod builder;
+pub mod layouts;
 
 use std::collections::HashSet;
 
@@ -760,7 +761,7 @@ impl<'a> Igz<'a> {
     }
 
     /// An error at a location's file offset (0 when its section is missing).
-    fn err_at(&self, at: Location, field: &'static str, kind: ErrorKind) -> FormatError {
+    pub(crate) fn err_at(&self, at: Location, field: &'static str, kind: ErrorKind) -> FormatError {
         let offset = self
             .sections
             .get(1 + at.section())
