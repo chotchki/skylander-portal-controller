@@ -43,8 +43,9 @@ pub struct BootOptions {
     pub extra_routes: Option<Router<Arc<AppState>>>,
     /// Where the figures and games come from.
     pub catalogue: Catalogue,
-    /// The address to bind and put in the QR. `None` puts the first
-    /// non-loopback IPv4 (else loopback) in the QR and listens on every
+    /// The address to bind and build the raw-IP URL from (the QR carries
+    /// `<hostname>.local` instead when the OS hostname reads). `None` uses
+    /// the first non-loopback IPv4 (else loopback) and listens on every
     /// address, so the port lock holds across a route change.
     pub bind_ip: Option<Ipv4Addr>,
 }
