@@ -127,9 +127,8 @@ fn intros(dump: &Path) -> Result<(), guac_extract::ExtractError> {
         extract_dir: extract_dir(),
     })?;
     let mut opened = guac_extract::open(dump, &root, KNOWN_DUMPS, &|_| {})?;
-    let identity = opened.dir.manifest().identity.clone();
     let started = Instant::now();
-    let idx = intros::index(dump, identity, &Default::default())?;
+    let idx = intros::index(&opened.dir, &Default::default())?;
     let out = intros::write(&mut opened.dir, &idx.table, IrFormat::Ron)?;
     let with_intro = idx
         .table

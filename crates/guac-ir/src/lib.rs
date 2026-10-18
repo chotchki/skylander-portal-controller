@@ -213,6 +213,17 @@ mod tests {
                     },
                 ),
                 (
+                    28,
+                    Character {
+                        archives: vec![],
+                        vo_name: None,
+                        intro: Some(Intro {
+                            movie: "spyro".into(),
+                            source: IntroSource::Variant { base: 16 },
+                        }),
+                    },
+                ),
+                (
                     113,
                     Character {
                         archives: vec![CharacterArchive {

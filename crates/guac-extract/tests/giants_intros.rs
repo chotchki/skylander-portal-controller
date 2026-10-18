@@ -9,9 +9,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use guac_extract::intros::{self, IrFormat, slug};
+use guac_extract::intros::{self, IrFormat, MAX_ENTRY_NAME, MAX_VO_STEM, slug};
 use guac_extract::known::KNOWN_DUMPS;
 use guac_extract::{ExtractRoot, open};
+use guac_formats::iga::Archive;
 use guac_ir::{CharacterTable, IntroSource};
 
 fn env_or_dotenv(key: &str) -> Option<String> {
@@ -46,14 +47,13 @@ fn every_giants_intro_maps_to_one_toy_type() {
         .unwrap();
     let root = ExtractRoot::checked(tmp.path().join("extract")).unwrap();
     let mut opened = open(&dump, &root, KNOWN_DUMPS, &|_| {}).expect("the known dump");
-    let identity = opened.dir.manifest().identity.clone();
 
     let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
     let catalogue = guac_server::native_catalogue::load(&data_root).unwrap();
     let names = guac_server::native_catalogue::base_names(&catalogue);
 
     let started = Instant::now();
-    let idx = intros::index(&dump, identity, &names).unwrap();
+    let idx = intros::index(&opened.dir, &names).unwrap();
     let took = started.elapsed().as_secs_f64();
     let chars = &idx.table.characters;
 
@@ -73,7 +73,11 @@ fn every_giants_intro_maps_to_one_toy_type() {
             (&i.movie, format!("{:?}", i.source))
         });
         let cat = names.get(toy).map_or("(none)".to_owned(), |n| {
-            let agrees = slug(n) == movie;
+            let variant = c
+                .intro
+                .as_ref()
+                .is_some_and(|i| matches!(i.source, IntroSource::Variant { .. }));
+            let agrees = variant || slug(n) == movie;
             format!("{n}{}", if agrees { "" } else { " (differs)" })
         });
         println!(
@@ -83,8 +87,18 @@ fn every_giants_intro_maps_to_one_toy_type() {
         );
     }
 
-    let disc = idx.count(IntroSource::Disc);
-    let fallback = idx.count(IntroSource::NameFallback);
+    let disc = idx.count(|s| s == IntroSource::Disc);
+    let fallback = idx.count(|s| s == IntroSource::NameFallback);
+    let variants: BTreeMap<u32, (u32, &str)> = chars
+        .iter()
+        .filter_map(|(t, c)| {
+            let i = c.intro.as_ref()?;
+            match i.source {
+                IntroSource::Variant { base } => Some((*t, (base, i.movie.as_str()))),
+                _ => None,
+            }
+        })
+        .collect();
     let fallback_toys: Vec<u32> = chars
         .iter()
         .filter(|(_, c)| {
@@ -103,7 +117,21 @@ fn every_giants_intro_maps_to_one_toy_type() {
         "split: {disc} by disc, {fallback} by name fallback {fallback_toys:?}; \
          toy types with an archive but no intro {no_intro:?}; {took:.2} s"
     );
+    println!("variants sharing a base's intro (toy: base, movie): {variants:?}");
     println!("unclaimed movies: {:?}", idx.unclaimed_movies);
+
+    // The five the catalogue gives a toy type of their own.
+    assert_eq!(
+        variants,
+        BTreeMap::from([
+            (28, (16, "spyro")),
+            (404, (4, "bash")),
+            (416, (16, "spyro")),
+            (419, (19, "triggerhappy")),
+            (430, (30, "chopchop")),
+        ])
+    );
+    assert!(no_intro.is_empty(), "{no_intro:?}");
 
     assert!(idx.claimed_twice.is_empty(), "{:?}", idx.claimed_twice);
     let intros: Vec<&String> = idx
@@ -142,6 +170,36 @@ fn every_giants_intro_maps_to_one_toy_type() {
         missing.is_empty(),
         "add these to native_catalogue's SUPPLEMENT: {missing:?}"
     );
+
+    // The caps drop nothing real: the longest voice-over entry name and stem.
+    let char_dir = dump.join(intros::CHARACTER_DIR);
+    let (mut longest_name, mut longest_stem, mut vo_entries) = (0, 0, 0usize);
+    for e in std::fs::read_dir(&char_dir).unwrap() {
+        let name = e.unwrap().file_name().into_string().unwrap();
+        if intros::parse_archive_file(&name).is_none() {
+            continue;
+        }
+        let bytes = std::fs::read(char_dir.join(&name)).unwrap();
+        for entry in Archive::parse(&bytes).unwrap().entries() {
+            let n = entry.name();
+            let Some(stem) = n.split(['/', '\\']).find_map(|s| {
+                s.to_ascii_lowercase()
+                    .strip_prefix("vo_")?
+                    .strip_suffix(".wav")
+                    .map(str::len)
+            }) else {
+                continue;
+            };
+            vo_entries += 1;
+            longest_name = longest_name.max(n.len());
+            longest_stem = longest_stem.max(stem);
+        }
+    }
+    println!(
+        "{vo_entries} voice-over entries; longest name {longest_name} bytes (cap {MAX_ENTRY_NAME}), \
+         longest stem {longest_stem} (cap {MAX_VO_STEM})"
+    );
+    assert!(longest_name <= MAX_ENTRY_NAME && longest_stem <= MAX_VO_STEM);
 
     // What guacamole will load: recorded in the manifest, same table back.
     for format in [IrFormat::Ron, IrFormat::Postcard] {

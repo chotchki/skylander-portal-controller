@@ -69,9 +69,10 @@ For each intro the index does this:
 2. Read each archive's entry names with the IGA reader and take the dominant `<vo_name>` from the `…/vo_<vo_name>_…` pattern.
 3. Strip its underscores and match `movies/<name>.mov`.
 4. On a miss, fall back to the name AA's interim catalogue gives the toy type's base figure, lowercased with non-alphanumerics removed (that catalogue is the wiki-derived one AE retires; until then it's what the phone shows).
-5. A toy type with neither has no intro and gets a card only.
+5. A catalogue toy type still without one, whose name is another toy type's archive suffix plus that toy type's name (`dark` + Spyro is Dark Spyro, 28), shares that toy type's intro. It isn't a claim, so the 48 movies still map one to one.
+6. A toy type with none of these has no intro and gets a card only.
 
-The result is IR v1's character table: `toy_type → { archives (each with the variant suffix its name carries), vo_name, intro, source: disc | name_fallback }`. A `#[ignore]`d disc test asserts all 48 intros map to some toy type and records the disc-versus-fallback split. Variant figures resolve through their toy type, which the figure's identity carries regardless of variant.
+The result is IR v1's character table: `toy_type → { archives (each with the variant suffix its name carries), vo_name, intro, source: disc | name_fallback | variant { base } }`. A `#[ignore]`d disc test asserts all 48 intros map to some toy type and records the disc-versus-fallback split. A variant on its base's toy type (Legendary Ignitor is toy 10 with variant bits) resolves through that toy type, which the figure's identity carries regardless of variant; a variant the catalogue gives a toy type of its own resolves by step 5 (on Giants, Dark Spyro and four Legendaries).
 
 That table is the roster's groundwork (design doc, Figures): the toy types Giants has characters for, read off its own disc. The same disc test cross-checks it against AA's interim catalogue and records both differences, toy types with a character archive the catalogue lacks and catalogue toy types with no archive (magic items have none, so they're expected there). AB doesn't change what the phone lists. Mapping each archive suffix to a variant word and finding the names, elements and portraits on the disc is AE's, and AE's roster is what replaces the interim catalogue.
 

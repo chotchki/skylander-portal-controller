@@ -20,7 +20,7 @@ pub struct CharacterTable {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Character {
     /// `character/<stem>.arc` (and its `.bld`), sorted by stem. Empty for a
-    /// toy type whose intro came from the name fallback alone.
+    /// toy type whose intro came from the name fallback or a variant's base.
     pub archives: Vec<CharacterArchive>,
     /// The dominant `vo_<name>_…` name in the archives' entry lists.
     pub vo_name: Option<String>,
@@ -49,4 +49,7 @@ pub enum IntroSource {
     Disc,
     /// The interim catalogue's base name, lowercased to letters and digits.
     NameFallback,
+    /// A variant on a toy type of its own sharing toy type `base`'s intro:
+    /// its catalogue name is a `base` archive's suffix plus the base's name.
+    Variant { base: u32 },
 }
