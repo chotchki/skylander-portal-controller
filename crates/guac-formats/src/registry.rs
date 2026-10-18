@@ -150,7 +150,7 @@ pub fn walk_igz(bytes: &[u8]) -> Result<(), FormatError> {
     Ok(())
 }
 
-/// Parses an IGZ, then runs every AC.4 layout reader and the hero walk on
+/// Parses an IGZ, then runs every AC.4 (and AC.10 material) layout reader and the hero walk on
 /// every object, dropping each result. The property test and the fuzz
 /// targets run it.
 pub fn walk_layouts(bytes: &[u8]) -> Result<(), FormatError> {
@@ -176,6 +176,9 @@ pub fn walk_layouts(bytes: &[u8]) -> Result<(), FormatError> {
         let _ = PhysicsModel::read(&file, i);
         let _ = AnimationInfoList::read(&file, i);
         let _ = AnimationInfo::read(&file, i);
+        let _ = AttrList::read(&file, i);
+        let _ = AlphaTextureUnitIdAttr::read(&file, i);
+        let _ = TextureAttr2::read(&file, i);
         let _ = Hero::read(&file, i);
     }
     Ok(())

@@ -2,15 +2,16 @@
 //! `_tfbBody` -> `tfbPhysicsBody` (Havok skeleton), its `_node` -> `igActor2`
 //! -> scene graph -> `igBlendMatrixSelect` -> techniques -> Edge geometry,
 //! its `_combinerPrototype` -> `igSkeleton2`, and `_animationSet` -> clips.
+//! Each technique's `_materialPass` -> texture binds -> `igTextureAttr2`.
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashSet};
 
 use super::{
-    Actor2, AnimationInfo, AnimationInfoList, BlendMatrixSelect, EdgeGeometry, EdgeGeometryAttr,
-    EdgeGeometrySegment, Group, IntList, Layout, NodeList, PhysicsAnimation, PhysicsBody,
-    PhysicsCombinerLink, PhysicsModel, RuntimeTechniqueInstance, Skeleton2, SkeletonBone,
-    SkeletonBoneList, is_a,
+    Actor2, AlphaTextureUnitIdAttr, AnimationInfo, AnimationInfoList, AttrList, BlendMatrixSelect,
+    EdgeGeometry, EdgeGeometryAttr, EdgeGeometrySegment, Group, IntList, Layout, NodeList,
+    ObjectRef, PhysicsAnimation, PhysicsBody, PhysicsCombinerLink, PhysicsModel,
+    RuntimeTechniqueInstance, Skeleton2, SkeletonBone, SkeletonBoneList, TextureAttr2, is_a,
 };
 use crate::igz::Igz;
 use crate::{ErrorKind, FormatError};
@@ -34,6 +35,8 @@ pub struct Mesh<'a> {
     pub attr: EdgeGeometryAttr,
     /// A key of [`Hero::geometries`].
     pub geometry: usize,
+    /// `_materialPass` when it's an `igAttrList`, a key of [`Hero::materials`].
+    pub material: Option<usize>,
 }
 
 /// One clip-table entry and the clip it wraps.
@@ -65,6 +68,12 @@ pub struct Hero<'a> {
     pub int_lists: BTreeMap<usize, IntList<'a>>,
     pub geometries: BTreeMap<usize, EdgeGeometry<'a>>,
     pub segments: BTreeMap<usize, EdgeGeometrySegment<'a>>,
+    /// Techniques can share a list, and lists a bind.
+    pub materials: BTreeMap<usize, AttrList<'a>>,
+    /// Every texture bind the materials hold.
+    pub texture_binds: BTreeMap<usize, AlphaTextureUnitIdAttr<'a>>,
+    /// The binds' `igTextureAttr2`s.
+    pub textures: BTreeMap<usize, TextureAttr2>,
     /// The clip table: each slot's `AnimationInfo`, a key of [`Hero::clips`].
     pub clip_slots: Vec<Option<usize>>,
     pub clips: BTreeMap<usize, Clip<'a>>,
@@ -126,6 +135,9 @@ impl<'a> Hero<'a> {
             int_lists: BTreeMap::new(),
             geometries: BTreeMap::new(),
             segments: BTreeMap::new(),
+            materials: BTreeMap::new(),
+            texture_binds: BTreeMap::new(),
+            textures: BTreeMap::new(),
             clip_slots: Vec::new(),
             clips: BTreeMap::new(),
         };
@@ -193,6 +205,13 @@ impl<'a> Hero<'a> {
             }
             self.geometries.insert(geometry, g);
         }
+        let material = match technique.material_pass {
+            ObjectRef::Object(m) if is_a(igz.type_name(&igz.objects()[m]), AttrList::TYPE) => {
+                self.material(igz, m)?;
+                Some(m)
+            }
+            _ => None,
+        };
         self.meshes.push(Mesh {
             technique_index,
             technique,
@@ -200,7 +219,33 @@ impl<'a> Hero<'a> {
             attr_index,
             attr,
             geometry,
+            material,
         });
+        Ok(())
+    }
+
+    /// Reads a material list once, and its texture binds; attributes of
+    /// other types stay unread. A bind other than `tfbAlphaTextureUnitIDAttr`
+    /// (none on the disc) is refused.
+    fn material(&mut self, igz: &Igz<'a>, list: usize) -> Result<(), FormatError> {
+        let Entry::Vacant(slot) = self.materials.entry(list) else {
+            return Ok(());
+        };
+        let attrs = slot.insert(AttrList::read(igz, list)?);
+        for &a in attrs.attrs.iter().flatten() {
+            if !is_a(igz.type_name(&igz.objects()[a]), "igTextureBindAttr2")
+                || self.texture_binds.contains_key(&a)
+            {
+                continue;
+            }
+            let bind = AlphaTextureUnitIdAttr::read(igz, a)?;
+            if let Some(t) = bind.bind.texture
+                && let Entry::Vacant(slot) = self.textures.entry(t)
+            {
+                slot.insert(TextureAttr2::read(igz, t)?);
+            }
+            self.texture_binds.insert(a, bind);
+        }
         Ok(())
     }
 
@@ -222,6 +267,19 @@ impl<'a> Hero<'a> {
             self.clips.insert(info_index, Clip { info, animation });
         }
         Ok(())
+    }
+
+    /// The texture a mesh binds at `unit` (0 is colour), with its index.
+    /// `None` when nothing binds there; the first bind wins.
+    pub fn texture_at(&self, mesh: &Mesh<'a>, unit: i16) -> Option<(usize, &TextureAttr2)> {
+        let list = self.materials.get(&mesh.material?)?;
+        list.attrs
+            .iter()
+            .flatten()
+            .filter_map(|a| self.texture_binds.get(a))
+            .find(|b| b.bind.unit() == unit)
+            .and_then(|b| b.bind.texture)
+            .and_then(|t| self.textures.get(&t).map(|attr| (t, attr)))
     }
 
     /// Every segment the meshes draw, in mesh then segment order.
