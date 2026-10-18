@@ -3,8 +3,9 @@
 //! of folders holding dumps up to two levels down (RPCS3's `game_discs`
 //! works), from the environment or the workspace's `.env.dev`. Reports go into
 //! `GUAC_EXTRACT_DIR`, ffprobe is `GUAC_FFPROBE` else PATH. Fails on a file
-//! neither flagged nor allowed, a high-entropy unknown, an unprobed Bink, and
-//! on Giants an archive or entry that didn't read:
+//! neither flagged nor allowed, a high-entropy unknown file or IGA entry, an
+//! unprobed Bink, and on Giants any unknown entry or an archive or entry that
+//! didn't read:
 //!
 //! `cargo test -p guac-extract --release --test census_dumps -- --ignored --nocapture`
 
@@ -144,12 +145,21 @@ fn every_file_of_every_dump_is_flagged_or_allowed() {
         for path in &s.high_entropy_unknown_files {
             failures.push(format!("{tag}: {path} is high-entropy with no known magic"));
         }
+        for name in &s.high_entropy_unknown_entries {
+            failures.push(format!("{tag}: {name} is high-entropy with no known magic"));
+        }
         for (path, why) in &s.bink_unprobed {
             failures.push(format!("{tag}: {path} not probed: {why}"));
         }
         if c.title_id == "BLUS30968" {
             for (path, why) in &s.iga_unread {
                 failures.push(format!("{tag}: {path} unread: {why}"));
+            }
+            if s.unknown_entries > 0 {
+                failures.push(format!(
+                    "{tag}: {} IGA entries neither flagged nor allowed",
+                    s.unknown_entries
+                ));
             }
             if s.entry_errors > 0 {
                 failures.push(format!("{tag}: {} entries didn't read", s.entry_errors));

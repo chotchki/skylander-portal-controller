@@ -5,7 +5,7 @@
 AA leaves guacamole as a Bevy app that embeds the server, finds the Giants dump through its own setup (the folders the user chose, each dump identified by its PARAM.SFO) and receives `Placed { slot, placement }` from the native driver, carrying the figure's identity (toy type + variant) from the phone's pick. AB adds the first disc reader behind it. Facts measured on chotchki's Giants dump (BLUS30968, APP_VER 01.00; no title update on the Mac, and none on the HTPC by chotchki's account):
 
 - `PS3_GAME/USRDIR` holds `character/`, `level/`, `item/`, `misc/`, `movies/`, `outfit/` and `permanent/`. `character/` has 227 files: 68 `.arc`/`.bld` pairs named `NNN_codename[_variant]` by decimal toy type, the card-game archives (`cardgame_streaming` plus 82 `cardgame_deck_NNN.bld`) and 7 other `.bld` bundles (lock puzzles, a stats screen, setup). Suffixes include `_legendary`, `_alt`, `_dark` and `_red`.
-- `movies/` holds 61 Bink 1 (`BIKi`) files at 1280×720: 48 named by character, `fmv01`-`fmv12` without `fmv05` and two logos. Ten of the 61 carry 13 audio tracks (per-language voice), fmv01-fmv11 without fmv05; the rest, every intro among them, carry one (AB.5's census).
+- `movies/` holds 61 Bink 1 (`BIKi`) files at 1280×720: 48 named by character, `fmv01`-`fmv12` without `fmv05` and two logos. Ten of the 61 carry 13 audio tracks, fmv01-fmv11 without fmv05: 12 mono (presumably per-language voice) plus one stereo id-0x0 track (unverified: likely the shared music and effects bed); the rest, every intro among them, carry one (AB.5's census).
 - IGA v0x08 (format notes in `docs/native/guacamole-design.md`, cross-checked against [igArchiveLib](https://github.com/LG-RZ/igArchiveLib) and [igArchiveExtractor](https://github.com/NefariousTechSupport/igArchiveExtractor)) is laid out like this:
   - a 0x34-byte little-endian header carrying the TOC size, file count, sector size and the name-table offset and size;
   - a TOC of name hashes then 12-byte file records `{offset, size, blockWord}`, then the block tables;
@@ -94,7 +94,7 @@ The lean is openh264: it's the only candidate that meets (a) and (e) without ven
 **8. The transcode.**
 - ffmpeg discovery order: the path in guacamole's settings (its own database; `GUAC_FFMPEG` in `.env.dev`), then beside the guacamole executable, then PATH.
 - One invocation per intro: `-map 0:v:0` plus the chosen voice track, no scaling, the source frame rate and `-progress pipe:1` parsed into progress events.
-- Track choice: a file with one audio track uses it. For the multi-track files, AB.5's census records which intros (if any) are multi-track, and the English track's index becomes data in the IR rather than a constant in code. The track language order isn't known yet and the files may not tag it.
+- Track choice: a file with one audio track uses it. For the multi-track files, AB.5's census records which intros (if any) are multi-track, and the English track's index becomes data in the IR rather than a constant in code. The track language order isn't known yet and the files may not tag it. A multi-track file may need its stereo 0x0 bed mixed with the chosen voice track rather than one track picked alone.
 - The ffmpeg command-line builder is a pure function, unit-tested; the process run is the only untested-in-CI part, covered by an `#[ignore]`d disc test and the e2e run.
 
 **9. guacamole integration.**

@@ -5,7 +5,7 @@
 use std::fs;
 use std::path::Path;
 
-use guac_extract::census::{Class, HIGH_ENTROPY, census};
+use guac_extract::census::{Class, HIGH_ENTROPY, MAX_WHOLE_ARCHIVE, census};
 use guac_extract::magic::GAME_MAGICS;
 use guac_extract::{ExtractError, ExtractRoot};
 use guac_formats::iga::builder::IgaBuilder;
@@ -156,6 +156,71 @@ fn a_root_inside_the_dump_is_refused() {
         Err(ExtractError::OverlapsDump { .. })
     ));
     assert!(!dump.join("out").exists());
+}
+
+#[test]
+fn an_unsafe_title_names_the_report_unsafe_inside_the_root() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dump = tmp.path().join("dump");
+    put(
+        &dump,
+        "PS3_GAME/PARAM.SFO",
+        &SfoBuilder::disc_game("x/../../y", "01.00", "01.00").build(),
+    );
+    let root = ExtractRoot::checked(tmp.path().join("extract")).unwrap();
+    fs::create_dir_all(root.path().join("census-x")).unwrap();
+    let (c, report) = census(&dump, &root, None).unwrap();
+    assert_eq!(report.parent().unwrap(), root.path());
+    let name = report.file_name().unwrap().to_str().unwrap();
+    assert!(name.starts_with("census-unsafe-01.00-"), "{name}");
+    assert_eq!(c.title_id, "x/../../y");
+    assert!(Path::new(&c.dump_dir).is_absolute());
+}
+
+#[test]
+fn a_root_that_became_a_checkout_is_refused_at_use() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dump = tmp.path().join("dump");
+    put(
+        &dump,
+        "PS3_GAME/PARAM.SFO",
+        &SfoBuilder::disc_game("BLUS30968", "01.00", "01.00").build(),
+    );
+    let root = ExtractRoot::checked(tmp.path().join("extract")).unwrap();
+    fs::create_dir(tmp.path().join(".git")).unwrap();
+    assert!(matches!(
+        census(&dump, &root, None),
+        Err(ExtractError::InCheckout { .. })
+    ));
+    assert!(!root.path().exists());
+}
+
+#[test]
+fn an_archive_over_the_whole_read_cap_is_unread() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dump = tmp.path().join("dump");
+    put(
+        &dump,
+        "PS3_GAME/PARAM.SFO",
+        &SfoBuilder::disc_game("BLUS30968", "01.00", "01.00").build(),
+    );
+    put(
+        &dump,
+        "PS3_GAME/USRDIR/huge.arc",
+        &starting_with(b"IGA\x1a\x08\0\0\0"),
+    );
+    // Sparse on APFS and ext4: nothing past the head is written.
+    fs::OpenOptions::new()
+        .write(true)
+        .open(dump.join("PS3_GAME/USRDIR/huge.arc"))
+        .unwrap()
+        .set_len(MAX_WHOLE_ARCHIVE + 1)
+        .unwrap();
+    let root = ExtractRoot::checked(tmp.path().join("extract")).unwrap();
+    let (c, _) = census(&dump, &root, None).unwrap();
+    let unread = &c.summary.iga_unread;
+    assert_eq!(unread.len(), 1);
+    assert!(unread[0].1.contains("whole-read cap"), "{unread:?}");
 }
 
 fn walk(dir: &Path) -> Vec<(String, Vec<u8>)> {

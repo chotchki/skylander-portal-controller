@@ -18,14 +18,17 @@ use serde::Serialize;
 
 use crate::dump::read_sfo;
 use crate::error::{ExtractError, Result};
+use crate::known::path_safe;
 use crate::magic::{Entropy, Sniff, sniff};
-use crate::root::{ExtractRoot, check_disjoint};
+use crate::root::{ExtractRoot, check_disjoint, enclosing_git_tree};
 
 /// How much of a file or entry the sniff sees.
 const HEAD: usize = 4096;
 /// At or above this, an unknown file reads as compressed or encrypted.
 pub const HIGH_ENTROPY: f64 = 7.9;
 const READ_BUF: usize = 1 << 20;
+/// A v0x08 IGA is read whole only up to this; a bigger one is recorded unread.
+pub const MAX_WHOLE_ARCHIVE: u64 = 1 << 30;
 const BINK: [&str; 2] = ["Bink 1 video", "Bink 2 video"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -184,6 +187,13 @@ pub fn census(
     root: &ExtractRoot,
     ffprobe: Option<&Path>,
 ) -> Result<(Census, PathBuf)> {
+    // Again at use, as `open` does: the root may have been resolved long before.
+    if let Some(repo) = enclosing_git_tree(root.path()) {
+        return Err(ExtractError::InCheckout {
+            root: root.path().to_path_buf(),
+            repo,
+        });
+    }
     check_disjoint(root, dump)?;
     let census = run(dump, ffprobe)?;
     let path = write(&census, root)?;
@@ -192,12 +202,19 @@ pub fn census(
 
 /// The census without writing it.
 pub fn run(dump: &Path, ffprobe: Option<&Path>) -> Result<Census> {
+    // Absolute, so ffprobe never reads a path as a URL scheme or an option.
+    let dump = &dump
+        .canonicalize()
+        .map_err(|e| ExtractError::unreadable(dump, e))?;
     let (title_id, app_ver) = read_sfo(dump)?;
     let version = ffprobe.and_then(ffprobe_version);
     let ffprobe = ffprobe.filter(|_| version.is_some());
     let listed = list(dump)?;
 
     let next = AtomicUsize::new(0);
+    // One whole archive in memory at a time, in one reused buffer: a fresh
+    // buffer per archive left macOS's footprint at the sum of the largest few.
+    let whole = Mutex::new(Vec::new());
     let results = Mutex::new(Vec::with_capacity(listed.len()));
     let threads = std::thread::available_parallelism()
         .map_or(1, usize::from)
@@ -211,7 +228,7 @@ pub fn run(dump: &Path, ffprobe: Option<&Path>) -> Result<Census> {
                     let Some((rel, abs)) = listed.get(i) else {
                         break;
                     };
-                    let r = file_census(rel, abs, ffprobe);
+                    let r = file_census(rel, abs, ffprobe, &whole);
                     let failed = r.is_err();
                     results.lock().unwrap().push((i, r));
                     if failed {
@@ -351,7 +368,12 @@ fn file_entropy(path: &Path) -> Result<f64> {
     }
 }
 
-fn file_census(rel: &str, abs: &Path, ffprobe: Option<&Path>) -> Result<CensusFile> {
+fn file_census(
+    rel: &str,
+    abs: &Path,
+    ffprobe: Option<&Path>,
+    whole: &Mutex<Vec<u8>>,
+) -> Result<CensusFile> {
     let (head, size) = read_head(abs)?;
     let s = sniff(&head, rel);
     let what = s.what();
@@ -361,9 +383,21 @@ fn file_census(rel: &str, abs: &Path, ffprobe: Option<&Path>) -> Result<CensusFi
     };
     let readable =
         head.starts_with(iga::MAGIC) && head.get(4..8) == Some(&iga::VERSION.to_le_bytes());
-    let iga = if readable {
-        let bytes = fs::read(abs).map_err(|e| ExtractError::unreadable(abs, e))?;
-        Some(iga_census(&bytes))
+    let iga = if readable && size > MAX_WHOLE_ARCHIVE {
+        Some(IgaCensus {
+            unread: Some(format!(
+                "{size} bytes, over the census's {MAX_WHOLE_ARCHIVE}-byte whole-read cap"
+            )),
+            ..IgaCensus::default()
+        })
+    } else if readable {
+        let mut buf = whole.lock().unwrap_or_else(|p| p.into_inner());
+        buf.clear();
+        buf.reserve_exact(size as usize);
+        File::open(abs)
+            .and_then(|f| f.take(size).read_to_end(&mut buf))
+            .map_err(|e| ExtractError::unreadable(abs, e))?;
+        Some(iga_census(&buf))
     } else if head.starts_with(iga::MAGIC) || head.starts_with(iga::MAGIC_BIG_ENDIAN) {
         // Another version or byte order: the reader refuses it from the header.
         Some(iga_census(&head))
@@ -501,14 +535,26 @@ pub fn parse_ffprobe(json: &[u8]) -> Result<BinkProbe, String> {
 }
 
 /// `census-<TITLE_ID>-<APP_VER>-<UTC stamp>[-N].json` in the root, written
-/// to `.partial` and renamed.
+/// to `.partial` and renamed. A title or version unfit for a file name is
+/// named `unsafe` there; the JSON keeps the real one.
 fn write(census: &Census, root: &ExtractRoot) -> Result<PathBuf> {
     let dir = root.path();
     fs::create_dir_all(dir).map_err(ExtractError::io(dir))?;
     let mut text = serde_json::to_string_pretty(census).expect("the census serializes");
     text.push('\n');
     let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
-    let base = format!("census-{}-{}-{stamp}", census.title_id, census.app_ver);
+    let safe = |s: &str| {
+        if path_safe(s) {
+            s.to_owned()
+        } else {
+            "unsafe".to_owned()
+        }
+    };
+    let base = format!(
+        "census-{}-{}-{stamp}",
+        safe(&census.title_id),
+        safe(&census.app_ver)
+    );
     let path = (0u32..)
         .map(|n| match n {
             0 => dir.join(format!("{base}.json")),
