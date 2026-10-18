@@ -203,6 +203,10 @@ calls a fix or G1 removes them with the `.sky` code.
   below.
 - [`tests/guacamole_tv.rs`](tests/guacamole_tv.rs) — guacamole's TV
   cards and setup, run only under `E2E_APP=guacamole` (see above).
+- [`tests/guacamole_intro.rs`](tests/guacamole_intro.rs) — guacamole's
+  character intros on a synthetic extract (`IntroFixture` in
+  [`src/lib.rs`](src/lib.rs), needs ffmpeg), run only under
+  `E2E_APP=guacamole` (see above).
 
 ## Screenshot tour as visual-regression contract
 
