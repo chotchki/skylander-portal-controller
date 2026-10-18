@@ -106,6 +106,20 @@ shows through `/api/_test/tv`, a JSON mirror of the laid-out Bevy UI
 tree (screen, join line, player count, each card's lines, portrait,
 owner pip and rect), not pixels.
 
+[`tests/guacamole_intro.rs`](tests/guacamole_intro.rs) (3 tests,
+openspec AB.11) is guacamole-only too and needs ffmpeg (`brew install
+ffmpeg`; found on PATH or in Homebrew's folders). Each test builds an
+`IntroFixture` first: a synthetic Giants dump (a PARAM.SFO and a text
+file) and a finished extract of it whose intros are ffmpeg's `testsrc`
+picture over a `sine` tone, encoded at run time to guacamole's own
+target, so no game bytes are involved anywhere. guacamole gets the
+extract as `GUAC_EXTRACT_DIR` and trusts the dump through
+`GUAC_TEST_KNOWN_DUMP` (title id, version, manifest hash; read only by a
+`test-hooks` build), finds the extract current and runs no ffmpeg
+itself. The tests read `intro` and `intro_queue` off `/api/_test/tv` and
+skip through `/api/_test/tv/skip`. Every guacamole the harness spawns
+plays its intros muted (`GUAC_MUTE=1`).
+
 Product-only tests skip with `SKIPPED under E2E_APP=guacamole,
 product-only: <why>` instead of failing:
 
@@ -131,9 +145,10 @@ product-only: <why>` instead of failing:
   `docs/assets/screens/`).
 
 Every other mock-harness test runs against both apps. On the Mac
-(2026-10-18, serial, `--skip ios_`): guacamole 48 of 48 ok, 35 run for
-real (13 TV + 22 shared) and 13 product-only skips; the product 32 of
-35. Its 3 failures already failed at the pre-AA base (46866ce):
+(2026-10-18, serial, `--skip ios_`, AB.11): guacamole 51 of 51 ok, 38
+run for real (13 TV + 3 intro + 22 shared) and 13 product-only skips;
+the product 32 of 35 run for real (plus 16 guacamole-only skips). Its 3
+failures already failed at the pre-AA base (46866ce):
 `edit_level_and_gold_round_trips_through_stats_strip`,
 `gold_chevrons_jump_to_bounds_and_max_round_trips` and
 `resume_prompt_offers_prior_layout`. All three are product-only `.sky`

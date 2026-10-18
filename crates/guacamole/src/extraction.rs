@@ -31,6 +31,9 @@ pub struct ExtractJob {
     /// The interim catalogue's folder: the intro index's name fallback.
     pub data_root: PathBuf,
     pub ir: IrFormat,
+    /// `test-hooks` only: the e2e harness's synthetic dump, trusted beside
+    /// [`KNOWN_DUMPS`] (`GUAC_TEST_KNOWN_DUMP`).
+    pub test_known: Option<KnownDump>,
 }
 
 impl ExtractJob {
@@ -54,8 +57,35 @@ impl ExtractJob {
             ffmpeg,
             data_root: catalogue,
             ir,
+            test_known: None,
         }
     }
+
+    /// What [`spawn`] checks the dump against.
+    fn known(&self) -> Vec<KnownDump> {
+        KNOWN_DUMPS.iter().copied().chain(self.test_known).collect()
+    }
+}
+
+/// `GUAC_TEST_KNOWN_DUMP`'s value, `<TITLE_ID> <APP_VER> <manifest hash hex>`.
+/// The strings are leaked: one per run, and `KnownDump` holds `&'static str`.
+pub fn parse_test_known(value: &str) -> Result<KnownDump, String> {
+    let parts: Vec<&str> = value.split_whitespace().collect();
+    let [title_id, app_ver, hash] = parts[..] else {
+        return Err(format!("expected `TITLE_ID APP_VER HASH`, got {value:?}"));
+    };
+    let hash = hash.to_ascii_lowercase();
+    let plain = |s: &str| s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.');
+    if !plain(title_id) || !plain(app_ver) || guac_ir::Sha256::from_hex(&hash).is_none() {
+        return Err(format!("not a title id, version and SHA-256: {value:?}"));
+    }
+    let leak = |s: &str| -> &'static str { Box::leak(s.to_owned().into_boxed_str()) };
+    Ok(KnownDump {
+        title_id: leak(title_id),
+        app_ver: leak(app_ver),
+        manifest_hash: leak(&hash),
+        source: "the e2e harness's synthetic dump (GUAC_TEST_KNOWN_DUMP)",
+    })
 }
 
 /// Where the extraction stands.
@@ -463,9 +493,10 @@ fn fallback_names(data_root: &Path) -> BTreeMap<u32, String> {
 /// Runs [`run`] on its own thread; events, then one `Finished`, come back.
 pub fn spawn(dump: PathBuf, job: ExtractJob) -> Receiver<ExtractEvent> {
     let (tx, rx) = crossbeam_channel::unbounded();
+    let known = job.known();
     let thread = std::thread::Builder::new()
         .name("extract".into())
-        .spawn(move || finish(&tx, run(&dump, &job, KNOWN_DUMPS, &|e| send(&tx, e))));
+        .spawn(move || finish(&tx, run(&dump, &job, &known, &|e| send(&tx, e))));
     if let Err(e) = thread {
         let (tx, rx) = crossbeam_channel::bounded(1);
         let message = format!("couldn't start the extraction thread: {e}");
@@ -949,6 +980,33 @@ mod tests {
             assert_eq!(left, ok.then_some(&library));
         }
     }
+
+    #[test]
+    fn the_test_known_dump_parses_and_joins_the_table() {
+        let hash = "ab".repeat(32);
+        let k = parse_test_known(&format!(" BLUS30968  01.00 {} ", hash.to_uppercase())).unwrap();
+        assert_eq!(
+            (k.title_id, k.app_ver, k.manifest_hash),
+            ("BLUS30968", "01.00", hash.as_str())
+        );
+        for bad in [
+            String::new(),
+            "BLUS30968 01.00".into(),
+            "BLUS30968 01.00 zz".into(),
+            format!("BLUS/30968 01.00 {hash}"),
+            format!("BLUS30968 01.00 {hash} extra"),
+        ] {
+            assert!(parse_test_known(&bad).is_err(), "{bad:?}");
+        }
+        let job = ExtractJob::new(Path::new("/r"), None, None, "/d".into());
+        assert_eq!(job.known(), KNOWN_DUMPS);
+        let job = ExtractJob {
+            test_known: Some(k),
+            ..job
+        };
+        assert_eq!(job.known().len(), KNOWN_DUMPS.len() + 1);
+        assert_eq!(job.known().last(), Some(&k));
+    }
 }
 
 /// [`run`] on synthetic dumps against a fake ffmpeg (a shell script), so
@@ -1050,6 +1108,7 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
             ffmpeg,
             data_root: catalogue(tmp),
             ir: IrFormat::Ron,
+            test_known: None,
         }
     }
 
@@ -1193,5 +1252,20 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
         let (result, seen) = run_all(&dump, &unset, KNOWN_DUMPS);
         assert_eq!(result.unwrap_err().code(), "GUAC-E-NO-EXTRACT-DIR");
         assert!(seen.is_empty());
+    }
+
+    #[test]
+    fn a_synthetic_dump_is_known_only_through_test_known() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dump = make_dump(tmp.path());
+        let ffmpeg = fake_ffmpeg(&tmp.path().join("bin"));
+        let mut job = job(tmp.path(), &tmp.path().join("extract"), Some(ffmpeg));
+        let (result, _) = run_all(&dump, &job, &job.known());
+        assert_eq!(result.unwrap_err().code(), "GUAC-E-UNKNOWN-DUMP");
+        let k = known_for(&dump)[0];
+        let line = format!("{} {} {}", k.title_id, k.app_ver, k.manifest_hash);
+        job.test_known = Some(parse_test_known(&line).unwrap());
+        let (result, _) = run_all(&dump, &job, &job.known());
+        assert_eq!(result.unwrap().library.intros(), 2);
     }
 }

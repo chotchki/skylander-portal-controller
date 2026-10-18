@@ -31,6 +31,7 @@ use bevy::log::LogPlugin;
 use bevy::prelude::{App, AppExit, DefaultPlugins, PluginGroup, Window, WindowPlugin, default};
 use bevy::window::{MonitorSelection, WindowMode as BevyWindowMode};
 use crossbeam_channel::{Receiver, Sender};
+use guac_extract::known::KnownDump;
 use guac_server::boot::{BootOptions, BuiltDriver, Catalogue, ServerHandles, boot};
 use guac_server::config::{DriverKind, WindowMode};
 use guac_server::hooks::Hooks;
@@ -120,12 +121,15 @@ fn main() -> Result<()> {
         "starting guacamole",
     );
     let setup_view = SetupView::at_start(picked, needs_setup, &loaded.dump_dirs, &scan);
-    let job = ExtractJob::new(
-        &root,
-        loaded.extract_dir.clone(),
-        loaded.ffmpeg.clone(),
-        cfg.data_root.clone(),
-    );
+    let job = ExtractJob {
+        test_known: test_known_dump(),
+        ..ExtractJob::new(
+            &root,
+            loaded.extract_dir.clone(),
+            loaded.ffmpeg.clone(),
+            cfg.data_root.clone(),
+        )
+    };
 
     let link = match boot(BootOptions {
         config: cfg.clone(),
@@ -160,6 +164,25 @@ fn main() -> Result<()> {
         mirror,
         log_guard,
     )
+}
+
+/// `.env.dev`'s `GUAC_TEST_KNOWN_DUMP`, `test-hooks` builds only: the e2e
+/// harness's synthetic dump, trusted beside the known-dump table.
+fn test_known_dump() -> Option<KnownDump> {
+    if !cfg!(feature = "test-hooks") {
+        return None;
+    }
+    let value = setup::env().remove("GUAC_TEST_KNOWN_DUMP")?;
+    match extraction::parse_test_known(&value) {
+        Ok(known) => {
+            warn!(?known, "trusting the e2e harness's synthetic dump");
+            Some(known)
+        }
+        Err(e) => {
+            tracing::error!("GUAC_TEST_KNOWN_DUMP: {e}");
+            None
+        }
+    }
 }
 
 /// `/api/_test/tv` for the e2e harness; nothing outside `test-hooks`.

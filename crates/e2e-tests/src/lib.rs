@@ -118,9 +118,6 @@ impl TestServer {
     /// built in code (AA never reads anything else on a dump). Its window
     /// opens desktop-sized unless `extra_env` says otherwise.
     pub fn spawn_guacamole(title_ids: &[&str], extra_env: &str) -> Result<Self> {
-        let repo = repo_root()?;
-        let phone_dist = built_phone_dist(&repo)?;
-
         let tmp = tempfile::tempdir().context("create temp dir")?;
         let dumps = tmp.path().join("dumps");
         for title_id in title_ids {
@@ -131,6 +128,24 @@ impl TestServer {
             std::fs::write(game.join("PARAM.SFO"), sfo)?;
         }
         std::fs::create_dir_all(&dumps)?;
+        Self::spawn_guacamole_over(tmp, &dumps, extra_env)
+    }
+
+    /// guacamole over `fixture`'s Giants dump and finished extract, the dump
+    /// trusted through `GUAC_TEST_KNOWN_DUMP` (openspec AB.11).
+    pub fn spawn_guacamole_with_intros(fixture: &IntroFixture) -> Result<Self> {
+        let tmp = tempfile::tempdir().context("create temp dir")?;
+        let env = format!(
+            "GUAC_EXTRACT_DIR={}\nGUAC_TEST_KNOWN_DUMP={}\n",
+            fixture.extract.display(),
+            fixture.known
+        );
+        Self::spawn_guacamole_over(tmp, &fixture.dumps, &env)
+    }
+
+    fn spawn_guacamole_over(tmp: TempDir, dumps: &Path, extra_env: &str) -> Result<Self> {
+        let repo = repo_root()?;
+        let phone_dist = built_phone_dist(&repo)?;
         let port = pick_free_port()?;
         // DATA_ROOT: the interim catalogue reads figures.json and the portraits.
         let mut env = format!(
@@ -164,6 +179,8 @@ impl TestServer {
             // trunk build`. Documented in
             // `crates/e2e-tests/README.md`.
             .env("BUILD_TOKEN", "e2e-test")
+            // guacamole's intros play muted: nobody listens to an e2e run.
+            .env("GUAC_MUTE", "1")
             .args([
                 "run",
                 "--manifest-path",
@@ -1269,6 +1286,141 @@ pub async fn fire_takeover(
             resp.status(),
             resp.text().await?
         );
+    }
+    Ok(())
+}
+
+/// One intro in an [`IntroFixture`]: the toy type that plays it, its movie
+/// name and its length.
+#[derive(Debug, Clone, Copy)]
+pub struct FixtureIntro {
+    pub toy_type: u32,
+    pub movie: &'static str,
+    pub seconds: u32,
+}
+
+/// A synthetic Giants dump and a finished extract of it, for guacamole's
+/// intro tests (openspec AB.11). No game bytes: the dump is a PARAM.SFO and a
+/// text file, and each intro is ffmpeg's `testsrc` picture over a `sine` tone,
+/// encoded at run time to guacamole's own target. guacamole trusts the dump
+/// through `GUAC_TEST_KNOWN_DUMP` ([`TestServer::spawn_guacamole_with_intros`])
+/// and finds the extract current, so it runs no ffmpeg itself.
+pub struct IntroFixture {
+    _dir: TempDir,
+    /// What `GUAC_DUMP_DIRS` names: holds `BLUS30968/PS3_GAME`.
+    pub dumps: PathBuf,
+    /// `GUAC_EXTRACT_DIR`.
+    pub extract: PathBuf,
+    /// `GUAC_TEST_KNOWN_DUMP`'s value: title id, version, manifest hash.
+    pub known: String,
+}
+
+impl IntroFixture {
+    pub fn build(intros: &[FixtureIntro]) -> Result<Self> {
+        use guac_extract::intros::{self, IrFormat};
+        use guac_extract::known::KnownDump;
+        use guac_extract::transcode::TARGET;
+        use guac_ir::{Character, CharacterTable, Intro, IntroSource, VoiceTrack};
+
+        let dir = tempfile::tempdir().context("create fixture dir")?;
+        let dumps = dir.path().join("dumps");
+        let game = dumps.join(GIANTS_SERIAL);
+        let usrdir = game.join("PS3_GAME").join("USRDIR");
+        std::fs::create_dir_all(&usrdir)?;
+        let sfo =
+            guac_formats::sfo::builder::SfoBuilder::disc_game(GIANTS_SERIAL, "01.00", "01.00")
+                .build();
+        std::fs::write(game.join("PS3_GAME").join("PARAM.SFO"), sfo)?;
+        std::fs::write(usrdir.join("e2e-fixture.txt"), "guacamole e2e fixture\n")?;
+
+        let scan = guac_extract::dump::scan(&game, &Default::default(), &|_| {})?;
+        let hash = scan.identity.manifest_hash.to_string();
+        let known = KnownDump {
+            title_id: GIANTS_SERIAL,
+            app_ver: "01.00",
+            manifest_hash: Box::leak(hash.clone().into_boxed_str()),
+            source: "e2e fixture",
+        };
+        let extract = dir.path().join("extract");
+        let root = guac_extract::ExtractRoot::checked(&extract)?;
+        let mut opened = guac_extract::open(&game, &root, &[known], &|_| {})?;
+
+        let characters = intros
+            .iter()
+            .map(|i| {
+                let intro = Intro {
+                    movie: i.movie.into(),
+                    source: IntroSource::NameFallback,
+                    voice: VoiceTrack::Only,
+                };
+                let character = Character {
+                    archives: Vec::new(),
+                    vo_name: None,
+                    intro: Some(intro),
+                };
+                (i.toy_type, character)
+            })
+            .collect();
+        let table = CharacterTable {
+            identity: opened.dir.manifest().identity.clone(),
+            characters,
+        };
+        // A test-hooks build is a dev build, which reads RON.
+        intros::write(&mut opened.dir, &table, IrFormat::Ron)?;
+
+        let ffmpeg = guac_extract::ffmpeg::Ffmpeg::locate(None)
+            .context("the intro fixture encodes with ffmpeg (`brew install ffmpeg`)")?;
+        for i in intros {
+            let (video, audio) = TARGET.outputs(i.movie);
+            let s = i.seconds;
+            let jobs = [
+                (
+                    video,
+                    format!("testsrc=size=640x360:rate=30:duration={s}"),
+                    TARGET.video_args,
+                ),
+                (
+                    audio,
+                    format!("sine=frequency=440:sample_rate=48000:duration={s}"),
+                    TARGET.audio_args,
+                ),
+            ];
+            for (rel, source, args) in jobs {
+                let partial = opened.dir.partial_path(&rel)?;
+                let out = Command::new(&ffmpeg.path)
+                    .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-y"])
+                    .args(["-f", "lavfi", "-i", &source])
+                    .args(args)
+                    .arg(format!("file:{}", partial.display()))
+                    .output()
+                    .context("run ffmpeg")?;
+                if !out.status.success() {
+                    bail!(
+                        "ffmpeg made no {rel}: {}",
+                        String::from_utf8_lossy(&out.stderr).trim()
+                    );
+                }
+                opened.dir.commit(&rel)?;
+            }
+        }
+        opened.dir.mark_complete()?;
+        Ok(Self {
+            _dir: dir,
+            dumps,
+            extract,
+            known: format!("{GIANTS_SERIAL} 01.00 {hash}"),
+        })
+    }
+}
+
+/// Skips the intro the TV is playing, as a key would (`/api/_test/tv/skip`).
+pub async fn skip_intro(base: &str) -> Result<()> {
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/api/_test/tv/skip"))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        bail!("/api/_test/tv/skip returned {}", resp.status());
     }
     Ok(())
 }

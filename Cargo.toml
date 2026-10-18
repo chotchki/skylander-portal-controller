@@ -52,3 +52,12 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 sha2 = "0.10"
 walkdir = "2"
+
+# Intros decode on a thread of their own. At opt-level 0 OpenH264 (C, which cc
+# builds at the profile's level) and its YUV to RGBA kept a debug guacamole
+# near 7 fps on a 640x360 clip (AB.11's e2e); optimized, they keep pace.
+[profile.dev.package.openh264]
+opt-level = 3
+
+[profile.dev.package.openh264-sys2]
+opt-level = 3
