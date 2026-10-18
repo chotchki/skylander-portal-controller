@@ -243,6 +243,53 @@ fn read_refuses_fields_at_their_file_offsets() {
     // Field offsets are the object's plus the field's.
     assert_eq!(base.offset - e.offset, 4);
 
+    // Scale, bias and padding: the first non-identity component, at its word.
+    let scale = read_lone(&lone(0, &spec.data(), |b, at| {
+        b.put_bytes(at.offset_by(0x18).unwrap(), &0.5f32.to_be_bytes())
+    }))
+    .unwrap_err();
+    assert_eq!(
+        (scale.field, scale.kind),
+        (
+            "_colorScale",
+            ErrorKind::Unsupported {
+                value: 0.5f32.to_bits().into()
+            }
+        )
+    );
+    assert_eq!(base.offset - scale.offset, 0x38 - 0x18);
+    let bias = read_lone(&lone(0, &spec.data(), |b, at| {
+        b.put_bytes(at.offset_by(0x20).unwrap(), &1f32.to_be_bytes())
+    }))
+    .unwrap_err();
+    assert_eq!(
+        (bias.field, bias.kind),
+        (
+            "_colorBias",
+            ErrorKind::Unsupported {
+                value: 1f32.to_bits().into()
+            }
+        )
+    );
+    assert_eq!(base.offset - bias.offset, 0x38 - 0x20);
+    let nan = read_lone(&lone(0, &spec.data(), |b, at| {
+        b.put_bytes(at.offset_by(0x2C).unwrap(), &f32::NAN.to_be_bytes())
+    }));
+    assert_eq!(nan.unwrap_err().field, "_colorBias");
+    let negative_zero = lone(0, &spec.data(), |b, at| {
+        b.put_bytes(at.offset_by(0x24).unwrap(), &(-0f32).to_be_bytes())
+    });
+    assert!(read_lone(&negative_zero).is_ok());
+    let padding = read_lone(&lone(0, &spec.data(), |b, at| {
+        b.put_bytes(at.offset_by(0x44).unwrap(), &4u16.to_be_bytes())
+    }))
+    .unwrap_err();
+    assert_eq!(
+        (padding.field, padding.kind),
+        ("_paddingDeprecated", ErrorKind::Unsupported { value: 4 })
+    );
+    assert_eq!(padding.offset - base.offset, 0x44 - 0x38);
+
     let dxt3 = Spec {
         format: "dxt3_tile_big_ps3",
         ..SPECS[0]

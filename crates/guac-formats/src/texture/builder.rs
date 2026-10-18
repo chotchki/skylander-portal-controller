@@ -3,6 +3,7 @@
 
 use crate::igz::Location;
 use crate::igz::builder::IgzBuilder;
+use crate::igz::kind;
 use crate::igz::layouts::METAIMAGES;
 
 /// One image: metaimage, width, height, levels, pixel bytes, first byte.
@@ -62,6 +63,13 @@ fn at(base: Location, offset: u32) -> Location {
 
 /// An `igImage2` at a fresh object, as Giants writes one.
 pub fn image(b: &mut IgzBuilder, blocks: u8, s: &Spec, data: &[u8]) -> Location {
+    let image = image_without_data(b, s);
+    b.handle(at(image, 0x48), blocks, data, 5);
+    image
+}
+
+/// [`image`] with `_data` left zero and unmarked.
+fn image_without_data(b: &mut IgzBuilder, s: &Spec) -> Location {
     let image = b.object(0, "igImage2", 0x60);
     b.string(at(image, 0x08), s.format);
     let one = 1f32.to_be_bytes().repeat(4);
@@ -73,7 +81,6 @@ pub fn image(b: &mut IgzBuilder, blocks: u8, s: &Spec, data: &[u8]) -> Location 
     b.put_bytes(at(image, 0x30), &dims);
     b.import(at(image, 0x3C), METAIMAGES, s.format);
     b.put_u32(at(image, 0x40), 1);
-    b.handle(at(image, 0x48), blocks, data, 5);
     b.put_u32(at(image, 0x50), u32::MAX);
     b.put_bytes(at(image, 0x58), &[1]);
     image
@@ -101,4 +108,27 @@ pub fn seeds() -> Vec<Vec<u8>> {
         b.build()
     });
     std::iter::once(images().bytes).chain(alone).collect()
+}
+
+/// `count` square `l8_tile` images all pointing at one `side` x `side` block,
+/// through one TMHN handle: input that asks for `count` untiles of it.
+pub fn shared_l8(count: usize, side: u16) -> Vec<u8> {
+    let s = Spec {
+        format: "l8_tile_big_ps3",
+        width: side,
+        height: side,
+        levels: 1,
+        len: usize::from(side) * usize::from(side),
+        seed: 0x60,
+    };
+    let mut b = IgzBuilder::new();
+    let blocks = b.section(0x80);
+    let first = image_without_data(&mut b, &s);
+    let handle = b.handle(at(first, 0x48), blocks, &s.data(), 5);
+    for _ in 1..count {
+        let other = image_without_data(&mut b, &s);
+        b.put_u32(at(other, 0x48), handle);
+        b.marker(kind::HANDLES, at(other, 0x48));
+    }
+    b.build()
 }

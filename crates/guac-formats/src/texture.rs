@@ -257,6 +257,34 @@ impl Texture {
             };
             return Err(field("_imageCount", Image2::IMAGE_COUNT, kind));
         }
+        // Constant on the disc and not in our output, so refused, not dropped.
+        // Float compares: -0.0 passes as zero bias, NaN is refused.
+        if let Some(i) = im.color_scale.iter().position(|&c| c != 1.0) {
+            let kind = ErrorKind::Unsupported {
+                value: im.color_scale[i].to_bits().into(),
+            };
+            return Err(field(
+                "_colorScale",
+                Image2::COLOR_SCALE + 4 * i as u32,
+                kind,
+            ));
+        }
+        if let Some(i) = im.color_bias.iter().position(|&c| c != 0.0) {
+            let kind = ErrorKind::Unsupported {
+                value: im.color_bias[i].to_bits().into(),
+            };
+            return Err(field("_colorBias", Image2::COLOR_BIAS + 4 * i as u32, kind));
+        }
+        if im.padding_deprecated != 0 {
+            let kind = ErrorKind::Unsupported {
+                value: im.padding_deprecated.into(),
+            };
+            return Err(field(
+                "_paddingDeprecated",
+                Image2::PADDING_DEPRECATED,
+                kind,
+            ));
+        }
         let Some(meta) = im.format_name().and_then(MetaImage::by_name) else {
             let kind = ErrorKind::Unsupported {
                 value: im.format.id.object.into(),

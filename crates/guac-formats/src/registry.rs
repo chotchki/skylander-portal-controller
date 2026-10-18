@@ -141,15 +141,50 @@ pub fn walk_layouts(bytes: &[u8]) -> Result<(), FormatError> {
     Ok(())
 }
 
+/// How many untiled bytes [`walk_textures`] converts before it stops. Images
+/// can share one block, so an input can ask for far more than it holds.
+pub const TEXTURE_WALK_BUDGET: usize = 4 << 20;
+
 /// Parses an IGZ, then untiles every `igImage2` and writes it as KTX2,
-/// dropping each and skipping errors. The property test and the fuzz
-/// targets run it.
+/// dropping each and skipping errors, until [`TEXTURE_WALK_BUDGET`] untiled
+/// bytes have come out. The property test and the fuzz targets run it.
 pub fn walk_textures(bytes: &[u8]) -> Result<(), FormatError> {
+    converted_textures(bytes).map(drop)
+}
+
+/// [`walk_textures`], counting the images it converted.
+fn converted_textures(bytes: &[u8]) -> Result<usize, FormatError> {
     let file = igz::Igz::parse(bytes)?;
+    let mut left = TEXTURE_WALK_BUDGET;
+    let mut converted = 0;
     for (i, _) in igz::layouts::read_all::<igz::layouts::Image2>(&file) {
+        // A refused image returns before untiling, so it costs nothing.
         if let Ok(t) = texture::Texture::read(&file, i) {
+            let n: usize = t.levels.iter().map(Vec::len).sum();
             drop(t.to_ktx2());
+            converted += 1;
+            left = left.saturating_sub(n.max(1));
+            if left == 0 {
+                break;
+            }
         }
     }
-    Ok(())
+    Ok(converted)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn texture_walk_stops_at_its_budget_on_a_shared_block() {
+        // 500 images over one 1 MiB block: four fill the budget.
+        let bytes = texture::builder::shared_l8(500, 1024);
+        assert!(bytes.len() < (2 << 20));
+        assert_eq!(converted_textures(&bytes), Ok(4));
+        assert_eq!(
+            converted_textures(&texture::builder::shared_l8(3, 64)),
+            Ok(3)
+        );
+    }
 }
