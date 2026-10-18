@@ -322,24 +322,45 @@ pub struct FigureStats {
     pub nickname: String,
 }
 
+/// What the stats fetch learned. `Unavailable` and `Missing` both mean
+/// no numbers to show, but only `Unavailable` means an edit can't work
+/// either: the server has no figure files at all (guacamole answers 409
+/// until it keeps figure progress of its own). `Missing` is the product's
+/// 404 for a figure this profile never placed, where the first edit forks
+/// a working copy from the pack, so editing stays on.
+#[derive(Debug, Clone)]
+pub enum StatsFetch {
+    Read(FigureStats),
+    /// 404 (no working copy yet), a parse failure or a transport error.
+    Missing,
+    /// 409: the server keeps no figure files, so edit and reset 409 too.
+    Unavailable,
+}
+
+impl StatsFetch {
+    pub fn stats(&self) -> Option<&FigureStats> {
+        match self {
+            StatsFetch::Read(s) => Some(s),
+            _ => None,
+        }
+    }
+}
+
 /// `GET /api/profiles/:profile_id/figures/:figure_id/stats`.
-/// Returns `None` on 404 (no working copy yet — figure has never been
-/// played by this profile, so there's nothing to read), parser errors
-/// (UNPROCESSABLE_ENTITY), or transport failures. The caller treats
-/// `None` as "stats unavailable, fall back to the placeholder strip".
-pub async fn fetch_figure_stats(profile_id: &str, figure_id: &str) -> Option<FigureStats> {
+pub async fn fetch_figure_stats(profile_id: &str, figure_id: &str) -> StatsFetch {
     let url = format!(
         "{}/api/profiles/{profile_id}/figures/{figure_id}/stats",
         origin()
     );
     match do_fetch(&url, "GET", None).await {
         Ok(text) => match serde_json::from_str::<FigureStats>(&text) {
-            Ok(s) => Some(s),
+            Ok(s) => StatsFetch::Read(s),
             Err(e) => {
                 crate::dev_warn!("fetch_figure_stats: parse error {e}");
-                None
+                StatsFetch::Missing
             }
         },
+        Err(e) if e == "HTTP 409" => StatsFetch::Unavailable,
         Err(e) => {
             // 404 just means no working copy yet — common on first
             // browse before the figure has ever been on the portal.
@@ -348,7 +369,7 @@ pub async fn fetch_figure_stats(profile_id: &str, figure_id: &str) -> Option<Fig
             if !e.contains("404") {
                 crate::dev_warn!("fetch_figure_stats: {e}");
             }
-            None
+            StatsFetch::Missing
         }
     }
 }
