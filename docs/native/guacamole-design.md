@@ -87,8 +87,9 @@ Second batch:
   the disc is basically what's already seen since my kids had such a vast collection", so the phone shows
   the whole disc roster.
 - The ACR122 reader leaves the product "as soon as it's convenient", as its own product-track removal
-  (`crates/nfc-reader`, `scanned/<uid>.sky`, `FigureScanned`), not tied to G1. `crates/sky-parser` stays
-  only as long as the product binary does.
+  (`crates/nfc-reader`, `scanned/<uid>.sky`, `FigureScanned`), not tied to G1: change AD
+  (`ad-remove-acr122`), which lands before AA. `crates/sky-parser` stays only as long as the product
+  binary does.
 - Persistence and setup: "what has to be persisted on disk for saves/progression should be way easier /
   simpler no files to copy around. the setup screens get way easier too." One SQLite database holds
   everything worth keeping, the extract dir is a regenerable cache and setup is pointing Guacamole at the
@@ -127,8 +128,8 @@ Third batch:
   the other five games gets replaced on install and its behavior has to survive AA's split (Architecture
   says how that's proven).
 - The server split: "I'm good with it." `crates/guac-server` takes only what `guacamole` runs. `.sky`
-  editing and stats, working copies, NFC and the eframe UI stay in `crates/server` and leave with it at G1
-  (the ACR122 removal, if it lands first, takes NFC out sooner).
+  editing and stats, working copies and the eframe UI stay in `crates/server` and leave with it at G1.
+  NFC isn't there to split: AD (the ACR122 removal) lands before AA and takes it out first.
 - Achievements in co-op, for a counter both kids feed: each profile earns it from its own share, "I'm good
   with that if we can detect it." Where Guacamole can't tell whose share it was, only the host earns it
   (the question's other option). The co-op rules in Deliberate departures carry the whole set.
@@ -144,7 +145,7 @@ Third batch:
   still on Bevy 0.19 on 2026-10-17, so until its 0.20 release Guacamole takes the branch the developer
   recommends, avianphysics/avian#1070 (Bevy 0.20 + Parry 0.31), as a git dependency pinned by rev
   (`34c9b008d2f4` today; it was written against 0.20.0-rc.1, so the first compile against 0.20.0 is the
-  check). Physics sits behind a thin internal seam either way. Nothing needs it before AF, and a
+  check). Physics sits behind a thin internal seam either way. Nothing needs it before AG, and a
   read-only census of what Giants uses from Havok (character proxy or its own controller, rigid bodies,
   constraints, ragdolls, collision shapes) comes first, since that decides what feel parity means.
 
@@ -186,7 +187,7 @@ Co-op, spelled out:
   figure follows the profile that placed it. A counter both kids feed counts each kid's own share toward
   their own profile wherever Guacamole can tell whose share it was ("I'm good with that if we can detect
   it"); where it can't, only the host earns it. Which counters can be attributed gets settled per
-  achievement when AL builds them.
+  achievement when AM builds them.
 
 Not a departure: local PvP (Battle Mode, `pvp_maincontrol.arc` in Giants) is part of parity for every
 game.
@@ -243,7 +244,7 @@ flowchart LR
 - The portal protocol doesn't change (REST commands return 202, WS carries the snapshot then
   `SlotChanged`). The visible differences: the figure list is the disc roster (AA's interim catalogue
   until it lands), the game list offers what `guacamole` can play from the dumps it was pointed at
-  (Giants), a figure's details and edits read and write Guacamole's store (from AG; before that every
+  (Giants), a figure's details and edits read and write Guacamole's store (from AH; before that every
   figure is fresh) and the grown-ups toggles that rewrite the product's RPCS3 and window settings answer
   "unavailable".
 - One binary at a time. Both bind the same HTTP port (8765, the default the controller's setup writes)
@@ -264,11 +265,12 @@ source, and the source moves more than a little:
   the server ones. AA moves only what `guacamole` runs into a new `crates/guac-server` that both binaries
   link (the router, the phone SPA serving, the profile store, the driver worker and watchdogs, mDNS, the
   QR, paths and logging), lifts the bootstrap into one `boot()` call there and gives every RPCS3-keyed
-  branch left in those modules an explicit native arm. `.sky` editing and stats, working copies, NFC, the
-  display-mode and RPCS3-config helpers and the eframe UI stay in `crates/server`; the product hands the
-  ones the shared code calls to `boot()` and `guacamole` hands none. No behavior change for the product,
-  and that matters more than it did: a tagged MSI puts this source's product on the HTPC. The product's
-  e2e suite at its pre-AA count, the HTPC live smoke and a check of the installed MSI prove it.
+  branch left in those modules an explicit native arm. `.sky` editing and stats, working copies, the
+  display-mode and RPCS3-config helpers and the eframe UI stay in `crates/server` (NFC is already gone:
+  AD, the ACR122 removal, lands before AA); the product hands the ones the shared code calls to `boot()`
+  and `guacamole` hands none. No behavior change for the product, and that matters more than it did: a
+  tagged MSI puts this source's product on the HTPC. The product's e2e suite at its pre-AA count, the
+  HTPC live smoke and a check of the installed MSI prove it.
 - The product's first-launch wizard (eframe, `crates/server/src/wizard.rs`) isn't a prerequisite and
   isn't ported. Guacamole's setup is one question (Persistence and setup).
 
@@ -279,7 +281,7 @@ ships. The product binary leaves, and with it everything RPCS3 in what ships: `r
 product series, `rpcs3-control`'s product drivers (IPC and UIA), the nested-app bundling and signing, the
 Win32 `SetWindowPos` tiling, the macOS CALayerHost embed (`crates/server/src/compositor.rs`),
 `crates/sky-parser` and the wiki data the product's phone UI still reads. (`crates/nfc-reader` is gone
-before then, on the product track.) The TV launcher surface (the QR badge, `BadgeRig` in
+before AA, with AD on the product track.) The TV launcher surface (the QR badge, `BadgeRig` in
 `crates/server/src/badge.rs`) is rebuilt as Bevy meshes and materials before then.
 
 It leaves what SHIPS, not the repo. The RPCS3 submodule plus a dev-only patch series stay as the oracle,
@@ -289,8 +291,8 @@ Nothing is lost on the HTPC. G1 stops BUILDING the product, it doesn't uninstall
 already installed there is frozen and keeps playing Spyro's Adventure, Swap Force, Trap Team,
 SuperChargers and Imaginators until Guacamole covers them. One catch the MSI brings: the installer
 upgrades in place (`MajorUpgrade` under one `UpgradeCode` in `wix/main.wxs`), so a G1 MSI that carries
-only `guacamole` under that code would remove the controller. AM's packaging has to keep it installed;
-how is AM's call when it's proposed.
+only `guacamole` under that code would remove the controller. AN's packaging has to keep it installed;
+how is AN's call when it's proposed.
 
 ## Persistence and setup
 
@@ -299,7 +301,7 @@ nothing else on disk is precious. Backing up the family's progress is copying on
 
 - In it: profiles and PINs, per-profile figure instances (Figures), per-profile story saves (one per
   profile per game), achievements and settings (the dumps folders, the port, the pairing key). It starts
-  in AA with the profiles and settings and grows a table set per rung (the figure store at AG).
+  in AA with the profiles and settings and grows a table set per rung (the figure store at AH).
 - Its own file, never the controller's (Decisions, third batch). The controller installed on the HTPC
   opens its `db.sqlite` through `sqlx::migrate!` at its defaults (`crates/server/src/profiles.rs:556`),
   which refuses a database carrying a migration the binary doesn't know, so one Guacamole table in that
@@ -536,7 +538,7 @@ What it lacks:
 - P9 (a per-frame state stream: camera, instances, poses, RNG, entity transforms) doesn't exist and can't
   until the Giants struct layouts are reverse engineered. It comes after that RE, not before.
 
-AE builds the foundation before anything gets called a regression test:
+AF builds the foundation before anything gets called a regression test:
 
 1. Measure divergence: same savestate, same input, 10 runs, on the Mac and the HTPC.
 2. A dev-only input patch in its own env-gated series, never in a product binary: frame-locked analog
@@ -629,7 +631,7 @@ The floor is the HTPC:
   (Solari) also only takes `StandardMaterial`, can't render skinned meshes and doesn't light from
   point or spot lights yet, so it doesn't fit the faithful material model in any case.
 - Bevy 0.20 has no HDR display output; the TV's HDR waits on Bevy.
-- Not measured: a 4K frame with CSM, SSAO, TAA and bloom on the 2080 Ti. AD measures it.
+- Not measured: a 4K frame with CSM, SSAO, TAA and bloom on the 2080 Ti. AE measures it.
 
 The M3 Max is for development, not for looking good. It has no temporal upscaler besides TAA (no DLSS,
 FSR or MetalFX in Bevy), pipeline compilation is synchronous on macOS (so both material sets get
@@ -664,7 +666,7 @@ the pad in the player's hands.
     no XInput path for it and only a HID-level driver reads it (SDL's HIDAPI is the reference).
   - Does Home reach Guacamole, or does Steam keep it for its overlay?
   - Can the per-shortcut Steam Input setting be applied automatically, or is it a one-time step by hand?
-- AF's input spec carries the prompt rule, since walking a level is the first rung with a pad in hand.
+- AG's input spec carries the prompt rule, since walking a level is the first rung with a pad in hand.
 
 ## Figures
 
@@ -675,8 +677,8 @@ lives in Guacamole's store per profile. Guacamole never reads a `.sky`.
   (`<toy type>-<variant>`; `ToyTypeId` and `TagVariant` at `crates/core/src/figure.rs:24,50`). In Giants
   the toy type names the character archive directly (Giants in detail).
 - Catalogue: the disc roster, all of it, with no per-kid filter. Names, elements and portraits come from
-  the disc (where each lives in Giants' data is for AC and AD to find), and the roster lands with the
-  first decoded models in AD. It doubles as the compatibility list: Giants offers what Giants has
+  the disc (where each lives in Giants' data is for AC and AE to find), and the roster lands with the
+  first decoded models in AE. It doubles as the compatibility list: Giants offers what Giants has
   characters for, which replaces today's origin-game-and-later heuristic (`crates/core/src/compat.rs:48`).
 - AA's catalogue is interim: the wiki data already in the repo (`data/figures.json`, keyed by the same
   toy type + variant, plus `data/images/` portraits), cut to the figures Giants plays. No `.sky` and no
@@ -692,42 +694,44 @@ lives in Guacamole's store per profile. Guacamole never reads a `.sky`.
   way today's working copies are (`working/<profile_id>/<figure_id>.sky`, minus the file). The profile is
   one of `guacamole`'s own (Persistence and setup), so nothing is keyed to the controller's profile ids. A
   figure a profile has never placed starts fresh on its first placement. The store's columns grow with
-  the rungs: XP and gold at AG, upgrades and path at AJ, the rest (hats, nicknames, hero points ...) when a
+  the rungs: XP and gold at AH, upgrades and path at AK, the rest (hats, nicknames, hero points ...) when a
   rung needs them.
 - Phone editing: the editor the phone already has (level and gold, plus reset to fresh) is buggy today
   because `crates/server/src/sky_edit.rs` has to decrypt, edit and re-encrypt a `.sky`. Under Guacamole it
-  edits rows in the store instead, from AG, and reset to fresh deletes the instance. `sky_edit` and
+  edits rows in the store instead, from AH, and reset to fresh deletes the instance. `sky_edit` and
   `sky_stats` stay product-only in `crates/server` (the server split) and leave with it at G1.
 - Ownership: the "profile that placed it" rule stays, so two phones keep working and co-op progress lands
   on the right kid (Deliberate departures).
-- No scanned figures. The ACR122 reader leaves the product on its own track.
+- No scanned figures. The ACR122 reader leaves the product first, in AD (a product change that lands
+  before AA).
 - The AA card shows identity only (name, element, portrait). Level, XP and gold join it once the store
-  exists (AG); before that every figure is fresh, so there's nothing to show.
+  exists (AH); before that every figure is fresh, so there's nothing to show.
 
 ## Milestone ladder
 
-Every rung ends in something the kids can see except AC (the decode gate) and AE (the oracle
+Every rung ends in something the kids can see except AC (the decode gate) and AF (the oracle
 foundation), which the rungs after them stand on. A rung starts when the ones it stands on have landed;
 there are no dates. Ids past AC are provisional: `openspec/config.yaml` allocates the next id when a
 change is proposed, so a product change proposed first takes the next letter (Decisions, third batch).
-The milestone names (M0-M9, G1, G2) are the stable handles.
+That has happened once: the ACR122 removal (`ad-remove-acr122`) took AD, so every rung after AC moved
+up a letter. The milestone names (M0-M9, G1, G2) are the stable handles.
 
 | Rung | Where | What the kids see | What it proves |
 |---|---|---|---|
 | AA | `aa-guacamole-shell` | place a figure on the phone, the TV shows its card (name, element, portrait), in `guacamole` | the embedded server, the native driver over a channel, Guacamole's one-question setup, its own database and profiles, the interim catalogue with no `.sky` and no firmware pack, one binary at a time, both binaries in one MSI |
 | AB, M0 | `ab-giants-extract-and-intros` | place a figure, its original intro video plays | `guac-extract` skeleton (identity, IGA, manifest, Bink 1 transcode, entropy scan); Bevy video playback is a spike. The 48 intros are named by character, not toy type; the voice-over folder in each character archive bridges most of them and AB maps the rest. A figure without one keeps its AA card |
 | AC | `ac-giants-decode-gate`, in parallel with AA and AB | nothing yet (a dev viewer) | IGZ v6, `igImage2`, Edge and a Havok 2011.2 skeleton plus one clip, matched against an RSX capture. Starts once AB's IGA reader has landed. If the decoded hero doesn't match the capture, AC proposes Trap Team and chotchki decides |
-| AD, M1 | backlog | their figure as an animated, textured turntable on the TV | the first 3D; the HTPC performance floor measured; the disc roster replaces the interim catalogue |
-| AE | backlog | nothing | the oracle foundation: divergence measured, frame-locked two-pad input, tolerance metrics. Lands before any gameplay comparison |
-| AF, M2 | backlog | walk one level | level scene, collision, character controller, camera, feel checked against the oracle; the input spec, with prompts that match the physical pad |
-| AG, M3 | backlog | first fight: one enemy, XP and gold earned and kept on the kid's profile | combat basics; the per-profile figure-progression store, with the phone's figure editor on it |
-| AH, M4 | backlog | first couch battle: one Giants PvP arena, two pads, two phones | a second pad and a second profile's figure in play; the PvP rules as the oracle shows them |
-| AI, M5 | backlog | the level comes alive | the tfbScript VM and its built-ins running the original scripts |
-| AJ, M6 | backlog | upgrades and the upgrade screen | upgrades and path kept in the store, movesets from script data |
-| AK, M7 | backlog | co-op, two pads and two figures in the adventure | the second player on the host's story, the shared camera, each kid's figure progress on their own profile |
-| AL, M8 | backlog | chapter one | a run of levels with story and cutscenes; profile-owned story saves (the host's, no slot picker); achievements, by the co-op rules |
-| AM, M9 = G1 | backlog | the whole game | `guacamole` becomes the only thing this repo builds and ships; the launcher surface lives in Bevy; the installed controller keeps the other five games |
-| AN, G2 | backlog | parity | the oracle retires |
+| AE, M1 | backlog | their figure as an animated, textured turntable on the TV | the first 3D; the HTPC performance floor measured; the disc roster replaces the interim catalogue |
+| AF | backlog | nothing | the oracle foundation: divergence measured, frame-locked two-pad input, tolerance metrics. Lands before any gameplay comparison |
+| AG, M2 | backlog | walk one level | level scene, collision, character controller, camera, feel checked against the oracle; the input spec, with prompts that match the physical pad |
+| AH, M3 | backlog | first fight: one enemy, XP and gold earned and kept on the kid's profile | combat basics; the per-profile figure-progression store, with the phone's figure editor on it |
+| AI, M4 | backlog | first couch battle: one Giants PvP arena, two pads, two phones | a second pad and a second profile's figure in play; the PvP rules as the oracle shows them |
+| AJ, M5 | backlog | the level comes alive | the tfbScript VM and its built-ins running the original scripts |
+| AK, M6 | backlog | upgrades and the upgrade screen | upgrades and path kept in the store, movesets from script data |
+| AL, M7 | backlog | co-op, two pads and two figures in the adventure | the second player on the host's story, the shared camera, each kid's figure progress on their own profile |
+| AM, M8 | backlog | chapter one | a run of levels with story and cutscenes; profile-owned story saves (the host's, no slot picker); achievements, by the co-op rules |
+| AN, M9 = G1 | backlog | the whole game | `guacamole` becomes the only thing this repo builds and ships; the launcher surface lives in Bevy; the installed controller keeps the other five games |
+| AO, G2 | backlog | parity | the oracle retires |
 
 ## Risks
 
@@ -738,15 +742,15 @@ Ranked by how much each could move the plan, each with the experiment that answe
 | IGZ v6 field layouts aren't in the files | no public Giants metaobject dump (ig-workshop's Giants data has enums and fields only; AlchemyMetadataDumper doesn't list Giants PS3 and is a PRX built with Sony's SDK) | find the igMetaObject registry in one guest-memory dump of Giants, cross-referenced with the RTTI and `*MetaField` strings in Ghidra | AC |
 | Edge geometry on v6 | every mesh is Edge-compressed for SPU | decode one character mesh, compare to the vertex buffer in an RSX capture | AC |
 | Havok 2011.2 animation | likely compressed clips; skeletons feed everything after M1 | one skeleton and one clip, posed against a capture | AC |
-| RPCS3 run-to-run divergence | decides whether the oracle can be a test at all, and how loose the tolerances get | 10 replays from one savestate on each machine, diff positions and RNG | AE |
+| RPCS3 run-to-run divergence | decides whether the oracle can be a test at all, and how loose the tolerances get | 10 replays from one savestate on each machine, diff positions and RNG | AF |
 | A tagged MSI reinstalls the product from current source | the kids' other five games run on it. (Guacamole tables in its `db.sqlite` were the old risk here; `guacamole`'s own database resolves that one by design.) | AA's split lands as moves only and passes the product's e2e suite at its pre-AA count plus the HTPC live smoke before any native code; AA.13 checks the installed product from the MSI | AA, then every tagged release |
-| How much of Giants is script data | sizes the VM vs the native built-ins | a read-only census of `OpFlowBuiltInBehavior` and engine-import names across `character/*.bld`, confirming the PAL Wii offsets on PS3 | any time before AI (backlog) |
+| How much of Giants is script data | sizes the VM vs the native built-ins | a read-only census of `OpFlowBuiltInBehavior` and engine-import names across `character/*.bld`, confirming the PAL Wii offsets on PS3 | any time before AJ (backlog) |
 | Bevy video playback | M0 depends on it, Bevy has no video player | decode one transcoded intro into a texture on the Mac and the HTPC | AB |
 | Embedding the server in a Bevy app | the bootstrap is eframe-shaped today | `guacamole` boots the server from the lib with the native driver; the product's e2e lanes stay unchanged | AA |
-| HTPC performance floor | 4K on a 2080 Ti with the Enhanced stack | a Bevy scene with CSM, SSAO, TAA and bloom at 4K, GPU timings from `RenderDiagnosticsPlugin`, DLSS on Vulkan | AD |
-| Feel parity (camera, controller, collision, Havok-tuned physics) | the long tail, never retired | not a spike: measured continuously by the oracle from AF on | AF onward |
+| HTPC performance floor | 4K on a 2080 Ti with the Enhanced stack | a Bevy scene with CSM, SSAO, TAA and bloom at 4K, GPU timings from `RenderDiagnosticsPlugin`, DLSS on Vulkan | AE |
+| Feel parity (camera, controller, collision, Havok-tuned physics) | the long tail, never retired | not a spike: measured continuously by the oracle from AG on | AG onward |
 | Reading the real pads with Steam Input off | wrong prompts, or a Switch-variant pad Windows can't read without Steam | read both variants' ids in a Bevy app on the HTPC with Steam Input off for its shortcut | backlog (non-urgent) |
-| Trophy data on the disc | achievements without the original names and icons | open `PS3_GAME/TROPDIR` on the Giants dump and see whether its container reads | before AL |
+| Trophy data on the disc | achievements without the original names and icons | open `PS3_GAME/TROPDIR` on the Giants dump and see whether its container reads | before AM |
 | Encrypted data outside the EBOOT | the extractor assumes plaintext USRDIR | an entropy scan over USRDIR | AB |
 | Bevy churn | every 0.x release breaks API | pin per milestone, upgrade at boundaries as its own change | ongoing |
 
@@ -783,5 +787,5 @@ deltas, what ran on which machine) and chotchki decides what comes next from tha
    2026-10-17: GitHub code search for its config files and symbol names, the project owner's repos and
    stars, decomp.dev (shutting down, its project list gone) and web searches all came up empty
    (`spyrosadventure/ReSSA` is a recompilation template, not it), so it's private, unpublished or
-   somewhere those searches don't reach. Nothing waits on it; it would help AI read the Wii engine's side
+   somewhere those searches don't reach. Nothing waits on it; it would help AJ read the Wii engine's side
    of the VM.

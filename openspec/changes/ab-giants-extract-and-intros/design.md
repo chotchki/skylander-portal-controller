@@ -24,13 +24,13 @@ Motivation is in proposal.md. The track-level extractor plan is in `docs/native/
 - M0 on the HTPC.
 
 **Non-Goals:**
-- IGZ, textures, meshes, Havok, FSB5 audio: AC and AD.
+- IGZ, textures, meshes, Havok, FSB5 audio: AC and AE.
 - Bink 2 (every later game): that's a later game's M0.
 - Matching the original game's rule for when an intro plays (first placement per save, or every time). That's an oracle question for when guacamole runs Giants' own front end. M0 plays it every time, with a skip.
 - Upscaling the intros (Enhanced comes later; the transcode keeps 1280×720).
 - Bundling ffmpeg, extracting from the EBOOT or any decryption.
-- Toy type → variant archive mapping beyond what the intro needs; AD needs it for models.
-- Names, elements and portraits from the disc, and the roster replacing AA's interim catalogue on the phone (AD).
+- Toy type → variant archive mapping beyond what the intro needs; AE needs it for models.
+- Names, elements and portraits from the disc, and the roster replacing AA's interim catalogue on the phone (AE).
 - Title updates. The parity target is the 1.00 disc (design doc, Decisions, third batch): nothing looks for an update, and a dump an update changed is an unknown dump (decision 4).
 
 ## Decisions
@@ -68,12 +68,12 @@ For each intro the index does this:
 1. List `character/NNN_*.arc` per decimal toy type.
 2. Read each archive's entry names with the IGA reader and take the dominant `<vo_name>` from the `…/vo_<vo_name>_…` pattern.
 3. Strip its underscores and match `movies/<name>.mov`.
-4. On a miss, fall back to the name AA's interim catalogue gives the toy type's base figure, lowercased with non-alphanumerics removed (that catalogue is the wiki-derived one AD retires; until then it's what the phone shows).
+4. On a miss, fall back to the name AA's interim catalogue gives the toy type's base figure, lowercased with non-alphanumerics removed (that catalogue is the wiki-derived one AE retires; until then it's what the phone shows).
 5. A toy type with neither has no intro and gets a card only.
 
 The result is IR v1's character table: `toy_type → { archives (each with the variant suffix its name carries), vo_name, intro, source: disc | name_fallback }`. A `#[ignore]`d disc test asserts all 48 intros map to some toy type and records the disc-versus-fallback split. Variant figures resolve through their toy type, which the figure's identity carries regardless of variant.
 
-That table is the roster's groundwork (design doc, Figures): the toy types Giants has characters for, read off its own disc. The same disc test cross-checks it against AA's interim catalogue and records both differences, toy types with a character archive the catalogue lacks and catalogue toy types with no archive (magic items have none, so they're expected there). AB doesn't change what the phone lists. Mapping each archive suffix to a variant word and finding the names, elements and portraits on the disc is AD's, and AD's roster is what replaces the interim catalogue.
+That table is the roster's groundwork (design doc, Figures): the toy types Giants has characters for, read off its own disc. The same disc test cross-checks it against AA's interim catalogue and records both differences, toy types with a character archive the catalogue lacks and catalogue toy types with no archive (magic items have none, so they're expected there). AB doesn't change what the phone lists. Mapping each archive suffix to a variant word and finding the names, elements and portraits on the disc is AE's, and AE's roster is what replaces the interim catalogue.
 
 **7. Video playback: a spike with fixed criteria (AB.7), and a lean.**
 Criteria:
@@ -101,7 +101,7 @@ The lean is openh264: it's the only candidate that meets (a) and (e) without ven
 - On a Giants pick, guacamole takes the Giants dump AA's setup found, checks the identity and either loads a current manifest or starts the extraction thread, with the progress screen on the TV.
 - Placements during extraction just make cards.
 - The intro player is a small state machine (idle → playing(slot) → idle, with a FIFO queue) driven by `Placed`/`Cleared` and input events. It's pure, so it's unit-tested without a window.
-- Skip input comes from Bevy's gamepad and keyboard input. With Steam Input off for guacamole's shortcut (design doc, Controllers), the pad Bevy sees is the real one. Any button skips, so no button prompt is shown and the prompt rule (AF) doesn't come up yet.
+- Skip input comes from Bevy's gamepad and keyboard input. With Steam Input off for guacamole's shortcut (design doc, Controllers), the pad Bevy sees is the real one. Any button skips, so no button prompt is shown and the prompt rule (AG) doesn't come up yet.
 - AA's `/api/_test/tv` snapshot gains the playing intro and the queue, so the e2e test asserts "placement starts the intro" without decoding video in the browser.
 
 **10. The game-magic guard is a test, not a hook script.**
@@ -112,9 +112,9 @@ The lean is openh264: it's the only candidate that meets (a) and (e) without ven
 - [The known-dump table is too strict: a valid dump that differs in one irrelevant file is refused] → by design for now (no guessing). The report makes the difference visible, and loosening to per-directory hashes is a later, measured change.
 - [openh264 can't hold real time on the HTPC CPU, or its frame upload stalls Bevy] → the spike measures both machines before the transcode target is fixed. AV1 via vendored dav1d is the next candidate.
 - [The voice-over naming heuristic picks the wrong name for an archive that voices two characters] → the dominant-name rule plus the disc test asserting all 48 intros map one-to-one, and a wrong mapping shows up in the census before it reaches a kid.
-- [The interim catalogue names a figure the disc has no character for, or lacks one it has] → the roster cross-check records both lists; a missing character goes into AA's supplement, and anything else waits for AD's roster.
+- [The interim catalogue names a figure the disc has no character for, or lacks one it has] → the roster cross-check records both lists; a missing character goes into AA's supplement, and anything else waits for AE's roster.
 - [Entropy flags legitimately compressed data (LZMA chunks, Bink, FSB5 MPEG) as "encrypted"] → the census classifies by magic first and reports entropy only for unknown-magic files, so "high entropy + unknown magic" is the signal, not entropy alone.
-- [A first-run extraction on the HTPC takes long enough that the kids give up] → AB extracts only the 48 intros plus the hashing. The progress screen says what it's doing, cards work meanwhile and AB.11 records the measured HTPC time so AD knows the real cost before it adds textures.
+- [A first-run extraction on the HTPC takes long enough that the kids give up] → AB extracts only the 48 intros plus the hashing. The progress screen says what it's doing, cards work meanwhile and AB.11 records the measured HTPC time so AE knows the real cost before it adds textures.
 - [ffmpeg's output varies across versions (encoder defaults)] → outputs are content-hashed after the fact, not compared to expected hashes, and the manifest records the ffmpeg version used.
 
 ## Migration Plan

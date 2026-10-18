@@ -15,12 +15,12 @@ AB.3 supplies the IGA reader. The oracle is the product's patched RPCS3 running 
 
 **Goals:**
 - Prove all four layers on one hero against the original's own rendered data, with numeric tolerances fixed before the comparison runs.
-- Leave a method AD can repeat across the roster: the capture recipe, the RRC reader, the layout-recovery recipe.
+- Leave a method AE can repeat across the roster: the capture recipe, the RRC reader, the layout-recovery recipe.
 - A verdict on a condition, never on a date: PASS, or a named layer out of leads, never "mostly".
 
 **Non-Goals:**
 - The other 47 characters, levels, collision, materials and shading, tfbScript.
-- Wiring the parsers into guac-extract or the IR (AD).
+- Wiring the parsers into guac-extract or the IR (AE).
 - A faithful renderer. The dev viewer uses plain Bevy materials, and its frame comparison is recorded, not gated.
 - Any Trap Team work beyond writing the fallback proposal.
 - Choosing the hero from the kids' play data. It's chotchki's pick (Eruptor unless he names another), and nothing reads a `.sky` or the HTPC for it.
@@ -67,7 +67,7 @@ The fallback if the registry won't surface: infer a type's layout by diffing man
 The IGZ parser handles the known fixups, characterizes any unknown one an AC type depends on, and counts the rest. Where a needed object depends on an unknown fixup, the parser refuses rather than guesses. The census of fixup kinds across the hero's archives goes in the verdict.
 
 **7. Havok: our own reader, with Kovah's metadata as the map.**
-A 2011.2 packfile reader covering header, sections, class names and the local, global and virtual fixups, enough to materialize `hkaSkeleton` and the clip's `hkaAnimation` subclass. If that's spline-compressed, the decoder is ours, with HavokLib as the reading aid. Output for the viewer is bone transforms; glTF export waits for AD.
+A 2011.2 packfile reader covering header, sections, class names and the local, global and virtual fixups, enough to materialize `hkaSkeleton` and the clip's `hkaAnimation` subclass. If that's spline-compressed, the decoder is ours, with HavokLib as the reading aid. Output for the viewer is bone transforms; glTF export waits for AE.
 
 **8. The dev viewer is an example, not a product surface.**
 `crates/guacamole/examples/hero_view.rs` reads the dump at `GUAC_GIANTS_DUMP`, decodes the hero in memory, builds a skinned Bevy mesh with the KTX2 textures and plays the clip on a turntable. It writes nothing to disk. A screenshot beside the oracle frame gets a FLIP number in the verdict for the record.

@@ -18,7 +18,7 @@ If one of them can't be cracked, Giants stops being the first game, and that's f
   - the EBOOT decrypted from a COPY by `rpcs3 --decrypt`, which writes next to its input;
   - the Ghidra project kept outside the repo;
   - RPCS3's guest memory dumper and RSX capture.
-- The gate hero is chotchki's pick, Eruptor unless he names another. It's the first 3D figure the kids see in AD, so it's his call. Nothing reads a `.sky` or queries the HTPC to choose it.
+- The gate hero is chotchki's pick, Eruptor unless he names another. It's the first 3D figure the kids see in AE, so it's his call. Nothing reads a `.sky` or queries the HTPC to choose it.
 - Oracle captures of that hero in the patched RPCS3, all kept outside the repo: one RSX capture of a frame with the hero on screen, two more during one looping clip, a guest memory dump and an `sys_fs` open log. The hero gets onto the oracle's emulated portal from the dev's own figure pack, dev-only like the rest of RPCS3; nothing in the `guac-*` crates or `guacamole` reads it. Captures are taken by hand with the game window's capture shortcut, so the gap between the two clip frames isn't known in frames, and the clip check (design decision 5) doesn't need it.
 - `tools/rrc-dump`, a dev tool that reads RPCS3's RSX capture format (magic `RRC`, version 6, gzip plus RPCS3's own serializer, `vendor/rpcs3/rpcs3/Emu/RSX/Capture/rsx_replay.h` and `RSXThread.cpp:73-100`). It decodes the subset of RSX methods that locate a draw's vertex arrays, index array, textures and vertex-program constants, and writes them to a directory outside the repo.
 - The reflection hunt: find Giants' igMetaObject registry in the memory dump, cross-referenced with the RTTI and `*MetaField` names in Ghidra. The field layouts of just the types the gate needs get written as our own Rust definitions in `guac-formats`.
@@ -34,7 +34,7 @@ If one of them can't be cracked, Giants stops being the first game, and that's f
 
 ### New Capabilities
 
-None. `.openspec.yaml` sets `skip_specs: true`. AC is research plus parsers whose observable result (what the TV shows) is AD's spec. What it learns about the formats is written in our own words into `docs/native/guacamole-design.md`, not into a behavior spec.
+None. `.openspec.yaml` sets `skip_specs: true`. AC is research plus parsers whose observable result (what the TV shows) is AE's spec. What it learns about the formats is written in our own words into `docs/native/guacamole-design.md`, not into a behavior spec.
 
 ### Modified Capabilities
 
@@ -42,9 +42,9 @@ None.
 
 ## Impact
 
-- Track: Guacamole, rung AC, the decode gate. No kid-visible milestone (a dev viewer only). PASS unblocks AD (M1); a layer out of leads triggers the Trap Team proposal.
+- Track: Guacamole, rung AC, the decode gate. No kid-visible milestone (a dev viewer only). PASS unblocks AE (M1); a layer out of leads triggers the Trap Team proposal.
 - Disc serial read: BLUS30968 only. Trap Team isn't touched unless a layer runs out of leads, and then only by the proposal.
-- guac-extract's output doesn't change: the new parsers aren't wired into extraction until AD, so the layout and IR stay at AB's v1.
+- guac-extract's output doesn't change: the new parsers aren't wired into extraction until AE, so the layout and IR stay at AB's v1.
 - Code:
   - new modules in `crates/guac-formats` (IGZ v6, `igImage2`, Edge, Havok 2011.2, and the recovered type layouts);
   - a new workspace tool `tools/rrc-dump`;
