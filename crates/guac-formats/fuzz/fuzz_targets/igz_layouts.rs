@@ -20,6 +20,9 @@ fuzz_target!(|data: &[u8]| {
             assert!(geometry.segments.iter().all(|s| hero.segments.contains_key(s)));
             assert!(mesh.palette.is_none_or(|p| hero.palettes.contains_key(&p)));
         }
+        for palette in hero.palettes.values() {
+            assert!(palette.indices.is_none_or(|i| hero.int_lists.contains_key(&i)));
+        }
         for slot in hero.clip_slots.iter().flatten() {
             assert!(hero.clips.contains_key(slot));
         }

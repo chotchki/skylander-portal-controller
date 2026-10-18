@@ -304,8 +304,9 @@ impl<'a> Layout<'a> for AnimationInfoList<'a> {
     }
 }
 
-/// `AnimationInfo`: size 0x44, one clip-table entry. Its parents' script
-/// fields (0x0C-0x30) aren't recovered and are skipped.
+/// `AnimationInfo`: size 0x44, one clip-table entry. Its parents' fields
+/// (0x0C-0x30: script func structs, `Sequence` scalars) aren't read; their
+/// refs stay unfollowed and any other marker there is refused.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AnimationInfo<'a> {
     pub name: Option<&'a str>,
@@ -325,13 +326,18 @@ impl AnimationInfo<'_> {
     pub const BLEND_FACTOR: u32 = 0x38;
     pub const TFB_ANIMATION: u32 = 0x3C;
     pub const BLEND_LIST: u32 = 0x40;
+    /// `Sequence._activator`, `ClonedSequence._clones` and `._parent`.
+    pub const SEQUENCE_REFS: [(u32, &'static str); 3] =
+        [(0x24, "_activator"), (0x28, "_clones"), (0x2C, "_parent")];
 }
 
 impl<'a> Layout<'a> for AnimationInfo<'a> {
     const TYPE: &'static str = "AnimationInfo";
 
     fn fields(v: &mut View<'_, 'a>) -> Result<Self, FormatError> {
-        v.skip(0x0C, Self::PROPERTIES);
+        for (offset, field) in Self::SEQUENCE_REFS {
+            v.object_ref(offset, field)?;
+        }
         Ok(Self {
             name: v.string(Self::NAME, "_name")?,
             properties: v.u32(Self::PROPERTIES, "_properties")?,

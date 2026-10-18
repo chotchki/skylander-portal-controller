@@ -231,7 +231,11 @@ fn eruptor_reads_with_the_recorded_numbers() {
     let palette_sizes: Vec<usize> = hero
         .palettes
         .values()
-        .map(|p| p.indices.as_ref().map_or(0, |l| l.values.len()))
+        .map(|p| {
+            p.indices
+                .and_then(|i| hero.int_lists.get(&i))
+                .map_or(0, |l| l.values.len())
+        })
         .collect();
     let images = layouts::read_all::<Image2>(&igz).count();
     let slots = &hero.clip_slots;

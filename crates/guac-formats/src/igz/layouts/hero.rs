@@ -16,10 +16,11 @@ use crate::igz::Igz;
 use crate::{ErrorKind, FormatError};
 
 /// A skin palette: the select node and its slot -> blend-matrix map.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Palette<'a> {
     pub select: BlendMatrixSelect<'a>,
-    pub indices: Option<IntList<'a>>,
+    /// A key of [`Hero::int_lists`].
+    pub indices: Option<usize>,
 }
 
 /// One drawn technique and the geometry it draws.
@@ -60,6 +61,8 @@ pub struct Hero<'a> {
     /// In scene-graph order, depth first.
     pub meshes: Vec<Mesh<'a>>,
     pub palettes: BTreeMap<usize, Palette<'a>>,
+    /// The palettes' slot maps; selects can share one.
+    pub int_lists: BTreeMap<usize, IntList<'a>>,
     pub geometries: BTreeMap<usize, EdgeGeometry<'a>>,
     pub segments: BTreeMap<usize, EdgeGeometrySegment<'a>>,
     /// The clip table: each slot's `AnimationInfo`, a key of [`Hero::clips`].
@@ -120,6 +123,7 @@ impl<'a> Hero<'a> {
             bones,
             meshes: Vec::new(),
             palettes: BTreeMap::new(),
+            int_lists: BTreeMap::new(),
             geometries: BTreeMap::new(),
             segments: BTreeMap::new(),
             clip_slots: Vec::new(),
@@ -130,10 +134,12 @@ impl<'a> Hero<'a> {
         Ok(hero)
     }
 
-    /// Depth first from the actor; each node is visited once.
+    /// Depth first from the actor; each node and child list is read once,
+    /// so a list shared by many groups stays linear.
     fn walk(&mut self, igz: &Igz<'a>) -> Result<(), FormatError> {
         let mut stack = vec![(self.actor_index, None)];
         let mut seen = HashSet::new();
+        let mut expanded = HashSet::new();
         while let Some((node, palette)) = stack.pop() {
             if !seen.insert(node) {
                 continue;
@@ -146,18 +152,23 @@ impl<'a> Hero<'a> {
             let mut palette = palette;
             if is_a(ty, BlendMatrixSelect::TYPE) {
                 let select = BlendMatrixSelect::read(igz, node)?;
-                let indices = select
-                    .blend_matrix_indices
-                    .map(|i| IntList::read(igz, i))
-                    .transpose()?;
+                let indices = select.blend_matrix_indices;
+                if let Some(i) = indices
+                    && let Entry::Vacant(slot) = self.int_lists.entry(i)
+                {
+                    slot.insert(IntList::read(igz, i)?);
+                }
                 self.palettes.insert(node, Palette { select, indices });
                 palette = Some(node);
             }
             // Leaves other than techniques aren't gate types, so refuse them.
             let group = Group::read(igz, node)?;
-            if let Some(list) = group.child_list {
+            if let Some(list) = group.child_list
+                && expanded.insert(list)
+            {
                 let children = NodeList::read(igz, list)?.nodes;
-                stack.extend(children.into_iter().rev().map(|c| (c, palette)));
+                let fresh = children.into_iter().rev().filter(|c| !seen.contains(c));
+                stack.extend(fresh.map(|c| (c, palette)));
             }
         }
         Ok(())

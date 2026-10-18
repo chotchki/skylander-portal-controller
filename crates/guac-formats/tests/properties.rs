@@ -255,13 +255,16 @@ fn run_mutated(parser: &RegisteredParser) -> Result<(), String> {
 }
 
 #[test]
-fn every_parser_accepts_its_own_seeds() {
+fn every_parser_accepts_its_own_seeds_within_budget() {
     for parser in PARSERS {
         let seeds = (parser.seeds)();
         assert!(!seeds.is_empty(), "{} registers no seeds", parser.name);
         for (i, seed) in seeds.iter().enumerate() {
             if let Err(e) = (parser.parse)(seed) {
                 panic!("{} rejects its own seed {i}: {e}", parser.name);
+            }
+            if let Err(e) = check(parser, seed) {
+                panic!("seed {i}: {e}");
             }
         }
     }

@@ -180,6 +180,7 @@ pub fn sample() -> Sample {
     b.pointer(at(body, 0x24), combiner);
     b.null_memory_ref(at(body, 0x28), 0);
     b.pointer(at(body, 0x34), lip_sync);
+    b.pointer(at(body, 0x38), idle);
     b.put_u32(at(body, 0x3C), 0x55);
 
     // The scene graph: actor -> select -> two techniques.
@@ -246,9 +247,9 @@ pub fn sample() -> Sample {
     b.memory_ref(at(skeleton, 0x10), blocks, &joints, 2);
     list(&mut b, bone_list, blocks, &bones.map(Some));
     let bone_values = [
-        ("J_root", -1, -1, [0.0, 0.0, 0.0]),
-        ("J_hip", 0, 0, [0.0, 1.5, 0.0]),
-        ("J_head", 1, 1, [0.25, 0.5, -0.125]),
+        ("J_root", -1, 1, [0.0, 0.0, 0.0]),
+        ("J_hip", 0, -1, [0.0, 1.5, 0.0]),
+        ("J_head", 1, 0, [0.25, 0.5, -0.125]),
     ];
     for (o, (name, parent, blend, t)) in bones.into_iter().zip(bone_values) {
         b.string(at(o, 0x08), name);
@@ -260,8 +261,6 @@ pub fn sample() -> Sample {
     // Giants' clip tables have empty slots.
     list(&mut b, clip_table, blocks, &[Some(clip_info), None]);
     b.string(at(clip_info, 0x08), "Idle");
-    // A script field in the skipped range.
-    b.string(at(clip_info, 0x0C), "script");
     b.put_u32(at(clip_info, 0x30), 0x610);
     b.string(at(clip_info, 0x34), "Eruptor_Idle");
     floats(&mut b, clip_info, 0x38, &[0.5]);
@@ -279,7 +278,7 @@ pub fn sample() -> Sample {
     b.string(at(image, 0x08), "eruptor_body");
     floats(&mut b, image, 0x10, &[1.0, 0.5, 0.25, 2.0]);
     floats(&mut b, image, 0x20, &[0.125, 0.0, -1.0, 0.0]);
-    u16_be(&mut b, image, 0x30, &[8, 4, 1, 2, 1]);
+    u16_be(&mut b, image, 0x30, &[8, 4, 1, 2, 6]);
     b.import(at(image, 0x3C), super::METAIMAGES, "dxt5_tile_big_ps3");
     b.put_u32(at(image, 0x40), 2);
     b.handle(at(image, 0x48), blocks, &[0xAB; 128], 5);
@@ -311,7 +310,79 @@ pub fn sample() -> Sample {
     }
 }
 
-/// Seeds for the property test and the fuzz corpus.
+/// The least hero [`Hero::read`](super::Hero::read) takes: model, body,
+/// actor, combiner and a boneless skeleton. `children(b, blocks, actor,
+/// list)` returns the actor's children; `list` is the actor's child list.
+pub fn bare_hero(
+    children: impl FnOnce(&mut IgzBuilder, u8, Location, Location) -> Vec<Location>,
+) -> Vec<u8> {
+    let mut b = IgzBuilder::new();
+    let blocks = b.section(0x10);
+    let model = b.object(0, "tfbPhysicsModel", 0x30);
+    let body = b.object(0, "tfbPhysicsBody", 0x40);
+    let actor = b.object(0, "igActor2", 0x28);
+    let actor_children = b.object(0, "igNodeList", 0x18);
+    let combiner = b.object(0, "tfbPhysicsCombinerLink", 0x3C);
+    let skeleton = b.object(0, "igSkeleton2", 0x18);
+    b.pointer(at(model, 0x14), body);
+    b.pointer(at(body, 0x20), actor);
+    b.pointer(at(body, 0x24), combiner);
+    b.pointer(at(actor, 0x20), actor_children);
+    b.pointer(at(combiner, 0x0C), skeleton);
+    for (o, off) in [
+        (body, 0x14),
+        (body, 0x28),
+        (combiner, 0x10),
+        (combiner, 0x18),
+        (combiner, 0x24),
+        (combiner, 0x2C),
+        (skeleton, 0x10),
+    ] {
+        b.null_memory_ref(at(o, off), 0);
+    }
+    let nodes: Vec<_> = children(&mut b, blocks, actor, actor_children)
+        .into_iter()
+        .map(Some)
+        .collect();
+    list(&mut b, actor_children, blocks, &nodes);
+    b.build()
+}
+
+/// `groups` igGroups under the actor, each with the actor's child list as
+/// its own: quadratic for a walk that re-reads a shared list.
+pub fn shared_child_list(groups: usize) -> Vec<u8> {
+    bare_hero(|b, _, _, list| {
+        let gs: Vec<_> = (0..groups).map(|_| b.object(0, "igGroup", 0x24)).collect();
+        for &g in &gs {
+            b.pointer(at(g, 0x20), list);
+        }
+        gs
+    })
+}
+
+/// `selects` igBlendMatrixSelects sharing one `ints`-entry igIntList.
+pub fn shared_palette(selects: usize, ints: usize) -> Vec<u8> {
+    bare_hero(|b, blocks, _, _| {
+        let palette = b.object(0, "igIntList", 0x18);
+        b.put_u32(at(palette, 0x08), ints as u32);
+        b.put_u32(at(palette, 0x0C), ints as u32);
+        b.memory_ref(at(palette, 0x10), blocks, &vec![0; 4 * ints], 0);
+        let ss: Vec<_> = (0..selects)
+            .map(|_| b.object(0, "igBlendMatrixSelect", 0xC0))
+            .collect();
+        for &s in &ss {
+            b.pointer(at(s, 0xB4), palette);
+        }
+        ss
+    })
+}
+
+/// Seeds for the property test and the fuzz corpus; the shared shapes
+/// overrun the heap budget on a walk that copies per reference.
 pub fn seeds() -> Vec<Vec<u8>> {
-    vec![sample().bytes]
+    vec![
+        sample().bytes,
+        shared_child_list(1000),
+        shared_palette(400, 16_000),
+    ]
 }

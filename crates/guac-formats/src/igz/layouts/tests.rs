@@ -94,7 +94,7 @@ fn image2_reads_back() {
             image.level_count,
             image.image_count
         ),
-        (8, 4, 1, 2, 1)
+        (8, 4, 1, 2, 6)
     );
     assert_eq!(image.format.id.namespace, fnv1a32(b"metaimages"));
     assert_eq!(image.format.id.object, fnv1a32(b"dxt5_tile_big_ps3"));
@@ -232,12 +232,12 @@ fn skeleton_and_combiner_read_back() {
         SkeletonBone {
             name: Some("J_head"),
             parent_index: 1,
-            blend_matrix_index: 1,
+            blend_matrix_index: 0,
             translation: [0.25, 0.5, -0.125]
         }
     );
     let root = SkeletonBone::read(&igz, index(&igz, s.bones[0])).unwrap();
-    assert_eq!((root.parent_index, root.blend_matrix_index), (-1, -1));
+    assert_eq!((root.parent_index, root.blend_matrix_index), (-1, 1));
 
     let link = PhysicsCombinerLink::read(&igz, index(&igz, s.combiner)).unwrap();
     assert_eq!(link.id_code, 0xBB);
@@ -351,7 +351,10 @@ fn havok_wrappers_read_back() {
         body.body.eye_blink,
         ObjectRef::Object(index(&igz, s.lip_sync))
     );
-    assert_eq!(body.body.footprint_data, ObjectRef::Null);
+    assert_eq!(
+        body.body.footprint_data,
+        ObjectRef::Object(index(&igz, s.idle))
+    );
     assert_eq!(body.id_code, 0x55);
     assert_eq!(
         BuildDataInfo::read(&igz, index(&igz, s.body)).unwrap(),
@@ -436,10 +439,9 @@ fn the_hero_walks_from_its_model() {
     assert_eq!(techniques, s.techniques.map(|t| index(&igz, t)));
     let select = index(&igz, s.select);
     assert!(hero.meshes.iter().all(|m| m.palette == Some(select)));
-    assert_eq!(
-        hero.palettes[&select].indices.as_ref().unwrap().values,
-        [1, 0]
-    );
+    let palette = hero.palettes[&select].indices.unwrap();
+    assert_eq!(palette, index(&igz, s.palette));
+    assert_eq!(hero.int_lists[&palette].values, [1, 0]);
     let per_mesh: Vec<usize> = hero
         .meshes
         .iter()
@@ -681,20 +683,56 @@ fn inverse_joints_must_be_whole_matrices() {
 }
 
 #[test]
-fn the_skipped_range_is_animation_info_only() {
-    // A marker at 0x0C passes on AnimationInfo but not on a type that
-    // declares the word.
-    let (s, bytes) = sampled();
-    let igz = Igz::parse(&bytes).unwrap();
-    assert_eq!(
-        igz.marker_at(at(s.clip_info, 0x0C)),
-        Some(crate::igz::Marker::String)
-    );
-    let (mut b, skel) = one("igSkeleton2", 0x18);
-    b.string(at(skel, 0x0C), "not a bone list");
+fn animation_info_refuses_a_marker_on_its_parents_scalars() {
+    // Script func structs, `_flags` and `_playbackPercent` hold no refs.
+    for offset in [0x0C, 0x18, 0x20] {
+        let (mut b, info) = one("AnimationInfo", 0x44);
+        b.string(at(info, offset), "not a ref");
+        let bytes = b.build();
+        let igz = Igz::parse(&bytes).unwrap();
+        let e = AnimationInfo::read(&igz, 0).unwrap_err();
+        assert_eq!(
+            (e.field, e.kind),
+            (
+                "string",
+                ErrorKind::Unsupported {
+                    value: offset.into()
+                }
+            )
+        );
+    }
+    // `_activator`, `_clones` and `_parent` are refs, left unfollowed.
+    let (mut b, info) = one("AnimationInfo", 0x44);
+    for (offset, _) in AnimationInfo::SEQUENCE_REFS {
+        b.pointer(at(info, offset), info);
+    }
     let bytes = b.build();
     let igz = Igz::parse(&bytes).unwrap();
-    assert_eq!(Skeleton2::read(&igz, 0).unwrap_err().field, "_boneList");
+    assert!(AnimationInfo::read(&igz, 0).is_ok());
+}
+
+#[test]
+fn a_child_list_shared_by_many_groups_is_read_once() {
+    // Re-reading it per group held groups^2 / 2 stack entries.
+    let bytes = builder::shared_child_list(2000);
+    let igz = Igz::parse(&bytes).unwrap();
+    let hero = Hero::read(&igz, 0).unwrap();
+    assert!(hero.meshes.is_empty() && hero.palettes.is_empty());
+}
+
+#[test]
+fn selects_sharing_an_int_list_share_one_copy() {
+    let bytes = builder::shared_palette(50, 1000);
+    let igz = Igz::parse(&bytes).unwrap();
+    let hero = Hero::read(&igz, 0).unwrap();
+    assert_eq!((hero.palettes.len(), hero.int_lists.len()), (50, 1));
+    let list = hero.int_lists.values().next().unwrap();
+    assert_eq!(list.values.len(), 1000);
+    assert!(
+        hero.palettes
+            .values()
+            .all(|p| p.indices == hero.int_lists.keys().next().copied())
+    );
 }
 
 #[test]
@@ -708,32 +746,7 @@ fn a_hero_missing_a_link_is_refused_and_cycles_end() {
     let _ = model;
 
     // A child list that holds the actor itself.
-    let mut b = IgzBuilder::new();
-    let blocks = b.section(0x10);
-    let model = b.object(0, "tfbPhysicsModel", 0x30);
-    let body = b.object(0, "tfbPhysicsBody", 0x40);
-    let actor = b.object(0, "igActor2", 0x28);
-    let children = b.object(0, "igNodeList", 0x18);
-    let combiner = b.object(0, "tfbPhysicsCombinerLink", 0x3C);
-    let skel = b.object(0, "igSkeleton2", 0x18);
-    b.pointer(at(model, 0x14), body);
-    b.pointer(at(body, 0x20), actor);
-    b.pointer(at(body, 0x24), combiner);
-    b.pointer(at(actor, 0x20), children);
-    builder::list(&mut b, children, blocks, &[Some(actor), Some(actor)]);
-    b.pointer(at(combiner, 0x0C), skel);
-    for (o, off) in [
-        (body, 0x14),
-        (body, 0x28),
-        (combiner, 0x10),
-        (combiner, 0x18),
-        (combiner, 0x24),
-        (combiner, 0x2C),
-        (skel, 0x10),
-    ] {
-        b.null_memory_ref(at(o, off), 0);
-    }
-    let bytes = b.build();
+    let bytes = builder::bare_hero(|_, _, actor, _| vec![actor, actor]);
     let igz = Igz::parse(&bytes).unwrap();
     let hero = Hero::read(&igz, 0).unwrap();
     assert!(hero.meshes.is_empty() && hero.bones.is_empty() && hero.clips.is_empty());

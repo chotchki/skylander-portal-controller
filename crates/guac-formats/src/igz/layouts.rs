@@ -265,7 +265,6 @@ pub struct View<'f, 'a> {
     /// The layout's size: fields and the fixup check stop here.
     extent: u32,
     claimed: Vec<u32>,
-    skipped: Vec<(u32, u32)>,
 }
 
 impl<'f, 'a> View<'f, 'a> {
@@ -310,7 +309,6 @@ impl<'f, 'a> View<'f, 'a> {
             object,
             extent,
             claimed: Vec::new(),
-            skipped: Vec::new(),
         })
     }
 
@@ -323,13 +321,11 @@ impl<'f, 'a> View<'f, 'a> {
         self.index
     }
 
-    /// Every fixup inside the layout must sit on a word read as a reference
-    /// or in a skipped range.
+    /// Every fixup inside the layout must sit on a word read as a reference.
     fn finish(self) -> Result<(), FormatError> {
         for &(at, marker) in self.igz.markers_in(self.object.at, self.extent) {
             let offset = at.offset() - self.object.at.offset();
-            let skipped = self.skipped.iter().any(|&(s, e)| (s..e).contains(&offset));
-            if !skipped && !self.claimed.contains(&offset) {
+            if !self.claimed.contains(&offset) {
                 return Err(self.igz.err_at(
                     at,
                     marker.field(),
@@ -340,11 +336,6 @@ impl<'f, 'a> View<'f, 'a> {
             }
         }
         Ok(())
-    }
-
-    /// Bytes `[start, end)` hold fields this crate hasn't recovered.
-    pub(crate) fn skip(&mut self, start: u32, end: u32) {
-        self.skipped.push((start, end));
     }
 
     fn at(&self, offset: u32, len: u32, field: &'static str) -> Result<Location, FormatError> {
