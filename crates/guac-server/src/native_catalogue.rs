@@ -3,7 +3,7 @@
 //! checked row by row, plus a hand-written supplement. Wrong is worse than
 //! missing, so a doubtful row is dropped. AE replaces this.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -99,6 +99,18 @@ pub fn load(data_root: &Path) -> Result<Vec<Figure>> {
         "built the native catalogue from figures.json",
     );
     Ok(figures)
+}
+
+/// Each base figure's name by toy type: the name fallback guac-extract's
+/// intro index takes (openspec AB, design decision 6).
+pub fn base_names(figures: &[Figure]) -> BTreeMap<u32, String> {
+    figures
+        .iter()
+        .filter_map(|f| match f.id.tag_parts()? {
+            (ToyTypeId(toy_type), MaskedVariant(0)) => Some((toy_type, f.canonical_name.clone())),
+            _ => None,
+        })
+        .collect()
 }
 
 fn rows(data_root: &Path) -> Result<Vec<Row>> {
@@ -563,6 +575,12 @@ mod tests {
             assert_eq!(f.element, Some(s.element));
             assert_eq!(portrait(&data_root, &f.id), None, "{}", s.name);
         }
+        let names = base_names(&figures);
+        assert_eq!(names[&9], "Eruptor");
+        assert_eq!(names[&0x64], "Jet-Vac");
+        // A variant (Legendary Ignitor, 00000a-0803) doesn't replace its base.
+        assert_eq!(names[&0x0A], "Ignitor");
+
         // Cynder on Spyro's toy type; Wrecking Ball on a SWAP Force bottom.
         assert!(find(&figures, "000010-0801").is_none());
         assert!(find(&figures, "0003ee-0000").is_none());

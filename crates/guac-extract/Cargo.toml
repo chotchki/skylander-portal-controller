@@ -19,9 +19,22 @@ path = "src/main.rs"
 [dependencies]
 guac-formats = { path = "../guac-formats" }
 guac-ir = { path = "../guac-ir" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# 0.11, not the workspace's 0.10: 0.11 picks the ARMv8 SHA instructions at run
+# time (0.10 only with its C `asm` feature), about 4x a core on the M3 Max.
+sha2 = "0.11"
+thiserror = { workspace = true }
+# The unknown-dump report's file name stamp.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 [dev-dependencies]
 # The game-magic guard (tests/no_game_bytes.rs) inflates gzip heads and builds
 # throwaway git repos to test itself in.
 flate2 = "1"
 tempfile = "3"
+# SfoBuilder, for the synthetic dumps the identity tests build.
+guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }
+# The interim catalogue's base names, the intro index's fallback and the
+# roster cross-check in tests/giants_intros.rs.
+guac-server = { path = "../guac-server", default-features = false }
