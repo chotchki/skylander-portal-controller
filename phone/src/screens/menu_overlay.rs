@@ -139,92 +139,95 @@ pub(crate) fn MenuOverlay(
             <div class="menu-overlay-panel">
                 <button class="menu-close" on:click=move |_| open.set(false)>"\u{2715}"</button>
 
-                <Show when=move || unlocked_profile.get().is_some() fallback=|| ()>
-                    <div class="menu-current-chip">
-                        <div class="menu-current-swatch">{move || initial.get()}</div>
-                        <div class="menu-current-meta">
-                            <div class="menu-current-name">{move || name.get()}</div>
-                            <Show when=move || current_game.get().is_some() fallback=|| ()>
-                                <div class="menu-current-game">{move || game_name.get()}</div>
-                            </Show>
-                        </div>
-                    </div>
-                </Show>
-
-                <div class="menu-join-card">
-                    <div class="menu-join-label">"\u{2316} INVITE A PLAYER"</div>
-                    <div class="menu-qr-frame">
-                        <img
-                            class="menu-qr-img"
-                            src="/api/join-qr.png"
-                            alt="Join QR code"
-                            loading="eager"
-                            decoding="async"
-                        />
-                    </div>
-                    <div class="menu-join-hint">"scan to join this portal"</div>
-                </div>
-
-                <div class="menu-actions">
+                // Scrolls when the viewport is too short for the menu (AA.20).
+                <div class="menu-overlay-scroll">
                     <Show when=move || unlocked_profile.get().is_some() fallback=|| ()>
-                        <ActionButton
-                            title="SWITCH PROFILE"
-                            description="Sign back in as someone else"
-                            icon="\u{21C4}"
-                            on_fire=on_switch
-                        />
+                        <div class="menu-current-chip">
+                            <div class="menu-current-swatch">{move || initial.get()}</div>
+                            <div class="menu-current-meta">
+                                <div class="menu-current-name">{move || name.get()}</div>
+                                <Show when=move || current_game.get().is_some() fallback=|| ()>
+                                    <div class="menu-current-game">{move || game_name.get()}</div>
+                                </Show>
+                            </div>
+                        </div>
                     </Show>
 
-                    <ActionButton
-                        title="MANAGE PROFILES"
-                        description="Grown-ups only \u{00B7} reset PINs, add or remove profiles"
-                        icon="\u{2699}"
-                        on_fire=on_manage
-                    />
+                    <div class="menu-join-card">
+                        <div class="menu-join-label">"\u{2316} INVITE A PLAYER"</div>
+                        <div class="menu-qr-frame">
+                            <img
+                                class="menu-qr-img"
+                                src="/api/join-qr.png"
+                                alt="Join QR code"
+                                loading="eager"
+                                decoding="async"
+                            />
+                        </div>
+                        <div class="menu-join-hint">"scan to join this portal"</div>
+                    </div>
 
-                    // PLAN 16.9.3 — per-game emulator config. Only when no game
-                    // is running (held-to-confirm; opens RPCS3 settings on the TV).
-                    // Never under guacamole, which has no RPCS3 (AA.19).
-                    <Show
-                        when=move || {
-                            current_game.get().is_none() && server_app.get().offers_rpcs3_settings()
-                        }
-                        fallback=|| ()
-                    >
+                    <div class="menu-actions">
+                        <Show when=move || unlocked_profile.get().is_some() fallback=|| ()>
+                            <ActionButton
+                                title="SWITCH PROFILE"
+                                description="Sign back in as someone else"
+                                icon="\u{21C4}"
+                                on_fire=on_switch
+                            />
+                        </Show>
+
                         <ActionButton
-                            title="HOLD FOR GAME SETTINGS"
-                            description="Grown-ups only \u{00B7} tune a game\u{2019}s emulator settings on the TV"
-                            icon="\u{1F39B}"
+                            title="MANAGE PROFILES"
+                            description="Grown-ups only \u{00B7} reset PINs, add or remove profiles"
+                            icon="\u{2699}"
+                            on_fire=on_manage
+                        />
+
+                        // PLAN 16.9.3 — per-game emulator config. Only when no game
+                        // is running (held-to-confirm; opens RPCS3 settings on the TV).
+                        // Never under guacamole, which has no RPCS3 (AA.19).
+                        <Show
+                            when=move || {
+                                current_game.get().is_none() && server_app.get().offers_rpcs3_settings()
+                            }
+                            fallback=|| ()
+                        >
+                            <ActionButton
+                                title="HOLD FOR GAME SETTINGS"
+                                description="Grown-ups only \u{00B7} tune a game\u{2019}s emulator settings on the TV"
+                                icon="\u{1F39B}"
+                                hold_duration=Some(hold_dur)
+                                on_fire=on_configure
+                            />
+                        </Show>
+
+                        <Show when=move || current_game.get().is_some() fallback=|| ()>
+                            <ActionButton
+                                title="HOLD TO SWITCH GAMES"
+                                description="Quit the current game and pick a different adventure"
+                                icon="\u{25C9}"
+                                hold_duration=Some(hold_dur)
+                                on_fire=on_switch_games
+                            />
+                        </Show>
+
+                        // Kaos toggle relocated to the AdminEdit (Konami-gated
+                        // edit-profile) screen. The kebab-overlay button's
+                        // description "Let Kaos swap a figure at random while
+                        // you play" overflowed iPhone width during the 2026-
+                        // 05-04 playtest; profile-scoped settings are a
+                        // better home for an opt-in toggle anyway.
+
+                        <ActionButton
+                            title="HOLD TO SHUT DOWN"
+                            description="Closes everything \u{00B7} ask a grown-up first"
+                            icon="\u{23FB}"
+                            variant=ActionVariant::Danger
                             hold_duration=Some(hold_dur)
-                            on_fire=on_configure
+                            on_fire=on_shutdown
                         />
-                    </Show>
-
-                    <Show when=move || current_game.get().is_some() fallback=|| ()>
-                        <ActionButton
-                            title="HOLD TO SWITCH GAMES"
-                            description="Quit the current game and pick a different adventure"
-                            icon="\u{25C9}"
-                            hold_duration=Some(hold_dur)
-                            on_fire=on_switch_games
-                        />
-                    </Show>
-
-                    // Kaos toggle relocated to the AdminEdit (Konami-gated
-                    // edit-profile) screen. The kebab-overlay button's
-                    // description "Let Kaos swap a figure at random while
-                    // you play" overflowed iPhone width during the 2026-
-                    // 05-04 playtest; profile-scoped settings are a
-                    // better home for an opt-in toggle anyway.
-
-                    <ActionButton
-                        title="HOLD TO SHUT DOWN"
-                        description="Closes everything \u{00B7} ask a grown-up first"
-                        icon="\u{23FB}"
-                        variant=ActionVariant::Danger
-                        hold_duration=Some(hold_dur)
-                        on_fire=on_shutdown
-                    />
+                    </div>
                 </div>
             </div>
         </Show>

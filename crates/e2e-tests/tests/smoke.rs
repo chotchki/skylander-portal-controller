@@ -7,7 +7,10 @@
 use std::time::Duration;
 
 use fantoccini::Locator;
-use skylander_e2e_tests::{E2eApp, Phone, TestServer, inject_profile, unlock_default_profile};
+use skylander_e2e_tests::{
+    E2eApp, Phone, TestServer, inject_profile, launch_giants, unlock_default_profile,
+    unlock_session,
+};
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver + built phone SPA"]
@@ -104,4 +107,82 @@ async fn the_menu_offers_game_settings_only_in_the_product() {
     assert_eq!(offered(&actions), product, "{app:?}: {actions:?}");
 
     phone.close().await.unwrap();
+}
+
+/// openspec AA.20: in a browser tab that keeps its toolbars on screen the
+/// visible viewport is short, and Orion on an iPhone hid HOLD TO SHUT DOWN
+/// below the menu's clipped bottom. With a profile open and a game running
+/// (the longest menu), every action has to come fully inside the viewport
+/// once scrolled to, with a tap at its centre landing on it. 375x548 is an
+/// iPhone SE's Safari with both bars up, 390x664 a current iPhone's.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver + built phone SPA"]
+async fn every_menu_action_is_reachable_in_a_short_viewport() {
+    let server = TestServer::spawn().expect("spawn server");
+    let app = E2eApp::from_env();
+    let pid = unlock_default_profile(&server.url)
+        .await
+        .expect("unlock profile");
+    launch_giants(&server.url).await.expect("launch Giants");
+
+    for (w, h) in [(375, 548), (390, 664)] {
+        // Each phone is its own session, so the next one is unlocked too.
+        unlock_session(&server.url, &pid).await.unwrap();
+        let phone = Phone::new_sized(
+            &server.phone_url().await.unwrap(),
+            &server.chromedriver_url,
+            w,
+            h,
+        )
+        .await
+        .expect("connect phone");
+        phone
+            .wait_for_portal(Duration::from_secs(15))
+            .await
+            .expect("portal");
+        let viewport = phone
+            .client
+            .execute("return [window.innerWidth, window.innerHeight];", vec![])
+            .await
+            .unwrap();
+        assert_eq!(viewport, serde_json::json!([w, h]), "viewport");
+        phone
+            .wait_for(Locator::Css(".kebab-btn"), Duration::from_secs(5))
+            .await
+            .unwrap()
+            .click()
+            .await
+            .unwrap();
+        let titles = phone
+            .menu_actions_until(|a| a.iter().any(|t| t == "HOLD TO SWITCH GAMES"))
+            .await
+            .unwrap();
+        for want in [
+            "SWITCH PROFILE",
+            "MANAGE PROFILES",
+            "HOLD TO SWITCH GAMES",
+            "HOLD TO SHUT DOWN",
+        ] {
+            assert!(titles.iter().any(|t| t == want), "{w}x{h}: {titles:?}");
+        }
+        // The open animation (0.35 s) scales the panel.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let reach = phone.menu_reach().await.unwrap();
+        eprintln!("{app:?} {w}x{h}: {reach}");
+        let inside = |r: &serde_json::Value| {
+            let r: Vec<f64> = serde_json::from_value(r.clone()).unwrap();
+            r[0] >= 0.0 && r[1] >= 0.0 && r[2] <= w as f64 && r[3] <= h as f64
+        };
+        assert!(
+            inside(&reach["panel"]),
+            "{w}x{h}: the panel leaves the viewport: {reach}"
+        );
+        let actions = reach["actions"].as_array().unwrap();
+        assert_eq!(actions.len(), titles.len(), "{reach}");
+        for a in actions {
+            assert!(inside(&a["rect"]), "{w}x{h}: {a} isn't fully on screen");
+            assert_eq!(a["tappable"], true, "{w}x{h}: a tap misses {a}");
+        }
+        phone.close().await.unwrap();
+    }
 }

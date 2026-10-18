@@ -870,6 +870,33 @@ impl Phone {
         Ok(Self { client })
     }
 
+    /// Like [`Phone::new`] with Chrome's phone emulation at `width` x
+    /// `height` CSS px: the page's viewport is exactly that, smaller than a
+    /// desktop window may go, as a phone browser with its toolbars on
+    /// screen leaves it (openspec AA.20).
+    pub async fn new_sized(
+        server_url: &str,
+        chromedriver_url: &str,
+        width: u32,
+        height: u32,
+    ) -> Result<Self> {
+        let caps = serde_json::json!({
+            "goog:chromeOptions": {
+                "args": ["--headless=new", "--no-sandbox", "--disable-gpu", "--window-size=600,900"],
+                "mobileEmulation": {
+                    "deviceMetrics": { "width": width, "height": height, "pixelRatio": 3.0, "touch": true }
+                }
+            }
+        });
+        let client = ClientBuilder::native()
+            .capabilities(caps.as_object().unwrap().clone())
+            .connect(chromedriver_url)
+            .await
+            .with_context(|| format!("connect to chromedriver at {chromedriver_url}"))?;
+        client.goto(server_url).await?;
+        Ok(Self { client })
+    }
+
     /// Like [`Phone::new`] but a VISIBLE (non-headless) Chrome window pinned
     /// at a fixed screen position + size, keeping the normal tab strip /
     /// omnibox. Legacy fallback with no current callers: the play-through
@@ -1458,6 +1485,44 @@ pub async fn wait_for_tv(
     }
 }
 
+/// A JS expression that reads every action in the open kebab menu as a
+/// finger reaches it, as a JSON string (both WebDriver and the iOS
+/// Simulator's `Runtime.evaluate` return a string by value). Each action is
+/// scrolled into view only when the menu is a scroll container a finger can
+/// drag (`overflow-y` auto or scroll: script can scroll a hidden overflow, a
+/// finger can't). Per action its title, its rect then and whether a tap at
+/// its centre lands on it; with the viewport (`innerWidth` x `innerHeight`
+/// and the visual viewport's height), the panel's rect, whether its content
+/// overflows and whether a finger can scroll it (openspec AA.20).
+pub const MENU_REACH_JS: &str = "(() => {
+  const panel = document.querySelector('.menu-overlay-panel');
+  const scroller = panel.querySelector('.menu-overlay-scroll') || panel;
+  const box = r => [r.left, r.top, r.right, r.bottom];
+  const overflows = scroller.scrollHeight > scroller.clientHeight + 1;
+  const scrollable = ['auto', 'scroll'].includes(getComputedStyle(scroller).overflowY);
+  const actions = Array.from(panel.querySelectorAll('.menu-action')).map(el => {
+    if (scrollable) el.scrollIntoView({ block: 'nearest' });
+    const r = el.getBoundingClientRect();
+    const hit = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2);
+    return {
+      title: el.querySelector('.menu-action-title').textContent.trim(),
+      rect: box(r),
+      tappable: !!hit && el.contains(hit),
+    };
+  });
+  scroller.scrollTop = 0;
+  return JSON.stringify({
+    viewport: [window.innerWidth, window.innerHeight],
+    visual_height: window.visualViewport ? window.visualViewport.height : null,
+    screen: [screen.width, screen.height],
+    standalone: !!navigator.standalone,
+    panel: box(panel.getBoundingClientRect()),
+    overflows,
+    scrollable,
+    actions,
+  });
+})()";
+
 /// Convenience for the common "launch Giants" setup.
 pub async fn launch_giants(base: &str) -> Result<()> {
     set_game(
@@ -1824,6 +1889,17 @@ impl Phone {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
         Err(anyhow!("wait_until timed out after {timeout:?}"))
+    }
+
+    /// [`MENU_REACH_JS`] on this page (openspec AA.20).
+    pub async fn menu_reach(&self) -> Result<serde_json::Value> {
+        let read = self
+            .client
+            .execute(&format!("return {MENU_REACH_JS};"), vec![])
+            .await?;
+        Ok(serde_json::from_str(
+            read.as_str().context("a JSON string")?,
+        )?)
     }
 
     /// The open kebab menu's action titles, read until `done` holds and
