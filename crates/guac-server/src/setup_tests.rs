@@ -95,6 +95,8 @@ fn dev_env_overrides_the_stored_settings() {
         ("DATA_ROOT", "/x/data"),
         ("WINDOW_MODE", "desktop"),
         ("RPCS3_EXE", "/ignored"),
+        ("GUAC_FFMPEG", "/x/ffmpeg"),
+        ("GUAC_EXTRACT_DIR", "/x/extract"),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -109,6 +111,8 @@ fn dev_env_overrides_the_stored_settings() {
     assert_eq!(loaded.config.data_root, PathBuf::from("/x/data"));
     assert_eq!(loaded.config.window_mode, WindowMode::Desktop);
     assert!(loaded.config.rpcs3_exe.as_os_str().is_empty());
+    assert_eq!(loaded.ffmpeg, Some(PathBuf::from("/x/ffmpeg")));
+    assert_eq!(loaded.extract_dir.as_deref(), Some("/x/extract"));
 }
 
 #[test]
@@ -135,6 +139,10 @@ fn settings_round_trip_through_the_database() {
         setup.set_bind_port(9001).unwrap();
         assert!(setup.set_bind_port(0).is_err());
         setup.keep_pairing_key(&[5; 32]).unwrap();
+        assert!(setup.set_ffmpeg_path(Path::new("ffmpeg")).is_err());
+        setup
+            .set_ffmpeg_path(&tmp.path().join("bin/ffmpeg"))
+            .unwrap();
     }
 
     let setup = Setup::open(&root).unwrap();
@@ -143,6 +151,7 @@ fn settings_round_trip_through_the_database() {
     assert_eq!(stored.dump_dirs, [discs.clone(), other]);
     assert_eq!(stored.bind_port, Some(9001));
     assert_eq!(stored.pairing_key, Some(vec![5; 32]));
+    assert_eq!(stored.ffmpeg_path, Some(tmp.path().join("bin/ffmpeg")));
     drop(setup);
 
     let loaded = load_with(&root, &no_env()).unwrap();
@@ -150,6 +159,8 @@ fn settings_round_trip_through_the_database() {
     assert_eq!(loaded.config.bind_port, 9001);
     assert_eq!(loaded.config.hmac_key, vec![5; 32]);
     assert_eq!(loaded.scan().games().len(), 1);
+    assert_eq!(loaded.ffmpeg, stored.ffmpeg_path);
+    assert_eq!(loaded.extract_dir, None);
 }
 
 #[test]

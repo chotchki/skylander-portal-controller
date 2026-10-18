@@ -27,6 +27,7 @@ const KEY_LEN: usize = 32;
 const DUMP_DIRS: &str = "dump_dirs";
 const BIND_PORT: &str = "bind_port";
 const PAIRING_KEY: &str = "pairing_key";
+const FFMPEG_PATH: &str = "ffmpeg_path";
 
 /// What `settings` holds; `None` and empty mean never set.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -34,6 +35,9 @@ pub struct Settings {
     pub dump_dirs: Vec<PathBuf>,
     pub bind_port: Option<u16>,
     pub pairing_key: Option<Vec<u8>>,
+    /// ffmpeg for the extraction (openspec AB, design decision 8); unset
+    /// looks beside the executable, then on PATH.
+    pub ffmpeg_path: Option<PathBuf>,
 }
 
 /// [`load`]'s result.
@@ -44,6 +48,11 @@ pub struct Loaded {
     pub dump_dirs: Vec<PathBuf>,
     /// True when `GUAC_DUMP_DIRS` overrode the stored folders.
     pub dump_dirs_from_env: bool,
+    /// `GUAC_FFMPEG` in dev when set, else the stored path.
+    pub ffmpeg: Option<PathBuf>,
+    /// `GUAC_EXTRACT_DIR`, dev only: the extract root outside the checkout.
+    /// Release builds never read it.
+    pub extract_dir: Option<String>,
 }
 
 impl Loaded {
@@ -123,6 +132,11 @@ pub fn load_with(root: &Path, env: &HashMap<String, String>) -> Result<Loaded> {
     let data_root = path_or("DATA_ROOT", "data", crate::paths::app_data_root);
     let log_dir = log_dir(root);
     let hmac_key = stored.pairing_key.unwrap_or_else(generate_key);
+    let dev_value = |key: &str| env.get(key).filter(|_| dev).cloned();
+    let ffmpeg = dev_value("GUAC_FFMPEG")
+        .map(PathBuf::from)
+        .or(stored.ffmpeg_path);
+    let extract_dir = dev_value("GUAC_EXTRACT_DIR");
 
     Ok(Loaded {
         config: Config {
@@ -140,6 +154,8 @@ pub fn load_with(root: &Path, env: &HashMap<String, String>) -> Result<Loaded> {
         },
         dump_dirs,
         dump_dirs_from_env,
+        ffmpeg,
+        extract_dir,
     })
 }
 
@@ -222,6 +238,7 @@ pub async fn read_settings(pool: &SqlitePool) -> Result<Settings> {
             PAIRING_KEY => {
                 out.pairing_key = hex::decode(&value).ok().filter(|k| k.len() == KEY_LEN)
             }
+            FFMPEG_PATH => out.ffmpeg_path = Some(PathBuf::from(value)).filter(|p| p.is_absolute()),
             _ => {}
         }
     }
@@ -296,6 +313,13 @@ impl Setup {
         anyhow::ensure!(port != 0, "port 0 isn't a port");
         self.rt
             .block_on(put(&self.pool, BIND_PORT, &port.to_string()))
+    }
+
+    /// Stores ffmpeg's path; it must be absolute.
+    pub fn set_ffmpeg_path(&self, path: &Path) -> Result<()> {
+        anyhow::ensure!(path.is_absolute(), "{} isn't absolute", path.display());
+        let value = path.to_str().context("ffmpeg's path isn't UTF-8")?;
+        self.rt.block_on(put(&self.pool, FFMPEG_PATH, value))
     }
 
     /// The stored pairing key, or `candidate` (the key [`load`] put in the

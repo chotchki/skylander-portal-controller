@@ -10,6 +10,7 @@
 mod cards;
 mod cli;
 mod driver;
+mod extraction;
 mod mirror;
 mod picker;
 mod screen;
@@ -38,6 +39,7 @@ use tracing::{info, warn};
 use crate::cards::PortalFeed;
 use crate::cli::Command;
 use crate::driver::{NativePortalDriver, PortalChange, portal_channel};
+use crate::extraction::ExtractJob;
 use crate::mirror::TvMirror;
 use crate::picker::{DataRoot, Picker};
 use crate::screen::SetupView;
@@ -77,7 +79,9 @@ fn main() -> Result<()> {
             let mode = setup::window_mode(&setup::env());
             let no_setup = SetupView::new(false, &[], &Default::default());
             let link = failed_link(format!("{e:#}"));
-            return run_tv(link, portal_rx, no_setup, mode, root, mirror, log_guard);
+            return run_tv(
+                link, portal_rx, no_setup, mode, root, None, mirror, log_guard,
+            );
         }
     };
     let cfg = loaded.config.clone();
@@ -99,6 +103,12 @@ fn main() -> Result<()> {
         "starting guacamole",
     );
     let setup_view = SetupView::at_start(picked, needs_setup, &loaded.dump_dirs, &scan);
+    let job = ExtractJob::new(
+        &root,
+        loaded.extract_dir.clone(),
+        loaded.ffmpeg.clone(),
+        cfg.data_root.clone(),
+    );
 
     let link = match boot(BootOptions {
         config: cfg.clone(),
@@ -128,6 +138,7 @@ fn main() -> Result<()> {
         setup_view,
         cfg.window_mode,
         root,
+        Some(job),
         mirror,
         log_guard,
     )
@@ -166,6 +177,7 @@ fn run_tv(
     setup_view: SetupView,
     mode: WindowMode,
     root: PathBuf,
+    job: Option<ExtractJob>,
     mirror: TvMirror,
     log_guard: WorkerGuard,
 ) -> Result<()> {
@@ -186,7 +198,10 @@ fn run_tv(
     .insert_resource(Setup(setup_view))
     .insert_resource(Framing(mode))
     .insert_resource(DataRoot(root))
-    .add_plugins((ServerBridge, Tv, Picker));
+    .add_plugins((ServerBridge, Tv, Picker, extraction::ExtractPlugin));
+    if let Some(job) = job {
+        app.insert_resource(job);
+    }
     #[cfg(feature = "dev-tools")]
     app.add_plugins(shots::Shots);
     if cfg!(feature = "test-hooks") {

@@ -11,6 +11,8 @@ pub struct SetupView {
     pub needs_setup: bool,
     /// A BLUS30968 dump was found.
     pub giants_found: bool,
+    /// The folder holding its `PS3_GAME`: what a Giants pick extracts from.
+    pub giants_dir: Option<std::path::PathBuf>,
     /// Every dump found, by title ("Skylanders: Giants (BLUS30968)").
     pub found_titles: Vec<String>,
     /// The chosen folders, for the no-Giants screen.
@@ -30,6 +32,7 @@ impl SetupView {
         Self {
             needs_setup,
             giants_found: scan.offered().is_some(),
+            giants_dir: scan.offered().map(|d| d.dir.clone()),
             found_titles: scan
                 .found
                 .iter()
@@ -426,6 +429,7 @@ mod tests {
         };
         let view = SetupView::new(false, &["/d".into()], &scan);
         assert!(view.giants_found);
+        assert_eq!(view.giants_dir.as_deref(), Some("/d/giants".as_ref()));
         assert_eq!(view.found_titles.len(), 2);
         assert!(view.found_titles[0].ends_with("(BLUS30968)"));
         assert_eq!(view.found_titles[1], "BLES99999");

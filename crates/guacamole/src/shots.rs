@@ -14,6 +14,7 @@ use bevy::render::view::window::screenshot::{Screenshot, ScreenshotCaptured, sav
 use tracing::info;
 
 use crate::cards::PortalCards;
+use crate::extraction::{ExtractBand, Extraction};
 use crate::tv::Current;
 
 /// Long enough for a rebuilt tree's layout and portraits to reach the GPU.
@@ -90,11 +91,14 @@ fn snap(
     mut state: ResMut<ShotState>,
     current: Option<Res<Current>>,
     cards: Res<PortalCards>,
+    band: Option<Res<ExtractBand>>,
+    extraction: Option<Res<Extraction>>,
 ) {
     let Some(current) = current else {
         return;
     };
-    if current.is_changed() || cards.is_changed() {
+    let band_changed = band.is_some_and(|b| b.is_changed());
+    if current.is_changed() || cards.is_changed() || band_changed {
         state.due = Some(Instant::now() + SETTLE);
         return;
     }
@@ -108,8 +112,9 @@ fn snap(
     state.seq += 1;
     let screen = format!("{:?}", current.screen);
     let screen: String = screen.chars().take_while(|c| c.is_alphanumeric()).collect();
+    let extract = extraction.map_or("Idle", |e| e.status.kind());
     let name = format!(
-        "{:02}-{screen}-{}cards.png",
+        "{:02}-{screen}-{}cards-{extract}.png",
         state.seq,
         cards.cards().count()
     );

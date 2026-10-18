@@ -19,6 +19,7 @@ use skylander_rpcs3_control::{Placement, PlacementOwner};
 use tracing::{error, info, warn};
 
 use crate::cards::{PortalCards, drain_portal};
+use crate::extraction::{Band, ExtractBand};
 use crate::screen::{SetupView, TvScreen, screen_for};
 
 /// How long the farewell shows before the app exits (spec: under 5 s).
@@ -126,6 +127,16 @@ pub(crate) struct JoinAddress;
 /// The "N phones connected" line as drawn.
 #[derive(Component)]
 pub(crate) struct PlayersLine;
+
+/// The extraction band's lines and bar fill (percent) as drawn.
+#[derive(Component)]
+pub(crate) struct ExtractTitle;
+
+#[derive(Component)]
+pub(crate) struct ExtractDetail;
+
+#[derive(Component)]
+pub(crate) struct ExtractBar(pub(crate) u8);
 
 /// Marks the root node; the whole tree is rebuilt when the screen changes.
 #[derive(Component)]
@@ -259,6 +270,7 @@ fn rebuild_screen(
     setup: Res<Setup>,
     framing: Res<Framing>,
     cards: Res<PortalCards>,
+    band: Option<Res<ExtractBand>>,
     mut portraits: ResMut<Portraits>,
     mut images: ResMut<Assets<Image>>,
     mut report: ResMut<LayoutReport>,
@@ -267,8 +279,10 @@ fn rebuild_screen(
     let (Some(current), Some(assets)) = (current, assets) else {
         return;
     };
-    let cards_changed = cards.is_changed() && matches!(current.screen, TvScreen::Portal { .. });
-    if !current.is_changed() && !setup.is_changed() && !cards_changed && !roots.is_empty() {
+    let on_portal = matches!(current.screen, TvScreen::Portal { .. });
+    let band_changed = band.as_ref().is_some_and(|b| b.is_changed());
+    let portal_changed = on_portal && (cards.is_changed() || band_changed);
+    if !current.is_changed() && !setup.is_changed() && !portal_changed && !roots.is_empty() {
         return;
     }
     for root in &roots {
@@ -281,6 +295,7 @@ fn rebuild_screen(
     };
     let portal = PortalView {
         cards: &cards,
+        band: band.as_ref().and_then(|b| b.0.as_ref()),
         portraits: &mut portraits,
         images: &mut images,
     };
@@ -347,6 +362,8 @@ fn picker_lines(setup: &SetupView, choose: &str) -> Vec<(String, f32, Color)> {
 /// What the portal screen draws from.
 struct PortalView<'a> {
     cards: &'a PortalCards,
+    /// The extraction's state, drawn in the header.
+    band: Option<&'a Band>,
     portraits: &'a mut Portraits,
     images: &'a mut Assets<Image>,
 }
@@ -697,6 +714,7 @@ fn spawn_portal(
     let text = |s: &str, size: f32, color: Color| text_at(s, size, color, Justify::Center);
     let PortalView {
         cards,
+        band,
         portraits,
         images,
     } = portal;
@@ -721,7 +739,8 @@ fn spawn_portal(
             justify_content: JustifyContent::SpaceBetween,
             align_items: AlignItems::Center,
             column_gap: px(24),
-            height: px(184),
+            // Grows only for a band whose detail wraps.
+            min_height: px(184),
             flex_shrink: 0.0,
             ..default()
         })
@@ -732,12 +751,15 @@ fn spawn_portal(
                     align_items: AlignItems::FlexStart,
                     row_gap: px(8),
                     min_width: px(0),
+                    flex_grow: 1.0,
                     flex_shrink: 1.0,
                     ..default()
                 })
                 .with_children(|left| {
                     left.spawn(text_at(game, 64.0, GOLD, Justify::Left));
-                    if empty {
+                    if let Some(band) = band {
+                        spawn_band(left, &text_at, band);
+                    } else if empty {
                         left.spawn(text_at(
                             "Put a figure on the portal from your phone.",
                             32.0,
@@ -825,6 +847,48 @@ fn spawn_portal(
             }
         });
     });
+}
+
+/// The extraction's title, detail and bar, under the game's name.
+fn spawn_band<T: Bundle>(
+    left: &mut ChildSpawnerCommands,
+    text_at: &impl Fn(&str, f32, Color, Justify) -> T,
+    band: &Band,
+) {
+    left.spawn((
+        ExtractTitle,
+        text_at(&band.title, 30.0, GOLD, Justify::Left),
+    ));
+    let color = if band.code.is_some() { WHITE } else { DIM };
+    left.spawn((
+        ExtractDetail,
+        text_at(&band.detail, 22.0, color, Justify::Left),
+    ));
+    if let Some(pct) = band.percent {
+        left.spawn((
+            Node {
+                width: percent(100),
+                max_width: px(640),
+                height: px(12),
+                flex_shrink: 0.0,
+                border_radius: BorderRadius::MAX,
+                overflow: Overflow::clip(),
+                ..default()
+            },
+            BackgroundColor(EMPTY_EDGE),
+        ))
+        .with_children(|bar| {
+            bar.spawn((
+                ExtractBar(pct),
+                Node {
+                    width: percent(f32::from(pct)),
+                    height: percent(100),
+                    ..default()
+                },
+                BackgroundColor(GOLD),
+            ));
+        });
+    }
 }
 
 /// A grid cell: grows to an equal share and clips anything that doesn't fit.
@@ -1183,7 +1247,19 @@ pub(crate) mod layout_tests {
     }
 
     fn assert_eight_visible(width: u32, height: u32, mode: WindowMode, name: &str) {
-        let laid = lay_out(width, height, mode, full(name));
+        assert_eight_visible_under(width, height, mode, name, None);
+    }
+
+    fn assert_eight_visible_under(
+        width: u32,
+        height: u32,
+        mode: WindowMode,
+        name: &str,
+        band: Option<Band>,
+    ) {
+        let mut app = portal_app(width, height, mode, full(name));
+        app.insert_resource(ExtractBand(band));
+        let laid = measure(&mut app);
         let safe = safe_area(width, height, mode);
         assert_eq!(laid.cards.len(), 8, "{width}x{height} {mode:?}");
         assert!(laid.empties.is_empty());
@@ -1245,6 +1321,66 @@ pub(crate) mod layout_tests {
     #[test]
     fn eight_cards_fit_the_desktop_window() {
         assert_eight_visible(1280, 720, WindowMode::Desktop, "Eruptor");
+    }
+
+    /// The longest band the TV draws: a failure naming two deep folders.
+    fn long_failure() -> Band {
+        use crate::extraction::{ExtractStatus, Failure, band};
+        let deep = "/Users/someone/Library/Application Support/guacamole/extract";
+        band(&ExtractStatus::Failed(Failure::InCheckout {
+            root: format!("{deep}/and/a/much/deeper/folder/than/anyone/would/use").into(),
+            repo: format!("{deep}/and/a/much").into(),
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn eight_cards_fit_under_the_extraction_band() {
+        use crate::extraction::{ExtractStatus, band};
+        let progress = band(&ExtractStatus::Converting {
+            done: 47,
+            total: 48,
+            movie: "wreckingball".into(),
+        });
+        for b in [progress, Some(long_failure())] {
+            assert_eight_visible_under(1920, 1080, WindowMode::Tv, "Eruptor", b.clone());
+            assert_eight_visible_under(3840, 2160, WindowMode::Tv, "Eruptor", b.clone());
+            assert_eight_visible_under(1280, 720, WindowMode::Desktop, "Eruptor", b);
+        }
+    }
+
+    #[test]
+    fn the_band_replaces_the_empty_portal_hint_and_draws_its_bar() {
+        use crate::extraction::{ExtractStatus, band};
+        let lines = |app: &mut App| {
+            let world = app.world_mut();
+            let mut q = world.query::<&Text>();
+            q.iter(world).map(|t| t.0.clone()).collect::<Vec<_>>()
+        };
+        let hint = "Put a figure on the portal from your phone.".to_string();
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
+        measure(&mut app);
+        assert!(lines(&mut app).contains(&hint));
+
+        let checking = band(&ExtractStatus::Checking {
+            bytes_done: 1,
+            bytes_total: 2,
+        });
+        app.insert_resource(ExtractBand(checking));
+        measure(&mut app);
+        let drawn = lines(&mut app);
+        assert!(!drawn.contains(&hint), "{drawn:?}");
+        assert!(drawn.contains(&"Checking your Giants dump… 50%".to_string()));
+        let world = app.world_mut();
+        let mut bars = world.query::<(&ExtractBar, &ComputedNode)>();
+        let (bar, node) = bars.single(world).unwrap();
+        assert_eq!(bar.0, 50);
+        assert!(node.size().x > 0.0);
+
+        // Ready draws nothing: the hint is back.
+        app.insert_resource(ExtractBand(None));
+        measure(&mut app);
+        assert!(lines(&mut app).contains(&hint));
     }
 
     #[test]

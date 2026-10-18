@@ -16,6 +16,9 @@ path = "src/main.rs"
 guac-server = { path = "../guac-server", default-features = false }
 skylander-core = { path = "../core" }
 skylander-rpcs3-control = { path = "../rpcs3-control" }
+# First-run extraction (openspec AB.9): identity, the intro index, the transcode.
+guac-extract = { path = "../guac-extract" }
+guac-ir = { path = "../guac-ir" }
 
 anyhow = { workspace = true }
 tracing = { workspace = true }

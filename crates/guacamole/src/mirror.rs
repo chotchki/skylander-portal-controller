@@ -12,10 +12,11 @@ use bevy::ui::{ComputedNode, UiGlobalTransform, UiSystems};
 use serde::Serialize;
 
 use crate::cards::PortalCards;
+use crate::extraction::{ExtractStatus, Extraction};
 use crate::screen::TvScreen;
 use crate::tv::{
-    CardSlot, Current, EmptySlot, Framing, JoinAddress, JoinQr, Pip, PlayersLine, Setup, TvAssets,
-    contains, node_rect, safe_area,
+    CardSlot, Current, EmptySlot, ExtractBar, ExtractDetail, ExtractTitle, Framing, JoinAddress,
+    JoinQr, Pip, PlayersLine, Setup, TvAssets, contains, node_rect, safe_area,
 };
 
 /// What the TV shows this frame.
@@ -46,6 +47,26 @@ pub struct TvSnapshot {
     pub cards_outside: Vec<u8>,
     /// Pairs of cards that overlap.
     pub overlapping: usize,
+    /// The first-run extraction (AB.9).
+    pub extraction: ExtractionShot,
+}
+
+/// The extraction's state from the resource; the band's lines and bar as drawn.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ExtractionShot {
+    /// `ExtractStatus`'s variant: `Idle`, `Checking`, `Converting`, `Ready`, `Failed`, ...
+    pub state: String,
+    /// A failure's `GUAC-E-*` code.
+    pub code: Option<String>,
+    /// Converting: intros done, of how many.
+    pub converted: Option<[usize; 2]>,
+    /// Ready: toy types with an intro, and whether this start extracted.
+    pub intros: Option<usize>,
+    pub ran: Option<bool>,
+    pub title: Option<String>,
+    pub detail: Option<String>,
+    /// The drawn bar's fill.
+    pub percent: Option<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -139,9 +160,17 @@ fn mirror_tv(
     texts: Query<&Text>,
     images: Query<(), With<ImageNode>>,
     pips: Query<(&Pip, &BackgroundColor)>,
-    players_line: Query<&Text, With<PlayersLine>>,
-    address: Query<&Text, With<JoinAddress>>,
-    qr: Query<&ImageNode, With<JoinQr>>,
+    (players_line, address, qr): (
+        Query<&Text, With<PlayersLine>>,
+        Query<&Text, With<JoinAddress>>,
+        Query<&ImageNode, With<JoinQr>>,
+    ),
+    (extraction, band_title, band_detail, bar): (
+        Option<Res<Extraction>>,
+        Query<&Text, With<ExtractTitle>>,
+        Query<&Text, With<ExtractDetail>>,
+        Query<&ExtractBar>,
+    ),
 ) {
     let Some(current) = current else {
         return;
@@ -198,6 +227,29 @@ fn mirror_tv(
         TvScreen::ServerError { message } => (None, Some(message.clone())),
         _ => (None, None),
     };
+    let status = extraction.map(|e| e.status.clone()).unwrap_or_default();
+    let extraction = ExtractionShot {
+        state: status.kind().to_string(),
+        code: match &status {
+            ExtractStatus::Failed(f) => Some(f.code().to_string()),
+            _ => None,
+        },
+        converted: match &status {
+            ExtractStatus::Converting { done, total, .. } => Some([*done, *total]),
+            _ => None,
+        },
+        intros: match &status {
+            ExtractStatus::Ready { intros, .. } => Some(*intros),
+            _ => None,
+        },
+        ran: match &status {
+            ExtractStatus::Ready { ran, .. } => Some(*ran),
+            _ => None,
+        },
+        title: band_title.iter().next().map(|t| t.0.clone()),
+        detail: band_detail.iter().next().map(|t| t.0.clone()),
+        percent: bar.iter().next().map(|b| b.0),
+    };
     let snapshot = TvSnapshot {
         screen: current.screen.kind().to_string(),
         game,
@@ -218,6 +270,7 @@ fn mirror_tv(
         window: [size.x as f32, size.y as f32],
         cards_outside,
         overlapping,
+        extraction,
     };
     let mut shared = mirror.0.lock().unwrap_or_else(|e| e.into_inner());
     if *shared != snapshot {
@@ -356,6 +409,75 @@ mod tests {
             (shot.players, shot.join_address, shot.join_qr),
             (None, None, false)
         );
+    }
+
+    #[test]
+    fn the_extraction_reads_back_its_state_and_drawn_band() {
+        use crate::extraction::{ExtractBand, ExtractStatus, Extraction, Failure, band};
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
+        let mirror = TvMirror::default();
+        app.insert_resource(mirror.clone()).add_plugins(Mirror);
+        app.update();
+        let idle = mirror.0.lock().unwrap().extraction.clone();
+        assert_eq!(idle.state, "Idle");
+        assert_eq!((idle.title, idle.percent), (None, None));
+
+        let converting = ExtractStatus::Converting {
+            done: 12,
+            total: 48,
+            movie: "eruptor".into(),
+        };
+        app.insert_resource(ExtractBand(band(&converting)));
+        app.insert_resource(Extraction {
+            status: converting,
+            ..Default::default()
+        });
+        for _ in 0..3 {
+            app.update();
+        }
+        let shot = mirror.0.lock().unwrap().extraction.clone();
+        assert_eq!(shot.state, "Converting");
+        assert_eq!(shot.converted, Some([12, 48]));
+        assert_eq!(shot.detail.as_deref(), Some("Converting intro 13 of 48…"));
+        assert_eq!(shot.percent, Some(25));
+        assert_eq!(shot.code, None);
+
+        let failed = ExtractStatus::Failed(Failure::NoFfmpeg {
+            configured: None,
+            install: "brew install ffmpeg".into(),
+        });
+        app.insert_resource(ExtractBand(band(&failed)));
+        app.insert_resource(Extraction {
+            status: failed,
+            ..Default::default()
+        });
+        for _ in 0..3 {
+            app.update();
+        }
+        let shot = mirror.0.lock().unwrap().extraction.clone();
+        assert_eq!(shot.state, "Failed");
+        assert_eq!(shot.code.as_deref(), Some("GUAC-E-NO-FFMPEG"));
+        assert_eq!(shot.title.as_deref(), Some("No intros: ffmpeg is needed"));
+        assert!(shot.detail.unwrap().contains("brew install ffmpeg"));
+        assert_eq!(shot.percent, None);
+
+        app.insert_resource(ExtractBand(None));
+        app.insert_resource(Extraction {
+            status: ExtractStatus::Ready {
+                intros: 53,
+                ran: false,
+            },
+            ..Default::default()
+        });
+        for _ in 0..3 {
+            app.update();
+        }
+        let shot = mirror.0.lock().unwrap().extraction.clone();
+        assert_eq!(
+            (shot.state.as_str(), shot.intros, shot.ran),
+            ("Ready", Some(53), Some(false))
+        );
+        assert_eq!(shot.title, None);
     }
 
     #[tokio::test]
