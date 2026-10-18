@@ -86,6 +86,12 @@ pub enum Catalogue {
     FirmwarePack {
         scan: fn(&Path) -> Result<Vec<Figure>>,
     },
+    /// guacamole's (`DriverKind::Native`): file-less records built from
+    /// `<data_root>/figures.json` (`native_catalogue`) and a fixed game list,
+    /// with no pack index and no `games.yml` read.
+    Native {
+        games: Vec<skylander_core::InstalledGame>,
+    },
 }
 
 /// What the binary's UI reads once the server is up.
@@ -110,7 +116,8 @@ pub struct ServerHandles {
 
 /// Start the server; returns once the driver worker runs or the tokio thread
 /// gave up (reported as `LauncherScreen::ServerError`, not as `Err`).
-/// `Err` is only what fails before the thread starts: indexing the pack.
+/// `Err` is only what fails before the thread starts: indexing the pack or
+/// reading `figures.json`, or a catalogue that doesn't fit the driver kind.
 pub fn boot(options: BootOptions) -> Result<ServerHandles> {
     let BootOptions {
         config: cfg,
@@ -123,8 +130,20 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
         bind_ip,
     } = options;
 
-    let figures: Vec<Figure> = match &catalogue {
-        Catalogue::FirmwarePack { scan } => index_firmware_pack(&cfg, *scan)?,
+    let figures: Vec<Figure> = match (&catalogue, cfg.driver_kind) {
+        (
+            Catalogue::FirmwarePack { scan },
+            DriverKind::Uia | DriverKind::Ipc | DriverKind::Mock,
+        ) => index_firmware_pack(&cfg, *scan)?,
+        (Catalogue::Native { .. }, DriverKind::Native) => {
+            crate::native_catalogue::load(&cfg.data_root)?
+        }
+        (Catalogue::FirmwarePack { .. }, DriverKind::Native) => {
+            anyhow::bail!("the native driver has no firmware pack to index")
+        }
+        (Catalogue::Native { .. }, kind) => {
+            anyhow::bail!("the native catalogue needs the native driver, not {kind:?}")
+        }
     };
 
     let figure_index: HashMap<_, _> = figures
@@ -227,7 +246,11 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
                     }
                 };
                 // PLAN 16.10.1: Internet Connected, PSN Disconnected, DNS 8.8.8.8; real emulators only, non-fatal.
-                if !matches!(driver_kind, DriverKind::Mock)
+                let real_emulator = match driver_kind {
+                    DriverKind::Uia | DriverKind::Ipc => true,
+                    DriverKind::Mock | DriverKind::Native => false,
+                };
+                if real_emulator
                     && let Some(rpcs3_config) = &hooks.rpcs3_config
                     && let Err(e) = rpcs3_config.ensure_net_config(&config_dir)
                 {
@@ -271,6 +294,7 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
                     rpcs3_for_task.clone(),
                     rpcs3_exe.clone(),
                     config_dir.clone(),
+                    data_root.clone(),
                     status_for_task.clone(),
                     hooks.rpcs3_config.clone(),
                 );
@@ -285,6 +309,7 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
                     driver_tx.clone(),
                     figures_for_driver,
                     hooks.figure_files.clone(),
+                    driver_kind,
                     std::time::Duration::from_millis(500),
                 );
                 // Only IPC polls STATE for `game_playable` (PLAN 16.6.3.1); UIA sets it in BootDirect, Mock never.
@@ -296,7 +321,7 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
                             std::time::Duration::from_millis(250),
                         );
                     }
-                    _ => {
+                    DriverKind::Uia | DriverKind::Mock | DriverKind::Native => {
                         let _ = driver_for_poller;
                     }
                 }
@@ -308,21 +333,26 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
                     std::time::Duration::from_secs(90),
                     std::time::Duration::from_secs(5),
                 );
-                // RPCS3 spawns on /api/launch (PLAN 10.8.4); Mock just installs a stand-in process.
-                if matches!(driver_kind, DriverKind::Mock) {
-                    let mut guard = rpcs3_for_task.lock().await;
-                    guard.process = Some(RpcsProcess::mock());
-                    drop(guard);
-                    if let Ok(mut st) = status_for_task.lock() {
-                        st.rpcs3_running = true;
+                // RPCS3 spawns on /api/launch (PLAN 10.8.4); Mock just installs a stand-in process
+                // and Native tracks none, ever.
+                match driver_kind {
+                    DriverKind::Mock => {
+                        let mut guard = rpcs3_for_task.lock().await;
+                        guard.process = Some(RpcsProcess::mock());
+                        drop(guard);
+                        if let Ok(mut st) = status_for_task.lock() {
+                            st.rpcs3_running = true;
+                        }
+                        info!("Mock RPCS3 lifecycle ready");
                     }
-                    info!("Mock RPCS3 lifecycle ready");
+                    DriverKind::Uia | DriverKind::Ipc | DriverKind::Native => {}
                 }
 
                 let (games, games_yml) = match catalogue {
                     Catalogue::FirmwarePack { .. } => {
                         games_from_games_yml(driver_kind, &config_dir)
                     }
+                    Catalogue::Native { games } => (games, HashMap::new()),
                 };
 
                 let state = Arc::new(AppState {
@@ -447,6 +477,10 @@ fn games_from_games_yml(
     driver_kind: DriverKind,
     config_dir: &Path,
 ) -> (Vec<skylander_core::InstalledGame>, HashMap<String, PathBuf>) {
+    // `boot` pairs Native with `Catalogue::Native`; never read games.yml for it.
+    if matches!(driver_kind, DriverKind::Native) {
+        return (Vec::new(), HashMap::new());
+    }
     // Non-fatal (PLAN 10.8.4): a failed read is an empty picker until games.yml is fixed.
     let games_yml = match skylander_rpcs3_control::games_yml::read_games_yml(config_dir) {
         Ok(map) => {
@@ -471,6 +505,7 @@ fn games_from_games_yml(
             );
             catalogue
         }
+        DriverKind::Native => Vec::new(),
         DriverKind::Mock => {
             let all_serials: Vec<String> = skylander_core::SKYLANDERS_SERIALS
                 .iter()
@@ -675,21 +710,19 @@ mod tests {
 
     /// Signed, so it passes with or without `dev-tools`.
     fn get_version(addr: SocketAddr) -> String {
+        get(addr, "/api/version")
+    }
+
+    fn get(addr: SocketAddr, path: &str) -> String {
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as u64;
-        let sig = hex::encode(crate::http::compute_hmac(
-            &KEY,
-            ts,
-            "GET",
-            "/api/version",
-            b"",
-        ));
+        let sig = hex::encode(crate::http::compute_hmac(&KEY, ts, "GET", path, b""));
         let mut stream = std::net::TcpStream::connect(addr).expect("connect");
         write!(
             stream,
-            "GET /api/version HTTP/1.1\r\nHost: {addr}\r\nX-Skyportal-Timestamp: {ts}\r\n\
+            "GET {path} HTTP/1.1\r\nHost: {addr}\r\nX-Skyportal-Timestamp: {ts}\r\n\
              X-Skyportal-Sig: {sig}\r\nConnection: close\r\n\r\n"
         )
         .unwrap();
@@ -759,5 +792,67 @@ mod tests {
 
         // The first copy keeps serving.
         assert!(get_version(first.bind_addr).starts_with("HTTP/1.1 200"));
+    }
+
+    fn native_boot(root: &Path, catalogue: Catalogue) -> Result<ServerHandles> {
+        let mut config = mock_config(root, ephemeral_port());
+        config.driver_kind = DriverKind::Native;
+        boot(BootOptions {
+            config,
+            runtime_root: root.to_path_buf(),
+            migrator: &TEST_MIGRATOR,
+            driver_factory: Box::new(|_| {
+                Ok(BuiltDriver::new(Arc::new(
+                    skylander_rpcs3_control::MockPortalDriver::new(),
+                )))
+            }),
+            hooks: Hooks::default(),
+            extra_routes: None,
+            catalogue,
+            bind_ip: Some(Ipv4Addr::LOCALHOST),
+        })
+    }
+
+    #[test]
+    fn a_native_boot_serves_the_catalogue_from_figures_json() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("data")).unwrap();
+        std::fs::write(
+            root.path().join("data/figures.json"),
+            r#"[
+                {"figure_id": "000009-0000", "alignment": "Core Skylander",
+                 "attributes": {"name": "Eruptor", "element": "Fire",
+                                "firstrelease": "Skylanders: Spyro's Adventure"}},
+                {"figure_id": "000009-0801", "alignment": "Core Skylander",
+                 "attributes": {"name": "Cynder", "element": "Undead",
+                                "firstrelease": "Skylanders: Spyro's Adventure"}}
+            ]"#,
+        )
+        .unwrap();
+        let giants = vec![skylander_core::InstalledGame {
+            serial: skylander_core::GameSerial::new("BLUS30968"),
+            display_name: "Skylanders: Giants".into(),
+        }];
+        let handles = native_boot(root.path(), Catalogue::Native { games: giants }).unwrap();
+        wait_until_ready(&handles);
+
+        let figures = get(handles.bind_addr, "/api/figures");
+        assert!(figures.starts_with("HTTP/1.1 200"), "{figures}");
+        assert!(figures.contains("\"000009-0000\""), "{figures}");
+        assert!(figures.contains("\"000064-0000\""), "{figures}");
+        assert!(!figures.contains("Cynder"), "{figures}");
+        let games = get(handles.bind_addr, "/api/games");
+        assert!(games.contains("BLUS30968"), "{games}");
+    }
+
+    #[test]
+    fn a_native_boot_without_figures_json_fails_before_the_bind() {
+        let root = tempfile::tempdir().unwrap();
+        let catalogue = Catalogue::Native { games: Vec::new() };
+        let err = native_boot(root.path(), catalogue)
+            .err()
+            .expect("no figures.json");
+        assert!(format!("{err:#}").contains("figures.json"), "{err:#}");
+        assert!(!root.path().join("db.sqlite").exists());
     }
 }

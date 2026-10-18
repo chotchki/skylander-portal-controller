@@ -292,9 +292,24 @@ pub fn router(state: Arc<AppState>, _phone_dist: std::path::PathBuf) -> Router {
     // Figure stats, edit and reset read or rewrite a `.sky` working copy, so
     // their handlers stay with the product and arrive through the figure-file
     // hook (registered only when the product's `sky-stats` feature is on).
-    // TODO(AA.3): with no hook, answer 409 on these three paths.
-    if let Some(figure_files) = &state.hooks.figure_files {
-        api = api.merge(figure_files.routes());
+    // Without the hook (Native) the same paths answer 409.
+    match &state.hooks.figure_files {
+        Some(figure_files) => api = api.merge(figure_files.routes()),
+        None => {
+            api = api
+                .route(
+                    "/api/profiles/:profile_id/figures/:figure_id/stats",
+                    get(figure_files_unavailable),
+                )
+                .route(
+                    "/api/profiles/:profile_id/figures/:figure_id/edit",
+                    post(figure_files_unavailable),
+                )
+                .route(
+                    "/api/profiles/:profile_id/figures/:figure_id/reset",
+                    post(figure_files_unavailable),
+                );
+        }
     }
 
     #[cfg(feature = "dev-tools")]
@@ -452,6 +467,13 @@ async fn figure_image(
         }
     };
 
+    // Native serves only the catalogue's portraits (a supplemented figure has none).
+    if matches!(state.driver_kind, crate::config::DriverKind::Native)
+        && crate::native_catalogue::portrait(&state.data_root, &FigureId::new(&id)).is_none()
+    {
+        return (StatusCode::NOT_FOUND, "no image available").into_response();
+    }
+
     let scraped = state
         .data_root
         .join("images")
@@ -608,6 +630,12 @@ fn is_valid_ps3_serial(s: &str) -> bool {
     s[4..].chars().all(|c| c.is_ascii_digit())
 }
 
+/// The figure-file routes without the hook: there's no working copy to read or
+/// rewrite.
+async fn figure_files_unavailable() -> Response {
+    (StatusCode::CONFLICT, "figure files unavailable").into_response()
+}
+
 async fn get_portal(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let portal = state.portal.lock().await.clone();
     axum::Json(portal)
@@ -650,14 +678,13 @@ async fn load_slot(
     // unlocked, route through the per-profile working copy (PLAN 3.11.2)
     // so progress persists across loads. Without a profile (no session
     // unlocked yet), fall back to the pack's fresh file — read-only use.
-    let path = match &placed_by {
-        Some(profile_id) => {
-            // TODO(AA.3): Native places by identity, with no file to resolve.
-            let Some(figure_files) = &state.hooks.figure_files else {
-                return (StatusCode::CONFLICT, "figure files unavailable").into_response();
-            };
+    // Without the figure-file hook (Native) there's no file: the worker
+    // places by identity.
+    let path = match (&state.hooks.figure_files, &placed_by) {
+        (None, _) => None,
+        (Some(figure_files), Some(profile_id)) => {
             match figure_files.resolve_load_path(profile_id, &figure) {
-                Ok(p) => p,
+                Ok(p) => Some(p),
                 Err(e) => {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -667,7 +694,7 @@ async fn load_slot(
                 }
             }
         }
-        None => figure.sky_path.clone(),
+        (Some(_), None) => Some(figure.sky_path.clone()),
     };
 
     // Bump figure_usage.last_used_at. Best-effort — we don't fail the load
@@ -725,6 +752,10 @@ async fn reset_slot(
     CurrentSession(sid): CurrentSession,
     Signed(body_bytes): Signed,
 ) -> Response {
+    // Without the figure-file hook (Native) there's no working copy to reset.
+    let Some(figure_files) = state.hooks.figure_files.clone() else {
+        return (StatusCode::CONFLICT, "figure files unavailable").into_response();
+    };
     let slot = match SlotIndex::from_display(n) {
         Ok(s) => s,
         Err(_) => {
@@ -748,11 +779,6 @@ async fn reset_slot(
     // action. A locked session isn't allowed to reset someone else's save.
     let Some(profile_id) = state.sessions.profile_of(sid).await else {
         return (StatusCode::FORBIDDEN, "unlock a profile first").into_response();
-    };
-    // Checked before the slot flips to Loading, so a refusal leaves it as is.
-    // TODO(AA.3): the Native arm (and its test) for the slot reset.
-    let Some(figure_files) = state.hooks.figure_files.clone() else {
-        return (StatusCode::CONFLICT, "figure files unavailable").into_response();
     };
 
     // Back pressure: reject if the slot is already mid-transition.
@@ -787,7 +813,7 @@ async fn reset_slot(
     let job = DriverJob::LoadFigure {
         slot,
         figure_id: figure.id.clone(),
-        path,
+        path: Some(path),
         placed_by: Some(profile_id),
         canonical_name: figure.canonical_name.clone(),
     };
@@ -954,7 +980,7 @@ async fn set_window_mode(State(state): State<Arc<AppState>>, Signed(body): Signe
         Ok(r) => r,
         Err(e) => return (StatusCode::BAD_REQUEST, format!("bad body: {e}")).into_response(),
     };
-    // TODO(AA.3): the Native arm (and its test) for the settings toggles.
+    // No settings writer (Native): there's no config.json to rewrite.
     let Some(settings) = &state.hooks.settings else {
         return (StatusCode::CONFLICT, "settings unavailable").into_response();
     };
@@ -1139,8 +1165,8 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
     // matching what RPCS3 wants, the boot stays at one resolution and
     // the launcher's animations survive.
     //
-    // TODO(AA.3): with no display-mode hook, both the pre-set and the capture
-    // below are skipped (the Native arm).
+    // Without the display-mode hook (Native) both the pre-set and the capture
+    // below are skipped.
     if let Some(display_modes) = &state.hooks.display_modes {
         match state.profiles.get_display_mode(body.serial.as_str()).await {
             Ok(Some(mode)) => {
@@ -1170,15 +1196,18 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
     // Resolve serial → game directory → EBOOT.BIN via games.yml
     // (PLAN 10.8.4). 404 if the picked serial isn't in RPCS3's library.
     //
-    // Skipped under the mock driver: BootDirect's mock branch ignores
-    // `eboot_path` entirely (no real RPCS3 to spawn), and on macOS
-    // there's typically no RPCS3 install at all so `games.yml` won't
-    // exist — the lookup would always 404 and every game-card click
-    // would dead-end on the picker. Gated on driver kind rather than
-    // `cfg(windows)` so a future Mac port with a real driver still
-    // gets the lookup. (PLAN 9.7 sibling fix, surfaced 2026-05-04
-    // playtest.)
-    let eboot_path = if matches!(state.driver_kind, crate::config::DriverKind::Mock) {
+    // Skipped under the mock and native drivers: neither spawns RPCS3,
+    // so BootDirect ignores `eboot_path`, and on macOS there's typically
+    // no RPCS3 install at all so `games.yml` won't exist — the lookup
+    // would always 404 and every game-card click would dead-end on the
+    // picker. Gated on driver kind rather than `cfg(windows)` so a Mac
+    // with a real driver still gets the lookup. (PLAN 9.7 sibling fix,
+    // surfaced 2026-05-04 playtest.)
+    let skip_eboot = match state.driver_kind {
+        crate::config::DriverKind::Mock | crate::config::DriverKind::Native => true,
+        crate::config::DriverKind::Uia | crate::config::DriverKind::Ipc => false,
+    };
+    let eboot_path = if skip_eboot {
         std::path::PathBuf::new()
     } else {
         let game_dir = match state.games_yml.get(body.serial.as_str()) {
@@ -1216,6 +1245,7 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
     if let Err(e) = state
         .driver_tx
         .send(crate::state::DriverJob::BootDirect {
+            driver_kind: state.driver_kind,
             eboot_path,
             expected_name: game.display_name.clone(),
             display_name: game.display_name.clone(),
@@ -1617,17 +1647,20 @@ async fn shutdown_launcher(State(state): State<Arc<AppState>>, Signed(_body): Si
 ///   the singleton lockfile + IPC socket) — the user quits to the picker first.
 ///   No auto-stop.
 /// - **202** (no-op) if the settings GUI is already open.
-/// - **409** on the mock driver (no real RPCS3 to configure).
+/// - **409** on the mock and native drivers (no real RPCS3 to configure).
 async fn open_rpcs3_settings(
     State(state): State<Arc<AppState>>,
     Signed(_body): Signed,
 ) -> Response {
-    if matches!(state.driver_kind, crate::config::DriverKind::Mock) {
-        return (
-            StatusCode::CONFLICT,
-            "RPCS3 settings aren't available on this platform",
-        )
-            .into_response();
+    match state.driver_kind {
+        crate::config::DriverKind::Mock | crate::config::DriverKind::Native => {
+            return (
+                StatusCode::CONFLICT,
+                "RPCS3 settings aren't available on this platform",
+            )
+                .into_response();
+        }
+        crate::config::DriverKind::Uia | crate::config::DriverKind::Ipc => {}
     }
 
     {

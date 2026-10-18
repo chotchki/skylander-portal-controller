@@ -163,6 +163,20 @@ impl FigureId {
     pub fn from_tag_identity(id: TagIdentity) -> Self {
         FigureId(id.to_canonical_id_string())
     }
+
+    /// The toy type and masked variant of a tag-form id (`"0007d6-0000"`); `None`
+    /// for any other form (`"sha:…"`).
+    pub fn tag_parts(&self) -> Option<(ToyTypeId, MaskedVariant)> {
+        let (toy_type, variant) = self.0.split_once('-')?;
+        let hex = |s: &str, len: usize| s.len() == len && s.bytes().all(|b| b.is_ascii_hexdigit());
+        if !hex(toy_type, 6) || !hex(variant, 4) {
+            return None;
+        }
+        Some((
+            ToyTypeId(u32::from_str_radix(toy_type, 16).ok()?),
+            MaskedVariant(u16::from_str_radix(variant, 16).ok()?),
+        ))
+    }
 }
 
 impl std::fmt::Display for FigureId {
@@ -359,4 +373,38 @@ pub struct Game {
     /// Server-private.
     #[serde(skip)]
     pub sky_root: Option<PathBuf>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tag_parts_parses_the_tag_form() {
+        assert_eq!(
+            FigureId::new("0007d6-0c02").tag_parts(),
+            Some((ToyTypeId(0x7d6), MaskedVariant(0x0c02)))
+        );
+        let id = TagIdentity::new(ToyTypeId(0x1ce), MaskedVariant(0x0801));
+        assert_eq!(
+            FigureId::from_tag_identity(id).tag_parts(),
+            Some((ToyTypeId(0x1ce), MaskedVariant(0x0801)))
+        );
+    }
+
+    #[test]
+    fn tag_parts_rejects_other_forms() {
+        for id in [
+            "sha:0123456789abcdef",
+            "0007d6",
+            "0007d6-000",
+            "07d6-0000",
+            "0007d6-0000-",
+            "+007d6-0000",
+            "0007g6-0000",
+            "",
+        ] {
+            assert_eq!(FigureId::new(id).tag_parts(), None, "{id}");
+        }
+    }
 }

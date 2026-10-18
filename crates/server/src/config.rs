@@ -307,6 +307,7 @@ pub fn load(software_gl: bool, reconfigure: bool) -> Result<Config> {
             DriverKind::Ipc => PersistedDriverKind::Ipc,
             DriverKind::Uia => PersistedDriverKind::Uia,
             DriverKind::Mock => PersistedDriverKind::Mock,
+            DriverKind::Native => unreachable!("the product's loader never picks Native"),
         };
         if persisted.driver_kind != persisted_equiv || persisted.rpcs3_exe != rpcs3_exe {
             info!(

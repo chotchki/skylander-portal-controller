@@ -11,6 +11,9 @@ pub mod http;
 pub mod kaos;
 pub mod logging;
 pub mod mdns;
+pub mod native_catalogue;
+#[cfg(test)]
+mod native_tests;
 pub mod paths;
 pub mod profiles;
 pub mod round_qr;

@@ -196,6 +196,7 @@ fn build_driver(kind: DriverKind) -> Result<BuiltDriver> {
                 "mock driver only available with the dev-tools or mock-driver-runtime feature"
             );
         }
+        DriverKind::Native => anyhow::bail!("the native driver is guacamole's, not the product's"),
     }
 }
 

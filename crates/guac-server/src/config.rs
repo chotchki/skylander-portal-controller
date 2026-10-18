@@ -68,6 +68,10 @@ pub enum DriverKind {
     /// launch + window coordination (PLAN 16.6) is proven on the HTPC.
     Ipc,
     Mock,
+    /// guacamole's (openspec AA, design decision 3): no emulator and no figure
+    /// file. Nothing spawns, nothing reads RPCS3's config and loads place by
+    /// identity (`PortalDriver::place`).
+    Native,
 }
 
 /// How the launcher presents its window (PLAN 20). Chosen once in the

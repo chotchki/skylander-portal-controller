@@ -27,10 +27,10 @@ pub struct AppState {
     /// Map figure_id → index into `figures` for quick lookup.
     pub figure_index: HashMap<FigureId, usize>,
     /// Which portal driver is active. Read by the `/api/launch` handler
-    /// to skip the games.yml → EBOOT.BIN resolution under the mock
-    /// driver (BootDirect's mock branch ignores `eboot_path` entirely,
-    /// and on macOS there's no RPCS3 install so games.yml doesn't
-    /// exist — the lookup would always 404). Driven by config /
+    /// to skip the games.yml → EBOOT.BIN resolution under the mock and
+    /// native drivers (neither spawns RPCS3, and on macOS there's no
+    /// RPCS3 install so games.yml doesn't exist — the lookup would
+    /// always 404), and by the RPCS3-settings route. Driven by config /
     /// SKYLANDER_PORTAL_DRIVER env var (`config.rs::DriverKind`).
     pub driver_kind: crate::config::DriverKind,
     /// How the launcher window is presented (PLAN 20.6). Set from
@@ -481,25 +481,20 @@ impl AppState {
             );
             return;
         };
-        // TODO(AA.3): the Native arm places by identity instead.
-        let Some(figure_files) = &self.hooks.figure_files else {
-            warn!(
-                profile_id,
-                new_figure_id = %swap.new_figure_id.as_str(),
-                "kaos swap: no figure-file hook to resolve a working copy — aborting",
-            );
-            return;
-        };
-        let new_path = match figure_files.resolve_load_path(profile_id, new_figure) {
-            Ok(p) => p,
-            Err(e) => {
-                warn!(
-                    profile_id,
-                    new_figure_id = %swap.new_figure_id.as_str(),
-                    "kaos swap: resolve working copy failed: {e}"
-                );
-                return;
-            }
+        let new_path = match &self.hooks.figure_files {
+            // No figure files (Native): the worker places by identity.
+            None => None,
+            Some(figure_files) => match figure_files.resolve_load_path(profile_id, new_figure) {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    warn!(
+                        profile_id,
+                        new_figure_id = %swap.new_figure_id.as_str(),
+                        "kaos swap: resolve working copy failed: {e}"
+                    );
+                    return;
+                }
+            },
         };
         // Flip portal state immediately so phones animate the slot
         // transitioning rather than waiting on the async clear+load
@@ -672,6 +667,56 @@ fn first_grapheme_uppercase(name: &str) -> Option<String> {
         .map(|c| c.to_uppercase().collect::<String>())
 }
 
+/// The identity placement for a file-less load (openspec AA, design decision
+/// 4). Errors only for an id that isn't in the catalogue or isn't tag-form; an
+/// owner whose profile can't be read is logged and left off.
+async fn build_placement(
+    figure_id: &FigureId,
+    name: &str,
+    placed_by: Option<&str>,
+    figures: &[Figure],
+    profiles: &crate::profiles::ProfileStore,
+    data_root: &Path,
+) -> Result<skylander_rpcs3_control::Placement> {
+    let figure = figures
+        .iter()
+        .find(|f| &f.id == figure_id)
+        .ok_or_else(|| anyhow::anyhow!("place: {figure_id} isn't in the catalogue"))?;
+    let (toy_type, variant) = figure_id
+        .tag_parts()
+        .ok_or_else(|| anyhow::anyhow!("place: {figure_id} isn't a toy type + variant id"))?;
+    let owner = match placed_by {
+        None => None,
+        Some(profile_id) => match profiles.get(profile_id).await {
+            Ok(Some(row)) => Some(skylander_rpcs3_control::PlacementOwner {
+                profile_id: profile_id.to_string(),
+                initial: first_grapheme_uppercase(&row.display_name).unwrap_or_default(),
+                color: row.color,
+            }),
+            Ok(None) => {
+                warn!(profile_id, "place: placing profile is gone; no owner pip");
+                None
+            }
+            Err(e) => {
+                warn!(
+                    profile_id,
+                    "place: profile lookup failed ({e}); no owner pip"
+                );
+                None
+            }
+        },
+    };
+    Ok(skylander_rpcs3_control::Placement {
+        figure_id: figure_id.clone(),
+        toy_type,
+        variant,
+        name: name.to_string(),
+        element: figure.element,
+        portrait: crate::native_catalogue::portrait(data_root, figure_id),
+        owner,
+    })
+}
+
 /// Reverse-lookup a figure by its display name (case and surrounding-whitespace
 /// insensitive match against `canonical_name`). Used on `RefreshPortal` — and
 /// driver-failure re-reads — where the driver returns a raw RPCS3 name with no
@@ -715,7 +760,9 @@ pub enum DriverJob {
     LoadFigure {
         slot: SlotIndex,
         figure_id: FigureId,
-        path: PathBuf,
+        /// The `.sky` file to load; `None` without the figure-file hook
+        /// (Native), where the worker calls `PortalDriver::place` instead.
+        path: Option<PathBuf>,
         /// Profile id of the session that initiated this load. Threaded
         /// through into `SlotState::Loaded.placed_by` so both phones can
         /// render an ownership indicator. `None` if the caller wasn't
@@ -739,6 +786,8 @@ pub enum DriverJob {
     /// viewport title matches what the user picked (catches a stale
     /// games.yml mapping or a path-collision mis-launch).
     BootDirect {
+        /// Picks the spawn arm; Native never spawns, on any OS.
+        driver_kind: crate::config::DriverKind,
         eboot_path: PathBuf,
         expected_name: String,
         /// Display name of the picked serial — fed to `current_game`
@@ -1005,9 +1054,12 @@ fn placed_figures_to_restore(
 ///     per-profile working copy to resolve;
 ///   * **unknown figure** — the id no longer maps to a library figure.
 ///
+/// Without the figure-file hook (Native) there's no working copy: every known
+/// figure is re-placed by identity, owner or not.
+///
 /// The driver worker serialises the loads after the restart's `BootDirect`, so
 /// they land on a booted emulator.
-async fn restore_portal_figures(
+pub(crate) async fn restore_portal_figures(
     portal: &Arc<Mutex<[SlotState; SLOT_COUNT]>>,
     events: &broadcast::Sender<Event>,
     driver_tx: &mpsc::Sender<DriverJob>,
@@ -1015,24 +1067,8 @@ async fn restore_portal_figures(
     figure_files: Option<&dyn crate::hooks::FigureFiles>,
     to_restore: &[(SlotIndex, FigureId, Option<String>)],
 ) {
-    // TODO(AA.3): the Native arm re-places by identity instead.
-    let Some(figure_files) = figure_files else {
-        warn!(
-            captured = to_restore.len(),
-            "restore: no figure-file hook to resolve working copies; skipping"
-        );
-        return;
-    };
     let mut requeued = 0usize;
     for (slot, figure_id, placed_by) in to_restore {
-        let Some(profile_id) = placed_by else {
-            info!(
-                slot = slot.as_u8(),
-                figure = figure_id.as_str(),
-                "restore: slot had no owner — can't resolve a working copy; skipping"
-            );
-            continue;
-        };
         let Some(figure) = figures.iter().find(|f| &f.id == figure_id) else {
             warn!(
                 figure = figure_id.as_str(),
@@ -1040,20 +1076,34 @@ async fn restore_portal_figures(
             );
             continue;
         };
-        let path = match figure_files.resolve_load_path(profile_id, figure) {
-            Ok(p) => p,
-            Err(e) => {
-                warn!(
-                    profile_id,
+        let path = match (figure_files, placed_by) {
+            (Some(figure_files), Some(profile_id)) => {
+                match figure_files.resolve_load_path(profile_id, figure) {
+                    Ok(p) => Some(p),
+                    Err(e) => {
+                        warn!(
+                            profile_id,
+                            figure = figure_id.as_str(),
+                            "restore: resolve working copy failed: {e}"
+                        );
+                        continue;
+                    }
+                }
+            }
+            (Some(_), None) => {
+                info!(
+                    slot = slot.as_u8(),
                     figure = figure_id.as_str(),
-                    "restore: resolve working copy failed: {e}"
+                    "restore: slot had no owner — can't resolve a working copy; skipping"
                 );
                 continue;
             }
+            // No figure files (Native): re-place by identity.
+            (None, _) => None,
         };
         let loading = SlotState::Loading {
             figure_id: Some(figure_id.clone()),
-            placed_by: Some(profile_id.clone()),
+            placed_by: placed_by.clone(),
         };
         portal.lock().await[slot.as_usize()] = loading.clone();
         let _ = events.send(Event::SlotChanged {
@@ -1064,7 +1114,7 @@ async fn restore_portal_figures(
             slot: *slot,
             figure_id: figure_id.clone(),
             path,
-            placed_by: Some(profile_id.clone()),
+            placed_by: placed_by.clone(),
             canonical_name: figure.canonical_name.clone(),
         };
         if driver_tx.send(job).await.is_err() {
@@ -1112,6 +1162,7 @@ pub fn spawn_crash_watchdog(
     driver_tx: mpsc::Sender<DriverJob>,
     figures: Arc<Vec<Figure>>,
     figure_files: Option<Arc<dyn crate::hooks::FigureFiles>>,
+    driver_kind: crate::config::DriverKind,
     interval: std::time::Duration,
 ) {
     /// Cap on consecutive restart attempts within a single recovery before we
@@ -1243,6 +1294,7 @@ pub fn spawn_crash_watchdog(
                 tokio::time::sleep(std::time::Duration::from_millis(800)).await;
                 let (done_tx, done_rx) = tokio::sync::oneshot::channel();
                 let job = DriverJob::BootDirect {
+                    driver_kind,
                     eboot_path: eboot.clone(),
                     expected_name: game.display_name.clone(),
                     display_name: game.display_name.clone(),
@@ -1453,6 +1505,7 @@ pub fn spawn_driver_worker(
     rpcs3: Arc<Mutex<RpcsLifecycle>>,
     rpcs3_exe: PathBuf,
     config_dir: PathBuf,
+    data_root: PathBuf,
     launcher_status: Arc<std::sync::Mutex<LauncherStatus>>,
     rpcs3_config: Option<Arc<dyn crate::hooks::Rpcs3Config>>,
 ) -> mpsc::Sender<DriverJob> {
@@ -1476,6 +1529,8 @@ pub fn spawn_driver_worker(
                 &portal,
                 &events,
                 &figures,
+                &profiles,
+                &data_root,
                 &rpcs3,
                 &rpcs3_exe,
                 &config_dir,
@@ -1510,6 +1565,8 @@ async fn handle_job(
     portal: &Arc<Mutex<[SlotState; SLOT_COUNT]>>,
     events: &broadcast::Sender<Event>,
     figures: &[Figure],
+    profiles: &crate::profiles::ProfileStore,
+    data_root: &Path,
     rpcs3: &Arc<Mutex<RpcsLifecycle>>,
     rpcs3_exe: &Path,
     config_dir: &Path,
@@ -1527,14 +1584,38 @@ async fn handle_job(
             // HTTP handler already set Loading and broadcast it.
             let d = driver.clone();
             let fid = figure_id.clone();
-            let result = tokio::task::spawn_blocking(move || -> Result<String> {
-                d.open_dialog()?;
-                d.load(slot, &path)
-            })
-            .await?;
+            let result = match path {
+                Some(path) => {
+                    tokio::task::spawn_blocking(move || -> Result<()> {
+                        d.open_dialog()?;
+                        // The driver's read-back name is ignored; see `canonical_name`.
+                        d.load(slot, &path).map(drop)
+                    })
+                    .await?
+                }
+                None => match build_placement(
+                    &figure_id,
+                    &canonical_name,
+                    placed_by.as_deref(),
+                    figures,
+                    profiles,
+                    data_root,
+                )
+                .await
+                {
+                    Ok(placement) => {
+                        tokio::task::spawn_blocking(move || -> Result<()> {
+                            d.open_dialog()?;
+                            d.place(slot, &placement)
+                        })
+                        .await?
+                    }
+                    Err(e) => Err(e),
+                },
+            };
 
             match result {
-                Ok(_driver_reported_name) => {
+                Ok(()) => {
                     // Use the canonical name from the pack index, not
                     // whatever the driver read back. See comment on
                     // DriverJob::LoadFigure.canonical_name.
@@ -1579,6 +1660,7 @@ async fn handle_job(
             refresh(driver, portal, events, figures).await?;
         }
         DriverJob::BootDirect {
+            driver_kind,
             eboot_path,
             expected_name,
             display_name,
@@ -1586,6 +1668,12 @@ async fn handle_job(
             timeout,
             done,
         } => {
+            use crate::config::DriverKind;
+            // No emulator under Native, so no spawn on any OS: the no-process reveal below.
+            let spawns = match driver_kind {
+                DriverKind::Native => false,
+                DriverKind::Uia | DriverKind::Ipc | DriverKind::Mock => true,
+            };
             // PLAN 16.11: the IPC boot path (patched RPCS3 + AF_UNIX) is
             // **cross-platform** — Windows *and* macOS/Linux drive the same
             // --no-gui launch + STATE-liveness wait, the enum picking the
@@ -1595,9 +1683,9 @@ async fn handle_job(
             // Keyed on the driver advertising an IPC socket — the mock returns
             // `None` and falls to the no-spawn arm, so /api/launch still
             // round-trips and mock-driver tests don't need a real RPCS3.
-            let result: Result<Option<RpcsProcess>> = if let Some(ipc_path) =
-                driver.ipc_socket_path()
-            {
+            let result: Result<Option<RpcsProcess>> = if !spawns {
+                Ok(None)
+            } else if let Some(ipc_path) = driver.ipc_socket_path() {
                 let d = driver.clone();
                 let exe_owned = rpcs3_exe.to_path_buf();
                 let config_dir_owned = config_dir.to_path_buf();
@@ -1633,7 +1721,6 @@ async fn handle_job(
                             let root = config_dir_owned.join("config.yml");
                             let legacy = config_dir_owned.join("config").join("config.yml");
                             let cfg = if root.is_file() { root } else { legacy };
-                            // TODO(AA.3): no hook means no save-state boot.
                             let Some(rpcs3_config) = &rpcs3_config_owned else {
                                 return Err(anyhow::anyhow!(
                                     "SKYLANDER_BOOT_SAVESTATE needs the RPCS3-config hook"
@@ -1788,7 +1875,7 @@ async fn handle_job(
 
             let outcome = match result {
                 Ok(maybe_proc) => {
-                    // No real process spawned ⇒ mock driver (non-Windows): there's
+                    // No real process spawned ⇒ Native, or mock off Windows: there's
                     // nothing to poll for playability, so reveal immediately instead of
                     // hanging on "loading" until the stable-timer fallback. The real
                     // UIA/IPC paths return Some(proc) and set game_playable from the
@@ -1968,6 +2055,8 @@ mod tests {
     use super::*;
     use skylander_core::{Category, Element, GameOfOrigin};
     use std::path::PathBuf;
+
+    static TEST_MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../server/migrations");
 
     // ---- freeze detector (PLAN 16.7.1) --------------------------------------
 
@@ -2188,6 +2277,7 @@ mod tests {
         assert_eq!(figure_id.as_str(), "restore_known_id");
         assert_eq!(placed_by.as_deref(), Some(prof));
         assert_eq!(canonical_name, "Restore Knownburst");
+        let path = path.as_ref().expect("a working copy with the hook");
         assert!(path.exists(), "working copy forked from the pack");
         assert_eq!(std::fs::read(path).unwrap(), b"fresh-pack");
 
@@ -2227,6 +2317,7 @@ mod tests {
 
         let (done_tx, done_rx) = tokio::sync::oneshot::channel::<Result<()>>();
         let job = DriverJob::BootDirect {
+            driver_kind: crate::config::DriverKind::Mock,
             eboot_path: PathBuf::new(), // ignored by the mock branch
             expected_name: "Skylanders Spyro's Adventure".into(),
             display_name: "Skylanders Spyro's Adventure".into(),
@@ -2235,12 +2326,17 @@ mod tests {
             done: done_tx,
         };
 
+        let profiles = crate::profiles::ProfileStore::open_in_memory(&TEST_MIGRATOR)
+            .await
+            .unwrap();
         handle_job(
             job,
             &driver,
             &portal,
             &events,
             &figures,
+            &profiles,
+            Path::new("/nonexistent/data"),
             &rpcs3,
             Path::new("/nonexistent/rpcs3"), // mock branch never spawns
             Path::new("/nonexistent/config"),
@@ -2275,6 +2371,65 @@ mod tests {
         assert_eq!(
             life.current.as_ref().map(|g| g.serial.as_str()),
             Some("BLUS30617")
+        );
+    }
+
+    /// Native never spawns: the driver advertises an IPC socket, so a job that
+    /// missed the Native arm would query it and try `launch_no_gui`.
+    #[tokio::test]
+    async fn boot_direct_native_reaches_no_spawn_arm() {
+        let recording = Arc::new(crate::native_tests::RecordingDriver::default());
+        let driver: Arc<dyn PortalDriver> = recording.clone();
+        let portal: Arc<Mutex<[SlotState; SLOT_COUNT]>> =
+            Arc::new(Mutex::new(std::array::from_fn(|_| SlotState::Empty)));
+        let (events, _erx) = broadcast::channel::<Event>(32);
+        let rpcs3: Arc<Mutex<RpcsLifecycle>> = Arc::new(Mutex::new(RpcsLifecycle::default()));
+        let launcher_status: Arc<std::sync::Mutex<LauncherStatus>> =
+            Arc::new(std::sync::Mutex::new(LauncherStatus::default()));
+        let profiles = crate::profiles::ProfileStore::open_in_memory(&TEST_MIGRATOR)
+            .await
+            .unwrap();
+
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel::<Result<()>>();
+        let job = DriverJob::BootDirect {
+            driver_kind: crate::config::DriverKind::Native,
+            eboot_path: PathBuf::new(),
+            expected_name: "Skylanders: Giants".into(),
+            display_name: "Skylanders: Giants".into(),
+            serial: "BLUS30968".into(),
+            timeout: std::time::Duration::from_secs(5),
+            done: done_tx,
+        };
+        handle_job(
+            job,
+            &driver,
+            &portal,
+            &events,
+            &[],
+            &profiles,
+            Path::new("/nonexistent/data"),
+            &rpcs3,
+            Path::new("/nonexistent/rpcs3"),
+            Path::new("/nonexistent/config"),
+            &launcher_status,
+            None,
+        )
+        .await
+        .expect("handle_job(BootDirect) under Native");
+
+        assert!(matches!(done_rx.await, Ok(Ok(()))));
+        assert!(
+            !recording
+                .ipc_queried
+                .load(std::sync::atomic::Ordering::SeqCst),
+            "BootDirect reached a spawn arm"
+        );
+        assert!(launcher_status.lock().unwrap().game_playable);
+        let life = rpcs3.lock().await;
+        assert!(life.process.is_none());
+        assert_eq!(
+            life.current.as_ref().map(|g| g.serial.as_str()),
+            Some("BLUS30968")
         );
     }
 

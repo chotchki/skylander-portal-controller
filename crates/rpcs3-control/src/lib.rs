@@ -7,13 +7,41 @@
 //! fallback path; see `docs/research/rpcs3-control.md`). `MockPortalDriver`
 //! (feature `mock`) is an in-memory stand-in for tests.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Result;
 #[cfg(not(windows))]
 use anyhow::bail;
-use skylander_core::{SLOT_COUNT, SlotIndex, SlotState};
+use skylander_core::{
+    Element, FigureId, MaskedVariant, SLOT_COUNT, SlotIndex, SlotState, ToyTypeId,
+};
+
+/// A figure placed by identity, with no `.sky` file behind it (openspec AA,
+/// design decision 4): what a driver without an emulator gets instead of a path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Placement {
+    pub figure_id: FigureId,
+    /// Parsed from `figure_id`, so callers key on the tag, not the id string.
+    pub toy_type: ToyTypeId,
+    pub variant: MaskedVariant,
+    pub name: String,
+    pub element: Option<Element>,
+    /// `data/images/<id>/thumb.png` when it exists. Server-private.
+    pub portrait: Option<PathBuf>,
+    /// The placing profile; `None` when no profile was unlocked.
+    pub owner: Option<PlacementOwner>,
+}
+
+/// Who placed a [`Placement`], as the TV's owner pip draws it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlacementOwner {
+    pub profile_id: String,
+    /// Uppercased first letter of the profile's name.
+    pub initial: String,
+    /// The profile's colour, as the profile store keeps it.
+    pub color: String,
+}
 
 /// Drive the emulated Skylanders portal.
 ///
@@ -36,6 +64,14 @@ pub trait PortalDriver: Send + Sync {
 
     /// Clear `slot`. Returns once the slot shows "None".
     fn clear(&self, slot: SlotIndex) -> Result<()>;
+
+    /// Put `placement` in `slot` by identity; the worker calls this instead of
+    /// [`Self::load`] when the job has no file. Default errors, so a driver
+    /// that loads files never quietly accepts one.
+    fn place(&self, slot: SlotIndex, placement: &Placement) -> Result<()> {
+        let _ = (slot, placement);
+        anyhow::bail!("place: this driver loads figure files")
+    }
 
     // --- IPC capability (PLAN 16.5/16.6). Default impls report "not supported"
     // so UIA / mock are unaffected; only IpcPortalDriver overrides them. ---
