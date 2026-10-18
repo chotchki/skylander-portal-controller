@@ -1,0 +1,281 @@
+From 0af7356b2eb2ce59551be7fe2606fbe783a2b398 Mon Sep 17 00:00:00 2001
+From: Christopher Hotchkiss <chris@hotchkiss.io>
+Date: Sun, 18 Oct 2026 15:08:12 -0700
+Subject: [PATCH 3/3] O3: oracle capture and control verbs over the P1 socket
+ (GUAC_ORACLE=1)
+
+Five verbs on P1's AF_UNIX listener so the oracle runs with nobody at the Mac (openspec AF.5, design decision 3). Each answers P1's ERR unknown_cmd unless GUAC_ORACLE=1 is in the emulator's environment, so a client that doesn't set it sees the product protocol. Nothing knows the game: every number is RSX's int_flip_index, the one STATE and HB already report.
+
+- PAUSE_AT <flip> -> OK | ERR bad_flip | ERR no_renderer | ERR past. Pauses on that flip, where Start Paused pauses (rsx::thread::flip). The target is absolute and the RSX thread checks it at every guest flip, because a relative count set from the IPC thread races the RSX thread's decrement (the increment and the check sit a whole present apart). A target already passed is dropped and logged, never honored late.
+- RESUME -> OK | ERR not_paused. Emu.Resume on the main thread, OK once it ran.
+- RSXCAP -> OK | ERR busy | ERR no_renderer. Sets the flag the game window's capture shortcut sets; RSX arms at the next frame end, records the frame after it, writes captures/<TITLE>_<time>_capture.rrc.gz and pauses.
+- SCREENSHOT -> OK flip=<n> | ERR busy | ERR no_renderer | ERR timeout. Sets the screenshot flag; VKGSRender::flip copies the guest's display buffer out of the surface cache at the next present and gs_frame::take_screenshot writes screenshots/<TITLE>/<TITLE>_screenshot_<time>.png. Paused, it asks for a native-UI flip (the pause message's path), which re-presents the current display buffer, so the shot is the frame the counter names. Replies once a present took the flag (5 s, then withdrawn).
+- SAVESTATE -> OK | ERR not_running. The game window's savestate shortcut on the main thread: stop, write savestates/<TITLE>/*.SAVESTAT.zst, boot it again (Start Paused holds it 2 flips in). The client sends P5's RECONNECT after.
+
+Touches Skylander.cpp beside P1 and three spots in RSXThread.cpp (the target, its reset with each RSX session, the check).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012qQNwXEQ8in9uR8sc7SjCW
+---
+ rpcs3/Emu/Io/Skylander.cpp  | 177 ++++++++++++++++++++++++++++++++++++
+ rpcs3/Emu/RSX/RSXThread.cpp |  18 ++++
+ 2 files changed, 195 insertions(+)
+
+diff --git a/rpcs3/Emu/Io/Skylander.cpp b/rpcs3/Emu/Io/Skylander.cpp
+index 458f02c23..99df9d56c 100644
+--- a/rpcs3/Emu/Io/Skylander.cpp
++++ b/rpcs3/Emu/Io/Skylander.cpp
+@@ -19,6 +19,7 @@
+ #include "Emu/RSX/RSXThread.h"     // rsx::get_current_renderer()->int_flip_index
+ #include "Utilities/StrUtil.h"     // strcpy_trunc
+ #include "Input/pad_thread.h"      // P6: inject pad button presses over the IPC
++#include "Emu/system_config.h"     // O3: g_cfg.savestate (SAVESTATE)
+ 
+ #ifndef _WIN32
+ #include <sys/socket.h>
+@@ -35,9 +36,19 @@
+ #include <queue>
+ #include <chrono>
+ #include <unordered_map>
++#include <string_view>
+ 
+ LOG_CHANNEL(skylander_log, "skylander");
+ 
++// O3 (oracle verbs): RSX's screenshot flag and PAUSE_AT target (RSXThread.cpp), declared here as
++// gs_frame.cpp declares the flag, and the native-UI flip request the pause message uses.
++extern atomic_t<bool> g_user_asked_for_screenshot;
++extern atomic_t<u64> g_oracle_pause_at_flip;
++namespace rsx
++{
++	void set_native_ui_flip();
++}
++
+ sky_portal g_skyportal;
+ 
+ // PLAN 16.1.3 — defined here (emucore); set by gs_frame on window creation (rpcs3qt),
+@@ -472,6 +483,168 @@ namespace
+ 		return true;
+ 	}
+ 
++	// --- O3: the oracle's capture and control verbs (openspec AF.5) ----------
++	// Dev-only (rpcs3-patches/oracle/, never in a product build). Each answers P1's
++	// `ERR unknown_cmd` unless GUAC_ORACLE=1 is in the emulator's environment, so a
++	// client that doesn't set it sees the product protocol. Nothing here knows the
++	// game: the flip counter is RSX's int_flip_index, the one STATE and HB report.
++	bool sky_oracle_gate()
++	{
++		static const bool on = []
++		{
++			const char* v = std::getenv("GUAC_ORACLE");
++			return v && std::string_view(v) == "1";
++		}();
++		return on;
++	}
++
++	// A decimal flip number, digits only; false on anything else.
++	bool sky_parse_flip(const std::string& arg, u64& out)
++	{
++		if (arg.empty() || arg.size() > 19)
++			return false;
++		u64 v = 0;
++		for (const char c : arg)
++		{
++			if (c < '0' || c > '9')
++				return false;
++			v = v * 10 + static_cast<u64>(c - '0');
++		}
++		out = v;
++		return true;
++	}
++
++	// Handles an O-verb into `out`; false when `cmd` isn't one.
++	bool sky_oracle_handle(const std::string& cmd, const std::string& arg, std::string& out)
++	{
++		if (cmd == "PAUSE_AT")
++		{
++			// "PAUSE_AT <flip>": pause when the flip counter reaches <flip>, so STATE then reads
++			// status=paused frames=<flip>. The RSX thread checks the target at every guest flip
++			// (O3's hook in rsx::thread::flip, beside Start Paused's count), so it lands exactly.
++			u64 at = 0;
++			rsx::thread* r = rsx::get_current_renderer();
++			if (!sky_parse_flip(arg, at) || at == 0)
++				out = "ERR bad_flip\n";
++			else if (!r)
++				out = "ERR no_renderer\n";
++			else if (at <= r->int_flip_index)
++				out = "ERR past\n";
++			else
++			{
++				g_oracle_pause_at_flip = at;
++				// A flip reaching the target between the check and the store went by unseen:
++				// withdraw it rather than leave the RSX thread to drop it.
++				if (at <= r->int_flip_index && g_oracle_pause_at_flip.compare_and_swap_test(at, 0))
++					out = "ERR past\n";
++				else
++					out = "OK\n";
++			}
++			return true;
++		}
++		if (cmd == "RESUME")
++		{
++			// Resume on the main thread, as the GUI's pause toggle does; OK once it has run.
++			// BlockingCallFromMainThread's own wait, without its error line for a caller that
++			// isn't a named_thread (this connection thread isn't).
++			if (Emu.GetStatus() != system_state::paused)
++			{
++				out = "ERR not_paused\n";
++				return true;
++			}
++			atomic_t<u32> done = 0;
++			Emu.CallFromMainThread([] { Emu.Resume(); }, &done);
++			while (!done)
++				done.wait(0);
++			out = "OK\n";
++			return true;
++		}
++		if (cmd == "RSXCAP")
++		{
++			// The flag the game window's capture shortcut sets (gs_frame.cpp). RSX arms at the next
++			// frame end, records the frame after it, writes captures/<TITLE>_<time>_capture.rrc.gz
++			// at that frame's end and pauses. Armed at a pause at flip n, STATE reads n+1 once it
++			// lands (AF.5's runs, Giants on the Mac).
++			rsx::thread* r = rsx::get_current_renderer();
++			if (!r)
++				out = "ERR no_renderer\n";
++			else if (r->capture_current_frame || g_user_asked_for_frame_capture.exchange(true))
++				out = "ERR busy\n";
++			else
++				out = "OK\n";
++			return true;
++		}
++		if (cmd == "SCREENSHOT")
++		{
++			// The flag the screenshot shortcut sets. The renderer's next present takes the frame
++			// (VKGSRender::flip copies the guest's display buffer out of the surface cache) and
++			// gs_frame::take_screenshot writes screenshots/<TITLE>/<TITLE>_screenshot_<time>.png on
++			// a thread of its own. While paused no guest flip comes, so ask RSX for a native-UI
++			// flip, which re-presents the current display buffer: the shot is the frame the counter
++			// names. Replies `OK flip=<n>` once a present has taken the request (exact at a pause;
++			// running, the counter as this thread saw it just after).
++			rsx::thread* r = rsx::get_current_renderer();
++			if (!r)
++			{
++				out = "ERR no_renderer\n";
++				return true;
++			}
++			if (g_user_asked_for_screenshot.exchange(true))
++			{
++				out = "ERR busy\n";
++				return true;
++			}
++			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
++			while (g_user_asked_for_screenshot)
++			{
++				if (std::chrono::steady_clock::now() > deadline)
++				{
++					// No present took it: withdraw the request, unless one did just now.
++					if (g_user_asked_for_screenshot.exchange(false))
++					{
++						out = "ERR timeout\n";
++						return true;
++					}
++					break;
++				}
++				if (Emu.IsPaused())
++					rsx::set_native_ui_flip();
++				std::this_thread::sleep_for(std::chrono::milliseconds(1));
++			}
++			out = "OK flip=" + std::to_string(r->int_flip_index) + "\n";
++			return true;
++		}
++		if (cmd == "SAVESTATE")
++		{
++			// The game window's savestate shortcut (gs_frame.cpp, gw_savestate) on the main thread.
++			// With Suspend Emulation Savestate Mode off the emulator stops, writes a new
++			// savestates/<TITLE>/<TITLE>_*.SAVESTAT.zst and boots it again, where Start Paused holds
++			// it 2 flips in. The portal's USB device goes with the old session, so the client sends
++			// P5's RECONNECT after. OK means the save was asked for, not that it landed.
++			const system_state s = Emu.GetStatus();
++			if (s != system_state::running && s != system_state::paused)
++			{
++				out = "ERR not_running\n";
++				return true;
++			}
++			Emu.CallFromMainThread([]
++			{
++				if (!g_cfg.savestate.suspend_emu)
++				{
++					Emu.after_kill_callback = []
++					{
++						Emu.Restart(true, false);
++					};
++					Emu.SetContinuousMode(true);
++				}
++				Emu.Kill(false, true);
++			});
++			out = "OK\n";
++			return true;
++		}
++		return false;
++	}
++
+ 	void sky_ipc_handle(const std::string& line, std::string& out)
+ 	{
+ 		const usz sp = line.find(' ');
+@@ -639,6 +812,10 @@ namespace
+ 			sky_force_pad_button(offset, bit, false);
+ 			out = "OK\n";
+ 		}
++		else if (sky_oracle_gate() && sky_oracle_handle(cmd, arg, out))
++		{
++			// O3: an oracle verb, answered above.
++		}
+ 		else
+ 		{
+ 			out = "ERR unknown_cmd\n";
+diff --git a/rpcs3/Emu/RSX/RSXThread.cpp b/rpcs3/Emu/RSX/RSXThread.cpp
+index cfa735fe8..5bc70fc24 100644
+--- a/rpcs3/Emu/RSX/RSXThread.cpp
++++ b/rpcs3/Emu/RSX/RSXThread.cpp
+@@ -42,6 +42,8 @@ class GSRender;
+ atomic_t<bool> g_user_asked_for_recording = false;
+ atomic_t<bool> g_user_asked_for_screenshot = false;
+ atomic_t<bool> g_user_asked_for_frame_capture = false;
++// O3 (oracle, PAUSE_AT): the flip to pause at, 0 for none. Only the GUAC_ORACLE=1 IPC verb sets it.
++atomic_t<u64> g_oracle_pause_at_flip = 0;
+ atomic_t<bool> g_disable_frame_limit = false;
+ rsx::frame_trace_data frame_debug;
+ rsx::frame_capture_data frame_capture;
+@@ -833,6 +835,7 @@ namespace rsx
+ 		m_graphics_state |= pipeline_state::all_dirty;
+ 
+ 		g_user_asked_for_frame_capture = false;
++		g_oracle_pause_at_flip = 0; // O3: a target never outlives its session's flip count
+ 
+ 		// TODO: Proper context management in the driver
+ 		s_ctx.rsxthr = this;
+@@ -2716,6 +2719,21 @@ namespace rsx
+ 			{
+ 				Emu.Pause();
+ 			}
++
++			// O3 (oracle, PAUSE_AT): pause at the target flip, where Start Paused pauses. The target is
++			// absolute and checked here, on the RSX thread, so the IPC thread setting it can't race this
++			// flip the way a relative count would. A target already passed is dropped, never late.
++			if (const u64 at = g_oracle_pause_at_flip; at && int_flip_index >= at && g_oracle_pause_at_flip.compare_and_swap_test(at, 0))
++			{
++				if (int_flip_index == at)
++				{
++					Emu.Pause();
++				}
++				else
++				{
++					rsx_log.error("Oracle: PAUSE_AT %u passed (the flip counter is at %u)", at, int_flip_index);
++				}
++			}
+ 		}
+ 
+ 		last_host_flip_timestamp = get_system_time();
+-- 
+2.54.0 (Apple Git-157)
+
