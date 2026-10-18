@@ -27,4 +27,6 @@ rrc-dump = { path = "../rrc-dump" }
 skylander-rpcs3-control = { path = "../../crates/rpcs3-control" }
 
 [dev-dependencies]
+# SlotIndex, for live_gameplay's P1 LOAD and CLEAR through the PortalDriver trait.
+skylander-core = { path = "../../crates/core" }
 tempfile = "3"

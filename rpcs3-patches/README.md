@@ -19,6 +19,7 @@ rpcs3-patches/
   0008-P8-…-SURFACE.patch             P8 — macOS surface-embed: publish CAMetalLayer via CAContext (CALayerHost)
   apply.sh                            apply the series onto a checkout (git am --3way)
   README.md                           this file
+  oracle/                             the dev-only O-series (Guacamole's oracle, openspec AF); see below
 ```
 (The two local SPU-LLVM Giga crash fixes that used to sit between P3 and P4 were merged upstream as RPCS3 #18935 and dropped on the 2026-06-24 pin bump to `09d602fd5` — the series is now a clean P1-P8.)
 
@@ -192,6 +193,61 @@ would emit nine patches. Use `HEAD~8`.
 so every local `apply.sh` run rewrote them in place and left `rpcs3-patches/` dirty.
 They are now pure LF — byte-identical to what `git am` actually consumes, so that
 normalization step is a true no-op.)
+
+## The oracle series (dev-only, openspec AF)
+
+Guacamole checks itself against the original game running in a patched RPCS3, the
+**oracle** ([`docs/native/guacamole-design.md`](../docs/native/guacamole-design.md), The
+oracle). The oracle is this pin + P1-P8 + the **O-series** in `oracle/`, and it is never a
+product build. Three walls keep it out of one: the directory (the product's `apply.sh`, its
+CI lane's expected-file check and `.ci-local/build-mac.sh` all glob `0*.patch` in THIS dir
+only), the build location (a checkout outside the repo, never `vendor/rpcs3/build`, never
+uploaded) and an env gate (every O-series IPC verb answers P1's `ERR unknown_cmd` unless
+`GUAC_ORACLE=1` is in the emulator's environment). A change in `oracle/` still triggers the
+`rpcs3-patched` lane (its filter is `rpcs3-patches/**`), which re-checks P1-P8 and passes.
+
+```
+rpcs3-patches/oracle/
+  0001-O1-vk-Support-multiple-attachments-on-renderpass-key.patch   upstream c938d3e049
+  0002-O2-vk-Fix-renderpass-keys-attached-to-property-blobs.patch   upstream d08d568d5e
+  apply.sh   check P1-P8 on HEAD by subject, then git am --3way the O-series (--check: verify only)
+  build.sh   clone/patch a checkout outside the repo, build it with build-mac.sh, install + identity
+```
+
+**O1 + O2 are upstream's fix for the pin's Mac boot crash**, cherry-picked with upstream's
+authorship (kd-11, 2026-09-21, the day after the pin) and an `O<n>: ` subject prefix. `7022a322a`,
+inside the `09d602fd5..accfecd2d` window, warms the shader interpreter with 2-4 colour attachments
+against a 1-attachment render pass; MoltenVK reads past its attachment table and Metal aborts at
+boot ("attachmentIndex(220) must be < 8"). They're the only O-patches without the env gate (they're
+upstream's code), and the next pin bump past `d08d568d5e` drops them. chotchki's call, 2026-10-18
+(AF design, Open question 1 (b)).
+
+Build it on the Mac:
+
+```bash
+GUAC_ORACLE_EXE=~/workspace/guacamole-research/rpcs3-oracle-accfecd2d/RPCS3.app/Contents/MacOS/rpcs3 \
+  rpcs3-patches/oracle/build.sh [--no-brew] ~/workspace/guacamole-research/oracle-src/rpcs3
+```
+
+`build.sh` clones the checkout when it's missing (from the submodule's objects, else upstream),
+puts it on the pin read from the `vendor/rpcs3` gitlink, applies `../apply.sh` then
+`oracle/apply.sh`, builds with `.ci-local/build-mac.sh <checkout>` and copies the `.app` to the
+bundle `GUAC_ORACLE_EXE` names (refused inside any work tree). A checkout that already carries both
+series builds as it stands; any other HEAD, or a dirty tree, is refused rather than reset.
+`--no-brew` passes `BUILD_MAC_NO_BREW=1`, which leaves Homebrew alone: the script's `brew install`
+upgrades whatever the local tap calls outdated and its unlink pulls `ffmpeg` out of `PATH`, both
+machine-wide. The script pins `OpenCV_DIR` to the `opencv@4` keg (find_package otherwise takes the
+linked `opencv`, 5.x since 2026-10-17). It prints the build's identity and writes it to
+`oracle-build.txt` beside the `.app`: upstream base, the repo commit the series came from, the
+checkout's tree, every patch's SHA-256, the binary's SHA-256 and the MoltenVK (Homebrew's, through
+its ICD file, not bundled), LLVM and Qt it was built against. The source tree is the reproducible
+part (commit hashes carry the apply time); the binary's hash isn't, so a rebuild records its own.
+
+The O-patches touch `VKRenderPass.h`, which upstream stores CRLF, so `oracle/apply.sh` lays
+down its own normalization commit between P8 and O1, as `../apply.sh` does under P1 (The CRLF base
+commit, above). To edit or add an O-patch: commit on top of the oracle checkout, then re-export from
+that normalization commit, `git format-patch HEAD~<#O-commits> -o rpcs3-patches/oracle/`. A pin
+bump replays both series: `../apply.sh`, then `oracle/apply.sh`, resolve, re-export each.
 
 ## Tests
 

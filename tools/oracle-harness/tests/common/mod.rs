@@ -38,7 +38,7 @@ pub fn live() -> Option<Live> {
         &InitOptions {
             real_home: real_home.clone(),
             giants_dump: dump,
-            config: ConfigTemplate::default(),
+            config: template(),
         },
     )
     .expect("oracle home init");
@@ -47,6 +47,20 @@ pub fn live() -> Option<Live> {
         home,
         dev_dirs: dev_rpcs3_dirs(&real_home),
     })
+}
+
+/// The harness's template, with `ORACLE_SHADER_MODE` from the process env as
+/// its shader mode when set (AF.4 boots the pin's own default, the mode the two
+/// upstream fixes are for).
+pub fn template() -> ConfigTemplate {
+    let mut config = ConfigTemplate::default();
+    if let Some(mode) = std::env::var("ORACLE_SHADER_MODE")
+        .ok()
+        .filter(|m| !m.is_empty())
+    {
+        config.shader_mode = mode;
+    }
+    config
 }
 
 /// `key` in seconds from the process env, else `default`.

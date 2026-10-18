@@ -6375,6 +6375,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "rrc-dump",
+ "skylander-core",
  "skylander-rpcs3-control",
  "tempfile",
 ]
