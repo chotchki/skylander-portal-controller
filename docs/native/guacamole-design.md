@@ -272,11 +272,12 @@ flowchart LR
   `HTTP 409` (AA.19).
 - One binary at a time. Both bind the same HTTP port (8765, the default the controller's setup writes)
   and advertise the same mDNS name, so the join address is the same for either. The listener binds
-  before anything else happens, so the second one to start sees the port taken, opens no database and
-  says so on the TV instead of fighting (`guacamole` shows its already-running screen for 8 s and exits).
-  The pairing key is each app's own, so a phone that last joined the other app gets the phone's existing
-  pairing screen and scans the TV's join code once. On the HTPC (the bring-up) Steam Big Picture gets two
-  non-Steam shortcuts, with Steam Input off on `guacamole`'s (Controllers).
+  before anything with a side effect (the boot call, below), so the second one to start sees the port
+  taken, stops there and says so on the TV instead of fighting (`guacamole` shows its already-running
+  screen for 8 s and exits). The pairing key is each app's own, so a phone that last joined the other
+  app gets the phone's existing pairing screen and scans the TV's join code once. On the HTPC (the
+  bring-up) Steam Big Picture gets two non-Steam shortcuts, with Steam Input off on `guacamole`'s
+  (Controllers).
 - Data lives in `guacamole`'s own SQLite plus the extract dir, both under its own data root (Persistence
   and setup). No working copies, no scanned figures and no RPCS3 config, and the extract dir sits outside
   the tree in dev (the hard rule says why).
@@ -322,8 +323,10 @@ product (it hands `skylander_indexer::scan` in, since the indexer links sky-pars
 for `guacamole`. Inside the thread the listener binds FIRST, then the RPCS3 Net config write (real
 emulators only), the driver, the database and the rest. An `AddrInUse` sets
 `LauncherStatus::port_in_use`, and the second app stops before it builds a driver, writes RPCS3's config
-or opens a database (a boot test checks all three). With no `bind_ip` it listens on 0.0.0.0 and
-puts the first non-loopback IPv4 in the QR, so the lock holds across a route change. Back come the
+or opens the profile store (a boot test checks all three; `guacamole`'s own loader has already read an
+existing `db.sqlite` by then, and writes nothing). With no `bind_ip` it listens on 0.0.0.0, so the lock
+holds across a route change, and the QR carries `<hostname>.local` when the OS hostname reads, else the
+first non-loopback IPv4 (the raw-IP URL always carries the IP). Back come the
 launcher status, the client counter, the phone and raw-IP URLs, the join-QR PNG, the event sender, the
 game list (shared, so `guacamole`'s setup replaces it after boot), the worker's job sender and the server
 thread.
@@ -451,9 +454,10 @@ nothing else on disk is precious. Backing up the family's progress is copying on
   runs the store's queries against a database migrated by each set, so the two can't drift apart unseen.
 - Settings live in that table: the dumps folders, the port (8765; only the dev `BIND_PORT` changes it,
   since nothing writes the stored one yet) and the pairing key, 32 random bytes made on the first start
-  and stored only once the server came up, so a second copy that lost the port never writes one. Its loader ([`crates/guac-server/src/setup.rs`](../../crates/guac-server/src/setup.rs))
-  writes nothing: it opens an existing `db.sqlite` read-write only so SQLite can roll back a crash's hot
-  journal, and a database with no `settings` table reads as never set.
+  and stored only once the server came up, so a second copy that lost the port never writes one. Its
+  loader ([`crates/guac-server/src/setup.rs`](../../crates/guac-server/src/setup.rs)) writes nothing: it
+  opens an existing `db.sqlite` read-write only so SQLite can roll back a crash's hot journal, and a
+  database with no `settings` table reads as never set.
 - Profiles aren't copied over. The kids set theirs up again in `guacamole` (name, colour, PIN, through the
   phone's existing create-profile flow), and each app keeps its own from then on.
 - Where: `~/Library/Application Support/guacamole/` on macOS (the target until the bring-up) and
@@ -473,23 +477,27 @@ nothing else on disk is precious. Backing up the family's progress is copying on
   `games.yml` scan. Guacamole identifies each dump itself and offers the games it can play. AA reads
   TITLE_ID from `PARAM.SFO` and nothing else; the extractor's identity key (The extractor) is AB's.
 - The scan (AA.5, `dumps::scan`) looks in each chosen folder and up to two levels below it for
-  `PS3_GAME/PARAM.SFO`, reads at most 64 KiB of each and reports a folder it couldn't list or an SFO it
-  couldn't read instead of skipping it. Every dump it finds is listed by title; only Giants is offered
-  (the Native table).
+  `PS3_GAME/PARAM.SFO`, reads at most 64 KiB of each and reports a chosen folder it couldn't list or an
+  SFO it couldn't read instead of skipping it. A subfolder it can't list is skipped without a word (a
+  volume root holds system folders nobody can list), so a dump behind one goes missing silently; choosing
+  the folder that holds the dumps, not a drive above it, keeps every listing failure on screen. Every
+  dump it finds is listed by title; only Giants is offered (the Native table).
 - The setup flow (AA.15). With no folder stored, the TV's Setup screen opens a native folder picker by
   itself after 1 s (`rfd` 0.17.2, a sheet on the window awaited from a Bevy task, so frames keep running),
-  and Enter, Space or a click opens it again. A pick with Giants stores the folder, replaces the server's
-  game list in place (the phone sees Giants without a restart) and shows Found, every dump by title, for
-  8 s or until a click, then the join code. Without Giants, NoGiants lists what it found plus any
-  `Couldn't list` / `Couldn't read` lines and offers the picker again. Later starts go straight to the
-  join code.
+  and Enter, Space or a click opens it again. A pick stores the folder whether it holds Giants or not and
+  replaces the server's game list in place (the phone sees Giants without a restart). With Giants the
+  TV shows Found, every dump by title, for 8 s or until a click, then the join code. Without it,
+  NoGiants lists what it found plus any `Couldn't list` / `Couldn't read` lines and offers the picker
+  again. Later starts skip Setup and rescan the stored folders: the join code while they still hold
+  Giants, NoGiants when they don't (a no-Giants pick, an unmounted drive).
 - The fallbacks, for a picker that won't show (whether it opens above the fullscreen window is AA.11's
   question). `guacamole --setup` asks with a plain dialog on the main thread before the window exists,
   stores the pick and starts on Found, or NoGiants when the pick has no Giants (a cancel keeps the stored
   folder). `guacamole --setup <folder>...` stores without any picker, prints each dump by title, whether
   Giants is ready and whether the dev `GUAC_DUMP_DIRS` overrides it, then exits (1 when a folder can't be
-  stored, nothing stored). On
-  Windows a release build has no console, so that report lands only in the log (the bring-up's call).
+  stored, nothing stored). That report goes to stdout only; the log gets the dump count and whether
+  Giants is there. A Windows release build has no console, so there the per-dump lines go nowhere (the
+  bring-up decides whether to attach the parent console).
   Nobody has looked at either dialog yet (the display was locked through AA.15); that's AA.17.
 
 ## The six games
@@ -898,8 +906,10 @@ lives in Guacamole's store per profile. Guacamole never reads a `.sky`.
   - one name keeps one toy type (Wrecking Ball's row also sits on three SWAP Force toy types, really
     Stink Bomb, Rattle Shake and Wash Buckler, and only 0x17 keeps it), and a variant whose base lost its
     name goes too;
-  - game, category (`alignment`), element (read case-insensitively), variant group and variant tag come
-    from the row, and the portrait is `data/images/<id>/thumb.png` when it exists;
+  - game and element (read case-insensitively) come from the row; category comes from the base row's
+    `alignment`, which a variant takes too (Gnarly Tree Rex's own row says "Skylander" for a Giant), a
+    variant's group is its base's name and its tag is the rest of its own name ("Legendary"); the
+    portrait is `data/images/<id>/thumb.png` when it exists;
   - a hand-written supplement fills the four base characters the data lacks or mislabels: 0x06 Dino-Rang
     (Earth), 0x0D Wham-Shell (Water), 0x15 Drill Sergeant (Tech) and 0x64 Jet-Vac (Air), with no portrait
     (their `thumb.png` files show a screenshot, a crab and a building). chotchki's check of the four is
@@ -909,7 +919,12 @@ lives in Guacamole's store per profile. Guacamole never reads a `.sky`.
   dropped), variant 227 → 12 kept (199 later games and 16 failing the name rule dropped), plus the 4 = 77
   figures, every one on RPCS3's figure list after `& 0x0BFF`. The disc roster research
   (`~/workspace/guacamole-research/ae-roster/FINDINGS.md`, outside the repo) found 123 figures on the
-  Giants disc (all 77 among them) and confirmed AA.14's four supplement rows.
+  Giants disc, all 77 among them, but only 60 agree exactly: 12 variant ids differ from the disc's
+  (Granite Crusher is 0x0202 here, 0x0402 on the disc), 5 items have no element where the disc's macro
+  default says 0 (keep None, the research says) and 46 disc rows aren't here at all (Series 2, LightCore,
+  locations, a few items). It confirmed AA.14's four supplement rows. The disc roster replacing this
+  catalogue (below) closes the id and coverage gaps; which variant-id encoding it keeps, the disc's bits
+  or AA's wiki words, is chotchki's call in the findings.
 
   `guacamole` stops reading it once the disc roster lands, and the files themselves
   (`data/images/`, `data/figures.json`, `data/figures.manual.json`, `data/rekey-log.json`,
@@ -978,7 +993,7 @@ Ranked by how much each could move the plan, each with the experiment that answe
 | A tagged MSI reinstalls the product from current source | the kids' other five games run on it. (Guacamole tables in its `db.sqlite` were the old risk here; `guacamole`'s own database resolves that one by design.) | AA's split lands as moves only and passes the product's e2e suite on the Mac at its pre-AA count before any native code; the bring-up runs the HTPC live smoke and checks the installed product from the MSI | AA, then the Windows/HTPC bring-up and every tagged release |
 | How much of Giants is script data | sizes the VM vs the native built-ins | RETIRED 2026-10-18: the whole-disc census (Giants in detail, tfbScript) confirmed the Wii offsets on PS3 and sized the built-ins as 414 engine members in 66 namespaces; `OpFlowBuiltInBehavior` was the wrong yardstick | done, before AJ |
 | Bevy video playback | M0 depends on it, Bevy has no video player | decode one transcoded intro into a texture on the Mac (the HTPC's decode cost at the bring-up) | AB |
-| Embedding the server in a Bevy app | the bootstrap is eframe-shaped today | `guacamole` boots the server from the lib with the native driver; the product's e2e lanes stay unchanged | AA |
+| Embedding the server in a Bevy app | the bootstrap was eframe-shaped | RETIRED 2026-10-18: AA.2 lifted it into `guac_server::boot`, `guacamole` boots it from Bevy with the native driver (AA.6) and the product's phone e2e on the Mac passes every test that passed at the pre-AA base (AA.10: 32 of 35, the 3 failures the base's) | done, AA |
 | The Mac's renderer floor | the Enhanced stack at the TV's resolution with no temporal upscaler, plus synchronous pipeline compiles | a Bevy scene with CSM, SSAO, TAA and bloom at the TV's resolution on the M3 Max, GPU timings from `RenderDiagnosticsPlugin`, pipelines pre-warmed at load | AE |
 | HTPC performance floor | 4K on a 2080 Ti with the Enhanced stack | the same scene at 4K on the 2080 Ti, DLSS on Vulkan | the Windows/HTPC bring-up (backlog) |
 | Feel parity (camera, controller, collision, Havok-tuned physics) | the long tail, never retired | not a spike: measured continuously by the oracle from AG on | AG onward |

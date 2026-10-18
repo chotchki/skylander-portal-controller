@@ -47,7 +47,7 @@ PRs whose diff touches `phone/`, `crates/e2e-tests/`, or `crates/guac-server/src
 
 ## Pre-push hook (opt-in)
 
-`.githooks/pre-push` runs `cargo fmt --all --check` (workspace + phone), `cargo check --workspace`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` locally before push, catching everything the `clippy-build-test` lane would catch on either OS. Opt-in:
+`.githooks/pre-push` runs `cargo fmt --all --check` (workspace + phone), `cargo check --workspace`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` locally before push, catching the `fmt` lane's failures and the `clippy-build-test` lane's clippy and test failures for the OS it runs on. Two gaps: it never builds `--all-features`, so code behind `test-hooks` compiles only in the lane's build step (and in the e2e harness, which runs with `--features test-hooks`), and a Mac never compiles `cfg(windows)` code. With the lanes triggered as in the table above, no lane runs on a `2.0` push, so today the e2e runs are what build `test-hooks` and nothing builds `cfg(windows)` until the Windows/HTPC bring-up's lane (see the caveats below). Opt-in:
 
 ```sh
 git config core.hooksPath .githooks
@@ -63,7 +63,7 @@ git push --no-verify
 
 ### Bevy's cost (openspec AA.10)
 
-`crates/guacamole` puts Bevy 0.20 (the `ui` feature collection) in every `--workspace` step, so the hook compiles it. Measured on the M3 Max on 2026-10-18, default profile, the hook's steps with vs without `--exclude guacamole`:
+`crates/guacamole` puts Bevy 0.20 in every `--workspace` step, so the hook compiles it: `cargo check` builds the binary's `ui` feature collection only, while `cargo clippy --all-targets` and `cargo test` also build the `hero_view` example (openspec AC.10) and its dev-dependency Bevy features (`bevy_pbr`, `bevy_light`, `ktx2`, `tonemapping_luts`, `zstd_rust`; [`crates/guacamole/Cargo.toml`](../../crates/guacamole/Cargo.toml)). The numbers below predate that: measured on the M3 Max on 2026-10-18 on the `aa8-tv` branch before AC.10 merged into it, so with the `ui` features alone and no example. Default profile, the hook's steps with vs without `--exclude guacamole`:
 
 | Run | With guacamole | Without | Delta |
 |---|---|---|---|
