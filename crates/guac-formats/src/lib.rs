@@ -16,6 +16,7 @@ pub mod iga;
 pub mod igz;
 mod reader;
 pub mod sfo;
+pub mod texture;
 
 #[cfg(feature = "test-fixtures")]
 pub mod registry;

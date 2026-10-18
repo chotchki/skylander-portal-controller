@@ -19,6 +19,8 @@ lzma-rust2 = { version = "0.23", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 proptest = "1"
+# Reads our KTX2 back in tests; the writer is ours.
+ktx2 = "0.5"
 # The IGA builder's LZMA encoder, for this crate's own unit tests.
 lzma-rust2 = { version = "0.23", default-features = false, features = ["std", "encoder"] }
 # The property harness (tests/properties.rs) needs the registry and the

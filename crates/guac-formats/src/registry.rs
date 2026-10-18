@@ -5,7 +5,7 @@
 //! it may hold at once for an input of a given length.
 
 use crate::FormatError;
-use crate::{iga, igz, sfo};
+use crate::{iga, igz, sfo, texture};
 
 pub struct RegisteredParser {
     /// Stable name: the property test reports it, the fuzz targets match on it.
@@ -56,6 +56,14 @@ pub const PARSERS: &[RegisteredParser] = &[
         // The IGZ parse, plus one reader's output at a time and a hero's
         // maps, each entry read from at least 4 input bytes.
         heap_budget: |len| 128 * len + (64 << 10),
+    },
+    RegisteredParser {
+        name: "igimage2_ktx2",
+        parse: walk_textures,
+        seeds: texture::builder::seeds,
+        // The IGZ parse, plus one image's levels and its KTX2 at a time:
+        // each about its pixel block, which the input holds.
+        heap_budget: |len| 64 * len + 2 * len + (64 << 10),
     },
 ];
 
@@ -129,6 +137,19 @@ pub fn walk_layouts(bytes: &[u8]) -> Result<(), FormatError> {
         let _ = AnimationInfoList::read(&file, i);
         let _ = AnimationInfo::read(&file, i);
         let _ = Hero::read(&file, i);
+    }
+    Ok(())
+}
+
+/// Parses an IGZ, then untiles every `igImage2` and writes it as KTX2,
+/// dropping each and skipping errors. The property test and the fuzz
+/// targets run it.
+pub fn walk_textures(bytes: &[u8]) -> Result<(), FormatError> {
+    let file = igz::Igz::parse(bytes)?;
+    for (i, _) in igz::layouts::read_all::<igz::layouts::Image2>(&file) {
+        if let Ok(t) = texture::Texture::read(&file, i) {
+            drop(t.to_ktx2());
+        }
     }
     Ok(())
 }

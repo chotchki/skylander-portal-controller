@@ -15,6 +15,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 guac-formats = { path = "..", features = ["test-fixtures"] }
+ktx2 = "0.5"
 
 [workspace]
 members = ["."]
@@ -51,6 +52,13 @@ bench = false
 [[bin]]
 name = "igz_layouts"
 path = "fuzz_targets/igz_layouts.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "igimage2_ktx2"
+path = "fuzz_targets/igimage2_ktx2.rs"
 test = false
 doc = false
 bench = false
