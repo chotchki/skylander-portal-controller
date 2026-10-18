@@ -12,6 +12,8 @@
 #![forbid(unsafe_code)]
 
 mod error;
+mod reader;
+pub mod sfo;
 
 #[cfg(feature = "test-fixtures")]
 pub mod registry;

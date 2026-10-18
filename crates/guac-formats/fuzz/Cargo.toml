@@ -6,7 +6,9 @@ publish = false
 
 # cargo-fuzz targets for guac-formats (openspec AB, design decision 3). Nightly
 # only, so this is its own workspace and the root one excludes it. Run from
-# crates/guac-formats: `cargo +nightly fuzz run <target>`.
+# crates/guac-formats: `cargo +nightly fuzz run <target>`, after seeding the
+# corpus from the builders (`cargo run -p guac-formats --features test-fixtures
+# --example fuzz_seeds`); unseeded, libFuzzer stalls at the magic.
 [package.metadata]
 cargo-fuzz = true
 
@@ -21,6 +23,13 @@ members = ["."]
 [[bin]]
 name = "all_parsers"
 path = "fuzz_targets/all_parsers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "param_sfo"
+path = "fuzz_targets/param_sfo.rs"
 test = false
 doc = false
 bench = false

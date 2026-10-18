@@ -5,6 +5,7 @@
 //! it may hold at once for an input of a given length.
 
 use crate::FormatError;
+use crate::sfo;
 
 pub struct RegisteredParser {
     /// Stable name: the property test reports it, the fuzz targets match on it.
@@ -20,4 +21,11 @@ pub struct RegisteredParser {
     pub heap_budget: fn(usize) -> usize,
 }
 
-pub const PARSERS: &[RegisteredParser] = &[];
+pub const PARSERS: &[RegisteredParser] = &[RegisteredParser {
+    name: "param_sfo",
+    parse: |bytes| sfo::ParamSfo::parse(bytes).map(drop),
+    seeds: sfo::builder::seeds,
+    // Entries are at most 56 bytes each, one per 16 input bytes, plus the
+    // strings they copy and the duplicate-key set: well under 16x.
+    heap_budget: |len| 16 * len + 4096,
+}];

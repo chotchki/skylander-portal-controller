@@ -25,3 +25,7 @@ guac-formats = { path = ".", features = ["test-fixtures"] }
 # property test and the fuzz targets walk. Test-only: other crates' tests
 # (AA.5, AA.10) enable it from their [dev-dependencies]; nothing that ships does.
 test-fixtures = []
+
+[[example]]
+name = "fuzz_seeds"
+required-features = ["test-fixtures"]
