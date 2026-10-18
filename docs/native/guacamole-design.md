@@ -393,7 +393,9 @@ cargo run -p guacamole       # add --features test-hooks for the /api/_test/* en
   `server.log` the product's dev build writes.
 - `GUAC_SHOT_DIR=<dir>` (process env, dev builds only) renders the TV offscreen at `GUAC_SHOT_SIZE`
   (default 1920x1080) and saves a PNG each time it settles. AA.8 checked its screens that way, because
-  window captures on the locked Mac came back black.
+  window captures on the locked Mac came back black. Since AB.10 a shot lands in each intro, a frame of
+  the disc's own FMV, so the folder has to be outside any git checkout like the extract root; one inside
+  is refused with an error and nothing is shot.
 
 Release, the build AA.11 runs on the TV:
 

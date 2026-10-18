@@ -3,7 +3,9 @@
 //! settles on a new screen, card set, extraction band or intro (an intro's
 //! shot lands [`SETTLE`] into it). Offscreen because a locked or occluded
 //! Mac presents no window frames, so a window capture comes back black; the
-//! window stays empty meanwhile.
+//! window stays empty meanwhile. An intro's shot is a frame of the disc's
+//! own FMV, so the folder must be outside any git checkout (the extract
+//! root's rule, design decision 5); one inside is refused and nothing shot.
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -12,7 +14,7 @@ use bevy::camera::RenderTarget;
 use bevy::prelude::*;
 use bevy::render::render_resource::TextureFormat;
 use bevy::render::view::window::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk};
-use tracing::info;
+use tracing::{error, info};
 
 use crate::cards::PortalCards;
 use crate::extraction::{ExtractBand, Extraction};
@@ -28,6 +30,17 @@ impl Plugin for Shots {
     fn build(&self, app: &mut App) {
         let Some(dir) = std::env::var_os("GUAC_SHOT_DIR").map(PathBuf::from) else {
             return;
+        };
+        let dir = match outside_checkouts(dir) {
+            Ok(dir) => dir,
+            Err((dir, repo)) => {
+                error!(
+                    dir = %dir.display(),
+                    repo = %repo.display(),
+                    "GUAC_SHOT_DIR is inside a git work tree and intro shots are game frames; no shots"
+                );
+                return;
+            }
         };
         let size = std::env::var("GUAC_SHOT_SIZE")
             .ok()
@@ -53,6 +66,15 @@ struct ShotState {
     target: Option<Handle<Image>>,
     seq: u32,
     due: Option<Instant>,
+}
+
+/// `dir` made absolute, or it and the work tree holding it.
+fn outside_checkouts(dir: PathBuf) -> Result<PathBuf, (PathBuf, PathBuf)> {
+    let dir = std::path::absolute(&dir).unwrap_or(dir);
+    match guac_extract::root::enclosing_git_tree(&dir) {
+        Some(repo) => Err((dir, repo)),
+        None => Ok(dir),
+    }
 }
 
 /// `1920x1080` → (1920, 1080).
@@ -147,5 +169,19 @@ mod tests {
         assert_eq!(parse_size("3840x2160"), Some(UVec2::new(3840, 2160)));
         assert_eq!(parse_size("1920 x 1080"), Some(UVec2::new(1920, 1080)));
         assert_eq!(parse_size("big"), None);
+    }
+
+    #[test]
+    fn a_shot_folder_in_a_checkout_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let outside = tmp.path().join("shots");
+        assert_eq!(outside_checkouts(outside.clone()), Ok(outside));
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        let inside = repo.join("shots");
+        assert_eq!(outside_checkouts(inside.clone()), Err((inside, repo)));
+        // Relative to the cwd, which is this crate in the repo.
+        let (dir, _) = outside_checkouts("shots".into()).unwrap_err();
+        assert!(dir.is_absolute(), "{}", dir.display());
     }
 }

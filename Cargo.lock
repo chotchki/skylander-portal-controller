@@ -4277,6 +4277,7 @@ dependencies = [
  "mp4",
  "openh264",
  "rfd 0.17.2",
+ "rodio",
  "serde",
  "serde_json",
  "skylander-core",

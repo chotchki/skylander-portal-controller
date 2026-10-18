@@ -32,7 +32,7 @@ use crate::video::{self, Feed};
 pub const DEFAULT_OUTPUT_LATENCY: Duration = Duration::from_millis(43);
 
 /// Waited for an audio sink before playing the video by the wall clock alone
-/// (no output device, or a sound that won't decode).
+/// (no output device). A sound that won't open never gets a player.
 const NO_SINK_AFTER: Duration = Duration::from_millis(500);
 
 /// Past the video's end by this, the intro ends whatever the sink says.
@@ -182,6 +182,16 @@ impl Plugin for IntroPlugin {
             })
             .add_systems(Update, (queue_intros, play_intros).chain());
     }
+}
+
+/// bevy_audio opens a sound the same way and unwraps it on the main thread,
+/// so a file that fails here must never reach it.
+fn sound_opens(bytes: &Arc<[u8]>) -> Result<(), rodio::decoder::DecoderError> {
+    rodio::Decoder::builder()
+        .with_byte_len(bytes.len() as u64)
+        .with_data(std::io::Cursor::new(bytes.clone()))
+        .build()
+        .map(drop)
 }
 
 /// Any key or any controller button, this frame.
@@ -441,6 +451,8 @@ impl Playback {
                     id = self.entry.id,
                     "no audio sink; the intro plays by the wall clock"
                 );
+                // Else it holds the sound for good, and plays if a sink comes late.
+                commands.entity(entity).despawn();
                 self.audio = Audio::Silent;
             }
         }
@@ -524,9 +536,12 @@ impl Playback {
                 return Audio::Silent;
             }
         };
-        let sound = sounds.add(AudioSource {
-            bytes: Arc::from(bytes),
-        });
+        let bytes: Arc<[u8]> = Arc::from(bytes);
+        if let Err(e) = sound_opens(&bytes) {
+            warn!(path = %path.display(), "intro sound won't open, playing it silent: {e}");
+            return Audio::Silent;
+        }
+        let sound = sounds.add(AudioSource { bytes });
         let settings = if muted {
             PlaybackSettings::ONCE.muted()
         } else {
@@ -622,6 +637,26 @@ mod tests {
         assert!(!skip_pressed(None, std::iter::once(&pad)));
         pad.digital_mut().press(GamepadButton::Start);
         assert!(skip_pressed(None, std::iter::once(&pad)));
+    }
+
+    /// Silent MPEG-1 Layer III, 128 kb/s mono at 44.1 kHz: 417-byte frames,
+    /// side info all zero (no main data).
+    fn silent_mp3(frames: usize) -> Vec<u8> {
+        let mut frame = vec![0u8; 417];
+        frame[..4].copy_from_slice(&[0xFF, 0xFB, 0x90, 0xC0]);
+        frame.repeat(frames)
+    }
+
+    #[test]
+    fn a_sound_that_wont_open_is_caught_before_bevy() {
+        assert!(sound_opens(&Arc::from(silent_mp3(20))).is_ok());
+        for junk in [
+            Vec::new(),
+            b"not an mp3 at all, a hand edit\n".to_vec(),
+            vec![0u8; 64 << 10],
+        ] {
+            assert!(sound_opens(&Arc::from(junk)).is_err());
+        }
     }
 
     #[test]
@@ -774,6 +809,55 @@ mod tests {
                 let world = self.app.world_mut();
                 world.query::<&IntroOverlay>().iter(world).count()
             }
+
+            fn players(&mut self) -> usize {
+                let world = self.app.world_mut();
+                world.query::<&AudioPlayer>().iter(world).count()
+            }
+        }
+
+        /// Sound assets but no output device, as on a machine with none.
+        fn tv_with_sound(dir: &Path, mp3: &[u8]) -> Tv {
+            let lib = library(dir, &[("eruptor", 100)]);
+            let audio = dir.join("audio/intro");
+            std::fs::create_dir_all(&audio).unwrap();
+            std::fs::write(audio.join("eruptor.mp3"), mp3).unwrap();
+            let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
+            let mirror = TvMirror::default();
+            app.add_message::<PortalChanged>()
+                .init_asset::<AudioSource>()
+                .insert_resource(mirror.clone())
+                .insert_resource(lib)
+                .add_plugins((IntroPlugin, Mirror));
+            app.update();
+            Tv { app, mirror }
+        }
+
+        #[test]
+        fn a_sound_that_wont_open_gets_no_player() {
+            let tmp = tempfile::tempdir().unwrap();
+            let mut tv = tv_with_sound(tmp.path(), b"");
+            tv.place(0, "000009-0000");
+            let shot = tv.until("frames", |s| s.intro.as_ref().is_some_and(|i| i.shown > 0));
+            assert_eq!(shot.intro.unwrap().audio, "none");
+            assert_eq!(tv.players(), 0);
+        }
+
+        #[test]
+        fn with_no_sink_the_player_goes_and_the_video_plays_on() {
+            let tmp = tempfile::tempdir().unwrap();
+            let mut tv = tv_with_sound(tmp.path(), &super::silent_mp3(20));
+            tv.place(0, "000009-0000");
+            tv.until("a player", |s| {
+                s.intro.as_ref().is_some_and(|i| i.audio == "starting")
+            });
+            assert_eq!(tv.players(), 1);
+            tv.until("no sink", |s| {
+                s.intro.as_ref().is_some_and(|i| i.audio == "none")
+            });
+            tv.app.update();
+            assert_eq!(tv.players(), 0, "the player outlived its sink's wait");
+            assert!(tv.shot().intro.is_some());
         }
 
         #[test]

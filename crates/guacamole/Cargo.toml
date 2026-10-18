@@ -46,6 +46,9 @@ rfd = "0.17.2"
 # default) compiles OpenH264 with `cc`: no system library.
 openh264 = "0.9.9"
 mp4 = "0.14"
+# bevy_audio's own copy (Cargo.lock): an intro's MP3 is opened once before
+# Bevy gets it, since bevy_audio unwraps that open and a bad file would panic.
+rodio = { version = "0.22", default-features = false, features = ["mp3"] }
 
 [dev-dependencies]
 tokio = { workspace = true }

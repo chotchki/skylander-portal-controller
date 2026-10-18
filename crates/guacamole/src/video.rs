@@ -16,6 +16,11 @@ pub const MAX_SIZE: (usize, usize) = (1920, 1080);
 /// The longest intro is 12.3 MB; this bounds what one read holds.
 const MAX_FILE: u64 = 256 << 20;
 
+/// An hour at 60 fps; the longest intro is 369 frames. `mp4` sums a chunk's
+/// earlier sample sizes per read, so a file with millions of samples in one
+/// chunk would keep the decode thread busy for hours after the player gave up.
+const MAX_SAMPLES: u32 = 60 * 60 * 60;
+
 /// Frames decoded ahead: about 15 MB at 1280x720.
 const AHEAD: usize = 4;
 
@@ -36,6 +41,10 @@ struct Demuxed {
 /// MP4 (AVCC, length-prefixed NALs) to Annex B, with SPS/PPS ahead of each
 /// sync sample.
 fn demux(bytes: Vec<u8>) -> Result<Demuxed> {
+    demux_capped(bytes, MAX_SAMPLES)
+}
+
+fn demux_capped(bytes: Vec<u8>, max_samples: u32) -> Result<Demuxed> {
     let size = bytes.len() as u64;
     let mut mp4 = mp4::Mp4Reader::read_header(Cursor::new(bytes), size)?;
     let (id, timescale, count, width, height, len_size, params) = {
@@ -79,6 +88,7 @@ fn demux(bytes: Vec<u8>) -> Result<Demuxed> {
         "{width}x{height} track, outside 1x1..{max_w}x{max_h}"
     );
     ensure!(timescale > 0.0, "the track's timescale is 0");
+    ensure!(count <= max_samples, "{count} samples, past {max_samples}");
     let mut packets = Vec::with_capacity(count.min(1 << 16) as usize);
     let mut end = 0f64;
     for i in 1..=count {
@@ -351,5 +361,13 @@ mod tests {
         assert_eq!(demux(test_clip(16, 16, 1, 25)).unwrap().width, 16);
         let err = demux(test_clip(MAX_SIZE.0 + 16, 16, 1, 25)).err().unwrap();
         assert!(err.to_string().contains("outside"), "{err}");
+    }
+
+    #[test]
+    fn a_track_with_too_many_samples_is_refused_before_any_read() {
+        let clip = test_clip(16, 16, 3, 25);
+        assert_eq!(demux_capped(clip.clone(), 3).unwrap().packets.len(), 3);
+        let err = demux_capped(clip, 2).err().unwrap();
+        assert!(err.to_string().contains("3 samples, past 2"), "{err}");
     }
 }
