@@ -800,7 +800,7 @@ mod tests {
         boot(BootOptions {
             config,
             runtime_root: root.to_path_buf(),
-            migrator: &TEST_MIGRATOR,
+            migrator: &crate::setup::MIGRATOR,
             driver_factory: Box::new(|_| {
                 Ok(BuiltDriver::new(Arc::new(
                     skylander_rpcs3_control::MockPortalDriver::new(),

@@ -854,8 +854,8 @@ fn validate_color(color: &str) -> Result<()> {
 mod tests {
     use super::*;
 
-    /// The product's migration set, the one the store's queries were written
-    /// against. TODO(AA.5): guacamole's own set lands in `migrations/` here.
+    /// The product's migration set; guacamole's is `crate::setup::MIGRATOR`,
+    /// and the last two tests hold the store to both.
     static TEST_MIGRATOR: Migrator = sqlx::migrate!("../server/migrations");
 
     #[test]
@@ -1058,5 +1058,110 @@ mod tests {
         let b = sid(&reg.register().await);
         assert_eq!(reg.profile_of(a).await.as_deref(), Some("alpha"));
         assert_eq!(reg.profile_of(b).await, None);
+    }
+
+    /// Every store query, against a database migrated by `migrator`.
+    async fn exercise_every_query(migrator: &Migrator) {
+        let s = ProfileStore::open_in_memory(migrator).await.unwrap();
+        assert_eq!(s.count().await.unwrap(), 0);
+        let id = s.create("Alice", "1234", "#ff00aa").await.unwrap();
+        assert_eq!(s.list().await.unwrap().len(), 1);
+        assert_eq!(s.get(&id).await.unwrap().unwrap().display_name, "Alice");
+        assert!(s.verify_pin(&id, "1234").await.unwrap());
+        s.reset_pin(&id, "4321").await.unwrap();
+        assert!(s.verify_pin(&id, "4321").await.unwrap());
+        assert!(s.set_kaos_enabled(&id, true).await.unwrap());
+        assert!(s.get(&id).await.unwrap().unwrap().kaos_enabled);
+
+        s.record_figure_usage(&id, "000009-0000").await.unwrap();
+        assert!(
+            s.fetch_usage(&id)
+                .await
+                .unwrap()
+                .contains_key("000009-0000")
+        );
+        s.save_portal_layout(&id, "[]").await.unwrap();
+        assert_eq!(
+            s.load_portal_layout(&id).await.unwrap().as_deref(),
+            Some("[]")
+        );
+        s.clear_portal_layout(&id).await.unwrap();
+        assert_eq!(s.load_portal_layout(&id).await.unwrap(), None);
+
+        let mode = crate::hooks::DisplayMode {
+            width: 1920,
+            height: 1080,
+            refresh_hz: 60,
+        };
+        s.save_display_mode("BLUS30968", mode).await.unwrap();
+        assert_eq!(s.get_display_mode("BLUS30968").await.unwrap(), Some(mode));
+
+        s.save_portal_layout(&id, "[]").await.unwrap();
+        assert!(s.delete(&id).await.unwrap());
+        assert_eq!(s.count().await.unwrap(), 0);
+        assert!(s.fetch_usage(&id).await.unwrap().is_empty(), "cascade");
+        assert_eq!(s.load_portal_layout(&id).await.unwrap(), None, "cascade");
+    }
+
+    #[tokio::test]
+    async fn the_store_runs_on_the_product_and_guacamole_sets() {
+        exercise_every_query(&TEST_MIGRATOR).await;
+        exercise_every_query(&crate::setup::MIGRATOR).await;
+    }
+
+    type Cols = Vec<(String, String, i64, Option<String>, i64)>;
+    type Fks = Vec<(String, String, Option<String>, String, String)>;
+    type Idx = Vec<(String, i64, String, i64)>;
+
+    /// `(table, columns, foreign keys, indexes)` for every table but sqlx's own.
+    async fn shape(migrator: &Migrator) -> Vec<(String, Cols, Fks, Idx)> {
+        let s = ProfileStore::open_in_memory(migrator).await.unwrap();
+        let tables: Vec<(String,)> = sqlx::query_as(
+            "SELECT name FROM sqlite_master WHERE type = 'table' \
+             AND name NOT LIKE '_sqlx%' ORDER BY name",
+        )
+        .fetch_all(&s.pool)
+        .await
+        .unwrap();
+        let mut out = Vec::new();
+        for (table,) in tables {
+            let cols = sqlx::query_as(
+                "SELECT name, type, \"notnull\", dflt_value, pk FROM pragma_table_info(?1)",
+            )
+            .bind(&table)
+            .fetch_all(&s.pool)
+            .await
+            .unwrap();
+            let fks = sqlx::query_as(
+                "SELECT \"table\", \"from\", \"to\", on_update, on_delete \
+                 FROM pragma_foreign_key_list(?1) ORDER BY id, seq",
+            )
+            .bind(&table)
+            .fetch_all(&s.pool)
+            .await
+            .unwrap();
+            let idx = sqlx::query_as(
+                "SELECT name, \"unique\", origin, partial \
+                 FROM pragma_index_list(?1) ORDER BY name",
+            )
+            .bind(&table)
+            .fetch_all(&s.pool)
+            .await
+            .unwrap();
+            out.push((table, cols, fks, idx));
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn guacamoles_set_has_the_products_tables_plus_settings() {
+        let product = shape(&TEST_MIGRATOR).await;
+        let mut guac = shape(&crate::setup::MIGRATOR).await;
+        let settings = guac
+            .iter()
+            .position(|(t, ..)| t == "settings")
+            .expect("settings");
+        guac.remove(settings);
+        assert_eq!(guac, product);
     }
 }

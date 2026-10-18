@@ -14,8 +14,8 @@ use guac_server::profiles::{
 };
 use sqlx::migrate::Migrator;
 
-/// The product's migration set (`crates/server/migrations/`), the one the
-/// store's queries were written against. TODO(AA.5): guacamole's own set.
+/// The product's migration set (`crates/server/migrations/`); the store's
+/// unit tests hold it to guacamole's set too.
 static MIGRATOR: Migrator = sqlx::migrate!("../server/migrations");
 
 #[tokio::test]

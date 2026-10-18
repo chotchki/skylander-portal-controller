@@ -15,6 +15,8 @@ path = "src/lib.rs"
 [dependencies]
 skylander-core = { path = "../core" }
 skylander-rpcs3-control = { path = "../rpcs3-control" }
+# The dump scan reads TITLE_ID from PARAM.SFO (AA.5).
+guac-formats = { path = "../guac-formats" }
 
 anyhow = { workspace = true }
 tokio = { workspace = true }
@@ -73,6 +75,8 @@ windows = { version = "0.61", features = [
 
 [dev-dependencies]
 tempfile = "3"
+# SfoBuilder, for the dump-scan tests.
+guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }
 # `util` brings `ServiceExt::oneshot`, used by axum-handler unit tests
 # (e.g. dev_log handler) to drive a router without spinning up a server.
 tower = { version = "0.5", features = ["util"] }

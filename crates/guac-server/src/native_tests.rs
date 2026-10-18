@@ -23,7 +23,8 @@ use crate::hooks::Hooks;
 use crate::profiles::{ProfileStore, RegistrationOutcome, SessionId, SessionRegistry};
 use crate::state::{AppState, LauncherStatus, RpcsLifecycle, spawn_driver_worker};
 
-static TEST_MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../server/migrations");
+/// guacamole runs Native on its own set.
+static TEST_MIGRATOR: &sqlx::migrate::Migrator = &crate::setup::MIGRATOR;
 
 const KEY: [u8; 32] = [3; 32];
 const ERUPTOR: &str = "000009-0000";
@@ -122,7 +123,7 @@ async fn native() -> Native {
         .enumerate()
         .map(|(i, f)| (f.id.clone(), i))
         .collect();
-    let profiles = ProfileStore::open(&root.path().join("db.sqlite"), &TEST_MIGRATOR)
+    let profiles = ProfileStore::open(&root.path().join("db.sqlite"), TEST_MIGRATOR)
         .await
         .unwrap();
     let sessions = Arc::new(SessionRegistry::default());

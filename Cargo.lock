@@ -2139,6 +2139,7 @@ dependencies = [
  "chrono",
  "directories",
  "futures-util",
+ "guac-formats",
  "hex",
  "hmac",
  "http-body-util",

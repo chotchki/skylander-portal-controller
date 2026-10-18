@@ -4,6 +4,7 @@
 
 pub mod boot;
 pub mod config;
+pub mod dumps;
 pub mod embedded_assets;
 pub mod firewall;
 pub mod hooks;
@@ -17,4 +18,7 @@ mod native_tests;
 pub mod paths;
 pub mod profiles;
 pub mod round_qr;
+pub mod setup;
+#[cfg(test)]
+mod setup_tests;
 pub mod state;

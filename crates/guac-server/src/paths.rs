@@ -146,6 +146,22 @@ pub fn runtime_dir_unchecked() -> Result<PathBuf> {
     }
 }
 
+/// guacamole's runtime root (AA design decision 6), passed to `boot` as its
+/// `runtime_root`: `%LOCALAPPDATA%\guacamole\`, `~/Library/Application
+/// Support/guacamole/` on macOS, `./dev-data/guacamole/` in dev. Not created.
+pub fn guac_data_root() -> Result<PathBuf> {
+    #[cfg(feature = "dev-tools")]
+    {
+        Ok(PathBuf::from("dev-data").join("guacamole"))
+    }
+    #[cfg(not(feature = "dev-tools"))]
+    {
+        let base = directories::BaseDirs::new()
+            .ok_or_else(|| anyhow::anyhow!("couldn't resolve the local data dir"))?;
+        Ok(base.data_local_dir().join("guacamole"))
+    }
+}
+
 /// Path to the persisted `config.json`. Does NOT create the file.
 pub fn config_json_path() -> Result<PathBuf> {
     Ok(runtime_dir_unchecked()?.join("config.json"))
