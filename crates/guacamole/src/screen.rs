@@ -204,7 +204,8 @@ mod tests {
         };
         assert_eq!(screen_for(&playing("Skylanders: Giants"), &found), portal);
         assert!(!portal.escape_quits());
-        // A quit clears the game: back to the join code.
+        // A quit clears the game: back to the join code. From `found` that
+        // needs `leave_found` to drop the list (picker's tests).
         assert_eq!(screen_for(&ready(), &set_up()), TvScreen::Join);
     }
 
