@@ -21,10 +21,15 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+# A SCREENSHOT's PNG, decoded to check it's a whole frame and to hash its pixels.
+image = { version = "0.25", default-features = false, features = ["png"] }
 # The work-tree refusal every harness output goes through.
 rrc-dump = { path = "../rrc-dump" }
 # RpcsProcess (the launch and its lifecycle), the P1 codec and IpcPortalDriver.
 skylander-rpcs3-control = { path = "../../crates/rpcs3-control" }
+# The oracle binary's hash for the identity line, and a screenshot's pixel hash.
+sha2 = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 # SlotIndex, for live_gameplay's P1 LOAD and CLEAR through the PortalDriver trait.

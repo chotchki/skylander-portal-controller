@@ -210,6 +210,7 @@ uploaded) and an env gate (every O-series IPC verb answers P1's `ERR unknown_cmd
 rpcs3-patches/oracle/
   0001-O1-vk-Support-multiple-attachments-on-renderpass-key.patch   upstream c938d3e049
   0002-O2-vk-Fix-renderpass-keys-attached-to-property-blobs.patch   upstream d08d568d5e
+  0003-O3-oracle-capture-and-control-verbs-over-the-P1-sock.patch   PAUSE_AT, RESUME, RSXCAP, SCREENSHOT, SAVESTATE
   apply.sh   check P1-P8 on HEAD by subject, then git am --3way the O-series (--check: verify only)
   build.sh   clone/patch a checkout outside the repo, build it with build-mac.sh, install + identity
 ```
@@ -221,6 +222,19 @@ against a 1-attachment render pass; MoltenVK reads past its attachment table and
 boot ("attachmentIndex(220) must be < 8"). They're the only O-patches without the env gate (they're
 upstream's code), and the next pin bump past `d08d568d5e` drops them. chotchki's call, 2026-10-18
 (AF design, Open question 1 (b)).
+
+**O3 is the oracle's capture and control verbs** (AF.5) on P1's listener, each answering
+`ERR unknown_cmd` unless `GUAC_ORACLE=1` is in the emulator's environment: `PAUSE_AT <flip>`,
+`RESUME`, `RSXCAP`, `SCREENSHOT` and `SAVESTATE`, every flip being the `frames=` counter `STATE`
+already reports. It touches `Skylander.cpp` beside P1 and three spots in `RSXThread.cpp`: the
+`PAUSE_AT` target, its reset with each RSX session and the check in `rsx::thread::flip` beside
+Start Paused's (an absolute target checked on the RSX thread, because a relative count set from the
+IPC thread races the RSX thread's decrement). The other four set the flags the game window's
+shortcuts set, or run its savestate path on the main thread; nothing in them knows the game. The
+wire shapes and what RPCS3 writes for each are in
+[`tools/oracle-harness/src/verbs.rs`](../tools/oracle-harness/src/verbs.rs), and
+[`tools/oracle-harness/tests/verbs_loopback.rs`](../tools/oracle-harness/tests/verbs_loopback.rs) is the
+fake listener they're specified against, the same two-layer rule as P1 (Tests, below).
 
 Build it on the Mac:
 

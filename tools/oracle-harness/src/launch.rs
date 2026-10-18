@@ -14,7 +14,7 @@
 //! [`inherited_render_env`] and printed with the run, rather than cleared: an
 //! allowlist would also drop a Vulkan ICD a dev's setup points at.
 
-use std::net::{Ipv4Addr, SocketAddr, TcpStream};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
@@ -24,11 +24,19 @@ use skylander_rpcs3_control::ipc::IpcPortalDriver;
 use skylander_rpcs3_control::ipc::proto::EmuState;
 use skylander_rpcs3_control::{LaunchSpec, RpcsProcess, ShutdownPath};
 
+use crate::control::Control;
 use crate::home::{self, OracleHome};
 
-/// RPCS3's GDB stub, on by default in every build: a listener here means
-/// another RPCS3 is running, and two would share the Mac's cores and the GPU.
+/// RPCS3's GDB stub at its default address, on in every build: a listener here
+/// means another RPCS3 is running (the dev's own, say), and two would share
+/// the Mac's cores and the GPU.
 pub const GDB_STUB: SocketAddr = SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), 2345);
+/// The oracle's own GDB stub ([`crate::template::ORACLE_GDB_PORT`]): a listener
+/// here means another oracle is running, from another home.
+pub const ORACLE_GDB_STUB: SocketAddr = SocketAddr::new(
+    std::net::IpAddr::V4(Ipv4Addr::LOCALHOST),
+    crate::template::ORACLE_GDB_PORT,
+);
 /// PINE's socket name under `$TMPDIR` on its default slot.
 pub const PINE_SOCKET: &str = "rpcs3.sock";
 /// The longest path an AF_UNIX socket takes on macOS (`sun_path` is 104 bytes
@@ -60,6 +68,9 @@ pub struct BootOptions {
     /// P8's 2560x1440 borderless surface (`SKYLANDER_SURFACE_2X=1`) instead of
     /// 1280x720. P8 checks only that the key is set, so off removes it.
     pub surface_2x: bool,
+    /// Boots without `GUAC_ORACLE=1`, so every O-verb answers `ERR unknown_cmd`
+    /// and P1 speaks exactly the product protocol (AF.5's gate check).
+    pub ungated: bool,
 }
 
 /// The per-run paths: the dir RPCS3 gets as `TMPDIR` and the two sockets in it.
@@ -138,7 +149,11 @@ pub fn spec(
     let mut env = vec![
         set("HOME", root.into()),
         set("TMPDIR", tmpdir),
-        set("GUAC_ORACLE", "1".into()),
+        if opts.ungated {
+            unset("GUAC_ORACLE")
+        } else {
+            set("GUAC_ORACLE", "1".into())
+        },
         // Each would point RPCS3 somewhere other than the oracle home.
         unset("RPCS3_CONFIG_DIR"),
         unset("XDG_CONFIG_HOME"),
@@ -190,14 +205,15 @@ pub fn inherited_render_env(
 }
 
 /// Refuses to start while an RPCS3 runs from `home` (it holds the home's
-/// `RPCS3.buf`), `gdb` accepts a connection or either socket of `run` is live;
-/// a socket file nobody answers on is a dead run's, and goes. The lock is what
-/// stops a second oracle on one home: [`boot`]'s run dir is always new, so its
-/// sockets are only ever live for a caller that made its own [`RunPaths`].
-pub fn preflight(home: &OracleHome, run: &RunPaths, gdb: SocketAddr) -> Result<()> {
+/// `RPCS3.buf`), something holds one of the `gdb` ports or either socket of
+/// `run` is live; a socket file nobody answers on is a dead run's, and goes.
+/// The lock is what stops a second oracle on one home: [`boot`]'s run dir is
+/// always new, so its sockets are only ever live for a caller that made its own
+/// [`RunPaths`].
+pub fn preflight(home: &OracleHome, run: &RunPaths, gdb: &[SocketAddr]) -> Result<()> {
     home::refuse_running(home.root())?;
-    if TcpStream::connect_timeout(&gdb, Duration::from_millis(300)).is_ok() {
-        bail!("something holds {gdb}, RPCS3's GDB stub: another RPCS3 is running; stop it first");
+    if let Some(held) = gdb.iter().find(|a| port_held(**a)) {
+        bail!("something holds {held}, an RPCS3 GDB stub: another RPCS3 is running; stop it first");
     }
     for sock in [&run.p1_socket, &run.pine_socket] {
         if socket_live(sock) {
@@ -211,6 +227,17 @@ pub fn preflight(home: &OracleHome, run: &RunPaths, gdb: SocketAddr) -> Result<(
         }
     }
     Ok(())
+}
+
+/// Whether something listens on `addr`, found by binding it, never by
+/// connecting: RPCS3's GDB stub pauses the emulator on every connection and
+/// freezes it when the peer hangs up without a word (AF.5's live run lost a
+/// boot to another work tree's preflight that connected).
+fn port_held(addr: SocketAddr) -> bool {
+    matches!(
+        std::net::TcpListener::bind(addr),
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse
+    )
 }
 
 #[cfg(unix)]
@@ -230,6 +257,7 @@ pub struct Oracle {
     run: RunPaths,
     driver: IpcPortalDriver,
     render_env: Vec<(String, String)>,
+    config_dir: PathBuf,
 }
 
 /// Boots the oracle at `exe` from `home` after the preflight, in a fresh run
@@ -258,6 +286,7 @@ pub fn boot(exe: &Path, home: &OracleHome, opts: &BootOptions) -> Result<Oracle>
         run,
         driver,
         render_env,
+        config_dir: home.config_dir(),
     })
 }
 
@@ -268,7 +297,7 @@ fn start(
     run: &RunPaths,
     opts: &BootOptions,
 ) -> Result<(RpcsProcess, Vec<(String, String)>)> {
-    preflight(home, run, GDB_STUB)?;
+    preflight(home, run, &[GDB_STUB, ORACLE_GDB_STUB])?;
     let mut opts = opts.clone();
     if let Some(state) = &opts.savestate {
         // RPCS3 only reads a state it boots, but the source may be the dev's own.
@@ -305,6 +334,12 @@ impl Oracle {
     /// P1's driver on this run's socket (`STATE`, `LOAD`, `RECONNECT`, ...).
     pub fn driver(&self) -> &IpcPortalDriver {
         &self.driver
+    }
+
+    /// The O-verbs on this run's socket, with the home's RPCS3 config dir to
+    /// find what they make RPCS3 write.
+    pub fn control(&self) -> Control {
+        Control::new(&self.run.p1_socket, &self.config_dir)
     }
 
     pub fn pid(&self) -> u32 {
@@ -471,6 +506,7 @@ mod tests {
             savestate: Some(PathBuf::from("/s/BLUS30968_1_0.SAVESTAT.zst")),
             borderless: true,
             surface_2x: true,
+            ungated: false,
         };
         let spec = spec(Path::new("/x/rpcs3"), &home, &run, &opts).unwrap();
         assert_eq!(
@@ -485,6 +521,22 @@ mod tests {
             env_of(&spec, "SKYLANDER_SURFACE_2X"),
             Some(Some("1".into()))
         );
+    }
+
+    #[test]
+    fn an_ungated_boot_removes_the_gate_rather_than_set_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = home(tmp.path());
+        let base = short_base();
+        let run = RunPaths::create(base.path()).unwrap();
+        let opts = BootOptions {
+            ungated: true,
+            ..BootOptions::default()
+        };
+        let spec = spec(Path::new("/x/rpcs3"), &home, &run, &opts).unwrap();
+        // Removed, so a GUAC_ORACLE=1 in the harness's own env can't leak through.
+        assert_eq!(env_of(&spec, "GUAC_ORACLE"), Some(None));
+        assert_eq!(env_of(&spec, "HOME"), Some(Some(home.root().into())));
     }
 
     #[test]
@@ -618,35 +670,47 @@ mod tests {
         let home = home(tmp.path());
         let base = short_base();
         let run = RunPaths::create(base.path()).unwrap();
-        preflight(&home, &run, free_addr).unwrap();
+        preflight(&home, &run, &[free_addr]).unwrap();
 
         // An RPCS3 running from the home holds RPCS3.buf's flock all its life.
         let held = std::fs::File::create(crate::home::rpcs3_lock_file(home.root())).unwrap();
         held.lock().unwrap();
-        let err = preflight(&home, &run, free_addr).unwrap_err().to_string();
+        let err = preflight(&home, &run, &[free_addr])
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("an RPCS3 is running"), "{err}");
         drop(held);
-        preflight(&home, &run, free_addr).unwrap();
+        preflight(&home, &run, &[free_addr]).unwrap();
 
         // A stale socket file nobody answers on is cleared, not refused.
         let stale = std::os::unix::net::UnixListener::bind(&run.p1_socket).unwrap();
         drop(stale);
         assert!(run.p1_socket.exists());
-        preflight(&home, &run, free_addr).unwrap();
+        preflight(&home, &run, &[free_addr]).unwrap();
         assert!(!run.p1_socket.exists());
 
         for sock in [&run.p1_socket, &run.pine_socket] {
             let live = std::os::unix::net::UnixListener::bind(sock).unwrap();
-            let err = preflight(&home, &run, free_addr).unwrap_err().to_string();
+            let err = preflight(&home, &run, &[free_addr])
+                .unwrap_err()
+                .to_string();
             assert!(err.contains("is live"), "{err}");
             drop(live);
             std::fs::remove_file(sock).unwrap();
         }
 
+        // A held GDB port refuses, found without connecting: a connection
+        // would pause (or freeze) the RPCS3 behind it.
         let gdb = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let err = preflight(&home, &run, gdb.local_addr().unwrap())
+        gdb.set_nonblocking(true).unwrap();
+        let err = preflight(&home, &run, &[free_addr, gdb.local_addr().unwrap()])
             .unwrap_err()
             .to_string();
         assert!(err.contains("GDB stub"), "{err}");
+        assert_eq!(
+            gdb.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock,
+            "the probe connected"
+        );
     }
 }

@@ -6374,10 +6374,13 @@ name = "oracle-harness"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "image",
  "rrc-dump",
+ "sha2 0.10.9",
  "skylander-core",
  "skylander-rpcs3-control",
  "tempfile",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

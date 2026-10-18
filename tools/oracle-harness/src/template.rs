@@ -3,11 +3,21 @@
 //! every key a file leaves out with the pin's default, so what's here is exactly
 //! what the oracle changes, and the pin (in the identity line) fixes the rest.
 
-/// The shader mode that dodges the `accfecd2d` boot crash: the crash is the
-/// shader interpreter's warm-up, which only the two interpreter modes run.
+/// The shader mode that dodges the unfixed `accfecd2d` boot crash (the shader
+/// interpreter's warm-up, which only the two interpreter modes run). It skips a
+/// draw whose shader is still compiling.
 pub const ASYNC_RECOMPILER: &str = "Async Recompiler (multi-threaded)";
-/// RPCS3's default from `accfecd2d` on, and what the dev's own config carries.
+/// RPCS3's default from `accfecd2d` on and the oracle's (AF.5): a draw whose
+/// shader is still compiling goes through the interpreter instead of being
+/// skipped, so what a frame holds doesn't hang on compile timing. O1 and O2 fix
+/// its boot crash.
 pub const ASYNC_WITH_INTERPRETER: &str = "Async Recompiler with Shader Interpreter";
+
+/// The oracle's GDB stub port, off RPCS3's default 2345: a connection to the
+/// stub pauses the emulator (and freezes it if the peer hangs up silently), so
+/// a debugger or port probe aimed at the dev's own RPCS3 must not reach an
+/// oracle run.
+pub const ORACLE_GDB_PORT: u16 = 2346;
 
 /// The oracle's `config.yml`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,7 +32,7 @@ pub struct ConfigTemplate {
 impl Default for ConfigTemplate {
     fn default() -> Self {
         Self {
-            shader_mode: ASYNC_RECOMPILER.to_owned(),
+            shader_mode: ASYNC_WITH_INTERPRETER.to_owned(),
             sys_fs_trace: false,
         }
     }
@@ -38,6 +48,9 @@ impl ConfigTemplate {
         if self.sys_fs_trace {
             out.push_str("Log:\n  sys_fs: Trace\n");
         }
+        out.push_str(&format!(
+            "Miscellaneous:\n  GDB Server: 127.0.0.1:{ORACLE_GDB_PORT}\n"
+        ));
         // Disconnected plus P3's offline path: a resumed state's dead sockets fail
         // fast instead of busy-retrying (the product recorder's resume setting).
         out.push_str("Net:\n  Internet enabled: Disconnected\n");
@@ -47,8 +60,10 @@ impl ConfigTemplate {
             "Savestate:\n  Compatible Savestate Mode: true\n  Start Paused: true\n  Suspend Emulation Savestate Mode: false\n",
         );
         // FIFO reordering off keeps RSX's command order the guest's (AC.12).
+        // Overlays (the pause message, trophy popups) stay out of a SCREENSHOT,
+        // which is then the guest's display buffer alone.
         out.push_str(&format!(
-            "Video:\n  Disable FIFO Reordering: true\n  Shader Mode: {}\n",
+            "Video:\n  Disable FIFO Reordering: true\n  Record With Overlays: false\n  Shader Mode: {}\n",
             self.shader_mode
         ));
         out
@@ -132,24 +147,29 @@ mod tests {
         );
         assert_eq!(value(&entries, "Net", "Internet enabled"), "Disconnected");
         assert_eq!(value(&entries, "Video", "Disable FIFO Reordering"), "true");
-        assert_eq!(value(&entries, "Video", "Shader Mode"), ASYNC_RECOMPILER);
+        assert_eq!(value(&entries, "Video", "Record With Overlays"), "false");
+        assert_eq!(
+            value(&entries, "Miscellaneous", "GDB Server"),
+            "127.0.0.1:2346"
+        );
+        assert_eq!(
+            value(&entries, "Video", "Shader Mode"),
+            ASYNC_WITH_INTERPRETER
+        );
         // sys_fs stays at its default unless a run asks for trace.
         assert!(entries.iter().all(|(s, _, _)| s != "Log"));
-        assert_eq!(entries.len(), 6);
+        assert_eq!(entries.len(), 8);
     }
 
     #[test]
     fn trace_and_shader_mode_are_the_template_parameters() {
         let template = ConfigTemplate {
-            shader_mode: ASYNC_WITH_INTERPRETER.to_owned(),
+            shader_mode: ASYNC_RECOMPILER.to_owned(),
             sys_fs_trace: true,
         };
         let entries = parse(&template.render());
         assert_eq!(value(&entries, "Log", "sys_fs"), "Trace");
-        assert_eq!(
-            value(&entries, "Video", "Shader Mode"),
-            ASYNC_WITH_INTERPRETER
-        );
+        assert_eq!(value(&entries, "Video", "Shader Mode"), ASYNC_RECOMPILER);
         assert_eq!(value(&entries, "Savestate", "Start Paused"), "true");
     }
 
