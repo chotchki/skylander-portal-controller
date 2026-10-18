@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 
-use crate::api::{fetch_figure_stats, post_load, FigureStats};
+use crate::api::{fetch_figure_stats, post_load, StatsFetch};
 use crate::components::{DisplayHeading, FigureHero, HeadingSize, HeroState};
 use crate::model::{
     Category, GameOfOrigin, PublicFigure, Slot, SlotState, UnlockedProfile, SLOT_COUNT,
@@ -113,12 +113,13 @@ pub(crate) fn FigureDetail(
 
     // Per-figure stats (PLAN 6.3). Fetches the working copy's parsed
     // level/gold/playtime/nickname when both an unlocked profile and
-    // figure id are available. `None` outcome (no working copy yet,
+    // figure id are available. `Missing` (no working copy yet,
     // unparseable .sky, transport error) falls back to the placeholder
     // strip — the whole experience stays usable when stats aren't
     // available, the placeholder just makes that absence legible.
+    // `Unavailable` (AA.9) also turns STATS and RESET off, see `edit_gate`.
     let stats_fig_id = fig_id.clone();
-    let stats: LocalResource<Option<FigureStats>> = LocalResource::new(move || {
+    let stats: LocalResource<StatsFetch> = LocalResource::new(move || {
         // Re-fetch when either rev bumps:
         // - `stats_rev`: local edit-sheet save (instant local feedback path).
         // - `figure_updates_rev`: WS `Event::FigureUpdated` from any phone
@@ -132,22 +133,13 @@ pub(crate) fn FigureDetail(
         async move {
             match profile_id {
                 Some(pid) => fetch_figure_stats(&pid, &fig_id).await,
-                None => None,
+                None => StatsFetch::Missing,
             }
         }
     });
 
-    // PLAN 11 — editability gate for the STATS button.
-    // (a) Category must be a player-controllable kind (figure / sidekick /
-    //     giant / kaos). Categories with no level/gold semantics (Trap,
-    //     Vehicle, CreationCrystal, AdventurePack, Item, Other) stay disabled.
-    // (b) Figure must not currently occupy any portal slot — editing the
-    //     working copy under the game's nose would let it see stale state
-    //     after the next read; user must clear the slot first.
-    let editable_category = matches!(
-        figure.category,
-        Category::Figure | Category::Sidekick | Category::Giant | Category::Kaos
-    );
+    // PLAN 11 + AA.9 — STATS and RESET share one gate, `edit_gate`.
+    let category = figure.category;
     let fig_id_for_portal_check = fig_id.clone();
     let on_portal = Signal::derive(move || {
         portal.get().iter().any(|slot| match &slot.state {
@@ -162,16 +154,25 @@ pub(crate) fn FigureDetail(
             _ => false,
         })
     });
-    let stats_editable = Signal::derive(move || editable_category && !on_portal.get());
-    let stats_tooltip = move || {
-        if !editable_category {
-            format!("Editing not supported for {:?}", figure.category)
-        } else if on_portal.get() {
-            "Remove from portal before editing".to_string()
-        } else {
-            "Edit level + gold".to_string()
+    let gate = Signal::derive(move || {
+        let fetched = stats.get();
+        edit_gate(category, on_portal.get(), fetched.as_deref())
+    });
+    let stats_editable = Signal::derive(move || gate.get().enabled());
+    let stats_tooltip = move || gate.get().tooltip();
+
+    // A tap during the in-flight fetch can open the sheet or modal before the 409; close them.
+    let gate_fig_id = fig_id.clone();
+    Effect::new(move |_| {
+        if gate.get() != EditGate::NotAvailableYet {
+            return;
         }
-    };
+        show_edit_sheet.set(false);
+        let ours = reset_target.with_untracked(|t| is_detail_reset_of(t.as_ref(), &gate_fig_id));
+        if ours {
+            reset_target.set(None);
+        }
+    });
 
     let max_level = max_level_for_game(game);
 
@@ -391,13 +392,13 @@ pub(crate) fn FigureDetail(
 
                 // PLAN 6.3 — three stat cells (Level / Gold / Playtime)
                 // populated from the per-figure `.sky` working copy. When
-                // the fetch hasn't resolved yet, returns None (no working
-                // copy, never played, parse failure), or the figure
-                // simply doesn't have stats yet, fall back to the muted
-                // "STATS COMING SOON" strip — that path is still useful
-                // for figures the profile has never placed.
-                {move || match stats.get().as_deref().and_then(|opt| opt.as_ref().cloned()) {
-                    Some(s) => view! {
+                // the fetch hasn't resolved yet or came back `Missing` (no
+                // working copy, never played, parse failure), fall back to
+                // the muted "NEVER PLACED" strip. `Unavailable` (AA.9: no
+                // figure files on this server) says so instead, which is
+                // the visible note for the disabled STATS + RESET above.
+                {move || match stats.get().as_deref().cloned() {
+                    Some(StatsFetch::Read(s)) => view! {
                         <div class="detail-stats-strip">
                             <div class="detail-stat-cell">
                                 <div class="detail-stat-l">"LEVEL"</div>
@@ -413,7 +414,12 @@ pub(crate) fn FigureDetail(
                             </div>
                         </div>
                     }.into_any(),
-                    None => view! {
+                    Some(StatsFetch::Unavailable) => view! {
+                        <div class="detail-stats-strip detail-stats-soon">
+                            <div class="detail-stats-soon-label">"NOT AVAILABLE YET"</div>
+                        </div>
+                    }.into_any(),
+                    Some(StatsFetch::Missing) | None => view! {
                         <div class="detail-stats-strip detail-stats-soon">
                             <div class="detail-stats-soon-label">"NEVER PLACED"</div>
                         </div>
@@ -456,7 +462,7 @@ pub(crate) fn FigureDetail(
                     let (initial_level, initial_gold) = stats
                         .get()
                         .as_deref()
-                        .and_then(|opt| opt.as_ref())
+                        .and_then(StatsFetch::stats)
                         .map(|s| (s.level, s.gold))
                         .unwrap_or((1, 0));
                     view! {
@@ -476,6 +482,65 @@ pub(crate) fn FigureDetail(
             }
         </div>
     }
+}
+
+/// Why STATS (level + gold edit) and RESET TO FRESH are on or off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EditGate {
+    Editable,
+    /// No level/gold semantics (Trap, Vehicle, CreationCrystal,
+    /// AdventurePack, Item, Other).
+    UnsupportedCategory(Category),
+    /// The server keeps no figure files (guacamole, until AH), so edit and
+    /// reset would 409.
+    NotAvailableYet,
+    /// Editing the working copy under the game's nose would let it see
+    /// stale state after the next read; the slot has to be cleared first.
+    OnPortal,
+}
+
+impl EditGate {
+    fn enabled(self) -> bool {
+        self == EditGate::Editable
+    }
+
+    fn tooltip(self) -> String {
+        match self {
+            EditGate::Editable => "Edit level + gold".to_string(),
+            EditGate::UnsupportedCategory(c) => format!("Editing not supported for {c:?}"),
+            EditGate::NotAvailableYet => "Not available yet".to_string(),
+            EditGate::OnPortal => "Remove from portal before editing".to_string(),
+        }
+    }
+}
+
+/// The STATS + RESET gate. `stats` is the stats fetch's outcome, `None`
+/// while it's in flight. Only a fetch the server refused outright
+/// (`Unavailable`) turns the actions off: the product's 404 for a
+/// never-placed figure (`Missing`) still edits, because the first edit
+/// forks the working copy from the pack. In-flight counts as editable so
+/// the product's buttons render enabled immediately, as before AA.9.
+/// Category wins over the rest (permanent), and "not available yet" wins
+/// over "on portal" (clearing the slot wouldn't help).
+fn edit_gate(category: Category, on_portal: bool, stats: Option<&StatsFetch>) -> EditGate {
+    if !matches!(
+        category,
+        Category::Figure | Category::Sidekick | Category::Giant | Category::Kaos
+    ) {
+        return EditGate::UnsupportedCategory(category);
+    }
+    if matches!(stats, Some(StatsFetch::Unavailable)) {
+        return EditGate::NotAvailableYet;
+    }
+    if on_portal {
+        return EditGate::OnPortal;
+    }
+    EditGate::Editable
+}
+
+/// True when `target` is this details screen's reset of `figure_id` (the portal's slot resets are left alone).
+fn is_detail_reset_of(target: Option<&ResetTarget>, figure_id: &str) -> bool {
+    target.is_some_and(|t| t.slot.is_none() && t.figure_id == figure_id)
 }
 
 /// Per-figure level cap derived from game-of-origin. Mirrors
@@ -520,5 +585,126 @@ fn game_display_name(g: GameOfOrigin) -> &'static str {
         GameOfOrigin::Superchargers => "SUPERCHARGERS",
         GameOfOrigin::Imaginators => "IMAGINATORS",
         GameOfOrigin::CrossGame => "CROSS-GAME",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! AA.9 — the STATS + RESET gate. The buttons themselves are covered
+    //! by `figure_edit.rs` e2e; this pins every input combination.
+    use super::*;
+    use crate::api::FigureStats;
+
+    const ALL_CATEGORIES: [Category; 10] = [
+        Category::Figure,
+        Category::Sidekick,
+        Category::Giant,
+        Category::Item,
+        Category::Trap,
+        Category::AdventurePack,
+        Category::CreationCrystal,
+        Category::Vehicle,
+        Category::Kaos,
+        Category::Other,
+    ];
+
+    fn editable_category(c: Category) -> bool {
+        matches!(
+            c,
+            Category::Figure | Category::Sidekick | Category::Giant | Category::Kaos
+        )
+    }
+
+    fn read() -> StatsFetch {
+        StatsFetch::Read(FigureStats {
+            level: 3,
+            gold: 120,
+            playtime_secs: 600,
+            nickname: String::new(),
+        })
+    }
+
+    #[test]
+    fn stats_present_follows_category_and_portal() {
+        let stats = read();
+        for c in ALL_CATEGORIES {
+            let off = edit_gate(c, false, Some(&stats));
+            let on = edit_gate(c, true, Some(&stats));
+            if editable_category(c) {
+                assert_eq!(off, EditGate::Editable, "{c:?} off portal");
+                assert_eq!(on, EditGate::OnPortal, "{c:?} on portal");
+            } else {
+                assert_eq!(off, EditGate::UnsupportedCategory(c), "{c:?} off portal");
+                assert_eq!(on, EditGate::UnsupportedCategory(c), "{c:?} on portal");
+            }
+        }
+    }
+
+    #[test]
+    fn stats_unavailable_disables_every_category_on_and_off_portal() {
+        for c in ALL_CATEGORIES {
+            for on_portal in [false, true] {
+                let gate = edit_gate(c, on_portal, Some(&StatsFetch::Unavailable));
+                assert!(!gate.enabled(), "{c:?} on_portal={on_portal}");
+                if editable_category(c) {
+                    assert_eq!(
+                        gate,
+                        EditGate::NotAvailableYet,
+                        "{c:?} on_portal={on_portal}"
+                    );
+                } else {
+                    assert_eq!(gate, EditGate::UnsupportedCategory(c));
+                }
+            }
+        }
+    }
+
+    /// The product's never-placed figure (404) and a fetch still in flight
+    /// gate exactly like stats that came back: the first edit forks the
+    /// working copy, so the product's phone behaves as it did before AA.9.
+    #[test]
+    fn missing_and_in_flight_match_stats_present() {
+        let stats = read();
+        for c in ALL_CATEGORIES {
+            for on_portal in [false, true] {
+                let present = edit_gate(c, on_portal, Some(&stats));
+                assert_eq!(edit_gate(c, on_portal, Some(&StatsFetch::Missing)), present);
+                assert_eq!(edit_gate(c, on_portal, None), present);
+            }
+        }
+    }
+
+    #[test]
+    fn tooltips_name_the_reason() {
+        assert_eq!(EditGate::Editable.tooltip(), "Edit level + gold");
+        assert_eq!(EditGate::NotAvailableYet.tooltip(), "Not available yet");
+        assert!(EditGate::OnPortal.tooltip().contains("portal"));
+        assert_eq!(
+            EditGate::UnsupportedCategory(Category::Trap).tooltip(),
+            "Editing not supported for Trap"
+        );
+        assert!(EditGate::Editable.enabled());
+        assert!(!EditGate::OnPortal.enabled());
+    }
+
+    /// Only this screen's reset of this figure closes when the gate turns off.
+    #[test]
+    fn detail_reset_matches_only_this_figure_off_portal() {
+        let target = |slot: Option<u8>, figure_id: &str| ResetTarget {
+            slot,
+            profile_id: "p1".to_string(),
+            figure_id: figure_id.to_string(),
+            display_name: "Eruptor".to_string(),
+        };
+        assert!(is_detail_reset_of(
+            Some(&target(None, "eruptor")),
+            "eruptor"
+        ));
+        assert!(!is_detail_reset_of(
+            Some(&target(Some(2), "eruptor")),
+            "eruptor"
+        ));
+        assert!(!is_detail_reset_of(Some(&target(None, "spyro")), "eruptor"));
+        assert!(!is_detail_reset_of(None, "eruptor"));
     }
 }
