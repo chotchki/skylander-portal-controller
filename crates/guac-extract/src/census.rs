@@ -150,7 +150,8 @@ pub struct Census {
 }
 
 /// `ffprobe` by ffmpeg's discovery order ([`crate::ffmpeg::find_tool`]):
-/// `configured` if given, else beside this executable, else on PATH.
+/// `configured` if given, else beside this executable, else on PATH, else
+/// (macOS) in Homebrew's bin folders.
 pub fn find_ffprobe(configured: Option<PathBuf>) -> Option<PathBuf> {
     crate::ffmpeg::find_tool_here("ffprobe", configured.as_deref())
         .ok()

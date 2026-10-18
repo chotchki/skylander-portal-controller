@@ -85,7 +85,8 @@ dev-tools = ["guac-server/dev-tools"]
 # The /api/_test/* endpoints for the e2e harness. Never in release builds.
 test-hooks = ["dev-tools", "guac-server/test-hooks"]
 # AB.7's spike, kept out of `cargo test`: `cargo run --release -p guacamole
-# --features video-spike --example video_spike` (AB.16 runs it on the TV).
+# --features video-spike --example video_spike` (the TV pass in
+# openspec/backlog.md runs it on the TV, ex-AB.16).
 video-spike = []
 
 [[example]]

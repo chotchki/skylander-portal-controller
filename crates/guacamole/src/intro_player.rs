@@ -26,9 +26,10 @@ use crate::tv::Current;
 use crate::video::{self, Feed};
 
 /// The speaker's lag behind the audio clock when none is stored. PROVISIONAL
-/// until AB.16 measures M0's path (HDMI to the TV) and AB.19 sets it: one
-/// rodio device buffer (2048 frames at 48 kHz, 42.7 ms, AB.7's step), without
-/// the output path's own latency.
+/// until the TV pass in `openspec/backlog.md` (ex-AB.16 and ex-AB.19) measures
+/// M0's path (HDMI to the TV) and sets it: one rodio device buffer (2048
+/// frames at 48 kHz, 42.7 ms, AB.7's step), without the output path's own
+/// latency.
 pub const DEFAULT_OUTPUT_LATENCY: Duration = Duration::from_millis(43);
 
 /// Waited for an audio sink before playing the video by the wall clock alone

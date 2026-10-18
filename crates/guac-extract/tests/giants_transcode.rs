@@ -1,7 +1,8 @@
 //! One real Giants intro through the real ffmpeg (openspec AB.8). Ignored by
 //! default: it reads the dump at `GUAC_GIANTS_DUMP`, writes a throwaway
 //! extract under `GUAC_EXTRACT_DIR` and needs ffmpeg and ffprobe
-//! (`GUAC_FFMPEG` / `GUAC_FFPROBE`, else PATH). `GUAC_TRANSCODE_INTRO` picks
+//! (`GUAC_FFMPEG` / `GUAC_FFPROBE`, else beside the test binary, PATH or
+//! Homebrew's bin folders on macOS). `GUAC_TRANSCODE_INTRO` picks
 //! the movie (default `eruptor`). Release mode, for the hashing:
 //!
 //! `cargo test -p guac-extract --release --test giants_transcode -- --ignored --nocapture`

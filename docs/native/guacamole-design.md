@@ -13,7 +13,7 @@ have to touch it until Guacamole is ready.
 
 A from-scratch Rust/Bevy reimplementation of the PS3 Skylanders games WITH the original gameplay,
 Skylanders Giants (BLUS30968) first, so the art can be upscaled and relit (on the Mac first, the HTPC
-later). Users supply their own disc dumps, `guac-extract` pulls the assets out at install time and nothing
+later). Users supply their own disc dumps, `guac-extract` pulls the assets out on first run and nothing
 read from a disc ever ships or lands in this repo. The phone stays the portal, and a figure is just an
 identity out of the disc's own roster, so nobody dumps a toy and nothing reads a `.sky`. It runs as a
 second binary, `guacamole`, beside the product launcher until it can play a whole game.
@@ -402,12 +402,16 @@ cargo run -p guacamole       # add --features test-hooks for the /api/_test/* en
 
 - It reads the dev env file the product reads (the keys are in
   [`.env.dev.example`](../../.env.dev.example)), and only these matter: `GUAC_DUMP_DIRS` (folders in the
-  OS's path-list form; set, it overrides the stored folders and the TV skips setup), `BIND_PORT` (default
-  8765), `DATA_ROOT` (default `data`, the interim catalogue's source) and `WINDOW_MODE` (`desktop` is a
-  resizable 1280x720 window, anything else is borderless full screen on the primary display). Never
-  `RPCS3_EXE` or `FIRMWARE_PACK_ROOT`.
+  OS's path-list form; set, it overrides the stored folders and the TV skips setup), `GUAC_EXTRACT_DIR`,
+  `GUAC_FFMPEG` and `GUAC_OUTPUT_LATENCY_MS` (The extractor; the first is required for any intro),
+  `BIND_PORT` (default 8765), `DATA_ROOT` (default `data`, the interim catalogue's source) and
+  `WINDOW_MODE` (`desktop` is a resizable 1280x720 window, anything else is borderless full screen on the
+  primary display). A `test-hooks` build also reads `GUAC_TEST_KNOWN_DUMP` (`<TITLE_ID> <APP_VER>
+  <manifest hash>`, the synthetic dump the e2e harness writes into its own scratch `.env.dev`, trusted
+  beside the known table and logged as a warning). Never `RPCS3_EXE` or `FIRMWARE_PACK_ROOT`.
 - State goes under `./dev-data/guacamole/` (`db.sqlite`); logs go to `./logs/`, the same daily
-  `server.log` the product's dev build writes.
+  `server.log` the product's dev build writes. `GUAC_MUTE` (process env, not the file, dev builds only)
+  plays intros muted; the e2e harness sets it.
 - `GUAC_SHOT_DIR=<dir>` (process env, dev builds only) renders the TV offscreen at `GUAC_SHOT_SIZE`
   (default 1920x1080) and saves a PNG each time it settles. AA.8 checked its screens that way, because
   window captures on the locked Mac came back black. Since AB.10 a shot lands in each intro, a frame of
@@ -423,9 +427,9 @@ SKYLANDER_APP_DIR="$PWD" target/release/guacamole
 ```
 
 - No dev env file and no dev shortcuts: the window is always borderless full screen on the primary
-  display, the data root is `~/Library/Application Support/guacamole/` (`db.sqlite` and `logs/`) and a
-  first start asks for the dumps folder (Persistence and setup). Deleting the data root goes back to
-  first run.
+  display, the data root is `~/Library/Application Support/guacamole/` (`db.sqlite`, `logs/` and, from
+  the first Giants pick, `extract/`) and a first start asks for the dumps folder (Persistence and setup).
+  Homebrew's ffmpeg is found without PATH (The extractor). Deleting the data root goes back to first run.
 - The catalogue's `data/` resolves next to the executable (`paths::app_data_root`) and `target/release/`
   has none, so `SKYLANDER_APP_DIR` points it at the checkout. Without it there's no
   [`figures.json`](../../data/figures.json) and the TV shows the server-error screen.
@@ -473,8 +477,10 @@ nothing else on disk is precious. Backing up the family's progress is copying on
   runs the store's queries against a database migrated by each set, so the two can't drift apart unseen.
 - Settings live in that table: the dumps folders, the port (8765; only the dev `BIND_PORT` changes it,
   since nothing writes the stored one yet) and the pairing key, 32 random bytes made on the first start
-  and stored only once the server came up, so a second copy that lost the port never writes one. Its
-  loader ([`crates/guac-server/src/setup.rs`](../../crates/guac-server/src/setup.rs)) writes nothing: it
+  and stored only once the server came up, so a second copy that lost the port never writes one. AB
+  added `ffmpeg_path` and `output_latency_ms` (0 to 1,000 ms), which nothing in a release build writes
+  yet (The extractor). Its loader
+  ([`crates/guac-server/src/setup.rs`](../../crates/guac-server/src/setup.rs)) writes nothing: it
   opens an existing `db.sqlite` read-write only so SQLite can roll back a crash's hot journal, and a
   database with no `settings` table reads as never set.
 - Profiles aren't copied over. The kids set theirs up again in `guacamole` (name, colour, PIN, through the
@@ -489,8 +495,8 @@ nothing else on disk is precious. Backing up the family's progress is copying on
   RPCS3's config. No files to copy around.
 - The extract dir is a regenerable CACHE, `extract/` under the data root in release and a path outside
   the working tree in dev (the hard rule says why). Delete it and `guac-extract` rebuilds it from the
-  dumps (its manifest already forces a rebuild on an extractor or IR version bump), so nothing in it gets
-  backed up. The local Enhanced pack is the same kind of cache.
+  dumps, as it already does after a layout or IR change (The extractor), so nothing in it gets backed
+  up. The local Enhanced pack is the same kind of cache.
 - Story saves start fresh, like figures. The kids' RPCS3 Giants saves aren't imported.
 - Setup asks one thing: where the disc dumps are. No RPCS3 path, no PS3 firmware, no figure pack and no
   `games.yml` scan. Guacamole identifies each dump itself and offers the games it can play. AA reads
@@ -547,7 +553,11 @@ PARAM.SFO), not taken from the wiki.
   Giants), so NOT every chunk of an LZMA entry is LZMA. Header flags are 0 on all 893 archives. `.arc` entries are stored, `.bld` entries are LZMA. A ~150-line reader opened every archive
   on all five Alchemy discs (16,310 of 16,310, 0 errors) and 522 random compressed entries decompressed to
   exactly their declared size. Cross-checked against [igArchiveLib](https://github.com/LG-RZ/igArchiveLib)
-  and [igArchiveExtractor](https://github.com/NefariousTechSupport/igArchiveExtractor).
+  and [igArchiveExtractor](https://github.com/NefariousTechSupport/igArchiveExtractor). Landed as
+  `guac_formats::iga` (AB.3), which reads v0x08 only and refuses every other version by name: all 893
+  Giants archives open, 81,051 stored entries in the `.arc`s and 4,259 LZMA entries in the `.bld`s
+  (214,944 chunks, no other codec), and every LZMA entry unpacks to its declared size (144 s release with
+  `GUAC_IGA_SAMPLE=all`; the default run samples 200).
 - Inner content: 85,310 entries, 17.56 GiB decompressed, of which 9.8 GiB is duplicate by name (every
   level and character bundle is self-contained). 79,509 FSB5 voice lines, 599 `level.bld` (one IGZ each),
   1,542 texture IGZ, 3,660 language packs.
@@ -592,8 +602,21 @@ PARAM.SFO), not taken from the wiki.
   disc, so triggering lives in engine objects (`tfbSoundDataInfo`) and script macros ("Sound - VO
   Request").
 - Video: 61 Bink 1 `.mov` at 1280×720: 48 per-character intros named by character (`eruptor.mov`), one
-  per playable character; 11 FMV (`fmv01`-`fmv12`, no `fmv05`); 2 logos. Ten carry 13 audio tracks
-  (per-language voice), the rest carry one. FFmpeg decodes Bink 1 (probed on a Giants file).
+  per playable character; 11 FMV (`fmv01`-`fmv12`, no `fmv05`); 2 logos. FFmpeg decodes Bink 1 (probed on
+  a Giants file). Tracks, from AB.5's census: fmv01-fmv04 and fmv06-fmv11 carry 13 44.1 kHz
+  `binkaudio_dct` tracks each, 12 mono (presumably per-language voice) plus one stereo track with Bink id
+  0x0 (probably the music and effects bed, unverified); fmv12, both logos and all 48 intros carry one
+  stereo track (id 0x0; 2 of those 51 at 48 kHz, the rest 44.1 kHz), so an intro's voice is its only track.
+  Frame rates are 2997/100 on 23 files, 30/1 on 14 and odd rationals from 30000/1001 to 32.72 on the other
+  24, and the transcode keeps each one.
+- Census (AB.5, `guac-extract census`, 3.6 s): 964 files, 19.32 GB (every file under the dump, so
+  `PS3_DISC.SFB` and `PS3_UPDATE` too; the identity hashes USRDIR alone). 893 little-endian IGA, 61
+  Bink 1, 3 PNG and one each of the EBOOT (SCE), PARAM.SFO, PS3_DISC.SFB, LIC.DAT, TROPHY.TRP,
+  PS3UPDAT.PUP and `alchemy.xml`; inside the IGAs 85,310 entries, 79,509 FSB5 and 5,801 IGZ, none
+  unknown and none failing to read. No file or entry has an unknown magic and the EBOOT is the only SCE
+  container, the evidence behind The extractor's "only the EBOOT is encrypted". The `#[ignore]`d
+  [`census_dumps.rs`](../../crates/guac-extract/tests/census_dumps.rs) fails on any file across the dumps
+  it's given that's neither flagged nor allowed, and on Giants on any unknown entry or unread archive.
 - EBOOT: an encrypted SELF, 5.65 MiB of `.text` (~1.48M PPU instructions), 277 imports from 22 libraries.
   Decrypted, Ghidra counts 20,511 functions (RE toolchain). Stripped, but RTTI typeinfo strings, 115
   `*MetaField` reflection names, engine API names (`igPlatformVisualContext::drawEdgeGeometry`) and the
@@ -602,9 +625,25 @@ PARAM.SFO), not taken from the wiki.
   then `ShaderPatching` and `IntraMeshSorting`.
 - Figure → asset: character archives are keyed by DECIMAL toy-type id, `character/009_eruptor.arc` ↔
   toy type 9, with variant suffixes (`_legendary`, `_alt`, `_dark`, `_red`). A placed figure resolves to
-  its archive by filename, except where a toy type has no archive of its own number (Dark Spyro, toy 28,
-  rides `016_spyro_dark`). `character/` holds 227 files: 68 character `.arc`/`.bld` pairs, the card-game
-  archives and a few UI and puzzle bundles.
+  its archive by filename, except where a toy type has no archive of its own number (five on Giants: Dark
+  Spyro, toy 28, rides `016_spyro_dark` and four Legendaries ride `NNN_*_legendary`; next bullet).
+  `character/` holds 227 files: 68 character `.arc`/`.bld` pairs, the card-game archives and a few UI and
+  puzzle bundles.
+- Figure → intro (AB.6, AB.15): intros are named by character and archives by toy type, and the bridge is
+  the voice-over name in each character archive's entry list. Entry names run
+  `…/champion_audio/<folder>/[<language>/]vo_<name>_<line>.wav/…`, and the name is the most common first
+  `_` token of the `vo_` stems, extended a token at a time while more than half the stems under it carry
+  the same next token short of their line number; underscores stripped, it names the movie. ALL 48 map by
+  disc, none by the catalogue-name fallback and none twice; the 13 movies left over are exactly
+  fmv01-fmv04, fmv06-fmv12 and the two logos. The read-only probes got 41 and 44, missing every
+  folder/name mismatch (`spectrum`/`flashwing`, `whale`/`thumpback`, `djini`/`ninjini`,
+  `spark`/`sprocket`), and a stricter every-stem rule got 46, tripped by 031's minion lines
+  (`ghost_eater`, 28 of its 268 `ghost_` stems) and 019's misnamed `vo_trigger_character_specific_NN`.
+  The five figures on a toy type of their own share their base's intro (`Variant { base }`): 28 Dark
+  Spyro and 416 Legendary Spyro → 16, 404 Legendary Bash → 4, 419 Legendary Trigger Happy → 19, 430
+  Legendary Chop Chop → 30. The index reads 31,267 voice-over entry names from 68 `.arc`s in 0.3 s;
+  an entry name over 1,024 bytes is skipped and a stem over 128 bytes or 16 tokens isn't one, so a crafted
+  archive can't blow up memory or the token walk.
 - Roster: 48 playable characters by the intro count (one intro each), plus variants. Giants also plays
   SSA-era figures (origin-game-and-later rule, `crates/core/src/compat.rs:48`). The disc's roster is the
   catalogue the phone offers (Figures).
@@ -1174,10 +1213,26 @@ breakage, and it retires at G2.
 
 ## The extractor
 
-Three crates. `guac-formats` holds pure parsers over byte slices (IGA, IGZ, `igImage2`, Edge, Havok
-packfiles, FSB5, Bink headers), fuzzed. `guac-ir` holds the versioned serde IR for game-logic data (RON in
-dev for diffing, postcard shipped). `guac-extract` is the CLI, and the library the app calls on first
-run.
+Verdict (AB, landed 2026-10-18): only a dump whose hash is in the known table gets extracted, read-only,
+into one cache dir outside any checkout; anything else gets a report and nothing more. Three crates:
+
+- `guac-formats` (`#![forbid(unsafe_code)]`, no I/O): parsers over byte slices that bound every length
+  before they allocate and name the offset and field when they fail. AB landed PARAM.SFO and IGA v0x08
+  (raw LZMA1 through `lzma-rust2` 0.23, AB.3's pick: faster than `lzma-rs` on the whole disc, a real
+  encoder for the test writer and a strict end check), AC the IGZ, `igImage2`, Edge and Havok readers.
+  Each registers with a property test `cargo test` runs (random and mutated bytes, no panic, bounded
+  allocation) and has a cargo-fuzz target in `crates/guac-formats/fuzz/`, outside the workspace because
+  it needs nightly (all 8 ran 1 h each on 2026-10-18 with no crash, recorded in AB.0; that was
+  `guac-formats` as of 1789cb5, and AC.23 has since changed Edge's CMP decode).
+- `guac-ir`: serde types behind `IR_VERSION = 1`, every file an envelope `{ ir_version, body }`, so an
+  older extract fails on its version instead of its shape. RON in dev for diffing, postcard in a release
+  build.
+- `guac-extract`: the filesystem, hashing, the manifest and ffmpeg, as the library guacamole calls on its
+  own thread (progress over a channel, the seam AA uses for portal events) and as a dev CLI over the same
+  code, `guac-extract identify | census | intros | transcode <dump>`. The CLI reads `GUAC_EXTRACT_DIR`,
+  `GUAC_FFMPEG` and `GUAC_FFPROBE` from the environment, else from `.env.dev` in the current folder.
+
+The plan the crates serve:
 
 - Input is plaintext `PS3_GAME/USRDIR` from the dump the user pointed setup at, plus `PS3_GAME/TROPDIR`
   for achievement names and icons if its container turns out readable. Never the EBOOT: the field layouts
@@ -1191,20 +1246,23 @@ run.
   a report, not a guess, and a dump a title update changed (files merged into USRDIR, a PARAM.SFO past
   01.00) is one of those: reported, never handled. A later game's target gets settled when that game
   starts.
-- "Only the EBOOT is encrypted" rests on magic sniffing (`SCE\0`, `NPD\0`). AB adds an entropy scan over
-  USRDIR.
-- Output: one extract dir per identity with a manifest (extractor version, IR version, identity, source
-  hashes). The engine refuses a stale manifest and offers to re-extract. An IR version bump forces
-  re-extraction, which is why a proposal must say whether it changes the layout or the IR version. The
-  extract dir is a cache, never a save (Persistence and setup).
+- "Only the EBOOT is encrypted" HOLDS on Giants: AB.5's census found the EBOOT the disc's only SCE
+  container and no file or IGA entry with an unknown magic, so nothing high-entropy goes unexplained
+  (Giants in detail). It reads all six discs; the other five's archives wait for their games.
+- Output: one extract dir per identity (layout v1, below), rebuilt by itself when the layout or the IR
+  version moves, which is why a proposal must say whether it changes either. The extract dir is a cache,
+  never a save (Persistence and setup).
 - Commodity assets transcode to formats Bevy loads natively. Textures → KTX2 carrying the original BC
   blocks (untile and endian fix only, no re-encode). Meshes, skeletons and animations → glTF `.glb`, with
-  engine semantics in the IR. FSB5 MPEG → MP3 (a remux, not a byte copy). Bink 1 → ffmpeg → AV1 or VP9
-  with the locale's voice track. Logic data (scenes, collision, tfbScript graphs, tuning, localization) →
-  IR. Content-hash dedupe (Giants is more than half duplicate bytes by name).
-- The extractor needs an ffmpeg it can call (bundled or found on PATH); AB decides.
-- Nothing in the repo: unit tests use synthetic byte fixtures built in code, and tests that need a disc
-  are `#[ignore]`d and read the dump path from `.env.dev`.
+  engine semantics in the IR. FSB5 MPEG → MP3 (a remux, not a byte copy). Bink 1 → ffmpeg → H.264
+  Constrained Baseline in MP4 plus an MP3 of the voice track (AB.7's pick, below). Logic data (scenes,
+  collision, tfbScript graphs, tuning, localization) → IR. Content-hash dedupe (Giants is more than half
+  duplicate bytes by name).
+- ffmpeg is a tool the user installs, found at extract time and never needed after; bundling it waits
+  until guacamole ships alone (ffmpeg and the transcode, below).
+- Nothing in the repo: unit tests use synthetic byte fixtures built in code, the e2e intro is ffmpeg's
+  `testsrc` made at run time, and tests that need a disc are `#[ignore]`d and read the dump path from
+  `.env.dev` (No game bytes in the repo).
 
 Local-only upscale pipeline (Enhanced). A first-run "generate my pack" step on the user's machine; the
 output never ships and, like the extract dir, is a cache. Texture roles route by the suffix in each
@@ -1216,6 +1274,185 @@ albedo, mips regenerated in linear light, then BC7 colour, BC5 normals and BC4 m
 padding, atlases get island dilation (that needs mesh UVs, so it follows AC), flipbooks go cell by cell.
 Giants is roughly 1.1-1.2 Gtexel unique (13,275 unique texture paths, mostly 128-512 px, full mip
 chains); how long a full pass takes gets measured when the pipeline runs.
+
+### Identity and the known-dump table (AB.4, AB.14)
+
+- The manifest hash is SHA-256 over every file under `PS3_GAME/USRDIR` but the top-level `EBOOT.BIN` (a
+  nested one counts), sorted bytewise by `/`-separated relative path, each fed as path, NUL, size (u64
+  LE) and the file's own SHA-256. A symlink, a non-UTF-8 name or a file that changes size while it's
+  hashed is `GUAC-E-DUMP-UNREADABLE`. SHA-256 is `sha2` 0.11, which picks the ARMv8 SHA instructions at
+  run time (0.10 uses them only behind its C `asm` feature).
+- The known table ([`known.rs`](../../crates/guac-extract/src/known.rs)) holds identities and hashes,
+  never content. One entry: BLUS30968 01.00
+  `5e933248f8cc7c54ac25bddf031e6cdc18f8bd44e7c8c8d4d539468f160d2d12`, the Mac's dump (955 files,
+  19,043,586,478 bytes; a Python re-implementation outside the tree gets the same hash). The HTPC's joins
+  at the bring-up if it hashes differently.
+- Anything else is `GUAC-E-UNKNOWN-DUMP` plus `unknown-dump-<UTC stamp>.json` in the extract root's
+  parent, written before the root exists: the code, title, version and hash, the dump folder, every file's
+  path, size and SHA-256 and the table it was checked against, so two dumps diff by hand. No manifest is
+  written, so an unknown dump re-hashes every start.
+- The hash cache is every manifest under the root for this dump folder: a file whose size, mtime, inode
+  and ctime still match its record isn't read again. Size and mtime alone can't tell two dumps of this
+  disc apart (every file carries the disc's whole-second 2012 mtime, and a re-dump or `cp -p` keeps it),
+  and no write puts a ctime back, so a same-size change always misses. Inode and ctime come from unix
+  metadata; until the bring-up fills them on Windows, every Windows start re-hashes.
+- Measured on the M3 Max (release, the internal SSD): a first run with no manifest takes 2.4 s with the
+  disc in the page cache (AB.4: 2.4-2.9 s over four threads, 6.5-8.0 GB/s) and 3.3 s disk-cold after
+  `sudo purge` (AB.14: `iostat` moved 18,347 MB, about 5.8 GB/s, the SSD's read rate), so a cold first
+  hash costs about a second more. A start over a manifest takes 0.01 s, all 955 files from the cache.
+
+### Extract roots and the checkout refusal (AB.4)
+
+- Release: `extract/` under guacamole's data root (Persistence and setup), and `GUAC_EXTRACT_DIR` is
+  ignored. Dev: `GUAC_EXTRACT_DIR` from `.env.dev`, required, no default (`GUAC-E-NO-EXTRACT-DIR`),
+  because the dev data root sits inside the checkout. The binary picks by its own build (`RootMode` in
+  [`root.rs`](../../crates/guac-extract/src/root.rs)).
+- An `ExtractRoot` exists only after the check: made absolute, `..` folded, then a `.git` (a folder, or a
+  worktree's file) looked for up both the path as written and its resolved form, so a symlink into a
+  checkout is caught too (`GUAC-E-EXTRACT-IN-CHECKOUT`, naming the folder and the working tree). `open`
+  checks again at use, and refuses a root inside the dump or a dump inside the root
+  (`GUAC-E-EXTRACT-OVERLAPS-DUMP`, since a rebuild deletes under the root), by path and on unix by
+  (device, inode), because macOS `realpath` keeps a `/System/Volumes/Data/...` firmlink spelling. The dump
+  is only ever opened with `File::open`, and AB's disc tests check its files keep their sizes and mtimes.
+- Open, AB.18 (chotchki's call before packaging): the release root refuses a `.git` in ANY ancestor, so a
+  home folder kept under git (`git init ~`) gets `GUAC-E-EXTRACT-IN-CHECKOUT` on every Giants pick and no
+  setting moves the root. This Mac has no `~/.git`. The two fixes on the table: in a release build refuse
+  only a `.git` at or below the data root (the hard rule protects this repo, which the OS data dir is
+  never inside) and reword the spec to match, or add a release `extract_dir` setting the refusal's
+  message points at.
+
+### Layout v1 and IR v1 (AB.4, AB.6, AB.8, AB.15)
+
+```text
+<root>/<TITLE_ID>-<APP_VER>-<hash8>/    e.g. BLUS30968-01.00-5e933248/
+  manifest.json
+  ir/characters.ron                     postcard (.postcard) in a release build
+  video/intro/<movie>.mp4
+  audio/intro/<movie>.mp3
+```
+
+- `manifest.json`: the extractor's version (recorded, not compared), `layout` (`LAYOUT_VERSION`, 1),
+  `IR_VERSION`, the identity, the dump folder, `complete`, the source records (the hash cache), every
+  output with its size and SHA-256, and `transcode`: the target's tag, then per movie its recipe and the
+  version line of the ffmpeg that encoded it.
+- Every write, the manifest included, goes to `<file>.partial`, is synced and renamed. A start finds the
+  dir Fresh, Current (complete), Resume (stray `.partial`s swept, finished outputs kept) or Rebuilt:
+  another layout or IR version, or a manifest that won't parse or names another identity, and the dir is
+  deleted and started over.
+- IR v1 is one table so far, `CharacterTable`
+  ([`characters.rs`](../../crates/guac-ir/src/characters.rs)): the dump identity, then per decimal toy
+  type its character archives (each stem with the variant suffix it adds, `016_spyro_dark` → `dark`), the
+  voice-over name, and the intro as `{ movie, source, voice }`. `source` is `Disc`, `NameFallback` or
+  `Variant { base }` (Giants in detail), and `voice` is `Only` or `Stream { index, bed }`, data rather
+  than a constant so a later game's multi-track intros pick their English track there. Giants' table: 53
+  toy types, 48 by disc and 5 by variant, RON 24,423 bytes, postcard 2,548.
+
+### ffmpeg and the transcode (AB.8)
+
+- Discovery (`find_tool` in [`ffmpeg.rs`](../../crates/guac-extract/src/ffmpeg.rs)): a configured path
+  (`ffmpeg_path` in guacamole's settings, `GUAC_FFMPEG` over it in dev) wins outright, and one that isn't a
+  program is the error, not a fall-through that hides the broken setting. Then `ffmpeg` beside the
+  executable, then the first PATH folder holding an executable one, then on macOS Homebrew's
+  `/opt/homebrew/bin` and `/usr/local/bin`: an app started from Finder, the Dock or launchd gets PATH
+  `/usr/bin:/bin:/usr/sbin:/sbin`, and nothing in a release build writes `ffmpeg_path` yet. The census
+  finds `ffprobe` the same way (`GUAC_FFPROBE`).
+- `Ffmpeg::locate` checks the find: `-version` runs, and `-encoders` and `-decoders` list `libx264`,
+  `libmp3lame`, `binkvideo`, `binkaudio_dct` and `binkaudio_rdft`, else `GUAC-E-FFMPEG-UNUSABLE` naming
+  what's missing. None found is `GUAC-E-NO-FFMPEG` with the install line, `brew install ffmpeg` on macOS
+  and `winget install Gyan.FFmpeg` on Windows (whether Gyan's build lists the codecs is the bring-up's).
+- The format is one constant, `transcode::TARGET`
+  ([`transcode.rs`](../../crates/guac-extract/src/transcode.rs)): H.264 Constrained Baseline (`libx264
+  -profile:v baseline -preset medium -crf 18 -pix_fmt yuv420p -fps_mode passthrough`, no scaling, the
+  source's own rate) in MP4 with faststart, and MP3 (`libmp3lame -b:a 192k`), both from one ffmpeg run
+  per distinct movie, its `-progress pipe:1` parsed into progress events. MP4 rather than raw `.h264`
+  keeps each frame's timestamp at Bink's odd rates (Eruptor's is 1087911/33250). `Only` maps the movie's
+  one audio track; `Stream` maps the picked one and, with a bed, mixes it over the stereo bed (bed first
+  into `amix`, or the mix comes out mono). Every Giants intro is `Only`.
+- Resume and dedupe ride each movie's recipe: 16 hex of SHA-256 over the source's SHA-256 and the
+  path-free command line, so source bytes, voice and target all move it. A movie whose two outputs still
+  hash to their records under a matching recipe is skipped; one whose recipe matches a movie already done
+  is hard-linked (a copy as the fallback), not re-run, which no two Giants intros need. Another target tag
+  redoes every intro, and a complete extract transcoded under another tag opens as Resume, not Current.
+- Giants: 48 intros, 627,811,281 bytes. Eruptor's ffprobe matches its source to the frame and the
+  microsecond (363 frames, 11.094 s), and over all 48 the frame rate equals the source's and the duration
+  is within 1 ms.
+
+### Playing video in Bevy: the spike's pick (AB.7)
+
+openh264 0.9.9 (its `source` feature) decoding H.264 Constrained Baseline, with the sound as MP3 through
+Bevy's `mp3` feature. The criteria and the full record are decision 7 in
+[`ab-giants-extract-and-intros/design.md`](../../openspec/changes/ab-giants-extract-and-intros/design.md)
+and AB.7's note. crates.io still had no Bevy 0.20 video player on 2026-10-18 (the ones that play files sit
+on Bevy 0.9-0.19, the newest on FFmpeg). Measured on the M3 Max with the display locked:
+
+- Build: `cc` alone, and the binary links only macOS system frameworks. On aarch64 the build assembles
+  OpenH264's NEON; on x86 it gets assembly only with `nasm` on PATH and drops to C without a warning
+  otherwise, so the HTPC build needs `nasm` (the bring-up's). dav1d and libvpx need system libraries, and
+  rav1d builds only without its assembly.
+- Decode: 2.0-2.4 ms a frame on average on one thread over all 48 intros (16,428 frames, p95 3.7 ms), plus
+  1.1-1.4 ms to RGBA, against 33.4 ms a frame. With NEON gated out it's 3.4 ms. rav1d without assembly
+  took 15.5 ms with single packets up to 169 ms, and AV1 only buys file size (5.6 MB against 12.3 MB for
+  the longest intro).
+- Upload, measured headless: swapping the bytes of a `RENDER_WORLD` `Image` costs a `write_texture` of
+  0.5-0.9 ms on average per new frame, the worst under 4 ms, with no stall.
+- Sync: Bevy's MP3 decode gives exactly the Bink source's sample count at lag 0. Over the longest intro
+  (12.31 s) the wall clock and the audio clock drift 0.3-1.9 ms apart, under 0.06 of a frame. The
+  audio clock steps in whole device buffers (`AudioSink::position()` moves about 42 ms at a time), so
+  presenting by it skipped 76-80 of 369 frames, the spike's anchored wall clock 0-2 and AB.10's player
+  (below) none in its runs.
+- Nothing at runtime but the binary: OpenH264 links statically and symphonia is pure Rust. Building
+  OpenH264 from source forgoes Cisco's patent coverage, which covers only Cisco's own binaries.
+
+### First run and intros in guacamole (AB.9, AB.10, AB.20, AB.21)
+
+- The first portal screen after a Giants pick starts the extraction on an `extract` thread over the dump
+  setup found ([`extraction.rs`](../../crates/guacamole/src/extraction.rs)): `open`, and on Current the IR
+  read back and nothing else; otherwise ffmpeg, the intro index (the interim catalogue's base names as its
+  fallback), the IR, the transcode and the manifest marked complete. Progress comes back over a channel
+  drained in `PreUpdate`, and the TV draws it as a band in the portal header (title, detail line, bar)
+  rather than a screen of its own, so a figure placed meanwhile gets its card (and no intro, then or once
+  the extract is ready). Progress stays hidden for the first second (`QUIET_START`), so a start over a
+  current extract shows nothing. A failure (an unknown or unreadable dump, no or an unusable ffmpeg, a
+  root in a checkout, the thread dying as `GUAC-E-EXTRACT-IO`) stays up until guacamole starts again.
+- Measured on the Mac: the first pick on a release build with no `extract/` yet took 63.5 s from pick to
+  ready (AB.20, chotchki at the Mac: identify 3.2 s with all 955 files hashed, index 0.3 s, 48 intros
+  transcoded in 59.8 s), against 127.2 s for the same first pick under a load average of 23-33 from other
+  work (AB.9: hash 8.3 s, index 0.6 s, transcode 118 s). The transcode is nearly all of it and wants free
+  cores. A restart over the finished extract is ready in 13.5 ms with no band, and a kill after 20 of 48
+  intros resumed with the other 28 (65.0 s), every output hashing the same as an uninterrupted run's.
+- The queue ([`intro.rs`](../../crates/guacamole/src/intro.rs), pure) runs idle, playing, a FIFO behind,
+  over the driver's `Placed` and `Cleared` (read off the cards' drain, so cards and intros hear one
+  channel), skip, a play's own `Ended` and leaving the portal. A placement resolves through its toy type
+  in the extract's character table, so Legendary Ignitor plays Ignitor's intro and Dark Spyro Spyro's; a
+  toy type with no intro (the magic items and sidekicks) stays a card. Removal drops a queued intro or
+  stops the playing one, and a placement over an occupied slot drops that slot's first.
+- Playback ([`video.rs`](../../crates/guacamole/src/video.rs),
+  [`intro_player.rs`](../../crates/guacamole/src/intro_player.rs)): the MP4 demuxed by `mp4` 0.14 (AVCC to
+  Annex B; the track bounded to 1920x1080, the file to 256 MiB and the samples to an hour at 60 fps) and
+  decoded by OpenH264 on an `intro-decode` thread four frames ahead, into a 16:9 `ImageNode` on a black
+  full-screen overlay at `GlobalZIndex` 1000 above the portal tree, which keeps rebuilding underneath. The
+  MP3 plays through Bevy audio once the first frame is decoded; its bytes go through rodio first, so a
+  file rodio can't open plays the intro silent instead of panicking inside bevy_audio. A frame is due by
+  the anchored clock, the wall time since the sink appeared minus the smallest (wall − sink position)
+  seen, held back by the output latency. No sink within 500 ms plays by the wall clock alone; an intro
+  ends when every frame is out and the sink is empty (or 2 s past the video's end), and the next queued
+  one starts in the same frame. Any key or gamepad button skips.
+- The output latency is `output_latency_ms` in guacamole's settings, 0 to 1,000 ms
+  (`GUAC_OUTPUT_LATENCY_MS` over it in dev), logged at start. Its default, `DEFAULT_OUTPUT_LATENCY`, is a
+  PROVISIONAL 43 ms: one rodio device buffer (2048 frames at 48 kHz) without the output path's own
+  latency, which differs between the speakers and HDMI to the TV. The lip-sync run that sets it moved to
+  the TV pass in [`openspec/backlog.md`](../../openspec/backlog.md) (ex-AB.16 and ex-AB.19), and nothing
+  in a release build writes the setting yet.
+- Measured: the first frame lands 49-84 ms after an intro starts at the 43 ms default (57 ms in AB.20's
+  release run) and 116 ms at 120 ms; full intros show every frame with none skipped. On the Mac's own
+  display and speakers (AB.20) Eruptor's intro played full screen with sound and a key skipped Double
+  Trouble's. A controller skip and the TV are the TV pass's.
+- A figure already on the portal plays no intro again (AB.21). RESUME re-sends the saved layout, and the
+  native driver sends nothing for a slot that already holds that figure from that owner (the placement
+  seam), so the product's reload is untouched. A co-op resume by the OTHER kid still re-places the first
+  kid's figures as the resumer's, intro replayed and pip moved. AB.22 waits on chotchki's pick (SPEC Q105
+  left two-player resume open): no intro for a figure already on the portal whoever placed it, RESUME
+  sending only the resumer's own slots, or today's behavior written into the spec.
 
 ## Renderer
 
@@ -1354,6 +1591,17 @@ lives in Guacamole's store per profile. Guacamole never reads a `.sky`.
   (`data/images/`, `data/figures.json`, `data/figures.manual.json`, `data/rekey-log.json`,
   `data/vehicle_terrain.json`, `data/games/*.png`, `tools/wiki-scrape`) go at G1 with the product code
   that still reads them.
+- The roster's groundwork (AB.6, AB.15): IR v1's character table (The extractor) is the first cut of the
+  disc's own roster, the toy types Giants has characters for, read off its own archives: 48 with an archive
+  of their number (0-27, 29-32, 100-115), plus the five variants that share a base's intro (Giants in
+  detail). Cross-checked against the interim catalogue, no toy type has an archive the catalogue lacks,
+  so nothing joined AA's supplement, and the disc's voice-over names (`dino_rang`, `wham_shell`,
+  `drill_sergeant`, `jet_vac`) back AA.14's four supplement rows. 17 catalogue toy types have no archive
+  of their number: the magic items 201 Hidden Treasure, 202 Healing Elixir, 205 Sky-Iron Shield, 206
+  Winged Boots and 207 Sparx the Dragonfly, the sidekicks 505 Terrabite, 514 Gill Runt, 519 Trigger
+  Snappy, 526 Whisper Elf, 540 Barkley, 541 Thumpling and 542 Mini-Jini (those twelve stay cards with no
+  intro), and the five variants. AB didn't change what the phone lists, and what each archive suffix
+  means as a variant is AE's.
 - Portraits, a recommendation: the game's own UI portrait textures if Giants ships them (`igImage2`, which
   AC decodes anyway, and it's the original art), rendered from the extracted model as the fallback.
   Either way the Giants disc only covers the figures Giants plays; Swap Force through Imaginators figures
@@ -1390,7 +1638,7 @@ beside the ladder in `openspec/backlog.md`, gates no rung and starts on chotchki
 | Rung | Where | What the kids see | What it proves |
 |---|---|---|---|
 | AA | `aa-guacamole-shell` | place a figure on the phone, the TV shows its card (name, element, portrait), in `guacamole` | the embedded server, the native driver over a channel, Guacamole's one-question setup, its own database and profiles, the interim catalogue with no `.sky` and no firmware pack, one binary at a time, all on the Mac driving the TV (the MSI carrying both binaries is the bring-up's) |
-| AB, M0 | `ab-giants-extract-and-intros` | place a figure, its original intro video plays | `guac-extract` skeleton (identity, IGA, manifest, Bink 1 transcode, entropy scan); Bevy video playback is a spike. The 48 intros are named by character, not toy type; the voice-over folder in each character archive bridges most of them and AB maps the rest. A figure without one keeps its AA card |
+| AB, M0 | `ab-giants-extract-and-intros` | place a figure, its original intro video plays | `guac-extract` skeleton (identity, IGA, manifest, census, Bink 1 transcode to H.264 + MP3); Bevy video through openh264, AB.7's spike pick. The 48 intros are named by character, not toy type; the voice-over name in each character archive bridges all 48. A figure without one keeps its AA card |
 | AC | `ac-giants-decode-gate`, in parallel with AA and AB | nothing yet (a dev viewer) | IGZ v6, `igImage2`, Edge and a Havok 2011.2 skeleton plus one clip, matched against an RSX capture. PASSED 2026-10-18 on everything the oracle drew of Eruptor, all four layers, so Giants stays first; AC.21 (L8, the 16 upgrade-menu images) holds the gate open unless chotchki rules it out (Why Giants first) |
 | AE, M1 | backlog | their figure as an animated, textured turntable on the TV | the first 3D; the Mac's renderer floor measured; the disc roster replaces the interim catalogue |
 | AF | `af-oracle-foundation` | nothing | the oracle foundation: divergence measured, frame-locked two-pad input, tolerance metrics. Lands before any gameplay comparison |
@@ -1416,14 +1664,14 @@ Ranked by how much each could move the plan, each with the experiment that answe
 | RPCS3 run-to-run divergence | decides whether the oracle can be a test at all, and how loose the tolerances get | 10 replays from one savestate on the Mac, diff positions and RNG (the HTPC's at the bring-up) | AF |
 | A tagged MSI reinstalls the product from current source | the kids' other five games run on it. (Guacamole tables in its `db.sqlite` were the old risk here; `guacamole`'s own database resolves that one by design.) | AA's split lands as moves only and passes the product's e2e suite on the Mac at its pre-AA count before any native code; the bring-up runs the HTPC live smoke and checks the installed product from the MSI | AA, then the Windows/HTPC bring-up and every tagged release |
 | How much of Giants is script data | sizes the VM vs the native built-ins | RETIRED 2026-10-18: the whole-disc census (Giants in detail, tfbScript) confirmed the Wii offsets on PS3 and sized the built-ins as 414 engine members in 66 namespaces; `OpFlowBuiltInBehavior` was the wrong yardstick | done, before AJ |
-| Bevy video playback | M0 depends on it, Bevy has no video player | decode one transcoded intro into a texture on the Mac (the HTPC's decode cost at the bring-up) | AB |
+| Bevy video playback | M0 depends on it, Bevy has no video player | RETIRED 2026-10-18: AB.7's spike picked openh264 (2.0-2.4 ms a frame against 33.4, an upload under 1 ms on average, A/V drift under 0.06 of a frame), AB.10 plays intros full screen against the audio clock and AB.20 heard Eruptor's through the Mac's speakers (The extractor). Still unmeasured: decode on the HTPC CPU (the bring-up) and lip sync over HDMI (the TV pass in the backlog) | done, AB |
 | Embedding the server in a Bevy app | the bootstrap was eframe-shaped | RETIRED 2026-10-18: AA.2 lifted it into `guac_server::boot`, `guacamole` boots it from Bevy with the native driver (AA.6) and the product's phone e2e on the Mac passes every test that passed at the pre-AA base (AA.10: 32 of 35, the 3 failures the base's) | done, AA |
 | The Mac's renderer floor | the Enhanced stack at the TV's resolution with no temporal upscaler, plus synchronous pipeline compiles | a Bevy scene with CSM, SSAO, TAA and bloom at the TV's resolution on the M3 Max, GPU timings from `RenderDiagnosticsPlugin`, pipelines pre-warmed at load | AE |
 | HTPC performance floor | 4K on a 2080 Ti with the Enhanced stack | the same scene at 4K on the 2080 Ti, DLSS on Vulkan | the Windows/HTPC bring-up (backlog) |
 | Feel parity (camera, controller, collision, Havok-tuned physics) | the long tail, never retired | not a spike: measured continuously by the oracle from AG on | AG onward |
 | Reading the real pads | wrong prompts, or a Switch-variant pad Windows can't read without Steam | read both variants' ids in a Bevy app on the Mac, then on the HTPC with Steam Input off for its shortcut at the bring-up | backlog (non-urgent) |
 | Trophy data on the disc | achievements without the original names and icons | open `PS3_GAME/TROPDIR` on the Giants dump and see whether its container reads | before AM |
-| Encrypted data outside the EBOOT | the extractor assumes plaintext USRDIR | an entropy scan over USRDIR | AB |
+| Encrypted data outside the EBOOT | the extractor assumes plaintext USRDIR | RETIRED 2026-10-18 for Giants: AB.5's census found no unknown magic in any file or IGA entry and the EBOOT the only SCE container (Giants in detail). Each later disc's archives get the same census when that game starts | done, AB |
 | Bevy churn | every 0.x release breaks API | pin per milestone, upgrade at boundaries as its own change | ongoing |
 
 ## No game bytes in the repo
@@ -1437,16 +1685,24 @@ disassembler output (Ghidra projects included), no RPCS3 memory dumps, no RSX ca
 - The repo holds our code, our specs in our own words, synthetic test fixtures and links to public work.
 - Disc dumps are read-only. Nothing writes into them (`rpcs3 --decrypt` writes next to its input, so it
   only ever sees a copy).
-- Enforced by construction once AB lands (AB.1): a `cargo test` that fails when any file git would commit
-  or push starts with a game magic. That's the index (`git ls-files`) plus every blob HEAD or a local
-  branch reaches that no remote has yet, because a push sends commits and a file committed then deleted
-  still ships with its commit. The magics: IGA in both byte orders (`IGA\x1a` on Giants and Trap Team,
-  `\x1aAGI` on every later `.pak`), IGZ in both (`IGZ\x01`, `\x01ZGI`), `BIKi`, `KB2`, `FSB5`, `SCE\0`,
-  `NPD\0`, `\x7fPKG`, `RRC`, `\0PSF` and the disc's own TROPHY.TRP, LIC.DAT, PS3_DISC.SFB and
-  PS3UPDAT.PUP heads. Only each blob's first 64 KiB is read, so a staged disc image costs that, not its
-  size. Two of the rule's items don't start with a magic: RPCS3 writes RSX captures gzipped (`.rrc.gz`,
-  `RRC` only after inflating), and a decrypted EBOOT is a plain big-endian PPC64 ELF. So a gzip file is
-  checked again after inflating its first bytes, and a 64-bit big-endian ELF with machine 21 fails too.
+- Enforced by construction since AB.1: the game-magic guard,
+  [`crates/guac-extract/tests/no_game_bytes.rs`](../../crates/guac-extract/tests/no_game_bytes.rs), a
+  `cargo test` that fails when any file git would commit or push starts with a game magic. That's the
+  index (`git ls-files`) plus every blob HEAD or a local branch reaches that no remote-tracking ref does
+  (`git rev-list --objects HEAD --branches --not --remotes`), because a push sends commits and a file
+  committed then deleted still ships with its commit. The magics are `GAME_MAGICS` in
+  [`magic.rs`](../../crates/guac-extract/src/magic.rs), the same list AB.5's census sniffs with: IGA in
+  both byte orders (`IGA\x1a` on Giants and Trap Team, `\x1aAGI` on every later `.pak`), IGZ in both
+  (`IGZ`, `\x01ZGI`), `BIKi`, `KB2`, `FSB5`, the Havok packfile, Wwise `BKHD` and `AKPK`, Spyro's
+  Adventure's `APKF`, `strm` and `\0ASL`, `SCE\0`, `\x7fPKG`, `NPD\0`, `\0PSF`, the disc's own
+  TROPHY.TRP, LIC.DAT, PS3_DISC.SFB and PS3UPDAT.PUP heads, `RRC` and RPCS3's savestate head `RPCS3SAV`
+  (AF). Only each blob's first 64 KiB is read (a zstd blob's first 256 KiB, a whole first block), so a
+  staged disc image costs that, not its size. Three of the rule's items hide their magic: RPCS3 writes RSX
+  captures gzipped (`.rrc.gz`) and savestates zstd-compressed (`.SAVESTAT.zst`), and a decrypted EBOOT is
+  a plain big-endian PPC64 ELF. So a gzip or zstd blob is inflated and checked again, up to three layers
+  deep, and a 64-bit big-endian ELF with machine 21 fails too. Of its 17 tests one scans this repo and
+  the rest build their fixtures in code in throwaway git repos. Fixtures everywhere else are built in code
+  at test time too, so none ever trips it, and the e2e intro is ffmpeg's `testsrc` made at run time.
   `.githooks/pre-push` runs `cargo test --workspace` on every push from the dev clone. The Windows CI
   lane runs it too, but push CI fires only on `main`, so on `2.0` a `--no-verify` push gets past the
   guard until a merge to `main` or a dispatched run. A guest memory dump has no magic at all; only the

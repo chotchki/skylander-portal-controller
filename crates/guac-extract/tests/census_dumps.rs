@@ -1,11 +1,11 @@
 //! The census over real dumps (openspec AB.5), ignored by default. The dumps
-//! are every `GUAC_*_DUMP` plus `GUAC_CENSUS_DUMPS`, a path list of dumps or
-//! of folders holding dumps up to two levels down (RPCS3's `game_discs`
-//! works), from the environment or the workspace's `.env.dev`. Reports go into
-//! `GUAC_EXTRACT_DIR`, ffprobe is `GUAC_FFPROBE` else PATH. Fails on a file
-//! neither flagged nor allowed, a high-entropy unknown file or IGA entry, an
-//! unprobed Bink, and on Giants any unknown entry or an archive or entry that
-//! didn't read:
+//! are every `GUAC_*_DUMP` but `GUAC_TEST_KNOWN_DUMP`, plus `GUAC_CENSUS_DUMPS`,
+//! a path list of dumps or of folders holding dumps up to two levels down
+//! (RPCS3's `game_discs` works), from the environment or the workspace's
+//! `.env.dev`. Reports go into `GUAC_EXTRACT_DIR`; ffprobe is `GUAC_FFPROBE`,
+//! else found the way ffmpeg is. Fails on a file neither flagged nor allowed, a
+//! high-entropy unknown file or IGA entry, an unprobed Bink, and on Giants any
+//! unknown entry or an archive or entry that didn't read:
 //!
 //! `cargo test -p guac-extract --release --test census_dumps -- --ignored --nocapture`
 
@@ -57,7 +57,10 @@ fn dumps_under(dir: &Path, depth: usize, out: &mut BTreeSet<PathBuf>) {
 }
 
 fn dumps() -> BTreeSet<PathBuf> {
-    let is_dump_key = |k: &str| k.starts_with("GUAC_") && k.ends_with("_DUMP");
+    // GUAC_TEST_KNOWN_DUMP is an identity line for a `test-hooks` guacamole
+    // (openspec AB.11), not a folder.
+    let is_dump_key =
+        |k: &str| k.starts_with("GUAC_") && k.ends_with("_DUMP") && k != "GUAC_TEST_KNOWN_DUMP";
     let mut named: Vec<(String, String)> = dotenv()
         .into_iter()
         .filter(|(k, _)| is_dump_key(k))
