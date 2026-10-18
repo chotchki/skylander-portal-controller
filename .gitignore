@@ -38,14 +38,9 @@ target
 node_modules/
 Thumbs.db
 .DS_Store
-.claude/settings.local.json
-.claude/settings.json
-# Per-agent scratch worktrees the Claude Code harness creates when
-# isolation: "worktree" is requested — each is its own git checkout
-# and shouldn't end up in the main repo.
-.claude/worktrees/
-# Local Claude Code session state (ScheduleWakeup lock, etc.)
-.claude/*.lock
+# Claude Code's machine-local state: settings, worktrees, locks, and the /opsx
+# commands + skills that `openspec update` regenerates
+.claude/
 
 # Standalone tool crates and trunk output
 /tools/*/target/
@@ -79,8 +74,6 @@ Thumbs.db
 # Re-generate locally with `cargo run -p skylander-wiki-scrape` if you need
 # the higher-resolution assets.
 /data/images/**/hero.png
-.claude/plan-bridge-state.json
-.claude/plan-bridge-state.json.lock
 
 # Recorder scratch capture frames — refs/ is the committed reference set, raw/ is throwaway
 tools/playthrough/assets/screens/raw/

@@ -1,0 +1,55 @@
+# Phase AA - Guacamole shell: a second binary that embeds the server and shows placed figures on the TV
+
+## Why
+
+Guacamole needs a body before it can grow organs. Every later rung (intros, turntables, levels) assumes a Bevy app that owns the TV, embeds the SAME Axum server and phone SPA the product runs and gets portal events with no emulator and no figure file underneath. None of that exists: the server's bootstrap lives in the product's `main.rs`, the only drivers behind `PortalDriver` are RPCS3-shaped (IPC, UIA) or the in-memory mock, and the phone's figure list is whatever the firmware pack holds. AA builds that body on the full reset (`docs/native/guacamole-design.md`, Figures): a figure is an identity, and guacamole reads no `.sky` and needs no firmware pack, RPCS3 install or product setup. It ends on something the kids can see: place a figure on the phone, its card shows up on the TV, in `guacamole`.
+
+## What Changes
+
+- `crates/server` splits in two without changing the product's behavior.
+  - The server core (Axum router, phone SPA serving, SQLite profiles, the driver worker, watchdogs, mDNS, QR, config, paths, logging) moves into a new library crate both binaries link.
+  - The product binary keeps its eframe launcher (`ui/`, the badge and vortex rigs, the wizard, the GL fallback, the macOS compositor) and its Windows resource stamping. Its release plumbing (`-p skylander-server` in `release.yml`, the WiX metadata, the e2e harness) keeps working unchanged.
+  - The bootstrap (`crates/server/src/main.rs:67-645`: pack indexing, scan merge, bind address, phone URL, QR, the tokio thread, DB, worker, watchdogs, catalogue, router) becomes one library call. The driver is built by a factory that runs ON the tokio thread, because the UIA driver initializes COM there (`main.rs:259-262`).
+  - The listener binds BEFORE the profile database opens, so whichever binary starts second fails on the port without touching `db.sqlite`.
+- A new driver kind, Native, for "no emulator and no figure file underneath". Every branch keyed on RPCS3 or on a figure file gets an explicit arm, since some of them do real damage without one:
+  - `BootDirect`'s non-IPC arm spawns RPCS3 through UIA on Windows for ANY driver that has no IPC socket (`crates/server/src/state.rs:1564`, `:1685`), so a native driver on the HTPC would try to launch the emulator.
+  - `/api/launch` pre-sets the Windows display mode saved for the game and captures it again after the first figure loads (`http.rs:1158`, `:1323`). Under guacamole that would save the desktop mode as Giants' preferred mode and the product would apply it on its next Giants boot.
+  - The window-mode and 2× admin toggles rewrite the controller's `config.json` (`http.rs:948`, `:998`) and RPCS3 settings opens the emulator (`http.rs:1629`). Under Native all three answer 409, the way settings already does for Mock.
+  - Every load, slot reset, Kaos swap and auto-restart restore forks or rewrites the profile's `.sky` working copy (`http.rs:661`, `:773`, `state.rs:480`, `:1021`). Under Native none of them touches a file: a placement carries the figure's identity and the profile that placed it.
+  - The figure stats, edit and reset routes (`http.rs:285-299`, the `sky_stats` and `sky_edit` modules) answer 409 under Native. guacamole doesn't build the `sky-stats` feature, so `crates/sky-parser` isn't in its binary.
+  - No RPCS3 Net-config write at startup (`main.rs:341`), no EBOOT resolution (`http.rs:1191`) and no `games.yml` read.
+- An interim figure catalogue, because without the pack there's no figure list. Today the indexer (`crates/indexer`) walks the pack: a figure's name comes from its dump's file name, its game, element and category from the folder it sits in and its id from the dump's tag header. `data/figures.json` isn't read at runtime by anything (only `tools/wiki-scrape` and `tools/rekey-figure-ids` touch it). Portraits are `data/images/<figure id>/thumb.png`, keyed by the same tag-form id `<toy type>-<variant>`. guacamole builds its catalogue at boot from those two, cut to what Giants plays, with a validation pass because the wiki data is measurably patchy and partly mis-keyed (design decision 5). The same list goes to every profile. It's interim: AB's extracted roster is the groundwork and AD replaces it with names, elements and portraits from the disc.
+- Guacamole's own setup, one question: where the disc dumps are. Release asks on the TV the first time (a native folder picker on the PC) and dev reads `GUAC_DUMP_DIRS` from `.env.dev`. guacamole scans the chosen folders for `PS3_GAME/PARAM.SFO`, reads each title id with AB.2's parser and offers Giants when a BLUS30968 dump is there. It needs no RPCS3 path, PS3 firmware, figure pack, `games.yml` or product wizard. When the controller is set up on the machine, guacamole uses its port and pairing key so a phone's bookmark works with either app; otherwise it makes its own. Its settings live in a file of its own, never in either of the controller's (design decision 6).
+- `NativePortalDriver` implements the existing trait (`crates/rpcs3-control/src/lib.rs:23`) and places by identity: the figure's id (toy type + variant), name, element, portrait and owner (the placing profile's colour and initial) go to the Bevy world over a channel, and `clear` sends the removal. How the trait carries a placement without a file is design decision 4. `open_dialog` (required) is a no-op and the IPC-only methods keep the trait's "not applicable" defaults, like `MockPortalDriver` (`crates/rpcs3-control/src/mock.rs:92`). Trimming the trait waits for G1.
+- `guacamole`, a new Bevy 0.20 binary (`crates/guacamole`). It boots the shared server with the native driver on a background tokio thread and owns the main thread and the TV window. The TV shows setup on the first run, the join QR, then after a game is picked one card per occupied slot: portrait, name, element and an owner pip. No level, XP or gold: every figure is fresh until guacamole keeps its own progression (AG), so there's nothing to show. SHUT DOWN on the phone closes it, back to Steam Big Picture.
+- The phone enables its STATS (level and gold) and RESET TO FRESH actions only when the figure's stats came back. Under guacamole they never do, so both stay disabled with a "not available yet" note until AG puts them on guacamole's own store. Under the product, stats come back whenever an edit could work, so it behaves as before.
+- The e2e harness runs the existing phone suite against either binary, and the test-only failure injection works with the native driver too. A guacamole-only test reads back what the TV shows through a test hook. The tests that need a figure file stay product-only.
+
+## Capabilities
+
+### New Capabilities
+
+- `guacamole/shell`: how the guacamole app gets set up and coexists with the product on one machine. Setup that asks only for the disc dumps, the shared phone URL and profiles, one app at a time, Giants as the only game, the controller's settings and figure files left alone, shutting down from the phone.
+- `guacamole/figure-cards`: what the phone offers and the guacamole TV shows. The whole Giants figure list for every profile, the join code, a card per figure on the portal with its identity and owner, how placements, removals, swaps and failures change it and figure progress not shown or edited yet.
+
+### Modified Capabilities
+
+None. `openspec/specs/` is empty; these are the track's first specs.
+
+## Impact
+
+- Track: Guacamole, the first rung of the ladder. Disc serial read: BLUS30968, and only its `PS3_GAME/PARAM.SFO` (setup reads the SFO of each dump in the chosen folders to find it); nothing under USRDIR. guac-extract's output doesn't exist yet, so no extract layout or IR version is involved.
+- Kid-visible milestone: a phone placement shows up on the TV as a card with the figure's portrait, name, element and the placing kid's pip, in guacamole, on the HTPC under Steam Big Picture.
+- Code:
+  - New crate `crates/guac-server` (package `guac-server`). It takes `config`, `display_mode`, `embedded_assets`, `firewall`, `http`, `kaos`, `logging`, `mdns`, `nfc`, `paths`, `profiles`, `round_qr`, `rpcs3_config`, `sky_edit`, `sky_stats`, `state`, `working_copies`, the `migrations/` dir and the `BUILD_TOKEN` half of `build.rs`. `sky-stats` and `nfc-import` stay features the product enables as it does today.
+  - `crates/server` keeps the eframe modules and shrinks `main.rs` to GL bootstrap, config, logging, boot and eframe.
+  - The wizard's `PersistedConfig`/`PersistedDriverKind` move out of `wizard.rs` into the library, since `config.rs` and `http.rs:960,1010` read them. `gl_fallback::APP_DIR_ENV` moves into `paths`.
+  - New crate `crates/guacamole`. `crates/rpcs3-control` gains the defaulted `place` method and the test-hook injector trait, nothing else.
+  - `phone/`: the STATS and RESET TO FRESH gate.
+  - `data/figures.json` and `data/images/` are read, not changed.
+- Dependencies: `bevy` 0.20.0 (MSRV 1.97.1, local toolchain 1.99.0) and a native folder-dialog crate (AA.5 picks; `rfd` is the first candidate) in `crates/guacamole` only. No `bevy_egui`. `guac-formats` for the PARAM.SFO reader, so AA.5 lands after AB.2.
+- Tests: the product's phone e2e suite (`crates/e2e-tests`) gates the split. It must pass unchanged against the product, then again against guacamole minus the tests that need a figure file. The HTPC live smoke (the product boots Giants over IPC and loads a figure) proves the split didn't move the product.
+- CI and the pre-push hook: `cargo clippy/build/test --workspace` now compiles Bevy on the Windows CI lane and in `.githooks/pre-push` on the Mac. The macOS CI lane has been disabled (`if: false`) since 2026-05-30, so nothing in CI builds guacamole for macOS; the `fmt` job on Ubuntu doesn't compile, so Bevy's Linux system libraries (ALSA, udev) are never needed. AA.10 measures what Bevy adds to both.
+- Owning doc: `docs/native/guacamole-design.md` (Architecture "Two binaries until G1", Persistence and setup, Figures). CLAUDE.md's Architecture and Dev-mode sections move with it, because the workspace layout and the "one binary" picture change.
+- Release reach: AA.1 and AA.2 change the product's source, not its behavior, and with the product frozen nothing here re-releases it unless chotchki says so. How guacamole reaches the HTPC is the design doc's Open question 2 (a `v*` tag whose MSI carries it beside the product would also replace the frozen controller on install), so AA.13 waits on that answer. The phone gate reaches the product only in a product build that ships. The dmg stays product-only (guacamole runs from `cargo` on the Mac).
+- One-way doors: none new. The shared `db.sqlite` gains no migration in AA (the frozen controller's migrator would refuse one) and guacamole never writes the controller's `config.json`.

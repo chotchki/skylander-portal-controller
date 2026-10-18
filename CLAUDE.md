@@ -1,10 +1,38 @@
 # Skylander Portal Controller — Working Notes
 
-Compact reference for this project. SPEC.md is the authoritative long-form requirements + Q&A log. PLAN.md tracks execution, new tasks should always be numbered and have a checkbox so it is traceable.
+Compact reference for this project. SPEC.md is the authoritative long-form requirements + Q&A log. Execution is tracked in **OpenSpec** (since 2026-10-17): each phase is a change at `openspec/changes/<id>-<slug>/` and its `tasks.md` is the plan — tasks are numbered `<ID>.<N>` with a checkbox so they're traceable, and get ticked live as the work lands. Unphased work lives in `openspec/backlog.md`; id allocation, task numbering and the specs policy live in `openspec/config.yaml` (read it before proposing). `PLAN_ARCHIVE.md` is the frozen pre-OpenSpec record.
 
 ## What it does
 
 A Windows app that wraps RPCS3 (PS3 emulator) so kids can manage the emulated Skylanders portal from a phone/iPad over Wi-Fi. Launched from Steam Big Picture. Shows a QR code on the TV → phone connects → pick a game → portal-control view with the family's figure collection.
+
+## Non-goals
+
+The product's, carried verbatim from PLAN.md. Guacamole plays the original game's own audio and video from the user's disc, stops reading the committed wiki data once the disc roster lands (M1) and deletes it at G1 with the product code that still reads it (`docs/native/guacamole-design.md`).
+
+- No bundling of `.sky` files or game backups (piracy). The patched RPCS3 *itself* IS bundled — GPL, source public — per the v1 distribution model (16.9.0b): Windows today, macOS via Phase U.
+- No Linux support — production targets are Windows + macOS.
+- No user-entered figure names.
+- No audio (text-only Kaos to dodge copyright).
+- No live wiki scraping at runtime — data is committed to the repo.
+- **No AXUIElement macOS driver** (ex-Phase 12) — IPC to the patched RPCS3 supersedes it.
+
+## Guacamole (native engine)
+
+- **What it is:** a from-scratch Rust/Bevy reimplementation of the Skylanders games WITH original-gameplay parity (minus the design doc's deliberate departures), so the art can be upscaled and relit (started 2026-10-17). Users supply their own disc dumps; `guac-extract` pulls the assets at install time. Target is the HTPC (Windows, RTX 2080 Ti, Steam Big Picture, 86" 4K TV); the dev box is the M3 Max Mac.
+- **Giants first** (`BLUS30968`) — the later games should come easier after it.
+- **The product is frozen** (2026-10-17). The controller installed on the HTPC keeps playing the games and doesn't need touching until Guacamole is ready; a product change happens only when Guacamole needs it or something breaks. Standing exception: ACR122 support leaves the product "as soon as it's convenient", on its own track, not tied to G1 (`openspec/backlog.md`).
+- **Second binary until G1.** `guacamole` is a separate Bevy app that embeds the same server (Axum + Leptos SPA + driver worker) in-process on a tokio background thread; a native `PortalDriver` feeds the Bevy world over a channel. Only one of the two runs at a time (same port, same mDNS name). The product binary (`crates/server`: eframe launcher + patched RPCS3, P7/P8 window management) stays untouched in behavior and window management; AA moves its server core into a shared `crates/guac-server` unless chotchki takes the narrower read (design doc, Open question 8).
+- **One SQLite, no files to copy around.** Profiles, PINs, per-profile figure instances, per-profile story saves, achievements and settings live in one database; the extract dir is a regenerable cache. Setup asks one thing, where the disc dumps are — no RPCS3 path, PS3 firmware, figure pack or `games.yml` scan. Which file is still open (design doc, Open question 1): the product's `db.sqlite` can't take a Guacamole migration while the frozen controller's `sqlx::migrate!` reads it.
+- **Figures: full reset.** Guacamole never reads a `.sky` — no import, no figure crypto, no firmware pack, no figure dumps, no scanner. A figure is an identity (toy type + variant) from the disc's own roster; the phone offers the whole roster, no per-kid shelf. Progress starts fresh in Guacamole's store, one instance per profile per figure (today's working-copy rule minus the file), and the phone's figure editor edits those rows.
+- **Story saves belong to profiles.** One save per profile per game, no slot picker. The profile that starts the game is the host and only its save advances; figure progress (XP, gold, upgrades) goes to the profile that placed the figure, so in co-op both kids' characters advance.
+- **Online is out, local PvP is in.** Nothing networked beyond the LAN phone link (no DemonWare, no PSN); trophies become per-profile achievements stored with the profile (names/icons from the disc's `TROPDIR` if it reads, otherwise our own). Couch battles are part of parity for every game.
+- **Gates.** **G1** = `guacamole` plays one game end to end → it becomes the only thing this repo builds and ships; the product binary, everything RPCS3 (`rpcs3-patches/` P1–P8 as a product series, `rpcs3-control`'s product drivers, nested-app bundling/signing), `crates/sky-parser` and the wiki data leave. G1 stops building the product, it doesn't uninstall it: the controller on the HTPC keeps the other five games until Guacamole covers them. **G2** = parity → the dev-only RPCS3 oracle (`vendor/rpcs3` + a dev-only patch series) retires.
+- **The phone is the portal.** No USB/HID portal, ever.
+- **Naming:** binary `guacamole`, crates `guac-*` (`guac-formats` = pure fuzzed parsers, `guac-ir` = versioned serde IR, `guac-extract` = the CLI, `guac-server` = the shared server lib). Never "Skylanders…" in a crate or binary name.
+- **HARD RULE: no game bytes in the repo, ever** — no extracted assets or scripts, decrypted EBOOTs, decompiler/disassembler output, RPCS3 memory dumps, RSX captures or keys. They live outside the tree; tests that need disc data are `#[ignore]`d and read the dump path from `.env.dev`.
+- **RPCS3 is the dev-only fidelity oracle**, never a dependency of `guacamole`: observe in the oracle → write the behavior in our own words as an OpenSpec spec → implement from the spec. Original script data runs on a tfbScript VM over the user's IGZ rather than being rewritten.
+- **`docs/native/guacamole-design.md` owns the track** — decisions (incl. the deliberate departures from the original), architecture, the milestone ladder (OpenSpec changes from `AA` up, later rungs in `openspec/backlog.md`), the RE toolchain. Plans sequence by conditions and report measured progress; no time estimates. Read it before proposing a Guacamole change.
 
 ## Tech stack (committed)
 
@@ -246,5 +274,7 @@ Hidden costs to keep in mind: every `@apply` in a component file means class nam
 ## See also
 
 - `SPEC.md` — authoritative long-form spec + full Q&A history with decision rationale.
-- `PLAN.md` — current execution plan (research-first, phased).
+- `openspec/` — execution: `changes/<id>-<slug>/tasks.md` per phase, `backlog.md` for unphased work, `config.yaml` for the conventions.
+- `PLAN_ARCHIVE.md` — the frozen pre-OpenSpec plan (phases closed before the 2026-10-17 move).
+- `docs/native/guacamole-design.md` — the Guacamole track (decisions, architecture, milestone ladder, RE toolchain).
 - `docs/aesthetic/` — UI reference images.

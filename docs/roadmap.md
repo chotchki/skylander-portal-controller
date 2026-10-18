@@ -1,6 +1,6 @@
 # Roadmap
 
-High-level phasing. Detailed checklists live in [PLAN.md](https://github.com/chotchki/skylander-portal-controller/blob/main/PLAN.md) and [PLAN_ARCHIVE.md](https://github.com/chotchki/skylander-portal-controller/blob/main/PLAN_ARCHIVE.md) in the repo.
+High-level phasing. Detailed checklists live in the repo: open phases in [openspec/changes/](https://github.com/chotchki/skylander-portal-controller/tree/main/openspec/changes) (one `tasks.md` per phase), unphased ideas in [openspec/backlog.md](https://github.com/chotchki/skylander-portal-controller/blob/main/openspec/backlog.md), and everything closed before the 2026-10-17 move to OpenSpec in [PLAN_ARCHIVE.md](https://github.com/chotchki/skylander-portal-controller/blob/main/PLAN_ARCHIVE.md).
 
 ## Phase 0 — Scaffolding (done)
 
@@ -64,7 +64,7 @@ Activate the wired-but-disabled Developer ID signing + notarisation pipeline so 
 
 ## Beyond Phase 14 — open
 
-Service-worker for PWA cache + update detection (so an iOS Add-to-Home-Screen survives long backgrounding), the rest of the Phase 6 per-kind `.sky` stat decoders (traps / vehicles / creation crystals), demo harness for screen recording. None of these block daily use. Detailed checklist lives in `PLAN.md` in the repo.
+Service-worker for PWA cache + update detection (so an iOS Add-to-Home-Screen survives long backgrounding), the rest of the Phase 6 per-kind `.sky` stat decoders (traps / vehicles / creation crystals), demo harness for screen recording. None of these block daily use. Detailed checklist lives in `openspec/backlog.md` in the repo.
 
 ## Non-goals
 

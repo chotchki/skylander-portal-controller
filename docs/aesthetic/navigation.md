@@ -6,7 +6,7 @@ Covers PLAN 4.3.4 (modal stack) and 4.3.5 (navigation map). Authoritative for th
 
 - **[Contract]** — load-bearing rules the code + tests must honor. Drift = bug: either fix the code to match, or update this doc because the rule was wrong. Audit when touching nearby code.
 - **[Snapshot]** — design spec captured at a point in time; shipped code is known to diverge. Reconciliation tracked in the referenced PLAN items. Treat like a mock — useful reference, not authoritative.
-- **[Roadmap]** — pointer list of not-yet-built things; overlaps with PLAN's open-items list.
+- **[Roadmap]** — pointer list of not-yet-built things; overlaps with the open items in `openspec/` (`changes/` + `backlog.md`).
 
 When in doubt: code + tests are truth, this doc is guidance.
 

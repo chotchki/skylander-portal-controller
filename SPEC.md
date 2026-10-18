@@ -391,7 +391,7 @@ Context: original spec assumed 1 concurrent phone with "last device wins" takeov
 - New requirement: **ownership indicator** on each occupied slot. Minimum: a small profile-coloured dot or initial on the slot; the owning phone sees its own figures highlighted. "Ownership" = the profile that placed the figure into that slot (not profile-of-origin for the working-copy file, which is separate).
 
 105. What happens to on-portal figures when a phone disconnects?
-- **Deferred.** The current session-resume model (Q44: remember and reload on unlock) assumes one player. With two, the questions multiply: does Player 2's slot stay populated if Player 1 drops? Does the kick-back flow restore the exact prior layout? Revisit after the 2-concurrent server logic lands and we can see the real failure modes. Flag this in PLAN.md 3.17 (reconnect overlay) as a follow-up.
+- **Deferred.** The current session-resume model (Q44: remember and reload on unlock) assumes one player. With two, the questions multiply: does Player 2's slot stay populated if Player 1 drops? Does the kick-back flow restore the exact prior layout? Revisit after the 2-concurrent server logic lands and we can see the real failure modes. Flag this in PLAN 3.17 (reconnect overlay, now in PLAN_ARCHIVE.md) as a follow-up.
 
 ### Impact Summary (for PLAN updates)
 

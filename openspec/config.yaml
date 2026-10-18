@@ -1,0 +1,82 @@
+schema: spec-driven
+
+context: |
+  skylander-portal-controller: two tracks in one Cargo workspace, both driven from a phone over Wi-Fi.
+
+  PRODUCT (ships today): a Windows + macOS launcher that wraps a patched RPCS3 (vendor/rpcs3 pinned
+  upstream + the P1-P8 series in rpcs3-patches/) so kids run the emulated Skylanders portal from a
+  phone. crates/server is the binary (Axum + the eframe TV launcher), phone/ the Leptos SPA,
+  crates/rpcs3-control the PortalDriver trait + the IPC driver, crates/core|indexer|sky-parser the
+  figure layer. CLAUDE.md is the compact map, SPEC.md the long-form requirements + Q&A log. The
+  product track is FROZEN since 2026-10-17: the controller installed on the HTPC keeps working, so a
+  product change happens only when Guacamole needs it or something breaks.
+
+  GUACAMOLE (native engine, started 2026-10-17): a from-scratch Rust/Bevy reimplementation of the
+  Skylanders games WITH original-gameplay parity, Giants (BLUS30968) first, so the art can be
+  upscaled and relit. Users supply their own disc dumps and guac-extract pulls assets at install
+  time. It ships as a SECOND binary (guacamole) that embeds the same Axum server + phone SPA
+  in-process; the phone stays the portal (no USB portal, ever). The product's window management is
+  left alone. The patched RPCS3 is Guacamole's fidelity ORACLE during development, never a
+  dependency of the guacamole binary. Two gates: G1 (guacamole plays one game end to end) retires
+  the product binary and everything RPCS3 from what ships, G2 (parity) retires the dev oracle.
+  docs/native/guacamole-design.md owns the track: decisions, architecture, the milestone ladder,
+  the RE toolchain. Target hardware is the HTPC (Windows, RTX 2080 Ti, Steam Big Picture, 86" 4K
+  TV); the dev box is an M3 Max Mac.
+
+  A doc named for a subsystem owns it (CLAUDE.md sections, SPEC.md, docs/dev/*, docs/research/*,
+  docs/native/*). Read the owning doc BEFORE proposing a change to that subsystem, and treat it as
+  source material for specs, not text to copy (duplicates drift).
+
+  HARD RULE: no game bytes in the repo, ever. No extracted assets or scripts, decrypted EBOOTs,
+  decompiler or disassembler output, RPCS3 memory dumps, RSX captures or keys; they live outside
+  the tree (research scratch, the user's own extract dir). Tests that need disc data are #[ignore]d
+  and read the dump from a path in .env.dev.
+
+  Specs grow one change at a time: openspec/specs/ started EMPTY on 2026-10-17 and never gets a bulk
+  backfill. A change that alters behavior ADDs or MODIFIEs the requirements it touches; a pure
+  refactor, perf, tooling, research or docs change sets skip_specs: true in its .openspec.yaml.
+  Every change that came over from PLAN.md starts with skip_specs: true. For Guacamole, a spec is
+  where reverse-engineered behavior gets written down in our own words (what the original game
+  observably does, as seen through the RPCS3 oracle) before it is implemented.
+
+  Phase ids carry over from the PLAN.md era, because code comments and commit subjects cite them
+  ("PLAN 16.11", "V.8"). A change is named <id>-<slug>. PLAN-era ids were numbers (0-21) and single
+  letters (A, B, R, S, T, U, V ...); a new change takes the next two-letter id, spreadsheet-style
+  (AA, AB ... AZ, BA), after the highest two-letter id under openspec/changes/ (archive/ included,
+  ignoring the YYYY-MM-DD- prefix an archived folder gets). Gaps are never backfilled, because a
+  backfilled id reads as older than it is. Tasks are numbered <ID>.<N>, and in a new change <ID>.0
+  is the phase-exit criterion. Changes that came over from PLAN.md keep their numbering.
+
+  Plans state no time or effort estimates (no hours, weeks, timeboxes or years): a change is
+  sequenced by conditions (it starts when what it stands on has landed) and reports measured
+  progress, and chotchki decides what comes next from that.
+
+  Pre-OpenSpec history lives in PLAN_ARCHIVE.md (frozen) and git log. Unphased ideas and tech debt
+  live in openspec/backlog.md: promoting one means proposing a change and deleting its backlog line.
+
+rules:
+  proposal:
+    - Under Impact, name the doc that owns the subsystem (a CLAUDE.md section, SPEC.md, a docs/*.md or docs/native/guacamole-design.md), or say that none does
+    - Say which track it serves (product or Guacamole) and its release reach. A v* tag publishes one GitHub release (the Windows zip + MSI, the signed, notarized macOS dmg and an unsigned macOS tarball that carries no emulator); tags are numeric only and a pushed tag is never deleted, so a bad release is fixed forward with a patch release
+    - A Guacamole change names the disc serial(s) it reads, whether guac-extract's output (the extracted layout or the IR version) changes, and the kid-visible milestone it delivers, if any
+  specs:
+    - Requirements describe observable behavior (what the phone shows and sends, what the TV shows, what a figure's data becomes, what the original game does as seen through the RPCS3 oracle), never internal type or function names
+  tasks:
+    - Number tasks <ID>.<N> under one "## <ID>. <title>" group, where <ID> is the change name's id prefix in uppercase
+    - <ID>.0 is the phase exit and says so - every box ticked, .githooks/pre-push green (fmt, check, clippy -D warnings, test --workspace), any e2e or #[ignore]d live lane the change touches run by hand on named hardware, the owning doc updated
+    - Unit tests ship in the same task as the code they cover, never in a trailing "add tests" task
+    - End with a docs task (the owning doc, plus CLAUDE.md when a convention moved) and, for anything that ships, a release task (a v* tag, only on chotchki's word)
+
+operations:
+  apply:
+    guidance:
+      - Tick each box the moment its work is done, not in batches - chotchki watches tasks.md live
+      - When a box can't be finished, split it - tick what shipped and add a new unchecked box for what's left; partial or expanded work never goes undocumented
+      - Run full suites unpiped into a file and read the file (piping cargo into tail masks its exit code and truncates the log)
+      - Keep cargo fmt and cargo clippy --workspace --all-targets -D warnings at zero (.githooks/pre-push runs both, plus check and test)
+      - A test that drives the real patched RPCS3 or reads a disc dump is #[ignore]d and runs on hardware; the box says which machine ran it (the HTPC or the Mac)
+  archive:
+    guidance:
+      - Archive only once the change has reached its users - in a v* release if it touches what ships, on main if it is CI-, test-, research- or tooling-only - because archived always reads as released; a landed-but-unreleased change stays in openspec/changes/ with every box ticked
+      - Archive only when the exit criterion holds (<ID>.0 in a new change, every box ticked in a migrated one); open boxes get split or descoped to openspec/backlog.md first
+      - Sync any delta specs into openspec/specs/ before moving the folder

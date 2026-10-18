@@ -1,3 +1,20 @@
+# Plan archive
+
+**FROZEN 2026-10-17:** planning moved to OpenSpec (`openspec/`) and nothing new lands here. The phases still open that day (U, V, T, A, 14, R) became `openspec/changes/<id>-<slug>/` with their ids kept, since code comments and commit subjects cite them; the backlog moved verbatim to `openspec/backlog.md`, and finished changes archive under `openspec/changes/archive/` from now on. This file never changes again.
+
+PLAN.md's header at the freeze, kept for the history it records:
+
+> # Skylander Portal Controller — Execution Plan
+>
+> Active work toward MVP. Closed work lives in [PLAN_ARCHIVE.md](PLAN_ARCHIVE.md) — Phases 0–13, 15–20, A.1–A.5, B (most done in code; Phase 12 struck as a non-goal). Swept 2026-06-24 after a full plan triage.
+>
+> Conventions:
+> - `[ ]` pending, `[x]` done, `[~]` in progress, `[?]` blocked / needs discussion.
+> - New tasks should always be numbered and have a checkbox so they're traceable.
+> - Don't skip a review checkpoint; the point is to re-plan with new information.
+
+---
+
 # Skylander Portal Controller — Archived Plan (Phases 0–3)
 
 Frozen record of Phases 0–3. Every checkbox here is resolved — either done, partial-but-promoted into a later-phase item, or explicitly deferred into the active plan ([PLAN.md](PLAN.md)).

@@ -1,6 +1,6 @@
 # Research Writeups
 
-Each Phase 1 spike (see PLAN.md) lands its findings here as a short markdown file:
+Each Phase 1 spike (see PLAN_ARCHIVE.md) lands its findings here as a short markdown file:
 
 - `rpcs3-control.md` — how we drive the emulated portal dialog.
 - `rpcs3-launch.md` — process launch, version detection, serial-based boot.
