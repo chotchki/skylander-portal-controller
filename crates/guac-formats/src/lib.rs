@@ -12,6 +12,7 @@
 #![forbid(unsafe_code)]
 
 mod error;
+pub mod iga;
 mod reader;
 pub mod sfo;
 

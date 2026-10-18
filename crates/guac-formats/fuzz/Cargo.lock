@@ -47,6 +47,7 @@ dependencies = [
 name = "guac-formats"
 version = "0.1.0"
 dependencies = [
+ "lzma-rust2",
  "thiserror",
 ]
 
@@ -83,6 +84,12 @@ dependencies = [
  "arbitrary",
  "cc",
 ]
+
+[[package]]
+name = "lzma-rust2"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1c46f3fcd2e888afdb01a07efc071cb21300e07c68d32c3e8b01b5c8cb1fcaa"
 
 [[package]]
 name = "proc-macro2"
