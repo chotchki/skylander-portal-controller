@@ -82,15 +82,34 @@ fn load_average() -> String {
         .unwrap_or_default()
 }
 
+/// Seconds since the last keyboard or mouse input (`IOHIDSystem`'s
+/// `HIDIdleTime`): with the lock state, whether anyone was at the Mac.
+fn hid_idle() -> String {
+    std::process::Command::new("ioreg")
+        .args(["-c", "IOHIDSystem"])
+        .output()
+        .ok()
+        .and_then(|o| {
+            let text = String::from_utf8_lossy(&o.stdout).into_owned();
+            let line = text.lines().find(|l| l.contains("\"HIDIdleTime\""))?;
+            let ns: f64 = line.rsplit(' ').next()?.trim().parse().ok()?;
+            Some(format!("input idle {:.0} s", ns / 1e9))
+        })
+        .unwrap_or_else(|| "input idle unknown".into())
+}
+
+/// A shot's line, with the screen's lock state when it was taken.
 fn shot_line(label: &str, shot: &Shot) -> String {
     format!(
-        "{label}: {} flip={} {}x{} lit {:.1}% pixels {}",
+        "{label}: {} flip={} {}x{} lit {:.1}% pixels {} [{}, {}]",
         shot.path.file_name().unwrap().to_string_lossy(),
         shot.flip,
         shot.frame.width,
         shot.frame.height,
         shot.frame.lit_share() * 100.0,
-        &shot.frame.pixels_sha256[..16]
+        &shot.frame.pixels_sha256[..16],
+        screen_lock(),
+        hid_idle()
     )
 }
 
