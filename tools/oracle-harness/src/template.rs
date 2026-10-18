@@ -13,6 +13,11 @@ pub const ASYNC_RECOMPILER: &str = "Async Recompiler (multi-threaded)";
 /// its boot crash.
 pub const ASYNC_WITH_INTERPRETER: &str = "Async Recompiler with Shader Interpreter";
 
+/// `Audio: Renderer` in the template: RPCS3's no-device backend ("Disable Audio
+/// Output" in its GUI). The pin's default, `Cubeb`, plays to the Mac's default
+/// output device.
+pub const NULL_AUDIO: &str = "Null";
+
 /// The oracle's GDB stub port, off RPCS3's default 2345: a connection to the
 /// stub pauses the emulator (and freezes it if the peer hangs up silently), so
 /// a debugger or port probe aimed at the dev's own RPCS3 must not reach an
@@ -27,6 +32,9 @@ pub struct ConfigTemplate {
     /// `Log: sys_fs: Trace`, for a run that wants every read and seek inside an
     /// archive; off, `sys_fs` keeps its default level (opens and stats).
     pub sys_fs_trace: bool,
+    /// The pin's own audio output, for a run that needs to hear the game; off,
+    /// the template sets [`NULL_AUDIO`] and the oracle is silent.
+    pub audio: bool,
 }
 
 impl Default for ConfigTemplate {
@@ -34,6 +42,7 @@ impl Default for ConfigTemplate {
         Self {
             shader_mode: ASYNC_WITH_INTERPRETER.to_owned(),
             sys_fs_trace: false,
+            audio: false,
         }
     }
 }
@@ -45,6 +54,13 @@ impl ConfigTemplate {
             "# Written by `oracle home init` (openspec AF, design decision 5). Keys left\n\
              # out keep the pin's defaults.\n",
         );
+        // Silent unless a run asks for sound. Null forces cellAudio's buffering off
+        // and logs an error unless the config agrees, so buffering is off here too.
+        if !self.audio {
+            out.push_str(&format!(
+                "Audio:\n  Enable Buffering: false\n  Renderer: {NULL_AUDIO}\n"
+            ));
+        }
         if self.sys_fs_trace {
             out.push_str("Log:\n  sys_fs: Trace\n");
         }
@@ -156,9 +172,30 @@ mod tests {
             value(&entries, "Video", "Shader Mode"),
             ASYNC_WITH_INTERPRETER
         );
+        // Silent: RPCS3's spelling of `audio_renderer::null` at the pin.
+        assert_eq!(value(&entries, "Audio", "Renderer"), "Null");
+        assert_eq!(value(&entries, "Audio", "Enable Buffering"), "false");
         // sys_fs stays at its default unless a run asks for trace.
         assert!(entries.iter().all(|(s, _, _)| s != "Log"));
-        assert_eq!(entries.len(), 8);
+        assert_eq!(entries.len(), 10);
+    }
+
+    #[test]
+    fn audio_hands_the_audio_section_back_to_the_pin() {
+        let silent = parse(&ConfigTemplate::default().render());
+        let loud = parse(
+            &ConfigTemplate {
+                audio: true,
+                ..ConfigTemplate::default()
+            }
+            .render(),
+        );
+        assert!(loud.iter().all(|(s, _, _)| s != "Audio"));
+        let rest: Vec<_> = silent
+            .into_iter()
+            .filter(|(s, _, _)| s != "Audio")
+            .collect();
+        assert_eq!(loud, rest);
     }
 
     #[test]
@@ -166,6 +203,7 @@ mod tests {
         let template = ConfigTemplate {
             shader_mode: ASYNC_RECOMPILER.to_owned(),
             sys_fs_trace: true,
+            ..ConfigTemplate::default()
         };
         let entries = parse(&template.render());
         assert_eq!(value(&entries, "Log", "sys_fs"), "Trace");

@@ -55,9 +55,13 @@ pub fn live() -> Option<Live> {
 }
 
 /// The harness's template, with `ORACLE_SHADER_MODE` from the process env as
-/// its shader mode when set.
+/// its shader mode when set, and the game's sound on when `ORACLE_AUDIO` is set
+/// to anything but empty or `0` (silent otherwise).
 pub fn template() -> ConfigTemplate {
-    let mut config = ConfigTemplate::default();
+    let mut config = ConfigTemplate {
+        audio: std::env::var("ORACLE_AUDIO").is_ok_and(|v| !v.is_empty() && v != "0"),
+        ..ConfigTemplate::default()
+    };
     if let Some(mode) = std::env::var("ORACLE_SHADER_MODE")
         .ok()
         .filter(|m| !m.is_empty())
