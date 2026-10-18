@@ -3,11 +3,11 @@
 Status: DESIGN, started 2026-10-17 and revised the same day for chotchki's second, third and fourth rounds of
 decisions.
 This file owns the Guacamole track (`openspec/config.yaml` points here). Open changes:
-`openspec/changes/aa-guacamole-shell/`, `ab-giants-extract-and-intros/` and `ac-giants-decode-gate/`; the
-later rungs of the ladder are lines in the Guacamole section of `openspec/backlog.md`. Until G1 the
-product (CLAUDE.md, SPEC.md, `docs/dev/*`) is owned where it always was, and it's frozen: the controller
-installed on the HTPC keeps playing the games and chotchki doesn't have to touch it until Guacamole is
-ready.
+`openspec/changes/aa-guacamole-shell/`, `ab-giants-extract-and-intros/`, `ac-giants-decode-gate/` and
+`af-oracle-foundation/`; the later rungs of the ladder are lines in the Guacamole section of
+`openspec/backlog.md`. Until G1 the product (CLAUDE.md, SPEC.md, `docs/dev/*`) is owned where it always
+was, and it's frozen: the controller installed on the HTPC keeps playing the games and chotchki doesn't
+have to touch it until Guacamole is ready.
 
 ## What Guacamole is
 
@@ -1252,7 +1252,7 @@ beside the ladder in `openspec/backlog.md`, gates no rung and starts on chotchki
 | AB, M0 | `ab-giants-extract-and-intros` | place a figure, its original intro video plays | `guac-extract` skeleton (identity, IGA, manifest, Bink 1 transcode, entropy scan); Bevy video playback is a spike. The 48 intros are named by character, not toy type; the voice-over folder in each character archive bridges most of them and AB maps the rest. A figure without one keeps its AA card |
 | AC | `ac-giants-decode-gate`, in parallel with AA and AB | nothing yet (a dev viewer) | IGZ v6, `igImage2`, Edge and a Havok 2011.2 skeleton plus one clip, matched against an RSX capture. Starts once AB's IGA reader has landed. If the decoded hero doesn't match the capture, AC proposes Trap Team and chotchki decides |
 | AE, M1 | backlog | their figure as an animated, textured turntable on the TV | the first 3D; the Mac's renderer floor measured; the disc roster replaces the interim catalogue |
-| AF | backlog | nothing | the oracle foundation: divergence measured, frame-locked two-pad input, tolerance metrics. Lands before any gameplay comparison |
+| AF | `af-oracle-foundation` | nothing | the oracle foundation: divergence measured, frame-locked two-pad input, tolerance metrics. Lands before any gameplay comparison |
 | AG, M2 | backlog | walk one level | level scene, collision, character controller, camera, feel checked against the oracle; the input spec, with prompts that match the physical pad |
 | AH, M3 | backlog | first fight: one enemy, XP and gold earned and kept on the kid's profile | combat basics; the per-profile figure-progression store, with the phone's figure editor on it |
 | AI, M4 | backlog | first couch battle: one Giants PvP arena, two pads, two phones | a second pad and a second profile's figure in play; the PvP rules as the oracle shows them |
