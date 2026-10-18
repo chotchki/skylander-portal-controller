@@ -10,12 +10,16 @@
 mod cards;
 mod cli;
 mod driver;
+mod extraction;
+mod intro;
+mod intro_player;
 mod mirror;
 mod picker;
 mod screen;
 #[cfg(feature = "dev-tools")]
 mod shots;
 mod tv;
+mod video;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -27,6 +31,7 @@ use bevy::log::LogPlugin;
 use bevy::prelude::{App, AppExit, DefaultPlugins, PluginGroup, Window, WindowPlugin, default};
 use bevy::window::{MonitorSelection, WindowMode as BevyWindowMode};
 use crossbeam_channel::{Receiver, Sender};
+use guac_extract::known::KnownDump;
 use guac_server::boot::{BootOptions, BuiltDriver, Catalogue, ServerHandles, boot};
 use guac_server::config::{DriverKind, WindowMode};
 use guac_server::hooks::Hooks;
@@ -38,6 +43,8 @@ use tracing::{info, warn};
 use crate::cards::PortalFeed;
 use crate::cli::Command;
 use crate::driver::{NativePortalDriver, PortalChange, portal_channel};
+use crate::extraction::ExtractJob;
+use crate::intro_player::OutputLatency;
 use crate::mirror::TvMirror;
 use crate::picker::{DataRoot, Picker};
 use crate::screen::SetupView;
@@ -77,10 +84,24 @@ fn main() -> Result<()> {
             let mode = setup::window_mode(&setup::env());
             let no_setup = SetupView::new(false, &[], &Default::default());
             let link = failed_link(format!("{e:#}"));
-            return run_tv(link, portal_rx, no_setup, mode, root, mirror, log_guard);
+            return run_tv(
+                link,
+                portal_rx,
+                no_setup,
+                mode,
+                root,
+                None,
+                OutputLatency::default(),
+                mirror,
+                log_guard,
+            );
         }
     };
     let cfg = loaded.config.clone();
+    let latency = loaded
+        .output_latency_ms
+        .map(|ms| OutputLatency(Duration::from_millis(ms.into())))
+        .unwrap_or_default();
 
     let needs_setup = loaded.needs_setup();
     let scan = if needs_setup {
@@ -96,9 +117,19 @@ fn main() -> Result<()> {
         dumps_from_env = loaded.dump_dirs_from_env,
         found = scan.found.len(),
         giants = scan.offered().is_some(),
+        output_latency_ms = latency.0.as_millis() as u64,
         "starting guacamole",
     );
     let setup_view = SetupView::at_start(picked, needs_setup, &loaded.dump_dirs, &scan);
+    let job = ExtractJob {
+        test_known: test_known_dump(),
+        ..ExtractJob::new(
+            &root,
+            loaded.extract_dir.clone(),
+            loaded.ffmpeg.clone(),
+            cfg.data_root.clone(),
+        )
+    };
 
     let link = match boot(BootOptions {
         config: cfg.clone(),
@@ -128,9 +159,30 @@ fn main() -> Result<()> {
         setup_view,
         cfg.window_mode,
         root,
+        Some(job),
+        latency,
         mirror,
         log_guard,
     )
+}
+
+/// `.env.dev`'s `GUAC_TEST_KNOWN_DUMP`, `test-hooks` builds only: the e2e
+/// harness's synthetic dump, trusted beside the known-dump table.
+fn test_known_dump() -> Option<KnownDump> {
+    if !cfg!(feature = "test-hooks") {
+        return None;
+    }
+    let value = setup::env().remove("GUAC_TEST_KNOWN_DUMP")?;
+    match extraction::parse_test_known(&value) {
+        Ok(known) => {
+            warn!(?known, "trusting the e2e harness's synthetic dump");
+            Some(known)
+        }
+        Err(e) => {
+            tracing::error!("GUAC_TEST_KNOWN_DUMP: {e}");
+            None
+        }
+    }
 }
 
 /// `/api/_test/tv` for the e2e harness; nothing outside `test-hooks`.
@@ -166,6 +218,8 @@ fn run_tv(
     setup_view: SetupView,
     mode: WindowMode,
     root: PathBuf,
+    job: Option<ExtractJob>,
+    latency: OutputLatency,
     mirror: TvMirror,
     log_guard: WorkerGuard,
 ) -> Result<()> {
@@ -186,7 +240,17 @@ fn run_tv(
     .insert_resource(Setup(setup_view))
     .insert_resource(Framing(mode))
     .insert_resource(DataRoot(root))
-    .add_plugins((ServerBridge, Tv, Picker));
+    .insert_resource(latency)
+    .add_plugins((
+        ServerBridge,
+        Tv,
+        Picker,
+        extraction::ExtractPlugin,
+        intro_player::IntroPlugin,
+    ));
+    if let Some(job) = job {
+        app.insert_resource(job);
+    }
     #[cfg(feature = "dev-tools")]
     app.add_plugins(shots::Shots);
     if cfg!(feature = "test-hooks") {

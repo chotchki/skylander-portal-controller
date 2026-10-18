@@ -16,6 +16,10 @@ tempfile = "3"
 # at (AA.10). A normal dependency because the harness lib builds it; this
 # crate ships nothing.
 guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }
+# The intro fixture (AB.11): its dump's identity, extract dir and IR, built
+# through guac-extract's own code so guacamole finds them current.
+guac-extract = { path = "../guac-extract" }
+guac-ir = { path = "../guac-ir" }
 which = "6"
 once_cell = "1"
 tracing = { workspace = true }

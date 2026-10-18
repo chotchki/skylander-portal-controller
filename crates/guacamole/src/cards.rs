@@ -85,13 +85,22 @@ impl PortalCards {
     }
 }
 
+/// Each change as the TV heard it, for the intro queue.
+#[derive(Message, Debug, Clone, PartialEq, Eq)]
+pub struct PortalChanged(pub PortalChange);
+
 /// Touches `PortalCards` only when something arrived, so the portal screen
 /// rebuilds on a change and not every frame.
-pub fn drain_portal(feed: Res<PortalFeed>, mut cards: ResMut<PortalCards>) {
+pub fn drain_portal(
+    feed: Res<PortalFeed>,
+    mut cards: ResMut<PortalCards>,
+    mut heard: MessageWriter<PortalChanged>,
+) {
     let changes: Vec<PortalChange> = feed.0.try_iter().collect();
     if changes.is_empty() {
         return;
     }
+    heard.write_batch(changes.iter().cloned().map(PortalChanged));
     *cards = cards.clone().reduce(changes);
     info!(count = cards.cards().count(), cards = %cards.summary(), "tv cards");
 }
