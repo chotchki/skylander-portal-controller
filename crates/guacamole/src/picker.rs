@@ -331,6 +331,44 @@ mod tests {
     }
 
     #[test]
+    fn a_pick_with_a_broken_dump_says_why_on_no_giants() {
+        let root = tempfile::tempdir().unwrap();
+        let discs = tempfile::tempdir().unwrap();
+        let sfo = discs.path().join("Giants/PS3_GAME/PARAM.SFO");
+        std::fs::create_dir_all(sfo.parent().unwrap()).unwrap();
+        std::fs::write(&sfo, b"not an sfo").unwrap();
+        let (app, _) = land_pick(root.path(), Some(discs.path().to_path_buf()));
+        let view = &app.world().resource::<Setup>().0;
+        assert_eq!(screen_for(&ready(), view), TvScreen::NoGiants);
+        assert_eq!(view.problems, [format!("Couldn't read {}", sfo.display())]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_pick_that_cant_be_listed_says_so() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let discs = tempfile::tempdir().unwrap();
+        dump(&discs.path().join("Giants"), GIANTS_TITLE_ID);
+        let set = |mode| {
+            std::fs::set_permissions(discs.path(), std::fs::Permissions::from_mode(mode)).unwrap()
+        };
+        set(0o311);
+        if std::fs::read_dir(discs.path()).is_ok() {
+            set(0o755);
+            return; // root lists anything
+        }
+        let (app, _) = land_pick(root.path(), Some(discs.path().to_path_buf()));
+        set(0o755);
+        let view = &app.world().resource::<Setup>().0;
+        assert_eq!(screen_for(&ready(), view), TvScreen::NoGiants);
+        assert_eq!(
+            view.problems,
+            [format!("Couldn't list {}", discs.path().display())]
+        );
+    }
+
+    #[test]
     fn a_cancelled_pick_stores_nothing_and_stays_on_setup() {
         let root = tempfile::tempdir().unwrap();
         let (app, games) = land_pick(root.path(), None);

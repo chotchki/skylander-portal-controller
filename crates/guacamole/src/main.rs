@@ -54,15 +54,15 @@ fn main() -> Result<()> {
     let root = paths::guac_data_root()?;
     // Before `load`, so a settings failure is logged and shown, not silent.
     let log_guard = logging::init(&setup::log_dir(&root))?;
-    match command {
+    let picked = match command {
         Command::SetupFolders(folders) => {
             let code = cli::setup_folders(&root, &folders, &mut std::io::stdout());
             drop(log_guard);
             std::process::exit(code);
         }
         Command::SetupPick => pick_before_the_window(&root),
-        Command::Run | Command::Help => {}
-    }
+        Command::Run | Command::Help => false,
+    };
     let (portal_tx, portal_rx) = portal_channel();
     // Writes nothing, so a second copy that loses the port leaves no trace.
     let loaded = match setup::load(&root).context("load guacamole's settings") {
@@ -93,7 +93,7 @@ fn main() -> Result<()> {
         giants = scan.offered().is_some(),
         "starting guacamole",
     );
-    let setup_view = SetupView::new(needs_setup, &loaded.dump_dirs, &scan);
+    let setup_view = SetupView::at_start(picked, needs_setup, &loaded.dump_dirs, &scan);
 
     let link = match boot(BootOptions {
         config: cfg.clone(),
@@ -129,19 +129,21 @@ fn main() -> Result<()> {
 
 /// `--setup` alone: the plain dialog, on the main thread before the event
 /// loop exists, then a normal start. A cancel keeps the stored folders.
-fn pick_before_the_window(root: &Path) {
+/// True when a pick was stored, so the TV lists what it found.
+fn pick_before_the_window(root: &Path) -> bool {
     let picked = rfd::FileDialog::new()
         .set_title(picker::PICKER_TITLE)
         .pick_folder();
     let Some(folder) = picked else {
         info!("--setup: no folder chosen");
         println!("No folder chosen; keeping the stored folder.");
-        return;
+        return false;
     };
     let code = cli::setup_folders(root, &[folder], &mut std::io::stdout());
     if code != 0 {
         warn!("--setup: the picked folder wasn't stored");
     }
+    code == 0
 }
 
 /// Runs the TV until it exits; the guard flushes the file log first.

@@ -241,6 +241,21 @@ fn spawn_screen(
     current: &Current,
 ) {
     let font = assets.font.clone();
+    // Wraps within the column rather than running off its sides.
+    let titles = (
+        Text::new(setup.titles_line()),
+        TextFont {
+            font: font.clone().into(),
+            font_size: FontSize::Px(36.0),
+            ..default()
+        },
+        TextColor(WHITE),
+        TextLayout::justify(Justify::Center),
+        Node {
+            max_width: percent(100),
+            ..default()
+        },
+    );
     let text = move |s: &str, size: f32, color: Color| {
         (
             Text::new(s),
@@ -260,7 +275,8 @@ fn spawn_screen(
             width: percent(100),
             height: percent(100),
             flex_direction: FlexDirection::Column,
-            justify_content: JustifyContent::Center,
+            // Safe: a column taller than the screen starts at the top, not off it.
+            justify_content: JustifyContent::CenterSafe,
             align_items: AlignItems::Center,
             row_gap: px(28),
             padding: UiRect::all(px(64)),
@@ -291,13 +307,14 @@ fn spawn_screen(
                 32.0,
                 DIM,
             ));
-            if setup.found_titles.is_empty() {
-                ui.spawn(text("No game dumps there.", 40.0, WHITE));
-            } else {
+            for problem in &setup.problems {
+                ui.spawn(text(problem, 32.0, GOLD));
+            }
+            if !setup.found_titles.is_empty() {
                 ui.spawn(text("Found:", 40.0, WHITE));
-                for title in &setup.found_titles {
-                    ui.spawn(text(title, 36.0, WHITE));
-                }
+                ui.spawn(titles.clone());
+            } else if setup.problems.is_empty() {
+                ui.spawn(text("No game dumps there.", 40.0, WHITE));
             }
             for (line, size, color) in picker_lines(setup, "choose another folder") {
                 ui.spawn(text(&line, size, color));
@@ -305,9 +322,7 @@ fn spawn_screen(
         }
         TvScreen::Found => {
             ui.spawn(text("Found your games", 88.0, GOLD));
-            for title in &setup.found_titles {
-                ui.spawn(text(title, 36.0, WHITE));
-            }
+            ui.spawn(titles.clone());
             ui.spawn(text("Skylanders: Giants is ready!", 56.0, GOLD));
             ui.spawn(text("Click to continue.", 32.0, DIM));
         }

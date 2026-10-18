@@ -21,6 +21,8 @@ pub struct SetupView {
     pub error: Option<String>,
     /// A pick just found Giants: list what was found before the join code.
     pub show_found: bool,
+    /// Folders that couldn't be listed and dumps that couldn't be read.
+    pub problems: Vec<String>,
 }
 
 impl SetupView {
@@ -37,8 +39,38 @@ impl SetupView {
                 })
                 .collect(),
             folders: folders.iter().map(|f| f.display().to_string()).collect(),
+            problems: scan
+                .unlisted
+                .iter()
+                .map(|f| format!("Couldn't list {}", f.display()))
+                .chain(
+                    scan.unreadable
+                        .iter()
+                        .map(|s| format!("Couldn't read {}", s.display())),
+                )
+                .collect(),
             ..Default::default()
         }
+    }
+
+    /// The view at startup: a `--setup` pick that stored lists what it found,
+    /// as the in-window sheet does.
+    pub fn at_start(
+        picked: bool,
+        needs_setup: bool,
+        folders: &[std::path::PathBuf],
+        scan: &DumpScan,
+    ) -> Self {
+        if picked && !needs_setup {
+            Self::after_pick(folders, scan)
+        } else {
+            Self::new(needs_setup, folders, scan)
+        }
+    }
+
+    /// Every found title on one wrapping line, so a big library stays on screen.
+    pub fn titles_line(&self) -> String {
+        self.found_titles.join("   ·   ")
     }
 
     /// After a pick was stored: Giants shows what was found before the join code.
@@ -252,6 +284,60 @@ mod tests {
         let view = SetupView::after_pick(&["/d".into()], &swap_force);
         assert!(!view.needs_setup && !view.giants_found && !view.show_found);
         assert_eq!(screen_for(&ready(), &view), TvScreen::NoGiants);
+    }
+
+    fn giants_and_swap_force() -> DumpScan {
+        use guac_server::dumps::FoundDump;
+        let dump = |id: &str| FoundDump {
+            title_id: id.into(),
+            dir: "/d/x".into(),
+        };
+        DumpScan {
+            found: vec![dump("BLUS31076"), dump("BLUS30968")],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_setup_pick_lists_what_it_found_then_a_plain_start_doesnt() {
+        let scan = giants_and_swap_force();
+        let view = SetupView::at_start(true, false, &["/d".into()], &scan);
+        assert_eq!(screen_for(&ready(), &view), TvScreen::Found);
+        let view = SetupView::at_start(false, false, &["/d".into()], &scan);
+        assert_eq!(screen_for(&ready(), &view), TvScreen::Join);
+        // A cancelled pick with nothing stored still asks for a folder.
+        let view = SetupView::at_start(false, true, &[], &DumpScan::default());
+        assert_eq!(screen_for(&ready(), &view), TvScreen::Setup);
+    }
+
+    #[test]
+    fn titles_share_one_line() {
+        let view = SetupView::new(false, &["/d".into()], &giants_and_swap_force());
+        assert_eq!(
+            view.titles_line(),
+            format!("{}   ·   {}", view.found_titles[0], view.found_titles[1])
+        );
+        assert_eq!(SetupView::default().titles_line(), "");
+    }
+
+    #[test]
+    fn scan_problems_reach_the_view() {
+        let scan = DumpScan {
+            unlisted: vec!["/d".into()],
+            unreadable: vec!["/e/PS3_GAME/PARAM.SFO".into()],
+            ..Default::default()
+        };
+        let view = SetupView::new(false, &["/d".into(), "/e".into()], &scan);
+        assert!(view.found_titles.is_empty());
+        assert_eq!(
+            view.problems,
+            ["Couldn't list /d", "Couldn't read /e/PS3_GAME/PARAM.SFO"]
+        );
+        assert_eq!(screen_for(&ready(), &view), TvScreen::NoGiants);
+        assert_eq!(
+            SetupView::after_pick(&["/d".into()], &scan).problems.len(),
+            2
+        );
     }
 
     #[test]
