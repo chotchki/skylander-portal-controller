@@ -56,7 +56,7 @@ The output is a Rust definition per type, tagged "IGZ v6 / BLUS30968 01.00", for
 The fallback if the registry won't surface: infer a type's layout by diffing many instances across the 1,542 texture IGZ and the character bundles. That's statistical and weaker evidence, but it doesn't need the EBOOT at all.
 
 **5. Tolerances, fixed now.**
-- Indices: each draw's triangle set is equal to ours, ignoring triangle order and rotation within a triangle.
+- Indices: each draw's triangles are an ordered subset of ours, in our order and with the same vertex rotation (chotchki, 2026-10-18: the SPU job culls, `igPS3EdgeManager._cullingState` 1, so a draw holds only the triangles that survive; this replaces "the triangle set is equal to ours").
 - Positions: equal after the same dequantization, or within 1e-4 of the mesh's bounding-box diagonal if the capture's floats come from a different dequantize order.
 - UVs: within 1/65536. Normals: within 1e-3 after normalization.
 - Textures: BC blocks byte-identical to the capture's surface after our untile. If RSX holds them re-swizzled, the comparison is after the same swizzle, and a FLIP number on the decoded RGBA is recorded but not gated.
