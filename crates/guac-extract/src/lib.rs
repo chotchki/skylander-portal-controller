@@ -3,13 +3,17 @@
 //!
 //! AB.4 is identity, the manifest and the extract root: [`root::ExtractRoot`]
 //! resolves and checks where output goes, [`extract::open`] hashes the dump,
-//! checks it against [`known::KNOWN_DUMPS`] and opens its identity dir. The
-//! census (AB.5), the intro index (AB.6) and the transcode (AB.8) land here.
+//! checks it against [`known::KNOWN_DUMPS`] and opens its identity dir.
+//! [`census::census`] (AB.5) sniffs every file and IGA entry with
+//! [`magic`], the list the game-magic guard checks the repo against. The
+//! intro index (AB.6) and the transcode (AB.8) land here.
 
+pub mod census;
 pub mod dump;
 mod error;
 pub mod extract;
 pub mod known;
+pub mod magic;
 mod report;
 pub mod root;
 

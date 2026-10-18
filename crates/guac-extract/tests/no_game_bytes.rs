@@ -10,8 +10,9 @@
 //! committed and then deleted still ships with its commit). A guest memory dump
 //! has no magic at all; only keeping it outside the tree stops that one.
 //!
-//! Fixtures are built in code at test time in throwaway repos, so nothing here
-//! trips the guard on this repo.
+//! The magic list and `classify` live in `guac_extract::magic`, shared with
+//! the census (AB.5). Fixtures are built in code at test time in throwaway
+//! repos, so nothing here trips the guard on this repo.
 
 use std::collections::HashSet;
 use std::fs;
@@ -22,38 +23,8 @@ use std::process::{Command, Stdio};
 use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
+use guac_extract::magic::{EM_PPC64, GAME_MAGICS, classify};
 
-/// Prefixes no file in this repo may start with. Alchemy writes its magics in
-/// the platform's byte order, so IGA and IGZ come both ways round.
-const MAGICS: &[(&[u8], &str)] = &[
-    (
-        b"IGA\x1a",
-        "IGA archive, little-endian (Giants and Trap Team .arc/.bld)",
-    ),
-    (
-        b"\x1aAGI",
-        "IGA archive, big-endian (Swap Force, SuperChargers and Imaginators .pak)",
-    ),
-    (b"IGZ", "IGZ object file"),
-    (b"\x01ZGI", "IGZ object file, little-endian"),
-    (b"BIKi", "Bink 1 video"),
-    (b"KB2", "Bink 2 video"),
-    (b"FSB5", "FMOD sound bank"),
-    (
-        b"SCE\0",
-        "SCE container (SELF/SPRX, an encrypted executable)",
-    ),
-    (b"\x7fPKG", "PS3 PKG (update or DLC package)"),
-    (b"NPD\0", "NPDRM EDAT/SDAT"),
-    (b"\0PSF", "PARAM.SFO"),
-    (b"\xdc\xa2\x4d\x00", "PS3 trophy pack (TROPHY.TRP)"),
-    (b"PS3LICDA", "PS3 disc licence (LIC.DAT)"),
-    (b".SFB", "PS3 disc boot file (PS3_DISC.SFB)"),
-    (b"SCEUF", "PS3 system update (PS3UPDAT.PUP)"),
-    (b"RRC", "RPCS3 RSX capture"),
-];
-
-const EM_PPC64: u16 = 21;
 const GZIP: &[u8] = &[0x1f, 0x8b];
 /// How much of a blob, or of an inflated gzip, the guard reads: every check
 /// needs only the first bytes, and 64 KiB covers a gzip header's name and
@@ -61,21 +32,6 @@ const GZIP: &[u8] = &[0x1f, 0x8b];
 const HEAD: u64 = 64 * 1024;
 /// gzip inside gzip inside gzip is as deep as the guard looks.
 const MAX_GZIP_DEPTH: usize = 3;
-
-fn is_ppc64_be_elf(head: &[u8]) -> bool {
-    head.len() >= 20
-        && head.starts_with(b"\x7fELF")
-        && head[4] == 2 // ELFCLASS64
-        && head[5] == 2 // ELFDATA2MSB
-        && u16::from_be_bytes([head[18], head[19]]) == EM_PPC64
-}
-
-fn classify(head: &[u8]) -> Option<&'static str> {
-    if let Some((_, what)) = MAGICS.iter().find(|(magic, _)| head.starts_with(magic)) {
-        return Some(what);
-    }
-    is_ppc64_be_elf(head).then_some("big-endian PPC64 ELF (a decrypted EBOOT)")
-}
 
 /// What a blob's head would leak, or `None` when it's clean.
 fn offence(head: &[u8], depth: usize) -> Option<String> {
@@ -331,13 +287,13 @@ fn flags_a_big_endian_ppc64_elf() {
 
 #[test]
 fn flags_every_listed_magic() {
-    let names: Vec<String> = (0..MAGICS.len()).map(|i| format!("f{i}")).collect();
+    let names: Vec<String> = (0..GAME_MAGICS.len()).map(|i| format!("f{i}")).collect();
     let files: Vec<(&str, Vec<u8>)> = names
         .iter()
-        .zip(MAGICS)
+        .zip(GAME_MAGICS)
         .map(|(name, (magic, _))| (name.as_str(), starting_with(magic)))
         .collect();
-    assert_eq!(scan(repo_with(&files).path()).len(), MAGICS.len());
+    assert_eq!(scan(repo_with(&files).path()).len(), GAME_MAGICS.len());
 }
 
 #[test]

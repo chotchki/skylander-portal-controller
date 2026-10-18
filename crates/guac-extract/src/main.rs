@@ -4,15 +4,17 @@
 //! required, outside any git working tree.
 
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
 
+use guac_extract::census::find_ffprobe;
 use guac_extract::known::KNOWN_DUMPS;
 use guac_extract::{DirState, ExtractRoot, RootMode};
 
 const USAGE: &str = "\
 usage: guac-extract identify <dump-dir>
+       guac-extract census <dump-dir>
        guac-extract [--help | --version]
 
 Extracts what guacamole plays from your own Skylanders disc dump.
@@ -20,17 +22,69 @@ Extracts what guacamole plays from your own Skylanders disc dump.
   identify   hash the dump (the folder holding PS3_GAME), check it against the
              known dumps and open its folder under GUAC_EXTRACT_DIR; an unknown
              dump gets a report of names, sizes and hashes beside that folder
+  census     sniff every file of any dump and every IGA entry, measure the
+             entropy of whatever has no known magic, count each Bink file's
+             audio tracks (ffprobe: GUAC_FFPROBE, else beside guac-extract,
+             else PATH) and write census-<title>-<version>-<stamp>.json into
+             GUAC_EXTRACT_DIR
 ";
 
-fn extract_dir() -> Option<OsString> {
-    if let Some(v) = std::env::var_os("GUAC_EXTRACT_DIR") {
+/// The environment, else `.env.dev` in the current folder.
+fn dev_var(key: &str) -> Option<OsString> {
+    if let Some(v) = std::env::var_os(key) {
         return Some(v);
     }
     let text = std::fs::read_to_string(".env.dev").ok()?;
     text.lines().find_map(|line| {
         let (k, v) = line.trim().split_once('=')?;
-        (k.trim() == "GUAC_EXTRACT_DIR").then(|| v.trim().trim_matches('"').into())
+        (k.trim() == key).then(|| v.trim().trim_matches('"').into())
     })
+}
+
+fn extract_dir() -> Option<OsString> {
+    dev_var("GUAC_EXTRACT_DIR")
+}
+
+fn census(dump: &Path) -> Result<(), guac_extract::ExtractError> {
+    let root = ExtractRoot::resolve(RootMode::Dev {
+        extract_dir: extract_dir(),
+    })?;
+    let ffprobe = find_ffprobe(dev_var("GUAC_FFPROBE").map(PathBuf::from));
+    let started = Instant::now();
+    let (c, report) = guac_extract::census::census(dump, &root, ffprobe.as_deref())?;
+    let s = &c.summary;
+    println!("dump        {} {}", c.title_id, c.app_ver);
+    println!("files       {} ({} bytes)", s.files, s.bytes);
+    for (what, n) in &s.files_by_what {
+        println!("  {n:6}  {what}");
+    }
+    println!(
+        "iga         {} archives ({} unread), {} entries, {} unknown, {} entry errors",
+        s.iga_archives,
+        s.iga_unread.len(),
+        s.iga_entries,
+        s.unknown_entries,
+        s.entry_errors
+    );
+    for (what, n) in &s.entries_by_what {
+        println!("  {n:6}  {what}");
+    }
+    println!(
+        "unknown     {} files, {} high-entropy; {} high-entropy entries",
+        s.unknown_files.len(),
+        s.high_entropy_unknown_files.len(),
+        s.high_entropy_unknown_entries.len()
+    );
+    println!(
+        "bink        {} files, {} multi-track, {} unprobed ({})",
+        s.bink_files,
+        s.multi_track_bink.len(),
+        s.bink_unprobed.len(),
+        c.ffprobe.as_deref().unwrap_or("no ffprobe")
+    );
+    println!("report      {}", report.display());
+    println!("took        {:.1} s", started.elapsed().as_secs_f64());
+    Ok(())
 }
 
 fn identify(dump: &Path) -> Result<(), guac_extract::ExtractError> {
@@ -83,6 +137,13 @@ fn main() -> ExitCode {
             );
             ExitCode::SUCCESS
         }
+        ["census", dump] => match census(Path::new(dump)) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("guac-extract: {e}");
+                ExitCode::FAILURE
+            }
+        },
         ["identify", dump] => match identify(Path::new(dump)) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
