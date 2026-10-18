@@ -2,12 +2,16 @@
 
 Status: DESIGN, started 2026-10-17 and revised the same day for chotchki's second, third and fourth rounds of
 decisions.
-This file owns the Guacamole track (`openspec/config.yaml` points here). Open changes:
-`openspec/changes/aa-guacamole-shell/`, `ab-giants-extract-and-intros/`, `ac-giants-decode-gate/` and
-`af-oracle-foundation/`; the later rungs of the ladder are lines in the Guacamole section of
-`openspec/backlog.md`. Until G1 the product (CLAUDE.md, SPEC.md, `docs/dev/*`) is owned where it always
-was, and it's frozen: the controller installed on the HTPC keeps playing the games and chotchki doesn't
-have to touch it until Guacamole is ready.
+This file owns the Guacamole track ([`openspec/config.yaml`](../../openspec/config.yaml) points here). Open
+changes under `openspec/changes/`: [`aa-guacamole-shell/`](../../openspec/changes/aa-guacamole-shell/proposal.md),
+[`ab-giants-extract-and-intros/`](../../openspec/changes/ab-giants-extract-and-intros/proposal.md),
+[`ac-giants-decode-gate/`](../../openspec/changes/ac-giants-decode-gate/proposal.md),
+[`ae-animated-turntable/`](../../openspec/changes/ae-animated-turntable/proposal.md) and
+[`af-oracle-foundation/`](../../openspec/changes/af-oracle-foundation/proposal.md); the later rungs of the
+ladder are lines in the Guacamole section of [`openspec/backlog.md`](../../openspec/backlog.md). Until G1 the
+product ([CLAUDE.md](../../CLAUDE.md), [SPEC.md](../../SPEC.md), `docs/dev/*`) is owned where it always was,
+and it's frozen: the controller installed on the HTPC keeps playing the games and chotchki doesn't have to
+touch it until Guacamole is ready.
 
 ## What Guacamole is
 
@@ -1584,8 +1588,9 @@ lives in Guacamole's store per profile. Guacamole never reads a `.sky`.
   (Granite Crusher is 0x0202 here, 0x0402 on the disc), 5 items have no element where the disc's macro
   default says 0 (keep None, the research says) and 46 disc rows aren't here at all (Series 2, LightCore,
   locations, a few items). It confirmed AA.14's four supplement rows. The disc roster replacing this
-  catalogue (below) closes the id and coverage gaps; which variant-id encoding it keeps, the disc's bits
-  or AA's wiki words, is chotchki's call in the findings.
+  catalogue (below) closes the id and coverage gaps. chotchki's calls (2026-10-18): ids take the disc's
+  bits ("agreed"), and Series 2 and LightCore are figures of their own ("separate figures"). AE carries
+  both ([`ae-animated-turntable`](../../openspec/changes/ae-animated-turntable/design.md), decisions 2-4).
 
   `guacamole` stops reading it once the disc roster lands, and the files themselves
   (`data/images/`, `data/figures.json`, `data/figures.manual.json`, `data/rekey-log.json`,
@@ -1640,7 +1645,7 @@ beside the ladder in `openspec/backlog.md`, gates no rung and starts on chotchki
 | AA | `aa-guacamole-shell` | place a figure on the phone, the TV shows its card (name, element, portrait), in `guacamole` | the embedded server, the native driver over a channel, Guacamole's one-question setup, its own database and profiles, the interim catalogue with no `.sky` and no firmware pack, one binary at a time, all on the Mac driving the TV (the MSI carrying both binaries is the bring-up's) |
 | AB, M0 | `ab-giants-extract-and-intros` | place a figure, its original intro video plays | `guac-extract` skeleton (identity, IGA, manifest, census, Bink 1 transcode to H.264 + MP3); Bevy video through openh264, AB.7's spike pick. The 48 intros are named by character, not toy type; the voice-over name in each character archive bridges all 48. A figure without one keeps its AA card |
 | AC | `ac-giants-decode-gate`, in parallel with AA and AB | nothing yet (a dev viewer) | IGZ v6, `igImage2`, Edge and a Havok 2011.2 skeleton plus one clip, matched against an RSX capture. PASSED 2026-10-18 on everything the oracle drew of Eruptor, all four layers, so Giants stays first; AC.21 (L8, the 16 upgrade-menu images) holds the gate open unless chotchki rules it out (Why Giants first) |
-| AE, M1 | backlog | their figure as an animated, textured turntable on the TV | the first 3D; the Mac's renderer floor measured; the disc roster replaces the interim catalogue |
+| AE, M1 | `ae-animated-turntable` | their figure as an animated, textured turntable on the TV | the first 3D; the Mac's renderer floor measured; the disc roster replaces the interim catalogue |
 | AF | `af-oracle-foundation` | nothing | the oracle foundation: divergence measured, frame-locked two-pad input, tolerance metrics. Lands before any gameplay comparison |
 | AG, M2 | backlog | walk one level | level scene, collision, character controller, camera, feel checked against the oracle; the input spec, with prompts that match the physical pad |
 | AH, M3 | backlog | first fight: one enemy, XP and gold earned and kept on the kid's profile | combat basics; the per-profile figure-progression store, with the phone's figure editor on it |
