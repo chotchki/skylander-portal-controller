@@ -3,9 +3,9 @@
 //! `audio/intro/<movie>.<ext>` in the identity dir. No scaling, the source
 //! frame rate, the IR's voice track. Progress comes from `-progress pipe:1`.
 //!
-//! Done outputs are kept (resume); a movie whose source bytes and voice match
-//! one already done is linked, not re-run (content-hash dedupe). Intros done
-//! for another [`Target::tag`] are redone.
+//! Done outputs are kept (resume) while their movie's [`recipe`] holds; a
+//! movie with the recipe of one already done is linked, not re-run
+//! (content-hash dedupe). Intros done for another [`Target::tag`] are redone.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -17,7 +17,7 @@ use guac_ir::{CharacterTable, Sha256, VoiceTrack};
 use sha2::Digest;
 
 use crate::error::{ExtractError, Result};
-use crate::extract::{IdentityDir, TranscodeRecord};
+use crate::extract::{IdentityDir, MovieRecord, TranscodeRecord};
 use crate::ffmpeg::Ffmpeg;
 use crate::intros::MOVIE_DIR;
 
@@ -159,6 +159,25 @@ pub fn command_line(
     a
 }
 
+/// 16 hex of SHA-256 over the source's SHA-256 and [`command_line`] with
+/// placeholder paths: changes with the source bytes, the voice choice, the
+/// fixed map/amix parts and the target. Resume and dedupe both key on it.
+pub fn recipe(source: &Sha256, voice: VoiceTrack, target: &Target) -> String {
+    let mut h = sha2::Sha256::new();
+    h.update(source.0);
+    for a in command_line(
+        Path::new("in"),
+        Path::new("v"),
+        Path::new("a"),
+        voice,
+        target,
+    ) {
+        h.update([0]);
+        h.update(a.as_encoded_bytes());
+    }
+    Sha256(h.finalize().into()).to_string()[..16].to_owned()
+}
+
 /// One `-progress` block, reported at its `progress=` line.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Progress {
@@ -262,8 +281,8 @@ fn movie_name_ok(m: &str) -> bool {
 }
 
 /// Transcodes every intro in `table` into `dir`, one ffmpeg at a time (x264
-/// already takes every core). Records the target and ffmpeg in the manifest;
-/// marking the extract complete is the caller's.
+/// already takes every core). Records the target, and per movie its recipe
+/// and the ffmpeg that encoded it; marking the extract complete is the caller's.
 pub fn transcode_intros(
     dir: &mut IdentityDir,
     table: &CharacterTable,
@@ -275,14 +294,15 @@ pub fn transcode_intros(
     if dir.manifest().transcode.as_ref().map(|t| &t.target) != Some(&tag) {
         dir.forget_outputs(&format!("{VIDEO_DIR}/"))?;
         dir.forget_outputs(&format!("{AUDIO_DIR}/"))?;
+        dir.set_transcode(TranscodeRecord {
+            target: tag,
+            movies: BTreeMap::new(),
+        })?;
     }
-    dir.set_transcode(TranscodeRecord {
-        target: tag,
-        ffmpeg: ffmpeg.version.clone(),
-    })?;
 
     let movie_dir = PathBuf::from(&dir.manifest().source_dir).join(MOVIE_DIR);
-    let mut done_by_key: BTreeMap<(Sha256, VoiceTrack), String> = BTreeMap::new();
+    // Recipe → the movie done with it this run.
+    let mut done_by_recipe: BTreeMap<String, String> = BTreeMap::new();
     let mut summary = Summary::default();
     let total = jobs.len();
     for (index, (movie, voice)) in jobs.into_iter().enumerate() {
@@ -305,18 +325,30 @@ pub fn transcode_intros(
                 movie: movie.clone(),
                 reason: format!("{rel} isn't in the dump's manifest"),
             })?;
+        let recipe = recipe(&sha, voice, &TARGET);
         let (video, audio) = TARGET.outputs(&movie);
         event(Step::Started);
-        let done = if dir.output_done(&video)? && dir.output_done(&audio)? {
+        let recorded = dir
+            .manifest()
+            .transcode
+            .as_ref()
+            .and_then(|t| t.movies.get(&movie))
+            .is_some_and(|m| m.recipe == recipe);
+        let done = if recorded && dir.output_done(&video)? && dir.output_done(&audio)? {
             summary.resumed += 1;
             Done::Resumed
-        } else if let Some(from) = done_by_key.get(&(sha, voice)) {
+        } else if let Some(from) = done_by_recipe.get(&recipe) {
+            // Unrecorded first, so a crash mid-way can't pass for done.
+            dir.set_movie(&movie, None)?;
             let (fv, fa) = TARGET.outputs(from);
             dir.link_output(&fv, &video)?;
             dir.link_output(&fa, &audio)?;
+            let from_rec = dir.manifest().transcode.as_ref().unwrap().movies[from].clone();
+            dir.set_movie(&movie, Some(from_rec))?;
             summary.linked += 1;
             Done::Linked { from: from.clone() }
         } else {
+            dir.set_movie(&movie, None)?;
             let src = movie_dir.join(format!("{movie}.mov"));
             let args = command_line(
                 &src,
@@ -333,10 +365,17 @@ pub fn transcode_intros(
             })?;
             dir.commit(&video)?;
             dir.commit(&audio)?;
+            dir.set_movie(
+                &movie,
+                Some(MovieRecord {
+                    recipe: recipe.clone(),
+                    ffmpeg: ffmpeg.version.clone(),
+                }),
+            )?;
             summary.transcoded += 1;
             Done::Transcoded
         };
-        done_by_key.entry((sha, voice)).or_insert(movie.clone());
+        done_by_recipe.entry(recipe).or_insert(movie.clone());
         event(Step::Done(done));
     }
     Ok(summary)
@@ -486,6 +525,35 @@ mod tests {
                 "audio/intro/eruptor.mp3".to_owned()
             )
         );
+    }
+
+    #[test]
+    fn the_recipe_follows_source_voice_and_target() {
+        let (a, b) = (Sha256([1; 32]), Sha256([2; 32]));
+        let only = recipe(&a, VoiceTrack::Only, &TARGET);
+        assert_eq!(only.len(), 16);
+        assert_eq!(only, recipe(&a, VoiceTrack::Only, &TARGET));
+        let picked = VoiceTrack::Stream {
+            index: 3,
+            bed: None,
+        };
+        let mixed = VoiceTrack::Stream {
+            index: 3,
+            bed: Some(13),
+        };
+        let other = Target {
+            audio_args: &["-c:a", "libmp3lame", "-b:a", "128k", "-f", "mp3"],
+            ..TARGET
+        };
+        let all = [
+            only.clone(),
+            recipe(&b, VoiceTrack::Only, &TARGET),
+            recipe(&a, picked, &TARGET),
+            recipe(&a, mixed, &TARGET),
+            recipe(&a, VoiceTrack::Only, &other),
+        ];
+        let distinct: std::collections::BTreeSet<_> = all.iter().collect();
+        assert_eq!(distinct.len(), all.len(), "{all:?}");
     }
 
     /// ffmpeg 9.0.2's `-progress pipe:1`, verbatim, from this module's

@@ -2,6 +2,7 @@
 //! `<root>/<TITLE_ID>-<APP_VER>-<hash8>/`. Every file in it, the manifest
 //! included, is written to `<file>.partial` and renamed when complete.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
@@ -34,7 +35,7 @@ pub struct Manifest {
     /// Sorted by path. Doubles as the hash cache for the next start.
     pub sources: Vec<SourceFile>,
     pub outputs: Vec<OutputFile>,
-    /// The intro transcode's target and the ffmpeg that ran it (AB.8).
+    /// The intro transcode's target and what made each movie (AB.8).
     #[serde(default)]
     pub transcode: Option<TranscodeRecord>,
 }
@@ -43,7 +44,17 @@ pub struct Manifest {
 pub struct TranscodeRecord {
     /// [`crate::transcode::Target::tag`]; another tag redoes the intros.
     pub target: String,
-    /// ffmpeg's version line. Recorded, not compared.
+    /// Movie name → what made its two outputs. A movie without an entry, or
+    /// whose recipe changed, is redone.
+    #[serde(default)]
+    pub movies: BTreeMap<String, MovieRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MovieRecord {
+    /// [`crate::transcode::recipe`]: source bytes, voice and the argv.
+    pub recipe: String,
+    /// The version line of the ffmpeg that encoded it. Recorded, not compared.
     pub ffmpeg: String,
 }
 
@@ -393,6 +404,20 @@ impl IdentityDir {
 
     pub(crate) fn set_transcode(&mut self, record: TranscodeRecord) -> Result<()> {
         self.manifest.transcode = Some(record);
+        self.save()
+    }
+
+    /// Sets or clears `movie`'s record (after [`Self::set_transcode`]).
+    pub(crate) fn set_movie(&mut self, movie: &str, record: Option<MovieRecord>) -> Result<()> {
+        let t = self
+            .manifest
+            .transcode
+            .as_mut()
+            .expect("set_transcode first");
+        match record {
+            Some(r) => t.movies.insert(movie.to_owned(), r),
+            None => t.movies.remove(movie),
+        };
         self.save()
     }
 

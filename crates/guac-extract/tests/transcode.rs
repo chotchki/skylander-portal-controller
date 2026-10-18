@@ -22,12 +22,18 @@ const DECODERS: &str = "Decoders:\n ------\n V....D binkvideo  x\n A....D binkau
 
 /// `<dir>/ffmpeg`, logging every transcode's input path to `<dir>/runs.log`.
 fn fake_ffmpeg(dir: &Path, encoders: &str) -> PathBuf {
+    fake_ffmpeg_v(dir, encoders, "fake-1")
+}
+
+/// [`fake_ffmpeg`] reporting `version`; each output holds the input's bytes,
+/// the output's name and the `-map` before it.
+fn fake_ffmpeg_v(dir: &Path, encoders: &str, version: &str) -> PathBuf {
     fs::create_dir_all(dir).unwrap();
     let log = dir.join("runs.log");
     let script = format!(
         r#"#!/bin/sh
 case "$1" in
-  -version) echo "ffmpeg version fake-1"; exit 0;;
+  -version) echo "ffmpeg version {version}"; exit 0;;
   -hide_banner)
     case "$2" in
       -encoders) printf '{encoders}'; exit 0;;
@@ -41,9 +47,10 @@ for a in "$@"; do
 done
 echo "$in" >> '{log}'
 case "$in" in *broken*) echo "broken.mov: Invalid data found when processing input" >&2; exit 1;; esac
-prev=''
+prev=''; map=''
 for a in "$@"; do
-  case "$a" in file:*) if [ "$prev" != "-i" ]; then {{ cat "$in"; echo " -> ${{a##*/}}"; }} > "${{a#file:}}"; fi;; esac
+  if [ "$prev" = "-map" ]; then case "$a" in 0:v:0|0:a:0) map='';; *) map=" $a";; esac; fi
+  case "$a" in file:*) if [ "$prev" != "-i" ]; then {{ cat "$in"; echo " -> ${{a##*/}}$map"; }} > "${{a#file:}}"; fi;; esac
   prev="$a"
 done
 printf 'frame=10\nout_time_us=1000000\nspeed=2.0x\nprogress=continue\n'
@@ -52,6 +59,7 @@ printf 'frame=20\nout_time_us=2000000\nspeed=2.5x\nprogress=end\n'
         encoders = encoders.replace('\n', "\\n"),
         DECODERS = DECODERS.replace('\n', "\\n"),
         log = log.display(),
+        version = version,
     );
     let p = dir.join("ffmpeg");
     fs::write(&p, script).unwrap();
@@ -103,18 +111,26 @@ fn known_for(dump: &Path) -> Vec<KnownDump> {
 
 /// Toy type → movie, every intro the movie's only track.
 fn table(dir: &IdentityDir, intros: &[(u32, &str)]) -> CharacterTable {
+    let with: Vec<_> = intros
+        .iter()
+        .map(|&(t, m)| (t, m, VoiceTrack::Only))
+        .collect();
+    table_voiced(dir, &with)
+}
+
+fn table_voiced(dir: &IdentityDir, intros: &[(u32, &str, VoiceTrack)]) -> CharacterTable {
     CharacterTable {
         identity: dir.manifest().identity.clone(),
         characters: intros
             .iter()
-            .map(|&(toy, movie)| {
+            .map(|&(toy, movie, voice)| {
                 let c = Character {
                     archives: vec![],
                     vo_name: None,
                     intro: Some(Intro {
                         movie: movie.into(),
                         source: IntroSource::Disc,
-                        voice: VoiceTrack::Only,
+                        voice,
                     }),
                 };
                 (toy, c)
@@ -195,7 +211,14 @@ fn transcodes_dedupes_and_resumes() {
     );
     let rec = m.transcode.as_ref().unwrap();
     assert_eq!(rec.target, TARGET.tag());
-    assert_eq!(rec.ffmpeg, "ffmpeg version fake-1");
+    assert_eq!(rec.movies.keys().collect::<Vec<_>>(), ["a", "b", "c"]);
+    assert_eq!(rec.movies["a"], rec.movies["b"]);
+    assert_ne!(rec.movies["a"].recipe, rec.movies["c"].recipe);
+    assert!(
+        rec.movies
+            .values()
+            .all(|r| r.ffmpeg == "ffmpeg version fake-1")
+    );
 
     // Per movie: Started, then progress for a run, then Done.
     let steps = |movie: &str| -> Vec<Step> {
@@ -292,6 +315,88 @@ fn another_target_redoes_a_complete_extract() {
         opened.dir.manifest().transcode.as_ref().unwrap().target,
         TARGET.tag()
     );
+}
+
+#[test]
+fn a_changed_voice_reruns_its_movie_and_the_record_names_the_encoder() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dump = make_dump(tmp.path(), &[("a", b"movie-a"), ("c", b"movie-c")]);
+    let known = known_for(&dump);
+    let root = ExtractRoot::checked(tmp.path().join("out/extract")).unwrap();
+    let old = fake_ffmpeg_v(&tmp.path().join("old"), ENCODERS, "old-1");
+    let new = fake_ffmpeg_v(&tmp.path().join("new"), ENCODERS, "new-2");
+
+    let mut opened = open(&dump, &root, &known, &|_| {}).unwrap();
+    let t = table(&opened.dir, &[(1, "a"), (2, "c")]);
+    let (s, _) = run(&mut opened.dir, &t, &checked(old.clone()));
+    assert_eq!(s.transcoded, 2);
+    let id = opened.dir.path().to_path_buf();
+    drop(opened);
+
+    // Reopened (Resume) under another ffmpeg, `a`'s voice now picked with a
+    // bed: `a` reruns with the new map, `c` resumes and keeps old-1.
+    let mut opened = open(&dump, &root, &known, &|_| {}).unwrap();
+    assert_eq!(opened.state, DirState::Resume);
+    let mixed = VoiceTrack::Stream {
+        index: 3,
+        bed: Some(13),
+    };
+    let t = table_voiced(&opened.dir, &[(1, "a", mixed), (2, "c", VoiceTrack::Only)]);
+    let (s, events) = run(&mut opened.dir, &t, &checked(new.clone()));
+    assert_eq!(
+        s,
+        Summary {
+            transcoded: 1,
+            resumed: 1,
+            linked: 0
+        }
+    );
+    assert_eq!(runs(&new), ["a.mov"]);
+    let done_a = events
+        .iter()
+        .find(|e| e.movie == "a" && matches!(e.step, Step::Done(_)));
+    assert_eq!(done_a.unwrap().step, Step::Done(Done::Transcoded));
+    assert_eq!(
+        fs::read_to_string(id.join("audio/intro/a.mp3")).unwrap(),
+        "movie-a -> a.mp3.partial [voice]\n"
+    );
+    let movies = &opened.dir.manifest().transcode.as_ref().unwrap().movies;
+    assert_eq!(movies["a"].ffmpeg, "ffmpeg version new-2");
+    assert_eq!(movies["c"].ffmpeg, "ffmpeg version old-1");
+    assert_eq!(
+        movies["a"].recipe,
+        transcode::recipe(
+            &opened
+                .dir
+                .manifest()
+                .sources
+                .iter()
+                .find(|f| f.path == "movies/a.mov")
+                .unwrap()
+                .sha256,
+            mixed,
+            &TARGET
+        )
+    );
+
+    // Same voice again: nothing reruns.
+    let (s, _) = run(&mut opened.dir, &t, &checked(new.clone()));
+    assert_eq!(s.resumed, 2);
+    assert_eq!(runs(&new), ["a.mov"]);
+
+    // A manifest from before the per-movie record (no `movies`) reads, and
+    // its intros are redone rather than trusted.
+    drop(opened);
+    let mpath = id.join("manifest.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&mpath).unwrap()).unwrap();
+    let rec = m["transcode"].as_object_mut().unwrap();
+    rec.remove("movies");
+    rec.insert("ffmpeg".into(), "ffmpeg version 9.0.2".into());
+    fs::write(&mpath, serde_json::to_string(&m).unwrap()).unwrap();
+    let mut opened = open(&dump, &root, &known, &|_| {}).unwrap();
+    let (s, _) = run(&mut opened.dir, &t, &checked(new.clone()));
+    assert_eq!(s.transcoded, 2);
 }
 
 #[test]

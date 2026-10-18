@@ -23,7 +23,9 @@ pub mod root;
 pub mod transcode;
 
 pub use error::{ExtractError, Result};
-pub use extract::{DirState, IdentityDir, Manifest, Opened, Stale, TranscodeRecord, open};
+pub use extract::{
+    DirState, IdentityDir, Manifest, MovieRecord, Opened, Stale, TranscodeRecord, open,
+};
 pub use guac_ir::IR_VERSION;
 pub use root::{ExtractRoot, RootMode};
 
