@@ -93,8 +93,10 @@ pub enum TvScreen {
     NoGiants,
     /// A pick found Giants: what was found, then the join code.
     Found,
-    /// Serving: the join code (AA.8 adds the portal cards).
+    /// Serving, no game picked: the join code.
     Join,
+    /// A game is picked: a card per figure on the portal, the join code small.
+    Portal { game: String },
     /// The port is taken: the controller or another guacamole is serving.
     AlreadyRunning,
     /// Startup failed, or (unreachable under Native) the emulator crashed.
@@ -123,6 +125,10 @@ pub fn screen_for(status: &LauncherStatus, setup: &SetupView) -> TvScreen {
         LauncherScreen::Main if !status.server_ready => TvScreen::Starting,
         LauncherScreen::Main if setup.needs_setup => TvScreen::Setup,
         LauncherScreen::Main if !setup.giants_found => TvScreen::NoGiants,
+        // A pick's Found list never hides a game a phone already started.
+        LauncherScreen::Main if status.current_game.is_some() => TvScreen::Portal {
+            game: status.current_game.clone().unwrap_or_default(),
+        },
         LauncherScreen::Main if setup.show_found => TvScreen::Found,
         LauncherScreen::Main => TvScreen::Join,
     }
@@ -173,6 +179,52 @@ mod tests {
     #[test]
     fn main_once_serving_shows_the_join_code() {
         assert_eq!(screen_for(&ready(), &set_up()), TvScreen::Join);
+    }
+
+    fn playing(game: &str) -> LauncherStatus {
+        LauncherStatus {
+            current_game: Some(game.into()),
+            ..ready()
+        }
+    }
+
+    #[test]
+    fn a_picked_game_shows_the_portal() {
+        let portal = TvScreen::Portal {
+            game: "Skylanders: Giants".into(),
+        };
+        assert_eq!(
+            screen_for(&playing("Skylanders: Giants"), &set_up()),
+            portal
+        );
+        // Over a pick's Found list too.
+        let found = SetupView {
+            show_found: true,
+            ..set_up()
+        };
+        assert_eq!(screen_for(&playing("Skylanders: Giants"), &found), portal);
+        assert!(!portal.escape_quits());
+        // A quit clears the game: back to the join code.
+        assert_eq!(screen_for(&ready(), &set_up()), TvScreen::Join);
+    }
+
+    #[test]
+    fn the_farewell_and_errors_beat_the_portal() {
+        let farewell = LauncherStatus {
+            screen: LauncherScreen::Farewell,
+            ..playing("Skylanders: Giants")
+        };
+        assert_eq!(screen_for(&farewell, &set_up()), TvScreen::Farewell);
+        let crashed = LauncherStatus {
+            screen: LauncherScreen::Crashed {
+                message: "gone".into(),
+            },
+            ..playing("Skylanders: Giants")
+        };
+        assert!(matches!(
+            screen_for(&crashed, &set_up()),
+            TvScreen::ServerError { .. }
+        ));
     }
 
     #[test]

@@ -12,6 +12,8 @@ mod cli;
 mod driver;
 mod picker;
 mod screen;
+#[cfg(feature = "dev-tools")]
+mod shots;
 mod tv;
 
 use std::path::{Path, PathBuf};
@@ -37,7 +39,7 @@ use crate::cli::Command;
 use crate::driver::{NativePortalDriver, PortalChange, portal_channel};
 use crate::picker::{DataRoot, Picker};
 use crate::screen::SetupView;
-use crate::tv::{FAREWELL_BEAT, ServerBridge, ServerLink, Setup, Tv};
+use crate::tv::{FAREWELL_BEAT, Framing, ServerBridge, ServerLink, Setup, Tv};
 
 fn main() -> Result<()> {
     let command = match cli::parse(std::env::args_os().skip(1)) {
@@ -157,22 +159,25 @@ fn run_tv(
 ) -> Result<()> {
     exit_after_farewell(link.status.clone());
 
-    let exit = App::new()
-        .add_plugins(
-            DefaultPlugins
-                .set(WindowPlugin {
-                    primary_window: Some(window(mode)),
-                    ..default()
-                })
-                // `logging::init` owns the global subscriber.
-                .disable::<LogPlugin>(),
-        )
-        .insert_resource(link)
-        .insert_resource(PortalFeed(portal))
-        .insert_resource(Setup(setup_view))
-        .insert_resource(DataRoot(root))
-        .add_plugins((ServerBridge, Tv, Picker))
-        .run();
+    let mut app = App::new();
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(window(mode)),
+                ..default()
+            })
+            // `logging::init` owns the global subscriber.
+            .disable::<LogPlugin>(),
+    )
+    .insert_resource(link)
+    .insert_resource(PortalFeed(portal))
+    .insert_resource(Setup(setup_view))
+    .insert_resource(Framing(mode))
+    .insert_resource(DataRoot(root))
+    .add_plugins((ServerBridge, Tv, Picker));
+    #[cfg(feature = "dev-tools")]
+    app.add_plugins(shots::Shots);
+    let exit = app.run();
     info!(?exit, "guacamole exited");
     drop(log_guard);
     match exit {
