@@ -403,15 +403,25 @@ async fn lock(server: &TestServer, sid: u64, pid: &str) {
     assert!(resp.status().is_success(), "lock: {}", resp.status());
 }
 
-/// Re-unlocks Alice the way a PIN does (the unlock offers the saved
-/// layout), waits for "resume last setup?" and taps RESUME.
-async fn resume(server: &TestServer, phone: &Phone, pid: &str) -> Instant {
+/// Unlocks `pid` on the phone the way a PIN does (the unlock offers the
+/// saved layout), waits for "resume last setup?" and taps RESUME. Returns
+/// when it tapped and the figures the prompt listed, lowercased.
+async fn resume(server: &TestServer, phone: &Phone, pid: &str) -> (Instant, Vec<String>) {
     unlock_session(&server.url, pid).await.unwrap();
     phone
         .wait_for(Locator::Css(".resume-panel"), Duration::from_secs(10))
         .await
         .expect("the resume prompt");
     tokio::time::sleep(Duration::from_millis(300)).await;
+    let mut listed = Vec::new();
+    for name in phone
+        .client
+        .find_all(Locator::Css(".resume-fig-name"))
+        .await
+        .expect("the prompt's figures")
+    {
+        listed.push(name.text().await.unwrap().to_lowercase());
+    }
     phone
         .client
         .find(Locator::Css(".resume-btn-primary"))
@@ -420,7 +430,17 @@ async fn resume(server: &TestServer, phone: &Phone, pid: &str) -> Instant {
         .click()
         .await
         .expect("tap RESUME");
-    Instant::now()
+    (Instant::now(), listed)
+}
+
+/// `pid`'s saved layout, through the test hook: 8 slots, owners included.
+async fn saved_layout(server: &TestServer, pid: &str) -> Vec<Value> {
+    reqwest::get(format!("{}/api/_test/layout/{pid}", server.url))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap()
 }
 
 /// Every event the server broadcasts, read by a WS session of the test's
@@ -450,9 +470,41 @@ impl Events {
         Self(seen)
     }
 
+    /// The watcher's own session id, from its Welcome.
+    async fn session_id(&self) -> u64 {
+        let until = Instant::now() + Duration::from_secs(5);
+        loop {
+            let welcome = self
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|e| e["kind"] == "welcome")
+                .and_then(|e| e["session_id"].as_u64());
+            if let Some(id) = welcome {
+                return id;
+            }
+            assert!(Instant::now() < until, "the watcher got no Welcome");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
     /// Where the next event will land.
     fn mark(&self) -> usize {
         self.0.lock().unwrap().len()
+    }
+
+    /// Every slot (1-based) a `slot_changed` since `mark` touched, whoever's.
+    fn changed_since(&self, mark: usize) -> Vec<u64> {
+        let seen = self.0.lock().unwrap();
+        let mut slots: Vec<u64> = seen[mark.min(seen.len())..]
+            .iter()
+            .filter(|e| e["kind"] == "slot_changed")
+            .map(|e| e["slot"].as_u64().unwrap() + 1)
+            .collect();
+        slots.sort_unstable();
+        slots.dedup();
+        slots
     }
 
     /// Since `mark`, the slots (1-based) whose load the server ran for
@@ -529,14 +581,16 @@ fn card_owners(snap: &Value) -> Vec<(u64, String, String)> {
 /// portal for the same profile plays no intro and changes no card; a saved
 /// figure that's gone from the portal is placed and plays its intro. Each
 /// RESUME's loads are checked at the server first, so a resume that sent
-/// nothing can't pass for one that replayed nothing.
+/// nothing can't pass for one that replayed nothing. AB.22: a second
+/// profile's RESUME of the same whole-portal layout re-places only its own
+/// figure, and Alice's keep her pips and play nothing.
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver and ffmpeg; E2E_APP=guacamole"]
 async fn a_resumed_layout_already_on_the_portal_plays_no_intro() {
     if guacamole_only() {
         return;
     }
-    let (server, _fixture) = spawn(&[ERUPTOR, SPYRO]);
+    let (server, _fixture) = spawn(&[ERUPTOR, SPYRO, BASH]);
     let pid = inject_profile(&server.url, "Alice", "1234", "#e8423f")
         .await
         .unwrap();
@@ -546,7 +600,7 @@ async fn a_resumed_layout_already_on_the_portal_plays_no_intro() {
         .unwrap();
     let sid = session_id(&phone).await;
     set_session_profile(&server.url, sid, &pid).await.unwrap();
-    pick_giants(&server, &phone, 2).await;
+    pick_giants(&server, &phone, 3).await;
 
     // Eruptor and Spyro placed and their intros over: the saved layout.
     for (slot, name, movie) in [(1, "Eruptor", "eruptor"), (2, "Spyro", "spyro")] {
@@ -569,7 +623,8 @@ async fn a_resumed_layout_already_on_the_portal_plays_no_intro() {
     // Resumed while both are still on the portal: nothing replays.
     lock(&server, sid, &pid).await;
     let mark = events.mark();
-    let tapped = resume(&server, &phone, &pid).await;
+    let (tapped, listed) = resume(&server, &phone, &pid).await;
+    assert_eq!(listed, ["eruptor", "spyro"]);
     let landed = events.wait_loads(mark, &[1, 2], &pid).await;
     eprintln!(
         "RESUME's 2 loads ran at the server {} ms after the tap",
@@ -598,7 +653,8 @@ async fn a_resumed_layout_already_on_the_portal_plays_no_intro() {
         .await
         .expect("Spyro's card goes");
     let mark = events.mark();
-    resume(&server, &phone, &pid).await;
+    let (_, listed) = resume(&server, &phone, &pid).await;
+    assert_eq!(listed, ["eruptor", "spyro"]);
     // Eruptor is re-sent too, so his skip runs again beside Spyro's place.
     events.wait_loads(mark, &[1, 2], &pid).await;
     let (snap, _) = wait_playing(&server, "spyro", INTRO_WITHIN).await;
@@ -614,5 +670,83 @@ async fn a_resumed_layout_already_on_the_portal_plays_no_intro() {
     }
     let after = tv(&server.url).await.unwrap();
     assert_eq!(card_owners(&after), cards, "{after}");
+    skip_intro(&server.url).await.unwrap();
+    wait_for_tv(&server.url, TV_WITHIN, |s| s["intro"].is_null())
+        .await
+        .expect("the skip ends Spyro's");
+
+    // AB.22: Bob places Bash beside Alice's two, so his saved layout is the
+    // whole portal, her figures as hers. He places from the watcher's
+    // session (the server admits two, the watcher and the phone hold both)
+    // and resumes on the phone after Alice hands it over.
+    let bob = inject_profile(&server.url, "Bob", "2222", "#3f8ee8")
+        .await
+        .unwrap();
+    let bob_sid = events.session_id().await;
+    set_session_profile(&server.url, bob_sid, &bob)
+        .await
+        .unwrap();
+    load(&server, bob_sid, 3, "Bash").await;
+    wait_playing(&server, "bash", INTRO_WITHIN).await;
+    skip_intro(&server.url).await.unwrap();
+    wait_for_tv(&server.url, TV_WITHIN, |s| s["intro"].is_null())
+        .await
+        .expect("the skip ends it");
+    let saved = saved_layout(&server, &bob).await;
+    let owners: Vec<&str> = saved[..3]
+        .iter()
+        .map(|s| s["placed_by"].as_str().unwrap_or(""))
+        .collect();
+    assert_eq!(
+        owners,
+        [pid.as_str(), pid.as_str(), bob.as_str()],
+        "{saved:?}"
+    );
+
+    // Bash taken off while Bob is locked, so his saved layout keeps him;
+    // Alice locks and Bob unlocks on her phone. RESUME lists and sends Bash
+    // alone: Alice's Eruptor and Spyro aren't re-sent, so they keep her pips
+    // and play no intro, and Bash comes back as Bob's with his.
+    lock(&server, bob_sid, &bob).await;
+    clear(&server, sid, 3).await;
+    wait_for_tv(&server.url, TV_WITHIN, |s| card_slots(s) == [1, 2])
+        .await
+        .expect("Bash's card goes");
+    lock(&server, sid, &pid).await;
+    let mark = events.mark();
+    let (tapped, listed) = resume(&server, &phone, &bob).await;
+    assert_eq!(listed, ["bash"], "Bob's prompt lists Alice's figures");
+    let landed = events.wait_loads(mark, &[3], &bob).await;
+    eprintln!(
+        "Bob's RESUME: 1 load ran at the server {} ms after the tap",
+        (landed - tapped).as_millis()
+    );
+    let (snap, _) = wait_playing(&server, "bash", INTRO_WITHIN).await;
+    assert_eq!(intro_slots(&snap), [3], "{snap}");
+    let mut polls = 0;
+    let until = Instant::now() + TV_WITHIN;
+    while Instant::now() < until {
+        let snap = tv(&server.url).await.unwrap();
+        assert!(
+            !intro_slots(&snap).iter().any(|&s| s < 3),
+            "Alice's replayed: {snap}"
+        );
+        assert_eq!(card_owners(&snap)[..2], cards[..], "Alice's moved: {snap}");
+        polls += 1;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(
+        events.changed_since(mark),
+        [3],
+        "Bob's RESUME touched another slot"
+    );
+    let mut want = cards.clone();
+    want.push((3, figure_id(&server, sid, "Bash").await, bob.clone()));
+    let after = tv(&server.url).await.unwrap();
+    assert_eq!(card_owners(&after), want, "{after}");
+    eprintln!(
+        "Alice's two kept their pips and played nothing over {polls} TV polls; \
+         Bash's intro played"
+    );
     phone.close().await.unwrap();
 }

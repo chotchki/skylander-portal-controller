@@ -720,6 +720,19 @@ async fn load_slot(
         if matches!(p[slot.as_usize()], SlotState::Loading { .. }) {
             return (StatusCode::TOO_MANY_REQUESTS, "slot busy").into_response();
         }
+        if ServingApp::of(state.driver_kind)
+            .refuses_load_over(&p[slot.as_usize()], placed_by.as_deref())
+        {
+            info!(
+                slot = n,
+                "load refused: the slot holds another profile's figure"
+            );
+            return (
+                StatusCode::CONFLICT,
+                format!("slot {n} holds another player's figure"),
+            )
+                .into_response();
+        }
         p[slot.as_usize()] = loading.clone();
     }
     let _ = state.events.send(skylander_core::Event::SlotChanged {
@@ -926,6 +939,39 @@ impl ServingApp {
         match kind {
             DriverKind::Native => Self::Guacamole,
             DriverKind::Uia | DriverKind::Ipc | DriverKind::Mock => Self::Product,
+        }
+    }
+
+    /// What "resume last setup?" offers `resumer` from their saved layout, which
+    /// is the whole portal with every slot's owner. The product offers all of it
+    /// (its drivers reload each slot from the resumer's working copy, SPEC Q105
+    /// left co-op resume open); guacamole only the slots `resumer` placed, so a
+    /// resume never re-places another kid's figure as theirs (openspec AB.22).
+    fn resumable(self, saved: [SlotState; SLOT_COUNT], resumer: &str) -> [SlotState; SLOT_COUNT] {
+        match self {
+            Self::Product => saved,
+            Self::Guacamole => saved.map(|s| match s {
+                SlotState::Loaded {
+                    placed_by: Some(ref owner),
+                    ..
+                } if owner == resumer => s,
+                _ => SlotState::Empty,
+            }),
+        }
+    }
+
+    /// Whether a load by `loader` onto a slot holding `held` is refused.
+    /// guacamole refuses one onto another profile's figure (take it off first):
+    /// the phone's PLACE only targets an empty slot, so this is a RESUME whose
+    /// slot another kid filled after the prompt (AB.22). The product loads over
+    /// anything.
+    fn refuses_load_over(self, held: &SlotState, loader: Option<&str>) -> bool {
+        match self {
+            Self::Product => false,
+            Self::Guacamole => matches!(
+                held,
+                SlotState::Loaded { placed_by: Some(owner), .. } if Some(owner.as_str()) != loader
+            ),
         }
     }
 }
@@ -2192,13 +2238,23 @@ async fn build_resume_prompt(
             return None;
         }
     };
-    let slots: [SlotState; SLOT_COUNT] = match serde_json::from_str(&json) {
+    let saved: [SlotState; SLOT_COUNT] = match serde_json::from_str(&json) {
         Ok(a) => a,
         Err(e) => {
             warn!("parse last_portal_layout_json for {profile_id}: {e}");
             return None;
         }
     };
+    let held = |slots: &[SlotState]| slots.iter().filter(|s| !s.is_empty()).count();
+    let slots = ServingApp::of(state.driver_kind).resumable(saved.clone(), profile_id);
+    if held(&slots) < held(&saved) {
+        info!(
+            profile_id,
+            offered = held(&slots),
+            saved = held(&saved),
+            "resume offers only the slots this profile placed"
+        );
+    }
     if slots.iter().all(|s| matches!(s, SlotState::Empty)) {
         return None;
     }
@@ -2783,6 +2839,82 @@ mod serving_app_tests {
             serde_json::to_value(ServingApp::Guacamole).unwrap(),
             "guacamole"
         );
+    }
+
+    fn loaded(id: &str, owner: Option<&str>) -> SlotState {
+        SlotState::Loaded {
+            figure_id: Some(FigureId::new(id)),
+            display_name: id.into(),
+            placed_by: owner.map(Into::into),
+        }
+    }
+
+    /// A saved co-op layout: Alice's figure, Bob's, an ownerless one, one in
+    /// flight for Alice and an empty slot.
+    fn co_op_layout() -> [SlotState; SLOT_COUNT] {
+        let mut saved: [SlotState; SLOT_COUNT] = std::array::from_fn(|_| SlotState::Empty);
+        saved[0] = loaded("eruptor", Some("alice"));
+        saved[1] = loaded("spyro", Some("bob"));
+        saved[2] = loaded("bash", None);
+        saved[3] = SlotState::Loading {
+            figure_id: Some(FigureId::new("tree-rex")),
+            placed_by: Some("alice".into()),
+        };
+        saved
+    }
+
+    /// openspec AB.22: guacamole's resume offers only the resumer's own
+    /// figures; the product's offers the layout as saved.
+    #[test]
+    fn guacamole_resumes_only_the_resumers_own_figures_the_product_all() {
+        let saved = co_op_layout();
+        assert_eq!(ServingApp::Product.resumable(saved.clone(), "alice"), saved);
+
+        let alice = ServingApp::Guacamole.resumable(saved.clone(), "alice");
+        let mut want: [SlotState; SLOT_COUNT] = std::array::from_fn(|_| SlotState::Empty);
+        want[0] = saved[0].clone();
+        assert_eq!(alice, want, "Bob's, the ownerless and the in-flight go");
+
+        let bob = ServingApp::Guacamole.resumable(saved.clone(), "bob");
+        let mut want: [SlotState; SLOT_COUNT] = std::array::from_fn(|_| SlotState::Empty);
+        want[1] = saved[1].clone();
+        assert_eq!(bob, want);
+
+        let carol = ServingApp::Guacamole.resumable(saved, "carol");
+        assert!(carol.iter().all(SlotState::is_empty), "{carol:?}");
+    }
+
+    /// openspec AB.22: guacamole won't load over another profile's figure, so
+    /// a resume can't claim one placed after its prompt; the product loads
+    /// over anything.
+    #[test]
+    fn guacamole_refuses_a_load_over_another_profiles_figure_the_product_never() {
+        let alices = loaded("eruptor", Some("alice"));
+        let ownerless = loaded("eruptor", None);
+        for (held, loader, refused) in [
+            (&alices, Some("bob"), true),
+            (&alices, None, true),
+            (&alices, Some("alice"), false),
+            (&ownerless, Some("bob"), false),
+            (&SlotState::Empty, Some("bob"), false),
+            (
+                &SlotState::Error {
+                    message: "x".into(),
+                },
+                Some("bob"),
+                false,
+            ),
+        ] {
+            assert_eq!(
+                ServingApp::Guacamole.refuses_load_over(held, loader),
+                refused,
+                "{held:?} by {loader:?}"
+            );
+            assert!(
+                !ServingApp::Product.refuses_load_over(held, loader),
+                "{held:?} by {loader:?}"
+            );
+        }
     }
 }
 

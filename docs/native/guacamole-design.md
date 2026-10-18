@@ -350,6 +350,7 @@ figure file, keyed on the driver kind or on the hook being absent, never on `cfg
 | `BootDirect` | IPC spawn, else a UIA spawn on Windows | returns before any spawn arm, on any OS (the job carries the driver kind) |
 | window-mode and 2× toggles, RPCS3 settings | rewrite the settings file; open RPCS3's settings (409 for Mock) | 409 |
 | quit | kills RPCS3 under a cover | `DriverJob::ResetPortal` empties the driver's slots (the TV gets `Cleared`) and keeps the saved layout for "resume last setup?" |
+| "resume last setup?" offer; a load onto a filled slot | the whole saved layout; loads over anything | only the slots the resumer placed; 409 on a slot another profile's figure holds (AB.22) |
 
 `BootDirect` was the dangerous one: its non-IPC arm was gated on `cfg(windows)`, so anything without an
 IPC socket would have launched RPCS3 on the HTPC. The unit test hands it a driver that advertises an IPC
@@ -371,7 +372,14 @@ when no profile is unlocked). `NativePortalDriver`
 which costs a stale card, never a hung load. Placing the figure a slot already holds for the same owner
 sends nothing (AB.21: RESUME on "resume last setup?" re-sends the whole layout, and the TV replayed the
 intro of every figure still on the portal); a slot whose last change was dropped isn't skipped, so placing
-it again repairs the card. The RPCS3 drivers still reload. A `PreUpdate` system
+it again repairs the card. The RPCS3 drivers still reload. The saved layout is the whole portal with each
+slot's owner, saved for every unlocked profile, so a second kid's RESUME used to re-send the first kid's
+figures as theirs: the pip moved and the intro replayed. AB.22 keeps that in the server, gated on the
+driver kind (`ServingApp` in [`http.rs`](../../crates/guac-server/src/http.rs)): guacamole's offer lists
+only the resumer's own slots, and its load answers 409 on a slot another profile's figure holds, which
+covers a slot another kid filled between the prompt and the tap (the phone's PLACE only targets an empty
+slot). The product keeps both as they were: its resume reloads every slot from the resumer's working copy,
+and SPEC Q105 leaves co-op resume open there. A `PreUpdate` system
 ([`crates/guacamole/src/cards.rs`](../../crates/guacamole/src/cards.rs)) drains it into `PortalCards`
 through a pure reducer, and the TV rebuilds its cards from that. Failure injection works against either
 app: the mock and the native driver both implement `LoadInjector` (`skylander-rpcs3-control`'s `inject`),

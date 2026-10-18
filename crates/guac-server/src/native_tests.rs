@@ -197,10 +197,15 @@ async fn native() -> Native {
 impl Native {
     /// A registered session with a fresh profile unlocked; returns both ids.
     async fn unlocked_session(&self) -> (SessionId, String) {
+        self.unlocked_session_as("Kaylee", "#e63946").await
+    }
+
+    /// [`Native::unlocked_session`] for a profile named `name` (PIN 1234).
+    async fn unlocked_session_as(&self, name: &str, color: &str) -> (SessionId, String) {
         let profile_id = self
             .state
             .profiles
-            .create("Kaylee", "1234", "#e63946")
+            .create(name, "1234", color)
             .await
             .unwrap();
         let RegistrationOutcome::Admitted(sid) = self.state.sessions.register().await else {
@@ -266,6 +271,54 @@ impl Native {
             );
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
+    }
+
+    /// Waits for `profile_id`'s saved layout to hold every figure in `figures`.
+    async fn wait_saved(&self, profile_id: &str, figures: &[&str]) -> [SlotState; SLOT_COUNT] {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let json = self
+                .state
+                .profiles
+                .load_portal_layout(profile_id)
+                .await
+                .unwrap();
+            if let Some(json) = json
+                && figures.iter().all(|f| json.contains(f))
+            {
+                return serde_json::from_str(&json).unwrap();
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{profile_id}'s layout never saved {figures:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    /// Unlocks `profile_id` on `session` with its PIN, as the phone does, and
+    /// returns what "resume last setup?" offers it, if anything.
+    async fn resume_offer(
+        &self,
+        session: SessionId,
+        profile_id: &str,
+    ) -> Option<[SlotState; SLOT_COUNT]> {
+        let mut events = self.state.events.subscribe();
+        let uri = format!("/api/profiles/{profile_id}/unlock");
+        let status = self
+            .send("POST", &uri, r#"{"pin":"1234"}"#, Some(session))
+            .await;
+        assert_eq!(status, StatusCode::OK, "unlock {profile_id}");
+        // The handler broadcasts the prompt before it answers.
+        let mut offer = None;
+        while let Ok(event) = events.try_recv() {
+            if let Event::ResumePrompt { session_id, slots } = event
+                && session_id == session.0
+            {
+                offer = Some(slots);
+            }
+        }
+        offer
     }
 
     /// Every file under the root except the database, with its bytes.
@@ -569,6 +622,106 @@ async fn quit_empties_the_drivers_portal_and_keeps_the_saved_layout() {
             .unwrap(),
         saved
     );
+}
+
+fn owner(slot: &SlotState) -> Option<&str> {
+    match slot {
+        SlotState::Loaded { placed_by, .. } => placed_by.as_deref(),
+        _ => None,
+    }
+}
+
+/// openspec AB.22: the saved layout is the whole portal with each slot's
+/// owner, saved for every unlocked profile, and "resume last setup?" offers
+/// each profile only the figures it placed.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_resume_offers_only_the_resumers_own_figures() {
+    let n = native().await;
+    let (alice_sid, alice) = n.unlocked_session_as("Alice", "#e8423f").await;
+    let (bob_sid, bob) = n.unlocked_session_as("Bob", "#3f8ee8").await;
+
+    // Alice's Eruptor lands in Bob's layout too, and offers Bob nothing.
+    let eruptor = format!(r#"{{"figure_id":"{ERUPTOR}"}}"#);
+    let status = n
+        .send("POST", "/api/portal/slot/1/load", &eruptor, Some(alice_sid))
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    n.wait_loaded(0, ERUPTOR).await;
+    let saved = n.wait_saved(&bob, &[ERUPTOR]).await;
+    assert_eq!(owner(&saved[0]), Some(alice.as_str()));
+    assert_eq!(n.resume_offer(bob_sid, &bob).await, None);
+
+    // Bob's Spyro: both layouts hold both figures, each with its owner.
+    let spyro = format!(r#"{{"figure_id":"{SPYRO}"}}"#);
+    let status = n
+        .send("POST", "/api/portal/slot/2/load", &spyro, Some(bob_sid))
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    n.wait_loaded(1, SPYRO).await;
+    for profile in [&alice, &bob] {
+        let saved = n.wait_saved(profile, &[ERUPTOR, SPYRO]).await;
+        assert_eq!(owner(&saved[0]), Some(alice.as_str()), "{profile}'s layout");
+        assert_eq!(owner(&saved[1]), Some(bob.as_str()), "{profile}'s layout");
+    }
+
+    // Each resume offers only that profile's own figure.
+    let saved = n.wait_saved(&bob, &[ERUPTOR, SPYRO]).await;
+    for (sid, profile, slot) in [(bob_sid, &bob, 1), (alice_sid, &alice, 0)] {
+        let offer = n
+            .resume_offer(sid, profile)
+            .await
+            .unwrap_or_else(|| panic!("{profile} was offered nothing"));
+        for (i, s) in offer.iter().enumerate() {
+            if i == slot {
+                assert_eq!(s, &saved[i], "{profile}'s own slot {i}");
+            } else {
+                assert!(s.is_empty(), "{profile} was offered slot {i}: {s:?}");
+            }
+        }
+    }
+}
+
+/// openspec AB.22: a load can't land on another profile's figure, so a
+/// resume whose slot another kid filled after the prompt claims nothing.
+/// The owner's own load still lands (a swap, or AB.21's same-figure resume).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_load_over_another_profiles_figure_is_refused_and_changes_nothing() {
+    let n = native().await;
+    let (alice_sid, alice) = n.unlocked_session_as("Alice", "#e8423f").await;
+    let (bob_sid, bob) = n.unlocked_session_as("Bob", "#3f8ee8").await;
+    let eruptor = format!(r#"{{"figure_id":"{ERUPTOR}"}}"#);
+    let spyro = format!(r#"{{"figure_id":"{SPYRO}"}}"#);
+    let load = "/api/portal/slot/1/load";
+    assert_eq!(
+        n.send("POST", load, &eruptor, Some(alice_sid)).await,
+        StatusCode::ACCEPTED
+    );
+    n.wait_loaded(0, ERUPTOR).await;
+    let held = n.state.portal.lock().await[0].clone();
+    assert_eq!(owner(&held), Some(alice.as_str()));
+
+    for body in [&eruptor, &spyro] {
+        assert_eq!(
+            n.send("POST", load, body, Some(bob_sid)).await,
+            StatusCode::CONFLICT,
+            "{body}"
+        );
+    }
+    assert_eq!(n.state.portal.lock().await[0], held);
+    assert_eq!(n.driver.places.lock().unwrap().len(), 1);
+
+    assert_eq!(
+        n.send("POST", load, &spyro, Some(alice_sid)).await,
+        StatusCode::ACCEPTED
+    );
+    n.wait_loaded(0, SPYRO).await;
+    let slot2 = "/api/portal/slot/2/load";
+    assert_eq!(
+        n.send("POST", slot2, &eruptor, Some(bob_sid)).await,
+        StatusCode::ACCEPTED
+    );
+    n.wait_loaded(1, ERUPTOR).await;
+    assert_eq!(owner(&n.state.portal.lock().await[1]), Some(bob.as_str()));
 }
 
 #[tokio::test]

@@ -472,7 +472,21 @@ async fn a_swap_puts_the_new_card_in_the_old_ones_place() {
     );
 
     // A Kaos swap on slot 2: Bob owns slot 1, so Alice's slot 2 is the only
-    // one Kaos can take from her.
+    // one Kaos can take from her. Her Spyro comes off slot 1 first, since
+    // guacamole refuses a load over another profile's figure (AB.22).
+    let resp = reqwest::Client::new()
+        .post(format!("{}/api/portal/slot/1/clear", server.url))
+        .header("x-session-id", sid.to_string())
+        .json(&json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202, "{}", resp.text().await.unwrap());
+    wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        card_slots(s).is_empty()
+    })
+    .await
+    .expect("Spyro's card goes");
     let bob_id = inject_profile(&server.url, "Bob", "2222", BOB)
         .await
         .unwrap();
