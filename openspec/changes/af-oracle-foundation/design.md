@@ -1,0 +1,132 @@
+# Design
+
+## Context
+
+What exists, from [`docs/native/guacamole-design.md`](../../../docs/native/guacamole-design.md) (The oracle, RE toolchain) and the research in `~/workspace/guacamole-research/af-oracle/FINDINGS.md` and `savestate-oracle/FINDINGS.md` (outside the repo):
+
+- The product series ([`rpcs3-patches/README.md`](../../../rpcs3-patches/README.md)): P1's AF_UNIX listener in `Skylander.cpp` (`PING`, `STATE`, `STATUS`, `LOAD`, `CLEAR`, `WINDOW`, plus a 1 Hz heartbeat whose `frames=` is RSX's `int_flip_index`), P4's `PE` pushes, P5's `RECONNECT` (re-attaches the portal after a savestate resume), P6's `BUTTON_PRESS` (digital, port 0, held by a wall-clock sleep through a forced-bit mask the pad thread re-applies each host poll). The Rust side is [`crates/rpcs3-control/src/ipc/proto.rs`](../../../crates/rpcs3-control/src/ipc/proto.rs) (a pure codec), `IpcPortalDriver`, `RpcsProcess` (no-GUI launch, kill, lockfile cleanup), the fake-server loopback and the `#[ignore]`d `live_*` suites.
+- Pins. The in-tree `accfecd2d` (+P1-P8, built here 2026-09-20) dies at boot on the M3 Max (Metal "attachmentIndex(220) must be < 8"; upstream `7022a322a` warms the shader interpreter with 2-4 colour attachments against a 1-attachment render pass, fixed upstream by `c938d3e049` + `d08d568d5e`; `Shader Mode: Async Recompiler (multi-threaded)` should dodge it, unconfirmed). The oracle today is a copy of v1.9.19's bundled `09d602fd5` binary with two `@loader_path` rpaths and an ad-hoc signature: Giants no-GUI at 54.9 fps (AC.2).
+- What RPCS3 already does at both pins: a capture starts only when `g_user_asked_for_frame_capture` is set (its sole writers are the game window's shortcut and a main-window menu item), records at the next frame end, writes `.rrc.gz` at the one after and pauses. `g_user_asked_for_screenshot` is consumed at the next flip (`vendor/rpcs3/rpcs3/Emu/RSX/VK/VKPresent.cpp:661`). `Start Paused` sets `m_pause_after_x_flips = 2` and the flip path pauses when it runs out (`RSXThread.cpp:873-877`, `:2715`). A savestate loads with `--savestate` under `--no-gui`, overwrites hdd0 and hdd1 from tars inside it, starts with the magic `RPCS3SAV` and loads only if every subsystem version it lists is accepted (the June Giants state: `09d602fd5` only).
+- Memory: PINE (off by default, `ipc.yml` under RPCS3's config dir, which `--config` doesn't cover; `$TMPDIR/rpcs3.sock`; batched 8- to 64-bit reads and writes, replies up to 450,000 bytes; no pause of its own). The GDB stub listens on 127.0.0.1:2345: about 600 bytes a packet, and its breakpoints silently never fire under the LLVM PPU decoder.
+- Pads: the guest reads through cellPad's `pad_get_data`, which copies `m_buttons_external` and `m_sticks_external`; the pad thread rebuilds those on host time, so anything injected there reaches the guest at the next host poll, not at a flip.
+- RNG: the reflection registry (AC.4) has `igRandomNumber` (8 bytes, under `igObject`) and `igMersenneTwisterRandomNumber` (2,508 bytes: `_mti` at +8, a 624-word `_mt` at +12), an MT19937. Its live instances, seeding and draw sites are unknown; AJ's research lists "the RNG and its seed" as open.
+- Positions: no actor's live transform is located. The savestate pass found each skinned Edge job holding its actor's palette in model space plus a separate local-to-world (12 of 18 NPC palettes solved), and AC.4's layouts read `igActor2`.
+- The product recorder already learned what a resume needs: `Compatible Savestate Mode: true` and `Internet enabled: Disconnected` ([`crates/server/src/rpcs3_config.rs`](../../../crates/server/src/rpcs3_config.rs)).
+
+## Goals / Non-Goals
+
+**Goals:**
+- An oracle that runs with nobody at the Mac: boot, place a figure, drive two pads flip by flip, pause at a flip, observe, capture, save and resume.
+- A drift number per observable, so a later rung knows how long the oracle agrees with itself before comparing Guacamole against it.
+- Tolerance definitions fixed before any Guacamole comparison, calibrated by the measurement and checked against the oracle itself.
+- An oracle anyone can rebuild from the repo, identified by hash.
+
+**Non-Goals:**
+- Determinism. AF measures the drift. A deterministic RPCS3 (guest time off the TSC, fixed thread scheduling) is a deep patch with no upstream path, proposed separately only if the measurement leaves the oracle useless without it and chotchki wants it.
+- P9 (the per-frame state stream), FSTRACE and MEMSNAP: they wait for the struct layouts and the rungs that need them.
+- Comparing Guacamole against the oracle (AG's), and a second player in the divergence runs (a second figure in a scene is AI's); AF proves port 1 reads, not what the game does with it.
+- Windows: the oracle build there, PINE over TCP and the HTPC's divergence runs are the bring-up's.
+- Any change to the product binary, P1-P8, `apply.sh`, the patched-build CI lane or the pin's gitlink.
+- Button pressure below full, motion sensors and the PS button.
+
+## Decisions
+
+**1. The oracle is a source build, reproducible from the repo.**
+No pin option avoids a build: the `09d602fd5` copy is a CI binary, so the O-series can't go onto it. The oracle is an upstream commit, the product series as the repo carries it for that commit, then the O-series, built on the Mac by [`.ci-local/build-mac.sh`](../../../.ci-local/build-mac.sh) pointed at a checkout outside `vendor/rpcs3` (the script takes an optional source dir; its default stays the submodule). Building outside `vendor/rpcs3/build` keeps the submodule on its pin and keeps the oracle away from every product packaging path. The `.app` lands where `GUAC_ORACLE_EXE` points, outside the repo. Every observation the harness writes carries one identity line: upstream base, the repo commit the series came from, the binary's SHA-256, the MoltenVK version (Homebrew's, not bundled) and the shader mode. Which pin: Open question 1.
+
+**2. The O-series: separate, env-gated, game-agnostic.**
+- It lives in `rpcs3-patches/oracle/` as format-patch files numbered O1 up. The product's [`apply.sh`](../../../rpcs3-patches/apply.sh) globs `0*.patch` in its own directory only, and the CI lane's expected-file check counts the same glob ([`.github/workflows/rpcs3-patched.yml`](../../../.github/workflows/rpcs3-patched.yml)), so neither ever reads the subdirectory. A change there still triggers that lane (its paths filter is `rpcs3-patches/**`), which re-checks the product series and passes untouched. `rpcs3-patches/oracle/apply.sh` checks that the eight P commits sit on HEAD by subject, then runs `git am --3way` over the O-series.
+- Under option (b) the two upstream fixes come first, one patch per upstream commit with upstream's authorship kept. They're the only O-patches without the env gate (they're upstream's code), and the next real bump drops them.
+- Every new verb answers P1's existing `ERR unknown_cmd` unless `GUAC_ORACLE=1` is in the emulator's environment, so a client of the oracle binary that doesn't set it sees exactly the product protocol.
+- No Giants addresses, struct layouts or title checks in C++. Whatever is game-specific lives in the harness.
+- Three walls keep it out of a product binary: the directory, the env gate and the build location (never `vendor/rpcs3/build`, never uploaded; `release.yml` takes only the product lane's `rpcs3-patched-<pin>` assets).
+
+**3. The verbs.**
+P1's line protocol: one request line, one reply line, `HB` and `PE` pushes interleaved as today.
+
+| Verb | Reply | Effect |
+|---|---|---|
+| `PAUSE_AT <flip>` | `OK`, `ERR past` | pauses when the counter `STATE` reports reaches `<flip>`, through RPCS3's own `Start Paused` counter set relative to the current flip; the heartbeat then reads `status=paused frames=<flip>` |
+| `RESUME` | `OK`, `ERR not_paused` | resumes on the main thread |
+| `RSXCAP` | `OK` | sets the capture flag; RPCS3 records the next frame, writes the `.rrc.gz` and pauses, and the harness takes the newest file under the home's `captures/` |
+| `SCREENSHOT` | `OK` | sets the screenshot flag; the next flip writes a PNG of the rendered frame where RPCS3 keeps screenshots, under the home |
+| `SAVESTATE` | `OK` | the game window's save path run on the main thread: the emulator stops, writes the state and continues from it; the client sends P5's `RECONNECT` after |
+| `PAD <port> <flip> <d1> <d2> <lx> <ly> <rx> <ry>` | `OK`, `ERR <reason>` | a schedule entry: from `<flip>` on, port 0 or 1 reads digital words `d1`/`d2` (`CELL_PAD_CTRL_*` bits, hex) and the four stick axes (0-255, 128 centred), held until that port's next entry |
+| `PAD_CLEAR` | `OK` | drops both schedules; the pads read the host's input again |
+| `PAD_STATE <port>` | `OK flip=<n> reads=<k> d1=<..> d2=<..> lx=<..> ly=<..> rx=<..> ry=<..>` | what the guest last read on that port, at which flip, and how many reads it made during that flip |
+
+The frame lock is applied inside the guest's pad read (`vendor/rpcs3/rpcs3/Emu/Cell/Modules/cellPad.cpp`, `pad_get_data`), keyed to the flip counter, so every read the guest makes while flip N is current sees N's entry whatever the pad thread's host poll does; P6's mask path can't give that. A scheduled entry replaces the port's whole state, P6's forced bits included. Pressed buttons read full pressure (255), as P6's do. Schedules are loaded while the emulator is paused (`Start Paused` or `PAUSE_AT`), so loading never races the guest. P6 stays for menu navigation. The oracle home's input config gives ports 0 and 1 handlers RPCS3 reports as connected.
+
+**4. Memory goes through PINE, only at a pause.**
+The harness reads and writes guest memory through PINE while `PAUSE_AT` or a capture holds the emulator, so a read sees every thread stopped. Rejected: a MEMSNAP verb now (PINE already batches 450,000-byte replies, and a memory patch is one more hunk to rebase) and the GDB stub for bulk reads (about 600 bytes a packet; it stays a manual tool). The RNG verbs are harness commands over PINE:
+- `rng peek` reads each census instance's `_mti` and 624-word state;
+- `rng seed` writes an MT19937 state, from the reference initializer with a given seed or copied from a peek, into each instance;
+- `rng distance` between two peeks counts the MT19937 steps from one state to the other (stepping the earlier one, bounded), so "the replays drew k numbers apart" is a number, not a yes or no.
+
+The MT19937 model lives in `guac-oracle`, checked against the reference generator's published output.
+
+**5. An isolated oracle home.**
+`oracle home init` builds `GUAC_ORACLE_HOME`, refused inside any work tree ([`tools/rrc-dump/src/output.rs`](../../../tools/rrc-dump/src/output.rs)'s guard) and refused when it is the dev's real RPCS3 dir. From that dir it COPIES `dev_flash` and Giants' `games.yml` entry (a savestate load deletes and rewrites hdd0 and hdd1, so nothing may link back), then writes `ipc.yml` with PINE on, the two-pad input config and a `config.yml` from a template the harness owns: `Start Paused` true, `Suspend Emulation Savestate Mode` false, `Compatible Savestate Mode` true and `Internet enabled: Disconnected` (the recorder's resume settings, plus P3's offline path), FIFO reordering off (AC.12), `sys_fs` at its default level unless a run asks for trace, and the shader mode the pin needs. The harness launches RPCS3 with `HOME` set to the oracle home, `TMPDIR` outside it (RPCS3 refuses a config dir under its temp dir) and a per-run `SKYLANDER_IPC_PATH`, so the PINE socket, the P1 socket and the lockfile are the oracle's own. It refuses to start while another RPCS3 holds port 2345 or either socket. Every replay loads a FRESH copy of the figure's `.sky`, because the game writes to it and a shared file would carry XP and gold from one replay into the next. The `.sky` is from the dev's own pack, dev-only like the rest of RPCS3; nothing in `guac-*` reads it.
+
+**6. Two crates, so RPCS3 stays out of `guacamole`'s tree.**
+- `crates/guac-oracle`, pure (serde, no I/O of its own, no RPCS3 dependency): the input-script format (RON, flip offset to per-port pad state, the same file a later rung replays through Guacamole's positional mapping), observation traces keyed by flip offset, envelopes, decision 9's comparisons, FLIP, the MT19937 model. A later rung's test dev-depends on it without ever linking `rpcs3-control`.
+- `tools/oracle-harness` (lib plus a bin, `oracle`): home setup; process lifecycle and the P1 codec reused from `skylander-rpcs3-control` (`RpcsProcess`; `STATE`, `HB`, `LOAD`, `RECONNECT`); its own codec for the O-verbs; the PINE client; the replay runner; the observation readers; capture checks through `rrc-dump`'s reader; every output through `rrc-dump`'s work-tree refusal. At G1 the product drivers leave `rpcs3-control`, and what the harness uses from it moves with the harness then (AN's call), since the oracle lives until G2.
+- Tests follow [`CLAUDE.md`](../../../CLAUDE.md)'s two-layer rule for emulator patches: codec unit tests; an in-process fake AF_UNIX server speaking P1, the O-verbs and PINE, run by `cargo test` and kept as the executable spec the oracle must satisfy; `#[ignore]`d live tests against the oracle on the Mac that read `GUAC_ORACLE_EXE`, `GUAC_ORACLE_HOME` and `GUAC_GIANTS_DUMP` from the process env, else `.env.dev`, and skip cleanly when they're unset.
+- PINE is AF_UNIX on the Mac and TCP on Windows. The harness builds on every workspace target, so the Windows CI lane still compiles the workspace, and its live paths say "Mac only until the Windows/HTPC bring-up" there.
+
+**7. The divergence protocol.**
+- Scenario: Eruptor (AC's gate hero) standing in gameplay at the start of chapter one (`level_213` on AG's strong hypothesis), unless chotchki names another (Open question 3). One fresh savestate, taken with `SAVESTATE` on the chosen pin. The June state isn't used: it's parked on a pause screen and loads only on `09d602fd5`.
+- One replay: a fresh process boots `--no-gui --savestate`; `Start Paused` stops it after 2 flips at flip F0; while paused, `RECONNECT`, `LOAD` a fresh figure copy and load the input schedule; `RESUME`; at each checkpoint `PAUSE_AT`, observe, `RESUME`; stop at F0 + 1,800 flips. If every observable still agrees at the end, a longer run follows before the horizon is reported.
+- Two scripts, both our own: idle (no input) and walk (stick forward, a turn, a jump, an attack press), which exercise analog, digital and press-at-frame-N on port 0.
+- Two sets of 10 replays per script: A observes only at the end flip, B every 60 flips. A's spread against B's at the end flip says whether pausing to observe moves the run.
+- Output: one JSON per run under `GUAC_CAPTURE_DIR`, each with the identity line, plus a summary: per observable and checkpoint the min, max, median and spread, the usable horizon, RNG distances, FLIP between every pair of end screenshots and set A's end-of-run savestates diffed region by region with the research dir's parser (outside the repo; recorded, never gated, since timers and pointers differ by construction).
+
+**8. Observables, and where each comes from.**
+- Flip counter and emulator status: P1's `STATE`.
+- RNG: the census instances through PINE (decision 4), equal or k draws apart.
+- Actor transforms: located by AF.9. Leads in order: the skinned Edge job records' per-job local-to-world for the frame (the savestate pass already reads them, and the hero is the job whose palette solves against his skeleton), then the actor objects AC.4's layouts read. The hero's position plus every skinned actor's in the frame, since enemy AI is where RNG and timing show.
+- Frames: `SCREENSHOT` at checkpoints; FLIP between replays (oracle against Guacamole is AG's).
+
+Every sample carries the flip and status it was read at: a pause reaches the PPU and SPU threads a little after the RSX thread's flip, and the spread that adds is part of what's measured.
+
+**9. Tolerances: shapes now, numbers from the measurement.**
+- Trajectory envelope: N oracle traces give each component at each checkpoint a [min, max]; a candidate passes when every component lies within [min − m, max + m], where m = max(a floor, k × that checkpoint's spread). It reports the worst excursion and its flip.
+- Event sequence: the oracle's sequence is the prefix all N replays agree on (where they part is itself reported); a candidate passes when its sequence equals that prefix and each event's flip lies within the replays' stamp spread plus a floor.
+- Totals (XP, gold, damage): equal when the N replays agree, otherwise within their [min, max].
+- Frames: the mean FLIP error at a checkpoint at or below the largest replay-against-replay FLIP there, plus a floor.
+- Usable horizon: per observable, the last checkpoint at which all N replays agree within the floor (identical states for the RNG). Past it a comparison goes statistical (envelopes over more runs) or re-anchors on a savestate taken inside the horizon, and the design doc says which the measurement supports.
+
+AF.12 sets the floors and k for what AF observes (transform trajectories, the RNG, frames) and records them in the design doc. AF observes no game events and no XP or gold, so the event-sequence and totals floors stay unset until the first rung that observes those (AH's combat) calibrates them the same way; a rung that needs other numbers argues it in its own design. Acceptance: leave-one-out, so each of the 10 replays passes against the envelope of the other nine on every observable inside its horizon; and perturbation, so extra walk runs with one press moved a few flips, and with one stick angle changed, fail, with the smallest shift that fails recorded as the metric's sensitivity. A metric that lets the perturbation through gets tightened before AG uses it.
+
+**10. AC gets an unattended route and doesn't wait for it.**
+AF.5's live checks run on AC.13's scenario: cold boot, P6 CROSS presses to the portal prompt, P1 `LOAD` of a copy of Eruptor's `.sky`, Eruptor idle, then three `RSXCAP`s on different idle poses, a `SAVESTATE` in gameplay and a `SCREENSHOT`, into `GUAC_CAPTURE_DIR` with the identity line. If AC.13 is still open then, AC can take that session for AC.12, AC.13 and AC.18 (noting the pin it ran on); if AC.13 ran attended on the `09d602fd5` copy first, AF re-takes nothing. `rrc-dump` pins RRC version 6, the research found no capture-format hunk between the two pins, and the first `--list` of an AF capture confirms it. Ticking AC's boxes stays AC's ([`ac-giants-decode-gate/tasks.md`](../ac-giants-decode-gate/tasks.md)).
+
+**11. The guard learns savestates.**
+`RPCS3SAV` joins [`crates/guac-extract/src/magic.rs`](../../../crates/guac-extract/src/magic.rs)'s magics, which catches a raw `.SAVESTAT` and, through the existing gzip re-check, a `.SAVESTAT.gz`. A zstd file (`28 B5 2F FD`) is inflated for its head and checked again, which catches `.SAVESTAT.zst`, RPCS3's default. A PINE read written out raw has no magic; the work-tree refusal on every harness output is what keeps it out, as for the guest memory dumps the design doc already names.
+
+## Risks / Trade-offs
+
+- [`accfecd2d` has a second fault behind the Metal crash] → AF.1 boots the existing build in async shader mode before any O-series work; if a fixed build still doesn't reach gameplay, the fallback is (a), with the O-series rebased onto the pre-bump P1-P8 from git history.
+- [A source build at `09d602fd5` fails against today's Homebrew] → Homebrew's opencv has already moved from 4.13 to 5.0.0 under the June binary. The failure is evidence for the pin call, not a reason to keep the copy, which can't take the O-series anyway.
+- [The Mac renders nothing while locked] → AF.2 settles it from one heartbeat log before anything depends on it; if frames stop, Open question 4.
+- [The replays part almost at once] → AF still exits: the verdict carries the numbers, and the comparisons that survive (totals, event sequences, statistical envelopes, savestate re-anchoring) are what the design doc offers AG.
+- [Pausing to observe moves the run] → set B against set A measures it; if it does, trajectories come from fewer checkpoints or from shorter runs that each end at their checkpoint.
+- [The game draws randomness from more than MT19937 (libc `rand`, an LCG, SPU-side state)] → the census records every source it finds; peek and seed cover those in guest memory, and the report names any they can't.
+- [Port 1 doesn't connect, or the guest reads pads off the cellPad path] → `PAD_STATE`'s readback shows either in the live test; the input config or the hook site moves.
+- [An oracle binary reaches a product build] → decision 2's walls; applying the product series alone on a fresh checkout still lands 8 commits over the same file set (AF.4 checks it).
+- [A savestate load wipes the dev's RPCS3 saves] → states only ever load under `GUAC_ORACLE_HOME`, whose hdd0 is a copy, and home init refuses the real dir.
+- [Rebase cost at the next pin bump] → the O-series touches `Skylander.cpp` beside P1 and cellPad's pad read, nothing else, and it retires at G2.
+
+## Open Questions
+
+chotchki's calls, each with a recommendation. Only 1 blocks a task: AF.4 builds nothing until it's answered, while AF.1-AF.3 and AF.6 (on the `09d602fd5` copy) can run before.
+
+1. **Which pin does the oracle ride?** The design doc leaves it to him (The oracle, pin policy). What each costs in evidence:
+   - (a) The `09d602fd5` fallback. What's validated (Giants no-GUI at 54.9 fps over 30 s) is a binary that can't take the O-series, so (a) is still a fresh source build: a tree last built in June, against Homebrew that has moved since, with the O-series applied to the pre-bump P1-P8 out of git history (a series HEAD no longer carries). It keeps every `09d602fd5` savestate loadable, which is the June state (paused, no hero, already mined offline by AC.14 and the savestate pass) and anything AC.13 takes attended on the copy.
+   - (b) The two upstream fixes cherry-picked onto `accfecd2d` at the head of the O-series. The tree was built here on 2026-09-20 and the fixes are three small upstream hunks (`c938d3e049`: +10 −4 and +2 −2; `d08d568d5e`: +3 −1). Unproven: `accfecd2d` has never reached gameplay on the Mac, so something else could sit behind the crash, and AF.1's async-shader boot of the existing build tests exactly that without a rebuild. It costs every `09d602fd5` savestate (global version 24 against 21), but AF needs a fresh gameplay state on any pin. Product and oracle share one source tree again.
+   - (c) Bump the pin past `d08d568d5e`. The pin is the product's gitlink, so on a frozen product that's a product change the next tag ships: P1-P8 rebased over a new window, both OSes' patched builds, `release.yml`'s two `rpcs3-patched-<pin>` tags and the Windows dependency pins. The alternative, an oracle-only pin in a second checkout, splits the sources. Newest upstream fixes, the same savestate cost as (b) and the widest unknown.
+
+   Recommendation: (b), gated on AF.1. If the existing build reaches gameplay in async shader mode, the warm-up is the whole fault and (b) is the smallest proven step; if it doesn't, (a). Not (c) while the product is frozen.
+2. **AF or AE?** [`openspec/config.yaml`](../../config.yaml) gives a new change the next id after the highest under `openspec/changes/`, which is AE. This is AF because the ladder, the design doc, the backlog, AC.13 and the research folder already call it AF, and M1 (AE) isn't proposed yet. Recommendation: keep AF and let M1 take AE when it's proposed, with one sentence in `config.yaml` saying a rung the ladder has already named keeps its id; otherwise rename this to AE and move M1 to AF everywhere it's cited.
+3. **The divergence scenario.** Recommendation: Eruptor at chapter one's start (AC's gate hero, and AG's first walk is likely there). It can wait until AF.11.
+4. **If the Mac renders nothing while locked** (asked only if AF.2 finds that): leave the display unlocked for oracle runs, or run the frame-free observables under the null renderer (`--headless`, unproven with Giants) and take the screenshots in an attended set. Recommendation: headless for the bulk of the measurement plus one attended screenshot set, so the Mac stays locked.
