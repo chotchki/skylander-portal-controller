@@ -644,12 +644,18 @@ impl<'a> Ctx<'_, 'a> {
         name: &'static str,
     ) -> Result<(), FormatError> {
         let need = usize::from(desc.stride) * count;
-        if data.data.len() < need {
+        let len = data.data.len();
+        if len < need {
             let kind = ErrorKind::Truncated {
                 needed: need,
-                available: data.data.len(),
+                available: len,
             };
             return Err(self.igz.err_at(data.at, name, kind));
+        }
+        // SPU streams are whole quadwords; RSX-only is exact.
+        let max_tail = if stream == Stream::RsxOnly { 0 } else { 15 };
+        if len - need > max_tail {
+            return Err(self.inside(data, unsupported(name, need, len as u64)));
         }
         for b in &desc.blocks {
             if out.iter().any(|a| a.semantic == b.semantic) {
@@ -746,6 +752,10 @@ impl Segment {
             Kind::Unskinned => {
                 cx.absent(s.spu_vertexes1, "_spuVertexes1", S::SPU_VERTEXES1)?;
                 cx.absent(s.spu_input_stream_descs1, "_spuInputStreamDescs1", desc1_at)?;
+                if desc1_size != 0 {
+                    let name = "_spuInputStreamDescSizes";
+                    return Err(cx.unsupported(name, sizes_at + 2, desc1_size.into()));
+                }
             }
             Kind::Skinned => {
                 let d = s.spu_input_stream_descs1;
@@ -770,7 +780,19 @@ impl Segment {
         }
 
         match (s.rsx_only_stream_desc, s.rsx_only_vertexes) {
-            (None, None) => {}
+            // Size words of absent buffers are zero on the disc.
+            (None, None) => {
+                if s.rsx_only_stream_desc_size != 0 {
+                    let value = s.rsx_only_stream_desc_size.into();
+                    let at = S::RSX_ONLY_STREAM_DESC_SIZE;
+                    return Err(cx.unsupported("_rsxOnlyStreamDescSize", at, value));
+                }
+                if s.rsx_only_vertexes_size != 0 {
+                    let value = s.rsx_only_vertexes_size.into();
+                    let at = S::RSX_ONLY_VERTEXES_SIZE;
+                    return Err(cx.unsupported("_rsxOnlyVertexesSize", at, value));
+                }
+            }
             (Some(_), None) => {
                 let at = S::RSX_ONLY_VERTEXES;
                 return Err(cx.field("_rsxOnlyVertexes", at, ErrorKind::Missing));
@@ -808,6 +830,29 @@ impl Segment {
         let at = S::SKIN_INDEXES_AND_WEIGHTS;
         if kind == Kind::Unskinned {
             cx.absent(s.skin_indexes_and_weights, name, at)?;
+            // No skin, so every skin size and offset word is zero.
+            let words = [
+                (
+                    "_skinMatricesByteOffsets",
+                    S::SKIN_MATRICES_BYTE_OFFSETS,
+                    s.skin_matrices_byte_offsets,
+                ),
+                (
+                    "_skinMatricesSizes",
+                    S::SKIN_MATRICES_SIZES,
+                    s.skin_matrices_sizes,
+                ),
+                (
+                    "_skinIndexesAndWeightsSizes",
+                    S::SKIN_INDEXES_AND_WEIGHTS_SIZES,
+                    s.skin_indexes_and_weights_sizes,
+                ),
+            ];
+            for (name, at, w) in words {
+                if let Some(i) = w.iter().position(|&x| x != 0) {
+                    return Err(cx.unsupported(name, at + 2 * i as u32, w[i].into()));
+                }
+            }
             return Ok(None);
         }
         let m = cx.required(s.skin_indexes_and_weights, name, at)?;

@@ -548,6 +548,25 @@ fn segments_outside_the_two_configs_are_refused() {
     let mut w = u();
     w.rsx = None;
     assert_eq!(field(w), "_rsxOnlyVertexes");
+    // Size and offset words of absent buffers.
+    let mut w = u();
+    w.desc_sizes[1] = 16;
+    assert_eq!(field(w), "_spuInputStreamDescSizes");
+    let mut w = u();
+    w.matrix_offsets[1] = 48;
+    assert_eq!(field(w), "_skinMatricesByteOffsets");
+    let mut w = u();
+    w.matrix_sizes[0] = 48;
+    assert_eq!(field(w), "_skinMatricesSizes");
+    let mut w = u();
+    w.skin_sizes[0] = 8;
+    assert_eq!(field(w), "_skinIndexesAndWeightsSizes");
+    let mut w = u();
+    (w.rsx, w.rsx_desc, w.rsx_desc_size) = (None, None, 0);
+    assert_eq!(field(w), "_rsxOnlyVertexesSize");
+    let mut w = u();
+    (w.rsx, w.rsx_desc, w.rsx_size) = (None, None, 0);
+    assert_eq!(field(w), "_rsxOnlyStreamDescSize");
     // A stream too short for its vertices.
     let mut w = u();
     w.spu0.truncate(60);
@@ -562,6 +581,21 @@ fn segments_outside_the_two_configs_are_refused() {
             }
         )
     );
+    // SPU streams may carry under a quadword of tail; RSX-only none.
+    let mut w = u();
+    w.spu0.extend([0; 16]);
+    let e = refused(&w);
+    assert_eq!(
+        (e.field, e.kind),
+        ("_spuVertexes0", ErrorKind::Unsupported { value: 88 })
+    );
+    let mut w = u();
+    w.spu0.extend([0; 15]);
+    read_one(&w).unwrap();
+    let mut w = u();
+    w.rsx.as_mut().unwrap().push(0);
+    w.rsx_size += 1;
+    assert_eq!(field(w), "_rsxOnlyVertexes");
     // Positions again in the RSX-only stream.
     let mut w = u();
     let mut d = w.rsx_desc.clone().unwrap();
