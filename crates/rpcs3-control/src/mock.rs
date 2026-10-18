@@ -6,24 +6,10 @@ use std::sync::Mutex;
 use std::thread::sleep;
 use std::time::Duration;
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use skylander_core::{SLOT_COUNT, SlotIndex, SlotState};
 
-use crate::PortalDriver;
-
-/// Inject-able outcomes for the next `load` call. One per queued entry;
-/// consumed FIFO. When the queue is empty, `load` behaves normally.
-#[derive(Debug, Clone)]
-pub enum MockOutcome {
-    /// Normal success path.
-    Ok,
-    /// Simulate the Windows shell "file is in use" TaskDialog path.
-    FileInUse { message: String },
-    /// Simulate an RPCS3 QMessageBox like "Failed to open the skylander file!".
-    QtModal { message: String },
-    /// Sleep past the driver's load timeout so the outer loop times out.
-    Timeout,
-}
+use crate::{InjectedOutcome, LoadInjector, PortalDriver};
 
 /// Mock driver. Tracks per-slot state; `load` pulls the figure name from the
 /// filename stem. Default latency 50ms per op (tune for tests).
@@ -32,7 +18,7 @@ pub struct MockPortalDriver {
     dialog_open: Mutex<bool>,
     latency: Duration,
     /// Queued outcomes for upcoming `load` calls.
-    load_queue: Mutex<VecDeque<MockOutcome>>,
+    load_queue: Mutex<VecDeque<InjectedOutcome>>,
     /// Mocked library enumeration result. Defaults to every supported
     /// Skylanders serial so dev-mode manual testing has a populated
     /// game picker out of the box; unit tests override via
@@ -52,14 +38,6 @@ impl MockPortalDriver {
             latency,
             load_queue: Mutex::new(VecDeque::new()),
             enumerated_games: Mutex::new(default_serials()),
-        }
-    }
-
-    /// Queue a sequence of outcomes for the next N `load` invocations.
-    pub fn queue_load_outcomes(&self, outcomes: Vec<MockOutcome>) {
-        let mut q = self.load_queue.lock().unwrap();
-        for o in outcomes {
-            q.push_back(o);
         }
     }
 
@@ -89,6 +67,12 @@ impl Default for MockPortalDriver {
     }
 }
 
+impl LoadInjector for MockPortalDriver {
+    fn queue_load_outcomes(&self, outcomes: Vec<InjectedOutcome>) {
+        self.load_queue.lock().unwrap().extend(outcomes);
+    }
+}
+
 impl PortalDriver for MockPortalDriver {
     fn open_dialog(&self) -> Result<()> {
         self.delay();
@@ -109,31 +93,20 @@ impl PortalDriver for MockPortalDriver {
 
         // Consume the next injected outcome, if any.
         let outcome = self.load_queue.lock().unwrap().pop_front();
-        match outcome {
-            None | Some(MockOutcome::Ok) => {
-                let mut slots = self.slots.lock().unwrap();
-                // Driver doesn't know the caller's profile — server fills in
-                // `placed_by` on the real state change it broadcasts. The
-                // mock's internal slot state is just a fixture so `None` is
-                // fine.
-                slots[slot.as_usize()] = SlotState::Loaded {
-                    figure_id: None,
-                    display_name: name.clone(),
-                    placed_by: None,
-                };
-                Ok(name)
-            }
-            Some(MockOutcome::FileInUse { message }) => {
-                Err(anyhow!("Windows file in use: {message}"))
-            }
-            Some(MockOutcome::QtModal { message }) => Err(anyhow!("RPCS3 reported: {message}")),
-            Some(MockOutcome::Timeout) => {
-                // Sleep past any reasonable test-side timeout. The real UIA
-                // driver would bail at ~10s.
-                sleep(Duration::from_secs(11));
-                Err(anyhow!("timeout"))
-            }
+        if let Some(outcome) = outcome {
+            outcome.into_result()?;
         }
+        let mut slots = self.slots.lock().unwrap();
+        // Driver doesn't know the caller's profile — server fills in
+        // `placed_by` on the real state change it broadcasts. The
+        // mock's internal slot state is just a fixture so `None` is
+        // fine.
+        slots[slot.as_usize()] = SlotState::Loaded {
+            figure_id: None,
+            display_name: name.clone(),
+            placed_by: None,
+        };
+        Ok(name)
     }
 
     fn clear(&self, slot: SlotIndex) -> Result<()> {
@@ -160,7 +133,7 @@ mod tests {
     #[test]
     fn queued_file_in_use_errors_and_leaves_slot_empty() {
         let d = MockPortalDriver::with_latency(Duration::ZERO);
-        d.queue_load_outcomes(vec![MockOutcome::FileInUse {
+        d.queue_load_outcomes(vec![InjectedOutcome::FileInUse {
             message: "Airstrike.sky — This file is in use.".into(),
         }]);
         let err = d
@@ -173,7 +146,7 @@ mod tests {
     #[test]
     fn queued_qt_modal_surfaces_message() {
         let d = MockPortalDriver::with_latency(Duration::ZERO);
-        d.queue_load_outcomes(vec![MockOutcome::QtModal {
+        d.queue_load_outcomes(vec![InjectedOutcome::QtModal {
             message: "Failed to open the skylander file!".into(),
         }]);
         let err = d
@@ -188,7 +161,7 @@ mod tests {
     #[test]
     fn queue_is_fifo_and_bypasses_to_normal_when_empty() {
         let d = MockPortalDriver::with_latency(Duration::ZERO);
-        d.queue_load_outcomes(vec![MockOutcome::QtModal {
+        d.queue_load_outcomes(vec![InjectedOutcome::QtModal {
             message: "boom".into(),
         }]);
         // First load hits the injected error.

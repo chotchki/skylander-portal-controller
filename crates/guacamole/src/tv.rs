@@ -13,6 +13,7 @@ use bevy::window::PrimaryWindow;
 use guac_server::state::LauncherStatus;
 use tracing::{error, info};
 
+use crate::cards::{PortalCards, drain_portal};
 use crate::screen::{SetupView, TvScreen, screen_for};
 
 /// How long the farewell shows before the app exits (spec: under 5 s).
@@ -65,7 +66,8 @@ pub struct ServerBridge;
 
 impl Plugin for ServerBridge {
     fn build(&self, app: &mut App) {
-        app.add_systems(PreUpdate, poll_status);
+        app.init_resource::<PortalCards>()
+            .add_systems(PreUpdate, (poll_status, drain_portal));
     }
 }
 

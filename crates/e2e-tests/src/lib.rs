@@ -908,7 +908,7 @@ impl Phone {
 
 // ---------------------------------------------------------------- REST
 
-/// Inject a sequence of MockOutcomes into the server's upcoming `load` calls.
+/// Queue injected outcomes for the server's upcoming loads or placements.
 pub async fn inject_load_outcomes(base: &str, outcomes: serde_json::Value) -> Result<()> {
     let resp = reqwest::Client::new()
         .post(format!("{base}/api/_test/inject_load"))

@@ -135,6 +135,9 @@ pub mod hide;
 
 pub mod games_yml;
 
+pub mod inject;
+pub use inject::{InjectedOutcome, LoadInjector};
+
 // IPC portal driver (PLAN 16.5). Cross-platform (std UnixStream on unix,
 // uds_windows on Windows) — the production control path for the patched-RPCS3 +
 // no-GUI architecture (Phase 16), superseding UIA as the portal mechanism.
@@ -178,7 +181,7 @@ pub fn read_viewport_title() -> Option<String> {
 #[cfg(feature = "mock")]
 pub mod mock;
 #[cfg(feature = "mock")]
-pub use mock::{MockOutcome, MockPortalDriver};
+pub use mock::MockPortalDriver;
 
 /// Lifecycle handle for an RPCS3 instance.
 ///
@@ -419,5 +422,53 @@ mod unix_enum_tests {
             ShutdownPath::Graceful
         );
         assert!(!p.is_alive());
+    }
+}
+
+#[cfg(test)]
+mod place_default_tests {
+    use super::*;
+
+    /// The trait's default error, which only the native driver overrides.
+    const DEFAULT_PLACE_ERROR: &str = "place: this driver loads figure files";
+
+    fn eruptor() -> Placement {
+        let figure_id = FigureId::new("000009-0000");
+        let (toy_type, variant) = figure_id.tag_parts().unwrap();
+        Placement {
+            figure_id,
+            toy_type,
+            variant,
+            name: "Eruptor".into(),
+            element: Some(Element::Fire),
+            portrait: None,
+            owner: None,
+        }
+    }
+
+    #[test]
+    fn the_ipc_driver_keeps_the_default_place_error() {
+        // No socket behind the path: the default must answer without one.
+        let d = IpcPortalDriver::with_path("/nonexistent/place-default.sock");
+        let err = d.place(SlotIndex::new(0).unwrap(), &eruptor()).unwrap_err();
+        assert_eq!(err.to_string(), DEFAULT_PLACE_ERROR);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_uia_driver_keeps_the_default_place_error() {
+        let d = UiaPortalDriver::new().unwrap();
+        let err = d.place(SlotIndex::new(0).unwrap(), &eruptor()).unwrap_err();
+        assert_eq!(err.to_string(), DEFAULT_PLACE_ERROR);
+    }
+
+    #[cfg(feature = "mock")]
+    #[test]
+    fn the_mock_keeps_the_default_place_error_and_its_slots() {
+        let d = MockPortalDriver::with_latency(Duration::ZERO);
+        let slot = SlotIndex::new(3).unwrap();
+        let err = d.place(slot, &eruptor()).unwrap_err();
+        assert_eq!(err.to_string(), DEFAULT_PLACE_ERROR);
+        assert!(matches!(d.read_slots().unwrap()[3], SlotState::Empty));
     }
 }

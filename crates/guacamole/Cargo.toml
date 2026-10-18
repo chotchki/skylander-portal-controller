@@ -19,10 +19,16 @@ skylander-rpcs3-control = { path = "../rpcs3-control" }
 
 anyhow = { workspace = true }
 tracing = { workspace = true }
+# The native driver → TV channel: bounded, and its `Receiver` is `Sync`, so it
+# sits in a plain Bevy `Resource` (design decision 4).
+crossbeam-channel = "0.5"
 
 # Pinned by Cargo.lock; upgrades are their own change at milestone boundaries.
 # `ui` is the 2D UI collection (winit, wgpu, bevy_ui, text, png); no 3D or audio yet.
 bevy = { version = "0.20.0", default-features = false, features = ["ui"] }
+
+[dev-dependencies]
+tokio = { workspace = true }
 
 [features]
 default = ["dev-tools"]

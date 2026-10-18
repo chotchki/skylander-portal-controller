@@ -52,12 +52,12 @@ pub struct BootOptions {
 /// See [`BootOptions::driver_factory`].
 pub type DriverFactory = Box<dyn FnOnce(DriverKind) -> Result<BuiltDriver> + Send>;
 
-/// A driver from a [`DriverFactory`], plus the concrete mock the
-/// `/api/_test/*` endpoints inject failures through.
+/// A driver from a [`DriverFactory`], plus the handle the `/api/_test/*`
+/// endpoints inject failures through.
 pub struct BuiltDriver {
     pub driver: Arc<dyn PortalDriver>,
     #[cfg(feature = "test-hooks")]
-    pub test_mock: Option<Arc<skylander_rpcs3_control::MockPortalDriver>>,
+    pub test_injector: Option<Arc<dyn skylander_rpcs3_control::LoadInjector>>,
 }
 
 impl BuiltDriver {
@@ -65,16 +65,19 @@ impl BuiltDriver {
         Self {
             driver,
             #[cfg(feature = "test-hooks")]
-            test_mock: None,
+            test_injector: None,
         }
     }
 
-    /// The mock driver, kept reachable by the test endpoints.
+    /// A driver the test endpoints can also inject failures into.
     #[cfg(feature = "test-hooks")]
-    pub fn with_test_mock(mock: Arc<skylander_rpcs3_control::MockPortalDriver>) -> Self {
+    pub fn with_injector<D>(driver: Arc<D>) -> Self
+    where
+        D: PortalDriver + skylander_rpcs3_control::LoadInjector + 'static,
+    {
         Self {
-            driver: mock.clone(),
-            test_mock: Some(mock),
+            driver: driver.clone(),
+            test_injector: Some(driver),
         }
     }
 }
@@ -395,7 +398,7 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
                     join_qr_png: join_qr_png_for_task,
                     hooks,
                     #[cfg(feature = "test-hooks")]
-                    test_mock: built.test_mock,
+                    test_injector: built.test_injector,
                 });
 
                 // Ghost-expiry sweep every 60s (PLAN 8.1.4).

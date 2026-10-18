@@ -7,6 +7,7 @@
 //! Threading: the main thread runs Bevy; `guac_server::boot` runs the server
 //! and driver worker on its own tokio thread.
 
+mod cards;
 mod driver;
 mod screen;
 mod tv;
@@ -20,6 +21,7 @@ use anyhow::{Context, Result};
 use bevy::log::LogPlugin;
 use bevy::prelude::{App, AppExit, DefaultPlugins, PluginGroup, Window, WindowPlugin, default};
 use bevy::window::{MonitorSelection, WindowMode as BevyWindowMode};
+use crossbeam_channel::{Receiver, Sender};
 use guac_server::boot::{BootOptions, BuiltDriver, Catalogue, ServerHandles, boot};
 use guac_server::config::{DriverKind, WindowMode};
 use guac_server::hooks::Hooks;
@@ -28,7 +30,8 @@ use guac_server::state::{LauncherScreen, LauncherStatus};
 use guac_server::{logging, paths, setup};
 use tracing::{info, warn};
 
-use crate::driver::NativePortalDriver;
+use crate::cards::PortalFeed;
+use crate::driver::{NativePortalDriver, PortalChange, portal_channel};
 use crate::screen::SetupView;
 use crate::tv::{FAREWELL_BEAT, ServerBridge, ServerLink, Setup, Tv};
 
@@ -36,6 +39,7 @@ fn main() -> Result<()> {
     let root = paths::guac_data_root()?;
     // Before `load`, so a settings failure is logged and shown, not silent.
     let log_guard = logging::init(&setup::log_dir(&root))?;
+    let (portal_tx, portal_rx) = portal_channel();
     // Writes nothing, so a second copy that loses the port leaves no trace.
     let loaded = match setup::load(&root).context("load guacamole's settings") {
         Ok(loaded) => loaded,
@@ -43,7 +47,8 @@ fn main() -> Result<()> {
             tracing::error!("{e:#}");
             let mode = setup::window_mode(&setup::env());
             let no_setup = SetupView::new(false, &[], &Default::default());
-            return run_tv(failed_link(format!("{e:#}")), no_setup, mode, log_guard);
+            let link = failed_link(format!("{e:#}"));
+            return run_tv(link, portal_rx, no_setup, mode, log_guard);
         }
     };
     let cfg = loaded.config.clone();
@@ -70,7 +75,7 @@ fn main() -> Result<()> {
         config: cfg.clone(),
         runtime_root: root.clone(),
         migrator: &setup::MIGRATOR,
-        driver_factory: Box::new(build_driver),
+        driver_factory: Box::new(move |kind| build_driver(kind, portal_tx)),
         hooks: Hooks::default(),
         extra_routes: None,
         catalogue: Catalogue::Native {
@@ -88,12 +93,13 @@ fn main() -> Result<()> {
             failed_link(format!("{e:#}"))
         }
     };
-    run_tv(link, setup_view, cfg.window_mode, log_guard)
+    run_tv(link, portal_rx, setup_view, cfg.window_mode, log_guard)
 }
 
 /// Runs the TV until it exits; the guard flushes the file log first.
 fn run_tv(
     link: ServerLink,
+    portal: Receiver<PortalChange>,
     setup_view: SetupView,
     mode: WindowMode,
     log_guard: WorkerGuard,
@@ -111,6 +117,7 @@ fn run_tv(
                 .disable::<LogPlugin>(),
         )
         .insert_resource(link)
+        .insert_resource(PortalFeed(portal))
         .insert_resource(Setup(setup_view))
         .add_plugins((ServerBridge, Tv))
         .run();
@@ -122,13 +129,19 @@ fn run_tv(
     }
 }
 
-/// The native driver; test-hook injection arrives with AA.7.
-fn build_driver(kind: DriverKind) -> Result<BuiltDriver> {
+/// The native driver, telling the TV through `tv`; test builds also hand it
+/// to `/api/_test/inject_load`.
+fn build_driver(kind: DriverKind, tv: Sender<PortalChange>) -> Result<BuiltDriver> {
     anyhow::ensure!(
         kind == DriverKind::Native,
         "guacamole runs only the native driver, not {kind:?}"
     );
-    Ok(BuiltDriver::new(Arc::new(NativePortalDriver::new())))
+    let driver = Arc::new(NativePortalDriver::new(tv));
+    #[cfg(feature = "test-hooks")]
+    let built = BuiltDriver::with_injector(driver);
+    #[cfg(not(feature = "test-hooks"))]
+    let built = BuiltDriver::new(driver);
+    Ok(built)
 }
 
 /// Stores the first start's key, only once the server is up (a closed

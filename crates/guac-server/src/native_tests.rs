@@ -174,7 +174,7 @@ async fn native() -> Native {
         join_qr_png: Arc::new(Vec::new()),
         hooks: Hooks::default(),
         #[cfg(feature = "test-hooks")]
-        test_mock: None,
+        test_injector: None,
     });
     Native {
         state,

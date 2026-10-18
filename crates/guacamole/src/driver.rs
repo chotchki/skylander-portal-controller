@@ -1,27 +1,87 @@
-//! The native portal driver (AA design decision 4), minimal until AA.7 adds
-//! the channel to the TV: places by identity and keeps its own slots.
+//! The native portal driver (AA design decision 4): places by identity, keeps
+//! its own slots for `read_slots`, and tells the TV over a bounded channel.
 
+use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
+use crossbeam_channel::{Receiver, Sender, TrySendError};
 use skylander_core::{SLOT_COUNT, SlotIndex, SlotState};
-use skylander_rpcs3_control::{Placement, PortalDriver};
+use skylander_rpcs3_control::{InjectedOutcome, LoadInjector, Placement, PortalDriver};
+use tracing::warn;
+
+/// Room for a burst of changes; the TV drains it every frame.
+pub const PORTAL_CHANNEL_CAPACITY: usize = 64;
+
+/// What the TV hears from the driver.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PortalChange {
+    Placed {
+        slot: SlotIndex,
+        placement: Placement,
+    },
+    Cleared {
+        slot: SlotIndex,
+    },
+}
+
+/// The driver's sender and the TV's receiver.
+pub fn portal_channel() -> (Sender<PortalChange>, Receiver<PortalChange>) {
+    crossbeam_channel::bounded(PORTAL_CHANNEL_CAPACITY)
+}
 
 pub struct NativePortalDriver {
     slots: Mutex<[SlotState; SLOT_COUNT]>,
+    tv: Sender<PortalChange>,
+    /// Outcomes from `/api/_test/inject_load`, consumed by `place`.
+    injected: Mutex<VecDeque<InjectedOutcome>>,
+    dropped: AtomicU64,
 }
 
 impl NativePortalDriver {
-    pub fn new() -> Self {
+    pub fn new(tv: Sender<PortalChange>) -> Self {
         Self {
             slots: Mutex::new(std::array::from_fn(|_| SlotState::Empty)),
+            tv,
+            injected: Mutex::new(VecDeque::new()),
+            dropped: AtomicU64::new(0),
         }
+    }
+
+    /// Changes the TV never got because the channel was full or closed.
+    #[cfg(test)]
+    pub fn dropped(&self) -> u64 {
+        self.dropped.load(Ordering::Relaxed)
     }
 
     fn set(&self, slot: SlotIndex, state: SlotState) {
         let mut slots = self.slots.lock().unwrap_or_else(|e| e.into_inner());
         slots[slot.as_usize()] = state;
+    }
+
+    /// Never blocks: a full channel costs a stale card, not a hung load.
+    fn tell_tv(&self, change: PortalChange) {
+        let why = match self.tv.try_send(change) {
+            Ok(()) => return,
+            Err(TrySendError::Full(_)) => "full",
+            Err(TrySendError::Disconnected(_)) => "closed",
+        };
+        let dropped = self.dropped.fetch_add(1, Ordering::Relaxed) + 1;
+        warn!(
+            dropped,
+            "the TV's portal channel is {why}; dropped a change"
+        );
+    }
+}
+
+impl LoadInjector for NativePortalDriver {
+    fn queue_load_outcomes(&self, outcomes: Vec<InjectedOutcome>) {
+        self.injected
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .extend(outcomes);
     }
 }
 
@@ -44,10 +104,19 @@ impl PortalDriver for NativePortalDriver {
 
     fn clear(&self, slot: SlotIndex) -> Result<()> {
         self.set(slot, SlotState::Empty);
+        self.tell_tv(PortalChange::Cleared { slot });
         Ok(())
     }
 
     fn place(&self, slot: SlotIndex, placement: &Placement) -> Result<()> {
+        let injected = self
+            .injected
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .pop_front();
+        if let Some(outcome) = injected {
+            outcome.into_result()?;
+        }
         self.set(
             slot,
             SlotState::Loaded {
@@ -56,60 +125,275 @@ impl PortalDriver for NativePortalDriver {
                 placed_by: placement.owner.as_ref().map(|o| o.profile_id.clone()),
             },
         );
+        self.tell_tv(PortalChange::Placed {
+            slot,
+            placement: placement.clone(),
+        });
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use skylander_core::FigureId;
-    use skylander_rpcs3_control::PlacementOwner;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
 
-    fn eruptor() -> Placement {
-        let figure_id = FigureId::new("000009-0000".to_string());
-        let (toy_type, variant) = figure_id.tag_parts().expect("tag-form id");
+    use guac_server::profiles::ProfileStore;
+    use guac_server::state::{DriverJob, LauncherStatus, RpcsLifecycle, spawn_driver_worker};
+    use skylander_core::{
+        Category, Element, Event, Figure, FigureId, GameOfOrigin, MaskedVariant, ToyTypeId,
+    };
+    use skylander_rpcs3_control::PlacementOwner;
+    use tokio::sync::{Mutex as AsyncMutex, broadcast, mpsc};
+
+    use super::*;
+
+    const ERUPTOR: &str = "000009-0000";
+    const LEGENDARY_IGNITOR: &str = "00000a-0803";
+
+    fn slot(n: u8) -> SlotIndex {
+        SlotIndex::new(n).unwrap()
+    }
+
+    fn record(id: &str, name: &str, element: Element) -> Figure {
+        Figure {
+            id: FigureId::new(id),
+            canonical_name: name.into(),
+            variant_group: name.into(),
+            variant_tag: "base".into(),
+            game: GameOfOrigin::Giants,
+            element: Some(element),
+            category: Category::Figure,
+            vehicle_terrain: None,
+            sky_path: PathBuf::new(),
+            element_icon_path: None,
+            tag_identity: None,
+        }
+    }
+
+    fn eruptor(owner: Option<&str>) -> Placement {
+        let figure_id = FigureId::new(ERUPTOR);
+        let (toy_type, variant) = figure_id.tag_parts().unwrap();
         Placement {
             figure_id,
             toy_type,
             variant,
             name: "Eruptor".into(),
-            element: None,
+            element: Some(Element::Fire),
             portrait: None,
-            owner: Some(PlacementOwner {
-                profile_id: "p1".into(),
+            owner: owner.map(|id| PlacementOwner {
+                profile_id: id.into(),
                 initial: "A".into(),
                 color: "#ff0000".into(),
             }),
         }
     }
 
+    /// The server's worker over a native driver, as guacamole boots it.
+    struct Worker {
+        jobs: mpsc::Sender<DriverJob>,
+        profiles: ProfileStore,
+        tv: Receiver<PortalChange>,
+        driver: Arc<NativePortalDriver>,
+    }
+
+    async fn worker() -> Worker {
+        let (tx, tv) = portal_channel();
+        let driver = Arc::new(NativePortalDriver::new(tx));
+        let profiles = ProfileStore::open_in_memory(&guac_server::setup::MIGRATOR)
+            .await
+            .unwrap();
+        let figures = vec![
+            record(ERUPTOR, "Eruptor", Element::Fire),
+            record(LEGENDARY_IGNITOR, "Legendary Ignitor", Element::Fire),
+        ];
+        let (events, _) = broadcast::channel::<Event>(64);
+        let jobs = spawn_driver_worker(
+            driver.clone(),
+            Arc::new(AsyncMutex::new(std::array::from_fn(|_| SlotState::Empty))),
+            events,
+            profiles.clone(),
+            Arc::default(),
+            Arc::new(figures),
+            Arc::new(AsyncMutex::new(RpcsLifecycle::default())),
+            PathBuf::new(),
+            PathBuf::new(),
+            PathBuf::from("/nonexistent/guac-data"),
+            Arc::new(std::sync::Mutex::new(LauncherStatus::default())),
+            None,
+        );
+        Worker {
+            jobs,
+            profiles,
+            tv,
+            driver,
+        }
+    }
+
+    impl Worker {
+        async fn place(&self, n: u8, id: &str, name: &str, placed_by: Option<&str>) {
+            self.jobs
+                .send(DriverJob::LoadFigure {
+                    slot: slot(n),
+                    figure_id: FigureId::new(id),
+                    path: None,
+                    placed_by: placed_by.map(str::to_string),
+                    canonical_name: name.into(),
+                })
+                .await
+                .unwrap();
+        }
+
+        /// The next change the TV hears, waiting up to 5 s.
+        async fn next(&self) -> PortalChange {
+            let tv = self.tv.clone();
+            tokio::task::spawn_blocking(move || tv.recv_timeout(Duration::from_secs(5)))
+                .await
+                .unwrap()
+                .expect("the TV heard nothing")
+        }
+    }
+
+    fn placed(change: PortalChange) -> (SlotIndex, Placement) {
+        match change {
+            PortalChange::Placed { slot, placement } => (slot, placement),
+            other => panic!("expected Placed, got {other:?}"),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_placement_carries_the_parsed_id_and_the_owners_initial_and_colour() {
+        let w = worker().await;
+        let kaylee = w
+            .profiles
+            .create("kaylee", "1234", "#e63946")
+            .await
+            .unwrap();
+        w.place(0, LEGENDARY_IGNITOR, "Legendary Ignitor", Some(&kaylee))
+            .await;
+
+        let (at, p) = placed(w.next().await);
+        assert_eq!(at, slot(0));
+        assert_eq!(p.figure_id.as_str(), LEGENDARY_IGNITOR);
+        assert_eq!(p.toy_type, ToyTypeId(0x0a));
+        assert_eq!(p.variant, MaskedVariant(0x0803));
+        assert_eq!(p.name, "Legendary Ignitor");
+        assert_eq!(p.element, Some(Element::Fire));
+        let owner = p.owner.expect("an unlocked profile placed it");
+        assert_eq!(owner.profile_id, kaylee);
+        assert_eq!(owner.initial, "K");
+        assert_eq!(owner.color, "#e63946");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_same_figure_by_two_profiles_is_two_placements_each_with_its_owner() {
+        let w = worker().await;
+        let kaylee = w
+            .profiles
+            .create("Kaylee", "1234", "#e63946")
+            .await
+            .unwrap();
+        let sam = w.profiles.create("Sam", "4321", "#2a9d8f").await.unwrap();
+        w.place(0, ERUPTOR, "Eruptor", Some(&kaylee)).await;
+        let first = placed(w.next().await);
+        w.place(1, ERUPTOR, "Eruptor", Some(&sam)).await;
+        let second = placed(w.next().await);
+
+        assert_eq!(first.0, slot(0));
+        assert_eq!(second.0, slot(1));
+        assert_eq!(first.1.figure_id, second.1.figure_id);
+        let owner = |p: &Placement| {
+            let o = p.owner.clone().unwrap();
+            (o.profile_id, o.initial, o.color)
+        };
+        assert_eq!(owner(&first.1), (kaylee, "K".into(), "#e63946".into()));
+        assert_eq!(owner(&second.1), (sam, "S".into(), "#2a9d8f".into()));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_placement_with_no_profile_unlocked_has_no_owner() {
+        let w = worker().await;
+        w.place(4, ERUPTOR, "Eruptor", None).await;
+        let (at, p) = placed(w.next().await);
+        assert_eq!(at, slot(4));
+        assert_eq!(p.owner, None);
+        match &w.driver.read_slots().unwrap()[4] {
+            SlotState::Loaded { placed_by, .. } => assert_eq!(placed_by, &None),
+            other => panic!("expected Loaded, got {other:?}"),
+        }
+    }
+
     #[test]
-    fn place_and_clear_show_in_read_slots() {
-        let d = NativePortalDriver::new();
-        let slot = SlotIndex::new(2).unwrap();
-        d.place(slot, &eruptor()).unwrap();
+    fn clear_sends_cleared() {
+        let (tx, tv) = portal_channel();
+        let d = NativePortalDriver::new(tx);
+        d.clear(slot(5)).unwrap();
+        assert_eq!(tv.try_recv(), Ok(PortalChange::Cleared { slot: slot(5) }));
+    }
+
+    #[test]
+    fn read_slots_mirrors_places_and_clears() {
+        let (tx, _tv) = portal_channel();
+        let d = NativePortalDriver::new(tx);
+        d.place(slot(2), &eruptor(Some("p1"))).unwrap();
         match &d.read_slots().unwrap()[2] {
             SlotState::Loaded {
                 figure_id,
                 display_name,
                 placed_by,
             } => {
-                assert_eq!(figure_id.as_ref().unwrap().as_str(), "000009-0000");
+                assert_eq!(figure_id.as_ref().unwrap().as_str(), ERUPTOR);
                 assert_eq!(display_name, "Eruptor");
                 assert_eq!(placed_by.as_deref(), Some("p1"));
             }
             other => panic!("expected Loaded, got {other:?}"),
         }
-        d.clear(slot).unwrap();
+        d.clear(slot(2)).unwrap();
         assert!(matches!(d.read_slots().unwrap()[2], SlotState::Empty));
     }
 
     #[test]
-    fn load_with_a_path_errors_and_changes_nothing() {
-        let d = NativePortalDriver::new();
-        let slot = SlotIndex::new(0).unwrap();
-        assert!(d.load(slot, Path::new("/pack/Eruptor.sky")).is_err());
+    fn an_injected_failure_is_an_error_and_sends_nothing() {
+        let (tx, tv) = portal_channel();
+        let d = NativePortalDriver::new(tx);
+        d.queue_load_outcomes(vec![InjectedOutcome::QtModal {
+            message: "Failed to open the skylander file!".into(),
+        }]);
+        let err = d.place(slot(0), &eruptor(Some("p1"))).unwrap_err();
+        assert!(err.to_string().contains("Failed to open"), "{err}");
+        assert!(tv.try_recv().is_err(), "the TV heard a failed placement");
         assert!(matches!(d.read_slots().unwrap()[0], SlotState::Empty));
+
+        // Consumed: the next placement goes through.
+        d.place(slot(0), &eruptor(Some("p1"))).unwrap();
+        assert!(matches!(tv.try_recv(), Ok(PortalChange::Placed { .. })));
+    }
+
+    #[test]
+    fn a_full_channel_drops_and_counts_without_blocking_place() {
+        let (tx, tv) = crossbeam_channel::bounded(1);
+        let d = NativePortalDriver::new(tx);
+        d.clear(slot(7)).unwrap();
+
+        let started = Instant::now();
+        d.place(slot(0), &eruptor(None)).unwrap();
+        assert!(started.elapsed() < Duration::from_secs(1), "place blocked");
+        assert_eq!(d.dropped(), 1);
+        assert!(
+            matches!(d.read_slots().unwrap()[0], SlotState::Loaded { .. }),
+            "the slot still holds the placement"
+        );
+        assert_eq!(tv.try_recv(), Ok(PortalChange::Cleared { slot: slot(7) }));
+        assert!(tv.try_recv().is_err(), "the dropped Placed arrived");
+    }
+
+    #[test]
+    fn load_with_a_path_errors_and_sends_nothing() {
+        let (tx, tv) = portal_channel();
+        let d = NativePortalDriver::new(tx);
+        assert!(d.load(slot(0), Path::new("/pack/Eruptor.sky")).is_err());
+        assert!(matches!(d.read_slots().unwrap()[0], SlotState::Empty));
+        assert!(tv.try_recv().is_err());
     }
 }

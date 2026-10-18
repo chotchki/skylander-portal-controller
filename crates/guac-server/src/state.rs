@@ -109,11 +109,10 @@ pub struct AppState {
     /// RPCS3 config and the settings writer. The product passes all four.
     pub hooks: crate::hooks::Hooks,
 
-    /// Concrete mock driver handle, populated only when running with the
-    /// mock driver + test-hooks feature. The /api/_test/* endpoints use
-    /// this to inject failure outcomes.
+    /// The driver again, as the /api/_test/* endpoints inject failure
+    /// outcomes into it: the mock's or the native driver's, else `None`.
     #[cfg(feature = "test-hooks")]
-    pub test_mock: Option<Arc<skylander_rpcs3_control::MockPortalDriver>>,
+    pub test_injector: Option<Arc<dyn skylander_rpcs3_control::LoadInjector>>,
 }
 
 #[derive(Default)]

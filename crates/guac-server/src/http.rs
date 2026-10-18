@@ -1423,33 +1423,33 @@ async fn inject_load(
     State(state): State<Arc<AppState>>,
     axum::Json(body): axum::Json<InjectLoadBody>,
 ) -> Response {
-    let mock = match &state.test_mock {
-        Some(m) => m.clone(),
+    let injector = match &state.test_injector {
+        Some(i) => i.clone(),
         None => {
             return (
                 StatusCode::CONFLICT,
-                "/api/_test/inject_load requires the mock driver",
+                "/api/_test/inject_load requires the mock or the native driver",
             )
                 .into_response();
         }
     };
-    let mapped: Vec<skylander_rpcs3_control::MockOutcome> = body
+    let mapped: Vec<skylander_rpcs3_control::InjectedOutcome> = body
         .outcomes
         .into_iter()
         .map(|o| match o {
-            InjectLoadOutcome::Ok => skylander_rpcs3_control::MockOutcome::Ok,
+            InjectLoadOutcome::Ok => skylander_rpcs3_control::InjectedOutcome::Ok,
             InjectLoadOutcome::FileInUse { message } => {
-                skylander_rpcs3_control::MockOutcome::FileInUse {
+                skylander_rpcs3_control::InjectedOutcome::FileInUse {
                     message: message.unwrap_or_else(|| "file is in use".into()),
                 }
             }
             InjectLoadOutcome::QtModal { message } => {
-                skylander_rpcs3_control::MockOutcome::QtModal { message }
+                skylander_rpcs3_control::InjectedOutcome::QtModal { message }
             }
-            InjectLoadOutcome::Timeout => skylander_rpcs3_control::MockOutcome::Timeout,
+            InjectLoadOutcome::Timeout => skylander_rpcs3_control::InjectedOutcome::Timeout,
         })
         .collect();
-    mock.queue_load_outcomes(mapped);
+    injector.queue_load_outcomes(mapped);
     (StatusCode::ACCEPTED, "queued").into_response()
 }
 

@@ -180,7 +180,7 @@ fn build_driver(kind: DriverKind) -> Result<BuiltDriver> {
             {
                 let mock = Arc::new(skylander_rpcs3_control::MockPortalDriver::new());
                 #[cfg(feature = "test-hooks")]
-                return Ok(BuiltDriver::with_test_mock(mock));
+                return Ok(BuiltDriver::with_injector(mock));
                 // The `return` on the branch below keeps the code symmetric
                 // with the `test-hooks` branch above and sidesteps a cfg-type
                 // mismatch that would otherwise require an outer `match`

@@ -4219,9 +4219,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bevy",
+ "crossbeam-channel",
  "guac-server",
  "skylander-core",
  "skylander-rpcs3-control",
+ "tokio",
  "tracing",
 ]
 

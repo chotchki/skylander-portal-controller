@@ -91,6 +91,6 @@ default = ["dev-tools"]
 # its own `dev-tools` here and depends on this crate with default features
 # off, so a release build never picks it up.
 dev-tools = []
-# Enables the /api/_test/* endpoints used by the e2e harness to inject
-# mock-driver failure outcomes. Never enable in release builds.
-test-hooks = ["dev-tools", "skylander-rpcs3-control/mock"]
+# Enables the /api/_test/* endpoints the e2e harness injects failure outcomes
+# through (into the mock or the native driver). Never enable in release builds.
+test-hooks = ["dev-tools"]
