@@ -10,7 +10,9 @@
 //! - `play <mp4> <mp3> [--no-upload] [--wall] [--hz N] [--audible] [--window] [--video-lag-ms N] [--csv <file>]`: headless
 //!   Bevy (no window, an offscreen camera) shows each frame through an
 //!   `ImageNode` while the MP3 plays through Bevy audio, muted unless
-//!   `--audible`; prints upload cost, frame times and A/V drift (`--csv <file>`
+//!   `--audible`; `--wall` presents by the wall clock anchored to the sink's
+//!   position steps (decision 7), otherwise by the raw position; prints upload
+//!   cost, frame times and A/V drift (`--csv <file>`
 //!   writes each update's wall clock, audio clock and shown frame; `--window`
 //!   plays in a real window instead, for an unlocked display, and
 //!   `--video-lag-ms` holds the video back to judge lip sync).
@@ -36,8 +38,9 @@ use bevy::render::texture::GpuImage;
 use bevy::render::{Render, RenderApp, RenderSystems};
 use bevy::window::ExitCondition;
 use bevy::winit::WinitPlugin;
-use crossbeam_channel::{Receiver, bounded};
-use openh264::decoder::Decoder;
+use crossbeam_channel::{Receiver, TryRecvError, bounded};
+use openh264::decoder::{DecodedYUV, Decoder};
+use openh264::formats::YUVSource;
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -144,11 +147,29 @@ fn demux(path: &Path) -> Result<Video> {
             annexb,
         });
     }
+    // The IR's intros are 1280x720; anything bigger is a bad extract.
+    if width == 0 || height == 0 || width > MAX_W || height > MAX_H {
+        bail!("{width}x{height} track, outside 1x1..{MAX_W}x{MAX_H}");
+    }
     Ok(Video {
         width,
         height,
         packets,
     })
+}
+
+const MAX_W: usize = 1280;
+const MAX_H: usize = 720;
+
+/// `write_rgba8` asserts the buffer fits the decoded picture, so check the
+/// picture against the track's size first and fail instead of panicking.
+fn to_rgba(img: &DecodedYUV, (w, h): (usize, usize), rgba: &mut [u8]) -> Result<()> {
+    if img.dimensions() != (w, h) {
+        let (dw, dh) = img.dimensions();
+        bail!("decoded {dw}x{dh}, the track says {w}x{h}");
+    }
+    img.write_rgba8(rgba);
+    Ok(())
 }
 
 // ---- decode ---------------------------------------------------------------
@@ -191,7 +212,7 @@ fn decode_cmd(paths: &[String]) -> Result<()> {
             if let Some(img) = out {
                 dec_t.push(d);
                 let t = Instant::now();
-                img.write_rgba8(&mut rgba);
+                to_rgba(&img, (video.width, video.height), &mut rgba)?;
                 rgba_t.push(t.elapsed());
             }
         }
@@ -316,6 +337,8 @@ struct Log {
     decode: Vec<Duration>,
     /// (wall s, audio s, shown pts) per update once the sink exists.
     samples: Vec<(f64, f64, f64)>,
+    /// The wall clock's anchor: the smallest wall - position seen (s).
+    anchor: f64,
     shown: usize,
     skipped: usize,
     audio_start: Option<Duration>,
@@ -334,6 +357,9 @@ struct Player {
     lag: f64,
     spawned: Instant,
     t0: Option<Instant>,
+    /// Smallest wall - position seen; `--wall` presents by wall - anchor,
+    /// decision 7's clock.
+    anchor: f64,
     shown_pts: f64,
     total: usize,
     last_frame: Option<Instant>,
@@ -370,7 +396,7 @@ fn play_cmd(args: &[String]) -> Result<()> {
                 let t = Instant::now();
                 if let Some(img) = dec.decode(&pkt.annexb)? {
                     let mut rgba = vec![0u8; w * h * 4];
-                    img.write_rgba8(&mut rgba);
+                    to_rgba(&img, (w, h), &mut rgba)?;
                     dlog.0.lock().unwrap().decode.push(t.elapsed());
                     if tx.send(Frame { pts: pkt.pts, rgba }).is_err() {
                         break;
@@ -463,6 +489,7 @@ fn play_cmd(args: &[String]) -> Result<()> {
                     lag: lag_ms / 1e3,
                     spawned: Instant::now(),
                     t0: None,
+                    anchor: f64::MAX,
                     shown_pts: -1.0,
                     total,
                     last_frame: None,
@@ -548,13 +575,35 @@ fn present(
     }
     let wall = (now - t0).as_secs_f64();
     let audio = sink.position().as_secs_f64();
-    let clock = if player.wall_clock { wall } else { audio } - player.lag;
+    player.anchor = player.anchor.min(wall - audio);
+    l.anchor = player.anchor;
+    let clock = if player.wall_clock {
+        wall - player.anchor
+    } else {
+        audio
+    } - player.lag;
 
     // The newest decoded frame due by `clock`; older due ones are skipped.
     let mut due = None;
     loop {
         if player.pending.is_none() {
-            player.pending = player.rx.try_recv().ok();
+            match player.rx.try_recv() {
+                Ok(f) => player.pending = Some(f),
+                // The decode thread died (a panic) before the last frame;
+                // `due` holds one not yet counted.
+                Err(TryRecvError::Disconnected)
+                    if l.shown + l.skipped + usize::from(due.is_some()) < player.total =>
+                {
+                    eprintln!(
+                        "decode thread ended after {} of {} frames",
+                        l.shown + l.skipped + usize::from(due.is_some()),
+                        player.total
+                    );
+                    exit.write(AppExit::error());
+                    return;
+                }
+                Err(_) => {}
+            }
         }
         match &player.pending {
             Some(f) if f.pts <= clock => {
@@ -670,6 +719,10 @@ fn report(l: &Log, upload: bool, wall_clock: bool, hz: f64, frame: f64) {
         let min = lag.iter().copied().fold(f64::MAX, f64::min);
         println!("audio - shown pts over the run: min {min:+.2} max {max:+.2} ms");
     }
+    println!(
+        "wall clock anchor (min wall - position): {:+.2} ms",
+        l.anchor * 1e3
+    );
     clock_edges(&l.samples);
 }
 
