@@ -37,6 +37,11 @@ pub struct VertexArray {
     /// The dumped bytes start at this vertex: `rsx_offset + first_vertex * stride`.
     pub first_vertex: u32,
     pub vertex_count: u32,
+    /// Bytes the draw reads that no captured block covered. Array draws count each range
+    /// separately, so the gap between disjoint ranges (zero-filled in `bytes`) isn't counted.
+    /// RPCS3's capture truncates `index + base` to u16 for u16 draws, so when a base index
+    /// pushes them past 0xFFFF it records a wrapped window: missing bytes there are a capture
+    /// gap, not a decode error.
     pub missing_bytes: usize,
     #[serde(skip)]
     pub bytes: Vec<u8>,
@@ -57,6 +62,7 @@ pub struct IndexArray {
     /// Smallest and largest vertex referenced after the base index, restart skipped.
     pub min_vertex: Option<u32>,
     pub max_vertex: Option<u32>,
+    /// Bytes of the draw's index ranges no captured block covered (counted per range).
     pub missing_bytes: usize,
     #[serde(skip)]
     pub bytes: Vec<u8>,
@@ -69,8 +75,10 @@ pub struct TextureUnit {
     pub location: u32,
     pub format_raw: u32,
     pub format_name: &'static str,
-    /// The format's `LN` bit: set means linear, clear means swizzled.
+    /// The format's raw `LN` bit.
     pub linear: bool,
+    /// Texels are Morton-ordered: `LN` clear, except for DXT* and B8R8_G8R8/R8B8_R8G8, which
+    /// RPCS3 never swizzles (for them `LN` clear means packed rows, see `nv4097::never_swizzled`).
     pub swizzled: bool,
     pub unnormalized: bool,
     pub dimension: u32,
@@ -82,9 +90,11 @@ pub struct TextureUnit {
     pub depth: u32,
     pub pitch: u32,
     pub remap: u32,
-    /// Whether the capture recorded a block starting at this texture's address.
+    /// A block was recorded at this texture's address. RPCS3 copies every enabled texture with
+    /// a non-empty layout out of guest memory at each draw's end, sized by its own layout (all
+    /// mips, all faces), so a recorded texture is whole by construction (though possibly stale:
+    /// guest memory, not GPU-resident data). False means RPCS3 recorded nothing.
     pub captured: bool,
-    pub missing_bytes: usize,
     #[serde(skip)]
     pub bytes: Vec<u8>,
 }
@@ -115,6 +125,11 @@ pub struct Draw {
     pub index_array: Option<IndexArray>,
     pub textures: Vec<TextureUnit>,
     pub constants: Constants,
+    /// `SET_VERTEX_DATA_BASE_OFFSET`, `SET_VERTEX_DATA_BASE_INDEX` or an array offset was written
+    /// between two ranges. RPCS3 draws each range with the binding it was issued under, but both
+    /// its capture and this dump use the final binding for every range, so the earlier ranges'
+    /// true bytes aren't in the capture.
+    pub vertex_bindings_changed_mid_draw: bool,
 }
 
 #[derive(Debug, Default, Clone, Serialize)]
@@ -123,7 +138,9 @@ pub struct ReplayStats {
     pub draws: usize,
     /// Memory-state ids with no matching block or data entry.
     pub unresolved_blocks: usize,
-    /// Zero-count commands outside any batch (RPCS3's replay writes nothing for them either).
+    /// Zero-count commands outside any batch. Every capture opens with exactly one: the
+    /// capture-start NOP, stored as the bare register index (RPCS3's replay writes its header
+    /// word and no argument). More than one is an anomaly.
     pub orphan_commands: usize,
     pub stray_ends: usize,
     pub starting_constants: bool,
@@ -134,6 +151,7 @@ struct OpenDraw {
     ranges: Vec<DrawRange>,
     indexed: Option<bool>,
     constants_changed: bool,
+    bindings_changed: bool,
 }
 
 struct Tracker {
@@ -168,7 +186,12 @@ impl Tracker {
         }
     }
 
-    fn vertex_arrays(&self, span: Option<(u32, u32)>) -> Vec<VertexArray> {
+    /// `ranges` is set for array draws, whose missing bytes are counted per range.
+    fn vertex_arrays(
+        &self,
+        span: Option<(u32, u32)>,
+        ranges: Option<&[DrawRange]>,
+    ) -> Vec<VertexArray> {
         let mask = self.reg(m::SET_VERTEX_ATTRIB_INPUT_MASK);
         let base = self.reg(m::SET_VERTEX_DATA_BASE_OFFSET);
         let mut out = Vec::new();
@@ -185,12 +208,24 @@ impl Tracker {
             let location = offset_reg >> 31;
             let element_size = m::vertex_element_size(type_raw, components);
             let (first_vertex, vertex_count) = span.unwrap_or((0, 0));
+            let read_len =
+                |count: u32| (count - 1) as usize * stride as usize + element_size as usize;
+            let at = |vertex: u32| u64::from(rsx_offset) + u64::from(vertex) * u64::from(stride);
             let (bytes, missing_bytes) = if vertex_count == 0 || element_size == 0 {
                 (Vec::new(), 0)
             } else {
-                let start = u64::from(rsx_offset) + u64::from(first_vertex) * u64::from(stride);
-                let len = (vertex_count - 1) as usize * stride as usize + element_size as usize;
-                self.mem.read(location, start, len)
+                let (bytes, span_missing) =
+                    self.mem
+                        .read(location, at(first_vertex), read_len(vertex_count));
+                let missing = match ranges {
+                    Some(ranges) => ranges
+                        .iter()
+                        .filter(|r| r.count > 0)
+                        .map(|r| self.mem.read(location, at(r.first), read_len(r.count)).1)
+                        .sum(),
+                    None => span_missing,
+                };
+                (bytes, missing)
             };
             out.push(VertexArray {
                 slot,
@@ -212,7 +247,7 @@ impl Tracker {
     }
 
     fn index_array(&self, ranges: &[DrawRange]) -> IndexArray {
-        let rsx_offset = self.reg(m::SET_INDEX_ARRAY_ADDRESS);
+        let rsx_offset = self.reg(m::SET_INDEX_ARRAY_ADDRESS) & m::INDEX_ARRAY_OFFSET_MASK;
         let dma = self.reg(m::SET_INDEX_ARRAY_DMA);
         let location = dma & 0xf;
         let is_u16 = (dma >> 4) & 0xf == 1;
@@ -227,9 +262,18 @@ impl Tracker {
         let end = ranges.iter().map(|r| r.first + r.count).max().unwrap_or(0);
         let span = end - first;
         let start = u64::from(rsx_offset) + u64::from(first) * u64::from(type_size);
-        let (bytes, missing_bytes) =
-            self.mem
-                .read(location, start, span as usize * type_size as usize);
+        let (bytes, _) = self
+            .mem
+            .read(location, start, span as usize * type_size as usize);
+        let missing_bytes = ranges
+            .iter()
+            .map(|r| {
+                let at = u64::from(rsx_offset) + u64::from(r.first) * u64::from(type_size);
+                self.mem
+                    .read(location, at, r.count as usize * type_size as usize)
+                    .1
+            })
+            .sum();
 
         let mut min_vertex: Option<u32> = None;
         let mut max_vertex: Option<u32> = None;
@@ -282,19 +326,19 @@ impl Tracker {
             let rect = r(m::SET_TEXTURE_IMAGE_RECT);
             let control3 = self.reg(m::SET_TEXTURE_CONTROL3 + unit);
             let block_len = self.mem.block_len_at(location, offset);
-            let (bytes, missing_bytes) = match block_len {
-                Some(len) => self.mem.read(location, u64::from(offset), len),
-                None => (Vec::new(), 0),
-            };
+            let bytes = block_len.map_or_else(Vec::new, |len| {
+                self.mem.read(location, u64::from(offset), len).0
+            });
+            let base = format_raw & !(m::TEXTURE_LN | m::TEXTURE_UN);
             let linear = format_raw & m::TEXTURE_LN != 0;
             out.push(TextureUnit {
                 unit,
                 offset,
                 location,
                 format_raw,
-                format_name: m::texture_format_name(format_raw & !(m::TEXTURE_LN | m::TEXTURE_UN)),
+                format_name: m::texture_format_name(base),
                 linear,
-                swizzled: !linear,
+                swizzled: !linear && !m::never_swizzled(base),
                 unnormalized: format_raw & m::TEXTURE_UN != 0,
                 dimension,
                 cubemap: (format >> 2) & 1 == 1,
@@ -306,7 +350,6 @@ impl Tracker {
                 pitch: control3 & 0xf_ffff,
                 remap: r(m::SET_TEXTURE_CONTROL1),
                 captured: block_len.is_some(),
-                missing_bytes,
                 bytes,
             });
         }
@@ -365,6 +408,10 @@ impl Tracker {
             DrawKind::Indexed => span.map_or(0, |s| s.1),
             _ => open.ranges.iter().map(|r| r.count).sum(),
         };
+        let vertex_arrays = self.vertex_arrays(
+            span,
+            (kind == DrawKind::Arrays).then_some(open.ranges.as_slice()),
+        );
         Draw {
             draw,
             command_index,
@@ -375,10 +422,11 @@ impl Tracker {
             vertex_count,
             vertex_data_base_offset: self.reg(m::SET_VERTEX_DATA_BASE_OFFSET),
             vertex_attrib_input_mask: self.reg(m::SET_VERTEX_ATTRIB_INPUT_MASK),
-            vertex_arrays: self.vertex_arrays(span),
+            vertex_arrays,
             index_array,
             textures: self.textures(),
             constants: self.constants(open.constants_changed),
+            vertex_bindings_changed_mid_draw: open.bindings_changed,
         }
     }
 }
@@ -431,6 +479,16 @@ pub fn replay<E>(
 
         let reg = (header & m::HEADER_METHOD_MASK) >> 2;
         let values: Vec<u32> = cmds[i..end].iter().map(|c| c.value).collect();
+        let arrays =
+            m::SET_VERTEX_DATA_ARRAY_OFFSET..m::SET_VERTEX_DATA_ARRAY_OFFSET + m::VERTEX_ARRAYS;
+        if let Some(open) = &mut t.open
+            && !open.ranges.is_empty()
+            && (reg == m::SET_VERTEX_DATA_BASE_OFFSET
+                || reg == m::SET_VERTEX_DATA_BASE_INDEX
+                || arrays.contains(&reg))
+        {
+            open.bindings_changed = true;
+        }
         if let Some(slot) = t.regs.get_mut(reg as usize) {
             *slot = values[0];
         }
@@ -443,12 +501,14 @@ pub fn replay<E>(
         if count == 1 && !window.contains(&reg) {
             let value = values[0];
             match reg {
-                m::SET_BEGIN_END if value != 0 => {
+                // RPCS3 looks only at the low byte: 0x100 ends a draw like 0 does.
+                m::SET_BEGIN_END if value & 0xff != 0 => {
                     t.open = Some(OpenDraw {
-                        primitive: value,
+                        primitive: value & 0xff,
                         ranges: Vec::new(),
                         indexed: None,
                         constants_changed: false,
+                        bindings_changed: false,
                     });
                 }
                 m::SET_BEGIN_END => match t.open.take() {

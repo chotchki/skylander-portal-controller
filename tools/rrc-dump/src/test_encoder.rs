@@ -54,9 +54,14 @@ impl Builder {
             tile_id: 0,
         };
         b.tile_id = b.id();
-        // RPCS3 opens every capture with a NOP carrying the first tile state.
-        b.method(crate::nv4097::NO_OPERATION, 0);
-        b.cmds[0].tile = b.tile_id;
+        // RPCS3 opens every capture with a NOP carrying the first tile state, stored as the
+        // bare register index (0x40, so count 0), not as a `reg << 2 | 1 << 18` header.
+        b.cmds.push(Cmd {
+            header: crate::nv4097::NO_OPERATION,
+            value: 0,
+            memory: Vec::new(),
+            tile: b.tile_id,
+        });
         b
     }
 
@@ -264,8 +269,10 @@ mod tests {
         let (draws, stats) = run(&b);
         assert_eq!(stats.draws, 1);
         assert_eq!(stats.unresolved_blocks, 0);
+        assert_eq!(stats.orphan_commands, 1, "the capture-start NOP");
         let d = &draws[0];
         assert_eq!(d.kind, DrawKind::Indexed);
+        assert!(!d.vertex_bindings_changed_mid_draw);
         assert_eq!(d.primitive_name, "triangles");
 
         let ia = d.index_array.as_ref().unwrap();
@@ -326,13 +333,13 @@ mod tests {
         assert_eq!(&p.bytes[..3 * 12], &pos[12..4 * 12]);
         assert_eq!(&p.bytes[4 * 12..], &pos[5 * 12..7 * 12]);
         assert_eq!(
-            p.missing_bytes, 12,
-            "vertex 4 sits between the ranges and was never captured"
+            p.missing_bytes, 0,
+            "vertex 4 sits between the ranges, which no range reads"
         );
         assert_eq!(
             d.vertex_arrays[1].missing_bytes,
-            6 * 4,
-            "colors weren't captured at all"
+            5 * 4,
+            "colors weren't captured at all: both ranges' vertices are missing"
         );
     }
 
@@ -371,6 +378,83 @@ mod tests {
         assert_eq!(t.remap, 0xaae4);
         assert!(t.captured);
         assert_eq!(t.bytes, surface);
+    }
+
+    #[test]
+    fn compressed_formats_are_never_swizzled_and_unrecorded_units_say_so() {
+        let mut b = Builder::new();
+        // Unit 4: DXT1 without LN (0x86). Unit 5: A8R8G8B8 without LN (0x85). Neither recorded.
+        for (unit, format) in [(4u32, 0x86u32), (5, 0x85)] {
+            let r = |base: u32| base + unit * m::TEXTURE_UNIT_STRIDE;
+            b.method(r(m::SET_TEXTURE_OFFSET), 0x0040_0000 + unit * 0x1000)
+                .method(r(m::SET_TEXTURE_FORMAT), 1 | (2 << 4) | (format << 8))
+                .method(r(m::SET_TEXTURE_CONTROL0), 0x8000_0000);
+        }
+        b.method(m::SET_BEGIN_END, 5)
+            .method(m::DRAW_ARRAYS, 2 << 24)
+            .method(m::SET_BEGIN_END, 0);
+
+        let (draws, _) = run(&b);
+        let t = &draws[0].textures;
+        assert_eq!(t.len(), 2);
+        assert_eq!(t[0].format_name, "COMPRESSED_DXT1");
+        assert!(
+            !t[0].linear && !t[0].swizzled,
+            "DXT with LN clear is packed rows"
+        );
+        assert_eq!(t[1].format_name, "A8R8G8B8");
+        assert!(!t[1].linear && t[1].swizzled);
+        for t in t {
+            assert!(!t.captured && t.bytes.is_empty(), "unit {}", t.unit);
+        }
+    }
+
+    #[test]
+    fn vertex_rebinds_between_ranges_flag_the_draw() {
+        for (mid_draw, reg) in [
+            (true, m::SET_VERTEX_DATA_BASE_OFFSET),
+            (true, m::SET_VERTEX_DATA_BASE_INDEX),
+            (true, m::SET_VERTEX_DATA_ARRAY_OFFSET + 7),
+            (false, m::SET_VERTEX_DATA_BASE_OFFSET),
+        ] {
+            let mut b = Builder::new();
+            b.method(m::SET_BEGIN_END, 5);
+            if mid_draw {
+                b.method(m::DRAW_ARRAYS, 2 << 24);
+            }
+            b.method(reg, 0x40)
+                .method(m::DRAW_ARRAYS, (2 << 24) | 3)
+                .method(m::SET_BEGIN_END, 0);
+            let (draws, _) = run(&b);
+            assert_eq!(
+                draws[0].vertex_bindings_changed_mid_draw, mid_draw,
+                "reg {reg:#x}, after a range: {mid_draw}"
+            );
+        }
+    }
+
+    #[test]
+    fn begin_end_low_byte_and_index_address_mask_match_rpcs3() {
+        let mut b = Builder::new();
+        let indices = [0u16, 1, 2];
+        // Bit 30 set: RPCS3 keeps 29 bits of the index address.
+        b.method(m::SET_INDEX_ARRAY_ADDRESS, 0x4000_0000 | INDEX_OFFSET)
+            .method(m::SET_INDEX_ARRAY_DMA, 1 << 4)
+            .method(m::SET_BEGIN_END, 0x300 | 5)
+            .method(m::DRAW_INDEX_ARRAY, 2 << 24)
+            .method(m::SET_BEGIN_END, 0x100);
+        b.block(0, INDEX_OFFSET, &be16(&indices));
+
+        let (draws, stats) = run(&b);
+        assert_eq!(
+            (stats.draws, stats.stray_ends),
+            (1, 0),
+            "0x100 ends the draw"
+        );
+        assert_eq!(draws[0].primitive, 5);
+        let ia = draws[0].index_array.as_ref().unwrap();
+        assert_eq!(ia.rsx_offset, INDEX_OFFSET);
+        assert_eq!((ia.missing_bytes, ia.bytes.clone()), (0, be16(&indices)));
     }
 
     #[test]
@@ -537,7 +621,7 @@ mod tests {
             let err = refuse_repo_output(&inside).unwrap_err();
             assert!(err.to_string().contains("refusing"), "{inside:?}: {err}");
         }
-        // Lexical `..` can't be used to sneak back in from outside.
+        // `..` below a missing dir is refused outright, so it can't sneak back in from outside.
         let tmp = tempfile::tempdir().unwrap();
         let sneaky = tmp
             .path()
@@ -578,5 +662,50 @@ mod tests {
             );
         }
         assert!(refuse_repo_output(&tmp.path().join("plain/out")).is_ok());
+    }
+
+    #[test]
+    fn nested_repos_and_symlinked_dotdot_inside_a_clone_are_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clone = tmp.path().join("clone");
+        std::fs::create_dir_all(clone.join(".git")).unwrap();
+        std::fs::write(
+            clone.join(".git/config"),
+            "[remote \"origin\"]\n\turl = git@github.com:chotchki/skylander-portal-controller.git\n",
+        )
+        .unwrap();
+        // A nested repo with an unrelated remote, and a submodule-style `.git` file.
+        let nested = clone.join("nested");
+        std::fs::create_dir_all(nested.join(".git")).unwrap();
+        std::fs::write(
+            nested.join(".git/config"),
+            "[remote \"origin\"]\n\turl = https://github.com/RPCS3/rpcs3.git\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(clone.join(".git/modules/sub")).unwrap();
+        std::fs::create_dir_all(clone.join("sub")).unwrap();
+        std::fs::write(clone.join("sub/.git"), "gitdir: ../.git/modules/sub\n").unwrap();
+        for inside in [nested.join("dump"), clone.join("sub/dump")] {
+            let err = DumpWriter::create(&inside).err().expect("refused");
+            assert!(err.to_string().contains("refusing"), "{inside:?}: {err}");
+            assert!(!inside.exists());
+        }
+
+        #[cfg(unix)]
+        {
+            let outside = tmp.path().join("outside");
+            std::fs::create_dir_all(&outside).unwrap();
+            std::os::unix::fs::symlink(&nested, outside.join("link")).unwrap();
+            // The OS resolves `link/..` to the clone, not to `outside`.
+            let sneaky = outside.join("link/../escaped");
+            assert!(refuse_repo_output(&sneaky).is_err());
+            assert!(!clone.join("escaped").exists());
+            // Writing through the link into a plain dir elsewhere lands at the physical path.
+            let plain = tmp.path().join("plain");
+            std::fs::create_dir_all(&plain).unwrap();
+            std::os::unix::fs::symlink(&plain, outside.join("to_plain")).unwrap();
+            let resolved = refuse_repo_output(&outside.join("to_plain/dump")).unwrap();
+            assert_eq!(resolved, plain.canonicalize().unwrap().join("dump"));
+        }
     }
 }

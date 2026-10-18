@@ -197,8 +197,10 @@ impl Capture {
             c.u64("tile state id")?;
         }
 
+        // Capacity hints are capped by the smallest entry that fits in what's left: a block is a
+        // 16-byte memory_block plus its u64 id, a data entry at least a 1-byte length plus its u64 id.
         let block_count = c.varint("memory map count")?;
-        let mut blocks = HashMap::with_capacity(block_count);
+        let mut blocks = HashMap::with_capacity(block_count.min(c.left() / 24));
         for _ in 0..block_count {
             let block = MemoryBlock {
                 offset: c.u32("memory block offset")?,
@@ -209,7 +211,7 @@ impl Capture {
         }
 
         let data_count = c.varint("memory data map count")?;
-        let mut data = HashMap::with_capacity(data_count);
+        let mut data = HashMap::with_capacity(data_count.min(c.left() / 9));
         for _ in 0..data_count {
             let len = c.varint("memory data length")?;
             let bytes = c.take(len, "memory data bytes")?.to_vec();

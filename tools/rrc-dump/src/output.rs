@@ -13,25 +13,6 @@ use crate::replay::{Draw, ReplayStats};
 /// Substring of this repo's remote URL; a clone anywhere else is still this repo.
 const REPO_NAME: &str = "skylander-portal-controller";
 
-fn normalize(path: &Path) -> Result<PathBuf> {
-    let abs = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()?.join(path)
-    };
-    let mut out = PathBuf::new();
-    for c in abs.components() {
-        match c {
-            Component::ParentDir => {
-                out.pop();
-            }
-            Component::CurDir => {}
-            other => out.push(other),
-        }
-    }
-    Ok(out)
-}
-
 /// Canonical path of the git dir shared by every worktree of the repo whose work tree holds `root`.
 fn common_git_dir(root: &Path) -> Option<PathBuf> {
     let dot_git = root.join(".git");
@@ -65,19 +46,10 @@ fn build_repo_common_dir() -> Option<PathBuf> {
     common_git_dir(&enclosing_work_tree(manifest)?)
 }
 
-/// Errors when `out` sits inside a work tree of this repo: the build checkout, any of its
-/// worktrees, or another clone whose remote names it.
-pub fn refuse_repo_output(out: &Path) -> Result<()> {
-    let target = normalize(out)?;
-    let existing = target
-        .ancestors()
-        .find(|a| a.exists())
-        .context("output path has no existing ancestor")?
-        .canonicalize()?;
-    let Some(root) = enclosing_work_tree(&existing) else {
-        return Ok(());
-    };
-    let common = common_git_dir(&root);
+/// A work tree of this repo: the build checkout, any of its worktrees, or another clone whose
+/// remote names it.
+fn is_this_repo(root: &Path) -> bool {
+    let common = common_git_dir(root);
     let same_checkout = common.is_some() && common == build_repo_common_dir();
     let remote_names_repo = common
         .and_then(|c| fs::read_to_string(c.join("config")).ok())
@@ -87,13 +59,38 @@ pub fn refuse_repo_output(out: &Path) -> Result<()> {
                 l.starts_with("url") && l.contains(REPO_NAME)
             })
         });
-    if same_checkout || remote_names_repo {
+    same_checkout || remote_names_repo
+}
+
+/// Resolves `out` to the physical path to write to, erroring when it sits inside any work tree of
+/// this repo. Every enclosing work tree is checked, not just the innermost: a submodule or nested
+/// repo (`vendor/rpcs3`) still sits inside this checkout. `..` is resolved by the OS through
+/// symlinks, never lexically, and refused below the deepest dir that exists.
+pub fn refuse_repo_output(out: &Path) -> Result<PathBuf> {
+    let abs = std::path::absolute(out)?;
+    let existing = abs
+        .ancestors()
+        .find(|a| a.exists())
+        .context("output path has no existing ancestor")?;
+    let tail = abs.strip_prefix(existing)?.to_path_buf();
+    if tail.components().any(|c| matches!(c, Component::ParentDir)) {
+        bail!(
+            "refusing an output path with `..` below its deepest existing dir: {}",
+            out.display()
+        );
+    }
+    let target = existing.canonicalize()?.join(&tail);
+    if let Some(root) = target
+        .ancestors()
+        .filter(|a| a.join(".git").exists())
+        .find(|a| is_this_repo(a))
+    {
         bail!(
             "refusing to write capture data inside the {REPO_NAME} repo (work tree {}); pick a dir outside it, e.g. $GUAC_CAPTURE_DIR",
             root.display()
         );
     }
-    Ok(())
+    Ok(target)
 }
 
 fn fnv1a64(bytes: &[u8]) -> u64 {
@@ -111,11 +108,11 @@ pub struct DumpWriter {
 
 impl DumpWriter {
     pub fn create(root: &Path) -> Result<Self> {
-        refuse_repo_output(root)?;
+        let root = refuse_repo_output(root)?;
         fs::create_dir_all(root.join("textures"))
             .with_context(|| format!("creating {}", root.display()))?;
         Ok(DumpWriter {
-            root: root.to_path_buf(),
+            root,
             textures: HashMap::new(),
             summary: Vec::new(),
         })

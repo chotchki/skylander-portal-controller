@@ -43,6 +43,16 @@ pub const HEADER_NON_INCREMENT: u32 = 0x4000_0000;
 pub const TEXTURE_LN: u32 = 0x20;
 pub const TEXTURE_UN: u32 = 0x40;
 
+/// `SET_INDEX_ARRAY_ADDRESS` keeps 29 bits of offset (RPCS3 decodes it as `bf_decoder<0, 29>`).
+pub const INDEX_ARRAY_OFFSET_MASK: u32 = 0x1fff_ffff;
+
+/// Base formats RPCS3 never Morton-orders: DXT1, DXT23, DXT45, B8R8_G8R8 and R8B8_R8G8.
+/// For these a clear `LN` bit only means packed rows (pitch ignored, layers 128-byte aligned);
+/// 3D power-of-two DXT is VTC-tiled instead.
+pub fn never_swizzled(base: u32) -> bool {
+    matches!(base, 0x86 | 0x87 | 0x88 | 0x8d | 0x8e)
+}
+
 pub fn primitive_name(value: u32) -> &'static str {
     match value {
         1 => "points",
