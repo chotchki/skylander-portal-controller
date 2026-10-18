@@ -4217,7 +4217,12 @@ dependencies = [
 name = "guacamole"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bevy",
+ "guac-server",
+ "skylander-core",
+ "skylander-rpcs3-control",
+ "tracing",
 ]
 
 [[package]]

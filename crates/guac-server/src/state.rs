@@ -268,6 +268,9 @@ pub struct LauncherStatus {
     /// `connectivity_warning` is raised so the card can specialise its copy
     /// ("no firewall rule for port …" vs "firewall is off — check Wi-Fi/mDNS").
     pub firewall_status: crate::firewall::FirewallStatus,
+    /// The listener's port was taken (another copy, or the other app, is
+    /// serving). Set with `ServerError`; guacamole shows "already running".
+    pub port_in_use: bool,
 }
 
 /// UI-polled view of one connected phone session. Colour / initial are

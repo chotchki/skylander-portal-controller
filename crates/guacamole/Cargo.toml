@@ -11,6 +11,23 @@ name = "guacamole"
 path = "src/main.rs"
 
 [dependencies]
+# Default features off: `dev-tools` / `test-hooks` below forward to it, so a
+# `--no-default-features` release build can't pick up the library's dev defaults.
+guac-server = { path = "../guac-server", default-features = false }
+skylander-core = { path = "../core" }
+skylander-rpcs3-control = { path = "../rpcs3-control" }
+
+anyhow = { workspace = true }
+tracing = { workspace = true }
+
 # Pinned by Cargo.lock; upgrades are their own change at milestone boundaries.
 # `ui` is the 2D UI collection (winit, wgpu, bevy_ui, text, png); no 3D or audio yet.
 bevy = { version = "0.20.0", default-features = false, features = ["ui"] }
+
+[features]
+default = ["dev-tools"]
+# `cargo run` builds: `./dev-data/guacamole/`, `.env.dev`, unsigned requests,
+# a console window on Windows.
+dev-tools = ["guac-server/dev-tools"]
+# The /api/_test/* endpoints for the e2e harness. Never in release builds.
+test-hooks = ["dev-tools", "guac-server/test-hooks"]

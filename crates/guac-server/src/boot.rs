@@ -241,6 +241,11 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
                 let listener = match tokio::net::TcpListener::bind(bind_addr).await {
                     Ok(l) => l,
                     Err(e) => {
+                        if e.kind() == std::io::ErrorKind::AddrInUse
+                            && let Ok(mut st) = status_for_ready.lock()
+                        {
+                            st.port_in_use = true;
+                        }
                         report_fatal(&format!("bind {bind_addr}"), &e);
                         return;
                     }
@@ -781,6 +786,7 @@ mod tests {
             message.starts_with(&format!("bind {}", first.bind_addr)),
             "{message}"
         );
+        assert!(second.launcher_status.lock().unwrap().port_in_use);
         assert!(!second_root.join("db.sqlite").exists());
         assert!(!second_root.exists(), "the runtime root was created");
         assert!(second.driver_tx.is_closed());
