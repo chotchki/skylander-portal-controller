@@ -147,8 +147,9 @@ product-only: <why>` instead of failing:
 Every other mock-harness test runs against both apps. On the Mac
 (2026-10-18, serial, `--skip ios_`, AB.11): guacamole 51 of 51 ok, 38
 run for real (13 TV + 3 intro + 22 shared) and 13 product-only skips;
-the product 32 of 35 run for real (plus 16 guacamole-only skips). Its 3
-failures already failed at the pre-AA base (46866ce):
+the product 48 of 51 ok, 28 run for real (25 passed, 3 failed), 7
+live-RPCS3 tests skip without `RPCS3_TEST_SERIAL` /
+`RPCS3_SKY_TEST_PATH`, plus 16 guacamole-only skips. Its 3 failures already failed at the pre-AA base (46866ce):
 `edit_level_and_gold_round_trips_through_stats_strip`,
 `gold_chevrons_jump_to_bounds_and_max_round_trips` and
 `resume_prompt_offers_prior_layout`. All three are product-only `.sky`
