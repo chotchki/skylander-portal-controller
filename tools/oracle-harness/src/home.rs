@@ -8,7 +8,10 @@
 //! `init` copies `dev_flash` from the dev's RPCS3 dir (a copy, never a link: a
 //! link would carry a write back), points `games.yml` at the Giants dump and
 //! writes the [`crate::template`] files. It refuses a home inside any work tree
-//! of this repo and one that overlaps the dev's RPCS3 dirs.
+//! of this repo, one that overlaps the dev's RPCS3 dirs and one an RPCS3 is
+//! running from. `open` re-checks the links and a launch re-checks the overlap,
+//! since a link made after `init` would carry a savestate load's wipe of hdd0
+//! and hdd1 into the dev's own.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -39,6 +42,46 @@ pub fn rpcs3_cache_dir(home: &Path) -> PathBuf {
     }
 }
 
+/// RPCS3's single-instance lock under a HOME. `rpcs3/rpcs3.cpp` opens it with
+/// `fs::lock` at start, which takes an exclusive `flock` (`Utilities/File.cpp`)
+/// and holds it for the life of the process.
+pub fn rpcs3_lock_file(home: &Path) -> PathBuf {
+    rpcs3_cache_dir(home).join("RPCS3.buf")
+}
+
+/// The dev's real HOME, the harness process's own `HOME` (only the RPCS3 it
+/// launches gets the oracle home's).
+pub fn real_home() -> Result<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|h| !h.is_empty())
+        .map(PathBuf::from)
+        .context("HOME is unset, so the dev's RPCS3 dir can't be found")
+}
+
+/// Refuses while an RPCS3 runs with `home` as its HOME: it holds an exclusive
+/// `flock` on [`rpcs3_lock_file`], so a lock this can't take is a live
+/// instance's. A lock it can take is let go at once; no lock file means no
+/// RPCS3 has run there.
+pub fn refuse_running(home: &Path) -> Result<()> {
+    let lock = rpcs3_lock_file(home);
+    let file = match fs::File::open(&lock) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e).with_context(|| format!("opening {}", lock.display())),
+    };
+    match file.try_lock() {
+        Ok(()) => Ok(()),
+        Err(fs::TryLockError::WouldBlock) => bail!(
+            "an RPCS3 is running from {} (it holds {}); stop it first",
+            home.display(),
+            lock.display()
+        ),
+        Err(fs::TryLockError::Error(e)) => {
+            Err(e).with_context(|| format!("probing the lock on {}", lock.display()))
+        }
+    }
+}
+
 /// A home `init` built: the marker is there and it sits outside every work tree.
 #[derive(Debug, Clone)]
 pub struct OracleHome {
@@ -47,9 +90,11 @@ pub struct OracleHome {
 }
 
 impl OracleHome {
-    /// Opens a home `init` built, refusing one inside a work tree of this repo.
+    /// Opens a home `init` built, refusing one inside a work tree of this repo
+    /// and one with a link anywhere from it down to the dirs RPCS3 writes.
     pub fn open(root: &Path) -> Result<Self> {
         let root = rrc_dump::output::refuse_repo_output(root)?;
+        refuse_links(&root)?;
         let marker = root.join(MARKER);
         let text = fs::read_to_string(&marker).with_context(|| {
             format!(
@@ -87,6 +132,27 @@ impl OracleHome {
     pub fn giants_eboot(&self) -> PathBuf {
         self.giants_dump.join("PS3_GAME/USRDIR/EBOOT.BIN")
     }
+
+    /// `init`'s isolation checks again, for a launch: no link from the home down
+    /// to the dirs RPCS3 writes, and none of their physical paths overlapping the
+    /// two RPCS3 dirs under `real_home`.
+    pub fn check_isolated(&self, real_home: &Path) -> Result<()> {
+        refuse_links(&self.root)?;
+        let real_dirs = [rpcs3_config_dir(real_home), rpcs3_cache_dir(real_home)];
+        refuse_overlap(&self.root, &real_dirs)?;
+        let config = self.config_dir();
+        for dir in [
+            config.join("dev_hdd0"),
+            config.join("dev_hdd1"),
+            config,
+            self.cache_dir(),
+        ] {
+            if let Ok(physical) = dir.canonicalize() {
+                refuse_overlap(&physical, &real_dirs)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -112,6 +178,8 @@ pub fn init(home: &Path, opts: &InitOptions) -> Result<OracleHome> {
     if cfg!(windows) {
         bail!("the oracle home is Mac only until the Windows/HTPC bring-up");
     }
+    // Before anything is rewritten: a running oracle reads this config.
+    refuse_running(&root)?;
     let eboot = opts.giants_dump.join("PS3_GAME/USRDIR/EBOOT.BIN");
     if !eboot.is_file() {
         bail!(
@@ -197,6 +265,21 @@ fn refuse_overlap(path: &Path, dirs: &[PathBuf]) -> Result<()> {
                 dir.display()
             );
         }
+    }
+    Ok(())
+}
+
+/// Refuses a link from `root` down to the config dir's `dev_flash`, `dev_hdd0`
+/// and `dev_hdd1` and down to the cache dir; a part not made yet passes.
+fn refuse_links(root: &Path) -> Result<()> {
+    let config = rpcs3_config_dir(root);
+    for dir in [
+        config.join("dev_flash"),
+        config.join("dev_hdd0"),
+        config.join("dev_hdd1"),
+        rpcs3_cache_dir(root),
+    ] {
+        refuse_link_on_the_way(root, &dir)?;
     }
     Ok(())
 }
@@ -394,6 +477,74 @@ mod tests {
         assert!(!inside.parent().unwrap().exists());
         let err = OracleHome::open(&inside).unwrap_err().to_string();
         assert!(err.contains("refusing"), "{err}");
+    }
+
+    #[test]
+    fn open_and_a_launch_check_the_isolation_again() {
+        let fx = Fixture::new();
+        let home = init(&fx.tmp.path().join("oracle"), &fx.opts()).unwrap();
+        home.check_isolated(&fx.opts().real_home).unwrap();
+        // The oracle home taken for the real one overlaps itself.
+        let err = home.check_isolated(home.root()).unwrap_err().to_string();
+        assert!(err.contains("overlaps"), "{err}");
+
+        // hdd0 swapped for a link into the dev's RPCS3 dir after init.
+        let hdd0 = home.config_dir().join("dev_hdd0");
+        fs::remove_dir(&hdd0).unwrap();
+        std::os::unix::fs::symlink(fx.real_config().join("dev_hdd0"), &hdd0).unwrap();
+        let err = OracleHome::open(home.root()).unwrap_err().to_string();
+        assert!(err.contains("is a link"), "{err}");
+        let err = home
+            .check_isolated(&fx.opts().real_home)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("is a link"), "{err}");
+        fs::remove_file(&hdd0).unwrap();
+        fs::create_dir(&hdd0).unwrap();
+        OracleHome::open(home.root()).unwrap();
+
+        // The cache dir's Library/Caches swapped for the dev's.
+        let caches = home.root().join("Library/Caches");
+        fs::rename(&caches, home.root().join("Caches.moved")).unwrap();
+        let real_caches = fx.tmp.path().join("real-home/Library/Caches");
+        fs::create_dir_all(&real_caches).unwrap();
+        std::os::unix::fs::symlink(&real_caches, &caches).unwrap();
+        let err = OracleHome::open(home.root()).unwrap_err().to_string();
+        assert!(err.contains("is a link"), "{err}");
+        assert_eq!(
+            fs::read_to_string(fx.real_config().join("dev_hdd0/game/save")).unwrap(),
+            "the dev's save"
+        );
+    }
+
+    #[test]
+    fn a_running_rpcs3_blocks_init_until_it_lets_go_of_its_lock() {
+        let fx = Fixture::new();
+        let root = fx.tmp.path().join("oracle");
+        // No lock file: nothing has run there.
+        refuse_running(&root).unwrap();
+        let home = init(&root, &fx.opts()).unwrap();
+        let config = home.config_dir().join("config.yml");
+        fs::write(&config, "what the running RPCS3 read").unwrap();
+
+        // RPCS3's own hold: an exclusive flock on RPCS3.buf for its whole life.
+        let held = fs::File::create(rpcs3_lock_file(home.root())).unwrap();
+        held.lock().unwrap();
+        let err = refuse_running(home.root()).unwrap_err().to_string();
+        assert!(err.contains("an RPCS3 is running"), "{err}");
+        let err = init(home.root(), &fx.opts()).unwrap_err().to_string();
+        assert!(err.contains("an RPCS3 is running"), "{err}");
+        assert_eq!(
+            fs::read_to_string(&config).unwrap(),
+            "what the running RPCS3 read"
+        );
+
+        // A dead instance's file, unlocked, is no bar; the probe holds nothing after.
+        drop(held);
+        refuse_running(home.root()).unwrap();
+        init(home.root(), &fx.opts()).unwrap();
+        let again = fs::File::open(rpcs3_lock_file(home.root())).unwrap();
+        again.try_lock().unwrap();
     }
 
     #[test]

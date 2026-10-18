@@ -16,12 +16,12 @@ usage:
   oracle home init [--home <dir>] [--shader-mode <mode>] [--sys-fs-trace]
       build the oracle home ($GUAC_ORACLE_HOME unless --home): a dev_flash copy from
       the dev's RPCS3 dir, games.yml at $GUAC_GIANTS_DUMP, PINE on, two pads, the config
-  oracle boot [--savestate <file>] [--windowed] [--ready-secs <n>] [--sample-secs <n>]
+  oracle boot [--savestate <file>] [--windowed] [--surface-2x] [--ready-secs <n>] [--sample-secs <n>]
       boot $GUAC_ORACLE_EXE from the oracle home to playable (a savestate: to its
       Start Paused pause), sample the fps, shut down, and check the dev's RPCS3
-      dirs came through untouched
+      dirs came through untouched; prints what RPCS3 inherited that can change a frame
   oracle pine --socket <path> (id | title | version | status | read <addr> <len>)
-      query a running oracle's PINE server; read prints hex";
+      query a running oracle's PINE server; read prints hex, and only while paused";
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -32,12 +32,6 @@ fn main() -> Result<()> {
         ["pine", "--socket", socket, rest @ ..] => pine(PathBuf::from(socket), rest),
         _ => bail!("{USAGE}"),
     }
-}
-
-fn real_home() -> Result<PathBuf> {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .context("HOME is unset, so the dev's RPCS3 dir can't be found")
 }
 
 fn required(key: &str) -> Result<PathBuf> {
@@ -69,7 +63,7 @@ fn home_init(mut rest: &[&str]) -> Result<()> {
     let built = home::init(
         &home,
         &InitOptions {
-            real_home: real_home()?,
+            real_home: home::real_home()?,
             giants_dump: required(env::GIANTS_DUMP)?,
             config,
         },
@@ -96,6 +90,7 @@ fn boot(mut rest: &[&str]) -> Result<()> {
                 rest = tail;
             }
             ("--windowed", _) => opts.borderless = false,
+            ("--surface-2x", _) => opts.surface_2x = true,
             ("--ready-secs", [n, tail @ ..]) => {
                 ready = Duration::from_secs(n.parse()?);
                 rest = tail;
@@ -109,7 +104,7 @@ fn boot(mut rest: &[&str]) -> Result<()> {
     }
     let exe = required(env::ORACLE_EXE)?;
     let home = OracleHome::open(&required(env::ORACLE_HOME)?)?;
-    let dev_dirs = dev_rpcs3_dirs(&real_home()?);
+    let dev_dirs = dev_rpcs3_dirs(&home::real_home()?);
     let before = Snapshot::take(&dev_dirs)?;
 
     let mut oracle = launch::boot(&exe, &home, &opts)?;
@@ -118,6 +113,19 @@ fn boot(mut rest: &[&str]) -> Result<()> {
         oracle.pid(),
         oracle.run_paths().p1_socket.display(),
         oracle.run_paths().pine_socket.display()
+    );
+    let inherited: Vec<String> = oracle
+        .render_env()
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect();
+    println!(
+        "inherited render env: {}",
+        if inherited.is_empty() {
+            "none".to_owned()
+        } else {
+            inherited.join(" ")
+        }
     );
     let state = if opts.savestate.is_some() {
         oracle.wait_paused(ready)?
@@ -157,7 +165,7 @@ fn pine(socket: PathBuf, rest: &[&str]) -> Result<()> {
         ["read", addr, len] => {
             let addr = u32::from_str_radix(addr.trim_start_matches("0x"), 16)
                 .with_context(|| format!("address {addr:?} isn't hex"))?;
-            let bytes = client.read_bytes(addr, len.parse()?)?;
+            let bytes = client.read_paused(addr, len.parse()?)?;
             for (i, row) in bytes.chunks(16).enumerate() {
                 let hex: Vec<String> = row.iter().map(|b| format!("{b:02x}")).collect();
                 println!("{:08x}  {}", addr as usize + i * 16, hex.join(" "));

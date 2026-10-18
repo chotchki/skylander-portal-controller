@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 use oracle_harness::pine::{
     Answer, EmuStatus, MAX_REPLY, MAX_REQUEST, Op, PineClient, PineError, Width,
@@ -54,6 +55,8 @@ struct Quirks {
     truncate_reply: Option<usize>,
     /// Overwrite the reply's status byte.
     status_byte: Option<u8>,
+    /// Send this many bytes of each reply, wait this long, then send the rest.
+    stall_reply: Option<(usize, Duration)>,
 }
 
 struct Fake {
@@ -117,6 +120,14 @@ fn serve(mut stream: UnixStream, guest: &Mutex<Guest>, messages: &AtomicUsize, q
         if let Some(n) = quirks.truncate_reply {
             let _ = stream.write_all(&reply[..n.min(reply.len())]);
             return;
+        }
+        if let Some((n, wait)) = quirks.stall_reply {
+            let n = n.min(reply.len());
+            if stream.write_all(&reply[..n]).is_err() {
+                return;
+            }
+            thread::sleep(wait);
+            reply.drain(..n);
         }
         if stream.write_all(&reply).is_err() {
             return;
@@ -358,6 +369,9 @@ fn a_short_reply_is_refused() {
         matches!(err, PineError::Short { needed: 13, got: 9 }),
         "{err}"
     );
+    // Out of step now: refused without another message going out.
+    assert!(matches!(c.title_id(), Err(PineError::Poisoned)));
+    assert_eq!(fake.messages.load(Ordering::Relaxed), 1);
     // Cut inside the size field: the read itself fails.
     let fake = spawn(
         guest(),
@@ -384,4 +398,53 @@ fn an_unknown_status_byte_is_refused() {
         c.read_bytes(0x3000_0000, 8),
         Err(PineError::UnknownStatus(0x01))
     ));
+}
+
+#[test]
+fn memory_waits_for_a_pause_when_asked_to() {
+    let mut running = guest();
+    running.status = 0;
+    let fake = spawn(running, Quirks::default());
+    let mut c = PineClient::connect(&fake.path).unwrap();
+    assert!(matches!(
+        c.read_paused(0x3000_0000, 8),
+        Err(PineError::NotPaused(EmuStatus::Running))
+    ));
+    assert!(matches!(
+        c.write_paused(0x3000_0000, &[0xAA; 8]),
+        Err(PineError::NotPaused(EmuStatus::Running))
+    ));
+    // Only the two status asks went out; the guest kept its bytes.
+    assert_eq!(fake.messages.load(Ordering::Relaxed), 2);
+    assert_eq!(fake.guest.lock().unwrap().regions[0].bytes[..2], [0, 1]);
+
+    fake.guest.lock().unwrap().status = 1;
+    c.write_paused(0x3000_0000, &[0xAA; 8]).unwrap();
+    assert_eq!(c.read_paused(0x3000_0000, 8).unwrap(), [0xAA; 8]);
+}
+
+#[test]
+fn a_reply_that_times_out_midway_poisons_the_connection() {
+    // 6 of 13 bytes, then the rest after the client has given up: read again,
+    // the tail would be taken for the next reply's size field.
+    let fake = spawn(
+        guest(),
+        Quirks {
+            stall_reply: Some((6, Duration::from_millis(400))),
+            ..Quirks::default()
+        },
+    );
+    let mut c = PineClient::connect(&fake.path).unwrap();
+    c.set_timeout(Duration::from_millis(100)).unwrap();
+    assert!(matches!(
+        c.read_bytes(0x3000_0000, 8),
+        Err(PineError::Io(_))
+    ));
+    thread::sleep(Duration::from_millis(500));
+    assert!(matches!(c.status(), Err(PineError::Poisoned)));
+    assert_eq!(fake.messages.load(Ordering::Relaxed), 1);
+    // A new connection is in step again (the server takes one client at a time).
+    drop(c);
+    let mut fresh = PineClient::connect(&fake.path).unwrap();
+    assert_eq!(fresh.title_id().unwrap(), "BLUS30968");
 }

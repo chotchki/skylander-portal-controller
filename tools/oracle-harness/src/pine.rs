@@ -1,7 +1,10 @@
 //! A PINE client: guest memory in bulk through the server RPCS3 runs when
-//! `ipc.yml` turns it on (openspec AF.6, design decision 4). The harness reads
-//! only while `PAUSE_AT` or a capture holds the emulator: PINE has no pause of
-//! its own, so a read of a running game races every guest thread.
+//! `ipc.yml` turns it on (openspec AF.6, design decision 4). PINE has no pause
+//! of its own, so a read of a running game races every guest thread and a write
+//! races them all the worse: [`PineClient::read_paused`] and
+//! [`PineClient::write_paused`] ask PINE's status first and refuse unless the
+//! emulator is paused, and the harness's own reads and writes go through them.
+//! [`PineClient::read_bytes`] and [`PineClient::write_bytes`] don't ask.
 //!
 //! The wire, as `3rdparty/pine/pine_server.h` reads and writes it at both pins,
 //! every integer little-endian:
@@ -191,6 +194,12 @@ pub enum PineError {
     Io(std::io::Error),
     /// PINE is TCP on Windows, which the harness doesn't speak yet.
     Unsupported,
+    /// A paused-only read or write found the emulator in this state.
+    NotPaused(EmuStatus),
+    /// An earlier exchange broke off mid-message (an I/O error or timeout, a
+    /// short reply, a size field out of range), so the stream is out of step;
+    /// connect again.
+    Poisoned,
 }
 
 impl fmt::Display for PineError {
@@ -230,6 +239,14 @@ impl fmt::Display for PineError {
             PineError::Unsupported => write!(
                 f,
                 "PINE over TCP (Windows) is Mac only until the Windows/HTPC bring-up"
+            ),
+            PineError::NotPaused(s) => write!(
+                f,
+                "PINE reports the emulator {s:?}; guest memory is read and written only while it's paused"
+            ),
+            PineError::Poisoned => write!(
+                f,
+                "this PINE connection broke off mid-message and is out of step; connect again"
             ),
         }
     }
@@ -419,9 +436,12 @@ pub fn write_ops(addr: u32, bytes: &[u8]) -> Result<Vec<Op>, PineError> {
 type Stream = std::os::unix::net::UnixStream;
 
 /// One connection to RPCS3's PINE server, which serves one client at a time.
+/// After an exchange breaks off mid-message every later call is
+/// [`PineError::Poisoned`]: the next reply's size field would be stale bytes.
 pub struct PineClient {
     #[cfg(unix)]
     stream: Stream,
+    poisoned: bool,
 }
 
 impl PineClient {
@@ -430,9 +450,12 @@ impl PineClient {
         #[cfg(unix)]
         {
             let stream = Stream::connect(path)?;
-            stream.set_read_timeout(Some(Duration::from_secs(10)))?;
-            stream.set_write_timeout(Some(Duration::from_secs(10)))?;
-            Ok(Self { stream })
+            let mut client = Self {
+                stream,
+                poisoned: false,
+            };
+            client.set_timeout(Duration::from_secs(10))?;
+            Ok(client)
         }
         #[cfg(not(unix))]
         {
@@ -441,12 +464,34 @@ impl PineClient {
         }
     }
 
+    /// The read and write timeout for each exchange (10 s from `connect`). One
+    /// that runs out mid-reply poisons the connection.
+    #[cfg(unix)]
+    pub fn set_timeout(&mut self, timeout: Duration) -> Result<(), PineError> {
+        self.stream.set_read_timeout(Some(timeout))?;
+        self.stream.set_write_timeout(Some(timeout))?;
+        Ok(())
+    }
+
     /// `ops` as one message. Errors when they don't fit one; [`Self::run`] splits.
+    /// An error before anything is sent, or in decoding a reply read whole,
+    /// leaves the connection usable; one in between poisons it.
     pub fn batch(&mut self, ops: &[Op]) -> Result<Vec<Answer>, PineError> {
+        if self.poisoned {
+            return Err(PineError::Poisoned);
+        }
+        let request = encode(ops)?;
+        let reply = self
+            .exchange(&request)
+            .inspect_err(|_| self.poisoned = true)?;
+        decode(ops, &reply)
+    }
+
+    /// Sends `request` and reads back one whole reply, size field included.
+    fn exchange(&mut self, request: &[u8]) -> Result<Vec<u8>, PineError> {
         #[cfg(unix)]
         {
-            let request = encode(ops)?;
-            self.stream.write_all(&request)?;
+            self.stream.write_all(request)?;
             let mut field = [0u8; SIZE_FIELD];
             self.stream.read_exact(&mut field)?;
             let len = u32::from_le_bytes(field) as usize;
@@ -465,11 +510,11 @@ impl PineClient {
                     n => got += n,
                 }
             }
-            decode(ops, &reply)
+            Ok(reply)
         }
         #[cfg(not(unix))]
         {
-            let _ = ops;
+            let _ = request;
             Err(PineError::Unsupported)
         }
     }
@@ -491,6 +536,25 @@ impl PineClient {
 
     pub fn write_bytes(&mut self, addr: u32, bytes: &[u8]) -> Result<(), PineError> {
         self.run(&write_ops(addr, bytes)?).map(|_| ())
+    }
+
+    /// [`Self::read_bytes`], refused unless PINE reports the emulator paused.
+    pub fn read_paused(&mut self, addr: u32, len: usize) -> Result<Vec<u8>, PineError> {
+        self.require_paused()?;
+        self.read_bytes(addr, len)
+    }
+
+    /// [`Self::write_bytes`], refused unless PINE reports the emulator paused.
+    pub fn write_paused(&mut self, addr: u32, bytes: &[u8]) -> Result<(), PineError> {
+        self.require_paused()?;
+        self.write_bytes(addr, bytes)
+    }
+
+    fn require_paused(&mut self) -> Result<(), PineError> {
+        match self.status()? {
+            EmuStatus::Paused => Ok(()),
+            other => Err(PineError::NotPaused(other)),
+        }
     }
 
     fn text(&mut self, op: Op) -> Result<String, PineError> {

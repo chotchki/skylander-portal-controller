@@ -37,6 +37,7 @@ fn the_oracle_boots_from_its_home_and_leaves_the_devs_rpcs3_alone() {
     )
     .unwrap();
     eprintln!("pid {} run {:?}", oracle.pid(), oracle.run_paths());
+    eprintln!("inherited render env: {:?}", oracle.render_env());
     let state = oracle
         .wait_playable(common::secs("ORACLE_READY_SECS", 600))
         .unwrap();
