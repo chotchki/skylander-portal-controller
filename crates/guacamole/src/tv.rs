@@ -147,6 +147,7 @@ pub struct ServerBridge;
 impl Plugin for ServerBridge {
     fn build(&self, app: &mut App) {
         app.init_resource::<PortalCards>()
+            .add_message::<crate::cards::PortalChanged>()
             .add_systems(PreUpdate, (poll_status, drain_portal));
     }
 }

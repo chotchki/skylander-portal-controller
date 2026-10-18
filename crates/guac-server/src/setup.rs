@@ -28,6 +28,11 @@ const DUMP_DIRS: &str = "dump_dirs";
 const BIND_PORT: &str = "bind_port";
 const PAIRING_KEY: &str = "pairing_key";
 const FFMPEG_PATH: &str = "ffmpeg_path";
+const OUTPUT_LATENCY_MS: &str = "output_latency_ms";
+
+/// The most an intro's video is held back for the sound path (openspec AB,
+/// design decision 7); more is a typo, not a TV.
+pub const MAX_OUTPUT_LATENCY_MS: u32 = 1000;
 
 /// What `settings` holds; `None` and empty mean never set.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -38,6 +43,10 @@ pub struct Settings {
     /// ffmpeg for the extraction (openspec AB, design decision 8); unset
     /// looks beside the executable, then on PATH.
     pub ffmpeg_path: Option<PathBuf>,
+    /// How far the speaker lags Bevy's audio clock, in ms; intros hold their
+    /// video back by it (openspec AB, design decision 7). Unset is guacamole's
+    /// default.
+    pub output_latency_ms: Option<u32>,
 }
 
 /// [`load`]'s result.
@@ -53,6 +62,8 @@ pub struct Loaded {
     /// `GUAC_EXTRACT_DIR`, dev only: the extract root outside the checkout.
     /// Release builds never read it.
     pub extract_dir: Option<String>,
+    /// `GUAC_OUTPUT_LATENCY_MS` in dev when set, else the stored value.
+    pub output_latency_ms: Option<u32>,
 }
 
 impl Loaded {
@@ -137,6 +148,12 @@ pub fn load_with(root: &Path, env: &HashMap<String, String>) -> Result<Loaded> {
         .map(PathBuf::from)
         .or(stored.ffmpeg_path);
     let extract_dir = dev_value("GUAC_EXTRACT_DIR");
+    let output_latency_ms = match dev_value("GUAC_OUTPUT_LATENCY_MS") {
+        Some(v) => Some(latency(&v).with_context(|| {
+            format!("GUAC_OUTPUT_LATENCY_MS must be 0 to {MAX_OUTPUT_LATENCY_MS} ms")
+        })?),
+        None => stored.output_latency_ms,
+    };
 
     Ok(Loaded {
         config: Config {
@@ -156,7 +173,17 @@ pub fn load_with(root: &Path, env: &HashMap<String, String>) -> Result<Loaded> {
         dump_dirs_from_env,
         ffmpeg,
         extract_dir,
+        output_latency_ms,
     })
+}
+
+/// A latency in whole ms, 0 to [`MAX_OUTPUT_LATENCY_MS`].
+fn latency(value: &str) -> Option<u32> {
+    value
+        .trim()
+        .parse()
+        .ok()
+        .filter(|ms| *ms <= MAX_OUTPUT_LATENCY_MS)
 }
 
 /// `KEY=value` lines, `#` comments; a missing file is an empty map.
@@ -239,6 +266,7 @@ pub async fn read_settings(pool: &SqlitePool) -> Result<Settings> {
                 out.pairing_key = hex::decode(&value).ok().filter(|k| k.len() == KEY_LEN)
             }
             FFMPEG_PATH => out.ffmpeg_path = Some(PathBuf::from(value)).filter(|p| p.is_absolute()),
+            OUTPUT_LATENCY_MS => out.output_latency_ms = latency(&value),
             _ => {}
         }
     }
@@ -320,6 +348,16 @@ impl Setup {
         anyhow::ensure!(path.is_absolute(), "{} isn't absolute", path.display());
         let value = path.to_str().context("ffmpeg's path isn't UTF-8")?;
         self.rt.block_on(put(&self.pool, FFMPEG_PATH, value))
+    }
+
+    /// Stores the intro's output latency, 0 to [`MAX_OUTPUT_LATENCY_MS`] ms.
+    pub fn set_output_latency_ms(&self, ms: u32) -> Result<()> {
+        anyhow::ensure!(
+            ms <= MAX_OUTPUT_LATENCY_MS,
+            "{ms} ms is past the {MAX_OUTPUT_LATENCY_MS} ms limit"
+        );
+        self.rt
+            .block_on(put(&self.pool, OUTPUT_LATENCY_MS, &ms.to_string()))
     }
 
     /// The stored pairing key, or `candidate` (the key [`load`] put in the

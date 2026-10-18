@@ -1,6 +1,7 @@
 //! Dev builds only: with `GUAC_SHOT_DIR=<dir>` set, the TV renders offscreen
 //! (`GUAC_SHOT_SIZE`, default 1920x1080) and a PNG is saved each time it
-//! settles on a new screen or card set. Offscreen because a locked or occluded
+//! settles on a new screen, card set, extraction band or intro (an intro's
+//! shot lands [`SETTLE`] into it). Offscreen because a locked or occluded
 //! Mac presents no window frames, so a window capture comes back black; the
 //! window stays empty meanwhile.
 
@@ -15,6 +16,7 @@ use tracing::info;
 
 use crate::cards::PortalCards;
 use crate::extraction::{ExtractBand, Extraction};
+use crate::intro::IntroQueue;
 use crate::tv::Current;
 
 /// Long enough for a rebuilt tree's layout and portraits to reach the GPU.
@@ -93,12 +95,14 @@ fn snap(
     cards: Res<PortalCards>,
     band: Option<Res<ExtractBand>>,
     extraction: Option<Res<Extraction>>,
+    intros: Option<Res<IntroQueue>>,
 ) {
     let Some(current) = current else {
         return;
     };
     let band_changed = band.is_some_and(|b| b.is_changed());
-    if current.is_changed() || cards.is_changed() || band_changed {
+    let intro_changed = intros.as_ref().is_some_and(|q| q.is_changed());
+    if current.is_changed() || cards.is_changed() || band_changed || intro_changed {
         state.due = Some(Instant::now() + SETTLE);
         return;
     }
@@ -113,8 +117,13 @@ fn snap(
     let screen = format!("{:?}", current.screen);
     let screen: String = screen.chars().take_while(|c| c.is_alphanumeric()).collect();
     let extract = extraction.map_or("Idle", |e| e.status.kind());
+    let intro = intros
+        .as_ref()
+        .and_then(|q| q.playing())
+        .map(|e| format!("-intro-{}", e.movie))
+        .unwrap_or_default();
     let name = format!(
-        "{:02}-{screen}-{}cards-{extract}.png",
+        "{:02}-{screen}-{}cards-{extract}{intro}.png",
         state.seq,
         cards.cards().count()
     );

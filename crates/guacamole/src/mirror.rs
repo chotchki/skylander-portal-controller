@@ -3,8 +3,9 @@
 //! only under `test-hooks`. Read off the laid-out UI tree: the players line,
 //! join address, join QR and every card's lines, portrait, pip and rect.
 //! Copied from the resources that feed the tree: the screen, game, message,
-//! Setup's lists and each card's figure and owner ids.
+//! Setup's lists, each card's figure and owner ids, and the intro queue.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use bevy::prelude::*;
@@ -13,6 +14,8 @@ use serde::Serialize;
 
 use crate::cards::PortalCards;
 use crate::extraction::{ExtractStatus, Extraction};
+use crate::intro::{IntroEntry, IntroEvent, IntroQueue};
+use crate::intro_player::{self, IntroOverlay, IntroPlayer, IntroVideo};
 use crate::screen::TvScreen;
 use crate::tv::{
     CardSlot, Current, EmptySlot, ExtractBar, ExtractDetail, ExtractTitle, Framing, JoinAddress,
@@ -49,6 +52,47 @@ pub struct TvSnapshot {
     pub overlapping: usize,
     /// The first-run extraction (AB.9).
     pub extraction: ExtractionShot,
+    /// The intro playing over the portal view (AB.10).
+    pub intro: Option<IntroShot>,
+    /// Intros waiting, in play order.
+    pub intro_queue: Vec<QueuedShot>,
+}
+
+/// A queued intro, from `IntroQueue`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct QueuedShot {
+    /// 1-based.
+    pub slot: u8,
+    pub figure_id: String,
+    pub movie: String,
+}
+
+impl From<&IntroEntry> for QueuedShot {
+    fn from(e: &IntroEntry) -> Self {
+        Self {
+            slot: e.slot.as_u8() + 1,
+            figure_id: e.figure_id.clone(),
+            movie: e.movie.clone(),
+        }
+    }
+}
+
+/// The playing intro: the queue's entry, the player's counts, the overlay as drawn.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct IntroShot {
+    pub slot: u8,
+    pub figure_id: String,
+    pub movie: String,
+    /// The video's frame count once open; frames presented and passed over.
+    pub frames: Option<usize>,
+    pub shown: usize,
+    pub skipped: usize,
+    /// `waiting`, `starting`, `playing` (a sink) or `none` (wall clock only).
+    pub audio: String,
+    /// The overlay is drawn and covers the whole window.
+    pub full_screen: bool,
+    /// The picture's x, y, width, height in physical pixels, once open.
+    pub video_rect: Option<[f32; 4]>,
 }
 
 /// The extraction's state from the resource; the band's lines and bar as drawn.
@@ -93,28 +137,50 @@ pub struct PipShot {
     pub profile_id: String,
 }
 
-/// Shared with the route.
+/// Shared with the routes: the last snapshot, and skips asked for over HTTP.
 #[derive(Resource, Clone, Default)]
-pub struct TvMirror(pub Arc<Mutex<TvSnapshot>>);
+pub struct TvMirror(pub Arc<Mutex<TvSnapshot>>, pub Arc<AtomicUsize>);
 
 pub struct Mirror;
 
 impl Plugin for Mirror {
     fn build(&self, app: &mut App) {
-        app.add_systems(PostUpdate, mirror_tv.after(UiSystems::Layout));
+        app.add_systems(PostUpdate, mirror_tv.after(UiSystems::Layout))
+            .add_systems(Update, skip_asked.before(intro_player::play_intros));
     }
 }
 
-/// Serves whatever the last frame wrote; generic so a test needs no `AppState`.
+/// `/api/_test/tv` serves whatever the last frame wrote; `POST
+/// /api/_test/tv/skip` skips the playing intro as a key would, for a run
+/// with nobody at the keyboard. Generic so a test needs no `AppState`.
 pub fn routes<S: Clone + Send + Sync + 'static>(mirror: &TvMirror) -> axum::Router<S> {
     let shared = mirror.0.clone();
-    axum::Router::new().route(
-        "/api/_test/tv",
-        axum::routing::get(move || {
-            let shared = shared.clone();
-            async move { axum::Json(shared.lock().unwrap_or_else(|e| e.into_inner()).clone()) }
-        }),
-    )
+    let skips = mirror.1.clone();
+    axum::Router::new()
+        .route(
+            "/api/_test/tv",
+            axum::routing::get(move || {
+                let shared = shared.clone();
+                async move { axum::Json(shared.lock().unwrap_or_else(|e| e.into_inner()).clone()) }
+            }),
+        )
+        .route(
+            "/api/_test/tv/skip",
+            axum::routing::post(move || {
+                skips.fetch_add(1, Ordering::Relaxed);
+                async { axum::http::StatusCode::ACCEPTED }
+            }),
+        )
+}
+
+fn skip_asked(mirror: Res<TvMirror>, queue: Option<ResMut<IntroQueue>>) {
+    if mirror.1.swap(0, Ordering::Relaxed) == 0 {
+        return;
+    }
+    if let Some(mut queue) = queue.filter(|q| q.playing().is_some()) {
+        info!("intro skipped over /api/_test/tv/skip");
+        intro_player::apply(&mut queue, IntroEvent::Skip);
+    }
 }
 
 /// Depth-first text and images under `root`, the pip's subtree apart.
@@ -170,6 +236,12 @@ fn mirror_tv(
         Query<&Text, With<ExtractTitle>>,
         Query<&Text, With<ExtractDetail>>,
         Query<&ExtractBar>,
+    ),
+    (queue, player, overlays, videos): (
+        Option<Res<IntroQueue>>,
+        Option<Res<IntroPlayer>>,
+        Query<(&ComputedNode, &UiGlobalTransform), With<IntroOverlay>>,
+        Query<(&ComputedNode, &UiGlobalTransform), With<IntroVideo>>,
     ),
 ) {
     let Some(current) = current else {
@@ -250,6 +322,37 @@ fn mirror_tv(
         detail: band_detail.iter().next().map(|t| t.0.clone()),
         percent: bar.iter().next().map(|b| b.0),
     };
+    let window = Rect::new(0.0, 0.0, size.x as f32, size.y as f32);
+    let intro = queue.as_ref().and_then(|q| q.playing()).map(|entry| {
+        let now = player
+            .as_ref()
+            .and_then(|p| p.now())
+            .filter(|n| n.entry.id == entry.id);
+        let full_screen = overlays.iter().any(|(node, at)| {
+            let r = node_rect(node, at);
+            // A pixel of slack, as for the cards.
+            (r.min - window.min).abs().max_element() <= 1.0
+                && (r.max - window.max).abs().max_element() <= 1.0
+        });
+        IntroShot {
+            slot: entry.slot.as_u8() + 1,
+            figure_id: entry.figure_id.clone(),
+            movie: entry.movie.clone(),
+            frames: now.as_ref().and_then(|n| n.frames),
+            shown: now.as_ref().map_or(0, |n| n.shown),
+            skipped: now.as_ref().map_or(0, |n| n.skipped),
+            audio: now.as_ref().map_or("waiting", |n| n.audio).to_string(),
+            full_screen,
+            video_rect: videos.iter().next().map(|(node, at)| {
+                let r = node_rect(node, at);
+                [r.min.x, r.min.y, r.width(), r.height()]
+            }),
+        }
+    });
+    let intro_queue = queue
+        .as_ref()
+        .map(|q| q.queued().map(QueuedShot::from).collect())
+        .unwrap_or_default();
     let snapshot = TvSnapshot {
         screen: current.screen.kind().to_string(),
         game,
@@ -271,6 +374,8 @@ fn mirror_tv(
         cards_outside,
         overlapping,
         extraction,
+        intro,
+        intro_queue,
     };
     let mut shared = mirror.0.lock().unwrap_or_else(|e| e.into_inner());
     if *shared != snapshot {
@@ -487,6 +592,7 @@ mod tests {
         mirror.0.lock().unwrap().screen = "NoGiants".into();
         let app = routes::<()>(&mirror);
         let response = app
+            .clone()
             .oneshot(
                 axum::http::Request::get("/api/_test/tv")
                     .body(axum::body::Body::empty())
@@ -502,5 +608,18 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["screen"], "NoGiants");
         assert_eq!(json["cards"], serde_json::json!([]));
+        assert_eq!(json["intro"], serde_json::Value::Null);
+        assert_eq!(json["intro_queue"], serde_json::json!([]));
+
+        let response = app
+            .oneshot(
+                axum::http::Request::post("/api/_test/tv/skip")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 202);
+        assert_eq!(mirror.1.load(Ordering::Relaxed), 1);
     }
 }

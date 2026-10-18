@@ -30,18 +30,22 @@ axum = "0.7"
 serde = { workspace = true }
 
 # Pinned by Cargo.lock; upgrades are their own change at milestone boundaries.
-# `ui` is the 2D UI collection (winit, wgpu, bevy_ui, text, png); no 3D or audio yet.
-bevy = { version = "0.20.0", default-features = false, features = ["ui"] }
+# `ui` is the 2D UI collection (winit, gilrs, wgpu, bevy_ui, text, png); audio
+# and `mp3` play the intros' sound (AB.10); no 3D yet.
+bevy = { version = "0.20.0", default-features = false, features = [
+    "ui",
+    "bevy_audio",
+    "mp3",
+] }
 # The setup screen's folder picker (AA.15): a sheet on the window while frames
 # run, or a plain dialog for `--setup` before the window exists. 0.17 is on
 # objc2 0.6, as winit is; the product's 0.14 stays on its own copy.
 rfd = "0.17.2"
 
-# AB.7's playback spike only (`examples/video_spike.rs`), behind `video-spike`
-# so neither the shipped binary nor `cargo test` builds a C decoder for it.
-# `source` (the default) compiles OpenH264 with `cc`: no system library.
-openh264 = { version = "0.9.9", optional = true }
-mp4 = { version = "0.14", optional = true }
+# The intros' video (AB.10, design decision 7: AB.7's pick). `source` (the
+# default) compiles OpenH264 with `cc`: no system library.
+openh264 = "0.9.9"
+mp4 = "0.14"
 
 [dev-dependencies]
 tokio = { workspace = true }
@@ -77,8 +81,9 @@ default = ["dev-tools"]
 dev-tools = ["guac-server/dev-tools"]
 # The /api/_test/* endpoints for the e2e harness. Never in release builds.
 test-hooks = ["dev-tools", "guac-server/test-hooks"]
-# AB.7: `cargo run --release -p guacamole --features video-spike --example video_spike`.
-video-spike = ["dep:openh264", "dep:mp4", "bevy/bevy_audio", "bevy/mp3"]
+# AB.7's spike, kept out of `cargo test`: `cargo run --release -p guacamole
+# --features video-spike --example video_spike` (AB.16 runs it on the TV).
+video-spike = []
 
 [[example]]
 name = "video_spike"

@@ -11,12 +11,15 @@ mod cards;
 mod cli;
 mod driver;
 mod extraction;
+mod intro;
+mod intro_player;
 mod mirror;
 mod picker;
 mod screen;
 #[cfg(feature = "dev-tools")]
 mod shots;
 mod tv;
+mod video;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -40,6 +43,7 @@ use crate::cards::PortalFeed;
 use crate::cli::Command;
 use crate::driver::{NativePortalDriver, PortalChange, portal_channel};
 use crate::extraction::ExtractJob;
+use crate::intro_player::OutputLatency;
 use crate::mirror::TvMirror;
 use crate::picker::{DataRoot, Picker};
 use crate::screen::SetupView;
@@ -80,11 +84,23 @@ fn main() -> Result<()> {
             let no_setup = SetupView::new(false, &[], &Default::default());
             let link = failed_link(format!("{e:#}"));
             return run_tv(
-                link, portal_rx, no_setup, mode, root, None, mirror, log_guard,
+                link,
+                portal_rx,
+                no_setup,
+                mode,
+                root,
+                None,
+                OutputLatency::default(),
+                mirror,
+                log_guard,
             );
         }
     };
     let cfg = loaded.config.clone();
+    let latency = loaded
+        .output_latency_ms
+        .map(|ms| OutputLatency(Duration::from_millis(ms.into())))
+        .unwrap_or_default();
 
     let needs_setup = loaded.needs_setup();
     let scan = if needs_setup {
@@ -100,6 +116,7 @@ fn main() -> Result<()> {
         dumps_from_env = loaded.dump_dirs_from_env,
         found = scan.found.len(),
         giants = scan.offered().is_some(),
+        output_latency_ms = latency.0.as_millis() as u64,
         "starting guacamole",
     );
     let setup_view = SetupView::at_start(picked, needs_setup, &loaded.dump_dirs, &scan);
@@ -139,6 +156,7 @@ fn main() -> Result<()> {
         cfg.window_mode,
         root,
         Some(job),
+        latency,
         mirror,
         log_guard,
     )
@@ -178,6 +196,7 @@ fn run_tv(
     mode: WindowMode,
     root: PathBuf,
     job: Option<ExtractJob>,
+    latency: OutputLatency,
     mirror: TvMirror,
     log_guard: WorkerGuard,
 ) -> Result<()> {
@@ -198,7 +217,14 @@ fn run_tv(
     .insert_resource(Setup(setup_view))
     .insert_resource(Framing(mode))
     .insert_resource(DataRoot(root))
-    .add_plugins((ServerBridge, Tv, Picker, extraction::ExtractPlugin));
+    .insert_resource(latency)
+    .add_plugins((
+        ServerBridge,
+        Tv,
+        Picker,
+        extraction::ExtractPlugin,
+        intro_player::IntroPlugin,
+    ));
     if let Some(job) = job {
         app.insert_resource(job);
     }
