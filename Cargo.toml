@@ -6,6 +6,7 @@ members = [
     "crates/guac-formats",
     "crates/guac-ir",
     "crates/guac-server",
+    "crates/guacamole",
     "crates/indexer",
     "crates/rpcs3-control",
     "crates/server",

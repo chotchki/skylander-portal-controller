@@ -1,0 +1,16 @@
+[package]
+name = "guacamole"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# The native Skylanders app (openspec AA, design decision 7): a Bevy TV that
+# boots the shared server (`guac-server`) with the native driver.
+[[bin]]
+name = "guacamole"
+path = "src/main.rs"
+
+[dependencies]
+# Pinned by Cargo.lock; upgrades are their own change at milestone boundaries.
+# `ui` is the 2D UI collection (winit, wgpu, bevy_ui, text, png); no 3D or audio yet.
+bevy = { version = "0.20.0", default-features = false, features = ["ui"] }
