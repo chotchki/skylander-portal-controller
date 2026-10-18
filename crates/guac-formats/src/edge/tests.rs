@@ -1,4 +1,6 @@
-use super::builder::{self, Fixture, Wire, cmp, cmp_value, desc, file, sample, skinned, unskinned};
+use super::builder::{
+    self, Fixture, Wire, cmp, cmp_rsx_value, desc, file, sample, skinned, unskinned,
+};
 use super::indexes::{compress, pack};
 use super::*;
 use crate::igz::Igz;
@@ -208,7 +210,40 @@ fn malformed_index_streams_are_refused() {
 }
 
 #[test]
-fn cmp_words_decode_signed_normalized() {
+fn cmp_words_decode_the_spus_way() {
+    // Both ends of each field, the codes either side of zero, a mid value.
+    for ([x, y, z], want) in [
+        ([1023, 1023, 511], [1.0, 1.0, 1.0]),
+        ([-1024, -1024, -512], [-1.0, -1.0, -1.0]),
+        ([0, 0, 0], [1.0 / 2047.0, 1.0 / 2047.0, 1.0 / 1023.0]),
+        ([-1, -1, -1], [-1.0 / 2047.0, -1.0 / 2047.0, -1.0 / 1023.0]),
+        (
+            [511, -512, 255],
+            [1023.0 / 2047.0, -1023.0 / 2047.0, 511.0 / 1023.0],
+        ),
+    ] {
+        assert_eq!(x11y11z10n_spu(cmp(x, y, z)), want, "{x} {y} {z}");
+    }
+    // Bits by hand: x = 1 (bit 0), y = -1 (bits 11-21), z = -512 (bit 31).
+    let w = 1 | (0x7FF << 11) | (1 << 31);
+    assert_eq!(x11y11z10n_spu(w), [3.0 / 2047.0, -1.0 / 2047.0, -1.0]);
+    // Every code of every field: inside -1..=1, rising, s mirroring -1 - s.
+    let mut shift = 0;
+    for (i, bits) in CMP_BITS.into_iter().enumerate() {
+        let read = |s: i32| x11y11z10n_spu(((s as u32) & ((1 << bits) - 1)) << shift)[i];
+        let lo = -(1 << (bits - 1));
+        for s in lo..-lo {
+            let v = read(s);
+            assert!((-1.0..=1.0).contains(&v), "{bits} bits, code {s}");
+            assert_eq!(read(-1 - s), -v, "{bits} bits, code {s}");
+            assert!(s == lo || v > read(s - 1), "{bits} bits, code {s}");
+        }
+        shift += bits;
+    }
+}
+
+#[test]
+fn rsx_only_cmp_words_decode_signed_normalized() {
     for [x, y, z] in [
         [0, 0, 0],
         [1023, -1023, 511],
@@ -216,11 +251,21 @@ fn cmp_words_decode_signed_normalized() {
         [300, -2, 17],
         [-1, 1, -1],
     ] {
-        assert_eq!(x11y11z10n(cmp(x, y, z)), cmp_value(x, y, z), "{x} {y} {z}");
+        assert_eq!(
+            x11y11z10n_rsx(cmp(x, y, z)),
+            cmp_rsx_value(x, y, z),
+            "{x} {y} {z}"
+        );
     }
     // Bits by hand: x = 1 (bit 0), y = -1 (bits 11-21), z = 1 (bit 22).
     let w = 1 | (0x7FF << 11) | (1 << 22);
-    assert_eq!(x11y11z10n(w), [1.0 / 1023.0, -1.0 / 1023.0, 1.0 / 511.0]);
+    assert_eq!(
+        x11y11z10n_rsx(w),
+        [1.0 / 1023.0, -1.0 / 1023.0, 1.0 / 511.0]
+    );
+    // Word 0 is the zero vector here, and isn't under the SPU's reading.
+    assert_eq!(x11y11z10n_rsx(0), [0.0; 3]);
+    assert_ne!(x11y11z10n_spu(0), x11y11z10n_rsx(0));
 }
 
 #[test]
@@ -341,7 +386,9 @@ fn check(f: &Fixture, s: &Segment) {
     assert_eq!(s.positions().collect::<Vec<_>>(), e.positions);
     let floats = |sem: Semantic| s.attribute(sem).unwrap().values.clone();
     let cmps = |v: &[[i32; 3]]| -> Vec<f32> {
-        v.iter().flat_map(|&[x, y, z]| cmp_value(x, y, z)).collect()
+        v.iter()
+            .flat_map(|&[x, y, z]| (e.cmp_value)(x, y, z))
+            .collect()
     };
     assert_eq!(floats(Semantic::Normal), cmps(&e.normals));
     assert_eq!(floats(Semantic::Tangent), cmps(&e.tangents));

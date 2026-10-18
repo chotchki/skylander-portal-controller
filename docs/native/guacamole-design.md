@@ -698,9 +698,10 @@ and the live registry agrees field for field.
 
 #### Textures (AC.6)
 
-Verdict: `_tile` is RSX's swizzle, and all 4,527 character `igImage2` convert to KTX2 with their original
+Verdict: `_tile` is RSX's swizzle, all 4,527 character `igImage2` convert to KTX2 with their original
 blocks (`guac_formats::texture`, [`crates/guac-formats/src/texture.rs`](../../crates/guac-formats/src/texture.rs):
-our own writer, BC1_RGBA_UNORM, BC3_UNORM and R8_UNORM with an `rrr1` swizzle).
+our own writer, BC1_RGBA_UNORM, BC3_UNORM and R8_UNORM with an `rrr1` swizzle), and every one of Eruptor's
+images his captured frames bind is exactly what RSX was given, level for level (AC.15).
 
 - Five metaimages across the character archives: `dxt5_tile_big_ps3` 2,158, `dxt1_tile_big_ps3` 1,283,
   `dxt5_big_ps3` 1,056, `dxt1_big_ps3` 20 and `l8_tile_big_ps3` 10, all depth 1 with one image. DXT maps 1:1
@@ -718,24 +719,44 @@ our own writer, BC1_RGBA_UNORM, BC3_UNORM and R8_UNORM with an `rrr1` swizzle).
 - Confirmed in the June savestate's RSX state: 1,092 resident `igImage2` are byte-identical to their file
   blocks and equal level for level after our untile, and 22 texture-unit states over 18 `_tile` DXT images
   (seen across the ring's draws, on units 0 and 1 only) show the linear bit CLEAR (swizzled) with kind,
-  size and mip count matching. Not exercised yet: a linear image's pitch, a bound L8 and the hero's own 60
-  (AC.15).
+  size and mip count matching.
+- Confirmed on the hero (AC.15: AC.13's three captures, `eruptor_textures_match_the_captures` in
+  [`giants_capture.rs`](../../crates/guac-formats/tests/giants_capture.rs)). Across the 348 unit states of
+  his 42 draws, wherever a unit holds one of his images it's exactly the image his material binds there, and
+  the surface after the crate's untile equals our KTX2 level for level: `eruptor_c` on u0, `eruptorrim` (body)
+  or `specrim_eye6` (eyes and teeth) on u3, `eruptor_n` on u4 and `eruptor_sp` on u6, plus his collection
+  portrait in a UI draw, 6 of his 60. `LN` is clear on every one, so `_tile` = swizzled holds on his data
+  too. The whole frame agrees: of the 243 distinct surfaces each capture binds, 234 equal a disc image level
+  for level (`LN` clear on all 229 `_tile` ones, set on exactly the 5 `_big` ones) and the other 9 are
+  all-zero render targets. The 5 `_big` are HUD health-bar pieces (DXT5 16x50, 2x50 and 15x50 at pitch 64,
+  16 and 64), packed block rows, which is how the crate reads a linear pitch. Byte-identical blocks decode
+  to identical RGBA, so a texture FLIP is 0 by construction.
+- Not exercised yet (AC.21): L8 and the 16 upgrade-menu images in `009_eruptor.arc`. No captured draw binds
+  an L8, so its Morton untile, the only untile here that moves bytes, still rests on the disc evidence above,
+  and comparing the same untile on both sides can't settle it: that takes RSX's own reading of a bound unit
+  (its `LN` bit plus RPCS3's swizzle decode of the surface, or the rendered frame). The `.arc` images aren't
+  resident outside the upgrade menu. All 44 in `009_eruptor.bld` (the 6 above among them) sit in the
+  session's savestate byte-identical to their file blocks, a check only research has run (no repo test reads
+  a savestate yet).
 - Which unit is which (AC.10): `tfbRuntimeTechniqueInstance._materialPass` lists `tfbAlphaTextureUnitIDAttr`
   binds and `igAttr._cachedUnitID` is the unit. All 2,243 character techniques bind unit 0 exactly once;
   colour sits at 0, `_n`/`_nrm` only at 4 and `_s`/`_sp` only at 6, and Eruptor's rim map at 3.
 
 #### Edge meshes, and where skinning runs (AC.7)
 
-Verdict: the SPU skins the heroes, a strong inference no skinned draw has confirmed yet. Edge
-decompression and skinning run in the `EdgeGeometry` SPURS job inside the EBOOT (which the 20-image SPU
-census missed, it only counted ELFs), whose scratch holds the live skin palettes (below).
-`tfbmulti2.fx`, which draws 2,201 of the 2,243 character techniques, sets its skinning bit on none of its
-5,120 compiled vertex-shader variants (per the AE materials research). The other 42 use `tfbwarp.fx`,
-whose 2 skinning variants of 4 (like `tfbshadow.fx`'s) take an `ig_matrix_blending` constant, so RSX
-skinning does exist in the shader set (whether any of those 42 draw skinned segments is unchecked; the SPU
-config of the segments under each technique says). The savestate only caught unskinned draws, so the SPU's
-skinned output stays unobserved until AC.13 records posed vs bind on Eruptor's draw. Our decoder replaces
-that job; nothing in it needed decompiling. `guac_formats::edge`
+Verdict: the SPU skins the heroes, and Eruptor's captured draws confirm it (AC.13). Edge decompression and
+skinning run in the `EdgeGeometry` SPURS job inside the EBOOT (which the 20-image SPU census missed, it
+only counted ELFs), whose scratch holds the live skin palettes (below). His draws hold POSED F32 positions
+in model space, not bind pose plus bone constants: the main pass's vertex input mask is 0x4105 (slots 0,
+2, 8 and 14: position, CMP normal, the F16 UV0 RSX reads in place from his RSX-only stream, CMP tangent),
+so no blend weight or index reaches RSX, and the captured positions sit up to 1.351, 1.223 and 1.438 from
+bind. A vertex drawn in more than one pass is bit-identical in all of them, so the SPU skins once per
+frame. The shader set agrees: `tfbmulti2.fx`, which draws 2,201 of the 2,243 character techniques, sets its
+skinning bit on none of its 5,120 compiled vertex-shader variants (per the AE materials research). The
+other 42 use `tfbwarp.fx`, whose 2 skinning variants of 4 (like `tfbshadow.fx`'s) take an
+`ig_matrix_blending` constant, so RSX skinning does exist in the shader set (whether any of those 42 draw
+skinned segments is unchecked; the SPU config of the segments under each technique says). Our decoder
+replaces that job; nothing in it needed decompiling. `guac_formats::edge`
 ([`crates/guac-formats/src/edge.rs`](../../crates/guac-formats/src/edge.rs)).
 
 - Two SPU configs on the characters, unskinned (1,897 segments) and skinned (424); anything else is refused.
@@ -747,7 +768,18 @@ that job; nothing in it needed decompiling. `guac_formats::edge`
   characters is a back-reference (368,718 of 368,718).
 - Streams: an 8-byte header plus 8-byte blocks, where the format code is RSX's own vertex type and the slot
   is the RSX input register, so each descriptor predicts a draw's vertex array. The disc uses F32, F16, U8N
-  and X11Y11Z10N (RSX's CMP word, big-endian, two's complement, read as signed normalized).
+  and X11Y11Z10N (RSX's CMP word, big-endian, two's complement).
+- Who reads a CMP word decides its decode. On the streams the SPU reads (the skinned characters' bind
+  normals and tangents) a b-bit field s is (2s + 1) / (2^b - 1), the SPU's own rule: AC.16 found it by brute
+  force over the captures (with a blend left unnormalized and the encode floor((x (2^b - 1) - 1) / 2), 16,691
+  of Eruptor's 16,708 posed words re-encode exactly, every miss 1 LSB at a rounding tie) and AC.23 moved the
+  decoder onto it from signed normalize, which sat up to 1.439e-3 rad off on his bind words. The RSX-only
+  stream the GPU reads in place stays signed normalized, s / (2^(b-1) - 1): the SPU's rule says nothing about
+  the GPU, the real RSX's is unmeasured and RPCS3's is within 0.2% of it.
+- Posed normals and tangents get compared as CMP WORDS, not angles (chotchki's ruling on decision 5,
+  2026-10-18, "I agree on a"): the captured word against ours re-encoded by the SPU's rule, every component
+  within 1 LSB. The old "within 1e-3 rad after normalization" can't hold for any decode, because the SPU
+  re-quantizes every posed vector and one CMP z step is 1.96e-3 rad (x and y 9.8e-4).
 - Skin: 4 × (u8 weight, u8 local matrix) per vertex, summing to 255 on all 262,899 skinned vertices. Locals
   land in two DMA ranges of 48-byte 3×4 matrices, then palette slot → `_blendMatrixIndices` → the bone with
   that `_blendMatrixIndex`.
@@ -761,16 +793,48 @@ that job; nothing in it needed decompiling. `guac_formats::edge`
   positions in place from `_spuVertexes0` (difference exactly 0), F16 UVs and U8N colour are exact.
 - Edge culling is ON: `igPS3EdgeManager._cullingState` 1 and both `_disableStaticCulling` and
   `_disableSkinnedCulling` 0 in the live state, and 10 of the 12 segments draw fewer triangles than they
-  hold (96 → 54, 240 → 202). So a capture holds an ordered SUBSET of the decode, and AC's index tolerance
-  ("each draw's triangle set is equal to ours", decision 5 in
-  [`ac-giants-decode-gate/design.md`](../../openspec/changes/ac-giants-decode-gate/design.md)) needs that
-  wording or the two flags poked to 1 in guest memory first (chotchki's call, AC.16).
+  hold (96 → 54, 240 → 202). So a capture holds an ordered SUBSET of the decode, and chotchki took that
+  wording over poking the two flags to 1 in guest memory (2026-10-18): decision 5 in
+  [`ac-giants-decode-gate/design.md`](../../openspec/changes/ac-giants-decode-gate/design.md) checks each
+  draw's triangles as an ordered subset of ours, in our order and with the same vertex rotation. What
+  survives follows the pose, and back-face plus small-primitive culling reproduces 4,810 of Eruptor's 4,812
+  triangle decisions on the session savestate's main pass.
 - Palettes (the savestate's 43 skinned jobs over 8 NPC models): blend-index (`_inverseJointArray`) order,
   48-byte row-major 3×4, MODEL space with a separate local-to-world per job, the two DMA sources at
-  `_skinMatricesByteOffsets[0]` and `[1]`, bones mapped by name.
-- Still for the hero's own draw (AC.16): the skinned output config, CMP normals (our signed normalize and
-  RPCS3's differ by up to 7.7e-4 rad, inside the 1e-3 tolerance with little margin) and Eruptor's 3
-  segments.
+  `_skinMatricesByteOffsets[0]` and `[1]`, bones mapped by name. Eruptor's own jobs in the session's
+  savestate hold to the same layout: all 103 of his job records take their 33 matrices from those two
+  offsets, and his 4 surviving idle palettes, read that way, solve to `Eruptor_Idle` (Havok below, Eruptor's
+  own). His captures agree on model space: a palette least-squares fitted to his captured vertices alone (33
+  joints) leaves a residual of 3.9e-7-4.4e-7.
+- Eruptor against the captures (AC.16, `eruptor_segments_match_the_captures` in
+  [`giants_capture.rs`](../../crates/guac-formats/tests/giants_capture.rs)). His 3 segments draw 14 times a
+  frame over 5 passes, A to E (the 503-vertex one skips C), every draw indexed u16 triangles, segment-local
+  (base index 0, no restart), in batches of at most 256 indexes that triangles cross.
+  - Indexes: 42 of 42 draws are ordered subsets of our decode, 0 triangles outside it, 0 rotated, 0 out of
+    order; a draw keeps 14.0%-47.4% of its segment's triangles.
+  - UV0: RSX reads his RSX-only stream in place, byte-identical over every draw's window, at one VRAM base
+    per segment.
+  - Positions: posed, so checked through the skeleton. Our bind vertices skinned with the palette solved at
+    each capture's idle time (Havok model pose × Alchemy inverse joint, Havok section below) miss by 9.70e-7,
+    1.24e-6 and 1.56e-6, 2.1e-7-3.4e-7 of the 4.643 `igAABox` diagonal against decision 5's 1e-4.
+  - Normals and tangents pass the word check: past the 16,691 exact words above, each of the other 17 is 1
+    LSB on one component whose unrounded field sits within 6.1e-4 of a step from the rounding boundary. As
+    angles that's 2.40e-3 rad from our float blend (2.92e-3 signed normalized, 2.87e-3 under RPCS3's
+    s × 2^(16-b) / 32767).
+  - The session's savestate agrees: 50 of 50 intact hero draws in its ring are ordered subsets in the same
+    rotation, positions within 8.55e-7 on all 2,861 vertices, UV0 exact, and its frame 4's main-pass words
+    re-encode 5,721 of 5,722 exactly (the miss 1 LSB on one component).
+  - The output byte doesn't fix the layout. All 3 carry the skinned config (output 1), and the SPU writes
+    stride 12 F32x3 for passes A and C and stride 20 (F32x3, CMP normal at +12, CMP tangent at +16) for B,
+    D and E. Output 0, the unskinned config, isn't drawn in these frames, and neither are the 19 unskinned
+    prop segments in his `level.bld`.
+- Model space reaches the vertex program. On the main pass (B), c8..c11 hold the modelview row by row
+  (translation in `.w`, c11 = (0, 0, 0, 1)) and c4..c7 its inverse transposed (the inverse's translation,
+  the eye in model space, in c7), so c4..c6 = c8..c10 / 2.25 (his local-to-world scales by 1.5); c8..c11's
+  translation is the savestate's eye-space Eruptor, 16.76 from the eye. D and E keep that c4..c7 but load
+  the view alone (world to eye, the savestate's camera) into c8..c11, C loads the view and its inverse, and
+  A leaves c4..c11 zero. Each pass's c4..c11 are identical in all three captures. How the program uses
+  them waits for AE; AC.18 needs them to match a frame.
 - Reading aids, nothing copied: NoesisPlugins' `fmt_alchemy_igz.py`
   ([NoesisPlugins](https://github.com/NefariousTechSupport/NoesisPlugins)) for field order and the
   attribute tables (its unsigned CMP decode doesn't fit this data), the index layout as SkydraHeavy's port
@@ -779,7 +843,8 @@ that job; nothing in it needed decompiling. `guac_formats::edge`
 
 #### Havok skeletons and clips (AC.8)
 
-Verdict: one compression on the whole disc, decoded. `guac_formats::havok`
+Verdict: one compression on the whole disc, decoded. Eruptor's skeleton and idle clip match the oracle with
+Alchemy's inverse joints as the bind (AC.17). `guac_formats::havok`
 ([`crates/guac-formats/src/havok.rs`](../../crates/guac-formats/src/havok.rs)), written from our own notes and
 [Kovah](https://github.com/NefariousTechSupport/Kovah)'s Apache-2.0 2011.2 offsets (dumped from Giants on
 Wii); [HavokLib](https://github.com/PredatorCZ/HavokLib) is GPL-3.0 and was only read.
@@ -807,28 +872,50 @@ Wii); [HavokLib](https://github.com/PredatorCZ/HavokLib) is GPL-3.0 and was only
   BoxTortoise_Idle at 1.1710 s and 1.0225 s, 2 FlyingFlocker_Flying, Butterfly_Fly, Cannon_Idle). The other
   6 are blends or layered poses (4 goats 0.034 off their idle, a tortoise 0.152 off look-right, Mabu 0.275
   off a run).
+- Eruptor's own (AC.17, `eruptor_idle_and_bind_match_the_captures` in
+  [`giants_capture.rs`](../../crates/guac-formats/tests/giants_capture.rs)): `Eruptor_Idle` solved from each
+  capture's posed vertices (worst vertex over the loop on a 2,000-step grid, then refined) lands at 0.23481,
+  1.09289 and 0.62158 s, where the worst vertex is the Edge positions check's miss (at most 3.4e-7 of the
+  diagonal, against the clip's 1e-3). Each minimum is unique by about five orders of magnitude (the best
+  fit more than 0.1 s away is 8.1e-2 or worse), and the three times sit pairwise more than 0.1 s apart.
+  Bones map by name (33 of 33), poses are model space and nothing layers over the idle in these frames: he
+  stood still and silent with no upgrades (the oracle's `.sky` as the game left it has upgrade flags 0). The
+  session's savestate agrees on its own: its 4 idle palettes solve within 6.6e-7 and 6.0e-7 rad on the 28
+  joints the binds agree on, its frames 1-4's posed output solves 0.05 s of clip apart (0.8355498 to
+  0.9855499 s, within 9.0e-7; why a rendered frame advances the clip 0.05 s is only a hypothesis so far),
+  and the game's own posed bone array, found in guest memory, equals our pose within 6.1e-7 and 5.8e-7 rad.
+  Open for AE, not the gate: two Spawn02 palettes keep the palms' previous-pose translation where the clip
+  has no track, and one palette is a Spawn02-to-Idle crossfade whose blend rule is unsettled.
 - None of the 20 SPU ELF images is Havok (all FMOD) and the SPURS jobs found so far are Edge's, so Havok
   PROBABLY runs on the PPU and physics parity needs no SPU decompilation. Not proven: the EBOOT imports
   `cellSpursJq` (12 functions), so other non-ELF jobs could exist; following those imports' callers in
   Ghidra settles it before AG leans on it.
 
-Which bind the game skins with is OPEN, for AC.17. Eruptor's Havok reference pose and Alchemy inverse
-joints agree on 28 of 33 bones within 1e-4, and `J_wrist_R` plus its 4 children differ by a 20.80° turn
-about the wrist's local +Y (107 of the 120 skeletons agree on every bone, 13 don't). Two lines of evidence
-point opposite ways:
+The bind is SETTLED (AC.17): the game skins with Alchemy's `igSkeleton2._inverseJointArray`, so a palette
+entry is the Havok model pose × the Alchemy inverse joint. The question was real because the two disagree:
+Eruptor's Havok reference pose and Alchemy inverse joints agree on 28 of 33 bones within 1e-4, and
+`J_wrist_R` plus its 4 children differ by a 20.80° turn about the wrist's local +Y (107 of the 120 skeletons
+agree on every bone, 13 don't). His captures answer it:
 
-- The mirror argument, for Havok's bind. The stored mesh mirrors itself in x to 1e-4 (median 0), Havok's
-  joints mirror on all 10 L/R pairs (within 3e-6) and Alchemy's break only at the right wrist and palm.
-  The 39 vertices `J_palm_R` dominates centre 0.148 from Havok's joint and 0.349 from Alchemy's (the left
-  palm's 53 sit 0.034 from theirs), and skinned with Alchemy's bind at the reference pose the right hand moves
-  up to 0.239 (5.1% of the 4.643 `igAABox` diagonal) and sits off the mirror by up to 0.138. Weakening
-  it: the skin weights themselves aren't mirror-symmetric (the palm counts above, the wrists 138 vs 132).
-- The savestate's statistical lean, for Alchemy's. On the live NPC palettes, where the two binds differ by
-  more than 7e-7 the Alchemy bind fits 9 of 9 (23 of 29 above 3e-7). Not decisive: no resident skeleton's
-  binds differ by more than 1e-6.
+- A palette least-squares fitted to the captured vertices alone equals our pose × Alchemy's inverse joints
+  within 2.48e-6 rad and 5.5e-6 (1.3e-6 of the 4.162 extent). With Havok's reference pose as the bind
+  instead, the same palette misses exactly `J_wrist_R`, `J_palm_R` and `J_hand_B1`/`F1`/`U1`, each by
+  0.3631 rad (the 20.80°), and no other joint by more than 1e-4 rad. Solving the clip freely under Havok's
+  bind gets no closer than 0.237-0.238, 5.1% of the diagonal. The test gates on decision 5's skeleton
+  tolerance alone, which already splits the two: Alchemy's 40x under it, Havok's 3,600x over.
+- The savestate rules out the last way around it, Havok's bind with the twist baked in somewhere else: the
+  inverse joints the game's own posed bone array implies equal Alchemy's within 1.9e-7, and Havok's are
+  off by 0.475 on the subtree.
 
-Eruptor's own palette settles it (AC.17). Until then the working assumption (palette = Havok model pose ×
-Alchemy inverse joint) is `hero_view`'s default, and `--bind havok` draws the other one.
+The mirror argument that favoured Havok was the wrong lead for the game. Its geometry was right (the stored
+mesh mirrors itself in x to 1e-4, Havok's joints mirror on all 10 L/R pairs within 3e-6, Alchemy's break
+only at the right wrist and palm, and skinned with Alchemy's bind at the reference pose the right hand moves
+up to 0.239 and sits up to 0.138 off that mirror), but it measured the asset, not what the game does with
+it: the game draws the twist. The savestate's NPC lean pointed the right way (where the two binds differ by
+more than 7e-7, Alchemy's fit 9 of 9). `hero_view`'s default `--bind alchemy` is the game's bind;
+`--bind havok` still draws the other one until AC.22 drops it. The other 12 skeletons whose binds disagree
+haven't met the oracle, so Alchemy's bind for them is an inference from Eruptor and the NPC lean until one
+does.
 
 ### What carries past Giants
 
@@ -870,9 +957,29 @@ SSA's wins are real, but none of them can sink it the way a missing oracle can. 
 better game one: it plays their SSA-era figures too, ships 48 intros (M0 needs only IGA and Bink 1, both
 already read) and already runs here.
 
-What flips it: AC's decoded hero doesn't match its RSX capture. Then AC proposes Trap Team (same TfbTool
-island, reflection schema already public) at the price of Bink 2 for its M0, and chotchki decides. What
-the kids play most is unknown, and it matters less now that the phone offers the whole roster: it would
+What flips it: AC's decoded hero not matching its RSX capture, and it didn't. Everything the oracle drew of
+Eruptor PASSED on 2026-10-18 (AC.20): decoded from the disc alone he matches what the original fed RSX, all
+four layers inside the tolerances AC fixed before comparing (decision 5 in
+[`ac-giants-decode-gate/design.md`](../../openspec/changes/ac-giants-decode-gate/design.md), with
+chotchki's two rewordings). The gate itself stays open on one item, AC.21: L8's untile and the 16
+upgrade-menu images against the oracle (Giants in detail, Textures), none of which a frame showing him
+draws. It gates unless chotchki rules it out, and no ruling is in yet. `#[ignore]`d tests check the rest on
+three RSX captures from one attended session on the oracle, and research cross-checked it on the savestate
+taken in the same session (The oracle; the detail is in Giants in detail):
+
+| Layer | Tolerance | Measured on Eruptor |
+|---|---|---|
+| Textures | BC blocks byte-identical after the same untile | every unit of his 42 draws that holds one of his images holds the one his material binds, level for level (5 of his 60 in those draws, his collection portrait a 6th in a UI draw); 234 of each frame's 243 surfaces equal a disc image, the other 9 are zero render targets |
+| Geometry | indexes an ordered subset of ours (SPU culling); positions within 1e-4 of the diagonal; UVs 1/65536; CMP words within 1 LSB of ours re-encoded the SPU's way | 42 of 42 draws ordered subsets; UV0 byte-identical; posed positions through the skeleton within 1.56e-6 (3.4e-7 of the 4.643 diagonal); 16,691 of 16,708 CMP words exact, the other 17 1 LSB on one component |
+| Skeleton | 1e-4 of the extent and 1e-4 rad | the skeleton a palette fitted to the captured vertices implies matches ours within 2.48e-6 rad and 4.2e-7 of the 4.162 extent, with Alchemy's inverse joints as the bind (Havok's misses the right wrist's 5 bones by 0.3631 rad) |
+| Clip | 1e-3 of the diagonal at the solved time, two captures on different poses | `Eruptor_Idle` solved at three distinct times (0.23481, 1.09289, 0.62158 s), each minimum unique, worst vertex 3.4e-7 of the diagonal; the savestate's frames agree within 9.0e-7 |
+
+So Giants stays first, the ladder carries on to AE on it and AC never proposed the Trap Team fallback (same
+TfbTool island, reflection schema already public, Bink 2 for its M0). Besides AC.21, still open and not
+gating: AC.18, a FLIP of `hero_view` against a rendered oracle frame for the record (The oracle says what
+it waits on; the viewer also needs camera options to match one).
+
+What the kids play most is unknown, and it matters less now that the phone offers the whole roster: it would
 reorder which figures and levels get attention first, not the game. The only signal is on the HTPC,
 where `figure_usage` holds a last-used time per (profile, figure) with no counts (the Mac's table is
 empty, it's a dev box) and the product's own figure stats carry playtime. Looking at those is one-off
@@ -959,29 +1066,41 @@ drivers may tolerate it, untested.
 It matters to the product only if the v1.10.0 prerelease ever gets promoted
 ([`openspec/backlog.md`](../../openspec/backlog.md)), and to AF's pin choice.
 
-The capture recipe (AC.13 as prepared; nothing is captured yet). Everything sits ready in the research
-dir, with the exact launch line in `~/workspace/guacamole-research/captures/BLUS30968/09d602fd5/SESSION.md`
-(outside the repo):
+The capture recipe, as AC.13 ran it (2026-10-18, chotchki at the unlocked M3 Max). The prep notes and
+launch line are in `~/workspace/guacamole-research/captures/BLUS30968/09d602fd5/SESSION.md`, the run's
+record in AC.13's note, both outside the repo:
 
-1. Boot the oracle `--no-gui` with a per-run `--config` (RPCS3's own config file is then never read or
-   written): RPCS3's config plus FIFO reordering OFF (so RPCS3 doesn't merge draws, AC.12), `sys_fs: Trace`
-   (opens log at the default level anyway; trace adds reads and seeks inside an archive), capture hints off,
-   and Compatible plus Inspection Mode savestates (so a savestate carries the executable-backed memory
-   too). Add an input config that moves Circle and Left Stick Down off C and S: the keyboard pad sees the
-   hotkeys too, so Option+C would also press Circle and Cmd+S push the stick, either of which knocks the
-   hero out of idle.
-2. Don't set `SKYLANDER_BORDERLESS`: P8 hides the game window on the Mac and publishes a surface
-   instead, and the hotkeys live on that window.
-3. From a cold boot, mash CROSS over P6 (`BUTTON_PRESS CROSS`) to the "put a Skylander on the Portal of
-   Power" prompt, then P1 `LOAD` a COPY of the dev's Eruptor `.sky` (the game writes to it).
-4. With Eruptor idle on screen, standing still and silent, upgrades recorded: Option+C on the focused,
-   UNLOCKED game window. The next frame end arms the capture, the one after writes
-   `<config>/captures/BLUS30968_<datetime>_capture.rrc.gz` and PAUSES the emulator, which is also the
-   moment for a consistent memory read; Cmd+P resumes. Two more on visibly different idle poses, then
-   Cmd+S for a savestate (the guest memory), then shut down. On a locked screen the keystrokes land in the
-   lock screen's password field, which is why the overnight attempt sent none.
-5. Restore RPCS3's Giants savedata and trophies from the pre-session backup (the cold-boot nav writes a
-   save slot), then `rrc-dump --list` each capture (AC.12).
+1. Cold boot the `09d602fd5` copy `--no-gui --config <research>/oracle/run/config-capture.yml
+   --input-config capture-input`, with P1's socket set (`SKYLANDER_IPC_PATH`) and WITHOUT
+   `SKYLANDER_BORDERLESS` (P8 hides the game window on the Mac and publishes a surface instead, and the
+   hotkeys live on that window). The per-run config is RPCS3's own plus FIFO reordering OFF (so RPCS3
+   doesn't merge draws, AC.12), `sys_fs: Trace` (reads and seeks too, RE toolchain), capture hints off and
+   Compatible plus Inspection Mode savestates; with `--config` RPCS3's own file is never read or written.
+   The input config moves Circle and Left Stick Down off C and S: the keyboard pad sees the hotkeys too, so
+   Option+C would also press Circle and Cmd+S push the stick, either of which knocks the hero out of idle.
+   `--input-config` takes a name under `<config>/input_configs/global/` and only works with `--no-gui`.
+2. P6 `BUTTON_PRESS CROSS` through the boot videos, menu and Eon's monologue to the "put a Skylander on the
+   Portal of Power" prompt, then P1 `LOAD` a COPY of the dev's Eruptor `.sky` (the game writes to it). He
+   lands in Chapter 1: `sys_fs` logs `level/level_213_tutotial.arc` and `.bld` opening at 0:00:54.6 and
+   `character/009_eruptor.arc` and `.bld` at 0:01:51.1.
+3. With Eruptor idling on screen, standing still and silent, upgrades recorded (none on his copy): Option+C
+   on the focused, UNLOCKED game window. The next frame end arms the capture, the one after writes
+   `<config>/captures/BLUS30968_<datetime>_capture.rrc.gz` (24-26 MB) and PAUSES the emulator; Cmd+P
+   resumes. Wait for that write and its pause (2.4-2.5 s after Option+C here) before Cmd+P, or it pauses
+   instead. AC.13 took three, at log 0:05:00.6, 0:05:22.6 and 0:05:33.8, which solved to three different
+   idle poses; the third's Cmd+P landed 0.8 s before its write and paused the game, so it took a second
+   Cmd+P to resume. On a locked screen the keystrokes land in the lock screen's password field, which is
+   why the overnight attempt sent none.
+4. Cmd+S on the game window for the savestate (the guest memory: 92 MB, 56 regions with Inspection Mode
+   on), then shut down. With `Suspend Emulation Savestate Mode` off RPCS3 saves, then restarts from the
+   state WITHOUT the `--config` override, so every config line the log prints after that restart is the
+   global config's, not the run's (from line 132838 of AC.13's log, so its `Disable FIFO Reordering:
+   false` there isn't what the captures ran under).
+5. Move the captures, the savestate, `RPCS3.log` (the `sys_fs` open log) and `TTY.log` into
+   `$GUAC_CAPTURE_DIR` with the `.sky` as the game left it (AC.13's:
+   `captures/BLUS30968/09d602fd5/session-20261018/` in the research dir), check RPCS3's Giants savedata and
+   trophies against the pre-session backup (the cold-boot nav can write a save slot; AC.13's hashed
+   identical afterwards), then `rrc-dump --list` each capture (AC.12).
 
 No unattended trigger exists at either pin: a capture starts only from that hotkey or the main window's
 menu, and no config key, CLI flag or home-menu entry does it. AF's smallest fix is a dev-only `RSXCAP` +
@@ -993,12 +1112,15 @@ command ring lives in guest memory, so a replay is exact. On the June Giants sta
 (148,387 commands, 4,833 draws, 59 flips) reproduces the serialized state with 0 mismatches (547
 registers, 468 of 468 transform constants, 2,176 program words), and the last 3D frame's Edge job
 records and per-job scratch survive (that's where the skin palettes came from). Render targets come back
-zero, since RPCS3 doesn't write them back, so only AC.18's FLIP still needs a real capture. Taking one is
-the same attended Cmd+S on the game window, or AF's `SAVESTATE`. The June state itself (parked on a pause
-screen in `level_213_tutotial`, the game's own spelling, so no hero is drawn) passes `09d602fd5`'s
-version check and fails `accfecd2d`'s (it lists global version 21, `accfecd2d` accepts only 24). That's a
-version-table check, not a load: no `--savestate` boot of it has run, and one settles it. Every savestate
-check in Giants in detail parsed it offline.
+zero, since RPCS3 doesn't write them back, and an RSX capture's are no better: AC.13's frames bind 9
+render targets, every byte zero, because a capture snapshots guest memory, not GPU-resident surfaces
+(AC.12). So neither gives a rendered frame, and AC.18's FLIP waits on a screenshot of the game window
+(AF.5's `SCREENSHOT`). AC.13 took its savestate with the attended Cmd+S (step 4 above); AF's `SAVESTATE`
+is the unattended route. The June state itself (parked on a pause screen in `level_213_tutotial`, the
+game's own spelling, so no hero is drawn) passes `09d602fd5`'s version check and fails `accfecd2d`'s (it
+lists global version 21, `accfecd2d` accepts only 24). That's a version-table check, not a load: no
+`--savestate` boot of it has run, and one settles it. Every savestate check in Giants in detail parsed a
+state offline, the June one or AC.13's.
 
 What it lacks:
 
@@ -1255,7 +1377,7 @@ beside the ladder in `openspec/backlog.md`, gates no rung and starts on chotchki
 |---|---|---|---|
 | AA | `aa-guacamole-shell` | place a figure on the phone, the TV shows its card (name, element, portrait), in `guacamole` | the embedded server, the native driver over a channel, Guacamole's one-question setup, its own database and profiles, the interim catalogue with no `.sky` and no firmware pack, one binary at a time, all on the Mac driving the TV (the MSI carrying both binaries is the bring-up's) |
 | AB, M0 | `ab-giants-extract-and-intros` | place a figure, its original intro video plays | `guac-extract` skeleton (identity, IGA, manifest, Bink 1 transcode, entropy scan); Bevy video playback is a spike. The 48 intros are named by character, not toy type; the voice-over folder in each character archive bridges most of them and AB maps the rest. A figure without one keeps its AA card |
-| AC | `ac-giants-decode-gate`, in parallel with AA and AB | nothing yet (a dev viewer) | IGZ v6, `igImage2`, Edge and a Havok 2011.2 skeleton plus one clip, matched against an RSX capture. Starts once AB's IGA reader has landed. If the decoded hero doesn't match the capture, AC proposes Trap Team and chotchki decides |
+| AC | `ac-giants-decode-gate`, in parallel with AA and AB | nothing yet (a dev viewer) | IGZ v6, `igImage2`, Edge and a Havok 2011.2 skeleton plus one clip, matched against an RSX capture. PASSED 2026-10-18 on everything the oracle drew of Eruptor, all four layers, so Giants stays first; AC.21 (L8, the 16 upgrade-menu images) holds the gate open unless chotchki rules it out (Why Giants first) |
 | AE, M1 | backlog | their figure as an animated, textured turntable on the TV | the first 3D; the Mac's renderer floor measured; the disc roster replaces the interim catalogue |
 | AF | `af-oracle-foundation` | nothing | the oracle foundation: divergence measured, frame-locked two-pad input, tolerance metrics. Lands before any gameplay comparison |
 | AG, M2 | backlog | walk one level | level scene, collision, character controller, camera, feel checked against the oracle; the input spec, with prompts that match the physical pad |
@@ -1275,8 +1397,8 @@ Ranked by how much each could move the plan, each with the experiment that answe
 | Risk | Why it matters | Experiment | Where |
 |---|---|---|---|
 | IGZ v6 field layouts aren't in the files | no public Giants metaobject dump (ig-workshop's Giants data has enums and fields only; AlchemyMetadataDumper doesn't list Giants PS3 and is a PRX built with Sony's SDK) | RETIRED 2026-10-18: the EBOOT registers every type from static tables, read out of the decrypted ELF with no memory dump (AC.4: 989 types, 0 misses over 1,346,793 reference fixups), and the live registry in the June savestate agrees (AC.14: 980 types live, 272 of 272 gate field reads) (Giants in detail) | done, AC |
-| Edge geometry on v6 | every mesh is Edge-compressed for SPU | decode one character mesh, compare to the vertex buffer in an RSX capture | AC |
-| Havok 2011.2 animation | likely compressed clips; skeletons feed everything after M1 | one skeleton and one clip, posed against a capture | AC |
+| Edge geometry on v6 | every mesh is Edge-compressed for SPU | RETIRED 2026-10-18: 2,321 of 2,321 character segments decode (AC.7), and Eruptor's 3 match his 42 captured draws (AC.16): indexes ordered subsets under the SPU's culling, UV0 byte-identical, posed positions through the skeleton within 3.4e-7 of the diagonal against 1e-4, 16,691 of 16,708 CMP words exact and the rest 1 LSB (Giants in detail) | done, AC |
+| Havok 2011.2 animation | likely compressed clips; skeletons feed everything after M1 | RETIRED 2026-10-18: one compression on the whole disc, 3,920 of 3,920 clips (AC.8), and Eruptor's skeleton and idle match the captures (AC.17): the implied skeleton within 2.48e-6 rad on Alchemy's bind against 1e-4, the idle solved at three times within 3.4e-7 of the diagonal against 1e-3. How ADDITIVE clips layer and crossfades blend stays open past the gate (Giants in detail) | done, AC |
 | RPCS3 run-to-run divergence | decides whether the oracle can be a test at all, and how loose the tolerances get | 10 replays from one savestate on the Mac, diff positions and RNG (the HTPC's at the bring-up) | AF |
 | A tagged MSI reinstalls the product from current source | the kids' other five games run on it. (Guacamole tables in its `db.sqlite` were the old risk here; `guacamole`'s own database resolves that one by design.) | AA's split lands as moves only and passes the product's e2e suite on the Mac at its pre-AA count before any native code; the bring-up runs the HTPC live smoke and checks the installed product from the MSI | AA, then the Windows/HTPC bring-up and every tagged release |
 | How much of Giants is script data | sizes the VM vs the native built-ins | RETIRED 2026-10-18: the whole-disc census (Giants in detail, tfbScript) confirmed the Wii offsets on PS3 and sized the built-ins as 414 engine members in 66 namespaces; `OpFlowBuiltInBehavior` was the wrong yardstick | done, before AJ |

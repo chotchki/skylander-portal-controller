@@ -11,8 +11,18 @@ pub fn cmp(x: i32, y: i32, z: i32) -> u32 {
     (x as u32 & 0x7FF) | ((y as u32 & 0x7FF) << 11) | ((z as u32 & 0x3FF) << 22)
 }
 
-/// What [`cmp`] packs, decoded: x and y over 1023, z over 511, floor -1.
-pub fn cmp_value(x: i32, y: i32, z: i32) -> [f32; 3] {
+/// What [`cmp`] packs, read the SPU's way: 2v + 1 over 2047, 2047 and 1023.
+pub fn cmp_spu_value(x: i32, y: i32, z: i32) -> [f32; 3] {
+    [
+        (2 * x + 1) as f32 / 2047.0,
+        (2 * y + 1) as f32 / 2047.0,
+        (2 * z + 1) as f32 / 1023.0,
+    ]
+}
+
+/// What [`cmp`] packs, signed normalized: x and y over 1023, z over 511,
+/// floor -1.
+pub fn cmp_rsx_value(x: i32, y: i32, z: i32) -> [f32; 3] {
     [
         (x as f32 / 1023.0).max(-1.0),
         (y as f32 / 1023.0).max(-1.0),
@@ -77,6 +87,9 @@ pub struct Expect {
     /// [`cmp`] inputs.
     pub normals: Vec<[i32; 3]>,
     pub tangents: Vec<[i32; 3]>,
+    /// What they decode to on their stream: [`cmp_rsx_value`] on the
+    /// RSX-only one, [`cmp_spu_value`] on SPU input 1.
+    pub cmp_value: fn(i32, i32, i32) -> [f32; 3],
     /// f16 bits, then the value they hold.
     pub uv0: Vec<[(u16, f32); 2]>,
     pub colors: Vec<[u8; 4]>,
@@ -211,6 +224,7 @@ pub fn unskinned() -> Fixture {
             positions,
             normals,
             tangents,
+            cmp_value: cmp_rsx_value,
             uv0,
             colors,
             influences: Vec::new(),
@@ -277,6 +291,7 @@ pub fn skinned() -> Fixture {
             positions,
             normals,
             tangents,
+            cmp_value: cmp_spu_value,
             uv0,
             colors: Vec::new(),
             influences,
