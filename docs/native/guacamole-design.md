@@ -3,9 +3,9 @@
 Status: DESIGN, started 2026-10-17 and revised the same day for chotchki's second, third and fourth rounds of
 decisions.
 This file owns the Guacamole track (`openspec/config.yaml` points here). Open changes:
-`openspec/changes/aa-guacamole-shell/`, `ab-giants-extract-and-intros/`, `ac-giants-decode-gate/` and
-`af-oracle-foundation/`; the later rungs of the ladder are lines in the Guacamole section of
-`openspec/backlog.md`. Until G1 the product (CLAUDE.md, SPEC.md, `docs/dev/*`) is owned where it always
+`openspec/changes/aa-guacamole-shell/`, `ab-giants-extract-and-intros/`, `ac-giants-decode-gate/`,
+`af-oracle-foundation/` and `ap-tv-ui-on-bevy-widgets/`; the later rungs of the ladder are lines in the
+Guacamole section of `openspec/backlog.md`. Until G1 the product (CLAUDE.md, SPEC.md, `docs/dev/*`) is owned where it always
 was, and it's frozen: the controller installed on the HTPC keeps playing the games and chotchki doesn't
 have to touch it until Guacamole is ready.
 
@@ -1392,6 +1392,7 @@ beside the ladder in `openspec/backlog.md`, gates no rung and starts on chotchki
 | AM, M8 | backlog | chapter one | a run of levels with story and cutscenes; profile-owned story saves (the host's, no slot picker); achievements, by the co-op rules |
 | AN, M9 = G1 | backlog | the whole game | `guacamole` becomes the only thing this repo builds and ships; the launcher surface lives in Bevy; the installed controller keeps the other five games |
 | AO, G2 | backlog | parity | the oracle retires |
+| AP | `ap-tv-ui-on-bevy-widgets`, beside the ladder once AB has merged | the TV's own screens in the Skylanders look, and a pad on the TV's choices | the TV on Bevy's UI stack: retained screens, one input router, `bevy_ui_widgets` buttons with pad focus, titles through a shader |
 
 ## Risks
 

@@ -1,0 +1,131 @@
+# Design
+
+## Context
+
+Motivation and chotchki's six answers are in [proposal.md](proposal.md); the requirements are the `guacamole/shell` delta ([specs/guacamole/shell/spec.md](specs/guacamole/shell/spec.md)). The research is `~/workspace/guacamole-research/tv-ui/` (outside the repo): a plan, a survey of Bevy 0.20's UI stack and an inventory of our TV, with every recommended API re-opened in the 0.20.0 registry sources. The TV as it stands on `2.0`:
+
+- **The TV rebuilds itself.** `rebuild_screen` ([`tv.rs`](../../../crates/guacamole/src/tv.rs)) despawns the one `ScreenRoot` and respawns the whole tree whenever `Current`, `Setup`, `PortalCards` (on Portal) or AB's `ExtractBand` changes; `clients` lives in `Current`, so a phone joining rebuilds Join, and every extraction tick rebuilds Portal. Nodes and colours are inline literals and flat consts, with font sizes anywhere from 22 to 96.
+- **Input is raw polling with no focus.** The picker's `pressed()` ([`picker.rs`](../../../crates/guacamole/src/picker.rs)) takes Enter, NumpadEnter, Space or a left click anywhere (Setup, NoGiants, Found); `escape_quits` takes Esc or a click anywhere on AlreadyRunning and ServerError; AB's intro skip ([`intro_player.rs`](../../../crates/guacamole/src/intro_player.rs)) takes any key or any pad button just pressed. A kid never touches the TV: the phone drives the portal.
+- **The pure logic is already apart from the UI**: `screen_for` ([`screen.rs`](../../../crates/guacamole/src/screen.rs)), `PortalCards::reduce` ([`cards.rs`](../../../crates/guacamole/src/cards.rs)), `should_open`, `IntroQueue::apply` ([`intro.rs`](../../../crates/guacamole/src/intro.rs)) and the band mapping ([`extraction.rs`](../../../crates/guacamole/src/extraction.rs)), each with its own tests. AP changes only the UI layer above them.
+- **What the tests read.** The mirror ([`mirror.rs`](../../../crates/guacamole/src/mirror.rs), `/api/_test/tv`) finds nodes by marker (`JoinQr`, `JoinAddress`, `PlayersLine`, `CardSlot`, `EmptySlot`, `Pip`, AB's `Extract*` and `Intro*`) and collects every `Text` under a card (`["Eruptor", "Fire"]`); its `game` and `message` come from resources, not drawn text. The layout tests build the real UI headless in `portal_app` (MinimalPlugins, assets, images, input, a window plugin with `primary_window: None`, text, picking, `UiPlugin`; no render app) and require that no two `Text` rects anywhere overlap. The e2e ([`guacamole_tv.rs`](../../../crates/e2e-tests/tests/guacamole_tv.rs), 13 tests, `E2E_APP=guacamole`) reads only the mirror. Shots ([`shots.rs`](../../../crates/guacamole/src/shots.rs)) point the one `Camera2d` at an `Image` with `IsDefaultUiCamera` and save a PNG 750 ms after a change settles.
+- **What's compiled in.** guacamole's `features = ["ui", "bevy_audio", "mp3"]` already pulls `bevy_ui_widgets`, `bevy_input_focus` (gamepad, keyboard, mouse), `bevy_state` (through `default_app`), `bevy_curve`, `bevy_gilrs`, `bevy_shader` and `bevy_ui_render`. `DefaultPlugins` adds everything AP uses except `DirectionalNavigationPlugin`. `bevy_sprite` (and so `Text2d`) and `bevy_feathers` are NOT in `ui`.
+- **The look's source** is [`docs/aesthetic/design_language.md`](../../../docs/aesthetic/design_language.md) (palette §1, display treatment §2, bezel §3.1, blue card §3.2, motion §5) and the TV type scale in [`docs/aesthetic/navigation.md`](../../../docs/aesthetic/navigation.md) §3.7 (96/64/40/32/24 px, nothing under 24). Both were written for the phone and the egui launcher; the TV adopts them.
+
+## Goals / Non-Goals
+
+**Goals:**
+- Entities that survive updates, so focus and per-entity motion can hold across a phone joining or a figure landing.
+- One place that decides which layer takes a press.
+- The TV's choices work from a pad, per the shell delta, with the click rules chotchki picked.
+- The Skylanders look on every TV screen, titles included.
+- Shots that come out byte-identical on two runs of the same walk, and every existing mirror, layout and e2e test passing unchanged except where the shell delta changes behaviour.
+
+**Non-Goals:**
+- A phone remote ("b, let's not scope creep"). `POST /api/_test/tv/press` is a test hook under `test-hooks`, nothing more.
+- A TV settings screen. Settings live on the phone ("b, but we'll have to discuss what settings make sense when the time comes"). Which settings exist (the Enhanced toggle, AB's `output_latency_ms`, a glyph-set fallback for AG are the candidates the design doc and AB name) is a later discussion with chotchki, carried as a backlog line, not an AP task.
+- The Home menu (design doc Open question 1): the router maps Home to a no-op until that's answered.
+- AG's prompt glyphs. A focused button needs no "press (A)" line, so AP never shows a glyph and AG's prompt rule doesn't come up.
+- The game's own menus (pause, the HUD, AK's upgrade screen as the original draws it). Whether those are `bevy_ui` or the disc's own UI through the script VM is AK's question, not AP's.
+- A pad-driven folder browser. Setup stays a grown-up's screen; the rfd sheet needs a mouse or keyboard (AA.11's open question about the sheet over full screen stands).
+- The G1 launcher surface (the 3D QR coin, AN), the Kaos skin, a second body font (the TV stays on Titan One, as the product's launcher is).
+- Couch-distance checks (the backlog's TV pass) and anything Windows (the bring-up).
+
+## Decisions
+
+**1. Screens are a `bevy_state` state derived from `screen_for`; inside a screen, entities are retained.**
+- A fieldless `TvState` (Starting, Setup, NoGiants, Found, Join, Portal, AlreadyRunning, ServerError, Farewell) is set from `screen_for(..)`'s kind by `poll_status` with `NextState::set_if_different`. Each screen spawns `OnEnter` under a root marked `DespawnOnExit`. `StateTransition` runs right after `PreUpdate`, where `poll_status` already runs, so a transition lands the same frame. `TvScreen` stays the data, `screen_for` stays pure and its tests untouched.
+- Inside a screen, a system per piece of changing text patches it in place on `Changed<..>`: the players line and join address (Join and the portal header), the ServerError message, Setup's picker lines, AB's band (title, detail, bar width).
+- The portal keeps eight cell entities. Each cell remembers the `Option<Placement>` it drew and respawns only its own content when `PortalCards` says its slot differs. That's AA design decision 4's "the UI reconciles entities from `PortalCards`", which the code never did.
+- Rejected: keeping full rebuilds (focus is an `Entity`, and every rebuild drops it and restarts any animation); a BSN scene per screen (its syntax broke between 0.19 and 0.20 and it has no `if`/`match` and no `.bsn` files; applying a scene to an entity orphans its old children rather than despawning them, while our tree is small and every widget works from a spawn tuple plus `observe`).
+
+**2. One input router decides who gets a press.**
+- `route_input` runs in `PreUpdate` after Bevy's input systems. Sources: every connected `Gamepad` (`just_pressed` South, East, Mode; the D-pad; the left stick past a deadzone), the keys the widgets don't handle (arrows, Esc, NumpadEnter) and the test route's queue. Mapping is positional, per the design doc's Controllers section: South activates, East goes back, Mode is Home (a no-op for now), the D-pad and stick move.
+- Two pure pieces, unit-tested without Bevy: `NavRepeat` (first move on press, repeats after a delay at an interval while held, the stick behind a threshold) and the layer pick (top layer takes the press, nothing under it sees it: the intro overlay, then a modal once one exists, then the screen).
+- Actions: Move → `AutoDirectionalNavigator::navigate(CompassOctant)` (from `Dir2::from_xy`, as Bevy's own example converts); Activate → trigger `Activate { entity }` on the focused button and hold `Pressed` on it while South is down; Back → the screen's back action (close, on the error screens); Home → nothing.
+- AB's intro skip moves in: while an intro plays, the overlay holds `InputFocus` and gives it back when it stops, so any pad button or key skips it, and an Enter or Space the widgets would see lands on a node with no `Button` and does nothing. `guacamole/character-intros` doesn't change.
+- Enter and Space stay with `bevy_ui_widgets`' own `ButtonPlugin` (its `FocusedInput<KeyboardInput>` observer); the router never maps them, so nothing activates twice. NumpadEnter, which the picker accepts today and the widget doesn't, stays ours.
+- `FocusedInput` dispatch needs exactly one `PrimaryWindow` and `portal_app` has none, so the router calls `navigate` and triggers `Activate` itself rather than observing `FocusedInput<GamepadButtonChangedEvent>`. That's what makes the pad path testable headless. The widget's Enter/Space path is tested headless with a `PrimaryWindow` entity spawned by hand if that works (no winit), otherwise by hand on the Mac (AP.6 records which).
+- Focus never strays. Initial focus is the window, and a click on anything without `TabIndex` clears focus; when focus isn't on a focusable of the current screen, the router puts it back on the screen's default. The ring is always on, console-style: `InputFocusVisible(true)` at boot and again on every pad or key input, since a mouse press sets it false.
+- Rejected: per-widget gamepad observers (untestable headless, and the intro layering needs one decider); Bevy's example's synthetic `PointerClick` for A (it doesn't fire `Activate`, since the button never got `Pressed`); `bevy_enhanced_input` or `leafwing-input-manager` now (each puts a crate on the Bevy-upgrade path; gameplay's action mapping is AG's input spec, and this router is small enough to fold into whatever AG picks).
+
+**3. Every choice is a `bevy_ui_widgets::Button`; click-anywhere goes away on Setup, NoGiants and Found.**
+- "Choose the folder" (Setup, NoGiants), "Continue" (Found) and "Close" (AlreadyRunning, ServerError), each `Button` + `TabIndex(0)` (so a click takes focus instead of clearing it) + `AutoFocus` + a `FocusId` (`"choose-folder"`, `"continue"`, `"close"`). `use bevy::ui_widgets::Button;` explicitly: the prelude still exports the deprecated `bevy_ui::Button`, which fails clippy's `-D warnings`.
+- `Activate` observers: choose-folder feeds `should_open`'s `pressed` argument (the 1 s auto-open and the rule stay pure and tested), continue takes the path `leave_found` takes today, close sends `AppExit`. The picker's `pressed()` loses the mouse; Found keeps its 8 s beat.
+- The error screens keep Esc and a click anywhere (AA.6's review fix for a mouse-only TV PC) on top of South (the focused Close) and East (Back); AlreadyRunning keeps closing itself after 8 s.
+- Copy: Found's "Click to continue." goes (the button says it); Setup's "Press Enter or click to choose it." becomes the button; the error screens' "Press Esc or click to close" lines stay true and stay.
+- Rejected: keeping click-anywhere on Setup and Found (chotchki: "b").
+
+**4. Directional moves are geometry-based, proven on a fixture.**
+- `DirectionalNavigationPlugin` added by hand, `AutoDirectionalNavigation` on every focusable, `AutoNavigationConfig { min_alignment_factor: 0.5, .. }` so a D-pad move stays in its row or column on a grid; manual `add_edge`/`block_edge` for exceptions.
+- No screen has two choices today. A headless 2×2 fixture proves the moves anyway, because the headless setup is exactly where it breaks: auto navigation skips nodes whose `InheritedVisibility` is false, which is the default until `VisibilityPlugin` propagates it, and `portal_app` has no `VisibilityPlugin`. AP.7 adds it there, or a test-only system setting `InheritedVisibility::VISIBLE` if it won't run headless (unverified; the box records which).
+- Auto navigation ignores z-order, so while an overlay is up the background's focusables lose `AutoDirectionalNavigation`.
+- Rejected: a hand-wired `DirectionalNavigationMap` per screen (every layout change re-wires it); a virtual cursor (the focus crate's stance is snapping between focusables, and so is a console's).
+
+**5. The tests keep reading what they read.**
+- `/api/_test/tv` only grows: `focus: Option<String>` from the focused entity's `FocusId`. `POST /api/_test/tv/press {"button": "south" | "east" | "mode" | "up" | "down" | "left" | "right"}` queues a press for the router, the way AB's `/api/_test/tv/skip` feeds the intro queue; an unknown name is a 400. `/skip` stays.
+- Every marker the mirror reads stays on the same logical node, untransformed (decision 9).
+- `portal_app` gains `StatesPlugin`, `InputFocusPlugin`, `DirectionalNavigationPlugin`, the widgets' `ButtonPlugin` and `VisibilityPlugin` (or the fallback). AB's intro tests reuse `portal_app`, so they get the same set.
+- Shots trigger on a focus change too, beside `Current`, `PortalCards`, the band and the intro.
+
+**6. One theme resource, one 10-ft knob.**
+- `TvTheme` holds the palette (starfield `--sf-1..3`, gold `--gb/--g/--gm/--gs/--gi`, the blue-card gradients, the status and element colours) and the TV type scale (96/64/40/32/24, nothing under 24; AB's 22 px band detail goes to 24), with the contrast contract's text roles (primary warm white, accent gold, muted), all opaque. Literal sizes and flat colour consts go.
+- `scale_ui` (`UiScale` from the camera target's height over 1080) stays the one 10-ft knob. `Val::Rem`/`RemSize` aren't needed: the layout scale factor is camera × `UiScale` and `Val::Rem` resolves through it, whatever `UiScale`'s doc comment says.
+- A Kaos skin later swaps the resource; AP doesn't build one.
+
+**7. Titles are drawn through a WESL `UiMaterial` over their own glyphs** (chotchki: "Hmmm could we run a shader over it?").
+- The pipeline:
+  - A `Title` component carries the logical string and its size role. Its on-screen node is a `MaterialNode<TitleMaterial>` sized to the laid-out text plus the effects' margin.
+  - The string renders ONCE into an `Image::new_target_texture`: a `Camera2d` at order -1 with `RenderTarget::Image`, and a UI root with `UiTargetCamera` holding one white Titan One `Text` (the shape of Bevy's `render_ui_to_texture` UI example; [`shots.rs`](../../../crates/guacamole/src/shots.rs) already renders the whole TV to an `Image` this way). A changed string re-renders; otherwise the camera goes inactive.
+  - `TitleMaterial` binds that image (`#[texture]`/`#[sampler]`) and a uniform with the theme's colours, the texel size and the radii. The fragment builds [design_language.md](../../../docs/aesthetic/design_language.md) §2's display treatment layer by layer from the glyph alpha, back to front: the gold glow (a wide averaged sample at ~0.3 alpha), the blurred drop (taps around a +5 px offset, black at 0.5), the two hard shadows (alpha at +3 px in `--gi`, +2 px in `--gs`), the `--gi` stroke (max alpha over a ring of 8-16 taps at 1-2 design px), then the fill as a vertical gradient `--gb` → `--g`. A radial `BackgroundGradient` ellipse behind larger titles is §2's `.title-rays` halo.
+  - The `.wesl` ships inside the binary through `embedded_asset!` and an `embedded://` `ShaderRef`, as `bevy_feathers`' `AlphaPatternMaterial` does, so a release build needs no assets folder.
+- What gets it: the screen titles and the portal header's game name, in caps (§2: never lowercase Titan One). Card names and element words stay plain `Text` with the theme's roles and one `TextShadow`: eight re-renders on every placement buys little at 36 px, and the mirror and the e2e read card text from `Text` nodes. Widening it later is a box, not a redesign.
+- The offscreen `Text` sits under its own camera, outside `ScreenRoot`, so the mirror's walk never sees it; the layout tests' overlap check filters to text whose target camera is the TV's.
+- Verified in the 0.20.0 sources for this design (read, not built): `UiMaterial` (`bevy_ui_render/src/ui_material.rs:103`), `MaterialNode<M>` (`:182`) and `UiMaterialPlugin<M>` (`ui_material_pipeline.rs:37`), with the fragment taking `UiVertexOutput` (uv, size, borders and radii, `ui_vertex_output.wesl`) and group 0 holding the view and `Globals` (time, `ui_material.wesl`); `.wesl` loads with no Cargo feature (`bevy_shader/src/shader.rs:297,342`, a crate with no feature table); `embedded_asset!` (`bevy_asset/src/io/embedded/mod.rs:352`) with feathers' precedent (`bevy_feathers/src/lib.rs:75`, `alpha_pattern.rs:21-22`); `Image::new_target_texture` carries `TEXTURE_BINDING`, so a material can sample a render target (`bevy_image/src/image.rs:1253-1266`); `UiTargetCamera` (`bevy_ui/src/ui_node.rs:3408`); the default UI camera is the one marked `IsDefaultUiCamera` or else the highest-order WINDOW-targeted camera (`:3453-3475`), so image-targeted title cameras never take the TV's UI; `Camera::is_active` (`bevy_camera/src/camera.rs:392`); `Text2d` lives in `bevy_sprite` (`text2d.rs:102`), outside `ui`; `ViewportNode` (`bevy_ui/src/widget/viewport.rs:43`) goes the other way (a camera shown in a node) and isn't needed.
+- NOT verified, the spike's job (AP.9): that an inactive camera's image keeps its pixels (if not, the camera stays active: one small 2D pass per title per frame); how `UiScale` reaches the title camera's UI and so how big the image must be at 1080p and 4K; sizing the image to the laid-out text (one frame late) versus a fixed generous canvas; that a target rendered at order -1 is sampled the same frame; that `portal_app` (no render app) runs with `Assets<TitleMaterial>` registered and no `UiMaterialPlugin`; the frame cost of a camera per title; and the look itself on the Mac's display at 1080p and 4K.
+- Fallback, if it doesn't read on a real display: stacked `Text` copies (an 8-way stroke and the two hard shadows under the fill), each marked `Decor` so the mirror and the overlap check skip it. No blur and no glow that way; the halo stays.
+- Rejected: stacked text as the first choice (a layout pass per copy, a marker on every copy); porting the product's CPU raster ([`badge_text.rs`](../../../crates/server/src/badge_text.rs), `ab_glyph`; a direct dependency, a re-raster per string and scale, effects in CPU code, and the product code leaves at G1 anyway); `Text2d` into the image (needs `bevy_sprite` and its render crate); an own glyph pipeline (no engine hook).
+
+**8. The rest of the look is native `bevy_ui` 0.20.**
+- Starfield: stacked `BackgroundGradient` on each screen root (the 3-stop linear `--sf-1` → `--sf-3` plus the top and bottom radial ellipses), and a star layer we generate ourselves (procedural in a small `UiMaterial` driven by `Globals.time`, or a tiled `ImageNode` built in code), drifting on §1's 140 s loop. Never a disc or wiki image.
+- Bezel (§3.1): nested ring nodes, since 0.20 has no inset `BoxShadow`: an outer ring with the radial gold `BackgroundGradient` and `BorderRadius::MAX`, an inner `--gi` ring, top and bottom light nodes, a `BoxShadow` drop, the element-coloured plate holding the portrait.
+- Card edge: `BorderGradient` gold instead of the flat element-coloured border; the blue-card gradient (§3.2) on the buttons.
+- The owner pip stays top-right, recorded as a departure from §3.1's bottom-right ownership pip: "b, top right bottom right will interfere with player 2's ui" (chotchki, 2026-10-18).
+
+**9. Motion animates inner nodes over our own timers, and freezes for shots.**
+- Easing from the design's tokens through `bevy_curve` (`EasingCurve`, `CubicSegment::new_bezier_easing`): `--ease-spring` (.3, 1.3, .5, 1), `--ease-tap` (.4, 2.2, .5, 1). One system per effect easing `UiTransform` over a timer.
+- Only on an INNER face node. `UiTransform` is composed into `UiGlobalTransform`, which is the rect the mirror, `report_layout` and the tests read, so a 1.05 focus pop or a 24 px rise on the marked outer node would push `cards_outside` and `overlapping` off mid-animation.
+- Focus is the bezel's picking state (§3.1): scale 1.05 plus the outer glow `0 0 22px 4px` (`BoxShadow`), eased with `--ease-spring`; `Pressed` is the tap scale (`--dur-tap` 120 ms, `--ease-tap`).
+- Card rise (§5.1) on the portal's entrance, 80 ms stagger, 500 ms; a single placement rises alone. Portal impact (§5.4) on a placement, 600 ms. Idle float (§5.3) ±2 px over 4.5 s, staggered. One focal animation at a time (§5.6). The outer card exists from the first frame, so `guacamole/figure-cards`' "within 1 second" still holds.
+- `ReducedMotion`, on whenever `GUAC_SHOT_DIR` is set: ambient motion off (drift, float, halo spin), entrances at their end state, the same carve-out as §5.7. Without it a 750 ms settle lands mid-rise and two runs give two PNGs.
+- Rejected: `bevy_animation` clips (a clip, graph, player and target ids per node for a focus pop); `bevy_flair`'s CSS transitions (third party on the upgrade path, the one to watch).
+
+**10. What AP doesn't adopt, and when to look again.**
+- BSN: at the next Bevy bump, if its syntax held a release.
+- `ModalDialog`/`Dialog`/`RequestClose`: with the Home menu. `ModalDialog` only flips `TabGroup.modal`, which directional navigation ignores, so the overlay rule in decision 4 is still needed then.
+- `Checkbox`/`Slider`/`RadioGroup`/`ListBox`/`Tabs`: not while settings live on the phone.
+- `bevy_feathers`: editor-only by its own charter ("deliberately not intended" for game UI); its focus-indicator module is the pattern to read for the ring, not a dependency.
+- Third-party UI crates: each one puts a crate on the Bevy-upgrade critical path.
+
+**11. The shell delta carries AA's Purpose verbatim.**
+AA touches what ships (the server split), so it archives only after a `v*` tag; AP touches nothing that ships and can archive on `2.0` first. The delta's `## Purpose` is AA's text word for word: archived first, AP creates the main shell spec under `openspec/specs/` with the right Purpose instead of a TBD; archived second, it's ignored.
+
+## Risks / Trade-offs
+
+- [Bevy churn: 0.19 → 0.20 deprecated `Button`/`Interaction`, flattened pointer events and broke BSN; the `TabIndex` pointer-focus bridge is labelled temporary] → a thin surface (`Button`, `Activate`, the focus resources, the navigator) behind our own router and templates; Bevy bumps are their own change at milestone boundaries.
+- [The shader title doesn't read on the Mac's display, or the spike finds a wall] → split the box and take the stacked-text fallback; nothing else in AP depends on how a title is drawn.
+- [An inactive camera doesn't keep its image] → leave title cameras active; at most two titles a screen.
+- [`VisibilityPlugin` doesn't run headless] → the test-only `InheritedVisibility` system.
+- [Focus lost when a subtree respawns (a portal cell, Setup's lines)] → restore by `FocusId` after the respawn, else the screen's default.
+- [A key activates twice] → the router never maps Enter or Space.
+- [Motion moves the rects the tests read] → inner nodes only, and `ReducedMotion` for shots.
+- [Auto navigation reaches under an overlay] → the background loses its navigation markers while one is up.
+- [Collision with other work on `crates/guacamole/src/`] → AP starts when nothing else edits it; AB.22 and AE's first 3D camera go before or after. AE's camera will need `IsDefaultUiCamera` on the TV's camera so the UI and every focusable stay on the one camera the navigator searches.
+- [The 8BitDo variants or Home don't reach Bevy on the Mac] → nothing in AP depends on pad identity: South and East are positional. The identity and Home questions stay the backlog's controller hardware checks.
+
+## Migration Plan
+
+Nothing persisted changes shape. Rollback is a revert. AP archives on `2.0` once AP.0 holds; no release carries it.
+
+## Open Questions
+
+None block AP. The design doc's Open question 1 (what Home does) decides the Home menu, a later change.
