@@ -111,6 +111,39 @@ fn incompressible_chunk_is_stored_raw_inside_an_lzma_entry() {
 }
 
 #[test]
+fn unknown_codec_is_refused_even_when_no_chunk_is_compressed() {
+    // Noise is stored raw chunk by chunk, so no slot has the compressed bit;
+    // the empty entry has no chunks at all. Neither may slip through as data.
+    let bytes = IgaBuilder::new()
+        .lzma("n", &noise(5000))
+        .lzma("e", &[])
+        .build();
+    let archive = Archive::parse(&bytes).unwrap();
+    let raw = archive.find("n").unwrap();
+    assert!(matches!(archive.read_chunk(raw, 0), Ok(Cow::Borrowed(_))));
+    let count = archive.entries().len();
+    let mut b = bytes.clone();
+    for e in archive.entries() {
+        let at = HEADER_LEN + count * 4 + e.index() * RECORD_LEN + 8;
+        let word = le32(&bytes, at);
+        put32(&mut b, at, (word & 0x0FFF_FFFF) | 0x1000_0000);
+    }
+    let a = Archive::parse(&b).unwrap();
+    for name in ["n", "e"] {
+        let e = a.find(name).unwrap();
+        assert_eq!(e.compression(), Compression::Other(1), "{name}");
+        let err = a.read(e).unwrap_err();
+        assert_eq!(
+            (err.field, err.kind),
+            ("block_word", ErrorKind::Unsupported { value: 1 }),
+            "{name}"
+        );
+    }
+    let n = a.find("n").unwrap();
+    assert!(a.chunks(n).all(|c| c.is_err()));
+}
+
+#[test]
 fn every_block_table_width_reads() {
     // A 16-byte sector puts entries in all three tables at test sizes:
     // small up to 2032 bytes, medium up to 524,272, large past that.
@@ -266,6 +299,15 @@ fn corrupt_tables_error_with_the_field() {
     assert_eq!(
         (err.field, err.kind),
         ("block_word", ErrorKind::Unsupported { value: 1 })
+    );
+
+    // Header flags Giants never sets.
+    let mut b = good.clone();
+    put32(&mut b, 0x30, 0xDEAD_BEEF);
+    let err = Archive::parse(&b).unwrap_err();
+    assert_eq!(
+        (err.field, err.offset, err.kind),
+        ("flags", 0x30, ErrorKind::Unsupported { value: 0xDEAD_BEEF })
     );
 
     // A sector size that isn't a power of two.

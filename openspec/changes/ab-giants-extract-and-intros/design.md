@@ -10,7 +10,7 @@ AA leaves guacamole as a Bevy app that embeds the server, finds the Giants dump 
   - a 0x34-byte little-endian header carrying the TOC size, file count, sector size and the name-table offset and size;
   - a TOC of name hashes then 12-byte file records `{offset, size, blockWord}`, then the block tables;
   - a name table of per-file offsets into NUL-terminated names.
-  - A `blockWord` of 0xFFFFFFFF means stored, otherwise its top nibble is the codec (2 = LZMA) and the rest indexes the block table. Data comes in 0x8000-byte chunks, each a u16 compressed size + 5 bytes of LZMA props + raw LZMA1. `.arc` entries are stored and `.bld` entries are LZMA.
+  - A `blockWord` of 0xFFFFFFFF means stored, otherwise its top nibble is the codec (2 = LZMA) and the rest indexes slots in the size-picked block table. Data comes in 0x8000-byte chunks; the chunk layout, raw chunks inside LZMA entries included, is in the guacamole-design.md IGA notes and `iga.rs`'s module docs (AB.3). `.arc` entries are stored and `.bld` entries are LZMA.
 - Inside each character `.arc` the entry names include its voice-over lines as `<vo_name>/<language>/vo_<vo_name>_<line>`. `<vo_name>` with its underscores removed equals the intro's file name for 41 of the 48 intros (a read-only probe over the dump; nothing kept). A second probe that took the folder one level up from `<language>` got 44. The misses are characters whose voice-over folder uses a different naming; AB.6's disc test settles the real split.
 - ffmpeg 9.0.2 on the Mac decodes `binkvideo` and both Bink audio codecs, and has `libx264`, `libsvtav1`, `libvpx-vp9`, `libmp3lame` and `libopus` encoders but no `libvorbis`.
 
@@ -41,7 +41,7 @@ Motivation is in proposal.md. The track-level extractor plan is in `docs/native/
 - `guac-extract` owns the filesystem, hashing, the manifest and ffmpeg. guacamole calls it as a library on its own thread and gets progress events over a channel, the same seam AA uses for portal events.
 
 **2. Pure-Rust LZMA.**
-The IGA chunk format is raw LZMA1 with externally supplied props and a known output size (≤ 0x8000). AB.3 picks between `lzma-rs` 0.3 and `lzma-rust2` 0.22 by two tests: an API that takes those props plus an unpacked size without a header, and surviving the fuzz target without a panic or an unbounded allocation. C `liblzma` was the alternative; it's rejected because it would put a system library and `unsafe` FFI under the parsers.
+The IGA chunk format is raw LZMA1 with externally supplied props and a known output size (≤ 0x8000). AB.3 picks between `lzma-rs` 0.3 and `lzma-rust2` 0.22 by two tests: an API that takes those props plus an unpacked size without a header, and surviving the fuzz target without a panic or an unbounded allocation. C `liblzma` was the alternative; it's rejected because it would put a system library and `unsafe` FFI under the parsers. AB.3 picked `lzma-rust2` 0.23; the reasons are in tasks.md AB.3.
 
 **3. Fuzzing in two layers.**
 A stable property test in `cargo test` throws random bytes and mutated synthetic files at every parser and asserts no panic and bounded memory. That's what CI and the pre-push hook run. cargo-fuzz targets live in `crates/guac-formats/fuzz/`, excluded from the workspace because they need nightly, and run locally before AB.0 with the hours recorded. A CI fuzz lane is out of scope until there are more parsers to justify one.

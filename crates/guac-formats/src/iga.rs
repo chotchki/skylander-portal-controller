@@ -68,6 +68,8 @@ pub struct Header {
     pub large_blocks: u32,
     pub medium_blocks: u32,
     pub small_blocks: u32,
+    /// Always 0: Giants sets none and the parser refuses any, since what they
+    /// mean in v0x08 is unknown.
     pub flags: u32,
 }
 
@@ -254,6 +256,15 @@ impl<'a> Archive<'a> {
             small_blocks: r.u32_le(0x2C, "small_blocks")?,
             flags: r.u32_le(0x30, "flags")?,
         };
+        if header.flags != 0 {
+            return Err(r.err(
+                "flags",
+                0x30,
+                ErrorKind::Unsupported {
+                    value: header.flags.into(),
+                },
+            ));
+        }
         let sector = header.sector_size;
         if !sector.is_power_of_two() || sector > MAX_SECTOR_SIZE {
             return Err(r.err(
@@ -420,6 +431,8 @@ impl<'a> Archive<'a> {
     /// The whole entry: a view into the archive when stored, unpacked
     /// otherwise. The result is always exactly [`Entry::size`] bytes.
     pub fn read(&self, entry: &Entry<'a>) -> Result<Cow<'a, [u8]>, FormatError> {
+        // Up front, so an empty entry (no chunks) is refused too.
+        self.refuse_unknown_codec(entry)?;
         if entry.block_word == STORED {
             return self.read_chunk(entry, 0);
         }
@@ -443,6 +456,9 @@ impl<'a> Archive<'a> {
 
     /// Chunk `j` of the entry, `j < entry.chunk_count()`.
     pub fn read_chunk(&self, entry: &Entry<'a>, j: usize) -> Result<Cow<'a, [u8]>, FormatError> {
+        // Before any slot: an unknown codec is refused whether or not the
+        // chunk's slot says it was compressed.
+        self.refuse_unknown_codec(entry)?;
         let r = Reader::new(FORMAT, self.bytes);
         let record_at = entry.record_at(self.entries.len());
         if j >= entry.chunk_count() {
@@ -455,15 +471,11 @@ impl<'a> Archive<'a> {
                 },
             ));
         }
-        let codec = match entry.compression() {
-            Compression::Stored => {
-                return r
-                    .bytes(entry.offset as usize, entry.size as usize, "data")
-                    .map(Cow::Borrowed);
-            }
-            Compression::Lzma => CODEC_LZMA,
-            Compression::Other(codec) => codec,
-        };
+        if entry.block_word == STORED {
+            return r
+                .bytes(entry.offset as usize, entry.size as usize, "data")
+                .map(Cow::Borrowed);
+        }
 
         let sector = u64::from(self.header.sector_size);
         let want = (entry.size as usize - j * CHUNK_LEN).min(CHUNK_LEN);
@@ -510,15 +522,6 @@ impl<'a> Archive<'a> {
                 ))
             };
         }
-        if codec != CODEC_LZMA {
-            return Err(r.err(
-                "block_word",
-                record_at + 8,
-                ErrorKind::Unsupported {
-                    value: codec.into(),
-                },
-            ));
-        }
         let packed_len = r.u16_le(span_at, "chunk_size")? as usize;
         if packed_len > CHUNK_LEN {
             return Err(r.err(
@@ -544,6 +547,20 @@ impl<'a> Archive<'a> {
         let dict = u32::from_le_bytes([span[3], span[4], span[5], span[6]]);
         let packed = &span[LZMA_CHUNK_HEADER_LEN..LZMA_CHUNK_HEADER_LEN + packed_len];
         unpack_lzma(&r, span_at, props, dict, packed, want).map(Cow::Owned)
+    }
+
+    /// An error for an entry whose codec nibble isn't LZMA.
+    fn refuse_unknown_codec(&self, entry: &Entry<'a>) -> Result<(), FormatError> {
+        match entry.compression() {
+            Compression::Other(codec) => Err(Reader::new(FORMAT, self.bytes).err(
+                "block_word",
+                entry.record_at(self.entries.len()) + 8,
+                ErrorKind::Unsupported {
+                    value: codec.into(),
+                },
+            )),
+            Compression::Stored | Compression::Lzma => Ok(()),
+        }
     }
 
     /// Slot `index` of `table`: its absolute offset, the compressed bit and
