@@ -116,15 +116,7 @@ async fn load(server: &TestServer, sid: u64, slot: u8, figure_id: &str) {
 /// Search, tap the card, PLACE: lands in the first empty slot.
 /// Searches, opens the figure and presses PLACE; returns when PLACE was clicked.
 async fn place_named(phone: &Phone, name: &str) -> Instant {
-    phone.open_search().await.unwrap();
-    let input = phone
-        .client
-        .find(Locator::Css(".search-input-p4"))
-        .await
-        .unwrap();
-    input.clear().await.unwrap();
-    input.send_keys(name).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    phone.search_named(name).await.unwrap();
     phone.tap_figure_named(name).await.unwrap();
     let place = phone
         .wait_for(Locator::Css(".detail-btn-primary"), Duration::from_secs(5))

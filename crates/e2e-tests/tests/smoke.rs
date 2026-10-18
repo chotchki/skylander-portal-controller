@@ -52,11 +52,26 @@ async fn smoke_game_picker_renders() {
 }
 
 /// The grown-ups menu's HOLD FOR GAME SETTINGS before a game is picked: the
-/// product offers it, guacamole leaves it out (openspec AA.19).
+/// product offers it, guacamole leaves it out (openspec AA.19). The phone
+/// assumes the product until `/api/status` answers, so the product's menu
+/// check can pass before the status lands; the server's `app` is asserted
+/// first.
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver + built phone SPA"]
 async fn the_menu_offers_game_settings_only_in_the_product() {
     let server = TestServer::spawn().expect("spawn server");
+    let app = E2eApp::from_env();
+    let status: serde_json::Value = reqwest::get(format!("{}/api/status", server.url))
+        .await
+        .expect("GET /api/status")
+        .json()
+        .await
+        .expect("parse /api/status");
+    let want = match app {
+        E2eApp::Product => "product",
+        E2eApp::Guacamole => "guacamole",
+    };
+    assert_eq!(status["app"], want, "{app:?}: {status}");
     inject_profile(&server.url, "TestKid", "1234", "#39d39f")
         .await
         .expect("inject profile");
@@ -75,7 +90,6 @@ async fn the_menu_offers_game_settings_only_in_the_product() {
         .await
         .unwrap();
 
-    let app = E2eApp::from_env();
     let product = app == E2eApp::Product;
     let offered = |a: &[String]| a.iter().any(|t| t == "HOLD FOR GAME SETTINGS");
     let actions = phone

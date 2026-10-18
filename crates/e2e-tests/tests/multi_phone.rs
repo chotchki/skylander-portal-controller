@@ -462,18 +462,24 @@ async fn ownership_pip_shows_correct_owner_per_slot() {
 // dump); guacamole refuses only the viewer's own placement, so Bob places his
 // Eruptor next to Alice's. Neither lets Alice place hers twice.
 
-/// Searches `name`, opens its card and presses PLACE.
-async fn search_and_place(phone: &Phone, name: &str) {
-    phone.open_search().await.unwrap();
-    let input = phone
-        .client
-        .find(Locator::Css(".search-input-p4"))
+/// Opens `name`'s card in the filtered toy box and presses PLACE. The details
+/// get 15 s to show PLACE, not `place_figure_named`'s 5: a product run at load
+/// average 20 timed out there once.
+async fn tap_and_place(phone: &Phone, name: &str) {
+    phone.tap_figure_named(name).await.unwrap();
+    phone
+        .wait_for(Locator::Css(".detail-btn-primary"), Duration::from_secs(15))
+        .await
+        .unwrap_or_else(|e| panic!("{name}'s details never showed PLACE: {e}"))
+        .click()
         .await
         .unwrap();
-    input.clear().await.unwrap();
-    input.send_keys(name).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    phone.place_figure_named(name).await.unwrap();
+}
+
+/// Searches `name`, opens its card and presses PLACE.
+async fn search_and_place(phone: &Phone, name: &str) {
+    phone.search_named(name).await.unwrap();
+    tap_and_place(phone, name).await;
 }
 
 async fn wait_slot_named(phone: &Phone, slot: u8, name: &str) {
@@ -549,20 +555,12 @@ async fn the_same_figure_from_two_profiles_follows_the_apps_rule() {
     wait_slot_named(&bob, 1, "Eruptor").await;
 
     // Bob's toy box: Alice's Eruptor marks his card only in the product.
-    bob.open_search().await.unwrap();
-    let input = bob
-        .client
-        .find(Locator::Css(".search-input-p4"))
-        .await
-        .unwrap();
-    input.clear().await.unwrap();
-    input.send_keys("Eruptor").await.unwrap();
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    bob.search_named("Eruptor").await.unwrap();
     let marked = marked_on_portal(&bob, "Eruptor").await;
     eprintln!("{app:?}: Bob's Eruptor card marked ON PORTAL: {marked:?}");
     assert_eq!(marked, Some(app == E2eApp::Product), "{app:?}");
 
-    bob.place_figure_named("Eruptor").await.unwrap();
+    tap_and_place(&bob, "Eruptor").await;
     match app {
         E2eApp::Product => {
             let said = refusal(&bob).await;

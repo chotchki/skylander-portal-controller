@@ -678,8 +678,9 @@ mod tests {
         assert_eq!(placed_names(&both, app, Some("bob")), ["Eruptor", "Spyro"]);
         assert!(placed_names(&both, app, Some("carol")).is_empty());
 
-        // A locked session's placement is owned by no profile: it blocks
-        // only another locked viewer.
+        // A placement no profile owns (only a raw load request from a locked
+        // session makes one; PLACE shows only with a profile unlocked)
+        // leaves every profile free to place theirs.
         let unowned = [loaded("Eruptor", None)];
         assert!(placed_names(&unowned, app, Some("alice")).is_empty());
         assert_eq!(placed_names(&unowned, app, None), ["Eruptor"]);
