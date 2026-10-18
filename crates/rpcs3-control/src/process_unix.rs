@@ -71,6 +71,32 @@ impl UnixRpcsProcess {
         )
     }
 
+    /// Launch with the argv and env changes in `spec` and nothing else of the
+    /// product's (no `SKYLANDER_BORDERLESS`, no `RPCS3_CONFIG_DIR`): the dev
+    /// oracle's launch (openspec AF.3). `SKYLANDER_IPC_PATH` comes from
+    /// `spec.ipc_path`; on macOS `KMP_DUPLICATE_LIB_OK` is set as for every launch.
+    pub fn launch_spec(spec: &crate::LaunchSpec) -> Result<Self> {
+        let mut cmd = Command::new(&spec.exe);
+        cmd.args(&spec.args)
+            .env("SKYLANDER_IPC_PATH", &spec.ipc_path);
+        #[cfg(target_os = "macos")]
+        cmd.env("KMP_DUPLICATE_LIB_OK", "TRUE");
+        for (key, value) in &spec.env {
+            match value {
+                Some(v) => cmd.env(key, v),
+                None => cmd.env_remove(key),
+            };
+        }
+        let child = cmd
+            .spawn()
+            .map_err(|e| anyhow::anyhow!("spawn RPCS3 at {}: {e}", spec.exe.display()))?;
+        tracing::info!(pid = child.id(), exe = %spec.exe.display(), "launched RPCS3 (spec)");
+        Ok(Self {
+            child,
+            socket_path: spec.ipc_path.clone(),
+        })
+    }
+
     fn spawn(
         exe: &Path,
         socket_path: &Path,
@@ -297,6 +323,41 @@ mod tests {
         assert_eq!(r, Readiness::Ready);
         p.shutdown_graceful(Duration::from_secs(2)).ok();
         let _ = std::fs::remove_file(&sock);
+    }
+
+    #[test]
+    fn launch_spec_passes_exactly_the_given_args_and_env() {
+        let dir = std::env::temp_dir().join(format!("skytest-spec-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("env.txt");
+        let sock = dir.join("p1.sock");
+        let script = format!(
+            "printf '%s|%s|%s|%s|%s' \"$1\" \"$HOME\" \"$SKYLANDER_IPC_PATH\" \"${{SKYLANDER_BORDERLESS-unset}}\" \"${{GONE-unset}}\" > '{}'",
+            out.display()
+        );
+        let spec = crate::LaunchSpec {
+            exe: PathBuf::from("/bin/sh"),
+            args: vec!["-c".into(), script.into(), "sh".into(), "first arg".into()],
+            ipc_path: sock.clone(),
+            env: vec![
+                ("HOME".into(), Some("/oracle/home".into())),
+                ("GONE".into(), Some("set then removed".into())),
+                ("GONE".into(), None),
+            ],
+        };
+        let mut p = UnixRpcsProcess::launch_spec(&spec).expect("spawn sh");
+        p.wait_for_exit_or_force(Duration::from_secs(5)).unwrap();
+        let got = std::fs::read_to_string(&out).unwrap();
+        // Whatever the test's own env holds passes through; launch_spec adds no borderless.
+        let borderless = std::env::var("SKYLANDER_BORDERLESS").unwrap_or("unset".into());
+        assert_eq!(
+            got,
+            format!(
+                "first arg|/oracle/home|{}|{borderless}|unset",
+                sock.display()
+            )
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

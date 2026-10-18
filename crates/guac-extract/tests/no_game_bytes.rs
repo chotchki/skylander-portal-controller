@@ -1,7 +1,8 @@
 //! The game-magic guard (openspec AB, design decision 10; the HARD rule in
 //! docs/native/guacamole-design.md, "No game bytes in the repo"): fails when any
-//! file git would commit or push starts with a game magic, is a gzip whose
-//! inflated head does (RPCS3 writes RSX captures as `.rrc.gz`) or is a
+//! file git would commit or push starts with a game magic, is a gzip or zstd
+//! file whose inflated head does (RPCS3 writes RSX captures as `.rrc.gz` and
+//! savestates as `.SAVESTAT.zst`, openspec AF design decision 11) or is a
 //! big-endian PPC64 ELF (a decrypted EBOOT).
 //!
 //! It reads git, not the working tree: the index, because that's what the next
@@ -26,23 +27,40 @@ use flate2::write::GzEncoder;
 use guac_extract::magic::{EM_PPC64, GAME_MAGICS, classify};
 
 const GZIP: &[u8] = &[0x1f, 0x8b];
-/// How much of a blob, or of an inflated gzip, the guard reads: every check
+const ZSTD: &[u8] = &[0x28, 0xb5, 0x2f, 0xfd];
+/// How much of a blob, or of an inflated stream, the guard reads: every check
 /// needs only the first bytes, and 64 KiB covers a gzip header's name and
 /// comment. A staged multi-GB disc image costs this, not its size.
 const HEAD: u64 = 64 * 1024;
-/// gzip inside gzip inside gzip is as deep as the guard looks.
-const MAX_GZIP_DEPTH: usize = 3;
+/// A zstd block runs to 128 KiB compressed and libzstd emits a compressed one
+/// only whole, so a zstd blob's head is read this far: the frame header plus
+/// the first block, whatever the compressor did with it.
+const ZSTD_HEAD: u64 = 256 * 1024;
+/// A compressed stream inside a compressed stream inside another is as deep as
+/// the guard looks.
+const MAX_INFLATE_DEPTH: usize = 3;
 
 /// What a blob's head would leak, or `None` when it's clean.
 fn offence(head: &[u8], depth: usize) -> Option<String> {
     if let Some(what) = classify(head) {
         return Some(what.to_string());
     }
-    if depth < MAX_GZIP_DEPTH && head.starts_with(GZIP) {
-        let mut inflated = Vec::new();
-        // A truncated or corrupt stream keeps whatever inflated before the error.
+    if depth >= MAX_INFLATE_DEPTH {
+        return None;
+    }
+    // A truncated or corrupt stream keeps whatever inflated before the error.
+    let mut inflated = Vec::new();
+    if head.starts_with(GZIP) {
         let _ = GzDecoder::new(head).take(HEAD).read_to_end(&mut inflated);
         return offence(&inflated, depth + 1).map(|what| format!("gzip of a {what}"));
+    }
+    if head.starts_with(ZSTD) {
+        // libzstd's streaming decoder hands each block over as it decodes it;
+        // ruzstd's holds back a whole window (2 MiB in RPCS3's states) first.
+        if let Ok(decoder) = zstd::stream::read::Decoder::with_buffer(head) {
+            let _ = decoder.take(HEAD).read_to_end(&mut inflated);
+        }
+        return offence(&inflated, depth + 1).map(|what| format!("zstd of a {what}"));
     }
     None
 }
@@ -143,6 +161,12 @@ fn scan(repo: &Path) -> Vec<(String, String)> {
             .take(size.min(HEAD))
             .read_to_end(&mut head)
             .unwrap();
+        if head.starts_with(ZSTD) {
+            (&mut stdout)
+                .take(size.min(ZSTD_HEAD) - head.len() as u64)
+                .read_to_end(&mut head)
+                .unwrap();
+        }
         let rest = size - head.len() as u64 + 1; // + the newline after each object
         assert_eq!(
             io::copy(&mut (&mut stdout).take(rest), &mut io::sink()).unwrap(),
@@ -275,6 +299,73 @@ fn flags_a_gzip_whose_inflated_head_is_rrc() {
     let findings = scan(repo.path());
     assert_eq!(paths(&findings), ["capture.rrc.gz"]);
     assert_eq!(findings[0].1, "gzip of a RPCS3 RSX capture");
+}
+
+fn zstd(bytes: &[u8]) -> Vec<u8> {
+    zstd::encode_all(bytes, 1).unwrap()
+}
+
+/// A savestate's head (the magic, then the subsystem version list) followed by
+/// `len` bytes of xorshift noise over 32 values: 5 bits a byte, so zstd keeps a
+/// block compressed but can't get a 128 KiB one under 64 KiB.
+fn savestate(len: usize) -> Vec<u8> {
+    let mut bytes = b"RPCS3SAV\x01\x00\x13\x00".to_vec();
+    let mut x = 0x9E37_79B9_7F4A_7C15u64;
+    bytes.extend((0..len).map(|_| {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        (x >> 32) as u8 & 0x1f
+    }));
+    bytes
+}
+
+#[test]
+fn flags_a_savestate_raw_gzipped_and_zstd_compressed() {
+    // The noise makes the zstd frame's first block a compressed one bigger than
+    // HEAD, which only the longer zstd head reaches (checked: with ZSTD_HEAD at
+    // 64 KiB this test fails).
+    let state = savestate(1 << 20);
+    let zst = zstd(&state);
+    assert!(zst.len() as u64 > HEAD, "{}", zst.len());
+    let repo = repo_with(&[
+        ("BLUS30968_1_0.SAVESTAT", state.clone()),
+        ("BLUS30968_1_0.SAVESTAT.gz", gzip(&state)),
+        ("BLUS30968_1_0.SAVESTAT.zst", zst),
+        ("small.SAVESTAT.zst", zstd(&savestate(16))),
+    ]);
+    let mut findings = scan(repo.path());
+    findings.sort();
+    assert_eq!(
+        findings,
+        [
+            ("BLUS30968_1_0.SAVESTAT", "RPCS3 savestate"),
+            ("BLUS30968_1_0.SAVESTAT.gz", "gzip of a RPCS3 savestate"),
+            ("BLUS30968_1_0.SAVESTAT.zst", "zstd of a RPCS3 savestate"),
+            ("small.SAVESTAT.zst", "zstd of a RPCS3 savestate"),
+        ]
+        .map(|(p, w)| (p.to_string(), w.to_string()))
+    );
+}
+
+#[test]
+fn passes_a_zstd_file_that_isnt_a_state() {
+    let mut text = b"plain notes, zstd-compressed\n".repeat(10_000);
+    text.extend(savestate(4096).iter().skip(8)); // the state's body without its magic
+    let repo = repo_with(&[
+        ("notes.zst", zstd(&text)),
+        ("empty.zst", zstd(b"")),
+        ("broken.zst", vec![0x28, 0xb5, 0x2f, 0xfd, 0xff, 0xff]),
+    ]);
+    assert_eq!(scan(repo.path()), Vec::<(String, String)>::new());
+}
+
+#[test]
+fn flags_a_zstd_of_a_gzipped_capture() {
+    let repo = repo_with(&[("c.rrc.gz.zst", zstd(&gzip(&starting_with(b"RRC"))))]);
+    let findings = scan(repo.path());
+    assert_eq!(paths(&findings), ["c.rrc.gz.zst"]);
+    assert_eq!(findings[0].1, "zstd of a gzip of a RPCS3 RSX capture");
 }
 
 #[test]
