@@ -23,7 +23,7 @@ use guac_formats::edge::{BoneMap, Segment as EdgeSegment};
 use guac_formats::igz::Igz;
 use guac_formats::igz::layouts::{Mat44, PixelShaderVariantMaskAttr, read_all};
 use guac_formats::model::{JointMap, idle, portal_model, skeleton};
-use guac_ir::model::{Blend, TextureRole};
+use guac_ir::model::{Blend, Glow, TextureRole};
 use guac_ir::{Model, Rig};
 
 fn env_or_dotenv(key: &str) -> Option<String> {
@@ -166,6 +166,29 @@ fn the_model_stage_extracts_every_character() {
         "  RON: models/ {n_models} files {model_bytes} bytes, textures/ {n_tex} files {tex_bytes} bytes, ir/rig.ron {rig_bytes} bytes"
     );
     assert_eq!((n_models, n_tex), (67, stage.textures));
+    // The glow each drawn material carries (AE.11): an amount, layer 1's
+    // alpha (the attribute off) or none (no attribute).
+    let (mut amount, mut layer_alpha, mut none) = (0, 0, 0);
+    let mut by_alpha = Vec::new();
+    for o in m.outputs.iter().filter(|o| o.path.starts_with("models/")) {
+        let model: Model =
+            guac_ir::from_ron(&std::fs::read_to_string(dir.join(&o.path)).unwrap()).unwrap();
+        let drawn: BTreeSet<u16> = model.segments.iter().map(|s| s.material).collect();
+        for &i in &drawn {
+            let material = &model.materials[usize::from(i)];
+            match material.params.glow {
+                Glow::Amount(_) => amount += 1,
+                Glow::LayerAlpha => {
+                    layer_alpha += 1;
+                    by_alpha.push(format!("{} {}", model.load_file, material.name));
+                }
+                Glow::None => none += 1,
+            }
+        }
+    }
+    println!(
+        "  glow over the drawn materials: {amount} by an amount, {layer_alpha} by layer 1's alpha {by_alpha:?}, {none} none"
+    );
 
     // A resume keeps every file.
     let again =
@@ -347,7 +370,10 @@ fn the_model_stage_extracts_every_character() {
         );
         assert!(m.scrolls.is_empty());
     }
-    assert_eq!((body.params.glow, eyes.params.glow), (Some(64), None));
+    assert_eq!(
+        (body.params.glow, eyes.params.glow),
+        (Glow::Amount(64), Glow::None)
+    );
     assert!(
         ir.materials
             .iter()

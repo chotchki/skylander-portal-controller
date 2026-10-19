@@ -650,6 +650,250 @@ mod tests {
     }
 
     #[test]
+    fn render_state_reads_targets_blend_masks_depth_and_samplers() {
+        let mut b = Builder::new();
+        // A8R8G8B8 into surfaces a and b (MRT1), Z24S8, pitch layout.
+        b.method(m::SET_SURFACE_FORMAT, 8 | (2 << 5) | (1 << 8))
+            .method(m::SET_SURFACE_COLOR_TARGET, 0x13)
+            .method(m::SET_SURFACE_COLOR_AOFFSET, 0x0d4a_0000)
+            .method(m::SET_CONTEXT_DMA_COLOR_A, 0xfeed_0000)
+            .method(m::SET_SURFACE_PITCH_A, 4096)
+            .method(m::SET_SURFACE_COLOR_BOFFSET, 0x0db0_0000)
+            .method(m::SET_CONTEXT_DMA_COLOR_B, 0xfeed_0001)
+            .method(m::SET_SURFACE_ZETA_OFFSET, 0x0d6c_0000)
+            .method(m::SET_SURFACE_CLIP_HORIZONTAL, 512 << 16)
+            .method(m::SET_SURFACE_CLIP_VERTICAL, 270 << 16)
+            .method(m::SET_VIEWPORT_HORIZONTAL, 512 << 16)
+            .method(m::SET_VIEWPORT_VERTICAL, (270 << 16) | 3)
+            .method(m::SET_VIEWPORT_SCALE, 256.0f32.to_bits())
+            .method(m::SET_VIEWPORT_OFFSET + 1, 135.0f32.to_bits())
+            // Additive: src alpha + one on colour, zero + one on alpha.
+            .method(m::SET_BLEND_ENABLE, 1)
+            .method(m::SET_BLEND_ENABLE_MRT, 0b0010)
+            .method(m::SET_BLEND_FUNC_SFACTOR, 0x302)
+            .method(m::SET_BLEND_FUNC_DFACTOR, (1 << 16) | 1)
+            .method(m::SET_BLEND_EQUATION, (0x8006 << 16) | 0x8006)
+            // Surface a writes red, green and blue; b alpha only.
+            .method(m::SET_COLOR_MASK, 0x0001_0101)
+            .method(m::SET_COLOR_MASK_MRT, 0x1 << 4)
+            .method(m::SET_DEPTH_TEST_ENABLE, 1)
+            .method(m::SET_DEPTH_FUNC, 0x203)
+            .method(m::SET_DEPTH_MASK, 0)
+            .method(m::SET_ALPHA_TEST_ENABLE, 1)
+            .method(m::SET_ALPHA_FUNC, 0x204)
+            .method(m::SET_ALPHA_REF, 0x80)
+            .method(m::SET_CULL_FACE_ENABLE, 1)
+            .method(m::SET_CULL_FACE, 0x405)
+            .method(m::SET_FRONT_FACE, 0x901);
+        // One enabled unit: clamp to edge both ways, linear both ways, LOD 0-12.
+        b.method(m::SET_TEXTURE_OFFSET, 0x0db0_0000)
+            .method(
+                m::SET_TEXTURE_FORMAT,
+                1 | (2 << 4) | (0xa5 << 8) | (1 << 16),
+            )
+            .method(m::SET_TEXTURE_IMAGE_RECT, (512 << 16) | 270)
+            .method(m::SET_TEXTURE_ADDRESS, 3 | (3 << 8) | (1 << 16))
+            .method(m::SET_TEXTURE_FILTER, (2 << 24) | (2 << 16) | 0x80)
+            .method(m::SET_TEXTURE_CONTROL0, 0x8000_0000 | (0xc00 << 7))
+            .method(m::SET_TEXTURE_BORDER_COLOR, 0xff00_00ff)
+            .method(m::SET_BEGIN_END, 6)
+            .method(m::DRAW_ARRAYS, 3 << 24)
+            .method(m::SET_BEGIN_END, 0);
+
+        let (draws, _) = run(&b);
+        let r = &draws[0].render_state;
+        let s = &r.surface;
+        assert_eq!(
+            (s.color_format, s.depth_format, s.layout),
+            ("A8R8G8B8", "Z24S8", "pitch")
+        );
+        let targets: Vec<_> = s
+            .color_targets
+            .iter()
+            .map(|t| (t.surface, t.offset, t.location, t.pitch))
+            .collect();
+        assert_eq!(
+            targets,
+            [('a', 0x0d4a_0000, 0, 4096), ('b', 0x0db0_0000, 1, 0)]
+        );
+        assert_eq!(s.zeta_offset, 0x0d6c_0000);
+        assert_eq!((s.clip.width, s.clip.height), (512, 270));
+        assert_eq!(
+            (
+                r.viewport.rect.width,
+                r.viewport.rect.height,
+                r.viewport.rect.y
+            ),
+            (512, 270, 3)
+        );
+        assert_eq!((r.viewport.scale[0], r.viewport.offset[1]), (256.0, 135.0));
+        let bl = &r.blend;
+        assert!(bl.enabled);
+        assert_eq!(bl.enabled_mrt, [true, false, false]);
+        assert_eq!(
+            (bl.src_rgb, bl.dst_rgb, bl.src_alpha, bl.dst_alpha),
+            ("src_alpha", "one", "zero", "one")
+        );
+        assert_eq!((bl.equation_rgb, bl.equation_alpha), ("add", "add"));
+        let w = &r.write_masks;
+        assert!(w.color.r && w.color.g && w.color.b && !w.color.a);
+        assert!(w.color_mrt[0].a && !w.color_mrt[0].r);
+        assert!(!w.depth);
+        assert!(r.depth.test);
+        assert_eq!(r.depth.func, "lequal");
+        assert!(r.alpha_test.enabled);
+        assert_eq!(
+            (r.alpha_test.func, r.alpha_test.reference_raw),
+            ("greater", 0x80)
+        );
+        assert_eq!(
+            (r.cull.enabled, r.cull.face, r.cull.front_face),
+            (true, "back", "ccw")
+        );
+        let t = &draws[0].textures[0].sampler;
+        assert_eq!(
+            (t.wrap_s, t.wrap_t, t.wrap_r),
+            ("clamp_to_edge", "clamp_to_edge", "wrap")
+        );
+        assert_eq!((t.min_filter, t.mag_filter), ("linear", "linear"));
+        assert_eq!((t.lod_bias, t.min_lod, t.max_lod), (0.5, 0.0, 12.0));
+        assert_eq!(t.border_color_raw, 0xff00_00ff);
+    }
+
+    #[test]
+    fn programs_come_from_their_block_and_the_uploads() {
+        let mut b = Builder::new();
+        // Two fragment instructions, the second marked last (word 0, bit 0,
+        // after the halfword swap RSX stores it with).
+        let mut fp = vec![0u8; 32];
+        fp[0..4].copy_from_slice(&0x0000_0102u32.to_be_bytes());
+        fp[16..20].copy_from_slice(&0x0001_0102u32.to_be_bytes());
+        b.method(m::SET_SHADER_PROGRAM, 0x0123_4560 | 2)
+            .method(m::SET_SHADER_CONTROL, 0x0200_8440);
+        // Program slot 4 on: two instructions in one batch, the second
+        // marked last, then a third word batch continuing at the next slot.
+        let ins = |n: u32, end: bool| [n, n + 1, n + 2, (n + 3) << 1 | u32::from(end)];
+        b.method(m::SET_TRANSFORM_PROGRAM_LOAD, 4)
+            .batch(
+                m::SET_TRANSFORM_PROGRAM,
+                &[ins(10, false), ins(20, false)].concat(),
+            )
+            .batch(m::SET_TRANSFORM_PROGRAM, &ins(30, true))
+            .method(m::SET_TRANSFORM_PROGRAM_START, 5)
+            .method(m::SET_VERTEX_ATTRIB_OUTPUT_MASK, 0x4020)
+            .method(m::SET_BEGIN_END, 5)
+            .method(m::DRAW_ARRAYS, 2 << 24)
+            .method(m::SET_BEGIN_END, 0);
+        b.block(1, 0x0123_4560, &fp);
+        // The next draw points at an address nothing recorded.
+        b.method(m::SET_SHADER_PROGRAM, 0x0000_1000 | 1)
+            .method(m::SET_BEGIN_END, 5)
+            .method(m::DRAW_ARRAYS, 2 << 24)
+            .method(m::SET_BEGIN_END, 0);
+
+        let (draws, _) = run(&b);
+        let f = &draws[0].fragment_program;
+        assert_eq!((f.offset, f.location), (0x0123_4560, 1));
+        assert_eq!(
+            (f.register_count, f.outputs_32bit, f.depth_export),
+            (2, true, false)
+        );
+        assert!(f.captured);
+        assert_eq!(f.bytes, fp);
+        let v = &draws[0].vertex_program;
+        assert_eq!((v.start, v.instructions, v.ended), (5, 2, true));
+        assert_eq!(v.words, [ins(20, false), ins(30, true)].concat());
+        assert_eq!(v.output_mask, 0x4020);
+        assert!(!draws[1].fragment_program.captured);
+        assert!(draws[1].fragment_program.bytes.is_empty());
+    }
+
+    #[test]
+    fn a_vertex_program_with_no_last_instruction_runs_to_the_end_of_memory() {
+        let mut b = Builder::new();
+        // The last three slots, none marked last; an upload past the end
+        // is dropped, as RPCS3 drops it.
+        let words: Vec<u32> = (0..16).map(|w| w * 2).collect();
+        b.method(m::SET_TRANSFORM_PROGRAM_LOAD, 541)
+            .batch(m::SET_TRANSFORM_PROGRAM, &words)
+            .method(m::SET_TRANSFORM_PROGRAM_START, 541)
+            .method(m::SET_BEGIN_END, 5)
+            .method(m::DRAW_ARRAYS, 2 << 24)
+            .method(m::SET_BEGIN_END, 0);
+        let (draws, _) = run(&b);
+        let v = &draws[0].vertex_program;
+        assert_eq!((v.instructions, v.ended), (3, false));
+        assert_eq!(v.words, words[..12]);
+    }
+
+    #[test]
+    fn clears_ride_on_the_next_draw_and_trailing_ones_on_the_stats() {
+        let mut b = Builder::new();
+        b.method(m::SET_SURFACE_COLOR_TARGET, 1)
+            .method(m::SET_SURFACE_COLOR_AOFFSET, 0x0d4a_0000)
+            .method(m::SET_COLOR_CLEAR_VALUE, 0x8080_8080)
+            .method(m::CLEAR_SURFACE, 0xf0)
+            .method(m::CLEAR_SURFACE, 0x01)
+            .method(m::SET_BEGIN_END, 5)
+            .method(m::DRAW_ARRAYS, 2 << 24)
+            .method(m::SET_BEGIN_END, 0)
+            .method(m::CLEAR_SURFACE, 0x80);
+        let (draws, stats) = run(&b);
+        let c = &draws[0].clears_before;
+        assert_eq!(c.len(), 2);
+        assert!(c[0].color.r && c[0].color.a && !c[0].depth);
+        assert_eq!(
+            (c[0].color_value_raw, c[0].color_targets.as_slice()),
+            (0x8080_8080, &[0x0d4a_0000u32][..])
+        );
+        assert!(c[1].depth && !c[1].color.r);
+        assert_eq!(stats.clears, 3);
+        assert_eq!(stats.trailing_clears.len(), 1);
+        assert!(stats.trailing_clears[0].color.a && !stats.trailing_clears[0].color.r);
+    }
+
+    #[test]
+    fn the_dump_writes_each_program_once() {
+        let mut b = Builder::new();
+        let fp = [0x11u8; 16];
+        b.method(m::SET_SHADER_PROGRAM, 0x0000_2000 | 1);
+        for _ in 0..2 {
+            b.method(m::SET_BEGIN_END, 5)
+                .method(m::DRAW_ARRAYS, 2 << 24)
+                .method(m::SET_BEGIN_END, 0);
+            b.block(0, 0x2000, &fp);
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("dump");
+        let capture = Capture::from_file_bytes(&b.gzip()).unwrap();
+        let mut w = DumpWriter::create(&out).unwrap();
+        let stats = replay(&capture, |d| w.write_draw(&d)).unwrap();
+        w.finish(std::path::Path::new("synthetic.rrc.gz"), &stats)
+            .unwrap();
+        let desc = |n: &str| -> serde_json::Value {
+            serde_json::from_slice(&std::fs::read(out.join(n).join("draw.json")).unwrap()).unwrap()
+        };
+        let (first, second) = (desc("draw_00000"), desc("draw_00001"));
+        let file = first["fragment_program"]["file"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(second["fragment_program"]["file"], file.as_str());
+        assert_eq!(
+            std::fs::read(out.join("draw_00000").join(&file)).unwrap(),
+            fp
+        );
+        assert_eq!(first["render_state"]["surface"]["color_format"], "unknown");
+        assert!(
+            first["vertex_program"]["file"]
+                .as_str()
+                .unwrap()
+                .starts_with("../programs/vp_")
+        );
+        assert_eq!(std::fs::read_dir(out.join("programs")).unwrap().count(), 2);
+    }
+
+    #[test]
     fn output_inside_this_repo_is_refused() {
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         for inside in [

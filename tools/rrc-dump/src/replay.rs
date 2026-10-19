@@ -6,6 +6,7 @@ use serde::Serialize;
 use crate::capture::Capture;
 use crate::memory::SparseMemory;
 use crate::nv4097 as m;
+use crate::state::{self, RenderState, Sampler};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -93,6 +94,7 @@ pub struct TextureUnit {
     pub depth: u32,
     pub pitch: u32,
     pub remap: u32,
+    pub sampler: Sampler,
     /// A block was recorded at this texture's address. RPCS3 copies every enabled texture with
     /// a non-empty layout out of guest memory at each draw's end, sized by its own layout (all
     /// mips, all faces), so a recorded texture is whole by construction (though possibly stale:
@@ -112,6 +114,61 @@ pub struct Constants {
     pub values: Vec<[u32; 4]>,
 }
 
+/// The fragment program `SET_SHADER_PROGRAM` points at. Its ucode is in RSX memory, constants
+/// inline after the instructions that read them (RSX has no fragment constant registers).
+#[derive(Debug, Clone, Serialize)]
+pub struct FragmentProgram {
+    pub offset: u32,
+    pub location: u32,
+    /// `SET_SHADER_CONTROL`, raw.
+    pub control: u32,
+    /// Registers the program uses (`SET_SHADER_CONTROL` bits 24-31).
+    pub register_count: u32,
+    /// Outputs exported as 32-bit floats rather than halves.
+    pub outputs_32bit: bool,
+    pub depth_export: bool,
+    /// RPCS3 recorded a block at the program's address: `bytes` is the ucode as RSX holds it (each
+    /// big-endian word with its 16-bit halves swapped), from the address through the instruction
+    /// marked last. False when nothing was recorded there.
+    pub captured: bool,
+    #[serde(skip)]
+    pub bytes: Vec<u8>,
+}
+
+/// The vertex program the draw runs, out of transform-program memory as the frame left it.
+#[derive(Debug, Clone, Serialize)]
+pub struct VertexProgram {
+    /// `SET_TRANSFORM_PROGRAM_START`: the instruction slot it starts at.
+    pub start: u32,
+    /// Instructions from the start through the first one marked last (word 3, bit 0).
+    pub instructions: u32,
+    /// False when no instruction up to the end of program memory is marked last.
+    pub ended: bool,
+    /// `SET_VERTEX_ATTRIB_OUTPUT_MASK`: the outputs handed to the fragment program.
+    pub output_mask: u32,
+    /// Four words per instruction, as uploaded.
+    #[serde(skip)]
+    pub words: Vec<u32>,
+}
+
+/// A `CLEAR_SURFACE`: what it cleared, to what, on which targets.
+#[derive(Debug, Clone, Serialize)]
+pub struct Clear {
+    /// Position of the command in the command list.
+    pub command_index: usize,
+    /// The raw mask: depth 0x01, stencil 0x02, red 0x10, green 0x20, blue 0x40, alpha 0x80.
+    pub mask: u32,
+    pub depth: bool,
+    pub stencil: bool,
+    pub color: state::ChannelMask,
+    /// `SET_COLOR_CLEAR_VALUE` as A8R8G8B8.
+    pub color_value_raw: u32,
+    pub zstencil_value_raw: u32,
+    pub color_targets: Vec<u32>,
+    pub zeta_offset: u32,
+    pub rect: state::Rect,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Draw {
     pub draw: usize,
@@ -128,6 +185,11 @@ pub struct Draw {
     pub index_array: Option<IndexArray>,
     pub textures: Vec<TextureUnit>,
     pub constants: Constants,
+    pub fragment_program: FragmentProgram,
+    pub vertex_program: VertexProgram,
+    pub render_state: RenderState,
+    /// Clears since the previous draw, in order.
+    pub clears_before: Vec<Clear>,
     /// `SET_VERTEX_DATA_BASE_OFFSET`, `SET_VERTEX_DATA_BASE_INDEX` or an array offset was written
     /// between two ranges. RPCS3 draws each range with the binding it was issued under, but both
     /// its capture and this dump use the final binding for every range, so the earlier ranges'
@@ -147,6 +209,9 @@ pub struct ReplayStats {
     pub orphan_commands: usize,
     pub stray_ends: usize,
     pub starting_constants: bool,
+    pub clears: usize,
+    /// Clears after the last draw, which no draw's `clears_before` lists.
+    pub trailing_clears: Vec<Clear>,
 }
 
 struct OpenDraw {
@@ -159,10 +224,13 @@ struct OpenDraw {
 
 struct Tracker {
     regs: Vec<u32>,
+    /// Transform-program memory: `TRANSFORM_PROGRAM_SLOTS` instructions of four words.
+    program: Vec<u32>,
     constants: Vec<[u32; 4]>,
     known: Vec<[bool; 4]>,
     mem: SparseMemory,
     open: Option<OpenDraw>,
+    clears: Vec<Clear>,
 }
 
 impl Tracker {
@@ -186,6 +254,92 @@ impl Tracker {
             && !open.ranges.is_empty()
         {
             open.constants_changed = true;
+        }
+    }
+
+    /// A `SET_TRANSFORM_PROGRAM` batch: words land from the load slot on, offset by the method's
+    /// position in its four-word window, and the load slot moves past them (RPCS3's
+    /// `set_transform_program`, which drops words past the end of program memory).
+    fn write_program(&mut self, first_reg: u32, values: &[u32]) {
+        let index = first_reg - m::SET_TRANSFORM_PROGRAM;
+        let load = self.reg(m::SET_TRANSFORM_PROGRAM_LOAD);
+        let at = (load * 4 + index % 4) as usize;
+        let n = values
+            .len()
+            .min((m::UPLOAD_WINDOW - index) as usize)
+            .min(self.program.len().saturating_sub(at));
+        self.program[at..at + n].copy_from_slice(&values[..n]);
+        self.regs[m::SET_TRANSFORM_PROGRAM_LOAD as usize] = load + (n as u32 + index % 4) / 4;
+    }
+
+    fn clear(&self, mask: u32, command_index: usize) -> Clear {
+        let rs = state::render_state(|reg| self.reg(reg));
+        Clear {
+            command_index,
+            mask,
+            depth: mask & 0x01 != 0,
+            stencil: mask & 0x02 != 0,
+            color: state::ChannelMask {
+                r: mask & 0x10 != 0,
+                g: mask & 0x20 != 0,
+                b: mask & 0x40 != 0,
+                a: mask & 0x80 != 0,
+            },
+            color_value_raw: self.reg(m::SET_COLOR_CLEAR_VALUE),
+            zstencil_value_raw: self.reg(m::SET_ZSTENCIL_CLEAR_VALUE),
+            color_targets: rs.surface.color_targets.iter().map(|t| t.offset).collect(),
+            zeta_offset: rs.surface.zeta_offset,
+            rect: {
+                let h = self.reg(m::SET_CLEAR_RECT_HORIZONTAL);
+                let v = self.reg(m::SET_CLEAR_RECT_VERTICAL);
+                state::Rect {
+                    x: h & 0xffff,
+                    y: v & 0xffff,
+                    width: h >> 16,
+                    height: v >> 16,
+                }
+            },
+        }
+    }
+
+    fn fragment_program(&self) -> FragmentProgram {
+        let address = self.reg(m::SET_SHADER_PROGRAM) & 0x7fff_ffff;
+        let location = (address & 3).wrapping_sub(1);
+        let offset = address & !3;
+        let control = self.reg(m::SET_SHADER_CONTROL);
+        let block_len = self.mem.block_len_at(location, offset);
+        FragmentProgram {
+            offset,
+            location,
+            control,
+            register_count: control >> 24,
+            outputs_32bit: control & 0x40 != 0,
+            depth_export: control & 0xe != 0,
+            captured: block_len.is_some(),
+            bytes: block_len.map_or_else(Vec::new, |len| {
+                self.mem.read(location, u64::from(offset), len).0
+            }),
+        }
+    }
+
+    fn vertex_program(&self) -> VertexProgram {
+        let start = self.reg(m::SET_TRANSFORM_PROGRAM_START);
+        let slots = self.program.as_chunks::<4>().0.iter().skip(start as usize);
+        let mut words = Vec::new();
+        let mut ended = false;
+        for ins in slots {
+            words.extend_from_slice(ins);
+            if ins[3] & 1 == 1 {
+                ended = true;
+                break;
+            }
+        }
+        VertexProgram {
+            start,
+            instructions: (words.len() / 4) as u32,
+            ended,
+            output_mask: self.reg(m::SET_VERTEX_ATTRIB_OUTPUT_MASK),
+            words,
         }
     }
 
@@ -356,6 +510,7 @@ impl Tracker {
                 depth: if dimension == 3 { control3 >> 20 } else { 1 },
                 pitch: control3 & 0xf_ffff,
                 remap: r(m::SET_TEXTURE_CONTROL1),
+                sampler: state::sampler(|reg| self.reg(reg), unit),
                 captured: block_len.is_some(),
                 bytes,
             });
@@ -384,7 +539,7 @@ impl Tracker {
         }
     }
 
-    fn close(&self, open: OpenDraw, draw: usize, command_index: usize) -> Draw {
+    fn close(&mut self, open: OpenDraw, draw: usize, command_index: usize) -> Draw {
         let kind = match open.indexed {
             Some(true) => DrawKind::Indexed,
             Some(false) => DrawKind::Arrays,
@@ -433,6 +588,10 @@ impl Tracker {
             index_array,
             textures: self.textures(),
             constants: self.constants(open.constants_changed),
+            fragment_program: self.fragment_program(),
+            vertex_program: self.vertex_program(),
+            render_state: state::render_state(|reg| self.reg(reg)),
+            clears_before: std::mem::take(&mut self.clears),
             vertex_bindings_changed_mid_draw: open.bindings_changed,
         }
     }
@@ -446,6 +605,7 @@ pub fn replay<E>(
     let starting = capture.reg_state.transform_constants.as_ref();
     let mut t = Tracker {
         regs: capture.reg_state.registers.clone(),
+        program: capture.reg_state.transform_program.clone(),
         constants: match starting {
             Some(c) => c[..m::TRANSFORM_CONSTANTS].to_vec(),
             None => vec![[0; 4]; m::TRANSFORM_CONSTANTS],
@@ -453,6 +613,7 @@ pub fn replay<E>(
         known: vec![[starting.is_some(); 4]; m::TRANSFORM_CONSTANTS],
         mem: SparseMemory::default(),
         open: None,
+        clears: Vec::new(),
     };
     let mut stats = ReplayStats {
         commands: capture.commands.len(),
@@ -500,12 +661,16 @@ pub fn replay<E>(
             *slot = values[0];
         }
         let window = m::SET_TRANSFORM_CONSTANT..m::SET_TRANSFORM_CONSTANT + m::UPLOAD_WINDOW;
+        let program = m::SET_TRANSFORM_PROGRAM..m::SET_TRANSFORM_PROGRAM + m::UPLOAD_WINDOW;
         if window.contains(&reg) {
             t.write_constants(reg, &values);
         }
+        if program.contains(&reg) {
+            t.write_program(reg, &values);
+        }
         // Only the three ranged methods batch, and RPCS3's handlers consume their tails without
         // touching the register array, so a batch's later words never land in registers.
-        if count == 1 && !window.contains(&reg) {
+        if count == 1 && !window.contains(&reg) && !program.contains(&reg) {
             let value = values[0];
             match reg {
                 // RPCS3 looks only at the low byte: 0x100 ends a draw like 0 does.
@@ -526,6 +691,11 @@ pub fn replay<E>(
                     }
                     None => stats.stray_ends += 1,
                 },
+                m::CLEAR_SURFACE => {
+                    let clear = t.clear(value, i);
+                    t.clears.push(clear);
+                    stats.clears += 1;
+                }
                 m::DRAW_ARRAYS | m::DRAW_INDEX_ARRAY => {
                     if let Some(open) = &mut t.open {
                         open.indexed = Some(reg == m::DRAW_INDEX_ARRAY);
@@ -540,5 +710,6 @@ pub fn replay<E>(
         }
         i = end;
     }
+    stats.trailing_clears = std::mem::take(&mut t.clears);
     Ok(stats)
 }

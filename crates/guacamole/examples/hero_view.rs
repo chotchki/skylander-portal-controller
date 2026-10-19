@@ -14,6 +14,10 @@
 //! rim maps decoded through sRGB views and its normal maps as stored. The
 //! camera is HDR into TonyMcMapface at scale 1 with 4x MSAA, the same in both
 //! modes, so `--stock` changes the material and its lights and nothing else.
+//! The remaster adds the game's glow (AE.11: his glow masks drawn by a second
+//! camera, then the chain on the linear frame before tonemapping), which
+//! `--no-glow` leaves off; `--glow-mask` screenshots the mask instead of the
+//! frame (its red as 8-bit grey). Bevy's own bloom stays off in both modes.
 //!
 //! At an oracle frame (AC.18): `--view-proj` takes the capture's
 //! model-view-projection (the vertex program's c0-c3), `--frame` the frame's
@@ -28,8 +32,9 @@
 //! through a symlink, and exits non-zero when the screenshot isn't written.
 //!
 //! `cargo run -p guacamole --release --example hero_view -- [--stock [--unlit]]
-//! [--at <s>] [--yaw <deg>] [--view-proj <16 floats>] [--frame <json>]
-//! [--size <w>x<h>] [--screenshot <png> [--frames <n>] [--offscreen]]`
+//! [--no-glow] [--at <s>] [--yaw <deg>] [--view-proj <16 floats>] [--frame
+//! <json>] [--size <w>x<h>] [--screenshot <png> [--glow-mask] [--frames <n>]
+//! [--offscreen]]`
 //!
 //! A frame file (JSON): `{"source": "...", "lights": [three of {"travel":
 //! [x, y, z], "ambient": [r, g, b], "diffuse": [r, g, b], "specular": [r, g,
@@ -56,7 +61,7 @@ use bevy::image::{
     ImageSamplerDescriptor, ImageType,
 };
 use bevy::log::LogPlugin;
-use bevy::math::{DMat3, DMat4, DQuat, DVec3, DVec4, Vec3A};
+use bevy::math::{DMat3, DMat4, DQuat, DVec3, DVec4, UVec2, Vec3A};
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::pbr::{DistanceFog, FogFalloff};
 // Not the glob: its `ContextExt` clashes with anyhow's `Context`.
@@ -78,7 +83,8 @@ use guac_ir::shading::{self, Scene};
 use guac_ir::{DumpIdentity, Model, Sha256};
 use guacamole::character::mesh::pose;
 use guacamole::character::{
-    CharacterMaterial, CharacterShadingPlugin, ShadowLookup, SpawnedCharacter, spawn_character,
+    CharacterMaterial, CharacterShadingPlugin, GlowPlugin, ShadowLookup, SpawnedCharacter,
+    spawn_character, spawn_glow_camera, spawn_glow_masks,
 };
 use serde::Deserialize;
 
@@ -97,6 +103,8 @@ const VIEWER_AMBIENT: f32 = 300.0;
 /// Fog for the viewer's light: on, so a spec map has its eye direction, and
 /// beyond anything drawn, as the turntable sets it (design decision 14).
 const VIEWER_FOG: (f32, f32) = (1.0e4, 2.0e4);
+/// The render layer the glow camera sees his glow masks on.
+const GLOW_LAYER: usize = 1;
 
 fn main() -> Result<()> {
     let args = Args::parse(std::env::args().skip(1))?;
@@ -136,6 +144,10 @@ struct Args {
     stock: bool,
     /// `--stock`'s colour map without lighting.
     unlit: bool,
+    /// The remaster without the game's glow.
+    no_glow: bool,
+    /// The screenshot is the glow mask, not the frame.
+    glow_mask: bool,
     /// The capture's model-view-projection, row by row.
     view_proj: Option<[f32; 16]>,
     /// The frame's rig and fog.
@@ -166,6 +178,8 @@ impl Args {
                 "--offscreen" => a.offscreen = true,
                 "--stock" => a.stock = true,
                 "--unlit" => a.unlit = true,
+                "--no-glow" => a.no_glow = true,
+                "--glow-mask" => a.glow_mask = true,
                 "--frame" => a.frame = Some(value()?.into()),
                 "--size" => a.size = size(&value()?)?,
                 other => bail!("unknown argument {other}"),
@@ -177,6 +191,14 @@ impl Args {
         );
         ensure!(a.frames > 0, "--frames must be at least 1");
         ensure!(!a.unlit || a.stock, "--unlit is --stock's");
+        ensure!(
+            !(a.stock && (a.no_glow || a.glow_mask)),
+            "the glow is the remaster's; --stock has none"
+        );
+        ensure!(
+            !a.glow_mask || (a.screenshot.is_some() && !a.no_glow),
+            "--glow-mask needs --screenshot and the glow"
+        );
         Ok(a)
     }
 }
@@ -285,6 +307,35 @@ fn write_png(path: &Path, image: Image) -> Result<()> {
         .suffix(".png")
         .tempfile_in(dir)?;
     rgb.write_to(tmp.as_file_mut(), image::ImageFormat::Png)?;
+    tmp.persist(&path)?;
+    Ok(())
+}
+
+/// `--glow-mask`'s PNG: the mask's red, one 8-bit grey per pixel, rounded.
+fn grey_png(path: &Path, image: &Image) -> Result<()> {
+    let (w, h) = (image.width(), image.height());
+    let mut grey = image::GrayImage::new(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            let red = image
+                .get_color_at(x, y)
+                .map_err(|e| anyhow!("the mask at ({x}, {y}): {e}"))?
+                .to_linear()
+                .red;
+            grey.put_pixel(
+                x,
+                y,
+                image::Luma([(red.clamp(0.0, 1.0) * 255.0).round() as u8]),
+            );
+        }
+    }
+    let path = screenshot_path(path)?;
+    let dir = path.parent().context("no directory")?;
+    let mut tmp = tempfile::Builder::new()
+        .prefix(".hero_view")
+        .suffix(".png")
+        .tempfile_in(dir)?;
+    grey.write_to(tmp.as_file_mut(), image::ImageFormat::Png)?;
     tmp.persist(&path)?;
     Ok(())
 }
@@ -761,6 +812,11 @@ struct View {
     frame: Option<FrameCamera>,
     /// The image the camera renders into when offscreen.
     target: Option<Handle<Image>>,
+    /// The remaster's glow, and whether the screenshot is its mask.
+    glow: bool,
+    glow_mask: bool,
+    /// The glow camera's mask image.
+    mask: Option<Handle<Image>>,
 }
 
 #[derive(Resource)]
@@ -808,7 +864,7 @@ fn run(
             ..default()
         }));
     }
-    app.add_plugins(CharacterShadingPlugin)
+    app.add_plugins((CharacterShadingPlugin, GlowPlugin))
         .insert_resource(decoded)
         .insert_resource(rig)
         .insert_resource(View {
@@ -822,6 +878,9 @@ fn run(
             size: args.size,
             frame,
             target: None,
+            glow: !args.stock && !args.no_glow,
+            glow_mask: args.glow_mask,
+            mask: None,
         })
         .insert_resource(ClearColor(Color::srgb(0.05, 0.07, 0.16)))
         .add_systems(Startup, setup)
@@ -896,7 +955,10 @@ fn setup(
         )
     } else {
         let scene = rig.scene();
-        let handles: Vec<Handle<CharacterMaterial>> = model
+        let (handles, glows): (
+            Vec<Handle<CharacterMaterial>>,
+            Vec<Handle<CharacterMaterial>>,
+        ) = model
             .materials
             .iter()
             .map(|m| {
@@ -905,16 +967,18 @@ fn setup(
                 })
                 .unwrap_or_else(|e| panic!("{}: {e}", m.name));
                 println!(
-                    "{}: pixel {:#05x} vertex {:#06x} drawn, {:?}",
+                    "{}: pixel {:#05x} vertex {:#06x} drawn, {:?}, glow {:?}",
                     m.name,
                     material.key.shader.pixel(),
                     material.key.shader.vertex(),
                     material.key.states,
+                    m.params.glow,
                 );
-                characters.add(material)
+                let glow = characters.add(material.glow_mask());
+                (characters.add(material), glow)
             })
-            .collect();
-        spawn_character(
+            .unzip();
+        let spawned = spawn_character(
             &mut commands,
             model,
             root,
@@ -922,7 +986,13 @@ fn setup(
             &mut meshes,
             &mut bindposes,
             &handles,
-        )
+        );
+        if view.glow
+            && let Ok(s) = &spawned
+        {
+            spawn_glow_masks(&mut commands, model, s, &glows, GLOW_LAYER);
+        }
+        spawned
     }
     .unwrap_or_else(|e| panic!("{}: {e}", model.name));
     commands.insert_resource(Spawned(spawned));
@@ -931,7 +1001,7 @@ fn setup(
         .spawn((
             Camera3d::default(),
             eye,
-            projection,
+            projection.clone(),
             Hdr,
             Tonemapping::TonyMcMapface,
             // Off so a shot comes out the same twice and its background is
@@ -956,6 +1026,18 @@ fn setup(
     }
     if view.stock {
         stock_lights(&mut commands, camera, &eye, &rig, view.frame.is_some());
+    }
+    if view.glow {
+        let size = UVec2::new(view.size.0, view.size.1);
+        view.mask = Some(spawn_glow_camera(
+            &mut commands,
+            &mut images,
+            camera,
+            size,
+            projection,
+            Msaa::Sample4,
+            GLOW_LAYER,
+        ));
     }
 }
 
@@ -1049,16 +1131,24 @@ fn screenshot(
     if *frame != view.frames {
         return;
     }
-    let target = match &view.target {
-        Some(image) => Screenshot::image(image.clone()),
-        None => Screenshot::primary_window(),
+    let target = match (&view.target, &view.mask) {
+        (_, Some(mask)) if view.glow_mask => Screenshot::image(mask.clone()),
+        (Some(image), _) => Screenshot::image(image.clone()),
+        (None, _) => Screenshot::primary_window(),
     };
     let path = path.clone();
     let frames = view.frames;
+    let grey = view.glow_mask;
     commands.spawn(target).observe(
         move |captured: On<ScreenshotCaptured>, mut exit: MessageWriter<AppExit>| {
             let s = started.elapsed().as_secs_f64();
-            match write_png(&path, captured.image.clone()) {
+            let image = captured.image.clone();
+            let written = if grey {
+                grey_png(&path, &image)
+            } else {
+                write_png(&path, image)
+            };
+            match written {
                 Ok(()) => {
                     println!("screenshot {}: {frames} frames in {s:.2} s", path.display());
                     exit.write(AppExit::Success);
@@ -1093,6 +1183,16 @@ mod tests {
         assert_eq!(s.size, (960, 540));
         assert_eq!(s.frame, Some(PathBuf::from("/x/frame.json")));
         assert_eq!(s.view_proj, None);
+
+        assert!(!s.no_glow && !s.glow_mask);
+        let g = parse("--no-glow --size 960x540").unwrap();
+        assert!(g.no_glow && !g.glow_mask);
+        let m = parse("--glow-mask --screenshot /tmp/m.png").unwrap();
+        assert!(m.glow_mask);
+        assert!(parse("--glow-mask").is_err(), "a mask needs a screenshot");
+        assert!(parse("--glow-mask --no-glow --screenshot /tmp/m.png").is_err());
+        assert!(parse("--stock --no-glow").is_err(), "--stock has no glow");
+        assert!(parse("--stock --glow-mask --screenshot /tmp/m.png").is_err());
 
         assert!(parse("--offscreen").is_err());
         assert!(parse("--frames 0").is_err());

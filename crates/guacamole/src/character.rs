@@ -9,6 +9,7 @@
 //!
 //! [`tests/character_gpu_lane.rs`]: ../../tests/character_gpu_lane.rs
 
+pub mod glow;
 pub mod key;
 pub mod material;
 pub mod mesh;
@@ -17,7 +18,8 @@ use bevy::app::{App, Plugin};
 use bevy::asset::embedded_asset;
 use bevy::pbr::MaterialPlugin;
 
-pub use key::{KeyError, MaterialKey, SceneBits, ShaderKey, StateKey};
+pub use glow::{Glow, GlowPlugin, spawn_glow_camera, spawn_glow_masks};
+pub use key::{KeyError, MaterialKey, Pass, SceneBits, ShaderKey, StateKey};
 pub use material::{
     CharacterMaterial, CharacterTextures, CharacterUniform, MaterialError, ShadowLookup,
     reference_material,

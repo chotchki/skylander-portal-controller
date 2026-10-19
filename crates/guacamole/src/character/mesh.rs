@@ -151,6 +151,10 @@ pub struct SpawnedCharacter {
     /// In the skeleton's order, which the skin's joint indices name.
     pub joints: Vec<Entity>,
     pub segments: Vec<Entity>,
+    /// Each segment's mesh, in the model's segment order, and the skin's
+    /// inverse joints: what the glow pass's copies draw ([`super::glow`]).
+    pub meshes: Vec<Handle<Mesh>>,
+    pub skin: Handle<SkinnedMeshInverseBindposes>,
 }
 
 /// Spawns `model` under a new root at `root_transform`: its joints posed
@@ -212,14 +216,15 @@ pub fn spawn_character<M: Material>(
     let skin = inverse.add(SkinnedMeshInverseBindposes::from(inverse_bindposes(
         &model.skeleton,
     )));
+    let handles: Vec<Handle<Mesh>> = built.into_iter().map(|m| meshes.add(m)).collect();
     let segments = model
         .segments
         .iter()
-        .zip(built)
+        .zip(&handles)
         .map(|(s, mesh)| {
             commands
                 .spawn((
-                    Mesh3d(meshes.add(mesh)),
+                    Mesh3d(mesh.clone()),
                     MeshMaterial3d(materials[usize::from(s.material)].clone()),
                     SkinnedMesh {
                         inverse_bindposes: skin.clone(),
@@ -235,6 +240,8 @@ pub fn spawn_character<M: Material>(
         root,
         joints: joint_entities,
         segments,
+        meshes: handles,
+        skin,
     })
 }
 

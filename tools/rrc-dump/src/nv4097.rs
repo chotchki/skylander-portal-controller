@@ -2,12 +2,58 @@
 //! Offsets match RPCS3's `gcm_enums.h` at the vendored pin.
 
 pub const NO_OPERATION: u32 = 0x0100 >> 2;
+pub const SET_CONTEXT_DMA_COLOR_B: u32 = 0x018c >> 2;
+pub const SET_CONTEXT_DMA_COLOR_A: u32 = 0x0194 >> 2;
+pub const SET_CONTEXT_DMA_ZETA: u32 = 0x0198 >> 2;
+pub const SET_CONTEXT_DMA_COLOR_C: u32 = 0x01b4 >> 2;
+pub const SET_CONTEXT_DMA_COLOR_D: u32 = 0x01b8 >> 2;
+pub const SET_SURFACE_CLIP_HORIZONTAL: u32 = 0x0200 >> 2;
+pub const SET_SURFACE_CLIP_VERTICAL: u32 = 0x0204 >> 2;
+pub const SET_SURFACE_FORMAT: u32 = 0x0208 >> 2;
+pub const SET_SURFACE_PITCH_A: u32 = 0x020c >> 2;
+pub const SET_SURFACE_COLOR_AOFFSET: u32 = 0x0210 >> 2;
+pub const SET_SURFACE_ZETA_OFFSET: u32 = 0x0214 >> 2;
+pub const SET_SURFACE_COLOR_BOFFSET: u32 = 0x0218 >> 2;
+pub const SET_SURFACE_PITCH_B: u32 = 0x021c >> 2;
+pub const SET_SURFACE_COLOR_TARGET: u32 = 0x0220 >> 2;
+pub const SET_SURFACE_PITCH_Z: u32 = 0x022c >> 2;
+pub const SET_SURFACE_PITCH_C: u32 = 0x0280 >> 2;
+pub const SET_SURFACE_PITCH_D: u32 = 0x0284 >> 2;
+pub const SET_SURFACE_COLOR_COFFSET: u32 = 0x0288 >> 2;
+pub const SET_SURFACE_COLOR_DOFFSET: u32 = 0x028c >> 2;
+pub const SET_WINDOW_OFFSET: u32 = 0x02b8 >> 2;
+pub const SET_DITHER_ENABLE: u32 = 0x0300 >> 2;
+pub const SET_ALPHA_TEST_ENABLE: u32 = 0x0304 >> 2;
+pub const SET_ALPHA_FUNC: u32 = 0x0308 >> 2;
+pub const SET_ALPHA_REF: u32 = 0x030c >> 2;
+pub const SET_BLEND_ENABLE: u32 = 0x0310 >> 2;
+pub const SET_BLEND_FUNC_SFACTOR: u32 = 0x0314 >> 2;
+pub const SET_BLEND_FUNC_DFACTOR: u32 = 0x0318 >> 2;
+pub const SET_BLEND_COLOR: u32 = 0x031c >> 2;
+pub const SET_BLEND_EQUATION: u32 = 0x0320 >> 2;
+pub const SET_COLOR_MASK: u32 = 0x0324 >> 2;
+pub const SET_BLEND_ENABLE_MRT: u32 = 0x036c >> 2;
+pub const SET_COLOR_MASK_MRT: u32 = 0x0370 >> 2;
+pub const SET_BLEND_COLOR2: u32 = 0x037c >> 2;
+pub const SET_SCISSOR_HORIZONTAL: u32 = 0x08c0 >> 2;
+pub const SET_SCISSOR_VERTICAL: u32 = 0x08c4 >> 2;
+pub const SET_SHADER_PROGRAM: u32 = 0x08e4 >> 2;
+pub const SET_VIEWPORT_HORIZONTAL: u32 = 0x0a00 >> 2;
+pub const SET_VIEWPORT_VERTICAL: u32 = 0x0a04 >> 2;
+pub const SET_VIEWPORT_OFFSET: u32 = 0x0a20 >> 2;
+pub const SET_VIEWPORT_SCALE: u32 = 0x0a30 >> 2;
+pub const SET_DEPTH_FUNC: u32 = 0x0a6c >> 2;
+pub const SET_DEPTH_MASK: u32 = 0x0a70 >> 2;
+pub const SET_DEPTH_TEST_ENABLE: u32 = 0x0a74 >> 2;
 pub const SET_TRANSFORM_PROGRAM: u32 = 0x0b80 >> 2;
 pub const SET_VERTEX_DATA_ARRAY_OFFSET: u32 = 0x1680 >> 2;
 pub const SET_VERTEX_DATA_BASE_OFFSET: u32 = 0x1738 >> 2;
 pub const SET_VERTEX_DATA_BASE_INDEX: u32 = 0x173c >> 2;
 pub const SET_VERTEX_DATA_ARRAY_FORMAT: u32 = 0x1740 >> 2;
 pub const SET_BEGIN_END: u32 = 0x1808 >> 2;
+pub const SET_CULL_FACE: u32 = 0x1830 >> 2;
+pub const SET_FRONT_FACE: u32 = 0x1834 >> 2;
+pub const SET_CULL_FACE_ENABLE: u32 = 0x183c >> 2;
 pub const DRAW_ARRAYS: u32 = 0x1814 >> 2;
 pub const SET_INDEX_ARRAY_ADDRESS: u32 = 0x181c >> 2;
 pub const SET_INDEX_ARRAY_DMA: u32 = 0x1820 >> 2;
@@ -15,14 +61,27 @@ pub const DRAW_INDEX_ARRAY: u32 = 0x1824 >> 2;
 pub const SET_TEXTURE_CONTROL3: u32 = 0x1840 >> 2;
 pub const SET_TEXTURE_OFFSET: u32 = 0x1a00 >> 2;
 pub const SET_TEXTURE_FORMAT: u32 = 0x1a04 >> 2;
+pub const SET_TEXTURE_ADDRESS: u32 = 0x1a08 >> 2;
 pub const SET_TEXTURE_CONTROL0: u32 = 0x1a0c >> 2;
 pub const SET_TEXTURE_CONTROL1: u32 = 0x1a10 >> 2;
+pub const SET_TEXTURE_FILTER: u32 = 0x1a14 >> 2;
 pub const SET_TEXTURE_IMAGE_RECT: u32 = 0x1a18 >> 2;
+pub const SET_TEXTURE_BORDER_COLOR: u32 = 0x1a1c >> 2;
+pub const SET_SHADER_CONTROL: u32 = 0x1d60 >> 2;
+pub const SET_ZSTENCIL_CLEAR_VALUE: u32 = 0x1d8c >> 2;
+pub const SET_COLOR_CLEAR_VALUE: u32 = 0x1d90 >> 2;
+pub const CLEAR_SURFACE: u32 = 0x1d94 >> 2;
+pub const SET_CLEAR_RECT_HORIZONTAL: u32 = 0x1d98 >> 2;
+pub const SET_CLEAR_RECT_VERTICAL: u32 = 0x1d9c >> 2;
 pub const SET_RESTART_INDEX_ENABLE: u32 = 0x1dac >> 2;
 pub const SET_RESTART_INDEX: u32 = 0x1db0 >> 2;
+pub const SET_TRANSFORM_PROGRAM_LOAD: u32 = 0x1e9c >> 2;
+pub const SET_TRANSFORM_PROGRAM_START: u32 = 0x1ea0 >> 2;
 pub const SET_TRANSFORM_CONSTANT_LOAD: u32 = 0x1efc >> 2;
 pub const SET_TRANSFORM_CONSTANT: u32 = 0x1f00 >> 2;
+pub const SET_SHADER_PACKER: u32 = 0x1fec >> 2;
 pub const SET_VERTEX_ATTRIB_INPUT_MASK: u32 = 0x1ff0 >> 2;
+pub const SET_VERTEX_ATTRIB_OUTPUT_MASK: u32 = 0x1ff4 >> 2;
 
 /// Register-index stride between consecutive fragment texture units (0x20 bytes).
 pub const TEXTURE_UNIT_STRIDE: u32 = 8;
@@ -30,6 +89,8 @@ pub const FRAGMENT_TEXTURE_UNITS: u32 = 16;
 pub const VERTEX_ARRAYS: u32 = 16;
 /// Words in one constant or program upload window.
 pub const UPLOAD_WINDOW: u32 = 32;
+/// Instruction slots of transform-program memory, four words each.
+pub const TRANSFORM_PROGRAM_SLOTS: usize = 544;
 /// Constants the vertex program can address (RPCS3 ignores writes past 467).
 pub const TRANSFORM_CONSTANTS: usize = 468;
 

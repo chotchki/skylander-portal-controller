@@ -361,3 +361,31 @@ fn fragment(in: Interpolants) -> @location(0) vec4<f32> {
 }
     return vec4<f32>(colour, alpha);
 }
+
+// The glow pass (AE.11): the part's glow alpha, layer 1's alpha switched
+// hard at a fixed alpha of 0 (not the colour pass's ramp) times the vertex
+// and both tints' alphas, and its mask: the glow amount, that alpha when the
+// amount is -1, nothing at 0. The alpha test runs on the glow alpha; the
+// mask goes in red, green and blue, the glow alpha in alpha, as the
+// original's glow shader writes them.
+@fragment
+fn glow_mask(in: Interpolants) -> @location(0) vec4<f32> {
+    var vertex_colour = HALF_GREY;
+@if(CHAR_VERTEX_COLOUR)
+    vertex_colour = in.colour;
+    var first = textureSample(colour_map, colour_sampler, in.uv01.xy).a;
+    if character.fixed_alpha.x >= 0.0 {
+        first = character.fixed_alpha.x;
+    }
+    let glow_alpha = first * vertex_colour.a * character.placement_tint.a * character.material_tint.a;
+    var mask = character.misc.z;
+    if mask < 0.0 {
+        mask = glow_alpha;
+    }
+@if(CHAR_ALPHA_TEST) {
+    if glow_alpha <= character.misc.y {
+        discard;
+    }
+}
+    return vec4<f32>(mask, mask, mask, glow_alpha);
+}

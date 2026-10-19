@@ -414,11 +414,21 @@ impl StateKey {
     }
 }
 
-/// What a pipeline is specialized on: the masks and the states.
+/// Which pass a part draws in: the frame's colour, or the glow pass's mask
+/// (the character-shading spec's glow mask, AE.11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Pass {
+    #[default]
+    Colour,
+    GlowMask,
+}
+
+/// What a pipeline is specialized on: the masks, the states and the pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MaterialKey {
     pub shader: ShaderKey,
     pub states: StateKey,
+    pub pass: Pass,
 }
 
 impl MaterialKey {
@@ -428,6 +438,30 @@ impl MaterialKey {
             defs.push(def::ALPHA_TEST.into());
         }
         defs
+    }
+
+    /// The fragment entry point: the shader's `fragment`, or `glow_mask`
+    /// in the glow pass.
+    pub fn entry_point(&self) -> &'static str {
+        match self.pass {
+            Pass::Colour => "fragment",
+            Pass::GlowMask => "glow_mask",
+        }
+    }
+
+    /// The pipeline's states and entry point: the part's own states in the
+    /// colour pass; in the glow pass its culling, depth write and alpha
+    /// test, never blended.
+    pub fn apply(&self, descriptor: &mut RenderPipelineDescriptor) {
+        self.states.apply(descriptor);
+        if let Some(fragment) = descriptor.fragment.as_mut() {
+            fragment.entry_point = Some(self.entry_point().into());
+            if self.pass == Pass::GlowMask {
+                for target in fragment.targets.iter_mut().flatten() {
+                    target.blend = None;
+                }
+            }
+        }
     }
 }
 
@@ -453,6 +487,7 @@ mod tests {
         MaterialKey {
             shader: ShaderKey::new(pixel, vertex).expect("a valid key"),
             states: StateKey::OPAQUE,
+            pass: Pass::Colour,
         }
     }
 

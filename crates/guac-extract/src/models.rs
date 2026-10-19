@@ -19,13 +19,13 @@ use guac_formats::havok::{self, QsTransform};
 use guac_formats::iga::Archive;
 use guac_formats::igz::Igz;
 use guac_formats::igz::layouts::{DirectionalLightInfo, TextureAttr2, read_all};
-use guac_formats::material::{self, Blend as FBlend, Role};
+use guac_formats::material::{self, Blend as FBlend, Glow as FGlow, Role};
 use guac_formats::model::{self as fmodel, JointMap};
 use guac_formats::texture::Texture;
 use guac_ir::clip::{Clip, RotationTrack, Track, VecSpline, VecTrack};
 use guac_ir::model::{
-    Blend, Filter, Joint, Mask, Material, Params, RenderStates, Sampler, Scroll, Segment, Skeleton,
-    TextureRole, TextureSlot, Transform, Wrap,
+    Blend, Filter, Glow, Joint, Mask, Material, Params, RenderStates, Sampler, Scroll, Segment,
+    Skeleton, TextureRole, TextureSlot, Transform, Wrap,
 };
 use guac_ir::{Category, DumpIdentity, Model, Rig, RigLight, Roster, Sha256};
 use sha2::Digest;
@@ -252,7 +252,11 @@ fn ir_material(m: &material::Material<'_>, textures: Vec<TextureSlot>) -> Materi
             layer4_blend: p.layer4_blend,
             layer4_values: p.layer4_values,
             material_tint: p.material_tint,
-            glow: p.glow,
+            glow: match p.glow {
+                FGlow::None => Glow::None,
+                FGlow::Amount(a) => Glow::Amount(a),
+                FGlow::LayerAlpha => Glow::LayerAlpha,
+            },
         },
         states: RenderStates {
             blend: match m.states.blend {

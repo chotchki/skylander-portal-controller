@@ -104,7 +104,7 @@ fn eruptors_body_maps_its_textures_by_sampler_order() {
     let p = body.params;
     assert_eq!(p.layer1_extra, [1.0; 4]);
     assert_eq!(p.fixed_alpha, [-1.0, -1.0, -1.0, 1.0]);
-    assert_eq!(p.glow, Some(64));
+    assert_eq!(p.glow, Glow::Amount(64));
     assert_eq!(p.layer4_blend, [0.0, 1.0, 0.0, 0.0]);
     assert_eq!(p.layer4_values, [0.0, 1.0, 0.0, 0.0]);
     assert_eq!(p.material_tint, [128, 128, 128, 255]);
@@ -115,9 +115,9 @@ fn eruptors_body_maps_its_textures_by_sampler_order() {
         (body.drawn_pixel_mask(), body.drawn_vertex_mask()),
         (0x41C, 0x41C)
     );
-    // The eyes have no glow attr, so their colour map's alpha glows.
+    // The eyes have no glow attr, so they glow nowhere.
     let eyes = m[1].as_ref().unwrap();
-    assert_eq!(eyes.params.glow, None);
+    assert_eq!(eyes.params.glow, Glow::None);
     assert_eq!(
         eyes.texture(Role::Layer4ColorMap).unwrap().image_name,
         Some("specrim_eye6")

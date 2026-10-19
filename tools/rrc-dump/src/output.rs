@@ -128,19 +128,36 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 pub struct DumpWriter {
     root: PathBuf,
     textures: HashMap<(u32, u32, usize, u64), String>,
+    /// Program files by content, so the hundreds of draws sharing a program share one file.
+    programs: HashMap<(char, usize, u64), String>,
     summary: Vec<Value>,
 }
 
 impl DumpWriter {
     pub fn create(root: &Path) -> Result<Self> {
         let root = refuse_repo_output(root)?;
-        fs::create_dir_all(root.join("textures"))
-            .with_context(|| format!("creating {}", root.display()))?;
+        for dir in ["textures", "programs"] {
+            fs::create_dir_all(root.join(dir))
+                .with_context(|| format!("creating {}", root.display()))?;
+        }
         Ok(DumpWriter {
             root,
             textures: HashMap::new(),
+            programs: HashMap::new(),
             summary: Vec::new(),
         })
+    }
+
+    /// `programs/<kind>_<hash>.bin`, written the first time its bytes turn up.
+    fn program_file(&mut self, kind: char, bytes: &[u8]) -> Result<String> {
+        let key = (kind, bytes.len(), fnv1a64(bytes));
+        if let Some(f) = self.programs.get(&key) {
+            return Ok(f.clone());
+        }
+        let f = format!("programs/{}p_{:016x}.bin", kind, key.2);
+        fs::write(self.root.join(&f), bytes)?;
+        self.programs.insert(key, f.clone());
+        Ok(f)
     }
 
     pub fn write_draw(&mut self, draw: &Draw) -> Result<()> {
@@ -191,6 +208,20 @@ impl DumpWriter {
             .flat_map(|w| w.to_le_bytes())
             .collect();
         fs::write(dir.join("constants.bin"), constants)?;
+        if draw.fragment_program.captured {
+            let f = self.program_file('f', &draw.fragment_program.bytes)?;
+            desc["fragment_program"]["file"] = json!(format!("../{f}"));
+            desc["fragment_program"]["bytes"] = json!(draw.fragment_program.bytes.len());
+        }
+        let vp: Vec<u8> = draw
+            .vertex_program
+            .words
+            .iter()
+            .flat_map(|w| w.to_be_bytes())
+            .collect();
+        let f = self.program_file('v', &vp)?;
+        desc["vertex_program"]["file"] = json!(format!("../{f}"));
+        desc["vertex_program"]["encoding"] = json!("4 words an instruction, big-endian");
         desc["constants"]["file"] = json!("constants.bin");
         desc["constants"]["encoding"] = json!("468 x vec4, f32 little-endian");
         desc["byte_order"] = json!("vertex and index files are raw RSX memory (big-endian)");
@@ -205,6 +236,14 @@ impl DumpWriter {
             "index_count": draw.index_array.as_ref().map(|ia| ia.index_count),
             "vertex_arrays": draw.vertex_arrays.len(),
             "textures": draw.textures.iter().map(|t| t.unit).collect::<Vec<_>>(),
+            "fragment_program": draw.fragment_program.offset,
+            "color_targets": draw
+                .render_state
+                .surface
+                .color_targets
+                .iter()
+                .map(|t| t.offset)
+                .collect::<Vec<_>>(),
         }));
         Ok(())
     }

@@ -172,6 +172,7 @@ mod tests {
             depth: 1,
             pitch,
             remap: 0xaae4,
+            sampler: Default::default(),
             captured: true,
             bytes: Vec::new(),
         }

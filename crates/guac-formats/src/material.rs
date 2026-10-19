@@ -226,9 +226,19 @@ pub struct Params {
     pub layer4_values: [f32; 4],
     /// RGBA, unpacked from the stored int (red in the low byte).
     pub material_tint: [u8; 4],
-    /// `tfbDestinationAlphaAttr._alpha` of 255 while its state is on; `None`
-    /// leaves the glow to layer 1's alpha.
-    pub glow: Option<u8>,
+    pub glow: Glow,
+}
+
+/// What `tfbDestinationAlphaAttr` gives the glow pass (ae-materials: its
+/// apply sets the bloom shader's amount to `_alpha` / 255 while `_state` is
+/// on and to -1, layer 1's alpha, while it's off). A material without the
+/// attr glows nowhere: AC.13's captures draw Eruptor's eyes into no glow
+/// pass (AE.11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Glow {
+    None,
+    Amount(u8),
+    LayerAlpha,
 }
 
 impl Params {
@@ -247,7 +257,7 @@ impl Params {
         layer4_blend: [0.0, 1.0, 0.0, 0.0],
         layer4_values: [0.0, 1.0, 0.0, 0.0],
         material_tint: [128, 128, 128, 255],
-        glow: None,
+        glow: Glow::None,
     };
 }
 
@@ -506,10 +516,11 @@ impl<'a> Attrs<'a> {
             layer4_values: self.layer4_values.unwrap_or(d.layer4_values),
             material_tint: self.tint.map_or(d.material_tint, |t| unpack_tint(t as u32)),
             // Range-checked when read.
-            glow: self
-                .glow
-                .filter(|g| g.state)
-                .and_then(|g| u8::try_from(g.alpha).ok()),
+            glow: match self.glow {
+                None => Glow::None,
+                Some(g) if !g.state => Glow::LayerAlpha,
+                Some(g) => u8::try_from(g.alpha).map_or(Glow::None, Glow::Amount),
+            },
         }
     }
 

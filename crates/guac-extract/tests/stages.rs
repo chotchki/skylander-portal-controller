@@ -427,7 +427,7 @@ fn a_v1_extract_is_rebuilt_and_extracted_again() {
     assert!(!dir.join("video/intro/eruptor.mp4").exists());
     let m = again.dir.manifest();
     assert_eq!((m.layout, m.ir_version), (LAYOUT_VERSION, IR_VERSION));
-    assert_eq!((LAYOUT_VERSION, IR_VERSION), (3, 2));
+    assert_eq!((LAYOUT_VERSION, IR_VERSION), (3, 3));
     let done = stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
     assert_eq!(done.roster.files.written, FIGURES + 1);
     assert!(done.intros.is_ok());
@@ -455,6 +455,21 @@ fn a_v1_extract_is_rebuilt_and_extracted_again() {
     fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
     let again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
     assert_eq!(again.state, DirState::Rebuilt(Stale::Layout { found: 2 }));
+    drop(again);
+    // An AE.6-era extract (layout 3, IR 2: a glow without its attr read as
+    // layer 1's alpha) too.
+    let mut again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    drop(again);
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    json["ir_version"] = 2.into();
+    fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+    let again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    assert_eq!(
+        again.state,
+        DirState::Rebuilt(Stale::IrVersion { found: 2 })
+    );
 }
 
 #[test]

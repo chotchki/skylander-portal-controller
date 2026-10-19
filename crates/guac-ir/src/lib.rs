@@ -11,6 +11,7 @@
 
 mod characters;
 pub mod clip;
+pub mod glow;
 mod identity;
 pub mod model;
 pub mod rig;
@@ -30,8 +31,10 @@ use serde::{Deserialize, Serialize};
 /// The IR's shape version. Any change to a serialized type bumps it. v2
 /// (AE.2) adds the disc's roster, and AE.6 the models, their clips and the
 /// 3D-UI rig, new files beside it before any v2 extract had shipped (the
-/// extract's layout version, which they change, made those re-extract).
-pub const IR_VERSION: u32 = 2;
+/// extract's layout version, which they change, made those re-extract). v3
+/// (AE.11): a material's glow tells a part without the attribute (no glow)
+/// from one with it off (layer 1's alpha), which v2 read alike.
+pub const IR_VERSION: u32 = 3;
 
 #[derive(Debug, thiserror::Error)]
 pub enum IrError {
@@ -324,7 +327,7 @@ mod tests {
     #[test]
     fn ron_carries_the_version_and_a_hex_hash() {
         let text = to_ron(&identity()).unwrap();
-        assert!(text.contains("ir_version: 2"), "{text}");
+        assert!(text.contains("ir_version: 3"), "{text}");
         assert!(
             text.contains(&format!("\"{}\"", identity().manifest_hash)),
             "{text}"
@@ -341,12 +344,12 @@ mod tests {
     fn another_ir_version_is_refused_in_ron() {
         let text = to_ron(&identity())
             .unwrap()
-            .replace("ir_version: 2", "ir_version: 1");
+            .replace("ir_version: 3", "ir_version: 1");
         assert!(matches!(
             from_ron::<DumpIdentity>(&text),
             Err(IrError::VersionMismatch {
                 found: 1,
-                expected: 2
+                expected: 3
             })
         ));
     }
@@ -360,19 +363,19 @@ mod tests {
             from_ron::<DumpIdentity>(text),
             Err(IrError::VersionMismatch {
                 found: 1,
-                expected: 2
+                expected: 3
             })
         ));
         // No version, a stray field, or no body: refused as malformed.
         let body = to_ron(&identity()).unwrap();
-        let unversioned = body.replace("ir_version: 2,", "");
+        let unversioned = body.replace("ir_version: 3,", "");
         assert!(matches!(
             from_ron::<DumpIdentity>(&unversioned),
             Err(IrError::RonSpanned(_))
         ));
-        let stray = body.replace("ir_version: 2,", "ir_version: 2, extra: 3,");
+        let stray = body.replace("ir_version: 3,", "ir_version: 3, extra: 3,");
         assert!(from_ron::<DumpIdentity>(&stray).is_err());
-        assert!(from_ron::<DumpIdentity>("(ir_version: 2)").is_err());
+        assert!(from_ron::<DumpIdentity>("(ir_version: 3)").is_err());
     }
 
     #[test]
@@ -384,7 +387,7 @@ mod tests {
             from_postcard::<DumpIdentity>(&bytes),
             Err(IrError::VersionMismatch {
                 found: 0,
-                expected: 2
+                expected: 3
             })
         ));
     }
