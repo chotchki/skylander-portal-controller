@@ -25,7 +25,7 @@ At the original's medium difficulty a chapter 1 Chompy SHALL have 1 health, and 
 - **THEN** it's beaten and leaves 4 experience and no coin
 
 ### Requirement: A Chompy closes in
-An alerted Chompy SHALL wait up to 0.5 s, each wait as likely as the original's, turn to the hero and close in at up to 20 ft/s (6.1 m/s), turning at up to 720° a second, until it can bite or is within 5 ft (1.5 m) of him.
+An alerted Chompy SHALL wait a time drawn evenly from 0 up to 0.5 s, turn to the hero and close in at up to 20 ft/s (6.1 m/s), turning at up to 720° a second, until it can bite or is within 5 ft (1.5 m) of him.
 
 #### Scenario: Alerted across the pit
 - **WHEN** a Chompy 40 ft from Eruptor is alerted
@@ -36,18 +36,22 @@ A Chompy within 10 ft (3 m) of a hero, 2 s or more after its last bite ended, SH
 
 #### Scenario: Standing still beside a Chompy
 - **WHEN** Eruptor stands still within 10 ft of an awake Chompy for 10 s
-- **THEN** each of its bites that lands does 11 to 14, and no two bites start less than 2 s plus its lunge and recovery apart
+- **THEN** each of its bites that hurts him does 11 to 14, and no two bites start less than 2 s plus its lunge and recovery apart
 
 #### Scenario: Many bites
-- **WHEN** 1,000 Chompy bites land on Eruptor at medium
-- **THEN** 11, 12, 13 and 14 come up equally often
+- **WHEN** 1,000 Chompy bites do damage to Eruptor at medium
+- **THEN** each of 11, 12, 13 and 14 comes up between 209 and 291 times, and nothing else does
 
 ### Requirement: Creatures warn each other
-Every 0.25 s each creature within its notice range of a hero SHALL be alerted (30 to 60 ft, 9.1 to 18.3 m, for chapter 1's first four Chompies). An alerted creature SHALL alert every other creature within its call range (50 ft, 15.2 m, for those four), and a creature a hero hurts SHALL be alerted at once.
+Every 0.25 s each creature within its notice range of a hero SHALL be alerted (30, 35 or 60 ft, 9.1 to 18.3 m, for chapter 1's first four Chompies). An alerted creature SHALL alert every other creature within its own call range plus the other's listening range: 60 ft (18.3 m) from the fourth of those Chompies and 20 ft (6.1 m) from the other three. A creature a hero hurts SHALL be alerted at once.
 
 #### Scenario: One Chompy sees him
-- **WHEN** Eruptor comes within one awake Chompy's notice range while the others are out of theirs
-- **THEN** within 0.25 s that one is alerted, and the others within 50 ft of it are too
+- **WHEN** Eruptor comes within the first Chompy's notice range while the others are out of theirs
+- **THEN** within 0.25 s it's alerted, and of the others only those within 20 ft of it are too
+
+#### Scenario: The fourth Chompy sees him
+- **WHEN** the fourth Chompy is the first alerted
+- **THEN** the others within 60 ft of it are alerted with it
 
 ### Requirement: A beaten creature
 A creature with no health left SHALL stop blocking at once, play its fall and fade out, gone when that ends, and its experience SHALL appear where it fell the moment it's beaten.
@@ -55,3 +59,10 @@ A creature with no health left SHALL stop blocking at once, play its fall and fa
 #### Scenario: A Chompy beaten
 - **WHEN** a Chompy's health runs out
 - **THEN** the hero can walk through where it stood, its experience orbs appear there at once, and it fades and is gone
+
+### Requirement: What the fight wakes past its own
+Anything the first fight's scripts wake that guacamole doesn't run yet, the pit's later encounters among them, SHALL stay as it was, neither moving nor fighting, while the level goes on around it as the original's does.
+
+#### Scenario: The pit after the fight
+- **WHEN** Eruptor beats the four Chompies
+- **THEN** nothing else in the pit comes at him, and the level carries on

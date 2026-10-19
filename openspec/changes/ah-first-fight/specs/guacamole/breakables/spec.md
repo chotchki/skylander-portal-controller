@@ -14,11 +14,15 @@ A barrel, pot or gourd SHALL break after as many hits from each of the hero's at
 - **THEN** it breaks on the same hit as the original's and he can walk where it stood
 
 ### Requirement: What a broken thing drops
-A broken barrel, pot or gourd SHALL drop what the original's drops, with the original's chances and its coins worth what the original's are.
+A broken barrel, pot or gourd SHALL drop a coin by a running count, not a fresh chance each time: each break adds the level's drop rate (0.6 in chapter 1) to a count that wraps past 1, dropping when the count is at or under the rate, so three of every five breaks in a row drop. Where the count starts SHALL be drawn when the level starts. Each coin SHALL be worth 1 or 2, two in three worth 1.
 
-#### Scenario: The clearing's breakables
-- **WHEN** Eruptor breaks every barrel, pot and gourd in the clearing many times over from the level's start
-- **THEN** the coins and their worth come out as often as in the original
+#### Scenario: Five in a row
+- **WHEN** Eruptor breaks five of the clearing's barrels, pots and gourds in a row
+- **THEN** exactly three of them drop a coin
+
+#### Scenario: The coins' worth
+- **WHEN** 300 coins have dropped from broken barrels, pots and gourds
+- **THEN** between 176 and 224 of them are worth 1 and the rest 2
 
 ### Requirement: Breaking opens the ledge route
 With the two barrels and the pot at the foot of the ledge route broken, the hero SHALL climb it to the walkway above the gate, as in the original, and reach the spinning coins along it.
