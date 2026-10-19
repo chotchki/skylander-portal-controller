@@ -19,6 +19,7 @@ mod picker;
 mod screen;
 #[cfg(feature = "dev-tools")]
 mod shots;
+mod theme;
 mod tv;
 mod video;
 
