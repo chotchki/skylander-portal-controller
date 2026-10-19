@@ -1,0 +1,37 @@
+# Spec Delta
+
+## MODIFIED Requirements
+
+### Requirement: Each figure on the portal shows as a card
+On the portal view, guacamole's TV SHALL show one card per occupied portal slot, in slot order, carrying the figure's turning model when it has one (the figure-turntable capability) and its portrait otherwise or while the model loads, its name and element as the phone's collection shows them and, when a profile placed it, that profile's colour and initial. A card SHALL appear within 1 second of the phone showing the figure as on the portal. A card SHALL NOT show a level, experience or gold.
+
+#### Scenario: Placing a figure
+- **WHEN** a phone with a profile unlocked places Eruptor in slot 1 after picking Giants
+- **THEN** within 1 second the TV shows a card for Eruptor in the first position with his portrait or his turning model, the Fire element and the placing profile's colour and initial, and no level, experience or gold
+
+#### Scenario: The same figure on two profiles
+- **WHEN** two phones with different profiles each place the same figure
+- **THEN** the TV shows two cards for that figure, each with the colour and initial of the profile that placed it
+
+#### Scenario: No model
+- **WHEN** the placed figure has no character model on the disc
+- **THEN** its card shows its portrait, name, element and the placing profile's colour and initial
+
+#### Scenario: A level showing
+- **WHEN** a figure is placed while a hero walks the level
+- **THEN** the TV shows no card over the level, and the phones show the figure on the portal
+
+### Requirement: Cards follow the portal
+On the portal view, when a figure leaves the portal its card SHALL leave the TV within 1 second. When a slot's figure is replaced, by a phone or by a Kaos swap, the TV SHALL show the new figure's card in that position instead. With all eight slots occupied the portal view SHALL show eight cards, none hidden or overlapping.
+
+#### Scenario: Removing a figure
+- **WHEN** a phone removes the figure in slot 3 while the portal view shows
+- **THEN** within 1 second the TV no longer shows that card and the other cards keep their positions
+
+#### Scenario: A Kaos swap
+- **WHEN** a Kaos swap replaces the figure in slot 2 with another figure from the collection while the portal view shows
+- **THEN** the TV shows the new figure's card in the second position and the old card is gone
+
+#### Scenario: A full portal
+- **WHEN** eight figures are on the portal while the portal view shows
+- **THEN** the TV shows eight cards, each fully visible
