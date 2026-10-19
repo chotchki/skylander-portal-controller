@@ -1,12 +1,16 @@
-//! The extraction's stages in guacamole's order (openspec AE.3, design
-//! decision 5). Identity is [`crate::open`], the caller's; then the roster
-//! with its portraits, then ffmpeg is looked for and the intros are indexed
+//! The extraction's stages in guacamole's order (openspec AE.3 and AE.6,
+//! design decision 5). Identity is [`crate::open`], the caller's; then the
+//! roster with its portraits, then the character models with their textures
+//! and the 3D-UI rig, then ffmpeg is looked for and the intros are indexed
 //! and transcoded. The roster lands first so a phone can place figures while
-//! the intros convert, and the intros are the only thing a missing or
-//! unusable ffmpeg costs. Every file goes through the identity dir's per-file
-//! resume, and the manifest is marked complete only once every stage is done,
-//! so a run that stopped anywhere picks up on the next start.
+//! the rest runs, and the intros are the only thing a missing or unusable
+//! ffmpeg costs. A model that won't read is reported and its figures keep
+//! their portraits; the others extract. Every file goes through the identity
+//! dir's per-file resume, and the manifest is marked complete only once
+//! every stage is done, so a run that stopped anywhere picks up on the next
+//! start.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -14,12 +18,12 @@ use std::time::{Duration, Instant};
 use guac_ir::{Roster, Sha256};
 use sha2::Digest;
 
-use crate::error::Result;
+use crate::error::{ExtractError, Result};
 use crate::extract::IdentityDir;
 use crate::ffmpeg::Ffmpeg;
 use crate::intros::{self, IntroIndex, IrFormat};
-use crate::roster;
 use crate::transcode::{self, Summary, TranscodeEvent};
+use crate::{models, roster};
 
 /// What a run reports as it goes.
 #[derive(Debug, Clone)]
@@ -34,6 +38,11 @@ pub enum Event {
     /// The roster and every portrait are in the extract: the figure list can
     /// be published now (AE.4).
     RosterReady(Arc<Roster>),
+    /// `done` of `total` character models written, kept or reported.
+    Models {
+        done: usize,
+        total: usize,
+    },
     /// ffmpeg was found; mapping toy types to intro movies.
     Indexing,
     Transcode(TranscodeEvent),
@@ -57,6 +66,29 @@ pub struct RosterStage {
     pub took: Duration,
 }
 
+/// A character model that didn't extract: its figures keep their
+/// portraits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelFailure {
+    /// The load file, or `ir/rig` when the rig didn't read.
+    pub load_file: String,
+    /// [`ExtractError::ModelUnreadable`]'s message.
+    pub reason: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModelStage {
+    /// Character load files whose model is in the extract.
+    pub models: usize,
+    pub failed: Vec<ModelFailure>,
+    /// Distinct texture files, and texture binds over every material.
+    pub textures: usize,
+    pub binds: usize,
+    /// The model and rig IR and the textures.
+    pub files: Files,
+    pub took: Duration,
+}
+
 #[derive(Debug)]
 pub struct IntroStage {
     pub ffmpeg: Ffmpeg,
@@ -68,6 +100,7 @@ pub struct IntroStage {
 #[derive(Debug)]
 pub struct Extracted {
     pub roster: RosterStage,
+    pub models: ModelStage,
     /// The intros, or why there are none. The roster stays either way, and
     /// the manifest stays unmarked, so the next start tries the intros again.
     pub intros: Result<IntroStage>,
@@ -84,11 +117,88 @@ pub fn run(
 ) -> Result<Extracted> {
     let roster = roster_stage(dir, ir, send)?;
     send(Event::RosterReady(roster.roster.clone()));
+    let models = model_stage(dir, &roster.roster, ir, send)?;
     let intros = intro_stage(dir, &roster.roster, ffmpeg, ir, send);
     if intros.is_ok() {
         dir.mark_complete()?;
     }
-    Ok(Extracted { roster, intros })
+    Ok(Extracted {
+        roster,
+        models,
+        intros,
+    })
+}
+
+/// Each character load file `roster` names, its model into
+/// `models/<load file>.<ron|postcard>` and its textures into
+/// `textures/<sha256>.ktx2`, then `global.bld`'s rig into
+/// `ir/rig.<ron|postcard>`. A model or rig that won't read is reported in
+/// [`ModelStage::failed`]; a file that won't write stops the run.
+pub fn model_stage(
+    dir: &mut IdentityDir,
+    roster: &Roster,
+    ir: IrFormat,
+    send: &(dyn Fn(Event) + Sync),
+) -> Result<ModelStage> {
+    let started = Instant::now();
+    let usrdir = PathBuf::from(&dir.manifest().source_dir).join("PS3_GAME/USRDIR");
+    let identity = dir.manifest().identity.clone();
+    let loads = models::character_loads(roster);
+    let total = loads.len();
+    let mut stage = ModelStage {
+        models: 0,
+        failed: Vec::new(),
+        textures: 0,
+        binds: 0,
+        files: Files::default(),
+        took: Duration::ZERO,
+    };
+    let mut written: HashSet<String> = HashSet::new();
+    send(Event::Models { done: 0, total });
+    for (i, load) in loads.iter().enumerate() {
+        let path = models::archive_path(&usrdir, load);
+        let extracted = models::archive(&path, load)
+            .and_then(|bytes| models::level(&bytes, load))
+            .and_then(|level| models::read(&level, load, identity.clone()));
+        match extracted {
+            Ok(m) => {
+                stage.binds += m.binds;
+                for (rel, ktx2) in &m.textures {
+                    if written.insert(rel.clone()) {
+                        put(dir, rel, ktx2, &mut stage.files)?;
+                    }
+                }
+                let rel = ir.model_path(load);
+                let bytes = ir.encode(&m.model, dir, &rel)?;
+                put(dir, &rel, &bytes, &mut stage.files)?;
+                stage.models += 1;
+            }
+            Err(e @ ExtractError::ModelUnreadable { .. }) => stage.failed.push(ModelFailure {
+                load_file: (*load).to_owned(),
+                reason: e.to_string(),
+            }),
+            Err(e) => return Err(e),
+        }
+        send(Event::Models { done: i + 1, total });
+    }
+    stage.textures = written.len();
+    let rig = std::fs::read(usrdir.join(roster::GLOBAL))
+        .map_err(ExtractError::io(usrdir.join(roster::GLOBAL)))
+        .and_then(|bytes| models::level(&bytes, roster::GLOBAL))
+        .and_then(|level| models::rig(&level, identity));
+    match rig {
+        Ok(rig) => {
+            let bytes = ir.encode(&rig, dir, ir.rig_path())?;
+            put(dir, ir.rig_path(), &bytes, &mut stage.files)?;
+        }
+        Err(e @ ExtractError::ModelUnreadable { .. }) => stage.failed.push(ModelFailure {
+            load_file: "ir/rig".into(),
+            reason: e.to_string(),
+        }),
+        Err(e) => return Err(e),
+    }
+    stage.took = started.elapsed();
+    Ok(stage)
 }
 
 /// The roster off the dump `dir` names, into `ir/roster.<ron|postcard>`,

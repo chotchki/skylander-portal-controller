@@ -20,6 +20,8 @@ pub mod iga;
 pub mod igz;
 pub mod language;
 pub mod level;
+pub mod material;
+pub mod model;
 mod reader;
 pub mod roster;
 pub mod sfo;

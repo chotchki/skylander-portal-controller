@@ -104,3 +104,10 @@ path = "fuzz_targets/havok.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "character_model"
+path = "fuzz_targets/character_model.rs"
+test = false
+doc = false
+bench = false

@@ -5,7 +5,9 @@
 //! it may hold at once for an input of a given length.
 
 use crate::FormatError;
-use crate::{edge, exports, havok, iga, igz, language, roster, sfo, texture, toys};
+use crate::{
+    edge, exports, havok, iga, igz, language, material, model, roster, sfo, texture, toys,
+};
 
 pub struct RegisteredParser {
     /// Stable name: the property test reports it, the fuzz targets match on it.
@@ -93,6 +95,16 @@ pub const PARSERS: &[RegisteredParser] = &[
         // the texts: each call, set member, sprite or key costs well under
         // its input bytes (a call spans a dozen ops of 28 bytes or more).
         heap_budget: |len| 64 * len + 64 * len + (64 << 10),
+    },
+    RegisteredParser {
+        name: "character_model",
+        parse: walk_model,
+        seeds: model::builder::seeds,
+        // The IGZ parse and the hero walk (as igz_layouts), then one
+        // material, one segment's decode (edge_geometry's 48x) and the
+        // body's and idle's Havok parses (havok's 160x of what they hold)
+        // at a time.
+        heap_budget: |len| 64 * len + 128 * len + 48 * len + 160 * len + (256 << 10),
     },
     RegisteredParser {
         name: "havok",
@@ -248,6 +260,37 @@ pub fn walk_havok(bytes: &[u8]) -> Result<(), FormatError> {
     Ok(())
 }
 
+/// Parses a character archive's level, then reads its portal model as the
+/// model stage does (AE.6): each technique's material and segments, the
+/// body's skeleton, the joint map and the idle sampled at its start, middle
+/// and end, dropping each and skipping errors, until [`EDGE_WALK_BUDGET`] of
+/// segment buffers is spent. The property test and the fuzz targets run it.
+pub fn walk_model(bytes: &[u8]) -> Result<(), FormatError> {
+    let file = igz::Igz::parse(bytes)?;
+    let p = model::portal_model(&file)?;
+    let mut left = EDGE_WALK_BUDGET;
+    'meshes: for mesh in &p.hero.meshes {
+        let _ = material::Material::read(&file, &p.hero, mesh);
+        for (i, layout) in p.hero.mesh_segments(mesh) {
+            left = left.saturating_sub(edge_cost(layout).max(1));
+            let _ = edge::Segment::decode(&file, i, layout);
+            if left == 0 {
+                break 'meshes;
+            }
+        }
+    }
+    let skeleton = model::skeleton(&file, &p.hero)?;
+    let _ = model::JointMap::new(&skeleton, &p.hero.bones);
+    let idle = model::idle(&file, &p.hero, &skeleton)?;
+    let end = f64::from(idle.clip.animation.duration);
+    for t in [0.0, end / 2.0, end] {
+        if let Some(local) = idle.clip.local_pose(&skeleton, t) {
+            drop(skeleton.model_pose(&local));
+        }
+    }
+    Ok(())
+}
+
 /// How many unpacked bytes [`walk_iga`] reads before it stops. Chunks can
 /// alias, so an input can declare far more output than it holds.
 pub const IGA_WALK_BUDGET: usize = 256 << 10;
@@ -291,7 +334,8 @@ pub fn walk_igz(bytes: &[u8]) -> Result<(), FormatError> {
     Ok(())
 }
 
-/// Parses an IGZ, then runs every AC.4 (and AC.10 material, AE.1 roster) layout reader and the hero walk on
+/// Parses an IGZ, then runs every AC.4 (and AC.10 material, AE.1 roster, AE.6
+/// material attribute) layout reader and the hero walk on
 /// every object, dropping each result. The property test and the fuzz
 /// targets run it.
 pub fn walk_layouts(bytes: &[u8]) -> Result<(), FormatError> {
@@ -359,6 +403,21 @@ pub fn walk_layouts(bytes: &[u8]) -> Result<(), FormatError> {
         let _ = RhsValueStack::read(&file, i);
         let _ = RhsReferenceStack::read(&file, i);
         let _ = ValueRhsVariant::read(&file, i);
+        let _ = PixelShaderVariantMaskAttr::read(&file, i);
+        let _ = VertexShaderVariantMaskAttr::read(&file, i);
+        let _ = ShaderConstantVec4fAttr::read(&file, i);
+        let _ = ShaderConstantIntAttr::read(&file, i);
+        let _ = BlendStateAttr::read(&file, i);
+        let _ = DepthWriteStateAttr::read(&file, i);
+        let _ = AlphaStateAttr::read(&file, i);
+        let _ = CullFaceAttr::read(&file, i);
+        let _ = BlendFunctionAttr::read(&file, i);
+        let _ = AlphaFunctionAttr::read(&file, i);
+        let _ = DestinationAlphaAttr::read(&file, i);
+        let _ = MaterialAnim::read(&file, i);
+        let _ = MaterialAnimTrackList::read(&file, i);
+        let _ = MaterialUvAnimTrack::read(&file, i);
+        let _ = ScrollUvAnimData::read(&file, i);
     }
     Ok(())
 }

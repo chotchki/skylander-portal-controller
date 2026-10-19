@@ -75,6 +75,12 @@ pub enum ExtractError {
     #[error("GUAC-E-ROSTER-UNREADABLE: the figure roster in {} didn't read: {reason}", path.display())]
     RosterUnreadable { path: PathBuf, reason: String },
 
+    /// A character's model, or the 3D-UI rig in `permanent/global.bld`,
+    /// didn't read (AE.6): a model's figures keep their portraits on the TV,
+    /// and the other models extract.
+    #[error("GUAC-E-MODEL-UNREADABLE: {load_file} didn't read: {reason}")]
+    ModelUnreadable { load_file: String, reason: String },
+
     #[error("GUAC-E-EXTRACT-IO: {}: {source}", path.display())]
     Io {
         path: PathBuf,
@@ -96,6 +102,7 @@ impl ExtractError {
             Self::TranscodeFailed { .. } => "GUAC-E-TRANSCODE-FAILED",
             Self::BadOutputPath { .. } => "GUAC-E-BAD-OUTPUT-PATH",
             Self::RosterUnreadable { .. } => "GUAC-E-ROSTER-UNREADABLE",
+            Self::ModelUnreadable { .. } => "GUAC-E-MODEL-UNREADABLE",
             Self::Io { .. } => "GUAC-E-EXTRACT-IO",
         }
     }
@@ -160,6 +167,10 @@ mod tests {
             ExtractError::BadOutputPath { path: "..".into() },
             ExtractError::RosterUnreadable {
                 path: "character/init_setup.bld".into(),
+                reason: "x".into(),
+            },
+            ExtractError::ModelUnreadable {
+                load_file: "009_Eruptor".into(),
                 reason: "x".into(),
             },
             ExtractError::io("p")(io::Error::other("x")),

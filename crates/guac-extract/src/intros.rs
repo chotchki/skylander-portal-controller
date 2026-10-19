@@ -404,6 +404,24 @@ impl IrFormat {
         }
     }
 
+    /// The 3D-UI rig's file (AE.6).
+    pub fn rig_path(self) -> &'static str {
+        match self {
+            Self::Ron => "ir/rig.ron",
+            Self::Postcard => "ir/rig.postcard",
+        }
+    }
+
+    /// The model `load_file` loads, `models/<load file>.<ron|postcard>`
+    /// (AE.6).
+    pub fn model_path(self, load_file: &str) -> String {
+        let ext = match self {
+            Self::Ron => "ron",
+            Self::Postcard => "postcard",
+        };
+        format!("{}/{load_file}.{ext}", crate::models::MODEL_DIR)
+    }
+
     /// `body` in this format, inside the IR's versioned envelope. A failure
     /// is reported against `rel` in `dir`.
     pub fn encode<T: Serialize>(self, body: &T, dir: &IdentityDir, rel: &str) -> Result<Vec<u8>> {

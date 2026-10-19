@@ -49,6 +49,14 @@ pub enum ErrorKind {
     },
     #[error("version {found:#x} isn't read here ({supported})")]
     UnsupportedVersion { found: u64, supported: &'static str },
+    /// A shader-variant feature the port leaves out (AE.6): a material
+    /// asking for bit `bit`, named as `global.bld` names it.
+    #[error("variant bit {bit} ({name}) isn't drawn")]
+    Feature { bit: u8, name: &'static str },
+    /// A texture whose normal-map hint and role disagree: `TFN1` outside a
+    /// normal-map role (`hinted`), or a normal-map role without it.
+    #[error("the texture in {role} {}", if *hinted { "carries the TFN1 normal-map hint" } else { "lacks the TFN1 normal-map hint" })]
+    NormalMapHint { role: &'static str, hinted: bool },
     /// Compressed data that didn't come out at the size its container
     /// declared: the decoder failed partway, ran out of input or had bytes
     /// left past the declared end.

@@ -7,6 +7,7 @@ use crate::igz::kind;
 use crate::igz::layouts::METAIMAGES;
 
 /// One image: metaimage, width, height, levels, pixel bytes, first byte.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Spec {
     pub format: &'static str,
     pub width: u16,
@@ -68,10 +69,21 @@ pub fn image(b: &mut IgzBuilder, blocks: u8, s: &Spec, data: &[u8]) -> Location 
     image
 }
 
+/// [`image`] named `name`, as a character's textures are (`eruptor_n`).
+pub fn named_image(b: &mut IgzBuilder, blocks: u8, s: &Spec, data: &[u8], name: &str) -> Location {
+    let image = image_named(b, s, name);
+    b.handle(at(image, 0x48), blocks, data, 5);
+    image
+}
+
 /// [`image`] with `_data` left zero and unmarked.
 fn image_without_data(b: &mut IgzBuilder, s: &Spec) -> Location {
+    image_named(b, s, s.format)
+}
+
+fn image_named(b: &mut IgzBuilder, s: &Spec, name: &str) -> Location {
     let image = b.object(0, "igImage2", 0x60);
-    b.string(at(image, 0x08), s.format);
+    b.string(at(image, 0x08), name);
     let one = 1f32.to_be_bytes().repeat(4);
     b.put_bytes(at(image, 0x10), &one);
     let dims: Vec<u8> = [s.width, s.height, 1, s.levels, 1]

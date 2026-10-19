@@ -1,6 +1,7 @@
-//! Field layouts of the decode gate's Alchemy types (openspec AC.4) and of
-//! the script, sprite and language types the roster reads (AE.1), tagged
-//! [`TAG`], and typed readers over [`Igz`]'s object graph.
+//! Field layouts of the decode gate's Alchemy types (openspec AC.4), of
+//! the script, sprite and language types the roster reads (AE.1) and of the
+//! material attributes the model stage reads (AE.6), tagged [`TAG`], and
+//! typed readers over [`Igz`]'s object graph.
 //!
 //! Method: static EBOOT registry tables cross-checked against the disc; no
 //! statistical fallback ([`METHOD`]). The registry is the source of every
@@ -13,6 +14,7 @@
 //! fixup on a word its layout doesn't declare as a reference. Fields that
 //! point outside the gate's types stay unfollowed as [`ObjectRef`].
 
+mod attrs;
 mod edge;
 mod hero;
 mod image;
@@ -30,6 +32,12 @@ mod world;
 #[cfg(any(test, feature = "test-fixtures"))]
 pub mod builder;
 
+pub use attrs::{
+    AlphaFunctionAttr, AlphaStateAttr, BlendFunctionAttr, BlendStateAttr, CullFaceAttr,
+    DepthWriteStateAttr, DestinationAlphaAttr, MaterialAnim, MaterialAnimTrackList,
+    MaterialUvAnimTrack, PixelShaderVariantMaskAttr, ScrollUvAnimData, ShaderConstantIntAttr,
+    ShaderConstantVec4fAttr, VariantMask, VertexShaderVariantMaskAttr,
+};
 pub use edge::{Attr, EdgeGeometry, EdgeGeometryAttr, EdgeGeometrySegment};
 pub use hero::{Clip, Hero, Mesh, Palette};
 pub use image::{Image2, KNOWN_FORMATS, METAIMAGES};
@@ -237,13 +245,83 @@ pub const TYPES: &[TypeDef] = &[
         parent: Some("igObject"),
         size: 0x1C,
     },
+    // A tfbmulti2 material's attributes and its UV animation (AE.6).
+    def("igPixelShaderVariantMaskAttr", "igVisualAttribute", 0x18),
+    def("igVertexShaderVariantMaskAttr", "igVisualAttribute", 0x18),
+    def("tfbShaderConstantAttr", "igVisualAttribute", 0x10),
+    def("tfbShaderConstantVec4fAttr", "tfbShaderConstantAttr", 0x20),
+    def(
+        "tfbMulti2FixedAlphaValuesAttr",
+        "tfbShaderConstantVec4fAttr",
+        0x20,
+    ),
+    def(
+        "tfbMulti2Layer1ExtraValuesAttr",
+        "tfbShaderConstantVec4fAttr",
+        0x20,
+    ),
+    def(
+        "tfbMulti2Layer2ExtraValuesAttr",
+        "tfbShaderConstantVec4fAttr",
+        0x20,
+    ),
+    def(
+        "tfbMulti2Layer2BlendFactorsAttr",
+        "tfbShaderConstantVec4fAttr",
+        0x20,
+    ),
+    def(
+        "tfbMulti2Layer3BlendFactorsAttr",
+        "tfbShaderConstantVec4fAttr",
+        0x20,
+    ),
+    def(
+        "tfbMulti2Layer4BlendFactorsAttr",
+        "tfbShaderConstantVec4fAttr",
+        0x20,
+    ),
+    def(
+        "tfbMulti2Layer4ValuesAttr",
+        "tfbShaderConstantVec4fAttr",
+        0x20,
+    ),
+    def("tfbShaderConstantIntAttr", "tfbShaderConstantAttr", 0x14),
+    def("tfbMaterialTintAttr", "tfbShaderConstantIntAttr", 0x14),
+    def("igBlendStateAttr", "igVisualAttribute", 0x10),
+    def("igBlendFunctionAttr", "igVisualAttribute", 0x34),
+    def("igDepthWriteStateAttr", "igVisualAttribute", 0x10),
+    def("igCullFaceAttr", "igVisualAttribute", 0x14),
+    def("igAlphaStateAttr", "igVisualAttribute", 0x10),
+    def("igAlphaFunctionAttr", "igVisualAttribute", 0x18),
+    def("tfbDestinationAlphaAttr", "igVisualAttribute", 0x18),
+    def("tfbMaterialAnim", "igObject", 0x10),
+    def("tfbMaterialAnimTrackList", "igObjectList", 0x18),
+    def("tfbMaterialAnimTrack", "igObject", 0x24),
+    def("tfbMaterialUVAnimTrack", "tfbMaterialAnimTrack", 0x28),
+    def("tfbScrollUVAnimTrack", "tfbMaterialUVAnimTrack", 0x28),
+    def("tfbTransformUVAnimTrack", "tfbMaterialUVAnimTrack", 0x28),
+    def("tfbFlipBookUVAnimTrack", "tfbMaterialUVAnimTrack", 0x28),
+    def("tfbMaterialTintAnimTrack", "tfbMaterialAnimTrack", 0x24),
+    def("tfbMaterialAnimData", "igObject", 0x8),
+    def("tfbMaterialUVAnimData", "tfbMaterialAnimData", 0x8),
+    def("tfbScrollUVAnimData", "tfbMaterialUVAnimData", 0x34),
+    // The other kinds' data, listed for is_a only: the reader refuses them.
+    def("tfbTransformUVAnimData", "tfbMaterialUVAnimData", 0x40),
+    def("tfbFlipBookUVAnimData", "tfbMaterialUVAnimData", 0x1C),
+    def("tfbMaterialTintAnimData", "tfbMaterialAnimData", 0x18),
 ];
 
 /// Types whose files carry an MTSZ 4 over the registry size (AC.4's open
 /// question 2, settled by AC.14: the loader reads sections in place, so the
-/// 4 bytes sit in memory as on disc, past the layout and never marked). Of
-/// the five, only `RHSReferenceStack` has a reader.
-pub const FILE_PADDED: &[(&str, u32)] = &[("RHSReferenceStack", 0x30)];
+/// 4 bytes sit in memory as on disc, past the layout and never marked): the
+/// script stack AE.2 reads and the four render states AE.6 reads.
+pub const FILE_PADDED: &[(&str, u32)] = &[
+    ("RHSReferenceStack", 0x30),
+    ("igBlendStateAttr", 0x14),
+    ("igDepthWriteStateAttr", 0x14),
+    ("igCullFaceAttr", 0x18),
+    ("igAlphaStateAttr", 0x14),
+];
 
 /// The MTSZ a file gives `name`: its registry size, or the padded one.
 pub fn file_size(name: &str) -> Option<u32> {
