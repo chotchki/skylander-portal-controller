@@ -157,6 +157,12 @@ Third batch:
   check). Physics sits behind a thin internal seam either way. Nothing needs it before AG, and a
   read-only census of what Giants uses from Havok (character proxy or its own controller, rigid bodies,
   constraints, ragdolls, collision shapes) comes first, since that decides what feel parity means.
+  That pin is stale (2026-10-18): #1070 closed unmerged, and #1084, built on it, merged to Avian's
+  `main` as `1070759b2145`, so AG takes avian3d 0.8 from crates.io, or that `main` commit pinned by rev
+  until 0.8 publishes
+  ([`ag-walk-one-level`](../../openspec/changes/ag-walk-one-level/design.md) decision 3). The census ran
+  (ag-levels and ag-motion in the research dir): Havok is query-only in the tutorial, and the hero moves
+  by Toys for Bob's own kinematic model over their copy of Havok's character proxy.
 
 Fourth batch:
 
@@ -1584,16 +1590,20 @@ the pad in the player's hands.
   is probably SDL3-class identification, vendor and product id against a gamepad database (SDL3 picks a
   pad's face labels that way). Bevy's `Gamepad` does carry the vendor and product id its gilrs backend
   reports; whether that's enough to tell the two 8BitDo variants apart is unverified on the Mac and on
-  Windows, and if it isn't, the fallback is a glyph-set choice in settings.
+  Windows. If it isn't, this doc's fallback was a glyph-set choice in settings; what the prompts show
+  then is chotchki's call, AG's Open question 5 (a settings choice, one per pad, or a position glyph that
+  claims no label), asked only if AG.5's probe finds the two alike.
 - What the Home button does in Guacamole is open (Open question 1).
-- Hardware checks, a backlog item and not a gate for any rung ("all non-urgent testing"):
+- Hardware checks ("all non-urgent testing"):
   - On the Mac, with any `guacamole` build: does each variant show up with an identity Guacamole can map
-    to the right glyphs, and does Home reach Guacamole?
-  - On the HTPC at the bring-up, with Steam Input off: the same identity question, where the Switch
-    variant is the shakier one (if it presents as a Switch Pro-class pad, Windows has no XInput path for
-    it and only a HID-level driver reads it; SDL's HIDAPI is the reference). Does Home reach Guacamole, or
-    does Steam keep it for its overlay? Can the per-shortcut Steam Input setting be applied automatically,
-    or is it a one-time step by hand?
+    to the right glyphs, and does Home reach Guacamole? This half moved into AG as its first input box
+    (AG.5 in [`ag-walk-one-level`](../../openspec/changes/ag-walk-one-level/tasks.md)), because AG's
+    prompt resolver is built on its answer; it gates that resolver and nothing else.
+  - On the HTPC at the bring-up, a backlog item that gates no rung, with Steam Input off: the same
+    identity question, where the Switch variant is the shakier one (if it presents as a Switch Pro-class
+    pad, Windows has no XInput path for it and only a HID-level driver reads it; SDL's HIDAPI is the
+    reference). Does Home reach Guacamole, or does Steam keep it for its overlay? Can the per-shortcut
+    Steam Input setting be applied automatically, or is it a one-time step by hand?
 - AG's input spec carries the prompt rule, since walking a level is the first rung with a pad in hand.
 
 ## Figures
@@ -1700,7 +1710,7 @@ names (M0-M9, G1, G2) are the stable handles. Every rung is built and checked on
 | AC | `ac-giants-decode-gate`, in parallel with AA and AB | nothing yet (a dev viewer) | IGZ v6, `igImage2`, Edge and a Havok 2011.2 skeleton plus one clip, matched against an RSX capture. PASSED 2026-10-18 on everything the oracle drew of Eruptor, all four layers, so Giants stays first; AC.24 and AC.25 (L8 against a bound unit, two upgrade branch images; AC.21 matched the other 14) hold the gate open, each one attended session away (Why Giants first) |
 | AE, M1 | `ae-animated-turntable` | their figure as an animated, textured turntable on the TV | the first 3D, in the one remaster look; the Mac's renderer floor measured; the disc roster replaces the interim catalogue |
 | AF | `af-oracle-foundation` | nothing | the oracle foundation: divergence measured, frame-locked two-pad input, tolerance metrics. Lands before any gameplay comparison |
-| AG, M2 | `ag-walk-one-level` | walk one level | level scene, collision, character controller, camera, feel checked against the oracle; the input spec, with prompts that match the physical pad |
+| AG, M2 | `ag-walk-one-level` | walk the opening of chapter 1 (no scripts run yet, so the breakable door and rubble wall close it off) | level scene, collision, character controller, camera, feel checked against the oracle; the input spec, with prompts that match the physical pad |
 | AH, M3 | backlog | first fight: one enemy, XP and gold earned and kept on the kid's profile | combat basics; the per-profile figure-progression store, with the phone's figure editor on it |
 | AI, M4 | backlog | first couch battle: one Giants PvP arena, two pads, two phones | a second pad and a second profile's figure in play; the PvP rules as the oracle shows them |
 | AJ, M5 | backlog | the level comes alive | the tfbScript VM and its built-ins running the original scripts |

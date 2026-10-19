@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The level guacamole plays and how a placed figure gets into it: chapter 1 of Skylanders Giants built from the user's own disc, what's in it and solid at the start, its look, and how the portal takes the TV into the level and keeps it there.
+The level guacamole plays and how a placed figure gets into it: chapter 1 of Skylanders Giants built from the user's own disc, what's in it and solid at the start, its look, how it loads, and how the portal takes the TV into the level and keeps it there.
 
 ## ADDED Requirements
 
@@ -11,7 +11,7 @@ With Giants picked and its extraction finished, the level a character enters SHA
 
 #### Scenario: Eruptor enters
 - **WHEN** Eruptor enters the level
-- **THEN** he stands on the flagstone clearing within 1 cm of where the original's first player starts and facing the same way, the wooden gate beyond him, the waterfall to the right and the rope fence and gourds nearer the camera, as the original shows them
+- **THEN** he stands on the flagstone clearing within 1 mm of where the original's first player stands at rest there and facing the same way, the wooden gate beyond him, the waterfall to the right and the rope fence and gourds nearer the camera, as the original shows them
 
 ### Requirement: What's there at the start is what the original has
 The level SHALL hold, where the original places them, the props it has in place when the chapter starts and none it brings in only later. Creatures the original moves by script (enemies, characters and animals) SHALL be left out, solid shapes and all, until guacamole runs their scripts.
@@ -24,8 +24,8 @@ The level SHALL hold, where the original places them, the props it has in place 
 The hero SHALL stand on, slide along and be stopped by the level's own collision and the solid shapes of the props present, as in the original, and SHALL pass through scenery the original lets him pass through.
 
 #### Scenario: The gate's door
-- **WHEN** the hero walks into the closed door in the gate beyond the start
-- **THEN** it stops him where it stops the original's hero
+- **WHEN** the hero walks straight into the closed door in the gate beyond the start
+- **THEN** it stops him at the distance from it the original's hero stops at
 
 #### Scenario: Grass
 - **WHEN** the hero walks through the grass by the clearing
@@ -38,8 +38,15 @@ The level's surfaces SHALL be drawn with the original's shading model in the rem
 - **WHEN** the level shows at the start
 - **THEN** its surfaces are lit by the level's lights and fog, Eruptor's shadow falls on the flagstones and the grass shows
 
+### Requirement: The level loads behind the intro
+Guacamole SHALL start loading the level when Giants is picked with its extract ready, with no TV frame over 50 ms on the M3 Max while it loads. When the hero's intro ends, or when he's placed if none plays, the level SHALL show within 1 second once it has loaded, and the portal view SHALL hold until it has.
+
+#### Scenario: Placed right after the pick
+- **WHEN** a character is placed and its intro skipped before the level has finished loading
+- **THEN** the portal view holds until it has loaded, then the level shows with that character as the hero
+
 ### Requirement: The level never stalls the TV
-Once the level shows, no TV frame SHALL take longer than 50 ms, including the first time any part of the level or a character comes into view.
+On the M3 Max, once the level shows, no TV frame SHALL take longer than 50 ms, including the first time any part of the level or a character comes into view.
 
 #### Scenario: New scenery comes into view
 - **WHEN** the hero walks to where scenery he hasn't seen yet comes into view
@@ -56,6 +63,10 @@ With Giants picked and its level extracted, placing a character on the portal SH
 - **WHEN** Sky-Iron Shield is placed before any character
 - **THEN** the TV stays on the portal view with its card, and the first character placed after it starts the level
 
+#### Scenario: Two characters before the start
+- **WHEN** Eruptor and then Tree Rex are placed before the level has started
+- **THEN** Eruptor's intro plays, then Tree Rex's, then the level shows with Eruptor as the hero and Tree Rex waiting
+
 ### Requirement: One hero at a time
 While a hero is in the level, a character placed after it SHALL wait on the portal without joining the level. When the hero is removed, the character waiting longest SHALL take its place as the hero.
 
@@ -66,6 +77,13 @@ While a hero is in the level, a character placed after it SHALL wait on the port
 #### Scenario: The hero comes off with another waiting
 - **WHEN** Eruptor is removed while Tree Rex waits on the portal
 - **THEN** Tree Rex becomes the hero, coming in where the original brings in a replacement hero
+
+### Requirement: Other figures leave the level as it is
+A magic item, an adventure-pack piece or a sidekick placed while the level shows SHALL change nothing in the level; it SHALL show only on the phones' portal.
+
+#### Scenario: An item mid-level
+- **WHEN** Sky-Iron Shield is placed while Eruptor walks the level
+- **THEN** the level carries on unchanged and the phones show the shield on the portal
 
 ### Requirement: Removing the hero pauses the level
 When the hero is removed and no character waits, the level SHALL pause under a message asking for a Skylander on the portal. The next character placed SHALL become the hero where the original brings in a replacement, and the level SHALL carry on from where it paused rather than restart.

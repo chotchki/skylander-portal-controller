@@ -20,3 +20,18 @@ On the portal view, guacamole's TV SHALL show one card per occupied portal slot,
 #### Scenario: A level showing
 - **WHEN** a figure is placed while a hero walks the level
 - **THEN** the TV shows no card over the level, and the phones show the figure on the portal
+
+### Requirement: Cards follow the portal
+On the portal view, when a figure leaves the portal its card SHALL leave the TV within 1 second. When a slot's figure is replaced, by a phone or by a Kaos swap, the TV SHALL show the new figure's card in that position instead. With all eight slots occupied the portal view SHALL show eight cards, none hidden or overlapping.
+
+#### Scenario: Removing a figure
+- **WHEN** a phone removes the figure in slot 3 while the portal view shows
+- **THEN** within 1 second the TV no longer shows that card and the other cards keep their positions
+
+#### Scenario: A Kaos swap
+- **WHEN** a Kaos swap replaces the figure in slot 2 with another figure from the collection while the portal view shows
+- **THEN** the TV shows the new figure's card in the second position and the old card is gone
+
+#### Scenario: A full portal
+- **WHEN** eight figures are on the portal while the portal view shows
+- **THEN** the TV shows eight cards, each fully visible
