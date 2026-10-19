@@ -111,8 +111,26 @@ pub enum WorldError {
     Static(BodyId),
 }
 
-fn pose_is_finite(pose: Pose) -> bool {
-    pose.position.is_finite() && pose.rotation.is_finite() && pose.rotation.is_normalized()
+/// A finite position and a unit rotation, or `BadPose`: what every side
+/// refuses before a body is placed or moved.
+pub fn check_pose(id: BodyId, pose: Pose) -> Result<(), WorldError> {
+    let finite =
+        pose.position.is_finite() && pose.rotation.is_finite() && pose.rotation.is_normalized();
+    if finite {
+        Ok(())
+    } else {
+        Err(WorldError::BadPose(id))
+    }
+}
+
+/// One body on its own (its pose, and a convex shape's sizes; `Mesh::new`
+/// already refused a bad mesh): what every side refuses before building it.
+pub fn check_body(body: &Body) -> Result<(), WorldError> {
+    check_pose(body.id, body.pose)?;
+    match &body.collider {
+        Collider::Convex(shape) if !shape.is_valid() => Err(WorldError::BadShape(body.id)),
+        _ => Ok(()),
+    }
 }
 
 impl ParryWorld {
@@ -122,13 +140,8 @@ impl ParryWorld {
             if entries.iter().any(|e| e.id == body.id) {
                 return Err(WorldError::Duplicate(body.id));
             }
-            if !pose_is_finite(body.pose) {
-                return Err(WorldError::BadPose(body.id));
-            }
+            check_body(body)?;
             let (shape, mesh) = match &body.collider {
-                Collider::Convex(shape) if !shape.is_valid() => {
-                    return Err(WorldError::BadShape(body.id));
-                }
                 Collider::Convex(shape) => (convex_shape(shape), None),
                 Collider::Mesh(mesh) => (mesh_shape(mesh), Some(mesh.clone())),
             };
@@ -155,9 +168,7 @@ impl ParryWorld {
         if entry.kind == BodyKind::Static {
             return Err(WorldError::Static(id));
         }
-        if !pose_is_finite(pose) {
-            return Err(WorldError::BadPose(id));
-        }
+        check_pose(id, pose)?;
         entry.pose = parry_pose(pose);
         entry.aabb = entry.shape.compute_aabb(&entry.pose);
         Ok(())

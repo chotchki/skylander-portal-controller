@@ -122,7 +122,13 @@ fn near_v(a: Vec3, b: Vec3, tol: f32) -> bool {
     near(a.x, b.x, tol) && near(a.y, b.y, tol) && near(a.z, b.z, tol)
 }
 
-fn planes_agree(a: &[ContactPlane], b: &[ContactPlane], tol: f32) -> Result<(), String> {
+/// [`AGREE`] relative to a point's magnitude past 1 m.
+fn point_tol(v: Vec3) -> f32 {
+    AGREE * v.abs().max_element().max(1.0)
+}
+
+/// Normals and gaps within [`AGREE`], points within [`point_tol`].
+fn planes_agree(a: &[ContactPlane], b: &[ContactPlane]) -> Result<(), String> {
     if a.len() != b.len() {
         return Err(format!("{} planes against {}", a.len(), b.len()));
     }
@@ -130,11 +136,13 @@ fn planes_agree(a: &[ContactPlane], b: &[ContactPlane], tol: f32) -> Result<(), 
         if (p.body, p.triangle, p.material) != (q.body, q.triangle, q.material) {
             return Err(format!("plane {i}: {p:?} against {q:?}"));
         }
-        if !(near_v(p.normal, q.normal, tol)
-            && near_v(p.point, q.point, tol)
-            && near(p.distance, q.distance, tol))
+        if !(near_v(p.normal, q.normal, AGREE)
+            && near_v(p.point, q.point, point_tol(p.point))
+            && near(p.distance, q.distance, AGREE))
         {
-            return Err(format!("plane {i} differs past {tol}: {p:?} against {q:?}"));
+            return Err(format!(
+                "plane {i} differs past {AGREE}: {p:?} against {q:?}"
+            ));
         }
     }
     Ok(())
@@ -147,7 +155,6 @@ pub fn agree(a: &[Answer], b: &[Answer]) -> Result<(), String> {
         return Err(format!("{} answers against {}", a.len(), b.len()));
     }
     for (i, (x, y)) in a.iter().zip(b).enumerate() {
-        let scale = |v: Vec3| AGREE * v.abs().max_element().max(1.0);
         let result = match (x, y) {
             (Answer::Cast(None), Answer::Cast(None)) => Ok(()),
             (Answer::Cast(Some(p)), Answer::Cast(Some(q))) => {
@@ -157,25 +164,17 @@ pub fn agree(a: &[Answer], b: &[Answer]) -> Result<(), String> {
                         p.fraction, p.distance, q.fraction, q.distance
                     ))
                 } else {
-                    let tol = p
-                        .planes
-                        .iter()
-                        .map(|pl| scale(pl.point))
-                        .fold(AGREE, f32::max);
-                    planes_agree(&p.planes, &q.planes, tol)
+                    planes_agree(&p.planes, &q.planes)
                 }
             }
-            (Answer::Contacts(p), Answer::Contacts(q)) => {
-                let tol = p.iter().map(|pl| scale(pl.point)).fold(AGREE, f32::max);
-                planes_agree(p, q, tol)
-            }
+            (Answer::Contacts(p), Answer::Contacts(q)) => planes_agree(p, q),
             (Answer::Ray(None), Answer::Ray(None)) => Ok(()),
             (Answer::Ray(Some(p)), Answer::Ray(Some(q))) => {
                 if (p.body, p.triangle, p.material) != (q.body, q.triangle, q.material) {
                     Err(format!("ray hits {p:?} against {q:?}"))
                 } else if !(near(p.distance, q.distance, AGREE)
                     && near_v(p.normal, q.normal, AGREE)
-                    && near_v(p.point, q.point, scale(p.point)))
+                    && near_v(p.point, q.point, point_tol(p.point)))
                 {
                     Err(format!("ray differs past {AGREE}: {p:?} against {q:?}"))
                 } else {
@@ -563,7 +562,10 @@ fn corner_gives_two_planes() -> Case {
             };
             check(planes(&a[0])?)?;
             let c = hit(&a[1])?;
-            close("fraction", c.fraction, 0.5, TOL_CAST)?;
+            // Half of the 2√2 m motion, to TOL_CAST in meters.
+            let length = 8.0f32.sqrt();
+            close("fraction", c.fraction, 0.5, TOL_CAST / length)?;
+            close("distance", c.distance, 0.5 * length, TOL_CAST)?;
             check(&c.planes)
         },
     }

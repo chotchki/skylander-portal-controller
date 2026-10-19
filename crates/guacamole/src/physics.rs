@@ -42,7 +42,9 @@ use avian3d::prelude::{
 };
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
-use guac_motion::parry::{Solid, parry_pose, planes_against, split_motion};
+use guac_motion::parry::{
+    Solid, WorldError, check_body, check_pose, parry_pose, planes_against, split_motion,
+};
 use guac_motion::seam::{
     Body, BodyId, BodyKind, CAST_SLOP, Cast, Collider as SeamCollider, ContactPlane, Mesh,
     PhysicsSeam, Pose, RayHit, Shape, sort_planes,
@@ -127,8 +129,12 @@ pub(crate) fn mesh_collider(mesh: &Mesh) -> Collider {
 
 /// Spawns a seam body: a static rigid body, a kinematic one, or a kinematic
 /// sensor. The `Transform` is there for Avian's collider scale (read off the
-/// `GlobalTransform` on insert), never as the body's pose.
-pub(crate) fn spawn_body(commands: &mut Commands, body: &Body) -> Entity {
+/// `GlobalTransform` on insert), never as the body's pose. Refuses what
+/// `ParryWorld::new` refuses for one body (a pose or a convex size that isn't
+/// finite), so bad extracted data is an error here, not a panic or a NaN in
+/// Avian's trees; keeping ids unique is the caller's, as it builds the list.
+pub(crate) fn spawn_body(commands: &mut Commands, body: &Body) -> Result<Entity, WorldError> {
+    check_body(body)?;
     let (collider, mesh) = match &body.collider {
         SeamCollider::Convex(shape) => (convex_collider(shape), None),
         SeamCollider::Mesh(mesh) => (mesh_collider(mesh), Some(mesh.clone())),
@@ -152,25 +158,29 @@ pub(crate) fn spawn_body(commands: &mut Commands, body: &Body) -> Entity {
     if body.kind == BodyKind::Sensor {
         entity.insert(Sensor);
     }
-    entity.id()
+    Ok(entity.id())
 }
 
-/// Moves a kinematic body or sensor. Queries see it there once the physics
-/// schedule has run (it refits the collider trees); a static body doesn't
-/// move.
+/// Moves a kinematic body or sensor, refusing as `ParryWorld::set_pose` does
+/// (no such body, a static one, a pose that isn't finite). Queries see it
+/// there once the physics schedule has run (it refits the collider trees),
+/// where `ParryWorld` sees it at once.
 pub(crate) fn set_pose(
     bodies: &mut Query<(&SeamBody, &mut Position, &mut Rotation)>,
     id: BodyId,
     pose: Pose,
-) -> bool {
-    for (body, mut position, mut rotation) in bodies.iter_mut() {
-        if body.id == id && body.kind != BodyKind::Static {
-            position.0 = pose.position;
-            rotation.0 = pose.rotation;
-            return true;
-        }
+) -> Result<(), WorldError> {
+    let (body, mut position, mut rotation) = bodies
+        .iter_mut()
+        .find(|(body, ..)| body.id == id)
+        .ok_or(WorldError::Missing(id))?;
+    if body.kind == BodyKind::Static {
+        return Err(WorldError::Static(id));
     }
-    false
+    check_pose(id, pose)?;
+    position.0 = pose.position;
+    rotation.0 = pose.rotation;
+    Ok(())
 }
 
 /// The seam's queries for any system that takes it: `SpatialQuery` for the
@@ -362,7 +372,7 @@ mod tests {
         let mut app = headless();
         let mut commands = app.world_mut().commands();
         for body in &case.bodies {
-            spawn_body(&mut commands, body);
+            spawn_body(&mut commands, body).expect(case.name);
         }
         app.world_mut().flush();
         app.update();
@@ -372,7 +382,7 @@ mod tests {
             );
             let mut bodies = state.get_mut(app.world_mut()).unwrap();
             for &(id, pose) in &case.moves {
-                assert!(set_pose(&mut bodies, id, pose), "{}: {id:?}", case.name);
+                set_pose(&mut bodies, id, pose).expect(case.name);
             }
             app.update();
         }
@@ -428,7 +438,7 @@ mod tests {
         let mut state =
             SystemState::<Query<(&SeamBody, &mut Position, &mut Rotation)>>::new(app.world_mut());
         let mut bodies = state.get_mut(app.world_mut()).unwrap();
-        assert!(set_pose(&mut bodies, door.0, door.1));
+        set_pose(&mut bodies, door.0, door.1).unwrap();
         let probe = |app: &mut App| {
             let mut state = SystemState::<AvianSeam>::new(app.world_mut());
             let seam = state.get(app.world()).unwrap();
@@ -489,16 +499,86 @@ mod tests {
         assert_eq!(seen, 3);
     }
 
-    /// A static body stays put whatever `set_pose` asks.
+    /// `set_pose` refuses what `ParryWorld::set_pose` refuses, by the same
+    /// name: a static body, a missing one, a pose that isn't finite; then a
+    /// sensor moves.
     #[test]
-    fn a_static_body_doesnt_move() {
-        let case = conformance::cases().remove(0);
+    fn set_pose_refuses_as_parry_does() {
+        let case = conformance::cases()
+            .into_iter()
+            .find(|c| c.name == "sensors_only_overlap")
+            .unwrap();
+        let (floor, sensor) = (case.bodies[0].id, case.bodies[1].id);
         let mut app = world_of(&case);
+        let mut parry = ParryWorld::new(&case.bodies).unwrap();
         let mut state =
             SystemState::<Query<(&SeamBody, &mut Position, &mut Rotation)>>::new(app.world_mut());
         let mut bodies = state.get_mut(app.world_mut()).unwrap();
-        assert!(!set_pose(&mut bodies, case.bodies[0].id, Pose::at(Vec3::Y)));
-        assert!(!set_pose(&mut bodies, BodyId(99), Pose::IDENTITY));
+        let skewed = Pose::new(Vec3::ZERO, Quat::from_xyzw(0.0, 0.0, 0.0, 2.0));
+        let far = Pose::at(Vec3::new(f32::INFINITY, 0.0, 0.0));
+        for (id, pose, want) in [
+            (floor, Pose::at(Vec3::Y), WorldError::Static(floor)),
+            (BodyId(99), Pose::IDENTITY, WorldError::Missing(BodyId(99))),
+            (sensor, skewed, WorldError::BadPose(sensor)),
+            (sensor, far, WorldError::BadPose(sensor)),
+        ] {
+            assert_eq!(set_pose(&mut bodies, id, pose), Err(want.clone()));
+            assert_eq!(parry.set_pose(id, pose), Err(want));
+        }
+        assert_eq!(set_pose(&mut bodies, sensor, Pose::at(Vec3::X)), Ok(()));
+    }
+
+    /// `spawn_body` refuses a body `ParryWorld::new` refuses, by the same
+    /// name, and spawns nothing for it.
+    #[test]
+    fn spawn_refuses_as_parry_does() {
+        let ball = |pose: Pose, shape: Shape| Body {
+            id: BodyId(4),
+            kind: BodyKind::Kinematic,
+            pose,
+            collider: SeamCollider::Convex(shape),
+        };
+        let sphere = Shape::Sphere { radius: 0.5 };
+        let bad = [
+            ball(Pose::at(Vec3::new(0.0, f32::NAN, 0.0)), sphere),
+            ball(
+                Pose::new(Vec3::ZERO, Quat::from_xyzw(0.0, 0.0, 0.0, 0.5)),
+                sphere,
+            ),
+            ball(
+                Pose::IDENTITY,
+                Shape::Capsule {
+                    radius: 0.3,
+                    half_segment: 0.0,
+                },
+            ),
+            ball(
+                Pose::IDENTITY,
+                Shape::Box {
+                    half_extents: Vec3::new(0.4, -0.3, 0.2),
+                    margin: 0.05,
+                },
+            ),
+            ball(
+                Pose::IDENTITY,
+                Shape::Cylinder {
+                    radius: 0.25,
+                    half_height: 0.45,
+                    margin: f32::INFINITY,
+                },
+            ),
+        ];
+        let mut app = headless();
+        for body in &bad {
+            let want = ParryWorld::new(std::slice::from_ref(body)).err();
+            assert!(want.is_some(), "{body:?}");
+            let mut commands = app.world_mut().commands();
+            assert_eq!(spawn_body(&mut commands, body).err(), want, "{body:?}");
+            app.world_mut().flush();
+        }
+        app.update();
+        let mut seam = app.world_mut().query::<&SeamBody>();
+        assert_eq!(seam.iter(app.world()).count(), 0);
     }
 
     /// The plugin leaves everything but seam bodies alone: a UI-like entity
