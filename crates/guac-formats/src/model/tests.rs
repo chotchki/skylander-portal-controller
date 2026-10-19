@@ -88,6 +88,11 @@ fn joints_map_by_name_to_the_bones_and_their_inverse_joints() {
     twice.push(twice[1]);
     let e = JointMap::new(&sk, &twice).unwrap_err();
     assert_eq!(e.kind, ErrorKind::Duplicate);
+    // Two joints naming one bone (cargo fuzz, AE.0's hour) are refused too.
+    let mut doubled = sk.clone();
+    doubled.bones[2].name = doubled.bones[1].name;
+    let e = JointMap::new(&doubled, &p.hero.bones).unwrap_err();
+    assert_eq!((e.field, e.kind), ("hkaBone name", ErrorKind::Duplicate));
     // A bone whose blend matrix isn't there.
     assert!(map.inverse_joints(&p.hero.bones, &[]).is_err());
 }
