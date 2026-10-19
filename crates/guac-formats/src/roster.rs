@@ -22,6 +22,7 @@
 //!   macro's default and reads as none.
 //! - sky1: the toy's "is sky1 character" flag, carried on all its rows; the
 //!   server reads a Spyro's Adventure toy's base off it (AE.4).
+//! - Every id is the roster's once; a second row under one is refused.
 //! - Portraits: `misc/ui_collection_champions.bld`'s eight `Collection_*`
 //!   sprite sets, each in toy-id order, matched by the toy id in the sprite's
 //!   name; the old legendaries' set by position against the alt-character
@@ -412,6 +413,13 @@ pub fn figures(
                 portrait,
             ));
         }
+    }
+    // An id is what the server, the database and the phone key a figure by:
+    // two rows under one (a toy defined twice, two alts with one deco) are
+    // refused rather than one shadowing the other.
+    let mut ids = std::collections::HashSet::new();
+    if !out.iter().all(|f| ids.insert((f.toy_type, f.variant))) {
+        return Err(FormatError::new(FORMAT, "id", 0, ErrorKind::Duplicate));
     }
     Ok(out)
 }

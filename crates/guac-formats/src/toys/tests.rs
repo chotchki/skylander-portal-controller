@@ -152,6 +152,27 @@ fn an_unknown_argument_shape_is_refused() {
     assert_eq!(read(&disc(&spec)).unwrap_err().field, "element");
 }
 
+/// A `ValueRHSVariant` chain is unwrapped to a bounded depth, so one that
+/// points back at itself is refused rather than recursed into forever.
+#[test]
+fn a_value_wrapped_in_itself_or_too_deep_is_refused() {
+    let mut spec = sample();
+    spec.toys[1].element = ElementSpec::WrappedIn(2, MAX_WRAPPING);
+    assert_eq!(read(&disc(&spec)).unwrap().0.toys[1].element, 2);
+    for element in [
+        ElementSpec::WrappedIn(2, MAX_WRAPPING + 1),
+        ElementSpec::SelfWrapped,
+    ] {
+        spec.toys[1].element = element;
+        let e = read(&disc(&spec)).unwrap_err();
+        assert_eq!(e.field, "_varOp1", "{element:?}");
+        assert!(
+            matches!(e.kind, ErrorKind::OutOfRange { limit, .. } if limit == MAX_WRAPPING as u64),
+            "{element:?}: {e}"
+        );
+    }
+}
+
 #[test]
 fn every_alt_in_a_toys_block_is_that_toys() {
     let mut spec = sample();

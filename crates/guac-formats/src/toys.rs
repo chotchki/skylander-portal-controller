@@ -40,6 +40,10 @@ pub const DEFINE_ALT_CHARACTER: &str = "Portal - Define Alt Character";
 pub const LIGHTCORE_SET: &str = "display as lightcore";
 /// The DEBUG toy, which the table defines and no figure is.
 pub const DEBUG_TOY: i32 = 999;
+/// How many `ValueRHSVariant`s an argument may sit in, one inside the next.
+/// The disc's go one deep; the bound keeps a chain that loops back on itself
+/// from recursing forever.
+pub const MAX_WRAPPING: usize = 8;
 
 /// A text key: a `StringInfo` object of `global.bld`.
 pub type Key = usize;
@@ -254,9 +258,19 @@ impl Reader<'_, '_, '_> {
         self.argument(object, None)
     }
 
-    fn argument(&self, object: usize, index: Option<i32>) -> Result<Arg, FormatError> {
-        let ty = self.type_of(object);
-        if is_a(ty, ValueRhsVariant::TYPE) {
+    fn argument(&self, mut object: usize, index: Option<i32>) -> Result<Arg, FormatError> {
+        let mut depth = 0;
+        while is_a(self.type_of(object), ValueRhsVariant::TYPE) {
+            if depth == MAX_WRAPPING {
+                return Err(refuse(
+                    "_varOp1",
+                    ErrorKind::OutOfRange {
+                        value: depth as u64 + 1,
+                        limit: MAX_WRAPPING as u64,
+                    },
+                ));
+            }
+            depth += 1;
             let v = ValueRhsVariant::read(self.igz, object)?;
             let ObjectRef::Object(inner) = v.op1 else {
                 return Err(refuse("_varOp1", ErrorKind::Missing));
@@ -269,8 +283,9 @@ impl Reader<'_, '_, '_> {
                     },
                 ));
             }
-            return self.argument(inner, index);
+            object = inner;
         }
+        let ty = self.type_of(object);
         if !is_a(ty, RhsValueStack::TYPE) {
             return Err(stranger(self.igz, object, RhsValueStack::TYPE));
         }

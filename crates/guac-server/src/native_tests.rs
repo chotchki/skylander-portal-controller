@@ -854,3 +854,112 @@ async fn a_resume_waits_for_the_roster() {
         );
     }
 }
+
+/// AE.4: a load racing the roster's landing, and loads while the same roster
+/// is published again (a pick over a current extract), each read one list
+/// whole: refused before it lands, placed with its name and portrait after,
+/// never an error in between.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_load_racing_the_roster_swap_is_refused_or_placed_whole() {
+    use std::sync::atomic::AtomicUsize;
+
+    let n = native_waiting().await;
+    let (sid, _) = n.unlocked_session().await;
+    let mut events = n.state.events.subscribe();
+    let extract = n.root.path().join(EXTRACT);
+    let body = format!(r#"{{"figure_id":"{ERUPTOR}"}}"#);
+
+    // The roster lands from another thread while the phone keeps asking.
+    let tries = Arc::new(AtomicUsize::new(0));
+    let publisher = {
+        let (list, tries, extract) = (n.state.figures.clone(), tries.clone(), extract.clone());
+        std::thread::spawn(move || {
+            while tries.load(Ordering::SeqCst) < 3 {
+                std::thread::yield_now();
+            }
+            list.publish(FigureSet::from_roster(
+                &fixture::eruptor_and_spyro(),
+                &extract,
+            ));
+        })
+    };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut refused = 0;
+    loop {
+        let status = n
+            .send("POST", "/api/portal/slot/1/load", &body, Some(sid))
+            .await;
+        tries.fetch_add(1, Ordering::SeqCst);
+        match status {
+            StatusCode::NOT_FOUND => refused += 1,
+            StatusCode::ACCEPTED => break,
+            other => panic!("a load during the swap answered {other}"),
+        }
+        assert!(Instant::now() < deadline, "the roster never landed");
+    }
+    publisher.join().unwrap();
+    assert!(refused >= 3, "{refused}");
+    n.wait_loaded(0, ERUPTOR).await;
+
+    // The same roster published over and over while loads and clears run.
+    let stop = Arc::new(AtomicBool::new(false));
+    let republisher = {
+        let (list, stop, extract) = (n.state.figures.clone(), stop.clone(), extract.clone());
+        std::thread::spawn(move || {
+            let mut published = 0;
+            while !stop.load(Ordering::SeqCst) {
+                list.publish(FigureSet::from_roster(
+                    &fixture::eruptor_and_spyro(),
+                    &extract,
+                ));
+                published += 1;
+            }
+            published
+        })
+    };
+    for _ in 0..20 {
+        let status = n
+            .send("POST", "/api/portal/slot/1/clear", "{}", Some(sid))
+            .await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !n.state.portal.lock().await[0].is_empty() {
+            assert!(Instant::now() < deadline, "slot 1 never cleared");
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+        let status = n
+            .send("POST", "/api/portal/slot/1/load", &body, Some(sid))
+            .await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        n.wait_loaded(0, ERUPTOR).await;
+    }
+    stop.store(true, Ordering::SeqCst);
+    assert!(republisher.join().unwrap() > 0);
+
+    let places = n.driver.places.lock().unwrap().clone();
+    assert_eq!(places.len(), 21);
+    let portrait = extract.join(format!("portraits/{ERUPTOR}.png"));
+    for (slot, p) in &places {
+        assert_eq!(*slot, 0);
+        assert_eq!(p.name, "Eruptor");
+        assert_eq!(p.portrait.as_deref(), Some(portrait.as_path()));
+    }
+    loop {
+        let event = match events.try_recv() {
+            Ok(event) => event,
+            Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
+            Err(_) => break,
+        };
+        assert!(
+            !matches!(
+                event,
+                Event::Error { .. }
+                    | Event::SlotChanged {
+                        state: SlotState::Error { .. },
+                        ..
+                    }
+            ),
+            "{event:?}"
+        );
+    }
+}

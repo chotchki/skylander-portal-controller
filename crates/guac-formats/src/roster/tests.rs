@@ -252,6 +252,26 @@ fn the_element_rule() {
 }
 
 #[test]
+fn two_rows_under_one_id_are_refused() {
+    use super::builder::{AltSpec, NameSpec, ToySpec};
+    // Two alts of Whirlwind with one deco: 0x0402 twice.
+    let mut spec = sample();
+    let alt: AltSpec = spec.toys[1].alts[0].clone();
+    spec.toys[1].alts.push(alt);
+    let e = read(&disc(&spec)).unwrap_err();
+    assert_eq!((e.field, e.kind), ("id", ErrorKind::Duplicate));
+    // A second toy defining Whirlwind's toy type.
+    let mut spec = sample();
+    spec.toys.push(ToySpec::new(
+        "MinionLoad_000_Again",
+        NameSpec::Key("000_Again_Name"),
+        0,
+    ));
+    let e = read(&disc(&spec)).unwrap_err();
+    assert_eq!((e.field, e.kind), ("id", ErrorKind::Duplicate));
+}
+
+#[test]
 fn every_figure_has_its_own_portrait() {
     let r = read(&disc(&sample())).unwrap();
     let portraits: Vec<&str> = r.portraits.iter().map(|p| p.as_deref().unwrap()).collect();

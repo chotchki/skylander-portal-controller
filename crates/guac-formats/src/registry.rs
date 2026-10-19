@@ -138,21 +138,28 @@ pub fn walk_roster(bytes: &[u8]) -> Result<(), FormatError> {
 }
 
 /// The toy table's seeds (AE.2): the sample disc bundled with its English
-/// pack, and with its French one and no alt characters.
+/// pack, with its French one and no alt characters, and with an element
+/// three `ValueRHSVariant`s deep, so the fuzzer has a chain to bend back on
+/// itself.
 pub fn toy_table_seeds() -> Vec<Vec<u8>> {
-    use roster::builder::{bundle, disc, sample, sample_bundle};
-    let mut spec = sample();
-    spec.alt_characters.clear();
-    let d = disc(&spec);
-    vec![
-        sample_bundle(),
+    use roster::builder::{ElementSpec, bundle, disc, sample, sample_bundle};
+    let parts = |d: &roster::builder::Disc, pack: usize| {
         bundle(&[
             &d.init_setup,
             &d.global,
             &d.bootstrap,
             &d.collection,
-            &d.packs[1],
-        ]),
+            &d.packs[pack],
+        ])
+    };
+    let mut spec = sample();
+    spec.alt_characters.clear();
+    let mut deep = sample();
+    deep.toys[1].element = ElementSpec::WrappedIn(2, 3);
+    vec![
+        sample_bundle(),
+        parts(&disc(&spec), 1),
+        parts(&disc(&deep), 0),
     ]
 }
 

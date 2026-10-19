@@ -37,6 +37,10 @@ pub enum ElementSpec {
     Literal(i32),
     /// A literal inside a `ValueRHSVariant` with no operator.
     Wrapped(i32),
+    /// A literal inside this many `ValueRHSVariant`s, one in the next.
+    WrappedIn(i32, usize),
+    /// A `ValueRHSVariant` whose operand is itself.
+    SelfWrapped,
     /// A `global.bld` `ValueInfo` import.
     Value(&'static str),
     /// No parameter: reads 0.
@@ -490,6 +494,16 @@ fn init_setup(spec: &DiscSpec, ids: &BTreeMap<String, u32>) -> Vec<u8> {
             ElementSpec::Wrapped(e) => {
                 let l = s.literal(e);
                 Some(s.wrapped(l))
+            }
+            ElementSpec::WrappedIn(e, depth) => {
+                let l = s.literal(e);
+                Some((0..depth).fold(l, |inner, _| s.wrapped(inner)))
+            }
+            ElementSpec::SelfWrapped => {
+                let v = s.b.object(0, "ValueRHSVariant", 0x1C);
+                s.b.pointer(at(v, 0x08), v);
+                s.b.put_u32(at(v, 0x0C), u32::MAX);
+                Some(v)
             }
             ElementSpec::Value(v) => Some(s.value_path(&[PathElement::Global(v)])),
             ElementSpec::Omitted => None,

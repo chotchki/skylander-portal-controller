@@ -41,6 +41,20 @@ pub struct EditBody {
     pub gold: u16,
 }
 
+/// The first figure in the list's order with `id`. A pack can hold an id
+/// twice (a Giants sidekick and its Trap Team mini, say), and these routes
+/// have always taken the first, where `AppState::lookup_figure`'s index takes
+/// the last; this keeps the edit routes' pick as it was (AE.4).
+fn first_in_catalog(state: &AppState, id: &FigureId) -> Option<skylander_core::Figure> {
+    state
+        .figures
+        .now()
+        .figures()
+        .iter()
+        .find(|f| &f.id == id)
+        .cloned()
+}
+
 /// `POST /api/profiles/:profile_id/figures/:figure_id/edit`.
 pub async fn edit_figure(
     State(state): State<Arc<AppState>>,
@@ -50,7 +64,7 @@ pub async fn edit_figure(
     let figure_id_key = FigureId(figure_id.clone());
 
     // 1. Look up figure in catalog.
-    let figure = match state.lookup_figure(&figure_id_key) {
+    let figure = match first_in_catalog(&state, &figure_id_key) {
         Some(f) => f,
         None => {
             return (StatusCode::NOT_FOUND, "figure not in catalog").into_response();
@@ -191,7 +205,7 @@ pub async fn reset_figure(
 ) -> Response {
     let figure_id_key = FigureId(figure_id.clone());
 
-    let figure = match state.lookup_figure(&figure_id_key) {
+    let figure = match first_in_catalog(&state, &figure_id_key) {
         Some(f) => f,
         None => {
             return (StatusCode::NOT_FOUND, "figure not in catalog").into_response();
