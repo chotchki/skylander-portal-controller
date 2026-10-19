@@ -10,6 +10,10 @@
 //!
 //! Enter and Space are never mapped: `bevy_ui_widgets`' button takes them
 //! from the focused entity, so nothing activates twice.
+//!
+//! Then [`keep_focus`] puts the focus back on one of the screen's choices if
+//! it strayed and [`act_on_input`] does what the screen heard: Activate
+//! presses the focused button, Back closes the startup-error screens.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -17,14 +21,18 @@ use std::time::Duration;
 
 use bevy::input::InputSystems;
 use bevy::input::gamepad::{Gamepad, GamepadButton};
-use bevy::input_focus::InputFocusVisible;
+use bevy::input_focus::{AutoFocus, FocusCause, InputFocus, InputFocusVisible};
 use bevy::math::CompassOctant;
 use bevy::prelude::*;
+use bevy::ui::{InteractionDisabled, Pressed};
+// Not the prelude's `Button`: that's bevy_ui's deprecated one.
+use bevy::ui_widgets::{Activate, Button};
 use tracing::{debug, info};
 
 use crate::intro::{IntroEvent, IntroQueue};
-use crate::intro_player;
+use crate::intro_player::{self, IntroOverlay};
 use crate::mirror::TvMirror;
+use crate::tv::Current;
 
 /// Long enough that a tap is one move; a hold starts repeating after it.
 pub(crate) const REPEAT_DELAY: Duration = Duration::from_millis(400);
@@ -39,6 +47,10 @@ pub(crate) const STICK_THRESHOLD: f32 = 0.5;
 
 /// Posted presses waiting for the router; more than this and the oldest go.
 const POSTED_MAX: usize = 64;
+
+/// A choice's name, for the router's focus and the mirror's `focus`.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FocusId(pub(crate) &'static str);
 
 /// What a press means to the screen under it.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
@@ -288,7 +300,12 @@ impl Plugin for InputRouter {
         // hides it, the next pad or key input brings it back).
         app.add_message::<TvInput>()
             .insert_resource(InputFocusVisible(true))
-            .add_systems(PreUpdate, route_input.after(InputSystems));
+            .add_systems(
+                PreUpdate,
+                (route_input, keep_focus, act_on_input)
+                    .chain()
+                    .after(InputSystems),
+            );
     }
 }
 
@@ -336,6 +353,97 @@ fn route_input(
             }
         }
         Taken::Nothing => {}
+    }
+}
+
+/// Where the focus belongs on a screen whose choices are `(entity, id,
+/// default)`: where it is if that's one of them, else the one with the id it
+/// last had (a button respawned under it), else the default; nowhere on a
+/// screen without choices.
+pub(crate) fn reseed<'a>(
+    now: Option<Entity>,
+    choices: &[(Entity, &'a str, bool)],
+    last: Option<&str>,
+) -> Option<(Entity, &'a str)> {
+    now.and_then(|e| choices.iter().find(|c| c.0 == e))
+        .or_else(|| last.and_then(|id| choices.iter().find(|c| c.1 == id)))
+        .or_else(|| choices.iter().find(|c| c.2))
+        .map(|c| (c.0, c.1))
+}
+
+/// Focus never strays from the screen's choices (a click off a button clears
+/// it, a respawned button takes its entity along): it goes back per
+/// [`reseed`], the default being the `AutoFocus` one. An intro's overlay
+/// keeps it while it plays.
+fn keep_focus(
+    focus: Option<ResMut<InputFocus>>,
+    choices: Query<(Entity, &FocusId, Has<AutoFocus>)>,
+    overlays: Query<(), With<IntroOverlay>>,
+    mut last: Local<Option<&'static str>>,
+) {
+    let Some(mut focus) = focus else {
+        return;
+    };
+    let now = focus.get();
+    if now.is_some_and(|e| overlays.contains(e)) {
+        return;
+    }
+    let choices: Vec<_> = choices
+        .iter()
+        .map(|(e, id, auto)| (e, id.0, auto))
+        .collect();
+    let Some((entity, id)) = reseed(now, &choices, *last) else {
+        return;
+    };
+    *last = Some(id);
+    if now != Some(entity) {
+        debug!(choice = id, "focus back on the screen's choice");
+        focus.set(entity, FocusCause::Navigated);
+    }
+}
+
+/// The screen's inputs. Activate presses the focused button, which shows
+/// `Pressed` until South and NumpadEnter are both up; Back closes the
+/// startup-error screens; Home does nothing yet; Move waits for AP.7's
+/// navigator.
+fn act_on_input(
+    mut commands: Commands,
+    mut inputs: MessageReader<TvInput>,
+    focus: Option<Res<InputFocus>>,
+    buttons: Query<(), (With<Button>, Without<InteractionDisabled>)>,
+    current: Option<Res<Current>>,
+    keys: Option<Res<ButtonInput<KeyCode>>>,
+    pads: Query<&Gamepad>,
+    mut held: Local<Option<Entity>>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    let down = pads.iter().any(|p| p.pressed(GamepadButton::South))
+        || keys.is_some_and(|k| k.pressed(KeyCode::NumpadEnter));
+    if !down
+        && let Some(was) = held.take()
+        && let Ok(mut button) = commands.get_entity(was)
+    {
+        button.try_remove::<Pressed>();
+    }
+    for input in inputs.read() {
+        match *input {
+            TvInput::Activate => {
+                let focused = focus.as_ref().and_then(|f| f.get());
+                let Some(button) = focused.filter(|e| buttons.contains(*e)) else {
+                    continue;
+                };
+                commands.entity(button).insert(Pressed);
+                *held = Some(button);
+                commands.trigger(Activate { entity: button });
+            }
+            TvInput::Back => {
+                if let Some(current) = current.as_ref().filter(|c| c.screen.escape_quits()) {
+                    info!(screen = ?current.screen, "closing on back");
+                    exit.write(AppExit::Success);
+                }
+            }
+            TvInput::Home | TvInput::Move(_) => {}
+        }
     }
 }
 
@@ -560,6 +668,33 @@ mod tests {
             .set(GamepadInput::Axis(GamepadAxis::LeftStickY), -0.8);
         let (_, _, stick) = read_devices(None, [&calm, &pushed].into_iter());
         assert_eq!(stick, Vec2::new(0.0, -0.8));
+    }
+
+    #[test]
+    fn focus_goes_back_to_the_choice_it_had_else_the_default() {
+        let mut world = World::new();
+        let [first, second, other] = [(); 3].map(|_| world.spawn_empty().id());
+        let choices = [(first, "first", true), (second, "second", false)];
+        assert_eq!(
+            reseed(Some(second), &choices, Some("first")),
+            Some((second, "second")),
+            "where it is"
+        );
+        // Off the choices (a click elsewhere, a respawned button): the one
+        // it last had.
+        for now in [Some(other), None] {
+            assert_eq!(
+                reseed(now, &choices, Some("second")),
+                Some((second, "second"))
+            );
+        }
+        assert_eq!(
+            reseed(None, &choices, Some("gone")),
+            Some((first, "first")),
+            "the default"
+        );
+        assert_eq!(reseed(None, &choices, None), Some((first, "first")));
+        assert_eq!(reseed(Some(other), &[], Some("first")), None);
     }
 
     #[test]

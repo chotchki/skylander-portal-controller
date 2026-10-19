@@ -12,9 +12,13 @@ use std::time::{Duration, Instant};
 use bevy::asset::RenderAssetUsages;
 use bevy::ecs::system::SystemParam;
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
+use bevy::input_focus::AutoFocus;
+use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::prelude::*;
 use bevy::text::FontSize;
 use bevy::ui::{ComputedNode, UiGlobalTransform};
+// Not the prelude's `Button`: that's bevy_ui's deprecated one.
+use bevy::ui_widgets::{Activate, Button};
 use guac_server::config::WindowMode;
 use guac_server::state::{GameList, LauncherStatus};
 use skylander_core::{Element, SLOT_COUNT};
@@ -23,6 +27,8 @@ use tracing::{error, info, warn};
 
 use crate::cards::{PortalCards, drain_portal};
 use crate::extraction::{Band, ExtractBand};
+use crate::input::FocusId;
+use crate::picker::FolderAsked;
 use crate::screen::{SetupView, TvScreen, screen_for};
 
 /// How long the farewell shows before the app exits (spec: under 5 s).
@@ -30,6 +36,11 @@ pub const FAREWELL_BEAT: Duration = Duration::from_secs(3);
 
 /// How long AlreadyRunning shows before this copy closes itself.
 const ALREADY_RUNNING_BEAT: Duration = Duration::from_secs(8);
+
+/// The TV's choices, by the [`FocusId`] the router and the mirror know them by.
+pub(crate) const CHOOSE_FOLDER: &str = "choose-folder";
+pub(crate) const CONTINUE: &str = "continue";
+pub(crate) const CLOSE: &str = "close";
 
 /// The layout's design height; `UiScale` maps it to the window.
 const DESIGN_HEIGHT: f32 = 1080.0;
@@ -169,6 +180,8 @@ struct Line {
     color: Color,
     /// Wraps at the column's width instead of running off its sides.
     wrap: bool,
+    /// A button with this [`FocusId`], labelled `text`, in place of a line.
+    choice: Option<&'static str>,
 }
 
 impl Line {
@@ -178,6 +191,14 @@ impl Line {
             size,
             color,
             wrap: false,
+            choice: None,
+        }
+    }
+
+    fn choice(label: &str, id: &'static str) -> Self {
+        Self {
+            choice: Some(id),
+            ..Self::new(label, 40.0, WHITE)
         }
     }
 
@@ -296,8 +317,11 @@ impl Plugin for Screens {
         app.init_state::<TvState>()
             .init_resource::<Portraits>()
             .init_resource::<LayoutReport>()
+            .init_resource::<FolderAsked>()
             .add_message::<Redrawn>()
-            .add_systems(PreUpdate, follow_screen.after(poll_status));
+            .add_observer(on_choice)
+            .add_systems(PreUpdate, follow_screen.after(poll_status))
+            .add_systems(Update, click_or_beat_closes);
         for state in TvState::ALL {
             app.add_systems(OnEnter(state), enter_screen);
         }
@@ -331,7 +355,7 @@ impl Plugin for Tv {
             .add_plugins(Screens)
             .add_systems(Startup, spawn_camera)
             .add_systems(Last, report_layout)
-            .add_systems(Update, (scale_ui, farewell_exit, escape_quits));
+            .add_systems(Update, (scale_ui, farewell_exit));
     }
 }
 
@@ -575,11 +599,17 @@ fn sync_setup_lines(
         if drawn.0 == lines {
             continue;
         }
+        // A button's label isn't patched: another label is another button.
         let same_shape = drawn.0.len() == lines.len()
-            && drawn.0.iter().zip(&lines).all(|(a, b)| a.wrap == b.wrap);
+            && drawn.0.iter().zip(&lines).all(|(a, b)| {
+                a.wrap == b.wrap && a.choice == b.choice && (a.choice.is_none() || a.text == b.text)
+            });
         match children.filter(|_| same_shape) {
             Some(children) => {
                 for (kid, line) in children.iter().zip(&lines) {
+                    if line.choice.is_some() {
+                        continue;
+                    }
                     let Ok((mut text, mut font, mut color)) = texts.get_mut(kid) else {
                         continue;
                     };
@@ -596,7 +626,7 @@ fn sync_setup_lines(
                     .despawn_children()
                     .with_children(|column| {
                         for line in &lines {
-                            column.spawn(line_bundle(&assets.font, line));
+                            spawn_line(column, &assets.font, line);
                         }
                     });
             }
@@ -710,6 +740,29 @@ fn arm_layout_report(mut redrawn: MessageReader<Redrawn>, mut report: ResMut<Lay
     }
 }
 
+/// What a choice does when it's activated: by a click on it, Enter or Space
+/// while it's focused (the widget's own), South or NumpadEnter (the router).
+fn on_choice(
+    activate: On<Activate>,
+    ids: Query<&FocusId>,
+    mut setup: ResMut<Setup>,
+    mut asked: ResMut<FolderAsked>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    let Ok(id) = ids.get(activate.entity) else {
+        return;
+    };
+    info!(choice = id.0, "tv choice");
+    match id.0 {
+        CHOOSE_FOLDER => asked.0 = true,
+        CONTINUE if setup.0.show_found => setup.0.show_found = false,
+        CLOSE => {
+            exit.write(AppExit::Success);
+        }
+        _ => {}
+    }
+}
+
 fn farewell_exit(current: Option<Res<Current>>, mut exit: MessageWriter<AppExit>) {
     if let Some(current) = current
         && current.screen == TvScreen::Farewell
@@ -720,10 +773,10 @@ fn farewell_exit(current: Option<Res<Current>>, mut exit: MessageWriter<AppExit>
     }
 }
 
-/// Esc or a click closes the error screens (a mouse-only TV PC has no Esc);
+/// A click anywhere closes the startup-error screens (AA.6: a mouse-only TV
+/// PC), beside their Close button and the router's Back (East, Esc);
 /// AlreadyRunning also closes itself so it never hides the running app's TV.
-fn escape_quits(
-    keys: Res<ButtonInput<KeyCode>>,
+fn click_or_beat_closes(
     mouse: Res<ButtonInput<MouseButton>>,
     current: Option<Res<Current>>,
     mut exit: MessageWriter<AppExit>,
@@ -731,17 +784,18 @@ fn escape_quits(
     let Some(current) = current.filter(|c| c.screen.escape_quits()) else {
         return;
     };
-    let pressed = keys.just_pressed(KeyCode::Escape) || mouse.just_pressed(MouseButton::Left);
+    let clicked = mouse.just_pressed(MouseButton::Left);
     let timed_out = current.screen == TvScreen::AlreadyRunning
         && current.since.elapsed() >= ALREADY_RUNNING_BEAT;
-    if pressed || timed_out {
+    if clicked || timed_out {
         info!(screen = ?current.screen, timed_out, "closing");
         exit.write(AppExit::Success);
     }
 }
 
-/// What the folder picker is doing, under Setup and NoGiants.
-fn picker_lines(setup: &SetupView, choose: &str) -> Vec<Line> {
+/// The folder picker under Setup and NoGiants: its button, or while the
+/// sheet is up a line saying where it is.
+fn picker_lines(setup: &SetupView) -> Vec<Line> {
     let mut lines = Vec::new();
     if let Some(error) = &setup.error {
         lines.push(Line::new(
@@ -750,19 +804,11 @@ fn picker_lines(setup: &SetupView, choose: &str) -> Vec<Line> {
             GOLD,
         ));
     }
-    if setup.picking {
-        lines.push(Line::new(
-            "Choose a folder in the window that opened.",
-            40.0,
-            WHITE,
-        ));
+    lines.push(if setup.picking {
+        Line::new("Choose a folder in the window that opened.", 40.0, WHITE)
     } else {
-        lines.push(Line::new(
-            format!("Press Enter or click to {choose}."),
-            40.0,
-            WHITE,
-        ));
-    }
+        Line::choice("Choose the folder", CHOOSE_FOLDER)
+    });
     lines.push(Line::new("Or run: guacamole --setup <folder>", 28.0, DIM));
     lines
 }
@@ -770,7 +816,7 @@ fn picker_lines(setup: &SetupView, choose: &str) -> Vec<Line> {
 /// The lines under Setup's and NoGiants' headings, all from `Setup`.
 fn setup_lines(state: TvState, setup: &SetupView) -> Vec<Line> {
     match state {
-        TvState::Setup => picker_lines(setup, "choose it"),
+        TvState::Setup => picker_lines(setup),
         TvState::NoGiants => {
             let mut lines = vec![Line::new(
                 format!("Looked in: {}", setup.folders.join(", ")),
@@ -786,7 +832,7 @@ fn setup_lines(state: TvState, setup: &SetupView) -> Vec<Line> {
             } else if setup.problems.is_empty() {
                 lines.push(Line::new("No game dumps there.", 40.0, WHITE));
             }
-            lines.extend(picker_lines(setup, "choose another folder"));
+            lines.extend(picker_lines(setup));
             lines
         }
         _ => Vec::new(),
@@ -801,6 +847,43 @@ fn line_bundle(font: &Handle<Font>, line: &Line) -> impl Bundle + use<> {
             max_width: if line.wrap { percent(100) } else { Val::Auto },
             ..default()
         },
+    )
+}
+
+/// A setup column's line: centred text, or a choice's button.
+fn spawn_line(column: &mut ChildSpawnerCommands, font: &Handle<Font>, line: &Line) {
+    match line.choice {
+        Some(id) => column.spawn(choice_bundle(font, &line.text, id)),
+        None => column.spawn(line_bundle(font, line)),
+    };
+}
+
+/// A choice: a `bevy_ui_widgets` button, focused when it appears
+/// (`AutoFocus`), taking the focus from a click on it (`TabIndex`; without one
+/// a click clears it) and named for the router and the mirror (`FocusId`).
+/// Its look sits on a face inside it, so AP.13's focus scale moves no rect
+/// the tests read.
+fn choice_bundle(font: &Handle<Font>, text: &str, id: &'static str) -> impl Bundle + use<> {
+    (
+        Button,
+        TabIndex(0),
+        AutoFocus,
+        FocusId(id),
+        Node {
+            flex_shrink: 0.0,
+            ..default()
+        },
+        children![(
+            Node {
+                padding: UiRect::axes(px(48), px(16)),
+                border: UiRect::all(px(4)),
+                border_radius: BorderRadius::all(px(24)),
+                ..default()
+            },
+            BackgroundColor(CARD_BG),
+            BorderColor::all(GOLD),
+            children![label(font, text, 40.0, WHITE, Justify::Center)],
+        )],
     )
 }
 
@@ -916,7 +999,7 @@ fn spawn_setup_lines(ui: &mut ChildSpawnerCommands, font: &Handle<Font>, lines: 
     ))
     .with_children(|column| {
         for line in &lines {
-            column.spawn(line_bundle(font, line));
+            spawn_line(column, font, line);
         }
     });
 }
@@ -953,7 +1036,7 @@ fn spawn_content(ui: &mut ChildSpawnerCommands, state: TvState, sources: &mut So
             let titles = Line::new(setup.titles_line(), 36.0, WHITE).wrapping();
             ui.spawn((TitlesLine, line_bundle(&font, &titles)));
             ui.spawn(text("Skylanders: Giants is ready!", 56.0, GOLD));
-            ui.spawn(text("Click to continue.", 32.0, DIM));
+            ui.spawn(choice_bundle(&font, "Continue", CONTINUE));
         }
         TvState::Join => {
             ui.spawn(text("Scan to play", 88.0, GOLD));
@@ -982,6 +1065,7 @@ fn spawn_content(ui: &mut ChildSpawnerCommands, state: TvState, sources: &mut So
                 40.0,
                 WHITE,
             ));
+            ui.spawn(choice_bundle(&font, "Close", CLOSE));
             ui.spawn(text(
                 "Press Esc or click to close this one (it closes itself in a few seconds).",
                 32.0,
@@ -1011,6 +1095,7 @@ fn spawn_content(ui: &mut ChildSpawnerCommands, state: TvState, sources: &mut So
                     ..default()
                 },
             ));
+            ui.spawn(choice_bundle(&font, "Close", CLOSE));
             ui.spawn(text("Press Esc or click to close.", 32.0, DIM));
         }
         TvState::Farewell => {
@@ -1514,21 +1599,21 @@ fn spawn_empty<T: Bundle>(
 mod tests {
     use super::*;
 
-    /// Runs `escape_quits` once on `screen`, shown for `age`, with a left click or not.
+    /// Runs `click_or_beat_closes` once on `screen`, shown for `age`, with a
+    /// left click or not.
     fn closes(screen: TvScreen, age: Duration, click: bool) -> bool {
         let mut app = App::new();
         let mut mouse = ButtonInput::<MouseButton>::default();
         if click {
             mouse.press(MouseButton::Left);
         }
-        app.insert_resource(ButtonInput::<KeyCode>::default())
-            .insert_resource(mouse)
+        app.insert_resource(mouse)
             .insert_resource(Current {
                 screen,
                 since: Instant::now().checked_sub(age).unwrap(),
                 clients: 0,
             })
-            .add_systems(Update, escape_quits);
+            .add_systems(Update, click_or_beat_closes);
         app.update();
         app.should_exit().is_some()
     }
@@ -1610,10 +1695,51 @@ mod tests {
         assert_ne!(element_color(Some(Fire)), element_color(Some(Water)));
     }
 
+    /// The shell delta's "Nothing on the join code reacts" (AP.6): a pad
+    /// button, a key and a click change nothing on Join.
     #[test]
     fn a_click_never_closes_the_join_screen() {
+        use bevy::input::gamepad::GamepadButton;
+        use bevy::input::keyboard::Key;
+
+        use super::choice_tests::{click_beside, exited, focus, key, pad, tap, tv_on};
         assert!(!closes(TvScreen::Join, Duration::ZERO, true));
         assert!(!closes(TvScreen::Join, ALREADY_RUNNING_BEAT * 4, false));
+
+        let joined = SetupView {
+            giants_found: true,
+            ..Default::default()
+        };
+        let mut app = tv_on(TvScreen::Join, Duration::ZERO, joined.clone());
+        let pad = pad(&mut app);
+        for button in [
+            GamepadButton::South,
+            GamepadButton::East,
+            GamepadButton::Mode,
+            GamepadButton::Start,
+            GamepadButton::DPadDown,
+        ] {
+            tap(&mut app, pad, button);
+        }
+        for (code, logical) in [
+            (KeyCode::Escape, Key::Escape),
+            (KeyCode::Enter, Key::Enter),
+            (KeyCode::NumpadEnter, Key::Enter),
+            (KeyCode::Space, Key::Space),
+            (KeyCode::ArrowUp, Key::ArrowUp),
+        ] {
+            key(&mut app, code, logical);
+        }
+        click_beside(&mut app);
+        app.update();
+        assert!(!exited(&app));
+        assert_eq!(app.world().resource::<Current>().screen, TvScreen::Join);
+        assert_eq!(
+            *app.world().resource::<State<TvState>>().get(),
+            TvState::Join
+        );
+        assert_eq!(app.world().resource::<Setup>().0, joined);
+        assert_eq!(focus(&mut app), None);
     }
 }
 
@@ -1677,6 +1803,7 @@ pub(crate) mod layout_tests {
             bevy::ui::UiPlugin,
             bevy::state::app::StatesPlugin,
             bevy::input_focus::InputFocusPlugin,
+            bevy::ui_widgets::ButtonPlugin,
             crate::input::InputRouter,
         ));
         let font = app
@@ -2032,7 +2159,8 @@ pub(crate) mod layout_tests {
             let line = 36.0 * h as f32 / DESIGN_HEIGHT;
             assert!(rect.height() > 2.0 * line, "{w}x{h}: one line, {rect:?}");
             assert!(contains(safe, rect), "{w}x{h}: {rect:?} leaves {safe:?}");
-            assert_eq!(laid.texts.len(), 3);
+            // The title, the message, the Close button's label and the hint.
+            assert_eq!(laid.texts.len(), 4);
             for (i, a) in laid.texts.iter().enumerate() {
                 assert!(contains(safe, *a), "{w}x{h}: {a:?} leaves {safe:?}");
                 for b in &laid.texts[i + 1..] {
@@ -2323,37 +2451,43 @@ pub(crate) mod layout_tests {
         assert_eq!(world.query::<&ExtractBar>().iter(world).count(), 0);
     }
 
-    /// AP.2: the picker opening patches Setup's lines; a failed pick adds a
-    /// line, so the column respawns with it.
+    /// AP.2, with AP.6's button: another error's text is patched in place;
+    /// the sheet opening swaps the button for a line and a failed pick adds
+    /// the error, so the column respawns for both.
     #[test]
     fn the_setup_lines_follow_the_picker() {
         let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
         app.world_mut().resource_mut::<Current>().screen = TvScreen::Setup;
         frames(&mut app, 2);
+        // Each line's entity and text; a button reads as `<its id>`.
         let lines = |app: &mut App| {
             let world = app.world_mut();
             let mut columns = world.query_filtered::<&Children, With<SetupLines>>();
             let kids: Vec<Entity> = columns.single(world).unwrap().iter().collect();
             let mut texts = world.query::<&Text>();
+            let mut ids = world.query::<&FocusId>();
             kids.into_iter()
-                .map(|kid| (kid, texts.get(world, kid).unwrap().0.clone()))
+                .map(|kid| match ids.get(world, kid) {
+                    Ok(id) => (kid, format!("<{}>", id.0)),
+                    Err(_) => (kid, texts.get(world, kid).unwrap().0.clone()),
+                })
                 .collect::<Vec<_>>()
         };
+        let drawn = |lines: &[(Entity, String)]| -> Vec<String> {
+            lines.iter().map(|(_, t)| t.clone()).collect()
+        };
+        let or_run = "Or run: guacamole --setup <folder>";
         let before = lines(&mut app);
-        assert_eq!(before[0].1, "Press Enter or click to choose it.");
+        assert_eq!(drawn(&before), ["<choose-folder>", or_run]);
 
         app.world_mut().resource_mut::<Setup>().0.picking = true;
         app.update();
         let picking = lines(&mut app);
-        assert_eq!(picking.len(), before.len());
         assert_eq!(
-            picking[0],
-            (
-                before[0].0,
-                "Choose a folder in the window that opened.".into()
-            )
+            drawn(&picking),
+            ["Choose a folder in the window that opened.", or_run]
         );
-        assert_eq!(picking[1], before[1]);
+        assert_ne!(picking[0].0, before[0].0);
 
         {
             let mut setup = app.world_mut().resource_mut::<Setup>();
@@ -2361,14 +2495,29 @@ pub(crate) mod layout_tests {
             setup.0.error = Some("/Volumes/gone isn't a folder".into());
         }
         app.update();
-        let failed: Vec<String> = lines(&mut app).into_iter().map(|(_, t)| t).collect();
+        let failed = lines(&mut app);
         assert_eq!(
-            failed,
+            drawn(&failed),
             [
                 "Couldn't use that folder: /Volumes/gone isn't a folder",
-                "Press Enter or click to choose it.",
-                "Or run: guacamole --setup <folder>",
+                "<choose-folder>",
+                or_run,
             ]
+        );
+
+        app.world_mut().resource_mut::<Setup>().0.error =
+            Some("/Volumes/other isn't a folder".into());
+        app.update();
+        let again = lines(&mut app);
+        let entities = |l: &[(Entity, String)]| l.iter().map(|(e, _)| *e).collect::<Vec<_>>();
+        assert_eq!(
+            entities(&again),
+            entities(&failed),
+            "patched, not respawned"
+        );
+        assert_eq!(
+            again[0].1,
+            "Couldn't use that folder: /Volumes/other isn't a folder"
         );
     }
 
@@ -2542,5 +2691,438 @@ pub(crate) mod layout_tests {
         app.world_mut().resource_mut::<Current>().screen = TvScreen::Join;
         frames(&mut app, 6);
         assert_eq!(seen(&mut app), (vec![Redrawn::Screen(TvState::Join)], 0));
+    }
+}
+
+/// AP.6: the TV's choices as `bevy_ui_widgets` buttons, one test per
+/// scenario of the shell delta. Headless has no pointer: a click on a button
+/// is the widget's own pointer press and click triggered on its entity (with
+/// the mouse button down and up around them), and a click elsewhere is a
+/// left press with no pointer event.
+#[cfg(test)]
+pub(crate) mod choice_tests {
+    use bevy::input::ButtonState;
+    use bevy::input::gamepad::{
+        GamepadButton, GamepadConnection, GamepadConnectionEvent, RawGamepadButtonChangedEvent,
+        RawGamepadEvent,
+    };
+    use bevy::input::keyboard::{Key, KeyboardInput};
+    use bevy::input::mouse::MouseButtonInput;
+    use bevy::input_focus::InputFocus;
+    use bevy::ui::Pressed;
+    use guac_server::state::LauncherScreen;
+
+    use super::layout_tests::portal_app;
+    use super::*;
+    use crate::input::FocusId;
+    use crate::picker::{PickerChoices, Picking};
+
+    /// An `AppExit` was written: messages last two frames, this lasts.
+    #[derive(Resource, Default)]
+    pub(crate) struct Exited(bool);
+
+    fn note_exit(mut exits: MessageReader<AppExit>, mut exited: ResMut<Exited>) {
+        exited.0 |= exits.read().count() > 0;
+    }
+
+    pub(crate) fn exited(app: &App) -> bool {
+        app.world().resource::<Exited>().0
+    }
+
+    /// The TV on `screen`, shown for `age`, its status ready and `poll_status`
+    /// following `Setup` the way the running app does.
+    pub(crate) fn tv_on(screen: TvScreen, age: Duration, setup: SetupView) -> App {
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
+        let status = match &screen {
+            TvScreen::ServerError { message } => LauncherStatus {
+                screen: LauncherScreen::ServerError {
+                    message: message.clone(),
+                },
+                ..Default::default()
+            },
+            TvScreen::AlreadyRunning => LauncherStatus {
+                screen: LauncherScreen::ServerError {
+                    message: "bind".into(),
+                },
+                port_in_use: true,
+                ..Default::default()
+            },
+            _ => LauncherStatus {
+                server_ready: true,
+                ..Default::default()
+            },
+        };
+        *app.world().resource::<ServerLink>().status.lock().unwrap() = status;
+        app.insert_resource(Setup(setup))
+            .init_resource::<Exited>()
+            .add_plugins(PickerChoices)
+            .add_systems(PreUpdate, poll_status)
+            .add_systems(Last, note_exit);
+        {
+            let mut current = app.world_mut().resource_mut::<Current>();
+            current.screen = screen.clone();
+            current.since = Instant::now().checked_sub(age).unwrap();
+        }
+        frames(&mut app, 2);
+        assert_eq!(app.world().resource::<Current>().screen, screen);
+        app
+    }
+
+    fn frames(app: &mut App, n: usize) {
+        for _ in 0..n {
+            app.update();
+        }
+    }
+
+    /// The focused choice's id, if any.
+    pub(crate) fn focus(app: &mut App) -> Option<&'static str> {
+        let entity = app.world().resource::<InputFocus>().get()?;
+        app.world().get::<FocusId>(entity).map(|id| id.0)
+    }
+
+    /// The one choice marked `id`.
+    pub(crate) fn choice(app: &mut App, id: &str) -> Entity {
+        let world = app.world_mut();
+        let mut q = world.query::<(Entity, &FocusId)>();
+        let found: Vec<Entity> = q
+            .iter(world)
+            .filter(|(_, f)| f.0 == id)
+            .map(|(e, _)| e)
+            .collect();
+        assert_eq!(found.len(), 1, "{id}: {found:?}");
+        found[0]
+    }
+
+    pub(crate) fn pad(app: &mut App) -> Entity {
+        let pad = app.world_mut().spawn_empty().id();
+        app.world_mut().write_message(GamepadConnectionEvent::new(
+            pad,
+            GamepadConnection::Connected {
+                name: "pad".into(),
+                vendor_id: None,
+                product_id: None,
+            },
+        ));
+        app.update();
+        pad
+    }
+
+    /// `button` down (1) or up (0) for a frame.
+    pub(crate) fn button(app: &mut App, pad: Entity, button: GamepadButton, value: f32) {
+        app.world_mut()
+            .write_message(RawGamepadEvent::Button(RawGamepadButtonChangedEvent::new(
+                pad, button, value,
+            )));
+        app.update();
+    }
+
+    /// A press and release of `button`, a frame each.
+    pub(crate) fn tap(app: &mut App, pad: Entity, which: GamepadButton) {
+        button(app, pad, which, 1.0);
+        button(app, pad, which, 0.0);
+    }
+
+    /// A key down then up, a frame each.
+    pub(crate) fn key(app: &mut App, code: KeyCode, logical: Key) {
+        for state in [ButtonState::Pressed, ButtonState::Released] {
+            app.world_mut().write_message(KeyboardInput {
+                key_code: code,
+                logical_key: logical.clone(),
+                state,
+                text: None,
+                repeat: false,
+                window: Entity::PLACEHOLDER,
+            });
+            app.update();
+        }
+    }
+
+    /// Lands on no button.
+    pub(crate) fn click_beside(app: &mut App) {
+        for state in [ButtonState::Pressed, ButtonState::Released] {
+            mouse(app, state);
+            app.update();
+        }
+    }
+
+    /// The left mouse button, as winit reports it (`InputPlugin` clears a
+    /// `ButtonInput` written by hand before anything reads it).
+    fn mouse(app: &mut App, state: ButtonState) {
+        app.world_mut().write_message(MouseButtonInput {
+            button: MouseButton::Left,
+            state,
+            window: Entity::PLACEHOLDER,
+        });
+    }
+
+    /// A click on `entity` as picking reports one over it: the mouse button
+    /// and the pointer's press, then its click and release.
+    pub(crate) fn click_on(app: &mut App, entity: Entity) {
+        use bevy::camera::NormalizedRenderTarget;
+        use bevy::picking::backend::HitData;
+        use bevy::picking::events::{Pointer, PointerClick, PointerPress, PointerRelease};
+        use bevy::picking::pointer::{Location, PointerButton, PointerId};
+        let pointer = Pointer::new(
+            PointerId::Mouse,
+            Location {
+                target: NormalizedRenderTarget::None {
+                    width: 1920,
+                    height: 1080,
+                },
+                position: Vec2::ZERO,
+            },
+        );
+        let hit = HitData::new(entity, 0.0, None, None);
+        let primary = PointerButton::Primary;
+        mouse(app, ButtonState::Pressed);
+        let world = app.world_mut();
+        world.trigger(PointerPress {
+            entity,
+            pointer: pointer.clone(),
+            button: primary,
+            hit: hit.clone(),
+            count: 1,
+        });
+        app.update();
+        mouse(app, ButtonState::Released);
+        let world = app.world_mut();
+        world.trigger(PointerClick {
+            entity,
+            pointer: pointer.clone(),
+            button: primary,
+            hit: hit.clone(),
+            duration: Duration::from_millis(80),
+            count: 1,
+        });
+        world.trigger(PointerRelease {
+            entity,
+            pointer,
+            button: primary,
+            hit,
+        });
+        app.update();
+    }
+
+    fn found() -> SetupView {
+        SetupView {
+            giants_found: true,
+            show_found: true,
+            found_titles: vec!["Skylanders: Giants (BLUS30968)".into()],
+            ..Default::default()
+        }
+    }
+
+    fn state(app: &App) -> TvState {
+        *app.world().resource::<State<TvState>>().get()
+    }
+
+    /// The picker was asked for (`should_open` said open) since the last call.
+    fn wanted(app: &mut App) -> bool {
+        app.world_mut().resource_mut::<Picking>().take_wanted()
+    }
+
+    #[test]
+    fn south_on_found_lands_on_join() {
+        let mut app = tv_on(TvScreen::Found, Duration::ZERO, found());
+        assert_eq!(focus(&mut app), Some(CONTINUE));
+        let pad = pad(&mut app);
+        tap(&mut app, pad, GamepadButton::South);
+        frames(&mut app, 2);
+        assert_eq!(app.world().resource::<Current>().screen, TvScreen::Join);
+        assert_eq!(state(&app), TvState::Join);
+    }
+
+    #[test]
+    fn a_click_beside_continue_leaves_found_up() {
+        let mut app = tv_on(TvScreen::Found, Duration::ZERO, found());
+        click_beside(&mut app);
+        frames(&mut app, 3);
+        assert_eq!(app.world().resource::<Current>().screen, TvScreen::Found);
+        assert!(app.world().resource::<Setup>().0.show_found);
+        assert_eq!(focus(&mut app), Some(CONTINUE));
+        // A click on it does continue (and the beat still would).
+        let continue_ = choice(&mut app, CONTINUE);
+        click_on(&mut app, continue_);
+        frames(&mut app, 2);
+        assert_eq!(state(&app), TvState::Join);
+    }
+
+    /// Setup after its own picker was closed (`Picking` already
+    /// auto-opened, nothing open).
+    fn setup_after_its_picker_closed() -> App {
+        let mut app = tv_on(
+            TvScreen::Setup,
+            Duration::from_secs(5),
+            SetupView {
+                needs_setup: true,
+                ..Default::default()
+            },
+        );
+        app.insert_resource(Picking::closed_once());
+        app.update();
+        assert!(!wanted(&mut app), "it opened by itself again");
+        app
+    }
+
+    #[test]
+    fn south_on_setup_after_its_picker_closed_asks_for_it_and_a_click_beside_doesnt() {
+        let mut app = setup_after_its_picker_closed();
+        assert_eq!(focus(&mut app), Some(CHOOSE_FOLDER));
+        click_beside(&mut app);
+        assert!(!wanted(&mut app));
+        let pad = pad(&mut app);
+        button(&mut app, pad, GamepadButton::South, 1.0);
+        assert!(wanted(&mut app), "South reached should_open as a press");
+        button(&mut app, pad, GamepadButton::South, 0.0);
+        assert!(!wanted(&mut app), "one press, one opening");
+    }
+
+    #[test]
+    fn a_click_beside_the_button_on_no_giants_opens_no_picker() {
+        use crate::mirror::{Mirror, TvMirror};
+        let setup = SetupView {
+            needs_setup: false,
+            folders: vec!["/Volumes/dumps".into()],
+            found_titles: vec!["Skylanders: SWAP Force (BLUS31076)".into()],
+            ..Default::default()
+        };
+        let mut app = tv_on(TvScreen::NoGiants, Duration::from_secs(5), setup);
+        let mirror = TvMirror::default();
+        app.insert_resource(mirror.clone()).add_plugins(Mirror);
+        click_beside(&mut app);
+        frames(&mut app, 2);
+        assert!(!wanted(&mut app));
+        assert_eq!(app.world().resource::<Current>().screen, TvScreen::NoGiants);
+        let shot = mirror.0.lock().unwrap().clone();
+        assert_eq!(shot.screen, "NoGiants");
+        assert_eq!(shot.focus.as_deref(), Some(CHOOSE_FOLDER));
+        // The button itself does ask.
+        let choose = choice(&mut app, CHOOSE_FOLDER);
+        click_on(&mut app, choose);
+        assert!(wanted(&mut app));
+    }
+
+    fn error_screens() -> [TvScreen; 2] {
+        [
+            TvScreen::AlreadyRunning,
+            TvScreen::ServerError {
+                message: "open profile store".into(),
+            },
+        ]
+    }
+
+    #[test]
+    fn south_east_esc_and_a_click_anywhere_close_the_error_screens() {
+        type Press = fn(&mut App);
+        let presses: [(&str, Press); 5] = [
+            ("south", |app| {
+                let pad = pad(app);
+                button(app, pad, GamepadButton::South, 1.0);
+                // Held: the close button shows pressed until let go.
+                let close = choice(app, CLOSE);
+                assert!(app.world().get::<Pressed>(close).is_some());
+                button(app, pad, GamepadButton::South, 0.0);
+                app.update();
+                assert!(app.world().get::<Pressed>(close).is_none());
+            }),
+            ("east", |app| {
+                let pad = pad(app);
+                tap(app, pad, GamepadButton::East);
+            }),
+            ("esc", |app| key(app, KeyCode::Escape, Key::Escape)),
+            ("a click anywhere", click_beside),
+            ("a click on close", |app| {
+                let close = choice(app, CLOSE);
+                click_on(app, close);
+            }),
+        ];
+        for screen in error_screens() {
+            for (what, press) in presses {
+                let mut app = tv_on(screen.clone(), Duration::ZERO, SetupView::default());
+                assert_eq!(focus(&mut app), Some(CLOSE), "{screen:?}");
+                assert!(!exited(&app), "{screen:?}: closed early");
+                press(&mut app);
+                assert!(exited(&app), "{screen:?}: {what}");
+            }
+        }
+    }
+
+    #[test]
+    fn focus_lands_back_on_the_choose_folder_button_after_setups_lines_respawn() {
+        let mut app = setup_after_its_picker_closed();
+        let first = choice(&mut app, CHOOSE_FOLDER);
+        assert_eq!(app.world().resource::<InputFocus>().get(), Some(first));
+        // The sheet opens: the button gives way to a line.
+        app.world_mut().resource_mut::<Setup>().0.picking = true;
+        app.update();
+        let world = app.world_mut();
+        assert_eq!(world.query::<&FocusId>().iter(world).count(), 0);
+        // It fails: the column respawns with the error and a new button.
+        {
+            let mut setup = app.world_mut().resource_mut::<Setup>();
+            setup.0.picking = false;
+            setup.0.error = Some("/Volumes/gone isn't a folder".into());
+        }
+        app.update();
+        let second = choice(&mut app, CHOOSE_FOLDER);
+        assert_ne!(second, first);
+        app.update();
+        assert_eq!(app.world().resource::<InputFocus>().get(), Some(second));
+        // A click elsewhere clears the focus (pointer focus); it comes back.
+        app.world_mut().resource_mut::<InputFocus>().clear();
+        app.update();
+        assert_eq!(app.world().resource::<InputFocus>().get(), Some(second));
+    }
+
+    /// Enter goes through the widget (`FocusedInput`, which needs exactly one
+    /// `PrimaryWindow`: spawned here by hand, no winit), NumpadEnter and
+    /// South through the router; each activates the button once.
+    #[test]
+    fn enter_on_a_focused_button_activates_it_exactly_once() {
+        use bevy::ui_widgets::Activate;
+        use bevy::window::PrimaryWindow;
+
+        #[derive(Resource, Default)]
+        struct Activations(Vec<Entity>);
+
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
+        app.add_plugins(bevy::input_focus::InputDispatchPlugin)
+            .init_resource::<Activations>()
+            .add_observer(|a: On<Activate>, mut seen: ResMut<Activations>| {
+                seen.0.push(a.entity);
+            });
+        app.world_mut().spawn((Window::default(), PrimaryWindow));
+        app.update();
+        let activations =
+            |app: &mut App| std::mem::take(&mut app.world_mut().resource_mut::<Activations>().0);
+        let error = TvScreen::ServerError {
+            message: "open profile store".into(),
+        };
+        app.world_mut().resource_mut::<Current>().screen = error;
+        frames(&mut app, 2);
+        let close = choice(&mut app, CLOSE);
+        assert_eq!(app.world().resource::<InputFocus>().get(), Some(close));
+
+        key(&mut app, KeyCode::Enter, Key::Enter);
+        frames(&mut app, 2);
+        assert_eq!(activations(&mut app), [close], "Enter");
+        key(&mut app, KeyCode::Space, Key::Space);
+        assert_eq!(activations(&mut app), [close], "Space");
+        key(&mut app, KeyCode::NumpadEnter, Key::Enter);
+        assert_eq!(activations(&mut app), [close], "NumpadEnter");
+        let pad = pad(&mut app);
+        tap(&mut app, pad, GamepadButton::South);
+        assert_eq!(activations(&mut app), [close], "South");
+        // A held key repeating activates nothing more.
+        app.world_mut().write_message(KeyboardInput {
+            key_code: KeyCode::Enter,
+            logical_key: Key::Enter,
+            state: ButtonState::Pressed,
+            text: None,
+            repeat: true,
+            window: Entity::PLACEHOLDER,
+        });
+        app.update();
+        assert_eq!(activations(&mut app), [], "a repeat");
     }
 }

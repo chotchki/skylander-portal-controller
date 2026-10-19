@@ -3,19 +3,21 @@
 //! only under `test-hooks`. Read off the laid-out UI tree: the players line,
 //! join address, join QR and every card's lines, portrait, pip and rect.
 //! Copied from the resources that feed the tree: the screen, game, message,
-//! Setup's lists, each card's figure and owner ids, and the intro queue.
+//! Setup's lists, each card's figure and owner ids, and the intro queue. The
+//! focused choice is `InputFocus`'s entity's `FocusId`.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::extract::rejection::JsonRejection;
+use bevy::input_focus::InputFocus;
 use bevy::prelude::*;
 use bevy::ui::{ComputedNode, UiGlobalTransform, UiSystems};
 use serde::{Deserialize, Serialize};
 
 use crate::cards::PortalCards;
 use crate::extraction::{ExtractStatus, Extraction};
-use crate::input::{PostedPresses, TestPress};
+use crate::input::{FocusId, PostedPresses, TestPress};
 use crate::intro::{IntroEntry, IntroEvent, IntroQueue};
 use crate::intro_player::{self, IntroOverlay, IntroPlayer, IntroVideo};
 use crate::screen::TvScreen;
@@ -42,6 +44,9 @@ pub struct TvSnapshot {
     pub found: Vec<String>,
     pub folders: Vec<String>,
     pub problems: Vec<String>,
+    /// The focused choice's id (`choose-folder`, `continue`, `close`); none
+    /// when no choice has the focus.
+    pub focus: Option<String>,
     /// One per card drawn, in slot order.
     pub cards: Vec<CardShot>,
     /// Slots drawn as empty frames, 1-based.
@@ -258,10 +263,12 @@ fn mirror_tv(
     texts: Query<&Text>,
     images: Query<(), With<ImageNode>>,
     pips: Query<(&Pip, &BackgroundColor)>,
-    (players_line, address, qr): (
+    (players_line, address, qr, input_focus, choices): (
         Query<&Text, With<PlayersLine>>,
         Query<&Text, With<JoinAddress>>,
         Query<&ImageNode, With<JoinQr>>,
+        Option<Res<InputFocus>>,
+        Query<&FocusId>,
     ),
     (extraction, band_title, band_detail, bar): (
         Option<Res<Extraction>>,
@@ -400,6 +407,10 @@ fn mirror_tv(
         found: setup.0.found_titles.clone(),
         folders: setup.0.folders.clone(),
         problems: setup.0.problems.clone(),
+        focus: input_focus
+            .and_then(|f| f.get())
+            .and_then(|e| choices.get(e).ok())
+            .map(|id| id.0.to_string()),
         cards: drawn.into_iter().map(|(c, _)| c).collect(),
         empty_slots,
         window: [size.x as f32, size.y as f32],

@@ -855,6 +855,14 @@ async fn no_giants_dump_offers_no_game() {
     .await
     .expect("TV says no Giants dump");
     assert_eq!(snap["found"], json!(["Skylanders: SWAP Force (BLUS31076)"]));
+    // AP.6: its choose-folder button is already selected. Not pressed: that
+    // would open the folder sheet.
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(1), |s| {
+        !s["focus"].is_null()
+    })
+    .await
+    .expect("a choice has the focus");
+    assert_eq!(snap["focus"], "choose-folder", "{snap}");
     let folders = snap["folders"].as_array().unwrap();
     assert!(
         folders.len() == 1 && folders[0].as_str().unwrap().ends_with("dumps"),
