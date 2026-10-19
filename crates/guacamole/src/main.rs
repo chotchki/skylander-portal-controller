@@ -14,6 +14,7 @@ mod extraction;
 mod input;
 mod intro;
 mod intro_player;
+mod look;
 mod mirror;
 mod motion;
 mod picker;

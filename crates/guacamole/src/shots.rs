@@ -2,7 +2,8 @@
 //! ([`ReducedMotion`], so a screen's shot is the same on every run), the TV
 //! renders offscreen (`GUAC_SHOT_SIZE`, default 1920x1080) and a PNG is saved
 //! each time it settles after a redraw (a screen entered, a card or the
-//! extraction band redrawn, a line patched) or an intro (an intro's shot lands
+//! extraction band redrawn, a line patched, a choice's focus look turning on
+//! or off) or an intro (an intro's shot lands
 //! [`SETTLE`] into it). Offscreen because a locked or occluded Mac presents no
 //! window frames, so a window capture comes back black; the window stays empty
 //! meanwhile. An intro's shot is a frame of the disc's own FMV, so the folder

@@ -61,6 +61,10 @@ pub(crate) struct TvTheme {
     pub(crate) gold_inner: Color,
     /// §3.2's blue card at rest, top to bottom (0, 55%, 100%): the buttons.
     pub(crate) blue_card: [Color; 3],
+    /// §3.2's brightened blue card (the phone's hover): a focused button.
+    pub(crate) blue_card_lit: [Color; 3],
+    /// §3.1's picking glow, `rgba(255,230,120,0.75)`: round a focused button.
+    pub(crate) focus_glow: Color,
     /// §1's blue panel, top to bottom (0, 50%, 100%), opaque so text on it
     /// keeps one backdrop: a figure card's fill.
     pub(crate) panel: [Color; 3],
@@ -118,6 +122,12 @@ impl Default for TvTheme {
                 hex(0x1e, 0x4f, 0xb3),
                 hex(0x15, 0x3a, 0x8a),
             ],
+            blue_card_lit: [
+                hex(0x42, 0x86, 0xf0),
+                hex(0x2a, 0x62, 0xcd),
+                hex(0x1b, 0x46, 0xa0),
+            ],
+            focus_glow: hex(0xff, 0xe6, 0x78).with_alpha(0.75),
             panel: [
                 hex(0x1a, 0x3a, 0x8a),
                 hex(0x0a, 0x24, 0x64),
@@ -244,6 +254,12 @@ mod tests {
             ["#FFE58A", "#F5C634", "#C58C18", "#6E4A00", "#3A2500"]
         );
         assert_eq!(theme.blue_card.map(hex), ["#2F6EDC", "#1E4FB3", "#153A8A"]);
+        assert_eq!(
+            theme.blue_card_lit.map(hex),
+            ["#4286F0", "#2A62CD", "#1B46A0"]
+        );
+        assert_eq!(hex(theme.focus_glow.with_alpha(1.0)), "#FFE678");
+        assert_eq!(theme.focus_glow.alpha(), 0.75);
         assert_eq!(theme.panel.map(hex), ["#1A3A8A", "#0A2464", "#061436"]);
         assert!(theme.panel.iter().all(|c| c.alpha() == 1.0));
         assert_eq!(theme.plate.map(hex), ["#1A2A4A", "#0A1630"]);

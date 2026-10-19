@@ -31,6 +31,7 @@ use tracing::{error, info, warn};
 use crate::cards::{PortalCards, drain_portal};
 use crate::extraction::{Band, ExtractBand};
 use crate::input::FocusId;
+use crate::look::{self, ChoiceFace};
 use crate::motion::ReducedMotion;
 use crate::picker::FolderAsked;
 use crate::screen::{SetupView, TvScreen, screen_for};
@@ -258,6 +259,8 @@ pub(crate) enum Redrawn {
     Band,
     /// A drawn line took new text: the players line, a setup line, the message.
     Text,
+    /// A choice's focus look turned on or off (`look`).
+    Focus,
 }
 
 /// The `Update` systems that redraw part of a screen in place.
@@ -352,6 +355,7 @@ impl Plugin for Screens {
                 )
                     .in_set(Redraw),
                 arm_layout_report.after(Redraw),
+                look::ease_faces.after(Redraw),
             ),
         );
     }
@@ -764,7 +768,7 @@ fn arm_layout_report(mut redrawn: MessageReader<Redrawn>, mut report: ResMut<Lay
                 report.0 = REPORT_AFTER_FRAMES;
             }
             Redrawn::Screen(_) => report.0 = 0,
-            Redrawn::Text => {}
+            Redrawn::Text | Redrawn::Focus => {}
         }
     }
 }
@@ -898,8 +902,8 @@ fn spawn_line(column: &mut ChildSpawnerCommands, pen: &Pen, line: &Line) {
 /// A choice: a `bevy_ui_widgets` button, focused when it appears
 /// (`AutoFocus`), taking the focus from a click on it (`TabIndex`; without one
 /// a click clears it) and named for the router and the mirror (`FocusId`).
-/// Its look, §3.2's blue card, sits on a face inside it, so AP.13's focus
-/// scale moves no rect the tests read.
+/// Its look, §3.2's blue card, sits on a face inside it, which the focus
+/// look and the press scale (`look`) without moving a rect the tests read.
 fn choice_bundle(pen: &Pen, text: &str, id: &'static str) -> impl Bundle + use<> {
     (
         Button,
@@ -911,6 +915,7 @@ fn choice_bundle(pen: &Pen, text: &str, id: &'static str) -> impl Bundle + use<>
             ..default()
         },
         children![(
+            ChoiceFace::default(),
             Node {
                 padding: UiRect::axes(px(48), px(16)),
                 border: UiRect::all(px(BUTTON_BORDER)),
@@ -3198,32 +3203,54 @@ pub(crate) mod layout_tests {
         }
     }
 
-    /// AP.12: every choice's face is §3.2's blue card at rest: the three-stop
-    /// fill, a solid `--gb` edge and the drop under it.
+    /// AP.12, AP.13: every choice's face is §3.2's blue card: at rest (the
+    /// focus not showing) the three-stop fill, a solid `--gb` edge and the two
+    /// drops under it; focused, the brightened fill with §3.1's picking glow
+    /// between the drops and the face at 1.05, the button's own node unscaled.
     #[test]
     fn every_choice_wears_the_blue_card() {
+        use bevy::input_focus::InputFocusVisible;
         let theme = TvTheme::default();
         let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
+        app.insert_resource(ReducedMotion(true));
         let mut seen = std::collections::BTreeSet::new();
         for screen in every_screen() {
             app.world_mut().resource_mut::<Current>().screen = screen.clone();
-            frames(&mut app, 2);
-            let world = app.world_mut();
-            let mut q = world.query::<(&FocusId, &Children)>();
-            let faces: Vec<(&'static str, Entity)> =
-                q.iter(world).map(|(id, kids)| (id.0, kids[0])).collect();
-            for (id, face) in faces {
-                let at = format!("{screen:?} {id}");
-                let fill = world.get::<BackgroundGradient>(face).unwrap();
-                let Gradient::Linear(base) = &fill.0[0] else {
-                    panic!("{at}: {fill:?}");
-                };
-                let colours: Vec<Color> = base.stops.iter().map(|s| s.color).collect();
-                assert_eq!(colours, theme.blue_card, "{at}");
-                let edge = world.get::<BorderColor>(face).unwrap();
-                assert_eq!(edge.top, theme.gold_bright, "{at}");
-                assert_eq!(world.get::<BoxShadow>(face).unwrap().len(), 2, "{at}");
-                seen.insert(id);
+            for showing in [false, true] {
+                app.insert_resource(InputFocusVisible(showing));
+                frames(&mut app, 2);
+                let world = app.world_mut();
+                let mut q = world.query::<(Entity, &FocusId, &Children)>();
+                let faces: Vec<(Entity, &'static str, Entity)> = q
+                    .iter(world)
+                    .map(|(button, id, kids)| (button, id.0, kids[0]))
+                    .collect();
+                for (button, id, face) in faces {
+                    let at = format!("{screen:?} {id} showing {showing}");
+                    assert!(world.get::<ChoiceFace>(face).is_some(), "{at}");
+                    let fill = world.get::<BackgroundGradient>(face).unwrap();
+                    let Gradient::Linear(base) = &fill.0[0] else {
+                        panic!("{at}: {fill:?}");
+                    };
+                    let colours: Vec<Color> = base.stops.iter().map(|s| s.color).collect();
+                    let shadows = &world.get::<BoxShadow>(face).unwrap().0;
+                    let scale = world.get::<UiTransform>(face).unwrap().scale;
+                    if showing {
+                        assert_eq!(colours, theme.blue_card_lit, "{at}");
+                        assert_eq!(shadows.len(), 3, "{at}");
+                        assert_eq!(shadows[1].color, theme.focus_glow, "{at}");
+                        assert_eq!(scale, Vec2::splat(look::FOCUS_SCALE), "{at}");
+                    } else {
+                        assert_eq!(colours, theme.blue_card, "{at}");
+                        assert_eq!(shadows.len(), 2, "{at}");
+                        assert_eq!(scale, Vec2::ONE, "{at}");
+                    }
+                    let edge = world.get::<BorderColor>(face).unwrap();
+                    assert_eq!(edge.top, theme.gold_bright, "{at}");
+                    let outer = world.get::<UiTransform>(button).unwrap();
+                    assert_eq!(*outer, UiTransform::IDENTITY, "{at}: the button's own node");
+                    seen.insert(id);
+                }
             }
         }
         assert_eq!(
@@ -3231,6 +3258,122 @@ pub(crate) mod layout_tests {
             [CHOOSE_FOLDER, CONTINUE, CLOSE].into(),
             "every choice was drawn"
         );
+    }
+
+    /// Where every node sits (its size and its whole transform, scale
+    /// included), but for the choices' faces and what's on them, and the
+    /// drifting sky.
+    pub(crate) fn outer_nodes(
+        app: &mut App,
+    ) -> std::collections::BTreeMap<Entity, (Vec2, UiGlobalTransform)> {
+        let world = app.world_mut();
+        let mut skip = Vec::new();
+        let mut q =
+            world.query_filtered::<Entity, Or<(With<ChoiceFace>, With<starfield::StarLayer>)>>();
+        let mut stack: Vec<Entity> = q.iter(world).collect();
+        while let Some(e) = stack.pop() {
+            skip.push(e);
+            if let Some(kids) = world.get::<Children>(e) {
+                stack.extend(kids.iter());
+            }
+        }
+        let mut q = world.query::<(Entity, &ComputedNode, &UiGlobalTransform)>();
+        q.iter(world)
+            .filter(|(e, _, _)| !skip.contains(e))
+            .map(|(e, n, t)| (e, (n.size(), *t)))
+            .collect()
+    }
+
+    fn face_of(app: &App, button: Entity) -> Entity {
+        app.world().get::<Children>(button).unwrap()[0]
+    }
+
+    pub(crate) fn scale_of(app: &App, button: Entity) -> f32 {
+        let scale = app
+            .world()
+            .get::<UiTransform>(face_of(app, button))
+            .unwrap()
+            .scale;
+        assert_eq!(scale.x, scale.y);
+        scale.x
+    }
+
+    /// AP.13: the focus moving from one choice to another eases one face down
+    /// and the other up through the spring's overshoot, and every other node,
+    /// the buttons and the marked lines included, stays exactly where it was
+    /// before, during and after; the change writes `Redrawn::Focus`, which
+    /// arms a shot.
+    #[test]
+    fn a_focus_change_moves_no_marked_rect() {
+        use bevy::input_focus::{FocusCause, InputFocus};
+        use bevy::time::TimeUpdateStrategy;
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
+        app.init_resource::<Seen>()
+            .add_systems(PostUpdate, see)
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+                20,
+            )));
+        app.world_mut().resource_mut::<Current>().screen = TvScreen::ServerError {
+            message: "bind 0.0.0.0:8765: address in use".into(),
+        };
+        frames(&mut app, 2);
+        // A second choice beside Close, as the Home menu will have.
+        let root = {
+            let world = app.world_mut();
+            let mut q = world.query_filtered::<Entity, With<ScreenRoot>>();
+            q.single(world).unwrap()
+        };
+        let pen = Pen::new(
+            app.world().resource::<TvAssets>(),
+            app.world().resource::<TvTheme>(),
+        );
+        let other = app
+            .world_mut()
+            .spawn(choice_bundle(&pen, "Try again", "try-again"))
+            .id();
+        app.world_mut().entity_mut(root).add_child(other);
+        let close = choice_tests::choice(&mut app, CLOSE);
+        app.world_mut()
+            .resource_mut::<InputFocus>()
+            .set(close, FocusCause::Navigated);
+        frames(&mut app, 20);
+        assert_eq!(scale_of(&app, close), look::FOCUS_SCALE);
+        assert_eq!(scale_of(&app, other), 1.0);
+        let before = outer_nodes(&mut app);
+        assert!(before.len() > 4, "{before:?}");
+        for marked in [close, other] {
+            assert!(before.contains_key(&marked), "the buttons are measured");
+        }
+        seen(&mut app);
+
+        app.world_mut()
+            .resource_mut::<InputFocus>()
+            .set(other, FocusCause::Navigated);
+        let mut ups = Vec::new();
+        let mut downs = Vec::new();
+        for frame in 0..20 {
+            app.update();
+            assert_eq!(outer_nodes(&mut app), before, "frame {frame}");
+            ups.push(scale_of(&app, other));
+            downs.push(scale_of(&app, close));
+        }
+        let top = ups.iter().copied().fold(f32::MIN, f32::max);
+        assert!(top > look::FOCUS_SCALE, "the pop overshoots: {ups:?}");
+        assert!(ups[1] > 1.0 && ups[1] < top, "mid-way: {ups:?}");
+        assert!(
+            downs.iter().any(|s| *s < 1.0),
+            "and back past rest: {downs:?}"
+        );
+        assert_eq!(ups.last(), Some(&look::FOCUS_SCALE), "{ups:?}");
+        assert_eq!(downs.last(), Some(&1.0), "{downs:?}");
+        assert_eq!(outer_nodes(&mut app), before, "after");
+        let (redrawn, armed) = seen(&mut app);
+        assert_eq!(
+            redrawn,
+            [Redrawn::Focus],
+            "a shot is armed, no layout report"
+        );
+        assert_eq!(armed, 0);
     }
 }
 
@@ -3540,6 +3683,61 @@ pub(crate) mod choice_tests {
         let choose = choice(&mut app, CHOOSE_FOLDER);
         click_on(&mut app, choose);
         assert!(wanted(&mut app));
+    }
+
+    /// AP.13: South held on the focused Close dips its face by the tap,
+    /// through `--ease-tap`'s overshoot, and lets it back up to the focus
+    /// pop when let go, every other node staying put; under `ReducedMotion`
+    /// each lands at its end the frame it changes.
+    #[test]
+    fn the_press_dips_the_focused_face_and_lets_it_back() {
+        use bevy::time::TimeUpdateStrategy;
+
+        use super::layout_tests::{outer_nodes, scale_of};
+        use crate::look::{FOCUS_SCALE, TAP_SCALE};
+        use crate::motion::ReducedMotion;
+        let pressed = FOCUS_SCALE * TAP_SCALE;
+        for reduced in [false, true] {
+            let mut app = tv_on(
+                error_screens()[1].clone(),
+                Duration::ZERO,
+                SetupView::default(),
+            );
+            app.insert_resource(ReducedMotion(reduced)).insert_resource(
+                TimeUpdateStrategy::ManualDuration(Duration::from_millis(10)),
+            );
+            frames(&mut app, 30);
+            let close = choice(&mut app, CLOSE);
+            assert_eq!(scale_of(&app, close), FOCUS_SCALE, "{reduced}");
+            let before = outer_nodes(&mut app);
+            let pad = pad(&mut app);
+            let run = |app: &mut App, value: f32| {
+                button(app, pad, GamepadButton::South, value);
+                let mut seen = vec![scale_of(app, close)];
+                for _ in 0..20 {
+                    app.update();
+                    assert_eq!(outer_nodes(app), before, "{reduced}");
+                    seen.push(scale_of(app, close));
+                }
+                seen
+            };
+            let down = run(&mut app, 1.0);
+            assert!(app.world().get::<Pressed>(close).is_some());
+            let up = run(&mut app, 0.0);
+            assert!(app.world().get::<Pressed>(close).is_none());
+            let low = down.iter().copied().fold(f32::MAX, f32::min);
+            let high = up.iter().copied().fold(f32::MIN, f32::max);
+            assert_eq!(down.last(), Some(&pressed), "{reduced}: {down:?}");
+            assert_eq!(up.last(), Some(&FOCUS_SCALE), "{reduced}: {up:?}");
+            if reduced {
+                assert!(down.iter().all(|s| *s == pressed), "{down:?}");
+                assert!(up.iter().all(|s| *s == FOCUS_SCALE), "{up:?}");
+            } else {
+                assert_eq!(down[0], FOCUS_SCALE, "the press starts from the pop");
+                assert!(low < pressed - 0.005, "dips past the tap: {down:?}");
+                assert!(high > FOCUS_SCALE + 0.005, "springs past it: {up:?}");
+            }
+        }
     }
 
     fn error_screens() -> [TvScreen; 2] {

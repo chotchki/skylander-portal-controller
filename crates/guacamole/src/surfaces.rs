@@ -265,52 +265,91 @@ fn gold_run(theme: &TvTheme) -> Gradient {
 /// "always full-bright gold"), over the offset drop that gives it depth
 /// (`0 3px 0`) and an ambient shadow (`0 5px 12px`).
 pub(crate) fn blue_card(theme: &TvTheme) -> impl Bundle + use<> {
-    let [top, middle, bottom] = theme.blue_card;
-    let width = 2.0 * BUTTON_SCALE;
     (
-        BackgroundGradient(vec![
-            linear(
-                LinearGradient::TO_BOTTOM,
-                vec![
-                    ColorStop::percent(top, 0),
-                    ColorStop::percent(middle, 55),
-                    ColorStop::percent(bottom, 100),
-                ],
-            ),
-            line(
-                LinearGradient::TO_BOTTOM,
-                theme.light,
-                0.25,
-                BUTTON_BORDER,
-                width,
-            ),
-            line(
-                LinearGradient::TO_TOP,
-                theme.shadow,
-                0.25,
-                BUTTON_BORDER,
-                width,
-            ),
-        ]),
+        blue_card_face(theme, 0.0),
         BorderColor::all(theme.gold_bright),
-        // Back to front: 0 5px 12px rgba(0,0,0,0.4), then 0 3px 0 rgba(0,0,0,0.45).
-        BoxShadow(vec![
-            ShadowStyle {
-                color: theme.shadow.with_alpha(0.4),
-                x_offset: px(0),
-                y_offset: px(5.0 * BUTTON_SCALE),
-                spread_radius: px(0),
-                blur_radius: px(12.0 * BUTTON_SCALE),
-            },
-            ShadowStyle {
-                color: theme.shadow.with_alpha(0.45),
-                x_offset: px(0),
-                y_offset: px(3.0 * BUTTON_SCALE),
-                spread_radius: px(0),
-                blur_radius: px(0),
-            },
-        ]),
     )
+}
+
+/// The face's fill and shadows `lit` of the way (0 to 1, clamped) from
+/// §3.2's rest look to its focused one: the brightened gradient (the phone's
+/// hover) and §3.1's picking glow (`0 0 22px 4px` at twice the phone's size,
+/// as the rest of the button is, through [`css_shadow`]) between the two
+/// drops. At 0 it's the rest look exactly, with no glow drawn.
+pub(crate) fn blue_card_face(theme: &TvTheme, lit: f32) -> (BackgroundGradient, BoxShadow) {
+    let lit = lit.clamp(0.0, 1.0);
+    let [top, middle, bottom] = std::array::from_fn(|i| {
+        let rest = Srgba::from(theme.blue_card[i]);
+        Color::from(rest.mix(&Srgba::from(theme.blue_card_lit[i]), lit))
+    });
+    let width = 2.0 * BUTTON_SCALE;
+    let fill = BackgroundGradient(vec![
+        linear(
+            LinearGradient::TO_BOTTOM,
+            vec![
+                ColorStop::percent(top, 0),
+                ColorStop::percent(middle, 55),
+                ColorStop::percent(bottom, 100),
+            ],
+        ),
+        line(
+            LinearGradient::TO_BOTTOM,
+            theme.light,
+            0.25,
+            BUTTON_BORDER,
+            width,
+        ),
+        line(
+            LinearGradient::TO_TOP,
+            theme.shadow,
+            0.25,
+            BUTTON_BORDER,
+            width,
+        ),
+    ]);
+    // Back to front: 0 5px 12px rgba(0,0,0,0.4), the glow, then 0 3px 0
+    // rgba(0,0,0,0.45), the order the phone's hover stacks them in.
+    let mut shadows = vec![ShadowStyle {
+        color: theme.shadow.with_alpha(0.4),
+        x_offset: px(0),
+        y_offset: px(5.0 * BUTTON_SCALE),
+        spread_radius: px(0),
+        blur_radius: px(12.0 * BUTTON_SCALE),
+    }];
+    if lit > 0.0 {
+        let glow = theme.focus_glow;
+        shadows.push(css_shadow(
+            glow.with_alpha(glow.alpha() * lit),
+            Vec2::ZERO,
+            22.0 * BUTTON_SCALE,
+            4.0 * BUTTON_SCALE,
+        ));
+    }
+    shadows.push(ShadowStyle {
+        color: theme.shadow.with_alpha(0.45),
+        x_offset: px(0),
+        y_offset: px(3.0 * BUTTON_SCALE),
+        spread_radius: px(0),
+        blur_radius: px(0),
+    });
+    (fill, BoxShadow(shadows))
+}
+
+/// A CSS `box-shadow` (`offset`, `blur` and `spread` in design px, already
+/// scaled to the TV) as bevy_ui draws the same thing: bevy_ui's blur radius
+/// is its Gaussian's sigma where CSS's is twice the sigma, and its spread
+/// grows the node's width by the value (the height in proportion) where
+/// CSS's grows each side by it (`bevy_ui_render`'s `box_shadow.rs` and
+/// `.wesl`). So a CSS shadow passed through as written draws twice as soft
+/// and half as spread.
+pub(crate) fn css_shadow(color: Color, offset: Vec2, blur: f32, spread: f32) -> ShadowStyle {
+    ShadowStyle {
+        color,
+        x_offset: px(offset.x),
+        y_offset: px(offset.y),
+        spread_radius: px(2.0 * spread),
+        blur_radius: px(blur / 2.0),
+    }
 }
 
 /// The owner pip in its card's top-right corner (design decision 8: the
