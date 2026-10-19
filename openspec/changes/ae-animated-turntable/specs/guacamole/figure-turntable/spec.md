@@ -2,7 +2,7 @@
 
 ## Purpose
 
-What guacamole's TV shows for a figure on the portal once the figure has a model on the disc: the character itself, textured, idling and turning on its card, in whichever look the TV is set to.
+What guacamole's TV shows for a figure on the portal once the figure has a model on the disc: the character itself, textured, idling and turning on its card, in the remaster look.
 
 ## ADDED Requirements
 
@@ -47,7 +47,7 @@ A figure with no character model on the disc (magic items, adventure-pack pieces
 - **THEN** its card shows its portrait, the log names the figure and why, and the other cards keep turning
 
 ### Requirement: The turntable never stalls the TV
-On the M3 Max, placing a figure, its model appearing and switching the look SHALL NOT make any TV frame take longer than 50 ms, from the first placement after guacamole starts. A figure's model SHALL be on its card by the time its intro ends, or within 1 second of its placement when it has no intro.
+On the M3 Max, placing a figure and its model appearing SHALL NOT make any TV frame take longer than 50 ms, from the first placement after guacamole starts. A figure's model SHALL be on its card by the time its intro ends, or within 1 second of its placement when it has no intro.
 
 #### Scenario: The first placement after a start
 - **WHEN** guacamole has just started and a phone places the first figure since

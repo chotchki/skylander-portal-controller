@@ -25,7 +25,7 @@ For a dump it doesn't recognize, guacamole SHALL extract nothing and its TV SHAL
 - **THEN** nothing is extracted, the TV shows the unknown-dump message with its error code, the report lists every file's name, size and hash, and the phone's collection lists no figures and says the disc wasn't recognized
 
 ### Requirement: Extraction runs once and survives interruption
-The first time Giants is picked with a recognized dump and no current extraction, guacamole's TV SHALL show extraction progress while it runs. The figure roster SHALL be extracted first, and phones SHALL be able to place figures from the moment it lands while the rest runs. Later starts SHALL reuse a current extraction without redoing it. An interrupted extraction SHALL resume on the next start, redoing only unfinished files. An extraction from a guacamole with another extraction format SHALL be redone, with progress shown again.
+The first time Giants is picked with a recognized dump and no current extraction, guacamole's TV SHALL show extraction progress while it runs. The figure roster SHALL come first, and phones SHALL be able to place figures once it lands while the rest runs. Later starts SHALL reuse a current extraction. An interrupted extraction SHALL resume on the next start, redoing only unfinished files. An extraction in an older or newer extraction format SHALL be redone, with progress shown again.
 
 #### Scenario: First pick
 - **WHEN** Giants is picked for the first time with the known dump

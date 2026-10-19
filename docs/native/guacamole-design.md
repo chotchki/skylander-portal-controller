@@ -24,10 +24,11 @@ identity out of the disc's own roster, so nobody dumps a toy and nothing reads a
 second binary, `guacamole`, beside the product launcher until it can play a whole game.
 
 The bar is parity: what the original game observably does, as seen through the patched RPCS3 (the
-oracle), at the original logic tick, EXCEPT the deliberate departures listed below. A Faithful render mode
-matches the original look first and an Enhanced toggle layers modern lighting and upscaled textures on
-top. Faithful comes first because the oracle can check it and can't check Enhanced (and an upscaled game
-that plays wrong isn't the goal).
+oracle), at the original logic tick, EXCEPT the deliberate departures listed below. The look is one of
+them: ONE renderer, a remaster (the game's own models, materials and shading in linear light, tonemapped),
+and the Enhanced line (modern lighting, upscaled textures) grows out of it (Decisions, fifth batch). The
+oracle checks decoding and gameplay, not the look (and an upscaled game that plays wrong isn't the
+goal).
 
 The why is chotchki's: exploring what's even possible and bringing joy to his kids. There's no time or
 cost pressure and the scale is not up for re-argument. What the motivation DOES set is ordering: every
@@ -39,13 +40,13 @@ USB/HID portal (never), anything online and reading a `.sky` file in any form.
 
 ## Decisions
 
-All chotchki's, all 2026-10-17. Quotes are his words (spelling fixed). The second, third and fourth
-batches came later that day and a later batch wins wherever two touched. What the second superseded (a
-one-way `.sky` import, sky-parser in the Guacamole path, stats read from `.sky`, finding dumps through
-RPCS3's `games.yml`, the product's wizard as a prerequisite, importing RPCS3 saves, trophies cut, PvP
-undecided), the open questions the third answered and the HTPC as the gate every early rung checked
-against (the fourth) are gone from this doc, not kept beside it. A proposal that needs one reversed says so
-and asks, it doesn't relitigate quietly.
+All chotchki's: the first four batches 2026-10-17, the fifth 2026-10-18. Quotes are his words (spelling
+fixed). The second, third and fourth batches came later that day and a later batch wins wherever two
+touched. What the second superseded (a one-way `.sky` import, sky-parser in the Guacamole path, stats
+read from `.sky`, finding dumps through RPCS3's `games.yml`, the product's wizard as a prerequisite,
+importing RPCS3 saves, trophies cut, PvP undecided), the open questions the third answered and the HTPC
+as the gate every early rung checked against (the fourth) are gone from this doc, not kept beside it. A
+proposal that needs one reversed says so and asks, it doesn't relitigate quietly.
 
 First batch:
 
@@ -147,8 +148,6 @@ Third batch:
 - Git: "Commit freely on a branch, we'll use a 2.0 branch as our 'main' until we've gotten through some
   milestones." Guacamole and all OpenSpec work land on `2.0`; `main` holds the frozen product line
   (CLAUDE.md, Git workflow).
-- Ladder ids float: `openspec/config.yaml` allocates each one at `/opsx:propose` (this doc's working
-  assumption, which round three left standing; no quote).
 - Physics: Avian replaces Havok, "probably avian if I had to guess." Avian 0.7.0 and its main branch were
   still on Bevy 0.19 on 2026-10-17, so until its 0.20 release Guacamole takes the branch the developer
   recommends, avianphysics/avian#1070 (Bevy 0.20 + Parry 0.31), as a git dependency pinned by rev
@@ -176,6 +175,23 @@ Fourth batch:
   proposed stands ("Don't care, we're going to touch it again later.") and AD needs no Windows build
   before a tag (the Mac-first quote above).
 
+Fifth batch (2026-10-18, AE's open questions and the ids):
+
+- One look, the remaster: "remastered is all I want to support, if I wanted faithful I'd do the
+  emulator." It reverses this doc's Faithful default with an Enhanced toggle. guacamole has no
+  original-look mode, setting or key, and the Enhanced line grows out of the remaster (Renderer). The
+  oracle checks decoding and gameplay, not the look (Deliberate departures).
+- The remaster's colour: linear light, Bevy's HDR pipeline and TonyMcMapface, "let's do the modern bevy
+  look, I'll decide later if there are lighting issues with it." No exposure lift until he's looked at it
+  (AE.18).
+- Models, skeletons, materials and clips go into the IR, not glTF, by his rule for it: "whatever is
+  easiest to load by bevy" (The extractor;
+  [`ae-animated-turntable`](../../openspec/changes/ae-animated-turntable/design.md) decision 6 has the
+  evidence).
+- Ids: "I don't care, the two letter id is just a holdover from claude-plan-bridge." The ids the ladder
+  names are reserved ([`openspec/config.yaml`](../../openspec/config.yaml)), so a change off the ladder
+  takes the next unreserved one, as AP did. This replaces the third batch's floating ids.
+
 ## Deliberate departures from the original
 
 Parity means matching the original EXCEPT this list. Each item is chotchki's call (Decisions); the oracle
@@ -198,7 +214,10 @@ checks everything else.
   Giants' online surface isn't measured, and the cut covers whatever is there.
 - Button prompts show the label printed on the pad in the player's hands, not the PS3's glyphs
   (Controllers).
-- The Enhanced renderer is an opt-in toggle over the Faithful default (Renderer).
+- The look is a remaster, not the original's: the game's own models, materials and shading model worked
+  in linear light at high dynamic range and tonemapped, where the original works on gamma-encoded values
+  and clips each channel at 8 bits (Eruptor's orange lava flattens to yellow). There's no original-look
+  mode (Decisions, fifth batch), and the Enhanced line grows out of the remaster (Renderer).
 - Rendering runs above the original frame rate by interpolating between logic ticks; the logic stays at
   the original tick (Renderer).
 
@@ -245,7 +264,7 @@ flowchart LR
   end
   subgraph root["guacamole's own data root"]
     db[("SQLite: profiles, PINs, figure instances, story saves, achievements, settings")]
-    extract[("extract/, a regenerable cache: KTX2, glTF, audio, video, IR (release; dev keeps it outside the tree)")]
+    extract[("extract/, a regenerable cache: KTX2, IR, audio, video (release; dev keeps it outside the tree)")]
   end
   ctrl[("the controller's db.sqlite + config.json")]
   dumps[("disc dumps (read-only)")]
@@ -1078,8 +1097,10 @@ Why it's shaped this way:
 - Running the script data means 48 characters' moves come from one VM plus its built-ins, so a bug fixed
   in a built-in is fixed for every character. Rewriting each moveset by hand is 48 chances to drift.
 - Shaders follow the same path: the shading model goes into a spec as equations, gets written fresh in
-  WESL and is checked with [FLIP](https://github.com/NVlabs/flip) against RSX captures. Ported microcode
-  (with the PS3's shader patching baked in) can't grow an Enhanced mode.
+  WESL and is checked term by term against a CPU model written from the same spec. Since the look is a
+  remaster, [FLIP](https://github.com/NVlabs/flip) against an oracle frame is recorded, not gated (AE.16).
+  Ported microcode (with the PS3's shader patching baked in) can't move into linear light or grow the
+  Enhanced line.
 - The nearest prior shape is [OpenMW](https://openmw.org) (the original data and scripts on a
   from-scratch engine), not [OpenGOAL](https://opengoal.dev) (decompiles and recompiles the original code)
   or [Unleashed Recompiled](https://github.com/hedge-dev/UnleashedRecomp) (static recompilation).
@@ -1269,11 +1290,14 @@ The plan the crates serve:
   version moves, which is why a proposal must say whether it changes either. The extract dir is a cache,
   never a save (Persistence and setup).
 - Commodity assets transcode to formats Bevy loads natively. Textures → KTX2 carrying the original BC
-  blocks (untile and endian fix only, no re-encode). Meshes, skeletons and animations → glTF `.glb`, with
-  engine semantics in the IR. FSB5 MPEG → MP3 (a remux, not a byte copy). Bink 1 → ffmpeg → H.264
-  Constrained Baseline in MP4 plus an MP3 of the voice track (AB.7's pick, below). Logic data (scenes,
-  collision, tfbScript graphs, tuning, localization) → IR. Content-hash dedupe (Giants is more than half
-  duplicate bytes by name).
+  blocks (untile and endian fix only, no re-encode). Meshes, skeletons, materials and animations → the
+  IR, not glTF: chotchki's rule was "whatever is easiest to load by bevy" (fifth batch), and Bevy's glTF
+  loader turns every material into a `StandardMaterial`, can't take KTX2 through `KHR_texture_basisu` and
+  wants Havok's splines converted, where the IR builds a `Mesh`, a skin and the game's own material
+  directly ([`ae-animated-turntable`](../../openspec/changes/ae-animated-turntable/design.md), decision
+  6). FSB5 MPEG → MP3 (a remux, not a byte copy). Bink 1 → ffmpeg → H.264 Constrained Baseline in MP4
+  plus an MP3 of the voice track (AB.7's pick, below). Logic data (scenes, collision, tfbScript graphs,
+  tuning, localization) → IR. Content-hash dedupe (Giants is more than half duplicate bytes by name).
 - ffmpeg is a tool the user installs, found at extract time and never needed after; bundling it waits
   until guacamole ships alone (ffmpeg and the transcode, below).
 - Nothing in the repo: unit tests use synthetic byte fixtures built in code, the e2e intro is ffmpeg's
@@ -1472,23 +1496,34 @@ on Bevy 0.9-0.19, the newest on FFmpeg). Measured on the M3 Max with the display
 
 ## Renderer
 
-Faithful first, Enhanced as a toggle.
+One renderer, a remaster, and the Enhanced line grows out of it. chotchki, 2026-10-18 (Decisions,
+fifth batch): "remastered is all I want to support, if I wanted faithful I'd do the emulator." No
+original-look mode, no toggle.
 
-Faithful. Giants' material look is painted diffuse (lighting and AO baked in by the artists), tangent
-normals, specular colour and per-character rim/matcap lookups, the same model SSA uses. Giants' render
-pipeline itself isn't characterized yet. Trap Team's is (a data-driven `tfbRenderer.igx` with a G-buffer,
-tiled deferred lights, CSM, AO, bloom, DoF, motion blur, FXAA and LUTs) and Giants is probably kin, but
-that's unverified. The shading model goes through the method above (spec, WESL, FLIP against RSX
-captures; RPCS3 already holds 155 fragment and 62 vertex programs for Giants). Gamma-space vs linear
-output is unknown; an RSX capture's surface formats answer it.
+The remaster keeps the game's own look and changes the colour space under it. Giants' material look is
+painted diffuse (lighting and AO baked in by the artists), tangent normals, specular colour and
+per-character rim/matcap lookups, the same model SSA uses; its characters draw with one effect,
+tfbmulti2, one function of 14 feature bits
+([`ae-animated-turntable`](../../openspec/changes/ae-animated-turntable/design.md), decision 9). The
+shading model goes through the method above (spec, WESL, a CPU model from the same spec). The game does
+its arithmetic on stored, gamma-encoded values and clips each channel at 8 bits, so Eruptor's orange lava
+flattens to yellow. The remaster decodes the colour, spec and rim maps and the disc's light colours into
+linear light, renders HDR and tonemaps with TonyMcMapface: "let's do the modern bevy look, I'll decide
+later if there are lighting issues with it." No exposure lift is tuned until he's judged it (AE.18).
+Giants' render pipeline beyond the characters isn't characterized yet. Trap Team's is (a data-driven
+`tfbRenderer.igx` with a G-buffer, tiled deferred lights, CSM, AO, bloom, DoF, motion blur, FXAA and
+LUTs) and Giants is probably kin, but that's unverified.
 
-Enhanced keeps the stylized model as the look and modernizes the light transport around it:
-higher-resolution CSM with PCSS or contact shadows, GTAO, TAA (DLSS on the HTPC), tuned bloom and DoF,
-an HDR tonemap matched to the original grade, the upscaled pack. No wholesale PBR conversion and no
-de-lighting the albedo; that's re-art-direction, not a remaster. The toggle keeps both material sets
-resident per entity (or one `ExtendedMaterial` with a mode uniform) and swaps the camera's post
-components. Halo CE Anniversary and Unleashed Recompiled are the precedents: accuracy by default,
-enhancements opt-in.
+The oracle checks decoding and gameplay, not the look. AC's gate matched textures, geometry, skeleton and
+clips against what the original fed RSX, and AF's metrics compare gameplay from AG on. A FLIP of the
+remaster against an oracle frame (AE.16) is recorded, never gated: the look departs by design (Deliberate
+departures).
+
+Enhanced is the remaster's next steps, not a second look: the stylized model stays the look and the light
+transport around it modernizes (higher-resolution CSM with PCSS or contact shadows, GTAO, TAA, DLSS on
+the HTPC, tuned bloom and DoF, the upscaled pack). No wholesale PBR conversion and no de-lighting the
+albedo; that's re-art-direction, not a remaster. With one look, nothing keeps two material sets resident
+or swaps post stacks.
 
 Frame rate: logic runs in `FixedUpdate` at the original tick and rendering interpolates transforms
 between ticks, so 60 fps+ doesn't touch game logic. Adventure co-op is one shared camera with leashed
@@ -1502,22 +1537,21 @@ TV, on Bevy's Metal backend. What that means now:
   sized to what the M3 Max holds at that resolution, not to what DLSS would buy (the ~1440p-internal plan
   below is the HTPC's).
 - Synchronous pipeline compiles. macOS compiles each render pipeline inside the frame that first needs it,
-  so a material, a post effect or the Faithful/Enhanced toggle seen for the first time hitches. Both
-  material sets and both post stacks get pre-warmed at level load, and on the target machine that's a
-  requirement, not polish.
+  so a material or a post effect seen for the first time hitches. Every material and post effect a scene
+  needs gets pre-warmed at load, and on the target machine that's a requirement, not polish.
 - An open macOS rendering-corruption bug to watch
   ([bevy #25595](https://github.com/bevyengine/bevy/issues/25595)).
 - Not measured: a frame with CSM, SSAO, TAA and bloom at the TV's resolution on the M3 Max. AE measures it
-  (GPU timings from `RenderDiagnosticsPlugin`), and that number is the budget the Enhanced toggle has to
+  (GPU timings from `RenderDiagnosticsPlugin`), and that number is the budget the Enhanced line has to
   fit until the bring-up.
 
 The HTPC, at the bring-up:
 
 - RTX 2080 Ti (Turing, 11 GB) is DLSS-capable, so the plan for the 86" 4K TV is ~1440p internal with DLSS
   up to 4K. Bevy's DLSS integration is Vulkan-only on Windows, so the HTPC runs Bevy's Vulkan backend.
-- First-generation RT cores make ray tracing an optional toggle at most, never a target. Bevy's RT GI
+- First-generation RT cores make ray tracing an option at most, never a target. Bevy's RT GI
   (Solari) also only takes `StandardMaterial`, can't render skinned meshes and doesn't light from
-  point or spot lights yet, so it doesn't fit the faithful material model in any case.
+  point or spot lights yet, so it doesn't fit the game's material model in any case.
 - Not measured: a 4K frame with CSM, SSAO, TAA and bloom on the 2080 Ti, DLSS on Vulkan. The bring-up
   measures it.
 
@@ -1643,21 +1677,21 @@ lives in Guacamole's store per profile. Guacamole never reads a `.sky`.
 
 ## Milestone ladder
 
-Every rung ends in something the kids can see except AC (the decode gate) and AF (the oracle
-foundation), which the rungs after them stand on. A rung starts when the ones it stands on have landed;
-there are no dates. Ids past AC are provisional: `openspec/config.yaml` allocates the next id when a
-change is proposed, so a product change proposed first takes the next letter (Decisions, third batch).
-That has happened once: the ACR122 removal (`ad-remove-acr122`) took AD, so every rung after AC moved
-up a letter. The milestone names (M0-M9, G1, G2) are the stable handles. Every rung is built and checked
-on the Mac driving the TV (Decisions, fourth batch); the Windows/HTPC bring-up isn't a rung, it sits
-beside the ladder in `openspec/backlog.md`, gates no rung and starts on chotchki's call.
+Every rung ends in something the kids can see except AC (the decode gate) and AF (the oracle foundation),
+which the rungs after them stand on. A rung starts when the ones it stands on have landed; there are no
+dates. The ids the ladder names are reserved (`openspec/config.yaml`; Decisions, fifth batch), so a
+change off the ladder takes the next unreserved id. Before that rule the ACR122 removal
+(`ad-remove-acr122`) took AD, so every rung after AC moved up a letter. The milestone names (M0-M9, G1,
+G2) are the stable handles. Every rung is built and checked on the Mac driving the TV (Decisions, fourth
+batch); the Windows/HTPC bring-up isn't a rung, it sits beside the ladder in `openspec/backlog.md`, gates
+no rung and starts on chotchki's call.
 
 | Rung | Where | What the kids see | What it proves |
 |---|---|---|---|
 | AA | `aa-guacamole-shell` | place a figure on the phone, the TV shows its card (name, element, portrait), in `guacamole` | the embedded server, the native driver over a channel, Guacamole's one-question setup, its own database and profiles, the interim catalogue with no `.sky` and no firmware pack, one binary at a time, all on the Mac driving the TV (the MSI carrying both binaries is the bring-up's) |
 | AB, M0 | `ab-giants-extract-and-intros` | place a figure, its original intro video plays | `guac-extract` skeleton (identity, IGA, manifest, census, Bink 1 transcode to H.264 + MP3); Bevy video through openh264, AB.7's spike pick. The 48 intros are named by character, not toy type; the voice-over name in each character archive bridges all 48. A figure without one keeps its AA card |
 | AC | `ac-giants-decode-gate`, in parallel with AA and AB | nothing yet (a dev viewer) | IGZ v6, `igImage2`, Edge and a Havok 2011.2 skeleton plus one clip, matched against an RSX capture. PASSED 2026-10-18 on everything the oracle drew of Eruptor, all four layers, so Giants stays first; AC.24 and AC.25 (L8 against a bound unit, two upgrade branch images; AC.21 matched the other 14) hold the gate open, each one attended session away (Why Giants first) |
-| AE, M1 | `ae-animated-turntable` | their figure as an animated, textured turntable on the TV | the first 3D; the Mac's renderer floor measured; the disc roster replaces the interim catalogue |
+| AE, M1 | `ae-animated-turntable` | their figure as an animated, textured turntable on the TV | the first 3D, in the one remaster look; the Mac's renderer floor measured; the disc roster replaces the interim catalogue |
 | AF | `af-oracle-foundation` | nothing | the oracle foundation: divergence measured, frame-locked two-pad input, tolerance metrics. Lands before any gameplay comparison |
 | AG, M2 | backlog | walk one level | level scene, collision, character controller, camera, feel checked against the oracle; the input spec, with prompts that match the physical pad |
 | AH, M3 | backlog | first fight: one enemy, XP and gold earned and kept on the kid's profile | combat basics; the per-profile figure-progression store, with the phone's figure editor on it |
