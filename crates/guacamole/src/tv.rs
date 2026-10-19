@@ -2,7 +2,11 @@
 //! the screen it maps to (`screen::screen_for`) in `bevy_ui`. The screen's
 //! kind is a `bevy_state` state (openspec AP, design decision 1): each kind
 //! spawns its tree on enter under a root that despawns on exit. Sizes and
-//! colours come from [`TvTheme`] (decision 6), through a [`Pen`].
+//! colours come from [`TvTheme`] (decision 6), through a [`Pen`]; every root
+//! sits on the [`starfield`](crate::starfield) and cards and buttons wear
+//! §3's [`surfaces`](crate::surfaces) (decision 8); a card's face rises,
+//! flashes and floats inside the box the tests measure
+//! ([`card_motion`](crate::card_motion), decision 9).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -26,11 +30,16 @@ use skylander_core::{Element, SLOT_COUNT};
 use skylander_rpcs3_control::{Placement, PlacementOwner};
 use tracing::{error, info, warn};
 
+use crate::card_motion::{self, CardFace, Schedule};
 use crate::cards::{PortalCards, drain_portal};
 use crate::extraction::{Band, ExtractBand};
 use crate::input::FocusId;
+use crate::look::{self, ChoiceFace};
+use crate::motion::ReducedMotion;
 use crate::picker::FolderAsked;
 use crate::screen::{SetupView, TvScreen, screen_for};
+use crate::starfield;
+use crate::surfaces::{self, BUTTON_BORDER, BUTTON_RADIUS};
 use crate::theme::{Role, Step, TvTheme};
 
 /// How long the farewell shows before the app exits (spec: under 5 s).
@@ -132,6 +141,8 @@ pub(crate) struct Current {
 pub(crate) struct TvAssets {
     font: Handle<Font>,
     pub(crate) qr: Option<Handle<Image>>,
+    /// The sky's tile of stars (`starfield::tile`).
+    pub(crate) stars: Handle<Image>,
 }
 
 /// The join QR as drawn (Join and the portal header), for the mirror.
@@ -251,6 +262,8 @@ pub(crate) enum Redrawn {
     Band,
     /// A drawn line took new text: the players line, a setup line, the message.
     Text,
+    /// A choice's focus look turned on or off (`look`).
+    Focus,
 }
 
 /// The `Update` systems that redraw part of a screen in place.
@@ -323,10 +336,11 @@ impl Plugin for Screens {
             .init_resource::<Portraits>()
             .init_resource::<LayoutReport>()
             .init_resource::<FolderAsked>()
+            .init_resource::<ReducedMotion>()
             .add_message::<Redrawn>()
             .add_observer(on_choice)
             .add_systems(PreUpdate, follow_screen.after(poll_status))
-            .add_systems(Update, click_or_beat_closes);
+            .add_systems(Update, (click_or_beat_closes, starfield::drift));
         for state in TvState::ALL {
             app.add_systems(OnEnter(state), enter_screen);
         }
@@ -344,6 +358,8 @@ impl Plugin for Screens {
                 )
                     .in_set(Redraw),
                 arm_layout_report.after(Redraw),
+                look::ease_faces.after(Redraw),
+                card_motion::move_cards.after(Redraw),
             ),
         );
     }
@@ -402,7 +418,8 @@ fn poll_status(
     }
 }
 
-/// The font and the join QR, on the world `main` built (`ServerLink` in it).
+/// The font, the join QR and the stars, on the world `main` built
+/// (`ServerLink` in it).
 fn tv_assets(world: &mut World) -> TvAssets {
     let font = world
         .resource_mut::<Assets<Font>>()
@@ -430,7 +447,9 @@ fn tv_assets(world: &mut World) -> TvAssets {
         }
         None => None,
     };
-    TvAssets { font, qr }
+    let theme = world.get_resource::<TvTheme>().cloned().unwrap_or_default();
+    let stars = starfield::tile(&mut world.resource_mut::<Assets<Image>>(), &theme);
+    TvAssets { font, qr, stars }
 }
 
 fn spawn_camera(mut commands: Commands) {
@@ -487,6 +506,8 @@ struct Sources<'w> {
     band: Option<Res<'w, ExtractBand>>,
     portraits: ResMut<'w, Portraits>,
     images: ResMut<'w, Assets<Image>>,
+    /// When a card was drawn, for its rise (`card_motion`).
+    time: Res<'w, Time>,
 }
 
 impl Sources<'_> {
@@ -503,8 +524,8 @@ impl Sources<'_> {
     }
 }
 
-/// `OnEnter` every state: the screen's root and everything under it. The
-/// root goes on exit (`DespawnOnExit`), its tree with it.
+/// `OnEnter` every state: the screen's root on the sky, and everything under
+/// it. The root goes on exit (`DespawnOnExit`), its tree with it.
 fn enter_screen(
     mut commands: Commands,
     state: Res<State<TvState>>,
@@ -512,14 +533,18 @@ fn enter_screen(
     mut redrawn: MessageWriter<Redrawn>,
 ) {
     let state = *state.get();
+    let stars = sources.assets.stars.clone();
     commands
         .spawn((
             ScreenRoot,
             DespawnOnExit(state),
             root_node(state, sources.framing.0),
-            BackgroundColor(sources.theme.background()),
+            starfield::sky(&sources.theme),
         ))
-        .with_children(|ui| spawn_content(ui, state, &mut sources));
+        .with_children(|ui| {
+            starfield::spawn_stars(ui, &stars);
+            spawn_content(ui, state, &mut sources);
+        });
     redrawn.write(Redrawn::Screen(state));
 }
 
@@ -714,6 +739,7 @@ fn sync_cells(
     cards: Res<PortalCards>,
     assets: Res<TvAssets>,
     theme: Res<TvTheme>,
+    time: Res<Time>,
     mut portraits: ResMut<Portraits>,
     mut images: ResMut<Assets<Image>>,
     mut cells: Query<(Entity, &Cell, &mut Drew)>,
@@ -729,11 +755,13 @@ fn sync_cells(
             continue;
         }
         let portrait = portrait_of(now.as_ref(), &mut portraits, &mut images);
+        // A card placed while the portal is up rises alone and flashes.
+        let motion = Schedule::placement(cell.0, time.elapsed());
         commands
             .entity(entity)
             .despawn_children()
             .with_children(|content| {
-                spawn_slot(content, &pen, cell.0, now.as_ref(), portrait);
+                spawn_slot(content, &pen, cell.0, now.as_ref(), portrait, motion);
             });
         drew.0 = now.clone();
         redrawn.write(Redrawn::Slot(cell.0));
@@ -749,7 +777,7 @@ fn arm_layout_report(mut redrawn: MessageReader<Redrawn>, mut report: ResMut<Lay
                 report.0 = REPORT_AFTER_FRAMES;
             }
             Redrawn::Screen(_) => report.0 = 0,
-            Redrawn::Text => {}
+            Redrawn::Text | Redrawn::Focus => {}
         }
     }
 }
@@ -883,8 +911,8 @@ fn spawn_line(column: &mut ChildSpawnerCommands, pen: &Pen, line: &Line) {
 /// A choice: a `bevy_ui_widgets` button, focused when it appears
 /// (`AutoFocus`), taking the focus from a click on it (`TabIndex`; without one
 /// a click clears it) and named for the router and the mirror (`FocusId`).
-/// Its look sits on a face inside it, so AP.13's focus scale moves no rect
-/// the tests read.
+/// Its look, §3.2's blue card, sits on a face inside it, which the focus
+/// look and the press scale (`look`) without moving a rect the tests read.
 fn choice_bundle(pen: &Pen, text: &str, id: &'static str) -> impl Bundle + use<> {
     (
         Button,
@@ -896,14 +924,14 @@ fn choice_bundle(pen: &Pen, text: &str, id: &'static str) -> impl Bundle + use<>
             ..default()
         },
         children![(
+            ChoiceFace::default(),
             Node {
                 padding: UiRect::axes(px(48), px(16)),
-                border: UiRect::all(px(4)),
-                border_radius: BorderRadius::all(px(24)),
+                border: UiRect::all(px(BUTTON_BORDER)),
+                border_radius: BorderRadius::all(px(BUTTON_RADIUS)),
                 ..default()
             },
-            BackgroundColor(pen.theme.panel),
-            BorderColor::all(pen.theme.gold),
+            surfaces::blue_card(&pen.theme),
             children![pen.text(text, Step::Md, Role::Accent)],
         )],
     )
@@ -1399,8 +1427,11 @@ fn spawn_rows(grid: &mut ChildSpawnerCommands, pen: &Pen, sources: &mut Sources)
         cards,
         portraits,
         images,
+        time,
         ..
     } = sources;
+    // The entrance: each card rises 80 ms after the one before it.
+    let mut order = 0;
     for row in 0..SLOT_COUNT / CARDS_PER_ROW {
         grid.spawn(Node {
             flex_direction: FlexDirection::Row,
@@ -1415,6 +1446,8 @@ fn spawn_rows(grid: &mut ChildSpawnerCommands, pen: &Pen, sources: &mut Sources)
                 let slot = row * CARDS_PER_ROW + col;
                 let placement = cards.slots[slot].as_ref();
                 let portrait = portrait_of(placement, portraits, images);
+                let motion = Schedule::entrance(slot as u8, order, time.elapsed());
+                order += usize::from(placement.is_some());
                 cells
                     .spawn((
                         Cell(slot as u8),
@@ -1430,7 +1463,7 @@ fn spawn_rows(grid: &mut ChildSpawnerCommands, pen: &Pen, sources: &mut Sources)
                         },
                     ))
                     .with_children(|cell| {
-                        spawn_slot(cell, pen, slot as u8, placement, portrait);
+                        spawn_slot(cell, pen, slot as u8, placement, portrait, motion);
                     });
             }
         });
@@ -1449,16 +1482,18 @@ fn portrait_of(
         .and_then(|p| portraits.get(p, images))
 }
 
-/// A cell's content: the card, or the numbered empty frame.
+/// A cell's content: the card, moving as `motion` says, or the numbered
+/// empty frame.
 fn spawn_slot(
     cell: &mut ChildSpawnerCommands,
     pen: &Pen,
     slot: u8,
     placement: Option<&Placement>,
     portrait: Option<Handle<Image>>,
+    motion: Schedule,
 ) {
     match placement {
-        Some(placement) => spawn_card(cell, pen, slot, placement, portrait),
+        Some(placement) => spawn_card(cell, pen, slot, placement, portrait, motion),
         None => spawn_empty(cell, pen, slot),
     }
 }
@@ -1505,13 +1540,22 @@ fn spawn_band(left: &mut ChildSpawnerCommands, pen: &Pen, band: &Band) {
     }
 }
 
-/// A cell's content: fills the cell and clips anything that doesn't fit.
-fn slot_content() -> Node {
+/// A cell's content box: fills the cell.
+fn slot_box() -> Node {
     Node {
         flex_grow: 1.0,
         flex_basis: px(0),
         min_width: px(0),
         min_height: px(0),
+        flex_direction: FlexDirection::Column,
+        ..default()
+    }
+}
+
+/// What a slot draws in its box: the edge and corners, the padding and the
+/// lines centred, clipping anything that doesn't fit.
+fn slot_frame() -> Node {
+    Node {
         flex_direction: FlexDirection::Column,
         align_items: AlignItems::Center,
         justify_content: JustifyContent::Center,
@@ -1524,74 +1568,69 @@ fn slot_content() -> Node {
     }
 }
 
-/// Portrait, name, element and owner pip; no level, XP or gold (AH).
+/// An empty frame's node: the box and the frame in one, since it never moves.
+fn slot_content() -> Node {
+    Node {
+        flex_grow: 1.0,
+        flex_basis: px(0),
+        min_width: px(0),
+        min_height: px(0),
+        ..slot_frame()
+    }
+}
+
+/// Portrait, name, element and owner pip; no level, XP or gold (AH). The card
+/// is §3.3's framed panel edged in gold, the portrait sits in §3.1's bezel
+/// ringed in the figure's element, and the pip stays top-right. `CardSlot` is
+/// the box the mirror and the tests measure; the card itself is its face, laid
+/// over the box, which rises, and the bezel on it floats and flashes
+/// (`card_motion`), so neither moves the box.
 fn spawn_card(
     cell: &mut ChildSpawnerCommands,
     pen: &Pen,
     slot: u8,
     placement: &Placement,
     portrait: Option<Handle<Image>>,
+    motion: Schedule,
 ) {
     let theme = &pen.theme;
-    cell.spawn((
-        CardSlot(slot),
-        slot_content(),
-        BackgroundColor(theme.panel),
-        BorderColor::all(theme.element(placement.element)),
-    ))
-    .with_children(|card| {
-        let frame = Node {
-            width: px(160),
-            height: px(160),
-            flex_shrink: 0.0,
-            border: UiRect::all(px(6)),
-            border_radius: BorderRadius::MAX,
-            ..default()
-        };
-        let ring = (
-            frame,
-            BorderColor::all(theme.gold),
-            BackgroundColor(theme.starfield[2]),
-        );
-        match portrait {
-            Some(image) => card.spawn((ring, ImageNode::new(image))),
-            None => card.spawn(ring),
-        };
-        card.spawn((
-            pen.text(&placement.name, CARD_NAME, Role::Primary),
-            Node {
-                max_width: percent(100),
-                ..default()
-            },
-        ));
-        if let Some(element) = placement.element {
-            card.spawn(pen.text(element_label(element), Step::Caption, Role::Muted));
-        }
-        if let Some(owner) = &placement.owner {
-            let color = owner_color(owner, theme);
+    cell.spawn((CardSlot(slot), slot_box()))
+        .with_children(|card| {
             card.spawn((
-                Pip(slot),
+                CardFace(motion),
                 Node {
                     position_type: PositionType::Absolute,
-                    top: px(10),
-                    right: px(10),
-                    width: px(60),
-                    height: px(60),
-                    border: UiRect::all(px(4)),
-                    border_radius: BorderRadius::MAX,
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::Center,
-                    ..default()
+                    left: px(0),
+                    right: px(0),
+                    top: px(0),
+                    bottom: px(0),
+                    ..slot_frame()
                 },
-                BackgroundColor(color.into()),
-                BorderColor::all(theme.role(Role::Primary)),
+                surfaces::card(theme),
             ))
-            .with_children(|pip| {
-                let ink = theme.ink_on(color);
-                pip.spawn(pen.inked(&owner.initial, Step::Body, ink, Justify::Center));
+            .with_children(|face| {
+                let bezel = surfaces::spawn_bezel(face, theme, placement.element, portrait);
+                card_motion::on_bezel(face.commands().entity(bezel), motion, theme);
+                face.spawn((
+                    pen.text(&placement.name, CARD_NAME, Role::Primary),
+                    Node {
+                        max_width: percent(100),
+                        ..default()
+                    },
+                ));
+                if let Some(element) = placement.element {
+                    face.spawn(pen.text(element_label(element), Step::Caption, Role::Muted));
+                }
+                if let Some(owner) = &placement.owner {
+                    let color = owner_color(owner, theme);
+                    face.spawn((Pip(slot), surfaces::pip(theme, color.into())))
+                        .with_children(|pip| {
+                            let ink = theme.ink_on(color);
+                            pip.spawn(pen.inked(&owner.initial, Step::Body, ink, Justify::Center));
+                        });
+                }
             });
-        }
-    });
+        });
 }
 
 fn spawn_empty(cell: &mut ChildSpawnerCommands, pen: &Pen, slot: u8) {
@@ -1823,7 +1862,16 @@ pub(crate) mod layout_tests {
             .world_mut()
             .resource_mut::<Assets<Font>>()
             .add(Font::from_bytes(TITAN_ONE.to_vec()));
-        app.insert_resource(TvAssets { font, qr: None })
+        let stars = starfield::tile(
+            &mut app.world_mut().resource_mut::<Assets<Image>>(),
+            &TvTheme::default(),
+        );
+        let assets = TvAssets {
+            font,
+            qr: None,
+            stars,
+        };
+        app.insert_resource(assets)
             .insert_resource(ServerLink {
                 status: Default::default(),
                 clients: Default::default(),
@@ -1862,7 +1910,11 @@ pub(crate) mod layout_tests {
         app
     }
 
+    /// The layout at rest, as a shot sees it: the cards' motion at its end
+    /// (`ReducedMotion`), so a card mid-rise doesn't carry its lines across
+    /// its box. The motion's own tests measure it moving.
     fn measure(app: &mut App) -> Laid {
+        app.insert_resource(ReducedMotion(true));
         for _ in 0..3 {
             app.update();
         }
@@ -2919,6 +2971,769 @@ pub(crate) mod layout_tests {
         frames(&mut app, 6);
         assert_eq!(seen(&mut app), (vec![Redrawn::Screen(TvState::Join)], 0));
     }
+
+    /// The one star layer up: its rect in target px, the drift's translation
+    /// in design px and its tiles.
+    fn star_layer(app: &mut App) -> (Entity, Rect, Val2, Vec<Entity>) {
+        let world = app.world_mut();
+        let mut q = world.query_filtered::<(
+            Entity,
+            &ComputedNode,
+            &UiGlobalTransform,
+            &UiTransform,
+            &Children,
+        ), With<starfield::StarLayer>>();
+        let (layer, node, at, moved, tiles) = q.single(world).unwrap();
+        (
+            layer,
+            node_rect(node, at),
+            moved.translation,
+            tiles.to_vec(),
+        )
+    }
+
+    /// AP.11: every screen's root sits on the sky, at 1080p, 4K and in the
+    /// desktop window: §1's three gradients on the root and a layer of stars
+    /// as its first child, from the window's corner (not the inset's) to a
+    /// tile past its far edges, every tile drawing the TV's stars, with no
+    /// text in it and no line moved by it.
+    #[test]
+    fn every_screen_sits_on_the_starfield() {
+        use bevy::ui::Val2;
+        let theme = TvTheme::default();
+        for (width, height, mode) in [
+            (1920, 1080, WindowMode::Tv),
+            (3840, 2160, WindowMode::Tv),
+            (1280, 720, WindowMode::Desktop),
+        ] {
+            let mut app = portal_app(width, height, mode, full("Eruptor"));
+            app.insert_resource(ReducedMotion(true));
+            let scale = height as f32 / DESIGN_HEIGHT;
+            let stars = app.world().resource::<TvAssets>().stars.clone();
+            for screen in every_screen() {
+                let case = format!("{width}x{height} {screen:?}");
+                app.world_mut().resource_mut::<Current>().screen = screen.clone();
+                frames(&mut app, 3);
+                let first = {
+                    let world = app.world_mut();
+                    let mut q = world
+                        .query_filtered::<(&BackgroundGradient, &Children), With<ScreenRoot>>();
+                    let (sky, children) = q.single(world).unwrap();
+                    assert_eq!(*sky, starfield::sky(&theme), "{case}");
+                    assert_eq!(sky.0.len(), 3, "{case}");
+                    children[0]
+                };
+                let (layer, rect, moved, tiles) = star_layer(&mut app);
+                assert_eq!(layer, first, "{case}: the stars draw under the screen");
+                assert_eq!(moved, Val2::ZERO, "{case}");
+                assert!(rect.min.abs_diff_eq(Vec2::ZERO, 0.01), "{case}: {rect:?}");
+                let past = Vec2::new(width as f32, height as f32) + starfield::TILE * scale;
+                assert!(rect.max.cmpge(past - 0.01).all(), "{case}: {rect:?}");
+                assert_eq!(tiles.len(), 15, "{case}");
+                for tile in &tiles {
+                    let image = app.world().get::<ImageNode>(*tile).unwrap();
+                    assert_eq!(image.image, stars, "{case}");
+                    assert!(app.world().get::<Children>(*tile).is_none(), "{case}");
+                }
+                assert!(app.world().get::<Text>(layer).is_none(), "{case}");
+
+                // Without the layer every line lands where it did.
+                let lines = |app: &mut App| {
+                    let mut drawn = drawn_text(app);
+                    drawn.sort_by(|a, b| a.0.cmp(&b.0));
+                    drawn
+                        .into_iter()
+                        .map(|(text, _, _, rect)| (text, rect))
+                        .collect::<Vec<_>>()
+                };
+                let with = lines(&mut app);
+                app.world_mut().entity_mut(layer).despawn();
+                frames(&mut app, 2);
+                assert_eq!(lines(&mut app), with, "{case}");
+            }
+        }
+    }
+
+    /// AP.11: the stars drift with the clock, a screen entered later picking
+    /// the drift up where the last one was, and hold at their start under
+    /// `ReducedMotion`.
+    #[test]
+    fn the_stars_drift_unless_motion_is_reduced() {
+        use bevy::time::TimeUpdateStrategy;
+        use bevy::ui::Val2;
+        for reduced in [false, true] {
+            let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
+            app.insert_resource(ReducedMotion(reduced))
+                .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(25)));
+            app.world_mut()
+                .resource_mut::<Time<Virtual>>()
+                .set_max_delta(Duration::from_secs(60));
+            for screen in [TvScreen::Join, TvScreen::Farewell] {
+                app.world_mut().resource_mut::<Current>().screen = screen.clone();
+                frames(&mut app, 2);
+                let elapsed = app.world().resource::<Time>().elapsed();
+                assert!(elapsed >= Duration::from_secs(25), "{elapsed:?}");
+                let (_, rect, moved, _) = star_layer(&mut app);
+                let at = if reduced {
+                    Vec2::ZERO
+                } else {
+                    starfield::drift_at(elapsed)
+                };
+                assert_ne!(at == Vec2::ZERO, !reduced, "{screen:?} at {elapsed:?}");
+                assert_eq!(moved, Val2::px(-at.x, -at.y), "{reduced} {screen:?}");
+                assert!(
+                    rect.min.abs_diff_eq(-at, 0.01),
+                    "{reduced} {screen:?}: {rect:?}"
+                );
+            }
+        }
+    }
+
+    /// AP.12: the owner pip stays in its card's top-right corner (design
+    /// decision 8), on eight cards at 1080p, 4K and in the desktop window,
+    /// with short names and with long ones under the longest band.
+    #[test]
+    fn each_pip_sits_in_its_cards_top_right_quadrant() {
+        for (w, h, mode) in [
+            (1920, 1080, WindowMode::Tv),
+            (3840, 2160, WindowMode::Tv),
+            (1280, 720, WindowMode::Desktop),
+        ] {
+            for (name, band) in [
+                ("Eruptor", None),
+                ("Legendary Chop Chop the Undead", Some(long_failure())),
+            ] {
+                let mut app = portal_app(w, h, mode, full(name));
+                app.insert_resource(ExtractBand(band));
+                let laid = measure(&mut app);
+                assert_eq!(laid.pips.len(), 8, "{w}x{h} {name}");
+                for (slot, pip) in &laid.pips {
+                    let card = laid.cards[usize::from(*slot)].1;
+                    let quadrant = Rect::from_corners(
+                        Vec2::new(card.center().x, card.min.y),
+                        Vec2::new(card.max.x, card.center().y),
+                    );
+                    assert!(
+                        contains(quadrant, *pip),
+                        "{w}x{h} {name}: pip {slot} {pip:?} leaves {quadrant:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The card's box, its face, and the bezel, plate and pip `spawn_card`
+    /// drew for `slot`.
+    fn card_parts(app: &mut App, slot: u8) -> [Entity; 5] {
+        let world = app.world_mut();
+        let mut cards = world.query::<(Entity, &CardSlot)>();
+        let card = cards
+            .iter(world)
+            .find(|(_, s)| s.0 == slot)
+            .map(|(e, _)| e)
+            .unwrap();
+        let mut found = [
+            card,
+            Entity::PLACEHOLDER,
+            Entity::PLACEHOLDER,
+            Entity::PLACEHOLDER,
+            Entity::PLACEHOLDER,
+        ];
+        let mut stack = vec![card];
+        while let Some(e) = stack.pop() {
+            if world.get::<CardFace>(e).is_some() {
+                found[1] = e;
+            }
+            if world.get::<surfaces::Bezel>(e).is_some() {
+                found[2] = e;
+            }
+            if world.get::<surfaces::Plate>(e).is_some() {
+                found[3] = e;
+            }
+            if world.get::<Pip>(e).is_some() {
+                found[4] = e;
+            }
+            if let Some(kids) = world.get::<Children>(e) {
+                stack.extend(kids.iter());
+            }
+        }
+        found
+    }
+
+    fn rect_of(app: &App, e: Entity) -> Rect {
+        node_rect(
+            app.world().get::<ComputedNode>(e).unwrap(),
+            app.world().get::<UiGlobalTransform>(e).unwrap(),
+        )
+    }
+
+    /// AP.12: a figure card is §3.3's framed panel edged in the gold run, its
+    /// portrait in §3.1's bezel ringed in the figure's element (the phone's
+    /// rule: the portrait covers the plate) or in gold for a figure with no
+    /// element, the plate concentric at 80% of the bezel holding the portrait,
+    /// and the pip a gold ring round the owner's colour. Since AP.14 the card
+    /// is the face over the `CardSlot` box, which wears nothing and keeps its
+    /// rect, the face filling it exactly at rest.
+    #[test]
+    fn a_card_wears_its_materials() {
+        let theme = TvTheme::default();
+        let dir = tempfile::tempdir().unwrap();
+        let thumb = dir.path().join("thumb.png");
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([200, 60, 20, 255]))
+            .save(&thumb)
+            .unwrap();
+        let mut eruptor = placement("Eruptor", Some("#e8423f"));
+        eruptor.portrait = Some(thumb);
+        let mut rex = placement("Tree Rex", None);
+        rex.element = None;
+        let cards = PortalCards::default().reduce([
+            PortalChange::Placed {
+                slot: SlotIndex::new(0).unwrap(),
+                placement: eruptor,
+            },
+            PortalChange::Placed {
+                slot: SlotIndex::new(1).unwrap(),
+                placement: rex,
+            },
+        ]);
+        for (w, h, mode) in [(1920, 1080, WindowMode::Tv), (3840, 2160, WindowMode::Tv)] {
+            let mut app = portal_app(w, h, mode, cards.clone());
+            measure(&mut app);
+            let scale = h as f32 / DESIGN_HEIGHT;
+            for (slot, element, portrait) in [(0, Some(Element::Fire), true), (1, None, false)] {
+                let at = format!("{w}x{h} slot {slot}");
+                let [card, face, bezel, plate, pip] = card_parts(&mut app, slot);
+                let world = app.world();
+                assert!(world.get::<BorderGradient>(card).is_none(), "{at}");
+                assert!(world.get::<BackgroundGradient>(card).is_none(), "{at}");
+                assert_eq!(rect_of(&app, face), rect_of(&app, card), "{at}");
+                let (edge, fill) = (
+                    world.get::<BorderGradient>(face).unwrap(),
+                    world.get::<BackgroundGradient>(face).unwrap(),
+                );
+                let (expected_fill, expected_edge) = {
+                    let mut probe = World::new();
+                    let e = probe.spawn(surfaces::card(&theme)).id();
+                    (
+                        probe.get::<BackgroundGradient>(e).unwrap().clone(),
+                        probe.get::<BorderGradient>(e).unwrap().clone(),
+                    )
+                };
+                assert_eq!(*edge, expected_edge, "{at}: the gold edge");
+                assert_eq!(*fill, expected_fill, "{at}: the panel");
+                assert!(
+                    world
+                        .get::<BorderColor>(face)
+                        .unwrap()
+                        .top
+                        .is_fully_transparent(),
+                    "{at}: no flat edge over the gold"
+                );
+                let ring = &world.get::<BackgroundGradient>(bezel).unwrap().0[0];
+                assert_eq!(*ring, surfaces::ring(&theme, element), "{at}");
+                assert_eq!(
+                    *ring == surfaces::gold_ring(&theme),
+                    element.is_none(),
+                    "{at}: gold only for a figure with no element"
+                );
+                assert_eq!(
+                    world.get::<ImageNode>(plate).is_some(),
+                    portrait,
+                    "{at}: the portrait sits on the plate"
+                );
+                let (outer, inner) = (rect_of(&app, bezel), rect_of(&app, plate));
+                assert!(
+                    (outer.width() - surfaces::BEZEL * scale).abs() < 1.0,
+                    "{at}"
+                );
+                assert!(
+                    inner.center().abs_diff_eq(outer.center(), 1.0),
+                    "{at}: {inner:?} in {outer:?}"
+                );
+                assert!(
+                    (inner.width() / outer.width() - 0.8).abs() < 0.01,
+                    "{at}: {inner:?} in {outer:?}"
+                );
+                if slot == 0 {
+                    let world = app.world();
+                    assert_eq!(
+                        Srgba::from(world.get::<BackgroundColor>(pip).unwrap().0).to_hex(),
+                        "#E8423F",
+                        "{at}: the pip's plate is the owner's"
+                    );
+                    let ring = world.get::<BorderGradient>(pip).unwrap();
+                    assert_eq!(ring.0[0], surfaces::gold_ring(&theme), "{at}");
+                    let size = rect_of(&app, pip).width();
+                    assert!((size - surfaces::PIP * scale).abs() < 1.0, "{at}: {size}");
+                } else {
+                    assert_eq!(pip, Entity::PLACEHOLDER, "{at}: no owner, no pip");
+                }
+            }
+        }
+    }
+
+    /// AP.12, AP.13: every choice's face is §3.2's blue card: at rest (the
+    /// focus not showing) the three-stop fill, a solid `--gb` edge and the two
+    /// drops under it; focused, the brightened fill with §3.1's picking glow
+    /// between the drops and the face at 1.05, the button's own node unscaled.
+    #[test]
+    fn every_choice_wears_the_blue_card() {
+        use bevy::input_focus::InputFocusVisible;
+        let theme = TvTheme::default();
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
+        app.insert_resource(ReducedMotion(true));
+        let mut seen = std::collections::BTreeSet::new();
+        for screen in every_screen() {
+            app.world_mut().resource_mut::<Current>().screen = screen.clone();
+            for showing in [false, true] {
+                app.insert_resource(InputFocusVisible(showing));
+                frames(&mut app, 2);
+                let world = app.world_mut();
+                let mut q = world.query::<(Entity, &FocusId, &Children)>();
+                let faces: Vec<(Entity, &'static str, Entity)> = q
+                    .iter(world)
+                    .map(|(button, id, kids)| (button, id.0, kids[0]))
+                    .collect();
+                for (button, id, face) in faces {
+                    let at = format!("{screen:?} {id} showing {showing}");
+                    assert!(world.get::<ChoiceFace>(face).is_some(), "{at}");
+                    let fill = world.get::<BackgroundGradient>(face).unwrap();
+                    let Gradient::Linear(base) = &fill.0[0] else {
+                        panic!("{at}: {fill:?}");
+                    };
+                    let colours: Vec<Color> = base.stops.iter().map(|s| s.color).collect();
+                    let shadows = &world.get::<BoxShadow>(face).unwrap().0;
+                    let scale = world.get::<UiTransform>(face).unwrap().scale;
+                    if showing {
+                        assert_eq!(colours, theme.blue_card_lit, "{at}");
+                        assert_eq!(shadows.len(), 3, "{at}");
+                        assert_eq!(shadows[1].color, theme.focus_glow, "{at}");
+                        assert_eq!(scale, Vec2::splat(look::FOCUS_SCALE), "{at}");
+                    } else {
+                        assert_eq!(colours, theme.blue_card, "{at}");
+                        assert_eq!(shadows.len(), 2, "{at}");
+                        assert_eq!(scale, Vec2::ONE, "{at}");
+                    }
+                    let edge = world.get::<BorderColor>(face).unwrap();
+                    assert_eq!(edge.top, theme.gold_bright, "{at}");
+                    let outer = world.get::<UiTransform>(button).unwrap();
+                    assert_eq!(*outer, UiTransform::IDENTITY, "{at}: the button's own node");
+                    seen.insert(id);
+                }
+            }
+        }
+        assert_eq!(
+            seen,
+            [CHOOSE_FOLDER, CONTINUE, CLOSE].into(),
+            "every choice was drawn"
+        );
+    }
+
+    /// Where every node sits (its size and its whole transform, scale
+    /// included), but for the choices' and the cards' faces and what's on
+    /// them, and the drifting sky.
+    pub(crate) fn outer_nodes(
+        app: &mut App,
+    ) -> std::collections::BTreeMap<Entity, (Vec2, UiGlobalTransform)> {
+        let world = app.world_mut();
+        let mut skip = Vec::new();
+        let mut q = world.query_filtered::<Entity, Or<(
+            With<ChoiceFace>,
+            With<CardFace>,
+            With<starfield::StarLayer>,
+        )>>();
+        let mut stack: Vec<Entity> = q.iter(world).collect();
+        while let Some(e) = stack.pop() {
+            skip.push(e);
+            if let Some(kids) = world.get::<Children>(e) {
+                stack.extend(kids.iter());
+            }
+        }
+        let mut q = world.query::<(Entity, &ComputedNode, &UiGlobalTransform)>();
+        q.iter(world)
+            .filter(|(e, _, _)| !skip.contains(e))
+            .map(|(e, n, t)| (e, (n.size(), *t)))
+            .collect()
+    }
+
+    fn face_of(app: &App, button: Entity) -> Entity {
+        app.world().get::<Children>(button).unwrap()[0]
+    }
+
+    pub(crate) fn scale_of(app: &App, button: Entity) -> f32 {
+        let scale = app
+            .world()
+            .get::<UiTransform>(face_of(app, button))
+            .unwrap()
+            .scale;
+        assert_eq!(scale.x, scale.y);
+        scale.x
+    }
+
+    /// AP.13: the focus moving from one choice to another eases one face down
+    /// and the other up through the spring's overshoot, and every other node,
+    /// the buttons and the marked lines included, stays exactly where it was
+    /// before, during and after; the change writes `Redrawn::Focus`, which
+    /// arms a shot.
+    #[test]
+    fn a_focus_change_moves_no_marked_rect() {
+        use bevy::input_focus::{FocusCause, InputFocus};
+        use bevy::time::TimeUpdateStrategy;
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
+        app.init_resource::<Seen>()
+            .add_systems(PostUpdate, see)
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+                20,
+            )));
+        app.world_mut().resource_mut::<Current>().screen = TvScreen::ServerError {
+            message: "bind 0.0.0.0:8765: address in use".into(),
+        };
+        frames(&mut app, 2);
+        // A second choice beside Close, as the Home menu will have.
+        let root = {
+            let world = app.world_mut();
+            let mut q = world.query_filtered::<Entity, With<ScreenRoot>>();
+            q.single(world).unwrap()
+        };
+        let pen = Pen::new(
+            app.world().resource::<TvAssets>(),
+            app.world().resource::<TvTheme>(),
+        );
+        let other = app
+            .world_mut()
+            .spawn(choice_bundle(&pen, "Try again", "try-again"))
+            .id();
+        app.world_mut().entity_mut(root).add_child(other);
+        let close = choice_tests::choice(&mut app, CLOSE);
+        app.world_mut()
+            .resource_mut::<InputFocus>()
+            .set(close, FocusCause::Navigated);
+        frames(&mut app, 20);
+        assert_eq!(scale_of(&app, close), look::FOCUS_SCALE);
+        assert_eq!(scale_of(&app, other), 1.0);
+        let before = outer_nodes(&mut app);
+        assert!(before.len() > 4, "{before:?}");
+        for marked in [close, other] {
+            assert!(before.contains_key(&marked), "the buttons are measured");
+        }
+        seen(&mut app);
+
+        app.world_mut()
+            .resource_mut::<InputFocus>()
+            .set(other, FocusCause::Navigated);
+        let mut ups = Vec::new();
+        let mut downs = Vec::new();
+        for frame in 0..20 {
+            app.update();
+            assert_eq!(outer_nodes(&mut app), before, "frame {frame}");
+            ups.push(scale_of(&app, other));
+            downs.push(scale_of(&app, close));
+        }
+        let top = ups.iter().copied().fold(f32::MIN, f32::max);
+        assert!(top > look::FOCUS_SCALE, "the pop overshoots: {ups:?}");
+        assert!(ups[1] > 1.0 && ups[1] < top, "mid-way: {ups:?}");
+        assert!(
+            downs.iter().any(|s| *s < 1.0),
+            "and back past rest: {downs:?}"
+        );
+        assert_eq!(ups.last(), Some(&look::FOCUS_SCALE), "{ups:?}");
+        assert_eq!(downs.last(), Some(&1.0), "{downs:?}");
+        assert_eq!(outer_nodes(&mut app), before, "after");
+        let (redrawn, armed) = seen(&mut app);
+        assert_eq!(
+            redrawn,
+            [Redrawn::Focus],
+            "a shot is armed, no layout report"
+        );
+        assert_eq!(armed, 0);
+    }
+
+    /// A node's rect as drawn, its transform's scale included (`node_rect`
+    /// takes only where its centre is).
+    fn drawn_rect(app: &App, e: Entity) -> Rect {
+        let size = app.world().get::<ComputedNode>(e).unwrap().size();
+        let at = app.world().get::<UiGlobalTransform>(e).unwrap();
+        let [a, b] = [-0.5 * size, 0.5 * size].map(|p| at.transform_point2(p));
+        Rect::from_corners(a, b)
+    }
+
+    /// Each card's face by slot: the entity, its rect as drawn, its
+    /// transform and whether it's shown.
+    fn faces(app: &mut App) -> std::collections::BTreeMap<u8, (Entity, Rect, UiTransform, bool)> {
+        let world = app.world_mut();
+        let mut q =
+            world.query_filtered::<(Entity, &ChildOf, &UiTransform, &Visibility), With<CardFace>>();
+        let found: Vec<_> = q
+            .iter(world)
+            .map(|(e, box_, t, v)| (e, box_.parent(), *t, *v != Visibility::Hidden))
+            .collect();
+        found
+            .into_iter()
+            .map(|(e, box_, t, shown)| {
+                let slot = app.world().get::<CardSlot>(box_).unwrap().0;
+                (slot, (e, drawn_rect(app, e), t, shown))
+            })
+            .collect()
+    }
+
+    /// The flash over `bezel`'s portrait, if its card was placed.
+    fn flash_on(app: &App, bezel: Entity) -> Option<Entity> {
+        let kids = app.world().get::<Children>(bezel)?;
+        kids.iter()
+            .find(|k| app.world().get::<card_motion::ImpactFlash>(*k).is_some())
+    }
+
+    /// AP.14, the box's check: the portal's entrance rises its eight cards
+    /// in turn, and at every 20 ms frame along the way the mirror reads each
+    /// card's box where it rests, none outside the inset and no two
+    /// overlapping, every node off the faces keeps its rect, every pip (on
+    /// a face, so it moves) stays on its card's box, and the faces as drawn
+    /// never overlap each other or leave the window.
+    #[test]
+    fn the_entrance_rises_without_moving_a_marked_rect() {
+        use bevy::time::TimeUpdateStrategy;
+
+        use crate::mirror::{Mirror, TvMirror};
+        let (w, h) = (1920, 1080);
+        let window = Rect::new(0.0, 0.0, w as f32, h as f32);
+        let mirrored = |reduced: bool| {
+            let mut app = portal_app(w, h, WindowMode::Tv, full("Eruptor"));
+            let mirror = TvMirror::default();
+            app.insert_resource(mirror.clone())
+                .insert_resource(ReducedMotion(reduced))
+                .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+                    20,
+                )))
+                .add_plugins(Mirror);
+            (app, mirror)
+        };
+        let boxes = |mirror: &crate::mirror::TvMirror| {
+            let shot = mirror.0.lock().unwrap().clone();
+            let rects: Vec<[f32; 4]> = shot.cards.iter().map(|c| c.rect).collect();
+            (shot, rects)
+        };
+        let rest = {
+            let (mut app, mirror) = mirrored(true);
+            frames(&mut app, 3);
+            boxes(&mirror).1
+        };
+        assert_eq!(rest.len(), 8);
+
+        let (mut app, mirror) = mirrored(false);
+        app.update();
+        let outer = outer_nodes(&mut app);
+        let (mut waiting, mut rising) = (0, 0);
+        for frame in 0..60 {
+            let (shot, rects) = boxes(&mirror);
+            assert!(shot.cards_outside.is_empty(), "frame {frame}: {shot:?}");
+            assert_eq!(shot.overlapping, 0, "frame {frame}");
+            assert_eq!(rects, rest, "frame {frame}: a card's box moved");
+            assert_eq!(outer_nodes(&mut app), outer, "frame {frame}");
+            // The pips ride the faces, and `report_layout` measures them
+            // (`pips_off_card`): each stays on its card's box as drawn.
+            let pips: Vec<(u8, Entity)> = {
+                let world = app.world_mut();
+                let mut q = world.query::<(Entity, &Pip)>();
+                q.iter(world).map(|(e, p)| (p.0, e)).collect()
+            };
+            assert_eq!(pips.len(), 8, "frame {frame}");
+            for (slot, pip) in pips {
+                let [card, ..] = card_parts(&mut app, slot);
+                let (card, pip) = (rect_of(&app, card), drawn_rect(&app, pip));
+                assert!(
+                    contains(card, pip),
+                    "frame {frame}: pip {slot} {pip:?} off {card:?}"
+                );
+            }
+            let faces = faces(&mut app);
+            assert_eq!(faces.len(), 8);
+            let shown: Vec<Rect> = faces.values().filter(|f| f.3).map(|f| f.1).collect();
+            for (i, a) in shown.iter().enumerate() {
+                assert!(
+                    contains(window, *a),
+                    "frame {frame}: {a:?} leaves the window"
+                );
+                for b in &shown[i + 1..] {
+                    assert!(a.intersect(*b).is_empty(), "frame {frame}: {a:?} on {b:?}");
+                }
+            }
+            waiting += faces.values().filter(|f| !f.3).count();
+            rising += faces
+                .values()
+                .filter(|f| {
+                    let Val::Px(drop) = f.2.translation.y else {
+                        panic!("{:?}", f.2)
+                    };
+                    f.3 && drop > 0.0 && drop < card_motion::RISE_DROP
+                })
+                .count();
+            app.update();
+        }
+        assert!(waiting > 0, "cards waited their turn, hidden");
+        assert!(rising > 8, "and were caught mid-rise");
+        for (slot, (_, rect, transform, shown)) in faces(&mut app) {
+            assert_eq!(transform, UiTransform::IDENTITY, "slot {slot} at rest");
+            assert!(shown, "slot {slot}");
+            let r = rest[usize::from(slot)];
+            assert!(
+                rect.min.abs_diff_eq(Vec2::new(r[0], r[1]), 0.01),
+                "slot {slot}: its face over its box at rest, {rect:?} on {r:?}"
+            );
+        }
+    }
+
+    /// AP.14: a placement while the portal is up rises alone, at once, under
+    /// its flash; the flash grows past its card's edge and the face clips it
+    /// there, so it never reaches a neighbour; its bezel holds still through
+    /// the impact while the others breathe, and breathes after.
+    #[test]
+    fn a_placement_rises_alone_and_its_flash_stays_on_its_card() {
+        use bevy::time::TimeUpdateStrategy;
+        use bevy::ui::{CalculatedClip, Val2};
+        let two = PortalCards::default().reduce([
+            PortalChange::Placed {
+                slot: SlotIndex::new(0).unwrap(),
+                placement: placement("Eruptor", Some("#33cc66")),
+            },
+            PortalChange::Placed {
+                slot: SlotIndex::new(2).unwrap(),
+                placement: placement("Spyro", None),
+            },
+        ]);
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, two.clone());
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            20,
+        )));
+        // The entrance is over by 1.1 s.
+        frames(&mut app, 60);
+        assert!(
+            faces(&mut app)
+                .values()
+                .all(|f| f.2 == UiTransform::IDENTITY && f.3)
+        );
+        *app.world_mut().resource_mut::<PortalCards>() = two.reduce([PortalChange::Placed {
+            slot: SlotIndex::new(1).unwrap(),
+            placement: placement("Tree Rex", Some("#33cc66")),
+        }]);
+        app.update();
+        let outer = outer_nodes(&mut app);
+        let [_, face, bezel, _, _] = card_parts(&mut app, 1);
+        let flash = flash_on(&app, bezel).expect("a placement flashes");
+        let others = [0, 2].map(|slot| card_parts(&mut app, slot));
+        for [_, _, bezel, _, _] in others {
+            assert_eq!(flash_on(&app, bezel), None, "the entrance doesn't flash");
+        }
+        let (mut past_its_edge, mut others_breathe, mut floats_after) = (false, false, false);
+        for frame in 0..45u32 {
+            let age = frame * 20;
+            let world = app.world();
+            let lift = |e: Entity| world.get::<UiTransform>(e).unwrap().translation;
+            let rise = *world.get::<UiTransform>(face).unwrap();
+            assert_ne!(world.get::<Visibility>(face), Some(&Visibility::Hidden));
+            if frame == 0 {
+                assert_eq!(rise.translation, Val2::px(0.0, card_motion::RISE_DROP));
+                assert_eq!(rise.scale, Vec2::splat(card_motion::RISE_SCALE));
+            }
+            if age >= 500 {
+                assert_eq!(rise, UiTransform::IDENTITY, "risen at {age} ms");
+            }
+            for [_, face, bezel, _, _] in others {
+                assert_eq!(
+                    *world.get::<UiTransform>(face).unwrap(),
+                    UiTransform::IDENTITY,
+                    "it rises alone"
+                );
+                others_breathe |= lift(bezel) != Val2::ZERO;
+            }
+            if age <= 600 {
+                assert_eq!(lift(bezel), Val2::ZERO, "held through the impact, {age} ms");
+            } else {
+                floats_after |= lift(bezel) != Val2::ZERO;
+            }
+            let shown = world.get::<Visibility>(flash) != Some(&Visibility::Hidden);
+            assert_eq!(shown, age > 0 && age < 600, "the flash at {age} ms");
+            if shown {
+                let drawn = drawn_rect(&app, flash);
+                let card = drawn_rect(&app, face);
+                let clip = app.world().get::<CalculatedClip>(flash).unwrap();
+                assert!(clip.contains_point(drawn.center()), "{age} ms");
+                let corners = [
+                    drawn.min,
+                    drawn.max,
+                    Vec2::new(drawn.min.x, drawn.max.y),
+                    Vec2::new(drawn.max.x, drawn.min.y),
+                    Vec2::new(drawn.center().x, drawn.min.y),
+                ];
+                for corner in corners.into_iter().filter(|c| !card.contains(*c)) {
+                    past_its_edge = true;
+                    assert!(!clip.contains_point(corner), "{age} ms: {corner} drawn");
+                }
+                for [neighbour, ..] in others {
+                    let r = rect_of(&app, neighbour);
+                    for p in [r.center(), r.min, r.max] {
+                        assert!(!clip.contains_point(p), "{age} ms: on a neighbour");
+                    }
+                }
+            }
+            assert_eq!(outer_nodes(&mut app), outer, "{age} ms");
+            app.update();
+        }
+        assert!(
+            past_its_edge,
+            "at 2× the flash reaches past its card's edge"
+        );
+        assert!(others_breathe, "the cards at rest float");
+        assert!(
+            floats_after,
+            "and the placed one does once its impact is over"
+        );
+    }
+
+    /// AP.14: under `ReducedMotion` every card is at rest from the frame it's
+    /// drawn, through the entrance and a placement: risen, shown, its bezel
+    /// still and no flash.
+    #[test]
+    fn reduced_motion_holds_every_card_at_rest() {
+        use bevy::time::TimeUpdateStrategy;
+        let seven = full("Eruptor").reduce([PortalChange::Cleared {
+            slot: SlotIndex::new(7).unwrap(),
+        }]);
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, seven.clone());
+        app.insert_resource(ReducedMotion(true)).insert_resource(
+            TimeUpdateStrategy::ManualDuration(Duration::from_millis(20)),
+        );
+        let at_rest = |app: &mut App, step: &str| {
+            let faces = faces(app);
+            for (slot, (_, _, transform, shown)) in &faces {
+                assert_eq!(*transform, UiTransform::IDENTITY, "{step}: slot {slot}");
+                assert!(shown, "{step}: slot {slot}");
+            }
+            let world = app.world_mut();
+            let mut bezels = world.query_filtered::<&UiTransform, With<card_motion::Floats>>();
+            assert!(
+                bezels.iter(world).all(|t| *t == UiTransform::IDENTITY),
+                "{step}"
+            );
+            let mut flashes = world.query_filtered::<&Visibility, With<card_motion::ImpactFlash>>();
+            assert!(
+                flashes.iter(world).all(|v| *v == Visibility::Hidden),
+                "{step}"
+            );
+            (faces.len(), flashes.iter(world).count())
+        };
+        for frame in 0..10 {
+            app.update();
+            assert_eq!(at_rest(&mut app, &format!("entrance {frame}")), (7, 0));
+        }
+        *app.world_mut().resource_mut::<PortalCards>() = seven.reduce([PortalChange::Placed {
+            slot: SlotIndex::new(7).unwrap(),
+            placement: placement("Jet-Vac", None),
+        }]);
+        for frame in 0..10 {
+            app.update();
+            assert_eq!(at_rest(&mut app, &format!("placement {frame}")), (8, 1));
+        }
+    }
 }
 
 /// AP.6: the TV's choices as `bevy_ui_widgets` buttons, one test per
@@ -3227,6 +4042,61 @@ pub(crate) mod choice_tests {
         let choose = choice(&mut app, CHOOSE_FOLDER);
         click_on(&mut app, choose);
         assert!(wanted(&mut app));
+    }
+
+    /// AP.13: South held on the focused Close dips its face by the tap,
+    /// through `--ease-tap`'s overshoot, and lets it back up to the focus
+    /// pop when let go, every other node staying put; under `ReducedMotion`
+    /// each lands at its end the frame it changes.
+    #[test]
+    fn the_press_dips_the_focused_face_and_lets_it_back() {
+        use bevy::time::TimeUpdateStrategy;
+
+        use super::layout_tests::{outer_nodes, scale_of};
+        use crate::look::{FOCUS_SCALE, TAP_SCALE};
+        use crate::motion::ReducedMotion;
+        let pressed = FOCUS_SCALE * TAP_SCALE;
+        for reduced in [false, true] {
+            let mut app = tv_on(
+                error_screens()[1].clone(),
+                Duration::ZERO,
+                SetupView::default(),
+            );
+            app.insert_resource(ReducedMotion(reduced)).insert_resource(
+                TimeUpdateStrategy::ManualDuration(Duration::from_millis(10)),
+            );
+            frames(&mut app, 30);
+            let close = choice(&mut app, CLOSE);
+            assert_eq!(scale_of(&app, close), FOCUS_SCALE, "{reduced}");
+            let before = outer_nodes(&mut app);
+            let pad = pad(&mut app);
+            let run = |app: &mut App, value: f32| {
+                button(app, pad, GamepadButton::South, value);
+                let mut seen = vec![scale_of(app, close)];
+                for _ in 0..20 {
+                    app.update();
+                    assert_eq!(outer_nodes(app), before, "{reduced}");
+                    seen.push(scale_of(app, close));
+                }
+                seen
+            };
+            let down = run(&mut app, 1.0);
+            assert!(app.world().get::<Pressed>(close).is_some());
+            let up = run(&mut app, 0.0);
+            assert!(app.world().get::<Pressed>(close).is_none());
+            let low = down.iter().copied().fold(f32::MAX, f32::min);
+            let high = up.iter().copied().fold(f32::MIN, f32::max);
+            assert_eq!(down.last(), Some(&pressed), "{reduced}: {down:?}");
+            assert_eq!(up.last(), Some(&FOCUS_SCALE), "{reduced}: {up:?}");
+            if reduced {
+                assert!(down.iter().all(|s| *s == pressed), "{down:?}");
+                assert!(up.iter().all(|s| *s == FOCUS_SCALE), "{up:?}");
+            } else {
+                assert_eq!(down[0], FOCUS_SCALE, "the press starts from the pop");
+                assert!(low < pressed - 0.005, "dips past the tap: {down:?}");
+                assert!(high > FOCUS_SCALE + 0.005, "springs past it: {up:?}");
+            }
+        }
     }
 
     fn error_screens() -> [TvScreen; 2] {

@@ -7,6 +7,7 @@
 //! Threading: the main thread runs Bevy; `guac_server::boot` runs the server
 //! and driver worker on its own tokio thread.
 
+mod card_motion;
 mod cards;
 mod cli;
 mod driver;
@@ -14,11 +15,15 @@ mod extraction;
 mod input;
 mod intro;
 mod intro_player;
+mod look;
 mod mirror;
+mod motion;
 mod picker;
 mod screen;
 #[cfg(feature = "dev-tools")]
 mod shots;
+mod starfield;
+mod surfaces;
 mod theme;
 mod tv;
 mod video;
