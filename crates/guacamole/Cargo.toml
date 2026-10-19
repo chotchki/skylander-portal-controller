@@ -10,6 +10,12 @@ publish.workspace = true
 name = "guacamole"
 path = "src/main.rs"
 
+# What the binary, its examples and its GPU lanes share (openspec AE.8): the
+# character material, its WESL shader and the meshes built from IR.
+[lib]
+name = "guacamole"
+path = "src/lib.rs"
+
 [dependencies]
 # Default features off: `dev-tools` / `test-hooks` below forward to it, so a
 # `--no-default-features` release build can't pick up the library's dev defaults.
@@ -21,6 +27,7 @@ guac-extract = { path = "../guac-extract" }
 guac-ir = { path = "../guac-ir" }
 
 anyhow = { workspace = true }
+thiserror = { workspace = true }
 tracing = { workspace = true }
 # The native driver → TV channel: bounded, and its `Receiver` is `Sync`, so it
 # sits in a plain Bevy `Resource` (design decision 4).
@@ -31,11 +38,19 @@ serde = { workspace = true }
 
 # Pinned by Cargo.lock; upgrades are their own change at milestone boundaries.
 # `ui` is the 2D UI collection (winit, gilrs, wgpu, bevy_ui, text, png); audio
-# and `mp3` play the intros' sound (AB.10); no 3D yet.
+# and `mp3` play the intros' sound (AB.10). The 3D set draws the characters
+# (AE.8): `bevy_pbr`'s material pipeline and skinning, `bevy_light`, `ktx2`
+# for the extract's textures (it refuses to build without a zstd backend,
+# though ours never compresses) and the tonemapping LUTs TonyMcMapface reads.
 bevy = { version = "0.20.0", default-features = false, features = [
     "ui",
     "bevy_audio",
     "mp3",
+    "bevy_pbr",
+    "bevy_light",
+    "ktx2",
+    "zstd_rust",
+    "tonemapping_luts",
 ] }
 # The setup screen's folder picker (AA.15): a sheet on the window while frames
 # run, or a plain dialog for `--setup` before the window exists. 0.17 is on
@@ -60,16 +75,6 @@ tempfile = "3"
 image = { version = "0.25", default-features = false, features = ["png"] }
 # SfoBuilder, for the `--setup <folder>` tests; hero_view's decoders.
 guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }
-# hero_view (AC.10) draws in 3D; dev-only, so the binary's features stay `ui`.
-bevy = { version = "0.20.0", default-features = false, features = [
-    "ui",
-    "bevy_pbr",
-    "bevy_light",
-    "ktx2",
-    "tonemapping_luts",
-    # ktx2 refuses to build without a zstd backend, though ours never compresses.
-    "zstd_rust",
-] }
 
 # The dev viewer for the decode gate (openspec AC.10); `test` runs its unit
 # tests under `cargo test`.

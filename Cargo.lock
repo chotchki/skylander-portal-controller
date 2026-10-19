@@ -4300,6 +4300,7 @@ dependencies = [
  "skylander-core",
  "skylander-rpcs3-control",
  "tempfile",
+ "thiserror 1.0.69",
  "tokio",
  "tower",
  "tracing",

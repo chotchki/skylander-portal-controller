@@ -1,0 +1,877 @@
+//! The character material (design decision 9): one WESL shader
+//! ([`shading.wesl`](shading.wesl)) specialized per [`MaterialKey`], its
+//! uniform packed from the reference model's own types
+//! ([`guac_ir::shading`]), so the GPU lane feeds the shader and the model
+//! the same numbers.
+//!
+//! The scene rides in each material's uniform: a turntable's rig is fixed
+//! to its camera (design decision 14), so its lights are constants in view
+//! space, the space the shader lights in.
+
+use bevy::asset::{Asset, Handle};
+use bevy::image::Image;
+use bevy::material::AlphaMode;
+use bevy::math::Vec4;
+use bevy::mesh::{
+    Mesh, MeshVertexBufferLayoutRef, MissingVertexAttributeError, VertexAttributeDescriptor,
+};
+use bevy::pbr::{Material, MaterialPipeline, MaterialPipelineKey};
+use bevy::reflect::TypePath;
+use bevy::render::render_resource::{
+    AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
+};
+use bevy::shader::ShaderRef;
+use guac_ir::model::{self, Mask, TextureRole};
+use guac_ir::shading::{Fixed, Layer, Rim, Scene, SecondLayer, ThirdLayer, UvTransform, Weights};
+
+use super::key::{KeyError, MaterialKey, SceneBits, ShaderKey, StateKey, bit};
+use super::mesh::ATTRIBUTE_UV_2;
+
+/// The shader, embedded by [`super::CharacterShadingPlugin`].
+pub const SHADER: &str = "embedded://guacamole/character/shading.wesl";
+
+/// The material's uniform, in the shader's `Character` layout.
+#[derive(Debug, Clone, Copy, PartialEq, ShaderType)]
+pub struct CharacterUniform {
+    /// Each directional light's way of travel, view space.
+    pub light_travel: [Vec4; 3],
+    pub light_ambient: [Vec4; 3],
+    pub light_diffuse: [Vec4; 3],
+    pub light_specular: [Vec4; 3],
+    /// View space.
+    pub point_position: [Vec4; 3],
+    pub point_colour: [Vec4; 3],
+    /// x the falloff's term over (d + 0.001), y its term over (d + 0.001)².
+    pub point_falloff: [Vec4; 3],
+    pub fog_colour: Vec4,
+    /// x near, y far.
+    pub fog_range: Vec4,
+    pub placement_tint: Vec4,
+    /// RGB and its amount.
+    pub replace: Vec4,
+    /// A view-space position's shadow-map coordinates: u = (P, 1)·shadow_u.
+    pub shadow_u: Vec4,
+    pub shadow_v: Vec4,
+    /// x the shadow mode, y the alpha test's reference.
+    pub misc: Vec4,
+    /// x layer 1's fixed alpha, y layer 2's, z layer 3's strength, w the
+    /// rim's.
+    pub fixed_alpha: Vec4,
+    /// x the exponent, y the detail weight.
+    pub layer1: Vec4,
+    pub layer2: Vec4,
+    /// Over, add and multiply.
+    pub layer2_weights: Vec4,
+    pub layer3_weights: Vec4,
+    pub rim_weights: Vec4,
+    /// x the lookup's scale, y the colour/alpha split.
+    pub rim: Vec4,
+    pub material_tint: Vec4,
+    /// Each texture-coordinate set's transform, numbered as the set:
+    /// u' = (u, v, 1)·uv_u, v' = (u, v, 1)·uv_v.
+    pub uv_u: [Vec4; 3],
+    pub uv_v: [Vec4; 3],
+}
+
+/// Where the shader looks a view-space position up in the shadow map. The
+/// reference model takes the sample as given, so this is the GPU's alone.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShadowLookup {
+    pub u: Vec4,
+    pub v: Vec4,
+}
+
+impl ShadowLookup {
+    /// Nothing renders a shadow map in AE: the turntable has shadows off.
+    pub const NONE: Self = Self {
+        u: Vec4::ZERO,
+        v: Vec4::ZERO,
+    };
+}
+
+impl CharacterUniform {
+    pub fn new(
+        material: &guac_ir::shading::Material,
+        scene: &Scene,
+        shadow: ShadowLookup,
+        alpha_reference: f32,
+    ) -> Self {
+        fn v3(c: [f32; 3]) -> Vec4 {
+            Vec4::new(c[0], c[1], c[2], 0.0)
+        }
+        let v4 = Vec4::from_array;
+        let weights = |w: Weights| Vec4::new(w.over, w.add, w.multiply, 0.0);
+        let layer = |l: &Layer| Vec4::new(l.exponent, l.detail_weight, 0.0, 0.0);
+        let lights = &scene.lights;
+        let point = |i: usize, f: fn(&guac_ir::shading::PointLight) -> Vec4| {
+            scene.point_lights.get(i).map_or(Vec4::ZERO, f)
+        };
+        let unset = Weights::new(0.0, 0.0, 0.0);
+        let second = material.second.as_ref();
+        let third = material.third.as_ref();
+        let rim = material.rim.as_ref();
+        let uv = |set: usize| material.uv_transforms[set];
+        let row = |r: [f32; 3]| Vec4::new(r[0], r[1], r[2], 0.0);
+        Self {
+            light_travel: lights.map(|l| v3(l.travel)),
+            light_ambient: lights.map(|l| v3(l.ambient)),
+            light_diffuse: lights.map(|l| v3(l.diffuse)),
+            light_specular: lights.map(|l| v3(l.specular)),
+            point_position: [0, 1, 2].map(|i| point(i, |p| v3(p.position))),
+            point_colour: [0, 1, 2].map(|i| point(i, |p| v3(p.colour))),
+            point_falloff: [0, 1, 2]
+                .map(|i| point(i, |p| Vec4::new(p.linear, p.quadratic, 0.0, 0.0))),
+            fog_colour: v3(scene.fog_colour),
+            fog_range: Vec4::new(scene.fog_near, scene.fog_far, 0.0, 0.0),
+            placement_tint: v4(scene.placement_tint),
+            replace: v4(scene.replace),
+            shadow_u: shadow.u,
+            shadow_v: shadow.v,
+            misc: Vec4::new(scene.shadow_mode, alpha_reference, 0.0, 0.0),
+            fixed_alpha: Vec4::new(
+                material.first.fixed_alpha,
+                second.map_or(-1.0, |s| s.layer.fixed_alpha),
+                third.map_or(0.0, |t| t.strength),
+                rim.map_or(0.0, |r| r.strength),
+            ),
+            layer1: layer(&material.first),
+            layer2: second.map_or(Vec4::ZERO, |s| layer(&s.layer)),
+            layer2_weights: weights(second.map_or(unset, |s| s.weights)),
+            layer3_weights: weights(third.map_or(unset, |t| t.weights)),
+            rim_weights: weights(rim.map_or(unset, |r| r.weights)),
+            rim: rim.map_or(Vec4::ZERO, |r| Vec4::new(r.scale, r.split, 0.0, 0.0)),
+            material_tint: v4(material.tint),
+            uv_u: [0, 1, 2].map(|s| row(uv(s).u)),
+            uv_v: [0, 1, 2].map(|s| row(uv(s).v)),
+        }
+    }
+}
+
+/// A material's textures by role, each loaded with the view its role
+/// samples through: colour, spec, rim and the layers' colour maps as sRGB
+/// (the remaster decodes them), normal maps and the shadow map as stored.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CharacterTextures {
+    pub colour: Option<Handle<Image>>,
+    pub normal_map: Option<Handle<Image>>,
+    pub spec_map: Option<Handle<Image>>,
+    pub second_colour: Option<Handle<Image>>,
+    pub second_normal_map: Option<Handle<Image>>,
+    pub second_spec_map: Option<Handle<Image>>,
+    pub third: Option<Handle<Image>>,
+    pub rim: Option<Handle<Image>>,
+    pub shadow: Option<Handle<Image>>,
+}
+
+impl CharacterTextures {
+    /// The slot an IR role fills.
+    pub fn slot(&mut self, role: TextureRole) -> &mut Option<Handle<Image>> {
+        match role {
+            TextureRole::Layer1ColorMap => &mut self.colour,
+            TextureRole::Layer1BaseNormalMap => &mut self.normal_map,
+            TextureRole::Layer1BaseSpecMap => &mut self.spec_map,
+            TextureRole::Layer2ColorMap => &mut self.second_colour,
+            TextureRole::Layer2BaseNormalMap => &mut self.second_normal_map,
+            TextureRole::Layer2BaseSpecMap => &mut self.second_spec_map,
+            TextureRole::Layer3ColorMap => &mut self.third,
+            TextureRole::Layer4ColorMap => &mut self.rim,
+        }
+    }
+
+    /// The first texture `key` samples that isn't here.
+    fn missing(&self, key: &ShaderKey) -> Option<&'static str> {
+        let s = key.switches();
+        [
+            (true, self.colour.is_some(), "colour map"),
+            (s.normal_map, self.normal_map.is_some(), "normal map"),
+            (s.spec_map, self.spec_map.is_some(), "spec map"),
+            (s.second, self.second_colour.is_some(), "second colour map"),
+            (
+                s.second && s.normal_map,
+                self.second_normal_map.is_some(),
+                "second normal map",
+            ),
+            (
+                s.second && s.spec_map,
+                self.second_spec_map.is_some(),
+                "second spec map",
+            ),
+            (s.third, self.third.is_some(), "third layer's map"),
+            (s.rim, self.rim.is_some(), "rim map"),
+            (s.shadows, self.shadow.is_some(), "shadow map"),
+        ]
+        .into_iter()
+        .find_map(|(needed, there, name)| (needed && !there).then_some(name))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum MaterialError {
+    #[error(transparent)]
+    Key(#[from] KeyError),
+    #[error("the material's {0} isn't there")]
+    MissingTexture(&'static str),
+    #[error("the material has a {0} but not its values")]
+    MissingValues(&'static str),
+    #[error("the base mask turns on point lights the material doesn't own: {0:#06x}")]
+    ForcedPointLights(u32),
+}
+
+/// The tfbmulti2 character material: the key the pipeline specializes on,
+/// the uniform and the textures.
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
+#[bind_group_data(MaterialKey)]
+pub struct CharacterMaterial {
+    #[uniform(0)]
+    pub uniform: CharacterUniform,
+    #[texture(1, visibility(fragment))]
+    #[sampler(2, visibility(fragment))]
+    pub colour: Option<Handle<Image>>,
+    #[texture(3, visibility(fragment))]
+    #[sampler(4, visibility(fragment))]
+    pub normal_map: Option<Handle<Image>>,
+    #[texture(5, visibility(fragment))]
+    #[sampler(6, visibility(fragment))]
+    pub spec_map: Option<Handle<Image>>,
+    #[texture(7, visibility(fragment))]
+    #[sampler(8, visibility(fragment))]
+    pub second_colour: Option<Handle<Image>>,
+    #[texture(9, visibility(fragment))]
+    #[sampler(10, visibility(fragment))]
+    pub second_normal_map: Option<Handle<Image>>,
+    #[texture(11, visibility(fragment))]
+    #[sampler(12, visibility(fragment))]
+    pub second_spec_map: Option<Handle<Image>>,
+    #[texture(13, visibility(fragment))]
+    #[sampler(14, visibility(fragment))]
+    pub third: Option<Handle<Image>>,
+    #[texture(15, visibility(fragment))]
+    #[sampler(16, visibility(fragment))]
+    pub rim: Option<Handle<Image>>,
+    #[texture(17, visibility(fragment))]
+    #[sampler(18, visibility(fragment))]
+    pub shadow: Option<Handle<Image>>,
+    pub key: MaterialKey,
+}
+
+impl From<&CharacterMaterial> for MaterialKey {
+    fn from(m: &CharacterMaterial) -> Self {
+        m.key
+    }
+}
+
+impl CharacterMaterial {
+    /// A material for `key`, its numbers from the reference model's types.
+    /// Refuses a key whose textures aren't all there, since an unbound slot
+    /// would sample Bevy's white fallback and draw something wrong quietly.
+    pub fn new(
+        key: MaterialKey,
+        material: &guac_ir::shading::Material,
+        scene: &Scene,
+        shadow: ShadowLookup,
+        alpha_reference: f32,
+        textures: CharacterTextures,
+    ) -> Result<Self, MaterialError> {
+        if let Some(name) = textures.missing(&key.shader) {
+            return Err(MaterialError::MissingTexture(name));
+        }
+        Ok(Self {
+            uniform: CharacterUniform::new(material, scene, shadow, alpha_reference),
+            colour: textures.colour,
+            normal_map: textures.normal_map,
+            spec_map: textures.spec_map,
+            second_colour: textures.second_colour,
+            second_normal_map: textures.second_normal_map,
+            second_spec_map: textures.second_spec_map,
+            third: textures.third,
+            rim: textures.rim,
+            shadow: textures.shadow,
+            key,
+        })
+    }
+
+    /// An IR material in `scene`: the masks it draws there, its numbers and
+    /// its textures, each found by `texture`.
+    pub fn from_ir(
+        ir: &model::Material,
+        scene: &Scene,
+        shadow: ShadowLookup,
+        mut texture: impl FnMut(&model::TextureSlot) -> Handle<Image>,
+    ) -> Result<Self, MaterialError> {
+        let bits = SceneBits {
+            shadows: scene.shadows,
+            fog: scene.fog,
+            point_lights: u8::try_from(scene.point_lights.len()).unwrap_or(u8::MAX),
+        };
+        let key = MaterialKey {
+            shader: ShaderKey::resolve(ir.pixel, ir.vertex, bits)?,
+            states: StateKey::from(&ir.states),
+        };
+        let mut textures = CharacterTextures::default();
+        for slot in &ir.textures {
+            *textures.slot(slot.role) = Some(texture(slot));
+        }
+        Self::new(
+            key,
+            &reference_material(ir)?,
+            scene,
+            shadow,
+            ir.states.alpha_test.unwrap_or(0.0),
+            textures,
+        )
+    }
+}
+
+fn mask_bit(mask: u32, b: u32) -> bool {
+    mask >> b & 1 == 1
+}
+
+/// A scene switch the material owns: its base bit when the ignore mask
+/// holds the bit, on when the base sets one it leaves to the scene (the
+/// selector ORs the scene's onto it), else the scene's.
+fn owned(mask: Mask, b: u32) -> Option<bool> {
+    if mask_bit(mask.ignore, b) {
+        Some(mask_bit(mask.base, b))
+    } else {
+        mask_bit(mask.base, b).then_some(true)
+    }
+}
+
+/// The reference model's material for an IR one: the switches its base
+/// masks set, the scene switches its ignore masks own, and its numbers
+/// (the character-shading spec's material requirement; a scroll track's
+/// motion is AE.21's, so every set keeps its identity transform).
+pub fn reference_material(
+    ir: &model::Material,
+) -> Result<guac_ir::shading::Material, MaterialError> {
+    let (p, v) = (ir.pixel, ir.vertex);
+    let pr = &ir.params;
+    let lights = 0b111 << bit::POINT_LIGHTS;
+    let point_lights = if p.ignore & lights == lights {
+        Some((p.base & lights).count_ones() as u8)
+    } else if p.base & lights != 0 {
+        return Err(MaterialError::ForcedPointLights(p.base));
+    } else {
+        None
+    };
+    let weights = |w: [f32; 4]| Weights::new(w[0], w[1], w[2]);
+    let second = if mask_bit(p.base, bit::LAYER2) {
+        let extra = pr
+            .layer2_extra
+            .ok_or(MaterialError::MissingValues("second layer"))?;
+        let blend = pr
+            .layer2_blend
+            .ok_or(MaterialError::MissingValues("second layer's blend"))?;
+        Some(SecondLayer {
+            layer: Layer {
+                exponent: extra[2],
+                detail_weight: extra[3],
+                fixed_alpha: pr.fixed_alpha[1],
+            },
+            weights: weights(blend),
+        })
+    } else {
+        None
+    };
+    let third = if mask_bit(p.base, bit::LAYER3) {
+        let blend = pr
+            .layer3_blend
+            .ok_or(MaterialError::MissingValues("third layer's blend"))?;
+        Some(ThirdLayer {
+            strength: pr.fixed_alpha[2],
+            weights: weights(blend),
+        })
+    } else {
+        None
+    };
+    Ok(guac_ir::shading::Material {
+        normal_map: mask_bit(p.base, bit::NORMAL_MAP),
+        spec_map: mask_bit(p.base, bit::SPEC_MAP),
+        directional: mask_bit(p.base, bit::DIRECTIONAL),
+        vertex_colour: mask_bit(v.base, bit::VERTEX_COLOUR),
+        first: Layer {
+            exponent: pr.layer1_extra[2],
+            detail_weight: pr.layer1_extra[3],
+            fixed_alpha: pr.fixed_alpha[0],
+        },
+        second,
+        third,
+        rim: mask_bit(p.base, bit::RIM).then(|| Rim {
+            scale: pr.layer4_values[1],
+            strength: pr.fixed_alpha[3],
+            weights: weights(pr.layer4_blend),
+            split: pr.layer4_values[3],
+        }),
+        tint: pr.material_tint.map(|c| f32::from(c) / 255.0),
+        glow: pr.glow.map(|g| f32::from(g) / 255.0),
+        uv_transforms: [UvTransform::IDENTITY; 3],
+        fixed: Fixed {
+            shadows: owned(p, bit::SHADOWS),
+            fog: owned(p, bit::FOG),
+            point_lights,
+        },
+    })
+}
+
+/// The vertex buffer's attributes for `key` on a mesh of this layout, at
+/// the shader's locations; a mesh missing one the key reads is refused.
+pub fn vertex_attributes(
+    key: &ShaderKey,
+    layout: &MeshVertexBufferLayoutRef,
+) -> Vec<VertexAttributeDescriptor> {
+    let s = key.switches();
+    let mut attributes = vec![
+        Mesh::ATTRIBUTE_POSITION.at_shader_location(0),
+        Mesh::ATTRIBUTE_NORMAL.at_shader_location(1),
+        Mesh::ATTRIBUTE_UV_0.at_shader_location(2),
+    ];
+    if key.uv_sets() > 1 {
+        attributes.push(Mesh::ATTRIBUTE_UV_1.at_shader_location(3));
+    }
+    if s.normal_map {
+        attributes.push(Mesh::ATTRIBUTE_TANGENT.at_shader_location(4));
+    }
+    if s.vertex_colour {
+        attributes.push(Mesh::ATTRIBUTE_COLOR.at_shader_location(5));
+    }
+    // Bevy's mesh pipeline turns skinning on (the SKINNED def, the joint
+    // palette's bind group) when the mesh carries both.
+    if layout.0.contains(Mesh::ATTRIBUTE_JOINT_INDEX)
+        && layout.0.contains(Mesh::ATTRIBUTE_JOINT_WEIGHT)
+    {
+        attributes.push(Mesh::ATTRIBUTE_JOINT_INDEX.at_shader_location(6));
+        attributes.push(Mesh::ATTRIBUTE_JOINT_WEIGHT.at_shader_location(7));
+    }
+    if key.uv_sets() > 2 {
+        attributes.push(ATTRIBUTE_UV_2.at_shader_location(8));
+    }
+    attributes
+}
+
+/// Sets `descriptor` up for `key`: the shader defs on both stages, the
+/// vertex buffer and the render states.
+pub fn specialize_for(
+    key: &MaterialKey,
+    descriptor: &mut RenderPipelineDescriptor,
+    layout: &MeshVertexBufferLayoutRef,
+) -> Result<(), MissingVertexAttributeError> {
+    let defs = key.shader_defs();
+    descriptor.vertex.shader_defs.extend(defs.iter().cloned());
+    if let Some(fragment) = descriptor.fragment.as_mut() {
+        fragment.shader_defs.extend(defs);
+    }
+    descriptor.vertex.buffers = vec![
+        layout
+            .0
+            .get_layout(&vertex_attributes(&key.shader, layout))?,
+    ];
+    key.states.apply(descriptor);
+    Ok(())
+}
+
+impl Material for CharacterMaterial {
+    fn vertex_shader() -> ShaderRef {
+        SHADER.into()
+    }
+
+    fn fragment_shader() -> ShaderRef {
+        SHADER.into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode {
+        self.key.states.alpha_mode(self.uniform.misc.y)
+    }
+
+    // Bevy's prepass and shadow shaders read its own vertex layout and
+    // material, not this one; nothing in AE needs either.
+    fn enable_prepass() -> bool {
+        false
+    }
+
+    fn enable_shadows() -> bool {
+        false
+    }
+
+    fn specialize(
+        _pipeline: &MaterialPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        layout: &MeshVertexBufferLayoutRef,
+        key: MaterialPipelineKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        specialize_for(&key.bind_group_data, descriptor, layout)?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::character::mesh::segment_mesh;
+    use bevy::mesh::MeshVertexBufferLayouts;
+    use bevy::render::render_resource::{
+        ColorTargetState, ColorWrites, CompareFunction, DepthStencilState, Face, FragmentState,
+        TextureFormat,
+    };
+    use guac_ir::model::{Blend, Filter, Params, RenderStates, Sampler, TextureSlot, Wrap};
+    use guac_ir::shading::{DirectionalLight, PointLight};
+
+    fn slot(role: TextureRole) -> TextureSlot {
+        TextureSlot {
+            role,
+            texture: format!("textures/{role:?}.ktx2"),
+            image: format!("{role:?}"),
+            sampler: Sampler {
+                wrap_u: Wrap::Repeat,
+                wrap_v: Wrap::Repeat,
+                mag: Filter::Linear,
+                min: Filter::Linear,
+                mip: Some(Filter::Linear),
+            },
+        }
+    }
+
+    /// Eruptor's body as AE.6 reads it off the disc (ae-shader section 2).
+    fn eruptor_body() -> model::Material {
+        model::Material {
+            name: "EruptorBody".into(),
+            pixel: Mask {
+                base: 0x1C,
+                ignore: 0x2FF,
+            },
+            vertex: Mask {
+                base: 0x1C,
+                ignore: 0x1AFF,
+            },
+            textures: vec![
+                slot(TextureRole::Layer1BaseNormalMap),
+                slot(TextureRole::Layer1BaseSpecMap),
+                slot(TextureRole::Layer1ColorMap),
+                slot(TextureRole::Layer4ColorMap),
+            ],
+            params: Params {
+                fixed_alpha: [-1.0, -1.0, -1.0, 1.0],
+                layer1_extra: [1.0, 1.0, 1.0, 1.0],
+                layer2_extra: None,
+                layer2_blend: None,
+                layer3_blend: None,
+                layer4_blend: [0.0, 1.0, 0.0, 0.0],
+                layer4_values: [0.0, 1.0, 0.0, 0.0],
+                material_tint: [128, 128, 128, 255],
+                glow: Some(64),
+            },
+            states: RenderStates {
+                blend: Blend::Opaque,
+                depth_write: true,
+                two_sided: false,
+                alpha_test: None,
+            },
+            scrolls: Vec::new(),
+        }
+    }
+
+    fn fogged() -> Scene {
+        Scene {
+            fog: true,
+            ..Scene::new()
+        }
+    }
+
+    #[test]
+    fn eruptors_body_becomes_the_spec_material() {
+        let m = reference_material(&eruptor_body()).unwrap();
+        assert!(m.normal_map && m.spec_map && !m.directional && !m.vertex_colour);
+        assert_eq!(
+            (m.first.exponent, m.first.detail_weight, m.first.fixed_alpha),
+            (1.0, 1.0, -1.0)
+        );
+        assert_eq!(m.rim, Some(Rim::new(1.0)));
+        assert_eq!(m.tint, [128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0]);
+        assert_eq!(m.glow, Some(64.0 / 255.0));
+        assert_eq!(m.second, None);
+        assert_eq!(m.third, None);
+        // 0x2FF leaves shadows, fog and point lights to the scene.
+        assert_eq!(m.fixed, Fixed::default());
+    }
+
+    #[test]
+    fn the_spikes_multiply_their_rim_at_twice_the_strength() {
+        let mut ir = eruptor_body();
+        ir.pixel.base = 0x24;
+        ir.vertex.base = 0x24;
+        ir.params.layer4_blend = [0.0, 0.0, 1.0, 0.0];
+        ir.params.fixed_alpha = [-1.0, -1.0, -1.0, 2.0];
+        ir.params.material_tint = [0x91, 0x91, 0x91, 0xFF];
+        let m = reference_material(&ir).unwrap();
+        assert!(m.directional && !m.normal_map && !m.spec_map);
+        let rim = m.rim.unwrap();
+        assert_eq!((rim.strength, rim.weights), (2.0, Weights::MULTIPLY));
+        assert_eq!(m.tint[0], 145.0 / 255.0);
+    }
+
+    #[test]
+    fn the_model_and_the_selector_agree_on_what_a_scene_draws() {
+        // Every base mask AE.5 counted, under both ignore pairs, in every
+        // scene the runtime can set: the model's switches resolved from
+        // the material's ownership equal the masks the selector draws.
+        let bases = [0x00, 0x04, 0x18, 0x1C, 0x20, 0x24, 0x28, 0x2C, 0x38, 0x3C];
+        for base in bases {
+            for (pi, vi) in [(0x2FF, 0x1AFF), (0x3AFF, 0x3AFF)] {
+                for colour in [0, 0x1000] {
+                    let mut ir = eruptor_body();
+                    ir.pixel = Mask { base, ignore: pi };
+                    ir.vertex = Mask {
+                        base: base | colour,
+                        ignore: vi,
+                    };
+                    let m = reference_material(&ir).unwrap();
+                    for shadows in [false, true] {
+                        for fog in [false, true] {
+                            for lights in 0..=3u8 {
+                                let mut scene = Scene::new();
+                                scene.shadows = shadows;
+                                scene.fog = fog;
+                                scene.point_lights = vec![
+                                    PointLight {
+                                        position: [0.0; 3],
+                                        colour: [0.0; 3],
+                                        linear: 0.0,
+                                        quadratic: 0.0,
+                                    };
+                                    usize::from(lights)
+                                ];
+                                let bits = SceneBits {
+                                    shadows,
+                                    fog,
+                                    point_lights: lights,
+                                };
+                                let key = ShaderKey::resolve(ir.pixel, ir.vertex, bits).unwrap();
+                                let model = guac_ir::shading::Switches::resolve(&m, &scene);
+                                assert_eq!(key.switches(), model, "{base:#x}/{pi:#x} {bits:?}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_layer_without_its_values_is_refused() {
+        let mut ir = eruptor_body();
+        ir.pixel.base |= 1;
+        ir.vertex.base |= 1;
+        assert_eq!(
+            reference_material(&ir),
+            Err(MaterialError::MissingValues("second layer"))
+        );
+        ir.params.layer2_extra = Some([1.0, 1.0, 3.0, 0.5]);
+        assert_eq!(
+            reference_material(&ir),
+            Err(MaterialError::MissingValues("second layer's blend"))
+        );
+        ir.params.layer2_blend = Some([0.0, 0.0, 1.0, 0.0]);
+        let second = reference_material(&ir).unwrap().second.unwrap();
+        assert_eq!(
+            (
+                second.layer.exponent,
+                second.layer.detail_weight,
+                second.weights
+            ),
+            (3.0, 0.5, Weights::MULTIPLY)
+        );
+    }
+
+    #[test]
+    fn the_uniform_packs_the_models_numbers() {
+        let mut m = reference_material(&eruptor_body()).unwrap();
+        m.uv_transforms[1] = UvTransform {
+            u: [2.0, 0.0, 0.5],
+            v: [0.0, 3.0, 0.25],
+        };
+        let mut scene = fogged();
+        scene.fog_near = 30.48;
+        scene.fog_far = 335.28;
+        scene.lights[1] = DirectionalLight {
+            travel: [0.0, -1.0, 0.0],
+            ambient: [0.1, 0.2, 0.3],
+            diffuse: [0.4, 0.5, 0.6],
+            specular: [0.7, 0.8, 0.9],
+        };
+        scene.point_lights.push(PointLight {
+            position: [1.0, 2.0, -3.0],
+            colour: [0.5, 0.25, 0.125],
+            linear: 1.5,
+            quadratic: 0.75,
+        });
+        let u = CharacterUniform::new(&m, &scene, ShadowLookup::NONE, 0.3);
+        assert_eq!(u.light_travel[1], Vec4::new(0.0, -1.0, 0.0, 0.0));
+        assert_eq!(u.light_specular[1], Vec4::new(0.7, 0.8, 0.9, 0.0));
+        assert_eq!(u.point_falloff[0], Vec4::new(1.5, 0.75, 0.0, 0.0));
+        assert_eq!(u.point_colour[1], Vec4::ZERO);
+        assert_eq!(u.fog_range, Vec4::new(30.48, 335.28, 0.0, 0.0));
+        assert_eq!(u.misc, Vec4::new(2.0, 0.3, 0.0, 0.0));
+        assert_eq!(u.fixed_alpha, Vec4::new(-1.0, -1.0, 0.0, 1.0));
+        assert_eq!(u.layer1, Vec4::new(1.0, 1.0, 0.0, 0.0));
+        assert_eq!(u.rim_weights, Vec4::new(0.0, 1.0, 0.0, 0.0));
+        assert_eq!(u.rim, Vec4::new(1.0, 0.0, 0.0, 0.0));
+        assert_eq!(u.uv_u[1], Vec4::new(2.0, 0.0, 0.5, 0.0));
+        assert_eq!(u.uv_v[1], Vec4::new(0.0, 3.0, 0.25, 0.0));
+        assert_eq!(u.uv_u[0], Vec4::new(1.0, 0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn an_ir_material_finds_each_texture_in_its_role() {
+        let ir = eruptor_body();
+        let mut images = bevy::asset::Assets::<Image>::default();
+        let mut seen = Vec::new();
+        let m = CharacterMaterial::from_ir(&ir, &fogged(), ShadowLookup::NONE, |slot| {
+            seen.push(slot.role);
+            images.add(Image::default())
+        })
+        .unwrap();
+        assert_eq!(seen.len(), 4);
+        assert_eq!(
+            (m.key.shader.pixel(), m.key.shader.vertex()),
+            (0x41C, 0x41C)
+        );
+        assert_eq!(m.key.states, StateKey::OPAQUE);
+        assert!(m.colour.is_some() && m.normal_map.is_some() && m.spec_map.is_some());
+        assert!(m.rim.is_some() && m.second_colour.is_none() && m.shadow.is_none());
+        assert_eq!(m.alpha_mode(), AlphaMode::Opaque);
+    }
+
+    #[test]
+    fn a_missing_texture_is_refused() {
+        let mut ir = eruptor_body();
+        ir.textures
+            .retain(|t| t.role != TextureRole::Layer4ColorMap);
+        let mut images = bevy::asset::Assets::<Image>::default();
+        let got = CharacterMaterial::from_ir(&ir, &fogged(), ShadowLookup::NONE, |_| {
+            images.add(Image::default())
+        });
+        assert_eq!(got.unwrap_err(), MaterialError::MissingTexture("rim map"));
+        // Shadows need a shadow map the IR never names.
+        let mut shadowed = fogged();
+        shadowed.shadows = true;
+        let got =
+            CharacterMaterial::from_ir(&eruptor_body(), &shadowed, ShadowLookup::NONE, |_| {
+                images.add(Image::default())
+            });
+        assert_eq!(
+            got.unwrap_err(),
+            MaterialError::MissingTexture("shadow map")
+        );
+    }
+
+    fn segment(uvs: usize, colours: bool) -> model::Segment {
+        model::Segment {
+            material: 0,
+            source: 0,
+            positions: vec![[0.0; 3]; 3],
+            normals: vec![[0.0, 0.0, 1.0]; 3],
+            tangents: Some(vec![[1.0, 0.0, 0.0, 1.0]; 3]),
+            uvs: vec![vec![[0.0; 2]; 3]; uvs],
+            colors: colours.then(|| vec![[255; 4]; 3]),
+            joints: vec![[0; 4]; 3],
+            weights: vec![[255, 0, 0, 0]; 3],
+            indices: vec![0, 1, 2],
+        }
+    }
+
+    fn layout(s: &model::Segment) -> MeshVertexBufferLayoutRef {
+        segment_mesh(s)
+            .unwrap()
+            .get_mesh_vertex_buffer_layout(&mut MeshVertexBufferLayouts::default())
+    }
+
+    fn locations(key: &ShaderKey, s: &model::Segment) -> Vec<u32> {
+        let layout = layout(s);
+        vertex_attributes(key, &layout)
+            .iter()
+            .map(|a| a.shader_location)
+            .collect()
+    }
+
+    #[test]
+    fn the_key_picks_the_vertex_attributes() {
+        let full = segment(3, true);
+        let key = |p: u32, v: u32| ShaderKey::new(p, v).unwrap();
+        // Eruptor's body: no second set, no colour.
+        assert_eq!(locations(&key(0x41C, 0x41C), &full), [0, 1, 2, 4, 6, 7]);
+        // Vertex colour.
+        assert_eq!(locations(&key(0x404, 0x1404), &full), [0, 1, 2, 5, 6, 7]);
+        // A third layer alone reads the second set; both read the third.
+        assert_eq!(locations(&key(0x002, 0x002), &full), [0, 1, 2, 3, 6, 7]);
+        assert_eq!(locations(&key(0x003, 0x003), &full), [0, 1, 2, 3, 6, 7, 8]);
+    }
+
+    #[test]
+    fn a_mesh_missing_what_the_key_reads_is_refused() {
+        let one_set = segment(1, false);
+        let layout = layout(&one_set);
+        let key = MaterialKey {
+            shader: ShaderKey::new(0x003, 0x003).unwrap(),
+            states: StateKey::OPAQUE,
+        };
+        let mut d = RenderPipelineDescriptor::default();
+        assert!(specialize_for(&key, &mut d, &layout).is_err());
+        let colour = MaterialKey {
+            shader: ShaderKey::new(0x404, 0x1404).unwrap(),
+            states: StateKey::OPAQUE,
+        };
+        assert!(specialize_for(&colour, &mut d, &layout).is_err());
+    }
+
+    #[test]
+    fn specialize_sets_defs_buffers_and_states() {
+        let s = segment(1, false);
+        let layout = layout(&s);
+        let key = MaterialKey {
+            shader: ShaderKey::new(0x41C, 0x41C).unwrap(),
+            states: StateKey {
+                blend: Blend::Alpha,
+                depth_write: false,
+                two_sided: true,
+                alpha_test: true,
+            },
+        };
+        let mut d = RenderPipelineDescriptor {
+            depth_stencil: Some(DepthStencilState {
+                format: TextureFormat::Depth32Float,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(CompareFunction::GreaterEqual),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            fragment: Some(FragmentState {
+                targets: vec![Some(ColorTargetState {
+                    format: TextureFormat::Rgba16Float,
+                    blend: None,
+                    write_mask: ColorWrites::ALL,
+                })],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        d.primitive.cull_mode = Some(Face::Back);
+        specialize_for(&key, &mut d, &layout).unwrap();
+        assert_eq!(d.vertex.shader_defs, key.shader_defs());
+        assert_eq!(d.fragment.as_ref().unwrap().shader_defs, key.shader_defs());
+        let buffer = &d.vertex.buffers[0];
+        let locations: Vec<u32> = buffer
+            .attributes
+            .iter()
+            .map(|a| a.shader_location)
+            .collect();
+        assert_eq!(locations, [0, 1, 2, 4, 6, 7]);
+        assert_eq!(d.primitive.cull_mode, None);
+        assert_eq!(d.depth_stencil.unwrap().depth_write_enabled, Some(false));
+        assert!(
+            d.fragment.unwrap().targets[0]
+                .as_ref()
+                .unwrap()
+                .blend
+                .is_some()
+        );
+    }
+}
