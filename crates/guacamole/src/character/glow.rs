@@ -385,24 +385,26 @@ pub fn spawn_glow_camera(
 }
 
 /// Each of `spawned`'s segments again on `layer`, with its material's glow
-/// pass (`masks`, by the model's material index), skinned by the same
-/// joints.
+/// pass (`masks`, by the model's material index; `None` for a material
+/// [`CharacterMaterial::glow_mask`] leaves out, whose segments aren't
+/// drawn), skinned by the same joints.
 pub fn spawn_glow_masks(
     commands: &mut Commands,
     model: &Model,
     spawned: &SpawnedCharacter,
-    masks: &[Handle<CharacterMaterial>],
+    masks: &[Option<Handle<CharacterMaterial>>],
     layer: usize,
 ) -> Vec<Entity> {
     model
         .segments
         .iter()
         .zip(&spawned.meshes)
-        .map(|(s, mesh)| {
+        .filter_map(|(s, mesh)| Some((masks[usize::from(s.material)].clone()?, mesh)))
+        .map(|(mask, mesh)| {
             commands
                 .spawn((
                     Mesh3d(mesh.clone()),
-                    MeshMaterial3d(masks[usize::from(s.material)].clone()),
+                    MeshMaterial3d(mask),
                     SkinnedMesh {
                         inverse_bindposes: spawned.skin.clone(),
                         joints: spawned.joints.clone(),

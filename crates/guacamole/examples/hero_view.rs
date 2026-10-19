@@ -602,7 +602,7 @@ fn setup(
         let scene = rig.scene();
         let (handles, glows): (
             Vec<Handle<CharacterMaterial>>,
-            Vec<Handle<CharacterMaterial>>,
+            Vec<Option<Handle<CharacterMaterial>>>,
         ) = model
             .materials
             .iter()
@@ -619,7 +619,7 @@ fn setup(
                     material.key.states,
                     m.params.glow,
                 );
-                let glow = characters.add(material.glow_mask());
+                let glow = material.glow_mask().map(|g| characters.add(g));
                 (characters.add(material), glow)
             })
             .unzip();

@@ -217,8 +217,9 @@ fn watch_pipelines(
 /// A key drawn on the hidden turntable, waiting for the render world.
 struct Drawing {
     key: WarmKey,
-    /// Its colour segment and its glow mask.
-    checks: [Entity; 2],
+    /// Its colour segment and, unless the glow pass leaves it out, its
+    /// glow mask.
+    checks: Vec<Entity>,
     since: Instant,
 }
 
@@ -483,7 +484,11 @@ fn confirm(warm: &mut Warm, watch: &PipelineWatch) {
     let mut watched = watch.lock();
     let mut finished = Vec::new();
     stage.drawing.retain(|d| {
-        let found = d.checks.map(|e| watched.checks.get(&e).cloned());
+        let found: Vec<Option<Compiled>> = d
+            .checks
+            .iter()
+            .map(|e| watched.checks.get(e).cloned())
+            .collect();
         let failed = found.iter().flatten().find_map(|c| match c {
             Compiled::Failed(why) => Some(why.clone()),
             _ => None,
@@ -493,8 +498,8 @@ fn confirm(warm: &mut Warm, watch: &PipelineWatch) {
         if !(ready || failed.is_some() || late) {
             return true;
         }
-        for e in d.checks {
-            watched.checks.remove(&e);
+        for e in &d.checks {
+            watched.checks.remove(e);
         }
         finished.push((d.key, failed, late && !ready));
         false
@@ -554,7 +559,8 @@ fn spawn_stage(s: &mut WarmSpawner) -> Option<Stage> {
 }
 
 /// One key on the stage: a triangle of its mesh shape with its material,
-/// and its glow mask, each watched.
+/// and its glow mask unless the glow pass leaves the part out, each
+/// watched.
 fn draw(warm: &mut Warm, entry: Entry, s: &mut WarmSpawner, watch: &PipelineWatch) {
     let (Some(stage), Some((scene, identity))) = (warm.stage.as_mut(), warm.scene.as_ref()) else {
         warm.finish(entry.key);
@@ -570,7 +576,7 @@ fn draw(warm: &mut Warm, entry: Entry, s: &mut WarmSpawner, watch: &PipelineWatc
         if material.key != entry.key.material {
             warn!(drawn = ?material.key, listed = ?entry.key.material, "the warm drew another key");
         }
-        let glow = s.materials.add(material.glow_mask());
+        let glow = material.glow_mask().map(|g| s.materials.add(g));
         let colour = s.materials.add(material);
         spawn_character(
             &mut s.commands,
@@ -605,10 +611,15 @@ fn draw(warm: &mut Warm, entry: Entry, s: &mut WarmSpawner, watch: &PipelineWatc
         &[glow],
         glow_layer(WARM_SLOT),
     );
-    let checks = [spawned.segments[0], masks[0]];
+    // Its glow mask too, unless the glow pass leaves the part out.
+    let checks: Vec<Entity> = spawned.segments[..1]
+        .iter()
+        .chain(&masks)
+        .copied()
+        .collect();
     let mut watched = watch.lock();
-    for e in checks {
-        watched.checks.insert(e, Compiled::Waiting);
+    for e in &checks {
+        watched.checks.insert(*e, Compiled::Waiting);
     }
     stage.roots.push(spawned.root);
     stage.drawing.push(Drawing {
@@ -718,7 +729,15 @@ mod tests {
         );
         let (colour, glow) = drawn(&mut app);
         assert_eq!(colour, unique);
-        assert_eq!(glow, unique, "the glow pass draws the same keys");
+        // The glow pass draws the same keys but the fins': no glow attribute
+        // and no depth written, so the glow pass leaves them out.
+        let masked: HashSet<WarmKey> = unique
+            .iter()
+            .copied()
+            .filter(|k| k.material.states.depth_write)
+            .collect();
+        assert_eq!(masked.len(), 2);
+        assert_eq!(glow, masked, "the glow pass draws the same keys");
         // Headless, nothing compiles: every key counts as compiled.
         let report = app.world().resource::<Warm>().report().clone();
         assert_eq!((report.state.as_str(), report.keys), ("done", 3));

@@ -206,7 +206,7 @@ Parts the disc marks as blended, additive, alpha-tested, two-sided or not writin
 - **THEN** the two colours add
 
 ### Requirement: The glow mask
-Once every part is drawn, each part SHALL be drawn again into a glow mask that starts at zero, writing its glow amount when its glow attribute is on, its glow alpha when the attribute is off, and zero when it has none. Its glow alpha SHALL be its first layer's alpha switched hard (the fixed alpha from 0 up, else the colour map's alpha) times the vertex and both tints' alphas.
+Once every part is drawn, each part SHALL be drawn again into a glow mask that starts at zero, writing its glow amount when its glow attribute is on, its glow alpha when the attribute is off, and zero when it has none, except a part with none that writes no depth, which SHALL NOT be drawn into it. Its glow alpha SHALL be its first layer's alpha switched hard (the fixed alpha from 0 up, else the colour map's alpha) times the vertex and both tints' alphas.
 
 #### Scenario: Eruptor's glow
 - **WHEN** Eruptor is drawn
@@ -220,8 +220,12 @@ Once every part is drawn, each part SHALL be drawn again into a glow mask that s
 The glow mask SHALL be drawn without blending, each part keeping its own culling and its alpha test (run on its glow alpha), and only where the part is the nearest surface, so a part in front writes its own mask over what's behind it.
 
 #### Scenario: A part without glow in front of one with it
-- **WHEN** a part with no glow attribute covers part of a glowing one
+- **WHEN** a part with no glow attribute that writes depth covers part of a glowing one
 - **THEN** the mask is zero where it covers
+
+#### Scenario: A see-through part without glow in front of one with it
+- **WHEN** a blended part with no glow attribute that writes no depth covers part of a glowing one
+- **THEN** the glowing part's mask shows through it
 
 ### Requirement: Extracting the glow
 The glow SHALL be extracted into a buffer 512/960 of the frame's width and half its height, rounded (512 by 270 at the original's 960 by 540), each buffer texel sampling the frame's colour and the mask with linear filtering at its own centre and multiplying the two. A sample past an edge SHALL take the edge texel, here and through the blur.

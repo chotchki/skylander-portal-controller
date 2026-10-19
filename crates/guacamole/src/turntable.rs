@@ -597,7 +597,7 @@ fn spawn_stage(
     for m in &model.materials {
         let material = CharacterMaterial::from_ir(m, scene, ShadowLookup::NONE, texture)
             .map_err(|e| format!("material {}: {e}", m.name))?;
-        glow.push(s.materials.add(material.glow_mask()));
+        glow.push(material.glow_mask().map(|g| s.materials.add(g)));
         colour.push(s.materials.add(material));
     }
     let spawned = spawn_character(
@@ -1146,6 +1146,26 @@ pub(crate) mod tests {
         assert!(root2 != root && !alive(&app, root) && !alive(&app, camera));
         assert!(alive(&app, root2) && alive(&app, camera2));
 
+        // The same figure placed again by another profile is a new placement
+        // (the key is the placement, not the figure): its scene starts over.
+        let mut again = placed(0, 2, "Two");
+        if let PortalChange::Placed { placement, .. } = &mut again {
+            placement.owner = Some(skylander_rpcs3_control::PlacementOwner {
+                profile_id: "p2".into(),
+                initial: "B".into(),
+                color: "#3366ff".into(),
+            });
+        }
+        set(&mut app, [again]);
+        settle(&mut app);
+        let (root3, camera3) = app
+            .world()
+            .resource::<Turntables>()
+            .stage_entities(0)
+            .unwrap();
+        assert!(root3 != root2 && !alive(&app, root2) && !alive(&app, camera2));
+        let (root2, camera2) = (root3, camera3);
+
         // Cleared: nothing of it left.
         set(
             &mut app,
@@ -1284,5 +1304,75 @@ pub(crate) mod tests {
         let shelf = Shelf::new(&roster, tmp.path(), IrFormat::Ron, &[]);
         assert_eq!(shelf.rig.unwrap_err(), "ir/rig.ron names another dump");
         assert!(!plain("../x.ktx2") && !plain("/x") && !plain("") && plain("textures/a.ktx2"));
+    }
+
+    /// What a scene leaves in the world: entities, cameras, and the images,
+    /// meshes, skins and materials it added.
+    fn footprint(app: &mut App) -> [usize; 6] {
+        let world = app.world_mut();
+        let cameras = world.query::<&Camera>().iter(world).count();
+        [
+            world.entities().count_spawned() as usize,
+            cameras,
+            world.resource::<Assets<Image>>().len(),
+            world.resource::<Assets<Mesh>>().len(),
+            world
+                .resource::<Assets<SkinnedMeshInverseBindposes>>()
+                .len(),
+            world.resource::<Assets<CharacterMaterial>>().len(),
+        ]
+    }
+
+    /// Review of AE.13: place, replace, resize and remove, three rounds, and
+    /// the world ends each round where it started; an image, camera, mesh or
+    /// material a scene leaked would grow it by a round each.
+    #[test]
+    fn place_replace_resize_and_remove_leave_nothing_behind() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app(extract(tmp.path()));
+        settle(&mut app);
+        let before = footprint(&mut app);
+        for round in 0..3 {
+            set(
+                &mut app,
+                [
+                    placed(0, 1, "One"),
+                    placed(1, 2, "Two"),
+                    placed(2, 3, "Three"),
+                ],
+            );
+            settle(&mut app);
+            assert_eq!(
+                states(&app)[..3],
+                [Some("model"), Some("model"), Some("portrait")]
+            );
+            let up = footprint(&mut app);
+            assert_eq!(up[1], 4, "two scenes, each a camera and its glow camera");
+            // Swapped: both scenes start over.
+            set(&mut app, [placed(0, 2, "Two"), placed(1, 1, "One")]);
+            settle(&mut app);
+            assert_eq!(footprint(&mut app), up, "round {round}: a replace");
+            // Another plate size: a new camera and image each, the old gone.
+            for size in [128, 256] {
+                app.insert_resource(PlateSize(UVec2::splat(size)));
+                app.update();
+                app.update();
+                let t = app.world().resource::<Turntables>();
+                let image = t.image(0).unwrap();
+                let images = app.world().resource::<Assets<Image>>();
+                assert_eq!(images.get(&image).unwrap().size(), UVec2::splat(size));
+            }
+            assert_eq!(footprint(&mut app), up, "round {round}: a resize");
+            set(
+                &mut app,
+                (0..3).map(|s| PortalChange::Cleared {
+                    slot: SlotIndex::new(s).unwrap(),
+                }),
+            );
+            for _ in 0..3 {
+                app.update();
+            }
+            assert_eq!(footprint(&mut app), before, "round {round}: cleared");
+        }
     }
 }

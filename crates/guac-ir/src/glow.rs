@@ -188,8 +188,9 @@ mod tests {
         assert_eq!(buffer_size(960, 540), (512, 270));
         assert_eq!(buffer_size(1920, 1080), (1024, 540));
         assert_eq!(buffer_size(3840, 2160), (2048, 1080));
-        // Rounded, and never empty.
+        // Rounded, and never empty: an odd height's half rounds up.
         assert_eq!(buffer_size(512, 512), (273, 256));
+        assert_eq!(buffer_size(333, 197), (178, 99));
         assert_eq!(buffer_size(1, 1), (1, 1));
     }
 

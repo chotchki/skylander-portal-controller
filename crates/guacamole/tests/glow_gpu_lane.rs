@@ -447,7 +447,10 @@ fn setup(
             };
             parts.push(material(Glow::None, images.add(flat.image())));
         }
-        let glows: Vec<_> = parts.iter().map(|m| materials.add(m.glow_mask())).collect();
+        let glows: Vec<_> = parts
+            .iter()
+            .map(|m| m.glow_mask().map(|g| materials.add(g)))
+            .collect();
         let handles: Vec<_> = parts.into_iter().map(|m| materials.add(m)).collect();
         let model = quad_model(c);
         let spawned = spawn_character(

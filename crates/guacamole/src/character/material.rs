@@ -265,6 +265,9 @@ pub struct CharacterMaterial {
     #[sampler(18, visibility(fragment))]
     pub shadow: Option<Handle<Image>>,
     pub key: MaterialKey,
+    /// Whether the part has a glow attribute (its glow is an amount or
+    /// layer 1's alpha, not none): what [`Self::glow_mask`] reads.
+    pub glows: bool,
 }
 
 impl From<&CharacterMaterial> for MaterialKey {
@@ -300,14 +303,22 @@ impl CharacterMaterial {
             rim: textures.rim,
             shadow: textures.shadow,
             key,
+            glows: material.glow != Glow::None,
         })
     }
 
-    /// The same part in the glow pass, drawing its glow mask.
-    pub fn glow_mask(&self) -> Self {
+    /// The same part in the glow pass, drawing its glow mask; `None` for a
+    /// part without a glow attribute that writes no depth. The original
+    /// draws only the parts with the attribute into the mask, tested against
+    /// the colour pass's depth, so a part without one hides glow behind it
+    /// only where it wrote depth (the character-shading spec's glow mask).
+    pub fn glow_mask(&self) -> Option<Self> {
+        if !self.glows && !self.key.states.depth_write {
+            return None;
+        }
         let mut m = self.clone();
         m.key.pass = Pass::GlowMask;
-        m
+        Some(m)
     }
 
     /// An IR material in `scene`: the masks it draws there, its numbers and
@@ -928,10 +939,45 @@ mod tests {
             textures,
         )
         .unwrap();
-        let mask = m.glow_mask();
+        let mask = m.glow_mask().expect("a glowing part draws its mask");
         assert_eq!(mask.key, glow);
         assert_eq!(mask.uniform, m.uniform);
         assert_eq!(mask.colour, m.colour);
+        // Without a glow attribute: the mask's zero where the part writes
+        // depth, and no mask draw at all where it doesn't (review of AE.11).
+        let none = |depth_write| {
+            let key = MaterialKey {
+                states: StateKey {
+                    depth_write,
+                    ..colour.states
+                },
+                ..colour
+            };
+            let material = guac_ir::shading::Material {
+                glow: Glow::None,
+                ..reference_material(&eruptor_body()).unwrap()
+            };
+            CharacterMaterial::new(
+                key,
+                &material,
+                &fogged(),
+                ShadowLookup::NONE,
+                0.5,
+                CharacterTextures {
+                    colour: Some(Handle::default()),
+                    normal_map: Some(Handle::default()),
+                    spec_map: Some(Handle::default()),
+                    rim: Some(Handle::default()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+        };
+        let occluder = none(true).glow_mask().expect("it hides glow behind it");
+        assert_eq!(occluder.uniform.misc.z, 0.0);
+        assert!(none(false).glow_mask().is_none());
+        // With the attribute, a part writing no depth still draws its mask.
+        assert!(!colour.states.depth_write && m.glow_mask().is_some());
     }
 
     #[test]

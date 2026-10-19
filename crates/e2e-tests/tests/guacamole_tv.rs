@@ -689,6 +689,7 @@ async fn a_modelled_figure_turns_on_its_card_and_leaves_with_it() {
         .unwrap_or_else(|e| panic!("{name} didn't settle on its portrait: {e}"));
         let c = card(&snap, slot).unwrap();
         assert!(c["reason"].as_str().unwrap().contains(why), "{c}");
+        assert_eq!(c["portrait"], true, "its portrait on the plate: {c}");
         assert_eq!(
             card(&snap, 1).unwrap()["state"],
             "model",

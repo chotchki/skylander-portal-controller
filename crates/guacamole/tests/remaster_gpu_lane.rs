@@ -720,7 +720,7 @@ fn setup(
                                 .clone()
                         })
                         .unwrap_or_else(|e| panic!("{}: {e}", m.name));
-                    let glow = characters.add(material.glow_mask());
+                    let glow = material.glow_mask().map(|g| characters.add(g));
                     (characters.add(material), glow)
                 })
                 .unzip();

@@ -52,7 +52,8 @@ impl MeshShape {
 }
 
 /// A pipeline pair a model draws: its colour pass's key on this mesh shape,
-/// and the same key in the glow pass ([`CharacterMaterial::glow_mask`]).
+/// and the same key in the glow pass ([`CharacterMaterial::glow_mask`]),
+/// unless that pass leaves the part out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WarmKey {
     pub material: MaterialKey,
