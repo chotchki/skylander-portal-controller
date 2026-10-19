@@ -1333,8 +1333,9 @@ chains); how long a full pass takes gets measured when the pipeline runs.
   (device, inode), because macOS `realpath` keeps a `/System/Volumes/Data/...` firmlink spelling. The dump
   is only ever opened with `File::open`, and AB's disc tests check its files keep their sizes and mtimes.
 - A release root's walk stops at the data root (AB.18, option (a); chotchki, 2026-10-18: "that's fine"):
-  only a `.git` in the data root or in `extract/` refuses it, by path as written and resolved, at resolve
-  and again at use. A home folder kept under git (`git init ~`) no longer gets `GUAC-E-EXTRACT-IN-CHECKOUT`
+  only a `.git` in the data root or in `extract/` refuses it, under the same checks as above. A symlink that leads out from under the data root (the data root itself, or
+  `extract/`) gets the any-ancestor walk on where it leads, so neither can point the root into a checkout
+  (AB.18's review). A home folder kept under git (`git init ~`) no longer gets `GUAC-E-EXTRACT-IN-CHECKOUT`
   on every Giants pick, and the hard rule still holds, since it protects this repo and the OS data dir is
   never inside it. A dev root and any root the CLI or a test is handed keep the any-ancestor walk. The
   other option, a release `extract_dir` setting the refusal pointed at, wasn't taken: no setting moves the

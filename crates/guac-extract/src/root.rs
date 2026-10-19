@@ -94,7 +94,11 @@ pub fn enclosing_git_tree(path: &Path) -> Option<PathBuf> {
 
 /// [`enclosing_git_tree`], looking no higher than `ceiling` (itself included)
 /// when there is one: along `path` as written up to `ceiling` as written, and
-/// along their resolved forms.
+/// along their resolved forms. The resolved ceiling is the ceiling's parent
+/// resolved plus its own name, so a symlink at or below it (the ceiling
+/// itself, or a folder under it) that leads out from under it gets every
+/// ancestor of where it leads checked: otherwise `extract/` linked into a
+/// checkout would pass.
 fn git_tree_within(path: &Path, ceiling: Option<&Path>) -> Option<PathBuf> {
     let has_git = |dir: &Path| dir.join(".git").symlink_metadata().is_ok();
     let find = |path: &Path, ceiling: Option<&Path>| {
@@ -104,11 +108,11 @@ fn git_tree_within(path: &Path, ceiling: Option<&Path>) -> Option<PathBuf> {
             .map(Path::to_path_buf)
     };
     find(path, ceiling).or_else(|| {
-        let ceiling = match ceiling {
-            Some(c) => Some(resolved(c)?),
-            None => None,
-        };
-        find(&resolved(path)?, ceiling.as_deref())
+        let path = resolved(path)?;
+        let ceiling = ceiling
+            .and_then(|c| Some(resolved(c.parent()?)?.join(c.file_name()?)))
+            .filter(|c| path.starts_with(c));
+        find(&path, ceiling.as_deref())
     })
 }
 
@@ -240,6 +244,64 @@ mod tests {
             std::fs::remove_file(at.join(".git")).unwrap();
         }
         release().unwrap();
+    }
+
+    /// AB.18's review: the release walk stops at the data root only while the
+    /// root's real folder is under the data root's. A symlink at or below the
+    /// data root that leads elsewhere (`extract/` itself, or the data root)
+    /// gets every ancestor checked, so neither can point into a checkout.
+    #[cfg(unix)]
+    #[test]
+    fn a_release_root_symlinked_out_of_the_data_root_gets_the_full_walk() {
+        use std::os::unix::fs::symlink;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        let in_repo = repo.join("dev-data/guacamole/extract");
+        std::fs::create_dir_all(&in_repo).unwrap();
+        let repo_canon = repo.canonicalize().unwrap();
+        let release = |data_root: &Path| {
+            ExtractRoot::resolve(RootMode::Release {
+                data_root: data_root.to_path_buf(),
+            })
+        };
+        let refused_by_repo = |r: Result<ExtractRoot>| match r {
+            Err(ExtractError::InCheckout { repo: found, .. }) => assert_eq!(found, repo_canon),
+            other => panic!("{other:?}"),
+        };
+
+        // `extract/` a symlink into the checkout.
+        let data_root = tmp.path().join("support/guacamole");
+        std::fs::create_dir_all(&data_root).unwrap();
+        symlink(&in_repo, data_root.join("extract")).unwrap();
+        refused_by_repo(release(&data_root));
+
+        // The data root itself a symlink into the checkout.
+        let linked = tmp.path().join("support/linked");
+        symlink(repo.join("dev-data/guacamole"), &linked).unwrap();
+        refused_by_repo(release(&linked));
+
+        // Swapped in after the resolve: refused at use.
+        let later = tmp.path().join("support/later");
+        std::fs::create_dir_all(&later).unwrap();
+        let root = release(&later).unwrap();
+        symlink(&in_repo, later.join("extract")).unwrap();
+        refused_by_repo(root.ensure_outside_checkouts().map(|()| root.clone()));
+
+        // A symlink out of the data root to a folder in no checkout is fine,
+        // and so is one that stays under the data root with the home in git.
+        let elsewhere = tmp.path().join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        let out = tmp.path().join("support/out");
+        std::fs::create_dir_all(&out).unwrap();
+        symlink(&elsewhere, out.join("extract")).unwrap();
+        release(&out).unwrap();
+        let home = tmp.path().join("home");
+        let inner = home.join("Library/Application Support/guacamole");
+        std::fs::create_dir_all(home.join(".git")).unwrap();
+        std::fs::create_dir_all(inner.join("cache")).unwrap();
+        symlink(inner.join("cache"), inner.join("extract")).unwrap();
+        release(&inner).unwrap();
     }
 
     #[cfg(unix)]
