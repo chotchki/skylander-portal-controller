@@ -1,8 +1,11 @@
-//! The extraction's stages in order (openspec AE.3) on synthetic dumps: a
-//! PARAM.SFO, the roster builder's four archives, two character archives and
-//! two movies, transcoded by a fake ffmpeg (a shell script that copies its
-//! input into each output). Unix only, as AB's transcode tests; the real dump
-//! runs in `giants_stages.rs`.
+//! The extraction's stages in order (openspec AE.3, AE.6) on synthetic
+//! dumps: a PARAM.SFO, the roster builder's four archives, the model
+//! builder's character archive under nine of the roster's eleven character
+//! load files (one more refused for a gloss-map bit, one missing), two
+//! voice-over archives and two movies, transcoded by a fake ffmpeg (a shell
+//! script that copies its input into each output). Unix only, as AB's
+//! transcode tests; the real dump runs in `giants_stages.rs` and
+//! `giants_model_stage.rs`.
 #![cfg(unix)]
 
 use std::fs;
@@ -15,12 +18,21 @@ use guac_extract::known::KnownDump;
 use guac_extract::stages::{self, Event, Files};
 use guac_extract::{DirState, ExtractRoot, IR_VERSION, LAYOUT_VERSION, Manifest, Stale, open};
 use guac_formats::iga::builder::IgaBuilder;
+use guac_formats::model::builder as model;
 use guac_formats::roster::builder::{disc, sample};
 use guac_formats::sfo::builder::SfoBuilder;
 use guac_ir::{IntroSource, Roster};
 
 /// The sample roster's figure count, each with a portrait.
 const FIGURES: usize = 24;
+/// Its character load files, and those [`make_dump`] gives a good model:
+/// all but a missing one and one whose body asks for bit 6.
+const LOADS: usize = 11;
+const MODELS: usize = 9;
+const MISSING: &str = "MinionLoad_016_SpyroDark";
+const REFUSED: &str = "MinionLoad_112_TitanLifeAlt";
+/// The model builder's sample binds eight textures, five distinct.
+const TEXTURES: usize = 5;
 
 const ENCODERS: &str = "Encoders:\\n ------\\n V....D libx264  x\\n A....D libmp3lame  y\\n";
 const DECODERS: &str = "Decoders:\\n ------\\n V....D binkvideo  x\\n A....D binkaudio_dct  y\\n A....D binkaudio_rdft  z\\n";
@@ -78,6 +90,26 @@ fn make_dump(tmp: &Path) -> PathBuf {
     fs::write(usr.join("character/009_eruptor.arc"), eruptor).unwrap();
     let eagle = IgaBuilder::new().stored("model.igz", b"igz").build();
     fs::write(usr.join("character/100_eagle.arc"), eagle).unwrap();
+    let good = model::archive(&model::character(&model::sample()));
+    let mut bad = model::sample();
+    bad.materials[0].pixel = Some((0x5C, 0x2FF));
+    let bad = model::archive(&model::character(&bad));
+    for load in [
+        "MinionLoad_000_AirDragon",
+        "MinionLoad_000_AirDragonLegendary",
+        "MinionLoad_007_GemGolem",
+        "MinionLoad_016_Spyro",
+        "MinionLoad_100_Eagle",
+        "MinionLoad_100_EagleLegendary",
+        "MinionLoad_106_IceSorc",
+        "MinionLoad_106_IceSorcLegendary",
+        "MinionLoad_112_TitanLife",
+    ] {
+        let path = usr.join(format!("character/{}.bld", load.to_ascii_lowercase()));
+        fs::write(path, &good).unwrap();
+    }
+    let path = usr.join(format!("character/{}.bld", REFUSED.to_ascii_lowercase()));
+    fs::write(path, &bad).unwrap();
     fs::write(usr.join("movies/eruptor.mov"), b"eruptor bink").unwrap();
     fs::write(usr.join("movies/jetvac.mov"), b"jetvac bink").unwrap();
     dump
@@ -99,6 +131,7 @@ enum Seen {
     ReadingRoster,
     Portraits(usize, usize),
     RosterReady(usize),
+    Models(usize, usize),
     Indexing,
     Transcode,
 }
@@ -109,6 +142,7 @@ impl Seen {
             Event::ReadingRoster => Self::ReadingRoster,
             Event::Portraits { done, total } => Self::Portraits(*done, *total),
             Event::RosterReady(r) => Self::RosterReady(r.figures.len()),
+            Event::Models { done, total } => Self::Models(*done, *total),
             Event::Indexing => Self::Indexing,
             Event::Transcode(_) => Self::Transcode,
         }
@@ -174,19 +208,64 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     assert_eq!(seen[1], Seen::Portraits(0, FIGURES));
     assert_eq!(seen[FIGURES + 1], Seen::Portraits(FIGURES, FIGURES));
     assert_eq!(ready, Some(FIGURES + 2));
-    assert_eq!(indexing, Some(FIGURES + 3));
+    // Then the models, one event each, before the intros.
+    let models: Vec<Seen> = (0..=LOADS).map(|i| Seen::Models(i, LOADS)).collect();
+    assert_eq!(seen[FIGURES + 3..FIGURES + 4 + LOADS], models[..]);
+    assert_eq!(indexing, Some(FIGURES + 4 + LOADS));
     assert!(first_transcode > indexing, "{seen:?}");
 
-    // The roster's IR and every portrait were recorded before the intro index.
+    // The roster's IR, every portrait, the models, their textures and the
+    // rig were recorded before the intro index.
     let m = at_indexing
         .into_inner()
         .unwrap()
         .expect("the intros started");
     assert_eq!(recorded(&m, "ir/roster.ron"), 1);
     assert_eq!(recorded(&m, "portraits/"), FIGURES);
+    assert_eq!(recorded(&m, "models/"), MODELS);
+    assert_eq!(recorded(&m, "textures/"), TEXTURES);
+    assert_eq!(recorded(&m, "ir/rig.ron"), 1);
     assert_eq!(recorded(&m, "ir/characters"), 0);
     assert_eq!(recorded(&m, "video/"), 0);
     assert!(!m.complete);
+
+    // Nine models; the one asking for bit 6 and the missing one reported.
+    let md = &done.models;
+    assert_eq!(
+        (md.models, md.textures, md.binds),
+        (MODELS, TEXTURES, 8 * MODELS)
+    );
+    let failed: Vec<&str> = md.failed.iter().map(|f| f.load_file.as_str()).collect();
+    assert_eq!(failed, [MISSING, REFUSED]);
+    assert!(
+        md.failed[0].reason.contains("no archive"),
+        "{:?}",
+        md.failed[0]
+    );
+    assert!(
+        md.failed[1].reason.contains("layer4UsesPositions"),
+        "{:?}",
+        md.failed[1]
+    );
+    assert!(
+        md.failed
+            .iter()
+            .all(|f| f.reason.starts_with("GUAC-E-MODEL-UNREADABLE"))
+    );
+    let eagle: guac_ir::Model = guac_ir::from_ron(
+        &fs::read_to_string(dir.join("models/MinionLoad_100_Eagle.ron")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        (eagle.load_file.as_str(), eagle.vertices()),
+        ("MinionLoad_100_Eagle", 8)
+    );
+    for slot in eagle.materials.iter().flat_map(|m| &m.textures) {
+        assert!(dir.join(&slot.texture).is_file(), "{}", slot.texture);
+    }
+    let rig: guac_ir::Rig =
+        guac_ir::from_ron(&fs::read_to_string(dir.join("ir/rig.ron")).unwrap()).unwrap();
+    assert_eq!(rig.lights.len(), 3);
 
     // What landed: the roster reads back, the intros by disc and by the
     // roster's name, the manifest marked.
@@ -237,10 +316,11 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
     assert_eq!(e.code(), "GUAC-E-NO-FFMPEG", "{e}");
     assert_eq!(done.roster.roster.figures.len(), FIGURES);
     let seen = seen.into_inner().unwrap();
-    assert_eq!(seen.last(), Some(&Seen::RosterReady(FIGURES)));
+    assert_eq!(seen.last(), Some(&Seen::Models(LOADS, LOADS)));
     let m = manifest_on_disk(&dir);
     assert_eq!(recorded(&m, "ir/roster.ron"), 1);
     assert_eq!(recorded(&m, "portraits/"), FIGURES);
+    assert_eq!(recorded(&m, "models/"), MODELS);
     assert_eq!(recorded(&m, "ir/characters"), 0);
     assert!(!m.complete, "only the whole extraction marks it");
 
@@ -252,6 +332,10 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
     assert_eq!(
         (done.roster.files.written, done.roster.files.kept),
         (0, FIGURES + 1)
+    );
+    assert_eq!(
+        (done.models.files.written, done.models.files.kept),
+        (0, MODELS + TEXTURES + 1)
     );
     assert_eq!(done.intros.unwrap().summary.transcoded, 2);
     assert!(manifest_on_disk(&dir).complete);
@@ -283,6 +367,27 @@ fn a_resume_rewrites_only_the_files_that_arent_as_recorded() {
         assert!(again.dir.output_done(&rel).unwrap(), "{rel}");
     }
     assert!(!dir.join("portraits/00001c-0000.png.partial").exists());
+
+    // A model and a texture gone, the rig changed: exactly those redone.
+    fs::remove_file(dir.join("models/MinionLoad_007_GemGolem.ron")).unwrap();
+    let texture = again
+        .dir
+        .manifest()
+        .outputs
+        .iter()
+        .find(|o| o.path.starts_with("textures/"))
+        .unwrap()
+        .path
+        .clone();
+    fs::remove_file(dir.join(&texture)).unwrap();
+    fs::write(dir.join("ir/rig.ron"), b"()").unwrap();
+    let roster = stage.roster.clone();
+    let models = stages::model_stage(&mut again.dir, &roster, IrFormat::Ron, &|_| {}).unwrap();
+    assert_eq!(
+        (models.files.written, models.files.kept),
+        (3, MODELS + TEXTURES + 1 - 3)
+    );
+    assert!(again.dir.output_done(&texture).unwrap());
 
     // An IR in the other format is a file of its own, written beside.
     let stage = stages::roster_stage(&mut again.dir, IrFormat::Postcard, &|_| {}).unwrap();
@@ -322,7 +427,7 @@ fn a_v1_extract_is_rebuilt_and_extracted_again() {
     assert!(!dir.join("video/intro/eruptor.mp4").exists());
     let m = again.dir.manifest();
     assert_eq!((m.layout, m.ir_version), (LAYOUT_VERSION, IR_VERSION));
-    assert_eq!((LAYOUT_VERSION, IR_VERSION), (2, 2));
+    assert_eq!((LAYOUT_VERSION, IR_VERSION), (3, 2));
     let done = stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
     assert_eq!(done.roster.files.written, FIGURES + 1);
     assert!(done.intros.is_ok());
@@ -339,6 +444,17 @@ fn a_v1_extract_is_rebuilt_and_extracted_again() {
         again.state,
         DirState::Rebuilt(Stale::IrVersion { found: 1 })
     );
+    drop(again);
+    // An AE.3-era extract (layout 2, IR 2: a roster, no models) too.
+    let mut again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    drop(again);
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    json["layout"] = 2.into();
+    fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+    let again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    assert_eq!(again.state, DirState::Rebuilt(Stale::Layout { found: 2 }));
 }
 
 #[test]

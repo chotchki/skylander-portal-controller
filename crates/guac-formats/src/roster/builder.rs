@@ -149,6 +149,35 @@ impl Disc {
     }
 }
 
+/// One of [`RIG`]'s lights.
+pub type RigLight = (&'static str, [u8; 4], [u8; 4], [u8; 4], [f32; 3]);
+
+/// The rig every sample `global.bld` carries (AE.6): name, diffuse, ambient
+/// and specular RGBA, Euler degrees. Made-up colours; the key pitched -45.
+pub const RIG: [RigLight; 3] = [
+    (
+        "_spriteLight1",
+        [200, 190, 180, 255],
+        [20, 20, 20, 255],
+        [150, 150, 150, 255],
+        [-45.0, 0.0, 0.0],
+    ),
+    (
+        "_spriteLight2",
+        [40, 50, 90, 255],
+        [0, 0, 0, 255],
+        [0, 0, 0, 255],
+        [45.0, 180.0, 0.0],
+    ),
+    (
+        "_spriteLight3",
+        [30, 30, 30, 255],
+        [0, 0, 0, 255],
+        [0, 0, 0, 255],
+        [-45.0, 90.0, 0.0],
+    ),
+];
+
 /// `global.bld`'s level and the export id of each root by name.
 struct Global {
     bytes: Vec<u8>,
@@ -235,6 +264,19 @@ fn global(spec: &DiscSpec) -> Global {
         b.put_u32(at(v, 0x20), *value as u32);
         ids.insert((*name).to_owned(), BOOTSTRAP_ROOTS + 1 + roots.len() as u32);
         roots.push(Some(v));
+    }
+    // The 3D-UI rig, outside the root list as on the disc.
+    for (name, diffuse, ambient, specular, rotation) in RIG {
+        let l = b.object(0, "DirectionalLightInfo", 0x40);
+        b.string(at(l, 0x08), name);
+        b.put_bytes(at(l, 0x18), &[diffuse, ambient, specular].concat());
+        b.put_bytes(at(l, 0x24), &1f32.to_be_bytes());
+        let euler: Vec<u8> = [0.0f32, 0.0, 0.0]
+            .into_iter()
+            .chain(rotation)
+            .flat_map(f32::to_be_bytes)
+            .collect();
+        b.put_bytes(at(l, 0x28), &euler);
     }
     list(&mut b, root, blocks, &roots);
     Global {

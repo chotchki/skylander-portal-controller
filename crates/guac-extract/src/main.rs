@@ -20,6 +20,7 @@ const USAGE: &str = "\
 usage: guac-extract identify <dump-dir>
        guac-extract census <dump-dir>
        guac-extract roster <dump-dir>
+       guac-extract models <dump-dir>
        guac-extract intros <dump-dir>
        guac-extract transcode <dump-dir>
        guac-extract extract <dump-dir>
@@ -38,6 +39,10 @@ Extracts what guacamole plays from your own Skylanders disc dump.
   roster     identify, then read the figures the disc defines into
              ir/roster.ron and each one's portrait into portraits/<id>.png in
              the dump's folder
+  models     the roster, then each character's model into
+             models/<load file>.ron, the textures its materials bind into
+             textures/<sha256>.ktx2 and the 3D-UI rig into ir/rig.ron in the
+             dump's folder; a model that won't read is listed, not fatal
   intros     identify, then map each toy type's character archives to its
              intro movie by their voice-over name, the roster's names as the
              fallback, and write the character table to ir/characters.ron in
@@ -47,9 +52,9 @@ Extracts what guacamole plays from your own Skylanders disc dump.
              GUAC_FFMPEG, else beside guac-extract, else PATH, else Homebrew's
              bin folders on macOS); leaves the extract unmarked, since it
              writes no roster
-  extract    every stage, in guacamole's order: identify, the roster, then
-             ffmpeg and the intros; a missing ffmpeg leaves the roster in
-             place and the extract unmarked
+  extract    every stage, in guacamole's order: identify, the roster, the
+             models, then ffmpeg and the intros; a missing ffmpeg leaves the
+             roster and the models in place and the extract unmarked
 ";
 
 /// The environment, else `.env.dev` in the current folder.
@@ -178,6 +183,35 @@ fn roster(dump: &Path) -> Result<(), guac_extract::ExtractError> {
     Ok(())
 }
 
+fn models_line(m: &stages::ModelStage) -> String {
+    format!(
+        "{} models, {} failed; {} textures for {} binds; {}; {:.2} s",
+        m.models,
+        m.failed.len(),
+        m.textures,
+        m.binds,
+        files_line(&m.files),
+        m.took.as_secs_f64()
+    )
+}
+
+fn models(dump: &Path) -> Result<(), guac_extract::ExtractError> {
+    let mut opened = open_dev(dump)?;
+    let roster = stages::roster_stage(&mut opened.dir, IrFormat::Ron, &|_| {})?;
+    println!(
+        "roster      {} figures; {:.2} s",
+        roster.roster.figures.len(),
+        roster.took.as_secs_f64()
+    );
+    let m = stages::model_stage(&mut opened.dir, &roster.roster, IrFormat::Ron, &|_| {})?;
+    println!("models      {}", models_line(&m));
+    for f in &m.failed {
+        println!("  failed    {}: {}", f.load_file, f.reason);
+    }
+    println!("extract     {}", opened.dir.path().display());
+    Ok(())
+}
+
 fn extract(dump: &Path) -> Result<(), guac_extract::ExtractError> {
     let started = Instant::now();
     let mut opened = open_dev(dump)?;
@@ -206,6 +240,10 @@ fn extract(dump: &Path) -> Result<(), guac_extract::ExtractError> {
         files_line(&r.files),
         r.took.as_secs_f64()
     );
+    println!("models      {}", models_line(&done.models));
+    for f in &done.models.failed {
+        println!("  failed    {}: {}", f.load_file, f.reason);
+    }
     match &done.intros {
         Ok(i) => println!(
             "intros      {} of {} toy types; {} transcoded, {} already done, {} linked; {:.1} s",
@@ -334,6 +372,13 @@ fn main() -> ExitCode {
             }
         },
         ["roster", dump] => match roster(Path::new(dump)) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("guac-extract: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        ["models", dump] => match models(Path::new(dump)) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("guac-extract: {e}");

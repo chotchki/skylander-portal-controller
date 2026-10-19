@@ -105,6 +105,11 @@ pub enum ExtractStatus {
         done: usize,
         total: usize,
     },
+    /// `done` of `total` character models (AE.6).
+    Models {
+        done: usize,
+        total: usize,
+    },
     /// Mapping toy types to intro movies.
     Indexing,
     /// `done` of `total` intros converted; `movie` is the one in hand.
@@ -129,6 +134,7 @@ impl ExtractStatus {
             Self::Starting => "Starting",
             Self::Checking { .. } => "Checking",
             Self::Roster { .. } => "Roster",
+            Self::Models { .. } => "Models",
             Self::Indexing => "Indexing",
             Self::Converting { .. } => "Converting",
             Self::Ready { .. } => "Ready",
@@ -262,6 +268,13 @@ pub fn band(status: &ExtractStatus) -> Option<Band> {
             };
             progress(detail, (*total > 0).then_some(pct))
         }
+        ExtractStatus::Models { done, total } => {
+            let pct = percent(*done as u64, *total as u64);
+            progress(
+                format!("Reading the characters' models off your disc… {pct}%"),
+                Some(pct),
+            )
+        }
         ExtractStatus::Indexing => progress("Finding each character's intro…".into(), None),
         ExtractStatus::Converting { done, total, .. } => progress(
             format!("Converting intro {} of {total}…", (done + 1).min(*total)),
@@ -332,6 +345,7 @@ pub fn band_after(status: &ExtractStatus, running_for: Duration) -> Option<Band>
         ExtractStatus::Starting
             | ExtractStatus::Checking { .. }
             | ExtractStatus::Roster { .. }
+            | ExtractStatus::Models { .. }
             | ExtractStatus::Indexing
             | ExtractStatus::Converting { .. }
     );
@@ -349,6 +363,11 @@ pub enum ExtractEvent {
     /// The roster stage: `done` of `total` portraits, none counted yet while
     /// its archives are read.
     Roster {
+        done: usize,
+        total: usize,
+    },
+    /// The model stage: `done` of `total` character models (AE.6).
+    Models {
         done: usize,
         total: usize,
     },
@@ -392,6 +411,10 @@ pub fn step(event: &ExtractEvent) -> ExtractStatus {
             bytes_total: p.bytes_total,
         },
         ExtractEvent::Roster { done, total } => ExtractStatus::Roster {
+            done: *done,
+            total: *total,
+        },
+        ExtractEvent::Models { done, total } => ExtractStatus::Models {
             done: *done,
             total: *total,
         },
@@ -465,6 +488,7 @@ pub fn run(
             Event::ReadingRoster => send(ExtractEvent::Roster { done: 0, total: 0 }),
             Event::Portraits { done, total } => send(ExtractEvent::Roster { done, total }),
             Event::RosterReady(roster) => publish(job, &roster, &dir),
+            Event::Models { done, total } => send(ExtractEvent::Models { done, total }),
             Event::Indexing => send(ExtractEvent::Indexing),
             Event::Transcode(e) => {
                 if let Step::Done(done) = &e.step {
@@ -491,6 +515,21 @@ pub fn run(
         took_s = r.took.as_secs_f64(),
         "roster written"
     );
+    let m = &extracted.models;
+    info!(
+        models = m.models,
+        failed = m.failed.len(),
+        textures = m.textures,
+        binds = m.binds,
+        written = m.files.written,
+        kept = m.files.kept,
+        bytes = m.files.bytes,
+        took_s = m.took.as_secs_f64(),
+        "models written"
+    );
+    for f in &m.failed {
+        warn!(load_file = %f.load_file, reason = %f.reason, "a model didn't extract; its figures keep their portraits");
+    }
     let intros = extracted.intros?;
     let ffmpeg = &intros.ffmpeg;
     info!(ffmpeg = %ffmpeg.path.display(), how = ?ffmpeg.how, version = %ffmpeg.version, "ffmpeg");
@@ -836,6 +875,30 @@ mod tests {
         assert_eq!(roster, ExtractStatus::Roster { done: 3, total: 9 });
         assert_eq!(roster.kind(), "Roster");
         assert_eq!(band_after(&roster, QUIET_START / 2), None);
+    }
+
+    #[test]
+    fn the_model_stage_names_itself_and_counts_models() {
+        let models = step(&ExtractEvent::Models {
+            done: 33,
+            total: 67,
+        });
+        assert_eq!(
+            models,
+            ExtractStatus::Models {
+                done: 33,
+                total: 67
+            }
+        );
+        assert_eq!(models.kind(), "Models");
+        let b = band(&models).unwrap();
+        assert_eq!(b.title, GETTING_READY);
+        assert_eq!(
+            b.detail,
+            "Reading the characters' models off your disc… 49%"
+        );
+        assert_eq!((b.percent, b.code), (Some(49), None));
+        assert_eq!(band_after(&models, QUIET_START / 2), None);
     }
 
     #[test]
@@ -1279,7 +1342,10 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
         assert_eq!(err.code(), "GUAC-E-TRANSCODE-FAILED", "{err}");
         let mut kinds: Vec<&str> = seen.iter().map(ExtractStatus::kind).collect();
         kinds.dedup();
-        assert_eq!(kinds, ["Checking", "Roster", "Indexing", "Converting"]);
+        assert_eq!(
+            kinds,
+            ["Checking", "Roster", "Models", "Indexing", "Converting"]
+        );
         // The roster went on the list before the intros failed (AE.4).
         assert_eq!(listed(&job).roster(), Some(RosterState::Ready));
         assert_eq!(listed(&job).figures().len(), 24);
@@ -1432,7 +1498,7 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
         );
         assert!(
             seen.iter()
-                .all(|s| ["Checking", "Roster"].contains(&s.kind())),
+                .all(|s| ["Checking", "Roster", "Models"].contains(&s.kind())),
             "{seen:?}"
         );
         // The roster and its portraits are there; the intros aren't.

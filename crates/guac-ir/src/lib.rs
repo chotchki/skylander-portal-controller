@@ -10,18 +10,26 @@
 #![forbid(unsafe_code)]
 
 mod characters;
+pub mod clip;
 mod identity;
+pub mod model;
+pub mod rig;
 pub mod roster;
 
 pub use characters::{Character, CharacterArchive, CharacterTable, Intro, IntroSource, VoiceTrack};
+pub use clip::Clip;
 pub use identity::{DumpIdentity, Sha256};
+pub use model::Model;
+pub use rig::{Rig, RigLight};
 pub use roster::{Category, Element, FigureKind, Language, Roster, RosterFigure, Text};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// The IR's shape version. Any change to a serialized type bumps it. v2
-/// (AE.2) adds the disc's roster.
+/// (AE.2) adds the disc's roster, and AE.6 the models, their clips and the
+/// 3D-UI rig, new files beside it before any v2 extract had shipped (the
+/// extract's layout version, which they change, made those re-extract).
 pub const IR_VERSION: u32 = 2;
 
 #[derive(Debug, thiserror::Error)]
@@ -44,17 +52,65 @@ struct EnvelopeRef<'a, T> {
     body: &'a T,
 }
 
-/// The body alone, read once [`VersionProbe`] has passed.
+/// How [`Envelope`] says the version is another, through serde's custom
+/// error; [`from_ron`] turns it back into [`IrError::VersionMismatch`].
+const MISMATCH: &str = "guac-ir: IR version ";
+
+/// The envelope read in one pass, `ir_version` before `body` as [`to_ron`]
+/// writes it, so a file from another IR version stops at its version
+/// without reading its body. Skipping a body instead costs ron 0.12 about
+/// 11 s on a 1.3 MB model (its ignored-any guesses each value's shape by
+/// parsing it; AE.6 measured), where reading it costs a fraction of that.
+struct Envelope<T>(T);
+
 #[derive(Deserialize)]
-struct BodyOnly<T> {
-    body: T,
+#[serde(field_identifier, rename_all = "snake_case")]
+enum EnvelopeField {
+    IrVersion,
+    Body,
 }
 
-/// The version alone: serde skips `body`, so a file from another IR version is
-/// read just far enough to say which.
-#[derive(Deserialize)]
-struct VersionProbe {
-    ir_version: u32,
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for Envelope<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use serde::de::{Error, MapAccess, Visitor};
+
+        struct V<T>(std::marker::PhantomData<T>);
+
+        impl<'de, T: Deserialize<'de>> Visitor<'de> for V<T> {
+            type Value = Envelope<T>;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("an IR envelope: ir_version, then body")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let (mut version, mut body) = (false, None);
+                while let Some(key) = map.next_key::<EnvelopeField>()? {
+                    match key {
+                        EnvelopeField::IrVersion => {
+                            let found: u32 = map.next_value()?;
+                            if found != IR_VERSION {
+                                return Err(A::Error::custom(format!("{MISMATCH}{found}")));
+                            }
+                            version = true;
+                        }
+                        EnvelopeField::Body => body = Some(map.next_value()?),
+                    }
+                }
+                if !version {
+                    return Err(A::Error::missing_field("ir_version"));
+                }
+                body.map(Envelope)
+                    .ok_or_else(|| A::Error::missing_field("body"))
+            }
+        }
+
+        d.deserialize_struct(
+            "Envelope",
+            &["ir_version", "body"],
+            V(std::marker::PhantomData),
+        )
+    }
 }
 
 fn check_version(found: u32) -> Result<(), IrError> {
@@ -81,10 +137,16 @@ pub fn to_ron<T: Serialize>(body: &T) -> Result<String, IrError> {
 }
 
 pub fn from_ron<T: DeserializeOwned>(text: &str) -> Result<T, IrError> {
-    let probe: VersionProbe = ron::from_str(text)?;
-    check_version(probe.ir_version)?;
-    let envelope: BodyOnly<T> = ron::from_str(text)?;
-    Ok(envelope.body)
+    match ron::from_str::<Envelope<T>>(text) {
+        Ok(Envelope(body)) => Ok(body),
+        Err(e) => match &e.code {
+            ron::Error::Message(m) if m.starts_with(MISMATCH) => Err(IrError::VersionMismatch {
+                found: m[MISMATCH.len()..].parse().map_err(|_| e.clone())?,
+                expected: IR_VERSION,
+            }),
+            _ => Err(e.into()),
+        },
+    }
 }
 
 /// postcard, the install format. The version is the first varint, so it reads
@@ -286,6 +348,30 @@ mod tests {
                 expected: 2
             })
         ));
+    }
+
+    #[test]
+    fn another_versions_ron_stops_at_its_version() {
+        // A body this build couldn't read at all: the version is what's
+        // reported, so the body was never read.
+        let text = "(ir_version: 1, body: (no: [such, (shape)]))";
+        assert!(matches!(
+            from_ron::<DumpIdentity>(text),
+            Err(IrError::VersionMismatch {
+                found: 1,
+                expected: 2
+            })
+        ));
+        // No version, a stray field, or no body: refused as malformed.
+        let body = to_ron(&identity()).unwrap();
+        let unversioned = body.replace("ir_version: 2,", "");
+        assert!(matches!(
+            from_ron::<DumpIdentity>(&unversioned),
+            Err(IrError::RonSpanned(_))
+        ));
+        let stray = body.replace("ir_version: 2,", "ir_version: 2, extra: 3,");
+        assert!(from_ron::<DumpIdentity>(&stray).is_err());
+        assert!(from_ron::<DumpIdentity>("(ir_version: 2)").is_err());
     }
 
     #[test]

@@ -95,6 +95,21 @@ fn the_table_is_closed_and_tagged() {
         RhsValueStack::TYPE,
         RhsReferenceStack::TYPE,
         ValueRhsVariant::TYPE,
+        PixelShaderVariantMaskAttr::TYPE,
+        VertexShaderVariantMaskAttr::TYPE,
+        ShaderConstantVec4fAttr::TYPE,
+        ShaderConstantIntAttr::TYPE,
+        BlendStateAttr::TYPE,
+        DepthWriteStateAttr::TYPE,
+        AlphaStateAttr::TYPE,
+        CullFaceAttr::TYPE,
+        BlendFunctionAttr::TYPE,
+        AlphaFunctionAttr::TYPE,
+        DestinationAlphaAttr::TYPE,
+        MaterialAnim::TYPE,
+        MaterialAnimTrackList::TYPE,
+        MaterialUvAnimTrack::TYPE,
+        ScrollUvAnimData::TYPE,
     ];
     for r in readers {
         assert!(type_def(r).is_some(), "{r} has no TypeDef");
@@ -1293,4 +1308,253 @@ fn an_op_reads_its_block_and_a_use_its_macro() {
     };
     assert_eq!(op(0).block_end(3), None);
     assert_eq!(op(BRANCH_END).block_end(3), None);
+}
+
+/// The material attributes and UV animation the model stage reads (AE.6):
+/// the type, the MTSZ files give it, memory refs a zeroed object needs
+/// marked null, reader.
+const MATERIAL_LAYOUTS: [(&str, u32, &[u32], Reader); 21] = [
+    ("igPixelShaderVariantMaskAttr", 0x18, &[], |i, o| {
+        PixelShaderVariantMaskAttr::read(i, o).map(drop)
+    }),
+    ("igVertexShaderVariantMaskAttr", 0x18, &[], |i, o| {
+        VertexShaderVariantMaskAttr::read(i, o).map(drop)
+    }),
+    ("tfbMulti2FixedAlphaValuesAttr", 0x20, &[], |i, o| {
+        ShaderConstantVec4fAttr::read(i, o).map(drop)
+    }),
+    ("tfbMulti2Layer1ExtraValuesAttr", 0x20, &[], |i, o| {
+        ShaderConstantVec4fAttr::read(i, o).map(drop)
+    }),
+    ("tfbMulti2Layer2ExtraValuesAttr", 0x20, &[], |i, o| {
+        ShaderConstantVec4fAttr::read(i, o).map(drop)
+    }),
+    ("tfbMulti2Layer2BlendFactorsAttr", 0x20, &[], |i, o| {
+        ShaderConstantVec4fAttr::read(i, o).map(drop)
+    }),
+    ("tfbMulti2Layer3BlendFactorsAttr", 0x20, &[], |i, o| {
+        ShaderConstantVec4fAttr::read(i, o).map(drop)
+    }),
+    ("tfbMulti2Layer4BlendFactorsAttr", 0x20, &[], |i, o| {
+        ShaderConstantVec4fAttr::read(i, o).map(drop)
+    }),
+    ("tfbMulti2Layer4ValuesAttr", 0x20, &[], |i, o| {
+        ShaderConstantVec4fAttr::read(i, o).map(drop)
+    }),
+    ("tfbMaterialTintAttr", 0x14, &[], |i, o| {
+        ShaderConstantIntAttr::read(i, o).map(drop)
+    }),
+    ("igBlendStateAttr", 0x14, &[], |i, o| {
+        BlendStateAttr::read(i, o).map(drop)
+    }),
+    ("igDepthWriteStateAttr", 0x14, &[], |i, o| {
+        DepthWriteStateAttr::read(i, o).map(drop)
+    }),
+    ("igAlphaStateAttr", 0x14, &[], |i, o| {
+        AlphaStateAttr::read(i, o).map(drop)
+    }),
+    ("igCullFaceAttr", 0x18, &[], |i, o| {
+        CullFaceAttr::read(i, o).map(drop)
+    }),
+    ("igBlendFunctionAttr", 0x34, &[], |i, o| {
+        BlendFunctionAttr::read(i, o).map(drop)
+    }),
+    ("igAlphaFunctionAttr", 0x18, &[], |i, o| {
+        AlphaFunctionAttr::read(i, o).map(drop)
+    }),
+    ("tfbDestinationAlphaAttr", 0x18, &[], |i, o| {
+        DestinationAlphaAttr::read(i, o).map(drop)
+    }),
+    ("tfbMaterialAnim", 0x10, &[], |i, o| {
+        MaterialAnim::read(i, o).map(drop)
+    }),
+    ("tfbMaterialAnimTrackList", 0x18, &[0x10], |i, o| {
+        MaterialAnimTrackList::read(i, o).map(drop)
+    }),
+    ("tfbScrollUVAnimTrack", 0x28, &[], |i, o| {
+        MaterialUvAnimTrack::read(i, o).map(drop)
+    }),
+    ("tfbScrollUVAnimData", 0x34, &[], |i, o| {
+        ScrollUvAnimData::read(i, o).map(drop)
+    }),
+];
+
+#[test]
+fn each_material_layout_refuses_a_wrong_mtsz() {
+    for (ty, size, nulls, read) in MATERIAL_LAYOUTS {
+        assert_eq!(file_size(ty), Some(size), "{ty}");
+        let zeroed = |mtsz| {
+            let (mut b, o) = one(ty, mtsz);
+            for &offset in nulls.iter().filter(|&&n| n + 8 <= mtsz) {
+                b.null_memory_ref(at(o, offset), 0);
+            }
+            b.build()
+        };
+        let bytes = zeroed(size);
+        read(&Igz::parse(&bytes).unwrap(), 0).unwrap_or_else(|e| panic!("{ty}: {e}"));
+        for wrong in [size - 4, size + 4] {
+            let bytes = zeroed(wrong);
+            let e = read(&Igz::parse(&bytes).unwrap(), 0).unwrap_err();
+            assert_eq!(e.field, "MTSZ", "{ty} at {wrong:#x}");
+        }
+    }
+}
+
+#[test]
+fn the_render_states_read_at_their_files_mtsz_with_a_clean_pad() {
+    for (ty, registered) in [
+        ("igBlendStateAttr", 0x10),
+        ("igDepthWriteStateAttr", 0x10),
+        ("igAlphaStateAttr", 0x10),
+        ("igCullFaceAttr", 0x14),
+    ] {
+        assert_eq!(type_def(ty).unwrap().size, registered, "{ty}");
+        let state = |mtsz, marker: bool| {
+            let (mut b, o) = one(ty, mtsz);
+            // `_readOnlyCopy` 0, `_enabled` 1; the pad holds what files
+            // hold on blend and alpha states.
+            b.put_bytes(at(o, 0x0C), &[0, 1]);
+            if mtsz > registered {
+                if marker {
+                    b.pointer(at(o, registered), o);
+                } else {
+                    b.put_bytes(at(o, registered), &[1, 0, 0, 0]);
+                }
+            }
+            b.build()
+        };
+        let enabled = |bytes: &[u8]| -> Result<bool, FormatError> {
+            let igz = Igz::parse(bytes).unwrap();
+            match ty {
+                "igBlendStateAttr" => BlendStateAttr::read(&igz, 0).map(|a| a.enabled),
+                "igDepthWriteStateAttr" => DepthWriteStateAttr::read(&igz, 0).map(|a| a.enabled),
+                "igAlphaStateAttr" => AlphaStateAttr::read(&igz, 0).map(|a| a.enabled),
+                _ => CullFaceAttr::read(&igz, 0).map(|a| a.enabled),
+            }
+        };
+        assert_eq!(enabled(&state(registered + 4, false)), Ok(true), "{ty}");
+        let e = enabled(&state(registered, false)).unwrap_err();
+        assert_eq!(
+            e.field, "MTSZ",
+            "{ty}: the registry's size isn't what files carry"
+        );
+        let e = enabled(&state(registered + 4, true)).unwrap_err();
+        assert_eq!(
+            e.kind,
+            ErrorKind::Unsupported {
+                value: registered.into()
+            },
+            "{ty}"
+        );
+    }
+}
+
+#[test]
+fn material_attributes_read_back_field_for_field() {
+    let mut b = IgzBuilder::new();
+    let ps = b.object(0, "igPixelShaderVariantMaskAttr", 0x18);
+    let vs = b.object(0, "igVertexShaderVariantMaskAttr", 0x18);
+    let fixed = b.object(0, "tfbMulti2FixedAlphaValuesAttr", 0x20);
+    let tint = b.object(0, "tfbMaterialTintAttr", 0x14);
+    let blend = b.object(0, "igBlendStateAttr", 0x14);
+    let func = b.object(0, "igBlendFunctionAttr", 0x34);
+    let cull = b.object(0, "igCullFaceAttr", 0x18);
+    let alpha = b.object(0, "igAlphaFunctionAttr", 0x18);
+    let glow = b.object(0, "tfbDestinationAlphaAttr", 0x18);
+    let anim = b.object(0, "tfbMaterialAnim", 0x10);
+    let tracks = b.object(0, "tfbMaterialAnimTrackList", 0x18);
+    let track = b.object(0, "tfbScrollUVAnimTrack", 0x28);
+    let data = b.object(0, "tfbScrollUVAnimData", 0x34);
+    let blocks = b.section(0x10);
+    b.put_bytes(at(ps, 0x08), &[0, 3, 0, 7, 1]);
+    b.put_u32(at(ps, 0x10), 0x1C);
+    b.put_u32(at(ps, 0x14), 0x2FF);
+    b.put_u32(at(vs, 0x10), 0x101C);
+    b.put_u32(at(vs, 0x14), 0x1AFF);
+    let f: Vec<u8> = [-1.0f32, 0.5, -1.0, 2.0]
+        .iter()
+        .flat_map(|v| v.to_be_bytes())
+        .collect();
+    b.put_bytes(at(fixed, 0x10), &f);
+    b.put_u32(at(tint, 0x10), 0xFF00_F0F0);
+    b.put_bytes(at(blend, 0x0D), &[1, 0]);
+    b.put_bytes(at(blend, 0x10), &[1, 0, 0, 0]);
+    b.put_u32(at(func, 0x10), 4);
+    b.put_u32(at(func, 0x14), 1);
+    b.put_u32(at(func, 0x18), 2);
+    b.put_bytes(at(func, 0x20), &[9, 0, 0xFF, 0xFE]);
+    b.put_u32(at(func, 0x30), 0x0D);
+    b.put_u32(at(cull, 0x10), 1);
+    b.put_u32(at(alpha, 0x10), 4);
+    b.put_bytes(at(alpha, 0x14), &0.5f32.to_be_bytes());
+    b.put_u32(at(glow, 0x10), 64);
+    b.put_bytes(at(glow, 0x14), &[1]);
+    b.pointer(at(anim, 0x08), tracks);
+    super::builder::list(&mut b, tracks, blocks, &[Some(track)]);
+    b.put_bytes(at(track, 0x08), &1.5f32.to_be_bytes());
+    b.pointer(at(track, 0x10), data);
+    b.put_u32(at(track, 0x14), u32::MAX);
+    b.put_u32(at(track, 0x24), 0);
+    let scroll: Vec<u8> = (1..=11)
+        .map(|i| i as f32 * 0.25)
+        .flat_map(f32::to_be_bytes)
+        .collect();
+    b.put_bytes(at(data, 0x08), &scroll);
+    let bytes = b.build();
+    let igz = Igz::parse(&bytes).unwrap();
+    let i = |l| index(&igz, l);
+
+    let p = PixelShaderVariantMaskAttr::read(&igz, i(ps)).unwrap().0;
+    assert_eq!((p.base_mask, p.ignore_mask), (0x1C, 0x2FF));
+    assert_eq!(
+        (
+            p.attr.cached_unit_id,
+            p.attr.cached_attr_index,
+            p.attr.read_only_copy
+        ),
+        (3, 7, true)
+    );
+    let v = VertexShaderVariantMaskAttr::read(&igz, i(vs)).unwrap().0;
+    assert_eq!((v.base_mask, v.ignore_mask), (0x101C, 0x1AFF));
+    // A pixel mask isn't a vertex one.
+    assert!(VertexShaderVariantMaskAttr::read(&igz, i(ps)).is_err());
+    let c = ShaderConstantVec4fAttr::read(&igz, i(fixed)).unwrap();
+    assert_eq!(c.data, [-1.0, 0.5, -1.0, 2.0]);
+    let t = ShaderConstantIntAttr::read(&igz, i(tint)).unwrap();
+    assert_eq!(t.data as u32, 0xFF00_F0F0);
+    let s = BlendStateAttr::read(&igz, i(blend)).unwrap();
+    assert_eq!((s.enabled, s.alpha_to_coverage_enabled), (true, false));
+    let f = BlendFunctionAttr::read(&igz, i(func)).unwrap();
+    assert_eq!((f.src, f.dst, f.eq), (4, 1, 2));
+    assert_eq!((f.blend_constant, f.blend_stage), (9, -2));
+    assert_eq!(f.blend_abcd, [0, 0, 0, 0x0D]);
+    let cf = CullFaceAttr::read(&igz, i(cull)).unwrap();
+    assert_eq!((cf.enabled, cf.mode), (false, 1));
+    let a = AlphaFunctionAttr::read(&igz, i(alpha)).unwrap();
+    assert_eq!((a.func, a.ref_value), (4, 0.5));
+    let g = DestinationAlphaAttr::read(&igz, i(glow)).unwrap();
+    assert_eq!((g.alpha, g.state), (64, true));
+    let m = MaterialAnim::read(&igz, i(anim)).unwrap();
+    assert_eq!(m.track_list, Some(i(tracks)));
+    assert_eq!(m.attr_list, ObjectRef::Null);
+    let l = MaterialAnimTrackList::read(&igz, i(tracks)).unwrap();
+    assert_eq!(l.tracks, [i(track)]);
+    let tr = MaterialUvAnimTrack::read(&igz, i(track)).unwrap();
+    assert_eq!(
+        (tr.base_time, tr.data, tr.cache_frame, tr.layer),
+        (1.5, Some(i(data)), -1, 0)
+    );
+    let d = ScrollUvAnimData::read(&igz, i(data)).unwrap();
+    assert_eq!(d.scale, [0.25, 0.5]);
+    assert_eq!(d.velocity, [0.75, 1.0]);
+    assert_eq!(d.phase, [2.25, 2.5]);
+    assert_eq!(d.rotation_phase, 2.75);
+    // A track list holding something other than a track is refused.
+    let (mut b, list) = one("tfbMaterialAnimTrackList", 0x18);
+    let not_a_track = b.object(0, "tfbScrollUVAnimData", 0x34);
+    let blocks = b.section(0x10);
+    super::builder::list(&mut b, list, blocks, &[Some(not_a_track)]);
+    let bytes = b.build();
+    let e = MaterialAnimTrackList::read(&Igz::parse(&bytes).unwrap(), 0).unwrap_err();
+    assert_eq!(wrong_type(e).0, "tfbMaterialAnimTrack");
 }
