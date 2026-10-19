@@ -1,16 +1,16 @@
 //! The TV's motion (openspec AP, design decision 9): §5's easing tokens and
 //! durations from `docs/aesthetic/design_language.md`, a [`Tween`] that eases
 //! a value along one of them, and [`ReducedMotion`], which the starfield's
-//! drift, the choices' focus look (`look`) and later the card rise and float
-//! (AP.14) read.
+//! drift, the choices' focus look (`look`) and the portal's cards
+//! (`card_motion`: the rise, the impact and the float) read.
 
 use std::time::Duration;
 
 use bevy::curve::CubicSegment;
 use bevy::prelude::*;
 
-/// Ambient motion off (the starfield's drift; later the idle float and the
-/// halo spin) and entrances at their end state, so a shot of a screen comes
+/// Ambient motion off (the starfield's drift, the cards' idle float; later
+/// the halo spin) and entrances at their end state, so a shot of a screen comes
 /// out the same on every run. A switch for dev shots, not a user setting:
 /// on whenever `GUAC_SHOT_DIR` is set (`shots` inserts it), off otherwise.
 #[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +32,12 @@ pub(crate) const DUR_QUICK: Duration = Duration::from_millis(200);
 /// `--dur-tap`: a button's press.
 pub(crate) const DUR_TAP: Duration = Duration::from_millis(120);
 
+/// `--dur-impact`: a placement's flash on its bezel (§5.4).
+pub(crate) const DUR_IMPACT: Duration = Duration::from_millis(600);
+
+/// `--dur-idle-float`: one breath of a loaded bezel (§5.3).
+pub(crate) const DUR_IDLE_FLOAT: Duration = Duration::from_millis(4500);
+
 /// §5's curves, each a CSS `cubic-bezier()` through `bevy_curve`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Easing {
@@ -41,6 +47,12 @@ pub(crate) enum Easing {
     /// `--ease-tap`, `cubic-bezier(.4, 2.2, .5, 1)`: a press; runs about a
     /// third past its end before settling.
     Tap,
+    /// CSS's `ease-out`, `cubic-bezier(0, 0, .58, 1)`: the phone's portal
+    /// impact (`gold_bezel.css`); fast off the mark, never past its end.
+    Out,
+    /// CSS's `ease-in-out`, `cubic-bezier(.42, 0, .58, 1)`: the phone's idle
+    /// float; slow at both ends, never past either.
+    InOut,
 }
 
 impl Easing {
@@ -48,6 +60,8 @@ impl Easing {
         match self {
             Self::Spring => CubicSegment::new_bezier_easing((0.3, 1.3), (0.5, 1.0)),
             Self::Tap => CubicSegment::new_bezier_easing((0.4, 2.2), (0.5, 1.0)),
+            Self::Out => CubicSegment::new_bezier_easing((0.0, 0.0), (0.58, 1.0)),
+            Self::InOut => CubicSegment::new_bezier_easing((0.42, 0.0), (0.58, 1.0)),
         }
     }
 
@@ -167,6 +181,33 @@ mod tests {
             assert!(
                 (1..100).all(|i| easing.ease(i as f32 / 1000.0) > 0.0),
                 "{easing:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ease_out_and_ease_in_out_never_overshoot() {
+        let samples = |easing: Easing| -> Vec<f32> {
+            (0..=1000).map(|i| easing.ease(i as f32 / 1000.0)).collect()
+        };
+        for easing in [Easing::Out, Easing::InOut] {
+            let s = samples(easing);
+            assert_eq!((s[0], s[1000]), (0.0, 1.0), "{easing:?}");
+            assert!(s.windows(2).all(|w| w[0] <= w[1]), "{easing:?} only rises");
+            assert!(s.iter().all(|v| (0.0..=1.0).contains(v)), "{easing:?}");
+        }
+        // ease-out is ahead of the clock all the way; ease-in-out behind it
+        // in the first half, ahead in the second, half way at half time.
+        let (out, in_out) = (samples(Easing::Out), samples(Easing::InOut));
+        assert!((1..1000).all(|i| out[i] > i as f32 / 1000.0));
+        assert!(out[100] > 0.15, "fast off the mark: {}", out[100]);
+        assert!((in_out[500] - 0.5).abs() < 1e-3, "{}", in_out[500]);
+        assert!((1..500).all(|i| in_out[i] < i as f32 / 1000.0));
+        assert!((501..1000).all(|i| in_out[i] > i as f32 / 1000.0));
+        for i in 1..500 {
+            assert!(
+                (in_out[i] + in_out[1000 - i] - 1.0).abs() < 1e-3,
+                "symmetric at {i}"
             );
         }
     }

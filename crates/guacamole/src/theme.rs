@@ -76,6 +76,9 @@ pub(crate) struct TvTheme {
     /// A bezel's plate for a figure with no element (the phone's
     /// `.bezel-plate`), light stop first.
     pub(crate) plate: [Color; 2],
+    /// §5.4's portal impact, white at its heart and gold at 35%: the phone's
+    /// flash (`gold_bezel.css`, `portal-impact-flash`), alphas included.
+    pub(crate) flash: [Color; 2],
     /// What highlights and shadows are tinted with; each surface sets its
     /// own alpha.
     pub(crate) light: Color,
@@ -135,6 +138,10 @@ impl Default for TvTheme {
             ],
             panel_glow: Color::srgba_u8(0xff, 0xe6, 0x78, 8),
             plate: [hex(0x1a, 0x2a, 0x4a), hex(0x0a, 0x16, 0x30)],
+            flash: [
+                Color::WHITE.with_alpha(0.95),
+                hex(0xff, 0xcf, 0x3a).with_alpha(0.6),
+            ],
             light: Color::WHITE,
             shadow: Color::BLACK,
             faint: Color::srgba_u8(0xd9, 0xc8, 0x8a, 56),
@@ -263,6 +270,10 @@ mod tests {
         assert_eq!(theme.panel.map(hex), ["#1A3A8A", "#0A2464", "#061436"]);
         assert!(theme.panel.iter().all(|c| c.alpha() == 1.0));
         assert_eq!(theme.plate.map(hex), ["#1A2A4A", "#0A1630"]);
+        assert_eq!(
+            theme.flash.map(|c| (hex(c.with_alpha(1.0)), c.alpha())),
+            [("#FFFFFF".into(), 0.95), ("#FFCF3A".into(), 0.6)]
+        );
         assert_eq!(theme.starfield.map(hex), ["#0B1E52", "#061436", "#020818"]);
         assert_eq!(theme.sky_glow.map(hex), ["#1A3A8A", "#0E2464"]);
         assert_eq!(theme.star_tints.map(hex), ["#FFFFFF", "#FFE6B4", "#B4DCFF"]);

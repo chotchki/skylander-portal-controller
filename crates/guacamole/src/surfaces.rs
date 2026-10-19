@@ -53,6 +53,9 @@ pub(crate) const BUTTON_RADIUS: f32 = 12.0 * BUTTON_SCALE;
 /// farthest corner, √(0.7² + 0.75²) of the width.
 const FAR_CORNER: f32 = 102.6;
 
+/// The same from a square's centre: √2/2 of the width.
+const FLASH_REACH: f32 = 70.71;
+
 /// A portrait's bezel, the ring node, so tests can find it.
 #[derive(Component, Debug)]
 pub(crate) struct Bezel;
@@ -128,13 +131,14 @@ pub(crate) fn ring(theme: &TvTheme, element: Option<Element>) -> Gradient {
 
 /// A portrait's bezel per §3.1: the ring (its fill, the `--gi` line as a
 /// border, the top light and bottom shade, a 1 px black outline and the drop)
-/// and the plate 10% in, holding the portrait over the element.
+/// and the plate 10% in, holding the portrait over the element. Returns the
+/// ring, which the card's motion floats and flashes (`card_motion`).
 pub(crate) fn spawn_bezel(
     parent: &mut ChildSpawnerCommands,
     theme: &TvTheme,
     element: Option<Element>,
     portrait: Option<Handle<Image>>,
-) {
+) -> Entity {
     let depth = 7.0 * BEZEL_SCALE;
     parent
         .spawn((
@@ -209,7 +213,49 @@ pub(crate) fn spawn_bezel(
             if let Some(image) = portrait {
                 spawned.insert(ImageNode::new(image));
             }
-        });
+        })
+        .id()
+}
+
+/// §5.4's portal impact over a bezel, laid over the ring's whole box (the
+/// plate's way past the ring's border) and drawn last, over the portrait: the
+/// phone's `radial-gradient(circle, white .95, gold .6 35%, transparent
+/// 70%)`, whose circle reaches the box's corners, at no alpha until
+/// [`flash_fill`] gives it some. The card's motion scales it from 0 to 2×
+/// round its centre; the card's face clips it.
+pub(crate) fn flash(theme: &TvTheme) -> impl Bundle + use<> {
+    (
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(-RING_LINE),
+            top: px(-RING_LINE),
+            width: px(BEZEL),
+            height: px(BEZEL),
+            border_radius: BorderRadius::MAX,
+            ..default()
+        },
+        flash_fill(theme, 0.0),
+    )
+}
+
+/// The flash's fill at `alpha` (0 to 1) of its full strength.
+pub(crate) fn flash_fill(theme: &TvTheme, alpha: f32) -> BackgroundGradient {
+    let alpha = alpha.clamp(0.0, 1.0);
+    let [white, gold] = theme.flash.map(|c| c.with_alpha(c.alpha() * alpha));
+    BackgroundGradient(vec![
+        RadialGradient::new(
+            UiPosition::CENTER,
+            // CSS's `circle` reaches the farthest corner: √2/2 of the width.
+            RadialGradientShape::Circle(percent(FLASH_REACH)),
+            vec![
+                ColorStop::percent(white, 0),
+                ColorStop::percent(gold, 35),
+                ColorStop::percent(gold.with_alpha(0.0), 70),
+            ],
+        )
+        .in_color_space(InterpolationColorSpace::Srgba)
+        .into(),
+    ])
 }
 
 /// §3.3's framed panel as a figure card: the blue panel under its warm top
@@ -480,5 +526,25 @@ mod tests {
     fn the_far_corner_is_where_css_puts_it() {
         let reach = (0.7f32.powi(2) + 0.75f32.powi(2)).sqrt() * 100.0;
         assert!((reach - FAR_CORNER).abs() < 0.05, "{reach}");
+        let reach = (0.5f32.powi(2) * 2.0).sqrt() * 100.0;
+        assert!((reach - FLASH_REACH).abs() < 0.05, "{reach}");
+    }
+
+    #[test]
+    fn the_flash_is_white_to_gold_and_fades_with_its_alpha() {
+        let theme = TvTheme::default();
+        let alphas = |alpha: f32| -> Vec<f32> {
+            let fill = flash_fill(&theme, alpha);
+            assert_eq!(fill.0.len(), 1);
+            stops(&fill.0[0]).iter().map(|c| c.alpha()).collect()
+        };
+        assert_eq!(alphas(0.0), [0.0, 0.0, 0.0], "drawn at nothing");
+        assert_eq!(alphas(1.0), [0.95, 0.6, 0.0], "the phone's");
+        let half = alphas(0.5);
+        assert!((half[0] - 0.475).abs() < 1e-6 && (half[1] - 0.3).abs() < 1e-6);
+        assert_eq!(alphas(1.5), alphas(1.0), "never past full");
+        let colours = stops(&flash_fill(&theme, 1.0).0[0]);
+        assert_eq!(Srgba::from(colours[0]).to_hex(), "#FFFFFFF2");
+        assert_eq!(Srgba::from(colours[1].with_alpha(1.0)).to_hex(), "#FFCF3A");
     }
 }
