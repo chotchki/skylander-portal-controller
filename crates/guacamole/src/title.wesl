@@ -1,9 +1,10 @@
-// AP.8's TitleMaterial (openspec AP, design decision 7): design_language.md
-// §2's display treatment built from the coverage of glyphs a title camera
-// rendered white into `glyphs`, back to front: the gold glow, the blurred
-// drop, the two hard shadows, the gradient fill, then the stroke over its edge. The surface
-// is the layout box grown by `margin` design px on each side, and `glyphs` is
-// exactly the surface's size, so uv maps texel for texel.
+// The TV's title treatment (openspec AP, design decision 7; `title.rs`):
+// design_language.md §2's display treatment built from the coverage of
+// glyphs a title camera rendered white into `glyphs`, back to front: the gold
+// glow, the blurred drop, the two hard shadows, the gradient fill, then the
+// stroke over its edge. The surface is the layout box grown by `margin`
+// design px on each side, and `glyphs` is exactly the surface's size, so uv
+// maps texel for texel. AP.8's spike proved it (openspec AP's tasks.md).
 import bevy_ui_render::ui_vertex_output::UiVertexOutput;
 
 struct TitleParams {
@@ -19,7 +20,7 @@ struct TitleParams {
     drop: vec4<f32>,
     // --g at 0.3, blurred wide.
     glow: vec4<f32>,
-    // The screen's background, which the CSS blend is matched on.
+    // The sky behind the title, which the CSS blend is matched on.
     backdrop: vec4<f32>,
     // Physical px per design px: the TV camera's scale factor times UiScale.
     scale: f32,
@@ -29,10 +30,6 @@ struct TitleParams {
     drop_offset: f32,
     drop_sigma: f32,
     glow_sigma: f32,
-    // 1 composites as CSS does (below), 0 in linear light.
-    css: u32,
-    // 0 the treatment, 1 the sampled coverage as grey, 2 the sampled colour.
-    mode: u32,
 }
 
 @group(1) @binding(0) var<uniform> title: TitleParams;
@@ -62,12 +59,6 @@ fn morphed(uv: vec2<f32>, texel: vec2<f32>, r: f32, grow: bool) -> f32 {
         }
     }
     return a;
-}
-
-// The glyphs with their stroke, which CSS centres on the outline: half the
-// width outside it, half over the fill.
-fn stroked(uv: vec2<f32>, texel: vec2<f32>) -> f32 {
-    return morphed(uv, texel, title.stroke_width * 0.5, true);
 }
 
 // Interleaved gradient noise (Jimenez 2014): a fixed per-pixel value in [0, 1).
@@ -113,12 +104,9 @@ fn to_srgb(c: vec3<f32>) -> vec3<f32> {
     return select(hi, c * 12.92, c <= vec3<f32>(0.0031308));
 }
 
-// A layer's colour in the space the stack is composited in.
+// A layer's colour in sRGB, the space the stack is composited in.
 fn layer(color: vec4<f32>) -> vec4<f32> {
-    if title.css == 1u {
-        return vec4<f32>(to_srgb(color.rgb), color.a);
-    }
-    return color;
+    return vec4<f32>(to_srgb(color.rgb), color.a);
 }
 
 // §2 is CSS, which composites in sRGB, while this target blends in linear
@@ -128,7 +116,8 @@ fn layer(color: vec4<f32>) -> vec4<f32> {
 // backdrop, exactly where a browser's sRGB blend would: the least alpha that
 // reaches the browser's result, and never less than the stack's own, so an
 // opaque pixel stays opaque. Over any other backdrop the difference is that
-// backdrop's, times the transmittance, as for any blend.
+// backdrop's, times the transmittance, as for any blend. `surfaces::css_over`
+// is the same rule on the CPU, for the halo.
 fn as_css(stack: vec4<f32>) -> vec4<f32> {
     let b = title.backdrop.rgb;
     let t = to_linear(mix(to_srgb(b), stack.rgb, stack.a));
@@ -144,12 +133,6 @@ fn as_css(stack: vec4<f32>) -> vec4<f32> {
 
 @fragment
 fn fragment(in: UiVertexOutput) -> @location(0) vec4<f32> {
-    if title.mode == 1u {
-        return vec4<f32>(vec3<f32>(coverage(in.uv)), 1.0);
-    }
-    if title.mode == 2u {
-        return vec4<f32>(textureSampleLevel(glyphs, glyphs_sampler, in.uv, 0.0).rgb, 1.0);
-    }
     // uv per design px.
     let texel = vec2<f32>(title.scale) / in.size;
     let down = vec2<f32>(0.0, texel.y);
@@ -162,19 +145,18 @@ fn fragment(in: UiVertexOutput) -> @location(0) vec4<f32> {
     // +2 ledge, so 1 px of --gs and 1 of --gi show under it).
     out = over(out, layer(title.shadow_far), coverage(in.uv - down * 3.0));
     out = over(out, layer(title.shadow_near), coverage(in.uv - down * 2.0));
-    // The fill, then the stroke over it (CSS paints them in that order).
+    // The fill, then the stroke over it (CSS paints them in that order); the
+    // stroke is centred on the outline as `-webkit-text-stroke` is, half
+    // outside it and half over the fill.
     let top = title.margin * texel.y;
     let t = clamp((in.uv.y - top) / (1.0 - 2.0 * top), 0.0, 1.0);
     let fill = mix(layer(title.fill_top), layer(title.fill_bottom), t);
-    let inked = coverage(in.uv);
-    out = over(out, fill, inked);
-    let outer = stroked(in.uv, texel);
+    out = over(out, fill, coverage(in.uv));
+    let half = title.stroke_width * 0.5;
+    let outer = morphed(in.uv, texel, half, true);
     if outer > 0.0 {
-        let inner = morphed(in.uv, texel, title.stroke_width * 0.5, false);
+        let inner = morphed(in.uv, texel, half, false);
         out = over(out, layer(title.stroke), min(outer, 1.0 - inner));
     }
-    if title.css == 1u {
-        return as_css(out);
-    }
-    return out;
+    return as_css(out);
 }

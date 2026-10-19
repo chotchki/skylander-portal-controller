@@ -106,14 +106,24 @@ lists them from the start (openspec AE.4). No
 pinned the same way, so the phone bundle from step 3 serves both apps.
 `spawn_live` and `spawn_ipc_*` bail under it: they drive RPCS3.
 
-[`tests/guacamole_tv.rs`](tests/guacamole_tv.rs) (13 tests) is
+[`tests/guacamole_tv.rs`](tests/guacamole_tv.rs) (14 tests) is
 guacamole-only and skips with a message otherwise. It reads what the TV
 shows through `/api/_test/tv`, a JSON mirror of the laid-out Bevy UI
 tree (screen, join line, player count, each card's lines, portrait,
-owner pip and rect), not pixels.
+owner pip and rect, and `focus`, the focused choice's id:
+`choose-folder`, `continue`, `close` or null; openspec AP.6), not pixels.
+`POST /api/_test/tv/press` with `{"button": "south"}` (or `east`,
+`mode`, `up`, `down`, `left`, `right`) hands the TV's input router a
+press as a pad would (202; an unknown name or a body without `button`
+is a 400), `press_tv` in [`src/lib.rs`](src/lib.rs); it's a test hook
+under `test-hooks`, not a phone remote. `no_giants_dump_offers_no_game`
+waits for `focus` to read `choose-folder` without pressing it (that
+would open the folder sheet), and `pad_presses_leave_the_join_code_up`
+posts South, East and Mode on the join screen and finds it unchanged
+(AP.5).
 
-[`tests/guacamole_intro.rs`](tests/guacamole_intro.rs) (4 tests,
-openspec AB.11, AB.21, AB.22 and AB.23) is guacamole-only too and needs ffmpeg (`brew install
+[`tests/guacamole_intro.rs`](tests/guacamole_intro.rs) (5 tests,
+openspec AB.11, AB.21, AB.22, AB.23 and AP.5) is guacamole-only too and needs ffmpeg (`brew install
 ffmpeg`; found on PATH or in Homebrew's folders). Each test builds an
 `IntroFixture` first: a synthetic Giants dump (a PARAM.SFO and a text
 file) and a finished extract of it, `E2E_ROSTER` included, whose intros
@@ -124,7 +134,10 @@ extract as `GUAC_EXTRACT_DIR` and trusts the dump through
 `GUAC_TEST_KNOWN_DUMP` (title id, version, manifest hash; read only by a
 `test-hooks` build), finds the extract current and runs no ffmpeg
 itself. The tests read `intro` and `intro_queue` off `/api/_test/tv` and
-skip through `/api/_test/tv/skip`. AB.21's resume test re-unlocks through
+skip through `/api/_test/tv/skip`, or, in
+`a_pad_press_skips_to_the_queued_intro`, with a South posted to
+`/api/_test/tv/press`, which the intro takes as its skip before anything
+under it sees it. AB.21's resume test re-unlocks through
 `/api/_test/unlock_session`, the hook that offers "resume last setup?"
 the way a PIN unlock does (`set_session_profile` binds the profile
 without offering it), and checks each RESUME's loads at the server over
@@ -178,6 +191,16 @@ skips. Its 3 failures already failed at the pre-AA base (46866ce):
 `resume_prompt_offers_prior_layout`. All three are product-only `.sky`
 tests, so under the product freeze they stay failing until chotchki
 calls a fix or G1 removes them with the `.sky` code.
+
+After AP added `pad_presses_leave_the_join_code_up` and
+`a_pad_press_skips_to_the_queued_intro` (2026-10-18, serial, `--skip
+ios_`, ffmpeg on PATH), guacamole runs 57 of 57 ok, 44 for real (14 TV
++ 5 intro + 25 shared) and the same 13 product-only skips; a product run
+lists those two among its guacamole-only skips, 19 now (not rerun: AP
+touches only `crates/guacamole` and these tests). Under load
+`multi_phone.rs` has failed on "phone never received Event::Welcome"
+in a whole-suite run and passed alone; rerun a test that fails that way
+by itself before calling it a regression.
 
 ## macOS specifics
 

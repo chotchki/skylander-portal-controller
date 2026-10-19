@@ -6,7 +6,10 @@
 //! sits on the [`starfield`](crate::starfield) and cards and buttons wear
 //! §3's [`surfaces`](crate::surfaces) (decision 8); a card's face rises,
 //! flashes and floats inside the box the tests measure
-//! ([`card_motion`](crate::card_motion), decision 9).
+//! ([`card_motion`](crate::card_motion), decision 9). The seven screen titles
+//! and the portal's game name are drawn through the title shader
+//! ([`title`](crate::title), decision 7), each by a camera of its own, so the
+//! TV's camera is the one marked [`TvCamera`].
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -41,6 +44,7 @@ use crate::screen::{SetupView, TvScreen, screen_for};
 use crate::starfield;
 use crate::surfaces::{self, BUTTON_BORDER, BUTTON_RADIUS};
 use crate::theme::{Role, Step, TvTheme};
+use crate::title;
 
 /// How long the farewell shows before the app exits (spec: under 5 s).
 pub const FAREWELL_BEAT: Duration = Duration::from_secs(3);
@@ -141,8 +145,8 @@ pub(crate) struct Current {
 pub(crate) struct TvAssets {
     font: Handle<Font>,
     pub(crate) qr: Option<Handle<Image>>,
-    /// The sky's tile of stars (`starfield::tile`).
-    pub(crate) stars: Handle<Image>,
+    /// The stars' two sprites (`starfield::Sprites`).
+    pub(crate) stars: starfield::Sprites,
 }
 
 /// The join QR as drawn (Join and the portal header), for the mirror.
@@ -245,6 +249,12 @@ impl BandShape {
     }
 }
 
+/// The TV's own camera. Every title renders through a `Camera2d` of its own
+/// ([`title`]), so whatever reads the TV's camera (the UI's scale, the layout
+/// report, the mirror, the shots) finds it by this, never by `Camera2d`.
+#[derive(Component, Debug)]
+pub(crate) struct TvCamera;
+
 /// Marks a screen's root node, spawned when its [`TvState`] is entered and
 /// despawned with everything under it when it's left.
 #[derive(Component)]
@@ -338,6 +348,7 @@ impl Plugin for Screens {
             .init_resource::<FolderAsked>()
             .init_resource::<ReducedMotion>()
             .add_message::<Redrawn>()
+            .add_plugins(title::Titles)
             .add_observer(on_choice)
             .add_systems(PreUpdate, follow_screen.after(poll_status))
             .add_systems(Update, (click_or_beat_closes, starfield::drift));
@@ -373,6 +384,8 @@ impl Plugin for Tv {
         // ahead of `Startup`.
         let assets = tv_assets(app.world_mut());
         app.insert_resource(assets)
+            // Before `Screens`, whose `Titles` needs only what this registers.
+            .add_plugins(title::TitleShader)
             .add_plugins(Screens)
             .add_systems(Startup, spawn_camera)
             .add_systems(Last, report_layout)
@@ -447,13 +460,14 @@ fn tv_assets(world: &mut World) -> TvAssets {
         }
         None => None,
     };
-    let theme = world.get_resource::<TvTheme>().cloned().unwrap_or_default();
-    let stars = starfield::tile(&mut world.resource_mut::<Assets<Image>>(), &theme);
+    let stars = starfield::Sprites::new(&mut world.resource_mut::<Assets<Image>>());
     TvAssets { font, qr, stars }
 }
 
+/// The default UI camera by name, so no camera added later (a title's, AE's
+/// 3D one) can take the TV's UI.
 fn spawn_camera(mut commands: Commands) {
-    commands.spawn(Camera2d);
+    commands.spawn((Camera2d, TvCamera, IsDefaultUiCamera));
 }
 
 /// The state follows `Current`'s screen, which `poll_status` sets from
@@ -467,7 +481,7 @@ fn follow_screen(current: Option<Res<Current>>, mut next: ResMut<NextState<TvSta
 /// Lays out at 1080 logical pixels tall, whatever the window.
 /// Reads the camera's target, not the window, so a dev offscreen render
 /// (`shots`) scales the same way.
-fn scale_ui(camera: Query<&Camera, With<Camera2d>>, mut scale: ResMut<UiScale>) {
+pub(crate) fn scale_ui(camera: Query<&Camera, With<TvCamera>>, mut scale: ResMut<UiScale>) {
     let Some(size) = camera.single().ok().and_then(Camera::logical_target_size) else {
         return;
     };
@@ -542,7 +556,7 @@ fn enter_screen(
             starfield::sky(&sources.theme),
         ))
         .with_children(|ui| {
-            starfield::spawn_stars(ui, &stars);
+            starfield::spawn_stars(ui, &stars, &sources.theme);
             spawn_content(ui, state, &mut sources);
         });
     redrawn.write(Redrawn::Screen(state));
@@ -598,7 +612,8 @@ fn patch_screen_text(
         return;
     };
     match &current.screen {
-        TvScreen::Portal { game } => patch(games.iter_mut(), game, redrawn),
+        // A title, so in caps (`title::spawn`).
+        TvScreen::Portal { game } => patch(games.iter_mut(), &game.to_uppercase(), redrawn),
         TvScreen::ServerError { message } => patch(messages.iter_mut(), message, redrawn),
         _ => {}
     }
@@ -969,6 +984,34 @@ impl Pen {
         self.inked(s, step, self.theme.role(role), justify)
     }
 
+    /// A title in caps through the title shader (decision 7), `marker` on its
+    /// hidden layout `Text`; a screen's own title gets §2's halo behind it.
+    fn title(
+        &self,
+        parent: &mut ChildSpawnerCommands,
+        s: &str,
+        step: Step,
+        justify: Justify,
+        halo: bool,
+        marker: impl Bundle,
+    ) {
+        title::spawn(
+            parent,
+            &self.theme,
+            self.font.clone(),
+            s,
+            step,
+            justify,
+            halo,
+            marker,
+        );
+    }
+
+    /// A screen's own title, centred, with its halo.
+    fn screen_title(&self, parent: &mut ChildSpawnerCommands, s: &str, step: Step) {
+        self.title(parent, s, step, Justify::Center, true, ());
+    }
+
     /// In a colour no role names: a pip's ink, picked against its fill.
     fn inked(&self, s: &str, step: Step, color: Color, justify: Justify) -> impl Bundle + use<> {
         (
@@ -1094,7 +1137,7 @@ fn spawn_content(ui: &mut ChildSpawnerCommands, state: TvState, sources: &mut So
             ui.spawn(pen.text("Starting…", Step::Lg, Role::Muted));
         }
         TvState::Setup => {
-            ui.spawn(pen.text("Where are your disc dumps?", TITLE, Role::Accent));
+            pen.screen_title(ui, "Where are your disc dumps?", TITLE);
             ui.spawn(pen.text(
                 "Choose the folder that holds your Skylanders Giants dump.",
                 Step::Md,
@@ -1104,11 +1147,11 @@ fn spawn_content(ui: &mut ChildSpawnerCommands, state: TvState, sources: &mut So
         }
         TvState::NoGiants => {
             // At 96 it takes two rows of the 1080p inset; 64 keeps it to one.
-            ui.spawn(pen.text("No Skylanders Giants dump found", Step::Lg, Role::Accent));
+            pen.screen_title(ui, "No Skylanders Giants dump found", Step::Lg);
             spawn_setup_lines(ui, &pen, setup_lines(state, setup));
         }
         TvState::Found => {
-            ui.spawn(pen.text("Found your games", TITLE, Role::Accent));
+            pen.screen_title(ui, "Found your games", TITLE);
             let titles = Line::new(setup.titles_line(), Step::Body, Role::Primary).wrapping();
             ui.spawn((TitlesLine, line_bundle(&pen, &titles)));
             ui.spawn(pen.text("Skylanders: Giants is ready!", Step::Lg, Role::Accent));
@@ -1116,7 +1159,7 @@ fn spawn_content(ui: &mut ChildSpawnerCommands, state: TvState, sources: &mut So
         }
         TvState::Join => {
             // navigation.md §3.7 names the launcher's "SCAN TO CONNECT" as its 64.
-            ui.spawn(pen.text("Scan to play", Step::Lg, Role::Accent));
+            pen.screen_title(ui, "Scan to play", Step::Lg);
             if let Some(qr) = &sources.assets.qr {
                 ui.spawn((
                     JoinQr,
@@ -1136,7 +1179,7 @@ fn spawn_content(ui: &mut ChildSpawnerCommands, state: TvState, sources: &mut So
         // Handled above.
         TvState::Portal => {}
         TvState::AlreadyRunning => {
-            ui.spawn(pen.text("Already running", TITLE, Role::Accent));
+            pen.screen_title(ui, "Already running", TITLE);
             ui.spawn(pen.text(
                 "guacamole or the Skylander Portal Controller is already serving phones on this computer.",
                 Step::Md,
@@ -1154,7 +1197,7 @@ fn spawn_content(ui: &mut ChildSpawnerCommands, state: TvState, sources: &mut So
                 Some(TvScreen::ServerError { message }) => message.as_str(),
                 _ => "",
             };
-            ui.spawn(pen.text("Something went wrong", TITLE, Role::Accent));
+            pen.screen_title(ui, "Something went wrong", TITLE);
             // The whole cause chain, wrapped inside the column; a path with
             // no space to break at breaks between characters.
             ui.spawn((
@@ -1172,7 +1215,7 @@ fn spawn_content(ui: &mut ChildSpawnerCommands, state: TvState, sources: &mut So
             ui.spawn(pen.text("Press Esc or click to close.", Step::Body, Role::Muted));
         }
         TvState::Farewell => {
-            ui.spawn(pen.text("Goodbye, Portal Master!", TITLE, Role::Accent));
+            pen.screen_title(ui, "Goodbye, Portal Master!", TITLE);
         }
     }
 }
@@ -1254,7 +1297,7 @@ const REPORT_AFTER_FRAMES: u8 = 3;
 fn report_layout(
     mut pending: ResMut<LayoutReport>,
     framing: Res<Framing>,
-    camera: Query<&Camera, With<Camera2d>>,
+    camera: Query<&Camera, With<TvCamera>>,
     cards: Query<(&CardSlot, &ComputedNode, &UiGlobalTransform)>,
     empties: Query<&EmptySlot>,
     pips: Query<(&Pip, &ComputedNode, &UiGlobalTransform)>,
@@ -1354,10 +1397,9 @@ fn spawn_portal(ui: &mut ChildSpawnerCommands, sources: &mut Sources) {
                 ..default()
             })
             .with_children(|left| {
-                left.spawn((
-                    GameName,
-                    pen.text_at(&game, Step::Lg, Role::Accent, Justify::Left),
-                ));
+                // A title, without the halo a screen's own gets: it heads
+                // the cards from the corner rather than centring a screen.
+                pen.title(left, &game, Step::Lg, Justify::Left, false, GameName);
                 left.spawn((
                     BandSlot(shape),
                     Node {
@@ -1862,10 +1904,7 @@ pub(crate) mod layout_tests {
             .world_mut()
             .resource_mut::<Assets<Font>>()
             .add(Font::from_bytes(TITAN_ONE.to_vec()));
-        let stars = starfield::tile(
-            &mut app.world_mut().resource_mut::<Assets<Image>>(),
-            &TvTheme::default(),
-        );
+        let stars = starfield::Sprites::new(&mut app.world_mut().resource_mut::<Assets<Image>>());
         let assets = TvAssets {
             font,
             qr: None,
@@ -1896,6 +1935,8 @@ pub(crate) mod layout_tests {
             .add_plugins(Screens);
         app.world_mut().spawn((
             Camera2d,
+            TvCamera,
+            IsDefaultUiCamera,
             Camera {
                 computed: ComputedCameraValues {
                     target_info: Some(RenderTargetInfo {
@@ -1936,14 +1977,42 @@ pub(crate) mod layout_tests {
             .iter(world)
             .map(|(s, n, t)| (s.0, node_rect(n, t)))
             .collect();
-        let mut q = world.query_filtered::<(&ComputedNode, &UiGlobalTransform), With<Text>>();
-        let texts = q.iter(world).map(|(n, t)| node_rect(n, t)).collect();
+        // The TV's text. A title's ink lays out on the title's own camera,
+        // and nothing else may: a line that lost the TV's camera would slip
+        // past every check that reads these.
+        let tv = tv_camera(world);
+        let mut q = world.query_filtered::<(
+            &ComputedNode,
+            &UiGlobalTransform,
+            &bevy::ui::ComputedUiTargetCamera,
+            Option<&ChildOf>,
+        ), With<Text>>();
+        let mut texts = Vec::new();
+        let mut off_tv = Vec::new();
+        for (node, at, camera, parent) in q.iter(world) {
+            if camera.get() == Some(tv) {
+                texts.push(node_rect(node, at));
+            } else {
+                off_tv.push(parent.map(ChildOf::parent));
+            }
+        }
+        for parent in off_tv {
+            assert!(
+                parent.is_some_and(|p| world.get::<title::TitleInk>(p).is_some()),
+                "a text off the TV's camera that isn't a title's ink"
+            );
+        }
         Laid {
             cards,
             empties,
             pips,
             texts,
         }
+    }
+
+    pub(crate) fn tv_camera(world: &mut World) -> Entity {
+        let mut q = world.query_filtered::<Entity, With<TvCamera>>();
+        q.single(world).unwrap()
     }
 
     fn full(name: &str) -> PortalCards {
@@ -2482,20 +2551,21 @@ pub(crate) mod layout_tests {
             game: "Skylanders: Giants".into(),
         };
         let mut app = portal_app(1920, 1080, WindowMode::Tv, full("Eruptor"));
+        // Titles in caps (AP.10); "Starting…" isn't one.
         let steps = [
             (TvScreen::Starting, TvState::Starting, "Starting…"),
             (
                 TvScreen::Setup,
                 TvState::Setup,
-                "Where are your disc dumps?",
+                "WHERE ARE YOUR DISC DUMPS?",
             ),
-            (TvScreen::Found, TvState::Found, "Found your games"),
-            (TvScreen::Join, TvState::Join, "Scan to play"),
-            (giants(), TvState::Portal, "Skylanders: Giants"),
+            (TvScreen::Found, TvState::Found, "FOUND YOUR GAMES"),
+            (TvScreen::Join, TvState::Join, "SCAN TO PLAY"),
+            (giants(), TvState::Portal, "SKYLANDERS: GIANTS"),
             (
                 TvScreen::Farewell,
                 TvState::Farewell,
-                "Goodbye, Portal Master!",
+                "GOODBYE, PORTAL MASTER!",
             ),
         ];
         for (screen, state, line) in steps {
@@ -2505,7 +2575,12 @@ pub(crate) mod layout_tests {
             assert_eq!(found.len(), 1, "{state:?}: {found:?}");
             assert_eq!(found[0].1, state);
             assert_eq!(*app.world().resource::<State<TvState>>().get(), state);
-            assert!(texts(&mut app).contains(&line.to_string()), "{state:?}");
+            let drawn = if state == TvState::Starting {
+                texts(&mut app)
+            } else {
+                titles(&mut app)
+            };
+            assert!(drawn.contains(&line.to_string()), "{state:?}: {drawn:?}");
             let cards = {
                 let world = app.world_mut();
                 world.query::<&CardSlot>().iter(world).count()
@@ -2524,10 +2599,18 @@ pub(crate) mod layout_tests {
         assert_eq!(roots(&mut app), before);
         let drawn = texts(&mut app);
         assert!(
-            drawn.contains(&"Skylanders: Swap Force".to_string()),
+            drawn.contains(&"SKYLANDERS: SWAP FORCE".to_string()),
             "{drawn:?}"
         );
-        assert!(!drawn.contains(&"Skylanders: Giants".to_string()));
+        assert!(!drawn.contains(&"SKYLANDERS: GIANTS".to_string()));
+        assert_eq!(titles(&mut app), ["SKYLANDERS: SWAP FORCE"]);
+    }
+
+    /// The titles' layout `Text`s: what each title draws.
+    fn titles(app: &mut App) -> Vec<String> {
+        let world = app.world_mut();
+        let mut q = world.query_filtered::<&Text, With<title::TitleText>>();
+        q.iter(world).map(|t| t.0.clone()).collect()
     }
 
     fn every_screen() -> [TvScreen; 9] {
@@ -2563,14 +2646,34 @@ pub(crate) mod layout_tests {
         (all, parentless)
     }
 
-    /// One root carrying `state` and no other parentless node; the node count.
+    /// One root carrying `state` and no other parentless node but its
+    /// titles' inks, one per title with a camera each; the node count.
     fn one_root(app: &mut App, state: TvState, step: &str) -> usize {
         let found = roots(app);
         assert_eq!(found.len(), 1, "{step}: {found:?}");
         assert_eq!(found[0].1, state, "{step}");
         assert_eq!(*app.world().resource::<State<TvState>>().get(), state);
         let (all, parentless) = nodes(app);
-        assert_eq!(parentless, [found[0].0], "{step}: a stray node");
+        let world = app.world_mut();
+        let inks: Vec<Entity> = world
+            .query_filtered::<Entity, With<title::TitleInk>>()
+            .iter(world)
+            .collect();
+        let surfaces = world.query::<&title::TitleSurface>().iter(world).count();
+        let cameras = world
+            .query_filtered::<(), With<title::TitleCamera>>()
+            .iter(world)
+            .count();
+        assert_eq!(
+            (inks.len(), cameras),
+            (surfaces, surfaces),
+            "{step}: a title's ink or camera left behind"
+        );
+        let strays: Vec<Entity> = parentless
+            .into_iter()
+            .filter(|e| *e != found[0].0 && !inks.contains(e))
+            .collect();
+        assert!(strays.is_empty(), "{step}: a stray node {strays:?}");
         all.len()
     }
 
@@ -2583,6 +2686,9 @@ pub(crate) mod layout_tests {
         let mut app = portal_app(1920, 1080, WindowMode::Tv, full("Eruptor"));
         app.world_mut().resource_mut::<Setup>().0.error = Some("gone".into());
         let mut counts: HashMap<TvState, usize> = HashMap::new();
+        // Each round ends on the same screen with its title drawn: the
+        // cameras, the titles' materials and the images there.
+        let mut ends = Vec::new();
         for round in 0..3 {
             for from in every_screen() {
                 for to in every_screen() {
@@ -2596,7 +2702,17 @@ pub(crate) mod layout_tests {
                     }
                 }
             }
+            frames(&mut app, 3);
+            let world = app.world_mut();
+            let cameras = world.query::<&Camera>().iter(world).count();
+            let materials = world.resource::<Assets<title::TitleMaterial>>().len();
+            ends.push((cameras, materials, world.resource::<Assets<Image>>().len()));
         }
+        // The TV's and the title's cameras, one material, and no image left
+        // behind by a round's 162 steps (the first round grows the font
+        // atlases, so it's the baseline's warm-up).
+        assert_eq!((ends[1].0, ends[1].1), (2, 1), "{ends:?}");
+        assert_eq!(ends[1], ends[2], "{ends:?}");
 
         let before = (roots(&mut app), nodes(&mut app).0);
         let farewell = app.world().resource::<Current>().screen.clone();
@@ -2972,35 +3088,51 @@ pub(crate) mod layout_tests {
         assert_eq!(seen(&mut app), (vec![Redrawn::Screen(TvState::Join)], 0));
     }
 
-    /// The one star layer up: its rect in target px, the drift's translation
-    /// in design px and its tiles.
-    fn star_layer(app: &mut App) -> (Entity, Rect, Val2, Vec<Entity>) {
+    /// One star drawn on the sky: what it is, its node's translation in
+    /// design px, its centre in target px and what it draws.
+    type DrawnStar = (starfield::SkyStar, Val2, Vec2, ImageNode);
+
+    /// The one star layer up: its rect in target px and its stars, in the
+    /// order they draw.
+    fn star_layer(app: &mut App) -> (Entity, Rect, Vec<DrawnStar>) {
         let world = app.world_mut();
         let mut q = world.query_filtered::<(
             Entity,
             &ComputedNode,
             &UiGlobalTransform,
-            &UiTransform,
             &Children,
         ), With<starfield::StarLayer>>();
-        let (layer, node, at, moved, tiles) = q.single(world).unwrap();
-        (
-            layer,
-            node_rect(node, at),
-            moved.translation,
-            tiles.to_vec(),
-        )
+        let (layer, node, at, kids) = q.single(world).unwrap();
+        let (rect, kids) = (node_rect(node, at), kids.to_vec());
+        let mut q = world.query::<(
+            &starfield::SkyStar,
+            &UiTransform,
+            &UiGlobalTransform,
+            &ImageNode,
+            Has<Children>,
+        )>();
+        let stars = kids
+            .iter()
+            .map(|kid| {
+                let (star, moved, drawn, image, parent) = q.get(world, *kid).unwrap();
+                assert!(!parent, "a star is one node");
+                (*star, moved.translation, drawn.translation, image.clone())
+            })
+            .collect();
+        (layer, rect, stars)
     }
 
     /// AP.11: every screen's root sits on the sky, at 1080p, 4K and in the
     /// desktop window: §1's three gradients on the root and a layer of stars
-    /// as its first child, from the window's corner (not the inset's) to a
-    /// tile past its far edges, every tile drawing the TV's stars, with no
-    /// text in it and no line moved by it.
+    /// as its first child, over the whole root from the window's corner (not
+    /// the inset's), with no text in it and no line moved by it. Since the
+    /// 2026-10-18 follow-up the layer holds a node a star, the small ones
+    /// first, each drawing its size's sprite in its tint at its alpha where
+    /// its copy in the window is with no drift.
     #[test]
     fn every_screen_sits_on_the_starfield() {
-        use bevy::ui::Val2;
         let theme = TvTheme::default();
+        let sky = starfield::stars(starfield::SEED);
         for (width, height, mode) in [
             (1920, 1080, WindowMode::Tv),
             (3840, 2160, WindowMode::Tv),
@@ -3009,7 +3141,7 @@ pub(crate) mod layout_tests {
             let mut app = portal_app(width, height, mode, full("Eruptor"));
             app.insert_resource(ReducedMotion(true));
             let scale = height as f32 / DESIGN_HEIGHT;
-            let stars = app.world().resource::<TvAssets>().stars.clone();
+            let sprites = app.world().resource::<TvAssets>().stars.clone();
             for screen in every_screen() {
                 let case = format!("{width}x{height} {screen:?}");
                 app.world_mut().resource_mut::<Current>().screen = screen.clone();
@@ -3023,17 +3155,28 @@ pub(crate) mod layout_tests {
                     assert_eq!(sky.0.len(), 3, "{case}");
                     children[0]
                 };
-                let (layer, rect, moved, tiles) = star_layer(&mut app);
+                let (layer, rect, stars) = star_layer(&mut app);
                 assert_eq!(layer, first, "{case}: the stars draw under the screen");
-                assert_eq!(moved, Val2::ZERO, "{case}");
-                assert!(rect.min.abs_diff_eq(Vec2::ZERO, 0.01), "{case}: {rect:?}");
-                let past = Vec2::new(width as f32, height as f32) + starfield::TILE * scale;
-                assert!(rect.max.cmpge(past - 0.01).all(), "{case}: {rect:?}");
-                assert_eq!(tiles.len(), 15, "{case}");
-                for tile in &tiles {
-                    let image = app.world().get::<ImageNode>(*tile).unwrap();
-                    assert_eq!(image.image, stars, "{case}");
-                    assert!(app.world().get::<Children>(*tile).is_none(), "{case}");
+                let window = Rect::new(0.0, 0.0, width as f32, height as f32);
+                assert!(rect.min.abs_diff_eq(window.min, 0.01), "{case}: {rect:?}");
+                assert!(rect.max.abs_diff_eq(window.max, 0.01), "{case}: {rect:?}");
+                assert_eq!(stars.len(), sky.len(), "{case}");
+                let big: Vec<bool> = stars.iter().map(|s| s.3.image == sprites.big).collect();
+                assert!(big.is_sorted(), "{case}: the small stars first");
+                for star in &sky {
+                    let (placed, moved, centre, image) =
+                        stars.iter().find(|s| s.0.at == star.at).unwrap();
+                    assert_eq!(*moved, placed.placed(Vec2::ZERO).translation, "{case}");
+                    let home = starfield::wrap(star.at) * scale;
+                    assert!(centre.abs_diff_eq(home, 0.01), "{case}: {centre} {home}");
+                    let sprite = if star.big() {
+                        &sprites.big
+                    } else {
+                        &sprites.small
+                    };
+                    assert_eq!(image.image, *sprite, "{case}");
+                    let tint = theme.star_tints[star.tint as usize].with_alpha(star.alpha);
+                    assert_eq!(image.color, tint, "{case}");
                 }
                 assert!(app.world().get::<Text>(layer).is_none(), "{case}");
 
@@ -3060,7 +3203,6 @@ pub(crate) mod layout_tests {
     #[test]
     fn the_stars_drift_unless_motion_is_reduced() {
         use bevy::time::TimeUpdateStrategy;
-        use bevy::ui::Val2;
         for reduced in [false, true] {
             let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
             app.insert_resource(ReducedMotion(reduced))
@@ -3073,19 +3215,135 @@ pub(crate) mod layout_tests {
                 frames(&mut app, 2);
                 let elapsed = app.world().resource::<Time>().elapsed();
                 assert!(elapsed >= Duration::from_secs(25), "{elapsed:?}");
-                let (_, rect, moved, _) = star_layer(&mut app);
                 let at = if reduced {
                     Vec2::ZERO
                 } else {
                     starfield::drift_at(elapsed)
                 };
                 assert_ne!(at == Vec2::ZERO, !reduced, "{screen:?} at {elapsed:?}");
-                assert_eq!(moved, Val2::px(-at.x, -at.y), "{reduced} {screen:?}");
-                assert!(
-                    rect.min.abs_diff_eq(-at, 0.01),
-                    "{reduced} {screen:?}: {rect:?}"
-                );
+                let (_, _, stars) = star_layer(&mut app);
+                let mut moved = 0;
+                for (placed, translation, centre, _) in &stars {
+                    let case = format!("{reduced} {screen:?} {placed:?}");
+                    assert_eq!(*translation, placed.placed(at).translation, "{case}");
+                    let drawn = placed.centre(at);
+                    assert!(centre.abs_diff_eq(drawn, 0.01), "{case}: {centre}");
+                    moved += usize::from(!drawn.abs_diff_eq(placed.centre(Vec2::ZERO), 0.01));
+                }
+                assert_eq!(moved == stars.len(), !reduced, "{reduced} {screen:?}");
             }
+        }
+    }
+
+    /// The most pairs of `stars` one shift carries one onto the other, to
+    /// within about half a px: a pattern that repeats shows as a shift many
+    /// pairs share (AP.11's tile at 16:9: 960 px across, 32 pairs), where
+    /// scattered stars share one by chance at most twice.
+    fn most_pairs_one_shift(stars: &[Vec2]) -> usize {
+        let mut shifts = std::collections::HashMap::<IVec2, usize>::new();
+        for (i, a) in stars.iter().enumerate() {
+            for b in &stars[i + 1..] {
+                let d = *b - *a;
+                let d = if (d.x, d.y) < (0.0, 0.0) { -d } else { d };
+                *shifts.entry((d * 2.0).round().as_ivec2()).or_default() += 1;
+            }
+        }
+        shifts
+            .keys()
+            .map(|at| {
+                (-1..=1)
+                    .flat_map(|x| (-1..=1).map(move |y| *at + IVec2::new(x, y)))
+                    .filter_map(|near| shifts.get(&near))
+                    .sum()
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn a_repeating_pattern_shares_a_shift_and_scattered_stars_dont() {
+        let tile: Vec<Vec2> = starfield::stars(starfield::SEED)
+            .iter()
+            .map(|s| s.at)
+            .filter(|at| at.cmplt(Vec2::new(960.0, 540.0)).all())
+            .collect();
+        assert_eq!(tile.len(), 16);
+        let two_by_two: Vec<Vec2> = [0.0, 960.0]
+            .iter()
+            .flat_map(|x| [0.0, 540.0].map(|y| Vec2::new(*x, y)))
+            .flat_map(|corner| tile.iter().map(move |at| *at + corner))
+            .collect();
+        assert_eq!(most_pairs_one_shift(&two_by_two), 32);
+        let scattered: Vec<Vec2> = starfield::stars(starfield::SEED)
+            .iter()
+            .map(|s| s.at)
+            .filter(|at| at.cmplt(Vec2::new(1920.0, 1080.0)).all())
+            .collect();
+        assert_eq!(scattered.len(), 64);
+        assert!(most_pairs_one_shift(&scattered) <= 2);
+    }
+
+    /// The AP.11 follow-up (2026-10-18): AP.11's 960×540 tile showed 2×2 on
+    /// a 16:9 screen, the same 16 stars in each quarter. On a 16:9 screen at
+    /// 1080p and 4K and a 32:9 one at both, from the drift's start and then a
+    /// frame every 7 s through a loop and past it, every star on the screen,
+    /// a sliver at an edge included, is another star of the sky (no two at
+    /// the same offset within its period), each node draws its own star, no
+    /// shift carries more than two of them onto others (no pattern repeats,
+    /// whatever its period) and every 2×2 cells' patch of the screen holds
+    /// one.
+    #[test]
+    fn no_star_shows_twice_on_a_screen() {
+        use bevy::time::TimeUpdateStrategy;
+        use starfield::tests::offset_in_period;
+        for (width, height) in [(1920, 1080), (3840, 2160), (3840, 1080), (7680, 2160)] {
+            let mut app = portal_app(width, height, WindowMode::Tv, PortalCards::default());
+            app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(7)));
+            app.world_mut()
+                .resource_mut::<Time<Virtual>>()
+                .set_max_delta(Duration::from_secs(60));
+            app.world_mut().resource_mut::<Current>().screen = TvScreen::Join;
+            let scale = height as f32 / DESIGN_HEIGHT;
+            let screen = Vec2::new(width as f32, height as f32) / scale;
+            let patch = 2.0 * starfield::CELL;
+            let patches = (screen / patch).as_uvec2();
+            let mut shown = 0;
+            for frame in 0..22 {
+                app.update();
+                let elapsed = app.world().resource::<Time>().elapsed();
+                let drift = starfield::drift_at(elapsed);
+                let case = format!("{width}x{height} frame {frame} at {elapsed:?}");
+                let (_, _, stars) = star_layer(&mut app);
+                let mut seen: Vec<(Vec2, Vec2)> = Vec::new();
+                let mut held = std::collections::BTreeSet::new();
+                for (placed, _, centre, _) in &stars {
+                    let c = *centre / scale;
+                    let reach = Vec2::splat(placed.half);
+                    if !(c.cmpgt(-reach).all() && c.cmplt(screen + reach).all()) {
+                        continue;
+                    }
+                    let offset = offset_in_period(c + drift);
+                    let own = offset_in_period(placed.at);
+                    assert!(offset.abs_diff_eq(own, 0.01), "{case}: {c} draws {own}");
+                    for (other, at) in &seen {
+                        assert!(
+                            !offset.abs_diff_eq(*other, 0.5),
+                            "{case}: {c} and {at} are one star"
+                        );
+                    }
+                    seen.push((offset, c));
+                    if c.cmpge(Vec2::ZERO).all() && c.cmplt(screen).all() {
+                        held.insert((c / patch).as_uvec2().to_array());
+                    }
+                }
+                assert_eq!(held.len() as u32, patches.x * patches.y, "{case}");
+                let on: Vec<Vec2> = seen.iter().map(|(_, at)| *at).collect();
+                assert!(most_pairs_one_shift(&on) <= 2, "{case}");
+                shown = shown.max(seen.len());
+            }
+            // About one star a cell: 64 cells on 16:9, 128 on 32:9.
+            let cells = (screen / starfield::CELL).element_product() as usize;
+            assert!((cells..cells + cells / 2).contains(&shown), "{shown}");
         }
     }
 
@@ -3331,7 +3589,8 @@ pub(crate) mod layout_tests {
 
     /// Where every node sits (its size and its whole transform, scale
     /// included), but for the choices' and the cards' faces and what's on
-    /// them, and the drifting sky.
+    /// them, the drifting sky and the titles' ink, which is laid out on each
+    /// title's own camera, a frame after the screen's.
     pub(crate) fn outer_nodes(
         app: &mut App,
     ) -> std::collections::BTreeMap<Entity, (Vec2, UiGlobalTransform)> {
@@ -3341,6 +3600,7 @@ pub(crate) mod layout_tests {
             With<ChoiceFace>,
             With<CardFace>,
             With<starfield::StarLayer>,
+            With<title::TitleInk>,
         )>>();
         let mut stack: Vec<Entity> = q.iter(world).collect();
         while let Some(e) = stack.pop() {

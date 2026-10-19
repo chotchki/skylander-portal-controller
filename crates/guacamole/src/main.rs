@@ -25,6 +25,7 @@ mod shots;
 mod starfield;
 mod surfaces;
 mod theme;
+mod title;
 mod tv;
 mod video;
 

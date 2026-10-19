@@ -77,7 +77,7 @@ Linear gradients (135°):
 | Light | `#fff8a0 → #c8b02c` (ink text) |
 | Dark | `#2a2a3a → #05050a` |
 
-The **bezel is always gold** regardless of element. Only the inner plate is element-tinted. This keeps the visual language consistent across the whole UI while still signaling element.
+The **bezel is gold** everywhere but on a figure. A figure's ring (portal slots and figure cards) wears its element's gradient, the phone's rule since the PLAN 9.7 playtest (2026-05-04: "color code the element instead of just a gold ring", `gold_bezel.css`): the portrait covers the plate, so a gold ring would leave the element showing nowhere. Profile swatches, PIN dots, emblems and a figure with no element keep the gold ring, the Portal Master's identity motif. The TV follows the same rule (§3.1).
 
 ### Kaos palette (used by Kaos overlays in Phase 4 + skin swap in 5.4)
 Distinct evil-lair-of-Kaos color system. Used as full palette for the two Kaos overlays (`kaos_takeover.html`, `kaos_swap.html`) and later as a `body.skin-kaos` class-swap for the whole app in Phase 5.4. Defined as sibling vars so no component CSS needs to change.
@@ -229,6 +229,11 @@ badge, claim a free corner rather than stacking.
 | Top-right | Unmatched figure | `.p4-slot-badge--unmatched` | Amber circle with `?` glyph. Renders when `SlotState::Loaded { figure_id: None }` — i.e. RPCS3 reports a figure name we can't reverse-match against the indexed pack (PLAN 3.8.2). Tooltip: "This figure isn't in your collection". |
 | Bottom-left | *reserved* | — | Open for future status (planned: load-from-storage indicator if 3.11.4 needs one). |
 | Bottom-right | Ownership pip | `.p4-slot-owner` | Profile-coloured circle with the placer's initial. Renders on every Loaded/Loading slot whose `placed_by` resolves against the known-profiles list (PLAN 4.18.17). Dimmed (`.p4-slot-owner--pending`) during Loading. |
+
+**On the TV** (guacamole's portal cards, openspec AP; `docs/native/guacamole-design.md`, The TV's UI), two departures:
+
+- **The owner pip sits top-right**, a deliberate departure from the bottom-right corner above (chotchki, 2026-10-18: "b, top right bottom right will interfere with player 2's ui"). The top-right corner is free there: guacamole places by identity, so there's no unmatched figure to badge. The pip is the same small bezel as `.p4-slot-owner`, 60 px (the card's bezel is 160).
+- **A figure's ring wears its element**, as the phone's does (§1, Elements): the card's edge is the gold run and the portrait covers the plate, so a gold ring would leave the element in the caption alone. A figure with no element keeps the gold ring above.
 
 ### 3.2 Blue card
 Any tappable or groupable surface inside an overlay/panel. Profile chips, action buttons, QR wrappers, stats strips.
