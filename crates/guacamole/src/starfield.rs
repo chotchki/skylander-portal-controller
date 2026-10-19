@@ -280,8 +280,9 @@ pub(crate) fn sky(theme: &TvTheme) -> BackgroundGradient {
 /// an absolute node over the whole root from its top-left corner (the
 /// overscan inset is padding, which an absolute node ignores), out of the
 /// layout and out of picking, holding a node a star at its place with no
-/// drift, which [`drift`] moves, unrounded so it draws at its own size. The small stars go first and the big ones
-/// after, so the sky draws in two batches, one a sprite.
+/// drift, which [`drift`] moves, unrounded so it draws at its own size. The
+/// small stars go first and the big ones after, so the sky draws in two
+/// batches, one a sprite.
 pub(crate) fn spawn_stars(root: &mut ChildSpawnerCommands, sprites: &Sprites, theme: &TvTheme) {
     let mut sky = stars(SEED);
     sky.sort_by_key(Star::big);
@@ -567,8 +568,12 @@ pub(crate) mod tests {
         let patch = 2.0 * CELL;
         let patches = (WIDEST / patch).as_uvec2();
         let mut jumps = 0;
-        for n in 0..(LOOP.as_millis() / frame.as_millis()) as u32 {
+        // Through a loop and a second past its end, so the seam is crossed.
+        let through = (LOOP + Duration::from_secs(1)).as_nanos() / frame.as_nanos();
+        let mut crossed = 0;
+        for n in 0..through as u32 {
             let (now, next) = (drift_at(frame * n), drift_at(frame * (n + 1)));
+            crossed += usize::from(next.x < now.x);
             let mut held = std::collections::BTreeSet::new();
             for star in &sky {
                 let placed = SkyStar {
@@ -587,5 +592,6 @@ pub(crate) mod tests {
             assert_eq!(held.len() as u32, patches.x * patches.y, "frame {n}");
         }
         assert!(jumps > 0, "the loop wraps stars");
+        assert_eq!(crossed, 1, "the loop's end, once");
     }
 }

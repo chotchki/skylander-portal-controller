@@ -1977,18 +1977,31 @@ pub(crate) mod layout_tests {
             .iter(world)
             .map(|(s, n, t)| (s.0, node_rect(n, t)))
             .collect();
-        // The TV's text: a title's ink is laid out on its own camera.
+        // The TV's text. A title's ink lays out on the title's own camera,
+        // and nothing else may: a line that lost the TV's camera would slip
+        // past every check that reads these.
         let tv = tv_camera(world);
         let mut q = world.query_filtered::<(
             &ComputedNode,
             &UiGlobalTransform,
             &bevy::ui::ComputedUiTargetCamera,
+            Option<&ChildOf>,
         ), With<Text>>();
-        let texts = q
-            .iter(world)
-            .filter(|(_, _, c)| c.get() == Some(tv))
-            .map(|(n, t, _)| node_rect(n, t))
-            .collect();
+        let mut texts = Vec::new();
+        let mut off_tv = Vec::new();
+        for (node, at, camera, parent) in q.iter(world) {
+            if camera.get() == Some(tv) {
+                texts.push(node_rect(node, at));
+            } else {
+                off_tv.push(parent.map(ChildOf::parent));
+            }
+        }
+        for parent in off_tv {
+            assert!(
+                parent.is_some_and(|p| world.get::<title::TitleInk>(p).is_some()),
+                "a text off the TV's camera that isn't a title's ink"
+            );
+        }
         Laid {
             cards,
             empties,
@@ -2673,6 +2686,9 @@ pub(crate) mod layout_tests {
         let mut app = portal_app(1920, 1080, WindowMode::Tv, full("Eruptor"));
         app.world_mut().resource_mut::<Setup>().0.error = Some("gone".into());
         let mut counts: HashMap<TvState, usize> = HashMap::new();
+        // Each round ends on the same screen with its title drawn: the
+        // cameras, the titles' materials and the images there.
+        let mut ends = Vec::new();
         for round in 0..3 {
             for from in every_screen() {
                 for to in every_screen() {
@@ -2686,7 +2702,17 @@ pub(crate) mod layout_tests {
                     }
                 }
             }
+            frames(&mut app, 3);
+            let world = app.world_mut();
+            let cameras = world.query::<&Camera>().iter(world).count();
+            let materials = world.resource::<Assets<title::TitleMaterial>>().len();
+            ends.push((cameras, materials, world.resource::<Assets<Image>>().len()));
         }
+        // The TV's and the title's cameras, one material, and no image left
+        // behind by a round's 162 steps (the first round grows the font
+        // atlases, so it's the baseline's warm-up).
+        assert_eq!((ends[1].0, ends[1].1), (2, 1), "{ends:?}");
+        assert_eq!(ends[1], ends[2], "{ends:?}");
 
         let before = (roots(&mut app), nodes(&mut app).0);
         let farewell = app.world().resource::<Current>().screen.clone();
