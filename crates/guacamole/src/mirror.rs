@@ -21,6 +21,7 @@ use crate::input::{FocusId, PostedPresses, TestPress};
 use crate::intro::{IntroEntry, IntroEvent, IntroQueue};
 use crate::intro_player::{self, IntroOverlay, IntroPlayer, IntroVideo};
 use crate::screen::TvScreen;
+use crate::turntable::{CardPlate, CardState, Turntables};
 use crate::tv::{
     CardSlot, Current, EmptySlot, ExtractBar, ExtractDetail, ExtractTitle, Framing, JoinAddress,
     JoinQr, Pip, PlayersLine, Setup, TvAssets, TvCamera, contains, node_rect, safe_area,
@@ -128,8 +129,17 @@ pub struct CardShot {
     pub figure_id: String,
     /// Every line drawn on the card outside the pip, top to bottom.
     pub texts: Vec<String>,
-    /// An image drawn in the portrait frame.
+    /// An image drawn in the portrait frame: the portrait, or the model.
     pub portrait: bool,
+    /// The card's turntable (AE.13): `model` (its model is on the card),
+    /// `portrait` (no model to show, or one that couldn't be) or `loading`
+    /// (the portrait while the model is read or the extract makes it).
+    pub state: String,
+    /// Why a `portrait` card has no model, as the log has it.
+    pub reason: Option<String>,
+    /// The bezel plate the portrait or the model draws in: x, y, width,
+    /// height in physical pixels.
+    pub plate: Option<[f32; 4]>,
     pub pip: Option<PipShot>,
     /// x, y, width, height in physical pixels.
     pub rect: [f32; 4],
@@ -276,11 +286,13 @@ fn mirror_tv(
         Query<&Text, With<ExtractDetail>>,
         Query<&ExtractBar>,
     ),
-    (queue, player, overlays, videos): (
+    (queue, player, overlays, videos, turntables, plates): (
         Option<Res<IntroQueue>>,
         Option<Res<IntroPlayer>>,
         Query<(&ComputedNode, &UiGlobalTransform), With<IntroOverlay>>,
         Query<(&ComputedNode, &UiGlobalTransform), With<IntroVideo>>,
+        Option<Res<Turntables>>,
+        Query<(&CardPlate, &ComputedNode, &UiGlobalTransform)>,
     ),
 ) {
     let Some(current) = current else {
@@ -306,6 +318,23 @@ fn mirror_tv(
                     .unwrap_or_default(),
                 texts: found.0,
                 portrait: found.1,
+                state: turntables
+                    .as_ref()
+                    .and_then(|t| t.card_state(slot.0))
+                    .unwrap_or(CardState::Portrait)
+                    .name()
+                    .into(),
+                reason: turntables
+                    .as_ref()
+                    .and_then(|t| t.portrait_reason(slot.0))
+                    .map(str::to_owned),
+                plate: plates
+                    .iter()
+                    .find(|(p, ..)| p.slot == slot.0)
+                    .map(|(_, n, t)| {
+                        let r = node_rect(n, t);
+                        [r.min.x, r.min.y, r.width(), r.height()]
+                    }),
                 pip: found.2.map(|(initial, fill)| PipShot {
                     initial,
                     color: Srgba::from(fill).to_hex(),

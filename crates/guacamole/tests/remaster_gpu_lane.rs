@@ -87,8 +87,8 @@ use guacamole::character::material::{
     CharacterUniform, SHADER, reference_material, specialize_for,
 };
 use guacamole::character::{
-    CharacterMaterial, CharacterShadingPlugin, GlowPlugin, MaterialKey, ShadowLookup, remaster,
-    spawn_character, spawn_glow_camera, spawn_glow_masks,
+    CharacterMaterial, CharacterShadingPlugin, GlowPlugin, GlowView, MaterialKey, ShadowLookup,
+    remaster, spawn_character, spawn_glow_camera, spawn_glow_masks,
 };
 
 use frame::{FrameCamera, FrameFile, Rig, view_proj};
@@ -756,9 +756,12 @@ fn setup(
                         &mut commands,
                         &mut images,
                         camera,
-                        SIZE,
-                        projection.clone(),
-                        remaster::MSAA,
+                        GlowView {
+                            size: SIZE,
+                            projection: projection.clone(),
+                            msaa: remaster::MSAA,
+                            order: -1,
+                        },
                         g,
                     );
                 }

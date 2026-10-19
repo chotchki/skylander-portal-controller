@@ -453,7 +453,9 @@ cargo run -p guacamole       # add --features test-hooks for the /api/_test/* en
   TV's UI). AA.8 checked its screens that way, because
   window captures on the locked Mac came back black. Since AB.10 a shot lands in each intro, a frame of
   the disc's own FMV, so the folder has to be outside any git checkout like the extract root; one inside
-  is refused with an error and nothing is shot.
+  is refused with an error and nothing is shot. `GUAC_SHOT_YAW=<degrees>` (default 0, facing the camera)
+  is where on its turn each card's model holds still in a shot (AE.13), so a walk shoots a turn one run
+  per angle.
 
 Release, the build AA.11 runs on the TV:
 
@@ -2074,6 +2076,29 @@ aimed, stricter than §5.7 (which keeps entrances at 200 ms linear) because a sh
 twice. It's a switch for dev shots, not a user setting, and a release build has no shots and never
 reduces. Two walks of the same screens match byte for byte everywhere but inside the join QR, whose noise
 ring is random every boot (a backlog line).
+
+The cards' turntables ([`turntable.rs`](../../crates/guacamole/src/turntable.rs),
+[`character/turntable.rs`](../../crates/guacamole/src/character/turntable.rs); AE.13, the AE change's
+design decision 14) draw a placed character's own model in its bezel's plate, where the portrait was:
+- One scene per occupied slot, outside the UI tree, on render layers of its own (16 + 2·slot for the
+  model, the next for its glow masks), drawn by the remaster's camera at order -1 (its glow camera at -2)
+  into an image the slot keeps. Scenes are reconciled from `PortalCards` by (slot, placement), so a UI
+  rebuild never respawns one; `show_turntables` points the plate's `ImageNode` at the image once the
+  model is up, in place, so the card neither respawns nor rises again.
+- The extraction hands the TV a `Shelf` (the extract's folder, each character figure's load file, what
+  the model stage reported, the sprite rig) once the models are in: guac-extract's `ModelsReady`, ahead
+  of the intros, or a current extract at start or on the pick. A model reads on a task, off the frame.
+- The portrait shows while the model loads (or the extract is still making it) and stays for good when
+  there's no model to show: a figure with no character model on the disc, one the model stage reported,
+  one that won't read. Each is logged by figure and why; `/api/_test/tv` mirrors every card's `state`
+  (`model`, `portrait`, `loading`), its `reason` and its plate's rect.
+- Framing: the cylinder the idle loop sweeps about the model's vertical axis (24 poses, skinned on the
+  CPU) fitted inside the plate's circle with 6% clear, at a 12° downward pitch and a 30° field of view, so
+  nothing leaves the card in a turn. One turn every 12 s; under `ReducedMotion` the idle's first pose at
+  `GUAC_SHOT_YAW`.
+- The image is the plate's size in pixels (128 at 1080p, 256 at 4K) and clears to the darker stop of
+  the figure's element, opaque, so blended and additive parts and the glow's halo land on what the card
+  shows. The light is the disc's sprite rig fixed to the camera, fog on past everything.
 
 What only the TV at couch distance can judge (the titles and the 24 px floor at 10 ft, the focus glow,
 the drift) is on the backlog's TV pass line.

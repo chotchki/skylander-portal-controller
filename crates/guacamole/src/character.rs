@@ -3,7 +3,8 @@
 //! feature bits ([`shading.wesl`](character/shading.wesl)), the material
 //! that specializes it per key, and the skinned meshes built from IR v2.
 //! [`remaster`] (AE.12) says what's decoded into linear light and how the
-//! camera draws; [`glow`] (AE.11) is the game's glow on that frame.
+//! camera draws; [`glow`] (AE.11) is the game's glow on that frame;
+//! [`turntable`] (AE.13) frames and lights a model on a card.
 //!
 //! The shader is checked against [`guac_ir::shading`], the spec's CPU
 //! model, by an `#[ignore]`d GPU lane ([`tests/character_gpu_lane.rs`]),
@@ -16,12 +17,13 @@ pub mod key;
 pub mod material;
 pub mod mesh;
 pub mod remaster;
+pub mod turntable;
 
 use bevy::app::{App, Plugin};
 use bevy::asset::embedded_asset;
 use bevy::pbr::MaterialPlugin;
 
-pub use glow::{Glow, GlowPlugin, spawn_glow_camera, spawn_glow_masks};
+pub use glow::{Glow, GlowPlugin, GlowView, spawn_glow_camera, spawn_glow_masks};
 pub use key::{KeyError, MaterialKey, Pass, SceneBits, ShaderKey, StateKey};
 pub use material::{
     CharacterMaterial, CharacterTextures, CharacterUniform, MaterialError, ShadowLookup,

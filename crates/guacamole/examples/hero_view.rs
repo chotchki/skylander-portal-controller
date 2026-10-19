@@ -73,8 +73,8 @@ use guac_ir::shading;
 use guac_ir::{DumpIdentity, Model, Sha256};
 use guacamole::character::mesh::pose;
 use guacamole::character::{
-    CharacterMaterial, CharacterShadingPlugin, GlowPlugin, ShadowLookup, SpawnedCharacter,
-    remaster, spawn_character, spawn_glow_camera, spawn_glow_masks,
+    CharacterMaterial, CharacterShadingPlugin, GlowPlugin, GlowView, ShadowLookup,
+    SpawnedCharacter, remaster, spawn_character, spawn_glow_camera, spawn_glow_masks,
 };
 
 use frame::{Fog, FrameCamera, Rig, view_proj, work_tree};
@@ -663,9 +663,12 @@ fn setup(
             &mut commands,
             &mut images,
             camera,
-            size,
-            projection,
-            remaster::MSAA,
+            GlowView {
+                size,
+                projection,
+                msaa: remaster::MSAA,
+                order: -1,
+            },
             GLOW_LAYER,
         ));
     }

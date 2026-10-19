@@ -132,6 +132,7 @@ enum Seen {
     Portraits(usize, usize),
     RosterReady(usize),
     Models(usize, usize),
+    ModelsReady(Vec<String>),
     Indexing,
     Transcode,
 }
@@ -143,6 +144,9 @@ impl Seen {
             Event::Portraits { done, total } => Self::Portraits(*done, *total),
             Event::RosterReady(r) => Self::RosterReady(r.figures.len()),
             Event::Models { done, total } => Self::Models(*done, *total),
+            Event::ModelsReady { failed } => {
+                Self::ModelsReady(failed.iter().map(|f| f.load_file.clone()).collect())
+            }
             Event::Indexing => Self::Indexing,
             Event::Transcode(_) => Self::Transcode,
         }
@@ -211,7 +215,12 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     // Then the models, one event each, before the intros.
     let models: Vec<Seen> = (0..=LOADS).map(|i| Seen::Models(i, LOADS)).collect();
     assert_eq!(seen[FIGURES + 3..FIGURES + 4 + LOADS], models[..]);
-    assert_eq!(indexing, Some(FIGURES + 4 + LOADS));
+    // The turntable's cue, with what didn't extract, ahead of the intros.
+    assert_eq!(
+        seen[FIGURES + 4 + LOADS],
+        Seen::ModelsReady(vec![MISSING.into(), REFUSED.into()])
+    );
+    assert_eq!(indexing, Some(FIGURES + 5 + LOADS));
     assert!(first_transcode > indexing, "{seen:?}");
 
     // The roster's IR, every portrait, the models, their textures and the
@@ -316,7 +325,11 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
     assert_eq!(e.code(), "GUAC-E-NO-FFMPEG", "{e}");
     assert_eq!(done.roster.roster.figures.len(), FIGURES);
     let seen = seen.into_inner().unwrap();
-    assert_eq!(seen.last(), Some(&Seen::Models(LOADS, LOADS)));
+    assert_eq!(seen[seen.len() - 2], Seen::Models(LOADS, LOADS));
+    assert_eq!(
+        seen.last(),
+        Some(&Seen::ModelsReady(vec![MISSING.into(), REFUSED.into()]))
+    );
     let m = manifest_on_disk(&dir);
     assert_eq!(recorded(&m, "ir/roster.ron"), 1);
     assert_eq!(recorded(&m, "portraits/"), FIGURES);

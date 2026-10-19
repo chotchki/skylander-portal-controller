@@ -331,26 +331,42 @@ fn glow(
     encoder.pop_debug_group();
 }
 
+/// What a glow camera takes from the frame's camera ([`spawn_glow_camera`]).
+#[derive(Debug, Clone)]
+pub struct GlowView {
+    /// The frame's size, which the mask takes.
+    pub size: UVec2,
+    pub projection: Projection,
+    pub msaa: Msaa,
+    /// The glow camera's order: before the frame camera's own, so the mask
+    /// is drawn when the chain reads it (-1 beside a camera at the default 0).
+    pub order: isize,
+}
+
 /// The glow camera for `camera`: a child that sees only `layer`, draws the
-/// glow masks there into a new image `size` big (zero where nothing glows)
-/// before the frame's camera draws, with its projection and sample count.
+/// glow masks there into a new image the frame's size (zero where nothing
+/// glows) with the frame's projection and sample count, at `view`'s order.
 /// Puts [`Glow`] on `camera` and returns the mask image.
 pub fn spawn_glow_camera(
     commands: &mut Commands,
     images: &mut Assets<Image>,
     camera: Entity,
-    size: UVec2,
-    projection: Projection,
-    msaa: Msaa,
+    view: GlowView,
     layer: usize,
 ) -> Handle<Image> {
+    let GlowView {
+        size,
+        projection,
+        msaa,
+        order,
+    } = view;
     let mut image = Image::new_target_texture(size.x, size.y, FORMAT, None);
     image.asset_usage = RenderAssetUsages::default();
     let mask = images.add(image);
     commands.spawn((
         Camera3d::default(),
         Camera {
-            order: -1,
+            order,
             clear_color: ClearColorConfig::Custom(Color::NONE),
             ..Default::default()
         },

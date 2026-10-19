@@ -43,6 +43,12 @@ pub enum Event {
         done: usize,
         total: usize,
     },
+    /// Every model the roster names and the rig are in the extract, or in
+    /// `failed` (AE.13): the turntable can draw from it now, while the intros
+    /// run.
+    ModelsReady {
+        failed: Vec<ModelFailure>,
+    },
     /// ffmpeg was found; mapping toy types to intro movies.
     Indexing,
     Transcode(TranscodeEvent),
@@ -118,6 +124,9 @@ pub fn run(
     let roster = roster_stage(dir, ir, send)?;
     send(Event::RosterReady(roster.roster.clone()));
     let models = model_stage(dir, &roster.roster, ir, send)?;
+    send(Event::ModelsReady {
+        failed: models.failed.clone(),
+    });
     let intros = intro_stage(dir, &roster.roster, ffmpeg, ir, send);
     if intros.is_ok() {
         dir.mark_complete()?;

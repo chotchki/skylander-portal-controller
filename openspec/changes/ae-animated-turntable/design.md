@@ -129,6 +129,13 @@ Read at AE.11 (2026-10-19, all three captures alike): after the main pass the ga
 - Lights and scene bits: the rig is the 3D-UI sprite rig, from the IR's `rig` (Open question 4, "agreed"). Fog is ON with its distances beyond the camera: the fog factor is 0, but the eye vector exists, so a spec-mapped part shows the sheen it shows in the level; shadows and point lights are off.
 - The portrait shows until the model is ready and stays when it can't be (spec); a model that fails to load is logged by figure and reason and never touches another slot.
 
+Landed at AE.13 (2026-10-19), with three readings the decision left open:
+- Where on the card: the bezel's plate, the image node the portrait was in, so AA's layout, AP's bezel and every card test stand. That's 128 design px a side (128 pixels at 1080p, 256 at 4K), framed inside the plate's circle.
+- The rig's angles. `DirectionalLightInfo._initMatrix` is the `tfbEulerTransform` AF.9 pinned for placements (tilt, heading, roll in degrees; heading θ faces (sin θ, 0, cos θ), a positive tilt lifts it), and each light travels the way it faces, in a frame whose camera looks along +Z as a heading-0 one does. That puts the key (tilt −45) shining down onto the side the camera sees, the fill (45, 180) coming up from behind and the back light (−45, 90) from the upper right. Level 213's `_worldLight1-3` hold the same three values, and the runtime replaced them in AC.13's frame (its key travels down at 30°, which this reading agrees with but doesn't pin), so nothing on the disc settles which way the UI's camera looks; AE.16's screenshot of the game's placement screen is the check.
+- The backdrop: opaque, the darker stop of the figure's element (the plate behind a portrait), since blended and additive parts blended over a transparent clear would come out premultiplied twice or not at all, and the glow's halo would vanish.
+
+What the remaster does to this rig, for AE.18: decoded, the key lights a part facing it at 4·(0.0075 + 0.0802) = 0.35 of its linear colour map where the game's arithmetic takes 4·(0.082 + 0.314) = 1.58 of its stored colour, so the directionally lit characters (Tree Rex, Crusher) read dark on their cards and Eruptor (unlit path, colour map at full) doesn't.
+
 **15. Every pipeline the roster needs is compiled before the portal shows.**
 macOS compiles a render pipeline inside the frame that first uses it (design doc, Renderer), so at start, and again when an extraction lands, a hidden offscreen pass draws one triangle per material key the roster's models use, on the turntable's own camera setup, before the Portal screen first shows. AE.14 measures the worst TV frame over the first placement after a start and models appearing, each against the spec's 50 ms.
 

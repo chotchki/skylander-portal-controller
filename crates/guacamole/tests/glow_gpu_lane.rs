@@ -48,8 +48,9 @@ use guac_ir::glow::{self as reference, Image as Plane};
 use guac_ir::model::{self, Joint, Model, Segment, Skeleton};
 use guac_ir::shading::{self, Fixed, Glow, Scene};
 use guacamole::character::{
-    CharacterMaterial, CharacterShadingPlugin, CharacterTextures, GlowPlugin, MaterialKey, Pass,
-    ShaderKey, ShadowLookup, StateKey, spawn_character, spawn_glow_camera, spawn_glow_masks,
+    CharacterMaterial, CharacterShadingPlugin, CharacterTextures, GlowPlugin, GlowView,
+    MaterialKey, Pass, ShaderKey, ShadowLookup, StateKey, spawn_character, spawn_glow_camera,
+    spawn_glow_masks,
 };
 
 /// The clear colour, exact in half precision; the quad covers every pixel.
@@ -500,9 +501,12 @@ fn setup(
             &mut commands,
             &mut images,
             camera,
-            UVec2::new(c.width, c.height),
-            projection,
-            Msaa::Off,
+            GlowView {
+                size: UVec2::new(c.width, c.height),
+                projection,
+                msaa: Msaa::Off,
+                order: -1,
+            },
             glow_layer,
         );
         targets.0.push(handle);

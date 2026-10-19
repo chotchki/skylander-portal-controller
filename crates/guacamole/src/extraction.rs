@@ -8,6 +8,7 @@
 //! lands, or at start when the extract is already current (AE.4).
 
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
@@ -15,7 +16,7 @@ use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use guac_extract::dump::HashProgress;
 use guac_extract::intros::IrFormat;
 use guac_extract::known::{KNOWN_DUMPS, KnownDump};
-use guac_extract::stages::{self, Event};
+use guac_extract::stages::{self, Event, ModelFailure};
 use guac_extract::transcode::{Done, Step, TranscodeEvent};
 use guac_extract::{DirState, ExtractError, ExtractRoot, IdentityDir, RootMode};
 use guac_ir::{CharacterTable, Roster};
@@ -23,6 +24,7 @@ use guac_server::figures::{FigureList, FigureSet, RosterState};
 use tracing::{error, info, warn};
 
 use crate::screen::TvScreen;
+use crate::turntable::{Shelf, ShelfSender};
 use crate::tv::{Current, Setup};
 
 /// What a Giants pick extracts with; built once in `main` from the settings.
@@ -38,6 +40,9 @@ pub struct ExtractJob {
     /// The server's figure list, where the roster goes when it lands (AE.4);
     /// `None` when the server didn't come up.
     pub figures: Option<FigureList>,
+    /// The TV's turntables, where the extract's models go once they're in
+    /// (AE.13); `None` with no TV to tell.
+    pub shelf: Option<ShelfSender>,
 }
 
 impl ExtractJob {
@@ -57,6 +62,7 @@ impl ExtractJob {
             ir,
             test_known: None,
             figures: None,
+            shelf: None,
         }
     }
 
@@ -467,6 +473,7 @@ pub fn run(
         match loaded {
             Ok((table, roster)) => {
                 publish(job, &roster, opened.dir.path());
+                put_on_shelf(job, &roster, opened.dir.path(), &[]);
                 return Ok(Ready {
                     library: IntroLibrary {
                         dir: opened.dir.path().to_path_buf(),
@@ -480,6 +487,8 @@ pub fn run(
         }
     }
     let dir = opened.dir.path().to_path_buf();
+    // The roster as it landed, for the shelf once the models are in.
+    let landed: Mutex<Option<std::sync::Arc<Roster>>> = Mutex::new(None);
     let extracted = stages::run(
         &mut opened.dir,
         job.ffmpeg.as_deref(),
@@ -487,8 +496,16 @@ pub fn run(
         &|e| match e {
             Event::ReadingRoster => send(ExtractEvent::Roster { done: 0, total: 0 }),
             Event::Portraits { done, total } => send(ExtractEvent::Roster { done, total }),
-            Event::RosterReady(roster) => publish(job, &roster, &dir),
+            Event::RosterReady(roster) => {
+                publish(job, &roster, &dir);
+                *landed.lock().unwrap_or_else(|e| e.into_inner()) = Some(roster);
+            }
             Event::Models { done, total } => send(ExtractEvent::Models { done, total }),
+            Event::ModelsReady { failed } => {
+                if let Some(roster) = &*landed.lock().unwrap_or_else(|e| e.into_inner()) {
+                    put_on_shelf(job, roster, &dir, &failed);
+                }
+            }
             Event::Indexing => send(ExtractEvent::Indexing),
             Event::Transcode(e) => {
                 if let Step::Done(done) = &e.step {
@@ -560,6 +577,16 @@ fn publish(job: &ExtractJob, roster: &Roster, dir: &Path) {
     info!(figures = roster.figures.len(), "roster published");
 }
 
+/// Puts the extract at `dir` on the TV's shelf: the turntable draws from it
+/// once every model the roster names is in it or in `failed` (AE.13).
+fn put_on_shelf(job: &ExtractJob, roster: &Roster, dir: &Path, failed: &[ModelFailure]) {
+    let Some(tx) = &job.shelf else {
+        return;
+    };
+    // The app is gone; nothing to tell.
+    let _ = tx.send(std::sync::Arc::new(Shelf::new(roster, dir, job.ir, failed)));
+}
+
 /// At start, the roster of a current extract of `dump`, published on a thread
 /// of its own (AE.4): no phone can have picked a game yet. It reads only the
 /// dump's listing, the manifest and the roster, writes nothing, and leaves
@@ -575,6 +602,7 @@ pub fn preload_roster(dump: PathBuf, job: ExtractJob) {
                 Ok(Some(dir)) => match guac_extract::roster::load(&dir, job.ir) {
                     Ok(roster) => {
                         publish(&job, &roster, dir.path());
+                        put_on_shelf(&job, &roster, dir.path(), &[]);
                         info!(
                             took_ms = started.elapsed().as_millis() as u64,
                             "start-time roster from the current extract"
@@ -1306,6 +1334,7 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
             ir: IrFormat::Ron,
             test_known: None,
             figures: Some(FigureList::new(FigureSet::waiting(RosterState::Reading))),
+            shelf: None,
         }
     }
 
@@ -1333,13 +1362,40 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
         let known = known_for(&dump);
         let ffmpeg = fake_ffmpeg(&tmp.path().join("bin"));
         let extract = tmp.path().join("extract");
-        let job = job(&extract, Some(ffmpeg.clone()));
+        let (shelf, shelves) = crate::turntable::shelf_channel();
+        let job = ExtractJob {
+            shelf: Some(shelf),
+            ..job(&extract, Some(ffmpeg.clone()))
+        };
 
         // The first run stops at jetvac, as a kill mid-run would.
         fs::write(ffmpeg.with_file_name("fail"), "").unwrap();
         let (result, seen) = run_all(&dump, &job, &known);
         let err = result.unwrap_err();
         assert_eq!(err.code(), "GUAC-E-TRANSCODE-FAILED", "{err}");
+        // The models went on the TV's shelf before the intros failed (AE.13):
+        // this dump has no character archives, so each of the roster's 11
+        // load files is there as reported, the rig beside them.
+        let landed: Vec<_> = shelves.0.try_iter().collect();
+        assert_eq!(landed.len(), 1);
+        assert_eq!(landed[0].failed.len(), 11, "{:?}", landed[0].failed);
+        assert!(
+            landed[0]
+                .failed
+                .values()
+                .all(|why| why.contains("no archive")),
+            "{:?}",
+            landed[0].failed
+        );
+        assert!(landed[0].rig.is_ok(), "{:?}", landed[0].rig);
+        assert!(!landed[0].loads.is_empty());
+        for (id, load) in &landed[0].loads {
+            let model = landed[0].dir.join(job.ir.model_path(load));
+            assert!(
+                model.is_file() || landed[0].failed.contains_key(load),
+                "{id}: {load}"
+            );
+        }
         let mut kinds: Vec<&str> = seen.iter().map(ExtractStatus::kind).collect();
         kinds.dedup();
         assert_eq!(
@@ -1399,6 +1455,8 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
         let (result, seen) = run_all(&dump, &restarted, &known);
         let again = result.unwrap();
         assert!(!again.ran);
+        // A current extract goes on the shelf as it's loaded.
+        assert_eq!(shelves.0.try_iter().count(), 2, "the second run's and this");
         assert_eq!(again.library, ready.library);
         assert!(seen.iter().all(|s| s.kind() == "Checking"), "{seen:?}");
         let set = listed(&restarted);
