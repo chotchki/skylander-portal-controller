@@ -12,7 +12,15 @@ use skylander_rpcs3_control::ipc::IpcPortalDriver;
 use skylander_rpcs3_control::ipc::proto::EmuState;
 
 use crate::outputs::{self, Frame, Kind, Rpcs3Outputs};
+use crate::rpcs3_log::LogTail;
 use crate::verbs::{Reply, Verb, VerbClient};
+
+/// What RPCS3 logs when it turns a savestate down after `SAVESTATE` has
+/// answered `OK` (`Emulator::Kill`, `rpcs3/Emu/System.cpp`): an SPU thread it
+/// can't lock (one asleep in an unsavable call for 5 s or more, a long pause
+/// included), an HLE video decoder, or a savedata operation in flight. The
+/// emulator stays where it was, so nothing but the log says so.
+pub const SAVESTATE_REFUSED: &str = "Failed to savestate";
 
 /// The gap [`Control::screenshot`] keeps after the last shot.
 pub const SHOT_SPACING: Duration = Duration::from_millis(1100);
@@ -117,6 +125,8 @@ pub struct Control {
     verbs: VerbClient,
     driver: IpcPortalDriver,
     outputs: Rpcs3Outputs,
+    /// RPCS3's log (`RPCS3.log` in the home's cache dir), when the caller has it.
+    log: Option<PathBuf>,
 }
 
 impl Control {
@@ -125,9 +135,19 @@ impl Control {
     pub fn new(p1_socket: &Path, config_dir: &Path) -> Self {
         Self {
             verbs: VerbClient::new(p1_socket),
-            driver: IpcPortalDriver::with_path(p1_socket).with_timeout(Duration::from_secs(5)),
+            // 15 s: with other lanes building, a STATE took over 5 s to come back on a
+            // load average of 28 (AF.7's exploration), and every step here asks for one.
+            driver: IpcPortalDriver::with_path(p1_socket).with_timeout(Duration::from_secs(15)),
             outputs: Rpcs3Outputs::new(config_dir),
+            log: None,
         }
+    }
+
+    /// RPCS3's log, so [`Control::savestate`] fails as soon as RPCS3 turns the
+    /// save down instead of waiting out its timeout.
+    pub fn with_log(mut self, log: impl Into<PathBuf>) -> Self {
+        self.log = Some(log.into());
+        self
     }
 
     pub fn verbs(&self) -> &VerbClient {
@@ -153,11 +173,22 @@ impl Control {
     pub fn wait_state(
         &self,
         timeout: Duration,
+        done: impl FnMut(&EmuState) -> bool,
+    ) -> Result<EmuState> {
+        self.wait_state_or(timeout, done, || Ok(()))
+    }
+
+    /// [`Control::wait_state`], failing as soon as `check` does.
+    fn wait_state_or(
+        &self,
+        timeout: Duration,
         mut done: impl FnMut(&EmuState) -> bool,
+        mut check: impl FnMut() -> Result<()>,
     ) -> Result<EmuState> {
         let deadline = Instant::now() + timeout;
         let mut last = None;
         loop {
+            check()?;
             if let Ok(state) = self.state() {
                 if state.status == "frozen" {
                     bail!("RPCS3 reports frozen at frame {}", state.frames);
@@ -252,16 +283,37 @@ impl Control {
 
     /// `SAVESTATE`, then the stop, the new state file and the reboot's Start
     /// Paused pause; the file copied into `out_dir`. P5's `RECONNECT` is the
-    /// caller's, once this returns.
+    /// caller's, once this returns. With [`Control::with_log`] a save RPCS3
+    /// turns down ([`SAVESTATE_REFUSED`]) fails at once with RPCS3's reason;
+    /// without it, at the timeout.
     pub fn savestate(&self, out_dir: &Path, timeout: Duration) -> Result<Saved> {
         let before: BTreeSet<PathBuf> = self.outputs.list(Kind::SaveState);
         let saved_at = self.state()?;
+        // RPCS3's log from here on: a save it turns down leaves the run where it
+        // was, so the wait below would otherwise sit out its whole timeout.
+        let mut log = self.log.clone().map(LogTail::new);
+        if let Some(log) = log.as_mut() {
+            log.lines();
+        }
         self.verbs.send(Verb::SaveState)?;
         // The old session goes first: a status other than running or paused, or
         // the counter starting over.
-        self.wait_state(timeout, |s| {
-            !matches!(s.status.as_str(), "running" | "paused") || s.frames < saved_at.frames
-        })?;
+        self.wait_state_or(
+            timeout,
+            |s| !matches!(s.status.as_str(), "running" | "paused") || s.frames < saved_at.frames,
+            || match log.as_mut().and_then(|l| {
+                l.lines()
+                    .into_iter()
+                    .find(|l| l.contains(SAVESTATE_REFUSED))
+            }) {
+                Some(line) => bail!(
+                    "RPCS3 turned the savestate down at frame {}, the run left as it was: {}",
+                    saved_at.frames,
+                    line.trim()
+                ),
+                None => Ok(()),
+            },
+        )?;
         let source = self.outputs.wait_new(Kind::SaveState, &before, timeout)?;
         let rebooted = self.wait_state(timeout, |s| s.status == "paused" && s.frames > 0)?;
         let path = outputs::copy_out(&source, out_dir)?;

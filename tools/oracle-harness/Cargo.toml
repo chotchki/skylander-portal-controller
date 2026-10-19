@@ -21,12 +21,17 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+# The input-script format (AF.7) a schedule is loaded from, and a pad's DS3 words.
+guac-oracle = { path = "../../crates/guac-oracle" }
 # A SCREENSHOT's PNG, decoded to check it's a whole frame and to hash its pixels.
 image = { version = "0.25", default-features = false, features = ["png"] }
 # The work-tree refusal every harness output goes through.
 rrc-dump = { path = "../rrc-dump" }
 # RpcsProcess (the launch and its lifecycle), the P1 codec and IpcPortalDriver.
 skylander-rpcs3-control = { path = "../../crates/rpcs3-control" }
+# A peek of the RNG (AF.8) as a file `oracle rng distance` and `origin` read back.
+serde = { workspace = true }
+serde_json = { workspace = true }
 # The oracle binary's hash for the identity line, and a screenshot's pixel hash.
 sha2 = { workspace = true }
 thiserror = { workspace = true }

@@ -18,6 +18,8 @@ path = "src/lib.rs"
 # reference's own viewing distance its error map is bit for bit the current
 # reference's on the reference's example pair (AF.10 has the numbers).
 nv-flip = "0.1.2"
+# AF.7's input scripts: RON, the format guac-ir already reads in dev.
+ron = "0.12"
 serde = { workspace = true }
 thiserror = { workspace = true }
 

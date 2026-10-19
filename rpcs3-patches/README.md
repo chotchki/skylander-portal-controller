@@ -211,6 +211,7 @@ rpcs3-patches/oracle/
   0001-O1-vk-Support-multiple-attachments-on-renderpass-key.patch   upstream c938d3e049
   0002-O2-vk-Fix-renderpass-keys-attached-to-property-blobs.patch   upstream d08d568d5e
   0003-O3-oracle-capture-and-control-verbs-over-the-P1-sock.patch   PAUSE_AT, RESUME, RSXCAP, SCREENSHOT, SAVESTATE
+  0004-O4-oracle-frame-locked-input-on-pads-0-and-1-over-th.patch   PAD, PAD_CLEAR, PAD_STATE
   apply.sh   check P1-P8 on HEAD by subject, then git am --3way the O-series (--check: verify only)
   build.sh   clone/patch a checkout outside the repo, build it with build-mac.sh, install + identity
 ```
@@ -235,6 +236,16 @@ wire shapes and what RPCS3 writes for each are in
 [`tools/oracle-harness/src/verbs.rs`](../tools/oracle-harness/src/verbs.rs), and
 [`tools/oracle-harness/tests/verbs_loopback.rs`](../tools/oracle-harness/tests/verbs_loopback.rs) is the
 fake listener they're specified against, the same two-layer rule as P1 (Tests, below).
+
+**O4 is the oracle's frame-locked input** (AF.7), behind the same gate: `PAD <port> <flip> <d1>
+<d2> <lx> <ly> <rx> <ry>` schedules what port 0 or 1 reads from a flip on (`CELL_PAD_CTRL_*` words
+in hex and the four stick bytes), `PAD_CLEAR` hands both back to the host's input and `PAD_STATE
+<port> [<flip>]` reads back what the guest read, flip by flip. It touches `cellPad.cpp` (the
+schedule and the readback, applied and recorded inside `pad_get_data` under `pad::g_pad_mutex`, so
+every read of a flip sees that flip's entry whatever the host's pad poll did) and `Skylander.cpp`
+beside O3. A new emulation session drops both. Its shapes are in `verbs.rs` with O3's, and
+[`tools/oracle-harness/tests/pad_loopback.rs`](../tools/oracle-harness/tests/pad_loopback.rs) is its
+fake. `build.sh` refuses to replace the installed bundle while an `rpcs3` from it runs.
 
 Build it on the Mac:
 

@@ -13,12 +13,11 @@
 
 mod common;
 
-use std::path::Path;
 use std::time::{Duration, Instant};
 
 use oracle_harness::home::{self, InitOptions};
 use oracle_harness::launch::{self, BootOptions};
-use oracle_harness::pine::{EmuStatus, PineClient};
+use oracle_harness::pine::EmuStatus;
 use oracle_harness::snapshot::Snapshot;
 use oracle_harness::template::ConfigTemplate;
 
@@ -71,7 +70,7 @@ fn pine_reads_and_writes_guest_memory_at_a_start_paused_pause() {
     assert!(err.contains("an RPCS3 is running"), "{err}");
     eprintln!("refused while running: a second boot and a re-init ({err})");
 
-    let mut pine = connect(&oracle.run_paths().pine_socket);
+    let mut pine = common::pine_connect(&oracle.run_paths().pine_socket);
     let id = pine.title_id().unwrap();
     eprintln!(
         "PINE: id={id} title={:?} version={:?} status={:?}",
@@ -104,6 +103,8 @@ fn pine_reads_and_writes_guest_memory_at_a_start_paused_pause() {
         (after.status.as_str(), after.frames),
         ("paused", paused.frames)
     );
+    // A held PINE connection holds up RPCS3's stop (the pine module's doc).
+    drop(pine);
     eprintln!("shutdown: {:?}", oracle.shutdown().unwrap());
     // The lock went with the process.
     home::refuse_running(live.home.root()).unwrap();
@@ -114,16 +115,4 @@ fn pine_reads_and_writes_guest_memory_at_a_start_paused_pause() {
         "the dev's RPCS3 dirs changed:\n{}",
         changed.join("\n")
     );
-}
-
-/// PINE's server starts with the game, so its socket can trail the pause.
-fn connect(socket: &Path) -> PineClient {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        match PineClient::connect(socket) {
-            Ok(c) => return c,
-            Err(e) if Instant::now() > deadline => panic!("PINE at {}: {e}", socket.display()),
-            Err(_) => std::thread::sleep(Duration::from_millis(250)),
-        }
-    }
 }

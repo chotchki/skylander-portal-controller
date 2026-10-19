@@ -7,14 +7,16 @@
 //! AF.10's metrics (design decision 9) are here: [`trace`] (traces,
 //! envelopes, the trajectory comparison, the usable horizon), [`events`],
 //! [`totals`] and [`frames`] (FLIP, NVlabs' reference). Their floors and k are
-//! parameters until AF.12 calibrates them. AF.7 adds the input scripts, AF.8
-//! the MT19937 model.
+//! parameters until AF.12 calibrates them. [`input`] is AF.7's input-script
+//! format, [`rng`] AF.8's MT19937 model.
 
 #![forbid(unsafe_code)]
 
 pub mod error;
 pub mod events;
 pub mod frames;
+pub mod input;
+pub mod rng;
 pub mod totals;
 pub mod trace;
 

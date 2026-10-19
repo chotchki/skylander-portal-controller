@@ -1,7 +1,7 @@
 From 0af7356b2eb2ce59551be7fe2606fbe783a2b398 Mon Sep 17 00:00:00 2001
 From: Christopher Hotchkiss <chris@hotchkiss.io>
 Date: Sun, 18 Oct 2026 15:08:12 -0700
-Subject: [PATCH 3/3] O3: oracle capture and control verbs over the P1 socket
+Subject: [PATCH 3/4] O3: oracle capture and control verbs over the P1 socket
  (GUAC_ORACLE=1)
 
 Five verbs on P1's AF_UNIX listener so the oracle runs with nobody at the Mac (openspec AF.5, design decision 3). Each answers P1's ERR unknown_cmd unless GUAC_ORACLE=1 is in the emulator's environment, so a client that doesn't set it sees the product protocol. Nothing knows the game: every number is RSX's int_flip_index, the one STATE and HB already report.

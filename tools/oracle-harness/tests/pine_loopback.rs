@@ -448,3 +448,267 @@ fn a_reply_that_times_out_midway_poisons_the_connection() {
     let mut fresh = PineClient::connect(&fake.path).unwrap();
     assert_eq!(fresh.title_id().unwrap(), "BLUS30968");
 }
+
+// ---- AF.8: the word search and the RNG verbs over the same fake -------------
+
+fn region(base: u32, len: usize) -> Region {
+    Region {
+        base,
+        bytes: vec![0; len],
+        writable: true,
+    }
+}
+
+fn plant(guest: &mut Guest, addr: u32, word: u32) {
+    let (mem, at) = guest.region(addr, 4, false).expect("planted in a region");
+    mem[at..at + 4].copy_from_slice(&word.to_be_bytes());
+}
+
+#[test]
+fn a_word_search_probes_pages_and_reads_around_a_hole() {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use oracle_harness::scan::{Area, find_words};
+
+    // A 64 KiB page whose first 32 KiB are mapped, then a 4 KiB hole, then the
+    // rest; a page past it unmapped; and a lone 4 KiB stack page.
+    let mut g = Guest {
+        regions: vec![
+            region(0x3000_0000, 0x8000),
+            region(0x3000_9000, 0x7000),
+            region(0xD000_1000, 0x1000),
+        ],
+        status: 1,
+    };
+    for at in [0x3000_0010, 0x3000_9FFC, 0x3000_FFFC, 0xD000_1008] {
+        plant(&mut g, at, 0x0064_6638);
+    }
+    plant(&mut g, 0x3000_0020, 0x3000_0010);
+    let fake = spawn(g, Quirks::default());
+    let mut c = PineClient::connect(&fake.path).unwrap();
+    let areas = [
+        Area {
+            start: 0x3000_0000,
+            end: 0x3002_0000,
+            page: 0x1_0000,
+        },
+        Area {
+            start: 0xD000_0000,
+            end: 0xD000_4000,
+            page: 0x1000,
+        },
+    ];
+    let words = BTreeSet::from([0x0064_6638, 0x3000_0010]);
+    let found = find_words(&mut c, &areas, &words).unwrap();
+    assert_eq!(
+        found.hits,
+        BTreeMap::from([
+            (
+                0x0064_6638,
+                vec![0x3000_0010, 0x3000_9FFC, 0x3000_FFFC, 0xD000_1008]
+            ),
+            (0x3000_0010, vec![0x3000_0020]),
+        ])
+    );
+    assert_eq!(
+        found.mapped,
+        [0x3000_0000..0x3001_0000, 0xD000_1000..0xD000_2000]
+    );
+    // The chunk read failed on the hole; the 4 KiB pages around it were read.
+    assert_eq!(found.unreadable, [0x3000_8000]);
+    assert_eq!(found.bytes, 0xF000 + 0x1000);
+    // 2 + 4 probes, the failed chunk and its 16 pages, the stack page, two status asks.
+    assert_eq!(found.messages, 6 + 1 + 16 + 1);
+    assert_eq!(
+        fake.messages.load(Ordering::Relaxed) as u64,
+        found.messages + 2
+    );
+
+    fake.guest.lock().unwrap().status = 0;
+    let err = find_words(&mut c, &areas, &words).unwrap_err().to_string();
+    assert!(err.contains("Running before the search"), "{err}");
+}
+
+/// Giants' RNG layout in the fake: the globals in the ELF's data, the meta and
+/// the generator in the heap, as the census found them. The generator is
+/// seeded 10554 and has drawn 104,201 numbers, as AF.5's state had.
+fn giants_rng() -> (Guest, guac_oracle::rng::Mt19937) {
+    use oracle_harness::rng::{ANIM_LCG, FMOD_GLOBAL, MT_GLOBAL, MT_META_SLOT, MT_VTABLE};
+
+    let mut mt = guac_oracle::rng::Mt19937::sgenrand(10_554);
+    mt.advance(104_201);
+    let mut g = Guest {
+        regions: vec![
+            region(0x0089_8000, 0x1000),
+            region(0x008E_0000, 0x3000),
+            region(0x008F_0000, 0x1000),
+            region(0x0090_0000, 0x1000),
+            region(0x3028_0000, 0x1_0000),
+        ],
+        status: 1,
+    };
+    plant(&mut g, MT_META_SLOT, 0x3028_E734);
+    plant(&mut g, MT_GLOBAL, 0x3028_E7F0);
+    plant(&mut g, 0x3028_E734 + 0x18, 1);
+    plant(&mut g, 0x3028_E734 + 0x20, MT_VTABLE);
+    plant(&mut g, 0x3028_E7F0, MT_VTABLE);
+    plant(&mut g, 0x3028_E7F4, 1);
+    plant(&mut g, 0x3028_E7F8, mt.mti());
+    for (i, w) in mt.words().iter().enumerate() {
+        plant(&mut g, 0x3028_E7FC + 4 * i as u32, *w);
+    }
+    plant(&mut g, ANIM_LCG, 0x12345);
+    plant(&mut g, ANIM_LCG + 4, 0x12345);
+    plant(&mut g, FMOD_GLOBAL, 0x0090_0000);
+    (g, mt)
+}
+
+#[test]
+fn the_rng_verbs_peek_seed_restore_and_census_over_pine() {
+    use oracle_harness::rng::{self, Hit, MT_GLOBAL, Peek};
+    use oracle_harness::scan::Area;
+
+    let (g, mt) = giants_rng();
+    let fake = spawn(g, Quirks::default());
+    let mut c = PineClient::connect(&fake.path).unwrap();
+    rng::check_title(&mut c).unwrap();
+
+    // Running: refused before a byte is read or written.
+    fake.guest.lock().unwrap().status = 0;
+    let err = format!("{:#}", Peek::read(&mut c).unwrap_err());
+    assert!(err.contains("Running"), "{err}");
+    assert!(rng::seed(&mut c, 5150).is_err());
+    fake.guest.lock().unwrap().status = 1;
+
+    let first = Peek::read(&mut c).unwrap();
+    assert_eq!(first, Peek::read(&mut c).unwrap(), "two peeks at one pause");
+    assert_eq!(first.mt, mt);
+    assert_eq!((first.instance, first.instances), (0x3028_E7F0, 1));
+    assert_eq!(first.origin(rng::ORIGIN_TWISTS).unwrap().seed, 10_554);
+    assert_eq!(first.fmod, Some(0));
+
+    rng::seed(&mut c, 4357).unwrap();
+    let seeded = Peek::read(&mut c).unwrap();
+    assert_eq!(seeded.mt, guac_oracle::rng::Mt19937::sgenrand(4357));
+    assert_eq!(seeded.anim, first.anim);
+    rng::restore(&mut c, &first).unwrap();
+    assert_eq!(Peek::read(&mut c).unwrap(), first);
+
+    let areas = [
+        Area {
+            start: 0x0080_0000,
+            end: 0x0092_0000,
+            page: 0x1_0000,
+        },
+        Area {
+            start: 0x3028_0000,
+            end: 0x3029_0000,
+            page: 0x1_0000,
+        },
+    ];
+    let census = rng::census(&mut c, &areas).unwrap();
+    assert_eq!(
+        census.hits,
+        [
+            Hit::MetaField { at: 0x3028_E754 },
+            Hit::Instance {
+                at: 0x3028_E7F0,
+                refcount: 1,
+                mti: 617
+            }
+        ]
+    );
+    assert_eq!(census.owners[&0x3028_E7F0], [MT_GLOBAL]);
+    assert_eq!(census.peek, first);
+}
+
+/// The actor reader (AF.9) over PINE: the fixture's world, which lays out
+/// Giants' chain from the application pointer down to the actors, served by the
+/// fake.
+fn actor_world() -> (
+    oracle_harness::actors::fixture::World,
+    oracle_harness::actors::fixture::Added,
+) {
+    use oracle_harness::actors::fixture::{Spec, World};
+
+    let mut w = World::new();
+    w.camera([6.5107, 52.2663, -107.1263], [-23.3597, 14.9997, 0.0]);
+    let hero = w.actor(&Spec {
+        name: "009_Eruptor".into(),
+        position: [10.190_27, 43.382_67, -93.394_06],
+        scale: [150.0; 3],
+        skinned: true,
+        pad: Some(-1),
+        ..Spec::default()
+    });
+    for i in 0..40 {
+        w.actor(&Spec {
+            name: format!("Bird_template_Red({i})"),
+            position: [i as f32, 44.0, -90.0],
+            rotation: [0.0, 9.0 * i as f32, 0.0],
+            scale: [85.0; 3],
+            skinned: i % 2 == 0,
+            ..Spec::default()
+        });
+    }
+    (w, hero)
+}
+
+fn served(world: &oracle_harness::actors::fixture::World) -> Guest {
+    Guest {
+        regions: world
+            .regions()
+            .into_iter()
+            .map(|(base, bytes)| Region {
+                base,
+                bytes,
+                writable: true,
+            })
+            .collect(),
+        status: 1,
+    }
+}
+
+#[test]
+fn the_actor_reader_walks_the_chain_over_pine_in_a_few_batches() {
+    use oracle_harness::actors::{self, read_frame};
+
+    let (mut world, hero) = actor_world();
+    let want = actors::read(&mut world).unwrap();
+    assert_eq!(want.counts().skinned, 21);
+    let fake = spawn(served(&world), Quirks::default());
+    let mut c = PineClient::connect(&fake.path).unwrap();
+
+    // Running: refused at the first status ask, before a byte is read.
+    fake.guest.lock().unwrap().status = 0;
+    let err = format!("{:#}", read_frame(&mut c).unwrap_err());
+    assert!(err.contains("Running"), "{err}");
+    let asked = fake.messages.load(Ordering::Relaxed);
+    assert_eq!(asked, 3, "the title, the version and one status ask");
+    fake.guest.lock().unwrap().status = 1;
+
+    let frame = read_frame(&mut c).unwrap();
+    assert_eq!(frame, want);
+    assert_eq!(frame.hero().unwrap().corpus, hero.corpus);
+    // The title and version, then a status ask and one batch per stage of the
+    // walk (14), then the status ask after: 41 actors in 31 messages.
+    assert_eq!(
+        fake.messages.load(Ordering::Relaxed) - asked,
+        2 + 2 * 14 + 1
+    );
+
+    // A corpus pointer into nothing fails its stage's batch; that stage is read
+    // again range by range, and only that corpus is lost.
+    let mut broken = world;
+    broken.push_corpus(0x4F00_0000);
+    let fake = spawn(served(&broken), Quirks::default());
+    let mut c = PineClient::connect(&fake.path).unwrap();
+    let frame = read_frame(&mut c).unwrap();
+    assert_eq!(frame.listed, 42);
+    assert_eq!(frame.actors, want.actors);
+    assert_eq!(frame.skipped.len(), 1);
+    assert_eq!(
+        (frame.skipped[0].corpus, frame.skipped[0].why.as_str()),
+        (0x4F00_0000, "not readable")
+    );
+}

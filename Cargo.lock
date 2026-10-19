@@ -4229,6 +4229,7 @@ version = "0.1.0"
 dependencies = [
  "image",
  "nv-flip",
+ "ron",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -6399,8 +6400,11 @@ name = "oracle-harness"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "guac-oracle",
  "image",
  "rrc-dump",
+ "serde",
+ "serde_json",
  "sha2 0.10.9",
  "skylander-core",
  "skylander-rpcs3-control",

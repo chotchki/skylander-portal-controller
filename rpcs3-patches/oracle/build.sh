@@ -115,6 +115,12 @@ built="$co/build/bin/rpcs3.app"
 [[ -x "$built/Contents/MacOS/rpcs3" ]] || { echo "error: no binary at $built" >&2; exit 1; }
 
 # ---- install + identity ------------------------------------------------------
+# A run (another lane's, a live test's) may be using the bundle: replacing it under a running
+# process swaps its frameworks out from under it. The built .app stays where it is for a rerun.
+if running="$(pgrep -f -- "$app/Contents/MacOS/rpcs3")"; then
+  echo "error: rpcs3 from $app is running (pid $(echo $running)); stop it, then rerun to install" >&2
+  exit 1
+fi
 rm -rf "$app"
 ditto "$built" "$app"
 sha="$(shasum -a 256 "$app/Contents/MacOS/rpcs3" | awk '{print $1}')"

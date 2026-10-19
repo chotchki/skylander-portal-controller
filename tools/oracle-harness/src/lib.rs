@@ -1,8 +1,11 @@
 //! The harness that drives the patched RPCS3 as Guacamole's fidelity oracle
 //! (openspec AF): an isolated oracle HOME ([`home`]), the launch wrapper that
 //! boots the emulator inside it ([`launch`]), the O-series capture and control
-//! verbs ([`verbs`], as run steps in [`control`]) and the PINE client that reads
-//! and writes guest memory ([`pine`]).
+//! verbs ([`verbs`], as run steps in [`control`]), the frame-locked input that
+//! loads an input script ([`pad`]), the PINE client that reads and writes
+//! guest memory ([`pine`]), a word search over it ([`scan`]), Giants'
+//! random number generators read and written through it ([`rng`]) and its
+//! actors and camera read through it ([`actors`]).
 //!
 //! It never writes inside a work tree of this repo: every path it creates goes
 //! through `rrc_dump::output::refuse_repo_output` first, because what an oracle
@@ -14,14 +17,18 @@
 //! unit-tested, a fake server in `tests/` as the executable spec, and
 //! `#[ignore]`d live tests against the real oracle on the Mac.
 
+pub mod actors;
 pub mod control;
 pub mod env;
 pub mod home;
 pub mod identity;
 pub mod launch;
 pub mod outputs;
+pub mod pad;
 pub mod pine;
+pub mod rng;
 pub mod rpcs3_log;
+pub mod scan;
 pub mod snapshot;
 pub mod template;
 pub mod verbs;

@@ -4,12 +4,16 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use guac_oracle::input::InputScript;
+use oracle_harness::actors::{self, ActorFrame};
 use oracle_harness::control::Control;
 use oracle_harness::env;
 use oracle_harness::home::{self, InitOptions, OracleHome};
 use oracle_harness::identity::Identity;
 use oracle_harness::launch::{self, BootOptions};
 use oracle_harness::pine::PineClient;
+use oracle_harness::rng::{self, Hit, Peek};
+use oracle_harness::scan;
 use oracle_harness::snapshot::{Snapshot, dev_rpcs3_dirs};
 use oracle_harness::template::ConfigTemplate;
 use skylander_rpcs3_control::PortalDriver;
@@ -41,8 +45,36 @@ usage:
       a savestate, copied into <dir>, then P5's RECONNECT at the reboot's pause
       (the last three find RPCS3's files under $GUAC_ORACLE_HOME; <dir> must sit
       outside every work tree)
+  oracle pad-load --socket <p1> <script.ron> [--base <flip>]
+      at a pause: PAD_CLEAR, then the input script's PAD lines, its offset 0 on the
+      first flip after the pause (or on <flip>)
+  oracle pad-clear --socket <p1>
+      both pads back to the host's input
+  oracle pad-state --socket <p1> <port> [<flip>]
+      what the guest last read on that port, or the first read of <flip>, with the
+      flip's read count and how many reads differed from its first
   oracle pine --socket <path> (id | title | version | status | read <addr> <len>)
-      query a running oracle's PINE server; read prints hex, and only while paused";
+      query a running oracle's PINE server; read prints hex, and only while paused
+  oracle rng census --pine <socket>
+      at a pause: Giants' MT (its meta's live count, tfbApplication::_random), every
+      word equal to its vtable in the PPU's areas, and what points at each instance
+  oracle rng peek --pine <socket> [--p1 <socket>] [--out <file.json>]
+      at a pause: the MT (_mti and its 624 words), the animation LCG and FMOD's LCG
+      word, printed with the MT's seed and draws since, and written to <file>
+      (outside every work tree); --p1 stamps it with STATE's flip
+  oracle rng seed --pine <socket> (<n> | --from <peek.json>)
+      at a pause: sgenrand(<n>) into the MT with _mti 624, as the game's own seeding
+      leaves it; or put back the MT and the animation LCG a peek read
+  oracle rng distance <a.json> <b.json> [--max-twists <n>]
+      numbers the MT drew and animation LCG steps from peek a to peek b
+      (negative: b is the earlier)
+  oracle rng origin <peek.json> [--max-twists <n>]
+      the MT's sgenrand seed and the numbers drawn since it
+  oracle actors --pine <socket> [--p1 <socket>] [--out <file.json>] [--all]
+      at a pause: every game actor on Giants' list (position, heading, scale,
+      velocity, skinned, the pad driving it), the camera and the hero (the one
+      skinned actor a pad drives); --all prints every actor, --out writes the
+      frame (outside every work tree), --p1 stamps it with STATE's flip";
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -51,6 +83,8 @@ fn main() -> Result<()> {
         ["home", "init", rest @ ..] => home_init(rest),
         ["boot", rest @ ..] => boot(rest),
         ["pine", "--socket", socket, rest @ ..] => pine(PathBuf::from(socket), rest),
+        ["rng", rest @ ..] => rng_cmd(rest),
+        ["actors", "--pine", socket, rest @ ..] => actors_cmd(socket.as_ref(), rest),
         [verb, "--socket", socket, rest @ ..] => run_verb(verb, &PathBuf::from(socket), rest),
         _ => bail!("{USAGE}"),
     }
@@ -230,7 +264,9 @@ fn run_verb(verb: &str, socket: &std::path::Path, rest: &[&str]) -> Result<()> {
             );
         }
         ("savestate", ["--out", dir]) => {
-            let control = Control::new(socket, &config_dir()?);
+            let home = OracleHome::open(&required(env::ORACLE_HOME)?)?;
+            let control = Control::new(socket, &home.config_dir())
+                .with_log(home.cache_dir().join("RPCS3.log"));
             let saved = control.savestate(dir.as_ref(), wait)?;
             control.driver().reconnect()?;
             println!(
@@ -240,6 +276,44 @@ fn run_verb(verb: &str, socket: &std::path::Path, rest: &[&str]) -> Result<()> {
                 saved.rebooted.status,
                 saved.rebooted.frames
             );
+        }
+        ("pad-load", [file, base @ ..]) => {
+            let text = std::fs::read_to_string(file).with_context(|| format!("reading {file}"))?;
+            let script = InputScript::from_ron(&text).with_context(|| format!("parsing {file}"))?;
+            let control = Control::new(socket, &config_dir()?);
+            let loaded = match base {
+                [] => control.load_script(&script)?,
+                ["--base", flip] => {
+                    control.load_script_at(&script, flip.parse().context("<flip> is a decimal")?)?
+                }
+                _ => bail!("{USAGE}"),
+            };
+            println!(
+                "loaded {} PAD entries at the pause at frames={}, offset 0 on flip {}",
+                loaded.entries, loaded.paused_at.frames, loaded.base
+            );
+        }
+        ("pad-clear", []) => {
+            Control::new(socket, &config_dir()?).pad_clear()?;
+            println!("schedules dropped");
+        }
+        ("pad-state", [port, flip @ ..]) => {
+            let port = port.parse().context("<port> is 0 or 1")?;
+            let flip = match flip {
+                [] => None,
+                [f] => Some(f.parse().context("<flip> is a decimal")?),
+                _ => bail!("{USAGE}"),
+            };
+            match Control::new(socket, &config_dir()?).pad_state(port, flip)? {
+                None => println!("no read"),
+                Some(read) => println!(
+                    "flip={} reads={} differ={} {:?}",
+                    read.flip,
+                    read.reads,
+                    read.differ,
+                    read.pad.state()
+                ),
+            }
         }
         _ => bail!("{USAGE}"),
     }
@@ -263,6 +337,176 @@ fn pine(socket: PathBuf, rest: &[&str]) -> Result<()> {
             }
         }
         _ => bail!("{USAGE}"),
+    }
+    Ok(())
+}
+
+fn twists(rest: &[&str], default: u64) -> Result<u64> {
+    match rest {
+        [] => Ok(default),
+        ["--max-twists", n] => n.parse().context("--max-twists takes a count"),
+        _ => bail!("{USAGE}"),
+    }
+}
+
+/// Giants' RNG through PINE (AF.8), and two peeks or one read back from files.
+fn rng_cmd(rest: &[&str]) -> Result<()> {
+    match rest {
+        ["census", "--pine", socket] => {
+            let mut pine = PineClient::connect(socket.as_ref())?;
+            let census = rng::census(&mut pine, &scan::PPU_AREAS)?;
+            println!("{}", census.peek.summary());
+            for (i, found) in census.searches.iter().enumerate() {
+                println!(
+                    "search {}: {} bytes in {} mapped ranges, {} unreadable 4 KiB pages, {} PINE messages",
+                    i + 1,
+                    found.bytes,
+                    found.mapped.len(),
+                    found.unreadable.len(),
+                    found.messages
+                );
+            }
+            for hit in &census.hits {
+                match hit {
+                    Hit::Instance { at, refcount, mti } => {
+                        let owners: Vec<String> = census.owners[at]
+                            .iter()
+                            .map(|o| format!("{o:#010x}"))
+                            .collect();
+                        println!(
+                            "instance {at:#010x} refcount {refcount} mti {mti}, pointed at from [{}]",
+                            owners.join(", ")
+                        );
+                    }
+                    Hit::MetaField { at } => println!("{at:#010x}: the meta's vtable field"),
+                    Hit::Other { at } => println!("{at:#010x}: the vtable word, not an object"),
+                }
+            }
+        }
+        ["peek", "--pine", socket, opts @ ..] => {
+            let (mut p1, mut out) = (None, None);
+            let mut opts = opts;
+            while let [flag, value, tail @ ..] = opts {
+                match *flag {
+                    "--p1" => p1 = Some(PathBuf::from(value)),
+                    "--out" => out = Some(PathBuf::from(value)),
+                    _ => bail!("{USAGE}"),
+                }
+                opts = tail;
+            }
+            if !opts.is_empty() {
+                bail!("{USAGE}");
+            }
+            let mut pine = PineClient::connect(socket.as_ref())?;
+            rng::check_title(&mut pine)?;
+            let mut peek = Peek::read(&mut pine)?;
+            if let Some(p1) = p1 {
+                let state =
+                    skylander_rpcs3_control::ipc::IpcPortalDriver::with_path(&p1).read_state()?;
+                peek.flip = Some(state.frames);
+            }
+            println!(
+                "{}{}",
+                peek.flip.map_or(String::new(), |f| format!("flip {f}: ")),
+                peek.summary()
+            );
+            match peek.origin(rng::ORIGIN_TWISTS) {
+                Some(o) => println!("seeded {} (sgenrand), {} drawn since", o.seed, o.draws),
+                None => println!(
+                    "no sgenrand seeding within {} twists back",
+                    rng::ORIGIN_TWISTS
+                ),
+            }
+            if let Some(out) = out {
+                println!("written to {}", peek.write(&out)?.display());
+            }
+        }
+        ["seed", "--pine", socket, how @ ..] => {
+            let mut pine = PineClient::connect(socket.as_ref())?;
+            rng::check_title(&mut pine)?;
+            match how {
+                ["--from", file] => {
+                    let peek = Peek::load(file.as_ref())?;
+                    rng::restore(&mut pine, &peek)?;
+                    println!("put back {file}: {}", peek.summary());
+                }
+                [n] => {
+                    let seed = n.parse().context("<n> is a u32")?;
+                    let at = rng::seed(&mut pine, seed)?;
+                    println!("sgenrand({seed}) written to the MT at {at:#010x}, mti 624");
+                }
+                _ => bail!("{USAGE}"),
+            }
+            println!("now: {}", Peek::read(&mut pine)?.summary());
+        }
+        ["distance", a, b, rest @ ..] => {
+            let max = twists(rest, rng::MAX_TWISTS)?;
+            let (a, b) = (Peek::load(a.as_ref())?, Peek::load(b.as_ref())?);
+            let apart = a.apart(&b, max);
+            let show = |n: Option<i64>, what: &str| {
+                n.map_or(format!("not within reach ({what})"), |n| n.to_string())
+            };
+            println!(
+                "MT: {} draws; animation LCG: {} steps",
+                show(apart.mt, &format!("{max} twists")),
+                show(apart.anim, &format!("{} steps", rng::ANIM_STEPS))
+            );
+        }
+        ["origin", file, rest @ ..] => {
+            let max = twists(rest, rng::ORIGIN_TWISTS)?;
+            let peek = Peek::load(file.as_ref())?;
+            match peek.origin(max) {
+                Some(o) => println!("seeded {} (sgenrand), {} drawn since", o.seed, o.draws),
+                None => println!("no sgenrand seeding within {max} twists back"),
+            }
+        }
+        _ => bail!("{USAGE}"),
+    }
+    Ok(())
+}
+
+/// Giants' actors and camera through PINE at a pause (AF.9).
+fn actors_cmd(socket: &std::path::Path, mut rest: &[&str]) -> Result<()> {
+    let (mut p1, mut out, mut all) = (None, None, false);
+    while let [flag, tail @ ..] = rest {
+        rest = tail;
+        match (*flag, rest) {
+            ("--p1", [path, tail @ ..]) => {
+                p1 = Some(PathBuf::from(path));
+                rest = tail;
+            }
+            ("--out", [path, tail @ ..]) => {
+                out = Some(PathBuf::from(path));
+                rest = tail;
+            }
+            ("--all", _) => all = true,
+            _ => bail!("{USAGE}"),
+        }
+    }
+    let mut pine = PineClient::connect(socket)?;
+    let mut frame: ActorFrame = actors::read_frame(&mut pine)?;
+    if let Some(p1) = p1 {
+        frame.flip = Some(
+            skylander_rpcs3_control::ipc::IpcPortalDriver::with_path(&p1)
+                .read_state()?
+                .frames,
+        );
+    }
+    println!("{}", frame.summary());
+    match frame.hero() {
+        Ok(hero) => println!("hero: {}", hero.summary()),
+        Err(e) => println!("hero: {e}"),
+    }
+    if all {
+        for actor in &frame.actors {
+            println!("  {:#010x} {}", actor.corpus, actor.summary());
+        }
+    }
+    for s in &frame.skipped {
+        println!("  skipped {:#010x}: {}", s.corpus, s.why);
+    }
+    if let Some(out) = out {
+        println!("written to {}", frame.write(&out)?.display());
     }
     Ok(())
 }

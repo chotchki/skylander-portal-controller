@@ -27,7 +27,8 @@
 
 mod common;
 
-use std::io::Write;
+use common::{Record, hid_idle, load_average, screen_lock};
+
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -45,60 +46,6 @@ use skylander_rpcs3_control::ipc::IpcPortalDriver;
 
 const FIGURE: &str = "GUAC_ORACLE_FIGURE";
 const WAIT: Duration = Duration::from_secs(120);
-
-/// `run.txt` in the output dir, each line echoed to stderr.
-struct Record(std::fs::File);
-
-impl Record {
-    fn line(&mut self, text: impl AsRef<str>) {
-        eprintln!("{}", text.as_ref());
-        writeln!(self.0, "{}", text.as_ref()).unwrap();
-    }
-}
-
-/// `"CGSSessionScreenIsLocked"=Yes` out of `ioreg`'s console-session entry, which
-/// carries the key only while the screen is locked.
-fn screen_lock() -> String {
-    const KEY: &str = "\"CGSSessionScreenIsLocked\"=";
-    std::process::Command::new("ioreg")
-        .args(["-n", "Root", "-d1"])
-        .output()
-        .ok()
-        .and_then(|o| {
-            let text = String::from_utf8_lossy(&o.stdout).into_owned();
-            let at = text.find(KEY)?;
-            let value: String = text[at + KEY.len()..]
-                .chars()
-                .take_while(char::is_ascii_alphabetic)
-                .collect();
-            Some(format!("{KEY}{value}"))
-        })
-        .unwrap_or_else(|| "no CGSSessionScreenIsLocked key (unlocked)".into())
-}
-
-fn load_average() -> String {
-    std::process::Command::new("sysctl")
-        .args(["-n", "vm.loadavg"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
-        .unwrap_or_default()
-}
-
-/// Seconds since the last keyboard or mouse input (`IOHIDSystem`'s
-/// `HIDIdleTime`): with the lock state, whether anyone was at the Mac.
-fn hid_idle() -> String {
-    std::process::Command::new("ioreg")
-        .args(["-c", "IOHIDSystem"])
-        .output()
-        .ok()
-        .and_then(|o| {
-            let text = String::from_utf8_lossy(&o.stdout).into_owned();
-            let line = text.lines().find(|l| l.contains("\"HIDIdleTime\""))?;
-            let ns: f64 = line.rsplit(' ').next()?.trim().parse().ok()?;
-            Some(format!("input idle {:.0} s", ns / 1e9))
-        })
-        .unwrap_or_else(|| "input idle unknown".into())
-}
 
 /// A shot's line, with the screen's lock state when it was taken.
 fn shot_line(label: &str, shot: &Shot) -> String {
@@ -317,7 +264,10 @@ fn the_o_verbs_run_ac13s_scenario_unattended() {
 
     // ---- SAVESTATE, reboot, RECONNECT ------------------------------------
     let t = Instant::now();
-    let saved = control.savestate(&out, Duration::from_secs(600)).unwrap();
+    // RPCS3 can turn a save down after the capture's long pause (review,
+    // 2026-10-18: "failed to lock SPU threads execution"), so 30 flips on, again.
+    let saved =
+        common::savestate_retrying(&control, &out, Duration::from_secs(600), 30, 3, &mut rec);
     let head = std::fs::read(&saved.path).unwrap();
     rec.line(format!(
         "SAVESTATE at frame {}: {} ({} bytes, starts {:02x?}), rebooted to {} frames={} in {:.1} s",
