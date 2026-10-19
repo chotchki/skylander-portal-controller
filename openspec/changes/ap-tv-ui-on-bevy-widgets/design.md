@@ -24,7 +24,7 @@ Sources: motivation and chotchki's six answers are in [proposal.md](proposal.md)
 
 **Non-Goals:**
 - A phone remote ("b, let's not scope creep"). `POST /api/_test/tv/press` is a test hook under `test-hooks`, nothing more.
-- A TV settings screen. Settings live on the phone ("b, but we'll have to discuss what settings make sense when the time comes"). Which settings exist (the Enhanced toggle, AB's `output_latency_ms`, a glyph-set fallback for AG are the candidates the design doc and AB name) is a later discussion with chotchki, carried as a backlog line, not an AP task.
+- A TV settings screen. Settings live on the phone ("b, but we'll have to discuss what settings make sense when the time comes"). Which settings exist (AB's `output_latency_ms` and a glyph-set fallback for AG are the candidates the design doc and AB name; the Enhanced toggle left the list on 2026-10-18 with AE's one look) is a later discussion with chotchki, carried as a backlog line, not an AP task.
 - The Home menu (design doc Open question 1): the router maps Home to a no-op until that's answered.
 - AG's prompt glyphs. A focused button needs no "press (A)" line, so AP never shows a glyph and AG's prompt rule doesn't come up.
 - The game's own menus (pause, the HUD, AK's upgrade screen as the original draws it). Whether those are `bevy_ui` or the disc's own UI through the script VM is AK's question, not AP's.

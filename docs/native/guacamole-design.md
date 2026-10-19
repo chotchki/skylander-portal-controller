@@ -188,9 +188,10 @@ Fifth batch (2026-10-18, AE's open questions and the ids):
   easiest to load by bevy" (The extractor;
   [`ae-animated-turntable`](../../openspec/changes/ae-animated-turntable/design.md) decision 6 has the
   evidence).
-- Ids: "I don't care, the two letter id is just a holdover from claude-plan-bridge." The ids the ladder
-  names are reserved ([`openspec/config.yaml`](../../openspec/config.yaml)), so a change off the ladder
-  takes the next unreserved one, as AP did. This replaces the third batch's floating ids.
+- Ids: "I don't care, the two letter id is just a holdover from claude-plan-bridge." So the rule is ours,
+  not his: the ladder's ids are reserved (Milestone ladder,
+  [`openspec/config.yaml`](../../openspec/config.yaml)), replacing the third batch's floating ids, a
+  working assumption that was never his either.
 
 ## Deliberate departures from the original
 
@@ -1291,11 +1292,11 @@ The plan the crates serve:
   never a save (Persistence and setup).
 - Commodity assets transcode to formats Bevy loads natively. Textures → KTX2 carrying the original BC
   blocks (untile and endian fix only, no re-encode). Meshes, skeletons, materials and animations → the
-  IR, not glTF: chotchki's rule was "whatever is easiest to load by bevy" (fifth batch), and Bevy's glTF
-  loader turns every material into a `StandardMaterial`, can't take KTX2 through `KHR_texture_basisu` and
-  wants Havok's splines converted, where the IR builds a `Mesh`, a skin and the game's own material
-  directly ([`ae-animated-turntable`](../../openspec/changes/ae-animated-turntable/design.md), decision
-  6). FSB5 MPEG → MP3 (a remux, not a byte copy). Bink 1 → ffmpeg → H.264 Constrained Baseline in MP4
+  IR, not glTF: chotchki's rule was "whatever is easiest to load by bevy" (fifth batch). Bevy's glTF
+  loader takes the game's material only as a vendor extension we'd write and a load hook would parse
+  (by default it makes a `StandardMaterial`), can't take KTX2 through `KHR_texture_basisu` and wants
+  Havok's splines converted, where the IR builds a `Mesh`, a skin and the game's own material directly
+  ([`ae-animated-turntable`](../../openspec/changes/ae-animated-turntable/design.md), decision 6). FSB5 MPEG → MP3 (a remux, not a byte copy). Bink 1 → ffmpeg → H.264 Constrained Baseline in MP4
   plus an MP3 of the voice track (AB.7's pick, below). Logic data (scenes, collision, tfbScript graphs,
   tuning, localization) → IR. Content-hash dedupe (Giants is more than half duplicate bytes by name).
 - ffmpeg is a tool the user installs, found at extract time and never needed after; bundling it waits
