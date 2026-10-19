@@ -114,8 +114,7 @@ impl CharacterUniform {
         let second = material.second.as_ref();
         let third = material.third.as_ref();
         let rim = material.rim.as_ref();
-        let uv = |set: usize| material.uv_transforms[set];
-        let row = |r: [f32; 3]| Vec4::new(r[0], r[1], r[2], 0.0);
+        let (uv_u, uv_v) = Self::uv_rows(&material.uv_transforms);
         Self {
             light_travel: lights.map(|l| v3(l.travel)),
             light_ambient: lights.map(|l| v3(l.ambient)),
@@ -154,9 +153,16 @@ impl CharacterUniform {
             rim_weights: weights(rim.map_or(unset, |r| r.weights)),
             rim: rim.map_or(Vec4::ZERO, |r| Vec4::new(r.scale, r.split, 0.0, 0.0)),
             material_tint: v4(material.tint),
-            uv_u: [0, 1, 2].map(|s| row(uv(s).u)),
-            uv_v: [0, 1, 2].map(|s| row(uv(s).v)),
+            uv_u,
+            uv_v,
         }
+    }
+
+    /// The sets' transforms as the shader's `uv_u` and `uv_v` rows; a scroll
+    /// writes these each frame ([`guac_ir::scroll::transforms`]).
+    pub fn uv_rows(transforms: &[UvTransform; 3]) -> ([Vec4; 3], [Vec4; 3]) {
+        let row = |r: [f32; 3]| Vec4::new(r[0], r[1], r[2], 0.0);
+        (transforms.map(|t| row(t.u)), transforms.map(|t| row(t.v)))
     }
 }
 
@@ -371,8 +377,9 @@ fn owned(mask: Mask, b: u32) -> Option<bool> {
 
 /// The reference model's material for an IR one: the switches its base
 /// masks set, the scene switches its ignore masks own, and its numbers
-/// (the character-shading spec's material requirement; a scroll track's
-/// motion is AE.21's, so every set keeps its identity transform).
+/// (the character-shading spec's material requirement), each set's
+/// transform where its scroll track starts: the turntable moves it from
+/// there each frame.
 pub fn reference_material(
     ir: &model::Material,
 ) -> Result<guac_ir::shading::Material, MaterialError> {
@@ -440,7 +447,7 @@ pub fn reference_material(
             model::Glow::Amount(a) => Glow::Amount(f32::from(a) / 255.0),
             model::Glow::LayerAlpha => Glow::LayerAlpha,
         },
-        uv_transforms: [UvTransform::IDENTITY; 3],
+        uv_transforms: guac_ir::scroll::transforms(&ir.scrolls, 0.0),
         fixed: Fixed {
             shadows: owned(p, bit::SHADOWS),
             fog: owned(p, bit::FOG),
@@ -760,6 +767,37 @@ mod tests {
         assert_eq!(u.uv_u[1], Vec4::new(2.0, 0.0, 0.5, 0.0));
         assert_eq!(u.uv_v[1], Vec4::new(0.0, 3.0, 0.25, 0.0));
         assert_eq!(u.uv_u[0], Vec4::new(1.0, 0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn a_scroll_track_moves_the_set_its_layer_names_from_its_start() {
+        let mut ir = eruptor_body();
+        ir.scrolls = vec![model::Scroll {
+            layer: 1,
+            scale: [2.0, 1.0],
+            velocity: [0.0, 0.75],
+            amplitude: [0.25, 0.0],
+            frequency: [0.0, 0.0],
+            phase: [std::f32::consts::FRAC_PI_2, 0.0],
+            rotation_phase: 0.0,
+        }];
+        // At its start: u doubled and swung by 0.25 sin(pi/2), v as stored;
+        // the other sets untouched.
+        let m = reference_material(&ir).unwrap();
+        let start = m.uv_transforms[1];
+        assert_eq!(
+            (start.u[0], start.u[1], start.v),
+            (2.0, 0.0, [0.0, 1.0, 0.0])
+        );
+        assert!((start.u[2] - 0.25).abs() < 1e-6, "{start:?}");
+        assert_eq!(m.uv_transforms[0], UvTransform::IDENTITY);
+        assert_eq!(m.uv_transforms[2], UvTransform::IDENTITY);
+        // Two seconds in, v has slid 1.5 textures, so the shader's row reads
+        // half of one; u's swing is where it started (no frequency).
+        let (u, v) = CharacterUniform::uv_rows(&guac_ir::scroll::transforms(&ir.scrolls, 2.0));
+        assert_eq!(v[1], Vec4::new(0.0, 1.0, 0.5, 0.0));
+        assert!((u[1] - Vec4::new(2.0, 0.0, 0.25, 0.0)).abs().max_element() < 1e-6);
+        assert_eq!((u[0], v[0]), (Vec4::X, Vec4::Y));
     }
 
     #[test]
