@@ -47,6 +47,81 @@ pub struct Clip<'a> {
     pub animation: Option<(usize, PhysicsAnimation<'a>)>,
 }
 
+/// A walk's material lists, the texture binds they hold and those binds'
+/// textures, each keyed by object index: what [`crate::material`] reads a
+/// technique's material out of. [`Hero::passes`] lends a hero's; a level's
+/// scene or prop collects its own in a [`MaterialLists`].
+#[derive(Debug, Clone, Copy)]
+pub struct Passes<'r, 'a> {
+    pub lists: &'r BTreeMap<usize, AttrList<'a>>,
+    pub binds: &'r BTreeMap<usize, AlphaTextureUnitIdAttr<'a>>,
+    pub textures: &'r BTreeMap<usize, TextureAttr2>,
+}
+
+/// Material lists read as a walk meets them, each once (AG.15: a level's
+/// techniques share 104 of their 249 lists).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MaterialLists<'a> {
+    pub lists: BTreeMap<usize, AttrList<'a>>,
+    pub binds: BTreeMap<usize, AlphaTextureUnitIdAttr<'a>>,
+    pub textures: BTreeMap<usize, TextureAttr2>,
+}
+
+impl<'a> MaterialLists<'a> {
+    /// Reads `technique`'s `_materialPass` when it's an `igAttrList`, and
+    /// returns it; any other pass is left alone and `None` comes back.
+    pub fn technique(
+        &mut self,
+        igz: &Igz<'a>,
+        technique: &RuntimeTechniqueInstance<'a>,
+    ) -> Result<Option<usize>, FormatError> {
+        match technique.material_pass {
+            ObjectRef::Object(m) if is_a(igz.type_name(&igz.objects()[m]), AttrList::TYPE) => {
+                read_list(igz, m, &mut self.lists, &mut self.binds, &mut self.textures)?;
+                Ok(Some(m))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    pub fn passes(&self) -> Passes<'_, 'a> {
+        Passes {
+            lists: &self.lists,
+            binds: &self.binds,
+            textures: &self.textures,
+        }
+    }
+}
+
+/// Reads a material list once, and its texture binds; attributes of other
+/// types stay unread. A bind other than `tfbAlphaTextureUnitIDAttr` (none
+/// on the disc) is refused.
+fn read_list<'a>(
+    igz: &Igz<'a>,
+    list: usize,
+    lists: &mut BTreeMap<usize, AttrList<'a>>,
+    binds: &mut BTreeMap<usize, AlphaTextureUnitIdAttr<'a>>,
+    textures: &mut BTreeMap<usize, TextureAttr2>,
+) -> Result<(), FormatError> {
+    let Entry::Vacant(slot) = lists.entry(list) else {
+        return Ok(());
+    };
+    let attrs = slot.insert(AttrList::read(igz, list)?);
+    for &a in attrs.attrs.iter().flatten() {
+        if !is_a(igz.type_name(&igz.objects()[a]), "igTextureBindAttr2") || binds.contains_key(&a) {
+            continue;
+        }
+        let bind = AlphaTextureUnitIdAttr::read(igz, a)?;
+        if let Some(t) = bind.bind.texture
+            && let Entry::Vacant(slot) = textures.entry(t)
+        {
+            slot.insert(TextureAttr2::read(igz, t)?);
+        }
+        binds.insert(a, bind);
+    }
+    Ok(())
+}
+
 /// Shared objects are read once and keyed by object index.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Hero<'a> {
@@ -224,29 +299,25 @@ impl<'a> Hero<'a> {
         Ok(())
     }
 
-    /// Reads a material list once, and its texture binds; attributes of
-    /// other types stay unread. A bind other than `tfbAlphaTextureUnitIDAttr`
-    /// (none on the disc) is refused.
+    /// Reads a material list once, and its texture binds ([`read_list`]).
     fn material(&mut self, igz: &Igz<'a>, list: usize) -> Result<(), FormatError> {
-        let Entry::Vacant(slot) = self.materials.entry(list) else {
-            return Ok(());
-        };
-        let attrs = slot.insert(AttrList::read(igz, list)?);
-        for &a in attrs.attrs.iter().flatten() {
-            if !is_a(igz.type_name(&igz.objects()[a]), "igTextureBindAttr2")
-                || self.texture_binds.contains_key(&a)
-            {
-                continue;
-            }
-            let bind = AlphaTextureUnitIdAttr::read(igz, a)?;
-            if let Some(t) = bind.bind.texture
-                && let Entry::Vacant(slot) = self.textures.entry(t)
-            {
-                slot.insert(TextureAttr2::read(igz, t)?);
-            }
-            self.texture_binds.insert(a, bind);
+        read_list(
+            igz,
+            list,
+            &mut self.materials,
+            &mut self.texture_binds,
+            &mut self.textures,
+        )
+    }
+
+    /// Its material lists, binds and textures, as [`crate::material`]
+    /// reads them.
+    pub fn passes(&self) -> Passes<'_, 'a> {
+        Passes {
+            lists: &self.materials,
+            binds: &self.texture_binds,
+            textures: &self.textures,
         }
-        Ok(())
     }
 
     fn read_clips(&mut self, igz: &Igz<'a>) -> Result<(), FormatError> {

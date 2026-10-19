@@ -355,9 +355,10 @@ impl StateKey {
         alpha_test: false,
     };
 
-    /// The colour blend: by source alpha, or source alpha plus what's there.
-    /// Alpha keeps Bevy's "over" when blending and stays what's there when
-    /// adding, since an additive part adds light and covers nothing; the
+    /// The colour blend: by source alpha, or source alpha plus what's there,
+    /// or what's there times the part's colour (a level's, AG.15). Alpha
+    /// keeps Bevy's "over" when blending and stays what's there when adding
+    /// or multiplying, since those parts tint light and cover nothing; the
     /// spec says nothing of the stored alpha.
     pub fn blend_state(&self) -> Option<BlendState> {
         let colour = |dst_factor| BlendComponent {
@@ -379,6 +380,18 @@ impl StateKey {
                     operation: BlendOperation::Add,
                 },
             }),
+            Blend::Multiply => Some(BlendState {
+                color: BlendComponent {
+                    src_factor: BlendFactor::Dst,
+                    dst_factor: BlendFactor::Zero,
+                    operation: BlendOperation::Add,
+                },
+                alpha: BlendComponent {
+                    src_factor: BlendFactor::Zero,
+                    dst_factor: BlendFactor::One,
+                    operation: BlendOperation::Add,
+                },
+            }),
         }
     }
 
@@ -394,6 +407,7 @@ impl StateKey {
         match self.blend {
             Blend::Alpha => AlphaMode::Blend,
             Blend::Additive => AlphaMode::Add,
+            Blend::Multiply => AlphaMode::Multiply,
             Blend::Opaque if self.alpha_test => AlphaMode::Mask(reference),
             Blend::Opaque => AlphaMode::Opaque,
         }

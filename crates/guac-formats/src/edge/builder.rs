@@ -233,6 +233,47 @@ pub fn unskinned() -> Fixture {
     }
 }
 
+/// Three unskinned vertices with no normal or tangent, UV0 and a colour in
+/// the RSX-only stream: what level 213's grass segments carry (AG.15).
+pub fn unlit() -> Fixture {
+    let tris = vec![[0, 1, 2]];
+    let positions = positions(3);
+    let uv0: Vec<[(u16, f32); 2]> = (0..3).map(|i| [UV[i + 2], UV[i + 5]]).collect();
+    let colors: Vec<[u8; 4]> = (0..3u8).map(|i| [40 * i, 200, 255 - i, 255]).collect();
+    let mut wire = base(Kind::Unskinned, &tris, &positions);
+    let rsx: Vec<u8> = (0..3)
+        .flat_map(|i| {
+            uv0[i]
+                .iter()
+                .flat_map(|(bits, _)| bits.to_be_bytes())
+                .chain(colors[i])
+                .collect::<Vec<u8>>()
+        })
+        .collect();
+    let d = desc(
+        8,
+        &[
+            block(0, VertexFormat::F16, 2, Semantic::Uv0, 8),
+            block(4, VertexFormat::U8N, 4, Semantic::Color, 3),
+        ],
+    );
+    wire.set_rsx(rsx, d);
+    Fixture {
+        wire,
+        expect: Expect {
+            tris,
+            positions,
+            normals: Vec::new(),
+            tangents: Vec::new(),
+            cmp_value: cmp_rsx_value,
+            uv0,
+            colors,
+            influences: Vec::new(),
+            palette_slots: Vec::new(),
+        },
+    }
+}
+
 /// Four skinned vertices: normal and tangent in SPU input 1, UV0 alone in
 /// the RSX-only stream, matrices from two ranges (slots 2, 3 and 10).
 pub fn skinned() -> Fixture {

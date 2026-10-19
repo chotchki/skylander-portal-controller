@@ -3,9 +3,10 @@
 //! current extract or runs one on its own thread, progress coming back over a
 //! channel. Cards don't wait on it: the portal screen draws [`band`] in its
 //! header while the thread runs or after it fails. The stages run in
-//! guac-extract's order (AE.3): the roster and its portraits, then ffmpeg and
-//! the intros. The roster goes on the server's figure list the moment it
-//! lands, or at start when the extract is already current (AE.4).
+//! guac-extract's order (AE.3): the roster and its portraits, the models, the
+//! level (AG.15), then ffmpeg and the intros. The roster goes on the server's
+//! figure list the moment it lands, or at start when the extract is already
+//! current (AE.4).
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -110,6 +111,11 @@ pub enum ExtractStatus {
         done: usize,
         total: usize,
     },
+    /// `done` of `total` parts of the level (AG.15).
+    Level {
+        done: usize,
+        total: usize,
+    },
     /// Mapping toy types to intro movies.
     Indexing,
     /// `done` of `total` intros converted; `movie` is the one in hand.
@@ -135,6 +141,7 @@ impl ExtractStatus {
             Self::Checking { .. } => "Checking",
             Self::Roster { .. } => "Roster",
             Self::Models { .. } => "Models",
+            Self::Level { .. } => "Level",
             Self::Indexing => "Indexing",
             Self::Converting { .. } => "Converting",
             Self::Ready { .. } => "Ready",
@@ -275,6 +282,13 @@ pub fn band(status: &ExtractStatus) -> Option<Band> {
                 Some(pct),
             )
         }
+        ExtractStatus::Level { done, total } => {
+            let pct = percent(*done as u64, *total as u64);
+            progress(
+                format!("Reading chapter 1 off your disc… {pct}%"),
+                Some(pct),
+            )
+        }
         ExtractStatus::Indexing => progress("Finding each character's intro…".into(), None),
         ExtractStatus::Converting { done, total, .. } => progress(
             format!("Converting intro {} of {total}…", (done + 1).min(*total)),
@@ -346,6 +360,7 @@ pub fn band_after(status: &ExtractStatus, running_for: Duration) -> Option<Band>
             | ExtractStatus::Checking { .. }
             | ExtractStatus::Roster { .. }
             | ExtractStatus::Models { .. }
+            | ExtractStatus::Level { .. }
             | ExtractStatus::Indexing
             | ExtractStatus::Converting { .. }
     );
@@ -368,6 +383,11 @@ pub enum ExtractEvent {
     },
     /// The model stage: `done` of `total` character models (AE.6).
     Models {
+        done: usize,
+        total: usize,
+    },
+    /// The level stage: `done` of `total` parts (AG.15).
+    Level {
         done: usize,
         total: usize,
     },
@@ -415,6 +435,10 @@ pub fn step(event: &ExtractEvent) -> ExtractStatus {
             total: *total,
         },
         ExtractEvent::Models { done, total } => ExtractStatus::Models {
+            done: *done,
+            total: *total,
+        },
+        ExtractEvent::Level { done, total } => ExtractStatus::Level {
             done: *done,
             total: *total,
         },
@@ -489,6 +513,7 @@ pub fn run(
             Event::Portraits { done, total } => send(ExtractEvent::Roster { done, total }),
             Event::RosterReady(roster) => publish(job, &roster, &dir),
             Event::Models { done, total } => send(ExtractEvent::Models { done, total }),
+            Event::Level { done, total } => send(ExtractEvent::Level { done, total }),
             Event::Indexing => send(ExtractEvent::Indexing),
             Event::Transcode(e) => {
                 if let Step::Done(done) = &e.step {
@@ -519,6 +544,8 @@ pub fn run(
     info!(
         models = m.models,
         failed = m.failed.len(),
+        heroes = m.heroes,
+        unsettled = m.unsettled.len(),
         textures = m.textures,
         binds = m.binds,
         written = m.files.written,
@@ -529,6 +556,27 @@ pub fn run(
     );
     for f in &m.failed {
         warn!(load_file = %f.load_file, reason = %f.reason, "a model didn't extract; its figures keep their portraits");
+    }
+    for f in &m.unsettled {
+        warn!(load_file = %f.load_file, reason = %f.reason, "a character's walk didn't settle; it keeps its model");
+    }
+    let l = &extracted.levels;
+    info!(
+        levels = l.levels,
+        read = l.parts_read,
+        kept = l.parts_kept,
+        failed = l.failed.len(),
+        props = l.props,
+        refused_props = l.refused_props.len(),
+        textures = l.textures,
+        shared = l.shared,
+        written = l.files.written,
+        bytes = l.files.bytes,
+        took_s = l.took.as_secs_f64(),
+        "level written"
+    );
+    for f in &l.failed {
+        warn!(level = %f.level, part = %f.part, reason = %f.reason, "a level part didn't extract; the next start tries it again");
     }
     let intros = extracted.intros?;
     let ffmpeg = &intros.ffmpeg;
@@ -902,6 +950,19 @@ mod tests {
     }
 
     #[test]
+    fn the_level_stage_names_chapter_1_and_counts_its_parts() {
+        let level = step(&ExtractEvent::Level { done: 2, total: 5 });
+        assert_eq!(level, ExtractStatus::Level { done: 2, total: 5 });
+        assert_eq!(level.kind(), "Level");
+        let b = band(&level).unwrap();
+        assert_eq!(b.title, GETTING_READY);
+        assert_eq!(b.detail, "Reading chapter 1 off your disc… 40%");
+        assert_eq!((b.percent, b.code.as_deref()), (Some(40), None));
+        assert_eq!(band_after(&level, QUIET_START / 2), None);
+        assert_eq!(band_after(&level, QUIET_START), Some(b));
+    }
+
+    #[test]
     fn an_unknown_dump_says_so_with_its_code_and_the_report() {
         let b = failed(Failure::UnknownDump {
             report: "/x/unknown-dump-1.json".into(),
@@ -1216,6 +1277,7 @@ mod run_tests {
     use std::sync::Mutex;
 
     use guac_formats::iga::builder::IgaBuilder;
+    use guac_formats::level::builder::{stage_level, stage_sample};
     use guac_formats::roster::builder::{disc, sample};
     use guac_formats::sfo::builder::SfoBuilder;
 
@@ -1261,7 +1323,8 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
     }
 
     /// The roster builder's sample disc, plus two intros: Eruptor maps by
-    /// his voice-over name, Jet-Vac (toy 100) by the roster's.
+    /// his voice-over name, Jet-Vac (toy 100) by the roster's; and the level
+    /// builder's chapter 1 (AG.15), which a current extract holds.
     fn make_dump(tmp: &Path) -> PathBuf {
         let dump = tmp.join("discs/Giants");
         let usr = dump.join("PS3_GAME/USRDIR");
@@ -1284,6 +1347,10 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
         fs::write(usr.join("character/100_eagle.arc"), eagle).unwrap();
         fs::write(usr.join("movies/eruptor.mov"), b"eruptor bink").unwrap();
         fs::write(usr.join("movies/jetvac.mov"), b"jetvac bink").unwrap();
+        let level = guac_extract::levels::archive_path(&usr, guac_extract::levels::LEVELS[0]);
+        fs::create_dir_all(level.parent().unwrap()).unwrap();
+        let bld = stage_level(&stage_sample());
+        fs::write(level, IgaBuilder::new().stored("level.bld", &bld).build()).unwrap();
         dump
     }
 
@@ -1344,7 +1411,14 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
         kinds.dedup();
         assert_eq!(
             kinds,
-            ["Checking", "Roster", "Models", "Indexing", "Converting"]
+            [
+                "Checking",
+                "Roster",
+                "Models",
+                "Level",
+                "Indexing",
+                "Converting"
+            ]
         );
         // The roster went on the list before the intros failed (AE.4).
         assert_eq!(listed(&job).roster(), Some(RosterState::Ready));
@@ -1498,7 +1572,7 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
         );
         assert!(
             seen.iter()
-                .all(|s| ["Checking", "Roster", "Models"].contains(&s.kind())),
+                .all(|s| ["Checking", "Roster", "Models", "Level"].contains(&s.kind())),
             "{seen:?}"
         );
         // The roster and its portraits are there; the intros aren't.

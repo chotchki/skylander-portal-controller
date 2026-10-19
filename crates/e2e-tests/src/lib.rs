@@ -1388,8 +1388,9 @@ pub const E2E_ROSTER: &[FixtureFigure] = {
 };
 
 /// A synthetic Giants dump and a finished extract of it (openspec AB.11,
-/// AE.4): [`E2E_ROSTER`] with a flat-colour portrait each and the intros asked
-/// for. No game bytes: the dump is a PARAM.SFO and a text file, and each
+/// AE.4, AG.15): [`E2E_ROSTER`] with a flat-colour portrait each, the intros
+/// asked for and a chapter 1 of a floor and a spawn ([`write_level`]). No
+/// game bytes: the dump is a PARAM.SFO and a text file, and each
 /// intro is ffmpeg's `testsrc` picture over a `sine` tone, encoded at run time
 /// to guacamole's own target. guacamole trusts the dump through
 /// `GUAC_TEST_KNOWN_DUMP` and finds the extract current, so it runs no ffmpeg
@@ -1474,6 +1475,7 @@ impl IntroFixture {
         // A test-hooks build is a dev build, which reads RON.
         intros::write(&mut opened.dir, &table, IrFormat::Ron)?;
         write_roster(&mut opened.dir)?;
+        write_level(&mut opened.dir)?;
 
         // Only the intros need ffmpeg.
         let ffmpeg = match intros {
@@ -1575,6 +1577,122 @@ fn write_roster(dir: &mut guac_extract::IdentityDir) -> Result<()> {
         let mut png = std::io::Cursor::new(Vec::new());
         image.write_to(&mut png, image::ImageFormat::Png)?;
         dir.write_output(f.portrait.as_deref().unwrap(), png.get_ref())?;
+    }
+    Ok(())
+}
+
+/// Chapter 1 into the extract as the level stage leaves it (AG.15), every
+/// part recorded so the extract is current: a 20 m floor at the spawn's
+/// height and `213_Init_Location` with its first waypoint, nothing drawn and
+/// no props or lights yet (AG.21 adds what its walk needs).
+fn write_level(dir: &mut guac_extract::IdentityDir) -> Result<()> {
+    use guac_extract::intros::IrFormat;
+    use guac_extract::levels::{COLLISION, LEVELS, LIGHTS, PLACEMENTS, PROPS, SCENE};
+    use guac_ir::level::{
+        Collision, CollisionMesh, Lights, Placement, Placements, Props, Scene, Waypoint,
+    };
+
+    let ir = IrFormat::Ron;
+    let identity = dir.manifest().identity.clone();
+    let level = LEVELS[0].to_owned();
+    let spawn = [10.191352, 43.37944, -93.393616];
+    let floor = CollisionMesh {
+        world: "Levels/E2E/E2E_ART_MASTER.ma".into(),
+        vertices: [[-10.0, -10.0], [10.0, -10.0], [10.0, 10.0], [-10.0, 10.0]]
+            .map(|[x, z]| [spawn[0] + x, spawn[1] - 0.01, spawn[2] + z])
+            .to_vec(),
+        triangles: vec![[0, 2, 1], [0, 3, 2]],
+        materials: vec![0, 0],
+        radius: 0.05,
+        welding: 4,
+    };
+    let parts: [(&str, Vec<u8>); 5] = [
+        (
+            SCENE,
+            ir.encode(
+                &Scene {
+                    identity: identity.clone(),
+                    level: level.clone(),
+                    scenes: Vec::new(),
+                },
+                dir,
+                SCENE,
+            )?,
+        ),
+        (
+            PROPS,
+            ir.encode(
+                &Props {
+                    identity: identity.clone(),
+                    level: level.clone(),
+                    props: Vec::new(),
+                    refused: Vec::new(),
+                },
+                dir,
+                PROPS,
+            )?,
+        ),
+        (
+            COLLISION,
+            ir.encode(
+                &Collision {
+                    identity: identity.clone(),
+                    level: level.clone(),
+                    meshes: vec![floor],
+                },
+                dir,
+                COLLISION,
+            )?,
+        ),
+        (
+            PLACEMENTS,
+            ir.encode(
+                &Placements {
+                    identity: identity.clone(),
+                    level: level.clone(),
+                    actors: vec![Placement {
+                        object: 1,
+                        id: 0,
+                        name: "213_Init_Location".into(),
+                        script: None,
+                        position: spawn,
+                        rotation: [0.0; 3],
+                        scale: [100.0; 3],
+                        model: None,
+                        solid: None,
+                        movement: None,
+                        waypoints: Some(0),
+                        activity_state: 4,
+                    }],
+                    waypoints: vec![vec![Waypoint {
+                        name: "wp0".into(),
+                        position: spawn,
+                        rotation: [0.0; 3],
+                        height: 0.0,
+                    }]],
+                },
+                dir,
+                PLACEMENTS,
+            )?,
+        ),
+        (
+            LIGHTS,
+            ir.encode(
+                &Lights {
+                    identity,
+                    level: level.clone(),
+                    directional: Vec::new(),
+                    placed: Vec::new(),
+                },
+                dir,
+                LIGHTS,
+            )?,
+        ),
+    ];
+    for (part, bytes) in parts {
+        let rel = ir.level_path(&level, part);
+        dir.write_output(&rel, &bytes)?;
+        dir.record_level_part(&level, part, vec![rel])?;
     }
     Ok(())
 }

@@ -21,6 +21,7 @@ usage: guac-extract identify <dump-dir>
        guac-extract census <dump-dir>
        guac-extract roster <dump-dir>
        guac-extract models <dump-dir>
+       guac-extract levels <dump-dir>
        guac-extract intros <dump-dir>
        guac-extract transcode <dump-dir>
        guac-extract extract <dump-dir>
@@ -43,6 +44,11 @@ Extracts what guacamole plays from your own Skylanders disc dump.
              models/<load file>.ron, the textures its materials bind into
              textures/<sha256>.ktx2 and the 3D-UI rig into ir/rig.ron in the
              dump's folder; a model that won't read is listed, not fatal
+  levels     identify, then each level guacamole plays (chapter 1) into
+             levels/<archive>/<part>.ron, part by part (scene, props,
+             collision, placements, lights), its textures beside the
+             models'; a part already there is kept, one that won't read is
+             listed, not fatal
   intros     identify, then map each toy type's character archives to its
              intro movie by their voice-over name, the roster's names as the
              fallback, and write the character table to ir/characters.ron in
@@ -53,8 +59,9 @@ Extracts what guacamole plays from your own Skylanders disc dump.
              bin folders on macOS); leaves the extract unmarked, since it
              writes no roster
   extract    every stage, in guacamole's order: identify, the roster, the
-             models, then ffmpeg and the intros; a missing ffmpeg leaves the
-             roster and the models in place and the extract unmarked
+             models, the levels, then ffmpeg and the intros; a missing ffmpeg
+             leaves the roster, the models and the levels in place and the
+             extract unmarked
 ";
 
 /// The environment, else `.env.dev` in the current folder.
@@ -185,14 +192,27 @@ fn roster(dump: &Path) -> Result<(), guac_extract::ExtractError> {
 
 fn models_line(m: &stages::ModelStage) -> String {
     format!(
-        "{} models, {} failed; {} textures for {} binds; {}; {:.2} s",
+        "{} models, {} failed; {} heroes, {} unsettled ({:.2} s); {} textures for {} binds; {}; {:.2} s",
         m.models,
         m.failed.len(),
+        m.heroes,
+        m.unsettled.len(),
+        m.heroes_took.as_secs_f64(),
         m.textures,
         m.binds,
         files_line(&m.files),
         m.took.as_secs_f64()
     )
+}
+
+/// The stage's failures and unsettled heroes, a line each.
+fn model_failures(m: &stages::ModelStage) {
+    for f in &m.failed {
+        println!("  failed    {}: {}", f.load_file, f.reason);
+    }
+    for f in &m.unsettled {
+        println!("  unsettled {}: {}", f.load_file, f.reason);
+    }
 }
 
 fn models(dump: &Path) -> Result<(), guac_extract::ExtractError> {
@@ -205,9 +225,42 @@ fn models(dump: &Path) -> Result<(), guac_extract::ExtractError> {
     );
     let m = stages::model_stage(&mut opened.dir, &roster.roster, IrFormat::Ron, &|_| {})?;
     println!("models      {}", models_line(&m));
-    for f in &m.failed {
-        println!("  failed    {}: {}", f.load_file, f.reason);
+    model_failures(&m);
+    println!("extract     {}", opened.dir.path().display());
+    Ok(())
+}
+
+fn levels_line(l: &stages::LevelStage) -> String {
+    format!(
+        "{} whole; {} parts read, {} kept, {} failed; {} props, {} refused; {} textures, {} already in the store; {}; {:.2} s",
+        l.levels,
+        l.parts_read,
+        l.parts_kept,
+        l.failed.len(),
+        l.props,
+        l.refused_props.len(),
+        l.textures,
+        l.shared,
+        files_line(&l.files),
+        l.took.as_secs_f64()
+    )
+}
+
+/// The stage's failed parts and refused props, a line each.
+fn level_failures(l: &stages::LevelStage) {
+    for f in &l.failed {
+        println!("  failed    {}", f.reason);
     }
+    for (prop, why) in &l.refused_props {
+        println!("  refused   {prop}: {why}");
+    }
+}
+
+fn levels(dump: &Path) -> Result<(), guac_extract::ExtractError> {
+    let mut opened = open_dev(dump)?;
+    let l = stages::level_stage(&mut opened.dir, IrFormat::Ron, &|_| {})?;
+    println!("levels      {}", levels_line(&l));
+    level_failures(&l);
     println!("extract     {}", opened.dir.path().display());
     Ok(())
 }
@@ -241,9 +294,9 @@ fn extract(dump: &Path) -> Result<(), guac_extract::ExtractError> {
         r.took.as_secs_f64()
     );
     println!("models      {}", models_line(&done.models));
-    for f in &done.models.failed {
-        println!("  failed    {}: {}", f.load_file, f.reason);
-    }
+    model_failures(&done.models);
+    println!("levels      {}", levels_line(&done.levels));
+    level_failures(&done.levels);
     match &done.intros {
         Ok(i) => println!(
             "intros      {} of {} toy types; {} transcoded, {} already done, {} linked; {:.1} s",
@@ -379,6 +432,13 @@ fn main() -> ExitCode {
             }
         },
         ["models", dump] => match models(Path::new(dump)) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("guac-extract: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        ["levels", dump] => match levels(Path::new(dump)) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("guac-extract: {e}");

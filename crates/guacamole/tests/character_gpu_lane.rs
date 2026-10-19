@@ -912,7 +912,7 @@ fn want(
         let stored = match key.states.blend {
             Blend::Opaque => alpha,
             Blend::Alpha => alpha + CLEAR[3] * (1.0 - alpha),
-            Blend::Additive => CLEAR[3],
+            Blend::Additive | Blend::Multiply => CLEAR[3],
         };
         Want::Colour([pixel.colour[0], pixel.colour[1], pixel.colour[2], stored])
     };

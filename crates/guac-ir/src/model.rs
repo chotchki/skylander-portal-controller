@@ -55,7 +55,10 @@ pub struct Joint {
     pub inverse_bind: [[f32; 4]; 4],
 }
 
-/// One Edge segment in bind pose: a triangle list, every vertex skinned.
+/// One Edge segment in bind pose: a triangle list. A character's has every
+/// vertex skinned; a level's (AG.15) isn't skinned, its joints and weights
+/// empty, and the effects that draw grass and shadows carry no normals,
+/// their normals empty too.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Segment {
     /// Into [`Model::materials`].
@@ -171,6 +174,9 @@ pub enum Blend {
     Alpha,
     /// Source alpha plus what's there.
     Additive,
+    /// What's there scaled by the part's colour: a level's (AG.15, level
+    /// 213's two cave paintings), no character's.
+    Multiply,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -195,6 +201,43 @@ pub struct Scroll {
     pub rotation_phase: f32,
 }
 
+/// A material track of another kind than a scroll, as stored: a level's
+/// (AG.15), no character's. How the runtime plays each isn't read yet.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum MaterialTrack {
+    /// Turns and scales a layer's texture coordinates about `center`.
+    Transform {
+        layer: i32,
+        center: [f32; 2],
+        rotation_rate: f32,
+        rotation_min: f32,
+        rotation_max: f32,
+        rotation_style: i32,
+        scale_rate: [f32; 2],
+        scale_min: [f32; 2],
+        scale_max: [f32; 2],
+        scale_style: [i32; 2],
+    },
+    /// Steps a layer's texture coordinates through a grid of `rows` by
+    /// `columns` cells at `rate`, in `cells`' order (empty: the grid's).
+    FlipBook {
+        layer: i32,
+        style: i32,
+        rows: i32,
+        columns: i32,
+        rate: f32,
+        cells: Vec<i32>,
+    },
+    /// Moves the material tint through its keys at `rate`: a frame and an
+    /// RGBA colour each, unpacked as [`Params::material_tint`] is.
+    Tint {
+        style: i32,
+        rate: f32,
+        frames: Vec<i32>,
+        colors: Vec<[u8; 4]>,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Material {
     /// The technique's name (`EruptorBody`).
@@ -206,6 +249,8 @@ pub struct Material {
     pub params: Params,
     pub states: RenderStates,
     pub scrolls: Vec<Scroll>,
+    /// Empty on every character's.
+    pub tracks: Vec<MaterialTrack>,
 }
 
 impl Material {

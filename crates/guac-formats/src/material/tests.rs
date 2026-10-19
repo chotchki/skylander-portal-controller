@@ -1,6 +1,8 @@
 use super::*;
 use crate::igz::layouts::Hero;
-use crate::model::builder::{AttrSpec, BindSpec, CharacterSpec, MaterialSpec, character, sample};
+use crate::model::builder::{
+    AttrSpec, BindSpec, CharacterSpec, MaterialSpec, TrackSpec, character, sample,
+};
 use crate::model::portal_model;
 
 /// Each material of `spec`'s portal model, read.
@@ -16,6 +18,56 @@ fn read(spec: &CharacterSpec) -> Vec<Result<Material<'static>, FormatError>> {
 
 fn first(spec: &CharacterSpec) -> Result<Material<'static>, FormatError> {
     read(spec).remove(0)
+}
+
+/// `spec`'s portal model, its first technique and its hero walk, for the
+/// level readers (AG.15).
+fn first_mesh(spec: &CharacterSpec) -> (&'static Igz<'static>, &'static Hero<'static>) {
+    let bytes: &'static [u8] = Vec::leak(character(spec));
+    let igz: &'static Igz<'static> = Box::leak(Box::new(Igz::parse(bytes).unwrap()));
+    let hero: &'static Hero<'static> = Box::leak(Box::new(portal_model(igz).unwrap().hero));
+    (igz, hero)
+}
+
+/// The first technique's material read as a level's.
+fn level(spec: &CharacterSpec) -> Result<Material<'static>, FormatError> {
+    let (igz, hero) = first_mesh(spec);
+    let m = &hero.meshes[0];
+    Material::read_technique(
+        igz,
+        hero.passes(),
+        m.technique_index,
+        &m.technique,
+        m.material,
+        Drawn::Level,
+    )
+}
+
+/// The first technique's material read as another effect's.
+fn effect_material(spec: &CharacterSpec) -> Result<EffectMaterial<'static>, FormatError> {
+    let (igz, hero) = first_mesh(spec);
+    let m = &hero.meshes[0];
+    EffectMaterial::read(
+        igz,
+        hero.passes(),
+        m.technique_index,
+        &m.technique,
+        m.material,
+    )
+}
+
+/// Eruptor's body on the gloss-map variant (0x9C: normal, spec, colour,
+/// gloss, rim), its gloss map image 7.
+fn gloss(b: &mut MaterialSpec) {
+    b.pixel = Some((0x9C, 0x3FF));
+    b.vertex = Some((0x109C, 0x1BFF));
+    b.binds = vec![
+        BindSpec::new(4, 0).normal_map(),
+        BindSpec::new(6, 1),
+        BindSpec::new(0, 2),
+        BindSpec::new(2, 7),
+        BindSpec::new(3, 3),
+    ];
 }
 
 fn with_body(f: impl FnOnce(&mut MaterialSpec)) -> CharacterSpec {
@@ -322,4 +374,314 @@ fn a_scroll_track_reads_and_other_track_kinds_are_refused() {
     }))
     .unwrap_err();
     assert_eq!(e.field, "_trackList");
+}
+
+#[test]
+fn a_level_takes_the_gloss_map_a_character_refuses() {
+    let spec = with_body(gloss);
+    let e = first(&spec).unwrap_err();
+    assert_eq!(
+        e.kind,
+        ErrorKind::Feature {
+            bit: 7,
+            name: "layer4UsesGlossmap"
+        }
+    );
+    let m = level(&spec).unwrap();
+    assert_eq!(m.pixel.base_mask, 0x9C);
+    let roles: Vec<(Role, Option<&str>)> =
+        m.textures.iter().map(|t| (t.role, t.image_name)).collect();
+    assert_eq!(
+        roles,
+        [
+            (Role::Layer1BaseNormalMap, Some("eruptor_n")),
+            (Role::Layer1BaseSpecMap, Some("eruptor_sp")),
+            (Role::Layer1ColorMap, Some("eruptor_c")),
+            (Role::Layer3ColorMap, Some("specrim_eye6")),
+            (Role::Layer4ColorMap, Some("eruptorrim")),
+        ]
+    );
+    // Bits 6 and 9 stay refused on a level, by name.
+    for (pixel, bit, name) in [
+        (0x5C, 6, "layer4UsesPositions"),
+        (0x21C, 9, "receivesReflections"),
+    ] {
+        let e = level(&with_body(|b| b.pixel = Some((pixel, 0x3FF)))).unwrap_err();
+        assert_eq!(e.kind, ErrorKind::Feature { bit, name }, "{pixel:#x}");
+        assert_eq!(e.field, "_baseMask");
+    }
+    // And on the vertex side, bits 6 and 9 with skinning.
+    for (vertex, bit, name) in [
+        (0x5C, 6, "layer4UsesPositions"),
+        (0x21C, 9, "receivesReflections"),
+        (0x81C, 11, "vertexSkinning"),
+    ] {
+        let e = level(&with_body(|b| b.vertex = Some((vertex, 0x1BFF)))).unwrap_err();
+        assert_eq!(e.kind, ErrorKind::Feature { bit, name }, "{vertex:#x}");
+        assert_eq!(e.field, "_baseMask");
+    }
+    assert_eq!(Drawn::Level.pixel_undrawn(), [6, 9]);
+    assert_eq!(Drawn::Character.pixel_undrawn(), [6, 7, 9]);
+    assert_eq!(Drawn::Level.vertex_undrawn(), [6, 9, 11]);
+}
+
+#[test]
+fn a_destination_colour_blend_multiplies() {
+    let states = |attrs: Vec<AttrSpec>| first(&with_body(|b| b.attrs = attrs)).map(|m| m.states);
+    let multiply = states(vec![
+        AttrSpec::BlendState(true),
+        AttrSpec::BlendFunction(6, 0),
+        AttrSpec::DepthWrite(false),
+    ])
+    .unwrap();
+    assert_eq!(
+        multiply,
+        States {
+            blend: Blend::Multiply,
+            depth_write: false,
+            two_sided: false,
+            alpha_test: None
+        }
+    );
+    // Destination colour onto anything but zero is still refused.
+    let e = states(vec![
+        AttrSpec::BlendState(true),
+        AttrSpec::BlendFunction(6, 1),
+    ])
+    .unwrap_err();
+    assert_eq!(
+        (e.field, e.kind),
+        (
+            "igBlendFunctionAttr",
+            ErrorKind::Unsupported { value: 6 << 32 | 1 }
+        )
+    );
+}
+
+fn tracks() -> Vec<TrackSpec> {
+    vec![
+        TrackSpec::Transform {
+            layer: 1,
+            floats: [0.5, 0.25, 34.906586, -1.0, 2.0],
+            rotation_style: 3,
+            scale: [0.1, 0.2, 1.0, 1.5, 2.0, 2.5],
+            scale_style: [4, 5],
+        },
+        TrackSpec::FlipBook {
+            layer: 0,
+            style: 1,
+            rows: 3,
+            columns: 2,
+            rate: 1.0 / 6.0,
+            cells: Some(vec![5, 0, 3]),
+        },
+        TrackSpec::Tint {
+            style: 1,
+            rate: 1.0,
+            frames: vec![0, 15, 30],
+            colors: vec![0xFF8E_BBCE, 0xFF57_93D2, 0x0078_CDEF],
+        },
+    ]
+}
+
+#[test]
+fn a_level_reads_the_other_track_kinds_a_character_refuses() {
+    let spec = with_body(|b| {
+        b.scroll = Some((2, [0.5; 11], "tfbScrollUVAnimTrack"));
+        b.tracks = tracks();
+    });
+    let e = first(&spec).unwrap_err();
+    assert_eq!(e.field, "_trackList");
+    assert!(
+        matches!(&e.kind, ErrorKind::WrongType { found, .. } if found == "tfbTransformUVAnimTrack"),
+        "{e}"
+    );
+    let m = level(&spec).unwrap();
+    assert_eq!(m.scrolls.len(), 1);
+    assert_eq!(m.scrolls[0].layer, 2);
+    let [transform, flip, tint] = &m.tracks[..] else {
+        panic!("{:?}", m.tracks);
+    };
+    let Track::Transform { layer: 1, data } = transform else {
+        panic!("{transform:?}");
+    };
+    assert_eq!(data.center, [0.5, 0.25]);
+    assert_eq!(
+        (data.rotation_rate, data.rotation_min, data.rotation_max),
+        (34.906586, -1.0, 2.0)
+    );
+    assert_eq!(data.rotation_style, 3);
+    assert_eq!(
+        (data.scale_rate, data.scale_min, data.scale_max),
+        ([0.1, 0.2], [1.0, 1.5], [2.0, 2.5])
+    );
+    assert_eq!(data.scale_style, [4, 5]);
+    let Track::FlipBook {
+        layer: 0,
+        data,
+        cells,
+    } = flip
+    else {
+        panic!("{flip:?}");
+    };
+    assert_eq!(
+        (data.style, data.rows, data.columns, data.rate),
+        (1, 3, 2, 1.0 / 6.0)
+    );
+    assert_eq!(cells, &[5, 0, 3]);
+    let Track::Tint {
+        data,
+        frames,
+        colors,
+    } = tint
+    else {
+        panic!("{tint:?}");
+    };
+    assert_eq!((data.style, data.rate), (1, 1.0));
+    assert_eq!(frames, &[0, 15, 30]);
+    assert_eq!(colors, &[0xFF8E_BBCE, 0xFF57_93D2, 0x0078_CDEF]);
+    // A flip book without its cells list plays the grid's order.
+    let m = level(&with_body(|b| {
+        b.tracks = vec![TrackSpec::FlipBook {
+            layer: 0,
+            style: 0,
+            rows: 1,
+            columns: 4,
+            rate: 0.5,
+            cells: None,
+        }]
+    }))
+    .unwrap();
+    assert!(matches!(&m.tracks[0], Track::FlipBook { cells, .. } if cells.is_empty()));
+    // A tint whose colours don't pair up with its frames is refused.
+    let e = level(&with_body(|b| {
+        b.tracks = vec![TrackSpec::Tint {
+            style: 0,
+            rate: 1.0,
+            frames: vec![0, 15],
+            colors: vec![0xFFFF_FFFF],
+        }]
+    }))
+    .unwrap_err();
+    assert_eq!(
+        (e.field, e.kind),
+        (
+            "_keyColors",
+            ErrorKind::CountMismatch {
+                found: 1,
+                expected: 2
+            }
+        )
+    );
+}
+
+/// The grass's material on Eruptor's body: three binds by unit, its
+/// states, its shader constants kept unread.
+fn grass(b: &mut MaterialSpec) {
+    b.effect = GRASS_EFFECT;
+    b.pixel = Some((0x50, 0x50));
+    b.vertex = Some((0x50, 0x50));
+    b.binds = vec![
+        BindSpec::new(1, 5),
+        BindSpec::new(2, 6),
+        BindSpec::new(0, 2),
+    ];
+    b.attrs = vec![
+        AttrSpec::DepthWrite(false),
+        AttrSpec::BlendState(true),
+        AttrSpec::AlphaState(true),
+        AttrSpec::AlphaFunction(4, 0.023529),
+        AttrSpec::Other(SHADER_PARAMETERS, 0x18),
+    ];
+}
+
+#[test]
+fn another_effects_material_keeps_its_textures_by_unit() {
+    let m = effect_material(&with_body(grass)).unwrap();
+    assert_eq!((m.name, m.effect), (Some("EruptorBody"), GRASS_EFFECT));
+    assert_eq!(
+        m.pixel.map(|p| (p.base_mask, p.ignore_mask)),
+        Some((0x50, 0x50))
+    );
+    let units: Vec<(i16, Option<&str>)> =
+        m.textures.iter().map(|t| (t.unit, t.image_name)).collect();
+    assert_eq!(
+        units,
+        [
+            (1, Some("eruptor_sp")),
+            (2, Some("eruptor_c")),
+            (0, Some("eruptor_c"))
+        ]
+    );
+    assert_eq!(
+        m.states,
+        States {
+            blend: Blend::Alpha,
+            depth_write: false,
+            two_sided: false,
+            alpha_test: Some(0.023529)
+        }
+    );
+    assert_eq!(m.unread, [SHADER_PARAMETERS]);
+    assert!(m.scrolls.is_empty() && m.tracks.is_empty());
+    // A scroll on another effect is read as a level's is.
+    let m = effect_material(&with_body(|b| {
+        grass(b);
+        b.effect = TFBWARP;
+        b.pixel = None;
+        b.vertex = None;
+        b.scroll = Some((0, [0.25; 11], "tfbScrollUVAnimTrack"));
+    }))
+    .unwrap();
+    assert_eq!((m.effect, m.pixel, m.scrolls.len()), (TFBWARP, None, 1));
+
+    // tfbmulti2's reader refuses another effect, and this one tfbmulti2.
+    let e = first(&with_body(grass)).unwrap_err();
+    assert_eq!(
+        (e.field, e.kind),
+        (
+            "_effect",
+            ErrorKind::Unsupported {
+                value: u64::from(GRASS_EFFECT)
+            }
+        )
+    );
+    let e = effect_material(&sample()).unwrap_err();
+    assert_eq!(
+        (e.field, e.kind),
+        (
+            "_effect",
+            ErrorKind::Unsupported {
+                value: u64::from(TFBMULTI2)
+            }
+        )
+    );
+    // A tfbmulti2 attribute, or one of a type nothing reads, is refused.
+    let e = effect_material(&with_body(|b| {
+        grass(b);
+        b.attrs.push(AttrSpec::Tint(0xFF80_8080));
+    }))
+    .unwrap_err();
+    assert!(
+        matches!(&e.kind, ErrorKind::WrongType { found, .. } if found == "tfbMaterialTintAttr"),
+        "{e}"
+    );
+    let e = effect_material(&with_body(|b| {
+        grass(b);
+        b.attrs.push(AttrSpec::Other("igLightStateAttr", 0x14));
+    }))
+    .unwrap_err();
+    assert!(
+        matches!(&e.kind, ErrorKind::WrongType { found, .. } if found == "igLightStateAttr"),
+        "{e}"
+    );
+    // A shader's constants on tfbmulti2 are refused as before.
+    let e = first(&with_body(|b| {
+        b.attrs.push(AttrSpec::Other(SHADER_PARAMETERS, 0x18))
+    }))
+    .unwrap_err();
+    assert!(
+        matches!(&e.kind, ErrorKind::WrongType { found, .. } if found == SHADER_PARAMETERS),
+        "{e}"
+    );
 }

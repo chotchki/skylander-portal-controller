@@ -566,6 +566,7 @@ mod tests {
                 alpha_test: None,
             },
             scrolls: Vec::new(),
+            tracks: Vec::new(),
         }
     }
 
