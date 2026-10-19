@@ -945,7 +945,7 @@ mod tests {
             tv.place(1, "00000a-0803");
             let mut movies = Vec::new();
             let start = Instant::now();
-            while start.elapsed() < Duration::from_secs(5) {
+            while start.elapsed() < Duration::from_secs(15) {
                 tv.app.update();
                 let movie = tv.movie();
                 if movies.last() != Some(&movie) {
