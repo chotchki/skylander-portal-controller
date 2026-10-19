@@ -160,7 +160,11 @@ Third batch:
   That pin is stale (2026-10-18): #1070 closed unmerged, and #1084, built on it, merged to Avian's
   `main` as `1070759b2145`, so AG takes avian3d 0.8 from crates.io, or that `main` commit pinned by rev
   until 0.8 publishes
-  ([`ag-walk-one-level`](../../openspec/changes/ag-walk-one-level/design.md) decision 3). The census ran
+  ([`ag-walk-one-level`](../../openspec/changes/ag-walk-one-level/design.md) decision 3). AG.4 (2026-10-19)
+  took the `main` commit: crates.io still tops out at 0.7.0 (Bevy 0.19), so `guacamole` pins avian3d
+  `0.8.0-dev` by rev `1070759b2145dc078abedace91dc7fe78013a45c`, features `3d` and `parry-f32` only, and
+  moves to 0.8 when it publishes. The seam is `guac-motion`'s `PhysicsSeam`, with a parry3d twin; the
+  TV adds Avian's schedule, collider hierarchy, backend and trees, and none of its solver. The census ran
   (ag-levels and ag-motion in the research dir): Havok is query-only in the tutorial, and the hero moves
   by Toys for Bob's own kinematic model over their copy of Havok's character proxy.
 

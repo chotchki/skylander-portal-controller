@@ -1,0 +1,28 @@
+[package]
+name = "guac-motion"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# The hero's motion, pure (openspec AG, design decision 3): the physics seam the
+# controller queries, its parry3d implementation and, from AG.16 on, the
+# controller and the camera follow. No Bevy, so every controller test runs
+# without an app; guacamole's Avian implementation of the seam passes the same
+# table (`conformance`).
+[lib]
+name = "guac_motion"
+path = "src/lib.rs"
+
+[features]
+# The seam's shared test table, for another implementation's tests (guacamole's
+# Avian side takes it as a dev-dependency).
+conformance = []
+
+[dependencies]
+# Avian's own parry (avian3d 0.8.0-dev at 1070759 builds on parry3d 0.31), so
+# both implementations run the same narrow phase.
+parry3d = "0.31"
+# The vector types, parry's own (through glamx) and Bevy 0.20's: one 0.33 in
+# Cargo.lock.
+glam = "0.33"
+thiserror = { workspace = true }

@@ -18,6 +18,7 @@ mod intro_player;
 mod look;
 mod mirror;
 mod motion;
+mod physics;
 mod picker;
 mod screen;
 #[cfg(feature = "dev-tools")]
@@ -263,6 +264,7 @@ fn run_tv(
         Picker,
         extraction::ExtractPlugin,
         intro_player::IntroPlugin,
+        physics::SeamPlugin,
     ));
     if let Some(job) = job {
         app.insert_resource(job);
