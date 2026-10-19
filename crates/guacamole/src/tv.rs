@@ -145,8 +145,8 @@ pub(crate) struct Current {
 pub(crate) struct TvAssets {
     font: Handle<Font>,
     pub(crate) qr: Option<Handle<Image>>,
-    /// The sky's tile of stars (`starfield::tile`).
-    pub(crate) stars: Handle<Image>,
+    /// The stars' two sprites (`starfield::Sprites`).
+    pub(crate) stars: starfield::Sprites,
 }
 
 /// The join QR as drawn (Join and the portal header), for the mirror.
@@ -460,8 +460,7 @@ fn tv_assets(world: &mut World) -> TvAssets {
         }
         None => None,
     };
-    let theme = world.get_resource::<TvTheme>().cloned().unwrap_or_default();
-    let stars = starfield::tile(&mut world.resource_mut::<Assets<Image>>(), &theme);
+    let stars = starfield::Sprites::new(&mut world.resource_mut::<Assets<Image>>());
     TvAssets { font, qr, stars }
 }
 
@@ -557,7 +556,7 @@ fn enter_screen(
             starfield::sky(&sources.theme),
         ))
         .with_children(|ui| {
-            starfield::spawn_stars(ui, &stars);
+            starfield::spawn_stars(ui, &stars, &sources.theme);
             spawn_content(ui, state, &mut sources);
         });
     redrawn.write(Redrawn::Screen(state));
@@ -1905,10 +1904,7 @@ pub(crate) mod layout_tests {
             .world_mut()
             .resource_mut::<Assets<Font>>()
             .add(Font::from_bytes(TITAN_ONE.to_vec()));
-        let stars = starfield::tile(
-            &mut app.world_mut().resource_mut::<Assets<Image>>(),
-            &TvTheme::default(),
-        );
+        let stars = starfield::Sprites::new(&mut app.world_mut().resource_mut::<Assets<Image>>());
         let assets = TvAssets {
             font,
             qr: None,
@@ -3066,35 +3062,51 @@ pub(crate) mod layout_tests {
         assert_eq!(seen(&mut app), (vec![Redrawn::Screen(TvState::Join)], 0));
     }
 
-    /// The one star layer up: its rect in target px, the drift's translation
-    /// in design px and its tiles.
-    fn star_layer(app: &mut App) -> (Entity, Rect, Val2, Vec<Entity>) {
+    /// One star drawn on the sky: what it is, its node's translation in
+    /// design px, its centre in target px and what it draws.
+    type DrawnStar = (starfield::SkyStar, Val2, Vec2, ImageNode);
+
+    /// The one star layer up: its rect in target px and its stars, in the
+    /// order they draw.
+    fn star_layer(app: &mut App) -> (Entity, Rect, Vec<DrawnStar>) {
         let world = app.world_mut();
         let mut q = world.query_filtered::<(
             Entity,
             &ComputedNode,
             &UiGlobalTransform,
-            &UiTransform,
             &Children,
         ), With<starfield::StarLayer>>();
-        let (layer, node, at, moved, tiles) = q.single(world).unwrap();
-        (
-            layer,
-            node_rect(node, at),
-            moved.translation,
-            tiles.to_vec(),
-        )
+        let (layer, node, at, kids) = q.single(world).unwrap();
+        let (rect, kids) = (node_rect(node, at), kids.to_vec());
+        let mut q = world.query::<(
+            &starfield::SkyStar,
+            &UiTransform,
+            &UiGlobalTransform,
+            &ImageNode,
+            Has<Children>,
+        )>();
+        let stars = kids
+            .iter()
+            .map(|kid| {
+                let (star, moved, drawn, image, parent) = q.get(world, *kid).unwrap();
+                assert!(!parent, "a star is one node");
+                (*star, moved.translation, drawn.translation, image.clone())
+            })
+            .collect();
+        (layer, rect, stars)
     }
 
     /// AP.11: every screen's root sits on the sky, at 1080p, 4K and in the
     /// desktop window: §1's three gradients on the root and a layer of stars
-    /// as its first child, from the window's corner (not the inset's) to a
-    /// tile past its far edges, every tile drawing the TV's stars, with no
-    /// text in it and no line moved by it.
+    /// as its first child, over the whole root from the window's corner (not
+    /// the inset's), with no text in it and no line moved by it. Since the
+    /// 2026-10-18 follow-up the layer holds a node a star, the small ones
+    /// first, each drawing its size's sprite in its tint at its alpha where
+    /// its copy in the window is with no drift.
     #[test]
     fn every_screen_sits_on_the_starfield() {
-        use bevy::ui::Val2;
         let theme = TvTheme::default();
+        let sky = starfield::stars(starfield::SEED);
         for (width, height, mode) in [
             (1920, 1080, WindowMode::Tv),
             (3840, 2160, WindowMode::Tv),
@@ -3103,7 +3115,7 @@ pub(crate) mod layout_tests {
             let mut app = portal_app(width, height, mode, full("Eruptor"));
             app.insert_resource(ReducedMotion(true));
             let scale = height as f32 / DESIGN_HEIGHT;
-            let stars = app.world().resource::<TvAssets>().stars.clone();
+            let sprites = app.world().resource::<TvAssets>().stars.clone();
             for screen in every_screen() {
                 let case = format!("{width}x{height} {screen:?}");
                 app.world_mut().resource_mut::<Current>().screen = screen.clone();
@@ -3117,17 +3129,28 @@ pub(crate) mod layout_tests {
                     assert_eq!(sky.0.len(), 3, "{case}");
                     children[0]
                 };
-                let (layer, rect, moved, tiles) = star_layer(&mut app);
+                let (layer, rect, stars) = star_layer(&mut app);
                 assert_eq!(layer, first, "{case}: the stars draw under the screen");
-                assert_eq!(moved, Val2::ZERO, "{case}");
-                assert!(rect.min.abs_diff_eq(Vec2::ZERO, 0.01), "{case}: {rect:?}");
-                let past = Vec2::new(width as f32, height as f32) + starfield::TILE * scale;
-                assert!(rect.max.cmpge(past - 0.01).all(), "{case}: {rect:?}");
-                assert_eq!(tiles.len(), 15, "{case}");
-                for tile in &tiles {
-                    let image = app.world().get::<ImageNode>(*tile).unwrap();
-                    assert_eq!(image.image, stars, "{case}");
-                    assert!(app.world().get::<Children>(*tile).is_none(), "{case}");
+                let window = Rect::new(0.0, 0.0, width as f32, height as f32);
+                assert!(rect.min.abs_diff_eq(window.min, 0.01), "{case}: {rect:?}");
+                assert!(rect.max.abs_diff_eq(window.max, 0.01), "{case}: {rect:?}");
+                assert_eq!(stars.len(), sky.len(), "{case}");
+                let big: Vec<bool> = stars.iter().map(|s| s.3.image == sprites.big).collect();
+                assert!(big.is_sorted(), "{case}: the small stars first");
+                for star in &sky {
+                    let (placed, moved, centre, image) =
+                        stars.iter().find(|s| s.0.at == star.at).unwrap();
+                    assert_eq!(*moved, placed.placed(Vec2::ZERO).translation, "{case}");
+                    let home = starfield::wrap(star.at) * scale;
+                    assert!(centre.abs_diff_eq(home, 0.01), "{case}: {centre} {home}");
+                    let sprite = if star.big() {
+                        &sprites.big
+                    } else {
+                        &sprites.small
+                    };
+                    assert_eq!(image.image, *sprite, "{case}");
+                    let tint = theme.star_tints[star.tint as usize].with_alpha(star.alpha);
+                    assert_eq!(image.color, tint, "{case}");
                 }
                 assert!(app.world().get::<Text>(layer).is_none(), "{case}");
 
@@ -3154,7 +3177,6 @@ pub(crate) mod layout_tests {
     #[test]
     fn the_stars_drift_unless_motion_is_reduced() {
         use bevy::time::TimeUpdateStrategy;
-        use bevy::ui::Val2;
         for reduced in [false, true] {
             let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
             app.insert_resource(ReducedMotion(reduced))
@@ -3167,19 +3189,135 @@ pub(crate) mod layout_tests {
                 frames(&mut app, 2);
                 let elapsed = app.world().resource::<Time>().elapsed();
                 assert!(elapsed >= Duration::from_secs(25), "{elapsed:?}");
-                let (_, rect, moved, _) = star_layer(&mut app);
                 let at = if reduced {
                     Vec2::ZERO
                 } else {
                     starfield::drift_at(elapsed)
                 };
                 assert_ne!(at == Vec2::ZERO, !reduced, "{screen:?} at {elapsed:?}");
-                assert_eq!(moved, Val2::px(-at.x, -at.y), "{reduced} {screen:?}");
-                assert!(
-                    rect.min.abs_diff_eq(-at, 0.01),
-                    "{reduced} {screen:?}: {rect:?}"
-                );
+                let (_, _, stars) = star_layer(&mut app);
+                let mut moved = 0;
+                for (placed, translation, centre, _) in &stars {
+                    let case = format!("{reduced} {screen:?} {placed:?}");
+                    assert_eq!(*translation, placed.placed(at).translation, "{case}");
+                    let drawn = placed.centre(at);
+                    assert!(centre.abs_diff_eq(drawn, 0.01), "{case}: {centre}");
+                    moved += usize::from(!drawn.abs_diff_eq(placed.centre(Vec2::ZERO), 0.01));
+                }
+                assert_eq!(moved == stars.len(), !reduced, "{reduced} {screen:?}");
             }
+        }
+    }
+
+    /// The most pairs of `stars` one shift carries one onto the other, to
+    /// within about half a px: a pattern that repeats shows as a shift many
+    /// pairs share (AP.11's tile at 16:9: 960 px across, 32 pairs), where
+    /// scattered stars share one by chance at most twice.
+    fn most_pairs_one_shift(stars: &[Vec2]) -> usize {
+        let mut shifts = std::collections::HashMap::<IVec2, usize>::new();
+        for (i, a) in stars.iter().enumerate() {
+            for b in &stars[i + 1..] {
+                let d = *b - *a;
+                let d = if (d.x, d.y) < (0.0, 0.0) { -d } else { d };
+                *shifts.entry((d * 2.0).round().as_ivec2()).or_default() += 1;
+            }
+        }
+        shifts
+            .keys()
+            .map(|at| {
+                (-1..=1)
+                    .flat_map(|x| (-1..=1).map(move |y| *at + IVec2::new(x, y)))
+                    .filter_map(|near| shifts.get(&near))
+                    .sum()
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn a_repeating_pattern_shares_a_shift_and_scattered_stars_dont() {
+        let tile: Vec<Vec2> = starfield::stars(starfield::SEED)
+            .iter()
+            .map(|s| s.at)
+            .filter(|at| at.cmplt(Vec2::new(960.0, 540.0)).all())
+            .collect();
+        assert_eq!(tile.len(), 16);
+        let two_by_two: Vec<Vec2> = [0.0, 960.0]
+            .iter()
+            .flat_map(|x| [0.0, 540.0].map(|y| Vec2::new(*x, y)))
+            .flat_map(|corner| tile.iter().map(move |at| *at + corner))
+            .collect();
+        assert_eq!(most_pairs_one_shift(&two_by_two), 32);
+        let scattered: Vec<Vec2> = starfield::stars(starfield::SEED)
+            .iter()
+            .map(|s| s.at)
+            .filter(|at| at.cmplt(Vec2::new(1920.0, 1080.0)).all())
+            .collect();
+        assert_eq!(scattered.len(), 64);
+        assert!(most_pairs_one_shift(&scattered) <= 2);
+    }
+
+    /// The AP.11 follow-up (2026-10-18): AP.11's 960×540 tile showed 2×2 on
+    /// a 16:9 screen, the same 16 stars in each quarter. On a 16:9 screen at
+    /// 1080p and 4K and a 32:9 one at both, from the drift's start and then a
+    /// frame every 7 s through a loop and past it, every star on the screen,
+    /// a sliver at an edge included, is another star of the sky (no two at
+    /// the same offset within its period), each node draws its own star, no
+    /// shift carries more than two of them onto others (no pattern repeats,
+    /// whatever its period) and every 2×2 cells' patch of the screen holds
+    /// one.
+    #[test]
+    fn no_star_shows_twice_on_a_screen() {
+        use bevy::time::TimeUpdateStrategy;
+        use starfield::tests::offset_in_period;
+        for (width, height) in [(1920, 1080), (3840, 2160), (3840, 1080), (7680, 2160)] {
+            let mut app = portal_app(width, height, WindowMode::Tv, PortalCards::default());
+            app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(7)));
+            app.world_mut()
+                .resource_mut::<Time<Virtual>>()
+                .set_max_delta(Duration::from_secs(60));
+            app.world_mut().resource_mut::<Current>().screen = TvScreen::Join;
+            let scale = height as f32 / DESIGN_HEIGHT;
+            let screen = Vec2::new(width as f32, height as f32) / scale;
+            let patch = 2.0 * starfield::CELL;
+            let patches = (screen / patch).as_uvec2();
+            let mut shown = 0;
+            for frame in 0..22 {
+                app.update();
+                let elapsed = app.world().resource::<Time>().elapsed();
+                let drift = starfield::drift_at(elapsed);
+                let case = format!("{width}x{height} frame {frame} at {elapsed:?}");
+                let (_, _, stars) = star_layer(&mut app);
+                let mut seen: Vec<(Vec2, Vec2)> = Vec::new();
+                let mut held = std::collections::BTreeSet::new();
+                for (placed, _, centre, _) in &stars {
+                    let c = *centre / scale;
+                    let reach = Vec2::splat(placed.half);
+                    if !(c.cmpgt(-reach).all() && c.cmplt(screen + reach).all()) {
+                        continue;
+                    }
+                    let offset = offset_in_period(c + drift);
+                    let own = offset_in_period(placed.at);
+                    assert!(offset.abs_diff_eq(own, 0.01), "{case}: {c} draws {own}");
+                    for (other, at) in &seen {
+                        assert!(
+                            !offset.abs_diff_eq(*other, 0.5),
+                            "{case}: {c} and {at} are one star"
+                        );
+                    }
+                    seen.push((offset, c));
+                    if c.cmpge(Vec2::ZERO).all() && c.cmplt(screen).all() {
+                        held.insert((c / patch).as_uvec2().to_array());
+                    }
+                }
+                assert_eq!(held.len() as u32, patches.x * patches.y, "{case}");
+                let on: Vec<Vec2> = seen.iter().map(|(_, at)| *at).collect();
+                assert!(most_pairs_one_shift(&on) <= 2, "{case}");
+                shown = shown.max(seen.len());
+            }
+            // About one star a cell: 64 cells on 16:9, 128 on 32:9.
+            let cells = (screen / starfield::CELL).element_product() as usize;
+            assert!((cells..cells + cells / 2).contains(&shown), "{shown}");
         }
     }
 
