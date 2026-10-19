@@ -1452,6 +1452,21 @@ pub async fn skip_intro(base: &str) -> Result<()> {
     Ok(())
 }
 
+/// Hands guacamole's input router a press as a pad would make it
+/// (`/api/_test/tv/press`): `south`, `east`, `mode`, `up`, `down`, `left` or
+/// `right`.
+pub async fn press_tv(base: &str, button: &str) -> Result<()> {
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/api/_test/tv/press"))
+        .json(&serde_json::json!({ "button": button }))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        bail!("/api/_test/tv/press {button} returned {}", resp.status());
+    }
+    Ok(())
+}
+
 /// guacamole's `/api/_test/tv`: what its TV shows (`TvSnapshot` in
 /// `crates/guacamole/src/mirror.rs`).
 pub async fn tv(base: &str) -> Result<serde_json::Value> {

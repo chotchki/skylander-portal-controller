@@ -1676,6 +1676,8 @@ pub(crate) mod layout_tests {
             bevy::picking::DefaultPickingPlugins,
             bevy::ui::UiPlugin,
             bevy::state::app::StatesPlugin,
+            bevy::input_focus::InputFocusPlugin,
+            crate::input::InputRouter,
         ));
         let font = app
             .world_mut()

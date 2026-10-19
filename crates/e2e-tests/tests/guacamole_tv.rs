@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 
 use skylander_e2e_tests::{
     GIANTS_SERIAL, Phone, TestServer, fire_kaos_swap, guacamole_only, inject_load_outcomes,
-    inject_profile, set_session_profile, tv, wait_for_tv,
+    inject_profile, press_tv, set_session_profile, tv, wait_for_tv,
 };
 
 /// The spec's bound from the phone showing a change to the TV showing it.
@@ -670,6 +670,34 @@ async fn figure_details_have_no_progress_and_stats_and_reset_are_off() {
 }
 
 // ---- guacamole/shell -----------------------------------------------------
+
+/// AP.5, the shell delta's "Nothing on the join code reacts", pad half: the
+/// input router takes a posted South, East and Mode, and the join code stays
+/// up (East closes only the startup-error screens; the app is still serving).
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver; E2E_APP=guacamole"]
+async fn pad_presses_leave_the_join_code_up() {
+    if guacamole_only() {
+        return;
+    }
+    let server = spawn();
+    let (before, _) = wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+        s["screen"] == "Join"
+    })
+    .await
+    .unwrap();
+    for button in ["south", "east", "mode"] {
+        press_tv(&server.url, button).await.unwrap();
+    }
+    // The router takes one press a frame; this is dozens of frames.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let after = tv(&server.url).await.expect("guacamole still serving");
+    assert_eq!(after["screen"], "Join", "{after}");
+    assert_eq!(after["join_qr"], true, "{after}");
+    for field in ["join_address", "players"] {
+        assert_eq!(after[field], before[field], "{field}");
+    }
+}
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver; E2E_APP=guacamole"]

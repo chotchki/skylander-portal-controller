@@ -11,6 +11,7 @@ mod cards;
 mod cli;
 mod driver;
 mod extraction;
+mod input;
 mod intro;
 mod intro_player;
 mod mirror;
@@ -244,6 +245,7 @@ fn run_tv(
     .add_plugins((
         ServerBridge,
         Tv,
+        input::InputRouter,
         Picker,
         extraction::ExtractPlugin,
         intro_player::IntroPlugin,
