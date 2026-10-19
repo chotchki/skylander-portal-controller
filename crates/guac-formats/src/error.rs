@@ -28,10 +28,16 @@ pub enum ErrorKind {
     MissingNul { end: usize },
     #[error("not valid UTF-8")]
     InvalidUtf8,
+    #[error("not valid UTF-16")]
+    InvalidUtf16,
     #[error("unsupported value {value:#x}")]
     Unsupported { value: u64 },
     #[error("duplicate entry")]
     Duplicate,
+    /// Two counts that must agree don't: a language pack's strings against
+    /// its level's text keys, a list against the entries it must hold.
+    #[error("{found} where {expected} belong")]
+    CountMismatch { found: u64, expected: u64 },
     /// A part the format requires isn't there.
     #[error("required but missing")]
     Missing,

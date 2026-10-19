@@ -468,11 +468,142 @@ pub fn shared_material(techniques: usize, binds: usize, bind_type: &str) -> Vec<
     })
 }
 
+/// Where [`script_sample`] put each roster object (AE.1).
+#[derive(Debug, Clone)]
+pub struct ScriptSample {
+    pub bytes: Vec<u8>,
+    pub string_info: Location,
+    pub value_info: Location,
+    pub set: Location,
+    pub set_list: Location,
+    pub light: Location,
+    pub pack: Location,
+    pub sprite: Location,
+    pub texture_data: Location,
+    pub bind: Location,
+    pub texture: Location,
+    pub image: Location,
+}
+
+/// One of each roster layout (AE.1), every field a distinct known value,
+/// plus the bind, texture and image a portrait sprite reaches.
+pub fn script_sample() -> ScriptSample {
+    let mut b = IgzBuilder::new();
+    let string_info = b.object(0, "StringInfo", 0x28);
+    let value_info = b.object(0, "ValueInfo", 0x24);
+    let set = b.object(0, "ScriptSet", 0x1C);
+    let set_list = b.object(0, "ScriptSetList", 0x24);
+    let light = b.object(0, "DirectionalLightInfo", 0x40);
+    let pack = b.object(0, "LanguagePackInfo", 0x20);
+    let sprite = b.object(0, "tfbSpriteInfo", 0xE4);
+    let texture_data = b.object(0, "AnimatableTextureDataInfo", 0x34);
+    let bind = b.object(0, "tfbAlphaTextureUnitIDAttr", 0x20);
+    let texture = b.object(0, "igTextureAttr2", 0x40);
+    let image = b.object(0, "igImage2", 0x60);
+    let blocks = b.section(0x10);
+
+    b.string(at(string_info, 0x08), "ItemName_Anvil");
+    for (offset, value) in [(0x1C, 7u32), (0x20, 3), (0x24, (-2i32) as u32)] {
+        b.put_u32(at(string_info, offset), value);
+    }
+
+    // EXNM 0 is IntMeasurement (the set's flagged `_editType`); the
+    // ValueInfo's `_type` indexes it unflagged, as Giants' do.
+    b.string(at(set, 0x08), "Element_Values");
+    b.pointer(at(set, 0x18), set_list);
+    b.put_u32(at(set_list, 0x08), 3);
+    b.put_u32(at(set_list, 0x0C), 3);
+    let data = b.memory_ref(at(set_list, 0x10), blocks, &[0; 12], 0);
+    b.pointer(data, value_info);
+    b.import(at(data, 4), "global.bld", "Minion_Names");
+    b.meta_object(at(set_list, 0x18), "metaobject", "IntMeasurement");
+    b.put_u32(at(set_list, 0x1C), 0x11);
+    b.put_u32(at(set_list, 0x20), 0x22);
+
+    b.string(at(value_info, 0x08), "ElementIndex_Fire");
+    b.put_u32(at(value_info, 0x18), (-4i32) as u32);
+    b.unflagged_meta(at(value_info, 0x1C), 0);
+    b.put_u32(at(value_info, 0x20), 5);
+
+    b.string(at(light, 0x08), "_spriteLight1");
+    b.put_bytes(
+        at(light, 0x18),
+        &[80, 78, 66, 255, 21, 21, 21, 255, 145, 145, 145, 255],
+    );
+    floats(&mut b, light, 0x24, &[1.0, 1.0, 2.0, 3.0, -45.0, 0.0, 30.0]);
+
+    b.string(at(pack, 0x08), "ENGLISH");
+    b.put_bytes(at(pack, 0x10), &[1]);
+    b.put_u32(at(pack, 0x14), 6);
+    b.memory_ref(at(pack, 0x18), blocks, &[0, 0x61, 0, 0, 0, 0x62, 0, 0], 0);
+
+    // The sprite: placement fields, then its own.
+    b.string(at(sprite, 0x08), "Collection_MinionIcon_009");
+    b.meta_object(at(sprite, 0x18), "metaobject", "TagList");
+    b.put_u32(at(sprite, 0x1C), 0x8000_0001);
+    b.put_u32(at(sprite, 0x20), 42);
+    floats(&mut b, sprite, 0x24, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    floats(&mut b, sprite, 0x3C, &[7.0, 8.0, 9.0, 10.0, 11.0, 12.0]);
+    b.put_u32(at(sprite, 0x54), 5);
+    b.put_u32(at(sprite, 0x68), (-1i32) as u32);
+    b.pointer(at(sprite, 0x74), string_info);
+    floats(&mut b, sprite, 0x78, &[13.0, 14.0, 15.0, 16.0, 17.0, 18.0]);
+    b.import(at(sprite, 0x98), "global.bld", "ResetTemplate");
+    b.put_u32(at(sprite, 0x9C), 9);
+    b.put_u32(at(sprite, 0xA0), 0x1800_0000);
+    u16_be(&mut b, sprite, 0xA4, &[0xFFF0, 0x0020]);
+    b.put_u32(at(sprite, 0xA8), 0x2001_4408);
+    floats(
+        &mut b,
+        sprite,
+        0xAC,
+        &[0.5, -3.0, 256.0, 128.0, 1.0, 2.0, 3.0],
+    );
+    b.put_bytes(at(sprite, 0xC8), &[0x80, 0x81, 0x82, 0xFF, 1, 2, 3, 0]);
+    b.pointer(at(sprite, 0xD0), texture_data);
+    b.pointer(at(sprite, 0xD4), string_info);
+    b.put_u32(at(sprite, 0xD8), 77);
+    floats(&mut b, sprite, 0xDC, &[100.0]);
+
+    info(&mut b, texture_data, "portraits/eruptor.png");
+    b.null_memory_ref(at(texture_data, 0x14), 0);
+    b.put_u32(at(texture_data, 0x1C), 0x77);
+    b.put_u32(at(texture_data, 0x24), 256);
+    b.put_u32(at(texture_data, 0x28), 128);
+    b.put_u32(at(texture_data, 0x2C), 3);
+    b.pointer(at(texture_data, 0x30), bind);
+
+    b.pointer(at(bind, 0x10), texture);
+    b.put_u32(at(bind, 0x14), u32::MAX);
+    b.put_u32(at(bind, 0x1C), u32::MAX);
+    b.pointer(at(texture, 0x30), image);
+    b.string(at(image, 0x08), "eruptor.png");
+    u16_be(&mut b, image, 0x30, &[4, 4, 1, 1, 1]);
+    b.import(at(image, 0x3C), super::METAIMAGES, "dxt5_big_ps3");
+    b.handle(at(image, 0x48), blocks, &[0x5A; 0x80], 5);
+
+    ScriptSample {
+        bytes: b.build(),
+        string_info,
+        value_info,
+        set,
+        set_list,
+        light,
+        pack,
+        sprite,
+        texture_data,
+        bind,
+        texture,
+        image,
+    }
+}
+
 /// Seeds for the property test and the fuzz corpus; the shared shapes
 /// overrun the heap budget on a walk that copies per reference.
 pub fn seeds() -> Vec<Vec<u8>> {
     vec![
         sample().bytes,
+        script_sample().bytes,
         shared_child_list(1000),
         shared_palette(400, 16_000),
         shared_material(400, 400, "tfbAlphaTextureUnitIDAttr"),

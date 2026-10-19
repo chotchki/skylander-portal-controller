@@ -5,7 +5,7 @@
 //! it may hold at once for an input of a given length.
 
 use crate::FormatError;
-use crate::{edge, havok, iga, igz, sfo, texture};
+use crate::{edge, exports, havok, iga, igz, language, sfo, texture};
 
 pub struct RegisteredParser {
     /// Stable name: the property test reports it, the fuzz targets match on it.
@@ -75,6 +75,16 @@ pub const PARSERS: &[RegisteredParser] = &[
         heap_budget: |len| 64 * len + 48 * len + (256 << 10),
     },
     RegisteredParser {
+        name: "roster",
+        parse: walk_roster,
+        seeds: roster_seeds,
+        // The IGZ parse, then a language pack's strings (a 24-byte String
+        // per NUL, 2 input bytes at least, and up to 3 bytes of UTF-8 per 2
+        // of UTF-16, doubled by growth), the join's and the texts' key maps
+        // (per StringInfo of 40 bytes) and both root-list copies.
+        heap_budget: |len| 64 * len + 64 * len + (64 << 10),
+    },
+    RegisteredParser {
         name: "havok",
         parse: walk_havok,
         seeds: havok::builder::seeds,
@@ -84,6 +94,38 @@ pub const PARSERS: &[RegisteredParser] = &[
         heap_budget: |len| 160 * len + (64 << 10),
     },
 ];
+
+/// The roster readers' seeds (AE.1): a level joined to its pack, a
+/// bootstrap, a global importing from both files, and the layouts' script
+/// sample.
+pub fn roster_seeds() -> Vec<Vec<u8>> {
+    use exports::builder::{bootstrap, names, rooted};
+    vec![
+        language::builder::joined(&["a", "b", "c"], language::ENGLISH),
+        bootstrap(),
+        rooted(&names("global", 24), &[0x03, 0x14, 0x2B, 0x2C]),
+        igz::layouts::builder::script_sample().bytes,
+    ]
+}
+
+/// Parses an IGZ, then runs the roster readers (AE.1) over it: its language
+/// pack joined to its own `StringInfo`s, and its root list as both
+/// bootstrap and global with every `global.bld` import resolved, each error
+/// skipped. The property test and the fuzz targets run it.
+pub fn walk_roster(bytes: &[u8]) -> Result<(), FormatError> {
+    let file = igz::Igz::parse(bytes)?;
+    if let Ok(pack) = language::LanguagePack::read(&file) {
+        let _ = language::join(&file, &pack);
+        let _ = language::Texts::new(&file, vec![pack]);
+    }
+    if let Ok(exports) = exports::Exports::new(&file, &file) {
+        for id in file.external_ids() {
+            let _ = exports.resolve_import(id);
+        }
+        let _ = exports.resolve(exports.global_base());
+    }
+    Ok(())
+}
 
 /// Parses a packfile, then samples its clip at the start, middle and end,
 /// posed on each skeleton it fits. The property test and the fuzz targets
@@ -150,7 +192,7 @@ pub fn walk_igz(bytes: &[u8]) -> Result<(), FormatError> {
     Ok(())
 }
 
-/// Parses an IGZ, then runs every AC.4 (and AC.10 material) layout reader and the hero walk on
+/// Parses an IGZ, then runs every AC.4 (and AC.10 material, AE.1 roster) layout reader and the hero walk on
 /// every object, dropping each result. The property test and the fuzz
 /// targets run it.
 pub fn walk_layouts(bytes: &[u8]) -> Result<(), FormatError> {
@@ -180,6 +222,14 @@ pub fn walk_layouts(bytes: &[u8]) -> Result<(), FormatError> {
         let _ = AlphaTextureUnitIdAttr::read(&file, i);
         let _ = TextureAttr2::read(&file, i);
         let _ = Hero::read(&file, i);
+        let _ = StringInfo::read(&file, i);
+        let _ = ValueInfo::read(&file, i);
+        let _ = ScriptSet::read(&file, i);
+        let _ = ScriptSetList::read(&file, i);
+        let _ = DirectionalLightInfo::read(&file, i);
+        let _ = LanguagePackInfo::read(&file, i);
+        let _ = SpriteInfo::read(&file, i);
+        let _ = AnimatableTextureDataInfo::read(&file, i);
     }
     Ok(())
 }
