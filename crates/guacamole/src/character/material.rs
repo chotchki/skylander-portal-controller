@@ -423,7 +423,7 @@ pub fn reference_material(
             weights: weights(pr.layer4_blend),
             split: pr.layer4_values[3],
         }),
-        tint: pr.material_tint.map(|c| f32::from(c) / 255.0),
+        tint: super::remaster::tint(pr.material_tint),
         glow: match pr.glow {
             model::Glow::None => Glow::None,
             model::Glow::Amount(a) => Glow::Amount(f32::from(a) / 255.0),

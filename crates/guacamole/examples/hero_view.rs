@@ -1,48 +1,47 @@
 // Bevy system signatures trip both by design.
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
-//! hero_view: Eruptor off the user's Giants dump, skinned, playing his idle
-//! on a turntable, drawn in the remaster (openspec AE.10, design decision
-//! 17) or, with `--stock`, on Bevy's `StandardMaterial` with his colour map
-//! alone, the comparison Open question 1's answer leaves chotchki.
+//! hero_view: a character off the user's Giants dump (Eruptor unless
+//! `--load-file` names another character load file), skinned, playing its
+//! idle on a turntable, drawn in the remaster (openspec AE.10, AE.12, design
+//! decision 17) or, with `--stock`, on Bevy's `StandardMaterial` with the
+//! colour map alone, the comparison Open question 1's answer leaves chotchki.
 //!
-//! It reads his archive in memory through the model stage's own reader
+//! It reads the archive in memory through the model stage's own reader
 //! (`guac_extract::models::read`, AE.6), so it draws what the turntable
 //! loads: the portal model's fresh segments in IR v2, skinned on the GPU with
 //! Alchemy's inverse joints (AC.17), the idle evaluated by `guac-ir`, each
 //! material through `guacamole::character` (the WESL shader AE.8 checked
-//! against the character-shading spec's CPU model) with its colour, spec and
-//! rim maps decoded through sRGB views and its normal maps as stored. The
-//! camera is HDR into TonyMcMapface at scale 1 with 4x MSAA, the same in both
-//! modes, so `--stock` changes the material and its lights and nothing else.
-//! The remaster adds the game's glow (AE.11: his glow masks drawn by a second
+//! against the character-shading spec's CPU model). Everything the remaster
+//! decodes, and the camera it draws with, is `character::remaster`'s (AE.12):
+//! colour, spec and rim maps through sRGB views, normal maps as stored, HDR
+//! into TonyMcMapface at scale 1 with 4x MSAA, the same camera in both modes,
+//! so `--stock` changes the material and its lights and nothing else. The
+//! remaster adds the game's glow (AE.11: the glow masks drawn by a second
 //! camera, then the chain on the linear frame before tonemapping), which
 //! `--no-glow` leaves off; `--glow-mask` screenshots the mask instead of the
 //! frame (its red as 8-bit grey). Bevy's own bloom stays off in both modes.
 //!
 //! At an oracle frame (AC.18): `--view-proj` takes the capture's
 //! model-view-projection (the vertex program's c0-c3), `--frame` the frame's
-//! rig and fog from a file beside the capture, `--at` its idle time and
-//! `--size` its output size. Nothing of a frame is in the repo: its numbers
-//! are read at run time, and a frame file inside a git work tree is refused.
-//! Without `--frame` both modes light with the viewer's own light, one white
-//! directional light fixed to the camera (Bevy's ambient beside it in
-//! `--stock`), not a light of the game's.
+//! rig, fog and idle time from a file beside the capture ([`frame`] has its
+//! format), `--at` an idle time of its own and `--size` the output size.
+//! Nothing of a frame is in the repo: its numbers are read at run time, and a
+//! frame file inside a git work tree is refused. Without `--frame` both modes
+//! light with the viewer's own light, one white directional light fixed to
+//! the camera (Bevy's ambient beside it in `--stock`), not a light of the
+//! game's.
 //!
 //! It writes nothing but `--screenshot`, refused inside any git work tree or
 //! through a symlink, and exits non-zero when the screenshot isn't written.
 //!
-//! `cargo run -p guacamole --release --example hero_view -- [--stock [--unlit]]
-//! [--no-glow] [--at <s>] [--yaw <deg>] [--view-proj <16 floats>] [--frame
-//! <json>] [--size <w>x<h>] [--screenshot <png> [--glow-mask] [--frames <n>]
-//! [--offscreen]]`
-//!
-//! A frame file (JSON): `{"source": "...", "lights": [three of {"travel":
-//! [x, y, z], "ambient": [r, g, b], "diffuse": [r, g, b], "specular": [r, g,
-//! b]}], "fog": {"colour": [r, g, b], "near": n, "far": f} or null}`. Each
-//! travel is the way the light goes, a unit vector in the frame's eye space
-//! (the game's `ig_light_directional_direction`); colours are the 8-bit
-//! codes the game stores, which the remaster decodes; fog distances run
-//! along the view direction. `source` is printed and otherwise ignored.
+//! `cargo run -p guacamole --release --example hero_view -- [--load-file
+//! <name>] [--stock [--unlit]] [--no-glow] [--at <s>] [--yaw <deg>]
+//! [--view-proj <16 floats>] [--frame <json>] [--size <w>x<h>] [--screenshot
+//! <png> [--glow-mask] [--frames <n>] [--offscreen]]`
+
+// Beside this file rather than in it: AE.12's GPU lane draws at the same frame.
+#[path = "hero_view/frame.rs"]
+mod frame;
 
 use std::f32::consts::PI;
 use std::path::{Path, PathBuf};
@@ -50,45 +49,37 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use bevy::app::ScheduleRunnerPlugin;
-use bevy::asset::RenderAssetUsages;
-use bevy::camera::{
-    CameraProjection, Exposure, Hdr, PerspectiveProjection, Projection, RenderTarget, SubCameraView,
-};
-use bevy::color::{LinearRgba, Srgba};
-use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
-use bevy::image::{
-    CompressedImageFormats, ImageAddressMode, ImageFilterMode, ImageSampler,
-    ImageSamplerDescriptor, ImageType,
-};
+use bevy::camera::{Exposure, PerspectiveProjection, Projection, RenderTarget};
+use bevy::color::LinearRgba;
+use bevy::image::CompressedImageFormats;
 use bevy::log::LogPlugin;
-use bevy::math::{DMat3, DMat4, DQuat, DVec3, DVec4, UVec2, Vec3A};
+use bevy::math::UVec2;
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::pbr::{DistanceFog, FogFalloff};
 // Not the glob: its `ContextExt` clashes with anyhow's `Context`.
 use bevy::prelude::{
-    App, AppExit, Assets, Camera3d, ClearColor, Color, Commands, DefaultPlugins, DirectionalLight,
-    Entity, GlobalAmbientLight, Handle, Image, Local, Mat4, Mesh, MessageWriter, On, PluginGroup,
-    Quat, Query, Res, ResMut, Resource, StandardMaterial, Startup, Time, Transform, Update, Vec3,
-    Window, WindowPlugin, default, warn,
+    App, AppExit, Assets, ClearColor, Color, Commands, DefaultPlugins, DirectionalLight, Entity,
+    GlobalAmbientLight, Handle, Image, Local, Mesh, MessageWriter, On, PluginGroup, Quat, Query,
+    Res, ResMut, Resource, StandardMaterial, Startup, Time, Transform, Update, Vec3, Window,
+    WindowPlugin, default, warn,
 };
-use bevy::render::render_resource::TextureFormat;
 use bevy::render::renderer::RenderDevice;
-use bevy::render::view::Msaa;
 use bevy::render::view::window::screenshot::{Screenshot, ScreenshotCaptured};
 use bevy::window::ExitCondition;
 use bevy::winit::WinitPlugin;
 use guac_extract::models;
-use guac_ir::model::{Filter, Sampler, TextureRole, Wrap};
-use guac_ir::shading::{self, Scene};
+use guac_ir::model::{Sampler, TextureRole};
+use guac_ir::shading;
 use guac_ir::{DumpIdentity, Model, Sha256};
 use guacamole::character::mesh::pose;
 use guacamole::character::{
     CharacterMaterial, CharacterShadingPlugin, GlowPlugin, ShadowLookup, SpawnedCharacter,
-    spawn_character, spawn_glow_camera, spawn_glow_masks,
+    remaster, spawn_character, spawn_glow_camera, spawn_glow_masks,
 };
-use serde::Deserialize;
 
-/// Eruptor's character load file: `character/009_eruptor.bld`.
+use frame::{Fog, FrameCamera, Rig, view_proj, work_tree};
+
+/// Eruptor's character load file, `character/009_eruptor.bld`: the default.
 const LOAD_FILE: &str = "009_Eruptor";
 const SIZE: (u32, u32) = (1280, 720);
 /// Radians per second.
@@ -119,9 +110,9 @@ fn main() -> Result<()> {
     };
     let rig = match &args.frame {
         Some(path) => Rig::read(path)?,
-        None => Rig::viewer(),
+        None => viewer_rig(),
     };
-    let decoded = decode(&dump_root()?)?;
+    let decoded = decode(&dump_root()?, &args.load_file)?;
     ensure!(
         run(args, shot, camera, rig, decoded).is_success(),
         "hero_view failed"
@@ -131,7 +122,10 @@ fn main() -> Result<()> {
 
 #[derive(Debug, Default, PartialEq)]
 struct Args {
-    /// Freezes the clip at this time and stops the turntable.
+    /// The character load file to draw.
+    load_file: String,
+    /// Freezes the clip at this time and stops the turntable; a frame's
+    /// idle time does the same unless this is given.
     at: Option<f64>,
     /// The turntable's angle while frozen, degrees.
     yaw: f32,
@@ -160,6 +154,7 @@ impl Args {
     fn parse(it: impl Iterator<Item = String>) -> Result<Self> {
         let mut it = it.peekable();
         let mut a = Self {
+            load_file: LOAD_FILE.to_owned(),
             frames: 240,
             size: SIZE,
             ..Self::default()
@@ -171,6 +166,7 @@ impl Args {
             }
             let mut value = || it.next().ok_or_else(|| anyhow!("{arg} needs a value"));
             match arg.as_str() {
+                "--load-file" => a.load_file = value()?,
                 "--at" => a.at = Some(value()?.parse().context("--at")?),
                 "--yaw" => a.yaw = value()?.parse().context("--yaw")?,
                 "--screenshot" => a.screenshot = Some(value()?.into()),
@@ -190,6 +186,13 @@ impl Args {
             "--offscreen needs --screenshot"
         );
         ensure!(a.frames > 0, "--frames must be at least 1");
+        ensure!(
+            !a.load_file.is_empty()
+                && a.load_file
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_'),
+            "--load-file wants a character load file's name, like {LOAD_FILE}"
+        );
         ensure!(!a.unlit || a.stock, "--unlit is --stock's");
         ensure!(
             !(a.stock && (a.no_glow || a.glow_mask)),
@@ -201,31 +204,6 @@ impl Args {
         );
         Ok(a)
     }
-}
-
-/// The 16 numbers after `--view-proj`, as separate arguments or pasted as
-/// one (commas, brackets and whitespace between them, so a JSON matrix
-/// pastes as is).
-fn view_proj(it: &mut impl Iterator<Item = String>) -> Result<[f32; 16]> {
-    let mut values = Vec::with_capacity(16);
-    while values.len() < 16 {
-        let arg = it
-            .next()
-            .with_context(|| format!("--view-proj needs 16 numbers, got {}", values.len()))?;
-        for token in arg
-            .split(|c: char| c == ',' || c == '[' || c == ']' || c.is_whitespace())
-            .filter(|t| !t.is_empty())
-        {
-            let v: f32 = token
-                .parse()
-                .with_context(|| format!("--view-proj: {token} isn't a number"))?;
-            ensure!(v.is_finite(), "--view-proj: {token} isn't finite");
-            values.push(v);
-        }
-    }
-    values
-        .try_into()
-        .map_err(|v: Vec<f32>| anyhow!("--view-proj needs 16 numbers, got {}", v.len()))
 }
 
 /// `<w>x<h>`, each at least 1.
@@ -252,12 +230,6 @@ fn dump_root() -> Result<PathBuf> {
             (k.trim() == "GUAC_GIANTS_DUMP").then(|| v.trim().trim_matches('"').into())
         })
         .ok_or_else(|| anyhow!("set GUAC_GIANTS_DUMP to the Giants dump"))
-}
-
-/// The git work tree `dir` sits in (a `.git` dir or file at or above it),
-/// with `dir` already canonical, so `..` and symlinks can't slip past.
-fn work_tree(dir: &Path) -> Option<&Path> {
-    dir.ancestors().find(|a| a.join(".git").exists())
 }
 
 /// The screenshot's path, refused when its directory sits in a git work
@@ -340,186 +312,31 @@ fn grey_png(path: &Path, image: &Image) -> Result<()> {
     Ok(())
 }
 
-// ---- the frame's camera ----
-
-/// Bevy's clip from GL's: Bevy's depth runs from 1 at the near plane to 0
-/// at the far one (reverse Z), where a GL-style projection's clip z runs
-/// from -w to w, so z' = (w - z) / 2.
-const BEVY_FROM_GL: DMat4 = DMat4::from_cols_array(&[
-    1.0, 0.0, 0.0, 0.0, //
-    0.0, 1.0, 0.0, 0.0, //
-    0.0, 0.0, -0.5, 0.0, //
-    0.0, 0.0, 0.5, 1.0,
-]);
-
-/// A capture's model-view-projection as Bevy places it: the model's uniform
-/// scale (the game's local-to-world carries Eruptor's 1.5 inside its
-/// modelview), the camera's turn and position in the scaled model's world,
-/// and the projection that leaves the two composing back to the capture's
-/// matrix. View space is then the game's eye space, the space the frame's
-/// rig is given in and the character shader lights in.
-#[derive(Debug, Clone)]
-struct FrameCamera {
-    scale: f32,
-    transform: Transform,
-    projection: CaptureProjection,
-    /// Vertical field of view, degrees, and the near and far planes: for
-    /// the record, read off the projection.
-    fov: f64,
-    near: f64,
-    far: f64,
-}
-
-/// What the GL-style perspective of a frame leaves Bevy: its clip from view
-/// with Bevy's depth, fixed whatever the target's size (the frame's NDC
-/// fills the target, as the game's fills its 960x540 surface).
-#[derive(Debug, Clone, PartialEq)]
-struct CaptureProjection {
-    clip_from_view: Mat4,
-    far: f32,
-}
-
-impl CameraProjection for CaptureProjection {
-    fn get_clip_from_view(&self) -> Mat4 {
-        self.clip_from_view
-    }
-
-    /// hero_view has no sub-views.
-    fn get_clip_from_view_for_sub(&self, _sub_view: &SubCameraView) -> Mat4 {
-        self.clip_from_view
-    }
-
-    fn update(&mut self, _width: f32, _height: f32) {}
-
-    fn far(&self) -> f32 {
-        self.far
-    }
-
-    /// The view-space points at depths `z_near` and `z_far` (negative, in
-    /// front of the camera) that land on the corners of NDC, in the order
-    /// Bevy's cascades want: bottom right, top right, top left, bottom left.
-    fn get_frustum_corners(&self, z_near: f32, z_far: f32) -> [Vec3A; 8] {
-        let m = self.clip_from_view.as_dmat4();
-        let corner = |sx: f64, sy: f64, z: f32| {
-            let z = f64::from(z);
-            // Rows 0 and 1 against row 3 at NDC (sx, sy): two equations
-            // in x and y.
-            let r = |i: usize| m.row(i);
-            let (r0, r1, r3) = (r(0), r(1), r(3));
-            let e0 = r0 - sx * r3;
-            let e1 = r1 - sy * r3;
-            let (b0, b1) = (-(e0.z * z + e0.w), -(e1.z * z + e1.w));
-            let det = e0.x * e1.y - e0.y * e1.x;
-            let x = (b0 * e1.y - e0.y * b1) / det;
-            let y = (e0.x * b1 - b0 * e1.x) / det;
-            Vec3A::new(x as f32, y as f32, z as f32)
-        };
-        let at = |z| {
-            [
-                corner(1.0, -1.0, z),
-                corner(1.0, 1.0, z),
-                corner(-1.0, 1.0, z),
-                corner(-1.0, -1.0, z),
-            ]
-        };
-        let (n, f) = (at(z_near), at(z_far));
-        [n[0], n[1], n[2], n[3], f[0], f[1], f[2], f[3]]
-    }
-}
-
-impl FrameCamera {
-    /// Splits `m` (row by row, column vectors, GL clip space) into
-    /// P · [s·R | t], P a perspective whose last row is (0, 0, -1, 0), R a
-    /// rotation and s a uniform scale. A matrix that isn't one is refused:
-    /// one with no perspective divide, a turn that isn't a rotation, a
-    /// mirror, near and far out of order.
-    fn from_view_proj(m: &[f32; 16]) -> Result<Self> {
-        let rows: [DVec4; 4] = std::array::from_fn(|r| {
-            DVec4::from_array(std::array::from_fn(|c| f64::from(m[4 * r + c])))
-        });
-        let [m0, m1, m2, m3] = rows;
-        // Row 3 is minus the modelview's row 2: the view direction times s.
-        let u = -m3.truncate();
-        let t2 = -m3.w;
-        let s = u.length();
-        ensure!(
-            s > 1e-9 && s.is_finite(),
-            "--view-proj isn't a perspective: its last row has no depth"
-        );
-        let s2 = s * s;
-        // A row of P · MV: its own axis plus an off-centre share of row 2.
-        let split = |p: DVec4| {
-            let v = p.truncate();
-            let off = v.dot(u) / s2;
-            (off, v - off * u, p.w)
-        };
-        let (c, w0, m03) = split(m0);
-        let (d, w1, m13) = split(m1);
-        let (a, b) = (w0.length() / s, w1.length() / s);
-        ensure!(
-            a > 1e-9 && b > 1e-9,
-            "--view-proj flattens the picture to a line"
-        );
-        let (r0, r1, r2) = (w0 / (a * s), w1 / (b * s), u / s);
-        let square = r0.dot(r1).abs();
-        ensure!(
-            square < 1e-4,
-            "--view-proj's turn isn't a rotation: its x and y axes are {square:.1e} off square"
-        );
-        let handed = r0.cross(r1).dot(r2);
-        ensure!(
-            handed > 0.999,
-            "--view-proj mirrors the picture (axes {handed:.4})"
-        );
-        let e = m2.truncate().dot(u) / s2;
-        let stray = (m2.truncate() - e * u).length() / m2.truncate().length().max(1.0);
-        ensure!(
-            stray < 1e-4,
-            "--view-proj's depth row leans sideways ({stray:.1e}): not a perspective"
-        );
-        let f = m2.w - e * t2;
-        let t = DVec3::new((m03 - c * t2) / a, (m13 - d * t2) / b, t2);
-        let (near, far) = (f / (e - 1.0), f / (e + 1.0));
-        ensure!(
-            near > 0.0 && far > near && far.is_finite(),
-            "--view-proj's near and far ({near}, {far}) aren't in front of the camera in order"
-        );
-
-        // The camera in the scaled model's world: R's transpose and -Rᵀt.
-        let turn = DMat3::from_cols(r0, r1, r2);
-        let rotation = DQuat::from_mat3(&turn).normalize().as_quat();
-        let translation = (-(turn * t)).as_vec3();
-        let transform = Transform {
-            translation,
-            rotation,
-            scale: Vec3::ONE,
-        };
-        let scale = s as f32;
-        // Whatever the rounding left in the turn, the chain composes back
-        // to the capture's matrix: clip from view = C · M · S⁻¹ · camera.
-        let mat = DMat4::from_cols_array(&m.map(f64::from)).transpose();
-        let camera = DMat4::from_rotation_translation(
-            transform.rotation.as_dquat(),
-            transform.translation.as_dvec3(),
-        );
-        let unscale = DMat4::from_scale(DVec3::splat(1.0 / f64::from(scale)));
-        let clip_from_view = (BEVY_FROM_GL * mat * unscale * camera).as_mat4();
-        Ok(Self {
-            scale,
-            transform,
-            projection: CaptureProjection {
-                clip_from_view,
-                far: far as f32,
-            },
-            fov: 2.0 * (1.0 / b).atan().to_degrees(),
-            near,
-            far,
-        })
+/// The viewer's own light: white, from up and to the right of the default
+/// camera, fixed to the camera; fog on beyond anything drawn.
+fn viewer_rig() -> Rig {
+    let camera = Transform::from_translation(EYE).looking_at(TARGET, Vec3::Y);
+    let travel = camera.rotation.inverse() * (TARGET - VIEWER_LIGHT).normalize();
+    let mut lights = [shading::DirectionalLight::OFF; 3];
+    lights[0] = shading::DirectionalLight {
+        travel: travel.to_array(),
+        ambient: [0.0; 3],
+        diffuse: [1.0; 3],
+        specular: [1.0; 3],
+    };
+    Rig {
+        lights,
+        fog: Some(Fog {
+            colour: [0.0; 3],
+            near: VIEWER_FOG.0,
+            far: VIEWER_FOG.1,
+        }),
+        idle_time: None,
     }
 }
 
 /// The camera and the model's scale: a frame's, else the viewer's own
-/// (Bevy's default perspective, looking at Eruptor from the front).
+/// (Bevy's default perspective, looking at the model from the front).
 fn camera_setup(frame: Option<&FrameCamera>) -> (Transform, Projection, f32) {
     match frame {
         Some(f) => (
@@ -535,152 +352,6 @@ fn camera_setup(frame: Option<&FrameCamera>) -> (Transform, Projection, f32) {
     }
 }
 
-// ---- the frame's rig and fog ----
-
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct FrameFile {
-    #[serde(default)]
-    source: Option<String>,
-    lights: [FrameLight; 3],
-    fog: Option<FrameFog>,
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct FrameLight {
-    travel: [f32; 3],
-    ambient: [u8; 3],
-    diffuse: [u8; 3],
-    specular: [u8; 3],
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct FrameFog {
-    colour: [u8; 3],
-    near: f32,
-    far: f32,
-}
-
-/// The fog a rig carries: its colour in linear light and its distances
-/// along the view direction.
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct Fog {
-    colour: [f32; 3],
-    near: f32,
-    far: f32,
-}
-
-/// Three directional lights fixed to the camera (each travel in view
-/// space), their colours in linear light, and the fog.
-#[derive(Debug, Clone, PartialEq, Resource)]
-struct Rig {
-    lights: [shading::DirectionalLight; 3],
-    fog: Option<Fog>,
-}
-
-/// A colour the disc or the game stores, decoded as the remaster decodes
-/// it (design decision 12).
-fn linear(c: [u8; 3]) -> [f32; 3] {
-    let l = LinearRgba::from(Srgba::rgb_u8(c[0], c[1], c[2]));
-    [l.red, l.green, l.blue]
-}
-
-impl Rig {
-    /// The viewer's own light: white, from up and to the right of the
-    /// default camera, fixed to the camera; fog on beyond anything drawn.
-    fn viewer() -> Self {
-        let camera = Transform::from_translation(EYE).looking_at(TARGET, Vec3::Y);
-        let travel = camera.rotation.inverse() * (TARGET - VIEWER_LIGHT).normalize();
-        let mut lights = [shading::DirectionalLight::OFF; 3];
-        lights[0] = shading::DirectionalLight {
-            travel: travel.to_array(),
-            ambient: [0.0; 3],
-            diffuse: [1.0; 3],
-            specular: [1.0; 3],
-        };
-        Self {
-            lights,
-            fog: Some(Fog {
-                colour: [0.0; 3],
-                near: VIEWER_FOG.0,
-                far: VIEWER_FOG.1,
-            }),
-        }
-    }
-
-    /// A frame file's rig: refused inside a git work tree, so a frame's
-    /// numbers stay beside its capture.
-    fn read(path: &Path) -> Result<Self> {
-        let canonical = path
-            .canonicalize()
-            .with_context(|| format!("--frame {}", path.display()))?;
-        if let Some(tree) = canonical.parent().and_then(work_tree) {
-            bail!(
-                "refusing a frame file inside the git work tree {}: it belongs beside its capture",
-                tree.display()
-            );
-        }
-        let text = std::fs::read_to_string(&canonical)
-            .with_context(|| format!("--frame {}", canonical.display()))?;
-        let file: FrameFile = serde_json::from_str(&text)
-            .with_context(|| format!("--frame {}", canonical.display()))?;
-        if let Some(source) = &file.source {
-            println!("frame {}: {source}", canonical.display());
-        }
-        Self::from_file(&file)
-    }
-
-    fn from_file(file: &FrameFile) -> Result<Self> {
-        let mut lights = [shading::DirectionalLight::OFF; 3];
-        for (i, (l, out)) in file.lights.iter().zip(&mut lights).enumerate() {
-            let length = Vec3::from_array(l.travel).length();
-            ensure!(
-                (length - 1.0).abs() < 1e-3,
-                "frame light {i}: its travel is {length} long, not a unit vector"
-            );
-            *out = shading::DirectionalLight {
-                travel: l.travel,
-                ambient: linear(l.ambient),
-                diffuse: linear(l.diffuse),
-                specular: linear(l.specular),
-            };
-        }
-        let fog = match &file.fog {
-            Some(f) => {
-                ensure!(
-                    f.near.is_finite() && f.far.is_finite() && f.near < f.far,
-                    "frame fog: near {} isn't before far {}",
-                    f.near,
-                    f.far
-                );
-                Some(Fog {
-                    colour: linear(f.colour),
-                    near: f.near,
-                    far: f.far,
-                })
-            }
-            None => None,
-        };
-        Ok(Self { lights, fog })
-    }
-
-    /// The scene the character material draws in: this rig, fog as it
-    /// says, shadows and point lights off, neutral placement, no flash.
-    fn scene(&self) -> Scene {
-        let mut scene = Scene::new();
-        scene.lights = self.lights;
-        if let Some(f) = self.fog {
-            scene.fog = true;
-            scene.fog_colour = f.colour;
-            scene.fog_near = f.near;
-            scene.fog_far = f.far;
-        }
-        scene
-    }
-}
-
 /// A Bevy directional light shining along `travel` (view space) from a
 /// camera at `camera`.
 fn shining(camera: &Transform, travel: [f32; 3]) -> Transform {
@@ -688,7 +359,7 @@ fn shining(camera: &Transform, travel: [f32; 3]) -> Transform {
     Transform::from_rotation(Quat::from_rotation_arc(Vec3::NEG_Z, world.normalize()))
 }
 
-// ---- Eruptor ----
+// ---- the character ----
 
 #[derive(Resource)]
 struct Decoded {
@@ -697,11 +368,11 @@ struct Decoded {
     textures: Vec<(String, Vec<u8>)>,
 }
 
-fn decode(root: &Path) -> Result<Decoded> {
+fn decode(root: &Path, load_file: &str) -> Result<Decoded> {
     let started = Instant::now();
-    let path = models::archive_path(&root.join("PS3_GAME/USRDIR"), LOAD_FILE);
-    let archive = models::archive(&path, LOAD_FILE)?;
-    let level = models::level(&archive, LOAD_FILE)?;
+    let path = models::archive_path(&root.join("PS3_GAME/USRDIR"), load_file);
+    let archive = models::archive(&path, load_file)?;
+    let level = models::level(&archive, load_file)?;
     let read = started.elapsed();
     // Never written anywhere, so no dump identity to carry.
     let identity = DumpIdentity {
@@ -709,7 +380,7 @@ fn decode(root: &Path) -> Result<Decoded> {
         app_ver: String::new(),
         manifest_hash: Sha256([0; 32]),
     };
-    let extracted = models::read(&level, LOAD_FILE, identity)?;
+    let extracted = models::read(&level, load_file, identity)?;
     let model = extracted.model;
     let ms = |d: Duration| d.as_secs_f64() * 1e3;
     let vertices: usize = model.segments.iter().map(|s| s.positions.len()).sum();
@@ -733,31 +404,8 @@ fn decode(root: &Path) -> Result<Decoded> {
     })
 }
 
-/// An IR sampler as Bevy's; one without a mipmap filter samples level 0
-/// alone, as the original does.
-fn sampler(s: &Sampler) -> ImageSamplerDescriptor {
-    let wrap = |w: Wrap| match w {
-        Wrap::Clamp => ImageAddressMode::ClampToEdge,
-        Wrap::Repeat => ImageAddressMode::Repeat,
-    };
-    let filter = |f: Filter| match f {
-        Filter::Nearest => ImageFilterMode::Nearest,
-        Filter::Linear => ImageFilterMode::Linear,
-    };
-    ImageSamplerDescriptor {
-        address_mode_u: wrap(s.wrap_u),
-        address_mode_v: wrap(s.wrap_v),
-        mag_filter: filter(s.mag),
-        min_filter: filter(s.min),
-        mipmap_filter: s.mip.map_or(ImageFilterMode::Nearest, filter),
-        lod_max_clamp: if s.mip.is_some() { 32.0 } else { 0.0 },
-        ..ImageSamplerDescriptor::default()
-    }
-}
-
-/// Each texture a role reads, loaded once per view and sampler: colour,
-/// spec and rim maps through sRGB views (the remaster decodes them), normal
-/// maps as stored.
+/// Each texture a role reads, loaded once per view and sampler as the
+/// remaster loads it ([`remaster::texture`]).
 struct Textures<'a> {
     decoded: &'a Decoded,
     formats: CompressedImageFormats,
@@ -772,7 +420,7 @@ impl Textures<'_> {
         role: TextureRole,
         s: &Sampler,
     ) -> Handle<Image> {
-        let key = (path.to_owned(), role.is_color(), *s);
+        let key = (path.to_owned(), remaster::is_srgb(role), *s);
         if let Some((_, h)) = self.loaded.iter().find(|(k, _)| *k == key) {
             return h.clone();
         }
@@ -782,15 +430,8 @@ impl Textures<'_> {
             .iter()
             .find(|(p, _)| p == path)
             .unwrap_or_else(|| panic!("{path} isn't among the model's textures"));
-        let image = Image::from_buffer(
-            ktx2,
-            ImageType::Extension("ktx2"),
-            self.formats,
-            key.1,
-            ImageSampler::Descriptor(sampler(s)),
-            RenderAssetUsages::RENDER_WORLD,
-        )
-        .unwrap_or_else(|e| panic!("{path}: {e}"));
+        let image = remaster::texture(ktx2, role, s, self.formats)
+            .unwrap_or_else(|e| panic!("{path}: {e}"));
         let handle = images.add(image);
         self.loaded.push((key, handle.clone()));
         handle
@@ -829,6 +470,9 @@ fn run(
     rig: Rig,
     decoded: Decoded,
 ) -> AppExit {
+    if let (None, Some(t)) = (args.at, rig.idle_time) {
+        println!("the frame's idle time: {t} s");
+    }
     if let Some(f) = &frame {
         let at = f.transform.translation;
         let forward = f.transform.forward();
@@ -837,6 +481,7 @@ fn run(
             f.scale, at.x, at.y, at.z, forward.x, forward.y, forward.z, f.fov, f.near, f.far
         );
     }
+    let at = args.at.or(rig.idle_time);
     let mut app = App::new();
     let plugins = DefaultPlugins.set(LogPlugin {
         filter: "wgpu=error,naga=warn".into(),
@@ -857,7 +502,7 @@ fn run(
     } else {
         app.add_plugins(plugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: format!("hero_view: Eruptor, {title}"),
+                title: format!("hero_view: {}, {title}", args.load_file),
                 resolution: args.size.into(),
                 ..default()
             }),
@@ -868,7 +513,7 @@ fn run(
         .insert_resource(decoded)
         .insert_resource(rig)
         .insert_resource(View {
-            at: args.at,
+            at,
             yaw: args.yaw.to_radians(),
             frames: args.frames,
             shot,
@@ -997,28 +642,13 @@ fn setup(
     .unwrap_or_else(|e| panic!("{}: {e}", model.name));
     commands.insert_resource(Spawned(spawned));
 
+    // The remaster's camera in both modes; its dither is off, so a shot
+    // comes out the same twice and its background is one colour.
     let camera = commands
-        .spawn((
-            Camera3d::default(),
-            eye,
-            projection.clone(),
-            Hdr,
-            Tonemapping::TonyMcMapface,
-            // Off so a shot comes out the same twice and its background is
-            // one colour.
-            DebandDither::Disabled,
-            Msaa::Sample4,
-        ))
+        .spawn((remaster::camera(), eye, projection.clone()))
         .id();
     if view.offscreen {
-        let mut target = Image::new_target_texture(
-            view.size.0,
-            view.size.1,
-            TextureFormat::Rgba8UnormSrgb,
-            None,
-        );
-        target.asset_usage = RenderAssetUsages::default();
-        let handle = images.add(target);
+        let handle = images.add(remaster::target(UVec2::new(view.size.0, view.size.1)));
         commands
             .entity(camera)
             .insert(RenderTarget::Image(handle.clone().into()));
@@ -1035,7 +665,7 @@ fn setup(
             camera,
             size,
             projection,
-            Msaa::Sample4,
+            remaster::MSAA,
             GLOW_LAYER,
         ));
     }
@@ -1165,6 +795,12 @@ fn screenshot(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::asset::RenderAssetUsages;
+    use bevy::camera::CameraProjection;
+    use bevy::color::Srgba;
+    use bevy::math::{DMat4, DQuat, DVec3, DVec4};
+    use bevy::render::render_resource::TextureFormat;
+    use frame::{BEVY_FROM_GL, FrameFile};
 
     fn parse(s: &str) -> Result<Args> {
         Args::parse(s.split_whitespace().map(String::from))
@@ -1174,6 +810,13 @@ mod tests {
     fn args_parse() {
         let a = parse("--at 0.5 --yaw 90 --screenshot /tmp/x.png --offscreen").unwrap();
         assert_eq!(a.at, Some(0.5));
+        assert_eq!(a.load_file, "009_Eruptor");
+        let sunburn = parse("--load-file 008_FireDragon --stock").unwrap();
+        assert_eq!(sunburn.load_file, "008_FireDragon");
+        for bad in ["../x", "a/b", "a.bld", ""] {
+            let e = Args::parse(["--load-file".to_owned(), bad.to_owned()].into_iter());
+            assert!(e.is_err(), "{bad:?}");
+        }
         assert_eq!(
             (a.yaw, a.frames, a.offscreen, a.stock, a.unlit, a.size),
             (90.0, 240, true, false, false, (1280, 720))
@@ -1417,7 +1060,7 @@ mod tests {
         let scene = rig.scene();
         assert!(scene.fog && !scene.shadows && scene.point_lights.is_empty());
         assert_eq!((scene.fog_near, scene.fog_far), (30.0, 300.0));
-        assert_eq!(scene.fog_colour, linear([128, 64, 32]));
+        assert_eq!(scene.fog_colour, remaster::linear([128, 64, 32]));
         assert_eq!(scene.lights, rig.lights);
 
         // No fog: the scene's fog is off, and with it the eye direction.
@@ -1438,6 +1081,30 @@ mod tests {
         assert!(serde_json::from_str::<FrameFile>(&past).is_err());
         let extra = frame_json("[0, 0, 1]", "null").replace("\"source\"", "\"sauce\"");
         assert!(serde_json::from_str::<FrameFile>(&extra).is_err());
+    }
+
+    #[test]
+    fn a_frame_files_idle_time_freezes_the_clip_unless_at_is_given() {
+        let timed = |t: &str| {
+            frame_json("[0, 0, 1]", "null")
+                .replace("\"lights\"", &format!("\"idle_time\": {t}, \"lights\""))
+        };
+        let file: FrameFile = serde_json::from_str(&timed("0.75")).unwrap();
+        assert_eq!(Rig::from_file(&file).unwrap().idle_time, Some(0.75));
+        let file: FrameFile = serde_json::from_str(&frame_json("[0, 0, 1]", "null")).unwrap();
+        assert_eq!(Rig::from_file(&file).unwrap().idle_time, None);
+        for bad in ["-0.5", "1e400"] {
+            // 1e400 is refused as it reads, -0.5 once it has.
+            if let Ok(file) = serde_json::from_str::<FrameFile>(&timed(bad)) {
+                assert!(Rig::from_file(&file).is_err(), "{bad}");
+            }
+        }
+        // `--at` wins over the frame's time, which wins over playing.
+        let file: FrameFile = serde_json::from_str(&timed("0.75")).unwrap();
+        let rig = Rig::from_file(&file).unwrap();
+        assert_eq!(parse("--at 0.5").unwrap().at.or(rig.idle_time), Some(0.5));
+        assert_eq!(parse("").unwrap().at.or(rig.idle_time), Some(0.75));
+        assert_eq!(parse("").unwrap().at.or(viewer_rig().idle_time), None);
     }
 
     #[test]
@@ -1466,7 +1133,7 @@ mod tests {
 
     #[test]
     fn the_viewers_light_follows_the_camera_from_where_it_was() {
-        let rig = Rig::viewer();
+        let rig = viewer_rig();
         let camera = Transform::from_translation(EYE).looking_at(TARGET, Vec3::Y);
         // At the default camera it shines from (2, 4, 5) at (0, 1, 0), as
         // hero_view's light did before AE.10.
@@ -1476,41 +1143,6 @@ mod tests {
         assert_eq!(rig.lights[1], shading::DirectionalLight::OFF);
         let scene = rig.scene();
         assert!(scene.fog && scene.fog_near > 1000.0);
-    }
-
-    #[test]
-    fn ir_samplers_map_to_bevys() {
-        let d = sampler(&Sampler {
-            wrap_u: Wrap::Repeat,
-            wrap_v: Wrap::Clamp,
-            mag: Filter::Linear,
-            min: Filter::Linear,
-            mip: Some(Filter::Linear),
-        });
-        assert_eq!(
-            (d.address_mode_u, d.address_mode_v),
-            (ImageAddressMode::Repeat, ImageAddressMode::ClampToEdge)
-        );
-        assert_eq!(
-            (d.mag_filter, d.min_filter, d.mipmap_filter, d.lod_max_clamp),
-            (
-                ImageFilterMode::Linear,
-                ImageFilterMode::Linear,
-                ImageFilterMode::Linear,
-                32.0
-            )
-        );
-        let flat = sampler(&Sampler {
-            wrap_u: Wrap::Clamp,
-            wrap_v: Wrap::Clamp,
-            mag: Filter::Nearest,
-            min: Filter::Nearest,
-            mip: None,
-        });
-        assert_eq!(
-            (flat.min_filter, flat.lod_max_clamp),
-            (ImageFilterMode::Nearest, 0.0)
-        );
     }
 
     #[test]
