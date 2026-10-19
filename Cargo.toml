@@ -64,9 +64,9 @@ opt-level = 3
 [profile.dev.package.openh264-sys2]
 opt-level = 3
 
-# FLIP's C++ (guac-oracle's frame comparison) at opt-level 0 took 16.9 s on the
-# reference's 1080p example pair, against 2.0 s optimized, and its error map
-# was off the reference's in the last bit at 1,665 pixels; optimized, it matches
-# bit for bit (AF.10).
+# FLIP's C++ (guac-oracle's frame comparison) at opt-level 0 took 7.1-8.5 s for
+# one FLIP of the reference's 1080p example pair, against 0.37 s at 3, and its
+# error map was off the reference's in the last bit at 1,665 pixels; at 3 it
+# matches bit for bit (AF.10).
 [profile.dev.package.nv-flip-sys]
 opt-level = 3

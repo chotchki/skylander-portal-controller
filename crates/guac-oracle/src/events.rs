@@ -151,7 +151,9 @@ impl EventReference {
     /// either side of the replays' earliest and latest. Past the prefix
     /// nothing is judged when the replays parted; when they didn't, an event
     /// beyond it is a mismatch. Comparison stops at the first wrong or missing
-    /// event, since every event after it is shifted.
+    /// event, since every event after it is shifted. A log carries no end
+    /// flip, so the candidate's has to cover the replays' window and no more:
+    /// an event it logged past their last flip counts as extra.
     pub fn check(&self, candidate: &EventLog, floor: u64) -> EventVerdict {
         let mut mismatches = Vec::new();
         let mut compared = 0;

@@ -59,6 +59,15 @@ pub enum MetricError {
     MaskSize { expected: usize, found: usize },
     #[error("pixels per degree must be finite and above 0, got {0}")]
     BadPixelsPerDegree(f32),
-    #[error("a frame band needs at least two replays, got {0}")]
-    TooFewFrames(usize),
+    #[error("FLIP gave {count} values that aren't finite at {pixels_per_degree} pixels per degree")]
+    FlipNotFinite {
+        count: usize,
+        pixels_per_degree: f32,
+    },
+    #[error("mean FLIP {index} must be finite and not negative, got {value}")]
+    BadFlipMean { index: usize, value: f64 },
+    #[error("this needs at least {needed} replays, got {found}")]
+    TooFewReplays { needed: usize, found: usize },
+    #[error("there's no replay {index} among {replays}")]
+    NoSuchReplay { index: usize, replays: usize },
 }

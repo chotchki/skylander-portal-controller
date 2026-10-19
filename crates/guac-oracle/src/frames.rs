@@ -185,16 +185,27 @@ pub fn flip(
     let (width, height) = reference.size();
     let r = nv_flip::FlipImageRgb8::with_data(width, height, &reference.rgb);
     let t = nv_flip::FlipImageRgb8::with_data(width, height, &test.rgb);
-    let map = nv_flip::flip(r, t, pixels_per_degree);
+    let values = nv_flip::flip(r, t, pixels_per_degree).to_vec();
+    // A tiny pixels per degree (1e-30, say) zeroes FLIP's filter sums and
+    // turns the whole map NaN; a NaN mean would read as no error downstream.
+    let count = values.iter().filter(|v| !v.is_finite()).count();
+    if count > 0 {
+        return Err(MetricError::FlipNotFinite {
+            count,
+            pixels_per_degree,
+        });
+    }
     Ok(FlipMap {
         width,
         height,
-        values: map.to_vec(),
+        values,
     })
 }
 
 /// The mean FLIP of every pair of N replays' frames at one checkpoint, the
-/// lower-indexed frame as the reference.
+/// lower-indexed frame as the reference. LDR-FLIP is symmetric bit for bit
+/// (the same filters on both images, then absolute and squared differences),
+/// so which one is the reference doesn't change a pair's mean.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct FlipMatrix {
     replays: usize,
@@ -205,7 +216,10 @@ pub struct FlipMatrix {
 impl FlipMatrix {
     pub fn of(frames: &[Frame], pixels_per_degree: f32) -> Result<Self, MetricError> {
         if frames.len() < 2 {
-            return Err(MetricError::TooFewFrames(frames.len()));
+            return Err(MetricError::TooFewReplays {
+                needed: 2,
+                found: frames.len(),
+            });
         }
         let mut pairs = Vec::with_capacity(frames.len() * (frames.len() - 1) / 2);
         for i in 0..frames.len() {
@@ -241,11 +255,23 @@ impl FlipMatrix {
     }
 
     /// Replay `i`'s means against every other replay, in replay order.
-    pub fn against(&self, i: usize) -> Vec<f64> {
-        (0..self.replays)
+    pub fn against(&self, i: usize) -> Result<Vec<f64>, MetricError> {
+        self.replay(i)?;
+        Ok((0..self.replays)
             .filter(|&j| j != i)
             .filter_map(|j| self.get(i, j))
-            .collect()
+            .collect())
+    }
+
+    fn replay(&self, index: usize) -> Result<(), MetricError> {
+        if index < self.replays {
+            Ok(())
+        } else {
+            Err(MetricError::NoSuchReplay {
+                index,
+                replays: self.replays,
+            })
+        }
     }
 
     /// The band a candidate that isn't one of the replays is judged against.
@@ -255,10 +281,17 @@ impl FlipMatrix {
 
     /// The band over the pairs that don't involve `left_out`: the envelope
     /// of the other replays, for leave-one-out. Needs three replays for a
-    /// pair to remain.
+    /// pair to remain. At floor 0 the two replays of the largest pair fail
+    /// their own leave-one-out by construction (each brings that pair, the
+    /// band without it doesn't have it), so a frame floor that passes
+    /// leave-one-out covers at least that pair's lead over the next largest.
     pub fn band_without(&self, left_out: usize) -> Result<FrameBand, MetricError> {
+        self.replay(left_out)?;
         if self.replays < 3 {
-            return Err(MetricError::TooFewFrames(self.replays.saturating_sub(1)));
+            return Err(MetricError::TooFewReplays {
+                needed: 3,
+                found: self.replays,
+            });
         }
         Ok(FrameBand::over(
             self.replays - 1,
@@ -288,10 +321,19 @@ impl FrameBand {
     /// `candidate_means` are the candidate's mean FLIP against each replay's
     /// frame; the largest counts, so every pair the candidate makes has to
     /// look like a pair the replays make, plus the floor.
+    /// A mean that isn't finite or is negative is refused: `f64::max` would
+    /// drop a NaN and pass the candidate.
     pub fn check(&self, candidate_means: &[f64], floor: f64) -> Result<FrameVerdict, MetricError> {
         crate::trace::check_tolerance("the frame floor", floor)?;
         if candidate_means.is_empty() {
             return Err(MetricError::NoReplays);
+        }
+        if let Some((index, &value)) = candidate_means
+            .iter()
+            .enumerate()
+            .find(|(_, v)| !(v.is_finite() && **v >= 0.0))
+        {
+            return Err(MetricError::BadFlipMean { index, value });
         }
         let worst = candidate_means.iter().copied().fold(0.0, f64::max);
         Ok(FrameVerdict {
@@ -474,6 +516,14 @@ mod tests {
                 Err(MetricError::BadPixelsPerDegree(_))
             ));
         }
+        // Positive and finite but small enough to turn FLIP's map NaN.
+        assert_eq!(
+            flip(&frame(1, 0), &frame(3, 40), 1e-30),
+            Err(MetricError::FlipNotFinite {
+                count: (W * H) as usize,
+                pixels_per_degree: 1e-30
+            })
+        );
     }
 
     #[test]
@@ -486,7 +536,7 @@ mod tests {
         assert_eq!(matrix.get(3, 1), matrix.get(1, 3));
         assert_eq!(matrix.get(2, 2), None);
         assert_eq!(matrix.get(0, 5), None);
-        assert_eq!(matrix.against(4).len(), 4);
+        assert_eq!(matrix.against(4).unwrap().len(), 4);
         let band = matrix.band();
         assert!(band.replay_max > 0.0);
 
@@ -520,9 +570,55 @@ mod tests {
         let verdict = matrix
             .band_without(5)
             .unwrap()
-            .check(&matrix.against(5), 0.0)
+            .check(&matrix.against(5).unwrap(), 0.0)
             .unwrap();
         assert!(!verdict.passed());
+    }
+
+    #[test]
+    fn flip_is_symmetric_so_a_pair_needs_one_order() {
+        let ppd = reference_pixels_per_degree();
+        let (a, b) = (frame(1, 0), frame(3, 40));
+        let ab = flip(&a, &b, ppd).unwrap();
+        let ba = flip(&b, &a, ppd).unwrap();
+        assert!(
+            ab.values()
+                .iter()
+                .zip(ba.values())
+                .all(|(x, y)| x.to_bits() == y.to_bits())
+        );
+    }
+
+    #[test]
+    fn at_floor_zero_the_largest_pairs_replays_fail_their_leave_one_out() {
+        let ppd = reference_pixels_per_degree();
+        let replays: Vec<Frame> = (40..46).map(|s| frame(s, 3)).collect();
+        let matrix = FlipMatrix::of(&replays, ppd).unwrap();
+        let &(i, j, top) = matrix
+            .pairs()
+            .iter()
+            .max_by(|x, y| x.2.total_cmp(&y.2))
+            .unwrap();
+        let fails: Vec<usize> = (0..replays.len())
+            .filter(|&r| {
+                let band = matrix.band_without(r).unwrap();
+                !band
+                    .check(&matrix.against(r).unwrap(), 0.0)
+                    .unwrap()
+                    .passed()
+            })
+            .collect();
+        assert!(
+            fails.contains(&i) && fails.contains(&j),
+            "{fails:?} {i} {j}"
+        );
+        // A floor of the top pair's lead over the band without one of its
+        // replays lets that replay through.
+        let band = matrix.band_without(i).unwrap();
+        let floor = (top - band.replay_max) * (1.0 + 1e-9);
+        assert!(floor > 0.0);
+        let verdict = band.check(&matrix.against(i).unwrap(), floor).unwrap();
+        assert!(verdict.passed(), "{verdict:?}");
     }
 
     #[test]
@@ -530,14 +626,46 @@ mod tests {
         let ppd = reference_pixels_per_degree();
         assert_eq!(
             FlipMatrix::of(&[frame(1, 0)], ppd),
-            Err(MetricError::TooFewFrames(1))
+            Err(MetricError::TooFewReplays {
+                needed: 2,
+                found: 1
+            })
         );
         let two = FlipMatrix::of(&[frame(1, 1), frame(2, 1)], ppd).unwrap();
-        assert_eq!(two.band_without(0), Err(MetricError::TooFewFrames(1)));
+        assert_eq!(
+            two.band_without(0),
+            Err(MetricError::TooFewReplays {
+                needed: 3,
+                found: 2
+            })
+        );
         assert!(matches!(
             two.band().check(&[0.1], -0.5),
             Err(MetricError::BadTolerance { .. })
         ));
         assert_eq!(two.band().check(&[], 0.0), Err(MetricError::NoReplays));
+        // A NaN mean would vanish into the max and pass; it's refused.
+        for bad in [f64::NAN, f64::INFINITY, -0.1] {
+            assert!(matches!(
+                two.band().check(&[0.01, bad], 1.0),
+                Err(MetricError::BadFlipMean { index: 1, .. })
+            ));
+        }
+        // A replay index past the matrix is refused, not read as "no pairs".
+        let three = FlipMatrix::of(&[frame(1, 1), frame(2, 1), frame(3, 1)], ppd).unwrap();
+        assert_eq!(
+            three.band_without(3),
+            Err(MetricError::NoSuchReplay {
+                index: 3,
+                replays: 3
+            })
+        );
+        assert_eq!(
+            three.against(7),
+            Err(MetricError::NoSuchReplay {
+                index: 7,
+                replays: 3
+            })
+        );
     }
 }

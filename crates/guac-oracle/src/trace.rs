@@ -271,9 +271,16 @@ impl Envelope {
 
     /// Where the replays stop agreeing: a checkpoint agrees when every
     /// component's spread there is at most `floor` (0 asks for identical
-    /// values, as the RNG's state does).
+    /// values, as the RNG's state does). Needs two replays: one has no spread,
+    /// so it would read as holding to the end.
     pub fn horizon(&self, floor: f64) -> Result<Horizon, MetricError> {
         check_tolerance("the horizon floor", floor)?;
+        if self.replays < 2 {
+            return Err(MetricError::TooFewReplays {
+                needed: 2,
+                found: self.replays,
+            });
+        }
         Horizon::from_agreement(
             self.checkpoints
                 .iter()
@@ -727,6 +734,15 @@ mod tests {
         assert!(wide.held_throughout());
         // Identical values only (floor 0): the same parting.
         assert_eq!(usable_horizon(&traces, 0.0).unwrap().parted_at, Some(300));
+        // One replay has no spread to part on, so it has no horizon (its
+        // envelope still checks a candidate, at the floor alone).
+        assert_eq!(
+            usable_horizon(&traces[..1], 0.0),
+            Err(MetricError::TooFewReplays {
+                needed: 2,
+                found: 1
+            })
+        );
         // The envelope cut to the horizon passes every replay against the
         // others' envelope at the floor alone; past it, replay 9 fails.
         let envelope = Envelope::from_traces(&traces[..9]).unwrap();
