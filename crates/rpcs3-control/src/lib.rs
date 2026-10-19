@@ -13,9 +13,7 @@ use std::time::Duration;
 use anyhow::Result;
 #[cfg(not(windows))]
 use anyhow::bail;
-use skylander_core::{
-    Element, FigureId, MaskedVariant, SLOT_COUNT, SlotIndex, SlotState, ToyTypeId,
-};
+use skylander_core::{Element, FigureId, SLOT_COUNT, SlotIndex, SlotState, SubtypeWord, ToyTypeId};
 
 /// A figure placed by identity, with no `.sky` file behind it (openspec AA,
 /// design decision 4): what a driver without an emulator gets instead of a path.
@@ -24,10 +22,11 @@ pub struct Placement {
     pub figure_id: FigureId,
     /// Parsed from `figure_id`, so callers key on the tag, not the id string.
     pub toy_type: ToyTypeId,
-    pub variant: MaskedVariant,
+    pub variant: SubtypeWord,
     pub name: String,
     pub element: Option<Element>,
-    /// `data/images/<id>/thumb.png` when it exists. Server-private.
+    /// The figure's portrait in the extract, `portraits/<id>.png`, when the
+    /// disc has one. Server-private.
     pub portrait: Option<PathBuf>,
     /// The placing profile; `None` when no profile was unlocked.
     pub owner: Option<PlacementOwner>,
@@ -464,7 +463,7 @@ mod place_default_tests {
 
     fn eruptor() -> Placement {
         let figure_id = FigureId::new("000009-0000");
-        let (toy_type, variant) = figure_id.tag_parts().unwrap();
+        let (toy_type, variant) = figure_id.subtype_parts().unwrap();
         Placement {
             figure_id,
             toy_type,

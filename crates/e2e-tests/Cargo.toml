@@ -20,6 +20,8 @@ guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }
 # through guac-extract's own code so guacamole finds them current.
 guac-extract = { path = "../guac-extract" }
 guac-ir = { path = "../guac-ir" }
+# The fixture roster's flat-colour portraits (AE.4); bevy_image's copy.
+image = { version = "0.25", default-features = false, features = ["png"] }
 which = "6"
 once_cell = "1"
 tracing = { workspace = true }

@@ -109,7 +109,8 @@ fn dev_env_overrides_the_stored_settings() {
     assert!(!loaded.needs_setup());
     assert_eq!(loaded.config.bind_port, 9123);
     assert_eq!(loaded.config.phone_dist_dir, PathBuf::from("/x/phone"));
-    assert_eq!(loaded.config.data_root, PathBuf::from("/x/data"));
+    // DATA_ROOT is the product's: guacamole reads nothing under it (AE.4).
+    assert!(loaded.config.data_root.as_os_str().is_empty());
     assert_eq!(loaded.config.window_mode, WindowMode::Desktop);
     assert!(loaded.config.rpcs3_exe.as_os_str().is_empty());
     assert_eq!(loaded.ffmpeg, Some(PathBuf::from("/x/ffmpeg")));
@@ -365,6 +366,30 @@ fn request(addr: SocketAddr, key: &[u8], method: &str, path: &str, body: &str) -
     response
 }
 
+/// A signed GET whose body may not be text: (status line and headers, body).
+fn request_bytes(addr: SocketAddr, key: &[u8], path: &str) -> (String, Vec<u8>) {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let sig = hex::encode(crate::http::compute_hmac(key, ts, "GET", path, b""));
+    let mut stream = std::net::TcpStream::connect(addr).unwrap();
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: {addr}\r\nX-Skyportal-Timestamp: {ts}\r\n\
+         X-Skyportal-Sig: {sig}\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).unwrap();
+    let split = response
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .expect("a header end");
+    let head = String::from_utf8(response[..split].to_vec()).unwrap();
+    (head, response[split + 4..].to_vec())
+}
+
 #[test]
 fn a_boot_beside_the_product_root_leaves_it_byte_identical() {
     let tmp = tempfile::tempdir().unwrap();
@@ -375,21 +400,16 @@ fn a_boot_beside_the_product_root_leaves_it_byte_identical() {
     let db_before = std::fs::read(product.join("db.sqlite")).unwrap();
     let root = product.join("guacamole");
 
-    let data = tmp.path().join("data");
-    std::fs::create_dir_all(&data).unwrap();
-    std::fs::write(
-        data.join("figures.json"),
-        r#"[{"figure_id": "000009-0000", "alignment": "Core Skylander",
-             "attributes": {"name": "Eruptor", "element": "Fire",
-                            "firstrelease": "Skylanders: Spyro's Adventure"}}]"#,
-    )
-    .unwrap();
+    // No `data/` anywhere (AE.4): the figures wait for the roster and the
+    // game's art is the dump's own icon.
     let discs = tmp.path().join("discs");
-    giants_dump(&discs.join("Skylanders Giants"));
+    let giants = discs.join("Skylanders Giants");
+    giants_dump(&giants);
+    let icon = b"\x89PNG\r\n\x1a\nsynthetic icon".to_vec();
+    std::fs::write(giants.join("PS3_GAME/ICON0.PNG"), &icon).unwrap();
     let env: HashMap<String, String> = [
         ("GUAC_DUMP_DIRS", discs.to_str().unwrap().to_string()),
         ("BIND_PORT", ephemeral_port().to_string()),
-        ("DATA_ROOT", data.to_str().unwrap().to_string()),
         (
             "PHONE_DIST",
             tmp.path().join("dist").to_str().unwrap().to_string(),
@@ -414,7 +434,10 @@ fn a_boot_beside_the_product_root_leaves_it_byte_identical() {
         }),
         hooks: Hooks::default(),
         extra_routes: None,
-        catalogue: Catalogue::Native { games },
+        catalogue: Catalogue::Native {
+            games,
+            roster: crate::figures::RosterState::Reading,
+        },
         bind_ip: Some(Ipv4Addr::LOCALHOST),
     })
     .unwrap();
@@ -434,6 +457,19 @@ fn a_boot_beside_the_product_root_leaves_it_byte_identical() {
     assert!(profiles.ends_with("[]"), "{profiles}");
     let games = request(addr, &key, "GET", "/api/games", "");
     assert!(games.contains(GIANTS_TITLE_ID), "{games}");
+    assert!(
+        !games.contains("ICON0"),
+        "a path reached the phone: {games}"
+    );
+    let art = format!("/api/games/{GIANTS_TITLE_ID}/image");
+    let (head, body) = request_bytes(addr, &key, &art);
+    assert!(head.starts_with("HTTP/1.1 200"), "{head}");
+    assert_eq!(body, icon);
+    let figures = request(addr, &key, "GET", "/api/figures", "");
+    assert!(figures.ends_with("[]"), "{figures}");
+    std::fs::remove_file(giants.join("PS3_GAME/ICON0.PNG")).unwrap();
+    let (head, _) = request_bytes(addr, &key, &art);
+    assert!(head.starts_with("HTTP/1.1 404"), "{head}");
 
     // The controller's key doesn't pair with guacamole; its own does.
     let body = r##"{"display_name":"Kid","pin":"1234","color":"#ff00aa"}"##;

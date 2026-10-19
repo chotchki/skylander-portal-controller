@@ -114,13 +114,21 @@ impl TestServer {
     }
 
     /// guacamole with no firmware pack or RPCS3: `GUAC_DUMP_DIRS` points at
-    /// one synthetic dump per title id, each just a `PS3_GAME/PARAM.SFO`
-    /// built in code (AA never reads anything else on a dump). Its window
-    /// opens desktop-sized unless `extra_env` says otherwise.
+    /// one synthetic dump per title id, each a `PS3_GAME/PARAM.SFO` built in
+    /// code. Giants' is an [`IntroFixture`] with no intros, so its roster
+    /// ([`E2E_ROSTER`]) is current at start (AE.4). Its window opens
+    /// desktop-sized unless `extra_env` says otherwise.
     pub fn spawn_guacamole(title_ids: &[&str], extra_env: &str) -> Result<Self> {
         let tmp = tempfile::tempdir().context("create temp dir")?;
-        let dumps = tmp.path().join("dumps");
-        for title_id in title_ids {
+        let mut env = String::new();
+        let dumps = if title_ids.contains(&GIANTS_SERIAL) {
+            let fixture = IntroFixture::build_in(&tmp.path().join("giants"), &[])?;
+            env = fixture.env();
+            fixture.dumps.clone()
+        } else {
+            tmp.path().join("dumps")
+        };
+        for title_id in title_ids.iter().filter(|t| **t != GIANTS_SERIAL) {
             let game = dumps.join(title_id).join("PS3_GAME");
             std::fs::create_dir_all(&game)?;
             let sfo = guac_formats::sfo::builder::SfoBuilder::disc_game(title_id, "01.00", "01.00")
@@ -128,31 +136,26 @@ impl TestServer {
             std::fs::write(game.join("PARAM.SFO"), sfo)?;
         }
         std::fs::create_dir_all(&dumps)?;
-        Self::spawn_guacamole_over(tmp, &dumps, extra_env)
+        env.push_str(extra_env);
+        Self::spawn_guacamole_over(tmp, &dumps, &env)
     }
 
     /// guacamole over `fixture`'s Giants dump and finished extract, the dump
     /// trusted through `GUAC_TEST_KNOWN_DUMP` (openspec AB.11).
     pub fn spawn_guacamole_with_intros(fixture: &IntroFixture) -> Result<Self> {
         let tmp = tempfile::tempdir().context("create temp dir")?;
-        let env = format!(
-            "GUAC_EXTRACT_DIR={}\nGUAC_TEST_KNOWN_DUMP={}\n",
-            fixture.extract.display(),
-            fixture.known
-        );
-        Self::spawn_guacamole_over(tmp, &fixture.dumps, &env)
+        Self::spawn_guacamole_over(tmp, &fixture.dumps, &fixture.env())
     }
 
     fn spawn_guacamole_over(tmp: TempDir, dumps: &Path, extra_env: &str) -> Result<Self> {
         let repo = repo_root()?;
         let phone_dist = built_phone_dist(&repo)?;
         let port = pick_free_port()?;
-        // DATA_ROOT: the interim catalogue reads figures.json and the portraits.
+        // No DATA_ROOT: guacamole reads no wiki data (AE.4).
         let mut env = format!(
-            "BIND_PORT={port}\nPHONE_DIST={phone}\nGUAC_DUMP_DIRS={dumps}\nDATA_ROOT={data}\nWINDOW_MODE=desktop\n",
+            "BIND_PORT={port}\nPHONE_DIST={phone}\nGUAC_DUMP_DIRS={dumps}\nWINDOW_MODE=desktop\n",
             phone = phone_dist.display(),
             dumps = dumps.display(),
-            data = repo.join("data").display(),
         );
         env.push_str(extra_env);
         std::fs::write(tmp.path().join(".env.dev"), env)?;
@@ -1326,14 +1329,73 @@ pub struct FixtureIntro {
     pub seconds: u32,
 }
 
-/// A synthetic Giants dump and a finished extract of it, for guacamole's
-/// intro tests (openspec AB.11). No game bytes: the dump is a PARAM.SFO and a
-/// text file, and each intro is ffmpeg's `testsrc` picture over a `sine` tone,
-/// encoded at run time to guacamole's own target. guacamole trusts the dump
-/// through `GUAC_TEST_KNOWN_DUMP` ([`TestServer::spawn_guacamole_with_intros`])
-/// and finds the extract current, so it runs no ffmpeg itself.
+/// One figure of [`E2E_ROSTER`].
+#[derive(Debug, Clone, Copy)]
+pub struct FixtureFigure {
+    pub toy_type: u32,
+    /// The subtype word; 0 on a base.
+    pub variant: u16,
+    pub name: &'static str,
+    /// The disc's variant word, on a variant.
+    pub word: Option<&'static str>,
+    pub element: Option<guac_ir::Element>,
+    pub category: guac_ir::Category,
+    /// A Spyro's Adventure toy.
+    pub sky1: bool,
+}
+
+const fn fig(
+    toy_type: u32,
+    name: &'static str,
+    element: Option<guac_ir::Element>,
+    category: guac_ir::Category,
+    sky1: bool,
+) -> FixtureFigure {
+    FixtureFigure {
+        toy_type,
+        variant: 0,
+        name,
+        word: None,
+        element,
+        category,
+        sky1,
+    }
+}
+
+/// The roster every guacamole e2e run's extract holds (AE.4): each figure the
+/// tests place, by name or toy type, under its disc id, plus one variant. Ids,
+/// names and elements as the 01.00 disc gives them; written in code, no disc
+/// bytes.
+pub const E2E_ROSTER: &[FixtureFigure] = {
+    use guac_ir::Category::{Figure, Giant, Item};
+    use guac_ir::Element::{Air, Earth, Fire, Life, Magic, Tech, Water};
+    &[
+        fig(0x04, "Bash", Some(Earth), Figure, true),
+        fig(0x09, "Eruptor", Some(Fire), Figure, true),
+        fig(0x0a, "Ignitor", Some(Fire), Figure, true),
+        FixtureFigure {
+            variant: 0x0403,
+            word: Some("Legendary"),
+            ..fig(0x0a, "Ignitor", Some(Fire), Figure, true)
+        },
+        fig(0x0e, "Gill Grunt", Some(Water), Figure, true),
+        fig(0x10, "Spyro", Some(Magic), Figure, true),
+        fig(0x13, "Trigger Happy", Some(Tech), Figure, true),
+        fig(0x64, "Jet-Vac", Some(Air), Figure, false),
+        fig(0x70, "Tree Rex", Some(Life), Giant, false),
+        fig(0xcd, "Sky-Iron Shield", None, Item, true),
+    ]
+};
+
+/// A synthetic Giants dump and a finished extract of it (openspec AB.11,
+/// AE.4): [`E2E_ROSTER`] with a flat-colour portrait each and the intros asked
+/// for. No game bytes: the dump is a PARAM.SFO and a text file, and each
+/// intro is ffmpeg's `testsrc` picture over a `sine` tone, encoded at run time
+/// to guacamole's own target. guacamole trusts the dump through
+/// `GUAC_TEST_KNOWN_DUMP` and finds the extract current, so it runs no ffmpeg
+/// itself and lists the roster from the start.
 pub struct IntroFixture {
-    _dir: TempDir,
+    _dir: Option<TempDir>,
     /// What `GUAC_DUMP_DIRS` names: holds `BLUS30968/PS3_GAME`.
     pub dumps: PathBuf,
     /// `GUAC_EXTRACT_DIR`.
@@ -1343,14 +1405,31 @@ pub struct IntroFixture {
 }
 
 impl IntroFixture {
+    /// In a temp dir of its own, dropped with the fixture.
     pub fn build(intros: &[FixtureIntro]) -> Result<Self> {
+        let dir = tempfile::tempdir().context("create fixture dir")?;
+        let mut fixture = Self::build_in(dir.path(), intros)?;
+        fixture._dir = Some(dir);
+        Ok(fixture)
+    }
+
+    /// The `.env.dev` lines that point guacamole at it.
+    pub fn env(&self) -> String {
+        format!(
+            "GUAC_EXTRACT_DIR={}\nGUAC_TEST_KNOWN_DUMP={}\n",
+            self.extract.display(),
+            self.known
+        )
+    }
+
+    /// Under `dir`, which must outlive the run (a server's own temp dir).
+    pub fn build_in(dir: &Path, intros: &[FixtureIntro]) -> Result<Self> {
         use guac_extract::intros::{self, IrFormat};
         use guac_extract::known::KnownDump;
         use guac_extract::transcode::TARGET;
         use guac_ir::{Character, CharacterTable, Intro, IntroSource, VoiceTrack};
 
-        let dir = tempfile::tempdir().context("create fixture dir")?;
-        let dumps = dir.path().join("dumps");
+        let dumps = dir.join("dumps");
         let game = dumps.join(GIANTS_SERIAL);
         let usrdir = game.join("PS3_GAME").join("USRDIR");
         std::fs::create_dir_all(&usrdir)?;
@@ -1368,7 +1447,7 @@ impl IntroFixture {
             manifest_hash: Box::leak(hash.clone().into_boxed_str()),
             source: "e2e fixture",
         };
-        let extract = dir.path().join("extract");
+        let extract = dir.join("extract");
         let root = guac_extract::ExtractRoot::checked(&extract)?;
         let mut opened = guac_extract::open(&game, &root, &[known], &|_| {})?;
 
@@ -1394,10 +1473,17 @@ impl IntroFixture {
         };
         // A test-hooks build is a dev build, which reads RON.
         intros::write(&mut opened.dir, &table, IrFormat::Ron)?;
+        write_roster(&mut opened.dir)?;
 
-        let ffmpeg = guac_extract::ffmpeg::Ffmpeg::locate(None)
-            .context("the intro fixture encodes with ffmpeg (`brew install ffmpeg`)")?;
-        for i in intros {
+        // Only the intros need ffmpeg.
+        let ffmpeg = match intros {
+            [] => None,
+            _ => Some(
+                guac_extract::ffmpeg::Ffmpeg::locate(None)
+                    .context("the intro fixture encodes with ffmpeg (`brew install ffmpeg`)")?,
+            ),
+        };
+        for (i, ffmpeg) in intros.iter().filter_map(|i| Some((i, ffmpeg.as_ref()?))) {
             let (video, audio) = TARGET.outputs(i.movie);
             let s = i.seconds;
             let jobs = [
@@ -1432,12 +1518,65 @@ impl IntroFixture {
         }
         opened.dir.mark_complete()?;
         Ok(Self {
-            _dir: dir,
+            _dir: None,
             dumps,
             extract,
             known: format!("{GIANTS_SERIAL} 01.00 {hash}"),
         })
     }
+}
+
+/// [`E2E_ROSTER`] into the extract as the roster stage leaves it: the IR, then
+/// a 16x16 flat-colour PNG per figure.
+fn write_roster(dir: &mut guac_extract::IdentityDir) -> Result<()> {
+    use guac_extract::intros::IrFormat;
+    use guac_ir::{FigureKind, Language, Roster, RosterFigure, Text};
+
+    let text = |key: &str, en: &str| Text {
+        key: key.into(),
+        texts: vec![en.into()],
+    };
+    let figures: Vec<RosterFigure> = E2E_ROSTER
+        .iter()
+        .map(|f| RosterFigure {
+            toy_type: f.toy_type,
+            variant: f.variant,
+            kind: match f.variant {
+                0 => FigureKind::Base,
+                _ => FigureKind::Alt,
+            },
+            deco: (f.variant != 0).then_some(f.variant as u8),
+            name: text(&format!("{:03}_Toy_Name", f.toy_type), f.name),
+            variant_word: f.word.map(|w| text("ToyType_Variant", w)),
+            element: f.element,
+            category: f.category,
+            load_file: format!("{:03}_e2e", f.toy_type),
+            portrait: Some(format!(
+                "portraits/{:06x}-{:04x}.png",
+                f.toy_type, f.variant
+            )),
+            sky1: f.sky1,
+        })
+        .collect();
+    let roster = Roster {
+        identity: dir.manifest().identity.clone(),
+        languages: vec![Language {
+            id: guac_ir::roster::ENGLISH,
+            name: "ENGLISH".into(),
+        }],
+        figures,
+    };
+    let ir = IrFormat::Ron;
+    let bytes = ir.encode(&roster, dir, ir.roster_path())?;
+    dir.write_output(ir.roster_path(), &bytes)?;
+    for f in &roster.figures {
+        let shade = (f.toy_type % 200) as u8;
+        let image = image::RgbaImage::from_pixel(16, 16, image::Rgba([shade, 96, 200, 255]));
+        let mut png = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut png, image::ImageFormat::Png)?;
+        dir.write_output(f.portrait.as_deref().unwrap(), png.get_ref())?;
+    }
+    Ok(())
 }
 
 /// Skips the intro the TV is playing, as a key would (`/api/_test/tv/skip`).

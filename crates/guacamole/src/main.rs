@@ -36,6 +36,7 @@ use crossbeam_channel::{Receiver, Sender};
 use guac_extract::known::KnownDump;
 use guac_server::boot::{BootOptions, BuiltDriver, Catalogue, ServerHandles, boot};
 use guac_server::config::{DriverKind, WindowMode};
+use guac_server::figures::RosterState;
 use guac_server::hooks::Hooks;
 use guac_server::logging::WorkerGuard;
 use guac_server::state::{LauncherScreen, LauncherStatus};
@@ -123,14 +124,15 @@ fn main() -> Result<()> {
         "starting guacamole",
     );
     let setup_view = SetupView::at_start(picked, needs_setup, &loaded.dump_dirs, &scan);
-    let job = ExtractJob {
+    let mut job = ExtractJob {
         test_known: test_known_dump(),
-        ..ExtractJob::new(
-            &root,
-            loaded.extract_dir.clone(),
-            loaded.ffmpeg.clone(),
-            cfg.data_root.clone(),
-        )
+        ..ExtractJob::new(&root, loaded.extract_dir.clone(), loaded.ffmpeg.clone())
+    };
+    // No figures until the disc's roster lands (AE.4); without a Giants dump
+    // there's none to read.
+    let roster = match scan.offered() {
+        Some(_) => RosterState::Reading,
+        None => RosterState::Unrecognized,
     };
 
     let link = match boot(BootOptions {
@@ -142,14 +144,19 @@ fn main() -> Result<()> {
         extra_routes: test_routes(&mirror),
         catalogue: Catalogue::Native {
             games: scan.games(),
+            roster,
         },
         bind_ip: None,
     }) {
         Ok(server) => {
             keep_pairing_key(&root, &server, &cfg.hmac_key);
+            job.figures = Some(server.figures.clone());
+            if let Some(giants) = scan.offered() {
+                extraction::preload_roster(giants.dir.clone(), job.clone());
+            }
             link_to(&server)
         }
-        // A missing figures.json: show it rather than exit silently.
+        // Show it rather than exit silently.
         Err(e) => {
             tracing::error!("boot failed: {e:#}");
             failed_link(format!("{e:#}"))

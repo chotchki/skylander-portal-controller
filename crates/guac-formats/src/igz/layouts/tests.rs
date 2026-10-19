@@ -72,6 +72,29 @@ fn the_table_is_closed_and_tagged() {
         TextureBindAttr2::TYPE,
         AlphaTextureUnitIdAttr::TYPE,
         TextureAttr2::TYPE,
+        StringInfo::TYPE,
+        ValueInfo::TYPE,
+        ScriptSet::TYPE,
+        ScriptSetList::TYPE,
+        DirectionalLightInfo::TYPE,
+        LanguagePackInfo::TYPE,
+        SpriteInfo::TYPE,
+        AnimatableTextureDataInfo::TYPE,
+        RootList::TYPE,
+        OpCode::TYPE,
+        ScriptInfo::TYPE,
+        OpCodeList::TYPE,
+        OpUseMacro::TYPE,
+        OpMacroInterface::TYPE,
+        OpDefineMacro::TYPE,
+        Variable::TYPE,
+        OpMacroParameter::TYPE,
+        OpChangeMembership::TYPE,
+        OpLoopValue::TYPE,
+        Stack::TYPE,
+        RhsValueStack::TYPE,
+        RhsReferenceStack::TYPE,
+        ValueRhsVariant::TYPE,
     ];
     for r in readers {
         assert!(type_def(r).is_some(), "{r} has no TypeDef");
@@ -887,4 +910,387 @@ fn the_sample_carries_every_marker_kind_the_layouts_read() {
     ] {
         assert!(igz.record(k).is_some(), "kind {k:#x}");
     }
+}
+
+fn scripted() -> (super::builder::ScriptSample, Vec<u8>) {
+    let s = super::builder::script_sample();
+    let bytes = s.bytes.clone();
+    (s, bytes)
+}
+
+#[test]
+fn roster_script_objects_read_back() {
+    let (s, bytes) = scripted();
+    let igz = Igz::parse(&bytes).unwrap();
+    let key = StringInfo::read(&igz, index(&igz, s.string_info)).unwrap();
+    assert_eq!(
+        key,
+        StringInfo {
+            name: Some("ItemName_Anvil"),
+            unicode_text: 0,
+            flags: 7,
+            integer_digits: 3,
+            decimal_digits: -2,
+        }
+    );
+
+    let value = ValueInfo::read(&igz, index(&igz, s.value_info)).unwrap();
+    assert_eq!(value.name, Some("ElementIndex_Fire"));
+    assert_eq!((value.reset_value, value.value), (-4, 5));
+    // An unflagged kind-0x10 word names its EXNM entry.
+    assert!(matches!(
+        value.value_type,
+        TypeRef::Indexed { index: 0, .. }
+    ));
+    assert_eq!(value.value_type.metaobject(), Some("IntMeasurement"));
+
+    let set = ScriptSet::read(&igz, index(&igz, s.set)).unwrap();
+    assert_eq!(set.name, Some("Element_Values"));
+    assert_eq!(set.list, Some(index(&igz, s.set_list)));
+    let list = ScriptSetList::read(&igz, set.list.unwrap()).unwrap();
+    assert_eq!(list.list.count, 3);
+    assert_eq!(
+        list.elements[0],
+        ObjectRef::Object(index(&igz, s.value_info))
+    );
+    let ObjectRef::Import(import) = list.elements[1] else {
+        panic!("{:?}", list.elements[1])
+    };
+    assert!(import.id.is("global.bld", "Minion_Names"));
+    assert_eq!(list.elements[2], ObjectRef::Null);
+    assert!(matches!(list.edit_type, TypeRef::Named { index: 0, .. }));
+    assert_eq!(list.edit_type.metaobject(), Some("IntMeasurement"));
+    assert_eq!((list.properties, list.next_history), (0x11, 0x22));
+
+    let light = DirectionalLightInfo::read(&igz, index(&igz, s.light)).unwrap();
+    assert_eq!(light.name, Some("_spriteLight1"));
+    assert_eq!(
+        (light.diffuse, light.ambient, light.specular),
+        ([80, 78, 66, 255], [21, 21, 21, 255], [145, 145, 145, 255])
+    );
+    assert_eq!(light.multiplier, 1.0);
+    assert_eq!(
+        light.init_matrix,
+        EulerTransform {
+            position: [1.0, 2.0, 3.0],
+            rotation: [-45.0, 0.0, 30.0],
+        }
+    );
+
+    let pack = LanguagePackInfo::read(&igz, index(&igz, s.pack)).unwrap();
+    assert_eq!(pack.info.name, Some("ENGLISH"));
+    assert!(pack.info.resolve_state);
+    assert_eq!(pack.lang_id, 6);
+    assert_eq!(
+        pack.string_dict.unwrap().data,
+        [0, 0x61, 0, 0, 0, 0x62, 0, 0]
+    );
+}
+
+#[test]
+fn a_portrait_sprite_reads_back_to_its_image() {
+    let (s, bytes) = scripted();
+    let igz = Igz::parse(&bytes).unwrap();
+    let sprite = SpriteInfo::read(&igz, index(&igz, s.sprite)).unwrap();
+    let p = &sprite.placement;
+    assert_eq!(p.name, Some("Collection_MinionIcon_009"));
+    assert!(matches!(p.tag_list, ObjectRef::Named { .. }));
+    assert_eq!((p.flag_pool, p.id), (0x8000_0001, 42));
+    assert_eq!(p.init_matrix.position, [1.0, 2.0, 3.0]);
+    assert_eq!(p.init_matrix.rotation, [4.0, 5.0, 6.0]);
+    assert_eq!(p.current_matrix.rotation, [10.0, 11.0, 12.0]);
+    assert_eq!(p.attach_xform.position, [13.0, 14.0, 15.0]);
+    assert_eq!((p.activity_state, p.move_index), (5, -1));
+    assert_eq!(
+        p.attached_objects,
+        ObjectRef::Object(index(&igz, s.string_info))
+    );
+    assert!(matches!(p.reset_template, ObjectRef::Import(_)));
+    assert_eq!(p.clones, ObjectRef::Null);
+    assert_eq!(p.active_time_layer, 9);
+    assert_eq!(
+        (sprite.flags, sprite.position, sprite.properties),
+        (0x1800_0000, [-16, 32], 0x2001_4408)
+    );
+    assert_eq!(
+        (sprite.z_depth, sprite.priority, sprite.width, sprite.height),
+        (0.5, -3.0, 256.0, 128.0)
+    );
+    assert_eq!(sprite.scale, [1.0, 2.0, 3.0]);
+    assert_eq!(
+        (sprite.color, sprite.replace_color),
+        ([0x80, 0x81, 0x82, 0xFF], [1, 2, 3, 0])
+    );
+    assert_eq!(
+        sprite.string_info,
+        ObjectRef::Object(index(&igz, s.string_info))
+    );
+    assert_eq!((sprite.num_value, sprite.depth), (77, 100.0));
+    assert_eq!(sprite.game_trans, ObjectRef::Null);
+
+    let data_index = sprite.texture_data(&igz).unwrap();
+    assert_eq!(data_index, index(&igz, s.texture_data));
+    let data = AnimatableTextureDataInfo::read(&igz, data_index).unwrap();
+    assert_eq!(data.data_info.info.name, Some("portraits/eruptor.png"));
+    assert_eq!(data.data_info.stream_archive_hash, 0x77);
+    assert_eq!(
+        (data.desired_width, data.desired_height, data.updated_count),
+        (256, 128, 3)
+    );
+    assert_eq!(data.loader, ObjectRef::Null);
+    assert_eq!(data.tex_attr, Some(index(&igz, s.bind)));
+    let bind = AlphaTextureUnitIdAttr::read(&igz, data.tex_attr.unwrap()).unwrap();
+    let texture = TextureAttr2::read(&igz, bind.bind.texture.unwrap()).unwrap();
+    assert_eq!(texture.image, Some(index(&igz, s.image)));
+    // A text sprite's context isn't a texture.
+    let (mut b, sprite) = one("tfbSpriteInfo", 0xE4);
+    let key = b.object(0, "StringInfo", 0x28);
+    b.pointer(at(sprite, 0xD0), key);
+    let bytes = b.build();
+    let igz = Igz::parse(&bytes).unwrap();
+    assert_eq!(SpriteInfo::read(&igz, 0).unwrap().texture_data(&igz), None);
+}
+
+#[test]
+fn texture_data_binds_only_a_texture_bind() {
+    let (mut b, data) = one("AnimatableTextureDataInfo", 0x34);
+    b.null_memory_ref(at(data, 0x14), 0);
+    let key = b.object(0, "StringInfo", 0x28);
+    b.pointer(at(data, 0x30), key);
+    let bytes = b.build();
+    let igz = Igz::parse(&bytes).unwrap();
+    assert_eq!(
+        wrong_type(AnimatableTextureDataInfo::read(&igz, 0).unwrap_err()),
+        ("igTextureBindAttr2", "StringInfo".into())
+    );
+}
+
+/// Every roster layout (AE.1): its registry size, its memory refs (a
+/// zeroed object needs them marked null) and its reader.
+type Reader = fn(&Igz<'_>, usize) -> Result<(), FormatError>;
+const ROSTER_LAYOUTS: [(&str, u32, &[u32], Reader); 8] = [
+    ("StringInfo", 0x28, &[], |i, o| {
+        StringInfo::read(i, o).map(drop)
+    }),
+    ("ValueInfo", 0x24, &[], |i, o| {
+        ValueInfo::read(i, o).map(drop)
+    }),
+    ("ScriptSet", 0x1C, &[], |i, o| {
+        ScriptSet::read(i, o).map(drop)
+    }),
+    ("ScriptSetList", 0x24, &[0x10], |i, o| {
+        ScriptSetList::read(i, o).map(drop)
+    }),
+    ("DirectionalLightInfo", 0x40, &[], |i, o| {
+        DirectionalLightInfo::read(i, o).map(drop)
+    }),
+    ("LanguagePackInfo", 0x20, &[0x18], |i, o| {
+        LanguagePackInfo::read(i, o).map(drop)
+    }),
+    ("tfbSpriteInfo", 0xE4, &[], |i, o| {
+        SpriteInfo::read(i, o).map(drop)
+    }),
+    ("AnimatableTextureDataInfo", 0x34, &[0x14], |i, o| {
+        AnimatableTextureDataInfo::read(i, o).map(drop)
+    }),
+];
+
+#[test]
+fn each_roster_layout_refuses_a_wrong_mtsz() {
+    for (ty, size, nulls, read) in ROSTER_LAYOUTS {
+        assert_eq!(type_def(ty).unwrap().size, size, "{ty}");
+        let zeroed = |mtsz| {
+            let (mut b, o) = one(ty, mtsz);
+            // The MTSZ check comes first, so a short object skips them.
+            for &offset in nulls.iter().filter(|&&n| n + 8 <= mtsz) {
+                b.null_memory_ref(at(o, offset), 0);
+            }
+            b.build()
+        };
+        // A zeroed object at the registry size reads.
+        let bytes = zeroed(size);
+        read(&Igz::parse(&bytes).unwrap(), 0).unwrap_or_else(|e| panic!("{ty}: {e}"));
+        for wrong in [size - 4, size + 4] {
+            let bytes = zeroed(wrong);
+            let e = read(&Igz::parse(&bytes).unwrap(), 0).unwrap_err();
+            assert_eq!(
+                (e.field, e.kind),
+                (
+                    "MTSZ",
+                    ErrorKind::Unsupported {
+                        value: wrong.into()
+                    }
+                ),
+                "{ty} at {wrong:#x}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_type_field_refuses_a_string() {
+    let (mut b, value) = one("ValueInfo", 0x24);
+    b.string(at(value, 0x1C), "IntMeasurement");
+    let bytes = b.build();
+    let igz = Igz::parse(&bytes).unwrap();
+    let e = ValueInfo::read(&igz, 0).unwrap_err();
+    assert_eq!(e.field, "_type");
+}
+
+#[test]
+fn an_unflagged_index_past_exnm_names_nothing() {
+    let (mut b, value) = one("ValueInfo", 0x24);
+    b.unflagged_meta(at(value, 0x1C), 9);
+    let bytes = b.build();
+    let igz = Igz::parse(&bytes).unwrap();
+    let v = ValueInfo::read(&igz, 0).unwrap();
+    assert_eq!(
+        v.value_type,
+        TypeRef::Indexed {
+            index: 9,
+            name: None
+        }
+    );
+    assert_eq!(v.value_type.metaobject(), None);
+}
+
+/// The toy table's op and stack layouts (AE.2): registry size, memory refs
+/// a zeroed object needs marked null, reader.
+const OP_LAYOUTS: [(&str, u32, &[u32], Reader); 14] = [
+    ("tfbScriptInfo", 0x1C, &[], |i, o| {
+        ScriptInfo::read(i, o).map(drop)
+    }),
+    ("OpCodeList", 0x18, &[0x10], |i, o| {
+        OpCodeList::read(i, o).map(drop)
+    }),
+    ("OpUseMacro", 0x24, &[], |i, o| {
+        OpUseMacro::read(i, o).map(drop)
+    }),
+    ("OpMacroInterface", 0x20, &[], |i, o| {
+        OpMacroInterface::read(i, o).map(drop)
+    }),
+    ("OpDefineMacro", 0x38, &[], |i, o| {
+        OpDefineMacro::read(i, o).map(drop)
+    }),
+    ("OpCreateVariable", 0x2C, &[], |i, o| {
+        Variable::read(i, o).map(drop)
+    }),
+    ("OpMacroParameter", 0x48, &[], |i, o| {
+        OpMacroParameter::read(i, o).map(drop)
+    }),
+    ("OpChangeMembership", 0x28, &[], |i, o| {
+        OpChangeMembership::read(i, o).map(drop)
+    }),
+    ("OpLoopValue", 0x28, &[], |i, o| {
+        OpLoopValue::read(i, o).map(drop)
+    }),
+    ("SetStack", 0x18, &[0x10], |i, o| {
+        Stack::read(i, o).map(drop)
+    }),
+    ("ScriptGroupStack", 0x1C, &[0x10], |i, o| {
+        Stack::read(i, o).map(drop)
+    }),
+    ("RHSValueStack", 0x28, &[0x10], |i, o| {
+        RhsValueStack::read(i, o).map(drop)
+    }),
+    ("ValueRHSVariant", 0x1C, &[], |i, o| {
+        ValueRhsVariant::read(i, o).map(drop)
+    }),
+    ("OpFlowMacro", 0x1C, &[], |i, o| {
+        OpCode::read(i, o).map(drop)
+    }),
+];
+
+#[test]
+fn each_op_layout_refuses_a_wrong_mtsz() {
+    for (ty, size, nulls, read) in OP_LAYOUTS {
+        assert_eq!(type_def(ty).unwrap().size, size, "{ty}");
+        let zeroed = |mtsz| {
+            let (mut b, o) = one(ty, mtsz);
+            for &offset in nulls.iter().filter(|&&n| n + 8 <= mtsz) {
+                b.null_memory_ref(at(o, offset), 0);
+            }
+            b.build()
+        };
+        let bytes = zeroed(size);
+        read(&Igz::parse(&bytes).unwrap(), 0).unwrap_or_else(|e| panic!("{ty}: {e}"));
+        for wrong in [size - 4, size + 4] {
+            let bytes = zeroed(wrong);
+            let e = read(&Igz::parse(&bytes).unwrap(), 0).unwrap_err();
+            assert_eq!(e.field, "MTSZ", "{ty} at {wrong:#x}");
+        }
+    }
+}
+
+#[test]
+fn an_rhs_reference_stack_reads_at_its_files_mtsz_with_a_clean_pad() {
+    let stack = |mtsz, pad_marker: bool| {
+        let (mut b, o) = one("RHSReferenceStack", mtsz);
+        b.null_memory_ref(at(o, 0x10), 0);
+        b.put_u32(at(o, 0x20), 7);
+        if mtsz == 0x30 {
+            if pad_marker {
+                b.pointer(at(o, 0x2C), o);
+            } else {
+                b.put_u32(at(o, 0x2C), 0xE82A_A02A);
+            }
+        }
+        b.build()
+    };
+    // The file's 0x30, its last word an unmarked value: reads.
+    let bytes = stack(0x30, false);
+    let igz = Igz::parse(&bytes).unwrap();
+    let r = RhsReferenceStack::read(&igz, 0).unwrap();
+    assert_eq!((r.value.value, r.value.stack.path.len()), (7, 0));
+    // Through its parent's layout too.
+    assert_eq!(RhsValueStack::read(&igz, 0).unwrap().value, 7);
+    assert_eq!(file_size("RHSReferenceStack"), Some(0x30));
+    assert_eq!(file_size("RHSValueStack"), Some(0x28));
+    // The registry's 0x2C is not what files carry.
+    let bytes = stack(0x2C, false);
+    let e = RhsReferenceStack::read(&Igz::parse(&bytes).unwrap(), 0).unwrap_err();
+    assert_eq!(e.field, "MTSZ");
+    // A fixup in the pad is refused.
+    let bytes = stack(0x30, true);
+    let e = RhsReferenceStack::read(&Igz::parse(&bytes).unwrap(), 0).unwrap_err();
+    assert_eq!(e.kind, ErrorKind::Unsupported { value: 0x2C });
+}
+
+#[test]
+fn an_op_reads_its_block_and_a_use_its_macro() {
+    let (mut b, call) = one("OpUseMacro", 0x24);
+    let np = b.object(0, "ScriptGroupStack", 0x1C);
+    let def = b.object(0, "OpDefineMacroSpecialization", 0x40);
+    let blocks = b.section(0x10);
+    b.string(at(call, 0x08), "use macro");
+    b.put_u32(at(call, 0x18), 0x0001_000C);
+    b.pointer(at(call, 0x1C), np);
+    super::builder::list(&mut b, np, blocks, &[Some(def)]);
+    b.string(at(def, 0x08), "Portal - Define Object Level Load");
+    b.put_u32(at(def, 0x20), 0x01C9_F90B);
+    b.put_u32(at(def, 0x24), 0x8FAE_96B0);
+    // A specialization's base, past the definition's layout.
+    b.pointer(at(def, 0x38), def);
+    let bytes = b.build();
+    let igz = Igz::parse(&bytes).unwrap();
+    let u = OpUseMacro::read(&igz, 0).unwrap();
+    assert_eq!(
+        (u.op.name, u.op.flags, u.op.branch),
+        (Some("use macro"), 1, 12)
+    );
+    assert_eq!(u.op.block_end(5), Some(17));
+    assert_eq!(u.np, Some(index(&igz, np)));
+    let path = Stack::read(&igz, u.np.unwrap()).unwrap().path;
+    assert_eq!(path, [ObjectRef::Object(index(&igz, def))]);
+    let d = OpDefineMacro::read(&igz, index(&igz, def)).unwrap();
+    assert_eq!(d.op.name, Some("Portal - Define Object Level Load"));
+    assert_eq!(d.creation_handle, 0x01C9_F90B_8FAE_96B0);
+    // No block, and `flow end`'s 0xFFFF, open nothing.
+    let op = |branch| OpCode {
+        name: None,
+        flags: 0,
+        branch,
+    };
+    assert_eq!(op(0).block_end(3), None);
+    assert_eq!(op(BRANCH_END).block_end(3), None);
 }

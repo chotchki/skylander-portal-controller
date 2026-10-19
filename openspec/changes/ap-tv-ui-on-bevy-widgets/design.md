@@ -24,7 +24,7 @@ Sources: motivation and chotchki's six answers are in [proposal.md](proposal.md)
 
 **Non-Goals:**
 - A phone remote ("b, let's not scope creep"). `POST /api/_test/tv/press` is a test hook under `test-hooks`, nothing more.
-- A TV settings screen. Settings live on the phone ("b, but we'll have to discuss what settings make sense when the time comes"). Which settings exist (the Enhanced toggle, AB's `output_latency_ms`, a glyph-set fallback for AG are the candidates the design doc and AB name) is a later discussion with chotchki, carried as a backlog line, not an AP task.
+- A TV settings screen. Settings live on the phone ("b, but we'll have to discuss what settings make sense when the time comes"). Which settings exist (AB's `output_latency_ms` and a glyph-set fallback for AG are the candidates the design doc and AB name; the Enhanced toggle left the list on 2026-10-18 with AE's one look) is a later discussion with chotchki, carried as a backlog line, not an AP task.
 - The Home menu (design doc Open question 1): the router maps Home to a no-op until that's answered.
 - Directional moves (decision 4, ex-AP.7), deferred to the Home menu (chotchki, 2026-10-18: "agreed"): after AP.6 no TV screen has more than one button, so nothing on the TV needs a move. The router still reads the D-pad, the arrows and the left stick with held repeat (`NavRepeat`, AP.5); a move reaches the screen and does nothing until then. The box's text is in [`openspec/backlog.md`](../../backlog.md)'s Home menu line.
 - AG's prompt glyphs. A focused button needs no "press (A)" line, so AP never shows a glyph and AG's prompt rule doesn't come up.

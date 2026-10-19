@@ -3,7 +3,7 @@
 use guac_formats::igz::Igz;
 use guac_formats::igz::layouts::{Image2, read_all};
 use guac_formats::registry::{TEXTURE_WALK_BUDGET, walk_textures};
-use guac_formats::texture::Texture;
+use guac_formats::texture::{Texture, level_dim};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -11,8 +11,9 @@ fuzz_target!(|data: &[u8]| {
     let Ok(file) = Igz::parse(data) else {
         return;
     };
-    // Every texture that reads writes a KTX2 the ktx2 crate takes back whole,
-    // under the walk's budget so images sharing a block can't stall the run.
+    // Every texture that reads writes a KTX2 the ktx2 crate takes back whole
+    // and decodes level by level, under the walk's budget so images sharing a
+    // block can't stall the run.
     let mut left = TEXTURE_WALK_BUDGET;
     for (i, _) in read_all::<Image2>(&file) {
         let Ok(t) = Texture::read(&file, i) else {
@@ -23,6 +24,15 @@ fuzz_target!(|data: &[u8]| {
         let h = r.header();
         assert_eq!((h.pixel_width, h.pixel_height), (t.width, t.height));
         assert!(r.levels().map(|l| l.data).eq(t.levels.iter().map(Vec::as_slice)));
+        // Every level decodes to a whole RGBA8 image (AE.3's portraits).
+        for level in 0..t.levels.len() {
+            let rgba = t.rgba8(level).expect("an untiled level decodes");
+            let (w, h) = (
+                level_dim(t.width, level as u32),
+                level_dim(t.height, level as u32),
+            );
+            assert_eq!(rgba.len(), w as usize * h as usize * 4);
+        }
         let n: usize = t.levels.iter().map(Vec::len).sum();
         left = left.saturating_sub(n.max(1));
         if left == 0 {

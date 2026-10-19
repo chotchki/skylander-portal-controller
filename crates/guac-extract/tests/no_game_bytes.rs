@@ -369,6 +369,22 @@ fn flags_a_zstd_of_a_gzipped_capture() {
 }
 
 #[test]
+fn flags_a_staged_ktx2() {
+    // The extract keeps the disc's textures in KTX2 (AE.3): one staged by
+    // mistake, under any name, is caught by its identifier.
+    let repo = repo_with(&[(
+        "textures/0f3a.bin",
+        starting_with(b"\xabKTX 20\xbb\r\n\x1a\n"),
+    )]);
+    let findings = scan(repo.path());
+    assert_eq!(paths(&findings), ["textures/0f3a.bin"]);
+    assert!(findings[0].1.contains("KTX2"), "{findings:?}");
+    // KTX 1 isn't what the extract writes, and isn't flagged.
+    let repo = repo_with(&[("old.ktx", starting_with(b"\xabKTX 11\xbb\r\n\x1a\n"))]);
+    assert_eq!(scan(repo.path()), Vec::<(String, String)>::new());
+}
+
+#[test]
 fn flags_a_big_endian_ppc64_elf() {
     let repo = repo_with(&[("EBOOT.elf", elf(2, 2, EM_PPC64))]);
     let findings = scan(repo.path());

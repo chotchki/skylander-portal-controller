@@ -2,7 +2,7 @@
 
 ## Purpose
 
-How the original Skylanders Giants shades a character, in our own words from what the disc, its decoded shader programs and the RPCS3 oracle show. guacamole's PARITY look is built from this, and checked against the oracle with it.
+How guacamole shades a character: the original Skylanders Giants' shading model, in our own words from what the disc, its decoded shader programs and the RPCS3 oracle show. Every term here is the original's; the colour space they're worked in is the remaster-look capability's (linear light, where the original works on stored, display-encoded values and clips each channel at 8 bits).
 
 ## ADDED Requirements
 
@@ -19,13 +19,6 @@ The material SHALL fix the feature switches it owns, and the scene SHALL set the
 #### Scenario: Eruptor in a fogged scene
 - **WHEN** Eruptor's body is drawn in a scene with fog on and no shadows or point lights
 - **THEN** it draws with exactly the normal map, spec map, rim and fog
-
-### Requirement: The arithmetic runs on stored values
-Every texture and colour SHALL be used as stored, with no conversion from the display encoding into linear light, and the result SHALL be stored the same way, with no conversion back and no tonemapping. Each channel past full SHALL clip on its own, so a colour past full in one channel changes hue.
-
-#### Scenario: Eruptor's lava
-- **WHEN** Eruptor is drawn under the light rig of the oracle's chapter-one frame
-- **THEN** his lava cracks read yellow, red and green both at full on most of their pixels, where the same colour unclipped is orange (a hue near 80° clipping to near 107°)
 
 ### Requirement: Normal maps
 A normal map SHALL give X from its alpha channel and Y from its green, each mapped from 0..1 to -1..1, and Z as the square root of the absolute value of 1 − X² − Y². The mapped normal SHALL be built from the interpolated tangent frame with X running against the tangent, and the interpolated normal SHALL NOT be renormalized first.
@@ -109,11 +102,11 @@ The replace colour SHALL be mixed over the result by its amount (how the origina
 - **THEN** fog leaves its colour unchanged
 
 ### Requirement: Render states
-Parts the disc marks as blended, additive, alpha-tested, two-sided or not writing depth SHALL draw that way: blended by source alpha, additive as source alpha plus what's already there, alpha tests passing above the material's reference and two-sided parts with no face culled. All blending SHALL happen on stored values.
+Parts the disc marks as blended, additive, alpha-tested, two-sided or not writing depth SHALL draw that way: blended by source alpha, additive as source alpha plus what's already there, alpha tests passing above the material's reference and two-sided parts with no face culled.
 
 #### Scenario: Two additive parts
 - **WHEN** an additive part overlaps another part
-- **THEN** the stored values add, clipping per channel at full
+- **THEN** the two colours add
 
 ### Requirement: Glow
 A material's glow SHALL come from a pass of its own: the drawn colour masked by the material's glow amount (or, with none set, its colour map's alpha times the vertex and tint alphas), blurred and added back over the frame, the blur and its sizes being what the oracle's captured frames show.
@@ -121,10 +114,3 @@ A material's glow SHALL come from a pass of its own: the drawn colour masked by 
 #### Scenario: Eruptor's glow
 - **WHEN** Eruptor is drawn
 - **THEN** his body glows at its amount of 64 of 255 and his eyes by their colour map's alpha
-
-### Requirement: The original look matches the oracle
-Drawn at the camera, pose, lights and fog of a frame the original rendered in the oracle, a character in the original look SHALL match that frame within a recorded FLIP threshold. The threshold SHALL be no looser than the first such comparison's measured error and SHALL be recorded with the residuals that comparison names (the shadowed area, any glow not yet drawn), so a later change can't drift past it.
-
-#### Scenario: Eruptor in chapter one
-- **WHEN** Eruptor is drawn at the camera, idle time, light rig and fog of an oracle frame of chapter one
-- **THEN** the result matches the oracle's screenshot of that frame within the recorded threshold

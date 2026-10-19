@@ -7,7 +7,11 @@
 //! - RSX ignores the swizzle for DXT, so blocks run in rows either way;
 //!   uncompressed texels are Morton-ordered under it ([`morton`]).
 //! - Blocks are already in BC byte order, so the endian fix is the identity.
+//!
+//! [`Texture::rgba8`] decodes a level for what can't take BC blocks, the
+//! phone's portraits (AE.3).
 
+mod bc;
 mod ktx;
 
 #[cfg(any(test, feature = "test-fixtures"))]
@@ -309,5 +313,33 @@ impl Texture {
     /// The image as a KTX2 file.
     pub fn to_ktx2(&self) -> Vec<u8> {
         ktx::write(self)
+    }
+
+    /// Level `level` decoded to straight RGBA8 rows, top down ([`bc`]'s
+    /// rules; L8 as grey, alpha 255). Refused past the last level or when the
+    /// level is shorter than its size, which only a hand-built `Texture` can be.
+    pub fn rgba8(&self, level: usize) -> Result<Vec<u8>, FormatError> {
+        let Some(data) = self.levels.get(level) else {
+            let kind = ErrorKind::OutOfRange {
+                value: level as u64,
+                limit: self.levels.len() as u64,
+            };
+            return Err(FormatError::new(FORMAT, "levels", 0, kind));
+        };
+        let (w, h) = (
+            level_dim(self.width, level as u32),
+            level_dim(self.height, level as u32),
+        );
+        bc::decode(self.format, w, h, data).ok_or_else(|| {
+            let kind = ErrorKind::Truncated {
+                needed: self
+                    .format
+                    .level_size(w, h)
+                    .try_into()
+                    .unwrap_or(usize::MAX),
+                available: data.len(),
+            };
+            FormatError::new(FORMAT, "_data", 0, kind)
+        })
     }
 }

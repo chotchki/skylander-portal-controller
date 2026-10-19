@@ -70,6 +70,11 @@ pub enum ExtractError {
     #[error("GUAC-E-BAD-OUTPUT-PATH: `{path}` isn't a plain relative path inside the extract")]
     BadOutputPath { path: String },
 
+    /// The dump is a known one but its figure roster didn't read (AE.2):
+    /// the phone's list stays empty and says so.
+    #[error("GUAC-E-ROSTER-UNREADABLE: the figure roster in {} didn't read: {reason}", path.display())]
+    RosterUnreadable { path: PathBuf, reason: String },
+
     #[error("GUAC-E-EXTRACT-IO: {}: {source}", path.display())]
     Io {
         path: PathBuf,
@@ -90,6 +95,7 @@ impl ExtractError {
             Self::FfmpegUnusable { .. } => "GUAC-E-FFMPEG-UNUSABLE",
             Self::TranscodeFailed { .. } => "GUAC-E-TRANSCODE-FAILED",
             Self::BadOutputPath { .. } => "GUAC-E-BAD-OUTPUT-PATH",
+            Self::RosterUnreadable { .. } => "GUAC-E-ROSTER-UNREADABLE",
             Self::Io { .. } => "GUAC-E-EXTRACT-IO",
         }
     }
@@ -152,6 +158,10 @@ mod tests {
                 reason: "x".into(),
             },
             ExtractError::BadOutputPath { path: "..".into() },
+            ExtractError::RosterUnreadable {
+                path: "character/init_setup.bld".into(),
+                reason: "x".into(),
+            },
             ExtractError::io("p")(io::Error::other("x")),
         ];
         for e in errors {

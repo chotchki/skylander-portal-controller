@@ -224,6 +224,37 @@ pub fn manifest_hash(files: &[SourceFile]) -> Sha256 {
     Sha256(hasher.finalize().into())
 }
 
+/// [`scan`] when `cache` answers for every file, reading none of them; `None`
+/// when one would have to be hashed (new, changed or never extracted).
+pub fn scan_cached(dump: &Path, cache: &HashCache) -> Result<Option<DumpScan>> {
+    let (title_id, app_ver) = read_sfo(dump)?;
+    let listed = list(&dump.join("PS3_GAME").join("USRDIR"))?;
+    let mut files = Vec::with_capacity(listed.len());
+    for l in listed {
+        let Some(sha256) = cache.hit(&l) else {
+            return Ok(None);
+        };
+        files.push(SourceFile {
+            path: l.rel,
+            size: l.size,
+            mtime_ns: l.mtime_ns,
+            ino: l.ino,
+            ctime_ns: l.ctime_ns,
+            sha256,
+        });
+    }
+    Ok(Some(DumpScan {
+        identity: DumpIdentity {
+            title_id,
+            app_ver,
+            manifest_hash: manifest_hash(&files),
+        },
+        files_cached: files.len(),
+        files,
+        bytes_hashed: 0,
+    }))
+}
+
 /// Reads the dump's PARAM.SFO and hashes its USRDIR, reading only the files
 /// `cache` can't answer, on a few threads.
 pub fn scan(

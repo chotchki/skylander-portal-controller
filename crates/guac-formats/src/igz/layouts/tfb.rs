@@ -25,7 +25,7 @@ impl<'a> Info<'a> {
     pub const DIRECTORY: u32 = 0x0C;
     pub const RESOLVE_STATE: u32 = 0x10;
 
-    fn fields(v: &mut View<'_, 'a>) -> Result<Self, FormatError> {
+    pub(super) fn fields(v: &mut View<'_, 'a>) -> Result<Self, FormatError> {
         Ok(Self {
             name: v.string(Self::NAME, "_name")?,
             directory: v.object_ref(Self::DIRECTORY, "_directory")?,

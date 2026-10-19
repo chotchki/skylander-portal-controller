@@ -17,6 +17,8 @@ skylander-core = { path = "../core" }
 skylander-rpcs3-control = { path = "../rpcs3-control" }
 # The dump scan reads TITLE_ID from PARAM.SFO (AA.5).
 guac-formats = { path = "../guac-formats" }
+# guacamole's figure list is the disc roster, IR v2 (AE.4).
+guac-ir = { path = "../guac-ir" }
 
 anyhow = { workspace = true }
 tokio = { workspace = true }

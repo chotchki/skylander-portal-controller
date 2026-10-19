@@ -8,7 +8,10 @@
 //! [`magic`], the list the game-magic guard checks the repo against.
 //! [`intros`] (AB.6) maps each toy type to its intro movie into IR v1's
 //! character table. [`transcode`] (AB.8) turns each intro movie into what
-//! guacamole plays, through the ffmpeg [`ffmpeg`] finds.
+//! guacamole plays, through the ffmpeg [`ffmpeg`] finds. [`roster`] (AE.2)
+//! reads the figures the disc defines into IR v2's roster. [`stages`] (AE.3)
+//! runs everything after identity in guacamole's order: the roster and its
+//! portraits first, then ffmpeg and the intros.
 
 pub mod census;
 pub mod dump;
@@ -20,16 +23,19 @@ pub mod known;
 pub mod magic;
 mod report;
 pub mod root;
+pub mod roster;
+pub mod stages;
 pub mod transcode;
 
 pub use error::{ExtractError, Result};
 pub use extract::{
-    DirState, IdentityDir, Manifest, MovieRecord, Opened, Stale, TranscodeRecord, open,
+    DirState, IdentityDir, Manifest, MovieRecord, Opened, Stale, TranscodeRecord, find_current,
+    open,
 };
 pub use guac_ir::IR_VERSION;
 pub use root::{ExtractRoot, RootMode};
 
 /// The extract dir's layout version (design decision 5). A manifest written
 /// under another layout or [`IR_VERSION`] is stale and its identity dir is
-/// rebuilt.
-pub const LAYOUT_VERSION: u32 = 1;
+/// rebuilt. v2 (AE.3) adds `ir/roster.*` and `portraits/`.
+pub const LAYOUT_VERSION: u32 = 2;

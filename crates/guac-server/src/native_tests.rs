@@ -11,14 +11,15 @@ use anyhow::Result;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use skylander_core::{
-    Category, Element, Event, Figure, FigureId, GameOfOrigin, GameSerial, InstalledGame,
-    MaskedVariant, SLOT_COUNT, SlotIndex, SlotState, ToyTypeId,
+    Element, Event, FigureId, GameSerial, InstalledGame, SLOT_COUNT, SlotIndex, SlotState,
+    SubtypeWord, ToyTypeId,
 };
 use skylander_rpcs3_control::{Placement, PortalDriver};
 use tokio::sync::{Mutex, broadcast};
 use tower::ServiceExt;
 
 use crate::config::{DriverKind, WindowMode};
+use crate::figures::{FigureList, FigureSet, RosterState, fixture};
 use crate::hooks::Hooks;
 use crate::profiles::{ProfileStore, RegistrationOutcome, SessionId, SessionRegistry};
 use crate::state::{AppState, LauncherStatus, RpcsLifecycle, spawn_driver_worker};
@@ -28,7 +29,9 @@ static TEST_MIGRATOR: &sqlx::migrate::Migrator = &crate::setup::MIGRATOR;
 
 const KEY: [u8; 32] = [3; 32];
 const ERUPTOR: &str = "000009-0000";
-const SPYRO: &str = "00001c-0000";
+const SPYRO: &str = "000010-0000";
+/// Where `native()`'s roster keeps its portraits, under the root.
+const EXTRACT: &str = "extract/BLUS30968-01.00-01010101";
 
 /// Records every call and mirrors its slots like the native driver; `load`
 /// fails so a stray file load shows up as an error too. Advertises an IPC socket, so a BootDirect that missed the Native arm
@@ -88,23 +91,6 @@ impl PortalDriver for RecordingDriver {
     }
 }
 
-/// A catalogue record with no file behind it.
-fn record(id: &str, name: &str, element: Element) -> Figure {
-    Figure {
-        id: FigureId::new(id),
-        canonical_name: name.into(),
-        variant_group: name.into(),
-        variant_tag: "base".into(),
-        game: GameOfOrigin::SpyrosAdventure,
-        element: Some(element),
-        category: Category::Figure,
-        vehicle_terrain: None,
-        sky_path: PathBuf::new(),
-        element_icon_path: None,
-        tag_identity: None,
-    }
-}
-
 struct Native {
     state: Arc<AppState>,
     driver: Arc<RecordingDriver>,
@@ -112,28 +98,34 @@ struct Native {
 }
 
 /// A Native `AppState` with no hooks under a tempdir runtime root:
-/// `db.sqlite`, the controller's `config.json` and `data/images/` for Eruptor.
+/// `db.sqlite`, the controller's `config.json` and Eruptor's and Spyro's
+/// roster already landed, Eruptor's portrait in the extract and Spyro's not.
 async fn native() -> Native {
+    let n = native_waiting().await;
+    let extract = n.root.path().join(EXTRACT);
+    let roster = fixture::eruptor_and_spyro();
+    n.state
+        .figures
+        .publish(FigureSet::from_roster(&roster, &extract));
+    n
+}
+
+/// [`native`] before its roster lands: reading it off the disc.
+async fn native_waiting() -> Native {
     let root = tempfile::tempdir().unwrap();
-    let data_root = root.path().join("data");
-    let thumb = data_root.join("images").join(ERUPTOR).join("thumb.png");
-    std::fs::create_dir_all(thumb.parent().unwrap()).unwrap();
-    std::fs::write(&thumb, b"\x89PNG\r\n\x1a\n").unwrap();
+    let portrait = root
+        .path()
+        .join(EXTRACT)
+        .join(format!("portraits/{ERUPTOR}.png"));
+    std::fs::create_dir_all(portrait.parent().unwrap()).unwrap();
+    std::fs::write(&portrait, b"\x89PNG\r\n\x1a\n").unwrap();
     std::fs::write(
         root.path().join("config.json"),
         br#"{"window_mode":"tv","render_2x":false}"#,
     )
     .unwrap();
 
-    let figures = vec![
-        record(ERUPTOR, "Eruptor", Element::Fire),
-        record(SPYRO, "Spyro", Element::Magic),
-    ];
-    let figure_index: HashMap<_, _> = figures
-        .iter()
-        .enumerate()
-        .map(|(i, f)| (f.id.clone(), i))
-        .collect();
+    let figures = FigureList::new(FigureSet::waiting(RosterState::Reading));
     let profiles = ProfileStore::open(&root.path().join("db.sqlite"), TEST_MIGRATOR)
         .await
         .unwrap();
@@ -149,17 +141,16 @@ async fn native() -> Native {
         events.clone(),
         profiles.clone(),
         sessions.clone(),
-        Arc::new(figures.clone()),
+        figures.clone(),
         rpcs3.clone(),
         PathBuf::new(),
         PathBuf::new(),
-        data_root.clone(),
         launcher_status.clone(),
         None,
     );
     let state = Arc::new(AppState {
         figures,
-        figure_index,
+        held_resumes: Mutex::new(Vec::new()),
         driver_kind: DriverKind::Native,
         window_mode: WindowMode::Desktop,
         render_2x: false,
@@ -171,11 +162,12 @@ async fn native() -> Native {
         games: Arc::new(std::sync::RwLock::new(vec![InstalledGame {
             serial: GameSerial::new("BLUS30968"),
             display_name: "Skylanders: Giants".into(),
+            art: None,
         }])),
         games_yml: HashMap::new(),
         rpcs3_exe: PathBuf::new(),
         config_dir: PathBuf::new(),
-        data_root,
+        data_root: PathBuf::new(),
         phone_dist: root.path().join("phone-dist"),
         hmac_key: KEY.to_vec(),
         boot_id: 0,
@@ -187,6 +179,7 @@ async fn native() -> Native {
         #[cfg(feature = "test-hooks")]
         test_injector: None,
     });
+    crate::http::spawn_resume_release(state.clone());
     Native {
         state,
         driver,
@@ -475,14 +468,18 @@ async fn a_load_places_by_identity_and_writes_no_file() {
     assert_eq!(*slot, 0);
     assert_eq!(placement.figure_id.as_str(), ERUPTOR);
     assert_eq!(placement.toy_type, ToyTypeId(0x09));
-    assert_eq!(placement.variant, MaskedVariant(0));
+    assert_eq!(placement.variant, SubtypeWord(0));
     assert_eq!(placement.name, "Eruptor");
     assert_eq!(placement.element, Some(Element::Fire));
-    assert!(
-        placement
-            .portrait
-            .as_ref()
-            .is_some_and(|p| p.ends_with(format!("images/{ERUPTOR}/thumb.png")))
+    assert_eq!(
+        placement.portrait.as_deref(),
+        Some(
+            n.root
+                .path()
+                .join(EXTRACT)
+                .join(format!("portraits/{ERUPTOR}.png"))
+                .as_path()
+        )
     );
     let owner = placement.owner.as_ref().expect("an unlocked profile");
     assert_eq!(owner.profile_id, profile_id);
@@ -546,7 +543,7 @@ async fn a_restore_re_places_by_identity_and_writes_no_file() {
         &n.state.portal,
         &n.state.events,
         &n.state.driver_tx,
-        &n.state.figures,
+        n.state.figures.now().figures(),
         None,
         &to_restore,
     )
@@ -724,18 +721,245 @@ async fn a_load_over_another_profiles_figure_is_refused_and_changes_nothing() {
     assert_eq!(owner(&n.state.portal.lock().await[1]), Some(bob.as_str()));
 }
 
+/// AE.4: guacamole serves the portrait the roster stage extracted, and a
+/// 404 for a figure without one or not on the list; nothing from `data/`.
 #[tokio::test]
-async fn the_image_route_serves_no_portrait_for_a_supplemented_figure() {
-    let native = native().await;
-    let jet_vac = native.state.data_root.join("images/000064-0000/thumb.png");
+async fn the_image_route_serves_the_extracted_portrait_only() {
+    let n = native().await;
+    let eruptor = format!("/api/figures/{ERUPTOR}/image");
+    assert_eq!(n.send("GET", &eruptor, "", None).await, StatusCode::OK);
+    let hero = format!("{eruptor}?size=hero");
+    assert_eq!(n.send("GET", &hero, "", None).await, StatusCode::OK);
+    // Spyro's roster row names a portrait the extract doesn't hold.
+    let spyro = format!("/api/figures/{SPYRO}/image");
+    assert_eq!(n.send("GET", &spyro, "", None).await, StatusCode::NOT_FOUND);
+    // A scraped thumb where the product keeps them is never read.
+    let jet_vac = n.root.path().join("data/images/000064-0000/thumb.png");
     std::fs::create_dir_all(jet_vac.parent().unwrap()).unwrap();
     std::fs::write(&jet_vac, b"\x89PNG\r\n\x1a\n").unwrap();
-
-    let eruptor = format!("/api/figures/{ERUPTOR}/image");
-    assert_eq!(native.send("GET", &eruptor, "", None).await, StatusCode::OK);
     let jet_vac = "/api/figures/000064-0000/image";
     assert_eq!(
-        native.send("GET", jet_vac, "", None).await,
+        n.send("GET", jet_vac, "", None).await,
         StatusCode::NOT_FOUND
     );
+}
+
+/// Saves `slots` as `profile_id`'s last portal layout.
+async fn save_layout(n: &Native, profile_id: &str, slots: &[(usize, &str)]) {
+    let mut layout: [SlotState; SLOT_COUNT] = std::array::from_fn(|_| SlotState::Empty);
+    for (slot, id) in slots {
+        layout[*slot] = SlotState::Loaded {
+            figure_id: Some(FigureId::new(*id)),
+            display_name: (*id).into(),
+            placed_by: Some(profile_id.into()),
+        };
+    }
+    n.state
+        .profiles
+        .save_portal_layout(profile_id, &serde_json::to_string(&layout).unwrap())
+        .await
+        .unwrap();
+}
+
+/// AE.4: a saved figure the roster doesn't know is skipped (and logged); the
+/// rest is offered and places.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_resume_holding_an_unknown_id_places_the_rest() {
+    let n = native().await;
+    let (sid, profile_id) = n.unlocked_session().await;
+    save_layout(
+        &n,
+        &profile_id,
+        &[(0, ERUPTOR), (2, "0000ff-0000"), (4, SPYRO)],
+    )
+    .await;
+
+    let offer = n
+        .resume_offer(sid, &profile_id)
+        .await
+        .expect("the known figures are offered");
+    let offered: Vec<(usize, &str)> = offer
+        .iter()
+        .enumerate()
+        .filter_map(|(i, s)| match s {
+            SlotState::Loaded {
+                figure_id: Some(id),
+                ..
+            } => Some((i, id.as_str())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(offered, [(0, ERUPTOR), (4, SPYRO)]);
+
+    // RESUME, as the phone sends it: one load per offered slot.
+    for (slot, id) in &offered {
+        let uri = format!("/api/portal/slot/{}/load", slot + 1);
+        let body = format!(r#"{{"figure_id":"{id}"}}"#);
+        assert_eq!(
+            n.send("POST", &uri, &body, Some(sid)).await,
+            StatusCode::ACCEPTED
+        );
+    }
+    n.wait_loaded(0, ERUPTOR).await;
+    n.wait_loaded(4, SPYRO).await;
+    assert!(n.state.portal.lock().await[2].is_empty());
+}
+
+/// AE.4: an unlock before the roster lands offers nothing yet; the roster
+/// landing sends the prompt, once, to the session still holding the profile.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_resume_waits_for_the_roster() {
+    let n = native_waiting().await;
+    let (sid, profile_id) = n.unlocked_session().await;
+    let (locked_sid, locked) = n.unlocked_session_as("Bob", "#3f8ee8").await;
+    save_layout(&n, &profile_id, &[(1, ERUPTOR)]).await;
+    save_layout(&n, &locked, &[(3, SPYRO)]).await;
+    let mut events = n.state.events.subscribe();
+
+    assert_eq!(n.resume_offer(sid, &profile_id).await, None);
+    assert_eq!(n.resume_offer(locked_sid, &locked).await, None);
+    assert_eq!(n.state.held_resumes.lock().await.len(), 2);
+    // Bob locks before the roster lands: his prompt is dropped.
+    n.state.sessions.set_profile(locked_sid, None).await;
+    // A state change that isn't the roster sends nothing.
+    n.state.figures.set_roster_state(RosterState::Unreadable);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(n.state.held_resumes.lock().await.len(), 2);
+
+    let roster = fixture::eruptor_and_spyro();
+    let extract = n.root.path().join(EXTRACT);
+    n.state
+        .figures
+        .publish(FigureSet::from_roster(&roster, &extract));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let slots = loop {
+        if let Ok(Ok(Event::ResumePrompt { session_id, slots })) =
+            tokio::time::timeout(Duration::from_millis(100), events.recv()).await
+        {
+            assert_eq!(session_id, sid.0, "only the unlocked session's");
+            break slots;
+        }
+        assert!(Instant::now() < deadline, "the held prompt never went out");
+    };
+    assert!(matches!(
+        &slots[1],
+        SlotState::Loaded { figure_id: Some(id), .. } if id.as_str() == ERUPTOR
+    ));
+    assert!(n.state.held_resumes.lock().await.is_empty());
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    while let Ok(event) = events.try_recv() {
+        assert!(
+            !matches!(event, Event::ResumePrompt { .. }),
+            "a second prompt: {event:?}"
+        );
+    }
+}
+
+/// AE.4: a load racing the roster's landing, and loads while the same roster
+/// is published again (a pick over a current extract), each read one list
+/// whole: refused before it lands, placed with its name and portrait after,
+/// never an error in between.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_load_racing_the_roster_swap_is_refused_or_placed_whole() {
+    use std::sync::atomic::AtomicUsize;
+
+    let n = native_waiting().await;
+    let (sid, _) = n.unlocked_session().await;
+    let mut events = n.state.events.subscribe();
+    let extract = n.root.path().join(EXTRACT);
+    let body = format!(r#"{{"figure_id":"{ERUPTOR}"}}"#);
+
+    // The roster lands from another thread while the phone keeps asking.
+    let tries = Arc::new(AtomicUsize::new(0));
+    let publisher = {
+        let (list, tries, extract) = (n.state.figures.clone(), tries.clone(), extract.clone());
+        std::thread::spawn(move || {
+            while tries.load(Ordering::SeqCst) < 3 {
+                std::thread::yield_now();
+            }
+            list.publish(FigureSet::from_roster(
+                &fixture::eruptor_and_spyro(),
+                &extract,
+            ));
+        })
+    };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut refused = 0;
+    loop {
+        let status = n
+            .send("POST", "/api/portal/slot/1/load", &body, Some(sid))
+            .await;
+        tries.fetch_add(1, Ordering::SeqCst);
+        match status {
+            StatusCode::NOT_FOUND => refused += 1,
+            StatusCode::ACCEPTED => break,
+            other => panic!("a load during the swap answered {other}"),
+        }
+        assert!(Instant::now() < deadline, "the roster never landed");
+    }
+    publisher.join().unwrap();
+    assert!(refused >= 3, "{refused}");
+    n.wait_loaded(0, ERUPTOR).await;
+
+    // The same roster published over and over while loads and clears run.
+    let stop = Arc::new(AtomicBool::new(false));
+    let republisher = {
+        let (list, stop, extract) = (n.state.figures.clone(), stop.clone(), extract.clone());
+        std::thread::spawn(move || {
+            let mut published = 0;
+            while !stop.load(Ordering::SeqCst) {
+                list.publish(FigureSet::from_roster(
+                    &fixture::eruptor_and_spyro(),
+                    &extract,
+                ));
+                published += 1;
+            }
+            published
+        })
+    };
+    for _ in 0..20 {
+        let status = n
+            .send("POST", "/api/portal/slot/1/clear", "{}", Some(sid))
+            .await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !n.state.portal.lock().await[0].is_empty() {
+            assert!(Instant::now() < deadline, "slot 1 never cleared");
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+        let status = n
+            .send("POST", "/api/portal/slot/1/load", &body, Some(sid))
+            .await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        n.wait_loaded(0, ERUPTOR).await;
+    }
+    stop.store(true, Ordering::SeqCst);
+    assert!(republisher.join().unwrap() > 0);
+
+    let places = n.driver.places.lock().unwrap().clone();
+    assert_eq!(places.len(), 21);
+    let portrait = extract.join(format!("portraits/{ERUPTOR}.png"));
+    for (slot, p) in &places {
+        assert_eq!(*slot, 0);
+        assert_eq!(p.name, "Eruptor");
+        assert_eq!(p.portrait.as_deref(), Some(portrait.as_path()));
+    }
+    loop {
+        let event = match events.try_recv() {
+            Ok(event) => event,
+            Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
+            Err(_) => break,
+        };
+        assert!(
+            !matches!(
+                event,
+                Event::Error { .. }
+                    | Event::SlotChanged {
+                        state: SlotState::Error { .. },
+                        ..
+                    }
+            ),
+            "{event:?}"
+        );
+    }
 }

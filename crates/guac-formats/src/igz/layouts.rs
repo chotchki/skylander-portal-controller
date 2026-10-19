@@ -1,5 +1,6 @@
-//! Field layouts of the decode gate's Alchemy types, tagged [`TAG`], and
-//! typed readers over [`Igz`]'s object graph (openspec AC.4).
+//! Field layouts of the decode gate's Alchemy types (openspec AC.4) and of
+//! the script, sprite and language types the roster reads (AE.1), tagged
+//! [`TAG`], and typed readers over [`Igz`]'s object graph.
 //!
 //! Method: static EBOOT registry tables cross-checked against the disc; no
 //! statistical fallback ([`METHOD`]). The registry is the source of every
@@ -16,8 +17,11 @@ mod edge;
 mod hero;
 mod image;
 mod material;
+mod ops;
 mod scene;
+mod script;
 mod skeleton;
+mod sprite;
 mod tfb;
 
 #[cfg(any(test, feature = "test-fixtures"))]
@@ -27,13 +31,23 @@ pub use edge::{Attr, EdgeGeometry, EdgeGeometryAttr, EdgeGeometrySegment};
 pub use hero::{Clip, Hero, Mesh, Palette};
 pub use image::{Image2, KNOWN_FORMATS, METAIMAGES};
 pub use material::{AlphaTextureUnitIdAttr, AttrList, TextureAttr2, TextureBindAttr2};
+pub use ops::{
+    BRANCH_END, NO_OPERATOR, OpChangeMembership, OpCode, OpCodeList, OpDefineMacro, OpLoopValue,
+    OpMacroInterface, OpMacroParameter, OpUseMacro, RhsReferenceStack, RhsValueStack, ScriptInfo,
+    Stack, ValueRhsVariant, Variable,
+};
 pub use scene::{
     Actor2, AttrSet, BlendMatrixSelect, Group, IntList, Node, NodeList, RuntimeTechniqueInstance,
+};
+pub use script::{
+    DirectionalLightInfo, EulerTransform, LanguagePackInfo, Rgba8, RootList, ScriptSet,
+    ScriptSetList, StringInfo, ValueInfo,
 };
 pub use skeleton::{
     AnimationSystem2, PhysicsCombiner, PhysicsCombinerLink, Skeleton2, SkeletonBone,
     SkeletonBoneList,
 };
+pub use sprite::{AbstractPlacement, AnimatableTextureDataInfo, SpriteInfo};
 pub use tfb::{
     AnimationInfo, AnimationInfoList, BodyInfo, BuildDataInfo, HAVOK_MAGIC, Info, LIP_SYNC_MAGIC,
     ModelInfo, Payload, PhysicsAnimation, PhysicsBody, PhysicsModel, TfbAnimationInfo,
@@ -67,7 +81,8 @@ const fn def(name: &'static str, parent: &'static str, size: u32) -> TypeDef {
     }
 }
 
-/// The gate's types and every type on their parent chains.
+/// The gate's types, the roster's (AE.1) and every type on their parent
+/// chains.
 pub const TYPES: &[TypeDef] = &[
     TypeDef {
         name: "igObject",
@@ -143,7 +158,79 @@ pub const TYPES: &[TypeDef] = &[
     def("ClonedSequence", "Sequence", 0x30),
     def("AbstractAnimSequence", "ClonedSequence", 0x30),
     def("AnimationInfo", "AbstractAnimSequence", 0x44),
+    // The roster's script objects (AE.1): names, numbers and sets.
+    def("StringInfo", "tfbScriptObject", 0x28),
+    def("AbstractScriptVariant", "tfbScriptObject", 0x18),
+    def("AbstractValueMeasurement", "AbstractScriptVariant", 0x18),
+    def(
+        "AbstractNumberMeasurement",
+        "AbstractValueMeasurement",
+        0x18,
+    ),
+    def("ValueInfo", "AbstractNumberMeasurement", 0x24),
+    def("SetVariant", "AbstractScriptVariant", 0x18),
+    def("ScriptSet", "SetVariant", 0x1C),
+    def("ScriptGroupStack", "ScriptObjectList", 0x1C),
+    def("ScriptSetList", "ScriptGroupStack", 0x24),
+    def("DirectionalLightInfo", "tfbScriptObject", 0x40),
+    def("LanguagePackInfo", "igInfo", 0x20),
+    // Sprites and their textures.
+    def("VectorMeasurement", "tfbScriptObject", 0x18),
+    def("PositionMeasurement", "VectorMeasurement", 0x18),
+    def("MatrixMeasurement", "PositionMeasurement", 0x18),
+    def("AbstractAttachNode", "MatrixMeasurement", 0x1C),
+    def("AbstractPlacement", "AbstractAttachNode", 0xA0),
+    def("tfbSpriteInfo", "AbstractPlacement", 0xE4),
+    def("AnimatableTextureDataInfo", "tfbBuildDataInfo", 0x34),
+    // Script ops and operand stacks, what the toy table's reader walks (AE.2).
+    def("tfbScriptInfo", "tfbComplexDataInfo", 0x1C),
+    def("OpCodeList", "ScriptObjectList", 0x18),
+    def("OpCode", "AbstractScriptVariant", 0x1C),
+    def("OpBranch", "OpCode", 0x1C),
+    def("OpAbstractBehavior", "OpBranch", 0x1C),
+    def("OpMacroInterface", "OpAbstractBehavior", 0x20),
+    def("OpAbstractFlow", "OpBranch", 0x1C),
+    def("OpFlowMacro", "OpAbstractFlow", 0x1C),
+    def("OpFlowBuiltInBehavior", "OpAbstractFlow", 0x1C),
+    def("OpUseMacro", "OpBranch", 0x24),
+    def("OpAbstractDefinition", "OpBranch", 0x30),
+    def("OpDefineMacro", "OpAbstractDefinition", 0x38),
+    def("OpDefineMacroSpecialization", "OpDefineMacro", 0x40),
+    def("OpAbstractCreateVariable", "OpCode", 0x2C),
+    def("OpCreateVariable", "OpAbstractCreateVariable", 0x2C),
+    def("OpParameter", "OpAbstractCreateVariable", 0x38),
+    def("OpMacroParameter", "OpParameter", 0x48),
+    def("OpChangeMembership", "OpCode", 0x28),
+    def("OpLoop", "OpBranch", 0x20),
+    def("OpLoopValue", "OpLoop", 0x28),
+    def("ValueStack", "ScriptObjectList", 0x1C),
+    def("RHSValueStack", "ValueStack", 0x28),
+    def("RHSReferenceStack", "RHSValueStack", 0x2C),
+    def("SetStack", "ScriptObjectList", 0x18),
+    def("ReferenceStack", "ScriptObjectList", 0x18),
+    TypeDef {
+        name: "ValueRHSVariant",
+        parent: Some("igObject"),
+        size: 0x1C,
+    },
 ];
+
+/// Types whose files carry an MTSZ 4 over the registry size (AC.4's open
+/// question 2, settled by AC.14: the loader reads sections in place, so the
+/// 4 bytes sit in memory as on disc, past the layout and never marked). Of
+/// the five, only `RHSReferenceStack` has a reader.
+pub const FILE_PADDED: &[(&str, u32)] = &[("RHSReferenceStack", 0x30)];
+
+/// The MTSZ a file gives `name`: its registry size, or the padded one.
+pub fn file_size(name: &str) -> Option<u32> {
+    let registered = type_def(name)?.size;
+    Some(
+        FILE_PADDED
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map_or(registered, |(_, size)| *size),
+    )
+}
 
 pub fn type_def(name: &str) -> Option<&'static TypeDef> {
     TYPES.iter().find(|t| t.name == name)
@@ -215,6 +302,42 @@ pub enum ObjectRef<'a> {
         index: u32,
         name: ExternalName<'a>,
     },
+}
+
+/// A script object's type field (`_type`, `_editType`, a variable's
+/// container and contents types): an object ref that can also be a kind-0x10
+/// word without the index flag, which on Giants indexes the file's EXNM
+/// table, every such entry in the `metaobject` namespace (aj-vm).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypeRef<'a> {
+    Null,
+    Object(usize),
+    Import(Import),
+    /// A flagged kind-0x10 word.
+    Named {
+        index: u32,
+        name: ExternalName<'a>,
+    },
+    /// An unflagged kind-0x10 word and the EXNM entry it indexes, `None`
+    /// past the table's end.
+    Indexed {
+        index: u32,
+        name: Option<ExternalName<'a>>,
+    },
+}
+
+impl TypeRef<'_> {
+    /// The `metaobject` class it names, if it names one.
+    pub fn metaobject(&self) -> Option<&str> {
+        let name = match self {
+            TypeRef::Named { name, .. } => name,
+            TypeRef::Indexed {
+                name: Some(name), ..
+            } => name,
+            _ => return None,
+        };
+        (name.namespace == "metaobject").then_some(name.name)
+    }
 }
 
 /// `igVectorMetaField`: a count, then a memory ref.
@@ -300,12 +423,24 @@ impl<'f, 'a> View<'f, 'a> {
         }
         // is_a found it, so the object's type is in the table.
         let registered = type_def(found).map_or(0, |t| t.size);
-        if object.size != registered {
+        if object.size != file_size(found).unwrap_or(registered) {
             return Err(igz.err_at(
                 object.at,
                 "MTSZ",
                 ErrorKind::Unsupported {
                     value: object.size.into(),
+                },
+            ));
+        }
+        // A padded type's extra bytes hold no fixup.
+        if let Some(pad) = object.at.offset_by(registered)
+            && let Some(&(at, marker)) = igz.markers_in(pad, object.size - registered).first()
+        {
+            return Err(igz.err_at(
+                at,
+                marker.field(),
+                ErrorKind::Unsupported {
+                    value: registered.into(),
                 },
             ));
         }
@@ -483,7 +618,7 @@ impl<'f, 'a> View<'f, 'a> {
         self.igz.reference(at, field)
     }
 
-    fn refused(&self, offset: u32, field: &'static str) -> FormatError {
+    pub(crate) fn refused(&self, offset: u32, field: &'static str) -> FormatError {
         let at = self.object.field(offset).unwrap_or(self.object.at);
         let value = self.igz.u32_at(at, field).unwrap_or_default();
         self.igz.err_at(
@@ -551,6 +686,25 @@ impl<'f, 'a> View<'f, 'a> {
         }
     }
 
+    /// A script object's type field ([`TypeRef`]).
+    pub fn type_ref(
+        &mut self,
+        offset: u32,
+        field: &'static str,
+    ) -> Result<TypeRef<'a>, FormatError> {
+        match self.reference(offset, field)? {
+            Ref::Null => Ok(TypeRef::Null),
+            Ref::Object(i) => Ok(TypeRef::Object(i)),
+            Ref::Import { index, id } => Ok(TypeRef::Import(Import { index, id })),
+            Ref::MetaObject { index, name } => Ok(TypeRef::Named { index, name }),
+            Ref::UnresolvedMeta(index) => Ok(TypeRef::Indexed {
+                index,
+                name: self.igz.external_names().get(index as usize).copied(),
+            }),
+            _ => Err(self.refused(offset, field)),
+        }
+    }
+
     pub(crate) fn check_type(
         &self,
         object: usize,
@@ -605,6 +759,39 @@ impl<'f, 'a> View<'f, 'a> {
                     ));
                 }
             }
+        }
+        Ok(out)
+    }
+
+    /// A data list's elements as unfollowed refs: null, local, imported or
+    /// named. Script lists hold all four.
+    pub(crate) fn element_refs(
+        &self,
+        list: &DataList<'a>,
+    ) -> Result<Vec<ObjectRef<'a>>, FormatError> {
+        let bytes = self.list_bytes(list, 4)?;
+        let Some(data) = list.data else {
+            return Ok(Vec::new());
+        };
+        let mut out = Vec::with_capacity(bytes.len() / 4);
+        for i in 0..bytes.len() as u32 / 4 {
+            let at = data.at.offset_by(4 * i).unwrap_or(data.at);
+            out.push(match self.igz.reference(at, "element")? {
+                Ref::Null => ObjectRef::Null,
+                Ref::Object(o) => ObjectRef::Object(o),
+                Ref::Import { index, id } => ObjectRef::Import(Import { index, id }),
+                Ref::MetaObject { index, name } => ObjectRef::Named { index, name },
+                _ => {
+                    let value = self.igz.u32_at(at, "element")?;
+                    return Err(self.igz.err_at(
+                        at,
+                        "element",
+                        ErrorKind::Unsupported {
+                            value: value.into(),
+                        },
+                    ));
+                }
+            });
         }
         Ok(out)
     }

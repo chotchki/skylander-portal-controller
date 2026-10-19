@@ -23,9 +23,12 @@ use skylander_core::InstalledGame;
 use crate::profiles::{ProfileStore, SessionRegistry};
 
 pub struct AppState {
-    pub figures: Vec<Figure>,
-    /// Map figure_id → index into `figures` for quick lookup.
-    pub figure_index: HashMap<FigureId, usize>,
+    /// The figure list, shared and replaceable (AE.4): the product's pack,
+    /// or guacamole's disc roster once it lands.
+    pub figures: crate::figures::FigureList,
+    /// guacamole's "resume last setup?" offers held until the roster lands,
+    /// by (session id, profile id) (AE.4).
+    pub held_resumes: Mutex<Vec<(u64, String)>>,
     /// Which portal driver is active. Read by the `/api/launch` handler
     /// to skip the games.yml → EBOOT.BIN resolution under the mock and
     /// native drivers (neither spawns RPCS3, and on macOS there's no
@@ -70,8 +73,9 @@ pub struct AppState {
     /// settings GUI (PLAN 16.9.3), which persists per-game Custom Configurations
     /// here for the `--no-gui` boots to consume.
     pub config_dir: PathBuf,
-    /// Root of the committed static-data bundle served at `/api/figures/:id/image`.
-    /// Points at `<repo>/data/` in dev; populated at startup from config.
+    /// The product's committed static-data bundle (`/api/figures/:id/image`'s
+    /// scraped portraits, the box art): `<repo>/data/` in dev. Empty, and never
+    /// read, under guacamole (AE.4).
     pub data_root: PathBuf,
     /// Root of the built phone SPA (trunk's `dist/`). Used by handlers
     /// that need to read static assets directly — e.g. the icon-serving
@@ -341,8 +345,9 @@ impl AppState {
 }
 
 impl AppState {
-    pub fn lookup_figure(&self, id: &FigureId) -> Option<&Figure> {
-        self.figure_index.get(id).and_then(|i| self.figures.get(*i))
+    /// `id`'s figure in the list as it is now.
+    pub fn lookup_figure(&self, id: &FigureId) -> Option<Figure> {
+        self.figures.now().get(id).cloned()
     }
 
     /// Sweep ghosted sessions whose `ghosted_at` exceeded the configured
@@ -436,8 +441,9 @@ impl AppState {
                 .current_game_of_origin()
                 .await
                 .unwrap_or(skylander_core::GameOfOrigin::Imaginators);
+            let figures = self.figures.now();
             let swap =
-                crate::kaos::select_swap(current_game, &portal, &self.figures, &pid, &mut rng);
+                crate::kaos::select_swap(current_game, &portal, figures.figures(), &pid, &mut rng);
             let next = match swap {
                 Some(s) => {
                     let taunt = crate::kaos::random_swap_taunt(&mut rng);
@@ -495,7 +501,7 @@ impl AppState {
         let new_path = match &self.hooks.figure_files {
             // No figure files (Native): the worker places by identity.
             None => None,
-            Some(figure_files) => match figure_files.resolve_load_path(profile_id, new_figure) {
+            Some(figure_files) => match figure_files.resolve_load_path(profile_id, &new_figure) {
                 Ok(p) => Some(p),
                 Err(e) => {
                     warn!(
@@ -679,22 +685,21 @@ fn first_grapheme_uppercase(name: &str) -> Option<String> {
 }
 
 /// The identity placement for a file-less load (openspec AA, design decision
-/// 4). Errors only for an id that isn't in the catalogue or isn't tag-form; an
-/// owner whose profile can't be read is logged and left off.
+/// 4): the subtype word as the id spells it (AE.4) and the roster's portrait.
+/// Errors only for an id that isn't in the list or isn't tag-form; an owner
+/// whose profile can't be read is logged and left off.
 async fn build_placement(
     figure_id: &FigureId,
     name: &str,
     placed_by: Option<&str>,
-    figures: &[Figure],
+    figures: &crate::figures::FigureSet,
     profiles: &crate::profiles::ProfileStore,
-    data_root: &Path,
 ) -> Result<skylander_rpcs3_control::Placement> {
     let figure = figures
-        .iter()
-        .find(|f| &f.id == figure_id)
-        .ok_or_else(|| anyhow::anyhow!("place: {figure_id} isn't in the catalogue"))?;
+        .get(figure_id)
+        .ok_or_else(|| anyhow::anyhow!("place: {figure_id} isn't in the figure list"))?;
     let (toy_type, variant) = figure_id
-        .tag_parts()
+        .subtype_parts()
         .ok_or_else(|| anyhow::anyhow!("place: {figure_id} isn't a toy type + variant id"))?;
     let owner = match placed_by {
         None => None,
@@ -723,7 +728,7 @@ async fn build_placement(
         variant,
         name: name.to_string(),
         element: figure.element,
-        portrait: crate::native_catalogue::portrait(data_root, figure_id),
+        portrait: figures.portrait(figure_id).map(Path::to_path_buf),
         owner,
     })
 }
@@ -1175,7 +1180,7 @@ pub fn spawn_crash_watchdog(
     events: broadcast::Sender<Event>,
     launcher_status: Arc<std::sync::Mutex<LauncherStatus>>,
     driver_tx: mpsc::Sender<DriverJob>,
-    figures: Arc<Vec<Figure>>,
+    figures: crate::figures::FigureList,
     figure_files: Option<Arc<dyn crate::hooks::FigureFiles>>,
     driver_kind: crate::config::DriverKind,
     interval: std::time::Duration,
@@ -1342,7 +1347,7 @@ pub fn spawn_crash_watchdog(
                     &portal,
                     &events,
                     &driver_tx,
-                    &figures,
+                    figures.now().figures(),
                     figure_files.as_deref(),
                     &to_restore,
                 )
@@ -1516,11 +1521,10 @@ pub fn spawn_driver_worker(
     events: broadcast::Sender<Event>,
     profiles: crate::profiles::ProfileStore,
     sessions: Arc<crate::profiles::SessionRegistry>,
-    figures: Arc<Vec<Figure>>,
+    figures: crate::figures::FigureList,
     rpcs3: Arc<Mutex<RpcsLifecycle>>,
     rpcs3_exe: PathBuf,
     config_dir: PathBuf,
-    data_root: PathBuf,
     launcher_status: Arc<std::sync::Mutex<LauncherStatus>>,
     rpcs3_config: Option<Arc<dyn crate::hooks::Rpcs3Config>>,
 ) -> mpsc::Sender<DriverJob> {
@@ -1529,7 +1533,7 @@ pub fn spawn_driver_worker(
     tokio::spawn(async move {
         // Initial snapshot — best effort; a subsequent RefreshPortal will retry
         // if this fails (e.g. dialog not open yet).
-        if let Err(e) = refresh(&driver, &portal, &events, &figures).await {
+        if let Err(e) = refresh(&driver, &portal, &events, figures.now().figures()).await {
             info!("initial portal refresh failed (expected if dialog isn't open yet): {e}");
         }
 
@@ -1538,14 +1542,14 @@ pub fn spawn_driver_worker(
                 &job,
                 DriverJob::LoadFigure { .. } | DriverJob::ClearSlot { .. }
             );
+            // Each job reads the list as it is when the job runs.
             if let Err(e) = handle_job(
                 job,
                 &driver,
                 &portal,
                 &events,
-                &figures,
+                &figures.now(),
                 &profiles,
-                &data_root,
                 &rpcs3,
                 &rpcs3_exe,
                 &config_dir,
@@ -1579,15 +1583,15 @@ async fn handle_job(
     driver: &Arc<dyn PortalDriver>,
     portal: &Arc<Mutex<[SlotState; SLOT_COUNT]>>,
     events: &broadcast::Sender<Event>,
-    figures: &[Figure],
+    set: &crate::figures::FigureSet,
     profiles: &crate::profiles::ProfileStore,
-    data_root: &Path,
     rpcs3: &Arc<Mutex<RpcsLifecycle>>,
     rpcs3_exe: &Path,
     config_dir: &Path,
     launcher_status: &Arc<std::sync::Mutex<LauncherStatus>>,
     rpcs3_config: Option<&Arc<dyn crate::hooks::Rpcs3Config>>,
 ) -> Result<()> {
+    let figures = set.figures();
     match job {
         DriverJob::LoadFigure {
             slot,
@@ -1612,9 +1616,8 @@ async fn handle_job(
                     &figure_id,
                     &canonical_name,
                     placed_by.as_deref(),
-                    figures,
+                    set,
                     profiles,
-                    data_root,
                 )
                 .await
                 {
@@ -2334,7 +2337,7 @@ mod tests {
         let portal: Arc<Mutex<[SlotState; SLOT_COUNT]>> =
             Arc::new(Mutex::new(std::array::from_fn(|_| SlotState::Empty)));
         let (events, _erx) = broadcast::channel::<Event>(32);
-        let figures: Vec<Figure> = Vec::new();
+        let figures = crate::figures::FigureSet::pack(Vec::new());
         let rpcs3: Arc<Mutex<RpcsLifecycle>> = Arc::new(Mutex::new(RpcsLifecycle::default()));
         let launcher_status: Arc<std::sync::Mutex<LauncherStatus>> =
             Arc::new(std::sync::Mutex::new(LauncherStatus::default()));
@@ -2363,7 +2366,6 @@ mod tests {
             &events,
             &figures,
             &profiles,
-            Path::new("/nonexistent/data"),
             &rpcs3,
             Path::new("/nonexistent/rpcs3"), // mock branch never spawns
             Path::new("/nonexistent/config"),
@@ -2432,9 +2434,8 @@ mod tests {
             &driver,
             &portal,
             &events,
-            &[],
+            &crate::figures::FigureSet::pack(Vec::new()),
             &profiles,
-            Path::new("/nonexistent/data"),
             &rpcs3,
             Path::new("/nonexistent/rpcs3"),
             Path::new("/nonexistent/config"),

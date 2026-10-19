@@ -27,6 +27,11 @@ pub struct FoundDump {
 }
 
 impl FoundDump {
+    /// `PS3_GAME/ICON0.PNG`, the disc's icon; it may not exist.
+    pub fn icon(&self) -> PathBuf {
+        self.dir.join("PS3_GAME").join("ICON0.PNG")
+    }
+
     /// The Skylanders title's display name; `None` for any other game.
     pub fn display_name(&self) -> Option<&'static str> {
         SKYLANDERS_SERIALS
@@ -52,12 +57,14 @@ impl DumpScan {
         self.found.iter().find(|d| d.title_id == GIANTS_TITLE_ID)
     }
 
-    /// The phone's game list: Giants when found, else nothing.
+    /// The phone's game list: Giants when found, else nothing. Its art is the
+    /// dump's own icon, wherever the dump is (AE.4).
     pub fn games(&self) -> Vec<InstalledGame> {
         self.offered()
             .map(|d| InstalledGame {
                 serial: GameSerial::new(GIANTS_TITLE_ID),
                 display_name: d.display_name().unwrap_or(GIANTS_TITLE_ID).to_string(),
+                art: Some(d.icon()),
             })
             .into_iter()
             .collect()
@@ -166,6 +173,8 @@ mod tests {
             assert_eq!(found.games().len(), 1);
             assert_eq!(found.games()[0].serial.as_str(), GIANTS_TITLE_ID);
             assert_eq!(found.games()[0].display_name, "Skylanders: Giants");
+            let art = found.games()[0].art.clone().unwrap();
+            assert_eq!(art, offered.dir.join("PS3_GAME/ICON0.PNG"));
         }
         let too_deep = giants_at("a/b/c");
         assert!(too_deep.found.is_empty(), "{too_deep:?}");

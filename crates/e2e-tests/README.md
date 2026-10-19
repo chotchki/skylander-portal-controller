@@ -94,9 +94,15 @@ E2E_APP=guacamole cargo test -p skylander-e2e-tests -- --ignored --nocapture
 Under `guacamole` the harness runs `cargo run -p guacamole --features
 test-hooks` with no firmware-pack lookup. The env file it generates in
 the temp working dir points `GUAC_DUMP_DIRS` at a temp dir of synthetic
-`PS3_GAME/PARAM.SFO` files (BLUS30968 unless a test asks for other
-titles), `DATA_ROOT` at the repo's `data/` (the interim figure
-catalogue) and sets `WINDOW_MODE=desktop`. `BUILD_TOKEN=e2e-test` is
+dumps, each a `PS3_GAME/PARAM.SFO` built in code (BLUS30968 unless a test
+asks for other titles), and sets `WINDOW_MODE=desktop`. The Giants dump
+is an `IntroFixture` with no intros: a finished extract
+(`GUAC_EXTRACT_DIR`, the dump trusted through `GUAC_TEST_KNOWN_DUMP`)
+whose roster, `E2E_ROSTER` in [`src/lib.rs`](src/lib.rs), holds ten
+figures under their disc ids (every one the tests place, plus Legendary
+Ignitor as a variant), each with a flat-colour PNG portrait, so guacamole
+lists them from the start (openspec AE.4). No
+`DATA_ROOT`: guacamole reads no wiki data. `BUILD_TOKEN=e2e-test` is
 pinned the same way, so the phone bundle from step 3 serves both apps.
 `spawn_live` and `spawn_ipc_*` bail under it: they drive RPCS3.
 
@@ -110,7 +116,8 @@ owner pip and rect), not pixels.
 openspec AB.11, AB.21, AB.22 and AB.23) is guacamole-only too and needs ffmpeg (`brew install
 ffmpeg`; found on PATH or in Homebrew's folders). Each test builds an
 `IntroFixture` first: a synthetic Giants dump (a PARAM.SFO and a text
-file) and a finished extract of it whose intros are ffmpeg's `testsrc`
+file) and a finished extract of it, `E2E_ROSTER` included, whose intros
+are ffmpeg's `testsrc`
 picture over a `sine` tone, encoded at run time to guacamole's own
 target, so no game bytes are involved anywhere. guacamole gets the
 extract as `GUAC_EXTRACT_DIR` and trusts the dump through
@@ -159,7 +166,8 @@ product-only: <why>` instead of failing:
   `docs/assets/screens/`).
 
 Every other mock-harness test runs against both apps. On the Mac
-(2026-10-18, serial, `--skip ios_`, after AB.21 and AA.20): guacamole
+(2026-10-18, serial, `--skip ios_`, after AB.21 and AA.20, and the same
+again after AE.4 moved guacamole onto the fixture roster): guacamole
 55 of 55 ok, 42 run for real (13 TV + 4 intro + 25 shared) and 13
 product-only skips; the product 52 of 55 ok, 31 run for real (28
 passed, 3 failed), 7 live-RPCS3 tests skip without

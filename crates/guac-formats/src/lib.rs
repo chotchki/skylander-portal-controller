@@ -13,12 +13,16 @@
 
 pub mod edge;
 mod error;
+pub mod exports;
 pub mod havok;
 pub mod iga;
 pub mod igz;
+pub mod language;
 mod reader;
+pub mod roster;
 pub mod sfo;
 pub mod texture;
+pub mod toys;
 
 #[cfg(feature = "test-fixtures")]
 pub mod registry;

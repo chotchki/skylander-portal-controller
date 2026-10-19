@@ -12,14 +12,17 @@ use guac_extract::census::find_ffprobe;
 use guac_extract::ffmpeg::Ffmpeg;
 use guac_extract::intros::{self, IrFormat};
 use guac_extract::known::KNOWN_DUMPS;
+use guac_extract::stages::{self, Event, Files};
 use guac_extract::transcode::{self, Done, Step};
-use guac_extract::{DirState, ExtractRoot, RootMode};
+use guac_extract::{DirState, ExtractRoot, IdentityDir, Opened, RootMode, roster};
 
 const USAGE: &str = "\
 usage: guac-extract identify <dump-dir>
        guac-extract census <dump-dir>
+       guac-extract roster <dump-dir>
        guac-extract intros <dump-dir>
        guac-extract transcode <dump-dir>
+       guac-extract extract <dump-dir>
        guac-extract [--help | --version]
 
 Extracts what guacamole plays from your own Skylanders disc dump.
@@ -32,15 +35,21 @@ Extracts what guacamole plays from your own Skylanders disc dump.
              audio tracks (ffprobe: GUAC_FFPROBE, else beside guac-extract,
              else PATH, else Homebrew's bin folders on macOS) and write
              census-<title>-<version>-<stamp>.json into GUAC_EXTRACT_DIR
+  roster     identify, then read the figures the disc defines into
+             ir/roster.ron and each one's portrait into portraits/<id>.png in
+             the dump's folder
   intros     identify, then map each toy type's character archives to its
-             intro movie by their voice-over name and write the character
-             table to ir/characters.ron in the dump's folder; guacamole adds
-             the interim catalogue's names as a fallback, this doesn't
+             intro movie by their voice-over name, the roster's names as the
+             fallback, and write the character table to ir/characters.ron in
+             the dump's folder
   transcode  intros, then turn each intro movie into video/intro/<name>.mp4
              and audio/intro/<name>.mp3 in the dump's folder (ffmpeg:
              GUAC_FFMPEG, else beside guac-extract, else PATH, else Homebrew's
-             bin folders on macOS); leaves the extract unmarked, since
-             guacamole's has the fallback names too
+             bin folders on macOS); leaves the extract unmarked, since it
+             writes no roster
+  extract    every stage, in guacamole's order: identify, the roster, then
+             ffmpeg and the intros; a missing ffmpeg leaves the roster in
+             place and the extract unmarked
 ";
 
 /// The environment, else `.env.dev` in the current folder.
@@ -130,13 +139,104 @@ fn identify(dump: &Path) -> Result<(), guac_extract::ExtractError> {
     Ok(())
 }
 
-fn intros(dump: &Path) -> Result<(), guac_extract::ExtractError> {
+fn open_dev(dump: &Path) -> Result<Opened, guac_extract::ExtractError> {
     let root = ExtractRoot::resolve(RootMode::Dev {
         extract_dir: extract_dir(),
     })?;
-    let mut opened = guac_extract::open(dump, &root, KNOWN_DUMPS, &|_| {})?;
+    guac_extract::open(dump, &root, KNOWN_DUMPS, &|_| {})
+}
+
+/// The roster's base names, the intro index's fallback, read off the dump.
+fn fallback_names(
+    dir: &IdentityDir,
+) -> Result<std::collections::BTreeMap<u32, String>, guac_extract::ExtractError> {
+    let m = dir.manifest();
+    let roster = roster::read(Path::new(&m.source_dir), m.identity.clone())?;
+    Ok(roster::base_names(&roster))
+}
+
+fn files_line(files: &Files) -> String {
+    format!(
+        "{} written, {} already there, {} bytes",
+        files.written, files.kept, files.bytes
+    )
+}
+
+fn roster(dump: &Path) -> Result<(), guac_extract::ExtractError> {
+    let mut opened = open_dev(dump)?;
+    let stage = stages::roster_stage(&mut opened.dir, IrFormat::Ron, &|_| {})?;
+    let r = &stage.roster;
+    println!(
+        "roster      {} figures, {} languages, {} portraits",
+        r.figures.len(),
+        r.languages.len(),
+        stage.portraits
+    );
+    println!("files       {}", files_line(&stage.files));
+    println!("extract     {}", opened.dir.path().display());
+    println!("took        {:.2} s", stage.took.as_secs_f64());
+    Ok(())
+}
+
+fn extract(dump: &Path) -> Result<(), guac_extract::ExtractError> {
     let started = Instant::now();
-    let idx = intros::index(&opened.dir, &Default::default())?;
+    let mut opened = open_dev(dump)?;
+    println!(
+        "identity    {:?} in {:.2} s",
+        opened.state,
+        started.elapsed().as_secs_f64()
+    );
+    if opened.state == DirState::Current {
+        println!("extract     {} (current)", opened.dir.path().display());
+        return Ok(());
+    }
+    let ffmpeg = dev_var("GUAC_FFMPEG").map(PathBuf::from);
+    let done = stages::run(&mut opened.dir, ffmpeg.as_deref(), IrFormat::Ron, &|e| {
+        if let Event::Transcode(t) = e
+            && let Step::Done(_) = t.step
+        {
+            println!("  {:2}/{}  {}", t.index + 1, t.total, t.movie);
+        }
+    })?;
+    let r = &done.roster;
+    println!(
+        "roster      {} figures, {} portraits; {}; {:.2} s",
+        r.roster.figures.len(),
+        r.portraits,
+        files_line(&r.files),
+        r.took.as_secs_f64()
+    );
+    match &done.intros {
+        Ok(i) => println!(
+            "intros      {} of {} toy types; {} transcoded, {} already done, {} linked; {:.1} s",
+            i.index
+                .table
+                .characters
+                .values()
+                .filter(|c| c.intro.is_some())
+                .count(),
+            i.index.table.characters.len(),
+            i.summary.transcoded,
+            i.summary.resumed,
+            i.summary.linked,
+            i.took.as_secs_f64()
+        ),
+        Err(e) => println!("intros      none ({})", e.code()),
+    }
+    let complete = opened.dir.manifest().complete;
+    println!(
+        "extract     {} ({})",
+        opened.dir.path().display(),
+        if complete { "complete" } else { "unmarked" }
+    );
+    println!("took        {:.1} s", started.elapsed().as_secs_f64());
+    done.intros.map(drop)
+}
+
+fn intros(dump: &Path) -> Result<(), guac_extract::ExtractError> {
+    let mut opened = open_dev(dump)?;
+    let started = Instant::now();
+    let idx = intros::index(&opened.dir, &fallback_names(&opened.dir)?)?;
     let out = intros::write(&mut opened.dir, &idx.table, IrFormat::Ron)?;
     let with_intro = idx
         .table
@@ -175,7 +275,7 @@ fn transcode(dump: &Path) -> Result<(), guac_extract::ExtractError> {
     let ffmpeg = Ffmpeg::locate(dev_var("GUAC_FFMPEG").map(PathBuf::from).as_deref())?;
     println!("ffmpeg      {} ({:?})", ffmpeg.path.display(), ffmpeg.how);
     let mut opened = guac_extract::open(dump, &root, KNOWN_DUMPS, &|_| {})?;
-    let idx = intros::index(&opened.dir, &Default::default())?;
+    let idx = intros::index(&opened.dir, &fallback_names(&opened.dir)?)?;
     intros::write(&mut opened.dir, &idx.table, IrFormat::Ron)?;
     let started = Instant::now();
     let summary = transcode::transcode_intros(&mut opened.dir, &idx.table, &ffmpeg, &|e| {
@@ -227,6 +327,20 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         ["census", dump] => match census(Path::new(dump)) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("guac-extract: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        ["roster", dump] => match roster(Path::new(dump)) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("guac-extract: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        ["extract", dump] => match extract(Path::new(dump)) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("guac-extract: {e}");
