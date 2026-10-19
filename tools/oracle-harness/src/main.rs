@@ -19,7 +19,8 @@ usage:
   oracle home init [--home <dir>] [--shader-mode <mode>] [--sys-fs-trace] [--audio]
       build the oracle home ($GUAC_ORACLE_HOME unless --home): a dev_flash copy from
       the dev's RPCS3 dir, games.yml at $GUAC_GIANTS_DUMP, PINE on, two pads, the config
-      (silent, RPCS3's Null audio renderer, unless --audio)
+      (silent unless --audio: RPCS3's Null audio renderer, and silence where a
+      screenshot would beep)
   oracle boot [--savestate <file>] [--windowed] [--surface-2x] [--ungated] [--hold]
               [--ready-secs <n>] [--sample-secs <n>]
       boot $GUAC_ORACLE_EXE from the oracle home to playable (a savestate: to its

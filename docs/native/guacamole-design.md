@@ -793,8 +793,10 @@ images his captured frames bind is exactly what RSX was given, level for level (
   [`giants_capture_texels.rs`](../../crates/guac-formats/tests/giants_capture_texels.rs)). The Skylander Info
   page's Upgrades carousel (SELECT in gameplay, no hub needed) binds 14 of the 16 `009_eruptor.arc` images
   over four unattended captures, each on u0 with `LN` SET (the linear `_big` it is on the disc), 512x360 at
-  pitch 2048, and RSX's own reading of the unit (`rrc_dump::texels`: RPCS3's level layout and Morton walk,
-  in our own code) equals our KTX2 byte for byte. The Wow Pow image lists only for a Series 2 figure.
+  pitch 2048, and RSX's own reading of the unit (`rrc_dump::texels`, RPCS3's level layout in our own code)
+  equals our KTX2 byte for byte. RSX never reorders DXT, so that reading is the uploaded rows: the check
+  pins the bytes plus the unit's `LN`, pitch, size and level count, and the Morton walk waits on L8. The
+  Wow Pow image lists only for a Series 2 figure.
 - Not exercised yet: L8 against a bound unit (AC.24) and the two branch images (AC.25). Giants' only L8
   images are two depth-of-field focus mappers (128x2, one pair in each of 66 `level.bld`, bound by no
   material) that the EBOOT's DOF pass binds while a script has DOF on, at turrets or in atmospheric zones.

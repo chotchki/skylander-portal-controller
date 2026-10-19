@@ -14,7 +14,9 @@
 //!   row pitch and in a compute shader otherwise (`rpcs3/Emu/RSX/VK/VKTexture.cpp:1148-1158`);
 //!   every L8 image on the Giants disc is 128x2 (256 bytes), so the CPU walk reads them.
 //! - DXT1/23/45 are never Morton-ordered ([`crate::nv4097::never_swizzled`]): `LN` clear is packed
-//!   rows, `LN` set rows at the pitch.
+//!   rows, `LN` set rows at the pitch. So for DXT, RSX's reading is the unit's bytes in rows, and
+//!   a check against it tests the layout (`LN`, pitch, size, levels), not a reorder.
+//! - The level count: the unit's, capped as `get_exact_mipmap_count` caps it.
 //!
 //! Only what the decode gate meets: 2D, no border texels, B8 and the three DXT formats.
 //! Everything else is refused by name, not guessed.
@@ -61,10 +63,11 @@ pub fn levels(t: &TextureUnit) -> Result<Vec<Vec<u8>>, Unread> {
     if t.width == 0 || t.height == 0 || t.mipmaps == 0 {
         return Err(Unread::Shape("empty"));
     }
-    let mut out = Vec::with_capacity(t.mipmaps as usize);
+    let count = exact_mipmap_count(t.mipmaps, t.width, t.height, edge);
+    let mut out = Vec::with_capacity(count as usize);
     let mut at = 0usize;
     let (mut w, mut h) = (t.width, t.height);
-    for _ in 0..t.mipmaps {
+    for _ in 0..count {
         let (bw, bh) = (w.div_ceil(edge), h.div_ceil(edge));
         let row = bw * bytes;
         // LN set: rows at the unit's pitch (the same pitch for every level, `:676`).
@@ -125,6 +128,19 @@ pub fn deswizzle(src: &[u8], width: u32, height: u32) -> Vec<u8> {
         }
     }
     out
+}
+
+/// The levels RPCS3 reads, `fragment_texture::get_exact_mipmap_count`
+/// (`rpcs3/Emu/RSX/RSXTexture.cpp:143`): the unit's count, capped at the chain
+/// down to a 1-texel side, or for DXT down to a 1-block side.
+fn exact_mipmap_count(mipmaps: u32, width: u32, height: u32, edge: u32) -> u32 {
+    let floor_log2 = |v: u32| v.max(1).ilog2();
+    let most = if edge == 4 {
+        floor_log2((width / 4).min(height / 4)) + 1
+    } else {
+        floor_log2(width.max(height)) + 1
+    };
+    mipmaps.min(most)
 }
 
 fn ceil_log2(v: u32) -> u32 {
@@ -232,6 +248,19 @@ mod tests {
         t.bytes = count(128);
         let l = levels(&t).unwrap();
         assert_eq!(l, [count(32), (32..40).collect::<Vec<u8>>()]);
+    }
+
+    #[test]
+    fn levels_past_the_chain_are_not_read() {
+        // B8 8x2 claims 6 levels; RPCS3 reads 4 (8x2, 4x1, 2x1, 1x1).
+        let mut t = unit(0x81 | m::TEXTURE_LN, 8, 2, 6, 8);
+        t.bytes = count(64);
+        assert_eq!(levels(&t).unwrap().len(), 4);
+        // DXT1 16x8 claims 5; RPCS3 stops where a side is one block (16x8, 8x4).
+        let mut t = unit(0x86, 16, 8, 5, 0);
+        t.bytes = count(128);
+        let l = levels(&t).unwrap();
+        assert_eq!(l, [count(64), (64..80).collect::<Vec<u8>>()]);
     }
 
     #[test]

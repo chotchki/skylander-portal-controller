@@ -1,6 +1,9 @@
-//! AC.21: textures checked against RSX's own reading of a bound unit, not only against the
-//! bytes it uploaded. RPCS3's reading is `rrc_dump::texels`: its level layout and, for an `LN`-clear
-//! B8 unit, its Morton walk, in code that shares nothing with this crate's untile.
+//! AC.21: textures checked against RSX's own reading of a bound unit. RPCS3's reading is
+//! `rrc_dump::texels`: its level layout and, for an `LN`-clear B8 unit, its Morton walk, in code
+//! that shares nothing with this crate's untile. For DXT, which RSX never reorders, that reading is
+//! the unit's bytes in rows, so a DXT check is those bytes plus the unit's `LN` bit, pitch, size
+//! and level count; only L8 moves bytes, and only the first test below exercises that walk until a
+//! capture binds an L8 (AC.24).
 //!
 //! - [`untile_agrees_with_rpcs3s_reading_on_every_power_of_two_l8`] runs in `cargo test`: the
 //!   crate's L8 untile against RPCS3's walk on every power-of-two shape up to 512 a side, whole
@@ -268,6 +271,19 @@ fn eruptor_upgrade_art_matches_the_captures() {
                 agree += 1;
             }
             let Some(a) = art.iter().find(|a| a.ktx == rsx) else {
+                // A DXT5 unit the size of one of his images is one of them, or a mismatch would
+                // pass as "not bound".
+                let size = (t.width, t.height);
+                assert!(
+                    t.format_raw & !0x60 != 0x88
+                        || !art
+                            .iter()
+                            .any(|a| (a.texture.width, a.texture.height) == size),
+                    "{name}: DXT5 {}x{} at {:#x} is the size of his upgrade art but equals none of it",
+                    t.width,
+                    t.height,
+                    t.offset
+                );
                 continue;
             };
             // One of his: bound as the linear `_big` image it is on the disc, rows at the packed
@@ -316,7 +332,8 @@ fn eruptor_upgrade_art_matches_the_captures() {
         covered.len(),
         art.len()
     );
-    // Everything but the two branch images, so a capture that adds them shows up here.
+    // Everything but the two branch images, which no unit binds at their size (the check above),
+    // so a capture that adds them shows up here.
     assert_eq!(missing, BRANCHES);
     assert_eq!(
         covered["eruptor_upgradepowwow.png"],

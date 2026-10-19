@@ -15,8 +15,42 @@ pub const ASYNC_WITH_INTERPRETER: &str = "Async Recompiler with Shader Interpret
 
 /// `Audio: Renderer` in the template: RPCS3's no-device backend ("Disable Audio
 /// Output" in its GUI). The pin's default, `Cubeb`, plays to the Mac's default
-/// output device.
+/// output device. Written double-quoted: yaml-cpp reads a plain `Null` as a YAML
+/// null (`IsNullString`), `cfg::decode` skips a value that isn't a scalar, and
+/// RPCS3 keeps Cubeb. RPCS3's own emitter quotes it for the same reason.
 pub const NULL_AUDIO: &str = "Null";
+
+/// The two files under `<config>/sounds/` whose absence makes RPCS3 beep:
+/// `gs_frame` plays `snd_screenshot.wav` after every screenshot and
+/// `snd_recording.wav` when a recording stops, and with no file there it calls
+/// `QApplication::beep()` (`rpcs3qt/gs_frame.cpp:1106-1112` and `:485-491` at
+/// the pin, `:1210` and `:533` in the P-patched oracle), the Mac's alert sound,
+/// which no audio setting reaches. A silent home holds [`silent_wav`] under both
+/// names.
+pub const BEEP_SOUNDS: [&str; 2] = ["snd_screenshot.wav", "snd_recording.wav"];
+
+/// 10 ms of silence, 16-bit mono PCM at 48 kHz: what RPCS3 plays through
+/// `QSoundEffect` in place of a beep.
+pub fn silent_wav() -> Vec<u8> {
+    const RATE: u32 = 48_000;
+    const DATA: u32 = RATE / 100 * 2;
+    let mut wav = Vec::with_capacity(44 + DATA as usize);
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + DATA).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    // PCM, 1 channel, the rate, bytes a second, bytes a frame, bits a sample.
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&RATE.to_le_bytes());
+    wav.extend_from_slice(&(RATE * 2).to_le_bytes());
+    wav.extend_from_slice(&2u16.to_le_bytes());
+    wav.extend_from_slice(&16u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&DATA.to_le_bytes());
+    wav.resize(44 + DATA as usize, 0);
+    wav
+}
 
 /// The oracle's GDB stub port, off RPCS3's default 2345: a connection to the
 /// stub pauses the emulator (and freezes it if the peer hangs up silently), so
@@ -33,7 +67,8 @@ pub struct ConfigTemplate {
     /// archive; off, `sys_fs` keeps its default level (opens and stats).
     pub sys_fs_trace: bool,
     /// The pin's own audio output, for a run that needs to hear the game; off,
-    /// the template sets [`NULL_AUDIO`] and the oracle is silent.
+    /// the template sets [`NULL_AUDIO`] and the home holds [`BEEP_SOUNDS`], so
+    /// the oracle is silent.
     pub audio: bool,
 }
 
@@ -58,7 +93,7 @@ impl ConfigTemplate {
         // and logs an error unless the config agrees, so buffering is off here too.
         if !self.audio {
             out.push_str(&format!(
-                "Audio:\n  Enable Buffering: false\n  Renderer: {NULL_AUDIO}\n"
+                "Audio:\n  Enable Buffering: false\n  Renderer: \"{NULL_AUDIO}\"\n"
             ));
         }
         if self.sys_fs_trace {
@@ -123,7 +158,10 @@ pub fn games_yml(giants_dump: &std::path::Path) -> String {
 mod tests {
     use super::*;
 
-    /// `section -> key -> value` for the two-level YAML RPCS3's configs use.
+    /// `section -> key -> value` for the two-level YAML RPCS3's configs use, each
+    /// value the scalar yaml-cpp hands `cfg::decode`: a double-quoted value
+    /// unquoted, and a plain one yaml-cpp reads as null (`IsNullString`) refused,
+    /// since RPCS3 drops it and keeps the pin's default.
     fn parse(yaml: &str) -> Vec<(String, String, String)> {
         let mut out = Vec::new();
         let mut section = String::new();
@@ -132,12 +170,47 @@ mod tests {
                 section = name.to_owned();
             } else if let Some(body) = line.strip_prefix("  ") {
                 let (k, v) = body.split_once(": ").expect("key: value");
+                let v = match v.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
+                    Some(quoted) => quoted,
+                    None => {
+                        assert!(
+                            !["~", "null", "Null", "NULL"].contains(&v),
+                            "{section}: {k}: {v} is a YAML null, which RPCS3 skips"
+                        );
+                        v
+                    }
+                };
                 out.push((section.clone(), k.to_owned(), v.to_owned()));
             } else {
                 panic!("unexpected line {line:?}");
             }
         }
         out
+    }
+
+    #[test]
+    #[should_panic(expected = "is a YAML null")]
+    fn a_plain_null_is_refused_as_rpcs3_would_drop_it() {
+        parse("Audio:\n  Renderer: Null\n");
+    }
+
+    #[test]
+    fn the_silent_wav_is_pcm_silence() {
+        let wav = silent_wav();
+        let u16_at = |at: usize| u16::from_le_bytes([wav[at], wav[at + 1]]);
+        let u32_at = |at: usize| u32::from_le_bytes(wav[at..at + 4].try_into().unwrap());
+        assert_eq!(&wav[..4], b"RIFF");
+        assert_eq!(u32_at(4) as usize, wav.len() - 8);
+        assert_eq!(&wav[8..16], b"WAVEfmt ");
+        assert_eq!(
+            (u32_at(16), u16_at(20), u16_at(22), u32_at(24)),
+            (16, 1, 1, 48_000)
+        );
+        assert_eq!((u32_at(28), u16_at(32), u16_at(34)), (96_000, 2, 16));
+        assert_eq!(&wav[36..40], b"data");
+        assert_eq!(u32_at(40), 960);
+        assert_eq!(wav.len(), 44 + 960);
+        assert!(wav[44..].iter().all(|&b| b == 0));
     }
 
     fn value<'a>(entries: &'a [(String, String, String)], section: &str, key: &str) -> &'a str {
