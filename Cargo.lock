@@ -4193,6 +4193,7 @@ dependencies = [
  "guac-formats",
  "guac-ir",
  "guac-server",
+ "png 0.18.1",
  "serde",
  "serde_json",
  "sha2 0.11.1",

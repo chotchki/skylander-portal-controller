@@ -5,10 +5,11 @@
 //! decimal toy type. Their entry lists carry the character's voice-over lines
 //! as `…/vo_<vo_name>_<line>.wav/…`, and `<vo_name>` with its underscores
 //! stripped is the intro's name. A toy type the disc doesn't map falls back
-//! to the interim catalogue's base name, lowercased to letters and digits. A
-//! fallback never takes a movie the disc gave another toy type. A variant the
-//! catalogue gives a toy type of its own (Dark Spyro, 28) shares its base's
-//! intro when its name is a base archive's suffix plus the base's name.
+//! to the roster's English base name (AE.3, [`crate::roster::base_names`]),
+//! lowercased to letters and digits. A fallback never takes a movie the disc
+//! gave another toy type. A variant the roster gives a toy type of its own
+//! (Dark Spyro, 28) shares its base's intro when its name is a base archive's
+//! suffix plus the base's name.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
@@ -182,7 +183,7 @@ pub fn archives(stems: &[&str]) -> Vec<CharacterArchive> {
     out
 }
 
-/// The pure index over listings, the disc's movie stems and the catalogue's
+/// The pure index over listings, the disc's movie stems and the fallback
 /// base names by toy type.
 pub fn build(
     identity: DumpIdentity,
@@ -393,6 +394,27 @@ impl IrFormat {
             Self::Postcard => "ir/characters.postcard",
         }
     }
+
+    /// The roster's file (AE.3).
+    pub fn roster_path(self) -> &'static str {
+        match self {
+            Self::Ron => "ir/roster.ron",
+            Self::Postcard => "ir/roster.postcard",
+        }
+    }
+
+    /// `body` in this format, inside the IR's versioned envelope. A failure
+    /// is reported against `rel` in `dir`.
+    pub fn encode<T: Serialize>(self, body: &T, dir: &IdentityDir, rel: &str) -> Result<Vec<u8>> {
+        match self {
+            Self::Ron => guac_ir::to_ron(body).map(String::into_bytes),
+            Self::Postcard => guac_ir::to_postcard(body),
+        }
+        .map_err(|e: IrError| ExtractError::Io {
+            path: dir.path().join(rel),
+            source: std::io::Error::other(e),
+        })
+    }
 }
 
 /// Writes the table to `ir/characters.<ron|postcard>` through the identity
@@ -402,14 +424,7 @@ pub fn write(
     table: &CharacterTable,
     format: IrFormat,
 ) -> Result<OutputFile> {
-    let bytes = match format {
-        IrFormat::Ron => guac_ir::to_ron(table).map(String::into_bytes),
-        IrFormat::Postcard => guac_ir::to_postcard(table),
-    }
-    .map_err(|e: IrError| ExtractError::Io {
-        path: dir.path().join(format.characters_path()),
-        source: std::io::Error::other(e),
-    })?;
+    let bytes = format.encode(table, dir, format.characters_path())?;
     dir.write_output(format.characters_path(), &bytes)
 }
 
@@ -744,7 +759,7 @@ mod tests {
         let c = &idx.table.characters[&113];
         assert_eq!(c.vo_name, None);
         assert_eq!(c.intro, None);
-        // A catalogue name with no archive and no movie isn't in the table.
+        // A fallback name with no archive and no movie isn't in the table.
         assert!(!idx.table.characters.contains_key(&200));
         assert_eq!(idx.unclaimed_movies, ["fmv01"]);
     }

@@ -1,4 +1,5 @@
-//! The intro index on the real Giants dump (openspec AB.6). Ignored by
+//! The intro index on the real Giants dump (openspec AB.6), its name
+//! fallback the disc roster's English base names since AE.3. Ignored by
 //! default: it reads `GUAC_GIANTS_DUMP` and writes the character table into
 //! a throwaway identity dir under `GUAC_EXTRACT_DIR`, from the environment or
 //! the workspace's `.env.dev`:
@@ -11,7 +12,7 @@ use std::time::Instant;
 
 use guac_extract::intros::{self, IrFormat, MAX_ENTRY_NAME, MAX_VO_STEM, slug};
 use guac_extract::known::KNOWN_DUMPS;
-use guac_extract::{ExtractRoot, open};
+use guac_extract::{ExtractRoot, open, roster};
 use guac_formats::iga::Archive;
 use guac_ir::{CharacterTable, IntroSource};
 
@@ -48,9 +49,9 @@ fn every_giants_intro_maps_to_one_toy_type() {
     let root = ExtractRoot::checked(tmp.path().join("extract")).unwrap();
     let mut opened = open(&dump, &root, KNOWN_DUMPS, &|_| {}).expect("the known dump");
 
-    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
-    let catalogue = guac_server::native_catalogue::load(&data_root).unwrap();
-    let names = guac_server::native_catalogue::base_names(&catalogue);
+    let identity = opened.dir.manifest().identity.clone();
+    let on_disc = roster::read(&dump, identity).expect("the disc's roster");
+    let names = roster::base_names(&on_disc);
 
     let started = Instant::now();
     let idx = intros::index(&opened.dir, &names).unwrap();
@@ -58,7 +59,7 @@ fn every_giants_intro_maps_to_one_toy_type() {
     let chars = &idx.table.characters;
 
     println!(
-        "toy  archives                                    vo_name          intro            source        catalogue"
+        "toy  archives                                    vo_name          intro            source        roster"
     );
     for (toy, c) in chars {
         let stems: Vec<String> = c
@@ -120,7 +121,7 @@ fn every_giants_intro_maps_to_one_toy_type() {
     println!("variants sharing a base's intro (toy: base, movie): {variants:?}");
     println!("unclaimed movies: {:?}", idx.unclaimed_movies);
 
-    // The five the catalogue gives a toy type of their own.
+    // The five the roster gives a toy type of their own.
     assert_eq!(
         variants,
         BTreeMap::from([
@@ -149,27 +150,21 @@ fn every_giants_intro_maps_to_one_toy_type() {
         .filter(|(_, c)| !c.archives.is_empty())
         .map(|(t, _)| *t)
         .collect();
-    let catalogued: BTreeSet<u32> = names.keys().copied().collect();
-    let missing: Vec<u32> = archived.difference(&catalogued).copied().collect();
-    let only_catalogue: BTreeMap<u32, String> = catalogued
+    let rostered: BTreeSet<u32> = names.keys().copied().collect();
+    let missing: Vec<u32> = archived.difference(&rostered).copied().collect();
+    let only_roster: BTreeMap<u32, String> = rostered
         .difference(&archived)
         .map(|t| {
-            let f = catalogue
-                .iter()
-                .find(|f| f.tag_identity.is_some_and(|i| i.toy_type.0 == *t))
-                .unwrap();
+            let f = on_disc.figures.iter().find(|f| f.toy_type == *t).unwrap();
             (*t, format!("{} ({:?})", names[t], f.category))
         })
         .collect();
-    println!("archive toy types the catalogue lacks: {missing:?}");
+    println!("archive toy types the roster lacks: {missing:?}");
     println!(
-        "catalogue toy types with no archive ({}): {only_catalogue:?}",
-        only_catalogue.len()
+        "roster toy types with no archive ({}): {only_roster:?}",
+        only_roster.len()
     );
-    assert!(
-        missing.is_empty(),
-        "add these to native_catalogue's SUPPLEMENT: {missing:?}"
-    );
+    assert!(missing.is_empty(), "the roster lacks {missing:?}");
 
     // The caps drop nothing real: the longest voice-over entry name and stem.
     let char_dir = dump.join(intros::CHARACTER_DIR);

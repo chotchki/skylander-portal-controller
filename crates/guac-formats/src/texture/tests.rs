@@ -413,3 +413,181 @@ fn ktx2_dfd_bytes_match_the_spec_generator() {
         );
     }
 }
+
+/// One BC1 colour half: endpoints, then texel i's 2-bit index at bit 2i.
+fn bc1(c0: u16, c1: u16, indexes: [u8; 16]) -> Vec<u8> {
+    let bits = indexes
+        .iter()
+        .enumerate()
+        .fold(0u32, |b, (i, &x)| b | u32::from(x) << (2 * i));
+    [c0.to_le_bytes(), c1.to_le_bytes()]
+        .concat()
+        .into_iter()
+        .chain(bits.to_le_bytes())
+        .collect()
+}
+
+/// One BC3 alpha half: endpoints, then texel i's 3-bit index at bit 3i.
+fn bc3_alpha(a0: u8, a1: u8, indexes: [u8; 16]) -> Vec<u8> {
+    let bits = indexes
+        .iter()
+        .enumerate()
+        .fold(0u64, |b, (i, &x)| b | u64::from(x) << (3 * i));
+    [a0, a1]
+        .into_iter()
+        .chain(bits.to_le_bytes()[..6].to_vec())
+        .collect()
+}
+
+fn texture(format: Format, width: u32, height: u32, level: Vec<u8>) -> Texture {
+    Texture {
+        format,
+        width,
+        height,
+        levels: vec![level],
+    }
+}
+
+/// The RGBA8 texel at (x, y) of a `width`-wide decode.
+fn px(rgba: &[u8], width: usize, x: usize, y: usize) -> [u8; 4] {
+    rgba[(y * width + x) * 4..][..4].try_into().unwrap()
+}
+
+/// Indexes 0, 1, 2, 3 along every row.
+const RAMP: [u8; 16] = [0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3];
+
+#[test]
+fn bc1_four_colours_widen_and_round() {
+    // Red over blue: c0 > c1, four opaque colours.
+    let t = texture(Format::Bc1RgbaUnorm, 4, 4, bc1(0xF800, 0x001F, RAMP));
+    let rgba = t.rgba8(0).unwrap();
+    assert_eq!(rgba.len(), 4 * 4 * 4);
+    let row: Vec<[u8; 4]> = (0..4).map(|x| px(&rgba, 4, x, 2)).collect();
+    assert_eq!(
+        row,
+        [
+            [255, 0, 0, 255],
+            [0, 0, 255, 255],
+            [170, 0, 85, 255],
+            [85, 0, 170, 255]
+        ]
+    );
+    // 565 widens by bit replication: 1, 2, 1 become 8, 8, 8.
+    let t = texture(Format::Bc1RgbaUnorm, 4, 4, bc1(0x0841, 0, [0; 16]));
+    assert_eq!(px(&t.rgba8(0).unwrap(), 4, 3, 3), [8, 8, 8, 255]);
+}
+
+#[test]
+fn bc1_three_colours_keep_transparent_black() {
+    // Blue over red: c0 <= c1, the midpoint and transparent black.
+    let t = texture(Format::Bc1RgbaUnorm, 4, 4, bc1(0x001F, 0xF800, RAMP));
+    let rgba = t.rgba8(0).unwrap();
+    let row: Vec<[u8; 4]> = (0..4).map(|x| px(&rgba, 4, x, 0)).collect();
+    assert_eq!(
+        row,
+        [
+            [0, 0, 255, 255],
+            [255, 0, 0, 255],
+            [128, 0, 128, 255],
+            [0, 0, 0, 0]
+        ]
+    );
+}
+
+#[test]
+fn bc3_alpha_steps_and_its_colour_half_always_four() {
+    let colour = bc1(0x001F, 0xF800, RAMP);
+    // Eight steps when a0 > a1: index 2 is (6 * 255 + 0) / 7, rounded.
+    let mut idx = [0u8; 16];
+    idx[..8].copy_from_slice(&[0, 1, 2, 3, 4, 5, 6, 7]);
+    let t = texture(
+        Format::Bc3Unorm,
+        4,
+        4,
+        [bc3_alpha(255, 0, idx), colour.clone()].concat(),
+    );
+    let rgba = t.rgba8(0).unwrap();
+    let alphas: Vec<u8> = (0..8).map(|i| px(&rgba, 4, i % 4, i / 4)[3]).collect();
+    assert_eq!(alphas, [255, 0, 219, 182, 146, 109, 73, 36]);
+    // c0 <= c1 is still four colours in BC3: index 3 is a third of the way.
+    assert_eq!(px(&rgba, 4, 3, 0), [170, 0, 85, 182]);
+    // Six steps plus 0 and 255 when a0 <= a1.
+    let t = texture(
+        Format::Bc3Unorm,
+        4,
+        4,
+        [bc3_alpha(0, 255, idx), colour].concat(),
+    );
+    let rgba = t.rgba8(0).unwrap();
+    let alphas: Vec<u8> = (0..8).map(|i| px(&rgba, 4, i % 4, i / 4)[3]).collect();
+    assert_eq!(alphas, [0, 255, 51, 102, 153, 204, 0, 255]);
+}
+
+#[test]
+fn blocks_land_in_rows_and_partial_blocks_crop() {
+    // 8x4: a red block, then a blue one.
+    let level = [bc1(0xF800, 0, [0; 16]), bc1(0x001F, 0, [0; 16])].concat();
+    let rgba = texture(Format::Bc1RgbaUnorm, 8, 4, level).rgba8(0).unwrap();
+    let red = [255, 0, 0, 255];
+    let blue = [0, 0, 255, 255];
+    let row: Vec<[u8; 4]> = (0..8).map(|x| px(&rgba, 8, x, 3)).collect();
+    assert_eq!(row, [red, red, red, red, blue, blue, blue, blue]);
+    // A 2x2 level keeps the block's top-left four texels.
+    let t = Texture {
+        format: Format::Bc1RgbaUnorm,
+        width: 4,
+        height: 4,
+        levels: vec![bc1(0, 0, [0; 16]), bc1(0xF800, 0x001F, RAMP)],
+    };
+    let rgba = t.rgba8(1).unwrap();
+    assert_eq!(rgba.len(), 2 * 2 * 4);
+    assert_eq!([px(&rgba, 2, 0, 1), px(&rgba, 2, 1, 1)], [red, blue]);
+}
+
+#[test]
+fn l8_reads_as_grey_and_short_levels_are_refused() {
+    let t = texture(Format::R8Unorm, 3, 1, vec![0, 128, 255]);
+    assert_eq!(
+        t.rgba8(0).unwrap(),
+        [0, 0, 0, 255, 128, 128, 128, 255, 255, 255, 255, 255]
+    );
+    let e = t.rgba8(1).unwrap_err();
+    assert_eq!(
+        (e.field, e.kind),
+        ("levels", ErrorKind::OutOfRange { value: 1, limit: 1 })
+    );
+    let short = texture(Format::Bc3Unorm, 8, 4, vec![0; 31]);
+    let e = short.rgba8(0).unwrap_err();
+    assert_eq!(
+        (e.field, e.kind),
+        (
+            "_data",
+            ErrorKind::Truncated {
+                needed: 32,
+                available: 31
+            }
+        )
+    );
+    // A huge level with no data is refused before anything is allocated.
+    let e = texture(Format::Bc1RgbaUnorm, u32::MAX, u32::MAX, vec![])
+        .rgba8(0)
+        .unwrap_err();
+    assert_eq!(e.field, "_data");
+}
+
+#[test]
+fn builder_images_decode_level_zero() {
+    let built = images();
+    let igz = Igz::parse(&built.bytes).unwrap();
+    for (spec, &at) in SPECS.iter().zip(&built.images) {
+        let (index, _) = igz.object_at(at).unwrap();
+        let t = Texture::read(&igz, index).unwrap();
+        let rgba = t.rgba8(0).unwrap();
+        assert_eq!(
+            rgba.len(),
+            usize::from(spec.width) * usize::from(spec.height) * 4,
+            "{}",
+            spec.format
+        );
+    }
+}

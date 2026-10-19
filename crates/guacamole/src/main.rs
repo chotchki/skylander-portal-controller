@@ -123,12 +123,7 @@ fn main() -> Result<()> {
     let setup_view = SetupView::at_start(picked, needs_setup, &loaded.dump_dirs, &scan);
     let job = ExtractJob {
         test_known: test_known_dump(),
-        ..ExtractJob::new(
-            &root,
-            loaded.extract_dir.clone(),
-            loaded.ffmpeg.clone(),
-            cfg.data_root.clone(),
-        )
+        ..ExtractJob::new(&root, loaded.extract_dir.clone(), loaded.ffmpeg.clone())
     };
 
     let link = match boot(BootOptions {

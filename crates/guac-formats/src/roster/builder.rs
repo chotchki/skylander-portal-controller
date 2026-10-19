@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 
 use crate::exports::NAMESPACE;
 use crate::fnv1a32;
+use crate::iga::builder::IgaBuilder;
 use crate::igz::Location;
 use crate::igz::builder::IgzBuilder;
 use crate::igz::layouts::builder::list;
@@ -117,6 +118,31 @@ pub struct Disc {
     pub packs: Vec<Vec<u8>>,
     pub bootstrap: Vec<u8>,
     pub collection: Vec<u8>,
+}
+
+impl Disc {
+    /// The four archives a dump keeps these in, by their path under
+    /// `PS3_GAME/USRDIR`, each holding its level as `level.bld` and global's
+    /// its packs too (AE.3's synthetic dumps).
+    pub fn archives(&self) -> Vec<(&'static str, Vec<u8>)> {
+        let level = |bytes: &[u8]| IgaBuilder::new().stored("level.bld", bytes);
+        let global = self
+            .packs
+            .iter()
+            .enumerate()
+            .fold(level(&self.global), |b, (i, pack)| {
+                b.stored(&format!("language_{i}.pak"), pack)
+            });
+        vec![
+            ("character/init_setup.bld", level(&self.init_setup).build()),
+            ("permanent/global.bld", global.build()),
+            ("permanent/bootstrap.bld", level(&self.bootstrap).build()),
+            (
+                "misc/ui_collection_champions.bld",
+                level(&self.collection).build(),
+            ),
+        ]
+    }
 }
 
 /// `global.bld`'s level and the export id of each root by name.
@@ -598,6 +624,8 @@ fn collection(spec: &DiscSpec) -> Vec<u8> {
             b.pointer(at(bind, 0x10), texture);
             b.pointer(at(texture, 0x30), image);
             b.string(at(image, 0x08), &format!("{name}.png"));
+            // A colour scale of 1, as every image on the disc has.
+            b.put_bytes(at(image, 0x10), &1f32.to_be_bytes().repeat(4));
             b.put_bytes(at(image, 0x30), &[0, 4, 0, 4, 0, 1, 0, 1, 0, 1]);
             b.import(at(image, 0x3C), "metaimages", "dxt5_big_ps3");
             b.handle(at(image, 0x48), blocks, &[i as u8; 0x80], 5);

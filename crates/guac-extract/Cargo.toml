@@ -27,6 +27,9 @@ sha2 = "0.11"
 thiserror = { workspace = true }
 # The unknown-dump report's file name stamp.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# The portraits the phone shows (AE.3): Bevy's image loader already pulls
+# this version in, so it adds no crate to the lock.
+png = "0.18"
 
 [dev-dependencies]
 # The game-magic guard (tests/no_game_bytes.rs) inflates gzip and zstd heads
@@ -39,6 +42,6 @@ zstd = "0.13"
 tempfile = "3"
 # SfoBuilder, for the synthetic dumps the identity tests build.
 guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }
-# The interim catalogue's base names, the intro index's fallback and the
-# roster cross-check in tests/giants_intros.rs.
+# AA's interim catalogue, which tests/giants_roster.rs checks the disc's
+# roster against.
 guac-server = { path = "../guac-server", default-features = false }

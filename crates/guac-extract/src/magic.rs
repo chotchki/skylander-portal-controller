@@ -41,6 +41,12 @@ pub const GAME_MAGICS: &[(&[u8], &str)] = &[
     (b".SFB", "PS3 disc boot file (PS3_DISC.SFB)"),
     (b"SCEUF", "PS3 system update (PS3UPDAT.PUP)"),
     (b"RRC", "RPCS3 RSX capture"),
+    // Not a disc format: the extract holds the disc's textures in it (AE.6),
+    // and the repo holds none (test fixtures are built in code).
+    (
+        b"\xabKTX 20\xbb\r\n\x1a\n",
+        "KTX2 texture (an extract's disc textures)",
+    ),
     // A whole-memory dump plus the hdd0/hdd1 tars; RPCS3 writes it raw, gzipped
     // or zstd-compressed (`.SAVESTAT.zst`, its default), and the guard inflates both.
     (b"RPCS3SAV", "RPCS3 savestate"),

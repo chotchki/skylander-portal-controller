@@ -7,9 +7,11 @@
 //! `misc/ui_collection_champions.bld` the portraits. `guac-formats` reads
 //! them ([`guac_formats::toys`], [`guac_formats::roster`]); this turns the
 //! figures into owned IR with every language's text. Each figure's portrait
-//! is named `portraits/<id>.png` when the disc has a sprite for it; writing
-//! the PNGs is the roster stage's (AE.3).
+//! is named `portraits/<id>.png` when the disc has a sprite for it, and
+//! [`png`] makes that file out of the sprite's image; writing them is the
+//! roster stage's ([`crate::stages`], AE.3).
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use guac_formats::FormatError;
@@ -19,7 +21,9 @@ use guac_formats::igz::Igz;
 use guac_formats::igz::layouts::{Layout, StringInfo};
 use guac_formats::language::{LanguagePack, Texts, packs};
 use guac_formats::roster::{self, Category as FCategory, Kind};
+use guac_formats::texture::Texture;
 use guac_formats::toys::ToyTable;
+use guac_ir::roster::ENGLISH;
 use guac_ir::{Category, DumpIdentity, Element, FigureKind, Language, Roster, RosterFigure, Text};
 
 use crate::{ExtractError, Result};
@@ -30,6 +34,17 @@ pub const BOOTSTRAP: &str = "permanent/bootstrap.bld";
 pub const COLLECTION: &str = "misc/ui_collection_champions.bld";
 /// The entry each of the four archives keeps its level in.
 pub const LEVEL: &str = "level.bld";
+/// Where the portraits go in the extract, one `<figure id>.png` each.
+pub const PORTRAIT_DIR: &str = "portraits";
+
+/// A figure's portrait as the disc holds it: its file in the extract and the
+/// sprite's image, untiled.
+#[derive(Debug, Clone)]
+pub struct Portrait {
+    /// `portraits/<figure id>.png`, the figure's [`RosterFigure::portrait`].
+    pub path: String,
+    pub texture: Texture,
+}
 
 /// The roster's inputs, read out of their archives.
 #[derive(Debug, Clone)]
@@ -78,6 +93,11 @@ impl Sources {
 
     /// The roster these sources define, under `identity`.
     pub fn roster(&self, identity: DumpIdentity) -> Result<Roster> {
+        Ok(self.roster_and_portraits(identity)?.0)
+    }
+
+    /// [`Self::roster`] plus every figure's portrait image, in roster order.
+    pub fn roster_and_portraits(&self, identity: DumpIdentity) -> Result<(Roster, Vec<Portrait>)> {
         let parse = |archive, bytes| Igz::parse(bytes).map_err(|e| unreadable(archive, e));
         let init = parse(INIT_SETUP, &self.init_setup)?;
         let global = parse(GLOBAL, &self.global)?;
@@ -109,7 +129,22 @@ impl Sources {
                 .ok_or_else(|| unreadable(GLOBAL, "no English pack"))
         };
         let mut out = Vec::with_capacity(figures.len());
+        let mut portraits = Vec::new();
         for f in &figures {
+            let portrait = match f.portrait {
+                Some(sprite) => {
+                    let path = format!("{PORTRAIT_DIR}/{}.png", f.id());
+                    let texture = roster::portrait_image(&collection, sprite)
+                        .and_then(|image| Texture::read(&collection, image))
+                        .map_err(|e| unreadable(COLLECTION, e))?;
+                    portraits.push(Portrait {
+                        path: path.clone(),
+                        texture,
+                    });
+                    Some(path)
+                }
+                None => None,
+            };
             let figure = RosterFigure {
                 toy_type: f.toy_type,
                 variant: f.variant,
@@ -135,11 +170,11 @@ impl Sources {
                     FCategory::Sidekick => Category::Sidekick,
                 },
                 load_file: english(f.level_load)?,
-                portrait: f.portrait.map(|_| format!("portraits/{}.png", f.id())),
+                portrait,
             };
             out.push(figure);
         }
-        Ok(Roster {
+        let roster = Roster {
             identity,
             languages: texts
                 .languages()
@@ -150,13 +185,49 @@ impl Sources {
                 })
                 .collect(),
             figures: out,
-        })
+        };
+        Ok((roster, portraits))
     }
 }
 
 /// The roster of the dump at `dump` (the folder holding `PS3_GAME`).
 pub fn read(dump: &Path, identity: DumpIdentity) -> Result<Roster> {
-    Sources::read(&dump.join("PS3_GAME").join("USRDIR"))?.roster(identity)
+    Ok(read_with_portraits(dump, identity)?.0)
+}
+
+/// [`read`] plus every figure's portrait image.
+pub fn read_with_portraits(dump: &Path, identity: DumpIdentity) -> Result<(Roster, Vec<Portrait>)> {
+    Sources::read(&dump.join("PS3_GAME").join("USRDIR"))?.roster_and_portraits(identity)
+}
+
+/// Each toy type's English name off its plain figure (variant 0), so 28 is
+/// "Dark Spyro" and 100 "Jet-Vac": the intro index's fallback (AE.3).
+pub fn base_names(roster: &Roster) -> BTreeMap<u32, String> {
+    roster
+        .figures
+        .iter()
+        .filter(|f| f.variant == 0)
+        .filter_map(|f| Some((f.toy_type, roster.display_name(f, ENGLISH)?)))
+        .collect()
+}
+
+/// `portrait` as the PNG the phone and the TV show: level 0 decoded to
+/// straight 8-bit RGBA.
+pub fn png(portrait: &Portrait) -> Result<Vec<u8>> {
+    let refused = |e: &dyn ToString| ExtractError::RosterUnreadable {
+        path: PathBuf::from(&portrait.path),
+        reason: e.to_string(),
+    };
+    let t = &portrait.texture;
+    let rgba = t.rgba8(0).map_err(|e| refused(&e))?;
+    let mut out = Vec::new();
+    let mut encoder = ::png::Encoder::new(&mut out, t.width, t.height);
+    encoder.set_color(::png::ColorType::Rgba);
+    encoder.set_depth(::png::BitDepth::Eight);
+    let mut writer = encoder.write_header().map_err(|e| refused(&e))?;
+    writer.write_image_data(&rgba).map_err(|e| refused(&e))?;
+    writer.finish().map_err(|e| refused(&e))?;
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -237,6 +308,78 @@ mod tests {
         s.packs.clear();
         let e = s.roster(identity()).unwrap_err();
         assert!(e.to_string().contains("no English pack"), "{e}");
+    }
+
+    #[test]
+    fn every_portrait_comes_with_its_image_and_decodes_to_a_png() {
+        let (r, portraits) = sources().roster_and_portraits(identity()).unwrap();
+        let named: Vec<&str> = r
+            .figures
+            .iter()
+            .filter_map(|f| f.portrait.as_deref())
+            .collect();
+        let paths: Vec<&str> = portraits.iter().map(|p| p.path.as_str()).collect();
+        assert_eq!(paths, named);
+        assert_eq!(paths.len(), 24);
+        for p in &portraits {
+            let bytes = png(p).unwrap();
+            let mut reader = ::png::Decoder::new(std::io::Cursor::new(&bytes))
+                .read_info()
+                .unwrap();
+            let mut rgba = vec![0; reader.output_buffer_size().unwrap()];
+            let info = reader.next_frame(&mut rgba).unwrap();
+            assert_eq!(
+                (info.width, info.height, info.color_type, info.bit_depth),
+                (4, 4, ::png::ColorType::Rgba, ::png::BitDepth::Eight),
+                "{}",
+                p.path
+            );
+            assert_eq!(rgba, p.texture.rgba8(0).unwrap(), "{}", p.path);
+        }
+        // A level that won't decode names the portrait.
+        let mut broken = portraits[0].clone();
+        broken.texture.levels[0].truncate(3);
+        let e = png(&broken).unwrap_err();
+        assert_eq!(e.code(), "GUAC-E-ROSTER-UNREADABLE");
+        assert!(e.to_string().contains(&broken.path), "{e}");
+    }
+
+    #[test]
+    fn base_names_are_each_toy_types_plain_figure_in_english() {
+        let names = base_names(&sources().roster(identity()).unwrap());
+        assert_eq!(names[&0], "Whirlwind");
+        // A toy type of its own keeps its variant word.
+        assert_eq!(names[&0x1c], "Dark Spyro");
+        assert_eq!(names[&0x64], "Jet-Vac");
+        assert_eq!(names[&0xc8], "Anvil Rain");
+        // Polar Whirlwind, Series 2 and LightCore rows don't replace a base.
+        assert_eq!(names[&7], "Prism Break");
+        assert!(!names.contains_key(&999), "DEBUG is dropped");
+        assert_eq!(names.len(), 13);
+    }
+
+    #[test]
+    fn the_builders_archives_read_back_from_a_dump() {
+        let tmp = tempfile::tempdir().unwrap();
+        let usrdir = tmp.path().join("PS3_GAME/USRDIR");
+        for (path, bytes) in disc(&sample()).archives() {
+            let path = usrdir.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, bytes).unwrap();
+        }
+        let (r, portraits) = read_with_portraits(tmp.path(), identity()).unwrap();
+        // Packs come in the archive's entry order, so compare by language.
+        let want = sources().roster(identity()).unwrap();
+        let names = |r: &Roster, lang| -> Vec<(String, Option<String>)> {
+            r.figures
+                .iter()
+                .map(|f| (f.id(), r.display_name(f, lang)))
+                .collect()
+        };
+        for lang in [ENGLISH, 8] {
+            assert_eq!(names(&r, lang), names(&want, lang));
+        }
+        assert_eq!(portraits.len(), 24);
     }
 
     #[test]

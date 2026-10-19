@@ -61,9 +61,10 @@ pub const PARSERS: &[RegisteredParser] = &[
         name: "igimage2_ktx2",
         parse: walk_textures,
         seeds: texture::builder::seeds,
-        // The IGZ parse, plus one image's levels and its KTX2 at a time:
-        // each about its pixel block, which the input holds.
-        heap_budget: |len| 64 * len + 2 * len + (64 << 10),
+        // The IGZ parse, plus one image's levels and its KTX2 at a time,
+        // each about its pixel block, which the input holds, then level 0
+        // as RGBA8: 8 bytes a BC1 byte, 4 a BC3 or L8 one.
+        heap_budget: |len| 64 * len + 2 * len + 8 * len + (64 << 10),
     },
     RegisteredParser {
         name: "edge_geometry",
@@ -324,9 +325,10 @@ pub fn walk_layouts(bytes: &[u8]) -> Result<(), FormatError> {
 /// can share one block, so an input can ask for far more than it holds.
 pub const TEXTURE_WALK_BUDGET: usize = 4 << 20;
 
-/// Parses an IGZ, then untiles every `igImage2` and writes it as KTX2,
-/// dropping each and skipping errors, until [`TEXTURE_WALK_BUDGET`] untiled
-/// bytes have come out. The property test and the fuzz targets run it.
+/// Parses an IGZ, then untiles every `igImage2`, writes it as KTX2 and
+/// decodes its level 0, dropping each and skipping errors, until
+/// [`TEXTURE_WALK_BUDGET`] untiled bytes have come out. The property test and
+/// the fuzz targets run it.
 pub fn walk_textures(bytes: &[u8]) -> Result<(), FormatError> {
     converted_textures(bytes).map(drop)
 }
@@ -341,6 +343,8 @@ fn converted_textures(bytes: &[u8]) -> Result<usize, FormatError> {
         if let Ok(t) = texture::Texture::read(&file, i) {
             let n: usize = t.levels.iter().map(Vec::len).sum();
             drop(t.to_ktx2());
+            // Level 0 as a portrait PNG would hold it (AE.3).
+            drop(t.rgba8(0).expect("an untiled level decodes"));
             converted += 1;
             left = left.saturating_sub(n.max(1));
             if left == 0 {
