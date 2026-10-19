@@ -78,6 +78,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "toy_table"
+path = "fuzz_targets/toy_table.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "havok"
 path = "fuzz_targets/havok.rs"
 test = false

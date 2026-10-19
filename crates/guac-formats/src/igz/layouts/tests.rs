@@ -80,6 +80,21 @@ fn the_table_is_closed_and_tagged() {
         LanguagePackInfo::TYPE,
         SpriteInfo::TYPE,
         AnimatableTextureDataInfo::TYPE,
+        RootList::TYPE,
+        OpCode::TYPE,
+        ScriptInfo::TYPE,
+        OpCodeList::TYPE,
+        OpUseMacro::TYPE,
+        OpMacroInterface::TYPE,
+        OpDefineMacro::TYPE,
+        Variable::TYPE,
+        OpMacroParameter::TYPE,
+        OpChangeMembership::TYPE,
+        OpLoopValue::TYPE,
+        Stack::TYPE,
+        RhsValueStack::TYPE,
+        RhsReferenceStack::TYPE,
+        ValueRhsVariant::TYPE,
     ];
     for r in readers {
         assert!(type_def(r).is_some(), "{r} has no TypeDef");
@@ -1137,4 +1152,145 @@ fn an_unflagged_index_past_exnm_names_nothing() {
         }
     );
     assert_eq!(v.value_type.metaobject(), None);
+}
+
+/// The toy table's op and stack layouts (AE.2): registry size, memory refs
+/// a zeroed object needs marked null, reader.
+const OP_LAYOUTS: [(&str, u32, &[u32], Reader); 14] = [
+    ("tfbScriptInfo", 0x1C, &[], |i, o| {
+        ScriptInfo::read(i, o).map(drop)
+    }),
+    ("OpCodeList", 0x18, &[0x10], |i, o| {
+        OpCodeList::read(i, o).map(drop)
+    }),
+    ("OpUseMacro", 0x24, &[], |i, o| {
+        OpUseMacro::read(i, o).map(drop)
+    }),
+    ("OpMacroInterface", 0x20, &[], |i, o| {
+        OpMacroInterface::read(i, o).map(drop)
+    }),
+    ("OpDefineMacro", 0x38, &[], |i, o| {
+        OpDefineMacro::read(i, o).map(drop)
+    }),
+    ("OpCreateVariable", 0x2C, &[], |i, o| {
+        Variable::read(i, o).map(drop)
+    }),
+    ("OpMacroParameter", 0x48, &[], |i, o| {
+        OpMacroParameter::read(i, o).map(drop)
+    }),
+    ("OpChangeMembership", 0x28, &[], |i, o| {
+        OpChangeMembership::read(i, o).map(drop)
+    }),
+    ("OpLoopValue", 0x28, &[], |i, o| {
+        OpLoopValue::read(i, o).map(drop)
+    }),
+    ("SetStack", 0x18, &[0x10], |i, o| {
+        Stack::read(i, o).map(drop)
+    }),
+    ("ScriptGroupStack", 0x1C, &[0x10], |i, o| {
+        Stack::read(i, o).map(drop)
+    }),
+    ("RHSValueStack", 0x28, &[0x10], |i, o| {
+        RhsValueStack::read(i, o).map(drop)
+    }),
+    ("ValueRHSVariant", 0x1C, &[], |i, o| {
+        ValueRhsVariant::read(i, o).map(drop)
+    }),
+    ("OpFlowMacro", 0x1C, &[], |i, o| {
+        OpCode::read(i, o).map(drop)
+    }),
+];
+
+#[test]
+fn each_op_layout_refuses_a_wrong_mtsz() {
+    for (ty, size, nulls, read) in OP_LAYOUTS {
+        assert_eq!(type_def(ty).unwrap().size, size, "{ty}");
+        let zeroed = |mtsz| {
+            let (mut b, o) = one(ty, mtsz);
+            for &offset in nulls.iter().filter(|&&n| n + 8 <= mtsz) {
+                b.null_memory_ref(at(o, offset), 0);
+            }
+            b.build()
+        };
+        let bytes = zeroed(size);
+        read(&Igz::parse(&bytes).unwrap(), 0).unwrap_or_else(|e| panic!("{ty}: {e}"));
+        for wrong in [size - 4, size + 4] {
+            let bytes = zeroed(wrong);
+            let e = read(&Igz::parse(&bytes).unwrap(), 0).unwrap_err();
+            assert_eq!(e.field, "MTSZ", "{ty} at {wrong:#x}");
+        }
+    }
+}
+
+#[test]
+fn an_rhs_reference_stack_reads_at_its_files_mtsz_with_a_clean_pad() {
+    let stack = |mtsz, pad_marker: bool| {
+        let (mut b, o) = one("RHSReferenceStack", mtsz);
+        b.null_memory_ref(at(o, 0x10), 0);
+        b.put_u32(at(o, 0x20), 7);
+        if mtsz == 0x30 {
+            if pad_marker {
+                b.pointer(at(o, 0x2C), o);
+            } else {
+                b.put_u32(at(o, 0x2C), 0xE82A_A02A);
+            }
+        }
+        b.build()
+    };
+    // The file's 0x30, its last word an unmarked value: reads.
+    let bytes = stack(0x30, false);
+    let igz = Igz::parse(&bytes).unwrap();
+    let r = RhsReferenceStack::read(&igz, 0).unwrap();
+    assert_eq!((r.value.value, r.value.stack.path.len()), (7, 0));
+    // Through its parent's layout too.
+    assert_eq!(RhsValueStack::read(&igz, 0).unwrap().value, 7);
+    assert_eq!(file_size("RHSReferenceStack"), Some(0x30));
+    assert_eq!(file_size("RHSValueStack"), Some(0x28));
+    // The registry's 0x2C is not what files carry.
+    let bytes = stack(0x2C, false);
+    let e = RhsReferenceStack::read(&Igz::parse(&bytes).unwrap(), 0).unwrap_err();
+    assert_eq!(e.field, "MTSZ");
+    // A fixup in the pad is refused.
+    let bytes = stack(0x30, true);
+    let e = RhsReferenceStack::read(&Igz::parse(&bytes).unwrap(), 0).unwrap_err();
+    assert_eq!(e.kind, ErrorKind::Unsupported { value: 0x2C });
+}
+
+#[test]
+fn an_op_reads_its_block_and_a_use_its_macro() {
+    let (mut b, call) = one("OpUseMacro", 0x24);
+    let np = b.object(0, "ScriptGroupStack", 0x1C);
+    let def = b.object(0, "OpDefineMacroSpecialization", 0x40);
+    let blocks = b.section(0x10);
+    b.string(at(call, 0x08), "use macro");
+    b.put_u32(at(call, 0x18), 0x0001_000C);
+    b.pointer(at(call, 0x1C), np);
+    super::builder::list(&mut b, np, blocks, &[Some(def)]);
+    b.string(at(def, 0x08), "Portal - Define Object Level Load");
+    b.put_u32(at(def, 0x20), 0x01C9_F90B);
+    b.put_u32(at(def, 0x24), 0x8FAE_96B0);
+    // A specialization's base, past the definition's layout.
+    b.pointer(at(def, 0x38), def);
+    let bytes = b.build();
+    let igz = Igz::parse(&bytes).unwrap();
+    let u = OpUseMacro::read(&igz, 0).unwrap();
+    assert_eq!(
+        (u.op.name, u.op.flags, u.op.branch),
+        (Some("use macro"), 1, 12)
+    );
+    assert_eq!(u.op.block_end(5), Some(17));
+    assert_eq!(u.np, Some(index(&igz, np)));
+    let path = Stack::read(&igz, u.np.unwrap()).unwrap().path;
+    assert_eq!(path, [ObjectRef::Object(index(&igz, def))]);
+    let d = OpDefineMacro::read(&igz, index(&igz, def)).unwrap();
+    assert_eq!(d.op.name, Some("Portal - Define Object Level Load"));
+    assert_eq!(d.creation_handle, 0x01C9_F90B_8FAE_96B0);
+    // No block, and `flow end`'s 0xFFFF, open nothing.
+    let op = |branch| OpCode {
+        name: None,
+        flags: 0,
+        branch,
+    };
+    assert_eq!(op(0).block_end(3), None);
+    assert_eq!(op(BRANCH_END).block_end(3), None);
 }

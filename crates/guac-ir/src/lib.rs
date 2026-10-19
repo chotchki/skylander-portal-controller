@@ -11,15 +11,18 @@
 
 mod characters;
 mod identity;
+pub mod roster;
 
 pub use characters::{Character, CharacterArchive, CharacterTable, Intro, IntroSource, VoiceTrack};
 pub use identity::{DumpIdentity, Sha256};
+pub use roster::{Category, Element, FigureKind, Language, Roster, RosterFigure, Text};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-/// The IR's shape version. Any change to a serialized type bumps it.
-pub const IR_VERSION: u32 = 1;
+/// The IR's shape version. Any change to a serialized type bumps it. v2
+/// (AE.2) adds the disc's roster.
+pub const IR_VERSION: u32 = 2;
 
 #[derive(Debug, thiserror::Error)]
 pub enum IrError {
@@ -258,7 +261,7 @@ mod tests {
     #[test]
     fn ron_carries_the_version_and_a_hex_hash() {
         let text = to_ron(&identity()).unwrap();
-        assert!(text.contains("ir_version: 1"), "{text}");
+        assert!(text.contains("ir_version: 2"), "{text}");
         assert!(
             text.contains(&format!("\"{}\"", identity().manifest_hash)),
             "{text}"
@@ -275,12 +278,12 @@ mod tests {
     fn another_ir_version_is_refused_in_ron() {
         let text = to_ron(&identity())
             .unwrap()
-            .replace("ir_version: 1", "ir_version: 2");
+            .replace("ir_version: 2", "ir_version: 1");
         assert!(matches!(
             from_ron::<DumpIdentity>(&text),
             Err(IrError::VersionMismatch {
-                found: 2,
-                expected: 1
+                found: 1,
+                expected: 2
             })
         ));
     }
@@ -294,7 +297,7 @@ mod tests {
             from_postcard::<DumpIdentity>(&bytes),
             Err(IrError::VersionMismatch {
                 found: 0,
-                expected: 1
+                expected: 2
             })
         ));
     }

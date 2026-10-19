@@ -17,6 +17,7 @@ mod edge;
 mod hero;
 mod image;
 mod material;
+mod ops;
 mod scene;
 mod script;
 mod skeleton;
@@ -30,6 +31,11 @@ pub use edge::{Attr, EdgeGeometry, EdgeGeometryAttr, EdgeGeometrySegment};
 pub use hero::{Clip, Hero, Mesh, Palette};
 pub use image::{Image2, KNOWN_FORMATS, METAIMAGES};
 pub use material::{AlphaTextureUnitIdAttr, AttrList, TextureAttr2, TextureBindAttr2};
+pub use ops::{
+    BRANCH_END, NO_OPERATOR, OpChangeMembership, OpCode, OpCodeList, OpDefineMacro, OpLoopValue,
+    OpMacroInterface, OpMacroParameter, OpUseMacro, RhsReferenceStack, RhsValueStack, ScriptInfo,
+    Stack, ValueRhsVariant, Variable,
+};
 pub use scene::{
     Actor2, AttrSet, BlendMatrixSelect, Group, IntList, Node, NodeList, RuntimeTechniqueInstance,
 };
@@ -176,7 +182,55 @@ pub const TYPES: &[TypeDef] = &[
     def("AbstractPlacement", "AbstractAttachNode", 0xA0),
     def("tfbSpriteInfo", "AbstractPlacement", 0xE4),
     def("AnimatableTextureDataInfo", "tfbBuildDataInfo", 0x34),
+    // Script ops and operand stacks, what the toy table's reader walks (AE.2).
+    def("tfbScriptInfo", "tfbComplexDataInfo", 0x1C),
+    def("OpCodeList", "ScriptObjectList", 0x18),
+    def("OpCode", "AbstractScriptVariant", 0x1C),
+    def("OpBranch", "OpCode", 0x1C),
+    def("OpAbstractBehavior", "OpBranch", 0x1C),
+    def("OpMacroInterface", "OpAbstractBehavior", 0x20),
+    def("OpAbstractFlow", "OpBranch", 0x1C),
+    def("OpFlowMacro", "OpAbstractFlow", 0x1C),
+    def("OpFlowBuiltInBehavior", "OpAbstractFlow", 0x1C),
+    def("OpUseMacro", "OpBranch", 0x24),
+    def("OpAbstractDefinition", "OpBranch", 0x30),
+    def("OpDefineMacro", "OpAbstractDefinition", 0x38),
+    def("OpDefineMacroSpecialization", "OpDefineMacro", 0x40),
+    def("OpAbstractCreateVariable", "OpCode", 0x2C),
+    def("OpCreateVariable", "OpAbstractCreateVariable", 0x2C),
+    def("OpParameter", "OpAbstractCreateVariable", 0x38),
+    def("OpMacroParameter", "OpParameter", 0x48),
+    def("OpChangeMembership", "OpCode", 0x28),
+    def("OpLoop", "OpBranch", 0x20),
+    def("OpLoopValue", "OpLoop", 0x28),
+    def("ValueStack", "ScriptObjectList", 0x1C),
+    def("RHSValueStack", "ValueStack", 0x28),
+    def("RHSReferenceStack", "RHSValueStack", 0x2C),
+    def("SetStack", "ScriptObjectList", 0x18),
+    def("ReferenceStack", "ScriptObjectList", 0x18),
+    TypeDef {
+        name: "ValueRHSVariant",
+        parent: Some("igObject"),
+        size: 0x1C,
+    },
 ];
+
+/// Types whose files carry an MTSZ 4 over the registry size (AC.4's open
+/// question 2, settled by AC.14: the loader reads sections in place, so the
+/// 4 bytes sit in memory as on disc, past the layout and never marked). Of
+/// the five, only `RHSReferenceStack` has a reader.
+pub const FILE_PADDED: &[(&str, u32)] = &[("RHSReferenceStack", 0x30)];
+
+/// The MTSZ a file gives `name`: its registry size, or the padded one.
+pub fn file_size(name: &str) -> Option<u32> {
+    let registered = type_def(name)?.size;
+    Some(
+        FILE_PADDED
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map_or(registered, |(_, size)| *size),
+    )
+}
 
 pub fn type_def(name: &str) -> Option<&'static TypeDef> {
     TYPES.iter().find(|t| t.name == name)
@@ -369,12 +423,24 @@ impl<'f, 'a> View<'f, 'a> {
         }
         // is_a found it, so the object's type is in the table.
         let registered = type_def(found).map_or(0, |t| t.size);
-        if object.size != registered {
+        if object.size != file_size(found).unwrap_or(registered) {
             return Err(igz.err_at(
                 object.at,
                 "MTSZ",
                 ErrorKind::Unsupported {
                     value: object.size.into(),
+                },
+            ));
+        }
+        // A padded type's extra bytes hold no fixup.
+        if let Some(pad) = object.at.offset_by(registered)
+            && let Some(&(at, marker)) = igz.markers_in(pad, object.size - registered).first()
+        {
+            return Err(igz.err_at(
+                at,
+                marker.field(),
+                ErrorKind::Unsupported {
+                    value: registered.into(),
                 },
             ));
         }
@@ -552,7 +618,7 @@ impl<'f, 'a> View<'f, 'a> {
         self.igz.reference(at, field)
     }
 
-    fn refused(&self, offset: u32, field: &'static str) -> FormatError {
+    pub(crate) fn refused(&self, offset: u32, field: &'static str) -> FormatError {
         let at = self.object.field(offset).unwrap_or(self.object.at);
         let value = self.igz.u32_at(at, field).unwrap_or_default();
         self.igz.err_at(

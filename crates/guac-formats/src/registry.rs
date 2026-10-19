@@ -5,7 +5,7 @@
 //! it may hold at once for an input of a given length.
 
 use crate::FormatError;
-use crate::{edge, exports, havok, iga, igz, language, sfo, texture};
+use crate::{edge, exports, havok, iga, igz, language, roster, sfo, texture, toys};
 
 pub struct RegisteredParser {
     /// Stable name: the property test reports it, the fuzz targets match on it.
@@ -85,6 +85,15 @@ pub const PARSERS: &[RegisteredParser] = &[
         heap_budget: |len| 64 * len + 64 * len + (64 << 10),
     },
     RegisteredParser {
+        name: "toy_table",
+        parse: walk_toy_table,
+        seeds: toy_table_seeds,
+        // Five IGZ parses (64x their parts), then the table, the figures and
+        // the texts: each call, set member, sprite or key costs well under
+        // its input bytes (a call spans a dozen ops of 28 bytes or more).
+        heap_budget: |len| 64 * len + 64 * len + (64 << 10),
+    },
+    RegisteredParser {
         name: "havok",
         parse: walk_havok,
         seeds: havok::builder::seeds,
@@ -123,6 +132,68 @@ pub fn walk_roster(bytes: &[u8]) -> Result<(), FormatError> {
             let _ = exports.resolve_import(id);
         }
         let _ = exports.resolve(exports.global_base());
+    }
+    Ok(())
+}
+
+/// The toy table's seeds (AE.2): the sample disc bundled with its English
+/// pack, and with its French one and no alt characters.
+pub fn toy_table_seeds() -> Vec<Vec<u8>> {
+    use roster::builder::{bundle, disc, sample, sample_bundle};
+    let mut spec = sample();
+    spec.alt_characters.clear();
+    let d = disc(&spec);
+    vec![
+        sample_bundle(),
+        bundle(&[
+            &d.init_setup,
+            &d.global,
+            &d.bootstrap,
+            &d.collection,
+            &d.packs[1],
+        ]),
+    ]
+}
+
+/// Splits a bundle ([`roster::builder::bundle`]'s format, a big-endian u32
+/// length before each part) into its parts; a length past the end ends it.
+pub fn unbundle(mut bytes: &[u8]) -> Vec<&[u8]> {
+    let mut out = Vec::new();
+    while let Some((len, rest)) = bytes.split_first_chunk::<4>() {
+        let len = u32::from_be_bytes(*len) as usize;
+        if len > rest.len() {
+            break;
+        }
+        let (part, rest) = rest.split_at(len);
+        out.push(part);
+        bytes = rest;
+    }
+    out
+}
+
+/// Reads a bundled init_setup, global, bootstrap, collection and pack as the
+/// roster does (AE.2): the export ids, the texts, the toy table, the figures
+/// and each portrait's image, each error skipped. The property test and the
+/// fuzz targets run it.
+pub fn walk_toy_table(bytes: &[u8]) -> Result<(), FormatError> {
+    let parts = unbundle(bytes);
+    let [init, global, boot, collection, pack, ..] = parts[..] else {
+        return Ok(());
+    };
+    let init = igz::Igz::parse(init)?;
+    let global = igz::Igz::parse(global)?;
+    let boot = igz::Igz::parse(boot)?;
+    let collection = igz::Igz::parse(collection)?;
+    if let Ok(pack) = igz::Igz::parse(pack).and_then(|p| language::LanguagePack::read(&p)) {
+        let _ = language::Texts::new(&global, vec![pack]);
+    }
+    let exports = exports::Exports::new(&boot, &global)?;
+    let table = toys::ToyTable::read(&init, &global, &exports)?;
+    let figures = roster::figures(&table, &global, &collection)?;
+    for f in &figures {
+        if let Some(p) = f.portrait {
+            let _ = roster::portrait_image(&collection, p);
+        }
     }
     Ok(())
 }
@@ -230,6 +301,21 @@ pub fn walk_layouts(bytes: &[u8]) -> Result<(), FormatError> {
         let _ = LanguagePackInfo::read(&file, i);
         let _ = SpriteInfo::read(&file, i);
         let _ = AnimatableTextureDataInfo::read(&file, i);
+        let _ = RootList::read(&file, i);
+        let _ = OpCode::read(&file, i);
+        let _ = ScriptInfo::read(&file, i);
+        let _ = OpCodeList::read(&file, i);
+        let _ = OpUseMacro::read(&file, i);
+        let _ = OpMacroInterface::read(&file, i);
+        let _ = OpDefineMacro::read(&file, i);
+        let _ = Variable::read(&file, i);
+        let _ = OpMacroParameter::read(&file, i);
+        let _ = OpChangeMembership::read(&file, i);
+        let _ = OpLoopValue::read(&file, i);
+        let _ = Stack::read(&file, i);
+        let _ = RhsValueStack::read(&file, i);
+        let _ = RhsReferenceStack::read(&file, i);
+        let _ = ValueRhsVariant::read(&file, i);
     }
     Ok(())
 }
@@ -313,6 +399,16 @@ fn decoded_segments(bytes: &[u8]) -> Result<usize, FormatError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bundle_splits_into_its_parts_and_stops_at_an_overlong_length() {
+        let b = roster::builder::bundle(&[b"ab", b"", b"cde"]);
+        assert_eq!(unbundle(&b), [&b"ab"[..], b"", b"cde"]);
+        let mut cut = b.clone();
+        cut.truncate(b.len() - 1);
+        assert_eq!(unbundle(&cut), [&b"ab"[..], b""]);
+        assert!(unbundle(&[0, 0, 1]).is_empty());
+    }
 
     #[test]
     fn edge_walk_stops_at_its_budget_on_shared_buffers() {

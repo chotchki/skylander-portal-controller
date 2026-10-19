@@ -8,7 +8,8 @@
 //! [`magic`], the list the game-magic guard checks the repo against.
 //! [`intros`] (AB.6) maps each toy type to its intro movie into IR v1's
 //! character table. [`transcode`] (AB.8) turns each intro movie into what
-//! guacamole plays, through the ffmpeg [`ffmpeg`] finds.
+//! guacamole plays, through the ffmpeg [`ffmpeg`] finds. [`roster`] (AE.2)
+//! reads the figures the disc defines into IR v2's roster.
 
 pub mod census;
 pub mod dump;
@@ -20,6 +21,7 @@ pub mod known;
 pub mod magic;
 mod report;
 pub mod root;
+pub mod roster;
 pub mod transcode;
 
 pub use error::{ExtractError, Result};

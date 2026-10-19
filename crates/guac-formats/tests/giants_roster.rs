@@ -420,3 +420,134 @@ fn the_effects_ae_names_resolve_and_the_sprite_rig_reads() {
     assert_eq!(rig[0].diffuse, [80, 78, 66, 255]);
     assert_eq!(rig[0].init_matrix.rotation[0], -45.0);
 }
+
+/// `misc/ui_collection_champions.bld`'s level and `global.bld`'s packs.
+fn collection_and_packs(usrdir: &Path) -> (Vec<u8>, Vec<LanguagePack>) {
+    let collection = level_bld(usrdir, "misc/ui_collection_champions.bld");
+    let bytes = std::fs::read(usrdir.join("permanent/global.bld")).unwrap();
+    let arc = Archive::parse(&bytes).unwrap();
+    let packs = guac_formats::language::packs(&arc).unwrap();
+    (collection, packs)
+}
+
+#[test]
+#[ignore = "reads the Giants dump at GUAC_GIANTS_DUMP"]
+fn the_toy_table_defines_123_figures() {
+    use guac_formats::roster::{self, Category, Kind};
+    use guac_formats::toys::ToyTable;
+    let start = Instant::now();
+    let usrdir = usrdir();
+    let init_bytes = level_bld(&usrdir, "character/init_setup.bld");
+    let boot_bytes = level_bld(&usrdir, "permanent/bootstrap.bld");
+    let global_bytes = level_bld(&usrdir, "permanent/global.bld");
+    let (collection_bytes, packs) = collection_and_packs(&usrdir);
+    let init = Igz::parse(&init_bytes).unwrap();
+    let boot = Igz::parse(&boot_bytes).unwrap();
+    let global = Igz::parse(&global_bytes).unwrap();
+    let collection = Igz::parse(&collection_bytes).unwrap();
+    let exports = Exports::new(&boot, &global).unwrap();
+    let texts = Texts::new(&global, packs).unwrap();
+    let read_at = Instant::now();
+    let table = ToyTable::read(&init, &global, &exports).unwrap();
+    let figures = roster::figures(&table, &global, &collection).unwrap();
+    let took = read_at.elapsed();
+    let en = |k| texts.text(k, guac_formats::language::ENGLISH).unwrap();
+
+    println!(
+        "calls: {} toys, {} alts, {} alt characters; {} figures (read in {:.1} ms, {:.1} s with the archives)",
+        table.toys.len(),
+        table.alts.len(),
+        table.alt_characters.len(),
+        figures.len(),
+        took.as_secs_f64() * 1e3,
+        start.elapsed().as_secs_f64()
+    );
+    // The research roster's columns, for diffing against it.
+    println!(
+        "ROSTER\tid\ttoy\tkind\tdeco\tdisplay\telement\tcategory\tload_file\tportrait\tname_key"
+    );
+    for f in &figures {
+        let display = match f.word {
+            Some(w) => format!("{} {}", en(w), en(f.name)),
+            None => en(f.name).to_owned(),
+        };
+        let portrait = f
+            .portrait
+            .map(|p| name_at(&collection, p))
+            .unwrap_or_default();
+        println!(
+            "ROSTER\t{}\t{}\t{:?}\t{}\t{display}\t{}\t{:?}\t{}\t{portrait}\t{}",
+            f.id(),
+            f.toy_type,
+            f.kind,
+            f.deco.map_or(String::new(), |d| d.to_string()),
+            f.element.map_or("none".into(), |e| e.to_string()),
+            f.category,
+            en(f.level_load),
+            name_at(&global, f.name),
+        );
+    }
+
+    assert_eq!(
+        (
+            table.toys.len(),
+            table.alts.len(),
+            table.alt_characters.len()
+        ),
+        (77, 15, 5)
+    );
+    assert_eq!(figures.len(), 123);
+    let count = |k: Kind, c: Option<Category>| {
+        figures
+            .iter()
+            .filter(|f| f.kind == k && c.is_none_or(|c| f.category == c))
+            .count()
+    };
+    assert_eq!(count(Kind::Base, Some(Category::Figure)), 45);
+    assert_eq!(count(Kind::Base, Some(Category::Giant)), 8);
+    assert_eq!(count(Kind::Alt, None), 15);
+    assert_eq!(count(Kind::Series2, None), 24);
+    assert_eq!(count(Kind::LightCore, None), 8);
+    assert_eq!(count(Kind::Base, Some(Category::Item)), 10);
+    assert_eq!(count(Kind::Base, Some(Category::AdventurePack)), 5);
+    assert_eq!(count(Kind::Base, Some(Category::Sidekick)), 8);
+
+    let lightcore: Vec<i32> = table
+        .toys
+        .iter()
+        .filter(|t| table.is_lightcore(t))
+        .map(|t| t.item_code)
+        .collect();
+    assert_eq!(lightcore, [7, 9, 20, 29, 100, 106, 108, 113]);
+    let mut series_2: Vec<i32> = table
+        .toys
+        .iter()
+        .filter(|t| t.known_repose)
+        .map(|t| t.item_code)
+        .collect();
+    series_2.sort_unstable();
+    assert_eq!(
+        series_2,
+        [
+            0, 1, 3, 4, 5, 7, 9, 10, 11, 12, 14, 15, 16, 18, 19, 20, 21, 23, 25, 26, 27, 29, 30, 32
+        ]
+    );
+
+    // Every figure its own portrait, every image a 256x256 DXT5.
+    let portraits: Vec<usize> = figures.iter().filter_map(|f| f.portrait).collect();
+    let unique: BTreeSet<usize> = portraits.iter().copied().collect();
+    assert_eq!((portraits.len(), unique.len()), (123, 123));
+    for &p in &portraits {
+        let image = roster::portrait_image(&collection, p).unwrap();
+        let image = layouts::Image2::read(&collection, image).unwrap();
+        assert_eq!(
+            (image.width, image.height, image.format_name()),
+            (256, 256, Some("dxt5_tile_big_ps3"))
+        );
+    }
+    // Every level load's text is the same file name in all 12 languages.
+    for f in &figures {
+        let all = texts.texts(f.level_load).unwrap();
+        assert!(all.iter().all(|(_, t)| *t == all[0].1), "{:?}", all);
+    }
+}
