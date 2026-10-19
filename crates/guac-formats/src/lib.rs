@@ -19,6 +19,7 @@ pub mod havok;
 pub mod iga;
 pub mod igz;
 pub mod language;
+pub mod level;
 mod reader;
 pub mod roster;
 pub mod sfo;

@@ -112,6 +112,17 @@ pub const PARSERS: &[RegisteredParser] = &[
         // material held in no more bytes than it's read from.
         heap_budget: |len| 64 * len + 160 * len + 4 * len + (64 << 10),
     },
+    RegisteredParser {
+        name: "level",
+        parse: walk_level,
+        seeds: crate::level::builder::seeds,
+        // The IGZ parse, then one scene at a time and the placements, each
+        // object read once: a group's 400 bytes from its 0x24 and a list
+        // slot (about 12x with its map entry and set slot), an actor's
+        // 1,208 from its 0xF8, a draw's 392 from its 0x38, each doubled at
+        // worst by vector growth.
+        heap_budget: |len| 64 * len + 32 * len + (64 << 10),
+    },
 ];
 
 /// The roster readers' seeds (AE.1): a level joined to its pack, a
@@ -306,6 +317,19 @@ pub fn walk_layouts(bytes: &[u8]) -> Result<(), FormatError> {
         let _ = PhysicsModel::read(&file, i);
         let _ = WorldInfo::read(&file, i);
         let _ = PhysicsWorld::read(&file, i);
+        let _ = SceneInfo::read(&file, i);
+        let _ = SpatialNode::read(&file, i);
+        let _ = Transform::read(&file, i);
+        let _ = UserInfo::read(&file, i);
+        let _ = Placement::read(&file, i);
+        let _ = ActorInfo::read(&file, i);
+        let _ = ParticleInfo::read(&file, i);
+        let _ = LightInfo::read(&file, i);
+        let _ = CollisionInfo::read(&file, i);
+        let _ = ModelParameters::read(&file, i);
+        let _ = ActorParameters::read(&file, i);
+        let _ = ActorWaypoint::read(&file, i);
+        let _ = ActorWaypointList::read(&file, i);
         let _ = AnimationInfoList::read(&file, i);
         let _ = AnimationInfo::read(&file, i);
         let _ = AttrList::read(&file, i);
@@ -456,6 +480,48 @@ fn read_worlds(bytes: &[u8]) -> Result<usize, FormatError> {
     Ok(read)
 }
 
+/// How many objects' worth of scene walks [`walk_level`] does before it
+/// stops. Scenes can share a graph, so an input can ask for far more walks
+/// than it holds nodes.
+pub const LEVEL_WALK_BUDGET: usize = 1 << 16;
+
+/// Parses a level's IGZ, then walks every `igSceneInfo` (AG.3), placing each
+/// draw's frame, until [`LEVEL_WALK_BUDGET`] is spent, and reads its
+/// placements and light rig, dropping each and skipping errors. A walk
+/// reads each object at most once, so each is charged the file's object
+/// count, refused or not. The property test and the fuzz targets run it.
+pub fn walk_level(bytes: &[u8]) -> Result<(), FormatError> {
+    walked_scenes(bytes).map(drop)
+}
+
+/// [`walk_level`], counting the scenes it walked.
+fn walked_scenes(bytes: &[u8]) -> Result<usize, FormatError> {
+    let file = igz::Igz::parse(bytes)?;
+    let charge = file.objects().len().max(1);
+    let mut left = LEVEL_WALK_BUDGET;
+    let mut walked = 0;
+    for (_, scene) in crate::level::scenes(&file) {
+        if let Ok(scene) = scene {
+            for draw in &scene.draws {
+                let _ = scene.draw_segments(draw).count();
+            }
+            walked += 1;
+        }
+        left = left.saturating_sub(charge);
+        if left == 0 {
+            break;
+        }
+    }
+    if let Ok(placements) = crate::level::Placements::read(&file) {
+        for actor in &placements.actors {
+            let _ = placements.model_path(actor);
+            let _ = placements.waypoints(actor).len();
+        }
+    }
+    let _ = crate::level::directional_lights(&file);
+    Ok(walked)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -507,5 +573,20 @@ mod tests {
             Ok(COLLISION_WALK_BUDGET.div_ceil(packfile.len()))
         );
         assert_eq!(read_worlds(&shared(3, &packfile)), Ok(3));
+    }
+
+    #[test]
+    fn level_walk_stops_at_its_budget_on_a_shared_graph() {
+        use crate::level::builder::shared_root;
+        // 2,000 scenes over one root of 100 groups: 2,102 objects each
+        // walk is charged, so 32 walks fill the budget.
+        let bytes = shared_root(2000, 100);
+        let objects = igz::Igz::parse(&bytes).unwrap().objects().len();
+        assert_eq!(objects, 2102);
+        assert_eq!(
+            walked_scenes(&bytes),
+            Ok(LEVEL_WALK_BUDGET.div_ceil(objects))
+        );
+        assert_eq!(walked_scenes(&shared_root(3, 4)), Ok(3));
     }
 }

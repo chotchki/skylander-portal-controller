@@ -16,8 +16,10 @@
 mod edge;
 mod hero;
 mod image;
+mod level;
 mod material;
 mod ops;
+mod placement;
 mod scene;
 mod script;
 mod skeleton;
@@ -31,11 +33,16 @@ pub mod builder;
 pub use edge::{Attr, EdgeGeometry, EdgeGeometryAttr, EdgeGeometrySegment};
 pub use hero::{Clip, Hero, Mesh, Palette};
 pub use image::{Image2, KNOWN_FORMATS, METAIMAGES};
+pub use level::{SceneInfo, SpatialNode, Transform, UserInfo};
 pub use material::{AlphaTextureUnitIdAttr, AttrList, TextureAttr2, TextureBindAttr2};
 pub use ops::{
     BRANCH_END, NO_OPERATOR, OpChangeMembership, OpCode, OpCodeList, OpDefineMacro, OpLoopValue,
     OpMacroInterface, OpMacroParameter, OpUseMacro, RhsReferenceStack, RhsValueStack, ScriptInfo,
     Stack, ValueRhsVariant, Variable,
+};
+pub use placement::{
+    ActorInfo, ActorParameters, ActorWaypoint, ActorWaypointList, CollisionInfo, LightInfo,
+    ModelParameters, ParticleInfo, Placement, Shape,
 };
 pub use scene::{
     Actor2, AttrSet, BlendMatrixSelect, Group, IntList, Node, NodeList, RuntimeTechniqueInstance,
@@ -126,7 +133,7 @@ pub const TYPES: &[TypeDef] = &[
     def("igActor2", "igGroup", 0x28),
     def("igNodeList", "igObjectList", 0x18),
     def("tfbRuntimeTechniqueInstance", "igNode", 0x38),
-    // Groups the character files hold, listed for is_a only.
+    // Groups the character files hold, read in levels' scenes (AG.3).
     def("igTransform", "igGroup", 0x80),
     def("igSpatialNode", "igGroup", 0x28),
     def("igUserInfo", "igGroup", 0x28),
@@ -154,6 +161,18 @@ pub const TYPES: &[TypeDef] = &[
     // A level's world: its collision packfile and its scene (AG.2).
     def("tfbWorldInfo", "tfbBuildDataInfo", 0x28),
     def("tfbPhysicsWorld", "tfbWorldInfo", 0x2C),
+    // A level's scene and placements (AG.3).
+    def("igSceneInfo", "igInfo", 0x48),
+    def("Placement", "AbstractPlacement", 0xD8),
+    def("tfbActorInfo", "Placement", 0xF8),
+    def("tfbParticleInfo", "Placement", 0xE0),
+    def("tfbLightInfo", "Placement", 0x10C),
+    def("CollisionInfo", "MatrixMeasurement", 0x58),
+    def("ModelPhysics", "igObject", 0xC),
+    def("ModelParameters", "ModelPhysics", 0x48),
+    def("ActorParameters", "ModelParameters", 0x4C),
+    def("ActorWaypoint", "AbstractAttachNode", 0x38),
+    def("ActorWaypointList", "ScriptObjectList", 0x18),
     // The clip table; only AnimationInfo's own fields are read.
     def("ScriptObjectList", "igObjectList", 0x18),
     def("AnimationStack", "ScriptObjectList", 0x18),
