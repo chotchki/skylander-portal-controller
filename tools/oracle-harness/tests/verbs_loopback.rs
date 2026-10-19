@@ -88,6 +88,9 @@ struct Emu {
     /// RPCS3 turns every save down after `SAVESTATE`'s `OK`, logging why (an
     /// SPU it can't lock, say) and leaving the run where it was.
     refuses_saves: bool,
+    /// The reboot from a written state dies in the guest before its first flip
+    /// (AF.11's lwmutex fatal error): `STATE` reads paused at frame 0 from then on.
+    reboot_dies: bool,
     config_dir: PathBuf,
     written: u32,
 }
@@ -109,6 +112,7 @@ impl Emu {
             presents: true,
             stop_for: Duration::from_millis(30),
             refuses_saves: false,
+            reboot_dies: false,
             config_dir: config_dir.to_path_buf(),
             written: 0,
         }
@@ -293,6 +297,10 @@ fn savestate(emu: &Arc<Mutex<Emu>>) {
         e.status = Status::Loading;
         e.renderer = false;
         e.frames = 0;
+        if e.reboot_dies {
+            e.status = Status::Paused;
+            return;
+        }
     }
     thread::sleep(Duration::from_millis(20));
     let mut e = emu.lock().unwrap();
@@ -692,6 +700,41 @@ fn a_savestate_rpcs3_turns_down_fails_at_once_with_its_reason() {
     fake.set(|e| e.refuses_saves = false);
     let saved = control.savestate(out.path(), WAIT).unwrap();
     assert_eq!((saved.saved_at.frames, saved.rebooted.frames), (at, 2));
+}
+
+#[test]
+fn a_state_whose_reboot_dies_is_still_copied_out_and_the_error_names_it() {
+    let fake = spawn();
+    let control = fake.control();
+    let out = tempfile::tempdir().unwrap();
+    let at = control.state().unwrap().frames + 10;
+    control.pause_at(at, WAIT).unwrap();
+    fake.set(|e| e.reboot_dies = true);
+    let err = format!(
+        "{:#}",
+        control
+            .savestate(out.path(), Duration::from_secs(2))
+            .unwrap_err()
+    );
+    let copied: Vec<_> = std::fs::read_dir(out.path())
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(copied.len(), 1, "{copied:?}");
+    assert_eq!(std::fs::read(&copied[0]).unwrap(), b"RPCS3SAV");
+    assert!(
+        err.contains("the state is written")
+            && err.contains(
+                &copied[0]
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            ),
+        "{err}"
+    );
+    let state = control.state().unwrap();
+    assert_eq!((state.status.as_str(), state.frames), ("paused", 0));
 }
 
 #[test]

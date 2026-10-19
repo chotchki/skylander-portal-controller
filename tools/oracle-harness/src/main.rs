@@ -7,6 +7,8 @@ use anyhow::{Context, Result, bail};
 use guac_oracle::input::InputScript;
 use oracle_harness::actors::{self, ActorFrame};
 use oracle_harness::control::Control;
+use oracle_harness::divergence::calibrate::{self, Reference};
+use oracle_harness::divergence::{self, Inputs, Perturbation, Plan, ReplayRecord, Report, Set};
 use oracle_harness::env;
 use oracle_harness::home::{self, InitOptions, OracleHome};
 use oracle_harness::identity::Identity;
@@ -74,7 +76,47 @@ usage:
       at a pause: every game actor on Giants' list (position, heading, scale,
       velocity, skinned, the pad driving it), the camera and the hero (the one
       skinned actor a pad drives); --all prints every actor, --out writes the
-      frame (outside every work tree), --p1 stamps it with STATE's flip";
+      frame (outside every work tree), --p1 stamps it with STATE's flip
+  oracle divergence run --out <dir> [--scripts idle,walk|<file.ron>,...] [--sets A,B]
+              [--replays <n>] [--first <n>] [--end <flips>] [--every <flips>]
+              [--warmup <script>] [--state <file>] [--figure <file>] [--attempts <n>]
+              [--boot-secs <n>] [--gap-secs <n>] [--perturb <change>]...
+      AF.11's measurement: <n> replays (10) of each script under each set, interleaved
+      (replay 0 of every script and set, then replay 1, ...), each a fresh RPCS3 from
+      the gameplay state ($GUAC_ORACLE_SAVESTATE unless --state) with a fresh copy of
+      the figure ($GUAC_ORACLE_FIGURE unless --figure): set A observed at F0 + <end>
+      (1800) only and saved there, set B every <every> (60) flips; a SCREENSHOT at the
+      end of both; set C (AF.12) set B's pauses with a SCREENSHOT at F0 and at each.
+      Each --perturb (AF.12) replaces the scripts by their perturbed copies, named
+      <script>_<change>: shift:<at>[,<at>...]:<by> moves those steps <by> flips (a
+      press and its release together when both are named), stick:<at>:<x>,<y> sets
+      port 0's left stick in the step at <at>. Every boot after the first waits
+      <gap-secs> (30) from the last RPCS3's exit (AF.12: a boot straight after one
+      fails its CoreMIDI client and hangs). --warmup runs one set B replay of
+      <script> first, into <dir>/warmup,
+      left out of the report. Each replay writes <dir>/<script>-<set>-<nn>/ (record.json,
+      the actor frames and peeks, the end shot, the end state, RPCS3's log); a failed
+      one is renamed .failed-<k> and tried again, up to <attempts> (3), a boot that
+      hasn't reached Start Paused's pause in <boot-secs> (120; more for a cold home)
+      counting as failed. <dir> must sit outside every work tree; the dev's RPCS3 dirs
+      are checked unchanged at the end, and the home's saves and trophies (which a
+      state's load doesn't put back) after every replay, a change stopping the run
+  oracle divergence report <dir>
+      the numbers from <dir>'s records: per observable the spread at each checkpoint
+      and the usable horizon by floor, the RNG distances, every actor by corpus, FLIP
+      between end shots, set A against set B at the end flip and the spreads against
+      the host's load; written to <dir>/report.txt and report.json
+  oracle divergence calibrate <dir>
+      AF.12's leave-one-out over <dir>'s groups with guac_oracle::tolerance's
+      defaults: each replay against the envelope of the others inside the
+      others' horizon on each observable (and, reported, over the whole run), and
+      each checkpoint's shots against the band of the others; written to
+      <dir>/calibrate.txt and calibrate.json, failing when any group does
+  oracle divergence check --reference <dir> --script <s> --set <A|B|C> <candidates>
+      every replay under <candidates> whose script isn't <s> against <dir>'s group
+      <s>, <set>: each trajectory inside the group's horizon and over the whole run,
+      and each frame the two share a checkpoint for; written to <candidates>/check.txt
+      and check.json";
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -85,6 +127,10 @@ fn main() -> Result<()> {
         ["pine", "--socket", socket, rest @ ..] => pine(PathBuf::from(socket), rest),
         ["rng", rest @ ..] => rng_cmd(rest),
         ["actors", "--pine", socket, rest @ ..] => actors_cmd(socket.as_ref(), rest),
+        ["divergence", "run", rest @ ..] => divergence_run(rest),
+        ["divergence", "report", dir] => divergence_report(dir.as_ref()),
+        ["divergence", "calibrate", dir] => divergence_calibrate(dir.as_ref()),
+        ["divergence", "check", rest @ ..] => divergence_check(rest),
         [verb, "--socket", socket, rest @ ..] => run_verb(verb, &PathBuf::from(socket), rest),
         _ => bail!("{USAGE}"),
     }
@@ -509,4 +555,372 @@ fn actors_cmd(socket: &std::path::Path, mut rest: &[&str]) -> Result<()> {
         println!("written to {}", frame.write(&out)?.display());
     }
     Ok(())
+}
+
+/// AF.11's replays (see the usage).
+fn divergence_run(mut rest: &[&str]) -> Result<()> {
+    let (mut out, mut state, mut figure, mut warmup) = (None, None, None, None);
+    let mut scripts = vec!["idle".to_owned(), "walk".to_owned()];
+    let mut sets = vec![Set::A, Set::B];
+    let (mut replays, mut first, mut attempts) = (10u32, 0u32, 3u32);
+    let mut boot_wait = divergence::BOOT_WAIT;
+    let (mut end, mut every) = (divergence::END, divergence::EVERY);
+    let mut perturbations = Vec::new();
+    let mut gap = Duration::from_secs(30);
+    while let [flag, value, tail @ ..] = rest {
+        rest = tail;
+        match *flag {
+            "--gap-secs" => {
+                gap = Duration::from_secs(value.parse().context("--gap-secs takes seconds")?)
+            }
+            "--perturb" => perturbations.push(Perturbation::parse(value)?),
+            "--out" => out = Some(PathBuf::from(value)),
+            "--state" => state = Some(PathBuf::from(value)),
+            "--figure" => figure = Some(PathBuf::from(value)),
+            "--warmup" => warmup = Some((*value).to_owned()),
+            "--scripts" => scripts = value.split(',').map(str::to_owned).collect(),
+            "--sets" => sets = value.split(',').map(Set::parse).collect::<Result<_>>()?,
+            "--replays" => replays = value.parse().context("--replays takes a count")?,
+            "--first" => first = value.parse().context("--first takes an index")?,
+            "--attempts" => attempts = value.parse().context("--attempts takes a count")?,
+            "--end" => end = value.parse().context("--end takes flips")?,
+            "--every" => every = value.parse().context("--every takes flips")?,
+            "--boot-secs" => {
+                boot_wait = Duration::from_secs(value.parse().context("--boot-secs takes seconds")?)
+            }
+            _ => bail!("{USAGE}"),
+        }
+    }
+    if !rest.is_empty() || attempts == 0 {
+        bail!("{USAGE}");
+    }
+    let out = rrc_dump::output::refuse_repo_output(&out.context("--out <dir> is required")?)?;
+    let state = match state {
+        Some(s) => s,
+        None => required("GUAC_ORACLE_SAVESTATE")?,
+    };
+    let figure = match figure {
+        Some(f) => f,
+        None => required("GUAC_ORACLE_FIGURE")?,
+    };
+    // Every plan is checked before the first boot, so a bad script fails at once.
+    let plans: Vec<Plan> = scripts
+        .iter()
+        .flat_map(|s| sets.iter().map(move |&set| (s, set)))
+        .map(|(s, set)| Plan::named(s, set, end, every))
+        .collect::<Result<_>>()?;
+    let plans = if perturbations.is_empty() {
+        plans
+    } else {
+        plans
+            .iter()
+            .flat_map(|plan| perturbations.iter().map(move |p| plan.perturbed(p)))
+            .collect::<Result<_>>()?
+    };
+    let warmup = warmup
+        .map(|w| Plan::named(&w, Set::B, end, every))
+        .transpose()?;
+    let exe = required(env::ORACLE_EXE)?;
+    let home = OracleHome::open(&required(env::ORACLE_HOME)?)?;
+    std::fs::create_dir_all(&out).with_context(|| format!("creating {}", out.display()))?;
+    let dev_dirs = dev_rpcs3_dirs(&home::real_home()?);
+    let before = Snapshot::take(&dev_dirs)?;
+    let figure_hash = sha256_hex(&figure)?;
+    let mut log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(out.join("run.txt"))?;
+    let mut line = |text: String| -> Result<()> {
+        use std::io::Write;
+        println!("{text}");
+        writeln!(log, "{text}")?;
+        Ok(())
+    };
+    line(Identity::of(&exe, &home.config_dir())?.line())?;
+    let host = divergence::Host::now();
+    line(format!(
+        "start: home {}, state {} ({}), figure {} ({}); load average {:?}; screen locked {:?}; \
+         the dev's RPCS3 dirs: {} entries",
+        home.root().display(),
+        state.display(),
+        &sha256_hex(&state)?[..16],
+        figure.display(),
+        &figure_hash[..16],
+        host.load_average,
+        host.screen_locked,
+        before.len()
+    ))?;
+    let inputs = Inputs {
+        exe: &exe,
+        home: &home,
+        state: &state,
+        figure: &figure,
+        boot_wait,
+    };
+    // Replays share the home: what a state's load doesn't put back has to come
+    // through each replay unchanged, or the next one isn't independent.
+    let carried_dirs = divergence::carried_dirs(&home.config_dir());
+    let carried = Snapshot::take(&carried_dirs)?;
+    let independent = |label: &str| -> Result<()> {
+        let changed = carried.diff(&Snapshot::take(&carried_dirs)?);
+        if !changed.is_empty() {
+            bail!(
+                "{label} left the home's saves or trophies changed, so the replays after it \
+                 wouldn't be independent; stopping:\n{}",
+                changed.join("\n")
+            );
+        }
+        Ok(())
+    };
+    let mut failed = Vec::new();
+    let mut spacing = Spacing { gap, last: None };
+    if let Some(plan) = &warmup {
+        let dir = out.join("warmup");
+        if run_attempts(&inputs, plan, 0, &dir, attempts, &mut spacing, &mut line)?.is_none() {
+            failed.push(format!("warmup {}", plan.label(0)));
+        }
+        independent(&format!("the warm-up {}", plan.label(0)))?;
+    }
+    for replay in first..first + replays {
+        for plan in &plans {
+            if run_attempts(
+                &inputs,
+                plan,
+                replay,
+                &out,
+                attempts,
+                &mut spacing,
+                &mut line,
+            )?
+            .is_none()
+            {
+                failed.push(plan.label(replay));
+            }
+            independent(&plan.label(replay))?;
+        }
+    }
+    let host = divergence::Host::now();
+    let changed = before.diff(&Snapshot::take(&dev_dirs)?);
+    line(format!(
+        "end: load average {:?}; screen locked {:?}; failed {:?}; the home's saves and trophies \
+         unchanged, {} entries; the figure source {}; the dev's RPCS3 dirs {}",
+        host.load_average,
+        host.screen_locked,
+        failed,
+        carried.len(),
+        if sha256_hex(&figure)? == figure_hash {
+            "unchanged"
+        } else {
+            "CHANGED"
+        },
+        if changed.is_empty() {
+            format!("unchanged, {} entries", before.len())
+        } else {
+            format!("CHANGED:\n{}", changed.join("\n"))
+        }
+    ))?;
+    if !changed.is_empty() {
+        bail!("the dev's RPCS3 dirs changed during the measurement");
+    }
+    Ok(())
+}
+
+/// The wait between one RPCS3's exit and the next boot. AF.12: each of the 8
+/// boots the runner started straight after the last replay's RPCS3 exited
+/// failed to create its CoreMIDI client (`MidiInCore::initialize ... (-304)`
+/// on RPCS3's stderr) and hung at `ready` with no flip; none of the 46 started
+/// 30 s after an exit, or first in a run, did. AF.11's one hang (1 of 50
+/// boots) printed the same line.
+struct Spacing {
+    gap: Duration,
+    last: Option<std::time::Instant>,
+}
+
+impl Spacing {
+    fn wait(&self) {
+        if let Some(last) = self.last {
+            std::thread::sleep(self.gap.saturating_sub(last.elapsed()));
+        }
+    }
+}
+
+/// One replay, tried up to `attempts` times: a failed try's dir is renamed
+/// `<label>.failed-<k>` with its error beside what it wrote, and the next try
+/// waits out the spacing (another lane's oracle holding the GDB ports, say,
+/// or the CoreMIDI hang).
+fn run_attempts(
+    inputs: &Inputs,
+    plan: &Plan,
+    replay: u32,
+    out: &std::path::Path,
+    attempts: u32,
+    spacing: &mut Spacing,
+    line: &mut impl FnMut(String) -> Result<()>,
+) -> Result<Option<ReplayRecord>> {
+    let label = plan.label(replay);
+    for attempt in 1..=attempts {
+        spacing.wait();
+        let result = divergence::run_replay(inputs, plan, replay, out);
+        spacing.last = Some(std::time::Instant::now());
+        match result {
+            Ok(record) => {
+                line(summary(&record))?;
+                return Ok(Some(record));
+            }
+            Err(e) => {
+                line(format!(
+                    "{label}: try {attempt} of {attempts} failed: {e:#}"
+                ))?;
+                let dir = out.join(&label);
+                if dir.exists() {
+                    let failed = out.join(format!("{label}.failed-{attempt}"));
+                    std::fs::rename(&dir, &failed)?;
+                    std::fs::write(failed.join("error.txt"), format!("{e:#}\n"))?;
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// One line for `run.txt`.
+fn summary(r: &ReplayRecord) -> String {
+    let end = r.observations.last();
+    let f0 = r.observations.first();
+    let hero = end
+        .and_then(|o| o.hero.as_ref())
+        .map_or("no hero".into(), |h| {
+            format!(
+                "hero ({:.4}, {:.4}, {:.4}) heading {:.2}",
+                h.position[0], h.position[1], h.position[2], h.rotation[1]
+            )
+        });
+    let drawn = match (end.and_then(|o| o.rng.drawn), f0.and_then(|o| o.rng.drawn)) {
+        (Some(e), Some(s)) => format!("MT +{} since F0", e as i64 - s as i64),
+        _ => "MT ?".into(),
+    };
+    format!(
+        "{}: F0 {}, boot {:.1} s, running {:.1} s, wall {:.0} s; load {:?} -> {:?}; end flip {} \
+         (game frame {}): {hero}, {} listed, {drawn}; shot {}; state {}{}; silent {}{}",
+        r.label,
+        r.f0,
+        r.boot_secs,
+        r.run_secs,
+        r.wall_secs,
+        r.before.load_average,
+        r.after.load_average,
+        end.map_or(0, |o| o.flip),
+        end.map_or(0, |o| o.game_frame),
+        end.map_or(0, |o| o.counts.listed),
+        r.shot
+            .as_ref()
+            .map_or("none".into(), |s| format!("flip {}", s.flip)),
+        r.saved.as_ref().map_or_else(
+            || r.save_error.clone().unwrap_or_else(|| "not asked".into()),
+            |s| format!("at {} ({} bytes)", s.saved_at, s.bytes)
+        ),
+        if r.save_refusals.is_empty() {
+            String::new()
+        } else {
+            format!(", {} refusal(s)", r.save_refusals.len())
+        },
+        r.silent,
+        if r.fatal.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "; RPCS3 logged {} fatal error(s): {}",
+                r.fatal.len(),
+                r.fatal[0]
+            )
+        }
+    )
+}
+
+fn divergence_report(dir: &std::path::Path) -> Result<()> {
+    let dir = rrc_dump::output::refuse_repo_output(dir)?;
+    let records = divergence::load_records(&dir)?;
+    let report = Report::build(&records, Some(&dir))?;
+    let text = report.text();
+    std::fs::write(dir.join("report.txt"), &text)?;
+    std::fs::write(
+        dir.join("report.json"),
+        serde_json::to_string_pretty(&report)?,
+    )?;
+    print!("{text}");
+    Ok(())
+}
+
+fn divergence_calibrate(dir: &std::path::Path) -> Result<()> {
+    let dir = rrc_dump::output::refuse_repo_output(dir)?;
+    let records = divergence::load_records(&dir)?;
+    let groups = calibrate::leave_one_out(&records, Some(&dir))?;
+    let mut text = String::new();
+    for g in &groups {
+        g.write_text(&mut text);
+    }
+    std::fs::write(dir.join("calibrate.txt"), &text)?;
+    std::fs::write(
+        dir.join("calibrate.json"),
+        serde_json::to_string_pretty(&groups)?,
+    )?;
+    print!("{text}");
+    let failed: Vec<String> = groups
+        .iter()
+        .filter(|g| !g.passed())
+        .map(|g| format!("{} set {}", g.script, g.set))
+        .collect();
+    if !failed.is_empty() {
+        bail!("leave-one-out failed: {}", failed.join(", "));
+    }
+    Ok(())
+}
+
+fn divergence_check(mut rest: &[&str]) -> Result<()> {
+    let (mut reference, mut script, mut set) = (None, None, None);
+    while let [flag, value, tail @ ..] = rest {
+        match *flag {
+            "--reference" => reference = Some(PathBuf::from(value)),
+            "--script" => script = Some((*value).to_owned()),
+            "--set" => set = Some(Set::parse(value)?),
+            _ => break,
+        }
+        rest = tail;
+    }
+    let [candidates] = rest else {
+        bail!("{USAGE}");
+    };
+    let (Some(reference), Some(script), Some(set)) = (reference, script, set) else {
+        bail!("{USAGE}");
+    };
+    let candidates = rrc_dump::output::refuse_repo_output(candidates.as_ref())?;
+    let reference = Reference::load(&reference, &script, set)?;
+    let mut checks = Vec::new();
+    let mut text = String::new();
+    for record in divergence::load_records(&candidates)? {
+        if record.script == script {
+            continue;
+        }
+        let check = calibrate::check(&reference, &record, &candidates)?;
+        let mut one = String::new();
+        check.write_text(&mut one);
+        print!("{one}");
+        text.push_str(&one);
+        checks.push(check);
+    }
+    std::fs::write(candidates.join("check.txt"), &text)?;
+    std::fs::write(
+        candidates.join("check.json"),
+        serde_json::to_string_pretty(&checks)?,
+    )?;
+    Ok(())
+}
+
+fn sha256_hex(path: &std::path::Path) -> Result<String> {
+    use sha2::Digest;
+    let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    Ok(sha2::Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
 }

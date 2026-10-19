@@ -36,7 +36,9 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
 
-[dev-dependencies]
-# SlotIndex, for live_gameplay's P1 LOAD and CLEAR through the PortalDriver trait.
+# SlotIndex, for a replay's P1 LOAD through the PortalDriver trait (and
+# live_gameplay's LOAD and CLEAR).
 skylander-core = { path = "../../crates/core" }
+
+[dev-dependencies]
 tempfile = "3"

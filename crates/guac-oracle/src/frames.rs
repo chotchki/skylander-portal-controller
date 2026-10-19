@@ -221,19 +221,19 @@ impl FlipMatrix {
                 found: frames.len(),
             });
         }
-        let mut pairs = Vec::with_capacity(frames.len() * (frames.len() - 1) / 2);
-        for i in 0..frames.len() {
-            for j in i + 1..frames.len() {
-                pairs.push((
-                    i,
-                    j,
-                    flip(&frames[i], &frames[j], pixels_per_degree)?.mean(),
-                ));
-            }
-        }
+        let index: Vec<(usize, usize)> = (0..frames.len())
+            .flat_map(|i| (i + 1..frames.len()).map(move |j| (i, j)))
+            .collect();
+        let means = parallel_map(&index, |&(i, j)| {
+            flip(&frames[i], &frames[j], pixels_per_degree).map(|m| m.mean())
+        })?;
         Ok(Self {
             replays: frames.len(),
-            pairs,
+            pairs: index
+                .into_iter()
+                .zip(means)
+                .map(|((i, j), mean)| (i, j, mean))
+                .collect(),
         })
     }
 
@@ -300,6 +300,23 @@ impl FlipMatrix {
                 .filter(|&&(i, j, _)| i != left_out && j != left_out)
                 .map(|p| p.2),
         ))
+    }
+
+    /// Leave-one-out (design decision 9's acceptance): each replay's means
+    /// against the band of the others, at `floor`, in replay order.
+    pub fn leave_one_out(&self, floor: f64) -> Result<Vec<FrameVerdict>, MetricError> {
+        (0..self.replays)
+            .map(|i| self.band_without(i)?.check(&self.against(i)?, floor))
+            .collect()
+    }
+
+    /// The smallest floor at which every replay passes its leave-one-out: the
+    /// largest lead a replay's worst mean has over the band of the others.
+    pub fn leave_one_out_floor(&self) -> Result<f64, MetricError> {
+        (0..self.replays).try_fold(0.0f64, |floor, i| {
+            let worst = self.against(i)?.into_iter().fold(0.0, f64::max);
+            Ok(floor.max(worst - self.band_without(i)?.replay_max))
+        })
     }
 }
 
@@ -370,11 +387,46 @@ pub fn compare_frame(
     pixels_per_degree: f32,
 ) -> Result<FrameVerdict, MetricError> {
     let band = FlipMatrix::of(replays, pixels_per_degree)?.band();
-    let means = replays
-        .iter()
-        .map(|r| flip(r, candidate, pixels_per_degree).map(|m| m.mean()))
-        .collect::<Result<Vec<_>, _>>()?;
-    band.check(&means, floor)
+    band.check(
+        &candidate_means(candidate, replays, pixels_per_degree)?,
+        floor,
+    )
+}
+
+/// The candidate's mean FLIP against each replay's frame (the replay as FLIP's
+/// reference), in replay order: what [`FrameBand::check`] takes.
+pub fn candidate_means(
+    candidate: &Frame,
+    replays: &[Frame],
+    pixels_per_degree: f32,
+) -> Result<Vec<f64>, MetricError> {
+    parallel_map(replays, |r| {
+        flip(r, candidate, pixels_per_degree).map(|m| m.mean())
+    })
+}
+
+/// `f` over `items` on up to the machine's cores, results in item order. FLIP
+/// of one 1280x720 pair takes a core about a sixth of a second, and a
+/// checkpoint's matrix is 45 of them.
+fn parallel_map<T: Sync, R: Send>(
+    items: &[T],
+    f: impl Fn(&T) -> Result<R, MetricError> + Sync,
+) -> Result<Vec<R>, MetricError> {
+    let threads = std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .min(items.len())
+        .max(1);
+    let chunk = items.len().div_ceil(threads).max(1);
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = items
+            .chunks(chunk)
+            .map(|part| scope.spawn(|| part.iter().map(&f).collect::<Vec<_>>()))
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().expect("a FLIP thread doesn't panic"))
+            .collect()
+    })
 }
 
 #[cfg(test)]
@@ -619,6 +671,29 @@ mod tests {
         assert!(floor > 0.0);
         let verdict = band.check(&matrix.against(i).unwrap(), floor).unwrap();
         assert!(verdict.passed(), "{verdict:?}");
+
+        // The whole leave-one-out: at floor 0 the pair's two fail; at the
+        // smallest passing floor every replay passes, and just under it one
+        // doesn't.
+        let at_zero = matrix.leave_one_out(0.0).unwrap();
+        assert_eq!(at_zero.len(), replays.len());
+        assert!(!at_zero[i].passed() && !at_zero[j].passed());
+        let needed = matrix.leave_one_out_floor().unwrap();
+        assert!(needed >= top - band.replay_max, "{needed}");
+        assert!(
+            matrix
+                .leave_one_out(needed + 1e-12)
+                .unwrap()
+                .iter()
+                .all(FrameVerdict::passed)
+        );
+        assert!(
+            !matrix
+                .leave_one_out(needed * (1.0 - 1e-6))
+                .unwrap()
+                .iter()
+                .all(FrameVerdict::passed)
+        );
     }
 
     #[test]

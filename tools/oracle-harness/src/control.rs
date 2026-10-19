@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use skylander_rpcs3_control::ipc::IpcPortalDriver;
 use skylander_rpcs3_control::ipc::proto::EmuState;
 
@@ -282,10 +282,13 @@ impl Control {
     }
 
     /// `SAVESTATE`, then the stop, the new state file and the reboot's Start
-    /// Paused pause; the file copied into `out_dir`. P5's `RECONNECT` is the
-    /// caller's, once this returns. With [`Control::with_log`] a save RPCS3
-    /// turns down ([`SAVESTATE_REFUSED`]) fails at once with RPCS3's reason;
-    /// without it, at the timeout.
+    /// Paused pause; the file copied into `out_dir` as soon as it's whole,
+    /// before the reboot is waited on, since a reboot can die in the guest
+    /// after RPCS3 has written the state (AF.11: the main PPU thread's lwmutex
+    /// check on restore), and the error then names the copy. P5's `RECONNECT`
+    /// is the caller's, once this returns. With [`Control::with_log`] a save
+    /// RPCS3 turns down ([`SAVESTATE_REFUSED`]) fails at once with RPCS3's
+    /// reason; without it, at the timeout.
     pub fn savestate(&self, out_dir: &Path, timeout: Duration) -> Result<Saved> {
         let before: BTreeSet<PathBuf> = self.outputs.list(Kind::SaveState);
         let saved_at = self.state()?;
@@ -315,8 +318,15 @@ impl Control {
             },
         )?;
         let source = self.outputs.wait_new(Kind::SaveState, &before, timeout)?;
-        let rebooted = self.wait_state(timeout, |s| s.status == "paused" && s.frames > 0)?;
         let path = outputs::copy_out(&source, out_dir)?;
+        let rebooted = self
+            .wait_state(timeout, |s| s.status == "paused" && s.frames > 0)
+            .with_context(|| {
+                format!(
+                    "the state is written ({}), but its reboot didn't reach Start Paused's pause",
+                    path.display()
+                )
+            })?;
         Ok(Saved {
             path,
             saved_at,

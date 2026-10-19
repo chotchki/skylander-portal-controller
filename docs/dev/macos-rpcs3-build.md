@@ -19,6 +19,22 @@ else and is idempotent. ~20–40 min cold; minutes warm (ccache at
 Homebrew's Qt instead of the fragile `qt-downloader`, and static-links
 Homebrew's `llvm@21` (so the vendored LLVM/opencv/SDL submodules are skipped).
 
+Two knobs (openspec AF.4, for Guacamole's oracle; the defaults are the product's
+dev build, unchanged):
+
+- `./.ci-local/build-mac.sh <checkout>` builds another RPCS3 checkout in
+  `<checkout>/build` instead of `vendor/rpcs3`. It patches nothing there: a checkout
+  without the P-series is refused. That's how
+  [`rpcs3-patches/oracle/build.sh`](../../rpcs3-patches/oracle/build.sh) builds the
+  oracle outside the repo, so the submodule stays on its pin and its build dir stays
+  the product's ([`rpcs3-patches/README.md`](../../rpcs3-patches/README.md), The
+  oracle series).
+- `BUILD_MAC_NO_BREW=1` skips the Homebrew step (install, relink, unlink) and only
+  checks the formulae are there. `brew install` upgrades whatever the local tap calls
+  outdated and the unlink pulls `ffmpeg` off `PATH`, both machine-wide, so on a Mac
+  other work shares, set it once the deps are in (the oracle's `build.sh --no-brew`
+  passes it).
+
 ## Why "how bad is it" turned out **not bad**
 
 The control layer was already cross-platform before any of this:
