@@ -289,6 +289,16 @@ patch shallow). Two layers pin both sides of the IPC contract:
 **If a patch changes wire behaviour, update the fake server in `ipc_loopback.rs`
 to match** — it doubles as the executable spec the live binary must satisfy.
 
+**The O-series follows the same rule**, in `tools/oracle-harness`: the codec's unit
+tests in [`src/verbs.rs`](../tools/oracle-harness/src/verbs.rs) and the fake listeners
+[`tests/verbs_loopback.rs`](../tools/oracle-harness/tests/verbs_loopback.rs) (O3) and
+[`tests/pad_loopback.rs`](../tools/oracle-harness/tests/pad_loopback.rs) (O4) run in
+`cargo test`; the `#[ignore]`d `tests/live_*.rs` drive the oracle build on the Mac
+(`live_gate` boots it without `GUAC_ORACLE=1` and checks every O-verb answers
+`ERR unknown_cmd`, `live_verbs` and `live_pad` drive O3 and O4 in a level). O1 and O2
+are upstream's code and have no test of their own beyond the oracle booting in the
+default shader mode.
+
 **P3 has no dedicated test.** It flips a single guest-visible errno on the
 offline `connect()` path, and the bug it fixes is gated on a real game's retry
 policy — a unit test would only re-assert the constant. It's validated by the
