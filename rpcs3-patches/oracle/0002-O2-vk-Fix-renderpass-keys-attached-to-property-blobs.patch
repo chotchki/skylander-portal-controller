@@ -1,7 +1,7 @@
-From a9ed91844fb56444d75f7c05b24323d0b7eac30b Mon Sep 17 00:00:00 2001
+From 6c51f236ef6bbe463ab6edce17c0c314bdc8ae37 Mon Sep 17 00:00:00 2001
 From: kd-11 <karokidii@gmail.com>
 Date: Mon, 21 Sep 2026 15:47:31 +0300
-Subject: [PATCH 2/4] O2: vk: Fix renderpass keys attached to property blobs
+Subject: [PATCH 2/5] O2: vk: Fix renderpass keys attached to property blobs
  when seeding interpreter variants
 
 (cherry picked from commit d08d568d5edf4f21508d9b8e471197e6d6f499ad)

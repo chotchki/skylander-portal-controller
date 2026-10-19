@@ -1,0 +1,365 @@
+From 39be13260852a7780d072a0326d87f8e91cfbd27 Mon Sep 17 00:00:00 2001
+From: Christopher Hotchkiss <chris@hotchkiss.io>
+Date: Mon, 19 Oct 2026 03:08:17 -0700
+Subject: [PATCH 5/5] O5: oracle per-frame recorder over the P1 socket
+ (GUAC_ORACLE=1)
+
+Three verbs on P1's AF_UNIX listener so the oracle records every frame of a run without pausing it (openspec AG.1, design decision 6). Behind O3's gate: each answers P1's ERR unknown_cmd unless GUAC_ORACLE=1 is in the emulator's environment. Nothing knows the game: the client names the guest ranges, and every flip is RSX's int_flip_index, the counter STATE and HB report.
+
+- WATCH <frames> <addr> <len> [<addr> <len> ...] -> OK bytes=<b> frames=<n> | ERR bad_args | ERR bad_frames | ERR bad_range | ERR too_big | ERR no_renderer | ERR unmapped. Arms a ring of <frames> records (1 to 1,048,576), each the ranges' bytes back to back: up to 64 ranges, addresses hex, lengths decimal, 16,384 bytes a record, 16 MiB for the ring with its headers. Every range has to be readable when it's armed. Replaces any watch before it.
+- WATCH_READ [<first> <count>] -> OK held=<h> total=<t> bytes=<b> frames=<n> armed=<flip> | OK first=<i> count=<k> data=<hex> | ERR bad_args | ERR not_paused | ERR no_watch | ERR bad_index | ERR bad_count. Only at a pause, so the ring holds still from one read to the next. Without arguments the summary: records held, taken since arming (the difference is what the ring overwrote), a record's payload, the ring's size and the counter when it was armed. With them those records, 0 the oldest held, each a 24-byte header (the flip, the host's steady clock in microseconds, a mask of the ranges that weren't readable, all u64 big-endian) and its payload, in hex; 32 KiB of records a reply.
+- WATCH_CLEAR -> OK | ERR bad_args. The watch and its ring dropped.
+
+Where it records: the first thing pad_get_data does, under pad::g_pad_mutex (cellPadGetData and cellPadPeriphGetData hold it; the verbs take it), on the guest thread making the read. The first read of each flip on any port copies the ranges into the next record (the oldest once the ring is full), so a flip read twice is recorded once, at its first read, and a game that reads its pads once a frame gets one record a frame taken at the same point in it. A range that isn't readable at that moment reads as zeros with its bit set in the mask. A new emulation session (a boot, a savestate's reboot) drops the watch, as O4 drops its schedules.
+
+Touches cellPad.cpp (the watch, the ring, one call at the top of pad_get_data) and Skylander.cpp beside O3 and O4.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012qQNwXEQ8in9uR8sc7SjCW
+---
+ rpcs3/Emu/Cell/Modules/cellPad.cpp | 194 +++++++++++++++++++++++++++++
+ rpcs3/Emu/Io/Skylander.cpp         |  89 ++++++++++++-
+ 2 files changed, 281 insertions(+), 2 deletions(-)
+
+diff --git a/rpcs3/Emu/Cell/Modules/cellPad.cpp b/rpcs3/Emu/Cell/Modules/cellPad.cpp
+index 7b98ef917..f108302ed 100644
+--- a/rpcs3/Emu/Cell/Modules/cellPad.cpp
++++ b/rpcs3/Emu/Cell/Modules/cellPad.cpp
+@@ -11,9 +11,14 @@
+ #include "Emu/System.h"        // O4: Emu.GetEmulationIdentifier()
+ #include "Emu/RSX/RSXThread.h" // O4: rsx::get_current_renderer()->int_flip_index
+ 
++#include <algorithm>
+ #include <cstdlib>
++#include <cstring>
+ #include <map>
++#include <string>
+ #include <string_view>
++#include <utility>
++#include <vector>
+ 
+ error_code sys_config_start(ppu_thread& ppu);
+ error_code sys_config_stop(ppu_thread& ppu);
+@@ -580,8 +585,197 @@ bool oracle_pad_read(u32 port, u64 flip, u64& at, u32& reads, u32& differ, u16 (
+ 	return true;
+ }
+ 
++// --- O5: the oracle's per-frame recorder (openspec AG.1) --------------------
++// Dev-only (rpcs3-patches/oracle/, never in a product build). P1's socket (Skylander.cpp) arms a
++// watch here: guest address ranges the client names, copied into a bounded ring once per flip, at
++// the flip's FIRST pad read on any port, on the guest thread making that read and under
++// pad::g_pad_mutex, where O4 keys the flip. Nothing pauses to observe, so the run isn't moved by
++// it the way a PAUSE_AT checkpoint moves it. Inert unless GUAC_ORACLE=1. Nothing here knows the
++// game: the client says what to copy.
++namespace
++{
++	constexpr usz oracle_watch_max_ranges = 64;      // one bit each in a record's missing mask
++	constexpr u32 oracle_watch_max_bytes = 16384;    // payload a record
++	constexpr u32 oracle_watch_max_frames = 1u << 20;
++	constexpr u64 oracle_watch_budget = 16u << 20;   // the ring, records and headers
++	constexpr u32 oracle_watch_header = 24;          // flip, host microseconds, missing mask
++	constexpr u64 oracle_watch_reply = 32768;        // record bytes a WATCH_READ reply carries
++
++	struct oracle_watch_range
++	{
++		u32 addr;
++		u32 len;
++	};
++
++	struct oracle_watch_state
++	{
++		u64 session = 0;      // the Emu.GetEmulationIdentifier() everything below belongs to
++		u64 last_flip = umax; // the flip of the latest pad read on any port
++		std::vector<oracle_watch_range> ranges;
++		u32 bytes = 0;        // payload a record: the ranges back to back
++		u32 frames = 0;       // records the ring holds; 0 when nothing is armed
++		u64 armed_at = 0;     // the flip counter when it was armed
++		u64 total = 0;        // records taken since
++		std::vector<u8> ring;
++	};
++
++	oracle_watch_state g_oracle_watch;
++
++	// A new emulation session counts flips from 0 again: drop the watch and its ring.
++	void oracle_watch_session()
++	{
++		const u64 id = static_cast<u64>(Emu.GetEmulationIdentifier());
++		if (g_oracle_watch.session == id)
++			return;
++		g_oracle_watch = {};
++		g_oracle_watch.session = id;
++	}
++
++	void oracle_watch_put_be(u8* at, u64 v)
++	{
++		for (int i = 7; i >= 0; i--, v >>= 8)
++			at[i] = static_cast<u8>(v);
++	}
++
++	// Every pad read, before anything else in it: the flip's first read copies the watched ranges
++	// into the next record (the oldest one once the ring is full). A range that isn't readable at
++	// that moment reads as zeros with its bit set in the record's missing mask.
++	void oracle_watch_read(u64 flip)
++	{
++		if (!oracle_pad_gate())
++			return;
++		oracle_watch_session();
++		oracle_watch_state& w = g_oracle_watch;
++		if (flip == w.last_flip)
++			return;
++		w.last_flip = flip;
++		if (!w.frames)
++			return;
++		const usz stride = oracle_watch_header + w.bytes;
++		u8* const rec = w.ring.data() + (w.total % w.frames) * stride;
++		u8* out = rec + oracle_watch_header;
++		u64 missing = 0;
++		for (usz i = 0; i < w.ranges.size(); i++)
++		{
++			const oracle_watch_range& r = w.ranges[i];
++			if (vm::check_addr(r.addr, vm::page_readable, r.len))
++			{
++				std::memcpy(out, vm::base(r.addr), r.len);
++			}
++			else
++			{
++				std::memset(out, 0, r.len);
++				missing |= u64{1} << i;
++			}
++			out += r.len;
++		}
++		const auto us = std::chrono::duration_cast<std::chrono::microseconds>(steady_clock::now().time_since_epoch()).count();
++		oracle_watch_put_be(rec, flip);
++		oracle_watch_put_be(rec + 8, static_cast<u64>(us));
++		oracle_watch_put_be(rec + 16, missing);
++		w.total++;
++	}
++}
++
++// O5: WATCH. Arms a ring of `frames` records of `ranges` (each an address and a length), replacing
++// any watch before it; the first record is the next flip's first pad read. nullptr once armed
++// (`bytes` is a record's payload), else the ERR reason.
++const char* oracle_watch_arm(u32 frames, const std::vector<std::pair<u32, u32>>& ranges, u32& bytes)
++{
++	if (frames == 0 || frames > oracle_watch_max_frames)
++		return "bad_frames";
++	if (ranges.empty() || ranges.size() > oracle_watch_max_ranges)
++		return "bad_args";
++	u64 total = 0;
++	for (const auto& [addr, len] : ranges)
++	{
++		if (len == 0 || len > oracle_watch_max_bytes || u64{addr} + len > 0x1'0000'0000ull)
++			return "bad_range";
++		total += len;
++	}
++	if (total > oracle_watch_max_bytes || u64{frames} * (oracle_watch_header + total) > oracle_watch_budget)
++		return "too_big";
++	std::lock_guard lock(pad::g_pad_mutex);
++	oracle_watch_session();
++	const rsx::thread* r = rsx::get_current_renderer();
++	if (!r)
++		return "no_renderer";
++	for (const auto& [addr, len] : ranges)
++	{
++		if (!vm::check_addr(addr, vm::page_readable, len))
++			return "unmapped";
++	}
++	oracle_watch_state& w = g_oracle_watch;
++	w.ranges.clear();
++	for (const auto& [addr, len] : ranges)
++		w.ranges.push_back({addr, len});
++	w.bytes = static_cast<u32>(total);
++	w.frames = frames;
++	w.armed_at = r->int_flip_index;
++	w.total = 0;
++	w.ring.assign(static_cast<usz>(frames) * (oracle_watch_header + total), 0);
++	bytes = w.bytes;
++	return nullptr;
++}
++
++// O5: WATCH_CLEAR. The watch and its ring dropped.
++void oracle_watch_clear()
++{
++	std::lock_guard lock(pad::g_pad_mutex);
++	oracle_watch_session();
++	const u64 session = g_oracle_watch.session;
++	const u64 last_flip = g_oracle_watch.last_flip;
++	g_oracle_watch = {};
++	g_oracle_watch.session = session;
++	g_oracle_watch.last_flip = last_flip;
++}
++
++// O5: WATCH_READ. `summary`: the ring's held and total record counts, a record's payload, its size
++// and the counter when it was armed. Otherwise records `first` to `first + count` of those held (0
++// the oldest), as hex. Into `out` with its newline; nullptr on success, else the ERR reason.
++const char* oracle_watch_records(bool summary, u64 first, u64 count, std::string& out)
++{
++	std::lock_guard lock(pad::g_pad_mutex);
++	oracle_watch_session();
++	const oracle_watch_state& w = g_oracle_watch;
++	if (!w.frames)
++		return "no_watch";
++	const u64 held = std::min<u64>(w.total, w.frames);
++	if (summary)
++	{
++		out = "OK held=" + std::to_string(held) + " total=" + std::to_string(w.total) + " bytes=" + std::to_string(w.bytes) +
++			" frames=" + std::to_string(w.frames) + " armed=" + std::to_string(w.armed_at) + "\n";
++		return nullptr;
++	}
++	const u64 stride = oracle_watch_header + w.bytes;
++	if (count == 0)
++		return "bad_count";
++	if (first >= held || count > held - first)
++		return "bad_index";
++	if (count > oracle_watch_reply / stride)
++		return "bad_count";
++	static constexpr char digits[] = "0123456789abcdef";
++	out = "OK first=" + std::to_string(first) + " count=" + std::to_string(count) + " data=";
++	out.reserve(out.size() + count * stride * 2 + 1);
++	const u64 oldest = w.total - held;
++	for (u64 i = first; i < first + count; i++)
++	{
++		const u8* rec = w.ring.data() + ((oldest + i) % w.frames) * stride;
++		for (u64 b = 0; b < stride; b++)
++		{
++			out += digits[rec[b] >> 4];
++			out += digits[rec[b] & 15];
++		}
++	}
++	out += "\n";
++	return nullptr;
++}
++
+ void pad_get_data(u32 port_no, CellPadData* data, bool get_periph_data = false)
+ {
++	// O5 (oracle): a flip's first pad read, on any port, records the watched ranges.
++	oracle_watch_read(oracle_pad_flip());
++
+ 	auto& config = g_fxo->get<pad_info>();
+ 	const auto handler = pad::get_pad_thread();
+ 	const auto& pad = handler->GetPads()[port_no];
+diff --git a/rpcs3/Emu/Io/Skylander.cpp b/rpcs3/Emu/Io/Skylander.cpp
+index e55902acb..b52b1672f 100644
+--- a/rpcs3/Emu/Io/Skylander.cpp
++++ b/rpcs3/Emu/Io/Skylander.cpp
+@@ -37,6 +37,7 @@
+ #include <chrono>
+ #include <unordered_map>
+ #include <string_view>
++#include <utility>
+ #include <vector>
+ 
+ LOG_CHANNEL(skylander_log, "skylander");
+@@ -56,6 +57,12 @@ const char* oracle_pad_set(u32 port, u64 flip, u16 d1, u16 d2, u16 lx, u16 ly, u
+ void oracle_pad_clear();
+ bool oracle_pad_read(u32 port, u64 flip, u64& at, u32& reads, u32& differ, u16 (&words)[6]);
+ 
++// O5 (oracle, the per-frame recorder): the watch and its ring, in cellPad.cpp beside
++// pad_get_data, whose first read of each flip copies the watched ranges.
++const char* oracle_watch_arm(u32 frames, const std::vector<std::pair<u32, u32>>& ranges, u32& bytes);
++void oracle_watch_clear();
++const char* oracle_watch_records(bool summary, u64 first, u64 count, std::string& out);
++
+ sky_portal g_skyportal;
+ 
+ // PLAN 16.1.3 — defined here (emucore); set by gs_frame on window creation (rpcs3qt),
+@@ -774,6 +781,83 @@ namespace
+ 		return false;
+ 	}
+ 
++	// --- O5: the oracle's per-frame recorder (openspec AG.1) ----------------
++	// Behind the same gate as O3. WATCH names guest ranges and a ring size; from the next flip on,
++	// each flip's first pad read copies those ranges into the ring (cellPad.cpp), so a run records
++	// every frame without pausing. WATCH_READ hands the ring back at a pause, WATCH_CLEAR drops it.
++
++	bool sky_oracle_watch_handle(const std::string& cmd, const std::string& arg, std::string& out)
++	{
++		if (cmd == "WATCH")
++		{
++			// "WATCH <frames> <addr> <len> [<addr> <len> ...]": a ring of <frames> records, each the
++			// ranges' bytes back to back (address hex, length decimal), taken at each flip's first
++			// pad read from the next one on. Replaces any watch before it.
++			const std::vector<std::string> w = arg.empty() ? std::vector<std::string>{} : sky_words(arg);
++			if (w.size() < 3 || (w.size() - 1) % 2 != 0 || (w.size() - 1) / 2 > 64)
++			{
++				out = "ERR bad_args\n";
++				return true;
++			}
++			u32 frames = 0;
++			if (!sky_parse_num(w[0], 10, 7, 0xffffffffu, frames))
++			{
++				out = "ERR bad_frames\n";
++				return true;
++			}
++			std::vector<std::pair<u32, u32>> ranges;
++			for (usz i = 1; i + 1 < w.size(); i += 2)
++			{
++				u32 addr = 0, len = 0;
++				if (!sky_parse_num(w[i], 16, 8, 0xffffffffu, addr) || !sky_parse_num(w[i + 1], 10, 5, 0xffffffffu, len))
++				{
++					out = "ERR bad_range\n";
++					return true;
++				}
++				ranges.emplace_back(addr, len);
++			}
++			u32 bytes = 0;
++			if (const char* err = oracle_watch_arm(frames, ranges, bytes))
++				out = std::string("ERR ") + err + "\n";
++			else
++				out = "OK bytes=" + std::to_string(bytes) + " frames=" + std::to_string(frames) + "\n";
++			return true;
++		}
++		if (cmd == "WATCH_READ")
++		{
++			// "WATCH_READ": the ring's summary. "WATCH_READ <first> <count>": those records, 0 the
++			// oldest held, as hex (decimal numbers, as flips are). Only at a pause, so the ring holds
++			// still from one read to the next.
++			const std::vector<std::string> w = arg.empty() ? std::vector<std::string>{} : sky_words(arg);
++			u64 first = 0, count = 0;
++			if (!(w.empty() || (w.size() == 2 && sky_parse_flip(w[0], first) && sky_parse_flip(w[1], count))))
++			{
++				out = "ERR bad_args\n";
++				return true;
++			}
++			if (!Emu.IsPaused())
++			{
++				out = "ERR not_paused\n";
++				return true;
++			}
++			if (const char* err = oracle_watch_records(w.empty(), first, count, out))
++				out = std::string("ERR ") + err + "\n";
++			return true;
++		}
++		if (cmd == "WATCH_CLEAR")
++		{
++			if (!arg.empty())
++			{
++				out = "ERR bad_args\n";
++				return true;
++			}
++			oracle_watch_clear();
++			out = "OK\n";
++			return true;
++		}
++		return false;
++	}
++
+ 	void sky_ipc_handle(const std::string& line, std::string& out)
+ 	{
+ 		const usz sp = line.find(' ');
+@@ -941,9 +1025,10 @@ namespace
+ 			sky_force_pad_button(offset, bit, false);
+ 			out = "OK\n";
+ 		}
+-		else if (sky_oracle_gate() && (sky_oracle_handle(cmd, arg, out) || sky_oracle_pad_handle(cmd, arg, out)))
++		else if (sky_oracle_gate() &&
++			(sky_oracle_handle(cmd, arg, out) || sky_oracle_pad_handle(cmd, arg, out) || sky_oracle_watch_handle(cmd, arg, out)))
+ 		{
+-			// O3, O4: an oracle verb, answered above.
++			// O3, O4, O5: an oracle verb, answered above.
+ 		}
+ 		else
+ 		{
+-- 
+2.54.0 (Apple Git-157)
+

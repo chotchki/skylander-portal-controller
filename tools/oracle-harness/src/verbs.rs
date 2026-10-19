@@ -18,14 +18,25 @@
 //! ->  PAD_STATE <port> [<flip>]
 //!                       <-  OK flip=<n> reads=<k> differ=<m> d1=<hh> d2=<hh> lx=<n> ly=<n> rx=<n> ry=<n>
 //!                           | ERR bad_args | ERR bad_port | ERR bad_flip | ERR no_read
+//! ->  WATCH <frames> <addr> <len> [<addr> <len> ...]
+//!                       <-  OK bytes=<b> frames=<n> | ERR bad_args | ERR bad_frames | ERR bad_range
+//!                           | ERR too_big | ERR no_renderer | ERR unmapped
+//! ->  WATCH_READ        <-  OK held=<h> total=<t> bytes=<b> frames=<n> armed=<flip>
+//!                           | ERR not_paused | ERR no_watch
+//! ->  WATCH_READ <first> <count>
+//!                       <-  OK first=<i> count=<k> data=<hex> | ERR bad_args | ERR not_paused
+//!                           | ERR no_watch | ERR bad_index | ERR bad_count
+//! ->  WATCH_CLEAR       <-  OK | ERR bad_args
 //! (any of them, gate off)  <-  ERR unknown_cmd
 //! ```
 //!
 //! `<flip>` is the counter `STATE` and the heartbeat report as `frames=` (RSX's
 //! `int_flip_index`), decimal. A pad's words are `CELL_PAD_CTRL_*` bits in two hex
-//! digits and its axes decimal bytes ([`guac_oracle::input::Ds3Pad`]). Pushes
-//! (`HB`, `PE`) interleave with replies, as on P1. The codec is pure: every line
-//! shape unit-tests without a socket.
+//! digits and its axes decimal bytes ([`guac_oracle::input::Ds3Pad`]). O5's
+//! (AG.1) are [`Watch`]'s: a watch's addresses are hex, its lengths and counts
+//! decimal, and a read's records come back as one hex run ([`WatchRecord`]).
+//! Pushes (`HB`, `PE`) interleave with replies, as on P1. The codec is pure:
+//! every line shape unit-tests without a socket.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -159,10 +170,27 @@ pub enum Refusal {
     /// `no_read`: the guest made no read in that flip (or none since the
     /// session began), or it's past the 4,096 flips O4 keeps.
     NoRead,
+    /// `bad_frames`: a ring size that isn't a decimal 1 to [`WATCH_MAX_FRAMES`].
+    BadFrames,
+    /// `bad_range`: an address that isn't 1-8 hex digits, or a length that
+    /// isn't a decimal 1 to [`WATCH_MAX_BYTES`], or a range past 4 GiB.
+    BadRange,
+    /// `too_big`: the ranges add up past [`WATCH_MAX_BYTES`] a record, or the
+    /// ring past [`WATCH_BUDGET`].
+    TooBig,
+    /// `unmapped`: a range isn't readable guest memory when it's armed.
+    Unmapped,
+    /// `no_watch`: nothing armed (or a new session dropped it).
+    NoWatch,
+    /// `bad_index`: records past the ones the ring holds.
+    BadIndex,
+    /// `bad_count`: no records, or more than one reply carries
+    /// ([`WATCH_REPLY_BYTES`]).
+    BadCount,
 }
 
 impl Refusal {
-    pub const ALL: [Refusal; 14] = [
+    pub const ALL: [Refusal; 21] = [
         Refusal::BadFlip,
         Refusal::NoRenderer,
         Refusal::Past,
@@ -177,6 +205,13 @@ impl Refusal {
         Refusal::BadAxis,
         Refusal::Full,
         Refusal::NoRead,
+        Refusal::BadFrames,
+        Refusal::BadRange,
+        Refusal::TooBig,
+        Refusal::Unmapped,
+        Refusal::NoWatch,
+        Refusal::BadIndex,
+        Refusal::BadCount,
     ];
 
     /// The reason word after `ERR `.
@@ -196,6 +231,13 @@ impl Refusal {
             Refusal::BadAxis => "bad_axis",
             Refusal::Full => "full",
             Refusal::NoRead => "no_read",
+            Refusal::BadFrames => "bad_frames",
+            Refusal::BadRange => "bad_range",
+            Refusal::TooBig => "too_big",
+            Refusal::Unmapped => "unmapped",
+            Refusal::NoWatch => "no_watch",
+            Refusal::BadIndex => "bad_index",
+            Refusal::BadCount => "bad_count",
         }
     }
 
@@ -326,6 +368,261 @@ fn parse_pad_read(line: &str) -> Option<PadRead> {
     fields.next().is_none().then_some(read)
 }
 
+/// O5's limits (`rpcs3-patches/oracle/0005-O5-*.patch`): ranges a watch.
+pub const WATCH_MAX_RANGES: usize = 64;
+/// Payload bytes a record: the ranges back to back.
+pub const WATCH_MAX_BYTES: u32 = 16_384;
+/// Records a ring.
+pub const WATCH_MAX_FRAMES: u32 = 1 << 20;
+/// The ring, headers included.
+pub const WATCH_BUDGET: u64 = 16 << 20;
+/// A record's header: the flip, the host's steady clock in microseconds and
+/// the mask of ranges that weren't readable, each a big-endian u64.
+pub const WATCH_HEADER: usize = 24;
+/// Record bytes (headers included) one `WATCH_READ` reply carries at most.
+pub const WATCH_REPLY_BYTES: u64 = 32_768;
+
+/// A guest range a watch copies each flip.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub struct WatchRange {
+    pub addr: u32,
+    pub len: u32,
+}
+
+/// O5's verbs (openspec AG.1): a ring of guest ranges recorded at each flip's
+/// first pad read without pausing the run, read back at a pause.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Watch {
+    /// A ring of `frames` records of `ranges`, replacing any watch before it;
+    /// the first record is the next flip's first pad read.
+    Arm {
+        frames: u32,
+        ranges: Vec<WatchRange>,
+    },
+    /// The ring's summary (only at a pause).
+    Summary,
+    /// Records `first` to `first + count` of those held, 0 the oldest (only at
+    /// a pause).
+    Read { first: u64, count: u64 },
+    /// The watch and its ring dropped.
+    Clear,
+}
+
+impl Watch {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Watch::Arm { .. } => "WATCH",
+            Watch::Summary | Watch::Read { .. } => "WATCH_READ",
+            Watch::Clear => "WATCH_CLEAR",
+        }
+    }
+
+    /// The newline-terminated request line.
+    pub fn encode(&self) -> String {
+        match self {
+            Watch::Arm { frames, ranges } => {
+                let mut line = format!("WATCH {frames}");
+                for r in ranges {
+                    line.push_str(&format!(" {:x} {}", r.addr, r.len));
+                }
+                line.push('\n');
+                line
+            }
+            Watch::Summary => "WATCH_READ\n".into(),
+            Watch::Read { first, count } => format!("WATCH_READ {first} {count}\n"),
+            Watch::Clear => "WATCH_CLEAR\n".into(),
+        }
+    }
+
+    /// The refusals this verb can get besides `unknown_cmd`.
+    pub fn refusals(&self) -> &'static [Refusal] {
+        match self {
+            Watch::Arm { .. } => &[
+                Refusal::BadArgs,
+                Refusal::BadFrames,
+                Refusal::BadRange,
+                Refusal::TooBig,
+                Refusal::NoRenderer,
+                Refusal::Unmapped,
+            ],
+            Watch::Summary => &[Refusal::NotPaused, Refusal::NoWatch],
+            Watch::Read { .. } => &[
+                Refusal::BadArgs,
+                Refusal::NotPaused,
+                Refusal::NoWatch,
+                Refusal::BadIndex,
+                Refusal::BadCount,
+            ],
+            Watch::Clear => &[Refusal::BadArgs],
+        }
+    }
+}
+
+/// `WATCH_READ`'s summary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WatchSummary {
+    /// Records the ring holds now.
+    pub held: u64,
+    /// Records taken since it was armed: `total - held` were overwritten.
+    pub total: u64,
+    /// A record's payload.
+    pub bytes: u32,
+    /// The ring's size in records.
+    pub frames: u32,
+    /// The flip counter when it was armed.
+    pub armed: u64,
+}
+
+/// One record: the flip whose first pad read took it, the host's steady clock
+/// then, which ranges weren't readable (bit `i` for range `i`) and the ranges'
+/// bytes back to back, big-endian as the guest holds them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WatchRecord {
+    pub flip: u64,
+    pub host_us: u64,
+    pub missing: u64,
+    pub payload: Vec<u8>,
+}
+
+impl WatchRecord {
+    /// `count` records back to back in `data`, each [`WATCH_HEADER`] bytes and
+    /// an equal payload; `None` unless they split evenly.
+    pub fn split(data: &[u8], count: u64) -> Option<Vec<WatchRecord>> {
+        let count = usize::try_from(count).ok().filter(|&c| c > 0)?;
+        if !data.len().is_multiple_of(count) {
+            return None;
+        }
+        let stride = data.len() / count;
+        if stride < WATCH_HEADER {
+            return None;
+        }
+        let be = |b: &[u8]| u64::from_be_bytes(b.try_into().expect("8 bytes"));
+        Some(
+            data.chunks_exact(stride)
+                .map(|r| WatchRecord {
+                    flip: be(&r[0..8]),
+                    host_us: be(&r[8..16]),
+                    missing: be(&r[16..24]),
+                    payload: r[WATCH_HEADER..].to_vec(),
+                })
+                .collect(),
+        )
+    }
+}
+
+/// An O5 verb's answer when it isn't refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WatchReply {
+    /// `WATCH`'s `OK bytes=<b> frames=<n>`.
+    Armed {
+        bytes: u32,
+        frames: u32,
+    },
+    Summary(WatchSummary),
+    /// `WATCH_READ <first> <count>`'s records, split.
+    Records {
+        first: u64,
+        records: Vec<WatchRecord>,
+    },
+    /// `WATCH_CLEAR`'s `OK`.
+    Ok,
+}
+
+/// Lower-case hex, two digits a byte, as O5 writes it; `None` for anything
+/// else (an odd length, upper case, a character that isn't a digit).
+pub fn unhex(text: &str) -> Option<Vec<u8>> {
+    let nibble = |b: u8| match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        _ => None,
+    };
+    let (pairs, rest) = text.as_bytes().as_chunks::<2>();
+    if !rest.is_empty() {
+        return None;
+    }
+    pairs
+        .iter()
+        .map(|&[hi, lo]| Some((nibble(hi)? << 4) | nibble(lo)?))
+        .collect()
+}
+
+fn decimal<T: std::str::FromStr>(s: &str) -> Option<T> {
+    (!s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+        .then(|| s.parse().ok())
+        .flatten()
+}
+
+/// Parses `verb`'s reply line (trimmed of the newline).
+pub fn parse_watch_reply(verb: &Watch, line: &str) -> Result<WatchReply, ReplyError> {
+    let unexpected = || ReplyError::Unexpected {
+        verb: verb.name(),
+        line: line.to_owned(),
+    };
+    if let Some(word) = line.strip_prefix("ERR ") {
+        return match Refusal::from_wire(word) {
+            Some(r) if r == Refusal::UnknownCmd || verb.refusals().contains(&r) => {
+                Err(ReplyError::Refused {
+                    verb: verb.name(),
+                    refusal: r,
+                })
+            }
+            _ => Err(unexpected()),
+        };
+    }
+    let fields = |keys: &[&str]| -> Option<Vec<&str>> {
+        let mut it = line.strip_prefix("OK ")?.split(' ');
+        let values = keys
+            .iter()
+            .map(|k| it.next()?.strip_prefix(k)?.strip_prefix('='))
+            .collect::<Option<Vec<&str>>>()?;
+        it.next().is_none().then_some(values)
+    };
+    match verb {
+        Watch::Arm { .. } => {
+            let v = fields(&["bytes", "frames"]).ok_or_else(unexpected)?;
+            Ok(WatchReply::Armed {
+                bytes: decimal(v[0]).ok_or_else(unexpected)?,
+                frames: decimal(v[1]).ok_or_else(unexpected)?,
+            })
+        }
+        Watch::Summary => {
+            let v =
+                fields(&["held", "total", "bytes", "frames", "armed"]).ok_or_else(unexpected)?;
+            let summary = WatchSummary {
+                held: decimal(v[0]).ok_or_else(unexpected)?,
+                total: decimal(v[1]).ok_or_else(unexpected)?,
+                bytes: decimal(v[2]).ok_or_else(unexpected)?,
+                frames: decimal(v[3]).ok_or_else(unexpected)?,
+                armed: decimal(v[4]).ok_or_else(unexpected)?,
+            };
+            if summary.held > summary.total || summary.held > u64::from(summary.frames) {
+                return Err(unexpected());
+            }
+            Ok(WatchReply::Summary(summary))
+        }
+        Watch::Read { first, count } => {
+            let v = fields(&["first", "count", "data"]).ok_or_else(unexpected)?;
+            let (got_first, got_count): (u64, u64) = (
+                decimal(v[0]).ok_or_else(unexpected)?,
+                decimal(v[1]).ok_or_else(unexpected)?,
+            );
+            if (got_first, got_count) != (*first, *count) {
+                return Err(unexpected());
+            }
+            let data = unhex(v[2]).ok_or_else(unexpected)?;
+            let records = WatchRecord::split(&data, *count).ok_or_else(unexpected)?;
+            Ok(WatchReply::Records {
+                first: *first,
+                records,
+            })
+        }
+        Watch::Clear if line == "OK" => Ok(WatchReply::Ok),
+        Watch::Clear => Err(unexpected()),
+    }
+}
+
 /// The O-verbs on one run's P1 socket, a fresh connection per request as
 /// `IpcPortalDriver` does (the emulator serves each on a thread of its own).
 #[derive(Debug, Clone)]
@@ -360,6 +657,26 @@ impl VerbClient {
     pub fn send(&self, verb: Verb) -> Result<Reply> {
         let line = self.roundtrip_line(&verb.encode())?;
         Ok(parse_reply(verb, &line)?)
+    }
+
+    /// Sends an O5 verb; a refusal comes back as a [`ReplyError`] inside the
+    /// error, as for [`VerbClient::send`].
+    pub fn send_watch(&self, verb: &Watch) -> Result<WatchReply> {
+        let line = self.roundtrip_line(&verb.encode())?;
+        Ok(parse_watch_reply(verb, &line)?)
+    }
+
+    /// O5 verbs in order on one connection, as [`VerbClient::send_all`] sends
+    /// O3's and O4's: a ring's records page by page without a connection each.
+    pub fn send_watch_all(&self, verbs: &[Watch]) -> Result<Vec<Result<WatchReply, ReplyError>>> {
+        let requests: Vec<String> = verbs.iter().map(Watch::encode).collect();
+        let requests: Vec<&str> = requests.iter().map(String::as_str).collect();
+        let lines = roundtrip(&self.path, self.timeout, &requests)?;
+        Ok(verbs
+            .iter()
+            .zip(&lines)
+            .map(|(verb, line)| parse_watch_reply(verb, line))
+            .collect())
     }
 
     /// One request line (newline included) and the first reply line that isn't
@@ -645,6 +962,212 @@ mod tests {
                 ReplyError::Unexpected {
                     verb: verb.name(),
                     line: (*line).to_owned()
+                },
+                "{verb:?} {line:?}"
+            );
+        }
+    }
+    fn watch_verbs() -> [Watch; 4] {
+        [
+            Watch::Arm {
+                frames: 600,
+                ranges: vec![
+                    WatchRange {
+                        addr: 0x3032_8364,
+                        len: 20,
+                    },
+                    WatchRange {
+                        addr: 0x0089_D4F0,
+                        len: 4,
+                    },
+                ],
+            },
+            Watch::Summary,
+            Watch::Read {
+                first: 0,
+                count: 40,
+            },
+            Watch::Clear,
+        ]
+    }
+
+    #[test]
+    fn each_watch_verb_encodes_as_o5_reads_it() {
+        let [arm, summary, read, clear] = watch_verbs();
+        assert_eq!(arm.encode(), "WATCH 600 30328364 20 89d4f0 4\n");
+        assert_eq!(arm.name(), "WATCH");
+        assert_eq!(summary.encode(), "WATCH_READ\n");
+        assert_eq!(read.encode(), "WATCH_READ 0 40\n");
+        assert_eq!(
+            Watch::Read {
+                first: u64::MAX,
+                count: 1
+            }
+            .encode(),
+            format!("WATCH_READ {} 1\n", u64::MAX)
+        );
+        assert_eq!((summary.name(), read.name()), ("WATCH_READ", "WATCH_READ"));
+        assert_eq!(clear.encode(), "WATCH_CLEAR\n");
+        let edge = Watch::Arm {
+            frames: WATCH_MAX_FRAMES,
+            ranges: vec![WatchRange {
+                addr: 0xFFFF_FFFF,
+                len: 1,
+            }],
+        };
+        assert_eq!(edge.encode(), "WATCH 1048576 ffffffff 1\n");
+    }
+
+    /// Two records of a 4-byte payload: flips 7 and 8, the second with range 0
+    /// unreadable.
+    const RECORDS_HEX: &str = "0000000000000007000000000000002a0000000000000000deadbeef\
+                               0000000000000008000000000000002b000000000000000100000000";
+
+    #[test]
+    fn each_watch_success_shape_parses() {
+        let [arm, summary, read, clear] = watch_verbs();
+        assert_eq!(
+            parse_watch_reply(&arm, "OK bytes=24 frames=600"),
+            Ok(WatchReply::Armed {
+                bytes: 24,
+                frames: 600
+            })
+        );
+        assert_eq!(
+            parse_watch_reply(
+                &summary,
+                "OK held=600 total=1801 bytes=804 frames=600 armed=2"
+            ),
+            Ok(WatchReply::Summary(WatchSummary {
+                held: 600,
+                total: 1_801,
+                bytes: 804,
+                frames: 600,
+                armed: 2,
+            }))
+        );
+        let two = Watch::Read { first: 5, count: 2 };
+        let got = parse_watch_reply(&two, &format!("OK first=5 count=2 data={RECORDS_HEX}"));
+        assert_eq!(
+            got,
+            Ok(WatchReply::Records {
+                first: 5,
+                records: vec![
+                    WatchRecord {
+                        flip: 7,
+                        host_us: 42,
+                        missing: 0,
+                        payload: vec![0xde, 0xad, 0xbe, 0xef],
+                    },
+                    WatchRecord {
+                        flip: 8,
+                        host_us: 43,
+                        missing: 1,
+                        payload: vec![0; 4],
+                    },
+                ],
+            })
+        );
+        // A record can carry no payload beyond its header only if O5 armed none,
+        // which it refuses; the split itself takes it.
+        assert_eq!(WatchRecord::split(&[0; 24], 1).unwrap()[0].payload.len(), 0);
+        assert_eq!(parse_watch_reply(&clear, "OK"), Ok(WatchReply::Ok));
+        assert!(matches!(
+            parse_watch_reply(&read, &format!("OK first=0 count=40 data={}", "00".repeat(40 * 30))),
+            Ok(WatchReply::Records { records, .. }) if records.len() == 40 && records[0].payload.len() == 6
+        ));
+    }
+
+    #[test]
+    fn every_refusal_maps_for_the_watch_verbs_that_get_it_and_no_other() {
+        for verb in watch_verbs() {
+            for refusal in Refusal::ALL {
+                let line = format!("ERR {}", refusal.wire());
+                let got = parse_watch_reply(&verb, &line).unwrap_err();
+                if refusal == Refusal::UnknownCmd || verb.refusals().contains(&refusal) {
+                    assert_eq!(got.refusal(), Some(refusal), "{verb:?} {line}");
+                    assert_eq!(got.to_string(), format!("{} refused: {line}", verb.name()));
+                } else {
+                    assert_eq!(got.refusal(), None, "{verb:?} can't get {line}");
+                }
+            }
+        }
+        let counts: Vec<usize> = watch_verbs().iter().map(|v| v.refusals().len()).collect();
+        assert_eq!(counts, [6, 2, 5, 1]);
+        // O3's and O4's verbs never get O5's refusals.
+        for verb in VERBS {
+            for refusal in &Refusal::ALL[14..] {
+                assert!(!verb.refusals().contains(refusal), "{verb:?} {refusal:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_watch_reply_off_the_table_is_unexpected() {
+        let [arm, summary, read, clear] = watch_verbs();
+        let two = Watch::Read { first: 5, count: 2 };
+        let cases: Vec<(Watch, String)> = vec![
+            (arm.clone(), "OK".into()),
+            (arm.clone(), "OK bytes=24".into()),
+            (arm.clone(), "OK frames=600 bytes=24".into()),
+            (arm.clone(), "OK bytes=-1 frames=600".into()),
+            (arm.clone(), "OK bytes=24 frames=600 extra=1".into()),
+            (arm.clone(), "ERR bad_index".into()),
+            (summary.clone(), "OK held=1 total=1 bytes=4 frames=1".into()),
+            // More held than taken, or than the ring holds.
+            (
+                summary.clone(),
+                "OK held=2 total=1 bytes=4 frames=8 armed=0".into(),
+            ),
+            (
+                summary.clone(),
+                "OK held=9 total=9 bytes=4 frames=8 armed=0".into(),
+            ),
+            (summary.clone(), "ERR bad_count".into()),
+            (read.clone(), "OK".into()),
+            // The records asked for, and none other.
+            (
+                two.clone(),
+                format!("OK first=4 count=2 data={RECORDS_HEX}"),
+            ),
+            (
+                two.clone(),
+                format!("OK first=5 count=1 data={RECORDS_HEX}"),
+            ),
+            // Hex O5 never writes: odd, upper case, not hex.
+            (
+                two.clone(),
+                format!("OK first=5 count=2 data={}", &RECORDS_HEX[1..]),
+            ),
+            (
+                two.clone(),
+                format!("OK first=5 count=2 data={}", RECORDS_HEX.to_uppercase()),
+            ),
+            (
+                two.clone(),
+                format!("OK first=5 count=2 data=zz{}", &RECORDS_HEX[2..]),
+            ),
+            // Records that don't split evenly or are shorter than their header.
+            (
+                two.clone(),
+                format!("OK first=5 count=2 data={}00", RECORDS_HEX),
+            ),
+            (
+                two.clone(),
+                format!("OK first=5 count=2 data={}", "00".repeat(40)),
+            ),
+            (two.clone(), "OK first=5 count=2 data=".into()),
+            (read.clone(), "ERR unmapped".into()),
+            (clear.clone(), "OK bytes=1 frames=1".into()),
+            (clear.clone(), "ERR no_watch".into()),
+        ];
+        for (verb, line) in &cases {
+            let err = parse_watch_reply(verb, line).unwrap_err();
+            assert_eq!(
+                err,
+                ReplyError::Unexpected {
+                    verb: verb.name(),
+                    line: line.clone()
                 },
                 "{verb:?} {line:?}"
             );

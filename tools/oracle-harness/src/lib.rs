@@ -5,8 +5,9 @@
 //! loads an input script ([`pad`]), the PINE client that reads and writes
 //! guest memory ([`pine`]), a word search over it ([`scan`]), Giants'
 //! random number generators read and written through it ([`rng`]), its
-//! actors and camera read through it ([`actors`]) and the divergence
-//! measurement built on all of them ([`divergence`]).
+//! actors and camera read through it ([`actors`]), the divergence
+//! measurement built on all of them ([`divergence`]) and O5's per-frame
+//! recorder with Giants' watch list ([`watch`], AG.1).
 //!
 //! It never writes inside a work tree of this repo: every path it creates goes
 //! through `rrc_dump::output::refuse_repo_output` first, because what an oracle
@@ -34,3 +35,4 @@ pub mod scan;
 pub mod snapshot;
 pub mod template;
 pub mod verbs;
+pub mod watch;

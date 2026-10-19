@@ -12,7 +12,11 @@
 //!   Set A against set B at the end flip says whether pausing to observe moves
 //!   the run;
 //! - set C (AF.12) at set B's checkpoints with a `SCREENSHOT` at F0 and at each
-//!   one, so frames compare where the run is live, not only at its end.
+//!   one, so frames compare where the run is live, not only at its end;
+//! - set W (AG.1) as set A, with O5's watch armed at F0 on Giants' full list
+//!   ([`crate::watch`]) and read back at the end flip: a run recorded every
+//!   frame without a pause. Set W against a fresh set A, interleaved, says
+//!   whether the recorder moves the run ([`observing`]).
 //!
 //! An observation, read through PINE at a `PAUSE_AT` pause: the hero's and the
 //! camera's placement and every game actor ([`crate::actors`]), and the RNG
@@ -39,6 +43,7 @@ use serde::{Deserialize, Serialize};
 use crate::actors::Counts;
 
 pub mod calibrate;
+pub mod observing;
 mod report;
 mod run;
 
@@ -46,7 +51,7 @@ pub use report::{
     AcrossObservable, AcrossSets, Band, FlipSummary, Group, LoadLink, Observable, ReplayEnd,
     Report, Rng, RngCheckpoint, World, WorldCheckpoint, spearman,
 };
-pub use run::{BOOT_WAIT, Inputs, carried_dirs, pine_connect, run_replay};
+pub use run::{BOOT_WAIT, Inputs, RECORDING_FILE, carried_dirs, pine_connect, run_replay};
 
 /// The end flip's offset from F0: 30 s at 60 fps (design decision 7).
 pub const END: u64 = 1_800;
@@ -57,6 +62,9 @@ pub const EVERY: u64 = 60;
 pub const SAVE_RETRY_FLIPS: u64 = 30;
 /// Tries at the end state before the replay goes on without it.
 pub const SAVE_TRIES: u32 = 3;
+/// Records a set W ring holds past the end flip, so the run's whole stretch
+/// fits whatever the counter does at F0.
+pub const WATCH_SPARE: u64 = 64;
 
 /// Both pads at rest from F0 + 1 on, so the host's input can't steer a replay.
 pub const IDLE: &str = "(steps: [(at: 0, pads: {0: (), 1: ()})])";
@@ -88,6 +96,8 @@ pub enum Set {
     /// Set B's checkpoints with a `SCREENSHOT` at F0 and at each of them, the
     /// last being set B's end shot.
     C,
+    /// Set A with O5's watch armed at F0 and read at the end flip (AG.1).
+    W,
 }
 
 impl Set {
@@ -96,7 +106,8 @@ impl Set {
             "A" | "a" => Ok(Set::A),
             "B" | "b" => Ok(Set::B),
             "C" | "c" => Ok(Set::C),
-            other => bail!("a set is A, B or C, not {other:?}"),
+            "W" | "w" => Ok(Set::W),
+            other => bail!("a set is A, B, C or W, not {other:?}"),
         }
     }
 }
@@ -107,6 +118,7 @@ impl std::fmt::Display for Set {
             Set::A => "A",
             Set::B => "B",
             Set::C => "C",
+            Set::W => "W",
         })
     }
 }
@@ -174,11 +186,11 @@ impl Plan {
     }
 
     /// The offsets from F0 a replay pauses and reads at, F0 itself not
-    /// counted: set A the end alone, sets B and C every `every` flips and the
-    /// end.
+    /// counted: sets A and W the end alone, sets B and C every `every` flips
+    /// and the end.
     pub fn checkpoints(&self) -> Vec<u64> {
         match self.set {
-            Set::A => vec![self.end],
+            Set::A | Set::W => vec![self.end],
             Set::B | Set::C => {
                 let mut offsets: Vec<u64> = (1..=self.end / self.every)
                     .map(|k| k * self.every)
@@ -196,9 +208,19 @@ impl Plan {
         format!("{}-{}-{replay:02}", self.script_name, self.set)
     }
 
-    /// A set A replay ends in a `SAVESTATE`.
+    /// A set A (or W) replay ends in a `SAVESTATE`.
     pub fn saves_at_end(&self) -> bool {
-        self.set == Set::A
+        matches!(self.set, Set::A | Set::W)
+    }
+
+    /// A set W replay records every frame through O5's watch.
+    pub fn watches(&self) -> bool {
+        self.set == Set::W
+    }
+
+    /// The ring a set W replay arms: the run's flips with room to spare.
+    pub fn ring_frames(&self) -> u32 {
+        u32::try_from(self.end + WATCH_SPARE).unwrap_or(u32::MAX)
     }
 
     /// A set C replay takes a `SCREENSHOT` at F0 and at every checkpoint.
@@ -418,6 +440,25 @@ pub struct EndState {
     pub sha256: String,
 }
 
+/// What a set W replay's ring held at the end flip, with AG.1's checks on it
+/// (`watch.json` beside the record has the records themselves).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WatchRun {
+    pub held: u64,
+    pub total: u64,
+    pub bytes: u32,
+    pub frames: u32,
+    pub ranges: usize,
+    pub fields: usize,
+    /// The counter when it was armed.
+    pub armed: u64,
+    pub check: crate::watch::RingCheck,
+    /// Records whose clips were dropped (the vector's slots changed).
+    pub frames_without_clips: usize,
+    /// The ring read back and the readback joined, milliseconds.
+    pub read_ms: f64,
+}
+
 /// Everything one replay recorded, as `record.json` in its dir.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReplayRecord {
@@ -447,6 +488,9 @@ pub struct ReplayRecord {
     #[serde(default)]
     pub shots: Vec<CheckpointShot>,
     pub saved: Option<EndState>,
+    /// Set W: what O5's watch recorded ([`WatchRun`]).
+    #[serde(default)]
+    pub watch: Option<WatchRun>,
     /// RPCS3's reason each time it turned the end `SAVESTATE` down.
     pub save_refusals: Vec<String>,
     /// Why the replay has no end state, when it was asked for one and hasn't.
@@ -551,6 +595,14 @@ mod tests {
         assert_eq!(c.checkpoints(), b.checkpoints());
         assert!(c.shoots_checkpoints() && !b.shoots_checkpoints() && !c.saves_at_end());
         assert_eq!(c.label(0), "walk-C-00");
+        // Set W is set A watched: the end alone, saved there, a ring past it.
+        let w = Plan::named("walk", Set::W, END, EVERY).unwrap();
+        assert_eq!(w.checkpoints(), a.checkpoints());
+        assert!(w.saves_at_end() && w.watches() && !a.watches());
+        assert_eq!(w.ring_frames(), 1_864);
+        assert_eq!(w.label(9), "walk-W-09");
+        assert_eq!(Set::parse("w").unwrap(), Set::W);
+        assert_eq!(Set::W.to_string(), "W");
     }
 
     #[test]

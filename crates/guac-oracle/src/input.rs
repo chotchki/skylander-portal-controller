@@ -190,7 +190,7 @@ impl PadState {
 /// A pad as a DualShock 3 reports it to the game (libpad's `CellPadData`): the
 /// two digital words of `CELL_PAD_CTRL_*` bits and the four stick bytes. Every
 /// bit has a position, so this and [`PadState`] convert both ways.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Ds3Pad {
     pub digital1: u8,
     pub digital2: u8,

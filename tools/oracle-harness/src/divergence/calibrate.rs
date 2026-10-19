@@ -819,6 +819,7 @@ mod tests {
             observations,
             shot: None,
             shots: vec![],
+            watch: None,
             saved: None,
             save_refusals: vec![],
             save_error: None,
