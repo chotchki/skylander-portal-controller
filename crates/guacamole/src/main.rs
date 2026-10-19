@@ -11,6 +11,7 @@ mod cards;
 mod cli;
 mod driver;
 mod extraction;
+mod input;
 mod intro;
 mod intro_player;
 mod mirror;
@@ -18,6 +19,7 @@ mod picker;
 mod screen;
 #[cfg(feature = "dev-tools")]
 mod shots;
+mod theme;
 mod tv;
 mod video;
 
@@ -244,6 +246,7 @@ fn run_tv(
     .add_plugins((
         ServerBridge,
         Tv,
+        input::InputRouter,
         Picker,
         extraction::ExtractPlugin,
         intro_player::IntroPlugin,

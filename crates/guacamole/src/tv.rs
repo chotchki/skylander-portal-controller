@@ -1,7 +1,8 @@
 //! The TV: `ServerBridge` polls the server's status each frame, `Tv` draws
 //! the screen it maps to (`screen::screen_for`) in `bevy_ui`. The screen's
 //! kind is a `bevy_state` state (openspec AP, design decision 1): each kind
-//! spawns its tree on enter under a root that despawns on exit.
+//! spawns its tree on enter under a root that despawns on exit. Sizes and
+//! colours come from [`TvTheme`] (decision 6), through a [`Pen`].
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -12,9 +13,13 @@ use std::time::{Duration, Instant};
 use bevy::asset::RenderAssetUsages;
 use bevy::ecs::system::SystemParam;
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
+use bevy::input_focus::AutoFocus;
+use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::prelude::*;
 use bevy::text::FontSize;
 use bevy::ui::{ComputedNode, UiGlobalTransform};
+// Not the prelude's `Button`: that's bevy_ui's deprecated one.
+use bevy::ui_widgets::{Activate, Button};
 use guac_server::config::WindowMode;
 use guac_server::state::{GameList, LauncherStatus};
 use skylander_core::{Element, SLOT_COUNT};
@@ -23,13 +28,21 @@ use tracing::{error, info, warn};
 
 use crate::cards::{PortalCards, drain_portal};
 use crate::extraction::{Band, ExtractBand};
+use crate::input::FocusId;
+use crate::picker::FolderAsked;
 use crate::screen::{SetupView, TvScreen, screen_for};
+use crate::theme::{Role, Step, TvTheme};
 
 /// How long the farewell shows before the app exits (spec: under 5 s).
 pub const FAREWELL_BEAT: Duration = Duration::from_secs(3);
 
 /// How long AlreadyRunning shows before this copy closes itself.
 const ALREADY_RUNNING_BEAT: Duration = Duration::from_secs(8);
+
+/// The TV's choices, by the [`FocusId`] the router and the mirror know them by.
+pub(crate) const CHOOSE_FOLDER: &str = "choose-folder";
+pub(crate) const CONTINUE: &str = "continue";
+pub(crate) const CLOSE: &str = "close";
 
 /// The layout's design height; `UiScale` maps it to the window.
 const DESIGN_HEIGHT: f32 = 1080.0;
@@ -45,10 +58,12 @@ const DESKTOP_MARGIN: f32 = 48.0;
 /// Cards per portal row; two rows hold all eight slots at 16:9.
 const CARDS_PER_ROW: usize = 4;
 
-const BACKGROUND: Color = Color::srgb(0.04, 0.08, 0.22);
-const GOLD: Color = Color::srgb(0.97, 0.78, 0.25);
-const WHITE: Color = Color::srgb(0.95, 0.96, 1.0);
-const DIM: Color = Color::srgb(0.65, 0.72, 0.88);
+/// A screen's title (§3.7's state titles).
+const TITLE: Step = Step::Hero;
+
+/// A card's figure name: the larger of 32 and 40 that still fits a long
+/// name in two rows of four at 1080p, 4K and the desktop window.
+const CARD_NAME: Step = Step::Md;
 
 static TITAN_ONE: &[u8] = include_bytes!("../../server/assets/fonts/TitanOne-Regular.ttf");
 
@@ -165,19 +180,29 @@ struct BandSlot(BandShape);
 #[derive(Debug, Clone, PartialEq)]
 struct Line {
     text: String,
-    size: f32,
-    color: Color,
+    step: Step,
+    role: Role,
     /// Wraps at the column's width instead of running off its sides.
     wrap: bool,
+    /// A button with this [`FocusId`], labelled `text`, in place of a line.
+    choice: Option<&'static str>,
 }
 
 impl Line {
-    fn new(text: impl Into<String>, size: f32, color: Color) -> Self {
+    fn new(text: impl Into<String>, step: Step, role: Role) -> Self {
         Self {
             text: text.into(),
-            size,
-            color,
+            step,
+            role,
             wrap: false,
+            choice: None,
+        }
+    }
+
+    fn choice(label: &str, id: &'static str) -> Self {
+        Self {
+            choice: Some(id),
+            ..Self::new(label, Step::Md, Role::Accent)
         }
     }
 
@@ -294,10 +319,14 @@ pub(crate) struct Screens;
 impl Plugin for Screens {
     fn build(&self, app: &mut App) {
         app.init_state::<TvState>()
+            .init_resource::<TvTheme>()
             .init_resource::<Portraits>()
             .init_resource::<LayoutReport>()
+            .init_resource::<FolderAsked>()
             .add_message::<Redrawn>()
-            .add_systems(PreUpdate, follow_screen.after(poll_status));
+            .add_observer(on_choice)
+            .add_systems(PreUpdate, follow_screen.after(poll_status))
+            .add_systems(Update, click_or_beat_closes);
         for state in TvState::ALL {
             app.add_systems(OnEnter(state), enter_screen);
         }
@@ -331,7 +360,7 @@ impl Plugin for Tv {
             .add_plugins(Screens)
             .add_systems(Startup, spawn_camera)
             .add_systems(Last, report_layout)
-            .add_systems(Update, (scale_ui, farewell_exit, escape_quits));
+            .add_systems(Update, (scale_ui, farewell_exit));
     }
 }
 
@@ -448,6 +477,7 @@ pub fn inset(mode: WindowMode) -> UiRect {
 #[derive(SystemParam)]
 struct Sources<'w> {
     assets: Res<'w, TvAssets>,
+    theme: Res<'w, TvTheme>,
     link: Res<'w, ServerLink>,
     setup: Res<'w, Setup>,
     framing: Res<'w, Framing>,
@@ -467,6 +497,10 @@ impl Sources<'_> {
     fn screen(&self) -> Option<&TvScreen> {
         self.current.as_ref().map(|c| &c.screen)
     }
+
+    fn pen(&self) -> Pen {
+        Pen::new(&self.assets, &self.theme)
+    }
 }
 
 /// `OnEnter` every state: the screen's root and everything under it. The
@@ -483,7 +517,7 @@ fn enter_screen(
             ScreenRoot,
             DespawnOnExit(state),
             root_node(state, sources.framing.0),
-            BackgroundColor(BACKGROUND),
+            BackgroundColor(sources.theme.background()),
         ))
         .with_children(|ui| spawn_content(ui, state, &mut sources));
     redrawn.write(Redrawn::Screen(state));
@@ -563,6 +597,7 @@ fn sync_setup_lines(
     setup: Res<Setup>,
     state: Res<State<TvState>>,
     assets: Res<TvAssets>,
+    theme: Res<TvTheme>,
     mut columns: Query<(Entity, &mut SetupLines, Option<&Children>)>,
     mut texts: Query<(&mut Text, &mut TextFont, &mut TextColor)>,
     mut redrawn: MessageWriter<Redrawn>,
@@ -575,28 +610,36 @@ fn sync_setup_lines(
         if drawn.0 == lines {
             continue;
         }
+        // A button's label isn't patched: another label is another button.
         let same_shape = drawn.0.len() == lines.len()
-            && drawn.0.iter().zip(&lines).all(|(a, b)| a.wrap == b.wrap);
+            && drawn.0.iter().zip(&lines).all(|(a, b)| {
+                a.wrap == b.wrap && a.choice == b.choice && (a.choice.is_none() || a.text == b.text)
+            });
         match children.filter(|_| same_shape) {
             Some(children) => {
                 for (kid, line) in children.iter().zip(&lines) {
+                    if line.choice.is_some() {
+                        continue;
+                    }
                     let Ok((mut text, mut font, mut color)) = texts.get_mut(kid) else {
                         continue;
                     };
                     text.set_if_neq(Text(line.text.clone()));
-                    color.set_if_neq(TextColor(line.color));
-                    if font.font_size != FontSize::Px(line.size) {
-                        font.font_size = FontSize::Px(line.size);
+                    color.set_if_neq(TextColor(theme.role(line.role)));
+                    let size = FontSize::Px(theme.size(line.step));
+                    if font.font_size != size {
+                        font.font_size = size;
                     }
                 }
             }
             None => {
+                let pen = Pen::new(&assets, &theme);
                 commands
                     .entity(column)
                     .despawn_children()
                     .with_children(|column| {
                         for line in &lines {
-                            column.spawn(line_bundle(&assets.font, line));
+                            spawn_line(column, &pen, line);
                         }
                     });
             }
@@ -614,6 +657,7 @@ fn sync_band(
     band: Option<Res<ExtractBand>>,
     cards: Res<PortalCards>,
     assets: Res<TvAssets>,
+    theme: Res<TvTheme>,
     mut slots: Query<(Entity, &mut BandSlot, &mut Node)>,
     mut titles: Query<&mut Text, (With<ExtractTitle>, Without<ExtractDetail>)>,
     mut details: Query<(&mut Text, &mut TextColor), (With<ExtractDetail>, Without<ExtractTitle>)>,
@@ -629,12 +673,12 @@ fn sync_band(
     for (slot, mut drawn, mut node) in &mut slots {
         if drawn.0 != shape {
             node.display = band_slot_display(shape);
-            let font = assets.font.clone();
+            let pen = Pen::new(&assets, &theme);
             commands
                 .entity(slot)
                 .despawn_children()
                 .with_children(|ui| {
-                    spawn_band_slot(ui, &font, shape, band);
+                    spawn_band_slot(ui, &pen, shape, band);
                 });
             drawn.0 = shape;
             redrawn.write(Redrawn::Band);
@@ -649,7 +693,7 @@ fn sync_band(
         }
         for (mut detail, mut color) in &mut details {
             detail.set_if_neq(Text(band.detail.clone()));
-            color.set_if_neq(TextColor(detail_color(band)));
+            color.set_if_neq(TextColor(theme.role(detail_role(band))));
         }
         if let Some(pct) = band.percent {
             for (mut bar, mut node) in &mut bars {
@@ -669,6 +713,7 @@ fn sync_cells(
     mut commands: Commands,
     cards: Res<PortalCards>,
     assets: Res<TvAssets>,
+    theme: Res<TvTheme>,
     mut portraits: ResMut<Portraits>,
     mut images: ResMut<Assets<Image>>,
     mut cells: Query<(Entity, &Cell, &mut Drew)>,
@@ -677,8 +722,7 @@ fn sync_cells(
     if !cards.is_changed() {
         return;
     }
-    let text =
-        |s: &str, size: f32, color: Color| label(&assets.font, s, size, color, Justify::Center);
+    let pen = Pen::new(&assets, &theme);
     for (entity, cell, mut drew) in &mut cells {
         let now = &cards.slots[usize::from(cell.0)];
         if drew.0 == *now {
@@ -689,7 +733,7 @@ fn sync_cells(
             .entity(entity)
             .despawn_children()
             .with_children(|content| {
-                spawn_slot(content, &text, cell.0, now.as_ref(), portrait);
+                spawn_slot(content, &pen, cell.0, now.as_ref(), portrait);
             });
         drew.0 = now.clone();
         redrawn.write(Redrawn::Slot(cell.0));
@@ -710,6 +754,29 @@ fn arm_layout_report(mut redrawn: MessageReader<Redrawn>, mut report: ResMut<Lay
     }
 }
 
+/// What a choice does when it's activated: by a click on it, Enter or Space
+/// while it's focused (the widget's own), South or NumpadEnter (the router).
+fn on_choice(
+    activate: On<Activate>,
+    ids: Query<&FocusId>,
+    mut setup: ResMut<Setup>,
+    mut asked: ResMut<FolderAsked>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    let Ok(id) = ids.get(activate.entity) else {
+        return;
+    };
+    info!(choice = id.0, "tv choice");
+    match id.0 {
+        CHOOSE_FOLDER => asked.0 = true,
+        CONTINUE if setup.0.show_found => setup.0.show_found = false,
+        CLOSE => {
+            exit.write(AppExit::Success);
+        }
+        _ => {}
+    }
+}
+
 fn farewell_exit(current: Option<Res<Current>>, mut exit: MessageWriter<AppExit>) {
     if let Some(current) = current
         && current.screen == TvScreen::Farewell
@@ -720,10 +787,10 @@ fn farewell_exit(current: Option<Res<Current>>, mut exit: MessageWriter<AppExit>
     }
 }
 
-/// Esc or a click closes the error screens (a mouse-only TV PC has no Esc);
+/// A click anywhere closes the startup-error screens (AA.6: a mouse-only TV
+/// PC), beside their Close button and the router's Back (East, Esc);
 /// AlreadyRunning also closes itself so it never hides the running app's TV.
-fn escape_quits(
-    keys: Res<ButtonInput<KeyCode>>,
+fn click_or_beat_closes(
     mouse: Res<ButtonInput<MouseButton>>,
     current: Option<Res<Current>>,
     mut exit: MessageWriter<AppExit>,
@@ -731,62 +798,63 @@ fn escape_quits(
     let Some(current) = current.filter(|c| c.screen.escape_quits()) else {
         return;
     };
-    let pressed = keys.just_pressed(KeyCode::Escape) || mouse.just_pressed(MouseButton::Left);
+    let clicked = mouse.just_pressed(MouseButton::Left);
     let timed_out = current.screen == TvScreen::AlreadyRunning
         && current.since.elapsed() >= ALREADY_RUNNING_BEAT;
-    if pressed || timed_out {
+    if clicked || timed_out {
         info!(screen = ?current.screen, timed_out, "closing");
         exit.write(AppExit::Success);
     }
 }
 
-/// What the folder picker is doing, under Setup and NoGiants.
-fn picker_lines(setup: &SetupView, choose: &str) -> Vec<Line> {
+/// The folder picker under Setup and NoGiants: its button, or while the
+/// sheet is up a line saying where it is.
+fn picker_lines(setup: &SetupView) -> Vec<Line> {
     let mut lines = Vec::new();
     if let Some(error) = &setup.error {
         lines.push(Line::new(
             format!("Couldn't use that folder: {error}"),
-            32.0,
-            GOLD,
+            Step::Body,
+            Role::Primary,
         ));
     }
-    if setup.picking {
-        lines.push(Line::new(
+    lines.push(if setup.picking {
+        Line::new(
             "Choose a folder in the window that opened.",
-            40.0,
-            WHITE,
-        ));
+            Step::Md,
+            Role::Primary,
+        )
     } else {
-        lines.push(Line::new(
-            format!("Press Enter or click to {choose}."),
-            40.0,
-            WHITE,
-        ));
-    }
-    lines.push(Line::new("Or run: guacamole --setup <folder>", 28.0, DIM));
+        Line::choice("Choose the folder", CHOOSE_FOLDER)
+    });
+    lines.push(Line::new(
+        "Or run: guacamole --setup <folder>",
+        Step::Caption,
+        Role::Muted,
+    ));
     lines
 }
 
 /// The lines under Setup's and NoGiants' headings, all from `Setup`.
 fn setup_lines(state: TvState, setup: &SetupView) -> Vec<Line> {
     match state {
-        TvState::Setup => picker_lines(setup, "choose it"),
+        TvState::Setup => picker_lines(setup),
         TvState::NoGiants => {
             let mut lines = vec![Line::new(
                 format!("Looked in: {}", setup.folders.join(", ")),
-                32.0,
-                DIM,
+                Step::Body,
+                Role::Muted,
             )];
             for problem in &setup.problems {
-                lines.push(Line::new(problem.clone(), 32.0, GOLD));
+                lines.push(Line::new(problem.clone(), Step::Body, Role::Primary));
             }
             if !setup.found_titles.is_empty() {
-                lines.push(Line::new("Found:", 40.0, WHITE));
-                lines.push(Line::new(setup.titles_line(), 36.0, WHITE).wrapping());
+                lines.push(Line::new("Found:", Step::Md, Role::Primary));
+                lines.push(Line::new(setup.titles_line(), Step::Body, Role::Primary).wrapping());
             } else if setup.problems.is_empty() {
-                lines.push(Line::new("No game dumps there.", 40.0, WHITE));
+                lines.push(Line::new("No game dumps there.", Step::Md, Role::Primary));
             }
-            lines.extend(picker_lines(setup, "choose another folder"));
+            lines.extend(picker_lines(setup));
             lines
         }
         _ => Vec::new(),
@@ -794,9 +862,9 @@ fn setup_lines(state: TvState, setup: &SetupView) -> Vec<Line> {
 }
 
 /// A centred line; a wrapping one is held to the column's width.
-fn line_bundle(font: &Handle<Font>, line: &Line) -> impl Bundle + use<> {
+fn line_bundle(pen: &Pen, line: &Line) -> impl Bundle + use<> {
     (
-        label(font, &line.text, line.size, line.color, Justify::Center),
+        pen.text(&line.text, line.step, line.role),
         Node {
             max_width: if line.wrap { percent(100) } else { Val::Auto },
             ..default()
@@ -804,28 +872,93 @@ fn line_bundle(font: &Handle<Font>, line: &Line) -> impl Bundle + use<> {
     )
 }
 
-fn label(
-    font: &Handle<Font>,
-    s: &str,
-    size: f32,
-    color: Color,
-    justify: Justify,
-) -> impl Bundle + use<> {
+/// A setup column's line: centred text, or a choice's button.
+fn spawn_line(column: &mut ChildSpawnerCommands, pen: &Pen, line: &Line) {
+    match line.choice {
+        Some(id) => column.spawn(choice_bundle(pen, &line.text, id)),
+        None => column.spawn(line_bundle(pen, line)),
+    };
+}
+
+/// A choice: a `bevy_ui_widgets` button, focused when it appears
+/// (`AutoFocus`), taking the focus from a click on it (`TabIndex`; without one
+/// a click clears it) and named for the router and the mirror (`FocusId`).
+/// Its look sits on a face inside it, so AP.13's focus scale moves no rect
+/// the tests read.
+fn choice_bundle(pen: &Pen, text: &str, id: &'static str) -> impl Bundle + use<> {
     (
-        Text::new(s),
-        TextFont {
-            font: font.clone().into(),
-            font_size: FontSize::Px(size),
+        Button,
+        TabIndex(0),
+        AutoFocus,
+        FocusId(id),
+        Node {
+            flex_shrink: 0.0,
             ..default()
         },
-        TextColor(color),
-        TextLayout::justify(justify),
+        children![(
+            Node {
+                padding: UiRect::axes(px(48), px(16)),
+                border: UiRect::all(px(4)),
+                border_radius: BorderRadius::all(px(24)),
+                ..default()
+            },
+            BackgroundColor(pen.theme.panel),
+            BorderColor::all(pen.theme.gold),
+            children![pen.text(text, Step::Md, Role::Accent)],
+        )],
     )
 }
 
-/// The band's detail: white when it's a failure to act on, dim for progress.
-fn detail_color(band: &Band) -> Color {
-    if band.code.is_some() { WHITE } else { DIM }
+/// What every line is drawn with: the font and the theme, so a size comes
+/// only from a [`Step`] and a colour from a [`Role`].
+struct Pen {
+    font: Handle<Font>,
+    theme: TvTheme,
+}
+
+impl Pen {
+    fn new(assets: &TvAssets, theme: &TvTheme) -> Self {
+        Self {
+            font: assets.font.clone(),
+            theme: theme.clone(),
+        }
+    }
+
+    fn font(&self, step: Step) -> TextFont {
+        TextFont {
+            font: self.font.clone().into(),
+            font_size: FontSize::Px(self.theme.size(step)),
+            ..default()
+        }
+    }
+
+    /// Centred.
+    fn text(&self, s: &str, step: Step, role: Role) -> impl Bundle + use<> {
+        self.text_at(s, step, role, Justify::Center)
+    }
+
+    fn text_at(&self, s: &str, step: Step, role: Role, justify: Justify) -> impl Bundle + use<> {
+        self.inked(s, step, self.theme.role(role), justify)
+    }
+
+    /// In a colour no role names: a pip's ink, picked against its fill.
+    fn inked(&self, s: &str, step: Step, color: Color, justify: Justify) -> impl Bundle + use<> {
+        (
+            Text::new(s),
+            self.font(step),
+            TextColor(color),
+            TextLayout::justify(justify),
+        )
+    }
+}
+
+/// The band's detail: primary when it's a failure to act on, muted for progress.
+fn detail_role(band: &Band) -> Role {
+    if band.code.is_some() {
+        Role::Primary
+    } else {
+        Role::Muted
+    }
 }
 
 /// An empty slot leaves the layout, so its row gap doesn't move the name.
@@ -840,22 +973,20 @@ fn band_slot_display(shape: BandShape) -> Display {
 /// The hint or the band, under the game's name.
 fn spawn_band_slot(
     slot: &mut ChildSpawnerCommands,
-    font: &Handle<Font>,
+    pen: &Pen,
     shape: BandShape,
     band: Option<&Band>,
 ) {
-    let text_at =
-        |s: &str, size: f32, color: Color, justify: Justify| label(font, s, size, color, justify);
     match (shape, band) {
         (BandShape::Hint, _) => {
-            slot.spawn(text_at(
+            slot.spawn(pen.text_at(
                 "Put a figure on the portal from your phone.",
-                32.0,
-                WHITE,
+                Step::Body,
+                Role::Primary,
                 Justify::Left,
             ));
         }
-        (BandShape::Band { .. }, Some(band)) => spawn_band(slot, &text_at, band),
+        (BandShape::Band { .. }, Some(band)) => spawn_band(slot, pen, band),
         _ => {}
     }
 }
@@ -903,7 +1034,7 @@ fn root_node(state: TvState, mode: WindowMode) -> Node {
 
 /// Setup's and NoGiants' lines in a full-width column with the screen's own
 /// gap, so they lay out as the screen's own children would.
-fn spawn_setup_lines(ui: &mut ChildSpawnerCommands, font: &Handle<Font>, lines: Vec<Line>) {
+fn spawn_setup_lines(ui: &mut ChildSpawnerCommands, pen: &Pen, lines: Vec<Line>) {
     ui.spawn((
         Node {
             width: percent(100),
@@ -916,7 +1047,7 @@ fn spawn_setup_lines(ui: &mut ChildSpawnerCommands, font: &Handle<Font>, lines: 
     ))
     .with_children(|column| {
         for line in &lines {
-            column.spawn(line_bundle(font, line));
+            spawn_line(column, pen, line);
         }
     });
 }
@@ -928,35 +1059,36 @@ fn spawn_content(ui: &mut ChildSpawnerCommands, state: TvState, sources: &mut So
         return;
     }
     let setup = &sources.setup.0;
-    let font = sources.assets.font.clone();
-    let text = |s: &str, size: f32, color: Color| label(&font, s, size, color, Justify::Center);
+    let pen = sources.pen();
 
     match state {
         TvState::Starting => {
-            ui.spawn(text("Starting…", 64.0, DIM));
+            ui.spawn(pen.text("Starting…", Step::Lg, Role::Muted));
         }
         TvState::Setup => {
-            ui.spawn(text("Where are your disc dumps?", 88.0, GOLD));
-            ui.spawn(text(
+            ui.spawn(pen.text("Where are your disc dumps?", TITLE, Role::Accent));
+            ui.spawn(pen.text(
                 "Choose the folder that holds your Skylanders Giants dump.",
-                40.0,
-                WHITE,
+                Step::Md,
+                Role::Primary,
             ));
-            spawn_setup_lines(ui, &font, setup_lines(state, setup));
+            spawn_setup_lines(ui, &pen, setup_lines(state, setup));
         }
         TvState::NoGiants => {
-            ui.spawn(text("No Skylanders Giants dump found", 80.0, GOLD));
-            spawn_setup_lines(ui, &font, setup_lines(state, setup));
+            // At 96 it takes two rows of the 1080p inset; 64 keeps it to one.
+            ui.spawn(pen.text("No Skylanders Giants dump found", Step::Lg, Role::Accent));
+            spawn_setup_lines(ui, &pen, setup_lines(state, setup));
         }
         TvState::Found => {
-            ui.spawn(text("Found your games", 88.0, GOLD));
-            let titles = Line::new(setup.titles_line(), 36.0, WHITE).wrapping();
-            ui.spawn((TitlesLine, line_bundle(&font, &titles)));
-            ui.spawn(text("Skylanders: Giants is ready!", 56.0, GOLD));
-            ui.spawn(text("Click to continue.", 32.0, DIM));
+            ui.spawn(pen.text("Found your games", TITLE, Role::Accent));
+            let titles = Line::new(setup.titles_line(), Step::Body, Role::Primary).wrapping();
+            ui.spawn((TitlesLine, line_bundle(&pen, &titles)));
+            ui.spawn(pen.text("Skylanders: Giants is ready!", Step::Lg, Role::Accent));
+            ui.spawn(choice_bundle(&pen, "Continue", CONTINUE));
         }
         TvState::Join => {
-            ui.spawn(text("Scan to play", 88.0, GOLD));
+            // navigation.md §3.7 names the launcher's "SCAN TO CONNECT" as its 64.
+            ui.spawn(pen.text("Scan to play", Step::Lg, Role::Accent));
             if let Some(qr) = &sources.assets.qr {
                 ui.spawn((
                     JoinQr,
@@ -969,23 +1101,24 @@ fn spawn_content(ui: &mut ChildSpawnerCommands, state: TvState, sources: &mut So
                 ));
             }
             let address = join_address(&sources.link.phone_url);
-            ui.spawn((JoinAddress, text(address, 32.0, DIM)));
+            ui.spawn((JoinAddress, pen.text(address, Step::Body, Role::Muted)));
             let players = players_line(sources.clients());
-            ui.spawn((PlayersLine, text(&players, 40.0, WHITE)));
+            ui.spawn((PlayersLine, pen.text(&players, Step::Md, Role::Primary)));
         }
         // Handled above.
         TvState::Portal => {}
         TvState::AlreadyRunning => {
-            ui.spawn(text("Already running", 88.0, GOLD));
-            ui.spawn(text(
+            ui.spawn(pen.text("Already running", TITLE, Role::Accent));
+            ui.spawn(pen.text(
                 "guacamole or the Skylander Portal Controller is already serving phones on this computer.",
-                40.0,
-                WHITE,
+                Step::Md,
+                Role::Primary,
             ));
-            ui.spawn(text(
+            ui.spawn(choice_bundle(&pen, "Close", CLOSE));
+            ui.spawn(pen.text(
                 "Press Esc or click to close this one (it closes itself in a few seconds).",
-                32.0,
-                DIM,
+                Step::Body,
+                Role::Muted,
             ));
         }
         TvState::ServerError => {
@@ -993,35 +1126,28 @@ fn spawn_content(ui: &mut ChildSpawnerCommands, state: TvState, sources: &mut So
                 Some(TvScreen::ServerError { message }) => message.as_str(),
                 _ => "",
             };
-            ui.spawn(text("Something went wrong", 88.0, GOLD));
+            ui.spawn(pen.text("Something went wrong", TITLE, Role::Accent));
             // The whole cause chain, wrapped inside the column; a path with
             // no space to break at breaks between characters.
             ui.spawn((
                 ErrorMessage,
                 Text::new(message),
-                TextFont {
-                    font: font.clone().into(),
-                    font_size: FontSize::Px(36.0),
-                    ..default()
-                },
-                TextColor(WHITE),
+                pen.font(Step::Body),
+                TextColor(pen.theme.role(Role::Primary)),
                 TextLayout::new(Justify::Center, LineBreak::WordOrCharacter),
                 Node {
                     max_width: percent(100),
                     ..default()
                 },
             ));
-            ui.spawn(text("Press Esc or click to close.", 32.0, DIM));
+            ui.spawn(choice_bundle(&pen, "Close", CLOSE));
+            ui.spawn(pen.text("Press Esc or click to close.", Step::Body, Role::Muted));
         }
         TvState::Farewell => {
-            ui.spawn(text("Goodbye, Portal Master!", 96.0, GOLD));
+            ui.spawn(pen.text("Goodbye, Portal Master!", TITLE, Role::Accent));
         }
     }
 }
-
-const CARD_BG: Color = Color::srgb(0.08, 0.14, 0.34);
-const EMPTY_EDGE: Color = Color::srgba(0.65, 0.72, 0.88, 0.22);
-const PORTRAIT_BG: Color = Color::srgb(0.03, 0.05, 0.14);
 
 /// A card on the portal screen, by slot (0-based).
 #[derive(Component, Debug)]
@@ -1060,37 +1186,10 @@ pub fn element_label(element: Element) -> &'static str {
     }
 }
 
-/// The card's edge and element word; dim for a figure with no element.
-pub fn element_color(element: Option<Element>) -> Color {
-    match element {
-        Some(Element::Air) => Color::srgb(0.55, 0.85, 1.0),
-        Some(Element::Dark) => Color::srgb(0.62, 0.45, 0.85),
-        Some(Element::Earth) => Color::srgb(0.78, 0.55, 0.30),
-        Some(Element::Fire) => Color::srgb(1.0, 0.42, 0.18),
-        Some(Element::Life) => Color::srgb(0.45, 0.85, 0.30),
-        Some(Element::Light) => Color::srgb(1.0, 0.95, 0.60),
-        Some(Element::Magic) => Color::srgb(0.85, 0.40, 1.0),
-        Some(Element::Tech) => Color::srgb(1.0, 0.70, 0.15),
-        Some(Element::Undead) => Color::srgb(0.70, 0.72, 0.80),
-        Some(Element::Water) => Color::srgb(0.25, 0.55, 1.0),
-        None => DIM,
-    }
-}
-
 /// The profile's colour as the store keeps it (`#rgb` or `#rrggbb`); gold if
 /// it won't parse, so a pip never goes invisible.
-pub fn owner_color(owner: &PlacementOwner) -> Srgba {
-    Srgba::hex(&owner.color).unwrap_or(GOLD.to_srgba())
-}
-
-/// Dark ink on a light pip, white on a dark one.
-pub fn ink_on(background: Srgba) -> Color {
-    let luma = 0.2126 * background.red + 0.7152 * background.green + 0.0722 * background.blue;
-    if luma > 0.6 {
-        Color::srgb(0.05, 0.05, 0.1)
-    } else {
-        Color::WHITE
-    }
+pub fn owner_color(owner: &PlacementOwner, theme: &TvTheme) -> Srgba {
+    Srgba::hex(&owner.color).unwrap_or(theme.gold.to_srgba())
 }
 
 /// The window shrunk by the inset (TV) or the margin (desktop), in physical
@@ -1193,9 +1292,7 @@ fn report_layout(
 /// The portal: the game and a small join code on top, then the slots in two
 /// rows of four, each holding its card or an empty frame.
 fn spawn_portal(ui: &mut ChildSpawnerCommands, sources: &mut Sources) {
-    let font = sources.assets.font.clone();
-    let text_at =
-        |s: &str, size: f32, color: Color, justify: Justify| label(&font, s, size, color, justify);
+    let pen = sources.pen();
     let game = match sources.screen() {
         Some(TvScreen::Portal { game }) => game.clone(),
         _ => String::new(),
@@ -1229,7 +1326,10 @@ fn spawn_portal(ui: &mut ChildSpawnerCommands, sources: &mut Sources) {
                 ..default()
             })
             .with_children(|left| {
-                left.spawn((GameName, text_at(&game, 64.0, GOLD, Justify::Left)));
+                left.spawn((
+                    GameName,
+                    pen.text_at(&game, Step::Lg, Role::Accent, Justify::Left),
+                ));
                 left.spawn((
                     BandSlot(shape),
                     Node {
@@ -1241,7 +1341,7 @@ fn spawn_portal(ui: &mut ChildSpawnerCommands, sources: &mut Sources) {
                         ..default()
                     },
                 ))
-                .with_children(|slot| spawn_band_slot(slot, &font, shape, band.as_ref()));
+                .with_children(|slot| spawn_band_slot(slot, &pen, shape, band.as_ref()));
             });
         header
             .spawn(Node {
@@ -1260,9 +1360,11 @@ fn spawn_portal(ui: &mut ChildSpawnerCommands, sources: &mut Sources) {
                         ..default()
                     })
                     .with_children(|join| {
-                        join.spawn(text_at("Scan to join", 32.0, WHITE, Justify::Right));
-                        join.spawn((PlayersLine, text_at(&players, 28.0, DIM, Justify::Right)));
-                        join.spawn((JoinAddress, text_at(&address, 24.0, DIM, Justify::Right)));
+                        let right =
+                            |s: &str, step, role| pen.text_at(s, step, role, Justify::Right);
+                        join.spawn(right("Scan to join", Step::Body, Role::Primary));
+                        join.spawn((PlayersLine, right(&players, Step::Caption, Role::Muted)));
+                        join.spawn((JoinAddress, right(&address, Step::Caption, Role::Muted)));
                     });
                 if let Some(qr) = &qr {
                     right.spawn((
@@ -1288,12 +1390,11 @@ fn spawn_portal(ui: &mut ChildSpawnerCommands, sources: &mut Sources) {
         min_height: px(0),
         ..default()
     })
-    .with_children(|grid| spawn_rows(grid, &font, sources));
+    .with_children(|grid| spawn_rows(grid, &pen, sources));
 }
 
 /// The grid's rows of cells, each holding its slot's card or empty frame.
-fn spawn_rows(grid: &mut ChildSpawnerCommands, font: &Handle<Font>, sources: &mut Sources) {
-    let text = |s: &str, size: f32, color: Color| label(font, s, size, color, Justify::Center);
+fn spawn_rows(grid: &mut ChildSpawnerCommands, pen: &Pen, sources: &mut Sources) {
     let Sources {
         cards,
         portraits,
@@ -1329,7 +1430,7 @@ fn spawn_rows(grid: &mut ChildSpawnerCommands, font: &Handle<Font>, sources: &mu
                         },
                     ))
                     .with_children(|cell| {
-                        spawn_slot(cell, &text, slot as u8, placement, portrait);
+                        spawn_slot(cell, pen, slot as u8, placement, portrait);
                     });
             }
         });
@@ -1349,32 +1450,33 @@ fn portrait_of(
 }
 
 /// A cell's content: the card, or the numbered empty frame.
-fn spawn_slot<T: Bundle>(
+fn spawn_slot(
     cell: &mut ChildSpawnerCommands,
-    text: &impl Fn(&str, f32, Color) -> T,
+    pen: &Pen,
     slot: u8,
     placement: Option<&Placement>,
     portrait: Option<Handle<Image>>,
 ) {
     match placement {
-        Some(placement) => spawn_card(cell, text, slot, placement, portrait),
-        None => spawn_empty(cell, text, slot),
+        Some(placement) => spawn_card(cell, pen, slot, placement, portrait),
+        None => spawn_empty(cell, pen, slot),
     }
 }
 
 /// The extraction's title, detail and bar, under the game's name.
-fn spawn_band<T: Bundle>(
-    left: &mut ChildSpawnerCommands,
-    text_at: &impl Fn(&str, f32, Color, Justify) -> T,
-    band: &Band,
-) {
+fn spawn_band(left: &mut ChildSpawnerCommands, pen: &Pen, band: &Band) {
     left.spawn((
         ExtractTitle,
-        text_at(&band.title, 30.0, GOLD, Justify::Left),
+        pen.text_at(&band.title, Step::Body, Role::Accent, Justify::Left),
     ));
     left.spawn((
         ExtractDetail,
-        text_at(&band.detail, 22.0, detail_color(band), Justify::Left),
+        pen.text_at(
+            &band.detail,
+            Step::Caption,
+            detail_role(band),
+            Justify::Left,
+        ),
     ));
     if let Some(pct) = band.percent {
         left.spawn((
@@ -1387,7 +1489,7 @@ fn spawn_band<T: Bundle>(
                 overflow: Overflow::clip(),
                 ..default()
             },
-            BackgroundColor(EMPTY_EDGE),
+            BackgroundColor(pen.theme.faint),
         ))
         .with_children(|bar| {
             bar.spawn((
@@ -1397,7 +1499,7 @@ fn spawn_band<T: Bundle>(
                     height: percent(100),
                     ..default()
                 },
-                BackgroundColor(GOLD),
+                BackgroundColor(pen.theme.gold),
             ));
         });
     }
@@ -1423,19 +1525,19 @@ fn slot_content() -> Node {
 }
 
 /// Portrait, name, element and owner pip; no level, XP or gold (AH).
-fn spawn_card<T: Bundle>(
+fn spawn_card(
     cell: &mut ChildSpawnerCommands,
-    text: &impl Fn(&str, f32, Color) -> T,
+    pen: &Pen,
     slot: u8,
     placement: &Placement,
     portrait: Option<Handle<Image>>,
 ) {
-    let edge = element_color(placement.element);
+    let theme = &pen.theme;
     cell.spawn((
         CardSlot(slot),
         slot_content(),
-        BackgroundColor(CARD_BG),
-        BorderColor::all(edge),
+        BackgroundColor(theme.panel),
+        BorderColor::all(theme.element(placement.element)),
     ))
     .with_children(|card| {
         let frame = Node {
@@ -1446,31 +1548,27 @@ fn spawn_card<T: Bundle>(
             border_radius: BorderRadius::MAX,
             ..default()
         };
+        let ring = (
+            frame,
+            BorderColor::all(theme.gold),
+            BackgroundColor(theme.starfield[2]),
+        );
         match portrait {
-            Some(image) => {
-                card.spawn((
-                    frame,
-                    ImageNode::new(image),
-                    BorderColor::all(GOLD),
-                    BackgroundColor(PORTRAIT_BG),
-                ));
-            }
-            None => {
-                card.spawn((frame, BorderColor::all(GOLD), BackgroundColor(PORTRAIT_BG)));
-            }
-        }
+            Some(image) => card.spawn((ring, ImageNode::new(image))),
+            None => card.spawn(ring),
+        };
         card.spawn((
-            text(&placement.name, 36.0, WHITE),
+            pen.text(&placement.name, CARD_NAME, Role::Primary),
             Node {
                 max_width: percent(100),
                 ..default()
             },
         ));
         if let Some(element) = placement.element {
-            card.spawn(text(element_label(element), 28.0, edge));
+            card.spawn(pen.text(element_label(element), Step::Caption, Role::Muted));
         }
         if let Some(owner) = &placement.owner {
-            let color = owner_color(owner);
+            let color = owner_color(owner, theme);
             card.spawn((
                 Pip(slot),
                 Node {
@@ -1486,27 +1584,25 @@ fn spawn_card<T: Bundle>(
                     ..default()
                 },
                 BackgroundColor(color.into()),
-                BorderColor::all(WHITE),
+                BorderColor::all(theme.role(Role::Primary)),
             ))
             .with_children(|pip| {
-                pip.spawn(text(&owner.initial, 34.0, ink_on(color)));
+                let ink = theme.ink_on(color);
+                pip.spawn(pen.inked(&owner.initial, Step::Body, ink, Justify::Center));
             });
         }
     });
 }
 
-fn spawn_empty<T: Bundle>(
-    cell: &mut ChildSpawnerCommands,
-    text: &impl Fn(&str, f32, Color) -> T,
-    slot: u8,
-) {
+fn spawn_empty(cell: &mut ChildSpawnerCommands, pen: &Pen, slot: u8) {
     cell.spawn((
         EmptySlot(slot),
         slot_content(),
-        BorderColor::all(EMPTY_EDGE),
+        BorderColor::all(pen.theme.faint),
     ))
     .with_children(|frame| {
-        frame.spawn(text(&(slot + 1).to_string(), 56.0, EMPTY_EDGE));
+        let number = (slot + 1).to_string();
+        frame.spawn(pen.text(&number, Step::Md, Role::Muted));
     });
 }
 
@@ -1514,21 +1610,21 @@ fn spawn_empty<T: Bundle>(
 mod tests {
     use super::*;
 
-    /// Runs `escape_quits` once on `screen`, shown for `age`, with a left click or not.
+    /// Runs `click_or_beat_closes` once on `screen`, shown for `age`, with a
+    /// left click or not.
     fn closes(screen: TvScreen, age: Duration, click: bool) -> bool {
         let mut app = App::new();
         let mut mouse = ButtonInput::<MouseButton>::default();
         if click {
             mouse.press(MouseButton::Left);
         }
-        app.insert_resource(ButtonInput::<KeyCode>::default())
-            .insert_resource(mouse)
+        app.insert_resource(mouse)
             .insert_resource(Current {
                 screen,
                 since: Instant::now().checked_sub(age).unwrap(),
                 clients: 0,
             })
-            .add_systems(Update, escape_quits);
+            .add_systems(Update, click_or_beat_closes);
         app.update();
         app.should_exit().is_some()
     }
@@ -1583,15 +1679,16 @@ mod tests {
             initial: "A".into(),
             color: c.into(),
         };
-        assert_eq!(owner_color(&owner("#ff0000")), Srgba::rgb(1.0, 0.0, 0.0));
-        assert_eq!(owner_color(&owner("#00f")), Srgba::rgb(0.0, 0.0, 1.0));
-        assert_eq!(owner_color(&owner("teal")), GOLD.to_srgba());
-        // Light pips get dark ink, dark ones white.
+        let theme = TvTheme::default();
         assert_eq!(
-            ink_on(Srgba::rgb(1.0, 1.0, 0.6)),
-            Color::srgb(0.05, 0.05, 0.1)
+            owner_color(&owner("#ff0000"), &theme),
+            Srgba::rgb(1.0, 0.0, 0.0)
         );
-        assert_eq!(ink_on(Srgba::rgb(0.1, 0.1, 0.5)), Color::WHITE);
+        assert_eq!(
+            owner_color(&owner("#00f"), &theme),
+            Srgba::rgb(0.0, 0.0, 1.0)
+        );
+        assert_eq!(owner_color(&owner("teal"), &theme), theme.gold.to_srgba());
     }
 
     #[test]
@@ -1607,13 +1704,55 @@ mod tests {
                 "Air", "Dark", "Earth", "Fire", "Life", "Light", "Magic", "Tech", "Undead", "Water"
             ]
         );
-        assert_ne!(element_color(Some(Fire)), element_color(Some(Water)));
+        let theme = TvTheme::default();
+        assert_ne!(theme.element(Some(Fire)), theme.element(Some(Water)));
     }
 
+    /// The shell delta's "Nothing on the join code reacts" (AP.6): a pad
+    /// button, a key and a click change nothing on Join.
     #[test]
     fn a_click_never_closes_the_join_screen() {
+        use bevy::input::gamepad::GamepadButton;
+        use bevy::input::keyboard::Key;
+
+        use super::choice_tests::{click_beside, exited, focus, key, pad, tap, tv_on};
         assert!(!closes(TvScreen::Join, Duration::ZERO, true));
         assert!(!closes(TvScreen::Join, ALREADY_RUNNING_BEAT * 4, false));
+
+        let joined = SetupView {
+            giants_found: true,
+            ..Default::default()
+        };
+        let mut app = tv_on(TvScreen::Join, Duration::ZERO, joined.clone());
+        let pad = pad(&mut app);
+        for button in [
+            GamepadButton::South,
+            GamepadButton::East,
+            GamepadButton::Mode,
+            GamepadButton::Start,
+            GamepadButton::DPadDown,
+        ] {
+            tap(&mut app, pad, button);
+        }
+        for (code, logical) in [
+            (KeyCode::Escape, Key::Escape),
+            (KeyCode::Enter, Key::Enter),
+            (KeyCode::NumpadEnter, Key::Enter),
+            (KeyCode::Space, Key::Space),
+            (KeyCode::ArrowUp, Key::ArrowUp),
+        ] {
+            key(&mut app, code, logical);
+        }
+        click_beside(&mut app);
+        app.update();
+        assert!(!exited(&app));
+        assert_eq!(app.world().resource::<Current>().screen, TvScreen::Join);
+        assert_eq!(
+            *app.world().resource::<State<TvState>>().get(),
+            TvState::Join
+        );
+        assert_eq!(app.world().resource::<Setup>().0, joined);
+        assert_eq!(focus(&mut app), None);
     }
 }
 
@@ -1676,6 +1815,9 @@ pub(crate) mod layout_tests {
             bevy::picking::DefaultPickingPlugins,
             bevy::ui::UiPlugin,
             bevy::state::app::StatesPlugin,
+            bevy::input_focus::InputFocusPlugin,
+            bevy::ui_widgets::ButtonPlugin,
+            crate::input::InputRouter,
         ));
         let font = app
             .world_mut()
@@ -2027,14 +2169,229 @@ pub(crate) mod layout_tests {
                 );
             }
             let rect = node_rect(node, t);
-            let line = 36.0 * h as f32 / DESIGN_HEIGHT;
+            let line = TvTheme::default().size(Step::Body) * h as f32 / DESIGN_HEIGHT;
             assert!(rect.height() > 2.0 * line, "{w}x{h}: one line, {rect:?}");
             assert!(contains(safe, rect), "{w}x{h}: {rect:?} leaves {safe:?}");
-            assert_eq!(laid.texts.len(), 3);
+            // The title, the message, the Close button's label and the hint.
+            assert_eq!(laid.texts.len(), 4);
             for (i, a) in laid.texts.iter().enumerate() {
                 assert!(contains(safe, *a), "{w}x{h}: {a:?} leaves {safe:?}");
                 for b in &laid.texts[i + 1..] {
                     assert!(a.intersect(*b).is_empty(), "{a:?} overlaps {b:?}");
+                }
+            }
+        }
+    }
+
+    /// Every drawn `Text` under the screen's root: its size, colour and rect.
+    fn drawn_text(app: &mut App) -> Vec<(String, FontSize, Color, Rect)> {
+        let world = app.world_mut();
+        let mut q = world.query::<(
+            Entity,
+            &Text,
+            &TextFont,
+            &TextColor,
+            &ComputedNode,
+            &UiGlobalTransform,
+        )>();
+        let mut parents = world.query::<&ChildOf>();
+        let mut drawn = Vec::new();
+        for (entity, text, font, color, node, at) in q.iter(world) {
+            let mut top = entity;
+            while let Ok(parent) = parents.get(world, top) {
+                top = parent.parent();
+            }
+            if world.get::<ScreenRoot>(top).is_some() {
+                drawn.push((text.0.clone(), font.font_size, color.0, node_rect(node, at)));
+            }
+        }
+        drawn
+    }
+
+    /// AP.9: every screen, with the most lines each can draw, and the portal
+    /// full under a band and empty with its hint, draws its text on the TV
+    /// scale (nothing under 24 design px, nothing between steps) in a role's
+    /// colour or a pip's ink, inside the inset with no two lines overlapping,
+    /// at 1080p and 4K on the TV and in the desktop window.
+    #[test]
+    fn every_screen_draws_on_the_type_scale_inside_the_inset() {
+        use crate::extraction::{ExtractStatus, band};
+        let theme = TvTheme::default();
+        let folders = vec![
+            "/Volumes/dumps".to_string(),
+            "/Users/someone/ps3".to_string(),
+        ];
+        let titles = vec![
+            "Skylanders: SWAP Force (BLUS31076)".to_string(),
+            "Skylanders: Trap Team (BLUS31442)".to_string(),
+            "Skylanders: SuperChargers (BLUS31545)".to_string(),
+        ];
+        let error = Some("/Volumes/gone isn't a folder".to_string());
+        let setup = |f: fn(&mut SetupView)| {
+            let mut view = SetupView::default();
+            f(&mut view);
+            view
+        };
+        let no_giants = SetupView {
+            folders: folders.clone(),
+            found_titles: titles.clone(),
+            problems: vec!["Couldn't read /Volumes/dumps/BLUS31442: permission denied".into()],
+            error: error.clone(),
+            ..Default::default()
+        };
+        let giants = || TvScreen::Portal {
+            game: "Skylanders: Giants".into(),
+        };
+        let progress = band(&ExtractStatus::Converting {
+            done: 12,
+            total: 48,
+            movie: "eruptor".into(),
+        });
+        let server_error = TvScreen::ServerError {
+            message: "open profile store: open sqlite at /Users/someone/Library/Application Support/guacamole/db.sqlite: unable to open database file".into(),
+        };
+        let cases: Vec<(&str, TvScreen, SetupView, PortalCards, Option<Band>)> = vec![
+            (
+                "starting",
+                TvScreen::Starting,
+                SetupView::default(),
+                PortalCards::default(),
+                None,
+            ),
+            (
+                "setup",
+                TvScreen::Setup,
+                setup(|v| v.needs_setup = true),
+                PortalCards::default(),
+                None,
+            ),
+            (
+                "setup, a failed pick",
+                TvScreen::Setup,
+                SetupView {
+                    error: error.clone(),
+                    ..Default::default()
+                },
+                PortalCards::default(),
+                None,
+            ),
+            (
+                "setup, picking",
+                TvScreen::Setup,
+                setup(|v| v.picking = true),
+                PortalCards::default(),
+                None,
+            ),
+            (
+                "no giants",
+                TvScreen::NoGiants,
+                no_giants.clone(),
+                PortalCards::default(),
+                None,
+            ),
+            (
+                "no giants, nothing there",
+                TvScreen::NoGiants,
+                SetupView {
+                    folders: folders.clone(),
+                    ..Default::default()
+                },
+                PortalCards::default(),
+                None,
+            ),
+            (
+                "found",
+                TvScreen::Found,
+                SetupView {
+                    found_titles: titles.clone(),
+                    show_found: true,
+                    giants_found: true,
+                    ..Default::default()
+                },
+                PortalCards::default(),
+                None,
+            ),
+            (
+                "join",
+                TvScreen::Join,
+                SetupView::default(),
+                PortalCards::default(),
+                None,
+            ),
+            (
+                "portal, empty",
+                giants(),
+                SetupView::default(),
+                PortalCards::default(),
+                None,
+            ),
+            (
+                "portal, eight under a band",
+                giants(),
+                SetupView::default(),
+                full("Legendary Chop Chop the Undead"),
+                progress,
+            ),
+            (
+                "portal, eight under a failure",
+                giants(),
+                SetupView::default(),
+                full("Eruptor"),
+                Some(long_failure()),
+            ),
+            (
+                "already running",
+                TvScreen::AlreadyRunning,
+                SetupView::default(),
+                PortalCards::default(),
+                None,
+            ),
+            (
+                "server error",
+                server_error,
+                SetupView::default(),
+                PortalCards::default(),
+                None,
+            ),
+            (
+                "farewell",
+                TvScreen::Farewell,
+                SetupView::default(),
+                PortalCards::default(),
+                None,
+            ),
+        ];
+        let roles = theme.text_colors();
+        for (w, h, mode) in [
+            (1920, 1080, WindowMode::Tv),
+            (3840, 2160, WindowMode::Tv),
+            (1280, 720, WindowMode::Desktop),
+        ] {
+            let safe = safe_area(w, h, mode);
+            for (what, screen, view, cards, band) in &cases {
+                let mut app = portal_app(w, h, mode, cards.clone());
+                app.insert_resource(Setup(view.clone()))
+                    .insert_resource(ExtractBand(band.clone()));
+                app.world_mut().resource_mut::<Current>().screen = screen.clone();
+                measure(&mut app);
+                let drawn = drawn_text(&mut app);
+                let at = format!("{what} at {w}x{h}");
+                assert!(!drawn.is_empty(), "{at}: no text");
+                for (text, size, color, rect) in &drawn {
+                    let FontSize::Px(px) = *size else {
+                        panic!("{at}: {text:?} is {size:?}, not a step");
+                    };
+                    assert!(px >= 24.0 && theme.on_scale(px), "{at}: {text:?} at {px}");
+                    assert!(roles.contains(color), "{at}: {text:?} in {color:?}");
+                    assert!(
+                        contains(safe, *rect),
+                        "{at}: {text:?} {rect:?} leaves {safe:?}"
+                    );
+                }
+                for (i, (a, _, _, ra)) in drawn.iter().enumerate() {
+                    for (b, _, _, rb) in &drawn[i + 1..] {
+                        assert!(ra.intersect(*rb).is_empty(), "{at}: {a:?} overlaps {b:?}");
+                    }
                 }
             }
         }
@@ -2321,37 +2678,43 @@ pub(crate) mod layout_tests {
         assert_eq!(world.query::<&ExtractBar>().iter(world).count(), 0);
     }
 
-    /// AP.2: the picker opening patches Setup's lines; a failed pick adds a
-    /// line, so the column respawns with it.
+    /// AP.2, with AP.6's button: another error's text is patched in place;
+    /// the sheet opening swaps the button for a line and a failed pick adds
+    /// the error, so the column respawns for both.
     #[test]
     fn the_setup_lines_follow_the_picker() {
         let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
         app.world_mut().resource_mut::<Current>().screen = TvScreen::Setup;
         frames(&mut app, 2);
+        // Each line's entity and text; a button reads as `<its id>`.
         let lines = |app: &mut App| {
             let world = app.world_mut();
             let mut columns = world.query_filtered::<&Children, With<SetupLines>>();
             let kids: Vec<Entity> = columns.single(world).unwrap().iter().collect();
             let mut texts = world.query::<&Text>();
+            let mut ids = world.query::<&FocusId>();
             kids.into_iter()
-                .map(|kid| (kid, texts.get(world, kid).unwrap().0.clone()))
+                .map(|kid| match ids.get(world, kid) {
+                    Ok(id) => (kid, format!("<{}>", id.0)),
+                    Err(_) => (kid, texts.get(world, kid).unwrap().0.clone()),
+                })
                 .collect::<Vec<_>>()
         };
+        let drawn = |lines: &[(Entity, String)]| -> Vec<String> {
+            lines.iter().map(|(_, t)| t.clone()).collect()
+        };
+        let or_run = "Or run: guacamole --setup <folder>";
         let before = lines(&mut app);
-        assert_eq!(before[0].1, "Press Enter or click to choose it.");
+        assert_eq!(drawn(&before), ["<choose-folder>", or_run]);
 
         app.world_mut().resource_mut::<Setup>().0.picking = true;
         app.update();
         let picking = lines(&mut app);
-        assert_eq!(picking.len(), before.len());
         assert_eq!(
-            picking[0],
-            (
-                before[0].0,
-                "Choose a folder in the window that opened.".into()
-            )
+            drawn(&picking),
+            ["Choose a folder in the window that opened.", or_run]
         );
-        assert_eq!(picking[1], before[1]);
+        assert_ne!(picking[0].0, before[0].0);
 
         {
             let mut setup = app.world_mut().resource_mut::<Setup>();
@@ -2359,14 +2722,29 @@ pub(crate) mod layout_tests {
             setup.0.error = Some("/Volumes/gone isn't a folder".into());
         }
         app.update();
-        let failed: Vec<String> = lines(&mut app).into_iter().map(|(_, t)| t).collect();
+        let failed = lines(&mut app);
         assert_eq!(
-            failed,
+            drawn(&failed),
             [
                 "Couldn't use that folder: /Volumes/gone isn't a folder",
-                "Press Enter or click to choose it.",
-                "Or run: guacamole --setup <folder>",
+                "<choose-folder>",
+                or_run,
             ]
+        );
+
+        app.world_mut().resource_mut::<Setup>().0.error =
+            Some("/Volumes/other isn't a folder".into());
+        app.update();
+        let again = lines(&mut app);
+        let entities = |l: &[(Entity, String)]| l.iter().map(|(e, _)| *e).collect::<Vec<_>>();
+        assert_eq!(
+            entities(&again),
+            entities(&failed),
+            "patched, not respawned"
+        );
+        assert_eq!(
+            again[0].1,
+            "Couldn't use that folder: /Volumes/other isn't a folder"
         );
     }
 
@@ -2540,5 +2918,438 @@ pub(crate) mod layout_tests {
         app.world_mut().resource_mut::<Current>().screen = TvScreen::Join;
         frames(&mut app, 6);
         assert_eq!(seen(&mut app), (vec![Redrawn::Screen(TvState::Join)], 0));
+    }
+}
+
+/// AP.6: the TV's choices as `bevy_ui_widgets` buttons, one test per
+/// scenario of the shell delta. Headless has no pointer: a click on a button
+/// is the widget's own pointer press and click triggered on its entity (with
+/// the mouse button down and up around them), and a click elsewhere is a
+/// left press with no pointer event.
+#[cfg(test)]
+pub(crate) mod choice_tests {
+    use bevy::input::ButtonState;
+    use bevy::input::gamepad::{
+        GamepadButton, GamepadConnection, GamepadConnectionEvent, RawGamepadButtonChangedEvent,
+        RawGamepadEvent,
+    };
+    use bevy::input::keyboard::{Key, KeyboardInput};
+    use bevy::input::mouse::MouseButtonInput;
+    use bevy::input_focus::InputFocus;
+    use bevy::ui::Pressed;
+    use guac_server::state::LauncherScreen;
+
+    use super::layout_tests::portal_app;
+    use super::*;
+    use crate::input::FocusId;
+    use crate::picker::{PickerChoices, Picking};
+
+    /// An `AppExit` was written: messages last two frames, this lasts.
+    #[derive(Resource, Default)]
+    pub(crate) struct Exited(bool);
+
+    fn note_exit(mut exits: MessageReader<AppExit>, mut exited: ResMut<Exited>) {
+        exited.0 |= exits.read().count() > 0;
+    }
+
+    pub(crate) fn exited(app: &App) -> bool {
+        app.world().resource::<Exited>().0
+    }
+
+    /// The TV on `screen`, shown for `age`, its status ready and `poll_status`
+    /// following `Setup` the way the running app does.
+    pub(crate) fn tv_on(screen: TvScreen, age: Duration, setup: SetupView) -> App {
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
+        let status = match &screen {
+            TvScreen::ServerError { message } => LauncherStatus {
+                screen: LauncherScreen::ServerError {
+                    message: message.clone(),
+                },
+                ..Default::default()
+            },
+            TvScreen::AlreadyRunning => LauncherStatus {
+                screen: LauncherScreen::ServerError {
+                    message: "bind".into(),
+                },
+                port_in_use: true,
+                ..Default::default()
+            },
+            _ => LauncherStatus {
+                server_ready: true,
+                ..Default::default()
+            },
+        };
+        *app.world().resource::<ServerLink>().status.lock().unwrap() = status;
+        app.insert_resource(Setup(setup))
+            .init_resource::<Exited>()
+            .add_plugins(PickerChoices)
+            .add_systems(PreUpdate, poll_status)
+            .add_systems(Last, note_exit);
+        {
+            let mut current = app.world_mut().resource_mut::<Current>();
+            current.screen = screen.clone();
+            current.since = Instant::now().checked_sub(age).unwrap();
+        }
+        frames(&mut app, 2);
+        assert_eq!(app.world().resource::<Current>().screen, screen);
+        app
+    }
+
+    fn frames(app: &mut App, n: usize) {
+        for _ in 0..n {
+            app.update();
+        }
+    }
+
+    /// The focused choice's id, if any.
+    pub(crate) fn focus(app: &mut App) -> Option<&'static str> {
+        let entity = app.world().resource::<InputFocus>().get()?;
+        app.world().get::<FocusId>(entity).map(|id| id.0)
+    }
+
+    /// The one choice marked `id`.
+    pub(crate) fn choice(app: &mut App, id: &str) -> Entity {
+        let world = app.world_mut();
+        let mut q = world.query::<(Entity, &FocusId)>();
+        let found: Vec<Entity> = q
+            .iter(world)
+            .filter(|(_, f)| f.0 == id)
+            .map(|(e, _)| e)
+            .collect();
+        assert_eq!(found.len(), 1, "{id}: {found:?}");
+        found[0]
+    }
+
+    pub(crate) fn pad(app: &mut App) -> Entity {
+        let pad = app.world_mut().spawn_empty().id();
+        app.world_mut().write_message(GamepadConnectionEvent::new(
+            pad,
+            GamepadConnection::Connected {
+                name: "pad".into(),
+                vendor_id: None,
+                product_id: None,
+            },
+        ));
+        app.update();
+        pad
+    }
+
+    /// `button` down (1) or up (0) for a frame.
+    pub(crate) fn button(app: &mut App, pad: Entity, button: GamepadButton, value: f32) {
+        app.world_mut()
+            .write_message(RawGamepadEvent::Button(RawGamepadButtonChangedEvent::new(
+                pad, button, value,
+            )));
+        app.update();
+    }
+
+    /// A press and release of `button`, a frame each.
+    pub(crate) fn tap(app: &mut App, pad: Entity, which: GamepadButton) {
+        button(app, pad, which, 1.0);
+        button(app, pad, which, 0.0);
+    }
+
+    /// A key down then up, a frame each.
+    pub(crate) fn key(app: &mut App, code: KeyCode, logical: Key) {
+        for state in [ButtonState::Pressed, ButtonState::Released] {
+            app.world_mut().write_message(KeyboardInput {
+                key_code: code,
+                logical_key: logical.clone(),
+                state,
+                text: None,
+                repeat: false,
+                window: Entity::PLACEHOLDER,
+            });
+            app.update();
+        }
+    }
+
+    /// Lands on no button.
+    pub(crate) fn click_beside(app: &mut App) {
+        for state in [ButtonState::Pressed, ButtonState::Released] {
+            mouse(app, state);
+            app.update();
+        }
+    }
+
+    /// The left mouse button, as winit reports it (`InputPlugin` clears a
+    /// `ButtonInput` written by hand before anything reads it).
+    fn mouse(app: &mut App, state: ButtonState) {
+        app.world_mut().write_message(MouseButtonInput {
+            button: MouseButton::Left,
+            state,
+            window: Entity::PLACEHOLDER,
+        });
+    }
+
+    /// A click on `entity` as picking reports one over it: the mouse button
+    /// and the pointer's press, then its click and release.
+    pub(crate) fn click_on(app: &mut App, entity: Entity) {
+        use bevy::camera::NormalizedRenderTarget;
+        use bevy::picking::backend::HitData;
+        use bevy::picking::events::{Pointer, PointerClick, PointerPress, PointerRelease};
+        use bevy::picking::pointer::{Location, PointerButton, PointerId};
+        let pointer = Pointer::new(
+            PointerId::Mouse,
+            Location {
+                target: NormalizedRenderTarget::None {
+                    width: 1920,
+                    height: 1080,
+                },
+                position: Vec2::ZERO,
+            },
+        );
+        let hit = HitData::new(entity, 0.0, None, None);
+        let primary = PointerButton::Primary;
+        mouse(app, ButtonState::Pressed);
+        let world = app.world_mut();
+        world.trigger(PointerPress {
+            entity,
+            pointer: pointer.clone(),
+            button: primary,
+            hit: hit.clone(),
+            count: 1,
+        });
+        app.update();
+        mouse(app, ButtonState::Released);
+        let world = app.world_mut();
+        world.trigger(PointerClick {
+            entity,
+            pointer: pointer.clone(),
+            button: primary,
+            hit: hit.clone(),
+            duration: Duration::from_millis(80),
+            count: 1,
+        });
+        world.trigger(PointerRelease {
+            entity,
+            pointer,
+            button: primary,
+            hit,
+        });
+        app.update();
+    }
+
+    fn found() -> SetupView {
+        SetupView {
+            giants_found: true,
+            show_found: true,
+            found_titles: vec!["Skylanders: Giants (BLUS30968)".into()],
+            ..Default::default()
+        }
+    }
+
+    fn state(app: &App) -> TvState {
+        *app.world().resource::<State<TvState>>().get()
+    }
+
+    /// The picker was asked for (`should_open` said open) since the last call.
+    fn wanted(app: &mut App) -> bool {
+        app.world_mut().resource_mut::<Picking>().take_wanted()
+    }
+
+    #[test]
+    fn south_on_found_lands_on_join() {
+        let mut app = tv_on(TvScreen::Found, Duration::ZERO, found());
+        assert_eq!(focus(&mut app), Some(CONTINUE));
+        let pad = pad(&mut app);
+        tap(&mut app, pad, GamepadButton::South);
+        frames(&mut app, 2);
+        assert_eq!(app.world().resource::<Current>().screen, TvScreen::Join);
+        assert_eq!(state(&app), TvState::Join);
+    }
+
+    #[test]
+    fn a_click_beside_continue_leaves_found_up() {
+        let mut app = tv_on(TvScreen::Found, Duration::ZERO, found());
+        click_beside(&mut app);
+        frames(&mut app, 3);
+        assert_eq!(app.world().resource::<Current>().screen, TvScreen::Found);
+        assert!(app.world().resource::<Setup>().0.show_found);
+        assert_eq!(focus(&mut app), Some(CONTINUE));
+        // A click on it does continue (and the beat still would).
+        let continue_ = choice(&mut app, CONTINUE);
+        click_on(&mut app, continue_);
+        frames(&mut app, 2);
+        assert_eq!(state(&app), TvState::Join);
+    }
+
+    /// Setup after its own picker was closed (`Picking` already
+    /// auto-opened, nothing open).
+    fn setup_after_its_picker_closed() -> App {
+        let mut app = tv_on(
+            TvScreen::Setup,
+            Duration::from_secs(5),
+            SetupView {
+                needs_setup: true,
+                ..Default::default()
+            },
+        );
+        app.insert_resource(Picking::closed_once());
+        app.update();
+        assert!(!wanted(&mut app), "it opened by itself again");
+        app
+    }
+
+    #[test]
+    fn south_on_setup_after_its_picker_closed_asks_for_it_and_a_click_beside_doesnt() {
+        let mut app = setup_after_its_picker_closed();
+        assert_eq!(focus(&mut app), Some(CHOOSE_FOLDER));
+        click_beside(&mut app);
+        assert!(!wanted(&mut app));
+        let pad = pad(&mut app);
+        button(&mut app, pad, GamepadButton::South, 1.0);
+        assert!(wanted(&mut app), "South reached should_open as a press");
+        button(&mut app, pad, GamepadButton::South, 0.0);
+        assert!(!wanted(&mut app), "one press, one opening");
+    }
+
+    #[test]
+    fn a_click_beside_the_button_on_no_giants_opens_no_picker() {
+        use crate::mirror::{Mirror, TvMirror};
+        let setup = SetupView {
+            needs_setup: false,
+            folders: vec!["/Volumes/dumps".into()],
+            found_titles: vec!["Skylanders: SWAP Force (BLUS31076)".into()],
+            ..Default::default()
+        };
+        let mut app = tv_on(TvScreen::NoGiants, Duration::from_secs(5), setup);
+        let mirror = TvMirror::default();
+        app.insert_resource(mirror.clone()).add_plugins(Mirror);
+        click_beside(&mut app);
+        frames(&mut app, 2);
+        assert!(!wanted(&mut app));
+        assert_eq!(app.world().resource::<Current>().screen, TvScreen::NoGiants);
+        let shot = mirror.0.lock().unwrap().clone();
+        assert_eq!(shot.screen, "NoGiants");
+        assert_eq!(shot.focus.as_deref(), Some(CHOOSE_FOLDER));
+        // The button itself does ask.
+        let choose = choice(&mut app, CHOOSE_FOLDER);
+        click_on(&mut app, choose);
+        assert!(wanted(&mut app));
+    }
+
+    fn error_screens() -> [TvScreen; 2] {
+        [
+            TvScreen::AlreadyRunning,
+            TvScreen::ServerError {
+                message: "open profile store".into(),
+            },
+        ]
+    }
+
+    #[test]
+    fn south_east_esc_and_a_click_anywhere_close_the_error_screens() {
+        type Press = fn(&mut App);
+        let presses: [(&str, Press); 5] = [
+            ("south", |app| {
+                let pad = pad(app);
+                button(app, pad, GamepadButton::South, 1.0);
+                // Held: the close button shows pressed until let go.
+                let close = choice(app, CLOSE);
+                assert!(app.world().get::<Pressed>(close).is_some());
+                button(app, pad, GamepadButton::South, 0.0);
+                app.update();
+                assert!(app.world().get::<Pressed>(close).is_none());
+            }),
+            ("east", |app| {
+                let pad = pad(app);
+                tap(app, pad, GamepadButton::East);
+            }),
+            ("esc", |app| key(app, KeyCode::Escape, Key::Escape)),
+            ("a click anywhere", click_beside),
+            ("a click on close", |app| {
+                let close = choice(app, CLOSE);
+                click_on(app, close);
+            }),
+        ];
+        for screen in error_screens() {
+            for (what, press) in presses {
+                let mut app = tv_on(screen.clone(), Duration::ZERO, SetupView::default());
+                assert_eq!(focus(&mut app), Some(CLOSE), "{screen:?}");
+                assert!(!exited(&app), "{screen:?}: closed early");
+                press(&mut app);
+                assert!(exited(&app), "{screen:?}: {what}");
+            }
+        }
+    }
+
+    #[test]
+    fn focus_lands_back_on_the_choose_folder_button_after_setups_lines_respawn() {
+        let mut app = setup_after_its_picker_closed();
+        let first = choice(&mut app, CHOOSE_FOLDER);
+        assert_eq!(app.world().resource::<InputFocus>().get(), Some(first));
+        // The sheet opens: the button gives way to a line.
+        app.world_mut().resource_mut::<Setup>().0.picking = true;
+        app.update();
+        let world = app.world_mut();
+        assert_eq!(world.query::<&FocusId>().iter(world).count(), 0);
+        // It fails: the column respawns with the error and a new button.
+        {
+            let mut setup = app.world_mut().resource_mut::<Setup>();
+            setup.0.picking = false;
+            setup.0.error = Some("/Volumes/gone isn't a folder".into());
+        }
+        app.update();
+        let second = choice(&mut app, CHOOSE_FOLDER);
+        assert_ne!(second, first);
+        app.update();
+        assert_eq!(app.world().resource::<InputFocus>().get(), Some(second));
+        // A click elsewhere clears the focus (pointer focus); it comes back.
+        app.world_mut().resource_mut::<InputFocus>().clear();
+        app.update();
+        assert_eq!(app.world().resource::<InputFocus>().get(), Some(second));
+    }
+
+    /// Enter goes through the widget (`FocusedInput`, which needs exactly one
+    /// `PrimaryWindow`: spawned here by hand, no winit), NumpadEnter and
+    /// South through the router; each activates the button once.
+    #[test]
+    fn enter_on_a_focused_button_activates_it_exactly_once() {
+        use bevy::ui_widgets::Activate;
+        use bevy::window::PrimaryWindow;
+
+        #[derive(Resource, Default)]
+        struct Activations(Vec<Entity>);
+
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
+        app.add_plugins(bevy::input_focus::InputDispatchPlugin)
+            .init_resource::<Activations>()
+            .add_observer(|a: On<Activate>, mut seen: ResMut<Activations>| {
+                seen.0.push(a.entity);
+            });
+        app.world_mut().spawn((Window::default(), PrimaryWindow));
+        app.update();
+        let activations =
+            |app: &mut App| std::mem::take(&mut app.world_mut().resource_mut::<Activations>().0);
+        let error = TvScreen::ServerError {
+            message: "open profile store".into(),
+        };
+        app.world_mut().resource_mut::<Current>().screen = error;
+        frames(&mut app, 2);
+        let close = choice(&mut app, CLOSE);
+        assert_eq!(app.world().resource::<InputFocus>().get(), Some(close));
+
+        key(&mut app, KeyCode::Enter, Key::Enter);
+        frames(&mut app, 2);
+        assert_eq!(activations(&mut app), [close], "Enter");
+        key(&mut app, KeyCode::Space, Key::Space);
+        assert_eq!(activations(&mut app), [close], "Space");
+        key(&mut app, KeyCode::NumpadEnter, Key::Enter);
+        assert_eq!(activations(&mut app), [close], "NumpadEnter");
+        let pad = pad(&mut app);
+        tap(&mut app, pad, GamepadButton::South);
+        assert_eq!(activations(&mut app), [close], "South");
+        // A held key repeating activates nothing more.
+        app.world_mut().write_message(KeyboardInput {
+            key_code: KeyCode::Enter,
+            logical_key: Key::Enter,
+            state: ButtonState::Pressed,
+            text: None,
+            repeat: true,
+            window: Entity::PLACEHOLDER,
+        });
+        app.update();
+        assert_eq!(activations(&mut app), [], "a repeat");
     }
 }

@@ -11,7 +11,8 @@ use std::time::{Duration, Instant};
 
 use bevy::asset::RenderAssetUsages;
 use bevy::audio::{AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, PlaybackSettings};
-use bevy::input::gamepad::Gamepad;
+use bevy::ecs::entity::Entities;
+use bevy::input_focus::{FocusCause, InputFocus};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use crossbeam_channel::{Receiver, TryRecvError};
@@ -181,7 +182,51 @@ impl Plugin for IntroPlugin {
                 current: None,
                 muted,
             })
-            .add_systems(Update, (queue_intros, play_intros).chain());
+            .add_systems(
+                Update,
+                (queue_intros, play_intros, overlay_holds_focus).chain(),
+            );
+    }
+}
+
+/// While an intro plays, its overlay holds the input focus, so an Enter or
+/// Space the widgets would take lands on a node with no button; the focus
+/// goes back to what had it when the last intro in a row stops, unless
+/// something else took it meanwhile (a new screen's button, focused as it
+/// spawned).
+fn overlay_holds_focus(
+    overlays: Query<Entity, With<IntroOverlay>>,
+    focus: Option<ResMut<InputFocus>>,
+    entities: &Entities,
+    // What had the focus before the first intro in a row, and the overlay
+    // that has it now.
+    mut held: Local<Option<(Option<Entity>, Entity)>>,
+) {
+    let Some(mut focus) = focus else {
+        return;
+    };
+    match overlays.iter().next() {
+        Some(overlay) => {
+            if focus.get() != Some(overlay) {
+                // The next intro in a row keeps what the first one took.
+                let before = held.map_or(focus.get(), |(before, _)| before);
+                *held = Some((before, overlay));
+                focus.set(overlay, FocusCause::Navigated);
+            }
+        }
+        None => {
+            let Some((was, overlay)) = held.take() else {
+                return;
+            };
+            if focus.get().is_some_and(|now| now != overlay) {
+                return;
+            }
+            match was.filter(|e| entities.contains(*e)) {
+                Some(entity) => focus.set(entity, FocusCause::Navigated),
+                None if focus.get().is_some() => focus.clear(),
+                None => {}
+            }
+        }
     }
 }
 
@@ -193,15 +238,6 @@ fn sound_opens(bytes: &Arc<[u8]>) -> Result<(), rodio::decoder::DecoderError> {
         .with_data(std::io::Cursor::new(bytes.clone()))
         .build()
         .map(drop)
-}
-
-/// Any key or any controller button, this frame.
-fn skip_pressed<'a>(
-    keys: Option<&ButtonInput<KeyCode>>,
-    mut pads: impl Iterator<Item = &'a Gamepad>,
-) -> bool {
-    keys.is_some_and(|k| k.get_just_pressed().len() > 0)
-        || pads.any(|p| p.get_just_pressed().next().is_some())
 }
 
 fn log(changes: &[Change]) {
@@ -227,12 +263,11 @@ pub(crate) fn apply(queue: &mut ResMut<IntroQueue>, event: IntroEvent) {
     }
 }
 
-/// Placements, removals and skips into the queue. A placement made before
-/// the extract is ready has no movie, so it stays a card.
+/// Placements and removals into the queue; a skip comes from the input
+/// router (`input.rs`). A placement made before the extract is ready has no
+/// movie, so it stays a card.
 fn queue_intros(
     mut heard: MessageReader<PortalChanged>,
-    keys: Option<Res<ButtonInput<KeyCode>>>,
-    pads: Query<&Gamepad>,
     current: Option<Res<Current>>,
     library: Option<Res<IntroLibrary>>,
     mut queue: ResMut<IntroQueue>,
@@ -247,10 +282,6 @@ fn queue_intros(
             PortalChange::Cleared { slot } => IntroEvent::Cleared { slot: *slot },
         };
         apply(&mut queue, event);
-    }
-    if skip_pressed(keys.as_deref(), pads.iter()) && queue.playing().is_some() {
-        info!("intro skipped by a key or button");
-        apply(&mut queue, IntroEvent::Skip);
     }
     let on_portal = current.is_some_and(|c| matches!(c.screen, TvScreen::Portal { .. }));
     if !on_portal && (queue.playing().is_some() || queue.queued().next().is_some()) {
@@ -622,22 +653,6 @@ mod tests {
             0.25
         ));
         assert_eq!(clock.anchor(), None);
-    }
-
-    #[test]
-    fn any_key_or_controller_button_skips() {
-        use bevy::input::gamepad::GamepadButton;
-        let none: [Gamepad; 0] = [];
-        let mut keys = ButtonInput::<KeyCode>::default();
-        assert!(!skip_pressed(Some(&keys), none.iter()));
-        keys.press(KeyCode::KeyQ);
-        assert!(skip_pressed(Some(&keys), none.iter()));
-        keys.clear();
-        assert!(!skip_pressed(Some(&keys), none.iter()), "held, not new");
-        let mut pad = Gamepad::default();
-        assert!(!skip_pressed(None, std::iter::once(&pad)));
-        pad.digital_mut().press(GamepadButton::Start);
-        assert!(skip_pressed(None, std::iter::once(&pad)));
     }
 
     /// Silent MPEG-1 Layer III, 128 kb/s mono at 44.1 kHz: 417-byte frames,
@@ -1017,11 +1032,8 @@ mod tests {
             assert_eq!(tv.movie(), None);
         }
 
-        #[test]
-        fn a_controller_button_skips() {
-            let tmp = tempfile::tempdir().unwrap();
-            let lib = library(tmp.path(), &[("eruptor", 100)]);
-            let mut tv = tv(Some(lib));
+        /// A pad, connected.
+        fn pad(tv: &mut Tv) -> Entity {
             let pad = tv.app.world_mut().spawn_empty().id();
             tv.app
                 .world_mut()
@@ -1035,13 +1047,121 @@ mod tests {
                 ));
             tv.app.update();
             assert!(tv.app.world().entity(pad).contains::<Gamepad>());
-            tv.place(0, "000009-0000");
-            assert_eq!(tv.movie().as_deref(), Some("eruptor"));
+            pad
+        }
+
+        /// `button` to `value` (1 down, 0 up), one frame.
+        fn button(tv: &mut Tv, pad: Entity, button: GamepadButton, value: f32) {
             tv.app.world_mut().write_message(RawGamepadEvent::Button(
-                RawGamepadButtonChangedEvent::new(pad, GamepadButton::South, 1.0),
+                RawGamepadButtonChangedEvent::new(pad, button, value),
             ));
             tv.app.update();
+        }
+
+        #[test]
+        fn a_controller_button_skips() {
+            let tmp = tempfile::tempdir().unwrap();
+            let lib = library(tmp.path(), &[("eruptor", 100)]);
+            let mut tv = tv(Some(lib));
+            let pad = pad(&mut tv);
+            tv.place(0, "000009-0000");
+            assert_eq!(tv.movie().as_deref(), Some("eruptor"));
+            button(&mut tv, pad, GamepadButton::South, 1.0);
             assert_eq!(tv.movie(), None);
+        }
+
+        /// AP.5's layer pick, through the router: South during an intro
+        /// skips it and the screen under it hears nothing; with no intro the
+        /// screen hears it.
+        #[test]
+        fn south_during_an_intro_reaches_nothing_under_it() {
+            use crate::input::TvInput;
+            use crate::input::heard::{listen, take};
+            let tmp = tempfile::tempdir().unwrap();
+            let lib = library(tmp.path(), &[("eruptor", 100), ("ignitor", 100)]);
+            let mut tv = tv(Some(lib));
+            listen(&mut tv.app);
+            let pad = pad(&mut tv);
+            tv.place(0, "000009-0000");
+            tv.place(1, "00000a-0803");
+            for movie in [Some("ignitor"), None] {
+                button(&mut tv, pad, GamepadButton::South, 1.0);
+                assert_eq!(tv.movie().as_deref(), movie);
+                button(&mut tv, pad, GamepadButton::South, 0.0);
+            }
+            assert_eq!(take(&mut tv.app), []);
+            tv.app.update();
+            assert_eq!(tv.overlays(), 0);
+            button(&mut tv, pad, GamepadButton::South, 1.0);
+            assert_eq!(take(&mut tv.app), [TvInput::Activate]);
+            assert_eq!(tv.shot().cards.len(), 2);
+        }
+
+        /// AP.5: the overlay holds the focus while intros play back to back
+        /// and gives it back when the last one stops.
+        #[test]
+        fn an_intro_holds_the_focus_and_gives_it_back() {
+            use bevy::input_focus::InputFocus;
+            let focus = |tv: &Tv| tv.app.world().resource::<InputFocus>().get();
+            let overlay = |tv: &mut Tv| {
+                let world = tv.app.world_mut();
+                world
+                    .query_filtered::<Entity, With<IntroOverlay>>()
+                    .single(world)
+                    .ok()
+            };
+            let tmp = tempfile::tempdir().unwrap();
+            let lib = library(tmp.path(), &[("eruptor", 100), ("ignitor", 100)]);
+            let mut tv = tv(Some(lib));
+            let had = tv.app.world_mut().spawn_empty().id();
+            tv.app
+                .world_mut()
+                .resource_mut::<InputFocus>()
+                .set(had, FocusCause::Navigated);
+            tv.place(0, "000009-0000");
+            tv.place(1, "00000a-0803");
+            let first = overlay(&mut tv).unwrap();
+            assert_eq!(focus(&tv), Some(first));
+            key(&mut tv, KeyCode::KeyX, ButtonState::Pressed);
+            assert_eq!(tv.movie().as_deref(), Some("ignitor"));
+            tv.app.update();
+            let second = overlay(&mut tv).unwrap();
+            assert_ne!(second, first);
+            assert_eq!(focus(&tv), Some(second));
+            key(&mut tv, KeyCode::KeyX, ButtonState::Released);
+            key(&mut tv, KeyCode::KeyX, ButtonState::Pressed);
+            tv.app.update();
+            assert_eq!(overlay(&mut tv), None);
+            assert_eq!(focus(&tv), Some(had));
+        }
+
+        /// AP.5-AP.6 review: a screen with a choice taking over from an
+        /// intro (a crash on the portal shows ServerError) keeps the focus its
+        /// button took on spawn; the overlay going gives back nothing.
+        #[test]
+        fn a_choice_that_took_the_focus_keeps_it_when_the_intro_stops() {
+            use crate::input::FocusId;
+            use crate::tv::CLOSE;
+            let focused = |tv: &Tv| {
+                let world = tv.app.world();
+                let entity = world.resource::<InputFocus>().get()?;
+                world.get::<FocusId>(entity).map(|id| id.0)
+            };
+            let tmp = tempfile::tempdir().unwrap();
+            let lib = library(tmp.path(), &[("eruptor", 100)]);
+            let mut tv = tv(Some(lib));
+            tv.place(0, "000009-0000");
+            assert_eq!(tv.overlays(), 1);
+            tv.app.world_mut().resource_mut::<Current>().screen = TvScreen::ServerError {
+                message: "the driver stopped".into(),
+            };
+            // Checked after every frame, so a frame that took it away and
+            // a later one that put it back still fail.
+            for frame in 0..4 {
+                tv.app.update();
+                assert_eq!(focused(&tv), Some(CLOSE), "frame {frame}");
+            }
+            assert_eq!(tv.overlays(), 0);
         }
 
         #[test]

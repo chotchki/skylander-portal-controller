@@ -3,17 +3,21 @@
 //! only under `test-hooks`. Read off the laid-out UI tree: the players line,
 //! join address, join QR and every card's lines, portrait, pip and rect.
 //! Copied from the resources that feed the tree: the screen, game, message,
-//! Setup's lists, each card's figure and owner ids, and the intro queue.
+//! Setup's lists, each card's figure and owner ids, and the intro queue. The
+//! focused choice is `InputFocus`'s entity's `FocusId`.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use axum::extract::rejection::JsonRejection;
+use bevy::input_focus::InputFocus;
 use bevy::prelude::*;
 use bevy::ui::{ComputedNode, UiGlobalTransform, UiSystems};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::cards::PortalCards;
 use crate::extraction::{ExtractStatus, Extraction};
+use crate::input::{FocusId, PostedPresses, TestPress};
 use crate::intro::{IntroEntry, IntroEvent, IntroQueue};
 use crate::intro_player::{self, IntroOverlay, IntroPlayer, IntroVideo};
 use crate::screen::TvScreen;
@@ -40,6 +44,9 @@ pub struct TvSnapshot {
     pub found: Vec<String>,
     pub folders: Vec<String>,
     pub problems: Vec<String>,
+    /// The focused choice's id (`choose-folder`, `continue`, `close`); none
+    /// when no choice has the focus.
+    pub focus: Option<String>,
     /// One per card drawn, in slot order.
     pub cards: Vec<CardShot>,
     /// Slots drawn as empty frames, 1-based.
@@ -137,9 +144,14 @@ pub struct PipShot {
     pub profile_id: String,
 }
 
-/// Shared with the routes: the last snapshot, and skips asked for over HTTP.
+/// Shared with the routes: the last snapshot, skips asked for over HTTP and
+/// presses posted for the input router.
 #[derive(Resource, Clone, Default)]
-pub struct TvMirror(pub Arc<Mutex<TvSnapshot>>, pub Arc<AtomicUsize>);
+pub struct TvMirror(
+    pub Arc<Mutex<TvSnapshot>>,
+    pub Arc<AtomicUsize>,
+    pub(crate) PostedPresses,
+);
 
 pub struct Mirror;
 
@@ -150,12 +162,22 @@ impl Plugin for Mirror {
     }
 }
 
+/// `POST /api/_test/tv/press`'s body.
+#[derive(Deserialize)]
+struct PressBody {
+    button: String,
+}
+
 /// `/api/_test/tv` serves whatever the last frame wrote; `POST
 /// /api/_test/tv/skip` skips the playing intro as a key would, for a run
-/// with nobody at the keyboard. Generic so a test needs no `AppState`.
+/// with nobody at the keyboard; `POST /api/_test/tv/press` hands the input
+/// router a press (`{"button": "south"}`: south, east, mode, up, down, left
+/// or right; anything else is a 400). A test hook, not a phone remote.
+/// Generic so a test needs no `AppState`.
 pub fn routes<S: Clone + Send + Sync + 'static>(mirror: &TvMirror) -> axum::Router<S> {
     let shared = mirror.0.clone();
     let skips = mirror.1.clone();
+    let presses = mirror.2.clone();
     axum::Router::new()
         .route(
             "/api/_test/tv",
@@ -169,6 +191,21 @@ pub fn routes<S: Clone + Send + Sync + 'static>(mirror: &TvMirror) -> axum::Rout
             axum::routing::post(move || {
                 skips.fetch_add(1, Ordering::Relaxed);
                 async { axum::http::StatusCode::ACCEPTED }
+            }),
+        )
+        .route(
+            "/api/_test/tv/press",
+            axum::routing::post(move |body: Result<axum::Json<PressBody>, JsonRejection>| {
+                let pressed = body
+                    .ok()
+                    .and_then(|axum::Json(b)| TestPress::parse(&b.button))
+                    .map(|press| presses.push(press));
+                async move {
+                    match pressed {
+                        Some(()) => axum::http::StatusCode::ACCEPTED,
+                        None => axum::http::StatusCode::BAD_REQUEST,
+                    }
+                }
             }),
         )
 }
@@ -226,10 +263,12 @@ fn mirror_tv(
     texts: Query<&Text>,
     images: Query<(), With<ImageNode>>,
     pips: Query<(&Pip, &BackgroundColor)>,
-    (players_line, address, qr): (
+    (players_line, address, qr, input_focus, choices): (
         Query<&Text, With<PlayersLine>>,
         Query<&Text, With<JoinAddress>>,
         Query<&ImageNode, With<JoinQr>>,
+        Option<Res<InputFocus>>,
+        Query<&FocusId>,
     ),
     (extraction, band_title, band_detail, bar): (
         Option<Res<Extraction>>,
@@ -368,6 +407,10 @@ fn mirror_tv(
         found: setup.0.found_titles.clone(),
         folders: setup.0.folders.clone(),
         problems: setup.0.problems.clone(),
+        focus: input_focus
+            .and_then(|f| f.get())
+            .and_then(|e| choices.get(e).ok())
+            .map(|id| id.0.to_string()),
         cards: drawn.into_iter().map(|(c, _)| c).collect(),
         empty_slots,
         window: [size.x as f32, size.y as f32],
@@ -621,5 +664,45 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), 202);
         assert_eq!(mirror.1.load(Ordering::Relaxed), 1);
+    }
+
+    /// AP.5: `south` is queued and the router takes it as the screen's
+    /// Activate; a name it doesn't know, or no name, is a 400 and queues nothing.
+    #[tokio::test]
+    async fn a_posted_press_reaches_the_router_and_an_unknown_one_is_refused() {
+        use crate::input::TvInput;
+        use crate::input::heard::{listen, take};
+        use tower::ServiceExt;
+        let mirror = TvMirror::default();
+        let routes = routes::<()>(&mirror);
+        for (body, status) in [
+            (r#"{"button":"south"}"#, 202),
+            (r#"{"button":"jump"}"#, 400),
+            (r#"{"press":"south"}"#, 400),
+            ("south", 400),
+        ] {
+            let response = routes
+                .clone()
+                .oneshot(
+                    axum::http::Request::post("/api/_test/tv/press")
+                        .header("content-type", "application/json")
+                        .body(axum::body::Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status, "{body}");
+        }
+        assert_eq!(mirror.2.len(), 1);
+
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
+        app.world_mut().resource_mut::<Current>().screen = TvScreen::Join;
+        app.insert_resource(mirror.clone());
+        listen(&mut app);
+        app.update();
+        assert_eq!(take(&mut app), [TvInput::Activate]);
+        assert_eq!(mirror.2.len(), 0);
+        app.update();
+        assert_eq!(take(&mut app), []);
     }
 }

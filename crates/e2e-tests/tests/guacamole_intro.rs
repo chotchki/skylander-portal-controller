@@ -4,8 +4,9 @@
 //! intros ffmpeg's `testsrc` and `sine` make at run time, so no game bytes are
 //! involved. What the TV plays is read from `/api/_test/tv`'s `intro` and
 //! `intro_queue`, not pixels; skips go through `/api/_test/tv/skip`, which
-//! skips as a key would (the key and controller paths are AB.10's headless
-//! tests and the M0 run's).
+//! skips as a key would, or a South posted to `/api/_test/tv/press`, which
+//! the input router takes as a pad's (the key and controller paths are
+//! AB.10's and AP.5's headless tests and the M0 run's).
 //!
 //! Guacamole-only, and needs ffmpeg. Run with
 //!
@@ -21,7 +22,7 @@ use fantoccini::Locator;
 use serde_json::{Value, json};
 
 use skylander_e2e_tests::{
-    FixtureIntro, IntroFixture, Phone, TestServer, guacamole_only, inject_profile,
+    FixtureIntro, IntroFixture, Phone, TestServer, guacamole_only, inject_profile, press_tv,
     set_session_profile, skip_intro, tv, unlock_session, wait_for_tv,
 };
 
@@ -391,6 +392,41 @@ async fn intros_queue_and_a_skip_or_removal_moves_on() {
     phone.close().await.unwrap();
 }
 
+/// AP.5: a pad's South, posted to the input router instead of `/skip`,
+/// skips the playing intro and the queued one plays; the last South goes
+/// back to the cards.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver and ffmpeg; E2E_APP=guacamole"]
+async fn a_pad_press_skips_to_the_queued_intro() {
+    if guacamole_only() {
+        return;
+    }
+    let (server, _fixture) = spawn(&[ERUPTOR, SPYRO]);
+    let (phone, sid) = phone(&server).await;
+    pick_giants(&server, &phone, 2).await;
+
+    load(&server, sid, 1, "Eruptor").await;
+    wait_playing(&server, "eruptor", INTRO_WITHIN).await;
+    load(&server, sid, 2, "Spyro").await;
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(5), |s| queue(s).len() == 1)
+        .await
+        .expect("spyro queued");
+    assert_eq!(queue(&snap), [(2, "spyro".to_string())]);
+
+    press_tv(&server.url, "south").await.unwrap();
+    let (snap, _) = wait_playing(&server, "spyro", TV_WITHIN).await;
+    assert!(queue(&snap).is_empty(), "{snap}");
+    assert_eq!(snap["intro"]["slot"], 2);
+
+    press_tv(&server.url, "south").await.unwrap();
+    let (snap, _) = wait_for_tv(&server.url, TV_WITHIN, |s| s["intro"].is_null())
+        .await
+        .expect("back to the cards");
+    assert_eq!(card_slots(&snap), [1, 2], "{snap}");
+    assert_eq!(snap["screen"], "Portal");
+    phone.close().await.unwrap();
+}
+
 /// Locks the session's profile as the phone's lock does: the next mutation
 /// saves no layout, and a re-unlock offers the saved one again.
 async fn lock(server: &TestServer, sid: u64, pid: &str) {
@@ -412,16 +448,28 @@ async fn resume(server: &TestServer, phone: &Phone, pid: &str) -> (Instant, Vec<
         .wait_for(Locator::Css(".resume-panel"), Duration::from_secs(10))
         .await
         .expect("the resume prompt");
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let mut listed = Vec::new();
-    for name in phone
-        .client
-        .find_all(Locator::Css(".resume-fig-name"))
-        .await
-        .expect("the prompt's figures")
-    {
-        listed.push(name.text().await.unwrap().to_lowercase());
-    }
+    // The figure row fades in (`resume_modal.css`: 200 ms delay, 600 ms
+    // entrance) and WebDriver reads text it doesn't consider shown as "",
+    // so wait for every name rather than a fixed beat (a loaded machine ran
+    // past 300 ms with the first one still blank).
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let listed = loop {
+        let mut listed = Vec::new();
+        for name in phone
+            .client
+            .find_all(Locator::Css(".resume-fig-name"))
+            .await
+            .expect("the prompt's figures")
+        {
+            listed.push(name.text().await.unwrap().to_lowercase());
+        }
+        if (!listed.is_empty() && listed.iter().all(|n| !n.is_empty()))
+            || Instant::now() >= deadline
+        {
+            break listed;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
     phone
         .client
         .find(Locator::Css(".resume-btn-primary"))

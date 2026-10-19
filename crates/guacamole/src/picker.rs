@@ -39,22 +39,57 @@ enum Picked {
 }
 
 #[derive(Resource, Default)]
-struct Picking {
+pub(crate) struct Picking {
     task: Option<Task<Picked>>,
     auto_opened: bool,
+    /// `should_open` said open; `open_picker` opens the sheet this frame.
+    wanted: bool,
 }
 
+#[cfg(test)]
+impl Picking {
+    /// Setup's own opening done and its sheet closed again.
+    pub(crate) fn closed_once() -> Self {
+        Self {
+            auto_opened: true,
+            ..Default::default()
+        }
+    }
+
+    /// Whether the picker was wanted since the last call.
+    pub(crate) fn take_wanted(&mut self) -> bool {
+        std::mem::take(&mut self.wanted)
+    }
+}
+
+/// A press of a choose-folder button (`tv::on_choice`), not yet spent.
+#[derive(Resource, Default)]
+pub(crate) struct FolderAsked(pub(crate) bool);
+
+/// The picker: when it opens and when Found gives way ([`PickerChoices`]),
+/// and the sheet itself.
 pub struct Picker;
 
 impl Plugin for Picker {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Picking>()
-            .add_systems(Update, (open_picker, finish_pick, leave_found));
+        app.add_plugins(PickerChoices)
+            .add_systems(Update, (open_picker.after(want_picker), finish_pick));
     }
 }
 
-/// Setup opens the picker once by itself; Setup and NoGiants open it on
-/// Enter, Space or a click. Never two at once.
+/// The picker's decisions without the sheet, so headless tests run them.
+pub(crate) struct PickerChoices;
+
+impl Plugin for PickerChoices {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<Picking>()
+            .init_resource::<FolderAsked>()
+            .add_systems(Update, (want_picker, leave_found));
+    }
+}
+
+/// Setup opens the picker once by itself; Setup and NoGiants open it on a
+/// press of their choose-folder button. Never two at once.
 pub fn should_open(
     screen: &TvScreen,
     shown_for: Duration,
@@ -72,36 +107,46 @@ pub fn should_open(
     }
 }
 
-fn pressed(keys: &ButtonInput<KeyCode>, mouse: &ButtonInput<MouseButton>) -> bool {
-    keys.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter, KeyCode::Space])
-        || mouse.just_pressed(MouseButton::Left)
+/// [`should_open`] each frame. A button press is spent either way, so one
+/// made while the sheet is up doesn't open another after it.
+fn want_picker(
+    current: Option<Res<Current>>,
+    mut asked: ResMut<FolderAsked>,
+    mut picking: ResMut<Picking>,
+) {
+    let pressed = asked.0;
+    if pressed {
+        asked.0 = false;
+    }
+    let Some(current) = current else {
+        return;
+    };
+    let busy = picking.task.is_some() || picking.wanted;
+    if should_open(
+        &current.screen,
+        current.since.elapsed(),
+        pressed,
+        picking.auto_opened,
+        busy,
+    ) {
+        picking.auto_opened = true;
+        picking.wanted = true;
+    }
 }
 
 /// On the main thread: macOS builds the sheet where it's called.
 fn open_picker(
     _main_thread: NonSendMarker,
     current: Option<Res<Current>>,
-    keys: Res<ButtonInput<KeyCode>>,
-    mouse: Res<ButtonInput<MouseButton>>,
     window: Query<&RawHandleWrapper, With<PrimaryWindow>>,
     root: Res<DataRoot>,
     mut picking: ResMut<Picking>,
     mut setup: ResMut<Setup>,
 ) {
-    let Some(current) = current else {
-        return;
-    };
-    let open = should_open(
-        &current.screen,
-        current.since.elapsed(),
-        pressed(&keys, &mouse),
-        picking.auto_opened,
-        picking.task.is_some(),
-    );
-    if !open {
+    if !picking.wanted {
         return;
     }
-    picking.auto_opened = true;
+    picking.wanted = false;
 
     let mut dialog = rfd::AsyncFileDialog::new().set_title(PICKER_TITLE);
     match window.single() {
@@ -117,7 +162,7 @@ fn open_picker(
     let pick = async move { pick.await.map(|h| h.path().to_path_buf()) };
     let task = IoTaskPool::get().spawn(store_pick(pick, root.0.clone()));
     picking.task = Some(task);
-    info!(screen = ?current.screen, "folder picker open");
+    info!(screen = ?current.as_ref().map(|c| &c.screen), "folder picker open");
     setup.0.picking = true;
     setup.0.error = None;
 }
@@ -165,17 +210,13 @@ fn finish_pick(mut picking: ResMut<Picking>, mut setup: ResMut<Setup>, link: Res
     }
 }
 
-/// The found list gives way to the join code after the beat or a press, and
-/// is dropped once a game starts over it (else a quit brings it back).
-fn leave_found(
-    current: Option<Res<Current>>,
-    keys: Res<ButtonInput<KeyCode>>,
-    mouse: Res<ButtonInput<MouseButton>>,
-    mut setup: ResMut<Setup>,
-) {
+/// The found list gives way to the join code after the beat (its Continue
+/// button does it at once, `tv::on_choice`), and is dropped once a game
+/// starts over it (else a quit brings it back).
+fn leave_found(current: Option<Res<Current>>, mut setup: ResMut<Setup>) {
     let Some(current) = current else { return };
     let leave = match current.screen {
-        TvScreen::Found => current.since.elapsed() >= FOUND_BEAT || pressed(&keys, &mouse),
+        TvScreen::Found => current.since.elapsed() >= FOUND_BEAT,
         // Only Portal: `--setup` passes Starting on its way to Found.
         TvScreen::Portal { .. } => true,
         _ => false,
@@ -237,29 +278,23 @@ mod tests {
         }
     }
 
-    fn found_app(age: Duration, click: bool) -> App {
-        on_screen(TvScreen::Found, age, click)
+    fn found_app(age: Duration) -> App {
+        on_screen(TvScreen::Found, age)
     }
 
-    fn on_screen(screen: TvScreen, age: Duration, click: bool) -> App {
+    fn on_screen(screen: TvScreen, age: Duration) -> App {
         let mut app = App::new();
-        let mut mouse = ButtonInput::<MouseButton>::default();
-        if click {
-            mouse.press(MouseButton::Left);
-        }
-        app.insert_resource(ButtonInput::<KeyCode>::default())
-            .insert_resource(mouse)
-            .insert_resource(Current {
-                screen,
-                since: std::time::Instant::now().checked_sub(age).unwrap(),
-                clients: 0,
-            })
-            .insert_resource(Setup(SetupView {
-                giants_found: true,
-                show_found: true,
-                ..Default::default()
-            }))
-            .add_systems(Update, leave_found);
+        app.insert_resource(Current {
+            screen,
+            since: std::time::Instant::now().checked_sub(age).unwrap(),
+            clients: 0,
+        })
+        .insert_resource(Setup(SetupView {
+            giants_found: true,
+            show_found: true,
+            ..Default::default()
+        }))
+        .add_systems(Update, leave_found);
         app.update();
         app
     }
@@ -287,6 +322,7 @@ mod tests {
         .insert_resource(Picking {
             task: Some(task),
             auto_opened: true,
+            wanted: false,
         })
         .add_systems(Update, finish_pick);
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
@@ -403,10 +439,22 @@ mod tests {
 
     #[test]
     fn found_gives_way_to_join_after_the_beat_or_a_click() {
-        let shown = |app: App| app.world().resource::<Setup>().0.show_found;
-        assert!(shown(found_app(Duration::ZERO, false)));
-        assert!(!shown(found_app(FOUND_BEAT + LATE, false)));
-        assert!(!shown(found_app(Duration::ZERO, true)));
+        use crate::tv::CONTINUE;
+        use crate::tv::choice_tests::{choice, click_on, tv_on};
+        let shown = |app: &App| app.world().resource::<Setup>().0.show_found;
+        assert!(shown(&found_app(Duration::ZERO)));
+        assert!(!shown(&found_app(FOUND_BEAT + LATE)));
+        // AP.6: the click is on its Continue button.
+        let found = SetupView {
+            giants_found: true,
+            show_found: true,
+            ..Default::default()
+        };
+        let mut app = tv_on(TvScreen::Found, Duration::ZERO, found);
+        assert!(shown(&app));
+        let button = choice(&mut app, CONTINUE);
+        click_on(&mut app, button);
+        assert!(!shown(&app));
     }
 
     #[test]
@@ -416,14 +464,13 @@ mod tests {
                 game: "Skylanders: Giants".into(),
             },
             Duration::ZERO,
-            false,
         );
         let view = &app.world().resource::<Setup>().0;
         assert!(!view.show_found);
         // So the quit goes back to the join code, not the stale list.
         assert_eq!(screen_for(&ready(), view), TvScreen::Join);
         // `--setup` passes Starting before Found: the list survives it.
-        let starting = on_screen(TvScreen::Starting, Duration::ZERO, true);
+        let starting = on_screen(TvScreen::Starting, Duration::ZERO);
         assert!(starting.world().resource::<Setup>().0.show_found);
     }
 }
