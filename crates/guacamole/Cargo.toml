@@ -88,15 +88,7 @@ test-hooks = ["dev-tools", "guac-server/test-hooks"]
 # --features video-spike --example video_spike` (the TV pass in
 # openspec/backlog.md runs it on the TV, ex-AB.16).
 video-spike = []
-# AP.8's spike, kept out of `cargo test` the same way: `cargo run --release -p
-# guacamole --features title-spike --example title_spike -- draw` (openspec AP,
-# design decision 7).
-title-spike = []
 
 [[example]]
 name = "video_spike"
 required-features = ["video-spike"]
-
-[[example]]
-name = "title_spike"
-required-features = ["title-spike"]

@@ -396,6 +396,48 @@ pub(crate) fn css_shadow(color: Color, offset: Vec2, blur: f32, spread: f32) -> 
     }
 }
 
+/// CSS's `color` at `alpha` over `backdrop`, as a colour bevy_ui can draw:
+/// CSS blends sRGB values where bevy_ui blends in linear light, which draws
+/// a faint gold over the dark sky several times too bright. The colour that
+/// comes back, blended linearly over `backdrop`, lands exactly where the
+/// browser's blend does, at CSS's own alpha (so the stars behind dim as much
+/// as in a browser) unless reaching it needs more. The title shader's
+/// `as_css` is the same rule (`title.wesl`).
+pub(crate) fn css_over(backdrop: Color, color: Color, alpha: f32) -> Color {
+    let b = backdrop.to_linear().to_vec3();
+    let (bs, cs) = (backdrop.to_srgba(), color.to_srgba());
+    let t = LinearRgba::from(Srgba::rgb(
+        bs.red + (cs.red - bs.red) * alpha,
+        bs.green + (cs.green - bs.green) * alpha,
+        bs.blue + (cs.blue - bs.blue) * alpha,
+    ))
+    .to_vec3();
+    let up = (t - b).max(Vec3::ZERO) / (Vec3::ONE - b).max(Vec3::splat(1e-4));
+    let down = (b - t).max(Vec3::ZERO) / b.max(Vec3::splat(1e-4));
+    let a = alpha
+        .max(up.max_element())
+        .max(down.max_element())
+        .clamp(0.0, 1.0);
+    if a <= 0.0 {
+        return Color::NONE;
+    }
+    let c = (b + (t - b) / a).clamp(Vec3::ZERO, Vec3::ONE);
+    Color::LinearRgba(LinearRgba::new(c.x, c.y, c.z, a))
+}
+
+/// What the TV's sRGB target shows for `color` over `backdrop`: the hardware
+/// blends in linear light, the half of the mismatch [`css_over`] corrects.
+#[cfg(test)]
+pub(crate) fn linear_over(backdrop: Color, color: Color) -> LinearRgba {
+    let (b, c) = (backdrop.to_linear(), color.to_linear());
+    let a = c.alpha;
+    LinearRgba::rgb(
+        b.red + (c.red - b.red) * a,
+        b.green + (c.green - b.green) * a,
+        b.blue + (c.blue - b.blue) * a,
+    )
+}
+
 /// The owner pip in its card's top-right corner (design decision 8: the
 /// phone's bottom-right would sit under player 2's UI), a small bezel as the
 /// phone's `.p4-slot-owner`: a gold ring round a plate in the profile's
@@ -590,5 +632,49 @@ mod tests {
         let colours = stops(&flash_fill(&theme, 1.0).0[0]);
         assert_eq!(Srgba::from(colours[0]).to_hex(), "#FFFFFFF2");
         assert_eq!(Srgba::from(colours[1].with_alpha(1.0)).to_hex(), "#FFCF3A");
+    }
+
+    /// AP.10: `css_over` lands over its backdrop where CSS's sRGB blend
+    /// does, at CSS's alpha while that reaches it; bevy_ui's linear blend of
+    /// the same alpha draws gold over the dark sky several levels too bright.
+    #[test]
+    fn css_over_lands_where_the_browsers_blend_does() {
+        let theme = TvTheme::default();
+        let to_u8 = |c: LinearRgba| {
+            let s = Srgba::from(c);
+            [s.red, s.green, s.blue].map(|v| (v * 255.0).round() as i32)
+        };
+        let css = |b: Color, c: Color, a: f32| {
+            let (b, c) = (b.to_srgba(), c.to_srgba());
+            [
+                b.red + (c.red - b.red) * a,
+                b.green + (c.green - b.green) * a,
+                b.blue + (c.blue - b.blue) * a,
+            ]
+            .map(|v| (v * 255.0).round() as i32)
+        };
+        for backdrop in theme.starfield {
+            for (color, alpha) in [
+                (theme.gold, 0.12),
+                (theme.gold, 0.3),
+                (theme.gold, 0.03),
+                (theme.shadow, 0.5),
+                (theme.light, 0.25),
+                (theme.gold_bright, 1.0),
+            ] {
+                let drawn = css_over(backdrop, color, alpha);
+                let lands = to_u8(linear_over(backdrop, drawn));
+                assert_eq!(lands, css(backdrop, color, alpha), "{color:?} at {alpha}");
+                assert!(drawn.alpha() >= alpha - 1e-6, "never less than CSS's alpha");
+            }
+        }
+        // The halo's gold over --sf-2 keeps CSS's 0.12, and bevy_ui's own
+        // blend of it would land brighter.
+        let sky = theme.starfield[1];
+        assert!((css_over(sky, theme.gold, 0.12).alpha() - 0.12).abs() < 1e-6);
+        let naive = to_u8(linear_over(sky, theme.gold.with_alpha(0.12)));
+        let want = css(sky, theme.gold, 0.12);
+        assert!(naive[0] > want[0] + 10, "{naive:?} vs {want:?}");
+        assert_eq!(css_over(sky, theme.gold, 0.0), Color::NONE);
     }
 }

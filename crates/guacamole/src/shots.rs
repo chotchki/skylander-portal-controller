@@ -23,7 +23,7 @@ use crate::cards::PortalCards;
 use crate::extraction::Extraction;
 use crate::intro::IntroQueue;
 use crate::motion::ReducedMotion;
-use crate::tv::{Current, Redrawn};
+use crate::tv::{Current, Redrawn, TvCamera};
 
 /// Long enough for a redrawn tree's layout and portraits to reach the GPU.
 const SETTLE: Duration = Duration::from_millis(750);
@@ -94,7 +94,7 @@ fn render_offscreen(
     mut commands: Commands,
     mut state: ResMut<ShotState>,
     mut images: ResMut<Assets<Image>>,
-    camera: Query<Entity, With<Camera2d>>,
+    camera: Query<Entity, With<TvCamera>>,
 ) {
     let Ok(camera) = camera.single() else {
         return;
@@ -108,7 +108,8 @@ fn render_offscreen(
     let handle = images.add(image);
     commands
         .entity(camera)
-        // Without a window target bevy_ui picks no default camera; name it.
+        // The TV's camera names itself the default UI camera already
+        // (`tv::spawn_camera`); without a window target bevy_ui would pick none.
         .insert((
             RenderTarget::Image(handle.clone().into()),
             IsDefaultUiCamera,

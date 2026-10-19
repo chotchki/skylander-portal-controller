@@ -23,7 +23,7 @@ use crate::intro_player::{self, IntroOverlay, IntroPlayer, IntroVideo};
 use crate::screen::TvScreen;
 use crate::tv::{
     CardSlot, Current, EmptySlot, ExtractBar, ExtractDetail, ExtractTitle, Framing, JoinAddress,
-    JoinQr, Pip, PlayersLine, Setup, TvAssets, contains, node_rect, safe_area,
+    JoinQr, Pip, PlayersLine, Setup, TvAssets, TvCamera, contains, node_rect, safe_area,
 };
 
 /// What the TV shows this frame.
@@ -256,7 +256,7 @@ fn mirror_tv(
     setup: Res<Setup>,
     framing: Res<Framing>,
     portal: Res<PortalCards>,
-    camera: Query<&Camera, With<Camera2d>>,
+    camera: Query<&Camera, With<TvCamera>>,
     cards: Query<(Entity, &CardSlot, &ComputedNode, &UiGlobalTransform)>,
     empties: Query<&EmptySlot>,
     children: Query<&Children>,
