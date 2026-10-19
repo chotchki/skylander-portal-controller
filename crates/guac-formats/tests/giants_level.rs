@@ -670,5 +670,6 @@ fn level_213s_collision_lies_on_its_render_mesh_once_translated() {
     assert_eq!(n, 2_168);
     assert_eq!(within(&translated, 0.01), 823);
     assert_eq!(within(&translated, 0.1), 1_247);
+    assert_eq!(within(&translated, 2.0), 1_986);
     assert_eq!(within(&local, 0.01), 0);
 }

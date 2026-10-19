@@ -95,7 +95,8 @@ pub struct Transform<'a> {
     /// p * m in the parent's frame.
     pub m: Mat44,
     pub target: i32,
-    /// `igTransformSource3` keyframes on an animated one (40 on the disc),
+    /// `igTransformSource3` keyframes on an animated one (40 in the disc's
+    /// scenes),
     /// read but not played here.
     pub transform_input: ObjectRef<'a>,
     pub transform_input3: ObjectRef<'a>,

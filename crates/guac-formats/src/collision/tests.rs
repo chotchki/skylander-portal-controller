@@ -4,7 +4,7 @@ use super::builder::{
 };
 use super::*;
 use crate::havok::builder::{PayloadSpec, payload};
-use crate::havok::physics::{SimpleMeshShape, TriangleCollisionQuery};
+use crate::havok::physics::{PhysicsSystem, SimpleMeshShape, TriangleCollisionQuery};
 use crate::havok::{HEADER_LEN, SECTION_HEADER_LEN};
 use crate::igz::Ref;
 use crate::igz::builder::IgzBuilder;
@@ -318,6 +318,59 @@ fn counts_that_dont_divide_or_agree_are_refused() {
 }
 
 #[test]
+fn a_non_finite_translation_radius_or_mopp_info_is_refused() {
+    let mut spec = body_spec(ramp());
+    spec.translation[1] = f32::INFINITY;
+    let bits = u64::from(f32::INFINITY.to_bits());
+    assert_eq!(
+        refused(&one_body(spec).bytes),
+        ("translation", ErrorKind::Unsupported { value: bits })
+    );
+    let mut spec = body_spec(ramp());
+    spec.mopp_info[3] = f32::INFINITY;
+    assert_eq!(
+        refused(&one_body(spec).bytes),
+        ("info", ErrorKind::Unsupported { value: bits })
+    );
+    let mut built = one_body(body_spec(ramp()));
+    let radius = built.meshes[0] + SimpleMeshShape::RADIUS as u32;
+    built.put_u32(radius, f32::INFINITY.to_bits());
+    assert_eq!(
+        refused(&built.bytes),
+        ("radius", ErrorKind::Unsupported { value: bits })
+    );
+}
+
+#[test]
+fn an_array_that_must_be_empty_is_refused_when_it_declares_elements() {
+    let base = one_body(body_spec(ramp()));
+    let (system, query, mesh) = (base.systems[0], base.queries[0], base.meshes[0]);
+    type S = PhysicsSystem;
+    type M = SimpleMeshShape;
+    let mut arrays = vec![
+        (system, S::CONSTRAINTS, "constraints"),
+        (system, S::ACTIONS, "actions"),
+        (system, S::PHANTOMS, "phantoms"),
+        (mesh, M::VERTICES, "vertices"),
+        (mesh, M::TRIANGLES, "triangles"),
+        (mesh, M::MATERIAL_INDICES, "materialIndices"),
+    ];
+    arrays.extend(TriangleCollisionQuery::OWN_ARRAYS.map(|(offset, field)| (query, offset, field)));
+    for (object, offset, field) in arrays {
+        // One element and the don't-deallocate flag, no data behind it.
+        let mut built = base.clone();
+        let size = object + offset as u32 + 4;
+        built.put_u32(size, 1);
+        built.put_u32(size + 4, 0x8000_0001);
+        assert_eq!(
+            refused(&built.bytes),
+            (field, ErrorKind::Missing),
+            "{field}"
+        );
+    }
+}
+
+#[test]
 fn a_non_finite_vertex_is_refused() {
     let mut mesh = ramp();
     mesh.floats[4] = f32::NAN;
@@ -377,6 +430,33 @@ fn an_object_inside_a_registered_size_is_refused() {
         .find(|&e| built.bytes[e..e + 4] == code.to_be_bytes())
         .unwrap();
     built.bytes[entry..entry + 4].copy_from_slice(&(query + 0x40).to_be_bytes());
+    assert_eq!(
+        refused(&built.bytes),
+        ("registered size", ErrorKind::Unsupported { value: 0x40 })
+    );
+}
+
+#[test]
+fn an_object_inside_the_meshs_registered_size_is_refused() {
+    let mut built = one_body(body_spec(ramp()));
+    let mesh = built.meshes[0];
+    // Move the collision filter's class marker 0x40 into the mesh shape:
+    // nothing follows the filter, so only the mesh's 0x68 bytes notice.
+    let word = |b: &[u8], at: usize| u32::from_be_bytes(b[at..at + 4].try_into().unwrap());
+    let name = b"hkpConstraintCollisionFilter\0";
+    let at = built
+        .bytes
+        .windows(name.len())
+        .position(|w| w == name)
+        .unwrap();
+    // The first section's absoluteDataStart: `__classnames__`.
+    let names = word(&built.bytes, HEADER_LEN + 20) as usize;
+    let (from, to) = virtual_table(&built.bytes);
+    let entry = (from..to)
+        .step_by(12)
+        .find(|&e| word(&built.bytes, e + 8) as usize == at - names)
+        .unwrap();
+    built.bytes[entry..entry + 4].copy_from_slice(&(mesh + 0x40).to_be_bytes());
     assert_eq!(
         refused(&built.bytes),
         ("registered size", ErrorKind::Unsupported { value: 0x40 })

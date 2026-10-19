@@ -83,7 +83,8 @@ pub struct ActorInfo<'a> {
     pub placement: Placement<'a>,
     pub controller: ObjectRef<'a>,
     /// A `tfbModelInfo` (a `tfbPhysicsModel` on the disc), shared between
-    /// placements: level 213's 613 model-bearing actors use 222.
+    /// placements: level 213's 613 model-bearing actors name 219 of the
+    /// file's 222.
     pub model: Option<usize>,
     /// An `ActorParameters`, over the model's defaults.
     pub actor_parameters: Option<usize>,

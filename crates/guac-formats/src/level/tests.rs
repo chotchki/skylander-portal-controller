@@ -526,11 +526,13 @@ fn a_node_reached_twice_is_refused() {
 #[test]
 fn a_child_list_two_groups_share_is_refused_unless_empty() {
     let shared = |children: usize| {
-        scene_over(|b, blocks| {
+        let mut shared_at = None;
+        let bytes = scene_over(|b, blocks| {
             let ts: Vec<_> = (0..children)
                 .map(|k| Some(drawn(b, blocks, &format!("t{k}"))))
                 .collect();
             let shared_list = b.object(0, "igNodeList", 0x18);
+            shared_at = Some(shared_list);
             list(b, shared_list, blocks, &ts);
             let groups: Vec<_> = (0..2)
                 .map(|_| {
@@ -544,13 +546,20 @@ fn a_child_list_two_groups_share_is_refused_unless_empty() {
             b.pointer(at(root, 0x20), root_list);
             list(b, root_list, blocks, &groups);
             Some(root)
-        })
+        });
+        (bytes, shared_at.unwrap())
     };
+    let (bytes, list_at) = shared(2);
+    let e = walk(&bytes).unwrap_err();
+    // Named at the list itself: without the list check, the second group's
+    // first child would be refused instead, under the same field and kind.
+    let igz = Igz::parse(&bytes).unwrap();
+    let list_offset = igz.err_at(list_at, "", ErrorKind::Duplicate).offset;
     assert_eq!(
-        refused(walk(&shared(2))),
-        ("_childList", ErrorKind::Duplicate)
+        (e.field, e.kind, e.offset),
+        ("_childList", ErrorKind::Duplicate, list_offset)
     );
-    let bytes = shared(0);
+    let (bytes, _) = shared(0);
     let scene = walk(&bytes).unwrap();
     assert_eq!((scene.groups.len(), scene.draws.len()), (3, 0));
 }
