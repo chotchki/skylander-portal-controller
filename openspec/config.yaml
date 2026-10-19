@@ -47,8 +47,13 @@ context: |
   letters (A, B, R, S, T, U, V ...); a new change takes the next two-letter id, spreadsheet-style
   (AA, AB ... AZ, BA), after the highest two-letter id under openspec/changes/ (archive/ included,
   ignoring the YYYY-MM-DD- prefix an archived folder gets). Gaps are never backfilled, because a
-  backfilled id reads as older than it is. Tasks are numbered <ID>.<N>, and in a new change <ID>.0
-  is the phase-exit criterion. Changes that came over from PLAN.md keep their numbering.
+  backfilled id reads as older than it is. Ids the ladder already names (its rungs in
+  openspec/backlog.md and the milestone ladder in docs/native/guacamole-design.md) are reserved,
+  and a reserved id isn't a gap: a rung keeps its id when it's proposed, and any other new change
+  takes the next id past the highest one used or reserved, as AP did (chotchki, 2026-10-18, on
+  ids: "I don't care, the two letter id is just a holdover from claude-plan-bridge"). Tasks are
+  numbered <ID>.<N>, and in a new change <ID>.0 is the phase-exit criterion. Changes that came
+  over from PLAN.md keep their numbering.
 
   Plans state no time or effort estimates (no hours, weeks, timeboxes or years): a change is
   sequenced by conditions (it starts when what it stands on has landed) and reports measured
