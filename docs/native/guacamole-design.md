@@ -1852,7 +1852,7 @@ TV, on Bevy's Metal backend. What that means now:
   AE.14 on the M3 Max: macOS keeps what it compiles in a per-user shader cache, so a pipeline is slow
   only the first time a Mac compiles it (one start's 45 UI pipelines took a 3.39 s frame; the same 45
   took 90-133 ms on every start after), and with the turntables' warm no placement's frame passed
-  37.2 ms on a warm cache. A cold cache under load is AE.23's.
+  37.2 ms on a warm cache. A cold cache under load is AE.25's.
 - An open macOS rendering-corruption bug to watch
   ([bevy #25595](https://github.com/bevyengine/bevy/issues/25595)).
 - Not measured: a frame with CSM, SSAO, TAA and bloom at the TV's resolution on the M3 Max. AE measures it
