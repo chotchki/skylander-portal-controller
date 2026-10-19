@@ -1,7 +1,7 @@
 // AP.8's TitleMaterial (openspec AP, design decision 7): design_language.md
 // §2's display treatment built from the coverage of glyphs a title camera
 // rendered white into `glyphs`, back to front: the gold glow, the blurred
-// drop, the two hard shadows, the stroke, then the gradient fill. The surface
+// drop, the two hard shadows, the gradient fill, then the stroke over its edge. The surface
 // is the layout box grown by `margin` design px on each side, and `glyphs` is
 // exactly the surface's size, so uv maps texel for texel.
 import bevy_ui_render::ui_vertex_output::UiVertexOutput;
@@ -19,6 +19,8 @@ struct TitleParams {
     drop: vec4<f32>,
     // --g at 0.3, blurred wide.
     glow: vec4<f32>,
+    // The screen's background, which the CSS blend is matched on.
+    backdrop: vec4<f32>,
     // Physical px per design px: the TV camera's scale factor times UiScale.
     scale: f32,
     // Design px from here on.
@@ -27,6 +29,8 @@ struct TitleParams {
     drop_offset: f32,
     drop_sigma: f32,
     glow_sigma: f32,
+    // 1 composites as CSS does (below), 0 in linear light.
+    css: u32,
     // 0 the treatment, 1 the sampled coverage as grey, 2 the sampled colour.
     mode: u32,
 }
@@ -42,17 +46,28 @@ fn coverage(uv: vec2<f32>) -> f32 {
     return textureSampleLevel(glyphs, glyphs_sampler, uv, 0.0).a;
 }
 
-// The glyphs grown by the stroke: the most coverage on two rings around uv.
-fn stroked(uv: vec2<f32>, texel: vec2<f32>) -> f32 {
+// The glyphs grown (or with `grow` false, shrunk) by `r` design px: the most
+// (least) coverage on two rings around uv.
+fn morphed(uv: vec2<f32>, texel: vec2<f32>, r: f32, grow: bool) -> f32 {
     var a = coverage(uv);
-    let r = title.stroke_width;
     for (var i = 0; i < 12; i++) {
         let t = f32(i) * TAU / 12.0;
         let d = vec2<f32>(cos(t), sin(t)) * texel;
-        a = max(a, coverage(uv + d * r));
-        a = max(a, coverage(uv + d * (r * 0.5)));
+        let near = coverage(uv + d * (r * 0.5));
+        let far = coverage(uv + d * r);
+        if grow {
+            a = max(a, max(near, far));
+        } else {
+            a = min(a, min(near, far));
+        }
     }
     return a;
+}
+
+// The glyphs with their stroke, which CSS centres on the outline: half the
+// width outside it, half over the fill.
+fn stroked(uv: vec2<f32>, texel: vec2<f32>) -> f32 {
+    return morphed(uv, texel, title.stroke_width * 0.5, true);
 }
 
 // Interleaved gradient noise (Jimenez 2014): a fixed per-pixel value in [0, 1).
@@ -88,6 +103,45 @@ fn over(dst: vec4<f32>, color: vec4<f32>, amount: f32) -> vec4<f32> {
     return vec4<f32>(rgb, out_a);
 }
 
+fn to_linear(c: vec3<f32>) -> vec3<f32> {
+    let hi = pow((c + 0.055) / 1.055, vec3<f32>(2.4));
+    return select(hi, c / 12.92, c <= vec3<f32>(0.04045));
+}
+
+fn to_srgb(c: vec3<f32>) -> vec3<f32> {
+    let hi = 1.055 * pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
+    return select(hi, c * 12.92, c <= vec3<f32>(0.0031308));
+}
+
+// A layer's colour in the space the stack is composited in.
+fn layer(color: vec4<f32>) -> vec4<f32> {
+    if title.css == 1u {
+        return vec4<f32>(to_srgb(color.rgb), color.a);
+    }
+    return color;
+}
+
+// §2 is CSS, which composites in sRGB, while this target blends in linear
+// light, where the same 0.3 glow comes out about three times as bright and
+// the black drop barely darkens. So the stack is composited in sRGB, then
+// handed over as the colour and alpha that land, blended linearly over the
+// backdrop, exactly where a browser's sRGB blend would: the least alpha that
+// reaches the browser's result, and never less than the stack's own, so an
+// opaque pixel stays opaque. Over any other backdrop the difference is that
+// backdrop's, times the transmittance, as for any blend.
+fn as_css(stack: vec4<f32>) -> vec4<f32> {
+    let b = title.backdrop.rgb;
+    let t = to_linear(mix(to_srgb(b), stack.rgb, stack.a));
+    let up = max(t - b, vec3<f32>(0.0)) / max(1.0 - b, vec3<f32>(1e-4));
+    let down = max(b - t, vec3<f32>(0.0)) / max(b, vec3<f32>(1e-4));
+    let need = max(max(up.r, max(up.g, up.b)), max(down.r, max(down.g, down.b)));
+    let a = clamp(max(stack.a, need), 0.0, 1.0);
+    if a <= 0.0 {
+        return vec4<f32>(0.0);
+    }
+    return vec4<f32>(clamp(b + (t - b) / a, vec3<f32>(0.0), vec3<f32>(1.0)), a);
+}
+
 @fragment
 fn fragment(in: UiVertexOutput) -> @location(0) vec4<f32> {
     if title.mode == 1u {
@@ -101,13 +155,26 @@ fn fragment(in: UiVertexOutput) -> @location(0) vec4<f32> {
     let down = vec2<f32>(0.0, texel.y);
     var out = vec4<f32>(0.0);
     let spin = noise(in.position.xy);
-    out = over(out, title.glow, blurred(in.uv, texel, title.glow_sigma, 64, spin));
-    out = over(out, title.drop, blurred(in.uv - down * title.drop_offset, texel, title.drop_sigma, 24, spin));
-    out = over(out, title.shadow_far, stroked(in.uv - down * 3.0, texel));
-    out = over(out, title.shadow_near, stroked(in.uv - down * 2.0, texel));
-    out = over(out, title.stroke, stroked(in.uv, texel));
+    out = over(out, layer(title.glow), blurred(in.uv, texel, title.glow_sigma, 64, spin));
+    out = over(out, layer(title.drop), blurred(in.uv - down * title.drop_offset, texel, title.drop_sigma, 24, spin));
+    // The hard shadows are the glyphs' own, not their stroke's, as a browser
+    // draws them (Chrome: the stroke's outer half covers the first px of the
+    // +2 ledge, so 1 px of --gs and 1 of --gi show under it).
+    out = over(out, layer(title.shadow_far), coverage(in.uv - down * 3.0));
+    out = over(out, layer(title.shadow_near), coverage(in.uv - down * 2.0));
+    // The fill, then the stroke over it (CSS paints them in that order).
     let top = title.margin * texel.y;
     let t = clamp((in.uv.y - top) / (1.0 - 2.0 * top), 0.0, 1.0);
-    out = over(out, mix(title.fill_top, title.fill_bottom, t), coverage(in.uv));
+    let fill = mix(layer(title.fill_top), layer(title.fill_bottom), t);
+    let inked = coverage(in.uv);
+    out = over(out, fill, inked);
+    let outer = stroked(in.uv, texel);
+    if outer > 0.0 {
+        let inner = morphed(in.uv, texel, title.stroke_width * 0.5, false);
+        out = over(out, layer(title.stroke), min(outer, 1.0 - inner));
+    }
+    if title.css == 1u {
+        return as_css(out);
+    }
     return out;
 }

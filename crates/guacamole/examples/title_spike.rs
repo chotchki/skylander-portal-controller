@@ -8,15 +8,21 @@
 //!
 //! `cargo run --release -p guacamole --features title-spike --example title_spike -- <cmd>`
 //! - `draw [--offscreen WxH [--scale S]] [--fullscreen] [--seconds N]
-//!   [--title-scale S] [--titles N] [--slots N] [--no-plain] [--always-active]
-//!   [--debug-alpha] [--out DIR --name NAME]`: the TV's background with the
-//!   real titles, each through the material and then as the plain `Text` the
-//!   TV draws today; in a window on the Mac's display, or offscreen at WxH
-//!   (`--scale 2` is a Retina window's scale factor). `--title-scale` overrides
-//!   the title cameras' `ImageRenderTarget::scale_factor`, which otherwise
-//!   follows the TV camera's. Prints `check:` lines (the sizes, the cleared
-//!   alpha, the inactive camera) and with `--out` saves the TV and each
-//!   title's texture as PNGs, outside any checkout.
+//!   [--title-scale S] [--titles N] [--slots N] [--only I] [--no-plain]
+//!   [--always-active] [--debug-alpha] [--linear-blend] [--readback]
+//!   [--out DIR --name NAME]`: the TV's background with the real titles, each
+//!   through the material and then as the plain `Text` the TV draws today; in
+//!   a window on the Mac's display, or offscreen at WxH (`--scale 2` is a
+//!   Retina window's scale factor). `--title-scale` overrides the title
+//!   cameras' `ImageRenderTarget::scale_factor`, which otherwise follows the
+//!   TV camera's; `--only I` draws `TITLES[I]` alone; `--linear-blend`
+//!   composites the stack in linear light (the first cut's blend). Prints
+//!   `check:` lines (the sizes, the cleared alpha, the inactive camera, the
+//!   margin) and with `--out` saves the TV and each title's texture as PNGs,
+//!   outside any checkout. `--readback` reads the title textures straight off
+//!   the GPU (`Readback`) the frame their cameras draw, the next and
+//!   [`SETTLE_FRAMES`] later, instead of screenshotting them, since a
+//!   screenshot of a camera's target reroutes that camera's output.
 //! - `probe [--title-order N]`: offscreen; whether the TV samples a title's
 //!   target the frame it renders (a colour that changes every frame, read
 //!   back each frame); `--title-order 1` draws the titles after the TV, the
@@ -41,7 +47,10 @@ use bevy::camera::{
 use bevy::diagnostic::FrameCount;
 use bevy::prelude::*;
 use bevy::reflect::TypePath;
-use bevy::render::render_resource::{AsBindGroup, PollType, ShaderType, TextureFormat};
+use bevy::render::gpu_readback::{Readback, ReadbackComplete};
+use bevy::render::render_resource::{
+    AsBindGroup, PollType, ShaderType, TextureFormat, TextureUsages,
+};
 use bevy::render::renderer::RenderDevice;
 use bevy::render::view::Msaa;
 use bevy::render::view::window::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk};
@@ -106,7 +115,7 @@ fn main() -> Result<()> {
         }
         Some("headless") => headless(),
         _ => bail!(
-            "usage: title_spike draw [--offscreen WxH [--scale S]] [--fullscreen] [--seconds N] [--title-scale S] [--titles N] [--slots N] [--no-plain] [--always-active] [--debug-alpha] [--out DIR --name NAME] | probe [--title-order N] | bench [--offscreen WxH] [--titles N] [--always-active] [--frames N] | headless"
+            "usage: title_spike draw [--offscreen WxH [--scale S]] [--fullscreen] [--seconds N] [--title-scale S] [--titles N] [--slots N] [--only I] [--no-plain] [--always-active] [--debug-alpha] [--linear-blend] [--readback] [--out DIR --name NAME] | probe [--title-order N] | bench [--offscreen WxH] [--titles N] [--always-active] [--frames N] | headless"
         ),
     }
 }
@@ -128,11 +137,18 @@ struct Opts {
     titles: usize,
     /// How many of [`TITLES`] are on screen.
     slots: usize,
+    /// Only this one of [`TITLES`] on screen.
+    only: Option<usize>,
     /// Each title again as plain `Text`, under it.
     plain: bool,
     always_active: bool,
     /// The shader's mode: 0 the treatment, 1 coverage as grey, 2 raw colour.
     mode: u32,
+    /// The stack composited in linear light rather than as CSS does (see the
+    /// shader's `as_css`).
+    linear_blend: bool,
+    /// The title textures read back off the GPU instead of screenshotted.
+    readback: bool,
     out: Option<PathBuf>,
     name: String,
     probe: bool,
@@ -151,9 +167,12 @@ impl Opts {
             title_order: -1,
             titles: TITLES.len(),
             slots: TITLES.len(),
+            only: None,
             plain: true,
             always_active: false,
             mode: 0,
+            linear_blend: false,
+            readback: false,
             out: None,
             name: "titles".into(),
             probe: false,
@@ -181,9 +200,18 @@ impl Opts {
                 "--title-order" => opts.title_order = value()?.parse()?,
                 "--titles" => opts.titles = value()?.parse()?,
                 "--slots" => opts.slots = value()?.parse::<usize>()?.min(TITLES.len()),
+                "--only" => {
+                    let i: usize = value()?.parse()?;
+                    if i >= TITLES.len() {
+                        bail!("--only takes 0 to {}", TITLES.len() - 1);
+                    }
+                    opts.only = Some(i);
+                }
                 "--no-plain" => opts.plain = false,
                 "--always-active" => opts.always_active = true,
                 "--debug-alpha" => opts.mode = 1,
+                "--linear-blend" => opts.linear_blend = true,
+                "--readback" => opts.readback = true,
                 "--out" => opts.out = Some(outside_checkouts(value()?.into())?),
                 "--name" => opts.name = value()?.clone(),
                 "--frames" => opts.frames = value()?.parse()?,
@@ -220,6 +248,8 @@ struct TitleParams {
     shadow_far: LinearRgba,
     drop: LinearRgba,
     glow: LinearRgba,
+    /// The screen's background, which the CSS blend is matched on.
+    backdrop: LinearRgba,
     /// Physical px per design px: the TV camera's scale factor × `UiScale`.
     scale: f32,
     margin: f32,
@@ -227,6 +257,8 @@ struct TitleParams {
     drop_offset: f32,
     drop_sigma: f32,
     glow_sigma: f32,
+    /// 1 composites as CSS does, 0 in linear light.
+    css: u32,
     mode: u32,
 }
 
@@ -272,7 +304,7 @@ fn treatment(step: Step) -> Treatment {
     }
 }
 
-fn params(theme: &TvTheme, step: Step, scale: f32, mode: u32) -> TitleParams {
+fn params(theme: &TvTheme, step: Step, scale: f32, opts: &Opts) -> TitleParams {
     let t = treatment(step);
     TitleParams {
         fill_top: theme.role(Role::Accent).to_linear(),
@@ -282,13 +314,15 @@ fn params(theme: &TvTheme, step: Step, scale: f32, mode: u32) -> TitleParams {
         shadow_far: GOLD_INNER.to_linear(),
         drop: Color::srgba(0.0, 0.0, 0.0, 0.5).to_linear(),
         glow: theme.gold.with_alpha(0.3).to_linear(),
+        backdrop: theme.background().to_linear(),
         scale,
         margin: t.margin,
         stroke_width: t.stroke,
         drop_offset: 5.0,
         drop_sigma: 5.0,
         glow_sigma: t.glow_sigma,
-        mode,
+        css: u32::from(!opts.linear_blend),
+        mode: opts.mode,
     }
 }
 
@@ -305,6 +339,14 @@ struct Spike {
 
 #[derive(Component)]
 struct TvCamera;
+
+/// The plain `Text` drawn under title `.0`, the size its glyphs should match.
+#[derive(Component)]
+struct Plain(usize);
+
+/// A texture readback that runs the frame it's spawned and no later.
+#[derive(Component)]
+struct ReadOnce(u32);
 
 /// A title drawn through the material: the surface over its hidden `Text`.
 #[derive(Component)]
@@ -339,6 +381,14 @@ struct Record {
     /// Surface rects (physical px, min and max) and their cameras' targets,
     /// by title.
     surfaces: Vec<(Rect, ImageRenderTarget)>,
+    /// By title: the texture's size, the surface's margin and the treatment's
+    /// reach past the glyphs (the glow's 2.5 sigma, which outreaches the
+    /// drop's 5 + 2.5 x 5 below), both in physical px.
+    textures: Vec<(UVec2, f32, f32)>,
+    /// By title: the plain `Text`'s rect, physical px.
+    plains: Vec<Option<Rect>>,
+    /// Raw texture bytes (rows padded to 256 bytes), by name.
+    readbacks: Arc<Mutex<HashMap<String, Vec<u8>>>>,
     sizes: Vec<String>,
     probe: Arc<Mutex<Vec<(u32, u8, u8)>>>,
 }
@@ -397,6 +447,7 @@ fn run(opts: Opts) -> Result<()> {
                 probe_tick,
                 close_after,
                 bench_stop,
+                end_readbacks,
             ),
         )
         .add_systems(
@@ -479,7 +530,11 @@ fn setup(
                     },
                 ));
             }
-            for (index, (text, step)) in TITLES.iter().take(spike.opts.slots).enumerate() {
+            let shown = match spike.opts.only {
+                Some(i) => &TITLES[i..=i],
+                None => &TITLES[..spike.opts.slots],
+            };
+            for (index, (text, step)) in shown.iter().enumerate() {
                 if index < spike.opts.titles {
                     spawn_title(root, &spike, &mut materials, index, text, *step);
                 } else {
@@ -497,6 +552,7 @@ fn setup(
                             margin: UiRect::bottom(px(28)),
                             ..default()
                         },
+                        Plain(index),
                     ));
                 }
             }
@@ -531,7 +587,7 @@ fn spawn_title(
 ) {
     let t = treatment(step);
     let material = materials.add(TitleMaterial {
-        params: params(&spike.theme, step, 1.0, spike.opts.mode),
+        params: params(&spike.theme, step, 1.0, &spike.opts),
         glyphs: None,
     });
     parent.spawn(Node::default()).with_children(|wrap| {
@@ -611,12 +667,13 @@ fn draw_titles(
                 commands.entity(old.camera).despawn();
                 commands.entity(old.root).despawn();
             }
-            let image = images.add(Image::new_target_texture(
-                want.x,
-                want.y,
-                TextureFormat::Rgba8UnormSrgb,
-                None,
-            ));
+            let mut target =
+                Image::new_target_texture(want.x, want.y, TextureFormat::Rgba8UnormSrgb, None);
+            if spike.opts.readback {
+                // A readback copies out of the texture; a target alone needn't.
+                target.texture_descriptor.usage |= TextureUsages::COPY_SRC;
+            }
+            let image = images.add(target);
             let camera = commands
                 .spawn((
                     Camera2d,
@@ -655,7 +712,7 @@ fn draw_titles(
                     &spike.theme,
                     surface.step,
                     tv_scale * ui_scale.0,
-                    spike.opts.mode,
+                    &spike.opts,
                 );
                 material.glyphs = Some(image.clone());
             }
@@ -680,6 +737,7 @@ fn draw_titles(
         let index = surface.index;
         let layout_size = nodes.get(surface.layout).map(|n| n.size()).ok();
         let text = surface.text.clone();
+        let step = surface.step;
         let drawn = surface.drawn.as_mut().expect("drawn above");
         if drawn.laid_out.is_none()
             && let Ok(ink) = nodes.get(drawn.ink)
@@ -702,6 +760,7 @@ fn draw_titles(
                 record
                     .surfaces
                     .resize(index + 1, (Rect::default(), Handle::default().into()));
+                record.textures.resize(index + 1, (UVec2::ZERO, 0.0, 0.0));
             }
             record.surfaces[index] = (
                 rect,
@@ -710,6 +769,9 @@ fn draw_titles(
                     scale_factor: title_scale,
                 },
             );
+            let t = treatment(step);
+            let px = tv_scale * ui_scale.0;
+            record.textures[index] = (drawn.size, t.margin * px, 2.5 * t.glow_sigma * px);
         }
     }
 }
@@ -752,13 +814,16 @@ fn retire_cameras(
 /// and [`SETTLE_FRAMES`] later. A texture screenshot reroutes its camera's
 /// output through a capture texture copied back after the frame, so the TV
 /// doesn't show the titles the frame they draw here; `probe` checks that
-/// without screenshots of the textures.
+/// without screenshots of the textures, and `--readback` reads the textures
+/// off the GPU instead, the frame they draw, the next and settled, with the
+/// TV shot the same frames.
 #[allow(clippy::too_many_arguments)]
 fn checks(
     mut commands: Commands,
     spike: Res<Spike>,
     frame: Res<FrameCount>,
     surfaces: Query<&TitleSurface>,
+    plains: Query<(&Plain, &ComputedNode, &UiGlobalTransform)>,
     mut record: ResMut<Record>,
     window: Query<(), With<PrimaryWindow>>,
     mut exit: MessageWriter<AppExit>,
@@ -781,22 +846,41 @@ fn checks(
                 return;
             }
             record.drawn_at = Some(frame.0);
+            record.plains = vec![None; record.surfaces.len()];
+            for (plain, node, transform) in &plains {
+                if let Some(slot) = record.plains.get_mut(plain.0) {
+                    *slot = Some(Rect::from_center_size(transform.translation, node.size()));
+                }
+            }
             println!(
                 "check: frame {}: {} title(s) laid out, drawn by their cameras this frame",
                 frame.0,
                 at.len()
             );
-            snapshot_textures(&mut commands, &spike, &mut record);
+            if spike.opts.readback {
+                read_textures(&mut commands, frame.0, &mut record, "drawn");
+                snapshot_tv(&mut commands, &spike, &mut record, "drawn", windowed);
+            } else {
+                snapshot_textures(&mut commands, &spike, &mut record);
+            }
+        }
+        Some(at) if frame.0 == at + 1 && spike.opts.readback => {
+            read_textures(&mut commands, frame.0, &mut record, "next");
+            snapshot_tv(&mut commands, &spike, &mut record, "next", windowed);
         }
         Some(at) if frame.0 == at + 2 => {
             snapshot_tv(&mut commands, &spike, &mut record, "early", windowed);
         }
         Some(at) if frame.0 == at + SETTLE_FRAMES => {
+            if spike.opts.readback {
+                read_textures(&mut commands, frame.0, &mut record, "settled");
+            }
             snapshot_tv(&mut commands, &spike, &mut record, "settled", windowed);
         }
         Some(at) => {
-            let done = frame.0 > at + SETTLE_FRAMES
-                && record.shots.lock().unwrap().len() >= record.requested;
+            let received =
+                record.shots.lock().unwrap().len() + record.readbacks.lock().unwrap().len();
+            let done = frame.0 > at + SETTLE_FRAMES && received >= record.requested;
             if done && !record.reported {
                 record.reported = true;
                 report(&spike, &record);
@@ -805,8 +889,7 @@ fn checks(
                 }
             } else if frame.0 > at + SETTLE_FRAMES + 600 && !record.reported {
                 println!(
-                    "check: screenshots incomplete ({} of {}): window frames not presented?",
-                    record.shots.lock().unwrap().len(),
+                    "check: screenshots incomplete ({received} of {}): window frames not presented?",
                     record.requested
                 );
                 record.reported = true;
@@ -900,17 +983,117 @@ fn hex(p: [u8; 4]) -> String {
     format!("#{:02x}{:02x}{:02x}/{:02x}", p[0], p[1], p[2], p[3])
 }
 
+/// Reads every title texture off the GPU this frame, as `rb{index}-{when}`.
+fn read_textures(commands: &mut Commands, frame: u32, record: &mut Record, when: &str) {
+    let handles: Vec<_> = record
+        .surfaces
+        .iter()
+        .map(|(_, target)| target.handle.clone())
+        .collect();
+    for (index, handle) in handles.into_iter().enumerate() {
+        record.requested += 1;
+        let store = record.readbacks.clone();
+        let name = format!("rb{index}-{when}");
+        commands
+            .spawn((Readback::texture(handle), ReadOnce(frame)))
+            .observe(move |done: On<ReadbackComplete>| {
+                store
+                    .lock()
+                    .unwrap()
+                    .entry(name.clone())
+                    .or_insert_with(|| done.data.clone());
+            });
+    }
+}
+
+/// A `Readback` reads its texture every frame until it's removed, so each of
+/// the spike's comes off the frame after it's spawned.
+fn end_readbacks(
+    mut commands: Commands,
+    frame: Res<FrameCount>,
+    reads: Query<(Entity, &ReadOnce), With<Readback>>,
+) {
+    for (entity, read) in &reads {
+        if read.0 < frame.0 {
+            commands.entity(entity).remove::<Readback>();
+        }
+    }
+}
+
+/// Title `index`'s texture as RGBA8 rows: read off the GPU `when`
+/// (`--readback`), else its screenshot.
+fn texture_bytes(
+    record: &Record,
+    shots: &HashMap<String, Image>,
+    index: usize,
+    when: &str,
+) -> Option<(UVec2, Vec<u8>)> {
+    let size = record.textures.get(index)?.0;
+    if let Some(raw) = record
+        .readbacks
+        .lock()
+        .unwrap()
+        .get(&format!("rb{index}-{when}"))
+    {
+        // A texture copy pads each row to 256 bytes.
+        let row = size.x as usize * 4;
+        let stride = row.next_multiple_of(256);
+        let rows = size.y as usize;
+        if raw.len() < stride * rows {
+            return None;
+        }
+        let bytes = (0..rows)
+            .flat_map(|y| raw[y * stride..y * stride + row].iter().copied())
+            .collect();
+        return Some((size, bytes));
+    }
+    let image = shots.get(&format!("title{index}"))?;
+    Some((
+        UVec2::new(image.width(), image.height()),
+        image.data.clone()?,
+    ))
+}
+
+/// The box (min inclusive, max exclusive) of the pixels `pick` keeps.
+fn ink_box(size: UVec2, pick: impl Fn(u32, u32) -> bool) -> Option<URect> {
+    let mut found: Option<URect> = None;
+    for y in 0..size.y {
+        for x in 0..size.x {
+            if pick(x, y) {
+                let p = URect::new(x, y, x + 1, y + 1);
+                found = Some(found.map_or(p, |b| b.union(p)));
+            }
+        }
+    }
+    found
+}
+
 fn report(spike: &Spike, record: &Record) {
     let shots = record.shots.lock().unwrap();
+    let background = Srgba::from(spike.theme.background());
+    let bg =
+        [background.red, background.green, background.blue, 1.0].map(|v| (v * 255.0).round() as u8);
+    let alone = record.surfaces.len() == 1 && !spike.opts.plain;
     for (index, (rect, _)) in record.surfaces.iter().enumerate() {
-        if let Some(texture) = shots.get(&format!("title{index}")) {
-            let (w, h) = (texture.width(), texture.height());
+        let last = if spike.opts.readback {
+            "settled"
+        } else {
+            "drawn"
+        };
+        let texture = texture_bytes(record, &shots, index, last);
+        if let Some((size, bytes)) = &texture {
+            let (w, h) = (size.x, size.y);
+            let alpha = |x: u32, y: u32| bytes[((y * w + x) * 4 + 3) as usize];
+            let texel = |x: u32, y: u32| {
+                let i = ((y * w + x) * 4) as usize;
+                [bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]
+            };
             let mut zero = 0u64;
             let mut max_a = 0u8;
             let mut border_max = 0u8;
             for y in 0..h {
                 for x in 0..w {
-                    let a = rgba(texture, x, y)[3];
+                    let a = alpha(x, y);
                     zero += u64::from(a == 0);
                     max_a = max_a.max(a);
                     if x == 0 || y == 0 || x == w - 1 || y == h - 1 {
@@ -918,31 +1101,110 @@ fn report(spike: &Spike, record: &Record) {
                     }
                 }
             }
+            let corners = [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]
+                .map(|(x, y)| hex(texel(x, y)))
+                .join(" ");
             println!(
-                "check: alpha {index}: texture {w}x{h}, border alpha max {border_max}, alpha 0 on {:.1}% of texels, max alpha {max_a}",
+                "check: alpha {index}: texture {w}x{h} ({}), corner texels {corners}, border alpha max {border_max}, alpha 0 on {:.1}% of texels, max alpha {max_a}",
+                if spike.opts.readback {
+                    "read off the GPU"
+                } else {
+                    "its screenshot"
+                },
                 100.0 * zero as f64 / f64::from(w * h)
             );
+            let (_, margin, reach) = record.textures[index];
+            if let Some(glyphs) = ink_box(*size, |x, y| alpha(x, y) > 0) {
+                let room = [
+                    glyphs.min.x,
+                    glyphs.min.y,
+                    w - glyphs.max.x,
+                    h - glyphs.max.y,
+                ];
+                let least = room.into_iter().min().unwrap_or(0);
+                println!(
+                    "check: margin {index}: glyphs {}/{}/{}/{} px from the surface's left/top/right/bottom, the treatment reaches {reach:.0} px past them: {}",
+                    room[0],
+                    room[1],
+                    room[2],
+                    room[3],
+                    if least as f32 >= reach {
+                        "fits"
+                    } else {
+                        "CLIPPED"
+                    }
+                );
+            }
+            let plain = record.plains.get(index).copied().flatten();
+            if let (Some(plain), Some(tv), Some(glyphs)) = (
+                plain,
+                shots.get("tv-settled"),
+                ink_box(*size, |x, y| alpha(x, y) >= 128),
+            ) {
+                let origin = plain.min.max(Vec2::ZERO).as_uvec2();
+                let area = plain.size().as_uvec2();
+                // Half coverage, as the texture's alpha >= 128 is: the plain
+                // Text is `--gb` blended over the background in linear light.
+                let (a, b) = (
+                    spike.theme.role(Role::Accent).to_linear().red,
+                    spike.theme.background().to_linear().red,
+                );
+                let half = Srgba::from(LinearRgba::rgb((a + b) / 2.0, 0.0, 0.0)).red;
+                let half = (half * 255.0).round() as u8;
+                let drawn = ink_box(area, |x, y| rgba(tv, origin.x + x, origin.y + y)[0] >= half);
+                if let Some(drawn) = drawn {
+                    let m = margin.round() as u32;
+                    println!(
+                        "check: ink {index}: the texture's glyphs {}x{} at +{},+{} past the margin; the plain Text's on the TV {}x{} at +{},+{} in its {:.0}x{:.0} box",
+                        glyphs.width(),
+                        glyphs.height(),
+                        glyphs.min.x as i64 - i64::from(m),
+                        glyphs.min.y as i64 - i64::from(m),
+                        drawn.width(),
+                        drawn.height(),
+                        drawn.min.x,
+                        drawn.min.y,
+                        plain.width(),
+                        plain.height()
+                    );
+                }
+            }
         }
-        let (Some(early), Some(settled)) = (shots.get("tv-early"), shots.get("tv-settled")) else {
+        if spike.opts.readback {
+            let read = |when: &str| texture_bytes(record, &shots, index, when).map(|(_, b)| b);
+            if let (Some(drawn), Some(next), Some(settled)) =
+                (read("drawn"), read("next"), read("settled"))
+            {
+                let differ = |a: &[u8], b: &[u8]| {
+                    a.chunks(4).zip(b.chunks(4)).filter(|(p, q)| p != q).count()
+                };
+                let lit = drawn.chunks(4).filter(|p| p[3] > 0).count();
+                println!(
+                    "check: kept {index}: the texture off the GPU the frame its camera drew ({lit} texels with alpha) vs the next, camera inactive: {} texels differ; vs {} frames later: {}",
+                    differ(&drawn, &next),
+                    SETTLE_FRAMES,
+                    differ(&drawn, &settled)
+                );
+            }
+        }
+        let Some(settled) = shots.get("tv-settled") else {
             continue;
+        };
+        let area = |f: &mut dyn FnMut(u32, u32, [u8; 4])| {
+            for y in rect.min.y.max(0.0) as u32..(rect.max.y as u32).min(settled.height()) {
+                for x in rect.min.x.max(0.0) as u32..(rect.max.x as u32).min(settled.width()) {
+                    f(x, y, rgba(settled, x, y));
+                }
+            }
         };
         let (x0, y0) = (rect.min.x.ceil() as u32 + 1, rect.min.y.ceil() as u32 + 1);
         let corner = rgba(settled, x0, y0);
-        let background = Srgba::from(spike.theme.background());
-        let bg = [background.red, background.green, background.blue, 1.0]
-            .map(|v| (v * 255.0).round() as u8);
-        let mut differ = 0u32;
         let mut lit = 0u32;
         let mut max_grey = 0u8;
-        for y in rect.min.y.max(0.0) as u32..(rect.max.y as u32).min(settled.height()) {
-            for x in rect.min.x.max(0.0) as u32..(rect.max.x as u32).min(settled.width()) {
-                let e = rgba(early, x, y);
-                let s = rgba(settled, x, y);
-                differ += u32::from(e != s);
-                lit += u32::from(s != bg);
-                max_grey = max_grey.max(s[0]);
-            }
-        }
+        area(&mut |_, _, s| {
+            lit += u32::from(s != bg);
+            max_grey = max_grey.max(s[0]);
+        });
         if spike.opts.mode == 1 {
             println!(
                 "check: sampler {index}: the TV's surface corner reads grey {} (the sampled alpha), the brightest {max_grey}",
@@ -955,10 +1217,38 @@ fn report(spike: &Spike, record: &Record) {
                 hex(bg)
             );
         }
-        println!(
-            "check: inactive {index}: the TV's surface 1 frame after its camera went inactive vs {} frames after: {differ} px differ, {lit} px drawn",
-            SETTLE_FRAMES - 1
-        );
+        for (when, label) in [
+            ("tv-drawn", "the frame its camera drew"),
+            ("tv-next", "the next, camera inactive"),
+            ("tv-early", "1 frame after its camera went inactive"),
+        ] {
+            let Some(other) = shots.get(when) else {
+                continue;
+            };
+            let mut differ = 0u32;
+            area(&mut |x, y, s| differ += u32::from(rgba(other, x, y) != s));
+            println!(
+                "check: inactive {index}: the TV's surface {label} vs {} frames after the draw: {differ} px differ, {lit} px drawn",
+                SETTLE_FRAMES
+            );
+        }
+        if alone && spike.opts.mode == 0 {
+            // Alone on screen, the surface's outermost ring is the background
+            // unless an effect runs into the margin's edge.
+            let (x1, y1) = (rect.min.x.ceil() as u32, rect.min.y.ceil() as u32);
+            let (x2, y2) = (rect.max.x as u32 - 1, rect.max.y as u32 - 1);
+            let mut worst = 0u8;
+            area(&mut |x, y, s| {
+                if x == x1 || y == y1 || x == x2 || y == y2 {
+                    for (v, b) in s.iter().zip(bg).take(3) {
+                        worst = worst.max(v.abs_diff(b));
+                    }
+                }
+            });
+            println!(
+                "check: edge {index}: the surface's outermost ring is at most {worst} levels off the background"
+            );
+        }
     }
 }
 
@@ -1146,7 +1436,12 @@ fn headless_title(app: &mut App) -> (Vec2, Vec2) {
         .world_mut()
         .resource_mut::<Assets<TitleMaterial>>()
         .add(TitleMaterial {
-            params: params(&theme, Step::Hero, 1.0, 0),
+            params: params(
+                &theme,
+                Step::Hero,
+                1.0,
+                &Opts::parse(&[]).expect("the defaults parse"),
+            ),
             glyphs: None,
         });
     let margin = treatment(Step::Hero).margin;
