@@ -1273,7 +1273,9 @@ nobody at the Mac. Two host hazards the runner works around: a boot started stra
 RPCS3 exited hangs at `ready` on a CoreMIDI client error (`-304`; 8 of 8 such boots, none of 46 started 30
 s after an exit), so `oracle divergence run` waits `--gap-secs` (30); and 3 of AF.11's 50 boots died on a
 guest lwmutex check (`lv2_lwmutex::try_own`) or never flipped, so a replay that hasn't reached its pause
-in 120 s is tried again, up to 3 times.
+in 120 s is tried again, up to 3 times. Never run an RPCS3 binary by hand with the real `HOME`, not even
+`--version`: it rewrites `RPCS3.log`, `RPCS3.log.gz` and `RPCS3.buf` under `~/Library/Caches/rpcs3`
+(AF.7's and AG.1's build checks did, and the crash log AF.1 read there is gone); point `HOME` at an oracle home.
 
 ### Memory through PINE
 
