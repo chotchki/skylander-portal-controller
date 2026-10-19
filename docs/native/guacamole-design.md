@@ -6,7 +6,8 @@ This file owns the Guacamole track ([`openspec/config.yaml`](../../openspec/conf
 changes under `openspec/changes/`: [`aa-guacamole-shell/`](../../openspec/changes/aa-guacamole-shell/proposal.md),
 [`ac-giants-decode-gate/`](../../openspec/changes/ac-giants-decode-gate/proposal.md),
 [`ae-animated-turntable/`](../../openspec/changes/ae-animated-turntable/proposal.md),
-[`af-oracle-foundation/`](../../openspec/changes/af-oracle-foundation/proposal.md) and
+[`af-oracle-foundation/`](../../openspec/changes/af-oracle-foundation/proposal.md),
+[`ag-walk-one-level/`](../../openspec/changes/ag-walk-one-level/proposal.md) and
 [`ap-tv-ui-on-bevy-widgets/`](../../openspec/changes/ap-tv-ui-on-bevy-widgets/proposal.md). Archived: AB
 ([`2026-10-18-ab-giants-extract-and-intros/`](../../openspec/changes/archive/2026-10-18-ab-giants-extract-and-intros/proposal.md)),
 whose specs now live in [`openspec/specs/guacamole/`](../../openspec/specs/guacamole/). The later rungs of the
@@ -1699,7 +1700,7 @@ names (M0-M9, G1, G2) are the stable handles. Every rung is built and checked on
 | AC | `ac-giants-decode-gate`, in parallel with AA and AB | nothing yet (a dev viewer) | IGZ v6, `igImage2`, Edge and a Havok 2011.2 skeleton plus one clip, matched against an RSX capture. PASSED 2026-10-18 on everything the oracle drew of Eruptor, all four layers, so Giants stays first; AC.24 and AC.25 (L8 against a bound unit, two upgrade branch images; AC.21 matched the other 14) hold the gate open, each one attended session away (Why Giants first) |
 | AE, M1 | `ae-animated-turntable` | their figure as an animated, textured turntable on the TV | the first 3D, in the one remaster look; the Mac's renderer floor measured; the disc roster replaces the interim catalogue |
 | AF | `af-oracle-foundation` | nothing | the oracle foundation: divergence measured, frame-locked two-pad input, tolerance metrics. Lands before any gameplay comparison |
-| AG, M2 | backlog | walk one level | level scene, collision, character controller, camera, feel checked against the oracle; the input spec, with prompts that match the physical pad |
+| AG, M2 | `ag-walk-one-level` | walk one level | level scene, collision, character controller, camera, feel checked against the oracle; the input spec, with prompts that match the physical pad |
 | AH, M3 | backlog | first fight: one enemy, XP and gold earned and kept on the kid's profile | combat basics; the per-profile figure-progression store, with the phone's figure editor on it |
 | AI, M4 | backlog | first couch battle: one Giants PvP arena, two pads, two phones | a second pad and a second profile's figure in play; the PvP rules as the oracle shows them |
 | AJ, M5 | backlog | the level comes alive | the tfbScript VM and its built-ins running the original scripts |
