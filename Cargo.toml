@@ -5,6 +5,7 @@ members = [
     "crates/guac-extract",
     "crates/guac-formats",
     "crates/guac-ir",
+    "crates/guac-motion",
     "crates/guac-oracle",
     "crates/guac-server",
     "crates/guacamole",

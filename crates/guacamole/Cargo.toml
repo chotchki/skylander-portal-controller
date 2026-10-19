@@ -50,7 +50,21 @@ mp4 = "0.14"
 # Bevy gets it, since bevy_audio unwraps that open and a bad file would panic.
 rodio = { version = "0.22", default-features = false, features = ["mp3"] }
 
+# The physics seam (openspec AG.4, design decision 3): queries only, no solver.
+# Pinned by rev because crates.io's newest avian3d (0.7.0, checked 2026-10-19)
+# is on Bevy 0.19; `main` at 1070759 is "Update to Bevy 0.20 (#1084)", avian3d
+# 0.8.0-dev on Bevy 0.20 and parry3d 0.31. Move to 0.8 from crates.io when it
+# publishes. `3d` and `parry-f32` only: no debug renderer, picking, scene or
+# mesh colliders.
+avian3d = { git = "https://github.com/avianphysics/avian", rev = "1070759b2145dc078abedace91dc7fe78013a45c", default-features = false, features = [
+    "3d",
+    "parry-f32",
+] }
+guac-motion = { path = "../guac-motion" }
+
 [dev-dependencies]
+# The seam's shared test table, run through the Avian side (physics.rs).
+guac-motion = { path = "../guac-motion", features = ["conformance"] }
 tokio = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
