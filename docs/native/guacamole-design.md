@@ -1223,7 +1223,7 @@ against (CLAUDE.md's two-layer rule).
 | `SAVESTATE` | O3 | the game window's save path: RPCS3 stops, writes the state and reboots from it to Start Paused's pause, and P5's `RECONNECT` follows. `OK` means asked, not saved: RPCS3 turns a save down when it can't lock an SPU asleep in an unsavable call for 5 s or more (a long pause counts), saying so only in its log (`failed to lock SPU threads execution`), so `Control::savestate` tails the log and fails at once and the runner asks again 30 flips on (4 refusals in AF.11's 24 asks) |
 | `PAD <port> <flip> <d1> <d2> <lx> <ly> <rx> <ry>` | O4 | from `<flip>` on, port 0 or 1 reads those digital words (`CELL_PAD_CTRL_*` bits, no PS button) and stick bytes (128 centred, y 0 forward), held until that port's next entry; only ahead of the counter (`ERR past`); 65,536 entries a port |
 | `PAD_CLEAR` | O4 | both pads back to the host's input, P6's presses included |
-| `PAD_STATE <port> [<flip>]` | O4 | what the guest read: its last read, or a flip's first, with the flip's read count and how many reads differed from its first (Giants reads each port once a flip, so 0 so far); the last 4,096 flips a port |
+| `PAD_STATE <port> [<flip>]` | O4 | what the guest read: its last read, or a flip's first, with the flip's read count and how many reads differed from its first (Giants reads each port once a game frame, which is once a flip bar a hitch that leaves a flip none and another two, AG.35; 0 differed so far); the last 4,096 flips a port |
 
 The frame lock: O4 picks a port's entry inside the guest's own pad read (`cellPad.cpp`'s `pad_get_data`,
 under `pad::g_pad_mutex`, which the verbs take too) from the counter it reads there, so every read the
