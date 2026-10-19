@@ -385,8 +385,10 @@ only the resumer's own slots, and its load answers 409 on a slot another profile
 offer comes from the saved layout, not the live portal, and a kid's layout is re-saved only while they're
 unlocked, so the 409 covers a saved slot another kid filled since (usually while the resumer was locked,
 before the prompt), plus two phones' PLACEs racing for the same empty slot. A resumed figure refused that
-way stays off and the phone toasts "Resume slot N: HTTP 409". The product keeps both as they were: its
-resume reloads every slot from the resumer's working copy, and SPEC Q105 leaves co-op resume open there.
+way stays off, and the phone's toast says so in a kid's words, composed from its own portal view and
+profile list (AB.23): "Bash stayed off the portal: Alice's Gill Grunt is in that spot." ("another
+player's" when it can't name them). The product keeps both as they were: its resume reloads every slot
+from the resumer's working copy, and SPEC Q105 leaves co-op resume open there.
 A `PreUpdate` system
 ([`crates/guacamole/src/cards.rs`](../../crates/guacamole/src/cards.rs)) drains the channel into `PortalCards`
 through a pure reducer, and the TV rebuilds its cards from that. Failure injection works against either

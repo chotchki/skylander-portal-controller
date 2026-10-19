@@ -107,7 +107,7 @@ tree (screen, join line, player count, each card's lines, portrait,
 owner pip and rect), not pixels.
 
 [`tests/guacamole_intro.rs`](tests/guacamole_intro.rs) (4 tests,
-openspec AB.11, AB.21 and AB.22) is guacamole-only too and needs ffmpeg (`brew install
+openspec AB.11, AB.21, AB.22 and AB.23) is guacamole-only too and needs ffmpeg (`brew install
 ffmpeg`; found on PATH or in Homebrew's folders). Each test builds an
 `IntroFixture` first: a synthetic Giants dump (a PARAM.SFO and a text
 file) and a finished extract of it whose intros are ffmpeg's `testsrc`
@@ -128,7 +128,10 @@ session. AB.22's act in the same test binds a second profile, Bob, to
 that socket's session to place a figure (the server admits two sessions
 and the socket and the phone hold both), then resumes him on the phone
 after Alice locks it, and checks his RESUME listed and loaded only his
-own figure with no `slot_changed` on Alice's. Every guacamole the
+own figure with no `slot_changed` on Alice's. AB.23's beat locks Bob,
+fills his saved slot with Alice's figure from the socket's session and
+checks his RESUME is refused with the phone's toast naming his figure
+and hers, and no `slot_changed` at all. Every guacamole the
 harness spawns plays its intros muted (`GUAC_MUTE=1`).
 
 Product-only tests skip with `SKIPPED under E2E_APP=guacamole,

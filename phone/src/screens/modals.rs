@@ -3,12 +3,41 @@ use leptos::prelude::*;
 use crate::api::{clear_resume, post_load, post_reset, post_reset_figure};
 use crate::components::{BezelSize, DisplayHeading, FramedPanel, GoldBezel, HeadingSize};
 use crate::gloo_timer;
-use crate::model::{SlotState, UnlockedProfile};
-use crate::{push_toast, ResetTarget, ResumeOffer, ToastMsg};
+use crate::model::{PublicProfile, Slot, SlotState, UnlockedProfile, SLOT_COUNT};
+use crate::{push_toast, push_toast_level, ResetTarget, ResumeOffer, ToastLevel, ToastMsg};
+
+/// What the phone says when guacamole refuses one of RESUME's loads (a 409:
+/// another player's figure holds that slot, openspec AB.22), in words a kid
+/// can read (AB.23): the figure that stayed off, and whose figure is in its
+/// spot as this phone's portal shows it, or "another player's" when the phone
+/// can't tell. The product never answers 409 on a load.
+pub(crate) fn resume_refused_message(
+    figure: &str,
+    held: &SlotState,
+    resumer: Option<&str>,
+    profiles: &[PublicProfile],
+) -> String {
+    let holder = match held {
+        SlotState::Loaded {
+            display_name,
+            placed_by: Some(owner),
+            ..
+        } if Some(owner.as_str()) != resumer => match profiles.iter().find(|p| &p.id == owner) {
+            Some(p) => format!("{}'s {display_name}", p.display_name),
+            None => format!("another player's {display_name}"),
+        },
+        _ => "another player's figure".to_string(),
+    };
+    format!("{figure} stayed off the portal: {holder} is in that spot.")
+}
 
 #[component]
 pub(crate) fn ResumeModal(
     resume_offer: RwSignal<Option<ResumeOffer>>,
+    /// The live portal and the profiles behind its owner pips: a refused
+    /// RESUME load names whose figure holds the slot from these (AB.23).
+    portal: RwSignal<[Slot; SLOT_COUNT]>,
+    known_profiles: RwSignal<Vec<PublicProfile>>,
     /// The currently unlocked profile — its `id` is what
     /// `/api/profiles/:id/clear_resume` keys on. Lifted from the lib
     /// signal so the Start Fresh handler can drop the saved layout
@@ -107,14 +136,24 @@ pub(crate) fn ResumeModal(
                                 };
                                 resume_offer.set(None);
                                 let slots = offer.slots.clone();
+                                let resumer = unlocked_profile.get_untracked().map(|p| p.id);
                                 leptos::task::spawn_local(async move {
                                     for (i, state) in slots.iter().enumerate() {
-                                        if let SlotState::Loaded { figure_id: Some(id), .. } = state {
+                                        if let SlotState::Loaded { figure_id: Some(id), display_name, .. } = state {
                                             let slot_1_indexed = (i + 1) as u8;
                                             let id = id.clone();
                                             match post_load(slot_1_indexed, &id).await {
                                                 Ok(()) => {}
                                                 Err(e) if e.contains("429") => {}
+                                                // guacamole only: another player's figure
+                                                // holds the slot (AB.22), so say whose.
+                                                Err(e) if e == "HTTP 409" => {
+                                                    let held = portal.with_untracked(|p| p[i].state.clone());
+                                                    let message = known_profiles.with_untracked(|ps| {
+                                                        resume_refused_message(display_name, &held, resumer.as_deref(), ps)
+                                                    });
+                                                    push_toast_level(toasts, &message, ToastLevel::Warn);
+                                                }
                                                 Err(e) => {
                                                     push_toast(
                                                         toasts,
@@ -388,5 +427,76 @@ fn ResetFlakes() -> impl IntoView {
                 </div>
             }.into_any()).collect_view()}
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn profile(id: &str, name: &str) -> PublicProfile {
+        PublicProfile {
+            id: id.to_string(),
+            display_name: name.to_string(),
+            color: "#e8423f".to_string(),
+            kaos_enabled: false,
+        }
+    }
+
+    fn loaded(name: &str, placed_by: Option<&str>) -> SlotState {
+        SlotState::Loaded {
+            figure_id: Some(format!("{}-id", name.to_lowercase())),
+            display_name: name.to_string(),
+            placed_by: placed_by.map(str::to_string),
+        }
+    }
+
+    /// AB.23: the toast names the figure that stayed off and whose figure
+    /// holds its spot, when the phone's portal and profiles say so.
+    #[test]
+    fn a_refused_resume_names_the_figure_and_who_holds_its_spot() {
+        let profiles = [profile("alice", "Alice"), profile("bob", "Bob")];
+        assert_eq!(
+            resume_refused_message(
+                "Bash",
+                &loaded("Gill Grunt", Some("alice")),
+                Some("bob"),
+                &profiles
+            ),
+            "Bash stayed off the portal: Alice's Gill Grunt is in that spot."
+        );
+        // A holder this phone has no profile for yet.
+        assert_eq!(
+            resume_refused_message(
+                "Bash",
+                &loaded("Gill Grunt", Some("carol")),
+                Some("bob"),
+                &profiles
+            ),
+            "Bash stayed off the portal: another player's Gill Grunt is in that spot."
+        );
+    }
+
+    /// A portal view that hasn't caught up (the slot empty, loading, the
+    /// resumer's own or nobody's) still says which figure stayed off and why.
+    #[test]
+    fn a_stale_portal_view_still_says_why() {
+        let profiles = [profile("alice", "Alice")];
+        let generic = "Spyro stayed off the portal: another player's figure is in that spot.";
+        for held in [
+            SlotState::Empty,
+            SlotState::Loading {
+                figure_id: None,
+                placed_by: Some("alice".to_string()),
+            },
+            loaded("Eruptor", Some("bob")),
+            loaded("Eruptor", None),
+        ] {
+            assert_eq!(
+                resume_refused_message("Spyro", &held, Some("bob"), &profiles),
+                generic,
+                "{held:?}"
+            );
+        }
     }
 }

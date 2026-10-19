@@ -58,7 +58,7 @@ When a phone places the figure a slot already holds, for the profile that placed
 - **THEN** only the one taken off plays its intro
 
 ### Requirement: A resume re-places only the resuming kid's own figures
-The layout saved for "resume last setup?" is the whole portal as it was, with the kid who placed each figure. When a kid accepts it, guacamole SHALL list and re-place only the figures that kid placed. Another kid's figure SHALL keep its owner and play no intro again, and a resume SHALL NOT put a figure into a slot that holds another kid's figure.
+The layout saved for "resume last setup?" is the whole portal as it was, with the kid who placed each figure. When a kid accepts it, guacamole SHALL list and re-place only the figures that kid placed. Another kid's figure SHALL keep its owner and play no intro again, and a resume SHALL NOT put a figure into a slot that holds another kid's figure. The resuming kid's phone SHALL then say which figure stayed off and why.
 
 #### Scenario: The second kid resumes the same layout
 - **WHEN** two kids each placed a figure, and the one whose figure was taken off since accepts "resume last setup?"
@@ -66,7 +66,7 @@ The layout saved for "resume last setup?" is the whole portal as it was, with th
 
 #### Scenario: Another kid filled the slot since
 - **WHEN** a kid resumes a layout whose slot now holds another kid's figure
-- **THEN** that figure stays on the portal as the other kid's and the resuming kid's figure isn't placed there
+- **THEN** that figure stays on the portal as the other kid's, the resuming kid's figure isn't placed there, and the resuming kid's phone says their figure stayed off because the other kid's figure, named with the other kid's name, is in that spot
 
 ### Requirement: Intros wait for extraction
 While extraction is still running or unavailable, a placement SHALL show the figure's card without an intro. Placements made after extraction finishes SHALL play their intros.
