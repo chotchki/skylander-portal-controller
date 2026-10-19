@@ -10,7 +10,9 @@
 //!   `SAVESTATE` for the region-by-region memory diff;
 //! - set B every [`EVERY`] flips up to the end, then the same `SCREENSHOT`.
 //!   Set A against set B at the end flip says whether pausing to observe moves
-//!   the run.
+//!   the run;
+//! - set C (AF.12) at set B's checkpoints with a `SCREENSHOT` at F0 and at each
+//!   one, so frames compare where the run is live, not only at its end.
 //!
 //! An observation, read through PINE at a `PAUSE_AT` pause: the hero's and the
 //! camera's placement and every game actor ([`crate::actors`]), and the RNG
@@ -22,17 +24,21 @@
 //! only outside a work tree); [`Report`] turns the records of one output dir
 //! into spreads per checkpoint, usable horizons, RNG distances, FLIP between
 //! end shots, set A against set B and how the spreads track the host's load.
-//! `oracle divergence run|report` drives both; AF.12's leave-one-out and
-//! perturbation runs reuse them.
+//! `oracle divergence run|report` drives both. AF.12's [`calibrate`] holds the
+//! leave-one-out over a measurement's groups and the check of a candidate
+//! replay against a reference group, with `guac_oracle::tolerance`'s defaults;
+//! a [`Perturbation`] makes the candidates (`oracle divergence run --perturb`,
+//! `oracle divergence check`).
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use guac_oracle::input::InputScript;
+use guac_oracle::input::{InputScript, Step, Stick};
 use serde::{Deserialize, Serialize};
 
 use crate::actors::Counts;
 
+pub mod calibrate;
 mod report;
 mod run;
 
@@ -79,6 +85,9 @@ pub enum Set {
     A,
     /// Every [`Plan::every`] flips, then `SCREENSHOT`.
     B,
+    /// Set B's checkpoints with a `SCREENSHOT` at F0 and at each of them, the
+    /// last being set B's end shot.
+    C,
 }
 
 impl Set {
@@ -86,7 +95,8 @@ impl Set {
         match text {
             "A" | "a" => Ok(Set::A),
             "B" | "b" => Ok(Set::B),
-            other => bail!("a set is A or B, not {other:?}"),
+            "C" | "c" => Ok(Set::C),
+            other => bail!("a set is A, B or C, not {other:?}"),
         }
     }
 }
@@ -96,6 +106,7 @@ impl std::fmt::Display for Set {
         f.write_str(match self {
             Set::A => "A",
             Set::B => "B",
+            Set::C => "C",
         })
     }
 }
@@ -163,11 +174,12 @@ impl Plan {
     }
 
     /// The offsets from F0 a replay pauses and reads at, F0 itself not
-    /// counted: set A the end alone, set B every `every` flips and the end.
+    /// counted: set A the end alone, sets B and C every `every` flips and the
+    /// end.
     pub fn checkpoints(&self) -> Vec<u64> {
         match self.set {
             Set::A => vec![self.end],
-            Set::B => {
+            Set::B | Set::C => {
                 let mut offsets: Vec<u64> = (1..=self.end / self.every)
                     .map(|k| k * self.every)
                     .collect();
@@ -187,6 +199,136 @@ impl Plan {
     /// A set A replay ends in a `SAVESTATE`.
     pub fn saves_at_end(&self) -> bool {
         self.set == Set::A
+    }
+
+    /// A set C replay takes a `SCREENSHOT` at F0 and at every checkpoint.
+    pub fn shoots_checkpoints(&self) -> bool {
+        self.set == Set::C
+    }
+
+    /// The plan with `perturbation` applied to its script, named
+    /// `<script>_<perturbation's name>`.
+    pub fn perturbed(&self, perturbation: &Perturbation) -> Result<Self> {
+        let script = perturbation.apply(&self.script)?;
+        let name = format!("{}_{}", self.script_name, perturbation.name());
+        Self::new(name, &script.to_ron(), self.set, self.end, self.every)
+    }
+}
+
+/// A deliberate change to an input script (AF.12's perturbation runs): the
+/// smallest one a comparison fails on is that metric's sensitivity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Perturbation {
+    /// The steps at these offsets moved `by` flips (negative: earlier), each
+    /// port holding what it held before until the moved step lands: a press
+    /// and its release move together when both are named, a stick's push
+    /// alone when only it is.
+    Shift { at: Vec<u64>, by: i64 },
+    /// Port 0's left stick in the step at `at` set to (x, y).
+    Stick { at: u64, x: u8, y: u8 },
+}
+
+impl Perturbation {
+    /// `shift:<at>[,<at>...]:<by>` (`shift:300,306:+3`) or
+    /// `stick:<at>:<x>,<y>` (`stick:60:133,0`).
+    pub fn parse(text: &str) -> Result<Self> {
+        let parts: Vec<&str> = text.split(':').collect();
+        match parts.as_slice() {
+            ["shift", at, by] => {
+                let at = at
+                    .split(',')
+                    .map(|a| a.parse().with_context(|| format!("offset {a:?}")))
+                    .collect::<Result<Vec<u64>>>()?;
+                let by: i64 = by
+                    .trim_start_matches('+')
+                    .parse()
+                    .with_context(|| format!("shift {by:?}"))?;
+                if by == 0 {
+                    bail!("a shift of 0 flips changes nothing");
+                }
+                Ok(Perturbation::Shift { at, by })
+            }
+            ["stick", at, xy] => {
+                let (x, y) = xy
+                    .split_once(',')
+                    .with_context(|| format!("a stick is <x>,<y>, not {xy:?}"))?;
+                Ok(Perturbation::Stick {
+                    at: at.parse().with_context(|| format!("offset {at:?}"))?,
+                    x: x.parse().with_context(|| format!("axis {x:?}"))?,
+                    y: y.parse().with_context(|| format!("axis {y:?}"))?,
+                })
+            }
+            _ => bail!(
+                "a perturbation is shift:<at>[,<at>...]:<by> or stick:<at>:<x>,<y>, not {text:?}"
+            ),
+        }
+    }
+
+    /// A label-safe name: `shift60p3`, `shift300and306m2`, `stick60x133y0`.
+    pub fn name(&self) -> String {
+        match self {
+            Perturbation::Shift { at, by } => {
+                let at: Vec<String> = at.iter().map(u64::to_string).collect();
+                let sign = if *by < 0 { 'm' } else { 'p' };
+                format!("shift{}{sign}{}", at.join("and"), by.unsigned_abs())
+            }
+            Perturbation::Stick { at, x, y } => format!("stick{at}x{x}y{y}"),
+        }
+    }
+
+    /// The script with the change made; refused when a named step isn't in
+    /// it, or a shift would land on or past a neighbouring step of the same
+    /// port (which would reorder the script rather than move a press).
+    pub fn apply(&self, script: &InputScript) -> Result<InputScript> {
+        let mut steps = script.steps().to_vec();
+        let named = |steps: &[Step], at: u64| -> Result<usize> {
+            steps
+                .iter()
+                .position(|s| s.at == at)
+                .with_context(|| format!("the script has no step at offset {at}"))
+        };
+        match self {
+            Perturbation::Shift { at, by } => {
+                let moved: Vec<usize> = at
+                    .iter()
+                    .map(|&a| named(&steps, a))
+                    .collect::<Result<_>>()?;
+                for &i in &moved {
+                    let to = steps[i]
+                        .at
+                        .checked_add_signed(*by)
+                        .with_context(|| format!("offset {} moved {by}", steps[i].at))?;
+                    let (lo, hi) = (steps[i].at.min(to), steps[i].at.max(to));
+                    for &port in steps[i].pads.0.keys() {
+                        let crossed = steps.iter().enumerate().any(|(j, s)| {
+                            !moved.contains(&j)
+                                && s.pads.0.contains_key(&port)
+                                && (lo..=hi).contains(&s.at)
+                                && s.at != steps[i].at
+                        });
+                        if crossed {
+                            bail!(
+                                "moving offset {} by {by} would cross another step of port {port}",
+                                steps[i].at
+                            );
+                        }
+                    }
+                }
+                for &i in &moved {
+                    steps[i].at = steps[i].at.saturating_add_signed(*by);
+                }
+            }
+            Perturbation::Stick { at, x, y } => {
+                let i = named(&steps, *at)?;
+                let pad = steps[i]
+                    .pads
+                    .0
+                    .get_mut(&0)
+                    .with_context(|| format!("the step at {at} doesn't set port 0"))?;
+                pad.left = Stick { x: *x, y: *y };
+            }
+        }
+        InputScript::new(steps).context("the perturbed script")
     }
 }
 
@@ -258,6 +400,14 @@ pub struct EndShot {
     pub lit_share: f64,
 }
 
+/// A set C shot at one checkpoint: its offset from F0 and the shot.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CheckpointShot {
+    pub offset: u64,
+    #[serde(flatten)]
+    pub shot: EndShot,
+}
+
 /// The end state, copied into the replay's dir.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EndState {
@@ -292,6 +442,10 @@ pub struct ReplayRecord {
     /// F0 first, then each checkpoint in order; the last is the end flip.
     pub observations: Vec<Observation>,
     pub shot: Option<EndShot>,
+    /// Set C: the shot at F0 and at each checkpoint, in order (the last is
+    /// [`ReplayRecord::shot`] too).
+    #[serde(default)]
+    pub shots: Vec<CheckpointShot>,
     pub saved: Option<EndState>,
     /// RPCS3's reason each time it turned the end `SAVESTATE` down.
     pub save_refusals: Vec<String>,
@@ -318,6 +472,16 @@ impl ReplayRecord {
     /// The last observation's offset (the end flip).
     pub fn end(&self) -> Option<u64> {
         self.observations.last().map(|o| o.offset)
+    }
+
+    /// The shot taken at `offset`: set C's at a checkpoint, or any set's end
+    /// shot at the end flip.
+    pub fn shot_at(&self, offset: u64) -> Option<&EndShot> {
+        self.shots
+            .iter()
+            .find(|s| s.offset == offset)
+            .map(|s| &s.shot)
+            .or_else(|| self.shot.as_ref().filter(|_| self.end() == Some(offset)))
     }
 
     pub fn write(&self, dir: &Path) -> Result<PathBuf> {
@@ -381,7 +545,86 @@ mod tests {
         assert!(Plan::named("idle", Set::B, 60, 0).is_err());
         assert!(Plan::new("a-b", IDLE, Set::A, 60, 60).is_err());
         assert_eq!(Set::parse("b").unwrap(), Set::B);
-        assert!(Set::parse("C").is_err());
+        assert!(Set::parse("D").is_err());
+        // Set C pauses where set B does and shoots at each pause.
+        let c = Plan::named("walk", Set::C, END, EVERY).unwrap();
+        assert_eq!(c.checkpoints(), b.checkpoints());
+        assert!(c.shoots_checkpoints() && !b.shoots_checkpoints() && !c.saves_at_end());
+        assert_eq!(c.label(0), "walk-C-00");
+    }
+
+    #[test]
+    fn perturbations_parse_name_and_move_presses_and_sticks() {
+        use guac_oracle::input::{Button, Stick};
+        let walk = Plan::named("walk", Set::C, END, EVERY).unwrap();
+        // The stick's push 3 flips late: forward from 63, the turn still at 150.
+        let late = Perturbation::parse("shift:60:+3").unwrap();
+        assert_eq!(
+            late,
+            Perturbation::Shift {
+                at: vec![60],
+                by: 3
+            }
+        );
+        assert_eq!(late.name(), "shift60p3");
+        let plan = walk.perturbed(&late).unwrap();
+        assert_eq!(plan.script_name, "walk_shift60p3");
+        assert_eq!(plan.label(2), "walk_shift60p3-C-02");
+        let at = |p: &Plan, offset| p.script.state_at(0, offset).unwrap();
+        assert!(at(&plan, 62).left.is_centred());
+        assert_eq!(at(&plan, 63).left, Stick { x: 128, y: 0 });
+        assert_eq!(at(&plan, 150).left, Stick { x: 0, y: 128 });
+        // The jump moved with its release: down 297-302, up from 303.
+        let early = Perturbation::parse("shift:300,306:-3").unwrap();
+        assert_eq!(early.name(), "shift300and306m3");
+        let plan = walk.perturbed(&early).unwrap();
+        assert!(at(&plan, 296).buttons.is_empty());
+        assert_eq!(
+            at(&plan, 297).buttons.iter().collect::<Vec<_>>(),
+            [&Button::South]
+        );
+        assert!(at(&plan, 303).buttons.is_empty());
+        // The forward push turned: x 133 is about 2.2 deg right of forward.
+        let turned = Perturbation::parse("stick:60:133,0").unwrap();
+        assert_eq!(turned.name(), "stick60x133y0");
+        let plan = walk.perturbed(&turned).unwrap();
+        assert_eq!(at(&plan, 100).left, Stick { x: 133, y: 0 });
+        assert_eq!(at(&plan, 150).left, Stick { x: 0, y: 128 });
+        // The rest of the script is the walk's.
+        assert_eq!(plan.script.state_at(1, 0), walk.script.state_at(1, 0));
+        assert!(plan.script.state_at(0, 1_800).unwrap().left.is_centred());
+        // Refused: a step the script hasn't, a move onto or past a neighbour
+        // of the same port, a shift of 0, a stick on a step without port 0,
+        // and what doesn't parse.
+        for bad in [
+            "shift:61:+3",
+            "shift:60:+90",
+            "shift:300:+6",
+            "stick:61:1,2",
+        ] {
+            let p = Perturbation::parse(bad).unwrap();
+            assert!(walk.perturbed(&p).is_err(), "{bad}");
+        }
+        for bad in [
+            "shift:60:0",
+            "shift:60",
+            "stick:60:256,0",
+            "stick:60:1",
+            "twist:60:1",
+        ] {
+            assert!(Perturbation::parse(bad).is_err(), "{bad}");
+        }
+        let idle = Plan::named("idle", Set::C, END, EVERY).unwrap();
+        let only_port_1 = InputScript::from_ron("(steps: [(at: 0, pads: {1: ()})])").unwrap();
+        assert!(
+            Perturbation::Stick { at: 0, x: 1, y: 2 }
+                .apply(&only_port_1)
+                .is_err()
+        );
+        assert!(
+            idle.perturbed(&Perturbation::parse("shift:0:+1").unwrap())
+                .is_ok()
+        );
     }
 
     #[test]

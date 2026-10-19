@@ -11,7 +11,7 @@ use skylander_core::SlotIndex;
 use skylander_rpcs3_control::PortalDriver;
 
 use super::{
-    EndShot, EndState, Host, Observation, Plan, Pose, ReplayRecord, RngObservation,
+    CheckpointShot, EndShot, EndState, Host, Observation, Plan, Pose, ReplayRecord, RngObservation,
     SAVE_RETRY_FLIPS, SAVE_TRIES, actors_file, peek_file,
 };
 use crate::actors::{self, ActorFrame};
@@ -105,6 +105,7 @@ pub fn run_replay(inputs: &Inputs, plan: &Plan, replay: u32, out: &Path) -> Resu
         run_secs: driven.run_secs,
         observations: driven.observations,
         shot: driven.shot,
+        shots: driven.shots,
         saved: driven.saved,
         save_refusals: driven.save_refusals,
         save_error: driven.save_error,
@@ -125,6 +126,7 @@ struct Driven {
     run_secs: f64,
     observations: Vec<Observation>,
     shot: Option<EndShot>,
+    shots: Vec<CheckpointShot>,
     saved: Option<EndState>,
     save_refusals: Vec<String>,
     save_error: Option<String>,
@@ -156,6 +158,12 @@ fn drive(inputs: &Inputs, plan: &Plan, dir: &Path) -> Result<Driven> {
     let mut pine = pine_connect(&oracle.run_paths().pine_socket, Duration::from_secs(30))?;
     rng::check_title(&mut pine)?;
     let mut observations = vec![observe(&mut pine, 0, f0, dir)?];
+    // Set C: a shot at every pause, after the reads, so it pauses where set B
+    // does, only for longer (AF.12: its trajectories matched set B's).
+    let mut shots = Vec::new();
+    if plan.shoots_checkpoints() {
+        shots.push(checkpoint_shot(&control, 0, dir)?);
+    }
     let loaded = control.load_script(&plan.script)?;
 
     // Only the running stretches count: a checkpoint's reads happen at a pause.
@@ -170,15 +178,15 @@ fn drive(inputs: &Inputs, plan: &Plan, dir: &Path) -> Result<Driven> {
             .with_context(|| format!("the checkpoint at F0 + {offset}"))?;
         running += t.elapsed();
         observations.push(observe(&mut pine, offset, paused.frames, dir)?);
+        if plan.shoots_checkpoints() {
+            shots.push(checkpoint_shot(&control, offset, dir)?);
+        }
         last = offset;
     }
 
-    let shot = control.screenshot(dir, STEP_WAIT)?;
-    let shot = EndShot {
-        file: file_name(&shot.path),
-        flip: shot.flip,
-        pixels_sha256: shot.frame.pixels_sha256.clone(),
-        lit_share: shot.frame.lit_share(),
+    let shot = match shots.last() {
+        Some(last) => last.shot.clone(),
+        None => end_shot(&control, dir)?,
     };
     // RPCS3's PINE thread blocks reading its one client, and a stop (a save,
     // the shutdown) waits on that thread: a held connection hangs it (AF.8).
@@ -212,11 +220,27 @@ fn drive(inputs: &Inputs, plan: &Plan, dir: &Path) -> Result<Driven> {
         run_secs: running.as_secs_f64(),
         observations,
         shot: Some(shot),
+        shots,
         saved,
         save_refusals,
         save_error,
         shutdown,
     })
+}
+
+fn end_shot(control: &Control, dir: &Path) -> Result<EndShot> {
+    let shot = control.screenshot(dir, STEP_WAIT)?;
+    Ok(EndShot {
+        file: file_name(&shot.path),
+        flip: shot.flip,
+        pixels_sha256: shot.frame.pixels_sha256.clone(),
+        lit_share: shot.frame.lit_share(),
+    })
+}
+
+fn checkpoint_shot(control: &Control, offset: u64, dir: &Path) -> Result<CheckpointShot> {
+    let shot = end_shot(control, dir).with_context(|| format!("the shot at F0 + {offset}"))?;
+    Ok(CheckpointShot { offset, shot })
 }
 
 /// Reads the actor frame and the RNG at the pause the run is in, writes both

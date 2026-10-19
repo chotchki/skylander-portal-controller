@@ -4,8 +4,9 @@
 //! [`Horizon`]); the RNG's distances; every actor all replays have, matched by
 //! its corpus; FLIP between the end shots; set A against set B at the end
 //! flip; and how far each replay's end sits from its group's median against
-//! the host's load. The floors are a ladder to read horizons off, not
-//! tolerances: AF.12 sets those.
+//! the host's load. The floors are a ladder to read horizons off; the
+//! tolerances are AF.12's (`guac_oracle::tolerance`), and each observable's
+//! horizon at its default floor is reported beside the ladder.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -13,7 +14,8 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use guac_oracle::frames::{self, FlipMatrix, Frame};
-use guac_oracle::trace::{Envelope, Horizon, Sample, Trace};
+use guac_oracle::tolerance;
+use guac_oracle::trace::{Envelope, Horizon, Sample, Trace, TrajectoryTolerance};
 use serde::Serialize;
 
 use super::{Observation, ReplayRecord, Set, actors_file};
@@ -26,18 +28,20 @@ const DRAW_FLOORS: &[f64] = &[0.0, 100.0, 1_000.0];
 const DELTA_FLOORS: &[f64] = &[0.0, 1e-4, 1e-3];
 const WORLD_FLOORS: &[f64] = &[0.0, 1e-3, 1e-2, 1e-1];
 
-type Read = fn(&Observation, &Observation) -> Option<Vec<f64>>;
+pub(super) type Read = fn(&Observation, &Observation) -> Option<Vec<f64>>;
 
 /// One observable: how it's read off an observation (and F0's, for counts
-/// since F0) and the floors its horizon is read at.
-struct Spec {
-    name: &'static str,
-    unit: &'static str,
-    components: &'static [&'static str],
+/// since F0), the floors its horizon is read at and the default tolerance a
+/// comparison takes (`None`: not compared, as host time isn't).
+pub(super) struct Spec {
+    pub(super) name: &'static str,
+    pub(super) unit: &'static str,
+    pub(super) components: &'static [&'static str],
     /// Degrees: unwrapped against the first replay's value before the spread.
-    angular: bool,
-    floors: &'static [f64],
-    read: Read,
+    pub(super) angular: bool,
+    pub(super) floors: &'static [f64],
+    pub(super) tolerance: Option<TrajectoryTolerance>,
+    pub(super) read: Read,
 }
 
 fn f64s(v: &[f32]) -> Vec<f64> {
@@ -48,7 +52,7 @@ fn since(now: Option<u64>, then: Option<u64>) -> Option<Vec<f64>> {
     Some(vec![now? as f64 - then? as f64])
 }
 
-fn specs() -> Vec<Spec> {
+pub(super) fn specs() -> Vec<Spec> {
     vec![
         Spec {
             name: "hero position",
@@ -56,6 +60,7 @@ fn specs() -> Vec<Spec> {
             components: &["x", "y", "z"],
             angular: false,
             floors: POSITION_FLOORS,
+            tolerance: Some(tolerance::POSITION),
             read: |o, _| o.hero.as_ref().map(|h| f64s(&h.position)),
         },
         Spec {
@@ -64,6 +69,7 @@ fn specs() -> Vec<Spec> {
             components: &["heading"],
             angular: true,
             floors: ANGLE_FLOORS,
+            tolerance: Some(tolerance::ANGLE),
             read: |o, _| o.hero.as_ref().map(|h| vec![f64::from(h.rotation[1])]),
         },
         Spec {
@@ -72,6 +78,7 @@ fn specs() -> Vec<Spec> {
             components: &["x", "y", "z"],
             angular: false,
             floors: POSITION_FLOORS,
+            tolerance: Some(tolerance::POSITION),
             read: |o, _| o.camera.as_ref().map(|c| f64s(&c.position)),
         },
         Spec {
@@ -80,6 +87,7 @@ fn specs() -> Vec<Spec> {
             components: &["tilt", "heading"],
             angular: true,
             floors: ANGLE_FLOORS,
+            tolerance: Some(tolerance::ANGLE),
             read: |o, _| o.camera.as_ref().map(|c| f64s(&c.rotation[..2])),
         },
         Spec {
@@ -88,6 +96,7 @@ fn specs() -> Vec<Spec> {
             components: &["listed"],
             angular: false,
             floors: COUNT_FLOORS,
+            tolerance: Some(tolerance::COUNT),
             read: |o, _| Some(vec![f64::from(o.counts.listed)]),
         },
         Spec {
@@ -96,6 +105,7 @@ fn specs() -> Vec<Spec> {
             components: &["skinned"],
             angular: false,
             floors: COUNT_FLOORS,
+            tolerance: Some(tolerance::COUNT),
             read: |o, _| Some(vec![o.counts.skinned as f64]),
         },
         Spec {
@@ -104,6 +114,7 @@ fn specs() -> Vec<Spec> {
             components: &["frames"],
             angular: false,
             floors: COUNT_FLOORS,
+            tolerance: Some(tolerance::COUNT),
             read: |o, f0| since(Some(o.game_frame.into()), Some(f0.game_frame.into())),
         },
         Spec {
@@ -112,6 +123,7 @@ fn specs() -> Vec<Spec> {
             components: &["dt"],
             angular: false,
             floors: DELTA_FLOORS,
+            tolerance: None,
             read: |o, _| Some(vec![f64::from(o.frame_delta)]),
         },
         Spec {
@@ -120,6 +132,7 @@ fn specs() -> Vec<Spec> {
             components: &["draws"],
             angular: false,
             floors: DRAW_FLOORS,
+            tolerance: Some(tolerance::COUNT),
             read: |o, f0| since(o.rng.drawn, f0.rng.drawn),
         },
         Spec {
@@ -128,6 +141,7 @@ fn specs() -> Vec<Spec> {
             components: &["steps"],
             angular: false,
             floors: COUNT_FLOORS,
+            tolerance: Some(tolerance::COUNT),
             read: |o, f0| since(o.rng.anim_steps, f0.rng.anim_steps),
         },
     ]
@@ -168,6 +182,10 @@ pub struct Observable {
     pub name: String,
     pub unit: String,
     pub components: Vec<String>,
+    /// The default tolerance a comparison takes (`None`: host time, not
+    /// compared), and the usable horizon at its floor.
+    pub tolerance: Option<TrajectoryTolerance>,
+    pub horizon: Option<Horizon>,
     /// Each replay's trace, in the group's label order.
     pub traces: Vec<Trace>,
     pub envelope: Envelope,
@@ -391,7 +409,16 @@ impl Report {
 }
 
 fn end_frame(dir: &Path, record: &ReplayRecord) -> Result<Option<Frame>> {
-    let Some(shot) = &record.shot else {
+    match record.end() {
+        Some(end) => frame_at(dir, record, end),
+        None => Ok(None),
+    }
+}
+
+/// The replay's shot at `offset` ([`ReplayRecord::shot_at`]), decoded; `None`
+/// when it has none or the file isn't there.
+pub(super) fn frame_at(dir: &Path, record: &ReplayRecord, offset: u64) -> Result<Option<Frame>> {
+    let Some(shot) = record.shot_at(offset) else {
         return Ok(None);
     };
     let path = dir.join(&record.label).join(&shot.file);
@@ -409,7 +436,7 @@ fn end_frame(dir: &Path, record: &ReplayRecord) -> Result<Option<Frame>> {
 }
 
 /// The offsets every replay observed, in order.
-fn common_offsets(replays: &[&ReplayRecord]) -> Vec<u64> {
+pub(super) fn common_offsets(replays: &[&ReplayRecord]) -> Vec<u64> {
     let mut sets = replays.iter().map(|r| {
         r.observations
             .iter()
@@ -422,7 +449,11 @@ fn common_offsets(replays: &[&ReplayRecord]) -> Vec<u64> {
         .collect()
 }
 
-fn observable(spec: &Spec, replays: &[&ReplayRecord], offsets: &[u64]) -> Result<Observable> {
+pub(super) fn observable(
+    spec: &Spec,
+    replays: &[&ReplayRecord],
+    offsets: &[u64],
+) -> Result<Observable> {
     let mut missing = Vec::new();
     // values[offset][replay]
     let mut rows: Vec<(u64, Vec<Vec<f64>>)> = Vec::new();
@@ -466,10 +497,16 @@ fn observable(spec: &Spec, replays: &[&ReplayRecord], offsets: &[u64]) -> Result
         .iter()
         .map(|&floor| Ok((floor, envelope.horizon(floor)?)))
         .collect::<Result<Vec<_>>>()?;
+    let horizon = spec
+        .tolerance
+        .map(|t| envelope.horizon(t.floor))
+        .transpose()?;
     Ok(Observable {
         name: spec.name.to_owned(),
         unit: spec.unit.to_owned(),
         components: spec.components.iter().map(|c| (*c).to_owned()).collect(),
+        tolerance: spec.tolerance,
+        horizon,
         traces,
         envelope,
         missing,
@@ -643,7 +680,7 @@ fn flip_summary(
 }
 
 impl Group {
-    fn build(
+    pub(super) fn build(
         script: String,
         set: Set,
         replays: &[&ReplayRecord],
@@ -715,9 +752,19 @@ impl Group {
                     )
                 })
                 .collect();
+            let default = match (o.tolerance, o.horizon) {
+                (Some(t), Some(h)) => format!(
+                    "; at the default floor {:e}: {}{}",
+                    t.floor,
+                    fmt_opt(h.last_agreeing),
+                    h.parted_at
+                        .map_or(" (held)".into(), |p| format!(" (parts {p})"))
+                ),
+                _ => "; not compared".into(),
+            };
             let _ = writeln!(
                 out,
-                "{} ({}): horizon by floor [{}]{}",
+                "{} ({}): horizon by floor [{}]{default}{}",
                 o.name,
                 o.unit,
                 horizons.join("; "),
@@ -1137,6 +1184,7 @@ mod tests {
             run_secs: 30.0 + load,
             observations,
             shot: None,
+            shots: vec![],
             saved: None,
             save_refusals: vec![],
             save_error: None,
