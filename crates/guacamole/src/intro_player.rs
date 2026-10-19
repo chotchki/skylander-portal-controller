@@ -1096,6 +1096,41 @@ mod tests {
             assert_eq!(tv.overlays(), 0);
         }
 
+        /// AP.1 review: an intro over the portal is no screen of its own;
+        /// leaving the portal under it leaves the next screen's root alone.
+        #[test]
+        fn an_intro_over_the_portal_leaves_one_screen_root() {
+            use crate::tv::ScreenRoot;
+            let roots = |tv: &mut Tv| {
+                let world = tv.app.world_mut();
+                let mut q = world.query_filtered::<Entity, With<ScreenRoot>>();
+                q.iter(world).collect::<Vec<_>>()
+            };
+            let tmp = tempfile::tempdir().unwrap();
+            let lib = library(tmp.path(), &[("eruptor", 100), ("ignitor", 100)]);
+            let mut tv = tv(Some(lib));
+            let portal = roots(&mut tv);
+            assert_eq!(portal.len(), 1);
+            tv.place(0, "000009-0000");
+            tv.until("playing", |s| s.intro.as_ref().is_some_and(|i| i.shown > 0));
+            tv.place(1, "00000a-0803");
+            assert_eq!((roots(&mut tv), tv.overlays()), (portal.clone(), 1));
+            assert_eq!(tv.shot().cards.len(), 2);
+            for screen in [
+                TvScreen::ServerError {
+                    message: "open profile store".into(),
+                },
+                TvScreen::Join,
+            ] {
+                tv.app.world_mut().resource_mut::<Current>().screen = screen.clone();
+                tv.app.update();
+                tv.app.update();
+                let now = roots(&mut tv);
+                assert!(now.len() == 1 && now != portal, "{screen:?}: {now:?}");
+                assert_eq!(tv.overlays(), 0, "{screen:?}");
+            }
+        }
+
         #[test]
         fn a_4_by_3_window_letterboxes_the_picture() {
             let tmp = tempfile::tempdir().unwrap();

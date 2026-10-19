@@ -2121,6 +2121,107 @@ pub(crate) mod layout_tests {
         assert!(!drawn.contains(&"Skylanders: Giants".to_string()));
     }
 
+    fn every_screen() -> [TvScreen; 9] {
+        [
+            TvScreen::Starting,
+            TvScreen::Setup,
+            TvScreen::NoGiants,
+            TvScreen::Found,
+            TvScreen::Join,
+            TvScreen::Portal {
+                game: "Skylanders: Giants".into(),
+            },
+            TvScreen::AlreadyRunning,
+            TvScreen::ServerError {
+                message: "open profile store".into(),
+            },
+            TvScreen::Farewell,
+        ]
+    }
+
+    /// Every UI node, and the parentless ones: a screen root or a stray.
+    fn nodes(app: &mut App) -> (std::collections::BTreeSet<Entity>, Vec<Entity>) {
+        let world = app.world_mut();
+        let mut q = world.query_filtered::<(Entity, Has<ChildOf>), With<Node>>();
+        let mut all = std::collections::BTreeSet::new();
+        let mut parentless = Vec::new();
+        for (entity, parented) in q.iter(world) {
+            all.insert(entity);
+            if !parented {
+                parentless.push(entity);
+            }
+        }
+        (all, parentless)
+    }
+
+    /// One root carrying `state` and no other parentless node; the node count.
+    fn one_root(app: &mut App, state: TvState, step: &str) -> usize {
+        let found = roots(app);
+        assert_eq!(found.len(), 1, "{step}: {found:?}");
+        assert_eq!(found[0].1, state, "{step}");
+        assert_eq!(*app.world().resource::<State<TvState>>().get(), state);
+        let (all, parentless) = nodes(app);
+        assert_eq!(parentless, [found[0].0], "{step}: a stray node");
+        all.len()
+    }
+
+    /// AP.1 review: every ordered pair of the nine screens, three times over,
+    /// leaves exactly the new screen's root and nothing stray beside it, and a
+    /// screen comes back with the node count it had; `Current` going away and
+    /// back between two frames is no transition.
+    #[test]
+    fn every_pair_of_screens_leaves_one_root_and_no_strays() {
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, full("Eruptor"));
+        app.world_mut().resource_mut::<Setup>().0.error = Some("gone".into());
+        let mut counts: HashMap<TvState, usize> = HashMap::new();
+        for round in 0..3 {
+            for from in every_screen() {
+                for to in every_screen() {
+                    for screen in [from.clone(), to.clone()] {
+                        let state = TvState::of(&screen);
+                        app.world_mut().resource_mut::<Current>().screen = screen;
+                        app.update();
+                        let step = format!("round {round}, {from:?} to {to:?}");
+                        let count = one_root(&mut app, state, &step);
+                        assert_eq!(*counts.entry(state).or_insert(count), count, "{step}");
+                    }
+                }
+            }
+        }
+
+        let before = (roots(&mut app), nodes(&mut app).0);
+        let farewell = app.world().resource::<Current>().screen.clone();
+        app.world_mut().resource_mut::<Current>().screen = TvScreen::Join;
+        app.world_mut().resource_mut::<Current>().screen = farewell;
+        app.update();
+        assert_eq!((roots(&mut app), nodes(&mut app).0), before);
+    }
+
+    /// AP.2 review: a source written with nothing new respawns nothing, on
+    /// any screen.
+    #[test]
+    fn a_touched_source_with_nothing_new_respawns_nothing() {
+        use crate::extraction::{ExtractStatus, band};
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, full("Eruptor"));
+        app.insert_resource(ExtractBand(band(&ExtractStatus::Converting {
+            done: 3,
+            total: 48,
+            movie: "eruptor".into(),
+        })));
+        for screen in every_screen() {
+            app.world_mut().resource_mut::<Current>().screen = screen.clone();
+            frames(&mut app, 3);
+            let (before, _) = nodes(&mut app);
+            let world = app.world_mut();
+            world.resource_mut::<Current>().set_changed();
+            world.resource_mut::<Setup>().set_changed();
+            world.resource_mut::<PortalCards>().set_changed();
+            world.resource_mut::<ExtractBand>().set_changed();
+            frames(&mut app, 3);
+            assert_eq!(nodes(&mut app).0, before, "{screen:?}");
+        }
+    }
+
     /// The one entity carrying `M`, and its text.
     fn marked<M: Component>(app: &mut App) -> (Entity, String) {
         let world = app.world_mut();
