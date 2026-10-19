@@ -6,8 +6,10 @@
 //! guest memory ([`pine`]), a word search over it ([`scan`]), Giants'
 //! random number generators read and written through it ([`rng`]), its
 //! actors and camera read through it ([`actors`]), the divergence
-//! measurement built on all of them ([`divergence`]) and O5's per-frame
-//! recorder with Giants' watch list ([`watch`], AG.1).
+//! measurement built on all of them ([`divergence`]), O5's per-frame
+//! recorder with Giants' watch list ([`watch`], AG.1) and a level as the live
+//! game holds it: its placements, its collision and its solids ([`level`],
+//! AG.7).
 //!
 //! It never writes inside a work tree of this repo: every path it creates goes
 //! through `rrc_dump::output::refuse_repo_output` first, because what an oracle
@@ -26,6 +28,7 @@ pub mod env;
 pub mod home;
 pub mod identity;
 pub mod launch;
+pub mod level;
 pub mod outputs;
 pub mod pad;
 pub mod pine;

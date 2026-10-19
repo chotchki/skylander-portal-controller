@@ -13,6 +13,9 @@
 //!   waypoints. Scripts aren't run here (AJ's VM runs them).
 //! - [`directional_lights`]: the level's light rig (`_worldLight1`-`3` and
 //!   `_causticLight` on level 213).
+//! - [`at_start`] and [`solid_axes`] (openspec AG.7): what a placement is
+//!   once the level runs and which way a solid's sides run, both as the
+//!   oracle's live state shows them.
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -454,6 +457,125 @@ impl<'a> Placements<'a> {
     pub fn actor(&self, name: &str) -> Option<&Actor<'a>> {
         self.actors.iter().find(|a| a.name() == Some(name))
     }
+}
+
+/// Metres in a foot: the data's lengths are feet, the engine's metres
+/// (ag-motion).
+pub const FOOT: f32 = 0.3048;
+
+/// `_activityState`, in the order the EBOOT lists its `PLACEMENT_*` names.
+/// Each value was seen where its name says (AG.7, AF's fresh state): the
+/// hero's own placement reads 0; a level file holds only 4 and 5; at run
+/// time a 4 becomes 1 (it has a corpus), 2 (it hasn't) or 3 (its script
+/// took it off).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ActivityState {
+    Player,
+    Active,
+    Inactive,
+    Removed,
+    Unmanaged,
+    Template,
+}
+
+impl ActivityState {
+    pub const ALL: [Self; 6] = [
+        Self::Player,
+        Self::Active,
+        Self::Inactive,
+        Self::Removed,
+        Self::Unmanaged,
+        Self::Template,
+    ];
+
+    pub fn from_raw(raw: u32) -> Option<Self> {
+        Self::ALL.get(usize::try_from(raw).ok()?).copied()
+    }
+
+    pub fn raw(self) -> u32 {
+        self as u32
+    }
+}
+
+/// What a level's placement is once the level runs (openspec AG.7). Every
+/// one of level 213's 1,186 placements in AF's fresh state followed this,
+/// bar two in range that their own scripts had taken off:
+/// - a template (TEMPLATE on the disc) never runs itself; scripts clone it;
+/// - an UNMANAGED placement with an activation range is active (simulated,
+///   with a corpus: the node its model hangs under, holding any solid) while
+///   the hero stands within that range of it, 3D, the range in feet, and
+///   inactive (no corpus) outside it;
+/// - one without a range waits on a script, which activates it, takes it
+///   off or leaves it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AtStart {
+    Template,
+    Active,
+    Inactive,
+    ByScript,
+}
+
+/// [`AtStart`] for a placement with the hero at `hero` (metres), measured to
+/// the placement's `_initMatrix` position. The boundary itself is unseen:
+/// the closest live cases sat 0.154 m inside and 0.479 m outside, so a
+/// placement exactly at its range counts as in it. `None` for a state a
+/// level file doesn't hold (anything but UNMANAGED or TEMPLATE).
+pub fn at_start(placement: &Placement<'_>, hero: [f32; 3]) -> Option<AtStart> {
+    let p = &placement.placement;
+    match ActivityState::from_raw(p.activity_state)? {
+        ActivityState::Template => Some(AtStart::Template),
+        ActivityState::Unmanaged if placement.activation_range > 0.0 => {
+            let d2: f32 = (0..3)
+                .map(|i| (p.init_matrix.position[i] - hero[i]).powi(2))
+                .sum();
+            let range = placement.activation_range * FOOT;
+            Some(if d2 <= range * range {
+                AtStart::Active
+            } else {
+                AtStart::Inactive
+            })
+        }
+        ActivityState::Unmanaged => Some(AtStart::ByScript),
+        _ => None,
+    }
+}
+
+/// The rotation Euler angles stand for, `[tilt, heading, roll]` in degrees,
+/// as row vectors (a local vector `v` lands at `v M`): the roll about Z, the
+/// tilt about X negated, then the heading about Y, so a heading θ faces
+/// (sin θ, 0, cos θ) (AF.9's convention, to 2.4e-7 on every actor read).
+pub fn euler_rows(rotation: [f32; 3]) -> [[f32; 3]; 3] {
+    let [tilt, heading, roll] = rotation.map(|d| f64::from(d).to_radians());
+    let (sx, cx) = (-tilt).sin_cos();
+    let (sy, cy) = heading.sin_cos();
+    let (sz, cz) = roll.sin_cos();
+    let rz = [[cz, sz, 0.0], [-sz, cz, 0.0], [0.0, 0.0, 1.0]];
+    let rx = [[1.0, 0.0, 0.0], [0.0, cx, sx], [0.0, -sx, cx]];
+    let ry = [[cy, 0.0, -sy], [0.0, 1.0, 0.0], [sy, 0.0, cy]];
+    let m = mul3(mul3(rz, rx), ry);
+    m.map(|row| row.map(|x| x as f32))
+}
+
+fn mul3(a: [[f64; 3]; 3], b: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
+    std::array::from_fn(|i| std::array::from_fn(|j| (0..3).map(|k| a[i][k] * b[k][j]).sum()))
+}
+
+/// Which way a solid's width, height and length run in the level: unit
+/// vectors, in that order (openspec AG.7). A primitive's own x, y and z are
+/// its width, height and length (the live Havok shapes' half extents), turned
+/// first by its `CollisionInfo`'s own `_transform` angles and then by the
+/// placement's `_initMatrix` angles, both as [`euler_rows`] reads them.
+/// Level 213's gate door is a 4 x 21 x 34 ft box whose collision carries a
+/// quarter turn of its own: at heading 180 its 34 ft run along x, across the
+/// gateway, where its angles alone would run them along z.
+pub fn solid_axes(placement: &Placement<'_>, collision: &CollisionInfo<'_>) -> [[f32; 3]; 3] {
+    let own = euler_rows(collision.transform.rotation);
+    let placed = euler_rows(placement.placement.init_matrix.rotation);
+    let m = mul3(
+        own.map(|r| r.map(f64::from)),
+        placed.map(|r| r.map(f64::from)),
+    );
+    m.map(|row| row.map(|x| x as f32))
 }
 
 /// Every `DirectionalLightInfo` in a level's IGZ, in object order: the

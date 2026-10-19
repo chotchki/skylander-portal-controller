@@ -14,18 +14,26 @@ With Giants picked and its extraction finished, the level a character enters SHA
 - **THEN** he stands on the flagstone clearing within 1 mm of where the original's first player stands at rest there and facing the same way, the wooden gate beyond him, the waterfall to the right and the rope fence and gourds nearer the camera, as the original shows them
 
 ### Requirement: What's there at the start is what the original has
-The level SHALL hold, where the original places them, the props it has in place when the chapter starts and none it brings in only later. Creatures the original moves by script (enemies, characters and animals) SHALL be left out, solid shapes and all, until guacamole runs their scripts.
+The level SHALL hold the props the original's level file places, where it puts them, but not those it keeps only as patterns its scripts copy. A prop the original wakes by distance SHALL be there while the hero is within that distance, and props its start-up scripts add or remove SHALL stand as they do once its chapter runs. Creatures the original moves by script (enemies, characters and animals) SHALL be left out, solid shapes and all, until guacamole runs their scripts.
 
 #### Scenario: The opening clearing
 - **WHEN** the level starts
 - **THEN** the gate's door, the gourds and the boulder stand where the original has them at the start, and the hero walks through the spots where the sheep and Norticus stand in the original
 
+#### Scenario: A barrel beyond its waking distance
+- **WHEN** the hero stands at the start, 70 m from a barrel the original wakes within 200 ft (61 m)
+- **THEN** that barrel isn't there, and it is once he has walked within 61 m of it
+
 ### Requirement: The level is solid where the original's is
-The hero SHALL stand on, slide along and be stopped by the level's own collision and the solid shapes of the props present, as in the original, and SHALL pass through scenery the original lets him pass through.
+The hero SHALL stand on, slide along and be stopped by the level's own collision and the solid shapes of the props present, as in the original, and SHALL pass through scenery the original lets him pass through. A prop whose solid has no shape SHALL stop nothing.
 
 #### Scenario: The gate's door
 - **WHEN** the hero walks straight into the closed door in the gate beyond the start
-- **THEN** it stops him at the distance from it the original's hero stops at
+- **THEN** it stops him with his feet 1.478 m from the door's middle, within 0.01 m, where the original's door stops Eruptor
+
+#### Scenario: A gourd by the start
+- **WHEN** the hero walks into the gourd beside the rope fence
+- **THEN** it stops him just short of touching it, as the original's does
 
 #### Scenario: Grass
 - **WHEN** the hero walks through the grass by the clearing

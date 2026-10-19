@@ -42,3 +42,5 @@ skylander-core = { path = "../../crates/core" }
 
 [dev-dependencies]
 tempfile = "3"
+# live_level (AG.7) reads level 213 off the dump to set the live game beside it.
+guac-formats = { path = "../../crates/guac-formats" }
