@@ -1,0 +1,1180 @@
+//! O5's per-frame recorder as run steps, and Giants' watch list (openspec
+//! AG.1, design decisions 5 and 6).
+//!
+//! O5 copies guest ranges into a ring at each flip's first pad read, on the
+//! guest thread making it, so a run is recorded every frame without a pause.
+//! What it copies is a [`WatchList`]: named fields merged into the fewest
+//! ranges (overlapping or touching fields share one), each field found again
+//! in a record's payload by name. [`GiantsWatch::resolve`] builds Giants'
+//! list at a pause, through PINE, from the same chain [`crate::actors`] walks:
+//!
+//! - the application's `_logicLoad`, `_GPUWait`, `_curFrame`,
+//!   `_presentationRate` (the nominal frame, 1/60 s) and `_frameDelta` (the
+//!   last frame's measured time), +0x54 to +0x68;
+//! - the time scales. The game's: the application's `_gameLogicScaleMessage`
+//!   (+0x10), a `GameLogicScaleMessage` the frame update sets to 1 and lets
+//!   the time systems lower each frame, its scale at +0x08 and its stop flag
+//!   at +0x0C (`FUN_0010fd90` clamps the frame time to [0.5, 3] x
+//!   `_presentationRate` and multiplies it by that scale; a stopped one steps
+//!   nothing). The actor's: its `ActorParameters._objectTimeScale` (+0x48),
+//!   which the placement's time-scale virtual returns (1 without parameters)
+//!   and the per-actor update multiplies in;
+//! - the hero (the one skinned actor a pad drives): his placement's
+//!   `_currentMatrix` (+0x3C: position, then tilt, heading and roll), his
+//!   corpus from `_desiredFacing` (+0x54) through `_animationBlock` (+0x7C),
+//!   `_velocity` and the game's `_timeStamp` (+0x6C) among them, the corpus's
+//!   `_xform` matrix, his `ActorParameters` from `_groundMaxSpeed` (+0x0C) to
+//!   `_objectTimeScale` (which the scripts swap while he walks), and his
+//!   controller's button words and its 42 `_buttons` floats (+0x148 to
+//!   +0x1F8), whose [23] and [24] (+0x1AC, +0x1B0) are the two floats the
+//!   movement code reads for a stick;
+//! - pad 0's controller (`_id` 0, in the tutorial the `Generic_FollowActor`'s),
+//!   the same span: the hero's own controller (`_id` -1) held 0 in every one
+//!   of those floats at every pad read of AG.1's walk, while pad 0's [23] and
+//!   [24] carried the stick (x, -1 full left; y, +1 full forward) and [5], [6]
+//!   and [16] the face buttons, so the stick a [`Frame`] carries is pad 0's;
+//! - the camera: the viewport system's `_currentViewport` (+0x14), so a
+//!   switch shows, and that viewport's `_currentMatrix`, `_FOV` (+0xAC) and
+//!   `_farClip` with the two flags and `_transitionTime` after it (+0xD0 to
+//!   +0xDC);
+//! - the hero's clips, which is where his current clip and its time live: the
+//!   corpus's `_animationBlock` is an `animationComponent` whose `_nowPlaying`
+//!   vector (+0x08: count, a memory ref's size word and its pointer) holds one
+//!   `animControl` per clip the blend plays (in AF.8's fresh state five:
+//!   Eruptor's idle, walk, run and two leans). Each control's
+//!   `_animationSequence` (+0x08, an `AnimationInfo`), `_animID` (+0x0C, the
+//!   clip's id, which its `tfbPhysicsAnimation` carries too), its flags,
+//!   `_timeRemaining` (+0x14), `_period` (+0x18) and the rest to +0x2C; each
+//!   sequence's `_playbackPercent` (+0x20) and its `_blendFactor` (+0x38,
+//!   percent: the clip at the top of the blend is what shows). The clip's
+//!   time is its period less what remains. The clips' names come once, at the
+//!   resolve, from each `tfbPhysicsAnimation`'s name.
+//!
+//! The list is fixed when it's armed: a control the game swaps out mid-run
+//! leaves its old address in the list, so each record carries the vector's
+//! slots too and [`GiantsWatch::frame`] drops the clips from a frame whose
+//! slots aren't the resolved ones. What O4's readback says the guest read on
+//! the hero's pad is joined per flip afterwards (`PAD_STATE <port> <flip>`,
+//! 4,096 flips kept).
+//!
+//! Every address is the 01.00 EBOOT's and every pointer is checked against its
+//! class's vtable before it's followed, as in [`crate::actors`].
+
+use std::collections::BTreeMap;
+use std::path::Path;
+
+use anyhow::{Context, Result, bail};
+use guac_oracle::input::Ds3Pad;
+use guac_oracle::recording::{Body, Clip, Clock, Frame, Recording, View};
+use serde::{Deserialize, Serialize};
+
+use crate::actors::{self, Gather, be32, expect_vtable, f32_at, floats, object_ptr, one, vtable};
+use crate::control::Control;
+use crate::outputs::hex;
+use crate::verbs::{
+    PadRead, Refusal, Reply, ReplyError, Verb, WATCH_HEADER, WATCH_MAX_BYTES, WATCH_MAX_RANGES,
+    WATCH_REPLY_BYTES, Watch, WatchRange, WatchRecord, WatchReply, WatchSummary,
+};
+
+/// A named span of guest memory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Field {
+    pub name: String,
+    pub addr: u32,
+    pub len: u32,
+}
+
+impl Field {
+    pub fn new(name: impl Into<String>, addr: u32, len: u32) -> Self {
+        Self {
+            name: name.into(),
+            addr,
+            len,
+        }
+    }
+
+    fn end(&self) -> u64 {
+        u64::from(self.addr) + u64::from(self.len)
+    }
+}
+
+/// Where a field lands in a record: its range and its offset in the payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Placed {
+    pub range: usize,
+    pub offset: usize,
+    pub len: usize,
+}
+
+/// Fields merged into the ranges O5 copies: sorted by address, a field that
+/// overlaps or touches the range before it extends that range, so the ranges
+/// are disjoint and each byte is copied once.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WatchList {
+    fields: Vec<Field>,
+    ranges: Vec<WatchRange>,
+    placed: BTreeMap<String, Placed>,
+}
+
+impl WatchList {
+    /// Refused: no fields, an empty or wrapping field, a name twice, or more
+    /// ranges or bytes than O5 takes.
+    pub fn new(fields: Vec<Field>) -> Result<Self> {
+        if fields.is_empty() {
+            bail!("a watch needs at least one field");
+        }
+        let mut order: Vec<usize> = (0..fields.len()).collect();
+        order.sort_by_key(|&i| (fields[i].addr, fields[i].len));
+        let mut ranges: Vec<(u32, u64)> = Vec::new();
+        let mut range_of = vec![0; fields.len()];
+        for &i in &order {
+            let f = &fields[i];
+            if f.len == 0 || f.end() > 1 << 32 {
+                bail!(
+                    "field {} at {:#010x} + {} isn't a range",
+                    f.name,
+                    f.addr,
+                    f.len
+                );
+            }
+            match ranges.last_mut() {
+                Some((_, end)) if u64::from(f.addr) <= *end => *end = (*end).max(f.end()),
+                _ => ranges.push((f.addr, f.end())),
+            }
+            range_of[i] = ranges.len() - 1;
+        }
+        if ranges.len() > WATCH_MAX_RANGES {
+            bail!(
+                "{} ranges after merging; O5 takes {WATCH_MAX_RANGES}",
+                ranges.len()
+            );
+        }
+        let ranges: Vec<WatchRange> = ranges
+            .into_iter()
+            .map(|(addr, end)| WatchRange {
+                addr,
+                len: u32::try_from(end - u64::from(addr)).expect("a range under 4 GiB"),
+            })
+            .collect();
+        let mut starts = Vec::with_capacity(ranges.len());
+        let mut at = 0usize;
+        for r in &ranges {
+            starts.push(at);
+            at += r.len as usize;
+        }
+        if at > WATCH_MAX_BYTES as usize {
+            bail!("{at} bytes a record; O5 takes {WATCH_MAX_BYTES}");
+        }
+        let mut placed = BTreeMap::new();
+        for (i, f) in fields.iter().enumerate() {
+            let range = range_of[i];
+            let p = Placed {
+                range,
+                offset: starts[range] + (f.addr - ranges[range].addr) as usize,
+                len: f.len as usize,
+            };
+            if placed.insert(f.name.clone(), p).is_some() {
+                bail!("the field name {} is used twice", f.name);
+            }
+        }
+        Ok(Self {
+            fields,
+            ranges,
+            placed,
+        })
+    }
+
+    pub fn fields(&self) -> &[Field] {
+        &self.fields
+    }
+
+    pub fn ranges(&self) -> &[WatchRange] {
+        &self.ranges
+    }
+
+    /// What O5 copies each flip, the ranges back to back.
+    pub fn bytes(&self) -> usize {
+        self.ranges.iter().map(|r| r.len as usize).sum()
+    }
+
+    pub fn placed(&self, name: &str) -> Option<Placed> {
+        self.placed.get(name).copied()
+    }
+
+    /// The field's bytes in `record`, or `None` when the list has no such
+    /// field, the record's payload is the wrong size or the field's range
+    /// wasn't readable that frame.
+    pub fn field<'a>(&self, record: &'a WatchRecord, name: &str) -> Option<&'a [u8]> {
+        let p = self.placed(name)?;
+        if record.payload.len() != self.bytes() || record.missing & (1 << p.range) != 0 {
+            return None;
+        }
+        Some(&record.payload[p.offset..p.offset + p.len])
+    }
+
+    /// The `WATCH` that arms a ring of `frames` records of this list.
+    pub fn arm(&self, frames: u32) -> Watch {
+        Watch::Arm {
+            frames,
+            ranges: self.ranges.clone(),
+        }
+    }
+}
+
+/// A ring read back: the summary and every record it held, oldest first.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ring {
+    pub summary: WatchSummary,
+    pub records: Vec<WatchRecord>,
+}
+
+impl Control {
+    /// `WATCH`: a ring of `frames` records of `list`, its first record the next
+    /// flip's first pad read. The payload O5 reports has to be the list's.
+    pub fn watch_arm(&self, list: &WatchList, frames: u32) -> Result<()> {
+        match self.verbs().send_watch(&list.arm(frames))? {
+            WatchReply::Armed { bytes, frames: f }
+                if bytes as usize == list.bytes() && f == frames =>
+            {
+                Ok(())
+            }
+            other => bail!(
+                "WATCH answered {other:?} for a {}-byte list of {frames} records",
+                list.bytes()
+            ),
+        }
+    }
+
+    /// At a pause: the summary, then every record held, as many to a reply as
+    /// one carries, all on one connection.
+    pub fn watch_read(&self) -> Result<Ring> {
+        let WatchReply::Summary(summary) = self.verbs().send_watch(&Watch::Summary)? else {
+            bail!("WATCH_READ answered without its summary");
+        };
+        let stride = (WATCH_HEADER + summary.bytes as usize) as u64;
+        let per = (WATCH_REPLY_BYTES / stride).max(1);
+        let pages: Vec<Watch> = (0..summary.held)
+            .step_by(per as usize)
+            .map(|first| Watch::Read {
+                first,
+                count: per.min(summary.held - first),
+            })
+            .collect();
+        let mut records = Vec::with_capacity(summary.held as usize);
+        if !pages.is_empty() {
+            for (page, reply) in pages.iter().zip(self.verbs().send_watch_all(&pages)?) {
+                match reply
+                    .with_context(|| format!("reading the ring: {}", page.encode().trim_end()))?
+                {
+                    WatchReply::Records { records: r, .. } => records.extend(r),
+                    other => bail!("WATCH_READ answered {other:?}"),
+                }
+            }
+        }
+        if records
+            .iter()
+            .any(|r| r.payload.len() != summary.bytes as usize)
+        {
+            bail!(
+                "a record's payload isn't the {} bytes the summary says",
+                summary.bytes
+            );
+        }
+        Ok(Ring { summary, records })
+    }
+
+    /// `WATCH_CLEAR`: the watch disarmed and its ring freed, so nothing more
+    /// is copied at the pad reads.
+    pub fn watch_clear(&self) -> Result<()> {
+        self.verbs().send_watch(&Watch::Clear)?;
+        Ok(())
+    }
+
+    /// O4's readback for each flip on `port`, on one connection; `None` for a
+    /// flip the guest made no read in (or past the 4,096 flips O4 keeps).
+    pub fn pad_reads(&self, port: u8, flips: &[u64]) -> Result<Vec<Option<PadRead>>> {
+        let verbs: Vec<Verb> = flips
+            .iter()
+            .map(|&flip| Verb::PadState {
+                port,
+                flip: Some(flip),
+            })
+            .collect();
+        if verbs.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.verbs()
+            .send_all(&verbs)?
+            .into_iter()
+            .map(|reply| match reply {
+                Ok(Reply::PadRead(read)) => Ok(Some(read)),
+                Ok(other) => bail!("PAD_STATE answered {other:?}"),
+                Err(e) if e.refusal() == Some(Refusal::NoRead) => Ok(None),
+                Err(e) => Err(anyhow::Error::from(e)),
+            })
+            .collect()
+    }
+}
+
+/// A clip the hero's animation plays: its control, its sequence, its id and
+/// the name its `tfbPhysicsAnimation` carries.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WatchedClip {
+    pub control: u32,
+    pub sequence: u32,
+    pub id: u32,
+    pub name: Option<String>,
+}
+
+/// Giants' watch list, resolved at a pause, with what it was resolved from.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GiantsWatch {
+    pub list: WatchList,
+    pub application: u32,
+    pub logic_scale: u32,
+    pub hero_corpus: u32,
+    pub hero_placement: u32,
+    pub hero_name: Option<String>,
+    pub controller: u32,
+    /// The controller whose `_id` is 0, pad 0's: in AF.8's fresh state the
+    /// `Generic_FollowActor`'s (the hero's own reads `_id` -1).
+    #[serde(default)]
+    pub pad0: Option<u32>,
+    pub parameters: u32,
+    pub viewport_system: Option<u32>,
+    pub viewport: Option<u32>,
+    pub animation: u32,
+    /// The `_nowPlaying` slots watched (the vector's whole array, live or not).
+    pub slots: u32,
+    pub clips: Vec<WatchedClip>,
+}
+
+const APP_FIRST: u32 = 0x54;
+const APP_LOGIC_SCALE: usize = 0x10;
+const SCALE_FIRST: u32 = 0x08;
+const CORPUS_FIRST: u32 = 0x54;
+const CORPUS_TIME_STAMP: usize = 0x6C;
+const CORPUS_ANIMATION: usize = 0x7C;
+const ACTOR_PARAMETERS: usize = 0xE0;
+const PARAMS_FIRST: u32 = 0x0C;
+const PARAMS_LEN: u32 = 0x40;
+const PAD_FIRST: u32 = 0x148;
+const PAD_LEN: u32 = 0xB0;
+/// The stick floats' offsets in the pad field: `_buttons` [23] and [24].
+const STICK: [usize; 2] = [0x1AC - PAD_FIRST as usize, 0x1B0 - PAD_FIRST as usize];
+const VIEWPORT_FOV: u32 = 0xAC;
+const VIEWPORT_FAR: u32 = 0xD0;
+const COMPONENT_LEN: usize = 0x28;
+const COMPONENT_PLAYING: u32 = 0x08;
+const CONTROL_LEN: usize = 0x2C;
+const CONTROL_FIRST: u32 = 0x08;
+const SEQUENCE_LEN: usize = 0x44;
+const SEQUENCE_FIRST: u32 = 0x20;
+const SEQUENCE_ANIMATION: usize = 0x3C;
+/// Slots of `_nowPlaying` watched at most: the fresh state's vector holds 8 for
+/// its 5 clips, and a count past this is taken for garbage.
+const MAX_SLOTS: u32 = 16;
+/// A clip's name is its `.ma` path (`Models/Characters/MinionsMonsters/
+/// Eruptor/Eruptor_Idle.ma` is 57 bytes); longer is cut.
+const CLIP_NAME_LEN: usize = 128;
+
+impl GiantsWatch {
+    /// Builds Giants' list from the frame the run is paused at: the actor
+    /// chain to the hero and the camera, then the time scales and the hero's
+    /// clips. Fails when there's no single hero, or a pointer on the way isn't
+    /// its class's.
+    pub fn resolve(g: &mut impl Gather) -> Result<Self> {
+        let frame = actors::read(g)?;
+        let hero = frame.hero()?.clone();
+        let pad0_actor = {
+            let on_pad0: Vec<_> = frame.actors.iter().filter(|a| a.pad == Some(0)).collect();
+            match on_pad0[..] {
+                [one] => Some(one.placement),
+                _ => None,
+            }
+        };
+        let viewport = frame.camera.as_ref().map(|c| c.viewport);
+
+        let app = be32(&one(g, actors::APP, 4, "the application pointer")?, 0);
+        let a = one(g, app, actors::APP_LEN, "the application")?;
+        expect_vtable(&a, vtable::APPLICATION, app, "tfbPS3Application")?;
+        let logic_scale = be32(&a, APP_LOGIC_SCALE);
+        let m = one(g, logic_scale, 0x10, "the game logic scale message")?;
+        expect_vtable(
+            &m,
+            vtable::LOGIC_SCALE_MESSAGE,
+            logic_scale,
+            "GameLogicScaleMessage",
+        )?;
+        let viewport_system = viewport_system(g, &a)?;
+
+        let p = one(g, hero.placement, actors::ACTOR_LEN, "the hero's placement")?;
+        let controller = be32(&p, actors::ACTOR_CONTROLLER);
+        let c = one(g, controller, 4, "the hero's controller")?;
+        expect_vtable(&c, vtable::PAD_CONTROLLER, controller, "tfbPS3Controller")?;
+        let pad0 = match pad0_actor {
+            Some(placement) => {
+                let at = one(g, placement, actors::ACTOR_LEN, "pad 0's actor's placement")?;
+                let c = be32(&at, actors::ACTOR_CONTROLLER);
+                let head = one(g, c, 4, "pad 0's controller")?;
+                expect_vtable(&head, vtable::PAD_CONTROLLER, c, "tfbPS3Controller")?;
+                Some(c)
+            }
+            None => None,
+        };
+        let parameters = be32(&p, ACTOR_PARAMETERS);
+        let ap = one(g, parameters, 4, "the hero's ActorParameters")?;
+        expect_vtable(&ap, vtable::ACTOR_PARAMETERS, parameters, "ActorParameters")?;
+
+        let corpus = one(g, hero.corpus, actors::CORPUS_LEN, "the hero's corpus")?;
+        let xform = be32(&corpus, actors::CORPUS_XFORM);
+        if be32(&corpus, actors::CORPUS_XFORM_SIZE) & actors::MEMREF_SIZE_MASK
+            != actors::MATRIX_LEN as u32
+            || !object_ptr(xform)
+        {
+            bail!(
+                "the hero's corpus at {:#010x} has no 4x4 _xform",
+                hero.corpus
+            );
+        }
+        let animation = be32(&corpus, CORPUS_ANIMATION);
+        let block = one(g, animation, COMPONENT_LEN, "the hero's animation block")?;
+        expect_vtable(
+            &block,
+            vtable::ANIMATION_COMPONENT,
+            animation,
+            "animationComponent",
+        )?;
+        let playing = COMPONENT_PLAYING as usize;
+        let (count, size, slots) = (
+            be32(&block, playing),
+            be32(&block, playing + 4) & actors::MEMREF_SIZE_MASK,
+            be32(&block, playing + 8),
+        );
+        let capacity = (size / 4).min(MAX_SLOTS);
+        if count > capacity || !object_ptr(slots) {
+            bail!(
+                "the hero's _nowPlaying at {animation:#010x} counts {count} in {size} bytes at {slots:#010x}"
+            );
+        }
+        let words = one(
+            g,
+            slots,
+            4 * capacity as usize,
+            "the hero's _nowPlaying slots",
+        )?;
+        let controls: Vec<u32> = (0..count as usize).map(|i| be32(&words, 4 * i)).collect();
+        let mut clips = Vec::new();
+        for &control in &controls {
+            let ctl = one(g, control, CONTROL_LEN, "an animControl")?;
+            expect_vtable(&ctl, vtable::ANIM_CONTROL, control, "animControl")?;
+            let sequence = be32(&ctl, 0x08);
+            let seq = one(g, sequence, SEQUENCE_LEN, "an AnimationInfo")?;
+            expect_vtable(&seq, vtable::ANIMATION_INFO, sequence, "AnimationInfo")?;
+            let animation = be32(&seq, SEQUENCE_ANIMATION);
+            let name = match one(g, animation, 0x0C, "a tfbPhysicsAnimation") {
+                Ok(pa) if be32(&pa, 0) == vtable::PHYSICS_ANIMATION => {
+                    let at = be32(&pa, actors::NAME);
+                    one(g, at, CLIP_NAME_LEN, "a clip's name")
+                        .ok()
+                        .map(|b| actors::c_string(&b))
+                }
+                _ => None,
+            };
+            clips.push(WatchedClip {
+                control,
+                sequence,
+                id: be32(&ctl, 0x0C),
+                name,
+            });
+        }
+
+        let mut fields = vec![
+            Field::new("app", app + APP_FIRST, 0x14),
+            Field::new("logic_scale", logic_scale + SCALE_FIRST, 8),
+            Field::new(
+                "hero.placement",
+                hero.placement + actors::PLACEMENT_MATRIX as u32,
+                24,
+            ),
+            Field::new("hero.corpus", hero.corpus + CORPUS_FIRST, 0x2C),
+            Field::new("hero.xform", xform, actors::MATRIX_LEN as u32),
+            Field::new("hero.parameters", parameters + PARAMS_FIRST, PARAMS_LEN),
+            Field::new("hero.pad", controller + PAD_FIRST, PAD_LEN),
+            Field::new("anim.playing", animation + COMPONENT_PLAYING, 12),
+            Field::new("anim.slots", slots, 4 * capacity.max(1)),
+        ];
+        if let Some(c) = pad0.filter(|&c| c != controller) {
+            fields.push(Field::new("pad0", c + PAD_FIRST, PAD_LEN));
+        }
+        if let Some(system) = viewport_system {
+            fields.push(Field::new(
+                "camera.current",
+                system + actors::VIEWPORT_SYSTEM_CURRENT as u32,
+                4,
+            ));
+        }
+        if let Some(v) = viewport {
+            fields.push(Field::new(
+                "camera.placement",
+                v + actors::PLACEMENT_MATRIX as u32,
+                24,
+            ));
+            fields.push(Field::new("camera.fov", v + VIEWPORT_FOV, 4));
+            fields.push(Field::new("camera.far", v + VIEWPORT_FAR, 12));
+        }
+        for (i, clip) in clips.iter().enumerate() {
+            fields.push(Field::new(
+                format!("anim.control.{i}"),
+                clip.control + CONTROL_FIRST,
+                (CONTROL_LEN as u32) - CONTROL_FIRST,
+            ));
+            fields.push(Field::new(
+                format!("anim.sequence.{i}"),
+                clip.sequence + SEQUENCE_FIRST,
+                0x1C,
+            ));
+        }
+        Ok(Self {
+            list: WatchList::new(fields)?,
+            application: app,
+            logic_scale,
+            hero_corpus: hero.corpus,
+            hero_placement: hero.placement,
+            hero_name: hero.name,
+            controller,
+            pad0,
+            parameters,
+            viewport_system,
+            viewport,
+            animation,
+            slots,
+            clips,
+        })
+    }
+
+    /// One record decoded into a [`Frame`], `pad` the readback joined for its
+    /// flip. Fails when a field the frame can't go without (the application,
+    /// the scale, the hero's placement, corpus or pad) wasn't readable; the
+    /// camera and the clips go missing quietly, the clips also when the
+    /// vector's slots aren't the resolved controls any more.
+    pub fn frame(&self, record: &WatchRecord, pad: Option<Ds3Pad>) -> Result<Frame> {
+        let need = |name: &str| {
+            self.list
+                .field(record, name)
+                .with_context(|| format!("{name} wasn't readable at flip {}", record.flip))
+        };
+        let app = need("app")?;
+        let scale = need("logic_scale")?;
+        let placement = need("hero.placement")?;
+        let corpus = need("hero.corpus")?;
+        let params = need("hero.parameters")?;
+        // The stick as pad 0's controller holds it, the hero's own without one.
+        let pads = match self.list.field(record, "pad0") {
+            Some(p) => p,
+            None => need("hero.pad")?,
+        };
+        let clock = Clock {
+            frame_delta: f32_at(app, 0x10),
+            presentation_rate: f32_at(app, 0x0C),
+            logic_scale: f32_at(scale, 0),
+            logic_stopped: scale[4] != 0,
+            object_scale: f32_at(params, 0x48 - PARAMS_FIRST as usize),
+        };
+        let velocity_at = actors::CORPUS_VELOCITY - CORPUS_FIRST as usize;
+        let camera = match (
+            self.list.field(record, "camera.placement"),
+            self.list.field(record, "camera.fov"),
+            self.list.field(record, "camera.far"),
+        ) {
+            (Some(p), Some(fov), Some(far)) => Some(View {
+                position: floats(p, 0),
+                rotation: floats(p, 12),
+                fov: f32_at(fov, 0),
+                far_clip: f32_at(far, 0),
+            }),
+            _ => None,
+        };
+        Ok(Frame {
+            flip: record.flip,
+            host_us: record.host_us,
+            game_frame: be32(app, 0x08),
+            clock,
+            hero: Body {
+                position: floats(placement, 0),
+                rotation: floats(placement, 12),
+                velocity: floats(corpus, velocity_at),
+            },
+            camera,
+            stick: STICK.map(|at| f32_at(pads, at)),
+            pad,
+            clips: self.clips(record).unwrap_or_default(),
+        })
+    }
+
+    /// The hero's `_timeStamp` in a record, the game's own clock on him.
+    pub fn time_stamp(&self, record: &WatchRecord) -> Option<f32> {
+        let corpus = self.list.field(record, "hero.corpus")?;
+        Some(f32_at(corpus, CORPUS_TIME_STAMP - CORPUS_FIRST as usize))
+    }
+
+    /// The camera viewport the system names in a record, to tell a switch.
+    pub fn current_viewport(&self, record: &WatchRecord) -> Option<u32> {
+        self.list
+            .field(record, "camera.current")
+            .map(|b| be32(b, 0))
+    }
+
+    fn clips(&self, record: &WatchRecord) -> Option<Vec<Clip>> {
+        let playing = self.list.field(record, "anim.playing")?;
+        let slots = self.list.field(record, "anim.slots")?;
+        let count = be32(playing, 0) as usize;
+        if count != self.clips.len()
+            || be32(playing, 8) != self.slots
+            || (0..count).any(|i| be32(slots, 4 * i) != self.clips[i].control)
+        {
+            return None;
+        }
+        self.clips
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                let ctl = self.list.field(record, &format!("anim.control.{i}"))?;
+                let seq = self.list.field(record, &format!("anim.sequence.{i}"))?;
+                Some(Clip {
+                    id: be32(ctl, 0x0C - CONTROL_FIRST as usize),
+                    weight: f32_at(seq, 0x38 - SEQUENCE_FIRST as usize),
+                    rate: f32_at(seq, 0),
+                    period: f32_at(ctl, 0x18 - CONTROL_FIRST as usize),
+                    remaining: f32_at(ctl, 0x14 - CONTROL_FIRST as usize),
+                })
+            })
+            .collect()
+    }
+
+    /// Every record decoded, `pads` the readback by flip.
+    pub fn recording(
+        &self,
+        records: &[WatchRecord],
+        pads: &BTreeMap<u64, Ds3Pad>,
+    ) -> Result<Recording> {
+        let frames = records
+            .iter()
+            .map(|r| self.frame(r, pads.get(&r.flip).copied()))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Recording::new(frames)?)
+    }
+}
+
+/// The `tfbViewportSystem` among the insight core's systems, if there's one.
+fn viewport_system(g: &mut impl Gather, app: &[u8]) -> Result<Option<u32>> {
+    let insight = be32(app, actors::APP_INSIGHT);
+    let core = one(g, insight, actors::INSIGHT_LEN, "the insight core")?;
+    expect_vtable(&core, vtable::INSIGHT_CORE, insight, "igInsightCore")?;
+    let systems = actors::list(
+        g,
+        be32(&core, actors::INSIGHT_SYSTEMS),
+        vtable::SYSTEM_LIST,
+        "igInsightSystemList",
+    )?;
+    let ranges: Vec<(u32, usize)> = systems
+        .iter()
+        .filter(|&&p| object_ptr(p))
+        .map(|&p| (p, 4))
+        .collect();
+    let heads = g.gather(&ranges)?;
+    Ok(ranges
+        .iter()
+        .zip(heads)
+        .find(|(_, b)| {
+            b.as_ref()
+                .is_some_and(|b| be32(b, 0) == vtable::VIEWPORT_SYSTEM)
+        })
+        .map(|((p, _), _)| *p))
+}
+
+/// What a watched run writes beside its other outputs (`watch.json`): the
+/// resolved list and every record raw, so a later box decodes more of it
+/// without running the oracle again. Guest bytes: only outside a work tree.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WatchFile {
+    pub identity: String,
+    pub watch: GiantsWatch,
+    pub held: u64,
+    pub total: u64,
+    pub frames: u32,
+    pub armed: u64,
+    pub records: Vec<RawRecord>,
+    /// O4's readback on the hero's pad by flip, where the guest read one.
+    pub pads: BTreeMap<u64, Ds3Pad>,
+}
+
+/// A record as it came back, its payload in hex.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RawRecord {
+    pub flip: u64,
+    pub host_us: u64,
+    pub missing: u64,
+    pub payload: String,
+}
+
+impl RawRecord {
+    pub fn of(r: &WatchRecord) -> Self {
+        Self {
+            flip: r.flip,
+            host_us: r.host_us,
+            missing: r.missing,
+            payload: hex(&r.payload),
+        }
+    }
+
+    pub fn record(&self) -> Result<WatchRecord> {
+        let payload = crate::verbs::unhex(&self.payload)
+            .with_context(|| format!("the payload at flip {} isn't lower-case hex", self.flip))?;
+        Ok(WatchRecord {
+            flip: self.flip,
+            host_us: self.host_us,
+            missing: self.missing,
+            payload,
+        })
+    }
+}
+
+impl WatchFile {
+    pub const FILE: &'static str = "watch.json";
+
+    pub fn write(&self, path: &Path) -> Result<()> {
+        let path = rrc_dump::output::refuse_repo_output(path)?;
+        std::fs::write(
+            &path,
+            serde_json::to_string(self).expect("a watch serialises"),
+        )
+        .with_context(|| format!("writing {}", path.display()))
+    }
+
+    pub fn load(path: &Path) -> Result<Self> {
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))
+    }
+
+    /// The recording a later box reads again from the file alone, no oracle.
+    pub fn recording(&self) -> Result<Recording> {
+        let records = self
+            .records
+            .iter()
+            .map(RawRecord::record)
+            .collect::<Result<Vec<_>>>()?;
+        self.watch.recording(&records, &self.pads)
+    }
+}
+
+/// What a ring says about the run it recorded, the checks AG.1's verify
+/// makes: one record a flip with none missing, and the game's frame count
+/// stepping by one a flip.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RingCheck {
+    pub records: usize,
+    pub first_flip: Option<u64>,
+    pub last_flip: Option<u64>,
+    /// Consecutive records whose flips aren't one apart.
+    pub flip_gaps: usize,
+    /// Consecutive records whose `_curFrame` isn't one apart.
+    pub frame_gaps: usize,
+    /// Records with a range that wasn't readable.
+    pub missing: usize,
+    /// `_curFrame` minus the flip, first and last: constant when the game
+    /// counts a frame a flip.
+    pub frame_minus_flip: Option<(i64, i64)>,
+}
+
+impl RingCheck {
+    pub fn of(recording: &Recording, raw: &[WatchRecord]) -> Self {
+        let frames = recording.frames();
+        let pairs = || frames.windows(2);
+        let diff = |f: &Frame| i64::from(f.game_frame) - f.flip as i64;
+        Self {
+            records: frames.len(),
+            first_flip: frames.first().map(|f| f.flip),
+            last_flip: frames.last().map(|f| f.flip),
+            flip_gaps: pairs().filter(|w| w[1].flip != w[0].flip + 1).count(),
+            frame_gaps: pairs()
+                .filter(|w| w[1].game_frame != w[0].game_frame.wrapping_add(1))
+                .count(),
+            missing: raw.iter().filter(|r| r.missing != 0).count(),
+            frame_minus_flip: frames
+                .first()
+                .zip(frames.last())
+                .map(|(a, b)| (diff(a), diff(b))),
+        }
+    }
+
+    /// One record a flip, every range readable, `_curFrame` a step a flip.
+    pub fn holds(&self) -> bool {
+        self.records > 0 && self.flip_gaps == 0 && self.frame_gaps == 0 && self.missing == 0
+    }
+}
+
+/// Whether a verb failed because O5 (or O3, O4) refused it for that reason,
+/// rather than on the socket.
+pub fn is_refusal(err: &anyhow::Error, refusal: Refusal) -> bool {
+    err.downcast_ref::<ReplyError>()
+        .and_then(ReplyError::refusal)
+        == Some(refusal)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(flip: u64, missing: u64, payload: Vec<u8>) -> WatchRecord {
+        WatchRecord {
+            flip,
+            host_us: flip * 16_667,
+            missing,
+            payload,
+        }
+    }
+
+    #[test]
+    fn overlapping_and_touching_fields_share_a_range() {
+        let list = WatchList::new(vec![
+            Field::new("b", 0x1010, 8),
+            Field::new("a", 0x1000, 0x14),
+            Field::new("inside", 0x1004, 4),
+            Field::new("touch", 0x1018, 4),
+            Field::new("apart", 0x2000, 2),
+            Field::new("tail", 0x1FFE, 2),
+        ])
+        .unwrap();
+        // 0x1000..0x1018 (a, b, inside), touched by 0x1018..0x101C, then 0x1FFE..0x2002.
+        assert_eq!(
+            list.ranges(),
+            [
+                WatchRange {
+                    addr: 0x1000,
+                    len: 0x1C
+                },
+                WatchRange {
+                    addr: 0x1FFE,
+                    len: 4
+                }
+            ]
+        );
+        assert_eq!(list.bytes(), 0x20);
+        let at = |n: &str| list.placed(n).unwrap();
+        assert_eq!((at("a").range, at("a").offset), (0, 0));
+        assert_eq!(at("b").offset, 0x10);
+        assert_eq!(at("inside").offset, 4);
+        assert_eq!(at("touch").offset, 0x18);
+        assert_eq!((at("tail").range, at("tail").offset), (1, 0x1C));
+        assert_eq!((at("apart").range, at("apart").offset), (1, 0x1E));
+        // A field's bytes come back from where its range put it.
+        let payload: Vec<u8> = (0..0x20).collect();
+        let r = record(5, 0, payload);
+        assert_eq!(
+            list.field(&r, "b"),
+            Some(&[16u8, 17, 18, 19, 20, 21, 22, 23][..])
+        );
+        assert_eq!(list.field(&r, "apart"), Some(&[30u8, 31][..]));
+        // A range O5 couldn't read leaves its fields out, the others in.
+        let unread = record(6, 0b10, (0..0x20).collect());
+        assert!(list.field(&unread, "tail").is_none());
+        assert!(list.field(&unread, "a").is_some());
+        assert!(list.field(&r, "nothing").is_none());
+        assert!(list.field(&record(7, 0, vec![0; 3]), "a").is_none());
+        assert_eq!(list.arm(600).encode(), "WATCH 600 1000 28 1ffe 4\n");
+    }
+
+    #[test]
+    fn a_list_o5_wouldnt_take_is_refused() {
+        assert!(WatchList::new(Vec::new()).is_err());
+        assert!(WatchList::new(vec![Field::new("z", 0x1000, 0)]).is_err());
+        assert!(WatchList::new(vec![Field::new("w", 0xFFFF_FFF0, 0x20)]).is_err());
+        assert!(
+            WatchList::new(vec![Field::new("x", 0x1000, 4), Field::new("x", 0x2000, 4)]).is_err()
+        );
+        let many: Vec<Field> = (0..65)
+            .map(|i| Field::new(format!("f{i}"), 0x1000 + 0x100 * i, 4))
+            .collect();
+        assert!(WatchList::new(many[..64].to_vec()).is_ok());
+        assert!(WatchList::new(many).is_err());
+        assert!(WatchList::new(vec![Field::new("big", 0x1000, WATCH_MAX_BYTES)]).is_ok());
+        assert!(WatchList::new(vec![Field::new("big", 0x1000, WATCH_MAX_BYTES + 1)]).is_err());
+        // The last byte of the address space is a range; one past it isn't.
+        assert!(WatchList::new(vec![Field::new("end", 0xFFFF_FFFF, 1)]).is_ok());
+    }
+    use crate::actors::fixture::{Added, Spec, World};
+    use guac_oracle::recording::{Alignment, Order};
+
+    /// AF.8's fresh state as far as the watch goes: Eruptor (skinned, a pad's)
+    /// and a sheep, the camera, the time scales, his parameters and three
+    /// clips, idle at the top of the blend.
+    struct Giants {
+        w: World,
+        hero: Added,
+        /// Pad 0's controller, the follow actor's.
+        pad0: u32,
+        controls: Vec<u32>,
+    }
+
+    const CLIPS: [(&str, u32, f32, f32); 3] = [
+        (
+            "Models/Characters/MinionsMonsters/Eruptor/Eruptor_Idle.ma",
+            0x3090_C890,
+            100.0,
+            1.333_333_4,
+        ),
+        (
+            "Models/Characters/MinionsMonsters/Eruptor/Eruptor_Walk.ma",
+            0x3090_B960,
+            0.0,
+            1.066_666_7,
+        ),
+        (
+            "Models/Characters/MinionsMonsters/Eruptor/Eruptor_Run.ma",
+            0x3090_B980,
+            0.0,
+            0.666_666_7,
+        ),
+    ];
+
+    fn giants() -> Giants {
+        let mut w = World::new();
+        w.camera([6.5107, 52.2663, -107.1263], [-23.3597, 14.9997, 0.0]);
+        let mut world = [0.0f32; 16];
+        for i in 0..4 {
+            world[5 * i] = 1.0;
+        }
+        let hero = w.actor(&Spec {
+            name: "009_Eruptor".into(),
+            position: [10.19027, 43.38267, -93.39406],
+            scale: [150.0; 3],
+            world: Some(world),
+            skinned: true,
+            pad: Some(-1),
+            ..Spec::default()
+        });
+        w.actor(&Spec {
+            name: "Sheep_1".into(),
+            skinned: true,
+            ..Spec::default()
+        });
+        let follow = w.actor(&Spec {
+            name: "Generic_FollowActor".into(),
+            pad: Some(0),
+            ..Spec::default()
+        });
+        let pad0 = w.get32(follow.placement + 0xD8);
+        w.putf(w.app + 0x60, 1.0 / 60.0);
+        let message = w.object(vtable::LOGIC_SCALE_MESSAGE, 0x10);
+        w.putf(message + 0x08, 1.0);
+        let app = w.app;
+        w.put32(app + 0x10, message);
+        let params = w.object(vtable::ACTOR_PARAMETERS, 0x4C);
+        w.put_floats(params + 0x0C, &[21.5, 160.0, 80.0, 1440.0]);
+        w.putf(params + 0x48, 1.0);
+        w.put32(hero.placement + 0xE0, params);
+        let block = w.object(vtable::ANIMATION_COMPONENT, 0x28);
+        w.put32(hero.corpus + 0x7C, block);
+        let slots = w.alloc(32);
+        w.put32(block + 0x08, CLIPS.len() as u32);
+        w.put32(block + 0x0C, 0x1000_0020);
+        w.put32(block + 0x10, slots);
+        let mut controls = Vec::new();
+        for (i, (name, id, weight, period)) in CLIPS.iter().enumerate() {
+            let animation = w.object(vtable::PHYSICS_ANIMATION, 0x2C);
+            let at = w.string(name);
+            w.put32(animation + 0x08, at);
+            w.put32(animation + 0x28, *id);
+            let sequence = w.object(vtable::ANIMATION_INFO, 0x44);
+            w.put32(sequence + 0x3C, animation);
+            w.putf(sequence + 0x20, 100.0);
+            w.putf(sequence + 0x38, *weight);
+            let control = w.object(vtable::ANIM_CONTROL, 0x2C);
+            w.put32(control + 0x08, sequence);
+            w.put32(control + 0x0C, *id);
+            w.putf(control + 0x14, *period);
+            w.putf(control + 0x18, *period);
+            w.put32(slots + 4 * i as u32, control);
+            controls.push(control);
+        }
+        Giants {
+            w,
+            hero,
+            pad0,
+            controls,
+        }
+    }
+
+    /// What O5 copies at a pad read: each range's bytes back to back.
+    fn sample(w: &mut World, list: &WatchList, flip: u64) -> WatchRecord {
+        let ranges: Vec<(u32, usize)> = list
+            .ranges()
+            .iter()
+            .map(|r| (r.addr, r.len as usize))
+            .collect();
+        let payload = w
+            .gather(&ranges)
+            .unwrap()
+            .into_iter()
+            .flat_map(|b| b.unwrap())
+            .collect();
+        record(flip, 0, payload)
+    }
+
+    #[test]
+    fn giants_list_resolves_from_the_frame_and_names_each_clip() {
+        let mut g = giants();
+        let watch = GiantsWatch::resolve(&mut g.w).unwrap();
+        assert_eq!(watch.hero_corpus, g.hero.corpus);
+        assert_eq!(watch.hero_placement, g.hero.placement);
+        assert_eq!(watch.hero_name.as_deref(), Some("009_Eruptor"));
+        assert!(watch.viewport.is_some() && watch.viewport_system.is_some());
+        let names: Vec<_> = watch
+            .clips
+            .iter()
+            .map(|c| c.name.clone().unwrap())
+            .collect();
+        assert_eq!(names, CLIPS.map(|c| c.0.to_owned()));
+        assert_eq!(watch.clips[1].id, 0x3090_B960);
+        assert_eq!(
+            watch.clips.iter().map(|c| c.control).collect::<Vec<_>>(),
+            g.controls
+        );
+        // Every field is placed, and the list fits O5.
+        for f in watch.list.fields() {
+            assert!(watch.list.placed(&f.name).is_some(), "{}", f.name);
+        }
+        assert!(watch.list.ranges().len() <= WATCH_MAX_RANGES);
+        assert!(watch.list.bytes() < 1_000, "{}", watch.list.bytes());
+        // A pointer that isn't its class's stops the resolve.
+        let params = g.w.get32(g.hero.placement + 0xE0);
+        g.w.put32(params, vtable::ANIMATION_INFO);
+        let err = GiantsWatch::resolve(&mut g.w).unwrap_err();
+        assert!(format!("{err:#}").contains("ActorParameters"), "{err:#}");
+    }
+
+    #[test]
+    fn a_synthetic_ring_decodes_to_game_time_summed_from_clamped_steps_a_hitch_included() {
+        let mut g = giants();
+        let watch = GiantsWatch::resolve(&mut g.w).unwrap();
+        let (app, placement, corpus) = (g.w.app, g.hero.placement, g.hero.corpus);
+        let controller = g.w.get32(placement + 0xD8);
+        // The stick held forward on pad 0's controller, the hero's own at rest.
+        g.w.put_floats(g.pad0 + 0x1AC, &[0.0, 1.0]);
+        g.w.put_floats(controller + 0x1AC, &[0.0, 0.0]);
+        let deltas = [
+            0.0167f32, 0.0158, 0.0175, 0.0166, 0.0171, 0.2, 0.0161, 0.0170, 0.0164, 0.0169,
+        ];
+        let (mut x, mut speed, mut remaining) = (10.19027f32, 0.0f32, CLIPS[0].3);
+        let mut records = Vec::new();
+        for (n, &delta) in deltas.iter().enumerate() {
+            // The frame measures its time, the pads are read (O5 copies),
+            // then the update moves the hero by his new velocity.
+            g.w.put32(app + 0x5C, 5_960 + n as u32);
+            g.w.putf(app + 0x64, delta);
+            records.push(sample(&mut g.w, &watch.list, 100 + n as u64));
+            let step = Clock {
+                frame_delta: delta,
+                presentation_rate: 1.0 / 60.0,
+                logic_scale: 1.0,
+                logic_stopped: false,
+                object_scale: 1.0,
+            }
+            .step();
+            speed = (speed + 48.768 * step).min(6.553);
+            x += speed * step;
+            remaining -= step;
+            if remaining <= 0.0 {
+                remaining += CLIPS[0].3;
+            }
+            g.w.putf(placement + 0x3C, x);
+            g.w.putf(corpus + 0x58, speed);
+            g.w.putf(g.controls[0] + 0x14, remaining);
+        }
+        let pads = BTreeMap::from([(101, Ds3Pad::REST)]);
+        let r = watch.recording(&records, &pads).unwrap();
+        let check = RingCheck::of(&r, &records);
+        assert!(check.holds(), "{check:?}");
+        assert_eq!((check.first_flip, check.last_flip), (Some(100), Some(109)));
+        assert_eq!(check.frame_minus_flip, Some((5_860, 5_860)));
+        let f = &r.frames()[3];
+        assert_eq!(f.stick, [0.0, 1.0]);
+        assert_eq!(watch.pad0, Some(g.pad0));
+        assert_eq!(f.clock.presentation_rate, 1.0 / 60.0);
+        assert_eq!((f.clock.logic_scale, f.clock.object_scale), (1.0, 1.0));
+        assert_eq!(f.camera.unwrap().rotation[1], 14.9997);
+        assert_eq!(r.frames()[1].pad, Some(Ds3Pad::REST));
+        assert_eq!(r.frames()[2].pad, None);
+        // The clip at the top is the idle, its time counting the steps.
+        let top = f.top_clip().unwrap();
+        assert_eq!(top.id, CLIPS[0].1);
+        let steps = r.steps();
+        let into: f64 = steps[..3].iter().sum();
+        assert!(
+            (f64::from(top.time()) - into).abs() < 1e-6,
+            "{} {into}",
+            top.time()
+        );
+        // Game time sums the clamped steps: the 0.2 s hitch counts 0.05 s.
+        let t = r.game_time(Alignment::Earlier).unwrap();
+        assert!((t[6] - t[5] - f64::from(1.0f32 / 60.0 * 3.0)).abs() < 1e-12);
+        let want: f64 = deltas[..9]
+            .iter()
+            .map(|&d| f64::from(if d > 0.05 { 1.0f32 / 60.0 * 3.0 } else { d }))
+            .sum();
+        assert!((t[9] - want).abs() < 1e-9, "{} {want}", t[9]);
+        // The walk was made with the earlier record's step and the later one's
+        // velocity, and only that pairing fits it.
+        let fit = r.residuals(Alignment::Earlier, Order::VelocityFirst, |_| true);
+        assert_eq!(fit.pairs, 9);
+        assert!(fit.max_ground < 2e-6, "{fit:?}");
+        for (a, o) in [
+            (Alignment::Later, Order::VelocityFirst),
+            (Alignment::Earlier, Order::PositionFirst),
+            (Alignment::Later, Order::PositionFirst),
+        ] {
+            assert!(r.residuals(a, o, |_| true).max_ground > 1e-3, "{a:?} {o:?}");
+        }
+        // The game's own clock on him reads back, and the camera's viewport.
+        assert_eq!(watch.time_stamp(&records[0]), Some(0.0));
+        assert_eq!(watch.current_viewport(&records[0]), watch.viewport);
+    }
+
+    #[test]
+    fn a_record_missing_a_range_keeps_what_it_can() {
+        let mut g = giants();
+        let watch = GiantsWatch::resolve(&mut g.w).unwrap();
+        let hero_controller = g.w.get32(g.hero.placement + 0xD8);
+        g.w.put_floats(g.pad0 + 0x1AC, &[-1.0, 0.0]);
+        g.w.put_floats(hero_controller + 0x1AC, &[0.25, 0.5]);
+        let full = sample(&mut g.w, &watch.list, 7);
+        let range_of = |name: &str| watch.list.placed(name).unwrap().range;
+        // Pad 0's stick, or the hero's controller's when pad 0's wasn't readable.
+        assert_eq!(watch.frame(&full, None).unwrap().stick, [-1.0, 0.0]);
+        let mut no_pad0 = full.clone();
+        no_pad0.missing = 1 << range_of("pad0");
+        assert_eq!(watch.frame(&no_pad0, None).unwrap().stick, [0.25, 0.5]);
+        // The clips' range unreadable: the frame decodes, without clips.
+        let mut no_clips = full.clone();
+        no_clips.missing = 1 << range_of("anim.control.1");
+        let f = watch.frame(&no_clips, None).unwrap();
+        assert!(f.clips.is_empty());
+        assert_eq!(watch.frame(&full, None).unwrap().clips.len(), 3);
+        // The hero's placement unreadable: no frame.
+        let mut no_hero = full.clone();
+        no_hero.missing = 1 << range_of("hero.placement");
+        let err = watch.frame(&no_hero, None).unwrap_err();
+        assert!(format!("{err:#}").contains("hero.placement"), "{err:#}");
+        // A control swapped out under the list: the slot no longer names it,
+        // so the clips are dropped rather than read off a stale address.
+        let slots = g.w.get32(watch.animation + 0x10);
+        g.w.put32(slots + 4, 0x3000_0000);
+        let swapped = sample(&mut g.w, &watch.list, 8);
+        assert!(watch.frame(&swapped, None).unwrap().clips.is_empty());
+        // The raw record round-trips through the file's hex.
+        let raw = RawRecord::of(&full);
+        assert_eq!(raw.record().unwrap(), full);
+    }
+}

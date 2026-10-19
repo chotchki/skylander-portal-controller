@@ -352,6 +352,8 @@ pub struct AcrossSets {
 pub struct Report {
     pub groups: Vec<Group>,
     pub across: Vec<AcrossSets>,
+    /// Set W against set A, per script with both (AG.1).
+    pub observing: Vec<super::observing::Discriminators>,
 }
 
 impl Report {
@@ -363,6 +365,7 @@ impl Report {
         for r in records {
             by.entry((r.script.clone(), r.set)).or_default().push(r);
         }
+        let by_set = by.clone();
         let mut groups = Vec::new();
         let mut frames: BTreeMap<String, Frame> = BTreeMap::new();
         for ((script, set), mut replays) in by {
@@ -392,7 +395,31 @@ impl Report {
                 across.push(AcrossSets::build(a, b, &frames)?);
             }
         }
-        Ok(Self { groups, across })
+        // Set W against set A on AF.11's discriminators, at the end flip both
+        // share.
+        let mut observing = Vec::new();
+        for ((script, set), replays) in &by_set {
+            if *set != Set::W {
+                continue;
+            }
+            let Some(reference) = by_set.get(&(script.clone(), Set::A)) else {
+                continue;
+            };
+            let both: Vec<&ReplayRecord> = reference.iter().chain(replays).copied().collect();
+            if let Some(&end) = common_offsets(&both).last() {
+                observing.push(super::observing::Discriminators::build(
+                    script,
+                    (Set::A, reference),
+                    (Set::W, replays),
+                    end,
+                ));
+            }
+        }
+        Ok(Self {
+            groups,
+            across,
+            observing,
+        })
     }
 
     /// The whole report as text, for `report.txt` and the terminal.
@@ -403,6 +430,9 @@ impl Report {
         }
         for a in &self.across {
             a.write_text(&mut out);
+        }
+        for o in &self.observing {
+            o.write_text(&mut out);
         }
         out
     }
@@ -1100,7 +1130,7 @@ pub fn spearman(x: &[f64], y: &[f64]) -> Option<f64> {
 /// The Mann-Whitney rank-sum z of `b` against `a` (normal approximation, no
 /// tie correction): positive when B sits higher. `None` when either side is
 /// empty or every value is equal.
-fn rank_sum_z(a: &[f64], b: &[f64]) -> Option<f64> {
+pub(super) fn rank_sum_z(a: &[f64], b: &[f64]) -> Option<f64> {
     if a.is_empty() || b.is_empty() {
         return None;
     }
@@ -1185,6 +1215,7 @@ mod tests {
             observations,
             shot: None,
             shots: vec![],
+            watch: None,
             saved: None,
             save_refusals: vec![],
             save_error: None,

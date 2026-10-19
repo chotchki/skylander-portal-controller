@@ -8,7 +8,8 @@
 //! envelopes, the trajectory comparison, the usable horizon), [`events`],
 //! [`totals`] and [`frames`] (FLIP, NVlabs' reference). AF.12's defaults for
 //! them, calibrated on AF.11's measurement, are in [`tolerance`]. [`input`] is
-//! AF.7's input-script format, [`rng`] AF.8's MT19937 model.
+//! AF.7's input-script format, [`rng`] AF.8's MT19937 model, [`recording`]
+//! AG.1's per-frame recording keyed by flip and by game time.
 
 #![forbid(unsafe_code)]
 
@@ -16,6 +17,7 @@ pub mod error;
 pub mod events;
 pub mod frames;
 pub mod input;
+pub mod recording;
 pub mod rng;
 pub mod tolerance;
 pub mod totals;

@@ -83,37 +83,44 @@ pub mod vtable {
     pub const ACTOR_INFO: u32 = 0x0062_1048;
     pub const PAD_CONTROLLER: u32 = 0x0062_6300;
     pub const SKELETON_INSTANCE: u32 = 0x0064_5B48;
+    /// AG.1's watch list ([`crate::watch`]) follows these too.
+    pub const LOGIC_SCALE_MESSAGE: u32 = 0x0063_04F8;
+    pub const ACTOR_PARAMETERS: u32 = 0x0062_0CA8;
+    pub const ANIMATION_COMPONENT: u32 = 0x0063_2650;
+    pub const ANIM_CONTROL: u32 = 0x0063_2608;
+    pub const ANIMATION_INFO: u32 = 0x0067_E0A0;
+    pub const PHYSICS_ANIMATION: u32 = 0x0063_2790;
 }
 
-const APP_LEN: usize = 0x68;
-const APP_INSIGHT: usize = 0x2C;
+pub(crate) const APP_LEN: usize = 0x68;
+pub(crate) const APP_INSIGHT: usize = 0x2C;
 const APP_FRAME: usize = 0x5C;
 const APP_FRAME_DELTA: usize = 0x64;
-const INSIGHT_LEN: usize = 0x20;
-const INSIGHT_SYSTEMS: usize = 0x18;
+pub(crate) const INSIGHT_LEN: usize = 0x20;
+pub(crate) const INSIGHT_SYSTEMS: usize = 0x18;
 const INSIGHT_UPDATERS: usize = 0x1C;
 const LIST_LEN: usize = 0x18;
 const LIST_COUNT: usize = 0x08;
 const LIST_CAPACITY: usize = 0x0C;
 const LIST_DATA: usize = 0x14;
 const ACTOR_UPDATE_LIST: usize = 0x08;
-const VIEWPORT_SYSTEM_CURRENT: usize = 0x14;
-const NAME: usize = 0x08;
-const PLACEMENT_MATRIX: usize = 0x3C;
+pub(crate) const VIEWPORT_SYSTEM_CURRENT: usize = 0x14;
+pub(crate) const NAME: usize = 0x08;
+pub(crate) const PLACEMENT_MATRIX: usize = 0x3C;
 const VIEWPORT_LEN: usize = 0x54;
-const CORPUS_LEN: usize = 0x80;
+pub(crate) const CORPUS_LEN: usize = 0x80;
 const CORPUS_CHILDREN: usize = 0x20;
-const CORPUS_XFORM_SIZE: usize = 0x24;
-const CORPUS_XFORM: usize = 0x28;
+pub(crate) const CORPUS_XFORM_SIZE: usize = 0x24;
+pub(crate) const CORPUS_XFORM: usize = 0x28;
 const CORPUS_PLACEMENT: usize = 0x50;
-const CORPUS_VELOCITY: usize = 0x58;
-const ACTOR_LEN: usize = 0xF8;
+pub(crate) const CORPUS_VELOCITY: usize = 0x58;
+pub(crate) const ACTOR_LEN: usize = 0xF8;
 const ACTOR_SCALE: usize = 0xB8;
-const ACTOR_CONTROLLER: usize = 0xD8;
+pub(crate) const ACTOR_CONTROLLER: usize = 0xD8;
 const CONTROLLER_ID: u32 = 0x134;
 /// A memory ref's size word: the byte count in the low 27 bits.
-const MEMREF_SIZE_MASK: u32 = 0x07FF_FFFF;
-const MATRIX_LEN: usize = 64;
+pub(crate) const MEMREF_SIZE_MASK: u32 = 0x07FF_FFFF;
+pub(crate) const MATRIX_LEN: usize = 64;
 /// What's read of a name; a longer one is cut there.
 const NAME_LEN: usize = 64;
 /// Lists longer than this are taken for garbage (the tutorial's holds 166).
@@ -464,24 +471,24 @@ pub fn read_frame(pine: &mut PineClient) -> Result<ActorFrame> {
     }
 }
 
-fn be32(b: &[u8], at: usize) -> u32 {
+pub(crate) fn be32(b: &[u8], at: usize) -> u32 {
     u32::from_be_bytes(b[at..at + 4].try_into().unwrap())
 }
 
-fn f32_at(b: &[u8], at: usize) -> f32 {
+pub(crate) fn f32_at(b: &[u8], at: usize) -> f32 {
     f32::from_bits(be32(b, at))
 }
 
-fn floats<const N: usize>(b: &[u8], at: usize) -> [f32; N] {
+pub(crate) fn floats<const N: usize>(b: &[u8], at: usize) -> [f32; N] {
     std::array::from_fn(|i| f32_at(b, at + 4 * i))
 }
 
 /// Where a PPU object can sit: 4-aligned, in the ELF's data or a heap.
-fn object_ptr(p: u32) -> bool {
+pub(crate) fn object_ptr(p: u32) -> bool {
     p.is_multiple_of(4) && (0x0001_0000..0x5000_0000).contains(&p)
 }
 
-fn one(g: &mut impl Gather, addr: u32, len: usize, what: &str) -> Result<Vec<u8>> {
+pub(crate) fn one(g: &mut impl Gather, addr: u32, len: usize, what: &str) -> Result<Vec<u8>> {
     if !object_ptr(addr) {
         bail!("{what} at {addr:#010x} isn't an object address");
     }
@@ -491,7 +498,7 @@ fn one(g: &mut impl Gather, addr: u32, len: usize, what: &str) -> Result<Vec<u8>
         .with_context(|| format!("{what} at {addr:#010x} isn't mapped"))
 }
 
-fn expect_vtable(bytes: &[u8], want: u32, at: u32, class: &str) -> Result<()> {
+pub(crate) fn expect_vtable(bytes: &[u8], want: u32, at: u32, class: &str) -> Result<()> {
     let got = be32(bytes, 0);
     if got != want {
         bail!("the object at {at:#010x} has vtable {got:#010x}, not {class}'s {want:#010x}");
@@ -501,7 +508,7 @@ fn expect_vtable(bytes: &[u8], want: u32, at: u32, class: &str) -> Result<()> {
 
 /// An `igDataList`'s element pointers, its vtable checked and its count
 /// held to its capacity and [`MAX_LIST`].
-fn list(g: &mut impl Gather, at: u32, want: u32, class: &str) -> Result<Vec<u32>> {
+pub(crate) fn list(g: &mut impl Gather, at: u32, want: u32, class: &str) -> Result<Vec<u32>> {
     let head = one(g, at, LIST_LEN, class)?;
     expect_vtable(&head, want, at, class)?;
     let (count, capacity, data) = (
@@ -520,7 +527,7 @@ fn list(g: &mut impl Gather, at: u32, want: u32, class: &str) -> Result<Vec<u32>
 }
 
 /// The C string in `bytes` (cut at [`NAME_LEN`] when it has no NUL).
-fn c_string(bytes: &[u8]) -> String {
+pub(crate) fn c_string(bytes: &[u8]) -> String {
     let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
     String::from_utf8_lossy(&bytes[..end]).into_owned()
 }
@@ -964,10 +971,16 @@ pub mod fixture {
             at
         }
 
-        fn string(&mut self, s: &str) -> u32 {
+        /// A C string off the heap.
+        pub fn string(&mut self, s: &str) -> u32 {
             let at = self.alloc(s.len() + 1);
             self.slot(at, s.len()).copy_from_slice(s.as_bytes());
             at
+        }
+
+        /// Floats from `addr` on, big-endian as the guest keeps them.
+        pub fn put_floats(&mut self, addr: u32, vs: &[f32]) {
+            self.putfs(addr, vs);
         }
 
         /// An `igDataList` with `vtable`, holding `items`, room for `capacity`.

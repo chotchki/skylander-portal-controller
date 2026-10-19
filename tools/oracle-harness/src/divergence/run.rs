@@ -1,5 +1,6 @@
 //! One replay against the real oracle, as the module doc lays it out.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -12,7 +13,7 @@ use skylander_rpcs3_control::PortalDriver;
 
 use super::{
     CheckpointShot, EndShot, EndState, Host, Observation, Plan, Pose, ReplayRecord, RngObservation,
-    SAVE_RETRY_FLIPS, SAVE_TRIES, actors_file, peek_file,
+    SAVE_RETRY_FLIPS, SAVE_TRIES, WatchRun, actors_file, peek_file,
 };
 use crate::actors::{self, ActorFrame};
 use crate::control::{Control, SAVESTATE_REFUSED, Saved};
@@ -22,6 +23,7 @@ use crate::launch::{self, BootOptions};
 use crate::outputs::{Kind, Rpcs3Outputs, hex};
 use crate::pine::PineClient;
 use crate::rng::{self, Peek};
+use crate::watch::{GiantsWatch, RawRecord, RingCheck, WatchFile};
 
 /// How long a savestate boot gets to reach Start Paused's pause unless the
 /// caller says otherwise: a warm home takes 4 to 7 s, and AF.11 saw a restore
@@ -71,7 +73,7 @@ pub fn run_replay(inputs: &Inputs, plan: &Plan, replay: u32, out: &Path) -> Resu
     let kinds = [Kind::Screenshot, Kind::SaveState];
     let had = kinds.map(|k| outputs.list(k));
 
-    let driven = drive(inputs, plan, &dir);
+    let driven = drive(inputs, plan, &dir, &identity);
 
     for (kind, had) in kinds.into_iter().zip(&had) {
         for path in outputs.list(kind).difference(had) {
@@ -106,6 +108,7 @@ pub fn run_replay(inputs: &Inputs, plan: &Plan, replay: u32, out: &Path) -> Resu
         observations: driven.observations,
         shot: driven.shot,
         shots: driven.shots,
+        watch: driven.watch,
         saved: driven.saved,
         save_refusals: driven.save_refusals,
         save_error: driven.save_error,
@@ -127,13 +130,14 @@ struct Driven {
     observations: Vec<Observation>,
     shot: Option<EndShot>,
     shots: Vec<CheckpointShot>,
+    watch: Option<WatchRun>,
     saved: Option<EndState>,
     save_refusals: Vec<String>,
     save_error: Option<String>,
     shutdown: String,
 }
 
-fn drive(inputs: &Inputs, plan: &Plan, dir: &Path) -> Result<Driven> {
+fn drive(inputs: &Inputs, plan: &Plan, dir: &Path, identity: &str) -> Result<Driven> {
     let launched = Instant::now();
     let mut oracle = launch::boot(
         inputs.exe,
@@ -164,6 +168,15 @@ fn drive(inputs: &Inputs, plan: &Plan, dir: &Path) -> Result<Driven> {
     if plan.shoots_checkpoints() {
         shots.push(checkpoint_shot(&control, 0, dir)?);
     }
+    // Set W: Giants' list resolved at F0 and armed before the script loads,
+    // so the first record is F0's own first pad read once the run resumes.
+    let watched = if plan.watches() {
+        let watch = GiantsWatch::resolve(&mut pine).context("the watch list at F0")?;
+        control.watch_arm(&watch.list, plan.ring_frames())?;
+        Some(watch)
+    } else {
+        None
+    };
     let loaded = control.load_script(&plan.script)?;
 
     // Only the running stretches count: a checkpoint's reads happen at a pause.
@@ -184,6 +197,10 @@ fn drive(inputs: &Inputs, plan: &Plan, dir: &Path) -> Result<Driven> {
         last = offset;
     }
 
+    let watch = match &watched {
+        Some(w) => Some(read_watch(&control, w, identity, dir).context("reading the watch")?),
+        None => None,
+    };
     let shot = match shots.last() {
         Some(last) => last.shot.clone(),
         None => end_shot(&control, dir)?,
@@ -221,12 +238,71 @@ fn drive(inputs: &Inputs, plan: &Plan, dir: &Path) -> Result<Driven> {
         observations,
         shot: Some(shot),
         shots,
+        watch,
         saved,
         save_refusals,
         save_error,
         shutdown,
     })
 }
+
+/// At the end pause: the ring and O4's readback on port 0 for its flips, both
+/// written raw beside the record (`watch.json`) with the recording decoded
+/// from them (`recording.json`), and AG.1's checks on it.
+fn read_watch(
+    control: &Control,
+    watch: &GiantsWatch,
+    identity: &str,
+    dir: &Path,
+) -> Result<WatchRun> {
+    let t = Instant::now();
+    let ring = control.watch_read()?;
+    let flips: Vec<u64> = ring.records.iter().map(|r| r.flip).collect();
+    let pads: BTreeMap<u64, _> = control
+        .pad_reads(0, &flips)?
+        .into_iter()
+        .zip(&flips)
+        .filter_map(|(read, &flip)| read.map(|r| (flip, r.pad)))
+        .collect();
+    let read_ms = t.elapsed().as_secs_f64() * 1e3;
+    let file = WatchFile {
+        identity: identity.to_owned(),
+        watch: watch.clone(),
+        held: ring.summary.held,
+        total: ring.summary.total,
+        frames: ring.summary.frames,
+        armed: ring.summary.armed,
+        records: ring.records.iter().map(RawRecord::of).collect(),
+        pads,
+    };
+    file.write(&dir.join(WatchFile::FILE))?;
+    let recording = watch.recording(&ring.records, &file.pads)?;
+    let path = rrc_dump::output::refuse_repo_output(&dir.join(RECORDING_FILE))?;
+    fs::write(
+        &path,
+        serde_json::to_string(&recording).expect("a recording serialises"),
+    )
+    .with_context(|| format!("writing {}", path.display()))?;
+    Ok(WatchRun {
+        held: ring.summary.held,
+        total: ring.summary.total,
+        bytes: ring.summary.bytes,
+        frames: ring.summary.frames,
+        ranges: watch.list.ranges().len(),
+        fields: watch.list.fields().len(),
+        armed: ring.summary.armed,
+        check: RingCheck::of(&recording, &ring.records),
+        frames_without_clips: recording
+            .frames()
+            .iter()
+            .filter(|f| f.clips.is_empty())
+            .count(),
+        read_ms,
+    })
+}
+
+/// A set W replay's decoded recording, beside its `watch.json`.
+pub const RECORDING_FILE: &str = "recording.json";
 
 fn end_shot(control: &Control, dir: &Path) -> Result<EndShot> {
     let shot = control.screenshot(dir, STEP_WAIT)?;

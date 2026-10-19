@@ -758,3 +758,168 @@ fn actors_sharing_a_list_read_it_once() {
     assert_eq!(p.waypoint_lists.len(), 1);
     assert!(p.actors.iter().all(|a| p.waypoints(a).len() == 1));
 }
+
+/// A level of tfbActorInfos built from `(name, position, activity state,
+/// activation range in feet)`, read back.
+fn placed(specs: &[(&str, [f32; 3], u32, f32)]) -> Vec<u8> {
+    let mut b = IgzBuilder::new();
+    for &(name, p, state, range) in specs {
+        let o = b.object(0, "tfbActorInfo", 0xF8);
+        placement(
+            &mut b,
+            o,
+            name,
+            0,
+            &[p[0], p[1], p[2], 0.0, 0.0, 0.0],
+            state,
+        );
+        b.put_bytes(at(o, 0xD0), &range.to_be_bytes());
+    }
+    b.build()
+}
+
+#[test]
+fn the_start_rule_follows_the_state_and_the_heros_distance() {
+    // AF's fresh state: Eruptor at the spawn. A 60 ft range is 18.288 m.
+    let hero = [10.190_27, 43.382_67, -93.394_06];
+    let at_x = |dx: f32| [hero[0] + dx, hero[1], hero[2]];
+    let bytes = placed(&[
+        ("Push_Block_Template_far", at_x(500.0), 5, 200.0),
+        ("Template_close", at_x(1.0), 5, 200.0),
+        ("Transition_inside", at_x(18.2), 4, 60.0),
+        ("Transition_outside", at_x(18.4), 4, 60.0),
+        // 16 m across the ground but 9.7 m up: 18.7 m away, so out.
+        ("Above", [hero[0] + 16.0, hero[1] + 9.7, hero[2]], 4, 60.0),
+        ("Scripted", at_x(2.0), 4, 0.0),
+        ("Negative_range", at_x(2.0), 4, -1.0),
+    ]);
+    let igz = Igz::parse(&bytes).unwrap();
+    let p = Placements::read(&igz).unwrap();
+    let rule: Vec<_> = p
+        .actors
+        .iter()
+        .map(|a| at_start(a.placement(), hero))
+        .collect();
+    assert_eq!(
+        rule,
+        [
+            Some(AtStart::Template),
+            Some(AtStart::Template),
+            Some(AtStart::Active),
+            Some(AtStart::Inactive),
+            Some(AtStart::Inactive),
+            Some(AtStart::ByScript),
+            Some(AtStart::ByScript),
+        ]
+    );
+    // The same placements from the hero's other side of each boundary.
+    let far = at_x(40.0);
+    let moved: Vec<_> = p
+        .actors
+        .iter()
+        .map(|a| at_start(a.placement(), far))
+        .collect();
+    assert_eq!(moved[2], Some(AtStart::Inactive));
+    assert_eq!(moved[0], Some(AtStart::Template));
+    assert_eq!(moved[5], Some(AtStart::ByScript));
+}
+
+#[test]
+fn a_state_no_level_file_holds_has_no_start_rule() {
+    let hero = [0.0; 3];
+    for raw in [0u32, 1, 2, 3, 6, u32::MAX] {
+        let bytes = placed(&[("x", [1.0, 0.0, 0.0], raw, 60.0)]);
+        let igz = Igz::parse(&bytes).unwrap();
+        let p = Placements::read(&igz).unwrap();
+        assert_eq!(at_start(p.actors[0].placement(), hero), None, "state {raw}");
+    }
+    let names: Vec<_> = (0..6)
+        .map(|r| ActivityState::from_raw(r).unwrap())
+        .collect();
+    assert_eq!(names, ActivityState::ALL);
+    assert!(
+        ActivityState::ALL
+            .iter()
+            .all(|s| ActivityState::from_raw(s.raw()) == Some(*s))
+    );
+    assert_eq!(ActivityState::from_raw(6), None);
+}
+
+/// Level 213's door, a solid 4 x 21 x 34 ft box whose collision carries
+/// `own` angles, the actor at `heading`.
+fn door(own: [f32; 3], heading: f32) -> Vec<u8> {
+    door_at(own, [0.0, heading, 0.0])
+}
+
+/// The door with the placement's angles (tilt, heading, roll) given whole.
+fn door_at(own: [f32; 3], angles: [f32; 3]) -> Vec<u8> {
+    let mut b = IgzBuilder::new();
+    let o = b.object(0, "tfbActorInfo", 0xF8);
+    let c = b.object(0, "CollisionInfo", 0x58);
+    placement(
+        &mut b,
+        o,
+        "Breakable_Stone_Wall_Castle_206(1)",
+        0,
+        &[
+            14.830_149, 43.367_107, -82.224_2, angles[0], angles[1], angles[2],
+        ],
+        4,
+    );
+    b.pointer(at(o, 0xC4), c);
+    // Shape 1 (box), solid and an actor surface, as the disc has the door.
+    b.put_u32(at(c, 0x18), 0x29);
+    let words: Vec<u8> = [0.0, 0.0, 0.0, own[0], own[1], own[2], 4.0, 21.0, 34.0]
+        .iter()
+        .flat_map(|v: &f32| v.to_be_bytes())
+        .collect();
+    b.put_bytes(at(c, 0x1C), &words);
+    b.build()
+}
+
+fn axes_of(bytes: &[u8]) -> [[f32; 3]; 3] {
+    let igz = Igz::parse(bytes).unwrap();
+    let p = Placements::read(&igz).unwrap();
+    let a = &p.actors[0];
+    solid_axes(a.placement(), a.collision.as_ref().unwrap())
+}
+
+fn near(a: [f32; 3], b: [f32; 3]) -> bool {
+    (0..3).all(|i| (a[i] - b[i]).abs() < 1e-6)
+}
+
+#[test]
+fn a_door_box_runs_its_length_across_the_gateway_by_its_own_quarter_turn() {
+    // Level 213's door: heading 180, its collision turned 90 of its own.
+    let [width, height, length] = axes_of(&door([0.0, 90.0, 0.0], 180.0));
+    assert!(near(length, [-1.0, 0.0, 0.0]), "length {length:?}");
+    assert!(near(width, [0.0, 0.0, 1.0]), "width {width:?}");
+    assert!(near(height, [0.0, 1.0, 0.0]), "height {height:?}");
+    // Without its own turn the same box runs its length along z: so a
+    // reading that swaps width and length, or drops the collision's angles,
+    // puts the door's 34 ft the wrong way.
+    let [width, _, length] = axes_of(&door([0.0; 3], 180.0));
+    assert!(near(length, [0.0, 0.0, -1.0]), "length {length:?}");
+    assert!(near(width, [-1.0, 0.0, 0.0]), "width {width:?}");
+    // The collision's turn comes first, then the placement's: turned along
+    // x first, a placement tilted 30 about x leaves the length level, where
+    // the other order would lift it to (0.866, 0.5, 0).
+    let [_, _, length] = axes_of(&door_at([0.0, 90.0, 0.0], [30.0, 0.0, 0.0]));
+    assert!(near(length, [1.0, 0.0, 0.0]), "length {length:?}");
+}
+
+#[test]
+fn euler_rows_face_a_heading_the_way_the_actors_do() {
+    // A heading θ faces (sin θ, 0, cos θ): local +z lands there.
+    for h in [0.0f32, 15.0, 90.0, 105.0, 180.0, 270.0] {
+        let m = euler_rows([0.0, h, 0.0]);
+        let r = h.to_radians();
+        assert!(
+            near(m[2], [r.sin(), 0.0, r.cos()]),
+            "heading {h}: {:?}",
+            m[2]
+        );
+    }
+    // A positive tilt lifts the nose: local +z gains height.
+    assert!(euler_rows([10.0, 0.0, 0.0])[2][1] > 0.0);
+}

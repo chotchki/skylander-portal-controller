@@ -77,6 +77,20 @@ usage:
       velocity, skinned, the pad driving it), the camera and the hero (the one
       skinned actor a pad drives); --all prints every actor, --out writes the
       frame (outside every work tree), --p1 stamps it with STATE's flip
+  oracle watch arm --socket <p1> --pine <socket> --list <list.json> [--frames <n>]
+      at a pause: Giants' watch list resolved through PINE (the frame time and its
+      scales, the hero's placement, corpus, matrix, parameters and pad floats, the
+      camera, the hero's clips), written to <list.json> (outside every work tree),
+      and O5 armed with a ring of <n> (1024) records of it, the first the next
+      flip's first pad read
+  oracle watch read --socket <p1> --list <list.json> --out <dir>
+      at a pause: the ring and O4's readback on port 0 for its flips, into
+      <dir>/watch.json (raw) and <dir>/recording.json (decoded); prints the ring's
+      checks (one record a flip, every range readable, _curFrame a step a flip)
+  oracle watch clear --socket <p1>
+  oracle watch residuals <recording.json> [--from <flip>] [--to <flip>]
+      each position step against velocity times the clamped step, under both
+      alignments and both integration orders, over the consecutive flips in range
   oracle divergence run --out <dir> [--scripts idle,walk|<file.ron>,...] [--sets A,B]
               [--replays <n>] [--first <n>] [--end <flips>] [--every <flips>]
               [--warmup <script>] [--state <file>] [--figure <file>] [--attempts <n>]
@@ -86,7 +100,9 @@ usage:
       the gameplay state ($GUAC_ORACLE_SAVESTATE unless --state) with a fresh copy of
       the figure ($GUAC_ORACLE_FIGURE unless --figure): set A observed at F0 + <end>
       (1800) only and saved there, set B every <every> (60) flips; a SCREENSHOT at the
-      end of both; set C (AF.12) set B's pauses with a SCREENSHOT at F0 and at each.
+      end of both; set C (AF.12) set B's pauses with a SCREENSHOT at F0 and at each;
+      set W (AG.1) set A with O5's watch armed at F0 on Giants' list and read at the
+      end (<replay>/watch.json and recording.json).
       Each --perturb (AF.12) replaces the scripts by their perturbed copies, named
       <script>_<change>: shift:<at>[,<at>...]:<by> moves those steps <by> flips (a
       press and its release together when both are named), stick:<at>:<x>,<y> sets
@@ -104,8 +120,9 @@ usage:
   oracle divergence report <dir>
       the numbers from <dir>'s records: per observable the spread at each checkpoint
       and the usable horizon by floor, the RNG distances, every actor by corpus, FLIP
-      between end shots, set A against set B at the end flip and the spreads against
-      the host's load; written to <dir>/report.txt and report.json
+      between end shots, set A against set B at the end flip, set W against set A on
+      AF.11's discriminators (AG.1) and the spreads against the host's load; written
+      to <dir>/report.txt and report.json
   oracle divergence calibrate <dir>
       AF.12's leave-one-out over <dir>'s groups with guac_oracle::tolerance's
       defaults: each replay against the envelope of the others inside the
@@ -127,6 +144,7 @@ fn main() -> Result<()> {
         ["pine", "--socket", socket, rest @ ..] => pine(PathBuf::from(socket), rest),
         ["rng", rest @ ..] => rng_cmd(rest),
         ["actors", "--pine", socket, rest @ ..] => actors_cmd(socket.as_ref(), rest),
+        ["watch", rest @ ..] => watch_cmd(rest),
         ["divergence", "run", rest @ ..] => divergence_run(rest),
         ["divergence", "report", dir] => divergence_report(dir.as_ref()),
         ["divergence", "calibrate", dir] => divergence_calibrate(dir.as_ref()),
@@ -553,6 +571,143 @@ fn actors_cmd(socket: &std::path::Path, mut rest: &[&str]) -> Result<()> {
     }
     if let Some(out) = out {
         println!("written to {}", frame.write(&out)?.display());
+    }
+    Ok(())
+}
+
+/// O5's watch (see the usage).
+fn watch_cmd(rest: &[&str]) -> Result<()> {
+    use guac_oracle::recording::{Alignment, Order, Recording};
+    use oracle_harness::watch::{GiantsWatch, RawRecord, RingCheck, WatchFile};
+
+    let flag = |rest: &[&str], name: &str| -> Option<String> {
+        rest.iter()
+            .position(|a| *a == name)
+            .and_then(|i| rest.get(i + 1))
+            .map(|v| (*v).to_owned())
+    };
+    let control = |socket: &str| -> Result<Control> {
+        Ok(Control::new(
+            socket.as_ref(),
+            &OracleHome::open(&required(env::ORACLE_HOME)?)?.config_dir(),
+        ))
+    };
+    match rest {
+        ["arm", "--socket", socket, opts @ ..] => {
+            let pine_at = flag(opts, "--pine").with_context(|| USAGE.to_owned())?;
+            let list_at = flag(opts, "--list").with_context(|| USAGE.to_owned())?;
+            let frames: u32 = match flag(opts, "--frames") {
+                Some(n) => n.parse().context("--frames takes a count")?,
+                None => 1024,
+            };
+            let mut pine = PineClient::connect(pine_at.as_ref())?;
+            rng::check_title(&mut pine)?;
+            let watch = GiantsWatch::resolve(&mut pine)?;
+            drop(pine);
+            let path = rrc_dump::output::refuse_repo_output(list_at.as_ref())?;
+            std::fs::write(&path, serde_json::to_string_pretty(&watch)?)?;
+            control(socket)?.watch_arm(&watch.list, frames)?;
+            println!(
+                "armed: {} fields in {} ranges, {} bytes a record, {frames} records; hero {} at \
+                 {:#010x}, {} clips; list in {}",
+                watch.list.fields().len(),
+                watch.list.ranges().len(),
+                watch.list.bytes(),
+                watch.hero_name.as_deref().unwrap_or("?"),
+                watch.hero_corpus,
+                watch.clips.len(),
+                path.display()
+            );
+        }
+        ["read", "--socket", socket, opts @ ..] => {
+            let list_at = flag(opts, "--list").with_context(|| USAGE.to_owned())?;
+            let out = PathBuf::from(flag(opts, "--out").with_context(|| USAGE.to_owned())?);
+            let watch: GiantsWatch = serde_json::from_str(
+                &std::fs::read_to_string(&list_at).with_context(|| format!("reading {list_at}"))?,
+            )
+            .with_context(|| format!("parsing {list_at}"))?;
+            let control = control(socket)?;
+            let ring = control.watch_read()?;
+            let flips: Vec<u64> = ring.records.iter().map(|r| r.flip).collect();
+            let pads = control
+                .pad_reads(0, &flips)?
+                .into_iter()
+                .zip(&flips)
+                .filter_map(|(read, &flip)| read.map(|r| (flip, r.pad)))
+                .collect();
+            let identity = match env::path(env::ORACLE_EXE) {
+                Some(exe) => Identity::of(
+                    &exe,
+                    &OracleHome::open(&required(env::ORACLE_HOME)?)?.config_dir(),
+                )?
+                .line(),
+                None => "?".into(),
+            };
+            let file = WatchFile {
+                identity,
+                watch,
+                held: ring.summary.held,
+                total: ring.summary.total,
+                frames: ring.summary.frames,
+                armed: ring.summary.armed,
+                records: ring.records.iter().map(RawRecord::of).collect(),
+                pads,
+            };
+            let dir = rrc_dump::output::refuse_repo_output(&out)?;
+            std::fs::create_dir_all(&dir)?;
+            file.write(&dir.join(WatchFile::FILE))?;
+            let recording = file.recording()?;
+            std::fs::write(
+                dir.join(divergence::RECORDING_FILE),
+                serde_json::to_string(&recording)?,
+            )?;
+            let check = RingCheck::of(&recording, &ring.records);
+            println!(
+                "{} held of {} taken (armed at {}): {check:?}; {}",
+                ring.summary.held,
+                ring.summary.total,
+                ring.summary.armed,
+                if check.holds() {
+                    "one record a flip"
+                } else {
+                    "GAPS"
+                }
+            );
+        }
+        ["clear", "--socket", socket] => {
+            control(socket)?.watch_clear()?;
+            println!("cleared");
+        }
+        ["residuals", file, opts @ ..] => {
+            let recording: Recording = serde_json::from_str(
+                &std::fs::read_to_string(file).with_context(|| format!("reading {file}"))?,
+            )
+            .with_context(|| format!("parsing {file}"))?;
+            let bound = |name: &str| -> Result<Option<u64>> {
+                flag(opts, name)
+                    .map(|v| v.parse().with_context(|| format!("{name} takes a flip")))
+                    .transpose()
+            };
+            let (from, to) = (
+                bound("--from")?.unwrap_or(0),
+                bound("--to")?.unwrap_or(u64::MAX),
+            );
+            for alignment in Alignment::ALL {
+                for order in Order::ALL {
+                    let r = recording.residuals(alignment, order, |f| f >= from && f < to);
+                    println!(
+                        "{alignment:?} {order:?}: {} pairs, ground max {:.3e} m (at flip {}) rms \
+                         {:.3e} m, height max {:.3e} m",
+                        r.pairs,
+                        r.max_ground,
+                        r.worst_flip.map_or("-".into(), |f| f.to_string()),
+                        r.rms_ground,
+                        r.max_height
+                    );
+                }
+            }
+        }
+        _ => bail!("{USAGE}"),
     }
     Ok(())
 }

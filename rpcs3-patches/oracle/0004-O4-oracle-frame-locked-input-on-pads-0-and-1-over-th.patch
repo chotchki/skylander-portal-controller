@@ -1,7 +1,7 @@
-From 4f41b4a01189155d14578f3d8a0c514d670e25a2 Mon Sep 17 00:00:00 2001
+From cb6aeb3bea88ee18231efe83f17f77141bd7e959 Mon Sep 17 00:00:00 2001
 From: Christopher Hotchkiss <chris@hotchkiss.io>
 Date: Sun, 18 Oct 2026 18:10:22 -0700
-Subject: [PATCH 4/4] O4: oracle frame-locked input on pads 0 and 1 over the P1
+Subject: [PATCH 4/5] O4: oracle frame-locked input on pads 0 and 1 over the P1
  socket (GUAC_ORACLE=1)
 
 Three verbs on P1's AF_UNIX listener so the oracle can walk, fight and play co-op flip by flip (openspec AF.7, design decision 3). Behind O3's gate: each answers P1's ERR unknown_cmd unless GUAC_ORACLE=1 is in the emulator's environment. Nothing knows the game: every flip is RSX's int_flip_index, the counter STATE and HB report.

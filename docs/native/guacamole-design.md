@@ -6,11 +6,12 @@ This file owns the Guacamole track ([`openspec/config.yaml`](../../openspec/conf
 changes under `openspec/changes/`: [`aa-guacamole-shell/`](../../openspec/changes/aa-guacamole-shell/proposal.md),
 [`ac-giants-decode-gate/`](../../openspec/changes/ac-giants-decode-gate/proposal.md),
 [`ae-animated-turntable/`](../../openspec/changes/ae-animated-turntable/proposal.md),
-[`af-oracle-foundation/`](../../openspec/changes/af-oracle-foundation/proposal.md),
 [`ag-walk-one-level/`](../../openspec/changes/ag-walk-one-level/proposal.md) and
 [`ap-tv-ui-on-bevy-widgets/`](../../openspec/changes/ap-tv-ui-on-bevy-widgets/proposal.md). Archived: AB
 ([`2026-10-18-ab-giants-extract-and-intros/`](../../openspec/changes/archive/2026-10-18-ab-giants-extract-and-intros/proposal.md)),
-whose specs now live in [`openspec/specs/guacamole/`](../../openspec/specs/guacamole/). The later rungs of the
+whose specs now live in [`openspec/specs/guacamole/`](../../openspec/specs/guacamole/), and AF
+([`2026-10-19-af-oracle-foundation/`](../../openspec/changes/archive/2026-10-19-af-oracle-foundation/proposal.md)),
+which carried no spec deltas (dev tooling). The later rungs of the
 ladder are lines in the Guacamole section of [`openspec/backlog.md`](../../openspec/backlog.md). Until G1 the
 product ([CLAUDE.md](../../CLAUDE.md), [SPEC.md](../../SPEC.md), `docs/dev/*`) is owned where it always was,
 and it's frozen: the controller installed on the HTPC keeps playing the games and chotchki doesn't have to
@@ -1158,7 +1159,7 @@ only inside an envelope, and splits into separate outcomes wherever the level of
 parts within the first 60 flips. So a comparison against it is an envelope or a FLIP band inside a
 usable horizon, and past one a distribution or a re-anchor on a savestate taken inside it; never a
 frame-exact or event-exact replay of anything that moves. Every run's numbers are in AF's
-[tasks](../../openspec/changes/af-oracle-foundation/tasks.md); this section is the method and the
+[tasks](../../openspec/changes/archive/2026-10-19-af-oracle-foundation/tasks.md); this section is the method and the
 numbers a rung needs.
 
 ### The build and its pin
@@ -2184,7 +2185,7 @@ names (M0-M9, G1, G2) are the stable handles. Every rung is built and checked on
 | AB, M0 | `ab-giants-extract-and-intros` (archived 2026-10-18) | place a figure, its original intro video plays | `guac-extract` skeleton (identity, IGA, manifest, census, Bink 1 transcode to H.264 + MP3); Bevy video through openh264, AB.7's spike pick. The 48 intros are named by character, not toy type; the voice-over name in each character archive bridges all 48. A figure without one keeps its AA card |
 | AC | `ac-giants-decode-gate`, in parallel with AA and AB | nothing yet (a dev viewer) | IGZ v6, `igImage2`, Edge and a Havok 2011.2 skeleton plus one clip, matched against an RSX capture. PASSED 2026-10-18 on everything the oracle drew of Eruptor, all four layers, so Giants stays first; AC.24 and AC.25 (L8 against a bound unit, two upgrade branch images; AC.21 matched the other 14) hold the gate open, each one attended session away (Why Giants first) |
 | AE, M1 | `ae-animated-turntable` | their figure as an animated, textured turntable on the TV | the first 3D, in the one remaster look; the Mac's renderer floor measured; the disc roster replaces the interim catalogue |
-| AF | `af-oracle-foundation` | nothing | the oracle foundation: an unattended oracle on the product's pin (pause at a flip, capture, screenshot, save, two frame-locked pads, guest memory through PINE), its drift measured (exact only for what doesn't integrate host time; a walk agrees for 60 flips) and tolerance metrics calibrated on it. Lands before any gameplay comparison |
+| AF | `af-oracle-foundation` (archived 2026-10-19) | nothing | the oracle foundation: an unattended oracle on the product's pin (pause at a flip, capture, screenshot, save, two frame-locked pads, guest memory through PINE), its drift measured (exact only for what doesn't integrate host time; a walk agrees for 60 flips) and tolerance metrics calibrated on it. Lands before any gameplay comparison |
 | AG, M2 | `ag-walk-one-level` | walk the opening of chapter 1 (no scripts run yet, so the breakable door and rubble wall close it off) | level scene, collision, character controller, camera, feel checked against the oracle; the input spec, with prompts that match the physical pad |
 | AH, M3 | backlog | first fight: one enemy, XP and gold earned and kept on the kid's profile | combat basics; the per-profile figure-progression store, with the phone's figure editor on it |
 | AI, M4 | backlog | first couch battle: one Giants PvP arena, two pads, two phones | a second pad and a second profile's figure in play; the PvP rules as the oracle shows them |

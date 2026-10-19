@@ -212,6 +212,7 @@ rpcs3-patches/oracle/
   0002-O2-vk-Fix-renderpass-keys-attached-to-property-blobs.patch   upstream d08d568d5e
   0003-O3-oracle-capture-and-control-verbs-over-the-P1-sock.patch   PAUSE_AT, RESUME, RSXCAP, SCREENSHOT, SAVESTATE
   0004-O4-oracle-frame-locked-input-on-pads-0-and-1-over-th.patch   PAD, PAD_CLEAR, PAD_STATE
+  0005-O5-oracle-per-frame-recorder-over-the-P1-socket-GUAC.patch   WATCH, WATCH_READ, WATCH_CLEAR
   apply.sh   check P1-P8 on HEAD by subject, then git am --3way the O-series (--check: verify only)
   build.sh   clone/patch a checkout outside the repo, build it with build-mac.sh, install + identity
 ```
@@ -246,6 +247,19 @@ every read of a flip sees that flip's entry whatever the host's pad poll did) an
 beside O3. A new emulation session drops both. Its shapes are in `verbs.rs` with O3's, and
 [`tools/oracle-harness/tests/pad_loopback.rs`](../tools/oracle-harness/tests/pad_loopback.rs) is its
 fake. `build.sh` refuses to replace the installed bundle while an `rpcs3` from it runs.
+
+**O5 is the oracle's per-frame recorder** (AG.1), behind the same gate: `WATCH <frames> <addr>
+<len> ...` arms a ring of records of the guest ranges it names (up to 64, 16 KiB a record, 16 MiB
+for the ring), `WATCH_READ [<first> <count>]` hands back its summary or its records at a pause, and
+`WATCH_CLEAR` drops it. The first thing `pad_get_data` does, under `pad::g_pad_mutex` on the guest
+thread making the read, is the record: the first read of each flip on any port copies the ranges,
+so a run is recorded every frame at the same point in it without a pause, which a `PAUSE_AT`
+checkpoint can't give (AF.11: a pause moves the run). What to watch is the client's: Giants'
+addresses are the harness's ([`tools/oracle-harness/src/watch.rs`](../tools/oracle-harness/src/watch.rs)).
+It touches `cellPad.cpp` and `Skylander.cpp` beside O3 and O4. A new emulation session drops the
+watch. Its shapes are in `verbs.rs` with the others', and
+[`tools/oracle-harness/tests/watch_loopback.rs`](../tools/oracle-harness/tests/watch_loopback.rs) is its
+fake.
 
 Build it on the Mac:
 
@@ -291,11 +305,13 @@ to match** — it doubles as the executable spec the live binary must satisfy.
 
 **The O-series follows the same rule**, in `tools/oracle-harness`: the codec's unit
 tests in [`src/verbs.rs`](../tools/oracle-harness/src/verbs.rs) and the fake listeners
-[`tests/verbs_loopback.rs`](../tools/oracle-harness/tests/verbs_loopback.rs) (O3) and
-[`tests/pad_loopback.rs`](../tools/oracle-harness/tests/pad_loopback.rs) (O4) run in
+[`tests/verbs_loopback.rs`](../tools/oracle-harness/tests/verbs_loopback.rs) (O3),
+[`tests/pad_loopback.rs`](../tools/oracle-harness/tests/pad_loopback.rs) (O4) and
+[`tests/watch_loopback.rs`](../tools/oracle-harness/tests/watch_loopback.rs) (O5) run in
 `cargo test`; the `#[ignore]`d `tests/live_*.rs` drive the oracle build on the Mac
 (`live_gate` boots it without `GUAC_ORACLE=1` and checks every O-verb answers
-`ERR unknown_cmd`, `live_verbs` and `live_pad` drive O3 and O4 in a level). O1 and O2
+`ERR unknown_cmd`, `live_verbs`, `live_pad` and `live_watch` drive O3, O4 and O5 in a
+level). O1 and O2
 are upstream's code and have no test of their own beyond the oracle booting in the
 default shader mode.
 
