@@ -161,10 +161,6 @@ struct SetupLines(Vec<Line>);
 #[derive(Component)]
 struct BandSlot(BandShape);
 
-/// The portal's two rows of cells.
-#[derive(Component)]
-struct PortalGrid;
-
 /// A setup screen's line, kept so a change can be patched over the one drawn.
 #[derive(Debug, Clone, PartialEq)]
 struct Line {
@@ -295,7 +291,7 @@ impl Plugin for Screens {
                 patch_titles,
                 sync_setup_lines,
                 sync_band,
-                respawn_grid,
+                sync_cells,
             ),
         );
     }
@@ -634,26 +630,38 @@ fn sync_band(
     }
 }
 
-/// Until the cells keep their own content (AP.3): a card change respawns the
-/// grid's rows.
-fn respawn_grid(
+/// Each of the portal's eight cells follows its slot in `PortalCards`: one
+/// whose placement changed respawns its own content, the other seven and the
+/// header keep theirs.
+fn sync_cells(
     mut commands: Commands,
-    state: Res<State<TvState>>,
-    mut sources: Sources,
-    grids: Query<Entity, With<PortalGrid>>,
+    cards: Res<PortalCards>,
+    assets: Res<TvAssets>,
+    mut portraits: ResMut<Portraits>,
+    mut images: ResMut<Assets<Image>>,
+    mut report: ResMut<LayoutReport>,
+    mut cells: Query<(Entity, &Cell, &mut Drew)>,
 ) {
-    // Entered this frame: drawn from this frame's cards already.
-    if state.is_changed() || !sources.cards.is_changed() {
+    if !cards.is_changed() {
         return;
     }
-    let font = sources.assets.font.clone();
-    for grid in &grids {
+    let text =
+        |s: &str, size: f32, color: Color| label(&assets.font, s, size, color, Justify::Center);
+    for (entity, cell, mut drew) in &mut cells {
+        let now = &cards.slots[usize::from(cell.0)];
+        if drew.0 == *now {
+            continue;
+        }
+        let portrait = portrait_of(now.as_ref(), &mut portraits, &mut images);
         commands
-            .entity(grid)
+            .entity(entity)
             .despawn_children()
-            .with_children(|grid| spawn_rows(grid, &font, &mut sources));
+            .with_children(|content| {
+                spawn_slot(content, &text, cell.0, now.as_ref(), portrait);
+            });
+        drew.0 = now.clone();
+        report.0 = REPORT_AFTER_FRAMES;
     }
-    sources.arm_report(*state.get());
 }
 
 fn farewell_exit(current: Option<Res<Current>>, mut exit: MessageWriter<AppExit>) {
@@ -977,6 +985,15 @@ pub(crate) struct CardSlot(pub(crate) u8);
 #[derive(Component, Debug)]
 pub(crate) struct EmptySlot(pub(crate) u8);
 
+/// A slot's place in the grid (0-based), kept as long as the portal is up;
+/// its one child is the card or the empty frame.
+#[derive(Component, Debug)]
+pub(crate) struct Cell(pub(crate) u8);
+
+/// The placement a cell drew, none for its empty frame.
+#[derive(Component)]
+struct Drew(Option<Placement>);
+
 /// A card's owner pip, by slot.
 #[derive(Component, Debug)]
 pub(crate) struct Pip(pub(crate) u8);
@@ -1217,21 +1234,18 @@ fn spawn_portal(ui: &mut ChildSpawnerCommands, sources: &mut Sources) {
     });
 
     // Two rows of four; every cell grows equally, so eight always fit.
-    ui.spawn((
-        PortalGrid,
-        Node {
-            flex_direction: FlexDirection::Column,
-            row_gap: px(24),
-            flex_grow: 1.0,
-            flex_basis: px(0),
-            min_height: px(0),
-            ..default()
-        },
-    ))
+    ui.spawn(Node {
+        flex_direction: FlexDirection::Column,
+        row_gap: px(24),
+        flex_grow: 1.0,
+        flex_basis: px(0),
+        min_height: px(0),
+        ..default()
+    })
     .with_children(|grid| spawn_rows(grid, &font, sources));
 }
 
-/// The grid's rows, each slot holding its card or an empty frame.
+/// The grid's rows of cells, each holding its slot's card or empty frame.
 fn spawn_rows(grid: &mut ChildSpawnerCommands, font: &Handle<Font>, sources: &mut Sources) {
     let text = |s: &str, size: f32, color: Color| label(font, s, size, color, Justify::Center);
     let Sources {
@@ -1252,18 +1266,53 @@ fn spawn_rows(grid: &mut ChildSpawnerCommands, font: &Handle<Font>, sources: &mu
         .with_children(|cells| {
             for col in 0..CARDS_PER_ROW {
                 let slot = row * CARDS_PER_ROW + col;
-                match &cards.slots[slot] {
-                    Some(placement) => {
-                        let portrait = placement
-                            .portrait
-                            .as_deref()
-                            .and_then(|p| portraits.get(p, images));
-                        spawn_card(cells, &text, slot as u8, placement, portrait);
-                    }
-                    None => spawn_empty(cells, &text, slot as u8),
-                }
+                let placement = cards.slots[slot].as_ref();
+                let portrait = portrait_of(placement, portraits, images);
+                cells
+                    .spawn((
+                        Cell(slot as u8),
+                        Drew(placement.cloned()),
+                        // An equal share of the row; the content fills it.
+                        Node {
+                            flex_grow: 1.0,
+                            flex_basis: px(0),
+                            min_width: px(0),
+                            min_height: px(0),
+                            flex_direction: FlexDirection::Column,
+                            ..default()
+                        },
+                    ))
+                    .with_children(|cell| {
+                        spawn_slot(cell, &text, slot as u8, placement, portrait);
+                    });
             }
         });
+    }
+}
+
+/// The portrait drawn for a placement, decoded on first use.
+fn portrait_of(
+    placement: Option<&Placement>,
+    portraits: &mut Portraits,
+    images: &mut Assets<Image>,
+) -> Option<Handle<Image>> {
+    placement?
+        .portrait
+        .as_deref()
+        .and_then(|p| portraits.get(p, images))
+}
+
+/// A cell's content: the card, or the numbered empty frame.
+fn spawn_slot<T: Bundle>(
+    cell: &mut ChildSpawnerCommands,
+    text: &impl Fn(&str, f32, Color) -> T,
+    slot: u8,
+    placement: Option<&Placement>,
+    portrait: Option<Handle<Image>>,
+) {
+    match placement {
+        Some(placement) => spawn_card(cell, text, slot, placement, portrait),
+        None => spawn_empty(cell, text, slot),
     }
 }
 
@@ -1308,8 +1357,8 @@ fn spawn_band<T: Bundle>(
     }
 }
 
-/// A grid cell: grows to an equal share and clips anything that doesn't fit.
-fn cell() -> Node {
+/// A cell's content: fills the cell and clips anything that doesn't fit.
+fn slot_content() -> Node {
     Node {
         flex_grow: 1.0,
         flex_basis: px(0),
@@ -1329,88 +1378,90 @@ fn cell() -> Node {
 
 /// Portrait, name, element and owner pip; no level, XP or gold (AH).
 fn spawn_card<T: Bundle>(
-    cells: &mut ChildSpawnerCommands,
+    cell: &mut ChildSpawnerCommands,
     text: &impl Fn(&str, f32, Color) -> T,
     slot: u8,
     placement: &Placement,
     portrait: Option<Handle<Image>>,
 ) {
     let edge = element_color(placement.element);
-    cells
-        .spawn((
-            CardSlot(slot),
-            cell(),
-            BackgroundColor(CARD_BG),
-            BorderColor::all(edge),
-        ))
-        .with_children(|card| {
-            let frame = Node {
-                width: px(160),
-                height: px(160),
-                flex_shrink: 0.0,
-                border: UiRect::all(px(6)),
-                border_radius: BorderRadius::MAX,
-                ..default()
-            };
-            match portrait {
-                Some(image) => {
-                    card.spawn((
-                        frame,
-                        ImageNode::new(image),
-                        BorderColor::all(GOLD),
-                        BackgroundColor(PORTRAIT_BG),
-                    ));
-                }
-                None => {
-                    card.spawn((frame, BorderColor::all(GOLD), BackgroundColor(PORTRAIT_BG)));
-                }
+    cell.spawn((
+        CardSlot(slot),
+        slot_content(),
+        BackgroundColor(CARD_BG),
+        BorderColor::all(edge),
+    ))
+    .with_children(|card| {
+        let frame = Node {
+            width: px(160),
+            height: px(160),
+            flex_shrink: 0.0,
+            border: UiRect::all(px(6)),
+            border_radius: BorderRadius::MAX,
+            ..default()
+        };
+        match portrait {
+            Some(image) => {
+                card.spawn((
+                    frame,
+                    ImageNode::new(image),
+                    BorderColor::all(GOLD),
+                    BackgroundColor(PORTRAIT_BG),
+                ));
             }
+            None => {
+                card.spawn((frame, BorderColor::all(GOLD), BackgroundColor(PORTRAIT_BG)));
+            }
+        }
+        card.spawn((
+            text(&placement.name, 36.0, WHITE),
+            Node {
+                max_width: percent(100),
+                ..default()
+            },
+        ));
+        if let Some(element) = placement.element {
+            card.spawn(text(element_label(element), 28.0, edge));
+        }
+        if let Some(owner) = &placement.owner {
+            let color = owner_color(owner);
             card.spawn((
-                text(&placement.name, 36.0, WHITE),
+                Pip(slot),
                 Node {
-                    max_width: percent(100),
+                    position_type: PositionType::Absolute,
+                    top: px(10),
+                    right: px(10),
+                    width: px(60),
+                    height: px(60),
+                    border: UiRect::all(px(4)),
+                    border_radius: BorderRadius::MAX,
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
                     ..default()
                 },
-            ));
-            if let Some(element) = placement.element {
-                card.spawn(text(element_label(element), 28.0, edge));
-            }
-            if let Some(owner) = &placement.owner {
-                let color = owner_color(owner);
-                card.spawn((
-                    Pip(slot),
-                    Node {
-                        position_type: PositionType::Absolute,
-                        top: px(10),
-                        right: px(10),
-                        width: px(60),
-                        height: px(60),
-                        border: UiRect::all(px(4)),
-                        border_radius: BorderRadius::MAX,
-                        align_items: AlignItems::Center,
-                        justify_content: JustifyContent::Center,
-                        ..default()
-                    },
-                    BackgroundColor(color.into()),
-                    BorderColor::all(WHITE),
-                ))
-                .with_children(|pip| {
-                    pip.spawn(text(&owner.initial, 34.0, ink_on(color)));
-                });
-            }
-        });
+                BackgroundColor(color.into()),
+                BorderColor::all(WHITE),
+            ))
+            .with_children(|pip| {
+                pip.spawn(text(&owner.initial, 34.0, ink_on(color)));
+            });
+        }
+    });
 }
 
 fn spawn_empty<T: Bundle>(
-    cells: &mut ChildSpawnerCommands,
+    cell: &mut ChildSpawnerCommands,
     text: &impl Fn(&str, f32, Color) -> T,
     slot: u8,
 ) {
-    cells
-        .spawn((EmptySlot(slot), cell(), BorderColor::all(EMPTY_EDGE)))
-        .with_children(|frame| {
-            frame.spawn(text(&(slot + 1).to_string(), 56.0, EMPTY_EDGE));
-        });
+    cell.spawn((
+        EmptySlot(slot),
+        slot_content(),
+        BorderColor::all(EMPTY_EDGE),
+    ))
+    .with_children(|frame| {
+        frame.spawn(text(&(slot + 1).to_string(), 56.0, EMPTY_EDGE));
+    });
 }
 
 #[cfg(test)]
@@ -2189,5 +2240,74 @@ pub(crate) mod layout_tests {
             marked::<ErrorMessage>(&mut app),
             (line, "bind 0.0.0.0:8765".to_string())
         );
+    }
+
+    /// Each cell's entity and its one child, the card or the empty frame.
+    fn cells(app: &mut App) -> std::collections::BTreeMap<u8, (Entity, Entity)> {
+        let world = app.world_mut();
+        let mut q = world.query::<(Entity, &Cell, &Children)>();
+        q.iter(world)
+            .map(|(cell, slot, kids)| {
+                assert_eq!(kids.len(), 1, "cell {}", slot.0);
+                (slot.0, (cell, kids[0]))
+            })
+            .collect()
+    }
+
+    /// AP.3: a placement in slot 3 respawns that cell's content and nothing
+    /// else: the other seven cells' content and the header stay.
+    #[test]
+    fn a_placement_respawns_only_its_own_cell() {
+        let two = PortalCards::default().reduce([
+            PortalChange::Placed {
+                slot: SlotIndex::new(0).unwrap(),
+                placement: placement("Eruptor", Some("#33cc66")),
+            },
+            PortalChange::Placed {
+                slot: SlotIndex::new(5).unwrap(),
+                placement: placement("Tree Rex", None),
+            },
+        ]);
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, two.clone());
+        frames(&mut app, 3);
+        let before = cells(&mut app);
+        assert_eq!(before.len(), 8);
+        let header = (
+            marked::<GameName>(&mut app).0,
+            marked::<PlayersLine>(&mut app).0,
+        );
+
+        let slot3 = SlotIndex::from_display(3).unwrap();
+        *app.world_mut().resource_mut::<PortalCards>() =
+            two.clone().reduce([PortalChange::Placed {
+                slot: slot3,
+                placement: placement("Spyro", Some("#33cc66")),
+            }]);
+        app.update();
+        let after = cells(&mut app);
+        for (slot, (cell, content)) in &after {
+            assert_eq!(*cell, before[slot].0, "cell {slot} respawned");
+            if *slot == slot3.as_u8() {
+                assert_ne!(*content, before[slot].1);
+            } else {
+                assert_eq!(*content, before[slot].1, "slot {slot}'s content respawned");
+            }
+        }
+        let world = app.world_mut();
+        let card = world.get::<CardSlot>(after[&slot3.as_u8()].1).unwrap();
+        assert_eq!(card.0, slot3.as_u8());
+        assert_eq!(
+            (
+                marked::<GameName>(&mut app).0,
+                marked::<PlayersLine>(&mut app).0
+            ),
+            header
+        );
+
+        // The same cards again (a resume replaying them) respawn nothing.
+        let same = app.world().resource::<PortalCards>().clone();
+        *app.world_mut().resource_mut::<PortalCards>() = same;
+        app.update();
+        assert_eq!(cells(&mut app), after);
     }
 }

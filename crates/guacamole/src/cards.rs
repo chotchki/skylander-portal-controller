@@ -89,8 +89,8 @@ impl PortalCards {
 #[derive(Message, Debug, Clone, PartialEq, Eq)]
 pub struct PortalChanged(pub PortalChange);
 
-/// Touches `PortalCards` only when something arrived, so the portal screen
-/// rebuilds on a change and not every frame.
+/// Touches `PortalCards` only when something arrived, so the portal's cells
+/// compare against it on a change and not every frame.
 pub fn drain_portal(
     feed: Res<PortalFeed>,
     mut cards: ResMut<PortalCards>,

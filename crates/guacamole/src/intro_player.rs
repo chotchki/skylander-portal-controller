@@ -42,7 +42,7 @@ const END_GRACE: Duration = Duration::from_secs(2);
 /// An intro that never opens its video by now has failed.
 const OPEN_WITHIN: Duration = Duration::from_secs(10);
 
-/// Over the portal screen, which rebuilds under it.
+/// Over the portal screen, whose cards keep changing under it.
 const OVERLAY_Z: i32 = 1_000;
 
 /// The intro's video held back by this (`output_latency_ms` in settings).
