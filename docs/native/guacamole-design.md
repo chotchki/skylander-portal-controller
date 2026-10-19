@@ -4,11 +4,12 @@ Status: DESIGN, started 2026-10-17 and revised the same day for chotchki's secon
 decisions.
 This file owns the Guacamole track ([`openspec/config.yaml`](../../openspec/config.yaml) points here). Open
 changes under `openspec/changes/`: [`aa-guacamole-shell/`](../../openspec/changes/aa-guacamole-shell/proposal.md),
-[`ab-giants-extract-and-intros/`](../../openspec/changes/ab-giants-extract-and-intros/proposal.md),
 [`ac-giants-decode-gate/`](../../openspec/changes/ac-giants-decode-gate/proposal.md),
 [`ae-animated-turntable/`](../../openspec/changes/ae-animated-turntable/proposal.md),
 [`af-oracle-foundation/`](../../openspec/changes/af-oracle-foundation/proposal.md) and
-[`ap-tv-ui-on-bevy-widgets/`](../../openspec/changes/ap-tv-ui-on-bevy-widgets/proposal.md); the later rungs of the
+[`ap-tv-ui-on-bevy-widgets/`](../../openspec/changes/ap-tv-ui-on-bevy-widgets/proposal.md). Archived: AB
+([`2026-10-18-ab-giants-extract-and-intros/`](../../openspec/changes/archive/2026-10-18-ab-giants-extract-and-intros/proposal.md)),
+whose specs now live in [`openspec/specs/guacamole/`](../../openspec/specs/guacamole/). The later rungs of the
 ladder are lines in the Guacamole section of [`openspec/backlog.md`](../../openspec/backlog.md). Until G1 the
 product ([CLAUDE.md](../../CLAUDE.md), [SPEC.md](../../SPEC.md), `docs/dev/*`) is owned where it always was,
 and it's frozen: the controller installed on the HTPC keeps playing the games and chotchki doesn't have to
@@ -1426,7 +1427,7 @@ chains); how long a full pass takes gets measured when the pipeline runs.
 
 openh264 0.9.9 (its `source` feature) decoding H.264 Constrained Baseline, with the sound as MP3 through
 Bevy's `mp3` feature. The criteria and the full record are decision 7 in
-[`ab-giants-extract-and-intros/design.md`](../../openspec/changes/ab-giants-extract-and-intros/design.md)
+[`ab-giants-extract-and-intros/design.md`](../../openspec/changes/archive/2026-10-18-ab-giants-extract-and-intros/design.md)
 and AB.7's note. crates.io still had no Bevy 0.20 video player on 2026-10-18 (the ones that play files sit
 on Bevy 0.9-0.19, the newest on FFmpeg). Measured on the M3 Max with the display locked:
 
@@ -1694,7 +1695,7 @@ names (M0-M9, G1, G2) are the stable handles. Every rung is built and checked on
 | Rung | Where | What the kids see | What it proves |
 |---|---|---|---|
 | AA | `aa-guacamole-shell` | place a figure on the phone, the TV shows its card (name, element, portrait), in `guacamole` | the embedded server, the native driver over a channel, Guacamole's one-question setup, its own database and profiles, the interim catalogue with no `.sky` and no firmware pack, one binary at a time, all on the Mac driving the TV (the MSI carrying both binaries is the bring-up's) |
-| AB, M0 | `ab-giants-extract-and-intros` | place a figure, its original intro video plays | `guac-extract` skeleton (identity, IGA, manifest, census, Bink 1 transcode to H.264 + MP3); Bevy video through openh264, AB.7's spike pick. The 48 intros are named by character, not toy type; the voice-over name in each character archive bridges all 48. A figure without one keeps its AA card |
+| AB, M0 | `ab-giants-extract-and-intros` (archived 2026-10-18) | place a figure, its original intro video plays | `guac-extract` skeleton (identity, IGA, manifest, census, Bink 1 transcode to H.264 + MP3); Bevy video through openh264, AB.7's spike pick. The 48 intros are named by character, not toy type; the voice-over name in each character archive bridges all 48. A figure without one keeps its AA card |
 | AC | `ac-giants-decode-gate`, in parallel with AA and AB | nothing yet (a dev viewer) | IGZ v6, `igImage2`, Edge and a Havok 2011.2 skeleton plus one clip, matched against an RSX capture. PASSED 2026-10-18 on everything the oracle drew of Eruptor, all four layers, so Giants stays first; AC.24 and AC.25 (L8 against a bound unit, two upgrade branch images; AC.21 matched the other 14) hold the gate open, each one attended session away (Why Giants first) |
 | AE, M1 | `ae-animated-turntable` | their figure as an animated, textured turntable on the TV | the first 3D, in the one remaster look; the Mac's renderer floor measured; the disc roster replaces the interim catalogue |
 | AF | `af-oracle-foundation` | nothing | the oracle foundation: divergence measured, frame-locked two-pad input, tolerance metrics. Lands before any gameplay comparison |
