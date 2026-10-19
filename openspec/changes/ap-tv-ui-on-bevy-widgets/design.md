@@ -90,8 +90,8 @@ Sources: motivation and chotchki's six answers are in [proposal.md](proposal.md)
 
 **8. The rest of the look is native `bevy_ui` 0.20.**
 - Starfield: stacked `BackgroundGradient` on each screen root (the 3-stop linear `--sf-1` → `--sf-3` plus the top and bottom radial ellipses), and a star layer we generate ourselves (procedural in a small `UiMaterial` driven by `Globals.time`, or a tiled `ImageNode` built in code), drifting on §1's 140 s loop. Never a disc or wiki image.
-- Bezel (§3.1): nested ring nodes, since 0.20 has no inset `BoxShadow`: an outer ring with the radial gold `BackgroundGradient` and `BorderRadius::MAX`, an inner `--gi` ring, top and bottom light nodes, a `BoxShadow` drop, the element-coloured plate holding the portrait.
-- Card edge: `BorderGradient` gold instead of the flat element-coloured border; the blue-card gradient (§3.2) on the buttons.
+- Bezel (§3.1), since 0.20 has no inset `BoxShadow`: a ring node with `BorderRadius::MAX` whose border is the `--gi` line and whose fill carries the top light and bottom shade as gradient layers, a `BoxShadow` outline and drop, and a plate node 10% in holding the portrait. On a figure card the ring wears the element's gradient instead of gold, as the phone's does (`gold_bezel.css`, chotchki's 2026-05-04 playtest: "color code the element instead of just a gold ring"): the portrait covers the plate and the card's edge is gold, so a gold ring would leave the element in the caption alone (AP.12). A figure with no element keeps the gold ring.
+- Card edge: `BorderGradient` gold instead of the flat element-coloured border, on §3.3's framed-panel fill; the blue-card gradient (§3.2) on the buttons.
 - The owner pip stays top-right, recorded as a departure from §3.1's bottom-right ownership pip: "b, top right bottom right will interfere with player 2's ui" (chotchki, 2026-10-18).
 
 **9. Motion animates inner nodes over our own timers, and freezes for shots.**

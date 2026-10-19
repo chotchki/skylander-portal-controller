@@ -3,7 +3,8 @@
 //! kind is a `bevy_state` state (openspec AP, design decision 1): each kind
 //! spawns its tree on enter under a root that despawns on exit. Sizes and
 //! colours come from [`TvTheme`] (decision 6), through a [`Pen`]; every root
-//! sits on the [`starfield`](crate::starfield) (decision 8).
+//! sits on the [`starfield`](crate::starfield) and cards and buttons wear
+//! §3's [`surfaces`](crate::surfaces) (decision 8).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -34,6 +35,7 @@ use crate::motion::ReducedMotion;
 use crate::picker::FolderAsked;
 use crate::screen::{SetupView, TvScreen, screen_for};
 use crate::starfield;
+use crate::surfaces::{self, BUTTON_BORDER, BUTTON_RADIUS};
 use crate::theme::{Role, Step, TvTheme};
 
 /// How long the farewell shows before the app exits (spec: under 5 s).
@@ -896,8 +898,8 @@ fn spawn_line(column: &mut ChildSpawnerCommands, pen: &Pen, line: &Line) {
 /// A choice: a `bevy_ui_widgets` button, focused when it appears
 /// (`AutoFocus`), taking the focus from a click on it (`TabIndex`; without one
 /// a click clears it) and named for the router and the mirror (`FocusId`).
-/// Its look sits on a face inside it, so AP.13's focus scale moves no rect
-/// the tests read.
+/// Its look, §3.2's blue card, sits on a face inside it, so AP.13's focus
+/// scale moves no rect the tests read.
 fn choice_bundle(pen: &Pen, text: &str, id: &'static str) -> impl Bundle + use<> {
     (
         Button,
@@ -911,12 +913,11 @@ fn choice_bundle(pen: &Pen, text: &str, id: &'static str) -> impl Bundle + use<>
         children![(
             Node {
                 padding: UiRect::axes(px(48), px(16)),
-                border: UiRect::all(px(4)),
-                border_radius: BorderRadius::all(px(24)),
+                border: UiRect::all(px(BUTTON_BORDER)),
+                border_radius: BorderRadius::all(px(BUTTON_RADIUS)),
                 ..default()
             },
-            BackgroundColor(pen.theme.panel),
-            BorderColor::all(pen.theme.gold),
+            surfaces::blue_card(&pen.theme),
             children![pen.text(text, Step::Md, Role::Accent)],
         )],
     )
@@ -1537,7 +1538,9 @@ fn slot_content() -> Node {
     }
 }
 
-/// Portrait, name, element and owner pip; no level, XP or gold (AH).
+/// Portrait, name, element and owner pip; no level, XP or gold (AH). The card
+/// is §3.3's framed panel edged in gold, the portrait sits in §3.1's bezel
+/// ringed in the figure's element, and the pip stays top-right.
 fn spawn_card(
     cell: &mut ChildSpawnerCommands,
     pen: &Pen,
@@ -1546,65 +1549,28 @@ fn spawn_card(
     portrait: Option<Handle<Image>>,
 ) {
     let theme = &pen.theme;
-    cell.spawn((
-        CardSlot(slot),
-        slot_content(),
-        BackgroundColor(theme.panel),
-        BorderColor::all(theme.element(placement.element)),
-    ))
-    .with_children(|card| {
-        let frame = Node {
-            width: px(160),
-            height: px(160),
-            flex_shrink: 0.0,
-            border: UiRect::all(px(6)),
-            border_radius: BorderRadius::MAX,
-            ..default()
-        };
-        let ring = (
-            frame,
-            BorderColor::all(theme.gold),
-            BackgroundColor(theme.starfield[2]),
-        );
-        match portrait {
-            Some(image) => card.spawn((ring, ImageNode::new(image))),
-            None => card.spawn(ring),
-        };
-        card.spawn((
-            pen.text(&placement.name, CARD_NAME, Role::Primary),
-            Node {
-                max_width: percent(100),
-                ..default()
-            },
-        ));
-        if let Some(element) = placement.element {
-            card.spawn(pen.text(element_label(element), Step::Caption, Role::Muted));
-        }
-        if let Some(owner) = &placement.owner {
-            let color = owner_color(owner, theme);
+    cell.spawn((CardSlot(slot), slot_content(), surfaces::card(theme)))
+        .with_children(|card| {
+            surfaces::spawn_bezel(card, theme, placement.element, portrait);
             card.spawn((
-                Pip(slot),
+                pen.text(&placement.name, CARD_NAME, Role::Primary),
                 Node {
-                    position_type: PositionType::Absolute,
-                    top: px(10),
-                    right: px(10),
-                    width: px(60),
-                    height: px(60),
-                    border: UiRect::all(px(4)),
-                    border_radius: BorderRadius::MAX,
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::Center,
+                    max_width: percent(100),
                     ..default()
                 },
-                BackgroundColor(color.into()),
-                BorderColor::all(theme.role(Role::Primary)),
-            ))
-            .with_children(|pip| {
-                let ink = theme.ink_on(color);
-                pip.spawn(pen.inked(&owner.initial, Step::Body, ink, Justify::Center));
-            });
-        }
-    });
+            ));
+            if let Some(element) = placement.element {
+                card.spawn(pen.text(element_label(element), Step::Caption, Role::Muted));
+            }
+            if let Some(owner) = &placement.owner {
+                let color = owner_color(owner, theme);
+                card.spawn((Pip(slot), surfaces::pip(theme, color.into())))
+                    .with_children(|pip| {
+                        let ink = theme.ink_on(color);
+                        pip.spawn(pen.inked(&owner.initial, Step::Body, ink, Justify::Center));
+                    });
+            }
+        });
 }
 
 fn spawn_empty(cell: &mut ChildSpawnerCommands, pen: &Pen, slot: u8) {
@@ -3057,6 +3023,214 @@ pub(crate) mod layout_tests {
                 );
             }
         }
+    }
+
+    /// AP.12: the owner pip stays in its card's top-right corner (design
+    /// decision 8), on eight cards at 1080p, 4K and in the desktop window,
+    /// with short names and with long ones under the longest band.
+    #[test]
+    fn each_pip_sits_in_its_cards_top_right_quadrant() {
+        for (w, h, mode) in [
+            (1920, 1080, WindowMode::Tv),
+            (3840, 2160, WindowMode::Tv),
+            (1280, 720, WindowMode::Desktop),
+        ] {
+            for (name, band) in [
+                ("Eruptor", None),
+                ("Legendary Chop Chop the Undead", Some(long_failure())),
+            ] {
+                let mut app = portal_app(w, h, mode, full(name));
+                app.insert_resource(ExtractBand(band));
+                let laid = measure(&mut app);
+                assert_eq!(laid.pips.len(), 8, "{w}x{h} {name}");
+                for (slot, pip) in &laid.pips {
+                    let card = laid.cards[usize::from(*slot)].1;
+                    let quadrant = Rect::from_corners(
+                        Vec2::new(card.center().x, card.min.y),
+                        Vec2::new(card.max.x, card.center().y),
+                    );
+                    assert!(
+                        contains(quadrant, *pip),
+                        "{w}x{h} {name}: pip {slot} {pip:?} leaves {quadrant:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The card, bezel, plate and pip `spawn_card` drew for `slot`.
+    fn card_parts(app: &mut App, slot: u8) -> [Entity; 4] {
+        let world = app.world_mut();
+        let mut cards = world.query::<(Entity, &CardSlot)>();
+        let card = cards
+            .iter(world)
+            .find(|(_, s)| s.0 == slot)
+            .map(|(e, _)| e)
+            .unwrap();
+        let mut found = [
+            card,
+            Entity::PLACEHOLDER,
+            Entity::PLACEHOLDER,
+            Entity::PLACEHOLDER,
+        ];
+        let mut stack = vec![card];
+        while let Some(e) = stack.pop() {
+            if world.get::<surfaces::Bezel>(e).is_some() {
+                found[1] = e;
+            }
+            if world.get::<surfaces::Plate>(e).is_some() {
+                found[2] = e;
+            }
+            if world.get::<Pip>(e).is_some() {
+                found[3] = e;
+            }
+            if let Some(kids) = world.get::<Children>(e) {
+                stack.extend(kids.iter());
+            }
+        }
+        found
+    }
+
+    fn rect_of(app: &App, e: Entity) -> Rect {
+        node_rect(
+            app.world().get::<ComputedNode>(e).unwrap(),
+            app.world().get::<UiGlobalTransform>(e).unwrap(),
+        )
+    }
+
+    /// AP.12: a figure card is §3.3's framed panel edged in the gold run, its
+    /// portrait in §3.1's bezel ringed in the figure's element (the phone's
+    /// rule: the portrait covers the plate) or in gold for a figure with no
+    /// element, the plate concentric at 80% of the bezel holding the portrait,
+    /// and the pip a gold ring round the owner's colour.
+    #[test]
+    fn a_card_wears_its_materials() {
+        let theme = TvTheme::default();
+        let dir = tempfile::tempdir().unwrap();
+        let thumb = dir.path().join("thumb.png");
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([200, 60, 20, 255]))
+            .save(&thumb)
+            .unwrap();
+        let mut eruptor = placement("Eruptor", Some("#e8423f"));
+        eruptor.portrait = Some(thumb);
+        let mut rex = placement("Tree Rex", None);
+        rex.element = None;
+        let cards = PortalCards::default().reduce([
+            PortalChange::Placed {
+                slot: SlotIndex::new(0).unwrap(),
+                placement: eruptor,
+            },
+            PortalChange::Placed {
+                slot: SlotIndex::new(1).unwrap(),
+                placement: rex,
+            },
+        ]);
+        for (w, h, mode) in [(1920, 1080, WindowMode::Tv), (3840, 2160, WindowMode::Tv)] {
+            let mut app = portal_app(w, h, mode, cards.clone());
+            measure(&mut app);
+            let scale = h as f32 / DESIGN_HEIGHT;
+            for (slot, element, portrait) in [(0, Some(Element::Fire), true), (1, None, false)] {
+                let at = format!("{w}x{h} slot {slot}");
+                let [card, bezel, plate, pip] = card_parts(&mut app, slot);
+                let world = app.world();
+                let (edge, fill) = (
+                    world.get::<BorderGradient>(card).unwrap(),
+                    world.get::<BackgroundGradient>(card).unwrap(),
+                );
+                let (expected_fill, expected_edge) = {
+                    let mut probe = World::new();
+                    let e = probe.spawn(surfaces::card(&theme)).id();
+                    (
+                        probe.get::<BackgroundGradient>(e).unwrap().clone(),
+                        probe.get::<BorderGradient>(e).unwrap().clone(),
+                    )
+                };
+                assert_eq!(*edge, expected_edge, "{at}: the gold edge");
+                assert_eq!(*fill, expected_fill, "{at}: the panel");
+                assert!(
+                    world
+                        .get::<BorderColor>(card)
+                        .unwrap()
+                        .top
+                        .is_fully_transparent(),
+                    "{at}: no flat edge over the gold"
+                );
+                let ring = &world.get::<BackgroundGradient>(bezel).unwrap().0[0];
+                assert_eq!(*ring, surfaces::ring(&theme, element), "{at}");
+                assert_eq!(
+                    *ring == surfaces::gold_ring(&theme),
+                    element.is_none(),
+                    "{at}: gold only for a figure with no element"
+                );
+                assert_eq!(
+                    world.get::<ImageNode>(plate).is_some(),
+                    portrait,
+                    "{at}: the portrait sits on the plate"
+                );
+                let (outer, inner) = (rect_of(&app, bezel), rect_of(&app, plate));
+                assert!(
+                    (outer.width() - surfaces::BEZEL * scale).abs() < 1.0,
+                    "{at}"
+                );
+                assert!(
+                    inner.center().abs_diff_eq(outer.center(), 1.0),
+                    "{at}: {inner:?} in {outer:?}"
+                );
+                assert!(
+                    (inner.width() / outer.width() - 0.8).abs() < 0.01,
+                    "{at}: {inner:?} in {outer:?}"
+                );
+                if slot == 0 {
+                    let world = app.world();
+                    assert_eq!(
+                        Srgba::from(world.get::<BackgroundColor>(pip).unwrap().0).to_hex(),
+                        "#E8423F",
+                        "{at}: the pip's plate is the owner's"
+                    );
+                    let ring = world.get::<BorderGradient>(pip).unwrap();
+                    assert_eq!(ring.0[0], surfaces::gold_ring(&theme), "{at}");
+                    let size = rect_of(&app, pip).width();
+                    assert!((size - surfaces::PIP * scale).abs() < 1.0, "{at}: {size}");
+                } else {
+                    assert_eq!(pip, Entity::PLACEHOLDER, "{at}: no owner, no pip");
+                }
+            }
+        }
+    }
+
+    /// AP.12: every choice's face is §3.2's blue card at rest: the three-stop
+    /// fill, a solid `--gb` edge and the drop under it.
+    #[test]
+    fn every_choice_wears_the_blue_card() {
+        let theme = TvTheme::default();
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
+        let mut seen = std::collections::BTreeSet::new();
+        for screen in every_screen() {
+            app.world_mut().resource_mut::<Current>().screen = screen.clone();
+            frames(&mut app, 2);
+            let world = app.world_mut();
+            let mut q = world.query::<(&FocusId, &Children)>();
+            let faces: Vec<(&'static str, Entity)> =
+                q.iter(world).map(|(id, kids)| (id.0, kids[0])).collect();
+            for (id, face) in faces {
+                let at = format!("{screen:?} {id}");
+                let fill = world.get::<BackgroundGradient>(face).unwrap();
+                let Gradient::Linear(base) = &fill.0[0] else {
+                    panic!("{at}: {fill:?}");
+                };
+                let colours: Vec<Color> = base.stops.iter().map(|s| s.color).collect();
+                assert_eq!(colours, theme.blue_card, "{at}");
+                let edge = world.get::<BorderColor>(face).unwrap();
+                assert_eq!(edge.top, theme.gold_bright, "{at}");
+                assert_eq!(world.get::<BoxShadow>(face).unwrap().len(), 2, "{at}");
+                seen.insert(id);
+            }
+        }
+        assert_eq!(
+            seen,
+            [CHOOSE_FOLDER, CONTINUE, CLOSE].into(),
+            "every choice was drawn"
+        );
     }
 }
 

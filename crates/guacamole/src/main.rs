@@ -21,6 +21,7 @@ mod screen;
 #[cfg(feature = "dev-tools")]
 mod shots;
 mod starfield;
+mod surfaces;
 mod theme;
 mod tv;
 mod video;
