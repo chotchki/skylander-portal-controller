@@ -22,9 +22,11 @@ use bevy::render::render_resource::{
 };
 use bevy::shader::ShaderRef;
 use guac_ir::model::{self, Mask, TextureRole};
-use guac_ir::shading::{Fixed, Layer, Rim, Scene, SecondLayer, ThirdLayer, UvTransform, Weights};
+use guac_ir::shading::{
+    Fixed, Glow, Layer, Rim, Scene, SecondLayer, ThirdLayer, UvTransform, Weights,
+};
 
-use super::key::{KeyError, MaterialKey, SceneBits, ShaderKey, StateKey, bit};
+use super::key::{KeyError, MaterialKey, Pass, SceneBits, ShaderKey, StateKey, bit};
 use super::mesh::ATTRIBUTE_UV_2;
 
 /// The shader, embedded by [`super::CharacterShadingPlugin`].
@@ -52,7 +54,9 @@ pub struct CharacterUniform {
     /// A view-space position's shadow-map coordinates: u = (P, 1)·shadow_u.
     pub shadow_u: Vec4,
     pub shadow_v: Vec4,
-    /// x the shadow mode, y the alpha test's reference.
+    /// x the shadow mode, y the alpha test's reference, z the glow: its
+    /// amount, -1 for layer 1's alpha, 0 for none (as the original's glow
+    /// shader takes it).
     pub misc: Vec4,
     /// x layer 1's fixed alpha, y layer 2's, z layer 3's strength, w the
     /// rim's.
@@ -127,7 +131,16 @@ impl CharacterUniform {
             replace: v4(scene.replace),
             shadow_u: shadow.u,
             shadow_v: shadow.v,
-            misc: Vec4::new(scene.shadow_mode, alpha_reference, 0.0, 0.0),
+            misc: Vec4::new(
+                scene.shadow_mode,
+                alpha_reference,
+                match material.glow {
+                    Glow::None => 0.0,
+                    Glow::Amount(a) => a,
+                    Glow::LayerAlpha => -1.0,
+                },
+                0.0,
+            ),
             fixed_alpha: Vec4::new(
                 material.first.fixed_alpha,
                 second.map_or(-1.0, |s| s.layer.fixed_alpha),
@@ -252,6 +265,9 @@ pub struct CharacterMaterial {
     #[sampler(18, visibility(fragment))]
     pub shadow: Option<Handle<Image>>,
     pub key: MaterialKey,
+    /// Whether the part has a glow attribute (its glow is an amount or
+    /// layer 1's alpha, not none): what [`Self::glow_mask`] reads.
+    pub glows: bool,
 }
 
 impl From<&CharacterMaterial> for MaterialKey {
@@ -287,7 +303,22 @@ impl CharacterMaterial {
             rim: textures.rim,
             shadow: textures.shadow,
             key,
+            glows: material.glow != Glow::None,
         })
+    }
+
+    /// The same part in the glow pass, drawing its glow mask; `None` for a
+    /// part without a glow attribute that writes no depth. The original
+    /// draws only the parts with the attribute into the mask, tested against
+    /// the colour pass's depth, so a part without one hides glow behind it
+    /// only where it wrote depth (the character-shading spec's glow mask).
+    pub fn glow_mask(&self) -> Option<Self> {
+        if !self.glows && !self.key.states.depth_write {
+            return None;
+        }
+        let mut m = self.clone();
+        m.key.pass = Pass::GlowMask;
+        Some(m)
     }
 
     /// An IR material in `scene`: the masks it draws there, its numbers and
@@ -306,6 +337,7 @@ impl CharacterMaterial {
         let key = MaterialKey {
             shader: ShaderKey::resolve(ir.pixel, ir.vertex, bits)?,
             states: StateKey::from(&ir.states),
+            pass: Pass::Colour,
         };
         let mut textures = CharacterTextures::default();
         for slot in &ir.textures {
@@ -402,8 +434,12 @@ pub fn reference_material(
             weights: weights(pr.layer4_blend),
             split: pr.layer4_values[3],
         }),
-        tint: pr.material_tint.map(|c| f32::from(c) / 255.0),
-        glow: pr.glow.map(|g| f32::from(g) / 255.0),
+        tint: super::remaster::tint(pr.material_tint),
+        glow: match pr.glow {
+            model::Glow::None => Glow::None,
+            model::Glow::Amount(a) => Glow::Amount(f32::from(a) / 255.0),
+            model::Glow::LayerAlpha => Glow::LayerAlpha,
+        },
         uv_transforms: [UvTransform::IDENTITY; 3],
         fixed: Fixed {
             shadows: owned(p, bit::SHADOWS),
@@ -465,7 +501,7 @@ pub fn specialize_for(
             .0
             .get_layout(&vertex_attributes(&key.shader, layout))?,
     ];
-    key.states.apply(descriptor);
+    key.apply(descriptor);
     Ok(())
 }
 
@@ -557,7 +593,7 @@ mod tests {
                 layer4_blend: [0.0, 1.0, 0.0, 0.0],
                 layer4_values: [0.0, 1.0, 0.0, 0.0],
                 material_tint: [128, 128, 128, 255],
-                glow: Some(64),
+                glow: model::Glow::Amount(64),
             },
             states: RenderStates {
                 blend: Blend::Opaque,
@@ -587,7 +623,7 @@ mod tests {
         );
         assert_eq!(m.rim, Some(Rim::new(1.0)));
         assert_eq!(m.tint, [128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0]);
-        assert_eq!(m.glow, Some(64.0 / 255.0));
+        assert_eq!(m.glow, Glow::Amount(64.0 / 255.0));
         assert_eq!(m.second, None);
         assert_eq!(m.third, None);
         // 0x2FF leaves shadows, fog and point lights to the scene.
@@ -710,7 +746,13 @@ mod tests {
         assert_eq!(u.point_falloff[0], Vec4::new(1.5, 0.75, 0.0, 0.0));
         assert_eq!(u.point_colour[1], Vec4::ZERO);
         assert_eq!(u.fog_range, Vec4::new(30.48, 335.28, 0.0, 0.0));
-        assert_eq!(u.misc, Vec4::new(2.0, 0.3, 0.0, 0.0));
+        assert_eq!(u.misc, Vec4::new(2.0, 0.3, 64.0 / 255.0, 0.0));
+        // The glow as the original's glow shader takes it.
+        for (glow, z) in [(Glow::None, 0.0), (Glow::LayerAlpha, -1.0)] {
+            m.glow = glow;
+            let u = CharacterUniform::new(&m, &scene, ShadowLookup::NONE, 0.3);
+            assert_eq!(u.misc.z, z, "{glow:?}");
+        }
         assert_eq!(u.fixed_alpha, Vec4::new(-1.0, -1.0, 0.0, 1.0));
         assert_eq!(u.layer1, Vec4::new(1.0, 1.0, 0.0, 0.0));
         assert_eq!(u.rim_weights, Vec4::new(0.0, 1.0, 0.0, 0.0));
@@ -813,14 +855,130 @@ mod tests {
         let key = MaterialKey {
             shader: ShaderKey::new(0x003, 0x003).unwrap(),
             states: StateKey::OPAQUE,
+            pass: Pass::Colour,
         };
         let mut d = RenderPipelineDescriptor::default();
         assert!(specialize_for(&key, &mut d, &layout).is_err());
         let colour = MaterialKey {
             shader: ShaderKey::new(0x404, 0x1404).unwrap(),
             states: StateKey::OPAQUE,
+            pass: Pass::Colour,
         };
         assert!(specialize_for(&colour, &mut d, &layout).is_err());
+    }
+
+    #[test]
+    fn the_glow_pass_writes_the_mask_unblended_with_the_parts_other_states() {
+        let s = segment(1, false);
+        let layout = layout(&s);
+        let colour = MaterialKey {
+            shader: ShaderKey::new(0x41C, 0x41C).unwrap(),
+            states: StateKey {
+                blend: Blend::Additive,
+                depth_write: false,
+                two_sided: true,
+                alpha_test: true,
+            },
+            pass: Pass::Colour,
+        };
+        let glow = MaterialKey {
+            pass: Pass::GlowMask,
+            ..colour
+        };
+        assert_eq!(glow.shader_defs(), colour.shader_defs());
+        let descriptor = || RenderPipelineDescriptor {
+            depth_stencil: Some(DepthStencilState {
+                format: TextureFormat::Depth32Float,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(CompareFunction::GreaterEqual),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            fragment: Some(FragmentState {
+                targets: vec![Some(ColorTargetState {
+                    format: TextureFormat::Rgba16Float,
+                    blend: None,
+                    write_mask: ColorWrites::ALL,
+                })],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let (mut c, mut g) = (descriptor(), descriptor());
+        specialize_for(&colour, &mut c, &layout).unwrap();
+        specialize_for(&glow, &mut g, &layout).unwrap();
+        let blend = |d: &RenderPipelineDescriptor| {
+            d.fragment.as_ref().unwrap().targets[0]
+                .as_ref()
+                .unwrap()
+                .blend
+        };
+        let entry = |d: &RenderPipelineDescriptor| d.fragment.as_ref().unwrap().entry_point.clone();
+        assert_eq!(entry(&c), Some("fragment".into()));
+        assert_eq!(entry(&g), Some("glow_mask".into()));
+        assert!(blend(&c).is_some());
+        assert_eq!(blend(&g), None, "never blended");
+        assert_eq!(g.primitive.cull_mode, c.primitive.cull_mode);
+        assert_eq!(
+            g.depth_stencil.as_ref().unwrap().depth_write_enabled,
+            Some(false)
+        );
+        // The same material, its pass flipped.
+        let textures = CharacterTextures {
+            colour: Some(Handle::default()),
+            normal_map: Some(Handle::default()),
+            spec_map: Some(Handle::default()),
+            rim: Some(Handle::default()),
+            ..Default::default()
+        };
+        let m = CharacterMaterial::new(
+            colour,
+            &reference_material(&eruptor_body()).unwrap(),
+            &fogged(),
+            ShadowLookup::NONE,
+            0.5,
+            textures,
+        )
+        .unwrap();
+        let mask = m.glow_mask().expect("a glowing part draws its mask");
+        assert_eq!(mask.key, glow);
+        assert_eq!(mask.uniform, m.uniform);
+        assert_eq!(mask.colour, m.colour);
+        // Without a glow attribute: the mask's zero where the part writes
+        // depth, and no mask draw at all where it doesn't (review of AE.11).
+        let none = |depth_write| {
+            let key = MaterialKey {
+                states: StateKey {
+                    depth_write,
+                    ..colour.states
+                },
+                ..colour
+            };
+            let material = guac_ir::shading::Material {
+                glow: Glow::None,
+                ..reference_material(&eruptor_body()).unwrap()
+            };
+            CharacterMaterial::new(
+                key,
+                &material,
+                &fogged(),
+                ShadowLookup::NONE,
+                0.5,
+                CharacterTextures {
+                    colour: Some(Handle::default()),
+                    normal_map: Some(Handle::default()),
+                    spec_map: Some(Handle::default()),
+                    rim: Some(Handle::default()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+        };
+        let occluder = none(true).glow_mask().expect("it hides glow behind it");
+        assert_eq!(occluder.uniform.misc.z, 0.0);
+        assert!(none(false).glow_mask().is_none());
+        // With the attribute, a part writing no depth still draws its mask.
+        assert!(!colour.states.depth_write && m.glow_mask().is_some());
     }
 
     #[test]
@@ -835,6 +993,7 @@ mod tests {
                 two_sided: true,
                 alpha_test: true,
             },
+            pass: Pass::Colour,
         };
         let mut d = RenderPipelineDescriptor {
             depth_stencil: Some(DepthStencilState {

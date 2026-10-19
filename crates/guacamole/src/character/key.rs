@@ -428,11 +428,21 @@ impl StateKey {
     }
 }
 
-/// What a pipeline is specialized on: the masks and the states.
+/// Which pass a part draws in: the frame's colour, or the glow pass's mask
+/// (the character-shading spec's glow mask, AE.11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Pass {
+    #[default]
+    Colour,
+    GlowMask,
+}
+
+/// What a pipeline is specialized on: the masks, the states and the pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MaterialKey {
     pub shader: ShaderKey,
     pub states: StateKey,
+    pub pass: Pass,
 }
 
 impl MaterialKey {
@@ -442,6 +452,30 @@ impl MaterialKey {
             defs.push(def::ALPHA_TEST.into());
         }
         defs
+    }
+
+    /// The fragment entry point: the shader's `fragment`, or `glow_mask`
+    /// in the glow pass.
+    pub fn entry_point(&self) -> &'static str {
+        match self.pass {
+            Pass::Colour => "fragment",
+            Pass::GlowMask => "glow_mask",
+        }
+    }
+
+    /// The pipeline's states and entry point: the part's own states in the
+    /// colour pass; in the glow pass its culling, depth write and alpha
+    /// test, never blended.
+    pub fn apply(&self, descriptor: &mut RenderPipelineDescriptor) {
+        self.states.apply(descriptor);
+        if let Some(fragment) = descriptor.fragment.as_mut() {
+            fragment.entry_point = Some(self.entry_point().into());
+            if self.pass == Pass::GlowMask {
+                for target in fragment.targets.iter_mut().flatten() {
+                    target.blend = None;
+                }
+            }
+        }
     }
 }
 
@@ -467,6 +501,7 @@ mod tests {
         MaterialKey {
             shader: ShaderKey::new(pixel, vertex).expect("a valid key"),
             states: StateKey::OPAQUE,
+            pass: Pass::Colour,
         }
     }
 
@@ -768,6 +803,55 @@ mod tests {
             ..StateKey::OPAQUE
         };
         assert_eq!(tested.alpha_mode(0.25), AlphaMode::Mask(0.25));
+    }
+
+    /// A level's multiplied part (AG.15) through a material key (AE.11's
+    /// passes): DESTINATION_COLOR, ZERO with the alpha kept in the colour
+    /// pass, never blended in the glow pass.
+    #[test]
+    fn a_multiplied_part_scales_whats_there_and_its_glow_pass_doesnt() {
+        let target = |d: &RenderPipelineDescriptor| {
+            d.fragment.as_ref().unwrap().targets[0]
+                .as_ref()
+                .unwrap()
+                .blend
+        };
+        let colour = MaterialKey {
+            states: StateKey {
+                blend: Blend::Multiply,
+                depth_write: false,
+                two_sided: false,
+                alpha_test: false,
+            },
+            ..key(0, 0)
+        };
+        let mut d = descriptor();
+        colour.apply(&mut d);
+        let b = target(&d).unwrap();
+        assert_eq!(
+            (b.color.src_factor, b.color.dst_factor),
+            (BlendFactor::Dst, BlendFactor::Zero)
+        );
+        assert_eq!(
+            (b.alpha.src_factor, b.alpha.dst_factor),
+            (BlendFactor::Zero, BlendFactor::One)
+        );
+        assert_eq!(colour.states.alpha_mode(0.5), AlphaMode::Multiply);
+        let glow = MaterialKey {
+            pass: Pass::GlowMask,
+            ..colour
+        };
+        let mut d = descriptor();
+        glow.apply(&mut d);
+        assert_eq!(target(&d), None);
+        assert_eq!(
+            d.fragment.as_ref().unwrap().entry_point.as_deref(),
+            Some("glow_mask")
+        );
+        assert_eq!(
+            d.depth_stencil.as_ref().unwrap().depth_write_enabled,
+            Some(false)
+        );
     }
 
     #[test]

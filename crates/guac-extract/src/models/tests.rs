@@ -8,7 +8,7 @@ use guac_formats::model::builder::{
     ActorSpec, CharacterSpec, SlotSpec, character, eruptor, inverse_joint, sample,
 };
 use guac_formats::roster::builder::{RIG, disc};
-use guac_ir::model::TextureRole as R;
+use guac_ir::model::{Glow, TextureRole as R};
 
 fn identity() -> DumpIdentity {
     DumpIdentity {
@@ -101,9 +101,12 @@ fn the_sample_archive_becomes_a_model() {
         ]
     );
     assert_eq!(body.params.layer1_extra, [1.0; 4]);
-    assert_eq!(body.params.glow, Some(64));
+    assert_eq!(body.params.glow, Glow::Amount(64));
     assert_eq!(body.params.material_tint, [128, 128, 128, 255]);
-    assert_eq!(m.materials[1].params.glow, None);
+    assert_eq!(m.materials[1].params.glow, Glow::None);
+    // A character's material carries no track besides its scrolls (AG.15
+    // refuses them on a character), beside its glow (AE.11).
+    assert!(m.materials.iter().all(|m| m.tracks.is_empty()));
     let n = &body.textures[0].sampler;
     assert_eq!(
         (n.wrap_u, n.min, n.mip),

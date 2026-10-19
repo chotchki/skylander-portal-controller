@@ -4,7 +4,9 @@
 //! textures, each with its hero side, and the 3D-UI rig, then the levels the
 //! build plays, part by part, then ffmpeg is looked for and the intros are
 //! indexed and transcoded. The roster lands first so a phone can place
-//! figures while the rest runs, and the intros are the only thing a missing
+//! figures while the rest runs, the models are announced as they finish
+//! ([`Event::ModelsReady`], AE.13) so the turntable draws while the level
+//! and the intros run, and the intros are the only thing a missing
 //! or unusable ffmpeg costs. A model that won't read is reported and its
 //! figures keep their portraits; a hero side that doesn't settle is reported
 //! and its model stays; a level part that won't read is reported and the
@@ -46,6 +48,12 @@ pub enum Event {
     Models {
         done: usize,
         total: usize,
+    },
+    /// Every model the roster names and the rig are in the extract, or in
+    /// `failed` (AE.13): the turntable can draw from it now, while the level
+    /// and the intros run.
+    ModelsReady {
+        failed: Vec<ModelFailure>,
     },
     /// `done` of `total` level parts written, kept or reported (AG.15).
     Level {
@@ -166,6 +174,9 @@ pub fn run(
     let roster = roster_stage(dir, ir, send)?;
     send(Event::RosterReady(roster.roster.clone()));
     let models = model_stage(dir, &roster.roster, ir, send)?;
+    send(Event::ModelsReady {
+        failed: models.failed.clone(),
+    });
     let levels = level_stage(dir, ir, send)?;
     let intros = intro_stage(dir, &roster.roster, ffmpeg, ir, send);
     if intros.is_ok() {

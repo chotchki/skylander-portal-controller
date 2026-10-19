@@ -458,7 +458,9 @@ cargo run -p guacamole       # add --features test-hooks for the /api/_test/* en
   TV's UI). AA.8 checked its screens that way, because
   window captures on the locked Mac came back black. Since AB.10 a shot lands in each intro, a frame of
   the disc's own FMV, so the folder has to be outside any git checkout like the extract root; one inside
-  is refused with an error and nothing is shot.
+  is refused with an error and nothing is shot. `GUAC_SHOT_YAW=<degrees>` (default 0, facing the camera)
+  is where on its turn each card's model holds still in a shot (AE.13), so a walk shoots a turn one run
+  per angle.
 
 Release, the build AA.11 runs on the TV:
 
@@ -1085,7 +1087,7 @@ taken in the same session (The oracle; the detail is in Giants in detail):
 So Giants stays first, the ladder carries on to AE on it and AC never proposed the Trap Team fallback (same
 TfbTool island, reflection schema already public, Bink 2 for its M0). Besides AC.24 and AC.25, still open and not
 gating: AC.18, a FLIP of `hero_view` against a rendered oracle frame for the record (The oracle says what
-it waits on; the viewer also needs camera options to match one).
+it waits on; `hero_view` matches a frame's camera, rig and fog since AE.10).
 
 What the kids play most is unknown, and it matters less now that the phone offers the whole roster: it would
 reorder which figures and levels get attention first, not the game. The only signal is on the HTPC,
@@ -1492,7 +1494,8 @@ The unattended route is O3: `live_verbs` runs AC.13's scenario with nobody at th
 CROSS to the portal prompt, P1 `LOAD` of a copy of Eruptor's `.sky`, then `PAUSE_AT`, `RSXCAP`,
 `SCREENSHOT` and `SAVESTATE`), every output into `GUAC_CAPTURE_DIR` with the identity line. It gives
 AC.18 the rendered frame it lacked (Eruptor idle in the level at exact flips, under the same build as the
-captures beside it); what AC.18 still waits on is the viewer's camera.
+captures beside it). The viewer matches one since AE.10 (`hero_view --view-proj`, `--frame`, `--size`, the
+frame's numbers read from beside its capture at run time), so AC.18 waits on AE.16's frame alone.
 
 The attended recipe, as AC.13 ran it (2026-10-18, chotchki at the unlocked M3 Max, on the `09d602fd5`
 copy). The prep notes and launch line are in
@@ -1852,7 +1855,11 @@ TV, on Bevy's Metal backend. What that means now:
   below is the HTPC's).
 - Synchronous pipeline compiles. macOS compiles each render pipeline inside the frame that first needs it,
   so a material or a post effect seen for the first time hitches. Every material and post effect a scene
-  needs gets pre-warmed at load, and on the target machine that's a requirement, not polish.
+  needs gets pre-warmed at load, and on the target machine that's a requirement, not polish. Measured at
+  AE.14 on the M3 Max: macOS keeps what it compiles in a per-user shader cache, so a pipeline is slow
+  only the first time a Mac compiles it (one start's 45 UI pipelines took a 3.39 s frame; the same 45
+  took 90-133 ms on every start after), and with the turntables' warm no placement's frame passed
+  37.2 ms on a warm cache. A cold cache under load is AE.25's.
 - An open macOS rendering-corruption bug to watch
   ([bevy #25595](https://github.com/bevyengine/bevy/issues/25595)).
 - Not measured: a frame with CSM, SSAO, TAA and bloom at the TV's resolution on the M3 Max. AE measures it
@@ -2080,6 +2087,37 @@ aimed, stricter than §5.7 (which keeps entrances at 200 ms linear) because a sh
 twice. It's a switch for dev shots, not a user setting, and a release build has no shots and never
 reduces. Two walks of the same screens match byte for byte everywhere but inside the join QR, whose noise
 ring is random every boot (a backlog line).
+
+The cards' turntables ([`turntable.rs`](../../crates/guacamole/src/turntable.rs),
+[`character/turntable.rs`](../../crates/guacamole/src/character/turntable.rs); AE.13, the AE change's
+design decision 14) draw a placed character's own model in its bezel's plate, where the portrait was:
+- One scene per occupied slot, outside the UI tree, on render layers of its own (16 + 2·slot for the
+  model, the next for its glow masks), drawn by the remaster's camera at order -1 (its glow camera at -2)
+  into an image the slot keeps. Scenes are reconciled from `PortalCards` by (slot, placement), so a UI
+  rebuild never respawns one; `show_turntables` points the plate's `ImageNode` at the image once the
+  model is up, in place, so the card neither respawns nor rises again.
+- The extraction hands the TV a `Shelf` (the extract's folder, each character figure's load file, what
+  the model stage reported, the sprite rig) once the models are in: guac-extract's `ModelsReady`, ahead
+  of the intros, or a current extract at start or on the pick. A model reads on a task, off the frame.
+- The warm ([`warm.rs`](../../crates/guacamole/src/warm.rs); AE.14, decision 15): whenever a shelf lands,
+  every model on it is read on a task for the pipelines it draws (a material's key on its mesh's vertex
+  layout, the glow pass's alongside; the roster's 67 models draw 33), and a hidden turntable on the
+  render layers past the eight slots' draws them one a frame, the render world confirming each one
+  compiled. A card whose model is read waits on its portrait until every pipeline it draws is compiled,
+  the warm taking those first, so no model comes up on a pipeline macOS would compile in that frame.
+  `/api/_test/tv` reports the warm (`warm`: state, keys, compiled, failed, took) and
+  `/api/_test/tv/frames` hands out the TV's frame times, each with the pipelines compiled in it.
+- The portrait shows while the model loads (or the extract is still making it) and stays for good when
+  there's no model to show: a figure with no character model on the disc, one the model stage reported,
+  one that won't read. Each is logged by figure and why; `/api/_test/tv` mirrors every card's `state`
+  (`model`, `portrait`, `loading`), its `reason` and its plate's rect.
+- Framing: the cylinder the idle loop sweeps about the model's vertical axis (24 poses, skinned on the
+  CPU) fitted inside the plate's circle with 6% clear, at a 12° downward pitch and a 30° field of view, so
+  nothing leaves the card in a turn. One turn every 12 s; under `ReducedMotion` the idle's first pose at
+  `GUAC_SHOT_YAW`.
+- The image is the plate's size in pixels (128 at 1080p, 256 at 4K) and clears to the darker stop of
+  the figure's element, opaque, so blended and additive parts and the glow's halo land on what the card
+  shows. The light is the disc's sprite rig fixed to the camera, fog on past everything.
 
 What only the TV at couch distance can judge (the titles and the 24 px floor at 10 ft, the focus glow,
 the drift) is on the backlog's TV pass line.

@@ -158,6 +158,7 @@ enum Seen {
     Portraits(usize, usize),
     RosterReady(usize),
     Models(usize, usize),
+    ModelsReady(Vec<String>),
     Level(usize, usize),
     Indexing,
     Transcode,
@@ -170,6 +171,9 @@ impl Seen {
             Event::Portraits { done, total } => Self::Portraits(*done, *total),
             Event::RosterReady(r) => Self::RosterReady(r.figures.len()),
             Event::Models { done, total } => Self::Models(*done, *total),
+            Event::ModelsReady { failed } => {
+                Self::ModelsReady(failed.iter().map(|f| f.load_file.clone()).collect())
+            }
             Event::Level { done, total } => Self::Level(*done, *total),
             Event::Indexing => Self::Indexing,
             Event::Transcode(_) => Self::Transcode,
@@ -236,12 +240,16 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     assert_eq!(seen[1], Seen::Portraits(0, FIGURES));
     assert_eq!(seen[FIGURES + 1], Seen::Portraits(FIGURES, FIGURES));
     assert_eq!(ready, Some(FIGURES + 2));
-    // Then the models, one event each, then the level's parts, before the
-    // intros.
+    // Then the models, one event each, the turntable's cue with what didn't
+    // extract, then the level's parts, before the intros.
     let models: Vec<Seen> = (0..=LOADS).map(|i| Seen::Models(i, LOADS)).collect();
     assert_eq!(seen[FIGURES + 3..FIGURES + 4 + LOADS], models[..]);
+    assert_eq!(
+        seen[FIGURES + 4 + LOADS],
+        Seen::ModelsReady(vec![MISSING.into(), REFUSED.into()])
+    );
     let level: Vec<Seen> = (0..LEVEL_EVENTS).map(|i| Seen::Level(i, 5)).collect();
-    let at = FIGURES + 4 + LOADS;
+    let at = FIGURES + 5 + LOADS;
     assert_eq!(seen[at..at + LEVEL_EVENTS], level[..]);
     assert_eq!(indexing, Some(at + LEVEL_EVENTS));
     assert!(first_transcode > indexing, "{seen:?}");
@@ -392,6 +400,14 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
     assert_eq!(e.code(), "GUAC-E-NO-FFMPEG", "{e}");
     assert_eq!(done.roster.roster.figures.len(), FIGURES);
     let seen = seen.into_inner().unwrap();
+    // The models, the turntable's cue, then the level: nothing after it.
+    let at = seen.len() - LEVEL_EVENTS;
+    assert_eq!(seen[at - 2], Seen::Models(LOADS, LOADS));
+    assert_eq!(
+        seen[at - 1],
+        Seen::ModelsReady(vec![MISSING.into(), REFUSED.into()])
+    );
+    assert_eq!(seen[at], Seen::Level(0, 5));
     assert_eq!(seen.last(), Some(&Seen::Level(5, 5)));
     let m = manifest_on_disk(&dir);
     assert_eq!(recorded(&m, "ir/roster.ron"), 1);
@@ -570,7 +586,7 @@ fn a_v1_extract_is_rebuilt_and_extracted_again() {
     assert!(!dir.join("video/intro/eruptor.mp4").exists());
     let m = again.dir.manifest();
     assert_eq!((m.layout, m.ir_version), (LAYOUT_VERSION, IR_VERSION));
-    assert_eq!((LAYOUT_VERSION, IR_VERSION), (4, 3));
+    assert_eq!((LAYOUT_VERSION, IR_VERSION), (4, 4));
     let done = stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
     assert_eq!(done.roster.files.written, FIGURES + 1);
     assert!(done.intros.is_ok());
@@ -622,6 +638,18 @@ fn a_v1_extract_is_rebuilt_and_extracted_again() {
     assert_eq!(
         open(&s.dump, &s.root, &s.known, &|_| {}).unwrap().state,
         DirState::Current
+    );
+    // An extract either branch's IR v3 wrote (layout 4: AG.15's multiply
+    // and material tracks, or AE.11's glow, each without the other) too.
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(json["layout"], 4);
+    json["ir_version"] = 3.into();
+    fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+    let again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    assert_eq!(
+        again.state,
+        DirState::Rebuilt(Stale::IrVersion { found: 3 })
     );
 }
 

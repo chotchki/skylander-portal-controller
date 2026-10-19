@@ -14,11 +14,9 @@ use bevy::mesh::{
     Indices, Mesh, Mesh3d, MeshVertexAttribute, PrimitiveTopology, VertexAttributeValues,
     VertexFormat,
 };
-use bevy::pbr::MeshMaterial3d;
+use bevy::pbr::{Material, MeshMaterial3d};
 use bevy::prelude::{ChildOf, Name, Transform, Visibility};
 use guac_ir::model::{self, Model, Segment, Skeleton};
-
-use super::material::CharacterMaterial;
 
 /// The third texture-coordinate set, which Bevy has no attribute for.
 pub const ATTRIBUTE_UV_2: MeshVertexAttribute =
@@ -153,20 +151,25 @@ pub struct SpawnedCharacter {
     /// In the skeleton's order, which the skin's joint indices name.
     pub joints: Vec<Entity>,
     pub segments: Vec<Entity>,
+    /// Each segment's mesh, in the model's segment order, and the skin's
+    /// inverse joints: what the glow pass's copies draw ([`super::glow`]).
+    pub meshes: Vec<Handle<Mesh>>,
+    pub skin: Handle<SkinnedMeshInverseBindposes>,
 }
 
 /// Spawns `model` under a new root at `root_transform`: its joints posed
 /// `seconds` into the idle, and each segment skinned over them with the
-/// material its segment names (`materials` in the model's material order).
+/// material its segment names (`materials` in the model's material order:
+/// the character material, or `StandardMaterial` for `hero_view --stock`).
 /// Segments skip frustum culling, since their bounds are the bind pose's.
-pub fn spawn_character(
+pub fn spawn_character<M: Material>(
     commands: &mut Commands,
     model: &Model,
     root_transform: Transform,
     seconds: f64,
     meshes: &mut Assets<Mesh>,
     inverse: &mut Assets<SkinnedMeshInverseBindposes>,
-    materials: &[Handle<CharacterMaterial>],
+    materials: &[Handle<M>],
 ) -> Result<SpawnedCharacter, MeshError> {
     let joints = model.skeleton.joints.len();
     for (i, s) in model.segments.iter().enumerate() {
@@ -213,14 +216,15 @@ pub fn spawn_character(
     let skin = inverse.add(SkinnedMeshInverseBindposes::from(inverse_bindposes(
         &model.skeleton,
     )));
+    let handles: Vec<Handle<Mesh>> = built.into_iter().map(|m| meshes.add(m)).collect();
     let segments = model
         .segments
         .iter()
-        .zip(built)
+        .zip(&handles)
         .map(|(s, mesh)| {
             commands
                 .spawn((
-                    Mesh3d(meshes.add(mesh)),
+                    Mesh3d(mesh.clone()),
                     MeshMaterial3d(materials[usize::from(s.material)].clone()),
                     SkinnedMesh {
                         inverse_bindposes: skin.clone(),
@@ -236,6 +240,8 @@ pub fn spawn_character(
         root,
         joints: joint_entities,
         segments,
+        meshes: handles,
+        skin,
     })
 }
 

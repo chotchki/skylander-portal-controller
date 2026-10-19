@@ -4,8 +4,9 @@
 use guac_formats::collision::builder::ramp;
 use guac_formats::igz::Igz;
 use guac_formats::level::builder::{STAGE_WORLD, StageSpec, stage_level, stage_sample};
+use guac_formats::model::builder::AttrSpec;
 use guac_ir::Sha256;
-use guac_ir::model::{Blend, TextureRole};
+use guac_ir::model::{Blend, Glow, TextureRole};
 
 use super::*;
 
@@ -159,6 +160,39 @@ fn the_scene_is_tfbmulti2s_and_the_other_effects_with_the_sky_beside() {
     for (path, ktx2) in &r.textures {
         assert_eq!(*path, models::texture_path(ktx2));
     }
+}
+
+/// AE.11's glow beside AG.15's tracks and multiply on one record (IR v4,
+/// the merge of both branches' v3): a level's tfbmulti2 reads its glow
+/// attribute as a character's does.
+#[test]
+fn a_level_material_carries_its_glow_beside_its_tracks() {
+    let mut spec = stage_sample();
+    spec.scene[4].attrs.push(AttrSpec::Glow(64, true));
+    spec.scene[3].attrs.push(AttrSpec::Glow(0, false));
+    let r = scene(parsed(&spec), LEVEL, identity()).unwrap();
+    let g = &r.ir.scenes[0];
+    let LevelMaterial::Multi2(sky) = &g.materials[4] else {
+        panic!("tfbmulti2");
+    };
+    assert_eq!(sky.params.glow, Glow::Amount(64));
+    assert!(
+        matches!(sky.tracks[..], [guac_ir::model::MaterialTrack::Tint { .. }]),
+        "{:?}",
+        sky.tracks
+    );
+    let LevelMaterial::Multi2(cave) = &g.materials[3] else {
+        panic!("tfbmulti2");
+    };
+    assert_eq!(
+        (cave.params.glow, cave.states.blend),
+        (Glow::LayerAlpha, Blend::Multiply)
+    );
+    // Without the attribute, none, as Eruptor's eyes.
+    let LevelMaterial::Multi2(ground) = &g.materials[0] else {
+        panic!("tfbmulti2");
+    };
+    assert_eq!(ground.params.glow, Glow::None);
 }
 
 #[test]

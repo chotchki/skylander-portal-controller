@@ -15,8 +15,8 @@ use fantoccini::Locator;
 use serde_json::{Value, json};
 
 use skylander_e2e_tests::{
-    GIANTS_SERIAL, Phone, TestServer, fire_kaos_swap, guacamole_only, inject_load_outcomes,
-    inject_profile, press_tv, set_session_profile, tv, wait_for_tv,
+    E2E_DAMAGED, E2E_MODELLED, GIANTS_SERIAL, Phone, TestServer, fire_kaos_swap, guacamole_only,
+    inject_load_outcomes, inject_profile, press_tv, set_session_profile, tv, wait_for_tv,
 };
 
 /// The spec's bound from the phone showing a change to the TV showing it.
@@ -607,6 +607,168 @@ async fn a_failed_placement_shows_no_card() {
     let snap = tv(&server.url).await.unwrap();
     assert_eq!(snap["screen"], "Portal");
     assert!(card_slots(&snap).is_empty(), "{snap}");
+    phone.close().await.unwrap();
+}
+
+// ---- guacamole/figure-turntable (AE.13) ------------------------------------
+
+/// The request the phone's remove button sends, for slot `slot`.
+async fn clear(server: &TestServer, sid: u64, slot: u8) {
+    let resp = reqwest::Client::new()
+        .post(format!("{}/api/portal/slot/{slot}/clear", server.url))
+        .header("x-session-id", sid.to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202, "{}", resp.text().await.unwrap());
+}
+
+/// The fixture's one figure with a model turns on its card within a second
+/// of the phone showing it (it has no intro); removing it takes the card and
+/// its turntable away; a figure the extract has no model for, and an item,
+/// keep their portraits.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver; E2E_APP=guacamole"]
+async fn a_modelled_figure_turns_on_its_card_and_leaves_with_it() {
+    if guacamole_only() {
+        return;
+    }
+    let server = spawn();
+    let (phone, _, sid) = phone_as(&server, "Alice", ALICE).await;
+    pick_giants(&server, &phone).await;
+    let figs = figures(&server, sid).await;
+    let gill = format!("{E2E_MODELLED:06x}-0000");
+    assert_eq!(id_named(&figs, "Gill Grunt"), gill);
+
+    load(&server, sid, 1, &gill).await;
+    let shown = wait_slot(&phone, 1, "Gill Grunt").await;
+    let (snap, at) = wait_for_tv(&server.url, TV_WITHIN, |s| {
+        card(s, 1).is_some_and(|c| c["state"] == "model")
+    })
+    .await
+    .unwrap_or_else(|e| panic!("Gill Grunt's model wasn't on his card within 1 s: {e}"));
+    eprintln!(
+        "Gill Grunt's model on his card {} ms after the phone poll saw him",
+        at.duration_since(shown).as_millis()
+    );
+    let gill_card = card(&snap, 1).unwrap();
+    assert_eq!(texts(gill_card), ["Gill Grunt", "Water"]);
+    assert_eq!(gill_card["portrait"], true, "the plate shows an image");
+    assert_eq!(gill_card["reason"], Value::Null);
+    // The model draws in the bezel's plate, inside his card.
+    let rect = |v: &Value| -> Vec<f64> {
+        v.as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n.as_f64().unwrap())
+            .collect()
+    };
+    let (plate, card_rect) = (rect(&gill_card["plate"]), rect(&gill_card["rect"]));
+    assert!(plate[2] > 0.0 && plate[3] > 0.0, "{gill_card}");
+    assert!(
+        plate[0] >= card_rect[0]
+            && plate[1] >= card_rect[1]
+            && plate[0] + plate[2] <= card_rect[0] + card_rect[2]
+            && plate[1] + plate[3] <= card_rect[1] + card_rect[3],
+        "{gill_card}"
+    );
+
+    // Spyro's model isn't in this extract, and Sky-Iron Shield is an item.
+    for (slot, name, why) in [
+        (2, "Spyro", "016_e2e.ron"),
+        (3, "Sky-Iron Shield", "no character model on the disc"),
+    ] {
+        load(&server, sid, slot, &id_named(&figs, name)).await;
+        let shown = wait_slot(&phone, slot, name).await;
+        let (snap, _) = wait_for_tv(
+            &server.url,
+            TV_WITHIN.saturating_sub(shown.elapsed()),
+            |s| card(s, slot).is_some_and(|c| c["state"] == "portrait"),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{name} didn't settle on its portrait: {e}"));
+        let c = card(&snap, slot).unwrap();
+        assert!(c["reason"].as_str().unwrap().contains(why), "{c}");
+        assert_eq!(c["portrait"], true, "its portrait on the plate: {c}");
+        assert_eq!(
+            card(&snap, 1).unwrap()["state"],
+            "model",
+            "slot 1 untouched"
+        );
+    }
+
+    clear(&server, sid, 1).await;
+    phone
+        .wait_for_slot_empty(1, Duration::from_secs(5))
+        .await
+        .unwrap();
+    let gone = Instant::now();
+    let (after, _) = wait_for_tv(&server.url, TV_WITHIN, |s| card(s, 1).is_none())
+        .await
+        .expect("Gill Grunt's card leaves within 1 s");
+    eprintln!(
+        "card and turntable gone {} ms after the phone",
+        gone.elapsed().as_millis()
+    );
+    assert_eq!(card_slots(&after), [2, 3]);
+    // Placed again, he turns again: the old scene went with the card.
+    load(&server, sid, 1, &gill).await;
+    let shown = wait_slot(&phone, 1, "Gill Grunt").await;
+    wait_for_tv(
+        &server.url,
+        TV_WITHIN.saturating_sub(shown.elapsed()),
+        |s| card(s, 1).is_some_and(|c| c["state"] == "model"),
+    )
+    .await
+    .expect("his model again");
+    phone.close().await.unwrap();
+}
+
+/// A damaged model leaves its card on the portrait, says why on the TV's
+/// mirror and in the log, and the modelled figure beside it still turns.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver; E2E_APP=guacamole"]
+async fn a_damaged_model_keeps_its_portrait_and_is_logged() {
+    if guacamole_only() {
+        return;
+    }
+    let server = spawn();
+    let (phone, _, sid) = phone_as(&server, "Alice", ALICE).await;
+    pick_giants(&server, &phone).await;
+    let figs = figures(&server, sid).await;
+    let bash = format!("{E2E_DAMAGED:06x}-0000");
+    assert_eq!(id_named(&figs, "Bash"), bash);
+
+    load(&server, sid, 1, &bash).await;
+    load(&server, sid, 2, &id_named(&figs, "Gill Grunt")).await;
+    wait_slot(&phone, 2, "Gill Grunt").await;
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        card(s, 1).is_some_and(|c| c["state"] == "portrait")
+            && card(s, 2).is_some_and(|c| c["state"] == "model")
+    })
+    .await
+    .expect("Bash on his portrait, Gill Grunt turning");
+    let bash_card = card(&snap, 1).unwrap();
+    assert_eq!(bash_card["portrait"], true, "his portrait: {bash_card}");
+    let reason = bash_card["reason"].as_str().unwrap();
+    assert!(reason.starts_with("004_e2e.ron:"), "{reason}");
+
+    // The log names the figure and why, in a line of its own.
+    let mut logged = String::new();
+    for _ in 0..20 {
+        logged = server.log_text();
+        if logged.contains("keeps its portrait") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let line = logged
+        .lines()
+        .find(|l| l.contains("keeps its portrait") && l.contains("Bash"))
+        .unwrap_or_else(|| panic!("no log line for Bash in:\n{logged}"));
+    assert!(line.contains("004_e2e.ron"), "{line}");
+    assert!(line.contains(&bash), "{line}");
+    eprintln!("logged: {line}");
     phone.close().await.unwrap();
 }
 

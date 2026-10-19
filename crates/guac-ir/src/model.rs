@@ -163,8 +163,20 @@ pub struct Params {
     pub layer4_values: [f32; 4],
     /// RGBA, neutral at 128: a multiplier, not a colour.
     pub material_tint: [u8; 4],
-    /// The glow amount of 255; `None` glows by layer 1's alpha.
-    pub glow: Option<u8>,
+    pub glow: Glow,
+}
+
+/// What a part writes into the glow pass's mask (the character-shading
+/// spec's glow mask, read off AC.13's captures at AE.11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Glow {
+    /// No glow attribute: the part glows nowhere, as Eruptor's eyes don't.
+    None,
+    /// The attribute on: its amount of 255.
+    Amount(u8),
+    /// The attribute off: layer 1's alpha, switched hard at a fixed alpha
+    /// of 0, times the vertex and tint alphas.
+    LayerAlpha,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

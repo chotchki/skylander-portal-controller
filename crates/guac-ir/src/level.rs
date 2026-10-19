@@ -249,7 +249,7 @@ impl SceneGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Blend, Filter, Wrap};
+    use crate::model::{Blend, Filter, Glow, Params, Wrap};
     use crate::{Sha256, from_postcard, from_ron, to_postcard, to_ron};
 
     fn identity() -> DumpIdentity {
@@ -311,6 +311,44 @@ mod tests {
             }],
             unread: vec!["igShaderParametersAttr".into()],
         };
+        // A tfbmulti2 material carries the glow (AE.11) beside the tracks and
+        // the multiply (AG.15): IR v4 has both.
+        let cave = Material {
+            name: "cave_painting".into(),
+            pixel: Mask {
+                base: 0,
+                ignore: 0x3FF,
+            },
+            vertex: Mask {
+                base: 0x1000,
+                ignore: 0x1BFF,
+            },
+            textures: Vec::new(),
+            params: Params {
+                fixed_alpha: [-1.0; 4],
+                layer1_extra: [1.0, 1.0, 1.0, 0.25],
+                layer2_extra: None,
+                layer2_blend: None,
+                layer3_blend: None,
+                layer4_blend: [0.0, 1.0, 0.0, 0.0],
+                layer4_values: [0.0, 1.0, 0.0, 0.0],
+                material_tint: [128, 128, 128, 255],
+                glow: Glow::LayerAlpha,
+            },
+            states: RenderStates {
+                blend: Blend::Multiply,
+                depth_write: false,
+                two_sided: false,
+                alpha_test: None,
+            },
+            scrolls: Vec::new(),
+            tracks: vec![MaterialTrack::Tint {
+                style: 1,
+                rate: 1.0,
+                frames: vec![0, 2000],
+                colors: vec![[0x6E, 0x6D, 0x70, 0xFF], [0x6E, 0x6D, 0x70, 0x96]],
+            }],
+        };
         let segment = Segment {
             material: 0,
             source: 9,
@@ -328,7 +366,7 @@ mod tests {
             level: "level_213_tutotial".into(),
             scenes: vec![SceneGraph {
                 world: "Levels/Level_213/Level_213_GRASS.ma".into(),
-                materials: vec![LevelMaterial::Effect(grass)],
+                materials: vec![LevelMaterial::Effect(grass), LevelMaterial::Multi2(cave)],
                 segments: vec![segment.clone()],
                 sky: vec![SkyGroup {
                     name: "|Sky_morning_213:SKYDOME".into(),

@@ -120,7 +120,12 @@ under `test-hooks`, not a phone remote. `no_giants_dump_offers_no_game`
 waits for `focus` to read `choose-folder` without pressing it (that
 would open the folder sheet), and `pad_presses_leave_the_join_code_up`
 posts South, East and Mode on the join screen and finds it unchanged
-(AP.5).
+(AP.5). The mirror's `warm` is the turntables' pre-warm (openspec AE.14:
+`state` `idle`, `reading`, `compiling` or `done`, and its key counts),
+and `GET /api/_test/tv/frames?since_ms=<ms>` hands out the TV's frame
+log, `[ended_ms, took_ms, pipelines_compiled]` per frame after
+`since_ms` with the last frame's end as `now_ms`; no test reads it yet,
+AE.14's stall check drives it by hand.
 
 [`tests/guacamole_intro.rs`](tests/guacamole_intro.rs) (5 tests,
 openspec AB.11, AB.21, AB.22, AB.23 and AP.5) is guacamole-only too and needs ffmpeg (`brew install

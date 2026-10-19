@@ -7,8 +7,9 @@ license.workspace = true
 
 # AC.3 (openspec/changes/ac-giants-decode-gate, design decision 3). Dev tool:
 # reads an RPCS3 RSX capture (RRC v6) and writes each draw's vertex arrays,
-# index range, texture surfaces and vertex-program constants to a directory
-# OUTSIDE the repo. Never shipped. The format notes live in src/lib.rs.
+# index range, texture surfaces and vertex-program constants, and since AE.11
+# its programs, pipeline state and clears, to a directory OUTSIDE the repo.
+# Never shipped. The format notes live in FORMAT.md (src/lib.rs's docs).
 
 [lib]
 path = "src/lib.rs"

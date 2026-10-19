@@ -12,9 +12,9 @@
 //! as it is (the remaster-look spec). Vectors are view space, and a
 //! directional light is given by the way it travels.
 //!
-//! Left to other boxes: the glow's blur and combine (AE.11; [`glow_mask`]
-//! is the mask they start from), a scroll track's motion (AE.21; a set's
-//! transform is taken as given) and the depth test, which is the
+//! Left to others: the glow's extract, blur and combine ([`crate::glow`],
+//! from the mask [`glow_mask`] gives), a scroll track's motion (AE.21; a
+//! set's transform is taken as given) and the depth test, which is the
 //! pipeline's, not a material's.
 
 use crate::model::{Blend, RenderStates};
@@ -159,6 +159,18 @@ impl UvTransform {
     }
 }
 
+/// What a part writes into the glow mask.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Glow {
+    /// Nothing: a part without the glow attribute.
+    None,
+    /// The amount, of 1.
+    Amount(f32),
+    /// The first layer's alpha, switched hard at a fixed alpha of 0, times
+    /// the vertex and both tints' alphas.
+    LayerAlpha,
+}
+
 /// The scene's switches a material owns, if any; `None` leaves one to the
 /// scene.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -180,8 +192,7 @@ pub struct Material {
     pub rim: Option<Rim>,
     /// The material tint, RGBA of 1 ([`unpack_tint`] for a packed one).
     pub tint: Rgba,
-    /// The glow amount of 1; `None` glows by the first layer's alpha.
-    pub glow: Option<f32>,
+    pub glow: Glow,
     /// One per texture-coordinate set, numbered as the set.
     pub uv_transforms: [UvTransform; 3],
     pub fixed: Fixed,
@@ -200,7 +211,7 @@ impl Material {
             third: None,
             rim: None,
             tint: [NEUTRAL, NEUTRAL, NEUTRAL, 1.0],
-            glow: None,
+            glow: Glow::None,
             uv_transforms: [UvTransform::IDENTITY; 3],
             fixed: Fixed::default(),
         }
@@ -456,9 +467,25 @@ pub fn facing(normal: Vec3, travel: Vec3) -> f32 {
     -dot(normal, travel)
 }
 
-/// The glow pass's mask for a pixel: the material's glow amount, else its
-/// first layer's alpha switched hard at a fixed alpha of 0, times the
-/// vertex and both tints' alphas.
+/// A part's glow alpha: its first layer's alpha switched hard at a fixed
+/// alpha of 0 (not the colour pass's ramp), times the vertex and both
+/// tints' alphas. The glow pass's alpha test runs on it.
+pub fn glow_alpha(
+    material: &Material,
+    scene: &Scene,
+    fragment: &Fragment,
+    colour_alpha: f32,
+) -> f32 {
+    let first = if material.first.fixed_alpha >= 0.0 {
+        material.first.fixed_alpha
+    } else {
+        colour_alpha
+    };
+    first * vertex_colour(material, fragment)[3] * scene.placement_tint[3] * material.tint[3]
+}
+
+/// The glow pass's mask for a pixel: nothing without a glow, else the
+/// amount or the glow alpha.
 pub fn glow_mask(
     material: &Material,
     scene: &Scene,
@@ -466,18 +493,9 @@ pub fn glow_mask(
     colour_alpha: f32,
 ) -> f32 {
     match material.glow {
-        Some(amount) => amount,
-        None => {
-            let first = if material.first.fixed_alpha >= 0.0 {
-                material.first.fixed_alpha
-            } else {
-                colour_alpha
-            };
-            first
-                * vertex_colour(material, fragment)[3]
-                * scene.placement_tint[3]
-                * material.tint[3]
-        }
+        Glow::None => 0.0,
+        Glow::Amount(amount) => amount,
+        Glow::LayerAlpha => glow_alpha(material, scene, fragment, colour_alpha),
     }
 }
 
@@ -845,7 +863,7 @@ mod tests {
                 fixed_alpha: -1.0,
             },
             rim: Some(Rim::new(1.0)),
-            glow: Some(64.0 / 255.0),
+            glow: Glow::Amount(64.0 / 255.0),
             ..Material::new()
         }
     }
@@ -2160,14 +2178,14 @@ mod tests {
     // Glow.
 
     #[test]
-    fn eruptors_glow_is_his_amount_on_the_body_and_alpha_on_the_eyes() {
+    fn eruptors_body_glows_by_its_amount_and_his_eyes_not_at_all() {
         let s = Scene::new();
         assert_eq!(glow_mask(&eruptor_body(), &s, &frag(), 0.7), 64.0 / 255.0);
         let eyes = Material {
-            glow: None,
+            glow: Glow::None,
             ..eruptor_body()
         };
-        assert_eq!(glow_mask(&eyes, &s, &frag(), 0.7), 0.7);
+        assert_eq!(glow_mask(&eyes, &s, &frag(), 0.7), 0.0);
     }
 
     #[test]
@@ -2176,7 +2194,10 @@ mod tests {
             placement_tint: [NEUTRAL, NEUTRAL, NEUTRAL, 0.8],
             ..Scene::new()
         };
-        let mut m = Material::new();
+        let mut m = Material {
+            glow: Glow::LayerAlpha,
+            ..Material::new()
+        };
         m.first.fixed_alpha = -0.0005;
         // Past the main pass's ramp, which takes the fixed alpha from
         // -0.0009, the glow's switch at 0 still takes the colour map's.
@@ -2192,6 +2213,10 @@ mod tests {
             ..frag()
         };
         assert!((glow_mask(&m, &s, &f, 0.7) - 0.3 * 0.5 * 0.8 * 0.5).abs() < 1e-7);
+        // An amount doesn't touch the glow alpha the alpha test reads.
+        m.glow = Glow::Amount(0.25);
+        assert_eq!(glow_mask(&m, &s, &f, 0.7), 0.25);
+        assert!((glow_alpha(&m, &s, &f, 0.7) - 0.3 * 0.5 * 0.8 * 0.5).abs() < 1e-7);
     }
 
     // The remaster: nothing clamped before the tonemapper.
