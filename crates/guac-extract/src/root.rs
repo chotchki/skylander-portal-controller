@@ -17,41 +17,71 @@ pub enum RootMode {
     Dev { extract_dir: Option<OsString> },
 }
 
-/// An extract root that was outside every git working tree when it was
-/// resolved. The only way to get one is through that check.
+/// An extract root that was outside every git working tree it's checked
+/// against when it was resolved. The only way to get one is through that check.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExtractRoot(PathBuf);
+pub struct ExtractRoot {
+    path: PathBuf,
+    /// Release only: the data root, where the walk for a `.git` stops (AB.18).
+    ceiling: Option<PathBuf>,
+}
 
 impl ExtractRoot {
+    /// Release refuses only a `.git` at or below the data root: the OS data
+    /// dir is never inside this repo, which is what the refusal protects, and
+    /// a home folder kept under git (`git init ~`) mustn't block every Giants
+    /// pick (openspec AB.18). Dev refuses one in any ancestor.
     pub fn resolve(mode: RootMode) -> Result<Self> {
-        let path = match mode {
-            RootMode::Release { data_root } => data_root.join("extract"),
+        match mode {
+            RootMode::Release { data_root } => {
+                let ceiling = absolute(&data_root)?;
+                Self::check(ceiling.join("extract"), Some(ceiling))
+            }
             RootMode::Dev { extract_dir } => match extract_dir {
-                Some(dir) if !dir.is_empty() => PathBuf::from(dir),
-                _ => return Err(ExtractError::NoExtractDir),
+                Some(dir) if !dir.is_empty() => Self::checked(PathBuf::from(dir)),
+                _ => Err(ExtractError::NoExtractDir),
             },
-        };
-        Self::checked(path)
+        }
     }
 
-    /// Makes `path` absolute and refuses it inside a git working tree.
+    /// Makes `path` absolute and refuses it inside any git working tree.
     pub fn checked(path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref();
-        let abs = normalize(&std::path::absolute(path).map_err(ExtractError::io(path))?);
-        if let Some(repo) = enclosing_git_tree(&abs) {
-            return Err(ExtractError::InCheckout { root: abs, repo });
+        Self::check(absolute(path.as_ref())?, None)
+    }
+
+    fn check(path: PathBuf, ceiling: Option<PathBuf>) -> Result<Self> {
+        let root = Self { path, ceiling };
+        root.ensure_outside_checkouts()?;
+        Ok(root)
+    }
+
+    /// The check again, as it was resolved: at use, since the root may have
+    /// been resolved long before.
+    pub(crate) fn ensure_outside_checkouts(&self) -> Result<()> {
+        match git_tree_within(&self.path, self.ceiling.as_deref()) {
+            Some(repo) => Err(ExtractError::InCheckout {
+                root: self.path.clone(),
+                repo,
+            }),
+            None => Ok(()),
         }
-        Ok(Self(abs))
     }
 
     pub fn path(&self) -> &Path {
-        &self.0
+        &self.path
     }
 
     /// Where an unknown-dump report goes: beside the root (its parent).
     pub fn report_dir(&self) -> &Path {
-        self.0.parent().unwrap_or(&self.0)
+        self.path.parent().unwrap_or(&self.path)
     }
+}
+
+/// `path` made absolute with `.` and `..` folded.
+fn absolute(path: &Path) -> Result<PathBuf> {
+    Ok(normalize(
+        &std::path::absolute(path).map_err(ExtractError::io(path))?,
+    ))
 }
 
 /// The nearest folder at or above `path` holding a `.git` (a repo's dir, or a
@@ -59,13 +89,26 @@ impl ExtractRoot {
 /// along its resolved form, so a symlink into a checkout is caught too. `path`
 /// needn't exist.
 pub fn enclosing_git_tree(path: &Path) -> Option<PathBuf> {
+    git_tree_within(path, None)
+}
+
+/// [`enclosing_git_tree`], looking no higher than `ceiling` (itself included)
+/// when there is one: along `path` as written up to `ceiling` as written, and
+/// along their resolved forms.
+fn git_tree_within(path: &Path, ceiling: Option<&Path>) -> Option<PathBuf> {
     let has_git = |dir: &Path| dir.join(".git").symlink_metadata().is_ok();
-    let lexical = path.ancestors().find(|a| has_git(a));
-    lexical.map(Path::to_path_buf).or_else(|| {
-        resolved(path)?
-            .ancestors()
+    let find = |path: &Path, ceiling: Option<&Path>| {
+        path.ancestors()
+            .take_while(|a| ceiling.is_none_or(|c| a.starts_with(c)))
             .find(|a| has_git(a))
             .map(Path::to_path_buf)
+    };
+    find(path, ceiling).or_else(|| {
+        let ceiling = match ceiling {
+            Some(c) => Some(resolved(c)?),
+            None => None,
+        };
+        find(&resolved(path)?, ceiling.as_deref())
     })
 }
 
@@ -162,6 +205,41 @@ mod tests {
         std::fs::write(tmp.path().join(".git"), "gitdir: elsewhere\n").unwrap();
         let err = ExtractRoot::checked(tmp.path().join("a/b")).unwrap_err();
         assert!(matches!(err, ExtractError::InCheckout { .. }), "{err}");
+    }
+
+    /// AB.18: release looks for a `.git` no higher than the data root, dev in
+    /// every ancestor.
+    #[test]
+    fn release_stops_at_the_data_root_and_dev_does_not() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        std::fs::create_dir_all(home.join(".git")).unwrap();
+        let data_root = home.join("Library/Application Support/guacamole");
+        let release = || {
+            ExtractRoot::resolve(RootMode::Release {
+                data_root: data_root.clone(),
+            })
+        };
+        assert_eq!(release().unwrap().path(), data_root.join("extract"));
+        let dev = ExtractRoot::resolve(RootMode::Dev {
+            extract_dir: Some(data_root.join("extract").into()),
+        });
+        match dev.unwrap_err() {
+            ExtractError::InCheckout { repo, .. } => assert_eq!(repo, home),
+            other => panic!("{other}"),
+        }
+        assert!(ExtractRoot::checked(data_root.join("extract")).is_err());
+
+        for at in [data_root.clone(), data_root.join("extract")] {
+            std::fs::create_dir_all(&at).unwrap();
+            std::fs::write(at.join(".git"), "gitdir: elsewhere\n").unwrap();
+            match release().unwrap_err() {
+                ExtractError::InCheckout { repo, .. } => assert_eq!(repo, at),
+                other => panic!("{other}"),
+            }
+            std::fs::remove_file(at.join(".git")).unwrap();
+        }
+        release().unwrap();
     }
 
     #[cfg(unix)]

@@ -20,7 +20,7 @@ use crate::dump::read_sfo;
 use crate::error::{ExtractError, Result};
 use crate::known::path_safe;
 use crate::magic::{Entropy, Sniff, sniff};
-use crate::root::{ExtractRoot, check_disjoint, enclosing_git_tree};
+use crate::root::{ExtractRoot, check_disjoint};
 
 /// How much of a file or entry the sniff sees.
 const HEAD: usize = 4096;
@@ -177,12 +177,7 @@ pub fn census(
     ffprobe: Option<&Path>,
 ) -> Result<(Census, PathBuf)> {
     // Again at use, as `open` does: the root may have been resolved long before.
-    if let Some(repo) = enclosing_git_tree(root.path()) {
-        return Err(ExtractError::InCheckout {
-            root: root.path().to_path_buf(),
-            repo,
-        });
-    }
+    root.ensure_outside_checkouts()?;
     check_disjoint(root, dump)?;
     let census = run(dump, ffprobe)?;
     let path = write(&census, root)?;

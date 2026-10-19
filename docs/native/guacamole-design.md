@@ -1330,12 +1330,13 @@ chains); how long a full pass takes gets measured when the pipeline runs.
   (`GUAC-E-EXTRACT-OVERLAPS-DUMP`, since a rebuild deletes under the root), by path and on unix by
   (device, inode), because macOS `realpath` keeps a `/System/Volumes/Data/...` firmlink spelling. The dump
   is only ever opened with `File::open`, and AB's disc tests check its files keep their sizes and mtimes.
-- Open, AB.18 (chotchki's call before packaging): the release root refuses a `.git` in ANY ancestor, so a
-  home folder kept under git (`git init ~`) gets `GUAC-E-EXTRACT-IN-CHECKOUT` on every Giants pick and no
-  setting moves the root. This Mac has no `~/.git`. The two fixes on the table: in a release build refuse
-  only a `.git` at or below the data root (the hard rule protects this repo, which the OS data dir is
-  never inside) and reword the spec to match, or add a release `extract_dir` setting the refusal's
-  message points at.
+- A release root's walk stops at the data root (AB.18, option (a); chotchki, 2026-10-18: "that's fine"):
+  only a `.git` in the data root or in `extract/` refuses it, by path as written and resolved, at resolve
+  and again at use. A home folder kept under git (`git init ~`) no longer gets `GUAC-E-EXTRACT-IN-CHECKOUT`
+  on every Giants pick, and the hard rule still holds, since it protects this repo and the OS data dir is
+  never inside it. A dev root and any root the CLI or a test is handed keep the any-ancestor walk. The
+  other option, a release `extract_dir` setting the refusal pointed at, wasn't taken: no setting moves the
+  release root.
 
 ### Layout v1 and IR v1 (AB.4, AB.6, AB.8, AB.15)
 
