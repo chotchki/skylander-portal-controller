@@ -1,5 +1,7 @@
 //! The TV: `ServerBridge` polls the server's status each frame, `Tv` draws
-//! the screen it maps to (`screen::screen_for`) in `bevy_ui`.
+//! the screen it maps to (`screen::screen_for`) in `bevy_ui`. The screen's
+//! kind is a `bevy_state` state (openspec AP, design decision 1): each kind
+//! spawns its tree on enter under a root that despawns on exit.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -8,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use bevy::asset::RenderAssetUsages;
+use bevy::ecs::system::SystemParam;
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::prelude::*;
 use bevy::text::FontSize;
@@ -142,9 +145,136 @@ pub(crate) struct ExtractDetail;
 #[derive(Component)]
 pub(crate) struct ExtractBar(pub(crate) u8);
 
-/// Marks the root node; the whole tree is rebuilt when the screen changes.
+/// The portal header's game name as drawn.
 #[derive(Component)]
-struct ScreenRoot;
+pub(crate) struct GameName;
+
+/// Found's list of titles as drawn.
+#[derive(Component)]
+pub(crate) struct TitlesLine;
+
+/// The column of lines Setup and NoGiants draw from `Setup`, as last drawn.
+#[derive(Component)]
+struct SetupLines(Vec<Line>);
+
+/// The header's slot under the game name, as last drawn.
+#[derive(Component)]
+struct BandSlot(BandShape);
+
+/// A setup screen's line, kept so a change can be patched over the one drawn.
+#[derive(Debug, Clone, PartialEq)]
+struct Line {
+    text: String,
+    size: f32,
+    color: Color,
+    /// Wraps at the column's width instead of running off its sides.
+    wrap: bool,
+}
+
+impl Line {
+    fn new(text: impl Into<String>, size: f32, color: Color) -> Self {
+        Self {
+            text: text.into(),
+            size,
+            color,
+            wrap: false,
+        }
+    }
+
+    fn wrapping(self) -> Self {
+        Self { wrap: true, ..self }
+    }
+}
+
+/// What sits under the portal's game name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BandShape {
+    /// Cards are up and nothing's extracting.
+    Nothing,
+    /// An empty portal: where the figures come from.
+    Hint,
+    /// The extraction's title and detail, and a bar when it has a percent.
+    Band { bar: bool },
+}
+
+impl BandShape {
+    fn of(band: Option<&Band>, empty: bool) -> Self {
+        match band {
+            Some(band) => Self::Band {
+                bar: band.percent.is_some(),
+            },
+            None if empty => Self::Hint,
+            None => Self::Nothing,
+        }
+    }
+}
+
+/// Marks a screen's root node, spawned when its [`TvState`] is entered and
+/// despawned with everything under it when it's left.
+#[derive(Component)]
+pub(crate) struct ScreenRoot;
+
+/// What the TV just redrew: the layout report and the shots wait on these
+/// instead of on the resources behind them, which change without a redraw.
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Redrawn {
+    /// A screen was entered and spawned.
+    Screen(TvState),
+    /// A portal cell's content respawned (0-based slot).
+    Slot(u8),
+    /// The band under the game's name, or the hint it replaces.
+    Band,
+    /// A drawn line took new text: the players line, a setup line, the message.
+    Text,
+}
+
+/// The `Update` systems that redraw part of a screen in place.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+struct Redraw;
+
+/// Which screen is up, without its data: [`Current`] keeps that. Set from
+/// `screen_for(..)`'s kind, so Portal to Portal (another game) is no transition.
+#[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub(crate) enum TvState {
+    #[default]
+    Starting,
+    Setup,
+    NoGiants,
+    Found,
+    Join,
+    Portal,
+    AlreadyRunning,
+    ServerError,
+    Farewell,
+}
+
+impl TvState {
+    const ALL: [Self; 9] = [
+        Self::Starting,
+        Self::Setup,
+        Self::NoGiants,
+        Self::Found,
+        Self::Join,
+        Self::Portal,
+        Self::AlreadyRunning,
+        Self::ServerError,
+        Self::Farewell,
+    ];
+
+    pub(crate) fn of(screen: &TvScreen) -> Self {
+        match screen {
+            TvScreen::Starting => Self::Starting,
+            TvScreen::Setup => Self::Setup,
+            TvScreen::NoGiants => Self::NoGiants,
+            TvScreen::Found => Self::Found,
+            TvScreen::Join => Self::Join,
+            TvScreen::Portal { .. } => Self::Portal,
+            TvScreen::AlreadyRunning => Self::AlreadyRunning,
+            TvScreen::ServerError { .. } => Self::ServerError,
+            TvScreen::Farewell => Self::Farewell,
+        }
+    }
+}
 
 pub struct ServerBridge;
 
@@ -156,18 +286,52 @@ impl Plugin for ServerBridge {
     }
 }
 
+/// The screens: the state, each one spawned on enter and kept current
+/// inside. [`Tv`] adds it; the headless tests add it alone, on `TvAssets`
+/// and the resources `main` inserts.
+pub(crate) struct Screens;
+
+impl Plugin for Screens {
+    fn build(&self, app: &mut App) {
+        app.init_state::<TvState>()
+            .init_resource::<Portraits>()
+            .init_resource::<LayoutReport>()
+            .add_message::<Redrawn>()
+            .add_systems(PreUpdate, follow_screen.after(poll_status));
+        for state in TvState::ALL {
+            app.add_systems(OnEnter(state), enter_screen);
+        }
+        app.add_systems(
+            Update,
+            (
+                (
+                    patch_players,
+                    patch_address,
+                    patch_screen_text,
+                    patch_titles,
+                    sync_setup_lines,
+                    sync_band,
+                    sync_cells,
+                )
+                    .in_set(Redraw),
+                arm_layout_report.after(Redraw),
+            ),
+        );
+    }
+}
+
 pub struct Tv;
 
 impl Plugin for Tv {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Portraits>()
-            .init_resource::<LayoutReport>()
-            .add_systems(Startup, setup_tv)
+        // Before the first state transition, which spawns the first screen
+        // ahead of `Startup`.
+        let assets = tv_assets(app.world_mut());
+        app.insert_resource(assets)
+            .add_plugins(Screens)
+            .add_systems(Startup, spawn_camera)
             .add_systems(Last, report_layout)
-            .add_systems(
-                Update,
-                (scale_ui, rebuild_screen, farewell_exit, escape_quits),
-            );
+            .add_systems(Update, (scale_ui, farewell_exit, escape_quits));
     }
 }
 
@@ -209,18 +373,20 @@ fn poll_status(
     }
 }
 
-fn setup_tv(
-    mut commands: Commands,
-    link: Res<ServerLink>,
-    mut fonts: ResMut<Assets<Font>>,
-    mut images: ResMut<Assets<Image>>,
-) {
-    commands.spawn(Camera2d);
-    let font = fonts.add(Font::from_bytes(TITAN_ONE.to_vec()));
+/// The font and the join QR, on the world `main` built (`ServerLink` in it).
+fn tv_assets(world: &mut World) -> TvAssets {
+    let font = world
+        .resource_mut::<Assets<Font>>()
+        .add(Font::from_bytes(TITAN_ONE.to_vec()));
+    let png = world
+        .get_resource::<ServerLink>()
+        .expect("main inserts ServerLink before the Tv plugin")
+        .join_qr_png
+        .clone();
     // A failed boot has no QR; nothing to decode.
-    let qr = match (!link.join_qr_png.is_empty()).then(|| {
+    let qr = match (!png.is_empty()).then(|| {
         Image::from_buffer(
-            &link.join_qr_png,
+            &png,
             ImageType::Extension("png"),
             CompressedImageFormats::NONE,
             true,
@@ -228,14 +394,26 @@ fn setup_tv(
             RenderAssetUsages::default(),
         )
     }) {
-        Some(Ok(image)) => Some(images.add(image)),
+        Some(Ok(image)) => Some(world.resource_mut::<Assets<Image>>().add(image)),
         Some(Err(e)) => {
             error!("decode the join QR: {e}");
             None
         }
         None => None,
     };
-    commands.insert_resource(TvAssets { font, qr });
+    TvAssets { font, qr }
+}
+
+fn spawn_camera(mut commands: Commands) {
+    commands.spawn(Camera2d);
+}
+
+/// The state follows `Current`'s screen, which `poll_status` sets from
+/// `screen_for`; the transition lands this frame, right after `PreUpdate`.
+fn follow_screen(current: Option<Res<Current>>, mut next: ResMut<NextState<TvState>>) {
+    if let Some(current) = current.filter(|c| c.is_changed()) {
+        next.set_if_different(TvState::of(&current.screen));
+    }
 }
 
 /// Lays out at 1080 logical pixels tall, whatever the window.
@@ -265,54 +443,271 @@ pub fn inset(mode: WindowMode) -> UiRect {
     }
 }
 
-/// Rebuilds the whole tree on any change: at most eight cards, so a
-/// rebuild costs less than diffing would.
-fn rebuild_screen(
+/// Every resource a screen reads, as one parameter for the systems that
+/// spawn and refresh screens.
+#[derive(SystemParam)]
+struct Sources<'w> {
+    assets: Res<'w, TvAssets>,
+    link: Res<'w, ServerLink>,
+    setup: Res<'w, Setup>,
+    framing: Res<'w, Framing>,
+    /// None before the first `poll_status`, while Starting is up.
+    current: Option<Res<'w, Current>>,
+    cards: Res<'w, PortalCards>,
+    band: Option<Res<'w, ExtractBand>>,
+    portraits: ResMut<'w, Portraits>,
+    images: ResMut<'w, Assets<Image>>,
+}
+
+impl Sources<'_> {
+    fn clients(&self) -> usize {
+        self.current.as_ref().map_or(0, |c| c.clients)
+    }
+
+    fn screen(&self) -> Option<&TvScreen> {
+        self.current.as_ref().map(|c| &c.screen)
+    }
+}
+
+/// `OnEnter` every state: the screen's root and everything under it. The
+/// root goes on exit (`DespawnOnExit`), its tree with it.
+fn enter_screen(
     mut commands: Commands,
+    state: Res<State<TvState>>,
+    mut sources: Sources,
+    mut redrawn: MessageWriter<Redrawn>,
+) {
+    let state = *state.get();
+    commands
+        .spawn((
+            ScreenRoot,
+            DespawnOnExit(state),
+            root_node(state, sources.framing.0),
+            BackgroundColor(BACKGROUND),
+        ))
+        .with_children(|ui| spawn_content(ui, state, &mut sources));
+    redrawn.write(Redrawn::Screen(state));
+}
+
+/// The players line (Join and the portal header) follows `Current.clients`.
+fn patch_players(
     current: Option<Res<Current>>,
-    assets: Option<Res<TvAssets>>,
+    mut lines: Query<&mut Text, With<PlayersLine>>,
+    redrawn: MessageWriter<Redrawn>,
+) {
+    let Some(current) = current.filter(|c| c.is_changed()) else {
+        return;
+    };
+    patch(lines.iter_mut(), &players_line(current.clients), redrawn);
+}
+
+/// Sets each line to `drawn`, telling [`Redrawn`] once if any of them moved.
+fn patch<'a>(
+    lines: impl Iterator<Item = Mut<'a, Text>>,
+    drawn: &str,
+    mut redrawn: MessageWriter<Redrawn>,
+) {
+    let mut changed = false;
+    for mut line in lines {
+        changed |= line.set_if_neq(Text(drawn.to_string()));
+    }
+    if changed {
+        redrawn.write(Redrawn::Text);
+    }
+}
+
+/// The join address (Join and the portal header) follows the phone URL.
+fn patch_address(
     link: Res<ServerLink>,
+    mut lines: Query<&mut Text, With<JoinAddress>>,
+    redrawn: MessageWriter<Redrawn>,
+) {
+    if link.is_changed() {
+        patch(lines.iter_mut(), join_address(&link.phone_url), redrawn);
+    }
+}
+
+/// The portal's game name and ServerError's message follow `Current`'s
+/// screen: another game or another error is no transition.
+fn patch_screen_text(
+    current: Option<Res<Current>>,
+    mut games: Query<&mut Text, (With<GameName>, Without<ErrorMessage>)>,
+    mut messages: Query<&mut Text, (With<ErrorMessage>, Without<GameName>)>,
+    redrawn: MessageWriter<Redrawn>,
+) {
+    let Some(current) = current.filter(|c| c.is_changed()) else {
+        return;
+    };
+    match &current.screen {
+        TvScreen::Portal { game } => patch(games.iter_mut(), game, redrawn),
+        TvScreen::ServerError { message } => patch(messages.iter_mut(), message, redrawn),
+        _ => {}
+    }
+}
+
+fn patch_titles(
     setup: Res<Setup>,
-    framing: Res<Framing>,
-    cards: Res<PortalCards>,
+    mut lines: Query<&mut Text, With<TitlesLine>>,
+    redrawn: MessageWriter<Redrawn>,
+) {
+    if setup.is_changed() {
+        patch(lines.iter_mut(), &setup.0.titles_line(), redrawn);
+    }
+}
+
+/// Setup's and NoGiants' lines follow `Setup` (the picker opening or
+/// closing, a pick that failed, another folder): patched in place while
+/// their count and wrapping hold, respawned when they don't.
+fn sync_setup_lines(
+    mut commands: Commands,
+    setup: Res<Setup>,
+    state: Res<State<TvState>>,
+    assets: Res<TvAssets>,
+    mut columns: Query<(Entity, &mut SetupLines, Option<&Children>)>,
+    mut texts: Query<(&mut Text, &mut TextFont, &mut TextColor)>,
+    mut redrawn: MessageWriter<Redrawn>,
+) {
+    if !setup.is_changed() {
+        return;
+    }
+    let lines = setup_lines(*state.get(), &setup.0);
+    for (column, mut drawn, children) in &mut columns {
+        if drawn.0 == lines {
+            continue;
+        }
+        let same_shape = drawn.0.len() == lines.len()
+            && drawn.0.iter().zip(&lines).all(|(a, b)| a.wrap == b.wrap);
+        match children.filter(|_| same_shape) {
+            Some(children) => {
+                for (kid, line) in children.iter().zip(&lines) {
+                    let Ok((mut text, mut font, mut color)) = texts.get_mut(kid) else {
+                        continue;
+                    };
+                    text.set_if_neq(Text(line.text.clone()));
+                    color.set_if_neq(TextColor(line.color));
+                    if font.font_size != FontSize::Px(line.size) {
+                        font.font_size = FontSize::Px(line.size);
+                    }
+                }
+            }
+            None => {
+                commands
+                    .entity(column)
+                    .despawn_children()
+                    .with_children(|column| {
+                        for line in &lines {
+                            column.spawn(line_bundle(&assets.font, line));
+                        }
+                    });
+            }
+        }
+        drawn.0 = lines.clone();
+        redrawn.write(Redrawn::Text);
+    }
+}
+
+/// The header's slot follows `ExtractBand`, and the hint the cards: a tick
+/// patches the band's title, detail and bar; a change of shape (the band
+/// coming or going, a bar appearing) respawns the slot's content.
+fn sync_band(
+    mut commands: Commands,
     band: Option<Res<ExtractBand>>,
+    cards: Res<PortalCards>,
+    assets: Res<TvAssets>,
+    mut slots: Query<(Entity, &mut BandSlot, &mut Node)>,
+    mut titles: Query<&mut Text, (With<ExtractTitle>, Without<ExtractDetail>)>,
+    mut details: Query<(&mut Text, &mut TextColor), (With<ExtractDetail>, Without<ExtractTitle>)>,
+    mut bars: Query<(&mut ExtractBar, &mut Node), Without<BandSlot>>,
+    mut redrawn: MessageWriter<Redrawn>,
+) {
+    let band_changed = band.as_ref().is_some_and(|b| b.is_changed());
+    if !band_changed && !cards.is_changed() {
+        return;
+    }
+    let band = band.as_ref().and_then(|b| b.0.as_ref());
+    let shape = BandShape::of(band, cards.cards().next().is_none());
+    for (slot, mut drawn, mut node) in &mut slots {
+        if drawn.0 != shape {
+            node.display = band_slot_display(shape);
+            let font = assets.font.clone();
+            commands
+                .entity(slot)
+                .despawn_children()
+                .with_children(|ui| {
+                    spawn_band_slot(ui, &font, shape, band);
+                });
+            drawn.0 = shape;
+            redrawn.write(Redrawn::Band);
+            continue;
+        }
+        let Some(band) = band.filter(|_| band_changed) else {
+            continue;
+        };
+        redrawn.write(Redrawn::Band);
+        for mut title in &mut titles {
+            title.set_if_neq(Text(band.title.clone()));
+        }
+        for (mut detail, mut color) in &mut details {
+            detail.set_if_neq(Text(band.detail.clone()));
+            color.set_if_neq(TextColor(detail_color(band)));
+        }
+        if let Some(pct) = band.percent {
+            for (mut bar, mut node) in &mut bars {
+                if bar.0 != pct {
+                    bar.0 = pct;
+                    node.width = percent(f32::from(pct));
+                }
+            }
+        }
+    }
+}
+
+/// Each of the portal's eight cells follows its slot in `PortalCards`: one
+/// whose placement changed respawns its own content, the other seven and the
+/// header keep theirs.
+fn sync_cells(
+    mut commands: Commands,
+    cards: Res<PortalCards>,
+    assets: Res<TvAssets>,
     mut portraits: ResMut<Portraits>,
     mut images: ResMut<Assets<Image>>,
-    mut report: ResMut<LayoutReport>,
-    roots: Query<Entity, With<ScreenRoot>>,
+    mut cells: Query<(Entity, &Cell, &mut Drew)>,
+    mut redrawn: MessageWriter<Redrawn>,
 ) {
-    let (Some(current), Some(assets)) = (current, assets) else {
-        return;
-    };
-    let on_portal = matches!(current.screen, TvScreen::Portal { .. });
-    let band_changed = band.as_ref().is_some_and(|b| b.is_changed());
-    let portal_changed = on_portal && (cards.is_changed() || band_changed);
-    if !current.is_changed() && !setup.is_changed() && !portal_changed && !roots.is_empty() {
+    if !cards.is_changed() {
         return;
     }
-    for root in &roots {
-        commands.entity(root).despawn();
+    let text =
+        |s: &str, size: f32, color: Color| label(&assets.font, s, size, color, Justify::Center);
+    for (entity, cell, mut drew) in &mut cells {
+        let now = &cards.slots[usize::from(cell.0)];
+        if drew.0 == *now {
+            continue;
+        }
+        let portrait = portrait_of(now.as_ref(), &mut portraits, &mut images);
+        commands
+            .entity(entity)
+            .despawn_children()
+            .with_children(|content| {
+                spawn_slot(content, &text, cell.0, now.as_ref(), portrait);
+            });
+        drew.0 = now.clone();
+        redrawn.write(Redrawn::Slot(cell.0));
     }
-    report.0 = if matches!(current.screen, TvScreen::Portal { .. }) {
-        REPORT_AFTER_FRAMES
-    } else {
-        0
-    };
-    let portal = PortalView {
-        cards: &cards,
-        band: band.as_ref().and_then(|b| b.0.as_ref()),
-        portraits: &mut portraits,
-        images: &mut images,
-    };
-    spawn_screen(
-        &mut commands,
-        &assets,
-        &link,
-        &setup.0,
-        &current,
-        framing.0,
-        portal,
-    );
+}
+
+/// The layout report waits a few frames after the portal's cards or band
+/// were redrawn; any other screen has no cards to report.
+fn arm_layout_report(mut redrawn: MessageReader<Redrawn>, mut report: ResMut<LayoutReport>) {
+    for redrawn in redrawn.read() {
+        match redrawn {
+            Redrawn::Screen(TvState::Portal) | Redrawn::Slot(_) | Redrawn::Band => {
+                report.0 = REPORT_AFTER_FRAMES;
+            }
+            Redrawn::Screen(_) => report.0 = 0,
+            Redrawn::Text => {}
+        }
+    }
 }
 
 fn farewell_exit(current: Option<Res<Current>>, mut exit: MessageWriter<AppExit>) {
@@ -346,31 +741,123 @@ fn escape_quits(
 }
 
 /// What the folder picker is doing, under Setup and NoGiants.
-fn picker_lines(setup: &SetupView, choose: &str) -> Vec<(String, f32, Color)> {
+fn picker_lines(setup: &SetupView, choose: &str) -> Vec<Line> {
     let mut lines = Vec::new();
     if let Some(error) = &setup.error {
-        lines.push((format!("Couldn't use that folder: {error}"), 32.0, GOLD));
+        lines.push(Line::new(
+            format!("Couldn't use that folder: {error}"),
+            32.0,
+            GOLD,
+        ));
     }
     if setup.picking {
-        lines.push((
-            "Choose a folder in the window that opened.".into(),
+        lines.push(Line::new(
+            "Choose a folder in the window that opened.",
             40.0,
             WHITE,
         ));
     } else {
-        lines.push((format!("Press Enter or click to {choose}."), 40.0, WHITE));
+        lines.push(Line::new(
+            format!("Press Enter or click to {choose}."),
+            40.0,
+            WHITE,
+        ));
     }
-    lines.push(("Or run: guacamole --setup <folder>".into(), 28.0, DIM));
+    lines.push(Line::new("Or run: guacamole --setup <folder>", 28.0, DIM));
     lines
 }
 
-/// What the portal screen draws from.
-struct PortalView<'a> {
-    cards: &'a PortalCards,
-    /// The extraction's state, drawn in the header.
-    band: Option<&'a Band>,
-    portraits: &'a mut Portraits,
-    images: &'a mut Assets<Image>,
+/// The lines under Setup's and NoGiants' headings, all from `Setup`.
+fn setup_lines(state: TvState, setup: &SetupView) -> Vec<Line> {
+    match state {
+        TvState::Setup => picker_lines(setup, "choose it"),
+        TvState::NoGiants => {
+            let mut lines = vec![Line::new(
+                format!("Looked in: {}", setup.folders.join(", ")),
+                32.0,
+                DIM,
+            )];
+            for problem in &setup.problems {
+                lines.push(Line::new(problem.clone(), 32.0, GOLD));
+            }
+            if !setup.found_titles.is_empty() {
+                lines.push(Line::new("Found:", 40.0, WHITE));
+                lines.push(Line::new(setup.titles_line(), 36.0, WHITE).wrapping());
+            } else if setup.problems.is_empty() {
+                lines.push(Line::new("No game dumps there.", 40.0, WHITE));
+            }
+            lines.extend(picker_lines(setup, "choose another folder"));
+            lines
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// A centred line; a wrapping one is held to the column's width.
+fn line_bundle(font: &Handle<Font>, line: &Line) -> impl Bundle + use<> {
+    (
+        label(font, &line.text, line.size, line.color, Justify::Center),
+        Node {
+            max_width: if line.wrap { percent(100) } else { Val::Auto },
+            ..default()
+        },
+    )
+}
+
+fn label(
+    font: &Handle<Font>,
+    s: &str,
+    size: f32,
+    color: Color,
+    justify: Justify,
+) -> impl Bundle + use<> {
+    (
+        Text::new(s),
+        TextFont {
+            font: font.clone().into(),
+            font_size: FontSize::Px(size),
+            ..default()
+        },
+        TextColor(color),
+        TextLayout::justify(justify),
+    )
+}
+
+/// The band's detail: white when it's a failure to act on, dim for progress.
+fn detail_color(band: &Band) -> Color {
+    if band.code.is_some() { WHITE } else { DIM }
+}
+
+/// An empty slot leaves the layout, so its row gap doesn't move the name.
+fn band_slot_display(shape: BandShape) -> Display {
+    if shape == BandShape::Nothing {
+        Display::None
+    } else {
+        Display::Flex
+    }
+}
+
+/// The hint or the band, under the game's name.
+fn spawn_band_slot(
+    slot: &mut ChildSpawnerCommands,
+    font: &Handle<Font>,
+    shape: BandShape,
+    band: Option<&Band>,
+) {
+    let text_at =
+        |s: &str, size: f32, color: Color, justify: Justify| label(font, s, size, color, justify);
+    match (shape, band) {
+        (BandShape::Hint, _) => {
+            slot.spawn(text_at(
+                "Put a figure on the portal from your phone.",
+                32.0,
+                WHITE,
+                Justify::Left,
+            ));
+        }
+        (BandShape::Band { .. }, Some(band)) => spawn_band(slot, &text_at, band),
+        _ => {}
+    }
 }
 
 /// The join URL without its pairing key: the key rides in the QR, and the
@@ -389,108 +876,88 @@ fn players_line(clients: usize) -> String {
     }
 }
 
-fn spawn_screen(
-    commands: &mut Commands,
-    assets: &TvAssets,
-    link: &ServerLink,
-    setup: &SetupView,
-    current: &Current,
-    mode: WindowMode,
-    portal: PortalView,
-) {
-    if let TvScreen::Portal { game } = &current.screen {
-        spawn_portal(commands, assets, link, current, mode, game, portal);
-        return;
-    }
-    let font = assets.font.clone();
-    // Wraps within the column rather than running off its sides.
-    let titles = (
-        Text::new(setup.titles_line()),
-        TextFont {
-            font: font.clone().into(),
-            font_size: FontSize::Px(36.0),
-            ..default()
-        },
-        TextColor(WHITE),
-        TextLayout::justify(Justify::Center),
-        Node {
-            max_width: percent(100),
-            ..default()
-        },
-    );
-    let text = move |s: &str, size: f32, color: Color| {
-        (
-            Text::new(s),
-            TextFont {
-                font: font.clone().into(),
-                font_size: FontSize::Px(size),
-                ..default()
-            },
-            TextColor(color),
-            TextLayout::justify(Justify::Center),
-        )
-    };
-
-    let mut root = commands.spawn((
-        ScreenRoot,
-        Node {
+/// A screen's root: a centred column, or the portal's header over its grid.
+fn root_node(state: TvState, mode: WindowMode) -> Node {
+    if state == TvState::Portal {
+        return Node {
             width: percent(100),
             height: percent(100),
             flex_direction: FlexDirection::Column,
-            // Safe: a column taller than the screen starts at the top, not off it.
-            justify_content: JustifyContent::CenterSafe,
-            align_items: AlignItems::Center,
-            row_gap: px(28),
+            row_gap: px(24),
             padding: inset(mode),
             ..default()
-        },
-        BackgroundColor(BACKGROUND),
-    ));
+        };
+    }
+    Node {
+        width: percent(100),
+        height: percent(100),
+        flex_direction: FlexDirection::Column,
+        // Safe: a column taller than the screen starts at the top, not off it.
+        justify_content: JustifyContent::CenterSafe,
+        align_items: AlignItems::Center,
+        row_gap: px(28),
+        padding: inset(mode),
+        ..default()
+    }
+}
 
-    root.with_children(|ui| match &current.screen {
-        TvScreen::Starting => {
+/// Setup's and NoGiants' lines in a full-width column with the screen's own
+/// gap, so they lay out as the screen's own children would.
+fn spawn_setup_lines(ui: &mut ChildSpawnerCommands, font: &Handle<Font>, lines: Vec<Line>) {
+    ui.spawn((
+        Node {
+            width: percent(100),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            row_gap: px(28),
+            ..default()
+        },
+        SetupLines(lines.clone()),
+    ))
+    .with_children(|column| {
+        for line in &lines {
+            column.spawn(line_bundle(font, line));
+        }
+    });
+}
+
+/// Every screen's lines; the portal's header and grid come from [`spawn_portal`].
+fn spawn_content(ui: &mut ChildSpawnerCommands, state: TvState, sources: &mut Sources) {
+    if state == TvState::Portal {
+        spawn_portal(ui, sources);
+        return;
+    }
+    let setup = &sources.setup.0;
+    let font = sources.assets.font.clone();
+    let text = |s: &str, size: f32, color: Color| label(&font, s, size, color, Justify::Center);
+
+    match state {
+        TvState::Starting => {
             ui.spawn(text("Starting…", 64.0, DIM));
         }
-        TvScreen::Setup => {
+        TvState::Setup => {
             ui.spawn(text("Where are your disc dumps?", 88.0, GOLD));
             ui.spawn(text(
                 "Choose the folder that holds your Skylanders Giants dump.",
                 40.0,
                 WHITE,
             ));
-            for (line, size, color) in picker_lines(setup, "choose it") {
-                ui.spawn(text(&line, size, color));
-            }
+            spawn_setup_lines(ui, &font, setup_lines(state, setup));
         }
-        TvScreen::NoGiants => {
+        TvState::NoGiants => {
             ui.spawn(text("No Skylanders Giants dump found", 80.0, GOLD));
-            ui.spawn(text(
-                &format!("Looked in: {}", setup.folders.join(", ")),
-                32.0,
-                DIM,
-            ));
-            for problem in &setup.problems {
-                ui.spawn(text(problem, 32.0, GOLD));
-            }
-            if !setup.found_titles.is_empty() {
-                ui.spawn(text("Found:", 40.0, WHITE));
-                ui.spawn(titles.clone());
-            } else if setup.problems.is_empty() {
-                ui.spawn(text("No game dumps there.", 40.0, WHITE));
-            }
-            for (line, size, color) in picker_lines(setup, "choose another folder") {
-                ui.spawn(text(&line, size, color));
-            }
+            spawn_setup_lines(ui, &font, setup_lines(state, setup));
         }
-        TvScreen::Found => {
+        TvState::Found => {
             ui.spawn(text("Found your games", 88.0, GOLD));
-            ui.spawn(titles.clone());
+            let titles = Line::new(setup.titles_line(), 36.0, WHITE).wrapping();
+            ui.spawn((TitlesLine, line_bundle(&font, &titles)));
             ui.spawn(text("Skylanders: Giants is ready!", 56.0, GOLD));
             ui.spawn(text("Click to continue.", 32.0, DIM));
         }
-        TvScreen::Join => {
+        TvState::Join => {
             ui.spawn(text("Scan to play", 88.0, GOLD));
-            if let Some(qr) = &assets.qr {
+            if let Some(qr) = &sources.assets.qr {
                 ui.spawn((
                     JoinQr,
                     ImageNode::new(qr.clone()),
@@ -501,12 +968,14 @@ fn spawn_screen(
                     },
                 ));
             }
-            ui.spawn((JoinAddress, text(join_address(&link.phone_url), 32.0, DIM)));
-            ui.spawn((PlayersLine, text(&players_line(current.clients), 40.0, WHITE)));
+            let address = join_address(&sources.link.phone_url);
+            ui.spawn((JoinAddress, text(address, 32.0, DIM)));
+            let players = players_line(sources.clients());
+            ui.spawn((PlayersLine, text(&players, 40.0, WHITE)));
         }
-        // Drawn by `spawn_portal`.
-        TvScreen::Portal { .. } => {}
-        TvScreen::AlreadyRunning => {
+        // Handled above.
+        TvState::Portal => {}
+        TvState::AlreadyRunning => {
             ui.spawn(text("Already running", 88.0, GOLD));
             ui.spawn(text(
                 "guacamole or the Skylander Portal Controller is already serving phones on this computer.",
@@ -519,7 +988,11 @@ fn spawn_screen(
                 DIM,
             ));
         }
-        TvScreen::ServerError { message } => {
+        TvState::ServerError => {
+            let message = match sources.screen() {
+                Some(TvScreen::ServerError { message }) => message.as_str(),
+                _ => "",
+            };
             ui.spawn(text("Something went wrong", 88.0, GOLD));
             // The whole cause chain, wrapped inside the column; a path with
             // no space to break at breaks between characters.
@@ -527,7 +1000,7 @@ fn spawn_screen(
                 ErrorMessage,
                 Text::new(message),
                 TextFont {
-                    font: assets.font.clone().into(),
+                    font: font.clone().into(),
                     font_size: FontSize::Px(36.0),
                     ..default()
                 },
@@ -540,10 +1013,10 @@ fn spawn_screen(
             ));
             ui.spawn(text("Press Esc or click to close.", 32.0, DIM));
         }
-        TvScreen::Farewell => {
+        TvState::Farewell => {
             ui.spawn(text("Goodbye, Portal Master!", 96.0, GOLD));
         }
-    });
+    }
 }
 
 const CARD_BG: Color = Color::srgb(0.08, 0.14, 0.34);
@@ -557,6 +1030,15 @@ pub(crate) struct CardSlot(pub(crate) u8);
 /// An empty slot's frame, so the cards around it keep their places.
 #[derive(Component, Debug)]
 pub(crate) struct EmptySlot(pub(crate) u8);
+
+/// A slot's place in the grid (0-based), kept as long as the portal is up;
+/// its one child is the card or the empty frame.
+#[derive(Component, Debug)]
+pub(crate) struct Cell(pub(crate) u8);
+
+/// The placement a cell drew, none for its empty frame.
+#[derive(Component)]
+struct Drew(Option<Placement>);
 
 /// A card's owner pip, by slot.
 #[derive(Component, Debug)]
@@ -633,7 +1115,7 @@ pub(crate) fn node_rect(node: &ComputedNode, at: &UiGlobalTransform) -> Rect {
     Rect::from_center_size(at.translation, node.size())
 }
 
-/// Frames until `report_layout` logs a rebuilt portal: layout and text
+/// Frames until `report_layout` logs a redrawn portal: layout and text
 /// measuring settle over a couple of frames.
 #[derive(Resource, Default)]
 struct LayoutReport(u8);
@@ -710,164 +1192,174 @@ fn report_layout(
 
 /// The portal: the game and a small join code on top, then the slots in two
 /// rows of four, each holding its card or an empty frame.
-fn spawn_portal(
-    commands: &mut Commands,
-    assets: &TvAssets,
-    link: &ServerLink,
-    current: &Current,
-    mode: WindowMode,
-    game: &str,
-    portal: PortalView,
-) {
-    let font = assets.font.clone();
-    let text_at = |s: &str, size: f32, color: Color, justify: Justify| {
-        (
-            Text::new(s),
-            TextFont {
-                font: font.clone().into(),
-                font_size: FontSize::Px(size),
-                ..default()
-            },
-            TextColor(color),
-            TextLayout::justify(justify),
-        )
+fn spawn_portal(ui: &mut ChildSpawnerCommands, sources: &mut Sources) {
+    let font = sources.assets.font.clone();
+    let text_at =
+        |s: &str, size: f32, color: Color, justify: Justify| label(&font, s, size, color, justify);
+    let game = match sources.screen() {
+        Some(TvScreen::Portal { game }) => game.clone(),
+        _ => String::new(),
     };
-    let text = |s: &str, size: f32, color: Color| text_at(s, size, color, Justify::Center);
-    let PortalView {
+    let players = players_line(sources.clients());
+    let address = join_address(&sources.link.phone_url).to_string();
+    let qr = sources.assets.qr.clone();
+    let band = sources.band.as_ref().and_then(|b| b.0.clone());
+    let shape = BandShape::of(band.as_ref(), sources.cards.cards().next().is_none());
+
+    // Header: the game on the left, the small join code on the right.
+    ui.spawn(Node {
+        flex_direction: FlexDirection::Row,
+        justify_content: JustifyContent::SpaceBetween,
+        align_items: AlignItems::Center,
+        column_gap: px(24),
+        // Grows only for a band whose detail wraps.
+        min_height: px(184),
+        flex_shrink: 0.0,
+        ..default()
+    })
+    .with_children(|header| {
+        header
+            .spawn(Node {
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::FlexStart,
+                row_gap: px(8),
+                min_width: px(0),
+                flex_grow: 1.0,
+                flex_shrink: 1.0,
+                ..default()
+            })
+            .with_children(|left| {
+                left.spawn((GameName, text_at(&game, 64.0, GOLD, Justify::Left)));
+                left.spawn((
+                    BandSlot(shape),
+                    Node {
+                        display: band_slot_display(shape),
+                        width: percent(100),
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::FlexStart,
+                        row_gap: px(8),
+                        ..default()
+                    },
+                ))
+                .with_children(|slot| spawn_band_slot(slot, &font, shape, band.as_ref()));
+            });
+        header
+            .spawn(Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: px(20),
+                flex_shrink: 0.0,
+                ..default()
+            })
+            .with_children(|right| {
+                right
+                    .spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::FlexEnd,
+                        row_gap: px(6),
+                        ..default()
+                    })
+                    .with_children(|join| {
+                        join.spawn(text_at("Scan to join", 32.0, WHITE, Justify::Right));
+                        join.spawn((PlayersLine, text_at(&players, 28.0, DIM, Justify::Right)));
+                        join.spawn((JoinAddress, text_at(&address, 24.0, DIM, Justify::Right)));
+                    });
+                if let Some(qr) = &qr {
+                    right.spawn((
+                        JoinQr,
+                        ImageNode::new(qr.clone()),
+                        Node {
+                            width: px(176),
+                            height: px(176),
+                            flex_shrink: 0.0,
+                            ..default()
+                        },
+                    ));
+                }
+            });
+    });
+
+    // Two rows of four; every cell grows equally, so eight always fit.
+    ui.spawn(Node {
+        flex_direction: FlexDirection::Column,
+        row_gap: px(24),
+        flex_grow: 1.0,
+        flex_basis: px(0),
+        min_height: px(0),
+        ..default()
+    })
+    .with_children(|grid| spawn_rows(grid, &font, sources));
+}
+
+/// The grid's rows of cells, each holding its slot's card or empty frame.
+fn spawn_rows(grid: &mut ChildSpawnerCommands, font: &Handle<Font>, sources: &mut Sources) {
+    let text = |s: &str, size: f32, color: Color| label(font, s, size, color, Justify::Center);
+    let Sources {
         cards,
-        band,
         portraits,
         images,
-    } = portal;
-    let empty = cards.cards().next().is_none();
-
-    let mut root = commands.spawn((
-        ScreenRoot,
-        Node {
-            width: percent(100),
-            height: percent(100),
-            flex_direction: FlexDirection::Column,
-            row_gap: px(24),
-            padding: inset(mode),
-            ..default()
-        },
-        BackgroundColor(BACKGROUND),
-    ));
-    root.with_children(|ui| {
-        // Header: the game on the left, the small join code on the right.
-        ui.spawn(Node {
+        ..
+    } = sources;
+    for row in 0..SLOT_COUNT / CARDS_PER_ROW {
+        grid.spawn(Node {
             flex_direction: FlexDirection::Row,
-            justify_content: JustifyContent::SpaceBetween,
-            align_items: AlignItems::Center,
             column_gap: px(24),
-            // Grows only for a band whose detail wraps.
-            min_height: px(184),
-            flex_shrink: 0.0,
-            ..default()
-        })
-        .with_children(|header| {
-            header
-                .spawn(Node {
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::FlexStart,
-                    row_gap: px(8),
-                    min_width: px(0),
-                    flex_grow: 1.0,
-                    flex_shrink: 1.0,
-                    ..default()
-                })
-                .with_children(|left| {
-                    left.spawn(text_at(game, 64.0, GOLD, Justify::Left));
-                    if let Some(band) = band {
-                        spawn_band(left, &text_at, band);
-                    } else if empty {
-                        left.spawn(text_at(
-                            "Put a figure on the portal from your phone.",
-                            32.0,
-                            WHITE,
-                            Justify::Left,
-                        ));
-                    }
-                });
-            header
-                .spawn(Node {
-                    flex_direction: FlexDirection::Row,
-                    align_items: AlignItems::Center,
-                    column_gap: px(20),
-                    flex_shrink: 0.0,
-                    ..default()
-                })
-                .with_children(|right| {
-                    right
-                        .spawn(Node {
-                            flex_direction: FlexDirection::Column,
-                            align_items: AlignItems::FlexEnd,
-                            row_gap: px(6),
-                            ..default()
-                        })
-                        .with_children(|join| {
-                            join.spawn(text_at("Scan to join", 32.0, WHITE, Justify::Right));
-                            join.spawn((
-                                PlayersLine,
-                                text_at(&players_line(current.clients), 28.0, DIM, Justify::Right),
-                            ));
-                            join.spawn((
-                                JoinAddress,
-                                text_at(join_address(&link.phone_url), 24.0, DIM, Justify::Right),
-                            ));
-                        });
-                    if let Some(qr) = &assets.qr {
-                        right.spawn((
-                            JoinQr,
-                            ImageNode::new(qr.clone()),
-                            Node {
-                                width: px(176),
-                                height: px(176),
-                                flex_shrink: 0.0,
-                                ..default()
-                            },
-                        ));
-                    }
-                });
-        });
-
-        // Two rows of four; every cell grows equally, so eight always fit.
-        ui.spawn(Node {
-            flex_direction: FlexDirection::Column,
-            row_gap: px(24),
             flex_grow: 1.0,
             flex_basis: px(0),
             min_height: px(0),
             ..default()
         })
-        .with_children(|grid| {
-            for row in 0..SLOT_COUNT / CARDS_PER_ROW {
-                grid.spawn(Node {
-                    flex_direction: FlexDirection::Row,
-                    column_gap: px(24),
-                    flex_grow: 1.0,
-                    flex_basis: px(0),
-                    min_height: px(0),
-                    ..default()
-                })
-                .with_children(|cells| {
-                    for col in 0..CARDS_PER_ROW {
-                        let slot = row * CARDS_PER_ROW + col;
-                        match &cards.slots[slot] {
-                            Some(placement) => {
-                                let portrait = placement
-                                    .portrait
-                                    .as_deref()
-                                    .and_then(|p| portraits.get(p, images));
-                                spawn_card(cells, &text, slot as u8, placement, portrait);
-                            }
-                            None => spawn_empty(cells, &text, slot as u8),
-                        }
-                    }
-                });
+        .with_children(|cells| {
+            for col in 0..CARDS_PER_ROW {
+                let slot = row * CARDS_PER_ROW + col;
+                let placement = cards.slots[slot].as_ref();
+                let portrait = portrait_of(placement, portraits, images);
+                cells
+                    .spawn((
+                        Cell(slot as u8),
+                        Drew(placement.cloned()),
+                        // An equal share of the row; the content fills it.
+                        Node {
+                            flex_grow: 1.0,
+                            flex_basis: px(0),
+                            min_width: px(0),
+                            min_height: px(0),
+                            flex_direction: FlexDirection::Column,
+                            ..default()
+                        },
+                    ))
+                    .with_children(|cell| {
+                        spawn_slot(cell, &text, slot as u8, placement, portrait);
+                    });
             }
         });
-    });
+    }
+}
+
+/// The portrait drawn for a placement, decoded on first use.
+fn portrait_of(
+    placement: Option<&Placement>,
+    portraits: &mut Portraits,
+    images: &mut Assets<Image>,
+) -> Option<Handle<Image>> {
+    placement?
+        .portrait
+        .as_deref()
+        .and_then(|p| portraits.get(p, images))
+}
+
+/// A cell's content: the card, or the numbered empty frame.
+fn spawn_slot<T: Bundle>(
+    cell: &mut ChildSpawnerCommands,
+    text: &impl Fn(&str, f32, Color) -> T,
+    slot: u8,
+    placement: Option<&Placement>,
+    portrait: Option<Handle<Image>>,
+) {
+    match placement {
+        Some(placement) => spawn_card(cell, text, slot, placement, portrait),
+        None => spawn_empty(cell, text, slot),
+    }
 }
 
 /// The extraction's title, detail and bar, under the game's name.
@@ -880,10 +1372,9 @@ fn spawn_band<T: Bundle>(
         ExtractTitle,
         text_at(&band.title, 30.0, GOLD, Justify::Left),
     ));
-    let color = if band.code.is_some() { WHITE } else { DIM };
     left.spawn((
         ExtractDetail,
-        text_at(&band.detail, 22.0, color, Justify::Left),
+        text_at(&band.detail, 22.0, detail_color(band), Justify::Left),
     ));
     if let Some(pct) = band.percent {
         left.spawn((
@@ -912,8 +1403,8 @@ fn spawn_band<T: Bundle>(
     }
 }
 
-/// A grid cell: grows to an equal share and clips anything that doesn't fit.
-fn cell() -> Node {
+/// A cell's content: fills the cell and clips anything that doesn't fit.
+fn slot_content() -> Node {
     Node {
         flex_grow: 1.0,
         flex_basis: px(0),
@@ -933,88 +1424,90 @@ fn cell() -> Node {
 
 /// Portrait, name, element and owner pip; no level, XP or gold (AH).
 fn spawn_card<T: Bundle>(
-    cells: &mut ChildSpawnerCommands,
+    cell: &mut ChildSpawnerCommands,
     text: &impl Fn(&str, f32, Color) -> T,
     slot: u8,
     placement: &Placement,
     portrait: Option<Handle<Image>>,
 ) {
     let edge = element_color(placement.element);
-    cells
-        .spawn((
-            CardSlot(slot),
-            cell(),
-            BackgroundColor(CARD_BG),
-            BorderColor::all(edge),
-        ))
-        .with_children(|card| {
-            let frame = Node {
-                width: px(160),
-                height: px(160),
-                flex_shrink: 0.0,
-                border: UiRect::all(px(6)),
-                border_radius: BorderRadius::MAX,
-                ..default()
-            };
-            match portrait {
-                Some(image) => {
-                    card.spawn((
-                        frame,
-                        ImageNode::new(image),
-                        BorderColor::all(GOLD),
-                        BackgroundColor(PORTRAIT_BG),
-                    ));
-                }
-                None => {
-                    card.spawn((frame, BorderColor::all(GOLD), BackgroundColor(PORTRAIT_BG)));
-                }
+    cell.spawn((
+        CardSlot(slot),
+        slot_content(),
+        BackgroundColor(CARD_BG),
+        BorderColor::all(edge),
+    ))
+    .with_children(|card| {
+        let frame = Node {
+            width: px(160),
+            height: px(160),
+            flex_shrink: 0.0,
+            border: UiRect::all(px(6)),
+            border_radius: BorderRadius::MAX,
+            ..default()
+        };
+        match portrait {
+            Some(image) => {
+                card.spawn((
+                    frame,
+                    ImageNode::new(image),
+                    BorderColor::all(GOLD),
+                    BackgroundColor(PORTRAIT_BG),
+                ));
             }
+            None => {
+                card.spawn((frame, BorderColor::all(GOLD), BackgroundColor(PORTRAIT_BG)));
+            }
+        }
+        card.spawn((
+            text(&placement.name, 36.0, WHITE),
+            Node {
+                max_width: percent(100),
+                ..default()
+            },
+        ));
+        if let Some(element) = placement.element {
+            card.spawn(text(element_label(element), 28.0, edge));
+        }
+        if let Some(owner) = &placement.owner {
+            let color = owner_color(owner);
             card.spawn((
-                text(&placement.name, 36.0, WHITE),
+                Pip(slot),
                 Node {
-                    max_width: percent(100),
+                    position_type: PositionType::Absolute,
+                    top: px(10),
+                    right: px(10),
+                    width: px(60),
+                    height: px(60),
+                    border: UiRect::all(px(4)),
+                    border_radius: BorderRadius::MAX,
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
                     ..default()
                 },
-            ));
-            if let Some(element) = placement.element {
-                card.spawn(text(element_label(element), 28.0, edge));
-            }
-            if let Some(owner) = &placement.owner {
-                let color = owner_color(owner);
-                card.spawn((
-                    Pip(slot),
-                    Node {
-                        position_type: PositionType::Absolute,
-                        top: px(10),
-                        right: px(10),
-                        width: px(60),
-                        height: px(60),
-                        border: UiRect::all(px(4)),
-                        border_radius: BorderRadius::MAX,
-                        align_items: AlignItems::Center,
-                        justify_content: JustifyContent::Center,
-                        ..default()
-                    },
-                    BackgroundColor(color.into()),
-                    BorderColor::all(WHITE),
-                ))
-                .with_children(|pip| {
-                    pip.spawn(text(&owner.initial, 34.0, ink_on(color)));
-                });
-            }
-        });
+                BackgroundColor(color.into()),
+                BorderColor::all(WHITE),
+            ))
+            .with_children(|pip| {
+                pip.spawn(text(&owner.initial, 34.0, ink_on(color)));
+            });
+        }
+    });
 }
 
 fn spawn_empty<T: Bundle>(
-    cells: &mut ChildSpawnerCommands,
+    cell: &mut ChildSpawnerCommands,
     text: &impl Fn(&str, f32, Color) -> T,
     slot: u8,
 ) {
-    cells
-        .spawn((EmptySlot(slot), cell(), BorderColor::all(EMPTY_EDGE)))
-        .with_children(|frame| {
-            frame.spawn(text(&(slot + 1).to_string(), 56.0, EMPTY_EDGE));
-        });
+    cell.spawn((
+        EmptySlot(slot),
+        slot_content(),
+        BorderColor::all(EMPTY_EDGE),
+    ))
+    .with_children(|frame| {
+        frame.spawn(text(&(slot + 1).to_string(), 56.0, EMPTY_EDGE));
+    });
 }
 
 #[cfg(test)]
@@ -1182,6 +1675,7 @@ pub(crate) mod layout_tests {
             // `bevy_ui`'s viewport picking needs its resources; no pointer moves.
             bevy::picking::DefaultPickingPlugins,
             bevy::ui::UiPlugin,
+            bevy::state::app::StatesPlugin,
         ));
         let font = app
             .world_mut()
@@ -1209,9 +1703,7 @@ pub(crate) mod layout_tests {
                 clients: 2,
             })
             .insert_resource(UiScale(height as f32 / DESIGN_HEIGHT))
-            .init_resource::<Portraits>()
-            .init_resource::<LayoutReport>()
-            .add_systems(Update, rebuild_screen);
+            .add_plugins(Screens);
         app.world_mut().spawn((
             Camera2d,
             Camera {
@@ -1558,5 +2050,495 @@ pub(crate) mod layout_tests {
         assert_eq!(laid.cards.len(), 1);
         assert_eq!(laid.empties.len(), 7);
         assert!(laid.pips.is_empty());
+    }
+
+    /// The screen's roots: (entity, the state it leaves with).
+    fn roots(app: &mut App) -> Vec<(Entity, TvState)> {
+        let world = app.world_mut();
+        let mut q = world.query_filtered::<(Entity, &DespawnOnExit<TvState>), With<ScreenRoot>>();
+        q.iter(world).map(|(e, s)| (e, s.0)).collect()
+    }
+
+    fn texts(app: &mut App) -> Vec<String> {
+        let world = app.world_mut();
+        let mut q = world.query::<&Text>();
+        q.iter(world).map(|t| t.0.clone()).collect()
+    }
+
+    /// AP.1: each step enters its screen and leaves the last one, tree and
+    /// all; a new game on the portal is no transition.
+    #[test]
+    fn each_screen_step_leaves_exactly_one_root() {
+        let giants = || TvScreen::Portal {
+            game: "Skylanders: Giants".into(),
+        };
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, full("Eruptor"));
+        let steps = [
+            (TvScreen::Starting, TvState::Starting, "Starting…"),
+            (
+                TvScreen::Setup,
+                TvState::Setup,
+                "Where are your disc dumps?",
+            ),
+            (TvScreen::Found, TvState::Found, "Found your games"),
+            (TvScreen::Join, TvState::Join, "Scan to play"),
+            (giants(), TvState::Portal, "Skylanders: Giants"),
+            (
+                TvScreen::Farewell,
+                TvState::Farewell,
+                "Goodbye, Portal Master!",
+            ),
+        ];
+        for (screen, state, line) in steps {
+            app.world_mut().resource_mut::<Current>().screen = screen;
+            app.update();
+            let found = roots(&mut app);
+            assert_eq!(found.len(), 1, "{state:?}: {found:?}");
+            assert_eq!(found[0].1, state);
+            assert_eq!(*app.world().resource::<State<TvState>>().get(), state);
+            assert!(texts(&mut app).contains(&line.to_string()), "{state:?}");
+            let cards = {
+                let world = app.world_mut();
+                world.query::<&CardSlot>().iter(world).count()
+            };
+            assert_eq!(cards, if state == TvState::Portal { 8 } else { 0 });
+        }
+
+        // Portal to Portal keeps the root and draws the new game.
+        app.world_mut().resource_mut::<Current>().screen = giants();
+        app.update();
+        let before = roots(&mut app);
+        app.world_mut().resource_mut::<Current>().screen = TvScreen::Portal {
+            game: "Skylanders: Swap Force".into(),
+        };
+        app.update();
+        assert_eq!(roots(&mut app), before);
+        let drawn = texts(&mut app);
+        assert!(
+            drawn.contains(&"Skylanders: Swap Force".to_string()),
+            "{drawn:?}"
+        );
+        assert!(!drawn.contains(&"Skylanders: Giants".to_string()));
+    }
+
+    fn every_screen() -> [TvScreen; 9] {
+        [
+            TvScreen::Starting,
+            TvScreen::Setup,
+            TvScreen::NoGiants,
+            TvScreen::Found,
+            TvScreen::Join,
+            TvScreen::Portal {
+                game: "Skylanders: Giants".into(),
+            },
+            TvScreen::AlreadyRunning,
+            TvScreen::ServerError {
+                message: "open profile store".into(),
+            },
+            TvScreen::Farewell,
+        ]
+    }
+
+    /// Every UI node, and the parentless ones: a screen root or a stray.
+    fn nodes(app: &mut App) -> (std::collections::BTreeSet<Entity>, Vec<Entity>) {
+        let world = app.world_mut();
+        let mut q = world.query_filtered::<(Entity, Has<ChildOf>), With<Node>>();
+        let mut all = std::collections::BTreeSet::new();
+        let mut parentless = Vec::new();
+        for (entity, parented) in q.iter(world) {
+            all.insert(entity);
+            if !parented {
+                parentless.push(entity);
+            }
+        }
+        (all, parentless)
+    }
+
+    /// One root carrying `state` and no other parentless node; the node count.
+    fn one_root(app: &mut App, state: TvState, step: &str) -> usize {
+        let found = roots(app);
+        assert_eq!(found.len(), 1, "{step}: {found:?}");
+        assert_eq!(found[0].1, state, "{step}");
+        assert_eq!(*app.world().resource::<State<TvState>>().get(), state);
+        let (all, parentless) = nodes(app);
+        assert_eq!(parentless, [found[0].0], "{step}: a stray node");
+        all.len()
+    }
+
+    /// AP.1 review: every ordered pair of the nine screens, three times over,
+    /// leaves exactly the new screen's root and nothing stray beside it, and a
+    /// screen comes back with the node count it had; `Current` going away and
+    /// back between two frames is no transition.
+    #[test]
+    fn every_pair_of_screens_leaves_one_root_and_no_strays() {
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, full("Eruptor"));
+        app.world_mut().resource_mut::<Setup>().0.error = Some("gone".into());
+        let mut counts: HashMap<TvState, usize> = HashMap::new();
+        for round in 0..3 {
+            for from in every_screen() {
+                for to in every_screen() {
+                    for screen in [from.clone(), to.clone()] {
+                        let state = TvState::of(&screen);
+                        app.world_mut().resource_mut::<Current>().screen = screen;
+                        app.update();
+                        let step = format!("round {round}, {from:?} to {to:?}");
+                        let count = one_root(&mut app, state, &step);
+                        assert_eq!(*counts.entry(state).or_insert(count), count, "{step}");
+                    }
+                }
+            }
+        }
+
+        let before = (roots(&mut app), nodes(&mut app).0);
+        let farewell = app.world().resource::<Current>().screen.clone();
+        app.world_mut().resource_mut::<Current>().screen = TvScreen::Join;
+        app.world_mut().resource_mut::<Current>().screen = farewell;
+        app.update();
+        assert_eq!((roots(&mut app), nodes(&mut app).0), before);
+    }
+
+    /// AP.2 review: a source written with nothing new respawns nothing, on
+    /// any screen.
+    #[test]
+    fn a_touched_source_with_nothing_new_respawns_nothing() {
+        use crate::extraction::{ExtractStatus, band};
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, full("Eruptor"));
+        app.insert_resource(ExtractBand(band(&ExtractStatus::Converting {
+            done: 3,
+            total: 48,
+            movie: "eruptor".into(),
+        })));
+        for screen in every_screen() {
+            app.world_mut().resource_mut::<Current>().screen = screen.clone();
+            frames(&mut app, 3);
+            let (before, _) = nodes(&mut app);
+            let world = app.world_mut();
+            world.resource_mut::<Current>().set_changed();
+            world.resource_mut::<Setup>().set_changed();
+            world.resource_mut::<PortalCards>().set_changed();
+            world.resource_mut::<ExtractBand>().set_changed();
+            frames(&mut app, 3);
+            assert_eq!(nodes(&mut app).0, before, "{screen:?}");
+        }
+    }
+
+    /// The one entity carrying `M`, and its text.
+    fn marked<M: Component>(app: &mut App) -> (Entity, String) {
+        let world = app.world_mut();
+        let mut q = world.query_filtered::<(Entity, &Text), With<M>>();
+        let (entity, text) = q.single(world).unwrap();
+        (entity, text.0.clone())
+    }
+
+    fn frames(app: &mut App, n: usize) {
+        for _ in 0..n {
+            app.update();
+        }
+    }
+
+    /// AP.2: a phone joining patches the drawn line, on Join and on the portal.
+    #[test]
+    fn a_new_phone_patches_the_players_line_in_place() {
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
+        {
+            let mut current = app.world_mut().resource_mut::<Current>();
+            current.screen = TvScreen::Join;
+            current.clients = 1;
+        }
+        frames(&mut app, 3);
+        for screen in [
+            TvScreen::Join,
+            TvScreen::Portal {
+                game: "Skylanders: Giants".into(),
+            },
+        ] {
+            app.world_mut().resource_mut::<Current>().screen = screen.clone();
+            app.world_mut().resource_mut::<Current>().clients = 1;
+            frames(&mut app, 2);
+            let (line, text) = marked::<PlayersLine>(&mut app);
+            let (address, _) = marked::<JoinAddress>(&mut app);
+            assert_eq!(text, "1 phone connected", "{screen:?}");
+            app.world_mut().resource_mut::<Current>().clients = 2;
+            app.update();
+            assert_eq!(
+                marked::<PlayersLine>(&mut app),
+                (line, "2 phones connected".to_string()),
+                "{screen:?}"
+            );
+            assert_eq!(marked::<JoinAddress>(&mut app).0, address);
+        }
+    }
+
+    /// AP.2: a tick of the extraction patches the band; a failure, which
+    /// has no bar, respawns it.
+    #[test]
+    fn a_band_tick_keeps_its_lines_and_bar() {
+        use crate::extraction::{ExtractStatus, Failure, band};
+        let converting = |done| {
+            band(&ExtractStatus::Converting {
+                done,
+                total: 48,
+                movie: "eruptor".into(),
+            })
+        };
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
+        app.insert_resource(ExtractBand(converting(12)));
+        frames(&mut app, 3);
+        let bar = |app: &mut App| {
+            let world = app.world_mut();
+            let mut q = world.query::<(Entity, &ExtractBar, &Node)>();
+            let (entity, bar, node) = q.single(world).unwrap();
+            (entity, bar.0, node.width)
+        };
+        let (title, _) = marked::<ExtractTitle>(&mut app);
+        let (detail, text) = marked::<ExtractDetail>(&mut app);
+        let (fill, pct, width) = bar(&mut app);
+        assert_eq!(
+            (text.as_str(), pct, width),
+            ("Converting intro 13 of 48…", 25, percent(25))
+        );
+
+        app.insert_resource(ExtractBand(converting(13)));
+        app.update();
+        assert_eq!(marked::<ExtractTitle>(&mut app).0, title);
+        assert_eq!(
+            marked::<ExtractDetail>(&mut app),
+            (detail, "Converting intro 14 of 48…".to_string())
+        );
+        assert_eq!(bar(&mut app), (fill, 27, percent(27)));
+
+        app.insert_resource(ExtractBand(band(&ExtractStatus::Failed(
+            Failure::NoFfmpeg {
+                configured: None,
+                install: "brew install ffmpeg".into(),
+            },
+        ))));
+        app.update();
+        let (failed, text) = marked::<ExtractTitle>(&mut app);
+        assert_ne!(failed, title);
+        assert_eq!(text, "No intros: ffmpeg is needed");
+        let world = app.world_mut();
+        assert_eq!(world.query::<&ExtractBar>().iter(world).count(), 0);
+    }
+
+    /// AP.2: the picker opening patches Setup's lines; a failed pick adds a
+    /// line, so the column respawns with it.
+    #[test]
+    fn the_setup_lines_follow_the_picker() {
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
+        app.world_mut().resource_mut::<Current>().screen = TvScreen::Setup;
+        frames(&mut app, 2);
+        let lines = |app: &mut App| {
+            let world = app.world_mut();
+            let mut columns = world.query_filtered::<&Children, With<SetupLines>>();
+            let kids: Vec<Entity> = columns.single(world).unwrap().iter().collect();
+            let mut texts = world.query::<&Text>();
+            kids.into_iter()
+                .map(|kid| (kid, texts.get(world, kid).unwrap().0.clone()))
+                .collect::<Vec<_>>()
+        };
+        let before = lines(&mut app);
+        assert_eq!(before[0].1, "Press Enter or click to choose it.");
+
+        app.world_mut().resource_mut::<Setup>().0.picking = true;
+        app.update();
+        let picking = lines(&mut app);
+        assert_eq!(picking.len(), before.len());
+        assert_eq!(
+            picking[0],
+            (
+                before[0].0,
+                "Choose a folder in the window that opened.".into()
+            )
+        );
+        assert_eq!(picking[1], before[1]);
+
+        {
+            let mut setup = app.world_mut().resource_mut::<Setup>();
+            setup.0.picking = false;
+            setup.0.error = Some("/Volumes/gone isn't a folder".into());
+        }
+        app.update();
+        let failed: Vec<String> = lines(&mut app).into_iter().map(|(_, t)| t).collect();
+        assert_eq!(
+            failed,
+            [
+                "Couldn't use that folder: /Volumes/gone isn't a folder",
+                "Press Enter or click to choose it.",
+                "Or run: guacamole --setup <folder>",
+            ]
+        );
+    }
+
+    /// AP.2: another error's message lands on the drawn line.
+    #[test]
+    fn another_error_patches_the_drawn_message() {
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
+        let error = |message: &str| TvScreen::ServerError {
+            message: message.into(),
+        };
+        app.world_mut().resource_mut::<Current>().screen = error("open profile store");
+        frames(&mut app, 2);
+        let (line, text) = marked::<ErrorMessage>(&mut app);
+        assert_eq!(text, "open profile store");
+        app.world_mut().resource_mut::<Current>().screen = error("bind 0.0.0.0:8765");
+        app.update();
+        assert_eq!(
+            marked::<ErrorMessage>(&mut app),
+            (line, "bind 0.0.0.0:8765".to_string())
+        );
+    }
+
+    /// Each cell's entity and its one child, the card or the empty frame.
+    fn cells(app: &mut App) -> std::collections::BTreeMap<u8, (Entity, Entity)> {
+        let world = app.world_mut();
+        let mut q = world.query::<(Entity, &Cell, &Children)>();
+        q.iter(world)
+            .map(|(cell, slot, kids)| {
+                assert_eq!(kids.len(), 1, "cell {}", slot.0);
+                (slot.0, (cell, kids[0]))
+            })
+            .collect()
+    }
+
+    /// AP.3: a placement in slot 3 respawns that cell's content and nothing
+    /// else: the other seven cells' content and the header stay.
+    #[test]
+    fn a_placement_respawns_only_its_own_cell() {
+        let two = PortalCards::default().reduce([
+            PortalChange::Placed {
+                slot: SlotIndex::new(0).unwrap(),
+                placement: placement("Eruptor", Some("#33cc66")),
+            },
+            PortalChange::Placed {
+                slot: SlotIndex::new(5).unwrap(),
+                placement: placement("Tree Rex", None),
+            },
+        ]);
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, two.clone());
+        frames(&mut app, 3);
+        let before = cells(&mut app);
+        assert_eq!(before.len(), 8);
+        let header = (
+            marked::<GameName>(&mut app).0,
+            marked::<PlayersLine>(&mut app).0,
+        );
+
+        let slot3 = SlotIndex::from_display(3).unwrap();
+        *app.world_mut().resource_mut::<PortalCards>() =
+            two.clone().reduce([PortalChange::Placed {
+                slot: slot3,
+                placement: placement("Spyro", Some("#33cc66")),
+            }]);
+        app.update();
+        let after = cells(&mut app);
+        for (slot, (cell, content)) in &after {
+            assert_eq!(*cell, before[slot].0, "cell {slot} respawned");
+            if *slot == slot3.as_u8() {
+                assert_ne!(*content, before[slot].1);
+            } else {
+                assert_eq!(*content, before[slot].1, "slot {slot}'s content respawned");
+            }
+        }
+        let world = app.world_mut();
+        let card = world.get::<CardSlot>(after[&slot3.as_u8()].1).unwrap();
+        assert_eq!(card.0, slot3.as_u8());
+        assert_eq!(
+            (
+                marked::<GameName>(&mut app).0,
+                marked::<PlayersLine>(&mut app).0
+            ),
+            header
+        );
+
+        // The same cards again (a resume replaying them) respawn nothing.
+        let same = app.world().resource::<PortalCards>().clone();
+        *app.world_mut().resource_mut::<PortalCards>() = same;
+        app.update();
+        assert_eq!(cells(&mut app), after);
+    }
+
+    /// Each frame's `Redrawn` messages, and the frames the layout report was
+    /// armed in (`report_layout` takes one off every `Last`, so it reads
+    /// `REPORT_AFTER_FRAMES` in `PostUpdate` only in a frame that armed it).
+    #[derive(Resource, Default)]
+    struct Seen {
+        redrawn: Vec<Redrawn>,
+        armed: usize,
+    }
+
+    fn see(mut seen: ResMut<Seen>, mut redrawn: MessageReader<Redrawn>, report: Res<LayoutReport>) {
+        seen.redrawn.extend(redrawn.read().copied());
+        if report.0 == REPORT_AFTER_FRAMES {
+            seen.armed += 1;
+        }
+    }
+
+    /// What was redrawn and how often the report was armed since last asked.
+    fn seen(app: &mut App) -> (Vec<Redrawn>, usize) {
+        let mut seen = app.world_mut().resource_mut::<Seen>();
+        (
+            std::mem::take(&mut seen.redrawn),
+            std::mem::take(&mut seen.armed),
+        )
+    }
+
+    /// AP.4: one slot's change arms the layout report once, a band tick arms
+    /// it once, a patched line and an unchanged frame never do, and leaving
+    /// the portal disarms it.
+    #[test]
+    fn a_slot_or_a_band_tick_arms_the_layout_report_once() {
+        use crate::extraction::{ExtractStatus, band};
+        let converting = |done| {
+            ExtractBand(band(&ExtractStatus::Converting {
+                done,
+                total: 48,
+                movie: "eruptor".into(),
+            }))
+        };
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, full("Eruptor"));
+        app.init_resource::<Seen>()
+            .add_systems(PostUpdate, see)
+            .add_systems(Last, report_layout);
+        frames(&mut app, 6);
+        let (entered, armed) = seen(&mut app);
+        assert_eq!(
+            entered,
+            [
+                Redrawn::Screen(TvState::Starting),
+                Redrawn::Screen(TvState::Portal)
+            ]
+        );
+        assert_eq!(armed, 1);
+
+        let slot3 = SlotIndex::from_display(3).unwrap();
+        let spyro = app
+            .world()
+            .resource::<PortalCards>()
+            .clone()
+            .reduce([PortalChange::Placed {
+                slot: slot3,
+                placement: placement("Spyro", Some("#33cc66")),
+            }]);
+        *app.world_mut().resource_mut::<PortalCards>() = spyro;
+        frames(&mut app, 6);
+        assert_eq!(seen(&mut app), (vec![Redrawn::Slot(slot3.as_u8())], 1));
+        assert_eq!(app.world().resource::<LayoutReport>().0, 0, "never fired");
+
+        // The band appearing, then a tick.
+        for done in [12, 13] {
+            app.insert_resource(converting(done));
+            frames(&mut app, 6);
+            assert_eq!(seen(&mut app), (vec![Redrawn::Band], 1), "intro {done}");
+        }
+
+        frames(&mut app, 6);
+        assert_eq!(seen(&mut app), (vec![], 0));
+        app.world_mut().resource_mut::<Current>().clients = 3;
+        frames(&mut app, 6);
+        assert_eq!(seen(&mut app), (vec![Redrawn::Text], 0));
+        app.world_mut().resource_mut::<Current>().screen = TvScreen::Join;
+        frames(&mut app, 6);
+        assert_eq!(seen(&mut app), (vec![Redrawn::Screen(TvState::Join)], 0));
     }
 }
