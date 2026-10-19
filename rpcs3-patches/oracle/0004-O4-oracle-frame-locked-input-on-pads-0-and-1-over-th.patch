@@ -1,0 +1,485 @@
+From 4f41b4a01189155d14578f3d8a0c514d670e25a2 Mon Sep 17 00:00:00 2001
+From: Christopher Hotchkiss <chris@hotchkiss.io>
+Date: Sun, 18 Oct 2026 18:10:22 -0700
+Subject: [PATCH 4/4] O4: oracle frame-locked input on pads 0 and 1 over the P1
+ socket (GUAC_ORACLE=1)
+
+Three verbs on P1's AF_UNIX listener so the oracle can walk, fight and play co-op flip by flip (openspec AF.7, design decision 3). Behind O3's gate: each answers P1's ERR unknown_cmd unless GUAC_ORACLE=1 is in the emulator's environment. Nothing knows the game: every flip is RSX's int_flip_index, the counter STATE and HB report.
+
+- PAD <port> <flip> <d1> <d2> <lx> <ly> <rx> <ry> -> OK | ERR bad_args | ERR bad_port | ERR bad_flip | ERR bad_button | ERR bad_axis | ERR no_renderer | ERR past | ERR full. From <flip> on, port 0 or 1 reads CELL_PAD_CTRL_* words d1 and d2 (hex, 0-ff: the PS button is refused) and the four stick axes (decimal 0-255, 128 centred), held until that port's next entry; one at an existing flip replaces it. An entry has to be ahead of the counter (the current flip's reads may already have happened), so a schedule is loaded at a pause; 65,536 entries a port.
+- PAD_CLEAR -> OK | ERR bad_args. Both schedules dropped; the pads read the host's input, and P6's presses, again.
+- PAD_STATE <port> [<flip>] -> OK flip=<n> reads=<k> differ=<m> d1=<hex> d2=<hex> lx= ly= rx= ry= | ERR bad_args | ERR bad_port | ERR bad_flip | ERR no_read. Without a flip, the guest's last read on that port and the flip it fell in; with one, that flip's first read. reads counts the guest's reads in that flip and differ those that weren't the first one's state. The last 4,096 flips are kept a port.
+
+Where it applies: cellPad's pad_get_data, under pad::g_pad_mutex (cellPadGetData and cellPadPeriphGetData hold it; the verbs take it). The read takes the counter once and, when a port's schedule has an entry at or before it, replaces what the host's buttons and sticks did to the pad's buffer with that entry, P6's forced presses included, running pad_get_data's own change check from the buffer as it was, so a report goes out only when the state changes. Pressed buttons read full pressure, as P6's do. Holding the mutex while checking the counter makes the past check exact: no read of a flip still ahead of it can have happened. A new emulation session (Emu.GetEmulationIdentifier(), so a boot or a savestate's reboot) drops the schedules and the reads, since its flips count from 0 again. Sensors, the PS button and pressure below full are left to the host.
+
+Touches cellPad.cpp (the schedule, the readback, two spots in pad_get_data) and Skylander.cpp beside O3.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012qQNwXEQ8in9uR8sc7SjCW
+---
+ rpcs3/Emu/Cell/Modules/cellPad.cpp | 247 +++++++++++++++++++++++++++++
+ rpcs3/Emu/Io/Skylander.cpp         | 133 +++++++++++++++-
+ 2 files changed, 378 insertions(+), 2 deletions(-)
+
+diff --git a/rpcs3/Emu/Cell/Modules/cellPad.cpp b/rpcs3/Emu/Cell/Modules/cellPad.cpp
+index da69da434..7b98ef917 100644
+--- a/rpcs3/Emu/Cell/Modules/cellPad.cpp
++++ b/rpcs3/Emu/Cell/Modules/cellPad.cpp
+@@ -8,6 +8,12 @@
+ #include "Input/pad_thread.h"
+ #include "Input/product_info.h"
+ #include "cellPad.h"
++#include "Emu/System.h"        // O4: Emu.GetEmulationIdentifier()
++#include "Emu/RSX/RSXThread.h" // O4: rsx::get_current_renderer()->int_flip_index
++
++#include <cstdlib>
++#include <map>
++#include <string_view>
+ 
+ error_code sys_config_start(ppu_thread& ppu);
+ error_code sys_config_stop(ppu_thread& ppu);
+@@ -352,6 +358,228 @@ error_code cellPadClearBuf(u32 port_no)
+ 	return CELL_OK;
+ }
+ 
++// --- O4: the oracle's frame-locked input (openspec AF.7) -------------------
++// Dev-only (rpcs3-patches/oracle/, never in a product build). P1's socket (Skylander.cpp) loads a
++// schedule per port here: from a flip on, port 0 or 1 reads these digital words and stick axes,
++// held until that port's next entry. pad_get_data applies the entry for the flip its read happens
++// in, so every read the guest makes while a flip is current sees that flip's entry whatever the
++// pad thread's host poll did, and it records what the guest read for PAD_STATE. Inert unless
++// GUAC_ORACLE=1 is in the emulator's environment. All of it is guarded by pad::g_pad_mutex, which
++// cellPadGetData and cellPadPeriphGetData hold around pad_get_data and the verbs below take; the
++// flip is RSX's int_flip_index, the counter STATE and HB report. Nothing here knows the game.
++namespace
++{
++	// One port's state: CELL_PAD_CTRL_* words and the four stick axes (0-255, 128 centred).
++	struct oracle_pad_entry
++	{
++		u16 d1 = 0;
++		u16 d2 = 0;
++		u16 lx = 128;
++		u16 ly = 128;
++		u16 rx = 128;
++		u16 ry = 128;
++
++		bool operator==(const oracle_pad_entry&) const = default;
++	};
++
++	// The guest's reads of one port during one flip: how many, the first one's state, and how many
++	// of the rest differed from it.
++	struct oracle_pad_flip_reads
++	{
++		u64 flip = umax;
++		u32 reads = 0;
++		u32 differ = 0;
++		oracle_pad_entry first{};
++	};
++
++	constexpr u32 oracle_pad_ports = 2;
++	constexpr usz oracle_pad_history = 4096; // flips of reads kept per port, about 68 s at 60 fps
++	constexpr usz oracle_pad_max_entries = 1u << 16;
++
++	struct oracle_pad_state
++	{
++		u64 session = 0; // the Emu.GetEmulationIdentifier() everything below belongs to
++		std::map<u64, oracle_pad_entry> schedule[oracle_pad_ports];
++		std::array<oracle_pad_flip_reads, oracle_pad_history> history[oracle_pad_ports]{};
++		u64 last_flip[oracle_pad_ports]{umax, umax};
++		oracle_pad_entry last[oracle_pad_ports]{};
++	};
++
++	oracle_pad_state g_oracle_pad;
++
++	bool oracle_pad_gate()
++	{
++		static const bool on = []
++		{
++			const char* v = std::getenv("GUAC_ORACLE");
++			return v && std::string_view(v) == "1";
++		}();
++		return on;
++	}
++
++	// A new emulation session (a boot, a savestate's reboot) counts flips from 0 again: drop what
++	// the old one loaded and read.
++	void oracle_pad_session()
++	{
++		const u64 id = static_cast<u64>(Emu.GetEmulationIdentifier());
++		if (g_oracle_pad.session == id)
++			return;
++		g_oracle_pad.session = id;
++		for (u32 p = 0; p < oracle_pad_ports; p++)
++		{
++			g_oracle_pad.schedule[p].clear();
++			g_oracle_pad.history[p].fill({});
++			g_oracle_pad.last_flip[p] = umax;
++			g_oracle_pad.last[p] = {};
++		}
++	}
++
++	// The flip a read belongs to; 0 with the gate off or before RSX is up.
++	u64 oracle_pad_flip()
++	{
++		if (!oracle_pad_gate())
++			return 0;
++		const rsx::thread* r = rsx::get_current_renderer();
++		return r ? r->int_flip_index : 0;
++	}
++
++	// The entry the port reads at `flip`, or nullptr for the host's input.
++	const oracle_pad_entry* oracle_pad_entry_at(u32 port, u64 flip)
++	{
++		if (!oracle_pad_gate() || port >= oracle_pad_ports)
++			return nullptr;
++		oracle_pad_session();
++		const auto& schedule = g_oracle_pad.schedule[port];
++		const auto next = schedule.upper_bound(flip);
++		return next == schedule.begin() ? nullptr : &std::prev(next)->second;
++	}
++
++	// The scheduled state into `output`, through pad_get_data's own change check. Pressed buttons
++	// read full pressure, as P6's forced presses do.
++	template <typename SetValue>
++	void oracle_pad_apply(CellPadData& output, const oracle_pad_entry& e, SetValue&& set_value)
++	{
++		struct press
++		{
++			bool d2;
++			u16 bit;
++			u32 offset;
++		};
++		static constexpr press presses[] = {
++			{false, CELL_PAD_CTRL_LEFT, CELL_PAD_BTN_OFFSET_PRESS_LEFT},
++			{false, CELL_PAD_CTRL_DOWN, CELL_PAD_BTN_OFFSET_PRESS_DOWN},
++			{false, CELL_PAD_CTRL_RIGHT, CELL_PAD_BTN_OFFSET_PRESS_RIGHT},
++			{false, CELL_PAD_CTRL_UP, CELL_PAD_BTN_OFFSET_PRESS_UP},
++			{true, CELL_PAD_CTRL_SQUARE, CELL_PAD_BTN_OFFSET_PRESS_SQUARE},
++			{true, CELL_PAD_CTRL_CROSS, CELL_PAD_BTN_OFFSET_PRESS_CROSS},
++			{true, CELL_PAD_CTRL_CIRCLE, CELL_PAD_BTN_OFFSET_PRESS_CIRCLE},
++			{true, CELL_PAD_CTRL_TRIANGLE, CELL_PAD_BTN_OFFSET_PRESS_TRIANGLE},
++			{true, CELL_PAD_CTRL_R1, CELL_PAD_BTN_OFFSET_PRESS_R1},
++			{true, CELL_PAD_CTRL_L1, CELL_PAD_BTN_OFFSET_PRESS_L1},
++			{true, CELL_PAD_CTRL_R2, CELL_PAD_BTN_OFFSET_PRESS_R2},
++			{true, CELL_PAD_CTRL_L2, CELL_PAD_BTN_OFFSET_PRESS_L2},
++		};
++		output.button[CELL_PAD_BTN_OFFSET_DIGITAL1] = e.d1;
++		output.button[CELL_PAD_BTN_OFFSET_DIGITAL2] = e.d2;
++		for (const press& p : presses)
++		{
++			set_value(output.button[p.offset], static_cast<u16>(((p.d2 ? e.d2 : e.d1) & p.bit) ? 255 : 0));
++		}
++		set_value(output.button[CELL_PAD_BTN_OFFSET_ANALOG_LEFT_X], e.lx);
++		set_value(output.button[CELL_PAD_BTN_OFFSET_ANALOG_LEFT_Y], e.ly);
++		set_value(output.button[CELL_PAD_BTN_OFFSET_ANALOG_RIGHT_X], e.rx);
++		set_value(output.button[CELL_PAD_BTN_OFFSET_ANALOG_RIGHT_Y], e.ry);
++	}
++
++	// What the guest holds after a read (`output` changes only with a report that carries it).
++	void oracle_pad_record(u32 port, u64 flip, const CellPadData& output)
++	{
++		if (!oracle_pad_gate() || port >= oracle_pad_ports)
++			return;
++		oracle_pad_session();
++		const oracle_pad_entry got{
++			output.button[CELL_PAD_BTN_OFFSET_DIGITAL1],
++			output.button[CELL_PAD_BTN_OFFSET_DIGITAL2],
++			output.button[CELL_PAD_BTN_OFFSET_ANALOG_LEFT_X],
++			output.button[CELL_PAD_BTN_OFFSET_ANALOG_LEFT_Y],
++			output.button[CELL_PAD_BTN_OFFSET_ANALOG_RIGHT_X],
++			output.button[CELL_PAD_BTN_OFFSET_ANALOG_RIGHT_Y],
++		};
++		oracle_pad_flip_reads& h = g_oracle_pad.history[port][flip % oracle_pad_history];
++		if (h.flip != flip)
++		{
++			h = {flip, 1, 0, got};
++		}
++		else
++		{
++			h.reads++;
++			if (got != h.first)
++				h.differ++;
++		}
++		g_oracle_pad.last_flip[port] = flip;
++		g_oracle_pad.last[port] = got;
++	}
++}
++
++// O4: a PAD entry for `port` from `flip` on; nullptr once it's in, else the ERR reason.
++const char* oracle_pad_set(u32 port, u64 flip, u16 d1, u16 d2, u16 lx, u16 ly, u16 rx, u16 ry)
++{
++	std::lock_guard lock(pad::g_pad_mutex);
++	if (port >= oracle_pad_ports)
++		return "bad_port";
++	oracle_pad_session();
++	const rsx::thread* r = rsx::get_current_renderer();
++	if (!r)
++		return "no_renderer";
++	// No read runs while this holds the mutex, and every read takes the counter under it, so a flip
++	// still ahead of the counter here has had no read yet: all of its reads see this entry. Reads
++	// of the current flip may already have happened, so it's past.
++	if (flip <= r->int_flip_index)
++		return "past";
++	auto& schedule = g_oracle_pad.schedule[port];
++	if (!schedule.contains(flip) && schedule.size() >= oracle_pad_max_entries)
++		return "full";
++	schedule[flip] = {d1, d2, lx, ly, rx, ry};
++	return nullptr;
++}
++
++// O4: PAD_CLEAR. Both ports read the host's input again; what the guest read stays readable.
++void oracle_pad_clear()
++{
++	std::lock_guard lock(pad::g_pad_mutex);
++	oracle_pad_session();
++	for (auto& schedule : g_oracle_pad.schedule)
++		schedule.clear();
++}
++
++// O4: PAD_STATE. `flip` umax: the guest's last read on `port`, with the read count of its flip.
++// Otherwise that flip's first read, its read count and how many reads differed from the first;
++// false when the guest made no read in it (or it's older than the history keeps).
++bool oracle_pad_read(u32 port, u64 flip, u64& at, u32& reads, u32& differ, u16 (&words)[6])
++{
++	std::lock_guard lock(pad::g_pad_mutex);
++	if (port >= oracle_pad_ports)
++		return false;
++	oracle_pad_session();
++	const bool last = flip == umax;
++	at = last ? g_oracle_pad.last_flip[port] : flip;
++	if (at == umax)
++		return false;
++	const oracle_pad_flip_reads& h = g_oracle_pad.history[port][at % oracle_pad_history];
++	if (h.flip != at)
++		return false;
++	const oracle_pad_entry& e = last ? g_oracle_pad.last[port] : h.first;
++	reads = h.reads;
++	differ = h.differ;
++	words[0] = e.d1;
++	words[1] = e.d2;
++	words[2] = e.lx;
++	words[3] = e.ly;
++	words[4] = e.rx;
++	words[5] = e.ry;
++	return true;
++}
++
+ void pad_get_data(u32 port_no, CellPadData* data, bool get_periph_data = false)
+ {
+ 	auto& config = g_fxo->get<pad_info>();
+@@ -370,6 +598,10 @@ void pad_get_data(u32 port_no, CellPadData* data, bool get_periph_data = false)
+ 
+ 	CellPadData& output = pad->data;
+ 
++	// O4 (oracle): the flip this read belongs to, and the scheduled entry for it (nullptr: the host's input).
++	const u64 oracle_flip = oracle_pad_flip();
++	const oracle_pad_entry* const oracle_entry = oracle_pad_entry_at(port_no, oracle_flip);
++
+ 	if (rinfo.ignore_input || !is_input_allowed())
+ 	{
+ 		// Needed for Hotline Miami and Ninja Gaiden Sigma after dialogs were closed and buttons are still pressed.
+@@ -418,6 +650,9 @@ void pad_get_data(u32 port_no, CellPadData* data, bool get_periph_data = false)
+ 			}
+ 		};
+ 
++		// O4 (oracle): what the host's loops below start from, for a scheduled entry to start from too.
++		const CellPadData oracle_before = oracle_entry ? output : CellPadData{};
++
+ 		for (const ButtonExternal& button : pad->m_buttons_external)
+ 		{
+ 			// here we check btns, and set pad accordingly,
+@@ -512,6 +747,15 @@ void pad_get_data(u32 port_no, CellPadData* data, bool get_periph_data = false)
+ 			}
+ 		}
+ 
++		// O4 (oracle): a scheduled entry replaces what the host's buttons and sticks just did, P6's
++		// forced presses included, and the change check starts over from before them.
++		if (oracle_entry)
++		{
++			output = oracle_before;
++			btnChanged = false;
++			oracle_pad_apply(output, *oracle_entry, set_value);
++		}
++
+ 		if (setting & CELL_PAD_SETTING_SENSOR_ON)
+ 		{
+ 			for (const AnalogSensor& sensor : pad->m_sensors)
+@@ -566,6 +810,9 @@ void pad_get_data(u32 port_no, CellPadData* data, bool get_periph_data = false)
+ 
+ 	pad->m_buffer_cleared = false;
+ 
++	// O4 (oracle): what the guest holds after this read, for PAD_STATE.
++	oracle_pad_record(port_no, oracle_flip, output);
++
+ 	// only update parts of the output struct depending on the controller setting
+ 	if (data->len > CELL_PAD_LEN_NO_CHANGE)
+ 	{
+diff --git a/rpcs3/Emu/Io/Skylander.cpp b/rpcs3/Emu/Io/Skylander.cpp
+index 99df9d56c..e55902acb 100644
+--- a/rpcs3/Emu/Io/Skylander.cpp
++++ b/rpcs3/Emu/Io/Skylander.cpp
+@@ -37,6 +37,7 @@
+ #include <chrono>
+ #include <unordered_map>
+ #include <string_view>
++#include <vector>
+ 
+ LOG_CHANNEL(skylander_log, "skylander");
+ 
+@@ -49,6 +50,12 @@ namespace rsx
+ 	void set_native_ui_flip();
+ }
+ 
++// O4 (oracle, frame-locked input): the per-port schedule and the guest's reads, in cellPad.cpp
++// beside pad_get_data, which applies the one and records the other.
++const char* oracle_pad_set(u32 port, u64 flip, u16 d1, u16 d2, u16 lx, u16 ly, u16 rx, u16 ry);
++void oracle_pad_clear();
++bool oracle_pad_read(u32 port, u64 flip, u64& at, u32& reads, u32& differ, u16 (&words)[6]);
++
+ sky_portal g_skyportal;
+ 
+ // PLAN 16.1.3 — defined here (emucore); set by gs_frame on window creation (rpcs3qt),
+@@ -645,6 +652,128 @@ namespace
+ 		return false;
+ 	}
+ 
++	// --- O4: the oracle's frame-locked input (openspec AF.7) ----------------
++	// Behind the same gate as O3. A schedule entry per port says what the guest reads from a flip on,
++	// held until that port's next entry; cellPad's pad_get_data applies it, so every read the guest
++	// makes while a flip is current sees that flip's entry, whatever the host's pad poll did. Load a
++	// schedule while paused (Start Paused or PAUSE_AT): an entry has to be ahead of the counter.
++
++	// `arg` split on single spaces.
++	std::vector<std::string> sky_words(const std::string& arg)
++	{
++		std::vector<std::string> words;
++		usz at = 0;
++		while (true)
++		{
++			const usz sp = arg.find(' ', at);
++			words.push_back(arg.substr(at, sp == umax ? umax : sp - at));
++			if (sp == umax)
++				return words;
++			at = sp + 1;
++		}
++	}
++
++	// 1 to `digits` characters of `base` (10 or 16) no greater than `max`.
++	bool sky_parse_num(const std::string& s, u32 base, usz digits, u32 max, u32& out)
++	{
++		if (s.empty() || s.size() > digits)
++			return false;
++		u32 v = 0;
++		for (const char c : s)
++		{
++			u32 d;
++			if (c >= '0' && c <= '9')
++				d = static_cast<u32>(c - '0');
++			else if (base == 16 && c >= 'a' && c <= 'f')
++				d = static_cast<u32>(c - 'a' + 10);
++			else if (base == 16 && c >= 'A' && c <= 'F')
++				d = static_cast<u32>(c - 'A' + 10);
++			else
++				return false;
++			v = v * base + d;
++		}
++		if (v > max)
++			return false;
++		out = v;
++		return true;
++	}
++
++	bool sky_oracle_pad_handle(const std::string& cmd, const std::string& arg, std::string& out)
++	{
++		if (cmd == "PAD")
++		{
++			// "PAD <port> <flip> <d1> <d2> <lx> <ly> <rx> <ry>": from <flip> on, port 0 or 1 reads
++			// CELL_PAD_CTRL_* words d1 and d2 (hex, PS button and above refused) and the stick axes
++			// (decimal 0-255, 128 centred), held until that port's next entry. Replaces whatever the
++			// port had at <flip>. Pressed buttons read full pressure.
++			const std::vector<std::string> w = sky_words(arg);
++			u32 port = 0, d1 = 0, d2 = 0, axis[4]{};
++			u64 flip = 0;
++			if (w.size() != 8)
++				out = "ERR bad_args\n";
++			else if (!sky_parse_num(w[0], 10, 1, 1, port))
++				out = "ERR bad_port\n";
++			else if (!sky_parse_flip(w[1], flip) || flip == 0)
++				out = "ERR bad_flip\n";
++			else if (!sky_parse_num(w[2], 16, 4, 0xff, d1) || !sky_parse_num(w[3], 16, 4, 0xff, d2))
++				out = "ERR bad_button\n";
++			else if (!sky_parse_num(w[4], 10, 3, 255, axis[0]) || !sky_parse_num(w[5], 10, 3, 255, axis[1]) ||
++				!sky_parse_num(w[6], 10, 3, 255, axis[2]) || !sky_parse_num(w[7], 10, 3, 255, axis[3]))
++				out = "ERR bad_axis\n";
++			else if (const char* err = oracle_pad_set(port, flip, static_cast<u16>(d1), static_cast<u16>(d2),
++				static_cast<u16>(axis[0]), static_cast<u16>(axis[1]), static_cast<u16>(axis[2]), static_cast<u16>(axis[3])))
++				out = std::string("ERR ") + err + "\n";
++			else
++				out = "OK\n";
++			return true;
++		}
++		if (cmd == "PAD_CLEAR")
++		{
++			// Drops both ports' schedules: the guest reads the host's input (and P6's presses) again.
++			if (!arg.empty())
++			{
++				out = "ERR bad_args\n";
++				return true;
++			}
++			oracle_pad_clear();
++			out = "OK\n";
++			return true;
++		}
++		if (cmd == "PAD_STATE")
++		{
++			// "PAD_STATE <port>": what the guest last read on that port, the flip it read it in and how
++			// many reads it made in that flip. "PAD_STATE <port> <flip>": that flip's first read, with
++			// the count. Either way differ= counts the flip's reads that weren't its first read's state.
++			const std::vector<std::string> w = arg.empty() ? std::vector<std::string>{} : sky_words(arg);
++			u32 port = 0;
++			u64 flip = umax;
++			if (w.empty() || w.size() > 2)
++				out = "ERR bad_args\n";
++			else if (!sky_parse_num(w[0], 10, 1, 1, port))
++				out = "ERR bad_port\n";
++			else if (w.size() == 2 && !sky_parse_flip(w[1], flip))
++				out = "ERR bad_flip\n";
++			else
++			{
++				u64 at = 0;
++				u32 reads = 0, differ = 0;
++				u16 s[6]{};
++				if (!oracle_pad_read(port, flip, at, reads, differ, s))
++				{
++					out = "ERR no_read\n";
++					return true;
++				}
++				char line[192];
++				std::snprintf(line, sizeof(line), "OK flip=%llu reads=%u differ=%u d1=%02x d2=%02x lx=%u ly=%u rx=%u ry=%u\n",
++					static_cast<unsigned long long>(at), reads, differ, unsigned{s[0]}, unsigned{s[1]}, unsigned{s[2]}, unsigned{s[3]},
++					unsigned{s[4]}, unsigned{s[5]});
++				out = line;
++			}
++			return true;
++		}
++		return false;
++	}
++
+ 	void sky_ipc_handle(const std::string& line, std::string& out)
+ 	{
+ 		const usz sp = line.find(' ');
+@@ -812,9 +941,9 @@ namespace
+ 			sky_force_pad_button(offset, bit, false);
+ 			out = "OK\n";
+ 		}
+-		else if (sky_oracle_gate() && sky_oracle_handle(cmd, arg, out))
++		else if (sky_oracle_gate() && (sky_oracle_handle(cmd, arg, out) || sky_oracle_pad_handle(cmd, arg, out)))
+ 		{
+-			// O3: an oracle verb, answered above.
++			// O3, O4: an oracle verb, answered above.
+ 		}
+ 		else
+ 		{
+-- 
+2.54.0 (Apple Git-157)
+
