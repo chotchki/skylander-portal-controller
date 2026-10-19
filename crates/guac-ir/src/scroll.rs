@@ -11,9 +11,16 @@
 //!   its sign kept (-1.25 leaves -0.25).
 //!
 //! The original runs a track on the scene's clock less the track's start
-//! time, or at a time the track fixes. All 408 tracks in Giants' character
-//! and item archives start with the scene and fix none (AE.21's census), so
-//! a track's time here is the caller's clock.
+//! time, or at a time the track fixes. None of the 4,650 tracks on the disc
+//! stores either (AE.21's census), so a track's time here is the caller's
+//! clock, from whatever zero the caller picks: the original's clock counts
+//! seconds from the console's start, so where its slide stands when a part
+//! appears is arbitrary anyway.
+//!
+//! Where the two part: the original sums an offset in single precision
+//! before dropping the whole part, so it's off the exact value by up to half
+//! an f32 ulp of the sum (3.1e-5 once the sum passes 512, Hot Dog's fire
+//! 274 s into its clock); this sums in f64.
 
 use crate::model::Scroll;
 use crate::shading::UvTransform;
@@ -65,7 +72,7 @@ pub fn transforms(scrolls: &[Scroll], seconds: f64) -> [UvTransform; SETS] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::f32::consts::{FRAC_PI_2, FRAC_PI_6, PI};
+    use std::f32::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_6, PI};
 
     const STILL: Scroll = Scroll {
         layer: 0,
@@ -157,14 +164,30 @@ mod tests {
             ..STILL
         };
         close(phased.transform(0.0), slid(0.0, 0.25));
-        // With a velocity under it: 2 + 0.5 sin(pi/2) = 2.5 at 1 s, so 0.5.
+        // With a velocity under it the whole part comes off the sum:
+        // 2.75 + 0.5 sin(pi/2) = 3.25 at 1 s, so 0.25 (the slide's 0.75 plus
+        // the swing would be 1.25).
         let both = Scroll {
-            velocity: [2.0, 0.0],
+            velocity: [2.75, 0.0],
             amplitude: [0.5, 0.0],
             frequency: [FRAC_PI_2, 0.0],
             ..STILL
         };
-        close(both.transform(1.0), slid(0.5, 0.0));
+        close(both.transform(1.0), slid(0.25, 0.0));
+    }
+
+    #[test]
+    fn each_axis_swings_at_its_own_frequency() {
+        // 0.5 sin(pi t) on u and 0.5 sin(2 pi t) on v: at 0.5 s u at its
+        // peak and v back at 0; at 0.75 s u at 0.5 sin(3 pi/4) = 0.354 and v
+        // at its trough.
+        let two = Scroll {
+            amplitude: [0.5, 0.5],
+            frequency: [PI, 2.0 * PI],
+            ..STILL
+        };
+        close(two.transform(0.5), slid(0.5, 0.0));
+        close(two.transform(0.75), slid(0.5 * FRAC_1_SQRT_2, -0.5));
     }
 
     #[test]

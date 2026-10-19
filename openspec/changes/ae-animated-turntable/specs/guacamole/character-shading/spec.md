@@ -178,7 +178,7 @@ A scroll track SHALL set the transform its layer numbers from the values the dis
 - **THEN** the set's coordinates (0.25, 0.5) are read at (−1, 0.25)
 
 ### Requirement: A scroll track's slide
-Each axis's offset SHALL be its velocity times t, plus its amplitude times the sine of its frequency times t plus its phase (in radians), less the offset's whole part with its sign kept: 1.25 slides 0.25 and −1.25 slides −0.25. t SHALL be the scene's clock in seconds: every scroll track on the disc starts with the scene and none fixes its own time.
+Each axis's offset SHALL be its velocity times t, plus its amplitude times the sine of its frequency times t plus its phase (in radians), less the offset's whole part with its sign kept: 1.25 slides 0.25 and −1.25 slides −0.25. t SHALL be the scene's clock in seconds, wherever its zero falls (the original's counts from the console's start): no scroll track on the disc stores a start or a fixed time of its own.
 
 #### Scenario: Hot Dog's fire
 - **WHEN** Hot Dog's fire, whose track stores a velocity of −1.869 on v and nothing else moving, has run for 1 s

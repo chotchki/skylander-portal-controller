@@ -5,8 +5,10 @@
 //! layer one of the three sets; no material with two on one set), then the
 //! six hero materials AE.6 found with one, read through the model stage,
 //! their IR tracks against the stored values and their transforms worked
-//! from them. What the runtime makes of a track was read statically; the
-//! constants a scrolling part draws with are AE.26's, on the oracle.
+//! from them; and every archive on the disc for the slide requirement's
+//! clock (no track anywhere stores a start or a fixed time). What the
+//! runtime makes of a track was read statically; the constants a scrolling
+//! part draws with are AE.26's, on the oracle.
 //! Ignored by default: it reads `GUAC_GIANTS_DUMP` from the environment or
 //! the workspace's `.env.dev`:
 //!
@@ -14,6 +16,8 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use guac_extract::known::KNOWN_DUMPS;
@@ -142,8 +146,8 @@ fn every_scroll_track_and_the_six_heroes() {
         "  layers {:?}; turned {}, swinging {}; one set driven twice: {:?}",
         census.layers, census.turned, census.swung, census.doubled
     );
-    // Every track starts with the scene (a start of -1 counts as 0) and
-    // fixes no time (one under 0 runs), so its time is the scene's clock.
+    // No track stores a start time (one under 0 counts as 0) or a fixed
+    // time (one under 0 runs), so its time is the scene's clock.
     assert_eq!(census.tracks, 408);
     let clocks: Vec<_> = census.clocks.iter().collect();
     assert_eq!(clocks, [(&"start -1 fixed -1".to_owned(), &408)]);
@@ -239,4 +243,126 @@ fn every_scroll_track_and_the_six_heroes() {
     }
     let hot_dog = transforms(&scrolling[0].3, 1.0)[0];
     assert!((hot_dog.v[2] + 0.869).abs() < 1e-6);
+}
+
+/// The archives (`.bld` and `.arc`) in `dir`, sorted.
+fn archives(dir: &Path) -> Vec<PathBuf> {
+    let mut paths: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "bld" || e == "arc"))
+        .collect();
+    paths.sort();
+    paths
+}
+
+/// Every archive on the disc: `USRDIR`'s and its folders' (no folder goes
+/// deeper); what's left is the EBOOT, `alchemy.xml` and the movies.
+fn every_archive(usrdir: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<_> = std::fs::read_dir(usrdir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.is_dir())
+        .collect();
+    dirs.sort();
+    let mut paths = archives(usrdir);
+    for dir in dirs {
+        paths.extend(archives(&dir));
+    }
+    paths
+}
+
+/// One archive's scroll tracks as (start time, fixed time) pairs, and how
+/// many igz files it holds.
+fn archive_clocks(bytes: &[u8]) -> (Vec<(f32, f32)>, usize) {
+    let archive = Archive::parse(bytes).unwrap();
+    let mut clocks = Vec::new();
+    let mut igzs = 0;
+    for entry in archive.entries() {
+        let Ok(data) = archive.read(entry) else {
+            continue;
+        };
+        let Ok(igz) = Igz::parse(&data) else {
+            continue;
+        };
+        igzs += 1;
+        let Some(scroll) = igz.type_index(SCROLL) else {
+            continue;
+        };
+        for (i, o) in igz.objects().iter().enumerate() {
+            if o.type_index == scroll {
+                let t = MaterialUvAnimTrack::read(&igz, i).unwrap();
+                clocks.push((t.base_time, t.cur_time));
+            }
+        }
+    }
+    (clocks, igzs)
+}
+
+/// The slide requirement's clock off the whole disc: no scroll track in any
+/// archive stores a start time (one under 0 counts as 0) or a fixed time (one
+/// under 0 runs), so every one runs on the scene's clock as it stands.
+#[test]
+#[ignore = "reads the Giants dump at GUAC_GIANTS_DUMP"]
+fn no_scroll_track_on_the_disc_stores_a_start_or_a_fixed_time() {
+    let dump = PathBuf::from(env_or_dotenv("GUAC_GIANTS_DUMP").expect("set GUAC_GIANTS_DUMP"));
+    let usrdir = dump.join("PS3_GAME/USRDIR");
+    let started = Instant::now();
+    let paths = every_archive(&usrdir);
+    let next = AtomicUsize::new(0);
+    let found = Mutex::new(Vec::with_capacity(paths.len()));
+    // Up to 4 threads: other work shares the machine.
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get().min(4));
+    std::thread::scope(|s| {
+        for _ in 0..threads {
+            s.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(path) = paths.get(i) else { break };
+                    let r = archive_clocks(&std::fs::read(path).unwrap());
+                    found.lock().unwrap().push((i, r));
+                }
+            });
+        }
+    });
+    let found = found.into_inner().unwrap();
+    // Tracks per folder and archive kind, and per stored pair.
+    let mut by_dir: BTreeMap<String, usize> = BTreeMap::new();
+    let mut pairs: BTreeMap<String, usize> = BTreeMap::new();
+    let mut igzs = 0;
+    for (i, (clocks, n)) in &found {
+        igzs += n;
+        let rel = paths[*i].strip_prefix(&usrdir).unwrap();
+        let dir = rel.parent().unwrap().display().to_string();
+        let kind = rel.extension().unwrap().to_string_lossy();
+        *by_dir.entry(format!("{dir} {kind}")).or_default() += clocks.len();
+        for (start, fixed) in clocks {
+            *pairs
+                .entry(format!("start {start} fixed {fixed}"))
+                .or_default() += 1;
+        }
+    }
+    println!(
+        "{} archives, {igzs} igz files in {:.1} s; scroll tracks per folder: {by_dir:?}; \
+         start and fixed times: {pairs:?}",
+        paths.len(),
+        started.elapsed().as_secs_f64()
+    );
+    assert_eq!(paths.len(), 893);
+    assert_eq!(igzs, 5801);
+    let tracks: Vec<_> = by_dir.iter().filter(|(_, n)| **n > 0).collect();
+    assert_eq!(
+        tracks,
+        [
+            (&"character bld".to_owned(), &377),
+            (&"item bld".to_owned(), &31),
+            (&"level bld".to_owned(), &4130),
+            (&"misc bld".to_owned(), &30),
+            (&"permanent bld".to_owned(), &82),
+        ]
+    );
+    assert_eq!(
+        pairs.into_iter().collect::<Vec<_>>(),
+        [("start -1 fixed -1".to_owned(), 4650)]
+    );
 }
