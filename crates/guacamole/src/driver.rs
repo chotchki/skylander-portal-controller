@@ -282,10 +282,12 @@ mod tests {
                 .unwrap();
         }
 
-        /// The next change the TV hears, waiting up to 5 s.
+        /// The next change the TV hears, waiting up to 30 s. A pass returns
+        /// as soon as it arrives; 5 s timed out once at load 9.8 with the
+        /// workspace's other test binaries running.
         async fn next(&self) -> PortalChange {
             let tv = self.tv.clone();
-            tokio::task::spawn_blocking(move || tv.recv_timeout(Duration::from_secs(5)))
+            tokio::task::spawn_blocking(move || tv.recv_timeout(Duration::from_secs(30)))
                 .await
                 .unwrap()
                 .expect("the TV heard nothing")
