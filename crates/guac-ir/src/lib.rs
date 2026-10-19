@@ -15,6 +15,7 @@ mod identity;
 pub mod model;
 pub mod rig;
 pub mod roster;
+pub mod shading;
 
 pub use characters::{Character, CharacterArchive, CharacterTable, Intro, IntroSource, VoiceTrack};
 pub use clip::Clip;

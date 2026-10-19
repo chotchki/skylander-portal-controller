@@ -209,8 +209,9 @@ pub struct Bound<'a> {
 /// sets none.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Params {
-    /// x layer 1's fixed alpha (from -0.001 it replaces the colour map's), y
-    /// layer 2's, z layer 3's (or the gloss map's) strength, w layer 4's.
+    /// x layer 1's fixed alpha (it takes over from the colour map's on a ramp
+    /// from -0.001 to -0.0009), y layer 2's, z layer 3's (or the gloss map's)
+    /// strength, w layer 4's.
     pub fixed_alpha: [f32; 4],
     /// z the spec exponent, w the normal map's detail weight; x and y unread.
     pub layer1_extra: [f32; 4],
@@ -226,7 +227,7 @@ pub struct Params {
     /// RGBA, unpacked from the stored int (red in the low byte).
     pub material_tint: [u8; 4],
     /// `tfbDestinationAlphaAttr._alpha` of 255 while its state is on; `None`
-    /// leaves the glow to the colour map's alpha.
+    /// leaves the glow to layer 1's alpha.
     pub glow: Option<u8>,
 }
 

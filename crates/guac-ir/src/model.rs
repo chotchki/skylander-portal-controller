@@ -146,8 +146,8 @@ pub struct TextureSlot {
 /// sets none (the character-shading spec's material requirement).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Params {
-    /// x layer 1's fixed alpha (from -0.001 it replaces the colour map's), y
-    /// layer 2's, z layer 3's strength, w layer 4's.
+    /// x layer 1's fixed alpha (it takes over from the colour map's on a ramp
+    /// from -0.001 to -0.0009), y layer 2's, z layer 3's strength, w layer 4's.
     pub fixed_alpha: [f32; 4],
     /// z the spec exponent, w the normal map's detail weight.
     pub layer1_extra: [f32; 4],
@@ -160,7 +160,7 @@ pub struct Params {
     pub layer4_values: [f32; 4],
     /// RGBA, neutral at 128: a multiplier, not a colour.
     pub material_tint: [u8; 4],
-    /// The glow amount of 255; `None` glows by the colour map's alpha.
+    /// The glow amount of 255; `None` glows by layer 1's alpha.
     pub glow: Option<u8>,
 }
 
