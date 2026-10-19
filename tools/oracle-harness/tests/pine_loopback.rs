@@ -621,3 +621,94 @@ fn the_rng_verbs_peek_seed_restore_and_census_over_pine() {
     assert_eq!(census.owners[&0x3028_E7F0], [MT_GLOBAL]);
     assert_eq!(census.peek, first);
 }
+
+/// The actor reader (AF.9) over PINE: the fixture's world, which lays out
+/// Giants' chain from the application pointer down to the actors, served by the
+/// fake.
+fn actor_world() -> (
+    oracle_harness::actors::fixture::World,
+    oracle_harness::actors::fixture::Added,
+) {
+    use oracle_harness::actors::fixture::{Spec, World};
+
+    let mut w = World::new();
+    w.camera([6.5107, 52.2663, -107.1263], [-23.3597, 14.9997, 0.0]);
+    let hero = w.actor(&Spec {
+        name: "009_Eruptor".into(),
+        position: [10.190_27, 43.382_67, -93.394_06],
+        scale: [150.0; 3],
+        skinned: true,
+        pad: Some(-1),
+        ..Spec::default()
+    });
+    for i in 0..40 {
+        w.actor(&Spec {
+            name: format!("Bird_template_Red({i})"),
+            position: [i as f32, 44.0, -90.0],
+            rotation: [0.0, 9.0 * i as f32, 0.0],
+            scale: [85.0; 3],
+            skinned: i % 2 == 0,
+            ..Spec::default()
+        });
+    }
+    (w, hero)
+}
+
+fn served(world: &oracle_harness::actors::fixture::World) -> Guest {
+    Guest {
+        regions: world
+            .regions()
+            .into_iter()
+            .map(|(base, bytes)| Region {
+                base,
+                bytes,
+                writable: true,
+            })
+            .collect(),
+        status: 1,
+    }
+}
+
+#[test]
+fn the_actor_reader_walks_the_chain_over_pine_in_a_few_batches() {
+    use oracle_harness::actors::{self, read_frame};
+
+    let (mut world, hero) = actor_world();
+    let want = actors::read(&mut world).unwrap();
+    assert_eq!(want.counts().skinned, 21);
+    let fake = spawn(served(&world), Quirks::default());
+    let mut c = PineClient::connect(&fake.path).unwrap();
+
+    // Running: refused at the first status ask, before a byte is read.
+    fake.guest.lock().unwrap().status = 0;
+    let err = format!("{:#}", read_frame(&mut c).unwrap_err());
+    assert!(err.contains("Running"), "{err}");
+    let asked = fake.messages.load(Ordering::Relaxed);
+    assert_eq!(asked, 3, "the title, the version and one status ask");
+    fake.guest.lock().unwrap().status = 1;
+
+    let frame = read_frame(&mut c).unwrap();
+    assert_eq!(frame, want);
+    assert_eq!(frame.hero().unwrap().corpus, hero.corpus);
+    // The title and version, then a status ask and one batch per stage of the
+    // walk (14), then the status ask after: 41 actors in 31 messages.
+    assert_eq!(
+        fake.messages.load(Ordering::Relaxed) - asked,
+        2 + 2 * 14 + 1
+    );
+
+    // A corpus pointer into nothing fails its stage's batch; that stage is read
+    // again range by range, and only that corpus is lost.
+    let mut broken = world;
+    broken.push_corpus(0x4F00_0000);
+    let fake = spawn(served(&broken), Quirks::default());
+    let mut c = PineClient::connect(&fake.path).unwrap();
+    let frame = read_frame(&mut c).unwrap();
+    assert_eq!(frame.listed, 42);
+    assert_eq!(frame.actors, want.actors);
+    assert_eq!(frame.skipped.len(), 1);
+    assert_eq!(
+        (frame.skipped[0].corpus, frame.skipped[0].why.as_str()),
+        (0x4F00_0000, "not readable")
+    );
+}

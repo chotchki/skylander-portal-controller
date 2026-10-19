@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use guac_oracle::input::InputScript;
+use oracle_harness::actors::{self, ActorFrame};
 use oracle_harness::control::Control;
 use oracle_harness::env;
 use oracle_harness::home::{self, InitOptions, OracleHome};
@@ -68,7 +69,12 @@ usage:
       numbers the MT drew and animation LCG steps from peek a to peek b
       (negative: b is the earlier)
   oracle rng origin <peek.json> [--max-twists <n>]
-      the MT's sgenrand seed and the numbers drawn since it";
+      the MT's sgenrand seed and the numbers drawn since it
+  oracle actors --pine <socket> [--p1 <socket>] [--out <file.json>] [--all]
+      at a pause: every game actor on Giants' list (position, heading, scale,
+      velocity, skinned, the pad driving it), the camera and the hero (the one
+      skinned actor a pad drives); --all prints every actor, --out writes the
+      frame (outside every work tree), --p1 stamps it with STATE's flip";
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -78,6 +84,7 @@ fn main() -> Result<()> {
         ["boot", rest @ ..] => boot(rest),
         ["pine", "--socket", socket, rest @ ..] => pine(PathBuf::from(socket), rest),
         ["rng", rest @ ..] => rng_cmd(rest),
+        ["actors", "--pine", socket, rest @ ..] => actors_cmd(socket.as_ref(), rest),
         [verb, "--socket", socket, rest @ ..] => run_verb(verb, &PathBuf::from(socket), rest),
         _ => bail!("{USAGE}"),
     }
@@ -452,6 +459,52 @@ fn rng_cmd(rest: &[&str]) -> Result<()> {
             }
         }
         _ => bail!("{USAGE}"),
+    }
+    Ok(())
+}
+
+/// Giants' actors and camera through PINE at a pause (AF.9).
+fn actors_cmd(socket: &std::path::Path, mut rest: &[&str]) -> Result<()> {
+    let (mut p1, mut out, mut all) = (None, None, false);
+    while let [flag, tail @ ..] = rest {
+        rest = tail;
+        match (*flag, rest) {
+            ("--p1", [path, tail @ ..]) => {
+                p1 = Some(PathBuf::from(path));
+                rest = tail;
+            }
+            ("--out", [path, tail @ ..]) => {
+                out = Some(PathBuf::from(path));
+                rest = tail;
+            }
+            ("--all", _) => all = true,
+            _ => bail!("{USAGE}"),
+        }
+    }
+    let mut pine = PineClient::connect(socket)?;
+    let mut frame: ActorFrame = actors::read_frame(&mut pine)?;
+    if let Some(p1) = p1 {
+        frame.flip = Some(
+            skylander_rpcs3_control::ipc::IpcPortalDriver::with_path(&p1)
+                .read_state()?
+                .frames,
+        );
+    }
+    println!("{}", frame.summary());
+    match frame.hero() {
+        Ok(hero) => println!("hero: {}", hero.summary()),
+        Err(e) => println!("hero: {e}"),
+    }
+    if all {
+        for actor in &frame.actors {
+            println!("  {:#010x} {}", actor.corpus, actor.summary());
+        }
+    }
+    for s in &frame.skipped {
+        println!("  skipped {:#010x}: {}", s.corpus, s.why);
+    }
+    if let Some(out) = out {
+        println!("written to {}", frame.write(&out)?.display());
     }
     Ok(())
 }

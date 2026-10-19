@@ -705,7 +705,13 @@ fn the_loader_wants_a_pause_and_a_base_ahead_of_it() {
 #[test]
 fn a_port_the_guest_never_reads_has_no_read_and_the_session_drops_it_all() {
     let fake = spawn();
-    fake.set(|e| e.reads_per_flip[1] = 0);
+    // The ticker runs from spawn on, so port 1 may already have been read by
+    // the time this lands: what it read goes with it.
+    fake.set(|e| {
+        e.reads_per_flip[1] = 0;
+        e.history[1] = vec![None; HISTORY as usize];
+        e.last[1] = None;
+    });
     pause(&fake);
     assert_eq!(fake.control.pad_state(1, None).unwrap(), None);
     assert!(fake.control.pad_state(0, None).unwrap().is_some());
