@@ -7,9 +7,21 @@ publish.workspace = true
 # The oracle's pure half (openspec AF, design decision 6): input scripts, traces,
 # envelopes, the comparisons and an MT19937 model, with no I/O and nothing of
 # RPCS3, so a later rung's test can depend on it without linking the emulator
-# side (tools/oracle-harness). Empty until AF.7 and AF.10 fill it.
+# side (tools/oracle-harness).
 [lib]
 name = "guac_oracle"
 path = "src/lib.rs"
 
 [dependencies]
+# FLIP, NVlabs' reference: nv-flip-sys vendors the reference's C++ (v1.2, BSD-3-Clause)
+# and builds it with `cc`, so no cmake and no CLI to find at run time. At the
+# reference's own viewing distance its error map is bit for bit the current
+# reference's on the reference's example pair (AF.10 has the numbers).
+nv-flip = "0.1.2"
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# The #[ignore]d reproduction of the reference's example pair decodes its PNGs.
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde_json = { workspace = true }
