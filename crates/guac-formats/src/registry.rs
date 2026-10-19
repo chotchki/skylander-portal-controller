@@ -103,6 +103,15 @@ pub const PARSERS: &[RegisteredParser] = &[
         // input bytes (overlapping arrays are refused).
         heap_budget: |len| 160 * len + (64 << 10),
     },
+    RegisteredParser {
+        name: "collision",
+        parse: walk_collision,
+        seeds: crate::collision::builder::seeds,
+        // The IGZ parse, then one world at a time: its packfile's fixup
+        // maps (havok's 160x), and the mesh, each vertex, triangle and
+        // material held in no more bytes than it's read from.
+        heap_budget: |len| 64 * len + 160 * len + 4 * len + (64 << 10),
+    },
 ];
 
 /// The roster readers' seeds (AE.1): a level joined to its pack, a
@@ -295,6 +304,8 @@ pub fn walk_layouts(bytes: &[u8]) -> Result<(), FormatError> {
         let _ = PhysicsAnimation::read(&file, i);
         let _ = PhysicsBody::read(&file, i);
         let _ = PhysicsModel::read(&file, i);
+        let _ = WorldInfo::read(&file, i);
+        let _ = PhysicsWorld::read(&file, i);
         let _ = AnimationInfoList::read(&file, i);
         let _ = AnimationInfo::read(&file, i);
         let _ = AttrList::read(&file, i);
@@ -407,6 +418,44 @@ fn decoded_segments(bytes: &[u8]) -> Result<usize, FormatError> {
     Ok(decoded)
 }
 
+/// How many packfile bytes [`walk_collision`] reads before it stops. Worlds
+/// can share one `_data` block, so an input can ask for far more than it
+/// holds.
+pub const COLLISION_WALK_BUDGET: usize = 4 << 20;
+
+/// Parses a level's IGZ, then reads every `tfbPhysicsWorld` through to its
+/// mesh (AG.2), places its vertices in the level and tallies its materials,
+/// dropping each and skipping errors, until [`COLLISION_WALK_BUDGET`] is
+/// spent. A world whose packfile is refused is charged too. The property
+/// test and the fuzz targets run it.
+pub fn walk_collision(bytes: &[u8]) -> Result<(), FormatError> {
+    read_worlds(bytes).map(drop)
+}
+
+/// [`walk_collision`], counting the worlds it read.
+fn read_worlds(bytes: &[u8]) -> Result<usize, FormatError> {
+    use igz::layouts::{PhysicsWorld, read_all};
+    let file = igz::Igz::parse(bytes)?;
+    let mut left = COLLISION_WALK_BUDGET;
+    let mut read = 0;
+    for (i, layout) in read_all::<PhysicsWorld>(&file) {
+        let Ok(layout) = layout else { continue };
+        let cost = layout.world.data_info.data.map_or(0, |d| d.data.len());
+        left = left.saturating_sub(cost.max(1));
+        if let Ok(world) = crate::collision::world(&file, i) {
+            if let Some(body) = &world.collision.body {
+                drop(body.world_vertices().collect::<Vec<_>>());
+                drop(body.mesh.material_counts());
+            }
+            read += 1;
+        }
+        if left == 0 {
+            break;
+        }
+    }
+    Ok(read)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -443,5 +492,20 @@ mod tests {
             converted_textures(&texture::builder::shared_l8(3, 64)),
             Ok(3)
         );
+    }
+
+    #[test]
+    fn collision_walk_stops_at_its_budget_on_a_shared_packfile() {
+        use crate::collision::builder::{body_spec, grid, shared, world_packfile, world_spec};
+        // A 40 x 40 grid's packfile, about 52 KiB, under 2,000 worlds:
+        // the budget runs out long before the worlds do.
+        let packfile = world_packfile(&world_spec(vec![body_spec(grid(40))])).bytes;
+        let bytes = shared(2000, &packfile);
+        assert!(bytes.len() < (1 << 20));
+        assert_eq!(
+            read_worlds(&bytes),
+            Ok(COLLISION_WALK_BUDGET.div_ceil(packfile.len()))
+        );
+        assert_eq!(read_worlds(&shared(3, &packfile)), Ok(3));
     }
 }

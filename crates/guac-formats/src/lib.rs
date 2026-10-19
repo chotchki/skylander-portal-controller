@@ -11,6 +11,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod collision;
 pub mod edge;
 mod error;
 pub mod exports;

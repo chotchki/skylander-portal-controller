@@ -23,6 +23,7 @@ mod script;
 mod skeleton;
 mod sprite;
 mod tfb;
+mod world;
 
 #[cfg(any(test, feature = "test-fixtures"))]
 pub mod builder;
@@ -52,6 +53,7 @@ pub use tfb::{
     AnimationInfo, AnimationInfoList, BodyInfo, BuildDataInfo, HAVOK_MAGIC, Info, LIP_SYNC_MAGIC,
     ModelInfo, Payload, PhysicsAnimation, PhysicsBody, PhysicsModel, TfbAnimationInfo,
 };
+pub use world::{PhysicsWorld, WorldInfo};
 
 use super::{ExternalId, ExternalName, Igz, Location, MemoryHandle, MemoryRef, Object, Ref};
 use crate::{ErrorKind, FormatError};
@@ -149,6 +151,9 @@ pub const TYPES: &[TypeDef] = &[
     def("tfbPhysicsBody", "tfbBodyInfo", 0x40),
     def("tfbModelInfo", "tfbComplexDataInfo", 0x2C),
     def("tfbPhysicsModel", "tfbModelInfo", 0x30),
+    // A level's world: its collision packfile and its scene (AG.2).
+    def("tfbWorldInfo", "tfbBuildDataInfo", 0x28),
+    def("tfbPhysicsWorld", "tfbWorldInfo", 0x2C),
     // The clip table; only AnimationInfo's own fields are read.
     def("ScriptObjectList", "igObjectList", 0x18),
     def("AnimationStack", "ScriptObjectList", 0x18),

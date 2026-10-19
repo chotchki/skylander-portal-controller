@@ -14,31 +14,31 @@ pub const DONT_DEALLOCATE: u32 = 0x8000_0000;
 pub const MAX_FRAMES: u32 = 256;
 
 #[derive(Debug, Clone, Copy)]
-struct Array {
-    at: Ptr,
-    len: usize,
+pub(super) struct Array {
+    pub(super) at: Ptr,
+    pub(super) len: usize,
 }
 
 impl Array {
-    fn element(&self, i: usize, size: usize) -> Ptr {
+    pub(super) fn element(&self, i: usize, size: usize) -> Ptr {
         self.at.plus(i * size)
     }
 }
 
 /// Reads objects, refusing two arrays that share bytes (and strings past
 /// [`super::MAX_STRING`]) so decode work stays linear in the input.
-struct Ctx<'p, 'a> {
-    pf: &'p Packfile<'a>,
+pub(super) struct Ctx<'p, 'a> {
+    pub(super) pf: &'p Packfile<'a>,
     /// Array data claimed so far: start -> end offset.
-    claims: BTreeMap<Ptr, usize>,
+    pub(super) claims: BTreeMap<Ptr, usize>,
 }
 
 impl<'a> Ctx<'_, 'a> {
-    fn place(&self, at: Ptr, offset: usize) -> usize {
+    pub(super) fn place(&self, at: Ptr, offset: usize) -> usize {
         self.pf.abs(at.plus(offset))
     }
 
-    fn array(
+    pub(super) fn array(
         &mut self,
         obj: Ptr,
         offset: usize,
@@ -76,7 +76,12 @@ impl<'a> Ctx<'_, 'a> {
         }
     }
 
-    fn empty(&mut self, obj: Ptr, offset: usize, field: &'static str) -> Result<(), FormatError> {
+    pub(super) fn empty(
+        &mut self,
+        obj: Ptr,
+        offset: usize,
+        field: &'static str,
+    ) -> Result<(), FormatError> {
         let a = self.array(obj, offset, 1, field)?;
         if a.len != 0 {
             return Err(unsupported(field, self.place(obj, offset), a.len as u64));
@@ -85,7 +90,7 @@ impl<'a> Ctx<'_, 'a> {
     }
 
     /// A pointer to an object of `class`; `None` when null.
-    fn object(
+    pub(super) fn object(
         &self,
         at: Ptr,
         offset: usize,
@@ -108,7 +113,7 @@ impl<'a> Ctx<'_, 'a> {
     }
 
     /// An array of non-null pointers to objects of `class`.
-    fn objects(
+    pub(super) fn objects(
         &mut self,
         obj: Ptr,
         offset: usize,
@@ -125,7 +130,12 @@ impl<'a> Ctx<'_, 'a> {
             .collect()
     }
 
-    fn finite(&self, at: Ptr, offset: usize, field: &'static str) -> Result<f32, FormatError> {
+    pub(super) fn finite(
+        &self,
+        at: Ptr,
+        offset: usize,
+        field: &'static str,
+    ) -> Result<f32, FormatError> {
         let v = self.pf.f32(at, offset, field)?;
         if !v.is_finite() {
             return Err(unsupported(
