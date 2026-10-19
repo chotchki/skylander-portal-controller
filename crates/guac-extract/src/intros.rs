@@ -432,6 +432,15 @@ impl IrFormat {
         format!("{}/{load_file}.{ext}", crate::models::HERO_DIR)
     }
 
+    /// A level's part, `levels/<archive>/<part>.<ron|postcard>` (AG.15).
+    pub fn level_path(self, level: &str, part: &str) -> String {
+        let ext = match self {
+            Self::Ron => "ron",
+            Self::Postcard => "postcard",
+        };
+        format!("{}/{level}/{part}.{ext}", crate::levels::LEVEL_DIR)
+    }
+
     /// `body` in this format, inside the IR's versioned envelope. A failure
     /// is reported against `rel` in `dir`.
     pub fn encode<T: Serialize>(self, body: &T, dir: &IdentityDir, rel: &str) -> Result<Vec<u8>> {

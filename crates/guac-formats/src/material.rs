@@ -18,16 +18,23 @@
 //! Bits 6, 7 and 9 (rim by position, gloss map, reflections) are never set
 //! on a character and vertex bit 11 (skinning) is never compiled (ae-shader
 //! section 4), so a material carrying one is refused with
-//! [`ErrorKind::Feature`] rather than drawn without it.
+//! [`ErrorKind::Feature`] rather than drawn without it. A level's materials
+//! ([`Drawn::Level`], AG.15) carry the gloss map on one material of level
+//! 213's, so bit 7 is taken there; 6 and 9 are refused all the same.
+//!
+//! A level also draws with three other effects ([`EffectMaterial`]): the
+//! grass's `0xAA6`, `0xAA8` and tfbwarp. Their textures are kept by unit and
+//! their render states read; what their shaders do with them is AG.24's.
 
 use crate::fnv1a32;
 use crate::igz::Igz;
 use crate::igz::layouts::{
     AlphaFunctionAttr, AlphaStateAttr, BlendFunctionAttr, BlendStateAttr, CullFaceAttr,
-    DepthWriteStateAttr, DestinationAlphaAttr, Hero, Image2, Layout, MaterialAnim,
-    MaterialAnimTrackList, MaterialUvAnimTrack, Mesh, ObjectRef, PixelShaderVariantMaskAttr,
-    ScrollUvAnimData, ShaderConstantIntAttr, ShaderConstantVec4fAttr, TextureAttr2, VariantMask,
-    VertexShaderVariantMaskAttr,
+    DepthWriteStateAttr, DestinationAlphaAttr, FlipBookUvAnimData, Hero, Image2, IntList, Layout,
+    MaterialAnim, MaterialAnimTrack, MaterialAnimTrackList, MaterialTintAnimData,
+    MaterialUvAnimTrack, Mesh, ObjectRef, Passes, PixelShaderVariantMaskAttr,
+    RuntimeTechniqueInstance, ScrollUvAnimData, ShaderConstantIntAttr, ShaderConstantVec4fAttr,
+    TextureAttr2, TransformUvAnimData, UnsignedIntList, VariantMask, VertexShaderVariantMaskAttr,
 };
 use crate::{ErrorKind, FormatError};
 
@@ -40,6 +47,13 @@ pub const EFFECTS: &str = "global.bld";
 /// draws every hero, and `tfbwarp.fx`, which draws none (AE.5).
 pub const TFBMULTI2: u32 = 0xAA7;
 pub const TFBWARP: u32 = 0xAA9;
+/// The two other effects level 213 draws with (AG.15's census): `0xAA6` on
+/// its 45 grass segments and `0xAA8` on 6, each unnamed until AG.24 names
+/// it through `global.bld`'s exports.
+pub const GRASS_EFFECT: u32 = 0xAA6;
+pub const EFFECT_AA8: u32 = 0xAA8;
+/// The effects [`EffectMaterial`] reads.
+pub const OTHER_EFFECTS: [u32; 3] = [GRASS_EFFECT, EFFECT_AA8, TFBWARP];
 /// `igTextureAttr2._formatHint` on every normal map and on nothing else.
 pub const TFN1: u32 = u32::from_be_bytes(*b"TFN1");
 
@@ -83,6 +97,36 @@ pub const VERTEX_BITS: [&str; 14] = [
 pub const PIXEL_UNDRAWN: [u8; 3] = [6, 7, 9];
 /// Vertex bits no character sets, plus skinning, which no variant compiles.
 pub const VERTEX_UNDRAWN: [u8; 4] = [6, 7, 9, 11];
+/// What a level's materials may not set: as a character's, bar the gloss
+/// map (bit 7), which level 213 sets on one material (AG.15).
+pub const LEVEL_PIXEL_UNDRAWN: [u8; 2] = [6, 9];
+pub const LEVEL_VERTEX_UNDRAWN: [u8; 3] = [6, 9, 11];
+
+/// Whose material is read, which decides the bits refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Drawn {
+    /// A character's (AE.6): bits 6, 7 and 9 refused.
+    Character,
+    /// A level's scene or prop (AG.15): bits 6 and 9 refused, the gloss map
+    /// taken.
+    Level,
+}
+
+impl Drawn {
+    pub const fn pixel_undrawn(self) -> &'static [u8] {
+        match self {
+            Self::Character => &PIXEL_UNDRAWN,
+            Self::Level => &LEVEL_PIXEL_UNDRAWN,
+        }
+    }
+
+    pub const fn vertex_undrawn(self) -> &'static [u8] {
+        match self {
+            Self::Character => &VERTEX_UNDRAWN,
+            Self::Level => &LEVEL_VERTEX_UNDRAWN,
+        }
+    }
+}
 
 fn has(mask: u32, bit: u8) -> bool {
     mask & (1 << bit) != 0
@@ -265,6 +309,9 @@ pub enum Blend {
     Alpha,
     /// Source alpha plus what's there (`igBlendFunctionAttr` SRC_ALPHA, ONE).
     Additive,
+    /// What's there scaled by the part's colour (DESTINATION_COLOR, ZERO):
+    /// level 213's two cave paintings (AG.15), no character.
+    Multiply,
 }
 
 /// The pipeline state a material sets; absent attrs leave blending off,
@@ -289,9 +336,13 @@ impl Default for States {
     }
 }
 
-/// IG_GFX's blend factors SRC_ALPHA and ONE, and the add equation.
-const SRC_ALPHA: u32 = 4;
+/// IG_GFX's blend factors (numbered in the EBOOT's enum order: ZERO, ONE,
+/// SOURCE_COLOR, ONE_MINUS_SOURCE_COLOR, SOURCE_ALPHA, ONE_MINUS_SOURCE_ALPHA,
+/// DESTINATION_COLOR, ...), and the add equation.
+const ZERO: u32 = 0;
 const ONE: u32 = 1;
+const SRC_ALPHA: u32 = 4;
+const DST_COLOR: u32 = 6;
 const ADD: u32 = 0;
 /// IG_GFX's GREATER, the one alpha test on the disc.
 const GREATER: u32 = 4;
@@ -301,6 +352,33 @@ const GREATER: u32 = 4;
 pub struct Scroll {
     pub layer: i32,
     pub data: ScrollUvAnimData,
+}
+
+/// A material track of another kind than a scroll, which a level's
+/// materials carry (AG.15: on level 213, 2 tint tracks and a flip book in
+/// the scene, 4 tint and 3 transform tracks on its props) and no
+/// character's does.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Track {
+    /// Turns and scales a layer's texture coordinates about a centre.
+    Transform {
+        layer: i32,
+        data: TransformUvAnimData,
+    },
+    /// Steps a layer's texture coordinates through a grid of cells, in the
+    /// listed order (empty: the grid's).
+    FlipBook {
+        layer: i32,
+        data: FlipBookUvAnimData,
+        cells: Vec<i32>,
+    },
+    /// Moves the material tint through its keys: a frame and a packed
+    /// colour each (red in the low byte, as the tint's).
+    Tint {
+        data: MaterialTintAnimData,
+        frames: Vec<i32>,
+        colors: Vec<u32>,
+    },
 }
 
 /// One hero technique's material.
@@ -315,9 +393,15 @@ pub struct Material<'a> {
     pub params: Params,
     pub states: States,
     pub scrolls: Vec<Scroll>,
+    /// The other tracks: a level's only ([`Drawn::Level`]).
+    pub tracks: Vec<Track>,
     /// Every attribute's type, in list order.
     pub attrs: Vec<&'a str>,
 }
+
+/// The attribute the other effects carry that nothing here reads: their
+/// shaders' own constants (grass and tfbwarp on level 213).
+pub const SHADER_PARAMETERS: &str = "igShaderParametersAttr";
 
 /// The attributes a material list holds, sorted by kind; each kind once.
 #[derive(Default)]
@@ -341,6 +425,8 @@ struct Attrs<'a> {
     alpha_state: Option<AlphaStateAttr>,
     alpha_function: Option<AlphaFunctionAttr>,
     names: Vec<&'a str>,
+    /// [`SHADER_PARAMETERS`], on an effect other than tfbmulti2.
+    unread: Vec<&'a str>,
 }
 
 impl Default for Params {
@@ -372,9 +458,16 @@ fn once<T>(
 }
 
 impl<'a> Attrs<'a> {
-    fn read(igz: &Igz<'a>, list_index: usize, hero: &Hero<'a>) -> Result<Self, FormatError> {
+    /// `effect` is whether the list is another effect's than tfbmulti2,
+    /// whose shader constants are kept by name, unread.
+    fn read(
+        igz: &Igz<'a>,
+        list_index: usize,
+        passes: Passes<'_, 'a>,
+        effect: bool,
+    ) -> Result<Self, FormatError> {
         let mut out = Self::default();
-        for a in &hero.materials[&list_index].attrs {
+        for a in &passes.lists[&list_index].attrs {
             let Some(a) = *a else {
                 return Err(err(igz, list_index, "_data", ErrorKind::Missing));
             };
@@ -382,9 +475,8 @@ impl<'a> Attrs<'a> {
             out.names.push(ty);
             let vec4 = || ShaderConstantVec4fAttr::read(igz, a).map(|c| c.data);
             match ty {
-                "tfbAlphaTextureUnitIDAttr" if hero.texture_binds.contains_key(&a) => {
-                    out.binds.push(a)
-                }
+                "tfbAlphaTextureUnitIDAttr" if passes.binds.contains_key(&a) => out.binds.push(a),
+                SHADER_PARAMETERS if effect => out.unread.push(ty),
                 "igPixelShaderVariantMaskAttr" => {
                     let m = PixelShaderVariantMaskAttr::read(igz, a)?.0;
                     once(igz, a, "igPixelShaderVariantMaskAttr", &mut out.pixel, m)?;
@@ -530,6 +622,7 @@ impl<'a> Attrs<'a> {
             (false, None) => Blend::Opaque,
             (true, None) => Blend::Alpha,
             (true, Some(f)) if (f.src, f.dst, f.eq) == (SRC_ALPHA, ONE, ADD) => Blend::Additive,
+            (true, Some(f)) if (f.src, f.dst, f.eq) == (DST_COLOR, ZERO, ADD) => Blend::Multiply,
             (true, Some(f)) => {
                 let value = u64::from(f.src) << 32 | u64::from(f.dst);
                 return Err(err(
@@ -587,23 +680,55 @@ fn undrawn(mask: u32, bits: &[u8], names: &[&'static str; 14]) -> Result<(), Err
     }
 }
 
-impl<'a> Material<'a> {
-    /// `mesh`'s material, read off `hero` (which read its list and binds).
-    pub fn read(igz: &Igz<'a>, hero: &Hero<'a>, mesh: &Mesh<'a>) -> Result<Self, FormatError> {
-        let t = mesh.technique_index;
-        match mesh.technique.effect {
-            ObjectRef::Import(imp)
-                if imp.id.namespace == fnv1a32(EFFECTS.as_bytes())
-                    && imp.id.object == TFBMULTI2 => {}
-            ObjectRef::Import(imp) => {
-                return Err(unsupported(igz, t, "_effect", u64::from(imp.id.object)));
-            }
-            _ => return Err(err(igz, t, "_effect", ErrorKind::Missing)),
+/// The export id `technique`'s `_effect` imports from [`EFFECTS`]; any other
+/// import, or none, is refused.
+pub fn effect(
+    igz: &Igz<'_>,
+    t: usize,
+    technique: &RuntimeTechniqueInstance<'_>,
+) -> Result<u32, FormatError> {
+    match technique.effect {
+        ObjectRef::Import(imp) if imp.id.namespace == fnv1a32(EFFECTS.as_bytes()) => {
+            Ok(imp.id.object)
         }
-        let list_index = mesh
-            .material
-            .ok_or_else(|| err(igz, t, "_materialPass", ErrorKind::Missing))?;
-        let attrs = Attrs::read(igz, list_index, hero)?;
+        ObjectRef::Import(imp) => Err(unsupported(igz, t, "_effect", u64::from(imp.id.object))),
+        _ => Err(err(igz, t, "_effect", ErrorKind::Missing)),
+    }
+}
+
+impl<'a> Material<'a> {
+    /// `mesh`'s material, read off `hero` (which read its list and binds),
+    /// as a character's ([`Drawn::Character`]).
+    pub fn read(igz: &Igz<'a>, hero: &Hero<'a>, mesh: &Mesh<'a>) -> Result<Self, FormatError> {
+        Self::read_technique(
+            igz,
+            hero.passes(),
+            mesh.technique_index,
+            &mesh.technique,
+            mesh.material,
+            Drawn::Character,
+        )
+    }
+
+    /// The tfbmulti2 material of the technique at `t`, whose `_materialPass`
+    /// is `list` (an `igAttrList` `passes` holds, or `None`). Refused: another
+    /// effect, no list, a bit `drawn` leaves out, a variant that doesn't
+    /// exist, binds that don't fill the variant's samplers, and anything
+    /// [`Material`]'s parts refuse.
+    pub fn read_technique(
+        igz: &Igz<'a>,
+        passes: Passes<'_, 'a>,
+        t: usize,
+        technique: &RuntimeTechniqueInstance<'a>,
+        list: Option<usize>,
+        drawn: Drawn,
+    ) -> Result<Self, FormatError> {
+        let id = effect(igz, t, technique)?;
+        if id != TFBMULTI2 {
+            return Err(unsupported(igz, t, "_effect", u64::from(id)));
+        }
+        let list_index = list.ok_or_else(|| err(igz, t, "_materialPass", ErrorKind::Missing))?;
+        let attrs = Attrs::read(igz, list_index, passes, false)?;
         let pixel = attrs.pixel.ok_or_else(|| {
             err(
                 igz,
@@ -620,9 +745,9 @@ impl<'a> Material<'a> {
                 ErrorKind::Missing,
             )
         })?;
-        undrawn(pixel.base_mask, &PIXEL_UNDRAWN, &PIXEL_BITS)
+        undrawn(pixel.base_mask, drawn.pixel_undrawn(), &PIXEL_BITS)
             .map_err(|k| err(igz, list_index, "_baseMask", k))?;
-        undrawn(vertex.base_mask, &VERTEX_UNDRAWN, &VERTEX_BITS)
+        undrawn(vertex.base_mask, drawn.vertex_undrawn(), &VERTEX_BITS)
             .map_err(|k| err(igz, list_index, "_baseMask", k))?;
         if !pixel_variant_exists(pixel.base_mask) || !vertex_variant_exists(vertex.base_mask) {
             let value = u64::from(pixel.base_mask) << 32 | u64::from(vertex.base_mask);
@@ -642,16 +767,18 @@ impl<'a> Material<'a> {
         }
         let mut textures = Vec::with_capacity(roles.len());
         for (role, &bind) in roles.into_iter().zip(&attrs.binds) {
-            textures.push(bound(igz, hero, role, bind)?);
+            textures.push(bound(igz, passes, role, bind)?);
         }
+        let (scrolls, tracks) = tracks(igz, t, technique.material_anim, drawn)?;
         Ok(Self {
-            name: mesh.technique.node.name,
+            name: technique.node.name,
             pixel,
             vertex,
             textures,
             params: attrs.params(),
             states: attrs.states(igz, list_index)?,
-            scrolls: scrolls(igz, t, mesh.technique.material_anim)?,
+            scrolls,
+            tracks,
             attrs: attrs.names,
         })
     }
@@ -672,6 +799,109 @@ impl<'a> Material<'a> {
     }
 }
 
+/// A texture another effect binds, by its unit: whose sampler it fills is
+/// that effect's shader's, which nothing here reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnitBound<'a> {
+    /// `_cachedUnitID`.
+    pub unit: i16,
+    pub bind: usize,
+    pub texture: usize,
+    pub sampler: TextureAttr2,
+    pub image: usize,
+    pub image_name: Option<&'a str>,
+}
+
+/// A material of an effect other than tfbmulti2 ([`OTHER_EFFECTS`]): its
+/// variant masks if it has them, its textures in list order and its render
+/// states, the shader's own constants kept by name ([`SHADER_PARAMETERS`]).
+/// What the effect draws with them is AG.24's.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EffectMaterial<'a> {
+    pub name: Option<&'a str>,
+    /// `_effect`'s export id: one of [`OTHER_EFFECTS`].
+    pub effect: u32,
+    pub pixel: Option<VariantMask>,
+    pub vertex: Option<VariantMask>,
+    pub textures: Vec<UnitBound<'a>>,
+    pub states: States,
+    /// Its material animation's tracks, as a level's are read (tfbwarp's
+    /// water on level 213 scrolls).
+    pub scrolls: Vec<Scroll>,
+    pub tracks: Vec<Track>,
+    /// The attributes kept unread, by type.
+    pub unread: Vec<&'a str>,
+}
+
+impl<'a> EffectMaterial<'a> {
+    /// The material of the technique at `t`, one of [`OTHER_EFFECTS`]'s.
+    /// Refused: another effect (tfbmulti2's is [`Material`]'s), no list, a
+    /// tfbmulti2 attribute or any type but the masks, binds, states and
+    /// [`SHADER_PARAMETERS`], a bind without a texture or image, and the
+    /// states [`Material`] refuses.
+    pub fn read(
+        igz: &Igz<'a>,
+        passes: Passes<'_, 'a>,
+        t: usize,
+        technique: &RuntimeTechniqueInstance<'a>,
+        list: Option<usize>,
+    ) -> Result<Self, FormatError> {
+        let id = effect(igz, t, technique)?;
+        if !OTHER_EFFECTS.contains(&id) {
+            return Err(unsupported(igz, t, "_effect", u64::from(id)));
+        }
+        let list_index = list.ok_or_else(|| err(igz, t, "_materialPass", ErrorKind::Missing))?;
+        let attrs = Attrs::read(igz, list_index, passes, true)?;
+        let multi2 = attrs.names.iter().find(|n| {
+            n.starts_with("tfbMulti2")
+                || **n == "tfbMaterialTintAttr"
+                || **n == "tfbDestinationAlphaAttr"
+        });
+        if let Some(found) = multi2 {
+            let kind = ErrorKind::WrongType {
+                expected: "an attribute of another effect than tfbmulti2",
+                found: (*found).to_owned(),
+            };
+            return Err(err(igz, list_index, "_materialPass", kind));
+        }
+        let mut textures = Vec::with_capacity(attrs.binds.len());
+        for &bind in &attrs.binds {
+            let b = passes.binds[&bind];
+            let texture = b
+                .bind
+                .texture
+                .ok_or_else(|| err(igz, bind, "_texture", ErrorKind::Missing))?;
+            let sampler = passes.textures[&texture];
+            let image = sampler
+                .image
+                .ok_or_else(|| err(igz, texture, "_image", ErrorKind::Missing))?;
+            let image_name = Image2::read(igz, image)?
+                .name
+                .map(|n| n.rsplit(['/', '\\']).next().unwrap_or(n));
+            textures.push(UnitBound {
+                unit: b.bind.unit(),
+                bind,
+                texture,
+                sampler,
+                image,
+                image_name,
+            });
+        }
+        let (scrolls, tracks) = tracks(igz, t, technique.material_anim, Drawn::Level)?;
+        Ok(Self {
+            name: technique.node.name,
+            effect: id,
+            pixel: attrs.pixel,
+            vertex: attrs.vertex,
+            textures,
+            states: attrs.states(igz, list_index)?,
+            scrolls,
+            tracks,
+            unread: attrs.unread,
+        })
+    }
+}
+
 /// The fog bit, which every 3D scene in the game sets.
 pub const FOG: u8 = 10;
 
@@ -687,11 +917,11 @@ fn with_fog(m: VariantMask) -> u32 {
 /// image, and it carries `TFN1` exactly when the role is a normal map.
 fn bound<'a>(
     igz: &Igz<'a>,
-    hero: &Hero<'a>,
+    passes: Passes<'_, 'a>,
     role: Role,
     bind: usize,
 ) -> Result<Bound<'a>, FormatError> {
-    let b = hero.texture_binds[&bind];
+    let b = passes.binds[&bind];
     let unit = b.bind.unit();
     if unit != role.unit() {
         return Err(unsupported(
@@ -705,7 +935,7 @@ fn bound<'a>(
         .bind
         .texture
         .ok_or_else(|| err(igz, bind, "_texture", ErrorKind::Missing))?;
-    let sampler = hero.textures[&texture];
+    let sampler = passes.textures[&texture];
     let hinted = sampler.format_hint == TFN1;
     if hinted != role.is_normal_map() {
         return Err(err(
@@ -734,26 +964,29 @@ fn bound<'a>(
     })
 }
 
-/// The technique's scroll tracks; any other kind of material track (a
-/// transform, flipbook or tint track, none on a hero) is refused.
-fn scrolls(
+/// The technique's scroll tracks, and its other tracks when `drawn` is a
+/// level's; a character's other tracks (a transform, flip book or tint, none
+/// on a hero) are refused, as is a tint track whose frames and colours
+/// don't pair up.
+fn tracks(
     igz: &Igz<'_>,
     technique: usize,
     anim: ObjectRef<'_>,
-) -> Result<Vec<Scroll>, FormatError> {
+    drawn: Drawn,
+) -> Result<(Vec<Scroll>, Vec<Track>), FormatError> {
     let anim = match anim {
-        ObjectRef::Null => return Ok(Vec::new()),
+        ObjectRef::Null => return Ok((Vec::new(), Vec::new())),
         ObjectRef::Object(a) => a,
         _ => return Err(unsupported(igz, technique, "_materialAnim", 0)),
     };
     let Some(list) = MaterialAnim::read(igz, anim)?.track_list else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     };
-    let mut out = Vec::new();
+    let (mut scrolls, mut others) = (Vec::new(), Vec::new());
     for track in MaterialAnimTrackList::read(igz, list)?.tracks {
         let ty = igz.type_name(&igz.objects()[track]);
-        if ty != "tfbScrollUVAnimTrack" {
-            return Err(err(
+        let wrong = || {
+            err(
                 igz,
                 track,
                 "_trackList",
@@ -761,16 +994,68 @@ fn scrolls(
                     expected: "tfbScrollUVAnimTrack",
                     found: ty.to_owned(),
                 },
-            ));
+            )
+        };
+        let level = drawn == Drawn::Level;
+        let data_of =
+            |data: Option<usize>| data.ok_or_else(|| err(igz, track, "_data", ErrorKind::Missing));
+        match ty {
+            "tfbScrollUVAnimTrack" => {
+                let t = MaterialUvAnimTrack::read(igz, track)?;
+                scrolls.push(Scroll {
+                    layer: t.layer,
+                    data: ScrollUvAnimData::read(igz, data_of(t.data)?)?,
+                });
+            }
+            "tfbTransformUVAnimTrack" if level => {
+                let t = MaterialUvAnimTrack::read(igz, track)?;
+                others.push(Track::Transform {
+                    layer: t.layer,
+                    data: TransformUvAnimData::read(igz, data_of(t.data)?)?,
+                });
+            }
+            "tfbFlipBookUVAnimTrack" if level => {
+                let t = MaterialUvAnimTrack::read(igz, track)?;
+                let data = FlipBookUvAnimData::read(igz, data_of(t.data)?)?;
+                let cells = match data.cell_indices {
+                    Some(l) => IntList::read(igz, l)?.values,
+                    None => Vec::new(),
+                };
+                others.push(Track::FlipBook {
+                    layer: t.layer,
+                    data,
+                    cells,
+                });
+            }
+            "tfbMaterialTintAnimTrack" if level => {
+                let t = MaterialAnimTrack::read(igz, track)?;
+                let d = t
+                    .data
+                    .ok_or_else(|| err(igz, track, "_data", ErrorKind::Missing))?;
+                let data = MaterialTintAnimData::read(igz, d)?;
+                let frames = match data.key_frames {
+                    Some(l) => IntList::read(igz, l)?.values,
+                    None => Vec::new(),
+                };
+                let colors = match data.key_colors {
+                    Some(l) => UnsignedIntList::read(igz, l)?.values,
+                    None => Vec::new(),
+                };
+                if frames.len() != colors.len() {
+                    let kind = ErrorKind::CountMismatch {
+                        found: colors.len() as u64,
+                        expected: frames.len() as u64,
+                    };
+                    return Err(err(igz, d, "_keyColors", kind));
+                }
+                others.push(Track::Tint {
+                    data,
+                    frames,
+                    colors,
+                });
+            }
+            _ => return Err(wrong()),
         }
-        let t = MaterialUvAnimTrack::read(igz, track)?;
-        let data = t
-            .data
-            .ok_or_else(|| err(igz, track, "_data", ErrorKind::Missing))?;
-        out.push(Scroll {
-            layer: t.layer,
-            data: ScrollUvAnimData::read(igz, data)?,
-        });
     }
-    Ok(out)
+    Ok((scrolls, others))
 }

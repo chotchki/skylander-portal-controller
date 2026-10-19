@@ -1,7 +1,7 @@
 #![no_main]
 
 use guac_formats::igz::Igz;
-use guac_formats::level::{GroupKind, Placements, scenes};
+use guac_formats::level::{GroupKind, Placements, StaticModel, scenes};
 use guac_formats::registry::walk_level;
 use libfuzzer_sys::fuzz_target;
 
@@ -27,7 +27,8 @@ fuzz_target!(|data: &[u8]| {
             }
         }
         for draw in &scene.draws {
-            let parent = &scene.groups[&draw.parent];
+            // A scene's root is a group, so every draw has a parent.
+            let parent = &scene.groups[&draw.parent.expect("a scene draw's parent")];
             assert!(parent.children.contains(&draw.technique_index));
             // Bit for bit: composed matrices can overflow to NaN.
             let bits = |m: &[[f32; 4]; 4]| {
@@ -56,6 +57,25 @@ fuzz_target!(|data: &[u8]| {
                     .waypoints
                     .is_none_or(|l| p.waypoint_lists.contains_key(&l))
             );
+        }
+        // A static model's graph hangs together as a scene's does; a
+        // technique alone is its own root, with no parent and no groups.
+        for &model in p.models.keys().take(16) {
+            let Ok(m) = StaticModel::read(&file, model) else {
+                continue;
+            };
+            let g = &m.graph;
+            for draw in &g.draws {
+                match draw.parent {
+                    Some(parent) => {
+                        assert!(g.groups[&parent].children.contains(&draw.technique_index));
+                    }
+                    None => {
+                        assert_eq!(draw.technique_index, g.root);
+                        assert!(g.groups.is_empty());
+                    }
+                }
+            }
         }
     }
 });

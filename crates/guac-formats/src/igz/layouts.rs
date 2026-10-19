@@ -34,12 +34,13 @@ pub mod builder;
 
 pub use attrs::{
     AlphaFunctionAttr, AlphaStateAttr, BlendFunctionAttr, BlendStateAttr, CullFaceAttr,
-    DepthWriteStateAttr, DestinationAlphaAttr, MaterialAnim, MaterialAnimTrackList,
-    MaterialUvAnimTrack, PixelShaderVariantMaskAttr, ScrollUvAnimData, ShaderConstantIntAttr,
-    ShaderConstantVec4fAttr, VariantMask, VertexShaderVariantMaskAttr,
+    DepthWriteStateAttr, DestinationAlphaAttr, FlipBookUvAnimData, MaterialAnim, MaterialAnimTrack,
+    MaterialAnimTrackList, MaterialTintAnimData, MaterialUvAnimTrack, PixelShaderVariantMaskAttr,
+    ScrollUvAnimData, ShaderConstantIntAttr, ShaderConstantVec4fAttr, TransformUvAnimData,
+    UnsignedIntList, VariantMask, VertexShaderVariantMaskAttr,
 };
 pub use edge::{Attr, EdgeGeometry, EdgeGeometryAttr, EdgeGeometrySegment};
-pub use hero::{Clip, Hero, Mesh, Palette};
+pub use hero::{Clip, Hero, MaterialLists, Mesh, Palette, Passes};
 pub use image::{Image2, KNOWN_FORMATS, METAIMAGES};
 pub use level::{SceneInfo, SpatialNode, Transform, UserInfo};
 pub use material::{AlphaTextureUnitIdAttr, AttrList, TextureAttr2, TextureBindAttr2};
@@ -111,6 +112,7 @@ pub const TYPES: &[TypeDef] = &[
     def("igDataList", "igContainer", 0x18),
     def("igObjectList", "igDataList", 0x18),
     def("igIntList", "igDataList", 0x18),
+    def("igUnsignedIntList", "igDataList", 0x18),
     // Textures.
     def("igImage2", "igNamedObject", 0x60),
     // Edge geometry.
@@ -305,7 +307,8 @@ pub const TYPES: &[TypeDef] = &[
     def("tfbMaterialAnimData", "igObject", 0x8),
     def("tfbMaterialUVAnimData", "tfbMaterialAnimData", 0x8),
     def("tfbScrollUVAnimData", "tfbMaterialUVAnimData", 0x34),
-    // The other kinds' data, listed for is_a only: the reader refuses them.
+    // The other kinds' data: a character's reader refuses them, a level's
+    // reads them (AG.15).
     def("tfbTransformUVAnimData", "tfbMaterialUVAnimData", 0x40),
     def("tfbFlipBookUVAnimData", "tfbMaterialUVAnimData", 0x1C),
     def("tfbMaterialTintAnimData", "tfbMaterialAnimData", 0x18),

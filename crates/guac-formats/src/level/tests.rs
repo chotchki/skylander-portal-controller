@@ -8,6 +8,7 @@ use crate::igz::Location;
 use crate::igz::builder::IgzBuilder;
 use crate::igz::layouts::builder::list;
 use crate::igz::layouts::{ObjectRef, Shape, TAG, type_def};
+use std::collections::BTreeMap;
 
 fn index(igz: &Igz<'_>, at: Location) -> usize {
     igz.object_at(at).expect("an object there").0
@@ -120,8 +121,8 @@ fn a_scenes_segments_sit_under_their_nodes() {
     assert_eq!(scene.transforms().count(), 2);
 
     // The draws, depth first, each under its node in its node's frame.
-    let parents: Vec<usize> = scene.draws.iter().map(|d| d.parent).collect();
-    assert_eq!(parents, [i(s.spatial), i(s.sky), i(s.inner)]);
+    let parents: Vec<Option<usize>> = scene.draws.iter().map(|d| d.parent).collect();
+    assert_eq!(parents, [s.spatial, s.sky, s.inner].map(|p| Some(i(p))));
     let techniques: Vec<usize> = scene.draws.iter().map(|d| d.technique_index).collect();
     assert_eq!(techniques, s.techniques.map(i));
     let names: Vec<_> = scene.draws.iter().map(|d| d.technique.node.name).collect();
@@ -689,7 +690,7 @@ fn a_user_info_group_marks_what_hangs_below_it() {
     };
     let sky = scene.groups[&scene.root].children[0];
     assert_eq!(draw.user_info, Some(sky));
-    assert_ne!(draw.parent, sky);
+    assert_ne!(draw.parent, Some(sky));
     assert_eq!(draw.world, IDENTITY);
 }
 
@@ -757,4 +758,103 @@ fn actors_sharing_a_list_read_it_once() {
     let p = Placements::read(&igz).unwrap();
     assert_eq!(p.waypoint_lists.len(), 1);
     assert!(p.actors.iter().all(|a| p.waypoints(a).len() == 1));
+}
+
+/// The stage sample's models (AG.15), by path.
+fn stage_models(igz: &Igz<'_>) -> BTreeMap<String, usize> {
+    let p = Placements::read(igz).unwrap();
+    p.models
+        .iter()
+        .map(|(&i, m)| (m.info.name.unwrap().to_owned(), i))
+        .collect()
+}
+
+#[test]
+fn a_static_model_walks_its_bodys_graph() {
+    let bytes = builder::stage_level(&builder::stage_sample());
+    let igz = Igz::parse(&bytes).unwrap();
+    let models = stage_models(&igz);
+    assert_eq!(models.len(), 3);
+
+    // The gourd: one technique as its body's node, its own parent.
+    let gourd =
+        StaticModel::read(&igz, models["C:/tfb/Content/Models/Objects/gourd_01.mdl"]).unwrap();
+    assert_eq!(gourd.name(), Some("gourd_01.mdl"));
+    assert!(gourd.graph.groups.is_empty());
+    let [draw] = &gourd.graph.draws[..] else {
+        panic!("{} draws", gourd.graph.draws.len());
+    };
+    assert_eq!(draw.parent, None);
+    assert_eq!(draw.technique_index, gourd.graph.root);
+    assert_eq!((draw.world, draw.user_info), (IDENTITY, None));
+    assert_eq!(gourd.graph.draw_segments(draw).count(), 1);
+    let lists = gourd.graph.material_lists(&igz).unwrap();
+    assert_eq!((lists.lists.len(), lists.binds.len()), (1, 1));
+
+    // The fairy gem: its technique under an animated transform, placed in
+    // its frame.
+    let gem = StaticModel::read(
+        &igz,
+        models["C:/tfb/Content/Models/Objects/fairy_upgrade_gem.mdl"],
+    )
+    .unwrap();
+    let [draw] = &gem.graph.draws[..] else {
+        panic!("{} draws", gem.graph.draws.len());
+    };
+    assert_eq!(draw.parent, Some(gem.graph.root));
+    assert_eq!(draw.world, builder::TRANSLATION);
+    let [(_, spin)] = gem.graph.transforms().collect::<Vec<_>>()[..] else {
+        panic!("one transform");
+    };
+    assert!(spin.is_animated());
+
+    // The chest is skinned: its node is an igActor2, which a static walk
+    // refuses (the hero walk reads it).
+    let chest = models["C:/tfb/Content/Models/Objects/Treasure_Chest.mdl"];
+    assert_eq!(
+        refused(StaticModel::read(&igz, chest)),
+        ("_node", wrong_type(SCENE_NODES, "igActor2"))
+    );
+    assert!(crate::igz::layouts::Hero::read(&igz, chest).is_ok());
+
+    // A scene still refuses a technique as its root.
+    let scene = scene_over(|b, blocks| {
+        let s = segment(b, blocks, &unskinned().wire);
+        let g = geometry(b, blocks, &[s]);
+        Some(technique(b, "alone", g).0)
+    });
+    assert_eq!(
+        refused(walk(&scene)),
+        (
+            "_sceneGraph",
+            wrong_type(Group::TYPE, RuntimeTechniqueInstance::TYPE)
+        )
+    );
+}
+
+#[test]
+fn the_stage_samples_scene_and_placements_read() {
+    let spec = builder::stage_sample();
+    let bytes = builder::stage_level(&spec);
+    let igz = Igz::parse(&bytes).unwrap();
+    let scenes: Vec<Scene<'_>> = scenes(&igz).map(|(_, s)| s.unwrap()).collect();
+    let [scene] = &scenes[..] else {
+        panic!("{} scenes", scenes.len());
+    };
+    assert_eq!(scene.draws.len(), spec.scene.len());
+    let sky: Vec<bool> = scene.draws.iter().map(|d| d.user_info.is_some()).collect();
+    assert_eq!(sky, [false, false, false, false, true]);
+    let p = Placements::read(&igz).unwrap();
+    assert_eq!((p.actors.len(), p.lights.len()), (4, 1));
+    assert_eq!(p.waypoints(p.actor("213_Init_Location").unwrap()).len(), 2);
+    assert_eq!(directional_lights(&igz).unwrap().len(), 2);
+    let worlds: Vec<_> = crate::collision::worlds(&igz)
+        .map(|(_, w)| w.unwrap())
+        .collect();
+    assert_eq!(worlds.len(), 1);
+    assert_eq!(worlds[0].name(), Some(builder::STAGE_WORLD));
+    assert_eq!(
+        worlds[0].layout.world.scene_info,
+        ObjectRef::Object(scene.index)
+    );
 }

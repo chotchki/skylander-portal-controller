@@ -435,6 +435,11 @@ pub fn walk_layouts(bytes: &[u8]) -> Result<(), FormatError> {
         let _ = MaterialAnimTrackList::read(&file, i);
         let _ = MaterialUvAnimTrack::read(&file, i);
         let _ = ScrollUvAnimData::read(&file, i);
+        let _ = MaterialAnimTrack::read(&file, i);
+        let _ = TransformUvAnimData::read(&file, i);
+        let _ = FlipBookUvAnimData::read(&file, i);
+        let _ = MaterialTintAnimData::read(&file, i);
+        let _ = UnsignedIntList::read(&file, i);
     }
     Ok(())
 }
@@ -562,12 +567,43 @@ fn read_worlds(bytes: &[u8]) -> Result<usize, FormatError> {
 pub const LEVEL_WALK_BUDGET: usize = 1 << 16;
 
 /// Parses a level's IGZ, then walks every `igSceneInfo` (AG.3), placing each
-/// draw's frame, until [`LEVEL_WALK_BUDGET`] is spent, and reads its
-/// placements and light rig, dropping each and skipping errors. A walk
-/// reads each object at most once, so each is charged the file's object
-/// count, refused or not. The property test and the fuzz targets run it.
+/// draw's frame and reading its material as a level's (AG.15), until
+/// [`LEVEL_WALK_BUDGET`] is spent, and reads its placements, each model they
+/// name through its body's graph (AG.15) on the same budget, and its light
+/// rig, dropping each and skipping errors. A walk reads each object at most
+/// once, so each is charged the file's object count, refused or not. The
+/// property test and the fuzz targets run it.
 pub fn walk_level(bytes: &[u8]) -> Result<(), FormatError> {
     walked_scenes(bytes).map(drop)
+}
+
+/// Each of `graph`'s draws' materials, read as a level's: tfbmulti2's or
+/// another effect's.
+fn level_materials(file: &igz::Igz<'_>, graph: &crate::level::Graph<'_>) {
+    use crate::igz::layouts::{AttrList, Layout, ObjectRef, is_a};
+    use crate::material::{Drawn, EffectMaterial, Material, TFBMULTI2};
+    let Ok(lists) = graph.material_lists(file) else {
+        return;
+    };
+    for draw in &graph.draws {
+        let t = &draw.technique;
+        let list = match t.material_pass {
+            ObjectRef::Object(m) if is_a(file.type_name(&file.objects()[m]), AttrList::TYPE) => {
+                Some(m)
+            }
+            _ => None,
+        };
+        let i = draw.technique_index;
+        match crate::material::effect(file, i, t) {
+            Ok(TFBMULTI2) => {
+                let _ = Material::read_technique(file, lists.passes(), i, t, list, Drawn::Level);
+            }
+            Ok(_) => {
+                let _ = EffectMaterial::read(file, lists.passes(), i, t, list);
+            }
+            Err(_) => {}
+        }
+    }
 }
 
 /// [`walk_level`], counting the scenes it walked.
@@ -581,6 +617,7 @@ fn walked_scenes(bytes: &[u8]) -> Result<usize, FormatError> {
             for draw in &scene.draws {
                 let _ = scene.draw_segments(draw).count();
             }
+            level_materials(&file, &scene);
             walked += 1;
         }
         left = left.saturating_sub(charge);
@@ -592,6 +629,15 @@ fn walked_scenes(bytes: &[u8]) -> Result<usize, FormatError> {
         for actor in &placements.actors {
             let _ = placements.model_path(actor);
             let _ = placements.waypoints(actor).len();
+        }
+        for &model in placements.models.keys() {
+            if left == 0 {
+                break;
+            }
+            if let Ok(m) = crate::level::StaticModel::read(&file, model) {
+                level_materials(&file, &m.graph);
+            }
+            left = left.saturating_sub(charge);
         }
     }
     let _ = crate::level::directional_lights(&file);

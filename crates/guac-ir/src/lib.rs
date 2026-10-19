@@ -14,6 +14,7 @@ mod characters;
 pub mod clip;
 pub mod hero;
 mod identity;
+pub mod level;
 pub mod model;
 pub mod rig;
 pub mod roster;
@@ -35,8 +36,11 @@ use serde::{Deserialize, Serialize};
 /// 3D-UI rig, and AG.14 the hero side (placements' solids and movement,
 /// the locomotion clips): new files beside unchanged ones, so each time the
 /// extract's layout version, not this one, made older extracts redo
-/// themselves.
-pub const IR_VERSION: u32 = 2;
+/// themselves. v3 (AG.15) changes a model's material: a blend that
+/// multiplies ([`model::Blend::Multiply`]) and the material tracks besides
+/// scrolls ([`model::MaterialTrack`]), which level 213's materials carry;
+/// the level itself is new files ([`level`]).
+pub const IR_VERSION: u32 = 3;
 
 #[derive(Debug, thiserror::Error)]
 pub enum IrError {
@@ -329,7 +333,7 @@ mod tests {
     #[test]
     fn ron_carries_the_version_and_a_hex_hash() {
         let text = to_ron(&identity()).unwrap();
-        assert!(text.contains("ir_version: 2"), "{text}");
+        assert!(text.contains("ir_version: 3"), "{text}");
         assert!(
             text.contains(&format!("\"{}\"", identity().manifest_hash)),
             "{text}"
@@ -346,12 +350,12 @@ mod tests {
     fn another_ir_version_is_refused_in_ron() {
         let text = to_ron(&identity())
             .unwrap()
-            .replace("ir_version: 2", "ir_version: 1");
+            .replace("ir_version: 3", "ir_version: 2");
         assert!(matches!(
             from_ron::<DumpIdentity>(&text),
             Err(IrError::VersionMismatch {
-                found: 1,
-                expected: 2
+                found: 2,
+                expected: 3
             })
         ));
     }
@@ -360,24 +364,24 @@ mod tests {
     fn another_versions_ron_stops_at_its_version() {
         // A body this build couldn't read at all: the version is what's
         // reported, so the body was never read.
-        let text = "(ir_version: 1, body: (no: [such, (shape)]))";
+        let text = "(ir_version: 2, body: (no: [such, (shape)]))";
         assert!(matches!(
             from_ron::<DumpIdentity>(text),
             Err(IrError::VersionMismatch {
-                found: 1,
-                expected: 2
+                found: 2,
+                expected: 3
             })
         ));
         // No version, a stray field, or no body: refused as malformed.
         let body = to_ron(&identity()).unwrap();
-        let unversioned = body.replace("ir_version: 2,", "");
+        let unversioned = body.replace("ir_version: 3,", "");
         assert!(matches!(
             from_ron::<DumpIdentity>(&unversioned),
             Err(IrError::RonSpanned(_))
         ));
-        let stray = body.replace("ir_version: 2,", "ir_version: 2, extra: 3,");
+        let stray = body.replace("ir_version: 3,", "ir_version: 3, extra: 3,");
         assert!(from_ron::<DumpIdentity>(&stray).is_err());
-        assert!(from_ron::<DumpIdentity>("(ir_version: 2)").is_err());
+        assert!(from_ron::<DumpIdentity>("(ir_version: 3)").is_err());
     }
 
     #[test]
@@ -389,7 +393,7 @@ mod tests {
             from_postcard::<DumpIdentity>(&bytes),
             Err(IrError::VersionMismatch {
                 found: 0,
-                expected: 2
+                expected: 3
             })
         ));
     }

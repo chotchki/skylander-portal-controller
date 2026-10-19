@@ -290,6 +290,7 @@ fn another_target_redoes_a_complete_extract() {
     let mut opened = open(&dump, &root, &known, &|_| {}).unwrap();
     let t = table(&opened.dir, &[(1, "a")]);
     run(&mut opened.dir, &t, &ff);
+    record_levels(&mut opened.dir);
     opened.dir.mark_complete().unwrap();
     let id = opened.dir.path().to_path_buf();
     drop(opened);
@@ -452,5 +453,15 @@ fn an_ffmpeg_without_the_codecs_or_none_at_all_is_named() {
             assert_eq!(install, guac_extract::ffmpeg::INSTALL_LINE);
         }
         other => panic!("{other:?}"),
+    }
+}
+
+/// What a whole run's level stage records (AG.15), each level part with no
+/// files of its own here: a current extract needs it.
+fn record_levels(dir: &mut guac_extract::IdentityDir) {
+    for level in guac_extract::levels::LEVELS {
+        for part in guac_extract::levels::PARTS {
+            dir.record_level_part(level, part, Vec::new()).unwrap();
+        }
     }
 }

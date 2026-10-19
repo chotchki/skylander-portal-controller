@@ -651,6 +651,8 @@ pub fn draw(pixel: Pixel, arriving: &Arriving, states: &RenderStates) -> Pixel {
         Blend::Opaque => colour,
         Blend::Alpha => add(scale(colour, alpha), scale(pixel.colour, 1.0 - alpha)),
         Blend::Additive => add(scale(colour, alpha), pixel.colour),
+        // A level's (AG.15), never a character's: DESTINATION_COLOR, ZERO.
+        Blend::Multiply => mul(colour, pixel.colour),
     };
     Pixel {
         colour,
@@ -2078,6 +2080,24 @@ mod tests {
         let p = draw(CLEAR, &arriving([0.5, 0.25, 0.1], 1.0), &additive);
         let p = draw(p, &arriving([0.4, 0.4, 0.4], 0.5), &additive);
         near(&p.colour, &[0.7, 0.45, 0.3], 1e-7);
+    }
+
+    /// A level's multiplied decal (AG.15) scales what's there by its
+    /// colour, whatever its alpha.
+    #[test]
+    fn a_multiplied_part_scales_what_is_there() {
+        let multiply = RenderStates {
+            blend: Blend::Multiply,
+            depth_write: false,
+            ..OPAQUE
+        };
+        let under = Pixel {
+            colour: [0.8, 0.5, 0.25],
+            depth: 1.0,
+        };
+        let p = draw(under, &arriving([0.5, 1.0, 2.0], 0.25), &multiply);
+        near(&p.colour, &[0.4, 0.5, 0.5], 1e-7);
+        assert_eq!(p.depth, 1.0);
     }
 
     #[test]

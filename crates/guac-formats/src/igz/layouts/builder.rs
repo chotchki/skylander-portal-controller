@@ -607,5 +607,9 @@ pub fn seeds() -> Vec<Vec<u8>> {
         shared_child_list(1000),
         shared_palette(400, 16_000),
         shared_material(400, 400, "tfbAlphaTextureUnitIDAttr"),
+        // A level's materials (AG.15): its tint, scroll and multiply, and a
+        // character's archive carrying every track kind.
+        crate::level::builder::stage_level(&crate::level::builder::stage_sample()),
+        crate::model::builder::character(&crate::model::builder::tracked()),
     ]
 }

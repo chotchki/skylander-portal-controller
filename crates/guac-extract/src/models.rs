@@ -36,8 +36,8 @@ use guac_ir::actor::{Movement, Shape, Solid};
 use guac_ir::clip::{Clip, RotationTrack, Track, VecSpline, VecTrack};
 use guac_ir::hero::{Gait, Locomotion, SlotClip};
 use guac_ir::model::{
-    Blend, Filter, Joint, Mask, Material, Params, RenderStates, Sampler, Scroll, Segment, Skeleton,
-    TextureRole, TextureSlot, Transform, Wrap,
+    Blend, Filter, Joint, Mask, Material, MaterialTrack, Params, RenderStates, Sampler, Scroll,
+    Segment, Skeleton, TextureRole, TextureSlot, Transform, Wrap,
 };
 use guac_ir::{Category, DumpIdentity, Hero, Model, Rig, RigLight, Roster, Sha256};
 use sha2::Digest;
@@ -147,38 +147,16 @@ pub fn read(level: &[u8], load_file: &str, identity: DumpIdentity) -> Result<Ext
     let idle = fmodel::idle(&igz, hero, &havok_skeleton).map_err(bad)?;
     let idle = clip(&idle.clip, idle.file.unwrap_or_default());
 
-    let mut textures: Vec<(String, Vec<u8>)> = Vec::new();
-    let mut by_image: BTreeMap<usize, String> = BTreeMap::new();
+    let mut textures = Textures::default();
     let mut binds = 0;
     let mut materials = Vec::with_capacity(hero.meshes.len());
     let mut segments = Vec::new();
     for mesh in &hero.meshes {
         let m = material::Material::read(&igz, hero, mesh).map_err(bad)?;
         binds += m.textures.len();
-        let mut slots = Vec::with_capacity(m.textures.len());
-        for t in &m.textures {
-            let path = match by_image.get(&t.image) {
-                Some(p) => p.clone(),
-                None => {
-                    let ktx2 = Texture::read(&igz, t.image).map_err(bad)?.to_ktx2();
-                    let path = texture_path(&ktx2);
-                    if !textures.iter().any(|(p, _)| *p == path) {
-                        textures.push((path.clone(), ktx2));
-                    }
-                    by_image.insert(t.image, path.clone());
-                    path
-                }
-            };
-            slots.push(TextureSlot {
-                role: role(t.role),
-                texture: path,
-                image: t.image_name.unwrap_or_default().to_owned(),
-                sampler: sampler(&t.sampler).map_err(|e| refused(load_file, e))?,
-            });
-        }
         let index =
             u16::try_from(materials.len()).map_err(|_| refused(load_file, "65,536 materials"))?;
-        materials.push(ir_material(&m, slots));
+        materials.push(multi2(&igz, &m, &mut textures).map_err(|e| refused(load_file, e))?);
 
         let palette = mesh
             .palette
@@ -207,7 +185,7 @@ pub fn read(level: &[u8], load_file: &str, identity: DumpIdentity) -> Result<Ext
             segments,
             idle,
         },
-        textures,
+        textures: textures.files,
         binds,
         hero,
         hero_took,
@@ -327,6 +305,54 @@ pub fn texture_path(ktx2: &[u8]) -> String {
     format!("{TEXTURE_DIR}/{sha}.ktx2")
 }
 
+/// The texture files one read binds, each image converted once and each
+/// distinct file kept once, in first-bind order.
+#[derive(Debug, Clone, Default)]
+pub struct Textures {
+    /// Its extract path and its KTX2.
+    pub files: Vec<(String, Vec<u8>)>,
+    by_image: BTreeMap<usize, String>,
+}
+
+impl Textures {
+    /// The `igImage2` at `image` as a KTX2, its path in the extract.
+    pub fn path(
+        &mut self,
+        igz: &Igz<'_>,
+        image: usize,
+    ) -> std::result::Result<String, FormatError> {
+        if let Some(p) = self.by_image.get(&image) {
+            return Ok(p.clone());
+        }
+        let ktx2 = Texture::read(igz, image)?.to_ktx2();
+        let path = texture_path(&ktx2);
+        if !self.files.iter().any(|(p, _)| *p == path) {
+            self.files.push((path.clone(), ktx2));
+        }
+        self.by_image.insert(image, path.clone());
+        Ok(path)
+    }
+}
+
+/// A tfbmulti2 material as the IR keeps it, its textures converted into
+/// `textures`.
+pub fn multi2(
+    igz: &Igz<'_>,
+    m: &material::Material<'_>,
+    textures: &mut Textures,
+) -> std::result::Result<Material, String> {
+    let mut slots = Vec::with_capacity(m.textures.len());
+    for t in &m.textures {
+        slots.push(TextureSlot {
+            role: role(t.role),
+            texture: textures.path(igz, t.image).map_err(|e| e.to_string())?,
+            image: t.image_name.unwrap_or_default().to_owned(),
+            sampler: sampler(&t.sampler)?,
+        });
+    }
+    Ok(ir_material(m, slots))
+}
+
 fn role(r: Role) -> TextureRole {
     match r {
         Role::Layer1BaseNormalMap => TextureRole::Layer1BaseNormalMap,
@@ -394,29 +420,74 @@ fn ir_material(m: &material::Material<'_>, textures: Vec<TextureSlot>) -> Materi
             material_tint: p.material_tint,
             glow: p.glow,
         },
-        states: RenderStates {
-            blend: match m.states.blend {
-                FBlend::Opaque => Blend::Opaque,
-                FBlend::Alpha => Blend::Alpha,
-                FBlend::Additive => Blend::Additive,
-            },
-            depth_write: m.states.depth_write,
-            two_sided: m.states.two_sided,
-            alpha_test: m.states.alpha_test,
+        states: states(&m.states),
+        scrolls: m.scrolls.iter().map(scroll).collect(),
+        tracks: m.tracks.iter().map(track).collect(),
+    }
+}
+
+/// A scroll track as the IR keeps it.
+pub fn scroll(s: &material::Scroll) -> Scroll {
+    Scroll {
+        layer: s.layer,
+        scale: s.data.scale,
+        velocity: s.data.velocity,
+        amplitude: s.data.amplitude,
+        frequency: s.data.frequency,
+        phase: s.data.phase,
+        rotation_phase: s.data.rotation_phase,
+    }
+}
+
+/// Render states as the IR keeps them.
+pub fn states(s: &material::States) -> RenderStates {
+    RenderStates {
+        blend: match s.blend {
+            FBlend::Opaque => Blend::Opaque,
+            FBlend::Alpha => Blend::Alpha,
+            FBlend::Additive => Blend::Additive,
+            FBlend::Multiply => Blend::Multiply,
         },
-        scrolls: m
-            .scrolls
-            .iter()
-            .map(|s| Scroll {
-                layer: s.layer,
-                scale: s.data.scale,
-                velocity: s.data.velocity,
-                amplitude: s.data.amplitude,
-                frequency: s.data.frequency,
-                phase: s.data.phase,
-                rotation_phase: s.data.rotation_phase,
-            })
-            .collect(),
+        depth_write: s.depth_write,
+        two_sided: s.two_sided,
+        alpha_test: s.alpha_test,
+    }
+}
+
+/// A level material's other track (AG.15), as stored; a tint's packed
+/// colours unpacked as the material tint is.
+pub fn track(t: &material::Track) -> MaterialTrack {
+    match t {
+        material::Track::Transform { layer, data: d } => MaterialTrack::Transform {
+            layer: *layer,
+            center: d.center,
+            rotation_rate: d.rotation_rate,
+            rotation_min: d.rotation_min,
+            rotation_max: d.rotation_max,
+            rotation_style: d.rotation_style,
+            scale_rate: d.scale_rate,
+            scale_min: d.scale_min,
+            scale_max: d.scale_max,
+            scale_style: d.scale_style,
+        },
+        material::Track::FlipBook { layer, data, cells } => MaterialTrack::FlipBook {
+            layer: *layer,
+            style: data.style,
+            rows: data.rows,
+            columns: data.columns,
+            rate: data.rate,
+            cells: cells.clone(),
+        },
+        material::Track::Tint {
+            data,
+            frames,
+            colors,
+        } => MaterialTrack::Tint {
+            style: data.style,
+            rate: data.rate,
+            frames: frames.clone(),
+            colors: colors.iter().map(|&c| material::unpack_tint(c)).collect(),
+        },
     }
 }
 
@@ -518,6 +589,32 @@ pub fn segment(
     bone_map: &BoneMap,
     joints: &JointMap,
 ) -> std::result::Result<Segment, String> {
+    segment_of(s, material, source, Some((bone_map, joints)), true)
+}
+
+/// A segment of a level's scene or a static prop (AG.15): as [`segment`],
+/// but without a skin (one there is refused), and its normals left empty
+/// when `normals` is false and it has none (the grass's and shadows'
+/// effects carry none).
+pub fn static_segment(
+    s: &EdgeSegment,
+    material: u16,
+    source: u32,
+    normals: bool,
+) -> std::result::Result<Segment, String> {
+    if s.skin.is_some() {
+        return Err("a skin outside a skinned model".into());
+    }
+    segment_of(s, material, source, None, normals)
+}
+
+fn segment_of(
+    s: &EdgeSegment,
+    material: u16,
+    source: u32,
+    skin: Option<(&BoneMap, &JointMap)>,
+    need_normals: bool,
+) -> std::result::Result<Segment, String> {
     let n = s.vertex_count();
     let vectors = |sem: Semantic| -> Option<Vec<Vec<f32>>> {
         s.attribute(sem)
@@ -535,7 +632,11 @@ pub fn segment(
         return Err("a binormal or a fourth UV set".into());
     }
     let positions = fixed(need(Semantic::Position)?, Semantic::Position)?;
-    let normals = fixed(need(Semantic::Normal)?, Semantic::Normal)?;
+    let normals = match vectors(Semantic::Normal) {
+        Some(v) => fixed(v, Semantic::Normal)?,
+        None if need_normals => return Err(format!("no {:?}", Semantic::Normal)),
+        None => Vec::new(),
+    };
     let tangents = vectors(Semantic::Tangent)
         .map(|v| fixed(v, Semantic::Tangent))
         .transpose()?;
@@ -552,28 +653,31 @@ pub fn segment(
     let colors = vectors(Semantic::Color)
         .map(|v| fixed(v, Semantic::Color))
         .transpose()?;
-    let skin = s.skin.as_ref().ok_or("unskinned")?;
-    let influences = skin.bones(bone_map).map_err(|e| e.to_string())?;
-    let mut joint_indices = Vec::with_capacity(n);
-    let mut weights = Vec::with_capacity(n);
-    for (v, inf) in influences.iter().enumerate() {
-        let mut j = [0u16; 4];
-        let mut w = [0u8; 4];
-        for (k, b) in inf.iter().enumerate() {
-            if b.weight == 0 {
-                continue;
+    let (mut joint_indices, mut weights) = (Vec::new(), Vec::new());
+    if let Some((bone_map, joints)) = skin {
+        let skin = s.skin.as_ref().ok_or("unskinned")?;
+        let influences = skin.bones(bone_map).map_err(|e| e.to_string())?;
+        joint_indices.reserve(n);
+        weights.reserve(n);
+        for (v, inf) in influences.iter().enumerate() {
+            let mut j = [0u16; 4];
+            let mut w = [0u8; 4];
+            for (k, b) in inf.iter().enumerate() {
+                if b.weight == 0 {
+                    continue;
+                }
+                let joint = joints
+                    .joint_of_bone
+                    .get(b.bone)
+                    .copied()
+                    .flatten()
+                    .ok_or_else(|| format!("vertex {v}: bone {} has no Havok joint", b.bone))?;
+                j[k] = u16::try_from(joint).map_err(|_| format!("joint {joint}"))?;
+                w[k] = b.weight;
             }
-            let joint = joints
-                .joint_of_bone
-                .get(b.bone)
-                .copied()
-                .flatten()
-                .ok_or_else(|| format!("vertex {v}: bone {} has no Havok joint", b.bone))?;
-            j[k] = u16::try_from(joint).map_err(|_| format!("joint {joint}"))?;
-            w[k] = b.weight;
+            joint_indices.push(j);
+            weights.push(w);
         }
-        joint_indices.push(j);
-        weights.push(w);
     }
     let three = |v: &[f32]| [v[0], v[1], v[2]];
     Ok(Segment {

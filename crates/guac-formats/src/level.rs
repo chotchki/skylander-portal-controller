@@ -13,6 +13,10 @@
 //!   waypoints. Scripts aren't run here (AJ's VM runs them).
 //! - [`directional_lights`]: the level's light rig (`_worldLight1`-`3` and
 //!   `_causticLight` on level 213).
+//! - [`StaticModel`] (AG.15): a placed model without a skeleton, its
+//!   `tfbPhysicsBody._node` walked the way a scene is ([`Graph`]). 183 of
+//!   the 219 models level 213's actors name are such props (gourds,
+//!   barrels, the gate's door): a technique alone, or a group of them.
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -21,8 +25,9 @@ use crate::igz::Igz;
 use crate::igz::layouts::{
     ActorInfo, ActorParameters, ActorWaypoint, ActorWaypointList, CollisionInfo,
     DirectionalLightInfo, EdgeGeometry, EdgeGeometryAttr, EdgeGeometrySegment, Group, Layout,
-    LightInfo, Mat44, ModelInfo, NodeList, ParticleInfo, Placement, RuntimeTechniqueInstance,
-    SceneInfo, ScriptInfo, SpatialNode, Transform, UserInfo, is_a, read_all,
+    LightInfo, Mat44, MaterialLists, ModelInfo, NodeList, ParticleInfo, PhysicsBody, PhysicsModel,
+    Placement, RuntimeTechniqueInstance, SceneInfo, ScriptInfo, SpatialNode, Transform, UserInfo,
+    is_a, read_all,
 };
 use crate::{ErrorKind, FormatError};
 
@@ -131,8 +136,9 @@ pub struct SceneGroup<'a> {
 pub struct Draw<'a> {
     pub technique_index: usize,
     pub technique: RuntimeTechniqueInstance<'a>,
-    /// The group it hangs under, a key of [`Scene::groups`].
-    pub parent: usize,
+    /// The group it hangs under, a key of [`Graph::groups`]; `None` for a
+    /// technique that is a model's whole graph.
+    pub parent: Option<usize>,
     pub attr_index: usize,
     pub attr: EdgeGeometryAttr,
     /// A key of [`Scene::geometries`].
@@ -143,12 +149,13 @@ pub struct Draw<'a> {
     pub user_info: Option<usize>,
 }
 
-/// One scene, walked: every group and draw, keyed or listed by object index.
+/// A scene graph walked from its root: every group and draw, keyed or
+/// listed by object index. No node, non-empty child list, geometry or
+/// segment is reached twice in a scene on the disc, so a second reach is
+/// refused: the graph draws each thing once and the walk stays linear.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Scene<'a> {
-    pub index: usize,
-    pub info: SceneInfo<'a>,
-    /// `_sceneGraph`, a key of [`Scene::groups`].
+pub struct Graph<'a> {
+    /// A key of [`Graph::groups`], or a technique that is the whole graph.
     pub root: usize,
     pub groups: BTreeMap<usize, SceneGroup<'a>>,
     /// In scene-graph order, depth first.
@@ -157,40 +164,26 @@ pub struct Scene<'a> {
     pub segments: BTreeMap<usize, EdgeGeometrySegment<'a>>,
 }
 
-impl<'a> Scene<'a> {
-    /// Walks the `igSceneInfo` at `index`. Refused: no root, a root that
-    /// isn't a group, more roots in `_sceneGraphList` (empty on the disc), a
-    /// node that isn't one of [`SCENE_NODES`], a node, non-empty child list,
-    /// geometry or segment reached twice, a transform that isn't finite and
-    /// a technique without geometry.
-    pub fn read(igz: &Igz<'a>, index: usize) -> Result<Self, FormatError> {
-        let info = SceneInfo::read(igz, index)?;
-        if let Some(list) = info.scene_graph_list {
-            let extra = NodeList::read(igz, list)?.nodes.len();
-            if extra != 0 {
-                let kind = ErrorKind::CountMismatch {
-                    found: extra as u64,
-                    expected: 0,
-                };
-                return Err(igz.err_at(igz.objects()[list].at, "_sceneGraphList", kind));
-            }
-        }
-        let root = required(igz, index, "_sceneGraph", info.scene_graph)?;
-        let mut scene = Self {
-            index,
-            info,
+impl<'a> Graph<'a> {
+    /// Walks from `root`, which `field` names: a group of [`SCENE_NODES`], or
+    /// a technique alone (one draw, its parent `None`). Refused: a node that
+    /// isn't one of [`SCENE_NODES`], a node, non-empty child list, geometry
+    /// or segment reached twice, a transform that isn't finite and a
+    /// technique without geometry.
+    pub fn read(igz: &Igz<'a>, root: usize, field: &'static str) -> Result<Self, FormatError> {
+        let mut graph = Self {
             root,
             groups: BTreeMap::new(),
             draws: Vec::new(),
             geometries: BTreeMap::new(),
             segments: BTreeMap::new(),
         };
-        scene.walk(igz)?;
-        Ok(scene)
+        graph.walk(igz, field)?;
+        Ok(graph)
     }
 
     /// Depth first from the root, each node read once.
-    fn walk(&mut self, igz: &Igz<'a>) -> Result<(), FormatError> {
+    fn walk(&mut self, igz: &Igz<'a>, root_field: &'static str) -> Result<(), FormatError> {
         let mut stack: Vec<(usize, Option<usize>)> = vec![(self.root, None)];
         let mut seen = HashSet::new();
         // Child lists already expanded, and whether they held anything.
@@ -199,19 +192,12 @@ impl<'a> Scene<'a> {
             let field = if parent.is_some() {
                 "_childList"
             } else {
-                "_sceneGraph"
+                root_field
             };
             if !seen.insert(node) {
                 return Err(duplicate(igz, node, field));
             }
             let Some(kind) = GroupKind::read(igz, node, field)? else {
-                let Some(parent) = parent else {
-                    let kind = ErrorKind::WrongType {
-                        expected: Group::TYPE,
-                        found: RuntimeTechniqueInstance::TYPE.to_owned(),
-                    };
-                    return Err(igz.err_at(igz.objects()[node].at, field, kind));
-                };
                 self.draw(igz, node, parent)?;
                 continue;
             };
@@ -261,7 +247,12 @@ impl<'a> Scene<'a> {
         Ok(())
     }
 
-    fn draw(&mut self, igz: &Igz<'a>, node: usize, parent: usize) -> Result<(), FormatError> {
+    fn draw(
+        &mut self,
+        igz: &Igz<'a>,
+        node: usize,
+        parent: Option<usize>,
+    ) -> Result<(), FormatError> {
         let technique = RuntimeTechniqueInstance::read(igz, node)?;
         let attr_index = required(igz, node, "_geomAttr", technique.geom_attr)?;
         let attr = EdgeGeometryAttr::read(igz, attr_index)?;
@@ -277,9 +268,8 @@ impl<'a> Scene<'a> {
             seg.insert(EdgeGeometrySegment::read(igz, s)?);
         }
         // The parent was inserted before its children were pushed.
-        let (world, user_info) = self
-            .groups
-            .get(&parent)
+        let (world, user_info) = parent
+            .and_then(|p| self.groups.get(&p))
             .map_or((IDENTITY, None), |g| (g.world, g.user_info));
         self.draws.push(Draw {
             technique_index: node,
@@ -312,6 +302,105 @@ impl<'a> Scene<'a> {
             GroupKind::Transform(t) => Some((*i, t)),
             _ => None,
         })
+    }
+
+    /// Every draw's material list, read: what [`crate::material`] reads the
+    /// draws' materials out of.
+    pub fn material_lists(&self, igz: &Igz<'a>) -> Result<MaterialLists<'a>, FormatError> {
+        let mut lists = MaterialLists::default();
+        for d in &self.draws {
+            lists.technique(igz, &d.technique)?;
+        }
+        Ok(lists)
+    }
+}
+
+/// One scene, walked: an `igSceneInfo` and its [`Graph`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct Scene<'a> {
+    pub index: usize,
+    pub info: SceneInfo<'a>,
+    pub graph: Graph<'a>,
+}
+
+impl<'a> std::ops::Deref for Scene<'a> {
+    type Target = Graph<'a>;
+
+    fn deref(&self) -> &Graph<'a> {
+        &self.graph
+    }
+}
+
+impl<'a> Scene<'a> {
+    /// Walks the `igSceneInfo` at `index`. Refused: no root, a root that
+    /// isn't a group, more roots in `_sceneGraphList` (empty on the disc),
+    /// and anything [`Graph::read`] refuses.
+    pub fn read(igz: &Igz<'a>, index: usize) -> Result<Self, FormatError> {
+        let info = SceneInfo::read(igz, index)?;
+        if let Some(list) = info.scene_graph_list {
+            let extra = NodeList::read(igz, list)?.nodes.len();
+            if extra != 0 {
+                let kind = ErrorKind::CountMismatch {
+                    found: extra as u64,
+                    expected: 0,
+                };
+                return Err(igz.err_at(igz.objects()[list].at, "_sceneGraphList", kind));
+            }
+        }
+        let root = required(igz, index, "_sceneGraph", info.scene_graph)?;
+        let ty = igz.type_name(&igz.objects()[root]);
+        if is_a(ty, RuntimeTechniqueInstance::TYPE) {
+            let kind = ErrorKind::WrongType {
+                expected: Group::TYPE,
+                found: RuntimeTechniqueInstance::TYPE.to_owned(),
+            };
+            return Err(igz.err_at(igz.objects()[root].at, "_sceneGraph", kind));
+        }
+        Ok(Self {
+            index,
+            info,
+            graph: Graph::read(igz, root, "_sceneGraph")?,
+        })
+    }
+}
+
+/// A placed model without a skeleton (AG.15): its `tfbPhysicsModel`, the
+/// `tfbPhysicsBody` it draws through and the graph under the body's `_node`
+/// (a technique alone on 103 of level 213's 183, a group of them on 79, one
+/// transform over its parts). A skinned model's node is an `igActor2`, which
+/// the graph refuses: that is [`crate::igz::layouts::Hero`]'s to read.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StaticModel<'a> {
+    pub model_index: usize,
+    pub model: PhysicsModel<'a>,
+    pub body_index: usize,
+    pub body: PhysicsBody<'a>,
+    pub graph: Graph<'a>,
+}
+
+impl<'a> StaticModel<'a> {
+    /// Refused: no body or node, and anything [`Graph::read`] refuses.
+    pub fn read(igz: &Igz<'a>, model_index: usize) -> Result<Self, FormatError> {
+        let model = PhysicsModel::read(igz, model_index)?;
+        let body_index = required(igz, model_index, "_tfbBody", model.model.tfb_body)?;
+        let body = PhysicsBody::read(igz, body_index)?;
+        let node = required(igz, body_index, "_node", body.body.node)?;
+        Ok(Self {
+            model_index,
+            model,
+            body_index,
+            body,
+            graph: Graph::read(igz, node, "_node")?,
+        })
+    }
+
+    /// The model's file name without its folders (`gourd_01.mdl`).
+    pub fn name(&self) -> Option<&'a str> {
+        self.model
+            .model
+            .info
+            .name
+            .map(|n| n.rsplit(['/', '\\']).next().unwrap_or(n))
     }
 }
 

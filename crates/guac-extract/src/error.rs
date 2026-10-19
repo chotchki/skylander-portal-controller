@@ -86,6 +86,15 @@ pub enum ExtractError {
     #[error("GUAC-E-HERO-UNSETTLED: {load_file}'s hero didn't settle: {reason}")]
     HeroUnsettled { load_file: String, reason: String },
 
+    /// A part of a level guacamole plays (AG.15) didn't read: the parts that
+    /// did are in the extract, and the next start tries this one again.
+    #[error("GUAC-E-LEVEL-UNREADABLE: {level}'s {part} didn't read: {reason}")]
+    LevelUnreadable {
+        level: String,
+        part: String,
+        reason: String,
+    },
+
     #[error("GUAC-E-EXTRACT-IO: {}: {source}", path.display())]
     Io {
         path: PathBuf,
@@ -109,6 +118,7 @@ impl ExtractError {
             Self::RosterUnreadable { .. } => "GUAC-E-ROSTER-UNREADABLE",
             Self::ModelUnreadable { .. } => "GUAC-E-MODEL-UNREADABLE",
             Self::HeroUnsettled { .. } => "GUAC-E-HERO-UNSETTLED",
+            Self::LevelUnreadable { .. } => "GUAC-E-LEVEL-UNREADABLE",
             Self::Io { .. } => "GUAC-E-EXTRACT-IO",
         }
     }
@@ -181,6 +191,11 @@ mod tests {
             },
             ExtractError::HeroUnsettled {
                 load_file: "009_Eruptor".into(),
+                reason: "x".into(),
+            },
+            ExtractError::LevelUnreadable {
+                level: "level_213_tutotial".into(),
+                part: "scene".into(),
                 reason: "x".into(),
             },
             ExtractError::io("p")(io::Error::other("x")),
