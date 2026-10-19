@@ -136,7 +136,8 @@ pub struct Frame {
     pub hero: Body,
     /// The camera, when the watch read one.
     pub camera: Option<View>,
-    /// The controller's two stick floats the movement code reads.
+    /// The stick as the game holds it: x, -1 full left, and y, +1 full
+    /// forward, after the game's reading of the pad's bytes.
     pub stick: [f32; 2],
     /// What the guest read on the hero's pad that flip (O4's readback), when
     /// it was joined.

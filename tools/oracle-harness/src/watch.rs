@@ -24,9 +24,15 @@
 //!   corpus from `_desiredFacing` (+0x54) through `_animationBlock` (+0x7C),
 //!   `_velocity` and the game's `_timeStamp` (+0x6C) among them, the corpus's
 //!   `_xform` matrix, his `ActorParameters` from `_groundMaxSpeed` (+0x0C) to
-//!   `_objectTimeScale`, and his pad controller's button words and its 42
-//!   `_buttons` floats (+0x148 to +0x1F8), whose [23] and [24] (+0x1AC,
-//!   +0x1B0) are the two stick floats the movement code reads;
+//!   `_objectTimeScale` (which the scripts swap while he walks), and his
+//!   controller's button words and its 42 `_buttons` floats (+0x148 to
+//!   +0x1F8), whose [23] and [24] (+0x1AC, +0x1B0) are the two floats the
+//!   movement code reads for a stick;
+//! - pad 0's controller (`_id` 0, in the tutorial the `Generic_FollowActor`'s),
+//!   the same span: the hero's own controller (`_id` -1) held 0 in every one
+//!   of those floats at every pad read of AG.1's walk, while pad 0's [23] and
+//!   [24] carried the stick (x, -1 full left; y, +1 full forward) and [5], [6]
+//!   and [16] the face buttons, so the stick a [`Frame`] carries is pad 0's;
 //! - the camera: the viewport system's `_currentViewport` (+0x14), so a
 //!   switch shows, and that viewport's `_currentMatrix`, `_FOV` (+0xAC) and
 //!   `_farClip` with the two flags and `_transitionTime` after it (+0xD0 to
@@ -330,6 +336,10 @@ pub struct GiantsWatch {
     pub hero_placement: u32,
     pub hero_name: Option<String>,
     pub controller: u32,
+    /// The controller whose `_id` is 0, pad 0's: in AF.8's fresh state the
+    /// `Generic_FollowActor`'s (the hero's own reads `_id` -1).
+    #[serde(default)]
+    pub pad0: Option<u32>,
     pub parameters: u32,
     pub viewport_system: Option<u32>,
     pub viewport: Option<u32>,
@@ -376,6 +386,13 @@ impl GiantsWatch {
     pub fn resolve(g: &mut impl Gather) -> Result<Self> {
         let frame = actors::read(g)?;
         let hero = frame.hero()?.clone();
+        let pad0_actor = {
+            let on_pad0: Vec<_> = frame.actors.iter().filter(|a| a.pad == Some(0)).collect();
+            match on_pad0[..] {
+                [one] => Some(one.placement),
+                _ => None,
+            }
+        };
         let viewport = frame.camera.as_ref().map(|c| c.viewport);
 
         let app = be32(&one(g, actors::APP, 4, "the application pointer")?, 0);
@@ -395,6 +412,16 @@ impl GiantsWatch {
         let controller = be32(&p, actors::ACTOR_CONTROLLER);
         let c = one(g, controller, 4, "the hero's controller")?;
         expect_vtable(&c, vtable::PAD_CONTROLLER, controller, "tfbPS3Controller")?;
+        let pad0 = match pad0_actor {
+            Some(placement) => {
+                let at = one(g, placement, actors::ACTOR_LEN, "pad 0's actor's placement")?;
+                let c = be32(&at, actors::ACTOR_CONTROLLER);
+                let head = one(g, c, 4, "pad 0's controller")?;
+                expect_vtable(&head, vtable::PAD_CONTROLLER, c, "tfbPS3Controller")?;
+                Some(c)
+            }
+            None => None,
+        };
         let parameters = be32(&p, ACTOR_PARAMETERS);
         let ap = one(g, parameters, 4, "the hero's ActorParameters")?;
         expect_vtable(&ap, vtable::ACTOR_PARAMETERS, parameters, "ActorParameters")?;
@@ -477,6 +504,9 @@ impl GiantsWatch {
             Field::new("anim.playing", animation + COMPONENT_PLAYING, 12),
             Field::new("anim.slots", slots, 4 * capacity.max(1)),
         ];
+        if let Some(c) = pad0.filter(|&c| c != controller) {
+            fields.push(Field::new("pad0", c + PAD_FIRST, PAD_LEN));
+        }
         if let Some(system) = viewport_system {
             fields.push(Field::new(
                 "camera.current",
@@ -513,6 +543,7 @@ impl GiantsWatch {
             hero_placement: hero.placement,
             hero_name: hero.name,
             controller,
+            pad0,
             parameters,
             viewport_system,
             viewport,
@@ -538,7 +569,11 @@ impl GiantsWatch {
         let placement = need("hero.placement")?;
         let corpus = need("hero.corpus")?;
         let params = need("hero.parameters")?;
-        let pads = need("hero.pad")?;
+        // The stick as pad 0's controller holds it, the hero's own without one.
+        let pads = match self.list.field(record, "pad0") {
+            Some(p) => p,
+            None => need("hero.pad")?,
+        };
         let clock = Clock {
             frame_delta: f32_at(app, 0x10),
             presentation_rate: f32_at(app, 0x0C),
@@ -878,6 +913,8 @@ mod tests {
     struct Giants {
         w: World,
         hero: Added,
+        /// Pad 0's controller, the follow actor's.
+        pad0: u32,
         controls: Vec<u32>,
     }
 
@@ -923,6 +960,12 @@ mod tests {
             skinned: true,
             ..Spec::default()
         });
+        let follow = w.actor(&Spec {
+            name: "Generic_FollowActor".into(),
+            pad: Some(0),
+            ..Spec::default()
+        });
+        let pad0 = w.get32(follow.placement + 0xD8);
         w.putf(w.app + 0x60, 1.0 / 60.0);
         let message = w.object(vtable::LOGIC_SCALE_MESSAGE, 0x10);
         w.putf(message + 0x08, 1.0);
@@ -956,7 +999,12 @@ mod tests {
             w.put32(slots + 4 * i as u32, control);
             controls.push(control);
         }
-        Giants { w, hero, controls }
+        Giants {
+            w,
+            hero,
+            pad0,
+            controls,
+        }
     }
 
     /// What O5 copies at a pad read: each range's bytes back to back.
@@ -1013,8 +1061,9 @@ mod tests {
         let watch = GiantsWatch::resolve(&mut g.w).unwrap();
         let (app, placement, corpus) = (g.w.app, g.hero.placement, g.hero.corpus);
         let controller = g.w.get32(placement + 0xD8);
-        // The stick held forward, as the movement code reads it.
-        g.w.put_floats(controller + 0x1AC, &[0.0, -1.0]);
+        // The stick held forward on pad 0's controller, the hero's own at rest.
+        g.w.put_floats(g.pad0 + 0x1AC, &[0.0, 1.0]);
+        g.w.put_floats(controller + 0x1AC, &[0.0, 0.0]);
         let deltas = [
             0.0167f32, 0.0158, 0.0175, 0.0166, 0.0171, 0.2, 0.0161, 0.0170, 0.0164, 0.0169,
         ];
@@ -1051,7 +1100,8 @@ mod tests {
         assert_eq!((check.first_flip, check.last_flip), (Some(100), Some(109)));
         assert_eq!(check.frame_minus_flip, Some((5_860, 5_860)));
         let f = &r.frames()[3];
-        assert_eq!(f.stick, [0.0, -1.0]);
+        assert_eq!(f.stick, [0.0, 1.0]);
+        assert_eq!(watch.pad0, Some(g.pad0));
         assert_eq!(f.clock.presentation_rate, 1.0 / 60.0);
         assert_eq!((f.clock.logic_scale, f.clock.object_scale), (1.0, 1.0));
         assert_eq!(f.camera.unwrap().rotation[1], 14.9997);
@@ -1096,8 +1146,16 @@ mod tests {
     fn a_record_missing_a_range_keeps_what_it_can() {
         let mut g = giants();
         let watch = GiantsWatch::resolve(&mut g.w).unwrap();
+        let hero_controller = g.w.get32(g.hero.placement + 0xD8);
+        g.w.put_floats(g.pad0 + 0x1AC, &[-1.0, 0.0]);
+        g.w.put_floats(hero_controller + 0x1AC, &[0.25, 0.5]);
         let full = sample(&mut g.w, &watch.list, 7);
         let range_of = |name: &str| watch.list.placed(name).unwrap().range;
+        // Pad 0's stick, or the hero's controller's when pad 0's wasn't readable.
+        assert_eq!(watch.frame(&full, None).unwrap().stick, [-1.0, 0.0]);
+        let mut no_pad0 = full.clone();
+        no_pad0.missing = 1 << range_of("pad0");
+        assert_eq!(watch.frame(&no_pad0, None).unwrap().stick, [0.25, 0.5]);
         // The clips' range unreadable: the frame decodes, without clips.
         let mut no_clips = full.clone();
         no_clips.missing = 1 << range_of("anim.control.1");

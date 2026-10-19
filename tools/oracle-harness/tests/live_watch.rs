@@ -58,6 +58,10 @@ const RING: u32 = 1_024;
 /// A position step's miss on open ground that's float noise: positions near
 /// 10-25 m are f32 with a 1.9e-6 m ulp, and a step adds a few of them.
 const FLOAT_NOISE: f64 = 1e-4;
+/// Level ground, by the hero's tilt (he tilts with the ground): a step on a
+/// 0.5 deg slope shortens on the ground by 4e-5 of itself, 4 µm at a step's
+/// 0.11 m, under float noise.
+const LEVEL_TILT: f32 = 0.5;
 
 fn sha256(path: &Path) -> String {
     use sha2::Digest;
@@ -331,16 +335,49 @@ fn a_walk_is_recorded_every_flip_without_a_pause() {
         ("at rest after (240-299)", 240, 300),
         ("the whole walk", 0, FLIPS),
     ];
-    let mut best_open = f64::MAX;
     for (label, from, to) in windows {
-        let lines = residual_lines(&recording, label, leg(from, to));
-        if from == 60 && to == 150 {
-            best_open = lines[0].0;
-        }
-        for (_, line) in lines {
+        for (_, line) in residual_lines(&recording, label, leg(from, to)) {
             rec.line(line);
         }
     }
+    // Open ground: a step from a moving record to the next with the hero level
+    // at both ends (he tilts with the ground, so his tilt says it's level).
+    let level: std::collections::BTreeSet<u64> = frames
+        .windows(2)
+        .filter(|w| {
+            let speed = f64::from(w[1].hero.velocity[0]).hypot(f64::from(w[1].hero.velocity[2]));
+            speed > 0.01 && w.iter().all(|f| f.hero.rotation[0].abs() <= LEVEL_TILT)
+        })
+        .map(|w| w[0].flip)
+        .collect();
+    let lines = residual_lines(
+        &recording,
+        "open level ground, moving, the whole walk",
+        |f| level.contains(&f),
+    );
+    let best_open = lines[0].0;
+    for (_, line) in lines {
+        rec.line(line);
+    }
+    // On a slope: the step's length in 3D against the speed times the step,
+    // the stored velocity staying level while he climbs.
+    let mut slope_miss: f64 = 0.0;
+    let mut slope_pairs = 0;
+    for (k, w) in frames.windows(2).enumerate() {
+        let speed = f64::from(w[1].hero.velocity[0]).hypot(f64::from(w[1].hero.velocity[2]));
+        if speed <= 0.01 || w[1].flip != w[0].flip + 1 || w[1].hero.rotation[0].abs() <= LEVEL_TILT
+        {
+            continue;
+        }
+        let d = |i: usize| f64::from(w[1].hero.position[i]) - f64::from(w[0].hero.position[i]);
+        let length = (d(0) * d(0) + d(1) * d(1) + d(2) * d(2)).sqrt();
+        slope_miss = slope_miss.max((length - speed * steps[k]).abs());
+        slope_pairs += 1;
+    }
+    rec.line(format!(
+        "on slopes (|tilt| over {LEVEL_TILT} deg), the step's 3D length against speed x the \
+         earlier record's step: worst miss {slope_miss:.3e} m over {slope_pairs} pairs"
+    ));
     // The game's own clock on him, against the same steps.
     let stamps: Vec<Option<f32>> = ring.records.iter().map(|r| watch.time_stamp(r)).collect();
     for alignment in Alignment::ALL {
@@ -404,6 +441,49 @@ fn a_walk_is_recorded_every_flip_without_a_pause() {
             f.clips.iter().map(|c| c.weight).collect::<Vec<_>>(),
             f.camera.map(|c| c.rotation[1]),
             f.camera.map(|c| c.fov),
+        ));
+    }
+    // Which of the two controllers' floats move with the stick.
+    for field in ["hero.pad", "pad0"] {
+        let words: Vec<Vec<f32>> = ring
+            .records
+            .iter()
+            .filter_map(|r| watch.list.field(r, field))
+            .map(|b| {
+                b.chunks(4)
+                    .map(|w| f32::from_be_bytes(w.try_into().unwrap()))
+                    .collect()
+            })
+            .collect();
+        let Some(first) = words.first() else {
+            rec.line(format!("{field}: not watched"));
+            continue;
+        };
+        let moving: Vec<String> = (0..first.len())
+            .filter(|&i| words.iter().any(|w| w[i].to_bits() != first[i].to_bits()))
+            .map(|i| {
+                let at = |offset: u64| {
+                    frames
+                        .iter()
+                        .position(|f| f.flip == base + offset)
+                        .map(|k| words[k][i])
+                };
+                format!(
+                    "+{:#05x} (rest {:?}, forward {:?}, left {:?}, South {:?}, West {:?})",
+                    0x148 + 4 * i,
+                    at(30),
+                    at(100),
+                    at(160),
+                    at(302),
+                    at(362)
+                )
+            })
+            .collect();
+        rec.line(format!(
+            "{field}: {} of {} words move: {}",
+            moving.len(),
+            first.len(),
+            moving.join("; ")
         ));
     }
     // The top clip's time against the steps while it stays the top clip.
