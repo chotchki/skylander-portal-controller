@@ -4,7 +4,8 @@
 //! that specializes it per key, and the skinned meshes built from IR v2.
 //! [`remaster`] (AE.12) says what's decoded into linear light and how the
 //! camera draws; [`glow`] (AE.11) is the game's glow on that frame;
-//! [`turntable`] (AE.13) frames and lights a model on a card.
+//! [`turntable`] (AE.13) frames and lights a model on a card; [`warm`]
+//! (AE.14) names the pipelines a model's draws compile.
 //!
 //! The shader is checked against [`guac_ir::shading`], the spec's CPU
 //! model, by an `#[ignore]`d GPU lane ([`tests/character_gpu_lane.rs`]),
@@ -18,6 +19,7 @@ pub mod material;
 pub mod mesh;
 pub mod remaster;
 pub mod turntable;
+pub mod warm;
 
 use bevy::app::{App, Plugin};
 use bevy::asset::embedded_asset;
@@ -30,6 +32,7 @@ pub use material::{
     reference_material,
 };
 pub use mesh::{MeshError, SpawnedCharacter, segment_mesh, spawn_character};
+pub use warm::{MeshShape, WarmError, WarmKey};
 
 /// Embeds the shader and registers [`CharacterMaterial`].
 pub struct CharacterShadingPlugin;

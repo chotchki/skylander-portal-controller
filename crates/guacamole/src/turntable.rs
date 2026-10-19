@@ -46,6 +46,7 @@ use guac_ir::model::Sampler;
 use guac_ir::shading::Scene;
 use guac_ir::{Category, DumpIdentity, Model, Rig, Roster};
 use guacamole::character::turntable::{Framing, SAMPLES, Sweep, TURN_SECONDS, rig_scene};
+use guacamole::character::warm::{self, WarmKey};
 use guacamole::character::{
     CharacterMaterial, GlowView, ShadowLookup, remaster, spawn_character, spawn_glow_camera,
     spawn_glow_masks,
@@ -59,6 +60,7 @@ use crate::cards::PortalCards;
 use crate::extraction::Extraction;
 use crate::motion::ReducedMotion;
 use crate::theme::TvTheme;
+use crate::warm::Warm;
 
 /// What the extract holds for the turntable (published with the roster's
 /// models, AE.13): where it is, in which IR format, the character load file
@@ -179,7 +181,7 @@ impl Turntables {
         Some(match &t.state {
             State::Model(_) => CardState::Model,
             State::Portrait(_) => CardState::Portrait,
-            State::Loading(_) => CardState::Loading,
+            State::Loading(_) | State::Compiling { .. } => CardState::Loading,
             State::NoShelf { extracting: true } => CardState::Loading,
             State::NoShelf { extracting: false } => CardState::Portrait,
         })
@@ -213,6 +215,13 @@ enum State {
         extracting: bool,
     },
     Loading(Task<Result<Loaded, String>>),
+    /// Read, and waiting for the warm to compile the pipelines it draws
+    /// with (`crate::warm`), so it never comes up on one that isn't.
+    Compiling {
+        loaded: Box<Loaded>,
+        keys: Vec<WarmKey>,
+        since: Instant,
+    },
     Model(Stage),
     /// Why there's no model on the card.
     Portrait(String),
@@ -251,11 +260,14 @@ const GLOW_ORDER: isize = -2;
 /// clear of the default layer every other camera draws.
 const FIRST_LAYER: usize = 16;
 
-fn model_layer(slot: usize) -> usize {
+/// The warm's scene ([`crate::warm`]) takes the pair past the eight slots'.
+pub(crate) const WARM_SLOT: usize = SLOT_COUNT;
+
+pub(crate) fn model_layer(slot: usize) -> usize {
     FIRST_LAYER + 2 * slot
 }
 
-fn glow_layer(slot: usize) -> usize {
+pub(crate) fn glow_layer(slot: usize) -> usize {
     FIRST_LAYER + 2 * slot + 1
 }
 
@@ -263,13 +275,15 @@ fn glow_layer(slot: usize) -> usize {
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct TurntableSystems;
 
-/// The turntables: needs `Assets` for images, meshes, inverse bindposes and
-/// [`CharacterMaterial`] (the running TV's `CharacterShadingPlugin`, or the
-/// tests' own), [`PortalCards`] and [`ReducedMotion`].
+/// The turntables and their warm ([`crate::warm`]): needs `Assets` for
+/// images, meshes, inverse bindposes and [`CharacterMaterial`] (the running
+/// TV's `CharacterShadingPlugin`, or the tests' own), [`PortalCards`] and
+/// [`ReducedMotion`].
 pub(crate) struct TurntablePlugin;
 
 impl Plugin for TurntablePlugin {
     fn build(&self, app: &mut App) {
+        crate::warm::build(app);
         app.init_resource::<Turntables>()
             .init_resource::<FrozenYaw>()
             .init_resource::<PlateSize>()
@@ -279,6 +293,7 @@ impl Plugin for TurntablePlugin {
                     receive_shelf,
                     reconcile,
                     poll_loads,
+                    crate::warm::step,
                     follow_plates,
                     resize_targets,
                     turn,
@@ -289,7 +304,11 @@ impl Plugin for TurntablePlugin {
     }
 }
 
-fn receive_shelf(feed: Option<Res<ShelfFeed>>, mut turntables: ResMut<Turntables>) {
+fn receive_shelf(
+    feed: Option<Res<ShelfFeed>>,
+    mut turntables: ResMut<Turntables>,
+    mut warm: ResMut<Warm>,
+) {
     let Some(feed) = feed else { return };
     if let Some(shelf) = feed.0.try_iter().last() {
         info!(
@@ -299,6 +318,7 @@ fn receive_shelf(feed: Option<Res<ShelfFeed>>, mut turntables: ResMut<Turntables
             rig = shelf.rig.is_ok(),
             "turntable shelf"
         );
+        warm.start(&shelf);
         turntables.shelf = Some(shelf);
     }
 }
@@ -386,13 +406,7 @@ fn load_model(
 ) -> Result<Loaded, String> {
     let started = Instant::now();
     let rel = shelf.ir.model_path(load);
-    let model: Model = read_ir(shelf.ir, &shelf.dir.join(&rel))?;
-    if model.identity != shelf.identity {
-        return Err(format!("{rel} names another dump"));
-    }
-    if model.load_file != load {
-        return Err(format!("{rel} holds {}'s model", model.load_file));
-    }
+    let model = read_model(shelf, load)?;
     let mut images: Vec<((String, bool, Sampler), Image)> = Vec::new();
     for slot in model.materials.iter().flat_map(|m| &m.textures) {
         let key = (
@@ -420,6 +434,20 @@ fn load_model(
         framing: Framing::fit(&sweep),
         took: started.elapsed(),
     })
+}
+
+/// `load`'s model off the shelf's extract, checked to be that load file's
+/// on that dump.
+pub(crate) fn read_model(shelf: &Shelf, load: &str) -> Result<Model, String> {
+    let rel = shelf.ir.model_path(load);
+    let model: Model = read_ir(shelf.ir, &shelf.dir.join(&rel))?;
+    if model.identity != shelf.identity {
+        return Err(format!("{rel} names another dump"));
+    }
+    if model.load_file != load {
+        return Err(format!("{rel} holds {}'s model", model.load_file));
+    }
+    Ok(model)
 }
 
 /// A relative path of plain names, so a model can't send the loader outside
@@ -458,16 +486,25 @@ struct Spawner<'w, 's> {
     time: Res<'w, Time>,
 }
 
-/// A finished load becomes the slot's scene, or its portrait with why.
-fn poll_loads(mut turntables: ResMut<Turntables>, mut spawner: Spawner) {
+/// A finished load becomes the slot's scene once the pipelines it draws
+/// with are compiled (the warm draws any that aren't first), or its
+/// portrait with why.
+fn poll_loads(mut turntables: ResMut<Turntables>, mut warm: ResMut<Warm>, mut spawner: Spawner) {
     let Turntables { slots, shelf } = &mut *turntables;
     for (i, slot) in slots.iter_mut().enumerate() {
         let Some(t) = slot.as_mut() else { continue };
-        let State::Loading(task) = &mut t.state else {
-            continue;
-        };
-        let Some(result) = check_ready(task) else {
-            continue;
+        let (result, waited) = match &mut t.state {
+            State::Loading(task) => match check_ready(task) {
+                Some(result) => (result, None),
+                None => continue,
+            },
+            State::Compiling { keys, .. } if warm.covers(keys.iter()) => {
+                match std::mem::replace(&mut t.state, State::NoShelf { extracting: false }) {
+                    State::Compiling { loaded, since, .. } => (Ok(*loaded), Some(since.elapsed())),
+                    _ => unreachable!("matched as compiling"),
+                }
+            }
+            _ => continue,
         };
         let p = &t.placement;
         let scene = shelf
@@ -475,6 +512,30 @@ fn poll_loads(mut turntables: ResMut<Turntables>, mut spawner: Spawner) {
             .ok_or_else(|| "the shelf went away".to_string())
             .and_then(|s| s.rig.clone())
             .and_then(|rig| rig_scene(&rig).map_err(|e| e.to_string()));
+        // What it draws with: a key the warm hasn't compiled goes to the
+        // front of its queue and the model waits for it. A model whose
+        // keys don't resolve fails in `spawn_stage` with why.
+        if let (Ok(loaded), Ok(scene)) = (&result, &scene)
+            && let Ok(keys) = warm::keys(&loaded.model, scene)
+            && !warm.covers(keys.iter().map(|(k, _)| k))
+        {
+            warm.ask(&loaded.model, &keys, scene);
+            info!(
+                slot = i + 1,
+                figure = %p.name,
+                keys = keys.len(),
+                "the turntable waits for its pipelines to compile"
+            );
+            let Ok(loaded) = result else {
+                unreachable!("matched as read")
+            };
+            t.state = State::Compiling {
+                loaded: Box::new(loaded),
+                keys: keys.into_iter().map(|(k, _)| k).collect(),
+                since: Instant::now(),
+            };
+            continue;
+        }
         let spawned = result.and_then(|loaded| {
             let took = loaded.took;
             let load_file = loaded.model.load_file.clone();
@@ -489,6 +550,7 @@ fn poll_loads(mut turntables: ResMut<Turntables>, mut spawner: Spawner) {
                     figure = %p.name,
                     load_file,
                     read_ms = took.as_millis() as u64,
+                    compiling_ms = waited.map(|w| w.as_millis() as u64),
                     size = %stage.size,
                     "turntable up"
                 );
@@ -559,7 +621,14 @@ fn spawn_stage(
         None => Color::BLACK,
     };
     let size = s.plate.0;
-    let (camera, image) = spawn_camera(s, slot, size, &framing, backdrop);
+    let (camera, image) = spawn_camera(
+        &mut s.commands,
+        &mut s.images,
+        slot,
+        size,
+        &framing,
+        backdrop,
+    );
     Ok(Stage {
         root: spawned.root,
         joints: spawned.joints,
@@ -573,19 +642,23 @@ fn spawn_stage(
     })
 }
 
-/// The remaster's camera at `framing`, into a new image `size` big, with
-/// its glow camera.
-fn spawn_camera(
-    s: &mut Spawner,
+/// The remaster's camera at `framing` drawing `slot`'s layers (a card's,
+/// or [`WARM_SLOT`]) into a new image `size` big, with its glow camera.
+pub(crate) fn spawn_camera(
+    commands: &mut Commands,
+    images: &mut Assets<Image>,
     slot: usize,
     size: UVec2,
     framing: &Framing,
     backdrop: Color,
 ) -> (Entity, Handle<Image>) {
-    let image = s.images.add(remaster::target(size));
+    let image = images.add(remaster::target(size));
     let projection = Projection::Perspective(framing.projection());
-    let camera = s
-        .commands
+    let name = match slot {
+        WARM_SLOT => "turntable warm".to_string(),
+        _ => format!("turntable {}", slot + 1),
+    };
+    let camera = commands
         .spawn((
             remaster::camera(),
             Camera {
@@ -597,12 +670,12 @@ fn spawn_camera(
             projection.clone(),
             framing.transform(),
             RenderLayers::layer(model_layer(slot)),
-            Name::new(format!("turntable {}", slot + 1)),
+            Name::new(name),
         ))
         .id();
     spawn_glow_camera(
-        &mut s.commands,
-        &mut s.images,
+        commands,
+        images,
         camera,
         GlowView {
             size,
@@ -652,7 +725,14 @@ fn resize_targets(mut turntables: ResMut<Turntables>, mut spawner: Spawner) {
             continue;
         }
         spawner.commands.entity(stage.camera).despawn();
-        let (camera, image) = spawn_camera(&mut spawner, i, size, &stage.framing, stage.backdrop);
+        let (camera, image) = spawn_camera(
+            &mut spawner.commands,
+            &mut spawner.images,
+            i,
+            size,
+            &stage.framing,
+            stage.backdrop,
+        );
         (stage.camera, stage.image, stage.size) = (camera, image, size);
     }
 }
@@ -728,7 +808,10 @@ pub(crate) mod tests {
     }
 
     /// A made-up model on `load`: a quad on two joints, a colour map alone,
-    /// a two-key idle swaying the top joint.
+    /// a two-key idle swaying the top joint. `002_two`'s also draws a
+    /// blended, two-sided, alpha-tested material with normal and spec maps
+    /// on a quad with vertex colours, and its first material on one too, so
+    /// the two models draw three keys between them (AE.14's warm list).
     pub(crate) fn model(load: &str) -> Model {
         let joint = |name: &str, parent, y: f32| model::Joint {
             name: name.into(),
@@ -798,6 +881,51 @@ pub(crate) mod tests {
                 spline: None,
             },
         };
+        let quad = |material: u16, colours: bool| Segment {
+            material,
+            source: 1,
+            positions: vec![
+                [-0.5, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [-0.5, 2.0, 0.0],
+                [0.5, 2.0, 0.0],
+            ],
+            normals: vec![[0.0, 0.0, 1.0]; 4],
+            tangents: Some(vec![[1.0, 0.0, 0.0, 1.0]; 4]),
+            uvs: vec![vec![[0.0, 1.0], [1.0, 1.0], [0.0, 0.0], [1.0, 0.0]]],
+            colors: colours.then(|| vec![[200, 128, 64, 255]; 4]),
+            joints: vec![[0, 0, 0, 0], [0, 0, 0, 0], [1, 0, 0, 0], [1, 0, 0, 0]],
+            weights: vec![[255, 0, 0, 0]; 4],
+            indices: vec![0, 1, 2, 2, 1, 3],
+        };
+        let (materials, segments) = if load == "002_two" {
+            let mut fins = material.clone();
+            fins.name = "made_up_fins".into();
+            fins.pixel.base = 0x18;
+            fins.vertex.base = 0x18;
+            for role in [
+                TextureRole::Layer1BaseNormalMap,
+                TextureRole::Layer1BaseSpecMap,
+            ] {
+                fins.textures.push(TextureSlot {
+                    role,
+                    ..fins.textures[0].clone()
+                });
+            }
+            fins.states = RenderStates {
+                blend: Blend::Alpha,
+                depth_write: false,
+                two_sided: true,
+                alpha_test: Some(0.5),
+            };
+            fins.params.glow = Glow::None;
+            (
+                vec![material, fins],
+                vec![quad(0, false), quad(1, true), quad(0, true)],
+            )
+        } else {
+            (vec![material], vec![quad(0, false)])
+        };
         Model {
             identity: identity(),
             load_file: load.into(),
@@ -805,24 +933,8 @@ pub(crate) mod tests {
             skeleton: model::Skeleton {
                 joints: vec![joint("foot", None, 0.0), joint("top", Some(0), 2.0)],
             },
-            materials: vec![material],
-            segments: vec![Segment {
-                material: 0,
-                source: 1,
-                positions: vec![
-                    [-0.5, 0.0, 0.0],
-                    [0.5, 0.0, 0.0],
-                    [-0.5, 2.0, 0.0],
-                    [0.5, 2.0, 0.0],
-                ],
-                normals: vec![[0.0, 0.0, 1.0]; 4],
-                tangents: Some(vec![[1.0, 0.0, 0.0, 1.0]; 4]),
-                uvs: vec![vec![[0.0, 1.0], [1.0, 1.0], [0.0, 0.0], [1.0, 0.0]]],
-                colors: None,
-                joints: vec![[0, 0, 0, 0], [0, 0, 0, 0], [1, 0, 0, 0], [1, 0, 0, 0]],
-                weights: vec![[255, 0, 0, 0]; 4],
-                indices: vec![0, 1, 2, 2, 1, 3],
-            }],
+            materials,
+            segments,
             idle: Clip {
                 name: "MadeUp_Idle.ma".into(),
                 duration: 1.0,
@@ -935,7 +1047,7 @@ pub(crate) mod tests {
             .add_plugins(TurntablePlugin);
     }
 
-    fn app(shelf: Shelf) -> App {
+    pub(crate) fn app(shelf: Shelf) -> App {
         let mut app = App::new();
         app.add_plugins((
             MinimalPlugins,
@@ -950,7 +1062,7 @@ pub(crate) mod tests {
         app
     }
 
-    fn set(app: &mut App, changes: impl IntoIterator<Item = PortalChange>) {
+    pub(crate) fn set(app: &mut App, changes: impl IntoIterator<Item = PortalChange>) {
         let cards = app
             .world()
             .resource::<PortalCards>()
@@ -975,7 +1087,7 @@ pub(crate) mod tests {
         }
     }
 
-    fn states(app: &App) -> Vec<Option<&'static str>> {
+    pub(crate) fn states(app: &App) -> Vec<Option<&'static str>> {
         let t = app.world().resource::<Turntables>();
         (0..8)
             .map(|s| t.card_state(s).map(CardState::name))

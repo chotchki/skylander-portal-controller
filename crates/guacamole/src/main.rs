@@ -29,6 +29,7 @@ mod title;
 mod turntable;
 mod tv;
 mod video;
+mod warm;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

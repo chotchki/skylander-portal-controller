@@ -1848,7 +1848,11 @@ TV, on Bevy's Metal backend. What that means now:
   below is the HTPC's).
 - Synchronous pipeline compiles. macOS compiles each render pipeline inside the frame that first needs it,
   so a material or a post effect seen for the first time hitches. Every material and post effect a scene
-  needs gets pre-warmed at load, and on the target machine that's a requirement, not polish.
+  needs gets pre-warmed at load, and on the target machine that's a requirement, not polish. Measured at
+  AE.14 on the M3 Max: macOS keeps what it compiles in a per-user shader cache, so a pipeline is slow
+  only the first time a Mac compiles it (one start's 45 UI pipelines took a 3.39 s frame; the same 45
+  took 90-133 ms on every start after), and with the turntables' warm no placement's frame passed
+  37.2 ms on a warm cache. A cold cache under load is AE.23's.
 - An open macOS rendering-corruption bug to watch
   ([bevy #25595](https://github.com/bevyengine/bevy/issues/25595)).
 - Not measured: a frame with CSM, SSAO, TAA and bloom at the TV's resolution on the M3 Max. AE measures it
@@ -2088,6 +2092,14 @@ design decision 14) draw a placed character's own model in its bezel's plate, wh
 - The extraction hands the TV a `Shelf` (the extract's folder, each character figure's load file, what
   the model stage reported, the sprite rig) once the models are in: guac-extract's `ModelsReady`, ahead
   of the intros, or a current extract at start or on the pick. A model reads on a task, off the frame.
+- The warm ([`warm.rs`](../../crates/guacamole/src/warm.rs); AE.14, decision 15): whenever a shelf lands,
+  every model on it is read on a task for the pipelines it draws (a material's key on its mesh's vertex
+  layout, the glow pass's alongside; the roster's 67 models draw 33), and a hidden turntable on the
+  render layers past the eight slots' draws them one a frame, the render world confirming each one
+  compiled. A card whose model is read waits on its portrait until every pipeline it draws is compiled,
+  the warm taking those first, so no model comes up on a pipeline macOS would compile in that frame.
+  `/api/_test/tv` reports the warm (`warm`: state, keys, compiled, failed, took) and
+  `/api/_test/tv/frames` hands out the TV's frame times, each with the pipelines compiled in it.
 - The portrait shows while the model loads (or the extract is still making it) and stays for good when
   there's no model to show: a figure with no character model on the disc, one the model stage reported,
   one that won't read. Each is logged by figure and why; `/api/_test/tv` mirrors every card's `state`
