@@ -264,7 +264,10 @@ fn the_o_verbs_run_ac13s_scenario_unattended() {
 
     // ---- SAVESTATE, reboot, RECONNECT ------------------------------------
     let t = Instant::now();
-    let saved = control.savestate(&out, Duration::from_secs(600)).unwrap();
+    // RPCS3 can turn a save down after the capture's long pause (review,
+    // 2026-10-18: "failed to lock SPU threads execution"), so 30 flips on, again.
+    let saved =
+        common::savestate_retrying(&control, &out, Duration::from_secs(600), 30, 3, &mut rec);
     let head = std::fs::read(&saved.path).unwrap();
     rec.line(format!(
         "SAVESTATE at frame {}: {} ({} bytes, starts {:02x?}), rebooted to {} frames={} in {:.1} s",

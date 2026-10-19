@@ -157,7 +157,7 @@ fn the_rng_census_peek_seed_and_distance_hold_in_a_fresh_gameplay_state() {
     let (booted, _) = peek_at(&mut pine, held.frames);
     let booted_origin = origin(&booted);
     rec.line(format!(
-        "AF.5's state at its pause, flip {}: {}; seeded {}, {} drawn since",
+        "the booted state at its pause, flip {}: {}; seeded {}, {} drawn since",
         held.frames,
         booted.summary(),
         booted_origin.seed,

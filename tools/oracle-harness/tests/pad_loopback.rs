@@ -761,6 +761,41 @@ fn a_full_schedule_refuses_one_more_entry_but_takes_a_replacement() {
 }
 
 #[test]
+fn a_load_refused_part_way_leaves_the_host_not_half_a_script() {
+    let fake = spawn();
+    fake.set(|e| e.max_entries = 2);
+    let at = pause(&fake);
+    // Port 0's third entry is one past the room: the first two went in.
+    let script = InputScript::from_ron(
+        "(steps: [
+            (at: 0, pads: {0: (buttons: [South]), 1: (buttons: [East])}),
+            (at: 5, pads: {0: ()}),
+            (at: 9, pads: {0: (buttons: [North])}),
+        ])",
+    )
+    .unwrap();
+    let err = fake.control.load_script(&script).unwrap_err();
+    assert_eq!(refusal(err), Refusal::Full);
+    assert!(
+        fake.emu
+            .lock()
+            .unwrap()
+            .schedule
+            .iter()
+            .all(BTreeMap::is_empty),
+        "a failed load left part of its script behind"
+    );
+    // Run past where the script would have pressed: the guest read the host.
+    fake.control.pause_at(at + 12, WAIT).unwrap();
+    for port in 0..2 {
+        for flip in at + 1..=at + 12 {
+            let read = fake.control.pad_state(port, Some(flip)).unwrap().unwrap();
+            assert_eq!(read.pad, Ds3Pad::REST, "port {port} flip {flip}");
+        }
+    }
+}
+
+#[test]
 fn many_lines_share_one_connection() {
     let fake = spawn();
     let at = pause(&fake);

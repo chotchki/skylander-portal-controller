@@ -264,7 +264,9 @@ fn run_verb(verb: &str, socket: &std::path::Path, rest: &[&str]) -> Result<()> {
             );
         }
         ("savestate", ["--out", dir]) => {
-            let control = Control::new(socket, &config_dir()?);
+            let home = OracleHome::open(&required(env::ORACLE_HOME)?)?;
+            let control = Control::new(socket, &home.config_dir())
+                .with_log(home.cache_dir().join("RPCS3.log"));
             let saved = control.savestate(dir.as_ref(), wait)?;
             control.driver().reconnect()?;
             println!(

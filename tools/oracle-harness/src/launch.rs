@@ -258,6 +258,8 @@ pub struct Oracle {
     driver: IpcPortalDriver,
     render_env: Vec<(String, String)>,
     config_dir: PathBuf,
+    /// RPCS3's log, `RPCS3.log` in the home's cache dir.
+    log: PathBuf,
 }
 
 /// Boots the oracle at `exe` from `home` after the preflight, in a fresh run
@@ -287,6 +289,7 @@ pub fn boot(exe: &Path, home: &OracleHome, opts: &BootOptions) -> Result<Oracle>
         driver,
         render_env,
         config_dir: home.config_dir(),
+        log: home.cache_dir().join("RPCS3.log"),
     })
 }
 
@@ -337,9 +340,9 @@ impl Oracle {
     }
 
     /// The O-verbs on this run's socket, with the home's RPCS3 config dir to
-    /// find what they make RPCS3 write.
+    /// find what they make RPCS3 write and RPCS3's log to see a save turned down.
     pub fn control(&self) -> Control {
-        Control::new(&self.run.p1_socket, &self.config_dir)
+        Control::new(&self.run.p1_socket, &self.config_dir).with_log(&self.log)
     }
 
     pub fn pid(&self) -> u32 {

@@ -55,7 +55,10 @@ impl Control {
     /// [`Control::load_script`] with offset 0 at `base`, which has to be ahead
     /// of the paused counter. The run has to hold still throughout: a `STATE`
     /// that moves between the first line and the last fails the load, since an
-    /// entry could then have raced the guest's reads.
+    /// entry could then have raced the guest's reads. A load that fails once
+    /// lines have gone out sends `PAD_CLEAR` again, so a refusal part way (or a
+    /// run that moved) leaves the host's input, not part of the script; the
+    /// error says so when that clear fails too.
     pub fn load_script_at(&self, script: &InputScript, base: u64) -> Result<Loaded> {
         let before = self.state()?;
         if before.status != "paused" {
@@ -73,12 +76,25 @@ impl Control {
         }
         let mut verbs = vec![Verb::PadClear];
         verbs.extend(script_verbs(script, base)?);
-        for (verb, reply) in verbs.iter().zip(self.verbs().send_all(&verbs)?) {
-            reply.with_context(|| format!("loading the script: {}", verb.encode().trim_end()))?;
-        }
-        let after = self.state()?;
-        if after != before {
-            bail!("the run moved while the script loaded: {before:?} -> {after:?}");
+        let sent = (|| {
+            for (verb, reply) in verbs.iter().zip(self.verbs().send_all(&verbs)?) {
+                reply
+                    .with_context(|| format!("loading the script: {}", verb.encode().trim_end()))?;
+            }
+            let after = self.state()?;
+            if after != before {
+                bail!("the run moved while the script loaded: {before:?} -> {after:?}");
+            }
+            Ok(())
+        })();
+        if let Err(err) = sent {
+            return Err(match self.verbs().send(Verb::PadClear) {
+                Ok(_) => err,
+                Err(clear) => err.context(format!(
+                    "PAD_CLEAR after the failed load failed too ({clear:#}): part of the \
+                     script may still be loaded"
+                )),
+            });
         }
         Ok(Loaded {
             base,

@@ -5,6 +5,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use oracle_harness::control::{Control, SAVESTATE_REFUSED, Saved};
 use oracle_harness::env;
 use oracle_harness::home::{self, InitOptions, OracleHome};
 use oracle_harness::launch::Oracle;
@@ -246,4 +247,34 @@ pub fn pine_connect(socket: &Path) -> PineClient {
             Err(_) => std::thread::sleep(Duration::from_millis(250)),
         }
     }
+}
+
+/// `SAVESTATE`, tried again `step` flips on when RPCS3 turns it down
+/// ([`SAVESTATE_REFUSED`]: an SPU asleep in an unsavable call for 5 s or more
+/// can't be locked, and a long pause counts toward that), up to `tries` times,
+/// each refusal recorded. The state is then from a later flip than asked:
+/// `Saved::saved_at` says which.
+#[allow(dead_code)] // the live tests that save
+pub fn savestate_retrying(
+    control: &Control,
+    out: &Path,
+    timeout: Duration,
+    step: u64,
+    tries: u32,
+    rec: &mut Record,
+) -> Saved {
+    for attempt in 1.. {
+        match control.savestate(out, timeout) {
+            Ok(saved) => return saved,
+            Err(e) if attempt < tries && format!("{e:#}").contains(SAVESTATE_REFUSED) => {
+                rec.line(format!(
+                    "SAVESTATE turned down, try {attempt} of {tries}: {e:#}"
+                ));
+                let at = control.state().unwrap().frames + step;
+                control.pause_at(at, timeout).unwrap();
+            }
+            Err(e) => panic!("SAVESTATE, try {attempt} of {tries}: {e:#}"),
+        }
+    }
+    unreachable!()
 }

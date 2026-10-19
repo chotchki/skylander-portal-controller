@@ -6,7 +6,8 @@
 //! written with a pause before that frame's flip (one flip on from where it was
 //! armed), a screenshot taken by the next present (or at once while paused, RSX's
 //! native-UI flip), and a savestate that stops, writes its file, boots again and
-//! holds at Start Paused's 2 flips. With the gate off every verb is
+//! holds at Start Paused's 2 flips, or that RPCS3 turns down after its `OK`,
+//! saying why only in its log. With the gate off every verb is
 //! `ERR unknown_cmd`. It's the executable spec the live binary has to match;
 //! `live_verbs` checks it does.
 
@@ -28,6 +29,9 @@ const TITLE: &str = "BLUS30968";
 const FLIP: Duration = Duration::from_millis(2);
 /// The fake's SCREENSHOT wait; O3 waits 5 s.
 const SHOT_WAIT: Duration = Duration::from_millis(300);
+/// The line RPCS3 logged when it turned `live_verbs`' save down (review, 2026-10-18).
+const REFUSED_LINE: &str = "\u{b7}E 0:02:09.473813 {Savestate Prepare Thread} SYS: Failed to savestate: \
+                            failed to lock SPU threads execution.\n";
 const WAIT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +85,9 @@ struct Emu {
     /// How long RPCS3's teardown takes before the state file lands; a test
     /// lengthens it to send a verb into the stop.
     stop_for: Duration,
+    /// RPCS3 turns every save down after `SAVESTATE`'s `OK`, logging why (an
+    /// SPU it can't lock, say) and leaving the run where it was.
+    refuses_saves: bool,
     config_dir: PathBuf,
     written: u32,
 }
@@ -101,6 +108,7 @@ impl Emu {
             shot_flag: false,
             presents: true,
             stop_for: Duration::from_millis(30),
+            refuses_saves: false,
             config_dir: config_dir.to_path_buf(),
             written: 0,
         }
@@ -248,6 +256,20 @@ fn handle(emu: &Arc<Mutex<Emu>>, line: &str) -> String {
         "SAVESTATE" => {
             if !matches!(e.status, Status::Running | Status::Paused) {
                 return "ERR not_running\n".into();
+            }
+            if e.refuses_saves {
+                // `Emulator::Kill`'s prepare thread, on its own, a moment later.
+                let log = e.config_dir.join("RPCS3.log");
+                thread::spawn(move || {
+                    thread::sleep(Duration::from_millis(20));
+                    let mut f = std::fs::OpenOptions::new()
+                        .append(true)
+                        .create(true)
+                        .open(log)
+                        .unwrap();
+                    f.write_all(REFUSED_LINE.as_bytes()).unwrap();
+                });
+                return "OK\n".into();
             }
             e.status = Status::Stopping;
             let emu = Arc::clone(emu);
@@ -634,6 +656,42 @@ fn a_savestate_reboots_to_start_paused_and_a_target_dies_with_its_session() {
     control.resume().unwrap();
     let on = control.wait_state(WAIT, |s| s.frames > at + 60).unwrap();
     assert_eq!(on.status, "running", "nothing paused it at the dead target");
+}
+
+#[test]
+fn a_savestate_rpcs3_turns_down_fails_at_once_with_its_reason() {
+    let fake = spawn();
+    let log = fake.config_dir.path().join("RPCS3.log");
+    // A refusal from before this save is history, not this save's answer.
+    std::fs::write(&log, REFUSED_LINE).unwrap();
+    let control = fake.control().with_log(&log);
+    let out = tempfile::tempdir().unwrap();
+    let at = control.state().unwrap().frames + 10;
+    control.pause_at(at, WAIT).unwrap();
+
+    fake.set(|e| e.refuses_saves = true);
+    let asked = Instant::now();
+    let err = control
+        .savestate(out.path(), Duration::from_secs(30))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        asked.elapsed() < Duration::from_secs(5),
+        "waited {:?} on a save RPCS3 had turned down",
+        asked.elapsed()
+    );
+    assert!(
+        err.contains("failed to lock SPU threads execution") && err.contains(&at.to_string()),
+        "{err}"
+    );
+    let state = control.state().unwrap();
+    assert_eq!((state.status.as_str(), state.frames), ("paused", at));
+    assert!(std::fs::read_dir(out.path()).unwrap().next().is_none());
+
+    // Once RPCS3 takes one, the save goes through, two refusals in the log.
+    fake.set(|e| e.refuses_saves = false);
+    let saved = control.savestate(out.path(), WAIT).unwrap();
+    assert_eq!((saved.saved_at.frames, saved.rebooted.frames), (at, 2));
 }
 
 #[test]

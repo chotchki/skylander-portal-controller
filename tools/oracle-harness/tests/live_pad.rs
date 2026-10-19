@@ -337,8 +337,12 @@ fn frame_locked_input_reaches_the_guest_on_both_ports_and_steps_a_menu_like_p6()
         step_pad > 0.2 && step_p6 > 0.2,
         "a press didn't step the menu"
     );
+    // One screen against itself moves with the menu's light rays (4.3-9.1% in
+    // the runs so far), a step about half the frame: "the same screen" is under
+    // half the smaller step, not a fixed share the rays can reach.
+    let same = step_pad.min(step_p6) / 2.0;
     assert!(
-        same_menu < 0.1 && same_step < 0.1,
+        same_menu < same && same_step < same,
         "PAD's step and P6's landed on different screens"
     );
 
