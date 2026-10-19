@@ -284,13 +284,22 @@ mod tests {
 
         /// The next change the TV hears, waiting up to 30 s. A pass returns
         /// as soon as it arrives; 5 s timed out once at load 9.8 with the
-        /// workspace's other test binaries running.
+        /// workspace's other test binaries running, and the reset test once
+        /// timed out at 30 s too (load 15-20), so a timeout says what the
+        /// driver holds and whether it dropped a change.
         async fn next(&self) -> PortalChange {
             let tv = self.tv.clone();
-            tokio::task::spawn_blocking(move || tv.recv_timeout(Duration::from_secs(30)))
-                .await
-                .unwrap()
-                .expect("the TV heard nothing")
+            let heard =
+                tokio::task::spawn_blocking(move || tv.recv_timeout(Duration::from_secs(30)))
+                    .await
+                    .unwrap();
+            heard.unwrap_or_else(|e| {
+                panic!(
+                    "the TV heard nothing ({e}); the driver holds {:?}, dropped {}",
+                    self.driver.read_slots(),
+                    self.driver.dropped()
+                )
+            })
         }
     }
 
