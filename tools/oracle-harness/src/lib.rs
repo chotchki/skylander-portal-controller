@@ -4,8 +4,9 @@
 //! verbs ([`verbs`], as run steps in [`control`]), the frame-locked input that
 //! loads an input script ([`pad`]), the PINE client that reads and writes
 //! guest memory ([`pine`]), a word search over it ([`scan`]), Giants'
-//! random number generators read and written through it ([`rng`]) and its
-//! actors and camera read through it ([`actors`]).
+//! random number generators read and written through it ([`rng`]), its
+//! actors and camera read through it ([`actors`]) and the divergence
+//! measurement built on all of them ([`divergence`]).
 //!
 //! It never writes inside a work tree of this repo: every path it creates goes
 //! through `rrc_dump::output::refuse_repo_output` first, because what an oracle
@@ -19,6 +20,7 @@
 
 pub mod actors;
 pub mod control;
+pub mod divergence;
 pub mod env;
 pub mod home;
 pub mod identity;

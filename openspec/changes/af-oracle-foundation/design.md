@@ -83,6 +83,8 @@ As built (AF.8): the census found one generator, `tfbApplication::_random`, seed
 - Two sets of 10 replays per script: A observes only at the end flip, B every 60 flips. A's spread against B's at the end flip says whether pausing to observe moves the run.
 - Output: one JSON per run under `GUAC_CAPTURE_DIR`, each with the identity line, plus a summary: per observable and checkpoint the min, max, median and spread, the usable horizon, RNG distances, FLIP between every pair of end screenshots and set A's end-of-run savestates diffed region by region with the research dir's parser (outside the repo; recorded, never gated, since timers and pointers differ by construction).
 
+As built (AF.11): `oracle divergence run|report` (`oracle_harness::divergence`). F0 is observed in both sets, inside the pause every replay takes; the replays run interleaved (replay k of every script and set before replay k + 1), so other lanes' load lands on all four groups alike; a failed try is kept beside its error and run again. The walk is at rest 60 flips, the stick forward 90, left 90 (into the gate's corner), then a jump and an attack press, at rest to the end; it has no jump or attack while moving, since AF.9 had shown only the stick. The answer to the risk below that pausing to observe moves the run: it does (a pause every 60 flips adds RNG draws and shifts where the camera comes to rest), so a comparison checkpoints both sides on the same schedule or observes only at its end. Each horizon and spread is in AF.11's tick.
+
 **8. Observables, and where each comes from.**
 - Flip counter and emulator status: P1's `STATE`.
 - RNG: the census instances through PINE (decision 4), equal or k draws apart.
