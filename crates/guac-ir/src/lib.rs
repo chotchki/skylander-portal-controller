@@ -9,8 +9,10 @@
 
 #![forbid(unsafe_code)]
 
+pub mod actor;
 mod characters;
 pub mod clip;
+pub mod hero;
 mod identity;
 pub mod model;
 pub mod rig;
@@ -19,6 +21,7 @@ pub mod shading;
 
 pub use characters::{Character, CharacterArchive, CharacterTable, Intro, IntroSource, VoiceTrack};
 pub use clip::Clip;
+pub use hero::Hero;
 pub use identity::{DumpIdentity, Sha256};
 pub use model::Model;
 pub use rig::{Rig, RigLight};
@@ -28,9 +31,11 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// The IR's shape version. Any change to a serialized type bumps it. v2
-/// (AE.2) adds the disc's roster, and AE.6 the models, their clips and the
-/// 3D-UI rig, new files beside it before any v2 extract had shipped (the
-/// extract's layout version, which they change, made those re-extract).
+/// (AE.2) adds the disc's roster, AE.6 the models, their clips and the
+/// 3D-UI rig, and AG.14 the hero side (placements' solids and movement,
+/// the locomotion clips): new files beside unchanged ones, so each time the
+/// extract's layout version, not this one, made older extracts redo
+/// themselves.
 pub const IR_VERSION: u32 = 2;
 
 #[derive(Debug, thiserror::Error)]

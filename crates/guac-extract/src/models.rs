@@ -8,9 +8,17 @@
 //! in bind pose, skinned to Havok's joints by name with Alchemy's inverse
 //! joints (AC.17), each technique's tfbmulti2 material read by
 //! [`guac_formats::material`], and slot 0's idle as its spline data.
+//!
+//! Beside it the hero side (AG.14, design decisions 8 and 14), a [`Hero`]:
+//! the placement the archive plays the character as, with its solid and
+//! disc movement parameters, and the clips in the animation set's
+//! locomotion slots. A character whose hero doesn't settle keeps its model
+//! and is reported; it doesn't walk.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+use std::time::{Duration, Instant};
 
 use guac_formats::FormatError;
 use guac_formats::edge::{BoneMap, Segment as EdgeSegment, Semantic};
@@ -18,16 +26,20 @@ use guac_formats::havok::spline::{Channel, QuatTrack, VecTrack as HavokVecTrack}
 use guac_formats::havok::{self, QsTransform};
 use guac_formats::iga::Archive;
 use guac_formats::igz::Igz;
-use guac_formats::igz::layouts::{DirectionalLightInfo, TextureAttr2, read_all};
+use guac_formats::igz::layouts::{
+    ActorParameters, CollisionInfo, DirectionalLightInfo, Shape as FShape, TextureAttr2, read_all,
+};
 use guac_formats::material::{self, Blend as FBlend, Role};
-use guac_formats::model::{self as fmodel, JointMap};
+use guac_formats::model::{self as fmodel, JointMap, PortalModel};
 use guac_formats::texture::Texture;
+use guac_ir::actor::{Movement, Shape, Solid};
 use guac_ir::clip::{Clip, RotationTrack, Track, VecSpline, VecTrack};
+use guac_ir::hero::{Gait, Locomotion, SlotClip};
 use guac_ir::model::{
     Blend, Filter, Joint, Mask, Material, Params, RenderStates, Sampler, Scroll, Segment, Skeleton,
     TextureRole, TextureSlot, Transform, Wrap,
 };
-use guac_ir::{Category, DumpIdentity, Model, Rig, RigLight, Roster, Sha256};
+use guac_ir::{Category, DumpIdentity, Hero, Model, Rig, RigLight, Roster, Sha256};
 use sha2::Digest;
 
 use crate::roster::{GLOBAL, LEVEL};
@@ -37,6 +49,16 @@ use crate::{ExtractError, Result};
 pub const MODEL_DIR: &str = "models";
 /// Where textures go, one `<sha256>.ktx2` per distinct file.
 pub const TEXTURE_DIR: &str = "textures";
+/// Where the hero side goes, one `<load file>.<ron|postcard>` each (AG.14).
+pub const HERO_DIR: &str = "heroes";
+/// Each gait's slot in the animation set ([`guac_formats::model`]'s).
+pub const GAITS: [(Gait, usize); 5] = [
+    (Gait::Walk, fmodel::WALK_SLOT),
+    (Gait::Jog, fmodel::JOG_SLOT),
+    (Gait::Run, fmodel::RUN_SLOT),
+    (Gait::Falling, fmodel::FALL_SLOT),
+    (Gait::Landing, fmodel::LANDING_SLOT),
+];
 /// The folder holding the character archives, under `PS3_GAME/USRDIR`.
 pub const CHARACTER_DIR: &str = "character";
 /// The rig's lights in `global.bld`, in order: key, fill, back.
@@ -51,6 +73,11 @@ pub struct Extracted {
     pub textures: Vec<(String, Vec<u8>)>,
     /// Texture binds over every material, distinct or not.
     pub binds: usize,
+    /// The hero side, or why it didn't settle
+    /// ([`ExtractError::HeroUnsettled`]'s message).
+    pub hero: std::result::Result<Hero, String>,
+    /// What reading the hero side took, of the whole read.
+    pub hero_took: Duration,
 }
 
 /// The character load files a roster names, in roster order: each figure
@@ -105,7 +132,7 @@ pub fn level(archive: &[u8], name: &str) -> Result<Vec<u8>> {
     Ok(arc.read(entry).map_err(|e| refused(name, e))?.into_owned())
 }
 
-/// The model `load_file`'s archive level holds.
+/// The model `load_file`'s archive level holds, and its hero side.
 pub fn read(level: &[u8], load_file: &str, identity: DumpIdentity) -> Result<Extracted> {
     let bad = |e: FormatError| refused(load_file, e);
     let igz = Igz::parse(level).map_err(bad)?;
@@ -166,6 +193,10 @@ pub fn read(level: &[u8], load_file: &str, identity: DumpIdentity) -> Result<Ext
             segments.push(seg);
         }
     }
+    let started = Instant::now();
+    let hero = self::hero(&igz, &portal, &havok_skeleton, load_file, identity.clone())
+        .map_err(|e| e.to_string());
+    let hero_took = started.elapsed();
     Ok(Extracted {
         model: Model {
             identity,
@@ -178,7 +209,116 @@ pub fn read(level: &[u8], load_file: &str, identity: DumpIdentity) -> Result<Ext
         },
         textures,
         binds,
+        hero,
+        hero_took,
     })
+}
+
+/// The hero side of `portal`'s character: its placement
+/// ([`fmodel::hero_actor`]) with its solid and movement, and each gait's
+/// slot clip on `skeleton`. An empty slot is a gait the character lacks;
+/// it doesn't settle without an actor, its parameters, a walk or a run to
+/// move in and a falling clip, or with a slot holding something other than
+/// a full NORMAL clip on its skeleton.
+pub fn hero(
+    igz: &Igz<'_>,
+    portal: &PortalModel<'_>,
+    skeleton: &havok::Skeleton<'_>,
+    load_file: &str,
+    identity: DumpIdentity,
+) -> Result<Hero> {
+    let unsettled = |reason: String| ExtractError::HeroUnsettled {
+        load_file: load_file.to_owned(),
+        reason,
+    };
+    let actor = fmodel::hero_actor(igz, portal, load_file).map_err(|e| unsettled(e.to_string()))?;
+    let name = actor.name().unwrap_or_default();
+    let collision = actor
+        .collision
+        .ok_or_else(|| unsettled(format!("{name} has no CollisionInfo")))?;
+    let parameters = actor
+        .parameters
+        .ok_or_else(|| unsettled(format!("{name} has no ActorParameters")))?;
+    let mut locomotion = Locomotion {
+        walk: None,
+        jog: None,
+        run: None,
+        falling: None,
+        landing: None,
+    };
+    for (gait, slot) in GAITS {
+        let c = fmodel::slot_clip(igz, &portal.hero, skeleton, slot)
+            .map_err(|e| unsettled(format!("its {gait:?} clip (slot {slot}): {e}")))?;
+        *locomotion.get_mut(gait) = c.map(|c| SlotClip {
+            slot: slot as u16,
+            label: c.label.map(str::to_owned),
+            clip: clip(&c.clip, c.file.unwrap_or_default()),
+        });
+    }
+    if locomotion.walk.is_none() && locomotion.run.is_none() {
+        return Err(unsettled(
+            "neither a walk (slot 1) nor a run (slot 3) to move in".into(),
+        ));
+    }
+    if locomotion.falling.is_none() {
+        return Err(unsettled("no falling clip (slot 57)".into()));
+    }
+    Ok(Hero {
+        identity,
+        load_file: load_file.to_owned(),
+        actor: name.to_owned(),
+        scale: actor.placement().scale,
+        solid: solid(&collision),
+        movement: movement(&parameters),
+        locomotion,
+    })
+}
+
+/// A `CollisionInfo` as the IR keeps it, field for field.
+pub fn solid(c: &CollisionInfo<'_>) -> Solid {
+    Solid {
+        shape: match c.shape() {
+            FShape::None => Shape::None,
+            FShape::Box => Shape::Box,
+            FShape::Capsule => Shape::Capsule,
+            FShape::Sphere => Shape::Sphere,
+            FShape::Cylinder => Shape::Cylinder,
+            FShape::Mesh => Shape::Mesh,
+        },
+        solid: c.is_solid(),
+        world: c.interacts_with_world(),
+        actor_surface: c.is_actor_surface(),
+        offset: c.transform.position,
+        rotation: c.transform.rotation,
+        width: c.width,
+        height: c.height,
+        length: c.length,
+        weight: c.weight,
+        rebound: c.rebound,
+    }
+}
+
+/// `ActorParameters` as the IR keeps them, field for field.
+pub fn movement(a: &ActorParameters<'_>) -> Movement {
+    let p = &a.parameters;
+    Movement {
+        ground_max_speed: p.ground_max_speed,
+        ground_acceleration: p.ground_acceleration,
+        ground_deceleration: p.ground_deceleration,
+        ground_turn_rate: p.ground_turn_rate,
+        air_max_speed: p.air_max_speed,
+        air_acceleration: p.air_acceleration,
+        air_deceleration: p.air_deceleration,
+        air_turn_rate: p.air_turn_rate,
+        gravity_max_speed: p.gravity_max_speed,
+        gravity_acceleration: p.gravity_acceleration,
+        jump_max_speed: p.jump_max_speed,
+        jump_acceleration: p.jump_acceleration,
+        jump_initial_speed: p.jump_initial_speed,
+        motion_type: p.motion_type,
+        tilts_with_ground: p.tilts_with_ground,
+        time_scale: a.object_time_scale,
+    }
 }
 
 /// `textures/<sha256 of the KTX2>.ktx2`: equal files share one name.

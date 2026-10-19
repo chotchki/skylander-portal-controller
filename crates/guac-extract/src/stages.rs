@@ -1,14 +1,15 @@
-//! The extraction's stages in guacamole's order (openspec AE.3 and AE.6,
-//! design decision 5). Identity is [`crate::open`], the caller's; then the
-//! roster with its portraits, then the character models with their textures
-//! and the 3D-UI rig, then ffmpeg is looked for and the intros are indexed
-//! and transcoded. The roster lands first so a phone can place figures while
-//! the rest runs, and the intros are the only thing a missing or unusable
-//! ffmpeg costs. A model that won't read is reported and its figures keep
-//! their portraits; the others extract. Every file goes through the identity
-//! dir's per-file resume, and the manifest is marked complete only once
-//! every stage is done, so a run that stopped anywhere picks up on the next
-//! start.
+//! The extraction's stages in guacamole's order (openspec AE.3, AE.6 and
+//! AG.14, design decision 5). Identity is [`crate::open`], the caller's; then
+//! the roster with its portraits, then the character models with their
+//! textures, each with its hero side, and the 3D-UI rig, then ffmpeg is
+//! looked for and the intros are indexed and transcoded. The roster lands
+//! first so a phone can place figures while the rest runs, and the intros
+//! are the only thing a missing or unusable ffmpeg costs. A model that won't
+//! read is reported and its figures keep their portraits; a hero side that
+//! doesn't settle is reported and its model stays; the others extract. Every
+//! file goes through the identity dir's per-file resume, and the manifest is
+//! marked complete only once every stage is done, so a run that stopped
+//! anywhere picks up on the next start.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -66,13 +67,14 @@ pub struct RosterStage {
     pub took: Duration,
 }
 
-/// A character model that didn't extract: its figures keep their
-/// portraits.
+/// A character model that didn't extract (its figures keep their
+/// portraits), or a hero side that didn't settle (its figures don't walk).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelFailure {
     /// The load file, or `ir/rig` when the rig didn't read.
     pub load_file: String,
-    /// [`ExtractError::ModelUnreadable`]'s message.
+    /// [`ExtractError::ModelUnreadable`]'s or
+    /// [`ExtractError::HeroUnsettled`]'s message.
     pub reason: String,
 }
 
@@ -81,6 +83,13 @@ pub struct ModelStage {
     /// Character load files whose model is in the extract.
     pub models: usize,
     pub failed: Vec<ModelFailure>,
+    /// Of those, the ones whose hero side is in it too (AG.14), and the
+    /// ones whose hero didn't settle.
+    pub heroes: usize,
+    pub unsettled: Vec<ModelFailure>,
+    /// Of [`ModelStage::took`], what reading and writing the hero sides
+    /// took.
+    pub heroes_took: Duration,
     /// Distinct texture files, and texture binds over every material.
     pub textures: usize,
     pub binds: usize,
@@ -130,10 +139,12 @@ pub fn run(
 }
 
 /// Each character load file `roster` names, its model into
-/// `models/<load file>.<ron|postcard>` and its textures into
-/// `textures/<sha256>.ktx2`, then `global.bld`'s rig into
+/// `models/<load file>.<ron|postcard>`, its textures into
+/// `textures/<sha256>.ktx2` and its hero side into
+/// `heroes/<load file>.<ron|postcard>`, then `global.bld`'s rig into
 /// `ir/rig.<ron|postcard>`. A model or rig that won't read is reported in
-/// [`ModelStage::failed`]; a file that won't write stops the run.
+/// [`ModelStage::failed`], a hero that doesn't settle in
+/// [`ModelStage::unsettled`]; a file that won't write stops the run.
 pub fn model_stage(
     dir: &mut IdentityDir,
     roster: &Roster,
@@ -148,6 +159,9 @@ pub fn model_stage(
     let mut stage = ModelStage {
         models: 0,
         failed: Vec::new(),
+        heroes: 0,
+        unsettled: Vec::new(),
+        heroes_took: Duration::ZERO,
         textures: 0,
         binds: 0,
         files: Files::default(),
@@ -172,6 +186,20 @@ pub fn model_stage(
                 let bytes = ir.encode(&m.model, dir, &rel)?;
                 put(dir, &rel, &bytes, &mut stage.files)?;
                 stage.models += 1;
+                let started = Instant::now();
+                match &m.hero {
+                    Ok(hero) => {
+                        let rel = ir.hero_path(load);
+                        let bytes = ir.encode(hero, dir, &rel)?;
+                        put(dir, &rel, &bytes, &mut stage.files)?;
+                        stage.heroes += 1;
+                    }
+                    Err(reason) => stage.unsettled.push(ModelFailure {
+                        load_file: (*load).to_owned(),
+                        reason: reason.clone(),
+                    }),
+                }
+                stage.heroes_took += m.hero_took + started.elapsed();
             }
             Err(e @ ExtractError::ModelUnreadable { .. }) => stage.failed.push(ModelFailure {
                 load_file: (*load).to_owned(),

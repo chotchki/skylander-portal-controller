@@ -185,14 +185,27 @@ fn roster(dump: &Path) -> Result<(), guac_extract::ExtractError> {
 
 fn models_line(m: &stages::ModelStage) -> String {
     format!(
-        "{} models, {} failed; {} textures for {} binds; {}; {:.2} s",
+        "{} models, {} failed; {} heroes, {} unsettled ({:.2} s); {} textures for {} binds; {}; {:.2} s",
         m.models,
         m.failed.len(),
+        m.heroes,
+        m.unsettled.len(),
+        m.heroes_took.as_secs_f64(),
         m.textures,
         m.binds,
         files_line(&m.files),
         m.took.as_secs_f64()
     )
+}
+
+/// The stage's failures and unsettled heroes, a line each.
+fn model_failures(m: &stages::ModelStage) {
+    for f in &m.failed {
+        println!("  failed    {}: {}", f.load_file, f.reason);
+    }
+    for f in &m.unsettled {
+        println!("  unsettled {}: {}", f.load_file, f.reason);
+    }
 }
 
 fn models(dump: &Path) -> Result<(), guac_extract::ExtractError> {
@@ -205,9 +218,7 @@ fn models(dump: &Path) -> Result<(), guac_extract::ExtractError> {
     );
     let m = stages::model_stage(&mut opened.dir, &roster.roster, IrFormat::Ron, &|_| {})?;
     println!("models      {}", models_line(&m));
-    for f in &m.failed {
-        println!("  failed    {}: {}", f.load_file, f.reason);
-    }
+    model_failures(&m);
     println!("extract     {}", opened.dir.path().display());
     Ok(())
 }
@@ -241,9 +252,7 @@ fn extract(dump: &Path) -> Result<(), guac_extract::ExtractError> {
         r.took.as_secs_f64()
     );
     println!("models      {}", models_line(&done.models));
-    for f in &done.models.failed {
-        println!("  failed    {}: {}", f.load_file, f.reason);
-    }
+    model_failures(&done.models);
     match &done.intros {
         Ok(i) => println!(
             "intros      {} of {} toy types; {} transcoded, {} already done, {} linked; {:.1} s",

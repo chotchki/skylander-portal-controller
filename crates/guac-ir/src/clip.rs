@@ -7,6 +7,13 @@
 //! numbers, its control points dequantized at extraction. A rotation spline
 //! blends its control points as 4-vectors and normalizes the sum. Time
 //! loops over the clip's duration, then counts frames, clamped to the last.
+//!
+//! A crossfade (AG.14, design decision 14) plays two clips at once while
+//! one takes over from the other: each joint's local transform is blended
+//! linearly by the incoming clip's weight, which rises from 0 to 1 over the
+//! switch time ([`crossfade_weight`], [`Skeleton::crossfade`]). How the
+//! original blends one is AC's open item; AG.11's recording says how close
+//! this is.
 
 use serde::{Deserialize, Serialize};
 
@@ -205,6 +212,39 @@ impl Qs {
             scale: self.s.map(|c| c as f32),
         }
     }
+
+    /// `weight` of the way from this transform to `to`: translation and
+    /// scale linearly, the rotation as a 4-vector turned onto this one's
+    /// hemisphere (so it takes the short way round) and normalized. The
+    /// ends are the transforms themselves.
+    fn blend(&self, to: &Self, weight: f64) -> Self {
+        if weight <= 0.0 {
+            return *self;
+        }
+        if weight >= 1.0 {
+            return *to;
+        }
+        let lerp = |a: f64, b: f64| a + (b - a) * weight;
+        let dot: f64 = (0..4).map(|i| self.r[i] * to.r[i]).sum();
+        let r = if dot < 0.0 { to.r.map(|c| -c) } else { to.r };
+        Self {
+            t: std::array::from_fn(|i| lerp(self.t[i], to.t[i])),
+            r: normalize(std::array::from_fn(|i| lerp(self.r[i], r[i]))),
+            s: std::array::from_fn(|i| lerp(self.s[i], to.s[i])),
+        }
+    }
+}
+
+/// The weight of the clip being switched to, `elapsed` seconds into a
+/// crossfade lasting `time`: 0 at its start, rising linearly to 1 at its
+/// end, held at 0 before and 1 after. A switch of no length (or a time
+/// that isn't a number) is done at once.
+pub fn crossfade_weight(elapsed: f64, time: f64) -> f64 {
+    if time.is_nan() || time <= 0.0 {
+        return 1.0;
+    }
+    let w = elapsed / time;
+    if w.is_nan() { 1.0 } else { w.clamp(0.0, 1.0) }
 }
 
 impl Transform {
@@ -217,6 +257,13 @@ impl Transform {
     /// `child` in this transform's space, composed as Havok composes them.
     pub fn then(&self, child: &Transform) -> Transform {
         Qs::of(self).then(&Qs::of(child)).transform()
+    }
+
+    /// `weight` of the way from this transform to `to`, as a crossfade
+    /// blends a joint: translation and scale linearly, the rotation the
+    /// short way round, normalized; 0 is this one and 1 is `to`.
+    pub fn blend(&self, to: &Transform, weight: f64) -> Transform {
+        Qs::of(self).blend(&Qs::of(to), weight).transform()
     }
 }
 
@@ -248,10 +295,10 @@ impl Clip {
             .collect()
     }
 
-    /// `skeleton`'s model-space pose at `t` seconds, looped: tracked joints
-    /// from the clip, the rest at their reference pose, each composed onto
-    /// its parent's. A track naming a joint past the skeleton is skipped.
-    pub fn model_pose(&self, skeleton: &Skeleton, t: f64) -> Vec<Transform> {
+    /// Every joint's local transform at `t` seconds, looped: tracked joints
+    /// from the clip, the rest at their reference. A track naming a joint
+    /// past the skeleton is skipped.
+    fn local_qs(&self, skeleton: &Skeleton, t: f64) -> Vec<Qs> {
         let frame = self.frame_at(t);
         let mut local: Vec<Qs> = skeleton
             .joints
@@ -263,6 +310,24 @@ impl Clip {
                 *slot = Self::track_qs(tr, frame);
             }
         }
+        local
+    }
+
+    /// `skeleton`'s local pose at `t` seconds, looped: each joint relative
+    /// to its parent, tracked joints from the clip and the rest at their
+    /// reference.
+    pub fn local_pose(&self, skeleton: &Skeleton, t: f64) -> Vec<Transform> {
+        self.local_qs(skeleton, t)
+            .iter()
+            .map(Qs::transform)
+            .collect()
+    }
+
+    /// `skeleton`'s model-space pose at `t` seconds, looped: tracked joints
+    /// from the clip, the rest at their reference pose, each composed onto
+    /// its parent's. A track naming a joint past the skeleton is skipped.
+    pub fn model_pose(&self, skeleton: &Skeleton, t: f64) -> Vec<Transform> {
+        let local = self.local_qs(skeleton, t);
         skeleton.compose(&local).iter().map(Qs::transform).collect()
     }
 }
@@ -294,6 +359,18 @@ impl Skeleton {
     pub fn reference_pose(&self) -> Vec<Transform> {
         let local: Vec<Transform> = self.joints.iter().map(|j| j.reference).collect();
         self.model_pose(&local)
+    }
+
+    /// The model-space pose `weight` of the way through a crossfade from
+    /// `from` (a clip and its time in seconds) to `to`: the two clips'
+    /// local poses blended joint by joint ([`Transform::blend`]), then
+    /// composed onto parents. Weight 0 is `from`'s pose and 1 is `to`'s,
+    /// exactly; [`crossfade_weight`] gives it from the switch's progress.
+    pub fn crossfade(&self, from: (&Clip, f64), to: (&Clip, f64), weight: f64) -> Vec<Transform> {
+        let a = from.0.local_qs(self, from.1);
+        let b = to.0.local_qs(self, to.1);
+        let local: Vec<Qs> = a.iter().zip(&b).map(|(a, b)| a.blend(b, weight)).collect();
+        self.compose(&local).iter().map(Qs::transform).collect()
     }
 }
 
@@ -425,6 +502,147 @@ mod tests {
         let mut stray = clip();
         stray.tracks[0].joint = 9;
         assert_eq!(stray.model_pose(&sk, 0.0), r);
+    }
+
+    /// A second clip on [`skeleton`]: the root held at (0.5, 4.5, 0),
+    /// unturned and at half scale; the arm untracked.
+    fn held() -> Clip {
+        Clip {
+            name: "Test_Run.ma".into(),
+            duration: 0.5,
+            frame_duration: 1.0 / 30.0,
+            frames: 16,
+            tracks: vec![Track {
+                joint: 0,
+                translation: VecTrack {
+                    constant: [0.5, 4.5, 0.0],
+                    spline: None,
+                },
+                rotation: RotationTrack::Constant([0.0, 0.0, 0.0, 1.0]),
+                scale: VecTrack {
+                    constant: [0.5; 3],
+                    spline: None,
+                },
+            }],
+        }
+    }
+
+    fn near(a: &[Transform], b: &[Transform], eps: f32) -> bool {
+        a.len() == b.len()
+            && a.iter().zip(b).all(|(x, y)| {
+                let d = |p: &[f32], q: &[f32]| p.iter().zip(q).all(|(u, v)| (u - v).abs() <= eps);
+                d(&x.translation, &y.translation)
+                    && d(&x.rotation, &y.rotation)
+                    && d(&x.scale, &y.scale)
+            })
+    }
+
+    #[test]
+    fn the_crossfade_weight_rises_linearly_over_the_switch() {
+        // The 0.25 s switch the locomotion scripts set: its start, middle and
+        // end, then held either side.
+        assert_eq!(crossfade_weight(0.0, 0.25), 0.0);
+        assert_eq!(crossfade_weight(0.125, 0.25), 0.5);
+        assert_eq!(crossfade_weight(0.0625, 0.25), 0.25);
+        assert_eq!(crossfade_weight(0.25, 0.25), 1.0);
+        assert_eq!(crossfade_weight(-1.0, 0.25), 0.0);
+        assert_eq!(crossfade_weight(9.0, 0.25), 1.0);
+        // No switch time: the new clip at once, whenever it's asked.
+        assert_eq!(crossfade_weight(0.0, 0.0), 1.0);
+        assert_eq!(crossfade_weight(-0.1, 0.0), 1.0);
+        assert_eq!(crossfade_weight(0.1, -0.25), 1.0);
+        assert_eq!(crossfade_weight(0.1, f64::NAN), 1.0);
+        assert_eq!(crossfade_weight(f64::NAN, 0.25), 1.0);
+    }
+
+    #[test]
+    fn a_crossfade_starts_on_one_clip_ends_on_the_other_and_halves_between() {
+        let sk = skeleton();
+        let (walk, run) = (clip(), held());
+        // Each clip at its own time: the incoming one starts where it starts.
+        let (tw, tr) = (0.05, 0.0);
+        assert_eq!(
+            sk.crossfade((&walk, tw), (&run, tr), 0.0),
+            walk.model_pose(&sk, tw)
+        );
+        assert_eq!(
+            sk.crossfade((&walk, tw), (&run, tr), 1.0),
+            run.model_pose(&sk, tr)
+        );
+        // A rotation stored a hair off unit length comes through the ends as
+        // stored, not renormalized.
+        let mut tilted = held();
+        tilted.tracks[0].rotation = RotationTrack::Constant([0.6, 0.0, 0.0, 0.800_000_1]);
+        assert_eq!(
+            sk.crossfade((&tilted, tr), (&walk, tw), 0.0),
+            tilted.model_pose(&sk, tr)
+        );
+        assert_eq!(
+            sk.crossfade((&walk, tw), (&tilted, tr), 1.0),
+            tilted.model_pose(&sk, tr)
+        );
+        // Past either end the weight holds.
+        assert_eq!(
+            sk.crossfade((&walk, tw), (&run, tr), -0.5),
+            walk.model_pose(&sk, tw)
+        );
+        assert_eq!(
+            sk.crossfade((&walk, tw), (&run, tr), 2.0),
+            run.model_pose(&sk, tr)
+        );
+
+        // Halfway: the walk's root is at y 1.5 turned an eighth about y at
+        // full scale, the run's at y 4.5 unturned at half; the blend is at
+        // y 3, turned a sixteenth, at three quarters.
+        let p = sk.crossfade((&walk, tw), (&run, tr), 0.5);
+        assert!(close(p[0].translation, [0.5, 3.0, 0.0]), "{p:?}");
+        let s = (std::f64::consts::PI / 16.0).sin() as f32;
+        assert!((p[0].rotation[1] - s).abs() < 1e-6, "{:?}", p[0].rotation);
+        assert!(close(p[0].scale, [0.75; 3]), "{p:?}");
+        // The untracked arm keeps its reference offset from the blended
+        // root: 2 along x, turned and scaled with it.
+        let a = std::f32::consts::FRAC_PI_8;
+        let want = [0.5 + 1.5 * a.cos(), 3.0, -1.5 * a.sin()];
+        assert!(close(p[1].translation, want), "{p:?}");
+    }
+
+    #[test]
+    fn a_pose_crossfaded_with_itself_is_unchanged() {
+        let sk = skeleton();
+        let c = clip();
+        for t in [0.0, 0.05, 0.08] {
+            let pose = c.model_pose(&sk, t);
+            for w in [0.25, 0.5, 0.75] {
+                let blended = sk.crossfade((&c, t), (&c, t), w);
+                assert!(near(&blended, &pose, 1e-7), "t {t}, w {w}");
+            }
+        }
+        // A transform with itself, and with its rotation's other sign (the
+        // same turn): the short way round, not through zero.
+        let turned = Transform {
+            translation: [1.0, 2.0, 3.0],
+            rotation: [0.0, 0.6, 0.0, 0.8],
+            scale: [2.0, 2.0, 2.0],
+        };
+        let negated = Transform {
+            rotation: turned.rotation.map(|c| -c),
+            ..turned
+        };
+        for other in [turned, negated] {
+            let b = turned.blend(&other, 0.5);
+            assert!(near(&[b], &[turned], 1e-7), "{b:?}");
+        }
+    }
+
+    #[test]
+    fn local_pose_is_the_model_pose_before_composing() {
+        let sk = skeleton();
+        let c = clip();
+        let local = c.local_pose(&sk, 0.05);
+        assert!(close(local[0].translation, [0.5, 1.5, 0.0]));
+        assert_eq!(local[1], sk.joints[1].reference);
+        // Composed again from its f32 rounding: the same to float precision.
+        assert!(near(&sk.model_pose(&local), &c.model_pose(&sk, 0.05), 1e-6));
     }
 
     #[test]

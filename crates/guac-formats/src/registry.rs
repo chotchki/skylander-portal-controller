@@ -102,9 +102,9 @@ pub const PARSERS: &[RegisteredParser] = &[
         seeds: model::builder::seeds,
         // The IGZ parse and the hero walk (as igz_layouts), then one
         // material, one segment's decode (edge_geometry's 48x) and the
-        // body's and idle's Havok parses (havok's 160x of what they hold)
-        // at a time.
-        heap_budget: |len| 64 * len + 128 * len + 48 * len + 160 * len + (256 << 10),
+        // body's and one clip's Havok parses (havok's 160x of what they
+        // hold) at a time, and the placements (level's 32x) for the hero.
+        heap_budget: |len| 64 * len + 128 * len + 48 * len + 160 * len + 32 * len + (256 << 10),
     },
     RegisteredParser {
         name: "havok",
@@ -264,7 +264,9 @@ pub fn walk_havok(bytes: &[u8]) -> Result<(), FormatError> {
 /// model stage does (AE.6): each technique's material and segments, the
 /// body's skeleton, the joint map and the idle sampled at its start, middle
 /// and end, dropping each and skipping errors, until [`EDGE_WALK_BUDGET`] of
-/// segment buffers is spent. The property test and the fuzz targets run it.
+/// segment buffers is spent; then the hero side (AG.14), each locomotion
+/// slot's clip in turn sampled the same way and the hero's placement. The
+/// property test and the fuzz targets run it.
 pub fn walk_model(bytes: &[u8]) -> Result<(), FormatError> {
     let file = igz::Igz::parse(bytes)?;
     let p = model::portal_model(&file)?;
@@ -281,13 +283,28 @@ pub fn walk_model(bytes: &[u8]) -> Result<(), FormatError> {
     }
     let skeleton = model::skeleton(&file, &p.hero)?;
     let _ = model::JointMap::new(&skeleton, &p.hero.bones);
-    let idle = model::idle(&file, &p.hero, &skeleton)?;
-    let end = f64::from(idle.clip.animation.duration);
-    for t in [0.0, end / 2.0, end] {
-        if let Some(local) = idle.clip.local_pose(&skeleton, t) {
-            drop(skeleton.model_pose(&local));
+    let sample = |c: &crate::havok::Clip<'_>| {
+        let end = f64::from(c.animation.duration);
+        for t in [0.0, end / 2.0, end] {
+            if let Some(local) = c.local_pose(&skeleton, t) {
+                drop(skeleton.model_pose(&local));
+            }
+        }
+    };
+    sample(&model::idle(&file, &p.hero, &skeleton)?.clip);
+    for slot in [
+        model::WALK_SLOT,
+        model::JOG_SLOT,
+        model::RUN_SLOT,
+        model::FALL_SLOT,
+        model::LANDING_SLOT,
+    ] {
+        if let Ok(Some(c)) = model::slot_clip(&file, &p.hero, &skeleton, slot) {
+            sample(&c.clip);
         }
     }
+    // The builder's sample is Eruptor's archive.
+    let _ = model::hero_actor(&file, &p, "009_Eruptor");
     Ok(())
 }
 

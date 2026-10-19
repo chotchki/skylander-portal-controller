@@ -81,6 +81,11 @@ pub enum ExtractError {
     #[error("GUAC-E-MODEL-UNREADABLE: {load_file} didn't read: {reason}")]
     ModelUnreadable { load_file: String, reason: String },
 
+    /// A character's hero side (AG.14) didn't settle: its model extracted,
+    /// but nothing says how it walks, so it doesn't.
+    #[error("GUAC-E-HERO-UNSETTLED: {load_file}'s hero didn't settle: {reason}")]
+    HeroUnsettled { load_file: String, reason: String },
+
     #[error("GUAC-E-EXTRACT-IO: {}: {source}", path.display())]
     Io {
         path: PathBuf,
@@ -103,6 +108,7 @@ impl ExtractError {
             Self::BadOutputPath { .. } => "GUAC-E-BAD-OUTPUT-PATH",
             Self::RosterUnreadable { .. } => "GUAC-E-ROSTER-UNREADABLE",
             Self::ModelUnreadable { .. } => "GUAC-E-MODEL-UNREADABLE",
+            Self::HeroUnsettled { .. } => "GUAC-E-HERO-UNSETTLED",
             Self::Io { .. } => "GUAC-E-EXTRACT-IO",
         }
     }
@@ -170,6 +176,10 @@ mod tests {
                 reason: "x".into(),
             },
             ExtractError::ModelUnreadable {
+                load_file: "009_Eruptor".into(),
+                reason: "x".into(),
+            },
+            ExtractError::HeroUnsettled {
                 load_file: "009_Eruptor".into(),
                 reason: "x".into(),
             },

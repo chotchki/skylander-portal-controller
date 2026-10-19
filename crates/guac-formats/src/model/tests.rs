@@ -1,7 +1,10 @@
-use super::builder::{CharacterSpec, archive, character, inverse_joint, sample, seeds};
+use super::builder::{
+    ActorSpec, CharacterSpec, SlotSpec, archive, character, eruptor, inverse_joint, sample, seeds,
+};
 use super::*;
 use crate::havok::builder::clip;
 use crate::iga::Archive;
+use crate::igz::layouts::Shape;
 
 fn parsed(spec: &CharacterSpec) -> &'static Igz<'static> {
     let bytes: &'static [u8] = Vec::leak(character(spec));
@@ -135,6 +138,152 @@ fn an_idle_that_isnt_a_full_normal_clip_is_refused() {
     let mut s = sample();
     s.idle.as_mut().unwrap().0.track_to_bone = vec![0, 1, 7];
     assert_eq!(refused(&s).field, "transformTrackToBoneIndices");
+}
+
+/// Each locomotion slot of `spec`'s archive, read.
+fn slots(spec: &CharacterSpec) -> Vec<(usize, Result<Option<SlotClip<'static>>, FormatError>)> {
+    let igz = parsed(spec);
+    let p = portal_model(igz).unwrap();
+    let sk = skeleton(igz, &p.hero).unwrap();
+    [WALK_SLOT, JOG_SLOT, RUN_SLOT, FALL_SLOT, LANDING_SLOT, 200]
+        .into_iter()
+        .map(|slot| (slot, slot_clip(igz, &p.hero, &sk, slot)))
+        .collect()
+}
+
+#[test]
+fn the_locomotion_clips_are_the_sets_fixed_slots() {
+    let read = slots(&sample());
+    /// File, label and duration.
+    type Seen<'a> = Option<(&'a str, Option<&'a str>, f32)>;
+    let got: Vec<(usize, Seen)> = read
+        .iter()
+        .map(|(slot, c)| {
+            let c = c.as_ref().unwrap().as_ref();
+            (
+                *slot,
+                c.map(|c| (c.file.unwrap(), c.label, c.clip.animation.duration)),
+            )
+        })
+        .collect();
+    // Each clip the builder put in its slot, by its own duration (8 frames
+    // at its frame time); the jog's slot empty and slot 200 past the set.
+    assert_eq!(
+        got,
+        [
+            (
+                1,
+                Some(("Eruptor_Walk.ma", Some("3.658 m/sec"), 8.0 / 15.0))
+            ),
+            (2, None),
+            (3, Some(("Eruptor_Run.ma", Some("6.401 m/sec"), 8.0 / 30.0))),
+            (57, Some(("Eruptor_Falling.ma", None, 8.0 / 60.0))),
+            (61, Some(("Eruptor_Landing.ma", None, 8.0 / 20.0))),
+            (200, None),
+        ]
+    );
+    let walk = read[0].1.as_ref().unwrap().as_ref().unwrap();
+    assert_eq!(walk.slot, WALK_SLOT);
+    assert_eq!(walk.clip.animation.tracks.len(), 3);
+}
+
+#[test]
+fn a_locomotion_slot_that_isnt_a_full_normal_clip_is_refused() {
+    let refused = |bend: &dyn Fn(&mut SlotSpec)| {
+        let mut s = sample();
+        let run = s.slots.iter_mut().find(|x| x.slot == RUN_SLOT).unwrap();
+        bend(run);
+        let (_, r) = slots(&s).swap_remove(2);
+        r.unwrap_err()
+    };
+    // An entry wrapping no clip: an animation network reads so.
+    let e = refused(&|r| r.clip = None);
+    assert_eq!((e.field, e.kind), ("_tfbAnimation", ErrorKind::Missing));
+    for flag in [1 << 4, 1 << 5] {
+        assert_eq!(refused(&|r| r.properties |= flag).field, "_properties");
+    }
+    let e = refused(&|r| r.clip.as_mut().unwrap().blend_hint = 1);
+    assert_eq!(e.field, "blendHint");
+    let e = refused(&|r| r.clip.as_mut().unwrap().track_to_bone = vec![0, 1, 7]);
+    assert_eq!(e.field, "transformTrackToBoneIndices");
+}
+
+/// The hero `spec`'s archive plays, read as `009_Eruptor`'s.
+fn hero(spec: &CharacterSpec) -> Result<Actor<'static>, FormatError> {
+    let igz = parsed(spec);
+    hero_actor(igz, &portal_model(igz).unwrap(), "009_Eruptor")
+}
+
+#[test]
+fn the_hero_is_the_solid_actor_drawing_the_portal_model() {
+    let a = hero(&sample()).unwrap();
+    // Not the clone beside him, whose solid neither blocks nor meets the
+    // level, nor the blob, which draws nothing.
+    assert_eq!(a.name(), Some("009_Eruptor"));
+    let c = a.collision.unwrap();
+    assert_eq!((c.properties, c.shape()), (0x1B, Shape::Sphere));
+    assert_eq!(
+        (c.width, c.height, c.length, c.weight, c.rebound),
+        (4.0, 6.0, 3.0, 10.0, 25.0)
+    );
+    assert_eq!(c.transform.position, [0.0, 0.5, 0.25]);
+    assert_eq!(c.transform.rotation, [0.0, 90.0, 0.0]);
+    let m = a.parameters.unwrap();
+    assert_eq!(
+        (m.parameters.ground_max_speed, m.parameters.ground_turn_rate),
+        (18.0, 360.0)
+    );
+    assert!(m.parameters.tilts_with_ground);
+}
+
+#[test]
+fn without_one_drawing_the_portal_model_the_hero_goes_by_the_load_file() {
+    // Punch Pop Fizz's archive: her actor draws another model.
+    let mut s = sample();
+    for a in &mut s.actors {
+        a.draws_portal = false;
+    }
+    assert_eq!(hero(&s).unwrap().name(), Some("009_Eruptor"));
+    // By name, any case; but a name that isn't solid doesn't count.
+    s.actors[1].name = "009_ERUPTOR";
+    assert_eq!(hero(&s).unwrap().name(), Some("009_ERUPTOR"));
+    s.actors[1].collision = 0x13;
+    let e = hero(&s).unwrap_err();
+    assert_eq!(
+        e.kind,
+        ErrorKind::CountMismatch {
+            found: 0,
+            expected: 1
+        }
+    );
+}
+
+#[test]
+fn no_hero_or_two_are_refused() {
+    let mut s = sample();
+    s.actors.retain(|a| a.name != "009_Eruptor");
+    let e = hero(&s).unwrap_err();
+    assert_eq!(e.field, "the hero's tfbActorInfo");
+    assert_eq!(
+        e.kind,
+        ErrorKind::CountMismatch {
+            found: 0,
+            expected: 1
+        }
+    );
+    // Two solid actors drawing the portal model: refused, not guessed.
+    let mut s = sample();
+    s.actors.push(ActorSpec {
+        name: "009_EruptorTwin",
+        ..eruptor()
+    });
+    assert_eq!(
+        hero(&s).unwrap_err().kind,
+        ErrorKind::CountMismatch {
+            found: 2,
+            expected: 1
+        }
+    );
 }
 
 #[test]

@@ -1,11 +1,11 @@
-//! The extraction's stages in order (openspec AE.3, AE.6) on synthetic
-//! dumps: a PARAM.SFO, the roster builder's four archives, the model
-//! builder's character archive under nine of the roster's eleven character
-//! load files (one more refused for a gloss-map bit, one missing), two
-//! voice-over archives and two movies, transcoded by a fake ffmpeg (a shell
-//! script that copies its input into each output). Unix only, as AB's
-//! transcode tests; the real dump runs in `giants_stages.rs` and
-//! `giants_model_stage.rs`.
+//! The extraction's stages in order (openspec AE.3, AE.6, AG.14) on
+//! synthetic dumps: a PARAM.SFO, the roster builder's four archives, the
+//! model builder's character archive under nine of the roster's eleven
+//! character load files (one of them without a hero, one more refused for a
+//! gloss-map bit, one missing), two voice-over archives and two movies,
+//! transcoded by a fake ffmpeg (a shell script that copies its input into
+//! each output). Unix only, as AB's transcode tests; the real dump runs in
+//! `giants_stages.rs` and `giants_model_stage.rs`.
 #![cfg(unix)]
 
 use std::fs;
@@ -31,6 +31,10 @@ const LOADS: usize = 11;
 const MODELS: usize = 9;
 const MISSING: &str = "MinionLoad_016_SpyroDark";
 const REFUSED: &str = "MinionLoad_112_TitanLifeAlt";
+/// Of the nine, the one whose archive holds no actor: its model extracts and
+/// its hero doesn't settle.
+const HEROES: usize = 8;
+const HEROLESS: &str = "MinionLoad_106_IceSorcLegendary";
 /// The model builder's sample binds eight textures, five distinct.
 const TEXTURES: usize = 5;
 
@@ -94,6 +98,9 @@ fn make_dump(tmp: &Path) -> PathBuf {
     let mut bad = model::sample();
     bad.materials[0].pixel = Some((0x5C, 0x2FF));
     let bad = model::archive(&model::character(&bad));
+    let mut heroless = model::sample();
+    heroless.actors.clear();
+    let heroless = model::archive(&model::character(&heroless));
     for load in [
         "MinionLoad_000_AirDragon",
         "MinionLoad_000_AirDragonLegendary",
@@ -102,11 +109,12 @@ fn make_dump(tmp: &Path) -> PathBuf {
         "MinionLoad_100_Eagle",
         "MinionLoad_100_EagleLegendary",
         "MinionLoad_106_IceSorc",
-        "MinionLoad_106_IceSorcLegendary",
+        HEROLESS,
         "MinionLoad_112_TitanLife",
     ] {
         let path = usr.join(format!("character/{}.bld", load.to_ascii_lowercase()));
-        fs::write(path, &good).unwrap();
+        let archive = if load == HEROLESS { &heroless } else { &good };
+        fs::write(path, archive).unwrap();
     }
     let path = usr.join(format!("character/{}.bld", REFUSED.to_ascii_lowercase()));
     fs::write(path, &bad).unwrap();
@@ -214,8 +222,8 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     assert_eq!(indexing, Some(FIGURES + 4 + LOADS));
     assert!(first_transcode > indexing, "{seen:?}");
 
-    // The roster's IR, every portrait, the models, their textures and the
-    // rig were recorded before the intro index.
+    // The roster's IR, every portrait, the models, their textures, the
+    // heroes and the rig were recorded before the intro index.
     let m = at_indexing
         .into_inner()
         .unwrap()
@@ -224,6 +232,7 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     assert_eq!(recorded(&m, "portraits/"), FIGURES);
     assert_eq!(recorded(&m, "models/"), MODELS);
     assert_eq!(recorded(&m, "textures/"), TEXTURES);
+    assert_eq!(recorded(&m, "heroes/"), HEROES);
     assert_eq!(recorded(&m, "ir/rig.ron"), 1);
     assert_eq!(recorded(&m, "ir/characters"), 0);
     assert_eq!(recorded(&m, "video/"), 0);
@@ -252,6 +261,30 @@ fn the_roster_is_written_before_any_intro_work_starts() {
             .iter()
             .all(|f| f.reason.starts_with("GUAC-E-MODEL-UNREADABLE"))
     );
+    // Eight heroes; the one with no actor reported, its model kept.
+    assert_eq!(md.heroes, HEROES);
+    let unsettled: Vec<&str> = md.unsettled.iter().map(|f| f.load_file.as_str()).collect();
+    assert_eq!(unsettled, [HEROLESS]);
+    assert!(
+        md.unsettled[0]
+            .reason
+            .starts_with("GUAC-E-HERO-UNSETTLED: MinionLoad_106_IceSorcLegendary's hero"),
+        "{:?}",
+        md.unsettled[0]
+    );
+    assert!(dir.join(format!("models/{HEROLESS}.ron")).is_file());
+    assert!(!dir.join(format!("heroes/{HEROLESS}.ron")).exists());
+    assert!(md.heroes_took <= md.took);
+    let hero: guac_ir::Hero = guac_ir::from_ron(
+        &fs::read_to_string(dir.join("heroes/MinionLoad_100_Eagle.ron")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        (hero.load_file.as_str(), hero.actor.as_str()),
+        ("MinionLoad_100_Eagle", "009_Eruptor")
+    );
+    let walk = hero.locomotion.walk.as_ref().unwrap();
+    assert_eq!((walk.slot, walk.clip.name.as_str()), (1, "Eruptor_Walk.ma"));
     let eagle: guac_ir::Model = guac_ir::from_ron(
         &fs::read_to_string(dir.join("models/MinionLoad_100_Eagle.ron")).unwrap(),
     )
@@ -321,6 +354,7 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
     assert_eq!(recorded(&m, "ir/roster.ron"), 1);
     assert_eq!(recorded(&m, "portraits/"), FIGURES);
     assert_eq!(recorded(&m, "models/"), MODELS);
+    assert_eq!(recorded(&m, "heroes/"), HEROES);
     assert_eq!(recorded(&m, "ir/characters"), 0);
     assert!(!m.complete, "only the whole extraction marks it");
 
@@ -335,7 +369,7 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
     );
     assert_eq!(
         (done.models.files.written, done.models.files.kept),
-        (0, MODELS + TEXTURES + 1)
+        (0, MODELS + HEROES + TEXTURES + 1)
     );
     assert_eq!(done.intros.unwrap().summary.transcoded, 2);
     assert!(manifest_on_disk(&dir).complete);
@@ -368,8 +402,10 @@ fn a_resume_rewrites_only_the_files_that_arent_as_recorded() {
     }
     assert!(!dir.join("portraits/00001c-0000.png.partial").exists());
 
-    // A model and a texture gone, the rig changed: exactly those redone.
+    // A model, a hero and a texture gone, the rig changed: exactly those
+    // redone.
     fs::remove_file(dir.join("models/MinionLoad_007_GemGolem.ron")).unwrap();
+    fs::remove_file(dir.join("heroes/MinionLoad_016_Spyro.ron")).unwrap();
     let texture = again
         .dir
         .manifest()
@@ -385,9 +421,15 @@ fn a_resume_rewrites_only_the_files_that_arent_as_recorded() {
     let models = stages::model_stage(&mut again.dir, &roster, IrFormat::Ron, &|_| {}).unwrap();
     assert_eq!(
         (models.files.written, models.files.kept),
-        (3, MODELS + TEXTURES + 1 - 3)
+        (4, MODELS + HEROES + TEXTURES + 1 - 4)
     );
     assert!(again.dir.output_done(&texture).unwrap());
+    assert!(
+        again
+            .dir
+            .output_done("heroes/MinionLoad_016_Spyro.ron")
+            .unwrap()
+    );
 
     // An IR in the other format is a file of its own, written beside.
     let stage = stages::roster_stage(&mut again.dir, IrFormat::Postcard, &|_| {}).unwrap();
@@ -427,7 +469,7 @@ fn a_v1_extract_is_rebuilt_and_extracted_again() {
     assert!(!dir.join("video/intro/eruptor.mp4").exists());
     let m = again.dir.manifest();
     assert_eq!((m.layout, m.ir_version), (LAYOUT_VERSION, IR_VERSION));
-    assert_eq!((LAYOUT_VERSION, IR_VERSION), (3, 2));
+    assert_eq!((LAYOUT_VERSION, IR_VERSION), (4, 2));
     let done = stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
     assert_eq!(done.roster.files.written, FIGURES + 1);
     assert!(done.intros.is_ok());
@@ -455,6 +497,22 @@ fn a_v1_extract_is_rebuilt_and_extracted_again() {
     fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
     let again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
     assert_eq!(again.state, DirState::Rebuilt(Stale::Layout { found: 2 }));
+    drop(again);
+    // An AE.6-era extract (layout 3, IR 2: models, no heroes) too, and it
+    // comes back with them.
+    let mut again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    drop(again);
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    json["layout"] = 3.into();
+    fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+    let mut again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    assert_eq!(again.state, DirState::Rebuilt(Stale::Layout { found: 3 }));
+    assert!(!dir.join("heroes").exists());
+    let done = stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    assert_eq!(done.models.heroes, HEROES);
+    assert_eq!(recorded(&manifest_on_disk(&dir), "heroes/"), HEROES);
 }
 
 #[test]

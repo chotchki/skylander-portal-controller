@@ -519,6 +519,8 @@ pub fn run(
     info!(
         models = m.models,
         failed = m.failed.len(),
+        heroes = m.heroes,
+        unsettled = m.unsettled.len(),
         textures = m.textures,
         binds = m.binds,
         written = m.files.written,
@@ -529,6 +531,9 @@ pub fn run(
     );
     for f in &m.failed {
         warn!(load_file = %f.load_file, reason = %f.reason, "a model didn't extract; its figures keep their portraits");
+    }
+    for f in &m.unsettled {
+        warn!(load_file = %f.load_file, reason = %f.reason, "a character's walk didn't settle; it keeps its model");
     }
     let intros = extracted.intros?;
     let ffmpeg = &intros.ffmpeg;

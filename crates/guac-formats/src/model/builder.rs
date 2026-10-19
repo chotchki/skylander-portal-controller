@@ -2,7 +2,8 @@
 //! a portal sprite drawing a skinned model whose every part decodes (AC.7's
 //! skinned Edge fixture, AC.8's Havok skeleton and clip, AC.6's images) and
 //! whose techniques carry tfbmulti2 materials, beside a sprite drawing an
-//! attachment. [`sample`] is Eruptor-shaped (a body and an eye material on
+//! attachment, the locomotion slots' clips and the placements the hero side
+//! reads (AG.14). [`sample`] is Eruptor-shaped (a body and an eye material on
 //! the normal-map, spec-map and rim variant); tests bend a [`CharacterSpec`]
 //! to make the shapes the readers refuse.
 
@@ -13,7 +14,9 @@ use crate::iga::builder::IgaBuilder;
 use crate::igz::Location;
 use crate::igz::builder::IgzBuilder;
 use crate::igz::layouts::builder::list;
+use crate::level::builder::placement;
 use crate::material::{EFFECTS, TFBMULTI2, TFN1};
+use crate::model::{FALL_SLOT, LANDING_SLOT, RUN_SLOT, WALK_SLOT};
 use crate::texture::builder::{SPECS, Spec, named_image};
 
 fn at(base: Location, offset: u32) -> Location {
@@ -134,6 +137,77 @@ pub struct CharacterSpec {
     pub idle_name: &'static str,
     /// Other sprites: their names and whether their model has a skeleton.
     pub attachments: Vec<(&'static str, bool)>,
+    /// Animation-set slots past the idle's.
+    pub slots: Vec<SlotSpec>,
+    /// The archive's actors.
+    pub actors: Vec<ActorSpec>,
+}
+
+/// One animation-set entry past slot 0.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SlotSpec {
+    pub slot: usize,
+    /// `None` wraps nothing, as an entry holding an animation network reads.
+    pub clip: Option<ClipSpec>,
+    /// The `tfbPhysicsAnimation`'s `_properties`.
+    pub properties: u32,
+    /// The clip's file.
+    pub file: &'static str,
+    /// The entry's `_mediaName`.
+    pub label: Option<&'static str>,
+}
+
+impl SlotSpec {
+    /// AC.8's clip at `frame_duration` seconds a frame, so each slot's
+    /// clip has a duration of its own (8 frames).
+    pub fn new(slot: usize, frame_duration: f32, file: &'static str) -> Self {
+        Self {
+            slot,
+            clip: Some(ClipSpec {
+                frame_duration,
+                ..clip()
+            }),
+            properties: 0x200,
+            file,
+            label: None,
+        }
+    }
+}
+
+/// A `tfbActorInfo` with its `CollisionInfo` and maybe `ActorParameters`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActorSpec {
+    pub name: &'static str,
+    /// Whether `_model` is the portal model; otherwise it has none.
+    pub draws_portal: bool,
+    /// `CollisionInfo._properties`.
+    pub collision: u32,
+    /// Its offset and Euler angles, then width, height, length, weight and
+    /// rebound.
+    pub solid: [f32; 11],
+    /// The 13 floats from ground max speed to jump initial speed, then the
+    /// motion type, tilting with the ground and the time scale.
+    pub parameters: Option<([f32; 13], u32, bool, f32)>,
+}
+
+/// Eruptor's actor as the disc stores it, bar an offset, turn and rebound
+/// set so each field shows: a solid sphere meeting the level, 4 x 6 x 3 ft
+/// at 10 lb, on his disc movement (18 ft/s, turning 360 a second).
+pub fn eruptor() -> ActorSpec {
+    ActorSpec {
+        name: "009_Eruptor",
+        draws_portal: true,
+        collision: 0x1B,
+        solid: [0.0, 0.5, 0.25, 0.0, 90.0, 0.0, 4.0, 6.0, 3.0, 10.0, 25.0],
+        parameters: Some((
+            [
+                18.0, 160.0, 80.0, 360.0, 30.0, 160.0, 20.0, 360.0, 120.0, 128.0, 0.0, 0.0, 0.0,
+            ],
+            0,
+            true,
+            1.0,
+        )),
+    }
 }
 
 /// AC.6's two decodable tiled images, as named copies.
@@ -181,6 +255,37 @@ pub fn sample() -> CharacterSpec {
         idle: Some((clip(), 0x200)),
         idle_name: "Models/Characters/Eruptor/Eruptor_Idle.ma",
         attachments: vec![("009_ReposeSpikes", false)],
+        slots: vec![
+            SlotSpec {
+                label: Some("3.658 m/sec"),
+                ..SlotSpec::new(WALK_SLOT, 1.0 / 15.0, "Eruptor_Walk.ma")
+            },
+            SlotSpec {
+                label: Some("6.401 m/sec"),
+                ..SlotSpec::new(RUN_SLOT, 1.0 / 30.0, "Eruptor_Run.ma")
+            },
+            SlotSpec::new(FALL_SLOT, 1.0 / 60.0, "Eruptor_Falling.ma"),
+            SlotSpec::new(LANDING_SLOT, 1.0 / 20.0, "Eruptor_Landing.ma"),
+        ],
+        actors: vec![
+            // A clone drawing the portal model through a solid that neither
+            // blocks nor meets the level, as Stealth Elf's does.
+            ActorSpec {
+                name: "009_EruptorClone",
+                collision: 0x12,
+                solid: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 4.0, 7.0, 3.0, 10.0, 0.0],
+                parameters: None,
+                ..eruptor()
+            },
+            eruptor(),
+            ActorSpec {
+                name: "009_FireBlob",
+                draws_portal: false,
+                collision: 0x1B,
+                solid: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 8.0, 2.5, 3.0, 0.0, 0.0],
+                parameters: None,
+            },
+        ],
     }
 }
 
@@ -432,25 +537,78 @@ pub fn character(spec: &CharacterSpec) -> Vec<u8> {
     let elements: Vec<Option<Location>> = bones.into_iter().map(Some).collect();
     list(&mut b, bone_list, blocks, &elements);
 
-    // The animation set: the idle in slot 0, an empty slot 1.
+    // The animation set: the idle in slot 0, the other slots' entries, the
+    // rest empty (slot 1 too, when no entry fills it).
     let table = b.object(0, "AnimationInfoList", 0x18);
     b.pointer(at(model, 0x1C), table);
-    let mut slots = vec![None, None];
-    if let Some((clip, properties)) = &spec.idle {
+    let last = spec.slots.iter().map(|s| s.slot).max().unwrap_or(0);
+    let mut slots = vec![None; last.max(1) + 1];
+    let entry = |b: &mut IgzBuilder,
+                 name: &str,
+                 clip: Option<&ClipSpec>,
+                 properties: u32,
+                 file: &str,
+                 label: Option<&str>| {
         let entry = b.object(0, "AnimationInfo", 0x44);
-        let anim = b.object(0, "tfbPhysicsAnimation", 0x2C);
-        b.string(at(entry, 0x08), "Idle");
-        b.pointer(at(entry, 0x3C), anim);
-        info(&mut b, anim, spec.idle_name);
-        let clips = PayloadSpec {
-            clip: Some(clip.clone()),
-            ..PayloadSpec::default()
-        };
-        b.memory_ref(at(anim, 0x14), blocks, &payload(&clips).bytes, 2);
-        b.put_u32(at(anim, 0x20), *properties);
-        slots[0] = Some(entry);
+        b.string(at(entry, 0x08), name);
+        if let Some(label) = label {
+            b.string(at(entry, 0x34), label);
+        }
+        if let Some(clip) = clip {
+            let anim = b.object(0, "tfbPhysicsAnimation", 0x2C);
+            b.pointer(at(entry, 0x3C), anim);
+            info(b, anim, file);
+            let clips = PayloadSpec {
+                clip: Some(clip.clone()),
+                ..PayloadSpec::default()
+            };
+            b.memory_ref(at(anim, 0x14), blocks, &payload(&clips).bytes, 2);
+            b.put_u32(at(anim, 0x20), properties);
+        }
+        entry
+    };
+    if let Some((clip, properties)) = &spec.idle {
+        slots[0] = Some(entry(
+            &mut b,
+            "Idle",
+            Some(clip),
+            *properties,
+            spec.idle_name,
+            None,
+        ));
+    }
+    for s in &spec.slots {
+        slots[s.slot] = Some(entry(
+            &mut b,
+            "?",
+            s.clip.as_ref(),
+            s.properties,
+            &format!("Models/Characters/Eruptor/{}", s.file),
+            s.label,
+        ));
     }
     list(&mut b, table, blocks, &slots);
+
+    // The actors, each with its solid and maybe its movement.
+    for (id, a) in spec.actors.iter().enumerate() {
+        let o = b.object(0, "tfbActorInfo", 0xF8);
+        placement(&mut b, o, a.name, id as u32, &[0.0; 6], 5);
+        let c = b.object(0, "CollisionInfo", 0x58);
+        b.pointer(at(o, 0xC4), c);
+        b.put_u32(at(c, 0x18), a.collision);
+        floats(&mut b, c, 0x1C, &a.solid);
+        if a.draws_portal {
+            b.pointer(at(o, 0xDC), model);
+        }
+        if let Some((values, motion, tilts, time_scale)) = a.parameters {
+            let p = b.object(0, "ActorParameters", 0x4C);
+            b.pointer(at(o, 0xE0), p);
+            floats(&mut b, p, 0x0C, &values);
+            b.put_u32(at(p, 0x40), motion);
+            b.put_bytes(at(p, 0x44), &[u8::from(tilts)]);
+            floats(&mut b, p, 0x48, &[time_scale]);
+        }
+    }
 
     // Attachments: another sprite each, its model unskinned (no body) or a
     // skinned copy of the portal model's body.
@@ -490,5 +648,24 @@ pub fn seeds() -> Vec<Vec<u8>> {
     states.materials[0].scroll = Some((0, [0.5; 11], "tfbScrollUVAnimTrack"));
     let mut tie = sample();
     tie.attachments = vec![("112_Woodpecker", true)];
-    vec![character(&sample()), character(&states), character(&tie)]
+    // The hero found by name, a jog that's an animation network and an
+    // additive lean.
+    let mut named = sample();
+    for a in &mut named.actors {
+        a.draws_portal = false;
+    }
+    named.slots.push(SlotSpec {
+        clip: None,
+        ..SlotSpec::new(2, 1.0 / 30.0, "Eruptor_Jog.ma")
+    });
+    named.slots.push(SlotSpec {
+        properties: 0x210,
+        ..SlotSpec::new(12, 1.0 / 30.0, "Eruptor_LeanLeft.ma")
+    });
+    vec![
+        character(&sample()),
+        character(&states),
+        character(&tie),
+        character(&named),
+    ]
 }

@@ -10,10 +10,11 @@
 //! character table. [`transcode`] (AB.8) turns each intro movie into what
 //! guacamole plays, through the ffmpeg [`ffmpeg`] finds. [`roster`] (AE.2)
 //! reads the figures the disc defines into IR v2's roster, and [`models`]
-//! (AE.6) each character's model, its textures and the 3D-UI rig.
+//! (AE.6) each character's model, its textures and the 3D-UI rig, and
+//! (AG.14) its hero side.
 //! [`stages`] (AE.3) runs everything after identity in guacamole's order:
-//! the roster and its portraits first, then the models, then ffmpeg and the
-//! intros.
+//! the roster and its portraits first, then the models with their hero side
+//! (AG.14), then ffmpeg and the intros.
 
 pub mod census;
 pub mod dump;
@@ -42,5 +43,6 @@ pub use root::{ExtractRoot, RootMode};
 /// under another layout or [`IR_VERSION`] is stale and its identity dir is
 /// rebuilt. v2 (AE.3) adds `ir/roster.*` and `portraits/`; v3 (AE.6)
 /// `models/`, `textures/` and `ir/rig.*`, so an extract made before the
-/// models redoes itself.
-pub const LAYOUT_VERSION: u32 = 3;
+/// models redoes itself; v4 (AG.14) `heroes/`, so one made before the hero
+/// side does too.
+pub const LAYOUT_VERSION: u32 = 4;
