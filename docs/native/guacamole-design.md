@@ -2136,8 +2136,8 @@ lives in Guacamole's store per profile. Guacamole never reads a `.sky`.
   the disc (where each lives in Giants' data is for AC and AE to find), and the roster lands with the
   first decoded models in AE. It doubles as the compatibility list: Giants offers what Giants has
   characters for, which replaces today's origin-game-and-later heuristic (`crates/core/src/compat.rs:48`).
-- AA's catalogue is interim (AA.4,
-  [`crates/guac-server/src/native_catalogue.rs`](../../crates/guac-server/src/native_catalogue.rs)): the
+- AA's catalogue was interim (AA.4's `native_catalogue.rs`, deleted at AE.4 when the disc roster replaced
+  it; the shared list is [`crates/guac-server/src/figures.rs`](../../crates/guac-server/src/figures.rs)): the
   wiki data already in the repo ([`data/figures.json`](../../data/figures.json), keyed by the same toy
   type + variant, plus `data/images/` portraits, under `DATA_ROOT`), cut to what Giants plays and checked
   row by row at boot, the same list for every profile, no `.sky` and no firmware pack. Checked because the
