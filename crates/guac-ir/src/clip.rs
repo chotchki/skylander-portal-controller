@@ -604,6 +604,22 @@ mod tests {
         let a = std::f32::consts::FRAC_PI_8;
         let want = [0.5 + 1.5 * a.cos(), 3.0, -1.5 * a.sin()];
         assert!(close(p[1].translation, want), "{p:?}");
+
+        // A quarter of the way, which halfway can't tell from three
+        // quarters: the root a quarter of the way up, at seven eighths
+        // scale, and the turn the normalized 3:1 mix of the two (not a
+        // quarter of the angle: the blend is linear, then normalized).
+        let p = sk.crossfade((&walk, tw), (&run, tr), 0.25);
+        assert!(close(p[0].translation, [0.5, 2.25, 0.0]), "{p:?}");
+        assert!(close(p[0].scale, [0.875; 3]), "{p:?}");
+        let (s8, c8) = (std::f64::consts::PI / 8.0).sin_cos();
+        let (y, w) = (0.75 * s8, 0.75 * c8 + 0.25);
+        let want = (y / y.hypot(w)) as f32;
+        assert!(
+            (p[0].rotation[1] - want).abs() < 1e-6,
+            "{:?}",
+            p[0].rotation
+        );
     }
 
     #[test]

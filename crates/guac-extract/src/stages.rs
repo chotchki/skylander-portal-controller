@@ -127,7 +127,8 @@ pub struct LevelStage {
     pub props: usize,
     pub refused_props: Vec<(String, String)>,
     /// Distinct texture files the parts read this run bind, and of those the
-    /// ones the store already held when the stage began (the characters').
+    /// ones the manifest already recorded when the stage began: on a first
+    /// run the characters', on a resume the level's own from before too.
     pub textures: usize,
     pub shared: usize,
     /// The parts' IR and textures.

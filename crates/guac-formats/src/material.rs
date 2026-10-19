@@ -356,7 +356,7 @@ pub struct Scroll {
 
 /// A material track of another kind than a scroll, which a level's
 /// materials carry (AG.15: on level 213, 2 tint tracks and a flip book in
-/// the scene, 4 tint and 3 transform tracks on its props) and no
+/// the scene, 3 tint and 3 transform tracks on its props) and no
 /// character's does.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Track {

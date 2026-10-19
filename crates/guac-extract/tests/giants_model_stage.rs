@@ -258,13 +258,20 @@ fn the_model_stage_extracts_every_character() {
         (post.files.written, post.files.kept),
         (67 + 67 + 1, stage.textures)
     );
-    let ron: Hero =
-        guac_ir::from_ron(&std::fs::read_to_string(dir.join("heroes/009_Eruptor.ron")).unwrap())
-            .unwrap();
-    let post: Hero =
-        guac_ir::from_postcard(&std::fs::read(dir.join("heroes/009_Eruptor.postcard")).unwrap())
-            .unwrap();
-    assert_eq!(ron, post);
+    // Every hero's RON, read back and put in postcard, is its postcard file
+    // byte for byte: the two formats hold the same bits.
+    let mut agreed = 0;
+    for load in models::character_loads(&roster.roster) {
+        let ron: Hero = guac_ir::from_ron(
+            &std::fs::read_to_string(dir.join(IrFormat::Ron.hero_path(load))).unwrap(),
+        )
+        .unwrap();
+        let post = std::fs::read(dir.join(IrFormat::Postcard.hero_path(load))).unwrap();
+        assert!(guac_ir::to_postcard(&ron).unwrap() == post, "{load}");
+        agreed += 1;
+    }
+    assert_eq!(agreed, 67);
+    println!("  heroes: RON and postcard agree byte for byte on all {agreed}");
     // Both formats hold the same model.
     let ron: Model =
         guac_ir::from_ron(&std::fs::read_to_string(dir.join("models/009_Eruptor.ron")).unwrap())

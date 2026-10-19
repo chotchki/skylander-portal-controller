@@ -4,8 +4,9 @@
 //! channel. Cards don't wait on it: the portal screen draws [`band`] in its
 //! header while the thread runs or after it fails. The stages run in
 //! guac-extract's order (AE.3): the roster and its portraits, the models, the
-//! level (AG.15), then ffmpeg and the intros. The roster goes on the server's figure list the moment it
-//! lands, or at start when the extract is already current (AE.4).
+//! level (AG.15), then ffmpeg and the intros. The roster goes on the server's
+//! figure list the moment it lands, or at start when the extract is already
+//! current (AE.4).
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};

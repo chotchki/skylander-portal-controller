@@ -410,17 +410,19 @@ fn a_level_takes_the_gloss_map_a_character_refuses() {
         assert_eq!(e.kind, ErrorKind::Feature { bit, name }, "{pixel:#x}");
         assert_eq!(e.field, "_baseMask");
     }
-    // And on the vertex side, with skinning.
-    let e = level(&with_body(|b| b.vertex = Some((0x81C, 0x1BFF)))).unwrap_err();
-    assert_eq!(
-        e.kind,
-        ErrorKind::Feature {
-            bit: 11,
-            name: "vertexSkinning"
-        }
-    );
+    // And on the vertex side, bits 6 and 9 with skinning.
+    for (vertex, bit, name) in [
+        (0x5C, 6, "layer4UsesPositions"),
+        (0x21C, 9, "receivesReflections"),
+        (0x81C, 11, "vertexSkinning"),
+    ] {
+        let e = level(&with_body(|b| b.vertex = Some((vertex, 0x1BFF)))).unwrap_err();
+        assert_eq!(e.kind, ErrorKind::Feature { bit, name }, "{vertex:#x}");
+        assert_eq!(e.field, "_baseMask");
+    }
     assert_eq!(Drawn::Level.pixel_undrawn(), [6, 9]);
     assert_eq!(Drawn::Character.pixel_undrawn(), [6, 7, 9]);
+    assert_eq!(Drawn::Level.vertex_undrawn(), [6, 9, 11]);
 }
 
 #[test]

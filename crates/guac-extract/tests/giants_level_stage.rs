@@ -51,6 +51,15 @@ fn read<T: serde::de::DeserializeOwned>(dir: &Path, rel: &str) -> T {
     guac_ir::from_ron(&text).unwrap()
 }
 
+/// `part`'s RON decoded and encoded as postcard is its postcard file, byte
+/// for byte (postcard keeps each float's bits as they are).
+fn agree<T: serde::de::DeserializeOwned + serde::Serialize>(dir: &Path, level: &str, part: &str) {
+    let ron: T = read(dir, &IrFormat::Ron.level_path(level, part));
+    let post = std::fs::read(dir.join(IrFormat::Postcard.level_path(level, part))).unwrap();
+    assert!(guac_ir::to_postcard(&ron).unwrap() == post, "{part}");
+    println!("  {part}: RON and postcard agree, {} bytes", post.len());
+}
+
 fn load_average() -> String {
     std::process::Command::new("sysctl")
         .args(["-n", "vm.loadavg"])
@@ -256,14 +265,21 @@ fn the_level_stage_extracts_chapter_1() {
     for (o, t) in ours.meshes.iter().zip(&theirs) {
         let body = t.collision.body.as_ref().unwrap();
         assert_eq!(o.world, t.name().unwrap());
+        // Bits, not values: `==` on floats would take -0.0 for 0.0.
+        let bits =
+            |v: &[[f32; 3]]| -> Vec<[u32; 3]> { v.iter().map(|p| p.map(f32::to_bits)).collect() };
         let world: Vec<[f32; 3]> = body.world_vertices().collect();
-        assert_eq!(o.vertices, world, "vertex for vertex, bit for bit");
+        assert_eq!(
+            bits(&o.vertices),
+            bits(&world),
+            "vertex for vertex, bit for bit"
+        );
         let tris: Vec<[u16; 3]> = body.mesh.triangles.iter().map(|t| t.indices).collect();
         assert_eq!(o.triangles, tris);
         assert_eq!(o.materials, body.mesh.materials);
         assert_eq!(
-            (o.radius, o.welding),
-            (body.mesh.radius, body.mesh.welding_type)
+            (o.radius.to_bits(), o.welding),
+            (body.mesh.radius.to_bits(), body.mesh.welding_type)
         );
         println!(
             "  collision {}: {} vertices, {} triangles, radius {}, welding {}: equal to AG.2's read",
@@ -355,12 +371,13 @@ fn the_level_stage_extracts_chapter_1() {
         post.took.as_secs_f64()
     );
     assert_eq!(post.files.written, 5);
-    let bytes =
-        std::fs::read(dir.join(IrFormat::Postcard.level_path(level, levels::SCENE))).unwrap();
-    assert_eq!(guac_ir::from_postcard::<Scene>(&bytes).unwrap(), scene);
-    let bytes =
-        std::fs::read(dir.join(IrFormat::Postcard.level_path(level, levels::COLLISION))).unwrap();
-    assert_eq!(guac_ir::from_postcard::<Collision>(&bytes).unwrap(), ours);
+    // Every part's RON, read back and put in postcard, is the postcard file
+    // byte for byte: the two formats hold the same bits.
+    agree::<Scene>(&dir, level, levels::SCENE);
+    agree::<Props>(&dir, level, levels::PROPS);
+    agree::<Collision>(&dir, level, levels::COLLISION);
+    agree::<Placements>(&dir, level, levels::PLACEMENTS);
+    agree::<Lights>(&dir, level, levels::LIGHTS);
     drop(opened);
 
     // A layout-3 extract (AE.6's: models, no heroes, no level) is rebuilt,
