@@ -375,16 +375,13 @@ fn an_extract_root_inside_a_git_repo_is_refused_with_its_path() {
         other => panic!("{other}"),
     }
 
-    // The repo itself, the dev env route and the release route too.
+    // The repo itself and the dev env route too. The release route looks no
+    // higher than its data root (AB.18): `a_release_root_under_a_home_kept_in_git_extracts`.
     assert!(ExtractRoot::checked(&repo).is_err());
     let dev = ExtractRoot::resolve(guac_extract::RootMode::Dev {
         extract_dir: Some(inside.clone().into()),
     });
     assert!(matches!(dev, Err(ExtractError::InCheckout { .. })));
-    let release = ExtractRoot::resolve(guac_extract::RootMode::Release {
-        data_root: repo.join("dev-data/guacamole"),
-    });
-    assert!(matches!(release, Err(ExtractError::InCheckout { .. })));
 
     // A root checked before a repo appeared around it is refused at use.
     let later = tmp.path().join("later");
@@ -393,6 +390,62 @@ fn an_extract_root_inside_a_git_repo_is_refused_with_its_path() {
     let dump = make_dump(&tmp.path().join("d"), "01.00");
     let err = open(&dump, &root, &[], &no_progress).unwrap_err();
     assert_eq!(err.code(), "GUAC-E-EXTRACT-IN-CHECKOUT");
+}
+
+/// openspec AB.18, option (a): a release root refuses only a `.git` at or
+/// below guacamole's data root, so a home folder kept under git (`git init ~`)
+/// still extracts; the same folder as a dev root is refused, and a `.git` in
+/// the data root or the extract folder is refused in release too, at resolve
+/// and at use.
+#[test]
+fn a_release_root_under_a_home_kept_in_git_extracts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    git_init(&home);
+    let data_root = home.join("Library/Application Support/guacamole");
+    let release = || {
+        ExtractRoot::resolve(guac_extract::RootMode::Release {
+            data_root: data_root.clone(),
+        })
+    };
+    let dump = make_dump(&tmp.path().join("d"), "01.00");
+    let table = table_for(&dump, "01.00");
+
+    let root = release().unwrap();
+    assert_eq!(root.path(), data_root.join("extract"));
+    let mut opened = open(&dump, &root, &table, &no_progress).unwrap();
+    assert_eq!(opened.state, DirState::Fresh);
+    opened.dir.write_output("ir/characters.ron", b"()").unwrap();
+    opened.dir.mark_complete().unwrap();
+    assert_eq!(
+        open(&dump, &root, &table, &no_progress).unwrap().state,
+        DirState::Current
+    );
+
+    let dev = ExtractRoot::resolve(guac_extract::RootMode::Dev {
+        extract_dir: Some(data_root.join("extract").into()),
+    });
+    match dev {
+        Err(ExtractError::InCheckout { repo, .. }) => assert_eq!(repo, home),
+        other => panic!("{other:?}"),
+    }
+
+    // A `.git` that appears in the data root after the resolve: refused at use.
+    git_init(&data_root);
+    let err = open(&dump, &root, &table, &no_progress).unwrap_err();
+    assert_eq!(err.code(), "GUAC-E-EXTRACT-IN-CHECKOUT");
+    match release() {
+        Err(ExtractError::InCheckout { repo, .. }) => assert_eq!(repo, data_root),
+        other => panic!("{other:?}"),
+    }
+    fs::remove_dir_all(data_root.join(".git")).unwrap();
+    release().unwrap();
+    // And one in the extract folder itself.
+    git_init(&data_root.join("extract"));
+    match release() {
+        Err(ExtractError::InCheckout { repo, .. }) => assert_eq!(repo, data_root.join("extract")),
+        other => panic!("{other:?}"),
+    }
 }
 
 #[test]

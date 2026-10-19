@@ -424,7 +424,7 @@ pub fn App() -> impl IntoView {
             // fire `post_load`s into a 500. Modal stays queued in
             // `resume_offer` until the user picks + launches a game.
             <Show when=move || resume_offer.get().is_some() && current_game.get().is_some() fallback=|| ()>
-                <ResumeModal resume_offer unlocked_profile toasts />
+                <ResumeModal resume_offer portal known_profiles unlocked_profile toasts />
             </Show>
             <ResetConfirmModal reset_target toasts />
             <Rpcs3SettingsOverlay visible=rpcs3_settings_open />

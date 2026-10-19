@@ -36,11 +36,23 @@ Extraction SHALL NOT create, modify or delete anything inside the dump's folder.
 - **THEN** every file in the dump has the same size, content and modification time as before, and no file was added to or removed from the dump's folder
 
 ### Requirement: Extracted files never land in a source checkout
-guacamole and the extraction tool SHALL refuse an extraction location inside a git working tree. The refusal SHALL name the location and say why.
+guacamole and the extraction tool SHALL refuse a development or configured extraction location inside any git working tree. A release guacamole's extraction location, in its own data folder, SHALL be refused only when that data folder or the location is the top of a git working tree, or links into one: the operating system's data folder is never inside a source checkout, so a home folder kept under git doesn't block it. A refusal SHALL name the location and say why.
 
 #### Scenario: A development config points inside the repository
 - **WHEN** the configured extraction location is a folder inside a git working tree
 - **THEN** extraction does not start and the message names that folder and says extracted game files may not live inside a source checkout
+
+#### Scenario: A home folder kept under git
+- **WHEN** a release guacamole's data folder sits inside a home folder that is itself a git working tree, and Giants is picked with the known dump
+- **THEN** guacamole extracts into its data folder as usual
+
+#### Scenario: A git working tree in the release data folder
+- **WHEN** a release guacamole's data folder or its extraction location is the top of a git working tree
+- **THEN** extraction does not start and the message names the extraction location and says extracted game files may not live inside a source checkout
+
+#### Scenario: A release extraction location linked into a checkout
+- **WHEN** a release guacamole's data folder or its extraction location is a link to a folder inside a git working tree
+- **THEN** extraction does not start and the message names the extraction location and says extracted game files may not live inside a source checkout
 
 ### Requirement: Extraction runs once and survives interruption
 The first time Giants is picked with a recognized dump and no current extraction, guacamole's TV SHALL show extraction progress while it runs, and phones SHALL still be able to place figures. Later starts SHALL reuse a current extraction without redoing it. An interrupted extraction SHALL resume on the next start, redoing only unfinished files. An extraction made by a guacamole whose extraction format differs SHALL be redone automatically, with progress shown again.

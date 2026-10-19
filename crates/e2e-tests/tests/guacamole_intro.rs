@@ -631,7 +631,9 @@ fn card_owners(snap: &Value) -> Vec<(u64, String, String)> {
 /// RESUME's loads are checked at the server first, so a resume that sent
 /// nothing can't pass for one that replayed nothing. AB.22: a second
 /// profile's RESUME of the same whole-portal layout re-places only its own
-/// figure, and Alice's keep her pips and play nothing.
+/// figure, and Alice's keep her pips and play nothing. AB.23: a saved slot
+/// another kid has filled since is refused, and the phone's toast names the
+/// figure that stayed off and whose figure is in its spot.
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver and ffmpeg; E2E_APP=guacamole"]
 async fn a_resumed_layout_already_on_the_portal_plays_no_intro() {
@@ -795,6 +797,71 @@ async fn a_resumed_layout_already_on_the_portal_plays_no_intro() {
     eprintln!(
         "Alice's two kept their pips and played nothing over {polls} TV polls; \
          Bash's intro played"
+    );
+
+    // AB.23: Bob locks, and Alice, on the watcher's session, takes his Bash
+    // off and puts her Gill Grunt (no intro in the fixture) in that slot, so
+    // his saved layout still has Bash there. Bob's RESUME is refused at that
+    // slot (AB.22's 409): Bash stays off, nothing on the portal or the TV
+    // changes, and the phone's toast says which figure and whose is there.
+    skip_intro(&server.url).await.unwrap();
+    wait_for_tv(&server.url, TV_WITHIN, |s| s["intro"].is_null())
+        .await
+        .expect("the skip ends Bash's");
+    lock(&server, sid, &bob).await;
+    set_session_profile(&server.url, bob_sid, &pid)
+        .await
+        .unwrap();
+    clear(&server, bob_sid, 3).await;
+    load(&server, bob_sid, 3, "Gill Grunt").await;
+    let gill = (3, figure_id(&server, sid, "Gill Grunt").await, pid.clone());
+    let (filled, _) = wait_for_tv(&server.url, TV_WITHIN, |s| {
+        card_owners(s).get(2) == Some(&gill)
+    })
+    .await
+    .expect("Alice's Gill Grunt in slot 3");
+    let saved = saved_layout(&server, &bob).await;
+    assert_eq!(
+        (&saved[2]["display_name"], &saved[2]["placed_by"]),
+        (&json!("Bash"), &json!(bob)),
+        "Bob's saved layout lost his Bash: {saved:?}"
+    );
+    let mark = events.mark();
+    let (tapped, listed) = resume(&server, &phone, &bob).await;
+    assert_eq!(listed, ["bash"]);
+    let want = "Bash stayed off the portal: Alice's Gill Grunt is in that spot.";
+    let mut toasts = Vec::new();
+    let until = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < until && !toasts.iter().any(|t| t == want) {
+        toasts.clear();
+        for t in phone
+            .client
+            .find_all(Locator::Css(".toast-msg"))
+            .await
+            .unwrap()
+        {
+            toasts.push(t.text().await.unwrap_or_default());
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        toasts.iter().any(|t| t == want),
+        "the refused RESUME's toast: {toasts:?}"
+    );
+    eprintln!(
+        "Bob's refused RESUME toasted {} ms after the tap: {want:?}",
+        tapped.elapsed().as_millis()
+    );
+    assert!(
+        events.changed_since(mark).is_empty(),
+        "the refused RESUME touched a slot"
+    );
+    let after = tv(&server.url).await.unwrap();
+    assert!(intro_slots(&after).is_empty(), "{after}");
+    assert_eq!(
+        card_owners(&after),
+        card_owners(&filled),
+        "a card changed: {after}"
     );
     phone.close().await.unwrap();
 }

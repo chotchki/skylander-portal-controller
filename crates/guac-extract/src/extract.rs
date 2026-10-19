@@ -132,12 +132,7 @@ pub fn open(
     progress: &(dyn Fn(HashProgress) + Sync),
 ) -> Result<Opened> {
     // Again at use: the root may have been resolved long before.
-    if let Some(repo) = root::enclosing_git_tree(root.path()) {
-        return Err(ExtractError::InCheckout {
-            root: root.path().to_path_buf(),
-            repo,
-        });
-    }
+    root.ensure_outside_checkouts()?;
     root::check_disjoint(root, dump_dir)?;
     let dump_dir = dump_dir
         .canonicalize()

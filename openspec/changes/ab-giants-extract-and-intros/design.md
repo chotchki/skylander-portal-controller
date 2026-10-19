@@ -54,7 +54,7 @@ The known table in `guac-extract` holds identities and hashes only, never conten
 **5. Where output goes, and why it can't leak.**
 - Release extract root: `extract/` under guacamole's own data root (AA design decision 6), so `%LOCALAPPDATA%\guacamole\extract\` on Windows (the root is machine-local because gigabytes don't belong in a roaming profile) and `~/Library/Application Support/guacamole/extract/` on macOS. Nothing lands under the controller's root.
 - Dev: `GUAC_EXTRACT_DIR` in `.env.dev`, required, with no default. guacamole's dev data root (`./dev-data/guacamole/`) is inside the checkout, so the extract can't sit under it there: a default inside `./dev-data/` would be one `git add -f` away from a leak (design doc, No game bytes in the repo).
-- Both the app and the CLI walk up from the resolved root and refuse it if any ancestor holds a `.git`.
+- Both the app and the CLI walk up from the resolved root and refuse it if any ancestor holds a `.git`. A release root's walk stops at guacamole's data root (AB.18; chotchki, 2026-10-18: "that's fine" to refusing only a `.git` at or below it), so a home folder kept under git doesn't block it; a symlink leading out from under the data root gets the any-ancestor walk where it leads, and a dev root and the CLI's keep it.
 - The dump is opened read-only and no code path takes a dump path as an output.
 - Layout v1:
   - `<root>/<TITLE_ID>-<APP_VER>-<hash8>/manifest.json`, recording the extractor version, `IR_VERSION`, the identity, the source file records and every output with its content hash;
