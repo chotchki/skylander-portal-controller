@@ -1372,6 +1372,13 @@ fn setup(
 /// pipeline to compile.
 const EVERY: u32 = 20;
 const MAX_WAIT: Duration = Duration::from_secs(180);
+/// Captures in a row that have to agree before a target that has drawn
+/// counts as done though pixels the model draws are still clear: each
+/// target is one key, so one pipeline, and once it draws anything it has
+/// compiled. Those pixels then fail as misses (a shader dropping them, a
+/// wrong alpha test or cull) instead of waiting out [`MAX_WAIT`] as if a
+/// pipeline were still compiling.
+const SETTLED: u32 = 3;
 
 fn capture(
     mut commands: Commands,
@@ -1382,6 +1389,7 @@ fn capture(
     mut frame: Local<u32>,
     mut started: Local<Option<Instant>>,
     mut previous: Local<Option<Vec<Vec<[f32; 4]>>>>,
+    mut agreeing: Local<u32>,
     mut exit: MessageWriter<AppExit>,
 ) {
     *frame += 1;
@@ -1415,7 +1423,10 @@ fn capture(
             })
             .collect();
         let stable = previous.as_ref() == Some(&shots);
-        if !waiting.is_empty() && *frame > 10 * EVERY {
+        *agreeing = if stable { *agreeing + 1 } else { 0 };
+        let every_target_drew = shots.iter().all(|s| s.iter().any(|p| *p != CLEAR));
+        let settled = every_target_drew && *agreeing >= SETTLED;
+        if !waiting.is_empty() && *frame > 10 * EVERY && !settled {
             eprintln!(
                 "frame {}: {} of {} targets still undrawn {:?}",
                 *frame,
@@ -1424,7 +1435,16 @@ fn capture(
                 &waiting[..waiting.len().min(3)]
             );
         }
-        if waiting.is_empty() && stable {
+        if (waiting.is_empty() && stable) || settled {
+            if !waiting.is_empty() {
+                eprintln!(
+                    "frame {}: every target drew and {} captures agree, but {} still leave pixels the model draws clear, compared as misses: {:?}",
+                    *frame,
+                    *agreeing + 1,
+                    waiting.len(),
+                    &waiting[..waiting.len().min(3)]
+                );
+            }
             *outcome.0.lock().unwrap() = Some(Ok(shots));
             exit.write(AppExit::Success);
             return;
@@ -1976,10 +1996,10 @@ fn probed(cases: &[Case], shots: &[Vec<[f32; 4]>]) -> Decode {
                 );
             }
         }
-        // The decode's envelope, as measured on the M3 Max (AE.8): sRGB
-        // colour within 1.44 x max(2^-13, one half step) of the exact
-        // decode (on a 2^-12 grid near black), linear 8-bit truncated to
-        // the half below it.
+        // The decode's envelope on the M3 Max (AE.8): sRGB colour measured
+        // up to 1.44 x max(2^-13, one half step) off the exact decode (on a
+        // 2^-12 grid near black) and asserted within 1.5x, linear 8-bit
+        // truncated to the half below it.
         for k in 0..256 {
             let (got, want) = (table[k], truth[k]);
             let e = (got - want).abs();

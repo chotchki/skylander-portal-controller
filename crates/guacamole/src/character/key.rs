@@ -269,6 +269,29 @@ impl ShaderKey {
         }
     }
 
+    fn vertex_bit(&self, b: u32) -> bool {
+        self.vertex() >> b & 1 == 1
+    }
+
+    /// Whether the vertex stage writes the eye direction: a spec map with
+    /// fog or a point light, read off the vertex mask as the original's
+    /// vertex program decides it rather than from the reference model's
+    /// [`Switches::eye_direction`], so the GPU lane still checks the
+    /// model's reading of the condition.
+    pub fn writes_eye(&self) -> bool {
+        self.vertex_bit(bit::SPEC_MAP)
+            && (self.vertex_bit(bit::FOG) || self.vertex_bit(bit::VERTEX_POINT_LIT))
+    }
+
+    /// Whether the part has a geometric normal for specular to reflect
+    /// about without a normal map: a rim, directional lighting or a point
+    /// light, off the vertex mask as [`Self::writes_eye`] is.
+    pub fn writes_normal(&self) -> bool {
+        self.vertex_bit(bit::RIM)
+            || self.vertex_bit(bit::DIRECTIONAL)
+            || self.vertex_bit(bit::VERTEX_POINT_LIT)
+    }
+
     /// How many texture-coordinate sets the part reads: the first layer's,
     /// then one each for a second and a third layer.
     pub fn uv_sets(&self) -> usize {
@@ -289,8 +312,8 @@ impl ShaderKey {
             (s.shadows, def::SHADOWS),
             (s.fog, def::FOG),
             (s.vertex_colour, def::VERTEX_COLOUR),
-            (s.eye_direction(), def::EYE),
-            (s.geometric_normal(), def::GEOMETRIC_NORMAL),
+            (self.writes_eye(), def::EYE),
+            (self.writes_normal(), def::GEOMETRIC_NORMAL),
             (self.uv_sets() > 1, def::UV1),
             (self.uv_sets() > 2, def::UV2),
         ]
@@ -501,6 +524,28 @@ mod tests {
                 def::GEOMETRIC_NORMAL
             ]
         );
+    }
+
+    #[test]
+    fn the_masks_and_the_model_agree_on_the_eye_direction_and_the_normal() {
+        // The shader's two derived defs come off the vertex mask, the
+        // model's off its switches: two readings of the spec's conditions,
+        // equal on every key (64 layer and lighting sets, shadows, fog and
+        // 0-3 point lights, with and without vertex colour).
+        let mut keys = 0;
+        for pixel in 0u32..1 << 14 {
+            let lit = u32::from(pixel >> 11 & 0b111 != 0) << 13;
+            for colour in [0, 1 << 12] {
+                let Ok(k) = ShaderKey::new(pixel, pixel & SHARED | lit | colour) else {
+                    continue;
+                };
+                let s = k.switches();
+                assert_eq!(k.writes_eye(), s.eye_direction(), "{pixel:#06x}");
+                assert_eq!(k.writes_normal(), s.geometric_normal(), "{pixel:#06x}");
+                keys += 1;
+            }
+        }
+        assert_eq!(keys, 64 * 2 * 2 * 4 * 2);
     }
 
     #[test]
