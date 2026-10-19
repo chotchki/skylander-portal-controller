@@ -3486,8 +3486,9 @@ pub(crate) mod layout_tests {
     /// AP.14, the box's check: the portal's entrance rises its eight cards
     /// in turn, and at every 20 ms frame along the way the mirror reads each
     /// card's box where it rests, none outside the inset and no two
-    /// overlapping, every node off the faces keeps its rect, and the faces
-    /// as drawn never overlap each other or leave the window.
+    /// overlapping, every node off the faces keeps its rect, every pip (on
+    /// a face, so it moves) stays on its card's box, and the faces as drawn
+    /// never overlap each other or leave the window.
     #[test]
     fn the_entrance_rises_without_moving_a_marked_rect() {
         use bevy::time::TimeUpdateStrategy;
@@ -3528,6 +3529,22 @@ pub(crate) mod layout_tests {
             assert_eq!(shot.overlapping, 0, "frame {frame}");
             assert_eq!(rects, rest, "frame {frame}: a card's box moved");
             assert_eq!(outer_nodes(&mut app), outer, "frame {frame}");
+            // The pips ride the faces, and `report_layout` measures them
+            // (`pips_off_card`): each stays on its card's box as drawn.
+            let pips: Vec<(u8, Entity)> = {
+                let world = app.world_mut();
+                let mut q = world.query::<(Entity, &Pip)>();
+                q.iter(world).map(|(e, p)| (p.0, e)).collect()
+            };
+            assert_eq!(pips.len(), 8, "frame {frame}");
+            for (slot, pip) in pips {
+                let [card, ..] = card_parts(&mut app, slot);
+                let (card, pip) = (rect_of(&app, card), drawn_rect(&app, pip));
+                assert!(
+                    contains(card, pip),
+                    "frame {frame}: pip {slot} {pip:?} off {card:?}"
+                );
+            }
             let faces = faces(&mut app);
             assert_eq!(faces.len(), 8);
             let shown: Vec<Rect> = faces.values().filter(|f| f.3).map(|f| f.1).collect();

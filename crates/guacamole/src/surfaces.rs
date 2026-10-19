@@ -158,23 +158,7 @@ pub(crate) fn spawn_bezel(
                 fade(LinearGradient::TO_BOTTOM, theme.light, 0.3, depth),
                 fade(LinearGradient::TO_TOP, theme.shadow, 0.5, depth),
             ]),
-            // Back to front: 0 4px 10px rgba(0,0,0,0.6), then 0 0 0 1px #000.
-            BoxShadow(vec![
-                ShadowStyle {
-                    color: theme.shadow.with_alpha(0.6),
-                    x_offset: px(0),
-                    y_offset: px(4.0 * BEZEL_SCALE),
-                    spread_radius: px(0),
-                    blur_radius: px(10.0 * BEZEL_SCALE),
-                },
-                ShadowStyle {
-                    color: theme.shadow,
-                    x_offset: px(0),
-                    y_offset: px(0),
-                    spread_radius: px(BEZEL_SCALE),
-                    blur_radius: px(0),
-                },
-            ]),
+            bezel_shadows(theme),
         ))
         .with_children(|ring| {
             let plate = theme.element(element).unwrap_or(theme.plate);
@@ -215,6 +199,20 @@ pub(crate) fn spawn_bezel(
             }
         })
         .id()
+}
+
+/// The bezel's outer shadows at its scale, back to front: §3.1's `0 4px 10px
+/// rgba(0,0,0,0.6)` drop, then its `0 0 0 1px #000` outline.
+fn bezel_shadows(theme: &TvTheme) -> BoxShadow {
+    BoxShadow(vec![
+        css_shadow(
+            theme.shadow.with_alpha(0.6),
+            Vec2::new(0.0, 4.0 * BEZEL_SCALE),
+            10.0 * BEZEL_SCALE,
+            0.0,
+        ),
+        css_shadow(theme.shadow, Vec2::ZERO, 0.0, BEZEL_SCALE),
+    ])
 }
 
 /// §5.4's portal impact over a bezel, laid over the ring's whole box (the
@@ -355,13 +353,12 @@ pub(crate) fn blue_card_face(theme: &TvTheme, lit: f32) -> (BackgroundGradient, 
     ]);
     // Back to front: 0 5px 12px rgba(0,0,0,0.4), the glow, then 0 3px 0
     // rgba(0,0,0,0.45), the order the phone's hover stacks them in.
-    let mut shadows = vec![ShadowStyle {
-        color: theme.shadow.with_alpha(0.4),
-        x_offset: px(0),
-        y_offset: px(5.0 * BUTTON_SCALE),
-        spread_radius: px(0),
-        blur_radius: px(12.0 * BUTTON_SCALE),
-    }];
+    let mut shadows = vec![css_shadow(
+        theme.shadow.with_alpha(0.4),
+        Vec2::new(0.0, 5.0 * BUTTON_SCALE),
+        12.0 * BUTTON_SCALE,
+        0.0,
+    )];
     if lit > 0.0 {
         let glow = theme.focus_glow;
         shadows.push(css_shadow(
@@ -371,13 +368,12 @@ pub(crate) fn blue_card_face(theme: &TvTheme, lit: f32) -> (BackgroundGradient, 
             4.0 * BUTTON_SCALE,
         ));
     }
-    shadows.push(ShadowStyle {
-        color: theme.shadow.with_alpha(0.45),
-        x_offset: px(0),
-        y_offset: px(3.0 * BUTTON_SCALE),
-        spread_radius: px(0),
-        blur_radius: px(0),
-    });
+    shadows.push(css_shadow(
+        theme.shadow.with_alpha(0.45),
+        Vec2::new(0.0, 3.0 * BUTTON_SCALE),
+        0.0,
+        0.0,
+    ));
     (fill, BoxShadow(shadows))
 }
 
@@ -387,7 +383,9 @@ pub(crate) fn blue_card_face(theme: &TvTheme, lit: f32) -> (BackgroundGradient, 
 /// grows the node's width by the value (the height in proportion) where
 /// CSS's grows each side by it (`bevy_ui_render`'s `box_shadow.rs` and
 /// `.wesl`). So a CSS shadow passed through as written draws twice as soft
-/// and half as spread.
+/// and half as spread; every §3 shadow here goes through this. On a node
+/// wider than tall the spread's height is short of CSS's (the focus glow's
+/// is), since bevy_ui grows the height in proportion to the width.
 pub(crate) fn css_shadow(color: Color, offset: Vec2, blur: f32, spread: f32) -> ShadowStyle {
     ShadowStyle {
         color,
@@ -439,20 +437,13 @@ pub(crate) fn pip(theme: &TvTheme, fill: Color) -> impl Bundle + use<> {
         ]),
         // Back to front: 0 2px 4px rgba(0,0,0,0.55), then 0 0 0 1px #000.
         BoxShadow(vec![
-            ShadowStyle {
-                color: theme.shadow.with_alpha(0.55),
-                x_offset: px(0),
-                y_offset: px(2.0 * PIP_SCALE),
-                spread_radius: px(0),
-                blur_radius: px(4.0 * PIP_SCALE),
-            },
-            ShadowStyle {
-                color: theme.shadow,
-                x_offset: px(0),
-                y_offset: px(0),
-                spread_radius: px(PIP_SCALE),
-                blur_radius: px(0),
-            },
+            css_shadow(
+                theme.shadow.with_alpha(0.55),
+                Vec2::new(0.0, 2.0 * PIP_SCALE),
+                4.0 * PIP_SCALE,
+                0.0,
+            ),
+            css_shadow(theme.shadow, Vec2::ZERO, 0.0, PIP_SCALE),
         ]),
     )
 }
@@ -528,6 +519,59 @@ mod tests {
         assert!((reach - FAR_CORNER).abs() < 0.05, "{reach}");
         let reach = (0.5f32.powi(2) * 2.0).sqrt() * 100.0;
         assert!((reach - FLASH_REACH).abs() < 0.05, "{reach}");
+    }
+
+    /// A shadow as `(alpha, y offset, blur, spread)` in bevy_ui's terms.
+    fn drawn(shadow: &ShadowStyle) -> (f32, Val, Val, Val) {
+        (
+            shadow.color.alpha(),
+            shadow.y_offset,
+            shadow.blur_radius,
+            shadow.spread_radius,
+        )
+    }
+
+    /// Every §3 shadow is the phone's CSS at the surface's scale, as bevy_ui
+    /// reads it: half the blur (bevy_ui's is the sigma) and twice the spread
+    /// (bevy_ui's grows the whole width). Passed through as written, AP.12's
+    /// drew twice as soft and their outlines half as thick.
+    #[test]
+    fn every_shadow_is_the_phones_through_css_shadow() {
+        let theme = TvTheme::default();
+        // §3.1's bezel at 160/128: 0 4px 10px .6, then 0 0 0 1px #000.
+        let bezel = bezel_shadows(&theme);
+        assert_eq!(
+            bezel.0.iter().map(drawn).collect::<Vec<_>>(),
+            [
+                (0.6, Val::Px(5.0), Val::Px(6.25), Val::Px(0.0)),
+                (1.0, Val::Px(0.0), Val::Px(0.0), Val::Px(2.5)),
+            ]
+        );
+        // The pip at 60/24: 0 2px 4px .55, then 0 0 0 1px #000.
+        let mut world = World::new();
+        let pip = world.spawn(pip(&theme, Color::WHITE)).id();
+        let shadows = world.get::<BoxShadow>(pip).unwrap();
+        assert_eq!(
+            shadows.0.iter().map(drawn).collect::<Vec<_>>(),
+            [
+                (0.55, Val::Px(5.0), Val::Px(5.0), Val::Px(0.0)),
+                (1.0, Val::Px(0.0), Val::Px(0.0), Val::Px(5.0)),
+            ]
+        );
+        // §3.2's button at 2×: 0 5px 12px .4 under, 0 3px 0 .45 on top, and
+        // focused the picking glow 0 0 22px 4px between them.
+        for (lit, len) in [(0.0, 2), (1.0, 3)] {
+            let (_, shadows) = blue_card_face(&theme, lit);
+            assert_eq!(shadows.0.len(), len);
+            assert_eq!(
+                drawn(&shadows.0[0]),
+                (0.4, Val::Px(10.0), Val::Px(12.0), Val::Px(0.0))
+            );
+            assert_eq!(
+                drawn(shadows.0.last().unwrap()),
+                (0.45, Val::Px(6.0), Val::Px(0.0), Val::Px(0.0))
+            );
+        }
     }
 
     #[test]
