@@ -6382,6 +6382,8 @@ dependencies = [
  "guac-oracle",
  "image",
  "rrc-dump",
+ "serde",
+ "serde_json",
  "sha2 0.10.9",
  "skylander-core",
  "skylander-rpcs3-control",

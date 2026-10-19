@@ -26,6 +26,13 @@
 //! RPCS3's server consumes 4 request bytes after `MsgStatus`'s opcode, where
 //! PCSX2's takes none; the client pads it with 4 zeros, so a status op works
 //! anywhere in a batch against RPCS3 (only).
+//!
+//! Drop the client before anything stops the emulator (`SAVESTATE`'s reboot, a
+//! shutdown). The server's one thread serves one client with a blocking read
+//! and checks for its abort only between messages, so the stop waits on it for
+//! as long as an idle client stays connected: AF.8's first live run hung at
+//! `stopped` for 120 s, RPCS3's log repeating "Thread [IPC Server] is too
+//! sleepy", until the harness gave up.
 
 use std::fmt;
 #[cfg(unix)]
@@ -571,6 +578,11 @@ impl PineClient {
 
     pub fn title(&mut self) -> Result<String, PineError> {
         self.text(Op::Title)
+    }
+
+    /// The running game's `APP_VER` (`01.00` for the Giants disc).
+    pub fn game_version(&mut self) -> Result<String, PineError> {
+        self.text(Op::GameVersion)
     }
 
     pub fn version(&mut self) -> Result<String, PineError> {

@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use oracle_harness::env;
 use oracle_harness::home::{self, InitOptions, OracleHome};
 use oracle_harness::launch::Oracle;
+use oracle_harness::pine::PineClient;
 use oracle_harness::rpcs3_log::{LogTail, opened_path};
 use oracle_harness::snapshot::dev_rpcs3_dirs;
 use oracle_harness::template::ConfigTemplate;
@@ -231,4 +232,18 @@ pub fn hid_idle() -> String {
             Some(format!("input idle {:.0} s", ns / 1e9))
         })
         .unwrap_or_else(|| "input idle unknown".into())
+}
+
+/// PINE's server starts with the game (and again after a savestate's reboot),
+/// so its socket can trail the pause: retried for 30 s.
+#[allow(dead_code)] // the live tests that read memory
+pub fn pine_connect(socket: &Path) -> PineClient {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match PineClient::connect(socket) {
+            Ok(c) => return c,
+            Err(e) if Instant::now() > deadline => panic!("PINE at {}: {e}", socket.display()),
+            Err(_) => std::thread::sleep(Duration::from_millis(250)),
+        }
+    }
 }
