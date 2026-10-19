@@ -448,16 +448,28 @@ async fn resume(server: &TestServer, phone: &Phone, pid: &str) -> (Instant, Vec<
         .wait_for(Locator::Css(".resume-panel"), Duration::from_secs(10))
         .await
         .expect("the resume prompt");
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let mut listed = Vec::new();
-    for name in phone
-        .client
-        .find_all(Locator::Css(".resume-fig-name"))
-        .await
-        .expect("the prompt's figures")
-    {
-        listed.push(name.text().await.unwrap().to_lowercase());
-    }
+    // The figure row fades in (`resume_modal.css`: 200 ms delay, 600 ms
+    // entrance) and WebDriver reads text it doesn't consider shown as "",
+    // so wait for every name rather than a fixed beat (a loaded machine ran
+    // past 300 ms with the first one still blank).
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let listed = loop {
+        let mut listed = Vec::new();
+        for name in phone
+            .client
+            .find_all(Locator::Css(".resume-fig-name"))
+            .await
+            .expect("the prompt's figures")
+        {
+            listed.push(name.text().await.unwrap().to_lowercase());
+        }
+        if (!listed.is_empty() && listed.iter().all(|n| !n.is_empty()))
+            || Instant::now() >= deadline
+        {
+            break listed;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
     phone
         .client
         .find(Locator::Css(".resume-btn-primary"))

@@ -191,12 +191,16 @@ impl Plugin for IntroPlugin {
 
 /// While an intro plays, its overlay holds the input focus, so an Enter or
 /// Space the widgets would take lands on a node with no button; the focus
-/// goes back to what had it when the last intro in a row stops.
+/// goes back to what had it when the last intro in a row stops, unless
+/// something else took it meanwhile (a new screen's button, focused as it
+/// spawned).
 fn overlay_holds_focus(
     overlays: Query<Entity, With<IntroOverlay>>,
     focus: Option<ResMut<InputFocus>>,
     entities: &Entities,
-    mut before: Local<Option<Option<Entity>>>,
+    // What had the focus before the first intro in a row, and the overlay
+    // that has it now.
+    mut held: Local<Option<(Option<Entity>, Entity)>>,
 ) {
     let Some(mut focus) = focus else {
         return;
@@ -205,14 +209,18 @@ fn overlay_holds_focus(
         Some(overlay) => {
             if focus.get() != Some(overlay) {
                 // The next intro in a row keeps what the first one took.
-                before.get_or_insert(focus.get());
+                let before = held.map_or(focus.get(), |(before, _)| before);
+                *held = Some((before, overlay));
                 focus.set(overlay, FocusCause::Navigated);
             }
         }
         None => {
-            let Some(was) = before.take() else {
+            let Some((was, overlay)) = held.take() else {
                 return;
             };
+            if focus.get().is_some_and(|now| now != overlay) {
+                return;
+            }
             match was.filter(|e| entities.contains(*e)) {
                 Some(entity) => focus.set(entity, FocusCause::Navigated),
                 None if focus.get().is_some() => focus.clear(),
@@ -1125,6 +1133,35 @@ mod tests {
             tv.app.update();
             assert_eq!(overlay(&mut tv), None);
             assert_eq!(focus(&tv), Some(had));
+        }
+
+        /// AP.5-AP.6 review: a screen with a choice taking over from an
+        /// intro (a crash on the portal shows ServerError) keeps the focus its
+        /// button took on spawn; the overlay going gives back nothing.
+        #[test]
+        fn a_choice_that_took_the_focus_keeps_it_when_the_intro_stops() {
+            use crate::input::FocusId;
+            use crate::tv::CLOSE;
+            let focused = |tv: &Tv| {
+                let world = tv.app.world();
+                let entity = world.resource::<InputFocus>().get()?;
+                world.get::<FocusId>(entity).map(|id| id.0)
+            };
+            let tmp = tempfile::tempdir().unwrap();
+            let lib = library(tmp.path(), &[("eruptor", 100)]);
+            let mut tv = tv(Some(lib));
+            tv.place(0, "000009-0000");
+            assert_eq!(tv.overlays(), 1);
+            tv.app.world_mut().resource_mut::<Current>().screen = TvScreen::ServerError {
+                message: "the driver stopped".into(),
+            };
+            // Checked after every frame, so a frame that took it away and
+            // a later one that put it back still fail.
+            for frame in 0..4 {
+                tv.app.update();
+                assert_eq!(focused(&tv), Some(CLOSE), "frame {frame}");
+            }
+            assert_eq!(tv.overlays(), 0);
         }
 
         #[test]

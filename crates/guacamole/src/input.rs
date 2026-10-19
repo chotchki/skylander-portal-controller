@@ -200,12 +200,17 @@ impl NavRepeat {
                 if now < due {
                     return None;
                 }
-                self.held = Some((dir, now + REPEAT_EVERY));
+                // On the cadence, not a frame late each time; after a
+                // stall, one move and the cadence again from here.
+                let next = due + REPEAT_EVERY;
+                self.held = Some((dir, if next > now { next } else { now + REPEAT_EVERY }));
                 dir
             }
-            // A press, or the hold turned to another direction.
+            // A press, or the hold turned to another direction: a new
+            // press, which a layer above can swallow again this frame.
             _ => {
                 self.held = Some((dir, now + REPEAT_DELAY));
+                self.swallowed = false;
                 dir
             }
         };
@@ -565,6 +570,67 @@ mod tests {
         }
         assert_eq!(repeat.step(Vec2::ZERO, Vec2::ZERO, at(2000)), None);
         assert!(repeat.step(UP, Vec2::ZERO, at(2010)).is_some());
+    }
+
+    /// AP.5 review: once the layer that swallowed a hold is gone, turning
+    /// it is a new press and moves; the old direction still doesn't.
+    #[test]
+    fn a_turn_after_a_swallowed_hold_is_a_new_press() {
+        let mut repeat = NavRepeat::default();
+        assert!(repeat.step(-Vec2::X, Vec2::ZERO, at(0)).is_some());
+        repeat.swallow();
+        assert_eq!(repeat.step(-Vec2::X, Vec2::ZERO, at(1000)), None);
+        // Up joins the held Left: north-west, a direction never swallowed.
+        assert_eq!(
+            repeat.step(Vec2::new(-1.0, 1.0), Vec2::ZERO, at(1010)),
+            Some(CompassOctant::NorthWest)
+        );
+        // Swallowed again in the frame it turned (the layer still up): nothing
+        // until the next turn or release.
+        let mut repeat = NavRepeat::default();
+        assert!(repeat.step(-Vec2::X, Vec2::ZERO, at(0)).is_some());
+        repeat.swallow();
+        assert!(repeat.step(UP, Vec2::ZERO, at(10)).is_some());
+        repeat.swallow();
+        for ms in (20..1000).step_by(10) {
+            assert_eq!(repeat.step(UP, Vec2::ZERO, at(ms)), None, "{ms} ms");
+        }
+    }
+
+    /// AP.5 review: the repeats keep their cadence at a frame rate that
+    /// doesn't divide it (each one due on the last one's schedule, not on the
+    /// late frame that made it: at 30 Hz that drifts to one every 167 ms), and
+    /// a stall gives one move, not a burst.
+    #[test]
+    fn a_hold_keeps_its_cadence_at_30_hz_and_after_a_stall() {
+        let frame = Duration::from_nanos(33_333_333);
+        let mut repeat = NavRepeat::default();
+        let mut moves = Vec::new();
+        for n in 0..=90u32 {
+            let now = frame * n;
+            if repeat.step(UP, Vec2::ZERO, now).is_some() {
+                moves.push(now);
+            }
+        }
+        // 3 s: the press, then one at 400 ms and every 150 ms after,
+        // 400 + 17 × 150 = 2950 being the last inside 3000.
+        assert_eq!(moves.len(), 1 + 1 + 17, "{moves:?}");
+        for (i, at) in moves.iter().enumerate().skip(1) {
+            let due = REPEAT_DELAY + REPEAT_EVERY * (i as u32 - 1);
+            assert!(
+                *at >= due && *at < due + frame,
+                "move {i} at {at:?}, due {due:?}"
+            );
+        }
+        // A one-second stall mid-hold: one move when it ends, then on the
+        // cadence again from there.
+        let mut repeat = NavRepeat::default();
+        assert!(repeat.step(UP, Vec2::ZERO, at(0)).is_some());
+        assert!(repeat.step(UP, Vec2::ZERO, at(400)).is_some());
+        assert!(repeat.step(UP, Vec2::ZERO, at(1550)).is_some());
+        assert_eq!(repeat.step(UP, Vec2::ZERO, at(1560)), None);
+        assert_eq!(repeat.step(UP, Vec2::ZERO, at(1699)), None);
+        assert!(repeat.step(UP, Vec2::ZERO, at(1700)).is_some());
     }
 
     fn south() -> Frame {
