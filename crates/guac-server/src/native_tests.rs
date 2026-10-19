@@ -14,13 +14,14 @@ use skylander_core::{
     Element, Event, FigureId, GameSerial, InstalledGame, SLOT_COUNT, SlotIndex, SlotState,
     SubtypeWord, ToyTypeId,
 };
-use skylander_rpcs3_control::{Placement, PortalDriver};
+use skylander_rpcs3_control::{FigureProgress, Placement, PortalDriver};
 use tokio::sync::{Mutex, broadcast};
 use tower::ServiceExt;
 
 use crate::config::{DriverKind, WindowMode};
 use crate::figures::{FigureList, FigureSet, RosterState, fixture};
 use crate::hooks::Hooks;
+use crate::instances::Caps;
 use crate::profiles::{ProfileStore, RegistrationOutcome, SessionId, SessionRegistry};
 use crate::state::{AppState, LauncherStatus, RpcsLifecycle, spawn_driver_worker};
 
@@ -188,6 +189,28 @@ async fn native_waiting() -> Native {
 }
 
 impl Native {
+    /// Waits for the worker to empty `slot`.
+    async fn wait_empty(&self, slot: usize) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !matches!(self.state.portal.lock().await[slot], SlotState::Empty) {
+            assert!(Instant::now() < deadline, "slot {slot} never emptied");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    /// How many rows guacamole's figure store holds.
+    async fn instance_rows(&self) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM figure_instances")
+            .fetch_one(&self.state.profiles.pool)
+            .await
+            .unwrap()
+    }
+
+    /// The placement the driver got last.
+    fn last_place(&self) -> (u8, Placement) {
+        self.driver.places.lock().unwrap().last().cloned().unwrap()
+    }
+
     /// A registered session with a fresh profile unlocked; returns both ids.
     async fn unlocked_session(&self) -> (SessionId, String) {
         self.unlocked_session_as("Kaylee", "#e63946").await
@@ -517,6 +540,10 @@ async fn a_kaos_swap_places_by_identity_and_writes_no_file() {
         places[1].1.owner.as_ref().map(|o| o.profile_id.as_str()),
         Some(profile_id.as_str())
     );
+    // The swap is the profile's first placement of Spyro: his row is made (AH.1).
+    let spyro = n.state.profiles.instances().read(&profile_id, SPYRO).await;
+    let spyro = spyro.unwrap().expect("made at the swap's placement");
+    assert_eq!(places[1].1.owner.as_ref().unwrap().progress, spyro.progress);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -962,4 +989,106 @@ async fn a_load_racing_the_roster_swap_is_refused_or_placed_whole() {
             "{event:?}"
         );
     }
+}
+
+/// AH.1: a profile's first placement of a figure makes its row fresh and the
+/// placement carries it; a second leaves the row as play left it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_first_placement_makes_the_row_fresh_and_a_second_leaves_it_alone() {
+    let n = native().await;
+    let (sid, alice) = n.unlocked_session().await;
+    let body = format!(r#"{{"figure_id":"{ERUPTOR}"}}"#);
+    let load = |slot: u8| format!("/api/portal/slot/{slot}/load");
+    assert_eq!(
+        n.send("POST", &load(1), &body, Some(sid)).await,
+        StatusCode::ACCEPTED
+    );
+    n.wait_loaded(0, ERUPTOR).await;
+    let row = n.state.profiles.instances().read(&alice, ERUPTOR).await;
+    let row = row.unwrap().expect("made at the first placement");
+    let p = row.progress;
+    assert_eq!((p.xp, p.gold, p.playtime_secs), (0, 0, 0));
+    assert!(p.generation > 0);
+    let (_, placed) = n.last_place();
+    assert_eq!(placed.owner.unwrap().progress, p);
+
+    // Earned in play, lifted, placed again.
+    let earned = FigureProgress {
+        xp: 16,
+        gold: 3,
+        playtime_secs: 61,
+        ..p
+    };
+    let wrote = n
+        .state
+        .profiles
+        .instances()
+        .write(&alice, ERUPTOR, earned, true, Caps::NONE);
+    assert!(wrote.await.unwrap().is_some());
+    let clear = n.send("POST", "/api/portal/slot/1/clear", "", Some(sid));
+    assert_eq!(clear.await, StatusCode::ACCEPTED);
+    n.wait_empty(0).await;
+    assert_eq!(
+        n.send("POST", &load(2), &body, Some(sid)).await,
+        StatusCode::ACCEPTED
+    );
+    n.wait_loaded(1, ERUPTOR).await;
+    let again = n.state.profiles.instances().read(&alice, ERUPTOR).await;
+    assert_eq!(
+        again.unwrap().unwrap().progress,
+        earned,
+        "the row was touched"
+    );
+    let (slot, placed) = n.last_place();
+    assert_eq!(slot, 1);
+    assert_eq!(placed.owner.unwrap().progress, earned);
+    assert_eq!(n.instance_rows().await, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn one_figure_placed_by_two_profiles_is_two_rows() {
+    let n = native().await;
+    let (alice_sid, alice) = n.unlocked_session().await;
+    let (bob_sid, bob) = n.unlocked_session_as("Bob", "#2a9d8f").await;
+    let body = format!(r#"{{"figure_id":"{ERUPTOR}"}}"#);
+    for (slot, sid) in [(1usize, alice_sid), (2, bob_sid)] {
+        let uri = format!("/api/portal/slot/{slot}/load");
+        assert_eq!(
+            n.send("POST", &uri, &body, Some(sid)).await,
+            StatusCode::ACCEPTED
+        );
+        n.wait_loaded(slot - 1, ERUPTOR).await;
+    }
+    assert_eq!(n.instance_rows().await, 2);
+    let instances = n.state.profiles.instances();
+    let alices = instances.read(&alice, ERUPTOR).await.unwrap().unwrap();
+    let bobs = instances.read(&bob, ERUPTOR).await.unwrap().unwrap();
+    assert_ne!(alices.progress.generation, bobs.progress.generation);
+    let mut places = n.driver.places.lock().unwrap().clone();
+    places.sort_by_key(|(slot, _)| *slot);
+    let owners: Vec<_> = places
+        .iter()
+        .map(|(_, p)| {
+            let o = p.owner.clone().unwrap();
+            (o.profile_id, o.progress)
+        })
+        .collect();
+    assert_eq!(owners, vec![(alice, alices.progress), (bob, bobs.progress)]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_placement_with_no_profile_unlocked_makes_no_row_and_carries_none() {
+    let n = native().await;
+    let RegistrationOutcome::Admitted(sid) = n.state.sessions.register().await else {
+        panic!("a fresh registry admits");
+    };
+    let body = format!(r#"{{"figure_id":"{ERUPTOR}"}}"#);
+    let status = n
+        .send("POST", "/api/portal/slot/4/load", &body, Some(sid))
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    n.wait_loaded(3, ERUPTOR).await;
+    let (_, placed) = n.last_place();
+    assert_eq!(placed.owner, None, "no owner, so no progress either");
+    assert_eq!(n.instance_rows().await, 0);
 }

@@ -686,8 +686,11 @@ fn first_grapheme_uppercase(name: &str) -> Option<String> {
 
 /// The identity placement for a file-less load (openspec AA, design decision
 /// 4): the subtype word as the id spells it (AE.4) and the roster's portrait.
-/// Errors only for an id that isn't in the list or isn't tag-form; an owner
-/// whose profile can't be read is logged and left off.
+/// An owner carries its row for the figure, made fresh on the profile's first
+/// placement of it (AH.1), so a load, a resume and a Kaos swap all make it.
+/// Errors for an id that isn't in the list or isn't tag-form, and for a row
+/// that can't be made or read; an owner whose profile can't be read is logged
+/// and left off.
 async fn build_placement(
     figure_id: &FigureId,
     name: &str,
@@ -708,6 +711,11 @@ async fn build_placement(
                 profile_id: profile_id.to_string(),
                 initial: first_grapheme_uppercase(&row.display_name).unwrap_or_default(),
                 color: row.color,
+                progress: profiles
+                    .instances()
+                    .fresh(profile_id, figure_id.as_str())
+                    .await?
+                    .progress,
             }),
             Ok(None) => {
                 warn!(profile_id, "place: placing profile is gone; no owner pip");

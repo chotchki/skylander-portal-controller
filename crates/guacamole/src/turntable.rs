@@ -1155,6 +1155,7 @@ pub(crate) mod tests {
                 profile_id: "p2".into(),
                 initial: "B".into(),
                 color: "#3366ff".into(),
+                progress: Default::default(),
             });
         }
         set(&mut app, [again]);

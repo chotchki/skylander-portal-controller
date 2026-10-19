@@ -20,6 +20,7 @@ mod mirror;
 mod motion;
 mod physics;
 mod picker;
+mod progress;
 mod screen;
 #[cfg(feature = "dev-tools")]
 mod shots;
@@ -48,6 +49,7 @@ use guac_server::config::{DriverKind, WindowMode};
 use guac_server::figures::RosterState;
 use guac_server::hooks::Hooks;
 use guac_server::logging::WorkerGuard;
+use guac_server::progress::ProgressSink;
 use guac_server::state::{LauncherScreen, LauncherStatus};
 use guac_server::{logging, paths, setup};
 use tracing::{info, warn};
@@ -99,6 +101,7 @@ fn main() -> Result<()> {
             let link = failed_link(format!("{e:#}"));
             return run_tv(
                 link,
+                None,
                 portal_rx,
                 shelf,
                 no_setup,
@@ -147,6 +150,7 @@ fn main() -> Result<()> {
         None => RosterState::Unrecognized,
     };
 
+    let mut progress = None;
     let link = match boot(BootOptions {
         config: cfg.clone(),
         runtime_root: root.clone(),
@@ -163,6 +167,7 @@ fn main() -> Result<()> {
         Ok(server) => {
             keep_pairing_key(&root, &server, &cfg.hmac_key);
             job.figures = Some(server.figures.clone());
+            progress = Some(server.progress.clone());
             if let Some(giants) = scan.offered() {
                 extraction::preload_roster(giants.dir.clone(), job.clone());
             }
@@ -176,6 +181,7 @@ fn main() -> Result<()> {
     };
     run_tv(
         link,
+        progress,
         portal_rx,
         shelf,
         setup_view,
@@ -233,9 +239,11 @@ fn pick_before_the_window(root: &Path) -> bool {
     code == 0
 }
 
-/// Runs the TV until it exits; the guard flushes the file log first.
+/// Runs the TV until it exits, then writes every figure's progress before the
+/// file log's guard flushes it (AH.1).
 fn run_tv(
     link: ServerLink,
+    progress: Option<ProgressSink>,
     portal: Receiver<PortalChange>,
     shelf: turntable::ShelfFeed,
     setup_view: SetupView,
@@ -246,7 +254,7 @@ fn run_tv(
     mirror: TvMirror,
     log_guard: WorkerGuard,
 ) -> Result<()> {
-    exit_after_farewell(link.status.clone());
+    exit_after_farewell(link.status.clone(), progress.clone());
 
     let mut app = App::new();
     app.add_plugins(
@@ -273,7 +281,11 @@ fn run_tv(
         extraction::ExtractPlugin,
         intro_player::IntroPlugin,
         physics::SeamPlugin,
+        progress::ProgressPlugin,
     ));
+    if let Some(progress) = &progress {
+        app.insert_resource(progress::ProgressOut(progress.clone()));
+    }
     if let Some(job) = job {
         app.insert_resource(job);
     }
@@ -284,6 +296,7 @@ fn run_tv(
     }
     let exit = app.run();
     info!(?exit, "guacamole exited");
+    flush_progress(progress.as_ref(), PROGRESS_FLUSH);
     drop(log_guard);
     match exit {
         AppExit::Success => Ok(()),
@@ -361,9 +374,29 @@ fn window(mode: WindowMode) -> Window {
     }
 }
 
+/// How long a quit waits for the figures' progress to reach the store; the
+/// farewell's fallback waits less, to keep its 5 s.
+const PROGRESS_FLUSH: Duration = Duration::from_secs(3);
+const PROGRESS_FLUSH_AFTER_FAREWELL: Duration = Duration::from_millis(400);
+
+/// Writes everything the TV handed over, playtime included, before exiting.
+fn flush_progress(progress: Option<&ProgressSink>, timeout: Duration) {
+    let Some(progress) = progress else {
+        return;
+    };
+    if progress.flush_and_wait(timeout) {
+        info!("figure progress written");
+    } else {
+        warn!("figure progress not confirmed written before the exit");
+    }
+}
+
 /// Exits even if frames stall (an occluded window), so SHUT DOWN always
-/// closes the app within 5 s.
-fn exit_after_farewell(status: Arc<std::sync::Mutex<LauncherStatus>>) {
+/// closes the app within 5 s, the figures' progress written first.
+fn exit_after_farewell(
+    status: Arc<std::sync::Mutex<LauncherStatus>>,
+    progress: Option<ProgressSink>,
+) {
     std::thread::Builder::new()
         .name("farewell".into())
         .spawn(move || {
@@ -379,6 +412,7 @@ fn exit_after_farewell(status: Arc<std::sync::Mutex<LauncherStatus>>) {
             }
             std::thread::sleep(FAREWELL_BEAT + Duration::from_millis(1500));
             warn!("the TV didn't exit after the farewell; exiting now");
+            flush_progress(progress.as_ref(), PROGRESS_FLUSH_AFTER_FAREWELL);
             // The file log's worker writes asynchronously; let it catch up.
             std::thread::sleep(Duration::from_millis(100));
             std::process::exit(0);

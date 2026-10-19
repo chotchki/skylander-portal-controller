@@ -28,11 +28,13 @@ pub struct Placement {
     /// The figure's portrait in the extract, `portraits/<id>.png`, when the
     /// disc has one. Server-private.
     pub portrait: Option<PathBuf>,
-    /// The placing profile; `None` when no profile was unlocked.
+    /// The placing profile and its progress for the figure; `None` when no
+    /// profile was unlocked, so the figure earns for the session alone.
     pub owner: Option<PlacementOwner>,
 }
 
-/// Who placed a [`Placement`], as the TV's owner pip draws it.
+/// Who placed a [`Placement`], as the TV's owner pip draws it, with that
+/// profile's progress for the figure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlacementOwner {
     pub profile_id: String,
@@ -40,6 +42,22 @@ pub struct PlacementOwner {
     pub initial: String,
     /// The profile's colour, as the profile store keeps it.
     pub color: String,
+    /// The profile's row for the figure as the placement read it (openspec
+    /// AH.1); the product's drivers never build a placement.
+    pub progress: FigureProgress,
+}
+
+/// A figure's progress on one profile (openspec AH.1, design decision 8): what
+/// the TV starts the figure from and sends back. Values are absolute, never
+/// changes; `generation` is the row's when they were read, and an edit or a
+/// reset moves the row past it, so values sent under an older one are dropped.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct FigureProgress {
+    /// The total, never the figure's own two-area split.
+    pub xp: u32,
+    pub gold: u32,
+    pub playtime_secs: u32,
+    pub generation: i64,
 }
 
 /// Drive the emulated Skylanders portal.

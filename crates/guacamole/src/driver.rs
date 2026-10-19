@@ -1,8 +1,8 @@
 //! The native portal driver (AA design decision 4): places by identity, keeps
 //! its own slots for `read_slots`, and tells the TV over a bounded channel.
-//! Placing the figure a slot already holds for the same owner (a resumed
-//! layout still on the portal, AB.21) tells the TV nothing, so no intro
-//! replays; the product's RPCS3 drivers still reload it.
+//! Placing the figure a slot already holds for the same owner under the same
+//! generation (a resumed layout still on the portal, AB.21) tells the TV
+//! nothing, so no intro replays; the product's RPCS3 drivers still reload it.
 
 use std::collections::VecDeque;
 use std::path::Path;
@@ -38,16 +38,27 @@ pub fn portal_channel() -> (Sender<PortalChange>, Receiver<PortalChange>) {
 /// The portal as the driver holds it.
 struct Slots {
     held: [SlotState; SLOT_COUNT],
+    /// The owner's row generation each placement carried (AH.1): a new one is
+    /// news to the TV even for the same figure and owner.
+    generations: [Option<i64>; SLOT_COUNT],
     /// The TV got the slot's last change. A dropped one leaves it false, so
     /// placing the same figure again repairs the card instead of skipping.
     shown: [bool; SLOT_COUNT],
 }
 
 impl Slots {
-    /// The slot holds `figure_id` placed by `owner` and the TV shows it.
-    fn shows(&self, slot: SlotIndex, figure_id: &FigureId, owner: Option<&str>) -> bool {
+    /// The slot holds `figure_id` placed by `owner` under `generation` and
+    /// the TV shows it.
+    fn shows(
+        &self,
+        slot: SlotIndex,
+        figure_id: &FigureId,
+        owner: Option<&str>,
+        generation: Option<i64>,
+    ) -> bool {
         let i = slot.as_usize();
         self.shown[i]
+            && self.generations[i] == generation
             && matches!(
                 &self.held[i],
                 SlotState::Loaded { figure_id: Some(held), placed_by, .. }
@@ -69,6 +80,7 @@ impl NativePortalDriver {
         Self {
             slots: Mutex::new(Slots {
                 held: std::array::from_fn(|_| SlotState::Empty),
+                generations: [None; SLOT_COUNT],
                 shown: [true; SLOT_COUNT],
             }),
             tv,
@@ -133,6 +145,7 @@ impl PortalDriver for NativePortalDriver {
     fn clear(&self, slot: SlotIndex) -> Result<()> {
         let mut slots = self.lock();
         slots.held[slot.as_usize()] = SlotState::Empty;
+        slots.generations[slot.as_usize()] = None;
         slots.shown[slot.as_usize()] = self.tell_tv(PortalChange::Cleared { slot });
         Ok(())
     }
@@ -147,8 +160,9 @@ impl PortalDriver for NativePortalDriver {
             outcome.into_result()?;
         }
         let owner = placement.owner.as_ref().map(|o| o.profile_id.clone());
+        let generation = placement.owner.as_ref().map(|o| o.progress.generation);
         let mut slots = self.lock();
-        if slots.shows(slot, &placement.figure_id, owner.as_deref()) {
+        if slots.shows(slot, &placement.figure_id, owner.as_deref(), generation) {
             info!(
                 slot = slot.display(),
                 figure = %placement.figure_id.as_str(),
@@ -161,6 +175,7 @@ impl PortalDriver for NativePortalDriver {
             display_name: placement.name.clone(),
             placed_by: owner,
         };
+        slots.generations[slot.as_usize()] = generation;
         slots.shown[slot.as_usize()] = self.tell_tv(PortalChange::Placed {
             slot,
             placement: placement.clone(),
@@ -223,6 +238,7 @@ mod tests {
                 profile_id: id.into(),
                 initial: "A".into(),
                 color: "#ff0000".into(),
+                progress: Default::default(),
             }),
         }
     }
@@ -323,6 +339,14 @@ mod tests {
         assert_eq!(owner.profile_id, kaylee);
         assert_eq!(owner.initial, "K");
         assert_eq!(owner.color, "#e63946");
+        // Her row for the figure, made fresh at this first placement (AH.1).
+        let row = w
+            .profiles
+            .instances()
+            .read(&kaylee, LEGENDARY_IGNITOR)
+            .await;
+        assert_eq!(owner.progress, row.unwrap().unwrap().progress);
+        assert_eq!((owner.progress.xp, owner.progress.gold), (0, 0));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -430,6 +454,25 @@ mod tests {
         d.place(slot(1), &eruptor(Some("p2"))).unwrap();
         assert_eq!(tv.try_recv(), Ok(PortalChange::Cleared { slot: slot(1) }));
         assert!(matches!(tv.try_recv(), Ok(PortalChange::Placed { .. })));
+    }
+
+    /// A slot reset rebuilds the placement under a new generation (AH.3):
+    /// news to the TV, though the figure and owner are the same.
+    #[test]
+    fn the_same_figure_and_owner_under_a_new_generation_reaches_the_tv() {
+        let (tx, tv) = portal_channel();
+        let d = NativePortalDriver::new(tx);
+        let mut placement = eruptor(Some("p1"));
+        d.place(slot(0), &placement).unwrap();
+        assert!(matches!(tv.try_recv(), Ok(PortalChange::Placed { .. })));
+        if let Some(owner) = &mut placement.owner {
+            owner.progress.generation += 1;
+        }
+        d.place(slot(0), &placement).unwrap();
+        let (at, p) = placed(tv.try_recv().unwrap());
+        assert_eq!((at, p), (slot(0), placement.clone()));
+        d.place(slot(0), &placement).unwrap();
+        assert!(tv.try_recv().is_err(), "the same generation twice");
     }
 
     #[test]

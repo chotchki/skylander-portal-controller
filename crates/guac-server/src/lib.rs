@@ -10,6 +10,7 @@ pub mod figures;
 pub mod firewall;
 pub mod hooks;
 pub mod http;
+pub mod instances;
 pub mod kaos;
 pub mod logging;
 pub mod mdns;
@@ -17,6 +18,7 @@ pub mod mdns;
 mod native_tests;
 pub mod paths;
 pub mod profiles;
+pub mod progress;
 pub mod round_qr;
 pub mod setup;
 #[cfg(test)]

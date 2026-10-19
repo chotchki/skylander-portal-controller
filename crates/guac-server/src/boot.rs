@@ -21,6 +21,7 @@ use tracing::{info, warn};
 use crate::config::{Config, DriverKind};
 use crate::figures::{FigureList, FigureSet, RosterState};
 use crate::hooks::Hooks;
+use crate::progress::{ProgressSink, ProgressionSlot, spawn_drainer};
 use crate::state::{
     AppState, DriverJob, GameList, LauncherScreen, LauncherStatus, RpcsLifecycle,
     spawn_connectivity_watchdog, spawn_crash_watchdog, spawn_driver_worker, spawn_state_poller,
@@ -118,6 +119,12 @@ pub struct ServerHandles {
     pub games: GameList,
     /// The figure list; guacamole publishes the disc roster into it (AE.4).
     pub figures: FigureList,
+    /// Where guacamole's TV hands over a figure's progress (AH.1); drained
+    /// into the store only on guacamole's arm, so the product's never is.
+    pub progress: ProgressSink,
+    /// The game's progression for the store's caps and levels, once the
+    /// extract holds it.
+    pub progression: ProgressionSlot,
     /// The driver worker's job queue (PLAN B.2's macOS game-window fit);
     /// closed when the server died before the worker started.
     pub driver_tx: mpsc::Sender<DriverJob>,
@@ -230,6 +237,10 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
         Catalogue::FirmwarePack { .. } => Vec::new(),
     }));
     let games_for_task = games.clone();
+    let progress = ProgressSink::new();
+    let progress_for_task = progress.clone();
+    let progression = ProgressionSlot::default();
+    let progression_for_task = progression.clone();
 
     let status_for_errors = launcher_status.clone();
     let status_for_ready = launcher_status.clone();
@@ -301,6 +312,15 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
                         }
                     };
                 let sessions = Arc::new(crate::profiles::SessionRegistry::default());
+                // Figure progress lives in guacamole's own store: its arm alone (AH.1).
+                if hooks.figure_files.is_none() {
+                    spawn_drainer(
+                        progress_for_task,
+                        profile_store.clone(),
+                        events_for_task.clone(),
+                        progression_for_task,
+                    );
+                }
                 // The IPC STATE poller's copy; the worker takes `driver` by value.
                 let driver_for_poller = driver.clone();
                 let driver_tx = spawn_driver_worker(
@@ -471,6 +491,8 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
         events: events_tx,
         games,
         figures,
+        progress,
+        progression,
         driver_tx,
         bind_addr: bind,
         server_thread,
@@ -1049,5 +1071,80 @@ mod tests {
         let status = json(&get(product.bind_addr, "/api/status"));
         assert_eq!(status["app"], "product", "{status}");
         assert!(status.get("roster").is_none(), "{status}");
+    }
+
+    /// The product's figure-file hook, never called here.
+    struct WorkingCopies;
+
+    impl crate::hooks::FigureFiles for WorkingCopies {
+        fn routes(&self) -> Router<Arc<AppState>> {
+            Router::new()
+        }
+
+        fn resolve_load_path(&self, _: &str, _: &Figure) -> Result<PathBuf> {
+            anyhow::bail!("no working copies in a boot test")
+        }
+
+        fn reset_to_fresh(&self, _: &str, _: &Figure) -> Result<PathBuf> {
+            anyhow::bail!("no working copies in a boot test")
+        }
+    }
+
+    /// AH.1: guacamole's boot drains what its TV sends into its own store,
+    /// and the quit's flush waits for it; the product's runs no drainer.
+    #[test]
+    fn guacamoles_boot_drains_figure_progress_and_the_products_runs_none() {
+        let root = tempfile::tempdir().unwrap();
+        let handles = native_boot(root.path(), native_catalogue(giants())).unwrap();
+        wait_until_ready(&handles);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let db = root.path().join("db.sqlite");
+        let store = rt
+            .block_on(crate::profiles::ProfileStore::open(
+                &db,
+                &crate::setup::MIGRATOR,
+            ))
+            .unwrap();
+        let alice = rt
+            .block_on(store.create("Alice", "1234", "#e63946"))
+            .unwrap();
+        let row = rt
+            .block_on(store.instances().fresh(&alice, "000009-0000"))
+            .unwrap();
+        let earned = skylander_rpcs3_control::FigureProgress {
+            xp: 16,
+            gold: 3,
+            playtime_secs: 61,
+            ..row.progress
+        };
+        let eruptor = skylander_core::FigureId::new("000009-0000");
+        handles.progress.send(&alice, &eruptor, earned);
+        assert!(handles.progress.flush_and_wait(Duration::from_secs(20)));
+        let after = rt
+            .block_on(store.instances().read(&alice, "000009-0000"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.progress, earned);
+
+        let product_root = tempfile::tempdir().unwrap();
+        let hooks = Hooks {
+            figure_files: Some(Arc::new(WorkingCopies)),
+            ..Hooks::default()
+        };
+        let product = boot_with(
+            mock_config(product_root.path(), ephemeral_port()),
+            product_root.path(),
+            Box::new(|_| {
+                Ok(BuiltDriver::new(Arc::new(
+                    skylander_rpcs3_control::MockPortalDriver::new(),
+                )))
+            }),
+            hooks,
+        );
+        wait_until_ready(&product);
+        assert!(
+            !product.progress.flush_and_wait(Duration::from_secs(1)),
+            "the product drains figure progress"
+        );
     }
 }
