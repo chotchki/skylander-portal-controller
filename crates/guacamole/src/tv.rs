@@ -214,6 +214,24 @@ impl BandShape {
 #[derive(Component)]
 pub(crate) struct ScreenRoot;
 
+/// What the TV just redrew: the layout report and the shots wait on these
+/// instead of on the resources behind them, which change without a redraw.
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Redrawn {
+    /// A screen was entered and spawned.
+    Screen(TvState),
+    /// A portal cell's content respawned (0-based slot).
+    Slot(u8),
+    /// The band under the game's name, or the hint it replaces.
+    Band,
+    /// A drawn line took new text: the players line, a setup line, the message.
+    Text,
+}
+
+/// The `Update` systems that redraw part of a screen in place.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+struct Redraw;
+
 /// Which screen is up, without its data: [`Current`] keeps that. Set from
 /// `screen_for(..)`'s kind, so Portal to Portal (another game) is no transition.
 #[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -278,6 +296,7 @@ impl Plugin for Screens {
         app.init_state::<TvState>()
             .init_resource::<Portraits>()
             .init_resource::<LayoutReport>()
+            .add_message::<Redrawn>()
             .add_systems(PreUpdate, follow_screen.after(poll_status));
         for state in TvState::ALL {
             app.add_systems(OnEnter(state), enter_screen);
@@ -285,13 +304,17 @@ impl Plugin for Screens {
         app.add_systems(
             Update,
             (
-                patch_players,
-                patch_address,
-                patch_screen_text,
-                patch_titles,
-                sync_setup_lines,
-                sync_band,
-                sync_cells,
+                (
+                    patch_players,
+                    patch_address,
+                    patch_screen_text,
+                    patch_titles,
+                    sync_setup_lines,
+                    sync_band,
+                    sync_cells,
+                )
+                    .in_set(Redraw),
+                arm_layout_report.after(Redraw),
             ),
         );
     }
@@ -434,7 +457,6 @@ struct Sources<'w> {
     band: Option<Res<'w, ExtractBand>>,
     portraits: ResMut<'w, Portraits>,
     images: ResMut<'w, Assets<Image>>,
-    report: ResMut<'w, LayoutReport>,
 }
 
 impl Sources<'_> {
@@ -445,20 +467,16 @@ impl Sources<'_> {
     fn screen(&self) -> Option<&TvScreen> {
         self.current.as_ref().map(|c| &c.screen)
     }
-
-    /// The layout report waits on the portal's cards; other screens have none.
-    fn arm_report(&mut self, state: TvState) {
-        self.report.0 = if state == TvState::Portal {
-            REPORT_AFTER_FRAMES
-        } else {
-            0
-        };
-    }
 }
 
 /// `OnEnter` every state: the screen's root and everything under it. The
 /// root goes on exit (`DespawnOnExit`), its tree with it.
-fn enter_screen(mut commands: Commands, state: Res<State<TvState>>, mut sources: Sources) {
+fn enter_screen(
+    mut commands: Commands,
+    state: Res<State<TvState>>,
+    mut sources: Sources,
+    mut redrawn: MessageWriter<Redrawn>,
+) {
     let state = *state.get();
     commands
         .spawn((
@@ -468,28 +486,44 @@ fn enter_screen(mut commands: Commands, state: Res<State<TvState>>, mut sources:
             BackgroundColor(BACKGROUND),
         ))
         .with_children(|ui| spawn_content(ui, state, &mut sources));
-    sources.arm_report(state);
+    redrawn.write(Redrawn::Screen(state));
 }
 
 /// The players line (Join and the portal header) follows `Current.clients`.
-fn patch_players(current: Option<Res<Current>>, mut lines: Query<&mut Text, With<PlayersLine>>) {
+fn patch_players(
+    current: Option<Res<Current>>,
+    mut lines: Query<&mut Text, With<PlayersLine>>,
+    redrawn: MessageWriter<Redrawn>,
+) {
     let Some(current) = current.filter(|c| c.is_changed()) else {
         return;
     };
-    let drawn = players_line(current.clients);
-    for mut line in &mut lines {
-        line.set_if_neq(Text(drawn.clone()));
+    patch(lines.iter_mut(), &players_line(current.clients), redrawn);
+}
+
+/// Sets each line to `drawn`, telling [`Redrawn`] once if any of them moved.
+fn patch<'a>(
+    lines: impl Iterator<Item = Mut<'a, Text>>,
+    drawn: &str,
+    mut redrawn: MessageWriter<Redrawn>,
+) {
+    let mut changed = false;
+    for mut line in lines {
+        changed |= line.set_if_neq(Text(drawn.to_string()));
+    }
+    if changed {
+        redrawn.write(Redrawn::Text);
     }
 }
 
 /// The join address (Join and the portal header) follows the phone URL.
-fn patch_address(link: Res<ServerLink>, mut lines: Query<&mut Text, With<JoinAddress>>) {
-    if !link.is_changed() {
-        return;
-    }
-    let drawn = join_address(&link.phone_url);
-    for mut line in &mut lines {
-        line.set_if_neq(Text(drawn.to_string()));
+fn patch_address(
+    link: Res<ServerLink>,
+    mut lines: Query<&mut Text, With<JoinAddress>>,
+    redrawn: MessageWriter<Redrawn>,
+) {
+    if link.is_changed() {
+        patch(lines.iter_mut(), join_address(&link.phone_url), redrawn);
     }
 }
 
@@ -499,32 +533,25 @@ fn patch_screen_text(
     current: Option<Res<Current>>,
     mut games: Query<&mut Text, (With<GameName>, Without<ErrorMessage>)>,
     mut messages: Query<&mut Text, (With<ErrorMessage>, Without<GameName>)>,
+    redrawn: MessageWriter<Redrawn>,
 ) {
     let Some(current) = current.filter(|c| c.is_changed()) else {
         return;
     };
     match &current.screen {
-        TvScreen::Portal { game } => {
-            for mut line in &mut games {
-                line.set_if_neq(Text(game.clone()));
-            }
-        }
-        TvScreen::ServerError { message } => {
-            for mut line in &mut messages {
-                line.set_if_neq(Text(message.clone()));
-            }
-        }
+        TvScreen::Portal { game } => patch(games.iter_mut(), game, redrawn),
+        TvScreen::ServerError { message } => patch(messages.iter_mut(), message, redrawn),
         _ => {}
     }
 }
 
-fn patch_titles(setup: Res<Setup>, mut lines: Query<&mut Text, With<TitlesLine>>) {
-    if !setup.is_changed() {
-        return;
-    }
-    let drawn = setup.0.titles_line();
-    for mut line in &mut lines {
-        line.set_if_neq(Text(drawn.clone()));
+fn patch_titles(
+    setup: Res<Setup>,
+    mut lines: Query<&mut Text, With<TitlesLine>>,
+    redrawn: MessageWriter<Redrawn>,
+) {
+    if setup.is_changed() {
+        patch(lines.iter_mut(), &setup.0.titles_line(), redrawn);
     }
 }
 
@@ -538,6 +565,7 @@ fn sync_setup_lines(
     assets: Res<TvAssets>,
     mut columns: Query<(Entity, &mut SetupLines, Option<&Children>)>,
     mut texts: Query<(&mut Text, &mut TextFont, &mut TextColor)>,
+    mut redrawn: MessageWriter<Redrawn>,
 ) {
     if !setup.is_changed() {
         return;
@@ -574,6 +602,7 @@ fn sync_setup_lines(
             }
         }
         drawn.0 = lines.clone();
+        redrawn.write(Redrawn::Text);
     }
 }
 
@@ -589,6 +618,7 @@ fn sync_band(
     mut titles: Query<&mut Text, (With<ExtractTitle>, Without<ExtractDetail>)>,
     mut details: Query<(&mut Text, &mut TextColor), (With<ExtractDetail>, Without<ExtractTitle>)>,
     mut bars: Query<(&mut ExtractBar, &mut Node), Without<BandSlot>>,
+    mut redrawn: MessageWriter<Redrawn>,
 ) {
     let band_changed = band.as_ref().is_some_and(|b| b.is_changed());
     if !band_changed && !cards.is_changed() {
@@ -607,11 +637,13 @@ fn sync_band(
                     spawn_band_slot(ui, &font, shape, band);
                 });
             drawn.0 = shape;
+            redrawn.write(Redrawn::Band);
             continue;
         }
         let Some(band) = band.filter(|_| band_changed) else {
             continue;
         };
+        redrawn.write(Redrawn::Band);
         for mut title in &mut titles {
             title.set_if_neq(Text(band.title.clone()));
         }
@@ -639,8 +671,8 @@ fn sync_cells(
     assets: Res<TvAssets>,
     mut portraits: ResMut<Portraits>,
     mut images: ResMut<Assets<Image>>,
-    mut report: ResMut<LayoutReport>,
     mut cells: Query<(Entity, &Cell, &mut Drew)>,
+    mut redrawn: MessageWriter<Redrawn>,
 ) {
     if !cards.is_changed() {
         return;
@@ -660,7 +692,21 @@ fn sync_cells(
                 spawn_slot(content, &text, cell.0, now.as_ref(), portrait);
             });
         drew.0 = now.clone();
-        report.0 = REPORT_AFTER_FRAMES;
+        redrawn.write(Redrawn::Slot(cell.0));
+    }
+}
+
+/// The layout report waits a few frames after the portal's cards or band
+/// were redrawn; any other screen has no cards to report.
+fn arm_layout_report(mut redrawn: MessageReader<Redrawn>, mut report: ResMut<LayoutReport>) {
+    for redrawn in redrawn.read() {
+        match redrawn {
+            Redrawn::Screen(TvState::Portal) | Redrawn::Slot(_) | Redrawn::Band => {
+                report.0 = REPORT_AFTER_FRAMES;
+            }
+            Redrawn::Screen(_) => report.0 = 0,
+            Redrawn::Text => {}
+        }
     }
 }
 
@@ -1069,7 +1115,7 @@ pub(crate) fn node_rect(node: &ComputedNode, at: &UiGlobalTransform) -> Rect {
     Rect::from_center_size(at.translation, node.size())
 }
 
-/// Frames until `report_layout` logs a rebuilt portal: layout and text
+/// Frames until `report_layout` logs a redrawn portal: layout and text
 /// measuring settle over a couple of frames.
 #[derive(Resource, Default)]
 struct LayoutReport(u8);
@@ -2309,5 +2355,89 @@ pub(crate) mod layout_tests {
         *app.world_mut().resource_mut::<PortalCards>() = same;
         app.update();
         assert_eq!(cells(&mut app), after);
+    }
+
+    /// Each frame's `Redrawn` messages, and the frames the layout report was
+    /// armed in (`report_layout` takes one off every `Last`, so it reads
+    /// `REPORT_AFTER_FRAMES` in `PostUpdate` only in a frame that armed it).
+    #[derive(Resource, Default)]
+    struct Seen {
+        redrawn: Vec<Redrawn>,
+        armed: usize,
+    }
+
+    fn see(mut seen: ResMut<Seen>, mut redrawn: MessageReader<Redrawn>, report: Res<LayoutReport>) {
+        seen.redrawn.extend(redrawn.read().copied());
+        if report.0 == REPORT_AFTER_FRAMES {
+            seen.armed += 1;
+        }
+    }
+
+    /// What was redrawn and how often the report was armed since last asked.
+    fn seen(app: &mut App) -> (Vec<Redrawn>, usize) {
+        let mut seen = app.world_mut().resource_mut::<Seen>();
+        (
+            std::mem::take(&mut seen.redrawn),
+            std::mem::take(&mut seen.armed),
+        )
+    }
+
+    /// AP.4: one slot's change arms the layout report once, a band tick arms
+    /// it once, a patched line and an unchanged frame never do, and leaving
+    /// the portal disarms it.
+    #[test]
+    fn a_slot_or_a_band_tick_arms_the_layout_report_once() {
+        use crate::extraction::{ExtractStatus, band};
+        let converting = |done| {
+            ExtractBand(band(&ExtractStatus::Converting {
+                done,
+                total: 48,
+                movie: "eruptor".into(),
+            }))
+        };
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, full("Eruptor"));
+        app.init_resource::<Seen>()
+            .add_systems(PostUpdate, see)
+            .add_systems(Last, report_layout);
+        frames(&mut app, 6);
+        let (entered, armed) = seen(&mut app);
+        assert_eq!(
+            entered,
+            [
+                Redrawn::Screen(TvState::Starting),
+                Redrawn::Screen(TvState::Portal)
+            ]
+        );
+        assert_eq!(armed, 1);
+
+        let slot3 = SlotIndex::from_display(3).unwrap();
+        let spyro = app
+            .world()
+            .resource::<PortalCards>()
+            .clone()
+            .reduce([PortalChange::Placed {
+                slot: slot3,
+                placement: placement("Spyro", Some("#33cc66")),
+            }]);
+        *app.world_mut().resource_mut::<PortalCards>() = spyro;
+        frames(&mut app, 6);
+        assert_eq!(seen(&mut app), (vec![Redrawn::Slot(slot3.as_u8())], 1));
+        assert_eq!(app.world().resource::<LayoutReport>().0, 0, "never fired");
+
+        // The band appearing, then a tick.
+        for done in [12, 13] {
+            app.insert_resource(converting(done));
+            frames(&mut app, 6);
+            assert_eq!(seen(&mut app), (vec![Redrawn::Band], 1), "intro {done}");
+        }
+
+        frames(&mut app, 6);
+        assert_eq!(seen(&mut app), (vec![], 0));
+        app.world_mut().resource_mut::<Current>().clients = 3;
+        frames(&mut app, 6);
+        assert_eq!(seen(&mut app), (vec![Redrawn::Text], 0));
+        app.world_mut().resource_mut::<Current>().screen = TvScreen::Join;
+        frames(&mut app, 6);
+        assert_eq!(seen(&mut app), (vec![Redrawn::Screen(TvState::Join)], 0));
     }
 }

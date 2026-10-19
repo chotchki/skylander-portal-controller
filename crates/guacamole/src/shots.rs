@@ -1,9 +1,10 @@
 //! Dev builds only: with `GUAC_SHOT_DIR=<dir>` set, the TV renders offscreen
 //! (`GUAC_SHOT_SIZE`, default 1920x1080) and a PNG is saved each time it
-//! settles on a new screen, card set, extraction band or intro (an intro's
-//! shot lands [`SETTLE`] into it). Offscreen because a locked or occluded
-//! Mac presents no window frames, so a window capture comes back black; the
-//! window stays empty meanwhile. An intro's shot is a frame of the disc's
+//! settles after a redraw (a screen entered, a card or the extraction band
+//! redrawn, a line patched) or an intro (an intro's shot lands [`SETTLE`]
+//! into it). Offscreen because a locked or occluded Mac presents no window
+//! frames, so a window capture comes back black; the window stays empty
+//! meanwhile. An intro's shot is a frame of the disc's
 //! own FMV, so the folder must be outside any git checkout (the extract
 //! root's rule, design decision 5); one inside is refused and nothing shot.
 
@@ -17,11 +18,11 @@ use bevy::render::view::window::screenshot::{Screenshot, ScreenshotCaptured, sav
 use tracing::{error, info};
 
 use crate::cards::PortalCards;
-use crate::extraction::{ExtractBand, Extraction};
+use crate::extraction::Extraction;
 use crate::intro::IntroQueue;
-use crate::tv::Current;
+use crate::tv::{Current, Redrawn};
 
-/// Long enough for a rebuilt tree's layout and portraits to reach the GPU.
+/// Long enough for a redrawn tree's layout and portraits to reach the GPU.
 const SETTLE: Duration = Duration::from_millis(750);
 
 pub struct Shots;
@@ -115,16 +116,16 @@ fn snap(
     mut state: ResMut<ShotState>,
     current: Option<Res<Current>>,
     cards: Res<PortalCards>,
-    band: Option<Res<ExtractBand>>,
     extraction: Option<Res<Extraction>>,
     intros: Option<Res<IntroQueue>>,
+    mut redrawn: MessageReader<Redrawn>,
 ) {
+    let redrew = redrawn.read().count() > 0;
     let Some(current) = current else {
         return;
     };
-    let band_changed = band.is_some_and(|b| b.is_changed());
     let intro_changed = intros.as_ref().is_some_and(|q| q.is_changed());
-    if current.is_changed() || cards.is_changed() || band_changed || intro_changed {
+    if redrew || intro_changed {
         state.due = Some(Instant::now() + SETTLE);
         return;
     }
