@@ -147,8 +147,10 @@ Third batch:
 - Git: "Commit freely on a branch, we'll use a 2.0 branch as our 'main' until we've gotten through some
   milestones." Guacamole and all OpenSpec work land on `2.0`; `main` holds the frozen product line
   (CLAUDE.md, Git workflow).
-- Ladder ids float: `openspec/config.yaml` allocates each one at `/opsx:propose` (this doc's working
-  assumption, which round three left standing; no quote).
+- Ladder ids are reserved (2026-10-18): a rung keeps the id the ladder names and any other change takes
+  the next one past them (`openspec/config.yaml`), on chotchki's "I don't care, the two letter id is just
+  a holdover from claude-plan-bridge". Before that they floated, allocated at `/opsx:propose` (this
+  doc's working assumption, which round three left standing; no quote).
 - Physics: Avian replaces Havok, "probably avian if I had to guess." Avian 0.7.0 and its main branch were
   still on Bevy 0.19 on 2026-10-17, so until its 0.20 release Guacamole takes the branch the developer
   recommends, avianphysics/avian#1070 (Bevy 0.20 + Parry 0.31), as a git dependency pinned by rev
@@ -1645,10 +1647,10 @@ lives in Guacamole's store per profile. Guacamole never reads a `.sky`.
 
 Every rung ends in something the kids can see except AC (the decode gate) and AF (the oracle
 foundation), which the rungs after them stand on. A rung starts when the ones it stands on have landed;
-there are no dates. Ids past AC are provisional: `openspec/config.yaml` allocates the next id when a
-change is proposed, so a product change proposed first takes the next letter (Decisions, third batch).
-That has happened once: the ACR122 removal (`ad-remove-acr122`) took AD, so every rung after AC moved
-up a letter. The milestone names (M0-M9, G1, G2) are the stable handles. Every rung is built and checked
+there are no dates. The rungs' ids are reserved (Decisions): a rung keeps its id and a change off the
+ladder takes the next one past them, as AP did (`openspec/config.yaml`). Before 2026-10-18 they floated,
+and the ACR122 removal (`ad-remove-acr122`) took AD, so every rung after AC moved up a letter. The
+milestone names (M0-M9, G1, G2) are the stable handles. Every rung is built and checked
 on the Mac driving the TV (Decisions, fourth batch); the Windows/HTPC bring-up isn't a rung, it sits
 beside the ladder in `openspec/backlog.md`, gates no rung and starts on chotchki's call.
 
