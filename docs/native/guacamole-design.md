@@ -6,7 +6,8 @@ This file owns the Guacamole track ([`openspec/config.yaml`](../../openspec/conf
 changes under `openspec/changes/`: [`aa-guacamole-shell/`](../../openspec/changes/aa-guacamole-shell/proposal.md),
 [`ac-giants-decode-gate/`](../../openspec/changes/ac-giants-decode-gate/proposal.md),
 [`ae-animated-turntable/`](../../openspec/changes/ae-animated-turntable/proposal.md),
-[`ag-walk-one-level/`](../../openspec/changes/ag-walk-one-level/proposal.md) and
+[`ag-walk-one-level/`](../../openspec/changes/ag-walk-one-level/proposal.md),
+[`ah-first-fight/`](../../openspec/changes/ah-first-fight/proposal.md) and
 [`ap-tv-ui-on-bevy-widgets/`](../../openspec/changes/ap-tv-ui-on-bevy-widgets/proposal.md). Archived: AB
 ([`2026-10-18-ab-giants-extract-and-intros/`](../../openspec/changes/archive/2026-10-18-ab-giants-extract-and-intros/proposal.md)),
 whose specs now live in [`openspec/specs/guacamole/`](../../openspec/specs/guacamole/), and AF
@@ -2205,8 +2206,10 @@ lives in Guacamole's store per profile. Guacamole never reads a `.sky`.
 - No scanned figures. The ACR122 reader leaves the product first, in AD (a product change that lands
   before AA), and `GameOfOrigin::Unknown`, which only scans produced, goes with it (Decisions, fourth
   batch).
-- The AA card shows identity only (name, element, portrait). Level, XP and gold join it once the store
-  exists (AH); before that every figure is fresh, so there's nothing to show.
+- The card shows identity only (name, element, portrait), and stays that way past AH: since AG the level
+  takes the TV at the first placement, so the portal view shows mostly during a first run's extraction,
+  and a kid sees the hero's level and gold on the TV's HUD and every figure's on the phone (AH design
+  decision 10).
 
 ## Milestone ladder
 
@@ -2227,9 +2230,9 @@ names (M0-M9, G1, G2) are the stable handles. Every rung is built and checked on
 | AE, M1 | `ae-animated-turntable` | their figure as an animated, textured turntable on the TV | the first 3D, in the one remaster look; the Mac's renderer floor measured; the disc roster replaces the interim catalogue |
 | AF | `af-oracle-foundation` (archived 2026-10-19) | nothing | the oracle foundation: an unattended oracle on the product's pin (pause at a flip, capture, screenshot, save, two frame-locked pads, guest memory through PINE), its drift measured (exact only for what doesn't integrate host time; a walk agrees for 60 flips) and tolerance metrics calibrated on it. Lands before any gameplay comparison |
 | AG, M2 | `ag-walk-one-level` | walk the opening of chapter 1 (no scripts run yet, so the breakable door and rubble wall close it off) | level scene, collision, character controller, camera, feel checked against the oracle; the input spec, with prompts that match the physical pad |
-| AH, M3 | backlog | first fight: one enemy, XP and gold earned and kept on the kid's profile | combat basics; the per-profile figure-progression store, with the phone's figure editor on it |
+| AH, M3 | [`ah-first-fight`](../../openspec/changes/ah-first-fight/proposal.md) | first fight: chapter 1's four Chompies in the pit below the walkway, reached the original's way after smashing the clearing for its gold; XP and gold earned and kept on the kid's profile | combat from the original scripts on the tfbScript VM's core, pulled forward from AJ by chotchki's rule for stand-ins (`f772507`: a stand-in that would rewrite a script body sends it to the VM); the per-profile figure-progression store, with the phone's figure editor on it; the oracle's event, totals and distribution floors calibrated |
 | AI, M4 | backlog | first couch battle: one Giants PvP arena, two pads, two phones | a second pad and a second profile's figure in play; the PvP rules as the oracle shows them |
-| AJ, M5 | backlog | the level comes alive | the tfbScript VM and its built-ins running the original scripts |
+| AJ, M5 | backlog | the level comes alive | the rest of the level's scripts on AH's VM core, and the built-ins and members they reach |
 | AK, M6 | backlog | upgrades and the upgrade screen | upgrades and path kept in the store, movesets from script data |
 | AL, M7 | backlog | co-op, two pads and two figures in the adventure | the second player on the host's story, the shared camera, each kid's figure progress on their own profile |
 | AM, M8 | backlog | chapter one | a run of levels with story and cutscenes; profile-owned story saves (the host's, no slot picker); achievements, by the co-op rules |
