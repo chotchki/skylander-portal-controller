@@ -73,11 +73,12 @@ serde_json = { workspace = true }
 tempfile = "3"
 # hero_view writes its screenshot PNG itself; the version bevy_image already pulls.
 image = { version = "0.25", default-features = false, features = ["png"] }
-# SfoBuilder, for the `--setup <folder>` tests; hero_view's decoders.
+# The builders (SfoBuilder, the sample disc) for the setup and extraction tests.
 guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }
 
-# The dev viewer for the decode gate (openspec AC.10); `test` runs its unit
-# tests under `cargo test`.
+# The dev viewer (openspec AC.10, AE.10): Eruptor in the remaster or on
+# `StandardMaterial`, at an oracle frame's camera; `test` runs its unit tests
+# under `cargo test`.
 [[example]]
 name = "hero_view"
 test = true

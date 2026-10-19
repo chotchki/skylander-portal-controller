@@ -1,66 +1,102 @@
 // Bevy system signatures trip both by design.
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
-//! hero_view: Eruptor off the user's Giants dump, skinned, textured and
-//! playing his idle on a turntable (openspec AC.10, design decision 8).
-//! It decodes in memory: IGA, the `level.bld` IGZ, the hero walk, Edge
-//! segments, each technique's unit-0 colour texture as KTX2, the Havok
-//! skeleton and `Eruptor_Idle.ma`. Joints map by name between `igSkeleton2`
-//! and Havok, and skin with Havok's pose times Alchemy's inverse joint, the
-//! bind the game skins with: AC.17 fitted Eruptor's palette from three RSX
-//! captures and a savestate, and Havok's reference model pose misses
-//! J_wrist_R's subtree by 0.3631 rad on every frame, so the `--bind havok`
-//! comparison is gone (AC.22). It writes nothing but `--screenshot`, refused
-//! inside any git work tree or through a symlink, and exits non-zero when the
-//! screenshot isn't written.
+//! hero_view: Eruptor off the user's Giants dump, skinned, playing his idle
+//! on a turntable, drawn in the remaster (openspec AE.10, design decision
+//! 17) or, with `--stock`, on Bevy's `StandardMaterial` with his colour map
+//! alone, the comparison Open question 1's answer leaves chotchki.
 //!
-//! `cargo run -p guacamole --release --example hero_view -- [--at <s>]
-//! [--yaw <deg>] [--screenshot <png> [--frames <n>] [--offscreen]] [--unlit]`
+//! It reads his archive in memory through the model stage's own reader
+//! (`guac_extract::models::read`, AE.6), so it draws what the turntable
+//! loads: the portal model's fresh segments in IR v2, skinned on the GPU with
+//! Alchemy's inverse joints (AC.17), the idle evaluated by `guac-ir`, each
+//! material through `guacamole::character` (the WESL shader AE.8 checked
+//! against the character-shading spec's CPU model) with its colour, spec and
+//! rim maps decoded through sRGB views and its normal maps as stored. The
+//! camera is HDR into TonyMcMapface at scale 1 with 4x MSAA, the same in both
+//! modes, so `--stock` changes the material and its lights and nothing else.
+//!
+//! At an oracle frame (AC.18): `--view-proj` takes the capture's
+//! model-view-projection (the vertex program's c0-c3), `--frame` the frame's
+//! rig and fog from a file beside the capture, `--at` its idle time and
+//! `--size` its output size. Nothing of a frame is in the repo: its numbers
+//! are read at run time, and a frame file inside a git work tree is refused.
+//! Without `--frame` both modes light with the viewer's own light, one white
+//! directional light fixed to the camera (Bevy's ambient beside it in
+//! `--stock`), not a light of the game's.
+//!
+//! It writes nothing but `--screenshot`, refused inside any git work tree or
+//! through a symlink, and exits non-zero when the screenshot isn't written.
+//!
+//! `cargo run -p guacamole --release --example hero_view -- [--stock [--unlit]]
+//! [--at <s>] [--yaw <deg>] [--view-proj <16 floats>] [--frame <json>]
+//! [--size <w>x<h>] [--screenshot <png> [--frames <n>] [--offscreen]]`
+//!
+//! A frame file (JSON): `{"source": "...", "lights": [three of {"travel":
+//! [x, y, z], "ambient": [r, g, b], "diffuse": [r, g, b], "specular": [r, g,
+//! b]}], "fog": {"colour": [r, g, b], "near": n, "far": f} or null}`. Each
+//! travel is the way the light goes, a unit vector in the frame's eye space
+//! (the game's `ig_light_directional_direction`); colours are the 8-bit
+//! codes the game stores, which the remaster decodes; fog distances run
+//! along the view direction. `source` is printed and otherwise ignored.
 
+use std::f32::consts::PI;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use bevy::app::ScheduleRunnerPlugin;
 use bevy::asset::RenderAssetUsages;
-use bevy::camera::RenderTarget;
-use bevy::camera::visibility::NoFrustumCulling;
+use bevy::camera::{
+    CameraProjection, Exposure, Hdr, PerspectiveProjection, Projection, RenderTarget, SubCameraView,
+};
+use bevy::color::{LinearRgba, Srgba};
+use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::image::{
     CompressedImageFormats, ImageAddressMode, ImageFilterMode, ImageSampler,
     ImageSamplerDescriptor, ImageType,
 };
 use bevy::log::LogPlugin;
-use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
-use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
+use bevy::math::{DMat3, DMat4, DQuat, DVec3, DVec4, Vec3A};
+use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
+use bevy::pbr::{DistanceFog, FogFalloff};
 // Not the glob: its `ContextExt` clashes with anyhow's `Context`.
 use bevy::prelude::{
-    App, AppExit, Assets, Camera3d, ChildOf, ClearColor, Color, Commands, Component,
-    DefaultPlugins, DirectionalLight, Entity, GlobalAmbientLight, Handle, Image, Local, Mat4, Mesh,
-    Mesh3d, MeshMaterial3d, MessageWriter, Name, On, PluginGroup, Quat, Query, Res, ResMut,
-    Resource, StandardMaterial, Startup, Time, Transform, Update, Vec3, Visibility, Window,
-    WindowPlugin, With, Without, default, warn,
+    App, AppExit, Assets, Camera3d, ClearColor, Color, Commands, DefaultPlugins, DirectionalLight,
+    Entity, GlobalAmbientLight, Handle, Image, Local, Mat4, Mesh, MessageWriter, On, PluginGroup,
+    Quat, Query, Res, ResMut, Resource, StandardMaterial, Startup, Time, Transform, Update, Vec3,
+    Window, WindowPlugin, default, warn,
 };
 use bevy::render::render_resource::TextureFormat;
 use bevy::render::renderer::RenderDevice;
+use bevy::render::view::Msaa;
 use bevy::render::view::window::screenshot::{Screenshot, ScreenshotCaptured};
 use bevy::window::ExitCondition;
 use bevy::winit::WinitPlugin;
-use guac_formats::edge::{BoneMap, BoneWeight, Segment, Semantic};
-use guac_formats::havok::{self, QsTransform};
-use guac_formats::iga::Archive;
-use guac_formats::igz::Igz;
-use guac_formats::igz::layouts::{
-    self, Hero, Image2, Layout, Mat44, Payload, PhysicsModel, SkeletonBone, TextureAttr2,
+use guac_extract::models;
+use guac_ir::model::{Filter, Sampler, TextureRole, Wrap};
+use guac_ir::shading::{self, Scene};
+use guac_ir::{DumpIdentity, Model, Sha256};
+use guacamole::character::mesh::pose;
+use guacamole::character::{
+    CharacterMaterial, CharacterShadingPlugin, ShadowLookup, SpawnedCharacter, spawn_character,
 };
-use guac_formats::texture::Texture;
+use serde::Deserialize;
 
-const ARCHIVE: &str = "PS3_GAME/USRDIR/character/009_eruptor.bld";
-const MODEL: &str = "/Eruptor.mdl";
-const IDLE: &str = "/Eruptor_Idle.ma";
-/// The colour map's unit: every character technique binds it once.
-const COLOUR_UNIT: i16 = 0;
+/// Eruptor's character load file: `character/009_eruptor.bld`.
+const LOAD_FILE: &str = "009_Eruptor";
 const SIZE: (u32, u32) = (1280, 720);
 /// Radians per second.
 const TURNTABLE: f32 = 0.5;
+/// The default camera, and the viewer's light, both in the model's space.
+const EYE: Vec3 = Vec3::new(0.0, 1.3, 5.5);
+const TARGET: Vec3 = Vec3::new(0.0, 1.0, 0.0);
+const VIEWER_LIGHT: Vec3 = Vec3::new(2.0, 4.0, 5.0);
+/// The viewer's light in `--stock`, as before AE.10: lux and ambient.
+const VIEWER_LUX: f32 = 4000.0;
+const VIEWER_AMBIENT: f32 = 300.0;
+/// Fog for the viewer's light: on, so a spec map has its eye direction, and
+/// beyond anything drawn, as the turntable sets it (design decision 14).
+const VIEWER_FOG: (f32, f32) = (1.0e4, 2.0e4);
 
 fn main() -> Result<()> {
     let args = Args::parse(std::env::args().skip(1))?;
@@ -69,8 +105,19 @@ fn main() -> Result<()> {
         .as_deref()
         .map(screenshot_path)
         .transpose()?;
+    let camera = match &args.view_proj {
+        Some(m) => Some(FrameCamera::from_view_proj(m)?),
+        None => None,
+    };
+    let rig = match &args.frame {
+        Some(path) => Rig::read(path)?,
+        None => Rig::viewer(),
+    };
     let decoded = decode(&dump_root()?)?;
-    ensure!(run(args, shot, decoded).is_success(), "hero_view failed");
+    ensure!(
+        run(args, shot, camera, rig, decoded).is_success(),
+        "hero_view failed"
+    );
     Ok(())
 }
 
@@ -85,17 +132,31 @@ struct Args {
     frames: u32,
     /// No window: renders into an image (needs `screenshot`).
     offscreen: bool,
-    /// The texture without lighting.
+    /// `StandardMaterial` with the colour map alone instead of the remaster.
+    stock: bool,
+    /// `--stock`'s colour map without lighting.
     unlit: bool,
+    /// The capture's model-view-projection, row by row.
+    view_proj: Option<[f32; 16]>,
+    /// The frame's rig and fog.
+    frame: Option<PathBuf>,
+    /// The window's or the offscreen image's size.
+    size: (u32, u32),
 }
 
 impl Args {
-    fn parse(mut it: impl Iterator<Item = String>) -> Result<Self> {
+    fn parse(it: impl Iterator<Item = String>) -> Result<Self> {
+        let mut it = it.peekable();
         let mut a = Self {
             frames: 240,
+            size: SIZE,
             ..Self::default()
         };
         while let Some(arg) = it.next() {
+            if arg == "--view-proj" {
+                a.view_proj = Some(view_proj(&mut it)?);
+                continue;
+            }
             let mut value = || it.next().ok_or_else(|| anyhow!("{arg} needs a value"));
             match arg.as_str() {
                 "--at" => a.at = Some(value()?.parse().context("--at")?),
@@ -103,7 +164,10 @@ impl Args {
                 "--screenshot" => a.screenshot = Some(value()?.into()),
                 "--frames" => a.frames = value()?.parse().context("--frames")?,
                 "--offscreen" => a.offscreen = true,
+                "--stock" => a.stock = true,
                 "--unlit" => a.unlit = true,
+                "--frame" => a.frame = Some(value()?.into()),
+                "--size" => a.size = size(&value()?)?,
                 other => bail!("unknown argument {other}"),
             }
         }
@@ -112,8 +176,45 @@ impl Args {
             "--offscreen needs --screenshot"
         );
         ensure!(a.frames > 0, "--frames must be at least 1");
+        ensure!(!a.unlit || a.stock, "--unlit is --stock's");
         Ok(a)
     }
+}
+
+/// The 16 numbers after `--view-proj`, as separate arguments or pasted as
+/// one (commas, brackets and whitespace between them, so a JSON matrix
+/// pastes as is).
+fn view_proj(it: &mut impl Iterator<Item = String>) -> Result<[f32; 16]> {
+    let mut values = Vec::with_capacity(16);
+    while values.len() < 16 {
+        let arg = it
+            .next()
+            .with_context(|| format!("--view-proj needs 16 numbers, got {}", values.len()))?;
+        for token in arg
+            .split(|c: char| c == ',' || c == '[' || c == ']' || c.is_whitespace())
+            .filter(|t| !t.is_empty())
+        {
+            let v: f32 = token
+                .parse()
+                .with_context(|| format!("--view-proj: {token} isn't a number"))?;
+            ensure!(v.is_finite(), "--view-proj: {token} isn't finite");
+            values.push(v);
+        }
+    }
+    values
+        .try_into()
+        .map_err(|v: Vec<f32>| anyhow!("--view-proj needs 16 numbers, got {}", v.len()))
+}
+
+/// `<w>x<h>`, each at least 1.
+fn size(s: &str) -> Result<(u32, u32)> {
+    let (w, h) = s
+        .split_once('x')
+        .with_context(|| format!("--size {s}: want <w>x<h>"))?;
+    let w: u32 = w.parse().with_context(|| format!("--size {s}"))?;
+    let h: u32 = h.parse().with_context(|| format!("--size {s}"))?;
+    ensure!(w > 0 && h > 0, "--size {s}: both sides at least 1");
+    Ok((w, h))
 }
 
 /// `GUAC_GIANTS_DUMP` from the environment, else the workspace's `.env.dev`.
@@ -129,6 +230,12 @@ fn dump_root() -> Result<PathBuf> {
             (k.trim() == "GUAC_GIANTS_DUMP").then(|| v.trim().trim_matches('"').into())
         })
         .ok_or_else(|| anyhow!("set GUAC_GIANTS_DUMP to the Giants dump"))
+}
+
+/// The git work tree `dir` sits in (a `.git` dir or file at or above it),
+/// with `dir` already canonical, so `..` and symlinks can't slip past.
+fn work_tree(dir: &Path) -> Option<&Path> {
+    dir.ancestors().find(|a| a.join(".git").exists())
 }
 
 /// The screenshot's path, refused when its directory sits in a git work
@@ -149,7 +256,7 @@ fn screenshot_path(path: &Path) -> Result<PathBuf> {
     let dir = parent
         .canonicalize()
         .with_context(|| format!("--screenshot's directory {}", parent.display()))?;
-    if let Some(tree) = dir.ancestors().find(|a| a.join(".git").exists()) {
+    if let Some(tree) = work_tree(&dir) {
         bail!(
             "refusing to write a screenshot inside the git work tree {}",
             tree.display()
@@ -182,342 +289,464 @@ fn write_png(path: &Path, image: Image) -> Result<()> {
     Ok(())
 }
 
-/// One segment, ready for a Bevy mesh.
-struct SegmentMesh {
-    label: String,
-    positions: Vec<[f32; 3]>,
-    normals: Vec<[f32; 3]>,
-    uvs: Vec<[f32; 2]>,
-    joints: Vec<[u16; 4]>,
-    weights: Vec<[f32; 4]>,
-    indices: Vec<u16>,
-    /// Into [`Decoded::textures`].
-    texture: Option<usize>,
+// ---- the frame's camera ----
+
+/// Bevy's clip from GL's: Bevy's depth runs from 1 at the near plane to 0
+/// at the far one (reverse Z), where a GL-style projection's clip z runs
+/// from -w to w, so z' = (w - z) / 2.
+const BEVY_FROM_GL: DMat4 = DMat4::from_cols_array(&[
+    1.0, 0.0, 0.0, 0.0, //
+    0.0, 1.0, 0.0, 0.0, //
+    0.0, 0.0, -0.5, 0.0, //
+    0.0, 0.0, 0.5, 1.0,
+]);
+
+/// A capture's model-view-projection as Bevy places it: the model's uniform
+/// scale (the game's local-to-world carries Eruptor's 1.5 inside its
+/// modelview), the camera's turn and position in the scaled model's world,
+/// and the projection that leaves the two composing back to the capture's
+/// matrix. View space is then the game's eye space, the space the frame's
+/// rig is given in and the character shader lights in.
+#[derive(Debug, Clone)]
+struct FrameCamera {
+    scale: f32,
+    transform: Transform,
+    projection: CaptureProjection,
+    /// Vertical field of view, degrees, and the near and far planes: for
+    /// the record, read off the projection.
+    fov: f64,
+    near: f64,
+    far: f64,
 }
 
-struct DecodedTexture {
-    name: String,
-    ktx2: Vec<u8>,
-    sampler: ImageSamplerDescriptor,
+/// What the GL-style perspective of a frame leaves Bevy: its clip from view
+/// with Bevy's depth, fixed whatever the target's size (the frame's NDC
+/// fills the target, as the game's fills its 960x540 surface).
+#[derive(Debug, Clone, PartialEq)]
+struct CaptureProjection {
+    clip_from_view: Mat4,
+    far: f32,
 }
+
+impl CameraProjection for CaptureProjection {
+    fn get_clip_from_view(&self) -> Mat4 {
+        self.clip_from_view
+    }
+
+    /// hero_view has no sub-views.
+    fn get_clip_from_view_for_sub(&self, _sub_view: &SubCameraView) -> Mat4 {
+        self.clip_from_view
+    }
+
+    fn update(&mut self, _width: f32, _height: f32) {}
+
+    fn far(&self) -> f32 {
+        self.far
+    }
+
+    /// The view-space points at depths `z_near` and `z_far` (negative, in
+    /// front of the camera) that land on the corners of NDC, in the order
+    /// Bevy's cascades want: bottom right, top right, top left, bottom left.
+    fn get_frustum_corners(&self, z_near: f32, z_far: f32) -> [Vec3A; 8] {
+        let m = self.clip_from_view.as_dmat4();
+        let corner = |sx: f64, sy: f64, z: f32| {
+            let z = f64::from(z);
+            // Rows 0 and 1 against row 3 at NDC (sx, sy): two equations
+            // in x and y.
+            let r = |i: usize| m.row(i);
+            let (r0, r1, r3) = (r(0), r(1), r(3));
+            let e0 = r0 - sx * r3;
+            let e1 = r1 - sy * r3;
+            let (b0, b1) = (-(e0.z * z + e0.w), -(e1.z * z + e1.w));
+            let det = e0.x * e1.y - e0.y * e1.x;
+            let x = (b0 * e1.y - e0.y * b1) / det;
+            let y = (e0.x * b1 - b0 * e1.x) / det;
+            Vec3A::new(x as f32, y as f32, z as f32)
+        };
+        let at = |z| {
+            [
+                corner(1.0, -1.0, z),
+                corner(1.0, 1.0, z),
+                corner(-1.0, 1.0, z),
+                corner(-1.0, -1.0, z),
+            ]
+        };
+        let (n, f) = (at(z_near), at(z_far));
+        [n[0], n[1], n[2], n[3], f[0], f[1], f[2], f[3]]
+    }
+}
+
+impl FrameCamera {
+    /// Splits `m` (row by row, column vectors, GL clip space) into
+    /// P · [s·R | t], P a perspective whose last row is (0, 0, -1, 0), R a
+    /// rotation and s a uniform scale. A matrix that isn't one is refused:
+    /// one with no perspective divide, a turn that isn't a rotation, a
+    /// mirror, near and far out of order.
+    fn from_view_proj(m: &[f32; 16]) -> Result<Self> {
+        let rows: [DVec4; 4] = std::array::from_fn(|r| {
+            DVec4::from_array(std::array::from_fn(|c| f64::from(m[4 * r + c])))
+        });
+        let [m0, m1, m2, m3] = rows;
+        // Row 3 is minus the modelview's row 2: the view direction times s.
+        let u = -m3.truncate();
+        let t2 = -m3.w;
+        let s = u.length();
+        ensure!(
+            s > 1e-9 && s.is_finite(),
+            "--view-proj isn't a perspective: its last row has no depth"
+        );
+        let s2 = s * s;
+        // A row of P · MV: its own axis plus an off-centre share of row 2.
+        let split = |p: DVec4| {
+            let v = p.truncate();
+            let off = v.dot(u) / s2;
+            (off, v - off * u, p.w)
+        };
+        let (c, w0, m03) = split(m0);
+        let (d, w1, m13) = split(m1);
+        let (a, b) = (w0.length() / s, w1.length() / s);
+        ensure!(
+            a > 1e-9 && b > 1e-9,
+            "--view-proj flattens the picture to a line"
+        );
+        let (r0, r1, r2) = (w0 / (a * s), w1 / (b * s), u / s);
+        let square = r0.dot(r1).abs();
+        ensure!(
+            square < 1e-4,
+            "--view-proj's turn isn't a rotation: its x and y axes are {square:.1e} off square"
+        );
+        let handed = r0.cross(r1).dot(r2);
+        ensure!(
+            handed > 0.999,
+            "--view-proj mirrors the picture (axes {handed:.4})"
+        );
+        let e = m2.truncate().dot(u) / s2;
+        let stray = (m2.truncate() - e * u).length() / m2.truncate().length().max(1.0);
+        ensure!(
+            stray < 1e-4,
+            "--view-proj's depth row leans sideways ({stray:.1e}): not a perspective"
+        );
+        let f = m2.w - e * t2;
+        let t = DVec3::new((m03 - c * t2) / a, (m13 - d * t2) / b, t2);
+        let (near, far) = (f / (e - 1.0), f / (e + 1.0));
+        ensure!(
+            near > 0.0 && far > near && far.is_finite(),
+            "--view-proj's near and far ({near}, {far}) aren't in front of the camera in order"
+        );
+
+        // The camera in the scaled model's world: R's transpose and -Rᵀt.
+        let turn = DMat3::from_cols(r0, r1, r2);
+        let rotation = DQuat::from_mat3(&turn).normalize().as_quat();
+        let translation = (-(turn * t)).as_vec3();
+        let transform = Transform {
+            translation,
+            rotation,
+            scale: Vec3::ONE,
+        };
+        let scale = s as f32;
+        // Whatever the rounding left in the turn, the chain composes back
+        // to the capture's matrix: clip from view = C · M · S⁻¹ · camera.
+        let mat = DMat4::from_cols_array(&m.map(f64::from)).transpose();
+        let camera = DMat4::from_rotation_translation(
+            transform.rotation.as_dquat(),
+            transform.translation.as_dvec3(),
+        );
+        let unscale = DMat4::from_scale(DVec3::splat(1.0 / f64::from(scale)));
+        let clip_from_view = (BEVY_FROM_GL * mat * unscale * camera).as_mat4();
+        Ok(Self {
+            scale,
+            transform,
+            projection: CaptureProjection {
+                clip_from_view,
+                far: far as f32,
+            },
+            fov: 2.0 * (1.0 / b).atan().to_degrees(),
+            near,
+            far,
+        })
+    }
+}
+
+/// The camera and the model's scale: a frame's, else the viewer's own
+/// (Bevy's default perspective, looking at Eruptor from the front).
+fn camera_setup(frame: Option<&FrameCamera>) -> (Transform, Projection, f32) {
+    match frame {
+        Some(f) => (
+            f.transform,
+            Projection::custom(f.projection.clone()),
+            f.scale,
+        ),
+        None => (
+            Transform::from_translation(EYE).looking_at(TARGET, Vec3::Y),
+            Projection::Perspective(PerspectiveProjection::default()),
+            1.0,
+        ),
+    }
+}
+
+// ---- the frame's rig and fog ----
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FrameFile {
+    #[serde(default)]
+    source: Option<String>,
+    lights: [FrameLight; 3],
+    fog: Option<FrameFog>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FrameLight {
+    travel: [f32; 3],
+    ambient: [u8; 3],
+    diffuse: [u8; 3],
+    specular: [u8; 3],
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FrameFog {
+    colour: [u8; 3],
+    near: f32,
+    far: f32,
+}
+
+/// The fog a rig carries: its colour in linear light and its distances
+/// along the view direction.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Fog {
+    colour: [f32; 3],
+    near: f32,
+    far: f32,
+}
+
+/// Three directional lights fixed to the camera (each travel in view
+/// space), their colours in linear light, and the fog.
+#[derive(Debug, Clone, PartialEq, Resource)]
+struct Rig {
+    lights: [shading::DirectionalLight; 3],
+    fog: Option<Fog>,
+}
+
+/// A colour the disc or the game stores, decoded as the remaster decodes
+/// it (design decision 12).
+fn linear(c: [u8; 3]) -> [f32; 3] {
+    let l = LinearRgba::from(Srgba::rgb_u8(c[0], c[1], c[2]));
+    [l.red, l.green, l.blue]
+}
+
+impl Rig {
+    /// The viewer's own light: white, from up and to the right of the
+    /// default camera, fixed to the camera; fog on beyond anything drawn.
+    fn viewer() -> Self {
+        let camera = Transform::from_translation(EYE).looking_at(TARGET, Vec3::Y);
+        let travel = camera.rotation.inverse() * (TARGET - VIEWER_LIGHT).normalize();
+        let mut lights = [shading::DirectionalLight::OFF; 3];
+        lights[0] = shading::DirectionalLight {
+            travel: travel.to_array(),
+            ambient: [0.0; 3],
+            diffuse: [1.0; 3],
+            specular: [1.0; 3],
+        };
+        Self {
+            lights,
+            fog: Some(Fog {
+                colour: [0.0; 3],
+                near: VIEWER_FOG.0,
+                far: VIEWER_FOG.1,
+            }),
+        }
+    }
+
+    /// A frame file's rig: refused inside a git work tree, so a frame's
+    /// numbers stay beside its capture.
+    fn read(path: &Path) -> Result<Self> {
+        let canonical = path
+            .canonicalize()
+            .with_context(|| format!("--frame {}", path.display()))?;
+        if let Some(tree) = canonical.parent().and_then(work_tree) {
+            bail!(
+                "refusing a frame file inside the git work tree {}: it belongs beside its capture",
+                tree.display()
+            );
+        }
+        let text = std::fs::read_to_string(&canonical)
+            .with_context(|| format!("--frame {}", canonical.display()))?;
+        let file: FrameFile = serde_json::from_str(&text)
+            .with_context(|| format!("--frame {}", canonical.display()))?;
+        if let Some(source) = &file.source {
+            println!("frame {}: {source}", canonical.display());
+        }
+        Self::from_file(&file)
+    }
+
+    fn from_file(file: &FrameFile) -> Result<Self> {
+        let mut lights = [shading::DirectionalLight::OFF; 3];
+        for (i, (l, out)) in file.lights.iter().zip(&mut lights).enumerate() {
+            let length = Vec3::from_array(l.travel).length();
+            ensure!(
+                (length - 1.0).abs() < 1e-3,
+                "frame light {i}: its travel is {length} long, not a unit vector"
+            );
+            *out = shading::DirectionalLight {
+                travel: l.travel,
+                ambient: linear(l.ambient),
+                diffuse: linear(l.diffuse),
+                specular: linear(l.specular),
+            };
+        }
+        let fog = match &file.fog {
+            Some(f) => {
+                ensure!(
+                    f.near.is_finite() && f.far.is_finite() && f.near < f.far,
+                    "frame fog: near {} isn't before far {}",
+                    f.near,
+                    f.far
+                );
+                Some(Fog {
+                    colour: linear(f.colour),
+                    near: f.near,
+                    far: f.far,
+                })
+            }
+            None => None,
+        };
+        Ok(Self { lights, fog })
+    }
+
+    /// The scene the character material draws in: this rig, fog as it
+    /// says, shadows and point lights off, neutral placement, no flash.
+    fn scene(&self) -> Scene {
+        let mut scene = Scene::new();
+        scene.lights = self.lights;
+        if let Some(f) = self.fog {
+            scene.fog = true;
+            scene.fog_colour = f.colour;
+            scene.fog_near = f.near;
+            scene.fog_far = f.far;
+        }
+        scene
+    }
+}
+
+/// A Bevy directional light shining along `travel` (view space) from a
+/// camera at `camera`.
+fn shining(camera: &Transform, travel: [f32; 3]) -> Transform {
+    let world = camera.rotation * Vec3::from_array(travel);
+    Transform::from_rotation(Quat::from_rotation_arc(Vec3::NEG_Z, world.normalize()))
+}
+
+// ---- Eruptor ----
 
 #[derive(Resource)]
 struct Decoded {
-    segments: Vec<SegmentMesh>,
-    textures: Vec<DecodedTexture>,
-    inverse_bindposes: Vec<Mat4>,
-    skeleton: havok::Skeleton<'static>,
-    clip: havok::Clip<'static>,
+    model: Model,
+    /// Each distinct texture: its extract path and its KTX2.
+    textures: Vec<(String, Vec<u8>)>,
 }
 
 fn decode(root: &Path) -> Result<Decoded> {
     let started = Instant::now();
-    let path = root.join(ARCHIVE);
-    let bytes = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
-    let archive = Archive::parse(&bytes)?;
-    let entry = archive
-        .entries()
-        .iter()
-        .find(|e| e.name().ends_with("level.bld"))
-        .context("no level.bld in the hero's archive")?;
-    // Leaked so the decoded borrows live as long as the app.
-    let level: &'static [u8] = Vec::leak(archive.read(entry)?.into_owned());
+    let path = models::archive_path(&root.join("PS3_GAME/USRDIR"), LOAD_FILE);
+    let archive = models::archive(&path, LOAD_FILE)?;
+    let level = models::level(&archive, LOAD_FILE)?;
     let read = started.elapsed();
-
-    let igz = Igz::parse(level)?;
-    let (model, _) = layouts::read_all::<PhysicsModel>(&igz)
-        .find(|(_, m)| {
-            m.as_ref()
-                .is_ok_and(|m| m.model.info.name.is_some_and(|n| n.ends_with(MODEL)))
-        })
-        .context("no Eruptor.mdl")?;
-    let hero = Hero::read(&igz, model)?;
-    let walked = started.elapsed();
-
-    let skeleton = match hero.body.body.data_info.payload() {
-        Some(Payload::Havok(b)) => havok::Container::parse(b)?
-            .skeletons
-            .into_iter()
-            .next()
-            .context("no hkaSkeleton in the body")?,
-        _ => bail!("the body holds no Havok skeleton"),
+    // Never written anywhere, so no dump identity to carry.
+    let identity = DumpIdentity {
+        title_id: String::new(),
+        app_ver: String::new(),
+        manifest_hash: Sha256([0; 32]),
     };
-    let idle = hero
-        .clips
-        .values()
-        .filter_map(|c| c.animation.map(|(_, a)| a))
-        .find(|a| {
-            a.info
-                .data_info
-                .info
-                .name
-                .is_some_and(|n| n.ends_with(IDLE))
-        })
-        .and_then(|a| match a.info.data_info.payload() {
-            Some(Payload::Havok(b)) => Some(b),
-            _ => None,
-        })
-        .context("no Eruptor_Idle.ma")?;
-    let clip = havok::Container::parse(idle)?
-        .clip
-        .context("the idle holds no clip")?;
-    let joints = JointMap::new(&skeleton, &hero.bones)?;
-    let inverse_bindposes = joints.inverse_bindposes(&hero.skeleton.inverse_joints)?;
-    let havoked = started.elapsed();
-
-    let mut textures: Vec<(usize, DecodedTexture)> = Vec::new();
-    let mut segments = Vec::new();
-    for mesh in &hero.meshes {
-        let palette = mesh
-            .palette
-            .and_then(|p| hero.palettes.get(&p)?.indices)
-            .and_then(|i| hero.int_lists.get(&i))
-            .context("a mesh without a skin palette")?;
-        let bone_map = BoneMap::new(&palette.values, &hero.bones);
-        let texture = match hero.texture_at(mesh, COLOUR_UNIT) {
-            Some((t, attr)) => Some(texture_slot(&igz, &mut textures, t, attr)?),
-            None => None,
-        };
-        for (index, layout) in hero.mesh_segments(mesh) {
-            let segment = Segment::decode(&igz, index, layout)?;
-            let label = format!("{} #{index}", mesh.technique.node.name.unwrap_or("?"));
-            segments.push(segment_mesh(label, &segment, &bone_map, &joints, texture)?);
-        }
-    }
-    let done = started.elapsed();
+    let extracted = models::read(&level, LOAD_FILE, identity)?;
+    let model = extracted.model;
     let ms = |d: Duration| d.as_secs_f64() * 1e3;
+    let vertices: usize = model.segments.iter().map(|s| s.positions.len()).sum();
+    let triangles: usize = model.segments.iter().map(|s| s.indices.len() / 3).sum();
     println!(
-        "decoded in {:.1} ms: IGA {:.1}, IGZ + hero walk {:.1}, Havok {:.1}, Edge + KTX2 {:.1}",
-        ms(done),
+        "decoded {} in {:.1} ms (archive {:.1}): {} segments, {} vertices, {} triangles, {} joints; idle {} {:.4} s; {} textures",
+        model.name,
+        ms(started.elapsed()),
         ms(read),
-        ms(walked - read),
-        ms(havoked - walked),
-        ms(done - havoked),
-    );
-    println!(
-        "{} segments, {} vertices, {} triangles, {} joints; idle {:.4} s over {} frames; colour {:?}",
-        segments.len(),
-        segments.iter().map(|s| s.positions.len()).sum::<usize>(),
-        segments.iter().map(|s| s.indices.len() / 3).sum::<usize>(),
-        inverse_bindposes.len(),
-        clip.animation.duration,
-        clip.animation.num_frames,
-        textures.iter().map(|(_, t)| &t.name).collect::<Vec<_>>(),
+        model.segments.len(),
+        vertices,
+        triangles,
+        model.skeleton.joints.len(),
+        model.idle.name,
+        model.idle.duration,
+        extracted.textures.len(),
     );
     Ok(Decoded {
-        segments,
-        textures: textures.into_iter().map(|(_, t)| t).collect(),
-        inverse_bindposes,
-        skeleton,
-        clip,
+        model,
+        textures: extracted.textures,
     })
 }
 
-/// The decoded texture for `igTextureAttr2` `t`, converted once.
-fn texture_slot(
-    igz: &Igz<'_>,
-    textures: &mut Vec<(usize, DecodedTexture)>,
-    t: usize,
-    attr: &TextureAttr2,
-) -> Result<usize> {
-    if let Some(i) = textures.iter().position(|(k, _)| *k == t) {
-        return Ok(i);
-    }
-    let image = attr.image.context("the colour texture has no image")?;
-    let name = Image2::read(igz, image)?
-        .name
-        .and_then(|n| n.rsplit('/').next())
-        .unwrap_or("?")
-        .to_owned();
-    let ktx2 = Texture::read(igz, image)?.to_ktx2();
-    textures.push((
-        t,
-        DecodedTexture {
-            name,
-            ktx2,
-            sampler: sampler(attr)?,
-        },
-    ));
-    Ok(textures.len() - 1)
-}
-
-/// `igTextureAttr2`'s filters and wraps as a sampler, for the values the
-/// character files use; others are refused. Wrap 0 is clamp, 1 repeat;
-/// filters run nearest, linear, then the four mipmapped (5 is linear-linear).
-fn sampler(attr: &TextureAttr2) -> Result<ImageSamplerDescriptor> {
-    let wrap = |v: u32| match v {
-        0 => Ok(ImageAddressMode::ClampToEdge),
-        1 => Ok(ImageAddressMode::Repeat),
-        _ => Err(anyhow!("texture wrap {v}")),
+/// An IR sampler as Bevy's; one without a mipmap filter samples level 0
+/// alone, as the original does.
+fn sampler(s: &Sampler) -> ImageSamplerDescriptor {
+    let wrap = |w: Wrap| match w {
+        Wrap::Clamp => ImageAddressMode::ClampToEdge,
+        Wrap::Repeat => ImageAddressMode::Repeat,
     };
-    let mag = match attr.mag_filter {
-        0 => ImageFilterMode::Nearest,
-        1 => ImageFilterMode::Linear,
-        v => bail!("mag filter {v}"),
+    let filter = |f: Filter| match f {
+        Filter::Nearest => ImageFilterMode::Nearest,
+        Filter::Linear => ImageFilterMode::Linear,
     };
-    let (min, mip) = match attr.min_filter {
-        0 => (ImageFilterMode::Nearest, None),
-        1 => (ImageFilterMode::Linear, None),
-        5 => (ImageFilterMode::Linear, Some(ImageFilterMode::Linear)),
-        v => bail!("min filter {v}"),
-    };
-    Ok(ImageSamplerDescriptor {
-        address_mode_u: wrap(attr.wrap_s)?,
-        address_mode_v: wrap(attr.wrap_t)?,
-        mag_filter: mag,
-        min_filter: min,
-        mipmap_filter: mip.unwrap_or(ImageFilterMode::Nearest),
-        lod_max_clamp: if mip.is_some() { 32.0 } else { 0.0 },
+    ImageSamplerDescriptor {
+        address_mode_u: wrap(s.wrap_u),
+        address_mode_v: wrap(s.wrap_v),
+        mag_filter: filter(s.mag),
+        min_filter: filter(s.min),
+        mipmap_filter: s.mip.map_or(ImageFilterMode::Nearest, filter),
+        lod_max_clamp: if s.mip.is_some() { 32.0 } else { 0.0 },
         ..ImageSamplerDescriptor::default()
-    })
-}
-
-/// Havok joints against the Alchemy bones, by name.
-#[derive(Debug, PartialEq)]
-struct JointMap {
-    /// Alchemy bone -> Havok joint; `None` for a bone Havok lacks.
-    joint_of_bone: Vec<Option<usize>>,
-    /// Havok joint -> its bone's `_blendMatrixIndex`.
-    blend_of_joint: Vec<i32>,
-}
-
-impl JointMap {
-    /// Every Havok bone must name exactly one Alchemy bone.
-    fn new(skeleton: &havok::Skeleton<'_>, bones: &[SkeletonBone<'_>]) -> Result<Self> {
-        let mut joint_of_bone = vec![None; bones.len()];
-        let mut blend_of_joint = Vec::with_capacity(skeleton.bones.len());
-        for (j, b) in skeleton.bones.iter().enumerate() {
-            let name = b
-                .name
-                .with_context(|| format!("Havok bone {j} has no name"))?;
-            let mut found = bones
-                .iter()
-                .enumerate()
-                .filter(|(_, a)| a.name == Some(name));
-            let (i, bone) = match (found.next(), found.next()) {
-                (Some(one), None) => one,
-                (None, _) => bail!("no Alchemy bone named {name}"),
-                (Some(_), Some(_)) => bail!("two Alchemy bones named {name}"),
-            };
-            joint_of_bone[i] = Some(j);
-            blend_of_joint.push(bone.blend_matrix_index);
-        }
-        Ok(Self {
-            joint_of_bone,
-            blend_of_joint,
-        })
     }
+}
 
-    /// Each joint's inverse joint matrix as Bevy's `Mat4`.
-    fn inverse_bindposes(&self, inverse_joints: &[Mat44]) -> Result<Vec<Mat4>> {
-        self.blend_of_joint
+/// Each texture a role reads, loaded once per view and sampler: colour,
+/// spec and rim maps through sRGB views (the remaster decodes them), normal
+/// maps as stored.
+struct Textures<'a> {
+    decoded: &'a Decoded,
+    formats: CompressedImageFormats,
+    loaded: Vec<((String, bool, Sampler), Handle<Image>)>,
+}
+
+impl Textures<'_> {
+    fn get(
+        &mut self,
+        images: &mut Assets<Image>,
+        path: &str,
+        role: TextureRole,
+        s: &Sampler,
+    ) -> Handle<Image> {
+        let key = (path.to_owned(), role.is_color(), *s);
+        if let Some((_, h)) = self.loaded.iter().find(|(k, _)| *k == key) {
+            return h.clone();
+        }
+        let (_, ktx2) = self
+            .decoded
+            .textures
             .iter()
-            .enumerate()
-            .map(|(j, &b)| {
-                let m = usize::try_from(b)
-                    .ok()
-                    .and_then(|b| inverse_joints.get(b))
-                    .with_context(|| format!("joint {j}: blend matrix {b} has no inverse joint"))?;
-                Ok(inverse_joint(m))
-            })
-            .collect()
+            .find(|(p, _)| p == path)
+            .unwrap_or_else(|| panic!("{path} isn't among the model's textures"));
+        let image = Image::from_buffer(
+            ktx2,
+            ImageType::Extension("ktx2"),
+            self.formats,
+            key.1,
+            ImageSampler::Descriptor(sampler(s)),
+            RenderAssetUsages::RENDER_WORLD,
+        )
+        .unwrap_or_else(|e| panic!("{path}: {e}"));
+        let handle = images.add(image);
+        self.loaded.push((key, handle.clone()));
+        handle
     }
 }
 
-/// Stored row-vector (translation in row 3), so its rows are the
-/// column-vector matrix's columns.
-fn inverse_joint(m: &Mat44) -> Mat4 {
-    Mat4::from_cols_array_2d(m)
-}
-
-/// A segment's skin as Bevy joints and weights: palette slots -> Alchemy
-/// bones (`Skin::bones`) -> Havok joints. Zero weights become joint 0.
-fn skin_attributes(
-    bones: &[[BoneWeight; 4]],
-    joints: &JointMap,
-) -> Result<(Vec<[u16; 4]>, Vec<[f32; 4]>)> {
-    let mut indices = Vec::with_capacity(bones.len());
-    let mut weights = Vec::with_capacity(bones.len());
-    for (v, influences) in bones.iter().enumerate() {
-        let mut j = [0u16; 4];
-        let mut w = [0f32; 4];
-        for (k, b) in influences.iter().enumerate() {
-            if b.weight == 0 {
-                continue;
-            }
-            let joint = joints
-                .joint_of_bone
-                .get(b.bone)
-                .copied()
-                .flatten()
-                .with_context(|| format!("vertex {v}: bone {} has no Havok joint", b.bone))?;
-            j[k] = u16::try_from(joint)?;
-            w[k] = f32::from(b.weight) / 255.0;
-        }
-        indices.push(j);
-        weights.push(w);
-    }
-    Ok((indices, weights))
-}
-
-fn segment_mesh(
-    label: String,
-    segment: &Segment,
-    bone_map: &BoneMap,
-    joints: &JointMap,
-    texture: Option<usize>,
-) -> Result<SegmentMesh> {
-    let n = segment.vertex_count();
-    let positions: Vec<[f32; 3]> = segment.positions().collect();
-    let normals: Vec<[f32; 3]> = segment
-        .attribute(Semantic::Normal)
-        .with_context(|| format!("{label}: no normals"))?
-        .vertices()
-        .map(|v| [v[0], v[1], v[2]])
-        .collect();
-    let uvs: Vec<[f32; 2]> = segment
-        .attribute(Semantic::Uv0)
-        .with_context(|| format!("{label}: no uv0"))?
-        .vertices()
-        .map(|v| [v[0], v[1]])
-        .collect();
-    let skin = segment
-        .skin
-        .as_ref()
-        .with_context(|| format!("{label}: unskinned"))?;
-    let (joint_indices, weights) = skin_attributes(&skin.bones(bone_map)?, joints)?;
-    ensure!(
-        [normals.len(), uvs.len(), weights.len(), positions.len()] == [n; 4],
-        "{label}: attribute counts differ"
-    );
-    Ok(SegmentMesh {
-        label,
-        positions,
-        normals,
-        uvs,
-        joints: joint_indices,
-        weights,
-        indices: segment.triangles().flatten().collect(),
-        texture,
-    })
-}
-
-/// The clip's model-space pose at `t` seconds, looped over its duration.
-fn pose(skeleton: &havok::Skeleton<'_>, clip: &havok::Clip<'_>, t: f64) -> Option<Vec<Transform>> {
-    let d = f64::from(clip.animation.duration);
-    let t = if d > 0.0 { t.rem_euclid(d) } else { 0.0 };
-    let model = skeleton.model_pose(&clip.local_pose(skeleton, t)?)?;
-    Some(model.iter().map(transform).collect())
-}
-
-fn transform(q: &QsTransform) -> Transform {
-    let [x, y, z, w] = q.rotation.map(|c| c as f32);
-    Transform {
-        translation: Vec3::from_array(q.translation.map(|c| c as f32)),
-        rotation: Quat::from_xyzw(x, y, z, w).normalize(),
-        scale: Vec3::from_array(q.scale.map(|c| c as f32)),
-    }
-}
+// ---- the app ----
 
 #[derive(Resource)]
 struct View {
@@ -526,23 +755,38 @@ struct View {
     frames: u32,
     shot: Option<PathBuf>,
     offscreen: bool,
+    stock: bool,
     unlit: bool,
+    size: (u32, u32),
+    frame: Option<FrameCamera>,
     /// The image the camera renders into when offscreen.
     target: Option<Handle<Image>>,
 }
 
-#[derive(Component)]
-struct Turntable;
-
 #[derive(Resource)]
-struct Joints(Vec<Entity>);
+struct Spawned(SpawnedCharacter);
 
-fn run(args: Args, shot: Option<PathBuf>, decoded: Decoded) -> AppExit {
+fn run(
+    args: Args,
+    shot: Option<PathBuf>,
+    frame: Option<FrameCamera>,
+    rig: Rig,
+    decoded: Decoded,
+) -> AppExit {
+    if let Some(f) = &frame {
+        let at = f.transform.translation;
+        let forward = f.transform.forward();
+        println!(
+            "frame camera: model scale {:.6}, at ({:.4}, {:.4}, {:.4}) facing ({:.5}, {:.5}, {:.5}), vertical FOV {:.4} deg, near {:.5}, far {:.3}",
+            f.scale, at.x, at.y, at.z, forward.x, forward.y, forward.z, f.fov, f.near, f.far
+        );
+    }
     let mut app = App::new();
     let plugins = DefaultPlugins.set(LogPlugin {
         filter: "wgpu=error,naga=warn".into(),
         ..default()
     });
+    let title = if args.stock { "stock" } else { "remaster" };
     if args.offscreen {
         app.add_plugins((
             plugins
@@ -557,28 +801,29 @@ fn run(args: Args, shot: Option<PathBuf>, decoded: Decoded) -> AppExit {
     } else {
         app.add_plugins(plugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: "hero_view: Eruptor".into(),
-                resolution: SIZE.into(),
+                title: format!("hero_view: Eruptor, {title}"),
+                resolution: args.size.into(),
                 ..default()
             }),
             ..default()
         }));
     }
-    app.insert_resource(decoded)
+    app.add_plugins(CharacterShadingPlugin)
+        .insert_resource(decoded)
+        .insert_resource(rig)
         .insert_resource(View {
             at: args.at,
             yaw: args.yaw.to_radians(),
             frames: args.frames,
             shot,
             offscreen: args.offscreen,
+            stock: args.stock,
             unlit: args.unlit,
+            size: args.size,
+            frame,
             target: None,
         })
         .insert_resource(ClearColor(Color::srgb(0.05, 0.07, 0.16)))
-        .insert_resource(GlobalAmbientLight {
-            brightness: 300.0,
-            ..default()
-        })
         .add_systems(Startup, setup)
         .add_systems(Update, (animate, screenshot))
         .run()
@@ -588,9 +833,11 @@ fn setup(
     mut commands: Commands,
     mut view: ResMut<View>,
     decoded: Res<Decoded>,
+    rig: Res<Rig>,
     device: Option<Res<RenderDevice>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut characters: ResMut<Assets<CharacterMaterial>>,
+    mut stock: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>,
 ) {
@@ -601,78 +848,105 @@ fn setup(
             CompressedImageFormats::BC
         }
     };
-    let textures: Vec<Handle<Image>> = decoded
-        .textures
-        .iter()
-        .map(|t| {
-            let image = Image::from_buffer(
-                &t.ktx2,
-                ImageType::Extension("ktx2"),
-                formats,
-                true,
-                ImageSampler::Descriptor(t.sampler.clone()),
-                RenderAssetUsages::RENDER_WORLD,
-            )
-            .unwrap_or_else(|e| panic!("{}: {e}", t.name));
-            images.add(image)
-        })
-        .collect();
+    let mut textures = Textures {
+        decoded: &decoded,
+        formats,
+        loaded: Vec::new(),
+    };
+    let (eye, projection, scale) = camera_setup(view.frame.as_ref());
+    let root = Transform {
+        rotation: Quat::from_rotation_y(view.yaw),
+        scale: Vec3::splat(scale),
+        ..Transform::IDENTITY
+    };
+    let model = &decoded.model;
+    let at = view.at.unwrap_or(0.0);
+    let spawned = if view.stock {
+        // The colour map alone, as hero_view drew before AE.10; vertex
+        // colours (a multiplier the remaster reads) would darken it.
+        let handles: Vec<Handle<StandardMaterial>> = model
+            .materials
+            .iter()
+            .map(|m| {
+                let colour = m
+                    .textures
+                    .iter()
+                    .find(|t| t.role == TextureRole::Layer1ColorMap)
+                    .map(|t| textures.get(&mut images, &t.texture, t.role, &t.sampler));
+                stock.add(StandardMaterial {
+                    base_color_texture: colour,
+                    perceptual_roughness: 0.8,
+                    unlit: view.unlit,
+                    ..default()
+                })
+            })
+            .collect();
+        let mut plain = model.clone();
+        for s in &mut plain.segments {
+            s.colors = None;
+        }
+        spawn_character(
+            &mut commands,
+            &plain,
+            root,
+            at,
+            &mut meshes,
+            &mut bindposes,
+            &handles,
+        )
+    } else {
+        let scene = rig.scene();
+        let handles: Vec<Handle<CharacterMaterial>> = model
+            .materials
+            .iter()
+            .map(|m| {
+                let material = CharacterMaterial::from_ir(m, &scene, ShadowLookup::NONE, |slot| {
+                    textures.get(&mut images, &slot.texture, slot.role, &slot.sampler)
+                })
+                .unwrap_or_else(|e| panic!("{}: {e}", m.name));
+                println!(
+                    "{}: pixel {:#05x} vertex {:#06x} drawn, {:?}",
+                    m.name,
+                    material.key.shader.pixel(),
+                    material.key.shader.vertex(),
+                    material.key.states,
+                );
+                characters.add(material)
+            })
+            .collect();
+        spawn_character(
+            &mut commands,
+            model,
+            root,
+            at,
+            &mut meshes,
+            &mut bindposes,
+            &handles,
+        )
+    }
+    .unwrap_or_else(|e| panic!("{}: {e}", model.name));
+    commands.insert_resource(Spawned(spawned));
 
-    let root = commands
+    let camera = commands
         .spawn((
-            Turntable,
-            Transform::from_rotation(Quat::from_rotation_y(view.yaw)),
-            Visibility::default(),
+            Camera3d::default(),
+            eye,
+            projection,
+            Hdr,
+            Tonemapping::TonyMcMapface,
+            // Off so a shot comes out the same twice and its background is
+            // one colour.
+            DebandDither::Disabled,
+            Msaa::Sample4,
         ))
         .id();
-    let start = pose(&decoded.skeleton, &decoded.clip, view.at.unwrap_or(0.0))
-        .expect("a NORMAL clip over this skeleton");
-    let joints: Vec<Entity> = start
-        .into_iter()
-        .map(|t| commands.spawn((t, ChildOf(root))).id())
-        .collect();
-    let inverse = bindposes.add(SkinnedMeshInverseBindposes::from(
-        decoded.inverse_bindposes.clone(),
-    ));
-    for s in &decoded.segments {
-        let mut mesh = Mesh::new(
-            PrimitiveTopology::TriangleList,
-            RenderAssetUsages::RENDER_WORLD,
-        );
-        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, s.positions.clone());
-        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, s.normals.clone());
-        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, s.uvs.clone());
-        mesh.insert_attribute(
-            Mesh::ATTRIBUTE_JOINT_INDEX,
-            VertexAttributeValues::Uint16x4(s.joints.clone()),
-        );
-        mesh.insert_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT, s.weights.clone());
-        mesh.insert_indices(Indices::U16(s.indices.clone()));
-        let material = StandardMaterial {
-            base_color_texture: s.texture.map(|t| textures[t].clone()),
-            perceptual_roughness: 0.8,
-            unlit: view.unlit,
-            ..default()
-        };
-        commands.spawn((
-            Name::new(s.label.clone()),
-            Mesh3d(meshes.add(mesh)),
-            MeshMaterial3d(materials.add(material)),
-            SkinnedMesh {
-                inverse_bindposes: inverse.clone(),
-                joints: joints.clone(),
-            },
-            NoFrustumCulling,
-            ChildOf(root),
-        ));
-    }
-    commands.insert_resource(Joints(joints));
-
-    let eye = Transform::from_xyz(0.0, 1.3, 5.5).looking_at(Vec3::new(0.0, 1.0, 0.0), Vec3::Y);
-    let camera = commands.spawn((Camera3d::default(), eye)).id();
     if view.offscreen {
-        let mut target =
-            Image::new_target_texture(SIZE.0, SIZE.1, TextureFormat::Rgba8UnormSrgb, None);
+        let mut target = Image::new_target_texture(
+            view.size.0,
+            view.size.1,
+            TextureFormat::Rgba8UnormSrgb,
+            None,
+        );
         target.asset_usage = RenderAssetUsages::default();
         let handle = images.add(target);
         commands
@@ -680,36 +954,86 @@ fn setup(
             .insert(RenderTarget::Image(handle.clone().into()));
         view.target = Some(handle);
     }
-    commands.spawn((
-        DirectionalLight {
-            illuminance: 4000.0,
+    if view.stock {
+        stock_lights(&mut commands, camera, &eye, &rig, view.frame.is_some());
+    }
+}
+
+/// `--stock`'s lights, fixed to the camera as the rig is. Without a frame,
+/// the viewer's light at the lux and ambient hero_view had before AE.10.
+/// With one, each light's diffuse colour as a Bevy directional light and
+/// the ambients' sum as Bevy's ambient, at the scale where a light of
+/// linear colour c adds c · albedo · N·L (ae-color's stock render), and the
+/// fog as Bevy's linear distance fog; Bevy has one colour a light, so the
+/// rig's specular colours go unused.
+fn stock_lights(commands: &mut Commands, camera: Entity, eye: &Transform, rig: &Rig, frame: bool) {
+    if !frame {
+        commands.spawn((
+            DirectionalLight {
+                illuminance: VIEWER_LUX,
+                ..default()
+            },
+            shining(eye, rig.lights[0].travel),
+        ));
+        commands.insert_resource(GlobalAmbientLight {
+            brightness: VIEWER_AMBIENT,
             ..default()
-        },
-        Transform::from_xyz(2.0, 4.0, 5.0).looking_at(Vec3::new(0.0, 1.0, 0.0), Vec3::Y),
-    ));
+        });
+        return;
+    }
+    let exposure = Exposure::default().exposure();
+    let colour = |c: [f32; 3]| Color::LinearRgba(LinearRgba::rgb(c[0], c[1], c[2]));
+    for l in &rig.lights {
+        if l.diffuse == [0.0; 3] {
+            continue;
+        }
+        commands.spawn((
+            DirectionalLight {
+                color: colour(l.diffuse),
+                illuminance: PI / exposure,
+                ..default()
+            },
+            shining(eye, l.travel),
+        ));
+    }
+    let ambient = rig.lights.iter().fold([0.0; 3], |s, l| {
+        std::array::from_fn(|i| s[i] + l.ambient[i])
+    });
+    commands.insert_resource(GlobalAmbientLight {
+        color: colour(ambient),
+        brightness: 1.0 / exposure,
+        ..default()
+    });
+    if let Some(f) = rig.fog {
+        commands.entity(camera).insert(DistanceFog {
+            color: colour(f.colour),
+            falloff: FogFalloff::Linear {
+                start: f.near,
+                end: f.far,
+            },
+            ..default()
+        });
+    }
 }
 
 fn animate(
     time: Res<Time>,
     view: Res<View>,
     decoded: Res<Decoded>,
-    joints: Option<Res<Joints>>,
-    mut transforms: Query<&mut Transform, Without<Turntable>>,
-    mut turntable: Query<&mut Transform, With<Turntable>>,
+    spawned: Option<Res<Spawned>>,
+    mut transforms: Query<&mut Transform>,
 ) {
-    let Some(joints) = joints else { return };
+    let Some(spawned) = spawned else { return };
     let t = view.at.unwrap_or_else(|| time.elapsed_secs_f64());
-    if let Some(p) = pose(&decoded.skeleton, &decoded.clip, t) {
-        for (e, p) in joints.0.iter().zip(p) {
-            if let Ok(mut tr) = transforms.get_mut(*e) {
-                *tr = p;
-            }
+    for (e, p) in spawned.0.joints.iter().zip(pose(&decoded.model, t)) {
+        if let Ok(mut tr) = transforms.get_mut(*e) {
+            *tr = p;
         }
     }
-    if view.at.is_none() {
-        for mut tr in &mut turntable {
-            tr.rotation = Quat::from_rotation_y(time.elapsed_secs() * TURNTABLE);
-        }
+    if view.at.is_none()
+        && let Ok(mut root) = transforms.get_mut(spawned.0.root)
+    {
+        root.rotation = Quat::from_rotation_y(view.yaw + time.elapsed_secs() * TURNTABLE);
     }
 }
 
@@ -751,247 +1075,342 @@ fn screenshot(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use guac_formats::edge::{Influence, Skin};
-    use guac_formats::havok::spline::{Channel, Curve, QuatTrack, TransformTrack, VecTrack};
-    use guac_formats::havok::{Binding, BlendHint, Bone, SplineAnimation};
 
-    fn bone(name: &'static str, parent: i32, blend: i32) -> SkeletonBone<'static> {
-        SkeletonBone {
-            name: Some(name),
-            parent_index: parent,
-            blend_matrix_index: blend,
-            translation: [0.0; 3],
-        }
-    }
-
-    /// Havok order differs from Alchemy's, which adds an unnamed root.
-    fn skeleton(names: &[&'static str], parents: &[i16]) -> havok::Skeleton<'static> {
-        havok::Skeleton {
-            name: Some("J_root"),
-            parents: parents.to_vec(),
-            bones: names
-                .iter()
-                .map(|n| Bone {
-                    name: Some(n),
-                    lock_translation: false,
-                })
-                .collect(),
-            reference_pose: vec![QsTransform::IDENTITY; names.len()],
-            reference_floats: Vec::new(),
-            float_slots: Vec::new(),
-        }
-    }
-
-    fn alchemy() -> Vec<SkeletonBone<'static>> {
-        vec![
-            bone("Unnamed bone", -1, -1),
-            bone("J_root", 0, 0),
-            bone("J_head", 1, 2),
-            bone("J_hip", 1, 1),
-        ]
+    fn parse(s: &str) -> Result<Args> {
+        Args::parse(s.split_whitespace().map(String::from))
     }
 
     #[test]
-    fn bones_map_by_name() {
-        let sk = skeleton(&["J_root", "J_hip", "J_head"], &[-1, 0, 0]);
-        let map = JointMap::new(&sk, &alchemy()).unwrap();
+    fn args_parse() {
+        let a = parse("--at 0.5 --yaw 90 --screenshot /tmp/x.png --offscreen").unwrap();
+        assert_eq!(a.at, Some(0.5));
         assert_eq!(
-            map,
-            JointMap {
-                joint_of_bone: vec![None, Some(0), Some(2), Some(1)],
-                blend_of_joint: vec![0, 1, 2],
-            }
+            (a.yaw, a.frames, a.offscreen, a.stock, a.unlit, a.size),
+            (90.0, 240, true, false, false, (1280, 720))
         );
-        let missing = skeleton(&["J_root", "J_tail"], &[-1, 0]);
-        let e = JointMap::new(&missing, &alchemy()).unwrap_err();
-        assert!(e.to_string().contains("J_tail"), "{e}");
-        let mut twice = alchemy();
-        twice.push(bone("J_hip", 1, 3));
-        assert!(JointMap::new(&sk, &twice).is_err());
+        let s = parse("--stock --unlit --size 960x540 --frame /x/frame.json").unwrap();
+        assert!(s.stock && s.unlit);
+        assert_eq!(s.size, (960, 540));
+        assert_eq!(s.frame, Some(PathBuf::from("/x/frame.json")));
+        assert_eq!(s.view_proj, None);
+
+        assert!(parse("--offscreen").is_err());
+        assert!(parse("--frames 0").is_err());
+        assert!(parse("--at").is_err());
+        assert!(parse("--bogus").is_err());
+        let e = parse("--unlit").unwrap_err();
+        assert!(e.to_string().contains("--stock"), "{e}");
+        for bad in ["960", "960x", "x540", "0x540", "960x0", "-960x540", "axb"] {
+            assert!(parse(&format!("--size {bad}")).is_err(), "{bad}");
+        }
+        // One bind, Alchemy's inverse joints (AC.17), so no switch (AC.22).
+        let e = parse("--bind havok").unwrap_err();
+        assert!(e.to_string().contains("unknown argument --bind"), "{e}");
     }
 
     #[test]
-    fn inverse_joints_go_in_joint_order_and_transpose() {
-        let sk = skeleton(&["J_root", "J_hip", "J_head"], &[-1, 0, 0]);
-        let map = JointMap::new(&sk, &alchemy()).unwrap();
-        // A distinct translation per blend index catches a wrong lookup.
-        let ij: Vec<Mat44> = (0..3)
-            .map(|i| {
-                let mut m = Mat4::IDENTITY.to_cols_array_2d();
-                m[3] = [10.0 + i as f32, 0.0, 0.0, 1.0];
-                m
+    fn the_view_projection_takes_16_numbers_in_any_paste() {
+        let want: [f32; 16] = std::array::from_fn(|i| i as f32 - 7.5);
+        let words: Vec<String> = want.iter().map(|v| v.to_string()).collect();
+        let spaced = parse(&format!("--view-proj {} --stock", words.join(" "))).unwrap();
+        assert_eq!(spaced.view_proj, Some(want));
+        assert!(spaced.stock, "the arguments after the 16 still parse");
+        // Pasted as one argument, as a JSON matrix prints.
+        let rows: Vec<String> = want
+            .chunks(4)
+            .map(|r| {
+                format!(
+                    "[{}]",
+                    r.iter().map(f32::to_string).collect::<Vec<_>>().join(", ")
+                )
             })
             .collect();
-        let ibp = map.inverse_bindposes(&ij).unwrap();
-        let xs: Vec<f32> = ibp.iter().map(|m| m.w_axis.x).collect();
-        assert_eq!(xs, [10.0, 11.0, 12.0]);
-        // A column-vector translation moves a point.
-        assert_eq!(
-            ibp[1].transform_point3(Vec3::ZERO),
-            Vec3::new(11.0, 0.0, 0.0)
+        let json = format!("[{}]", rows.join(", "));
+        let pasted = Args::parse(["--view-proj".to_owned(), json].into_iter()).unwrap();
+        assert_eq!(pasted.view_proj, Some(want));
+        // 1e-3 as Rust and JSON print it.
+        let tiny = parse(&format!("--view-proj 1e-3 {}", words[1..].join(" "))).unwrap();
+        assert_eq!(tiny.view_proj.unwrap()[0], 1e-3);
+
+        let short = parse(&format!("--view-proj {}", words[..15].join(" "))).unwrap_err();
+        assert!(short.to_string().contains("got 15"), "{short}");
+        let long = Args::parse(["--view-proj".to_owned(), words.join(",") + ",1"].into_iter());
+        assert!(long.unwrap_err().to_string().contains("got 17"));
+        let word = parse(&format!("--view-proj {} --stock", words[..8].join(" "))).unwrap_err();
+        assert!(
+            word.to_string().contains("--stock isn't a number"),
+            "{word}"
         );
-        assert!(map.inverse_bindposes(&ij[..2]).is_err());
+        assert!(parse(&format!("--view-proj inf {}", words[1..].join(" "))).is_err());
+    }
+
+    /// A GL-style perspective: vertical FOV, aspect, near and far, and an
+    /// off-centre shift on each axis.
+    fn perspective(fov: f64, aspect: f64, near: f64, far: f64, shift: (f64, f64)) -> DMat4 {
+        let b = 1.0 / (fov.to_radians() / 2.0).tan();
+        let a = b / aspect;
+        DMat4::from_cols_array(&[
+            a,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            b,
+            0.0,
+            0.0,
+            shift.0,
+            shift.1,
+            -(far + near) / (far - near),
+            -1.0,
+            0.0,
+            0.0,
+            -2.0 * far * near / (far - near),
+            0.0,
+        ])
+    }
+
+    /// A capture's camera made up for the test (none of the game's): a
+    /// modelview of uniform scale 1.5 turned 15 deg, pitched -23 and rolled
+    /// 3, then a 50 deg 16:9 perspective a little off centre.
+    fn synthetic() -> (DMat4, DMat4, [f32; 16]) {
+        let turn = DQuat::from_rotation_z(3f64.to_radians())
+            * DQuat::from_rotation_x(23f64.to_radians())
+            * DQuat::from_rotation_y(-15f64.to_radians());
+        let modelview = DMat4::from_scale_rotation_translation(
+            DVec3::splat(1.5),
+            turn,
+            DVec3::new(0.25, -2.5, -16.5),
+        );
+        let p = perspective(50.0, 16.0 / 9.0, 0.1, 250.0, (0.01, -0.02));
+        let m = p * modelview;
+        let rows = m.transpose().to_cols_array().map(|v| v as f32);
+        (p, modelview, rows)
+    }
+
+    fn max_off(a: DMat4, b: DMat4) -> f64 {
+        let (a, b) = (a.to_cols_array(), b.to_cols_array());
+        let scale = b.iter().fold(1.0f64, |s, v| s.max(v.abs()));
+        a.iter()
+            .zip(b)
+            .map(|(x, y)| (x - y).abs() / scale)
+            .fold(0.0, f64::max)
     }
 
     #[test]
-    fn palette_slots_become_joint_indices() {
-        let sk = skeleton(&["J_root", "J_hip", "J_head"], &[-1, 0, 0]);
-        let bones = alchemy();
-        let map = JointMap::new(&sk, &bones).unwrap();
-        // Slot 0 -> blend 2 (J_head), slot 1 -> blend 0 (J_root).
-        let palette = BoneMap::new(&[2, 0], &bones);
-        let skin = Skin {
-            influences: vec![
-                [
-                    Influence {
-                        weight: 200,
-                        local: 1,
-                    },
-                    Influence {
-                        weight: 55,
-                        local: 0,
-                    },
-                    Influence::default(),
-                    Influence::default(),
-                ],
-                [
-                    Influence {
-                        weight: 255,
-                        local: 0,
-                    },
-                    Influence::default(),
-                    Influence::default(),
-                    Influence::default(),
-                ],
-            ],
-            // Local 0 -> slot 1, local 1 -> slot 0.
-            palette_slots: vec![1, 0],
-        };
-        let (j, w) = skin_attributes(&skin.bones(&palette).unwrap(), &map).unwrap();
-        assert_eq!(j, [[2, 0, 0, 0], [0, 0, 0, 0]]);
-        assert_eq!(w[0], [200.0 / 255.0, 55.0 / 255.0, 0.0, 0.0]);
-        assert_eq!(w[1], [1.0, 0.0, 0.0, 0.0]);
+    fn the_view_projection_is_applied_to_the_camera() {
+        let (p, modelview, rows) = synthetic();
+        let f = FrameCamera::from_view_proj(&rows).unwrap();
+        assert!((f.scale - 1.5).abs() < 1e-5, "{}", f.scale);
+        assert!((f.fov - 50.0).abs() < 1e-3, "{}", f.fov);
+        assert!((f.near - 0.1).abs() < 1e-4 && (f.far - 250.0).abs() < 0.5);
 
-        // A weighted bone Havok lacks is refused.
-        let unnamed = [[
-            BoneWeight {
-                bone: 0,
-                weight: 255,
-            },
-            BoneWeight::default(),
-            BoneWeight::default(),
-            BoneWeight::default(),
-        ]];
-        assert!(skin_attributes(&unnamed, &map).is_err());
+        // Bevy's chain, as the camera and the model's root apply it:
+        // clip from view (the projection) · view from world (the camera's
+        // inverse) · world from model (the root's scale), against the
+        // capture's matrix with Bevy's depth.
+        let root = Transform::from_scale(Vec3::splat(f.scale));
+        let projection = Projection::custom(f.projection.clone());
+        let chain = (projection.get_clip_from_view()
+            * f.transform.to_matrix().inverse()
+            * root.to_matrix())
+        .as_dmat4();
+        let m = DMat4::from_cols_array(&rows.map(f64::from)).transpose();
+        let off = max_off(chain, BEVY_FROM_GL * m);
+        assert!(off < 1e-5, "the chain is {off:.1e} off the capture's");
+
+        // View space is the capture's eye space: the camera's inverse
+        // times the root is the modelview, so the rig lights where it did.
+        let eye = (f.transform.to_matrix().inverse() * root.to_matrix()).as_dmat4();
+        let off = max_off(eye, modelview);
+        assert!(off < 1e-5, "eye space is {off:.1e} off the modelview");
+        let off = max_off(f.projection.clip_from_view.as_dmat4(), BEVY_FROM_GL * p);
+        assert!(off < 1e-5, "the projection is {off:.1e} off");
+
+        // A point in front lands where the capture puts it, its depth
+        // between 0 (far) and 1 (near).
+        let point = DVec4::new(0.3, 1.2, -0.4, 1.0);
+        let gl = m * point;
+        let bevy = chain * point;
+        let (gl, bevy) = (gl.truncate() / gl.w, bevy.truncate() / bevy.w);
+        assert!((gl.x - bevy.x).abs() < 1e-5 && (gl.y - bevy.y).abs() < 1e-5);
+        assert!((bevy.z - (1.0 - gl.z) / 2.0).abs() < 1e-5 && (0.0..1.0).contains(&bevy.z));
     }
 
-    /// Root rises 0 -> 1 over one second; the child sits 1 along x,
-    /// turned a quarter about y.
-    fn clip() -> havok::Clip<'static> {
-        let fixed = |v: [f64; 3]| VecTrack {
-            channels: [Channel::Static; 3],
-            constant: v,
-            curve: None,
+    #[test]
+    fn a_matrix_that_isnt_a_cameras_is_refused() {
+        let (p, modelview, rows) = synthetic();
+        let flat = |m: DMat4| m.transpose().to_cols_array().map(|v| v as f32);
+        let refused = |m: [f32; 16], what: &str| {
+            let e = FrameCamera::from_view_proj(&m).unwrap_err().to_string();
+            assert!(e.contains(what), "{what}: {e}");
         };
-        let root = TransformTrack {
-            mask: [0x45, 0, 0, 0],
-            position: VecTrack {
-                channels: [Channel::Static, Channel::Spline, Channel::Static],
-                constant: [0.0; 3],
-                curve: Some(Curve {
-                    degree: 1,
-                    knots: vec![0, 0, 1, 1],
-                    points: vec![[0.0; 3], [0.0, 1.0, 0.0]],
-                }),
-            },
-            rotation: QuatTrack::Static([0.0, 0.5f64.sqrt(), 0.0, 0.5f64.sqrt()]),
-            scale: fixed([1.0; 3]),
-        };
-        let child = TransformTrack {
-            mask: [0x45, 0, 0, 0],
-            position: fixed([1.0, 0.0, 0.0]),
-            rotation: QuatTrack::Identity,
-            scale: fixed([1.0; 3]),
-        };
-        havok::Clip {
-            animation: SplineAnimation {
-                duration: 1.0,
-                num_frames: 2,
-                max_frames_per_block: 256,
-                block_duration: 255.0,
-                frame_duration: 1.0,
-                data_len: 0,
-                data_end: 0,
-                tracks: vec![root, child],
-            },
-            binding: Binding {
-                original_skeleton_name: None,
-                track_to_bone: vec![0, 1],
-                blend_hint: BlendHint::Normal,
-            },
+        // An orthographic projection (affine, its last row 0, 0, 0, 1) has
+        // no perspective divide.
+        let ortho = DMat4::from_scale(DVec3::new(0.5, 0.9, -0.02)) * modelview;
+        refused(flat(ortho), "isn't a perspective");
+        // A shear in the modelview.
+        let shear = DMat4::from_cols_array(&[
+            1.0, 0.0, 0.0, 0.0, //
+            0.3, 1.0, 0.0, 0.0, //
+            0.0, 0.0, 1.0, 0.0, //
+            0.0, 0.0, 0.0, 1.0,
+        ]);
+        refused(flat(p * shear * modelview), "isn't a rotation");
+        // A mirror.
+        let mirror = DMat4::from_scale(DVec3::new(-1.0, 1.0, 1.0));
+        refused(flat(p * mirror * modelview), "mirrors");
+        // A depth row that mixes in x.
+        let mut lean = rows;
+        lean[8] += 0.5;
+        refused(lean, "leans sideways");
+        // Far in front of near: a perspective built with them swapped.
+        let swapped = perspective(50.0, 16.0 / 9.0, 250.0, 0.1, (0.0, 0.0)) * modelview;
+        refused(flat(swapped), "in order");
+        assert!(FrameCamera::from_view_proj(&[0.0; 16]).is_err());
+    }
+
+    #[test]
+    fn the_frustums_corners_land_on_the_edges_of_the_picture() {
+        let (_, _, rows) = synthetic();
+        let f = FrameCamera::from_view_proj(&rows).unwrap();
+        let corners = f.projection.get_frustum_corners(-1.0, -100.0);
+        let want = [(1.0, -1.0), (1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0)];
+        for (i, c) in corners.iter().enumerate() {
+            let clip = f.projection.clip_from_view * c.extend(1.0);
+            let (x, y) = (clip.x / clip.w, clip.y / clip.w);
+            let (wx, wy) = want[i % 4];
+            assert!(
+                (x - wx).abs() < 1e-4 && (y - wy).abs() < 1e-4,
+                "{i}: {x}, {y}"
+            );
+            assert_eq!(c.z, if i < 4 { -1.0 } else { -100.0 });
         }
     }
 
-    #[test]
-    fn the_clip_samples_to_model_space_and_loops() {
-        let sk = skeleton(&["J_root", "J_hip"], &[-1, 0]);
-        let c = clip();
-        let p = pose(&sk, &c, 0.25).unwrap();
-        assert!((p[0].translation - Vec3::new(0.0, 0.25, 0.0)).length() < 1e-6);
-        // The child's x offset turned a quarter about y lands on -z.
-        assert!((p[1].translation - Vec3::new(0.0, 0.25, -1.0)).length() < 1e-6);
-        assert!(p[1].rotation.angle_between(p[0].rotation) < 1e-6);
-        // Looped: 2.25 s and -0.75 s are 0.25 s.
-        for t in [2.25, -0.75] {
-            let q = pose(&sk, &c, t).unwrap();
-            assert!((q[1].translation - p[1].translation).length() < 1e-6, "{t}");
-        }
-        // An additive clip has no pose of its own.
-        let mut additive = clip();
-        additive.binding.blend_hint = BlendHint::Additive;
-        assert!(pose(&sk, &additive, 0.0).is_none());
+    /// A frame file with made-up numbers (none of the game's).
+    fn frame_json(travel0: &str, fog: &str) -> String {
+        format!(
+            r#"{{"source": "made up for the test",
+                "lights": [
+                  {{"travel": {travel0}, "ambient": [10, 20, 30], "diffuse": [200, 100, 50], "specular": [255, 255, 255]}},
+                  {{"travel": [0, 1, 0], "ambient": [0, 0, 0], "diffuse": [40, 40, 90], "specular": [80, 80, 80]}},
+                  {{"travel": [0, 0, -1], "ambient": [0, 0, 0], "diffuse": [0, 0, 0], "specular": [0, 0, 0]}}
+                ],
+                "fog": {fog}}}"#
+        )
     }
 
     #[test]
-    fn samplers_map_the_disc_values_and_refuse_the_rest() {
-        let attr = |mag, min, s, t| TextureAttr2 {
-            attr: layouts::Attr {
-                cached_unit_id: -1,
-                cached_attr_index: -1,
-                read_only_copy: false,
-            },
-            format_hint: 0,
-            load_in_vram_for_ctr: false,
-            mag_filter: mag,
-            min_filter: min,
-            wrap_s: s,
-            wrap_t: t,
-            msaa_type: 0,
-            source: 0,
-            image: None,
-            tex_handle: -1,
-            image_handle: 0,
-            wrap_r: 1,
+    fn a_frame_file_becomes_the_rig_in_linear_light() {
+        let fog = r#"{"colour": [128, 64, 32], "near": 30, "far": 300}"#;
+        let file: FrameFile = serde_json::from_str(&frame_json("[0.6, -0.8, 0]", fog)).unwrap();
+        let rig = Rig::from_file(&file).unwrap();
+        let key = rig.lights[0];
+        assert_eq!(key.travel, [0.6, -0.8, 0.0]);
+        // Colours decode through bevy_color as the remaster does: 200 is
+        // about 0.578 and 255 exactly 1.
+        let want = LinearRgba::from(Srgba::rgb_u8(200, 100, 50));
+        assert_eq!(key.diffuse, [want.red, want.green, want.blue]);
+        assert!((key.diffuse[0] - 0.578).abs() < 1e-3, "{:?}", key.diffuse);
+        assert_eq!(key.specular, [1.0; 3]);
+        assert_eq!(rig.lights[2].diffuse, [0.0; 3]);
+        let scene = rig.scene();
+        assert!(scene.fog && !scene.shadows && scene.point_lights.is_empty());
+        assert_eq!((scene.fog_near, scene.fog_far), (30.0, 300.0));
+        assert_eq!(scene.fog_colour, linear([128, 64, 32]));
+        assert_eq!(scene.lights, rig.lights);
+
+        // No fog: the scene's fog is off, and with it the eye direction.
+        let file: FrameFile = serde_json::from_str(&frame_json("[0, 0, 1]", "null")).unwrap();
+        assert!(!Rig::from_file(&file).unwrap().scene().fog);
+
+        let bad = |travel: &str, fog: &str| {
+            let file: FrameFile = serde_json::from_str(&frame_json(travel, fog)).unwrap();
+            Rig::from_file(&file).unwrap_err().to_string()
         };
-        let d = sampler(&attr(1, 5, 1, 0)).unwrap();
+        assert!(bad("[0.5, 0, 0]", "null").contains("not a unit vector"));
+        assert!(bad("[0, 0, 1]", r#"{"colour": [0, 0, 0], "near": 9, "far": 9}"#).contains("far"));
+        // Two lights, a code past 255 or a field it doesn't know: refused
+        // as it reads.
+        let two = r#"{"lights": [], "fog": null}"#;
+        assert!(serde_json::from_str::<FrameFile>(two).is_err());
+        let past = frame_json("[0, 0, 1]", "null").replace("200, 100", "256, 100");
+        assert!(serde_json::from_str::<FrameFile>(&past).is_err());
+        let extra = frame_json("[0, 0, 1]", "null").replace("\"source\"", "\"sauce\"");
+        assert!(serde_json::from_str::<FrameFile>(&extra).is_err());
+    }
+
+    #[test]
+    fn a_frame_file_inside_a_work_tree_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let json = frame_json("[0, 0, 1]", "null");
+        let outside = dir.path().join("frame.json");
+        std::fs::write(&outside, &json).unwrap();
+        assert!(Rig::read(&outside).is_ok());
+        let tree = dir.path().join("repo");
+        std::fs::create_dir_all(tree.join(".git")).unwrap();
+        std::fs::create_dir_all(tree.join("a")).unwrap();
+        let inside = tree.join("a/frame.json");
+        std::fs::write(&inside, &json).unwrap();
+        let e = Rig::read(&inside).unwrap_err().to_string();
+        assert!(e.contains("git work tree"), "{e}");
+        // Nor through a link from outside.
+        #[cfg(unix)]
+        {
+            let link = dir.path().join("link.json");
+            std::os::unix::fs::symlink(&inside, &link).unwrap();
+            assert!(Rig::read(&link).is_err());
+        }
+        assert!(Rig::read(&dir.path().join("missing.json")).is_err());
+    }
+
+    #[test]
+    fn the_viewers_light_follows_the_camera_from_where_it_was() {
+        let rig = Rig::viewer();
+        let camera = Transform::from_translation(EYE).looking_at(TARGET, Vec3::Y);
+        // At the default camera it shines from (2, 4, 5) at (0, 1, 0), as
+        // hero_view's light did before AE.10.
+        let light = shining(&camera, rig.lights[0].travel);
+        let want = (TARGET - VIEWER_LIGHT).normalize();
+        assert!(light.forward().as_vec3().abs_diff_eq(want, 1e-6));
+        assert_eq!(rig.lights[1], shading::DirectionalLight::OFF);
+        let scene = rig.scene();
+        assert!(scene.fog && scene.fog_near > 1000.0);
+    }
+
+    #[test]
+    fn ir_samplers_map_to_bevys() {
+        let d = sampler(&Sampler {
+            wrap_u: Wrap::Repeat,
+            wrap_v: Wrap::Clamp,
+            mag: Filter::Linear,
+            min: Filter::Linear,
+            mip: Some(Filter::Linear),
+        });
         assert_eq!(
             (d.address_mode_u, d.address_mode_v),
             (ImageAddressMode::Repeat, ImageAddressMode::ClampToEdge)
         );
         assert_eq!(
-            (d.mag_filter, d.min_filter, d.mipmap_filter),
+            (d.mag_filter, d.min_filter, d.mipmap_filter, d.lod_max_clamp),
             (
                 ImageFilterMode::Linear,
                 ImageFilterMode::Linear,
-                ImageFilterMode::Linear
+                ImageFilterMode::Linear,
+                32.0
             )
         );
-        let flat = sampler(&attr(0, 0, 0, 0)).unwrap();
-        assert_eq!(flat.min_filter, ImageFilterMode::Nearest);
-        assert_eq!(flat.lod_max_clamp, 0.0);
-        assert!(sampler(&attr(2, 5, 1, 1)).is_err());
-        assert!(sampler(&attr(1, 3, 1, 1)).is_err());
-        assert!(sampler(&attr(1, 5, 4, 1)).is_err());
+        let flat = sampler(&Sampler {
+            wrap_u: Wrap::Clamp,
+            wrap_v: Wrap::Clamp,
+            mag: Filter::Nearest,
+            min: Filter::Nearest,
+            mip: None,
+        });
+        assert_eq!(
+            (flat.min_filter, flat.lod_max_clamp),
+            (ImageFilterMode::Nearest, 0.0)
+        );
     }
 
     #[test]
@@ -1082,23 +1501,5 @@ mod tests {
         assert_eq!(std::fs::read_dir(&ro).unwrap().count(), 0);
         // The directory gone after the check.
         assert!(write_png(&dir.path().join("gone/y.png"), pixel()).is_err());
-    }
-
-    #[test]
-    fn args_parse() {
-        let parse = |s: &str| Args::parse(s.split_whitespace().map(String::from));
-        let a = parse("--at 0.5 --yaw 90 --screenshot /tmp/x.png --offscreen --unlit").unwrap();
-        assert_eq!(a.at, Some(0.5));
-        assert_eq!(
-            (a.yaw, a.frames, a.offscreen, a.unlit),
-            (90.0, 240, true, true)
-        );
-        assert!(parse("--offscreen").is_err());
-        assert!(parse("--frames 0").is_err());
-        assert!(parse("--at").is_err());
-        assert!(parse("--bogus").is_err());
-        // One bind, Alchemy's inverse joints (AC.17), so no switch (AC.22).
-        let e = parse("--bind havok").unwrap_err();
-        assert!(e.to_string().contains("unknown argument --bind"), "{e}");
     }
 }

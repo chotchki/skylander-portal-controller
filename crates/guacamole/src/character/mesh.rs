@@ -14,11 +14,9 @@ use bevy::mesh::{
     Indices, Mesh, Mesh3d, MeshVertexAttribute, PrimitiveTopology, VertexAttributeValues,
     VertexFormat,
 };
-use bevy::pbr::MeshMaterial3d;
+use bevy::pbr::{Material, MeshMaterial3d};
 use bevy::prelude::{ChildOf, Name, Transform, Visibility};
 use guac_ir::model::{self, Model, Segment, Skeleton};
-
-use super::material::CharacterMaterial;
 
 /// The third texture-coordinate set, which Bevy has no attribute for.
 pub const ATTRIBUTE_UV_2: MeshVertexAttribute =
@@ -157,16 +155,17 @@ pub struct SpawnedCharacter {
 
 /// Spawns `model` under a new root at `root_transform`: its joints posed
 /// `seconds` into the idle, and each segment skinned over them with the
-/// material its segment names (`materials` in the model's material order).
+/// material its segment names (`materials` in the model's material order:
+/// the character material, or `StandardMaterial` for `hero_view --stock`).
 /// Segments skip frustum culling, since their bounds are the bind pose's.
-pub fn spawn_character(
+pub fn spawn_character<M: Material>(
     commands: &mut Commands,
     model: &Model,
     root_transform: Transform,
     seconds: f64,
     meshes: &mut Assets<Mesh>,
     inverse: &mut Assets<SkinnedMeshInverseBindposes>,
-    materials: &[Handle<CharacterMaterial>],
+    materials: &[Handle<M>],
 ) -> Result<SpawnedCharacter, MeshError> {
     let joints = model.skeleton.joints.len();
     for (i, s) in model.segments.iter().enumerate() {

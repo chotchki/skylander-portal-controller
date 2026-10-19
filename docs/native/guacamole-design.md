@@ -1080,7 +1080,7 @@ taken in the same session (The oracle; the detail is in Giants in detail):
 So Giants stays first, the ladder carries on to AE on it and AC never proposed the Trap Team fallback (same
 TfbTool island, reflection schema already public, Bink 2 for its M0). Besides AC.24 and AC.25, still open and not
 gating: AC.18, a FLIP of `hero_view` against a rendered oracle frame for the record (The oracle says what
-it waits on; the viewer also needs camera options to match one).
+it waits on; `hero_view` matches a frame's camera, rig and fog since AE.10).
 
 What the kids play most is unknown, and it matters less now that the phone offers the whole roster: it would
 reorder which figures and levels get attention first, not the game. The only signal is on the HTPC,
@@ -1485,7 +1485,8 @@ The unattended route is O3: `live_verbs` runs AC.13's scenario with nobody at th
 CROSS to the portal prompt, P1 `LOAD` of a copy of Eruptor's `.sky`, then `PAUSE_AT`, `RSXCAP`,
 `SCREENSHOT` and `SAVESTATE`), every output into `GUAC_CAPTURE_DIR` with the identity line. It gives
 AC.18 the rendered frame it lacked (Eruptor idle in the level at exact flips, under the same build as the
-captures beside it); what AC.18 still waits on is the viewer's camera.
+captures beside it). The viewer matches one since AE.10 (`hero_view --view-proj`, `--frame`, `--size`, the
+frame's numbers read from beside its capture at run time), so AC.18 waits on AE.16's frame alone.
 
 The attended recipe, as AC.13 ran it (2026-10-18, chotchki at the unlocked M3 Max, on the `09d602fd5`
 copy). The prep notes and launch line are in
