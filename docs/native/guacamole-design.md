@@ -789,13 +789,23 @@ images his captured frames bind is exactly what RSX was given, level for level (
   all-zero render targets. The 5 `_big` are HUD health-bar pieces (DXT5 16x50, 2x50 and 15x50 at pitch 64,
   16 and 64), packed block rows, which is how the crate reads a linear pitch. Byte-identical blocks decode
   to identical RGBA, so a texture FLIP is 0 by construction.
-- Not exercised yet (AC.21): L8 and the 16 upgrade-menu images in `009_eruptor.arc`. No captured draw binds
-  an L8, so its Morton untile, the only untile here that moves bytes, still rests on the disc evidence above,
-  and comparing the same untile on both sides can't settle it: that takes RSX's own reading of a bound unit
-  (its `LN` bit plus RPCS3's swizzle decode of the surface, or the rendered frame). The `.arc` images aren't
-  resident outside the upgrade menu. All 44 in `009_eruptor.bld` (the 6 above among them) sit in the
-  session's savestate byte-identical to their file blocks, a check only research has run (no repo test reads
-  a savestate yet).
+- Confirmed on his upgrade-menu art (AC.21, `eruptor_upgrade_art_matches_the_captures` in
+  [`giants_capture_texels.rs`](../../crates/guac-formats/tests/giants_capture_texels.rs)). The Skylander Info
+  page's Upgrades carousel (SELECT in gameplay, no hub needed) binds 14 of the 16 `009_eruptor.arc` images
+  over four unattended captures, each on u0 with `LN` SET (the linear `_big` it is on the disc), 512x360 at
+  pitch 2048, and RSX's own reading of the unit (`rrc_dump::texels`, RPCS3's level layout in our own code)
+  equals our KTX2 byte for byte. RSX never reorders DXT, so that reading is the uploaded rows: the check
+  pins the bytes plus the unit's `LN`, pitch, size and level count, and the Morton walk waits on L8. The
+  Wow Pow image lists only for a Series 2 figure.
+- Not exercised yet: L8 against a bound unit (AC.24) and the two branch images (AC.25). Giants' only L8
+  images are two depth-of-field focus mappers (128x2, one pair in each of 66 `level.bld`, bound by no
+  material) that the EBOOT's DOF pass binds while a script has DOF on, at turrets or in atmospheric zones.
+  None of the 20 frames captured so far binds one, and the oracle can't walk to a turret unattended yet. Our
+  L8 untile agrees with RPCS3's own walk on every power-of-two shape up to 512 a side (`cargo test`), so
+  what's left is the bound unit: its `LN` bit and RSX's reading of its surface. The branch images (DXT5
+  1024x236) show where a path is offered or bought, not on a fresh figure's page. All 44 in `009_eruptor.bld`
+  (the 6 above among them) sit in the session's savestate byte-identical to their file blocks, a check only
+  research has run (no repo test reads a savestate yet).
 - Which unit is which (AC.10): `tfbRuntimeTechniqueInstance._materialPass` lists `tfbAlphaTextureUnitIDAttr`
   binds and `igAttr._cachedUnitID` is the unit. All 2,243 character techniques bind unit 0 exactly once;
   colour sits at 0, `_n`/`_nrm` only at 4 and `_s`/`_sp` only at 6, and Eruptor's rim map at 3.
@@ -1019,21 +1029,22 @@ What flips it: AC's decoded hero not matching its RSX capture, and it didn't. Ev
 Eruptor PASSED on 2026-10-18 (AC.20): decoded from the disc alone he matches what the original fed RSX, all
 four layers inside the tolerances AC fixed before comparing (decision 5 in
 [`ac-giants-decode-gate/design.md`](../../openspec/changes/ac-giants-decode-gate/design.md), with
-chotchki's two rewordings). The gate itself stays open on one item, AC.21: L8's untile and the 16
-upgrade-menu images against the oracle (Giants in detail, Textures), none of which a frame showing him
-draws. It gates unless chotchki rules it out, and no ruling is in yet. `#[ignore]`d tests check the rest on
+chotchki's two rewordings). The gate itself stays open on what's left of AC.21, which chotchki kept in
+it ("I'd rather do them than punt if its easy"): L8 against a bound unit (AC.24) and two of the 16
+upgrade-menu images (AC.25), each one attended session away (Giants in detail, Textures); AC.21 matched
+the other 14 on the Upgrades page. `#[ignore]`d tests check the rest on
 three RSX captures from one attended session on the oracle, and research cross-checked it on the savestate
 taken in the same session (The oracle; the detail is in Giants in detail):
 
 | Layer | Tolerance | Measured on Eruptor |
 |---|---|---|
-| Textures | BC blocks byte-identical after the same untile | every unit of his 42 draws that holds one of his images holds the one his material binds, level for level (5 of his 60 in those draws, his collection portrait a 6th in a UI draw); 234 of each frame's 243 surfaces equal a disc image, the other 9 are zero render targets |
+| Textures | BC blocks byte-identical after the same untile | every unit of his 42 draws that holds one of his images holds the one his material binds, level for level (5 of his 60 in those draws, his collection portrait a 6th in a UI draw); 234 of each frame's 243 surfaces equal a disc image, the other 9 are zero render targets; 14 of his 16 upgrade-menu images equal RSX's own reading of their units on the Upgrades page (AC.21) |
 | Geometry | indexes an ordered subset of ours (SPU culling); positions within 1e-4 of the diagonal; UVs 1/65536; CMP words within 1 LSB of ours re-encoded the SPU's way | 42 of 42 draws ordered subsets; UV0 byte-identical; posed positions through the skeleton within 1.56e-6 (3.4e-7 of the 4.643 diagonal); 16,691 of 16,708 CMP words exact, the other 17 1 LSB on one component |
 | Skeleton | 1e-4 of the extent and 1e-4 rad | the skeleton a palette fitted to the captured vertices implies matches ours within 2.48e-6 rad and 4.2e-7 of the 4.162 extent, with Alchemy's inverse joints as the bind (Havok's misses the right wrist's 5 bones by 0.3631 rad) |
 | Clip | 1e-3 of the diagonal at the solved time, two captures on different poses | `Eruptor_Idle` solved at three distinct times (0.23481, 1.09289, 0.62158 s), each minimum unique, worst vertex 3.4e-7 of the diagonal; the savestate's frames agree within 9.0e-7 |
 
 So Giants stays first, the ladder carries on to AE on it and AC never proposed the Trap Team fallback (same
-TfbTool island, reflection schema already public, Bink 2 for its M0). Besides AC.21, still open and not
+TfbTool island, reflection schema already public, Bink 2 for its M0). Besides AC.24 and AC.25, still open and not
 gating: AC.18, a FLIP of `hero_view` against a rendered oracle frame for the record (The oracle says what
 it waits on; the viewer also needs camera options to match one).
 
@@ -1084,7 +1095,7 @@ Why it's shaped this way:
 | Live debugging | RPCS3's GDB stub | On by default at `127.0.0.1:2345` (`vendor/rpcs3/rpcs3/Emu/system_config.h:379`; the oracle's log shows it listening). PPU only, Z0 software breakpoints only and breakpoints need the PPU interpreter: under LLVM RPCS3 refuses them but the stub still answers OK, so the breakpoint silently never fires. A 0x03 byte pauses, `m` reads (about 600 bytes a packet), `vCont;c` resumes: good for targeted reads, too slow for bulk (PINE, next row). |
 | Bulk live reads | RPCS3's PINE server | Off by default; `IPC Server enabled: true` in `ipc.yml` under RPCS3's config dir turns it on (`--config` doesn't cover that file, so an isolated HOME carries its own), and it listens on `$TMPDIR/rpcs3.sock`. 8- to 64-bit reads batched up to 450,000 bytes a reply. No pause of its own, so reads race the game unless a capture or the GDB stub has paused it. |
 | Runtime state | Guest memory dump (`vendor/rpcs3/rpcs3/rpcs3qt/guest_memory_dumper.cpp`), or a savestate | The dumper writes a sparse 4 GB file where offset = guest address, plus SPU local stores and a JSON manifest. A savestate is a memory dump too: a parser outside the repo walks its memory section into regions (55 for the June Giants state) and fills the text segment from the decrypted EBOOT, which a state leaves out unless Inspection Mode saved it. AC.14's live-registry check ran on that. |
-| Frame ground truth | RSX capture (`.rrc.gz`), read by [`tools/rrc-dump`](../../tools/rrc-dump/FORMAT.md) | Taken with the game window's RSX-capture shortcut into `<rpcs3 config>/captures/` (`vendor/rpcs3/rpcs3/Emu/RSX/RSXThread.cpp:3401`); `--rsx-capture <path>` REPLAYS one, it doesn't take one. Real vertex, index and texture bytes for one frame plus the register state. RPCS3's own serialization (magic `RRC`, version 6), no public spec, so `rrc-dump` carries our write-up of it, pins version 6 and refuses to write inside any work tree of this repo. The oracle section has the recipe. |
+| Frame ground truth | RSX capture (`.rrc.gz`), read by [`tools/rrc-dump`](../../tools/rrc-dump/FORMAT.md) | Taken with the game window's RSX-capture shortcut into `<rpcs3 config>/captures/` (`vendor/rpcs3/rpcs3/Emu/RSX/RSXThread.cpp:3401`); `--rsx-capture <path>` REPLAYS one, it doesn't take one. Real vertex, index and texture bytes for one frame plus the register state. RPCS3's own serialization (magic `RRC`, version 6), no public spec, so `rrc-dump` carries our write-up of it, pins version 6 and refuses to write inside any work tree of this repo; its `texels` reads a bound unit as RPCS3 does (level layout, Morton walk), RSX's side of a texture check (AC.21). The oracle section has the recipe. |
 | SPU programs | SPU ELF dumper (`vendor/rpcs3/rpcs3/rpcs3qt/elf_memory_dumping_dialog.cpp`) | Carves SPU programs out of local store into ELF. |
 | Which files load when | RPCS3 `sys_fs` logging | Opens are logged by default; reads need the trace level. |
 | Glue | small Rust or Python scripts | Read inputs from a path, write outputs outside the tree. |
@@ -1645,7 +1656,7 @@ beside the ladder in `openspec/backlog.md`, gates no rung and starts on chotchki
 |---|---|---|---|
 | AA | `aa-guacamole-shell` | place a figure on the phone, the TV shows its card (name, element, portrait), in `guacamole` | the embedded server, the native driver over a channel, Guacamole's one-question setup, its own database and profiles, the interim catalogue with no `.sky` and no firmware pack, one binary at a time, all on the Mac driving the TV (the MSI carrying both binaries is the bring-up's) |
 | AB, M0 | `ab-giants-extract-and-intros` | place a figure, its original intro video plays | `guac-extract` skeleton (identity, IGA, manifest, census, Bink 1 transcode to H.264 + MP3); Bevy video through openh264, AB.7's spike pick. The 48 intros are named by character, not toy type; the voice-over name in each character archive bridges all 48. A figure without one keeps its AA card |
-| AC | `ac-giants-decode-gate`, in parallel with AA and AB | nothing yet (a dev viewer) | IGZ v6, `igImage2`, Edge and a Havok 2011.2 skeleton plus one clip, matched against an RSX capture. PASSED 2026-10-18 on everything the oracle drew of Eruptor, all four layers, so Giants stays first; AC.21 (L8, the 16 upgrade-menu images) holds the gate open unless chotchki rules it out (Why Giants first) |
+| AC | `ac-giants-decode-gate`, in parallel with AA and AB | nothing yet (a dev viewer) | IGZ v6, `igImage2`, Edge and a Havok 2011.2 skeleton plus one clip, matched against an RSX capture. PASSED 2026-10-18 on everything the oracle drew of Eruptor, all four layers, so Giants stays first; AC.24 and AC.25 (L8 against a bound unit, two upgrade branch images; AC.21 matched the other 14) hold the gate open, each one attended session away (Why Giants first) |
 | AE, M1 | `ae-animated-turntable` | their figure as an animated, textured turntable on the TV | the first 3D; the Mac's renderer floor measured; the disc roster replaces the interim catalogue |
 | AF | `af-oracle-foundation` | nothing | the oracle foundation: divergence measured, frame-locked two-pad input, tolerance metrics. Lands before any gameplay comparison |
 | AG, M2 | backlog | walk one level | level scene, collision, character controller, camera, feel checked against the oracle; the input spec, with prompts that match the physical pad |

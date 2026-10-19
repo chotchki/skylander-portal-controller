@@ -230,11 +230,12 @@ pub fn init(home: &Path, opts: &InitOptions) -> Result<OracleHome> {
         fs::create_dir_all(&dir)?;
     }
 
-    write(&config.join("config.yml"), &opts.config.render())?;
+    write(&config.join("config.yml"), opts.config.render())?;
+    write_beep_sounds(&config, opts.config.audio)?;
     write(&config.join("ipc.yml"), template::ipc_yml())?;
     write(
         &config.join("games.yml"),
-        &template::games_yml(&opts.giants_dump),
+        template::games_yml(&opts.giants_dump),
     )?;
     write(
         &config.join("input_configs/global/Default.yml"),
@@ -246,7 +247,7 @@ pub fn init(home: &Path, opts: &InitOptions) -> Result<OracleHome> {
     )?;
     write(
         &root.join(MARKER),
-        &format!(
+        format!(
             "# An oracle home (openspec AF): RPCS3 runs with HOME set here.\ngiants_dump={}\n",
             opts.giants_dump.display()
         ),
@@ -319,11 +320,35 @@ fn copy_tree(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
-fn write(path: &Path, text: &str) -> Result<()> {
+fn write(path: &Path, bytes: impl AsRef<[u8]>) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(path, text).with_context(|| format!("writing {}", path.display()))
+    fs::write(path, bytes).with_context(|| format!("writing {}", path.display()))
+}
+
+/// Silent, the [`template::BEEP_SOUNDS`] hold [`template::silent_wav`], so a
+/// screenshot plays 10 ms of silence instead of the Mac's alert sound. With
+/// sound on, the ones a silent init wrote go and the pin's beep is back; a file
+/// with other bytes is left alone.
+fn write_beep_sounds(config: &Path, audio: bool) -> Result<()> {
+    let sounds = config.join("sounds");
+    if is_link(&sounds) {
+        bail!(
+            "{} is a link; an oracle home holds its own",
+            sounds.display()
+        );
+    }
+    let silent = template::silent_wav();
+    for name in template::BEEP_SOUNDS {
+        let path = sounds.join(name);
+        if !audio {
+            write(&path, &silent)?;
+        } else if fs::read(&path).is_ok_and(|b| b == silent) {
+            fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(all(test, unix))]
@@ -545,6 +570,37 @@ mod tests {
         init(home.root(), &fx.opts()).unwrap();
         let again = fs::File::open(rpcs3_lock_file(home.root())).unwrap();
         again.try_lock().unwrap();
+    }
+
+    #[test]
+    fn a_silent_home_swaps_rpcs3s_beeps_for_silence_and_audio_gives_them_back() {
+        let fx = Fixture::new();
+        let home = init(&fx.tmp.path().join("oracle"), &fx.opts()).unwrap();
+        let sounds = home.config_dir().join("sounds");
+        for name in template::BEEP_SOUNDS {
+            assert_eq!(fs::read(sounds.join(name)).unwrap(), template::silent_wav());
+        }
+        // A sound someone put there on purpose survives the switch to audio.
+        fs::write(sounds.join(template::BEEP_SOUNDS[1]), "theirs").unwrap();
+        let loud = InitOptions {
+            config: ConfigTemplate {
+                audio: true,
+                ..ConfigTemplate::default()
+            },
+            ..fx.opts()
+        };
+        init(home.root(), &loud).unwrap();
+        assert!(!sounds.join(template::BEEP_SOUNDS[0]).exists());
+        assert_eq!(
+            fs::read_to_string(sounds.join(template::BEEP_SOUNDS[1])).unwrap(),
+            "theirs"
+        );
+        // A linked sounds dir would write into whatever it points at.
+        fs::remove_dir_all(&sounds).unwrap();
+        std::os::unix::fs::symlink(fx.real_config(), &sounds).unwrap();
+        let err = init(home.root(), &fx.opts()).unwrap_err().to_string();
+        assert!(err.contains("is a link"), "{err}");
+        assert!(!fx.real_config().join(template::BEEP_SOUNDS[0]).exists());
     }
 
     #[test]

@@ -13,7 +13,8 @@
 //! and `GUAC_ORACLE_FIGURE` (a `.sky` from the dev's own pack; the game writes
 //! the run dir's copy, never the file) from the env or `.env.dev`, and skips when
 //! one is unset. `ORACLE_LEVEL_SECS` (default 600) bounds playable to hero,
-//! `ORACLE_SHADER_MODE` overrides the template's shader mode.
+//! `ORACLE_SHADER_MODE` overrides the template's shader mode, and `ORACLE_AUDIO=1`
+//! plays the game's sound (the template is silent).
 //!
 //! `cargo test -p oracle-harness --test live_gameplay -- --ignored --nocapture`
 
