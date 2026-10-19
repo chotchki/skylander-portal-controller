@@ -19,6 +19,7 @@ pub mod level;
 pub mod model;
 pub mod rig;
 pub mod roster;
+pub mod scroll;
 pub mod shading;
 
 pub use characters::{Character, CharacterArchive, CharacterTable, Intro, IntroSource, VoiceTrack};
