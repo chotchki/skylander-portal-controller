@@ -46,7 +46,7 @@ pub use report::{
     AcrossObservable, AcrossSets, Band, FlipSummary, Group, LoadLink, Observable, ReplayEnd,
     Report, Rng, RngCheckpoint, World, WorldCheckpoint, spearman,
 };
-pub use run::{BOOT_WAIT, Inputs, pine_connect, run_replay};
+pub use run::{BOOT_WAIT, Inputs, carried_dirs, pine_connect, run_replay};
 
 /// The end flip's offset from F0: 30 s at 60 fps (design decision 7).
 pub const END: u64 = 1_800;

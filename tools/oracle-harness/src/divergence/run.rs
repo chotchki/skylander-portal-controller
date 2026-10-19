@@ -370,6 +370,16 @@ fn saved_in(dir: &Path) -> Option<std::path::PathBuf> {
         .find(|p| p.to_string_lossy().ends_with(Kind::SaveState.suffix()))
 }
 
+/// What a replay can leave in the oracle home for the next one: a savestate's
+/// load puts back `dev_hdd0/game/<dir>` and hdd1's caches from the state
+/// (`Emulator::Load`'s tars) but not the users' saves and trophies under
+/// `dev_hdd0/home`, so a replay that saved or unlocked a trophy would boot the
+/// next one into a different home. `divergence run` snapshots these before the
+/// first replay and stops when one changes them.
+pub fn carried_dirs(config_dir: &Path) -> Vec<std::path::PathBuf> {
+    vec![config_dir.join("dev_hdd0").join("home")]
+}
+
 /// PINE's server starts with the game (and again after a savestate's reboot),
 /// so its socket can trail the pause: retried until `within` is up.
 pub fn pine_connect(socket: &Path, within: Duration) -> Result<PineClient> {
@@ -531,6 +541,34 @@ mod tests {
             ["F {PPU} SIG: Thread terminated due to fatal error: Verification failed"]
         );
         assert!(log_lines(b"Backend: Cubeb\n", SILENT).is_empty());
+    }
+
+    #[test]
+    fn a_save_or_a_trophy_in_the_home_shows_and_a_restored_game_dir_doesnt() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = tmp.path();
+        let trophy = config.join("dev_hdd0/home/00000001/trophy/NPWR00000_00");
+        fs::create_dir_all(&trophy).unwrap();
+        fs::write(trophy.join("TROPUSR.DAT"), b"a").unwrap();
+        fs::create_dir_all(config.join("dev_hdd0/game/BLUS30968")).unwrap();
+        let dirs = carried_dirs(config);
+        let before = crate::snapshot::Snapshot::take(&dirs).unwrap();
+        // The state's load rewrites the game dir: not carried.
+        fs::write(config.join("dev_hdd0/game/BLUS30968/data"), b"b").unwrap();
+        assert!(
+            before
+                .diff(&crate::snapshot::Snapshot::take(&dirs).unwrap())
+                .is_empty()
+        );
+        // A save lands beside the trophies: carried.
+        let save = config.join("dev_hdd0/home/00000001/savedata/BLUS30968");
+        fs::create_dir_all(&save).unwrap();
+        fs::write(save.join("E_SLOT_1"), b"c").unwrap();
+        let changed = before.diff(&crate::snapshot::Snapshot::take(&dirs).unwrap());
+        assert!(
+            changed.iter().any(|c| c.ends_with("E_SLOT_1")),
+            "{changed:?}"
+        );
     }
 
     #[test]

@@ -447,17 +447,38 @@ pub fn usable_horizon(traces: &[Trace], floor: f64) -> Result<Horizon, MetricErr
     Envelope::from_traces(traces)?.horizon(floor)
 }
 
-/// Leave-one-out (design decision 9's acceptance): each trace checked against
-/// the envelope of the others, cut to `until` (a usable horizon's last
-/// agreeing checkpoint) when given, in trace order. Needs three traces, so
-/// every envelope has two replays and a spread. Inside a horizon read at
-/// `tolerance.floor` every trace passes by construction (all N lie within the
-/// floor of each other there); past it, k decides.
+/// One trace's leave-one-out: the others' usable horizon at the floor (what a
+/// reference of them would give a candidate), and the trace against the
+/// others' envelope inside it and over the whole run.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LeftOut {
+    pub horizon: Horizon,
+    /// `None` when the others part at their first checkpoint.
+    pub inside: Option<TrajectoryVerdict>,
+    pub whole: TrajectoryVerdict,
+}
+
+impl LeftOut {
+    /// Inside the others' horizon (the gated half).
+    pub fn passed(&self) -> bool {
+        self.inside.as_ref().is_none_or(TrajectoryVerdict::passed)
+    }
+}
+
+/// Leave-one-out (design decision 9's acceptance), in trace order: each trace
+/// is a candidate against the other traces, judged inside THEIR usable horizon
+/// at `tolerance.floor`, as [`Envelope::check`] judges any candidate against a
+/// reference. Needs three traces, so every envelope has two replays and a
+/// spread. A horizon read over all N, the left-out trace included, would pass
+/// every trace by construction (all N lie within the floor of each other
+/// there; the AF.11-AF.13 review found the first cut doing that), so it
+/// couldn't fail at any floor or k. Over the others' horizon it fails a trace
+/// that strays alone while they still agree, which is what a floor set too
+/// tight lets through.
 pub fn leave_one_out(
     traces: &[Trace],
     tolerance: &TrajectoryTolerance,
-    until: Option<u64>,
-) -> Result<Vec<TrajectoryVerdict>, MetricError> {
+) -> Result<Vec<LeftOut>, MetricError> {
     if traces.len() < 3 {
         return Err(MetricError::TooFewReplays {
             needed: 3,
@@ -473,11 +494,16 @@ pub fn leave_one_out(
                 .map(|(_, t)| t.clone())
                 .collect();
             let envelope = Envelope::from_traces(&others)?;
-            let envelope = match until {
-                Some(last) => envelope.until(last),
-                None => envelope,
-            };
-            envelope.check(&traces[i], tolerance)
+            let horizon = envelope.horizon(tolerance.floor)?;
+            let inside = horizon
+                .last_agreeing
+                .map(|last| envelope.until(last).check(&traces[i], tolerance))
+                .transpose()?;
+            Ok(LeftOut {
+                horizon,
+                inside,
+                whole: envelope.check(&traces[i], tolerance)?,
+            })
         })
         .collect()
 }
@@ -793,7 +819,7 @@ mod tests {
     }
 
     #[test]
-    fn leave_one_out_passes_inside_the_horizon_and_k_decides_past_it() {
+    fn leave_one_out_judges_each_trace_inside_the_others_horizon() {
         // Ten replays identical to 240, then replay r 0.002 x r off on y.
         let traces: Vec<Trace> = (0..10)
             .map(|r| {
@@ -807,22 +833,27 @@ mod tests {
             })
             .collect();
         let floor = 0.001;
-        let horizon = usable_horizon(&traces, floor).unwrap();
-        assert_eq!(horizon.last_agreeing, Some(240));
-        // Inside the horizon every replay passes even at k = 0.
-        let inside = TrajectoryTolerance { floor, k: 0.0 };
-        let verdicts = leave_one_out(&traces, &inside, horizon.last_agreeing).unwrap();
+        assert_eq!(
+            usable_horizon(&traces, floor).unwrap().last_agreeing,
+            Some(240)
+        );
+        // Without any one of them the others still part at 300, so each is
+        // judged to 240 and passes there even at k = 0.
+        let tight = TrajectoryTolerance { floor, k: 0.0 };
+        let verdicts = leave_one_out(&traces, &tight).unwrap();
         assert_eq!(verdicts.len(), 10);
-        assert!(verdicts.iter().all(TrajectoryVerdict::passed));
-        assert!(verdicts.iter().all(|v| v.checked == 5 * 2));
-        // Past it, the two end replays stray 0.002 past the others' range,
-        // whose spread is 0.016: k = 0 fails them and only them; k = 0.125
-        // lets them through.
-        let failed: Vec<usize> = leave_one_out(&traces, &inside, None)
-            .unwrap()
+        for v in &verdicts {
+            assert_eq!(v.horizon.last_agreeing, Some(240));
+            assert_eq!(v.inside.as_ref().unwrap().checked, 5 * 2);
+            assert!(v.passed());
+        }
+        // Over the whole run the two end replays stray 0.002 past the others'
+        // range, whose spread is 0.016: k = 0 fails them and only them; k =
+        // 0.125 lets them through.
+        let failed: Vec<usize> = verdicts
             .iter()
             .enumerate()
-            .filter(|(_, v)| !v.passed())
+            .filter(|(_, v)| !v.whole.passed())
             .map(|(i, _)| i)
             .collect();
         assert_eq!(failed, [0, 9]);
@@ -831,17 +862,63 @@ mod tests {
             k: 0.125 + 1e-9,
         };
         assert!(
-            leave_one_out(&traces, &k, None)
+            leave_one_out(&traces, &k)
                 .unwrap()
                 .iter()
-                .all(TrajectoryVerdict::passed)
+                .all(|v| v.whole.passed())
         );
         assert_eq!(
-            leave_one_out(&traces[..2], &k, None),
+            leave_one_out(&traces[..2], &k),
             Err(MetricError::TooFewReplays {
                 needed: 3,
                 found: 2
             })
+        );
+
+        // One replay strays alone at 180 while the other nine agree to the
+        // end: a horizon read over all ten ends at 120 and would have passed
+        // it there by construction; the nine's runs to 600, and it fails at
+        // 180, at any k. Every other replay, judged against nine that include
+        // the stray, gets a horizon of 120 and passes.
+        let mut lone: Vec<Trace> = (0..10)
+            .map(|_| trace(|offset, c| [0.01 * offset as f64, 2.0][c], 2))
+            .collect();
+        lone[9] = trace(
+            |offset, c| {
+                [
+                    0.01 * offset as f64,
+                    if offset == 180 { 2.002 } else { 2.0 },
+                ][c]
+            },
+            2,
+        );
+        assert_eq!(
+            usable_horizon(&lone, floor).unwrap().last_agreeing,
+            Some(120)
+        );
+        let verdicts = leave_one_out(&lone, &TrajectoryTolerance { floor, k: 10.0 }).unwrap();
+        let stray = &verdicts[9];
+        assert_eq!(stray.horizon.last_agreeing, Some(600));
+        let inside = stray.inside.as_ref().unwrap();
+        assert!(!stray.passed());
+        assert_eq!(inside.first_outside, Some(180));
+        assert!((inside.worst.by - 0.001).abs() < 1e-9, "{:?}", inside.worst);
+        for v in &verdicts[..9] {
+            assert_eq!(v.horizon.last_agreeing, Some(120));
+            assert!(v.passed());
+        }
+        // A floor that covers the stray lets it through.
+        assert!(
+            leave_one_out(
+                &lone,
+                &TrajectoryTolerance {
+                    floor: 0.002,
+                    k: 1.0
+                }
+            )
+            .unwrap()
+            .iter()
+            .all(LeftOut::passed)
         );
     }
 

@@ -96,7 +96,7 @@ pub(super) fn specs() -> Vec<Spec> {
             components: &["listed"],
             angular: false,
             floors: COUNT_FLOORS,
-            tolerance: Some(tolerance::COUNT),
+            tolerance: Some(tolerance::ACTORS),
             read: |o, _| Some(vec![f64::from(o.counts.listed)]),
         },
         Spec {
@@ -105,7 +105,7 @@ pub(super) fn specs() -> Vec<Spec> {
             components: &["skinned"],
             angular: false,
             floors: COUNT_FLOORS,
-            tolerance: Some(tolerance::COUNT),
+            tolerance: Some(tolerance::ACTORS),
             read: |o, _| Some(vec![o.counts.skinned as f64]),
         },
         Spec {
@@ -141,7 +141,7 @@ pub(super) fn specs() -> Vec<Spec> {
             components: &["steps"],
             angular: false,
             floors: COUNT_FLOORS,
-            tolerance: Some(tolerance::COUNT),
+            tolerance: Some(tolerance::ANIMATION_STEPS),
             read: |o, f0| since(o.rng.anim_steps, f0.rng.anim_steps),
         },
     ]

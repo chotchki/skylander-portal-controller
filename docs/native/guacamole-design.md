@@ -1313,7 +1313,7 @@ carries both for Guacamole's side.
 ### How far it drifts from itself (AF.11)
 
 The protocol, `oracle divergence run|report`
-([`divergence`](../../tools/oracle-harness/src/divergence/mod.rs)): AF.8's state, each replay a fresh RPCS3 process and a fresh copy of the figure (the game writes to it).
+([`divergence`](../../tools/oracle-harness/src/divergence/mod.rs)): AF.8's state, each replay a fresh RPCS3 process and a fresh copy of the figure (the game writes to it), all in one home. A state's load puts back the game's data dir and hdd1's cache but not the users' saves and trophies, so the runner checks those unchanged after every replay and stops when one isn't (none changed in AF.11 or AF.12).
 Start Paused holds it at F0 (flip 2 every time), then `RECONNECT`, `LOAD`, the script loaded with offset 0
 on F0 + 1, and observations at `PAUSE_AT` pauses (the hero, the camera, every actor, an RNG peek) with a
 shot at F0 + 1,800. Two scripts: idle (both pads at rest) and walk (at rest 60 flips, the stick forward
@@ -1342,7 +1342,7 @@ doesn't move. AF.12 found the mechanism: each pause adds about a frame of game t
 the same schedule, or observe only at the end.
 
 Spreads don't follow the host's load average (Spearman |rho| 0.03-0.57 against a replay's distance from
-its group's median, either sign); they follow each replay's own hitches (its running time against that
+its group's median, either sign; -0.70 over the 5 long replays, more load nearer the median); they follow each replay's own hitches (its running time against that
 distance, rho up to +0.79), and the furthest-out replays are the slow ones (one ran 55.6 s for 30 s of
 flips). Load can cause a hitch, but its average doesn't foretell one. Set A's end states, diffed region by
 region with the research dir's savestate parser (recorded, not gated): 6,541-6,743 of 108,032 pages
@@ -1382,13 +1382,20 @@ hitching replay included, rounded up:
 |---|---|---|
 | `POSITION` | floor 0.1 m, k 1 | the walk's 8.8 cm at F0 + 120; a frame of walking is 11 cm, so one frame still shows |
 | `ANGLE` | floor 1e-4 deg, k 1 | the facing's 1.5e-5 deg before the split (2 ulps of an f32 near 105) and the camera's 2.1e-5 anywhere, against the split's 6.1e-3 |
-| `COUNT` | floor 0, k 1 | MT draws, animation LCG steps, actors, game frames: a count agrees or doesn't |
+| `COUNT` | floor 0, k 1 | game frames since F0 (exactly the flips, every checkpoint of every replay) and MT draws (identical states only at F0): these agree or don't |
+| `ACTORS` | floor 1, k 1 | actors listed and skinned: idle-B-09, a slow replay, listed one more at F0 + 1,260 while the other nine agreed to 1,500, so floor 0 fails it; the walk's outcomes still part by 7 at 240 |
+| `ANIMATION_STEPS` | floor 1, k 1 | the animation LCG: idle-B-01 stepped once at F0 + 240 while the other nine hadn't, so floor 0 fails it |
 | `FRAME_FLOOR` | 0.03 | at floor 0 the two replays of a checkpoint's largest pair fail their own leave-one-out by construction; the largest lead any replay had over the others' band was 0.0262 (a slow idle replay's end shot) |
 | event and totals floors | not set | AF observes no events, XP or gold; AH, the first rung that does, calibrates them the same way |
 
-Inside a horizon every spread is under its floor, so k only matters past one; there, at k 1, leave-one-out
-over whole runs failed nothing but the replays that hitched and one- or two-step animation LCG
-excursions. A rung that needs other numbers argues them in its own design.
+The acceptance is leave-one-out with each replay a candidate against the other nine, judged inside THEIR
+horizon, as a Guacamole run will be. AF.12's first cut read the horizon over all ten, the replay judged
+included, which passes every replay by construction (all ten lie within the floor of each other there),
+so it couldn't fail at any floor or k; the AF.11-AF.13 review's re-check is what moved the actor and
+animation floors off 0, and pins the position floor's lower edge: walk-B-06 sits 6.8 cm past the other
+nine at F0 + 120, where they agree to 2.0 cm. Inside a horizon k matters only once a spread passes its
+floor; over whole runs at k 1, leave-one-out failed nothing but the replays that hitched and one- or
+two-step animation LCG excursions. A rung that needs other numbers argues them in its own design.
 
 AF.12's checks moved two shapes:
 - Frames are gated only inside the scene's horizon (the hero's and the camera's, whichever ends first)
@@ -1401,8 +1408,12 @@ AF.12's checks moved two shapes:
   each pause leaves the run alone.
 
 The self-checks run as `oracle divergence calibrate` and `check` and as the `#[ignore]`d `calibration`
-test, which also pins the numbers each default cites, so a default that drifts from its measurement
-fails there. Leave-one-out passes on AF.11's four groups, on set C and on the six controls. The
+test, which also pins the numbers each default cites and the sensitivity ladder below, so a default that
+drifts from its measurement fails there. Leave-one-out passes on AF.11's four groups and on set C. The six
+controls fail it, on walk_control-C-04 alone: it alone turned free at the corner, so the other five agree
+past it and it fails them there. A reference that holds no replay of a branch claims a horizon past it,
+and a candidate on that branch fails; at the 8 in 36 unperturbed walks that turned free here, 10 replays
+hold none about 8% of the time (0.78^10), so a rung checks its reference's branch counts, not just N. The
 perturbations, one walk each (`oracle divergence run --perturb`), with the smallest change that fails
 inside the horizon:
 
@@ -1415,7 +1426,7 @@ inside the horizon:
 
 A press after the corner (the jump at 300, the attack at 360) acts past every horizon and leaves the hero
 where he stands, so nothing gates it; the frames still show it at F0 + 420 (the attack's eruption shakes
-the camera), where either press moved 3 or 10 flips fails and 1 flip passes. Gating a press that late
+the camera), where either press moved 3 or 10 flips fails and 1 flip passes (and the jump moved 30). Gating a press that late
 needs a reference re-anchored on a state taken inside its horizon.
 
 ### FLIP

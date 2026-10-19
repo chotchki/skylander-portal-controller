@@ -99,7 +99,8 @@ usage:
       one is renamed .failed-<k> and tried again, up to <attempts> (3), a boot that
       hasn't reached Start Paused's pause in <boot-secs> (120; more for a cold home)
       counting as failed. <dir> must sit outside every work tree; the dev's RPCS3 dirs
-      are checked unchanged at the end
+      are checked unchanged at the end, and the home's saves and trophies (which a
+      state's load doesn't put back) after every replay, a change stopping the run
   oracle divergence report <dir>
       the numbers from <dir>'s records: per observable the spread at each checkpoint
       and the usable horizon by floor, the RNG distances, every actor by corpus, FLIP
@@ -107,9 +108,9 @@ usage:
       the host's load; written to <dir>/report.txt and report.json
   oracle divergence calibrate <dir>
       AF.12's leave-one-out over <dir>'s groups with guac_oracle::tolerance's
-      defaults: each replay against the envelope of the others inside each
-      observable's horizon (and, reported, over the whole run), and each
-      checkpoint's shots against the band of the others; written to
+      defaults: each replay against the envelope of the others inside the
+      others' horizon on each observable (and, reported, over the whole run), and
+      each checkpoint's shots against the band of the others; written to
       <dir>/calibrate.txt and calibrate.json, failing when any group does
   oracle divergence check --reference <dir> --script <s> --set <A|B|C> <candidates>
       every replay under <candidates> whose script isn't <s> against <dir>'s group
@@ -656,6 +657,21 @@ fn divergence_run(mut rest: &[&str]) -> Result<()> {
         figure: &figure,
         boot_wait,
     };
+    // Replays share the home: what a state's load doesn't put back has to come
+    // through each replay unchanged, or the next one isn't independent.
+    let carried_dirs = divergence::carried_dirs(&home.config_dir());
+    let carried = Snapshot::take(&carried_dirs)?;
+    let independent = |label: &str| -> Result<()> {
+        let changed = carried.diff(&Snapshot::take(&carried_dirs)?);
+        if !changed.is_empty() {
+            bail!(
+                "{label} left the home's saves or trophies changed, so the replays after it \
+                 wouldn't be independent; stopping:\n{}",
+                changed.join("\n")
+            );
+        }
+        Ok(())
+    };
     let mut failed = Vec::new();
     let mut spacing = Spacing { gap, last: None };
     if let Some(plan) = &warmup {
@@ -663,6 +679,7 @@ fn divergence_run(mut rest: &[&str]) -> Result<()> {
         if run_attempts(&inputs, plan, 0, &dir, attempts, &mut spacing, &mut line)?.is_none() {
             failed.push(format!("warmup {}", plan.label(0)));
         }
+        independent(&format!("the warm-up {}", plan.label(0)))?;
     }
     for replay in first..first + replays {
         for plan in &plans {
@@ -679,16 +696,18 @@ fn divergence_run(mut rest: &[&str]) -> Result<()> {
             {
                 failed.push(plan.label(replay));
             }
+            independent(&plan.label(replay))?;
         }
     }
     let host = divergence::Host::now();
     let changed = before.diff(&Snapshot::take(&dev_dirs)?);
     line(format!(
-        "end: load average {:?}; screen locked {:?}; failed {:?}; the figure source {}; the \
-         dev's RPCS3 dirs {}",
+        "end: load average {:?}; screen locked {:?}; failed {:?}; the home's saves and trophies \
+         unchanged, {} entries; the figure source {}; the dev's RPCS3 dirs {}",
         host.load_average,
         host.screen_locked,
         failed,
+        carried.len(),
         if sha256_hex(&figure)? == figure_hash {
             "unchanged"
         } else {

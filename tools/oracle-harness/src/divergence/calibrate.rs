@@ -1,14 +1,17 @@
 //! AF.12's checks of the defaults in `guac_oracle::tolerance` (design decision
 //! 9's acceptance), over a measurement's records:
 //!
-//! - [`leave_one_out`]: per group, each replay against the envelope of the
-//!   others on every compared observable, inside that observable's usable
-//!   horizon at its default floor (which has to pass) and over the whole run
-//!   (reported: past a horizon the envelope is statistical); the RNG's
-//!   identical states inside its horizon; and at every checkpoint the group's
-//!   replays all have a shot at, each replay's FLIP against the band of the
-//!   others plus [`tolerance::FRAME_FLOOR`], gated inside the scene's horizon
-//!   and reported past it;
+//! - [`leave_one_out`]: per group, each replay as a candidate against the
+//!   others, the way [`check`] judges one against a reference: on every
+//!   compared observable inside the OTHERS' usable horizon at its default
+//!   floor (which has to pass) and over the whole run (reported: past a
+//!   horizon the envelope is statistical); the RNG's state inside the others'
+//!   identical-state horizon; and at every checkpoint the group's replays all
+//!   have a shot at, each replay's FLIP against the band of the others plus
+//!   [`tolerance::FRAME_FLOOR`], gated inside the others' scene horizon and
+//!   reported past it. A horizon read over the whole group, the replay judged
+//!   included, would pass every replay by construction (the AF.11-AF.13
+//!   review found the first cut doing that);
 //! - [`check`]: a candidate replay (a perturbed script's, say) against a
 //!   reference group, the same metrics: each trajectory inside the reference's
 //!   horizon, where the oracle agrees with itself, and over the whole run, and
@@ -46,19 +49,23 @@ pub struct Failure {
 }
 
 /// Each replay of a group against the envelope of the others on one
-/// observable, at its default tolerance: inside the usable horizon read at that
-/// floor (gated) and over the whole run (reported).
+/// observable, at its default tolerance: inside the others' usable horizon
+/// read at that floor (gated) and over the whole run (reported).
 #[derive(Debug, Clone, Serialize)]
 pub struct ObservableLoo {
     pub name: String,
     pub unit: String,
     /// `None`: not compared (host time).
     pub tolerance: Option<TrajectoryTolerance>,
-    /// At the default floor; `None` when not compared.
+    /// The whole group's, at the default floor; `None` when not compared.
     pub horizon: Option<Horizon>,
-    /// (replay, checkpoint, component) values checked inside the horizon.
+    /// Each replay's judge: the others' last agreeing checkpoint at the
+    /// default floor, in label order (empty when not compared).
+    pub others: Vec<Option<u64>>,
+    /// (replay, checkpoint, component) values checked inside the horizons.
     pub checked: usize,
-    /// Replays that failed inside the horizon: none, or the defaults are wrong.
+    /// Replays that failed inside the others' horizon: none, or the defaults
+    /// are wrong.
     pub failed: Vec<Failure>,
     /// Replays that failed over the whole run, reported, not gated.
     pub past: Vec<Failure>,
@@ -69,15 +76,18 @@ pub struct ObservableLoo {
 #[derive(Debug, Clone, Serialize)]
 pub struct FramesLoo {
     pub offset: u64,
-    /// Inside the scene's horizon, so gated.
+    /// Inside the whole group's scene horizon.
     pub inside: bool,
     pub replays: usize,
     /// The largest mean FLIP between two replays' shots.
     pub replay_max: f64,
     /// The smallest floor every replay passes at.
     pub needed_floor: f64,
-    /// Replays failing at [`tolerance::FRAME_FLOOR`].
+    /// Replays failing at [`tolerance::FRAME_FLOOR`] inside the others' scene
+    /// horizon: gated.
     pub failed: Vec<String>,
+    /// Replays failing past the others' scene horizon: reported.
+    pub past: Vec<String>,
 }
 
 /// A script under one set (idle, set B, say): every compared observable's
@@ -88,22 +98,25 @@ pub struct GroupLoo {
     pub set: Set,
     pub labels: Vec<String>,
     pub observables: Vec<ObservableLoo>,
-    /// The RNG's identical-state horizon and whether every replay's state
-    /// inside it equals every other's (it does by construction).
+    /// The whole group's identical-state horizon for the RNG, and the replays
+    /// whose state differs from the others' inside the others' horizon.
     pub rng_horizon: Horizon,
-    pub rng_identical_inside: bool,
-    /// The last checkpoint inside the hero's and the camera's horizons.
+    pub rng_failed: Vec<String>,
+    /// The last checkpoint inside the whole group's hero and camera horizons.
     pub scene_horizon: Option<u64>,
+    /// Each replay's frames are gated to the others' scene horizon, in label
+    /// order.
+    pub scene_others: Vec<Option<u64>>,
     pub frames: Vec<FramesLoo>,
 }
 
 impl GroupLoo {
-    /// Every compared observable inside its horizon, the RNG inside its own and
-    /// the frames inside the scene's.
+    /// Every replay inside the others' horizon on every compared observable,
+    /// on the RNG and on the frames.
     pub fn passed(&self) -> bool {
-        self.rng_identical_inside
+        self.rng_failed.is_empty()
             && self.observables.iter().all(|o| o.failed.is_empty())
-            && self.frames.iter().all(|f| !f.inside || f.failed.is_empty())
+            && self.frames.iter().all(|f| f.failed.is_empty())
     }
 
     pub fn write_text(&self, out: &mut String) {
@@ -136,8 +149,8 @@ impl GroupLoo {
                 .collect();
             let _ = writeln!(
                 out,
-                "{} (floor {:e} {}, k {}): horizon {}{}; inside it {} values, {} failed{}; over \
-                 the whole run {} of {} fail{}",
+                "{} (floor {:e} {}, k {}): horizon {}{}, the others' {}; inside those {} values, \
+                 {} failed{}; over the whole run {} of {} fail{}",
                 o.name,
                 t.floor,
                 o.unit,
@@ -145,6 +158,7 @@ impl GroupLoo {
                 h.last_agreeing.map_or("none".into(), |v| v.to_string()),
                 h.parted_at
                     .map_or(" (held)".into(), |p| format!(" (parts {p})")),
+                range_text(&o.others),
                 o.checked,
                 o.failed.len(),
                 if o.failed.is_empty() {
@@ -170,23 +184,28 @@ impl GroupLoo {
         }
         let _ = writeln!(
             out,
-            "RNG: identical through {} (parts {}); identical inside: {}",
+            "RNG: identical through {} (parts {}); differing inside the others' horizon: {}",
             h_text(self.rng_horizon.last_agreeing),
             h_text(self.rng_horizon.parted_at),
-            self.rng_identical_inside
+            if self.rng_failed.is_empty() {
+                "none".into()
+            } else {
+                self.rng_failed.join(", ")
+            }
         );
         let _ = writeln!(
             out,
-            "the scene's horizon (hero and camera): {}",
-            h_text(self.scene_horizon)
+            "the scene's horizon (hero and camera): {}, the others' {}",
+            h_text(self.scene_horizon),
+            range_text(&self.scene_others)
         );
         for f in &self.frames {
             let _ = writeln!(
                 out,
                 "frames at {} ({}): {} replays, largest pair {:.5}, floor needed {:.5} (default \
-                 {}){}",
+                 {}){}{}",
                 f.offset,
-                if f.inside { "inside" } else { "past, reported" },
+                if f.inside { "inside" } else { "past" },
                 f.replays,
                 f.replay_max,
                 f.needed_floor,
@@ -195,6 +214,14 @@ impl GroupLoo {
                     String::new()
                 } else {
                     format!("; FAILED: {}", f.failed.join(", "))
+                },
+                if f.past.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "; past the others' horizon, reported: {}",
+                        f.past.join(", ")
+                    )
                 }
             );
         }
@@ -206,15 +233,33 @@ fn h_text(v: Option<u64>) -> String {
     v.map_or("none".into(), |v| v.to_string())
 }
 
+/// The spread of the others' horizons over a group's replays: `120`, or
+/// `180-240` when they differ (`none` sorts first).
+fn range_text(horizons: &[Option<u64>]) -> String {
+    let (Some(lo), Some(hi)) = (horizons.iter().min(), horizons.iter().max()) else {
+        return "none".into();
+    };
+    if lo == hi {
+        h_text(*lo)
+    } else {
+        format!("{}-{}", h_text(*lo), h_text(*hi))
+    }
+}
+
 /// The observables a frame shows the agreement of.
 const SCENE: [&str; 2] = ["hero position", "camera position"];
 
 /// The last checkpoint inside every [`SCENE`] observable's horizon; `None`
 /// when one parts at its first checkpoint or isn't there.
 fn scene_horizon<'a>(horizons: impl Iterator<Item = (&'a str, Option<Horizon>)>) -> Option<u64> {
-    let found: Vec<Option<u64>> = horizons
+    scene_last(horizons.map(|(name, h)| (name, h.and_then(|h| h.last_agreeing))))
+}
+
+/// [`scene_horizon`] from each observable's last agreeing checkpoint.
+fn scene_last<'a>(lasts: impl Iterator<Item = (&'a str, Option<u64>)>) -> Option<u64> {
+    let found: Vec<Option<u64>> = lasts
         .filter(|(name, _)| SCENE.contains(name))
-        .map(|(_, h)| h.and_then(|h| h.last_agreeing))
+        .map(|(_, last)| last)
         .collect();
     if found.len() < SCENE.len() {
         return None;
@@ -259,42 +304,48 @@ fn group_loo(
                 unit: o.unit,
                 tolerance: None,
                 horizon: None,
+                others: vec![],
                 checked: 0,
                 failed: vec![],
                 past: vec![],
             });
             continue;
         };
-        let (mut checked, mut failed) = (0, Vec::new());
-        if let Some(last) = h.last_agreeing {
-            for (i, v) in trace::leave_one_out(&o.traces, &t, Some(last))?
-                .into_iter()
-                .enumerate()
-            {
-                checked += v.checked;
-                if !v.passed() {
-                    failed.push(failure(&labels[i], &v));
+        let (mut checked, mut failed, mut past, mut others) = (0, vec![], vec![], vec![]);
+        for (i, v) in trace::leave_one_out(&o.traces, &t)?.into_iter().enumerate() {
+            others.push(v.horizon.last_agreeing);
+            if let Some(inside) = &v.inside {
+                checked += inside.checked;
+                if !inside.passed() {
+                    failed.push(failure(&labels[i], inside));
                 }
             }
+            if !v.whole.passed() {
+                past.push(failure(&labels[i], &v.whole));
+            }
         }
-        let past = trace::leave_one_out(&o.traces, &t, None)?
-            .iter()
-            .enumerate()
-            .filter(|(_, v)| !v.passed())
-            .map(|(i, v)| failure(&labels[i], v))
-            .collect();
         observables.push(ObservableLoo {
             name: o.name,
             unit: o.unit,
             tolerance: Some(t),
             horizon: Some(h),
+            others,
             checked,
             failed,
             past,
         });
     }
-    let (rng_horizon, rng_identical_inside) = rng_loo(replays, &offsets)?;
+    let (rng_horizon, rng_failed) = rng_loo(replays, &offsets)?;
     let scene = scene_horizon(observables.iter().map(|o| (o.name.as_str(), o.horizon)));
+    let scene_others: Vec<Option<u64>> = (0..replays.len())
+        .map(|i| {
+            scene_last(
+                observables
+                    .iter()
+                    .map(|o| (o.name.as_str(), o.others.get(i).copied().flatten())),
+            )
+        })
+        .collect();
     let mut frames = Vec::new();
     if let Some(dir) = dir {
         for &offset in &offsets {
@@ -302,13 +353,21 @@ fn group_loo(
                 continue;
             };
             let matrix = FlipMatrix::of(&stack, frames::reference_pixels_per_degree())?;
-            let failed = matrix
+            let (mut failed, mut past) = (vec![], vec![]);
+            for (i, v) in matrix
                 .leave_one_out(tolerance::FRAME_FLOOR)?
                 .iter()
                 .enumerate()
-                .filter(|(_, v)| !v.passed())
-                .map(|(i, _)| labels[i].clone())
-                .collect();
+            {
+                if v.passed() {
+                    continue;
+                }
+                if scene_others[i].is_some_and(|last| offset <= last) {
+                    failed.push(labels[i].clone());
+                } else {
+                    past.push(labels[i].clone());
+                }
+            }
             frames.push(FramesLoo {
                 offset,
                 inside: scene.is_some_and(|last| offset <= last),
@@ -316,6 +375,7 @@ fn group_loo(
                 replay_max: matrix.band().replay_max,
                 needed_floor: matrix.leave_one_out_floor()?,
                 failed,
+                past,
             });
         }
     }
@@ -325,8 +385,9 @@ fn group_loo(
         labels,
         observables,
         rng_horizon,
-        rng_identical_inside,
+        rng_failed,
         scene_horizon: scene,
+        scene_others,
         frames,
     })
 }
@@ -339,25 +400,39 @@ fn failure(label: &str, v: &TrajectoryVerdict) -> Failure {
     }
 }
 
-/// The RNG's horizon (identical MT states and animation LCG steps), and
-/// whether inside it each replay's state equals the others'.
-fn rng_loo(replays: &[&ReplayRecord], offsets: &[u64]) -> Result<(Horizon, bool)> {
-    let identical_at = |offset: u64| -> bool {
-        let states: Vec<(&str, Option<u64>)> = replays
-            .iter()
-            .filter_map(|r| {
-                let o = r.at(offset)?;
-                Some((o.rng.state_sha256.as_str(), o.rng.anim_steps))
-            })
-            .collect();
-        states.len() == replays.len() && states.iter().all(|s| *s == states[0])
+/// The group's RNG horizon (identical MT states and animation LCG steps), and
+/// the replays whose state differs from the others' inside the others' own
+/// identical-state horizon.
+fn rng_loo(replays: &[&ReplayRecord], offsets: &[u64]) -> Result<(Horizon, Vec<String>)> {
+    let state = |r: &ReplayRecord, offset: u64| {
+        r.at(offset)
+            .map(|o| (o.rng.state_sha256.clone(), o.rng.anim_steps))
     };
-    let horizon = Horizon::from_agreement(offsets.iter().map(|&o| (o, identical_at(o))))?;
-    let inside = offsets
-        .iter()
-        .filter(|&&o| horizon.last_agreeing.is_some_and(|last| o <= last))
-        .all(|&o| identical_at(o));
-    Ok((horizon, inside))
+    let identical_at = |among: &[&&ReplayRecord], offset: u64| -> bool {
+        let states: Vec<_> = among.iter().map(|r| state(r, offset)).collect();
+        states.iter().all(|s| s.is_some() && *s == states[0])
+    };
+    let all: Vec<&&ReplayRecord> = replays.iter().collect();
+    let horizon = Horizon::from_agreement(offsets.iter().map(|&o| (o, identical_at(&all, o))))?;
+    let mut failed = Vec::new();
+    for (i, r) in replays.iter().enumerate() {
+        let others: Vec<&&ReplayRecord> = replays
+            .iter()
+            .enumerate()
+            .filter(|&(j, _)| j != i)
+            .map(|(_, r)| r)
+            .collect();
+        let theirs =
+            Horizon::from_agreement(offsets.iter().map(|&o| (o, identical_at(&others, o))))?;
+        let strays = offsets
+            .iter()
+            .filter(|&&o| theirs.last_agreeing.is_some_and(|last| o <= last))
+            .any(|&o| state(r, o) != state(others[0], o));
+        if strays {
+            failed.push(r.label.clone());
+        }
+    }
+    Ok((horizon, failed))
 }
 
 /// Every replay's shot at `offset`, decoded a thread a shot (a debug build's
@@ -823,6 +898,9 @@ mod tests {
                 parted_at: Some(240)
             })
         );
+        // Without any one replay the other nine still hold both branches, so
+        // each is judged to 180 too.
+        assert_eq!(hero.others, vec![Some(180); 10]);
         assert_eq!(hero.checked, 10 * 4 * 3);
         // Over the whole run nobody strays: two branches of five each, every
         // replay inside the other nine's range.
@@ -837,7 +915,7 @@ mod tests {
         assert_eq!(draws.horizon.unwrap().last_agreeing, Some(0));
         assert!(draws.past.is_empty());
         assert_eq!(g.rng_horizon.last_agreeing, Some(0));
-        assert!(g.rng_identical_inside);
+        assert!(g.rng_failed.is_empty());
         let delta = g
             .observables
             .iter()
@@ -847,6 +925,49 @@ mod tests {
         let mut text = String::new();
         g.write_text(&mut text);
         assert!(text.contains("PASSED"), "{text}");
+    }
+
+    #[test]
+    fn leave_one_out_fails_a_replay_that_strays_alone_inside_the_others_horizon() {
+        // Nine replays walk alike to the end; the tenth alone takes the other
+        // branch at 240 and, from 120 on, holds another RNG state. Horizons
+        // over all ten end at 180 (positions) and 60 (the RNG) and would have
+        // passed it by construction; the nine's run to 240 on both, and the
+        // tenth fails both inside them.
+        let mut records: Vec<ReplayRecord> = (0..10)
+            .map(|r| {
+                let mut rec = walk("walk", 0, 0, 15.0);
+                rec.label = format!("walk-C-{r:02}");
+                rec.replay = r;
+                rec
+            })
+            .collect();
+        let lone = &mut records[9];
+        lone.observations[4].hero.as_mut().unwrap().position[2] += 1.0;
+        for o in &mut lone.observations[2..] {
+            o.rng.state_sha256 = format!("other-{}", o.offset);
+        }
+        let groups = leave_one_out(&records, None).unwrap();
+        let g = &groups[0];
+        assert!(!g.passed());
+        let hero = g
+            .observables
+            .iter()
+            .find(|o| o.name == "hero position")
+            .unwrap();
+        assert_eq!(hero.horizon.unwrap().last_agreeing, Some(180));
+        assert_eq!(&hero.others[..9], &[Some(180); 9]);
+        assert_eq!(hero.others[9], Some(240));
+        let failed: Vec<&str> = hero.failed.iter().map(|f| f.label.as_str()).collect();
+        assert_eq!(failed, ["walk-C-09"]);
+        assert_eq!(hero.failed[0].first_outside, Some(240));
+        assert_eq!(g.rng_failed, ["walk-C-09"]);
+        let mut text = String::new();
+        g.write_text(&mut text);
+        assert!(
+            text.contains("FAILED") && text.contains("the others' 180-240"),
+            "{text}"
+        );
     }
 
     #[test]

@@ -8,9 +8,11 @@
 //! A floor is the largest spread the replays reached while they still agreed,
 //! the replay that hitched included, rounded up: in the walk, up to the gate's
 //! corner (F0 + 180), which split them into two outcomes a metre and more
-//! apart. Inside a usable horizon read at these floors the oracle agrees with
-//! itself by construction, so a candidate fails there only by straying past
-//! the oracle's own noise.
+//! apart. The acceptance is leave-one-out against the other replays' own
+//! horizon ([`crate::trace::leave_one_out`]): each replay a candidate against
+//! the rest, as a Guacamole run will be, so a floor that's too tight fails a
+//! replay that strays alone while the others still agree (the AF.11-AF.13
+//! review's re-check set the actor and animation floors that way).
 //!
 //! Not set: the event-sequence and totals floors ([`crate::events`],
 //! [`crate::totals`]). AF observes no game events and no XP or gold, so they
@@ -43,10 +45,28 @@ pub const POSITION: TrajectoryTolerance = TrajectoryTolerance { floor: 0.1, k: K
 /// camera's anywhere 2.1e-5, while the facing parted by 6.1e-3 at F0 + 180.
 pub const ANGLE: TrajectoryTolerance = TrajectoryTolerance { floor: 1e-4, k: K };
 
-/// Counts: MT draws and animation LCG steps since F0, actors listed and
-/// skinned, game frames since F0. A count agrees exactly or not, and AF.11's
-/// RNG agreed only at F0 (identical MT states, design decision 9).
+/// Counts that agree exactly or not at all: game frames since F0 (exactly the
+/// flips since F0 at every checkpoint of all 45 AF.11 replays) and MT draws
+/// since F0 (identical states only at F0, then hundreds of draws apart by
+/// F0 + 60).
 pub const COUNT: TrajectoryTolerance = TrajectoryTolerance { floor: 0.0, k: K };
+
+/// Actors listed and skinned: birds, leaves and butterflies come and go on
+/// host time, and a replay that hitched gets one a checkpoint early or late
+/// while the rest still agree. AF.11's idle set B: idle-B-09 (32.9 s of
+/// running) listed one actor more at F0 + 1,260 while the other nine agreed
+/// through 1,500, so at floor 0 it fails the others' envelope; at 1 every
+/// reference group passes its leave-one-out (the review's re-check), and the
+/// walk's counts still part at F0 + 240, by 7, where its outcomes split.
+pub const ACTORS: TrajectoryTolerance = TrajectoryTolerance { floor: 1.0, k: K };
+
+/// The animation variety LCG's steps since F0 (AF.8's pair at `0x008E20F0`):
+/// a weighted clip pick a frame early or late steps it once more. AF.11's idle
+/// set B: idle-B-01 stepped once at F0 + 240, the other nine not until later,
+/// so at floor 0 it fails the others' envelope; at 1 every reference group
+/// passes (the review's re-check), while the replays are up to 4 apart by
+/// F0 + 1,800.
+pub const ANIMATION_STEPS: TrajectoryTolerance = TrajectoryTolerance { floor: 1.0, k: K };
 
 /// The frame comparison's floor over the largest mean FLIP between two
 /// replays' frames at a checkpoint ([`crate::frames::FrameBand::check`]),
@@ -63,7 +83,7 @@ mod tests {
 
     #[test]
     fn the_defaults_are_tolerances_the_metrics_take() {
-        for t in [POSITION, ANGLE, COUNT] {
+        for t in [POSITION, ANGLE, COUNT, ACTORS, ANIMATION_STEPS] {
             assert!(t.floor.is_finite() && t.floor >= 0.0);
             assert_eq!(t.k, K);
             // A spread under the floor leaves the floor as the margin.
