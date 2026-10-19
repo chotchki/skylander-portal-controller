@@ -21,6 +21,8 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+# The input-script format (AF.7) a schedule is loaded from, and a pad's DS3 words.
+guac-oracle = { path = "../../crates/guac-oracle" }
 # A SCREENSHOT's PNG, decoded to check it's a whole frame and to hash its pixels.
 image = { version = "0.25", default-features = false, features = ["png"] }
 # The work-tree refusal every harness output goes through.

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use guac_oracle::input::InputScript;
 use oracle_harness::control::Control;
 use oracle_harness::env;
 use oracle_harness::home::{self, InitOptions, OracleHome};
@@ -41,6 +42,14 @@ usage:
       a savestate, copied into <dir>, then P5's RECONNECT at the reboot's pause
       (the last three find RPCS3's files under $GUAC_ORACLE_HOME; <dir> must sit
       outside every work tree)
+  oracle pad-load --socket <p1> <script.ron> [--base <flip>]
+      at a pause: PAD_CLEAR, then the input script's PAD lines, its offset 0 on the
+      first flip after the pause (or on <flip>)
+  oracle pad-clear --socket <p1>
+      both pads back to the host's input
+  oracle pad-state --socket <p1> <port> [<flip>]
+      what the guest last read on that port, or the first read of <flip>, with the
+      flip's read count and how many reads differed from its first
   oracle pine --socket <path> (id | title | version | status | read <addr> <len>)
       query a running oracle's PINE server; read prints hex, and only while paused";
 
@@ -240,6 +249,44 @@ fn run_verb(verb: &str, socket: &std::path::Path, rest: &[&str]) -> Result<()> {
                 saved.rebooted.status,
                 saved.rebooted.frames
             );
+        }
+        ("pad-load", [file, base @ ..]) => {
+            let text = std::fs::read_to_string(file).with_context(|| format!("reading {file}"))?;
+            let script = InputScript::from_ron(&text).with_context(|| format!("parsing {file}"))?;
+            let control = Control::new(socket, &config_dir()?);
+            let loaded = match base {
+                [] => control.load_script(&script)?,
+                ["--base", flip] => {
+                    control.load_script_at(&script, flip.parse().context("<flip> is a decimal")?)?
+                }
+                _ => bail!("{USAGE}"),
+            };
+            println!(
+                "loaded {} PAD entries at the pause at frames={}, offset 0 on flip {}",
+                loaded.entries, loaded.paused_at.frames, loaded.base
+            );
+        }
+        ("pad-clear", []) => {
+            Control::new(socket, &config_dir()?).pad_clear()?;
+            println!("schedules dropped");
+        }
+        ("pad-state", [port, flip @ ..]) => {
+            let port = port.parse().context("<port> is 0 or 1")?;
+            let flip = match flip {
+                [] => None,
+                [f] => Some(f.parse().context("<flip> is a decimal")?),
+                _ => bail!("{USAGE}"),
+            };
+            match Control::new(socket, &config_dir()?).pad_state(port, flip)? {
+                None => println!("no read"),
+                Some(read) => println!(
+                    "flip={} reads={} differ={} {:?}",
+                    read.flip,
+                    read.reads,
+                    read.differ,
+                    read.pad.state()
+                ),
+            }
         }
         _ => bail!("{USAGE}"),
     }

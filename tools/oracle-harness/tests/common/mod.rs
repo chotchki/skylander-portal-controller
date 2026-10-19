@@ -1,6 +1,7 @@
 //! What the `#[ignore]`d live tests share: the keys they need, and a skip (not a
 //! failure) when one is unset, as the disc tests do.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -171,4 +172,63 @@ pub fn reach_hero(
         state,
         figure_copy,
     }
+}
+
+/// `run.txt` in a live test's output dir, each line echoed to stderr.
+#[allow(dead_code)] // the live tests that write a record
+pub struct Record(pub std::fs::File);
+
+#[allow(dead_code)]
+impl Record {
+    pub fn line(&mut self, text: impl AsRef<str>) {
+        eprintln!("{}", text.as_ref());
+        writeln!(self.0, "{}", text.as_ref()).unwrap();
+    }
+}
+
+/// `"CGSSessionScreenIsLocked"=Yes` out of `ioreg`'s console-session entry, which
+/// carries the key only while the screen is locked.
+#[allow(dead_code)]
+pub fn screen_lock() -> String {
+    const KEY: &str = "\"CGSSessionScreenIsLocked\"=";
+    std::process::Command::new("ioreg")
+        .args(["-n", "Root", "-d1"])
+        .output()
+        .ok()
+        .and_then(|o| {
+            let text = String::from_utf8_lossy(&o.stdout).into_owned();
+            let at = text.find(KEY)?;
+            let value: String = text[at + KEY.len()..]
+                .chars()
+                .take_while(char::is_ascii_alphabetic)
+                .collect();
+            Some(format!("{KEY}{value}"))
+        })
+        .unwrap_or_else(|| "no CGSSessionScreenIsLocked key (unlocked)".into())
+}
+
+#[allow(dead_code)]
+pub fn load_average() -> String {
+    std::process::Command::new("sysctl")
+        .args(["-n", "vm.loadavg"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+        .unwrap_or_default()
+}
+
+/// Seconds since the last keyboard or mouse input (`IOHIDSystem`'s
+/// `HIDIdleTime`): with the lock state, whether anyone was at the Mac.
+#[allow(dead_code)]
+pub fn hid_idle() -> String {
+    std::process::Command::new("ioreg")
+        .args(["-c", "IOHIDSystem"])
+        .output()
+        .ok()
+        .and_then(|o| {
+            let text = String::from_utf8_lossy(&o.stdout).into_owned();
+            let line = text.lines().find(|l| l.contains("\"HIDIdleTime\""))?;
+            let ns: f64 = line.rsplit(' ').next()?.trim().parse().ok()?;
+            Some(format!("input idle {:.0} s", ns / 1e9))
+        })
+        .unwrap_or_else(|| "input idle unknown".into())
 }

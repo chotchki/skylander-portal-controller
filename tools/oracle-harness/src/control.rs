@@ -125,7 +125,9 @@ impl Control {
     pub fn new(p1_socket: &Path, config_dir: &Path) -> Self {
         Self {
             verbs: VerbClient::new(p1_socket),
-            driver: IpcPortalDriver::with_path(p1_socket).with_timeout(Duration::from_secs(5)),
+            // 15 s: with other lanes building, a STATE took over 5 s to come back on a
+            // load average of 28 (AF.7's exploration), and every step here asks for one.
+            driver: IpcPortalDriver::with_path(p1_socket).with_timeout(Duration::from_secs(15)),
             outputs: Rpcs3Outputs::new(config_dir),
         }
     }

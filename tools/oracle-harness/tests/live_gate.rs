@@ -1,10 +1,11 @@
-//! Live (openspec AF.5): the O-series is inert without its gate. The oracle
-//! boots with `GUAC_ORACLE` removed from its environment, and once RSX is
-//! flipping, each of the five O-verbs answers `ERR unknown_cmd` while P1's own
-//! words (`PING`, `STATE`, `STATUS`) work as in a product build, and none of
-//! them took: the counter runs on past the `PAUSE_AT` target without a pause,
-//! and RPCS3 writes no screenshot, capture or state. Mac, against
-//! `GUAC_ORACLE_EXE` from `GUAC_ORACLE_HOME`; skips when a key is unset.
+//! Live (openspec AF.5, AF.7): the O-series is inert without its gate. The
+//! oracle boots with `GUAC_ORACLE` removed from its environment, and once RSX is
+//! flipping, each of the eight O-verbs (O3's five, O4's three) answers
+//! `ERR unknown_cmd` while P1's own words (`PING`, `STATE`, `STATUS`) work as in
+//! a product build, and none of them took: the counter runs on past the
+//! `PAUSE_AT` target without a pause, and RPCS3 writes no screenshot, capture or
+//! state. Mac, against `GUAC_ORACLE_EXE` from `GUAC_ORACLE_HOME`; skips when a
+//! key is unset.
 //!
 //! `cargo test -p oracle-harness --test live_gate -- --ignored --nocapture`
 
@@ -12,6 +13,7 @@
 
 mod common;
 
+use guac_oracle::input::Ds3Pad;
 use oracle_harness::launch::{self, BootOptions};
 use oracle_harness::outputs::Kind;
 use oracle_harness::snapshot::Snapshot;
@@ -49,6 +51,16 @@ fn without_the_gate_every_o_verb_is_an_unknown_command() {
         Verb::RsxCap,
         Verb::Screenshot,
         Verb::SaveState,
+        Verb::Pad {
+            port: 0,
+            flip: target,
+            pad: Ds3Pad::REST,
+        },
+        Verb::PadClear,
+        Verb::PadState {
+            port: 0,
+            flip: None,
+        },
     ] {
         let err = control.verbs().send(verb).unwrap_err();
         let refusal = err

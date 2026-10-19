@@ -4226,6 +4226,11 @@ dependencies = [
 [[package]]
 name = "guac-oracle"
 version = "0.1.0"
+dependencies = [
+ "ron",
+ "serde",
+ "thiserror 1.0.69",
+]
 
 [[package]]
 name = "guac-server"
@@ -6374,6 +6379,7 @@ name = "oracle-harness"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "guac-oracle",
  "image",
  "rrc-dump",
  "sha2 0.10.9",

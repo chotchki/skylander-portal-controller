@@ -13,3 +13,7 @@ name = "guac_oracle"
 path = "src/lib.rs"
 
 [dependencies]
+# AF.7's input scripts: RON, the format guac-ir already reads in dev.
+ron = "0.12"
+serde = { workspace = true }
+thiserror = { workspace = true }
