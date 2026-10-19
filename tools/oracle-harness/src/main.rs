@@ -119,12 +119,14 @@ usage:
       counting as failed. <dir> must sit outside every work tree; the dev's RPCS3 dirs
       are checked unchanged at the end, and the home's saves and trophies (which a
       state's load doesn't put back) after every replay, a change stopping the run
-  oracle divergence report <dir>
+  oracle divergence report <dir> [--paused <dir>]
       the numbers from <dir>'s records: per observable the spread at each checkpoint
       and the usable horizon by floor, the RNG distances, every actor by corpus, FLIP
       between end shots, set A against set B at the end flip, set W against set A on
-      AF.11's discriminators (AG.1) and the spreads against the host's load; written
-      to <dir>/report.txt and report.json
+      AF.11's discriminators by AG.34's rule (a) (rank-sum |z| < 2, and on the camera's
+      offset and the slides' stops no set W replay inside set B's range: <dir>'s set B
+      of the script, else --paused's, AF.11's measurement) and the spreads against the
+      host's load; written to <dir>/report.txt and report.json
   oracle divergence calibrate <dir>
       AF.12's leave-one-out over <dir>'s groups with guac_oracle::tolerance's
       defaults: each replay against the envelope of the others inside the
@@ -148,7 +150,10 @@ fn main() -> Result<()> {
         ["actors", "--pine", socket, rest @ ..] => actors_cmd(socket.as_ref(), rest),
         ["watch", rest @ ..] => watch_cmd(rest),
         ["divergence", "run", rest @ ..] => divergence_run(rest),
-        ["divergence", "report", dir] => divergence_report(dir.as_ref()),
+        ["divergence", "report", dir] => divergence_report(dir.as_ref(), None),
+        ["divergence", "report", dir, "--paused", paused] => {
+            divergence_report(dir.as_ref(), Some(paused.as_ref()))
+        }
         ["divergence", "calibrate", dir] => divergence_calibrate(dir.as_ref()),
         ["divergence", "check", rest @ ..] => divergence_check(rest),
         [verb, "--socket", socket, rest @ ..] => run_verb(verb, &PathBuf::from(socket), rest),
@@ -991,10 +996,14 @@ fn summary(r: &ReplayRecord) -> String {
     )
 }
 
-fn divergence_report(dir: &std::path::Path) -> Result<()> {
+fn divergence_report(dir: &std::path::Path, paused: Option<&std::path::Path>) -> Result<()> {
     let dir = rrc_dump::output::refuse_repo_output(dir)?;
     let records = divergence::load_records(&dir)?;
-    let report = Report::build(&records, Some(&dir))?;
+    let paused = match paused {
+        Some(p) => divergence::load_records(p)?,
+        None => Vec::new(),
+    };
+    let report = Report::build_with(&records, Some(&dir), &paused)?;
     let text = report.text();
     std::fs::write(dir.join("report.txt"), &text)?;
     std::fs::write(
