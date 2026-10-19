@@ -2,7 +2,8 @@
 //! the screen it maps to (`screen::screen_for`) in `bevy_ui`. The screen's
 //! kind is a `bevy_state` state (openspec AP, design decision 1): each kind
 //! spawns its tree on enter under a root that despawns on exit. Sizes and
-//! colours come from [`TvTheme`] (decision 6), through a [`Pen`].
+//! colours come from [`TvTheme`] (decision 6), through a [`Pen`]; every root
+//! sits on the [`starfield`](crate::starfield) (decision 8).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -29,8 +30,10 @@ use tracing::{error, info, warn};
 use crate::cards::{PortalCards, drain_portal};
 use crate::extraction::{Band, ExtractBand};
 use crate::input::FocusId;
+use crate::motion::ReducedMotion;
 use crate::picker::FolderAsked;
 use crate::screen::{SetupView, TvScreen, screen_for};
+use crate::starfield;
 use crate::theme::{Role, Step, TvTheme};
 
 /// How long the farewell shows before the app exits (spec: under 5 s).
@@ -132,6 +135,8 @@ pub(crate) struct Current {
 pub(crate) struct TvAssets {
     font: Handle<Font>,
     pub(crate) qr: Option<Handle<Image>>,
+    /// The sky's tile of stars (`starfield::tile`).
+    pub(crate) stars: Handle<Image>,
 }
 
 /// The join QR as drawn (Join and the portal header), for the mirror.
@@ -323,10 +328,11 @@ impl Plugin for Screens {
             .init_resource::<Portraits>()
             .init_resource::<LayoutReport>()
             .init_resource::<FolderAsked>()
+            .init_resource::<ReducedMotion>()
             .add_message::<Redrawn>()
             .add_observer(on_choice)
             .add_systems(PreUpdate, follow_screen.after(poll_status))
-            .add_systems(Update, click_or_beat_closes);
+            .add_systems(Update, (click_or_beat_closes, starfield::drift));
         for state in TvState::ALL {
             app.add_systems(OnEnter(state), enter_screen);
         }
@@ -402,7 +408,8 @@ fn poll_status(
     }
 }
 
-/// The font and the join QR, on the world `main` built (`ServerLink` in it).
+/// The font, the join QR and the stars, on the world `main` built
+/// (`ServerLink` in it).
 fn tv_assets(world: &mut World) -> TvAssets {
     let font = world
         .resource_mut::<Assets<Font>>()
@@ -430,7 +437,9 @@ fn tv_assets(world: &mut World) -> TvAssets {
         }
         None => None,
     };
-    TvAssets { font, qr }
+    let theme = world.get_resource::<TvTheme>().cloned().unwrap_or_default();
+    let stars = starfield::tile(&mut world.resource_mut::<Assets<Image>>(), &theme);
+    TvAssets { font, qr, stars }
 }
 
 fn spawn_camera(mut commands: Commands) {
@@ -503,8 +512,8 @@ impl Sources<'_> {
     }
 }
 
-/// `OnEnter` every state: the screen's root and everything under it. The
-/// root goes on exit (`DespawnOnExit`), its tree with it.
+/// `OnEnter` every state: the screen's root on the sky, and everything under
+/// it. The root goes on exit (`DespawnOnExit`), its tree with it.
 fn enter_screen(
     mut commands: Commands,
     state: Res<State<TvState>>,
@@ -512,14 +521,18 @@ fn enter_screen(
     mut redrawn: MessageWriter<Redrawn>,
 ) {
     let state = *state.get();
+    let stars = sources.assets.stars.clone();
     commands
         .spawn((
             ScreenRoot,
             DespawnOnExit(state),
             root_node(state, sources.framing.0),
-            BackgroundColor(sources.theme.background()),
+            starfield::sky(&sources.theme),
         ))
-        .with_children(|ui| spawn_content(ui, state, &mut sources));
+        .with_children(|ui| {
+            starfield::spawn_stars(ui, &stars);
+            spawn_content(ui, state, &mut sources);
+        });
     redrawn.write(Redrawn::Screen(state));
 }
 
@@ -1823,7 +1836,16 @@ pub(crate) mod layout_tests {
             .world_mut()
             .resource_mut::<Assets<Font>>()
             .add(Font::from_bytes(TITAN_ONE.to_vec()));
-        app.insert_resource(TvAssets { font, qr: None })
+        let stars = starfield::tile(
+            &mut app.world_mut().resource_mut::<Assets<Image>>(),
+            &TvTheme::default(),
+        );
+        let assets = TvAssets {
+            font,
+            qr: None,
+            stars,
+        };
+        app.insert_resource(assets)
             .insert_resource(ServerLink {
                 status: Default::default(),
                 clients: Default::default(),
@@ -2918,6 +2940,123 @@ pub(crate) mod layout_tests {
         app.world_mut().resource_mut::<Current>().screen = TvScreen::Join;
         frames(&mut app, 6);
         assert_eq!(seen(&mut app), (vec![Redrawn::Screen(TvState::Join)], 0));
+    }
+
+    /// The one star layer up: its rect in target px, the drift's translation
+    /// in design px and its tiles.
+    fn star_layer(app: &mut App) -> (Entity, Rect, Val2, Vec<Entity>) {
+        let world = app.world_mut();
+        let mut q = world.query_filtered::<(
+            Entity,
+            &ComputedNode,
+            &UiGlobalTransform,
+            &UiTransform,
+            &Children,
+        ), With<starfield::StarLayer>>();
+        let (layer, node, at, moved, tiles) = q.single(world).unwrap();
+        (
+            layer,
+            node_rect(node, at),
+            moved.translation,
+            tiles.to_vec(),
+        )
+    }
+
+    /// AP.11: every screen's root sits on the sky, at 1080p, 4K and in the
+    /// desktop window: §1's three gradients on the root and a layer of stars
+    /// as its first child, from the window's corner (not the inset's) to a
+    /// tile past its far edges, every tile drawing the TV's stars, with no
+    /// text in it and no line moved by it.
+    #[test]
+    fn every_screen_sits_on_the_starfield() {
+        use bevy::ui::Val2;
+        let theme = TvTheme::default();
+        for (width, height, mode) in [
+            (1920, 1080, WindowMode::Tv),
+            (3840, 2160, WindowMode::Tv),
+            (1280, 720, WindowMode::Desktop),
+        ] {
+            let mut app = portal_app(width, height, mode, full("Eruptor"));
+            app.insert_resource(ReducedMotion(true));
+            let scale = height as f32 / DESIGN_HEIGHT;
+            let stars = app.world().resource::<TvAssets>().stars.clone();
+            for screen in every_screen() {
+                let case = format!("{width}x{height} {screen:?}");
+                app.world_mut().resource_mut::<Current>().screen = screen.clone();
+                frames(&mut app, 3);
+                let first = {
+                    let world = app.world_mut();
+                    let mut q = world
+                        .query_filtered::<(&BackgroundGradient, &Children), With<ScreenRoot>>();
+                    let (sky, children) = q.single(world).unwrap();
+                    assert_eq!(*sky, starfield::sky(&theme), "{case}");
+                    assert_eq!(sky.0.len(), 3, "{case}");
+                    children[0]
+                };
+                let (layer, rect, moved, tiles) = star_layer(&mut app);
+                assert_eq!(layer, first, "{case}: the stars draw under the screen");
+                assert_eq!(moved, Val2::ZERO, "{case}");
+                assert!(rect.min.abs_diff_eq(Vec2::ZERO, 0.01), "{case}: {rect:?}");
+                let past = Vec2::new(width as f32, height as f32) + starfield::TILE * scale;
+                assert!(rect.max.cmpge(past - 0.01).all(), "{case}: {rect:?}");
+                assert_eq!(tiles.len(), 15, "{case}");
+                for tile in &tiles {
+                    let image = app.world().get::<ImageNode>(*tile).unwrap();
+                    assert_eq!(image.image, stars, "{case}");
+                    assert!(app.world().get::<Children>(*tile).is_none(), "{case}");
+                }
+                assert!(app.world().get::<Text>(layer).is_none(), "{case}");
+
+                // Without the layer every line lands where it did.
+                let lines = |app: &mut App| {
+                    let mut drawn = drawn_text(app);
+                    drawn.sort_by(|a, b| a.0.cmp(&b.0));
+                    drawn
+                        .into_iter()
+                        .map(|(text, _, _, rect)| (text, rect))
+                        .collect::<Vec<_>>()
+                };
+                let with = lines(&mut app);
+                app.world_mut().entity_mut(layer).despawn();
+                frames(&mut app, 2);
+                assert_eq!(lines(&mut app), with, "{case}");
+            }
+        }
+    }
+
+    /// AP.11: the stars drift with the clock, a screen entered later picking
+    /// the drift up where the last one was, and hold at their start under
+    /// `ReducedMotion`.
+    #[test]
+    fn the_stars_drift_unless_motion_is_reduced() {
+        use bevy::time::TimeUpdateStrategy;
+        use bevy::ui::Val2;
+        for reduced in [false, true] {
+            let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
+            app.insert_resource(ReducedMotion(reduced))
+                .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(25)));
+            app.world_mut()
+                .resource_mut::<Time<Virtual>>()
+                .set_max_delta(Duration::from_secs(60));
+            for screen in [TvScreen::Join, TvScreen::Farewell] {
+                app.world_mut().resource_mut::<Current>().screen = screen.clone();
+                frames(&mut app, 2);
+                let elapsed = app.world().resource::<Time>().elapsed();
+                assert!(elapsed >= Duration::from_secs(25), "{elapsed:?}");
+                let (_, rect, moved, _) = star_layer(&mut app);
+                let at = if reduced {
+                    Vec2::ZERO
+                } else {
+                    starfield::drift_at(elapsed)
+                };
+                assert_ne!(at == Vec2::ZERO, !reduced, "{screen:?} at {elapsed:?}");
+                assert_eq!(moved, Val2::px(-at.x, -at.y), "{reduced} {screen:?}");
+                assert!(
+                    rect.min.abs_diff_eq(-at, 0.01),
+                    "{reduced} {screen:?}: {rect:?}"
+                );
+            }
+        }
     }
 }
 

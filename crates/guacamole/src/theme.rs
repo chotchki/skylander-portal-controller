@@ -45,9 +45,13 @@ pub(crate) enum Role {
 
 #[derive(Resource, Debug, Clone, PartialEq)]
 pub(crate) struct TvTheme {
-    /// `--sf-1..3`, top to bottom. Until AP.11's gradient the screens fill
-    /// with the middle stop.
+    /// `--sf-1..3`, top to bottom: the sky's fall (`starfield::sky`); the
+    /// last is also a portrait's backing.
     pub(crate) starfield: [Color; 3],
+    /// The sky's two glows, top (`#1a3a8a`) and bottom (`#0e2464`).
+    pub(crate) sky_glow: [Color; 2],
+    /// The stars' colours, by `starfield::Tint`: white, warm, cool.
+    pub(crate) star_tints: [Color; 3],
     /// `--g`: the progress bar's fill, the portrait's ring, a button's edge.
     pub(crate) gold: Color,
     /// A figure card's and a button's fill until AP.12's materials: the blue
@@ -78,6 +82,12 @@ impl Default for TvTheme {
                 hex(0x0b, 0x1e, 0x52),
                 hex(0x06, 0x14, 0x36),
                 hex(0x02, 0x08, 0x18),
+            ],
+            sky_glow: [hex(0x1a, 0x3a, 0x8a), hex(0x0e, 0x24, 0x64)],
+            star_tints: [
+                hex(0xff, 0xff, 0xff),
+                hex(0xff, 0xe6, 0xb4),
+                hex(0xb4, 0xdc, 0xff),
             ],
             gold: hex(0xf5, 0xc6, 0x34),
             panel: hex(0x0a, 0x24, 0x64),
@@ -120,11 +130,6 @@ impl TvTheme {
             Role::Accent => self.accent,
             Role::Muted => self.muted,
         }
-    }
-
-    /// A screen's fill until AP.11's starfield.
-    pub(crate) fn background(&self) -> Color {
-        self.starfield[1]
     }
 
     /// The colour a figure's element shows as (its gradient's light stop);
@@ -193,6 +198,8 @@ mod tests {
         }
         assert_eq!(hex(theme.gold), "#F5C634");
         assert_eq!(theme.starfield.map(hex), ["#0B1E52", "#061436", "#020818"]);
+        assert_eq!(theme.sky_glow.map(hex), ["#1A3A8A", "#0E2464"]);
+        assert_eq!(theme.star_tints.map(hex), ["#FFFFFF", "#FFE6B4", "#B4DCFF"]);
     }
 
     #[test]

@@ -1,12 +1,13 @@
-//! Dev builds only: with `GUAC_SHOT_DIR=<dir>` set, the TV renders offscreen
-//! (`GUAC_SHOT_SIZE`, default 1920x1080) and a PNG is saved each time it
-//! settles after a redraw (a screen entered, a card or the extraction band
-//! redrawn, a line patched) or an intro (an intro's shot lands [`SETTLE`]
-//! into it). Offscreen because a locked or occluded Mac presents no window
-//! frames, so a window capture comes back black; the window stays empty
-//! meanwhile. An intro's shot is a frame of the disc's
-//! own FMV, so the folder must be outside any git checkout (the extract
-//! root's rule, design decision 5); one inside is refused and nothing shot.
+//! Dev builds only: with `GUAC_SHOT_DIR=<dir>` set, motion is reduced
+//! ([`ReducedMotion`], so a screen's shot is the same on every run), the TV
+//! renders offscreen (`GUAC_SHOT_SIZE`, default 1920x1080) and a PNG is saved
+//! each time it settles after a redraw (a screen entered, a card or the
+//! extraction band redrawn, a line patched) or an intro (an intro's shot lands
+//! [`SETTLE`] into it). Offscreen because a locked or occluded Mac presents no
+//! window frames, so a window capture comes back black; the window stays empty
+//! meanwhile. An intro's shot is a frame of the disc's own FMV, so the folder
+//! must be outside any git checkout (the extract root's rule, design decision
+//! 5); one inside is refused and nothing shot.
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -20,6 +21,7 @@ use tracing::{error, info};
 use crate::cards::PortalCards;
 use crate::extraction::Extraction;
 use crate::intro::IntroQueue;
+use crate::motion::ReducedMotion;
 use crate::tv::{Current, Redrawn};
 
 /// Long enough for a redrawn tree's layout and portraits to reach the GPU.
@@ -29,7 +31,9 @@ pub struct Shots;
 
 impl Plugin for Shots {
     fn build(&self, app: &mut App) {
-        let Some(dir) = std::env::var_os("GUAC_SHOT_DIR").map(PathBuf::from) else {
+        let shot_dir = std::env::var_os("GUAC_SHOT_DIR");
+        app.insert_resource(ReducedMotion::for_shots(shot_dir.as_deref()));
+        let Some(dir) = shot_dir.map(PathBuf::from) else {
             return;
         };
         let dir = match outside_checkouts(dir) {

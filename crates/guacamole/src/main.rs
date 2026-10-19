@@ -15,10 +15,12 @@ mod input;
 mod intro;
 mod intro_player;
 mod mirror;
+mod motion;
 mod picker;
 mod screen;
 #[cfg(feature = "dev-tools")]
 mod shots;
+mod starfield;
 mod theme;
 mod tv;
 mod video;
