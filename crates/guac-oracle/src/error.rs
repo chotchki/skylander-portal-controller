@@ -78,4 +78,17 @@ pub enum MetricError {
         previous: u32,
         frame: u32,
     },
+    #[error(
+        "the record at flip {flip} is game frame {frame} again: the port was read twice in one frame, so its step would count twice"
+    )]
+    FrameRepeat { flip: u64, frame: u32 },
+    #[error(
+        "the record at flip {flip} is the port's read {read} there, after flip {previous_flip}'s read {previous_read}: a record is missing between them"
+    )]
+    ReadOrder {
+        previous_flip: u64,
+        previous_read: u32,
+        flip: u64,
+        read: u32,
+    },
 }
