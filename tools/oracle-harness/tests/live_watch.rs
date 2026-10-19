@@ -316,7 +316,9 @@ fn a_walk_is_recorded_every_flip_without_a_pause() {
         hitches.join(", ")
     ));
     for alignment in Alignment::ALL {
-        let t = recording.game_time(alignment);
+        let t = recording
+            .game_time(alignment)
+            .expect("no game frame lost: the ring check held above");
         rec.line(format!(
             "game time under {alignment:?}: {:.4} s over {} records ({} flips at 1/60 s would \
              be {:.4} s)",

@@ -18,6 +18,13 @@
 //! read before or after it is its [`Order`]: [`Recording::residuals`] measures
 //! both against the position steps, and [`Recording::game_time`] keys the
 //! frames under the alignment that held (AG.1's tick has it).
+//!
+//! O5 records flips, not game frames: a hitch can leave a flip without a pad
+//! read and the next flip with two game frames, one of them unrecorded (AG.35,
+//! AG.1's walk-W-03). So records pair by `_curFrame`, never by flip: a pair of
+//! consecutive flips can be two updates apart, and two flips apart can be one.
+//! Game time can't be summed across a game frame the recording lacks, so
+//! [`Recording::game_time`] refuses one rather than drop its step.
 
 use serde::{Deserialize, Serialize};
 
@@ -280,8 +287,21 @@ impl Recording {
     /// that moved the hero there under `alignment`. Under
     /// [`Alignment::Later`] the first record's own step is the one before it,
     /// so it isn't counted; under [`Alignment::Earlier`] the last record's is
-    /// the one after it.
-    pub fn game_time(&self, alignment: Alignment) -> Vec<f64> {
+    /// the one after it. Refused ([`MetricError::FrameGap`]) when two records'
+    /// `_curFrame` aren't one apart: the frame between them is missing and so
+    /// is its step. Flips that skip with the game frames one apart are fine.
+    pub fn game_time(&self, alignment: Alignment) -> Result<Vec<f64>, MetricError> {
+        if let Some(w) = self
+            .frames
+            .windows(2)
+            .find(|w| !consecutive_frames(&w[0], &w[1]))
+        {
+            return Err(MetricError::FrameGap {
+                flip: w[1].flip,
+                previous: w[0].game_frame,
+                frame: w[1].game_frame,
+            });
+        }
         let steps = self.steps();
         let mut t = 0.0;
         let mut out = Vec::with_capacity(steps.len());
@@ -290,21 +310,24 @@ impl Recording {
             t += steps[alignment.step_index(k)];
             out.push(t);
         }
-        out
+        Ok(out)
     }
 
-    /// The frames keyed by game time under `alignment`: `(flip, seconds)`.
-    pub fn keyed(&self, alignment: Alignment) -> Vec<(u64, f64)> {
-        self.frames
+    /// The frames keyed by game time under `alignment`: `(flip, seconds)`,
+    /// refused as [`Recording::game_time`] refuses.
+    pub fn keyed(&self, alignment: Alignment) -> Result<Vec<(u64, f64)>, MetricError> {
+        Ok(self
+            .frames
             .iter()
             .map(|f| f.flip)
-            .zip(self.game_time(alignment))
-            .collect()
+            .zip(self.game_time(alignment)?)
+            .collect())
     }
 
     /// Each position step from record `k` to `k + 1` against the velocity
     /// `order` names times the step `alignment` names, over the pairs whose
-    /// earlier flip `keep` accepts and whose flips are consecutive.
+    /// earlier flip `keep` accepts and whose game frames are consecutive, so
+    /// one update lies between them (their flips may not be, AG.35).
     pub fn residuals(
         &self,
         alignment: Alignment,
@@ -324,7 +347,7 @@ impl Recording {
         let mut sum_sq = 0.0;
         for k in 0..self.frames.len() - 1 {
             let (a, b) = (&self.frames[k], &self.frames[k + 1]);
-            if b.flip != a.flip + 1 || !keep(a.flip) {
+            if !consecutive_frames(a, b) || !keep(a.flip) {
                 continue;
             }
             let v = match order {
@@ -350,6 +373,12 @@ impl Recording {
         }
         out
     }
+}
+
+/// Whether `b` is the game frame right after `a`'s (`_curFrame` one on), so
+/// exactly one update lies between the two records.
+fn consecutive_frames(a: &Frame, b: &Frame) -> bool {
+    b.game_frame == a.game_frame.wrapping_add(1)
 }
 
 impl TryFrom<Vec<Frame>> for Recording {
@@ -469,8 +498,8 @@ mod tests {
         for (got, want) in r.steps().iter().zip(&steps) {
             assert!((got - want).abs() < 1e-8, "{got} {want}");
         }
-        let earlier = r.game_time(Alignment::Earlier);
-        let later = r.game_time(Alignment::Later);
+        let earlier = r.game_time(Alignment::Earlier).unwrap();
+        let later = r.game_time(Alignment::Later).unwrap();
         assert_eq!((earlier.len(), later.len()), (9, 9));
         assert_eq!((earlier[0], later[0]), (0.0, 0.0));
         for k in 1..9 {
@@ -485,7 +514,7 @@ mod tests {
         assert!((later[4] - later[3] - hitch).abs() < 1e-12);
         // Eight flips past the first record are 0.1661 s of game time, not 8/60.
         assert!((earlier[8] - 0.1661).abs() < 1e-6, "{}", earlier[8]);
-        let keyed = r.keyed(Alignment::Later);
+        let keyed = r.keyed(Alignment::Later).unwrap();
         assert_eq!(keyed.len(), 9);
         assert_eq!(keyed[0], (100, 0.0));
         assert_eq!(keyed[8].0, 108);
@@ -515,23 +544,66 @@ mod tests {
                 }
             }
         }
-        // Only consecutive flips, and only those kept, are measured.
-        let mut frames = walk(Alignment::Earlier, Order::VelocityFirst);
-        frames[5].flip += 10;
-        frames[6].flip += 10;
-        frames[7].flip += 10;
-        frames[8].flip += 10;
-        let r = Recording::new(frames).unwrap();
-        assert_eq!(
-            r.residuals(Alignment::Earlier, Order::VelocityFirst, |_| true)
-                .pairs,
-            7
-        );
+        // Only pairs one game frame apart, and only those kept, are measured,
+        // whatever their flips (AG.1's walk-W-03, AG.35): a flip with no pad
+        // read leaves two flips one game frame apart, which counts...
+        let mut skipped = walk(Alignment::Earlier, Order::VelocityFirst);
+        for f in &mut skipped[5..] {
+            f.flip += 1;
+        }
+        let r = Recording::new(skipped).unwrap();
+        let fit = r.residuals(Alignment::Earlier, Order::VelocityFirst, |_| true);
+        assert_eq!(fit.pairs, 8);
+        assert!(fit.max_ground < 1e-5, "{fit:?}");
         assert_eq!(
             r.residuals(Alignment::Earlier, Order::VelocityFirst, |f| f < 102)
                 .pairs,
             2
         );
+        // ...and the next flip holding two game frames, one unrecorded, leaves
+        // two consecutive flips two updates apart, which doesn't.
+        let mut lost = walk(Alignment::Earlier, Order::VelocityFirst);
+        for f in &mut lost[5..] {
+            f.game_frame += 1;
+        }
+        let r = Recording::new(lost).unwrap();
+        assert_eq!(
+            r.residuals(Alignment::Earlier, Order::VelocityFirst, |_| true)
+                .pairs,
+            7
+        );
+    }
+
+    #[test]
+    fn game_time_refuses_a_lost_game_frame_and_takes_a_skipped_flip() {
+        // Two flips one game frame apart (a flip without a pad read): the
+        // same steps, the same game time.
+        let whole = Recording::new(walk(Alignment::Earlier, Order::VelocityFirst)).unwrap();
+        let mut skipped = walk(Alignment::Earlier, Order::VelocityFirst);
+        for f in &mut skipped[3..] {
+            f.flip += 1;
+        }
+        let skipped = Recording::new(skipped).unwrap();
+        for a in Alignment::ALL {
+            assert_eq!(skipped.game_time(a), whole.game_time(a));
+            let keyed = skipped.keyed(a).unwrap();
+            assert_eq!(keyed[3].0, 104);
+        }
+        // A game frame the ring never took: its step is missing, so no sum.
+        let mut lost = walk(Alignment::Earlier, Order::VelocityFirst);
+        for f in &mut lost[6..] {
+            f.game_frame += 1;
+        }
+        let lost = Recording::new(lost).unwrap();
+        for a in Alignment::ALL {
+            let want = MetricError::FrameGap {
+                flip: 106,
+                previous: 6_105,
+                frame: 6_107,
+            };
+            assert_eq!(lost.game_time(a).unwrap_err(), want);
+            assert_eq!(lost.keyed(a).unwrap_err(), want);
+        }
     }
 
     #[test]

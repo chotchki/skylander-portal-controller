@@ -1118,7 +1118,7 @@ mod tests {
             top.time()
         );
         // Game time sums the clamped steps: the 0.2 s hitch counts 0.05 s.
-        let t = r.game_time(Alignment::Earlier);
+        let t = r.game_time(Alignment::Earlier).unwrap();
         assert!((t[6] - t[5] - f64::from(1.0f32 / 60.0 * 3.0)).abs() < 1e-12);
         let want: f64 = deltas[..9]
             .iter()

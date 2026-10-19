@@ -20,9 +20,9 @@ The level SHALL hold the props the original's level file places, where it puts t
 - **WHEN** the level starts
 - **THEN** the gate's door, the gourds and the boulder stand where the original has them at the start, and the hero walks through the spots where the sheep and Norticus stand in the original
 
-#### Scenario: A barrel beyond its waking distance
-- **WHEN** the hero stands at the start, 70 m from a barrel the original wakes within 200 ft (61 m)
-- **THEN** that barrel isn't there, and it is once he has walked within 61 m of it
+#### Scenario: A coin beyond its waking distance
+- **WHEN** the hero stands at the start, 49.3 m from the spinning coin the original wakes within 160 ft (48.8 m)
+- **THEN** that coin isn't there, and it is once he has walked within 48.8 m of it, as on the original's walk to the gate's door
 
 ### Requirement: The level is solid where the original's is
 The hero SHALL stand on, slide along and be stopped by the level's own collision and the solid shapes of the props present, as in the original, and SHALL pass through scenery the original lets him pass through. A prop whose solid has no shape SHALL stop nothing.

@@ -504,7 +504,9 @@ impl ActivityState {
 /// - an UNMANAGED placement with an activation range is active (simulated,
 ///   with a corpus: the node its model hangs under, holding any solid) while
 ///   the hero stands within that range of it, 3D, the range in feet, and
-///   inactive (no corpus) outside it;
+///   inactive (no corpus) outside it, going inactive again when he leaves
+///   (AG.7's walk back to a gourd: the 18 active at the door whose range he
+///   left were off the game's actor list);
 /// - one without a range waits on a script, which activates it, takes it
 ///   off or leaves it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

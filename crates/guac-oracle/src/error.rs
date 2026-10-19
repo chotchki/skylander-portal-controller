@@ -70,4 +70,12 @@ pub enum MetricError {
     TooFewReplays { needed: usize, found: usize },
     #[error("there's no replay {index} among {replays}")]
     NoSuchReplay { index: usize, replays: usize },
+    #[error(
+        "the record at flip {flip} is game frame {frame}, after {previous}: the recording lacks a frame and its step"
+    )]
+    FrameGap {
+        flip: u64,
+        previous: u32,
+        frame: u32,
+    },
 }
