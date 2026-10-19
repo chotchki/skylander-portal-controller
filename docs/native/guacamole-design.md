@@ -412,7 +412,8 @@ player's" when it can't name them). The product keeps both as they were: its res
 from the resumer's working copy, and SPEC Q105 leaves co-op resume open there.
 A `PreUpdate` system
 ([`crates/guacamole/src/cards.rs`](../../crates/guacamole/src/cards.rs)) drains the channel into `PortalCards`
-through a pure reducer, and the TV rebuilds its cards from that. Failure injection works against either
+through a pure reducer, and the TV reconciles its cards from that: the portal keeps eight cells and
+respawns only the one whose slot changed (The TV's UI). Failure injection works against either
 app: the mock and the native driver both implement `LoadInjector` (`skylander-rpcs3-control`'s `inject`),
 so `/api/_test/inject_load` drives both.
 
@@ -441,7 +442,8 @@ cargo run -p guacamole       # add --features test-hooks for the /api/_test/* en
   `server.log` the product's dev build writes. `GUAC_MUTE` (process env, not the file, dev builds only)
   plays intros muted; the e2e harness sets it.
 - `GUAC_SHOT_DIR=<dir>` (process env, dev builds only) renders the TV offscreen at `GUAC_SHOT_SIZE`
-  (default 1920x1080) and saves a PNG each time it settles. AA.8 checked its screens that way, because
+  (default 1920x1080) and saves a PNG each time it settles, with motion held still (`ReducedMotion`, The
+  TV's UI). AA.8 checked its screens that way, because
   window captures on the locked Mac came back black. Since AB.10 a shot lands in each intro, a frame of
   the disc's own FMV, so the folder has to be outside any git checkout like the extract root; one inside
   is refused with an error and nothing is shot.
@@ -537,11 +539,13 @@ nothing else on disk is precious. Backing up the family's progress is copying on
   dump it finds is listed by title; only Giants is offered (the Native table).
 - The setup flow (AA.15). With no folder stored, the TV's Setup screen opens a native folder picker by
   itself after 1 s (`rfd` 0.17.2, a sheet on the window awaited from a Bevy task, so frames keep running),
-  and Enter, Space or a click opens it again. A pick stores the folder whether it holds Giants or not and
-  replaces the server's game list in place (the phone sees Giants without a restart). With Giants the
-  TV shows Found, every dump by title, for 8 s or until a click, then the join code. Without it,
-  NoGiants lists what it found plus any `Couldn't list` / `Couldn't read` lines and offers the picker
-  again. Later starts skip Setup and rescan the stored folders: the join code while they still hold
+  and its "Choose the folder" button, focused as the screen appears, opens it again: a pad's bottom face
+  button, Enter, Space or a click on the button, never a click beside it (The TV's UI). A pick stores the
+  folder whether it holds Giants or not and replaces the server's game list in place (the phone sees
+  Giants without a restart). With Giants the TV shows Found, every dump by title, for 8 s or until its
+  focused "Continue" is pressed, then the join code. Without it, NoGiants lists what it found plus any
+  `Couldn't list` / `Couldn't read` lines and offers the picker again through its own "Choose the folder"
+  button. Later starts skip Setup and rescan the stored folders: the join code while they still hold
   Giants, NoGiants when they don't (a no-Giants pick, an unmounted drive).
 - The fallbacks, for a picker that won't show (whether it opens above the fullscreen window is AA.11's
   question). `guacamole --setup` asks with a plain dialog on the main thread before the window exists,
@@ -1594,6 +1598,180 @@ the pad in the player's hands.
     does Steam keep it for its overlay? Can the per-shortcut Steam Input setting be applied automatically,
     or is it a one-time step by hand?
 - AG's input spec carries the prompt rule, since walking a level is the first rung with a pad in hand.
+
+## The TV's UI
+
+Verdict: the TV is Bevy 0.20's own UI stack, `bevy_ui` with `bevy_state`, `bevy_ui_widgets` and
+`bevy_input_focus`, behind one input router of ours, and it wears the phone's Skylanders design language
+([`design_language.md`](../aesthetic/design_language.md)) at the TV's type scale
+([`navigation.md`](../aesthetic/navigation.md) §3.7). No BSN, no `bevy_feathers`, no third-party UI crate.
+AP built it ([`ap-tv-ui-on-bevy-widgets`](../../openspec/changes/ap-tv-ui-on-bevy-widgets/design.md), whose
+design has the why of each call); a kid never touches the TV, so it's a grown-up's setup screens, the join
+code and the portal's cards.
+
+The stack ([`tv.rs`](../../crates/guacamole/src/tv.rs)):
+- Screens are a fieldless `TvState` (so another game on the portal is no transition), which
+  `follow_screen` sets from the pure `screen_for`'s kind with `set_if_different`; each screen spawns
+  `OnEnter` under a `ScreenRoot` carrying `DespawnOnExit`. Inside a screen nothing respawns that didn't change: one
+  system per changing line patches it in place (the players line, the join address, the error message,
+  Setup's lines, the extraction band), and the portal keeps eight `Cell`s for its life, each respawning
+  only its own content when its slot in `PortalCards` differs (`sync_cells`). What redrew writes a
+  `Redrawn` message, which arms the layout report and the shots.
+- Every choice is a `bevy_ui_widgets` `Button` with `TabIndex(0)`, `AutoFocus` and a `FocusId`
+  (`choose-folder` on Setup and NoGiants, `continue` on Found, `close` on AlreadyRunning and ServerError),
+  built by `choice_bundle` and acted on by one `Activate` observer, `on_choice`. Import it by name, `use
+  bevy::ui_widgets::Button;`: the prelude still exports the deprecated `bevy_ui::Button`, which fails
+  clippy's `-D warnings`. A click presses a button only when it lands on it; the error screens alone keep
+  Esc and a click anywhere (AA.6's fix for a mouse-only TV PC, `click_or_beat_closes`), and AlreadyRunning
+  still closes itself after 8 s. The rules are `guacamole/shell`'s two AP requirements.
+- The headless test app (`portal_app`) adds `StatesPlugin`, `InputFocusPlugin` and the widgets'
+  `ButtonPlugin`, so the layout, mirror and router tests run the stack the window runs.
+
+What's skipped, and when to look again: BSN at the next Bevy bump, if its syntax held a release;
+`ModalDialog`, `Dialog` and `RequestClose` with the Home menu, which also takes the directional moves (ex-AP.7:
+`DirectionalNavigationPlugin`'s geometry-based navigation, nothing to move between until a screen has two
+choices; the backlog's Home menu line); `Checkbox`, `Slider`, `RadioGroup`, `ListBox` and `Tabs` not while
+settings live on the phone; `bevy_feathers` never as a dependency (editor-only by its own charter; its
+focus-indicator module is the pattern to read); and third-party UI and input crates (`bevy_flair`,
+`bevy_enhanced_input`, `leafwing-input-manager`) because each puts a crate on the Bevy-upgrade path, while
+gameplay's action mapping is AG's input spec.
+
+The router ([`input.rs`](../../crates/guacamole/src/input.rs)) is the one place that decides who gets a
+press:
+- `route_input` runs in `PreUpdate` after Bevy's input systems and reads every `Gamepad` (South, East and
+  Mode just pressed, the D-pad, the left stick past 0.5), the keys the widgets don't take (the arrows, Esc,
+  NumpadEnter) and one press a frame posted to `/api/_test/tv/press` (a `test-hooks` build only).
+- It hands the frame to the top layer alone (`Layer::top`). An intro playing over the portal takes any pad
+  button, key or posted press as its skip and nothing under it sees the press; the intro overlay holds
+  `InputFocus` meanwhile, so an Enter the widget would see lands on a node with no `Button`. Otherwise the
+  screen hears `TvInput`s.
+- Mapping is positional, as Controllers has it: South activates (`act_on_input` triggers `Activate` on the
+  focused button and holds `Pressed` on it while South is down), East is Back (it closes the error
+  screens), Mode is Home (nothing until Open question 1 is answered), and the D-pad, the arrows and the
+  stick move, a held one repeating per `NavRepeat`: one move on the press, the first repeat 400 ms later,
+  then one every 150 ms on schedule at any frame rate. Nothing takes a move yet.
+- Enter and Space are never mapped: the widget's own key observer takes them from the focused entity, so
+  nothing activates twice. NumpadEnter, which the widget ignores, is ours. The router triggers `Activate`
+  itself rather than observing `FocusedInput`, which needs exactly one `PrimaryWindow` (the headless app
+  has none), so the pad path is testable headless.
+- Focus never strays: `keep_focus` puts it back when it's off the screen's choices (a click on anything
+  without `TabIndex` clears it), on the choice with the `FocusId` it last had, else the `AutoFocus` one.
+  `InputFocusVisible` goes on at boot and again with every pad or key input, console-style, since a mouse
+  press turns it off.
+
+The theme ([`theme.rs`](../../crates/guacamole/src/theme.rs)): `TvTheme` holds §1's palette, §2's text
+roles (`Role`: primary warm white, accent gold, muted, all opaque) and §3.7's scale (`Step`: 96, 64, 40, 32,
+24, nothing under 24). Every line goes through a `Pen` taking a `Step` and a `Role`, so no call site names
+a size or a colour, and a Kaos skin later is another `TvTheme`. `scale_ui` (`UiScale` is the TV camera's
+height over 1080) stays the one 10-ft knob: the design screen is 1080 tall whatever the window.
+
+The surfaces ([`surfaces.rs`](../../crates/guacamole/src/surfaces.rs)) are §3's materials in bevy_ui 0.20's
+own gradients, borders and shadows, sized as the phone's CSS scaled by each surface's size over the phone's:
+the gold bezel (§3.1) round each portrait, the card's gold `BorderGradient` edge on §3.3's framed panel and
+§3.2's blue card on the buttons. bevy_ui isn't a browser, and three conversions follow:
+- Shadows. bevy_ui reads a `BoxShadow`'s blur as its Gaussian's sigma, where CSS's blur is twice the
+  sigma, and its spread as the growth of the node's whole width, where CSS's grows each side
+  (`bevy_ui_render`'s `box_shadow.rs` and `box_shadow.wesl`). Every §3 shadow goes through
+  `css_shadow(color, offset, blur, spread)` with CSS's numbers, which halves the blur and doubles the
+  spread; passed as written they drew twice as soft with outlines half as thick (AP.12, fixed in the
+  AP.11-AP.14 review).
+- Blending. bevy_ui blends in linear light where a browser blends sRGB values, so a faint colour over the
+  dark sky lands brighter than in CSS: 0.12 gold over `--sf-2` at red 94 where a browser gives 35.
+  `css_over` returns the colour that, blended in linear light, lands where CSS's blend does (the title
+  halo's stops go through it), and the card's top glow is 3% where §3.3 has 8-10%.
+- No inset shadow in 0.20, so a ring's dark line is a border (the pip's, a hard radial stop) and its inset
+  light and shade are gradient layers over its fill.
+
+Two departures from §3.1, both written there too. A figure's ring wears its element's gradient instead of
+gold, the phone's rule since its PLAN 9.7 playtest (`gold_bezel.css`; chotchki, 2026-05-04: "color code the
+element instead of just a gold ring"), because the portrait covers the plate and the card's edge is gold,
+so a gold ring would leave the element showing nowhere but the caption (AP.12); a figure without one keeps
+the gold ring. And the owner pip stays in the card's top-right corner, where §3.1 puts the ownership pip
+bottom-right (chotchki, 2026-10-18: "b, top right bottom right will interfere with player 2's ui"): a 60
+design px small bezel, 10 px in, round the owner's colour with the initial in its ink.
+
+The sky ([`starfield.rs`](../../crates/guacamole/src/starfield.rs)): §1's three gradients on every screen
+root, under stars generated in code (never a disc or wiki image), one in each 240×135 design-px cell in
+the phone's mix of sizes and tints, each a node of its own drawing one of two sprites built at startup.
+They drift up and to the left, 960 design px across and 1620 up every 140 s (`--dur-sky-drift`). The sky
+repeats every 4080 px across and every loop's drift on the diagonal: a loop lands every star on a copy of
+itself, so the drift has no seam, and no screen up to 32:9 shows a star twice (AP.11's first sky, a
+960×540 tile, showed 2×2 on a 16:9 screen; fixed the same day). Each star is drawn at its one copy in a
+window wider and taller than any such screen, so a star leaving one edge comes back in at the other off
+the screen.
+
+Titles go through a shader ([`title.rs`](../../crates/guacamole/src/title.rs),
+[`title.wesl`](../../crates/guacamole/src/title.wesl)). The seven screen titles and the portal's game name,
+in caps (§2: Titan One is for caps), wear §2's display treatment, built by a WESL `UiMaterial`
+(`TitleMaterial`) from the glyphs' alpha: the gold glow, the blurred black drop, the `--gi` and `--gs` hard
+shadows, the `--gi` stroke and the `--gb` → `--g` fill.
+- A title is a wrapper holding its `Text` hidden as the layout box, so a screen lays out as it would with
+  a plain line, headless included, and the surface laid over it, grown by the treatment's margin (40
+  design px at 96, 28 at 64). Behind the seven screen titles sits §2's ray halo, the TV launcher mock's at
+  its gold and size, faded to its own edge; the game name over the cards has none.
+- The string renders once, white, into an image the surface's size, by a camera of its own (order -1,
+  cleared to `Color::NONE`, a UI root on it under `UiTargetCamera`), which goes inactive the frame after
+  its glyphs land and keeps its image (`draw_titles`). A title renders again only when its string, its
+  size, the TV camera's scale factor or `UiScale` changes, and its camera and ink go with its surface.
+- The fragment ships inside the binary (`embedded_asset!`, `embedded://guacamole/title.wesl`), so a
+  release build needs no assets folder.
+- Every title camera is a second `Camera2d`, so the TV's own carries `TvCamera` (and `IsDefaultUiCamera`)
+  and whatever reads it (`scale_ui`, the layout report, the mirror, the shots) finds it by that; a
+  `With<Camera2d>` query's `.single()` would fail silently.
+
+AP.8's spike checked what the design couldn't read off the 0.20 sources, and its record is the pipeline's
+rulebook:
+- An inactive camera keeps its image: read back off the GPU the frame it drew, the next and 60 later,
+  byte-identical. A target drawn at order -1 is sampled the same frame (20 of 20 frames read their own
+  colour; drawn at order 1, 0 of 20). The `Color::NONE` clear reaches the sampler as alpha 0.
+- The Retina rule: a title camera's `ImageRenderTarget::scale_factor` is the TV camera's
+  `target_scaling_factor()`, not a bare handle's 1.0, or every title draws at half size on the Mac's
+  display; `UiScale` reaches a title's UI as it does the TV's. Bevy keys an image target by handle AND
+  scale factor, so a `Screenshot` of an image a camera draws at 2 has to name that scale factor or it
+  comes back empty.
+- CSS's blend: composited in linear light, the glow came out about three times too bright and grey-tan,
+  so the fragment composites in sRGB and hands over the colour and alpha that, blended in linear light
+  over the sky's `--sf-2`, land where a browser's blend does. The stroke is centred on the outline as
+  `-webkit-text-stroke` is, and the hard shadows are the glyphs' own, not the stroked glyphs'. Measured
+  against Chrome drawing the same stack in CSS: within 1-2 levels at every distance, at 1080p and 4K. The
+  one deliberate difference is the `--gb` → `--g` fill where §2 has flat `--gb`.
+- Headless: the test app has no render app, so `Titles` registers only the asset type
+  (`init_asset::<TitleMaterial>()`) and the running TV's `TitleShader` adds
+  `UiMaterialPlugin::<TitleMaterial>`; the plugin in the headless app panics for want of the `Shader`
+  asset type. The headless tests run the whole pipeline but the GPU.
+- The cost on the M3 Max, GPU waited on: two titles 0.25 ms over none at 1080p and 1.1 ms at 4K with their
+  cameras inactive, 0.4 ms more always active, nearly all of it the fragment's ~140 taps a pixel. If that
+  ever matters, the finished treatment renders once into a second target and gets sampled.
+
+Motion ([`motion.rs`](../../crates/guacamole/src/motion.rs), [`look.rs`](../../crates/guacamole/src/look.rs),
+[`card_motion.rs`](../../crates/guacamole/src/card_motion.rs)) is §5's curves through `bevy_curve`
+(`CubicSegment::new_bezier_easing`) on our own `Tween`s, and moves inner nodes only: `UiTransform`
+composes into the `UiGlobalTransform` the mirror, the layout report and the tests read, so a marked node
+never moves.
+- A focused choice's face (`ChoiceFace`, the node inside its `Button`) takes §3.2's hover gradient, scale
+  1.05 and §3.1's picking glow on `--ease-spring` over 200 ms; `Pressed` dips it to 0.96 on `--ease-tap`
+  over 120 ms. A mouse press hides the look until the next pad or key input.
+- A card is a face (`CardFace`) laid absolutely over the `CardSlot` box: the box wears nothing and keeps
+  the rect everyone measures, the face wears the panel, its edge and its clip, and moves. It rises (§5.1:
+  from 24 design px below at 0.97 to rest over 500 ms of `--ease-spring`, 80 ms after the card before it
+  on the portal's entrance; a placement rises alone, at once). The rise drops §5.1's fade: bevy_ui 0.20 has
+  no opacity for a subtree, so a fade means easing every colour on the card; a card waiting for its turn
+  is hidden instead, as the CSS's from-frame hides it.
+- A placement flashes white to gold over its bezel (§5.4, 600 ms, 0 to 2×), clipped by the face so it
+  never covers a neighbour; the phone's ring brightness spike needs a filter bevy_ui doesn't have. A
+  loaded bezel floats ±2 design px over 4.5 s (§5.3) on the bezel (`Floats`), not the whole card, as the
+  phone's does, each slot out of step with its neighbours, and waits for its card's rise and impact before
+  easing in (§5.6, one focal animation at a time).
+
+`ReducedMotion` ([`motion.rs`](../../crates/guacamole/src/motion.rs)) is on whenever `GUAC_SHOT_DIR` is
+set: the drift and the float stop, and every entrance and focus look lands at its end the frame it's
+aimed, stricter than §5.7 (which keeps entrances at 200 ms linear) because a shot has to come out the same
+twice. It's a switch for dev shots, not a user setting, and a release build has no shots and never
+reduces. Two walks of the same screens match byte for byte everywhere but inside the join QR, whose noise
+ring is random every boot (a backlog line).
+
+What only the TV at couch distance can judge (the titles and the 24 px floor at 10 ft, the focus glow,
+the drift) is on the backlog's TV pass line.
 
 ## Figures
 
