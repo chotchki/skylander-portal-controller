@@ -59,7 +59,7 @@ impl<'a> AbstractPlacement<'a> {
     pub const RESET_TEMPLATE: u32 = 0x98;
     pub const ACTIVE_TIME_LAYER: u32 = 0x9C;
 
-    fn fields(v: &mut View<'_, 'a>) -> Result<Self, FormatError> {
+    pub(super) fn fields(v: &mut View<'_, 'a>) -> Result<Self, FormatError> {
         Ok(Self {
             name: v.string(Self::NAME, "_name")?,
             tag_list: v.object_ref(Self::TAG_LIST, "_tagList")?,

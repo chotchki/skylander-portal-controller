@@ -85,6 +85,20 @@ doc = false
 bench = false
 
 [[bin]]
+name = "level"
+path = "fuzz_targets/level.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "collision"
+path = "fuzz_targets/collision.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "havok"
 path = "fuzz_targets/havok.rs"
 test = false

@@ -3,8 +3,10 @@
 //! - Packfile: big-endian, 4-byte pointers, local, global and virtual fixups.
 //! - Classes ([`Container`]) at Kovah's 2011.2 offsets, pinned by signature.
 //! - Clips ([`spline`]): one block, mask 0x45, little-endian; others refused.
+//! - Physics ([`physics`], AG.2): a level's collision mesh.
 
 mod classes;
+pub mod physics;
 pub mod qs;
 pub mod spline;
 
