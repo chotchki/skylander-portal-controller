@@ -22,6 +22,7 @@ use guac_ir::{
     VoiceTrack,
 };
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use crate::census::MAX_WHOLE_ARCHIVE;
 use crate::error::{ExtractError, Result};
@@ -414,6 +415,26 @@ impl IrFormat {
             path: dir.path().join(rel),
             source: std::io::Error::other(e),
         })
+    }
+}
+
+impl IrFormat {
+    /// `rel` in `dir` read back out of the IR's envelope, refused when it
+    /// won't read or decode.
+    pub fn decode<T: DeserializeOwned>(self, dir: &IdentityDir, rel: &str) -> Result<T> {
+        let path = dir.path().join(rel);
+        let bytes = fs::read(&path).map_err(ExtractError::io(&path))?;
+        let bad = |why: String| ExtractError::Io {
+            path: path.clone(),
+            source: std::io::Error::other(why),
+        };
+        match self {
+            Self::Ron => {
+                let text = std::str::from_utf8(&bytes).map_err(|e| bad(e.to_string()))?;
+                guac_ir::from_ron(text).map_err(|e| bad(e.to_string()))
+            }
+            Self::Postcard => guac_ir::from_postcard(&bytes).map_err(|e| bad(e.to_string())),
+        }
     }
 }
 

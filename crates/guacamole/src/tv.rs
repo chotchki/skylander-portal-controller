@@ -1636,7 +1636,7 @@ pub(crate) mod layout_tests {
 
     pub(crate) fn placement(name: &str, owner: Option<&str>) -> Placement {
         let figure_id = FigureId::new("000009-0000");
-        let (toy_type, variant) = figure_id.tag_parts().unwrap();
+        let (toy_type, variant) = figure_id.subtype_parts().unwrap();
         Placement {
             figure_id,
             toy_type,

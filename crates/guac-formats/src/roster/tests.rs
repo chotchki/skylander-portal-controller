@@ -169,6 +169,34 @@ fn the_sample_composes_every_row() {
 }
 
 #[test]
+fn every_row_carries_its_toys_sky1_flag() {
+    let r = read(&disc(&sample())).unwrap();
+    let sky1: Vec<(String, bool)> = r.figures.iter().map(|f| (f.id(), f.sky1)).collect();
+    let flagged = |id: &str| sky1.iter().find(|(i, _)| i == id).unwrap().1;
+    // Whirlwind's base, Series 2 and alt rows; Dark Spyro, a toy of its own;
+    // Volcanic Vault, a flagged item.
+    for id in [
+        "000000-0000",
+        "000000-0800",
+        "000000-0402",
+        "00001c-0000",
+        "000130-0000",
+    ] {
+        assert!(flagged(id), "{id}");
+    }
+    // Jet-Vac and its rows, Tree Rex, an unflagged item and a sidekick.
+    for id in [
+        "000064-0000",
+        "000064-0403",
+        "000070-0402",
+        "0000c8-0000",
+        "000202-0000",
+    ] {
+        assert!(!flagged(id), "{id}");
+    }
+}
+
+#[test]
 fn debug_is_dropped() {
     let r = read(&disc(&sample())).unwrap();
     assert!(r.figures.iter().all(|f| f.toy_type != DEBUG_TOY as u32));
@@ -295,6 +323,7 @@ fn ids_are_six_and_four_hex_digits() {
         category: Category::Figure,
         level_load: 0,
         portrait: None,
+        sky1: false,
     };
     assert_eq!(f.id(), "0001a0-0603");
 }

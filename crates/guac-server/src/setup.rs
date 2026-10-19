@@ -79,7 +79,7 @@ impl Loaded {
 }
 
 /// Dev reads `.env.dev` over the stored settings; release reads none.
-/// Never requires `RPCS3_EXE` or `FIRMWARE_PACK_ROOT`.
+/// Never requires `RPCS3_EXE` or `FIRMWARE_PACK_ROOT`, and never reads `DATA_ROOT`.
 pub fn load(root: &Path) -> Result<Loaded> {
     load_with(root, &env())
 }
@@ -141,7 +141,6 @@ pub fn load_with(root: &Path, env: &HashMap<String, String>) -> Result<Loaded> {
     let phone_dist_dir = path_or("PHONE_DIST", "phone/dist", || {
         crate::paths::app_asset_dir().join("phone-dist")
     });
-    let data_root = path_or("DATA_ROOT", "data", crate::paths::app_data_root);
     let log_dir = log_dir(root);
     let hmac_key = stored.pairing_key.unwrap_or_else(generate_key);
     let dev_value = |key: &str| env.get(key).filter(|_| dev).cloned();
@@ -167,7 +166,9 @@ pub fn load_with(root: &Path, env: &HashMap<String, String>) -> Result<Loaded> {
             render_2x: false,
             log_dir,
             phone_dist_dir,
-            data_root,
+            // The committed wiki data is the product's; guacamole's figures
+            // and art come off the disc (AE.4), so it reads no DATA_ROOT.
+            data_root: PathBuf::new(),
             hmac_key,
         },
         dump_dirs,

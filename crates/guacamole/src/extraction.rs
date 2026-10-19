@@ -4,7 +4,8 @@
 //! channel. Cards don't wait on it: the portal screen draws [`band`] in its
 //! header while the thread runs or after it fails. The stages run in
 //! guac-extract's order (AE.3): the roster and its portraits, then ffmpeg and
-//! the intros.
+//! the intros. The roster goes on the server's figure list the moment it
+//! lands, or at start when the extract is already current (AE.4).
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -17,7 +18,8 @@ use guac_extract::known::{KNOWN_DUMPS, KnownDump};
 use guac_extract::stages::{self, Event};
 use guac_extract::transcode::{Done, Step, TranscodeEvent};
 use guac_extract::{DirState, ExtractError, ExtractRoot, IdentityDir, RootMode};
-use guac_ir::CharacterTable;
+use guac_ir::{CharacterTable, Roster};
+use guac_server::figures::{FigureList, FigureSet, RosterState};
 use tracing::{error, info, warn};
 
 use crate::screen::TvScreen;
@@ -33,6 +35,9 @@ pub struct ExtractJob {
     /// `test-hooks` only: the e2e harness's synthetic dump, trusted beside
     /// [`KNOWN_DUMPS`] (`GUAC_TEST_KNOWN_DUMP`).
     pub test_known: Option<KnownDump>,
+    /// The server's figure list, where the roster goes when it lands (AE.4);
+    /// `None` when the server didn't come up.
+    pub figures: Option<FigureList>,
 }
 
 impl ExtractJob {
@@ -51,6 +56,7 @@ impl ExtractJob {
             ffmpeg,
             ir,
             test_known: None,
+            figures: None,
         }
     }
 
@@ -430,8 +436,14 @@ pub fn run(
         "giants dump identified"
     );
     if opened.state == DirState::Current {
-        match load_table(&opened.dir, job.ir) {
-            Ok(table) => {
+        let loaded = load_table(&opened.dir, job.ir).and_then(|table| {
+            let roster =
+                guac_extract::roster::load(&opened.dir, job.ir).map_err(|e| e.to_string())?;
+            Ok((table, roster))
+        });
+        match loaded {
+            Ok((table, roster)) => {
+                publish(job, &roster, opened.dir.path());
                 return Ok(Ready {
                     library: IntroLibrary {
                         dir: opened.dir.path().to_path_buf(),
@@ -444,6 +456,7 @@ pub fn run(
             Err(why) => warn!("the current extract's IR didn't load, redoing it: {why}"),
         }
     }
+    let dir = opened.dir.path().to_path_buf();
     let extracted = stages::run(
         &mut opened.dir,
         job.ffmpeg.as_deref(),
@@ -451,9 +464,7 @@ pub fn run(
         &|e| match e {
             Event::ReadingRoster => send(ExtractEvent::Roster { done: 0, total: 0 }),
             Event::Portraits { done, total } => send(ExtractEvent::Roster { done, total }),
-            Event::RosterReady(roster) => {
-                info!(figures = roster.figures.len(), "roster ready");
-            }
+            Event::RosterReady(roster) => publish(job, &roster, &dir),
             Event::Indexing => send(ExtractEvent::Indexing),
             Event::Transcode(e) => {
                 if let Step::Done(done) = &e.step {
@@ -498,6 +509,55 @@ pub fn run(
         ran: true,
         took: started.elapsed(),
     })
+}
+
+/// Puts a landed roster on the server's figure list, its portraits under
+/// `dir`, the identity dir (AE.4).
+fn publish(job: &ExtractJob, roster: &Roster, dir: &Path) {
+    let Some(figures) = &job.figures else {
+        return;
+    };
+    figures.publish(FigureSet::from_roster(roster, dir));
+    info!(figures = roster.figures.len(), "roster published");
+}
+
+/// At start, the roster of a current extract of `dump`, published on a thread
+/// of its own (AE.4): no phone can have picked a game yet. It reads only the
+/// dump's listing, the manifest and the roster, writes nothing, and leaves
+/// anything short of a current extract to the first Giants pick.
+pub fn preload_roster(dump: PathBuf, job: ExtractJob) {
+    let spawned = std::thread::Builder::new()
+        .name("roster".into())
+        .spawn(move || {
+            let started = Instant::now();
+            let found = ExtractRoot::resolve(job.root.clone())
+                .and_then(|root| guac_extract::find_current(&dump, &root, &job.known()));
+            match found {
+                Ok(Some(dir)) => match guac_extract::roster::load(&dir, job.ir) {
+                    Ok(roster) => {
+                        publish(&job, &roster, dir.path());
+                        info!(
+                            took_ms = started.elapsed().as_millis() as u64,
+                            "start-time roster from the current extract"
+                        );
+                    }
+                    Err(e) => warn!("the current extract's roster didn't load: {e}"),
+                },
+                Ok(None) => info!("no current extract; the roster lands with the Giants pick"),
+                Err(e) => info!(code = e.code(), "no start-time roster: {e}"),
+            }
+        });
+    if let Err(e) = spawned {
+        warn!("couldn't start the roster thread: {e}");
+    }
+}
+
+/// The roster state a failed extraction leaves while no roster has landed.
+pub fn roster_state_after(f: &Failure) -> RosterState {
+    match f {
+        Failure::UnknownDump { .. } => RosterState::Unrecognized,
+        _ => RosterState::Unreadable,
+    }
 }
 
 /// The table a current extract holds, if it reads and names its dump.
@@ -592,14 +652,22 @@ fn start_on_pick(
     {
         return;
     }
+    let figures = job.as_ref().and_then(|j| j.figures.clone());
     let (Some(job), Some(dump)) = (job, setup.0.giants_dir.clone()) else {
         extraction.status = ExtractStatus::Failed(Failure::Other {
             code: "GUAC-E-NO-GIANTS-DUMP".into(),
             message: "setup found no Giants dump to extract from".into(),
         });
+        if let Some(figures) = figures {
+            figures.set_roster_state(RosterState::Unrecognized);
+        }
         warn!("giants picked with no dump or no extract settings");
         return;
     };
+    // A folder picked after start can bring the dump: the roster's on its way.
+    if let Some(figures) = figures {
+        figures.set_roster_state(RosterState::Reading);
+    }
     info!(dump = %dump.display(), root = ?job.root, "extraction starting");
     extraction.status = ExtractStatus::Starting;
     extraction.started = Some(Instant::now());
@@ -624,6 +692,7 @@ fn next_event(feed: &Receiver<ExtractEvent>) -> Option<ExtractEvent> {
 
 fn drain_extraction(
     mut commands: Commands,
+    job: Option<Res<ExtractJob>>,
     mut extraction: ResMut<Extraction>,
     mut drawn: ResMut<ExtractBand>,
 ) {
@@ -649,7 +718,13 @@ fn drain_extraction(
                     );
                     commands.insert_resource(ready.library);
                 }
-                Err(f) => warn!(code = f.code(), "extraction failed: {f:?}"),
+                Err(f) => {
+                    warn!(code = f.code(), "extraction failed: {f:?}");
+                    // No-op once the roster has landed (a missing ffmpeg).
+                    if let Some(figures) = job.as_ref().and_then(|j| j.figures.as_ref()) {
+                        figures.set_roster_state(roster_state_after(&f));
+                    }
+                }
             }
         }
     }
@@ -943,9 +1018,18 @@ mod tests {
             feed: Some(rx),
             ..Default::default()
         })
+        .insert_resource(ExtractJob {
+            figures: Some(FigureList::new(FigureSet::waiting(RosterState::Reading))),
+            ..ExtractJob::new(Path::new("/r"), None, None)
+        })
         .init_resource::<ExtractBand>()
         .add_systems(Update, drain_extraction);
         app
+    }
+
+    fn roster_state(app: &App) -> Option<RosterState> {
+        let job = app.world().resource::<ExtractJob>();
+        job.figures.as_ref().unwrap().now().roster()
     }
 
     fn hashing() -> ExtractEvent {
@@ -977,6 +1061,8 @@ mod tests {
         assert_eq!(f.code(), "GUAC-E-EXTRACT-IO");
         let drawn = app.world().resource::<ExtractBand>();
         assert!(drawn.0.is_some(), "the failure draws its band");
+        // No roster came: the phone's note says it couldn't be read.
+        assert_eq!(roster_state(&app), Some(RosterState::Unreadable));
     }
 
     #[test]
@@ -1156,7 +1242,13 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
             ffmpeg,
             ir: IrFormat::Ron,
             test_known: None,
+            figures: Some(FigureList::new(FigureSet::waiting(RosterState::Reading))),
         }
+    }
+
+    /// The figure list `job` publishes to, as it is now.
+    fn listed(job: &ExtractJob) -> std::sync::Arc<FigureSet> {
+        job.figures.as_ref().unwrap().now()
     }
 
     fn run_all(
@@ -1188,6 +1280,9 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
         let mut kinds: Vec<&str> = seen.iter().map(ExtractStatus::kind).collect();
         kinds.dedup();
         assert_eq!(kinds, ["Checking", "Roster", "Indexing", "Converting"]);
+        // The roster went on the list before the intros failed (AE.4).
+        assert_eq!(listed(&job).roster(), Some(RosterState::Ready));
+        assert_eq!(listed(&job).figures().len(), 24);
         assert!(
             seen.contains(&ExtractStatus::Roster {
                 done: 24,
@@ -1229,12 +1324,93 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
         assert!(dir.join("ir/roster.ron").is_file());
         assert!(dir.join("portraits/000064-0000.png").is_file());
 
-        // A restart: current, loaded from the IR, nothing converted.
-        let (result, seen) = run_all(&dump, &job, &known);
+        // A restart: current, loaded from the IR, nothing converted, and
+        // the roster published off the extract.
+        let restarted = ExtractJob {
+            figures: Some(FigureList::new(FigureSet::waiting(RosterState::Reading))),
+            ..job.clone()
+        };
+        let (result, seen) = run_all(&dump, &restarted, &known);
         let again = result.unwrap();
         assert!(!again.ran);
         assert_eq!(again.library, ready.library);
         assert!(seen.iter().all(|s| s.kind() == "Checking"), "{seen:?}");
+        let set = listed(&restarted);
+        assert_eq!(set.figures().len(), 24);
+        let jet_vac = skylander_core::FigureId::new("000064-0000");
+        assert_eq!(
+            set.portrait(&jet_vac),
+            Some(dir.join("portraits/000064-0000.png").as_path())
+        );
+    }
+
+    /// AE.4: at start, a current extract's roster lands with no pick; one
+    /// that isn't complete leaves the list waiting for the pick.
+    #[test]
+    fn a_start_preloads_only_a_current_extracts_roster() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dump = make_dump(tmp.path());
+        let known = known_for(&dump);
+        let extract = tmp.path().join("extract");
+        let k = known[0];
+        let trusted = |job: ExtractJob| ExtractJob {
+            test_known: Some(k),
+            ..job
+        };
+        let wait = |job: &ExtractJob, want: usize| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while listed(job).figures().len() != want {
+                assert!(Instant::now() < deadline, "{:?}", job.figures);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+
+        // Nothing extracted, then the roster stage alone: no ffmpeg.
+        let missing = tmp.path().join("nope/ffmpeg");
+        let early = trusted(job(&extract, None));
+        preload_roster(dump.clone(), early.clone());
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(listed(&early).roster(), Some(RosterState::Reading));
+        let (result, _) = run_all(&dump, &job(&extract, Some(missing)), &known);
+        assert!(result.is_err());
+        let partial = trusted(job(&extract, None));
+        preload_roster(dump.clone(), partial.clone());
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(listed(&partial).is_waiting(), "an incomplete extract");
+
+        let ffmpeg = fake_ffmpeg(&tmp.path().join("bin"));
+        run_all(&dump, &job(&extract, Some(ffmpeg)), &known)
+            .0
+            .unwrap();
+        let start = trusted(job(&extract, None));
+        preload_roster(dump.clone(), start.clone());
+        wait(&start, 24);
+        assert_eq!(listed(&start).roster(), Some(RosterState::Ready));
+    }
+
+    #[test]
+    fn a_failure_before_the_roster_says_why_on_the_list() {
+        let report = PathBuf::from("/x/report.txt");
+        assert_eq!(
+            roster_state_after(&Failure::UnknownDump { report }),
+            RosterState::Unrecognized
+        );
+        for f in [
+            Failure::DumpUnreadable {
+                path: "/d".into(),
+                reason: "gone".into(),
+            },
+            Failure::Other {
+                code: "GUAC-E-ROSTER-UNREADABLE".into(),
+                message: "init_setup".into(),
+            },
+            Failure::Other {
+                code: "GUAC-E-NO-EXTRACT-DIR".into(),
+                message: "unset".into(),
+            },
+        ] {
+            assert_eq!(roster_state_after(&f), RosterState::Unreadable, "{f:?}");
+        }
     }
 
     #[test]

@@ -50,8 +50,8 @@ pub async fn edit_figure(
     let figure_id_key = FigureId(figure_id.clone());
 
     // 1. Look up figure in catalog.
-    let figure = match state.figures.iter().find(|f| f.id == figure_id_key) {
-        Some(f) => f.clone(),
+    let figure = match state.lookup_figure(&figure_id_key) {
+        Some(f) => f,
         None => {
             return (StatusCode::NOT_FOUND, "figure not in catalog").into_response();
         }
@@ -191,8 +191,8 @@ pub async fn reset_figure(
 ) -> Response {
     let figure_id_key = FigureId(figure_id.clone());
 
-    let figure = match state.figures.iter().find(|f| f.id == figure_id_key) {
-        Some(f) => f.clone(),
+    let figure = match state.lookup_figure(&figure_id_key) {
+        Some(f) => f,
         None => {
             return (StatusCode::NOT_FOUND, "figure not in catalog").into_response();
         }

@@ -219,6 +219,50 @@ pub fn open(
     })
 }
 
+/// A complete extract of `dump_dir` under `root` at this layout and IR
+/// version, found without reading the dump's files or writing anything, so it
+/// can run beside a pick's [`open`] of the same dir (AE.4's start-time roster).
+/// `None` when there's none, when it isn't complete, or when telling would
+/// mean hashing: a file no earlier manifest of this dump vouches for. The dir
+/// comes back for reading; writes belong to whoever [`open`]s it.
+pub fn find_current(
+    dump_dir: &Path,
+    root: &ExtractRoot,
+    known: &[KnownDump],
+) -> Result<Option<IdentityDir>> {
+    if let Some(repo) = root::enclosing_git_tree(root.path()) {
+        return Err(ExtractError::InCheckout {
+            root: root.path().to_path_buf(),
+            repo,
+        });
+    }
+    let dump_dir = dump_dir
+        .canonicalize()
+        .map_err(|e| ExtractError::unreadable(dump_dir, e))?;
+    let source_dir = dump_dir.to_string_lossy().into_owned();
+    let (title_id, app_ver) = dump::read_sfo(&dump_dir)?;
+    let cache = load_cache(root.path(), &title_id, &app_ver, &source_dir);
+    if cache.is_empty() {
+        return Ok(None);
+    }
+    let Some(scan) = dump::scan_cached(&dump_dir, &cache)? else {
+        return Ok(None);
+    };
+    if known::lookup(known, &scan.identity).is_none() {
+        return Ok(None);
+    }
+    let path = root.path().join(dir_name(&scan.identity));
+    let Ok(manifest) = read_manifest(&path, &scan.identity) else {
+        return Ok(None);
+    };
+    let current = manifest.complete
+        && manifest
+            .transcode
+            .as_ref()
+            .is_none_or(|t| t.target == crate::transcode::TARGET.tag());
+    Ok(current.then_some(IdentityDir { path, manifest }))
+}
+
 fn read_manifest(dir: &Path, id: &DumpIdentity) -> Result<Manifest, Stale> {
     let text = fs::read_to_string(dir.join(MANIFEST)).map_err(|_| Stale::Unusable)?;
     let probe: VersionProbe = serde_json::from_str(&text).map_err(|_| Stale::Unusable)?;

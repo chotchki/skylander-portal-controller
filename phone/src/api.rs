@@ -36,7 +36,8 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{Request, RequestInit, Response};
 
 use crate::model::{
-    GameLaunched, InstalledGame, PublicFigure, PublicProfile, ServerApp, UnlockedProfile,
+    GameLaunched, InstalledGame, PublicFigure, PublicProfile, RosterState, ServerApp,
+    UnlockedProfile,
 };
 
 // Session-id storage shared between `ws.rs` (writes it on `Event::Welcome`)
@@ -449,6 +450,9 @@ pub struct StatusBody {
     /// Missing from a server that predates it: the product.
     #[serde(default)]
     pub app: ServerApp,
+    /// guacamole's roster state (AE.4); the product sends none.
+    #[serde(default)]
+    pub roster: Option<RosterState>,
 }
 
 pub async fn fetch_status() -> Option<StatusBody> {

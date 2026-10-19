@@ -6,13 +6,13 @@ pub mod boot;
 pub mod config;
 pub mod dumps;
 pub mod embedded_assets;
+pub mod figures;
 pub mod firewall;
 pub mod hooks;
 pub mod http;
 pub mod kaos;
 pub mod logging;
 pub mod mdns;
-pub mod native_catalogue;
 #[cfg(test)]
 mod native_tests;
 pub mod paths;

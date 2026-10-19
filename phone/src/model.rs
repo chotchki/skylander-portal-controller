@@ -78,6 +78,32 @@ impl ServerApp {
     }
 }
 
+/// Where guacamole's figure list stands, from `/api/status`'s `roster`
+/// (openspec AE.4); the product sends none. Until `Ready` the collection is
+/// empty and says why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RosterState {
+    Reading,
+    Unrecognized,
+    Unreadable,
+    Ready,
+}
+
+impl RosterState {
+    /// What the empty collection says, or `None` once the figures are there.
+    pub fn note(self) -> Option<&'static str> {
+        match self {
+            Self::Reading => Some("Reading the figures off your disc\u{2026}"),
+            Self::Unrecognized => {
+                Some("This Giants disc isn't one guacamole recognizes, so there are no figures.")
+            }
+            Self::Unreadable => Some("The figures couldn't be read off your disc."),
+            Self::Ready => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Category {

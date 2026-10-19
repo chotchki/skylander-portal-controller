@@ -20,6 +20,8 @@
 //!   the rest Figure. An alt or variant row takes its toy's.
 //! - Element: the call's value, 0-7; 0 on an Item or AdventurePack is the
 //!   macro's default and reads as none.
+//! - sky1: the toy's "is sky1 character" flag, carried on all its rows; the
+//!   server reads a Spyro's Adventure toy's base off it (AE.4).
 //! - Portraits: `misc/ui_collection_champions.bld`'s eight `Collection_*`
 //!   sprite sets, each in toy-id order, matched by the toy id in the sprite's
 //!   name; the old legendaries' set by position against the alt-character
@@ -118,6 +120,9 @@ pub struct Figure {
     /// The level load key; its text is the file the figure loads.
     pub level_load: Key,
     pub portrait: Option<usize>,
+    /// The toy's "is sky1 character" flag, on every row of the toy: a
+    /// Spyro's Adventure toy.
+    pub sky1: bool,
 }
 
 impl Figure {
@@ -335,6 +340,7 @@ pub fn figures(
             category: cat,
             level_load,
             portrait,
+            sky1: toy.sky1,
         };
         let item = matches!(
             cat,

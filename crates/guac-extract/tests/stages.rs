@@ -364,3 +364,88 @@ fn a_roster_that_doesnt_read_stops_the_run_before_ffmpeg() {
     let m = manifest_on_disk(opened.dir.path());
     assert!(m.outputs.is_empty() && !m.complete);
 }
+
+/// Every file under `dir` with its bytes and modified time.
+fn tree(dir: &Path) -> Vec<(PathBuf, Vec<u8>, std::time::SystemTime)> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for entry in fs::read_dir(&d).unwrap() {
+            let p = entry.unwrap().path();
+            if p.is_dir() {
+                stack.push(p);
+            } else {
+                let modified = fs::metadata(&p).unwrap().modified().unwrap();
+                out.push((p.clone(), fs::read(&p).unwrap(), modified));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// AE.4's start-time lookup: a complete extract is found and its roster
+/// loads, with nothing read off the dump but its PARAM.SFO and listing and
+/// nothing written; anything short of complete is no extract at all.
+#[test]
+fn a_current_extract_is_found_without_writing_and_its_roster_loads() {
+    let s = setup();
+    // Nothing extracted yet: no manifest vouches for the dump's files.
+    assert!(
+        guac_extract::find_current(&s.dump, &s.root, &s.known)
+            .unwrap()
+            .is_none()
+    );
+
+    // The roster stage alone: not complete, so not current.
+    let missing = s.ffmpeg.with_file_name("missing-ffmpeg");
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    let dir = opened.dir.path().to_path_buf();
+    let done = stages::run(&mut opened.dir, Some(&missing), IrFormat::Ron, &|_| {}).unwrap();
+    assert!(done.intros.is_err());
+    assert!(
+        guac_extract::find_current(&s.dump, &s.root, &s.known)
+            .unwrap()
+            .is_none()
+    );
+
+    let mut again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    let before = tree(s.root.path());
+    let found = guac_extract::find_current(&s.dump, &s.root, &s.known)
+        .unwrap()
+        .expect("a complete extract");
+    assert_eq!(found.path(), dir);
+    let roster = guac_extract::roster::load(&found, IrFormat::Ron).unwrap();
+    assert_eq!(roster, *done.roster.roster);
+    assert_eq!(tree(s.root.path()), before, "the lookup wrote something");
+
+    // A dump file changed since: telling would mean hashing, so no.
+    let movie = s.dump.join("PS3_GAME/USRDIR/movies/jetvac.mov");
+    fs::write(&movie, b"jetvac bink, edited").unwrap();
+    assert!(
+        guac_extract::find_current(&s.dump, &s.root, &s.known)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn a_roster_naming_another_dump_or_unreadable_is_refused() {
+    let s = setup();
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    let dir = opened.dir.path().to_path_buf();
+    let done = stages::run(&mut opened.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    let found = guac_extract::find_current(&s.dump, &s.root, &s.known)
+        .unwrap()
+        .unwrap();
+
+    let mut other = (*done.roster.roster).clone();
+    other.identity.app_ver = "01.02".into();
+    fs::write(dir.join("ir/roster.ron"), guac_ir::to_ron(&other).unwrap()).unwrap();
+    let e = guac_extract::roster::load(&found, IrFormat::Ron).unwrap_err();
+    assert!(e.to_string().contains("names another dump"), "{e}");
+
+    fs::write(dir.join("ir/roster.ron"), b"(not a roster)").unwrap();
+    assert!(guac_extract::roster::load(&found, IrFormat::Ron).is_err());
+}

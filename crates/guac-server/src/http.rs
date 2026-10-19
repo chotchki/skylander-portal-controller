@@ -20,6 +20,7 @@ use tracing::{debug, info, warn};
 
 use skylander_core::InstalledGame;
 
+use crate::figures::{FigureSet, RosterState};
 use crate::hooks::SettingsWriteError;
 use crate::profiles::{LockoutCheck, MAX_PROFILES, PublicProfile, RegistrationOutcome, SessionId};
 use crate::state::{AppState, DriverJob};
@@ -404,8 +405,10 @@ async fn list_figures(
     // handler computed a `compat` boolean and only used it as a sort
     // key, so newer-game figures still showed up under the supported
     // ones in earlier games — which the phone presented as playable.
-    let mut figs: Vec<(Option<String>, PublicFigure)> = state
-        .figures
+    // guacamole's is empty until its roster lands (AE.4); `/api/status` says why.
+    let figures = state.figures.now();
+    let mut figs: Vec<(Option<String>, PublicFigure)> = figures
+        .figures()
         .iter()
         .filter(|f| match current_game {
             Some(cg) => skylander_core::is_compatible(f.game, f.category, cg),
@@ -442,10 +445,11 @@ struct ImageQuery {
 
 /// GET /api/figures/:id/image?size=thumb|hero
 ///
-/// Serves the scraped wiki hero portrait from
-/// `<data_root>/images/<id>/<size>.png`. Falls back to the firmware-pack's
-/// element-symbol PNG when the scrape didn't land a match. Returns 404 only
-/// if neither exists.
+/// The product serves the scraped wiki hero portrait from
+/// `<data_root>/images/<id>/<size>.png`, falling back to the firmware-pack's
+/// element-symbol PNG when the scrape didn't land a match, and 404s only if
+/// neither exists. guacamole serves the disc's portrait the roster stage
+/// extracted, for either size, or 404 (AE.4).
 async fn figure_image(
     State(state): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
@@ -467,11 +471,22 @@ async fn figure_image(
         }
     };
 
-    // Native serves only the catalogue's portraits (a supplemented figure has none).
-    if matches!(state.driver_kind, crate::config::DriverKind::Native)
-        && crate::native_catalogue::portrait(&state.data_root, &FigureId::new(&id)).is_none()
-    {
-        return (StatusCode::NOT_FOUND, "no image available").into_response();
+    if ServingApp::of(state.driver_kind) == ServingApp::Guacamole {
+        let portrait = state
+            .figures
+            .now()
+            .portrait(&FigureId::new(&id))
+            .map(std::path::Path::to_path_buf);
+        return match portrait {
+            Some(path) => match tokio::fs::read(&path).await {
+                Ok(bytes) => image_response(bytes),
+                Err(e) => {
+                    warn!(path = %path.display(), "portrait unreadable: {e}");
+                    (StatusCode::NOT_FOUND, "no image available").into_response()
+                }
+            },
+            None => (StatusCode::NOT_FOUND, "no image available").into_response(),
+        };
     }
 
     let scraped = state
@@ -589,15 +604,36 @@ async fn join_qr(State(state): State<Arc<AppState>>) -> Response {
 
 /// GET /api/games/:serial/image
 ///
-/// Serves the scraped box-art PNG from `<data_root>/games/<serial>.png` for
-/// the phone's game-picker cards. Box art is optional polish — a miss returns
-/// 404 with no fallback (cards render fine without an image thanks to their
-/// per-slug CSS gradient).
+/// The phone's game-picker art. The product serves the scraped box-art PNG
+/// from `<data_root>/games/<serial>.png`; guacamole the found dump's own
+/// `PS3_GAME/ICON0.PNG`, read in place (AE.4). Box art is optional polish — a
+/// miss returns 404 with no fallback (cards render fine without an image
+/// thanks to their per-slug CSS gradient).
 async fn game_image(
     State(state): State<Arc<AppState>>,
     AxumPath(serial): AxumPath<String>,
 ) -> Response {
-    serve_game_image(&state.data_root, &serial).await
+    match ServingApp::of(state.driver_kind) {
+        ServingApp::Product => serve_game_image(&state.data_root, &serial).await,
+        ServingApp::Guacamole => serve_disc_icon(&state, &serial).await,
+    }
+}
+
+/// guacamole's art: the offered game's dump icon, or 404.
+async fn serve_disc_icon(state: &AppState, serial: &str) -> Response {
+    if !is_valid_ps3_serial(serial) {
+        return (StatusCode::BAD_REQUEST, "bad game serial").into_response();
+    }
+    let art = state
+        .lookup_game(&GameSerial::new(serial))
+        .and_then(|g| g.art);
+    match art {
+        Some(path) => match tokio::fs::read(&path).await {
+            Ok(bytes) => image_response(bytes),
+            Err(_) => (StatusCode::NOT_FOUND, "").into_response(),
+        },
+        None => (StatusCode::NOT_FOUND, "").into_response(),
+    }
 }
 
 /// Shared core of `game_image`, factored out so tests can exercise the
@@ -663,7 +699,7 @@ async fn load_slot(
         Err(e) => return (StatusCode::BAD_REQUEST, format!("bad load body: {e}")).into_response(),
     };
     let figure = match state.lookup_figure(&body.figure_id) {
-        Some(f) => f.clone(),
+        Some(f) => f,
         None => return (StatusCode::NOT_FOUND, "unknown figure_id").into_response(),
     };
     let figure_id = figure.id.clone();
@@ -784,7 +820,7 @@ async fn reset_slot(
         Err(e) => return (StatusCode::BAD_REQUEST, format!("bad reset body: {e}")).into_response(),
     };
     let figure = match state.lookup_figure(&body.figure_id) {
-        Some(f) => f.clone(),
+        Some(f) => f,
         None => return (StatusCode::NOT_FOUND, "unknown figure_id").into_response(),
     };
 
@@ -922,6 +958,10 @@ struct StatusBody {
     /// Which app is serving, so the phone can apply guacamole's portal rule
     /// and leave out what guacamole doesn't have (openspec AA.18, AA.19).
     app: ServingApp,
+    /// guacamole's roster state, so the phone's collection says why it's
+    /// empty and polls until `ready` (AE.4); absent on the product.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    roster: Option<RosterState>,
 }
 
 /// The app behind the router. guacamole is the only one that runs the
@@ -984,6 +1024,7 @@ async fn get_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         rpcs3_running: rpcs3.process.is_some(),
         current_game: rpcs3.current.clone(),
         app: ServingApp::of(state.driver_kind),
+        roster: state.figures.now().roster(),
     })
 }
 
@@ -2248,7 +2289,8 @@ async fn build_resume_prompt(
         }
     };
     let held = |slots: &[SlotState]| slots.iter().filter(|s| !s.is_empty()).count();
-    let slots = ServingApp::of(state.driver_kind).resumable(saved.clone(), profile_id);
+    let app = ServingApp::of(state.driver_kind);
+    let mut slots = app.resumable(saved.clone(), profile_id);
     if held(&slots) < held(&saved) {
         info!(
             profile_id,
@@ -2260,7 +2302,95 @@ async fn build_resume_prompt(
     if slots.iter().all(|s| matches!(s, SlotState::Empty)) {
         return None;
     }
+    if app == ServingApp::Guacamole {
+        // The layout places by id, so it waits for the roster (AE.4); the
+        // lock keeps a roster landing now from missing this hold.
+        let mut waiting = state.held_resumes.lock().await;
+        let figures = state.figures.now();
+        if figures.is_waiting() {
+            if !waiting
+                .iter()
+                .any(|(s, p)| *s == session_id && p == profile_id)
+            {
+                waiting.push((session_id, profile_id.to_owned()));
+            }
+            info!(
+                profile_id,
+                roster = ?figures.roster(),
+                "resume held until the roster lands"
+            );
+            return None;
+        }
+        drop(waiting);
+        slots = known_only(slots, &figures, profile_id);
+        if slots.iter().all(|s| matches!(s, SlotState::Empty)) {
+            return None;
+        }
+    }
     Some(Event::ResumePrompt { session_id, slots })
+}
+
+/// `slots` with every figure the list doesn't know taken out, each logged:
+/// an id from before the roster that no migration rewrote, say (AE.4).
+fn known_only(
+    slots: [SlotState; SLOT_COUNT],
+    figures: &FigureSet,
+    profile_id: &str,
+) -> [SlotState; SLOT_COUNT] {
+    let mut out = slots;
+    for (i, slot) in out.iter_mut().enumerate() {
+        if let SlotState::Loaded {
+            figure_id: Some(id),
+            ..
+        } = slot
+            && figures.get(id).is_none()
+        {
+            warn!(
+                profile_id,
+                slot = i + 1,
+                figure = id.as_str(),
+                "resume skips a figure the roster doesn't know"
+            );
+            *slot = SlotState::Empty;
+        }
+    }
+    out
+}
+
+/// Sends guacamole's held resume prompts once the roster lands (AE.4); the
+/// product holds none, so it runs nothing.
+pub(crate) fn spawn_resume_release(state: Arc<AppState>) {
+    if ServingApp::of(state.driver_kind) != ServingApp::Guacamole {
+        return;
+    }
+    let mut landed = state.figures.subscribe();
+    tokio::spawn(async move {
+        loop {
+            let ready = !landed.borrow_and_update().is_waiting();
+            if ready {
+                release_held_resumes(&state).await;
+            }
+            if landed.changed().await.is_err() {
+                break;
+            }
+        }
+    });
+}
+
+/// Every held prompt whose session still has that profile unlocked.
+async fn release_held_resumes(state: &Arc<AppState>) {
+    let held = std::mem::take(&mut *state.held_resumes.lock().await);
+    for (session_id, profile_id) in held {
+        let now = state.sessions.profile_of(SessionId(session_id)).await;
+        if now.as_deref() != Some(profile_id.as_str()) {
+            continue;
+        }
+        info!(
+            session_id,
+            profile_id, "roster landed: the held resume goes out"
+        );
+        maybe_send_resume_prompt(state, session_id, &profile_id).await;
+    }
 }
 
 /// Convenience wrapper that builds + broadcasts. Used from REST handlers
@@ -2758,7 +2888,7 @@ async fn fire_kaos_swap_testhook(
     match crate::kaos::select_swap(
         current_game,
         &portal,
-        &state.figures,
+        state.figures.now().figures(),
         &body.profile_id,
         &mut rng,
     ) {

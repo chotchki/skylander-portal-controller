@@ -178,7 +178,7 @@ mod tests {
     use guac_server::profiles::ProfileStore;
     use guac_server::state::{DriverJob, LauncherStatus, RpcsLifecycle, spawn_driver_worker};
     use skylander_core::{
-        Category, Element, Event, Figure, FigureId, GameOfOrigin, MaskedVariant, ToyTypeId,
+        Category, Element, Event, Figure, FigureId, GameOfOrigin, SubtypeWord, ToyTypeId,
     };
     use skylander_rpcs3_control::PlacementOwner;
     use tokio::sync::{Mutex as AsyncMutex, broadcast, mpsc};
@@ -186,7 +186,8 @@ mod tests {
     use super::*;
 
     const ERUPTOR: &str = "000009-0000";
-    const LEGENDARY_IGNITOR: &str = "00000a-0803";
+    /// The disc's id: bit 10, which the product's mask drops, kept (AE.4).
+    const LEGENDARY_IGNITOR: &str = "00000a-0403";
 
     fn slot(n: u8) -> SlotIndex {
         SlotIndex::new(n).unwrap()
@@ -210,7 +211,7 @@ mod tests {
 
     fn eruptor(owner: Option<&str>) -> Placement {
         let figure_id = FigureId::new(ERUPTOR);
-        let (toy_type, variant) = figure_id.tag_parts().unwrap();
+        let (toy_type, variant) = figure_id.subtype_parts().unwrap();
         Placement {
             figure_id,
             toy_type,
@@ -240,10 +241,11 @@ mod tests {
         let profiles = ProfileStore::open_in_memory(&guac_server::setup::MIGRATOR)
             .await
             .unwrap();
-        let figures = vec![
-            record(ERUPTOR, "Eruptor", Element::Fire),
-            record(LEGENDARY_IGNITOR, "Legendary Ignitor", Element::Fire),
-        ];
+        let figures =
+            guac_server::figures::FigureList::new(guac_server::figures::FigureSet::pack(vec![
+                record(ERUPTOR, "Eruptor", Element::Fire),
+                record(LEGENDARY_IGNITOR, "Legendary Ignitor", Element::Fire),
+            ]));
         let (events, _) = broadcast::channel::<Event>(64);
         let jobs = spawn_driver_worker(
             driver.clone(),
@@ -251,11 +253,10 @@ mod tests {
             events,
             profiles.clone(),
             Arc::default(),
-            Arc::new(figures),
+            figures,
             Arc::new(AsyncMutex::new(RpcsLifecycle::default())),
             PathBuf::new(),
             PathBuf::new(),
-            PathBuf::from("/nonexistent/guac-data"),
             Arc::new(std::sync::Mutex::new(LauncherStatus::default())),
             None,
         );
@@ -313,7 +314,7 @@ mod tests {
         assert_eq!(at, slot(0));
         assert_eq!(p.figure_id.as_str(), LEGENDARY_IGNITOR);
         assert_eq!(p.toy_type, ToyTypeId(0x0a));
-        assert_eq!(p.variant, MaskedVariant(0x0803));
+        assert_eq!(p.variant, SubtypeWord(0x0403));
         assert_eq!(p.name, "Legendary Ignitor");
         assert_eq!(p.element, Some(Element::Fire));
         let owner = p.owner.expect("an unlocked profile placed it");

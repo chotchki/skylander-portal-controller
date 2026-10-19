@@ -23,4 +23,9 @@ pub const SKYLANDERS_SERIALS: &[(&str, &str)] = &[
 pub struct InstalledGame {
     pub serial: GameSerial,
     pub display_name: String,
+    /// guacamole: the dump's own `PS3_GAME/ICON0.PNG`, the picker's art, read
+    /// in place (openspec AE.4). `None` on the product, whose art is the
+    /// committed box art. Server-private: never serialized.
+    #[serde(skip)]
+    pub art: Option<std::path::PathBuf>,
 }

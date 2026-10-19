@@ -107,6 +107,20 @@ impl std::fmt::Display for MaskedVariant {
     }
 }
 
+/// A figure's subtype word as Skylanders Giants keeps it (deco id in bits
+/// 0-7, LightCore 9, legendary 10, Series 2 11), with no mask applied:
+/// guacamole's variant (openspec AE, design decision 2). Apart from
+/// [`MaskedVariant`], which drops bit 10 and stays the product's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SubtypeWord(pub u16);
+
+impl std::fmt::Display for SubtypeWord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "0x{:04X}", self.0)
+    }
+}
+
 /// Canonical identity pair: toy type plus masked variant. Every pack
 /// figure's [`FigureId`] is built from it, and two tags with the same
 /// [`TagIdentity`] are the same canonical SKU (e.g. a pack-fresh Fire
@@ -167,6 +181,18 @@ impl FigureId {
     /// The toy type and masked variant of a tag-form id (`"0007d6-0000"`); `None`
     /// for any other form (`"sha:…"`).
     pub fn tag_parts(&self) -> Option<(ToyTypeId, MaskedVariant)> {
+        let (toy_type, variant) = self.parts()?;
+        Some((toy_type, MaskedVariant(variant)))
+    }
+
+    /// guacamole's reading of the same form: the toy type and the subtype
+    /// word as the id spells it, nothing masked.
+    pub fn subtype_parts(&self) -> Option<(ToyTypeId, SubtypeWord)> {
+        let (toy_type, variant) = self.parts()?;
+        Some((toy_type, SubtypeWord(variant)))
+    }
+
+    fn parts(&self) -> Option<(ToyTypeId, u16)> {
         let (toy_type, variant) = self.0.split_once('-')?;
         let hex = |s: &str, len: usize| s.len() == len && s.bytes().all(|b| b.is_ascii_hexdigit());
         if !hex(toy_type, 6) || !hex(variant, 4) {
@@ -174,7 +200,7 @@ impl FigureId {
         }
         Some((
             ToyTypeId(u32::from_str_radix(toy_type, 16).ok()?),
-            MaskedVariant(u16::from_str_radix(variant, 16).ok()?),
+            u16::from_str_radix(variant, 16).ok()?,
         ))
     }
 }
@@ -390,6 +416,16 @@ mod tests {
             FigureId::from_tag_identity(id).tag_parts(),
             Some((ToyTypeId(0x1ce), MaskedVariant(0x0801)))
         );
+    }
+
+    #[test]
+    fn subtype_parts_keeps_every_bit() {
+        // Legendary Chill: bit 10 is what the product's mask drops.
+        assert_eq!(
+            FigureId::new("00006a-0603").subtype_parts(),
+            Some((ToyTypeId(0x6a), SubtypeWord(0x0603)))
+        );
+        assert_eq!(FigureId::new("sha:0123456789abcdef").subtype_parts(), None);
     }
 
     #[test]

@@ -26,6 +26,8 @@ use guac_formats::toys::ToyTable;
 use guac_ir::roster::ENGLISH;
 use guac_ir::{Category, DumpIdentity, Element, FigureKind, Language, Roster, RosterFigure, Text};
 
+use crate::extract::IdentityDir;
+use crate::intros::IrFormat;
 use crate::{ExtractError, Result};
 
 pub const INIT_SETUP: &str = "character/init_setup.bld";
@@ -171,6 +173,7 @@ impl Sources {
                 },
                 load_file: english(f.level_load)?,
                 portrait,
+                sky1: f.sky1,
             };
             out.push(figure);
         }
@@ -198,6 +201,20 @@ pub fn read(dump: &Path, identity: DumpIdentity) -> Result<Roster> {
 /// [`read`] plus every figure's portrait image.
 pub fn read_with_portraits(dump: &Path, identity: DumpIdentity) -> Result<(Roster, Vec<Portrait>)> {
     Sources::read(&dump.join("PS3_GAME").join("USRDIR"))?.roster_and_portraits(identity)
+}
+
+/// The roster a current extract holds (AE.4: the server's figure list at
+/// start), refused when it won't read or names another dump.
+pub fn load(dir: &IdentityDir, ir: IrFormat) -> Result<Roster> {
+    let roster: Roster = ir.decode(dir, ir.roster_path())?;
+    if roster.identity != dir.manifest().identity {
+        let path = dir.path().join(ir.roster_path());
+        return Err(ExtractError::Io {
+            source: std::io::Error::other(format!("{} names another dump", path.display())),
+            path,
+        });
+    }
+    Ok(roster)
 }
 
 /// Each toy type's English name off its plain figure (variant 0), so 28 is

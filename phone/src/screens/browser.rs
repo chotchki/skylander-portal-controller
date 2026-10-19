@@ -83,6 +83,9 @@ pub(crate) fn Browser(
     /// The controller or guacamole: whose placements mark a card as on the
     /// portal follows its rule (AA.18).
     server_app: RwSignal<ServerApp>,
+    /// Why guacamole's collection is empty while its roster hasn't landed
+    /// (AE.4); `None` otherwise.
+    roster_note: Signal<Option<&'static str>>,
 ) -> impl IntoView {
     let all_figures = StoredValue::new(figures);
     let selected_figure = RwSignal::new(None::<PublicFigure>);
@@ -164,7 +167,9 @@ pub(crate) fn Browser(
                         fallback=move || view! {
                             <div class="browser-empty">
                                 <span class="browser-empty-icon">"?"</span>
-                                <span class="browser-empty-text">"No figures match your search."</span>
+                                <span class="browser-empty-text">
+                                    {move || roster_note.get().unwrap_or("No figures match your search.")}
+                                </span>
                             </div>
                         }
                     >

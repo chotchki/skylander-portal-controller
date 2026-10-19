@@ -106,6 +106,9 @@ pub struct RosterFigure {
     pub load_file: String,
     /// The extract-relative PNG, `portraits/<id>.png`.
     pub portrait: Option<String>,
+    /// The toy's "is sky1 character" flag, the same on all its rows: a
+    /// Spyro's Adventure toy.
+    pub sky1: bool,
 }
 
 impl RosterFigure {
@@ -166,6 +169,7 @@ mod tests {
             category: Category::Figure,
             load_file: "000_AirDragon".into(),
             portrait: Some(format!("portraits/{:06x}-{variant:04x}.png", 0)),
+            sky1: true,
         }
     }
 

@@ -20,8 +20,8 @@ use crate::components::{
     StaleVersion,
 };
 use crate::model::{
-    Category, ConnState, Element, GameLaunched, GameOfOrigin, PublicProfile, ServerApp, Slot,
-    SlotState, UnlockedProfile, SLOT_COUNT,
+    Category, ConnState, Element, GameLaunched, GameOfOrigin, PublicProfile, RosterState,
+    ServerApp, Slot, SlotState, UnlockedProfile, SLOT_COUNT,
 };
 use crate::screens::*;
 
@@ -181,6 +181,8 @@ pub fn App() -> impl IntoView {
     let current_game = RwSignal::new(None::<GameLaunched>);
     // The controller or guacamole (AA.18, AA.19), from `/api/status` below.
     let server_app = RwSignal::new(ServerApp::default());
+    // guacamole's roster state (AE.4); `None` on the product.
+    let roster = RwSignal::new(None::<RosterState>);
     let unlocked_profile = RwSignal::new(None::<UnlockedProfile>);
     let takeover = RwSignal::new(None::<TakeoverReason>);
     let kaos_swap = RwSignal::new(None::<KaosSwapAnnouncement>);
@@ -230,8 +232,10 @@ pub fn App() -> impl IntoView {
     // current game doesn't support. Tracking `current_game` inside
     // the LocalResource fetcher kicks a refresh on every transition.
     // Chris flagged 2026-04-25 ("still seeing sensei in Trap Team").
+    // guacamole's list also lands after boot (AE.4): a roster change refetches.
     let figures = LocalResource::new(move || {
         let _ = current_game.get();
+        let _ = roster.get();
         api::fetch_figures()
     });
     let games = LocalResource::new(fetch_games);
@@ -242,11 +246,40 @@ pub fn App() -> impl IntoView {
     leptos::task::spawn_local(async move {
         if let Some(status) = fetch_status().await {
             server_app.set(status.app);
+            roster.set(status.roster);
             if let Some(g) = status.current_game {
                 current_game.set(Some(g));
             }
         }
     });
+
+    // AE.4: while guacamole's collection waits on its roster, poll the status
+    // so the figures fill in within 2 s of it landing, with no reload.
+    {
+        let polling = StoredValue::new(false);
+        Effect::new(move |_| {
+            let waiting = roster.get().and_then(RosterState::note).is_some();
+            if !waiting || current_game.get().is_none() || polling.get_value() {
+                return;
+            }
+            polling.set_value(true);
+            leptos::task::spawn_local(async move {
+                loop {
+                    gloo_timer(ROSTER_POLL_MS).await;
+                    if let Some(status) = fetch_status().await {
+                        if status.roster != roster.get_untracked() {
+                            roster.set(status.roster);
+                        }
+                        if status.roster.and_then(RosterState::note).is_none() {
+                            break;
+                        }
+                    }
+                }
+                polling.set_value(false);
+            });
+        });
+    }
+    let roster_note = Signal::derive(move || roster.get().and_then(RosterState::note));
 
     ws::connect(
         portal,
@@ -410,6 +443,7 @@ pub fn App() -> impl IntoView {
                                 reset_target
                                 figure_updates_rev
                                 server_app
+                                roster_note
                             />
                         })}
                     </Suspense>
@@ -525,6 +559,9 @@ pub(crate) fn push_toast_level(toasts: RwSignal<Vec<ToastMsg>>, message: &str, l
         toasts.update(|v| v.retain(|t| t.id != id));
     });
 }
+
+/// How often the phone asks whether guacamole's roster has landed (AE.4).
+const ROSTER_POLL_MS: i32 = 1000;
 
 pub(crate) async fn gloo_timer(ms: i32) {
     use wasm_bindgen::closure::Closure;
@@ -707,6 +744,37 @@ mod tests {
         assert_eq!(product.current_game.unwrap().serial, "BLUS30968");
         let old = read(r#"{"rpcs3_running":true,"current_game":null}"#);
         assert_eq!(old.app, ServerApp::Product);
+        assert_eq!(old.roster, None);
+        assert_eq!(product.roster, None);
+    }
+
+    /// AE.4: guacamole's status names its roster state, and the collection
+    /// says why it's empty until `ready`.
+    #[test]
+    fn the_roster_state_reads_and_each_waiting_state_has_its_note() {
+        let read = |state: &str| {
+            let json = format!(
+                r#"{{"rpcs3_running":false,"current_game":null,"app":"guacamole","roster":"{state}"}}"#
+            );
+            serde_json::from_str::<api::StatusBody>(&json)
+                .unwrap()
+                .roster
+                .unwrap()
+        };
+        let reading = read("reading");
+        assert_eq!(reading, RosterState::Reading);
+        assert_eq!(
+            reading.note(),
+            Some("Reading the figures off your disc\u{2026}")
+        );
+        let unrecognized = read("unrecognized").note().unwrap();
+        assert!(
+            unrecognized.contains("isn't one guacamole recognizes"),
+            "{unrecognized}"
+        );
+        let unreadable = read("unreadable").note().unwrap();
+        assert!(unreadable.contains("couldn't be read"), "{unreadable}");
+        assert_eq!(read("ready").note(), None);
     }
 }
 

@@ -118,7 +118,7 @@ mod tests {
 
     fn figure(id: &str, name: &str, owner: Option<(&str, &str)>) -> Placement {
         let figure_id = FigureId::new(id);
-        let (toy_type, variant) = figure_id.tag_parts().unwrap();
+        let (toy_type, variant) = figure_id.subtype_parts().unwrap();
         Placement {
             figure_id,
             toy_type,

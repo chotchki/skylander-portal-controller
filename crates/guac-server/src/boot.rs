@@ -19,6 +19,7 @@ use tokio::sync::{Mutex, broadcast, mpsc};
 use tracing::{info, warn};
 
 use crate::config::{Config, DriverKind};
+use crate::figures::{FigureList, FigureSet, RosterState};
 use crate::hooks::Hooks;
 use crate::state::{
     AppState, DriverJob, GameList, LauncherScreen, LauncherStatus, RpcsLifecycle,
@@ -91,11 +92,13 @@ pub enum Catalogue {
     FirmwarePack {
         scan: fn(&Path) -> Result<Vec<Figure>>,
     },
-    /// guacamole's (`DriverKind::Native`): file-less records built from
-    /// `<data_root>/figures.json` (`native_catalogue`) and a fixed game list,
-    /// with no pack index and no `games.yml` read.
+    /// guacamole's (`DriverKind::Native`): no figures until the binary
+    /// publishes the disc roster ([`ServerHandles::figures`], AE.4), `roster`
+    /// saying why meanwhile, and the game list setup found. Reads no pack, no
+    /// `games.yml` and nothing under `data_root`.
     Native {
         games: Vec<skylander_core::InstalledGame>,
+        roster: RosterState,
     },
 }
 
@@ -113,6 +116,8 @@ pub struct ServerHandles {
     pub events: broadcast::Sender<Event>,
     /// The phone's game list (`/api/games`); guacamole replaces it after setup.
     pub games: GameList,
+    /// The figure list; guacamole publishes the disc roster into it (AE.4).
+    pub figures: FigureList,
     /// The driver worker's job queue (PLAN B.2's macOS game-window fit);
     /// closed when the server died before the worker started.
     pub driver_tx: mpsc::Sender<DriverJob>,
@@ -123,8 +128,8 @@ pub struct ServerHandles {
 
 /// Start the server; returns once the driver worker runs or the tokio thread
 /// gave up (reported as `LauncherScreen::ServerError`, not as `Err`).
-/// `Err` is only what fails before the thread starts: indexing the pack or
-/// reading `figures.json`, or a catalogue that doesn't fit the driver kind.
+/// `Err` is only what fails before the thread starts: indexing the pack, or a
+/// catalogue that doesn't fit the driver kind.
 pub fn boot(options: BootOptions) -> Result<ServerHandles> {
     let BootOptions {
         config: cfg,
@@ -137,14 +142,12 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
         bind_ip,
     } = options;
 
-    let figures: Vec<Figure> = match (&catalogue, cfg.driver_kind) {
+    let figures = match (&catalogue, cfg.driver_kind) {
         (
             Catalogue::FirmwarePack { scan },
             DriverKind::Uia | DriverKind::Ipc | DriverKind::Mock,
-        ) => index_firmware_pack(&cfg, *scan)?,
-        (Catalogue::Native { .. }, DriverKind::Native) => {
-            crate::native_catalogue::load(&cfg.data_root)?
-        }
+        ) => FigureSet::pack(index_firmware_pack(&cfg, *scan)?),
+        (Catalogue::Native { roster, .. }, DriverKind::Native) => FigureSet::waiting(*roster),
         (Catalogue::FirmwarePack { .. }, DriverKind::Native) => {
             anyhow::bail!("the native driver has no firmware pack to index")
         }
@@ -153,11 +156,7 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
         }
     };
 
-    let figure_index: HashMap<_, _> = figures
-        .iter()
-        .enumerate()
-        .map(|(i, f)| (f.id.clone(), i))
-        .collect();
+    let figures = FigureList::new(figures);
 
     // --- Pick bind address. ---
     let ip = bind_ip
@@ -224,11 +223,10 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
     let clients_for_task = connected_clients.clone();
     let status_for_task = launcher_status.clone();
     let figures_for_task = figures.clone();
-    let figure_index_for_task = figure_index.clone();
     let join_qr_png_for_task = join_qr_png.clone();
     // Native's list is known now; the product's is read from games.yml on the thread.
     let games: GameList = Arc::new(std::sync::RwLock::new(match &catalogue {
-        Catalogue::Native { games } => games.clone(),
+        Catalogue::Native { games, .. } => games.clone(),
         Catalogue::FirmwarePack { .. } => Vec::new(),
     }));
     let games_for_task = games.clone();
@@ -303,7 +301,6 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
                         }
                     };
                 let sessions = Arc::new(crate::profiles::SessionRegistry::default());
-                let figures_for_driver: Arc<Vec<Figure>> = Arc::new(figures_for_task.clone());
                 // The IPC STATE poller's copy; the worker takes `driver` by value.
                 let driver_for_poller = driver.clone();
                 let driver_tx = spawn_driver_worker(
@@ -312,11 +309,10 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
                     events_for_task.clone(),
                     profile_store.clone(),
                     sessions.clone(),
-                    figures_for_driver.clone(),
+                    figures_for_task.clone(),
                     rpcs3_for_task.clone(),
                     rpcs3_exe.clone(),
                     config_dir.clone(),
-                    data_root.clone(),
                     status_for_task.clone(),
                     hooks.rpcs3_config.clone(),
                 );
@@ -329,7 +325,7 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
                     events_for_task.clone(),
                     status_for_task.clone(),
                     driver_tx.clone(),
-                    figures_for_driver,
+                    figures_for_task.clone(),
                     hooks.figure_files.clone(),
                     driver_kind,
                     std::time::Duration::from_millis(500),
@@ -381,7 +377,7 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
 
                 let state = Arc::new(AppState {
                     figures: figures_for_task,
-                    figure_index: figure_index_for_task,
+                    held_resumes: Mutex::new(Vec::new()),
                     driver_kind,
                     driver_tx,
                     portal: portal_for_task,
@@ -424,6 +420,9 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
                         }
                     });
                 }
+
+                // guacamole's held resume prompts go out when the roster lands (AE.4).
+                crate::http::spawn_resume_release(state.clone());
 
                 // Kaos timer ticker every ~10s (PLAN 8.2b.2): one task, not per-session.
                 {
@@ -471,6 +470,7 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
         join_qr_png,
         events: events_tx,
         games,
+        figures,
         driver_tx,
         bind_addr: bind,
         server_thread,
@@ -638,6 +638,7 @@ fn serials_to_catalogue(serials: &[String]) -> Vec<skylander_core::InstalledGame
         .map(|(serial, display)| skylander_core::InstalledGame {
             serial: skylander_core::GameSerial::new(*serial),
             display_name: (*display).to_string(),
+            art: None,
         })
         .collect()
 }
@@ -942,34 +943,59 @@ mod tests {
         })
     }
 
-    #[test]
-    fn a_native_boot_serves_the_catalogue_from_figures_json() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(root.path().join("data")).unwrap();
-        std::fs::write(
-            root.path().join("data/figures.json"),
-            r#"[
-                {"figure_id": "000009-0000", "alignment": "Core Skylander",
-                 "attributes": {"name": "Eruptor", "element": "Fire",
-                                "firstrelease": "Skylanders: Spyro's Adventure"}},
-                {"figure_id": "000009-0801", "alignment": "Core Skylander",
-                 "attributes": {"name": "Cynder", "element": "Undead",
-                                "firstrelease": "Skylanders: Spyro's Adventure"}}
-            ]"#,
-        )
-        .unwrap();
-        let giants = vec![skylander_core::InstalledGame {
+    fn giants() -> Vec<skylander_core::InstalledGame> {
+        vec![skylander_core::InstalledGame {
             serial: skylander_core::GameSerial::new("BLUS30968"),
             display_name: "Skylanders: Giants".into(),
-        }];
-        let handles = native_boot(root.path(), Catalogue::Native { games: giants }).unwrap();
-        wait_until_ready(&handles);
+            art: None,
+        }]
+    }
 
-        let figures = get(handles.bind_addr, "/api/figures");
-        assert!(figures.starts_with("HTTP/1.1 200"), "{figures}");
-        assert!(figures.contains("\"000009-0000\""), "{figures}");
-        assert!(figures.contains("\"000064-0000\""), "{figures}");
-        assert!(!figures.contains("Cynder"), "{figures}");
+    fn native_catalogue(games: Vec<skylander_core::InstalledGame>) -> Catalogue {
+        Catalogue::Native {
+            games,
+            roster: RosterState::Reading,
+        }
+    }
+
+    /// The JSON body of a 200.
+    fn json(response: &str) -> serde_json::Value {
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        let body = response.split("\r\n\r\n").nth(1).unwrap();
+        serde_json::from_str(body).unwrap_or_else(|e| panic!("{e}: {body}"))
+    }
+
+    /// AE.4: boot reads no catalogue (there's no `data/` under the root); the
+    /// roster published after boot shows on `/api/figures` at once.
+    #[test]
+    fn a_native_boot_lists_no_figures_until_the_roster_is_published() {
+        let root = tempfile::tempdir().unwrap();
+        let handles = native_boot(root.path(), native_catalogue(giants())).unwrap();
+        wait_until_ready(&handles);
+        assert!(!root.path().join("data").exists());
+
+        assert_eq!(
+            json(&get(handles.bind_addr, "/api/figures")),
+            serde_json::json!([])
+        );
+        let status = json(&get(handles.bind_addr, "/api/status"));
+        assert_eq!(status["roster"], "reading", "{status}");
+
+        let roster = crate::figures::fixture::eruptor_and_spyro();
+        handles
+            .figures
+            .publish(FigureSet::from_roster(&roster, root.path()));
+        let figures = json(&get(handles.bind_addr, "/api/figures"));
+        let ids: Vec<&str> = figures
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["000009-0000", "000010-0000"]);
+        assert_eq!(figures[0]["canonical_name"], "Eruptor");
+        let status = json(&get(handles.bind_addr, "/api/status"));
+        assert_eq!(status["roster"], "ready", "{status}");
         let games = get(handles.bind_addr, "/api/games");
         assert!(games.contains("BLUS30968"), "{games}");
     }
@@ -977,29 +1003,51 @@ mod tests {
     #[test]
     fn a_native_game_list_replaced_after_boot_is_served() {
         let root = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(root.path().join("data")).unwrap();
-        std::fs::write(root.path().join("data/figures.json"), "[]").unwrap();
-        let catalogue = Catalogue::Native { games: Vec::new() };
-        let handles = native_boot(root.path(), catalogue).unwrap();
+        let handles = native_boot(root.path(), native_catalogue(Vec::new())).unwrap();
         wait_until_ready(&handles);
         assert!(!get(handles.bind_addr, "/api/games").contains("BLUS30968"));
 
-        *handles.games.write().unwrap() = vec![skylander_core::InstalledGame {
-            serial: skylander_core::GameSerial::new("BLUS30968"),
-            display_name: "Skylanders: Giants".into(),
-        }];
+        *handles.games.write().unwrap() = giants();
         let games = get(handles.bind_addr, "/api/games");
         assert!(games.contains("BLUS30968"), "{games}");
     }
 
+    /// AE.4: guacamole's `/api/status` names where its roster stands; the
+    /// product's carries no roster at all.
     #[test]
-    fn a_native_boot_without_figures_json_fails_before_the_bind() {
+    fn each_roster_state_shows_on_guacamoles_status_and_none_on_the_products() {
         let root = tempfile::tempdir().unwrap();
-        let catalogue = Catalogue::Native { games: Vec::new() };
-        let err = native_boot(root.path(), catalogue)
-            .err()
-            .expect("no figures.json");
-        assert!(format!("{err:#}").contains("figures.json"), "{err:#}");
-        assert!(!root.path().join("db.sqlite").exists());
+        let catalogue = Catalogue::Native {
+            games: giants(),
+            roster: RosterState::Unrecognized,
+        };
+        let handles = native_boot(root.path(), catalogue).unwrap();
+        wait_until_ready(&handles);
+        for (state, wire) in [
+            (None, "unrecognized"),
+            (Some(RosterState::Reading), "reading"),
+            (Some(RosterState::Unreadable), "unreadable"),
+            (Some(RosterState::Unrecognized), "unrecognized"),
+        ] {
+            if let Some(state) = state {
+                handles.figures.set_roster_state(state);
+            }
+            let status = json(&get(handles.bind_addr, "/api/status"));
+            assert_eq!(status["roster"], wire, "{status}");
+            assert_eq!(status["app"], "guacamole", "{status}");
+        }
+        handles.figures.publish(FigureSet::from_roster(
+            &crate::figures::fixture::eruptor_and_spyro(),
+            root.path(),
+        ));
+        let status = json(&get(handles.bind_addr, "/api/status"));
+        assert_eq!(status["roster"], "ready", "{status}");
+
+        let product_root = tempfile::tempdir().unwrap();
+        let product = mock_boot(product_root.path(), ephemeral_port());
+        wait_until_ready(&product);
+        let status = json(&get(product.bind_addr, "/api/status"));
+        assert_eq!(status["app"], "product", "{status}");
+        assert!(status.get("roster").is_none(), "{status}");
     }
 }

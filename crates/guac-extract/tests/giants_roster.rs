@@ -1,8 +1,8 @@
-//! The roster on the real Giants dump (openspec AE.2): IR v2's 123 figures
-//! read off the disc, checked against the toy table's counts and sets and
-//! against AA's interim catalogue. Ignored by default: it reads
-//! `GUAC_GIANTS_DUMP` from the environment or the workspace's `.env.dev`,
-//! and AA's catalogue from the workspace's `data/` (until AE.4 retires it):
+//! The roster on the real Giants dump (openspec AE.2, AE.4): IR v2's 123
+//! figures read off the disc, checked against the toy table's counts and
+//! sets, the server's figure list built from them and the 12 ids AA's interim
+//! catalogue gave otherwise. Ignored by default: it reads `GUAC_GIANTS_DUMP`
+//! from the environment or the workspace's `.env.dev`:
 //!
 //! `cargo test -p guac-extract --release --test giants_roster -- --ignored --nocapture`
 
@@ -14,6 +14,8 @@ use guac_extract::known::KNOWN_DUMPS;
 use guac_extract::roster;
 use guac_ir::roster::ENGLISH;
 use guac_ir::{Category, DumpIdentity, Element, FigureKind, Sha256};
+use guac_server::figures::FigureSet;
+use skylander_core::{FigureId, GameOfOrigin};
 
 fn env_or_dotenv(key: &str) -> Option<String> {
     if let Ok(value) = std::env::var(key) {
@@ -27,26 +29,9 @@ fn env_or_dotenv(key: &str) -> Option<String> {
     })
 }
 
-/// AA's ids the disc names otherwise (design decision 2): toy type, AA's
-/// variant, the disc's.
-const CHANGED: [(u32, u16, u16); 12] = [
-    (0, 0x0802, 0x0402),
-    (18, 0x0802, 0x0402),
-    (10, 0x0803, 0x0403),
-    (15, 0x0803, 0x0403),
-    (26, 0x0803, 0x0403),
-    (102, 0x0202, 0x0402),
-    (109, 0x0202, 0x0402),
-    (112, 0x0202, 0x0402),
-    (105, 0x0002, 0x0402),
-    (108, 0x0002, 0x0402),
-    (106, 0x0203, 0x0603),
-    (110, 0x0203, 0x0403),
-];
-
 #[test]
 #[ignore = "reads the Giants dump at GUAC_GIANTS_DUMP"]
-fn the_disc_roster_is_123_figures_with_aas_77_among_them() {
+fn the_disc_roster_is_123_figures_and_the_servers_list() {
     let dump = PathBuf::from(env_or_dotenv("GUAC_GIANTS_DUMP").expect("set GUAC_GIANTS_DUMP"));
     let known = KNOWN_DUMPS[0];
     let identity = DumpIdentity {
@@ -152,61 +137,100 @@ fn the_disc_roster_is_123_figures_with_aas_77_among_them() {
         assert!(f.portrait.is_some());
     }
 
-    // AA's interim catalogue: every id on the disc but the 12 decision 2
-    // names, each of those under the disc's id with the same name.
-    let data_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
-    let aa = guac_server::native_catalogue::load(&data_root).unwrap();
-    assert_eq!(aa.len(), 77);
-    let mut agree = 0;
-    let mut moved = Vec::new();
-    let mut disagree = Vec::new();
-    for row in &aa {
-        let id = row.id.as_str();
-        match r.figure(id) {
-            Some(f) => {
-                let same = en(f) == row.canonical_name
-                    && format!("{:?}", f.element) == format!("{:?}", row.element)
-                    && format!("{:?}", f.category) == format!("{:?}", row.category);
-                if same {
-                    agree += 1;
-                } else {
-                    disagree.push(format!(
-                        "{id}: disc {} {:?} {:?}, AA {} {:?} {:?}",
-                        en(f),
-                        f.element,
-                        f.category,
-                        row.canonical_name,
-                        row.element,
-                        row.category
-                    ));
-                }
-            }
-            None => {
-                let (toy, variant) = row.id.tag_parts().unwrap();
-                let (_, _, new) = CHANGED
-                    .iter()
-                    .find(|(t, old, _)| *t == toy.0 && *old == variant.0)
-                    .unwrap_or_else(|| panic!("{id} ({}) isn't on the disc", row.canonical_name));
-                let f = r.figure(&format!("{:06x}-{new:04x}", toy.0)).unwrap();
-                assert_eq!(en(f), row.canonical_name, "{id}");
-                moved.push(format!("{id} -> {} {}", f.id(), row.canonical_name));
-            }
-        }
+    // AE.4's id migration: each old id is off the disc, its new one on it,
+    // under the name AA showed (decision 2).
+    let names = [
+        "Polar Whirlwind",
+        "Royal Double Trouble",
+        "Legendary Ignitor",
+        "Legendary Slam Bam",
+        "Legendary Stealth Elf",
+        "Granite Crusher",
+        "Scarlet Ninjini",
+        "Gnarly Tree Rex",
+        "Molten Hot Dog",
+        "Punch Pop Fizz",
+        "Legendary Chill",
+        "Legendary Bouncer",
+    ];
+    for ((old, new), name) in guac_server::figures::AA_IDS_ON_THE_DISC.iter().zip(names) {
+        assert!(r.figure(old).is_none(), "{old} is a disc id");
+        let f = r
+            .figure(new)
+            .unwrap_or_else(|| panic!("{new} isn't on the disc"));
+        assert_eq!(en(f), name, "{new}");
+        assert_eq!(old[..6], new[..6], "{name} keeps its toy type");
     }
-    println!(
-        "AA's 77: {agree} agree on name, element and category; {} moved:",
-        moved.len()
+
+    // The server's list (AE.4): every figure, a sky1 toy's base Spyro's
+    // Adventure's and the rest Giants'.
+    let set = FigureSet::from_roster(&r, Path::new("/extract"));
+    assert_eq!(set.figures().len(), 123);
+    let by_game = |g: GameOfOrigin| set.figures().iter().filter(|f| f.game == g).count();
+    let (sa, giants) = (
+        by_game(GameOfOrigin::SpyrosAdventure),
+        by_game(GameOfOrigin::Giants),
     );
-    for m in &moved {
-        println!("  {m}");
+    println!("server list: {sa} Spyro's Adventure, {giants} Giants");
+    assert_eq!((sa, giants), (54, 69));
+    let fig = |id: &str| set.get(&FigureId::new(id)).unwrap();
+    for (id, name, group, tag, game) in [
+        (
+            "000010-0000",
+            "Spyro",
+            "Spyro",
+            "base",
+            GameOfOrigin::SpyrosAdventure,
+        ),
+        (
+            "00001c-0000",
+            "Dark Spyro",
+            "Spyro",
+            "Dark",
+            GameOfOrigin::SpyrosAdventure,
+        ),
+        (
+            "000000-0800",
+            "Series 2 Whirlwind",
+            "Whirlwind",
+            "Series 2",
+            GameOfOrigin::Giants,
+        ),
+        (
+            "00001d-0200",
+            "LightCore Hex",
+            "Hex",
+            "LightCore",
+            GameOfOrigin::Giants,
+        ),
+        (
+            "00006a-0603",
+            "Legendary Chill",
+            "Chill",
+            "Legendary",
+            GameOfOrigin::Giants,
+        ),
+        (
+            "000130-0000",
+            "Volcanic Vault",
+            "Volcanic Vault",
+            "base",
+            GameOfOrigin::SpyrosAdventure,
+        ),
+    ] {
+        let f = fig(id);
+        assert_eq!(
+            (
+                f.canonical_name.as_str(),
+                f.variant_group.as_str(),
+                f.variant_tag.as_str(),
+                f.game
+            ),
+            (name, group, tag, game),
+            "{id}"
+        );
+        assert!(set.portrait(&f.id).is_some(), "{id}");
     }
-    println!("disagree: {disagree:?}");
-    assert_eq!(moved.len(), 12);
-    assert!(disagree.is_empty());
-    assert_eq!(agree, 65);
-    let only_disc = r.figures.len() - agree - moved.len();
-    println!("on the disc, not in AA: {only_disc}");
-    assert_eq!(only_disc, 46);
     assert!(
         r.figures
             .iter()
