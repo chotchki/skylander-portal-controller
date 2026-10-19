@@ -300,9 +300,11 @@ fn linear_budget(len: usize) -> usize {
 }
 
 fn panics(input: &[u8]) -> Result<(), FormatError> {
-    // Panics on the first input longer than 8 bytes, the way an unchecked
-    // slice index would.
-    let _ = black_box(&input[..9]);
+    // Panics on every input, the way an unchecked slice index past the end
+    // would. Panicking only on short inputs left the self-test flaky: the
+    // mutated 16-byte seeds rarely come out under 9 bytes, and a run could
+    // miss them all.
+    let _ = black_box(&input[..input.len() + 1]);
     Ok(())
 }
 
