@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use skylander_core::SlotIndex;
 use skylander_rpcs3_control::PortalDriver;
+use skylander_rpcs3_control::ipc::proto::PadButton;
 
 use super::attach::{self, HeroAttachments};
 use super::list::SweepFigure;
@@ -37,9 +38,16 @@ const MAX_RECONNECTS: u32 = 4;
 const HERO_WAIT: Duration = Duration::from_secs(90);
 /// Flips ahead of the counter a poll pauses at.
 const POLL_AHEAD: u64 = 30;
+/// Polls in a row with the figure's archive open and no hero at all before
+/// the sweep presses CROSS: a prompt is holding the swap (Eye-Brawl's pack
+/// figure is "visiting from another adventure", and the game asks whether to
+/// show visiting nicknames, NO highlighted, before it brings him in).
+const PROMPT_POLLS: u32 = 3;
+/// CROSS presses a figure gets before the sweep gives the boot up.
+const MAX_PRESSES: u32 = 4;
 /// The state's own character (Eruptor and his Series 2 and LightCore
-/// figures) needs no archive opened: its hero counts once this many flips
-/// have run since the game queried the portal.
+/// figures) may keep its archive and its placement: its hero counts once this
+/// many flips have run since the game queried the portal.
 const OWN_WAIT: u64 = 300;
 const STEP_WAIT: Duration = Duration::from_secs(180);
 /// RPCS3's log when the template's silent audio took (AF.3's review).
@@ -91,6 +99,10 @@ pub struct FigureRecord {
     pub reconnects: u32,
     /// `PE cmd=query` pushes seen in the listen that ended them.
     pub queries: u32,
+    /// CROSS presses (P6) answering a prompt that held the swap, its
+    /// highlighted choice taken.
+    #[serde(default)]
+    pub presses: u32,
     /// The figure's character archive opening, when it wasn't the state's.
     pub archive: Option<Opened>,
     /// The flip the new hero was first read at, and the one read and shot.
@@ -171,6 +183,7 @@ pub fn run_figure(inputs: &Inputs, figure: &SweepFigure, out: &Path) -> Result<F
         f0_hero: d.f0_hero,
         reconnects: d.reconnects,
         queries: d.queries,
+        presses: d.presses,
         archive: d.archive,
         hero_at: d.hero_at,
         read_at: d.read_at,
@@ -205,6 +218,7 @@ struct Driven {
     f0_hero: Option<String>,
     reconnects: u32,
     queries: u32,
+    presses: u32,
     archive: Option<Opened>,
     hero_at: u64,
     read_at: u64,
@@ -279,6 +293,7 @@ fn drive(inputs: &Inputs, figure: &SweepFigure, source: &Path, dir: &Path) -> Re
 
     let deadline = Instant::now() + HERO_WAIT;
     let mut archive = None;
+    let (mut absent, mut presses) = (0, 0);
     let hero_at = loop {
         for line in log.lines() {
             let Some(path) = opened_path(&line) else {
@@ -307,6 +322,11 @@ fn drive(inputs: &Inputs, figure: &SweepFigure, source: &Path, dir: &Path) -> Re
         if ready {
             break paused.frames;
         }
+        absent = if archive.is_some() && frame.hero().is_err() {
+            absent + 1
+        } else {
+            0
+        };
         if Instant::now() > deadline {
             bail!(
                 "no new hero {HERO_WAIT:?} after the queries: archive {:?}, hero {:?}",
@@ -315,6 +335,11 @@ fn drive(inputs: &Inputs, figure: &SweepFigure, source: &Path, dir: &Path) -> Re
             );
         }
         control.resume()?;
+        if absent >= PROMPT_POLLS && presses < MAX_PRESSES {
+            control.driver().press_button(PadButton::Cross, 120)?;
+            presses += 1;
+            absent = 0;
+        }
         std::thread::sleep(Duration::from_millis(500));
     };
 
@@ -345,6 +370,7 @@ fn drive(inputs: &Inputs, figure: &SweepFigure, source: &Path, dir: &Path) -> Re
         f0_hero: f0_hero.and_then(|h| h.name),
         reconnects,
         queries,
+        presses,
         archive,
         hero_at,
         read_at: read.frames,

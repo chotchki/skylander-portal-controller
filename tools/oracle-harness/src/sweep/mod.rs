@@ -16,10 +16,14 @@
 //! and `RECONNECT` again until the game queries the portal (one more did it in
 //! AE.22's held boots, where F0's alone left the guest's USB thread on its
 //! stale handle); then, at pauses half a second apart, until RPCS3's log shows
-//! the figure's character archive opened and AF.9's reader has a new hero (the
-//! state's own character, Eruptor's figures, opens nothing: its hero counts 300
-//! flips after the queries); then [`SETTLE`] flips more, the reads
-//! ([`attach`], [`crate::hero`], every actor) and the shot.
+//! the figure's character archive opened and AF.9's reader has a new hero (for
+//! the state's own character, Eruptor's figures, the hero counts 300 flips
+//! after the queries, archive or not: the game swapped Eruptor for himself and
+//! reopened his in AE.22's sweep, but nothing requires it), pressing CROSS when the archive is open and three
+//! polls in a row find no hero at all (a prompt holding the swap: the pack's
+//! Eye-Brawl is "visiting from another adventure", and the game asks about
+//! visiting nicknames with NO highlighted); then [`SETTLE`] flips more, the
+//! reads ([`attach`], [`crate::hero`], every actor) and the shot.
 //!
 //! The run ([`run_sweep`]): one figure per boot, `gap` after the last
 //! RPCS3's exit (AF.12's CoreMIDI hang), silent (the home's template), a
@@ -201,6 +205,10 @@ impl Row {
         }
         if let Some(e) = &r.tuning_error {
             row.notes.push(format!("tuning partly read: {e}"));
+        }
+        if r.presses > 0 {
+            row.notes
+                .push(format!("{} CROSS to a prompt before the swap", r.presses));
         }
         if r.reconnects > 1 {
             row.notes
@@ -445,7 +453,11 @@ pub fn run_sweep(
                         ))?;
                         let dir = out.join(&label);
                         if dir.exists() {
-                            let failed = out.join(format!("{label}.failed-{attempt}"));
+                            // A rerun into the same dir keeps an earlier run's failures.
+                            let failed = (attempt..)
+                                .map(|k| out.join(format!("{label}.failed-{k}")))
+                                .find(|p| !p.exists())
+                                .expect("a free name");
                             fs::rename(&dir, &failed)?;
                             fs::write(failed.join("error.txt"), format!("{last}\n"))?;
                         }
@@ -688,6 +700,7 @@ mod tests {
             f0_hero: Some("009_Eruptor".into()),
             reconnects: 1,
             queries: 40,
+            presses: 0,
             archive: Some(Opened {
                 path: "/dev_bdvd/PS3_GAME/USRDIR/character/026_stealthelf.arc".into(),
                 after_secs: 6.0,
