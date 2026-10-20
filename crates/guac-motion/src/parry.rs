@@ -231,12 +231,19 @@ pub fn planes_against(
             continue;
         };
         let sub = manifold.subshape_pos1().copied().unwrap_or(PPose::IDENTITY);
-        let normal = body_pose.rotation * (sub.rotation * manifold.local_n1).normalize();
+        let local_normal = (sub.rotation * manifold.local_n1).normalize();
+        let normal = body_pose.rotation * local_normal;
         if !normal.is_normalized() {
             continue;
         }
-        let point = body_pose.transform_point(sub.transform_point(deepest.local_p1));
+        let local_point = sub.transform_point(deepest.local_p1);
+        let point = body_pose.transform_point(local_point);
         let triangle = mesh.map(|_| manifold.subshape1);
+        if let (Some(mesh), Some(t)) = (mesh, triangle)
+            && beyond_a_neighbour(mesh, t, local_point, local_normal)
+        {
+            continue;
+        }
         out.push(ContactPlane {
             body,
             triangle,
@@ -246,6 +253,50 @@ pub fn planes_against(
             distance: deepest.dist,
         });
     }
+}
+
+/// How near an edge a contact point is on it, metres (f32 at the level's
+/// hundred-metre coordinates resolves about 1e-5).
+const ON_EDGE: f32 = 1.0e-4;
+
+/// A contact on triangle `t` at an edge it shares, whose normal lies outside
+/// the arc between its face's normal and its neighbour's, past the
+/// neighbour's: the shape is over the neighbour's face, which gives the plane
+/// itself, so this one is dropped, as the original's welding snaps it to the
+/// neighbour's (and the dedupe would then merge the two). Parry's own fix
+/// tests the normal against the cone of whichever edge pseudo-normal is
+/// nearest, not the touched edge's, so it passes some: on level 213 at the
+/// start's convex 1.4° crease (triangles 2672 and 2428), a plane 2° past
+/// the flat side's that lifted the hero 3 mm (AG.16's replays). Points in
+/// the mesh's frame. A vertex contact meets the test once per edge through it.
+fn beyond_a_neighbour(mesh: &Mesh, t: u32, point: Vec3, normal: Vec3) -> bool {
+    let (Some(face), Some(corners)) = (mesh.face_normal(t), mesh.corners(t)) else {
+        return false;
+    };
+    if normal.dot(face) > 1.0 - 1.0e-7 {
+        return false;
+    }
+    (0..3).any(|e| {
+        let (a, b) = (corners[e], corners[(e + 1) % 3]);
+        let ab = b - a;
+        let along = ((point - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0);
+        if (a + ab * along - point).length() > ON_EDGE {
+            return false;
+        }
+        let Some(other) = mesh.neighbour(t, e).and_then(|u| mesh.face_normal(u)) else {
+            return false;
+        };
+        let axis = ab.normalize();
+        let r = normal - axis * normal.dot(axis);
+        let c = face.dot(other);
+        let det = 1.0 - c * c;
+        if c <= 0.0 || det < 1.0e-10 {
+            return false;
+        }
+        // r = α face + β other; α < 0 is past the neighbour's normal.
+        let alpha = (r.dot(face) - c * r.dot(other)) / det;
+        alpha < -1.0e-4
+    })
 }
 
 /// The cast options both sides use: Avian's `ShapeCastConfig` with

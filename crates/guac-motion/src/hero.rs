@@ -27,10 +27,14 @@
 //!   faces up past 0.69 and the walk isn't leaving it faster than 0.01 m/s
 //!   (the velocity model as read);
 //! - a frame that fails that test ends without support whatever the support
-//!   check finds (the corpus's 0x200 flag, set only in frames without
-//!   support, AG.38): it's what takes him off the ground for a frame over a
-//!   crest (AG.38's dip edge) and on the first frame he's let go walking
-//!   uphill (AG.38's `g38_t2979_up`, record 381);
+//!   check finds when the walk also leaves the ground faster than 0.01 of
+//!   its own speed (the post-step's airborne test, as read; the corpus's
+//!   0x200 flag, set only in frames without support, AG.38): it's what takes
+//!   him off the ground for a frame over a crest (AG.38's dip edge) and on
+//!   the first frame he's let go walking uphill (AG.38's `g38_t2979_up`,
+//!   record 381), while a slow walk rising off a slope stays supported (of
+//!   the 632 frames of AG.38's run that fail the leave test, the two tests
+//!   together call 608 as recorded, the leave test alone 97);
 //! - the lean turns before the snap, and the snap never sets his shape
 //!   inside the ground: until his lean reaches a slope he rides as high as
 //!   his shape needs there (AG.39: no landing rose after it, where a snap to
@@ -48,7 +52,7 @@
 
 use crate::edge;
 use crate::ground::{self, LEAN_SETTLED, MAX_SLOPE_COS, SNAP_REACH, SUPPORT_GAP};
-use crate::proxy::{self, KEEP, LEAVE_NORMAL, LEAVE_SPEED, Proxy};
+use crate::proxy::{self, AIRBORNE_SHARE, KEEP, LEAVE_NORMAL, LEAVE_SPEED, Proxy};
 use crate::seam::{BodyId, PhysicsSeam, Quat, Vec3};
 use crate::solid::HavokSolid;
 use crate::stick::Stick;
@@ -128,6 +132,12 @@ impl Hero {
         &self.solid
     }
 
+    /// The steps one and two frames before the next, for a run that starts
+    /// partway into a recording (a replay feeds the recording's own).
+    pub fn set_steps(&mut self, before: f32, two_before: f32) {
+        self.steps = [before, two_before];
+    }
+
     /// For drawing him: his facing is a heading on the ground, so it turns
     /// him before the lean tips him.
     pub fn rotation(&self) -> Quat {
@@ -176,7 +186,7 @@ impl Hero {
                 .face_and_move(push, &self.footing, &tuning, two_before);
         }
         if let Some(point) = edge::point(self.pivot, self.walk.velocity, push, &tuning) {
-            if edge::walkable(seam, point, exclude) {
+            if edge::walkable(seam, self.pivot, point, exclude) {
                 self.held_off = false;
             } else {
                 self.walk.velocity.x = 0.0;
@@ -190,34 +200,39 @@ impl Hero {
         let v = self.walk.velocity * FOOT;
         let n = self.footing.ground.unwrap_or(Vec3::Y);
         let walking = self.footing.supported && n.y >= LEAVE_NORMAL && n.dot(v) <= LEAVE_SPEED;
-        let left = self.footing.supported && !walking;
+        let airborne = self.footing.supported && !walking && n.dot(v) > AIRBORNE_SHARE * v.length();
         let v = if walking { proxy::lay_along(v, n) } else { v };
         let start = self.pivot;
-        let moved = self
-            .proxy(seam, exclude)
-            .integrate(self.pivot, self.up, v, step, walking);
+        let moved = self.proxy(seam, exclude).integrate(
+            self.pivot,
+            self.up,
+            v,
+            step,
+            self.footing.supported,
+        );
         self.pivot = moved.pivot;
         self.velocity = (self.pivot - start) / step;
-        self.look(seam, exclude, walking, left, step);
+        self.look(seam, exclude, walking, airborne, step);
         self.steps = [step, before];
     }
 
     /// The engine's look after a move: the support check, the ground finder,
-    /// the snap and the lean, into his footing. A frame whose walk `left` the
-    /// ground (the velocity model's leave test) ends without support, as the
-    /// corpus's airborne flag marks only frames without it (AG.38).
+    /// the snap and the lean, into his footing. A frame whose walk left the
+    /// ground (the velocity model's leave test and the post-step's airborne
+    /// test both) ends without support, as the corpus's airborne flag marks
+    /// only frames without it (AG.38).
     fn look(
         &mut self,
         seam: &dyn PhysicsSeam,
         exclude: &[BodyId],
         walking: bool,
-        left: bool,
+        airborne: bool,
         step: f32,
     ) {
         let planes = self
             .proxy(seam, exclude)
             .planes(self.pivot, self.up, SUPPORT_GAP);
-        let supported = ground::support(&planes).supported && !left;
+        let supported = ground::support(&planes).supported && !airborne;
         let found = ground::find(seam, self.pivot, exclude);
         let mut height = found.map(|g| self.pivot.y - g.point.y);
         if let (Some(g), Some(h)) = (found, height) {

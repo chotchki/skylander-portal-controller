@@ -18,11 +18,14 @@
 //! - The lean (AG.9): his up axis turns toward the ground's normal at 120°/s
 //!   until it's within half a degree.
 //!
-//! Hypotheses: the support's reach, [`SUPPORT_GAP`], between the 11.7 mm
-//! over the ground he was supported at and the 14.5 mm he wasn't (AG.36,
-//! AG.9's gate); the snap's 0.375 m past the 189 mm seen; that the lean turns
-//! over the frame's own step; the ground finder's up-cast,
-//! read, and seen only through the edge probe (AG.39's cliff foot).
+//! Hypotheses: the support's reach, [`SUPPORT_GAP`], the read probe's travel
+//! at 1 m/s over 1/60 s: stepped a frame at a time from AG.38's 19,308
+//! records, 8 mm calls 1,089 supported records unsupported, 1/60 m 165 and
+//! 25 mm 143, the 93 without support called so at each, since the frames he
+//! loses it nearer are the airborne test's ([`crate::hero`]), AG.9's gate's
+//! 14.5 mm among them; the snap's 0.375 m past the 189 mm seen; that the
+//! lean turns over the frame's own step; the ground finder's up-cast, read,
+//! and seen only through the edge probe (AG.39's cliff foot).
 
 use crate::seam::{BodyId, ContactPlane, PhysicsSeam, Quat, Vec3};
 use crate::solve::{Limit, solve};
@@ -31,7 +34,7 @@ use crate::solve::{Limit, solve};
 pub const MAX_SLOPE_COS: f32 = core::f32::consts::FRAC_1_SQRT_2;
 /// How far a plane may be from his shape (past its skin) and still hold him
 /// up, metres (a hypothesis, the module's).
-pub const SUPPORT_GAP: f32 = 0.008;
+pub const SUPPORT_GAP: f32 = 1.0 / 60.0;
 /// Planes facing up less than this don't count toward support (as read).
 const SUPPORT_FACING: f32 = 0.08;
 /// Where the snap sets him, and how far it reaches.

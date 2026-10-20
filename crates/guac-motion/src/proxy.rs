@@ -20,8 +20,10 @@
 //! Δd² + 1000 (1 − nᵢ·nⱼ) < 0.1; AG.9's manifold grew past two entries only in
 //! corners the watch lost); where the wall law's three regimes part
 //! ([`DEAD_ANGLE`] and [`SHARE_ANGLE`] sit midway between AG.9's 0.15° and
-//! 1.06°, and 1.06° and 1.99°); that the law runs only while he walks (on the
-//! ground), not in the air; that a step's edge within 45° of up is ground, so
+//! 1.06°, and 1.06° and 1.99°); that the law runs while he's supported, his
+//! walk laid along the ground or not (AG.9's wall at 20°: the walk leaving
+//! the ground falling away 0.15° under it at 0.017 m/s, the velocity model's
+//! leave test failed, and he slid at the law's 6.01 m/s), not in the air; that a step's edge within 45° of up is ground, so
 //! the sphere's rounded bottom climbs a riser to where its edge meets it at
 //! 45° (0.27 m for Eruptor), where AG.9 saw 4 cm climbed and 2.36 m not, and
 //! nothing between; [`CONTACT_REACH`] for the planes the solve sees (Havok's
@@ -57,6 +59,9 @@ const TOUCHING: f32 = 1.0e-3;
 /// isn't walked along.
 pub const LEAVE_NORMAL: f32 = 0.69;
 pub const LEAVE_SPEED: f32 = 0.01;
+/// The post-step's airborne test (as read): a walk leaving the ground faster
+/// than this share of its own speed takes his support with it.
+pub const AIRBORNE_SHARE: f32 = 0.01;
 
 /// `v` along the plane with normal `n` at its whole length, its across part's
 /// direction kept (the velocity model's ground step, as read).
@@ -141,14 +146,15 @@ impl Proxy<'_> {
     }
 
     /// Moves him from `pivot` at `velocity` (m/s) for `step` seconds;
-    /// `walking` when he's on the ground and the wall law applies.
+    /// `grounded` when he's on the ground (the support check passed) and the
+    /// wall law applies.
     pub fn integrate(
         &self,
         pivot: Vec3,
         up: Vec3,
         velocity: Vec3,
         step: f32,
-        walking: bool,
+        grounded: bool,
     ) -> Moved {
         let asked = velocity;
         let mut pos = pivot;
@@ -160,11 +166,15 @@ impl Proxy<'_> {
                 break;
             }
             let planes = self.planes(pos, up, CONTACT_REACH);
-            if walking && let Some(slid) = wall_law(asked, &planes) {
+            if grounded && let Some(slid) = wall_law(asked, &planes) {
                 v = slid;
             }
+            // A plane short of touching limits nothing: the cast meets it,
+            // and from there it's touching (the original's solver moves him
+            // freely until a plane is reached, then slides).
             let limits: Vec<Limit> = planes
                 .iter()
+                .filter(|p| p.distance <= TOUCHING)
                 .map(|p| Limit {
                     normal: p.normal,
                     min: if p.distance >= 0.0 {
@@ -192,12 +202,21 @@ impl Proxy<'_> {
                 break;
             };
             let dir = motion / len;
-            let facing = hit
+            // The plane the cast ran into most squarely, and how far short of
+            // it the cast stopped: he stops KEEP off it along its normal.
+            let (facing, short) = hit
                 .planes
                 .iter()
-                .map(|p| -dir.dot(p.normal))
-                .fold(0.0f32, f32::max);
-            let back = if facing > 1e-3 { KEEP / facing } else { 0.0 };
+                .map(|p| (-dir.dot(p.normal), p.distance))
+                .fold(
+                    (0.0f32, 0.0f32),
+                    |best, p| if p.0 > best.0 { p } else { best },
+                );
+            let back = if facing > 1e-3 {
+                (KEEP - short) / facing
+            } else {
+                0.0
+            };
             let travel = (hit.distance - back).clamp(0.0, len);
             pos += dir * travel;
             remaining *= 1.0 - travel / len;

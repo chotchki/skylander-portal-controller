@@ -21,6 +21,11 @@ fn ledge(depth: f32, below: impl FnOnce(&mut Soup)) -> Soup {
     soup
 }
 
+/// Upward speed no landing reaches, m/s: f32 noise at 4 m down moves his
+/// pivot by a few 1e-7 m a frame as the solve keeps him off the ground he
+/// lands 5 mm over; a bounce would be metres a second.
+const NO_RISE: f32 = 1e-4;
+
 fn flat_below(depth: f32) -> Soup {
     ledge(depth, |s| {
         s.floor(-depth, [-20.0, 20.0], [0.0, 40.0], 1.0);
@@ -71,7 +76,7 @@ fn falling_off_a_ledge() {
     assert!(grew > 10);
     let landed = states.iter().rposition(high).unwrap() + 1;
     assert!(
-        states[landed..].iter().all(|s| s.velocity.y <= 1e-6),
+        states[landed..].iter().all(|s| s.velocity.y <= NO_RISE),
         "no bounce"
     );
     let end = states.last().unwrap();
@@ -99,7 +104,7 @@ fn a_long_drop_levels_off_at_120_ft_s() {
     let at_terminal = states.iter().filter(|s| s.walk.y == -120.0).count();
     assert!(at_terminal > 5, "{at_terminal}");
     let landed = states.iter().rposition(high).unwrap() + 1;
-    assert!(states[landed..].iter().all(|s| s.velocity.y <= 1e-6));
+    assert!(states[landed..].iter().all(|s| s.velocity.y <= NO_RISE));
     assert!((states.last().unwrap().pivot.y + 30.0 - 0.005).abs() < 6e-3);
 }
 
@@ -185,7 +190,7 @@ fn landing_on_a_slope_slides_down_its_fall_line() {
         .find(|&k| states[k].supported)
         .unwrap();
     assert!(
-        states[landed..].iter().all(|s| s.velocity.y <= 1e-6),
+        states[landed..].iter().all(|s| s.velocity.y <= NO_RISE),
         "no rise"
     );
     let slide = states[landed + 1];
