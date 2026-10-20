@@ -6680,7 +6680,9 @@ name = "oracle-harness"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "guac-extract",
  "guac-formats",
+ "guac-ir",
  "guac-oracle",
  "image",
  "rrc-dump",

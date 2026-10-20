@@ -17,6 +17,7 @@ use oracle_harness::pine::PineClient;
 use oracle_harness::rng::{self, Hit, Peek};
 use oracle_harness::scan;
 use oracle_harness::snapshot::{Snapshot, dev_rpcs3_dirs};
+use oracle_harness::sweep;
 use oracle_harness::template::ConfigTemplate;
 use skylander_rpcs3_control::PortalDriver;
 
@@ -93,6 +94,28 @@ usage:
       each position step against velocity times the clamped step, under both
       alignments and both integration orders, over the records one game frame
       apart whose earlier one's flip is in range
+  oracle sweep list --pack <dir>
+      AE.22's figure list: the roster's figures with a character model (off
+      $GUAC_GIANTS_DUMP) and the .sky each takes from <dir> (the dev's pack, read
+      only): the file Giants reads as that figure, lowest year code first; a figure
+      no file reads as is listed with none
+  oracle sweep run --out <dir> --pack <dir> [--figures <id|name|load file>,...]
+              [--state <file>] [--settle-flips <n>] [--attempts <n>] [--boot-secs <n>]
+              [--gap-secs <n>]
+      AE.22's sweep, one figure per boot: a fresh RPCS3 from the gameplay state
+      ($GUAC_ORACLE_SAVESTATE unless --state), P5's RECONNECT and a fresh copy of the
+      figure's .sky through P1's LOAD at F0, RECONNECT again once it runs until the
+      game queries the portal, the figure's archive opened and AF.9's reader holding a
+      new hero, <settle-flips> (300) more; then at a pause the hero's model, what the
+      game attached to him and where (bone or node), his scale, CollisionInfo,
+      ActorParameters and solid, every actor and a SCREENSHOT, into
+      <dir>/<id>-<load file>[-s2|-lc]/ (figure.json, hero.png, actors.json, RPCS3's
+      log), with figures.json, summary.json and summary.txt beside them. Each figure
+      is tried <attempts> (2) times, <gap-secs> (30) after the last RPCS3's exit, and
+      listed when every try fails; one whose figure.json is in <dir> already is kept.
+      The home's saves, which the game writes when a new figure arrives, are copied
+      to <dir>/home-pristine at the start and put back before any boot that finds
+      them changed; the pack and the dev's RPCS3 dirs are checked unchanged at the end
   oracle divergence run --out <dir> [--scripts idle,walk|<file.ron>,...] [--sets A,B]
               [--replays <n>] [--first <n>] [--end <flips>] [--every <flips>]
               [--warmup <script>] [--state <file>] [--figure <file>] [--attempts <n>]
@@ -149,6 +172,8 @@ fn main() -> Result<()> {
         ["rng", rest @ ..] => rng_cmd(rest),
         ["actors", "--pine", socket, rest @ ..] => actors_cmd(socket.as_ref(), rest),
         ["watch", rest @ ..] => watch_cmd(rest),
+        ["sweep", "list", "--pack", pack] => sweep_list(pack.as_ref()),
+        ["sweep", "run", rest @ ..] => sweep_run(rest),
         ["divergence", "run", rest @ ..] => divergence_run(rest),
         ["divergence", "report", dir] => divergence_report(dir.as_ref(), None),
         ["divergence", "report", dir, "--paused", paused] => {
@@ -880,6 +905,105 @@ fn divergence_run(mut rest: &[&str]) -> Result<()> {
     ))?;
     if !changed.is_empty() {
         bail!("the dev's RPCS3 dirs changed during the measurement");
+    }
+    Ok(())
+}
+
+fn sweep_list(pack: &std::path::Path) -> Result<()> {
+    let roster = sweep::roster(&required(env::GIANTS_DUMP)?)?;
+    let list = sweep::figures(&roster, &sweep::scan_pack(pack)?);
+    for f in &list {
+        match &f.sky {
+            Some(s) => println!(
+                "{} {} ({}, {:?}): {} ({:#06x}){}",
+                f.id,
+                f.name,
+                f.load_file,
+                f.kind,
+                s.path.display(),
+                s.word,
+                if s.others.is_empty() {
+                    String::new()
+                } else {
+                    format!(", {} more read as it", s.others.len())
+                }
+            ),
+            None => println!(
+                "{} {} ({}, {:?}): no .sky in the pack",
+                f.id, f.name, f.load_file, f.kind
+            ),
+        }
+    }
+    let loads: std::collections::BTreeSet<&str> =
+        list.iter().map(|f| f.load_file.as_str()).collect();
+    println!(
+        "{} figures with a character model over {} load files; {} with a .sky, {} without",
+        list.len(),
+        loads.len(),
+        list.iter().filter(|f| f.sky.is_some()).count(),
+        list.iter().filter(|f| f.sky.is_none()).count()
+    );
+    Ok(())
+}
+
+fn sweep_run(mut rest: &[&str]) -> Result<()> {
+    let (mut out, mut pack, mut state) = (None, None, None);
+    let mut keys = Vec::new();
+    let (mut attempts, mut settle) = (2u32, sweep::SETTLE);
+    let (mut boot_wait, mut gap) = (sweep::BOOT_WAIT, Duration::from_secs(30));
+    while let [flag, value, tail @ ..] = rest {
+        rest = tail;
+        match *flag {
+            "--out" => out = Some(PathBuf::from(value)),
+            "--pack" => pack = Some(PathBuf::from(value)),
+            "--state" => state = Some(PathBuf::from(value)),
+            "--figures" => keys = value.split(',').map(str::to_owned).collect(),
+            "--attempts" => attempts = value.parse().context("--attempts takes a count")?,
+            "--settle-flips" => settle = value.parse().context("--settle-flips takes flips")?,
+            "--boot-secs" => {
+                boot_wait = Duration::from_secs(value.parse().context("--boot-secs takes seconds")?)
+            }
+            "--gap-secs" => {
+                gap = Duration::from_secs(value.parse().context("--gap-secs takes seconds")?)
+            }
+            _ => bail!("{USAGE}"),
+        }
+    }
+    if !rest.is_empty() {
+        bail!("{USAGE}");
+    }
+    let out = out.context("--out <dir> is required")?;
+    let opts = sweep::SweepOptions {
+        out: out.clone(),
+        pack: pack.context("--pack <dir> is required")?,
+        state: match state {
+            Some(s) => s,
+            None => required("GUAC_ORACLE_SAVESTATE")?,
+        },
+        dump: required(env::GIANTS_DUMP)?,
+        keys,
+        attempts,
+        gap,
+        boot_wait,
+        settle,
+    };
+    let exe = required(env::ORACLE_EXE)?;
+    let home = OracleHome::open(&required(env::ORACLE_HOME)?)?;
+    let out = rrc_dump::output::refuse_repo_output(&out)?;
+    std::fs::create_dir_all(&out).with_context(|| format!("creating {}", out.display()))?;
+    let mut log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(out.join("run.txt"))?;
+    let rows = sweep::run_sweep(&exe, &home, &opts, |text| {
+        use std::io::Write;
+        println!("{text}");
+        writeln!(log, "{text}")?;
+        Ok(())
+    })?;
+    let failed = sweep::Counts::of(&rows).failed;
+    if !failed.is_empty() {
+        bail!("{} figure(s) failed every try: {failed:?}", failed.len());
     }
     Ok(())
 }
