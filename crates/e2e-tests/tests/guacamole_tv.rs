@@ -942,6 +942,17 @@ async fn reset_from_details(phone: &Phone) {
     // The hold fires at 1.2 s.
     tokio::time::sleep(Duration::from_millis(1500)).await;
     let _ = phone.client.execute(&press("pointerup"), vec![]).await;
+    // The confirm plays its flakes for 1.5 s after firing, then goes.
+    phone
+        .wait_until(Duration::from_secs(5), || async {
+            phone
+                .client
+                .find(Locator::Css(".reset-btn-danger"))
+                .await
+                .is_err()
+        })
+        .await
+        .expect("the reset confirm closes");
 }
 
 /// `GET .../stats` for `profile_id`'s `figure_id`: (status, body).

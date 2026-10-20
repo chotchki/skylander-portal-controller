@@ -106,7 +106,7 @@ lists them from the start (openspec AE.4). No
 pinned the same way, so the phone bundle from step 3 serves both apps.
 `spawn_live` and `spawn_ipc_*` bail under it: they drive RPCS3.
 
-[`tests/guacamole_tv.rs`](tests/guacamole_tv.rs) (14 tests) is
+[`tests/guacamole_tv.rs`](tests/guacamole_tv.rs) (23 tests) is
 guacamole-only and skips with a message otherwise. It reads what the TV
 shows through `/api/_test/tv`, a JSON mirror of the laid-out Bevy UI
 tree (screen, join line, player count, each card's lines, portrait,
@@ -126,6 +126,18 @@ and `GET /api/_test/tv/frames?since_ms=<ms>` hands out the TV's frame
 log, `[ended_ms, took_ms, pipelines_compiled]` per frame after
 `since_ms` with the last frame's end as `now_ms`; no test reads it yet,
 AE.14's stall check drives it by hand.
+
+Its figure-progress section (openspec AH.3) drives the phone's editor on
+guacamole's figure rows: the details' strip and the edit sheet's caps from
+the extract's own table and clamp (`E2E_LEVEL_XP`, `E2E_GOLD_CAP`), an
+edit refused while the viewer's own figure is on the portal (read in the
+sheet's kid's words), a sibling's session refused, reset to fresh, a
+second phone's strip following an edit, and RESET on the details of a
+figure standing on the portal going to the slot reset.
+`a_never_placed_figure_edited_is_kept_across_a_restart` restarts
+guacamole with `TestServer::restart_guacamole`, which kills it and starts
+it again in the same temp dir (the same `.env.dev`, port, database and
+extract); phones connected before see the connection drop.
 
 [`tests/guacamole_intro.rs`](tests/guacamole_intro.rs) (5 tests,
 openspec AB.11, AB.21, AB.22, AB.23 and AP.5) is guacamole-only too and needs ffmpeg (`brew install
@@ -206,6 +218,14 @@ touches only `crates/guacamole` and these tests). Under load
 `multi_phone.rs` has failed on "phone never received Event::Welcome"
 in a whole-suite run and passed alone; rerun a test that fails that way
 by itself before calling it a regression.
+
+After AH.3 (2026-10-20, serial, `--skip ios_`, `--no-fail-fast`, the
+phone built with `BUILD_TOKEN=e2e-test`): guacamole 66 of 66 ok, 53 for
+real (23 TV + 5 intro + 25 shared) and the same 13 product-only skips;
+the product 63 of 66 ok, 31 for real (28 passed, the same 3 failed), 7
+live-RPCS3 skips and 28 guacamole-only skips. Without `--no-fail-fast`
+cargo stops at the first failing test binary (`figure_edit.rs` under the
+product), so a product run needs it to reach the rest.
 
 ## macOS specifics
 

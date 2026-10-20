@@ -384,7 +384,7 @@ figure file, keyed on the driver kind or on the hook being absent, never on `cfg
 | tracked RPCS3 process | Mock installs a stand-in | none, ever |
 | game list | RPCS3's `games.yml` (Mock: every game) | the dump scan: Giants alone when a BLUS30968 dump was found, else empty |
 | load, Kaos swap, auto-restart restore | fork or rewrite the profile's `.sky` working copy, then `load(slot, path)` | no file: the job's path is `None` and the worker calls `place` |
-| slot reset; figure stats, edit and reset routes | rewrite or read the working copy | 409 |
+| slot reset; figure stats, edit and reset routes | rewrite or read the working copy | guacamole's figure rows ([`editor.rs`](../../crates/guac-server/src/editor.rs), openspec AH.3): stats from the row with the game's caps (409 until the extract holds the table, 404 never placed); edit and reset 403 unless the path's profile is the session's, 409 while its own placement holds the figure; the slot reset makes the figure fresh where it stands, 409 for the hero in a level |
 | launch | EBOOT lookup in `games.yml` (not for Mock); display mode pre-set, then captured after the first load | neither |
 | `BootDirect` | IPC spawn, else a UIA spawn on Windows | returns before any spawn arm, on any OS (the job carries the driver kind) |
 | window-mode and 2× toggles, RPCS3 settings | rewrite the settings file; open RPCS3's settings (409 for Mock) | 409 |
