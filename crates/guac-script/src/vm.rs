@@ -22,10 +22,11 @@ pub type Handle = u64;
 /// A placement's place in the VM, in the order added.
 pub type PlacementId = u32;
 
-/// Above the largest single tick the disc tests run (`Init_Setup.ai`'s
-/// first, aj-vm's 57,418 op executions; AH.14's own count is in its tick
-/// note), so only a script that loops inside a tick reaches it.
-pub const DEFAULT_BUDGET: u32 = 250_000;
+/// Over twice the largest single tick the disc tests run (`Init_Setup.ai`'s
+/// first: 142,149 op executions since the review's parameter-frame fix,
+/// aj-vm's tool 57,418), so only a script that loops inside a tick reaches
+/// it.
+pub const DEFAULT_BUDGET: u32 = 300_000;
 
 /// How deep expressions may nest and structures contain structures: the
 /// disc's go a few deep; the bound keeps a graph that loops back on itself
@@ -1434,7 +1435,7 @@ impl Vm {
                     Ok(Spot::Cell(c))
                 }
                 Ins::Parameter(p) => {
-                    let def = self.param_frame(program, p);
+                    let def = self.param_frame(program, op, p);
                     let c = match def {
                         Some(def) => {
                             let name = param_name(program, &self.frames, def, p);
@@ -1493,9 +1494,18 @@ impl Vm {
         }
     }
 
-    /// The frame a parameter on a path reads: the definition it binds into
-    /// (a stub followed), or the running specialization of that definition.
-    fn param_frame(&self, program: &Program, p: &Param) -> Option<DefId> {
+    /// The frame a parameter on a path reads. A definition's own parameter
+    /// reads the running definition's frame: in its body, while it binds a
+    /// nested call's arguments and in a nested call's after-return code
+    /// (a specialization's own parameters name the base). Any other reads
+    /// the definition it binds into (a stub followed), or the open call's
+    /// specialization of it (an after-return read of what a call returned).
+    fn param_frame(&self, program: &Program, op: OpId, p: &Param) -> Option<DefId> {
+        if let Some(running) = self.run.frame
+            && declares(program, running, op)
+        {
+            return Some(running);
+        }
         let def = p.def.and_then(|d| program.resolve(d))?;
         if let Some(top) = self.run.calls.last()
             && top.def != def
@@ -2278,6 +2288,28 @@ impl Vm {
             }
         }
     }
+}
+
+/// Whether `op` sits in `def`'s own INTERFACE: the block of the op right
+/// after the definition's position, as every definition on the disc lays
+/// it out. A stub (no position) declares nothing.
+fn declares(program: &Program, def: DefId, op: OpId) -> bool {
+    let Some((sid, pos)) = program.defs.get(def as usize).and_then(|d| d.placed) else {
+        return false;
+    };
+    let Some(ops) = program.scripts.get(sid as usize).map(|s| &s.ops) else {
+        return false;
+    };
+    let pos = pos as usize;
+    let Some(&iface) = ops.get(pos + 1) else {
+        return false;
+    };
+    if program.ops[iface as usize] != Ins::Interface {
+        return false;
+    }
+    let n = program.branch(iface) as usize;
+    ops.get(pos + 2..=pos + 1 + n)
+        .is_some_and(|params| params.contains(&op))
 }
 
 /// The callee's name for a parameter: its own, else the one the callee's

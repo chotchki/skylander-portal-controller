@@ -868,7 +868,8 @@ fn the_budget_stops_a_long_loop_and_a_loop_that_never_ends() {
     let id = vm.add(HANDLE, "Spinner", 0);
     let halt = vm.tick(id, &mut Bare).unwrap_err();
     assert_eq!(halt.reason, Reason::Budget(1_000));
-    assert!(vm.executed() <= 1_001);
+    // The budget's 1,000 ran; the 1,001st, counted, stopped it.
+    assert_eq!(vm.executed(), 1_001);
     // `flow` on a behaviour's block runs it again: forever, but for the
     // budget. In play mode it stops that script and the next tick skips it.
     let forever = program(|w| {
@@ -1064,4 +1065,419 @@ fn a_scripts_rolls_draw_from_the_generator_in_the_order_written() {
     }
     assert!(seen.iter().all(|&c| c > 0), "{seen:?}");
     assert_eq!(host.0, twin);
+}
+
+// ---- The review's probes (2026-10-20): one op list per flow rule the crate
+// docs state that the tests above don't pin, the host seam (decision 21) and
+// a specialization's parameter read while it calls on.
+
+#[test]
+fn flow_end_at_a_scripts_top_ends_the_tick_and_the_next_runs_again() {
+    // Checks and flows: `flow end` at the top of a script ends the tick; the
+    // ops after it never run, and the next tick starts over.
+    let p = program(|w| {
+        idle(
+            w,
+            |_| {},
+            |w| {
+                w.inc(&[El::Member("test", "before")]);
+                w.flow_end();
+                w.inc(&[El::Member("test", "after")]);
+            },
+        );
+    });
+    let (vm, _) = run(&p, config(Mode::Strict, &["before", "after"]), 2);
+    assert_eq!(cell(&vm, "before"), Some(Value::Int(2)));
+    assert_eq!(cell(&vm, "after"), None);
+}
+
+#[test]
+fn for_each_turns_its_set_by_the_offset_and_runs_either_way() {
+    // Loops: the set rotated left by the offset (modulo the count, negatives
+    // wrapping), then run forward (direction 0) or backward (1).
+    for (offset, dir, want) in [
+        (0, 0, ["a", "b", "c", "d"]),
+        (1, 0, ["b", "c", "d", "a"]),
+        (1, 1, ["a", "d", "c", "b"]),
+        (-1, 0, ["d", "a", "b", "c"]),
+        (6, 0, ["c", "d", "a", "b"]),
+    ] {
+        let p = program(|w| {
+            let names = w.variable("names", "ScriptSet", None);
+            let order = w.variable("order", "ScriptSet", None);
+            let append = |w: &mut Writer<'_>, set: Location, rhs: Location| {
+                let lhs = w.stack(StackClass::Set, &[El::Local(set)]);
+                let o = w.op(Class::ChangeMembership, "set [set]||to");
+                w.refer(o, 0x1C, lhs);
+                w.word(o, 0x20, 4);
+                w.refer(o, 0x24, rhs);
+                w.push(o);
+            };
+            idle(
+                w,
+                |_| {},
+                |w| {
+                    for name in ["A", "B", "C", "D"] {
+                        let rhs = w.reference(&[El::Named("SpriteInfo", name)], None);
+                        append(w, names, rhs);
+                    }
+                    let lhs = w.stack(StackClass::Set, &[El::Local(names)]);
+                    let off = w.int(offset);
+                    let (at, fe) = w.open(Class::ForEach, "for each");
+                    w.refer(fe, 0x20, lhs);
+                    w.word(fe, 0x24, dir);
+                    w.refer(fe, 0x28, off);
+                    let item = w.reference(&[El::Local(fe)], None);
+                    append(w, order, item);
+                    w.end_loop(at);
+                },
+            );
+        });
+        let (vm, id) = run(&p, Config::new(Mode::Strict), 1);
+        let order = vm.local(id, "order").unwrap();
+        let got: Vec<String> = vm
+            .set(order)
+            .unwrap()
+            .iter()
+            .map(|v| match v {
+                Value::Named(_, n) => vm.program().sym(*n).to_owned(),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(got, want, "offset {offset}, direction {dir}");
+    }
+}
+
+#[test]
+fn loop_value_reads_its_count_once_truncated_and_counts_from_0() {
+    // Loops: the count read once as an integer (2.7 runs twice, 0.99 not at
+    // all), 0 or less skips, the index 0 to count - 1. The body grows the
+    // count's variable, which changes nothing.
+    for (count, passes, index_sum) in [
+        (2.7f32, 2, 1),
+        (4.0, 4, 6),
+        (0.99, 0, 0),
+        (0.0, 0, 0),
+        (-3.0, 0, 0),
+    ] {
+        let p = program(|w| {
+            let (n, done, sum) = (var(w, "n"), var(w, "passes"), var(w, "sum"));
+            idle(
+                w,
+                |_| {},
+                |w| {
+                    let lit = w.float(count);
+                    w.set(&[El::Local(n)], lit);
+                    let rn = read(w, n);
+                    let (at, lp) = w.open(Class::LoopValue, "loop value|||loop index");
+                    w.refer(lp, 0x20, rn);
+                    w.inc(&[El::Local(done)]);
+                    let s = read(w, sum);
+                    let i = w.rhs(INT, &[El::Local(lp)]);
+                    let plus = w.expr(s, Some((0, i)));
+                    w.set(&[El::Local(sum)], plus);
+                    w.inc(&[El::Local(n)]);
+                    w.end_loop(at);
+                },
+            );
+        });
+        let (vm, id) = run(&p, Config::new(Mode::Strict), 1);
+        let got = |name| vm.local(id, name).unwrap_or(Value::Int(0));
+        assert_eq!(got("passes"), Value::Int(passes), "count {count}");
+        assert_eq!(got("sum"), Value::Int(index_sum), "count {count}");
+    }
+}
+
+/// A host keeping its members in a map by receiver, answering "nothing" for
+/// the members in `absent`, and logging every get and set in order.
+#[derive(Default)]
+struct World {
+    cells: std::collections::HashMap<(Option<u64>, MemberId), Value>,
+    absent: Vec<MemberId>,
+    seen: Vec<String>,
+}
+
+impl World {
+    fn key(at: &Access) -> (Option<u64>, MemberId) {
+        let receiver = match at.receiver {
+            None => None,
+            Some(Value::Entity(e)) => Some(e),
+            Some(other) => panic!("a member read on {other:?}"),
+        };
+        (receiver, at.member)
+    }
+}
+
+impl Host for World {
+    fn get(&mut self, at: &Access) -> Result<Value, HostFault> {
+        if self.absent.contains(&at.member) {
+            return Err(HostFault::Nothing);
+        }
+        let v = self
+            .cells
+            .get(&Self::key(at))
+            .copied()
+            .unwrap_or(Value::Int(0));
+        self.seen.push(format!("get {:x} {v:?}", at.placement));
+        Ok(v)
+    }
+    fn set(&mut self, at: &Access, value: Value) -> Result<(), HostFault> {
+        if self.absent.contains(&at.member) {
+            return Err(HostFault::Nothing);
+        }
+        self.seen.push(format!("set {:x} {value:?}", at.placement));
+        self.cells.insert(Self::key(at), value);
+        Ok(())
+    }
+    fn reset(&mut self, at: &Access) -> Result<(), HostFault> {
+        self.cells.remove(&Self::key(at));
+        Ok(())
+    }
+    fn draw(&mut self) -> u32 {
+        0
+    }
+}
+
+#[test]
+fn a_path_through_nothing_skips_a_check_and_drops_a_write_and_the_tick_runs_on() {
+    // Checks and flows, Members: a check whose left side can't be read skips
+    // its block; a write through nothing (a null receiver, a member the host
+    // answers with nothing) drops; neither stops the script.
+    let p = program(|w| {
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let gone = [
+                    El::Member("optoplevelbehavior", "my"),
+                    El::Member("actorinfo", "target"),
+                ];
+                let zero = w.int(0);
+                let at = w.check(&gone, 1, zero);
+                w.inc(&[El::Member("test", "inside")]);
+                w.end_block(at);
+                let five = w.int(5);
+                w.set(
+                    &[
+                        El::Member("abstractscriptgroup", "null"),
+                        El::Member("actorinfo", "health"),
+                    ],
+                    five,
+                );
+                let five = w.int(5);
+                w.set(&gone, five);
+                w.inc(&[El::Member("test", "after")]);
+            },
+        );
+    });
+    let mut c = config(Mode::Strict, &["inside", "after"]);
+    c.members
+        .host("actorinfo", "target", int_cell())
+        .host("actorinfo", "health", int_cell());
+    let mut vm = Vm::new(p, c);
+    let id = vm.add(HANDLE, "Thing", 0);
+    let mut world = World {
+        absent: vec![MemberId::named("actorinfo", "target")],
+        ..World::default()
+    };
+    vm.tick(id, &mut world).unwrap_or_else(|h| panic!("{h}"));
+    assert_eq!(cell(&vm, "inside"), None, "the check skipped its block");
+    assert_eq!(cell(&vm, "after"), Some(Value::Int(1)), "the tick ran on");
+    assert!(world.cells.is_empty(), "nothing written: {:?}", world.cells);
+}
+
+#[test]
+fn a_script_reads_its_own_host_write_in_the_tick_and_a_later_placement_sees_it() {
+    // Design decision 21: a member's set goes straight to the host and its
+    // get straight back (nothing cached or deferred in the VM), so a script
+    // reads its own write within the tick, as the hurt chain lowers health
+    // and checks it, and a placement ticked later in the same step reads it.
+    let p = program(|w| {
+        // The hurt: my.health = 5; my.health = my.health - 1;
+        // if my.health == 4 { saw = 1 }; the shared health = my.health.
+        let saw = var(w, "saw");
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let health = [
+                    El::Member("optoplevelbehavior", "my"),
+                    El::Member("actorinfo", "health"),
+                ];
+                let five = w.int(5);
+                w.set(&health, five);
+                let h = w.rhs(INT, &health);
+                let one = w.int(1);
+                let less = w.expr(h, Some((1, one)));
+                w.set(&health, less);
+                let four = w.int(4);
+                let at = w.check(&health, 1, four);
+                let yes = w.int(1);
+                w.set(&[El::Local(saw)], yes);
+                w.end_block(at);
+                let h = w.rhs(INT, &health);
+                w.set(&[El::Member("actorinfo", "health")], h);
+            },
+        );
+        // A later placement: seen = the shared health.
+        let seen = var(w, "seen");
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let h = w.rhs(INT, &[El::Member("actorinfo", "health")]);
+                w.set(&[El::Local(seen)], h);
+            },
+        );
+    });
+    let mut c = Config::new(Mode::Strict);
+    c.members.host("actorinfo", "health", int_cell());
+    let mut vm = Vm::new(p, c);
+    let hurt = vm.add(0xA, "Enemy_Chompy(1)", 0);
+    let look = vm.add(0xB, "Setup_001_Controller", 1);
+    let mut world = World::default();
+    let report = vm.step(&mut world).unwrap_or_else(|h| panic!("{h}"));
+    assert_eq!(report.ticked, 2);
+    assert_eq!(vm.local(hurt, "saw"), Some(Value::Int(1)), "its own write");
+    assert_eq!(vm.local(look, "seen"), Some(Value::Int(4)), "the same step");
+    assert_eq!(
+        world.seen,
+        [
+            "set a Int(5)",
+            "get a Int(5)",
+            "set a Int(4)",
+            "get a Int(4)",
+            "get a Int(4)",
+            "set a Int(4)",
+            "get b Int(4)",
+        ]
+    );
+}
+
+#[test]
+fn the_tolerance_holds_to_the_float_through_the_vm() {
+    // Comparisons: d exactly the tolerance still compares equal and not
+    // greater, the next float out the other way, the same below 0; 0 and a
+    // literal as the operands, so d carries no rounding of its own.
+    let e = value::TOLERANCE;
+    let out = f32::from_bits(e.to_bits() + 1);
+    // Left 0 against right r: d = -r.
+    let rights = [out, e, 0.0, -e, -out];
+    let p = program(|w| {
+        let zero = var(w, "zero");
+        idle(
+            w,
+            |_| {},
+            |w| {
+                for code in 0..6u32 {
+                    for (k, r) in rights.iter().enumerate() {
+                        let lit = w.float(*r);
+                        let (at, _) = check(w, zero, code, lit);
+                        let hit = w.variable(&format!("r{code}{k}"), "ValueInfo", Some(INT));
+                        let yes = w.int(1);
+                        w.set(&[El::Local(hit)], yes);
+                        w.close(at);
+                    }
+                }
+            },
+        );
+    });
+    let (vm, id) = run(&p, Config::new(Mode::Strict), 1);
+    // d = -out, -e, 0, e, out, per code 0 <=, 1 ==, 2 >=, 3 <, 4 >, 5 !=.
+    let table: [[bool; 5]; 6] = [
+        [true, true, true, true, false],
+        [false, true, true, true, false],
+        [false, true, true, true, true],
+        [true, false, false, false, false],
+        [false, false, false, false, true],
+        [true, false, false, false, true],
+    ];
+    for (code, row) in table.iter().enumerate() {
+        for (k, held) in row.iter().enumerate() {
+            let got = vm.local(id, &format!("r{code}{k}"));
+            assert_eq!(got.is_some(), *held, "code {code} with d = {}", -rights[k]);
+        }
+    }
+}
+
+#[test]
+fn a_specializations_parameter_reads_its_frame_while_it_calls_on() {
+    // Macros, Variables: a specialization's own parameter names the base and
+    // reads the specialization's frame while it runs, and it still runs
+    // while it binds a nested call's arguments (to another macro or to its
+    // own base) and in a nested call's after-return code; the base's frame
+    // is never bound there.
+    let p = program(|w| {
+        let base = w.op(Class::DefineMacro, "Get Save Param");
+        let spec = w.op(Class::DefineMacroSpecialization, "Set Save Param");
+        let sink = w.op(Class::DefineMacro, "Sink");
+        let header = |w: &mut Writer<'_>, def: Location, name: &str, owner: Location| {
+            let at = w.push(def);
+            let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
+            let own = parameter(w, name, owner);
+            let zero = w.int(0);
+            w.refer(own, 0x30, zero);
+            w.push(own);
+            let enter = w.flow(Class::FlowMacro);
+            w.push(enter);
+            w.close(iface);
+            (at, own)
+        };
+        frame(
+            w,
+            |_| {},
+            |_| {},
+            |w| {
+                // Get Save Param(val): nothing.
+                let (at, _) = header(w, base, "val", base);
+                w.end_block(at);
+                // Sink(m): test.sunk = m.
+                let (at, m) = header(w, sink, "m", sink);
+                let r = w.rhs(INT, &[El::Local(m)]);
+                w.set(&[El::Member("test", "sunk")], r);
+                w.end_block(at);
+                // Set Save Param(val), its parameter naming the base:
+                // Sink(m = val), after it test.after = val; then
+                // Get Save Param(val = val), after it test.based = its val.
+                let np = w.stack(StackClass::MacroDefinitions, &[El::Local(base)]);
+                w.refer(spec, 0x38, np);
+                let (at, own) = header(w, spec, "val", base);
+                let arg = w.rhs(INT, &[El::Local(own)]);
+                call_then(w, sink, &[("m", arg)], |w| {
+                    let r = w.rhs(INT, &[El::Local(own)]);
+                    w.set(&[El::Member("test", "after")], r);
+                });
+                let arg = w.rhs(INT, &[El::Local(own)]);
+                let ret = parameter(w, "val", base);
+                call_then(w, base, &[("val", arg)], |w| {
+                    let r = w.rhs(INT, &[El::Local(ret)]);
+                    w.set(&[El::Member("test", "based")], r);
+                });
+                w.end_block(at);
+            },
+            |_| {},
+            |w| {
+                let b = w.behaviour("idle");
+                let five = w.int(5);
+                call_then(w, spec, &[("val", five)], |_| {});
+                w.end_block(b);
+            },
+        );
+    });
+    let (vm, _) = run(&p, config(Mode::Strict, &["sunk", "after", "based"]), 1);
+    assert_eq!(
+        cell(&vm, "sunk"),
+        Some(Value::Int(5)),
+        "an argument passed on"
+    );
+    assert_eq!(
+        cell(&vm, "after"),
+        Some(Value::Int(5)),
+        "after a nested call"
+    );
+    assert_eq!(
+        cell(&vm, "based"),
+        Some(Value::Int(5)),
+        "passed to its base"
+    );
 }

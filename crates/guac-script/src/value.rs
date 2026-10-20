@@ -160,9 +160,9 @@ pub fn convert(spec: &MemberSpec, v: Value) -> Option<Value> {
 
 /// A random literal of `v` drawn with `word` (crate docs, Literals and
 /// rolls): a float r reads r x word x 2^-32, the word rounded to single
-/// precision first, an integer n reads `(word & 0x7fffffff) mod (n + sign
-/// n)`; a packed value is drawn per byte or half and isn't modelled yet
-/// (`None`).
+/// precision first, an integer n reads `(word & 0x7fffffff) mod (n + 1)`
+/// for n >= 0 and `mod (n - 1)` below (so `random(0)` is always 0); a packed
+/// value is drawn per byte or half and isn't modelled yet (`None`).
 pub fn random_literal(v: Value, word: u32) -> Option<Value> {
     match v {
         Value::Float(r) => Some(Value::Float(r * (word as f32 * (1.0 / 4_294_967_296.0)))),

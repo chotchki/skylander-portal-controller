@@ -131,15 +131,23 @@
 //!   goes back to its default and the definition is no longer busy.
 //! - A specialization is a definition with an INTERFACE and body of its own;
 //!   calling it runs it. A parameter that names its base's definition reads
-//!   the specialization's frame while the specialization runs.
+//!   the specialization's frame while the specialization runs. A reading:
+//!   the disc shows only that every specialization's parameters name the
+//!   base, and a call binds its arguments into the callee's frame, which the
+//!   base's never is; no oracle read has settled it yet.
 //!
 //! # Variables, structures and sets
 //!
 //! - A variable named at the head of a path lives in the *current context*:
 //!   the running macro's frame inside a body (or in a call's after-return
-//!   code, the caller's), else the placement's locals. A parameter on a path
+//!   code, the caller's), else the placement's locals. A definition's own
+//!   parameter (one its INTERFACE declares) reads that definition's frame
+//!   wherever its body runs, binding a nested call's arguments and in a
+//!   nested call's after-return code included; a specialization's own
+//!   parameters name the base and read the specialization's frame. Any other
+//!   parameter on a path (an after-return read of what a call returned)
 //!   reads the frame of the definition it binds into (its `_macroDef`, a stub
-//!   followed), or of the running specialization of that definition.
+//!   followed), or of the open call's specialization of that definition.
 //! - A variable holds a number (dynamically an integer or a float: a write
 //!   takes the type it's given), a reference, a set, a reference to a set or
 //!   a structure, as its declaration says. Writing anything but a number or a
@@ -181,7 +189,11 @@
 //! right, and with e = 1e-4: `==` is |d| <= e, `!=` |d| > e, `<` d < -e, `<=`
 //! d <= e, `>` d > e, `>=` d >= -e. Anything else (references, packed
 //! colours) supports only `==` and `!=` (the same thing, or not); any other
-//! code fails the check.
+//! code fails the check. Not modelled yet: a number against nothing or a
+//! reference, where only `!=` holds here; the original's routine is read to
+//! compare two different kinds as numbers, the other side's word as one, so
+//! a number against nothing would compare with 0 there. No oracle read has
+//! shown whether the disc's scripts ever compare the two.
 //!
 //! # Literals and rolls
 //!
@@ -254,7 +266,10 @@
 //! properties (unmodelled members); and, with no stop, a reference's type
 //! check against the stack's edit type, `for each`'s shuffled order (any order
 //! that visits each member once) and the scheduler's placement groups and
-//! activity states (the embedder ticks placements in the order it adds them).
+//! activity states (the embedder ticks placements in the order it adds them),
+//! so SHUTDOWN's restart isn't either: the original runs STARTUP again at
+//! once when an active placement's SHUTDOWN block falls through, where the
+//! VM ends the tick and starts it on the next.
 
 #![forbid(unsafe_code)]
 
