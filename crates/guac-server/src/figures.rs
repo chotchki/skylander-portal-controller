@@ -552,7 +552,8 @@ mod tests {
         let mut copied = 0;
         for entry in std::fs::read_dir(&ours).unwrap() {
             let path = entry.unwrap().path();
-            if path.file_name().unwrap() != THIS {
+            // Versions are the names' leading timestamps, so names sort in order.
+            if path.file_name().unwrap().to_str().unwrap() < THIS {
                 std::fs::copy(&path, earlier.join(path.file_name().unwrap())).unwrap();
                 copied += 1;
             }

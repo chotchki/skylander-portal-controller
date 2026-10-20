@@ -1820,6 +1820,7 @@ mod tests {
             profile_id: "p".into(),
             initial: "A".into(),
             color: c.into(),
+            progress: Default::default(),
         };
         let theme = TvTheme::default();
         assert_eq!(
@@ -1929,6 +1930,7 @@ pub(crate) mod layout_tests {
                 profile_id: "p".into(),
                 initial: "A".into(),
                 color: c.into(),
+                progress: Default::default(),
             }),
         }
     }

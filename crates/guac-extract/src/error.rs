@@ -75,6 +75,12 @@ pub enum ExtractError {
     #[error("GUAC-E-ROSTER-UNREADABLE: the figure roster in {} didn't read: {reason}", path.display())]
     RosterUnreadable { path: PathBuf, reason: String },
 
+    /// The progression tables (AH.2) didn't read: the store clamps nothing
+    /// and the phone's figure editor stays off, and the next start tries
+    /// them again.
+    #[error("GUAC-E-PROGRESSION-UNREADABLE: the progression tables in {} didn't read: {reason}", path.display())]
+    ProgressionUnreadable { path: PathBuf, reason: String },
+
     /// A character's model, or the 3D-UI rig in `permanent/global.bld`,
     /// didn't read (AE.6): a model's figures keep their portraits on the TV,
     /// and the other models extract.
@@ -116,6 +122,7 @@ impl ExtractError {
             Self::TranscodeFailed { .. } => "GUAC-E-TRANSCODE-FAILED",
             Self::BadOutputPath { .. } => "GUAC-E-BAD-OUTPUT-PATH",
             Self::RosterUnreadable { .. } => "GUAC-E-ROSTER-UNREADABLE",
+            Self::ProgressionUnreadable { .. } => "GUAC-E-PROGRESSION-UNREADABLE",
             Self::ModelUnreadable { .. } => "GUAC-E-MODEL-UNREADABLE",
             Self::HeroUnsettled { .. } => "GUAC-E-HERO-UNSETTLED",
             Self::LevelUnreadable { .. } => "GUAC-E-LEVEL-UNREADABLE",
@@ -182,6 +189,10 @@ mod tests {
             },
             ExtractError::BadOutputPath { path: "..".into() },
             ExtractError::RosterUnreadable {
+                path: "character/init_setup.bld".into(),
+                reason: "x".into(),
+            },
+            ExtractError::ProgressionUnreadable {
                 path: "character/init_setup.bld".into(),
                 reason: "x".into(),
             },

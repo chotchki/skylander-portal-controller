@@ -290,27 +290,13 @@ pub fn router(state: Arc<AppState>, _phone_dist: std::path::PathBuf) -> Router {
         .route("/api/version", get(get_version))
         .route("/ws", get(ws_handler));
 
-    // Figure stats, edit and reset read or rewrite a `.sky` working copy, so
-    // their handlers stay with the product and arrive through the figure-file
-    // hook (registered only when the product's `sky-stats` feature is on).
-    // Without the hook (Native) the same paths answer 409.
+    // Figure stats, edit and reset: the product's read or rewrite a `.sky`
+    // working copy, so they stay with it and arrive through the figure-file
+    // hook (registered only when its `sky-stats` feature is on). Without the
+    // hook they're guacamole's, on its figure rows (AH.3).
     match &state.hooks.figure_files {
         Some(figure_files) => api = api.merge(figure_files.routes()),
-        None => {
-            api = api
-                .route(
-                    "/api/profiles/:profile_id/figures/:figure_id/stats",
-                    get(figure_files_unavailable),
-                )
-                .route(
-                    "/api/profiles/:profile_id/figures/:figure_id/edit",
-                    post(figure_files_unavailable),
-                )
-                .route(
-                    "/api/profiles/:profile_id/figures/:figure_id/reset",
-                    post(figure_files_unavailable),
-                );
-        }
+        None => api = api.merge(crate::editor::routes()),
     }
 
     #[cfg(feature = "dev-tools")]
@@ -666,12 +652,6 @@ fn is_valid_ps3_serial(s: &str) -> bool {
     s[4..].chars().all(|c| c.is_ascii_digit())
 }
 
-/// The figure-file routes without the hook: there's no working copy to read or
-/// rewrite.
-async fn figure_files_unavailable() -> Response {
-    (StatusCode::CONFLICT, "figure files unavailable").into_response()
-}
-
 async fn get_portal(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let portal = state.portal.lock().await.clone();
     axum::Json(portal)
@@ -801,9 +781,9 @@ async fn reset_slot(
     CurrentSession(sid): CurrentSession,
     Signed(body_bytes): Signed,
 ) -> Response {
-    // Without the figure-file hook (Native) there's no working copy to reset.
+    // Without the figure-file hook it's guacamole's, on its figure rows (AH.3).
     let Some(figure_files) = state.hooks.figure_files.clone() else {
-        return (StatusCode::CONFLICT, "figure files unavailable").into_response();
+        return crate::editor::reset_slot(&state, n, sid, &body_bytes).await;
     };
     let slot = match SlotIndex::from_display(n) {
         Ok(s) => s,

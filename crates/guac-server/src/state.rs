@@ -114,6 +114,13 @@ pub struct AppState {
     /// RPCS3 config and the settings writer. The product passes all four.
     pub hooks: crate::hooks::Hooks,
 
+    /// The game's progression once guacamole's extract holds it (AH.2): the
+    /// figure editor's levels and caps (AH.3). The product never fills it.
+    pub progression: crate::progress::ProgressionSlot,
+    /// The slot whose figure is the hero in a level, as guacamole's TV says;
+    /// the slot reset refuses it (AH.3).
+    pub level_hero: crate::progress::LevelHero,
+
     /// The driver again, as the /api/_test/* endpoints inject failure
     /// outcomes into it: the mock's or the native driver's, else `None`.
     #[cfg(feature = "test-hooks")]
@@ -686,8 +693,11 @@ fn first_grapheme_uppercase(name: &str) -> Option<String> {
 
 /// The identity placement for a file-less load (openspec AA, design decision
 /// 4): the subtype word as the id spells it (AE.4) and the roster's portrait.
-/// Errors only for an id that isn't in the list or isn't tag-form; an owner
-/// whose profile can't be read is logged and left off.
+/// An owner carries its row for the figure, made fresh on the profile's first
+/// placement of it (AH.1), so a load, a resume and a Kaos swap all make it.
+/// Errors for an id that isn't in the list or isn't tag-form, and for a row
+/// that can't be made or read; an owner whose profile can't be read is logged
+/// and left off.
 async fn build_placement(
     figure_id: &FigureId,
     name: &str,
@@ -708,6 +718,11 @@ async fn build_placement(
                 profile_id: profile_id.to_string(),
                 initial: first_grapheme_uppercase(&row.display_name).unwrap_or_default(),
                 color: row.color,
+                progress: profiles
+                    .instances()
+                    .fresh(profile_id, figure_id.as_str())
+                    .await?
+                    .progress,
             }),
             Ok(None) => {
                 warn!(profile_id, "place: placing profile is gone; no owner pip");

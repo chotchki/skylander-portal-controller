@@ -130,6 +130,7 @@ mod tests {
                 profile_id: id.into(),
                 initial: id[..1].to_uppercase(),
                 color: color.into(),
+                progress: Default::default(),
             }),
         }
     }

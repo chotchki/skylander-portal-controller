@@ -17,6 +17,7 @@ pub mod hero;
 mod identity;
 pub mod level;
 pub mod model;
+pub mod progression;
 pub mod rig;
 pub mod roster;
 pub mod scroll;
@@ -45,7 +46,8 @@ use serde::{Deserialize, Serialize};
 /// itself is new files, [`level`]); and AE.11's glow ([`model::Glow`]),
 /// telling a part without the attribute (no glow) from one with it off
 /// (layer 1's alpha), which v2 read alike. v4 is the merge of both, so an
-/// extract either branch's v3 wrote redoes itself.
+/// extract either branch's v3 wrote redoes itself. AH.2's progression is a
+/// new record in a file of its own, so v4 holds.
 pub const IR_VERSION: u32 = 4;
 
 #[derive(Debug, thiserror::Error)]
@@ -334,6 +336,62 @@ mod tests {
         assert_eq!(from_ron::<CharacterTable>(&text).unwrap(), table());
         let bytes = to_postcard(&table()).unwrap();
         assert_eq!(from_postcard::<CharacterTable>(&bytes).unwrap(), table());
+    }
+
+    fn progression() -> progression::Progression {
+        use progression::{SaveField, SaveKind, SaveParam};
+        progression::Progression {
+            identity: identity(),
+            level_xp: vec![0, 400, 1100],
+            save_params: vec![
+                SaveParam {
+                    param: "pp_Exp".into(),
+                    kind: SaveKind::Plain,
+                    fields: vec![SaveField {
+                        word: 0,
+                        bit: 0,
+                        member: None,
+                    }],
+                    width: 12,
+                    bits_per_field: 0,
+                    limit: 700,
+                },
+                SaveParam {
+                    param: "pp_Bits".into(),
+                    kind: SaveKind::Spillover,
+                    fields: vec![
+                        SaveField {
+                            word: 2,
+                            bit: 0,
+                            member: Some("pp_A".into()),
+                        },
+                        SaveField {
+                            word: 2,
+                            bit: 1,
+                            member: None,
+                        },
+                    ],
+                    width: 1,
+                    bits_per_field: 0,
+                    limit: 0,
+                },
+            ],
+            gold_cap: 9000,
+        }
+    }
+
+    #[test]
+    fn the_progression_round_trips_through_both() {
+        let text = to_ron(&progression()).unwrap();
+        assert_eq!(
+            from_ron::<progression::Progression>(&text).unwrap(),
+            progression()
+        );
+        let bytes = to_postcard(&progression()).unwrap();
+        assert_eq!(
+            from_postcard::<progression::Progression>(&bytes).unwrap(),
+            progression()
+        );
     }
 
     #[test]

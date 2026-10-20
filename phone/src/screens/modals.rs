@@ -3,7 +3,9 @@ use leptos::prelude::*;
 use crate::api::{clear_resume, post_load, post_reset, post_reset_figure};
 use crate::components::{BezelSize, DisplayHeading, FramedPanel, GoldBezel, HeadingSize};
 use crate::gloo_timer;
-use crate::model::{PublicProfile, Slot, SlotState, UnlockedProfile, SLOT_COUNT};
+use crate::model::{
+    FigureAction, PublicProfile, ServerApp, Slot, SlotState, UnlockedProfile, SLOT_COUNT,
+};
 use crate::{push_toast, push_toast_level, ResetTarget, ResumeOffer, ToastLevel, ToastMsg};
 
 /// What the phone says when guacamole refuses one of RESUME's loads (a 409:
@@ -211,6 +213,8 @@ pub(crate) fn ResumeModal(
 pub(crate) fn ResetConfirmModal(
     reset_target: RwSignal<Option<ResetTarget>>,
     toasts: RwSignal<Vec<ToastMsg>>,
+    /// guacamole's refusals read in a kid's words (AH.3).
+    server_app: RwSignal<ServerApp>,
 ) -> impl IntoView {
     let holding = RwSignal::new(false);
     let fired = RwSignal::new(false);
@@ -269,12 +273,22 @@ pub(crate) fn ResetConfirmModal(
                 None => return,
             };
             leptos::task::spawn_local(async move {
-                let outcome = match target.slot {
-                    Some(slot) => post_reset(slot, &target.figure_id).await,
-                    None => post_reset_figure(&target.profile_id, &target.figure_id).await,
+                let (outcome, action) = match target.slot {
+                    Some(slot) => (
+                        post_reset(slot, &target.figure_id).await,
+                        FigureAction::SlotReset,
+                    ),
+                    None => (
+                        post_reset_figure(&target.profile_id, &target.figure_id).await,
+                        FigureAction::Reset,
+                    ),
                 };
                 if let Err(e) = outcome {
-                    push_toast(toasts, &format!("Reset failed: {e}"));
+                    let app = server_app.get_untracked();
+                    match app.refusal(action, &e, &target.display_name) {
+                        Some(words) => push_toast_level(toasts, &words, ToastLevel::Warn),
+                        None => push_toast(toasts, &format!("Reset failed: {e}")),
+                    }
                 }
             });
 

@@ -6,7 +6,8 @@
 
 use crate::FormatError;
 use crate::{
-    edge, exports, havok, iga, igz, language, material, model, roster, sfo, texture, toys,
+    edge, exports, havok, iga, igz, language, material, model, progression, roster, sfo, texture,
+    toys,
 };
 
 pub struct RegisteredParser {
@@ -135,7 +136,39 @@ pub const PARSERS: &[RegisteredParser] = &[
         // worst by vector growth.
         heap_budget: |len| 64 * len + 32 * len + (64 << 10),
     },
+    RegisteredParser {
+        name: "save_table",
+        parse: walk_save_table,
+        seeds: progression::builder::seeds,
+        // Three IGZ parses (64x their parts), the definitions' index and op
+        // lists (a few words per op of 28 bytes or more) and the run: its
+        // cells and rows hold a path or a field per op stepped, and a loop's
+        // passes are bounded by MAX_PASSES and the step budget.
+        heap_budget: |len| 64 * len + 32 * len + (256 << 10),
+    },
+    RegisteredParser {
+        name: "gold_clamp",
+        parse: |bytes| progression::gold_clamp(&igz::Igz::parse(bytes)?).map(drop),
+        seeds: progression::builder::clamp_seeds,
+        // The IGZ parse, then the definitions' index and op lists.
+        heap_budget: |len| 64 * len + 32 * len + (64 << 10),
+    },
 ];
+
+/// Reads a bundled init_setup, global and bootstrap as the extract's
+/// progression part does (AH.2): the export ids, then the level table and
+/// save params. The property test and the fuzz targets run it.
+pub fn walk_save_table(bytes: &[u8]) -> Result<(), FormatError> {
+    let parts = unbundle(bytes);
+    let [init, global, boot, ..] = parts[..] else {
+        return Ok(());
+    };
+    let init = igz::Igz::parse(init)?;
+    let global = igz::Igz::parse(global)?;
+    let boot = igz::Igz::parse(boot)?;
+    let exports = exports::Exports::new(&boot, &global)?;
+    progression::SaveTable::read(&init, &global, &exports).map(drop)
+}
 
 /// The roster readers' seeds (AE.1): a level joined to its pack, a
 /// bootstrap, a global importing from both files, and the layouts' script

@@ -404,6 +404,14 @@ impl IrFormat {
         }
     }
 
+    /// The progression tables' file (AH.2).
+    pub fn progression_path(self) -> &'static str {
+        match self {
+            Self::Ron => "ir/progression.ron",
+            Self::Postcard => "ir/progression.postcard",
+        }
+    }
+
     /// The 3D-UI rig's file (AE.6).
     pub fn rig_path(self) -> &'static str {
         match self {
