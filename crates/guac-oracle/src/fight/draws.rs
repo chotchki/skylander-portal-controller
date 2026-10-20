@@ -205,13 +205,20 @@ mod tests {
         let mut third = base;
         third[5] += 1;
         let c = count(&third);
-        let horizon = anchor_horizon(&[a.clone(), b.clone(), c]).unwrap();
+        let horizon = anchor_horizon(&[a.clone(), b.clone(), c.clone()]).unwrap();
         assert_eq!(horizon.last_agreeing, Some(5));
         assert_eq!(horizon.parted_at, Some(6));
         // Replays that never part hold to the last common frame.
         let short = a[..8].to_vec();
-        let held = anchor_horizon(&[a, b, short]).unwrap();
+        let held = anchor_horizon(&[a.clone(), b.clone(), short]).unwrap();
         assert_eq!((held.last_agreeing, held.parted_at), (Some(7), None));
+        // One whose records start two frames in: compared from there.
+        let late = c[2..].to_vec();
+        let horizon = anchor_horizon(&[a, b, late]).unwrap();
+        assert_eq!(
+            (horizon.last_agreeing, horizon.parted_at),
+            (Some(5), Some(6))
+        );
         assert!(anchor_horizon(&[count(&base)]).is_err());
     }
 }

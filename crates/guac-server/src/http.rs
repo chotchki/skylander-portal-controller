@@ -962,13 +962,13 @@ struct StatusBody {
 /// native driver, so the driver kind says which.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum ServingApp {
+pub(crate) enum ServingApp {
     Product,
     Guacamole,
 }
 
 impl ServingApp {
-    fn of(kind: crate::config::DriverKind) -> Self {
+    pub(crate) fn of(kind: crate::config::DriverKind) -> Self {
         use crate::config::DriverKind;
         match kind {
             DriverKind::Native => Self::Guacamole,
@@ -1018,7 +1018,8 @@ impl ServingApp {
     /// slot's experience and gold. Placing it again in its own slot stays
     /// allowed (AB.21), and so does another profile's copy (AA.18); a load with
     /// no profile unlocked has no row to guard. The product loads anything.
-    fn placed_elsewhere(
+    /// A Kaos swap asks it too ([`crate::state::AppState::execute_kaos_swap`]).
+    pub(crate) fn placed_elsewhere(
         self,
         portal: &[SlotState],
         target: SlotIndex,

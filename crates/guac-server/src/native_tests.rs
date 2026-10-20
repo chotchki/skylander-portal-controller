@@ -591,6 +591,62 @@ async fn a_kaos_swap_places_by_identity_and_writes_no_file() {
     assert_eq!(places[1].1.owner.as_ref().unwrap().progress, spyro.progress);
 }
 
+/// openspec AH.37, at its review: a Kaos swap is picked from a copy of the
+/// portal and run after, so her phone can place the replacement in another
+/// slot between the two. Under guacamole the swap is dropped then (one
+/// instance, one slot); the product's swaps as before.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_kaos_swap_to_a_figure_her_phone_placed_meanwhile_is_dropped() {
+    for kind in [DriverKind::Native, DriverKind::Mock] {
+        let n = native_as(kind).await;
+        let (sid, alice) = n.unlocked_session_as("Alice", "#e8423f").await;
+        let load = |figure: &str| format!(r#"{{"figure_id":"{figure}"}}"#);
+        let uri = |slot: u8| format!("/api/portal/slot/{slot}/load");
+        assert_eq!(
+            n.send("POST", &uri(1), &load(ERUPTOR), Some(sid)).await,
+            StatusCode::ACCEPTED
+        );
+        n.wait_loaded(0, ERUPTOR).await;
+        // Picked while Spyro was off the portal.
+        let swap = crate::kaos::KaosSwap {
+            slot: SlotIndex::new(0).unwrap(),
+            old_figure_id: FigureId::new(ERUPTOR),
+            new_figure_id: FigureId::new(SPYRO),
+        };
+        // Her phone places Spyro before the swap runs.
+        assert_eq!(
+            n.send("POST", &uri(2), &load(SPYRO), Some(sid)).await,
+            StatusCode::ACCEPTED
+        );
+        n.wait_loaded(1, SPYRO).await;
+        let mut events = n.state.events.subscribe();
+        n.state.execute_kaos_swap(&swap, &alice, "Kaos!").await;
+        if kind == DriverKind::Native {
+            let portal = n.state.portal.lock().await.clone();
+            assert!(matches!(
+                &portal[0],
+                SlotState::Loaded { figure_id: Some(id), .. } if id.as_str() == ERUPTOR
+            ));
+            assert!(
+                n.driver.clears.lock().unwrap().is_empty(),
+                "nothing cleared"
+            );
+            assert_eq!(n.driver.places.lock().unwrap().len(), 2);
+            assert!(events.try_recv().is_err(), "nothing announced");
+        } else {
+            n.wait_loaded(0, SPYRO).await;
+            let portal = n.state.portal.lock().await.clone();
+            let spyros = portal
+                .iter()
+                .filter(|s| {
+                    matches!(s, SlotState::Loaded { figure_id: Some(id), .. } if id.as_str() == SPYRO)
+                })
+                .count();
+            assert_eq!(spyros, 2, "the product's swap is as it was: {portal:?}");
+        }
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_restore_re_places_by_identity_and_writes_no_file() {
     let n = native().await;

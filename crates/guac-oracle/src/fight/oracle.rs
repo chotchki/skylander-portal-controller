@@ -5,12 +5,19 @@
 //! list followed from a base by pointer hops, kept by a filter, each kept
 //! item's ranges copied through further hops) into a [`ChainRecord`] riding
 //! the O5 record it was copied with, one for one. An item's identity is its
-//! address while it stays in the list: an address gone for a record and back
-//! is a new actor, as a freed slot reused is. The harness names what the
-//! filter matched (`kind`), resolves a placed actor's name checksum to its
-//! placement and decodes the ranges; the behaviour cell stays raw here and
-//! resolves to the behaviour's name through [`Names`], built from the extract,
-//! so both sides compare names.
+//! address while it stays in the list, its kind and, when the harness names
+//! one, its [`ChainItem::serial`]: an address gone for a record and back is a
+//! new actor, and so is one listed under another kind or serial. Without a
+//! serial, a slot freed and taken by an actor of the same kind between two
+//! records reads as one actor that jumped (an orb collected as another
+//! spawns, with a pooled allocator), which a pickup or a spawn then miscounts:
+//! AH.5 copies a word that changes on reuse where the actor has one. The
+//! harness names what the filter matched (`kind`), resolves a placed actor's
+//! name checksum to its placement (and leaves a clone's `None`, though it
+//! carries its template's checksum, or every clone is named by the template
+//! rather than by its parent) and decodes the ranges; the behaviour cell
+//! stays raw here and resolves to the behaviour's name through [`Names`],
+//! built from the extract, so both sides compare names.
 //!
 //! The hero is O5's: his body and clip come from the record, and an item of
 //! kind [`HERO`] in the chain (his script variables, his behaviour) joins him
@@ -35,9 +42,15 @@ pub struct ChainItem {
     /// The filter entry it matched, as the harness names it (`"chompy"`,
     /// `"orb"`, [`HERO`]).
     pub kind: String,
-    /// The placement whose name checksum it carries; `None` for one spawned.
+    /// The placement whose name checksum it carries; `None` for one spawned
+    /// (a clone carries its template's checksum and still reads `None`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placement: Option<String>,
+    /// A word O6 copies that changes when the list's slot is taken by
+    /// another actor (the actor's own id or a spawn count), when the harness
+    /// names one: the same address under another serial is a new actor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub serial: Option<u32>,
     /// Transform and velocity off its corpus; `None` when a hop to them was
     /// unreadable.
     pub body: Option<Body>,
@@ -101,8 +114,9 @@ fn from_body(body: &Body) -> ([f64; 3], f64, [f64; 3]) {
 /// one per record, each actor named by `spawns`. Refused: a lost or repeated
 /// game frame ([`Recording::game_time`]'s refusals), a chain record that
 /// isn't its O5 record's ([`MetricError::ChainMismatch`]), an item listed
-/// twice, an item whose body didn't read ([`MetricError::Unreadable`]), and a
-/// cell the names don't hold.
+/// twice, an item whose body didn't read ([`MetricError::Unreadable`]: the
+/// whole recording, so AH.5's chain keeps a dying actor's body readable to
+/// its last listing or the replay is lost), and a cell the names don't hold.
 pub fn fight_trace(
     recording: &Recording,
     chain: &[ChainRecord],
@@ -117,8 +131,9 @@ pub fn fight_trace(
         });
     }
     let origin = frames[0].game_frame;
-    // Address -> (id, kind) for the items the record before listed.
-    let mut listed: BTreeMap<u32, (u64, String)> = BTreeMap::new();
+    // Address -> (id, kind, serial) for the items the record before listed.
+    type Listed = (u64, String, Option<u32>);
+    let mut listed: BTreeMap<u32, Listed> = BTreeMap::new();
     let mut next_id: u64 = 1;
     let mut ticks = Vec::with_capacity(frames.len());
     for (index, ((frame, record), &time)) in frames.iter().zip(chain).zip(&times).enumerate() {
@@ -150,7 +165,7 @@ pub fn fight_trace(
             vars: BTreeMap::new(),
         };
         let mut actors = Vec::with_capacity(record.items.len() + 1);
-        let mut now: BTreeMap<u32, (u64, String)> = BTreeMap::new();
+        let mut now: BTreeMap<u32, Listed> = BTreeMap::new();
         for item in &record.items {
             let behaviour = item
                 .behaviour
@@ -173,13 +188,16 @@ pub fn fight_trace(
                 });
             };
             let id = match listed.get(&item.address) {
-                Some((id, kind)) if *kind == item.kind => *id,
+                Some((id, kind, serial)) if *kind == item.kind && *serial == item.serial => *id,
                 _ => {
                     next_id += 1;
                     next_id - 1
                 }
             };
-            if now.insert(item.address, (id, item.kind.clone())).is_some() {
+            if now
+                .insert(item.address, (id, item.kind.clone(), item.serial))
+                .is_some()
+            {
                 return Err(MetricError::DuplicateActor { frame: at, id });
             }
             let (position, heading, velocity) = from_body(body);
@@ -252,6 +270,7 @@ pub(crate) mod tests {
             address,
             kind: kind.into(),
             placement: placement.map(Into::into),
+            serial: None,
             body: Some(Body {
                 position: [x, 22.4, -60.0],
                 rotation: [0.0, 0.0, 0.0],
@@ -390,5 +409,51 @@ pub(crate) mod tests {
             .map(|t| (t.name(), t.first(), t.last()))
             .collect();
         assert_eq!(orbs, [("orb#1", 0, 0), ("orb#2", 2, 2)]);
+    }
+
+    /// The review's cases: a slot taken between two records, by another kind
+    /// or, told by the serial, by another of the same kind, is a new actor;
+    /// without a serial a same-kind reuse can't be told from one actor.
+    #[test]
+    fn a_slot_taken_between_records_is_a_new_actor_by_kind_or_serial() {
+        let frames: Vec<Frame> = (0..4).map(|k| record(k, NOMINAL, 0.0, false)).collect();
+        let recording = Recording::new(frames.clone()).unwrap();
+        let serial = |x: f32, s: u32| {
+            let mut i = item(0x9000, "orb", None, x);
+            i.serial = Some(s);
+            i
+        };
+        let items = vec![
+            vec![serial(1.0, 7)],
+            vec![serial(1.5, 7)],
+            // Collected, and its slot taken by a new orb in the same frame.
+            vec![serial(4.0, 8)],
+            // Then by a coin.
+            vec![item(0x9000, "coin", None, 6.0)],
+        ];
+        let trace =
+            fight_trace(&recording, &chained(&frames, items), &Names::default(), &[]).unwrap();
+        let tracks: Vec<(&str, usize, usize)> = trace
+            .tracks()
+            .filter(|t| t.kind() != HERO)
+            .map(|t| (t.name(), t.first(), t.last()))
+            .collect();
+        assert_eq!(tracks, [("coin#1", 3, 3), ("orb#1", 0, 1), ("orb#2", 2, 2)]);
+        // No serial: the same reuse reads as one orb that jumped; a coin
+        // taking the slot is still told by its kind.
+        let items = vec![
+            vec![item(0x9000, "orb", None, 1.0)],
+            vec![item(0x9000, "orb", None, 1.5)],
+            vec![item(0x9000, "orb", None, 4.0)],
+            vec![item(0x9000, "coin", None, 6.0)],
+        ];
+        let trace =
+            fight_trace(&recording, &chained(&frames, items), &Names::default(), &[]).unwrap();
+        let tracks: Vec<(&str, usize, usize)> = trace
+            .tracks()
+            .filter(|t| t.kind() != HERO)
+            .map(|t| (t.name(), t.first(), t.last()))
+            .collect();
+        assert_eq!(tracks, [("coin#1", 3, 3), ("orb#1", 0, 2)]);
     }
 }

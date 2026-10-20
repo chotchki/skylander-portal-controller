@@ -672,9 +672,13 @@ mod tests {
         let v = reference.check(&way_late, &j).unwrap();
         assert!(v.passed(), "{v:?}");
         assert_eq!(v.actors["Enemy_Chompy(1)"].stamped, 1);
-        // The horizon at the band's last frame still judges it.
+        // The horizon at the band's last frame still judges it; one frame
+        // short of it doesn't, though a replay's stamp (79) lies inside:
+        // every replay's must.
         j.horizon = Some(80);
         assert!(!reference.check(&way_late, &j).unwrap().passed());
+        j.horizon = Some(79);
+        assert!(reference.check(&way_late, &j).unwrap().passed());
         // A kind a roll times: order only, wherever it falls.
         let mut j = judge(F);
         j.ordered.insert("state Battle".into());

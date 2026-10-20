@@ -12,7 +12,9 @@
 //! kinds a [`SpawnRule`] lists, a tick before) and its count among that
 //! parent's children of its kind (`Enemy_Chompy(2)>orb#3`), else by its
 //! count among its kind (`orb#3`). Spawns in one tick count in order of
-//! where they appear, so a run's own ids never decide a name.
+//! where they appear (position, then velocity), so a run's own ids decide a
+//! name only between spawns alike in both, twins whose names can then swap
+//! from run to run.
 
 use std::collections::{BTreeMap, BTreeSet};
 

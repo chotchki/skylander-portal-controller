@@ -1297,6 +1297,19 @@ fn each_of_the_fights_parts_resumes_alone() {
         (0, ENTRIES)
     );
     assert_eq!(again.dir.manifest().parts[scripts::SCRIPTS].len(), ENTRIES);
+    // A part's file gone with its record kept (the review's case): the
+    // part isn't in, so it's read again and only that file written.
+    let spawn = IrFormat::Ron.spawn_path(scripts::spawn_archives()[0].as_str());
+    for f in ["scripts/009_eruptor.igz", spawn.as_str()] {
+        fs::remove_file(again.dir.path().join(f)).unwrap();
+    }
+    let sc = stages::script_stage(&mut again.dir, IrFormat::Ron, &|_| {}).unwrap();
+    assert_eq!((sc.parts_read, sc.parts_kept), (2, 0));
+    assert_eq!(
+        (sc.script_files.written, sc.script_files.kept),
+        (1, ENTRIES - 1)
+    );
+    assert_eq!(sc.spawn_files.written, 1);
 }
 
 /// A level whose scripts don't read (AG.3's sample names one with no op

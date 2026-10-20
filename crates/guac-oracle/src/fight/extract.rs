@@ -277,7 +277,9 @@ pub enum Hit {
     Changes(String),
 }
 
-/// What a bite is.
+/// What a bite is. The health lost is read across the hit's own tick, so
+/// the hit's marker has to land in the tick the target's health drops: one
+/// a frame ahead of it reads every bite as turned away (AH.10 picks it).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BiteRule {
     /// The biters' kind.
@@ -1004,6 +1006,67 @@ mod tests {
         assert_eq!(kinds("barrel_b_intact(1)>coin#1"), ["12 spawn"]);
         let totals = totals(&trace, &rules).unwrap();
         assert_eq!((totals["breaks"], totals["drops"]), (2, 1));
+    }
+
+    /// The review's case: a barrel that leaves the trace as it breaks, in the
+    /// tick the ball bursts, its coin out that same tick. The break is the
+    /// ball's (a burst's own tick counts), and the coin is the barrel's,
+    /// found where it stood the tick before.
+    #[test]
+    fn a_barrel_gone_in_the_bursts_own_tick_is_the_balls_and_parents_its_coin() {
+        let trace = FightTrace::new(
+            (0..10)
+                .map(|t| {
+                    let mut h = hero(0.0, 290.0);
+                    if (1..=2).contains(&t) {
+                        h.clip = Some("Eruptor_Throw".into());
+                    }
+                    let mut actors = vec![h];
+                    if t < 6 {
+                        actors.push(actor(5, "barrel", Some("barrel_b_intact(1)"), 4.5));
+                    }
+                    if (2..6).contains(&t) {
+                        actors.push(actor(40, "lava_ball", None, t as f64 - 1.0));
+                    }
+                    if t >= 6 {
+                        actors.push(actor(50, "coin", None, 4.4));
+                    }
+                    Tick {
+                        frame: t as u32,
+                        time: t as f64 / 60.0,
+                        buttons: Some(if t == 1 {
+                            BTreeSet::from([Button::South])
+                        } else {
+                            BTreeSet::new()
+                        }),
+                        mt: None,
+                        actors,
+                    }
+                })
+                .collect(),
+            &spawn_rules(),
+        )
+        .unwrap();
+        let mut rule = chain_rule();
+        rule.breaks.broken = Cue::Gone;
+        let links = chain(&trace, &rule);
+        assert_eq!(links.len(), 1);
+        let link = &links[0];
+        assert_eq!(
+            (
+                link.press.map(|s| s.frame),
+                link.throw.frame,
+                link.burst.map(|s| s.frame)
+            ),
+            (Some(1), 1, Some(6))
+        );
+        assert_eq!(
+            link.broke.as_ref().map(|b| (b.name.as_str(), b.at.frame)),
+            Some(("barrel_b_intact(1)", 6))
+        );
+        let coins: Vec<&str> = link.coins.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(coins, ["barrel_b_intact(1)>coin#1"]);
+        assert_eq!(drop_count(&breaks(&trace, &rule.breaks)), 1);
     }
 
     #[test]
