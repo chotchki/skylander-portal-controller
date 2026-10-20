@@ -21,6 +21,11 @@
 //!   its start (AG.41) lights it and sets the [`LevelFog`] resource, which
 //!   every material's fog term reads; a change relights them all
 //!   ([`light_level`]).
+//! - Scripts (AH.22): the level's script part, parsed and linked on a task
+//!   of its own beside the reading one ([`guacamole::level_scripts`]), so it
+//!   adds nothing to the time the level takes to show; the level is drawn
+//!   whether it links or not, and the report says which and what it cost.
+//!   Nothing runs the program yet (AH.16).
 //!
 //! Nothing shows it in the product yet (AG.21 and AG.29 take the TV into
 //! it). The dev entry does: with `GUAC_LEVEL_VIEW` set in a `dev-tools` build,
@@ -63,6 +68,7 @@ use guacamole::level_scene::{
     self as arithmetic, AtStart, Drawn, LevelFog, LevelLights, fresh_state_projection,
     fresh_state_transform, fresh_state_view, view_scene,
 };
+use guacamole::level_scripts;
 use serde::Serialize;
 use tracing::{info, warn};
 
@@ -336,9 +342,30 @@ pub(crate) struct LevelReport {
     /// From the Giants pick to ready.
     pub pick_to_ready_ms: Option<u64>,
     pub shown: bool,
+    /// The script part, once linked (AH.22), or why it didn't.
+    pub scripts: Option<ScriptsReport>,
+    pub scripts_reason: Option<String>,
     /// What stopped it: the reading task's error, a part's file or the
     /// lights it lacks.
     pub reason: Option<String>,
+}
+
+/// What `/api/_test/tv` reports of the level's script part (AH.22).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub(crate) struct ScriptsReport {
+    /// The entries, the level's own included, and their bytes.
+    pub files: usize,
+    pub bytes: u64,
+    /// What linked: scripts, ops and macro definitions.
+    pub scripts: usize,
+    pub ops: usize,
+    pub defs: usize,
+    /// Reading the entries, parsing them and their graphs, linking; and
+    /// from the source landing to linked.
+    pub read_ms: u64,
+    pub parsed_ms: u64,
+    pub linked_ms: u64,
+    pub done_ms: Option<u64>,
 }
 
 /// A level being handed to the renderer.
@@ -420,6 +447,8 @@ pub(crate) struct Level {
     stage: Stage,
     since: Option<Instant>,
     report: LevelReport,
+    /// The script part's task, until it's done (AH.22).
+    scripts: Option<Task<Result<level_scripts::Linked, String>>>,
 }
 
 impl Level {
@@ -433,6 +462,7 @@ impl Level {
                 state: "idle".into(),
                 ..Default::default()
             },
+            scripts: None,
         }
     }
 
@@ -544,6 +574,10 @@ fn receive_level(
         let source = source.clone();
         AsyncComputeTaskPool::get().spawn(async move { read_level(&source, formats) })
     };
+    level.scripts = Some({
+        let (dir, name) = (source.dir.clone(), source.level.clone());
+        AsyncComputeTaskPool::get().spawn(async move { level_scripts::load(&dir, &name) })
+    });
     level.report = LevelReport {
         state: "reading".into(),
         level: Some(source.level.clone()),
@@ -571,6 +605,7 @@ pub(crate) struct LevelSpawner<'w, 's> {
 /// ready once the renderer has it all and the warm has its keys.
 fn step_level(mut level: ResMut<Level>, mut warm: ResMut<Warm>, mut s: LevelSpawner) {
     let level = &mut *level;
+    poll_scripts(level);
     match std::mem::replace(&mut level.stage, Stage::Idle) {
         Stage::Reading(mut task) => match check_ready(&mut task) {
             None => level.stage = Stage::Reading(task),
@@ -641,6 +676,52 @@ fn step_level(mut level: ResMut<Level>, mut warm: ResMut<Warm>, mut s: LevelSpaw
         other => level.stage = other,
     }
     level.report.state = level.stage.name().into();
+}
+
+/// The script part's task, reported once it's done: what linked and what
+/// it cost, or why it didn't. The level goes on either way.
+fn poll_scripts(level: &mut Level) {
+    let Some(task) = level.scripts.as_mut() else {
+        return;
+    };
+    let Some(result) = check_ready(task) else {
+        return;
+    };
+    level.scripts = None;
+    let done_ms = level.ms();
+    match result {
+        Ok(linked) => {
+            let report = ScriptsReport {
+                files: linked.files,
+                bytes: linked.bytes,
+                scripts: linked.program.scripts.len(),
+                ops: linked.program.ops.len(),
+                defs: linked.program.defs.len(),
+                read_ms: linked.read.as_millis() as u64,
+                parsed_ms: linked.parsed.as_millis() as u64,
+                linked_ms: linked.linked.as_millis() as u64,
+                done_ms,
+            };
+            info!(
+                level = ?level.report.level,
+                files = report.files,
+                bytes = report.bytes,
+                scripts = report.scripts,
+                ops = report.ops,
+                defs = report.defs,
+                read_ms = report.read_ms,
+                parsed_ms = report.parsed_ms,
+                linked_ms = report.linked_ms,
+                done_ms = ?report.done_ms,
+                "the level's scripts linked"
+            );
+            level.report.scripts = Some(report);
+        }
+        Err(why) => {
+            warn!(level = ?level.report.level, reason = %why, "the level's scripts didn't load; it's drawn without them");
+            level.report.scripts_reason = Some(why);
+        }
+    }
 }
 
 /// Ready once the renderer has every part resident and the warm every key
@@ -1334,6 +1415,48 @@ mod tests {
             app.world().get::<Visibility>(root),
             Some(&Visibility::Hidden),
             "nothing shows it"
+        );
+    }
+
+    /// AH.22: the level's script part links on a task of its own and the
+    /// report says what linked; without the part the level loads all the
+    /// same, the reason reported.
+    #[test]
+    fn the_script_part_links_beside_the_load_and_a_missing_one_is_reported() {
+        use guac_formats::roster::builder::{disc, sample};
+        let tmp = tempfile::tempdir().unwrap();
+        let source = write_level(tmp.path(), &lights());
+        let d = disc(&sample());
+        let (creature, _) = guac_formats::script::builder::creature();
+        let entries = [&d.bootstrap, &d.global, &d.init_setup, &creature, &creature];
+        for ((rel, _), bytes) in level_scripts::files(LEVEL).iter().zip(entries) {
+            let path = tmp.path().join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, bytes).unwrap();
+        }
+        let mut app = level_app(tmp.path(), source.clone(), false);
+        until_report(&mut app, |r| r.scripts.is_some(), |_| {});
+        let r = report(&app);
+        let linked = r.scripts.as_ref().unwrap();
+        // The portal manager, three Init_Setup scripts, the creature twice.
+        assert_eq!((linked.files, linked.scripts), (5, 6));
+        assert!(linked.ops > 0 && linked.done_ms.is_some(), "{linked:?}");
+        assert_eq!(r.scripts_reason, None);
+        until(&mut app, &["ready"], |_| {});
+
+        // The fighter's entry gone: the level is ready without the scripts.
+        let tmp = tempfile::tempdir().unwrap();
+        let source = write_level(tmp.path(), &lights());
+        let mut app = level_app(tmp.path(), source, false);
+        until(&mut app, &["ready"], |_| {});
+        until_report(&mut app, |r| r.scripts_reason.is_some(), |_| {});
+        let r = report(&app);
+        assert!(r.scripts.is_none());
+        assert!(
+            r.scripts_reason
+                .as_deref()
+                .is_some_and(|w| w.starts_with("scripts/bootstrap.igz: ")),
+            "{r:?}"
         );
     }
 

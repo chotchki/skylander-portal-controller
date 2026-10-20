@@ -4497,6 +4497,7 @@ dependencies = [
  "guac-formats",
  "guac-ir",
  "guac-motion",
+ "guac-script",
  "guac-server",
  "http-body-util",
  "image",

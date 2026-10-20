@@ -1,6 +1,6 @@
 //! The levels guacamole plays off the dump (openspec AG.15, design decision
 //! 8): chapter 1, `level/level_213_tutotial.bld`, into IR v3's level
-//! records ([`guac_ir::level`]) in six parts, each a file of its own under
+//! records ([`guac_ir::level`]) in eight parts, each a file of its own under
 //! `levels/<archive>/`, the textures into the characters' store. Writing
 //! them is the level stage's ([`crate::stages`]).
 //!
@@ -17,6 +17,14 @@
 //! - The atmosphere (AG.41): the zones the level's definition script adds
 //!   at its start on a PS3, read statically ([`guac_formats::atmosphere`]).
 //!   An extract written before it gains this part alone on its next start.
+//! - The script (AH.22, design decision 7): the level's `level.bld` as the
+//!   disc holds it, decompressed, `levels/<archive>/script.igz`, checked to
+//!   parse and its op graph to read; whole, since a script refers to its own
+//!   file's placements, structures and sets. The same file in either IR
+//!   format.
+//! - The palettes (AH.22): every slot of each skinned model a placement
+//!   running a whitelisted script names ([`crate::scripts::WHITELIST`]):
+//!   chapter 1's Chompies and Norticus.
 //!
 //! A part that doesn't read is the level stage's failure for that part
 //! alone: the other parts land, and the next start tries it again.
@@ -42,6 +50,7 @@ use guac_ir::level::{
     UnitTexture, Waypoint, ZoneFog, ZoneLight,
 };
 use guac_ir::model::{Mask, Segment};
+use guac_ir::palette::LevelPalettes;
 use guac_ir::{DumpIdentity, RigLight};
 
 use crate::extract::Manifest;
@@ -63,7 +72,26 @@ pub const COLLISION: &str = "collision";
 pub const PLACEMENTS: &str = "placements";
 pub const LIGHTS: &str = "lights";
 pub const ATMOSPHERE: &str = "atmosphere";
-pub const PARTS: [&str; 6] = [SCENE, PROPS, COLLISION, PLACEMENTS, LIGHTS, ATMOSPHERE];
+pub const SCRIPT: &str = "script";
+pub const PALETTES: &str = "palettes";
+pub const PARTS: [&str; 8] = [
+    SCENE, PROPS, COLLISION, PLACEMENTS, LIGHTS, ATMOSPHERE, SCRIPT, PALETTES,
+];
+
+/// The script part's file, `levels/<archive>/script.igz`: raw, so the same
+/// in either IR format.
+pub fn script_path(level: &str) -> String {
+    format!("{LEVEL_DIR}/{level}/{SCRIPT}.igz")
+}
+
+/// `part`'s file in `ir`'s format: its IR, or the script's raw entry.
+pub fn part_path(ir: crate::intros::IrFormat, level: &str, part: &str) -> String {
+    if part == SCRIPT {
+        script_path(level)
+    } else {
+        ir.level_path(level, part)
+    }
+}
 
 /// `level/<archive>.bld` under the dump's `PS3_GAME/USRDIR`.
 pub fn archive_path(usrdir: &Path, level: &str) -> PathBuf {
@@ -578,6 +606,62 @@ pub fn atmosphere(
             script: a.script.to_owned(),
             zones,
             start: a.start.map(|i| i as u32),
+        },
+        textures: Vec::new(),
+    })
+}
+
+/// The script part: the scripts the level's entry holds, once it parses
+/// and its op graph reads; the stage writes the entry itself.
+pub fn script(igz: &Igz<'_>) -> Result<usize, String> {
+    guac_formats::script::Graph::read(igz)
+        .map(|g| g.scripts.len())
+        .map_err(s)
+}
+
+/// The palettes part: every slot of each skinned model a placement running
+/// one of the level's whitelisted scripts names, each model once, in
+/// object order. A model with no skeleton (a breakable, a coin) has none;
+/// one whose skeleton won't read refuses the part.
+pub fn palettes(
+    igz: &Igz<'_>,
+    level: &str,
+    identity: DumpIdentity,
+) -> Result<Read<LevelPalettes>, String> {
+    let listed = crate::scripts::level_scripts(level);
+    let placements = FormatPlacements::read(igz).map_err(s)?;
+    let mut creatures: BTreeMap<usize, &str> = BTreeMap::new();
+    for a in &placements.actors {
+        let Some(model) = a.info.model else {
+            continue;
+        };
+        if !a.script.is_some_and(|p| crate::scripts::listed(listed, p)) {
+            continue;
+        }
+        let Some(info) = placements.models.get(&model) else {
+            continue;
+        };
+        creatures.insert(model, info.info.name.unwrap_or_default());
+    }
+    let mut palettes = Vec::new();
+    for (model, path) in creatures {
+        let Ok(hero) = Hero::read(igz, model) else {
+            continue;
+        };
+        let skeleton = fmodel::skeleton(igz, &hero).map_err(|e| format!("{path}: {e}"))?;
+        palettes.push(models::palette(
+            igz,
+            &hero,
+            &skeleton,
+            path,
+            identity.clone(),
+        ));
+    }
+    Ok(Read {
+        ir: LevelPalettes {
+            identity,
+            level: level.to_owned(),
+            palettes,
         },
         textures: Vec::new(),
     })

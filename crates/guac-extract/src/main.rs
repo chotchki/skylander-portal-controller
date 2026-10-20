@@ -22,6 +22,7 @@ usage: guac-extract identify <dump-dir>
        guac-extract roster <dump-dir>
        guac-extract models <dump-dir>
        guac-extract levels <dump-dir>
+       guac-extract scripts <dump-dir>
        guac-extract intros <dump-dir>
        guac-extract transcode <dump-dir>
        guac-extract extract <dump-dir>
@@ -42,13 +43,22 @@ Extracts what guacamole plays from your own Skylanders disc dump.
              the dump's folder
   models     the roster, then each character's model into
              models/<load file>.ron, the textures its materials bind into
-             textures/<sha256>.ktx2 and the 3D-UI rig into ir/rig.ron in the
-             dump's folder; a model that won't read is listed, not fatal
+             textures/<sha256>.ktx2, its hero side into heroes/ and every
+             slot of its animation set into palettes/<load file>.ron, and
+             the 3D-UI rig into ir/rig.ron in the dump's folder; a model
+             that won't read is listed, not fatal
   levels     identify, then each level guacamole plays (chapter 1) into
              levels/<archive>/<part>.ron, part by part (scene, props,
-             collision, placements, lights), its textures beside the
+             collision, placements, lights, atmosphere, palettes), its
+             entry as levels/<archive>/script.igz, its textures beside the
              models'; a part already there is kept, one that won't read is
              listed, not fatal
+  scripts    identify, then the fight's script data outside a level: the
+             level.bld of bootstrap.bld, global.bld, init_setup.bld and each
+             fighter's archive into scripts/<archive>.igz, and the models
+             global.bld's and each fighter's placements name into
+             spawns/<archive>.ron; a part already there is kept, one that
+             won't read is listed, not fatal
   intros     identify, then map each toy type's character archives to its
              intro movie by their voice-over name, the roster's names as the
              fallback, and write the character table to ir/characters.ron in
@@ -59,9 +69,9 @@ Extracts what guacamole plays from your own Skylanders disc dump.
              bin folders on macOS); leaves the extract unmarked, since it
              writes no roster
   extract    every stage, in guacamole's order: identify, the roster, the
-             models, the levels, then ffmpeg and the intros; a missing ffmpeg
-             leaves the roster, the models and the levels in place and the
-             extract unmarked
+             models, the levels, the scripts, then ffmpeg and the intros; a
+             missing ffmpeg leaves the rest in place and the extract
+             unmarked
 ";
 
 /// The environment, else `.env.dev` in the current folder.
@@ -205,6 +215,53 @@ fn models_line(m: &stages::ModelStage) -> String {
     )
 }
 
+fn palettes_line(p: &stages::PaletteCount) -> String {
+    format!(
+        "{} palettes: {} clips, {} networks, {} slots refused; {}; {:.2} s",
+        p.palettes,
+        p.clips,
+        p.networks,
+        p.refused,
+        files_line(&p.files),
+        p.took.as_secs_f64()
+    )
+}
+
+fn scripts_line(s: &stages::ScriptStage) -> String {
+    format!(
+        "{} parts read, {} kept, {} failed; {} entries, {} scripts ({}); {} spawn models, {} refused ({}); {:.2} s",
+        s.parts_read,
+        s.parts_kept,
+        s.failed.len(),
+        s.entries,
+        s.scripts,
+        files_line(&s.script_files),
+        s.props,
+        s.refused_props.len(),
+        files_line(&s.spawn_files),
+        s.took.as_secs_f64()
+    )
+}
+
+/// The stage's failed parts and refused spawn models, a line each.
+fn script_failures(s: &stages::ScriptStage) {
+    for f in &s.failed {
+        println!("  failed    {}", f.reason);
+    }
+    for (prop, why) in &s.refused_props {
+        println!("  refused   {prop}: {why}");
+    }
+}
+
+fn scripts(dump: &Path) -> Result<(), guac_extract::ExtractError> {
+    let mut opened = open_dev(dump)?;
+    let s = stages::script_stage(&mut opened.dir, IrFormat::Ron, &|_| {})?;
+    println!("scripts     {}", scripts_line(&s));
+    script_failures(&s);
+    println!("extract     {}", opened.dir.path().display());
+    Ok(())
+}
+
 /// The stage's failures and unsettled heroes, a line each.
 fn model_failures(m: &stages::ModelStage) {
     for f in &m.failed {
@@ -225,6 +282,7 @@ fn models(dump: &Path) -> Result<(), guac_extract::ExtractError> {
     );
     let m = stages::model_stage(&mut opened.dir, &roster.roster, IrFormat::Ron, &|_| {})?;
     println!("models      {}", models_line(&m));
+    println!("palettes    {}", palettes_line(&m.palettes));
     model_failures(&m);
     println!("extract     {}", opened.dir.path().display());
     Ok(())
@@ -260,6 +318,11 @@ fn levels(dump: &Path) -> Result<(), guac_extract::ExtractError> {
     let mut opened = open_dev(dump)?;
     let l = stages::level_stage(&mut opened.dir, IrFormat::Ron, &|_| {})?;
     println!("levels      {}", levels_line(&l));
+    println!(
+        "  scripts {}, creatures {}",
+        l.scripts,
+        palettes_line(&l.palettes)
+    );
     level_failures(&l);
     println!("extract     {}", opened.dir.path().display());
     Ok(())
@@ -307,9 +370,17 @@ fn extract(dump: &Path) -> Result<(), guac_extract::ExtractError> {
         Err(why) => println!("progression didn't read: {why}"),
     }
     println!("models      {}", models_line(&done.models));
+    println!("palettes    {}", palettes_line(&done.models.palettes));
     model_failures(&done.models);
     println!("levels      {}", levels_line(&done.levels));
+    println!(
+        "  scripts {}, creatures {}",
+        done.levels.scripts,
+        palettes_line(&done.levels.palettes)
+    );
     level_failures(&done.levels);
+    println!("scripts     {}", scripts_line(&done.scripts));
+    script_failures(&done.scripts);
     match &done.intros {
         Ok(i) => println!(
             "intros      {} of {} toy types; {} transcoded, {} already done, {} linked; {:.1} s",
@@ -445,6 +516,13 @@ fn main() -> ExitCode {
             }
         },
         ["models", dump] => match models(Path::new(dump)) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("guac-extract: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        ["scripts", dump] => match scripts(Path::new(dump)) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("guac-extract: {e}");

@@ -440,6 +440,30 @@ impl IrFormat {
         format!("{}/{load_file}.{ext}", crate::models::HERO_DIR)
     }
 
+    /// The animation palette `load_file`'s model plays,
+    /// `palettes/<load file>.<ron|postcard>` (AH.22).
+    pub fn palette_path(self, load_file: &str) -> String {
+        let ext = match self {
+            Self::Ron => "ron",
+            Self::Postcard => "postcard",
+        };
+        format!("{}/{load_file}.{ext}", crate::models::PALETTE_DIR)
+    }
+
+    /// The spawn models of `archive` (`permanent/global.bld`),
+    /// `spawns/<stem>.<ron|postcard>` (AH.22).
+    pub fn spawn_path(self, archive: &str) -> String {
+        let ext = match self {
+            Self::Ron => "ron",
+            Self::Postcard => "postcard",
+        };
+        format!(
+            "{}/{}.{ext}",
+            crate::scripts::SPAWN_DIR,
+            crate::scripts::stem(archive)
+        )
+    }
+
     /// A level's part, `levels/<archive>/<part>.<ron|postcard>` (AG.15).
     pub fn level_path(self, level: &str, part: &str) -> String {
         let ext = match self {

@@ -50,6 +50,7 @@ use guac_ir::model::{
     Attachment, Blend, Filter, Glow, Joint, Mask, Material, MaterialTrack, Params, RenderStates,
     Sampler, Scroll, Segment, Skeleton, TextureRole, TextureSlot, Transform, Wrap,
 };
+use guac_ir::palette::{Palette, PaletteSlot, RefusedSlot, SlotEntry};
 use guac_ir::{Category, DumpIdentity, Hero, Model, Rig, RigLight, Roster, Sha256};
 use sha2::Digest;
 
@@ -62,6 +63,11 @@ pub const MODEL_DIR: &str = "models";
 pub const TEXTURE_DIR: &str = "textures";
 /// Where the hero side goes, one `<load file>.<ron|postcard>` each (AG.14).
 pub const HERO_DIR: &str = "heroes";
+/// Where the palettes go, one `<load file>.<ron|postcard>` each (AH.22).
+pub const PALETTE_DIR: &str = "palettes";
+/// The palettes' part in the manifest: every character's, recorded once
+/// the model stage has been through them all.
+pub const PALETTES: &str = "palettes";
 /// Each gait's slot in the animation set ([`guac_formats::model`]'s).
 pub const GAITS: [(Gait, usize); 5] = [
     (Gait::Walk, fmodel::WALK_SLOT),
@@ -89,6 +95,10 @@ pub struct Extracted {
     pub hero: std::result::Result<Hero, String>,
     /// What reading the hero side took, of the whole read.
     pub hero_took: Duration,
+    /// Every slot of the model's animation set (AH.22).
+    pub palette: Palette,
+    /// What reading the palette took, of the whole read.
+    pub palette_took: Duration,
 }
 
 /// The character load files a roster names, in roster order: each figure
@@ -227,6 +237,15 @@ pub fn read(
     let hero = self::hero(&igz, &portal, &havok_skeleton, load_file, identity.clone())
         .map_err(|e| e.to_string());
     let hero_took = started.elapsed();
+    let started = Instant::now();
+    let palette = self::palette(
+        &igz,
+        &portal.hero,
+        &havok_skeleton,
+        load_file,
+        identity.clone(),
+    );
+    let palette_took = started.elapsed();
     Ok(Extracted {
         model: Model {
             identity,
@@ -243,7 +262,56 @@ pub fn read(
         binds,
         hero,
         hero_took,
+        palette,
+        palette_took,
     })
+}
+
+/// Every filled slot of `hero`'s animation set as a palette (AH.22): each
+/// clip on `skeleton`'s joints with how it blends, a network as one, and a
+/// slot that won't play listed with why.
+pub fn palette(
+    igz: &Igz<'_>,
+    hero: &guac_formats::igz::layouts::Hero<'_>,
+    skeleton: &havok::Skeleton<'_>,
+    owner: &str,
+    identity: DumpIdentity,
+) -> Palette {
+    let mut entries = Vec::new();
+    let mut refused = Vec::new();
+    for slot in 0..hero.clip_slots.len() {
+        let read = fmodel::palette_slot(igz, hero, skeleton, slot);
+        let slot16 = u16::try_from(slot).unwrap_or(u16::MAX);
+        match read {
+            Ok(None) => {}
+            Ok(Some(s)) => entries.push(PaletteSlot {
+                slot: slot16,
+                name: s.name.map(str::to_owned),
+                label: s.label.map(str::to_owned),
+                entry: match s.clip {
+                    None => SlotEntry::Network,
+                    Some(c) => SlotEntry::Clip {
+                        additive: c.flags.additive_blend(),
+                        partial: c.flags.partial_animation(),
+                        layered: c.flags.layered(),
+                        motion_extraction: c.flags.motion_extraction_flags() as u8,
+                        clip: self::clip(&c.clip, c.file.unwrap_or_default()),
+                    },
+                },
+            }),
+            Err(e) => refused.push(RefusedSlot {
+                slot: slot16,
+                reason: e.to_string(),
+            }),
+        }
+    }
+    Palette {
+        identity,
+        owner: owner.to_owned(),
+        slots: u16::try_from(hero.clip_slots.len()).unwrap_or(u16::MAX),
+        entries,
+        refused,
+    }
 }
 
 /// Where an attachment's template lives: in the archive or `global.bld`,

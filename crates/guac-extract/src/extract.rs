@@ -45,9 +45,9 @@ pub struct Manifest {
     #[serde(default)]
     pub levels: BTreeMap<String, LevelRecord>,
     /// Each part that isn't a level's, by name, with its files (AH.2's
-    /// progression), recorded as a level's parts are: a start is current
-    /// only once every one this build reads is in
-    /// ([`crate::progression::complete`]).
+    /// progression; AH.22's palettes, scripts and spawn models), recorded
+    /// as a level's parts are: a start is current only once every one this
+    /// build reads is in.
     #[serde(default)]
     pub parts: BTreeMap<String, Vec<String>>,
 }
@@ -270,14 +270,15 @@ pub fn find_current(
 }
 
 /// Marked complete, its intros for this build's target, every level the
-/// build plays whole and every other part in.
+/// build plays whole and every other part in (the progression, the
+/// palettes, the scripts and the spawn models).
 fn current(m: &Manifest) -> bool {
     m.complete
         && m.transcode
             .as_ref()
             .is_none_or(|t| t.target == crate::transcode::TARGET.tag())
         && crate::levels::complete(m)
-        && crate::progression::complete(m)
+        && crate::PARTS.iter().all(|p| m.parts.contains_key(*p))
 }
 
 fn read_manifest(dir: &Path, id: &DumpIdentity) -> Result<Manifest, Stale> {
@@ -527,6 +528,24 @@ impl IdentityDir {
             return Ok(false);
         }
         for f in files {
+            if !self.output_done(f)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Whether the extract-wide `part` is in with every one of `files`:
+    /// each recorded under it, and every file it names still as recorded.
+    /// A file the build adds to a part (a fighter joining) reads as not in.
+    pub fn part_holds(&self, part: &str, files: &[String]) -> Result<bool> {
+        let Some(recorded) = self.manifest.parts.get(part) else {
+            return Ok(false);
+        };
+        if !files.iter().all(|f| recorded.contains(f)) {
+            return Ok(false);
+        }
+        for f in recorded {
             if !self.output_done(f)? {
                 return Ok(false);
             }

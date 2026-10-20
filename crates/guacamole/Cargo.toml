@@ -25,6 +25,10 @@ skylander-rpcs3-control = { path = "../rpcs3-control" }
 # First-run extraction (openspec AB.9): identity, the intro index, the transcode.
 guac-extract = { path = "../guac-extract" }
 guac-ir = { path = "../guac-ir" }
+# The level's script part (openspec AH.22): parsed by guac-formats' readers
+# and linked by guac-script at level load.
+guac-formats = { path = "../guac-formats" }
+guac-script = { path = "../guac-script" }
 
 anyhow = { workspace = true }
 thiserror = { workspace = true }

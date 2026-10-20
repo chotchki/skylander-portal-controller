@@ -618,15 +618,16 @@ fn a_run_leaves_the_dump_exactly_as_it_was() {
     assert_eq!(before, after);
 }
 
-/// What a whole run's level and progression stages record (AG.15, AH.2),
-/// each part with no files of its own here: a current extract needs them.
+/// What a whole run's level stage and extract-wide parts record (AG.15,
+/// AH.2, AH.22), each part with no files of its own here: a current extract
+/// needs them.
 fn record_levels(dir: &mut guac_extract::IdentityDir) {
     for level in guac_extract::levels::LEVELS {
         for part in guac_extract::levels::PARTS {
             dir.record_level_part(level, part, Vec::new()).unwrap();
         }
     }
-    for part in guac_extract::progression::PARTS {
+    for part in guac_extract::PARTS {
         dir.record_part(part, Vec::new()).unwrap();
     }
 }
