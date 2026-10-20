@@ -172,13 +172,23 @@ fn read_array(g: &mut impl Gather, ptr: u32, len: usize, what: &str) -> Result<V
     one(g, ptr, len, what)
 }
 
-/// The level's collision from [`HKP_WORLD`] down: the world, its fixed
-/// island and the one fixed body there with a `tfbTriangleCollisionQuery`,
-/// read through to its mesh. Refused: a chain whose vtables aren't theirs, an
-/// island that isn't the world's, no such body or a second one, a body that
-/// isn't the world's or isn't fixed, and arrays whose counts don't divide or
-/// agree.
-pub fn collision(g: &mut impl Gather) -> Result<LiveCollision> {
+/// The level's static body as [`collision`] finds it, without its mesh.
+struct LevelBody {
+    world: u32,
+    body: u32,
+    bytes: Vec<u8>,
+    query: u32,
+    fixed_bodies: usize,
+}
+
+/// The level's static body: the one fixed body of the world's fixed island
+/// whose shape is a `tfbTriangleCollisionQuery`, checked as [`collision`]
+/// checks it up to its shape (its motion type aside).
+pub fn level_body_address(g: &mut impl Gather) -> Result<u32> {
+    Ok(level_body(g)?.body)
+}
+
+fn level_body(g: &mut impl Gather) -> Result<LevelBody> {
     let world = be32(&one(g, HKP_WORLD, 4, "the hkpWorld pointer")?, 0);
     let w = one(g, world, WORLD_LEN, "the hkpWorld")?;
     expect_vtable(&w, vtable::WORLD, world, "hkpWorld")?;
@@ -219,6 +229,29 @@ pub fn collision(g: &mut impl Gather) -> Result<LiveCollision> {
     if be32(&b, BODY_WORLD) != world {
         bail!("the level body at {body:#010x} isn't the world's");
     }
+    Ok(LevelBody {
+        world,
+        body,
+        bytes: b,
+        query,
+        fixed_bodies: count as usize,
+    })
+}
+
+/// The level's collision from [`HKP_WORLD`] down: the world, its fixed
+/// island and the one fixed body there with a `tfbTriangleCollisionQuery`,
+/// read through to its mesh. Refused: a chain whose vtables aren't theirs, an
+/// island that isn't the world's, no such body or a second one, a body that
+/// isn't the world's or isn't fixed, and arrays whose counts don't divide or
+/// agree.
+pub fn collision(g: &mut impl Gather) -> Result<LiveCollision> {
+    let LevelBody {
+        world,
+        body,
+        bytes: b,
+        query,
+        fixed_bodies: count,
+    } = level_body(g)?;
     let motion_type = b[BODY_MOTION_TYPE];
     if motion_type != MOTION_FIXED {
         bail!("the level body at {body:#010x} has motion type {motion_type}, not fixed");
@@ -271,7 +304,7 @@ pub fn collision(g: &mut impl Gather) -> Result<LiveCollision> {
         body,
         query,
         mesh,
-        fixed_bodies: count as usize,
+        fixed_bodies: count,
         motion_type,
         rotation: floats::<12>(&b, BODY_ROTATION),
         translation: floats::<3>(&b, BODY_TRANSLATION),

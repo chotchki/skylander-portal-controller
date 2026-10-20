@@ -52,6 +52,26 @@
 //!   time is its period less what remains. The clips' names come once, at the
 //!   resolve, from each `tfbPhysicsAnimation`'s name.
 //!
+//! - the hero's contacts (AG.9): his corpus's `_animationBlock` holds his
+//!   `tfbShapePhanton` (+0x1C), whose Havok property 0x2003 (the phantom's
+//!   properties, an array of 16-byte key and value pairs at +0x7C, count
+//!   +0x80) is his `tfbCharacterProxy`. The proxy keeps his corpus (+0x14),
+//!   the velocity its last solve left (+0x20), his phantom (+0x30), its
+//!   manifold (an `hkArray` of 0x30-byte `hkpRootCdPoint`s at +0x40: data,
+//!   count, capacity), his physics link (+0x4C, which points back at the
+//!   proxy from +0x10) and four flag bytes (+0x50). The link holds the
+//!   support check's state (+0x20, 2 supported) and the surface normal it
+//!   found (+0x30). The step rebuilds the manifold from its start with each
+//!   cast (the closest start point, then the cast's first hit) and zeroes its
+//!   count once the step is done (`FUN_00138da0`), so at a pad read the count
+//!   reads 0 and the watch copies every entry the array's capacity holds. His
+//!   corpus's `_ground` (+0x64, a `tfbScript::ContactInfo`) is where the
+//!   ground finder leaves the ground under him: `_location` +0x1C,
+//!   `_magnitude` +0x28, `_normal` +0x2C, `_contextID` +0x38, `_contactFlags`
+//!   +0x3C. Each collidable a contact names is a phantom's (+0x10) or the
+//!   level body's (+0x10), named at the resolve from [`crate::level`]'s
+//!   solids and the level body.
+//!
 //! The list is fixed when it's armed: a control the game swaps out mid-run
 //! leaves its old address in the list, so each record carries the vector's
 //! slots too and [`GiantsWatch::frame`] drops the clips from a frame whose
@@ -68,7 +88,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use guac_oracle::input::Ds3Pad;
-use guac_oracle::recording::{Body, Clip, Clock, Frame, Recording, View};
+use guac_oracle::recording::{Body, Clip, Clock, Contacts, Frame, Ground, Plane, Recording, View};
 use serde::{Deserialize, Serialize};
 
 use crate::actors::{self, Gather, be32, expect_vtable, f32_at, floats, object_ptr, one, vtable};
@@ -390,6 +410,40 @@ pub struct GiantsWatch {
     /// The `_nowPlaying` slots watched (the vector's whole array, live or not).
     pub slots: u32,
     pub clips: Vec<WatchedClip>,
+    /// The hero's character proxy and what hangs off it (AG.9): none in a
+    /// list written before it, or when his animation block holds no phantom.
+    #[serde(default)]
+    pub proxy: Option<ProxyWatch>,
+}
+
+/// Where the hero's contacts live, resolved at the pause (AG.9).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProxyWatch {
+    pub phantom: u32,
+    pub proxy: u32,
+    pub link: u32,
+    /// The manifold's data at the resolve and the entries watched there (its
+    /// capacity then): an array that grows moves, and a record whose proxy
+    /// names another data pointer has no planes.
+    pub manifold: u32,
+    pub capacity: u32,
+    /// His corpus's `_ground` `ContactInfo`.
+    pub ground: u32,
+    /// Each collidable the world held at the resolve, by name: every simulated
+    /// actor's phantom by its placement's name (its corpus in hex without
+    /// one) and the level's static body as `level`.
+    pub colliders: BTreeMap<u32, String>,
+}
+
+impl ProxyWatch {
+    /// What a contact's collider is called, its address in hex when the
+    /// resolve didn't hold it.
+    pub fn collider_name(&self, collider: u32) -> String {
+        self.colliders
+            .get(&collider)
+            .cloned()
+            .unwrap_or_else(|| format!("{collider:#010x}"))
+    }
 }
 
 const APP_FIRST: u32 = 0x54;
@@ -414,6 +468,40 @@ const CONTROL_FIRST: u32 = 0x08;
 const SEQUENCE_LEN: usize = 0x44;
 const SEQUENCE_FIRST: u32 = 0x20;
 const SEQUENCE_ANIMATION: usize = 0x3C;
+const COMPONENT_PHANTOM: usize = 0x1C;
+const PHANTOM_LEN: usize = 0x84;
+const PHANTOM_COLLIDABLE: u32 = 0x10;
+const PHANTOM_PROPERTIES: usize = 0x7C;
+/// Havok's `hkpProperty`: a key word, padding, then a 64-bit value.
+const PROPERTY_LEN: usize = 0x10;
+/// The property whose value is the phantom's `tfbCharacterProxy`.
+const PROPERTY_PROXY: u32 = 0x2003;
+const MAX_PROPERTIES: u32 = 64;
+const PROXY_LEN: usize = 0x60;
+const PROXY_CORPUS: usize = 0x14;
+const PROXY_VELOCITY: usize = 0x20;
+const PROXY_PHANTOM: usize = 0x30;
+const PROXY_MANIFOLD: usize = 0x40;
+const PROXY_LINK: usize = 0x4C;
+const PROXY_FLAGS: usize = 0x50;
+/// The proxy as watched: from its corpus to its end.
+const PROXY_FIRST: u32 = 0x14;
+const HK_ARRAY_CAPACITY_MASK: u32 = 0x3FFF_FFFF;
+/// Manifold entries watched at most: Giants' rebuild keeps the closest start
+/// point and the cast's first hit, so the hero's array held 2 in AF.8's state.
+const MAX_MANIFOLD: u32 = 16;
+const ROOT_CD_POINT_LEN: u32 = 0x30;
+const LINK_LEN: usize = 0x40;
+const LINK_PROXY: usize = 0x10;
+/// The link as watched: the support state to the surface normal's end.
+const LINK_FIRST: u32 = 0x20;
+const LINK_WATCHED: u32 = 0x20;
+const CORPUS_GROUND: usize = 0x64;
+const CONTACT_INFO_LEN: usize = 0x44;
+/// The ContactInfo as watched: `_location` to `_contactFlags`.
+const GROUND_FIRST: u32 = 0x1C;
+const GROUND_WATCHED: u32 = 0x24;
+
 /// Slots of `_nowPlaying` watched at most: the fresh state's vector holds 8 for
 /// its 5 clips, and a count past this is taken for garbage.
 const MAX_SLOTS: u32 = 16;
@@ -536,6 +624,8 @@ impl GiantsWatch {
             });
         }
 
+        let proxy = proxy_watch(g, &frame, hero.corpus, &corpus, &block)?;
+
         let mut fields = vec![
             Field::new("app", app + APP_FIRST, 0x14),
             Field::new("logic_scale", logic_scale + SCALE_FIRST, 8),
@@ -570,6 +660,26 @@ impl GiantsWatch {
             fields.push(Field::new("camera.fov", v + VIEWPORT_FOV, 4));
             fields.push(Field::new("camera.far", v + VIEWPORT_FAR, 12));
         }
+        if let Some(p) = &proxy {
+            fields.push(Field::new(
+                "hero.proxy",
+                p.proxy + PROXY_FIRST,
+                PROXY_LEN as u32 - PROXY_FIRST,
+            ));
+            if p.capacity > 0 {
+                fields.push(Field::new(
+                    "hero.manifold",
+                    p.manifold,
+                    p.capacity * ROOT_CD_POINT_LEN,
+                ));
+            }
+            fields.push(Field::new("hero.link", p.link + LINK_FIRST, LINK_WATCHED));
+            fields.push(Field::new(
+                "hero.ground",
+                p.ground + GROUND_FIRST,
+                GROUND_WATCHED,
+            ));
+        }
         for (i, clip) in clips.iter().enumerate() {
             fields.push(Field::new(
                 format!("anim.control.{i}"),
@@ -598,6 +708,7 @@ impl GiantsWatch {
             animation,
             slots,
             clips,
+            proxy,
         })
     }
 
@@ -659,6 +770,48 @@ impl GiantsWatch {
             stick: STICK.map(|at| f32_at(pads, at)),
             pad,
             clips: self.clips(record).unwrap_or_default(),
+            contacts: self.contacts(record),
+        })
+    }
+
+    /// The hero's contacts in a record: none without a proxy in the list or
+    /// with its range unreadable; no planes when the proxy names another
+    /// manifold array than the resolved one (it grew and moved).
+    pub fn contacts(&self, record: &WatchRecord) -> Option<Contacts> {
+        let watch = self.proxy.as_ref()?;
+        let p = self.list.field(record, "hero.proxy")?;
+        let at = |offset: usize| offset - PROXY_FIRST as usize;
+        let link = self.list.field(record, "hero.link");
+        let planes = match self.list.field(record, "hero.manifold") {
+            Some(m) if be32(p, at(PROXY_MANIFOLD)) == watch.manifold => (0..watch.capacity
+                as usize)
+                .map(|k| {
+                    let e = &m[ROOT_CD_POINT_LEN as usize * k..];
+                    Plane {
+                        position: floats(e, 0),
+                        position_w: f32_at(e, 0x0C),
+                        normal: floats(e, 0x10),
+                        distance: f32_at(e, 0x1C),
+                        collider: be32(e, 0x28),
+                    }
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        let flags = std::array::from_fn(|k| p[at(PROXY_FLAGS) + k]);
+        Some(Contacts {
+            velocity: floats(p, at(PROXY_VELOCITY)),
+            support: link.map_or(0, |l| be32(l, 0)),
+            surface: link.map_or([0.0; 3], |l| floats(l, 0x10)),
+            flags,
+            ground: self.list.field(record, "hero.ground").map(|g| Ground {
+                location: floats(g, 0),
+                magnitude: f32_at(g, 0x0C),
+                normal: floats(g, 0x10),
+                context: be32(g, 0x1C),
+                flags: be32(g, 0x20),
+            }),
+            planes,
         })
     }
 
@@ -715,6 +868,91 @@ impl GiantsWatch {
             .collect::<Result<Vec<_>>>()?;
         Ok(Recording::new(frames)?)
     }
+}
+
+/// The hero's proxy chain from his corpus (AG.9): none when his animation
+/// block holds no phantom; refused when a pointer on the way isn't its
+/// class's, the phantom has no proxy property, or the proxy or link don't
+/// point back at him.
+fn proxy_watch(
+    g: &mut impl Gather,
+    frame: &actors::ActorFrame,
+    corpus_at: u32,
+    corpus: &[u8],
+    block: &[u8],
+) -> Result<Option<ProxyWatch>> {
+    let phantom = be32(block, COMPONENT_PHANTOM);
+    if phantom == 0 {
+        return Ok(None);
+    }
+    let ph = one(g, phantom, PHANTOM_LEN, "the hero's phantom")?;
+    expect_vtable(
+        &ph,
+        crate::level::vtable::SHAPE_PHANTOM,
+        phantom,
+        "tfbShapePhanton",
+    )?;
+    let (props_at, count) = (
+        be32(&ph, PHANTOM_PROPERTIES),
+        be32(&ph, PHANTOM_PROPERTIES + 4),
+    );
+    if count == 0 || count > MAX_PROPERTIES {
+        bail!("the hero's phantom at {phantom:#010x} lists {count} properties");
+    }
+    let props = one(
+        g,
+        props_at,
+        PROPERTY_LEN * count as usize,
+        "the hero's phantom's properties",
+    )?;
+    let Some(proxy) = props
+        .chunks(PROPERTY_LEN)
+        .find(|p| be32(p, 0) == PROPERTY_PROXY)
+        .map(|p| be32(p, 0x0C))
+    else {
+        bail!("the hero's phantom at {phantom:#010x} has no proxy property ({PROPERTY_PROXY:#x})");
+    };
+    let px = one(g, proxy, PROXY_LEN, "the hero's character proxy")?;
+    expect_vtable(&px, vtable::CHARACTER_PROXY, proxy, "tfbCharacterProxy")?;
+    if be32(&px, PROXY_CORPUS) != corpus_at || be32(&px, PROXY_PHANTOM) != phantom {
+        bail!("the character proxy at {proxy:#010x} isn't the hero's");
+    }
+    let manifold = be32(&px, PROXY_MANIFOLD);
+    let capacity = be32(&px, PROXY_MANIFOLD + 8) & HK_ARRAY_CAPACITY_MASK;
+    if capacity > MAX_MANIFOLD || (capacity > 0 && !object_ptr(manifold)) {
+        bail!("the hero's manifold at {manifold:#010x} holds {capacity} entries");
+    }
+    let link = be32(&px, PROXY_LINK);
+    if be32(
+        &one(g, link, LINK_LEN, "the hero's physics link")?,
+        LINK_PROXY,
+    ) != proxy
+    {
+        bail!("the physics link at {link:#010x} isn't the proxy's");
+    }
+    let ground = be32(corpus, CORPUS_GROUND);
+    let gi = one(g, ground, CONTACT_INFO_LEN, "the hero's ground")?;
+    expect_vtable(&gi, vtable::CONTACT_INFO, ground, "ContactInfo")?;
+    let mut colliders = BTreeMap::new();
+    for s in crate::level::solids(g, frame)? {
+        colliders.insert(
+            s.phantom + PHANTOM_COLLIDABLE,
+            s.name.unwrap_or_else(|| format!("{:#010x}", s.corpus)),
+        );
+    }
+    colliders.insert(
+        crate::level::level_body_address(g)? + PHANTOM_COLLIDABLE,
+        "level".to_owned(),
+    );
+    Ok(Some(ProxyWatch {
+        phantom,
+        proxy,
+        link,
+        manifold,
+        capacity,
+        ground,
+        colliders,
+    }))
 }
 
 /// The `tfbViewportSystem` among the insight core's systems, if there's one.
@@ -1126,6 +1364,219 @@ mod tests {
             pad0,
             controls,
         }
+    }
+
+    /// Where [`with_proxy`] put the hero's contacts.
+    struct ProxyFixture {
+        phantom: u32,
+        proxy: u32,
+        link: u32,
+        manifold: u32,
+        ground: u32,
+        body: u32,
+        door: u32,
+    }
+
+    /// The hero's proxy chain as AF.8's fresh state holds it, pressed against
+    /// the gate's door: his phantom in his animation block, its properties
+    /// naming his proxy, the proxy's manifold (two entries, the door's face
+    /// as a start point and as the cast's hit), its link, his ground, and the
+    /// world holding his phantom, the door's and the level's static body.
+    fn with_proxy(g: &mut Giants) -> ProxyFixture {
+        let w = &mut g.w;
+        let sphere = w.object(crate::level::vtable::SPHERE_SHAPE, 0x50);
+        w.putf(sphere + 0x10, 0.8144);
+        let phantom = |w: &mut World, corpus: u32| {
+            let block = w.get32(corpus + 0x7C);
+            let block = if block == 0 {
+                let b = w.object(vtable::ANIMATION_COMPONENT, 0x28);
+                w.put32(corpus + 0x7C, b);
+                b
+            } else {
+                block
+            };
+            let ph = w.object(crate::level::vtable::SHAPE_PHANTOM, 0xE0);
+            w.put32(block + 0x1C, ph);
+            w.put32(ph + 0x10, sphere);
+            ph
+        };
+        let hero_phantom = phantom(w, g.hero.corpus);
+        let door = w.actor(&Spec {
+            name: "Breakable_Stone_Wall_Castle_206(1)".into(),
+            ..Spec::default()
+        });
+        let door_phantom = phantom(w, door.corpus);
+        // The world: its fixed island holding the level's body, and the two
+        // phantoms listed.
+        let world = w.object(crate::level::vtable::WORLD, 0x128);
+        w.put32(crate::level::HKP_WORLD, world);
+        let island = w.object(crate::level::vtable::SIMULATION_ISLAND, 0x58);
+        w.put32(world + 0x20, island);
+        w.put32(island + 0x18, world);
+        let body = w.object(crate::level::vtable::RIGID_BODY, 0x130);
+        w.put32(body + 0x08, world);
+        let query = w.object(crate::level::vtable::TRIANGLE_COLLISION_QUERY, 0x38);
+        w.put32(body + 0x10, query);
+        let entities = w.alloc(4);
+        w.put32(entities, body);
+        w.put32(island + 0x4C, entities);
+        w.put32(island + 0x50, 1);
+        let listed = w.alloc(8);
+        w.put32(listed, hero_phantom);
+        w.put32(listed + 4, door_phantom);
+        w.put32(world + 0x11C, listed);
+        w.put32(world + 0x120, 2);
+        for ph in [hero_phantom, door_phantom] {
+            w.put32(ph + 0x08, world);
+        }
+        // The hero's phantom's properties, the proxy among them.
+        let proxy = w.object(vtable::CHARACTER_PROXY, 0x60);
+        let props = w.alloc(0x30);
+        for (k, (key, value)) in [(0x200D, 0x3000_0040), (0x2003, proxy), (0x2004, 0)]
+            .into_iter()
+            .enumerate()
+        {
+            w.put32(props + 0x10 * k as u32, key);
+            w.put32(props + 0x10 * k as u32 + 0x0C, value);
+        }
+        w.put32(hero_phantom + 0x7C, props);
+        w.put32(hero_phantom + 0x80, 3);
+        // The proxy: his corpus, a velocity along the door, his phantom, the
+        // manifold, the link, a flag.
+        w.put32(proxy + 0x14, g.hero.corpus);
+        w.put_floats(proxy + 0x20, &[-6.4850, 0.0, 0.0]);
+        w.put32(proxy + 0x30, hero_phantom);
+        let manifold = w.alloc(0x60);
+        w.put32(proxy + 0x40, manifold);
+        w.put32(proxy + 0x48, 2);
+        let link = w.alloc(0x40);
+        w.put32(link + 0x10, proxy);
+        w.put32(proxy + 0x4C, link);
+        w.put32(proxy + 0x50, 0x0000_0001);
+        w.put32(link + 0x20, 2);
+        w.put_floats(link + 0x30, &[0.0179, 0.9998, -0.0010]);
+        for (k, w_) in [(0u32, 1.0f32), (1, 0.0)] {
+            let e = manifold + 0x30 * k;
+            w.put_floats(e, &[14.1131, 44.3155, -82.8338, w_]);
+            w.put_floats(
+                e + 0x10,
+                &[0.0, 0.0, -1.0, if k == 0 { 0.0018 } else { 0.0 }],
+            );
+            w.put32(e + 0x20, hero_phantom + 0x10);
+            w.put32(e + 0x28, door_phantom + 0x10);
+        }
+        // His ground.
+        let ground = w.object(vtable::CONTACT_INFO, 0x44);
+        w.put32(g.hero.corpus + 0x64, ground);
+        w.put_floats(ground + 0x1C, &[13.7756, 43.3971, -83.7026, 43.4071]);
+        w.put_floats(ground + 0x2C, &[0.0179, 0.9998, -0.0010]);
+        w.put32(ground + 0x3C, 1);
+        ProxyFixture {
+            phantom: hero_phantom,
+            proxy,
+            link,
+            manifold,
+            ground,
+            body,
+            door: door_phantom,
+        }
+    }
+
+    #[test]
+    fn the_heros_contacts_resolve_through_his_phantom_and_name_their_colliders() {
+        let mut g = giants();
+        let fx = with_proxy(&mut g);
+        let watch = GiantsWatch::resolve(&mut g.w).unwrap();
+        let p = watch.proxy.as_ref().unwrap();
+        assert_eq!(
+            (p.phantom, p.proxy, p.link, p.manifold, p.capacity, p.ground),
+            (fx.phantom, fx.proxy, fx.link, fx.manifold, 2, fx.ground)
+        );
+        assert_eq!(
+            p.collider_name(fx.door + 0x10),
+            "Breakable_Stone_Wall_Castle_206(1)"
+        );
+        assert_eq!(p.collider_name(fx.phantom + 0x10), "009_Eruptor");
+        assert_eq!(p.collider_name(fx.body + 0x10), "level");
+        assert_eq!(p.collider_name(0x3000_0004), "0x30000004");
+        assert!(watch.list.bytes() < 1_200, "{}", watch.list.bytes());
+        // A record decodes the proxy's state as the step left it: the count
+        // word is 0 (the game zeroes it), and both entries come back.
+        let full = sample(&mut g.w, &watch.list, 278);
+        let c = watch.frame(&full, None).unwrap().contacts.unwrap();
+        assert_eq!(c.velocity, [-6.4850, 0.0, 0.0]);
+        assert_eq!((c.support, c.flags), (2, [0, 0, 0, 1]));
+        assert_eq!(c.surface, [0.0179, 0.9998, -0.0010]);
+        let ground = c.ground.unwrap();
+        assert_eq!(
+            (ground.location, ground.magnitude, ground.flags),
+            ([13.7756, 43.3971, -83.7026], 43.4071, 1)
+        );
+        assert_eq!(c.planes.len(), 2);
+        assert_eq!(c.planes[0].normal, [0.0, 0.0, -1.0]);
+        assert_eq!(
+            (c.planes[0].distance, c.planes[0].position_w),
+            (0.0018, 1.0)
+        );
+        assert_eq!(c.planes[1].position_w, 0.0);
+        assert!(c.planes.iter().all(|e| e.collider == fx.door + 0x10));
+        // The array grown and moved: the proxy names other data, so no planes.
+        g.w.put32(fx.proxy + 0x40, 0x3000_0000);
+        let moved = sample(&mut g.w, &watch.list, 279);
+        let c = watch.frame(&moved, None).unwrap().contacts.unwrap();
+        assert!(c.planes.is_empty());
+        assert_eq!(c.support, 2);
+        // A list without the proxy (one written before AG.9) has no contacts.
+        let mut old = watch.clone();
+        old.proxy = None;
+        assert!(old.frame(&full, None).unwrap().contacts.is_none());
+        // The proxy's range unreadable: no contacts, the frame still decodes.
+        let mut unread = full.clone();
+        unread.missing = 1 << watch.list.placed("hero.proxy").unwrap().range;
+        assert!(watch.frame(&unread, None).unwrap().contacts.is_none());
+    }
+
+    #[test]
+    fn a_proxy_chain_off_its_layout_is_refused() {
+        let msg = |g: &mut Giants| format!("{:#}", GiantsWatch::resolve(&mut g.w).unwrap_err());
+        // The proxy's vtable isn't its class's.
+        let mut g = giants();
+        let fx = with_proxy(&mut g);
+        g.w.put32(fx.proxy, vtable::ANIMATION_INFO);
+        assert!(msg(&mut g).contains("tfbCharacterProxy"), "{}", msg(&mut g));
+        // The proxy isn't the hero's.
+        let mut g = giants();
+        let fx = with_proxy(&mut g);
+        g.w.put32(fx.proxy + 0x14, 0x3000_0000);
+        assert!(msg(&mut g).contains("isn't the hero's"), "{}", msg(&mut g));
+        // The phantom names no proxy.
+        let mut g = giants();
+        let fx = with_proxy(&mut g);
+        let props = g.w.get32(fx.phantom + 0x7C);
+        g.w.put32(props + 0x10, 0x2005);
+        assert!(msg(&mut g).contains("no proxy property"), "{}", msg(&mut g));
+        // The link doesn't point back at the proxy.
+        let mut g = giants();
+        let fx = with_proxy(&mut g);
+        g.w.put32(fx.link + 0x10, 0);
+        assert!(msg(&mut g).contains("physics link"), "{}", msg(&mut g));
+        // The ground isn't a ContactInfo.
+        let mut g = giants();
+        let fx = with_proxy(&mut g);
+        g.w.put32(fx.ground, vtable::ANIMATION_INFO);
+        assert!(msg(&mut g).contains("ContactInfo"), "{}", msg(&mut g));
+        // A manifold past what the watch takes.
+        let mut g = giants();
+        let fx = with_proxy(&mut g);
+        g.w.put32(fx.proxy + 0x48, 0x8000_0000 | 17);
+        assert!(msg(&mut g).contains("17 entries"), "{}", msg(&mut g));
+        // No proxy chain at all: a hero whose block holds no phantom.
+        let mut g = giants();
+        let fx = with_proxy(&mut g);
+        let block = g.w.get32(g.hero.corpus + 0x7C);
+        g.w.put32(block + 0x1C, 0);
+        let _ = fx;
+        assert!(GiantsWatch::resolve(&mut g.w).unwrap().proxy.is_none());
     }
 
     /// What O5 copies at a pad read: each range's bytes back to back.
