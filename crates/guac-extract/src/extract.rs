@@ -38,6 +38,20 @@ pub struct Manifest {
     /// The intro transcode's target and what made each movie (AB.8).
     #[serde(default)]
     pub transcode: Option<TranscodeRecord>,
+    /// Each level the extract holds, by archive name, with the parts of it
+    /// that are in (AG.15). A start is current only once every level the
+    /// build plays has every part ([`crate::levels::complete`]), so a part
+    /// added later (AG.27's script data) resumes alone.
+    #[serde(default)]
+    pub levels: BTreeMap<String, LevelRecord>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LevelRecord {
+    /// Part name to its files: the part's IR and the textures it binds,
+    /// each of which must still be as recorded for the part to count.
+    #[serde(default)]
+    pub parts: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -165,15 +179,9 @@ pub fn open(
     };
     let (state, mut manifest) = match existing {
         None => (DirState::Fresh, None),
-        // Complete, unless the intros were transcoded for another target.
-        Some(Ok(m))
-            if m.complete
-                && m.transcode
-                    .as_ref()
-                    .is_none_or(|t| t.target == crate::transcode::TARGET.tag()) =>
-        {
-            (DirState::Current, Some(m))
-        }
+        // Complete, unless the intros were transcoded for another target or
+        // a level the build plays lacks a part.
+        Some(Ok(m)) if current(&m) => (DirState::Current, Some(m)),
         Some(Ok(m)) => (DirState::Resume, Some(m)),
         Some(Err(stale)) => {
             fs::remove_dir_all(&path).map_err(ExtractError::io(&path))?;
@@ -201,6 +209,7 @@ pub fn open(
             sources: files,
             outputs: Vec::new(),
             transcode: None,
+            levels: BTreeMap::new(),
         },
     };
     let dir = IdentityDir { path, manifest };
@@ -250,12 +259,17 @@ pub fn find_current(
     let Ok(manifest) = read_manifest(&path, &scan.identity) else {
         return Ok(None);
     };
-    let current = manifest.complete
-        && manifest
-            .transcode
+    Ok(current(&manifest).then_some(IdentityDir { path, manifest }))
+}
+
+/// Marked complete, its intros for this build's target and every level the
+/// build plays whole.
+fn current(m: &Manifest) -> bool {
+    m.complete
+        && m.transcode
             .as_ref()
-            .is_none_or(|t| t.target == crate::transcode::TARGET.tag());
-    Ok(current.then_some(IdentityDir { path, manifest }))
+            .is_none_or(|t| t.target == crate::transcode::TARGET.tag())
+        && crate::levels::complete(m)
 }
 
 fn read_manifest(dir: &Path, id: &DumpIdentity) -> Result<Manifest, Stale> {
@@ -457,6 +471,41 @@ impl IdentityDir {
             Some(r) => t.movies.insert(movie.to_owned(), r),
             None => t.movies.remove(movie),
         };
+        self.save()
+    }
+
+    /// Whether `level`'s `part` is in as `ir_file` (its IR in the format
+    /// asked for): recorded with that file, and every file it names still
+    /// as recorded. A part recorded in the other format reads as not in, and
+    /// redoing it records it in this one.
+    pub fn level_part_done(&self, level: &str, part: &str, ir_file: &str) -> Result<bool> {
+        let Some(files) = self
+            .manifest
+            .levels
+            .get(level)
+            .and_then(|l| l.parts.get(part))
+        else {
+            return Ok(false);
+        };
+        if !files.iter().any(|f| f == ir_file) {
+            return Ok(false);
+        }
+        for f in files {
+            if !self.output_done(f)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Records `level`'s `part` as in, with its files (written first).
+    pub fn record_level_part(&mut self, level: &str, part: &str, files: Vec<String>) -> Result<()> {
+        self.manifest
+            .levels
+            .entry(level.to_owned())
+            .or_default()
+            .parts
+            .insert(part.to_owned(), files);
         self.save()
     }
 

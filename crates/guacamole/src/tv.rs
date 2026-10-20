@@ -29,6 +29,7 @@ use bevy::ui::{ComputedNode, UiGlobalTransform};
 use bevy::ui_widgets::{Activate, Button};
 use guac_server::config::WindowMode;
 use guac_server::state::{GameList, LauncherStatus};
+use guacamole::character::{CharacterShadingPlugin, GlowPlugin};
 use skylander_core::{Element, SLOT_COUNT};
 use skylander_rpcs3_control::{Placement, PlacementOwner};
 use tracing::{error, info, warn};
@@ -45,6 +46,7 @@ use crate::starfield;
 use crate::surfaces::{self, BUTTON_BORDER, BUTTON_RADIUS};
 use crate::theme::{Role, Step, TvTheme};
 use crate::title;
+use crate::turntable::{CardPlate, TurntablePlugin, TurntableSystems, Turntables};
 
 /// How long the farewell shows before the app exits (spec: under 5 s).
 pub const FAREWELL_BEAT: Duration = Duration::from_secs(3);
@@ -347,6 +349,7 @@ impl Plugin for Screens {
             .init_resource::<LayoutReport>()
             .init_resource::<FolderAsked>()
             .init_resource::<ReducedMotion>()
+            .init_resource::<Turntables>()
             .add_message::<Redrawn>()
             .add_plugins(title::Titles)
             .add_observer(on_choice)
@@ -369,6 +372,7 @@ impl Plugin for Screens {
                 )
                     .in_set(Redraw),
                 arm_layout_report.after(Redraw),
+                show_turntables.after(Redraw).after(TurntableSystems),
                 look::ease_faces.after(Redraw),
                 card_motion::move_cards.after(Redraw),
             ),
@@ -387,6 +391,9 @@ impl Plugin for Tv {
             // Before `Screens`, whose `Titles` needs only what this registers.
             .add_plugins(title::TitleShader)
             .add_plugins(Screens)
+            // The cards' turntables (AE.13): the character material, the
+            // game's glow and the per-slot scenes.
+            .add_plugins((CharacterShadingPlugin, GlowPlugin, TurntablePlugin))
             .add_systems(Startup, spawn_camera)
             .add_systems(Last, report_layout)
             .add_systems(Update, (scale_ui, farewell_exit));
@@ -522,6 +529,8 @@ struct Sources<'w> {
     images: ResMut<'w, Assets<Image>>,
     /// When a card was drawn, for its rise (`card_motion`).
     time: Res<'w, Time>,
+    /// A card's model, once its turntable has one up (AE.13).
+    turntables: Res<'w, Turntables>,
 }
 
 impl Sources<'_> {
@@ -755,6 +764,7 @@ fn sync_cells(
     assets: Res<TvAssets>,
     theme: Res<TvTheme>,
     time: Res<Time>,
+    turntables: Res<Turntables>,
     mut portraits: ResMut<Portraits>,
     mut images: ResMut<Assets<Image>>,
     mut cells: Query<(Entity, &Cell, &mut Drew)>,
@@ -770,13 +780,17 @@ fn sync_cells(
             continue;
         }
         let portrait = portrait_of(now.as_ref(), &mut portraits, &mut images);
+        let shown = CardImages {
+            portrait,
+            model: turntables.image(cell.0),
+        };
         // A card placed while the portal is up rises alone and flashes.
         let motion = Schedule::placement(cell.0, time.elapsed());
         commands
             .entity(entity)
             .despawn_children()
             .with_children(|content| {
-                spawn_slot(content, &pen, cell.0, now.as_ref(), portrait, motion);
+                spawn_slot(content, &pen, cell.0, now.as_ref(), shown, motion);
             });
         drew.0 = now.clone();
         redrawn.write(Redrawn::Slot(cell.0));
@@ -1470,6 +1484,7 @@ fn spawn_rows(grid: &mut ChildSpawnerCommands, pen: &Pen, sources: &mut Sources)
         portraits,
         images,
         time,
+        turntables,
         ..
     } = sources;
     // The entrance: each card rises 80 ms after the one before it.
@@ -1487,7 +1502,10 @@ fn spawn_rows(grid: &mut ChildSpawnerCommands, pen: &Pen, sources: &mut Sources)
             for col in 0..CARDS_PER_ROW {
                 let slot = row * CARDS_PER_ROW + col;
                 let placement = cards.slots[slot].as_ref();
-                let portrait = portrait_of(placement, portraits, images);
+                let shown = CardImages {
+                    portrait: portrait_of(placement, portraits, images),
+                    model: turntables.image(slot as u8),
+                };
                 let motion = Schedule::entrance(slot as u8, order, time.elapsed());
                 order += usize::from(placement.is_some());
                 cells
@@ -1505,7 +1523,7 @@ fn spawn_rows(grid: &mut ChildSpawnerCommands, pen: &Pen, sources: &mut Sources)
                         },
                     ))
                     .with_children(|cell| {
-                        spawn_slot(cell, pen, slot as u8, placement, portrait, motion);
+                        spawn_slot(cell, pen, slot as u8, placement, shown, motion);
                     });
             }
         });
@@ -1524,6 +1542,13 @@ fn portrait_of(
         .and_then(|p| portraits.get(p, images))
 }
 
+/// What a card's plate can show: its portrait, and its turntable's image
+/// once the model is up, which it shows instead.
+struct CardImages {
+    portrait: Option<Handle<Image>>,
+    model: Option<Handle<Image>>,
+}
+
 /// A cell's content: the card, moving as `motion` says, or the numbered
 /// empty frame.
 fn spawn_slot(
@@ -1531,12 +1556,36 @@ fn spawn_slot(
     pen: &Pen,
     slot: u8,
     placement: Option<&Placement>,
-    portrait: Option<Handle<Image>>,
+    images: CardImages,
     motion: Schedule,
 ) {
     match placement {
-        Some(placement) => spawn_card(cell, pen, slot, placement, portrait, motion),
+        Some(placement) => spawn_card(cell, pen, slot, placement, images, motion),
         None => spawn_empty(cell, pen, slot),
+    }
+}
+
+/// Each card's plate shows its turntable's image once the model is up, and
+/// its portrait until then or without one (the figure-turntable spec),
+/// patched in place so the card neither respawns nor rises again.
+fn show_turntables(
+    mut commands: Commands,
+    turntables: Res<Turntables>,
+    plates: Query<(Entity, &CardPlate, Option<&ImageNode>)>,
+    mut redrawn: MessageWriter<Redrawn>,
+) {
+    for (entity, plate, node) in &plates {
+        let wanted = turntables
+            .image(plate.slot)
+            .or_else(|| plate.portrait.clone());
+        if node.map(|n| n.image.id()) == wanted.as_ref().map(Handle::id) {
+            continue;
+        }
+        match wanted {
+            Some(image) => commands.entity(entity).insert(ImageNode::new(image)),
+            None => commands.entity(entity).remove::<ImageNode>(),
+        };
+        redrawn.write(Redrawn::Slot(plate.slot));
     }
 }
 
@@ -1622,8 +1671,9 @@ fn slot_content() -> Node {
 }
 
 /// Portrait, name, element and owner pip; no level, XP or gold (AH). The card
-/// is §3.3's framed panel edged in gold, the portrait sits in §3.1's bezel
-/// ringed in the figure's element, and the pip stays top-right. `CardSlot` is
+/// is §3.3's framed panel edged in gold, the portrait (or the figure's
+/// turning model, AE.13) sits in §3.1's bezel ringed in the figure's element,
+/// and the pip stays top-right. `CardSlot` is
 /// the box the mirror and the tests measure; the card itself is its face, laid
 /// over the box, which rises, and the bezel on it floats and flashes
 /// (`card_motion`), so neither moves the box.
@@ -1632,7 +1682,7 @@ fn spawn_card(
     pen: &Pen,
     slot: u8,
     placement: &Placement,
-    portrait: Option<Handle<Image>>,
+    images: CardImages,
     motion: Schedule,
 ) {
     let theme = &pen.theme;
@@ -1651,7 +1701,12 @@ fn spawn_card(
                 surfaces::card(theme),
             ))
             .with_children(|face| {
-                let bezel = surfaces::spawn_bezel(face, theme, placement.element, portrait);
+                let shown = images.model.or_else(|| images.portrait.clone());
+                let (bezel, plate) = surfaces::spawn_bezel(face, theme, placement.element, shown);
+                face.commands().entity(plate).insert(CardPlate {
+                    slot,
+                    portrait: images.portrait,
+                });
                 card_motion::on_bezel(face.commands().entity(bezel), motion, theme);
                 face.spawn((
                     pen.text(&placement.name, CARD_NAME, Role::Primary),
@@ -3993,6 +4048,142 @@ pub(crate) mod layout_tests {
             app.update();
             assert_eq!(at_rest(&mut app, &format!("placement {frame}")), (8, 1));
         }
+    }
+
+    /// The portal with the turntables (AE.13) over
+    /// `turntable::tests::extract`'s shelf, `slots` placed with its modelled
+    /// figure 1; the extract's folder, which the loads read, beside it.
+    fn turntable_app(
+        width: u32,
+        height: u32,
+        mode: WindowMode,
+        slots: &[u8],
+    ) -> (App, tempfile::TempDir) {
+        use crate::turntable::tests::{add_turntable, extract, placed};
+        let tmp = tempfile::tempdir().unwrap();
+        let shelf = extract(tmp.path());
+        let cards = PortalCards::default().reduce(slots.iter().map(|s| placed(*s, 1, "One")));
+        let mut app = portal_app(width, height, mode, cards);
+        add_turntable(&mut app);
+        let (tx, feed) = crate::turntable::shelf_channel();
+        tx.send(std::sync::Arc::new(shelf)).unwrap();
+        app.insert_resource(feed)
+            .insert_resource(ReducedMotion(true));
+        crate::turntable::tests::settle(&mut app);
+        (app, tmp)
+    }
+
+    /// Each plate's slot, rect, the image it shows and its card's rect.
+    fn plates(app: &mut App) -> Vec<(u8, Rect, Option<AssetId<Image>>)> {
+        let world = app.world_mut();
+        let mut q = world.query::<(
+            &CardPlate,
+            &ComputedNode,
+            &UiGlobalTransform,
+            Option<&ImageNode>,
+        )>();
+        let mut out: Vec<_> = q
+            .iter(world)
+            .map(|(p, n, t, i)| (p.slot, node_rect(n, t), i.map(|i| i.image.id())))
+            .collect();
+        out.sort_by_key(|p| p.0);
+        out
+    }
+
+    /// AE.13: a full portal's turning models each draw inside their own card
+    /// and the TV's inset, at 1080p, 4K and the desktop window.
+    #[test]
+    fn eight_turntable_images_sit_inside_their_cards_and_the_inset() {
+        for (w, h, mode) in [
+            (1920, 1080, WindowMode::Tv),
+            (3840, 2160, WindowMode::Tv),
+            (1280, 720, WindowMode::Desktop),
+        ] {
+            let (mut app, _extract) = turntable_app(w, h, mode, &[0, 1, 2, 3, 4, 5, 6, 7]);
+            let laid = measure(&mut app);
+            let safe = safe_area(w, h, mode);
+            let turntables = app.world().resource::<Turntables>();
+            let images: Vec<_> = (0..8).map(|s| turntables.image(s).unwrap().id()).collect();
+            let plates = plates(&mut app);
+            assert_eq!(plates.len(), 8, "{w}x{h}");
+            for (slot, rect, image) in &plates {
+                assert_eq!(
+                    *image,
+                    Some(images[usize::from(*slot)]),
+                    "slot {slot} shows its model"
+                );
+                let card = laid.cards[usize::from(*slot)].1;
+                assert!(
+                    rect.width() > 0.0 && contains(card, *rect),
+                    "slot {slot}: {rect:?} in {card:?}"
+                );
+                assert!(
+                    contains(safe, *rect),
+                    "slot {slot}: {rect:?} leaves {safe:?}"
+                );
+                for (other, r, _) in &plates {
+                    assert!(
+                        other == slot || r.intersect(*rect).is_empty(),
+                        "{slot} and {other}"
+                    );
+                }
+            }
+            // Drawn at the plate's own pixels, so the UI never scales it.
+            let size = app.world().resource::<crate::turntable::PlateSize>().0;
+            assert_eq!(size.x as f32, plates[0].1.width().ceil(), "{w}x{h}");
+            let assets = app.world().resource::<Assets<Image>>();
+            for id in &images {
+                assert_eq!(assets.get(*id).unwrap().size(), size);
+            }
+        }
+    }
+
+    /// AE.13: leaving the portal and coming back respawns every card, but no
+    /// turntable: the new card shows the scene that was already turning.
+    #[test]
+    fn a_ui_rebuild_keeps_the_turntable_and_shows_it_again() {
+        let (mut app, _extract) = turntable_app(1920, 1080, WindowMode::Tv, &[0, 5]);
+        let scenes = |app: &App| {
+            let t = app.world().resource::<Turntables>();
+            (t.stage_entities(0).unwrap(), t.stage_entities(5).unwrap())
+        };
+        let before = scenes(&app);
+        let shown = plates(&mut app);
+        let card = cells(&mut app)[&0].1;
+
+        app.world_mut().resource_mut::<Current>().screen = TvScreen::Join;
+        frames(&mut app, 3);
+        assert!(plates(&mut app).is_empty(), "the portal's gone");
+        app.world_mut().resource_mut::<Current>().screen = TvScreen::Portal {
+            game: "Skylanders: Giants".into(),
+        };
+        frames(&mut app, 3);
+        assert_ne!(cells(&mut app)[&0].1, card, "the card was respawned");
+        assert_eq!(scenes(&app), before, "the scenes weren't");
+        let again = plates(&mut app);
+        let images = |p: &[(u8, Rect, Option<AssetId<Image>>)]| {
+            p.iter().map(|(s, _, i)| (*s, *i)).collect::<Vec<_>>()
+        };
+        assert_eq!(images(&again), images(&shown));
+        assert!(again.iter().all(|(_, _, i)| i.is_some()));
+
+        // A placement in another slot respawns that cell, not slot 1's model.
+        let cards = app
+            .world()
+            .resource::<PortalCards>()
+            .clone()
+            .reduce([crate::turntable::tests::placed(2, 3, "Three")]);
+        app.insert_resource(cards);
+        crate::turntable::tests::settle(&mut app);
+        assert_eq!(scenes(&app), before);
+        let t = app.world().resource::<Turntables>();
+        assert_eq!(
+            t.card_state(2),
+            Some(crate::turntable::CardState::Portrait),
+            "the damaged one keeps its portrait"
+        );
+        let third = plates(&mut app).into_iter().find(|p| p.0 == 2).unwrap();
+        assert_eq!(third.2, None, "no portrait in the made-up roster, no model");
     }
 }
 

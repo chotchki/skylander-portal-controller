@@ -247,6 +247,20 @@ impl TestServer {
         self._tmpdir.path().join("dev-data")
     }
 
+    /// Everything the server has logged so far: a dev build's `./logs/`,
+    /// in this server's temp dir, every file of it.
+    pub fn log_text(&self) -> String {
+        let Ok(dir) = std::fs::read_dir(self._tmpdir.path().join("logs")) else {
+            return String::new();
+        };
+        let mut files: Vec<PathBuf> = dir.flatten().map(|e| e.path()).collect();
+        files.sort();
+        files
+            .iter()
+            .filter_map(|f| std::fs::read_to_string(f).ok())
+            .collect()
+    }
+
     /// Forcibly kill the server child while keeping the chromedriver and
     /// the rest of the harness alive. Tests that want to observe phone-side
     /// behavior when the server goes away (e.g. the ConnectionLost overlay
@@ -1387,11 +1401,23 @@ pub const E2E_ROSTER: &[FixtureFigure] = {
     ]
 };
 
+/// The toy type whose figure has a character model in every e2e extract
+/// (AE.13): Gill Grunt's card turns.
+pub const E2E_MODELLED: u32 = 0x0e;
+
+/// The toy type whose extracted model is damaged (AE.13): Bash's card keeps
+/// its portrait and the log says why.
+pub const E2E_DAMAGED: u32 = 0x04;
+
 /// A synthetic Giants dump and a finished extract of it (openspec AB.11,
-/// AE.4): [`E2E_ROSTER`] with a flat-colour portrait each and the intros asked
-/// for. No game bytes: the dump is a PARAM.SFO and a text file, and each
-/// intro is ffmpeg's `testsrc` picture over a `sine` tone, encoded at run time
-/// to guacamole's own target. guacamole trusts the dump through
+/// AE.4, AE.13, AG.15): [`E2E_ROSTER`] with a flat-colour portrait each,
+/// one synthetic character model ([`E2E_MODELLED`]), one damaged one
+/// ([`E2E_DAMAGED`]), a light rig, a chapter 1 of a floor and a spawn
+/// ([`write_level`]) and the intros asked for. No game bytes: the dump is a
+/// PARAM.SFO and a text file, the model is a few triangles on two joints with
+/// a two-key idle and a flat-colour texture, all made up here, and each intro
+/// is ffmpeg's `testsrc` picture over a `sine` tone, encoded at run time to
+/// guacamole's own target. guacamole trusts the dump through
 /// `GUAC_TEST_KNOWN_DUMP` and finds the extract current, so it runs no ffmpeg
 /// itself and lists the roster from the start.
 pub struct IntroFixture {
@@ -1474,6 +1500,8 @@ impl IntroFixture {
         // A test-hooks build is a dev build, which reads RON.
         intros::write(&mut opened.dir, &table, IrFormat::Ron)?;
         write_roster(&mut opened.dir)?;
+        write_models(&mut opened.dir)?;
+        write_level(&mut opened.dir)?;
 
         // Only the intros need ffmpeg.
         let ffmpeg = match intros {
@@ -1550,7 +1578,7 @@ fn write_roster(dir: &mut guac_extract::IdentityDir) -> Result<()> {
             variant_word: f.word.map(|w| text("ToyType_Variant", w)),
             element: f.element,
             category: f.category,
-            load_file: format!("{:03}_e2e", f.toy_type),
+            load_file: load_file(f.toy_type),
             portrait: Some(format!(
                 "portraits/{:06x}-{:04x}.png",
                 f.toy_type, f.variant
@@ -1576,6 +1604,288 @@ fn write_roster(dir: &mut guac_extract::IdentityDir) -> Result<()> {
         image.write_to(&mut png, image::ImageFormat::Png)?;
         dir.write_output(f.portrait.as_deref().unwrap(), png.get_ref())?;
     }
+    Ok(())
+}
+
+/// Chapter 1 into the extract as the level stage leaves it (AG.15), every
+/// part recorded so the extract is current: a 20 m floor at the spawn's
+/// height and `213_Init_Location` with its first waypoint, nothing drawn and
+/// no props or lights yet (AG.21 adds what its walk needs).
+fn write_level(dir: &mut guac_extract::IdentityDir) -> Result<()> {
+    use guac_extract::intros::IrFormat;
+    use guac_extract::levels::{COLLISION, LEVELS, LIGHTS, PLACEMENTS, PROPS, SCENE};
+    use guac_ir::level::{
+        Collision, CollisionMesh, Lights, Placement, Placements, Props, Scene, Waypoint,
+    };
+
+    let ir = IrFormat::Ron;
+    let identity = dir.manifest().identity.clone();
+    let level = LEVELS[0].to_owned();
+    let spawn = [10.191352, 43.37944, -93.393616];
+    let floor = CollisionMesh {
+        world: "Levels/E2E/E2E_ART_MASTER.ma".into(),
+        vertices: [[-10.0, -10.0], [10.0, -10.0], [10.0, 10.0], [-10.0, 10.0]]
+            .map(|[x, z]| [spawn[0] + x, spawn[1] - 0.01, spawn[2] + z])
+            .to_vec(),
+        triangles: vec![[0, 2, 1], [0, 3, 2]],
+        materials: vec![0, 0],
+        radius: 0.05,
+        welding: 4,
+    };
+    let parts: [(&str, Vec<u8>); 5] = [
+        (
+            SCENE,
+            ir.encode(
+                &Scene {
+                    identity: identity.clone(),
+                    level: level.clone(),
+                    scenes: Vec::new(),
+                },
+                dir,
+                SCENE,
+            )?,
+        ),
+        (
+            PROPS,
+            ir.encode(
+                &Props {
+                    identity: identity.clone(),
+                    level: level.clone(),
+                    props: Vec::new(),
+                    refused: Vec::new(),
+                },
+                dir,
+                PROPS,
+            )?,
+        ),
+        (
+            COLLISION,
+            ir.encode(
+                &Collision {
+                    identity: identity.clone(),
+                    level: level.clone(),
+                    meshes: vec![floor],
+                },
+                dir,
+                COLLISION,
+            )?,
+        ),
+        (
+            PLACEMENTS,
+            ir.encode(
+                &Placements {
+                    identity: identity.clone(),
+                    level: level.clone(),
+                    actors: vec![Placement {
+                        object: 1,
+                        id: 0,
+                        name: "213_Init_Location".into(),
+                        script: None,
+                        position: spawn,
+                        rotation: [0.0; 3],
+                        scale: [100.0; 3],
+                        model: None,
+                        solid: None,
+                        movement: None,
+                        waypoints: Some(0),
+                        activity_state: 4,
+                    }],
+                    waypoints: vec![vec![Waypoint {
+                        name: "wp0".into(),
+                        position: spawn,
+                        rotation: [0.0; 3],
+                        height: 0.0,
+                    }]],
+                },
+                dir,
+                PLACEMENTS,
+            )?,
+        ),
+        (
+            LIGHTS,
+            ir.encode(
+                &Lights {
+                    identity,
+                    level: level.clone(),
+                    directional: Vec::new(),
+                    placed: Vec::new(),
+                },
+                dir,
+                LIGHTS,
+            )?,
+        ),
+    ];
+    for (part, bytes) in parts {
+        let rel = ir.level_path(&level, part);
+        dir.write_output(&rel, &bytes)?;
+        dir.record_level_part(&level, part, vec![rel])?;
+    }
+    Ok(())
+}
+
+/// The roster's load file for `toy_type`, as [`write_roster`] names it.
+fn load_file(toy_type: u32) -> String {
+    format!("{toy_type:03}_e2e")
+}
+
+/// What the model stage leaves for [`E2E_MODELLED`] and [`E2E_DAMAGED`]: the
+/// first's model and texture, the second's model file cut short, and the
+/// rig. Every number made up here.
+fn write_models(dir: &mut guac_extract::IdentityDir) -> Result<()> {
+    use guac_extract::intros::IrFormat;
+    use guac_formats::texture::{Format, Texture};
+    use guac_ir::clip::{Clip, RotationTrack, Track, VecSpline, VecTrack};
+    use guac_ir::model::{
+        Blend, Filter, Glow, Joint, Mask, Material, Params, RenderStates, Sampler, Segment,
+        Skeleton, TextureRole, TextureSlot, Transform, Wrap,
+    };
+    use guac_ir::{Model, Rig, RigLight};
+
+    let ir = IrFormat::Ron;
+    let identity = dir.manifest().identity.clone();
+    // A 4x4 BC1 block of one colour.
+    let ktx2 = Texture {
+        format: Format::Bc1RgbaUnorm,
+        width: 4,
+        height: 4,
+        levels: vec![vec![0x1F, 0xF8, 0x1F, 0xF8, 0, 0, 0, 0]],
+    }
+    .to_ktx2();
+    let texture = "textures/e2e-flat.ktx2";
+    dir.write_output(texture, &ktx2)?;
+
+    // Two joints a unit apart; the top one sways sideways over a second.
+    let joint = |name: &str, parent, y: f32| Joint {
+        name: name.into(),
+        parent,
+        reference: Transform {
+            translation: [0.0, y, 0.0],
+            ..Transform::IDENTITY
+        },
+        inverse_bind: [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, -y, 0.0, 1.0],
+        ],
+    };
+    let sway = Track {
+        joint: 1,
+        translation: VecTrack {
+            constant: [0.0, 1.0, 0.0],
+            spline: Some(VecSpline {
+                channels: [true, false, false],
+                degree: 1,
+                knots: vec![0, 0, 30, 30],
+                points: vec![[0.0; 3], [0.25, 0.0, 0.0]],
+            }),
+        },
+        rotation: RotationTrack::Constant([0.0, 0.0, 0.0, 1.0]),
+        scale: VecTrack {
+            constant: [1.0; 3],
+            spline: None,
+        },
+    };
+    let model = Model {
+        identity: identity.clone(),
+        load_file: load_file(E2E_MODELLED),
+        name: "E2e.mdl".into(),
+        skeleton: Skeleton {
+            joints: vec![joint("foot", None, 0.0), joint("top", Some(0), 1.0)],
+        },
+        materials: vec![Material {
+            name: "e2e".into(),
+            pixel: Mask {
+                base: 0,
+                ignore: 0x2FF,
+            },
+            vertex: Mask {
+                base: 0,
+                ignore: 0x1AFF,
+            },
+            textures: vec![TextureSlot {
+                role: TextureRole::Layer1ColorMap,
+                texture: texture.into(),
+                image: "e2e_flat".into(),
+                sampler: Sampler {
+                    wrap_u: Wrap::Repeat,
+                    wrap_v: Wrap::Repeat,
+                    mag: Filter::Linear,
+                    min: Filter::Linear,
+                    mip: None,
+                },
+            }],
+            params: Params {
+                fixed_alpha: [-1.0; 4],
+                layer1_extra: [1.0, 1.0, 1.0, 0.25],
+                layer2_extra: None,
+                layer2_blend: None,
+                layer3_blend: None,
+                layer4_blend: [0.0, 1.0, 0.0, 0.0],
+                layer4_values: [0.0, 1.0, 0.0, 0.0],
+                material_tint: [128, 128, 128, 255],
+                glow: Glow::None,
+            },
+            states: RenderStates {
+                blend: Blend::Opaque,
+                depth_write: true,
+                two_sided: false,
+                alpha_test: None,
+            },
+            scrolls: Vec::new(),
+            tracks: Vec::new(),
+        }],
+        segments: vec![Segment {
+            material: 0,
+            source: 0,
+            positions: vec![
+                [-0.3, 0.0, 0.0],
+                [0.3, 0.0, 0.0],
+                [-0.3, 1.0, 0.0],
+                [0.3, 1.0, 0.0],
+            ],
+            normals: vec![[0.0, 0.0, 1.0]; 4],
+            tangents: Some(vec![[1.0, 0.0, 0.0, 1.0]; 4]),
+            uvs: vec![vec![[0.0, 1.0], [1.0, 1.0], [0.0, 0.0], [1.0, 0.0]]],
+            colors: None,
+            joints: vec![[0, 0, 0, 0], [0, 0, 0, 0], [1, 0, 0, 0], [1, 0, 0, 0]],
+            weights: vec![[255, 0, 0, 0]; 4],
+            indices: vec![0, 1, 2, 2, 1, 3],
+        }],
+        idle: Clip {
+            name: "E2e_Idle.ma".into(),
+            duration: 1.0,
+            frame_duration: 1.0 / 30.0,
+            frames: 31,
+            tracks: vec![sway],
+        },
+    };
+    let rel = ir.model_path(&model.load_file);
+    let bytes = ir.encode(&model, dir, &rel)?;
+    dir.write_output(&rel, &bytes)?;
+    // The damaged one: the same file cut off halfway.
+    let damaged = ir.model_path(&load_file(E2E_DAMAGED));
+    dir.write_output(&damaged, &bytes[..bytes.len() / 2])?;
+
+    let light = |name: &str, rotation| RigLight {
+        name: name.into(),
+        diffuse: [160, 160, 160, 255],
+        ambient: [40, 40, 40, 255],
+        specular: [80, 80, 80, 255],
+        multiplier: 1.0,
+        position: [0.0; 3],
+        rotation,
+    };
+    let rig = Rig {
+        identity,
+        lights: vec![
+            light("_spriteLight1", [-45.0, 0.0, 0.0]),
+            light("_spriteLight2", [45.0, 180.0, 0.0]),
+            light("_spriteLight3", [-45.0, 90.0, 0.0]),
+        ],
+    };
+    let bytes = ir.encode(&rig, dir, ir.rig_path())?;
+    dir.write_output(ir.rig_path(), &bytes)?;
     Ok(())
 }
 

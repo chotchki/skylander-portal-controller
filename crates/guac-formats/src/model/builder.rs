@@ -2,7 +2,8 @@
 //! a portal sprite drawing a skinned model whose every part decodes (AC.7's
 //! skinned Edge fixture, AC.8's Havok skeleton and clip, AC.6's images) and
 //! whose techniques carry tfbmulti2 materials, beside a sprite drawing an
-//! attachment. [`sample`] is Eruptor-shaped (a body and an eye material on
+//! attachment, the locomotion slots' clips and the placements the hero side
+//! reads (AG.14). [`sample`] is Eruptor-shaped (a body and an eye material on
 //! the normal-map, spec-map and rim variant); tests bend a [`CharacterSpec`]
 //! to make the shapes the readers refuse.
 
@@ -13,7 +14,9 @@ use crate::iga::builder::IgaBuilder;
 use crate::igz::Location;
 use crate::igz::builder::IgzBuilder;
 use crate::igz::layouts::builder::list;
+use crate::level::builder::placement;
 use crate::material::{EFFECTS, TFBMULTI2, TFN1};
+use crate::model::{FALL_SLOT, LANDING_SLOT, RUN_SLOT, WALK_SLOT};
 use crate::texture::builder::{SPECS, Spec, named_image};
 
 fn at(base: Location, offset: u32) -> Location {
@@ -90,6 +93,39 @@ pub struct MaterialSpec {
     pub attrs: Vec<AttrSpec>,
     /// A scroll track's layer and its 11 floats; the type, if not a scroll.
     pub scroll: Option<(i32, [f32; 11], &'static str)>,
+    /// Tracks of the other kinds, after the scroll (a level's, AG.15).
+    pub tracks: Vec<TrackSpec>,
+}
+
+/// A material track other than a scroll, with its data.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TrackSpec {
+    /// The layer, then centre U and V, rotation rate, min and max, scale
+    /// rate, min and max (U and V each), as the data stores them; the
+    /// rotation style and the two scale styles.
+    Transform {
+        layer: i32,
+        floats: [f32; 5],
+        rotation_style: i32,
+        scale: [f32; 6],
+        scale_style: [i32; 2],
+    },
+    /// Cells in an `igIntList`, or none.
+    FlipBook {
+        layer: i32,
+        style: i32,
+        rows: i32,
+        columns: i32,
+        rate: f32,
+        cells: Option<Vec<i32>>,
+    },
+    /// Frames and packed colours, each in its list.
+    Tint {
+        style: i32,
+        rate: f32,
+        frames: Vec<i32>,
+        colors: Vec<u32>,
+    },
 }
 
 impl MaterialSpec {
@@ -113,6 +149,7 @@ impl MaterialSpec {
                 AttrSpec::Glow(64, true),
             ],
             scroll: None,
+            tracks: Vec::new(),
         }
     }
 }
@@ -134,6 +171,77 @@ pub struct CharacterSpec {
     pub idle_name: &'static str,
     /// Other sprites: their names and whether their model has a skeleton.
     pub attachments: Vec<(&'static str, bool)>,
+    /// Animation-set slots past the idle's.
+    pub slots: Vec<SlotSpec>,
+    /// The archive's actors.
+    pub actors: Vec<ActorSpec>,
+}
+
+/// One animation-set entry past slot 0.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SlotSpec {
+    pub slot: usize,
+    /// `None` wraps nothing, as an entry holding an animation network reads.
+    pub clip: Option<ClipSpec>,
+    /// The `tfbPhysicsAnimation`'s `_properties`.
+    pub properties: u32,
+    /// The clip's file.
+    pub file: &'static str,
+    /// The entry's `_mediaName`.
+    pub label: Option<&'static str>,
+}
+
+impl SlotSpec {
+    /// AC.8's clip at `frame_duration` seconds a frame, so each slot's
+    /// clip has a duration of its own (8 frames).
+    pub fn new(slot: usize, frame_duration: f32, file: &'static str) -> Self {
+        Self {
+            slot,
+            clip: Some(ClipSpec {
+                frame_duration,
+                ..clip()
+            }),
+            properties: 0x200,
+            file,
+            label: None,
+        }
+    }
+}
+
+/// A `tfbActorInfo` with its `CollisionInfo` and maybe `ActorParameters`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActorSpec {
+    pub name: &'static str,
+    /// Whether `_model` is the portal model; otherwise it has none.
+    pub draws_portal: bool,
+    /// `CollisionInfo._properties`.
+    pub collision: u32,
+    /// Its offset and Euler angles, then width, height, length, weight and
+    /// rebound.
+    pub solid: [f32; 11],
+    /// The 13 floats from ground max speed to jump initial speed, then the
+    /// motion type, tilting with the ground and the time scale.
+    pub parameters: Option<([f32; 13], u32, bool, f32)>,
+}
+
+/// Eruptor's actor as the disc stores it, bar an offset, turn and rebound
+/// set so each field shows: a solid sphere meeting the level, 4 x 6 x 3 ft
+/// at 10 lb, on his disc movement (18 ft/s, turning 360 a second).
+pub fn eruptor() -> ActorSpec {
+    ActorSpec {
+        name: "009_Eruptor",
+        draws_portal: true,
+        collision: 0x1B,
+        solid: [0.0, 0.5, 0.25, 0.0, 90.0, 0.0, 4.0, 6.0, 3.0, 10.0, 25.0],
+        parameters: Some((
+            [
+                18.0, 160.0, 80.0, 360.0, 30.0, 160.0, 20.0, 360.0, 120.0, 128.0, 0.0, 0.0, 0.0,
+            ],
+            0,
+            true,
+            1.0,
+        )),
+    }
 }
 
 /// AC.6's two decodable tiled images, as named copies.
@@ -181,6 +289,37 @@ pub fn sample() -> CharacterSpec {
         idle: Some((clip(), 0x200)),
         idle_name: "Models/Characters/Eruptor/Eruptor_Idle.ma",
         attachments: vec![("009_ReposeSpikes", false)],
+        slots: vec![
+            SlotSpec {
+                label: Some("3.658 m/sec"),
+                ..SlotSpec::new(WALK_SLOT, 1.0 / 15.0, "Eruptor_Walk.ma")
+            },
+            SlotSpec {
+                label: Some("6.401 m/sec"),
+                ..SlotSpec::new(RUN_SLOT, 1.0 / 30.0, "Eruptor_Run.ma")
+            },
+            SlotSpec::new(FALL_SLOT, 1.0 / 60.0, "Eruptor_Falling.ma"),
+            SlotSpec::new(LANDING_SLOT, 1.0 / 20.0, "Eruptor_Landing.ma"),
+        ],
+        actors: vec![
+            // A clone drawing the portal model through a solid that neither
+            // blocks nor meets the level, as Stealth Elf's does.
+            ActorSpec {
+                name: "009_EruptorClone",
+                collision: 0x12,
+                solid: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 4.0, 7.0, 3.0, 10.0, 0.0],
+                parameters: None,
+                ..eruptor()
+            },
+            eruptor(),
+            ActorSpec {
+                name: "009_FireBlob",
+                draws_portal: false,
+                collision: 0x1B,
+                solid: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 8.0, 2.5, 3.0, 0.0, 0.0],
+                parameters: None,
+            },
+        ],
     }
 }
 
@@ -199,14 +338,14 @@ pub fn inverse_joint(i: usize) -> [[f32; 4]; 4] {
 }
 
 /// `igNode`'s fields: name, weights, handle -1, flags 0x10000.
-fn node(b: &mut IgzBuilder, o: Location, name: &str) {
+pub(crate) fn node(b: &mut IgzBuilder, o: Location, name: &str) {
     b.string(at(o, 0x08), name);
     b.put_u32(at(o, 0x18), u32::MAX);
     b.put_u32(at(o, 0x1C), 0x1_0000);
 }
 
 /// A `tfbInfo`'s name and resolve state.
-fn info(b: &mut IgzBuilder, o: Location, name: &str) {
+pub(crate) fn info(b: &mut IgzBuilder, o: Location, name: &str) {
     b.string(at(o, 0x08), name);
     b.put_bytes(at(o, 0x10), &[1]);
 }
@@ -283,7 +422,9 @@ fn geometry(b: &mut IgzBuilder, blocks: u8, f: &Fixture) -> Location {
     attr
 }
 
-fn technique(
+/// A technique drawing `fixture`'s segment with `m`'s material, binding
+/// `images`.
+pub(crate) fn technique(
     b: &mut IgzBuilder,
     blocks: u8,
     m: &MaterialSpec,
@@ -332,31 +473,123 @@ fn technique(
     let elements: Vec<Option<Location>> = attrs.into_iter().map(Some).collect();
     list(b, material, blocks, &elements);
 
+    let mut tracks = Vec::new();
     if let Some((layer, values, ty)) = m.scroll {
-        let anim = b.object(0, "tfbMaterialAnim", 0x10);
-        let tracks = b.object(0, "tfbMaterialAnimTrackList", 0x18);
         let track = b.object(0, ty, 0x28);
         let data = b.object(0, "tfbScrollUVAnimData", 0x34);
-        b.pointer(at(t, 0x2C), anim);
-        b.pointer(at(anim, 0x08), tracks);
-        list(b, tracks, blocks, &[Some(track)]);
         b.pointer(at(track, 0x10), data);
         b.put_u32(at(track, 0x14), u32::MAX);
         b.put_u32(at(track, 0x24), layer as u32);
         floats(b, data, 0x08, &values);
+        tracks.push(Some(track));
+    }
+    for spec in &m.tracks {
+        tracks.push(Some(track(b, blocks, spec)));
+    }
+    if !tracks.is_empty() {
+        let anim = b.object(0, "tfbMaterialAnim", 0x10);
+        let list_object = b.object(0, "tfbMaterialAnimTrackList", 0x18);
+        b.pointer(at(t, 0x2C), anim);
+        b.pointer(at(anim, 0x08), list_object);
+        list(b, list_object, blocks, &tracks);
     }
     t
+}
+
+/// An `igIntList` (or `igUnsignedIntList`) of `values`.
+fn int_list(b: &mut IgzBuilder, blocks: u8, ty: &str, values: &[u32]) -> Location {
+    let o = b.object(0, ty, 0x18);
+    b.put_u32(at(o, 0x08), values.len() as u32);
+    b.put_u32(at(o, 0x0C), values.len() as u32);
+    let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_be_bytes()).collect();
+    b.memory_ref(at(o, 0x10), blocks, &bytes, 0);
+    o
+}
+
+/// One track of another kind than a scroll, its data and lists.
+fn track(b: &mut IgzBuilder, blocks: u8, spec: &TrackSpec) -> Location {
+    match spec {
+        TrackSpec::Transform {
+            layer,
+            floats: f,
+            rotation_style,
+            scale,
+            scale_style,
+        } => {
+            let track = b.object(0, "tfbTransformUVAnimTrack", 0x28);
+            let data = b.object(0, "tfbTransformUVAnimData", 0x40);
+            b.pointer(at(track, 0x10), data);
+            b.put_u32(at(track, 0x14), u32::MAX);
+            b.put_u32(at(track, 0x24), *layer as u32);
+            floats(b, data, 0x08, f);
+            b.put_u32(at(data, 0x1C), *rotation_style as u32);
+            floats(b, data, 0x20, scale);
+            b.put_u32(at(data, 0x38), scale_style[0] as u32);
+            b.put_u32(at(data, 0x3C), scale_style[1] as u32);
+            track
+        }
+        TrackSpec::FlipBook {
+            layer,
+            style,
+            rows,
+            columns,
+            rate,
+            cells,
+        } => {
+            let track = b.object(0, "tfbFlipBookUVAnimTrack", 0x28);
+            let data = b.object(0, "tfbFlipBookUVAnimData", 0x1C);
+            b.pointer(at(track, 0x10), data);
+            b.put_u32(at(track, 0x14), u32::MAX);
+            b.put_u32(at(track, 0x24), *layer as u32);
+            b.put_u32(at(data, 0x08), *style as u32);
+            b.put_u32(at(data, 0x0C), *rows as u32);
+            b.put_u32(at(data, 0x10), *columns as u32);
+            floats(b, data, 0x14, &[*rate]);
+            if let Some(cells) = cells {
+                let values: Vec<u32> = cells.iter().map(|&c| c as u32).collect();
+                let l = int_list(b, blocks, "igIntList", &values);
+                b.pointer(at(data, 0x18), l);
+            }
+            track
+        }
+        TrackSpec::Tint {
+            style,
+            rate,
+            frames,
+            colors,
+        } => {
+            let track = b.object(0, "tfbMaterialTintAnimTrack", 0x24);
+            let data = b.object(0, "tfbMaterialTintAnimData", 0x18);
+            b.pointer(at(track, 0x10), data);
+            b.put_u32(at(track, 0x14), u32::MAX);
+            b.put_u32(at(data, 0x08), *style as u32);
+            floats(b, data, 0x0C, &[*rate]);
+            let values: Vec<u32> = frames.iter().map(|&f| f as u32).collect();
+            let f = int_list(b, blocks, "igIntList", &values);
+            let c = int_list(b, blocks, "igUnsignedIntList", colors);
+            b.pointer(at(data, 0x10), f);
+            b.pointer(at(data, 0x14), c);
+            track
+        }
+    }
 }
 
 /// The level's IGZ.
 pub fn character(spec: &CharacterSpec) -> Vec<u8> {
     let mut b = IgzBuilder::new();
     let blocks = b.section(0x80);
+    character_in(&mut b, blocks, spec);
+    b.build()
+}
+
+/// `spec`'s objects in `b`; returns the portal model (the
+/// `tfbPhysicsModel`), which a level's skinned prop is too (AG.15).
+pub(crate) fn character_in(b: &mut IgzBuilder, blocks: u8, spec: &CharacterSpec) -> Location {
     let fixture = skinned();
     let images: Vec<Location> = spec
         .images
         .iter()
-        .map(|(s, name)| named_image(&mut b, blocks, s, &s.data(), name))
+        .map(|(s, name)| named_image(b, blocks, s, &s.data(), name))
         .collect();
 
     // The portal sprite and its model.
@@ -374,9 +607,9 @@ pub fn character(spec: &CharacterSpec) -> Vec<u8> {
     b.string(at(sprite, 0x08), spec.portal_sprite);
     b.pointer(at(sprite, 0xD0), model);
 
-    info(&mut b, model, spec.model);
+    info(b, model, spec.model);
     b.pointer(at(model, 0x14), body);
-    info(&mut b, body, "Eruptor.ma");
+    info(b, body, "Eruptor.ma");
     let skeletons = PayloadSpec {
         skeletons: vec![spec.skeleton.clone()],
         ..PayloadSpec::default()
@@ -386,10 +619,10 @@ pub fn character(spec: &CharacterSpec) -> Vec<u8> {
     b.pointer(at(body, 0x24), combiner);
     b.null_memory_ref(at(body, 0x28), 0);
 
-    node(&mut b, actor, "Actor");
+    node(b, actor, "Actor");
     b.pointer(at(actor, 0x20), actor_children);
-    list(&mut b, actor_children, blocks, &[Some(select)]);
-    node(&mut b, select, "skin");
+    list(b, actor_children, blocks, &[Some(select)]);
+    node(b, select, "skin");
     b.pointer(at(select, 0x20), select_children);
     b.pointer(at(select, 0xB4), palette);
     b.put_u32(at(palette, 0x08), PALETTE.len() as u32);
@@ -399,9 +632,9 @@ pub fn character(spec: &CharacterSpec) -> Vec<u8> {
     let techniques: Vec<Option<Location>> = spec
         .materials
         .iter()
-        .map(|m| Some(technique(&mut b, blocks, m, &images, &fixture)))
+        .map(|m| Some(technique(b, blocks, m, &images, &fixture)))
         .collect();
-    list(&mut b, select_children, blocks, &techniques);
+    list(b, select_children, blocks, &techniques);
 
     // The combiner, igSkeleton2 and its bones: an unnamed root, then
     // skeleton3's joints, each on its own blend matrix.
@@ -430,27 +663,80 @@ pub fn character(spec: &CharacterSpec) -> Vec<u8> {
         bones.push(o);
     }
     let elements: Vec<Option<Location>> = bones.into_iter().map(Some).collect();
-    list(&mut b, bone_list, blocks, &elements);
+    list(b, bone_list, blocks, &elements);
 
-    // The animation set: the idle in slot 0, an empty slot 1.
+    // The animation set: the idle in slot 0, the other slots' entries, the
+    // rest empty (slot 1 too, when no entry fills it).
     let table = b.object(0, "AnimationInfoList", 0x18);
     b.pointer(at(model, 0x1C), table);
-    let mut slots = vec![None, None];
-    if let Some((clip, properties)) = &spec.idle {
+    let last = spec.slots.iter().map(|s| s.slot).max().unwrap_or(0);
+    let mut slots = vec![None; last.max(1) + 1];
+    let entry = |b: &mut IgzBuilder,
+                 name: &str,
+                 clip: Option<&ClipSpec>,
+                 properties: u32,
+                 file: &str,
+                 label: Option<&str>| {
         let entry = b.object(0, "AnimationInfo", 0x44);
-        let anim = b.object(0, "tfbPhysicsAnimation", 0x2C);
-        b.string(at(entry, 0x08), "Idle");
-        b.pointer(at(entry, 0x3C), anim);
-        info(&mut b, anim, spec.idle_name);
-        let clips = PayloadSpec {
-            clip: Some(clip.clone()),
-            ..PayloadSpec::default()
-        };
-        b.memory_ref(at(anim, 0x14), blocks, &payload(&clips).bytes, 2);
-        b.put_u32(at(anim, 0x20), *properties);
-        slots[0] = Some(entry);
+        b.string(at(entry, 0x08), name);
+        if let Some(label) = label {
+            b.string(at(entry, 0x34), label);
+        }
+        if let Some(clip) = clip {
+            let anim = b.object(0, "tfbPhysicsAnimation", 0x2C);
+            b.pointer(at(entry, 0x3C), anim);
+            info(b, anim, file);
+            let clips = PayloadSpec {
+                clip: Some(clip.clone()),
+                ..PayloadSpec::default()
+            };
+            b.memory_ref(at(anim, 0x14), blocks, &payload(&clips).bytes, 2);
+            b.put_u32(at(anim, 0x20), properties);
+        }
+        entry
+    };
+    if let Some((clip, properties)) = &spec.idle {
+        slots[0] = Some(entry(
+            b,
+            "Idle",
+            Some(clip),
+            *properties,
+            spec.idle_name,
+            None,
+        ));
     }
-    list(&mut b, table, blocks, &slots);
+    for s in &spec.slots {
+        slots[s.slot] = Some(entry(
+            b,
+            "?",
+            s.clip.as_ref(),
+            s.properties,
+            &format!("Models/Characters/Eruptor/{}", s.file),
+            s.label,
+        ));
+    }
+    list(b, table, blocks, &slots);
+
+    // The actors, each with its solid and maybe its movement.
+    for (id, a) in spec.actors.iter().enumerate() {
+        let o = b.object(0, "tfbActorInfo", 0xF8);
+        placement(b, o, a.name, id as u32, &[0.0; 6], 5);
+        let c = b.object(0, "CollisionInfo", 0x58);
+        b.pointer(at(o, 0xC4), c);
+        b.put_u32(at(c, 0x18), a.collision);
+        floats(b, c, 0x1C, &a.solid);
+        if a.draws_portal {
+            b.pointer(at(o, 0xDC), model);
+        }
+        if let Some((values, motion, tilts, time_scale)) = a.parameters {
+            let p = b.object(0, "ActorParameters", 0x4C);
+            b.pointer(at(o, 0xE0), p);
+            floats(b, p, 0x0C, &values);
+            b.put_u32(at(p, 0x40), motion);
+            b.put_bytes(at(p, 0x44), &[u8::from(tilts)]);
+            floats(b, p, 0x48, &[time_scale]);
+        }
+    }
 
     // Attachments: another sprite each, its model unskinned (no body) or a
     // skinned copy of the portal model's body.
@@ -459,17 +745,48 @@ pub fn character(spec: &CharacterSpec) -> Vec<u8> {
         let m = b.object(0, "tfbPhysicsModel", 0x30);
         b.string(at(s, 0x08), name);
         b.pointer(at(s, 0xD0), m);
-        info(&mut b, m, &format!("{name}.mdl"));
+        info(b, m, &format!("{name}.mdl"));
         if *skinned {
             b.pointer(at(m, 0x14), body);
         }
     }
-    b.build()
+    model
 }
 
 /// `level` stored the way the readers look for it, as `level.bld`.
 pub fn archive(level: &[u8]) -> Vec<u8> {
     IgaBuilder::new().stored("level.bld", level).build()
+}
+
+/// The sample with a material carrying a track of every kind (a level's,
+/// AG.15): a scroll, a transform, a flip book with its cells and a tint.
+pub fn tracked() -> CharacterSpec {
+    let mut s = sample();
+    s.materials[0].scroll = Some((1, [0.5; 11], "tfbScrollUVAnimTrack"));
+    s.materials[0].tracks = vec![
+        TrackSpec::Transform {
+            layer: 0,
+            floats: [0.5, 0.5, 34.906586, 0.0, 0.0],
+            rotation_style: 0,
+            scale: [0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+            scale_style: [0, 0],
+        },
+        TrackSpec::FlipBook {
+            layer: 0,
+            style: 1,
+            rows: 3,
+            columns: 1,
+            rate: 1.0 / 6.0,
+            cells: Some(vec![0, 2, 1]),
+        },
+        TrackSpec::Tint {
+            style: 0,
+            rate: 1.0,
+            frames: vec![0, 15, 30, 60],
+            colors: vec![0xFF8E_BBCE, 0xFF57_93D2, 0xFF78_CDEF, 0xFF8E_BBCE],
+        },
+    ];
+    s
 }
 
 /// The sample, a variant with a scroll track and every state attr, and an
@@ -490,5 +807,24 @@ pub fn seeds() -> Vec<Vec<u8>> {
     states.materials[0].scroll = Some((0, [0.5; 11], "tfbScrollUVAnimTrack"));
     let mut tie = sample();
     tie.attachments = vec![("112_Woodpecker", true)];
-    vec![character(&sample()), character(&states), character(&tie)]
+    // The hero found by name, a jog that's an animation network and an
+    // additive lean.
+    let mut named = sample();
+    for a in &mut named.actors {
+        a.draws_portal = false;
+    }
+    named.slots.push(SlotSpec {
+        clip: None,
+        ..SlotSpec::new(2, 1.0 / 30.0, "Eruptor_Jog.ma")
+    });
+    named.slots.push(SlotSpec {
+        properties: 0x210,
+        ..SlotSpec::new(12, 1.0 / 30.0, "Eruptor_LeanLeft.ma")
+    });
+    vec![
+        character(&sample()),
+        character(&states),
+        character(&tie),
+        character(&named),
+    ]
 }

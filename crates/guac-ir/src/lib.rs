@@ -9,16 +9,22 @@
 
 #![forbid(unsafe_code)]
 
+pub mod actor;
 mod characters;
 pub mod clip;
+pub mod glow;
+pub mod hero;
 mod identity;
+pub mod level;
 pub mod model;
 pub mod rig;
 pub mod roster;
+pub mod scroll;
 pub mod shading;
 
 pub use characters::{Character, CharacterArchive, CharacterTable, Intro, IntroSource, VoiceTrack};
 pub use clip::Clip;
+pub use hero::Hero;
 pub use identity::{DumpIdentity, Sha256};
 pub use model::Model;
 pub use rig::{Rig, RigLight};
@@ -28,10 +34,19 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// The IR's shape version. Any change to a serialized type bumps it. v2
-/// (AE.2) adds the disc's roster, and AE.6 the models, their clips and the
-/// 3D-UI rig, new files beside it before any v2 extract had shipped (the
-/// extract's layout version, which they change, made those re-extract).
-pub const IR_VERSION: u32 = 2;
+/// (AE.2) adds the disc's roster, AE.6 the models, their clips and the
+/// 3D-UI rig, and AG.14 the hero side (placements' solids and movement,
+/// the locomotion clips): new files beside unchanged ones, so each time the
+/// extract's layout version, not this one, made older extracts redo
+/// themselves. v3 was taken twice, on parallel branches, for two different
+/// changes to a model's material: AG.15's blend that multiplies
+/// ([`model::Blend::Multiply`]) and material tracks besides scrolls
+/// ([`model::MaterialTrack`]), which level 213's materials carry (the level
+/// itself is new files, [`level`]); and AE.11's glow ([`model::Glow`]),
+/// telling a part without the attribute (no glow) from one with it off
+/// (layer 1's alpha), which v2 read alike. v4 is the merge of both, so an
+/// extract either branch's v3 wrote redoes itself.
+pub const IR_VERSION: u32 = 4;
 
 #[derive(Debug, thiserror::Error)]
 pub enum IrError {
@@ -324,7 +339,7 @@ mod tests {
     #[test]
     fn ron_carries_the_version_and_a_hex_hash() {
         let text = to_ron(&identity()).unwrap();
-        assert!(text.contains("ir_version: 2"), "{text}");
+        assert!(text.contains("ir_version: 4"), "{text}");
         assert!(
             text.contains(&format!("\"{}\"", identity().manifest_hash)),
             "{text}"
@@ -341,12 +356,12 @@ mod tests {
     fn another_ir_version_is_refused_in_ron() {
         let text = to_ron(&identity())
             .unwrap()
-            .replace("ir_version: 2", "ir_version: 1");
+            .replace("ir_version: 4", "ir_version: 3");
         assert!(matches!(
             from_ron::<DumpIdentity>(&text),
             Err(IrError::VersionMismatch {
-                found: 1,
-                expected: 2
+                found: 3,
+                expected: 4
             })
         ));
     }
@@ -355,24 +370,24 @@ mod tests {
     fn another_versions_ron_stops_at_its_version() {
         // A body this build couldn't read at all: the version is what's
         // reported, so the body was never read.
-        let text = "(ir_version: 1, body: (no: [such, (shape)]))";
+        let text = "(ir_version: 3, body: (no: [such, (shape)]))";
         assert!(matches!(
             from_ron::<DumpIdentity>(text),
             Err(IrError::VersionMismatch {
-                found: 1,
-                expected: 2
+                found: 3,
+                expected: 4
             })
         ));
         // No version, a stray field, or no body: refused as malformed.
         let body = to_ron(&identity()).unwrap();
-        let unversioned = body.replace("ir_version: 2,", "");
+        let unversioned = body.replace("ir_version: 4,", "");
         assert!(matches!(
             from_ron::<DumpIdentity>(&unversioned),
             Err(IrError::RonSpanned(_))
         ));
-        let stray = body.replace("ir_version: 2,", "ir_version: 2, extra: 3,");
+        let stray = body.replace("ir_version: 4,", "ir_version: 4, extra: 4,");
         assert!(from_ron::<DumpIdentity>(&stray).is_err());
-        assert!(from_ron::<DumpIdentity>("(ir_version: 2)").is_err());
+        assert!(from_ron::<DumpIdentity>("(ir_version: 4)").is_err());
     }
 
     #[test]
@@ -384,7 +399,7 @@ mod tests {
             from_postcard::<DumpIdentity>(&bytes),
             Err(IrError::VersionMismatch {
                 found: 0,
-                expected: 2
+                expected: 4
             })
         ));
     }

@@ -8,7 +8,9 @@
 //! window frames, so a window capture comes back black; the window stays empty
 //! meanwhile. An intro's shot is a frame of the disc's own FMV, so the folder
 //! must be outside any git checkout (the extract root's rule, design decision
-//! 5); one inside is refused and nothing shot.
+//! 5); one inside is refused and nothing shot. A card's turning model holds
+//! its idle's first pose at `GUAC_SHOT_YAW` degrees of its turn (default 0,
+//! facing the camera), so a walk can shoot a turn one run per angle.
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -23,6 +25,7 @@ use crate::cards::PortalCards;
 use crate::extraction::Extraction;
 use crate::intro::IntroQueue;
 use crate::motion::ReducedMotion;
+use crate::turntable::FrozenYaw;
 use crate::tv::{Current, Redrawn, TvCamera};
 
 /// Long enough for a redrawn tree's layout and portraits to reach the GPU.
@@ -52,7 +55,12 @@ impl Plugin for Shots {
             .ok()
             .and_then(|s| parse_size(&s))
             .unwrap_or(UVec2::new(1920, 1080));
-        info!(dir = %dir.display(), %size, "rendering offscreen, a screenshot per TV change");
+        let yaw = std::env::var("GUAC_SHOT_YAW")
+            .ok()
+            .and_then(|s| parse_yaw(&s))
+            .unwrap_or(0.0);
+        info!(dir = %dir.display(), %size, yaw, "rendering offscreen, a screenshot per TV change");
+        app.insert_resource(FrozenYaw(yaw.to_radians()));
         app.insert_resource(ShotState {
             dir,
             size,
@@ -87,6 +95,11 @@ fn outside_checkouts(dir: PathBuf) -> Result<PathBuf, (PathBuf, PathBuf)> {
 fn parse_size(s: &str) -> Option<UVec2> {
     let (w, h) = s.split_once('x')?;
     Some(UVec2::new(w.trim().parse().ok()?, h.trim().parse().ok()?))
+}
+
+/// `GUAC_SHOT_YAW`'s degrees, finite.
+fn parse_yaw(s: &str) -> Option<f32> {
+    s.trim().parse::<f32>().ok().filter(|d| d.is_finite())
 }
 
 /// Points the TV's camera at an image instead of the window.
@@ -176,6 +189,14 @@ mod tests {
         assert_eq!(parse_size("3840x2160"), Some(UVec2::new(3840, 2160)));
         assert_eq!(parse_size("1920 x 1080"), Some(UVec2::new(1920, 1080)));
         assert_eq!(parse_size("big"), None);
+    }
+
+    #[test]
+    fn shot_yaws_parse() {
+        assert_eq!(parse_yaw(" 45 "), Some(45.0));
+        assert_eq!(parse_yaw("-22.5"), Some(-22.5));
+        assert_eq!(parse_yaw("inf"), None);
+        assert_eq!(parse_yaw("left"), None);
     }
 
     #[test]

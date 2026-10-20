@@ -423,3 +423,172 @@ impl<'a> Layout<'a> for ScrollUvAnimData {
         })
     }
 }
+
+/// `tfbMaterialAnimTrack`, size 0x24: a track's base, which a tint track
+/// (`tfbMaterialTintAnimTrack`) adds no field to. The cache fields are the
+/// runtime's.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MaterialAnimTrack<'a> {
+    pub base_time: f32,
+    pub cur_time: f32,
+    /// A `tfbMaterialAnimData`: the kind's parameters.
+    pub data: Option<usize>,
+    pub cache_frame: i32,
+    pub cache_time: f32,
+    pub cache_inst: ObjectRef<'a>,
+    pub attr_list: ObjectRef<'a>,
+}
+
+impl<'a> Layout<'a> for MaterialAnimTrack<'a> {
+    const TYPE: &'static str = "tfbMaterialAnimTrack";
+
+    fn fields(v: &mut View<'_, 'a>) -> Result<Self, FormatError> {
+        Ok(Self {
+            base_time: v.f32(MaterialUvAnimTrack::BASE_TIME, "_baseTime")?,
+            cur_time: v.f32(MaterialUvAnimTrack::CUR_TIME, "_curTime")?,
+            data: v.object(MaterialUvAnimTrack::DATA, "_data", "tfbMaterialAnimData")?,
+            cache_frame: v.i32(MaterialUvAnimTrack::CACHE_FRAME, "_cacheFrame")?,
+            cache_time: v.f32(MaterialUvAnimTrack::CACHE_TIME, "_cacheTime")?,
+            cache_inst: v.object_ref(MaterialUvAnimTrack::CACHE_INST, "_cacheInst")?,
+            attr_list: v.object_ref(MaterialUvAnimTrack::ATTR_LIST, "_attrList")?,
+        })
+    }
+}
+
+/// `tfbTransformUVAnimData`, size 0x40: a transform track's parameters, as
+/// stored (AG.15: three of level 213's props turn a layer's coordinates
+/// about its centre). How the runtime turns them into a texture-coordinate
+/// transform isn't read here.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TransformUvAnimData {
+    pub center: [f32; 2],
+    pub rotation_rate: f32,
+    pub rotation_min: f32,
+    pub rotation_max: f32,
+    pub rotation_style: i32,
+    pub scale_rate: [f32; 2],
+    pub scale_min: [f32; 2],
+    pub scale_max: [f32; 2],
+    pub scale_style: [i32; 2],
+}
+
+impl TransformUvAnimData {
+    pub const CENTER_U: u32 = 0x08;
+    pub const ROTATION_RATE: u32 = 0x10;
+    pub const ROTATION_MIN: u32 = 0x14;
+    pub const ROTATION_MAX: u32 = 0x18;
+    pub const ROTATION_STYLE: u32 = 0x1C;
+    pub const SCALE_RATE: u32 = 0x20;
+    pub const SCALE_MIN: u32 = 0x28;
+    pub const SCALE_MAX: u32 = 0x30;
+    pub const SCALE_STYLE: u32 = 0x38;
+}
+
+impl<'a> Layout<'a> for TransformUvAnimData {
+    const TYPE: &'static str = "tfbTransformUVAnimData";
+
+    fn fields(v: &mut View<'_, 'a>) -> Result<Self, FormatError> {
+        Ok(Self {
+            center: v.floats(Self::CENTER_U, "_centerUV")?,
+            rotation_rate: v.f32(Self::ROTATION_RATE, "_rotationRate")?,
+            rotation_min: v.f32(Self::ROTATION_MIN, "_rotationMin")?,
+            rotation_max: v.f32(Self::ROTATION_MAX, "_rotationMax")?,
+            rotation_style: v.i32(Self::ROTATION_STYLE, "_rotationStyle")?,
+            scale_rate: v.floats(Self::SCALE_RATE, "_scaleRate")?,
+            scale_min: v.floats(Self::SCALE_MIN, "_scaleMin")?,
+            scale_max: v.floats(Self::SCALE_MAX, "_scaleMax")?,
+            scale_style: [
+                v.i32(Self::SCALE_STYLE, "_scaleStyle")?,
+                v.i32(Self::SCALE_STYLE + 4, "_scaleStyle")?,
+            ],
+        })
+    }
+}
+
+/// `tfbFlipBookUVAnimData`, size 0x1C: a flip book's grid and rate, as
+/// stored (level 213's waterfall glimmer: 3 rows, 1 column, 1/6).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FlipBookUvAnimData {
+    pub style: i32,
+    pub rows: i32,
+    pub columns: i32,
+    pub rate: f32,
+    /// An `igIntList` of cells in play order; null on level 213's one.
+    pub cell_indices: Option<usize>,
+}
+
+impl FlipBookUvAnimData {
+    pub const ANIM_STYLE: u32 = 0x08;
+    pub const NUM_ROWS: u32 = 0x0C;
+    pub const NUM_COLUMNS: u32 = 0x10;
+    pub const RATE: u32 = 0x14;
+    pub const CELL_INDICES: u32 = 0x18;
+}
+
+impl<'a> Layout<'a> for FlipBookUvAnimData {
+    const TYPE: &'static str = "tfbFlipBookUVAnimData";
+
+    fn fields(v: &mut View<'_, 'a>) -> Result<Self, FormatError> {
+        Ok(Self {
+            style: v.i32(Self::ANIM_STYLE, "_animStyle")?,
+            rows: v.i32(Self::NUM_ROWS, "_numRows")?,
+            columns: v.i32(Self::NUM_COLUMNS, "_numColumns")?,
+            rate: v.f32(Self::RATE, "_rate")?,
+            cell_indices: v.object(Self::CELL_INDICES, "_cellIndices", "igIntList")?,
+        })
+    }
+}
+
+/// `tfbMaterialTintAnimData`, size 0x18: a tint track's style, rate and
+/// keys, as stored: frames in an `igIntList` (0, 15, 30, 60 on a lantern
+/// of level 213's) and packed colours in an `igUnsignedIntList`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MaterialTintAnimData {
+    pub style: i32,
+    pub rate: f32,
+    pub key_frames: Option<usize>,
+    pub key_colors: Option<usize>,
+}
+
+impl MaterialTintAnimData {
+    pub const ANIM_STYLE: u32 = 0x08;
+    pub const RATE: u32 = 0x0C;
+    pub const KEY_FRAMES: u32 = 0x10;
+    pub const KEY_COLORS: u32 = 0x14;
+}
+
+impl<'a> Layout<'a> for MaterialTintAnimData {
+    const TYPE: &'static str = "tfbMaterialTintAnimData";
+
+    fn fields(v: &mut View<'_, 'a>) -> Result<Self, FormatError> {
+        Ok(Self {
+            style: v.i32(Self::ANIM_STYLE, "_animStyle")?,
+            rate: v.f32(Self::RATE, "_rate")?,
+            key_frames: v.object(Self::KEY_FRAMES, "_keyFrames", "igIntList")?,
+            key_colors: v.object(Self::KEY_COLORS, "_keyColors", "igUnsignedIntList")?,
+        })
+    }
+}
+
+/// `igUnsignedIntList`: a data list of u32s.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnsignedIntList<'a> {
+    pub list: DataList<'a>,
+    pub values: Vec<u32>,
+}
+
+impl<'a> Layout<'a> for UnsignedIntList<'a> {
+    const TYPE: &'static str = "igUnsignedIntList";
+
+    fn fields(v: &mut View<'_, 'a>) -> Result<Self, FormatError> {
+        let list = DataList::fields(v)?;
+        let values = v
+            .list_bytes(&list, 4)?
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| u32::from_be_bytes(*c))
+            .collect();
+        Ok(Self { list, values })
+    }
+}

@@ -67,11 +67,11 @@ use bevy::winit::WinitPlugin;
 use guac_ir::clip::Clip;
 use guac_ir::model::{self, Blend, Joint, Mask, Model, Segment, Skeleton};
 use guac_ir::shading::{
-    self, DirectionalLight, Fixed, Fragment, Layer, PointLight, Rim, Scene, SecondLayer,
+    self, DirectionalLight, Fixed, Fragment, Glow, Layer, PointLight, Rim, Scene, SecondLayer,
     ThirdLayer, UvTransform, Weights,
 };
 use guacamole::character::{
-    CharacterMaterial, CharacterShadingPlugin, CharacterTextures, MaterialKey, SceneBits,
+    CharacterMaterial, CharacterShadingPlugin, CharacterTextures, MaterialKey, Pass, SceneBits,
     ShaderKey, ShadowLookup, StateKey, spawn_character,
 };
 
@@ -185,6 +185,7 @@ fn drawn(scenes: &[SceneBits]) -> Vec<MaterialKey> {
             let k = MaterialKey {
                 shader,
                 states: s.states,
+                pass: Pass::Colour,
             };
             if keys.insert(k) {
                 out.push(k);
@@ -225,6 +226,7 @@ fn layer_keys() -> Vec<MaterialKey> {
     .map(|(p, v)| MaterialKey {
         shader: ShaderKey::new(p, v).expect("a layer key"),
         states: StateKey::OPAQUE,
+        pass: Pass::Colour,
     })
     .to_vec()
 }
@@ -780,7 +782,7 @@ fn random_material(rng: &mut Rng, key: &ShaderKey) -> shading::Material {
         third,
         rim,
         tint: [rng.byte(), rng.byte(), rng.byte(), rng.byte()].map(|c| f32::from(c) / 255.0),
-        glow: None,
+        glow: Glow::None,
         uv_transforms: [uv(rng), uv(rng), uv(rng)],
         fixed: Fixed {
             shadows: Some(s.shadows),
@@ -912,7 +914,7 @@ fn want(
         let stored = match key.states.blend {
             Blend::Opaque => alpha,
             Blend::Alpha => alpha + CLEAR[3] * (1.0 - alpha),
-            Blend::Additive => CLEAR[3],
+            Blend::Additive | Blend::Multiply => CLEAR[3],
         };
         Want::Colour([pixel.colour[0], pixel.colour[1], pixel.colour[2], stored])
     };
@@ -1201,6 +1203,7 @@ fn probe_case(srgb: bool) -> Case {
     let key = MaterialKey {
         shader: ShaderKey::new(0, 0).unwrap(),
         states: StateKey::OPAQUE,
+        pass: Pass::Colour,
     };
     // 256 blocks, one per code; the channels run through the codes apart.
     let codes: Vec<[u8; 4]> = (0..=255u8)

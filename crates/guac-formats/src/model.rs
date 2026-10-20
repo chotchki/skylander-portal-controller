@@ -15,6 +15,14 @@
 //!   ([`JointMap`]), and skin with Alchemy's inverse joints (AC.17).
 //! - The idle is slot 0 of the model's animation set, a NORMAL clip that
 //!   poses the whole skeleton (AE.5: 67 of 67; 62 named `<character>_Idle`).
+//! - The locomotion clips (AG.14) are the set's other fixed slots: walk 1,
+//!   jog 2, run 3 and falling 57, the numbers `permanent/global.bld`'s
+//!   `AnimSlot_*` values give and its locomotion macros play from, and the
+//!   landing 61, which the macro plays by number as a hero touches down. An
+//!   empty slot is a clip the character doesn't have.
+//! - The hero is the placement drawing the portal model with a solid that
+//!   blocks and meets the level ([`hero_actor`]), which carries the
+//!   character's `CollisionInfo` and its disc `ActorParameters`.
 
 use crate::havok::{self, BlendHint};
 use crate::igz::Igz;
@@ -22,6 +30,7 @@ use crate::igz::layouts::{
     Hero, Layout, Mat44, ObjectRef, Payload, PhysicsAnimation, PhysicsModel, SkeletonBone,
     SpriteInfo, is_a, read_all,
 };
+use crate::level::{Actor, Placements};
 use crate::{ErrorKind, FormatError};
 
 #[cfg(any(test, feature = "test-fixtures"))]
@@ -33,6 +42,21 @@ const FORMAT: &str = "model";
 
 /// What the portal sprite's name holds, any case.
 pub const PORTAL_TOY: &str = "portal_toy";
+
+/// The animation set's slots: the idle, and the locomotion's by
+/// `global.bld`'s `AnimSlot_Idle`, `_Walk`, `_Jog`, `_Run` and `_Fall`
+/// (0, 1, 2, 3 and 57). The landing is slot 61, played by number.
+pub const IDLE_SLOT: usize = 0;
+pub const WALK_SLOT: usize = 1;
+pub const JOG_SLOT: usize = 2;
+pub const RUN_SLOT: usize = 3;
+pub const FALL_SLOT: usize = 57;
+pub const LANDING_SLOT: usize = 61;
+
+/// A `CollisionInfo` that blocks (bit 3) and meets the level (bit 4): the
+/// hero's own, not a clone's (0x12), an upgrade avatar's (0x4) or a
+/// trigger's.
+pub const HERO_SOLID: u32 = 0x18;
 
 /// The model a character archive draws for its toy.
 #[derive(Debug, Clone, PartialEq)]
@@ -159,7 +183,9 @@ fn joint_error(field: &'static str, kind: ErrorKind) -> FormatError {
 }
 
 impl JointMap {
-    /// Every Havok joint must name exactly one Alchemy bone.
+    /// Every Havok joint must name exactly one Alchemy bone, and no two
+    /// joints the same one (`cargo fuzz` found a pair that did: the second
+    /// overwrote the first and the map stopped being one to one).
     pub fn new(
         skeleton: &havok::Skeleton<'_>,
         bones: &[SkeletonBone<'_>],
@@ -181,7 +207,9 @@ impl JointMap {
                     return Err(joint_error("igSkeletonBone name", ErrorKind::Duplicate));
                 }
             };
-            joint_of_bone[bone] = Some(j);
+            if joint_of_bone[bone].replace(j).is_some() {
+                return Err(joint_error("hkaBone name", ErrorKind::Duplicate));
+            }
             bone_of_joint.push(bone);
         }
         Ok(Self {
@@ -220,33 +248,43 @@ impl JointMap {
     }
 }
 
-/// Slot 0 of the animation set, checked to pose the skeleton ([`idle`]).
+/// One animation-set slot's clip, checked to pose the skeleton
+/// ([`slot_clip`]).
 #[derive(Debug, Clone, PartialEq)]
-pub struct Idle<'a> {
-    /// The `AnimationInfo` in slot 0 and the `tfbPhysicsAnimation` it wraps.
+pub struct SlotClip<'a> {
+    pub slot: usize,
+    /// The `AnimationInfo` in the slot and the `tfbPhysicsAnimation` it
+    /// wraps.
     pub info: usize,
     pub animation: usize,
     /// The clip's file name without its folders (`Eruptor_Idle.ma`).
     pub file: Option<&'a str>,
+    /// The entry's own label (`_mediaName`), which some locomotion slots
+    /// use for their authored speed (`3.658 m/sec` on Eruptor's walk).
+    pub label: Option<&'a str>,
     pub clip: havok::Clip<'a>,
 }
 
-/// Slot 0 of `hero`'s animation set: a NORMAL clip, neither additive nor
-/// partial, that poses `skeleton` at its start and halfway.
-pub fn idle<'a>(
+/// Slot 0 of the animation set ([`idle`]).
+pub type Idle<'a> = SlotClip<'a>;
+
+/// The clip in `slot` of `hero`'s animation set, `None` when the slot is
+/// empty or past the set's end. Refused: an entry wrapping no
+/// `tfbPhysicsAnimation` (an animation network or nothing), a clip that is
+/// additive or partial or not a NORMAL blend, and one that doesn't pose
+/// `skeleton` at its start and halfway.
+pub fn slot_clip<'a>(
     igz: &Igz<'a>,
     hero: &Hero<'a>,
     skeleton: &havok::Skeleton<'_>,
-) -> Result<Idle<'a>, FormatError> {
-    let model_at = igz.objects()[hero.model_index].at;
-    let info = hero
-        .clip_slots
-        .first()
-        .copied()
-        .flatten()
-        .ok_or_else(|| igz.err_at(model_at, "_animationSet slot 0", ErrorKind::Missing))?;
+    slot: usize,
+) -> Result<Option<SlotClip<'a>>, FormatError> {
+    let Some(info) = hero.clip_slots.get(slot).copied().flatten() else {
+        return Ok(None);
+    };
     let at = igz.objects()[info].at;
-    let (animation, a): (usize, PhysicsAnimation<'a>) = hero.clips[&info]
+    let entry = &hero.clips[&info];
+    let (animation, a): (usize, PhysicsAnimation<'a>) = entry
         .animation
         .ok_or_else(|| igz.err_at(at, "_tfbAnimation", ErrorKind::Missing))?;
     let anim_at = igz.objects()[animation].at;
@@ -289,10 +327,67 @@ pub fn idle<'a>(
         .info
         .name
         .map(|n| n.rsplit(['/', '\\']).next().unwrap_or(n));
-    Ok(Idle {
+    Ok(Some(SlotClip {
+        slot,
         info,
         animation,
         file,
+        label: entry.info.media_name,
         clip,
+    }))
+}
+
+/// Slot 0 of `hero`'s animation set: a NORMAL clip, neither additive nor
+/// partial, that poses `skeleton` at its start and halfway.
+pub fn idle<'a>(
+    igz: &Igz<'a>,
+    hero: &Hero<'a>,
+    skeleton: &havok::Skeleton<'_>,
+) -> Result<Idle<'a>, FormatError> {
+    slot_clip(igz, hero, skeleton, IDLE_SLOT)?.ok_or_else(|| {
+        let model_at = igz.objects()[hero.model_index].at;
+        igz.err_at(model_at, "_animationSet slot 0", ErrorKind::Missing)
     })
+}
+
+/// The placement the archive plays `portal`'s character as: the one actor
+/// drawing the portal model whose solid blocks and meets the level
+/// ([`HERO_SOLID`]); where no actor draws it, the one named as the load file,
+/// any case, with such a solid (Punch Pop Fizz's archive, whose actor draws
+/// another model than her portal sprite's). None, or more than one, is
+/// refused.
+pub fn hero_actor<'a>(
+    igz: &Igz<'a>,
+    portal: &PortalModel<'a>,
+    load_file: &str,
+) -> Result<Actor<'a>, FormatError> {
+    let placements = Placements::read(igz)?;
+    let solid = |a: &Actor<'_>| {
+        a.collision
+            .is_some_and(|c| c.properties & HERO_SOLID == HERO_SOLID)
+    };
+    let pick = |by: &dyn Fn(&Actor<'a>) -> bool| -> Vec<Actor<'a>> {
+        placements
+            .actors
+            .iter()
+            .filter(|a| solid(a) && by(a))
+            .copied()
+            .collect()
+    };
+    let mut found = pick(&|a| a.info.model == Some(portal.model));
+    if found.is_empty() {
+        found = pick(&|a| a.name().is_some_and(|n| n.eq_ignore_ascii_case(load_file)));
+    }
+    match found[..] {
+        [actor] => Ok(actor),
+        _ => Err(FormatError::new(
+            FORMAT,
+            "the hero's tfbActorInfo",
+            0,
+            ErrorKind::CountMismatch {
+                found: found.len() as u64,
+                expected: 1,
+            },
+        )),
+    }
 }

@@ -1,10 +1,11 @@
-//! The model stage on the real Giants dump (openspec AE.6): every character
-//! model the roster loads, its textures and the 3D-UI rig, written into a
-//! throwaway identity dir, again as a resume and once in the install
-//! format; Eruptor's model read back from the IR against the decoders'
-//! direct output (counts, positions, his materials, his idle skinned at
-//! AC.17's three solved times); the rig; and the totals AE.6's tick
-//! records. Ignored by default: it reads `GUAC_GIANTS_DUMP` and writes
+//! The model stage on the real Giants dump (openspec AE.6, AG.14): every
+//! character model the roster loads, its textures, its hero side and the
+//! 3D-UI rig, written into a throwaway identity dir, again as a resume and
+//! once in the install format; Eruptor's model read back from the IR
+//! against the decoders' direct output (counts, positions, his materials,
+//! his idle skinned at AC.17's three solved times, his walk and run skinned
+//! at and between their knots); the rig; and the totals AE.6's and AG.14's
+//! ticks record. Ignored by default: it reads `GUAC_GIANTS_DUMP` and writes
 //! under `GUAC_EXTRACT_DIR`, from the environment or the workspace's
 //! `.env.dev`:
 //!
@@ -22,9 +23,10 @@ use guac_extract::{DirState, ExtractRoot, open};
 use guac_formats::edge::{BoneMap, Segment as EdgeSegment};
 use guac_formats::igz::Igz;
 use guac_formats::igz::layouts::{Mat44, PixelShaderVariantMaskAttr, read_all};
-use guac_formats::model::{JointMap, idle, portal_model, skeleton};
-use guac_ir::model::{Blend, TextureRole};
-use guac_ir::{Model, Rig};
+use guac_formats::model::{JointMap, RUN_SLOT, WALK_SLOT, idle, portal_model, skeleton, slot_clip};
+use guac_ir::clip::{Clip, RotationTrack};
+use guac_ir::model::{Blend, Glow, TextureRole};
+use guac_ir::{Hero, Model, Rig};
 
 fn env_or_dotenv(key: &str) -> Option<String> {
     if let Ok(value) = std::env::var(key) {
@@ -78,6 +80,42 @@ fn trs(t: [f64; 3], q: [f64; 4], s: [f64; 3]) -> M4 {
     ];
     let row = |i: usize| [r[i][0] * s[0], r[i][1] * s[1], r[i][2] * s[2], t[i]];
     [row(0), row(1), row(2), [0.0, 0.0, 0.0, 1.0]]
+}
+
+/// Every knot frame of `c`'s splines and the midpoint between each two,
+/// as times: the evaluator's hardest and easiest points. The last frame is
+/// taken just short of the duration, where time would wrap to 0.
+fn knot_times(c: &Clip) -> Vec<f64> {
+    let mut knots: Vec<u8> = Vec::new();
+    for t in &c.tracks {
+        for s in [&t.translation.spline, &t.scale.spline]
+            .into_iter()
+            .flatten()
+        {
+            knots.extend(&s.knots);
+        }
+        if let RotationTrack::Spline { knots: k, .. } = &t.rotation {
+            knots.extend(k);
+        }
+    }
+    knots.sort_unstable();
+    knots.dedup();
+    let fd = f64::from(c.frame_duration);
+    let end = f64::from(c.duration) - 1e-6;
+    let mut frames: Vec<f64> = knots.iter().map(|&k| f64::from(k)).collect();
+    let mids: Vec<f64> = frames.windows(2).map(|w| (w[0] + w[1]) / 2.0).collect();
+    frames.extend(mids);
+    frames.sort_by(f64::total_cmp);
+    frames.into_iter().map(|f| (f * fd).min(end)).collect()
+}
+
+/// The angle between two rotations, well conditioned near zero (acos of a
+/// dot product near 1 isn't): 2 atan2(|a - b|, |a + b|), signs aligned.
+fn angle(a: [f64; 4], b: [f64; 4]) -> f64 {
+    let dot: f64 = a.iter().zip(&b).map(|(x, y)| x * y).sum();
+    let b = if dot < 0.0 { b.map(|c| -c) } else { b };
+    let norm = |f: &dyn Fn(usize) -> f64| (0..4).map(|i| f(i).powi(2)).sum::<f64>().sqrt();
+    2.0 * norm(&|i| a[i] - b[i]).atan2(norm(&|i| a[i] + b[i]))
 }
 
 fn apply(m: &M4, p: [f32; 3]) -> [f64; 3] {
@@ -157,15 +195,50 @@ fn the_model_stage_extracts_every_character() {
     }
     assert!(stage.failed.is_empty(), "every character model extracts");
     assert_eq!(stage.models, 67);
+    println!(
+        "  heroes: {} settled, {} unsettled, {:.2} s of the stage",
+        stage.heroes,
+        stage.unsettled.len(),
+        stage.heroes_took.as_secs_f64()
+    );
+    for f in &stage.unsettled {
+        println!("  UNSETTLED {}: {}", f.load_file, f.reason);
+    }
+    assert!(stage.unsettled.is_empty(), "every character's hero settles");
+    assert_eq!(stage.heroes, 67);
     let m = opened.dir.manifest().clone();
     let dir = opened.dir.path().to_path_buf();
     let (n_models, model_bytes) = recorded("models/", &m);
     let (n_tex, tex_bytes) = recorded("textures/", &m);
     let (_, rig_bytes) = recorded("ir/rig", &m);
+    let (n_heroes, hero_bytes) = recorded("heroes/", &m);
     println!(
-        "  RON: models/ {n_models} files {model_bytes} bytes, textures/ {n_tex} files {tex_bytes} bytes, ir/rig.ron {rig_bytes} bytes"
+        "  RON: models/ {n_models} files {model_bytes} bytes, textures/ {n_tex} files {tex_bytes} bytes, heroes/ {n_heroes} files {hero_bytes} bytes, ir/rig.ron {rig_bytes} bytes"
     );
-    assert_eq!((n_models, n_tex), (67, stage.textures));
+    assert_eq!((n_models, n_tex, n_heroes), (67, stage.textures, 67));
+    // The glow each drawn material carries (AE.11): an amount, layer 1's
+    // alpha (the attribute off) or none (no attribute).
+    let (mut amount, mut layer_alpha, mut none) = (0, 0, 0);
+    let mut by_alpha = Vec::new();
+    for o in m.outputs.iter().filter(|o| o.path.starts_with("models/")) {
+        let model: Model =
+            guac_ir::from_ron(&std::fs::read_to_string(dir.join(&o.path)).unwrap()).unwrap();
+        let drawn: BTreeSet<u16> = model.segments.iter().map(|s| s.material).collect();
+        for &i in &drawn {
+            let material = &model.materials[usize::from(i)];
+            match material.params.glow {
+                Glow::Amount(_) => amount += 1,
+                Glow::LayerAlpha => {
+                    layer_alpha += 1;
+                    by_alpha.push(format!("{} {}", model.load_file, material.name));
+                }
+                Glow::None => none += 1,
+            }
+        }
+    }
+    println!(
+        "  glow over the drawn materials: {amount} by an amount, {layer_alpha} by layer 1's alpha {by_alpha:?}, {none} none"
+    );
 
     // A resume keeps every file.
     let again =
@@ -179,7 +252,7 @@ fn the_model_stage_extracts_every_character() {
         again.files,
         Files {
             written: 0,
-            kept: 67 + stage.textures + 1,
+            kept: 67 + 67 + stage.textures + 1,
             bytes: stage.files.bytes
         }
     );
@@ -193,12 +266,35 @@ fn the_model_stage_extracts_every_character() {
         .filter(|o| o.path.ends_with(".postcard") && !o.path.contains("roster"))
         .map(|o| o.size)
         .sum();
+    let post_heroes: u64 = m
+        .outputs
+        .iter()
+        .filter(|o| o.path.starts_with("heroes/") && o.path.ends_with(".postcard"))
+        .map(|o| o.size)
+        .sum();
     println!(
-        "  postcard: {:?} in {:.2} s; models and rig {postcard} bytes",
+        "  postcard: {:?} in {:.2} s; models, heroes and rig {postcard} bytes, the heroes {post_heroes}",
         post.files,
         post.took.as_secs_f64()
     );
-    assert_eq!((post.files.written, post.files.kept), (68, stage.textures));
+    assert_eq!(
+        (post.files.written, post.files.kept),
+        (67 + 67 + 1, stage.textures)
+    );
+    // Every hero's RON, read back and put in postcard, is its postcard file
+    // byte for byte: the two formats hold the same bits.
+    let mut agreed = 0;
+    for load in models::character_loads(&roster.roster) {
+        let ron: Hero = guac_ir::from_ron(
+            &std::fs::read_to_string(dir.join(IrFormat::Ron.hero_path(load))).unwrap(),
+        )
+        .unwrap();
+        let post = std::fs::read(dir.join(IrFormat::Postcard.hero_path(load))).unwrap();
+        assert!(guac_ir::to_postcard(&ron).unwrap() == post, "{load}");
+        agreed += 1;
+    }
+    assert_eq!(agreed, 67);
+    println!("  heroes: RON and postcard agree byte for byte on all {agreed}");
     // Both formats hold the same model.
     let ron: Model =
         guac_ir::from_ron(&std::fs::read_to_string(dir.join("models/009_Eruptor.ron")).unwrap())
@@ -347,7 +443,10 @@ fn the_model_stage_extracts_every_character() {
         );
         assert!(m.scrolls.is_empty());
     }
-    assert_eq!((body.params.glow, eyes.params.glow), (Some(64), None));
+    assert_eq!(
+        (body.params.glow, eyes.params.glow),
+        (Glow::Amount(64), Glow::None)
+    );
     assert!(
         ir.materials
             .iter()
@@ -437,6 +536,89 @@ fn the_model_stage_extracts_every_character() {
             worst / diagonal
         );
         assert!(worst <= CLIP * diagonal);
+    }
+
+    // His walk and run from the IR's hero side, skinned at and between
+    // every knot, against the decoders' clips out of the same slots.
+    let hero_ir: Hero =
+        guac_ir::from_ron(&std::fs::read_to_string(dir.join("heroes/009_Eruptor.ron")).unwrap())
+            .unwrap();
+    for (name, slot, sc) in [
+        ("walk", WALK_SLOT, &hero_ir.locomotion.walk),
+        ("run", RUN_SLOT, &hero_ir.locomotion.run),
+    ] {
+        let sc = sc.as_ref().expect("Eruptor walks and runs");
+        assert_eq!(usize::from(sc.slot), slot);
+        let ir_clip = &sc.clip;
+        let decoded_clip = slot_clip(&igz, hero, &hk, slot).unwrap().unwrap();
+        assert_eq!(decoded_clip.file, Some(ir_clip.name.as_str()));
+        let times = knot_times(ir_clip);
+        let (mut worst, mut worst_joint, mut worst_angle) = (0f64, 0f64, 0f64);
+        for &t in &times {
+            let local = decoded_clip.clip.local_pose(&hk, t).unwrap();
+            let pose = hk.model_pose(&local).unwrap();
+            let want_palette: Vec<M4> = pose
+                .iter()
+                .zip(&alchemy_inverse)
+                .map(|(q, inv): (_, &Mat44)| mul(&q.matrix(), &from_cols(inv)))
+                .collect();
+            let ir_pose = ir_clip.model_pose(&ir.skeleton, t);
+            for (w, g) in pose.iter().zip(&ir_pose) {
+                let d = (0..3)
+                    .map(|i| (w.translation[i] - f64::from(g.translation[i])).powi(2))
+                    .sum::<f64>()
+                    .sqrt();
+                worst_joint = worst_joint.max(d);
+                worst_angle = worst_angle.max(angle(w.rotation, g.rotation.map(f64::from)));
+            }
+            let got_palette: Vec<M4> = ir_pose
+                .iter()
+                .zip(&ir.skeleton.joints)
+                .map(|(p, j)| {
+                    let m = trs(
+                        p.translation.map(f64::from),
+                        p.rotation.map(f64::from),
+                        p.scale.map(f64::from),
+                    );
+                    mul(&m, &from_cols(&j.inverse_bind))
+                })
+                .collect();
+            for ((_, d, map), s) in decoded.iter().zip(&ir.segments) {
+                let skin_bones = d.skin.as_ref().unwrap().bones(map).unwrap();
+                let (dj, dw): (Vec<[u16; 4]>, Vec<[u8; 4]>) = skin_bones
+                    .iter()
+                    .map(|inf| {
+                        let mut j = [0u16; 4];
+                        let mut w = [0u8; 4];
+                        for (k, b) in inf.iter().enumerate() {
+                            if b.weight > 0 {
+                                j[k] = joints.joint_of_bone[b.bone].unwrap() as u16;
+                                w[k] = b.weight;
+                            }
+                        }
+                        (j, w)
+                    })
+                    .unzip();
+                let positions: Vec<[f32; 3]> = d.positions().collect();
+                let want = skin(&want_palette, &positions, &dj, &dw);
+                let got = skin(&got_palette, &s.positions, &s.joints, &s.weights);
+                for (w, g) in want.iter().zip(&got) {
+                    let e = (0..3).map(|i| (w[i] - g[i]).powi(2)).sum::<f64>().sqrt();
+                    worst = worst.max(e);
+                }
+            }
+        }
+        println!(
+            "  {name} ({}, slot {slot}, {:.4} s, {} frames, label {:?}): {} times at and between knots; worst skinned vertex {worst:.3e} ({:.3e} of the diagonal, tolerance {CLIP:.0e}), worst joint {worst_joint:.3e}, worst turn {worst_angle:.3e} rad",
+            ir_clip.name,
+            ir_clip.duration,
+            ir_clip.frames,
+            sc.label,
+            times.len(),
+            worst / diagonal
+        );
+        assert!(times.len() >= 3);
+        assert!(worst <= CLIP * diagonal, "{name}");
     }
 
     // The rig: three directional lights, the key pitched -45.

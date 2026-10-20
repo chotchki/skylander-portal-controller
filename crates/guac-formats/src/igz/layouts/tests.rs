@@ -1313,7 +1313,7 @@ fn an_op_reads_its_block_and_a_use_its_macro() {
 /// The material attributes and UV animation the model stage reads (AE.6):
 /// the type, the MTSZ files give it, memory refs a zeroed object needs
 /// marked null, reader.
-const MATERIAL_LAYOUTS: [(&str, u32, &[u32], Reader); 21] = [
+const MATERIAL_LAYOUTS: [(&str, u32, &[u32], Reader); 28] = [
     ("igPixelShaderVariantMaskAttr", 0x18, &[], |i, o| {
         PixelShaderVariantMaskAttr::read(i, o).map(drop)
     }),
@@ -1376,6 +1376,28 @@ const MATERIAL_LAYOUTS: [(&str, u32, &[u32], Reader); 21] = [
     }),
     ("tfbScrollUVAnimData", 0x34, &[], |i, o| {
         ScrollUvAnimData::read(i, o).map(drop)
+    }),
+    // A level's other tracks (AG.15).
+    ("tfbTransformUVAnimTrack", 0x28, &[], |i, o| {
+        MaterialUvAnimTrack::read(i, o).map(drop)
+    }),
+    ("tfbFlipBookUVAnimTrack", 0x28, &[], |i, o| {
+        MaterialUvAnimTrack::read(i, o).map(drop)
+    }),
+    ("tfbMaterialTintAnimTrack", 0x24, &[], |i, o| {
+        MaterialAnimTrack::read(i, o).map(drop)
+    }),
+    ("tfbTransformUVAnimData", 0x40, &[], |i, o| {
+        TransformUvAnimData::read(i, o).map(drop)
+    }),
+    ("tfbFlipBookUVAnimData", 0x1C, &[], |i, o| {
+        FlipBookUvAnimData::read(i, o).map(drop)
+    }),
+    ("tfbMaterialTintAnimData", 0x18, &[], |i, o| {
+        MaterialTintAnimData::read(i, o).map(drop)
+    }),
+    ("igUnsignedIntList", 0x18, &[0x10], |i, o| {
+        UnsignedIntList::read(i, o).map(drop)
     }),
 ];
 

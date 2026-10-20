@@ -4,9 +4,11 @@ use guac_formats::havok::builder::{
     ChanSpec, ClipSpec, PayloadSpec, QuatSpec, TrackSpec, VecSpec, clamped_knots,
     clip as havok_clip, encode40, payload, skeleton3,
 };
-use guac_formats::model::builder::{CharacterSpec, character, inverse_joint, sample};
+use guac_formats::model::builder::{
+    ActorSpec, CharacterSpec, SlotSpec, character, eruptor, inverse_joint, sample,
+};
 use guac_formats::roster::builder::{RIG, disc};
-use guac_ir::model::TextureRole as R;
+use guac_ir::model::{Glow, TextureRole as R};
 
 fn identity() -> DumpIdentity {
     DumpIdentity {
@@ -99,9 +101,12 @@ fn the_sample_archive_becomes_a_model() {
         ]
     );
     assert_eq!(body.params.layer1_extra, [1.0; 4]);
-    assert_eq!(body.params.glow, Some(64));
+    assert_eq!(body.params.glow, Glow::Amount(64));
     assert_eq!(body.params.material_tint, [128, 128, 128, 255]);
-    assert_eq!(m.materials[1].params.glow, None);
+    assert_eq!(m.materials[1].params.glow, Glow::None);
+    // A character's material carries no track besides its scrolls (AG.15
+    // refuses them on a character), beside its glow (AE.11).
+    assert!(m.materials.iter().all(|m| m.tracks.is_empty()));
     let n = &body.textures[0].sampler;
     assert_eq!(
         (n.wrap_u, n.min, n.mip),
@@ -383,5 +388,267 @@ fn character_loads_are_each_figure_and_giants_once_in_roster_order() {
     assert_eq!(
         archive_path(Path::new("u"), "MinionLoad_000_AirDragon"),
         Path::new("u/character/minionload_000_airdragon.bld")
+    );
+}
+
+/// The sample's hero side, or why it didn't settle.
+fn hero_of(spec: &CharacterSpec) -> std::result::Result<Hero, String> {
+    extracted(spec).unwrap().hero
+}
+
+#[test]
+fn the_sample_archive_has_a_hero_field_for_field() {
+    // Eruptor's archive, his movement bent so no two of its fields share a
+    // value.
+    let mut spec = sample();
+    let hero = spec
+        .actors
+        .iter_mut()
+        .find(|a| a.name == "009_Eruptor")
+        .unwrap();
+    hero.parameters = Some((
+        [
+            18.0, 160.0, 80.0, 360.0, 30.0, 161.0, 20.0, 362.0, 120.0, 128.0, 3.0, 4.8, 32.0,
+        ],
+        2,
+        true,
+        1.25,
+    ));
+    let e = extracted(&spec).unwrap();
+    let h = e.hero.as_ref().unwrap();
+    assert_eq!(
+        (h.load_file.as_str(), h.actor.as_str()),
+        ("009_Eruptor", "009_Eruptor")
+    );
+    assert_eq!(h.identity, identity());
+    // The level builder's placement scale, per axis.
+    assert_eq!(h.scale, [150.0, 125.0, 100.0]);
+    // His solid as the builder wrote it: a sphere that blocks and meets the
+    // level, its offset and turn, 4 x 6 x 3 ft, 10 lb, 25 % rebound.
+    assert_eq!(
+        h.solid,
+        Solid {
+            shape: Shape::Sphere,
+            solid: true,
+            world: true,
+            actor_surface: false,
+            offset: [0.0, 0.5, 0.25],
+            rotation: [0.0, 90.0, 0.0],
+            width: 4.0,
+            height: 6.0,
+            length: 3.0,
+            weight: 10.0,
+            rebound: 25.0,
+        }
+    );
+    // His movement as written: 18 ft/s and 360 a second on the ground, 30
+    // in the air, 128 ft/s/s of gravity to 120 ft/s, and the bent ones.
+    assert_eq!(
+        h.movement,
+        Movement {
+            ground_max_speed: 18.0,
+            ground_acceleration: 160.0,
+            ground_deceleration: 80.0,
+            ground_turn_rate: 360.0,
+            air_max_speed: 30.0,
+            air_acceleration: 161.0,
+            air_deceleration: 20.0,
+            air_turn_rate: 362.0,
+            gravity_max_speed: 120.0,
+            gravity_acceleration: 128.0,
+            jump_max_speed: 3.0,
+            jump_acceleration: 4.8,
+            jump_initial_speed: 32.0,
+            motion_type: 2,
+            tilts_with_ground: true,
+            time_scale: 1.25,
+        }
+    );
+    // Each gait from its slot, by the clip's own duration; no jog.
+    /// Slot, clip name, label and duration.
+    type Seen<'a> = Option<(u16, &'a str, Option<&'a str>, f32)>;
+    let gaits: Vec<(Gait, Seen)> = Gait::ALL
+        .into_iter()
+        .map(|g| {
+            let c = h.locomotion.get(g);
+            (
+                g,
+                c.map(|c| {
+                    (
+                        c.slot,
+                        c.clip.name.as_str(),
+                        c.label.as_deref(),
+                        c.clip.duration,
+                    )
+                }),
+            )
+        })
+        .collect();
+    assert_eq!(
+        gaits,
+        [
+            (
+                Gait::Walk,
+                Some((1, "Eruptor_Walk.ma", Some("3.658 m/sec"), 8.0 / 15.0))
+            ),
+            (Gait::Jog, None),
+            (
+                Gait::Run,
+                Some((3, "Eruptor_Run.ma", Some("6.401 m/sec"), 8.0 / 30.0))
+            ),
+            (
+                Gait::Falling,
+                Some((57, "Eruptor_Falling.ma", None, 8.0 / 60.0))
+            ),
+            (
+                Gait::Landing,
+                Some((61, "Eruptor_Landing.ma", None, 8.0 / 20.0))
+            ),
+        ]
+    );
+    // On the model's skeleton, the same tracks as the decoders'.
+    let walk = &h.locomotion.walk.as_ref().unwrap().clip;
+    let joints: Vec<u16> = walk.tracks.iter().map(|t| t.joint).collect();
+    assert_eq!(joints, [0, 1, 2]);
+    // It survives both IR formats.
+    let back: Hero = guac_ir::from_postcard(&guac_ir::to_postcard(h).unwrap()).unwrap();
+    assert_eq!(back, *h);
+    let back: Hero = guac_ir::from_ron(&guac_ir::to_ron(h).unwrap()).unwrap();
+    assert_eq!(back, *h);
+}
+
+#[test]
+fn a_hero_clip_is_the_decoders_through_the_evaluator() {
+    // The walk is AC.8's clip at a frame every 1/15 s: the same evaluator
+    // check AE.6 made of the idle, at and between knots.
+    let (s, c) = decoded(ClipSpec {
+        frame_duration: 1.0 / 15.0,
+        ..havok_clip()
+    });
+    let e = extracted(&sample()).unwrap();
+    let ir = &e.hero.unwrap().locomotion.walk.unwrap().clip;
+    assert_eq!(*ir, clip(&c, "Eruptor_Walk.ma"));
+    let fd = f64::from(c.animation.frame_duration);
+    for frame in [0.0, 4.0, 8.0 - 1e-9, 0.5, 2.75, 5.9] {
+        let t = frame * fd;
+        let (dt, dr) = gap(&s, &c, ir, t, t);
+        assert!(dt < 1e-5 && dr < 1e-5, "frame {frame}: {dt:e}, {dr:e}");
+    }
+}
+
+#[test]
+fn a_character_without_a_way_to_move_is_listed_and_keeps_its_model() {
+    let listed = |bend: &dyn Fn(&mut CharacterSpec)| {
+        let mut s = sample();
+        bend(&mut s);
+        let e = extracted(&s).unwrap();
+        assert_eq!(e.model.load_file, "009_Eruptor", "the model extracts");
+        let why = e.hero.unwrap_err();
+        assert!(
+            why.starts_with("GUAC-E-HERO-UNSETTLED: 009_Eruptor's hero didn't settle: "),
+            "{why}"
+        );
+        why
+    };
+    let drop_slots = |s: &mut CharacterSpec, slots: &[usize]| {
+        s.slots.retain(|x| !slots.contains(&x.slot));
+    };
+    // Neither a walk nor a run.
+    let why = listed(&|s| drop_slots(s, &[1, 3]));
+    assert!(
+        why.contains("neither a walk (slot 1) nor a run (slot 3)"),
+        "{why}"
+    );
+    // No falling clip.
+    let why = listed(&|s| drop_slots(s, &[57]));
+    assert!(why.contains("no falling clip (slot 57)"), "{why}");
+    // No actor plays him, or his has no parameters.
+    let why = listed(&|s| s.actors.clear());
+    assert!(why.contains("the hero's tfbActorInfo"), "{why}");
+    let why = listed(&|s| {
+        s.actors = vec![ActorSpec {
+            parameters: None,
+            ..eruptor()
+        }]
+    });
+    assert!(why.contains("009_Eruptor has no ActorParameters"), "{why}");
+    // A slot holding what the evaluator can't play: an animation network,
+    // or an additive lean.
+    let why = listed(&|s| {
+        s.slots.push(SlotSpec {
+            clip: None,
+            ..SlotSpec::new(2, 1.0 / 30.0, "Eruptor_Jog.ma")
+        })
+    });
+    assert!(
+        why.contains("its Jog clip (slot 2)") && why.contains("_tfbAnimation"),
+        "{why}"
+    );
+    let why = listed(&|s| {
+        let landing = s.slots.iter_mut().find(|x| x.slot == 61).unwrap();
+        landing.properties |= 1 << 4;
+    });
+    assert!(why.contains("its Landing clip (slot 61)"), "{why}");
+}
+
+#[test]
+fn a_walk_or_a_run_alone_settles_and_the_rest_may_be_missing() {
+    // Slam Bam's set has no walk, Crusher's no run, and 44 have no landing.
+    for gone in [[1, 61], [3, 61]] {
+        let mut s = sample();
+        s.slots.retain(|x| !gone.contains(&x.slot));
+        let h = hero_of(&s).unwrap();
+        assert_eq!(h.locomotion.walk.is_some(), gone[0] != 1);
+        assert_eq!(h.locomotion.run.is_some(), gone[0] != 3);
+        assert!(h.locomotion.landing.is_none() && h.locomotion.falling.is_some());
+    }
+}
+
+#[test]
+fn a_solid_keeps_each_bit_and_shape_apart() {
+    use guac_formats::igz::layouts::{CollisionInfo, EulerTransform, ObjectRef};
+    let info = |properties: u32| CollisionInfo {
+        name: None,
+        properties,
+        transform: EulerTransform {
+            position: [1.0, 2.0, 3.0],
+            rotation: [4.0, 5.0, 6.0],
+        },
+        width: 7.0,
+        height: 8.0,
+        length: 9.0,
+        weight: 10.0,
+        rebound: 11.0,
+        object_owner: ObjectRef::Null,
+        object_contacts: ObjectRef::Null,
+        environment_contacts: ObjectRef::Null,
+        object_collisions: ObjectRef::Null,
+    };
+    // Each flag alone, over each shape code in the disc's order.
+    let shapes = [
+        Shape::None,
+        Shape::Box,
+        Shape::Capsule,
+        Shape::Sphere,
+        Shape::Cylinder,
+        Shape::Mesh,
+    ];
+    for (code, shape) in shapes.into_iter().enumerate() {
+        for (bit, flags) in [
+            (0, (false, false, false)),
+            (1 << 3, (true, false, false)),
+            (1 << 4, (false, true, false)),
+            (1 << 5, (false, false, true)),
+        ] {
+            let s = solid(&info(code as u32 | bit));
+            assert_eq!(s.shape, shape, "{code:#x}");
+            assert_eq!((s.solid, s.world, s.actor_surface), flags, "{bit:#x}");
+        }
+    }
+    let s = solid(&info(0x1B));
+    assert_eq!((s.offset, s.rotation), ([1.0, 2.0, 3.0], [4.0, 5.0, 6.0]));
+    assert_eq!(
+        (s.width, s.height, s.length, s.weight, s.rebound),
+        (7.0, 8.0, 9.0, 10.0, 11.0)
     );
 }

@@ -420,8 +420,366 @@ pub fn shared_root(scenes: usize, groups: usize) -> Vec<u8> {
     b.build()
 }
 
-/// Seeds for the property test and the fuzz corpus: the sample, and a
-/// handful of scenes sharing one graph.
+/// Seeds for the property test and the fuzz corpus: the sample, a handful
+/// of scenes sharing one graph, and the level stage's sample (AG.15: its
+/// materials, its static, skinned and transformed props).
 pub fn seeds() -> Vec<Vec<u8>> {
-    vec![sample().bytes, shared_root(8, 16)]
+    vec![
+        sample().bytes,
+        shared_root(8, 16),
+        stage_level(&stage_sample()),
+    ]
+}
+
+/// What [`stage_level`] builds (AG.15): a level the level stage reads
+/// whole, shaped as level 213's is. One physics world names the scene and
+/// holds the collision; the scene's techniques hang under a spatial node,
+/// the last [`StageSpec::sky`] of them under the sky's group; each prop is
+/// an actor drawing its own model.
+#[derive(Debug, Clone)]
+pub struct StageSpec {
+    /// The physics world's name: its scene's and its collision's.
+    pub world: &'static str,
+    pub collision: crate::collision::builder::MeshSpec,
+    /// Images the materials bind, by index; equal specs make equal images.
+    pub images: Vec<(crate::texture::builder::Spec, &'static str)>,
+    /// The scene's techniques, in order. Another effect than tfbmulti2 draws
+    /// the unlit fixture (no normals, as the grass), tfbmulti2 the unskinned.
+    pub scene: Vec<crate::model::builder::MaterialSpec>,
+    pub sky: usize,
+    /// Static props: each model's path and its one technique's material.
+    pub props: Vec<(&'static str, crate::model::builder::MaterialSpec)>,
+    /// A skinned prop, built as a character's model is, at this path.
+    pub skinned: Option<(&'static str, crate::model::builder::CharacterSpec)>,
+    /// A prop whose technique sits under an animated transform.
+    pub transformed: Option<(&'static str, crate::model::builder::MaterialSpec)>,
+}
+
+/// The collision world's name in [`stage_sample`].
+pub const STAGE_WORLD: &str = "Levels/Synthetic/Synthetic_ART_MASTER.ma";
+
+/// A tfbmulti2 material binding `colour` alone (variant 0).
+pub fn colour_only(name: &'static str, colour: usize) -> crate::model::builder::MaterialSpec {
+    use crate::model::builder::{BindSpec, MaterialSpec};
+    MaterialSpec {
+        name,
+        effect: crate::material::TFBMULTI2,
+        pixel: Some((0, 0x3FF)),
+        vertex: Some((0x1000, 0x1BFF)),
+        binds: vec![BindSpec::new(0, colour)],
+        attrs: Vec::new(),
+        scroll: None,
+        tracks: Vec::new(),
+    }
+}
+
+/// Level 213's shapes in small: the ground on the body variant, whose
+/// colour map is the character sample's (`eruptor_c`, so the two share a
+/// texture), the one gloss-map material, a grass technique on its own
+/// effect (scrolling, as the water's warp does), a cave painting that
+/// multiplies and a sky whose tint moves; a static gourd, a skinned chest
+/// built as a character is, and a fairy gem under an animated transform; a
+/// ramp to stand on.
+pub fn stage_sample() -> StageSpec {
+    use crate::material::GRASS_EFFECT;
+    use crate::model::builder::{AttrSpec, BindSpec, MaterialSpec, TrackSpec};
+    use crate::texture::builder::{SPECS, Spec};
+    let spec = |i: usize, seed: u8| Spec { seed, ..SPECS[i] };
+    let mut ground = MaterialSpec::body("Ground");
+    ground.pixel = Some((0x1C, 0x3FF));
+    ground.vertex = Some((0x101C, 0x1BFF));
+    ground.attrs.clear();
+    let gloss = MaterialSpec {
+        name: "Lava_Gloss",
+        pixel: Some((0x9C, 0x3FF)),
+        vertex: Some((0x109C, 0x1BFF)),
+        binds: vec![
+            BindSpec::new(4, 0).normal_map(),
+            BindSpec::new(6, 1),
+            BindSpec::new(0, 2),
+            BindSpec::new(2, 4),
+            BindSpec::new(3, 3),
+        ],
+        attrs: vec![AttrSpec::Vec4(
+            "tfbMulti2FixedAlphaValuesAttr",
+            [-1.0, -1.0, 0.5, 1.0],
+        )],
+        ..MaterialSpec::body("Lava_Gloss")
+    };
+    let grass = MaterialSpec {
+        name: "grass_HIRES",
+        effect: GRASS_EFFECT,
+        pixel: Some((0x50, 0x50)),
+        vertex: Some((0x50, 0x50)),
+        binds: vec![
+            BindSpec::new(1, 5),
+            BindSpec::new(2, 6),
+            BindSpec::new(0, 2),
+        ],
+        attrs: vec![
+            AttrSpec::DepthWrite(false),
+            AttrSpec::BlendState(true),
+            AttrSpec::AlphaState(true),
+            AttrSpec::AlphaFunction(4, 0.023529),
+            AttrSpec::Other(crate::material::SHADER_PARAMETERS, 0x18),
+        ],
+        scroll: Some((0, [0.25; 11], "tfbScrollUVAnimTrack")),
+        tracks: Vec::new(),
+    };
+    let mut cave = colour_only("cave_painting", 2);
+    cave.attrs = vec![
+        AttrSpec::BlendState(true),
+        AttrSpec::BlendFunction(6, 0),
+        AttrSpec::DepthWrite(false),
+    ];
+    let mut sky = colour_only("Sky_morning", 7);
+    sky.tracks = vec![TrackSpec::Tint {
+        style: 1,
+        rate: 1.0,
+        frames: vec![0, 2000],
+        colors: vec![0xFF70_6D6E, 0x9670_6D6E],
+    }];
+    let mut chest = crate::model::builder::sample();
+    chest.actors.clear();
+    chest.attachments.clear();
+    chest.slots.clear();
+    chest.portal_sprite = "Chest_Sprite";
+    StageSpec {
+        world: STAGE_WORLD,
+        collision: crate::collision::builder::ramp(),
+        images: vec![
+            (spec(1, 0x21), "ground_n"),
+            (spec(0, 0x61), "ground_sp"),
+            (spec(0, 0x10), "eruptor_c"),
+            (spec(0, 0x71), "ground_rim"),
+            (spec(0, 0x41), "lava_gloss"),
+            (spec(0, 0x51), "grass_hieght"),
+            (spec(1, 0x31), "grass_random"),
+            (spec(0, 0x11), "sky"),
+        ],
+        scene: vec![ground, gloss, grass, cave, sky],
+        sky: 1,
+        props: vec![(
+            "C:/tfb/Content/Models/Objects/gourd_01.mdl",
+            colour_only("gourd", 2),
+        )],
+        skinned: Some(("C:/tfb/Content/Models/Objects/Treasure_Chest.mdl", chest)),
+        transformed: Some((
+            "C:/tfb/Content/Models/Objects/fairy_upgrade_gem.mdl",
+            colour_only("m_butterfly_wings", 7),
+        )),
+    }
+}
+
+/// A `tfbPhysicsModel` named `path` whose body's `_node` is `node`, no
+/// skeleton or clips: a static prop.
+fn static_model(b: &mut IgzBuilder, path: &str, node: Location) -> Location {
+    let model = b.object(0, "tfbPhysicsModel", 0x30);
+    let body = b.object(0, "tfbPhysicsBody", 0x40);
+    crate::model::builder::info(b, model, path);
+    b.pointer(at(model, 0x14), body);
+    crate::model::builder::info(b, body, path);
+    b.null_memory_ref(at(body, 0x14), 0);
+    b.pointer(at(body, 0x20), node);
+    b.null_memory_ref(at(body, 0x28), 0);
+    model
+}
+
+/// `spec`'s level as its `level.bld` IGZ.
+pub fn stage_level(spec: &StageSpec) -> Vec<u8> {
+    use crate::collision::builder::{body_spec, world_packfile, world_spec};
+    use crate::edge::builder::{unlit, unskinned};
+    use crate::model::builder::technique as material_technique;
+    use crate::texture::builder::named_image;
+
+    let mut b = IgzBuilder::new();
+    let blocks = b.section(0x80);
+    let images: Vec<Location> = spec
+        .images
+        .iter()
+        .map(|(s, name)| named_image(&mut b, blocks, s, &s.data(), name))
+        .collect();
+    let lit = unskinned();
+    let flat = unlit();
+    let fixture = |m: &crate::model::builder::MaterialSpec| {
+        if m.effect == crate::material::TFBMULTI2 {
+            &lit
+        } else {
+            &flat
+        }
+    };
+
+    // The world, its collision and its scene.
+    let world = b.object(0, "tfbPhysicsWorld", 0x2C);
+    let scene = b.object(0, "igSceneInfo", 0x48);
+    let extra_roots = b.object(0, "igNodeList", 0x18);
+    b.string(at(world, 0x08), spec.world);
+    b.put_bytes(at(world, 0x10), &[1]);
+    let packfile = world_packfile(&world_spec(vec![body_spec(spec.collision.clone())])).bytes;
+    b.memory_ref(at(world, 0x14), blocks, &packfile, 2);
+    b.put_u32(at(world, 0x1C), 0x5EED);
+    b.pointer(at(world, 0x20), scene);
+    b.put_u32(at(world, 0x28), 0x1234);
+    let techniques: Vec<Location> = spec
+        .scene
+        .iter()
+        .map(|m| material_technique(&mut b, blocks, m, &images, fixture(m)))
+        .collect();
+    let (ground, sky) = techniques.split_at(techniques.len() - spec.sky);
+    let mut under_spatial = ground.to_vec();
+    if !sky.is_empty() {
+        under_spatial.push(group(
+            &mut b,
+            blocks,
+            SIMPLE_USER_INFO,
+            "|Sky_morning_213:SKYDOME|Sky_morning_213:pPlane3_Userdata",
+            sky,
+        ));
+    }
+    let spatial = group(&mut b, blocks, SPATIAL_NODE, "", &under_spatial);
+    let root = group(&mut b, blocks, GROUP, "sceneGraph", &[spatial]);
+    b.string(at(scene, 0x08), "igSceneInfo0");
+    b.put_bytes(at(scene, 0x10), &[1]);
+    b.pointer(at(scene, 0x14), root);
+    floats(&mut b, scene, 0x30, &[0.0, 1.0, 0.0]);
+    b.pointer(at(scene, 0x40), extra_roots);
+    list(&mut b, extra_roots, blocks, &[]);
+
+    // The props' models.
+    let mut models: Vec<Location> = spec
+        .props
+        .iter()
+        .map(|(path, m)| {
+            let t = material_technique(&mut b, blocks, m, &images, fixture(m));
+            static_model(&mut b, path, t)
+        })
+        .collect();
+    if let Some((path, character)) = &spec.skinned {
+        let mut character = character.clone();
+        character.model = path;
+        models.push(crate::model::builder::character_in(
+            &mut b, blocks, &character,
+        ));
+    }
+    if let Some((path, m)) = &spec.transformed {
+        let t = material_technique(&mut b, blocks, m, &images, fixture(m));
+        let keyframes = b.object(0, "igTransformSource3", 0x50);
+        let spin = group(&mut b, blocks, TRANSFORM, "spin", &[t]);
+        floats(&mut b, spin, 0x30, TRANSLATION.as_flattened());
+        b.put_u32(at(spin, 0x70), (-1i32) as u32);
+        b.pointer(at(spin, 0x78), keyframes);
+        models.push(static_model(&mut b, path, spin));
+    }
+
+    // The actors: the spawn with its waypoints, then one per prop.
+    let spawn = b.object(0, "tfbActorInfo", 0xF8);
+    let script = b.object(0, "tfbScriptInfo", 0x1C);
+    let solid = b.object(0, "CollisionInfo", 0x58);
+    let parameters = b.object(0, "ActorParameters", 0x4C);
+    let waypoint_list = b.object(0, "ActorWaypointList", 0x18);
+    let waypoints = [(); 2].map(|_| b.object(0, "ActorWaypoint", 0x38));
+    placement(
+        &mut b,
+        spawn,
+        "213_Init_Location",
+        7,
+        &[10.191352, 43.37944, -93.393616, 0.0, 0.0, 0.0],
+        4,
+    );
+    b.pointer(at(spawn, 0xA8), script);
+    b.pointer(at(spawn, 0xC4), solid);
+    b.pointer(at(spawn, 0xE0), parameters);
+    b.pointer(at(spawn, 0xE4), waypoint_list);
+    b.string(
+        at(script, 0x08),
+        "Levels/Synthetic/Scripts/InitializeLevel.ai",
+    );
+    b.put_bytes(at(script, 0x10), &[1]);
+    b.put_u32(at(solid, 0x18), 0x1B);
+    floats(
+        &mut b,
+        solid,
+        0x1C,
+        &[0.0, 1.5, 0.0, 0.0, 90.0, 0.0, 4.0, 6.0, 3.0, 10.0, 25.0],
+    );
+    floats(
+        &mut b,
+        parameters,
+        0x0C,
+        &[
+            18.0, 160.0, 80.0, 360.0, 20.0, 150.0, 70.0, 1440.0, 120.0, 128.0, 0.0, 0.0, 0.0,
+        ],
+    );
+    b.put_bytes(at(parameters, 0x44), &[1]);
+    floats(&mut b, parameters, 0x48, &[1.0]);
+    list(&mut b, waypoint_list, blocks, &waypoints.map(Some));
+    for (k, o) in waypoints.into_iter().enumerate() {
+        b.string(at(o, 0x08), &format!("wp{k}"));
+        floats(&mut b, o, 0x1C, &[k as f32]);
+        floats(
+            &mut b,
+            o,
+            0x20,
+            &[
+                10.191352 + k as f32,
+                43.37944,
+                -93.393616,
+                0.0,
+                45.0 * k as f32,
+                0.0,
+            ],
+        );
+    }
+    for (k, &model) in models.iter().enumerate() {
+        let a = b.object(0, "tfbActorInfo", 0xF8);
+        let c = b.object(0, "CollisionInfo", 0x58);
+        placement(
+            &mut b,
+            a,
+            &format!("prop({k})"),
+            100 + k as u32,
+            &[k as f32, 44.0, -90.0, 0.0, 180.0, 0.0],
+            4 + (k % 2) as u32,
+        );
+        b.pointer(at(a, 0xC4), c);
+        b.pointer(at(a, 0xDC), model);
+        b.put_u32(at(c, 0x18), 0x19);
+        floats(&mut b, c, 0x34, &[4.0, 21.0, 34.0, 1.0, 0.0]);
+    }
+
+    // A placed point light and two of the rig.
+    let light = b.object(0, "tfbLightInfo", 0x10C);
+    placement(
+        &mut b,
+        light,
+        "213_EvilRobot_Beam_light",
+        0,
+        &[1.0, 2.0, 3.0, 0.0, 0.0, 0.0],
+        5,
+    );
+    b.put_u32(at(light, 0xD8), 1);
+    b.put_bytes(at(light, 0xDC), &[1]);
+    floats(&mut b, light, 0xE0, &[0.25, 30.0, 1.0, 0.5, 0.125]);
+    b.put_bytes(
+        at(light, 0xF4),
+        &[
+            0x55, 0x2A, 0x11, 0xFF, 0, 0, 0, 0xFF, 0x2C, 0x1F, 0x13, 0xFF,
+        ],
+    );
+    floats(&mut b, light, 0x100, &[1.5]);
+    for (k, name) in ["_worldLight1", "_worldLight2"].into_iter().enumerate() {
+        let rig = b.object(0, "DirectionalLightInfo", 0x40);
+        b.string(at(rig, 0x08), name);
+        b.put_bytes(
+            at(rig, 0x18),
+            &[200, 190, 170, 255, 40, 45, 60, 255, 255, 250, 240, 255],
+        );
+        floats(
+            &mut b,
+            rig,
+            0x24,
+            &[1.0, 0.0, 0.0, 0.0, -45.0 + 90.0 * k as f32, 30.0, 0.0],
+        );
+    }
+    b.build()
 }

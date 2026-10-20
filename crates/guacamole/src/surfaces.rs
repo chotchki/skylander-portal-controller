@@ -131,16 +131,18 @@ pub(crate) fn ring(theme: &TvTheme, element: Option<Element>) -> Gradient {
 
 /// A portrait's bezel per §3.1: the ring (its fill, the `--gi` line as a
 /// border, the top light and bottom shade, a 1 px black outline and the drop)
-/// and the plate 10% in, holding the portrait over the element. Returns the
-/// ring, which the card's motion floats and flashes (`card_motion`).
+/// and the plate 10% in, holding the portrait (or the turntable's image,
+/// AE.13) over the element. Returns the ring, which the card's motion floats
+/// and flashes (`card_motion`), and the plate.
 pub(crate) fn spawn_bezel(
     parent: &mut ChildSpawnerCommands,
     theme: &TvTheme,
     element: Option<Element>,
     portrait: Option<Handle<Image>>,
-) -> Entity {
+) -> (Entity, Entity) {
     let depth = 7.0 * BEZEL_SCALE;
-    parent
+    let mut plate_entity = Entity::PLACEHOLDER;
+    let ring = parent
         .spawn((
             Bezel,
             Node {
@@ -197,8 +199,10 @@ pub(crate) fn spawn_bezel(
             if let Some(image) = portrait {
                 spawned.insert(ImageNode::new(image));
             }
+            plate_entity = spawned.id();
         })
-        .id()
+        .id();
+    (ring, plate_entity)
 }
 
 /// The bezel's outer shadows at its scale, back to front: §3.1's `0 4px 10px

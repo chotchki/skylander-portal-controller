@@ -5,6 +5,7 @@ pub mod memory;
 pub mod nv4097;
 pub mod output;
 pub mod replay;
+pub mod state;
 pub mod texels;
 
 #[cfg(test)]

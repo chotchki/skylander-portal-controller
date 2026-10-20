@@ -27,8 +27,10 @@ mod starfield;
 mod surfaces;
 mod theme;
 mod title;
+mod turntable;
 mod tv;
 mod video;
+mod warm;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -85,6 +87,7 @@ fn main() -> Result<()> {
         Command::Run | Command::Help => false,
     };
     let (portal_tx, portal_rx) = portal_channel();
+    let (shelf_tx, shelf) = turntable::shelf_channel();
     let mirror = TvMirror::default();
     // Writes nothing, so a second copy that loses the port leaves no trace.
     let loaded = match setup::load(&root).context("load guacamole's settings") {
@@ -97,6 +100,7 @@ fn main() -> Result<()> {
             return run_tv(
                 link,
                 portal_rx,
+                shelf,
                 no_setup,
                 mode,
                 root,
@@ -133,6 +137,7 @@ fn main() -> Result<()> {
     let setup_view = SetupView::at_start(picked, needs_setup, &loaded.dump_dirs, &scan);
     let mut job = ExtractJob {
         test_known: test_known_dump(),
+        shelf: Some(shelf_tx),
         ..ExtractJob::new(&root, loaded.extract_dir.clone(), loaded.ffmpeg.clone())
     };
     // No figures until the disc's roster lands (AE.4); without a Giants dump
@@ -172,6 +177,7 @@ fn main() -> Result<()> {
     run_tv(
         link,
         portal_rx,
+        shelf,
         setup_view,
         cfg.window_mode,
         root,
@@ -231,6 +237,7 @@ fn pick_before_the_window(root: &Path) -> bool {
 fn run_tv(
     link: ServerLink,
     portal: Receiver<PortalChange>,
+    shelf: turntable::ShelfFeed,
     setup_view: SetupView,
     mode: WindowMode,
     root: PathBuf,
@@ -253,6 +260,7 @@ fn run_tv(
     )
     .insert_resource(link)
     .insert_resource(PortalFeed(portal))
+    .insert_resource(shelf)
     .insert_resource(Setup(setup_view))
     .insert_resource(Framing(mode))
     .insert_resource(DataRoot(root))

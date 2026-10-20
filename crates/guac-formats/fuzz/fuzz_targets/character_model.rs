@@ -2,7 +2,10 @@
 
 use guac_formats::igz::Igz;
 use guac_formats::material::{Material, pixel_variant_exists, samplers};
-use guac_formats::model::{JointMap, portal_model, skeleton};
+use guac_formats::model::{
+    FALL_SLOT, HERO_SOLID, JOG_SLOT, JointMap, LANDING_SLOT, RUN_SLOT, WALK_SLOT, hero_actor,
+    portal_model, skeleton, slot_clip,
+};
 use guac_formats::registry::walk_model;
 use libfuzzer_sys::fuzz_target;
 
@@ -33,5 +36,21 @@ fuzz_target!(|data: &[u8]| {
         for (j, &b) in map.bone_of_joint.iter().enumerate() {
             assert_eq!(map.joint_of_bone[b], Some(j));
         }
+    }
+    // A slot clip that reads is from its own slot and poses the skeleton.
+    if let Ok(s) = skeleton(&file, &p.hero) {
+        for slot in [WALK_SLOT, JOG_SLOT, RUN_SLOT, FALL_SLOT, LANDING_SLOT] {
+            if let Ok(Some(c)) = slot_clip(&file, &p.hero, &s, slot) {
+                assert_eq!(c.slot, slot);
+                assert_eq!(p.hero.clip_slots[slot], Some(c.info));
+                let local = c.clip.local_pose(&s, 0.0).expect("checked to pose");
+                assert!(s.model_pose(&local).is_some());
+            }
+        }
+    }
+    // The hero found has a solid that blocks and meets the level.
+    if let Ok(a) = hero_actor(&file, &p, "009_Eruptor") {
+        let c = a.collision.expect("a hero has a solid");
+        assert_eq!(c.properties & HERO_SOLID, HERO_SOLID);
     }
 });

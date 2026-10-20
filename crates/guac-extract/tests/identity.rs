@@ -308,6 +308,7 @@ fn outputs_go_through_partial_and_an_interrupted_run_resumes() {
         .dir
         .write_output("video/intro/b.mp4", b"bbbbbb")
         .unwrap();
+    record_levels(&mut resumed.dir);
     resumed.dir.mark_complete().unwrap();
 
     // A tampered output no longer counts as done.
@@ -416,6 +417,7 @@ fn a_release_root_under_a_home_kept_in_git_extracts() {
     let mut opened = open(&dump, &root, &table, &no_progress).unwrap();
     assert_eq!(opened.state, DirState::Fresh);
     opened.dir.write_output("ir/characters.ron", b"()").unwrap();
+    record_levels(&mut opened.dir);
     opened.dir.mark_complete().unwrap();
     assert_eq!(
         open(&dump, &root, &table, &no_progress).unwrap().state,
@@ -614,4 +616,14 @@ fn a_run_leaves_the_dump_exactly_as_it_was() {
     let mut after = Snapshot::new();
     snapshot(&dump, &mut after);
     assert_eq!(before, after);
+}
+
+/// What a whole run's level stage records (AG.15), each level part with no
+/// files of its own here: a current extract needs it.
+fn record_levels(dir: &mut guac_extract::IdentityDir) {
+    for level in guac_extract::levels::LEVELS {
+        for part in guac_extract::levels::PARTS {
+            dir.record_level_part(level, part, Vec::new()).unwrap();
+        }
+    }
 }

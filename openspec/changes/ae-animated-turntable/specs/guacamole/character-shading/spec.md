@@ -160,11 +160,33 @@ After the tints, a third layer's colour map times its strength (the material's f
 - **THEN** its colour map adds to the tinted colour and the alpha stays as it was
 
 ### Requirement: Texture-coordinate sets
-Texture-coordinate sets SHALL be handed out in order of use (the first layer the first set, then a second layer, then a third), so a third layer without a second reads the second set. Each set SHALL go through its own 2×3 transform (u' = a·u + b·v + c, and v' alike), numbered as the set.
+Texture-coordinate sets SHALL be handed out in order of use (the first layer the first set, then a second layer, then a third), so a third layer without a second reads the second set. Each set SHALL go through its own 2×3 transform (u' = a·u + b·v + c, and v' alike), numbered as the set: the identity, unless a scroll track on the material names that number as its layer.
 
 #### Scenario: A third layer alone
 - **WHEN** a material has a third layer and no second
 - **THEN** the third layer reads the part's second texture-coordinate set through the second transform
+
+#### Scenario: A set no track moves
+- **WHEN** Eruptor's body, which has no scroll track, is drawn
+- **THEN** every set is read as the part stores it
+
+### Requirement: A scroll track's turn and scale
+A scroll track SHALL set the transform its layer numbers from the values the disc stores on it. The first two columns SHALL turn the set by the track's rotation phase r, in radians, and scale each axis by that axis's own scale: u' takes s_u·cos r of u and −s_u·sin r of v, and v' takes s_v·sin r of u and s_v·cos r of v. The third column SHALL be each axis's offset (the slide), so a track with scales of 1 and no rotation only slides its set.
+
+#### Scenario: A quarter turn
+- **WHEN** a track with scales of 2 on u and 1 on v, a rotation phase of π/2 and no offset moves a set
+- **THEN** the set's coordinates (0.25, 0.5) are read at (−1, 0.25)
+
+### Requirement: A scroll track's slide
+Each axis's offset SHALL be its velocity times t, plus its amplitude times the sine of its frequency times t plus its phase (in radians), less the offset's whole part with its sign kept: 1.25 slides 0.25 and −1.25 slides −0.25. t SHALL be the scene's clock in seconds, wherever its zero falls (the original's counts from the console's start): no scroll track on the disc stores a start or a fixed time of its own.
+
+#### Scenario: Hot Dog's fire
+- **WHEN** Hot Dog's fire, whose track stores a velocity of −1.869 on v and nothing else moving, has run for 1 s
+- **THEN** its colour map is read at (u, v − 0.869)
+
+#### Scenario: A swing
+- **WHEN** a track stores an amplitude of 0.5 and a frequency of π on u and nothing else moving
+- **THEN** u slides 0.5 at 0.5 s, back to 0 at 1 s and −0.5 at 1.5 s
 
 ### Requirement: The order of the terms
 The terms SHALL apply in this order: each layer's lighting and specular, the second layer's blend, tints, third layer, shadow, rim, point lights, replace colour, fog.
@@ -205,9 +227,45 @@ Parts the disc marks as blended, additive, alpha-tested, two-sided or not writin
 - **WHEN** an additive part overlaps another part
 - **THEN** the two colours add
 
-### Requirement: Glow
-A material's glow SHALL come from a pass of its own: the drawn colour masked by the material's glow amount or, with none set, by its first layer's alpha switched hard (the fixed alpha when it's 0 or more, else the colour map's alpha) times the vertex and both tints' alphas; blurred and added back over the frame, the blur and its sizes being what the oracle's captured frames show.
+### Requirement: The glow mask
+Once every part is drawn, each part SHALL be drawn again into a glow mask that starts at zero, writing its glow amount when its glow attribute is on, its glow alpha when the attribute is off, and zero when it has none, except a part with none that writes no depth, which SHALL NOT be drawn into it. Its glow alpha SHALL be its first layer's alpha switched hard (the fixed alpha from 0 up, else the colour map's alpha) times the vertex and both tints' alphas.
 
 #### Scenario: Eruptor's glow
 - **WHEN** Eruptor is drawn
-- **THEN** his body glows at its amount of 64 of 255 and his eyes by their colour map's alpha
+- **THEN** his body's mask is 64 of 255 and his eyes', which carry no glow attribute, zero
+
+#### Scenario: A glow attribute turned off
+- **WHEN** a part's glow attribute is off and its first layer's fixed alpha is 0.3
+- **THEN** its mask is 0.3 times its vertex and tints' alphas, whatever its colour map holds
+
+### Requirement: Drawing the glow mask
+The glow mask SHALL be drawn without blending, each part keeping its own culling and its alpha test (run on its glow alpha), and only where the part is the nearest surface, so a part in front writes its own mask over what's behind it.
+
+#### Scenario: A part without glow in front of one with it
+- **WHEN** a part with no glow attribute that writes depth covers part of a glowing one
+- **THEN** the mask is zero where it covers
+
+#### Scenario: A see-through part without glow in front of one with it
+- **WHEN** a blended part with no glow attribute that writes no depth covers part of a glowing one
+- **THEN** the glowing part's mask shows through it
+
+### Requirement: Extracting the glow
+The glow SHALL be extracted into a buffer 512/960 of the frame's width and half its height, rounded (512 by 270 at the original's 960 by 540), each buffer texel sampling the frame's colour and the mask with linear filtering at its own centre and multiplying the two. A sample past an edge SHALL take the edge texel, here and through the blur.
+
+#### Scenario: The original's frame
+- **WHEN** the frame is 960 by 540
+- **THEN** the glow buffer is 512 by 270
+
+### Requirement: Blurring the glow
+The glow buffer SHALL be blurred across and then down, each pass summing 15 linear-filtered taps: tap k, from -7 to 7, sits 2|k| - 0.5 texels to the side (the centre for k = 0) and weighs exp(-k²/32) over the 15 weights' sum. Each off-centre tap falls halfway between two texels, so a texel reaches 14 to either side.
+
+#### Scenario: One bright texel
+- **WHEN** the glow buffer holds one bright texel
+- **THEN** after both passes the texel d across and e down from it holds its value times w(d)·w(e), where w(0) is the centre tap's weight and w(2j - 1) and w(2j) half tap j's, and nothing reaches past 14 either way
+
+### Requirement: Adding the glow back
+After every part is drawn and before tonemapping, the blurred glow, sampled with linear filtering at each pixel's centre, SHALL be added to the frame's colour twice over, alpha left alone. Nothing in the chain SHALL be clamped.
+
+#### Scenario: Nothing glows
+- **WHEN** no part writes a mask above zero
+- **THEN** the frame is what the parts drew

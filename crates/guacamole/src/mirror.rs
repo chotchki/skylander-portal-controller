@@ -4,8 +4,11 @@
 //! join address, join QR and every card's lines, portrait, pip and rect.
 //! Copied from the resources that feed the tree: the screen, game, message,
 //! Setup's lists, each card's figure and owner ids, and the intro queue. The
-//! focused choice is `InputFocus`'s entity's `FocusId`.
+//! focused choice is `InputFocus`'s entity's `FocusId`. The turntables'
+//! warm (AE.14) rides along, and `/api/_test/tv/frames` hands out the TV's
+//! frame times for the stall check.
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -21,10 +24,12 @@ use crate::input::{FocusId, PostedPresses, TestPress};
 use crate::intro::{IntroEntry, IntroEvent, IntroQueue};
 use crate::intro_player::{self, IntroOverlay, IntroPlayer, IntroVideo};
 use crate::screen::TvScreen;
+use crate::turntable::{CardPlate, CardState, Turntables};
 use crate::tv::{
     CardSlot, Current, EmptySlot, ExtractBar, ExtractDetail, ExtractTitle, Framing, JoinAddress,
     JoinQr, Pip, PlayersLine, Setup, TvAssets, TvCamera, contains, node_rect, safe_area,
 };
+use crate::warm::{PipelineWatch, Warm, WarmReport};
 
 /// What the TV shows this frame.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -63,6 +68,8 @@ pub struct TvSnapshot {
     pub intro: Option<IntroShot>,
     /// Intros waiting, in play order.
     pub intro_queue: Vec<QueuedShot>,
+    /// The turntables' warm (AE.14); none without turntables.
+    pub warm: Option<WarmReport>,
 }
 
 /// A queued intro, from `IntroQueue`.
@@ -128,8 +135,17 @@ pub struct CardShot {
     pub figure_id: String,
     /// Every line drawn on the card outside the pip, top to bottom.
     pub texts: Vec<String>,
-    /// An image drawn in the portrait frame.
+    /// An image drawn in the portrait frame: the portrait, or the model.
     pub portrait: bool,
+    /// The card's turntable (AE.13): `model` (its model is on the card),
+    /// `portrait` (no model to show, or one that couldn't be) or `loading`
+    /// (the portrait while the model is read or the extract makes it).
+    pub state: String,
+    /// Why a `portrait` card has no model, as the log has it.
+    pub reason: Option<String>,
+    /// The bezel plate the portrait or the model draws in: x, y, width,
+    /// height in physical pixels.
+    pub plate: Option<[f32; 4]>,
     pub pip: Option<PipShot>,
     /// x, y, width, height in physical pixels.
     pub rect: [f32; 4],
@@ -144,22 +160,92 @@ pub struct PipShot {
     pub profile_id: String,
 }
 
-/// Shared with the routes: the last snapshot, skips asked for over HTTP and
-/// presses posted for the input router.
+/// Shared with the routes: the last snapshot, skips asked for over HTTP,
+/// presses posted for the input router and the frame log.
 #[derive(Resource, Clone, Default)]
 pub struct TvMirror(
     pub Arc<Mutex<TvSnapshot>>,
     pub Arc<AtomicUsize>,
     pub(crate) PostedPresses,
+    pub(crate) Arc<Mutex<FrameLog>>,
 );
+
+/// Frames the log keeps: over half an hour at 60 a second.
+const FRAMES_KEPT: usize = 120_000;
+
+/// The TV's frames, oldest first, for the stall check (AE.14): each one's
+/// end and length in milliseconds of `Time<Real>` (the interval the render
+/// world's frames finish at, so a frame that stalls the TV is a long one)
+/// and the render pipelines compiled since the frame before.
+#[derive(Debug, Default)]
+pub(crate) struct FrameLog {
+    frames: VecDeque<[f64; 3]>,
+}
+
+impl FrameLog {
+    fn push(&mut self, frame: [f64; 3]) {
+        if self.frames.len() == FRAMES_KEPT {
+            self.frames.pop_front();
+        }
+        self.frames.push_back(frame);
+    }
+
+    /// Frames that ended after `since_ms`, and the last one's end.
+    fn since(&self, since_ms: f64) -> FramesBody {
+        FramesBody {
+            now_ms: self.frames.back().map_or(0.0, |f| f[0]),
+            frames: self
+                .frames
+                .iter()
+                .filter(|f| f[0] > since_ms)
+                .copied()
+                .collect(),
+        }
+    }
+}
+
+/// `GET /api/_test/tv/frames`' body.
+#[derive(Debug, Serialize, PartialEq)]
+struct FramesBody {
+    now_ms: f64,
+    /// `[ended_ms, took_ms, pipelines_compiled]` each.
+    frames: Vec<[f64; 3]>,
+}
+
+#[derive(Deserialize)]
+struct FramesQuery {
+    since_ms: Option<f64>,
+}
 
 pub struct Mirror;
 
 impl Plugin for Mirror {
     fn build(&self, app: &mut App) {
         app.add_systems(PostUpdate, mirror_tv.after(UiSystems::Layout))
-            .add_systems(Update, skip_asked.before(intro_player::play_intros));
+            .add_systems(Update, skip_asked.before(intro_player::play_intros))
+            .add_systems(Last, log_frame);
     }
+}
+
+/// This frame into the log, with the pipelines compiled since the last.
+fn log_frame(
+    time: Res<Time<Real>>,
+    mirror: Res<TvMirror>,
+    watch: Option<Res<PipelineWatch>>,
+    mut compiled_before: Local<Option<usize>>,
+) {
+    let compiled = watch.map(|w| w.ready());
+    let new = match (compiled, *compiled_before) {
+        (Some(now), Some(before)) => now.saturating_sub(before),
+        _ => 0,
+    };
+    *compiled_before = compiled.or(*compiled_before);
+    let ms = |d: std::time::Duration| d.as_secs_f64() * 1e3;
+    mirror.3.lock().unwrap_or_else(|e| e.into_inner()).push([
+        ms(time.elapsed()),
+        ms(time.delta()),
+        new as f64,
+    ]);
 }
 
 /// `POST /api/_test/tv/press`'s body.
@@ -173,12 +259,25 @@ struct PressBody {
 /// with nobody at the keyboard; `POST /api/_test/tv/press` hands the input
 /// router a press (`{"button": "south"}`: south, east, mode, up, down, left
 /// or right; anything else is a 400). A test hook, not a phone remote.
-/// Generic so a test needs no `AppState`.
+/// `GET /api/_test/tv/frames?since_ms=<ms>` hands out the frame log after
+/// `since_ms` of the TV's real time (all of it without one) and the last
+/// frame's end. Generic so a test needs no `AppState`.
 pub fn routes<S: Clone + Send + Sync + 'static>(mirror: &TvMirror) -> axum::Router<S> {
     let shared = mirror.0.clone();
     let skips = mirror.1.clone();
     let presses = mirror.2.clone();
+    let frames = mirror.3.clone();
     axum::Router::new()
+        .route(
+            "/api/_test/tv/frames",
+            axum::routing::get(move |q: axum::extract::Query<FramesQuery>| {
+                let body = frames
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .since(q.since_ms.unwrap_or(f64::NEG_INFINITY));
+                async move { axum::Json(body) }
+            }),
+        )
         .route(
             "/api/_test/tv",
             axum::routing::get(move || {
@@ -276,11 +375,14 @@ fn mirror_tv(
         Query<&Text, With<ExtractDetail>>,
         Query<&ExtractBar>,
     ),
-    (queue, player, overlays, videos): (
+    (queue, player, overlays, videos, turntables, plates, warm): (
         Option<Res<IntroQueue>>,
         Option<Res<IntroPlayer>>,
         Query<(&ComputedNode, &UiGlobalTransform), With<IntroOverlay>>,
         Query<(&ComputedNode, &UiGlobalTransform), With<IntroVideo>>,
+        Option<Res<Turntables>>,
+        Query<(&CardPlate, &ComputedNode, &UiGlobalTransform)>,
+        Option<Res<Warm>>,
     ),
 ) {
     let Some(current) = current else {
@@ -306,6 +408,23 @@ fn mirror_tv(
                     .unwrap_or_default(),
                 texts: found.0,
                 portrait: found.1,
+                state: turntables
+                    .as_ref()
+                    .and_then(|t| t.card_state(slot.0))
+                    .unwrap_or(CardState::Portrait)
+                    .name()
+                    .into(),
+                reason: turntables
+                    .as_ref()
+                    .and_then(|t| t.portrait_reason(slot.0))
+                    .map(str::to_owned),
+                plate: plates
+                    .iter()
+                    .find(|(p, ..)| p.slot == slot.0)
+                    .map(|(_, n, t)| {
+                        let r = node_rect(n, t);
+                        [r.min.x, r.min.y, r.width(), r.height()]
+                    }),
                 pip: found.2.map(|(initial, fill)| PipShot {
                     initial,
                     color: Srgba::from(fill).to_hex(),
@@ -419,6 +538,7 @@ fn mirror_tv(
         extraction,
         intro,
         intro_queue,
+        warm: warm.map(|w| w.report().clone()),
     };
     let mut shared = mirror.0.lock().unwrap_or_else(|e| e.into_inner());
     if *shared != snapshot {

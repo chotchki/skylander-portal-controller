@@ -6,7 +6,8 @@ This file owns the Guacamole track ([`openspec/config.yaml`](../../openspec/conf
 changes under `openspec/changes/`: [`aa-guacamole-shell/`](../../openspec/changes/aa-guacamole-shell/proposal.md),
 [`ac-giants-decode-gate/`](../../openspec/changes/ac-giants-decode-gate/proposal.md),
 [`ae-animated-turntable/`](../../openspec/changes/ae-animated-turntable/proposal.md),
-[`ag-walk-one-level/`](../../openspec/changes/ag-walk-one-level/proposal.md) and
+[`ag-walk-one-level/`](../../openspec/changes/ag-walk-one-level/proposal.md),
+[`ah-first-fight/`](../../openspec/changes/ah-first-fight/proposal.md) and
 [`ap-tv-ui-on-bevy-widgets/`](../../openspec/changes/ap-tv-ui-on-bevy-widgets/proposal.md). Archived: AB
 ([`2026-10-18-ab-giants-extract-and-intros/`](../../openspec/changes/archive/2026-10-18-ab-giants-extract-and-intros/proposal.md)),
 whose specs now live in [`openspec/specs/guacamole/`](../../openspec/specs/guacamole/), and AF
@@ -458,7 +459,9 @@ cargo run -p guacamole       # add --features test-hooks for the /api/_test/* en
   TV's UI). AA.8 checked its screens that way, because
   window captures on the locked Mac came back black. Since AB.10 a shot lands in each intro, a frame of
   the disc's own FMV, so the folder has to be outside any git checkout like the extract root; one inside
-  is refused with an error and nothing is shot.
+  is refused with an error and nothing is shot. `GUAC_SHOT_YAW=<degrees>` (default 0, facing the camera)
+  is where on its turn each card's model holds still in a shot (AE.13), so a walk shoots a turn one run
+  per angle.
 
 Release, the build AA.11 runs on the TV:
 
@@ -1085,7 +1088,7 @@ taken in the same session (The oracle; the detail is in Giants in detail):
 So Giants stays first, the ladder carries on to AE on it and AC never proposed the Trap Team fallback (same
 TfbTool island, reflection schema already public, Bink 2 for its M0). Besides AC.24 and AC.25, still open and not
 gating: AC.18, a FLIP of `hero_view` against a rendered oracle frame for the record (The oracle says what
-it waits on; the viewer also needs camera options to match one).
+it waits on; `hero_view` matches a frame's camera, rig and fog since AE.10).
 
 What the kids play most is unknown, and it matters less now that the phone offers the whole roster: it would
 reorder which figures and levels get attention first, not the game. The only signal is on the HTPC,
@@ -1492,7 +1495,8 @@ The unattended route is O3: `live_verbs` runs AC.13's scenario with nobody at th
 CROSS to the portal prompt, P1 `LOAD` of a copy of Eruptor's `.sky`, then `PAUSE_AT`, `RSXCAP`,
 `SCREENSHOT` and `SAVESTATE`), every output into `GUAC_CAPTURE_DIR` with the identity line. It gives
 AC.18 the rendered frame it lacked (Eruptor idle in the level at exact flips, under the same build as the
-captures beside it); what AC.18 still waits on is the viewer's camera.
+captures beside it). The viewer matches one since AE.10 (`hero_view --view-proj`, `--frame`, `--size`, the
+frame's numbers read from beside its capture at run time), so AC.18 waits on AE.16's frame alone.
 
 The attended recipe, as AC.13 ran it (2026-10-18, chotchki at the unlocked M3 Max, on the `09d602fd5`
 copy). The prep notes and launch line are in
@@ -1852,7 +1856,11 @@ TV, on Bevy's Metal backend. What that means now:
   below is the HTPC's).
 - Synchronous pipeline compiles. macOS compiles each render pipeline inside the frame that first needs it,
   so a material or a post effect seen for the first time hitches. Every material and post effect a scene
-  needs gets pre-warmed at load, and on the target machine that's a requirement, not polish.
+  needs gets pre-warmed at load, and on the target machine that's a requirement, not polish. Measured at
+  AE.14 on the M3 Max: macOS keeps what it compiles in a per-user shader cache, so a pipeline is slow
+  only the first time a Mac compiles it (one start's 45 UI pipelines took a 3.39 s frame; the same 45
+  took 90-133 ms on every start after), and with the turntables' warm no placement's frame passed
+  37.2 ms on a warm cache. A cold cache under load is AE.25's.
 - An open macOS rendering-corruption bug to watch
   ([bevy #25595](https://github.com/bevyengine/bevy/issues/25595)).
 - Not measured: a frame with CSM, SSAO, TAA and bloom at the TV's resolution on the M3 Max. AE measures it
@@ -2081,6 +2089,37 @@ twice. It's a switch for dev shots, not a user setting, and a release build has 
 reduces. Two walks of the same screens match byte for byte everywhere but inside the join QR, whose noise
 ring is random every boot (a backlog line).
 
+The cards' turntables ([`turntable.rs`](../../crates/guacamole/src/turntable.rs),
+[`character/turntable.rs`](../../crates/guacamole/src/character/turntable.rs); AE.13, the AE change's
+design decision 14) draw a placed character's own model in its bezel's plate, where the portrait was:
+- One scene per occupied slot, outside the UI tree, on render layers of its own (16 + 2·slot for the
+  model, the next for its glow masks), drawn by the remaster's camera at order -1 (its glow camera at -2)
+  into an image the slot keeps. Scenes are reconciled from `PortalCards` by (slot, placement), so a UI
+  rebuild never respawns one; `show_turntables` points the plate's `ImageNode` at the image once the
+  model is up, in place, so the card neither respawns nor rises again.
+- The extraction hands the TV a `Shelf` (the extract's folder, each character figure's load file, what
+  the model stage reported, the sprite rig) once the models are in: guac-extract's `ModelsReady`, ahead
+  of the intros, or a current extract at start or on the pick. A model reads on a task, off the frame.
+- The warm ([`warm.rs`](../../crates/guacamole/src/warm.rs); AE.14, decision 15): whenever a shelf lands,
+  every model on it is read on a task for the pipelines it draws (a material's key on its mesh's vertex
+  layout, the glow pass's alongside; the roster's 67 models draw 33), and a hidden turntable on the
+  render layers past the eight slots' draws them one a frame, the render world confirming each one
+  compiled. A card whose model is read waits on its portrait until every pipeline it draws is compiled,
+  the warm taking those first, so no model comes up on a pipeline macOS would compile in that frame.
+  `/api/_test/tv` reports the warm (`warm`: state, keys, compiled, failed, took) and
+  `/api/_test/tv/frames` hands out the TV's frame times, each with the pipelines compiled in it.
+- The portrait shows while the model loads (or the extract is still making it) and stays for good when
+  there's no model to show: a figure with no character model on the disc, one the model stage reported,
+  one that won't read. Each is logged by figure and why; `/api/_test/tv` mirrors every card's `state`
+  (`model`, `portrait`, `loading`), its `reason` and its plate's rect.
+- Framing: the cylinder the idle loop sweeps about the model's vertical axis (24 poses, skinned on the
+  CPU) fitted inside the plate's circle with 6% clear, at a 12° downward pitch and a 30° field of view, so
+  nothing leaves the card in a turn. One turn every 12 s; under `ReducedMotion` the idle's first pose at
+  `GUAC_SHOT_YAW`.
+- The image is the plate's size in pixels (128 at 1080p, 256 at 4K) and clears to the darker stop of
+  the figure's element, opaque, so blended and additive parts and the glow's halo land on what the card
+  shows. The light is the disc's sprite rig fixed to the camera, fog on past everything.
+
 What only the TV at couch distance can judge (the titles and the 24 px floor at 10 ft, the focus glow,
 the drift) is on the backlog's TV pass line.
 
@@ -2097,8 +2136,8 @@ lives in Guacamole's store per profile. Guacamole never reads a `.sky`.
   the disc (where each lives in Giants' data is for AC and AE to find), and the roster lands with the
   first decoded models in AE. It doubles as the compatibility list: Giants offers what Giants has
   characters for, which replaces today's origin-game-and-later heuristic (`crates/core/src/compat.rs:48`).
-- AA's catalogue is interim (AA.4,
-  [`crates/guac-server/src/native_catalogue.rs`](../../crates/guac-server/src/native_catalogue.rs)): the
+- AA's catalogue was interim (AA.4's `native_catalogue.rs`, deleted at AE.4 when the disc roster replaced
+  it; the shared list is [`crates/guac-server/src/figures.rs`](../../crates/guac-server/src/figures.rs)): the
   wiki data already in the repo ([`data/figures.json`](../../data/figures.json), keyed by the same toy
   type + variant, plus `data/images/` portraits, under `DATA_ROOT`), cut to what Giants plays and checked
   row by row at boot, the same list for every profile, no `.sky` and no firmware pack. Checked because the
@@ -2167,8 +2206,10 @@ lives in Guacamole's store per profile. Guacamole never reads a `.sky`.
 - No scanned figures. The ACR122 reader leaves the product first, in AD (a product change that lands
   before AA), and `GameOfOrigin::Unknown`, which only scans produced, goes with it (Decisions, fourth
   batch).
-- The AA card shows identity only (name, element, portrait). Level, XP and gold join it once the store
-  exists (AH); before that every figure is fresh, so there's nothing to show.
+- The card shows identity only (name, element, portrait), and stays that way past AH: since AG the level
+  takes the TV at the first placement, so the portal view shows mostly during a first run's extraction,
+  and a kid sees the hero's level and gold on the TV's HUD and every figure's on the phone (AH design
+  decision 10).
 
 ## Milestone ladder
 
@@ -2189,9 +2230,9 @@ names (M0-M9, G1, G2) are the stable handles. Every rung is built and checked on
 | AE, M1 | `ae-animated-turntable` | their figure as an animated, textured turntable on the TV | the first 3D, in the one remaster look; the Mac's renderer floor measured; the disc roster replaces the interim catalogue |
 | AF | `af-oracle-foundation` (archived 2026-10-19) | nothing | the oracle foundation: an unattended oracle on the product's pin (pause at a flip, capture, screenshot, save, two frame-locked pads, guest memory through PINE), its drift measured (exact only for what doesn't integrate host time; a walk agrees for 60 flips) and tolerance metrics calibrated on it. Lands before any gameplay comparison |
 | AG, M2 | `ag-walk-one-level` | walk the opening of chapter 1 (no scripts run yet, so the breakable door and rubble wall close it off) | level scene, collision, character controller, camera, feel checked against the oracle; the input spec, with prompts that match the physical pad |
-| AH, M3 | backlog | first fight: one enemy, XP and gold earned and kept on the kid's profile | combat basics; the per-profile figure-progression store, with the phone's figure editor on it |
+| AH, M3 | [`ah-first-fight`](../../openspec/changes/ah-first-fight/proposal.md) | first fight: chapter 1's four Chompies in the pit below the walkway, reached the original's way after smashing the clearing for its gold; XP and gold earned and kept on the kid's profile | combat from the original scripts on the tfbScript VM's core, pulled forward from AJ by chotchki's rule for stand-ins (`f772507`: a stand-in that would rewrite a script body sends it to the VM); the per-profile figure-progression store, with the phone's figure editor on it; the oracle's event, totals and distribution floors calibrated |
 | AI, M4 | backlog | first couch battle: one Giants PvP arena, two pads, two phones | a second pad and a second profile's figure in play; the PvP rules as the oracle shows them |
-| AJ, M5 | backlog | the level comes alive | the tfbScript VM and its built-ins running the original scripts |
+| AJ, M5 | backlog | the level comes alive | the rest of the level's scripts on AH's VM core, and the built-ins and members they reach |
 | AK, M6 | backlog | upgrades and the upgrade screen | upgrades and path kept in the store, movesets from script data |
 | AL, M7 | backlog | co-op, two pads and two figures in the adventure | the second player on the host's story, the shared camera, each kid's figure progress on their own profile |
 | AM, M8 | backlog | chapter one | a run of levels with story and cutscenes; profile-owned story saves (the host's, no slot picker); achievements, by the co-op rules |

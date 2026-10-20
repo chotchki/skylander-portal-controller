@@ -55,7 +55,10 @@ pub struct Joint {
     pub inverse_bind: [[f32; 4]; 4],
 }
 
-/// One Edge segment in bind pose: a triangle list, every vertex skinned.
+/// One Edge segment in bind pose: a triangle list. A character's has every
+/// vertex skinned; a level's (AG.15) isn't skinned, its joints and weights
+/// empty, and the effects that draw grass and shadows carry no normals,
+/// their normals empty too.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Segment {
     /// Into [`Model::materials`].
@@ -160,8 +163,20 @@ pub struct Params {
     pub layer4_values: [f32; 4],
     /// RGBA, neutral at 128: a multiplier, not a colour.
     pub material_tint: [u8; 4],
-    /// The glow amount of 255; `None` glows by layer 1's alpha.
-    pub glow: Option<u8>,
+    pub glow: Glow,
+}
+
+/// What a part writes into the glow pass's mask (the character-shading
+/// spec's glow mask, read off AC.13's captures at AE.11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Glow {
+    /// No glow attribute: the part glows nowhere, as Eruptor's eyes don't.
+    None,
+    /// The attribute on: its amount of 255.
+    Amount(u8),
+    /// The attribute off: layer 1's alpha, switched hard at a fixed alpha
+    /// of 0, times the vertex and tint alphas.
+    LayerAlpha,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -171,6 +186,9 @@ pub enum Blend {
     Alpha,
     /// Source alpha plus what's there.
     Additive,
+    /// What's there scaled by the part's colour: a level's (AG.15, level
+    /// 213's two cave paintings), no character's.
+    Multiply,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -195,6 +213,43 @@ pub struct Scroll {
     pub rotation_phase: f32,
 }
 
+/// A material track of another kind than a scroll, as stored: a level's
+/// (AG.15), no character's. How the runtime plays each isn't read yet.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum MaterialTrack {
+    /// Turns and scales a layer's texture coordinates about `center`.
+    Transform {
+        layer: i32,
+        center: [f32; 2],
+        rotation_rate: f32,
+        rotation_min: f32,
+        rotation_max: f32,
+        rotation_style: i32,
+        scale_rate: [f32; 2],
+        scale_min: [f32; 2],
+        scale_max: [f32; 2],
+        scale_style: [i32; 2],
+    },
+    /// Steps a layer's texture coordinates through a grid of `rows` by
+    /// `columns` cells at `rate`, in `cells`' order (empty: the grid's).
+    FlipBook {
+        layer: i32,
+        style: i32,
+        rows: i32,
+        columns: i32,
+        rate: f32,
+        cells: Vec<i32>,
+    },
+    /// Moves the material tint through its keys at `rate`: a frame and an
+    /// RGBA colour each, unpacked as [`Params::material_tint`] is.
+    Tint {
+        style: i32,
+        rate: f32,
+        frames: Vec<i32>,
+        colors: Vec<[u8; 4]>,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Material {
     /// The technique's name (`EruptorBody`).
@@ -206,6 +261,8 @@ pub struct Material {
     pub params: Params,
     pub states: RenderStates,
     pub scrolls: Vec<Scroll>,
+    /// Empty on every character's.
+    pub tracks: Vec<MaterialTrack>,
 }
 
 impl Material {

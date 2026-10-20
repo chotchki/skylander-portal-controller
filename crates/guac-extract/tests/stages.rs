@@ -1,11 +1,12 @@
-//! The extraction's stages in order (openspec AE.3, AE.6) on synthetic
-//! dumps: a PARAM.SFO, the roster builder's four archives, the model
-//! builder's character archive under nine of the roster's eleven character
-//! load files (one more refused for a gloss-map bit, one missing), two
+//! The extraction's stages in order (openspec AE.3, AE.6, AG.14, AG.15) on
+//! synthetic dumps: a PARAM.SFO, the roster builder's four archives, the
+//! model builder's character archive under nine of the roster's eleven
+//! character load files (one of them without a hero, one more refused for a
+//! gloss-map bit, one missing), the level builder's chapter 1, two
 //! voice-over archives and two movies, transcoded by a fake ffmpeg (a shell
 //! script that copies its input into each output). Unix only, as AB's
-//! transcode tests; the real dump runs in `giants_stages.rs` and
-//! `giants_model_stage.rs`.
+//! transcode tests; the real dump runs in `giants_stages.rs`,
+//! `giants_model_stage.rs` and `giants_level_stage.rs`.
 #![cfg(unix)]
 
 use std::fs;
@@ -15,9 +16,11 @@ use std::sync::Mutex;
 
 use guac_extract::intros::IrFormat;
 use guac_extract::known::KnownDump;
+use guac_extract::levels::{self, LEVELS, PARTS};
 use guac_extract::stages::{self, Event, Files};
 use guac_extract::{DirState, ExtractRoot, IR_VERSION, LAYOUT_VERSION, Manifest, Stale, open};
 use guac_formats::iga::builder::IgaBuilder;
+use guac_formats::level::builder::{StageSpec, stage_level, stage_sample};
 use guac_formats::model::builder as model;
 use guac_formats::roster::builder::{disc, sample};
 use guac_formats::sfo::builder::SfoBuilder;
@@ -31,8 +34,20 @@ const LOADS: usize = 11;
 const MODELS: usize = 9;
 const MISSING: &str = "MinionLoad_016_SpyroDark";
 const REFUSED: &str = "MinionLoad_112_TitanLifeAlt";
+/// Of the nine, the one whose archive holds no actor: its model extracts and
+/// its hero doesn't settle.
+const HEROES: usize = 8;
+const HEROLESS: &str = "MinionLoad_106_IceSorcLegendary";
 /// The model builder's sample binds eight textures, five distinct.
 const TEXTURES: usize = 5;
+/// The level builder's sample: eight scene textures, the props' five (the
+/// chest is the model builder's sample, the gourd its colour map), one
+/// shared between them: twelve, of which the characters' store already
+/// holds five.
+const LEVEL_TEXTURES: usize = 12;
+const LEVEL_SHARED: usize = 5;
+/// A level's events: none of its five parts done, then each.
+const LEVEL_EVENTS: usize = 6;
 
 const ENCODERS: &str = "Encoders:\\n ------\\n V....D libx264  x\\n A....D libmp3lame  y\\n";
 const DECODERS: &str = "Decoders:\\n ------\\n V....D binkvideo  x\\n A....D binkaudio_dct  y\\n A....D binkaudio_rdft  z\\n";
@@ -69,8 +84,12 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
 }
 
 /// The roster builder's sample disc, Eruptor (toy 9) by his voice-over and
-/// Jet-Vac (toy 100) by the roster's name.
+/// Jet-Vac (toy 100) by the roster's name, with chapter 1.
 fn make_dump(tmp: &Path) -> PathBuf {
+    make_dump_with(tmp, &stage_sample())
+}
+
+fn make_dump_with(tmp: &Path, level: &StageSpec) -> PathBuf {
     let dump = tmp.join("dump");
     let usr = dump.join("PS3_GAME/USRDIR");
     fs::create_dir_all(usr.join("movies")).unwrap();
@@ -94,6 +113,9 @@ fn make_dump(tmp: &Path) -> PathBuf {
     let mut bad = model::sample();
     bad.materials[0].pixel = Some((0x5C, 0x2FF));
     let bad = model::archive(&model::character(&bad));
+    let mut heroless = model::sample();
+    heroless.actors.clear();
+    let heroless = model::archive(&model::character(&heroless));
     for load in [
         "MinionLoad_000_AirDragon",
         "MinionLoad_000_AirDragonLegendary",
@@ -102,16 +124,20 @@ fn make_dump(tmp: &Path) -> PathBuf {
         "MinionLoad_100_Eagle",
         "MinionLoad_100_EagleLegendary",
         "MinionLoad_106_IceSorc",
-        "MinionLoad_106_IceSorcLegendary",
+        HEROLESS,
         "MinionLoad_112_TitanLife",
     ] {
         let path = usr.join(format!("character/{}.bld", load.to_ascii_lowercase()));
-        fs::write(path, &good).unwrap();
+        let archive = if load == HEROLESS { &heroless } else { &good };
+        fs::write(path, archive).unwrap();
     }
     let path = usr.join(format!("character/{}.bld", REFUSED.to_ascii_lowercase()));
     fs::write(path, &bad).unwrap();
     fs::write(usr.join("movies/eruptor.mov"), b"eruptor bink").unwrap();
     fs::write(usr.join("movies/jetvac.mov"), b"jetvac bink").unwrap();
+    let path = levels::archive_path(&usr, LEVELS[0]);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, model::archive(&stage_level(level))).unwrap();
     dump
 }
 
@@ -132,6 +158,8 @@ enum Seen {
     Portraits(usize, usize),
     RosterReady(usize),
     Models(usize, usize),
+    ModelsReady(Vec<String>),
+    Level(usize, usize),
     Indexing,
     Transcode,
 }
@@ -143,6 +171,10 @@ impl Seen {
             Event::Portraits { done, total } => Self::Portraits(*done, *total),
             Event::RosterReady(r) => Self::RosterReady(r.figures.len()),
             Event::Models { done, total } => Self::Models(*done, *total),
+            Event::ModelsReady { failed } => {
+                Self::ModelsReady(failed.iter().map(|f| f.load_file.clone()).collect())
+            }
+            Event::Level { done, total } => Self::Level(*done, *total),
             Event::Indexing => Self::Indexing,
             Event::Transcode(_) => Self::Transcode,
         }
@@ -208,14 +240,22 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     assert_eq!(seen[1], Seen::Portraits(0, FIGURES));
     assert_eq!(seen[FIGURES + 1], Seen::Portraits(FIGURES, FIGURES));
     assert_eq!(ready, Some(FIGURES + 2));
-    // Then the models, one event each, before the intros.
+    // Then the models, one event each, the turntable's cue with what didn't
+    // extract, then the level's parts, before the intros.
     let models: Vec<Seen> = (0..=LOADS).map(|i| Seen::Models(i, LOADS)).collect();
     assert_eq!(seen[FIGURES + 3..FIGURES + 4 + LOADS], models[..]);
-    assert_eq!(indexing, Some(FIGURES + 4 + LOADS));
+    assert_eq!(
+        seen[FIGURES + 4 + LOADS],
+        Seen::ModelsReady(vec![MISSING.into(), REFUSED.into()])
+    );
+    let level: Vec<Seen> = (0..LEVEL_EVENTS).map(|i| Seen::Level(i, 5)).collect();
+    let at = FIGURES + 5 + LOADS;
+    assert_eq!(seen[at..at + LEVEL_EVENTS], level[..]);
+    assert_eq!(indexing, Some(at + LEVEL_EVENTS));
     assert!(first_transcode > indexing, "{seen:?}");
 
-    // The roster's IR, every portrait, the models, their textures and the
-    // rig were recorded before the intro index.
+    // The roster's IR, every portrait, the models, their textures, the
+    // heroes and the rig were recorded before the intro index.
     let m = at_indexing
         .into_inner()
         .unwrap()
@@ -223,11 +263,31 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     assert_eq!(recorded(&m, "ir/roster.ron"), 1);
     assert_eq!(recorded(&m, "portraits/"), FIGURES);
     assert_eq!(recorded(&m, "models/"), MODELS);
-    assert_eq!(recorded(&m, "textures/"), TEXTURES);
+    assert_eq!(
+        recorded(&m, "textures/"),
+        TEXTURES + LEVEL_TEXTURES - LEVEL_SHARED
+    );
+    assert_eq!(recorded(&m, "heroes/"), HEROES);
     assert_eq!(recorded(&m, "ir/rig.ron"), 1);
+    assert_eq!(recorded(&m, "levels/"), PARTS.len());
+    assert!(levels::complete(&m), "every part recorded before ffmpeg");
     assert_eq!(recorded(&m, "ir/characters"), 0);
     assert_eq!(recorded(&m, "video/"), 0);
     assert!(!m.complete);
+    let lv = &done.levels;
+    assert_eq!((lv.levels, lv.parts_read, lv.parts_kept), (1, 5, 0));
+    assert!(lv.failed.is_empty(), "{:?}", lv.failed);
+    assert_eq!((lv.props, lv.refused_props.len()), (2, 1));
+    assert_eq!((lv.textures, lv.shared), (LEVEL_TEXTURES, LEVEL_SHARED));
+    assert_eq!(
+        (lv.files.written, lv.files.kept),
+        (PARTS.len() + LEVEL_TEXTURES - LEVEL_SHARED, LEVEL_SHARED)
+    );
+    let scene: guac_ir::level::Scene = guac_ir::from_ron(
+        &fs::read_to_string(dir.join("levels/level_213_tutotial/scene.ron")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(scene.scenes[0].segments.len(), 5);
 
     // Nine models; the one asking for bit 6 and the missing one reported.
     let md = &done.models;
@@ -252,6 +312,30 @@ fn the_roster_is_written_before_any_intro_work_starts() {
             .iter()
             .all(|f| f.reason.starts_with("GUAC-E-MODEL-UNREADABLE"))
     );
+    // Eight heroes; the one with no actor reported, its model kept.
+    assert_eq!(md.heroes, HEROES);
+    let unsettled: Vec<&str> = md.unsettled.iter().map(|f| f.load_file.as_str()).collect();
+    assert_eq!(unsettled, [HEROLESS]);
+    assert!(
+        md.unsettled[0]
+            .reason
+            .starts_with("GUAC-E-HERO-UNSETTLED: MinionLoad_106_IceSorcLegendary's hero"),
+        "{:?}",
+        md.unsettled[0]
+    );
+    assert!(dir.join(format!("models/{HEROLESS}.ron")).is_file());
+    assert!(!dir.join(format!("heroes/{HEROLESS}.ron")).exists());
+    assert!(md.heroes_took <= md.took);
+    let hero: guac_ir::Hero = guac_ir::from_ron(
+        &fs::read_to_string(dir.join("heroes/MinionLoad_100_Eagle.ron")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        (hero.load_file.as_str(), hero.actor.as_str()),
+        ("MinionLoad_100_Eagle", "009_Eruptor")
+    );
+    let walk = hero.locomotion.walk.as_ref().unwrap();
+    assert_eq!((walk.slot, walk.clip.name.as_str()), (1, "Eruptor_Walk.ma"));
     let eagle: guac_ir::Model = guac_ir::from_ron(
         &fs::read_to_string(dir.join("models/MinionLoad_100_Eagle.ron")).unwrap(),
     )
@@ -316,11 +400,34 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
     assert_eq!(e.code(), "GUAC-E-NO-FFMPEG", "{e}");
     assert_eq!(done.roster.roster.figures.len(), FIGURES);
     let seen = seen.into_inner().unwrap();
-    assert_eq!(seen.last(), Some(&Seen::Models(LOADS, LOADS)));
+    // The models, the turntable's cue, then the level: nothing after it.
+    let at = seen.len() - LEVEL_EVENTS;
+    assert_eq!(seen[at - 2], Seen::Models(LOADS, LOADS));
+    assert_eq!(
+        seen[at - 1],
+        Seen::ModelsReady(vec![MISSING.into(), REFUSED.into()])
+    );
+    assert_eq!(seen[at], Seen::Level(0, 5));
+    assert_eq!(seen.last(), Some(&Seen::Level(5, 5)));
     let m = manifest_on_disk(&dir);
     assert_eq!(recorded(&m, "ir/roster.ron"), 1);
     assert_eq!(recorded(&m, "portraits/"), FIGURES);
     assert_eq!(recorded(&m, "models/"), MODELS);
+    assert_eq!(recorded(&m, "heroes/"), HEROES);
+    // No ffmpeg costs the intros alone: the level is written and its
+    // entry complete.
+    assert_eq!(recorded(&m, "levels/"), PARTS.len());
+    assert!(levels::complete(&m));
+    for part in PARTS {
+        let files = &m.levels[LEVELS[0]].parts[part];
+        assert!(
+            files.contains(&IrFormat::Ron.level_path(LEVELS[0], part)),
+            "{part}"
+        );
+        for f in files {
+            assert!(dir.join(f).is_file(), "{f}");
+        }
+    }
     assert_eq!(recorded(&m, "ir/characters"), 0);
     assert!(!m.complete, "only the whole extraction marks it");
 
@@ -335,8 +442,11 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
     );
     assert_eq!(
         (done.models.files.written, done.models.files.kept),
-        (0, MODELS + TEXTURES + 1)
+        (0, MODELS + HEROES + TEXTURES + 1)
     );
+    // The level, whole, is kept without reading it.
+    assert_eq!((done.levels.parts_read, done.levels.parts_kept), (0, 5));
+    assert_eq!(done.levels.files.written, 0);
     assert_eq!(done.intros.unwrap().summary.transcoded, 2);
     assert!(manifest_on_disk(&dir).complete);
 }
@@ -368,8 +478,10 @@ fn a_resume_rewrites_only_the_files_that_arent_as_recorded() {
     }
     assert!(!dir.join("portraits/00001c-0000.png.partial").exists());
 
-    // A model and a texture gone, the rig changed: exactly those redone.
+    // A model, a hero and a texture gone, the rig changed: exactly those
+    // redone.
     fs::remove_file(dir.join("models/MinionLoad_007_GemGolem.ron")).unwrap();
+    fs::remove_file(dir.join("heroes/MinionLoad_016_Spyro.ron")).unwrap();
     let texture = again
         .dir
         .manifest()
@@ -385,9 +497,56 @@ fn a_resume_rewrites_only_the_files_that_arent_as_recorded() {
     let models = stages::model_stage(&mut again.dir, &roster, IrFormat::Ron, &|_| {}).unwrap();
     assert_eq!(
         (models.files.written, models.files.kept),
-        (3, MODELS + TEXTURES + 1 - 3)
+        (4, MODELS + HEROES + TEXTURES + 1 - 4)
     );
     assert!(again.dir.output_done(&texture).unwrap());
+    assert!(
+        again
+            .dir
+            .output_done("heroes/MinionLoad_016_Spyro.ron")
+            .unwrap()
+    );
+
+    // A level part's file and a texture only the scene binds gone: those
+    // two parts are read again, and only the two files written.
+    let gloss = {
+        let scene: guac_ir::level::Scene = IrFormat::Ron
+            .decode(&again.dir, &IrFormat::Ron.level_path(LEVELS[0], "scene"))
+            .unwrap();
+        let guac_ir::level::LevelMaterial::Multi2(m) = &scene.scenes[0].materials[1] else {
+            panic!("the gloss material");
+        };
+        m.texture(guac_ir::model::TextureRole::Layer3ColorMap)
+            .unwrap()
+            .texture
+            .clone()
+    };
+    fs::remove_file(dir.join(&gloss)).unwrap();
+    fs::remove_file(dir.join(IrFormat::Ron.level_path(LEVELS[0], "placements"))).unwrap();
+    let lv = stages::level_stage(&mut again.dir, IrFormat::Ron, &|_| {}).unwrap();
+    assert_eq!((lv.parts_read, lv.parts_kept), (2, 3));
+    assert_eq!(lv.files.written, 2);
+    assert!(again.dir.output_done(&gloss).unwrap());
+    assert!(lv.failed.is_empty());
+    // A part is in for the format asked for: in postcard every part is
+    // read again and only its IR written, beside the RON, the textures
+    // kept.
+    let lv = stages::level_stage(&mut again.dir, IrFormat::Postcard, &|_| {}).unwrap();
+    assert_eq!(
+        (lv.parts_read, lv.files.written),
+        (PARTS.len(), PARTS.len())
+    );
+    assert_eq!(lv.files.kept, LEVEL_TEXTURES);
+    for part in PARTS {
+        assert!(
+            dir.join(IrFormat::Postcard.level_path(LEVELS[0], part))
+                .is_file()
+        );
+        assert!(
+            dir.join(IrFormat::Ron.level_path(LEVELS[0], part))
+                .is_file()
+        );
+    }
 
     // An IR in the other format is a file of its own, written beside.
     let stage = stages::roster_stage(&mut again.dir, IrFormat::Postcard, &|_| {}).unwrap();
@@ -427,7 +586,7 @@ fn a_v1_extract_is_rebuilt_and_extracted_again() {
     assert!(!dir.join("video/intro/eruptor.mp4").exists());
     let m = again.dir.manifest();
     assert_eq!((m.layout, m.ir_version), (LAYOUT_VERSION, IR_VERSION));
-    assert_eq!((LAYOUT_VERSION, IR_VERSION), (3, 2));
+    assert_eq!((LAYOUT_VERSION, IR_VERSION), (4, 4));
     let done = stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
     assert_eq!(done.roster.files.written, FIGURES + 1);
     assert!(done.intros.is_ok());
@@ -455,6 +614,43 @@ fn a_v1_extract_is_rebuilt_and_extracted_again() {
     fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
     let again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
     assert_eq!(again.state, DirState::Rebuilt(Stale::Layout { found: 2 }));
+    drop(again);
+    // An AE.6-era extract (layout 3, IR 2: models, no heroes) too, and it
+    // comes back with them.
+    let mut again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    drop(again);
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    json["layout"] = 3.into();
+    fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+    let mut again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    assert_eq!(again.state, DirState::Rebuilt(Stale::Layout { found: 3 }));
+    assert!(!dir.join("heroes").exists() && !dir.join("levels").exists());
+    let done = stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    assert_eq!(done.models.heroes, HEROES);
+    assert_eq!(done.levels.parts_read, PARTS.len());
+    let m = manifest_on_disk(&dir);
+    assert_eq!(recorded(&m, "heroes/"), HEROES);
+    assert_eq!(recorded(&m, "levels/"), PARTS.len());
+    // Once: the next start finds it current.
+    drop(again);
+    assert_eq!(
+        open(&s.dump, &s.root, &s.known, &|_| {}).unwrap().state,
+        DirState::Current
+    );
+    // An extract either branch's IR v3 wrote (layout 4: AG.15's multiply
+    // and material tracks, or AE.11's glow, each without the other) too.
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(json["layout"], 4);
+    json["ir_version"] = 3.into();
+    fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+    let again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    assert_eq!(
+        again.state,
+        DirState::Rebuilt(Stale::IrVersion { found: 3 })
+    );
 }
 
 #[test]
@@ -564,4 +760,145 @@ fn a_roster_naming_another_dump_or_unreadable_is_refused() {
 
     fs::write(dir.join("ir/roster.ron"), b"(not a roster)").unwrap();
     assert!(guac_extract::roster::load(&found, IrFormat::Ron).is_err());
+}
+
+/// A part the extract lacks, as an extract made before the part existed
+/// does (AG.27's script data will be one): the extract isn't current, and
+/// the next run reads that part alone, the roster's, models' and intros'
+/// files and the other parts kept.
+#[test]
+fn a_level_part_the_manifest_lacks_resumes_alone() {
+    let s = setup();
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    stages::run(&mut opened.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    let dir = opened.dir.path().to_path_buf();
+    drop(opened);
+    assert_eq!(
+        open(&s.dump, &s.root, &s.known, &|_| {}).unwrap().state,
+        DirState::Current
+    );
+    let path = dir.join("manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let parts = json["levels"][LEVELS[0]]["parts"].as_object_mut().unwrap();
+    assert!(parts.remove("lights").is_some());
+    fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+    let lights = IrFormat::Ron.level_path(LEVELS[0], "lights");
+    let before = fs::metadata(dir.join(&lights)).unwrap().modified().unwrap();
+
+    let mut again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    assert_eq!(again.state, DirState::Resume);
+    assert!(
+        guac_extract::find_current(&s.dump, &s.root, &s.known)
+            .unwrap()
+            .is_none()
+    );
+    let done = stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    assert_eq!(done.roster.files.written, 0);
+    assert_eq!(done.models.files.written, 0);
+    let lv = &done.levels;
+    assert_eq!((lv.parts_read, lv.parts_kept), (1, 4));
+    // Its file was there as recorded: kept, not written again.
+    assert_eq!(
+        (lv.files.written, lv.files.kept),
+        (0, 1 + 4 + LEVEL_TEXTURES)
+    );
+    assert_eq!(
+        fs::metadata(dir.join(&lights)).unwrap().modified().unwrap(),
+        before
+    );
+    assert_eq!(done.intros.unwrap().summary.transcoded, 0);
+    drop(again);
+    assert_eq!(
+        open(&s.dump, &s.root, &s.known, &|_| {}).unwrap().state,
+        DirState::Current
+    );
+}
+
+/// The level's colour map is the character sample's: one file, written by
+/// the model stage, kept by the level's, recorded once.
+#[test]
+fn a_texture_already_in_the_store_isnt_written_twice() {
+    let s = setup();
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    let roster = stages::roster_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
+    stages::model_stage(&mut opened.dir, &roster.roster, IrFormat::Ron, &|_| {}).unwrap();
+    let store: Vec<String> = opened
+        .dir
+        .manifest()
+        .outputs
+        .iter()
+        .filter(|o| o.path.starts_with("textures/"))
+        .map(|o| o.path.clone())
+        .collect();
+    let dir = opened.dir.path().to_path_buf();
+    let modified = |p: &str| fs::metadata(dir.join(p)).unwrap().modified().unwrap();
+    let stamps: Vec<_> = store.iter().map(|p| modified(p)).collect();
+    let lv = stages::level_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
+    assert_eq!(lv.shared, LEVEL_SHARED);
+    assert_eq!(
+        lv.files.written,
+        PARTS.len() + LEVEL_TEXTURES - LEVEL_SHARED
+    );
+    for (p, stamp) in store.iter().zip(&stamps) {
+        assert_eq!(modified(p), *stamp, "{p} rewritten");
+    }
+    let m = opened.dir.manifest();
+    let scene = &m.levels[LEVELS[0]].parts["scene"];
+    let shared: Vec<&String> = scene.iter().filter(|f| store.contains(f)).collect();
+    assert_eq!(shared.len(), 1, "the ground's colour map");
+    assert_eq!(m.outputs.iter().filter(|o| &o.path == shared[0]).count(), 1);
+}
+
+/// A part that won't read (the scene asking for bit 6) is reported; the
+/// others land; the extract isn't current, so the next start tries it.
+#[test]
+fn a_level_part_that_doesnt_read_leaves_the_others() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut level = stage_sample();
+    level.scene[0].pixel = Some((0x5C, 0x3FF));
+    let dump = make_dump_with(tmp.path(), &level);
+    let known = known_for(&dump);
+    let root = ExtractRoot::checked(tmp.path().join("out/extract")).unwrap();
+    let ffmpeg = fake_ffmpeg(&tmp.path().join("bin"));
+    let mut opened = open(&dump, &root, &known, &|_| {}).unwrap();
+    let done = stages::run(&mut opened.dir, Some(&ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    let lv = &done.levels;
+    assert_eq!((lv.levels, lv.parts_read), (0, 4));
+    let [f] = &lv.failed[..] else {
+        panic!("{:?}", lv.failed);
+    };
+    assert_eq!((f.level.as_str(), f.part.as_str()), (LEVELS[0], "scene"));
+    assert!(
+        f.reason
+            .starts_with("GUAC-E-LEVEL-UNREADABLE: level_213_tutotial's scene didn't read:"),
+        "{}",
+        f.reason
+    );
+    assert!(f.reason.contains("layer4UsesPositions"), "{}", f.reason);
+    assert!(done.intros.is_ok());
+    let m = manifest_on_disk(opened.dir.path());
+    assert!(m.complete && !levels::complete(&m));
+    assert_eq!(recorded(&m, "levels/"), 4);
+    drop(opened);
+    assert_eq!(
+        open(&dump, &root, &known, &|_| {}).unwrap().state,
+        DirState::Resume
+    );
+    // A dump without the level reports every part, and the rest extracts.
+    fs::remove_file(levels::archive_path(
+        &dump.join("PS3_GAME/USRDIR"),
+        LEVELS[0],
+    ))
+    .unwrap();
+    let known = known_for(&dump);
+    let mut again = open(&dump, &root, &known, &|_| {}).unwrap();
+    let done = stages::run(&mut again.dir, Some(&ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    assert_eq!(done.levels.failed.len(), PARTS.len());
+    assert!(
+        done.levels.failed[0].reason.contains("no archive at"),
+        "{:?}",
+        done.levels.failed[0]
+    );
+    assert!(done.intros.is_ok());
 }

@@ -84,6 +84,7 @@ fn unit(format_raw: u32, w: u32, h: u32, mips: u32, pitch: u32, bytes: Vec<u8>) 
         depth: 1,
         pitch,
         remap: 0xaae4,
+        sampler: Default::default(),
         captured: true,
         bytes,
     }
