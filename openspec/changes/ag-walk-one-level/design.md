@@ -165,9 +165,9 @@ Every scenario AG's deltas add or modify, and the box whose test or recorded che
 | level-scene | A coin beyond its waking distance | AG.7 (the rule, live at two of the hero's positions; the coin woke between them), AG.25 |
 | level-scene | A gourd by the start | AG.7 (the original stops him), AG.16, AG.25 |
 | level-scene | Grass | AG.24 |
-| level-scene | The start under its own lights | AG.19, AG.23, AG.24 |
+| level-scene | The start under its own lights | AG.19, AG.23, AG.24, AG.41 (the fog) |
 | level-scene | Placed right after the pick | AG.21 (unit), AG.19 (the load time) |
-| level-scene | New scenery comes into view | AG.19, AG.21, AG.23 |
+| level-scene | New scenery comes into view | AG.19, AG.21, AG.23, AG.42 (the first show) |
 | level-scene | Eruptor first | AG.21 (e2e) |
 | level-scene | An item first; Two characters before the start; A second kid places a character; The hero comes off with another waiting; An item mid-level; Swapping heroes; Three figures on the portal | AG.29 (unit and e2e, on AG.6's sessions) |
 | hero-movement | Forward at the start; Left at the start; From rest at the start | AG.16, AG.18 |
@@ -195,7 +195,8 @@ Every scenario AG's deltas add or modify, and the box whose test or recorded che
 | figure-cards | A level showing | AG.29 |
 | figure-turntable | Eruptor; A Giant; A full portal | AE.13's tests (its fixture has no level, so the portal view stays) |
 | figure-turntable | The first placement after a start | AE.14, AG.19 |
-| character-shading | Full gloss; No gloss | AG.22 |
+| character-shading | Full gloss; No gloss | AG.22 (unit, GPU lane) |
+| character-shading | A third layer with no blend set | AG.19 (unit) |
 
 Figure-turntable's other requirements (each figure's own model, no upgrades, a portrait without a model) describe what a card carries, not when the TV shows one, so AG leaves them to AE: the MODIFIED "Each figure on the portal shows as a card" already confines cards to the portal view.
 

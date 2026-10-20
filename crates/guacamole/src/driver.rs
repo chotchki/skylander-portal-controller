@@ -282,24 +282,25 @@ mod tests {
                 .unwrap();
         }
 
-        /// The next change the TV hears, waiting up to 30 s. A pass returns
-        /// as soon as it arrives; 5 s timed out once at load 9.8 with the
-        /// workspace's other test binaries running, and the reset test once
-        /// timed out at 30 s too (load 15-20), so a timeout says what the
-        /// driver holds and whether it dropped a change.
+        /// The next change the TV hears, waiting up to 30 s. It polls on the
+        /// runtime instead of parking a `spawn_blocking` thread on the channel:
+        /// the worker makes every driver call on that pool, and a wait parked
+        /// there held the worker's `place` until it timed out (tokio 1.52.0,
+        /// guac-server's `a_blocking_call_never_waits_for_one_that_blocks`).
+        /// A timeout says what the driver holds and whether it dropped a change.
         async fn next(&self) -> PortalChange {
-            let tv = self.tv.clone();
-            let heard =
-                tokio::task::spawn_blocking(move || tv.recv_timeout(Duration::from_secs(30)))
-                    .await
-                    .unwrap();
-            heard.unwrap_or_else(|e| {
-                panic!(
-                    "the TV heard nothing ({e}); the driver holds {:?}, dropped {}",
-                    self.driver.read_slots(),
-                    self.driver.dropped()
-                )
-            })
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                match self.tv.try_recv() {
+                    Ok(change) => return change,
+                    Err(e) if e.is_disconnected() || Instant::now() >= deadline => panic!(
+                        "the TV heard nothing ({e}); the driver holds {:?}, dropped {}",
+                        self.driver.read_slots(),
+                        self.driver.dropped()
+                    ),
+                    Err(_) => tokio::time::sleep(Duration::from_millis(1)).await,
+                }
+            }
         }
     }
 

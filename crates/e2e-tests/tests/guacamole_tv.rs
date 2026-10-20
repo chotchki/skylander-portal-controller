@@ -724,6 +724,40 @@ async fn a_modelled_figure_turns_on_its_card_and_leaves_with_it() {
     phone.close().await.unwrap();
 }
 
+/// AG.19: picking Giants with its extract current loads chapter 1 behind
+/// the portal, which stays up: nothing takes the TV into the level yet.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver; E2E_APP=guacamole"]
+async fn the_pick_loads_the_level_behind_the_portal() {
+    if guacamole_only() {
+        return;
+    }
+    let server = spawn();
+    let (phone, _, _) = phone_as(&server, "Alice", ALICE).await;
+    let before = tv(&server.url).await.expect("the TV's mirror");
+    assert_eq!(
+        before["level"]["state"], "idle",
+        "nothing loads before the pick"
+    );
+    pick_giants(&server, &phone).await;
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+        s["level"]["state"] == "ready" || s["level"]["state"] == "failed"
+    })
+    .await
+    .expect("the level loads");
+    let level = &snap["level"];
+    assert_eq!(level["state"], "ready", "{level}");
+    assert_eq!(level["level"], "level_213_tutotial");
+    // The fixture's chapter 1 draws nothing: no scene, so no keys.
+    assert_eq!(
+        (level["segments"].as_u64(), level["keys"].as_u64()),
+        (Some(0), Some(0))
+    );
+    assert_eq!(level["shown"], false);
+    assert_eq!(snap["screen"], "Portal", "the portal stays up");
+    phone.close().await.unwrap();
+}
+
 /// A damaged model leaves its card on the portrait, says why on the TV's
 /// mirror and in the log, and the modelled figure beside it still turns.
 #[tokio::test(flavor = "current_thread")]
