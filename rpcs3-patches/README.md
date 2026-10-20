@@ -280,7 +280,8 @@ bundle `GUAC_ORACLE_EXE` names (refused inside any work tree). A checkout that a
 series builds as it stands; any other HEAD, or a dirty tree, is refused rather than reset.
 `--no-brew` passes `BUILD_MAC_NO_BREW=1`, which leaves Homebrew alone: the script's `brew install`
 upgrades whatever the local tap calls outdated and its unlink pulls `ffmpeg` out of `PATH`, both
-machine-wide. The script pins `OpenCV_DIR` to the `opencv@4` keg (find_package otherwise takes the
+machine-wide. `BUILD_MAC_JOBS=<n>` caps the compile at n jobs (unset, ninja takes every core);
+on a Mac other lanes share, build at 4. The script pins `OpenCV_DIR` to the `opencv@4` keg (find_package otherwise takes the
 linked `opencv`, 5.x since 2026-10-17). It prints the build's identity and writes it to
 `oracle-build.txt` beside the `.app`: upstream base, the repo commit the series came from, the
 checkout's tree, every patch's SHA-256, the binary's SHA-256 and the MoltenVK (Homebrew's, through
