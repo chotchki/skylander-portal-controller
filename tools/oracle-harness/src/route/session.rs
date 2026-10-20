@@ -148,7 +148,9 @@ impl Session for Live<'_> {
 
     fn run(&mut self, script: &InputScript, flips: u64) -> Result<()> {
         let at = self.paused()?;
-        self.control.load_script_at(script, at + 1)?;
+        // Appended, not loaded: the paused flip's reads come after the resume,
+        // and they're the last run's.
+        self.control.append_script_at(script, at + 1)?;
         // 20 fps, a third of the game's, and a minute.
         let wait = Duration::from_secs(60 + flips / 20);
         self.control
