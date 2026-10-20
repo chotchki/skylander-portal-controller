@@ -15,6 +15,7 @@ mod extraction;
 mod input;
 mod intro;
 mod intro_player;
+mod level;
 mod look;
 mod mirror;
 mod motion;
@@ -88,6 +89,7 @@ fn main() -> Result<()> {
     };
     let (portal_tx, portal_rx) = portal_channel();
     let (shelf_tx, shelf) = turntable::shelf_channel();
+    let (level_tx, level_feed) = level::level_channel();
     let mirror = TvMirror::default();
     // Writes nothing, so a second copy that loses the port leaves no trace.
     let loaded = match setup::load(&root).context("load guacamole's settings") {
@@ -101,6 +103,7 @@ fn main() -> Result<()> {
                 link,
                 portal_rx,
                 shelf,
+                level_feed,
                 no_setup,
                 mode,
                 root,
@@ -138,6 +141,7 @@ fn main() -> Result<()> {
     let mut job = ExtractJob {
         test_known: test_known_dump(),
         shelf: Some(shelf_tx),
+        level: Some(level_tx),
         ..ExtractJob::new(&root, loaded.extract_dir.clone(), loaded.ffmpeg.clone())
     };
     // No figures until the disc's roster lands (AE.4); without a Giants dump
@@ -178,6 +182,7 @@ fn main() -> Result<()> {
         link,
         portal_rx,
         shelf,
+        level_feed,
         setup_view,
         cfg.window_mode,
         root,
@@ -238,6 +243,7 @@ fn run_tv(
     link: ServerLink,
     portal: Receiver<PortalChange>,
     shelf: turntable::ShelfFeed,
+    level: level::LevelFeed,
     setup_view: SetupView,
     mode: WindowMode,
     root: PathBuf,
@@ -261,6 +267,7 @@ fn run_tv(
     .insert_resource(link)
     .insert_resource(PortalFeed(portal))
     .insert_resource(shelf)
+    .insert_resource(level)
     .insert_resource(Setup(setup_view))
     .insert_resource(Framing(mode))
     .insert_resource(DataRoot(root))
