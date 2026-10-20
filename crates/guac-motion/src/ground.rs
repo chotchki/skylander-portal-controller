@@ -27,7 +27,7 @@
 //! lean turns over the frame's own step; the ground finder's up-cast, read,
 //! and seen only through the edge probe (AG.39's cliff foot).
 
-use crate::seam::{BodyId, ContactPlane, PhysicsSeam, Quat, Vec3};
+use crate::seam::{BodyId, ContactPlane, PhysicsSeam, Pose, Quat, RayHit, Shape, Vec3};
 use crate::solve::{Limit, solve};
 
 /// cos 45°: the steepest ground that holds him.
@@ -52,12 +52,53 @@ pub struct Ground {
     pub normal: Vec3,
 }
 
+/// The first surface along a ray as the original's rays see one: a ray
+/// starting inside a convex solid reports nothing from it (as read of
+/// Havok's convex rays, a hypothesis), where the seam reports where it
+/// leaves, its normal facing back along the ray as a front face's would
+/// (parry's non-solid ray), so the tell is the ray's start overlapping the
+/// body it hit; the ray goes on from where it left. A mesh triangle's back
+/// is a hit either way.
+pub fn ray(
+    seam: &dyn PhysicsSeam,
+    origin: Vec3,
+    direction: Vec3,
+    max_distance: f32,
+    exclude: &[BodyId],
+) -> Option<RayHit> {
+    let dir = direction.try_normalize()?;
+    let mut travelled = 0.0;
+    for _ in 0..8 {
+        let from = origin + dir * travelled;
+        let hit = seam.ray(from, dir, max_distance - travelled, exclude)?;
+        let inside = hit.triangle.is_none()
+            && seam
+                .overlaps(&Shape::Sphere { radius: POINT }, Pose::at(from), exclude)
+                .contains(&hit.body);
+        if !inside {
+            return Some(RayHit {
+                distance: travelled + hit.distance,
+                ..hit
+            });
+        }
+        travelled += hit.distance + LEAVE_STEP;
+        if travelled >= max_distance {
+            return None;
+        }
+    }
+    None
+}
+
+/// A point, as a sphere the seam can overlap, metres.
+const POINT: f32 = 1.0e-5;
+/// How far past where a ray left a convex solid it goes on from, metres.
+const LEAVE_STEP: f32 = 1.0e-4;
+
 /// The ground under (or over) `at`, the ground finder's way.
 pub fn find(seam: &dyn PhysicsSeam, at: Vec3, exclude: &[BodyId]) -> Option<Ground> {
     let origin = at + Vec3::Y * 0.1;
-    let hit = seam
-        .ray(origin, Vec3::NEG_Y, 160.0, exclude)
-        .or_else(|| seam.ray(origin, Vec3::Y, 80.0, exclude))?;
+    let hit = ray(seam, origin, Vec3::NEG_Y, 160.0, exclude)
+        .or_else(|| ray(seam, origin, Vec3::Y, 80.0, exclude))?;
     let normal = if hit.normal.y < -0.05 {
         -hit.normal
     } else {
@@ -213,5 +254,54 @@ mod tests {
         let under = find(&world, Vec3::new(0.0, -1.0, 0.0), &[]).unwrap();
         assert!((under.point.y - 2.0).abs() < 1e-5 && under.normal.y > 0.99);
         assert!(find(&world, Vec3::new(20.0, 3.0, 0.0), &[]).is_none());
+    }
+
+    /// From inside a convex solid the finder sees through it: a box around
+    /// the point over a floor gives the floor, not the box's underside.
+    #[test]
+    fn a_ray_from_inside_a_convex_goes_on_through_it() {
+        let floor = Mesh::new(
+            vec![
+                Vec3::new(-5.0, 0.0, -5.0),
+                Vec3::new(-5.0, 0.0, 5.0),
+                Vec3::new(5.0, 0.0, 5.0),
+                Vec3::new(5.0, 0.0, -5.0),
+            ],
+            vec![[0, 1, 2], [0, 2, 3]],
+            vec![1, 1],
+        )
+        .unwrap();
+        let world = ParryWorld::new(&[
+            Body {
+                id: BodyId(1),
+                kind: BodyKind::Static,
+                pose: Pose::IDENTITY,
+                collider: Collider::Mesh(Arc::new(floor)),
+            },
+            Body {
+                id: BodyId(2),
+                kind: BodyKind::Kinematic,
+                pose: Pose::at(Vec3::new(0.0, 2.0, 0.0)),
+                collider: Collider::Convex(Shape::Box {
+                    half_extents: Vec3::splat(1.0),
+                    margin: 0.0,
+                }),
+            },
+        ])
+        .unwrap();
+        let at = Vec3::new(0.0, 2.0, 0.0);
+        let raw = world
+            .ray(at + Vec3::Y * 0.1, Vec3::NEG_Y, 160.0, &[])
+            .unwrap();
+        assert_eq!(raw.body, BodyId(2), "the seam reports the box's underside");
+        assert!((raw.point.y - 1.0).abs() < 1e-5, "{raw:?}");
+        let g = find(&world, at, &[]).unwrap();
+        assert!(g.point.y.abs() < 1e-5 && g.normal.y > 0.99, "{g:?}");
+        let hit = ray(&world, at + Vec3::Y * 0.1, Vec3::NEG_Y, 160.0, &[]).unwrap();
+        assert_eq!(hit.body, BodyId(1));
+        assert!((hit.distance - 2.1).abs() < 1e-3, "{hit:?}");
+        // From above, the box's top is a hit as ever.
+        let top = find(&world, Vec3::new(0.0, 5.0, 0.0), &[]).unwrap();
+        assert!((top.point.y - 3.0).abs() < 1e-5);
     }
 }

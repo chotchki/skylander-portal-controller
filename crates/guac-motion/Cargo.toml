@@ -14,8 +14,9 @@ name = "guac_motion"
 path = "src/lib.rs"
 
 [features]
-# The seam's shared test table, for another implementation's tests (guacamole's
-# Avian side takes it as a dev-dependency).
+# The seam's shared test table and the controller's open-ground and wall
+# scenarios, for another implementation's tests (guacamole's Avian side takes
+# them as a dev-dependency) and this crate's own.
 conformance = []
 
 [dependencies]
@@ -33,4 +34,6 @@ thiserror = { workspace = true }
 # through AG.2's reader; both crates are pure, so no Bevy and no RPCS3.
 guac-formats = { path = "../guac-formats" }
 guac-oracle = { path = "../guac-oracle" }
+# The scenarios the tests in tests/ run on parry (src/scenarios.rs).
+guac-motion = { path = ".", features = ["conformance"] }
 serde_json = { workspace = true }

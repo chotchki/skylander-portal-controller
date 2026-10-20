@@ -19,6 +19,8 @@
 //!
 //! What the oracle didn't show is labelled a hypothesis in the module that
 //! builds it, with the reading behind it; AG.16's box keeps the list.
+//! [`scenarios`] (with `conformance`) holds the controller's open-ground and
+//! wall cases for any side of the seam.
 
 #![forbid(unsafe_code)]
 
@@ -30,6 +32,8 @@ pub mod ground;
 pub mod hero;
 pub mod parry;
 pub mod proxy;
+#[cfg(any(test, feature = "conformance"))]
+pub mod scenarios;
 pub mod seam;
 pub mod solid;
 pub mod solve;

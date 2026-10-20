@@ -65,8 +65,8 @@ const SIGHT_HEIGHT: f32 = 0.1;
 pub fn walkable(seam: &dyn PhysicsSeam, pivot: Vec3, point: Vec3, exclude: &[BodyId]) -> bool {
     let from = pivot + Vec3::Y * SIGHT_HEIGHT;
     let across = Vec3::new(point.x - from.x, 0.0, point.z - from.z);
-    let blocked =
-        across.length() > 1e-6 && seam.ray(from, across, across.length(), exclude).is_some();
+    let blocked = across.length() > 1e-6
+        && ground::ray(seam, from, across, across.length(), exclude).is_some();
     blocked
         || ground::find(seam, point, exclude).is_some_and(|g| point.y - g.point.y <= WALKABLE_RANGE)
 }

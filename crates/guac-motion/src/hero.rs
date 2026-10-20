@@ -52,7 +52,7 @@
 
 use crate::edge;
 use crate::ground::{self, LEAN_SETTLED, MAX_SLOPE_COS, SNAP_REACH, SUPPORT_GAP};
-use crate::proxy::{self, AIRBORNE_SHARE, KEEP, LEAVE_NORMAL, LEAVE_SPEED, Proxy};
+use crate::proxy::{self, AIRBORNE_SHARE, KEEP, LEAVE_NORMAL, LEAVE_SPEED, Proxy, Surfaces};
 use crate::seam::{BodyId, PhysicsSeam, Quat, Vec3};
 use crate::solid::HavokSolid;
 use crate::stick::Stick;
@@ -144,13 +144,19 @@ impl Hero {
         Quat::from_rotation_arc(Vec3::Y, self.up) * Quat::from_rotation_y(self.facing.to_radians())
     }
 
-    fn proxy<'a>(&self, seam: &'a dyn PhysicsSeam, exclude: &'a [BodyId]) -> Proxy<'a> {
+    fn proxy<'a>(
+        &self,
+        seam: &'a dyn PhysicsSeam,
+        exclude: &'a [BodyId],
+        surfaces: &'a Surfaces,
+    ) -> Proxy<'a> {
         Proxy {
             seam,
             shape: self.solid.grown(0.0),
             centre: self.solid.centre,
             rotation: self.solid.rotation,
             exclude,
+            surfaces,
         }
     }
 
@@ -158,7 +164,7 @@ impl Hero {
     /// [`KEEP`] off it (AF.9's idle pose rides 5 mm over the ground), and reads
     /// his footing there.
     pub fn settle(&mut self, seam: &dyn PhysicsSeam, exclude: &[BodyId]) {
-        let proxy = self.proxy(seam, exclude);
+        let proxy = self.proxy(seam, exclude, Surfaces::NONE);
         let from = self.pivot + Vec3::Y;
         if let Some(hit) = seam.cast(
             &proxy.shape,
@@ -171,11 +177,26 @@ impl Hero {
             let back = if facing > 1e-3 { KEEP / facing } else { 0.0 };
             self.pivot = from + Vec3::NEG_Y * (hit.distance - back).max(0.0);
         }
-        self.look(seam, exclude, true, false, NOMINAL_STEP);
+        self.look(seam, exclude, Surfaces::NONE, true, false, NOMINAL_STEP);
     }
 
-    /// One game frame of `step` seconds.
+    /// One game frame of `step` seconds in a world where nothing moves.
     pub fn step(&mut self, seam: &dyn PhysicsSeam, input: &Input, step: f32, exclude: &[BodyId]) {
+        self.step_among(seam, input, step, exclude, Surfaces::NONE);
+    }
+
+    /// One game frame of `step` seconds, `surfaces` holding how fast each
+    /// moving solid went over its last move. Move a kinematic body after the
+    /// hero's step, not before: then he meets it where it stood, as Avian's
+    /// queries see it until its physics schedule runs.
+    pub fn step_among(
+        &mut self,
+        seam: &dyn PhysicsSeam,
+        input: &Input,
+        step: f32,
+        exclude: &[BodyId],
+        surfaces: &Surfaces,
+    ) {
         let tuning = self.tuning;
         let push = input.stick.push(input.view_heading);
         let [before, two_before] = self.steps;
@@ -203,7 +224,7 @@ impl Hero {
         let airborne = self.footing.supported && !walking && n.dot(v) > AIRBORNE_SHARE * v.length();
         let v = if walking { proxy::lay_along(v, n) } else { v };
         let start = self.pivot;
-        let moved = self.proxy(seam, exclude).integrate(
+        let moved = self.proxy(seam, exclude, surfaces).integrate(
             self.pivot,
             self.up,
             v,
@@ -212,7 +233,7 @@ impl Hero {
         );
         self.pivot = moved.pivot;
         self.velocity = (self.pivot - start) / step;
-        self.look(seam, exclude, walking, airborne, step);
+        self.look(seam, exclude, surfaces, walking, airborne, step);
         self.steps = [step, before];
     }
 
@@ -225,12 +246,13 @@ impl Hero {
         &mut self,
         seam: &dyn PhysicsSeam,
         exclude: &[BodyId],
+        surfaces: &Surfaces,
         walking: bool,
         airborne: bool,
         step: f32,
     ) {
         let planes = self
-            .proxy(seam, exclude)
+            .proxy(seam, exclude, surfaces)
             .planes(self.pivot, self.up, SUPPORT_GAP);
         let supported = ground::support(&planes).supported && !airborne;
         let found = ground::find(seam, self.pivot, exclude);
@@ -240,7 +262,7 @@ impl Hero {
             if supported || near {
                 self.up = ground::lean(self.up, g.normal, step);
                 if let Some(to) = ground::snap(h) {
-                    let proxy = self.proxy(seam, exclude);
+                    let proxy = self.proxy(seam, exclude, surfaces);
                     let mut y = g.point.y + to;
                     let inside = proxy.clearance(
                         Vec3::new(self.pivot.x, y, self.pivot.z),

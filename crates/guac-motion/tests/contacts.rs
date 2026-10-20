@@ -7,167 +7,35 @@
 mod common;
 
 use common::*;
+use guac_motion::scenarios;
 use guac_motion::seam::{BodyId, Pose, Vec3};
-use guac_motion::solid::{SolidInfo, SolidKind, euler};
 use guac_motion::stick::Stick;
 
-/// The wall behind the start, square to the view's forward.
-fn walled() -> Soup {
-    let mut soup = open_ground();
-    soup.wall_z(6.0, [-40.0, 40.0], [-1.0, 5.0], Vec3::NEG_Z);
-    soup
-}
-
-/// Walks him from 3 m short of the wall at `degrees` from head-on, `s` of
-/// the stick, for `frames` frames, the view facing +z so forward is
-/// head-on.
-fn into_the_wall(degrees: f32, s: f32, frames: usize) -> Vec<State> {
-    let world = world(&walled(), &[]);
-    let mut hero = eruptor(&world, Vec3::new(0.0, 1.0, 3.0), 0.0);
-    (0..frames)
-        .map(|_| {
-            hero.step(
-                &world,
-                &guac_motion::hero::Input::stick(stick(s, -degrees), 0.0),
-                DT,
-                &[],
-            );
-            state(&hero)
-        })
-        .collect()
-}
-
-/// Walls: along the wall at his speed x 1 − 0.1235 (1 − sin θ), θ from
-/// head-on, within 6 mm/s of the medians AG.9 measured at 1.99°, 5.04°,
-/// 10.1°, 20°, 45° and 69.83° (5.7669, 5.8103, 5.8820, 6.0183, 6.3164 and
-/// 6.5030-6.5037 m/s: w ran 0.1218-0.1250 per recording, 0.1235 their
-/// middle), held 5 mm off it and never more than 1.1 mm higher than where he
-/// met it.
+/// The wall cases live in `guac_motion::scenarios`, so guacamole runs them
+/// on Avian too.
 #[test]
 fn along_a_wall() {
-    for (degrees, median) in [
-        (1.99, 5.7669),
-        (5.04, 5.8103),
-        (10.1, 5.8820),
-        (20.0, 6.0183),
-        (45.0, 6.3164),
-        (69.83, 6.5034),
-    ] {
-        let states = into_the_wall(degrees, 1.0, 90);
-        let met = states
-            .iter()
-            .position(|s| s.pivot.z > 6.0 - 0.9144 - 0.0051)
-            .unwrap();
-        let sliding = &states[met + 2..];
-        assert!(!sliding.is_empty(), "{degrees}");
-        for s in sliding {
-            let speed = ground_speed(s.velocity);
-            assert!((speed - median).abs() < 6e-3, "{degrees}°: {speed}");
-            assert!(s.velocity.z.abs() < 1e-4, "{degrees}°: {s:?}");
-            let gap = 6.0 - (s.pivot.z + 0.9144);
-            assert!((gap - 0.005).abs() < 2e-4, "{degrees}°: gap {gap}");
-            assert!(
-                s.pivot.y - states[met].pivot.y <= 1.1e-3,
-                "{degrees}°: rose"
-            );
-        }
-    }
+    on_parry(scenarios::along_a_wall());
 }
 
-/// Half stick along a wall: 45.7° from head-on, 0.965 of his speed.
 #[test]
 fn half_stick_along_a_wall() {
-    let states = into_the_wall(45.7, 0.5, 120);
-    let s = states.last().unwrap();
-    let share = ground_speed(s.velocity) / (TOP * 0.5);
-    assert!((share - 0.965).abs() < 1e-3, "{share}");
+    on_parry(scenarios::half_stick_along_a_wall());
 }
 
-/// Head-on: he stops dead the frame he reaches the wall, from top speed,
-/// 5 mm off its face, and stays while the stick holds; within 0.15° of
-/// head-on too; at 1.06° he creeps along at the push's share, 0.12 m/s.
 #[test]
 fn head_on_he_stops_dead() {
-    let stop = 6.0 - 0.9144 - 0.005;
-    let states = into_the_wall(0.0, 1.0, 90);
-    let met = states.iter().position(|s| s.pivot.z > stop - 1e-4).unwrap();
-    assert!(
-        (states[met].pivot.z - stop).abs() < 1e-4,
-        "{:?}",
-        states[met]
-    );
-    assert!((ground_speed(states[met - 1].velocity) - TOP).abs() < 1e-3);
-    assert!(
-        states[met + 1..]
-            .iter()
-            .all(|s| s.pivot == states[met].pivot)
-    );
-    for angle in [0.04, 0.15] {
-        let states = into_the_wall(angle, 1.0, 90);
-        assert_eq!(states.last().unwrap().velocity, Vec3::ZERO, "{angle}");
-    }
-    let creep = into_the_wall(1.06, 1.0, 90);
-    let speed = ground_speed(creep.last().unwrap().velocity);
-    assert!(
-        (speed - TOP * 1.06f32.to_radians().sin()).abs() < 2e-3,
-        "{speed}"
-    );
+    on_parry(scenarios::head_on_he_stops_dead());
 }
 
-/// Let go along a wall at 45°, he slows along it as on open ground, his
-/// ground speed 0.9639 of his walk's (AG.9: stopped 0.81-0.84 m on).
 #[test]
 fn let_go_along_a_wall() {
-    let world = world(&walled(), &[]);
-    let mut hero = eruptor(&world, Vec3::new(0.0, 1.0, 4.5), 0.0);
-    let input = |s| guac_motion::hero::Input::stick(s, 0.0);
-    for _ in 0..30 {
-        hero.step(&world, &input(stick(1.0, -45.0)), DT, &[]);
-    }
-    let released = hero.pivot;
-    for _ in 0..40 {
-        hero.step(&world, &input(Stick::CENTRED), DT, &[]);
-        if hero.velocity != Vec3::ZERO {
-            let share = ground_speed(hero.velocity) / (hero.walk.velocity.length() * 0.3048);
-            assert!((share - 0.9639).abs() < 1e-3, "{share}");
-        }
-    }
-    let slid = ground_speed(hero.pivot - released);
-    assert!((0.78..=0.82).contains(&slid), "{slid}");
+    on_parry(scenarios::let_go_along_a_wall());
 }
 
-/// The gate's door, built from its CollisionInfo (4 x 21 x 34 ft, its own
-/// quarter turn, heading 180): walked into head-on he stops with his pivot
-/// 1.4781 m from its middle (AG.7) within the millimetre his 5 mm keep makes
-/// of its 4.1 mm.
 #[test]
 fn the_gate_door_stops_him() {
-    let door = SolidInfo {
-        kind: SolidKind::Box,
-        offset: [0.0; 3],
-        rotation: [0.0, 90.0, 0.0],
-        width: 4.0,
-        height: 21.0,
-        length: 34.0,
-    }
-    .havok([100.0; 3])
-    .unwrap();
-    let at = Pose::new(Vec3::new(0.0, 0.0, 5.0), euler([0.0, 180.0, 0.0]));
-    let world = world(&open_ground(), &[(BodyId(2), door, at)]);
-    let mut hero = eruptor(&world, Vec3::new(2.0, 1.0, 0.0), 0.0);
-    let states = run(&world, &mut hero, 90, |_| stick(1.0, -VIEW));
-    let s = states.last().unwrap();
-    assert_eq!(s.velocity, Vec3::ZERO);
-    let from_middle = 5.0 - s.pivot.z;
-    assert!((from_middle - 1.4781).abs() < 1.5e-3, "{from_middle}");
-    // Along x the door is 10.36 m wide: walked along it 4 m off, nothing.
-    let mut past = eruptor(&world, Vec3::new(-4.0, 1.0, 3.5), 0.0);
-    let along = run(&world, &mut past, 60, |_| stick(1.0, -VIEW - 90.0));
-    assert!(
-        along
-            .iter()
-            .all(|s| (ground_speed(s.velocity) - TOP).abs() < 1e-3 || s.velocity.x < 0.0)
-    );
+    on_parry(scenarios::the_gate_door_stops_him());
 }
 
 /// What he walks up in [`steps_up`].
@@ -353,4 +221,57 @@ fn snapped_back_down_from_189_mm() {
     hero.pivot.y += 0.189 - 0.005;
     let after = run(&world, &mut hero, 1, |_| Stick::CENTRED)[0];
     assert!((after.pivot.y - 0.01).abs() < 1e-5, "{after:?}");
+}
+
+/// A moving solid carries him along its normal at its own speed (the
+/// surface's velocity in the solve, kept by whoever moves it): a 2 m box
+/// coming at him across level ground at 1 m/s, moved after each of his
+/// steps, pushes him back at 1 m/s once it reaches him, its face 5 mm off
+/// his shape each time it has moved and never into it (the frame it first
+/// reaches him it ends 2.3 mm off, inside the keep, as it moved after he
+/// did).
+#[test]
+fn a_moving_solid_pushes_him_at_its_speed() {
+    use guac_motion::proxy::Surfaces;
+    use guac_motion::seam::{Body, BodyKind, Collider, PhysicsSeam, Shape};
+    let block = BodyId(2);
+    let half = 1.0;
+    let mut at = Vec3::new(0.0, half, 3.0);
+    let mut bodies = vec![level(&open_ground())];
+    bodies.push(Body {
+        id: block,
+        kind: BodyKind::Kinematic,
+        pose: Pose::at(at),
+        collider: Collider::Convex(Shape::Box {
+            half_extents: Vec3::splat(half),
+            margin: 0.0,
+        }),
+    });
+    let mut world = guac_motion::parry::ParryWorld::new(&bodies).unwrap();
+    let mut hero = eruptor(&world, Vec3::new(0.0, 1.0, 0.0), 0.0);
+    let mut surfaces = Surfaces::default();
+    let towards = Vec3::new(0.0, 0.0, -1.0);
+    let mut gaps = Vec::new();
+    for _ in 0..180 {
+        hero.step_among(
+            &world,
+            &guac_motion::hero::Input::stick(Stick::CENTRED, 0.0),
+            DT,
+            &[],
+            &surfaces,
+        );
+        at += towards * DT;
+        world.set_pose(block, Pose::at(at)).unwrap();
+        surfaces.set(block, towards);
+        gaps.push((at.z - half) - (hero.pivot.z + 0.9144));
+    }
+    // 1.0856 m apart at the start, closed at 1 m/s: met about 65 frames in.
+    assert!(gaps.iter().all(|&g| g > 0.0), "{gaps:?}");
+    for g in &gaps[80..] {
+        assert!((g - 0.005).abs() < 1e-4, "{g}");
+    }
+    assert!((hero.velocity.z + 1.0).abs() < 1e-3, "{:?}", hero.velocity);
+    let shape = Shape::Sphere { radius: 0.9 };
+    let centre = Pose::at(hero.pivot + Vec3::Y * 0.9144);
+    assert!(world.overlaps(&shape, centre, &[]).is_empty());
 }

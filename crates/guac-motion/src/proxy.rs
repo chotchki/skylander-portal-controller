@@ -27,9 +27,12 @@
 //! the sphere's rounded bottom climbs a riser to where its edge meets it at
 //! 45° (0.27 m for Eruptor), where AG.9 saw 4 cm climbed and 2.36 m not, and
 //! nothing between; [`CONTACT_REACH`] for the planes the solve sees (Havok's
-//! keep-contact tolerance as a guess); a surface's own velocity in the dedupe
-//! (every solid still, until a moving body comes into reach); the
-//! [`RECOVERY`] speed off a plane he's inside.
+//! keep-contact tolerance as a guess); a moving surface ([`Surfaces`])
+//! counted in the dedupe and pushing him along its normal at its own speed,
+//! its cast still against its pose at the step's start (read; no body moves
+//! in M2's world); the [`RECOVERY`] speed off a plane he's inside.
+
+use std::collections::BTreeMap;
 
 use crate::ground::MAX_SLOPE_COS;
 use crate::seam::{BodyId, ContactPlane, PhysicsSeam, Pose, Quat, Shape, Vec3};
@@ -79,10 +82,36 @@ pub fn lay_along(v: Vec3, n: Vec3) -> Vec3 {
     if l < 1e-6 { v } else { laid * (len / l) }
 }
 
-/// Planes the same within Havok's dedupe (a surface's velocity taken as 0).
-fn same(a: &ContactPlane, b: &ContactPlane) -> bool {
+/// How fast each moving solid went over its owner's last move of it, m/s,
+/// by body: the seam's bodies carry no velocity, so whoever moves a
+/// kinematic body keeps it here (a door swinging, a block pushed). A body
+/// not in it stands still, as every one in M2's world does.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Surfaces(BTreeMap<BodyId, Vec3>);
+
+impl Surfaces {
+    pub const NONE: &'static Surfaces = &Surfaces(BTreeMap::new());
+
+    /// `id` moved at `velocity` over its last move; a zero one forgets it.
+    pub fn set(&mut self, id: BodyId, velocity: Vec3) {
+        if velocity == Vec3::ZERO {
+            self.0.remove(&id);
+        } else {
+            self.0.insert(id, velocity);
+        }
+    }
+
+    pub fn velocity(&self, id: BodyId) -> Vec3 {
+        self.0.get(&id).copied().unwrap_or(Vec3::ZERO)
+    }
+}
+
+/// Planes the same within Havok's dedupe: Δd² + 1000 (1 − nᵢ·nⱼ) +
+/// 0.1 |Δv|² < 0.1, Δv their surfaces' velocities apart.
+fn same(a: &ContactPlane, b: &ContactPlane, surfaces: &Surfaces) -> bool {
     let dd = a.distance - b.distance;
-    dd * dd + 1000.0 * (1.0 - a.normal.dot(b.normal)) < 0.1
+    let dv = surfaces.velocity(a.body) - surfaces.velocity(b.body);
+    dd * dd + 1000.0 * (1.0 - a.normal.dot(b.normal)) + 0.1 * dv.length_squared() < 0.1
 }
 
 /// The hero's shape against the world.
@@ -95,6 +124,7 @@ pub struct Proxy<'a> {
     pub centre: Vec3,
     pub rotation: Quat,
     pub exclude: &'a [BodyId],
+    pub surfaces: &'a Surfaces,
 }
 
 /// Where a move left him, and the planes its last solve saw.
@@ -138,7 +168,7 @@ impl Proxy<'_> {
         found.sort_by(|a, b| a.distance.total_cmp(&b.distance));
         let mut kept: Vec<ContactPlane> = Vec::new();
         for p in found {
-            if !kept.iter().any(|k| same(k, &p)) {
+            if !kept.iter().any(|k| same(k, &p, self.surfaces)) {
                 kept.push(p);
             }
         }
@@ -177,11 +207,13 @@ impl Proxy<'_> {
                 .filter(|p| p.distance <= TOUCHING)
                 .map(|p| Limit {
                     normal: p.normal,
-                    min: if p.distance >= 0.0 {
-                        -p.distance / remaining
-                    } else {
-                        (-p.distance / remaining).min(RECOVERY)
-                    },
+                    // A moving surface carries him with it along its normal.
+                    min: self.surfaces.velocity(p.body).dot(p.normal)
+                        + if p.distance >= 0.0 {
+                            -p.distance / remaining
+                        } else {
+                            (-p.distance / remaining).min(RECOVERY)
+                        },
                 })
                 .collect();
             let mut solved = solve(v, &limits);

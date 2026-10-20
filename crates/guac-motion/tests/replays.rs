@@ -90,6 +90,7 @@ fn run(world: &ParryWorld, frames: &[Frame], s: usize, until: usize) -> Vec<Step
             centre: hero.solid().centre,
             rotation: hero.solid().rotation,
             exclude: &[],
+            surfaces: guac_motion::proxy::Surfaces::NONE,
         };
         let door = proxy
             .planes(hero.pivot, hero.up, 0.01)
