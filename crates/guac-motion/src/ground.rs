@@ -21,7 +21,7 @@
 //! Hypotheses: the support's reach, [`SUPPORT_GAP`], between the 11.7 mm
 //! over the ground he was supported at and the 14.5 mm he wasn't (AG.36,
 //! AG.9's gate); the snap's 0.375 m past the 189 mm seen; that the lean turns
-//! in the air too and over the frame's own step; the ground finder's up-cast,
+//! over the frame's own step; the ground finder's up-cast,
 //! read, and seen only through the edge probe (AG.39's cliff foot).
 
 use crate::seam::{BodyId, ContactPlane, PhysicsSeam, Quat, Vec3};

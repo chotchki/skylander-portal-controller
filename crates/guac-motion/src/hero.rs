@@ -27,7 +27,9 @@
 //! m/s (the velocity model as read; it's what lifts him for a frame over a
 //! crest and off a slope he's let go on uphill); the edge probe's hold turns
 //! his facing to the stick at his usual rate; his collision shape turns with
-//! his lean about his pivot.
+//! his lean about his pivot; he leans only while he's on the ground (the
+//! post-step's grounded test, as read), so not up in the air or on ground
+//! steeper than 45°.
 
 use crate::edge;
 use crate::ground::{self, LEAN_SETTLED, MAX_SLOPE_COS, SNAP_REACH, SUPPORT_GAP};
@@ -195,13 +197,14 @@ impl Hero {
         let mut height = found.map(|g| self.pivot.y - g.point.y);
         if let (Some(g), Some(h)) = (found, height) {
             let near = walking && h < SNAP_REACH && g.normal.y > MAX_SLOPE_COS;
-            if (support.supported || near)
-                && let Some(to) = ground::snap(h)
-            {
+            let grounded = support.supported || near;
+            if grounded && let Some(to) = ground::snap(h) {
                 self.pivot.y = g.point.y + to;
                 height = Some(to);
             }
-            self.up = ground::lean(self.up, g.normal, step);
+            if grounded {
+                self.up = ground::lean(self.up, g.normal, step);
+            }
         }
         let settled = found.is_some_and(|g| ground::angle(self.up, g.normal) <= LEAN_SETTLED);
         self.footing = Footing {
