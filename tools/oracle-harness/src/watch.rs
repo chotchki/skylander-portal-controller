@@ -71,6 +71,12 @@
 //!   +0x3C. Each collidable a contact names is a phantom's (+0x10) or the
 //!   level body's (+0x10), named at the resolve from [`crate::level`]'s
 //!   solids and the level body.
+//! - every `Generic_FollowActor` the frame holds (AG.13): each one's
+//!   placement `_currentMatrix`, named `follow.<placement>`. The camera
+//!   scripts keep their points on such clones (the magic point the eye keeps
+//!   a camera definition's offset from, the player's camera target), so a
+//!   record holds the camera's whole chain; they stay out of a [`Frame`] and
+//!   [`GiantsWatch::followers`] reads them.
 //!
 //! The list is fixed when it's armed: a control the game swaps out mid-run
 //! leaves its old address in the list, so each record carries the vector's
@@ -414,6 +420,33 @@ pub struct GiantsWatch {
     /// list written before it, or when his animation block holds no phantom.
     #[serde(default)]
     pub proxy: Option<ProxyWatch>,
+    /// Every `Generic_FollowActor` at the resolve (AG.13): none in a list
+    /// written before it.
+    #[serde(default)]
+    pub followers: Vec<Follower>,
+}
+
+/// A `Generic_FollowActor` on the watch list (AG.13).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Follower {
+    pub placement: u32,
+    pub corpus: u32,
+}
+
+impl Follower {
+    /// The name it takes on the list: `follow.` and its placement in hex.
+    pub fn field(&self) -> String {
+        format!("follow.{:08x}", self.placement)
+    }
+}
+
+/// A follower where a record found it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FollowerAt {
+    pub follower: Follower,
+    pub position: [f32; 3],
+    /// Tilt, heading, roll, degrees.
+    pub rotation: [f32; 3],
 }
 
 /// Where the hero's contacts live, resolved at the pause (AG.9).
@@ -508,6 +541,11 @@ const MAX_SLOTS: u32 = 16;
 /// A clip's name is its `.ma` path (`Models/Characters/MinionsMonsters/
 /// Eruptor/Eruptor_Idle.ma` is 57 bytes); longer is cut.
 const CLIP_NAME_LEN: usize = 128;
+/// The clone the camera scripts keep their points on (AG.13); AF.8's fresh
+/// state holds six.
+const FOLLOW_ACTOR: &str = "Generic_FollowActor";
+/// Followers watched at most: past this the list would crowd O5's 64 ranges.
+const MAX_FOLLOWERS: usize = 16;
 
 impl GiantsWatch {
     /// The port the watch records on: pad 0, the hero's, which Giants reads
@@ -529,6 +567,16 @@ impl GiantsWatch {
             }
         };
         let viewport = frame.camera.as_ref().map(|c| c.viewport);
+        let followers: Vec<Follower> = frame
+            .actors
+            .iter()
+            .filter(|a| a.corpus != hero.corpus && a.name.as_deref() == Some(FOLLOW_ACTOR))
+            .map(|a| Follower {
+                placement: a.placement,
+                corpus: a.corpus,
+            })
+            .take(MAX_FOLLOWERS)
+            .collect();
 
         let app = be32(&one(g, actors::APP, 4, "the application pointer")?, 0);
         let a = one(g, app, actors::APP_LEN, "the application")?;
@@ -680,6 +728,13 @@ impl GiantsWatch {
                 GROUND_WATCHED,
             ));
         }
+        for f in &followers {
+            fields.push(Field::new(
+                f.field(),
+                f.placement + actors::PLACEMENT_MATRIX as u32,
+                24,
+            ));
+        }
         for (i, clip) in clips.iter().enumerate() {
             fields.push(Field::new(
                 format!("anim.control.{i}"),
@@ -709,6 +764,7 @@ impl GiantsWatch {
             slots,
             clips,
             proxy,
+            followers,
         })
     }
 
@@ -813,6 +869,22 @@ impl GiantsWatch {
             }),
             planes,
         })
+    }
+
+    /// Each follower's place in a record (AG.13), in the resolve's order; one
+    /// whose range wasn't readable is left out.
+    pub fn followers(&self, record: &WatchRecord) -> Vec<FollowerAt> {
+        self.followers
+            .iter()
+            .filter_map(|&follower| {
+                let p = self.list.field(record, &follower.field())?;
+                Some(FollowerAt {
+                    follower,
+                    position: floats(p, 0),
+                    rotation: floats(p, 12),
+                })
+            })
+            .collect()
     }
 
     /// The hero's `_timeStamp` in a record, the game's own clock on him.
@@ -1625,6 +1697,58 @@ mod tests {
         g.w.put32(params, vtable::ANIMATION_INFO);
         let err = GiantsWatch::resolve(&mut g.w).unwrap_err();
         assert!(format!("{err:#}").contains("ActorParameters"), "{err:#}");
+    }
+
+    #[test]
+    fn every_follow_actor_is_watched_and_read_back_by_its_placement() {
+        let mut g = giants();
+        // The camera's magic point, a second follower beside pad 0's, just
+        // off the hero as the fresh state has it (AG.13).
+        let magic = g.w.actor(&Spec {
+            name: "Generic_FollowActor".into(),
+            position: [10.190276, 43.382694, -93.39401],
+            ..Spec::default()
+        });
+        let watch = GiantsWatch::resolve(&mut g.w).unwrap();
+        assert_eq!(watch.followers.len(), 2, "{:?}", watch.followers);
+        assert!(watch.followers.contains(&Follower {
+            placement: magic.placement,
+            corpus: magic.corpus,
+        }));
+        assert!(watch.followers.iter().all(|f| f.corpus != g.hero.corpus));
+        for f in &watch.followers {
+            assert_eq!(f.field(), format!("follow.{:08x}", f.placement));
+            assert!(watch.list.placed(&f.field()).is_some(), "{}", f.field());
+        }
+        assert!(watch.list.ranges().len() <= WATCH_MAX_RANGES);
+        let app = g.w.app;
+        g.w.put32(app + 0x5C, 5_962);
+        let before = sample(&mut g.w, &watch.list, 100);
+        g.w.put32(app + 0x5C, 5_963);
+        g.w.put_floats(
+            magic.placement + actors::PLACEMENT_MATRIX as u32,
+            &[11.0, 43.5, -94.0, -1.0, 15.0, 0.5],
+        );
+        let after = sample(&mut g.w, &watch.list, 101);
+        let at = |r: &WatchRecord| {
+            watch
+                .followers(r)
+                .into_iter()
+                .find(|f| f.follower.placement == magic.placement)
+                .unwrap()
+        };
+        assert_eq!(at(&before).position, [10.190276, 43.382694, -93.39401]);
+        assert_eq!(at(&after).position, [11.0, 43.5, -94.0]);
+        assert_eq!(at(&after).rotation, [-1.0, 15.0, 0.5]);
+        // Followers stay out of the frame the recording decodes.
+        let pads = BTreeMap::new();
+        let r = watch.recording(&[before, after.clone()], &pads).unwrap();
+        assert_eq!(r.frames()[1].hero.position, [10.19027, 43.38267, -93.39406]);
+        // A list written before AG.13 reads as having none.
+        let mut json = serde_json::to_value(&watch).unwrap();
+        json.as_object_mut().unwrap().remove("followers");
+        let old: GiantsWatch = serde_json::from_value(json).unwrap();
+        assert!(old.followers.is_empty() && old.followers(&after).is_empty());
     }
 
     #[test]
