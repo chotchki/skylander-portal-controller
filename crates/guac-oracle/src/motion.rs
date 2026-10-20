@@ -475,8 +475,10 @@ impl Motion {
     }
 
     /// His turning between two game times: every step whose heading changes
-    /// counts, its rate the change over the step's game time.
-    pub fn turn_rate(&self, from: f64, to: f64) -> Result<TurnRate, MetricError> {
+    /// by more than `still_deg` counts (a recorded heading wobbles by an f32
+    /// ulp while he walks straight), its rate the change over the step's game
+    /// time.
+    pub fn turn_rate(&self, from: f64, to: f64, still_deg: f64) -> Result<TurnRate, MetricError> {
         let (k0, k1) = self.window(from, to)?;
         let mut out = TurnRate {
             angle: 0.0,
@@ -489,7 +491,7 @@ impl Motion {
         for k in k0..k1 {
             let (a, b) = (&self.samples[k], &self.samples[k + 1]);
             let d = wrap(b.heading - a.heading);
-            if d == 0.0 {
+            if d.abs() <= still_deg {
                 continue;
             }
             out.angle += d;
@@ -922,7 +924,7 @@ mod tests {
         let dts = [STEP, STEP, HITCH, STEP, STEP, STEP];
         let m = walk_turning(&headings, &dts, &[6.0; 6]);
         let (t0, t1) = m.span();
-        let r = m.turn_rate(t0, t1).unwrap();
+        let r = m.turn_rate(t0, t1, 1e-3).unwrap();
         close(r.angle, 129.0, 1e-9);
         close(r.peak, 1440.0, 1e-6);
         close(r.seconds, 3.0 * STEP + HITCH, 1e-12);
@@ -931,12 +933,14 @@ mod tests {
         // Across north: 350 to 10 is +20, not -340.
         let m = walk_turning(&[350.0, 10.0, 10.0], &[STEP, STEP], &[6.0; 2]);
         let (t0, t1) = m.span();
-        close(m.turn_rate(t0, t1).unwrap().angle, 20.0, 1e-9);
-        // Straight: no turn, no rate.
-        let m = walk(0.0, &[STEP; 3], &[6.0; 3]);
+        close(m.turn_rate(t0, t1, 1e-3).unwrap().angle, 20.0, 1e-9);
+        // Straight: no turn, no rate; an ulp's wobble on a heading of 105
+        // (7.6e-6 deg) isn't a turn, though with no threshold it is one.
+        let m = walk_turning(&[105.0, 105.0, 105.000_007_6, 105.0], &[STEP; 3], &[6.0; 3]);
         let (t0, t1) = m.span();
-        let r = m.turn_rate(t0, t1).unwrap();
+        let r = m.turn_rate(t0, t1, 1e-3).unwrap();
         assert_eq!((r.angle, r.steps, r.peak), (0.0, 0, 0.0));
+        assert_eq!(m.turn_rate(t0, t1, 0.0).unwrap().steps, 2);
     }
 
     #[test]

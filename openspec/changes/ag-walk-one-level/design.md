@@ -74,6 +74,8 @@ Why the original's shape over a built-in: what decides the oracle's branch outco
 - The 15° gate sits exactly on the start. The camera looks across the ground at 15° and Eruptor faces 0°, so the stick held forward points 15.00° off his facing, the from-rest gate's edge; which side of "more than 15°" it falls on decides his first frame. AG.8 settles it from frames 1-3, the requirement says whether 15° itself counts, and AG.16 tests 15° ± 0.01°.
 - The thresholds disagree. `checkSupport` reads 45° and the velocity model's leave-the-ground test normal.y < 0.69 (46.4°), so ground in that band is the oracle's to settle; AG.16 tests "doesn't hold" at 50° and adds a band case only after AG.9 measures one. And the idle height: the ground under the spawn is 43.3777, flat to 0.11°, and AF.9's idle pivot 43.3827, 5.0 mm up, which the 0.01 m snap as read doesn't give; AG.18 settles him from the waypoint and either lands within 1e-4 m or AG.8's recordings explain the gap.
 
+As measured (AG.8, 2026-10-19, 59 O5b recordings from AF's fresh state on the level ground the spawn sits in, every game frame): the read model isn't what walks Eruptor. His `ActorParameters` hold 10,000 ft/s, no acceleration or deceleration, 10,000°/s and motion type 2 at rest and through every walk, changing only for the frames an action button plays (AG.1 read the swap at the South press as walking), so his walk runs on numbers held elsewhere, `Speed_Slow`'s live 21.5 ft/s among them. Each game frame, with the stick's strength S from the per-axis dead zone: the walk takes the stick's direction against the view at once, whatever his facing or speed; the speed rises by 160 ft/s² × S × the step up to S × 21.5 ft/s (a speed over a weaker push's top holds), and with the stick let go falls by 80 ft/s² × the step along the last direction to 0; the facing turns toward the walk the short way by 1440°/s × S × the step and freezes when let go. No 15°, 45° or 135° gate, no stop dead, no turn slowing the walk, no S² or angle factor on the turn. The rise and the turn integrate the step of the frame two before, the fall the frame before, the position its own (AG.1's order): one update at a time the law holds to 1.3e-4 m/s, 4e-3° on the facing and 4.1e-6 m on the position over 14,733 updates, and 167 pushes from rest rebuilt from their own steps land within 2.2e-5 m. So the brief's acceleration gap closes as acceleration alone, scaled by the strength, and the reading decision 7's replay bound cites is settled; AG.16 builds this law and AG.18 feeds it each frame's step with those lags. The proxy's contact loop, the ground and slopes stay AG.9's: on the mound ahead of the spawn a part-stick walk runs faster than its level top.
+
 Rejected: Avian's `MoveAndSlide` with its per-hit callback (iterations, depenetration, a 0.01 skin and up to 20 similar planes; the callback can express no upward gain, but its solve and plane merging aren't the original's, so a branch could go the other way for reasons nobody can name; worth a measured comparison only if cheap); tnua or ahoy (someone else's feel).
 
 **5. Time: a fixed 1/60 s step, game time defined and what "the original tick" means.**
@@ -164,7 +166,7 @@ Every scenario AG's deltas add or modify, and the box whose test or recorded che
 | level-scene | Eruptor first | AG.21 (e2e) |
 | level-scene | An item first; Two characters before the start; A second kid places a character; The hero comes off with another waiting; An item mid-level; Swapping heroes; Three figures on the portal | AG.29 (unit and e2e, on AG.6's sessions) |
 | hero-movement | Forward at the start; Left at the start; From rest at the start | AG.16, AG.18 |
-| hero-movement | Eruptor at full stick; From rest; Letting go; A full reversal; Part stick; Along a wall | AG.16, AG.31 |
+| hero-movement | Eruptor at full stick; Half stick; From rest; Letting go; A full reversal; Part stick; Let go mid-turn; Along a wall | AG.16, AG.31 |
 | hero-movement | Into the corner by the gate | AG.18 |
 | hero-movement | A steep bank; A step up; Off a ledge; A faster display | AG.16 |
 | hero-movement | Onto a slope; A long drop | AG.16, AG.18 (on AG.9's and AG.10's recordings) |
@@ -176,7 +178,7 @@ Every scenario AG's deltas add or modify, and the box whose test or recorded che
 | gameplay-camera | Forward after a switch; The stick held through a switch | AG.28 |
 | gameplay-camera | Scenery in the way | AG.17 (and AG.13's recording, if the opening area has such a spot) |
 | pad-input | Two 8BitDo variants; The pause overlay on each 8BitDo; A second pad; The pad goes away | AG.20 (unit), AG.32 (chotchki's hands) |
-| pad-input | A stick resting off centre; Full on both axes; A pad guacamole doesn't know; Pause and resume | AG.20 |
+| pad-input | A stick resting off centre; Just past the dead zone; Full on both axes; Between the axes; A pad guacamole doesn't know; Pause and resume | AG.20 |
 | character-intros | A Giants character | AG.21, AG.29 |
 | character-intros | Placed while the level runs; Placed while the level is paused for a hero; Two placements back to back | AG.29 |
 | character-intros | Removed before its turn; Skipped with the controller; Placed during extraction | AB's tests, unchanged in behaviour; AG.20 (a skip over the level layer), AG.29 (the level case) |

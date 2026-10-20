@@ -7,9 +7,9 @@
 //! random number generators read and written through it ([`rng`]), its
 //! actors and camera read through it ([`actors`]), the divergence
 //! measurement built on all of them ([`divergence`]), O5's per-frame
-//! recorder with Giants' watch list ([`watch`], AG.1) and a level as the live
+//! recorder with Giants' watch list ([`watch`], AG.1), a level as the live
 //! game holds it: its placements, its collision and its solids ([`level`],
-//! AG.7).
+//! AG.7), and the hero's own scale, solid and parameters ([`hero`], AG.8).
 //!
 //! It never writes inside a work tree of this repo: every path it creates goes
 //! through `rrc_dump::output::refuse_repo_output` first, because what an oracle
@@ -25,6 +25,7 @@ pub mod actors;
 pub mod control;
 pub mod divergence;
 pub mod env;
+pub mod hero;
 pub mod home;
 pub mod identity;
 pub mod launch;

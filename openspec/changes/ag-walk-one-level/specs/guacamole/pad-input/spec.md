@@ -14,15 +14,23 @@ In a level, guacamole SHALL read a pad's four face buttons by position (bottom, 
 - **THEN** both presses resume the level
 
 ### Requirement: The move stick's dead zone
-The left stick SHALL read as centred on any axis pushed less than a quarter of its travel, and past that SHALL count from nothing at a quarter to full at full travel. Its strength SHALL be the two axes' combined length, capped at full.
+The left stick SHALL read each axis as centred while it's a quarter of its travel or less off centre (32 of the 128 steps either side), and past that count from nothing to full at full travel, so a push between the axes walks the hero nearer the closer axis than the stick points. Its strength SHALL be the two axes' combined length, capped at full; the hero's top speed scales with it.
 
 #### Scenario: A stick resting off centre
-- **WHEN** the left stick rests a fifth of its travel off centre
+- **WHEN** the left stick rests a fifth of its travel off centre, or exactly a quarter on one axis
 - **THEN** the hero doesn't move
+
+#### Scenario: Just past the dead zone
+- **WHEN** one axis is pushed one step past a quarter of its travel
+- **THEN** the hero creeps that way at a 96th of his top speed
 
 #### Scenario: Full on both axes
 - **WHEN** the left stick reads full travel on both axes at once
 - **THEN** the hero walks at the same top speed as with the stick fully forward
+
+#### Scenario: Between the axes
+- **WHEN** a round-gate pad's stick is pushed fully 22.5° off forward
+- **THEN** the hero walks 11.2° off forward at 91.3 % of his top speed
 
 ### Requirement: One pad walks the hero
 The hero SHALL follow the first pad connected; another pad's stick and face buttons SHALL NOT move him. When that pad disconnects, or none is connected when the level starts, the level SHALL wait under a message asking for a controller, and a press on any connected pad SHALL make it the hero's and carry on.
