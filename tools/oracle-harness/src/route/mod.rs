@@ -105,8 +105,8 @@ impl RoutePlan {
     }
 
     /// Refuses what no run can do: no steps, a radius or tolerance that isn't
-    /// positive, a step of no flips, a label used twice or one that can't name
-    /// a file.
+    /// positive, a step of no flips, a shot's or a read's label used twice by
+    /// its kind, or one that can't name a file.
     pub fn check(&self) -> Result<()> {
         if self.steps.is_empty() {
             bail!("a route has at least one step");
@@ -150,7 +150,10 @@ impl RoutePlan {
                     if label == "f0" {
                         bail!("step {i}: \"f0\" is the session's own read at F0");
                     }
-                    if !labels.insert(label.clone()) {
+                    // A shot and a read write different files, so they may
+                    // share a label; two of a kind may not.
+                    let kind = matches!(step, Step::Shot { .. });
+                    if !labels.insert((kind, label.clone())) {
                         bail!("step {i}: the label {label:?} is used twice");
                     }
                 }

@@ -638,6 +638,8 @@ fn a_route_reads_from_ron_and_what_no_run_can_do_is_refused() {
         }
     );
     assert_eq!(RoutePlan::from_ron(&plan.to_ron()).unwrap(), plan);
+    // A shot and a read write different files: one label serves both.
+    assert!(RoutePlan::from_ron("(steps: [Read(label: \"pre\"), Shot(label: \"pre\")])").is_ok());
     for bad in [
         "(steps: [])",
         "(steps: [Via(to: (x: 1.0, z: 2.0), radius: 0.0)])",
@@ -649,7 +651,8 @@ fn a_route_reads_from_ron_and_what_no_run_can_do_is_refused() {
         "(steps: [Press(buttons: [South], flips: 0)])",
         "(steps: [Shot(label: \"a/b\")])",
         "(steps: [Shot(label: \"\")])",
-        "(steps: [Shot(label: \"x\"), Read(label: \"x\")])",
+        "(steps: [Shot(label: \"x\"), Shot(label: \"x\")])",
+        "(steps: [Read(label: \"x\"), Wait(flips: 2), Read(label: \"x\")])",
         "(steps: [Read(label: \"f0\")])",
         "(steps: [Hop(to: (x: 1.0, z: 2.0))])",
         "(steps: [Wait(flips: 3)], extra: 1)",
