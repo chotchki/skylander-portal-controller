@@ -303,7 +303,7 @@ mod tests {
     }
 
     #[test]
-    fn random_literals_cover_both_ends_for_integers_and_not_for_floats() {
+    fn random_literals_cover_both_ends_and_a_floats_top_on_its_128_highest_words() {
         // random(3): word mod 4, so 0 and 3 come up and 4 never does.
         assert_eq!(random_literal(Value::Int(3), 0), Some(Value::Int(0)));
         assert_eq!(random_literal(Value::Int(3), 3), Some(Value::Int(3)));

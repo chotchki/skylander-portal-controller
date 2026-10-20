@@ -207,7 +207,8 @@
 //! number x 2^-32 with the number rounded to single precision first, as the
 //! original's routine is read to do: [0, r), except that the 128 highest
 //! numbers round to 2^32 and read r itself, one draw in 2^25. That corner
-//! is the reading, kept for parity; no measurement sees it.
+//! is the reading, kept for parity as script-runtime's Random rolls says;
+//! no measurement sees it.
 //!
 //! # Members
 //!
