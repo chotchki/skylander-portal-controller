@@ -4496,6 +4496,7 @@ dependencies = [
  "avian3d",
  "axum",
  "bevy",
+ "bevy_transform_interpolation",
  "crossbeam-channel",
  "guac-extract",
  "guac-formats",

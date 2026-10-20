@@ -12,6 +12,7 @@ mod cards;
 mod cli;
 mod driver;
 mod extraction;
+mod hero;
 mod input;
 mod intro;
 mod intro_player;

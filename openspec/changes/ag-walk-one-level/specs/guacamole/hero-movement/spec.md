@@ -128,7 +128,7 @@ A hero SHALL ride 5 mm above level ground, and 10 mm above a slope once the snap
 - **THEN** he drifts up to 171-189 mm above the ground and is put back 10 mm above it in one frame
 
 ### Requirement: An edge with nothing below
-A hero SHALL stop dead the frame a point 4 ft (1.2192 m) ahead of him along his walk would be over no ground within 225 ft (68.58 m) below: his walk across the ground drops to 0 there whatever the angle, held or let go, with no slide along the edge, and he stays while the stick pushes on. Slower than 2 ft/s (0.61 m/s) the point SHALL be half his width and 1 ft ahead along the stick (3 ft for Eruptor). Where ground lies within 225 ft below, he SHALL walk off and fall.
+A hero SHALL stop dead the frame a point 4 ft (1.2192 m) ahead of him along his walk, with no wall between, would be over no ground within 225 ft (68.58 m) below: his walk across the ground drops to 0 there whatever the angle, held or let go, with no slide along the edge, and he stays while the stick pushes on. Slower than 2 ft/s (0.61 m/s) the point SHALL be half his width and 1 ft ahead along the stick (3 ft for Eruptor). Where ground lies within 225 ft below, he SHALL walk off and fall.
 
 #### Scenario: Head-on at the bridge's foot
 - **WHEN** Eruptor walks at full stick straight at the edge by the bridge's foot, or at the sheep's ground's rim or the ledge route's edges
@@ -149,6 +149,10 @@ A hero SHALL stop dead the frame a point 4 ft (1.2192 m) ahead of him along his 
 #### Scenario: Off the ledge route
 - **WHEN** Eruptor walks at full stick off the ledge route's edge over the corridor, its upper slope 2-3.5 m below, 17.5° and 33.8° from head-on
 - **THEN** he walks over the edge at 6.553 m/s without slowing, falls 3.60 and 2.72 m onto the slope in 0.40 and 0.36 s, and walks on
+
+#### Scenario: A wall at the level's edge
+- **WHEN** Eruptor walks at full stick into the wall behind the start, past which the level holds nothing
+- **THEN** he walks up to it and slides along it as he does along any wall, never stopped short of it
 
 #### Scenario: Where the ledge route lets him off
 - **WHEN** Eruptor walks at full stick at the ledge route's edge over the corridor, head-on, 17°-70° east of head-on or 34°-64° west of it, or creeps at it under 2 ft/s
